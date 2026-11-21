@@ -178,12 +178,7 @@ Franka 在线强化学习
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
-      若固件需要 0.15.0，在命令前添加 ``LIBFRANKA_VERSION=0.15.0``；如需自定义 wheel 可通过 ``FRANKY_WHEEL`` 指定 URL 或本地路径；若系统 APT 依赖已装好可追加 ``--no-root``。验证 GPU 与 Franky 加载（第一条须输出 ``True``，第二条无输出）：
-
-      .. code-block:: bash
-
-         python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
-         python -c "import franky"
+      若固件需要 0.15.0，在命令前加 ``LIBFRANKA_VERSION=0.15.0``；需要自定义 wheel 时通过 ``FRANKY_WHEEL`` 指定 URL 或本地路径；系统 APT 依赖已装好时可追加 ``--no-root``。
 
       **2. 下载权重**
 
@@ -222,13 +217,9 @@ Franka 在线强化学习
          python -m toolkits.realworld_check.test_franka_controller
          export FRANKA_TARGET_POSE='[x, y, z, roll, pitch, yaw]'  # 替换全部六个数值
 
-      设置 ``RLINF_NODE_RANK=0`` 并启动 Ray，用 SpaceMouse 采集 20 条演示（保存至 ``logs/franka-demo/demo_buffer``，同级可选导出 ``pickle_episode/`` 与 ``lerobot_dataset/``；使用 GELLO 采集见 :doc:`franka_gello`），待采集退出并释放机械臂后启动在线 RLPD 训练：
+      用 SpaceMouse 采集 20 条演示（保存至 ``logs/franka-demo/demo_buffer``，同级可选导出 ``pickle_episode/`` 与 ``lerobot_dataset/``；使用 GELLO 采集见 :doc:`franka_gello`），待采集退出并释放机械臂后启动在线 RLPD 训练：
 
       .. code-block:: bash
-
-         ray stop
-         export RLINF_NODE_RANK=0
-         ray start --head
 
          RLINF_LOG_DIR="$PWD/logs/franka-demo" \
            bash examples/embodiment/collect_data.sh realworld_collect_data \
@@ -238,10 +229,9 @@ Franka 在线强化学习
            realworld_peginsertion_rlpd_cnn_async \
            "env.train.override_cfg.target_ee_pose=$FRANKA_TARGET_POSE" \
            "algorithm.demo_buffer.load_path=$PWD/logs/franka-demo/demo_buffer" \
-           "actor.model.model_path=$PWD/models/RLinf-ResNet10-pretrained" \
-           "rollout.model.model_path=$PWD/models/RLinf-ResNet10-pretrained"
+           "actor.model.model_path=$PWD/models/RLinf-ResNet10-pretrained"
 
-      每次重新采集请更换 ``RLINF_LOG_DIR``，避免混入不同批次数据。运行中全程监控机械臂并按需通过 SpaceMouse 干预；结束时中断启动脚本、等待机械臂停稳，再执行 ``ray stop``。
+      每次重新采集请更换 ``RLINF_LOG_DIR``，避免混入不同批次数据。运行中全程监控机械臂，按需用 SpaceMouse 干预；结束时中断启动脚本并等待机械臂停稳。
 
    .. tab-item:: 多机部署（控制机 + GPU）
 
@@ -256,7 +246,7 @@ Franka 在线强化学习
 
       **2. 采集演示并下载权重**
 
-      先在控制机上以 ``RLINF_NODE_RANK=0`` 按“单机部署”步骤采集演示，再将完整的 ``logs/franka-demo/demo_buffer`` 复制到 GPU 服务器。在 GPU 服务器上下载预训练 ResNet-10 编码器：
+      先在控制机上按“单机部署”步骤采集演示，再将 ``logs/franka-demo/demo_buffer`` 复制到 GPU 服务器。在 GPU 服务器上下载预训练 ResNet-10 编码器：
 
       .. code-block:: bash
 
@@ -275,13 +265,11 @@ Franka 在线强化学习
       .. code-block:: bash
 
          # 在 GPU 服务器（head 节点）
-         ray stop
          export RLINF_NODE_RANK=0
          export HEAD_IP=192.168.10.10
          ray start --head --port=6379 --node-ip-address="$HEAD_IP"
 
          # 在控制机（worker 节点）
-         ray stop
          export RLINF_NODE_RANK=1
          export HEAD_IP=192.168.10.10
          export CONTROLLER_IP=192.168.10.11
@@ -304,7 +292,7 @@ Franka 在线强化学习
 
       .. warning::
 
-         设置 ``SKIP_ROS=1`` 时需自行准备 ROS Noetic、libfranka、``franka_ros`` 与 ``serl_franka_controllers``，并在每次 ``ray start`` 前 source ``/opt/ros/noetic/setup.bash`` 与 catkin ``devel/setup.bash``，同时确保 libfranka 位于 ``LD_LIBRARY_PATH``。手动安装见 `ROS Noetic <https://wiki.ros.org/noetic/Installation/Ubuntu>`_、`libfranka <https://frankarobotics.github.io/docs/libfranka/docs/installation.html>`_ 与 `serl_franka_controllers <https://github.com/rail-berkeley/serl_franka_controllers>`_。
+         设置 ``SKIP_ROS=1`` 时需自行准备 ROS Noetic、libfranka、``franka_ros`` 与 ``serl_franka_controllers``，并在每次启动前（多机部署须在 ``ray start`` 前）source ``/opt/ros/noetic/setup.bash`` 与 catkin ``devel/setup.bash``，同时确保 libfranka 位于 ``LD_LIBRARY_PATH``。手动安装见 `ROS Noetic <https://wiki.ros.org/noetic/Installation/Ubuntu>`_、`libfranka <https://frankarobotics.github.io/docs/libfranka/docs/installation.html>`_ 与 `serl_franka_controllers <https://github.com/rail-berkeley/serl_franka_controllers>`_。
 
       **2. 配置并运行**
 
@@ -318,15 +306,11 @@ Franka 在线强化学习
              camera_serials: ["CAMERA_SERIAL"]
              backend: franka_ros
 
-      检查控制器启动，再于 ``franka-ros`` 环境中启动 Ray 并运行与“单机部署”相同的采集与训练命令：
+      在已激活的 ``franka-ros`` 环境中检查控制器，随后运行“单机部署”中的采集与训练命令（多机部署按“多机部署”步骤配置 Ray 集群）：
 
       .. code-block:: bash
 
          python -m toolkits.realworld_check.test_franka_controller --backend franka_ros
-         source franka-ros/bin/activate
-         ray stop
-         export RLINF_NODE_RANK=0
-         ray start --head
 
       RLinf 会自动管理 ``roscore``、``roslaunch serl_franka_controllers impedance.launch`` 以及关节复位时的 ``joint.launch``。与 Franky 的差异：仅接受笛卡尔位姿目标（关节控制需使用 Franky）；``gripper_type: franka`` 通过 ``/franka_gripper`` 话题通信，仅在机械臂连接时响应；阻抗增益由 ``dynamic_reconfigure`` 控制，硬件配置中的 ``compliance`` 字段无效。多机部署时仅控制机需要 ``franka-ros`` 环境，GPU 服务器使用标准 ``franka`` 环境。
 
@@ -334,7 +318,7 @@ Franka 在线强化学习
 
 .. dropdown:: 配置机械臂运动（Franky 柔顺控制默认值）
 
-   数采、训练、评估、PICO / SpaceMouse 遥操作，以及下发笛卡尔位姿的 GELLO 遥操作，在硬件条目未配置 ``compliance`` 时共用以下 Franky 笛卡尔控制器默认值：
+   数据采集、训练、评估、PICO / SpaceMouse 遥操作，以及下发笛卡尔位姿的 GELLO 遥操作，在硬件条目未配置 ``compliance`` 时共用以下 Franky 笛卡尔控制器默认值：
 
    .. list-table::
       :header-rows: 1
@@ -383,7 +367,7 @@ Franka 在线强化学习
         train:
           keyboard_reward_wrapper: single_stage  # 或 multi_stage
 
-   ``single_stage`` 模式下 ``a`` / ``b`` / ``c`` 分别输出失败、中性和成功奖励；``multi_stage`` 模式下 ``a`` / ``b`` / ``c`` 切换奖励阶段、``q`` 输出负奖励。在机器人主机上查找键盘设备、赋权并在 ``ray start`` 前导出 ``RLINF_KEYBOARD_DEVICE``：
+   ``single_stage`` 模式下 ``a`` / ``b`` / ``c`` 分别输出失败、中性和成功奖励；``multi_stage`` 模式下 ``a`` / ``b`` / ``c`` 切换奖励阶段、``q`` 输出负奖励。在机器人主机上查找键盘设备、赋权并在启动前导出 ``RLINF_KEYBOARD_DEVICE``\ （多机部署须在 ``ray start`` 前导出）：
 
    .. code-block:: bash
 

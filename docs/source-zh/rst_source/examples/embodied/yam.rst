@@ -16,7 +16,7 @@ YAM PICO 数据采集
 
       2× YAM · ``flexible_4310`` 夹爪
 
-   .. grid-item-card:: 遥操与相机
+   .. grid-item-card:: 遥操作与相机
       :text-align: center
 
       PICO 双手柄 · 3 台 RealSense RGB 相机
@@ -95,7 +95,7 @@ YAM PICO 数据采集
 
       确认两路 CAN 处于 ``UP``、bitrate 为 1 Mbit/s 且无 ``BUS-OFF`` 故障，按实物接线区分左右 CAN，并按机身标签匹配顶部、左腕、右腕序列号（XML 与 yaw 核对方法见上方“硬件标定细则”）。
 
-      **3. 导出环境变量、验流并启动采集**\ （务必在 **启动 Ray 前** 导出，供硬件枚举与 env worker 读取；也可将前三个硬件字段直接写入 ``examples/embodiment/config/realworld_dual_yam_collect_data_pico.yaml`` 中的 ``left_can_channel``、``right_can_channel`` 与 ``camera_serials``）：
+      **3. 导出环境变量、验流并启动采集**\ （在 **启动采集前** 导出，供硬件枚举与 env worker 读取；也可将前三个硬件字段直接写入 ``examples/embodiment/config/realworld_dual_yam_collect_data_pico.yaml`` 中的 ``left_can_channel``、``right_can_channel`` 与 ``camera_serials``）：
 
       .. code-block:: bash
 
@@ -109,9 +109,7 @@ YAM PICO 数据采集
          # 检查头显、双手柄位姿与按键更新（按 Ctrl-C 退出）
          python toolkits/realworld_check/test_pico_data.py --zmq-addr "$YAM_PICO_ZMQ_ADDR"
 
-         # 在新启动的单机上拉起 Ray 并启动采集
-         export RLINF_NODE_RANK=0
-         ray start --head
+         # 启动采集
          bash examples/embodiment/collect_data.sh realworld_dual_yam_collect_data_pico
 
       首次接管请逐臂小幅移动，核对方向与缩放；方向不符立即松开两侧 grip、停止采集并修正 yaw。任一手柄掉线时双臂会保持不动，直到两侧 grip 均松开。故障停机后须由现场操作员确认状态再恢复。
@@ -137,12 +135,12 @@ YAM PICO 数据采集
    * - 现象
      - 处理方法
    * - 接管时机械臂运动方向反了
-     - 立即松开两侧 grip 并停止采集，按 ``atan2(dy, dx)`` 重新测量 ``YAM_LEFT_OPERATOR_TO_ROBOT_YAW`` / ``YAM_RIGHT_OPERATOR_TO_ROBOT_YAW`` 后重启 Ray。
+     - 立即松开两侧 grip 并停止采集，按 ``atan2(dy, dx)`` 重新测量 ``YAM_LEFT_OPERATOR_TO_ROBOT_YAW`` / ``YAM_RIGHT_OPERATOR_TO_ROBOT_YAW``，重新导出后再次启动。
    * - CAN 接口出现 ``BUS-OFF`` 或打开失败
      - 释放占用 CAN 的其他进程，按 ``i2rt`` CAN 文档重设 1 Mbit/s 速率，并用 ``ip -details link show type can`` 确认 ``UP`` 状态。
    * - ``test_pico_data.py`` 无输出更新
      - 确认 XRoboToolkit PC Service 与 ``vr_data_publisher`` 正在运行，并将 ``YAM_PICO_ZMQ_ADDR`` 设为可达的 ``tcp://<publisher-ip>:<port>``\ （切勿填头显 IP 或 ``0.0.0.0``）。
    * - 左右腕相机画面颠倒
-     - 按相机机身标签而非枚举顺序核对序列号，在 ``ray start`` 前按 ``top,left,right`` 顺序更新 ``CAMERA_SERIALS``。
+     - 按相机机身标签而非枚举顺序核对序列号，在启动前按 ``top,left,right`` 顺序更新 ``CAMERA_SERIALS``。
    * - 原始分片中混入失败或超时回合
      - 合并时为 ``merge_lerobot_datasets.py`` 传入 ``--only-success``，并在 SFT 前抽查合并后的 RGB 画面。

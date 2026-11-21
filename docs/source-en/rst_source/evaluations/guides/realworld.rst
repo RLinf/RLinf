@@ -53,7 +53,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: Custom Task (Single-Node)
 
-      When GPU rollout and Franka control share one workstation, set ``robot_ip`` and task geometry in ``evaluations/realworld/realworld_eval.yaml`` (``FrankaEnv-v1``) and launch:
+      When GPU rollout and Franka control share one workstation, set ``robot_ip`` and task geometry in ``evaluations/realworld/realworld_eval.yaml`` (``FrankaEnv-v1``) and launch (single-node configs auto-start Ray):
 
       .. code-block:: bash
 
@@ -67,7 +67,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: Dual Franka RTC (π₀.₅)
 
-      Single-workstation dual-arm RTC evaluation runs GPU inference, both Franka arms, and three RealSense cameras on one host (``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``). Fill in arm IPs, camera serials, gripper ports, ``keyboard_device``, ``norm_stats_path``, and ``task_description``. After homing, press ``a`` on the USB keyboard or pedal to start, ``c`` for success, and ``b`` for failure:
+      Single-workstation dual-arm RTC evaluation runs GPU inference, both Franka arms, and three RealSense cameras on one host (``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``; auto-starts Ray). Fill in arm IPs, camera serials, gripper ports, ``keyboard_device``, ``norm_stats_path``, and ``task_description``. After homing, press ``a`` on the USB keyboard or pedal to start, ``c`` for success, and ``b`` for failure:
 
       .. code-block:: bash
 
@@ -85,7 +85,11 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
 .. dropdown:: Pre-flight Checks and Starting Ray
 
-   Run these checks on the robot control node before launching evaluation (example IPs: ``192.168.1.10`` for the GPU head node, ``192.168.1.20`` for the Franka controller, and ``eth0`` for multi-NIC hosts):
+   **Step 1 (Hardware checks):** run on the robot control node with ``.venv`` active before launching evaluation.
+
+   **Step 2 (Ray cluster):** required **only for two-node configs** (``PnP Two-Node (π₀)``, ``realworld_dual_yam_openpi_pi05_eval``, and other two-node configs). Single-node tabs (``Custom Task (Single-Node)`` and ``Dual Franka RTC (π₀.₅)``) auto-start Ray, so skip ``RLINF_NODE_RANK`` and ``ray start``.
+
+   On two-node runs, keep ``.venv`` active on both nodes (or customize and source ``ray_utils/realworld/setup_before_ray.sh``), export ``RLINF_NODE_RANK`` before ``ray start`` (Ray freezes environment variables at startup), and replace the example IPs (``192.168.1.10`` GPU head, ``192.168.1.20`` Franka controller):
 
    .. code-block:: bash
 
@@ -94,16 +98,11 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
       export FRANKA_ROBOT_IP=192.168.1.20
       python -m toolkits.realworld_check.test_franka_controller
 
-      # 2. Prepare env on every node BEFORE starting Ray (Ray freezes env vars at startup)
-      source ray_utils/realworld/setup_before_ray.sh
-      source .venv/bin/activate
-      # Optional on multi-NIC hosts: export RLINF_COMM_NET_DEVICES=eth0
-
-      # 3a. GPU head node (rank 0)
+      # 2a. Two-node only — GPU head node (rank 0; on multi-NIC hosts also export RLINF_COMM_NET_DEVICES=eth0)
       export RLINF_NODE_RANK=0
       ray start --head --port=6379 --node-ip-address=192.168.1.10
 
-      # 3b. Franka control node (rank 1)
+      # 2b. Two-node only — Franka control node (rank 1; on multi-NIC hosts also export RLINF_COMM_NET_DEVICES=eth0)
       export RLINF_NODE_RANK=1
       ray start --address=192.168.1.10:6379
 

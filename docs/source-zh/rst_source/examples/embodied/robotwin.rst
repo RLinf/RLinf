@@ -122,11 +122,10 @@ NVIDIA CUDA 按模型选择对应标签页；AMD GPU 请切换到 **AMD ROCm** �
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env robotwin
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env robotwin && source .venv/bin/activate
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
          (cd ../RoboTwin && bash script/_download_assets.sh)
-         export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          export ROBOT_PLATFORM=ALOHA
 
       **2. 下载资源与模型**
@@ -184,11 +183,10 @@ NVIDIA CUDA 按模型选择对应标签页；AMD GPU 请切换到 **AMD ROCm** �
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env robotwin
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
          (cd ../RoboTwin && bash script/_download_assets.sh)
-         export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          export ROBOT_PLATFORM=ALOHA
 
       **2. 下载资源与模型**
@@ -249,11 +247,10 @@ NVIDIA CUDA 按模型选择对应标签页；AMD GPU 请切换到 **AMD ROCm** �
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model lingbotvla --env robotwin
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model lingbotvla --env robotwin && source .venv/bin/activate
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
          (cd ../RoboTwin && bash script/_download_assets.sh)
-         export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          export ROBOT_PLATFORM=ALOHA
 
       **2. 下载资源与模型**
@@ -306,11 +303,10 @@ NVIDIA CUDA 按模型选择对应标签页；AMD GPU 请切换到 **AMD ROCm** �
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env robotwin
-         source .venv/bin/activate
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env robotwin && source .venv/bin/activate
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
          (cd ../RoboTwin && bash script/_download_assets.sh)
-         export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          export ROBOT_PLATFORM=ALOHA
 
       .. dropdown:: 构建并启动 ROCm Docker 镜像（可选）

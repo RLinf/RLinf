@@ -1,8 +1,11 @@
 多机 Ray 集群启动
 ==================
 
-本指南说明如何在 **多台机器** 上启动 Ray 集群，并在此基础上运行 RLinf 训练任务。
-适用于具身智能、推理、Agent 等所有依赖 Ray 的 RLinf 工作负载。
+本指南说明如何在 **多台机器** 上启动 Ray 集群，并在此基础上运行 RLinf 训练任务。适用于具身智能、推理、Agent 等所有依赖 Ray 的 RLinf 工作负载。
+
+.. note::
+
+   单机运行（``cluster.num_nodes: 1``）会自动启动 Ray，无需手动执行 ``ray start`` 或设置 ``RLINF_NODE_RANK``。
 
 
 准备工作
@@ -63,8 +66,7 @@
    # 可选：export RLINF_COMM_NET_DEVICES=eth0
    ray start --address='<head_ip>:6379'
 
-``--node-ip-address`` 应填写其他节点用来连接 head 的地址（内网 IP、VPC IP 或 overlay IP，见下文云平台说明）。
-端口 ``6379`` 可改为其他未占用端口，head 与 worker 需一致。
+``--node-ip-address`` 应填写其他节点用来连接 head 的地址（内网 IP、VPC IP 或 overlay IP，云边网络配置见 :doc:`cloud_edge`）。端口 ``6379`` 可改为其他未占用端口，head 与 worker 需一致。
 
 方式 B：使用仓库脚本（共享文件系统场景）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -80,19 +80,15 @@ SFT 在 GPU 节点运行。真机评估使用双节点 Ray 集群：GPU 节点�
          export YAM_DATASET="$HOME/yam-data/merged"
          mkdir -p "$(dirname "$YAM_DATASET")"
 
-         # 先试跑，再正式合并成功回合
-         python toolkits/lerobot/merge_lerobot_datasets.py \
-             --source-dir "$YAM_COLLECTION/lerobot_dataset" --output-dir "$YAM_DATASET" \
-             --only-success --dry-run
+         # 合并成功回合（可先加 --dry-run 预览）
          python toolkits/lerobot/merge_lerobot_datasets.py \
              --source-dir "$YAM_COLLECTION/lerobot_dataset" --output-dir "$YAM_DATASET" \
              --only-success
 
          # 查看记录的任务文本并生成 norm_stats.json
          head -n 5 "$YAM_DATASET/meta/tasks.jsonl"
-         PYTHONPATH=$(pwd) python toolkits/lerobot/calculate_norm_stats.py \
+         python toolkits/lerobot/calculate_norm_stats.py \
              --config-name pi05_yam_joint --repo-id "$YAM_DATASET"
-         test -s "$YAM_DATASET/norm_stats.json"
 
       评估提示词请直接使用 ``meta/tasks.jsonl`` 中记录的任务文本，并在训练与评估阶段共用同一份 ``norm_stats.json``。
 
@@ -100,12 +96,9 @@ SFT 在 GPU 节点运行。真机评估使用双节点 Ray 集群：GPU 节点�
 
       .. code-block:: bash
 
-         source .venv/bin/activate
          export YAM_DATASET="$HOME/yam-data/merged"
          mkdir -p "$(dirname "$YAM_DATASET")"
-         test ! -e "$YAM_DATASET" && \
-             scp -r 'user@192.168.1.20:/data/yam_merged' "$YAM_DATASET" && \
-             test -s "$YAM_DATASET/norm_stats.json"  # 替换为控制节点用户名、IP 与源路径
+         scp -r 'user@192.168.1.20:/data/yam_merged' "$YAM_DATASET"  # 替换为控制节点用户名、IP 与源路径
 
    .. tab-item:: 2. SFT 训练
 
@@ -122,7 +115,6 @@ SFT 在 GPU 节点运行。真机评估使用双节点 Ray 集群：GPU 节点�
              --output-model "$YAM_MODELS/pi05_base_openpi" \
              --output-norm-stats "$YAM_MODELS/pi05_base_openpi/yam/norm_stats.json" \
              --action-dim 32 --action-horizon 30 --max-token-len 200
-         test -s "$YAM_MODELS/pi05_base_openpi/model.safetensors"
 
       **在** ``examples/sft/config/realworld_dual_yam_sft_openpi_pi05.yaml`` **中填入三个绝对路径：**
 
@@ -152,19 +144,17 @@ SFT 在 GPU 节点运行。真机评估使用双节点 Ray 集群：GPU 节点�
 
    .. tab-item:: 3. 真机评测与部署
 
-      **检查网络连通性并启动双节点 Ray 集群**\ （使用共享认证 token）。在两机用 ``hostname -I`` 确定 ``GPU_IP`` 与 ``CONTROL_IP`` 并互测 ``ping -c 1``；在控制节点启动 Ray 前先按 :doc:`yam` 导出 ``LEFT_CAN_CHANNEL``、``RIGHT_CAN_CHANNEL`` 与 ``CAMERA_SERIALS``：
+      **检查网络连通性并启动双节点 Ray 集群**\ （两台机器均保持 ``.venv`` 已激活，并使用共享认证 token）。在两机用 ``hostname -I`` 确定 ``GPU_IP`` 与 ``CONTROL_IP`` 并互测 ``ping -c 1``；在控制节点启动 Ray 前先按 :doc:`yam` 导出 ``LEFT_CAN_CHANNEL``、``RIGHT_CAN_CHANNEL`` 与 ``CAMERA_SERIALS``：
 
       .. code-block:: bash
 
          # GPU 节点（rank 0）
-         source .venv/bin/activate
          export RAY_AUTH_MODE=token
          export YAM_TASK_DESCRIPTION='pick the block'
          export RLINF_NODE_RANK=0
          ray start --head --port=6379 --node-ip-address="$GPU_IP"
 
          # YAM 控制节点（rank 1；保持相同的 YAM_TASK_DESCRIPTION）
-         source .venv/bin/activate
          export RAY_AUTH_MODE=token
          export YAM_TASK_DESCRIPTION='pick the block'
          export RLINF_NODE_RANK=1
@@ -176,18 +166,16 @@ SFT 在 GPU 节点运行。真机评估使用双节点 Ray 集群：GPU 节点�
 
       .. code-block:: bash
 
-         test -s "$YAM_CHECKPOINT/actor/model_state_dict/full_weights.pt"
          bash evaluations/run_eval.sh realworld realworld_dual_yam_openpi_pi05_eval \
              rollout.model.model_path="$YAM_CHECKPOINT" \
              rollout.model.openpi_data.norm_stats_path="$YAM_DATASET/norm_stats.json"
 
 .. dropdown:: RPent 部署（可选）
 
-   RPent 的 YAM OpenPI 服务沿用相同的 ``pi05_yam_joint`` 约定（14 维目标、顶/左/右三路相机、预测 30 步、30 Hz 下执行 5 步）。启动前先结束原生评估，确保只有一个进程控制机械臂，再在两台 RPent 节点的 RLinf 仓库目录下执行：
+   RPent 的 YAM OpenPI 服务沿用相同的 ``pi05_yam_joint`` 约定（14 维目标、顶/左/右三路相机、预测 30 步、30 Hz 下执行 5 步）。启动前先结束原生评估，确保只有一个进程控制机械臂，再在两台 RPent 节点的 RLinf 仓库目录下保持 ``.venv`` 激活并执行：
 
    .. code-block:: bash
 
-      source .venv/bin/activate
       export RPENT_RLINF_ROOT="$(pwd)"
       git clone --branch main https://github.com/RLinf/RPent.git "$HOME/RPent-yam"
       uv pip install -e "$HOME/RPent-yam[yam]" "numpy<2"
@@ -207,8 +195,6 @@ SFT 在 GPU 节点运行。真机评估使用双节点 Ray 集群：GPU 节点�
      - 处理方法
    * - 48 GB 单卡 SFT 显存不足（OOM）
      - 在 SFT 配置中先设为 ``actor.micro_batch_size: 1``、``actor.global_batch_size: 1`` 与 ``actor.model.precision: bf16``，用 ``nvidia-smi`` 排查空闲显存，跑通完整更新步后再增大批量。
-   * - ``scp`` 因目标已存在跳过复制
-     - ``test ! -e "$YAM_DATASET"`` 用于保护已有数据；改用新的 ``YAM_DATASET`` 目录或确认后清理旧目录。
    * - Ray worker 无法加入 head 节点
      - 检查 ``GPU_IP`` 与 ``CONTROL_IP`` 双向 ``ping -c 1``，确认两机 ``RAY_AUTH_MODE=token`` 配置了完全一致的认证 token，并用 ``ray status`` 复核。
    * - 评估启动时夹爪自动开合

@@ -118,7 +118,6 @@ Setup and Run
          bash requirements/install.sh --no-flash-attn embodied --env dummy --python "$ROS_PY"
          source /opt/ros/humble/setup.bash
          source .venv/bin/activate
-         export REPO_PATH="$PWD"
          uv pip install pyzmq  # Required only for PICO VR teleoperation
 
       If ``rframe`` and R2 message packages (``r2_motion_msgs``, ``rdiagnostic_msgs``, ``navigation_msgs``, ``state_machine_msgs``) live in a separate overlay workspace, source its ``setup.bash`` as well and verify with ``python -c "import rclpy, rframe"``.
@@ -179,7 +178,7 @@ Setup and Run
 
       **4. Join a multi-node Ray cluster (optional)**
 
-      Before running ``ray start`` on the R2 controller node, source the ROS 2 / RFrame workspaces and ``.venv``, and export ``PYTHONPATH``, ``RLINF_NODE_RANK``, and (on multi-NIC hosts) ``RLINF_COMM_NET_DEVICES`` so Ray workers inherit the middleware environment.
+      Before running ``ray start`` on the R2 controller node, source the ROS 2 / RFrame workspaces and ``.venv``, and export ``RLINF_NODE_RANK`` and (on multi-NIC hosts) ``RLINF_COMM_NET_DEVICES`` so Ray workers inherit the middleware environment.
 
    .. tab-item:: Training & Rollout Nodes
 

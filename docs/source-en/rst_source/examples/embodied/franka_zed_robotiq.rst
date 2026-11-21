@@ -138,20 +138,16 @@ Setup and Run
              override_cfg:
                target_ee_pose: TARGET_EE_POSE     # your target end-effector pose
 
-      On **both nodes**, from the RLinf repository root, activate the virtual environment, export variables, and start Ray:
+      On **both nodes**, from the RLinf repository root with ``.venv`` active, export the node variables and start Ray:
 
       .. code-block:: bash
 
          # Node 0 (GPU server, Ray head; replace IP and NIC for your network)
-         source .venv/bin/activate
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          export RLINF_NODE_RANK=0
          export RLINF_COMM_NET_DEVICES=eth0  # optional, omit if single NIC
          ray start --head --port=6379 --node-ip-address=192.168.1.10
 
          # Node 1 (NUC controller)
-         source .venv/bin/activate
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          export RLINF_NODE_RANK=1
          export RLINF_COMM_NET_DEVICES=eth0  # optional, omit if single NIC
          ray start --address=192.168.1.10:6379

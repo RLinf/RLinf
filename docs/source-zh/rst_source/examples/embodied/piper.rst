@@ -22,7 +22,7 @@ AgileX Piper 配置与控制
 
       AgileX Piper 6 自由度 · AgxGripper
 
-   .. grid-item-card:: 传感器与遥操
+   .. grid-item-card:: 传感器与遥操作
       :text-align: center
 
       关节与 TCP 反馈 · 可选相机
@@ -74,7 +74,6 @@ AgileX Piper 配置与控制
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env piper && source .venv/bin/activate
-         export REPO_PATH="$PWD"
 
       **2. 启动 SocketCAN 接口**
 

@@ -117,12 +117,10 @@ Setup and Run
              data_collection:
                fps: 30
 
-      **Start Ray and collect demonstrations** from the repository root (with ``.venv`` active and ``ARX5_beta`` on ``PYTHONPATH``):
+      **Collect demonstrations** from the repository root (with ``.venv`` active and ``ARX5_beta`` on ``PYTHONPATH``):
 
       .. code-block:: bash
 
-         export RLINF_NODE_RANK=0
-         ray start --head
          bash examples/embodiment/collect_data.sh collect_data_dual_arx5
 
       **PICO button controls:** after both arms reset, press **B** to start recording, **X** to end and save a successful episode, or **A** to end and discard a failed attempt.
@@ -154,9 +152,9 @@ Merged datasets write to ``$RUN/lerobot_merged`` and per-frame images, metadata,
    * - Symptom
      - Fix
    * - OpenCV reports ``Could not open V4L2 camera``
-     - Check ``ls -l /dev/video*`` and ``id -nG``, run ``sudo usermod -aG video "$USER"``, log out and back in, and restart Ray so workers inherit the ``video`` group.
+     - Check ``ls -l /dev/video*`` and ``id -nG``, run ``sudo usermod -aG video "$USER"``, log out and back in, and open a new shell so workers inherit the ``video`` group.
    * - ``ModuleNotFoundError: No module named 'bimanual'``
-     - Export ``PYTHONPATH="/path/to/ARX5_beta${PYTHONPATH:+:$PYTHONPATH}"`` before running ``ray start``.
+     - Export ``PYTHONPATH="/path/to/ARX5_beta${PYTHONPATH:+:$PYTHONPATH}"`` before running ``collect_data.sh``.
    * - Camera view appears rotated or upside down
      - Set clockwise ``camera_rotations`` (``0`` / ``90`` / ``180`` / ``270``) for that view in ``collect_data_dual_arx5.yaml``.
    * - CAN interface fails to open or arms stay unresponsive

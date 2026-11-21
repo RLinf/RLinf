@@ -87,7 +87,7 @@ Franka π₀ SFT 与部署
 
       **安装依赖**
 
-      在 GPU 主机上安装 OpenPI 与 Franka 环境（加上 ``--env franka`` 可直接满足单机部署；独立控制机按 :doc:`franka` 安装即可）。``--model`` 须指定 ``openpi``，不要写成 ``openvla``：
+      在 GPU 主机上安装 OpenPI 与 Franka 环境（加上 ``--env franka`` 可直接用于单机部署；独立控制机按 :doc:`franka` 安装即可）：
 
       .. code-block:: bash
 
@@ -124,7 +124,7 @@ Franka π₀ SFT 与部署
                enabled: True
                export_format: lerobot_dataset
 
-      启动 Ray（``export RLINF_NODE_RANK=0 && ray start --head``）后开始数据采集：
+      运行数据采集：
 
       .. code-block:: bash
 
@@ -195,7 +195,7 @@ Franka π₀ SFT 与部署
                target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
                task_description: "pick up the object and place it into the container"
 
-      按 :doc:`franka` 启动 Ray 集群后，参照 :doc:`真机评测指南 <../../evaluations/guides/realworld>` 使用 ``realworld_pnp_eval`` 运行部署。policy 将按 ``env.eval.rollout_epoch`` 指定的轮数自主控制机械臂完成任务。
+      多机部署先按 :doc:`franka` 启动 Ray 集群，单机部署可直接启动。参照 :doc:`真机评测指南 <../../evaluations/guides/realworld>` 使用 ``realworld_pnp_eval`` 运行部署，policy 会按 ``env.eval.rollout_epoch`` 指定的轮数自主控制机械臂。
 
 .. dropdown:: 通用真机 SFT 环境（FrankaEnv-v1）
 

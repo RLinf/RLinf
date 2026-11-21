@@ -95,7 +95,6 @@ Setup and Run
 
       .. code-block:: bash
 
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          python -m rlinf.robotics.parts.teleop.gello \
              --port /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0
 
@@ -148,11 +147,11 @@ Setup and Run
 
 .. dropdown:: Cluster setup notes
 
-   Follow the Ray cluster setup in :doc:`franka`, with one extra order requirement: install both ``gello`` and ``gello-teleop`` in the virtual environment on the controller node (NUC) **before** running ``ray start``.
+   For multi-node setups, follow the Ray cluster setup in :doc:`franka`, with one order requirement: install both ``gello`` and ``gello-teleop`` in the virtual environment on the controller node (NUC) **before** running ``ray start``.
 
    .. warning::
 
-      Ray captures the Python interpreter and environment variables at ``ray start`` time. Packages installed after ``ray start`` are invisible to Ray workers. Always install ``gello`` and ``gello-teleop`` first, then start Ray.
+      Ray captures the Python interpreter and environment variables at ``ray start`` time. Packages installed after ``ray start`` are invisible to Ray workers. Install ``gello`` and ``gello-teleop`` first, then start Ray.
 
 Troubleshooting
 ---------------
@@ -168,7 +167,7 @@ Troubleshooting
    * - Permission denied on serial port
      - Run ``sudo chmod 666 /dev/serial/by-id/<your-device>``, or run ``sudo usermod -aG dialout $USER`` and log out and back in.
    * - ``No module named 'gello'``
-     - Verify ``gello`` from ``gello_software`` is installed in the active virtual environment with ``pip show gello``, then restart Ray if needed.
+     - Verify ``gello`` from ``gello_software`` is installed in the active virtual environment with ``pip show gello`` (restart Ray in multi-node setups).
    * - ``No module named 'gello_teleop'``
      - Verify ``gello-teleop`` is installed with ``pip show gello-teleop`` and check the editable checkout path.
    * - GELLO readings do not update

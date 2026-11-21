@@ -84,16 +84,15 @@
 
 .. warning::
 
-   启用运动前，确保急停开关触手可及并清空双臂工作空间。在 DAgger 配置中，将全零占位的 ``joint_reset_qpos`` 替换为数据集首帧关节均值或安全 home 姿态（每臂 7 个关节角），并确认每臂 ``target_ee_pose`` 落在共享环境 ``realworld_dual_franka_tcp_rot6d`` 的限位盒内：``x`` 在 ``[0.3, 0.9]``，``y`` 在 ``[-0.4, 0.4]``，``z`` 在 ``[0.02, 0.7]``。Ray 在 ``ray start`` 时捕获 Python 虚拟环境与环境变量，多机运行前务必先导出 ``PYTHONPATH``、``RLINF_NODE_RANK`` 与 ``RLINF_KEYBOARD_DEVICE``。
+   启用运动前，确保急停开关触手可及并清空双臂工作空间。在 DAgger 配置中，将全零占位的 ``joint_reset_qpos`` 替换为数据集首帧关节均值或安全 home 姿态（每臂 7 个关节角），并确认每臂 ``target_ee_pose`` 落在共享环境 ``realworld_dual_franka_tcp_rot6d`` 的限位盒内：``x`` 在 ``[0.3, 0.9]``，``y`` 在 ``[-0.4, 0.4]``，``z`` 在 ``[0.02, 0.7]``。Ray 在 ``ray start`` 时捕获 Python 虚拟环境与环境变量，多机运行前务必先导出 ``RLINF_NODE_RANK`` 与 ``RLINF_KEYBOARD_DEVICE``。
 
 .. dropdown:: 多机 Ray 集群启动（HG-DAgger 或双机数据采集必填）
 
-   单机数据采集跳过此项（若残留旧集群，先执行 ``ray stop --force``）。三节点 HG-DAgger，或两台机器人分机数据采集（设 ``num_nodes: 2``、``node_rank: 0``、``left_controller_node_rank: 0``、``right_controller_node_rank: 1``）时，按实际环境修改并在每个节点 source ``ray_utils/realworld/setup_before_ray.sh``，再导出变量并启动 Ray：
+   单机数据采集会自动启动 Ray，跳过此项。三节点 HG-DAgger，或两台机器人分机数据采集（设 ``num_nodes: 2``、``node_rank: 0``、``left_controller_node_rank: 0``、``right_controller_node_rank: 1``）时，按实际环境修改并在每个节点 source ``ray_utils/realworld/setup_before_ray.sh``，再导出变量并启动 Ray：
 
    .. code-block:: bash
 
       # 每个节点均需执行（按节点设置 RLINF_NODE_RANK 为 0/1/2；单网卡可省略 NIC）
-      export PYTHONPATH=$PWD:$PYTHONPATH
       export RLINF_NODE_RANK=0
       export RLINF_COMM_NET_DEVICES=eth0
 
@@ -146,7 +145,6 @@
          python -m vr_data_publisher --config configs/vr_bridge.yaml
 
          # env 节点（在 RLinf 根目录且 .venv 已激活；将 IP:端口 替换为 publisher 地址）
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          python toolkits/realworld_check/test_pico_data.py \
              --zmq-addr tcp://192.168.1.20:5555
 
@@ -154,7 +152,7 @@
 
    .. tab-item:: 2. 数据采集与准备权重
 
-      **启动 PICO 双臂采集**\ （在单机机器人主机上先激活 Python 3.11 虚拟环境；若有旧 Ray 集群先执行 ``ray stop --force``）：
+      **启动 PICO 双臂采集**\ （在单机机器人主机上激活 ``.venv`` 后直接运行，单节点会自动启动 Ray）：
 
       .. code-block:: bash
 

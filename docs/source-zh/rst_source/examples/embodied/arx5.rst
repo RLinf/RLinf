@@ -23,7 +23,7 @@ ARX X5 数据采集
 
       2× ARX X5（``ARX5_beta`` SDK）
 
-   .. grid-item-card:: 遥操与相机
+   .. grid-item-card:: 遥操作与相机
       :text-align: center
 
       PICO 双手柄 · 3 路 V4L2 RGB 相机
@@ -117,12 +117,10 @@ ARX X5 数据采集
              data_collection:
                fps: 30
 
-      **启动 Ray 并开始采集**\ （激活 ``.venv`` 且配置好 ``ARX5_beta`` 的 ``PYTHONPATH`` 后，在仓库根目录执行）：
+      **启动数据采集**\ （激活 ``.venv`` 且配置好 ``ARX5_beta`` 的 ``PYTHONPATH`` 后，在仓库根目录执行）：
 
       .. code-block:: bash
 
-         export RLINF_NODE_RANK=0
-         ray start --head
          bash examples/embodiment/collect_data.sh collect_data_dual_arx5
 
       **PICO 手柄按键：** 双臂复位后，按 **B** 开始录制，成功时按 **X** 结束并保存，失败时按 **A** 结束并丢弃。
@@ -154,9 +152,9 @@ ARX X5 数据采集
    * - 现象
      - 处理方法
    * - OpenCV 报错 ``Could not open V4L2 camera``
-     - 检查 ``ls -l /dev/video*`` 与 ``id -nG``，执行 ``sudo usermod -aG video "$USER"``，退出并重新登录后重启 Ray 使 worker 继承 ``video`` 组权限。
+     - 检查 ``ls -l /dev/video*`` 与 ``id -nG``，执行 ``sudo usermod -aG video "$USER"``，退出并重新登录后在新终端中启动，使 worker 继承 ``video`` 组权限。
    * - 报错找不到 ``bimanual`` 模块
-     - 在执行 ``ray start`` 前导出 ``PYTHONPATH="/path/to/ARX5_beta${PYTHONPATH:+:$PYTHONPATH}"``。
+     - 在执行 ``collect_data.sh`` 前导出 ``PYTHONPATH="/path/to/ARX5_beta${PYTHONPATH:+:$PYTHONPATH}"``。
    * - 录制画面倒置或侧偏
      - 在 ``collect_data_dual_arx5.yaml`` 中为对应视角设置顺时针 ``camera_rotations``\ （``0`` / ``90`` / ``180`` / ``270``）。
    * - CAN 接口打开失败或机械臂无响应

@@ -74,7 +74,6 @@ Setup and Run
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env piper && source .venv/bin/activate
-         export REPO_PATH="$PWD"
 
       **2. Bring up the SocketCAN interface**
 
@@ -136,7 +135,7 @@ Setup is verified once ``candump -n 5 can0`` prints five frames, ``--read-only``
    * - ``candump -n 5 can0`` blocks with no frames
      - Press Ctrl+C and check arm power, CAN wiring, interface name from ``ip -brief link``, and ``bitrate 1000000``.
    * - Gripper scaling mismatch or no gripper installed
-     - Pass ``--gripper-max-width 0.1`` for a 0.1 m AgxGripper stroke, or ``--no-gripper`` when running bare arm only.
+     - Pass ``--gripper-max-width 0.1`` for a 0.1 m AgxGripper stroke, or ``--no-gripper`` if no gripper is fitted.
    * - Motors remain holding torque after ``quit``
      - Expected behavior; use the arm's hardware power or emergency stop switch to cut motor power.
 

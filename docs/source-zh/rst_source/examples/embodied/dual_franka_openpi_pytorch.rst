@@ -100,11 +100,10 @@
 
 .. dropdown:: GELLO 首次标定
 
-   在 RLinf 仓库根目录，两台 GELLO 主手均可在 ``node 0`` 上对左臂完成一次标定，并用 ``align-sequential`` 验证对齐。更换 ``GELLO_PORT`` 后对第二台主手重复执行：
+   在 RLinf 仓库根目录（保持 ``.venv`` 已激活），两台 GELLO 主手均可在 ``node 0`` 上对左臂完成一次标定，并用 ``align-sequential`` 验证对齐。更换 ``GELLO_PORT`` 后对第二台主手重复执行：
 
    .. code-block:: bash
 
-      export PYTHONPATH=$PWD:${PYTHONPATH:-}
       export GELLO_PORT=/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0  # 替换为实际 FTDI 设备
 
       python toolkits/realworld_check/test_gello.py calibrate
@@ -159,7 +158,6 @@
 
          # GELLO 主手（逐台接入以区分 FTDI 路径）
          ls /dev/serial/by-id/ | grep -i ftdi
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          python -m rlinf.robotics.parts.teleop.gello_joint \
              --port /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0  # 替换为左臂 GELLO 设备
 
@@ -172,16 +170,12 @@
       .. code-block:: bash
 
          # node 0（按工作站替换 IP 与脚踏设备）
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          export RLINF_NODE_RANK=0
          export RLINF_KEYBOARD_DEVICE=/dev/input/event12
-         ray stop --force
          ray start --head --port=6379 --node-ip-address=192.168.1.10
 
          # node 1（按工作站替换 IP）
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          export RLINF_NODE_RANK=1
-         ray stop --force
          ray start --address=192.168.1.10:6379 --node-ip-address=192.168.1.20
 
       在 ``node 0`` 运行 ``ray status``，确认两个节点均为 ``ALIVE``。
@@ -190,7 +184,6 @@
 
       .. code-block:: bash
 
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          bash examples/embodiment/collect_data.sh \
              realworld_collect_data_gello_joint_dual_franka 2>&1 | tee logs/collect.log
 
@@ -225,7 +218,6 @@
 
       .. code-block:: bash
 
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          export HF_LEROBOT_HOME="$HOME/lerobot_data"            # 替换为 LeRobot 数据根目录
          export SFT_REPO_ID="my_org/dual_franka_demo/tcp_rot6d_v1"
 

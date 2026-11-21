@@ -96,17 +96,18 @@ For other installation options and supported platforms, see
            train_data_paths: ["/path/to/train.parquet"]
            val_data_paths: ["/path/to/test.parquet"]
 
-      Launch training from ``examples/agent/agentlightning/calc_x`` (or pass Hydra overrides on the command line):
+      Launch training from the repository root (or pass Hydra overrides on the command line):
 
       .. code-block:: bash
 
-         cd examples/agent/agentlightning/calc_x
          # Multi-turn
-         bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn
+         bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn
+
          # Trajectory-level
-         bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory
+         bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory
+
          # Or override paths without editing the YAML
-         bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn \
+         bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn \
            rollout.model.model_path=/path/to/Qwen2.5-1.5B-Instruct \
            data.train_data_paths='["/path/to/train.parquet"]' \
            data.val_data_paths='["/path/to/test.parquet"]'
@@ -130,5 +131,5 @@ For HF evaluation, set ``rollout.model.model_path`` in the matching ``*_eval.yam
 
 .. code-block:: bash
 
-   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn_eval
-   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory_eval
+   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn_eval
+   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory_eval

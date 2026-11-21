@@ -134,26 +134,13 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       **3. Launch**
 
-      Set ``cluster.num_nodes``, ``runner.output_dir``, ``rollout.model.model_path``, and ``data.train_data_paths`` in ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``, then start Ray and launch on the head node:
+      Update ``runner.output_dir``, ``rollout.model.model_path``, and ``data.train_data_paths`` in ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``, then launch training:
 
       .. code-block:: bash
 
-         cd /path_to_RLinf/ray_utils;
-         rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
-         export TOKENIZERS_PARALLELISM=false
-         bash start_ray.sh;
-         if [ "$RANK" -eq 0 ]; then
-             bash check_ray.sh 128; # set to number of accelerators/GPUs in the cluster
-             cd /path_to_RLinf;
-             bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron
-         else
-           if [ "$RANK" -eq 1 ]; then
-               sleep 3m
-           fi
-           sleep 10d
-         fi
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron
 
-         sleep 10d
+      For multi-node training, set ``cluster.num_nodes`` in the YAML, start the Ray cluster following :doc:`/rst_source/guides/multi_node`, and run the command above on the head node.
 
    .. tab-item:: DeepSeek-R1-Distill-Qwen-7B
 
@@ -173,26 +160,13 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       **3. Launch**
 
-      Set ``cluster.num_nodes``, ``runner.output_dir``, ``rollout.model.model_path``, and ``data.train_data_paths`` in ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``, then start Ray and launch on the head node:
+      Update ``runner.output_dir``, ``rollout.model.model_path``, and ``data.train_data_paths`` in ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``, then launch training:
 
       .. code-block:: bash
 
-         cd /path_to_RLinf/ray_utils;
-         rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
-         export TOKENIZERS_PARALLELISM=false
-         bash start_ray.sh;
-         if [ "$RANK" -eq 0 ]; then
-             bash check_ray.sh 128; # set to number of accelerators/GPUs in the cluster
-             cd /path_to_RLinf;
-             bash examples/reasoning/run_main_grpo_math.sh qwen2.5-7b-grpo-megatron
-         else
-           if [ "$RANK" -eq 1 ]; then
-               sleep 3m
-           fi
-           sleep 10d
-         fi
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-7b-grpo-megatron
 
-         sleep 10d
+      For multi-node training, set ``cluster.num_nodes`` in the YAML, start the Ray cluster following :doc:`/rst_source/guides/multi_node`, and run the command above on the head node.
 
 Visualization and Results
 -------------------------

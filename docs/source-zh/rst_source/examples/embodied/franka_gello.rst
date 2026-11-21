@@ -95,7 +95,6 @@ Franka GELLO 遥操作
 
       .. code-block:: bash
 
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          python -m rlinf.robotics.parts.teleop.gello \
              --port /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0
 
@@ -148,11 +147,11 @@ Franka GELLO 遥操作
 
 .. dropdown:: 集群配置注意事项
 
-   集群配置步骤与 :doc:`franka` 相同，只需注意顺序：在控制节点（NUC）上执行 ``ray start`` 之前，先在虚拟环境中安装好 ``gello`` 和 ``gello-teleop``。
+   多机部署按 :doc:`franka` 配置 Ray 集群，但须注意顺序：在控制节点（NUC）上执行 ``ray start`` 前，先在虚拟环境中安装 ``gello`` 和 ``gello-teleop``。
 
    .. warning::
 
-      Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。启动 Ray 之后安装的包对 Ray worker 不可见。务必先安装 ``gello`` 和 ``gello-teleop``，再启动 Ray。
+      Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量，之后安装的包对 Ray worker 不可见。务必先安装 ``gello`` 和 ``gello-teleop``，再启动 Ray。
 
 常见问题
 --------
@@ -168,7 +167,7 @@ Franka GELLO 遥操作
    * - 串口权限被拒绝
      - 执行 ``sudo chmod 666 /dev/serial/by-id/<your-device>``，或运行 ``sudo usermod -aG dialout $USER`` 后注销重登。
    * - 报错 ``No module named 'gello'``
-     - 运行 ``pip show gello`` 确认 ``gello_software`` 已装入当前虚拟环境，必要时重启 Ray。
+     - 运行 ``pip show gello`` 确认 ``gello_software`` 已装入当前虚拟环境（多机部署须重启 Ray）。
    * - 报错 ``No module named 'gello_teleop'``
      - 运行 ``pip show gello-teleop`` 检查安装状态，确认可编辑安装指向的仓库路径有效。
    * - GELLO 读数不更新

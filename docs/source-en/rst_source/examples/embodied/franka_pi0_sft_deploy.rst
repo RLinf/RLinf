@@ -87,7 +87,7 @@ Setup and Run
 
       **Install**
 
-      Install the OpenPI and Franka environment on the GPU host (adding ``--env franka`` covers single-node setups; on a separate robot controller host, follow :doc:`franka`). Specify ``--model openpi`` rather than ``openvla``:
+      Install the OpenPI and Franka environment on the GPU host (adding ``--env franka`` covers single-node setups; on a separate controller host, follow :doc:`franka`):
 
       .. code-block:: bash
 
@@ -124,7 +124,7 @@ Setup and Run
                enabled: True
                export_format: lerobot_dataset
 
-      Start Ray (``export RLINF_NODE_RANK=0 && ray start --head``) and run collection:
+      Run collection:
 
       .. code-block:: bash
 
@@ -195,7 +195,7 @@ Setup and Run
                target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
                task_description: "pick up the object and place it into the container"
 
-      Start the Ray cluster as in :doc:`franka`, then run deployment with ``realworld_pnp_eval`` following the :doc:`real-world evaluation guide <../../evaluations/guides/realworld>`. The policy autonomously controls the arm for ``env.eval.rollout_epoch`` episodes.
+      For multi-node setups, start the Ray cluster as in :doc:`franka`; on a single host, launch directly. Run deployment with ``realworld_pnp_eval`` following the :doc:`real-world evaluation guide <../../evaluations/guides/realworld>`. The policy autonomously controls the arm for ``env.eval.rollout_epoch`` episodes.
 
 .. dropdown:: Generic Real-World SFT Environment (FrankaEnv-v1)
 

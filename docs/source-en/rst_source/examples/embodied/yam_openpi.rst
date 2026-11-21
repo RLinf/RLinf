@@ -80,19 +80,15 @@ Setup and Run
          export YAM_DATASET="$HOME/yam-data/merged"
          mkdir -p "$(dirname "$YAM_DATASET")"
 
-         # Dry-run first, then merge successful takes
-         python toolkits/lerobot/merge_lerobot_datasets.py \
-             --source-dir "$YAM_COLLECTION/lerobot_dataset" --output-dir "$YAM_DATASET" \
-             --only-success --dry-run
+         # Merge successful takes (pass --dry-run first to preview)
          python toolkits/lerobot/merge_lerobot_datasets.py \
              --source-dir "$YAM_COLLECTION/lerobot_dataset" --output-dir "$YAM_DATASET" \
              --only-success
 
          # Check recorded task prompt and compute norm_stats.json
          head -n 5 "$YAM_DATASET/meta/tasks.jsonl"
-         PYTHONPATH=$(pwd) python toolkits/lerobot/calculate_norm_stats.py \
+         python toolkits/lerobot/calculate_norm_stats.py \
              --config-name pi05_yam_joint --repo-id "$YAM_DATASET"
-         test -s "$YAM_DATASET/norm_stats.json"
 
       Use the exact task string from ``meta/tasks.jsonl`` as your evaluation prompt and keep the same ``norm_stats.json`` for both training and evaluation.
 
@@ -100,12 +96,9 @@ Setup and Run
 
       .. code-block:: bash
 
-         source .venv/bin/activate
          export YAM_DATASET="$HOME/yam-data/merged"
          mkdir -p "$(dirname "$YAM_DATASET")"
-         test ! -e "$YAM_DATASET" && \
-             scp -r 'user@192.168.1.20:/data/yam_merged' "$YAM_DATASET" && \
-             test -s "$YAM_DATASET/norm_stats.json"  # replace user, IP, and source path
+         scp -r 'user@192.168.1.20:/data/yam_merged' "$YAM_DATASET"  # replace user, IP, and source path
 
    .. tab-item:: 2. SFT Training
 
@@ -122,7 +115,6 @@ Setup and Run
              --output-model "$YAM_MODELS/pi05_base_openpi" \
              --output-norm-stats "$YAM_MODELS/pi05_base_openpi/yam/norm_stats.json" \
              --action-dim 32 --action-horizon 30 --max-token-len 200
-         test -s "$YAM_MODELS/pi05_base_openpi/model.safetensors"
 
       **Edit three absolute paths** in ``examples/sft/config/realworld_dual_yam_sft_openpi_pi05.yaml``:
 
@@ -152,19 +144,17 @@ Setup and Run
 
    .. tab-item:: 3. Evaluate & Deploy
 
-      **Verify connectivity and start the 2-node Ray cluster** with a shared auth token. Export ``GPU_IP`` and ``CONTROL_IP`` (from ``hostname -I``; verify mutual ``ping -c 1``), and export ``LEFT_CAN_CHANNEL``, ``RIGHT_CAN_CHANNEL``, and ``CAMERA_SERIALS`` on the controller (:doc:`yam`) before starting Ray:
+      **Verify connectivity and start the 2-node Ray cluster** with ``.venv`` active and a shared auth token. Export ``GPU_IP`` and ``CONTROL_IP`` (from ``hostname -I``; verify mutual ``ping -c 1``), and export ``LEFT_CAN_CHANNEL``, ``RIGHT_CAN_CHANNEL``, and ``CAMERA_SERIALS`` on the controller (:doc:`yam`) before starting Ray:
 
       .. code-block:: bash
 
          # GPU node (rank 0)
-         source .venv/bin/activate
          export RAY_AUTH_MODE=token
          export YAM_TASK_DESCRIPTION='pick the block'
          export RLINF_NODE_RANK=0
          ray start --head --port=6379 --node-ip-address="$GPU_IP"
 
          # YAM controller (rank 1; use the same YAM_TASK_DESCRIPTION)
-         source .venv/bin/activate
          export RAY_AUTH_MODE=token
          export YAM_TASK_DESCRIPTION='pick the block'
          export RLINF_NODE_RANK=1
@@ -176,18 +166,16 @@ Setup and Run
 
       .. code-block:: bash
 
-         test -s "$YAM_CHECKPOINT/actor/model_state_dict/full_weights.pt"
          bash evaluations/run_eval.sh realworld realworld_dual_yam_openpi_pi05_eval \
              rollout.model.model_path="$YAM_CHECKPOINT" \
              rollout.model.openpi_data.norm_stats_path="$YAM_DATASET/norm_stats.json"
 
 .. dropdown:: RPent deployment (optional)
 
-   RPent's YAM OpenPI server uses the same ``pi05_yam_joint`` contract (14-D targets, top/left/right cameras, 30-step prediction, 5 executed steps at 30 Hz). Stop native evaluation first so only one process owns the arms, then run the commands below on both RPent nodes from the RLinf repository directory:
+   RPent's YAM OpenPI server uses the same ``pi05_yam_joint`` contract (14-D targets, top/left/right cameras, 30-step prediction, 5 executed steps at 30 Hz). Stop native evaluation first so only one process owns the arms, then run the commands below on both RPent nodes from the RLinf repository directory with ``.venv`` active:
 
    .. code-block:: bash
 
-      source .venv/bin/activate
       export RPENT_RLINF_ROOT="$(pwd)"
       git clone --branch main https://github.com/RLinf/RPent.git "$HOME/RPent-yam"
       uv pip install -e "$HOME/RPent-yam[yam]" "numpy<2"
@@ -207,8 +195,6 @@ Monitor SFT curves on the GPU node with ``tensorboard --logdir logs --port 6006`
      - Fix
    * - Out-of-memory error during SFT on a 48 GB GPU
      - Set ``actor.micro_batch_size: 1``, ``actor.global_batch_size: 1``, and ``actor.model.precision: bf16`` in the SFT YAML, check free memory with ``nvidia-smi``, and increase batch size only after one optimizer step completes.
-   * - ``scp`` guard skips copying ``YAM_DATASET``
-     - ``test ! -e "$YAM_DATASET"`` protects existing data; choose a fresh ``YAM_DATASET`` path or remove the stale directory intentionally.
    * - Ray worker fails to join the head node
      - Verify mutual ``ping -c 1`` between ``GPU_IP`` and ``CONTROL_IP``, confirm ``RAY_AUTH_MODE=token`` uses identical tokens on both hosts, and check ``ray status`` before launching.
    * - Grippers move unexpectedly on eval startup

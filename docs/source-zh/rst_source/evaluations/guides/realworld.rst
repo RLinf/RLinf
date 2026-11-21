@@ -53,7 +53,7 @@
 
    .. tab-item:: 单机自定义任务
 
-      GPU 推理与 Franka 控制合署同一工作站时，更新 ``evaluations/realworld/realworld_eval.yaml``\ （``FrankaEnv-v1``）中的 ``robot_ip`` 与任务空间参数后直接启动：
+      GPU 推理与 Franka 控制合署同一工作站时，更新 ``evaluations/realworld/realworld_eval.yaml``\ （``FrankaEnv-v1``）中的 ``robot_ip`` 与任务空间参数后直接启动（单机配置会自动启动 Ray）：
 
       .. code-block:: bash
 
@@ -67,7 +67,7 @@
 
    .. tab-item:: 单机双臂 RTC（π₀.₅）
 
-      单机双臂 RTC 在一台机器上运行 GPU 推理、两台 Franka 与三路 RealSense 相机（``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``）。填入双臂 IP、相机序列号、夹爪串口、``keyboard_device``、``norm_stats_path`` 与 ``task_description``；复位后在 USB 键盘或脚踏上按 ``a`` 启动、``c`` 记成功、``b`` 记失败：
+      单机双臂 RTC 在一台机器上运行 GPU 推理、两台 Franka 与三路 RealSense 相机（``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``，自动启动 Ray）。填入双臂 IP、相机序列号、夹爪串口、``keyboard_device``、``norm_stats_path`` 与 ``task_description``；复位后在 USB 键盘或脚踏上按 ``a`` 启动、``c`` 记成功、``b`` 记失败：
 
       .. code-block:: bash
 
@@ -85,7 +85,11 @@
 
 .. dropdown:: 启动前检查与 Ray 集群启动
 
-   在控制节点检查硬件后启动双节点 Ray（以下示例假设 GPU head 节点为 ``192.168.1.10``、Franka 控制器为 ``192.168.1.20``，多网卡主机可按需指定 ``eth0``）：
+   **步骤 1（硬件检查）：** 评测前在机器人控制节点保持 ``.venv`` 激活并检查相机与机械臂。
+
+   **步骤 2（启动 Ray 集群）：** 仅适用于双节点配置（``双节点 PnP（π₀）``、``realworld_dual_yam_openpi_pi05_eval`` 等）。单机配置（``单机自定义任务`` 与 ``单机双臂 RTC（π₀.₅）``）会自动启动 Ray，无需导出 ``RLINF_NODE_RANK`` 或手动执行 ``ray start``。
+
+   双节点运行时，在两台机器上保持 ``.venv`` 已激活（也可按需修改并 source ``ray_utils/realworld/setup_before_ray.sh``），在 ``ray start`` 前导出 ``RLINF_NODE_RANK``\ （Ray 会在启动时冻结环境变量），并按实际替换示例 IP（GPU head 节点 ``192.168.1.10``、Franka 控制节点 ``192.168.1.20``）：
 
    .. code-block:: bash
 
@@ -94,16 +98,11 @@
       export FRANKA_ROBOT_IP=192.168.1.20
       python -m toolkits.realworld_check.test_franka_controller
 
-      # 2. 在每个节点启动 Ray 前先初始化环境（Ray 会在启动时冻结环境变量）
-      source ray_utils/realworld/setup_before_ray.sh
-      source .venv/bin/activate
-      # 多网卡主机按需取消注释：export RLINF_COMM_NET_DEVICES=eth0
-
-      # 3a. GPU head 节点（rank 0）
+      # 2a. 仅双节点需要 —— GPU head 节点（rank 0；多网卡主机额外导出 RLINF_COMM_NET_DEVICES=eth0）
       export RLINF_NODE_RANK=0
       ray start --head --port=6379 --node-ip-address=192.168.1.10
 
-      # 3b. Franka 控制节点（rank 1）
+      # 2b. 仅双节点需要 —— Franka 控制节点（rank 1；多网卡主机额外导出 RLINF_COMM_NET_DEVICES=eth0）
       export RLINF_NODE_RANK=1
       ray start --address=192.168.1.10:6379
 

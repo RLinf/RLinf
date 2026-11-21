@@ -118,7 +118,6 @@ Robbyant R2 配置与强化学习
          bash requirements/install.sh --no-flash-attn embodied --env dummy --python "$ROS_PY"
          source /opt/ros/humble/setup.bash
          source .venv/bin/activate
-         export REPO_PATH="$PWD"
          uv pip install pyzmq  # 仅运行 PICO VR 遥操作时需要
 
       若 ``rframe`` 及 R2 消息包（``r2_motion_msgs``、``rdiagnostic_msgs``、``navigation_msgs``、``state_machine_msgs``）位于独立 overlay 工作空间，请一并 ``source`` 其 ``setup.bash``，再运行 ``python -c "import rclpy, rframe"`` 验证导入。
@@ -179,7 +178,7 @@ Robbyant R2 配置与强化学习
 
       **4. 加入多节点 Ray 集群（可选）**
 
-      在 R2 控制节点执行 ``ray start`` 前，先加载 ROS 2 / RFrame 工作空间并激活 ``.venv``，同时导出 ``PYTHONPATH``、``RLINF_NODE_RANK`` 以及多网卡主机上的 ``RLINF_COMM_NET_DEVICES``，确保 Ray worker 继承中间件环境。
+      在 R2 控制节点执行 ``ray start`` 前，先加载 ROS 2 / RFrame 工作空间并激活 ``.venv``，同时导出 ``RLINF_NODE_RANK`` 以及多网卡主机上的 ``RLINF_COMM_NET_DEVICES``，确保 Ray worker 继承中间件环境。
 
    .. tab-item:: 训练与 Rollout 节点
 

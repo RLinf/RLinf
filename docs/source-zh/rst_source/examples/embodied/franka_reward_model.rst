@@ -220,18 +220,15 @@ Franka 奖励模型
 
       .. code-block:: bash
 
-         source .venv/bin/activate
-         export PYTHONPATH="$PWD:$PYTHONPATH"
-
          # 基于 GAE 或 reward 自动标注
-         python examples/reward/vlm_trend/preprocess_reward_dataset.py \
+         python -m examples.reward.vlm_trend.preprocess_reward_dataset \
              --raw-data-path /path/to/run/pickle_episode \
              --output-dir /path/to/processed_vlm_trend_reward_data \
              --window-size 5 \
              --task-description "Pick up the peg and insert it into the hole."
 
          # 或基于到目标位姿的 TCP 距离自动标注（--delta-threshold 单位为米）
-         python examples/reward/vlm_trend/preprocess_reward_dataset.py \
+         python -m examples.reward.vlm_trend.preprocess_reward_dataset \
              --raw-data-path /path/to/run/pickle_episode \
              --output-dir /path/to/processed_vlm_trend_reward_data \
              --window-size 5 \

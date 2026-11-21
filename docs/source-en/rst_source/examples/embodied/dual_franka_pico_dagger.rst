@@ -84,16 +84,15 @@ Collection runs on a single host by default (rank ``0`` owns both arms via dual 
 
 .. warning::
 
-   Keep an emergency stop within reach and clear the dual-arm workspace before enabling motion. In the DAgger config, replace the all-zero ``joint_reset_qpos`` placeholder with first-frame joint means or a verified safe home pose (7 joint angles per arm), and keep every ``target_ee_pose`` inside the shared ``realworld_dual_franka_tcp_rot6d`` workspace box: ``x`` in ``[0.3, 0.9]``, ``y`` in ``[-0.4, 0.4]``, and ``z`` in ``[0.02, 0.7]``. Ray captures your virtualenv and environment variables at ``ray start`` time—export ``PYTHONPATH``, ``RLINF_NODE_RANK``, and ``RLINF_KEYBOARD_DEVICE`` before starting Ray.
+   Keep an emergency stop within reach and clear the dual-arm workspace before enabling motion. In the DAgger config, replace the all-zero ``joint_reset_qpos`` placeholder with first-frame joint means or a verified safe home pose (7 joint angles per arm), and keep every ``target_ee_pose`` inside the shared ``realworld_dual_franka_tcp_rot6d`` workspace box: ``x`` in ``[0.3, 0.9]``, ``y`` in ``[-0.4, 0.4]``, and ``z`` in ``[0.02, 0.7]``. Ray captures your virtualenv and environment variables at ``ray start`` time—export ``RLINF_NODE_RANK`` and ``RLINF_KEYBOARD_DEVICE`` before starting Ray.
 
 .. dropdown:: Multi-node Ray cluster setup (required for HG-DAgger and 2-host collection)
 
-   Skip this block for default single-host collection (run ``ray stop --force`` if an older cluster is still alive). For 3-node HG-DAgger—or 2-host collection with ``num_nodes: 2``, ``node_rank: 0``, ``left_controller_node_rank: 0``, and ``right_controller_node_rank: 1``—source ``ray_utils/realworld/setup_before_ray.sh`` (customized for your virtualenv and hardware) on every node, then export node variables and start Ray:
+   Skip this block for default single-host collection (single-node runs auto-start Ray). For 3-node HG-DAgger—or 2-host collection with ``num_nodes: 2``, ``node_rank: 0``, ``left_controller_node_rank: 0``, and ``right_controller_node_rank: 1``—source ``ray_utils/realworld/setup_before_ray.sh`` (customized for your virtualenv and hardware) on every node, then export node variables and start Ray:
 
    .. code-block:: bash
 
       # On every node (set RLINF_NODE_RANK to 0, 1, or 2; omit NIC if only one exists)
-      export PYTHONPATH=$PWD:$PYTHONPATH
       export RLINF_NODE_RANK=0
       export RLINF_COMM_NET_DEVICES=eth0
 
@@ -146,7 +145,6 @@ Setup and Run
          python -m vr_data_publisher --config configs/vr_bridge.yaml
 
          # Env node (from the RLinf root with .venv active; replace IP:port with your publisher)
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          python toolkits/realworld_check/test_pico_data.py \
              --zmq-addr tcp://192.168.1.20:5555
 
@@ -154,7 +152,7 @@ Setup and Run
 
    .. tab-item:: 2. Collect & Prep Checkpoint
 
-      **Collect PICO demonstrations** on the single-host robot machine (activate the Python 3.11 virtualenv first; stop any stray Ray cluster with ``ray stop --force``):
+      **Collect PICO demonstrations** on the single-host robot machine with ``.venv`` active (single-node runs auto-start Ray):
 
       .. code-block:: bash
 

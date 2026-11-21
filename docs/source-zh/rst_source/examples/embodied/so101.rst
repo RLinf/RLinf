@@ -7,12 +7,12 @@ SO-101 配置与 SFT
 
    SO-101 follower 及其夹爪。图片来源：Hugging Face LeRobot。
 
-在连接机械臂的 Linux 主机上完成 SO-101 全流程：硬件校准与自检、主从臂遥操与 LeRobot 示教采集、OpenPI SFT 训练，以及本地 fixed-checkpoint 评测。
+在连接机械臂的 Linux 主机上完成 SO-101 全流程：硬件校准与自检、主从臂遥操作与 LeRobot 示教采集、OpenPI SFT 训练，以及本地 fixed-checkpoint 评测。
 
 概览
 ----
 
-采集、SFT 与本地评测全部在同一套 Linux 主机环境下运行，并共用 ``SO101ReachEnv-v1`` 的六维关节空间表示。
+采集、SFT 与本地评测全部在同一套 Linux 主机环境下运行，并共用 ``SO101ReachEnv-v1`` 的 6 维关节空间表示。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -22,7 +22,7 @@ SO-101 配置与 SFT
 
       SO-101 从臂 · 夹爪 · 可选主臂
 
-   .. grid-item-card:: 传感器与遥操
+   .. grid-item-card:: 传感器与遥操作
       :text-align: center
 
       USB 相机 · SO-101 主臂 · 键盘
@@ -67,7 +67,7 @@ SO-101 配置与 SFT
    * - Follower（从臂）
      - SO-101 机械臂、夹爪、舵机控制板与套件指定电源。
    * - Leader（主臂，可选）
-     - 接在独立 USB 串口的 SO-101 主臂，用于遥操与示教采集。
+     - 接在独立 USB 串口的 SO-101 主臂，用于遥操作与示教采集。
    * - 控制主机
      - 通过 USB 连接 Feetech 舵机控制板与相机的 Linux 主机；运行 OpenPI SFT 与评测需配备 GPU。
 
@@ -106,7 +106,6 @@ SO-101 配置与 SFT
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env so101 && source .venv/bin/activate
-         export REPO_PATH="$PWD"
 
       **2. 查找串口并检查权限**
 
@@ -153,9 +152,9 @@ SO-101 配置与 SFT
 
    .. tab-item:: 2. 遥操作与数据采集
 
-      **1. 标定主臂并验证遥操**
+      **1. 标定主臂并验证遥操作**
 
-      用独立串口与 ID 标定 SO-101 主臂，再启动带相机的遥操检查（``--enable-camera-player`` 用于实时预览画面）：
+      用独立串口与 ID 标定 SO-101 主臂，再启动带相机的遥操作检查（``--enable-camera-player`` 用于实时预览画面）：
 
       .. code-block:: bash
 

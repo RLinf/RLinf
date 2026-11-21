@@ -128,8 +128,7 @@ LIBERO 强化学习
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
       **2. 下载资源与模型**
 
@@ -195,8 +194,7 @@ LIBERO 强化学习
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env liberopro
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env liberopro && source .venv/bin/activate
 
       **2. 下载资源与模型**
 
@@ -254,8 +252,7 @@ LIBERO 强化学习
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env liberoplus
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env liberoplus && source .venv/bin/activate
 
       **2. 下载资源与模型**
 
@@ -292,18 +289,16 @@ LIBERO 强化学习
 
       **1. 安装环境**
 
-      安装 OpenPI 环境后，将标准 LIBERO 替换为指定版本的 `LIBERO-Mem fork <https://github.com/libero-mem/libero-mem>`__\ （两者共用 ``libero.libero`` namespace）。最后一条命令提示数据集路径时回答 ``N`` 使用默认值，并在启动 shell 中保留 ``LIBERO_CONFIG_PATH`` 和 ``LIBERO_TYPE``：
+      安装 OpenPI 环境后，将标准 LIBERO 替换为指定版本的 `LIBERO-Mem fork <https://github.com/libero-mem/libero-mem>`__\ （两者共用 ``libero.libero`` namespace）。最后一条命令提示数据集路径时回答 ``N`` 使用默认值，并在启动 shell 中保留 ``LIBERO_CONFIG_PATH``：
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
          git clone https://github.com/libero-mem/libero-mem.git ../LIBERO-Mem
          git -C ../LIBERO-Mem checkout 0eee0defa4024e51511b6e15a79f30e9620209de
          uv pip uninstall rlinf-libero
          uv pip install --no-deps -e ../LIBERO-Mem
-         export LIBERO_TYPE=standard
          export LIBERO_CONFIG_PATH="$PWD/.libero-mem"
          python -c "import libero.libero"
 

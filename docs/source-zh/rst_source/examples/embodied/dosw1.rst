@@ -156,7 +156,7 @@ Dexmal DOS-W1 在线强化学习
 
       **4. 加入 Ray 集群**
 
-      激活 ``.venv`` 并导出 ``RLINF_NODE_RANK`` 后再启动 Ray（将 ``192.168.1.10`` 替换为 GPU 节点 IP）：
+      保持 ``.venv`` 已激活，导出 ``RLINF_NODE_RANK`` 并加入 Ray 集群（将 ``192.168.1.10`` 替换为 GPU 节点 IP）：
 
       .. code-block:: bash
 
@@ -165,7 +165,7 @@ Dexmal DOS-W1 在线强化学习
 
       .. dropdown:: 采集遥操示教用于 RLPD（可选）
 
-         先修改 ``examples/embodiment/config/dosw1_collect_data.yaml`` 中的 ``robot_url``、四个 gRPC 端口与 ``camera_serials``\ （单节点运行，``cluster.num_nodes: 1``），再在机器人节点运行：
+         先修改 ``examples/embodiment/config/dosw1_collect_data.yaml`` 中的 ``robot_url``、四个 gRPC 端口与 ``camera_serials``\ （单节点配置，``cluster.num_nodes: 1``，会自动启动 Ray），再在机器人节点运行：
 
          .. code-block:: bash
 
@@ -283,14 +283,13 @@ Dexmal DOS-W1 在线强化学习
 
       **4. 运行 Dummy 自检（可选）并启动训练**
 
-      可先在单机运行纯状态 dummy 配置验证流程，再从 GPU 节点启动真机训练（日志保存在 ``logs/<timestamp>-<config>/``）：
+      可先在单机运行纯状态 dummy 配置验证流程（自动启动 Ray），再从 GPU 节点启动双节点真机训练（日志保存在 ``logs/<timestamp>-<config>/``）：
 
       .. code-block:: bash
 
          # 可选：单机 dummy 冒烟自检（无需相机与真机）
-         export REPO_PATH=$(pwd)
          python examples/embodiment/train_embodied_agent.py \
-             --config-path $REPO_PATH/tests/e2e_tests/embodied/ \
+             --config-path "$PWD/tests/e2e_tests/embodied" \
              --config-name dosw1_dummy_sac_mlp_pick \
              runner.max_epochs=1
 

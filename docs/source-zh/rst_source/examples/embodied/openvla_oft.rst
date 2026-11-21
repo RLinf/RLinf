@@ -135,7 +135,7 @@ NVIDIA CUDA 支持概览中的全部环境。AMD ROCm、华为昇腾 CANN 和摩
 
       .. code-block:: bash
 
-         ROBOT_PLATFORM=LIBERO bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
 
       脚本加载指定的 YAML，按 ``cluster.component_placement`` 创建 actor、rollout 和环境 worker，然后启动 GRPO。按设备资源调整 placement 和 batch size，参见 :doc:`../../concepts/placement` 与 :doc:`../../resources/faq`。
 
@@ -158,8 +158,7 @@ NVIDIA CUDA 支持概览中的全部环境。AMD ROCm、华为昇腾 CANN 和摩
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env libero && source .venv/bin/activate
 
       **2. 下载模型**
 
@@ -187,8 +186,7 @@ NVIDIA CUDA 支持概览中的全部环境。AMD ROCm、华为昇腾 CANN 和摩
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
       配置 CPU simulation：
 
@@ -219,8 +217,7 @@ NVIDIA CUDA 支持概览中的全部环境。AMD ROCm、华为昇腾 CANN 和摩
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero && source .venv/bin/activate
 
       .. include:: _ascend_torch.rst
 
@@ -250,8 +247,7 @@ NVIDIA CUDA 支持概览中的全部环境。AMD ROCm、华为昇腾 CANN 和摩
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
       配置 CPU simulation：
 
@@ -276,8 +272,7 @@ NVIDIA CUDA 支持概览中的全部环境。AMD ROCm、华为昇腾 CANN 和摩
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform musa embodied --model openvla-oft --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform musa embodied --model openvla-oft --env libero && source .venv/bin/activate
 
       RLinf 会检测 MUSA 设备，并沿用其他 GPU 后端的 placement 配置完成分配。
 
@@ -309,8 +304,7 @@ NVIDIA CUDA 支持概览中的全部环境。AMD ROCm、华为昇腾 CANN 和摩
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform musa embodied --venv openvla-oft --model openvla-oft --env libero
-         source openvla-oft/bin/activate
+         bash requirements/install.sh --platform musa embodied --venv openvla-oft --model openvla-oft --env libero && source openvla-oft/bin/activate
 
       配置 CPU simulation：
 

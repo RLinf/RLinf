@@ -206,7 +206,7 @@ VR 链路最多涉及三类节点角色。publisher 与 RLinf env worker 在同�
 
 .. dropdown:: 机械臂运动参数
 
-   采集示例沿用 Franky 默认运动参数，单次调用的目标变化上限为 3 cm 和 0.10 rad，无需为 PICO 另加 ``compliance``。数采和 policy 执行共用这些默认值，完整参数、reset 行为及硬件覆盖方法见 :ref:`配置机械臂运动 <franka-motion-settings>`。
+   采集示例沿用 Franky 默认运动参数，单次调用的目标变化上限为 3 cm 和 0.10 rad，无需为 PICO 另加 ``compliance``。数据采集和策略执行共用这些默认值，完整参数、reset 行为及硬件覆盖方法见 :ref:`配置机械臂运动 <franka-motion-settings>`。
 
    ``pico.position_scale`` 和 ``pico.rotation_scale`` 控制手柄运动映射为请求运动的比例，只作用于 PICO 输入（包含训练期间的人工接管）。环境先应用动作缩放和工作空间边界，再下发给 Franky。
 

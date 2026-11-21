@@ -120,7 +120,6 @@ XSquare Turtle2 在线强化学习
 
       .. code-block:: bash
 
-         export PYTHONPATH="$PWD:$PYTHONPATH"
          export RLINF_NODE_RANK=1
          export RLINF_COMM_NET_DEVICES=eth0  # 仅多网卡机器需要设置
          ray start --address='192.168.1.10:6379'
@@ -141,7 +140,6 @@ XSquare Turtle2 在线强化学习
 
       .. code-block:: bash
 
-         export PYTHONPATH="$PWD:$PYTHONPATH"
          export RLINF_NODE_RANK=0
          export RLINF_COMM_NET_DEVICES=eth0  # 仅多网卡机器需要设置
          ray start --head --port=6379 --node-ip-address=192.168.1.10
@@ -237,7 +235,7 @@ XSquare Turtle2 在线强化学习
    * - 控制节点找不到 XSquare SDK 或 ROS 包
      - 在 XSquare 官方 Docker 容器内安装 RLinf 并执行 ``ray start``，确保 SDK 位于 Python 搜索路径中。
    * - Ray worker 缺少 ``RLINF_NODE_RANK`` 或虚拟环境
-     - 先激活 ``.venv`` 并导出 ``PYTHONPATH`` 与 ``RLINF_NODE_RANK``，再执行 ``ray start``。
+     - 先激活 ``.venv`` 并导出 ``RLINF_NODE_RANK``，再执行 ``ray start``。
    * - 双臂模式下状态或动作维度不匹配
      - 设置 ``use_arm_ids: [0, 1]`` 时，将 ``actor.model.state_dim`` 和 ``actor.model.action_dim`` 均改为 ``12``。
 

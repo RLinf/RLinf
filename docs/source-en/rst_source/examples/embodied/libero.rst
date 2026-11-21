@@ -133,8 +133,7 @@ Setup and Run
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
       **2. Download**
 
@@ -200,8 +199,7 @@ Setup and Run
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env liberopro
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env liberopro && source .venv/bin/activate
 
       **2. Download**
 
@@ -259,8 +257,7 @@ Setup and Run
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env liberoplus
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env liberoplus && source .venv/bin/activate
 
       **2. Download**
 
@@ -297,18 +294,16 @@ Setup and Run
 
       **1. Install**
 
-      Install the OpenPI environment and replace the standard LIBERO package with the pinned `LIBERO-Mem fork <https://github.com/libero-mem/libero-mem>`__ (both share the ``libero.libero`` namespace). Answer ``N`` when the final command prompts for a dataset path, and keep ``LIBERO_CONFIG_PATH`` and ``LIBERO_TYPE`` exported in the launch shell:
+      Install the OpenPI environment and replace the standard LIBERO package with the pinned `LIBERO-Mem fork <https://github.com/libero-mem/libero-mem>`__ (both share the ``libero.libero`` namespace). Answer ``N`` when the final command prompts for a dataset path, and keep ``LIBERO_CONFIG_PATH`` exported in the launch shell:
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
          git clone https://github.com/libero-mem/libero-mem.git ../LIBERO-Mem
          git -C ../LIBERO-Mem checkout 0eee0defa4024e51511b6e15a79f30e9620209de
          uv pip uninstall rlinf-libero
          uv pip install --no-deps -e ../LIBERO-Mem
-         export LIBERO_TYPE=standard
          export LIBERO_CONFIG_PATH="$PWD/.libero-mem"
          python -c "import libero.libero"
 

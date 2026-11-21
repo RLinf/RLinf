@@ -109,7 +109,6 @@ as described in the SFT guide, then compute task-specific normalization:
 .. code-block:: bash
 
    source .venv/bin/activate
-   export PYTHONPATH="$PWD:${PYTHONPATH:-}"
    python toolkits/lerobot/calculate_norm_stats.py --config-name pi05_libero_mem --repo-id CollisionCode/libero_mem_lerobot_v2.1
 
 This writes ``assets/pi05_libero_mem/CollisionCode/libero_mem_lerobot_v2.1/norm_stats.json``.
@@ -117,8 +116,7 @@ Set the checkpoint and that statistics file in the SFT launch:
 
 .. code-block:: bash
 
-   EMBODIED_PATH="$PWD/examples/sft" python examples/sft/train_vla_sft.py \
-     --config-name libero_mem_sft_openpi_pi05 \
+   bash examples/sft/run_vla_sft.sh libero_mem_sft_openpi_pi05 \
      actor.model.model_path=/path/to/RLinf-Pi05-LIBERO-SFT \
      actor.model.openpi_data.norm_stats_path="$PWD/assets/pi05_libero_mem/CollisionCode/libero_mem_lerobot_v2.1/norm_stats.json"
 

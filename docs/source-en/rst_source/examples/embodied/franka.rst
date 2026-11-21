@@ -178,12 +178,7 @@ Setup and Run
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
-      Prefix ``LIBFRANKA_VERSION=0.15.0`` if your firmware requires 0.15.0, set ``FRANKY_WHEEL`` to a custom wheel URL or local path if needed, or pass ``--no-root`` when APT system packages are already installed. Confirm GPU access and Franky import (first line must print ``True``; second prints nothing):
-
-      .. code-block:: bash
-
-         python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
-         python -c "import franky"
+      Prefix ``LIBFRANKA_VERSION=0.15.0`` if your firmware requires 0.15.0, set ``FRANKY_WHEEL`` to a custom wheel URL or local path if needed, or pass ``--no-root`` when APT system packages are already installed.
 
       **2. Download**
 
@@ -222,13 +217,9 @@ Setup and Run
          python -m toolkits.realworld_check.test_franka_controller
          export FRANKA_TARGET_POSE='[x, y, z, roll, pitch, yaw]'  # Replace all six entries
 
-      Start Ray with ``RLINF_NODE_RANK=0``, collect 20 SpaceMouse demonstrations (stored under ``logs/franka-demo/demo_buffer``, with optional ``pickle_episode/`` and ``lerobot_dataset/`` exports; see :doc:`franka_gello` for GELLO collection), and launch online RLPD training after collection exits and releases the arm:
+      Collect 20 SpaceMouse demonstrations (stored under ``logs/franka-demo/demo_buffer``, with optional ``pickle_episode/`` and ``lerobot_dataset/`` exports; see :doc:`franka_gello` for GELLO collection), then launch online RLPD training after collection exits and releases the arm:
 
       .. code-block:: bash
-
-         ray stop
-         export RLINF_NODE_RANK=0
-         ray start --head
 
          RLINF_LOG_DIR="$PWD/logs/franka-demo" \
            bash examples/embodiment/collect_data.sh realworld_collect_data \
@@ -238,10 +229,9 @@ Setup and Run
            realworld_peginsertion_rlpd_cnn_async \
            "env.train.override_cfg.target_ee_pose=$FRANKA_TARGET_POSE" \
            "algorithm.demo_buffer.load_path=$PWD/logs/franka-demo/demo_buffer" \
-           "actor.model.model_path=$PWD/models/RLinf-ResNet10-pretrained" \
-           "rollout.model.model_path=$PWD/models/RLinf-ResNet10-pretrained"
+           "actor.model.model_path=$PWD/models/RLinf-ResNet10-pretrained"
 
-      Use a fresh ``RLINF_LOG_DIR`` for each collection session. Keep supervising the arm and intervene with the SpaceMouse as needed; interrupt the launcher, wait for the arm to stop, and run ``ray stop`` when done.
+      Use a fresh ``RLINF_LOG_DIR`` for each collection session. Supervise the arm throughout training and intervene with the SpaceMouse as needed; when done, interrupt the launcher and wait for the arm to stop.
 
    .. tab-item:: Multi-Node (Robot + GPU)
 
@@ -256,7 +246,7 @@ Setup and Run
 
       **2. Collect demos and download model**
 
-      Collect demonstrations on the controller first with ``RLINF_NODE_RANK=0`` (as in the Single-Node tab), then copy ``logs/franka-demo/demo_buffer`` to the GPU server. On the GPU server, download the pretrained ResNet-10 encoder:
+      Collect demonstrations on the controller first (as in the Single-Node tab), then copy ``logs/franka-demo/demo_buffer`` to the GPU server. On the GPU server, download the pretrained ResNet-10 encoder:
 
       .. code-block:: bash
 
@@ -275,13 +265,11 @@ Setup and Run
       .. code-block:: bash
 
          # On the GPU server (head node)
-         ray stop
          export RLINF_NODE_RANK=0
          export HEAD_IP=192.168.10.10
          ray start --head --port=6379 --node-ip-address="$HEAD_IP"
 
          # On the controller host (worker node)
-         ray stop
          export RLINF_NODE_RANK=1
          export HEAD_IP=192.168.10.10
          export CONTROLLER_IP=192.168.10.11
@@ -304,7 +292,7 @@ Setup and Run
 
       .. warning::
 
-         With ``SKIP_ROS=1``, source ``/opt/ros/noetic/setup.bash`` and your catkin ``devel/setup.bash`` and put libfranka on ``LD_LIBRARY_PATH`` in every shell before ``ray start``. See the `ROS Noetic <https://wiki.ros.org/noetic/Installation/Ubuntu>`_, `libfranka <https://frankarobotics.github.io/docs/libfranka/docs/installation.html>`_, and `serl_franka_controllers <https://github.com/rail-berkeley/serl_franka_controllers>`_ guides for manual installation.
+         With ``SKIP_ROS=1``, source ``/opt/ros/noetic/setup.bash`` and your catkin ``devel/setup.bash`` and put libfranka on ``LD_LIBRARY_PATH`` in every shell before launching (or before ``ray start`` in multi-node setups). See the `ROS Noetic <https://wiki.ros.org/noetic/Installation/Ubuntu>`_, `libfranka <https://frankarobotics.github.io/docs/libfranka/docs/installation.html>`_, and `serl_franka_controllers <https://github.com/rail-berkeley/serl_franka_controllers>`_ guides for manual installation.
 
       **2. Configure and launch**
 
@@ -318,15 +306,11 @@ Setup and Run
              camera_serials: ["CAMERA_SERIAL"]
              backend: franka_ros
 
-      Verify the controller launch, then start Ray in the activated ``franka-ros`` environment and run the same collection and training commands as Single-Node:
+      Verify the controller in the active ``franka-ros`` environment, then run the collection and training commands from the Single-Node tab (for multi-node, follow the Multi-Node tab):
 
       .. code-block:: bash
 
          python -m toolkits.realworld_check.test_franka_controller --backend franka_ros
-         source franka-ros/bin/activate
-         ray stop
-         export RLINF_NODE_RANK=0
-         ray start --head
 
       RLinf manages ``roscore``, ``roslaunch serl_franka_controllers impedance.launch``, and ``joint.launch`` (during joint resets) automatically. Differences from Franky: accepts Cartesian targets only (joint-position control requires Franky), ``gripper_type: franka`` responds only while the arm is connected via ``/franka_gripper``, and impedance gains are applied through ``dynamic_reconfigure`` (hardware ``compliance`` overrides are ignored). In multi-node setups, only the controller needs ``franka-ros``; the GPU server uses the standard ``franka`` environment.
 
@@ -383,7 +367,7 @@ Setup and Run
         train:
           keyboard_reward_wrapper: single_stage  # or multi_stage
 
-   In ``single_stage`` mode, ``a`` / ``b`` / ``c`` emit failure, neutral, and success rewards; in ``multi_stage`` mode, ``a`` / ``b`` / ``c`` switch stages and ``q`` emits a negative reward. Find the keyboard event device on the robot host, grant permission, and export ``RLINF_KEYBOARD_DEVICE`` before ``ray start``:
+   In ``single_stage`` mode, ``a`` / ``b`` / ``c`` emit failure, neutral, and success rewards; in ``multi_stage`` mode, ``a`` / ``b`` / ``c`` switch stages and ``q`` emits a negative reward. Find the keyboard event device on the robot host, grant permission, and export ``RLINF_KEYBOARD_DEVICE`` before launching (or before ``ray start`` in multi-node setups):
 
    .. code-block:: bash
 

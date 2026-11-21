@@ -139,7 +139,7 @@ NVIDIA CUDA supports all environments listed in the Overview. AMD ROCm, Huawei A
 
       .. code-block:: bash
 
-         ROBOT_PLATFORM=LIBERO bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
 
       The script loads the named YAML, creates actor, rollout, and environment workers according to ``cluster.component_placement``, and starts GRPO. Adjust placement and batch sizes for your devices; see :doc:`../../concepts/placement` and :doc:`../../resources/faq`.
 
@@ -162,8 +162,7 @@ NVIDIA CUDA supports all environments listed in the Overview. AMD ROCm, Huawei A
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env libero && source .venv/bin/activate
 
       **2. Download**
 
@@ -191,8 +190,7 @@ NVIDIA CUDA supports all environments listed in the Overview. AMD ROCm, Huawei A
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
       Configure CPU simulation:
 
@@ -223,8 +221,7 @@ NVIDIA CUDA supports all environments listed in the Overview. AMD ROCm, Huawei A
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero && source .venv/bin/activate
 
       .. include:: _ascend_torch.rst
 
@@ -254,8 +251,7 @@ NVIDIA CUDA supports all environments listed in the Overview. AMD ROCm, Huawei A
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
       Configure CPU simulation:
 
@@ -280,8 +276,7 @@ NVIDIA CUDA supports all environments listed in the Overview. AMD ROCm, Huawei A
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform musa embodied --model openvla-oft --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform musa embodied --model openvla-oft --env libero && source .venv/bin/activate
 
       RLinf detects MUSA devices and assigns them through the same placement configuration used on other GPU backends.
 
@@ -313,8 +308,7 @@ NVIDIA CUDA supports all environments listed in the Overview. AMD ROCm, Huawei A
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform musa embodied --venv openvla-oft --model openvla-oft --env libero
-         source openvla-oft/bin/activate
+         bash requirements/install.sh --platform musa embodied --venv openvla-oft --model openvla-oft --env libero && source openvla-oft/bin/activate
 
       Configure CPU simulation:
 

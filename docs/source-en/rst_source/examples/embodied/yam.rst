@@ -95,7 +95,7 @@ Setup and Run
 
       Confirm each CAN interface is ``UP`` at 1 Mbit/s with no ``BUS-OFF`` errors, identify left/right CAN from physical wiring, and match camera serials to physical top/left/right labels (see the calibration dropdown under Hardware and Safety for XML and yaw checks).
 
-      **3. Export station variables, verify PICO, and launch collection** (export all variables **before** starting Ray so workers inherit them; you can alternatively set ``left_can_channel``, ``right_can_channel``, and ``camera_serials`` directly in ``examples/embodiment/config/realworld_dual_yam_collect_data_pico.yaml``):
+      **3. Export station variables, verify PICO, and launch collection** (export all variables **before** launching collection so workers inherit them; you can alternatively set ``left_can_channel``, ``right_can_channel``, and ``camera_serials`` directly in ``examples/embodiment/config/realworld_dual_yam_collect_data_pico.yaml``):
 
       .. code-block:: bash
 
@@ -109,9 +109,7 @@ Setup and Run
          # Verify live headset, controller, and button updates (Ctrl-C to exit)
          python toolkits/realworld_check/test_pico_data.py --zmq-addr "$YAM_PICO_ZMQ_ADDR"
 
-         # Start Ray on a fresh single-node host and launch collection
-         export RLINF_NODE_RANK=0
-         ray start --head
+         # Launch collection
          bash examples/embodiment/collect_data.sh realworld_dual_yam_collect_data_pico
 
       On your first takeover, test one arm at a time with small motions to verify direction and scaling. If direction is wrong, release both grips and stop collection before editing yaw. If either controller drops out, both arms hold until both grips are released. After any fault stop, confirm the robot state on site before resuming.
@@ -137,12 +135,12 @@ Each run writes LeRobot shards under ``logs/<timestamp>-realworld_dual_yam_colle
    * - Symptom
      - Fix
    * - Arm moves in the wrong direction on takeover
-     - Release both grips, stop collection, remeasure ``YAM_LEFT_OPERATOR_TO_ROBOT_YAW`` / ``YAM_RIGHT_OPERATOR_TO_ROBOT_YAW`` using ``atan2(dy, dx)``, and restart Ray.
+     - Release both grips, stop collection, remeasure ``YAM_LEFT_OPERATOR_TO_ROBOT_YAW`` / ``YAM_RIGHT_OPERATOR_TO_ROBOT_YAW`` using ``atan2(dy, dx)``, re-export, and relaunch.
    * - CAN interface shows ``BUS-OFF`` or fails to open
      - Release any other process using CAN, re-apply 1 Mbit/s configuration per the ``i2rt`` CAN guide, and verify ``UP`` state with ``ip -details link show type can``.
    * - ``test_pico_data.py`` receives no updates
      - Verify XRoboToolkit PC Service and ``vr_data_publisher`` are running and set ``YAM_PICO_ZMQ_ADDR`` to a reachable ``tcp://<publisher-ip>:<port>`` (not the headset IP or ``0.0.0.0``).
    * - Left/right camera views appear swapped
-     - Match serials to physical camera chassis labels rather than enumeration order and update ``CAMERA_SERIALS`` in ``top,left,right`` order before ``ray start``.
+     - Match serials to physical camera chassis labels rather than enumeration order and update ``CAMERA_SERIALS`` in ``top,left,right`` order before launching.
    * - Unfinished or faulted takes appear in raw shards
      - Pass ``--only-success`` to ``merge_lerobot_datasets.py`` and inspect the merged RGB videos before SFT.

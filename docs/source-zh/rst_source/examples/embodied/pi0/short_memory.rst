@@ -58,15 +58,13 @@ SFT 的 ``num_frames`` 和 ``stride`` 放在 ``data.short_memory`` 下，评测�
 .. code-block:: bash
 
    source .venv/bin/activate
-   export PYTHONPATH="$PWD:${PYTHONPATH:-}"
    python toolkits/lerobot/calculate_norm_stats.py --config-name pi05_libero_mem --repo-id CollisionCode/libero_mem_lerobot_v2.1
 
 统计文件写入 ``assets/pi05_libero_mem/CollisionCode/libero_mem_lerobot_v2.1/norm_stats.json``。将初始 checkpoint 和该文件传给 SFT：
 
 .. code-block:: bash
 
-   EMBODIED_PATH="$PWD/examples/sft" python examples/sft/train_vla_sft.py \
-     --config-name libero_mem_sft_openpi_pi05 \
+   bash examples/sft/run_vla_sft.sh libero_mem_sft_openpi_pi05 \
      actor.model.model_path=/path/to/RLinf-Pi05-LIBERO-SFT \
      actor.model.openpi_data.norm_stats_path="$PWD/assets/pi05_libero_mem/CollisionCode/libero_mem_lerobot_v2.1/norm_stats.json"
 

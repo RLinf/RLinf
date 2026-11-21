@@ -87,17 +87,18 @@ AgentLightning 0.3.0 需要使用 RLinf 约束的 OpenTelemetry 版本，因为 
            train_data_paths: ["/path/to/train.parquet"]
            val_data_paths: ["/path/to/test.parquet"]
 
-      进入 ``examples/agent/agentlightning/calc_x`` 启动训练（或通过命令行 Hydra overrides 覆盖路径）：
+      在仓库根目录启动训练（或通过命令行 Hydra overrides 覆盖路径）：
 
       .. code-block:: bash
 
-         cd examples/agent/agentlightning/calc_x
          # 多轮模式
-         bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn
+         bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn
+
          # 轨迹级模式
-         bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory
+         bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory
+
          # 或不修改配置文件，直接命令行覆盖路径
-         bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn \
+         bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn \
            rollout.model.model_path=/path/to/Qwen2.5-1.5B-Instruct \
            data.train_data_paths='["/path/to/train.parquet"]' \
            data.val_data_paths='["/path/to/test.parquet"]'
@@ -121,5 +122,5 @@ HF 评测时在对应的 ``*_eval.yaml`` 里设置 ``rollout.model.model_path``�
 
 .. code-block:: bash
 
-   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn_eval
-   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory_eval
+   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn_eval
+   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory_eval

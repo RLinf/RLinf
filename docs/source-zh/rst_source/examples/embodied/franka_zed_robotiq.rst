@@ -138,20 +138,16 @@ Franka ZED 与 Robotiq
              override_cfg:
                target_ee_pose: TARGET_EE_POSE     # 目标末端执行器位姿
 
-      在 **两个节点** 的 RLinf 仓库根目录分别激活虚拟环境、导出环境变量并启动 Ray：
+      在 **两个节点** 的 RLinf 仓库根目录（保持 ``.venv`` 已激活），导出节点环境变量并启动 Ray：
 
       .. code-block:: bash
 
          # 节点 0（GPU 服务器，Ray 头节点；按实际网络替换 IP 与网卡）
-         source .venv/bin/activate
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          export RLINF_NODE_RANK=0
          export RLINF_COMM_NET_DEVICES=eth0  # 可选，单网卡可省略
          ray start --head --port=6379 --node-ip-address=192.168.1.10
 
          # 节点 1（NUC 控制节点）
-         source .venv/bin/activate
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          export RLINF_NODE_RANK=1
          export RLINF_COMM_NET_DEVICES=eth0  # 可选，单网卡可省略
          ray start --address=192.168.1.10:6379

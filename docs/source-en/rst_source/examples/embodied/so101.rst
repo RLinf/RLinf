@@ -106,7 +106,6 @@ Setup and Run
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env so101 && source .venv/bin/activate
-         export REPO_PATH="$PWD"
 
       **2. Find the serial port and check permissions**
 
@@ -228,7 +227,7 @@ Monitor SFT loss on the host with ``tensorboard --logdir ./logs --port 6006`` an
    * - Permission denied opening ``/dev/ttyACM0``
      - Run ``sudo usermod -aG dialout "$USER"``, log out and back in, reactivate ``.venv``, and re-verify the port with ``lerobot-find-port``.
    * - Worker fails to connect to follower
-     - Run ``lerobot-calibrate`` under the exact Linux account used for RLinf and pass the matching ``--id``; never reuse the leader's calibration file.
+     - Run ``lerobot-calibrate`` under the same Linux account used for RLinf and pass the matching ``--id``; never reuse the leader's calibration file.
    * - Gripper stops advancing against an object
      - Stall protection holds the measured opening to relieve pressure; move the leader gripper slightly away from the obstruction before retrying.
    * - Multiple collection runs need joint SFT

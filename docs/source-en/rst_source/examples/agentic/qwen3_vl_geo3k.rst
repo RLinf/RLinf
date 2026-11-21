@@ -37,17 +37,6 @@ The Qwen3-VL model family requires ``torch >= 2.8.0``, ``sglang == 0.5.4``, and
 
          ``MEGATRON_PATH`` must point to an existing Megatron-LM repository clone (the ``core_r0.13.0`` branch is recommended). If the directory does not exist, the install script will exit early without installing flash-attn or apex. Since this example uses FSDP2, ``--no-apex`` skips apex compilation.
 
-      Verify the installed versions:
-
-      .. code-block:: bash
-
-         python -c "
-         import torch; print('torch:', torch.__version__)
-         import transformers; print('transformers:', transformers.__version__)
-         import sglang; print('sglang:', sglang.__version__)
-         print('All good')
-         "
-
       **2. Download**
 
       Download the base model and the `geo3K dataset <https://huggingface.co/datasets/CAIR-HKISI/geo3k>`__:
@@ -59,23 +48,13 @@ The Qwen3-VL model family requires ``torch >= 2.8.0``, ``sglang == 0.5.4``, and
 
       **3. Launch**
 
-      Update ``rollout.model.model_path`` and ``data.train_data_paths`` in ``examples/reasoning/config/vqa/qwen3-vl-2b-grpo-fsdp-geo3k.yaml`` (keep ``rollout.model.model_type: qwen3_vl``), then start the Ray cluster and launch training:
+      Update ``rollout.model.model_path`` and ``data.train_data_paths`` in ``examples/reasoning/config/vqa/qwen3-vl-2b-grpo-fsdp-geo3k.yaml`` (keep ``rollout.model.model_type: qwen3_vl``), then launch training:
 
       .. code-block:: bash
 
-         cd /path_to_RLinf/ray_utils;
-         rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
-         export TOKENIZERS_PARALLELISM=false
-         bash start_ray.sh;
-         if [ "$RANK" -eq 0 ]; then
-             bash check_ray.sh 4
-             bash examples/reasoning/run_main_grpo_vqa.sh qwen3-vl-2b-grpo-fsdp-geo3k
-         else
-           sleep 10d
-           rm ray_utils/ray_head_ip.txt;
-         fi
+         bash examples/reasoning/run_main_grpo_vqa.sh qwen3-vl-2b-grpo-fsdp-geo3k
 
-         sleep 10d
+      For multi-node scaling, follow :doc:`/rst_source/guides/multi_node` and run the command above on the head node.
 
 Dataset Format
 --------------

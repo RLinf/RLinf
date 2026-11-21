@@ -33,17 +33,6 @@ Qwen3-VL 系列模型需要 ``torch >= 2.8.0``、``sglang == 0.5.4`` 和 ``trans
 
          ``MEGATRON_PATH`` 需要指向一个已有的 Megatron-LM 仓库克隆（推荐 ``core_r0.13.0`` 分支）；如果该目录不存在，安装脚本会提前退出，不执行后续的 flash-attn 和 apex 安装步骤。本示例使用 FSDP2 作为训练后端，通过 ``--no-apex`` 跳过 apex 编译。
 
-      验证关键依赖版本：
-
-      .. code-block:: bash
-
-         python -c "
-         import torch; print('torch:', torch.__version__)
-         import transformers; print('transformers:', transformers.__version__)
-         import sglang; print('sglang:', sglang.__version__)
-         print('All good')
-         "
-
       **2. 下载模型与数据**
 
       下载基础模型和 `geo3K 数据集 <https://huggingface.co/datasets/CAIR-HKISI/geo3k>`__：
@@ -55,23 +44,13 @@ Qwen3-VL 系列模型需要 ``torch >= 2.8.0``、``sglang == 0.5.4`` 和 ``trans
 
       **3. 启动训练**
 
-      在 ``examples/reasoning/config/vqa/qwen3-vl-2b-grpo-fsdp-geo3k.yaml`` 中填写 ``rollout.model.model_path`` 和 ``data.train_data_paths``\ （保持 ``rollout.model.model_type: qwen3_vl``），然后启动 Ray 集群并开始训练：
+      在 ``examples/reasoning/config/vqa/qwen3-vl-2b-grpo-fsdp-geo3k.yaml`` 中填写 ``rollout.model.model_path`` 和 ``data.train_data_paths``\ （保持 ``rollout.model.model_type: qwen3_vl``），然后启动训练：
 
       .. code-block:: bash
 
-         cd /path_to_RLinf/ray_utils;
-         rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
-         export TOKENIZERS_PARALLELISM=false
-         bash start_ray.sh;
-         if [ "$RANK" -eq 0 ]; then
-             bash check_ray.sh 4
-             bash examples/reasoning/run_main_grpo_vqa.sh qwen3-vl-2b-grpo-fsdp-geo3k
-         else
-           sleep 10d
-           rm ray_utils/ray_head_ip.txt;
-         fi
+         bash examples/reasoning/run_main_grpo_vqa.sh qwen3-vl-2b-grpo-fsdp-geo3k
 
-         sleep 10d
+      多机扩展按 :doc:`/rst_source/guides/multi_node` 启动 Ray 集群，再在 head 节点运行上述命令。
 
 数据集格式
 -------------

@@ -94,23 +94,13 @@ Setup and Run
 
       **3. Launch**
 
-      Update the model and data paths in ``examples/reasoning/config/math/moonlight-16b-grpo-megatron.yaml`` (``model_type: deepseek_v3``, TP=8, EP=8, ``multi_latent_attention: True``, precision-aware optimizer, ``reward_type: math``), then start Ray and launch training:
+      Update the model and data paths in ``examples/reasoning/config/math/moonlight-16b-grpo-megatron.yaml`` (``model_type: deepseek_v3``, TP=8, EP=8, ``multi_latent_attention: True``, precision-aware optimizer, ``reward_type: math``), then launch training:
 
       .. code-block:: bash
 
-         cd /path/to/RLinf/ray_utils
-         rm -f ray_head_ip.txt
-         export TOKENIZERS_PARALLELISM=false
-         bash start_ray.sh
-         if [ "$RANK" -eq 0 ]; then
-             bash check_ray.sh 8          # number of GPUs in the cluster
-             cd /path/to/RLinf
-             bash examples/reasoning/run_main_grpo_math.sh moonlight-16b-grpo-megatron
-         else
-             if [ "$RANK" -eq 1 ]; then sleep 3m; fi
-             sleep 10d
-         fi
-         sleep 10d
+         bash examples/reasoning/run_main_grpo_math.sh moonlight-16b-grpo-megatron
+
+      For multi-node scaling, follow :doc:`/rst_source/guides/multi_node` and run the command above on the head node.
 
 Visualization and Results
 -------------------------

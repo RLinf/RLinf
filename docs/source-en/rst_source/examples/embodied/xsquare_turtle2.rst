@@ -120,7 +120,6 @@ Setup and Run
 
       .. code-block:: bash
 
-         export PYTHONPATH="$PWD:$PYTHONPATH"
          export RLINF_NODE_RANK=1
          export RLINF_COMM_NET_DEVICES=eth0  # Optional if only one NIC
          ray start --address='192.168.1.10:6379'
@@ -141,7 +140,6 @@ Setup and Run
 
       .. code-block:: bash
 
-         export PYTHONPATH="$PWD:$PYTHONPATH"
          export RLINF_NODE_RANK=0
          export RLINF_COMM_NET_DEVICES=eth0  # Optional if only one NIC
          ray start --head --port=6379 --node-ip-address=192.168.1.10
@@ -237,7 +235,7 @@ Monitor training on the Ray head node with ``tensorboard --logdir ./logs --port 
    * - Missing XSquare SDK or ROS packages on controller node
      - Run installation and ``ray start`` inside the official XSquare Docker container so SDK packages stay on the Python path.
    * - Ray workers miss ``RLINF_NODE_RANK`` or ``.venv``
-     - Source ``.venv/bin/activate`` and export ``PYTHONPATH`` and ``RLINF_NODE_RANK`` before running ``ray start``.
+     - Source ``.venv/bin/activate`` and export ``RLINF_NODE_RANK`` before running ``ray start``.
    * - State or action dimension mismatch in dual-arm mode
      - Set both ``actor.model.state_dim`` and ``actor.model.action_dim`` to ``12`` when ``use_arm_ids: [0, 1]``.
 

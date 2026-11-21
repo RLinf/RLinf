@@ -127,21 +127,10 @@ ABot-M0 作为 VLA 策略接入 RLinf：适配层冻结预训练感知模块，�
            model:
              model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
 
-      导出环境变量、启动 Ray 并启动 PPO 训练：
+      启动 PPO 训练：
 
       .. code-block:: bash
 
-         source .venv/bin/activate
-         export REPO_PATH=$(pwd)
-         export EMBODIED_PATH=$(pwd)/examples/embodiment
-         export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
-         export MUJOCO_GL=egl
-         export PYOPENGL_PLATFORM=egl
-         export ROBOT_PLATFORM=LIBERO
-         export LIBERO_TYPE=standard
-
-         ray stop || true
-         ray start --head --port=6379
          bash examples/embodiment/run_embodiment.sh libero_10_ppo_abot_m0
 
       .. dropdown:: 进阶配置（可选）
@@ -158,12 +147,6 @@ ABot-M0 作为 VLA 策略接入 RLinf：适配层冻结预训练感知模块，�
 
               hf download facebook/VGGT-1B --local-dir ./VGGT-1B
               export VGGT_MODEL_PATH=$PWD/VGGT-1B
-
-         - **导入完整性检查**：启动前验证包级依赖链路（正常应输出 ``IMPORT_OK``）：
-
-           .. code-block:: bash
-
-              python -c "import rlinf; import ABot; import vggt; print('IMPORT_OK')"
 
          - **Hydra 配置参考**：完整字段说明见 :doc:`训练配置 <../../reference/configuration>`。
 
@@ -229,21 +212,11 @@ ABot-M0 作为 VLA 策略接入 RLinf：适配层冻结预训练感知模块，�
            model:
              model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
 
-      导出环境变量、启动 Ray 并启动 PPO 训练：
+      指定 LIBERO-Plus 套件并启动 PPO 训练：
 
       .. code-block:: bash
 
-         source .venv/bin/activate
-         export REPO_PATH=$(pwd)
-         export EMBODIED_PATH=$(pwd)/examples/embodiment
-         export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
-         export MUJOCO_GL=egl
-         export PYOPENGL_PLATFORM=egl
-         export ROBOT_PLATFORM=LIBERO
          export LIBERO_TYPE=plus
-
-         ray stop || true
-         ray start --head --port=6379
          bash examples/embodiment/run_embodiment.sh libero_10_plus_ppo_abot_m0
 
       .. dropdown:: 进阶配置（可选）
@@ -261,12 +234,6 @@ ABot-M0 作为 VLA 策略接入 RLinf：适配层冻结预训练感知模块，�
               hf download facebook/VGGT-1B --local-dir ./VGGT-1B
               export VGGT_MODEL_PATH=$PWD/VGGT-1B
 
-         - **导入完整性检查**：启动前验证包级依赖链路（正常应输出 ``IMPORT_OK``）：
-
-           .. code-block:: bash
-
-              python -c "import rlinf; import ABot; import vggt; print('IMPORT_OK')"
-
          - **Hydra 配置参考**：完整字段说明见 :doc:`训练配置 <../../reference/configuration>`。
 
 .. dropdown:: 独立评测
@@ -282,7 +249,7 @@ ABot-M0 作为 VLA 策略接入 RLinf：适配层冻结预训练感知模块，�
         - 需要修改
       * - LIBERO-10
         - 通过 Evaluation 配置回退使用 ``libero_10_ppo_abot_m0``
-        - 设置 ``LIBERO_TYPE=standard``，并将 ``actor.model.model_path`` 指向 ABot-M0 checkpoint。
+        - 将 ``actor.model.model_path`` 指向 ABot-M0 checkpoint。
       * - LIBERO-10+
         - 通过 Evaluation 配置回退使用 ``libero_10_plus_ppo_abot_m0``
         - 设置 ``LIBERO_TYPE=plus``，并将 ``actor.model.model_path`` 指向 ABot-M0 checkpoint。

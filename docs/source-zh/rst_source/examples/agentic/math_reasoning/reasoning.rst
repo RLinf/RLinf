@@ -123,26 +123,13 @@ GRPO 工作方式
 
       **3. 启动训练**
 
-      在 ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml`` 中设置 ``cluster.num_nodes``、``runner.output_dir``、``rollout.model.model_path`` 和 ``data.train_data_paths``，然后启动 Ray 集群并在 head 节点启动训练：
+      在 ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml`` 中填写 ``runner.output_dir``、``rollout.model.model_path`` 和 ``data.train_data_paths``，然后启动训练：
 
       .. code-block:: bash
 
-         cd /path_to_RLinf/ray_utils;
-         rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
-         export TOKENIZERS_PARALLELISM=false
-         bash start_ray.sh;
-         if [ "$RANK" -eq 0 ]; then
-             bash check_ray.sh 128;
-             cd /path_to_RLinf;
-             bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron
-         else
-           if [ "$RANK" -eq 1 ]; then
-               sleep 3m
-           fi
-           sleep 10d
-         fi
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron
 
-         sleep 10d
+      多机训练时，在 YAML 中设置 ``cluster.num_nodes``，按 :doc:`/rst_source/guides/multi_node` 启动 Ray 集群，再在 head 节点运行上述命令。
 
    .. tab-item:: DeepSeek-R1-Distill-Qwen-7B
 
@@ -162,26 +149,13 @@ GRPO 工作方式
 
       **3. 启动训练**
 
-      在 ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml`` 中设置 ``cluster.num_nodes``、``runner.output_dir``、``rollout.model.model_path`` 和 ``data.train_data_paths``，然后启动 Ray 集群并在 head 节点启动训练：
+      在 ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml`` 中填写 ``runner.output_dir``、``rollout.model.model_path`` 和 ``data.train_data_paths``，然后启动训练：
 
       .. code-block:: bash
 
-         cd /path_to_RLinf/ray_utils;
-         rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
-         export TOKENIZERS_PARALLELISM=false
-         bash start_ray.sh;
-         if [ "$RANK" -eq 0 ]; then
-             bash check_ray.sh 128;
-             cd /path_to_RLinf;
-             bash examples/reasoning/run_main_grpo_math.sh qwen2.5-7b-grpo-megatron
-         else
-           if [ "$RANK" -eq 1 ]; then
-               sleep 3m
-           fi
-           sleep 10d
-         fi
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-7b-grpo-megatron
 
-         sleep 10d
+      多机训练时，在 YAML 中设置 ``cluster.num_nodes``，按 :doc:`/rst_source/guides/multi_node` 启动 Ray 集群，再在 head 节点运行上述命令。
 
 可视化与结果
 ----------------------------------------

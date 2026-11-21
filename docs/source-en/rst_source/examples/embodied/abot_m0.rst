@@ -135,21 +135,10 @@ The installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` and ``VGG
            model:
              model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
 
-      Export the runtime variables, start Ray, and launch PPO training:
+      Launch PPO training:
 
       .. code-block:: bash
 
-         source .venv/bin/activate
-         export REPO_PATH=$(pwd)
-         export EMBODIED_PATH=$(pwd)/examples/embodiment
-         export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
-         export MUJOCO_GL=egl
-         export PYOPENGL_PLATFORM=egl
-         export ROBOT_PLATFORM=LIBERO
-         export LIBERO_TYPE=standard
-
-         ray stop || true
-         ray start --head --port=6379
          bash examples/embodiment/run_embodiment.sh libero_10_ppo_abot_m0
 
       .. dropdown:: Advanced configuration (optional)
@@ -166,12 +155,6 @@ The installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` and ``VGG
 
               hf download facebook/VGGT-1B --local-dir ./VGGT-1B
               export VGGT_MODEL_PATH=$PWD/VGGT-1B
-
-         - **Import sanity check**: verify package wiring before launching training (prints ``IMPORT_OK``):
-
-           .. code-block:: bash
-
-              python -c "import rlinf; import ABot; import vggt; print('IMPORT_OK')"
 
          - **Hydra configuration reference**: see :doc:`Training configuration <../../reference/configuration>`.
 
@@ -237,21 +220,11 @@ The installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` and ``VGG
            model:
              model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
 
-      Export the runtime variables, start Ray, and launch PPO training:
+      Select the LIBERO-Plus suite and launch PPO training:
 
       .. code-block:: bash
 
-         source .venv/bin/activate
-         export REPO_PATH=$(pwd)
-         export EMBODIED_PATH=$(pwd)/examples/embodiment
-         export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
-         export MUJOCO_GL=egl
-         export PYOPENGL_PLATFORM=egl
-         export ROBOT_PLATFORM=LIBERO
          export LIBERO_TYPE=plus
-
-         ray stop || true
-         ray start --head --port=6379
          bash examples/embodiment/run_embodiment.sh libero_10_plus_ppo_abot_m0
 
       .. dropdown:: Advanced configuration (optional)
@@ -269,12 +242,6 @@ The installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` and ``VGG
               hf download facebook/VGGT-1B --local-dir ./VGGT-1B
               export VGGT_MODEL_PATH=$PWD/VGGT-1B
 
-         - **Import sanity check**: verify package wiring before launching training (prints ``IMPORT_OK``):
-
-           .. code-block:: bash
-
-              python -c "import rlinf; import ABot; import vggt; print('IMPORT_OK')"
-
          - **Hydra configuration reference**: see :doc:`Training configuration <../../reference/configuration>`.
 
 .. dropdown:: Standalone evaluation
@@ -290,7 +257,7 @@ The installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` and ``VGG
         - What to change
       * - LIBERO-10
         - ``libero_10_ppo_abot_m0`` via the Evaluation config fallback
-        - Set ``LIBERO_TYPE=standard`` and point ``actor.model.model_path`` at the ABot-M0 checkpoint.
+        - Point ``actor.model.model_path`` at the ABot-M0 checkpoint.
       * - LIBERO-10+
         - ``libero_10_plus_ppo_abot_m0`` via the Evaluation config fallback
         - Set ``LIBERO_TYPE=plus`` and point ``actor.model.model_path`` at the ABot-M0 checkpoint.

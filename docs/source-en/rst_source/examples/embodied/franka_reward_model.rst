@@ -220,18 +220,15 @@ Setup and Run
 
       .. code-block:: bash
 
-         source .venv/bin/activate
-         export PYTHONPATH="$PWD:$PYTHONPATH"
-
          # Auto-label from GAE / rewards
-         python examples/reward/vlm_trend/preprocess_reward_dataset.py \
+         python -m examples.reward.vlm_trend.preprocess_reward_dataset \
              --raw-data-path /path/to/run/pickle_episode \
              --output-dir /path/to/processed_vlm_trend_reward_data \
              --window-size 5 \
              --task-description "Pick up the peg and insert it into the hole."
 
          # Or auto-label from TCP distance to target pose (--delta-threshold in metres)
-         python examples/reward/vlm_trend/preprocess_reward_dataset.py \
+         python -m examples.reward.vlm_trend.preprocess_reward_dataset \
              --raw-data-path /path/to/run/pickle_episode \
              --output-dir /path/to/processed_vlm_trend_reward_data \
              --window-size 5 \

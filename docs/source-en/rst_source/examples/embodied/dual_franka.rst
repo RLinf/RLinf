@@ -100,11 +100,10 @@ Configure the PCsensor FootSwitch keys once with the vendor tool as ``a`` / ``b`
 
 .. dropdown:: GELLO calibration (first-time setup)
 
-   From the RLinf repository root, calibrate each GELLO leader once against the left arm on ``node 0`` and verify alignment with ``align-sequential``. Repeat both commands for the second leader by updating ``GELLO_PORT``:
+   From the RLinf repository root with ``.venv`` active, calibrate each GELLO leader once against the left arm on ``node 0`` and verify alignment with ``align-sequential``. Repeat both commands for the second leader by updating ``GELLO_PORT``:
 
    .. code-block:: bash
 
-      export PYTHONPATH=$PWD:${PYTHONPATH:-}
       export GELLO_PORT=/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0  # replace with your FTDI device
 
       python toolkits/realworld_check/test_gello.py calibrate
@@ -159,7 +158,6 @@ Setup and Run
 
          # GELLO leaders (plug one at a time to identify FTDI paths)
          ls /dev/serial/by-id/ | grep -i ftdi
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          python -m rlinf.robotics.parts.teleop.gello_joint \
              --port /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0  # replace with your left GELLO device
 
@@ -172,16 +170,12 @@ Setup and Run
       .. code-block:: bash
 
          # node 0 (replace IP and event device for your station)
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          export RLINF_NODE_RANK=0
          export RLINF_KEYBOARD_DEVICE=/dev/input/event12
-         ray stop --force
          ray start --head --port=6379 --node-ip-address=192.168.1.10
 
          # node 1 (replace IPs for your station)
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          export RLINF_NODE_RANK=1
-         ray stop --force
          ray start --address=192.168.1.10:6379 --node-ip-address=192.168.1.20
 
       Confirm ``ray status`` on ``node 0`` shows both nodes ``ALIVE``.
@@ -190,7 +184,6 @@ Setup and Run
 
       .. code-block:: bash
 
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          bash examples/embodiment/collect_data.sh \
              realworld_collect_data_gello_joint_dual_franka 2>&1 | tee logs/collect.log
 
@@ -217,7 +210,6 @@ Setup and Run
 
       .. code-block:: bash
 
-         export PYTHONPATH=$PWD:${PYTHONPATH:-}
          export HF_LEROBOT_HOME="$HOME/lerobot_data"            # replace with your LeRobot data root
          export DUAL_FRANKA_DATA_ROOT="$HF_LEROBOT_HOME"
          export PI05_BASE_CKPT="$HOME/models/pi05_torch"        # replace with your base checkpoint dir

@@ -156,7 +156,7 @@ Setup and Run
 
       **4. Join the Ray cluster**
 
-      Source ``.venv`` and export ``RLINF_NODE_RANK`` before ``ray start`` (replace ``192.168.1.10`` with your GPU node IP):
+      With ``.venv`` active, export ``RLINF_NODE_RANK`` and join the Ray cluster (replace ``192.168.1.10`` with your GPU node IP):
 
       .. code-block:: bash
 
@@ -165,7 +165,7 @@ Setup and Run
 
       .. dropdown:: Collect teleoperated demos for RLPD (optional)
 
-         Update ``robot_url``, the four gRPC ports, and ``camera_serials`` in ``examples/embodiment/config/dosw1_collect_data.yaml`` (single-node config, ``cluster.num_nodes: 1``), then run on the robot node:
+         Update ``robot_url``, the four gRPC ports, and ``camera_serials`` in ``examples/embodiment/config/dosw1_collect_data.yaml`` (single-node config, ``cluster.num_nodes: 1``; Ray starts automatically), then run on the robot node:
 
          .. code-block:: bash
 
@@ -283,14 +283,13 @@ Setup and Run
 
       **4. Run dummy smoke test (optional) and launch training**
 
-      Validate config and cluster wiring on a single node with the state-only dummy config, then launch real-world training from the GPU node (logs write to ``logs/<timestamp>-<config>/``):
+      Validate config wiring on a single node with the state-only dummy config (auto-starts Ray), then launch two-node real-world training from the GPU node (logs write to ``logs/<timestamp>-<config>/``):
 
       .. code-block:: bash
 
          # Optional single-node dummy smoke test (no hardware or cameras)
-         export REPO_PATH=$(pwd)
          python examples/embodiment/train_embodied_agent.py \
-             --config-path $REPO_PATH/tests/e2e_tests/embodied/ \
+             --config-path "$PWD/tests/e2e_tests/embodied" \
              --config-name dosw1_dummy_sac_mlp_pick \
              runner.max_epochs=1
 

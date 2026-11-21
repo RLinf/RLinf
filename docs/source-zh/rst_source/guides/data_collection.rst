@@ -69,11 +69,10 @@
 ``{save_dir}/pickle_episode/``。把 ``export_format`` 改成 ``lerobot_dataset``
 时，shard 在 ``{save_dir}/lerobot_dataset/rank_*/id_*/``。
 
-真机遥操数采步骤
-----------------
+真机遥操作数据采集步骤
+----------------------
 
-在 ``examples/embodiment/config/realworld_collect_data.yaml`` 里填写机器人、
-遥操方式和目标位姿：
+在 ``examples/embodiment/config/realworld_collect_data.yaml`` 里填写机器人、遥操作方式和目标位姿：
 
 .. code-block:: yaml
 
