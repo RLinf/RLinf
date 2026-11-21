@@ -20,8 +20,13 @@ import sys
 from docutils import nodes
 from docutils.parsers.rst import roles
 
-# Ensure project root is on Python path for autodoc
+# Ensure project root and docs directory are on Python path for autodoc
 sys.path.insert(0, os.path.abspath("../../"))
+sys.path.insert(0, os.path.abspath("../"))
+
+from autodoc_mock import AUTODOC_MOCK_IMPORTS, install_autodoc_mock_shims  # noqa: E402
+
+install_autodoc_mock_shims()
 
 
 # -- Project Information -------------------------------------------------------
@@ -59,7 +64,7 @@ exclude_patterns = [
 ]  # underscore-prefixed files are reusable includes, not standalone pages
 default_role = "code"
 autosummary_generate = True
-autodoc_mock_imports = ["sglang", "megatron", "prismatic", "libero", "lerobot"]
+autodoc_mock_imports = AUTODOC_MOCK_IMPORTS
 autodoc_class_signature = "separated"
 autodoc_typehints = "description"
 # autoclass_content = "both"
