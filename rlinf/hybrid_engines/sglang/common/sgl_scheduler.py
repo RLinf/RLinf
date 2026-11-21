@@ -29,6 +29,7 @@ from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
 )
+from sglang.srt.managers.schedule_batch import FINISH_ABORT
 from sglang.srt.managers.scheduler import Scheduler as _Scheduler
 from sglang.srt.managers.scheduler import logger
 from sglang.srt.managers.scheduler import (
@@ -391,13 +392,21 @@ class Scheduler(_Scheduler):
         waiting_reqs = []
         # waiting_reqs.append(self.waiting_queue)
         for req in self.waiting_queue:
-            req.to_abort = True
+            if hasattr(req, "to_finish"):
+                if req.to_finish is None:
+                    req.to_finish = FINISH_ABORT()
+            else:
+                req.to_abort = True
 
         # abort every running req with no kvcache
         running_reqs = []
         running_reqs.append(self.running_batch.reqs)
         for req in self.running_batch.reqs:
-            req.to_abort = True
+            if hasattr(req, "to_finish"):
+                if req.to_finish is None:
+                    req.to_finish = FINISH_ABORT()
+            else:
+                req.to_abort = True
         res = AbortGenerationOutput(
             waiting_reqs=waiting_reqs, running_reqs=running_reqs
         )

@@ -154,6 +154,13 @@ and decides whether to adjust resources. Typical actions include:
 - When the rollout backlog is small: trigger rollout migration, release part of rollout resources, and expand the actor
 - When rollout or inference finishes: release resources to expand the actor
 
+For SGLang rollout migration, the source instance requests an abort and waits
+for its active generation tasks to return before transferring unfinished
+responses. SGLang processes the abort through its normal output handling, so
+the request can produce more tokens before it stops. The destination uses the
+original prompt plus the returned tokens as input, with a token budget equal
+to the original limit minus the total number of tokens already generated.
+
 Optional Policies
 ^^^^^^^^^^^^^^^^^
 
