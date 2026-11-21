@@ -85,6 +85,8 @@ Start training with the configuration name:
    # PPO
    bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
 
+To reduce logprob memory in Megatron GRPO, run ``bash examples/agent/searchr1/run_train.sh train_qwen2.5_chunked``. See :doc:`../../../guides/actor_logprob_memory` for settings and measurements.
+
 MA-FSDP Training
 ~~~~~~~~~~~~~~~~
 

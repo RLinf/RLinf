@@ -2047,6 +2047,30 @@ def _validate_steam_ensemble_cfg(actor_cfg: DictConfig) -> None:
 
 
 def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
+    chunk_size = cfg.actor.get("logprob_chunk_size", 0)
+    response_only = cfg.actor.get("response_only_logits", False)
+    if type(chunk_size) is not int or chunk_size < 0:
+        raise ValueError("actor.logprob_chunk_size must be a nonnegative integer")
+    if not isinstance(response_only, bool):
+        raise ValueError("actor.response_only_logits must be a boolean")
+    if (chunk_size or response_only) and (
+        cfg.actor.training_backend != "megatron"
+        or not OmegaConf.select(
+            cfg, "agentloop.is_dynamic_rollout_batch", default=False
+        )
+    ):
+        raise ValueError(
+            "Actor logprob chunking and response-only scoring require a dynamic Megatron agent batch"
+        )
+    if response_only and cfg.actor.model.get("context_parallel_size", 1) != 1:
+        raise ValueError("actor.response_only_logits requires context_parallel_size=1")
+    if chunk_size and (
+        cfg.algorithm.get("calculate_entropy", False)
+        or cfg.algorithm.get("entropy_bonus", 0) != 0
+    ):
+        raise ValueError(
+            "actor.logprob_chunk_size requires entropy calculation and entropy bonus to be disabled"
+        )
     assert cfg.algorithm.recompute_logprobs or cfg.rollout.return_logprobs, (
         "One of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
     )
@@ -2627,6 +2651,12 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             cfg.critic = validate_fsdp_cfg(cfg.critic)
 
     if cfg.runner.task_type == "reasoning":
+        if "lm_head_chunk_size" in cfg.actor.model:
+            from rlinf.hybrid_engines.megatron.qwen_vl import (
+                validate_qwen_vl_chunked_cfg,
+            )
+
+            validate_qwen_vl_chunked_cfg(cfg)
         cfg = validate_searchr1_cfg(cfg)
 
     return cfg
