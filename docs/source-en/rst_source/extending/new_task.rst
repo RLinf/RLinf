@@ -1,5 +1,5 @@
-New Real-World Tasks
-====================
+Add a Real-World Task
+=====================
 
 This guide explains how to add a real-world task when RLinf already knows how to
 connect the physical robot. By the end, you will have a config dataclass, a

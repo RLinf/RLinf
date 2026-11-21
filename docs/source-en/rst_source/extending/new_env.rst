@@ -1,5 +1,5 @@
-Adding New Environment 
-============================
+Add a Simulator Environment
+===========================
 
 Add a new reinforcement learning environment to RLinf.
 RLinf supports various reinforcement learning environments, including robotic manipulation (e.g., ManiSkill3, LIBERO) and others.

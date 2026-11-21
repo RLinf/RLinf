@@ -46,6 +46,7 @@ GALLERY_PAGE = re.compile(
     r"docs/source-(en|zh)/rst_source/examples/embodied/(?!_)[^/]+\.rst"
 )
 RECIPE_SECTIONS = {"en": ("Installation", "Run It"), "zh": ("安装", "运行")}
+RECIPE_ALT_SECTIONS = {"en": ("Setup and Run",), "zh": ("一键上手",)}
 GENERIC_SECTIONS = {"Algorithm", "Environment", "算法", "环境"}
 
 #: Severity of an internal code name, by page type; other types are not checked.
@@ -201,13 +202,16 @@ def check_page(
                 )
     if new and GALLERY_PAGE.match(rel):
         titles = {title for _, title in headings(lines)}
-        missing = [s for s in RECIPE_SECTIONS[lang] if s not in titles]
+        has_unified = all(s in titles for s in RECIPE_ALT_SECTIONS[lang])
+        missing = (
+            [] if has_unified else [s for s in RECIPE_SECTIONS[lang] if s not in titles]
+        )
         if missing:
             add(
                 "major",
                 None,
                 "docs/structure",
-                f"a gallery recipe needs the sections {', '.join(missing)}",
+                f"a gallery recipe needs 'Setup and Run' (or {', '.join(missing)})",
             )
         for generic in sorted(titles & GENERIC_SECTIONS):
             add(

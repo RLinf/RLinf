@@ -1,52 +1,61 @@
 Cheat Sheet
 ===========
 
-Use this page when you already know the workflow and need the shortest path to a
-working command.
+Run common RLinf workflows with the shortest commands.
 
 Install
 -------
 
-.. code-block:: bash
+Install locally with ``install.sh`` (append ``--use-mirror`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` in mainland China), or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
+.. tab-set::
 
-Start Ray
----------
+   .. tab-item:: Embodied
 
-Single-node runs can start Ray locally.
+      .. code-block:: bash
 
-.. code-block:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
-   ray start --head
+   .. tab-item:: Agentic / Reasoning
 
-For multi-node runs, set ``RLINF_NODE_RANK`` before ``ray start`` on every node.
-See :doc:`../guides/multi_node`.
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
+
+   .. tab-item:: Docs
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh docs --venv .docs-venv
 
 Run Training
 ------------
 
-Launch an embodied recipe by config name.
+Single-node runs start Ray automatically, and quickstart configs download their default Hugging Face checkpoints on first run:
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
+Pass ``actor.model.model_path=/path/to/checkpoint`` (or another Hugging Face ``owner/repo``) to override the model; rollout inherits it automatically. Quickstart configs default to ``all`` accelerators; change ``cluster.component_placement`` to target specific devices (:doc:`../reference/configuration`). For multi-node runs, set ``RLINF_NODE_RANK`` before running ``ray start`` on each node (:doc:`../guides/multi_node`).
+
 Evaluate
 --------
 
-Use the unified evaluation entry point for embodied benchmarks.
+Run standalone embodied evaluation:
 
 .. code-block:: bash
 
-   bash evaluations/run_eval.sh libero/libero_spatial_openpi_pi05_eval
+   bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
+     rollout.model.model_path=/path/to/checkpoint
 
 Next Steps
 ----------
 
-- :doc:`Installation <installation>` — set up RLinf and optional dependencies.
-- :doc:`Quick Start <vla>` — run the Get Started training recipe.
-- :doc:`Launch & Scale <../guides/launch-scale/index>` — run across nodes.
-- :doc:`Evaluation <../evaluations/index>` — run standalone embodied evaluation.
+- :doc:`Installation <installation>` — targets, flags, and Docker Hub link.
+- :doc:`Quick Start <vla>` — four-step ManiSkill3 walkthrough.
+- :doc:`Launch & Scale <../guides/launch-scale/index>` — multi-node and real-world runs.
+- :doc:`Evaluation <../evaluations/index>` — supported benchmarks and eval configs.

@@ -5,7 +5,6 @@ variables in the active model environment before launching a run:
 
    export MUJOCO_GL=osmesa
    export PYOPENGL_PLATFORM=osmesa
-   export ROBOT_PLATFORM=LIBERO
 
 ``run_embodiment.sh`` preserves these values. The installer includes the
 ``libosmesa6`` system library through ``requirements/sys_deps.sh``.

@@ -18,7 +18,7 @@ settings before launching a run.
      - Run different env configurations, such as ManiSkill and LIBERO, for one policy in one run.
    * - :doc:`Agentic Configuration <../agentic_config>`
      - Config keys specific to agentic and reasoning training.
-   * - :doc:`Logging <../logger>`
+   * - :doc:`Logging & Visualization <../logger>`
      - TensorBoard, wandb, and swanlab logger setup.
 
 .. toctree::
@@ -28,4 +28,4 @@ settings before launching a run.
    Embodied Configuration <../embodiment_config>
    Heterogeneous Envs <../hetero_envs>
    Agentic Configuration <../agentic_config>
-   Logging <../logger>
+   Logging & Visualization <../logger>

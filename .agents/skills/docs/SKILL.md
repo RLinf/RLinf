@@ -57,6 +57,16 @@ Page findings count only on the lines the change adds, because many existing pag
 | `docs/en-style` | minor | a word or phrase that [rules/english.md](rules/english.md) cuts |
 | `docs/zh-style` | minor | 您, 「」, 值得注意的是, 进行, 当……时, 不是/并非……而是……, half-width punctuation in a Chinese sentence, or no space between Chinese and English or digits ([rules/chinese.md](rules/chinese.md)) |
 | `docs/zh-hard-wrap` | minor | Chinese prose wrapped inside a paragraph or list item, which renders as a space |
+| `docs/command-placeholder` | major | an `install.sh` or `hf download` command containing unrunnable `<...>` placeholders on `examples/` or `evaluations/` pages |
+| `docs/command-legacy` | major | `huggingface-cli download`, `pip install huggingface-hub`, `git lfs`, `git clone https://huggingface.co/`, or `CUDA_VISIBLE_DEVICES` |
+| `docs/command-cd` | major | `cd` immediately before `hf download`, or `--local-dir .` / `--local-dir /path/to/...` |
+| `docs/command-tabset` | major | an `install.sh` or `hf download` block on `examples/` or `evaluations/` (outside hardware-backend subsections) not wrapped in `.. tab-set::` |
+| `docs/nested-tabset` | major | nested `.. tab-set::` directives (stacked tab bars); flatten into one single-level `.. tab-set::` |
+| `docs/mirror-comment` | major | commented `--use-mirror`, `HF_ENDPOINT`, `hf-mirror`, or `gh-proxy` lines inside bash blocks |
+| `docs/dir-tree` | major | decorative ASCII directory trees (`├──` / `└──`) outside `.. dropdown::` |
+| `docs/boilerplate-yaml` | major | stale `rollout.model.model_path` alongside `actor.model.model_path`, or repeated `logger_backends:` / `video_base_dir:` YAML blocks |
+| `docs/long-yaml` | minor | a YAML block with ≥ 25 lines outside `.. dropdown::` on `examples/` or `evaluations/` pages |
+| `docs/local-asset` | major | a new image/diagram file added under `docs/**/_static/` instead of hosted in `RLinf/misc` under `pic/` |
 
 Then read every changed page in full, in both languages, as a reader new to RLinf who has not seen its code, and inspect every command block (the script above checks build, markup, and prose, not command quality or workflow design):
 

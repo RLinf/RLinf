@@ -90,25 +90,7 @@ Rollout Worker 部署在不同集群或云区域时。
      - ``list``
      - 共享 ``bandwidth_mbps`` 带宽预算的端点组。
 
-.. code-block:: yaml
-
-   cluster:
-     net_emulation:
-       enabled: true
-       symmetric: true
-       crossdc_pairs:
-         - src: ["Env:0-1"]
-           dst: ["Rollout:0-1", "Actor:0-1"]
-           delay_ms: 50
-       bandwidth_groups:
-         - members: ["Env:0-1"]
-           bandwidth_mbps: 1000
-         - members: ["Rollout:0-1", "Actor:0-1"]
-           bandwidth_mbps: 500
-
-端点名称使用 ``GroupName:Rank`` 格式——``Env:0`` 表示第一个 Env Worker，
-``Rollout:1`` 表示第二个 Rollout Worker。支持闭区间 Rank 范围，例如
-``Env:0-3`` 会展开为 ``Env:0`` 到 ``Env:3``。``Group`` 后缀会自动去除。
+端点名称使用 ``GroupName:Rank`` 格式——``Env:0`` 表示第一个 Env Worker，``Rollout:1`` 表示第二个 Rollout Worker。支持闭区间 Rank 范围，例如 ``Env:0-3`` 会展开为 ``Env:0`` 到 ``Env:3``。``Group`` 后缀会自动去除。
 
 使用要求：
 
@@ -116,39 +98,55 @@ Rollout Worker 部署在不同集群或云区域时。
 - 与 ``delay_sampler`` 独立。可单独启用、组合启用或全部关闭。
 
 
-组合使用
---------
-
-同时启用两个模块以模拟真实部署环境：
-
-.. code-block:: yaml
-
-   env:
-     delay_sampler:
-       type: uniform
-       min_delay: 0.11
-       max_delay: 0.20
-
-   cluster:
-     net_emulation:
-       enabled: true
-       crossdc_pairs:
-         - src: ["Env:0", "Env:1"]
-           dst: ["Rollout:0", "Rollout:1"]
-           delay_ms: 50
-
-
-示例
+运行
 ----
 
-完整示例配置：
+按 :doc:`RoboTwin <robotwin>` 准备好环境与检查点后，启动内置示例配置 ``examples/embodiment/config/realsimulator_robotwin_adjust_bottle_dagger_openpi.yaml``：
 
-.. code-block:: text
+.. code-block:: bash
 
-   examples/embodiment/config/realsimulator_robotwin_adjust_bottle_dagger_openpi.yaml
+   bash examples/embodiment/run_async.sh realsimulator_robotwin_adjust_bottle_dagger_openpi
+
+.. dropdown:: 进阶配置（可选）
+
+   包含 ``crossdc_pairs`` 与 ``bandwidth_groups`` 的完整 ``net_emulation`` 配置示例：
+
+   .. code-block:: yaml
+
+      cluster:
+        net_emulation:
+          enabled: true
+          symmetric: true
+          crossdc_pairs:
+            - src: ["Env:0-1"]
+              dst: ["Rollout:0-1", "Actor:0-1"]
+              delay_ms: 50
+          bandwidth_groups:
+            - members: ["Env:0-1"]
+              bandwidth_mbps: 1000
+            - members: ["Rollout:0-1", "Actor:0-1"]
+              bandwidth_mbps: 500
+
+   同时启用 ``delay_sampler`` 与 ``net_emulation`` 模拟真实部署环境：
+
+   .. code-block:: yaml
+
+      env:
+        delay_sampler:
+          type: uniform
+          min_delay: 0.11
+          max_delay: 0.20
+
+      cluster:
+        net_emulation:
+          enabled: true
+          crossdc_pairs:
+            - src: ["Env:0", "Env:1"]
+              dst: ["Rollout:0", "Rollout:1"]
+              delay_ms: 50
 
 
 参考：
-  
-  - :doc:`RoboTwin <robotwin>` — RoboTwin 环境设置与配置。
-  - :doc:`DAgger <dagger>` — 基于专家策略的 DAgger 训练。
+
+- :doc:`RoboTwin <robotwin>` — RoboTwin 环境设置与配置。
+- :doc:`DAgger <dagger>` — 基于专家策略的 DAgger 训练。

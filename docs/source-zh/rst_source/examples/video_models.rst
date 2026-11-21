@@ -56,21 +56,25 @@ Prompt、生成结果与奖励
 安装
 ----
 
-先满足 :doc:`RLinf 安装的前置条件 </rst_source/start/installation>`，再在 GPU 训练机器的仓库根目录执行：
+先满足 :doc:`RLinf 安装的前置条件 </rst_source/start/installation>`\ （中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``）：
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model diffusion
-   source .venv/bin/activate
+   .. tab-item:: CPU OCR（SD3 / ART）
 
-安装器创建 Python 3.10 环境，安装 Diffusers、PEFT、Transformers、PaddleOCR 和 CPU PaddlePaddle。两个 ART 配置及 SD3 NFT 配置使用 CPU OCR。需要其他环境目录时，传入 ``--venv /path/to/venv``，并激活对应环境。
+      .. code-block:: bash
 
-Wan NFT 配置设置了 ``env.*.reward.use_gpu: True``。使用 GPU OCR 时，通过 ``--paddle-gpu`` 安装 GPU PaddlePaddle（CUDA 11.x 或 12.x），然后激活环境：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
 
-.. code:: bash
+   .. tab-item:: GPU OCR（Wan NFT）
 
-   bash requirements/install.sh embodied --model diffusion --paddle-gpu
-   source .venv/bin/activate
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion --paddle-gpu && source .venv/bin/activate
+
+安装器会创建 Python 3.10 环境，并安装 Diffusers、PEFT、Transformers 与 PaddleOCR（``--paddle-gpu`` 支持 CUDA 11.x / 12.x，供 Wan NFT 配置使用）。需要其他目录时可追加 ``--venv /path/to/venv``。
 
 .. note::
 
@@ -81,17 +85,23 @@ Wan NFT 配置设置了 ``env.*.reward.use_gpu: True``。使用 GPU OCR 时，�
 下载模型
 --------
 
-下载所选配置对应的 checkpoint。SD3.5 Medium 需要先在 Hugging Face 接受模型访问条款。
+下载所选配置对应的 checkpoint（使用 SD3.5 Medium 前需先在 Hugging Face 接受访问条款）：
 
-.. code:: bash
+.. tab-set::
 
-   huggingface-cli download stabilityai/stable-diffusion-3.5-medium \
-      --local-dir /path/to/stable-diffusion-3.5-medium
+   .. tab-item:: SD3.5 Medium
 
-   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B-Diffusers \
-      --local-dir /path/to/Wan2.2-TI2V-5B-Diffusers
+      .. code-block:: bash
 
-命令将 Diffusers checkpoint 保存到本地。在所选训练 YAML 中，将 ``actor.model.model_path`` 设为对应目录。
+         hf download stabilityai/stable-diffusion-3.5-medium --local-dir ./stable-diffusion-3.5-medium
+
+   .. tab-item:: Wan2.2 TI2V 5B
+
+      .. code-block:: bash
+
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --local-dir ./Wan2.2-TI2V-5B-Diffusers
+
+在所选训练 YAML 中，将 ``actor.model.model_path`` 设为下载目录。
 
 .. _diffusion-ocr-dataset:
 

@@ -45,14 +45,13 @@ After that, we introduce the upper-layer APIs used to implement different stages
    :hidden:
    :maxdepth: 1
 
-   worker
-   placement
-   cluster
-   channel
-
-   actor
-   rollout
-   env
-   data
-   embodied_data
-   replay_buffer
+   Worker <worker>
+   Placement <placement>
+   Cluster <cluster>
+   Channel <channel>
+   Actor <actor>
+   Rollout <rollout>
+   Environment <env>
+   Data <data>
+   Embodied Data <embodied_data>
+   Replay Buffer <replay_buffer>

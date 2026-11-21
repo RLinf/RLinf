@@ -15,42 +15,32 @@
 
       设置 Hydra 配置、日志与不同工作负载的专用选项。
 
-   .. grid-item-card:: 启动与扩展
-      :link: launch-scale/index
-      :link-type: doc
-
-      在多节点、异构硬件、云边协同或真实机器人上运行。
-
    .. grid-item-card:: 数据与 Checkpoint
       :link: data-checkpoints/index
       :link-type: doc
 
       采集数据、转换 checkpoint，并恢复训练。
 
-   .. grid-item-card:: 性能
+   .. grid-item-card:: 启动与扩展
+      :link: launch-scale/index
+      :link-type: doc
+
+      在多节点、异构硬件、云边协同或真实机器人上运行。
+
+   .. grid-item-card:: 性能与并行
       :link: performance/index
       :link-type: doc
 
-      调整 placement、调度、并行、profiling 与 adapter 训练。
-
-   .. grid-item-card:: 智能体工作流
-      :link: agent-workflows/index
-      :link-type: doc
-
-      运行智能体与推理工作负载。
+      调整 placement、调度、并行、profiling、FUSCO 与 adapter 训练。
 
    .. grid-item-card:: Rollout 引擎
       :link: rollout-engines/index
       :link-type: doc
 
-      启动 SGLang server 与 router，或使用 PhyAI 作为进程内的具身 rollout 后端。
+      启动 SGLang server 与 router，或使用 PhyAI / ApxInf 具身 rollout 后端。
 
-.. toctree::
-   :hidden:
+   .. grid-item-card:: 智能体与推理
+      :link: ../examples/agentic/index
+      :link-type: doc
 
-   配置 <configure/index>
-   启动与扩展 <launch-scale/index>
-   数据与 Checkpoint <data-checkpoints/index>
-   性能 <performance/index>
-   智能体工作流 <agent-workflows/index>
-   Rollout 引擎 <rollout-engines/index>
+      浏览数学推理、搜索、编程与多智能体端到端工作流。

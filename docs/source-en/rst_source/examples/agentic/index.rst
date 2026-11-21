@@ -63,15 +63,6 @@ The following examples include math reasoning RL and agentic AI workflows, such 
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/waiting_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[Ongoing]SWE-agent</b><br>
-         Unified deployment, inference, and training with high flexibility and performance
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="math_reasoning/index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/math_numbers_small.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -99,10 +90,10 @@ The following examples include math reasoning RL and agentic AI workflows, such 
    :hidden:
    :maxdepth: 2
 
+   Math Reasoning <math_reasoning/index>
+   Search-R1 <searchr1/index>
    WideSeek-R1 <wideseek_r1/index>
+   rStar2 <rstar2>
    AgentLightning <agentlightning_calc_x>
    Coding Online RL <coding_online_rl>
-   Search-R1 <searchr1/index>
-   rStar2 <rstar2>
-   Math Reasoning <math_reasoning/index>
-   Qwen3 VL GRPO <qwen3_vl_geo3k>
+   Qwen3-VL GRPO <qwen3_vl_geo3k>

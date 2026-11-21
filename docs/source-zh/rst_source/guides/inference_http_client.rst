@@ -1,5 +1,5 @@
-使用 ``InferenceHTTPClient`` 调用 SGLang
-=========================================
+使用 InferenceHTTPClient 调用 SGLang
+====================================
 
 :class:`rlinf.utils.http_client.InferenceHTTPClient` 是对 ``requests`` 与
 ``aiohttp`` 的轻薄封装，面向单个 sglang **router 或 server** 的 base URL。

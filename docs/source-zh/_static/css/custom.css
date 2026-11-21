@@ -356,11 +356,29 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
   padding-top: 0.34rem;
 }
 
-/* Top-level sections: a touch larger + bold for hierarchy, but far smaller
-   than the theme default (.toctree-l1 > a is 1.3em out of the box). */
-.bd-sidebar-primary .bd-sidenav .toctree-l1 > a {
-  font-size: 0.98rem;
+/* LeRobot-style flat uppercase section captions in the left sidebar. */
+.bd-sidebar-primary .bd-docs-nav p.caption {
+  border-top: 1px solid var(--pst-color-border);
+  color: var(--pst-color-text-muted);
+  font-size: 0.75rem;
   font-weight: 700;
+  letter-spacing: 0.05em;
+  margin: 0.9rem 0.25rem 0.2rem;
+  padding: 0.65rem 0.35rem 0.15rem;
+  text-transform: uppercase;
+}
+
+.bd-sidebar-primary .bd-docs-nav p.caption:first-of-type {
+  border-top: none;
+  margin-top: 0.15rem;
+  padding-top: 0.15rem;
+}
+
+/* Direct entries under each caption stay clean and scannable (not oversized
+   like the theme default .toctree-l1 > a at 1.3em). */
+.bd-sidebar-primary .bd-sidenav .toctree-l1 > a {
+  font-size: 0.88rem;
+  font-weight: 500;
 }
 
 /* Clean rounded-pill hover + active state (LeRobot style), replacing the
@@ -577,4 +595,159 @@ div.highlight button.copybtn {
 
 .bd-article table.geniesim-results-table td:not(:first-child) {
   white-space: nowrap;
+}
+
+/* --- Modern segmented-pill tab-sets & clean dropdowns ------------------- */
+:root {
+  --rlinf-tab-bg: #f1f5f9;
+  --rlinf-tab-hover-bg: #e2e8f0;
+  --rlinf-tab-active-bg: #ffffff;
+  --rlinf-tab-active-fg: var(--pst-color-primary, #1d4ed8);
+  --rlinf-tab-active-border: rgba(37, 99, 235, 0.28);
+  --rlinf-tab-active-shadow: 0 1px 3px rgba(15, 23, 42, 0.08),
+    0 1px 2px rgba(15, 23, 42, 0.05);
+  --rlinf-tab-panel-bg: #ffffff;
+  --rlinf-tab-panel-border: #e2e8f0;
+  --rlinf-tab-panel-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
+}
+
+html[data-theme="dark"] {
+  --rlinf-tab-bg: rgba(148, 163, 184, 0.1);
+  --rlinf-tab-hover-bg: rgba(148, 163, 184, 0.18);
+  --rlinf-tab-active-bg: rgba(59, 130, 246, 0.18);
+  --rlinf-tab-active-fg: #93c5fd;
+  --rlinf-tab-active-border: rgba(96, 165, 250, 0.45);
+  --rlinf-tab-active-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  --rlinf-tab-panel-bg: rgba(30, 41, 59, 0.45);
+  --rlinf-tab-panel-border: rgba(148, 163, 184, 0.22);
+  --rlinf-tab-panel-shadow: 0 2px 12px rgba(0, 0, 0, 0.24);
+}
+
+.bd-content .bd-article .sd-tab-set {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 1rem 0 1.4rem;
+}
+
+.bd-content .bd-article .sd-tab-set > label.sd-tab-label {
+  background: var(--rlinf-tab-bg) !important;
+  border: 1px solid transparent !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  color: var(--pst-color-text-muted) !important;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.35 !important;
+  margin: 0 !important;
+  margin-inline-end: 0 !important;
+  padding: 0.42rem 0.9rem !important;
+  text-decoration: none !important;
+  transform: none !important;
+  transition: background-color 150ms ease, color 150ms ease,
+    border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.bd-content .bd-article .sd-tab-set > input:not(:checked) + label.sd-tab-label:hover {
+  background: var(--rlinf-tab-hover-bg) !important;
+  border-color: transparent !important;
+  color: var(--pst-color-text-base) !important;
+  text-decoration: none !important;
+  transform: none !important;
+}
+
+.bd-content .bd-article .sd-tab-set > input:checked + label.sd-tab-label {
+  background: var(--rlinf-tab-active-bg) !important;
+  border: 1px solid var(--rlinf-tab-active-border) !important;
+  border-radius: 8px !important;
+  box-shadow: var(--rlinf-tab-active-shadow) !important;
+  color: var(--rlinf-tab-active-fg) !important;
+  font-weight: 600;
+  text-decoration: none !important;
+  transform: none !important;
+}
+
+.bd-content .bd-article .sd-tab-set > input:focus-visible + label.sd-tab-label {
+  outline: 2px solid var(--pst-color-primary, #2563eb);
+  outline-offset: 2px;
+  border-radius: 8px !important;
+  transform: none !important;
+}
+
+.bd-content .bd-article .sd-tab-set > .sd-tab-content {
+  background: var(--rlinf-tab-panel-bg) !important;
+  border: 1px solid var(--rlinf-tab-panel-border) !important;
+  border-radius: 12px !important;
+  box-shadow: var(--rlinf-tab-panel-shadow) !important;
+  margin-top: 0.35rem;
+  padding: 1.15rem 1.25rem !important;
+}
+
+.bd-content .bd-article .sd-tab-set > .sd-tab-content .highlight pre {
+  border-radius: 8px;
+}
+
+/* Lighter visual treatment if any nested tab-set ever appears. */
+.bd-content .bd-article .sd-tab-content .sd-tab-set {
+  margin: 0.75rem 0 1rem;
+}
+
+.bd-content .bd-article .sd-tab-content .sd-tab-set > label.sd-tab-label {
+  font-size: 0.8125rem;
+  padding: 0.3rem 0.7rem !important;
+}
+
+.bd-content .bd-article .sd-tab-content .sd-tab-set > .sd-tab-content {
+  background: transparent !important;
+  border-style: dashed !important;
+  box-shadow: none !important;
+  padding: 0.85rem 1rem !important;
+}
+
+/* Clean, low-noise dropdowns matching the tab-set cards. */
+.bd-article details.sd-dropdown {
+  background: var(--rlinf-tab-panel-bg) !important;
+  border: 1px solid var(--rlinf-tab-panel-border) !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  margin: 0.9rem 0 !important;
+  overflow: hidden;
+}
+
+.bd-article details.sd-dropdown:hover {
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.bd-article details.sd-dropdown > summary.sd-summary-title {
+  background: var(--rlinf-tab-bg) !important;
+  color: var(--pst-color-text-base) !important;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.65rem 1rem !important;
+  transition: background-color 150ms ease;
+}
+
+.bd-article details.sd-dropdown > summary.sd-summary-title:hover {
+  background: var(--rlinf-tab-hover-bg) !important;
+}
+
+.bd-article details.sd-dropdown > .sd-summary-content {
+  border-top: 1px solid var(--rlinf-tab-panel-border);
+  padding: 0.95rem 1.15rem !important;
+}
+
+/* Transparent canvas + dark-mode adaptation for RLinf architecture/flow SVGs
+   (overrides pydata-sphinx-theme's default white image backdrop in dark mode). */
+.bd-article img[src^="https://raw.githubusercontent.com/RLinf/misc/"][src$=".svg"] {
+  background-color: transparent !important;
+}
+
+html[data-theme="dark"]
+  .bd-article
+  img[src^="https://raw.githubusercontent.com/RLinf/misc/"][src$=".svg"] {
+  background-color: transparent !important;
+  filter: invert(0.92) hue-rotate(180deg) saturate(1.15);
 }

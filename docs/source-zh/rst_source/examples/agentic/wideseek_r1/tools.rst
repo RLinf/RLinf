@@ -43,28 +43,18 @@
 安装
 ----
 
-基础环境请参考 RLinf 的 :doc:`安装指南 <../../../start/installation>`。
+基础环境请参考 RLinf 的 :doc:`安装指南 <../../../start/installation>`。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。
 
-我们推荐使用预构建的 Docker 镜像：
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: WideSeek-R1
 
-   docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17
+      .. code-block:: bash
 
-如果你更倾向于本地环境，请安装 agentic 依赖栈：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-.. code-block:: bash
-
-   bash requirements/install.sh agentic
-
-.. note::
-   上面的镜像安装的是 FA2，不包含 ``flash-attn-4``，因此也能在早于 ``sm90`` 的 GPU（如 ``A100``）上运行。在 Hopper 及更新的 GPU 上，可以使用同一 tag 加 ``-fa4`` 后缀的镜像，其中安装 FA4 而不安装 FA2，RLinf 会相应改用 FA4 计算注意力：
-
-   .. code-block:: bash
-
-      docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17-fa4
-
-   使用 ``bash requirements/install.sh agentic`` 本地安装时，安装脚本会检测 GPU 并自动做出这一选择。
+``bash requirements/install.sh agentic`` 会根据 GPU 架构自动选择注意力实现（A100 等旧架构使用 FA2，Hopper 及更新架构使用 FA4）。如需预构建容器镜像（含 ``-fa4`` 标签），请访问 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。
 
 启动脚本和配置文件位于 ``examples/agent/wideseek_r1``。
 
@@ -97,7 +87,7 @@ WideSeek-R1 提供两种搜索后端：
 在线模式
 ~~~~~~~~
 
-在线模式使用 `Serper <https://serper.dev>`__ 进行网页搜索，并使用 `Jina AI <https://jina.ai>`__ 进行网页访问。
+在线模式使用 `Serper <https://serper.dev>`__ 搜索网页，并使用 `Jina AI <https://jina.ai>`__ 访问网页。
 
 API 密钥
 ^^^^^^^^
@@ -141,16 +131,16 @@ API 密钥
 下载语料库与检索器
 ^^^^^^^^^^^^^^^^^^
 
-准备以下资源：
+下载 `Wiki-2018-Corpus <https://huggingface.co/datasets/RLinf/Wiki-2018-Corpus>`__\ （包含 ``wiki_corpus.jsonl``、``wiki_webpages.jsonl`` 和 ``qdrant/``）与 `intfloat/e5-base-v2 <https://huggingface.co/intfloat/e5-base-v2>`__：
 
-- `Wiki-2018-Corpus <https://huggingface.co/datasets/RLinf/Wiki-2018-Corpus>`__
-- `intfloat/e5-base-v2 <https://huggingface.co/intfloat/e5-base-v2>`__
+.. tab-set::
 
-语料包包含：
+   .. tab-item:: 离线语料库与检索器
 
-- ``wiki_corpus.jsonl``，用于检索片段。
-- ``wiki_webpages.jsonl``，用于网页内容查找。
-- ``qdrant/``，其中包含 Qdrant collection 文件。
+      .. code-block:: bash
+
+         hf download --repo-type dataset RLinf/Wiki-2018-Corpus --local-dir ./Wiki-2018-Corpus
+         hf download intfloat/e5-base-v2 --local-dir ./e5-base-v2
 
 启动检索服务
 ^^^^^^^^^^^^
@@ -172,11 +162,11 @@ API 密钥
 
 3. 编辑 `examples/agent/tools/search_local_server_qdrant/launch_local_server.sh` 并更新以下变量：
 
-   - ``WIKI2018_DIR``： ``/PATH/TO/Wiki-2018-Corpus``
-   - ``retriever_path``： ``/PATH/TO/e5-model``
+   - ``WIKI2018_DIR``：``/PATH/TO/Wiki-2018-Corpus``
+   - ``retriever_path``：``/PATH/TO/e5-model``
    - ``qdrant_url``：例如 ``http://<host_ip>:6333``
-   - ``qdrant_collection_name``：设置为 ``wiki_collection_m32_cef512``.
-   - ``qdrant_search_param``：设置为 ``{"hnsw_ef":256}``.
+   - ``qdrant_collection_name``：设置为 ``wiki_collection_m32_cef512``。
+   - ``qdrant_search_param``：设置为 ``{"hnsw_ef":256}``。
 
 4. 启动检索服务：
 
@@ -326,4 +316,4 @@ API 密钥
 多节点
 ------
 
-多智能体生成的时间开销较大，使用单机 8 卡进行训练和评测会显著降低实验效率，因此 WideSeek-R1 支持多节点训练与评测。详细内容请参阅 :doc:`../../../guides/multi_node`。
+多智能体生成的时间开销较大，使用单机 8 卡训练和评测会显著降低实验效率，因此 WideSeek-R1 支持多节点训练与评测。详细内容请参阅 :doc:`../../../guides/multi_node`。

@@ -1,5 +1,5 @@
-GRPO training for Math Reasoning
-=================================
+Qwen2.5 Math GRPO
+=================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -10,8 +10,6 @@ Train a Qwen-based reasoning model with GRPO on math data. Compared with supervi
 
 Overview
 --------
-
-Use this recipe to train Qwen-based reasoning models with GRPO on math data.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -65,12 +63,12 @@ To support different dataset formats, you can adjust the configuration as needed
 
 - **Prompt key and answer key configurations**
 
-  The default configuration expects the dataset to have the `prompt` and `solutions` keys for retrieving the prompt and answer like in the Boba dataset.
+  The default configuration expects the dataset to have the ``prompt`` and ``solutions`` keys for retrieving the prompt and answer like in the Boba dataset.
 
   However, different datasets may have different key names or structures. You can customize the configuration to match your dataset's format.
-  Change the `prompt_key` and `answer_key` in the configuration yaml file to point to the correct fields in your dataset.
+  Change ``prompt_key`` and ``answer_key`` in the configuration YAML file to point to the correct fields in your dataset.
 
-  For example, if your dataset uses `prompt` and `label` as keys, you would set:
+  For example, if your dataset uses ``prompt`` and ``label`` as keys, set:
 
   .. code-block:: yaml
 
@@ -79,14 +77,13 @@ To support different dataset formats, you can adjust the configuration as needed
 
 - **apply_chat_template configuration**
 
-  Some datasets may require the use of a chat template for the prompt.
-  If so, you will need to enable the `apply_chat_template` option in the configuration.
+  Some datasets require a chat template for the prompt. Enable ``apply_chat_template`` in the configuration:
 
   .. code-block:: yaml
 
       apply_chat_template: true
 
-  For example, if your dataset has a specific structure for chat messages, you need to enable this option to properly format the prompt. Such as:
+  For example, if your dataset stores chat messages as a list:
 
   .. code-block:: json
 
@@ -95,8 +92,7 @@ To support different dataset formats, you can adjust the configuration as needed
           "label": "<str>",
       }
 
-  When the option is enabled, the raw dataset is processed through `tokenizer.apply_chat_template()` to format the prompt according to the model's chat template.
-  After processing, the prompt will be converted into a string for input.
+  When enabled, RLinf formats each prompt with ``tokenizer.apply_chat_template()`` into an input string.
 
 How GRPO Works
 --------------
@@ -113,49 +109,71 @@ Reward function:
 - +5 if the final boxed/numeric answer is correct;
 - -5 if incorrect.
 
-Run It
-------
+Setup and Run
+-------------
 
-**1. Key Parameters Configuration**
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. For common path, cluster, and runner fields, see :doc:`Training configuration <../../../reference/configuration>`.
 
-Before launching, check the configuration file. For common cluster, runner, rollout, and data fields, see :doc:`Training configuration <../../../reference/configuration>`.
+.. tab-set::
 
-**2. Configuration File**
+   .. tab-item:: DeepSeek-R1-Distill-Qwen-1.5B
 
-Recommended configurations can be found in:
+      **1. Install**
 
-- ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``
-- ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``
+      .. code-block:: bash
 
-**3. Launch Command**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-Run the following commands to start the Ray cluster and begin training:
+      **2. Download**
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   cd /path_to_RLinf/ray_utils;
-   rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
-   export TOKENIZERS_PARALLELISM=false
-   bash start_ray.sh;
-   if [ "$RANK" -eq 0 ]; then
-       bash check_ray.sh 128; # set to number of accelerators/GPUs in the cluster
-       cd /path_to_RLinf;
-       bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron # change config file
-   else
-     if [ "$RANK" -eq 1 ]; then
-         sleep 3m
-     fi
-     sleep 10d
-   fi
+         hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --local-dir ./DeepSeek-R1-Distill-Qwen-1.5B
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
 
-   sleep 10d
+      **3. Launch**
+
+      Update ``runner.output_dir``, ``rollout.model.model_path``, and ``data.train_data_paths`` in ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``, then launch training:
+
+      .. code-block:: bash
+
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron
+
+      For multi-node training, set ``cluster.num_nodes`` in the YAML, start the Ray cluster following :doc:`/rst_source/guides/multi_node`, and run the command above on the head node.
+
+   .. tab-item:: DeepSeek-R1-Distill-Qwen-7B
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-7B --local-dir ./DeepSeek-R1-Distill-Qwen-7B
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
+
+      **3. Launch**
+
+      Update ``runner.output_dir``, ``rollout.model.model_path``, and ``data.train_data_paths`` in ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``, then launch training:
+
+      .. code-block:: bash
+
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-7b-grpo-megatron
+
+      For multi-node training, set ``cluster.num_nodes`` in the YAML, start the Ray cluster following :doc:`/rst_source/guides/multi_node`, and run the command above on the head node.
 
 Visualization and Results
 -------------------------
 
-We trained both 1.5B and 7B models based on DeepSeek-R1-Distill-Qwen.
+We trained 1.5B and 7B models from DeepSeek-R1-Distill-Qwen.
 
-After launch, monitor training with:
+Monitor training with TensorBoard:
 
 .. code-block:: bash
 
@@ -182,7 +200,7 @@ Final Performance
 
 We provide an evaluation `toolkit <https://github.com/RLinf/LLMEvalKit>`_.
 
-Measured performance on AIME24, AIME25, and GPQA-diamond shows RLinf achieves SOTA performance.
+Evaluation results on AIME 24, AIME 25, and GPQA-diamond:
 
 .. list-table:: **1.5 B model results**
    :header-rows: 1

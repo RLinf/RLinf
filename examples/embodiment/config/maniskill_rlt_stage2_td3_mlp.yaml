@@ -229,7 +229,6 @@ rollout:
 
   model:
     model_type: ${actor.model.model_type}
-    model_path: ""
     precision: ${actor.model.precision}
     policy_setup: ${actor.model.policy_setup}
     action_dim: ${actor.model.action_dim}

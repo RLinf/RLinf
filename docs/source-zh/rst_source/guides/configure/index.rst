@@ -1,7 +1,7 @@
 配置
 ====
 
-当你需要在启动前修改 YAML、日志或工作负载专用设置时，使用这些指南。
+启动前需要修改 YAML、日志或工作负载专用设置时，使用这些指南。
 
 .. list-table::
    :header-rows: 1
@@ -17,7 +17,7 @@
      - 在一次运行中让同一个 policy 使用不同的环境配置，例如 ManiSkill 和 LIBERO。
    * - :doc:`智能体配置 <../agentic_config>`
      - 智能体和推理训练专用配置项。
-   * - :doc:`日志 <../logger>`
+   * - :doc:`日志与可视化 <../logger>`
      - TensorBoard、wandb 和 swanlab 日志设置。
 
 .. toctree::
@@ -27,4 +27,4 @@
    具身智能配置 <../embodiment_config>
    异构环境 <../hetero_envs>
    智能体配置 <../agentic_config>
-   日志 <../logger>
+   日志与可视化 <../logger>

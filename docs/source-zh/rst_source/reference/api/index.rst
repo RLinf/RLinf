@@ -1,8 +1,7 @@
-API手册
-==========
+API 手册
+========
 
-带你了解 RLinf 中最核心的 API 接口及其用法。  
-这些关键 API 是暴露给用户的，用来简化 RL 中复杂的数据流，让用户只需关注高层抽象，而无需关心底层的具体实现。
+带你了解 RLinf 中最核心的 API 接口及其用法。这些关键 API 是暴露给用户的，用来简化 RL 中复杂的数据流，让用户只需关注高层抽象，而无需关心底层的具体实现。
 
 本 API 文档采用自底向上的方式展开，首先介绍 RLinf 的基础 API，包括：
 
@@ -44,14 +43,13 @@ API手册
    :hidden:
    :maxdepth: 1
 
-   worker
-   placement
-   cluster
-   channel
-
-   actor
-   rollout
-   env
-   data
-   embodied_data
-   replay_buffer
+   Worker <worker>
+   Placement <placement>
+   Cluster <cluster>
+   Channel <channel>
+   Actor <actor>
+   Rollout <rollout>
+   Environment <env>
+   Data <data>
+   Embodied Data <embodied_data>
+   Replay Buffer <replay_buffer>

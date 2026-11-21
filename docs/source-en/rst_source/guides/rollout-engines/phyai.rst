@@ -55,7 +55,6 @@ Download the PI0.5 LIBERO SFT checkpoint:
 
 .. code-block:: bash
 
-   # For mainland China users: export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir RLinf-Pi05-LIBERO-SFT
 
 Then set ``actor.model.model_path`` in

@@ -5,6 +5,10 @@ This guide explains how to start a Ray cluster across **multiple machines** and 
 RLinf training on top of it. It applies to all Ray-based RLinf workloads, including
 embodied RL, reasoning, and agents.
 
+.. note::
+
+   Single-node runs (``cluster.num_nodes: 1``) auto-start Ray and do not require manual ``ray start`` or ``RLINF_NODE_RANK``.
+
 
 Prerequisites
 -------------
@@ -68,7 +72,7 @@ workers; call it ``<head_ip>``.
    ray start --address='<head_ip>:6379'
 
 ``--node-ip-address`` must be the address other nodes use to reach the head (private IP,
-VPC IP, or overlay IP; see cloud platform notes below). Port ``6379`` can be changed if
+VPC IP, or overlay IP; see :doc:`cloud_edge`). Port ``6379`` can be changed if
 unused; head and workers must use the same port.
 
 Option B: Repository script (shared filesystem)
@@ -194,7 +198,7 @@ FAQ
 Check that ``<head_ip>`` is pingable/telnet-able from workers, security groups/iptables allow
 port ``6379``, and the head did not bind ``--node-ip-address`` to ``127.0.0.1``.
 
-**``ray status`` shows fewer nodes than ``cluster.num_nodes``**
+**ray status shows fewer nodes than cluster.num_nodes**
 
 Wait for workers to finish joining; confirm ``ray start`` succeeded on each node and you
 are not mixing multiple independent Ray clusters.

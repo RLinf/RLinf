@@ -1,5 +1,5 @@
-PPO training for Math Reasoning
-==================================
+Qwen2.5 Math PPO
+================
 
 Use this recipe when you want actor-critic PPO for the same math-reasoning task covered by :doc:`reasoning`. PPO and GRPO share most launch and data settings, so this page only lists the PPO-specific differences.
 
@@ -32,28 +32,43 @@ used by the GRPO example.
 
       Multi-GPU Megatron training
 
-Dataset
--------
-
-We also use the boba dataset. For details, see :doc:`reasoning`.
-
 How PPO Works
 -------------
 
 Use standard PPO (Proximal Policy Optimization) with GAE advantages and a critic. For the algorithm reference, see :doc:`PPO <../../../reference/algorithms/ppo>`.
 
-Run It
-------
+Setup and Run
+-------------
 
-**1. Config file**
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. For common path, cluster, and runner fields, see :doc:`Training configuration <../../../reference/configuration>`.
 
-For common path, cluster, and runner fields, see :doc:`Training configuration <../../../reference/configuration>`. Recommended config example:
+.. tab-set::
 
-- ``examples/reasoning/config/math/qwen2.5-1.5b-ppo-megatron.yaml``
+   .. tab-item:: Qwen2.5-1.5B-Instruct (Megatron PPO)
 
-**2. Launch command**
+      **1. Install**
 
-The launch command for PPO training is basically the same as for GRPO training. We also use ``run_main_grpo_math.sh`` as the entry script. RLinf automatically determines whether to use PPO training based on whether there are critic-related configurations in the YAML config file and the value of ``adv_type`` (PPO typically uses ``gae`` as the advantage function).
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+
+      **2. Download**
+
+      Download the base model and the boba dataset (see :doc:`reasoning` for dataset format details):
+
+      .. code-block:: bash
+
+         hf download Qwen/Qwen2.5-1.5B-Instruct --local-dir ./Qwen2.5-1.5B-Instruct
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
+
+      **3. Launch**
+
+      Update paths in ``examples/reasoning/config/math/qwen2.5-1.5b-ppo-megatron.yaml``. PPO training uses the same entry script (``run_main_grpo_math.sh``) as GRPO training; RLinf selects PPO automatically from the critic configuration and ``adv_type`` (typically ``gae``):
+
+      .. code-block:: bash
+
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-ppo-megatron
 
 
 Visualization and Results

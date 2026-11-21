@@ -1,5 +1,5 @@
-GRPO training for Moonlight-16B
-================================
+Moonlight-16B Math GRPO
+=======================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -50,14 +50,6 @@ The actor uses Megatron-Bridge (``megatron-bridge``) to convert HuggingFace
 weights into Megatron-Core sharded checkpoints; the rollout uses SGLang (DeepSeek-V2
 backend, ``model_type: deepseek_v3``) with expert parallelism (``ep_size == tp_size``).
 
-Dataset
--------
-
-Same as the general :doc:`math reasoning <reasoning>` recipe: `AReaL-boba-Data
-<https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`_, with ``prompt`` /
-``solutions`` keys. See that page for prompt-key / answer-key / ``apply_chat_template``
-customization if your dataset uses a different format.
-
 How GRPO Works
 ---------------
 
@@ -69,50 +61,46 @@ We adopt GRPO (Group Relative Policy Optimization) with the following modificati
   that minibatch is discarded to stabilize training.
 - **Reward**: +5 if the final boxed/numeric answer is correct; -5 if incorrect.
 
-Dependency Installation
------------------------
+Setup and Run
+-------------
 
-**Prerequisites**: NVIDIA driver ≥580 and CUDA 13.3 toolkit (``nvcc``) must be installed.
+**Prerequisites**: NVIDIA driver ≥580 and CUDA 13.3 toolkit (``nvcc``) must be installed. In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
 
-.. code-block:: bash
+.. tab-set::
 
-   cd /path/to/RLinf
-   MEGATRON_PATH=/path/to/Megatron-LM-core0.18 \
-   bash requirements/install.sh agentic \
-     --sglang 0.5.12 --torch 2.11.0 --transformers 5.6.0 \
-     --no-apex --platform nvidia --use-mirror \
-     --venv /opt/venv/reason_0512_v3
+   .. tab-item:: Moonlight-16B-A3B-Instruct (Megatron · 8×A100)
 
-This creates a Python 3.12 venv and installs the agentic stack — sglang 0.5.12 + torch 2.11+cu130 +
-TransformerEngine 2.17 + transformers 5.6 + the ``megatron-bridge`` 0.5.0 wheel + flash-attn —
-and reuses the Megatron-Core 0.18 clone via ``MEGATRON_PATH``.
+      **1. Install**
 
-Run It
-------
+      Creates a Python 3.12 venv with sglang 0.5.12, torch 2.11+cu130, TransformerEngine 2.17, transformers 5.6, ``megatron-bridge`` 0.5.0, and flash-attn, reusing the Megatron-Core 0.18 clone via ``MEGATRON_PATH``:
 
-**1. Configuration file**
+      .. code-block:: bash
 
-``examples/reasoning/config/math/moonlight-16b-grpo-megatron.yaml``
-(``model_type: deepseek_v3``, TP=8, EP=8, ``multi_latent_attention: True``,
-precision-aware optimizer, ``reward_type: math``).
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         MEGATRON_PATH=/path/to/Megatron-LM-core0.18 \
+         bash requirements/install.sh agentic \
+           --sglang 0.5.12 --torch 2.11.0 --transformers 5.6.0 \
+           --no-apex --platform nvidia \
+           --venv /opt/venv/reason_0512_v3 && source /opt/venv/reason_0512_v3/bin/activate
 
-**2. Launch**
+      **2. Download**
 
-.. code-block:: bash
+      Download the model and `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`_ (see :doc:`math reasoning <reasoning>` for ``prompt_key`` / ``answer_key`` / ``apply_chat_template`` customization):
 
-   cd /path/to/RLinf/ray_utils
-   rm -f ray_head_ip.txt
-   export TOKENIZERS_PARALLELISM=false
-   bash start_ray.sh
-   if [ "$RANK" -eq 0 ]; then
-       bash check_ray.sh 8          # number of GPUs in the cluster
-       cd /path/to/RLinf
-       bash examples/reasoning/run_main_grpo_math.sh moonlight-16b-grpo-megatron
-   else
-       if [ "$RANK" -eq 1 ]; then sleep 3m; fi
-       sleep 10d
-   fi
-   sleep 10d
+      .. code-block:: bash
+
+         hf download moonshotai/Moonlight-16B-A3B-Instruct --local-dir ./Moonlight-16B-A3B-Instruct
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
+
+      **3. Launch**
+
+      Update the model and data paths in ``examples/reasoning/config/math/moonlight-16b-grpo-megatron.yaml`` (``model_type: deepseek_v3``, TP=8, EP=8, ``multi_latent_attention: True``, precision-aware optimizer, ``reward_type: math``), then launch training:
+
+      .. code-block:: bash
+
+         bash examples/reasoning/run_main_grpo_math.sh moonlight-16b-grpo-megatron
+
+      For multi-node scaling, follow :doc:`/rst_source/guides/multi_node` and run the command above on the head node.
 
 Visualization and Results
 -------------------------

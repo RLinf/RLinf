@@ -1,7 +1,7 @@
 智能体场景
 ========================================
 
-RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的支持使RLinf天然支持智能体工作流的构建，以及智能体的训练。以下示例包含数学推理强化学习与智能体 AI 工作流，例如智能体工作流构建、在线强化学习训练、环境接入，以及 **以推理为中心的智能体强化学习** 等场景。
+RLinf 的 worker 抽象、灵活的通信组件以及对不同类型加速器的支持，使 RLinf 天然支持智能体工作流的构建与智能体训练。以下示例包含数学推理强化学习与智能体 AI 工作流，例如智能体工作流构建、在线强化学习训练、环境接入，以及 **以推理为中心的智能体强化学习** 等场景。
 
 .. raw:: html
 
@@ -35,7 +35,7 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
         <a href="coding_online_rl.html" style="text-decoration: underline; color: blue;">
           <b>代码补全在线强化学习开源版</b>
          </a><br>
-         基于RLinf+continue实现端到端在线强化学习，模型效果提升52%
+         基于 RLinf + Continue 实现端到端在线强化学习，模型效果提升 52%
        </p>
      </div>
 
@@ -44,9 +44,9 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
         <a href="searchr1/index.html" style="text-decoration: underline; color: blue;">
-          <b>Search-R1强化学习</b>
+          <b>Search-R1 强化学习</b>
          </a><br>
-         训练LLM调用搜索工具回答问题，RLinf加速训练过程55%
+         训练 LLM 调用搜索工具回答问题，RLinf 加速训练过程 55%
        </p>
      </div>
 
@@ -55,18 +55,9 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
         <a href="rstar2.html" style="text-decoration: underline; color: blue;">
-          <b>rStar2-agent强化学习</b>
+          <b>rStar2 智能体强化学习</b>
          </a><br>
-         通过强化学习让模型学会使用Python工具进行自主推理和反思,以极低计算成本达到数学推理领域的顶尖水平
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/waiting_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[适配中]SWE-agent</b><br>
-         部署、推理、训练一体，高灵活性、高性能
+         通过强化学习让模型学会使用 Python 工具自主推理和反思，以极低计算成本达到数学推理领域的顶尖水平
        </p>
      </div>
 
@@ -98,10 +89,10 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
    :hidden:
    :maxdepth: 2
 
+   数学推理 <math_reasoning/index>
+   Search-R1 <searchr1/index>
    WideSeek-R1 <wideseek_r1/index>
+   rStar2 <rstar2>
    AgentLightning <agentlightning_calc_x>
    Coding Online RL <coding_online_rl>
-   Search-R1 <searchr1/index>
-   rStar2 <rstar2>
-   数学推理 <math_reasoning/index>
-   Qwen3 VL GRPO <qwen3_vl_geo3k>
+   Qwen3-VL GRPO <qwen3_vl_geo3k>

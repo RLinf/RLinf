@@ -1,5 +1,5 @@
-理解 Trajectory Collector
-=========================
+Trajectory Collector
+====================
 
 阅读本页，理解具身 rollout 数据如何从一个 action chunk 变成 Actor 训练 batch。
 算法开发者应关注算法生产和消费的字段；Collector 负责 routing、配对和完成状态。

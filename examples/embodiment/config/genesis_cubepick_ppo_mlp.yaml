@@ -108,7 +108,6 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: ""
     precision: ${actor.model.precision}
 
   enable_torch_compile: True

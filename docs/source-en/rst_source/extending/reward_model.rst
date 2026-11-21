@@ -1,5 +1,5 @@
-Reward Model Guide
-==================
+Build a Reward Model
+====================
 
 Use reward models in RLinf — both image-classification rewards such as
 ``ResNetRewardModel`` and VLM rewards based on ``VLMRewardModel``.
@@ -67,8 +67,8 @@ used later by the VLM pipeline, such as ``main_images`` and ``extra_view_images`
 
 Raw ``pickle`` files cannot be consumed by reward model training directly. Use
 ``examples/reward/preprocess_reward_dataset.py`` to convert collected ``.pkl`` episodes into
-``.pt`` files that can be loaded by ``RewardBinaryDataset``. In the current implementation,
-the script extracts ``main_images`` from observations and builds binary labels from per-step
+``.pt`` files that can be loaded by ``RewardBinaryDataset``. The script extracts
+``main_images`` from observations and builds binary labels from per-step
 ``info["success"]``.
 
 Example:
@@ -191,9 +191,9 @@ Before training, edit ``examples/reward/config/reward_training.yaml`` so it poin
 
 .. note::
 
-   At present, ``run_reward_training.sh`` mainly prepares the launch command and log directory.
-   The dataset paths are taken from ``reward_training.yaml``, specifically
-   ``data.train_data_paths`` and ``data.val_data_paths``.
+   ``run_reward_training.sh`` prepares the launch command and log directory;
+   dataset paths come from ``data.train_data_paths`` and ``data.val_data_paths``
+   in ``reward_training.yaml``.
 
 2.2.2 Configure the ResNet Model
 ....................................
@@ -215,7 +215,7 @@ If you want to train from scratch, keep ``model_path: null``.
 2.2.3 Launch ResNet Training
 ................................
 
-Once the dataset and model are configured, run:
+Launch ResNet reward model training:
 
 .. code-block:: bash
 
@@ -279,15 +279,22 @@ shaping from the same VLM. Keep the four stages in order:
 
 Configure the pipeline paths in YAML before running the stages:
 
-- In ``examples/reward/vlm_trend/config/pipeline.yaml``, set
-  ``paths.raw_data_root``, ``paths.pipeline_root``, ``paths.model_path``, and,
-  after Potential SFT, ``paths.potential_checkpoint``. The teacher, feature,
-  and scalar-head paths reuse those values through YAML references.
-  Also replace ``auxiliary.teacher.raw_data_paths`` with the actual collected
-  checkpoint directories for your run.
-- In ``examples/sft/config/vlm_trend_success_sft.yaml`` and
-  ``vlm_trend_potential_sft.yaml``, set ``paths.pipeline_root`` and
-  ``paths.model_path``. Their data and output paths are derived in YAML.
+.. list-table::
+   :header-rows: 1
+   :widths: 34 32 34
+
+   * - Config
+     - Fields to set
+     - Notes
+   * - ``examples/reward/vlm_trend/config/pipeline.yaml``
+     - ``paths.raw_data_root``, ``paths.pipeline_root``, ``paths.model_path``, ``paths.potential_checkpoint`` (after Potential SFT), ``auxiliary.teacher.raw_data_paths``
+     - Teacher, feature, and scalar-head paths reuse these via YAML references; replace ``raw_data_paths`` with your collected checkpoint directories.
+   * - ``examples/sft/config/vlm_trend_success_sft.yaml``
+     - ``paths.pipeline_root``, ``paths.model_path``
+     - Data and output paths are derived in YAML.
+   * - ``examples/sft/config/vlm_trend_potential_sft.yaml``
+     - ``paths.pipeline_root``, ``paths.model_path``
+     - Data and output paths are derived in YAML.
 
 Train the teacher from the checkpoint directories listed under
 ``auxiliary.teacher.raw_data_paths`` in ``pipeline.yaml``:
@@ -312,7 +319,7 @@ checkpoint directory; the abbreviated example below shows the argument shape:
      --value-checkpoint /path/to/vlm_trend_success_potential/teacher/best.pt \
      --output-dir /path/to/vlm_trend_success_potential/potential_data
 
-What this does: terminal-success keeps online-matched ``0``/``1`` windows without
+Terminal-success preprocessing keeps online-matched ``0``/``1`` windows without
 balanced sampling. Both branches stop at the first successful transition, matching
 the online environment termination boundary. Potential preprocessing uses the
 teacher to emit absolute potential digits and ``up``/``same``/``down`` progress
@@ -352,16 +359,30 @@ Use the existing ``eval/eval_accuracy`` to select the Success adapter and
 3. Reward Model Inference in RL
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-RLinf provides several example configs for integrating a reward model into RL:
+Example configs for integrating a reward model into RL (keeping the policy on state observations and the reward model on image or VLM observations):
 
-- ``examples/embodiment/config/maniskill_ppo_mlp_resnet_reward.yaml``
-- ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
-- ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward.yaml`` (VLM Trend reward, local Hugging Face)
-- ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml`` (VLM Trend reward, SGLang API)
-- ``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml`` (Success + Potential VLM reward, local Hugging Face)
+.. list-table::
+   :header-rows: 1
+   :widths: 34 14 52
 
-These configs show how to enable a reward worker in RL training while keeping the policy on state observations
-and the reward model on image or VLM observations.
+   * - Reward model / Backend
+     - Algorithm
+     - Config
+   * - ResNet (local)
+     - PPO
+     - ``examples/embodiment/config/maniskill_ppo_mlp_resnet_reward.yaml``
+   * - ResNet (local)
+     - Async SAC
+     - ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
+   * - VLM Trend (local Hugging Face)
+     - PPO
+     - ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward.yaml``
+   * - VLM Trend (SGLang API)
+     - PPO
+     - ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``
+   * - Success + Potential VLM (local Hugging Face)
+     - PPO
+     - ``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml``
 
 3.1 Key Config Fields
 """""""""""""""""""""
@@ -389,7 +410,7 @@ Where:
 - ``reward_threshold`` applies only to ``model_type: resnet``: sigmoid probabilities below the threshold are set to ``0``.
   For ``buffered_vlm`` / VLM Trend reward, scalar rewards come from ``reward_parser_params``.
   For ``shaped_vlm``, they come from potential differences and the one-shot success bonus.
-  The top-level ``reward_threshold`` is not read by either VLM path today.
+  The top-level ``reward_threshold`` is not read by either VLM path.
 - ``model_path`` points to the reward model checkpoint used for online inference.
   For ``model_type: resnet``, it is the weights file itself, such as
   ``checkpoints/best_model/actor/model_state_dict/full_weights.pt`` from section 2.2.3.
@@ -431,7 +452,7 @@ then merges it with the original environment reward inside ``compute_bootstrap_r
 
 If bootstrap is enabled by the algorithm config, RLinf may also add bootstrap values to the last step reward.
 
-From a system perspective, the reward model does not replace the original bootstrap reward. Instead, it serves as
+From a system perspective, the reward model does not replace the original bootstrap reward. Instead, it is
 an additional reward source inside the env worker and participates in final reward construction.
 
 3.4 Deploy VLM Trend Reward for MLP RL
@@ -563,9 +584,9 @@ Launch:
      runner.ckpt_path="${POLICY_CHECKPOINT}"
 
 For Success + Potential, use the warmup checkpoint selected above and the three
-reward artifacts. This recipe is based on the existing VLM Trend recipe, uses
+reward artifacts. This recipe extends the VLM Trend recipe, uses
 1,024 environments, evaluates every 5 PPO steps, disables environment reward,
-and runs 160 steps by default:
+and runs 160 steps by default.
 
 Set the five artifact fields under ``vlm_trend_paths`` in
 ``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml``.
@@ -711,7 +732,7 @@ Franka robot. Two data collection approaches are supported:
 a **general-purpose keyboard-labeling** approach and a **fixed-pose** approach that
 uses a predetermined target pose to drive episode success/failure.
 
-Before getting started, it is strongly recommended to read the following documents:
+Before getting started, read the following documents:
 
 1. :doc:`../examples/embodied/franka` — to familiarize yourself with the end-to-end real-world Franka training pipeline.
 2. :doc:`reward_model` — to understand the canonical reward model workflow in RLinf (data collection via ``pickle``, offline preprocessing, training, RL inference).
@@ -815,16 +836,14 @@ inheriting environment parameters from ``env/realworld_bin_relocation.yaml``:
   ``intervene_action`` in step info overrides the zero dummy action).
 - ``env.eval.override_cfg.target_ee_pose`` — the target end-effector pose for the task.
 
-**Launching:**
+**Launching**
+
+Start collection (optionally pass a custom config name as the first argument):
 
 .. code-block:: bash
 
    bash examples/reward/realworld_collect_process_dataset.sh
-
-Or with an explicit config name:
-
-.. code-block:: bash
-
+   # or with an explicit config name:
    bash examples/reward/realworld_collect_process_dataset.sh realworld_collect_dataset
 
 A progress bar prints live to the terminal:
@@ -888,7 +907,7 @@ Step 2: Preprocessing into a Reward Dataset
 ...........................................
 
 The collected ``.pkl`` episodes are converted into ``train.pt`` / ``val.pt`` using
-``preprocess_reward_dataset.py``. It is recommended to increase ``fail-success-ratio`` to ``3``:
+``preprocess_reward_dataset.py``. Increase ``fail-success-ratio`` to ``3``:
 
 .. code-block:: bash
 
@@ -1104,16 +1123,12 @@ Key fields for the reward model in teleop mode:
 Launching
 ^^^^^^^^^
 
-Set environment variables and run:
+Set environment variables and launch teleoperation (optionally pass a custom config name):
 
 .. code-block:: bash
 
    bash examples/reward/run_realworld_teleop.sh
-
-Or with an explicit config:
-
-.. code-block:: bash
-
+   # or with an explicit config name:
    bash examples/reward/run_realworld_teleop.sh realworld_teleop
 
 The terminal prints per-step output:

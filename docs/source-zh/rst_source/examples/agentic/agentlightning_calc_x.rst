@@ -1,8 +1,7 @@
-AgentLightning 的强化学习训练（calc_x）
-============================================
+AgentLightning 强化学习
+=======================
 
-``calc_x`` 是 RLinf 中的 AgentLightning 示例，用于训练一个会做数学题的 agent。
-agent 会读取题目，生成推理过程与答案，并根据反馈做强化学习更新。
+``calc_x`` 是 RLinf 中的 AgentLightning 示例，用于训练一个会做数学题的 agent。agent 会读取题目，生成推理过程与答案，并根据反馈做强化学习更新。
 
 概述
 ----------------------------------------
@@ -32,71 +31,77 @@ agent 会读取题目，生成推理过程与答案，并根据反馈做强化�
 
       一个节点，至少一张 40 GB GPU
 
-安装
+一键上手
 ----------------------------------------
 
-AgentLightning 0.3.0 需要使用 RLinf 约束的 OpenTelemetry 版本，因为 OpenTelemetry 1.45 修改了将 rollout span 路由到 Lightning Store 的 exporter 实现。创建基础环境后，请先安装兼容的 OpenTelemetry 依赖，再安装本示例的其他依赖：
+AgentLightning 0.3.0 需要使用 RLinf 约束的 OpenTelemetry 版本，因为 OpenTelemetry 1.45 修改了将 rollout span 路由到 Lightning Store 的 exporter 实现。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__，其他安装选项和支持的平台请参考 :doc:`RLinf Installation </rst_source/start/installation>`。
 
-.. code-block:: bash
+.. tab-set::
 
-   cd /path/to/RLinf
-   bash requirements/install.sh agentic
-   source .venv/bin/activate
-   uv pip install -r requirements/agentic/agentlightning_constraints.txt
-   uv pip install "agentlightning==0.3.0" "litellm<1.95" \
-     "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" \
-     "mcp-server-calculator" "openai==2.32.0"
+   .. tab-item:: Qwen2.5-1.5B-Instruct
 
-其他安装选项和支持的平台请参考 :doc:`RLinf Installation </rst_source/start/installation>`。
+      **1. 安装环境**
 
-数据准备
-----------------------------------------
+      .. code-block:: bash
 
-下载并解压 ``calc_x`` 数据集（Google Drive），下载链接见 `这里 <https://drive.google.com/file/d/1FQMyKLLd6hP9dw9rfZn1EZOWNvKaDsqw/view>`_。
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+         uv pip install -r requirements/agentic/agentlightning_constraints.txt
+         uv pip install "agentlightning==0.3.0" "litellm<1.95" \
+           "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" \
+           "mcp-server-calculator" "openai==2.32.0"
 
-运行
-----------------------------------------
+      **2. 下载模型与数据**
 
-进入示例目录：
+      下载基础模型，并从 `Google Drive <https://drive.google.com/file/d/1FQMyKLLd6hP9dw9rfZn1EZOWNvKaDsqw/view>`_ 下载解压 ``calc_x`` 数据集：
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   cd /path/to/RLinf/examples/agent/agentlightning/calc_x
+         hf download Qwen/Qwen2.5-1.5B-Instruct --local-dir ./Qwen2.5-1.5B-Instruct
 
-先选择要运行的配置文件，并在同一个配置文件中设置模型与数据集路径。下面的训练命令使用
-``config/qwen2.5-1.5b-enginehttp-multiturn.yaml``：
+      **3. 启动训练**
 
-.. code-block:: yaml
+      在 ``examples/agent/agentlightning/calc_x/config/`` 中选择配置文件，并填写 ``rollout.model.model_path``、``data.train_data_paths`` 和 ``data.val_data_paths``：
 
-   rollout:
-     model:
-       model_path: /path/to/model/Qwen2.5-1.5B-Instruct
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 44 30
 
-   data:
-     train_data_paths: ["/path/to/train.parquet"]
-     val_data_paths: ["/path/to/test.parquet"]
+         * - 模式
+           - 配置文件
+           - 优势估计
+         * - 多轮
+           - ``qwen2.5-1.5b-enginehttp-multiturn.yaml``
+           - 轮次级
+         * - 轨迹级
+           - ``qwen2.5-1.5b-enginehttp-trajectory.yaml``
+           - 轨迹级
 
-启动训练：
+      .. code-block:: yaml
 
-.. code-block:: bash
+         rollout:
+           model:
+             model_path: /path/to/model/Qwen2.5-1.5B-Instruct
 
-   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn
+         data:
+           train_data_paths: ["/path/to/train.parquet"]
+           val_data_paths: ["/path/to/test.parquet"]
 
-也可以不修改配置文件，直接通过命令行传入 Hydra overrides：
+      在仓库根目录启动训练（或通过命令行 Hydra overrides 覆盖路径）：
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn \
-     rollout.model.model_path=/path/to/Qwen2.5-1.5B-Instruct \
-     data.train_data_paths='["/path/to/train.parquet"]' \
-     data.val_data_paths='["/path/to/test.parquet"]'
+         # 多轮模式
+         bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn
 
-如果需要使用 trajectory-level advantages 训练，则使用对应的 trajectory 配置，并在其中设置
-相同路径或通过 overrides 传入：
+         # 轨迹级模式
+         bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory
 
-.. code-block:: bash
-
-   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory
+         # 或不修改配置文件，直接命令行覆盖路径
+         bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn \
+           rollout.model.model_path=/path/to/Qwen2.5-1.5B-Instruct \
+           data.train_data_paths='["/path/to/train.parquet"]' \
+           data.val_data_paths='["/path/to/test.parquet"]'
 
 可视化与结果
 ----------------------------------------
@@ -117,5 +122,5 @@ HF 评测时在对应的 ``*_eval.yaml`` 里设置 ``rollout.model.model_path``�
 
 .. code-block:: bash
 
-   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn_eval
-   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory_eval
+   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn_eval
+   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory_eval

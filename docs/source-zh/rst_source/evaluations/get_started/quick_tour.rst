@@ -1,56 +1,61 @@
-快速体验
-========
+评测快速上手
+============
 
-本教程以 **LIBERO Spatial + OpenPI π₀.₅** 为例，在约 5 分钟内完成第一次具身评测。示例配置为 ``evaluations/libero/libero_spatial_openpi_pi05_eval.yaml``。
+以 **LIBERO Spatial + OpenPI π₀.₅** 为例（``evaluations/libero/libero_spatial_openpi_pi05_eval.yaml``），约 5 分钟完成第一次具身评测。
 
-Step 1：安装环境
-----------------
+一键上手
+--------
 
-在仓库根目录执行：
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``\ （或前往 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像）。
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env libero
-   source .venv/bin/activate
+   .. tab-item:: LIBERO Spatial（OpenPI π₀.₅）
 
-Step 2：准备模型
-----------------
+      **1. 安装环境**
 
-从 Hugging Face 下载 SFT 模型（``RLinf/RLinf-Pi05-LIBERO-SFT``）到本地：
+      .. code-block:: bash
 
-.. code-block:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
 
-   huggingface-cli download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
+      **2. 下载预训练模型**\ （`RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__）
 
-模型地址：`RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__。也可在启动时通过命令行覆盖 ``rollout.model.model_path``。
+      .. code-block:: bash
 
-Step 3：启动评测
-----------------
+         hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
-.. code-block:: bash
+      **3. 启动评测**
 
-   bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
-     rollout.model.model_path=./RLinf-Pi05-LIBERO-SFT
+      .. code-block:: bash
 
-若配置名以 ``libero_`` 开头，可省略 benchmark 参数：
+         bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
+           rollout.model.model_path=$PWD/RLinf-Pi05-LIBERO-SFT
 
-.. code-block:: bash
+结果与下一步
+------------
 
-   bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
-     rollout.model.model_path=./RLinf-Pi05-LIBERO-SFT
+- 终端会输出 ``eval/success_once``、``eval/return`` 等评测指标。
+- 日志保存在 ``logs/<时间戳>-libero_spatial_openpi_pi05_eval/eval_embodiment.log``。
+- 设置 ``env.eval.video_cfg.save_video=True`` 可在 ``<log_path>/video/eval/`` 保存评测视频，详见 :doc:`../reference/results`。
 
-Step 4：查看结果
-----------------
+.. grid:: 1 3 3 3
+   :gutter: 2
 
-- 终端会输出 ``eval/success_once``、``eval/return`` 等指标
-- 日志目录：``logs/<时间戳>-libero_spatial_openpi_pi05_eval/eval_embodiment.log``
-- 若配置中 ``env.eval.video_cfg.save_video: True``，视频保存在 ``<log_path>/video/eval/``
+   .. grid-item-card:: YAML 配置参考
+      :link: ../reference/configuration
+      :link-type: doc
 
-更多细节见 :doc:`../reference/results`。
+      了解评测配置的字段结构与覆盖方式。
 
-下一步
-------
+   .. grid-item-card:: Benchmark 评测指南
+      :link: ../guides/libero
+      :link-type: doc
 
-- 了解 YAML 配置：:doc:`../reference/configuration`
-- 探索其他 benchmark：:doc:`../guides/libero`
-- 查看更多 CLI 选项：:doc:`../reference/cli`
+      探索 LIBERO、ManiSkill OOD、RoboTwin、BEHAVIOR-1K 等基准。
+
+   .. grid-item-card:: CLI 选项参考
+      :link: ../reference/cli
+      :link-type: doc
+
+      查看 ``run_eval.sh`` 全部命令行参数与用法。

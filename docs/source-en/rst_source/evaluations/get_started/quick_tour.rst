@@ -1,56 +1,61 @@
-Quick Tour
-==========
+Evaluation Quick Tour
+=====================
 
-This tutorial walks through your first embodied evaluation in about 5 minutes using **LIBERO Spatial + OpenPI π₀.₅**. The example config is ``evaluations/libero/libero_spatial_openpi_pi05_eval.yaml``.
+Run your first embodied evaluation in about 5 minutes using **OpenPI π₀.₅ on LIBERO Spatial** (``evaluations/libero/libero_spatial_openpi_pi05_eval.yaml``).
 
-Step 1: Install the Environment
--------------------------------
+Setup and Run
+-------------
 
-From the repository root:
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download`` (or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__).
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env libero
-   source .venv/bin/activate
+   .. tab-item:: OpenPI π₀.₅ on LIBERO Spatial
 
-Step 2: Prepare the Model
--------------------------
+      **1. Install**
 
-Download the SFT checkpoint from Hugging Face (``RLinf/RLinf-Pi05-LIBERO-SFT``) to a local directory:
+      .. code-block:: bash
 
-.. code-block:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
 
-   huggingface-cli download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
+      **2. Download Checkpoint** (`RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__)
 
-Model hub: `RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__. You can also override ``rollout.model.model_path`` on the command line at launch time.
+      .. code-block:: bash
 
-Step 3: Launch Evaluation
--------------------------
+         hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
-.. code-block:: bash
+      **3. Launch Evaluation**
 
-   bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
-     rollout.model.model_path=./RLinf-Pi05-LIBERO-SFT
+      .. code-block:: bash
 
-When the config name starts with ``libero_``, you can omit the benchmark argument:
+         bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
+           rollout.model.model_path=$PWD/RLinf-Pi05-LIBERO-SFT
 
-.. code-block:: bash
+Results and Next Steps
+----------------------
 
-   bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
-     rollout.model.model_path=./RLinf-Pi05-LIBERO-SFT
+- The terminal prints metrics such as ``eval/success_once`` and ``eval/return``.
+- Logs are saved to ``logs/<timestamp>-libero_spatial_openpi_pi05_eval/eval_embodiment.log``.
+- Set ``env.eval.video_cfg.save_video=True`` to record rollout videos under ``<log_path>/video/eval/`` (see :doc:`../reference/results`).
 
-Step 4: Check Results
----------------------
+.. grid:: 1 3 3 3
+   :gutter: 2
 
-- The terminal prints metrics such as ``eval/success_once`` and ``eval/return``
-- Log directory: ``logs/<timestamp>-libero_spatial_openpi_pi05_eval/eval_embodiment.log``
-- When ``env.eval.video_cfg.save_video: True``, videos are saved under ``<log_path>/video/eval/``
+   .. grid-item-card:: YAML Configuration
+      :link: ../reference/configuration
+      :link-type: doc
 
-See :doc:`../reference/results` for more details.
+      Review Hydra evaluation config fields and overrides.
 
-Next Steps
-----------
+   .. grid-item-card:: Benchmark Guides
+      :link: ../guides/libero
+      :link-type: doc
 
-- YAML configuration: :doc:`../reference/configuration`
-- Other benchmarks: :doc:`../guides/libero`
-- More CLI options: :doc:`../reference/cli`
+      Run LIBERO, ManiSkill OOD, RoboTwin, BEHAVIOR-1K, and more.
+
+   .. grid-item-card:: CLI Options
+      :link: ../reference/cli
+      :link-type: doc
+
+      Explore ``run_eval.sh`` flags and override syntax.

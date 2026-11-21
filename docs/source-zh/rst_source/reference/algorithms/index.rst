@@ -1,7 +1,7 @@
 算法
 ====
 
-当你需要查看支持的 RL 算法目标、适用范围与实现说明时，使用这些参考页。
+需要查看支持的 RL 算法目标、适用范围与实现说明时，使用这些参考页。
 
 .. list-table::
    :header-rows: 1
@@ -11,11 +11,13 @@
      - 简介
    * - :doc:`PPO <ppo>`
      - Proximal Policy Optimization。
+   * - :doc:`Async PPO <async_ppo>`
+     - 异步流水线化的 PPO。
    * - :doc:`GRPO <grpo>`
      - Group Relative Policy Optimization。
    * - :doc:`DAPO <dapo>`
      - 解耦裁剪与动态采样的策略优化。
-   * - :doc:`Reinforce++ <reinforce>`
+   * - :doc:`REINFORCE++ <reinforce>`
      - 增强版 REINFORCE 基线。
    * - :doc:`SAC <sac>`
      - Soft Actor-Critic。
@@ -25,18 +27,16 @@
      - 利用先验数据的强化学习。
    * - :doc:`IQL <iql>`
      - 面向离线 RL 的 Implicit Q-Learning。
-   * - :doc:`Async PPO <async_ppo>`
-     - 异步流水线化的 PPO。
 
 .. toctree::
    :hidden:
 
    PPO <ppo>
+   Async PPO <async_ppo>
    GRPO <grpo>
    DAPO <dapo>
-   Reinforce++ <reinforce>
+   REINFORCE++ <reinforce>
    SAC <sac>
    CrossQ <crossq>
    RLPD <rlpd>
    IQL <iql>
-   Async PPO <async_ppo>

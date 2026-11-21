@@ -3,6 +3,10 @@
 
 本页说明如何将 **多台 Franka 真机** 与 **GPU 训练节点** 接入同一 Ray 集群，完成 YAML 配置并启动真机强化学习训练。
 
+.. note::
+
+   单机部署会自动启动 Ray，无需设置 ``RLINF_NODE_RANK`` 或手动执行 ``ray start``；仅在连接多台节点时按本指南操作。
+
 更完整的硬件安装、依赖、数据采集与任务说明，请参阅：
 
 - :doc:`../examples/embodied/franka` — RealSense + Franka 夹爪的标准真机流程
@@ -16,7 +20,7 @@ Ray 集群的基础启动步骤（``RLINF_NODE_RANK``、``ray start``、代码�
 典型拓扑
 --------
 
-真机训练一般采用 **「1 个 GPU 训练节点 + N 个机器人控制节点」** 的异构布局：
+真机训练一般采用 **“1 个 GPU 训练节点 + N 个机器人控制节点”** 的异构布局：
 
 .. list-table::
    :header-rows: 1
@@ -47,22 +51,14 @@ Ray 集群的基础启动步骤（``RLINF_NODE_RANK``、``ray start``、代码�
 步骤 1：在各节点准备环境
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-在 **每个节点**、执行 ``ray start`` **之前**：
-
-.. code-block:: bash
-
-   # 建议在各节点 source 仓库脚本并按本机修改
-   source ray_utils/realworld/setup_before_ray.sh
-
-   export RLINF_NODE_RANK=<0..N-1>          # 集群内唯一；GPU 节点通常为 0
-   # 多网卡时指定对外可达的网卡，例如：
-   # export RLINF_COMM_NET_DEVICES=eth0
-
-若 ``setup_before_ray.sh`` 未激活 Franka 环境，控制节点还需手动激活：
+在 **每个节点** 执行 ``ray start`` 之前，激活虚拟环境并导出节点编号（也可以编辑并执行 ``source ray_utils/realworld/setup_before_ray.sh`` 一次性完成设置与激活）：
 
 .. code-block:: bash
 
    source .venv/bin/activate
+   export RLINF_NODE_RANK=<0..N-1>          # 集群内唯一；GPU 节点通常为 0
+   # 多网卡时指定对外可达的网卡，例如：
+   # export RLINF_COMM_NET_DEVICES=eth0
 
 步骤 2：启动 Ray
 ~~~~~~~~~~~~~~~~
@@ -272,8 +268,7 @@ YAML 配置
 启动真机训练
 ------------
 
-完成 Ray 集群搭建、YAML 修改与（若使用 RLPD）demo 数据准备后，在 **head 节点（通常为 rank 0 的 GPU 机器）** 进入 RLinf 仓库目录执行。
-若 GPU 节点与机器人控制节点 **未共享同一 RLinf 代码目录**，可在运行下方训练命令 **之前** 于同一终端执行 ``export RLINF_CODE_WORKING_DIR=auto`` 开启代码同步（详见 :doc:`multi_node` 中「步骤 3：开启代码同步」）。
+完成 Ray 集群搭建、YAML 修改与（若使用 RLPD）demo 数据准备后，在 **head 节点（通常为 rank 0 的 GPU 机器）** 进入 RLinf 仓库目录执行。若 GPU 节点与机器人控制节点 **未共享同一 RLinf 代码目录**，可在运行下方训练命令 **之前** 于同一终端执行 ``export RLINF_CODE_WORKING_DIR=auto`` 开启代码同步（详见 :doc:`multi_node` 中“步骤 3：开启代码同步”）。
 
 **标准单臂训练（插块插入，RLPD + 异步 SAC）：**
 

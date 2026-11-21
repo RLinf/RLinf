@@ -1,5 +1,5 @@
-使用 Megatron+SGLang 添加新模型
-=============================================
+接入 Megatron 模型
+==================
 
 使用 Megatron+SGLang 后端为 RLinf 添加新的 HuggingFace 模型，本指南完整介绍所需步骤。  
 

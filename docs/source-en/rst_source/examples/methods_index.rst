@@ -1,5 +1,5 @@
-RL
-==
+RL Algorithm Recipes
+====================
 
 This category groups examples in which the **training algorithm or recipe** is the headline — independent of any single benchmark or model. They cover offline RL, imitation learning, hybrid sim-real co-training, and residual / noise-space policy steering.
 
@@ -14,7 +14,7 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/sac_flow.html" style="text-decoration: underline; color: blue;">
-           <b>SAC-Flow Policy Training</b>
+           <b>SAC-Flow: Flow Matching Policy with SAC</b>
          </a><br>
          Train a Flow Matching policy with SAC (Sim &amp; Real)
        </p>
@@ -28,6 +28,39 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
            <b>DSRL for Pi0</b>
          </a><br>
          Steer a frozen Pi0 diffusion policy with lightweight SAC in noise space
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/rlt.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/RLT.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/rlt.html" style="text-decoration: underline; color: blue;">
+           <b>RL Token</b>
+         </a><br>
+         Bootstrap online RL with VLA prefix features and a compact actor-critic
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/co_training.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/co_training.html" style="text-decoration: underline; color: blue;">
+           <b>Sim-Real Co-Training</b>
+         </a><br>
+         PPO in sim + SFT on real data for better sim-to-real transfer
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/opd.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/opd.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/opd.html" style="text-decoration: underline; color: blue;">
+           <b>OPD for OpenVLA-OFT</b>
+         </a><br>
+         Distill on LIBERO with teacher logprobs over student on-policy action tokens
        </p>
      </div>
 
@@ -54,57 +87,22 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/co_training.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/co_training.html" style="text-decoration: underline; color: blue;">
-           <b>Sim-Real Co-Training</b>
-         </a><br>
-         PPO in sim + SFT on real data for better sim-to-real transfer
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/iql_d4rl.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/iql_d4rl.html" style="text-decoration: underline; color: blue;">
-           <b>Offline RL with D4RL Benchmark</b>
+           <b>IQL: Offline RL on D4RL</b>
          </a><br>
          Support IQL offline training for D4RL scenarios
        </p>
      </div>
-
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/opd.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/opd.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/opd.html" style="text-decoration: underline; color: blue;">
-           <b>OPD for OpenVLA-OFT</b>
-         </a><br>
-         Distill on LIBERO with teacher logprobs over student on-policy action tokens
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/rlt.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/RLT.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/rlt.html" style="text-decoration: underline; color: blue;">
-           <b>RL Token</b>
-         </a><br>
-         Bootstrap online RL with VLA prefix features and a compact actor-critic
-       </p>
-     </div>
-
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/refl.html" style="display: block;"><img src="https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/figures/ImageReward.jpg"
             style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/refl.html" style="text-decoration: underline; color: blue;">
-           <b>ReFL</b>
+           <b>ReFL: Fine-Tune SD3 with ImageReward</b>
          </a><br>
          Fine-tune SD3 with ImageReward and optional supervised image-text updates
        </p>
@@ -118,10 +116,10 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
 
    SAC-Flow <embodied/sac_flow>
    DSRL <embodied/dsrl>
+   RL Token <embodied/rlt>
+   Co-Training <embodied/co_training>
+   OPD <embodied/opd>
    RECAP <embodied/recap>
    STEAM <embodied/steam>
-   Co-Training <embodied/co_training>
    IQL (D4RL) <embodied/iql_d4rl>
-   OPD <embodied/opd>
-   RL Token <embodied/rlt>
    ReFL <embodied/refl>

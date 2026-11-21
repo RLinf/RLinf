@@ -1,169 +1,125 @@
-Quick Start
-===========
+VLA Quick Start
+===============
 
-This quick-start walks you through training the Visual-Language-Action model, including
-`OpenVLA <https://github.com/openvla/openvla>`_ and `OpenVLA-OFT <https://github.com/moojink/openvla-oft>`_ on the
-`ManiSkill3 <https://github.com/haosulab/ManiSkill>`_ environment with **RLinf**.
+Train **OpenVLA** or **OpenVLA-OFT** on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ with PPO in four steps.
 
-Environment Introduction
---------------------------
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-ManiSkill3 is a GPU-accelerated simulation platform for robotics research,  
-focusing on complex contact manipulation and embodied intelligence tasks.  
-The benchmark covers multiple domains, including robotic arms, mobile manipulators, humanoid robots, and dexterous hands,  
-supporting various tasks such as grasping, assembling, drawing, and locomotion.
+   .. grid-item-card:: 1. Install
+      :text-align: center
 
-We have also implemented system-level optimizations for the GPU simulator (see :doc:`../concepts/execution_modes`).
+      ``install.sh`` or Docker Hub
 
-Launch Training
---------------------------
+   .. grid-item-card:: 2. Download
+      :text-align: center
 
-**Step 1: Download pre-trained models**
+      Checkpoint + ManiSkill assets
 
-If using the **OpenVLA** model, run the following command:
+   .. grid-item-card:: 3. Train
+      :text-align: center
 
-.. code-block:: bash
+      One launch command
 
-   # Download OpenVLA pre-trained model
-   hf download gen-robot/openvla-7b-rlvla-warmup \
-   --local-dir /path/to/model/openvla-7b-rlvla-warmup/
+   .. grid-item-card:: 4. Watch Results
+      :text-align: center
 
-This model is cited in the paper: `paper <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`_
+      TensorBoard curves
 
-If using the **OpenVLA-OFT** model, run the following command:
+Setup and Run
+-------------
 
-.. code-block:: bash
+Select a model tab below — each tab contains the full install, download, and launch commands. Both recipes use all available accelerators by default; edit ``cluster.component_placement`` to target specific devices (:doc:`../guides/basic_config`). In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download`` (or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__).
 
-   # Download OpenVLA-OFT pre-trained model
-   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main \
-   --local-dir /path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/
-   
-   # Download LoRA fine-tuned checkpoint on maniskill
-   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora \
-   --local-dir /path/to/model/oft-sft/lora_004000
+.. tab-set::
 
-**Step 2: Download ManiSkill assets**
+   .. tab-item:: OpenVLA
+      :sync: openvla
 
-This step is required for both **OpenVLA** and **OpenVLA-OFT** on ManiSkill3.
+      **1. Install**
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   cd <path_to_RLinf>/rlinf/envs/sim/maniskill
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
+      **2. Download ManiSkill Assets** (`paper <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__)
 
-**Step 3: Modify the configuration file**
+      .. code-block:: bash
 
-Before running the script, you need to modify the ``./examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml`` file according to the download paths of the model and dataset. Specifically, update the following configurations to the path where the `gen-robot/openvla-7b-rlvla-warmup` checkpoint is located.
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
 
-- ``rollout.model.model_path``  
-- ``actor.model.model_path``  
+      **3. Launch PPO Training** (downloads ``gen-robot/openvla-7b-rlvla-warmup`` into your Hugging Face cache automatically on first run)
 
+      .. code-block:: bash
 
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
-For **OpenVLA-OFT**, modify the ``maniskill_ppo_openvlaoft_quickstart.yaml`` file. Set the following model configuration items to the path where the `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main` checkpoint is located. At the same time, set the LoRA path to the path where the `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` checkpoint is located.
+   .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
 
-- ``rollout.model.model_path``  
-- ``actor.model.model_path``  
-- ``actor.model.lora_path``
-- ``actor.model.is_lora: True``
+      **1. Install**
 
-**Step 4: Launch training**
+      .. code-block:: bash
 
-After completing the above configuration file modifications, run the following command to launch training:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. Download ManiSkill Assets**
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
+      .. code-block:: bash
 
-.. note::
-   If you installed **RLinf** via Docker image (see :doc:`./installation`), please ensure you have switched to the Python environment corresponding to the target model.
-   The default environment is ``openvla``.
-   If using OpenVLA-OFT or openpi, please use the built-in script `switch_env` to switch environments:
-   ``source switch_env openvla-oft`` or ``source switch_env openpi``.
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
 
-   If you installed **RLinf** in a custom environment, please ensure you have installed the dependencies for the corresponding model, see :doc:`./installation` for details.
+      **3. Launch PPO Training** (downloads ``RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main`` and ``Base-Lora`` automatically on first run)
 
-For **OpenVLA-OFT**:
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
 
-   source switch_env openvla-oft
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
+Rollout inherits ``actor.model.model_path`` automatically. To use pre-downloaded local checkpoints instead of Hugging Face repo IDs, pass overrides on the command line (``actor.model.model_path=/path/to/checkpoint`` and, for OpenVLA-OFT, ``actor.model.lora_path=/path/to/lora``) or see :doc:`Training Configuration <../reference/configuration>`.
 
-Training Pipeline Mode
---------------------------
+Results and Troubleshooting
+---------------------------
 
-For embodied FSDP training, ``runner.use_training_pipeline`` enables a pipeline
-execution path between environment rollout and actor training. When it is set to
-``True``, rollout trajectories are processed on the environment worker, converted
-into packed actor micro-batches, and streamed to the actor through the channel.
-The actor can then train on ready-to-use micro-batches while rollout generation is
-still progressing.
+Training writes logs and checkpoints under ``./logs``. Open TensorBoard (``tensorboard --host 0.0.0.0 --logdir ./logs``) and track ``rollout/env_info/return`` and ``rollout/env_info/success_once``.
 
-This mode is useful when rollout payloads contain nested observations or large
-tensors. Sending packed micro-batches makes the channel payload more friendly to
-the tensor fast path and reduces extra reconstruction work on the actor side. It
-is especially helpful when environment workers and actor workers are placed on
-different nodes and the inter-node connection crosses a wide-area network, where
-smaller packed tensor payloads reduce transfer overhead.
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/embody-quickstart-metric.jpg
+   :align: center
+   :width: 90%
 
-Example:
+   TensorBoard training curves for the ManiSkill3 quick start.
 
-.. code-block:: yaml
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-   runner:
-     use_training_pipeline: True
+   * - Symptom
+     - Fix
+   * - Out of GPU memory (OOM)
+     - Lower ``actor.micro_batch_size`` and ``env.train.total_num_envs``; see :ref:`Out of Memory <faq-oom>`.
+   * - EGL or Vulkan rendering error
+     - Check graphics driver and EGL config in :ref:`Rendering Issues <faq-rendering>`.
+   * - Stale Ray / NCCL error on rerun
+     - Run ``ray stop`` before relaunching (:ref:`CUDA and Memory Issues <faq-cuda>`).
 
-   algorithm:
-     adv_type: gae
-     normalize_advantages: True
+.. grid:: 1 3 3 3
+   :gutter: 2
 
-Notes and limitations:
+   .. grid-item-card:: Embodied Training
+      :link: ../examples/index
+      :link-type: doc
 
-- ``algorithm.normalize_advantages`` is supported. The pipeline path computes raw
-  advantages on the environment worker, aggregates masked advantage statistics
-  across the environment workers that feed each actor rank, and normalizes before
-  streaming actor micro-batches.
-- ``algorithm.adv_type`` currently supports only ``gae`` in this mode.
-- This mode is intended for embodied FSDP actor training with PPO/GRPO-style
-  actor losses. It is not supported for ``embodied_sac``, ``embodied_dagger``,
-  or ``embodied_nft``.
+      Explore LIBERO, RoboTwin, OpenPI, SFT, and world models.
 
+   .. grid-item-card:: Standalone Evaluation
+      :link: ../evaluations/index
+      :link-type: doc
 
-View Training Results
---------------------------
+      Evaluate trained checkpoints across embodied benchmarks.
 
-- Final model and metrics save path: ``./logs``  
-- Launch as follows:
+   .. grid-item-card:: Performance Tuning
+      :link: ../guides/performance/index
+      :link-type: doc
 
-  .. code-block:: bash
-
-     tensorboard --host 0.0.0.0 --logdir path/to/tensorboard/
-
-After opening TensorBoard, you will see an interface similar to the figure below.  
-It is recommended to focus on the following metrics:
-
-- ``rollout/env_info/return``  
-- ``rollout/env_info/success_once``  
-
-.. raw:: html
-
-   <img src="https://github.com/RLinf/misc/raw/main/pic/embody-quickstart-metric.jpg" width="800"/>
-
-.. note::
-   If you want to specify GPU usage,
-   you can modify the parameter  
-   ``cluster.component_placement`` in the configuration file.
-
-   Set this item to **0-3** or **0-7** to use 4/8 GPUs according to your actual resources.
-   See :doc:`../guides/basic_config` for more detailed instructions on Placement configuration.
-
-   .. code-block:: yaml
-
-      cluster:
-      num_nodes: 1
-      component_placement:
-         actor,env,rollout: 0-3
+      Learn :doc:`Training Pipeline Mode <../guides/training_pipeline>` and :doc:`Execution Modes <../concepts/execution_modes>`.

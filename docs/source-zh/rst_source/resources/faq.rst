@@ -3,91 +3,7 @@
 
 下面整理了 RLinf 的常见问题。该部分会持续更新，欢迎大家不断提问，帮助我们改进！
 
-断点调试方法
-------------
-
-使用 Ray 分布式调试器（推荐）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**说明：** 在 VSCode/Cursor 中使用 Ray Distributed Debugger 远程调试 Ray 任务（断点或 post-mortem）。
-
-1. 准备环境（一次性）：
-
-   .. code-block:: bash
-
-      uv pip install debugpy
-
-2. 在 VSCode/Cursor 中注册集群：
-
-   - 在扩展市场搜索 “Ray Distributed Debugger” 并安装。
-   - 如果找不到扩展，可从 `这里 <https://open-vsx.org/extension/anyscalecompute/ray-distributed-debugger>`__ 下载 VSIX，使用“Extensions: Install from VSIX”或拖拽到 VSCode/Cursor 窗口安装。
-   - 在侧边栏打开 Ray 扩展面板，点击 “+” 注册集群地址（本地默认 ``127.0.0.1:8265``，或你通过 ``ray start --head`` 启动的地址）。
-   - 点击已添加集群的 “⚙”（Configure Debugger Local Folder），填写 RLinf 仓库路径。
-
-3. 在代码中任意位置添加 `breakpoint()`：
-
-   .. code-block:: python
-
-      chains = data["chains"]
-      denoise_inds = data["denoise_inds"]
-      
-      # 添加断点
-      breakpoint()
-      
-      # input transform
-      observation = self.input_transform(data, transpose=False)
-      observation = _model.Observation.from_dict(observation)
-
-4. 运行任意 RLinf 脚本（示例：PPO Pi05）：
-
-   .. code-block:: bash
-
-      bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
-
-5. 连接调试器：
-
-   - 执行暂停时，任务会出现在 Ray 扩展的 “Paused Tasks” 列表。
-   - 点击播放/连接图标开始交互式调试。
-   - 调试完成后在 VSCode/Cursor 调试工具栏断开连接，便于切换到其他暂停任务。
-
-常用提示：
-
-- 若首次调试遇到 Runtime Error，可 `Ctrl+Shift+P` 选择 “Developer: Reload Window” 重新加载窗口。
-
-**参考：** Ray Distributed Debugger 文档 https://docs.ray.io/en/latest/ray-observability/ray-distributed-debugger.html
-
-使用 Ray Legacy Debugger（备用）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**说明：** 无法使用 Ray 分布式调试器扩展时的后备方案。
-
-1. 在需要调试的位置设置断点：
-
-.. code-block:: python
-
-   chains = data["chains"]
-   denoise_inds = data["denoise_inds"]
-   
-   # 添加断点
-   breakpoint()
-   
-   # input transform
-   observation = self.input_transform(data, transpose=False)
-   observation = _model.Observation.from_dict(observation)
-
-2. 运行程序（示例：PPO Pi05）：
-
-.. code-block:: bash
-
-   RAY_DEBUG=legacy bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
-
-3. 当程序提示 ``use 'ray debug' to connect ...`` 时，另开终端执行：
-
-.. code-block:: bash
-
-   ray debug
-
-**参考：** Ray 调试文档 https://docs.ray.io/en/latest/ray-observability/user-guides/debug-apps/ray-debugging.html
+.. _faq-rendering:
 
 渲染问题
 --------
@@ -95,25 +11,20 @@
 EGL 渲染使用哪块 GPU？
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-RLinf 会为每个 worker 指定渲染设备：向驱动查询该 worker 所分配 GPU 对应的 EGL 索引，并将其
-导出为 ``MUJOCO_EGL_DEVICE_ID``\ （MuJoCo、robosuite）和 ``EGL_DEVICE_ID``\ （其他 EGL 渲染器，
-如 pyrender）。这一步是必要的，因为 EGL 设备索引与 CUDA 设备号属于两套不同的命名空间：EGL 会
-列出驱动可见的所有设备，因此当容器只分配到节点上的部分 GPU 时，CUDA 设备 0 通常\ **并不是**
-EGL 设备 0。
+RLinf 会为每个 worker 指定渲染设备：向驱动查询该 worker 所分配 GPU 对应的 EGL 索引，并将其导出为 ``MUJOCO_EGL_DEVICE_ID``\ （MuJoCo、robosuite）和 ``EGL_DEVICE_ID``\ （其他 EGL 渲染器，如 pyrender）。这一步是必要的，因为 EGL 设备索引与 CUDA 设备号属于两套不同的命名空间：EGL 会列出驱动可见的所有设备，因此容器只分配到节点上的部分 GPU 时，CUDA 设备 0 通常\ **并不是** EGL 设备 0。
 
-仅当需要覆盖该选择时才手动设置 ``MUJOCO_EGL_DEVICE_ID``，显式设置的值始终优先。若将其设为
-CUDA 序号，在两套命名空间不一致时会渲染到错误的 GPU 上。
+仅在需要覆盖该选择时才手动设置 ``MUJOCO_EGL_DEVICE_ID``，显式设置的值始终优先。若将其设为 CUDA 序号，在两套命名空间不一致时会渲染到错误的 GPU 上。
 
 RuntimeError: The MUJOCO_EGL_DEVICE_ID environment variable must be an integer between 0 and 0 (inclusive), got 1.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **现象：** 运行设置了 MUJOCO_GL 环境变量为 "egl" 的模拟器时出现上述错误信息。
 
-**原因：** 该错误是因为您的 GPU 环境未正确设置图形渲染，尤其是在 NVIDIA GPU 上。
+**原因：** 该错误是因为你的 GPU 环境未正确设置图形渲染，尤其是在 NVIDIA GPU 上。
 
-**修复：** 检查您是否有此文件 `/usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.0`。
+**修复：** 检查是否包含文件 `/usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.0`。
 
-1. 如果您有此文件，请检查您是否还拥有 `/usr/share/glvnd/egl_vendor.d/10_nvidia.json`。如果没有，请创建此文件并添加以下内容：
+1. 如果存在该文件，请检查是否还包含 `/usr/share/glvnd/egl_vendor.d/10_nvidia.json`。如果没有，请创建此文件并添加以下内容：
 
    .. code-block:: json
 
@@ -124,17 +35,17 @@ RuntimeError: The MUJOCO_EGL_DEVICE_ID environment variable must be an integer b
          }
       }
 
-   然后在您的运行脚本中添加以下环境变量：
+   然后在运行脚本中添加以下环境变量：
 
    .. code-block:: shell
 
       export NVIDIA_DRIVER_CAPABILITIES="all"
 
-2. 如果您没有此文件，则表示您的 NVIDIA 驱动程序未正确安装图形功能。您可以尝试以下解决方案：
+2. 如果不存在该文件，则表示 NVIDIA 驱动程序未正确安装图形功能。可以尝试以下解决方案：
 
-   * 重新安装 NVIDIA 驱动程序，并使用正确的选项启用图形功能。安装 NVIDIA 驱动程序时，有几个选项会禁用图形驱动程序。因此，您需要尝试安装NVIDIA的图形驱动。在Ubuntu上可以通过命令 ``apt install libnvidia-gl-<driver-version>`` 完成，具体参见NVIDIA的文档 https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/ubuntu.html#compute-only-headless-and-desktop-only-no-compute-installation 。
+   * 重新安装 NVIDIA 驱动程序，并使用正确的选项启用图形功能。安装 NVIDIA 驱动程序时，有几个选项会禁用图形驱动程序。因此，需要尝试安装 NVIDIA 的图形驱动。在 Ubuntu 上可以通过命令 ``apt install libnvidia-gl-<driver-version>`` 完成，具体参见 NVIDIA 的文档 https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/ubuntu.html#compute-only-headless-and-desktop-only-no-compute-installation 。
 
-   * 使用 **osmesa** 进行渲染，将运行脚本中的 `MUJOCO_GL` 和 `PYOPENGL_PLATFORM` 环境变量更改为 "osmesa"。但是，这可能会导致滚动过程比 EGL 慢 10 倍，因为它使用 CPU 进行渲染。
+   * 使用 **osmesa** 渲染，将运行脚本中的 `MUJOCO_GL` 和 `PYOPENGL_PLATFORM` 环境变量更改为 "osmesa"。但是，这可能会导致采样过程比 EGL 慢 10 倍，因为它使用 CPU 渲染。
 
 Vulkan Incompatible GPU Driver
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -172,8 +83,33 @@ Vulkan Incompatible GPU Driver
 - 确认所选 IP 能被其他节点访问（例如使用 ping 测试）。  
 - 如有需要，请显式选择正确网卡对应的 IP 作为 Ray head，并将该 IP 告知各 Worker。
 
-CUDA 问题
-----------
+.. _faq-cuda:
+
+CUDA 与显存问题
+---------------
+
+.. _faq-oom:
+
+显存不足（OOM）
+~~~~~~~~~~~~~~~
+
+**现象：** rollout 或 actor 更新阶段报错 ``torch.OutOfMemoryError: CUDA out of memory``。
+
+**修复：** 在配置 YAML 中降低单卡显存占用并开启 offload：
+
+.. code-block:: yaml
+
+   env:
+     train:
+       total_num_envs: 8
+       enable_offload: True
+   rollout:
+     enable_offload: True
+   actor:
+     micro_batch_size: 1
+     enable_offload: True
+
+保持 ``actor.global_batch_size`` 能被 ``actor.micro_batch_size`` 乘以 actor worker 数量整除，且 ``env.train.total_num_envs`` 能被 env worker 数量乘以 ``rollout.pipeline_stage_num`` 整除。
 
 任务迁移时出现 NCCL “cuda invalid argument”
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -236,11 +172,9 @@ FSDP 集合通信被后端看门狗超时杀掉
 
 报错里的超时值来自后端自带的默认值——NCCL 和 Gloo 是 1800000 ms，昇腾 HCCL 是 3636000 ms。
 
-**可能原因：** 某个 rank 在两次 FSDP 集合通信之间耗时超过了这个时间——例如梯度累积步过大、
-checkpoint 写入过慢，或者该 rank 挂在调试器里，而其余 rank 都在 all-gather 处等待。
+**可能原因：** 某个 rank 在两次 FSDP 集合通信之间耗时超过了这个时间——例如梯度累积步过大、checkpoint 写入过慢，或者该 rank 挂在调试器里，而其余 rank 都在 all-gather 处等待。
 
-**修复：** FSDP 的集合通信与 RLinf 其余 worker 间通信共用同一个超时，默认 180 分钟。
-用 ``RLINF_TIMEOUT`` 调大它（单位为分钟）：
+**修复：** FSDP 的集合通信与 RLinf 其余 worker 间通信共用同一个超时，默认 180 分钟。用 ``RLINF_TIMEOUT`` 调大它（单位为分钟）：
 
 .. code-block:: bash
 
@@ -272,3 +206,42 @@ Ray 会在启动时捕获环境变量，因此必须在每个节点上 ``ray sta
 **可能原因：** PyTorch 2.7 之前，``torch.distributed`` 中有若干构造函数（包括 Gloo 后端和 ``TCPStore``）在未持有 GIL 的情况下登记新建的 Python 对象。RLinf 在不同线程上为不同对端创建通信组，两次登记可能重叠，从而破坏 pybind11 记录存活对象的表。BEHAVIOR 环境（PyTorch 2.5.1）和 Ascend 默认环境（PyTorch 2.6.0）都受影响。
 
 **修复：** 在这些版本上，RLinf 改用持有 GIL 完成登记的构造函数来创建 Gloo 后端和通信组选项，Gloo 通信组因此不再触发该问题。``TCPStore`` 以及 ``TORCH_DISTRIBUTED_DEBUG=DETAIL`` 启用的调试包装没有这样的构造函数；``TCPStore`` 每个通信组只创建一次，因此仍可能偶发中止。条件允许时，请使用 PyTorch 2.7 及以上版本。报告问题时，请附上 PyTorch 版本和第一份原生调用栈，Ray 的 ``actor died`` 信息不足以判断原因。
+
+.. _faq-debugging:
+
+断点调试
+--------
+
+使用 Ray 分布式调试器（推荐）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+在 VSCode 或 Cursor 中用 Ray Distributed Debugger 调试 Ray worker：
+
+1. 安装 ``debugpy``：
+
+   .. code-block:: bash
+
+      uv pip install debugpy
+
+2. 在 VSCode 或 Cursor 中安装 “Ray Distributed Debugger” 扩展（也可从 `Open VSX <https://open-vsx.org/extension/anyscalecompute/ray-distributed-debugger>`__ 下载 VSIX）。随后打开 Ray 侧边栏，点击 “+” 添加 ``127.0.0.1:8265``\ （或 Ray head 地址），并将本地目录设为 RLinf 仓库路径。
+
+3. 在需要暂停的位置插入 ``breakpoint()``，再运行训练脚本：
+
+   .. code-block:: bash
+
+      bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
+
+4. 在 Ray 扩展的 “Paused Tasks” 列表中连接到暂停的 worker。调试完断开连接即可切换其他任务；首次连接报错时，执行 ``Developer: Reload Window`` 重载窗口。
+
+参考：`Ray Distributed Debugger 文档 <https://docs.ray.io/en/latest/ray-observability/ray-distributed-debugger.html>`__。
+
+使用 Ray Legacy Debugger（备用）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+无法安装编辑器扩展时，插入 ``breakpoint()`` 并设置 ``RAY_DEBUG=legacy`` 启动训练：
+
+.. code-block:: bash
+
+   RAY_DEBUG=legacy bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
+
+日志提示 ``use 'ray debug' to connect`` 后，另开终端执行 ``ray debug`` 即可连接调试。参考：`Ray 调试文档 <https://docs.ray.io/en/latest/ray-observability/user-guides/debug-apps/ray-debugging.html>`__。

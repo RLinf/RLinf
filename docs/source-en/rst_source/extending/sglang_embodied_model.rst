@@ -1,5 +1,5 @@
-Adapting an Embodied Model in SGLang Server
-===============================================
+Adapt a SGLang Embodied Model
+=============================
 
 This document describes how to integrate an embodied model already adapted to SGLang Server into
 RLinf's evaluation rollout and evaluate the model using the various simulators supported by RLinf.

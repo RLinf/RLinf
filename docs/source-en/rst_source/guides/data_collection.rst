@@ -1,6 +1,13 @@
 Data Collection
 ===============
 
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/data_formats.svg
+   :align: center
+   :width: 100%
+   :alt: RLinf data collection sources, stored formats, and downstream consumers
+
+   Data collection sources, stored formats, and downstream consumers.
+
 There are two entry points, and both write the same directories. ``save_dir``
 defaults to ``${runner.logger.log_path}``.
 

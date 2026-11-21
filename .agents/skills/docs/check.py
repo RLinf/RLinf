@@ -53,6 +53,7 @@ except ImportError:
     os.execv(str(python), [str(python), __file__, *sys.argv[1:]])
 
 import check_doc_symbols  # noqa: E402
+import check_recipe  # noqa: E402
 import check_rst_markup  # noqa: E402
 import check_writing  # noqa: E402
 
@@ -290,11 +291,16 @@ def main() -> int:
     )
     names = check_writing.code_names(route.REPO_ROOT)
     added = {c.path for c in changes if c.status == "A"}
-    findings = check_parity(changes) + check_toctrees(pages)
+    findings = (
+        check_parity(changes)
+        + check_toctrees(pages)
+        + check_recipe.check_static_assets(changes)
+    )
     for page in pages:
         path = route.REPO_ROOT / page
         page_findings = check_page(path, page, known)
         page_findings += check_writing.check_page(path, page, names, page in added)
+        page_findings += check_recipe.check_page(path, page)
         findings += selection.relevant(page_findings)
     if args.no_build:
         print("skipped: the Sphinx build (--no-build)")

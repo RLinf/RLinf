@@ -235,19 +235,19 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
 
    ManiSkill <embodied/maniskill>
    LIBERO <embodied/libero>
-   Behavior <embodied/behavior>
+   RoboTwin <embodied/robotwin>
+   BEHAVIOR-1K <embodied/behavior>
+   CALVIN <embodied/calvin>
    MetaWorld <embodied/metaworld>
    IsaacLab <embodied/isaaclab>
-   CALVIN <embodied/calvin>
    RoboCasa <embodied/robocasa>
    RoboCasa365 <embodied/robocasa365>
-   RoboTwin <embodied/robotwin>
+   RoboLab <embodied/robolab>
+   PolaRiS <embodied/polaris>
    RoboDojo <embodied/robodojo>
    RoboVerse <embodied/roboverse>
    Franka-Sim <embodied/frankasim>
    EmbodiChain <embodied/embodichain>
-   PolaRiS <embodied/polaris>
-   RoboLab <embodied/robolab>
    GSEnv <embodied/gsenv>
    Genesis <embodied/genesis>
    GenieSim <embodied/geniesim>

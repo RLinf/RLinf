@@ -1,78 +1,151 @@
 安装说明
 ========
 
-RLinf 提供两种安装方式：**选项 1（UV）** 在本地构建与机器匹配的虚拟环境，**选项 2
-（Docker）** 提供最可复现的安装。
+使用 ``requirements/install.sh`` 在本地 ``uv`` 虚拟环境中一键安装 RLinf，或直接拉取 Docker Hub 预构建镜像。
 
-选项 1：UV
+安装与验证
 ----------
 
-用 ``install.sh`` 构建 UV 虚拟环境。传入安装目标（``embodied``\ 、``agentic`` 或
-``docs``\ ）以及对应的专用参数：
+选择目标场景，直接复制运行完整安装与验证命令：
 
-.. code-block:: bash
+.. tab-set::
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
-   source .venv/bin/activate
+   .. tab-item:: 具身仿真（Embodied）
+      :sync: embodied
 
-更多目标与组合：
+      以下为 ManiSkill3 快速上手的默认安装命令（其他模型与环境按下方表格替换 ``--model`` 与 ``--env``）：
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-   bash requirements/install.sh embodied --model openpi --env libero
-   bash requirements/install.sh agentic
-   bash requirements/install.sh docs
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
+         python -c "import rlinf; print(rlinf.__file__)" && ray --version
 
-运行 ``bash requirements/install.sh --help`` 可查看完整模型和环境列表。
+   .. tab-item:: 真机机器人（Real-World）
+      :sync: realworld
 
-- 使用 ``--venv <dir>`` 指定虚拟环境目录。
-- 使用 ``--use-mirror`` 加速中国大陆环境下的下载。
-- 仅在依赖需要时使用 ``--python <version>``\ 。默认版本是 Python 3.11.14，``agentic`` 目标在默认的 torch 2.11 栈上使用 Python 3.12.12；部分环境如 ``behavior`` 和 ``d4rl`` 需要 Python 3.10。
-- 仅在需要不同 PyTorch wheel 时使用 ``--torch <version>``\ 。
-- 使用 ``--platform amd``、``--platform ascend`` 或 ``--platform musa`` 选择对应硬件。在 :ref:`模型图库 <model-hardware-support>` 中确认模型与环境组合，再按对应示例准备运行环境。
+      在机器人控制节点安装驱动与传感器依赖（无需 GPU），在 GPU 节点安装模型与驱动（按需将 ``franka`` 替换为 ``arx5``、``yam``、``xsquare_turtle2``、``so101``、``piper``、``lekiwi``、``dosw1`` 或 ``gim_arm``，详见 :doc:`../examples/real_world_index`）：
 
-选项 2：Docker
---------------
+      .. code-block:: bash
 
-每个镜像都打包了开箱即用的栈（例如 ``agentic-rlinf0.4-maniskill_libero``\ ）。拉取
-并运行镜像，然后在容器内选择模型环境：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
 
-.. code-block:: bash
+         # 机器人控制节点（驱动与传感器）
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
-   docker pull rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-   docker run -it --gpus all \
-      --shm-size 100g \
-      --net=host \
-      --name rlinf \
-      -e NVIDIA_DRIVER_CAPABILITIES=all \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero /bin/bash
+         # GPU 训练 / 推理节点（或单机同配 GPU 与机器人）
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-   source switch_env openvla
+   .. tab-item:: 智能体 / 推理（Agentic）
+      :sync: agentic
 
-- 保留 ``-e NVIDIA_DRIVER_CAPABILITIES=all``\ ，GPU 渲染需要该能力。
-- 不要覆盖容器内的 ``/root`` 或 ``/opt``\ ；镜像中的资源文件和虚拟环境位于这些目录。
-- 如果平台会修改 ``$HOME`` 或挂载 ``/root``\ ，请在容器内运行 ``link_assets`` 后再启动示例。
-- 使用 ``source switch_env openvla``\ 、``source switch_env openvla-oft`` 或
-  ``source switch_env openpi`` 切换模型环境。
+      .. code-block:: bash
 
-验证
-----
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
+         python -c "import rlinf; print(rlinf.__file__)" && ray --version
 
-激活环境后，确认 RLinf 和 Ray 可用：
+   .. tab-item:: 预构建 Docker 镜像
+      :sync: docker
 
-.. code-block:: bash
+      .. grid:: 1 1 1 1
+         :gutter: 2
 
-   python -c "import rlinf; print(rlinf.__file__)"
-   ray --version
+         .. grid-item-card:: Docker Hub — rlinf/rlinf
+            :link: https://hub.docker.com/r/rlinf/rlinf
 
-下一步
-------
+            在 Docker Hub 查看全部预构建镜像标签、容器启动命令与国内镜像站说明。
 
-- :doc:`运行 VLA 快速上手 <vla>`\ 。
-- :doc:`扩展到多机 <../guides/launch-scale/index>`\ 。
-- 如果只需要命令，打开 :doc:`速查表 <cheat_sheet>`\ 。
+   .. tab-item:: 文档构建（Docs）
+      :sync: docs
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh docs --venv .docs-venv
+
+.. tip::
+
+   **国内镜像加速：** 在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
+
+支持的模型、环境与硬件平台
+--------------------------
+
+将下表中的名称直接传入 ``--model``、``--env``、``--engine`` 或 ``--platform``：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 78
+
+   * - 参数
+     - 支持的值
+   * - ``--model``\ （VLA）
+     - ``openvla``、``openvla-oft``、``openpi``、``psi0``、``pi0_fast``、``gr00t``、``gr00t_n1d6``、``gr00t_n1d7``、``dexbotic``、``starvla``、``lingbotvla``、``lingbotvlav2``、``abot_m0``、``molmoact2``、``evo1``
+   * - ``--model``\ （WAM / VLM / 生成）
+     - ``dreamzero``、``fastwam``、``cosmos3``、``qwen3_vl``、``diffusion``、``sglang``
+   * - ``--env``\ （仿真器）
+     - ``maniskill_libero``、``libero``、``liberopro``、``liberoplus``、``behavior``、``metaworld``、``calvin``、``isaaclab``、``robocasa``、``robocasa365``、``frankasim``、``robotwin``、``robodojo``、``roboverse``、``habitat``、``genesis``、``geniesim``、``embodichain``、``d4rl``、``mujoco_warp``、``polaris``、``simple``、``robolab``
+   * - ``--env``\ （世界模型）
+     - ``opensora``、``wan``
+   * - ``--env``\ （真机）
+     - ``franka``、``franka-ros``、``xsquare_turtle2``、``dosw1``、``gim_arm``、``so101``、``lekiwi``、``piper``、``arx5``、``yam``、``dummy``
+   * - ``--engine``
+     - ``sglang``\ （``agentic`` 默认）、``vllm``\ （``agentic``）、``phyai``\ （``embodied`` 搭配 ``--model openpi --env libero``）
+   * - ``--platform``
+     - ``nvidia``\ （默认）、``amd``、``ascend``、``musa``、``kunlun``、``biren``、``metax``\ （详见 :ref:`硬件支持矩阵 <model-hardware-support>`）
+
+.. dropdown:: 更多安装参数（可选）
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 28 72
+
+      * - 参数
+        - 作用
+      * - ``--use-mirror``
+        - 使用中国大陆镜像源加速依赖与 GitHub 下载（运行 ``hf download`` 前也可设置 ``export HF_ENDPOINT=https://hf-mirror.com``）。
+      * - ``--venv <dir>``
+        - 指定虚拟环境目录（默认 ``.venv``）。
+      * - ``--python <version>``
+        - 按需指定 Python 版本（如 ``behavior`` 和 ``d4rl`` 需要 ``3.10``）。
+      * - ``--no-root``
+        - 跳过 ``sudo`` 系统库安装，适合已预装系统依赖的主机。
+      * - ``--no-flash-attn`` / ``--no-apex``
+        - 在不需要或无匹配 CUDA 编译工具链的主机上跳过 ``flash-attn`` 或 ``apex`` 编译。
+
+   运行 ``bash requirements/install.sh --help`` 查看全部版本覆盖参数。
+
+常见问题与下一步
+----------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - 现象
+     - 解决方法
+   * - EGL 或 Vulkan 渲染报错
+     - 按 :ref:`渲染问题 <faq-rendering>` 检查驱动与图形渲染配置。
+   * - Ray 残留或 NCCL 报错
+     - 执行 ``ray stop`` 清理本机残留进程，详见 :ref:`CUDA 与显存问题 <faq-cuda>`。
+
+.. grid:: 1 3 3 3
+   :gutter: 2
+
+   .. grid-item-card:: VLA 快速上手
+      :link: vla
+      :link-type: doc
+
+      四步在 ManiSkill3 上用 PPO 训练 OpenVLA 或 OpenVLA-OFT。
+
+   .. grid-item-card:: 扩展到多机集群
+      :link: ../guides/launch-scale/index
+      :link-type: doc
+
+      配置多 GPU 与多节点 Ray 集群部署。
+
+   .. grid-item-card:: 命令速查表
+      :link: cheat_sheet
+      :link-type: doc
+
+      安装、训练与评测的最短常用命令。

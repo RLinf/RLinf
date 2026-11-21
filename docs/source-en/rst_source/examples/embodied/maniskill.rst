@@ -1,5 +1,5 @@
-RL with ManiSkill Benchmark
-===========================
+ManiSkill RL
+============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -15,8 +15,7 @@ RL with ManiSkill Benchmark
 `ManiSkill <https://maniskill.readthedocs.io>`__ is a GPU-parallelized robotics
 simulator and benchmark for manipulation. A 7-DoF arm performs language-conditioned
 tabletop tasks; RLinf uses ManiSkill3 to RL-fine-tune vision-language-action (VLA)
-policies and reach state-of-the-art success rates, including on out-of-distribution
-(OOD) variations.
+policies to high success rates, including on out-of-distribution (OOD) variations.
 
 Overview
 --------
@@ -94,107 +93,155 @@ The walkthrough below uses **OpenVLA / OpenVLA-OFT** with **PPO/GRPO**; switch t
 
    Backend-specific ManiSkill setup is documented with each model: :ref:`OpenVLA-OFT <openvla-oft-hardware>`, :ref:`GR00T N1.5 <gr00t-hardware>`, and :ref:`OpenPI π₀ / π₀.₅ <pi0-hardware>`. AMD, Ascend, and MUSA use CPU PhysX simulation while the model remains on its selected accelerator. GR00T requires a compatible checkpoint with a ``maniskill_widowx`` embodiment head, and MUSA requires the vendor simulator packages.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenVLA
+      :sync: openvla
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      **1. Install**
 
-   # Inside the container, switch to the model's virtual environment:
-   source switch_env openvla        # or: source switch_env openvla-oft
+      .. code-block:: bash
 
-**Option 2: Custom environment** — install bundle ``--env maniskill_libero``:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero
+         source .venv/bin/activate
 
-.. code:: bash
+      **2. Download**
 
-   # Add --use-mirror for faster downloads in mainland China.
-   # Use --model openvla-oft for the OpenVLA-OFT experiments.
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
-   source .venv/bin/activate
+      Download the ManiSkill scene assets and base checkpoint from the repository root:
 
-Download the Assets
--------------------
+      .. code-block:: bash
 
-Download the ManiSkill assets:
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         hf download gen-robot/openvla-7b-rlvla-warmup --local-dir ./openvla-7b-rlvla-warmup
 
-.. code:: bash
+      **3. Launch**
 
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./maniskill_assets
+      Available configs under ``examples/embodiment/config/``:
 
-.. important::
+      .. list-table::
+         :header-rows: 1
+         :widths: 25 75
 
-   The assets **must** be placed under ``rlinf/envs/sim/maniskill/assets`` — this is where the env loads them from. Copy them into the env package directory:
+         * - Algorithm
+           - Config
+         * - PPO
+           - ``maniskill_ppo_openvla.yaml``
+         * - GRPO
+           - ``maniskill_grpo_openvla.yaml``
 
-.. code:: bash
+      Set ``actor.model.model_path`` in the chosen YAML (rollout inherits it automatically):
 
-   cp -r ./maniskill_assets <path_to_RLinf>/rlinf/envs/sim/maniskill/assets
+      .. code-block:: yaml
 
-Download the Model
-------------------
+         actor:
+           model:
+             model_path: ./openvla-7b-rlvla-warmup
 
-Download a pretrained base checkpoint (either method works):
+      Launch training with ``run_embodiment.sh``:
 
-.. code:: bash
+      .. code-block:: bash
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla
 
-   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
-   pip install huggingface-hub
-   hf download gen-robot/openvla-7b-rlvla-warmup --local-dir openvla-7b-rlvla-warmup
+      .. dropdown:: Advanced configuration (optional)
 
-.. include:: _model_path.rst
+         When PPO rollout spends time running terminal value bootstrap one environment slice at a time or decoding unused action tokens on OpenVLA, enable batched and value-only bootstrap in the config:
 
-Run It
-------
+         .. code-block:: yaml
 
-Each recipe is a YAML config under ``examples/embodiment/config/``:
+            rollout:
+              batch_bootstrap_inference: True
+              value_only_bootstrap: True
 
-- **OpenVLA + PPO** — ``maniskill_ppo_openvla.yaml``
-- **OpenVLA-OFT + PPO** — ``maniskill_ppo_openvlaoft.yaml``
-- **OpenVLA + GRPO** — ``maniskill_grpo_openvla.yaml``
-- **OpenVLA-OFT + GRPO** — ``maniskill_grpo_openvlaoft.yaml``
+         ``rollout.batch_bootstrap_inference`` merges pending terminal observations into one rollout batch before splitting values back to their routes. ``rollout.value_only_bootstrap`` estimates values directly from the prompt hidden state instead of autoregressively generating actions when a value head is present (such as OpenVLA PPO). Both options default to ``False``.
 
-Launch a config with ``run_embodiment.sh``:
+      **4. Training Curve**
 
-.. code-block:: bash
+      Running on a single 8-GPU H100 machine, OpenVLA exceeds 90% success on ManiSkill3's plate-25-main task:
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla
+      .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/mani_openvla.png
+         :align: center
+         :width: 80%
 
-**What this command does:**
+         OpenVLA training curve on ManiSkill3.
 
-1. Loads ``examples/embodiment/config/maniskill_ppo_openvla.yaml``.
-2. Attaches to (or starts) Ray and places the actor, rollout, and env workers per ``cluster.component_placement``.
-3. Runs the PPO training loop, writing logs and checkpoints under ``runner.logger.log_path``.
+   .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
 
-When PPO rollout spends time running terminal value bootstrap one environment
-slice at a time or decoding unused action tokens on OpenVLA, enable batched and
-value-only bootstrap in the config:
+      **1. Install**
 
-.. code-block:: yaml
+      .. code-block:: bash
 
-   rollout:
-     batch_bootstrap_inference: True
-     value_only_bootstrap: True
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
+         source .venv/bin/activate
 
-``rollout.batch_bootstrap_inference`` merges pending terminal observations into
-one rollout batch before splitting values back to their routes.
-``rollout.value_only_bootstrap`` calls ``predict_value_batch`` directly from the
-prompt hidden state instead of autoregressively generating actions when a value
-head is present (such as OpenVLA PPO). Both options default to ``False``.
+      **2. Download**
+
+      Download the ManiSkill scene assets, base checkpoint, and LoRA weights from the repository root:
+
+      .. code-block:: bash
+
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir ./RLinf-OpenVLAOFT-ManiSkill-Base-Main
+         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+
+      **3. Launch**
+
+      Available configs under ``examples/embodiment/config/``:
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 25 75
+
+         * - Algorithm
+           - Config
+         * - PPO
+           - ``maniskill_ppo_openvlaoft.yaml``
+         * - GRPO
+           - ``maniskill_grpo_openvlaoft.yaml``
+
+      Set ``actor.model.model_path`` and ``actor.model.lora_path`` in the chosen YAML (rollout inherits ``model_path`` automatically):
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_path: ./RLinf-OpenVLAOFT-ManiSkill-Base-Main
+             lora_path: ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+
+      Launch training with ``run_embodiment.sh``:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft
+
+      .. dropdown:: Advanced configuration (optional)
+
+         When PPO rollout spends time running terminal value bootstrap one environment slice at a time, enable batched bootstrap in the config:
+
+         .. code-block:: yaml
+
+            rollout:
+              batch_bootstrap_inference: True
+
+         ``rollout.batch_bootstrap_inference`` merges pending terminal observations into one rollout batch before splitting values back to their routes (defaults to ``False``).
+
+      **4. Training Curve**
+
+      Running on a single 8-GPU H100 machine, OpenVLA-OFT exceeds 90% success on ManiSkill3's plate-25-main task:
+
+      .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/mani_openvlaoft.png
+         :align: center
+         :width: 80%
+
+         OpenVLA-OFT training curve on ManiSkill3.
 
 .. admonition:: Configure further
    :class: note
@@ -208,43 +255,10 @@ head is present (such as OpenVLA PPO). Both options default to ``False``.
 Visualization and Results
 -------------------------
 
-Launch TensorBoard to watch training live:
-
-.. code-block:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-The key signal to watch is **``env/success_once``** — the unnormalized episodic success
-rate. For every logged metric, see :doc:`Training metrics <../../reference/metrics>`.
-
-To save evaluation videos, enable them in the config:
-
-.. code-block:: yaml
-
-   env:
-      eval:
-         video_cfg:
-            save_video: True
-            video_base_dir: ${runner.logger.log_path}/video/eval
+Watch ``env/success_once`` in TensorBoard (``tensorboard --logdir ./logs``); set ``env.eval.video_cfg.save_video=True`` to record videos, or see :doc:`Training metrics <../../reference/metrics>` for W&B/SwanLab and all metrics.
 
 ManiSkill3 Results
 ~~~~~~~~~~~~~~~~~~
-
-Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieve
-over 90% success on ManiSkill3's plate-25-main task.
-
-.. raw:: html
-
-   <div style="display: flex; justify-content: space-between; gap: 10px;">
-     <div style="flex: 1; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/mani_openvla.png" style="width: 100%;"/>
-       <p><em>OpenVLA</em></p>
-     </div>
-     <div style="flex: 1; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/mani_openvlaoft.png" style="width: 100%;"/>
-       <p><em>OpenVLA-OFT</em></p>
-     </div>
-   </div>
 
 We evaluate on both in-distribution (IND) and OOD scenarios (Vision, Semantic, Execution).
 The best result per column is in bold.

@@ -1,5 +1,5 @@
-RL
-==
+RL 算法示例
+===========
 
 本类示例以 **训练算法或方法** 为主线，独立于具体基准或模型，覆盖离线 RL、模仿学习、仿真-真机协同训练以及残差 / 噪声空间策略调控。
 
@@ -14,9 +14,9 @@ RL
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/sac_flow.html" style="text-decoration: underline; color: blue;">
-           <b>SAC-Flow 策略训练</b>
+           <b>SAC-Flow：流匹配策略 SAC 强化学习</b>
          </a><br>
-         使用 SAC 训练 Flow Matching 策略 (Sim &amp; Real)
+         使用 SAC 训练 Flow Matching 策略（Sim &amp; Real）
        </p>
      </div>
 
@@ -28,6 +28,39 @@ RL
            <b>DSRL：Pi0 噪声空间强化学习</b>
          </a><br>
          用轻量级 SAC 智能体在噪声空间引导冻结的 Pi0 扩散策略
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/rlt.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/RLT.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/rlt.html" style="text-decoration: underline; color: blue;">
+           <b>RL Token</b>
+         </a><br>
+         借助 VLA prefix 特征启动在线 RL，并训练轻量级 actor-critic
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/co_training.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/co_training.html" style="text-decoration: underline; color: blue;">
+           <b>仿真-真机协同训练</b>
+         </a><br>
+         仿真 PPO + 真机 SFT，提升 Sim-to-Real 迁移
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/opd.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/opd.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/opd.html" style="text-decoration: underline; color: blue;">
+           <b>OPD：OpenVLA-OFT 在线策略蒸馏</b>
+         </a><br>
+         在 student on-policy 动作 token 上用 teacher logprob 蒸馏
        </p>
      </div>
 
@@ -49,18 +82,7 @@ RL
          <a href="embodied/steam.html" style="text-decoration: underline; color: blue;">
            <b>STEAM：集成优势建模</b>
          </a><br>
-         用集成优势预测器进行保守样本评估
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/co_training.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/co_training.html" style="text-decoration: underline; color: blue;">
-           <b>仿真-真机协同训练</b>
-         </a><br>
-         仿真 PPO + 真机 SFT，提升 Sim-to-Real 迁移
+         用集成优势预测器做保守样本评估
        </p>
      </div>
 
@@ -69,42 +91,18 @@ RL
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/iql_d4rl.html" style="text-decoration: underline; color: blue;">
-           <b>基于 D4RL 基准的离线强化学习</b>
+           <b>IQL：基于 D4RL 的离线强化学习</b>
          </a><br>
          支持 D4RL 场景的 IQL 离线训练
        </p>
      </div>
-
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/opd.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/opd.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/opd.html" style="text-decoration: underline; color: blue;">
-           <b>OPD：OpenVLA-OFT 在线策略蒸馏</b>
-         </a><br>
-         在 student on-policy 动作 token 上用 teacher logprob 进行蒸馏
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/rlt.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/RLT.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/rlt.html" style="text-decoration: underline; color: blue;">
-           <b>RL Token</b>
-         </a><br>
-         借助 VLA prefix 特征启动在线 RL，并训练轻量级 actor-critic
-       </p>
-     </div>
-
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/refl.html" style="display: block;"><img src="https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/figures/ImageReward.jpg"
             style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/refl.html" style="text-decoration: underline; color: blue;">
-           <b>ReFL</b>
+           <b>ReFL：基于 ImageReward 的 SD3 奖励反馈微调</b>
          </a><br>
          使用 ImageReward 和可选的图文监督更新微调 SD3
        </p>
@@ -118,10 +116,10 @@ RL
 
    SAC-Flow <embodied/sac_flow>
    DSRL <embodied/dsrl>
+   RL Token <embodied/rlt>
+   Co-Training <embodied/co_training>
+   OPD <embodied/opd>
    RECAP <embodied/recap>
    STEAM <embodied/steam>
-   Co-Training <embodied/co_training>
    IQL (D4RL) <embodied/iql_d4rl>
-   OPD <embodied/opd>
-   RL Token <embodied/rlt>
    ReFL <embodied/refl>

@@ -4,6 +4,10 @@ Real-World Robot Training Launch
 This page explains how to connect **multiple Franka robots** and a **GPU training
 node** to one Ray cluster, configure YAML, and start real-world RL training.
 
+.. note::
+
+   Single-node setups auto-start Ray and do not need ``RLINF_NODE_RANK`` or ``ray start``; use this guide when connecting multiple nodes.
+
 For full hardware setup, dependencies, data collection, and task details, see:
 
 - :doc:`../examples/embodied/franka` — standard RealSense + Franka gripper workflow
@@ -49,22 +53,14 @@ Connect robot nodes to the Ray cluster
 Step 1: Prepare the environment on each node
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-On **every node**, before ``ray start``:
-
-.. code-block:: bash
-
-   # Recommended: source and edit the repo script on each machine
-   source ray_utils/realworld/setup_before_ray.sh
-
-   export RLINF_NODE_RANK=<0..N-1>          # unique; GPU node is usually 0
-   # If multiple NICs, pin the reachable interface, e.g.:
-   # export RLINF_COMM_NET_DEVICES=eth0
-
-On control nodes, also activate the Franka environment if ``setup_before_ray.sh`` does not:
+On **every node**, activate the virtual environment and export its rank before ``ray start`` (or edit and ``source ray_utils/realworld/setup_before_ray.sh`` to do both in one step):
 
 .. code-block:: bash
 
    source .venv/bin/activate
+   export RLINF_NODE_RANK=<0..N-1>          # unique; GPU node is usually 0
+   # If multiple NICs, pin the reachable interface, e.g.:
+   # export RLINF_COMM_NET_DEVICES=eth0
 
 Step 2: Start Ray
 ~~~~~~~~~~~~~~~~~

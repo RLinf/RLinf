@@ -187,15 +187,15 @@ Open a model page for the full workflow and its supported environments.
    :hidden:
    :maxdepth: 2
 
-   OpenVLA-OFT <embodied/openvla_oft>
-   MLP <embodied/mlp>
    π₀ / π₀.₅ <embodied/pi0>
-   π₀-FAST <embodied/pi0_fast>
+   OpenVLA-OFT <embodied/openvla_oft>
    GR00T <embodied/gr00t>
-   Dexbotic <embodied/dexbotic>
-   StarVLA <embodied/starvla>
-   MolmoAct2 <embodied/molmoact2>
+   MLP <embodied/mlp>
+   π₀-FAST <embodied/pi0_fast>
    LingbotVLA <embodied/lingbotvla_index>
+   StarVLA <embodied/starvla>
+   Dexbotic <embodied/dexbotic>
+   MolmoAct2 <embodied/molmoact2>
    Evo-1 <embodied/evo1>
    ABot-M0 <embodied/abot_m0>
    Psi0 <embodied/psi0>

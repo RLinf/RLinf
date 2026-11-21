@@ -9,6 +9,12 @@
 .. grid:: 1 2 2 2
    :gutter: 2
 
+   .. grid-item-card:: 架构总览
+      :link: overview
+      :link-type: doc
+
+      三张图速览核心训练闭环、三种部署模式与数据格式流转。
+
    .. grid-item-card:: 执行
       :link: execution-model/index
       :link-type: doc
@@ -42,6 +48,7 @@
 .. toctree::
    :hidden:
 
+   架构总览 <overview>
    执行 <execution-model/index>
    调度 <scheduling-model/index>
    机器人接口 <robotics>

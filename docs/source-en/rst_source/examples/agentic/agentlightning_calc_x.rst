@@ -1,5 +1,5 @@
-AgentLightning RL Training (calc_x)
-===================================
+AgentLightning RL
+=================
 
 ``calc_x`` is an AgentLightning example in RLinf for training a math-solving agent.
 The agent reads a question, produces reasoning and an answer, and then receives feedback for RL updates.
@@ -33,78 +33,84 @@ RLinf's distributed trainer.
 
       One node with at least one 40 GB GPU
 
-Installation
-------------
+Setup and Run
+-------------
 
 AgentLightning 0.3.0 requires the OpenTelemetry versions constrained by RLinf
 because OpenTelemetry 1.45 changed the exporter implementation used to route
-rollout spans to the Lightning Store. After creating the base environment,
-install the compatible OpenTelemetry set before the dependencies for this
-example:
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-   bash requirements/install.sh agentic
-   source .venv/bin/activate
-   uv pip install -r requirements/agentic/agentlightning_constraints.txt
-   uv pip install "agentlightning==0.3.0" "litellm<1.95" \
-     "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" \
-     "mcp-server-calculator" "openai==2.32.0"
-
+rollout spans to the Lightning Store. In mainland China, append
+``--use-mirror`` to ``install.sh`` and run
+``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt
+images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
 For other installation options and supported platforms, see
 :doc:`RLinf Installation </rst_source/start/installation>`.
 
-Data Preparation
-----------------
+.. tab-set::
 
-Download and extract the ``calc_x`` dataset (Google Drive). See the download link `here <https://drive.google.com/file/d/1FQMyKLLd6hP9dw9rfZn1EZOWNvKaDsqw/view>`_.
+   .. tab-item:: Qwen2.5-1.5B-Instruct
 
-Run It
-------
+      **1. Install**
 
-Go to the example directory:
+      .. code-block:: bash
 
-.. code-block:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+         uv pip install -r requirements/agentic/agentlightning_constraints.txt
+         uv pip install "agentlightning==0.3.0" "litellm<1.95" \
+           "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" \
+           "mcp-server-calculator" "openai==2.32.0"
 
-   cd /path/to/RLinf/examples/agent/agentlightning/calc_x
+      **2. Download**
 
-Choose the config you want to run, then set the model and dataset paths in the
-same config file. For example, the training command below uses
-``config/qwen2.5-1.5b-enginehttp-multiturn.yaml``:
+      Download the base model and extract the ``calc_x`` dataset from `Google Drive <https://drive.google.com/file/d/1FQMyKLLd6hP9dw9rfZn1EZOWNvKaDsqw/view>`_:
 
-.. code-block:: yaml
+      .. code-block:: bash
 
-   rollout:
-     model:
-       model_path: /path/to/model/Qwen2.5-1.5B-Instruct
+         hf download Qwen/Qwen2.5-1.5B-Instruct --local-dir ./Qwen2.5-1.5B-Instruct
 
-   data:
-     train_data_paths: ["/path/to/train.parquet"]
-     val_data_paths: ["/path/to/test.parquet"]
+      **3. Launch**
 
-Start training:
+      Choose a config under ``examples/agent/agentlightning/calc_x/config/`` and set ``rollout.model.model_path``, ``data.train_data_paths``, and ``data.val_data_paths``:
 
-.. code-block:: bash
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 44 30
 
-   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn
+         * - Mode
+           - Config
+           - Advantage
+         * - Multi-turn
+           - ``qwen2.5-1.5b-enginehttp-multiturn.yaml``
+           - Turn-level
+         * - Trajectory
+           - ``qwen2.5-1.5b-enginehttp-trajectory.yaml``
+           - Trajectory-level
 
-You can also keep the config file unchanged and pass Hydra overrides on the
-command line:
+      .. code-block:: yaml
 
-.. code-block:: bash
+         rollout:
+           model:
+             model_path: /path/to/model/Qwen2.5-1.5B-Instruct
 
-   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn \
-     rollout.model.model_path=/path/to/Qwen2.5-1.5B-Instruct \
-     data.train_data_paths='["/path/to/train.parquet"]' \
-     data.val_data_paths='["/path/to/test.parquet"]'
+         data:
+           train_data_paths: ["/path/to/train.parquet"]
+           val_data_paths: ["/path/to/test.parquet"]
 
-To train with trajectory-level advantages instead, use the matching trajectory
-config and set the same paths there or via overrides:
+      Launch training from the repository root (or pass Hydra overrides on the command line):
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory
+         # Multi-turn
+         bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn
+
+         # Trajectory-level
+         bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory
+
+         # Or override paths without editing the YAML
+         bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn \
+           rollout.model.model_path=/path/to/Qwen2.5-1.5B-Instruct \
+           data.train_data_paths='["/path/to/train.parquet"]' \
+           data.val_data_paths='["/path/to/test.parquet"]'
 
 Visualization and Results
 -------------------------
@@ -125,5 +131,5 @@ For HF evaluation, set ``rollout.model.model_path`` in the matching ``*_eval.yam
 
 .. code-block:: bash
 
-   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn_eval
-   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory_eval
+   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn_eval
+   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory_eval

@@ -1,5 +1,5 @@
-Search-R1的强化学习训练
-========================================
+Search-R1 强化学习训练
+======================
 
 使用本配方复现 `Search-R1: Training LLMs to Reason and Leverage Search Engines with Reinforcement Learning <https://arxiv.org/abs/2503.09516>`__ 的搜索增强推理实验，通过强化学习训练大语言模型调用搜索工具回答问题。
 
@@ -45,17 +45,15 @@ Search-R1的强化学习训练
 环境
 ----------------------------------------
 
-RLinf环境
+RLinf 环境
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 RLinf 环境配置参照 :doc:`RLinf Installation </rst_source/start/installation>`。
 
-Local Wiki Server运行环境
+Local Wiki Server 运行环境
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-我们使用search-R1示例中的local retrieve
-server，通过conda安装faiss，详细文档见\ `SearchR1 <https://raw.githubusercontent.com/PeterGriffinJin/Search-R1/refs/heads/main/docs/retriever.md>`__\ ，安装过程参考\ `Search-R1 &
-veRL-SGLang <https://github.com/zhaochenyang20/Awesome-ML-SYS-Tutorial/blob/main/rlhf/verl/multi-turn/tool_examples/verl-multiturn-searchR1-like_ZH.md>`__\ ，同样使用conda来配置环境
+我们使用 Search-R1 示例中的 local retrieve server，通过 conda 安装 faiss，详细文档见 `SearchR1 <https://raw.githubusercontent.com/PeterGriffinJin/Search-R1/refs/heads/main/docs/retriever.md>`__\ ，安装过程参考 `Search-R1 & veRL-SGLang <https://github.com/zhaochenyang20/Awesome-ML-SYS-Tutorial/blob/main/rlhf/verl/multi-turn/tool_examples/verl-multiturn-searchR1-like_ZH.md>`__\ ，同样使用 conda 配置环境：
 
 .. code-block:: bash
 
@@ -70,10 +68,10 @@ veRL-SGLang <https://github.com/zhaochenyang20/Awesome-ML-SYS-Tutorial/blob/main
 
    pip install uvicorn fastapi
 
-Wiki配置文件
+Wiki 配置文件
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-我们使用Asearcher提供的本地检索文件，下载文件大约 50~60GB
+我们使用 ASearcher 提供的本地检索文件，下载文件大约 50~60 GB：
 
 .. code-block:: bash
 
@@ -82,13 +80,13 @@ Wiki配置文件
    save_path=/the/path/to/save
    python examples/agent/searchr1/download.py --save_path $save_path
 
-从huggingface上下载\ `e5-base-v2 <https://huggingface.co/intfloat/e5-base-v2>`__ embedding模型，并生成index
+从 Hugging Face 下载 `e5-base-v2 <https://huggingface.co/intfloat/e5-base-v2>`__ embedding 模型，并生成 index：
 
 .. code-block:: bash
 
    bash examples/agent/tools/search_local_server_faiss/build_index.sh
 
-将之前下载好的wiki文件路径和index路径等写入examples/agent/searchr1/launch_local_server.sh
+将之前下载好的 wiki 文件路径和 index 路径等写入 ``examples/agent/searchr1/launch_local_server.sh``：
 
 .. code-block:: bash
 
@@ -112,9 +110,9 @@ Wiki配置文件
                                                --retriever_model $retriever_path \
                                                --faiss_gpu --port 8000
 
-运行launch_local_server.sh启动Local Wiki Server，等待直至输出server ip等信息，代表server启动完成
+运行 ``launch_local_server.sh`` 启动 Local Wiki Server，等待直至输出 server IP 等信息，代表 server 启动完成。
 
-(Optional) 使用Qdrant作为Wiki Server
+（可选）使用 Qdrant 作为 Wiki Server
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 我们也支持使用 qdrant 作为 wiki 服务器。如果你不打算使用 qdrant，可以直接跳到 训练 部分。
@@ -152,7 +150,7 @@ Wiki配置文件
    # 启动基于 qdrant 的 wiki server
    bash examples/agent/tools/search_local_server_qdrant/launch_local_server.sh
 
-Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参考 `Qdrant 文档 <https://qdrant.tech/documentation/guides/optimize/>`__。
+Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化，请参考 `Qdrant 文档 <https://qdrant.tech/documentation/guides/optimize/>`__。
 
 References
 ----------
@@ -169,6 +167,6 @@ Asearcher: https://github.com/inclusionAI/ASearcher
    :hidden:
    :maxdepth: 1
 
-   Qwen2.5-3B Search-R1 <qwen2.5>
-   GLM-4.7-Flash Search-R1 <glm4.7_flash>
-   Search-R1 异步训练 <async>
+   Qwen2.5-3B <qwen2.5>
+   GLM-4.7-Flash <glm4.7_flash>
+   异步训练 <async>

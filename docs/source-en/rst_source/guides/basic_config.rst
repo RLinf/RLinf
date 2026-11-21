@@ -1,12 +1,7 @@
 Basic Configuration
 ===================
 
-Below is a complete reference for the core configuration parameters shared across all RLinf workloads.
-Every important key in the YAML is documented so that you can confidently adapt the file to your own cluster, model, or research ideas.
-Parameters are grouped exactly by their top-level key.
-
-This section covers the fundamental GPU and cluster configuration that applies to both embodied and agentic training.
-For task-specific configuration, see :doc:`embodiment_config` and :doc:`agentic_config`.
+For an annotated minimal YAML, Hydra preset overview, and the five keys most commonly tuned on a single GPU, start with :doc:`../reference/configuration`. This page provides the full key-by-key reference for shared parameters across embodied and agentic workloads; for task-specific keys, see :doc:`embodiment_config` and :doc:`agentic_config`.
 
 hydra
 ~~~~~~

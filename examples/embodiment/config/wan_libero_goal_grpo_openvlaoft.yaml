@@ -109,7 +109,6 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/Openvla-oft-SFT-libero-goal-traj1/" # https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1 https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
     precision: ${actor.model.precision}
 
 actor:

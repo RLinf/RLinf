@@ -70,27 +70,27 @@ Installation
 ------------
 
 Start from the :doc:`RLinf installation prerequisites
-</rst_source/start/installation>` and run the following commands from the
-repository root on your GPU training host:
+</rst_source/start/installation>` (in mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``):
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model diffusion
-   source .venv/bin/activate
+   .. tab-item:: CPU OCR (SD3 / ART)
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
+
+   .. tab-item:: GPU OCR (Wan NFT)
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion --paddle-gpu && source .venv/bin/activate
 
 The installer creates a Python 3.10 environment with Diffusers, PEFT,
-Transformers, PaddleOCR, and CPU PaddlePaddle. Both ART recipes and the SD3 NFT
-recipe use CPU OCR. Pass ``--venv /path/to/venv`` to install in another directory
-and activate that environment instead.
-
-The Wan NFT recipes set ``env.*.reward.use_gpu: True``. For GPU OCR, install GPU
-PaddlePaddle with ``--paddle-gpu`` (CUDA 11.x or 12.x), then activate the resulting
-environment:
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --model diffusion --paddle-gpu
-   source .venv/bin/activate
+Transformers, and PaddleOCR (``--paddle-gpu`` supports CUDA 11.x/12.x for Wan
+NFT recipes). Pass ``--venv /path/to/venv`` to install into another directory.
 
 .. note::
 
@@ -103,19 +103,24 @@ environment:
 Download the Model
 ------------------
 
-Download the checkpoint for the recipe you plan to run. Accept the SD3.5 Medium
-access terms on Hugging Face before downloading that model.
+Download the checkpoint for the recipe you plan to run (accept the SD3.5 Medium
+access terms on Hugging Face first if using SD3.5):
 
-.. code:: bash
+.. tab-set::
 
-   huggingface-cli download stabilityai/stable-diffusion-3.5-medium \
-      --local-dir /path/to/stable-diffusion-3.5-medium
+   .. tab-item:: SD3.5 Medium
 
-   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B-Diffusers \
-      --local-dir /path/to/Wan2.2-TI2V-5B-Diffusers
+      .. code-block:: bash
 
-These commands save Diffusers checkpoints locally. Set
-``actor.model.model_path`` in your selected training YAML to the corresponding
+         hf download stabilityai/stable-diffusion-3.5-medium --local-dir ./stable-diffusion-3.5-medium
+
+   .. tab-item:: Wan2.2 TI2V 5B
+
+      .. code-block:: bash
+
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --local-dir ./Wan2.2-TI2V-5B-Diffusers
+
+Set ``actor.model.model_path`` in your selected training YAML to the downloaded
 directory.
 
 .. _diffusion-ocr-dataset:

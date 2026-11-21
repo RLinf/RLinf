@@ -138,7 +138,6 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model"
     precision: ${actor.model.precision}
 
 actor:
