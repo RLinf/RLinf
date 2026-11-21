@@ -14,6 +14,8 @@
 
 """Heterogeneous env modes, and the observations env workers send the policy."""
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import torch
@@ -32,6 +34,50 @@ from rlinf.envs.layout import EnvLayout
 from rlinf.envs.policy_obs import PolicyObsSpec
 from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.workers.env.env_worker import EnvWorker
+
+
+def test_maniskill_chunk_keeps_first_action_boundary():
+    pytest.importorskip("mani_skill")
+    from rlinf.envs.sim.maniskill.maniskill_env import ManiskillEnv
+
+    env = ManiskillEnv.__new__(ManiskillEnv)
+    env.cfg = OmegaConf.create(
+        {"wrap_obs_mode": "simple", "reward_mode": "only_success"}
+    )
+    env.auto_reset = False
+    env.ignore_terminations = False
+    env.use_rel_reward = True
+    env.record_metrics = True
+    env.prev_step_reward = torch.zeros(2)
+    sim = SimpleNamespace(
+        num_envs=2,
+        device=torch.device("cpu"),
+        obs_mode="state",
+        elapsed_steps=torch.zeros(2),
+    )
+    outcomes = iter([(False, False), (True, False), (False, True), (False, True)])
+
+    def step(actions):
+        success = torch.tensor(next(outcomes))
+        sim.elapsed_steps += 1
+        return (
+            actions,
+            torch.zeros(2),
+            success,
+            torch.zeros_like(success),
+            {"success": success},
+        )
+
+    env.env = SimpleNamespace(unwrapped=sim, step=step)
+    env._init_metrics()
+
+    _, rewards, terminations, _, _ = env.chunk_step(torch.zeros(2, 4, 1))
+
+    assert rewards.tolist() == [[0, 1, 0, 0], [0, 0, 1, 0]]
+    assert terminations.tolist() == [
+        [False, True, False, False],
+        [False, False, True, False],
+    ]
 
 
 def _env(env_type: str, total_num_envs: int, **fields) -> dict:
