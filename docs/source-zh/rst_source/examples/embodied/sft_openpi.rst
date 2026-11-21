@@ -99,9 +99,9 @@ BEHAVIOR、RoboTwin、dual-Franka 和 RLT Stage 1 SFT 配置设置 ``precision: 
 使用 FP32。该配置保留 FP32 的 action/time 输入及自适应 norm 条件，主干使用 BF16 计算。
 RLT Stage 1 配置还让 ``rlt_module`` 使用 FP32。
 
-π₀.₅ 的主干激活使用 FP16 或 BF16 时，设置 ``actor.model.openpi.attention_backend: flash_attention_2``，即可在 SFT、RL 和推理中使用 FlashAttention-2 计算 Gemma attention。训练和 rollout 环境需安装与 PyTorch、CUDA 版本匹配的 ``flash-attn`` 2.x。默认的 ``eager`` 后端使用 FP32 计算 attention；FlashAttention 会产生小幅数值差异。
+π₀.₅ 的主干激活使用 FP16 或 BF16 时，可启用 FlashAttention-2。运行 SFT 或 RL 时，将 ``actor.model.openpi.attention_backend`` 设为 ``flash_attention_2``。独立评测时，设置 ``rollout.model.openpi.attention_backend``。在需要使用 FlashAttention-2 的环境中安装与 PyTorch、CUDA 版本匹配的 ``flash-attn`` 2.x。
 
-使用 FlashAttention 时保持 ``pytorch_numerics=False``。原生 OpenPI Torch 数值模式要求 ``attention_backend: eager``，以保留其舍入和全遮罩 query 的梯度行为。
+使用 FlashAttention 时保持 ``pytorch_numerics: false``。NVIDIA GPU 在默认设置下使用 ``eager`` 以 FP32 计算注意力分数，切换到 FlashAttention 后可能出现小幅数值差异。
 
 在使用 CUDA Toolkit 12.3 或更高版本的 Hopper GPU 上，将 ``attention_backend`` 设为 ``flash_attention_3``，并在已激活的 OpenPI 环境中安装官方 FlashAttention-3。
 
