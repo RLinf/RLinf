@@ -1,5 +1,5 @@
-单臂 Franka：GELLO 遥操作与采数
-===============================
+Franka GELLO 遥操作
+===================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gello.jpeg
    :align: center

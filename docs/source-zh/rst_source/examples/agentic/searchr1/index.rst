@@ -167,6 +167,6 @@ Asearcher: https://github.com/inclusionAI/ASearcher
    :hidden:
    :maxdepth: 1
 
-   Qwen2.5-3B Search-R1 <qwen2.5>
-   GLM-4.7-Flash Search-R1 <glm4.7_flash>
-   Search-R1 异步训练 <async>
+   Qwen2.5-3B <qwen2.5>
+   GLM-4.7-Flash <glm4.7_flash>
+   异步训练 <async>

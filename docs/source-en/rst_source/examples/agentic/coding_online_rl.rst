@@ -1,5 +1,5 @@
-Online RL for Code Completion Agent
-=======================================================
+Coding Online RL
+================
 
 Use this recipe to connect Continue to RLinf, collect accept/reject feedback on code completions, and update a Qwen coder model online.
 

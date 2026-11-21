@@ -1,5 +1,5 @@
-Franka: π₀ Data Collection, SFT & Deployment
-============================================
+Franka π₀ SFT & Deployment
+==========================
 
 Overview
 --------

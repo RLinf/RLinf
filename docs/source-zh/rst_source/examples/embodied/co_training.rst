@@ -1,5 +1,5 @@
-基于 RL 的仿真-真机协同训练
-========================================
+仿真-真机协同训练
+=================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png
    :align: center

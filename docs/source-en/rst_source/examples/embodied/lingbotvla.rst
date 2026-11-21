@@ -1,5 +1,5 @@
-RL on LingbotVLA 1.0 Models
-===========================
+LingbotVLA 1.0 RL
+=================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

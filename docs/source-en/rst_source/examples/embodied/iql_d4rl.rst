@@ -1,5 +1,5 @@
-IQL: Offline RL on D4RL
-=======================
+IQL (D4RL)
+==========
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png
    :align: center

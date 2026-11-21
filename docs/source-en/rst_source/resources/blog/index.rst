@@ -52,10 +52,10 @@ Explore RLinf engineering reports, system optimizations, and model integrations.
    :hidden:
    :maxdepth: 1
 
-   RLinf × MUSA (WoVR) <musa_wovr>
-   RLinf × WorldLoop (VLM Reward) <worldloop_topreward>
-   RLinf × SGLang (Cosmos3) <cosmos3_sft_and_sglang_evaluate>
-   BEHAVIOR 25× Optimization <behavior_system_optimization>
-   Ascend Embodied Optimization <ascend_embodied_optimization>
-   Cursor Online Coding RL <build_a_coding_online_rl_case>
-   Comparison with veRL <compare_with_verl>
+   MUSA × WoVR <musa_wovr>
+   WorldLoop VLM Reward <worldloop_topreward>
+   SGLang × Cosmos3 <cosmos3_sft_and_sglang_evaluate>
+   BEHAVIOR 25× Speedup <behavior_system_optimization>
+   Ascend Embodied <ascend_embodied_optimization>
+   Cursor Coding RL <build_a_coding_online_rl_case>
+   RLinf vs. veRL <compare_with_verl>

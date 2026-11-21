@@ -1,5 +1,5 @@
-RL on π₀-FAST with LeRobot
-============================
+π₀-FAST RL
+===========
 
 This example integrates LeRobot's ``PI0FastPolicy`` with RLinf for deterministic
 LIBERO-Long evaluation and token-level GRPO fine-tuning. The integration keeps

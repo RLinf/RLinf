@@ -1,5 +1,5 @@
-RL with Real2Sim2Real GSEnv
-===========================
+GSEnv Real2Sim2Real RL
+======================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

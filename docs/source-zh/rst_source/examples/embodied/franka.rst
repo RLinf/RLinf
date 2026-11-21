@@ -1,5 +1,5 @@
-单臂 Franka：环境配置与在线 RL
-==============================
+Franka 在线强化学习
+===================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
    :align: center

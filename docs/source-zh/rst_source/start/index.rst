@@ -60,7 +60,7 @@
    * - 仿真环境 VLA 强化学习
      - 1–8 卡（40–80 GB）
      - :doc:`VLA 快速上手（ManiSkill3） <vla>`
-   * - 真机联调、采数与训练
+   * - 真机联调、数据采集与训练
      - 控制机 + GPU 节点
      - :doc:`真实机器人强化学习 <../examples/real_world_index>`
    * - 大模型数学推理 RL

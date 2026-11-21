@@ -1,5 +1,5 @@
-基于 Genesis 的强化学习训练
-========================================
+Genesis 强化学习
+================
 
 .. figure:: https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/HeroShot_Final.png
    :align: center

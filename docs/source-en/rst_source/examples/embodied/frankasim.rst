@@ -1,5 +1,5 @@
-RL with Franka-Sim Benchmark
-============================
+Franka-Sim RL
+=============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/serl/refs/heads/RLinf/franka-sim/franka_sim/franka_sim/envs/xmls/robotiq_2f85/2f85.png
    :align: center

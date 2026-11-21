@@ -1,5 +1,5 @@
-YAM: Dual-Arm PICO Data Collection
-==================================
+YAM PICO Data Collection
+========================
 
 Collect dual-arm YAM joint-space demonstrations with PICO controllers and three RealSense RGB cameras on one YAM host, then merge successful shards into a LeRobot dataset ready for :doc:`yam_openpi`.
 

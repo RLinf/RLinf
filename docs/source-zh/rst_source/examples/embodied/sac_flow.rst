@@ -1,5 +1,5 @@
-SAC-Flow：流匹配策略 SAC 强化学习
-=================================
+SAC-Flow
+========
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-overview.png
    :align: center

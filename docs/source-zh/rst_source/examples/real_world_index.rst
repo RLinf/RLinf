@@ -1,7 +1,7 @@
 真实机器人强化学习
 ==================
 
-按实体机器人平台选择对应指南，覆盖各平台支持的硬件配置、遥操作采数、SFT 部署与在线 RL 流程。
+按实体机器人平台选择对应指南，覆盖各平台支持的硬件配置、遥操作数据采集、SFT 部署与在线 RL 流程。
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/realworld_flow_zh.svg
    :align: center
@@ -21,7 +21,7 @@
 
    * - 机器人
      - 硬件配置
-     - 遥操作与采数
+     - 遥操作与数据采集
      - SFT / 部署
      - 在线 RL
      - 指南

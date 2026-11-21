@@ -1,5 +1,5 @@
-Add a New Model (Megatron + SGLang)
-===================================
+Add a Megatron Model
+====================
 
 
 Add a new HuggingFace model to RLinf with the Megatron+SGLang backend. This

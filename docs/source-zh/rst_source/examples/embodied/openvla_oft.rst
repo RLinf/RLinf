@@ -1,5 +1,5 @@
-OpenVLA-OFT 强化学习训练
-========================
+OpenVLA-OFT 强化学习
+====================
 
 .. figure:: https://openvla-oft.github.io/static/images/libero_task_performance_results.png
    :align: center

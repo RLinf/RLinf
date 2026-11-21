@@ -1,5 +1,5 @@
-SAC-Flow: Flow Matching Policy with SAC
-=======================================
+SAC-Flow
+========
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-overview.png
    :align: center

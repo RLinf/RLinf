@@ -1,5 +1,5 @@
-GimArm：硬件配置、VR 遥操与在线 RL
-==================================
+GimArm 在线强化学习
+===================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gim-arm.png
    :align: center
@@ -7,7 +7,7 @@ GimArm：硬件配置、VR 遥操与在线 RL
 
    用于 SocketCAN 控制、电机校准和插孔训练的 GimArm 6 自由度机械臂。
 
-通过 Linux SocketCAN 将 GimArm 6 自由度机械臂接入 RLinf，完成电机零位校准、目标位姿采集、VR 遥操采数和真机插孔训练。
+通过 Linux SocketCAN 将 GimArm 6 自由度机械臂接入 RLinf，完成电机零位校准、目标位姿采集、VR 遥操作数据采集和真机插孔训练。
 
 概览
 ----

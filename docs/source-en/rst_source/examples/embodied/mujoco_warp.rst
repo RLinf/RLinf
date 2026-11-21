@@ -1,5 +1,5 @@
-RL with MuJoCo Warp
-===================
+MuJoCo Warp RL
+==============
 
 .. figure:: https://raw.githubusercontent.com/google-deepmind/mujoco_warp/main/benchmarks/humanoid/rollout_three_humanoids.webp
    :align: center

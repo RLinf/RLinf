@@ -1,5 +1,5 @@
-ARX X5：双臂 PICO 遥操采数
-==========================
+ARX X5 数据采集
+===============
 
 .. figure:: https://arx-global.us/assets/img/x5.webp
    :align: center
@@ -31,7 +31,7 @@ ARX X5：双臂 PICO 遥操采数
    .. grid-item-card:: 工作流
       :text-align: center
 
-      PICO 采数 → 合并 LeRobot → 可视化预览
+      PICO 数据采集 → 合并 LeRobot → 可视化预览
 
    .. grid-item-card:: 硬件
       :text-align: center
@@ -101,7 +101,7 @@ ARX X5：双臂 PICO 遥操采数
          right_camera_serials: ['/dev/v4l/by-path/pci-0000:00:14.0-usb-0:2.3:1.0-video-index0']
          camera_rotations: {base_0_rgb: 180}
 
-   .. tab-item:: 2. 采数与合并数据集
+   .. tab-item:: 2. 采集与合并数据集
 
       **设置目标回合数、频率与任务描述**\ （编辑 ``examples/embodiment/config/collect_data_dual_arx5.yaml``）：
 

@@ -1,5 +1,5 @@
-RL on ABot-M0
-==============
+ABot-M0 RL
+==========
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/ABot-M0.png
    :align: center

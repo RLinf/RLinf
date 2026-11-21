@@ -1,5 +1,5 @@
-MLP 策略强化学习训练
-===============================================
+MLP 强化学习
+============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/3_layer_mlp.jpg
    :align: center

@@ -1,5 +1,5 @@
-OpenPI Supervised Fine-Tuning
-=============================
+OpenPI SFT
+==========
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg
    :align: center

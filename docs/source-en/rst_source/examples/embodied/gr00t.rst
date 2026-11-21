@@ -1,5 +1,5 @@
-RL on GR00T Models
-==================================================================
+GR00T RL
+========
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

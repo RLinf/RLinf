@@ -1,5 +1,5 @@
-RL with GenieSim Benchmark
-==========================
+GenieSim RL
+===========
 
 .. |pi| replace:: π₀.₅
 

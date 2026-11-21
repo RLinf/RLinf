@@ -1,5 +1,5 @@
-RL on Dexbotic Models
-=====================
+Dexbotic RL
+===========
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

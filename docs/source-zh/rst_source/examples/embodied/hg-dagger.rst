@@ -1,5 +1,5 @@
-单臂 Franka：HG-DAgger 人在环训练
-=================================
+Franka HG-DAgger
+================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/hg-dagger.jpg
    :align: center
@@ -28,7 +28,7 @@
    .. grid-item-card:: 流程
       :text-align: center
 
-      PICO 采数 → SFT → 在线 HG-DAgger
+      PICO 数据采集 → SFT → 在线 HG-DAgger
 
    .. grid-item-card:: 硬件
       :text-align: center

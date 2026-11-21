@@ -1,5 +1,5 @@
-Franka: ZED Cameras & Robotiq Gripper
-=====================================
+Franka ZED & Robotiq
+====================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robotiq_zed.jpeg
    :align: center

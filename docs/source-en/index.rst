@@ -195,15 +195,15 @@ Why RLinf
   :titlesonly:
   :hidden:
 
-  Extending Hub <rst_source/extending/index>
-  Extension Registries <rst_source/extending/overview>
-  New Model (FSDP) <rst_source/extending/new_model_fsdp>
-  New Model (Megatron) <rst_source/extending/new_model_megatron>
-  SGLang Embodied Model <rst_source/extending/sglang_embodied_model>
-  New SFT Model <rst_source/extending/new_model_sft>
-  New Simulator Env <rst_source/extending/new_env>
-  New Real-World Robot <rst_source/extending/new_robot>
-  New Real-World Task <rst_source/extending/new_task>
+  Overview <rst_source/extending/index>
+  Architecture <rst_source/extending/overview>
+  FSDP Model <rst_source/extending/new_model_fsdp>
+  Megatron Model <rst_source/extending/new_model_megatron>
+  SGLang Embodied <rst_source/extending/sglang_embodied_model>
+  SFT Model <rst_source/extending/new_model_sft>
+  Simulator Env <rst_source/extending/new_env>
+  Real-World Robot <rst_source/extending/new_robot>
+  Real-World Task <rst_source/extending/new_task>
   Reward Model <rst_source/extending/reward_model>
   Advanced Integrations <rst_source/extending/advanced-integrations/index>
 
@@ -229,7 +229,7 @@ Why RLinf
   Why RLinf <rst_source/resources/why_rlinf>
   v0.4 Release Notes <rst_source/resources/release_v0.4>
   v0.3 Release Notes <rst_source/resources/release_v0.3>
-  v0.1 & v0.2 Release Notes <rst_source/resources/release_v0.1_v0.2>
+  v0.1–v0.2 Release Notes <rst_source/resources/release_v0.1_v0.2>
   Blog <rst_source/resources/blog/index>
   Publications <rst_source/resources/publications/index>
   Contributor Policy <rst_source/resources/maintainer_policy>

@@ -1,5 +1,5 @@
-使用 GRPO 训练 Qwen3-VL 视觉语言推理任务
-==========================================
+Qwen3-VL GRPO 视觉推理
+======================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

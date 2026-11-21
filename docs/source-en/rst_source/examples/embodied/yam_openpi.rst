@@ -1,5 +1,5 @@
-YAM: π₀.₅ SFT & Real-World Evaluation
-=====================================
+YAM π₀.₅ SFT & Evaluation
+=========================
 
 Merge demonstrations from :doc:`yam`, compute normalization statistics, fine-tune OpenPI Pi0.5 on a GPU node, and evaluate the checkpoint on a dual-arm YAM setup (or deploy with RPent).
 

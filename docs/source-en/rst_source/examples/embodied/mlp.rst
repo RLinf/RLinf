@@ -1,5 +1,5 @@
-RL on MLP Policy
-================
+MLP Policy RL
+=============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/3_layer_mlp.jpg
    :align: center

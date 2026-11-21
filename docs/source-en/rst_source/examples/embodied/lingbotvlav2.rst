@@ -1,5 +1,5 @@
-RL on LingbotVLA 2.0 Models
-===========================
+LingbotVLA 2.0 RL
+=================
 
 .. figure:: https://raw.githubusercontent.com/robbyant/lingbot-vla-v2/ecca77bb259b9592d5fc0eb2b4972d4a236ed2c8/assets/lingbot_vla2_framework.png
    :align: center

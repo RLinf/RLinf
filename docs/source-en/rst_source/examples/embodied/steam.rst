@@ -1,5 +1,5 @@
-STEAM: Ensemble Advantage Modeling for Offline Policy Optimization
-==================================================================
+STEAM
+=====
 
 Run the **STEAM** pipeline in RLinf. STEAM is an offline policy-optimization
 recipe that scores existing data with a **pair-classification progress critic**

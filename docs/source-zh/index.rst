@@ -67,7 +67,7 @@ RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础
       :link: rst_source/examples/real_world_index
       :link-type: doc
 
-      在 Franka、SO-101、ARX X5、R2 等真机上运行硬件测试、遥操采数、SFT 与在线 RL。
+      在 Franka、SO-101、ARX X5、R2 等真机上运行硬件测试、遥操数据采集、SFT 与在线 RL。
 
    .. grid-item-card:: 智能体 / 推理 RL
       :link: rst_source/examples/agentic/math_reasoning/reasoning
@@ -114,7 +114,7 @@ RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础
   安装说明 <rst_source/start/installation>
   VLA 快速上手 <rst_source/start/vla>
   命令速查表 <rst_source/start/cheat_sheet>
-  常见问题（FAQ） <rst_source/resources/faq>
+  常见问题 <rst_source/resources/faq>
 
 .. toctree::
   :caption: 具身训练
@@ -196,14 +196,14 @@ RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础
   :hidden:
 
   扩展总览 <rst_source/extending/index>
-  扩展注册表 <rst_source/extending/overview>
-  FSDP 新模型 <rst_source/extending/new_model_fsdp>
-  Megatron 新模型 <rst_source/extending/new_model_megatron>
+  扩展架构 <rst_source/extending/overview>
+  FSDP 模型 <rst_source/extending/new_model_fsdp>
+  Megatron 模型 <rst_source/extending/new_model_megatron>
   SGLang 具身模型 <rst_source/extending/sglang_embodied_model>
-  新 SFT 模型 <rst_source/extending/new_model_sft>
-  新仿真环境 <rst_source/extending/new_env>
-  新真机机器人 <rst_source/extending/new_robot>
-  新真机任务 <rst_source/extending/new_task>
+  SFT 模型 <rst_source/extending/new_model_sft>
+  仿真环境 <rst_source/extending/new_env>
+  真机机器人 <rst_source/extending/new_robot>
+  真机任务 <rst_source/extending/new_task>
   奖励模型 <rst_source/extending/reward_model>
   高级集成 <rst_source/extending/advanced-integrations/index>
 
@@ -229,7 +229,7 @@ RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础
   为什么选择 RLinf <rst_source/resources/why_rlinf>
   v0.4 发布说明 <rst_source/resources/release_v0.4>
   v0.3 发布说明 <rst_source/resources/release_v0.3>
-  v0.1 & v0.2 发布说明 <rst_source/resources/release_v0.1_v0.2>
+  v0.1–v0.2 发布说明 <rst_source/resources/release_v0.1_v0.2>
   博客 <rst_source/resources/blog/index>
-  论文与技术报告 <rst_source/resources/publications/index>
+  论文 <rst_source/resources/publications/index>
   贡献者政策 <rst_source/resources/maintainer_policy>

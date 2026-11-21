@@ -1,5 +1,5 @@
-基于 PolaRiS 仿真平台的强化学习训练
-========================================
+PolaRiS 强化学习
+================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/polaris.png
    :align: center

@@ -1,5 +1,5 @@
-Evaluation on RoboLab
-=====================
+RoboLab Evaluation
+==================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png
    :align: center

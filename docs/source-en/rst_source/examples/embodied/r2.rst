@@ -1,5 +1,5 @@
-Robbyant R2: Setup, VR Teleop & Online RL
-=========================================
+Robbyant R2 Setup & RL
+======================
 
 Set up a Robbyant R2 wheeled humanoid robot over RFrame and ROS 2, verify state feedback and whole-body motion, run PICO VR teleoperation, and configure ``R2ReachEnv-v1`` for real-world rollouts.
 

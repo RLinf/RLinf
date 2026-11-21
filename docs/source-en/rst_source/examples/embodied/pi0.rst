@@ -1,5 +1,5 @@
-RL on π₀ and π₀.₅
-===================
+π₀ / π₀.₅ RL
+==============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

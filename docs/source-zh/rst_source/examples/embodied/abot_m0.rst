@@ -1,5 +1,5 @@
-ABot-M0 强化学习训练
-========================================
+ABot-M0 强化学习
+================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/ABot-M0.png
    :align: center

@@ -17,19 +17,19 @@
 .. grid:: 1 2 3 3
    :gutter: 3
 
-   .. grid-item-card:: OpenPI PyTorch 采数、SFT 与部署
+   .. grid-item-card:: OpenPI PyTorch
       :link: dual_franka_openpi_pytorch
       :link-type: doc
 
       用 OpenPI PyTorch 完成双臂 Franka policy 微调与部署。
 
-   .. grid-item-card:: OpenPI JAX 采数、SFT 与部署
+   .. grid-item-card:: OpenPI JAX
       :link: dual_franka
       :link-type: doc
 
       用 GELLO 采集双臂示教数据，完成数据转换、微调与部署。
 
-   .. grid-item-card:: PICO VR 采数与 HG-DAgger
+   .. grid-item-card:: PICO VR HG-DAgger
       :link: dual_franka_pico_dagger
       :link-type: doc
 
@@ -39,6 +39,6 @@
    :hidden:
    :maxdepth: 1
 
-   OpenPI PyTorch 采数、SFT 与部署 <dual_franka_openpi_pytorch>
-   OpenPI JAX 采数、SFT 与部署 <dual_franka>
-   PICO VR 采数与 HG-DAgger <dual_franka_pico_dagger>
+   OpenPI PyTorch <dual_franka_openpi_pytorch>
+   OpenPI JAX <dual_franka>
+   PICO VR HG-DAgger <dual_franka_pico_dagger>

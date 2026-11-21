@@ -52,10 +52,10 @@
    :hidden:
    :maxdepth: 1
 
-   RLinf × MUSA：复现 WoVR <musa_wovr>
-   RLinf × WorldLoop：VLM 奖励 <worldloop_topreward>
-   RLinf × SGLang：Cosmos3 实践 <cosmos3_sft_and_sglang_evaluate>
-   BEHAVIOR 25 倍系统优化 <behavior_system_optimization>
-   昇腾 Ascend 具身优化 <ascend_embodied_optimization>
-   Cursor 在线代码强化学习 <build_a_coding_online_rl_case>
+   MUSA 复现 WoVR <musa_wovr>
+   WorldLoop 奖励模型 <worldloop_topreward>
+   SGLang 集成 Cosmos3 <cosmos3_sft_and_sglang_evaluate>
+   BEHAVIOR 25× 优化 <behavior_system_optimization>
+   Ascend 具身优化 <ascend_embodied_optimization>
+   Cursor 代码 RL <build_a_coding_online_rl_case>
    与 veRL 对比 <compare_with_verl>

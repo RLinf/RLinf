@@ -1,5 +1,5 @@
-RL on StarVLA Models
-====================
+StarVLA RL
+==========
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/starvla.png
    :align: center

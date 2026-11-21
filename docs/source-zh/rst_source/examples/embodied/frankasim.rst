@@ -1,5 +1,5 @@
-基于 Franka-Sim 的强化学习训练
-========================================
+Franka-Sim 强化学习
+===================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/serl/refs/heads/RLinf/franka-sim/franka_sim/franka_sim/envs/xmls/robotiq_2f85/2f85.png
    :align: center

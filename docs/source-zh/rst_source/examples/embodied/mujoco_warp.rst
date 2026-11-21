@@ -1,5 +1,5 @@
-基于 MuJoCo Warp 的强化学习训练
-===============================
+MuJoCo Warp 强化学习
+====================
 
 .. figure:: https://raw.githubusercontent.com/google-deepmind/mujoco_warp/main/benchmarks/humanoid/rollout_three_humanoids.webp
    :align: center

@@ -1,5 +1,5 @@
-Moonlight-16B 数学推理（GRPO）
-==============================
+Moonlight-16B 数学推理 GRPO
+===========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

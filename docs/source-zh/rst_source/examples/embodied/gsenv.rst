@@ -1,5 +1,5 @@
-基于 GSEnv 的 Real2Sim2Real 强化学习训练
-========================================
+GSEnv 强化学习
+==============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

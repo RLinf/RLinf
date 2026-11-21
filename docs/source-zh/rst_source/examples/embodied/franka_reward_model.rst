@@ -1,5 +1,5 @@
-单臂 Franka：视觉与 VLM 奖励模型
-================================
+Franka 奖励模型
+===============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_reward_model.jpg
    :align: center
@@ -10,7 +10,7 @@
 概览
 ----
 
-在 Franka 真机异步 RLPD 训练中，用学习得到的奖励模型替代手写成功规则。本页支持两种模型：用于视觉上明确成功状态的 ResNet 逐帧分类器，以及提供 5 帧滑动窗口稠密进度引导的 Qwen3-VL-4B（LoRA）动作趋势判别模型；两者的数据标注格式不同，采数前先选定其一。
+在 Franka 真机异步 RLPD 训练中，用学习得到的奖励模型替代手写成功规则。本页支持两种模型：用于视觉上明确成功状态的 ResNet 逐帧分类器，以及提供 5 帧滑动窗口稠密进度引导的 Qwen3-VL-4B（LoRA）动作趋势判别模型；两者的数据标注格式不同，采集前先选定其一。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -28,7 +28,7 @@
    .. grid-item-card:: 流程
       :text-align: center
 
-      采数标注 → 训练奖励模型 → 在线 RLPD
+      数据采集与标注 → 训练奖励模型 → 在线 RLPD
 
    .. grid-item-card:: 硬件
       :text-align: center
@@ -80,7 +80,7 @@
 
 .. warning::
 
-   每次采数与真机 RL 均须由操作员全程监控并保持急停按钮触手可及。连接前清空工作区域并核对机械臂 IP、相机序列号与目标位姿。ResNet 模式开启 ``standalone_realworld: True`` 后由奖励模型直接触发环境复位，启动自主 RL 前请先离线评估精度，或按 :doc:`../../extending/reward_model` 用真机遥操作做在线推理验证。
+   每次数据采集与真机 RL 均须由操作员全程监控并保持急停按钮触手可及。连接前清空工作区域并核对机械臂 IP、相机序列号与目标位姿。ResNet 模式开启 ``standalone_realworld: True`` 后由奖励模型直接触发环境复位，启动自主 RL 前请先离线评估精度，或按 :doc:`../../extending/reward_model` 用真机遥操作做在线推理验证。
 
 .. _franka-resnet-reward-model:
 .. _franka-vlm-reward-model:
@@ -115,7 +115,7 @@
 
            bash examples/reward/realworld_collect_process_dataset.sh realworld_collect_dataset
 
-      - **方式二：固定位姿标注（目标驱动）**：采数时将 ``env.eval.override_cfg.success_hold_steps`` 设为 ``20``\ （缓慢移动获取多样失败帧，到达目标位姿后小幅微调获取多样成功帧），再将 ``.pkl`` 轨迹预处理为 ``train.pt`` 与 ``val.pt``：
+      - **方式二：固定位姿标注（目标驱动）**：数据采集时将 ``env.eval.override_cfg.success_hold_steps`` 设为 ``20``\ （缓慢移动获取多样失败帧，到达目标位姿后小幅微调获取多样成功帧），再将 ``.pkl`` 轨迹预处理为 ``train.pt`` 与 ``val.pt``：
 
         .. code-block:: bash
 
@@ -363,6 +363,6 @@
    * - ResNet 奖励模型在真机数据上过早触发早停
      - 在奖励模型训练配置中将 ``runner.early_stop.min_delta`` 降至 ``1e-6``。
    * - 无 GAE 信号时 VLM 趋势预处理报错或标签全为中性
-     - 传入 ``--target-ee-pose "X,Y,Z,RX,RY,RZ"`` 并调整 ``--delta-threshold``\ （单位米，可从 ``0.005`` 起步），且确认采数时设置了 ``use_relative_frame: False``。
+     - 传入 ``--target-ee-pose "X,Y,Z,RX,RY,RZ"`` 并调整 ``--delta-threshold``\ （单位米，可从 ``0.005`` 起步），且确认数据采集时设置了 ``use_relative_frame: False``。
    * - Qwen3-VL-4B LoRA 微调显存不足
      - 在 ``qwen3vl_sft_vlm_trend_reward.yaml`` 中开启 ``actor.fsdp_config.gradient_checkpointing: true``。

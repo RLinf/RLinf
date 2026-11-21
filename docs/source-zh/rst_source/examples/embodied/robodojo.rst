@@ -1,5 +1,5 @@
-RoboDojo 基准评估
-========================================
+RoboDojo 评测
+=============
 
 `RoboDojo <https://robodojo-benchmark.github.io/>`__ 是基于 Isaac Sim 的双臂操作基准，面向 ARX-X5 等机器人提供桌面整理、抓取、放置和工具使用任务。RLinf 将 RoboDojo 接入为 Gym 环境，用于 VLA 策略的 rollout 与评估，暂不支持 RL 训练。
 

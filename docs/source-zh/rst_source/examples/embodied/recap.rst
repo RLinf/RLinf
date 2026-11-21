@@ -1,5 +1,5 @@
-RECAP：基于离线优势估计的策略优化
-==========================================
+RECAP
+=====
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/recap.png
    :align: center

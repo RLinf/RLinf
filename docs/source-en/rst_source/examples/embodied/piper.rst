@@ -1,5 +1,5 @@
-AgileX Piper: Setup & Hardware Control
-======================================
+AgileX Piper Setup
+==================
 
 .. figure:: https://raw.githubusercontent.com/agilexrobotics/piper_ros/noetic/asserts/pictures/piper_urdf_zero.png
    :align: center

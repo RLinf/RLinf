@@ -1,5 +1,5 @@
-基于 BEHAVIOR-1K 的强化学习训练
-===============================
+BEHAVIOR-1K 强化学习
+====================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior.jpg
    :align: center

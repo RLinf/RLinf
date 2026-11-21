@@ -1,8 +1,8 @@
 .. Copyright 2026 The RLinf Authors.
    Licensed under the Apache License, Version 2.0.
 
-单臂 Franka：Orbbec 深度相机
-============================
+Franka Orbbec 相机
+==================
 
 概览
 ----

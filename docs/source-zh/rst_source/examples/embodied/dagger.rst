@@ -1,5 +1,5 @@
-具身策略的 DAgger 训练
-========================================
+DAgger 模仿学习
+===============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dagger.jpg
    :align: center

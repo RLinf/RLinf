@@ -1,5 +1,5 @@
-LingbotVLA 1.0 模型强化学习
-========================================
+LingbotVLA 1.0 强化学习
+=======================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

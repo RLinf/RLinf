@@ -1,5 +1,5 @@
-DreamZero 监督微调和 Franka 真机部署
-========================================
+DreamZero 监督微调
+==================
 
 .. figure:: https://dreamzero0.github.io/images/project_overview.png
    :align: center

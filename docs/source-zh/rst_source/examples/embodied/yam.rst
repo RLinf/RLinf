@@ -1,5 +1,5 @@
-YAM：双臂 PICO 遥操数据采集
-===========================
+YAM PICO 数据采集
+=================
 
 在单台 YAM 主机上使用 PICO 双手柄和 3 台 RealSense RGB 相机采集双臂 YAM 关节空间示教数据，并将成功分片合并为可用于 :doc:`yam_openpi` 的 LeRobot 数据集。
 
@@ -24,7 +24,7 @@ YAM：双臂 PICO 遥操数据采集
    .. grid-item-card:: 工作流
       :text-align: center
 
-      PICO 逆解采数 → 过滤合并 LeRobot
+      PICO 逆解数据采集 → 过滤合并 LeRobot
 
    .. grid-item-card:: 硬件
       :text-align: center

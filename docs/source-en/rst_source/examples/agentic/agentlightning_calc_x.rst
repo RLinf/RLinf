@@ -1,5 +1,5 @@
-AgentLightning RL Training (calc_x)
-===================================
+AgentLightning RL
+=================
 
 ``calc_x`` is an AgentLightning example in RLinf for training a math-solving agent.
 The agent reads a question, produces reasoning and an answer, and then receives feedback for RL updates.

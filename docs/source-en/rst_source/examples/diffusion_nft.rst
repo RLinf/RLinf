@@ -1,5 +1,5 @@
-Diffusion-NFT: Image & Video RL
-===============================
+Diffusion-NFT
+=============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
    :align: center

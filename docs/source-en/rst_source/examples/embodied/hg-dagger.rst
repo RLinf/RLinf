@@ -1,5 +1,5 @@
-Franka: Online HG-DAgger
-========================
+Franka HG-DAgger
+================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/hg-dagger.jpg
    :align: center

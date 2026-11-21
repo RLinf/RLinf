@@ -17,19 +17,19 @@ Choose a dual-arm Franka guide for GELLO or PICO data collection, OpenPI π₀.�
 .. grid:: 1 2 3 3
    :gutter: 3
 
-   .. grid-item-card:: OpenPI PyTorch (SFT & Deploy)
+   .. grid-item-card:: OpenPI PyTorch
       :link: dual_franka_openpi_pytorch
       :link-type: doc
 
       Fine-tune and deploy a dual-Franka policy with OpenPI PyTorch.
 
-   .. grid-item-card:: OpenPI JAX (SFT & Deploy)
+   .. grid-item-card:: OpenPI JAX
       :link: dual_franka
       :link-type: doc
 
       Collect GELLO demonstrations, convert data, fine-tune a policy, and deploy it.
 
-   .. grid-item-card:: PICO VR Collection & HG-DAgger
+   .. grid-item-card:: PICO VR HG-DAgger
       :link: dual_franka_pico_dagger
       :link-type: doc
 
@@ -39,6 +39,6 @@ Choose a dual-arm Franka guide for GELLO or PICO data collection, OpenPI π₀.�
    :hidden:
    :maxdepth: 1
 
-   OpenPI PyTorch (SFT & Deploy) <dual_franka_openpi_pytorch>
-   OpenPI JAX (SFT & Deploy) <dual_franka>
-   PICO VR Collection & HG-DAgger <dual_franka_pico_dagger>
+   OpenPI PyTorch <dual_franka_openpi_pytorch>
+   OpenPI JAX <dual_franka>
+   PICO VR HG-DAgger <dual_franka_pico_dagger>

@@ -1,5 +1,5 @@
-基于 Wan 世界模型的强化学习
-========================================
+Wan 强化学习
+============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

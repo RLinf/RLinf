@@ -1,5 +1,5 @@
-环境解耦模式（Env Decoupled）
-=============================
+环境解耦模式
+============
 
 ``env_decoupled_mode`` 是 RLinf embodied 任务中用于解耦 Env Worker 与 Rollout Worker
 通信的一种模式。它通过配置 ``runner.enable_decoupled_mode: true`` 开启。

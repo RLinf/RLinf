@@ -1,5 +1,5 @@
-基于 EmbodiChain 的强化学习训练
-========================================
+EmbodiChain 强化学习
+====================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/embodichain.gif
    :align: center

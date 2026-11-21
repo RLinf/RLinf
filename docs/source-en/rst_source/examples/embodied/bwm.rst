@@ -1,5 +1,5 @@
-RL with BWM World Model
-=======================
+BWM RL
+======
 
 This recipe trains a single-view pi0.5 policy with PPO on RoboTwin ``adjust_bottle`` inside the Boundless World Model (BWM), an action-conditioned video world model built on Wan2.2-TI2V-5B. Training never touches the simulator; checkpoints are scored in RoboTwin afterwards.
 

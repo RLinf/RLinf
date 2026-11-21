@@ -1,5 +1,5 @@
-双臂 Franka：OpenPI JAX 采数、SFT 与部署
-========================================
+双臂 Franka OpenPI JAX
+======================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-deploy.jpg
    :align: center
@@ -31,7 +31,7 @@
    .. grid-item-card:: 工作流
       :text-align: center
 
-      GELLO 采数 → 回填 → π₀.₅ SFT → 评测部署
+      GELLO 数据采集 → 回填 → π₀.₅ SFT → 评测部署
 
    .. grid-item-card:: 硬件
       :text-align: center
@@ -165,7 +165,7 @@
 
       正常情况下终端会持续刷新 ``joints=[+0.012 -0.604 ...]  gripper=[0.035]``。若数值停止更新或跳变约 ``2π``，先执行 :ref:`align-sequential <dual-franka-gello-calibration-zh>`。
 
-   .. tab-item:: 2. 采数与 SFT 训练
+   .. tab-item:: 2. 数据采集与 SFT 训练
 
       **启动双节点 Ray 集群**\ （在 RLinf 仓库根目录且 ``.venv`` 已激活；Ray 在 ``ray start`` 时捕获 ``RLINF_NODE_RANK`` 与 ``RLINF_KEYBOARD_DEVICE``）：
 

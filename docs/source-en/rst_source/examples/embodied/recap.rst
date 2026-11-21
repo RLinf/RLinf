@@ -1,5 +1,5 @@
-RECAP: Offline Advantage-Based Policy Optimization
-=====================================================
+RECAP
+=====
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/recap.png
    :align: center

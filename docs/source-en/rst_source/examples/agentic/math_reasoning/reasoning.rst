@@ -1,5 +1,5 @@
-Math Reasoning with Qwen2.5 (GRPO)
-==================================
+Qwen2.5 Math GRPO
+=================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

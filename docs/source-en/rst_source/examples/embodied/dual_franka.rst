@@ -1,5 +1,5 @@
-Dual-Arm Franka: OpenPI JAX SFT & Deployment
-============================================
+Dual-Arm Franka OpenPI JAX
+==========================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-deploy.jpg
    :align: center

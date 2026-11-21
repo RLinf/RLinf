@@ -1,5 +1,5 @@
-StarVLA 模型强化学习训练
-========================================
+StarVLA 强化学习
+================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/starvla.png
    :align: center

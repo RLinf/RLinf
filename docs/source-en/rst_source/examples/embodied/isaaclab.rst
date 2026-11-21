@@ -1,5 +1,5 @@
-RL with IsaacLab
-================
+IsaacLab RL
+===========
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

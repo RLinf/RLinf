@@ -1,5 +1,5 @@
-Dexmal DOS-W1: Flow Matching + SAC Online RL
-============================================
+Dexmal DOS-W1 Online RL
+=======================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dos-w1.png
    :align: center

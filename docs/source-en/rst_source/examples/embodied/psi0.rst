@@ -1,5 +1,5 @@
-RL on Psi0 (SIMPLE)
-===================
+Psi0 RL
+=======
 
 Run PPO post-training for Psi0 on SIMPLE humanoid tasks, starting from the
 official OpenOven checkpoint. For task checkpoints and evaluation commands, see

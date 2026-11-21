@@ -1,5 +1,5 @@
-Dual-Arm Franka: OpenPI PyTorch SFT & Deployment
-================================================
+Dual-Arm Franka OpenPI PyTorch
+==============================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-deploy-rlinf.jpg
    :align: center

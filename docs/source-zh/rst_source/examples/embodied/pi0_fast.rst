@@ -1,5 +1,5 @@
-基于 LeRobot 的 π₀-FAST 强化学习
-============================================================
+π₀-FAST 强化学习
+=================
 
 本示例将 LeRobot 的 ``PI0FastPolicy`` 接入 RLinf，用于 LIBERO-Long 的确定性评测和 token-level GRPO 微调。接入层保留 π₀-FAST 原生的自回归动作序列，并在 actor update 阶段通过 teacher forcing 重放 rollout 时采样的 token。
 

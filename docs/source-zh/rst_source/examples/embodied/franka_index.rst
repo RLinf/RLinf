@@ -18,19 +18,19 @@
 .. grid:: 1 3 3 3
    :gutter: 3
 
-   .. grid-item-card:: 在线 RL（RLPD / SAC）
+   .. grid-item-card:: 在线 RL
       :link: franka
       :link-type: doc
 
       配置单臂 Franka，采集演示数据，并运行在线强化学习训练。
 
-   .. grid-item-card:: π₀ 采数、SFT 与部署
+   .. grid-item-card:: π₀ SFT 与部署
       :link: franka_pi0_sft_deploy
       :link-type: doc
 
       采集演示数据，微调 π₀，并在 Franka 上部署 policy。
 
-   .. grid-item-card:: HG-DAgger 人在环训练
+   .. grid-item-card:: HG-DAgger
       :link: hg-dagger
       :link-type: doc
 
@@ -44,7 +44,7 @@
 .. grid:: 1 3 3 3
    :gutter: 3
 
-   .. grid-item-card:: GELLO 遥操作与采数
+   .. grid-item-card:: GELLO 遥操作
       :link: franka_gello
       :link-type: doc
 
@@ -56,7 +56,7 @@
 
       用 VR 或 PICO 设备遥操作 Franka。
 
-   .. grid-item-card:: 奖励模型（ResNet / VLM）
+   .. grid-item-card:: 奖励模型
       :link: franka_reward_model
       :link-type: doc
 
@@ -70,19 +70,19 @@
 .. grid:: 1 3 3 3
    :gutter: 3
 
-   .. grid-item-card:: ZED 相机与 Robotiq 夹爪
+   .. grid-item-card:: ZED 与 Robotiq
       :link: franka_zed_robotiq
       :link-type: doc
 
       配置 ZED 相机与 Robotiq 夹爪。
 
-   .. grid-item-card:: Orbbec 深度相机
+   .. grid-item-card:: Orbbec 相机
       :link: franka_orbbec
       :link-type: doc
 
       读取 Orbbec USB 相机的彩色图像及对齐深度。
 
-   .. grid-item-card:: 灵巧手真机 RL
+   .. grid-item-card:: 灵巧手
       :link: franka_dexhand
       :link-type: doc
 
@@ -92,12 +92,12 @@
    :hidden:
    :maxdepth: 1
 
-   在线 RL（RLPD / SAC） <franka>
-   π₀ 采数、SFT 与部署 <franka_pi0_sft_deploy>
-   HG-DAgger 人在环训练 <hg-dagger>
-   GELLO 遥操作与采数 <franka_gello>
+   在线 RL <franka>
+   π₀ SFT 与部署 <franka_pi0_sft_deploy>
+   HG-DAgger <hg-dagger>
+   GELLO 遥操作 <franka_gello>
    PICO VR 遥操作 <franka_vr>
-   奖励模型（ResNet / VLM） <franka_reward_model>
-   ZED 相机与 Robotiq 夹爪 <franka_zed_robotiq>
-   Orbbec 深度相机 <franka_orbbec>
-   灵巧手真机 RL <franka_dexhand>
+   奖励模型 <franka_reward_model>
+   ZED 与 Robotiq <franka_zed_robotiq>
+   Orbbec 相机 <franka_orbbec>
+   灵巧手 <franka_dexhand>

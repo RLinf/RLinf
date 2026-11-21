@@ -1,5 +1,5 @@
-基于 RoboTwin 的强化学习训练
-========================================
+RoboTwin 强化学习
+=================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

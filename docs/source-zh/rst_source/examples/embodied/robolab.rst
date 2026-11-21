@@ -1,4 +1,4 @@
-RoboLab 评估
+RoboLab 评测
 ============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png

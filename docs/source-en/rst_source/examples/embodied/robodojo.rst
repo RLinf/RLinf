@@ -1,5 +1,5 @@
-RoboDojo Benchmark Evaluation
-=============================
+RoboDojo Evaluation
+===================
 
 `RoboDojo <https://robodojo-benchmark.github.io/>`__ is an Isaac Sim-based
 benchmark for dual-arm manipulation. It includes tabletop rearrangement,

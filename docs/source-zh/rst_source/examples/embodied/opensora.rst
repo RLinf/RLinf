@@ -1,5 +1,5 @@
-基于 OpenSora 世界模型的强化学习
-========================================
+OpenSora 强化学习
+=================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

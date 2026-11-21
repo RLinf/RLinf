@@ -1,5 +1,5 @@
-IQL：基于 D4RL 的离线强化学习
-=============================
+IQL 离线强化学习
+================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png
    :align: center

@@ -1,5 +1,5 @@
-单臂 Franka：π₀ 数据采集、SFT 与部署
-====================================
+Franka π₀ SFT 与部署
+====================
 
 概览
 ----
@@ -83,7 +83,7 @@
 
 .. tab-set::
 
-   .. tab-item:: 1. 安装与采数
+   .. tab-item:: 1. 安装与数据采集
 
       **安装依赖**
 
@@ -105,7 +105,7 @@
 
       **配置并采集示教数据**
 
-      采数、训练与部署共用环境模板 ``examples/embodiment/config/env/realworld_bin_relocation.yaml``。在 ``examples/embodiment/config/realworld_collect_data.yaml`` 中按 :doc:`franka` 填好机械臂 IP 与相机序列号后，应用以下 Bin-relocation 覆盖项（切换环境、开启夹爪、启用键盘标注、填写任务文本并导出 LeRobot 格式）：
+      数据采集、训练与部署共用环境模板 ``examples/embodiment/config/env/realworld_bin_relocation.yaml``。在 ``examples/embodiment/config/realworld_collect_data.yaml`` 中按 :doc:`franka` 填好机械臂 IP 与相机序列号后，应用以下 Bin-relocation 覆盖项（切换环境、开启夹爪、启用键盘标注、填写任务文本并导出 LeRobot 格式）：
 
       .. code-block:: yaml
 
@@ -124,7 +124,7 @@
                enabled: True
                export_format: lerobot_dataset
 
-      启动 Ray（``export RLINF_NODE_RANK=0 && ray start --head``）后开始采数：
+      启动 Ray（``export RLINF_NODE_RANK=0 && ray start --head``）后开始数据采集：
 
       .. code-block:: bash
 
@@ -230,7 +230,7 @@
      - 将 ``HF_LEROBOT_HOME`` 指向包含 ``<repo_id>/{data,meta}`` 的父目录，并确保 ``--repo-id`` 与目录名一致。
    * - SFT 或部署时提示缺少 ``norm_stats.json``
      - 将生成的 ``norm_stats.json`` 复制到 ``<model_path>/<repo_id>/norm_stats.json``。
-   * - 采数时夹爪无法开合
+   * - 数据采集时夹爪无法开合
      - 在 ``realworld_collect_data.yaml`` 中设置 ``env.eval.no_gripper: False``。
    * - 机械臂碰触容器边缘或触发限位
      - 在运动空间安全最低中点重新测量 ``target_ee_pose``，并核对 ``ee_pose_limit_min`` 与 ``ee_pose_limit_max``。

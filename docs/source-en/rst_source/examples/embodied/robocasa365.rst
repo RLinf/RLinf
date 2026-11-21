@@ -1,5 +1,5 @@
-RL with RoboCasa365 Benchmark
-=============================
+RoboCasa365 RL
+==============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

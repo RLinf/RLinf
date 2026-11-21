@@ -1,5 +1,5 @@
-OPD：OpenVLA-OFT 在线策略蒸馏
-========================================
+OPD 在线策略蒸馏
+================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

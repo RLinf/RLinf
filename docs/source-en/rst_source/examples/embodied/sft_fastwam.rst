@@ -1,5 +1,5 @@
-FastWAM Supervised Fine-Tuning and Evaluation
-==============================================
+FastWAM SFT & Evaluation
+========================
 
 .. figure:: https://yuantianyuan01.github.io/FastWAM/static/images/teaser_main.png
    :align: center

@@ -1,5 +1,5 @@
-单臂 Franka：灵巧手真机 RL
-==========================
+Franka 灵巧手
+=============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dexhand.jpg
    :align: center
@@ -28,7 +28,7 @@
    .. grid-item-card:: 流程
       :text-align: center
 
-      采数 → 奖励模型 → 在线 RLPD
+      数据采集 → 奖励模型 → 在线 RLPD
 
    .. grid-item-card:: 硬件
       :text-align: center
@@ -115,7 +115,7 @@
 
       在 ``examples/embodiment/config/realworld_collect_dexhand_data.yaml`` 与 ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml`` 中填写 ``robot_ip``、``target_ee_pose``、``end_effector_config`` 与 ``glove_config``\ （串口参数），并在 RL 配置中补充 policy ``model_path`` 和奖励模型 ``model.model_path``。
 
-      **3. 采数、训练奖励模型并启动 RL**
+      **3. 数据采集、训练奖励模型并启动 RL**
 
       在 Franka 控制节点先采集专家示教，再用独立日志目录和更大的 ``env.eval.override_cfg.success_hold_steps`` 采集奖励模型原始轨迹：
 
@@ -148,7 +148,7 @@
             * - 配置文件
               - 用途
             * - ``examples/embodiment/config/realworld_collect_dexhand_data.yaml``
-              - 采数配置，含 ``end_effector_type: "ruiyan_hand"``、手套遥操作参数，以及同时导出 ``replay_buffer``\ （``demo_buffer/``）和 ``pickle_episode``\ （``pickle_episode/``）。
+              - 数据采集配置，含 ``end_effector_type: "ruiyan_hand"``、手套遥操作参数，以及同时导出 ``replay_buffer``\ （``demo_buffer/``）和 ``pickle_episode``\ （``pickle_episode/``）。
             * - ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml``
               - 异步 RLPD CNN 训练配置，已启用 ``reward`` 段。
             * - ``examples/embodiment/config/env/realworld_dex_pnp.yaml``

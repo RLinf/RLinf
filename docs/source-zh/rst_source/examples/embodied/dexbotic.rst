@@ -1,5 +1,5 @@
-Dexbotic 模型强化学习训练
-========================================
+Dexbotic 强化学习
+=================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

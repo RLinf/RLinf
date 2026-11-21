@@ -1,5 +1,5 @@
-Add a New Real-World Robot
-==========================
+Add a Real-World Robot
+======================
 
 This guide adds a mobile base, composes it with RLinf's existing Franka arm, and
 drives the resulting mobile manipulator through a real-world Gymnasium

@@ -48,4 +48,4 @@ Choose a Concept Area
    Scheduling <scheduling-model/index>
    Robotics Interface <robotics>
    Robotics Architecture <robotics_architecture>
-   Real-World Tasks and Environments <realworld_envs>
+   Real-World Tasks <realworld_envs>

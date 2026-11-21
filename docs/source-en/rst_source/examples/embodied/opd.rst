@@ -1,5 +1,5 @@
-OPD for OpenVLA-OFT on LIBERO
-=================================
+OPD
+====
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

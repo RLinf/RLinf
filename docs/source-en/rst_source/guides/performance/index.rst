@@ -12,7 +12,7 @@ training efficiency becomes the bottleneck.
      - What you get
    * - :doc:`RTC <../rtc>`
      - Hide policy inference latency by overlapping it with action-chunk execution, in simulation and on real robots.
-   * - :doc:`Env Decoupled Mode <../env_decoupled_mode>`
+   * - :doc:`Env Decoupled <../env_decoupled_mode>`
      - Decouple Env Workers from Rollout Workers for dynamic embodied rollout scheduling.
    * - :doc:`Training Pipeline Mode <../training_pipeline>`
      - Stream packed actor micro-batches from env workers to overlap embodied rollout and FSDP training.
@@ -28,16 +28,16 @@ training efficiency becomes the bottleneck.
      - System-level profiling of Ray worker processes.
    * - :doc:`5D Parallelism <../5D>`
      - Configure 5D parallelism for large models.
-   * - :doc:`Asynchronous Agentic RL <../async_agentic>`
+   * - :doc:`Async Agentic RL <../async_agentic>`
      - Overlap multi-turn agent rollout with training; two admission limits bound how stale the training data gets.
-   * - :doc:`FUSCO (MoE All-to-All) <../../examples/system/fusco>`
+   * - :doc:`FUSCO <../../examples/system/fusco>`
      - Fuse data transformation and All-to-All communication to accelerate Megatron MoE training.
 
 .. toctree::
    :hidden:
 
    RTC <../rtc>
-   Env Decoupled Mode <../env_decoupled_mode>
+   Env Decoupled <../env_decoupled_mode>
    Training Pipeline Mode <../training_pipeline>
    Observation Compression <../obs_compression>
    LoRA <../lora>
@@ -45,5 +45,5 @@ training efficiency becomes the bottleneck.
    Dynamic Scheduling <../dynamic_scheduling>
    Profiling <../profile>
    5D Parallelism <../5D>
-   Asynchronous Agentic RL <../async_agentic>
-   FUSCO (MoE All-to-All) <../../examples/system/fusco>
+   Async Agentic RL <../async_agentic>
+   FUSCO <../../examples/system/fusco>

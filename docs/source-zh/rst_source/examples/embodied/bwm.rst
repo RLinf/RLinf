@@ -1,5 +1,5 @@
-基于 BWM 世界模型的强化学习
-=============================
+BWM 强化学习
+============
 
 本示例在 Boundless World Model（BWM，基于 Wan2.2-TI2V-5B 的动作条件视频世界模型）中，用 PPO 训练单视角 pi0.5 policy 完成 RoboTwin ``adjust_bottle`` 任务。训练过程不调用仿真器，训练后的 checkpoint 在 RoboTwin 中评测。
 

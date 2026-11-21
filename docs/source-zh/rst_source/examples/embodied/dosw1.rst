@@ -1,5 +1,5 @@
-Dexmal DOS-W1：流匹配 + SAC 真机在线 RL
-=======================================
+Dexmal DOS-W1 在线强化学习
+==========================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dos-w1.png
    :align: center
@@ -30,7 +30,7 @@ Dexmal DOS-W1：流匹配 + SAC 真机在线 RL
    .. grid-item-card:: 工作流
       :text-align: center
 
-      目标关节标定 · 遥操采数 · SAC / RLPD Flow
+      目标关节标定 · 遥操作数据采集 · SAC / RLPD Flow
 
    .. grid-item-card:: 硬件
       :text-align: center

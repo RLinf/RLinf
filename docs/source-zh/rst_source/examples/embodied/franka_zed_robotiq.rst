@@ -1,5 +1,5 @@
-单臂 Franka：ZED 相机与 Robotiq 夹爪
-====================================
+Franka ZED 与 Robotiq
+=====================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robotiq_zed.jpeg
    :align: center
@@ -112,7 +112,7 @@
          g.disconnect()
          "
 
-   .. tab-item:: 2. 采数与运行
+   .. tab-item:: 2. 数据采集与运行
 
       修改 ``examples/embodiment/config/realworld_collect_data_zed_robotiq.yaml`` 中的必填硬件与目标位姿字段：
 

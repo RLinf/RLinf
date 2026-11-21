@@ -89,4 +89,4 @@ SGLang 服务评测
    PolaRiS <polaris>
    RoboLab <robolab>
    SIMPLE <simple>
-   真机（RealWorld） <realworld>
+   真机评测 <realworld>

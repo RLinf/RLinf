@@ -1,5 +1,5 @@
-Franka: PICO VR Teleoperation
-=============================
+Franka PICO VR Teleop
+=====================
 
 Overview
 --------

@@ -1,7 +1,7 @@
 .. _dual-franka-pico-dagger-zh:
 
-双臂 Franka：PICO VR 采数与 HG-DAgger
-=====================================
+双臂 Franka PICO VR HG-DAgger
+=============================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-vr.jpg
    :align: center
@@ -33,12 +33,12 @@
    .. grid-item-card:: 工作流
       :text-align: center
 
-      PICO 采数 → π₀.₅ SFT → 在线 HG-DAgger
+      PICO 数据采集 → π₀.₅ SFT → 在线 HG-DAgger
 
    .. grid-item-card:: 硬件
       :text-align: center
 
-      单机（采数）· 3 节点（GPU + 2 台机器人节点跑 DAgger）
+      单机（数据采集）· 3 节点（GPU + 2 台机器人节点跑 DAgger）
 
 观测与动作
 ~~~~~~~~~~
@@ -86,9 +86,9 @@
 
    启用运动前，确保急停开关触手可及并清空双臂工作空间。在 DAgger 配置中，将全零占位的 ``joint_reset_qpos`` 替换为数据集首帧关节均值或安全 home 姿态（每臂 7 个关节角），并确认每臂 ``target_ee_pose`` 落在共享环境 ``realworld_dual_franka_tcp_rot6d`` 的限位盒内：``x`` 在 ``[0.3, 0.9]``，``y`` 在 ``[-0.4, 0.4]``，``z`` 在 ``[0.02, 0.7]``。Ray 在 ``ray start`` 时捕获 Python 虚拟环境与环境变量，多机运行前务必先导出 ``PYTHONPATH``、``RLINF_NODE_RANK`` 与 ``RLINF_KEYBOARD_DEVICE``。
 
-.. dropdown:: 多机 Ray 集群启动（HG-DAgger 或双机采数必填）
+.. dropdown:: 多机 Ray 集群启动（HG-DAgger 或双机数据采集必填）
 
-   单机采数跳过此项（若残留旧集群，先执行 ``ray stop --force``）。三节点 HG-DAgger，或两台机器人分机采数（设 ``num_nodes: 2``、``node_rank: 0``、``left_controller_node_rank: 0``、``right_controller_node_rank: 1``）时，按实际环境修改并在每个节点 source ``ray_utils/realworld/setup_before_ray.sh``，再导出变量并启动 Ray：
+   单机数据采集跳过此项（若残留旧集群，先执行 ``ray stop --force``）。三节点 HG-DAgger，或两台机器人分机数据采集（设 ``num_nodes: 2``、``node_rank: 0``、``left_controller_node_rank: 0``、``right_controller_node_rank: 1``）时，按实际环境修改并在每个节点 source ``ray_utils/realworld/setup_before_ray.sh``，再导出变量并启动 Ray：
 
    .. code-block:: bash
 
@@ -152,7 +152,7 @@
 
       确认终端输出持续刷新，且按下 ``grip``、``trigger``、``A/B`` 与 ``X/Y`` 时数值变化后再继续。
 
-   .. tab-item:: 2. 采数与准备权重
+   .. tab-item:: 2. 数据采集与准备权重
 
       **启动 PICO 双臂采集**\ （在单机机器人主机上先激活 Python 3.11 虚拟环境；若有旧 Ray 集群先执行 ``ray stop --force``）：
 
@@ -296,5 +296,5 @@
      - 检查 XRoboToolkit PC Service 与 ``vr_data_publisher`` 是否运行，并将 ``zmq_addr`` 设为可达的 publisher IP（勿填 ``0.0.0.0``）。
    * - 快速运动触发 ``joint_velocity_violation``
      - 针对当前 Robotiq 负载与 10 Hz 控制频率调小 ``compliance.max_step``\ （或单侧 ``left_compliance`` / ``right_compliance``）。
-   * - 单机采数误连到旧 Ray 集群
+   * - 单机数据采集误连到旧 Ray 集群
      - 启动 ``collect_data.sh`` 前执行 ``ray stop --force``，并确认已激活 Python 3.11 虚拟环境。

@@ -1,7 +1,7 @@
 .. _maintainer-group-policy:
 
-RLinf Contributor Development and Governance Policy
-=====================================================
+Contributor Policy
+==================
 
 This policy enables contributors from companies, universities, and independent backgrounds to earn
 meaningful project responsibility while preserving maintenance quality and preventing institutional

@@ -11,7 +11,7 @@
      - 内容
    * - :doc:`RTC <../rtc>`
      - 将策略推理与动作块执行重叠，隐藏推理延迟，支持仿真与真机。
-   * - :doc:`环境解耦模式（Env Decoupled） <../env_decoupled_mode>`
+   * - :doc:`环境解耦模式 <../env_decoupled_mode>`
      - 解耦 Env Worker 与 Rollout Worker，用于具身任务中的动态 rollout 调度。
    * - :doc:`训练流水线模式 <../training_pipeline>`
      - 将轨迹打包为 micro-batch 流式发往 actor，实现具身 rollout 与 FSDP 训练并行。
@@ -27,16 +27,16 @@
      - 对 Ray worker 进程做系统级 profiling。
    * - :doc:`5D 并行 <../5D>`
      - 为大模型配置 5D 并行。
-   * - :doc:`异步智能体 RL（Async Agentic） <../async_agentic>`
+   * - :doc:`异步智能体 RL <../async_agentic>`
      - 让多轮 agent rollout 与训练重叠，用两个准入上限约束训练数据的新旧程度。
-   * - :doc:`FUSCO（MoE All-to-All） <../../examples/system/fusco>`
+   * - :doc:`FUSCO <../../examples/system/fusco>`
      - 融合数据变换与通信，加速 Megatron MoE 的 All-to-All 通信。
 
 .. toctree::
    :hidden:
 
    RTC <../rtc>
-   环境解耦模式（Env Decoupled） <../env_decoupled_mode>
+   环境解耦模式 <../env_decoupled_mode>
    训练流水线模式 <../training_pipeline>
    观测压缩 <../obs_compression>
    LoRA <../lora>
@@ -44,5 +44,5 @@
    动态调度 <../dynamic_scheduling>
    Profiling <../profile>
    5D 并行 <../5D>
-   异步智能体 RL（Async Agentic） <../async_agentic>
-   FUSCO（MoE All-to-All） <../../examples/system/fusco>
+   异步智能体 RL <../async_agentic>
+   FUSCO <../../examples/system/fusco>

@@ -1,5 +1,5 @@
-GRPO Training for Qwen3-VL Visual Language Reasoning
-=====================================================
+Qwen3-VL GRPO
+=============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

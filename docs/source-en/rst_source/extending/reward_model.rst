@@ -1,5 +1,5 @@
-Build & Plug In a Reward Model
-==============================
+Build a Reward Model
+====================
 
 Use reward models in RLinf — both image-classification rewards such as
 ``ResNetRewardModel`` and VLM rewards based on ``VLMRewardModel``.

@@ -1,5 +1,5 @@
-RL Token：借助视觉-语言-动作模型启动在线强化学习
-================================================
+RL Token
+========
 
 **RL Token: Bootstrapping Online RL with Vision-Language-Action Models** 在冻结的 VLA 特征模型之上训练一个轻量级强化学习策略。在 RLinf 的配置和代码中，这套流程简称为 **RLT**。整个流程分为两个阶段：
 

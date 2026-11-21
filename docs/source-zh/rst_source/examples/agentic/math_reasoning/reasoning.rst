@@ -1,5 +1,5 @@
-Qwen2.5 数学推理（GRPO）
-========================
+Qwen2.5 数学推理 GRPO
+=====================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

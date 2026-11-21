@@ -1,5 +1,5 @@
-RL with Genesis Benchmark
-=========================
+Genesis RL
+==========
 
 .. figure:: https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/HeroShot_Final.png
    :align: center

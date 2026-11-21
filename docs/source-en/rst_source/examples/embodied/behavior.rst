@@ -1,5 +1,5 @@
-RL with BEHAVIOR-1K
-===================
+BEHAVIOR-1K RL
+==============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior.jpg
    :align: center

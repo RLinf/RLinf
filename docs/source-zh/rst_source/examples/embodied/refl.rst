@@ -1,5 +1,5 @@
-ReFL：基于 ImageReward 的 SD3 奖励反馈微调
-==========================================
+ReFL
+====
 
 .. figure:: https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/figures/ImageReward.jpg
    :align: center

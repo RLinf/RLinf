@@ -1,5 +1,5 @@
-基于 RoboCasa365 的强化学习训练
-===============================
+RoboCasa365 强化学习
+====================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

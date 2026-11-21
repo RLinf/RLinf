@@ -1,5 +1,5 @@
-DAgger for Embodied Policies
-============================
+DAgger
+======
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dagger.jpg
    :align: center

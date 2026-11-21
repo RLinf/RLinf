@@ -1,5 +1,5 @@
-ReFL: Fine-Tune SD3 with ImageReward
-====================================
+ReFL
+====
 
 .. figure:: https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/figures/ImageReward.jpg
    :align: center

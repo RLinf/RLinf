@@ -1,5 +1,5 @@
-DSRL: Diffusion Steering via Reinforcement Learning
-======================================================
+DSRL
+====
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dsrl.png
    :align: center

@@ -1,5 +1,5 @@
-RL with CALVIN Benchmark
-========================
+CALVIN RL
+=========
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

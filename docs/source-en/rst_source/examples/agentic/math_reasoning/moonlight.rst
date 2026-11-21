@@ -1,5 +1,5 @@
-Math Reasoning with Moonlight-16B (GRPO)
-========================================
+Moonlight-16B Math GRPO
+=======================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

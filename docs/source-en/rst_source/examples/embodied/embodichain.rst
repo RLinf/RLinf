@@ -1,5 +1,5 @@
-RL with EmbodiChain
-===================
+EmbodiChain RL
+==============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/embodichain.gif
    :align: center

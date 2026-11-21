@@ -1,5 +1,5 @@
-Cosmos3 Supervised Fine-Tuning (LIBERO)
-========================================
+Cosmos3 SFT
+===========
 
 Fine-tune NVIDIA Cosmos3-Nano (OmniMoT video world model) with SFT to adapt it to the LIBERO action space and simulator.
 

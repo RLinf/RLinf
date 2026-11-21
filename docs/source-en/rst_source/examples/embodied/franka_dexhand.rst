@@ -1,5 +1,5 @@
-Franka: Dexterous Hand RL
-=========================
+Franka Dexterous Hand
+=====================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dexhand.jpg
    :align: center

@@ -1,5 +1,5 @@
-XSquare Turtle2: Visual SAC Online RL
-=====================================
+XSquare Turtle2 Online RL
+=========================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/xsquare_turtle2_arm_small.jpg
    :align: center

@@ -1,5 +1,5 @@
-RL on OpenVLA-OFT
-=================
+OpenVLA-OFT RL
+==============
 
 .. figure:: https://openvla-oft.github.io/static/images/libero_task_performance_results.png
    :align: center

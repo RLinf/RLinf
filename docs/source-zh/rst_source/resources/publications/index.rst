@@ -47,13 +47,13 @@
    :hidden:
    :maxdepth: 2
 
-   CEL（96 台真机集群学习） <cel>
-   STEAM（集成优势建模） <steam>
-   USER（真机在线 RL 系统） <rlinf_user>
-   WoVR（世界模型强化学习） <wovr>
-   WideSeek-R1（多智能体 RL） <wideseek_r1>
-   RLinf-Co（仿真实协同训练） <rlinf_co>
-   DynaRL（动态调度） <dynarl>
-   πRL（流匹配 VLA 强化学习） <pi_rl>
-   RLinf-VLA（统一 VLA+RL 框架） <rlinf_vla>
-   RLinf 系统架构（M2Flow） <rlinf_system>
+   CEL <cel>
+   STEAM <steam>
+   USER <rlinf_user>
+   WoVR <wovr>
+   WideSeek-R1 <wideseek_r1>
+   RLinf-Co <rlinf_co>
+   DynaRL <dynarl>
+   πRL <pi_rl>
+   RLinf-VLA <rlinf_vla>
+   RLinf <rlinf_system>

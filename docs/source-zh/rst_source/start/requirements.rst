@@ -20,7 +20,7 @@
      - 适用任务
      - 推荐入口
    * - 单卡（24 GB 起）
-     - MLP / CNN 仿真 RL、VLA 评测、LoRA SFT、真机采数与部署
+     - MLP / CNN 仿真 RL、VLA 评测、LoRA SFT、真机数据采集与部署
      - :doc:`评测快速体验 <../evaluations/get_started/quick_tour>`、:doc:`MLP 强化学习 <../examples/embodied/mlp>`
    * - 1–2 卡（40–80 GB）
      - 单机 OpenVLA / OpenPI 快速上手、共享式 PPO / GRPO

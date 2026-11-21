@@ -1,5 +1,5 @@
-基于 IsaacLab 的强化学习训练
-========================================
+IsaacLab 强化学习
+=================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

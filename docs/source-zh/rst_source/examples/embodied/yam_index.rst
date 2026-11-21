@@ -10,13 +10,13 @@ YAM
 .. grid:: 1 2 2 2
    :gutter: 3
 
-   .. grid-item-card:: 1. PICO 遥操采数
+   .. grid-item-card:: PICO 数据采集
       :link: yam
       :link-type: doc
 
       用 PICO 双手柄和三路 RGB 相机采集 14 维绝对位置示教数据。
 
-   .. grid-item-card:: 2. π₀.₅ SFT 与评测
+   .. grid-item-card:: π₀.₅ SFT 与评测
       :link: yam_openpi
       :link-type: doc
 
@@ -26,5 +26,5 @@ YAM
    :hidden:
    :maxdepth: 1
 
-   1. PICO 遥操采数 <yam>
-   2. π₀.₅ SFT 与评测 <yam_openpi>
+   PICO 数据采集 <yam>
+   π₀.₅ SFT 与评测 <yam_openpi>

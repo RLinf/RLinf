@@ -1,5 +1,5 @@
-Psi0 强化学习训练（SIMPLE）
-===========================
+Psi0 强化学习
+=============
 
 本页介绍如何从官方 OpenOven checkpoint 开始，在 SIMPLE 人形机器人任务上对 Psi0 运行 PPO 后训练。各任务的 checkpoint 和评测命令见 :doc:`SIMPLE 评测指南 </rst_source/evaluations/guides/simple>`。
 

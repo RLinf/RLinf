@@ -47,13 +47,13 @@ Detailed publication pages
    :hidden:
    :maxdepth: 2
 
-   CEL (96-Robot Fleet Learning) <cel>
-   STEAM (Ensemble Advantage) <steam>
-   USER (Real-World Online RL) <rlinf_user>
-   WoVR (World Model RL) <wovr>
-   WideSeek-R1 (Multi-Agent RL) <wideseek_r1>
-   RLinf-Co (Sim-Real Co-Training) <rlinf_co>
-   DynaRL (Dynamic Scheduling) <dynarl>
-   πRL (Flow-Based VLA RL) <pi_rl>
-   RLinf-VLA (Unified VLA+RL) <rlinf_vla>
-   RLinf System (M2Flow) <rlinf_system>
+   CEL <cel>
+   STEAM <steam>
+   USER <rlinf_user>
+   WoVR <wovr>
+   WideSeek-R1 <wideseek_r1>
+   RLinf-Co <rlinf_co>
+   DynaRL <dynarl>
+   πRL <pi_rl>
+   RLinf-VLA <rlinf_vla>
+   RLinf <rlinf_system>

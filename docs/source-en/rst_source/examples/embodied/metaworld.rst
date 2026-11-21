@@ -1,5 +1,5 @@
-RL with MetaWorld Benchmark
-===========================
+MetaWorld RL
+============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

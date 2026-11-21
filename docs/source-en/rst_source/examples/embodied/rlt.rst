@@ -1,5 +1,5 @@
-RL Token: Bootstrapping Online RL with Vision-Language-Action Models
-====================================================================
+RL Token
+========
 
 **RL Token: Bootstrapping Online RL with Vision-Language-Action Models** trains
 a compact reinforcement-learning policy on top of a frozen VLA feature model.

@@ -1,5 +1,5 @@
-DSRL：基于扩散模型的潜在空间强化学习
-======================================================
+DSRL
+====
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dsrl.png
    :align: center

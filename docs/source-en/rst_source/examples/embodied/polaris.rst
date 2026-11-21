@@ -1,5 +1,5 @@
-RL with PolaRiS Simulation Platform
-===================================
+PolaRiS RL
+==========
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/polaris.png
    :align: center

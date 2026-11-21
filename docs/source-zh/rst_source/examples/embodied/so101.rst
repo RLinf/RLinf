@@ -1,5 +1,5 @@
-SO-101：硬件配置、遥操采数与 OpenPI SFT
-=======================================
+SO-101 配置与 SFT
+=================
 
 .. figure:: https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp
    :align: center
@@ -30,7 +30,7 @@ SO-101：硬件配置、遥操采数与 OpenPI SFT
    .. grid-item-card:: 工作流
       :text-align: center
 
-      校准 · 遥操采数 · OpenPI SFT · 本地评测
+      校准 · 遥操作数据采集 · OpenPI SFT · 本地评测
 
    .. grid-item-card:: 硬件
       :text-align: center
@@ -151,7 +151,7 @@ SO-101：硬件配置、遥操采数与 OpenPI SFT
          close
          quit
 
-   .. tab-item:: 2. 遥操与采数
+   .. tab-item:: 2. 遥操作与数据采集
 
       **1. 标定主臂并验证遥操**
 

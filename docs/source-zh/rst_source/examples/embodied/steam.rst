@@ -1,5 +1,5 @@
-STEAM：用于离线策略优化的集成优势建模
-========================================================
+STEAM
+=====
 
 在 RLinf 中运行 **STEAM** 流程。STEAM 是一种离线策略优化方法：用\ **成对分类的进度评论器（progress critic）**\ 配合\ **深度集成（deep ensemble）**\ 为已有数据打分，将保守的 worst-of-N 集成估计转化为逐帧的优势标签，再用这些标签驱动与 :doc:`RECAP <recap>` 相同的 **无分类器引导（Classifier-Free Guidance, CFG）训练**。
 

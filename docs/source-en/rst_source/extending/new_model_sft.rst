@@ -1,5 +1,5 @@
-Add a New SFT Model (FSDP)
-==========================
+Add an SFT Model
+================
 
 This document explains how to use HuggingFace Transformers together with PyTorch FSDP
 (Fully Sharded Data Parallel) to train and generate with models.  

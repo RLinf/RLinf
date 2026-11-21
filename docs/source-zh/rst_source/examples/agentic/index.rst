@@ -95,4 +95,4 @@ RLinf 的 worker 抽象、灵活的通信组件以及对不同类型加速器的
    rStar2 <rstar2>
    AgentLightning <agentlightning_calc_x>
    Coding Online RL <coding_online_rl>
-   Qwen3-VL 视觉推理（GRPO） <qwen3_vl_geo3k>
+   Qwen3-VL GRPO <qwen3_vl_geo3k>

@@ -96,4 +96,4 @@ The following examples include math reasoning RL and agentic AI workflows, such 
    rStar2 <rstar2>
    AgentLightning <agentlightning_calc_x>
    Coding Online RL <coding_online_rl>
-   Qwen3-VL GRPO (Geo3K) <qwen3_vl_geo3k>
+   Qwen3-VL GRPO <qwen3_vl_geo3k>

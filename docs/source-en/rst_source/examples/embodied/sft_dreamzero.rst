@@ -1,5 +1,5 @@
-DreamZero Supervised Fine-Tuning and Franka Real-World Deployment
-=================================================================
+DreamZero SFT
+=============
 
 .. figure:: https://dreamzero0.github.io/images/project_overview.png
    :align: center

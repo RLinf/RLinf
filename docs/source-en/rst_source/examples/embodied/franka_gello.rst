@@ -1,5 +1,5 @@
-Franka: GELLO Teleoperation & Collection
-========================================
+Franka GELLO Teleop
+===================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gello.jpeg
    :align: center

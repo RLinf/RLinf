@@ -1,5 +1,5 @@
-基于 MetaWorld 的强化学习训练
-=============================
+MetaWorld 强化学习
+==================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

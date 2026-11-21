@@ -1,5 +1,5 @@
-Cosmos3 监督微调（LIBERO）
-================================
+Cosmos3 监督微调
+================
 
 将 NVIDIA Cosmos3-Nano（OmniMoT 视频世界模型）按 LIBERO 动作空间做 SFT 微调，适配 LIBERO 仿真器。
 
