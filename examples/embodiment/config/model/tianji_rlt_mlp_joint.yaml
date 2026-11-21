@@ -1,0 +1,106 @@
+# rtj joint Stage2: the Tianji RLT MLP actor-critic with a 16D joint actor.
+# Same settings as tianji_rlt_mlp.yaml, except the spaces:
+# - actor: plans 16D absolute joints (A J1-7 [rad], A closure, B J1-7,
+#   B closure; the joint VLA's action semantics) in the joint contract's RL
+#   frame (tianji_kinematics.TianjiJointContract: SDK joint limits, centre and
+#   half range; closure 0.5 / 0.5), from the VLA's joint chunk, z and the
+#   joint state (16 joints + 14 joint velocities + 4 stage one-hot = 34);
+# - critic (10-28 evening, critic_action_space joint_rel): reads the TCP state
+#   (critic_proprio, 42) and the joint state (16 joints + 14 velocities), and
+#   the joint plan as its displacement from the current joints; a state-only
+#   V shares the layout (critic_value_head) and bootstraps Q's target
+#   (algorithm.critic_target: v_bootstrap).
+model_type: rlt_mlp_policy
+# RTJ Stage2 uses Rectify by default; the frozen SFT/VLA input is unchanged.
+tactile_enabled: true
+tactile_embed_dim: 64
+precision: fp32
+add_value_head: False
+add_q_head: True
+q_head_type: default
+# 10-30: small Gaussian exploration on the deployed residual (RLT: a small
+# fixed std). Offline data has no action variation at a given state, so the
+# critic cannot learn a correction direction from it (offline/README.md
+# 10-30); the exploration is what gives it "same state, different action"
+# pairs. The heads output in units of the cap, so 0.1 is a tenth of the cap
+# per step before the 6-step smoothing.
+fixed_std: 0.1
+rollout_noise: True
+# The executed residual (pi - VLA joint reference), as in tianji_rlt_mlp.yaml:
+# capped at every step of the chunk by residual_limits below (J1-J4 0.05 rad,
+# J5-J7 0.12 rad), closures unlimited; averaged over time (sigma 6 steps); faded
+# in over the first 14 steps of each chunk; heads output in units of the cap.
+residual_smooth_sigma: 6
+residual_ramp_steps: 14
+residual_in_cap_units: True
+# The joint contract's half ranges [rad] (J1 J3 J5 170 deg, J2 120, J4 102.5,
+# J6 60, J7 90) and closure 0.5, per arm.
+action_scales: [2.9670597, 2.0943951, 2.9670597, 1.7889625, 2.9670597, 1.0471976, 1.5707963, 0.5,
+                2.9670597, 2.0943951, 2.9670597, 1.7889625, 2.9670597, 1.0471976, 1.5707963, 0.5]
+# 10-28: J1-J4 0.05 rad (11-28 mm at the TCP), wrist J5-J7 0.12 rad (7 deg;
+# 0.05 rad was 6-12 mm and 2.9 deg there, where human corrections are largest).
+# 10-30: x4 (J1-J4 0.2 rad, J5-J7 0.48 rad). At x1 only 2% of the human
+# correction steps fit inside the cap on all 14 joints (the policy's own
+# execution lag is 0.1 rad already); at x4 65% do, and offline the actor's
+# residual follows the human direction (cos 0.5-0.6 vs 0.05 at x1) while on
+# policy chunks it stays at 0.01 rad (p99 0.065), far from the cap.
+residual_limits: [0.2, 0.2, 0.2, 0.2, 0.48, 0.48, 0.48, 0,
+                  0.2, 0.2, 0.2, 0.2, 0.48, 0.48, 0.48, 0]
+is_lora: False
+
+z_dim: 2048
+proprio_dim: 34
+action_dim: 16
+critic_proprio_dim: 42
+critic_action_dim: 20
+# 10-28: critic inputs projected block by block (z 2048->256, state ->64,
+# action ->256, each with LayerNorm), then one 256x3 MLP head per stage on the
+# concatenated projections. 10-28 evening: the action is the joint plan minus
+# the current joints in physical units (rad, closure) over critic_action_scale,
+# the per-dimension std of that displacement in the 09:37 run's policy chunks;
+# no longer the deviation from the VLA plan (every -1 sat at zero deviation and
+# Q learned "deviating is good", 12:58). action_bias: the joint contract's
+# centres (tianji_kinematics.JOINT_ACTION_BIAS), with action_scales the RL
+# frame -> physical map.
+critic_block_encoders: True
+critic_relative_action: False
+critic_action_space: joint_rel
+critic_value_head: True
+# 10-28 night: Q = V + pbar - phat (rlt_mlp_policy critic_penalty_head): the
+# twin Q nets are classifiers of "this chunk gets F or a takeover here".
+critic_penalty_head: True
+# 10-30: Q = -phat only. The TD-regressed V never fitted its truncated target
+# (the takeover -1 leaked through neighbouring states and summed over a
+# 48-chunk horizon to -3 ... -5 in stages 2/3) and has no action gradient; the
+# critic is the short-horizon Monte-Carlo classifier "a takeover or step
+# failure is coming" (algorithm.critic_penalty_window / critic_penalty_decay).
+critic_penalty_only: True
+critic_action_scale: [0.13, 0.13, 0.11, 0.13, 0.30, 0.12, 0.11, 0.27,
+                      0.14, 0.12, 0.11, 0.14, 0.35, 0.12, 0.15, 0.29]
+action_bias: [0.0, 0.0, 0.0, -0.7417649, 0.0, 0.0, 0.0, 0.5,
+              0.0, 0.0, 0.0, -0.7417649, 0.0, 0.0, 0.0, 0.5]
+# 10-28 evening: small critic (block projections to 32, two 128 layers with
+# dropout 0.2). At 256 widths and three 256 layers (~2.4M weights per Q) the
+# offline Q overfit the 6k transitions and lost the takeover signal.
+critic_block_widths: {z: 32, proprio: 32, action: 32}
+critic_hidden_dims: [128, 128]
+critic_dropout: 0.2
+num_action_chunks: ${oc.decode:${oc.env:TIANJI_STAGE2_CHUNK,24}}
+ref_num_action_chunks: ${oc.decode:${oc.env:TIANJI_ACTION_HORIZON,30}}
+residual_ref: True
+# 11-06: the actor reads all ref_num_action_chunks VLA rows (60), not only the executed
+# ones; it still outputs the executed rows' residual. A checkpoint of the 42-row actor
+# does not load into it (use "新训练"); false = the 42-row input.
+actor_ref_full: True
+# Networks predict executor target knots; num_action_chunks remains the env clock.
+# Resolve these fields into checkpoints/replay instead of reading speed at training time.
+executor_action_grid: true
+action_grid_offset: ${oc.decode:${oc.env:RLT_REF_OFFSET,0}}
+action_grid_scale: ${oc.decode:${oc.env:TIANJI_ROW_SCALE,1.0}}
+action_grid_dense: ${oc.decode:${oc.env:TIANJI_DENSE_ROWS,0}}
+gripper_dims: [7, 15]
+exclude_gripper_residual: False
+num_stage_actors: ${oc.decode:${oc.env:TIANJI_STAGE2_HEADS,1}}
+stage_onehot_dim: 4
+# 10-28: no reference dropout (tianji2_rlt_stage2_async.yaml), so no head for it.
+indep_dropout_head: False

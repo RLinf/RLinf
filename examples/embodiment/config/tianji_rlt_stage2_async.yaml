@@ -1,0 +1,232 @@
+defaults:
+  - env/realworld_tianji@env.train
+  - env/realworld_tianji@env.eval
+  - model/tianji_rlt_mlp@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  # Single machine with two GPUs:
+  #   GPU0 (rollout + env): frozen VLA/RLT feature model for z_rl and the
+  #                         Stage2 policy inference copy.
+  #   GPU1 (actor group):   trainable Stage2 actor-critic learner.
+  component_placement:
+    actor: 1
+    env: 0
+    rollout: 0
+
+runner:
+  task_type: embodied
+  # Make the cross-GPU update boundary explicit: actor updates on GPU1 are
+  # synchronized to the GPU0 rollout copy every training step.
+  weight_sync_interval: 1
+  per_worker_log: True
+  logger:
+    log_path: "${oc.env:TIANJI_RLT_OUTPUT,./tianji_runs}"
+    project_name: rlinf-tianji
+    experiment_name: tianji_rlt_stage2_async
+    logger_backends: [tensorboard]
+  max_epochs: 1000000
+  max_steps: -1
+  only_eval: False
+  val_check_interval: -1
+  save_interval: 500
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  update_epoch: 8
+  utd_ratio: 5
+  warmup_transitions: 200
+  staleness_threshold: 2
+  group_size: 1
+  agg_q: min
+  actor_agg_q: q1
+  enable_drq: False
+  q_head_type: ${actor.model.q_head_type}
+  adv_type: embodied_sac
+  loss_type: rlt_ac
+  loss_agg_func: token-mean
+  q_weight: 0.1
+  bc_weight: 5.0
+  human_bc_target: direct
+  require_exec_action_validity: True
+  bc_human_weight_mult: 2.0
+  z_noise_frac: 0.1
+  takeover_penalty: -1.0
+  takeover_kinds: [2, 3]
+  smooth_weight: 300
+  reference_dropout_prob: 0.5
+  bootstrap_type: standard
+  q_target_min: 0.0
+  q_target_max: 1.0
+  actor_uses_min_q: False
+  gamma: 0.9995
+  tau: 0.005
+  entropy_tuning:
+    alpha_type: fixed_alpha
+    initial_alpha: 0.0
+    optim:
+      lr: 3.0e-4
+      lr_scheduler: torch_constant
+      clip_grad: 10.0
+  replay_buffer:
+    enable_cache: True
+    cache_size: 6000
+    min_buffer_size: 2
+    sample_window_size: 6000
+    auto_save: True
+    auto_save_path: "${runner.logger.log_path}/replay"
+    load_path: null
+  rlt_schedule:
+    enable: True
+    max_updates_per_train_step: 400
+    warmup_min_size: 10
+    warmup_post_collect_updates: 0
+    train_every_episodes: 0
+    train_every_transitions: 5
+  target_update_freq: 1
+  target_update_type: all
+  train_actor_steps: 2
+  critic_actor_ratio: 2
+  critic_subsample_size: 0
+  backup_entropy: False
+
+env:
+  group_name: EnvGroup
+  train:
+    rollout_epoch: 1
+    total_num_envs: 1
+    auto_reset: True
+    ignore_terminations: False
+    max_episode_steps: null
+    max_steps_per_rollout_epoch: ${oc.decode:${oc.env:TIANJI_STAGE2_EPOCH_STEPS,240}}
+    smooth_intervene: True
+    intervene_prefetch: True
+    use_pico: True
+    override_cfg:
+      stream_chunks: True
+      subtask_prompts_file: ${oc.env:TIANJI_SUBTASK_PROMPTS,null}
+      # Full VR motion has been accepted on site. Start real HIL directly;
+      # the local panel controls episode start/pause/result, not commissioning.
+      backend: loopinfra
+      reset_to_saved_pose: True
+      reset_after_episode: True
+      recorder_source_jpeg: True
+      server_url: ${oc.env:LOOPINFRA_URL,http://127.0.0.1:8780}
+      read_only: False
+      hil_control: True
+      hil_port: 8879
+      manual_episode_control_only: True
+      request_timeout_s: 2.0
+      image_hw: [224, 224]
+      step_frequency: ${oc.decode:${oc.env:TIANJI_CONTROL_HZ,10}}
+      max_num_steps: 600
+      recorder_dir: "${runner.logger.log_path}/hil"
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 1
+    auto_reset: True
+    ignore_terminations: False
+    max_episode_steps: 600
+    max_steps_per_rollout_epoch: ${oc.decode:${oc.env:TIANJI_STAGE2_EPOCH_STEPS,240}}
+    override_cfg:
+      backend: loopinfra
+      server_url: ${oc.env:LOOPINFRA_URL,http://127.0.0.1:8780}
+      read_only: True
+      request_timeout_s: 2.0
+      image_hw: [224, 224]
+      step_frequency: ${oc.decode:${oc.env:TIANJI_CONTROL_HZ,10}}
+
+rollout:
+  # Tianji has no A1 keyboard stage switch; train/execute Stage2 from the start.
+  default_actor_switch: True
+  group_name: RolloutGroup
+  generation_backend: huggingface
+  enable_offload: False
+  pipeline_stage_num: 1
+  collect_transitions: True
+  collect_prev_infos: False
+  # Keep async rollout conservative until Stage1 inference latency is measured.
+  # A1 prefetch timetable (RLT_REF_OFFSET = num_action_chunks-1-prefetch_at).
+  prefetch_at: ${oc.decode:${oc.env:TIANJI_STAGE2_PREFETCH_AT,17}}
+  # Receive the next chunk while this one executes (seamless chunk boundary).
+  early_policy_recv: True
+  gc_after_weight_sync: False
+  model:
+    # RLT MLP has no external HF checkpoint; this non-null sentinel satisfies
+    # RLinf's rollout validation.  The actual model is built from actor.model
+    # and receives its weights from GPU1 through WeightSyncer.
+    model_type: rlt_mlp_policy
+    model_path: inline://tianji_rlt_mlp_policy
+    precision: ${actor.model.precision}
+    action_dim: ${actor.model.action_dim}
+    num_action_chunks: ${actor.model.num_action_chunks}
+    ref_num_action_chunks: ${actor.model.ref_num_action_chunks}
+  # Supply the new Stage1 checkpoint, tokenizer and norm stats here.  An old
+  # A1 checkpoint is intentionally invalid for this contract.
+  rlt_feature_model:
+    model_type: openpi_rlinf
+    precision: bf16
+    is_lora: False
+    num_action_chunks: ${oc.decode:${oc.env:TIANJI_ACTION_HORIZON,30}}
+    action_dim: 20
+    num_steps: 4
+    model_path: ${oc.env:TIANJI_RLT_STAGE1_MODEL_PATH,null}
+    openpi_data:
+      repo_id: tianji_rlt_stage1
+      norm_stats_path: ${oc.env:TIANJI_RLT_STAGE1_NORM_STATS_PATH,null}
+    openpi:
+      task: eval
+      config_name: tianji_stage1
+      num_images_in_input: 3
+      action_chunk: ${oc.decode:${oc.env:TIANJI_ACTION_HORIZON,30}}
+      action_horizon: ${oc.decode:${oc.env:TIANJI_ACTION_HORIZON,30}}
+      action_env_dim: 20
+      model_action_dim: 32
+      num_steps: 4
+      paligemma_variant: gemma_2b
+      action_expert_variant: gemma_300m
+      max_token_len: 200
+      discrete_state_input: True
+      state_indices: []
+      noise_method: flow_noise
+      noise_params: [0.16, 0.12, 200]
+      joint_logprob: True
+      use_rlt: True
+      rlt_prefix_seq_len: 1024
+      rlt_image_only: False
+      rlt_use_mask: True
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 256
+  global_batch_size: 256
+  seed: 1234
+  enable_offload: False
+  # Let rollout continue while a patch sync is in flight; the rollout worker
+  # still applies only the latest completed actor version.
+  sync_weight_no_wait: True
+  optim:
+    clip_grad: 1.0
+    lr: 1.0e-4
+    lr_scheduler: torch_constant
+  critic_optim:
+    clip_grad: 1.0
+    lr: 3.0e-4
+    lr_scheduler: torch_constant
+
+reward:
+  use_reward_model: False
+critic:
+  use_critic_model: False

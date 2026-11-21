@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import warnings
 from enum import Enum
 
 from rlinf.utils.robosuite_compat import install_robosuite_egl_device_shim
@@ -27,55 +26,24 @@ class SupportedEnvType(Enum):
     MANISKILL_RLT = "maniskill_rlt"
     LIBERO = "libero"
     ROBOTWIN = "robotwin"
-    ROBODOJO = "robodojo"
     ISAACLAB = "isaaclab"
     METAWORLD = "metaworld"
     BEHAVIOR = "behavior"
     CALVIN = "calvin"
     ROBOCASA = "robocasa"
     ROBOCASA365 = "robocasa365"
-    REAL = "real"
+    REALWORLD = "realworld"
     FRANKASIM = "frankasim"
     HABITAT = "habitat"
-    WORLD_MODEL = "world_model"
+    OPENSORAWM = "opensora_wm"
+    WANWM = "wan_wm"
     GENESIS = "genesis"
     EMBODICHAIN = "embodichain"
     ROBOVERSE = "roboverse"
-    GENIESIM = "geniesim"
     D4RL = "d4rl"
-    MUJOCO_WARP = "mujoco_warp"
     DIFFUSION = "diffusion"
     POLARIS = "polaris"
-    ROBOLAB = "robolab"
-    SIMPLE = "simple"
-
-    @classmethod
-    def _missing_(cls, value: object) -> "SupportedEnvType | None":
-        """Accept the spellings this enum used to have.
-
-        The real-world package was ``envs/realworld`` and is now ``envs/real``;
-        world-model backend names (and their retired ``env_type`` spellings)
-        resolve to ``world_model``. Configs that named the old values keep
-        working and say so.
-        """
-        if value == "realworld":
-            warnings.warn(
-                "env_type 'realworld' is retired. Use 'real'.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return cls.REAL
-        from rlinf.envs.sim.world_model.registry import get_backend_name
-
-        backend = get_backend_name(value)
-        if backend is not None:
-            warnings.warn(
-                f"env_type {value!r} is retired. Use 'world_model' with backend: {backend}.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return cls.WORLD_MODEL
-        return None
+    TIANJI = "tianji"
 
 
 def get_env_cls(env_type: str, env_cfg=None):
@@ -94,33 +62,27 @@ def get_env_cls(env_type: str, env_cfg=None):
 
     if env_type == SupportedEnvType.MANISKILL:
         if env_cfg.get("enable_offload", False):
-            from rlinf.envs.sim.maniskill.maniskill_offload_env import (
-                ManiskillOffloadEnv,
-            )
+            from rlinf.envs.maniskill.maniskill_offload_env import ManiskillOffloadEnv
 
             return ManiskillOffloadEnv
         else:
-            from rlinf.envs.sim.maniskill.maniskill_env import ManiskillEnv
+            from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
 
             return ManiskillEnv
     elif env_type == SupportedEnvType.MANISKILL_RLT:
-        from rlinf.envs.sim.maniskill.maniskill_rlt_env import ManiskillRLTEnv
+        from rlinf.envs.maniskill.maniskill_rlt_env import ManiskillRLTEnv
 
         return ManiskillRLTEnv
     elif env_type == SupportedEnvType.LIBERO:
-        from rlinf.envs.sim.libero.libero_env import LiberoEnv
+        from rlinf.envs.libero.libero_env import LiberoEnv
 
         return LiberoEnv
     elif env_type == SupportedEnvType.ROBOTWIN:
-        from rlinf.envs.sim.robotwin.robotwin_env import RoboTwinEnv
+        from rlinf.envs.robotwin.robotwin_env import RoboTwinEnv
 
         return RoboTwinEnv
-    elif env_type == SupportedEnvType.ROBODOJO:
-        from rlinf.envs.sim.robodojo.robodojo_env import RoboDojoEnv
-
-        return RoboDojoEnv
     elif env_type == SupportedEnvType.ISAACLAB:
-        from rlinf.envs.sim.isaaclab import REGISTER_ISAACLAB_ENVS
+        from rlinf.envs.isaaclab import REGISTER_ISAACLAB_ENVS
 
         if env_cfg is None:
             raise ValueError(
@@ -135,80 +97,72 @@ def get_env_cls(env_type: str, env_cfg=None):
         )
         return REGISTER_ISAACLAB_ENVS[task_id]
     elif env_type == SupportedEnvType.METAWORLD:
-        from rlinf.envs.sim.metaworld.metaworld_env import MetaWorldEnv
+        from rlinf.envs.metaworld.metaworld_env import MetaWorldEnv
 
         return MetaWorldEnv
     elif env_type == SupportedEnvType.BEHAVIOR:
-        from rlinf.envs.sim.behavior.behavior_env import BehaviorEnv
+        from rlinf.envs.behavior.behavior_env import BehaviorEnv
 
         return BehaviorEnv
     elif env_type == SupportedEnvType.CALVIN:
-        from rlinf.envs.sim.calvin.calvin_gym_env import CalvinEnv
+        from rlinf.envs.calvin.calvin_gym_env import CalvinEnv
 
         return CalvinEnv
     elif env_type == SupportedEnvType.ROBOCASA:
-        from rlinf.envs.sim.robocasa.robocasa_env import RobocasaEnv
+        from rlinf.envs.robocasa.robocasa_env import RobocasaEnv
 
         return RobocasaEnv
     elif env_type == SupportedEnvType.ROBOCASA365:
-        from rlinf.envs.sim.robocasa365.robocasa365_env import Robocasa365Env
+        from rlinf.envs.robocasa365.robocasa365_env import Robocasa365Env
 
         return Robocasa365Env
-    elif env_type == SupportedEnvType.REAL:
-        from rlinf.envs.real import RealWorldEnv
+    elif env_type == SupportedEnvType.REALWORLD:
+        from rlinf.envs.realworld import RealWorldEnv
 
         return RealWorldEnv
-    elif env_type == SupportedEnvType.WORLD_MODEL:
-        from rlinf.envs.sim.world_model import WorldModelEnv
-
-        return WorldModelEnv
     elif env_type == SupportedEnvType.HABITAT:
-        from rlinf.envs.sim.habitat.habitat_env import HabitatEnv
+        from rlinf.envs.habitat.habitat_env import HabitatEnv
 
         return HabitatEnv
     elif env_type == SupportedEnvType.FRANKASIM:
-        from rlinf.envs.sim.frankasim.frankasim_env import FrankaSimEnv
+        from rlinf.envs.frankasim.frankasim_env import FrankaSimEnv
 
         return FrankaSimEnv
     elif env_type == SupportedEnvType.GENESIS:
-        from rlinf.envs.sim.genesis.genesis_env import GenesisEnv
+        from rlinf.envs.genesis.genesis_env import GenesisEnv
 
         return GenesisEnv
+    elif env_type == SupportedEnvType.OPENSORAWM:
+        from rlinf.envs.world_model.world_model_opensora_env import OpenSoraEnv
+
+        return OpenSoraEnv
+    elif env_type == SupportedEnvType.WANWM:
+        from rlinf.envs.world_model.world_model_wan_env import WanEnv
+
+        return WanEnv
     elif env_type == SupportedEnvType.EMBODICHAIN:
-        from rlinf.envs.sim.embodichain.embodichain_env import EmbodiChainEnv
+        from rlinf.envs.embodichain.embodichain_env import EmbodiChainEnv
 
         return EmbodiChainEnv
     elif env_type == SupportedEnvType.ROBOVERSE:
-        from rlinf.envs.sim.roboverse.roboverse_env import RoboVerseEnv
+        from rlinf.envs.roboverse.roboverse_env import RoboVerseEnv
 
         return RoboVerseEnv
-    elif env_type == SupportedEnvType.GENIESIM:
-        from rlinf.envs.sim.geniesim.geniesim_env import GenieSimEnv
-
-        return GenieSimEnv
     elif env_type == SupportedEnvType.D4RL:
-        from rlinf.envs.sim.d4rl.d4rl_env import D4RLEnv
+        from rlinf.envs.d4rl.d4rl_env import D4RLEnv
 
         return D4RLEnv
-    elif env_type == SupportedEnvType.MUJOCO_WARP:
-        from rlinf.envs.sim.mujoco_warp.mujoco_warp_env import MujocoWarpEnv
-
-        return MujocoWarpEnv
     elif env_type == SupportedEnvType.DIFFUSION:
-        from rlinf.envs.sim.diffusion.generation_env import GenerationEnv
+        from rlinf.envs.diffusion import GenerationEnv
 
         return GenerationEnv
     elif env_type == SupportedEnvType.POLARIS:
-        from rlinf.envs.sim.polaris.polaris_env import PolarisEnv
+        from rlinf.envs.polaris.polaris_env import PolarisEnv
 
         return PolarisEnv
-    elif env_type == SupportedEnvType.ROBOLAB:
-        from rlinf.envs.sim.robolab.robolab_env import RoboLabEnv
+    elif env_type == SupportedEnvType.TIANJI:
+        from rlinf.envs.realworld.realworld_env import RealWorldEnv
 
-        return RoboLabEnv
-    elif env_type == SupportedEnvType.SIMPLE:
-        from rlinf.envs.sim.simple.simple_env import SimpleEnv
-
-        return SimpleEnv
+        return RealWorldEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")

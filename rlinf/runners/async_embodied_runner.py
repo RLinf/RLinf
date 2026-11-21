@@ -18,12 +18,12 @@ from typing import TYPE_CHECKING, Union
 
 from omegaconf.dictconfig import DictConfig
 
-from rlinf.runners.async_weight_sync_mixin import AsyncWeightSyncMixin
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
+from rlinf.utils.tianji_startup import publish_stage2_ready
 
 if TYPE_CHECKING:
     from rlinf.workers.actor.async_fsdp_dagger_policy_worker import (
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     )
 
 
-class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
+class AsyncEmbodiedRunner(EmbodiedRunner):
     def __init__(
         self,
         cfg: DictConfig,
@@ -55,7 +55,10 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         self.env_metric_channel = Channel.create("EnvMetric")
         self.rollout_metric_channel = Channel.create("RolloutMetric")
 
-        self.init_weight_sync_state()
+        self._pending_rollout_weight_sync = None
+        self._weight_sync_coalesced_total = 0
+        self._weight_sync_request_total = 0
+        self.sync_weight_no_wait = self.cfg.actor.get("sync_weight_no_wait", False)
 
     def get_env_metrics(self) -> tuple[dict, list[dict], list[dict]]:
         results: list[dict] = []
@@ -101,19 +104,60 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         )
         return time_metrics, ranked_time_metrics_list
 
+    def _cleanup_pending_rollout_weight_sync(self, no_wait):
+        if self._pending_rollout_weight_sync is None:
+            return True
+
+        rollout_handle, actor_handle = self._pending_rollout_weight_sync
+        self.logger.info(
+            f"Rollout handle done: {rollout_handle.done()}, actor handle done: {actor_handle.done()}"
+        )
+        if no_wait and (not rollout_handle.done() or not actor_handle.done()):
+            return False
+
+        rollout_handle.wait()
+        actor_handle.wait()
+        self._pending_rollout_weight_sync = None
+        return True
+
+    def update_rollout_weights(self, no_wait=False):
+        if not no_wait:
+            return super().update_rollout_weights()
+
+        self._weight_sync_request_total += 1
+        if not self._cleanup_pending_rollout_weight_sync(no_wait):
+            self._weight_sync_coalesced_total += 1
+            self.logger.info(
+                f"Weight sync coalesced {self._weight_sync_coalesced_total} times.\n"
+                f"Request total {self._weight_sync_request_total} times."
+            )
+            return
+
+        rollout_handle: Handle = self.rollout.request_actor_sync_model()
+        actor_handle: Handle = self.actor.sync_model_to_rollout()
+        self._pending_rollout_weight_sync = (rollout_handle, actor_handle)
+
+    def _save_checkpoint(self):
+        """Take the actor snapshot only after an in-flight weight patch finishes.
+
+        Async training deliberately overlaps rollout inference with the actor →
+        rollout patch.  A checkpoint must still describe one coherent actor
+        version, so drain that patch before serializing model, optimizer,
+        target-critic, replay, and runtime counters.
+        """
+        self._cleanup_pending_rollout_weight_sync(no_wait=False)
+        # The rollout request handle only schedules its receiver-side task.
+        # Drain that task as well, so the checkpoint and GPU0 inference copy
+        # describe the same actor version.
+        self.rollout.wait_for_pending_weight_sync().wait()
+        super()._save_checkpoint()
+
     def evaluate(self):
-        env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
-        if env_decoupled_mode:
-            # The rollout-side loop is unbounded by design. Ensure one service
-            # exists and reuse it across every validation cycle.
-            self.rollout.ensure_evaluate_service(
-                input_channel=self.rollout_channel,
-                output_channel=self.env_channel,
-            ).wait()
         env_handle: Handle = self.env.evaluate(
             input_channel=self.env_channel,
             rollout_channel=self.rollout_channel,
         )
+        env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
         if not env_decoupled_mode:
             rollout_handle: Handle = self.rollout.evaluate(
                 input_channel=self.rollout_channel,
@@ -129,22 +173,33 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
     def run(self):
         start_step = self.global_step
         start_time = time.time()
-        self.rollout.set_global_step(self.global_step).wait()
-        self.env.set_global_step(self.global_step).wait()
-        # Rollout must start from the actor's exact initial/resumed weights, so
-        # this first sync always blocks even when overlap is enabled.
-        self.update_rollout_weights()
+        # rt fork: runner.deploy_actor_updates=false trains and checkpoints the
+        # actor but never syncs it to the rollout, which keeps its own initial
+        # actor: the zero-initialized residual, i.e. the VLA reference exactly.
+        deploy = bool(self.cfg.runner.get("deploy_actor_updates", True))
+        if not deploy:
+            print(
+                "STAGE2_ACTOR_NOT_DEPLOYED: executing the VLA reference; "
+                "actor updates are trained and checkpointed only",
+                flush=True,
+            )
+        # The first rollout must not execute with its independently initialized
+        # policy.  Later updates can overlap generation, but the initial patch
+        # is drained before env/rollout tasks are started so every trajectory
+        # has a well-defined actor version.
+        if deploy and not getattr(self, "_initial_weights_synced", False):
+            self.update_rollout_weights(no_wait=False)
 
         env_handle: Handle = self.env.interact(
             input_channel=self.env_channel,
             rollout_channel=self.rollout_channel,
             reward_channel=self.reward_channel,
+            actor_channel=self.actor_channel,
             metric_channel=self.env_metric_channel,
         )
         rollout_handle: Handle = self.rollout.generate(
             input_channel=self.rollout_channel,
             output_channel=self.env_channel,
-            actor_channel=self.actor_channel,
             metric_channel=self.rollout_metric_channel,
         )
         if self.reward is not None:
@@ -155,6 +210,9 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         actor_handle: Handle = self.actor.recv_rollout_trajectories(
             input_channel=self.actor_channel
         )
+
+        # init_workers (including resume) and the initial blocking sync are done.
+        publish_stage2_ready()
 
         while self.global_step < self.max_steps:
             # Use the step we're ABOUT to run as the profiling key, mirroring
@@ -175,7 +233,7 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
 
                 if not skip_step:
                     self.global_step += 1
-                    if self.global_step % self.weight_sync_interval == 0:
+                    if deploy and self.global_step % self.weight_sync_interval == 0:
                         self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
 
                     training_metrics = {
@@ -213,8 +271,6 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
             if self.actor_channel is not None:
-                # Total outstanding across consumers, matching the pre-dispatcher
-                # meaning of this series.
                 training_metrics["train/replay_channel_qsize"] = (
                     self.actor_channel.qsize()
                 )
@@ -285,9 +341,6 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
 
             if profiled_step is not None:
                 self._close_profiling_window(profiled_step)
-
-        # Let any in-flight non-blocking sync land before the workers go away.
-        self.drain_pending_rollout_weight_sync()
 
         self.env.stop().wait()
         self.rollout.stop().wait()

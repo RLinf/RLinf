@@ -1,0 +1,60 @@
+model_type: rlt_mlp_policy
+precision: fp32
+add_value_head: False
+add_q_head: True
+q_head_type: default
+fixed_std: 0.002
+# Training rollouts execute the actor mean, as smooth as Stage1 (the residual
+# starts at zero, so this is the VLA's RTC chunk). In the absolute TCP frame a
+# per-step sample with fixed_std 0.002 is ~4 mm per axis every 33 ms: on the
+# robot a ~15 mm zig-zag that also drove B J5 into its execution limit.
+rollout_noise: False
+# The executed residual (pi - VLA reference), in training and on the robot:
+# 1. capped per step (A1 human_bc.soft_limit), pi = ref + c*tanh(d/c), with
+#    physical limits per dimension in the contract's RL frame (action_scales:
+#    position 2 m, rot6 1, closure 0.5 per unit): 30 mm per axis, 0.05 per
+#    rot6 component (about 3 degrees); the commanded closure stays unlimited,
+#    like A1's gripper. Uncapped, a sim-trained actor reached 32 mm median and
+#    119 mm max;
+# 2. averaged over time (Gaussian, sigma 6 steps). Per-dimension critic
+#    gradients otherwise turn it into a per-step sawtooth (A1 measured it on
+#    hardware; smooth_weight only damps it to 2-8 mm per step here). With the
+#    cap even a -c..+c flip then moves at most 4 mm per step;
+# 3. faded in from zero over the first 14 steps (0.47 s at 30 Hz) of each
+#    chunk. RTC pins the next reference to the executed actions (including
+#    the previous correction), so a chunk starts where the arm is going
+#    instead of jumping by its residual.
+# The VLA reference itself is never smoothed.
+residual_smooth_sigma: 6
+residual_ramp_steps: 14
+# The residual heads output in units of the cap (x c per dimension). Adam moves
+# each output weight by about lr per update, ~2 mm of residual here; against
+# the 30 mm cap that drove 93% of a sim-trained residual (80 updates, real
+# schedule) deep into saturation, where the soft limit's gradient vanishes and
+# BC can no longer pull it back (A1's cap is 10-20x wider in RL units).
+residual_in_cap_units: True
+action_scales: [2, 2, 2, 1, 1, 1, 1, 1, 1, 0.5, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0.5]
+residual_limits: [0.03, 0.03, 0.03, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0,
+                  0.03, 0.03, 0.03, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0]
+is_lora: False
+
+z_dim: 2048
+# RLT rollout concatenates 14 joint velocities and the four-slot stage
+# one-hot after the 20D Tianji state.
+proprio_dim: 38
+action_dim: 20
+# A1 prefetch timetable from launcher/tianji_local.env: the frozen model's
+# chunk minus the inference budget (24 for a 30-step 10 Hz model, 42 for a
+# 60-step 30 Hz model); the reference chunk is the frozen model's chunk.
+num_action_chunks: ${oc.decode:${oc.env:TIANJI_STAGE2_CHUNK,24}}
+ref_num_action_chunks: ${oc.decode:${oc.env:TIANJI_ACTION_HORIZON,30}}
+residual_ref: True
+gripper_dims: [9, 19]
+# Human BC and Q gradients include both absolute commanded-closure dimensions.
+exclude_gripper_residual: False
+# A1: one actor per subtask, routed by the stage one-hot (1 without subtasks);
+# critic heads per subtask. Samples whose reference was dropped use their own
+# head, so the residual head never learns "half an action".
+num_stage_actors: ${oc.decode:${oc.env:TIANJI_STAGE2_HEADS,1}}
+stage_onehot_dim: 4
+indep_dropout_head: True

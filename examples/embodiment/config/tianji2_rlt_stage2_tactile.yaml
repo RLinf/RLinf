@@ -1,0 +1,373 @@
+# Rectify Stage2 alias. RTJ Stage2 now enables tactile by default.
+# Copied from the current async primary config: Hydra forbids inheriting its searchpath.
+# Standalone local configuration derived from tianji_rlt_stage2_async.yaml.
+# Hydra searchpath must be declared in the primary config.
+# Chunk lengths, the control rate, the prefetch timetable and subtasks come
+# from launcher/tianji_local.env (TIANJI_* and RLT_REF_OFFSET); launch through
+# launcher/run_tianji_stage2_local.sh so every worker sees the same values.
+defaults:
+- env/realworld_tianji@env.train
+- env/realworld_tianji@env.eval
+# rtj joint Stage2: 16D joint actor, critic on TCP (model/tianji_rlt_mlp_joint.yaml).
+- model/tianji_rlt_mlp_joint@actor.model
+- hybrid_engines/fsdp@actor.fsdp_config
+- weight_syncer/patch_syncer@weight_syncer
+- override hydra/job_logging: stdout
+- _self_
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+  - file://${oc.env:EMBODIED_PATH}/config/
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 1
+    env: 0
+    rollout: 0
+runner:
+  task_type: embodied
+  weight_sync_interval: 1
+  # rt fork: 0 (launcher/tianji_local.user.env) trains and checkpoints the actor
+  # but keeps executing the VLA reference (the rollout never receives updates).
+  deploy_actor_updates: ${oc.decode:${oc.env:TIANJI_DEPLOY_ACTOR_UPDATES,1}}
+  # Actor, resume and the first weight sync finish before the HIL panel opens;
+  # the env's first reset waits for 开始本条 meanwhile (runners/embodied_runner).
+  init_before_start: true
+  per_worker_log: true
+  logger:
+    log_path: ${oc.env:TIANJI_RLT_OUTPUT,./tianji_runs}
+    project_name: rlinf-tianji
+    experiment_name: tianji2_rlt_stage2_tactile
+    logger_backends:
+    - tensorboard
+  max_epochs: 1000000
+  max_steps: -1
+  only_eval: false
+  val_check_interval: -1
+  save_interval: 500
+  resume_dir: null
+  ckpt_path: null
+algorithm:
+  update_epoch: 8
+  # A1 (a1_box_rlt_stage14_async.yaml): updates are bought by new data, at
+  # most 5 per new transition (paper UTD), and none before warmup_transitions
+  # of pure-VLA execution (the zero-initialized residual actor).
+  utd_ratio: 5
+  warmup_transitions: 200
+  # No staleness filter: RLT is off-policy and its replay keeps all data. With
+  # rlt_schedule the version is update_step (8 per train step), so the A1
+  # value of 2 dropped every trajectory once training started; the 10-25
+  # robot run stopped training after 130 steps and lost all later data.
+  staleness_threshold: null
+  group_size: 1
+  agg_q: min
+  actor_agg_q: q1
+  enable_drq: false
+  q_head_type: ${actor.model.q_head_type}
+  adv_type: embodied_sac
+  loss_type: rlt_ac
+  loss_agg_func: token-mean
+  # 10-28 13:30: 0 until the critic learns takeover corrections (hil/corr_*);
+  # the 12:58 run's critic rated any deviation from the plan higher and Q
+  # diverged above 1, so the actor is BC only (VLA reference + corrections).
+  # 10-30: 0.1 with the penalty-only critic (model critic_penalty_only); offline
+  # it neither helps nor hurts the direction learnt from the human BC
+  # (q_pi - q_data <= 0.01 with the conservative term).
+  q_weight: 0.1
+  # 10-28 evening: Q and a state-only V regress on r + gamma^42 V_target(s') over
+  # recorded transitions (worker _forward_critic_vboot), never on the actor's
+  # own next action. r keeps the +1 of a completed stage, each step costs
+  # 1 / stage_time_cost_steps[k] (stage k's median length in successful
+  # episodes, 10-28 morning), a step failure or takeover is -1 once per chunk.
+  # Q learns from chunks the policy began; V from every chunk. With
+  # actor.model.critic_penalty_head, Q = V + pbar - phat, phat / pbar
+  # classifiers of a penalized chunk (no large human corrections as samples).
+  # 10-30: with actor.model.critic_penalty_only the V loss is off and
+  # Q = -phat; the keys below then only shape the (unused) V target.
+  critic_target: v_bootstrap
+  stage_time_cost_steps: [953, 3699, 2915, 445]
+  critic_value_samples: all
+  # 10-30: human-driven chunks (>= 80% Pico-moving steps) are Q samples too,
+  # with the executed joint chunk as the action and only a step failure as
+  # penalty (RLT: the intervention is the executed action in the replay).
+  # Offline this is what makes Q(human) > Q(plan) at the same state (72-81%).
+  critic_human_samples: all
+  # 10-30: the penalty label of a chunk is "its own takeover / step failure OR
+  # one within the next critic_penalty_window - 1 chunks" (takeovers lag the
+  # error by 1-3 chunks; the two-chunk window raised the held-out AUC
+  # 0.87 -> 0.89-0.90). critic_failure_window is the same for step failures
+  # (default: the same). critic_penalty_decay > 0 replaces the hard window by
+  # the soft label gamma^d, d chunks to the next penalty. penalty_next is
+  # attached at replay ingestion (worker _attach_penalty_window).
+  critic_penalty_window: 2
+  critic_failure_window: 2
+  critic_penalty_decay: 0.0
+  # Penalized chunks (3-4% of Q samples) weigh as much as the rest in Q's loss.
+  critic_balance_penalized: true
+  # Conservative term: where Q rates the actor's plan above the data plan,
+  # the excess is penalized (relu).
+  critic_conservative_alpha: 1.0
+  # 10-28: a preloaded replay counts toward the warmup threshold but buys no
+  # updates (5 per transition bought ~19k updates on the 09:37 replay before
+  # any new data in the 12:58 run).
+  # 10-30: 1, so a preloaded replay (the 10-28 runs) trains the actor and
+  # critic before the first episode, about as many updates as the offline
+  # runs that were validated (6k steps at batch 256).
+  preload_utd_ratio: 1
+  # A1: a takeover inside an autonomous chunk is reward -1 without bootstrap.
+  # Tianji counts H-mode (iv_kind 2) and Pico (3) steps, never pause holds (1).
+  takeover_penalty: -1.0
+  takeover_kinds:
+  - 2
+  - 3
+  # A takeover chunk has no complete executed action (the step H came in and
+  # the holds after it), so require_exec_action_validity dropped its Q sample
+  # and with it the -1 (10-25 robot run: 4 of 4). Keep it, labelled with the
+  # policy's own plan for the chunk (policy_action), which led to the takeover.
+  takeover_q_uses_policy_action: true
+  # 10-28: a policy step's Q label is the plan the actor commanded (its joints
+  # through FK), the action the actor is queried with; the measured TCP after
+  # the step was 4.3 mm (median) / 34 mm (p90) away from it. Takeover and hold
+  # steps keep their measured labels.
+  critic_policy_label: commanded
+  # A1: second difference of the residual over time; removes the per-step
+  # sawtooth of independently trained residual dimensions.
+  smooth_weight: 300
+  bc_weight: 5.0
+  human_bc_target: direct
+  require_exec_action_validity: true
+  bc_human_weight_mult: 2.0
+  # 10-28: only small corrections (every arm joint within the residual limit of
+  # the VLA reference) are human BC targets; a larger correction is beyond what
+  # the residual actor can execute and stays out of the RL update (kept in the
+  # replay and the HIL archive for the next SFT). Not clipped.
+  # 10-30: off. Filtering the BC targets to the cap halved the direction
+  # signal offline (orth cos 0.26-0.36 -> 0.1); the residual is capped at
+  # execution anyway, so every human step is a target.
+  human_bc_within_cap: false
+  # 10-28: chunks with a "当前步失败" (-1) step, and takeover chunks (began
+  # autonomous, then H / Pico), keep no VLA BC target on their policy steps
+  # (worker forward_actor); their human steps still count.
+  bc_skip_penalized_chunks: true
+  # A1: noise on the actor's z input keeps it from memorizing rare takeovers.
+  z_noise_frac: 0.1
+  # 10-28: the same noise on the critic's z (its training pass only).
+  # 10-30: 0.3 keeps the held-out phat AUC at 0.87-0.90 through 12k updates
+  # (0.1: 0.82-0.90, overfitting the 2048-dim z); better than dropout, a
+  # narrower net or weight decay.
+  critic_z_noise_frac: 0.3
+  # 10-28: log hil/corr_* (worker _correction_metrics), whether the critic
+  # learns from takeovers.
+  correction_metrics: true
+  # 10-28: off. The residual actor always executes with its reference, so
+  # dropping it only fed a never-executed head (half the actor batch).
+  reference_dropout_prob: 0.0
+  bootstrap_type: standard
+  # No TD target clipping (10-25): the takeover chunk (-1, no bootstrap) and
+  # the panel's "step failure" (-1 on that step) must reach the critic; the
+  # former [0, 1] clip turned the takeover penalty into 0. The Q head is linear.
+  q_target_min: null
+  q_target_max: null
+  # A1 / paper / TD3: the actor maximizes Q1. 10-28 evening: the smaller of the
+  # two, as the actor otherwise follows one critic's extrapolation.
+  actor_uses_min_q: true
+  # Discount per control step. Subtask boundaries (stage one-hot) truncate
+  # bootstrapping, so a subtask's Q is only its own discounted rewards: at most
+  # 1, negative after takeovers or step failures.
+  gamma: 0.9995
+  tau: 0.005
+  entropy_tuning:
+    alpha_type: fixed_alpha
+    initial_alpha: 0.0
+    optim:
+      lr: 0.0003
+      lr_scheduler: torch_constant
+      clip_grad: 10.0
+  replay_buffer:
+    enable_cache: true
+    cache_size: 6000
+    min_buffer_size: 2
+    sample_window_size: 6000
+    auto_save: true
+    auto_save_path: ${runner.logger.log_path}/replay
+    # A new run can start from an earlier run's replay (rank directory, e.g. one
+    # converted by launcher/convert_stage2_replay_onehot4.py). Resume loads the
+    # checkpoint's own replay; leave this unset there.
+    load_path: null  # old replay has no Rectify tensors
+  rlt_schedule:
+    enable: true
+    max_updates_per_train_step: 400
+    warmup_min_size: 10
+    warmup_post_collect_updates: 0
+    train_every_episodes: 0
+    train_every_transitions: 5
+  target_update_freq: 1
+  target_update_type: all
+  train_actor_steps: 2
+  # Paper / A1: two critic updates per actor update.
+  critic_actor_ratio: 2
+  critic_subsample_size: 0
+  backup_entropy: false
+env:
+  group_name: EnvGroup
+  train:
+    rollout_epoch: 1
+    total_num_envs: 1
+    auto_reset: true
+    ignore_terminations: false
+    max_episode_steps: null
+    # Ten RL chunks per rollout epoch; the prefetch carry keeps the robot
+    # moving across epoch boundaries.
+    max_steps_per_rollout_epoch: ${oc.decode:${oc.env:TIANJI_STAGE2_EPOCH_STEPS,240}}
+    # A1: a chunk under human control starts at once while its real inference
+    # runs in parallel and is recorded; the teleop itself is unchanged.
+    smooth_intervene: true
+    intervene_prefetch: true
+    # Human control comes from Pico through LoopInfra (no RLinf wrapper).
+    use_pico: true
+    # HIL "丢弃本条": an episode's chunks wait in the env worker until it ends
+    # (Success/Failure release them), so a discarded episode never reaches the
+    # replay or any update. The cost: an episode trains only once it is over.
+    discard_episodes: true
+    override_cfg:
+      tactile_enabled: true
+      backend: loopinfra
+      # rtj joint Stage2: actions (VLA reference, actor, robot commands) are 16D
+      # joints sent as joint targets (no IK); the critic's executed action is the
+      # measured TCP; every label is stored in both spaces. Pico stays IK teleop.
+      action_space: joint
+      reset_to_saved_pose: true
+      reset_after_episode: true
+      recorder_source_jpeg: true
+      # Every episode, with the three cameras, under hil/episodes/ for offline
+      # RL and LeRobot (recording only; training, replay and control are
+      # unchanged; Discard deletes the episode). Cameras capped at 15 Hz (null:
+      # every synced group, ~30 Hz, twice the disk). In the sim the camera
+      # stream added 0.2-0.9 ms (1-2%) to the median control step at either
+      # rate; recording without cameras added nothing.
+      episode_archive: true
+      episode_archive_image_hz: 15
+      server_url: ${oc.env:LOOPINFRA_URL,http://127.0.0.1:8780}
+      read_only: false
+      hil_control: true
+      hil_port: ${oc.decode:${oc.env:TIANJI_HIL_PORT,8879}}
+      manual_episode_control_only: true
+      request_timeout_s: 2.0
+      image_hw:
+      - 224
+      - 224
+      step_frequency: ${oc.decode:${oc.env:TIANJI_CONTROL_HZ,10}}
+      stream_chunks: true
+      subtask_prompts_file: ${oc.env:TIANJI_SUBTASK_PROMPTS,null}
+      max_num_steps: 600
+      recorder_dir: ${runner.logger.log_path}/hil
+      control_profile: wuji_compat
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 1
+    auto_reset: true
+    ignore_terminations: false
+    max_episode_steps: 600
+    max_steps_per_rollout_epoch: ${oc.decode:${oc.env:TIANJI_STAGE2_EPOCH_STEPS,240}}
+    override_cfg:
+      tactile_enabled: true
+      backend: loopinfra
+      action_space: joint
+      server_url: ${oc.env:LOOPINFRA_URL,http://127.0.0.1:8780}
+      read_only: true
+      request_timeout_s: 2.0
+      image_hw:
+      - 224
+      - 224
+      step_frequency: ${oc.decode:${oc.env:TIANJI_CONTROL_HZ,10}}
+rollout:
+  default_actor_switch: true
+  group_name: RolloutGroup
+  generation_backend: huggingface
+  enable_offload: false
+  pipeline_stage_num: 1
+  collect_transitions: true
+  collect_prev_infos: false
+  # A1 prefetch timetable: after prefetch_at+1 executed steps the next request
+  # leaves, and RLT_REF_OFFSET = num_action_chunks - 1 - prefetch_at aligns the
+  # reference chunk with the steps executed meanwhile (checked at startup).
+  prefetch_at: ${oc.decode:${oc.env:TIANJI_STAGE2_PREFETCH_AT,17}}
+  # Receive the next chunk while this one executes, so a chunk boundary does
+  # not let the last 62 ms segment coast to rest (Stage1 swaps seamlessly).
+  early_policy_recv: true
+  # A1: a full gc after each weight sync holds the GIL and delays inference.
+  gc_after_weight_sync: false
+  model:
+    model_type: rlt_mlp_policy
+    model_path: inline://tianji_rlt_mlp_policy
+    precision: ${actor.model.precision}
+    action_dim: ${actor.model.action_dim}
+    num_action_chunks: ${actor.model.num_action_chunks}
+    ref_num_action_chunks: ${actor.model.ref_num_action_chunks}
+  rlt_feature_model:
+    model_type: openpi_rlinf
+    precision: bf16
+    is_lora: false
+    num_action_chunks: ${oc.decode:${oc.env:TIANJI_ACTION_HORIZON,30}}
+    # rtj fork: the 16D joint Stage1 checkpoint (box_v6j); its joint chunk is
+    # the joint actor's reference (joint contract frame) and RTC guides in
+    # joints; its TCP rows by FK are stored beside it (openpi_rlinf eval model).
+    action_dim: 16
+    num_steps: 4
+    model_path: ${oc.env:TIANJI_RLT_STAGE1_MODEL_PATH,null}
+    openpi_data:
+      repo_id: tianji_stage1_joint
+      norm_stats_path: ${oc.env:TIANJI_RLT_STAGE1_NORM_STATS_PATH,null}
+    openpi:
+      task: eval
+      config_name: tianji_stage1_joint
+      num_images_in_input: 3
+      action_chunk: ${oc.decode:${oc.env:TIANJI_ACTION_HORIZON,30}}
+      action_horizon: ${oc.decode:${oc.env:TIANJI_ACTION_HORIZON,30}}
+      action_env_dim: 16
+      model_action_dim: 32
+      num_steps: 4
+      paligemma_variant: gemma_2b
+      action_expert_variant: gemma_300m
+      max_token_len: 200
+      discrete_state_input: true
+      state_indices: []
+      noise_method: flow_noise
+      noise_params:
+      - 0.16
+      - 0.12
+      - 200
+      joint_logprob: true
+      use_rlt: true
+      rlt_prefix_seq_len: 1024
+      rlt_image_only: false
+      rlt_use_mask: true
+actor:
+  model:
+    tactile_enabled: true
+    tactile_embed_dim: 64
+    # As tianji2_rlt_stage2_async.yaml: no exploration without deployment.
+    rollout_noise: ${runner.deploy_actor_updates}
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 256
+  global_batch_size: 256
+  seed: 1234
+  enable_offload: false
+  sync_weight_no_wait: true
+  optim:
+    # A1: clip 1.0 / lr 1e-4 removed gradient spikes that pushed the residual
+    # to its limit within one update.
+    clip_grad: 1.0
+    lr: 0.0001
+    lr_scheduler: torch_constant
+  critic_optim:
+    clip_grad: 1.0
+    lr: 0.0003
+    lr_scheduler: torch_constant
+reward:
+  use_reward_model: false
+critic:
+  use_critic_model: false

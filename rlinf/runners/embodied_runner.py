@@ -22,10 +22,6 @@ from typing import TYPE_CHECKING, Union
 
 from omegaconf.dictconfig import DictConfig
 
-from rlinf.data.schema.embodied_trajectory import (
-    select_trajectory_collector,
-    select_trajectory_dispatcher,
-)
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.checkpoint import parse_global_step_from_checkpoint_path
@@ -43,9 +39,7 @@ if TYPE_CHECKING:
         AsyncEmbodiedSACFSDPPolicy,
     )
     from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
-    from rlinf.workers.actor.fsdp_art_policy_worker import EmbodiedARTFSDPPolicy
     from rlinf.workers.actor.fsdp_nft_policy_worker import EmbodiedNFTFSDPPolicy
-    from rlinf.workers.actor.fsdp_refl_policy_worker import EmbodiedReFLFSDPPolicy
     from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
     from rlinf.workers.env.env_worker import EnvWorker
@@ -62,9 +56,7 @@ class EmbodiedRunner:
         cfg: DictConfig,
         actor: Union[
             "EmbodiedFSDPActor",
-            "EmbodiedARTFSDPPolicy",
             "EmbodiedNFTFSDPPolicy",
-            "EmbodiedReFLFSDPPolicy",
             "EmbodiedSACFSDPPolicy",
             "AsyncEmbodiedSACFSDPPolicy",
         ],
@@ -102,18 +94,7 @@ class EmbodiedRunner:
         # Data channels
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
-        # Trajectory assembly runs on the channel worker, so neither the env
-        # nor the rollout worker has to hold partial trajectory state.
-        self.actor_channel = None
-        if self.cfg.env.get("train") is not None:
-            self.actor_channel = Channel.create(
-                "Actor",
-                collector=select_trajectory_collector(self.cfg),
-                dispatcher=select_trajectory_dispatcher(self.cfg),
-                cfg=self.cfg,
-                producers=[self.rollout],
-                consumers=[self.actor],
-            )
+        self.actor_channel = Channel.create("Actor")
         if self.reward is not None:
             self.reward_channel = Channel.create("Reward")
         else:
@@ -138,23 +119,24 @@ class EmbodiedRunner:
         )
 
         # Async logging setup
+        self.stop_logging = False
         self.log_queue = queue.Queue()
         self.log_thread = threading.Thread(target=self._log_worker, daemon=True)
         self.log_thread.start()
 
     def _log_worker(self):
         """Background thread for processing log messages."""
-        while True:
-            task = self.log_queue.get()
+        while not self.stop_logging:
             try:
-                if task is None:
-                    return
-                log_func, args = task
+                # Wait for log message with timeout
+                log_func, args = self.log_queue.get(timeout=0.1)
                 log_func(*args)
-            except Exception:
-                self.logger.exception("Logging callback failed.")
-            finally:
                 self.log_queue.task_done()
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Logging error: {e}")
+                continue
 
     def print_metrics_table_async(
         self,
@@ -188,9 +170,24 @@ class EmbodiedRunner:
             self.reward.init_worker().wait()
 
         rollout_handle.wait()
-        env_handle.wait()
+        # Tianji HIL: the env's first reset waits for the operator's Start.
+        # Actor, resume and the first weight sync are finished while it waits,
+        # so Start begins the episode with everything loaded.
+        prestart = bool(self.cfg.runner.get("init_before_start", False))
+        if not prestart:
+            env_handle.wait()
         self.actor.init_worker().wait()
+        self._resume_actor()
+        if prestart:
+            if bool(self.cfg.runner.get("deploy_actor_updates", True)):
+                self.update_rollout_weights()
+                self._initial_weights_synced = True
+            from rlinf.utils.tianji_startup import publish_stage2_ready
 
+            publish_stage2_ready("TIANJI_STAGE2_PRESTART_FILE")
+            env_handle.wait()
+
+    def _resume_actor(self):
         resume_dir = self.cfg.runner.get("resume_dir", None)
         if resume_dir is None:
             return
@@ -470,8 +467,9 @@ class EmbodiedRunner:
     def _finish_run(self) -> None:
         self.metric_logger.finish()
 
-        self.log_queue.put(None)
-        self.log_queue.join()
+        # Stop logging thread
+        self.stop_logging = True
+        self.log_queue.join()  # Wait for all queued logs to be processed
         self.log_thread.join(timeout=1.0)
 
     def _should_profile_step(self, step_idx: int) -> bool:
@@ -503,7 +501,6 @@ class EmbodiedRunner:
             # set global step
             self.actor.set_global_step(self.global_step).wait()
             self.rollout.set_global_step(self.global_step).wait()
-            self.env.set_global_step(self.global_step).wait()
 
             profiled_step = (
                 self.global_step
@@ -522,11 +519,11 @@ class EmbodiedRunner:
                         input_channel=self.env_channel,
                         rollout_channel=self.rollout_channel,
                         reward_channel=self.reward_channel,
+                        actor_channel=self.actor_channel,
                     )
                     rollout_handle: Handle = self.rollout.generate(
                         input_channel=self.rollout_channel,
                         output_channel=self.env_channel,
-                        actor_channel=self.actor_channel,
                     )
                     reward_handle = None
                     if self.reward is not None:
@@ -553,7 +550,7 @@ class EmbodiedRunner:
                     env_bootstrap_handle: Handle | None = None
                     if self.overlap_env_bootstrap and _step + 1 < self.max_steps:
                         env_bootstrap_handle = self.env.prefetch_train_bootstrap(
-                            rollout_channel=self.rollout_channel,
+                            rollout_channel=self.rollout_channel
                         )
 
                     actor_training_metrics = actor_training_handle.wait()
@@ -588,7 +585,6 @@ class EmbodiedRunner:
             # set global step
             self.actor.set_global_step(self.global_step).wait()
             self.rollout.set_global_step(self.global_step).wait()
-            self.env.set_global_step(self.global_step).wait()
 
             profiled_step = (
                 self.global_step
@@ -606,11 +602,11 @@ class EmbodiedRunner:
                     input_channel=self.env_channel,
                     rollout_channel=self.rollout_channel,
                     reward_channel=self.reward_channel,
+                    actor_channel=self.actor_channel,
                 )
                 rollout_handle: Handle = self.rollout.generate(
                     input_channel=self.rollout_channel,
                     output_channel=self.env_channel,
-                    actor_channel=self.actor_channel,
                 )
                 reward_handle = None
                 if self.reward is not None:
@@ -630,7 +626,7 @@ class EmbodiedRunner:
                 env_bootstrap_handle: Handle | None = None
                 if self.overlap_env_bootstrap and _step + 1 < self.max_steps:
                     env_bootstrap_handle = self.env.prefetch_train_bootstrap(
-                        rollout_channel=self.rollout_channel,
+                        rollout_channel=self.rollout_channel
                     )
 
                 actor_results = actor_training_handle.wait()

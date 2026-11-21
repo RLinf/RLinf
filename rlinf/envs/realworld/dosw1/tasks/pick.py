@@ -1,0 +1,169 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Single-arm pick task for the DOSW1 robot.
+
+Three-phase task (reach -> grasp -> lift) using left arm only,
+modelled after Franka's ``PegInsertionEnv`` but in joint space.
+"""
+
+import time
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from rlinf.envs.realworld.dosw1.dosw1_env import ControlMode, DOSW1Config, DOSW1Env
+
+
+def _default_grasp_joint() -> np.ndarray:
+    return np.array([-0.75, 0.0, 0.0, 1.57, 0.0, -1.57], dtype=np.float64)
+
+
+def _default_lift_joint() -> np.ndarray:
+    return np.array([-0.75, -0.15, 0.0, 1.57, 0.0, -1.57], dtype=np.float64)
+
+
+@dataclass
+class PickConfig(DOSW1Config):
+    """Configuration for the DOSW1 single-arm pick task."""
+
+    target_grasp_joint: np.ndarray = field(default_factory=_default_grasp_joint)
+    target_lift_joint: np.ndarray = field(default_factory=_default_lift_joint)
+
+    joint_reward_sharpness: float = 2.0
+    lift_threshold: float = 0.25
+    gripper_closed_max_width: float = 0.01
+    grasp_bonus: float = 0.3
+
+    max_joint_delta: float = 0.1
+
+    right_arm_home_penalty: float = 0.3
+
+    enable_gripper_penalty: bool = False
+    gripper_penalty: float = 0.05
+    use_dense_reward: bool = True
+    step_frequency: float = 10.0
+
+
+class PickEnv(DOSW1Env):
+    """Reach a grasp joint pose, close gripper, then lift to a target pose."""
+
+    def __init__(
+        self,
+        override_cfg: dict,
+        worker_info=None,
+        hardware_info=None,
+        env_idx: int = 0,
+    ) -> None:
+        super().__init__(
+            PickConfig(**override_cfg),
+            worker_info,
+            hardware_info,
+            env_idx,
+        )
+        self.phase = "reach"
+        self.holding_object = False
+        self.task_success = False
+
+    @property
+    def task_description(self) -> str:
+        return "Pick up the object with the left arm."
+
+    def reset(
+        self,
+        *,
+        seed=None,
+        options=None,
+        joint_reset: bool = False,
+    ) -> tuple[dict, dict]:
+        obs, info = super().reset(seed=seed, options=options, joint_reset=joint_reset)
+
+        self.phase = "reach"
+        self.holding_object = False
+        self.task_success = False
+        return self._get_observation(), info
+
+    def step(self, action: np.ndarray) -> tuple[dict, float, bool, bool, dict]:
+        obs, reward, terminated, truncated, info = super().step(action)
+        if (
+            self.task_success and not self.config.manual_episode_control_only
+        ) or self.manual_done:
+            terminated = True
+        return obs, reward, terminated, truncated, info
+
+    def _calc_step_reward(self, obs: dict, gripper_changed: bool = False) -> float:
+        del obs
+        if self.config.is_dummy:
+            return 0.0
+
+        cfg: PickConfig = self.config
+        left_joint = self.robot_state.left_joint_positions
+        left_gripper = self.robot_state.left_gripper
+        grasp_joint = np.asarray(cfg.target_grasp_joint, dtype=np.float64).reshape(6)
+        lift_joint = np.asarray(cfg.target_lift_joint, dtype=np.float64).reshape(6)
+        sharpness = float(cfg.joint_reward_sharpness)
+
+        if (
+            self.control_mode == ControlMode.TELEOP
+            and self.teleop_target_left_gripper is not None
+        ):
+            gripper_closed = (
+                self.teleop_target_left_gripper <= cfg.gripper_closed_max_width
+            )
+        else:
+            gripper_closed = left_gripper <= cfg.gripper_closed_max_width
+
+        reward = 0.0
+        reach_dist_sq = float(np.sum(np.square(left_joint - grasp_joint)))
+        lift_dist_sq = float(np.sum(np.square(left_joint - lift_joint)))
+        lift_distance = float(np.sqrt(lift_dist_sq))
+
+        if self.phase == "reach":
+            if cfg.use_dense_reward:
+                reward = float(np.exp(-sharpness * reach_dist_sq))
+
+            if gripper_closed and gripper_changed:
+                self.holding_object = True
+                self.phase = "lift"
+                reward += cfg.grasp_bonus
+
+        elif self.phase == "lift":
+            if cfg.use_dense_reward:
+                reward = float(np.exp(-sharpness * lift_dist_sq))
+
+            if lift_distance <= cfg.lift_threshold:
+                reward = 1.0
+                self.task_success = True
+
+        if cfg.enable_gripper_penalty and gripper_changed:
+            reward -= cfg.gripper_penalty
+
+        right_joint = self.robot_state.right_joint_positions
+        right_home = np.asarray(cfg.right_reset_joint, dtype=np.float64).reshape(6)
+        right_dist_sq = float(np.sum(np.square(right_joint - right_home)))
+        reward -= cfg.right_arm_home_penalty * right_dist_sq
+
+        return float(np.clip(reward, -1.0, 1.0))
+
+    def go_to_rest(self) -> None:
+        """Open gripper if needed and return to the home joint state."""
+        if self.config.is_dummy:
+            return
+
+        if self.holding_object:
+            self.sdk.open_gripper()
+            time.sleep(0.4)
+            self.holding_object = False
+
+        self._go_to_home()
