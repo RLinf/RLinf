@@ -150,7 +150,9 @@ Evidence: <one line: command and result, or trace; for unresolved, what settles 
 ````markdown
 ### Inline comments (posted on diff lines)
 
-**F1** · `rlinf/x.py:42`
+`rlinf/x.py:42`
+
+**F1 · critical · correctness: <plain title>**
 
 <Problem (1–3 sentences), `Suggested fix:` + verified `suggestion`/code block, and one-line `Evidence:`.>
 ````

@@ -326,6 +326,7 @@ class ReviewLinter:
     )
     ROW = re.compile(r"^\|\s*F\d+\s*\|")
     FINDING = re.compile(r"^#### (F\d+) · ([\w-]+) · ([\w-]+): \S")
+    INLINE_HEADING = re.compile(r"^\*\*(F\d+) · ([\w-]+) · ([\w-]+): \S.*\*\*$")
     LOCATION = re.compile(r"`([^`:\s]+):(\d+)(?:-(\d+))?`")
 
     def __init__(self, payload: dict, pr: PullRequest | None) -> None:
@@ -580,6 +581,26 @@ class ReviewLinter:
                     f"body {row.id}",
                     f"posted inline at {m[0]}, but no inline comment sits there",
                 )
+            for i in hits:
+                first = next(
+                    (
+                        line.strip()
+                        for line in (comments[i].get("body") or "").splitlines()
+                        if line.strip()
+                    ),
+                    "",
+                )
+                hm = self.INLINE_HEADING.match(first)
+                if hm and (hm[1], hm[2], hm[3]) != (
+                    row.id,
+                    row.severity,
+                    row.category,
+                ):
+                    self.error(
+                        f"comment {i + 1} ({path}:{end})",
+                        f"heading says {hm[1]} {hm[2]} {hm[3]}, "
+                        f"the table says {row.id} {row.severity} {row.category}",
+                    )
             matched.update(hits)
         for i, c in enumerate(comments):
             if i not in matched:
@@ -634,6 +655,12 @@ class ReviewLinter:
             self.error(
                 where,
                 f"start_line must be an integer below line {line}, found {start!r}",
+            )
+        first = next((line.strip() for line in body.splitlines() if line.strip()), "")
+        if not self.INLINE_HEADING.match(first):
+            self.error(
+                where,
+                "start the inline comment with '**F<n> · <severity> · <category>: <title>**' matching its table row",
             )
         if FIX_LEAD not in body:
             self.error(where, f"every inline comment needs a '{FIX_LEAD}' paragraph")
