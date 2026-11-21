@@ -263,6 +263,8 @@ actor
   actor:
     training_backend: megatron
     mcore_gpt: True
+    logprob_chunk_size: 0
+    response_only_logits: False
     spec_name: decoder_gpt
 
     offload_optimizer: True
@@ -275,6 +277,7 @@ actor
 
     model:
       precision: fp16
+      lm_head_chunk_size: 0
       add_bias_linear: False
 
       tensor_model_parallel_size: 1
@@ -409,6 +412,10 @@ actor
      - Enable data-parallel load balancing.
    * - ``actor.calculate_flops``
      - Compute and log FLOPs for profiling.
+   * - ``actor.logprob_chunk_size``
+     - Positions per vocabulary softmax chunk (nonnegative integer). With response-only projection and entropy disabled, zero uses chunks of 256 positions. See :doc:`actor_logprob_memory` for the other options and benchmark.
+   * - ``actor.response_only_logits``
+     - Project only positions that predict response tokens. Requires context parallel size 1.
    * - ``actor.seed``
      - Global seed for reproducibility.
 
@@ -420,6 +427,8 @@ actor
 
    * - Parameter
      - Description
+   * - ``actor.model.lm_head_chunk_size``
+     - Positions per output projection chunk (nonnegative integer). Applies to Qwen3.5 with MBridge.
    * - ``actor.model.precision``
      - Numerical precision for training (e.g., ``fp16``).
    * - ``actor.model.add_bias_linear``

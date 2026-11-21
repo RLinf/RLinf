@@ -23,7 +23,10 @@ from omegaconf import DictConfig
 from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
-from rlinf.config import torch_dtype_from_precision
+from rlinf.config import (
+    shared_multi_modal_processor_enabled,
+    torch_dtype_from_precision,
+)
 from rlinf.data.schema.reasoning_requests import RolloutRequest, SeqGroupInfo
 from rlinf.data.schema.reasoning_results import RolloutResult
 from rlinf.scheduler import Channel, Worker
@@ -33,6 +36,7 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.backend import RlinfContext
+from rlinf.workers.rollout.sglang import sglang_version
 from rlinf.workers.rollout.sglang.backends import make_backend
 from rlinf.workers.rollout.sglang.rendezvous import (
     broadcast_instance_readiness,
@@ -46,8 +50,6 @@ from rlinf.workers.rollout.utils import (
     RunningStatusManager,
     print_sglang_outputs,
 )
-
-_SERVER_ARGS_FIELDS = {f.name for f in dataclasses.fields(ServerArgs)}
 
 
 class SGLangWorker(Worker):
@@ -174,8 +176,16 @@ class SGLangWorker(Worker):
         Engine and Server backends consume the same product, so
         version-compatibility branches live here only once.
         """
+        server_fields = (
+            {field.name for field in dataclasses.fields(ServerArgs)}
+            if dataclasses.is_dataclass(ServerArgs)
+            else ServerArgs.__struct_fields__
+        )
         use_cudagraph = not self._cfg_rollout.enforce_eager
 
+        enable_weights_cpu_backup = self._cfg_rollout.sglang.get(
+            "enable_weights_cpu_backup", False
+        )
         load_format = "dummy"  # dummy means randomize init weight
         if self.weight_reload == "sync":
             validate_weight_first_sync = self._cfg_rollout.get(
@@ -200,8 +210,48 @@ class SGLangWorker(Worker):
                 "enable_deterministic_inference", False
             ),
         }
+        if (
+            self._cfg_rollout.model.model_type == "qwen3_5"
+            and self.weight_reload == "sync"
+            and self._cfg.actor.training_backend == "megatron"
+        ):
+            # The vision tower and optional MTP must exist before graph capture.
+            load_format = "auto"
+            qwen_args = {
+                "mm_enable_dp_encoder": self._cfg_rollout.sglang.get(
+                    "mm_enable_dp_encoder", False
+                ),
+                # Qwen3.5 NEXTN with SGLang's no_buffer Mamba scheduler
+                # requires prefix caching to be disabled.
+                "disable_radix_cache": self._cfg_rollout.sglang.get(
+                    "disable_radix_cache", True
+                ),
+            }
+            if self._cfg.actor.model.get("load_mtp", True):
+                # load_mtp owns the algorithm and checkpoint for the MTP branch.
+                qwen_args.update(
+                    speculative_algorithm="NEXTN",
+                    speculative_num_steps=self._cfg_rollout.sglang.get(
+                        "speculative_num_steps", 1
+                    ),
+                    speculative_num_draft_tokens=self._cfg_rollout.sglang.get(
+                        "speculative_num_draft_tokens", 2
+                    ),
+                    speculative_eagle_topk=self._cfg_rollout.sglang.get(
+                        "speculative_eagle_topk", 1
+                    ),
+                    speculative_draft_model_path=self._cfg_rollout.model.model_path,
+                )
+            version_dependent_args.update(qwen_args)
+        for name in (
+            "context_length",
+            "chunked_prefill_size",
+            "disable_radix_cache",
+        ):
+            if name in self._cfg_rollout.sglang:
+                version_dependent_args[name] = self._cfg_rollout.sglang[name]
         for name in list(version_dependent_args):
-            if name in _SERVER_ARGS_FIELDS:
+            if name in server_fields:
                 continue
             value = version_dependent_args.pop(name)
             if name in self._cfg_rollout.sglang:
@@ -210,13 +260,40 @@ class SGLangWorker(Worker):
                     f"the configured value {value!r} is ignored"
                 )
 
+        if shared_multi_modal_processor_enabled(self._cfg_rollout.sglang):
+            from rlinf.hybrid_engines.sglang.multimodal.replay import (
+                require_image_capture,
+            )
+
+            require_image_capture(sglang_version)
+
+        # SGLang 0.5.19 renamed this field; both release APIs use the same limit.
+        graph_limit_name = (
+            "cuda_graph_max_bs"
+            if "cuda_graph_max_bs" in server_fields
+            else "cuda_graph_max_bs_decode"
+        )
+        version_dependent_args[graph_limit_name] = min(
+            self._cfg_rollout.cuda_graph_max_bs,
+            self._cfg_rollout.max_running_requests,
+        )
+
+        # Back up pretrained parameters that the actor does not synchronize.
+        if "enable_weights_cpu_backup" in server_fields:
+            version_dependent_args["enable_weights_cpu_backup"] = (
+                enable_weights_cpu_backup
+            )
+        elif enable_weights_cpu_backup:
+            raise ValueError(
+                f"SGLang {sglang_version} does not support enable_weights_cpu_backup. "
+                "Disable it or install a release with CPU weight backup support."
+            )
+        if enable_weights_cpu_backup:
+            load_format = "auto"
+
         server_args = ServerArgs(
             model_path=self._cfg_rollout.model.model_path,
             disable_cuda_graph=not use_cudagraph,
-            cuda_graph_max_bs=min(
-                self._cfg_rollout.cuda_graph_max_bs,
-                self._cfg_rollout.max_running_requests,
-            ),
             tp_size=self._cfg_rollout.tensor_parallel_size,
             # Expert parallel: pass ep_size explicitly. sglang derives
             # moe_tp = tp // ep // moe_dp itself. ep_size defaults to
@@ -246,7 +323,9 @@ class SGLangWorker(Worker):
                 self._cfg_rollout.max_running_requests,
             ),
             load_format=load_format,
-            # disable_overlap_schedule=True,
+            disable_overlap_schedule=self._cfg_rollout.sglang.get(
+                "disable_overlap_schedule", False
+            ),
             dtype=torch_dtype_from_precision(self._cfg_rollout.model.precision),
             # sglang will only return text/output_ids when skip_tokenizer_init=False/True
             # text is not needed in RL training, so set to True can save time.
@@ -269,7 +348,13 @@ class SGLangWorker(Worker):
             server_args.skip_server_warmup = True
 
         self.log_on_first_rank(f"{server_args=}")
-        return dataclasses.asdict(server_args)
+        if dataclasses.is_dataclass(server_args):
+            return dataclasses.asdict(server_args)
+        # Backends reconstruct ServerArgs and resolve it at launch. Resolved
+        # values are not constructor inputs (e.g. DP prefill sizing is scaled).
+        return {
+            name: getattr(server_args, name) for name in server_args.__struct_fields__
+        }
 
     async def stop(self):
         """Stop the SGLang engine and finalize stats collectors."""
@@ -385,9 +470,10 @@ class SGLangWorker(Worker):
                     "nnodes": nnodes,
                     "node_rank": node_rank,
                 }
+        server_args = self._build_server_args()
         self._backend = make_backend(
             backend_type,
-            server_args=self._build_server_args(),
+            server_args=server_args,
             rlinf_ctx=RlinfContext(
                 parent_address=self.worker_address,
                 weight_reload=self.weight_reload,
@@ -752,6 +838,8 @@ class SGLangWorker(Worker):
         channel_key: str,
         prompt_ids: list[int],
         sampling_params: Optional[dict] = None,
+        image_data: Optional[list] = None,
+        capture_images: Optional[dict] = None,
     ):
         # Backstop for rollout_serverless's entry-rank gate; return instead
         # of raising because nobody awaits this task.
@@ -768,12 +856,31 @@ class SGLangWorker(Worker):
         # waiting forever.
         try:
             version_start = self._weight_version
-            result = await self._backend.async_generate(
-                input_ids=prompt_ids,
-                sampling_params=final_sampling_params,
-                image_data=None,
-                return_logprob=self._return_logprobs,
-            )
+            captured = None
+            if capture_images is not None:
+                from rlinf.hybrid_engines.sglang.multimodal.replay import (
+                    generate_with_capture,
+                )
+
+                if not shared_multi_modal_processor_enabled(self._cfg_rollout.sglang):
+                    raise ValueError(
+                        "Release capture requires shared preprocessing and explicit image spans"
+                    )
+                result, captured, history = await generate_with_capture(
+                    self._backend.async_generate,
+                    prompt_ids,
+                    image_data,
+                    final_sampling_params,
+                    capture_images,
+                    self._return_logprobs,
+                )
+            else:
+                result = await self._backend.async_generate(
+                    input_ids=prompt_ids,
+                    sampling_params=final_sampling_params,
+                    image_data=image_data or None,
+                    return_logprob=self._return_logprobs,
+                )
             # sglang will trim matched stop in result text, so we should only return output_ids
             result_dict = {
                 "output_ids": result["output_ids"],
@@ -784,6 +891,10 @@ class SGLangWorker(Worker):
                 "version_start": version_start,
                 "version_end": self._weight_version,
             }
+            if captured is not None:
+                result_dict["multimodal_input"] = captured
+                result_dict["image_history"] = history
+                result_dict["prompt_token_ids"] = captured["prompt_token_ids"]
             if self._return_logprobs:
                 result_dict["logprobs"] = [
                     item[0] for item in result["meta_info"]["output_token_logprobs"]
@@ -825,6 +936,8 @@ class SGLangWorker(Worker):
                     channel_key=rollout_request["channel_key"],
                     prompt_ids=rollout_request["prompt_ids"],
                     sampling_params=rollout_request.get("sampling_params", None),
+                    image_data=rollout_request.get("image_data"),
+                    capture_images=rollout_request.get("capture_images"),
                 )
             )
             self._inflight_generates.add(task)

@@ -306,7 +306,7 @@ class MegatronModelManager:
         # Only override user-controllable runtime fields
         # e.g. multi_latent_attention=True -> False
         _model_type = getattr(self._cfg.model, "model_type", None)
-        if _model_type in ("deepseek_v3", "glm4_moe_lite"):
+        if _model_type in ("deepseek_v3", "glm4_moe_lite", "qwen3_5"):
             _mbridge_user_override_fields = {
                 "fp16",
                 "bf16",
@@ -317,8 +317,10 @@ class MegatronModelManager:
                 "sequence_parallel",
                 "tensor_model_parallel_size",
                 "pipeline_model_parallel_size",
+                "virtual_pipeline_model_parallel_size",
                 "expert_model_parallel_size",
                 "context_parallel_size",
+                "attention_backend",
                 "gradient_accumulation_fusion",
                 "moe_aux_loss_coeff",
                 "moe_router_bias_update_rate",
@@ -339,6 +341,21 @@ class MegatronModelManager:
         provider.position_embedding_type = position_embedding_type
         if hasattr(provider, "vision_config"):
             provider.vision_config._attn_implementation = resolve_attn_implementation()
+        if _model_type == "qwen3_5":
+            text_config = provider.hf_text_config
+            if self._cfg.model.get("load_mtp", True):
+                mtp_layers = text_config.mtp_num_hidden_layers
+                assert (
+                    mtp_layers == 1 and not text_config.mtp_use_dedicated_embeddings
+                ), "Qwen3.5 weight sync requires one MTP layer with shared embeddings."
+                provider.mtp_num_layers = mtp_layers
+            else:
+                provider.mtp_num_layers = 0
+                # Bridge exports the HF config alongside the loaded parameters.
+                text_config.mtp_num_hidden_layers = 0
+
+        if self.is_dedicated_critic_model:
+            provider.register_pre_wrap_hook(self._attach_value_head)
 
         # the Mbridge run the qwen3-vl-moe model will freeze the language model and vision model by default.
         provider.freeze_language_model = getattr(
@@ -458,16 +475,39 @@ class MegatronModelManager:
             )
 
         if self.is_dedicated_critic_model and post_process:
-            # replace lm head with value head if this is a critic model
-            model.output_layer = LinearForLastLayer(
-                input_size=self._cfg.model.hidden_size,
-                output_size=1,
-                sequence_parallel=self._cfg.model.sequence_parallel,
-                weight_init=self._cfg.get("value_head_init", "normal"),
-                init_std=self._cfg.model.get("init_method_std", 0.02),
+            model.output_layer = self._value_head(
+                self._cfg.model.hidden_size, self._cfg.model.sequence_parallel
             )
 
         return model
+
+    def _value_head(self, hidden_size: int, sequence_parallel: bool) -> torch.nn.Module:
+        """Return the scalar projection that replaces a critic's language-model head."""
+        return LinearForLastLayer(
+            input_size=hidden_size,
+            output_size=1,
+            sequence_parallel=sequence_parallel,
+            weight_init=self._cfg.get("value_head_init", "normal"),
+            init_std=self._cfg.model.get("init_method_std", 0.02),
+        )
+
+    def _attach_value_head(self, model_chunks: list) -> list:
+        """Replace the language-model head of bridge-built critic chunks."""
+        for chunk in model_chunks:
+            if not chunk.post_process:
+                continue
+            head = self._value_head(
+                chunk.config.hidden_size, chunk.config.sequence_parallel
+            ).to(next(chunk.parameters()).device)
+            if hasattr(chunk, "output_layer"):
+                # A value head never shares the input embedding weights.
+                chunk.share_embeddings_and_output_weights = False
+                chunk.output_layer = head
+            else:
+                # A vision-language chunk keeps its head on the language model.
+                chunk.language_model.share_embeddings_and_output_weights = False
+                chunk.language_model.output_layer = head
+        return model_chunks
 
     def optimizer_step(self, increment):
         success, grad_norm, num_zeros_in_grad = self.optimizer.step()
@@ -684,15 +724,18 @@ class MegatronModelManager:
         """Default forward pass for GPT models with optional sequence packing."""
         pre_process = unwrap_model(model).pre_process
         post_process = unwrap_model(model).post_process
+        # Earlier pipeline stages return hidden states for the next stage.
+        scale_logits = post_process and temperature != 1.0
         if packed_seq_params is not None:
             output = model(
                 input_ids=input_ids.contiguous(),
-                attention_mask=None,
+                attention_mask=attention_mask,
                 position_ids=position_ids,
                 packed_seq_params=packed_seq_params,
                 **model_forward_kwargs,
             )
-            output /= temperature
+            if scale_logits:
+                output /= temperature
             if post_process and logits_processor is not None:
                 return logits_processor(output, **logits_processor_args)
             return output
@@ -712,7 +755,8 @@ class MegatronModelManager:
                 packed_seq_params=packed_seq_params,
                 **model_forward_kwargs,
             )
-            output_orig /= temperature
+            if scale_logits:
+                output_orig /= temperature
             if post_process and logits_processor is not None:
                 args = {
                     k: preprocess_packed_seqs(
@@ -760,7 +804,8 @@ class MegatronModelManager:
                 position_ids=new_position_ids,
                 **model_forward_kwargs,
             )
-            output_orig /= temperature
+            if scale_logits:
+                output_orig /= temperature
             if post_process and logits_processor is not None:
                 args = {
                     k: tensor_rm_left_padding(v, attention_mask, sequence_parallel)

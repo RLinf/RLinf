@@ -9,6 +9,8 @@
 
    * - 指南
      - 内容
+   * - :doc:`降低 Actor 计算 logprob 的显存占用 <../actor_logprob_memory>`
+     - 选择 Megatron Actor 的分块设置，测量输出层的峰值显存。
    * - :doc:`RTC <../rtc>`
      - 将策略推理与动作块执行重叠，隐藏推理延迟，支持仿真与真机。
    * - :doc:`Env Decoupled Mode <../env_decoupled_mode>`
@@ -31,6 +33,7 @@
 .. toctree::
    :hidden:
 
+   降低 Actor 计算 logprob 的显存占用 <../actor_logprob_memory>
    RTC <../rtc>
    Env Decoupled Mode <../env_decoupled_mode>
    观测压缩 <../obs_compression>

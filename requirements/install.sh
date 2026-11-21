@@ -592,6 +592,7 @@ EOF
 # Export TORCH_CUDA_ARCH_LIST for extensions built from source. CUDA 12.8+
 # adds Blackwell (sm_100); earlier toolkits reject that target.
 set_torch_cuda_arch_list() {
+    [ -n "${TORCH_CUDA_ARCH_LIST:-}" ] && return
     local cuda_mm cuda_major cuda_minor
     cuda_mm=$(detect_cuda_major_minor) || {
         echo "Could not detect the CUDA version; cannot build CUDA extensions." >&2
@@ -599,7 +600,9 @@ set_torch_cuda_arch_list() {
     }
     cuda_major="${cuda_mm%% *}"
     cuda_minor="${cuda_mm##* }"
-    if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
+    if [ "$cuda_major" -ge 13 ]; then
+        export TORCH_CUDA_ARCH_LIST="8.0;9.0;10.0"
+    elif [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; then
         export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
     else
         export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
@@ -4613,6 +4616,8 @@ install_mbridge() {
     uv pip uninstall rlinf-megatron-bridge || true
     uv pip install --no-deps "megatron-bridge==0.5.0"
     uv pip install "nvidia-modelopt==0.45.0"
+    # Megatron's GDN layers use FLA's kernels and normalization modules.
+    uv pip install "fla-core==0.6.0"
 
     local mbridge_ver modelopt_ver
     mbridge_ver=$(uv pip show megatron-bridge 2>/dev/null | awk '/^Version:/{print $2}')

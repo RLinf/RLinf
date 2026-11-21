@@ -31,6 +31,7 @@ from omegaconf import OmegaConf
 
 from rlinf.data.schema import DiscardedGroup
 from rlinf.workers.agent.agent_loop import (
+    AgentLoopOutput,
     AgentLoopWorker,
     GroupDiscarded,
     MultiAgentLoopWorker,
@@ -70,6 +71,19 @@ def _make_worker() -> AgentLoopWorker:
     worker._inflight_groups = set()
     worker.log_error = mock.MagicMock()
     return worker
+
+
+def test_agent_loop_sends_multimodal_request_metadata():
+    worker = _make_worker()
+    worker.generate_input_channel = _QueueChannel()
+    worker.generate_output_channel = _QueueChannel()
+    ids, images, spans = [1, 2], [b"image"], [(1, 2)]
+
+    worker.generate_output_channel.put({"output_ids": [3]})
+    asyncio.run(worker.generate(ids, {}, image_data=images, image_spans=spans))
+    request = worker.generate_input_channel.get_nowait()
+    assert request["image_data"] == images
+    assert request["capture_images"]["image_spans"] == spans
 
 
 def _request(n_groups=1, group_size=2, group_ids=None, task_names=None):
@@ -601,8 +615,8 @@ def _single_turn_output(
     version_start: int | None,
     version_end: int | None,
     not_training: bool = False,
-) -> SimpleNamespace:
-    return SimpleNamespace(
+) -> AgentLoopOutput:
+    return AgentLoopOutput(
         prompt_ids=[1, 2],
         response_ids=[3],
         response_logprobs=[0.5],
@@ -634,6 +648,13 @@ class TestGetRolloutResultVersions:
         return worker.get_rollout_result(
             task_results, None, None, None, extra_fields_train={}
         )
+
+    def test_image_payloads_follow_retained_turns(self):
+        text, skipped, image = (_single_turn_output(1, 1) for _ in range(3))
+        skipped.extra_fields["not_training"] = True
+        image.response_images = {"image_refs": [{"path": "image.png"}]}
+        result = self._get_rollout_result([[text, skipped], [image]])
+        assert result.multi_modal_inputs == [None, image.response_images]
 
     def test_versions_written_and_aligned(self):
         result = self._get_rollout_result(

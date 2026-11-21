@@ -88,6 +88,7 @@ class SupportedModel:
 SupportedModel.QWEN2_5 = SupportedModel.register("qwen2.5", force=True)
 SupportedModel.QWEN2_5_VL = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3 = SupportedModel.register("qwen3", force=True)
+SupportedModel.QWEN3_5 = SupportedModel.register("qwen3_5", force=True)
 SupportedModel.QWEN3_VL = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_MOE = SupportedModel.register("qwen3_moe", force=True)
 SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
@@ -275,6 +276,17 @@ def activation_to_func(
     return activation_func
 
 
+def shared_multi_modal_processor_enabled(cfg: DictConfig | dict | None) -> bool:
+    """Read the opt-in flag for capturing SGLang image inputs."""
+    if cfg is None:
+        return False
+    key = "enable_shared_multi_modal_processor"
+    enabled = cfg.get(key, False)
+    if type(enabled) is not bool:
+        raise ValueError(f"rollout.sglang.{key} must be a boolean, got {enabled!r}.")
+    return enabled
+
+
 def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
     SupportedModel(cfg.model.model_type)  # To validate model_type is supported
 
@@ -300,6 +312,10 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
             f"backend_type=server; the server backend is only implemented for "
             f"the default serving worker (leave serving_mode unset)."
         )
+        if shared_multi_modal_processor_enabled(cfg) and serving_mode is not None:
+            raise ValueError(
+                "Image capture requires the default SGLang rollout worker."
+            )
         return cfg
 
     def validate_vllm_cfg(cfg):
@@ -335,6 +351,15 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         assert cfg.rollout_backend in SUPPORTED_ROLLOUT_BACKENDS, (
             f"rollout_backend must be one of {SUPPORTED_ROLLOUT_BACKENDS}."
         )
+        if (
+            cfg.model.model_type == "qwen3_5"
+            and actor_cfg is not None
+            and actor_cfg.get("training_backend") == "megatron"
+        ):
+            load_mtp = actor_cfg.model.get("load_mtp", True)
+            assert isinstance(load_mtp, bool), (
+                f"actor.model.load_mtp must be a boolean, got {load_mtp!r}."
+            )
         cfg.return_logprobs = cfg.return_logprobs or algorithm_cfg.get(
             "importance_sampling_fix", False
         )
@@ -396,6 +421,8 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         or "Qwen3MoeForCausalLM" in hf_config.architectures
         or "Qwen3VLForConditionalGeneration" in hf_config.architectures
         or "Qwen3VLMoeForConditionalGeneration" in hf_config.architectures
+        or "Qwen3_5ForConditionalGeneration" in hf_config.architectures
+        or "Qwen3_5ForCausalLM" in hf_config.architectures
     ):
         qk_layernorm = True
     else:
@@ -413,7 +440,9 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             # reported as rope_scaling=None and so left this untouched.
             cfg.model.seq_len_interpolation_factor = None
         model_type = getattr(cfg.model, "model_type", None)
-        if model_type == "qwen3_vl" or model_type == "qwen3_vl_moe":
+        if model_type in ("qwen3_vl", "qwen3_vl_moe", "qwen3_5") and hasattr(
+            hf_config, "text_config"
+        ):
             # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
             hf_config = hf_config.text_config
 
@@ -2047,6 +2076,30 @@ def _validate_steam_ensemble_cfg(actor_cfg: DictConfig) -> None:
 
 
 def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
+    chunk_size = cfg.actor.get("logprob_chunk_size", 0)
+    response_only = cfg.actor.get("response_only_logits", False)
+    if type(chunk_size) is not int or chunk_size < 0:
+        raise ValueError("actor.logprob_chunk_size must be a nonnegative integer")
+    if not isinstance(response_only, bool):
+        raise ValueError("actor.response_only_logits must be a boolean")
+    if (chunk_size or response_only) and (
+        cfg.actor.training_backend != "megatron"
+        or not OmegaConf.select(
+            cfg, "agentloop.is_dynamic_rollout_batch", default=False
+        )
+    ):
+        raise ValueError(
+            "Actor logprob chunking and response-only scoring require a dynamic Megatron agent batch"
+        )
+    if response_only and cfg.actor.model.get("context_parallel_size", 1) != 1:
+        raise ValueError("actor.response_only_logits requires context_parallel_size=1")
+    if chunk_size and (
+        cfg.algorithm.get("calculate_entropy", False)
+        or cfg.algorithm.get("entropy_bonus", 0) != 0
+    ):
+        raise ValueError(
+            "actor.logprob_chunk_size requires entropy calculation and entropy bonus to be disabled"
+        )
     assert cfg.algorithm.recompute_logprobs or cfg.rollout.return_logprobs, (
         "One of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
     )
@@ -2508,6 +2561,39 @@ def adv_requires_group_baseline(
     return False
 
 
+def validate_multimodal_learner_cfg(cfg: DictConfig) -> None:
+    """Validate per-rank image cache and prefetch budgets for agent learners."""
+    for role in ("actor", "critic"):
+        learner = cfg.get(role) or {}
+        if learner.get("expect_multi_modal_inputs", False):
+            model = learner.get("model") or {}
+            if learner.get("training_backend") != "megatron" or any(
+                model.get(key, 1) != 1
+                for key in ("pipeline_model_parallel_size", "context_parallel_size")
+            ):
+                raise ValueError(
+                    f"{role}.expect_multi_modal_inputs requires Megatron with PP=1 and CP=1"
+                )
+        multimodal = learner.get("multimodal") or {}
+        for field in ("cache_bytes", "prefetch_batches", "prefetch_bytes"):
+            value = multimodal.get(field, 0)
+            if type(value) is not int or value < 0:
+                raise ValueError(
+                    f"{role}.multimodal.{field} must be a nonnegative integer, "
+                    f"got {value!r}."
+                )
+        if multimodal.get("prefetch_batches", 0) and (
+            not multimodal.get("prefetch_bytes", 0)
+            or not shared_multi_modal_processor_enabled(
+                OmegaConf.select(cfg, "rollout.sglang")
+            )
+        ):
+            raise ValueError(
+                f"{role}.multimodal prefetch requires enable_shared_multi_modal_processor=True "
+                "and positive prefetch_bytes per learner rank."
+            )
+
+
 def validate_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
@@ -2627,6 +2713,13 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             cfg.critic = validate_fsdp_cfg(cfg.critic)
 
     if cfg.runner.task_type == "reasoning":
+        if "lm_head_chunk_size" in cfg.actor.model:
+            from rlinf.hybrid_engines.megatron.qwen_vl import (
+                validate_qwen_vl_chunked_cfg,
+            )
+
+            validate_qwen_vl_chunked_cfg(cfg)
+        validate_multimodal_learner_cfg(cfg)
         cfg = validate_searchr1_cfg(cfg)
 
     return cfg
@@ -2830,6 +2923,16 @@ def build_transformer_config(cfg) -> "TransformerConfig":
                 model_parallel_config, field.name
             )
 
+    if isinstance(transformer_config_dict.get("attention_backend"), str):
+        from megatron.core.transformer.enums import AttnBackend
+
+        backend = transformer_config_dict["attention_backend"]
+        try:
+            transformer_config_dict["attention_backend"] = AttnBackend[backend]
+        except KeyError as error:
+            raise ValueError(
+                f"Unknown Megatron attention backend: {backend}"
+            ) from error
     transformer_config = TransformerConfig(**transformer_config_dict)
 
     # pass mcore customization configs directly to mcore

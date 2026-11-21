@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import time
-from functools import partial
+from contextlib import nullcontext
+from functools import cached_property, partial
 from typing import Callable, Optional
 
 import torch
@@ -1403,6 +1404,40 @@ class MegatronWorker(MegatronModelManager, Worker):
 class DynamicMegatronBatchMixin:
     """Shared real-length group transport and microbatch scheduling."""
 
+    @cached_property
+    def multimodal_preparer(self):
+        from rlinf.config import shared_multi_modal_processor_enabled
+        from rlinf.utils.multimodal import MultimodalBatchPreparer
+
+        settings = self.role_cfg.get("multimodal") or {}
+        return MultimodalBatchPreparer(
+            self.cfg.rollout.model.model_path,
+            token_space=shared_multi_modal_processor_enabled(
+                self.cfg.rollout.get("sglang")
+            ),
+            cache_bytes=settings.get("cache_bytes", 0),
+            prefetch_batches=settings.get("prefetch_batches", 0),
+            prefetch_bytes=settings.get("prefetch_bytes", 0),
+        )
+
+    def ragged_model_inputs(self, batch, model, input_ids, position_ids, packed_params):
+        if "multi_modal_inputs" in batch:
+            from rlinf.hybrid_engines.megatron.qwen_vl_inputs import (
+                ragged_qwen_vl_inputs,
+            )
+
+            return ragged_qwen_vl_inputs(
+                batch, self.multimodal_preparer, model, packed_params, input_ids.device
+            )
+        return nullcontext(
+            {
+                "input_ids": input_ids,
+                "position_ids": position_ids,
+                "attention_mask": None,
+                "packed_seq_params": packed_params,
+            }
+        )
+
     def get_batch(
         self, channel: Channel
     ) -> tuple[DynamicActorBatch, list[DynamicRolloutResult]]:
@@ -1534,16 +1569,21 @@ class DynamicMegatronBatchMixin:
                 else self.megatron_forward_backward_record
             )
             forward_backward_record.start()
-        forward_outputs = fwd_bwd_function(
-            forward_step_func=self.get_forward_step_func(),
-            data_iterator=self.make_data_iterator_list(batch_iter),
-            model=self.model,
-            num_microbatches=num_microbatches,
-            forward_only=forward_only,
-            seq_length=total_seqlen,
-            micro_batch_size=1,
-            collect_non_loss_data=forward_only,
-        )
+        iterator = self.make_data_iterator_list(batch_iter)
+        context = nullcontext(iterator)
+        if (self.role_cfg.get("multimodal") or {}).get("prefetch_batches", 0):
+            context = self.multimodal_preparer.iterator_context(iterator)
+        with context as data_iterator:
+            forward_outputs = fwd_bwd_function(
+                forward_step_func=self.get_forward_step_func(),
+                data_iterator=data_iterator,
+                model=self.model,
+                num_microbatches=num_microbatches,
+                forward_only=forward_only,
+                seq_length=total_seqlen,
+                micro_batch_size=1,
+                collect_non_loss_data=forward_only,
+            )
         if self.use_profiler:
             forward_backward_record.stop()
             self.profiler.stop(forward_only=forward_only)

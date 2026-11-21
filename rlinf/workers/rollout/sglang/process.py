@@ -504,13 +504,20 @@ def _pin_bundled_cudart() -> None:
     try:
         import nvidia.cuda_runtime
 
-        _cudart_lib = os.path.join(os.path.dirname(nvidia.cuda_runtime.__file__), "lib")
+        # NVIDIA wheels may expose a namespace package without __file__.
+        bundled_paths = [
+            os.path.join(path, "lib")
+            for path in nvidia.cuda_runtime.__path__
+            if os.path.isdir(os.path.join(path, "lib"))
+        ]
         existing_paths = [
             path
             for path in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)
-            if path and path != _cudart_lib
+            if path and path not in bundled_paths
         ]
-        os.environ["LD_LIBRARY_PATH"] = os.pathsep.join([_cudart_lib, *existing_paths])
+        os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(
+            [*bundled_paths, *existing_paths]
+        )
     except ImportError:
         # torch built against system/conda CUDA (no bundled runtime).
         pass

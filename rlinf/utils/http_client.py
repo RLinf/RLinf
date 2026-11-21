@@ -270,7 +270,15 @@ class InferenceHTTPClient:
         if sampling_params is not None:
             body["sampling_params"] = sampling_params
         if image_data is not None:
-            body["image_data"] = image_data
+
+            def encode_image(value):
+                if isinstance(value, bytes):
+                    return base64.b64encode(value).decode("ascii")
+                if isinstance(value, list):
+                    return [encode_image(item) for item in value]
+                return value
+
+            body["image_data"] = encode_image(image_data)
         return body
 
     def post(

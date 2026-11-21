@@ -12,7 +12,11 @@
    * - :doc:`智能体指南 <../agentic>`
      - 智能体任务的操作流程。
 
+   * - :doc:`共享图像预处理 <qwen35-multimodal>`
+     - 在 rollout 与训练中复用 Qwen3.5 图像预处理。
+
 .. toctree::
    :hidden:
 
    智能体指南 <../agentic>
+   共享图像预处理 <qwen35-multimodal>

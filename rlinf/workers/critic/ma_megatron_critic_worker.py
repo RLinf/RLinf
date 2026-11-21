@@ -52,8 +52,11 @@ class MAMegatronCritic(DynamicMegatronBatchMixin, MegatronCritic):
         assert cfg.agentloop.is_dynamic_rollout_batch and not self.is_pipeline, (
             "Multi-agent critic requires dynamic rollout batches and synchronous execution."
         )
-        assert self.enable_dp_load_balance, (
-            "Multi-agent critic requires enable_dp_load_balance=True."
+        assert self.enable_dp_load_balance or cfg.critic.get(
+            "expect_multi_modal_inputs", False
+        ), (
+            "Multi-agent critic requires enable_dp_load_balance=True "
+            "or critic.expect_multi_modal_inputs=True."
         )
         self.pack_traj = cfg.actor.get("pack_traj", True)
 
@@ -68,14 +71,14 @@ class MAMegatronCritic(DynamicMegatronBatchMixin, MegatronCritic):
             position_ids, _ = preprocess_ragged_seqs(
                 [torch.arange(n, device=input_ids.device) for n in lengths]
             )
-            output = self.custom_forward(
-                model,
-                input_ids,
-                None,
-                position_ids,
-                sequence_parallel=self.transformer_config.sequence_parallel,
-                packed_seq_params=packed_params,
-            )
+            with self.ragged_model_inputs(
+                batch, unwrap_model(model), input_ids, position_ids, packed_params
+            ) as model_inputs:
+                output = self.custom_forward(
+                    model,
+                    **model_inputs,
+                    sequence_parallel=self.transformer_config.sequence_parallel,
+                )
             if unwrap_model(model).post_process:
                 value_rows = [
                     torch.nn.functional.pad(row.squeeze(-1).float()[:-1], (1, 0))

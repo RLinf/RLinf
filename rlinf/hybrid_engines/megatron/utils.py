@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
+from contextlib import contextmanager
 from typing import Optional
 
 import torch
 
 try:
-    from megatron.core import parallel_state
+    from megatron.core import parallel_state, tensor_parallel
     from megatron.core.packed_seq_params import PackedSeqParams
 
 except (ImportError, ModuleNotFoundError) as e:
@@ -88,6 +90,85 @@ def postprocess_ragged_seqs(
             )[:length]
         rows.append(row)
     return rows
+
+
+def align_next_token_scores(scores: torch.Tensor) -> torch.Tensor:
+    """Move each prediction to the token it scores, after unpacking trajectory rows."""
+    return torch.nn.functional.pad(scores[..., :-1], (1, 0))
+
+
+def supports_fp32_output(model: torch.nn.Module) -> bool:
+    """Return whether a precision wrapper accepts fp32_output before dispatch to GPT."""
+    while hasattr(model, "module"):
+        if "fp32_output" in inspect.signature(type(model).forward).parameters:
+            return True
+        model = model.module
+    return False
+
+
+def _resolve_output_layer(module: torch.nn.Module) -> torch.nn.Module:
+    """Return the layer that produces logits for ``module``.
+
+    A vision-language wrapper keeps its language model -- and that model's
+    output layer -- one level down.
+    """
+    layer = getattr(module, "output_layer", None)
+    if layer is None:
+        layer = getattr(getattr(module, "language_model", None), "output_layer", None)
+    if layer is None:
+        raise AttributeError(
+            f"{type(module).__name__} has no output layer to restrict."
+        )
+    return layer
+
+
+@contextmanager
+def output_layer_positions(module: torch.nn.Module, positions: torch.Tensor):
+    """Evaluate ``module.output_layer`` only at ``positions`` of a packed sequence.
+
+    The output layer receives hidden states as [tokens, batch, hidden] in its
+    first argument and returns one logit row per selected position. With
+    sequence parallelism, hidden states are gathered before selection and the
+    selected rows are scattered back for the output layer's own SP collectives.
+    Context parallelism is not supported.
+    """
+
+    output_layer = _resolve_output_layer(module)
+    sequence_parallel = getattr(output_layer, "sequence_parallel", False)
+
+    def select_positions(_, args, kwargs):
+        hidden, *rest = args
+        if sequence_parallel:
+            # The output layer already sums vocabulary-shard gradients. This
+            # gather's backward must only split, rather than sum them again.
+            hidden = tensor_parallel.gather_from_sequence_parallel_region(
+                hidden, tensor_parallel_output_grad=False
+            )
+        hidden = hidden.index_select(0, positions)
+        if sequence_parallel:
+            tp_size = parallel_state.get_tensor_model_parallel_world_size()
+            padding = -len(positions) % tp_size
+            if padding:
+                hidden = torch.cat(
+                    [hidden, hidden.new_zeros(padding, *hidden.shape[1:])]
+                )
+            hidden = tensor_parallel.scatter_to_sequence_parallel_region(hidden)
+        return (hidden, *rest), kwargs
+
+    def trim_padding(_, args, output):
+        logits, bias = output
+        return logits[: len(positions)], bias
+
+    hook = output_layer.register_forward_pre_hook(select_positions, with_kwargs=True)
+    output_hook = (
+        output_layer.register_forward_hook(trim_padding) if sequence_parallel else None
+    )
+    try:
+        yield
+    finally:
+        hook.remove()
+        if output_hook is not None:
+            output_hook.remove()
 
 
 def preprocess_packed_seqs(
