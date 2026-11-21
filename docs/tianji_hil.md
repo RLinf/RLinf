@@ -1,29 +1,13 @@
-# Tianji HIL integration
+# Tianji HIL Integration
 
-This branch carries the Tianji HIL control path used by the Stage2 30 Hz joint deployment.
+本分支（`tianji_hil`）承载 Tianji Marvin Pro 双臂实机部署与训练集成，覆盖 **模型推理、HIL 数据收集、DAgger 数据收集、Online RL** 四大核心流程，并与独立仓库 `LoopInfra`（同样位于 `tianji_hil` 分支）通过 HTTP/二进制协议协同运行。
 
-The main controller is rlinf/envs/realworld/tianji/tianji_hil.py. It owns the
-loopback HIL panel and the episode control state machine:
+- 完整文档入口与四流程总览：[docs/tianji/README.md](tianji/README.md)
+- `RLinf-tianji-hil` ↔ `LoopInfra` 接口契约：[docs/tianji/interface_contract.md](tianji/interface_contract.md)
+- 四大流程运行手册与 HIL 面板说明：[docs/tianji/workflows.md](tianji/workflows.md)
+- 仓库协同管理与已知分支缺陷清单：[docs/tianji/repo_management.md](tianji/repo_management.md)
+- 后台 Monitor（`tianji_shadow`）指南：[docs/tianji/shadow_monitor.md](tianji/shadow_monitor.md)
+- 部署模板与环境变量示例：[docs/tianji/deploy_template.md](tianji/deploy_template.md) / [docs/tianji/site.env.example](tianji/site.env.example)
 
-- start and saved-pose reset;
-- policy pause/resume;
-- H/P human takeover and handback;
-- subtask selection and prompt revision;
-- success/failure/end-of-episode handling;
-- revision checks that invalidate stale policy chunks.
-
-The controller does not drive the robot SDK directly. Tianji environment code
-uses it as the control-plane gate and sends executable joint chunks to a
-separate LoopInfra collector through the policy schedule API. The LoopInfra
-checkout and its runtime configuration therefore remain separate from this
-repository.
-
-The implementation also includes the Tianji real-world environment adapter,
-the optional tianji_shadow monitor transport, the joint VLA/RLT adapters, and
-the deployment configuration needed by the Stage2 integration. Model weights,
-machine-specific site.env values, reset-pose identifiers, logs, and recorded
-episodes are intentionally excluded.
-
-The Stage2 launcher should pin this branch (or a commit from it) together with
-the matching LoopInfra tianji_hil branch. A normal deployment still needs the
-external model assets and a configured LoopInfra collector.
+> [!NOTE]
+> `RLinf-tianji-hil` 负责策略推理、RL/BC 训练、HIL 网页控制面板（`:8879`）与轨迹归档；`LoopInfra` 负责底层机器人 SDK、相机/触觉同步采集、PICO 遥操接管仲裁与运动队列执行。当前 `tianji_hil` 分支存在部分待修复的缺失模块与 `sparse-checkout` 状态，详见 [repo_management.md](tianji/repo_management.md)。
