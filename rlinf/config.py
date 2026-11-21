@@ -99,6 +99,7 @@ SupportedModel.PSI0 = SupportedModel.register("psi0", force=True)
 SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
+SupportedModel.QAM_POLICY = SupportedModel.register("qam_policy", force=True)
 SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
 SupportedModel.RLT_TD3_MLP_POLICY = SupportedModel.register(
     "rlt_td3_mlp_policy", force=True
@@ -2787,7 +2788,6 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.actor.training_backend in SUPPORTED_TRAINING_BACKENDS, (
         f"Unsupported training_backend {cfg.actor.training_backend}. Supported training backends are {SUPPORTED_TRAINING_BACKENDS}."
     )
-
     if cfg.actor.training_backend == "megatron":
         cfg.actor = validate_megatron_cfg(cfg.actor)
         if cfg.runner.task_type == "sft":
