@@ -1,5 +1,5 @@
-Embodiment Configuration
-=========================
+Embodied Configuration
+======================
 
 This section covers configuration parameters specific to embodied RL training
 (robot manipulation, simulators, VLA models). These extend the shared

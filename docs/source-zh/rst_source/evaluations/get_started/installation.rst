@@ -1,5 +1,5 @@
-环境安装
-========
+评测环境安装
+============
 
 评测与训练共用同一套具身环境安装脚本。切换下方标签直接安装对应 benchmark 环境，或前往 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 

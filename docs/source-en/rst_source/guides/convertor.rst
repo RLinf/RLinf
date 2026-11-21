@@ -1,4 +1,4 @@
-Checkpoint Convertor
+Checkpoint Conversion
 =====================
 
 RLinf provides Megatron-LM and FSDP checkpoint convertor scripts, supporting converting from ``.distcp`` or ``.pt`` format checkpoint files to ``.safetensors`` format.

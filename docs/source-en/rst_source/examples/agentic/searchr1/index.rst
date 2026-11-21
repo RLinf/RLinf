@@ -1,5 +1,5 @@
-Reinforcement Learning Training of Search-R1
-============================================
+Search-R1 RL Training
+=====================
 
 Multi-turn RL with tool calls extends the interaction boundary of large language models (LLMs) to the real world.
 Reproduce the experiments from

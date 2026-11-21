@@ -440,5 +440,5 @@ The terminal prints ``eval/success_once``; logs and videos go to ``logs/<timesta
    :hidden:
    :maxdepth: 1
 
-   dreamzero_sglang
-   cosmos3_sglang
+   DreamZero (SGLang) <dreamzero_sglang>
+   Cosmos3 (SGLang) <cosmos3_sglang>

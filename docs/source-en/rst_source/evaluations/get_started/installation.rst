@@ -1,5 +1,5 @@
-Installation
-============
+Evaluation Installation
+=======================
 
 Evaluation shares the same embodied environment installer as training. Pick a benchmark tab below, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
 

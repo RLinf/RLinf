@@ -1,5 +1,5 @@
-SO101 配置与控制
-================
+SO-101：硬件配置、遥操采数与 OpenPI SFT
+=======================================
 
 .. figure:: https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp
    :align: center

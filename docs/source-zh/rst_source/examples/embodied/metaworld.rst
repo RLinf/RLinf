@@ -1,5 +1,5 @@
-基于 MetaWorld 评测平台的强化学习训练
-========================================
+基于 MetaWorld 的强化学习训练
+=============================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

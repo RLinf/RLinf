@@ -18,19 +18,19 @@ Choose the training or deployment loop you want to run on a single-arm Franka.
 .. grid:: 1 3 3 3
    :gutter: 3
 
-   .. grid-item-card:: Real-World RL
+   .. grid-item-card:: Online RL (RLPD / SAC)
       :link: franka
       :link-type: doc
 
       Set up a single-arm Franka, collect demonstrations, and run online RL training.
 
-   .. grid-item-card:: Collection / SFT / Deployment
+   .. grid-item-card:: π₀ SFT & Deployment
       :link: franka_pi0_sft_deploy
       :link-type: doc
 
       Collect demonstrations, fine-tune π₀, and deploy the policy on Franka.
 
-   .. grid-item-card:: HG-DAgger
+   .. grid-item-card:: HG-DAgger (Online Imitation)
       :link: hg-dagger
       :link-type: doc
 
@@ -44,19 +44,19 @@ Add teleoperation input devices or learned reward models to any core workflow.
 .. grid:: 1 3 3 3
    :gutter: 3
 
-   .. grid-item-card:: GELLO Collection
+   .. grid-item-card:: GELLO Teleop & Collection
       :link: franka_gello
       :link-type: doc
 
       Collect joint-level teleoperation data with GELLO.
 
-   .. grid-item-card:: VR Teleoperation
+   .. grid-item-card:: PICO VR Teleoperation
       :link: franka_vr
       :link-type: doc
 
       Use VR / PICO devices for teleoperation.
 
-   .. grid-item-card:: Reward Model
+   .. grid-item-card:: Reward Models (ResNet / VLM)
       :link: franka_reward_model
       :link-type: doc
 
@@ -70,19 +70,19 @@ Configure optional depth cameras, grippers, and dexterous hands on your Franka r
 .. grid:: 1 3 3 3
    :gutter: 3
 
-   .. grid-item-card:: ZED + Robotiq
+   .. grid-item-card:: ZED Cameras & Robotiq Gripper
       :link: franka_zed_robotiq
       :link-type: doc
 
       Use ZED cameras and Robotiq grippers.
 
-   .. grid-item-card:: Orbbec Cameras
+   .. grid-item-card:: Orbbec RGB-D Cameras
       :link: franka_orbbec
       :link-type: doc
 
       Capture color images and aligned depth from Orbbec USB cameras.
 
-   .. grid-item-card:: Dexterous Hand
+   .. grid-item-card:: Dexterous Hand RL
       :link: franka_dexhand
       :link-type: doc
 
@@ -92,12 +92,12 @@ Configure optional depth cameras, grippers, and dexterous hands on your Franka r
    :hidden:
    :maxdepth: 1
 
-   Real-World RL <franka>
-   GELLO Collection <franka_gello>
-   VR Teleoperation <franka_vr>
-   Collection / SFT / Deployment <franka_pi0_sft_deploy>
-   HG-DAgger <hg-dagger>
-   Reward Model <franka_reward_model>
-   ZED + Robotiq <franka_zed_robotiq>
-   Orbbec Cameras <franka_orbbec>
-   Dexterous Hand <franka_dexhand>
+   Online RL (RLPD / SAC) <franka>
+   π₀ SFT & Deployment <franka_pi0_sft_deploy>
+   HG-DAgger (Online Imitation) <hg-dagger>
+   GELLO Teleop & Collection <franka_gello>
+   PICO VR Teleoperation <franka_vr>
+   Reward Models (ResNet / VLM) <franka_reward_model>
+   ZED Cameras & Robotiq Gripper <franka_zed_robotiq>
+   Orbbec RGB-D Cameras <franka_orbbec>
+   Dexterous Hand RL <franka_dexhand>

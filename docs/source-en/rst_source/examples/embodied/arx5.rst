@@ -1,5 +1,5 @@
-ARX X5
-======
+ARX X5: Dual-Arm PICO Data Collection
+=====================================
 
 .. figure:: https://arx-global.us/assets/img/x5.webp
    :align: center

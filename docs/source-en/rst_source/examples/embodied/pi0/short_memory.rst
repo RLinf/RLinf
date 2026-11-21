@@ -1,5 +1,5 @@
-Short Memory
-============
+OpenPI Visual Short Memory
+==========================
 
 Give OpenPI π₀.₅ access to recent camera frames during SFT and evaluation.
 Short Memory mixes those frames inside the vision encoder, then passes only

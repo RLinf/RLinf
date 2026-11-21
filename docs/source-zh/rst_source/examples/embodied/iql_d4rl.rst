@@ -1,5 +1,5 @@
-基于 D4RL 评测平台的强化学习训练
-============================================
+IQL：基于 D4RL 的离线强化学习
+=============================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png
    :align: center

@@ -1,5 +1,5 @@
-Franka 真机强化学习
-====================
+单臂 Franka：环境配置与在线 RL
+==============================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
    :align: center

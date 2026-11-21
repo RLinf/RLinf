@@ -21,39 +21,39 @@ Detailed publication pages
    * - :doc:`USER <rlinf_user>`
      - Unified system for real-world online policy learning.
      - `RSS 2026 <https://roboticsproceedings.org/rss22/p037.html>`__
-   * - :doc:`RLinf-VLA <rlinf_vla>`
-     - Unified framework for VLA+RL training.
-     - `RSS 2026 <https://roboticsproceedings.org/rss22/p089.html>`__
-   * - :doc:`RLinf-Co <rlinf_co>`
-     - Reinforcement learning-based sim-real co-training for VLA models.
-     - `arXiv:2602.12628 <https://arxiv.org/abs/2602.12628>`__
-   * - :doc:`RLinf <rlinf_system>`
-     - Flexible and efficient RL system.
-     - `OSDI 2026 <https://www.usenix.org/conference/osdi26/presentation/yu-chao>`__
-   * - :doc:`DynaRL <dynarl>`
-     - Flexible and dynamic scheduling for large-scale RL training.
-     - `OSDI 2026 <https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing>`__
-   * - :doc:`πRL <pi_rl>`
-     - Online RL fine-tuning for flow-based VLA models.
-     - `arXiv:2510.25889 <https://arxiv.org/abs/2510.25889>`__
    * - :doc:`WoVR <wovr>`
      - World model-based RL fine-tuning for VLA policies.
      - `arXiv:2602.13977 <https://arxiv.org/abs/2602.13977>`__
    * - :doc:`WideSeek-R1 <wideseek_r1>`
      - Exploring width scaling for broad information seeking via multi-agent reinforcement learning.
      - `arXiv:2602.04634 <https://arxiv.org/abs/2602.04634>`__
+   * - :doc:`RLinf-Co <rlinf_co>`
+     - Reinforcement learning-based sim-real co-training for VLA models.
+     - `arXiv:2602.12628 <https://arxiv.org/abs/2602.12628>`__
+   * - :doc:`DynaRL <dynarl>`
+     - Flexible and dynamic scheduling for large-scale RL training.
+     - `OSDI 2026 <https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing>`__
+   * - :doc:`πRL <pi_rl>`
+     - Online RL fine-tuning for flow-based VLA models.
+     - `arXiv:2510.25889 <https://arxiv.org/abs/2510.25889>`__
+   * - :doc:`RLinf-VLA <rlinf_vla>`
+     - Unified framework for VLA+RL training.
+     - `RSS 2026 <https://roboticsproceedings.org/rss22/p089.html>`__
+   * - :doc:`RLinf <rlinf_system>`
+     - Flexible and efficient RL system.
+     - `OSDI 2026 <https://www.usenix.org/conference/osdi26/presentation/yu-chao>`__
 
 .. toctree::
    :hidden:
    :maxdepth: 2
 
-   CEL: Collective Experience Learning Across 96 Robots <cel>
-   steam
-   rlinf_user
-   rlinf_vla
-   rlinf_co
-   rlinf_system
-   dynarl
-   pi_rl
-   wovr
-   wideseek_r1
+   CEL (96-Robot Fleet Learning) <cel>
+   STEAM (Ensemble Advantage) <steam>
+   USER (Real-World Online RL) <rlinf_user>
+   WoVR (World Model RL) <wovr>
+   WideSeek-R1 (Multi-Agent RL) <wideseek_r1>
+   RLinf-Co (Sim-Real Co-Training) <rlinf_co>
+   DynaRL (Dynamic Scheduling) <dynarl>
+   πRL (Flow-Based VLA RL) <pi_rl>
+   RLinf-VLA (Unified VLA+RL) <rlinf_vla>
+   RLinf System (M2Flow) <rlinf_system>

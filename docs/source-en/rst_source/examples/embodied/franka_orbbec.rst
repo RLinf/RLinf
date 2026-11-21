@@ -1,8 +1,8 @@
 .. Copyright 2026 The RLinf Authors.
    Licensed under the Apache License, Version 2.0.
 
-Using Orbbec Cameras with Franka
-================================
+Franka: Orbbec RGB-D Cameras
+============================
 
 Overview
 --------

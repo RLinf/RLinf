@@ -12,11 +12,13 @@ notes for a supported RL algorithm.
      - Summary
    * - :doc:`PPO <ppo>`
      - Proximal Policy Optimization.
+   * - :doc:`Async PPO <async_ppo>`
+     - Asynchronous, pipelined PPO.
    * - :doc:`GRPO <grpo>`
      - Group Relative Policy Optimization.
    * - :doc:`DAPO <dapo>`
      - Decoupled-clip and dynamic-sampling policy optimization.
-   * - :doc:`Reinforce++ <reinforce>`
+   * - :doc:`REINFORCE++ <reinforce>`
      - An enhanced REINFORCE baseline.
    * - :doc:`SAC <sac>`
      - Soft Actor-Critic.
@@ -26,18 +28,16 @@ notes for a supported RL algorithm.
      - RL with prior data.
    * - :doc:`IQL <iql>`
      - Implicit Q-Learning for offline RL.
-   * - :doc:`Async PPO <async_ppo>`
-     - Asynchronous, pipelined PPO.
 
 .. toctree::
    :hidden:
 
    PPO <ppo>
+   Async PPO <async_ppo>
    GRPO <grpo>
    DAPO <dapo>
-   Reinforce++ <reinforce>
+   REINFORCE++ <reinforce>
    SAC <sac>
    CrossQ <crossq>
    RLPD <rlpd>
    IQL <iql>
-   Async PPO <async_ppo>

@@ -17,28 +17,28 @@ Choose a dual-arm Franka guide for GELLO or PICO data collection, OpenPI π₀.�
 .. grid:: 1 2 3 3
    :gutter: 3
 
-   .. grid-item-card:: Collection / SFT / Deployment
-      :link: dual_franka
-      :link-type: doc
-
-      Collect GELLO demonstrations, convert data, fine-tune a policy, and deploy it.
-
-   .. grid-item-card:: VR HG-DAgger
-      :link: dual_franka_pico_dagger
-      :link-type: doc
-
-      Collect dual-arm PICO data and run online human-gated DAgger.
-
-   .. grid-item-card:: Collection / SFT / Deployment (OpenPI PyTorch)
+   .. grid-item-card:: OpenPI PyTorch (SFT & Deploy)
       :link: dual_franka_openpi_pytorch
       :link-type: doc
 
       Fine-tune and deploy a dual-Franka policy with OpenPI PyTorch.
 
+   .. grid-item-card:: OpenPI JAX (SFT & Deploy)
+      :link: dual_franka
+      :link-type: doc
+
+      Collect GELLO demonstrations, convert data, fine-tune a policy, and deploy it.
+
+   .. grid-item-card:: PICO VR Collection & HG-DAgger
+      :link: dual_franka_pico_dagger
+      :link-type: doc
+
+      Collect dual-arm PICO data and run online human-gated DAgger.
+
 .. toctree::
    :hidden:
    :maxdepth: 1
 
-   Collection / SFT / Deployment <dual_franka>
-   VR HG-DAgger <dual_franka_pico_dagger>
-   Collection / SFT / Deployment (OpenPI PyTorch) <dual_franka_openpi_pytorch>
+   OpenPI PyTorch (SFT & Deploy) <dual_franka_openpi_pytorch>
+   OpenPI JAX (SFT & Deploy) <dual_franka>
+   PICO VR Collection & HG-DAgger <dual_franka_pico_dagger>

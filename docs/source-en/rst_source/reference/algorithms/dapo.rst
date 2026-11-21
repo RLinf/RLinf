@@ -1,4 +1,4 @@
-Decoupled Clip and Dynamic sAmpling Policy Optimization (DAPO)
+Decoupled Clip and Dynamic Sampling Policy Optimization (DAPO)
 ==============================================================
 
 1. Introduction

@@ -1,6 +1,6 @@
 .. _dual-franka-pico-dagger-zh:
 
-双臂 Franka 的 PICO 数据采集与 DAgger
+双臂 Franka：PICO VR 采数与 HG-DAgger
 =====================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-vr.jpg

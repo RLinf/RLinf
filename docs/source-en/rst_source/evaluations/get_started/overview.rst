@@ -1,5 +1,5 @@
-Overview
-========
+Evaluation Architecture & Layout
+================================
 
 RLinf provides a unified embodied evaluation entry point. It runs parallel rollouts in simulation or on real robots and reports task-level metrics such as success rate.
 

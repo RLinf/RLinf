@@ -1,5 +1,5 @@
-Using ZED + Robotiq with Franka
-===============================
+Franka: ZED Cameras & Robotiq Gripper
+=====================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robotiq_zed.jpeg
    :align: center

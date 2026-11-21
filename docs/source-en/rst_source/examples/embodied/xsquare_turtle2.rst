@@ -1,5 +1,5 @@
-Real-World RL with XSquare Turtle2
-==================================
+XSquare Turtle2: Visual SAC Online RL
+=====================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/xsquare_turtle2_arm_small.jpg
    :align: center

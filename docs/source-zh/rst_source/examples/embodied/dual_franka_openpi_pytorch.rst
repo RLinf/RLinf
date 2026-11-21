@@ -1,5 +1,5 @@
-使用 OpenPI PyTorch 完成双臂 Franka policy 微调与部署
-======================================================
+双臂 Franka：OpenPI PyTorch 采数、SFT 与部署
+============================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-deploy-rlinf.jpg
    :align: center

@@ -1,5 +1,5 @@
-PPO training for Math Reasoning
-==================================
+Math Reasoning with Qwen2.5 (PPO)
+=================================
 
 Use this recipe when you want actor-critic PPO for the same math-reasoning task covered by :doc:`reasoning`. PPO and GRPO share most launch and data settings, so this page only lists the PPO-specific differences.
 

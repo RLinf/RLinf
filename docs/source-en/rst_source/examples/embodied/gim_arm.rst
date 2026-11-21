@@ -1,5 +1,5 @@
-Real-World RL with GimArm
-=========================
+GimArm: Setup, VR Teleop & Online RL
+====================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gim-arm.png
    :align: center

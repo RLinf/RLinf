@@ -1,5 +1,5 @@
-Running Pi0 SFT with Franka
-===========================
+Franka: π₀ Data Collection, SFT & Deployment
+============================================
 
 Overview
 --------

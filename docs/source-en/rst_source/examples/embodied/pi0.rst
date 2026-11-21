@@ -1,5 +1,5 @@
-RL on π\ :sub:`0`\  and π\ :sub:`0.5`\  Models
-==================================================================
+RL on π₀ and π₀.₅
+===================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -10,25 +10,25 @@ RL on π\ :sub:`0`\  and π\ :sub:`0.5`\  Models
    :align: center
    :width: 35%
 
-   The π\ :sub:`0`\  / π\ :sub:`0.5`\  flow-based VLA models.
+   The π₀ / π₀.₅ flow-based VLA models.
 
-Fine-tune the **π**\ :sub:`0`\  and **π**\ :sub:`0.5`\  flow-based VLA models with
+Fine-tune the **π₀** and **π₀.₅** flow-based VLA models with
 reinforcement learning (PPO / GRPO) across several simulators using RLinf. For the full
 method, see the paper
 `πRL: Online RL Fine-Tuning for Flow-Based Vision-Language-Action Models <https://arxiv.org/abs/2510.25889>`__.
 
-Use :doc:`Short Memory <pi0/short_memory>` to condition OpenPI on past camera
+Use :doc:`Visual Short Memory <pi0/short_memory>` to condition OpenPI on past camera
 frames during SFT and evaluation.
 
 .. toctree::
    :hidden:
 
-   Short Memory <pi0/short_memory>
+   Visual Short Memory <pi0/short_memory>
 
 Overview
 --------
 
-RL-fine-tune π\ :sub:`0`\  / π\ :sub:`0.5`\  on LIBERO, ManiSkill, MetaWorld, and CALVIN with PPO or GRPO.
+RL-fine-tune π₀ / π₀.₅ on LIBERO, ManiSkill, MetaWorld, and CALVIN with PPO or GRPO.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -54,7 +54,7 @@ RL-fine-tune π\ :sub:`0`\  / π\ :sub:`0.5`\  on LIBERO, ManiSkill, MetaWorld, 
       NVIDIA CUDA · :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <pi0-hardware>` (π₀ / π₀.₅, LIBERO · ManiSkill)
 
 | **You'll do:** install → download an SFT checkpoint → pick a config → launch ``run_embodiment.sh`` → watch ``env/success_once``.
-| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a π\ :sub:`0`\  / π\ :sub:`0.5`\  SFT checkpoint (steps below).
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a π₀ / π₀.₅ SFT checkpoint (steps below).
 
 Tasks
 ~~~~~
@@ -104,7 +104,7 @@ Observation and Action
    * - Prompt
      - Environment-provided natural-language task description consumed by the VLA processor.
 
-π\ :sub:`0`\  / π\ :sub:`0.5`\  train with PPO (actor-critic; GAE, ratio clipping, value clipping, entropy regularization) or GRPO (group-relative advantages over *G* sampled actions).
+π₀ / π₀.₅ train with PPO (actor-critic; GAE, ratio clipping, value clipping, entropy regularization) or GRPO (group-relative advantages over *G* sampled actions).
 
 .. _pi0-hardware:
 
@@ -135,7 +135,7 @@ NVIDIA CUDA supports all four environments listed above (select **π₀** or **�
 
          hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
-      .. list-table:: **π**\ :sub:`0`\  **Model List**
+      .. list-table:: **π₀ Model List**
          :header-rows: 1
          :widths: 15 25 15 12 12
 
@@ -218,7 +218,7 @@ NVIDIA CUDA supports all four environments listed above (select **π₀** or **�
 
          hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
-      .. list-table:: **π**\ :sub:`0.5`\  **Model List**
+      .. list-table:: **π₀.₅ Model List**
          :header-rows: 1
          :widths: 15 25 15 12 12
 
@@ -494,10 +494,10 @@ Launch TensorBoard with ``tensorboard --logdir ./logs --port 6006`` and watch ``
 LIBERO Results
 ~~~~~~~~~~~~~~
 
-We trained π\ :sub:`0`\  and π\ :sub:`0.5`\  with PPO and GRPO in the LIBERO environment.
+We trained π₀ and π₀.₅ with PPO and GRPO in the LIBERO environment.
 The results achieved through RL training are shown below:
 
-.. list-table:: **π**\ :sub:`0`\  **model results on LIBERO**
+.. list-table:: **π₀ model results on LIBERO**
    :header-rows: 1
 
    * - Model
@@ -508,7 +508,7 @@ The results achieved through RL training are shown below:
      - Average
      - Δ Avg.
 
-   * - π\ :sub:`0`\ (few-shot)
+   * - π₀ (few-shot)
      - 65.3%
      - 64.4%
      - 49.8%
@@ -532,7 +532,7 @@ The results achieved through RL training are shown below:
      - **96.0%**
      - **+38.4**
 
-.. list-table:: **π**\ :sub:`0.5`\  **model results on LIBERO**
+.. list-table:: **π₀.₅ model results on LIBERO**
    :header-rows: 1
 
    * - Model
@@ -543,7 +543,7 @@ The results achieved through RL training are shown below:
      - Average
      - Δ Avg.
 
-   * - π\ :sub:`0.5`\ (few-shot)
+   * - π₀.₅ (few-shot)
      - 84.6%
      - 95.4%
      - 84.6%

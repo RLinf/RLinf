@@ -1,5 +1,5 @@
-Reward Model 使用指南
-======================
+构建与接入奖励模型
+==================
 
 在 RLinf 中使用 reward model——包括 ``ResNetRewardModel`` 这类图像分类 reward，以及基于 ``VLMRewardModel`` 的 VLM reward。``BufferedVLMRewardModel`` 继承 ``VLMRewardModel``，用于处理 env worker 维护的历史窗口。``ShapedVLMRewardModel`` 在此基础上叠加 potential shaping 与一次性 success bonus。
 

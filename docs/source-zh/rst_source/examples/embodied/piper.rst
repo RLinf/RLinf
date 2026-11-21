@@ -1,5 +1,5 @@
-AgileX Piper 配置与控制
-=======================
+AgileX Piper：硬件配置与基础控制
+================================
 
 .. figure:: https://raw.githubusercontent.com/agilexrobotics/piper_ros/noetic/asserts/pictures/piper_urdf_zero.png
    :align: center

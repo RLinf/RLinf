@@ -82,11 +82,11 @@ SGLang 服务评测
    :hidden:
    :maxdepth: 2
 
-   libero
-   maniskill_ood
-   robotwin
-   behavior
-   polaris
-   robolab
-   simple
-   realworld
+   LIBERO <libero>
+   ManiSkill OOD <maniskill_ood>
+   RoboTwin <robotwin>
+   BEHAVIOR-1K <behavior>
+   PolaRiS <polaris>
+   RoboLab <robolab>
+   SIMPLE <simple>
+   真机（RealWorld） <realworld>

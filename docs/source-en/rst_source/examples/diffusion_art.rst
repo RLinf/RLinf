@@ -1,5 +1,5 @@
-Diffusion Model Fine-Tuning with ART
-====================================
+DiffusionART: Fast Image & Video RL
+===================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
    :align: center

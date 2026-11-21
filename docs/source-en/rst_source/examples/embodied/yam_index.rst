@@ -16,7 +16,7 @@ Choose a guide for dual-arm YAM data collection, OpenPI π₀.₅ fine-tuning, a
 
       Collect 14-D absolute-position demonstrations with PICO controllers and three RGB cameras.
 
-   .. grid-item-card:: 2. OpenPI π₀.₅ Training and Evaluation
+   .. grid-item-card:: 2. π₀.₅ SFT & Evaluation
       :link: yam_openpi
       :link-type: doc
 
@@ -26,5 +26,5 @@ Choose a guide for dual-arm YAM data collection, OpenPI π₀.₅ fine-tuning, a
    :hidden:
    :maxdepth: 1
 
-   PICO Data Collection <yam>
-   Pi0.5 Training and Evaluation <yam_openpi>
+   1. PICO Data Collection <yam>
+   2. π₀.₅ SFT & Evaluation <yam_openpi>

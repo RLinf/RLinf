@@ -1,5 +1,5 @@
-Checkpoint Resume
-=================
+Resume Training
+===============
 
 Unexpected events—network errors, power loss, node pre-emptions—can
 interrupt a long-running distributed job.  

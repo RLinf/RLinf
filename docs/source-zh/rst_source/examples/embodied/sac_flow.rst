@@ -1,5 +1,5 @@
-流匹配策略SAC强化学习训练
-===============================================
+SAC-Flow：流匹配策略 SAC 强化学习
+=================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-overview.png
    :align: center
@@ -7,15 +7,14 @@
 
    SAC-Flow 总览。
 
-本示例展示 RLinf 框架使用 **SAC (Soft Actor-Critic)** 算法训练 **Flow Matching** 策略网络的完整流程。
-该算法结合了最大熵强化学习（SAC）与生成式流匹配模型（Flow Matching）的优势，支持在仿真环境（ManiSkill3）和真机环境（Franka）中进行训练。
+本示例展示 RLinf 框架使用 **SAC（Soft Actor-Critic）** 算法训练 **Flow Matching** 策略网络的完整流程。该算法结合了最大熵强化学习（SAC）与生成式流匹配模型（Flow Matching）的优势，支持在仿真环境（ManiSkill3）和真机环境（Franka）中训练。
 
 相关论文：`SAC Flow: Sample-Efficient Reinforcement Learning of Flow-Based Policies via Velocity-Reparameterized Sequential Modeling <https://arxiv.org/abs/2509.25756>`_
 
 概览
 ----------------------------------------
 
-用 SAC 训练流匹配（Flow Matching）策略——可在 ManiSkill 仿真中或真实 Franka（插销）上进行。
+用 SAC 训练流匹配（Flow Matching）策略——可在 ManiSkill 仿真或真实 Franka（插销）上运行。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -80,11 +79,11 @@ SAC-Flow 工作原理
 
     -   **速度网络参数化**：将流策略的 K 步采样视为 RNN，将流策略中的速度网络替换成为循环而生的现代 Transformer 架构，解决训练稳定问题。
 
-    -   **对数似然计算**：在每步采样中填加高斯噪声 + 配套漂移修正，保证末端动作分布不变，同时把路径密度分解为单步高斯似然的连乘，从而得到可微的 :math:`\log p_{\theta}(A|s)`。
+    -   **对数似然计算**：在每步采样中添加高斯噪声 + 配套漂移修正，保证末端动作分布不变，同时把路径密度分解为单步高斯似然的连乘，从而得到可微的动作对数似然。
 
 3. **RLPD (Reinforcement Learning with Prior Data)**
 
-   - SAC 的一种变体，结合离线数据和在线数据进行训练。
+   - SAC 的一种变体，结合离线数据和在线数据训练。
 
    - 为加速在真实世界的训练，SAC-Flow 也可结合 RLPD 使用预采集的离线数据作为演示缓冲区。
 
@@ -183,7 +182,7 @@ SAC-Flow 工作原理
   - ``env/episode_len``：该回合实际经历的环境步数（单位：step）
   - ``env/return``：回合总回报
   - ``env/reward``：环境的 step-level 奖励
-  - ``env/success_once``：回合中至少成功一次标志（0或1）
+  - ``env/success_once``：回合中至少成功一次标志（0 或 1）
 
 - **Training Metrics**:
 
@@ -207,7 +206,7 @@ SAC-Flow 工作原理
 
 真实世界结果
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-以下提供了SAC-Flow算法插块插入任务的演示视频（经加速处理）和训练曲线。在 30分钟 的训练时间内，机器人能够学习到一套能够持续成功完成任务的策略。
+以下提供了 SAC-Flow 算法插块插入任务的演示视频（经加速处理）和训练曲线。在 30 分钟的训练时间内，机器人能够学习到一套持续成功完成任务的策略。
 
 .. raw:: html
 

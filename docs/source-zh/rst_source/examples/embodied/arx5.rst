@@ -1,5 +1,5 @@
-ARX X5
-======
+ARX X5：双臂 PICO 遥操采数
+==========================
 
 .. figure:: https://arx-global.us/assets/img/x5.webp
    :align: center

@@ -1,5 +1,5 @@
-GimArm 真机强化学习
-===================
+GimArm：硬件配置、VR 遥操与在线 RL
+==================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gim-arm.png
    :align: center

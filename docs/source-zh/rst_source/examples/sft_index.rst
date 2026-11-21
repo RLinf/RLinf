@@ -1,5 +1,5 @@
-VLA / WAM 模型监督微调
-========================================
+SFT 与模仿学习
+==============
 
 监督微调（SFT）是具身强化学习的标准冷启动步骤：一个良好的 SFT 检查点能显著缩短 RL 探索时间并提升最终策略效果。本类示例汇总了 RLinf 在 VLA / WAM 模型上的全量与 LoRA SFT 配方，以及面向多模态后训练的 VLM SFT。
 
@@ -59,7 +59,7 @@ VLA / WAM 模型监督微调
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/sft_vlm.html" style="text-decoration: underline; color: blue;">
-           <b>Qwen-VL</b>
+           <b>Qwen-VL 监督微调</b>
          </a><br>
          支持 Qwen 系列等 VLM 的全量监督微调与结果评估
        </p>

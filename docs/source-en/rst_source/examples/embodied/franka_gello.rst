@@ -1,5 +1,5 @@
-Using GELLO with Franka
-=======================
+Franka: GELLO Teleoperation & Collection
+========================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gello.jpeg
    :align: center

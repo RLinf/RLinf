@@ -1,5 +1,5 @@
-在 Franka 上使用 ZED + Robotiq
-==============================
+单臂 Franka：ZED 相机与 Robotiq 夹爪
+====================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robotiq_zed.jpeg
    :align: center

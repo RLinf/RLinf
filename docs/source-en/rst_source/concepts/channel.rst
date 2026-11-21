@@ -1,5 +1,5 @@
-Use Channel for Communication
-=============================
+Channel Communication
+=====================
 
 The Channel module provides a distributed producer-consumer queue for moving
 data between workers. One or more producers can ``put`` items into a named

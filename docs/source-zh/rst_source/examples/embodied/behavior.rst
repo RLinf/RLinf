@@ -1,5 +1,5 @@
-基于 Behavior 评测平台的强化学习训练
-========================================
+基于 BEHAVIOR-1K 的强化学习训练
+===============================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior.jpg
    :align: center

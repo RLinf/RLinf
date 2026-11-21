@@ -82,11 +82,11 @@ Dedicated guides for world-action models served through RLinf's SGLang embodied 
    :hidden:
    :maxdepth: 2
 
-   libero
-   maniskill_ood
-   robotwin
-   behavior
-   polaris
-   robolab
-   simple
-   realworld
+   LIBERO <libero>
+   ManiSkill OOD <maniskill_ood>
+   RoboTwin <robotwin>
+   BEHAVIOR-1K <behavior>
+   PolaRiS <polaris>
+   RoboLab <robolab>
+   SIMPLE <simple>
+   RealWorld <realworld>

@@ -37,48 +37,48 @@ Compare what each robot guide covers before choosing a platform.
      - ✓
      - ✓
      - :doc:`Dual-Arm Franka (3 guides) <embodied/dual_franka_index>`
-   * - ARX X5
-     - ✓
-     - ✓
-     - —
-     - —
-     - :doc:`ARX X5 Guide <embodied/arx5>`
    * - YAM
      - ✓
      - ✓
      - ✓
      - —
      - :doc:`YAM (2 guides) <embodied/yam_index>`
+   * - ARX X5
+     - ✓
+     - ✓
+     - —
+     - —
+     - :doc:`ARX X5 Guide <embodied/arx5>`
    * - GimArm
      - ✓
      - ✓
      - —
      - ✓
      - :doc:`GimArm Guide <embodied/gim_arm>`
-   * - XSquare Turtle2
+   * - AgileX Piper
      - ✓
      - —
      - —
-     - ✓
-     - :doc:`Turtle2 Guide <embodied/xsquare_turtle2>`
-   * - Dexmal DOS-W1
-     - ✓
-     - ✓
      - —
-     - ✓
-     - :doc:`DOS-W1 Guide <embodied/dosw1>`
+     - :doc:`AgileX Piper Guide <embodied/piper>`
    * - Robbyant R2
      - ✓
      - ✓
      - —
      - ✓
      - :doc:`Robbyant R2 Guide <embodied/r2>`
-   * - AgileX Piper
+   * - Dexmal DOS-W1
+     - ✓
+     - ✓
+     - —
+     - ✓
+     - :doc:`Dexmal DOS-W1 Guide <embodied/dosw1>`
+   * - XSquare Turtle2
      - ✓
      - —
      - —
-     - —
-     - :doc:`Piper Guide <embodied/piper>`
+     - ✓
+     - :doc:`XSquare Turtle2 Guide <embodied/xsquare_turtle2>`
    * - SO-101
      - ✓
      - ✓
@@ -116,6 +116,12 @@ Single-arm and dual-arm manipulators for hardware setup, teleoperation, data col
 
       GELLO and PICO data collection, OpenPI π₀.₅ SFT, policy deployment, and online HG-DAgger.
 
+   .. grid-item-card:: YAM
+      :link: embodied/yam_index
+      :link-type: doc
+
+      Collect dual-arm PICO demonstrations, fine-tune OpenPI π₀.₅, and evaluate checkpoints on both arms.
+
    .. grid-item-card:: ARX X5
       :img-top: https://arx-global.us/assets/img/x5.webp
       :img-alt: ARX X5 robot arms
@@ -123,12 +129,6 @@ Single-arm and dual-arm manipulators for hardware setup, teleoperation, data col
       :link-type: doc
 
       Collect dual-arm demonstrations with PICO controllers and three RGB cameras in LeRobot format.
-
-   .. grid-item-card:: YAM
-      :link: embodied/yam_index
-      :link-type: doc
-
-      Collect dual-arm PICO demonstrations, fine-tune OpenPI π₀.₅, and evaluate checkpoints on both arms.
 
    .. grid-item-card:: GimArm
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/gim-arm.png
@@ -154,13 +154,11 @@ Integrated bimanual and wheeled humanoid systems for whole-body teleoperation an
 .. grid:: 1 2 3 3
    :gutter: 3
 
-   .. grid-item-card:: XSquare Turtle2
-      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/xsquare_turtle2_arm_small.jpg
-      :img-alt: XSquare Turtle2 dual-arm robot
-      :link: embodied/xsquare_turtle2
+   .. grid-item-card:: Robbyant R2
+      :link: embodied/r2
       :link-type: doc
 
-      Train a visual SAC CNN policy for button pressing on the XSquare Turtle2 dual-arm robot.
+      Run hardware checks, whole-body PICO VR teleoperation, and joint-reach RL on the Robbyant R2 wheeled humanoid.
 
    .. grid-item-card:: Dexmal DOS-W1
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/dos-w1.png
@@ -170,11 +168,13 @@ Integrated bimanual and wheeled humanoid systems for whole-body teleoperation an
 
       Collect leader-arm demonstrations and train a Flow Matching + SAC pick policy on DOS-W1.
 
-   .. grid-item-card:: Robbyant R2
-      :link: embodied/r2
+   .. grid-item-card:: XSquare Turtle2
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/xsquare_turtle2_arm_small.jpg
+      :img-alt: XSquare Turtle2 dual-arm robot
+      :link: embodied/xsquare_turtle2
       :link-type: doc
 
-      Run hardware checks, whole-body PICO VR teleoperation, and joint-reach RL on the Robbyant R2 wheeled humanoid.
+      Train a visual SAC CNN policy for button pressing on the XSquare Turtle2 dual-arm robot.
 
 Low-Cost & Mobile Robots
 ------------------------

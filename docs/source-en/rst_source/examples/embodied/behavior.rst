@@ -1,5 +1,5 @@
-RL with Behavior Benchmark
-==========================
+RL with BEHAVIOR-1K
+===================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior.jpg
    :align: center

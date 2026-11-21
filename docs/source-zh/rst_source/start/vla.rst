@@ -1,5 +1,5 @@
-快速上手
-========
+VLA 快速上手
+============
 
 四步在 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ 上用 PPO 训练 **OpenVLA** 或 **OpenVLA-OFT**。
 

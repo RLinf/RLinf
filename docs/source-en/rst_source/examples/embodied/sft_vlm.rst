@@ -1,5 +1,5 @@
-Qwen-VL
-========
+Qwen-VL Supervised Fine-Tuning
+==============================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/release_0.2/qwen2_5_sft_vlm.png
    :align: center

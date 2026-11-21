@@ -1,5 +1,5 @@
-使用双臂 Franka
-===============
+双臂 Franka：OpenPI JAX 采数、SFT 与部署
+========================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-deploy.jpg
    :align: center

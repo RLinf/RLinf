@@ -1,5 +1,5 @@
-Real-World RL with Dexmal DOS-W1
-================================
+Dexmal DOS-W1: Flow Matching + SAC Online RL
+============================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dos-w1.png
    :align: center

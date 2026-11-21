@@ -1,5 +1,5 @@
-Quick Start
-===========
+VLA Quick Start
+===============
 
 Train **OpenVLA** or **OpenVLA-OFT** on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ with PPO in four steps.
 

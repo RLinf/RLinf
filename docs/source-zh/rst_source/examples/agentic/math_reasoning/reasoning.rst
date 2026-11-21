@@ -1,5 +1,5 @@
-使用 GRPO 训练 Math 推理任务
-========================================
+Qwen2.5 数学推理（GRPO）
+========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

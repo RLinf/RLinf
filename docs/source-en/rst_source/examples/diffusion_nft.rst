@@ -1,5 +1,5 @@
-Diffusion Model Fine-Tuning with NFT
-====================================
+Diffusion-NFT: Image & Video RL
+===============================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
    :align: center

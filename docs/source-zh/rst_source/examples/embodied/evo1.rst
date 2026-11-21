@@ -1,5 +1,5 @@
-Evo-1 模型的强化学习
-====================
+Evo-1 模型强化学习训练
+======================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

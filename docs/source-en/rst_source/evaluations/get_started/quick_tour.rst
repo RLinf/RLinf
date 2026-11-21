@@ -1,5 +1,5 @@
-Quick Tour
-==========
+Evaluation Quick Tour
+=====================
 
 Run your first embodied evaluation in about 5 minutes using **OpenPI π₀.₅ on LIBERO Spatial** (``evaluations/libero/libero_spatial_openpi_pi05_eval.yaml``).
 

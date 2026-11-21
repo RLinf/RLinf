@@ -1,5 +1,5 @@
-使用 FSDP+HuggingFace 添加新模型 SFT 训练
-=============================================
+接入新 SFT 模型（FSDP）
+=======================
 
 本文档重点介绍如何使用 HuggingFace Transformers 库与 PyTorch FSDP（Fully Sharded Data Parallel，全分片数据并行）  
 来训练和生成模型。它支持 HuggingFace 中实现的任意模型，只要兼容 PyTorch 即可。  

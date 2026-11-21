@@ -1,5 +1,5 @@
-Using Reward Models with Franka
-===============================
+Franka: Vision & VLM Reward Models
+==================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_reward_model.jpg
    :align: center

@@ -1,5 +1,5 @@
-Implicit Q-Learning (IQL) Algorithm
-=====================================
+Implicit Q-Learning (IQL)
+=========================
 
 1. Introduction
 ------------------

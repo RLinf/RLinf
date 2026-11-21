@@ -1,5 +1,5 @@
-常见问题
-========
+常见问题（FAQ）
+===============
 
 下面整理了 RLinf 的常见问题。该部分会持续更新，欢迎大家不断提问，帮助我们改进！
 
@@ -11,25 +11,20 @@
 EGL 渲染使用哪块 GPU？
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-RLinf 会为每个 worker 指定渲染设备：向驱动查询该 worker 所分配 GPU 对应的 EGL 索引，并将其
-导出为 ``MUJOCO_EGL_DEVICE_ID``\ （MuJoCo、robosuite）和 ``EGL_DEVICE_ID``\ （其他 EGL 渲染器，
-如 pyrender）。这一步是必要的，因为 EGL 设备索引与 CUDA 设备号属于两套不同的命名空间：EGL 会
-列出驱动可见的所有设备，因此当容器只分配到节点上的部分 GPU 时，CUDA 设备 0 通常\ **并不是**
-EGL 设备 0。
+RLinf 会为每个 worker 指定渲染设备：向驱动查询该 worker 所分配 GPU 对应的 EGL 索引，并将其导出为 ``MUJOCO_EGL_DEVICE_ID``\ （MuJoCo、robosuite）和 ``EGL_DEVICE_ID``\ （其他 EGL 渲染器，如 pyrender）。这一步是必要的，因为 EGL 设备索引与 CUDA 设备号属于两套不同的命名空间：EGL 会列出驱动可见的所有设备，因此容器只分配到节点上的部分 GPU 时，CUDA 设备 0 通常\ **并不是** EGL 设备 0。
 
-仅当需要覆盖该选择时才手动设置 ``MUJOCO_EGL_DEVICE_ID``，显式设置的值始终优先。若将其设为
-CUDA 序号，在两套命名空间不一致时会渲染到错误的 GPU 上。
+仅在需要覆盖该选择时才手动设置 ``MUJOCO_EGL_DEVICE_ID``，显式设置的值始终优先。若将其设为 CUDA 序号，在两套命名空间不一致时会渲染到错误的 GPU 上。
 
 RuntimeError: The MUJOCO_EGL_DEVICE_ID environment variable must be an integer between 0 and 0 (inclusive), got 1.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **现象：** 运行设置了 MUJOCO_GL 环境变量为 "egl" 的模拟器时出现上述错误信息。
 
-**原因：** 该错误是因为您的 GPU 环境未正确设置图形渲染，尤其是在 NVIDIA GPU 上。
+**原因：** 该错误是因为你的 GPU 环境未正确设置图形渲染，尤其是在 NVIDIA GPU 上。
 
-**修复：** 检查您是否有此文件 `/usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.0`。
+**修复：** 检查是否包含文件 `/usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.0`。
 
-1. 如果您有此文件，请检查您是否还拥有 `/usr/share/glvnd/egl_vendor.d/10_nvidia.json`。如果没有，请创建此文件并添加以下内容：
+1. 如果存在该文件，请检查是否还包含 `/usr/share/glvnd/egl_vendor.d/10_nvidia.json`。如果没有，请创建此文件并添加以下内容：
 
    .. code-block:: json
 
@@ -40,17 +35,17 @@ RuntimeError: The MUJOCO_EGL_DEVICE_ID environment variable must be an integer b
          }
       }
 
-   然后在您的运行脚本中添加以下环境变量：
+   然后在运行脚本中添加以下环境变量：
 
    .. code-block:: shell
 
       export NVIDIA_DRIVER_CAPABILITIES="all"
 
-2. 如果您没有此文件，则表示您的 NVIDIA 驱动程序未正确安装图形功能。您可以尝试以下解决方案：
+2. 如果不存在该文件，则表示 NVIDIA 驱动程序未正确安装图形功能。可以尝试以下解决方案：
 
-   * 重新安装 NVIDIA 驱动程序，并使用正确的选项启用图形功能。安装 NVIDIA 驱动程序时，有几个选项会禁用图形驱动程序。因此，您需要尝试安装NVIDIA的图形驱动。在Ubuntu上可以通过命令 ``apt install libnvidia-gl-<driver-version>`` 完成，具体参见NVIDIA的文档 https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/ubuntu.html#compute-only-headless-and-desktop-only-no-compute-installation 。
+   * 重新安装 NVIDIA 驱动程序，并使用正确的选项启用图形功能。安装 NVIDIA 驱动程序时，有几个选项会禁用图形驱动程序。因此，需要尝试安装 NVIDIA 的图形驱动。在 Ubuntu 上可以通过命令 ``apt install libnvidia-gl-<driver-version>`` 完成，具体参见 NVIDIA 的文档 https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/ubuntu.html#compute-only-headless-and-desktop-only-no-compute-installation 。
 
-   * 使用 **osmesa** 进行渲染，将运行脚本中的 `MUJOCO_GL` 和 `PYOPENGL_PLATFORM` 环境变量更改为 "osmesa"。但是，这可能会导致滚动过程比 EGL 慢 10 倍，因为它使用 CPU 进行渲染。
+   * 使用 **osmesa** 渲染，将运行脚本中的 `MUJOCO_GL` 和 `PYOPENGL_PLATFORM` 环境变量更改为 "osmesa"。但是，这可能会导致采样过程比 EGL 慢 10 倍，因为它使用 CPU 渲染。
 
 Vulkan Incompatible GPU Driver
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -177,11 +172,9 @@ FSDP 集合通信被后端看门狗超时杀掉
 
 报错里的超时值来自后端自带的默认值——NCCL 和 Gloo 是 1800000 ms，昇腾 HCCL 是 3636000 ms。
 
-**可能原因：** 某个 rank 在两次 FSDP 集合通信之间耗时超过了这个时间——例如梯度累积步过大、
-checkpoint 写入过慢，或者该 rank 挂在调试器里，而其余 rank 都在 all-gather 处等待。
+**可能原因：** 某个 rank 在两次 FSDP 集合通信之间耗时超过了这个时间——例如梯度累积步过大、checkpoint 写入过慢，或者该 rank 挂在调试器里，而其余 rank 都在 all-gather 处等待。
 
-**修复：** FSDP 的集合通信与 RLinf 其余 worker 间通信共用同一个超时，默认 180 分钟。
-用 ``RLINF_TIMEOUT`` 调大它（单位为分钟）：
+**修复：** FSDP 的集合通信与 RLinf 其余 worker 间通信共用同一个超时，默认 180 分钟。用 ``RLINF_TIMEOUT`` 调大它（单位为分钟）：
 
 .. code-block:: bash
 

@@ -1,5 +1,5 @@
-Real-World Franka with VR Teleoperation
-=======================================
+Franka: PICO VR Teleoperation
+=============================
 
 Overview
 --------

@@ -1,5 +1,5 @@
-SO101 Setup and Control
-=======================
+SO-101: Setup, Teleop & OpenPI SFT
+==================================
 
 .. figure:: https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp
    :align: center

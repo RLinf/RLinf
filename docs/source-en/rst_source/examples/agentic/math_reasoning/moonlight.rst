@@ -1,5 +1,5 @@
-GRPO training for Moonlight-16B
-================================
+Math Reasoning with Moonlight-16B (GRPO)
+========================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

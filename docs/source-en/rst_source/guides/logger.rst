@@ -1,5 +1,5 @@
-Training Visualisation
-======================
+Logging & Visualization
+=======================
 
 RLinf support for real-time experiment tracking.
 You can stream loss curves, accuracy, GPU utilization and arbitrary

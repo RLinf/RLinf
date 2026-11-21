@@ -1,5 +1,5 @@
-快速体验
-========
+评测快速上手
+============
 
 以 **LIBERO Spatial + OpenPI π₀.₅** 为例（``evaluations/libero/libero_spatial_openpi_pi05_eval.yaml``），约 5 分钟完成第一次具身评测。
 

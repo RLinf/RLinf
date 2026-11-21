@@ -1,5 +1,5 @@
-Real-World RL with Franka
-=========================
+Franka: Setup & Online RL (RLPD / SAC)
+======================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
    :align: center

@@ -1,7 +1,7 @@
 .. _dual-franka-pico-dagger-en:
 
-Dual Franka PICO Collection and DAgger
-======================================
+Dual-Arm Franka: PICO VR Collection & HG-DAgger
+===============================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-vr.jpg
    :align: center

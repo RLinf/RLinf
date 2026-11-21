@@ -1,5 +1,5 @@
-Reinforcement Learning Training for rStar2
-===========================================
+rStar2 Agent RL Training
+========================
 
 Multi-turn RL combined with tool invocation extends the interaction boundaries of Large Language Models (LLMs) to the real world. Reproduce the experiments from `rStar2-Agent: Agentic Reasoning Technical Report <https://arxiv.org/abs/2508.20722>`__ in RLinf, training LLMs to answer questions by invoking code-execution tools.
 

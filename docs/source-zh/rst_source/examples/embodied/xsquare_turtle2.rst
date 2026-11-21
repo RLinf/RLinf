@@ -1,5 +1,5 @@
-XSquare Turtle2 真机强化学习
-============================
+XSquare Turtle2：视觉 SAC 真机在线 RL
+=====================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/xsquare_turtle2_arm_small.jpg
    :align: center

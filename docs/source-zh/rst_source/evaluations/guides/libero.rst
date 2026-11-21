@@ -440,5 +440,5 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    :hidden:
    :maxdepth: 1
 
-   dreamzero_sglang
-   cosmos3_sglang
+   DreamZero（SGLang） <dreamzero_sglang>
+   Cosmos3（SGLang） <cosmos3_sglang>

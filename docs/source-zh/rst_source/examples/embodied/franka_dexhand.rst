@@ -1,5 +1,5 @@
-在 Franka 上使用灵巧手
-======================
+单臂 Franka：灵巧手真机 RL
+==========================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dexhand.jpg
    :align: center

@@ -144,9 +144,9 @@ RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础
   ARX X5 <rst_source/examples/embodied/arx5>
   GimArm <rst_source/examples/embodied/gim_arm>
   AgileX Piper <rst_source/examples/embodied/piper>
-  XSquare Turtle2 <rst_source/examples/embodied/xsquare_turtle2>
-  Dexmal DOS-W1 <rst_source/examples/embodied/dosw1>
   Robbyant R2 <rst_source/examples/embodied/r2>
+  Dexmal DOS-W1 <rst_source/examples/embodied/dosw1>
+  XSquare Turtle2 <rst_source/examples/embodied/xsquare_turtle2>
   SO-101 <rst_source/examples/embodied/so101>
   LeKiwi <rst_source/examples/embodied/lekiwi>
 
@@ -196,14 +196,14 @@ RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础
   :hidden:
 
   扩展总览 <rst_source/extending/index>
-  扩展架构说明 <rst_source/extending/overview>
+  扩展注册表 <rst_source/extending/overview>
   FSDP 新模型 <rst_source/extending/new_model_fsdp>
   Megatron 新模型 <rst_source/extending/new_model_megatron>
   SGLang 具身模型 <rst_source/extending/sglang_embodied_model>
   新 SFT 模型 <rst_source/extending/new_model_sft>
   新仿真环境 <rst_source/extending/new_env>
-  新机器人 <rst_source/extending/new_robot>
-  新增真机任务 <rst_source/extending/new_task>
+  新真机机器人 <rst_source/extending/new_robot>
+  新真机任务 <rst_source/extending/new_task>
   奖励模型 <rst_source/extending/reward_model>
   高级集成 <rst_source/extending/advanced-integrations/index>
 

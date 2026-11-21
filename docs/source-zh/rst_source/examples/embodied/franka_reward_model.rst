@@ -1,5 +1,5 @@
-在 Franka 上使用奖励模型
-========================
+单臂 Franka：视觉与 VLM 奖励模型
+================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_reward_model.jpg
    :align: center

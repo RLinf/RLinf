@@ -1,4 +1,4 @@
-SFT for VLA / WAM Models
+SFT & Imitation Learning
 ========================
 
 Supervised fine-tuning (SFT) is the standard cold-start step before embodied RL: a strong SFT checkpoint dramatically reduces RL exploration time and improves final policy quality. This category lists RLinf's recipes for full-parameter and LoRA SFT on VLA / WAM models, plus VLM SFT for multimodal post-training.
@@ -59,7 +59,7 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/sft_vlm.html" style="text-decoration: underline; color: blue;">
-           <b>Qwen-VL</b>
+           <b>Qwen-VL Supervised Fine-Tuning</b>
          </a><br>
          Run full-parameter SFT and evaluation for VLM models such as Qwen
        </p>

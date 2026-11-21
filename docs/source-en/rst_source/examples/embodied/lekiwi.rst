@@ -1,5 +1,5 @@
-LeKiwi Mobile Base Setup and Control
-====================================
+LeKiwi: Mobile Base Setup & Teleop
+==================================
 
 Take a LeKiwi 3-omniwheel mobile base and its front UVC camera from unboxing to a running ``LeKiwiDriveEnv-v1`` environment by checking the wheels, camera, and keyboard teleoperation in order.
 

@@ -1,5 +1,5 @@
-在 Franka 上使用 HG-DAgger
-==========================
+单臂 Franka：HG-DAgger 人在环训练
+=================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/hg-dagger.jpg
    :align: center

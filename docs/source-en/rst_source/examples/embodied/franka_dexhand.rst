@@ -1,5 +1,5 @@
-Using Dexterous Hand with Franka
-================================
+Franka: Dexterous Hand RL
+=========================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dexhand.jpg
    :align: center

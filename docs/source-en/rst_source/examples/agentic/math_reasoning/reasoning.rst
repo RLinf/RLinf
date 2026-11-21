@@ -1,5 +1,5 @@
-GRPO training for Math Reasoning
-=================================
+Math Reasoning with Qwen2.5 (GRPO)
+==================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

@@ -144,9 +144,9 @@ Why RLinf
   ARX X5 <rst_source/examples/embodied/arx5>
   GimArm <rst_source/examples/embodied/gim_arm>
   AgileX Piper <rst_source/examples/embodied/piper>
-  XSquare Turtle2 <rst_source/examples/embodied/xsquare_turtle2>
-  Dexmal DOS-W1 <rst_source/examples/embodied/dosw1>
   Robbyant R2 <rst_source/examples/embodied/r2>
+  Dexmal DOS-W1 <rst_source/examples/embodied/dosw1>
+  XSquare Turtle2 <rst_source/examples/embodied/xsquare_turtle2>
   SO-101 <rst_source/examples/embodied/so101>
   LeKiwi <rst_source/examples/embodied/lekiwi>
 

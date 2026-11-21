@@ -1,5 +1,5 @@
-NFT 扩散模型微调
-================
+Diffusion-NFT：图像与视频扩散模型微调
+=====================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
    :align: center

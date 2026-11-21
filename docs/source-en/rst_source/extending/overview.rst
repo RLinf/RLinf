@@ -1,5 +1,5 @@
-Extending the Framework
-========================
+Extension Architecture & Registries
+===================================
 
 For advanced users seeking deeper customization, this chapter demonstrates how to extend RLinf  
 by integrating custom environments and new model architectures.

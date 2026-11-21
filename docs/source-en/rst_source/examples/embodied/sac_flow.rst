@@ -1,5 +1,5 @@
-Flow Matching Policy Training with SAC
-======================================================
+SAC-Flow: Flow Matching Policy with SAC
+=======================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-overview.png
    :align: center
@@ -79,7 +79,7 @@ How SAC-Flow Works
 
     -   **Velocity Network Parameterization**: Treats the K-step sampling of the flow policy as an RNN, replacing the velocity network in the flow policy with a recurrent modern Transformer architecture to solve training stability issues.
 
-    -   **Log-Likelihood Calculation**: Adds Gaussian noise + corresponding drift correction in each sampling step to ensure the terminal action distribution remains unchanged, while decomposing the path density into a product of single-step Gaussian likelihoods, thereby obtaining a differentiable :math:`\log p_{\theta}(A|s)` .
+    -   **Log-Likelihood Calculation**: Adds Gaussian noise + corresponding drift correction in each sampling step to ensure the terminal action distribution remains unchanged, while decomposing the path density into a product of single-step Gaussian likelihoods, obtaining a differentiable action log-likelihood.
 
 3. **RLPD (Reinforcement Learning with Prior Data)**
 

@@ -1,5 +1,5 @@
-π\ :sub:`0`\和π\ :sub:`0.5`\ 模型强化学习训练
-===============================================
+π₀ 与 π₀.₅ 强化学习训练
+=========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -10,21 +10,21 @@
    :align: center
    :width: 35%
 
-   π\ :sub:`0`\  / π\ :sub:`0.5`\  基于流匹配的 VLA 模型。
+   π₀ / π₀.₅ 基于流匹配的 VLA 模型。
 
-使用 RLinf 在多种仿真器上对 **π**\ :sub:`0`\  与 **π**\ :sub:`0.5`\  这两类基于流匹配的 VLA 模型做强化学习微调（PPO / GRPO）。方法细节见论文 `πRL: Online RL Fine-Tuning for Flow-Based Vision-Language-Action Models <https://arxiv.org/abs/2510.25889>`__。
+使用 RLinf 在多种仿真器上对 **π₀** 与 **π₀.₅** 这两类基于流匹配的 VLA 模型做强化学习微调（PPO / GRPO）。方法细节见论文 `πRL: Online RL Fine-Tuning for Flow-Based Vision-Language-Action Models <https://arxiv.org/abs/2510.25889>`__。
 
-需要在 SFT 和评测中使用相机历史时，参阅 :doc:`Short Memory <pi0/short_memory>`。
+需要在 SFT 和评测中使用相机历史时，参阅 :doc:`视觉短期记忆 <pi0/short_memory>`。
 
 .. toctree::
    :hidden:
 
-   Short Memory <pi0/short_memory>
+   视觉短期记忆 <pi0/short_memory>
 
 概览
 ----------------------------------------
 
-在 LIBERO、ManiSkill、MetaWorld、CALVIN 上用 PPO 或 GRPO 对 π\ :sub:`0`\  / π\ :sub:`0.5`\  做 RL 微调。
+在 LIBERO、ManiSkill、MetaWorld、CALVIN 上用 PPO 或 GRPO 对 π₀ / π₀.₅ 做 RL 微调。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -50,7 +50,7 @@
       NVIDIA CUDA · :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <pi0-hardware>`\ （π₀ / π₀.₅，LIBERO · ManiSkill）
 
 | **你将完成：** 安装 → 下载 SFT checkpoint → 选择配置 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
-| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一个 π\ :sub:`0`\  / π\ :sub:`0.5`\  SFT checkpoint（见下文）。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一个 π₀ / π₀.₅ SFT checkpoint（见下文）。
 
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -100,7 +100,7 @@
    * - Prompt
      - 环境提供的自然语言任务描述，由 VLA processor 消费。
 
-π\ :sub:`0` / π\ :sub:`0.5` 使用 PPO（actor-critic；GAE、ratio clipping、value clipping、entropy regularization）或 GRPO（基于 *G* 个采样动作的 group-relative advantages）训练。
+π₀ / π₀.₅ 使用 PPO（actor-critic；GAE、ratio clipping、value clipping、entropy regularization）或 GRPO（基于 *G* 个采样动作的 group-relative advantages）训练。
 
 .. _pi0-hardware:
 
@@ -131,7 +131,7 @@ NVIDIA CUDA 支持上方列出的全部四个环境（在下方选择 **π₀** 
 
          hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
-      .. list-table:: **π**\ :sub:`0` **模型列表**
+      .. list-table:: **π₀ 模型列表**
          :header-rows: 1
          :widths: 15 25 15 12 12
 
@@ -214,7 +214,7 @@ NVIDIA CUDA 支持上方列出的全部四个环境（在下方选择 **π₀** 
 
          hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
-      .. list-table:: **π**\ :sub:`0.5` **模型列表**
+      .. list-table:: **π₀.₅ 模型列表**
          :header-rows: 1
          :widths: 15 25 15 12 12
 
@@ -490,9 +490,9 @@ NVIDIA CUDA 支持上方列出的全部四个环境（在下方选择 **π₀** 
 LIBERO 结果
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-我们在 LIBERO 环境中使用 PPO 和 GRPO 训练了 π\ :sub:`0`\ 和 π\ :sub:`0.5`\。通过 RL 训练所获得的结果如下：
+我们在 LIBERO 环境中使用 PPO 和 GRPO 训练了 π₀ 和 π₀.₅。通过 RL 训练所获得的结果如下：
 
-.. list-table:: **π**\ :sub:`0` **在 LIBERO 环境中的训练结果**
+.. list-table:: **π₀ 在 LIBERO 环境中的训练结果**
    :header-rows: 1
 
    * - Model
@@ -503,7 +503,7 @@ LIBERO 结果
      - Average
      - Δ Avg.
 
-   * - π\ :sub:`0`\ (few-shot)
+   * - π₀ (few-shot)
      - 65.3%
      - 64.4%
      - 49.8%
@@ -527,7 +527,7 @@ LIBERO 结果
      - **96.0%**
      - **+38.4**
 
-.. list-table:: **π**\ :sub:`0.5` **在 LIBERO 环境中的训练结果**
+.. list-table:: **π₀.₅ 在 LIBERO 环境中的训练结果**
    :header-rows: 1
 
    * - Model
@@ -538,7 +538,7 @@ LIBERO 结果
      - Average
      - Δ Avg.
 
-   * - π\ :sub:`0.5`\ (few-shot)
+   * - π₀.₅ (few-shot)
      - 84.6%
      - 95.4%
      - 84.6%

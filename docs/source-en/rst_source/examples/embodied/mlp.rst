@@ -1,5 +1,5 @@
-MLP Policy Reinforcement Learning Training
-==========================================
+RL on MLP Policy
+================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/3_layer_mlp.jpg
    :align: center

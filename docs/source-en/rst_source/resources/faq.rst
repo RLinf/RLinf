@@ -1,5 +1,5 @@
-FAQs
-====
+Frequently Asked Questions (FAQ)
+================================
 
 Below are RLinf's frequently asked questions. This section will be continuously updated, and everyone is welcome to keep asking questions to help us improve!
 
