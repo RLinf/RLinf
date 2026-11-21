@@ -223,11 +223,9 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
             raw_main_images, raw_wrist_images, device
         )
 
-        target_dtype = next(self.parameters()).dtype
         lang_tokens = observation["tokenized_prompt"].to(device)
         lang_masks = observation["tokenized_prompt_mask"].to(device)
         state = observation["observation/state"].to(device=device)
-        chains = data["chains"].to(device=device, dtype=target_dtype)
 
         log_probs, value_t, entropy = self.get_log_prob_value(
             images,
@@ -695,14 +693,16 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
 
         if self.config.joint_logprob:
             num_steps = self.config.num_steps
+            # Rollout scores the initial noise before stacking promotes the chain.
+            initial_noise = chains[:, 0].to(dtype=next(self.parameters()).dtype)
             chains_log_probs.append(
                 self.get_logprob_norm(
-                    chains[:, 0],
-                    torch.zeros_like(chains[:, 0]),
-                    torch.ones_like(chains[:, 0]),
+                    initial_noise,
+                    torch.zeros_like(initial_noise),
+                    torch.ones_like(initial_noise),
                 )
             )
-            chains_entropy.append(self.gaussian_entropy(torch.ones_like(chains[:, 0])))
+            chains_entropy.append(self.gaussian_entropy(torch.ones_like(initial_noise)))
         else:
             num_steps = 1
 
