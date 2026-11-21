@@ -64,7 +64,6 @@ class OGBenchEnv(gym.Env):
         self.record_metrics = record_metrics
         self.is_start = True
         self.elapsed_steps = np.zeros(num_envs, dtype=np.int32)
-        self.info_logging_keys = []
         self._closed = False
 
     def reset(
@@ -194,11 +193,6 @@ class OGBenchEnv(gym.Env):
 
     def update_reset_state_ids(self) -> None:
         """Episode seeds advance on reset; no separate task sampler is needed."""
-
-    def render(self) -> Any:
-        """Return frames for the standard video wrapper."""
-        frames = [env.render() for env in self.envs]
-        return frames[0] if self.num_envs == 1 else frames
 
     def close(self) -> None:
         """Release every owned simulator once."""

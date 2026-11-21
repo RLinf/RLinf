@@ -73,7 +73,12 @@ def test_detached_targets_old_parameter_ema_and_resume():
         model, batch["observations"], torch.randn(4, 2), torch.randn(3, 4, 2)
     )
     assert all(not x.requires_grad for x in targets)
-    info = qam_update(model, optimizer, batch, generator)
+    info = qam_update(model, optimizer, batch, generator, max_grad_norm=0.25)
+    grad_norm = torch.linalg.vector_norm(
+        torch.stack([p.grad.norm() for p in model.parameters() if p.grad is not None])
+    )
+    assert info["grad_norm"] > 0.25
+    torch.testing.assert_close(grad_norm, torch.tensor(0.25))
     assert all(torch.isfinite(v) for v in info.values())
     assert any(
         not torch.equal(v, old[k])

@@ -24,3 +24,7 @@ actor:
     value_hidden_dims: [16, 16]
     num_qs: 2
     flow_steps: 3
+
+env:
+  eval:
+    max_steps_per_rollout_epoch: 4

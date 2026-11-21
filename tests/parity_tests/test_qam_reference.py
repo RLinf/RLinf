@@ -96,7 +96,6 @@ def test_reference_losses_gradients_update(horizon):
     # Explicit orientation mapping, including the ensemble axis and LayerNorm.
     pairs = []
     for name in ("actor_fast", "actor_slow", "target_actor_slow"):
-        ref.network.params[f"modules_{name}"]["mlp"]
         module = getattr(model, name)
         for i, layer in enumerate(module.layers):
             pairs += [

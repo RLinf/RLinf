@@ -47,7 +47,6 @@ env:
   eval:
     env_type: ogbench
     task_name: ${data.task_name}
-    dataset_dir: ${data.dataset_dir}
     seed: ${actor.seed}
     evaluation_seed_offset: 1000000
     rollout_epoch: ${runner.eval_episodes}

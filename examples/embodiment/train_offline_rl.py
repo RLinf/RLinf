@@ -78,7 +78,9 @@ def main(cfg) -> None:
 
         # Create rollout worker group
         rollout_placement = component_placement.get_strategy("rollout")
-        rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
+        rollout_group = MultiStepRolloutWorker.create_group(
+            cfg, sync_weights_for_eval=True
+        ).launch(
             cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
         )
 

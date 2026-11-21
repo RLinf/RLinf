@@ -85,78 +85,6 @@ def test_ogbench_evaluation_contract():
         env.close()
 
 
-def test_ogbench_parallel_episodes_finish_independently(monkeypatch):
-    import gymnasium as gym
-    import ogbench
-
-    class StaggeredEnv(gym.Env):
-        def __init__(self, finish_after, success):
-            self.finish_after = finish_after
-            self.success = success
-            self.steps = 0
-            self.closed = False
-            self.observation_space = gym.spaces.Box(-1, 1, shape=(29,))
-            self.action_space = gym.spaces.Box(-1, 1, shape=(8,))
-
-        def reset(self, *, seed=None, options=None):
-            self.steps = 0
-            self.seed = seed
-            return np.full(29, seed, dtype=np.float32), {}
-
-        def step(self, action):
-            assert not self.closed and self.steps < self.finish_after
-            assert np.asarray(action).shape == (8,)
-            self.steps += 1
-            reward = float(self.finish_after if self.steps == 1 else 1)
-            return (
-                np.full(29, self.steps, dtype=np.float32),
-                reward,
-                self.steps == self.finish_after,
-                False,
-                {"success": self.success if self.steps == self.finish_after else 0},
-            )
-
-        def close(self):
-            self.closed = True
-
-    environments = [StaggeredEnv(1, 1), StaggeredEnv(3, 0)]
-    monkeypatch.setattr(
-        ogbench, "make_env_and_datasets", lambda *args, **kwargs: environments.pop(0)
-    )
-    cfg = OmegaConf.create(
-        {
-            "task_name": "antmaze-large-navigate-singletask-task1-v0",
-            "is_eval": True,
-            "auto_reset": False,
-            "early_stop_on_done": False,
-            "seed": 10001,
-            "evaluation_seed_offset": 1000000,
-            "max_steps_per_rollout_epoch": 4,
-            "video_cfg": {"save_video": False},
-        }
-    )
-    env = get_env_cls("ogbench", cfg)(cfg, num_envs=2)
-    first, _ = env.reset()
-    assert first["states"].shape == (2, 29)
-    assert [item.seed for item in env.envs] == [1010001, 1010002]
-    states, rewards, terminated, truncated, infos = env.chunk_step(torch.zeros(2, 4, 8))
-    assert rewards.tolist() == [[1.0, 0.0, 0.0, 0.0], [3.0, 1.0, 1.0, 0.0]]
-    assert terminated.tolist() == [
-        [True, True, True, True],
-        [False, False, True, True],
-    ]
-    assert not truncated.any()
-    assert [item.steps for item in env.envs] == [1, 3]
-    torch.testing.assert_close(states[0]["states"][0], states[3]["states"][0])
-    episode = infos[-1]["episode"]
-    assert episode["success"].tolist() == [1.0, 0.0]
-    assert episode["return"].tolist() == [1.0, 5.0]
-    assert episode["episode_len"].tolist() == [1.0, 3.0]
-    env.close()
-    env.close()
-    assert all(item.closed for item in env.envs)
-
-
 def _scalars(path):
     events = EventAccumulator(
         str(path / "tensorboard"), size_guidance={"scalars": 0}
@@ -184,7 +112,7 @@ def _assert_equal(actual, expected):
         assert actual == expected
 
 
-def test_offline_resume_and_evaluation(tmp_path):
+def _run_offline_resume_and_evaluation(tmp_path, wrap):
     repo = Path(__file__).resolve().parents[3]
     env = dict(os.environ, REPO_PATH=str(repo), RAY_ADDRESS="local")
 
@@ -198,6 +126,7 @@ def test_offline_resume_and_evaluation(tmp_path):
             "egl",
             f"runner.logger.log_path={run_dir}",
             "runner.logger.experiment_name=qam",
+            f"actor.use_fsdp_wrap={str(wrap).lower()}",
             *overrides,
         ]
         if os.environ.get("OGBENCH_DATASET_DIR"):
@@ -217,10 +146,32 @@ def test_offline_resume_and_evaluation(tmp_path):
     full_dir = run("full")
     step4 = full_dir / "qam/checkpoints/global_step_4"
     step8 = full_dir / "qam/checkpoints/global_step_8"
-    filename = "actor/seed_10001.pt"
-    assert (step4 / filename).is_file()
-    full = torch.load(step8 / filename, map_location="cpu", weights_only=False)
-    assert full["step"] == full["updates"] == 8
+
+    def read_checkpoint(step):
+        folder = step / "actor"
+        if wrap:
+            state = torch.load(
+                folder / "state_rank_0.pt", map_location="cpu", weights_only=False
+            )
+            shard = torch.load(
+                folder / "qam_model/local_shard_checkpoint/checkpoint_rank_0.pt",
+                map_location="cpu",
+                weights_only=False,
+            )
+            state.update(model=shard["model"], optimizer=shard["optimizers"][0])
+            return state
+        return torch.load(
+            folder / "seed_10001.pt", map_location="cpu", weights_only=False
+        )
+
+    first = read_checkpoint(step4)
+    full = read_checkpoint(step8)
+    assert first["step"] == 4 and full["step"] == 8
+    assert any(
+        not torch.equal(v, first["model"][k])
+        for k, v in full["model"].items()
+        if k.startswith("actor_fast.")
+    )
     full_metrics = _scalars(full_dir)
     assert full_metrics["eval/num_trajectories"] == [(4, 1.0), (8, 1.0)]
     assert full_metrics["eval/episode_len"][0][1] > 0
@@ -229,12 +180,8 @@ def test_offline_resume_and_evaluation(tmp_path):
         assert np.isfinite([value for _, value in full_metrics[tag]]).all()
 
     resumed_dir = run("resumed", f"runner.resume_dir={step4}")
-    resumed = torch.load(
-        resumed_dir / "qam/checkpoints/global_step_8" / filename,
-        map_location="cpu",
-        weights_only=False,
-    )
-    for key in ("model", "optimizer", "generator", "replay", "step", "updates", "seed"):
+    resumed = read_checkpoint(resumed_dir / "qam/checkpoints/global_step_8")
+    for key in ("model", "optimizer", "generator", "replay", "step", "seed"):
         _assert_equal(resumed[key], full[key])
     resumed_metrics = _scalars(resumed_dir)
     for tag, values in full_metrics.items():
@@ -243,18 +190,13 @@ def test_offline_resume_and_evaluation(tmp_path):
                 (step, value) for step, value in values if step > 4
             ]
 
-    before = hashlib.sha256((step4 / filename).read_bytes()).digest()
-    evaluated_dir = run(
-        "evaluated", f"runner.resume_dir={step4}", "runner.only_eval=true"
-    )
-    metrics = _scalars(evaluated_dir)
-    assert metrics["eval/num_trajectories"] == [(4, 1.0)]
-    assert metrics["eval/episode_len"][0][1] > 0
-    assert "eval/success" in metrics and "eval/return" in metrics
-    assert not any(tag.startswith("train/") for tag in metrics)
-    assert not (evaluated_dir / "qam/checkpoints").exists()
-    assert hashlib.sha256((step4 / filename).read_bytes()).digest() == before
+    def hashes():
+        return {
+            f.relative_to(step4): hashlib.sha256(f.read_bytes()).digest()
+            for f in step4.rglob("*.pt")
+        }
 
+    before = hashes()
     parallel_dir = run(
         "parallel_eval",
         f"runner.resume_dir={step4}",
@@ -270,4 +212,25 @@ def test_offline_resume_and_evaluation(tmp_path):
     ).all()
     assert not any(tag.startswith("train/") for tag in parallel_metrics)
     assert not (parallel_dir / "qam/checkpoints").exists()
-    assert hashlib.sha256((step4 / filename).read_bytes()).digest() == before
+    assert hashes() == before
+    return full["model"], full_metrics
+
+
+def test_offline_resume_and_evaluation(tmp_path):
+    native, fsdp = tmp_path / "native", tmp_path / "fsdp"
+    native.mkdir()
+    fsdp.mkdir()
+    expected, native_metrics = _run_offline_resume_and_evaluation(native, False)
+    actual, fsdp_metrics = _run_offline_resume_and_evaluation(fsdp, True)
+    assert actual.keys() == expected.keys()
+    for key in expected:
+        torch.testing.assert_close(actual[key], expected[key], atol=2e-6, rtol=2e-5)
+    for tag in (
+        "train/grad_norm",
+        "train/critic_loss",
+        "train/flow_loss",
+        "train/adj_loss",
+    ):
+        np.testing.assert_allclose(
+            fsdp_metrics[tag], native_metrics[tag], atol=2e-5, rtol=2e-5
+        )

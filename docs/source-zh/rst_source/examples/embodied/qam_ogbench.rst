@@ -161,23 +161,19 @@ actor 使用 RLinf 的 ``fsdp`` training backend。示例默认将 ``actor.use_f
    * - ``eval/num_trajectories``
      - 已完成的评估 episode 数量
 
-以下结果由作者在 `PR #1811 <https://github.com/RLinf/RLinf/pull/1811>`_ 中报告，来自提交 ``569ee9c`` 的离线接入版本，使用 A800 GPU。三个 seed 均采用默认 AntMaze 模型，训练至 1,000,000 次更新后各评估 50 个 episode。后续版本尚未重新验证这些结果。
+数值验证
+--------
 
-.. list-table::
-   :header-rows: 1
+在测试环境中安装官方 QAM 的 JAX 依赖。以下 CPU 测试固定权重和随机噪声，在动作长度为 1 和 2 时对比损失、梯度、目标网络更新以及一步优化结果。
 
-   * - Seed
-     - 成功率
-     - 平均 Episode 长度
-   * - 10001
-     - 0.96
-     - 531.38
-   * - 20002
-     - 0.74
-     - 730.88
-   * - 30003
-     - 0.92
-     - 545.38
-   * - 均值 ± 样本标准差
-     - 0.8733 ± 0.1172
-     - —
+.. code-block:: bash
+
+   git clone https://github.com/ColinQiyangLi/qam.git qam-reference
+   git -C qam-reference checkout 2726d767c9a0a7a46d49693f0391f73dc2cf58ac
+   CUDA_VISIBLE_DEVICES='' JAX_PLATFORMS=cpu QAM_REFERENCE_ROOT="$PWD/qam-reference" python -m pytest tests/parity_tests/test_qam_reference.py -v -rs
+
+单卡集成测试分别运行 native 和 FSDP，将两种模式都从第 4 步恢复至第 8 步，并使用两个环境评估各自的检查点。
+
+.. code-block:: bash
+
+   python -m pytest tests/e2e_tests/embodied/test_qam.py -v

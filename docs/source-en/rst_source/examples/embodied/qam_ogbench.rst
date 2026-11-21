@@ -161,23 +161,19 @@ Each run stores events and its resolved config in ``<log_directory>/tensorboard/
    * - ``eval/num_trajectories``
      - Completed evaluation episodes
 
-The author reported the following offline runs in `PR #1811 <https://github.com/RLinf/RLinf/pull/1811>`_, using the offline integration at commit ``569ee9c`` on A800 GPUs. Each seed reached 1,000,000 updates with the default AntMaze model and was evaluated over 50 episodes. These results have not been revalidated for later revisions.
+Numerical checks
+----------------
 
-.. list-table::
-   :header-rows: 1
+Install the official QAM JAX dependencies in the test environment. To compare losses, gradients, target updates and one optimizer step with matched weights and noise for action horizons 1 and 2, run the reference test on CPU.
 
-   * - Seed
-     - Success
-     - Mean Episode Length
-   * - 10001
-     - 0.96
-     - 531.38
-   * - 20002
-     - 0.74
-     - 730.88
-   * - 30003
-     - 0.92
-     - 545.38
-   * - Mean ± Sample Standard Deviation
-     - 0.8733 ± 0.1172
-     - —
+.. code-block:: bash
+
+   git clone https://github.com/ColinQiyangLi/qam.git qam-reference
+   git -C qam-reference checkout 2726d767c9a0a7a46d49693f0391f73dc2cf58ac
+   CUDA_VISIBLE_DEVICES='' JAX_PLATFORMS=cpu QAM_REFERENCE_ROOT="$PWD/qam-reference" python -m pytest tests/parity_tests/test_qam_reference.py -v -rs
+
+The single-GPU integration test trains in native and FSDP modes, resumes both from step 4 to step 8, and evaluates each checkpoint with two environments.
+
+.. code-block:: bash
+
+   python -m pytest tests/e2e_tests/embodied/test_qam.py -v

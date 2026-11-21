@@ -125,6 +125,7 @@ def qam_update(
     *,
     loss_fn: Callable[..., tuple[torch.Tensor, dict[str, torch.Tensor]]] | None = None,
     target_update: Callable[[], None] | None = None,
+    max_grad_norm: float = 1.0,
     clip_grad: Callable[[], torch.Tensor | float] | None = None,
 ):
     """One Adam update with global clipping and pre-update-parameter EMA."""
@@ -136,7 +137,7 @@ def qam_update(
     loss.backward()
     if clip_grad is None:
         grad_norm = torch.nn.utils.clip_grad_norm_(
-            model.parameters(), 1.0, error_if_nonfinite=True
+            model.parameters(), max_grad_norm, error_if_nonfinite=True
         )
     else:
         grad_norm = clip_grad()

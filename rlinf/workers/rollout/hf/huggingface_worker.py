@@ -55,7 +55,7 @@ from rlinf.utils.placement import HybridComponentPlacement
 
 
 class MultiStepRolloutWorker(Worker):
-    def __init__(self, cfg: DictConfig):
+    def __init__(self, cfg: DictConfig, *, sync_weights_for_eval: bool = False):
         Worker.__init__(self)
 
         self.cfg = cfg
@@ -148,7 +148,7 @@ class MultiStepRolloutWorker(Worker):
 
         self.weight_syncer = None
         self._sync_weight_comm_options = None
-        if self.actor_group_name is not None:
+        if not self.only_eval or sync_weights_for_eval:
             weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer", default=None)
             assert weight_syncer_cfg is not None, (
                 "rollout.weight_syncer config must be provided"

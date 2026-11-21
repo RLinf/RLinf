@@ -127,7 +127,7 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
         )
 
     def _fsdp_clip_grad(self):
-        return self._strategy.clip_grad_norm_(self.model, 1.0)
+        return self._strategy.clip_grad_norm_(self.model)
 
     def _fsdp_update_targets(self):
         state_dict = self.get_model_state_dict(
@@ -148,7 +148,9 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
                 if isinstance(source_value, torch.Tensor) and isinstance(
                     target_value, torch.Tensor
                 ):
-                    state_dict[target_name] = target_value * (1 - tau) + source_value * tau
+                    state_dict[target_name] = (
+                        target_value * (1 - tau) + source_value * tau
+                    )
         self.load_model_with_state_dict(
             state_dict,
             cpu_offload=False,
@@ -162,7 +164,10 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
             module.horizon,
             module.discount,
         )
-        batch = {key: torch.as_tensor(value, device=self.device) for key, value in batch.items()}
+        batch = {
+            key: torch.as_tensor(value, device=self.device)
+            for key, value in batch.items()
+        }
         if self._use_fsdp_wrap:
             return qam_update(
                 self.model,
@@ -173,7 +178,13 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
                 target_update=self._fsdp_update_targets,
                 clip_grad=self._fsdp_clip_grad,
             )
-        return qam_update(self.model, self.optimizer, batch, self.generator)
+        return qam_update(
+            self.model,
+            self.optimizer,
+            batch,
+            self.generator,
+            max_grad_norm=self.cfg.actor.optim.clip_grad,
+        )
 
     @Worker.timer("run_training")
     def run_training(self):

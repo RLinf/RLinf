@@ -4868,6 +4868,8 @@ def test_qam_model_registry_action_contract():
     actions, _ = model.predict_action_batch(observations=np.zeros((4, 3), np.float32))
     assert actions.shape == (4, 1, 2)
     assert np.isfinite(actions).all() and np.max(np.abs(actions)) <= 1
+
+
 def test_starvla_exposes_no_split_modules_for_fsdp_auto_wrap(starvla_preprocessing):
     from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 
