@@ -3942,9 +3942,13 @@ def test_env_uses_mode_qualified_decoupled_response_tag():
     env.env_decoupled_mode = True
     env.train_batch_size = 32
     env._supplied_actions = {}
-    env.recv_from = Mock(return_value=torch.zeros(8, 4))
+    env.recv_from = Mock(
+        return_value=SimpleNamespace(
+            async_wait=AsyncMock(return_value=torch.zeros(8, 4))
+        )
+    )
 
-    env._recv_actions(None, stage_id=0)
+    asyncio.run(env._recv_actions(None, stage_id=0))
 
     env.recv_from.assert_called_once_with(
         group_name="RolloutGroup",
@@ -3953,8 +3957,96 @@ def test_env_uses_mode_qualified_decoupled_response_tag():
         route_key=None,
         batch_size=32,
         infer_batch_size_fn=env._infer_action_batch_size,
+        async_op=True,
         decoupled_mode=True,
     )
+
+
+def test_async_env_worker_stop_cancels_pending_action_receive():
+    async def run():
+        worker = object.__new__(AsyncEnvWorker)
+        worker._accelerator_type = AcceleratorType.NO_ACCEL
+        worker._timer_metrics = {}
+        worker._interact_task = None
+        worker.rollout_epoch = 1
+        worker.stage_num = 1
+        worker.n_train_chunk_steps = 1
+        worker._prefetched_train_bootstrap = None
+        worker._trajectory_step = 0
+        worker.cfg = SimpleNamespace(rollout=SimpleNamespace(group_name="RolloutGroup"))
+        worker.env_decoupled_mode = True
+        worker.train_batch_size = 4
+        worker._supplied_actions = {}
+        worker._bootstrap_and_send_train = Mock(
+            return_value=[EnvOutput(obs={"states": torch.zeros(1, 4)})]
+        )
+        worker._build_env_transition = Mock(return_value=EnvTransition())
+        worker._maybe_wait_env_delay = AsyncMock()
+
+        entered = asyncio.Event()
+        blocker = asyncio.Event()
+
+        async def pending_wait():
+            entered.set()
+            await blocker.wait()
+
+        worker.recv_from = Mock(return_value=SimpleNamespace(async_wait=pending_wait))
+
+        interact_task = asyncio.create_task(
+            worker.interact(Mock(), Mock(), None, Mock())
+        )
+        await asyncio.wait_for(entered.wait(), timeout=1.0)
+        await worker.stop()
+        await asyncio.wait_for(interact_task, timeout=1.0)
+
+        assert worker._interact_task.cancelled()
+        assert worker.recv_from.call_args.kwargs["async_op"] is True
+
+    asyncio.run(run())
+
+
+def test_env_evaluate_uses_async_channel_receive():
+    env = object.__new__(EnvWorker)
+    env._accelerator_type = AcceleratorType.NO_ACCEL
+    env._timer_metrics = {}
+    env.cfg = SimpleNamespace(rollout=SimpleNamespace(group_name="RolloutGroup"))
+    env.env_decoupled_mode = True
+    env.eval_rollout_epoch = 1
+    env.stage_num = 1
+    env.n_eval_chunk_steps = 1
+    env.eval_num_envs_per_stage = 1
+    env.eval_batch_size = 1
+    env.eval_enable_offload = False
+    env.enable_rlt = False
+    env.eval_assignment = EnvAssignment(
+        name=None,
+        cfg=OmegaConf.create({"auto_reset": True}),
+        rank=0,
+        world_size=1,
+    )
+    env.eval_prev_done = [torch.zeros(1, dtype=torch.bool)]
+    env.eval_env_list = [
+        SimpleNamespace(
+            is_start=False,
+            reset=Mock(return_value=({"states": torch.zeros(1, 4)}, {})),
+        )
+    ]
+    env.send_to = Mock()
+    recv_work = Mock(wait=Mock(return_value=torch.zeros(1, 1, 4)))
+    env.recv_from = Mock(return_value=recv_work)
+    env.env_evaluate_step = Mock(
+        return_value=(
+            EnvOutput(obs={"states": torch.zeros(1, 4)}),
+            {"return": torch.tensor([1.0])},
+        )
+    )
+    env.finish_rollout = Mock()
+
+    metrics = env.evaluate(Mock(), Mock())
+
+    assert env.recv_from.call_args.kwargs["async_op"] is True
+    recv_work.wait.assert_called_once_with()
+    assert torch.equal(metrics["return"], torch.tensor([1.0]))
 
 
 def test_smooth_intervention_builds_external_input_without_policy_history():
@@ -4025,7 +4117,11 @@ def test_env_runs_its_own_actions_after_intervention_continues():
     env.smooth_intervene = SmoothInterveneController(1, 1, 2, 2, enabled=True)
     env._build_env_transition = Mock(return_value=EnvTransition())
     env.send_to = Mock()
-    env.recv_from = Mock(return_value=torch.zeros(1, 2, 2))
+    env.recv_from = Mock(
+        return_value=SimpleNamespace(
+            async_wait=AsyncMock(return_value=torch.zeros(1, 2, 2))
+        )
+    )
     env_output = EnvOutput(
         obs={"states": torch.zeros(1, 4)},
         transition=EnvTransition(
@@ -4046,10 +4142,10 @@ def test_env_runs_its_own_actions_after_intervention_continues():
     assert torch.equal(policy_input.obs["states"], env_output.obs["states"])
     assert torch.equal(policy_input.external_actions, hold_chunk)
     # Rollout sends nothing back, so the next chunk starts without a receive.
-    assert torch.equal(env._recv_actions(Mock(), 0), hold_chunk)
+    assert torch.equal(asyncio.run(env._recv_actions(Mock(), 0)), hold_chunk)
     env.recv_from.assert_not_called()
     # The chunk after that waits for the policy again.
-    env._recv_actions(Mock(), 0)
+    asyncio.run(env._recv_actions(Mock(), 0))
     env.recv_from.assert_called_once()
 
 
@@ -4678,7 +4774,7 @@ def test_env_closes_reward_stream_with_final_chunk():
         return_value=[EnvOutput(obs={"states": torch.zeros(1, 4)})]
     )
     env._maybe_wait_env_delay = AsyncMock()
-    env._recv_actions = Mock(return_value=torch.zeros(1, 4))
+    env._recv_actions = AsyncMock(return_value=torch.zeros(1, 4))
     env.smooth_intervene = SmoothInterveneController(1, 1, 2, 4)
     env.env_interact_step = Mock(
         return_value=(

@@ -1127,20 +1127,23 @@ class EnvWorker(Worker):
         """Infer the batch dimension of a policy response."""
         return int(actions.shape[0])
 
-    def _recv_actions(self, input_channel: Channel, stage_id: int) -> torch.Tensor:
+    async def _recv_actions(
+        self, input_channel: Channel, stage_id: int
+    ) -> torch.Tensor:
         """Return the actions the stage supplied, else receive the policy's reply."""
         supplied = self._supplied_actions.pop(stage_id, None)
         if supplied is not None:
             return supplied
-        return self.recv_from(
+        return await self.recv_from(
             group_name=self.cfg.rollout.group_name,
             channel=input_channel,
             tag="train_policy" if self.env_decoupled_mode else "policy",
             route_key=stage_id if not self.env_decoupled_mode else None,
             batch_size=self.train_batch_size,
             infer_batch_size_fn=self._infer_action_batch_size,
+            async_op=True,
             decoupled_mode=self.env_decoupled_mode,
-        )
+        ).async_wait()
 
     @Worker.timer("run_interact_once")
     async def _run_interact_once(
@@ -1176,7 +1179,7 @@ class EnvWorker(Worker):
                     if cooperative_yield:
                         await asyncio.sleep(0)
 
-                    actions = self._recv_actions(input_channel, stage_id)
+                    actions = await self._recv_actions(input_channel, stage_id)
                     self.smooth_intervene.remember_actions(stage_id, actions)
 
                     if self.enable_online_lerobot:
@@ -1301,6 +1304,8 @@ class EnvWorker(Worker):
             eval_epoch_done = False
             for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
+                    # Async channel receive demultiplexes by query_id when an
+                    # async training interact loop shares input_channel.
                     policy_output = self.recv_from(
                         group_name=self.cfg.rollout.group_name,
                         channel=input_channel,
@@ -1310,8 +1315,9 @@ class EnvWorker(Worker):
                         infer_batch_size_fn=self._infer_rollout_batch_size
                         if self.env_decoupled_mode
                         else None,
+                        async_op=True,
                         decoupled_mode=self.env_decoupled_mode,
-                    )
+                    ).wait()
                     raw_chunk_actions = (
                         policy_output.actions
                         if hasattr(policy_output, "actions")
