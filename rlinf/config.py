@@ -1209,6 +1209,31 @@ def validate_refl_cfg(cfg: DictConfig) -> None:
         )
 
 
+def _validate_kl_clip(cfg: DictConfig, target_kl: float) -> None:
+    if type(target_kl) not in (int, float) or not 0 < target_kl < float("inf"):
+        raise ValueError(
+            f"Expected a finite positive algorithm.kl_clip_target, got {target_kl!r}."
+        )
+
+    algorithm = cfg.algorithm
+    if not (
+        cfg.runner.task_type == "embodied"
+        and not cfg.runner.get("use_training_pipeline", False)
+        and not cfg.runner.get("async_mode", False)
+        and cfg.actor.training_backend == "fsdp"
+        and cfg.rollout.get("rollout_backend", "huggingface") == "huggingface"
+        and algorithm.loss_type in {"actor", "actor_critic"}
+        and algorithm.logprob_type == "chunk_level"
+        and algorithm.reward_type == "chunk_level"
+        and not algorithm.get("recompute_logprobs", False)
+    ):
+        raise ValueError(
+            "Expected algorithm.kl_clip_target to use synchronous FSDP PPO "
+            "or GRPO with Hugging Face rollout and chunk-level rollout logprobs "
+            "and rewards."
+        )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1226,6 +1251,11 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    if (
+        not only_eval
+        and (kl_clip_target := algorithm_cfg.get("kl_clip_target")) is not None
+    ):
+        _validate_kl_clip(cfg, kl_clip_target)
     if model_type == SupportedModel.OPENPI:
         if only_eval and model_cfg.openpi.get("short_memory", False):
             assert cfg.env.eval.get("short_memory") is not None, (

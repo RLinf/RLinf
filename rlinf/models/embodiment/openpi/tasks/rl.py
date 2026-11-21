@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import random
 from typing import Any, Literal, Sequence
 
@@ -134,6 +135,21 @@ class Pi0RL(EnvIO, Pi0):
     def set_global_step(self, global_step: int) -> None:
         self.global_step = int(global_step)
 
+    def validate_transition_stats(self) -> None:
+        """Require one stochastic Flow-SDE transition per action chunk."""
+        cfg = self.rl_cfg
+        if (
+            cfg.noise_method != "flow_sde"
+            or cfg.joint_logprob
+            or cfg.is_nft
+            or not (math.isfinite(cfg.noise_level) and cfg.noise_level > 0)
+            or self.num_steps < 1
+        ):
+            raise ValueError(
+                "OpenPI transition statistics require Flow-SDE with positive finite "
+                "noise, at least one denoise step, and disabled joint logprobs and NFT."
+            )
+
     def _build_prefix_cache_for_actor(self, observation: Observation):
         """Prefix KV for actor recompute.
 
@@ -158,6 +174,7 @@ class Pi0RL(EnvIO, Pi0):
         *,
         noise: torch.Tensor | None = None,
         rng: torch.Generator | None = None,
+        return_transition_stats: bool = False,
         **kwargs,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         del kwargs
@@ -172,7 +189,11 @@ class Pi0RL(EnvIO, Pi0):
         if mode == "eval":
             return self._predict_eval(observation, noise=noise, rng=rng)
         actions, result = self._predict_train(
-            observation, noise=noise, rng=rng, compute_values=compute_values
+            observation,
+            noise=noise,
+            rng=rng,
+            compute_values=compute_values,
+            return_transition_stats=return_transition_stats,
         )
         # Match OpenPI: stash raw env obs so the actor can re-transform.
         result["forward_inputs"].update(_clone_replay_obs(repacked))
@@ -185,6 +206,7 @@ class Pi0RL(EnvIO, Pi0):
         noise: torch.Tensor | None,
         rng: torch.Generator | None,
         compute_values: bool,
+        return_transition_stats: bool,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         rl_cfg = self.rl_cfg
         device = self.device
@@ -226,6 +248,7 @@ class Pi0RL(EnvIO, Pi0):
         chains = [noise]
         log_probs: list[torch.Tensor] = []
         suffix_values: list[torch.Tensor] = []
+        transition_stats = None
         x_t = noise
 
         if rl_cfg.joint_logprob:
@@ -236,11 +259,8 @@ class Pi0RL(EnvIO, Pi0):
             )
 
         for idx in range(num_steps):
-            method = (
-                rl_cfg.noise_method
-                if idx == int(denoise_inds[0, idx].item())
-                else "flow_ode"
-            )
+            selected = idx == int(denoise_inds[0, idx].item())
+            method = rl_cfg.noise_method if selected else "flow_ode"
             t_val = float(timesteps[idx].item())
             t_tensor = torch.full((B,), t_val, device=device, dtype=torch.float32)
             suffix_act = self.run_suffix(
@@ -260,6 +280,8 @@ class Pi0RL(EnvIO, Pi0):
                 num_steps=num_steps,
                 noise_std=noise_std,
             )
+            if return_transition_stats and selected:
+                transition_stats = self._transition_stats(x_t_mean, x_t_std)
             x_t_prev = x_t
             step_noise = torch.randn(
                 x_t.shape, device=device, dtype=torch.float32, generator=rng
@@ -313,12 +335,27 @@ class Pi0RL(EnvIO, Pi0):
         if nft_state is not None:
             forward_inputs.update(nft_state)
             forward_inputs["nft_x0"] = x_0.detach()
-
-        return actions, {
+        result = {
             "prev_logprobs": log_probs_picked,
             "prev_values": prev_values,
             "forward_inputs": forward_inputs,
             "model_actions": x_0,
+        }
+        if return_transition_stats:
+            result["transition_stats"] = transition_stats
+        return actions, result
+
+    def _transition_stats(
+        self, mean: torch.Tensor, std: torch.Tensor
+    ) -> dict[str, torch.Tensor]:
+        action_slice = (
+            slice(None),
+            slice(self.action_chunk),
+            slice(self.action_env_dim),
+        )
+        return {
+            "mean": mean[action_slice].detach().float().contiguous(),
+            "std": std[action_slice].detach().float().contiguous(),
         }
 
     def _init_nft_state(
@@ -422,12 +459,24 @@ class Pi0RL(EnvIO, Pi0):
             f"{type(self).__name__} does not support forward_type={forward_type!r}."
         )
 
-    def default_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
+    def default_forward(
+        self,
+        forward_inputs: dict[str, torch.Tensor],
+        *,
+        return_transition_stats: bool = False,
+        **kwargs,
+    ) -> dict[str, Any]:
         """PPO/GRPO recompute of logprobs and values from the stored chain."""
         rl_cfg = self.rl_cfg
         compute_values = kwargs.get("compute_values", True)
         chains = forward_inputs["chains"]
         denoise_inds = forward_inputs["denoise_inds"]
+        rollout_steps = chains.shape[1] - 1
+        if return_transition_stats and rollout_steps != self.num_steps:
+            raise ValueError(
+                f"Expected {self.num_steps} denoise steps in actor replay, "
+                f"got {rollout_steps} from rollout."
+            )
         B = chains.shape[0]
         device = chains.device
         observation = self._observation_from_forward_inputs(forward_inputs)
@@ -517,11 +566,14 @@ class Pi0RL(EnvIO, Pi0):
             entropy = entropy.mean(dim=[1, 2, 3], keepdim=False)[:, None]
         else:
             entropy = torch.zeros((B, 1), device=device, dtype=torch.float32)
-        return {
+        result = {
             "logprobs": log_probs.contiguous(),
             "values": values.float(),
             "entropy": entropy.float(),
         }
+        if return_transition_stats:
+            result["transition_stats"] = self._transition_stats(x_t_mean, x_t_std)
+        return result
 
     def nft_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
         """Compute velocity v_theta at explicit (x_t, timesteps) for NFT loss."""

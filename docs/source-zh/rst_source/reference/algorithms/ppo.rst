@@ -119,6 +119,24 @@ Rollout 与 Actor 的重要性采样修正
 
 该模式要求使用同步、非流水线的具身训练，``loss_type`` 为 ``actor`` 或 ``actor_critic``。通过 ``actor/importance_sampling_weight``、``actor/importance_sampling_clip_fraction``、``actor/behav_approx_kl`` 和 ``actor/recomputed_logprob_abs_diff`` 监控 rollout 与 actor 的差异。
 
+按 KL 收紧概率比的裁剪范围
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Actor 在每个动作块选中的去噪转移上，计算从 rollout policy 到当前 policy 的条件 KL。
+
+KL 超过目标的动作块才收紧 ratio clip 的范围。上下界各自与 1 的距离都乘以“目标 KL 除以实测 KL”的平方根，最少保留原距离的四分之一。例如，目标 KL 为 0.05 时，KL 为 0.20 的动作块会把两个距离都缩短一半。
+
+这个选项适用于同步 FSDP OpenPI PPO 或 GRPO，rollout 使用 Hugging Face。奖励和 log-prob 都按动作块计算。使用噪声强度大于 0 的 Flow-SDE，关闭 joint log-prob，并让 rollout 和 actor 的去噪步数一致。``algorithm.recompute_logprobs``\ 保持关闭，ratio 以 rollout 返回的 log-prob 为基准。
+
+在训练 YAML 中设置有限的正数作为 KL 目标。省略该项或设为 ``null``\ 即可关闭。
+
+.. code:: yaml
+
+  algorithm:
+    kl_clip_target: 0.05
+
+``train/actor/conditional_kl_mean``\ 记录有效动作块的平均 KL，``train/actor/kl_clip/tight_frac``\ 记录有效动作块中裁剪范围收紧的比例。``train/actor/kl_clip/extra_frac``\ 记录有效动作块中因范围收紧才进入 PPO 裁剪分支的比例。两个比例都按整轮更新的有效动作块统计。实际更新预算仍由训练配置决定。
+
 3.2. LLM 推理任务
 ~~~~~~~~~~~~~~~~~
 LLM 推理任务的配置与具身任务的配置有相似之处。

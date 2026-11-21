@@ -19,6 +19,14 @@ from torch import nn
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.expert import build_expert_model_config
+from rlinf.algorithms.kl_clip import (
+    BEHAVIOR_TRANSITION_MEAN,
+    BEHAVIOR_TRANSITION_STD,
+    KLClip,
+    finalize_kl_clip_metrics,
+    require_transition_stats,
+    transition_kl,
+)
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.config import SupportedModel
@@ -84,6 +92,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         Worker.__init__(self)
         super().__init__(cfg.actor, self._world_size, self._rank)
         self.cfg = cfg
+        self._kl_clip_target = cfg.algorithm.get("kl_clip_target")
         self._env_group_name = cfg.env.group_name
         self._rollout_group_name = cfg.rollout.group_name
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
@@ -148,6 +157,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             model.load_state_dict(model_dict)
 
+        if self._kl_clip_target is not None:
+            require_transition_stats(model)
         return model
 
     def get_rollout_state_dict(self) -> dict:
@@ -665,6 +676,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             f"{rollout_size} is not divisible by {batch_size_per_rank}"
         )
         metrics = {}
+        kl_clip = (
+            KLClip(self._kl_clip_target, self.device)
+            if self._kl_clip_target is not None
+            else None
+        )
         if self.cfg.algorithm.get("recompute_logprobs", False):
             append_to_dict(metrics, self.recompute_prev_logprobs(batch_size_per_rank))
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
@@ -696,6 +712,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         micro_batch=batch,
                         metrics=metrics,
                         is_last=(idx + 1) == self.gradient_accumulation,
+                        kl_clip=kl_clip,
                     )
                     # avoid gpu memory leak
                     train_micro_batch[idx] = None
@@ -717,9 +734,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         clear_memory()
         explained_variance_stats = pop_critic_explained_variance_stats(metrics)
         mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}
+        if kl_clip is not None:
+            mean_metric_dict.update(kl_clip.totals())
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )
+        if kl_clip is not None:
+            finalize_kl_clip_metrics(mean_metric_dict)
         if explained_variance_stats:
             reduced_stats = all_reduce_dict(
                 explained_variance_stats, op=torch.distributed.ReduceOp.SUM
@@ -736,6 +757,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         metrics: dict[str, list[float]],
         *,
         is_last: bool,
+        kl_clip: KLClip | None = None,
     ) -> None:
         micro_batch = put_tensor_device(micro_batch, self.device)
         backward_ctx = self.before_micro_batch(self.model, is_last_micro_batch=is_last)
@@ -748,6 +770,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         forward_inputs = micro_batch.get("forward_inputs", None)
 
         kwargs = {}
+        if kl_clip is not None:
+            behavior_stats = {
+                "mean": forward_inputs.pop(BEHAVIOR_TRANSITION_MEAN),
+                "std": forward_inputs.pop(BEHAVIOR_TRANSITION_STD),
+            }
+            kwargs["return_transition_stats"] = True
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.OPENVLA,
             SupportedModel.OPENVLA_OFT,
@@ -819,6 +847,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 "log_logprob_diagnostics", False
             ),
         }
+        if kl_clip is not None:
+            loss_kwargs["ppo_conditional_kl"] = transition_kl(
+                behavior_stats, output_dict["transition_stats"]
+            )
+            loss_kwargs["kl_clip"] = kl_clip
         if self.cfg.algorithm.get("importance_sampling_fix", False):
             loss_kwargs["rollout_logprobs"] = micro_batch["rollout_logprobs"]
             loss_kwargs["importance_sampling_clip"] = (
