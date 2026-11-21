@@ -129,30 +129,9 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         )
 
     dreamzero_config = DreamZeroConfig(**config_dict)
-    checkpoint_interval = dreamzero_config.checkpoint_every_n_blocks
-    if not isinstance(checkpoint_interval, int) or checkpoint_interval < 1:
-        raise ValueError(
-            "DreamZero checkpoint_every_n_blocks must be a positive integer."
-        )
     prompt_cache_size = cfg.get("sft_prompt_cache_size", 0)
-    if not isinstance(prompt_cache_size, int) or prompt_cache_size < 0:
-        raise ValueError(
-            "DreamZero sft_prompt_cache_size must be a non-negative integer."
-        )
     skip_condition_vae = cfg.get("sft_skip_unused_condition_vae", False)
-    if prompt_cache_size or skip_condition_vae:
-        head_cfg = dreamzero_config.action_head_cfg
-        if head_cfg["_target_"] != (
-            "groot.vla.model.dreamzero.action_head.wan_flow_matching_action_tf.WANPolicyHead"
-        ):
-            raise ValueError(
-                "DreamZero SFT encoder optimizations require WANPolicyHead."
-            )
-        head_cfg["_target_"] = (
-            "rlinf.models.embodiment.dreamzero.dreamzero_policy.DreamZeroSFTHead"
-        )
-        head_cfg["prompt_cache_size"] = prompt_cache_size
-        head_cfg["skip_unused_condition_vae"] = skip_condition_vae
+    head_cfg = dreamzero_config.action_head_cfg
 
     has_full_model_weights = False
     st = st_index = None
@@ -189,9 +168,25 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     )
     dreamzero_config.relative_action_keys = list(cfg.get("relative_action_keys") or [])
 
-    model = DreamZeroPolicy(
-        config=dreamzero_config,
-    )
+    if prompt_cache_size or skip_condition_vae:
+        if head_cfg["_target_"] != (
+            "groot.vla.model.dreamzero.action_head.wan_flow_matching_action_tf.WANPolicyHead"
+        ):
+            raise ValueError(
+                "DreamZero SFT encoder optimizations require WANPolicyHead."
+            )
+        dreamzero_config.action_head_cfg = {
+            **head_cfg,
+            "_target_": (
+                "rlinf.models.embodiment.dreamzero.dreamzero_policy.DreamZeroSFTHead"
+            ),
+            "prompt_cache_size": prompt_cache_size,
+            "skip_unused_condition_vae": skip_condition_vae,
+        }
+
+    model = DreamZeroPolicy(config=dreamzero_config)
+    # Checkpoint export serializes model.config using the upstream head spec.
+    dreamzero_config.action_head_cfg = head_cfg
 
     # Load DreamZero full weights if available; otherwise keep component-initialized model.
     if has_full_model_weights and model_path is not None:
