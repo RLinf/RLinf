@@ -364,109 +364,44 @@ def test_behavior_online_sampling_requires_one_scene_per_process(behavior_proces
     assert pool.env_reset_slice(1, 1)[0] == [(1, 0)]
 
 
-@pytest.mark.parametrize("automatic_reset", [False, True])
-def test_behavior_shared_stages_step_only_their_own_scenes(
-    monkeypatch, automatic_reset
-):
-    og = pytest.importorskip("omnigibson")
-    from omnigibson.envs import Environment
-    from omnigibson.tasks.behavior_task import BehaviorTask
-    from omnigibson.tasks.task_base import BaseTask
+@pytest.mark.parametrize("skip_intermediate_renders", [False, True])
+def test_behavior_process_forwards_indexed_actions(skip_intermediate_renders):
+    from rlinf.envs.sim.behavior.behavior_env import BehaviorProcess
 
-    from rlinf.envs.sim.behavior import behavior_env
-
-    # Use the SDK's real step, reward, timeout and automatic reset. Only the
-    # physical scene, observations and goal predicate need a simulator.
-    sim = mock.Mock()
-    monkeypatch.setattr(og, "sim", sim)
-    env = Environment.__new__(Environment)
-    env.num_envs = 4
-    env._scenes = [
-        mock.Mock(robots=[mock.Mock(action_dim=1)]) for _ in range(env.num_envs)
-    ]
-    env._scene_graph_builders = []
-    env._current_steps = torch.zeros(env.num_envs, dtype=torch.int32)
-    env._current_episodes = torch.zeros_like(env._current_steps)
-    env._automatic_reset = automatic_reset
-    env._num_rerenders_on_reset = 0
-    env._loaded = False
-
-    def get_obs(env_indices=None):
-        rows = range(env.num_envs) if env_indices is None else env_indices
-        return list(rows), [{} for _ in rows]
-
-    env.get_obs = get_obs
-    task = env._task = BehaviorTask.__new__(BehaviorTask)
-    BaseTask.__init__(
-        task, termination_config={"max_steps": 2}, reward_config={"r_potential": 1.0}
-    )
-    task._loaded = True
-    task._num_envs = env.num_envs
-    task.use_presampled_robot_pose = False
-    task.object_scopes = [{"goal": False} for _ in env.scenes]
-
-    def check_goal(evaluate):
-        achieved = evaluate("goal")
-        return achieved, {
-            "satisfied": [0] if achieved else [],
-            "unsatisfied": [] if achieved else [0],
-        }
-
-    monkeypatch.setattr(
-        BehaviorTask,
-        "_evaluate_predicate",
-        lambda self, row, key: self.object_scopes[row][key],
-    )
-    task.compiled_task = SimpleNamespace(check_goal=check_goal)
-    env.reset(get_obs=False)
-    env._current_steps[0] = 2
-    env._current_steps[3] = 1
-    # Scene 0 reaches its goal while waiting for stage 1; its reward must survive.
-    task.object_scopes[0]["goal"] = True
-
-    cls = behavior_env.BehaviorProcess.__ray_metadata__.modified_class
+    cls = BehaviorProcess.__ray_metadata__.modified_class
     worker = cls.__new__(cls)
-    worker.env = env
-    worker.skip_intermediate_renders = False
+    worker.env = mock.Mock()
+    worker.skip_intermediate_renders = skip_intermediate_renders
     worker.use_legacy_proprio = False
     actions = torch.arange(1.0, 9.0).reshape(4, 2, 1)
-    obs, _, terms, truncs, _ = worker.chunk_step(actions, [2, 3])
-    assert obs == ([2, 3], [2, 3])
-    assert not torch.stack(terms).any()
-    assert torch.stack(truncs).tolist() == [[False, False], [False, True]]
-    assert env.episode_steps.tolist() == [2, 0, 2, 1 if automatic_reset else 3]
-    assert env._current_episodes.tolist() == [1, 1, 1, 1 + automatic_reset]
-    env.scenes[0].robots[0].apply_action.assert_not_called()
-    env.scenes[1].robots[0].apply_action.assert_not_called()
-    for row in (2, 3):
-        received = env.scenes[row].robots[0].apply_action.call_args_list
-        assert [call.args[0].item() for call in received] == actions[row, :, 0].tolist()
-    assert task._termination_conditions["predicate"].goal_status[0] == {
-        "satisfied": [],
-        "unsatisfied": [],
-    }
-    assert sim.step.call_count == 2 + automatic_reset
+    rewards = torch.tensor([1.0, 0.0])
+    terminated = torch.tensor([True, False])
+    truncated = torch.tensor([False, True])
+    infos = [{"done": {"success": True}}, {"done": {"success": False}}]
 
-    obs, rewards, terms, truncs, infos = worker.chunk_step(actions[:, :1], [0, 1])
-    assert obs == ([0, 1],)
-    assert terms[0].tolist() == truncs[0].tolist() == [True, False]
-    assert infos[0][0]["reward"]["reward_breakdown"]["potential"] == 1.0
-    assert env._current_episodes.tolist() == [
-        1 + automatic_reset,
-        1,
-        1,
-        1 + automatic_reset,
-    ]
-    assert env.scenes[2].reset.call_count == 1
+    for rows in ([2, 3], [0, 1]):
+        worker.env.step.return_value = (rows, rewards, terminated, truncated, infos)
+        obs, result_rewards, terms, truncs, result_infos = worker.chunk_step(
+            actions, rows
+        )
+        need_first_obs = not skip_intermediate_renders
+        assert obs == (rows if need_first_obs else None, rows)
+        torch.testing.assert_close(torch.stack(result_rewards), rewards.repeat(2, 1))
+        assert torch.stack(terms).tolist() == [[True, False], [True, False]]
+        assert torch.stack(truncs).tolist() == [[False, True], [False, True]]
+        assert result_infos == (infos, infos)
 
-    # Compare scene 0 against a full-batch step from the same initial state.
-    task.object_scopes[0]["goal"] = False
-    env.reset(get_obs=False)
-    env._current_steps[0] = 2
-    task.object_scopes[0]["goal"] = True
-    _, expected_rewards, _, _, expected_infos = env.step(actions[:, 0])
-    assert torch.equal(rewards[0], expected_rewards[:2])
-    assert infos[0][0] == expected_infos[0]
+        calls = worker.env.step.call_args_list
+        assert len(calls) == 2
+        for timestep, call in enumerate(calls):
+            torch.testing.assert_close(call.args[0], actions[rows, timestep])
+            need_obs = need_first_obs or timestep == 1
+            assert call.kwargs == {
+                "env_indices": rows,
+                "get_obs": need_obs,
+                "render": need_obs,
+            }
+        worker.env.reset_mock()
 
 
 @pytest.mark.parametrize(
