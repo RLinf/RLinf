@@ -103,6 +103,8 @@ versions of LeRobot, Hugging Face Hub, and Warp.
 The v3.9.4 checkout reports OmniGibson 3.9.3 in its Python package metadata. For the default installation, the Git revision should match the commit pinned in ``requirements/install.sh``, and Isaac Sim should report 5.1.x.
 
 
+.. _behavior-sim-assets:
+
 Download the Assets
 -------------------
 
@@ -207,24 +209,7 @@ Launch PPO training with the existing entry point.
 Standalone Evaluation
 ~~~~~~~~~~~~~~~~~~~~~
 
-In principle, any ``pi05`` checkpoint that has non-zero success rate on
-Behavior and has been converted to PyTorch format can be used for evaluation
-with this config. We use OpenPI-Comet only as an example source:
-
-- https://huggingface.co/sunshk/openpi_comet/tree/main
-
-After download, you can use the following repository to convert weights to
-PyTorch format:
-
-- https://github.com/mli0603/openpi-comet
-
-Thanks to the OpenPI-Comet authors for open-sourcing the model and tools, which
-helps reproducibility and evaluation in RLinf.
-
-Set ``rollout.model.model_path`` to the converted model directory.
-Evaluation uses the selected task's official timeout by default. For step limits,
-success metrics, logs and videos, see the :doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>`.
-
+The radio evaluation uses the `π₀.₅ PT50 checkpoint <https://huggingface.co/RLinf/RLinf-Pi05-BEHAVIOR-1K-PT50-CS32>`_. Follow the :doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>` to download the weights and run the default task or a public instance.
 
 Configure Further
 -----------------
@@ -255,13 +240,9 @@ performance.
      - Directory of cached instance JSONs (``*_template.json`` / ``*_template-tro_state.json``),
        used by ``offline`` mode and by fixed-id loading when the mode is ``disabled``.
    * - ``omni_config.task.instance_file_format``
-     - Cached-instance format: ``template`` (full reload) or ``tro_state`` (light, task-relevant
-       only). RLinf accepts ``tro_state`` files without ``robot_poses``; it then clears stale
-       cached robot-pose metadata and the reset falls back to the task's default robot pose.
+     - ``template`` loads a full scene. ``tro_state`` restores task-relevant object states and uses the recorded robot pose when available, or the scene’s default starting pose otherwise.
    * - ``omni_config.scene.partial_scene_load``
-     - When ``true``, auto-fills ``scene.load_room_types`` with rooms relevant to
-       ``activity_name`` (reduces startup time and memory). Requires ``activity_name`` and
-       ``scene_model``. Set ``load_room_types`` explicitly when ``false``/omitted.
+     - Set to ``true`` to load only the rooms needed for the task.
    * - ``omni_config.camera.head_resolution`` / ``omni_config.camera.wrist_resolution``
      - Head / wrist camera resolutions (defaults 720×720 / 480×480, applied to R1Pro sensors).
    * - ``omni_config.env.action_frequency`` / ``rendering_frequency`` / ``physics_frequency``

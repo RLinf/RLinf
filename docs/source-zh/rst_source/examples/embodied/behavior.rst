@@ -98,6 +98,8 @@
 v3.9.4 源码中的 OmniGibson 软件包版本号仍为 3.9.3。按默认方式安装后，Git 提交号应与 ``requirements/install.sh`` 中指定的提交一致，Isaac Sim 版本应为 5.1.x。
 
 
+.. _behavior-sim-assets:
+
 下载资产
 ----------------------------------------
 
@@ -200,19 +202,7 @@ PPO 训练沿用以下入口。
 独立评测
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-原则上，任何在 BEHAVIOR 上有非零成功率、并且已经转换为 PyTorch
-格式的 ``pi05`` checkpoint 都可以使用该配置评估。我们只将
-OpenPI-Comet 作为示例来源：
-
-- https://huggingface.co/sunshk/openpi_comet/tree/main
-
-下载后，可参考以下仓库将权重转换为 PyTorch 格式：
-
-- https://github.com/mli0603/openpi-comet
-
-感谢 OpenPI-Comet 作者开源模型和工具，这有助于 RLinf 中的可复现评估。
-
-将 ``rollout.model.model_path`` 设为转换后的模型目录。评测默认使用所选任务的官方超时。步数配置、成功率指标、日志和视频见 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`。
+收音机评测使用 `π₀.₅ PT50 权重 <https://huggingface.co/RLinf/RLinf-Pi05-BEHAVIOR-1K-PT50-CS32>`_\ 。下载权重、运行默认任务或选择公开实例的步骤见 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`\ 。
 
 --------------
 
@@ -268,12 +258,9 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
      - 缓存实例 JSON 目录（``*_template.json`` / ``*_template-tro_state.json``），供 ``offline``
        模式以及 ``disabled`` 模式下的固定 id 加载使用。
    * - ``omni_config.task.instance_file_format``
-     - 缓存实例格式：``template``\ （完整重载）或 ``tro_state``\ （仅任务相关、轻量）。RLinf 接受不含
-       ``robot_poses`` 的 ``tro_state`` 文件，此时会清除过期的缓存机器人位姿元数据，reset 回退到
-       任务默认机器人位姿。
+     - ``template`` 加载完整场景，``tro_state`` 恢复任务相关物体的状态。实例提供机器人位姿时使用该位姿，缺少位姿时使用场景的默认起点。
    * - ``omni_config.scene.partial_scene_load``
-     - 为 ``true`` 时自动按 ``activity_name`` 填充 ``scene.load_room_types``\ （减少启动时间与内存），
-       需要 ``activity_name`` 与 ``scene_model``。为 ``false``/省略时需显式设置 ``load_room_types``。
+     - 设为 ``true`` 时，仅加载当前任务需要的房间。
    * - ``omni_config.camera.head_resolution`` / ``omni_config.camera.wrist_resolution``
      - 头部 / 腕部相机分辨率（默认 720×720 / 480×480，应用到 R1Pro 传感器）。
    * - ``omni_config.env.action_frequency`` / ``rendering_frequency`` / ``physics_frequency``
