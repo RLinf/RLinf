@@ -59,6 +59,7 @@ class UpdateKLProbe:
         self._captured: list[_CapturedBatch] = []
         self._reference: _ProbeReference | None = None
         self.valid_count = 0
+        self._first_kl = 0.0
         self.last_kl: float | None = None
         self.stopped = False
 
@@ -70,6 +71,7 @@ class UpdateKLProbe:
         """Select the leading samples of the first optimizer batch as the probe."""
         self._remaining = min(128, batch_size_per_rank)
         self.valid_count = 0
+        self._first_kl = 0.0
         self.last_kl = None
         self.stopped = False
 
@@ -136,10 +138,28 @@ class UpdateKLProbe:
         finally:
             reduction.wait()
 
-        self.last_kl = kl_sum.item() / self.valid_count
-        if not math.isfinite(self.last_kl):
-            raise RuntimeError(f"Expected finite policy update KL, got {self.last_kl}.")
-        self.stopped = self.last_kl >= self._target_kl
+        kl = kl_sum.item() / self.valid_count
+        if not math.isfinite(kl):
+            raise RuntimeError(f"Expected finite policy update KL, got {kl}.")
+        if self.last_kl is None:
+            self._first_kl = kl
+        self.last_kl = kl
+        self.stopped = kl >= self._target_kl
+
+    def round_metrics(
+        self, steps_used: int, step_budget: int
+    ) -> dict[str, int | float]:
+        """Report update usage and measured KL for the current round."""
+        metrics = {
+            "actor/optimizer_steps_used": steps_used,
+            "actor/update_kl_stopped": int(self.stopped),
+            "actor/update_kl_probe_count": self.valid_count,
+            "actor/kl_stop/used_frac": steps_used / step_budget,
+        }
+        if self.last_kl is not None:
+            metrics["actor/kl_stop/first_kl"] = self._first_kl
+            metrics["actor/update_kl"] = self.last_kl
+        return metrics
 
     def end_round(self) -> None:
         """Release the staged inputs and reference tensors for the completed round."""

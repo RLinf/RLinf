@@ -761,11 +761,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 break
 
         if kl_probe is not None:
-            metrics["actor/optimizer_steps_used"] = [updates_used]
-            metrics["actor/update_kl_stopped"] = [int(kl_probe.stopped)]
-            metrics["actor/update_kl_probe_count"] = [kl_probe.valid_count]
-            if kl_probe.last_kl is not None:
-                metrics["actor/update_kl"] = [kl_probe.last_kl]
+            append_to_dict(
+                metrics,
+                kl_probe.round_metrics(
+                    updates_used, len(global_batches) * self.update_epoch
+                ),
+            )
 
     def train_micro_batch(
         self,
