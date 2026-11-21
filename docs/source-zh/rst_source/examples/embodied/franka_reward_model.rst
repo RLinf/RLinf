@@ -254,7 +254,7 @@ ResNet Reward Model（逐帧成功判别）
 
 - ``reward_mode`` 控制 reward model 在每一步推理，还是仅在终止帧推理。
 - ``standalone_realworld`` 利用 reward model 直接判断任务是否成功，进而触发重置。
-- ``reward_threshold`` 用于对 reward model 输出的成功概率做阈值过滤；低于阈值的项会被置为 ``0``。
+- ``reward_threshold`` 为非负数时，将 ResNet 成功概率转换为二值 reward：达到或超过阈值返回 ``1``，否则返回 ``0``；省略、设为 ``null`` 或负数时，Worker 返回原始概率。
 - ``model_path`` 指向用于在线推理的 reward model 权重。
 
 运行

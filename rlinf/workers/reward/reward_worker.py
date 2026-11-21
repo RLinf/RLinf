@@ -241,7 +241,12 @@ class EmbodiedRewardWorker(Worker):
         self.reward_threshold = self.cfg.reward.get("reward_threshold", 0.6)
         self._use_reward_prob = self.cfg.reward.get("use_reward_prob", False)
 
-        self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
+        if self._standalone_realworld and "runner" not in self.cfg:
+            self.env_decoupled_mode = False
+        else:
+            self.env_decoupled_mode = self.cfg.runner.get(
+                "enable_decoupled_mode", False
+            )
 
         if self.env_decoupled_mode:
             # save the run-time imformation in communicate channel for decoupled mode
@@ -340,7 +345,17 @@ class EmbodiedRewardWorker(Worker):
         may override this method; they should return through
         :meth:`_format_reward_output` so env-side broadcasting stays consistent.
         """
-        return self._format_reward_output(self.model.compute_reward(observations))
+        rewards = self.model.compute_reward(observations)
+
+        if self.cfg.reward.model.model_type == "resnet":
+            threshold = self.cfg.reward.get("reward_threshold", None)
+            if threshold is not None and float(threshold) >= 0:
+                if isinstance(rewards, torch.Tensor):
+                    rewards = (rewards >= float(threshold)).to(rewards.dtype)
+                elif isinstance(rewards, np.ndarray):
+                    rewards = (rewards >= float(threshold)).astype(rewards.dtype)
+
+        return self._format_reward_output(rewards)
 
     async def compute_rewards_async(
         self, input_channel: Channel, output_channel: Channel
