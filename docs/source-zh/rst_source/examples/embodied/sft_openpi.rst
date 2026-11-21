@@ -99,6 +99,16 @@ BEHAVIOR、RoboTwin、dual-Franka 和 RLT Stage 1 SFT 配置设置 ``precision: 
 使用 FP32。该配置保留 FP32 的 action/time 输入及自适应 norm 条件，主干使用 BF16 计算。
 RLT Stage 1 配置还让 ``rlt_module`` 使用 FP32。
 
+π₀.₅ 的主干激活使用 FP16 或 BF16 时，可启用 FlashAttention-2。运行 SFT 或 RL 时，将 ``actor.model.openpi.attention_backend`` 设为 ``flash_attention_2``。独立评测时，设置 ``rollout.model.openpi.attention_backend``。在需要使用 FlashAttention-2 的环境中安装与 PyTorch、CUDA 版本匹配的 ``flash-attn`` 2.x。
+
+使用 FlashAttention 时保持 ``pytorch_numerics: false``。NVIDIA GPU 在默认设置下使用 ``eager`` 以 FP32 计算注意力分数，切换到 FlashAttention 后可能出现小幅数值差异。
+
+在使用 CUDA Toolkit 12.3 或更高版本的 Hopper GPU 上，将 ``attention_backend`` 设为 ``flash_attention_3``，并在已激活的 OpenPI 环境中安装官方 FlashAttention-3。
+
+.. code-block:: bash
+
+   uv pip install --no-build-isolation 'git+https://github.com/Dao-AILab/flash-attention.git@bd26bc8e10e7c8f10dce6e17276156accecd2994#subdirectory=hopper'
+
 OpenPI 支持 FSDP1 的 ``no_shard``、``shard_grad_op`` 和 ``full_shard``，
 均使用 ``use_orig_params: true``。``no_shard`` 复制全部训练状态；
 ``shard_grad_op`` 对梯度和优化器状态分片；``full_shard`` 还在模块执行之间对参数分片。

@@ -121,6 +121,24 @@ and vision embeddings in FP32. The profile preserves FP32 action/time inputs
 and adaptive-norm conditioning while the backbone computes in BF16.
 RLT Stage 1 configurations also keep ``rlt_module`` in FP32.
 
+For π₀.₅ with FP16 or BF16 backbone activations, set
+``actor.model.openpi.attention_backend`` to ``flash_attention_2`` for SFT or RL.
+For standalone evaluation, set ``rollout.model.openpi.attention_backend``.
+Install a ``flash-attn`` 2.x build that matches your PyTorch and CUDA versions
+in each environment that uses it.
+
+Keep ``pytorch_numerics: false`` when using FlashAttention. With the default
+numerics on NVIDIA GPUs, ``eager`` computes attention scores in FP32, so
+FlashAttention can produce small numerical differences.
+
+On Hopper GPUs with CUDA Toolkit 12.3 or later, set
+``attention_backend: flash_attention_3`` and install the official
+FlashAttention-3 build in the active OpenPI environment.
+
+.. code-block:: bash
+
+   uv pip install --no-build-isolation 'git+https://github.com/Dao-AILab/flash-attention.git@bd26bc8e10e7c8f10dce6e17276156accecd2994#subdirectory=hopper'
+
 OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard`` with
 ``use_orig_params: true``. ``no_shard`` replicates all training state;
 ``shard_grad_op`` shards gradients and optimizer state; ``full_shard`` also

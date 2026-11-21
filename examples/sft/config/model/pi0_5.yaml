@@ -30,6 +30,7 @@ add_value_head: False
 # TrainConfig for config_name (or openpi.action_horizon if set), plus the
 # openpi.* shape fields below; no config.json is read.
 openpi:
+  attention_backend: eager
   # Concrete openpi variant: eval / sft / rl. This template feeds SFT
   # experiments, so it defaults to `sft`.
   task: sft

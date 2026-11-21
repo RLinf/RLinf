@@ -15,6 +15,7 @@ num_steps: 5
 add_value_head: False
 
 openpi:
+  attention_backend: eager
   # Factory selector: sft | eval | rl | dagger | dsrl. Embodiment default is rl;
   # eval / sft / dagger / dsrl experiments override this in the main YAML.
   task: rl
