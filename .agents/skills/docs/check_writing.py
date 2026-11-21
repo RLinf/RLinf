@@ -68,7 +68,7 @@ EN_PHRASES = re.compile(
     r"\b(simply|easily|obviously|basically|seamless(?:ly)?|powerful|robust|"
     r"comprehensive|cutting-edge|state-of-the-art|leverag(?:e|es|ed|ing)|crucial|"
     r"pivotal|delve|showcases?|empowers?|it is worth noting|please note|note that|"
-    r"in order to|allows you to|enables you to|a wide range of|currently)\b",
+    r"in order to|allows you to|enables you to|a wide range of|currently|not just)\b",
     re.IGNORECASE,
 )
 HAN = r"一-鿿"
@@ -83,6 +83,10 @@ ZH_PATTERNS = (
     (
         re.compile("当[^，。；：！？]{1,30}时"),
         "drop 当……时 where ……后 or ……时 alone reads naturally",
+    ),
+    (
+        re.compile("(?:不是|并非)[^。！？\n]{1,40}而是"),
+        "state directly what it is instead of framing it as 不是……而是……",
     ),
     (
         re.compile(f"(?<=[{HAN}\u3001-\u301f\uff01-\uff5e])[,;:!?](?=\\s|$|[{HAN}])"),
