@@ -18,7 +18,8 @@ All evaluation code and configs live under ``evaluations/`` at the repository ro
    ├── behavior/                # BEHAVIOR-1K eval configs
    ├── maniskill/               # ManiSkill OOD eval configs
    ├── realworld/               # Real-robot eval configs
-   └── polaris/                 # PolaRiS eval configs
+   ├── polaris/                 # PolaRiS eval configs
+   └── supermimic/              # SuperMimic eval configs
 
 Evaluation Architecture
 -----------------------
@@ -31,6 +32,12 @@ Typical data flow:
 2. **Worker launch** — Env and Rollout workers start on GPUs according to ``cluster.component_placement``.
 3. **Parallel rollout** — Env workers reset environments and return observations; Rollout workers generate actions from the model; loop until episodes finish.
 4. **Metric aggregation** — Task-level metrics such as ``success_once`` and ``return`` are computed and logged.
+
+SuperMimic also launches evaluation through ``evaluations/run_eval.sh``. It
+covers G1 motion tracking and recovery after a push while standing. The
+evaluation gathers the results from every environment. Motion tracking is
+exported per clip, and push recovery per trial. The launch command and the
+metric definitions are in :doc:`../../examples/embodied/supermimic_eval`.
 
 Next Steps
 ----------

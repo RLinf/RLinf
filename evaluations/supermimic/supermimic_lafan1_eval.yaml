@@ -1,0 +1,32 @@
+# Motion-tracking evaluation of a SuperMimic LAFAN1 checkpoint.
+# Set runner.ckpt_path to <run>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt
+# and, for a MaxCoord run, actor.model.representation=maxcoord.
+defaults:
+  - supermimic_lafan1_gencoord
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+runner:
+  task_type: embodied_eval
+  only_eval: True
+  ckpt_path: null
+  logger:
+    log_path: ../results/eval
+    experiment_name: supermimic_lafan1_eval
+  eval_export:
+    enabled: True
+    output_dir: null         # default: <log_path>/<experiment_name>/eval_results
+
+rollout:
+  model: ${actor.model}
+
+env:
+  eval:
+    total_num_envs: 40
+    eval_tasks: [tracking]

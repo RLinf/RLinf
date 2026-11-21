@@ -1,0 +1,35 @@
+# Standing push recovery (Section 4.3) of a SuperMimic checkpoint.
+# Set runner.ckpt_path to the policy's full_weights.pt and, for a MaxCoord
+# run, actor.model.representation=maxcoord.
+defaults:
+  - supermimic_lafan1_gencoord
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+runner:
+  task_type: embodied_eval
+  only_eval: True
+  ckpt_path: null
+  logger:
+    log_path: ../results/eval
+    experiment_name: supermimic_push_recovery
+  eval_export:
+    enabled: True
+    output_dir: null         # default: <log_path>/<experiment_name>/eval_results
+
+rollout:
+  model: ${actor.model}
+
+env:
+  eval:
+    # 4 speeds x 4 trials, one trial per env.
+    total_num_envs: 16
+    eval_tasks: [push_recovery]
+    # 1 s settle + 5 s after the push.
+    max_steps_per_rollout_epoch: 300

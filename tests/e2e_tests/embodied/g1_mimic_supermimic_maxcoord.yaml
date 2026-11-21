@@ -1,0 +1,42 @@
+# Three updates of the MaxCoord recipe on two ranks, on the standing clip in
+# SUPERMIMIC_MOTION_PATH. The last update saves a checkpoint.
+defaults:
+  - supermimic_lafan1_maxcoord
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  component_placement:
+    actor,env,rollout: 0-1
+
+runner:
+  logger:
+    log_path: /workspace/results/g1_mimic_supermimic_maxcoord
+    experiment_name: ci-test
+  max_epochs: 3
+  save_interval: 3
+
+algorithm:
+  replay_length: 32
+  replay_ratio: 32           # two updates per env step with the sizes below
+  wm_batches: 1
+  wm_window_batch: 8
+  imagine_batch: 8
+  critic_epochs: 1
+  critic_minibatches: 1
+
+actor:
+  model:
+    torch_compile: False
+
+env:
+  train:
+    total_num_envs: 4
+    num_clips: 1
+    motion_on_cpu: True

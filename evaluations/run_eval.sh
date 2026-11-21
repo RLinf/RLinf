@@ -30,6 +30,7 @@ infer_benchmark() {
         polaris_*|polaris-* ) echo "polaris" ;;
         robolab_*|robolab-* ) echo "robolab" ;;
         geniesim_*|geniesim-* ) echo "geniesim" ;;
+        supermimic_*|supermimic-* ) echo "supermimic" ;;
         simple_*|simple-* ) echo "simple" ;;
         * )
             echo "unknown"

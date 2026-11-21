@@ -38,6 +38,9 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
    * - RoboCasa365
      - ``robocasa365`` pretrain 任务切片
      - ``robocasa365/robocasa365_eval_openpi.yaml``
+   * - SuperMimic（G1 动作跟踪）
+     - LAFAN1 参考动作；BONES-SEED 为实验性；GenCoord 与 MaxCoord
+     - ``supermimic/supermimic_lafan1_eval.yaml``、``supermimic/supermimic_push_recovery.yaml``
    * - SIMPLE
      - ``G1WholebodyOpenOvenTeleop-v0``
      - ``simple/simple_psi0_eval.yaml``
@@ -87,6 +90,8 @@ Benchmark 指南
      - 通过 RLinf 环境 worker 和统一评估 runner 运行 RoboLab。
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin 双臂操作。
+   * - :doc:`SuperMimic <../examples/embodied/supermimic_eval>`
+     - G1 动作跟踪（GenCoord 与 MaxCoord）和屈膝站立推力恢复：要加载的检查点、表示覆盖项、命令和指标含义。
    * - :doc:`SIMPLE <guides/simple>`
      - Psi0 人形机器人全身评测。
 

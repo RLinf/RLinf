@@ -28,6 +28,8 @@ notes for a supported RL algorithm.
      - Implicit Q-Learning for offline RL.
    * - :doc:`Async PPO <async_ppo>`
      - Asynchronous, pipelined PPO.
+   * - :doc:`SuperMimic <supermimic>`
+     - Humanoid tracking through a differentiable world model.
 
 .. toctree::
    :hidden:
@@ -41,3 +43,4 @@ notes for a supported RL algorithm.
    RLPD <rlpd>
    IQL <iql>
    Async PPO <async_ppo>
+   SuperMimic <supermimic>

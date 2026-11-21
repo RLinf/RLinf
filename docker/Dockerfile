@@ -89,6 +89,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-mujoco_warp
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-geniesim
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-simple
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-supermimic
 
 
 ##################################################################################################
@@ -573,6 +574,17 @@ RUN link_assets
 
 ENV OPENPI_DATA_HOME=/root/.cache/openpi
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: SuperMimic
+##################################################################################################
+FROM embodied-common-image AS embodied-supermimic-image
+
+# Install the SuperMimic env (MuJoCo Warp G1, no VLA model)
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv supermimic --env supermimic
+
+# Set default env
+RUN echo "source ${UV_PATH}/supermimic/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Final image selection
