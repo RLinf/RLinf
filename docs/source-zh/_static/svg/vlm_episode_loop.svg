@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 360" width="1040" height="360" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="ep-dark" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#0f172a"/>
+    </marker>
+    <marker id="ep-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#0f766e"/>
+    </marker>
+    <marker id="ep-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#b45309"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1040" height="360" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+
+  <text x="28" y="32" font-size="15" font-weight="700" fill="#0f172a">One Multi-Turn Robot Episode</text>
+  <text x="28" y="52" font-size="12" fill="#64748b">How the reasoning VLM controls the arm until the task ends</text>
+
+  <rect x="20" y="72" width="1000" height="168" rx="14" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+
+  <!-- Step 1 -->
+  <rect x="36" y="88" width="200" height="136" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+  <circle cx="56" cy="108" r="12" fill="#2563eb"/>
+  <text x="56" y="112" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">1</text>
+  <text x="76" y="113" font-size="13" font-weight="700" fill="#1e3a8a">Observe</text>
+  <text x="50" y="140" font-size="12" fill="#334155">Camera frames:</text>
+  <text x="50" y="158" font-size="11.5" fill="#475569">[agentview] + [wrist]</text>
+  <text x="50" y="182" font-size="12" fill="#334155">Base-frame arm state</text>
+  <text x="50" y="200" font-size="11.5" fill="#64748b">+ task instruction</text>
+
+  <line x1="236" y1="156" x2="268" y2="156" stroke="#0f172a" stroke-width="2.5" marker-end="url(#ep-dark)"/>
+
+  <!-- Step 2 -->
+  <rect x="272" y="88" width="240" height="136" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2"/>
+  <circle cx="292" cy="108" r="12" fill="#7c3aed"/>
+  <text x="292" y="112" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">2</text>
+  <text x="312" y="113" font-size="13" font-weight="700" fill="#4c1d95">Reason &amp; Write</text>
+  <text x="286" y="140" font-size="12" fill="#334155">Qwen3.8 · xhigh thinking</text>
+  <text x="286" y="160" font-size="11.5" fill="#475569">&lt;think&gt; … &lt;/think&gt;</text>
+  <rect x="286" y="172" width="212" height="36" rx="6" fill="#ffffff" stroke="#ddd6fe" stroke-width="1.2"/>
+  <text x="296" y="188" font-size="10.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#5b21b6">{"arm":{"x":2.0,...},</text>
+  <text x="296" y="202" font-size="10.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#5b21b6"> "gripper":{"width":-8}}</text>
+
+  <line x1="512" y1="156" x2="544" y2="156" stroke="#0f172a" stroke-width="2.5" marker-end="url(#ep-dark)"/>
+
+  <!-- Step 3 -->
+  <rect x="548" y="88" width="210" height="136" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="568" cy="108" r="12" fill="#0d9488"/>
+  <text x="568" y="112" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">3</text>
+  <text x="588" y="113" font-size="13" font-weight="700" fill="#115e59">Execute</text>
+  <text x="562" y="142" font-size="12" fill="#334155">Closed-loop PD + OSC</text>
+  <text x="562" y="162" font-size="11.5" fill="#475569">Run sim until settle,</text>
+  <text x="562" y="180" font-size="11.5" fill="#475569">stall, success, or budget.</text>
+  <text x="562" y="204" font-size="11" fill="#64748b">Invalid JSON → end</text>
+
+  <!-- done branch -->
+  <path d="M 758 130 L 818 130" fill="none" stroke="#b45309" stroke-width="2.5" marker-end="url(#ep-amber)"/>
+  <rect x="766" y="108" width="44" height="18" rx="9" fill="#fffbeb" stroke="#f59e0b" stroke-width="1"/>
+  <text x="788" y="121" text-anchor="middle" font-size="10" font-weight="700" fill="#b45309">done</text>
+
+  <!-- Step 4 -->
+  <rect x="822" y="88" width="180" height="136" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+  <circle cx="842" cy="108" r="12" fill="#d97706"/>
+  <text x="842" y="112" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">4</text>
+  <text x="862" y="113" font-size="13" font-weight="700" fill="#92400e">Reward</text>
+  <text x="912" y="152" text-anchor="middle" font-size="14" font-weight="700" fill="#92400e">Sparse 0 / 1</text>
+  <text x="912" y="176" text-anchor="middle" font-size="12" fill="#334155">Success → 1.0</text>
+  <text x="912" y="196" text-anchor="middle" font-size="12" fill="#334155">Fail / timeout → 0.0</text>
+
+  <!-- continue loop from bottom of Execute back to Observe -->
+  <path d="M 653 224 L 653 300 L 136 300 L 136 228" fill="none" stroke="#0f766e" stroke-width="2.5" marker-end="url(#ep-teal)"/>
+  <rect x="668" y="248" width="72" height="20" rx="10" fill="#ccfbf1" stroke="#14b8a6" stroke-width="1"/>
+  <text x="704" y="262" text-anchor="middle" font-size="10" font-weight="700" fill="#0f766e">not done</text>
+
+  <rect x="280" y="284" width="360" height="28" rx="14" fill="#ccfbf1" stroke="#5eead4" stroke-width="1.2"/>
+  <text x="460" y="303" text-anchor="middle" font-size="12" font-weight="600" fill="#0f766e">Append new observation (mask = 0) and continue</text>
+
+  <line x1="28" y1="338" x2="56" y2="338" stroke="#0f172a" stroke-width="2.5" marker-end="url(#ep-dark)"/>
+  <text x="64" y="342" font-size="11" fill="#475569">forward</text>
+  <line x1="140" y1="338" x2="168" y2="338" stroke="#0f766e" stroke-width="2.5" marker-end="url(#ep-teal)"/>
+  <text x="176" y="342" font-size="11" fill="#475569">continue episode</text>
+  <line x1="310" y1="338" x2="338" y2="338" stroke="#b45309" stroke-width="2.5" marker-end="url(#ep-amber)"/>
+  <text x="346" y="342" font-size="11" fill="#475569">episode ends → reward</text>
+</svg>

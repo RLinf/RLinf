@@ -47,7 +47,13 @@ from rlinf.workers.rollout.utils import (
     print_sglang_outputs,
 )
 
-_SERVER_ARGS_FIELDS = {f.name for f in dataclasses.fields(ServerArgs)}
+try:
+    # autodoc_mock_imports replaces sglang with a mock, which is not a dataclass.
+    _SERVER_ARGS_FIELDS = {f.name for f in dataclasses.fields(ServerArgs)}
+except TypeError as exc:
+    if "dataclass" not in str(exc):
+        raise
+    _SERVER_ARGS_FIELDS = set()
 
 
 class SGLangWorker(Worker):

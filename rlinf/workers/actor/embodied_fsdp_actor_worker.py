@@ -21,7 +21,7 @@ import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.expert import build_expert_model_config
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.algorithms.utils import compute_entropy_loss
-from rlinf.config import SupportedModel
+from rlinf.config import SupportedModel, torch_dtype_from_precision
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
@@ -97,6 +97,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.cfg.algorithm.get("loss_agg_func", "token-mean")
         )
         self._group_success_metrics: dict[str, float] = {}
+        self._dapo_stats: dict[str, float] = {}
+        self._dapo_pending = None
+        self._stream_groups: list = []
+        self._stream_short = False
 
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
         self.version = 0
@@ -153,6 +157,73 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def get_rollout_state_dict(self) -> dict:
         return self.get_model_state_dict(cpu_offload=False, full_state_dict=False)
 
+    def _send_sglang_weight_buckets(self) -> None:
+        """Send FSDP parameters to the patched SGLang scheduler via CUDA IPC.
+
+        Each actor rank gathers its DTensor to a full tensor, then
+        ``reduce_tensor`` hands the scheduler a rebuild handle. The scheduler
+        renames HuggingFace prefixes to the loaded SGLang tree. This is the
+        same bucket path the reasoning actor uses; Qwen3.5 name mismatches
+        surface as a failed ``load_weights`` on the first sync.
+        """
+        from torch.distributed.tensor import DTensor
+        from torch.multiprocessing.reductions import reduce_tensor
+
+        from rlinf.workers.rollout.sglang.ipc_placement import CollocatedIpcPlacement
+        from rlinf.workers.rollout.utils import (
+            RankMapper,
+            instance_ids_to_entry_process_ranks,
+        )
+
+        sglang_cfg = self.cfg.rollout.sglang
+        fp32_modules = tuple(sglang_cfg.get("fp32_modules", None) or ())
+        rollout_dtype_name = sglang_cfg.get("dtype", None)
+        rollout_dtype = (
+            torch_dtype_from_precision(rollout_dtype_name)
+            if rollout_dtype_name is not None
+            else None
+        )
+        placement = CollocatedIpcPlacement(
+            actor_world_size=self._world_size,
+            rollout_tp_size=int(sglang_cfg.tensor_parallel_size),
+            nnodes_per_model_instance=int(
+                sglang_cfg.get("nnodes_per_model_instance", 1)
+            ),
+        )
+        mapped = RankMapper.get_actor_rank_to_rollout_rank_map(placement)[self._rank]
+        destination = instance_ids_to_entry_process_ranks(mapped, placement)
+        if isinstance(destination, tuple):
+            destination = list(destination)
+        state_dict = self.get_model_state_dict(cpu_offload=False, full_state_dict=False)
+        buckets = self.divide_model_to_bucket(state_dict, False)
+        del state_dict
+        pending = []
+        group_name = str(sglang_cfg.group_name)
+        for index, bucket in enumerate(buckets):
+            buffer = {}
+            for name, value in bucket.items():
+                if isinstance(value, DTensor):
+                    value = value.full_tensor()
+                if fp32_modules and any(key in name for key in fp32_modules):
+                    if value.is_floating_point() and value.dtype != torch.float32:
+                        value = value.to(dtype=torch.float32)
+                elif (
+                    rollout_dtype is not None
+                    and value.is_floating_point()
+                    and value.dtype != rollout_dtype
+                ):
+                    value = value.to(dtype=rollout_dtype)
+                buffer[name] = reduce_tensor(value)
+            if index == 0:
+                buffer["bucket_length"] = torch.tensor(
+                    [len(buckets)], device=torch.cuda.current_device()
+                )
+            for handle in pending:
+                handle.wait()
+            pending = [self.send(buffer, group_name, destination, async_op=True)]
+        for handle in pending:
+            handle.wait()
+
     @Worker.timer("actor/sync_model_to_rollout")
     async def sync_model_to_rollout(self) -> None:
         if self.enable_offload:
@@ -161,6 +232,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
             if self.is_weight_offloaded:
                 self.load_param_and_grad(self.device, False)
+
+        if str(self.cfg.rollout.get("rollout_backend", "")) == "sglang":
+            self._send_sglang_weight_buckets()
+            if self.enable_offload:
+                assert not self.is_weight_offloaded, (
+                    "weight should be offloaded in sync_model_to_rollout"
+                )
+                self.offload_param_and_grad(True)
+            return
 
         state_dict = self.get_rollout_state_dict()
 
@@ -217,19 +297,92 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             input_channel: The input channel to read from.
         """
         clear_memory(sync=False)
+        if self.cfg.algorithm.get("pear", {}).get("stream_to_actors", False):
+            await self._recv_streamed_trajectories(input_channel)
+            return
 
         send_num = self._component_placement.get_world_size("env") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(send_num, recv_num)
 
         recv_list = []
+        pending = None
         for _ in range(split_num):
             trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
+            from rlinf.algorithms.pear_objective import DapoPending
+
+            if isinstance(trajectory, DapoPending):
+                pending = trajectory
+                continue
             recv_list.append(trajectory)
+
+        if pending is not None:
+            if recv_list:
+                raise RuntimeError(
+                    "DAPO pool sent a shortfall signal mixed with trajectories."
+                )
+            self._dapo_pending = pending
+            self.rollout_batch = {}
+            return
+        self._dapo_pending = None
 
         self.rollout_batch = Trajectory.to_batch(recv_list)
 
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
+
+    async def _recv_streamed_trajectories(self, input_channel: Channel) -> None:
+        """Append groups until this generation's drain, then keep a full quota."""
+        from rlinf.algorithms.pear_objective import TrajectoryDrain, is_trajectory_stale
+
+        pear_cfg = self.cfg.algorithm.get("pear", {}) or {}
+        raw_staleness = pear_cfg.get("max_off_policy_threshold", None)
+        max_off_policy = int(raw_staleness) if raw_staleness is not None else None
+        clear_surplus = bool(pear_cfg.get("clear_surplus_after_step", False))
+
+        while True:
+            item = await input_channel.get(async_op=True).async_wait()
+            if isinstance(item, TrajectoryDrain):
+                break
+            if is_trajectory_stale(item, int(self.version), max_off_policy):
+                continue
+            self._stream_groups.append(item)
+        if max_off_policy is not None and self._stream_groups:
+            self._stream_groups = [
+                group
+                for group in self._stream_groups
+                if not is_trajectory_stale(group, int(self.version), max_off_policy)
+            ]
+        if not pear_cfg.get("dapo_compact", False):
+            self._stream_short = False
+            self.rollout_batch = self._batch_stream_groups(self._stream_groups)
+            self._stream_groups = []
+            return
+        quota = int(pear_cfg.get("dapo_target_groups", 0)) // self._world_size
+        have = len(self._stream_groups)
+        if have < quota:
+            self._stream_short = True
+            self._dapo_pending = None
+            self._dapo_stats = {
+                "dapo/kept_groups": float(have),
+                "dapo/buffered_groups": float(have),
+            }
+            self.rollout_batch = {}
+            return
+        selected = self._stream_groups[:quota]
+        self._stream_groups = [] if clear_surplus else self._stream_groups[quota:]
+        self._stream_short = False
+        self._dapo_pending = None
+        self.rollout_batch = self._batch_stream_groups(selected)
+
+    def _batch_stream_groups(self, groups: list) -> dict:
+        from rlinf.algorithms.pear_objective import concat_trajectories
+
+        merged = None
+        for group in groups:
+            merged = concat_trajectories(merged, group)
+        if merged is None:
+            return {}
+        return self._process_received_rollout_batch(Trajectory.to_batch([merged]))
 
     def _process_received_rollout_batch(
         self, rollout_batch: dict[str, torch.Tensor]
@@ -316,13 +469,64 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             else:
                 rollout_batch["loss_mask"] = reward_filter_mask
 
+        self._apply_pear_objective(rollout_batch)
         return rollout_batch
+
+    def _apply_pear_objective(self, rollout_batch: dict[str, torch.Tensor]) -> None:
+        """One sequence per episode, then drop zero-variance DAPO groups."""
+        pear_cfg = self.cfg.algorithm.get("pear", {})
+        if not pear_cfg:
+            self._dapo_stats = {}
+            return
+        loss_mask = rollout_batch.get("loss_mask", None)
+        changed = False
+        if pear_cfg.get("episode_sequence", False) and loss_mask is not None:
+            from rlinf.algorithms.pear_objective import keep_last_valid_step
+
+            loss_mask = keep_last_valid_step(loss_mask)
+            rollout_batch["loss_mask"] = loss_mask
+            changed = True
+        self._dapo_stats = {}
+        if pear_cfg.get("dapo_filter", False) and "rewards" in rollout_batch:
+            from rlinf.algorithms.pear_objective import dapo_group_mask
+
+            keep, stats = dapo_group_mask(
+                rollout_batch["rewards"], int(self.cfg.algorithm.group_size)
+            )
+            self._dapo_stats = stats
+            if loss_mask is not None:
+                keep_mask = keep.to(device=loss_mask.device)
+                extra = max(loss_mask.ndim - 2, 0)
+                keep_mask = keep_mask.view(1, -1, *([1] * extra))
+                rollout_batch["loss_mask"] = loss_mask * keep_mask.to(
+                    dtype=loss_mask.dtype
+                )
+                changed = True
+        if changed and rollout_batch.get("loss_mask", None) is not None:
+            refreshed = rollout_batch["loss_mask"]
+            if refreshed.ndim == 3:
+                total = refreshed.to(dtype=torch.float32).sum(dim=(0, 2), keepdim=True)
+            else:
+                total = refreshed.to(dtype=torch.float32).sum(dim=0, keepdim=True)
+            rollout_batch["loss_mask_sum"] = total.expand_as(refreshed)
 
     @Worker.timer("actor/compute_adv")
     def compute_advantages_and_returns(self) -> dict[str, torch.Tensor]:
         """
         Compute the advantages and returns.
         """
+        pending = getattr(self, "_dapo_pending", None)
+        if getattr(self, "_stream_short", False):
+            self._stream_short = False
+            return dict(self._dapo_stats)
+        if pending is not None:
+            self._dapo_pending = None
+            share = float(pending.kept_groups) / float(self._world_size)
+            self._dapo_stats = {
+                "dapo/kept_groups": share,
+                "dapo/buffered_groups": float(pending.kept_groups),
+            }
+            return dict(self._dapo_stats)
         if self.cfg.algorithm.adv_type == "opd":
             self.compute_opd_teacher_logprobs()
 
@@ -354,6 +558,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         rollout_metrics.update(self._group_success_metrics)
+        rollout_metrics.update(self._dapo_stats)
         return rollout_metrics
 
     @Worker.timer("actor/compute_opd_teacher_logprobs")
@@ -644,6 +849,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 )
 
         self.model.train()
+        pear_cfg = self.cfg.algorithm.get("pear", {}) or {}
+        if pear_cfg.get("episode_sequence", False):
+            from rlinf.algorithms.pear_objective import compact_episode_sequence_batch
+
+            self.rollout_batch = compact_episode_sequence_batch(self.rollout_batch)
+
         rollout_size = (
             self.rollout_batch["prev_logprobs"].shape[0]
             * self.rollout_batch["prev_logprobs"].shape[1]
@@ -665,8 +876,18 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             f"{rollout_size} is not divisible by {batch_size_per_rank}"
         )
         metrics = {}
-        if self.cfg.algorithm.get("recompute_logprobs", False):
+        # pear_reinforce does not use old_logprobs unless IS fix is enabled.
+        need_recompute = bool(self.cfg.algorithm.get("recompute_logprobs", False)) and (
+            self.cfg.algorithm.loss_type != "pear_reinforce"
+            or bool(self.cfg.algorithm.get("importance_sampling_fix", False))
+        )
+        if need_recompute:
             append_to_dict(metrics, self.recompute_prev_logprobs(batch_size_per_rank))
+        use_global_token_mean = (
+            self.cfg.algorithm.loss_type == "pear_reinforce"
+            and self.cfg.algorithm.get("loss_agg_func", "token-mean") == "token-mean"
+            and self.cfg.algorithm.get("logprob_type") == "sequence_token_level"
+        )
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
             rollout_dataloader_iter = split_dict_to_chunk(
@@ -685,6 +906,24 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size}"
                 )
 
+                global_valid_tokens = None
+                if use_global_token_mean:
+                    from rlinf.algorithms.pear_objective import (
+                        count_valid_sequence_tokens,
+                    )
+
+                    local_tokens = count_valid_sequence_tokens(train_global_batch)
+                    token_tensor = torch.tensor(
+                        local_tokens, dtype=torch.float64, device=self.device
+                    )
+                    if torch.distributed.is_initialized():
+                        torch.distributed.all_reduce(
+                            token_tensor,
+                            op=torch.distributed.ReduceOp.SUM,
+                            group=getattr(self, "_dp_group", None),
+                        )
+                    global_valid_tokens = float(token_tensor.item())
+
                 train_micro_batch = split_dict_to_chunk(
                     train_global_batch,
                     train_global_batch_size // self.cfg.actor.micro_batch_size,
@@ -696,6 +935,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         micro_batch=batch,
                         metrics=metrics,
                         is_last=(idx + 1) == self.gradient_accumulation,
+                        global_valid_tokens=global_valid_tokens,
                     )
                     # avoid gpu memory leak
                     train_micro_batch[idx] = None
@@ -715,6 +955,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.lr_scheduler.step()
         self.optimizer.zero_grad()
         clear_memory()
+        if self.enable_offload:
+            self.offload_param_and_grad()
+            self.offload_optimizer()
         explained_variance_stats = pop_critic_explained_variance_stats(metrics)
         mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}
         mean_metric_dict = all_reduce_dict(
@@ -736,6 +979,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         metrics: dict[str, list[float]],
         *,
         is_last: bool,
+        global_valid_tokens: float | None = None,
     ) -> None:
         micro_batch = put_tensor_device(micro_batch, self.device)
         backward_ctx = self.before_micro_batch(self.model, is_last_micro_batch=is_last)
@@ -841,6 +1085,35 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     self.cfg.algorithm.clip_log_ratio_max
                 )
 
+        pear_cfg = self.cfg.algorithm.get("pear", {}) or {}
+        if pear_cfg.get("score_centering", False):
+            if self.cfg.algorithm.loss_type != "pear_reinforce":
+                raise ValueError(
+                    "PEAR score centering requires algorithm.loss_type='pear_reinforce', "
+                    f"got {self.cfg.algorithm.loss_type!r}."
+                )
+            from rlinf.algorithms.pear_score_centering import score_centering_correction
+
+            train_head = output_dict.get("train_head_log_probs")
+            if train_head is None and forward_inputs is not None:
+                train_head = forward_inputs.get("train_head_log_probs")
+            sampler_head = (
+                None
+                if forward_inputs is None
+                else forward_inputs.get("sampler_head_log_probs")
+            )
+            if train_head is not None and sampler_head is not None:
+                correction, sampler_mass, trainer_mass = score_centering_correction(
+                    train_head, sampler_head
+                )
+                target_shape = output_dict["logprobs"].shape
+                loss_kwargs["sc_correction"] = correction.reshape(target_shape)
+                loss_kwargs["sc_sampler_head_mass"] = sampler_mass.reshape(target_shape)
+                loss_kwargs["sc_train_head_mass"] = trainer_mass.reshape(target_shape)
+
+        if global_valid_tokens is not None:
+            loss_kwargs["global_valid_tokens"] = global_valid_tokens
+
         loss, metrics_data = policy_loss(**loss_kwargs)
         entropy_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
         if compute_entropy and not loss_kwargs["critic_warmup"]:
@@ -880,7 +1153,18 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.enable_sft_co_train:
             loss = self._train_sft_epoch(metrics_data, loss)
 
-        loss /= self.gradient_accumulation
+        if global_valid_tokens is not None:
+            # Each micro-batch loss is already normalized by the global token
+            # count across all DP ranks; multiply by DP world size so FSDP's
+            # mean gradient all-reduce yields the exact global token-mean.
+            dp_world = (
+                torch.distributed.get_world_size(group=getattr(self, "_dp_group", None))
+                if torch.distributed.is_initialized()
+                else 1
+            )
+            loss = loss * float(dp_world)
+        else:
+            loss /= self.gradient_accumulation
         with backward_ctx:
             self.grad_scaler.scale(loss).backward()
 

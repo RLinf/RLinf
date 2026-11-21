@@ -6,8 +6,8 @@ showcasing how the framework can be applied across different scenarios and
 demonstrating its efficiency in practice.
 This example gallery is continuously expanding, covering new scenarios and tasks to highlight RLinf's flexibility and efficiency.
 
-Embodied intelligence is RLinf's primary focus. The embodied gallery is split into seven
-entry points — pick the one that matches your starting question:
+Embodied intelligence is RLinf's primary focus. The embodied gallery is organized into
+the entry points below — pick the one that matches your starting question:
 
 .. grid:: 1 2 3 3
    :gutter: 3
@@ -41,6 +41,12 @@ entry points — pick the one that matches your starting question:
       :link-type: doc
 
       Build reward models for simulation and real-world reinforcement learning workflows.
+
+   .. grid-item-card:: VLM-as-Policy
+      :link: embodied/vlm_as_policy
+      :link-type: doc
+
+      Train a reasoning VLM directly as a multi-turn robot policy with online RL.
 
    .. grid-item-card:: SFT
       :link: sft_index
@@ -86,6 +92,7 @@ Beyond embodiment:
    Embodied Models <vla_wam_index>
    World Models <world_model_index>
    Reward Models <embodied/reward_model_index>
+   VLM-as-Policy <embodied/vlm_as_policy>
    SFT <sft_index>
    RL <methods_index>
    Image and Video Generation <video_models>

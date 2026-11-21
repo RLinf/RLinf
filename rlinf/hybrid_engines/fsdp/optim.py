@@ -242,3 +242,214 @@ def build_adamw(
         )
     except (RuntimeError, TypeError):
         return torch.optim.AdamW(params, eps=eps, weight_decay=weight_decay)
+
+
+class StreamedAdamW:
+    """Host-resident AdamW streamed through GPU staging slots in fixed chunks.
+
+    Mirrors PEAR's ``StreamedAdamW`` (``pear/trainer/engine.py``): optimizer
+    moments stay in pinned host memory and are pipelined across H2D / compute /
+    D2H streams in ``CHUNK_BYTES`` chunks so 27B full-parameter updates never
+    spike device memory when offloading is enabled.
+    """
+
+    CHUNK_BYTES = 2 << 30
+    SLOTS = 3
+
+    def __init__(self, optimizer: Optimizer, *, chunk_bytes: int | None = None):
+        self.optimizer = optimizer
+        if chunk_bytes is not None and chunk_bytes > 0:
+            self.CHUNK_BYTES = int(chunk_bytes)
+        self._cuda_available = torch.cuda.is_available()
+        self.h2d = torch.cuda.Stream() if self._cuda_available else None
+        self.d2h = torch.cuda.Stream() if self._cuda_available else None
+        for group in optimizer.param_groups:
+            if group.get("fused") or group.get("foreach") is False:
+                raise ValueError(
+                    "StreamedAdamW requires multi-tensor AdamW (fused=False, foreach!=False)."
+                )
+            for p in group["params"]:
+                if p.requires_grad and p not in optimizer.state:
+                    optimizer.state[p] = {
+                        "step": torch.tensor(0.0, dtype=torch.float32),
+                        "exp_avg": self.zeros(p),
+                        "exp_avg_sq": self.zeros(p),
+                    }
+
+    def is_ready(self) -> bool:
+        """Whether every active parameter's optimizer state resides on CPU."""
+        for group in self.optimizer.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                state = self.optimizer.state.get(p)
+                if not state:
+                    return False
+                if (
+                    self.local(state["exp_avg"]).device.type != "cpu"
+                    or state["step"].device.type != "cpu"
+                ):
+                    return False
+        return True
+
+    @torch.no_grad()
+    def step(self) -> None:
+        from torch.optim.adam import _multi_tensor_adam
+
+        for group in self.optimizer.param_groups:
+            params = [p for p in group["params"] if p.grad is not None]
+            if not params:
+                continue
+            if not self._cuda_available or self.local(params[0]).device.type != "cuda":
+                self._step_cpu_fallback(group, params)
+                continue
+            self._step_cuda_group(group, params, _multi_tensor_adam)
+
+    def _step_cpu_fallback(
+        self, group: dict[str, Any], params: list[torch.Tensor]
+    ) -> None:
+        from torch.optim.adam import _multi_tensor_adam
+
+        beta1, beta2 = group["betas"]
+        _multi_tensor_adam(
+            [self.local(p) for p in params],
+            [self.local(p.grad) for p in params],
+            [self.local(self.optimizer.state[p]["exp_avg"]) for p in params],
+            [self.local(self.optimizer.state[p]["exp_avg_sq"]) for p in params],
+            [],
+            [self.optimizer.state[p]["step"] for p in params],
+            None,
+            None,
+            amsgrad=group.get("amsgrad", False),
+            has_complex=False,
+            beta1=beta1,
+            beta2=beta2,
+            lr=group["lr"],
+            weight_decay=group["weight_decay"],
+            eps=group["eps"],
+            maximize=group.get("maximize", False),
+            capturable=False,
+            differentiable=False,
+            decoupled_weight_decay=True,
+        )
+
+    def _step_cuda_group(
+        self,
+        group: dict[str, Any],
+        params: list[torch.Tensor],
+        multi_tensor_adam: Callable,
+    ) -> None:
+        chunks = self.chunks(params)
+        offsets = [self.offsets(chunk) for chunk in chunks]
+        compute = torch.cuda.current_stream()
+        capacity = max(total for _, total in offsets)
+        buffers = [
+            torch.empty(capacity, device="cuda", dtype=torch.float32)
+            for _ in range(min(self.SLOTS, len(chunks)))
+        ]
+        freed: list[torch.cuda.Event | None] = [None] * len(buffers)
+        self.h2d.wait_stream(compute)
+
+        def load(i: int):
+            slot = i % len(buffers)
+            with torch.cuda.stream(self.h2d):
+                if freed[slot] is not None:
+                    self.h2d.wait_event(freed[slot])
+                staged = []
+                for p, (offset, n) in zip(chunks[i], offsets[i][0], strict=True):
+                    state = self.optimizer.state[p]
+                    exp_avg = self.local(state["exp_avg"])
+                    exp_avg_sq = self.local(state["exp_avg_sq"])
+                    m = buffers[slot][offset : offset + n].view_as(exp_avg)
+                    v = buffers[slot][offset + n : offset + 2 * n].view_as(exp_avg_sq)
+                    m.copy_(exp_avg, non_blocking=True)
+                    v.copy_(exp_avg_sq, non_blocking=True)
+                    staged.append((m, v))
+                loaded = torch.cuda.Event()
+                loaded.record(self.h2d)
+            return staged, loaded
+
+        beta1, beta2 = group["betas"]
+        pending = [load(i) for i in range(len(buffers) - 1)]
+        for i, chunk in enumerate(chunks):
+            if i + len(buffers) - 1 < len(chunks):
+                pending.append(load(i + len(buffers) - 1))
+            staged, loaded = pending.pop(0)
+            compute.wait_event(loaded)
+            multi_tensor_adam(
+                [self.local(p) for p in chunk],
+                [self.local(p.grad) for p in chunk],
+                [m for m, _ in staged],
+                [v for _, v in staged],
+                [],
+                [self.optimizer.state[p]["step"] for p in chunk],
+                None,
+                None,
+                amsgrad=group.get("amsgrad", False),
+                has_complex=False,
+                beta1=beta1,
+                beta2=beta2,
+                lr=group["lr"],
+                weight_decay=group["weight_decay"],
+                eps=group["eps"],
+                maximize=group.get("maximize", False),
+                capturable=False,
+                differentiable=False,
+                decoupled_weight_decay=True,
+            )
+            updated = torch.cuda.Event()
+            updated.record(compute)
+            with torch.cuda.stream(self.d2h):
+                self.d2h.wait_event(updated)
+                for p, (m, v) in zip(chunk, staged, strict=True):
+                    state = self.optimizer.state[p]
+                    self.local(state["exp_avg"]).copy_(m, non_blocking=True)
+                    self.local(state["exp_avg_sq"]).copy_(v, non_blocking=True)
+                written = torch.cuda.Event()
+                written.record(self.d2h)
+            freed[i % len(buffers)] = written
+
+        compute.wait_stream(self.d2h)
+        self.d2h.synchronize()
+
+    def chunks(self, params: list[torch.Tensor]) -> list[list[torch.Tensor]]:
+        chunks: list[list[torch.Tensor]] = []
+        current: list[torch.Tensor] = []
+        size = 0
+        for p in params:
+            current.append(p)
+            size += 2 * self.local(self.optimizer.state[p]["exp_avg"]).numel() * 4
+            if size >= self.CHUNK_BYTES:
+                chunks.append(current)
+                current, size = [], 0
+        if current:
+            chunks.append(current)
+        return chunks
+
+    def offsets(self, chunk: list[torch.Tensor]) -> tuple[list[tuple[int, int]], int]:
+        offsets: list[tuple[int, int]] = []
+        total = 0
+        for p in chunk:
+            n = self.local(self.optimizer.state[p]["exp_avg"]).numel()
+            offsets.append((total, n))
+            total += 2 * n
+        return offsets, total
+
+    @classmethod
+    def zeros(cls, param: torch.Tensor) -> torch.Tensor:
+        from torch.distributed.tensor import DTensor
+
+        local = cls.local(param)
+        pin = torch.cuda.is_available()
+        zeros = torch.zeros(local.shape, dtype=torch.float32, pin_memory=pin)
+        return (
+            DTensor(zeros, param._spec, requires_grad=False)
+            if isinstance(param, DTensor)
+            else zeros
+        )
+
+    @staticmethod
+    def local(tensor: torch.Tensor) -> torch.Tensor:
+        from torch.distributed.tensor import DTensor
+
+        return tensor.to_local() if isinstance(tensor, DTensor) else tensor

@@ -55,6 +55,7 @@ class SGLangServerWorker(Worker):
         bind_host: str = "0.0.0.0",
         advertise_host: Optional[str] = None,
         server_type: str = "srt",
+        apply_rlinf_patch: bool = False,
     ):
         Worker.__init__(self)
         self._cfg = config
@@ -62,33 +63,108 @@ class SGLangServerWorker(Worker):
         self._bind_host = bind_host
         self._advertise_host = advertise_host
         self._server_type = server_type
+        self._apply_rlinf_patch = bool(apply_rlinf_patch)
 
         self._process: Optional[SGLangServerProcess] = None
 
-    def init_server(self) -> None:
+    async def init_server(self) -> None:
         """Spawn the sglang HTTP server subprocess and wait for /health.
 
         If the server fails to become healthy, ``SGLangServerProcess.start``
         tears the subprocess down and re-raises, so the caller never sees a
         leaked sglang process.
+
+        An engine that fits on one node is a single process. An engine that
+        does not negotiates one ``dist_init_addr`` on its entry node and
+        starts one process per node, the same rendezvous the reasoning
+        SGLang worker uses.
         """
         assert self._process is None, "sglang server already initialized."
+
+        from rlinf.workers.rollout.sglang.rendezvous import (
+            negotiate_model_instance_dist_addr,
+        )
+
+        nnodes = int(self._cfg.rollout.sglang.get("nnodes_per_model_instance", 1))
+        self._node_rank = 0
+        dist_init_addr = None
+        if nnodes > 1:
+            placement = self._ipc_placement()
+            self._node_rank = placement.rollout_node_rank_in_model_instance(self._rank)
+            host, port = await negotiate_model_instance_dist_addr(self, placement)
+            dist_init_addr = f"{host}:{port}"
 
         server_kwargs = OmegaConf.to_container(self._sglang_cfg, resolve=True) or {}
         self._process = SGLangServerProcess(
             server_args_kwargs=server_kwargs,
             acquire_free_port=self.acquire_free_port,
             server_type=self._server_type,
+            nnodes=nnodes,
+            node_rank=self._node_rank,
+            dist_init_addr=dist_init_addr,
             bind_host=self._bind_host,
             advertise_host=self._advertise_host,
+            apply_rlinf_patch=self._apply_rlinf_patch,
             log_info=self.log_info,
             log_error=self.log_error,
         )
         self._process.start()
 
-    def get_server_url(self) -> str:
-        """Return the advertised ``http://host:port`` URL for this server."""
+    async def init_rlinf_weight_sync(self) -> None:
+        """Register scheduler children so the FSDP actor can CUDA-IPC weights.
+
+        The patched server exposes ``/rlinf/run_task_method``. One call on the
+        entry process fans ``init_rlinf_worker`` out to every TP rank.
+        """
+        if not self._apply_rlinf_patch:
+            raise RuntimeError(
+                "init_rlinf_weight_sync requires rollout.sglang.apply_rlinf_patch"
+            )
+        placement = self._ipc_placement()
+        if placement.rollout_node_rank_in_model_instance(self._rank) != 0:
+            # The entry process fans init out to every TP rank, including
+            # ranks whose scheduler runs on another node of this engine.
+            return
+        from rlinf.hybrid_engines.sglang.common.io_struct import TaskMethodInput
+        from rlinf.utils.http_client import InferenceHTTPClient
+
+        client = InferenceHTTPClient(self.get_server_url())
+        await client.async_run_task_method(
+            TaskMethodInput(
+                method_name="init_rlinf_worker",
+                args=[
+                    self.worker_address,
+                    "sync",
+                    placement,
+                    self._cfg,
+                    placement.rollout_model_instance_id(self._rank),
+                ],
+            )
+        )
+
+    def _ipc_placement(self):
+        from rlinf.workers.rollout.sglang.ipc_placement import CollocatedIpcPlacement
+
+        sglang_cfg = self._cfg.rollout.sglang
+        if "actor_world_size" not in sglang_cfg:
+            raise RuntimeError(
+                "rollout.sglang.actor_world_size is unset. The training "
+                "driver fills it from the actor placement before launch."
+            )
+        return CollocatedIpcPlacement(
+            int(sglang_cfg.actor_world_size),
+            int(sglang_cfg.tensor_parallel_size),
+            int(sglang_cfg.get("nnodes_per_model_instance", 1)),
+        )
+
+    def get_server_url(self) -> str | None:
+        """Return the advertised ``http://host:port`` URL for this server.
+
+        Non-entry processes of a cross-node engine do not serve requests.
+        """
         assert self._process is not None, "init_server() has not been called."
+        if getattr(self, "_node_rank", 0) != 0:
+            return None
         return self._process.get_server_url()
 
     def is_healthy(self) -> bool:

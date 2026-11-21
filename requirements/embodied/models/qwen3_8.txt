@@ -1,0 +1,5 @@
+# Qwen3.8-27B uses Qwen3_5ForConditionalGeneration. Install this after
+# SGLang 0.5.19, which pins transformers==5.12.1 and its hybrid attention
+# kernels. Do not pin transformers in this file.
+qwen-vl-utils==0.0.14
+flash-linear-attention==0.5.2

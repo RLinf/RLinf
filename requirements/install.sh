@@ -129,7 +129,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "qwen3_8" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple" "robolab")
 
 #=======================Utility Functions=======================
@@ -164,7 +164,8 @@ Common options:
                            twice with different --venv to get both.
     --sglang <version>     Override sglang version (e.g., 0.5.4). Must be one of the
                            versions in requirements/agentic/; torch is derived from it.
-                           Applies to target agentic and to --model sglang / qwen3_vl.
+                           Applies to target agentic and to --model sglang / qwen3_vl / qwen3_8.
+                           Qwen3.8-27B requires sglang 0.5.19 (torch 2.13.0, transformers 5.12.1).
     --vllm <version>       Override vllm version (e.g., 0.23.0). Must be one of the
                            versions in requirements/agentic/.
     --transformers <version> Override transformers version (e.g., 4.57.1). Patches
@@ -1692,6 +1693,10 @@ apply_model_default_torch() {
             fi
             ;;
         sglang) model_torch=$(sglang_torch_version "${SGLANG_VERSION:-$EMBODIED_SGLANG_VERSION}") ;;
+        qwen3_8)
+            SGLANG_VERSION="${SGLANG_VERSION:-0.5.19}"
+            model_torch=$(sglang_torch_version "$SGLANG_VERSION")
+            ;;
     esac
     [ "$model_torch" != "-" ] || return 0
     TORCH_VERSION="$model_torch"
@@ -3496,6 +3501,73 @@ install_qwen3_vl_model() {
     install_flash_attn
 }
 
+install_qwen3_8_model() {
+    # Qwen3.8-27B is a Qwen3.5 VLM. SGLang 0.5.4 and transformers 4.57.1
+    # predate that architecture, so this target refuses the Qwen3-VL reward stack.
+    case "$ENV_NAME" in
+        libero|maniskill_libero)
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for Qwen3.8-27B. Use --env libero or --env maniskill_libero." >&2
+            exit 1
+            ;;
+    esac
+
+    local expected_torch="2.13.0"
+    local expected_sglang="0.5.19"
+    local expected_transformers="5.12.1"
+    SGLANG_VERSION="${SGLANG_VERSION:-$expected_sglang}"
+    TRANSFORMERS_VERSION="${TRANSFORMERS_VERSION:-$expected_transformers}"
+    if [ "${TORCH_VERSION:-$expected_torch}" != "$expected_torch" ] \
+        || [ "$SGLANG_VERSION" != "$expected_sglang" ] \
+        || [ "$TRANSFORMERS_VERSION" != "$expected_transformers" ]; then
+        echo "Qwen3.8-27B requires torch==${expected_torch}, sglang==${expected_sglang}, transformers==${expected_transformers}." >&2
+        echo "Got torch=${TORCH_VERSION:-<unset>}, sglang=${SGLANG_VERSION}, transformers=${TRANSFORMERS_VERSION}." >&2
+        exit 1
+    fi
+
+    create_and_sync_venv
+    install_common_embodied_deps
+    install_${ENV_NAME}_env
+    install_sglang "$SGLANG_VERSION"
+    uv pip install -r "$SCRIPT_DIR/embodied/models/qwen3_8.txt"
+    uv pip install "transformers==${TRANSFORMERS_VERSION}"
+    python - "$expected_torch" "$expected_sglang" "$expected_transformers" <<'EOF'
+import pathlib
+import sys
+
+import torch
+from importlib.metadata import version
+from packaging.version import Version
+
+expected_torch, expected_sglang, expected_transformers = sys.argv[1:4]
+actual_torch = torch.__version__.split("+", 1)[0]
+if actual_torch != expected_torch:
+    raise SystemExit(f"Expected torch=={expected_torch}, found {torch.__version__}.")
+if Version(version("sglang")) != Version(expected_sglang):
+    raise SystemExit(f"Expected sglang=={expected_sglang}, found {version('sglang')}.")
+if version("transformers") != expected_transformers:
+    raise SystemExit(
+        f"Expected transformers=={expected_transformers}, found {version('transformers')}."
+    )
+import sglang
+import transformers.models.qwen3_5.configuration_qwen3_5 as qwen3_5_config
+
+if not hasattr(qwen3_5_config, "Qwen3_5Config"):
+    raise SystemExit("transformers does not provide Qwen3_5Config.")
+model_file = pathlib.Path(sglang.__file__).parent / "srt" / "models" / "qwen3_5.py"
+if not model_file.is_file():
+    raise SystemExit(f"SGLang has no Qwen3.5 model implementation at {model_file}.")
+EOF
+    select_flash_attn_variant
+    if [ "${FA4_KEPT:-0}" -eq 1 ]; then
+        drop_fa2_for_fa4
+    else
+        install_flash_attn
+    fi
+    uv pip uninstall pynvml || true
+}
+
 # SGLang server venv for embodied eval (Cosmos3 via sglang[diffusion]).
 install_sglang_model() {
     create_and_sync_venv
@@ -4867,6 +4939,9 @@ main() {
                     ;;
                 qwen3_vl)
                     install_qwen3_vl_model
+                    ;;
+                qwen3_8)
+                    install_qwen3_8_model
                     ;;
                 sglang)
                     install_sglang_model

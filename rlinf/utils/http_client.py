@@ -351,6 +351,9 @@ class InferenceHTTPClient:
                         f" (after {retries + 1} attempt(s); prior error: {last_error})"
                     )
                 raise RuntimeError(f"POST {url} failed: {detail}")
+            if not resp.content:
+                # /close_session in SGLang 0.5.19 is an empty 200.
+                return {}
             if msgpack:
                 if "msgpack" not in resp.headers.get("content-type", "").lower():
                     raise RuntimeError(
@@ -388,22 +391,36 @@ class InferenceHTTPClient:
         return value
 
     async def _apost(self, path: str, body: dict) -> dict:
-        session = self._get_or_create_session()
-        async with session.post(
-            f"{self.base_url}{path}",
-            json=body,
-            timeout=aiohttp.ClientTimeout(
-                total=None,
-                sock_connect=self.connect_timeout,
-                sock_read=None,
-            ),
-        ) as resp:
-            # ClientResponseError is not picklable and Ray would hide it
-            # behind "can't pickle"; raise a RuntimeError with status and
-            # body instead.
-            if resp.status >= 400:
-                text = await resp.text()
-                raise RuntimeError(
-                    f"POST {path} failed with HTTP {resp.status}: {text[:2000]}"
-                )
-            return await resp.json()
+        timeout = aiohttp.ClientTimeout(
+            total=None,
+            sock_connect=self.connect_timeout,
+            sock_read=None,
+        )
+        last_error: Optional[BaseException] = None
+        for attempt in range(2):
+            session = self._get_or_create_session()
+            try:
+                async with session.post(
+                    f"{self.base_url}{path}",
+                    json=body,
+                    timeout=timeout,
+                ) as resp:
+                    # ClientResponseError is not picklable and Ray would hide it
+                    # behind "can't pickle"; raise a RuntimeError with status and
+                    # body instead.
+                    if resp.status >= 400:
+                        text = await resp.text()
+                        raise RuntimeError(
+                            f"POST {path} failed with HTTP {resp.status}: {text[:2000]}"
+                        )
+                    return await resp.json()
+            except aiohttp.ClientConnectionError as exc:
+                # The body never left the client, so the server did not start
+                # the call. Drop the pooled socket and try once more. A reset
+                # after the response headers arrive is not retried: a weight
+                # sync may already be running.
+                last_error = exc
+                await self.aclose()
+                if attempt == 1:
+                    raise
+        raise RuntimeError(f"POST {path} failed: {last_error}")

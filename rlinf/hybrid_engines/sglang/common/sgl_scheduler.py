@@ -97,6 +97,14 @@ class Scheduler(_Scheduler):
                 self._request_dispatcher._mapping[_ty] = _fn
         else:
             self._request_dispatcher._mapping.extend(_extra_req_mapping)
+        # 0.5.19 routes release/resume to SchedulerWeightUpdaterManager, so the
+        # overrides below are skipped unless the dispatcher is pointed back here.
+        self._bind_request_handler(
+            ReleaseMemoryOccupationReqInput, self.release_memory_occupation
+        )
+        self._bind_request_handler(
+            ResumeMemoryOccupationReqInput, self.resume_memory_occupation
+        )
 
         self.is_weight_offloaded = False
         # Per-tag offload state: tag -> True when currently offloaded. A single
@@ -112,6 +120,36 @@ class Scheduler(_Scheduler):
             raise ValueError(f"sglang version not supported: {e}")
         self.patch_return_output_ids = sglang_version < parse("0.5.0")
 
+    def _bind_request_handler(self, req_type, handler) -> None:
+        mapping = self._request_dispatcher._mapping
+        if isinstance(mapping, dict):
+            if req_type in mapping:
+                mapping[req_type] = handler
+            return
+        for index, (registered, _) in enumerate(mapping):
+            if registered is req_type:
+                mapping[index] = (req_type, handler)
+                return
+
+    def _invoke_memory_occupation(self, op: str, recv_req):
+        """Call the 0.5.19 weight updater, or Scheduler's own method before that move."""
+        updater = getattr(self, "weight_updater", None)
+        method = getattr(updater, op, None) if updater is not None else None
+        if method is not None:
+            return method(recv_req)
+        return getattr(super(), op)(recv_req)
+
+    def _tp_world(self) -> tuple[int, int]:
+        """Return (tp_size, tp_rank).
+
+        SGLang 0.5.19 keeps these on ``scheduler.ps``. Older releases stored
+        them directly on the scheduler.
+        """
+        ps = getattr(self, "ps", None)
+        if ps is not None and hasattr(ps, "tp_size"):
+            return ps.tp_size, ps.tp_rank
+        return self.tp_size, self.tp_rank
+
     def cuda_info(self, text: str = ""):
         free_gpu_memory, total_gpu_memory = Worker.torch_platform.mem_get_info()
         free_gpu_memory /= 2**30
@@ -120,9 +158,10 @@ class Scheduler(_Scheduler):
         memory_allocated = Worker.torch_platform.memory_allocated() / 2**30
         memory_reserved = Worker.torch_platform.memory_reserved() / 2**30
 
+        _, tp_rank = self._tp_world()
         self._rlinf_worker.log_info(
             f"[dp {self._rlinf_worker.get_parent_rank()}-"
-            f"mi {self.model_instance_id}-tp {self.tp_rank}] {text} "
+            f"mi {self.model_instance_id}-tp {tp_rank}] {text} "
             f"{memory_allocated=:.2f} GiB, {memory_reserved=:.2f} GiB, "
             f"{free_gpu_memory=:.2f} GiB, {total_gpu_memory=:.2f} GiB"
         )
@@ -149,7 +188,7 @@ class Scheduler(_Scheduler):
         for tag in requested_tags:
             self.offloaded_tags[tag] = True
         self.is_weight_offloaded = self.offloaded_tags.get("weights", False)
-        result = super().release_memory_occupation(recv_req)
+        result = self._invoke_memory_occupation("release_memory_occupation", recv_req)
         return result
 
     def resume_memory_occupation(self, recv_req: ResumeMemoryOccupationReqInput):
@@ -165,7 +204,7 @@ class Scheduler(_Scheduler):
         for tag in requested_tags:
             self.offloaded_tags[tag] = False
         self.is_weight_offloaded = self.offloaded_tags.get("weights", False)
-        result = super().resume_memory_occupation(recv_req)
+        result = self._invoke_memory_occupation("resume_memory_occupation", recv_req)
         if self.weight_reload == "cpu":
             model = self.tp_worker.worker.model_runner.model
             model.load_state_dict(self.cpu_state_dict)
@@ -201,6 +240,12 @@ class Scheduler(_Scheduler):
             renames.append(("model.language_model.", "model."))
 
         def rename(name: str) -> str:
+            # QwenVLMPolicy keeps the HF module on ``.model``, so FSDP names
+            # are ``model.model.language_model.*`` and ``model.lm_head.*``.
+            # SGLang's loader only strips one ``model.language_model.`` /
+            # ``model.visual.`` prefix and then misses every parameter.
+            if name.startswith("model.model.") or name.startswith("model.lm_head."):
+                name = name[len("model.") :]
             for src, dst in renames:
                 if name.startswith(src):
                     return dst + name[len(src) :]
@@ -217,6 +262,12 @@ class Scheduler(_Scheduler):
         rollout_sync_mode_collocated = (
             self.rollout_sync_mode == RolloutSyncMode.COLLOCATED
         )
+        sglang_cfg = (
+            self.cfg.rollout.get("sglang", {})
+            if hasattr(self, "cfg") and self.cfg is not None
+            else {}
+        )
+        fp32_modules = tuple(sglang_cfg.get("fp32_modules", None) or ())
         batch_weight = []
         if rollout_sync_mode_collocated:
             for name, handle in state_dict.items():
@@ -226,11 +277,27 @@ class Scheduler(_Scheduler):
                 # in case two processes have different CUDA_VISIBLE_DEVICES
                 list_args[6] = Worker.torch_platform.current_device()
                 new_weight = func(*list_args)
-                batch_weight.append((rename(name), new_weight))
+                mapped_name = rename(name)
+                if (
+                    fp32_modules
+                    and any(key in mapped_name or key in name for key in fp32_modules)
+                    and new_weight.is_floating_point()
+                    and new_weight.dtype != torch.float32
+                ):
+                    new_weight = new_weight.to(dtype=torch.float32)
+                batch_weight.append((mapped_name, new_weight))
         else:
             # disaggregate mode, recv tensor directly
             for name, tensor in state_dict.items():
-                batch_weight.append((rename(name), tensor))
+                mapped_name = rename(name)
+                if (
+                    fp32_modules
+                    and any(key in mapped_name or key in name for key in fp32_modules)
+                    and tensor.is_floating_point()
+                    and tensor.dtype != torch.float32
+                ):
+                    tensor = tensor.to(dtype=torch.float32)
+                batch_weight.append((mapped_name, tensor))
 
         model.load_weights(batch_weight)
 
@@ -381,27 +448,29 @@ class Scheduler(_Scheduler):
         Run a CommTask method with the given name and arguments.
         NOTE: will call wait() if async_op is True.
         """
-        result = getattr(self, obj.method_name)(*obj.args, **obj.kwargs)
-        if "async_op" in obj.kwargs and obj.kwargs["async_op"]:
+        args, kwargs = obj.unpacked_args()
+        result = getattr(self, obj.method_name)(*args, **kwargs)
+        if kwargs.get("async_op"):
             result = result.wait()
         return TaskMethodOutput(method_name=obj.method_name, result=result)
 
     def abort_generation(self, recv_req: AbortGenerationInput):
-        # clear waiting reqs
-        waiting_reqs = []
-        # waiting_reqs.append(self.waiting_queue)
-        for req in self.waiting_queue:
-            req.to_abort = True
+        # 0.5.19 dropped Req.to_abort. abort_request is what actually
+        # pops the waiting queue and marks running requests finished.
+        waiting_reqs = list(self.waiting_queue)
+        running_reqs = list(self.running_batch.reqs)
+        if hasattr(self, "abort_request"):
+            from sglang.srt.managers.io_struct import AbortReq
 
-        # abort every running req with no kvcache
-        running_reqs = []
-        running_reqs.append(self.running_batch.reqs)
-        for req in self.running_batch.reqs:
-            req.to_abort = True
-        res = AbortGenerationOutput(
+            self.abort_request(AbortReq(abort_all=True))
+        else:
+            from sglang.srt.managers.schedule_batch import FINISH_ABORT
+
+            for req in waiting_reqs + running_reqs:
+                req.to_finish = FINISH_ABORT("Aborted by RLinf")
+        return AbortGenerationOutput(
             waiting_reqs=waiting_reqs, running_reqs=running_reqs
         )
-        return res
 
     def init_rlinf_worker(
         self,
@@ -411,9 +480,10 @@ class Scheduler(_Scheduler):
         config: DictConfig = None,
         model_instance_id: int | None = None,
     ):
-        # WARNNING(wyq): Is world_size == self.tp_size when we enable EP in MoE?
+        # WARNNING(wyq): Is world_size == tp_size when we enable EP in MoE?
+        tp_size, tp_rank = self._tp_world()
         self._rlinf_worker = Worker(
-            parent_address=parent_address, world_size=self.tp_size, rank=self.tp_rank
+            parent_address=parent_address, world_size=tp_size, rank=tp_rank
         )
         # Explicit rather than get_parent_rank(): the parent is the entry
         # process, whose rank differs from the instance id once an instance
@@ -457,7 +527,7 @@ class Scheduler(_Scheduler):
 
             self._rlinf_worker.log_info(
                 f"Running Scheduler dp rank {self._rlinf_worker.get_parent_rank()}, "
-                f"model instance id {self.model_instance_id}, tp rank {self.tp_rank}, "
+                f"model instance id {self.model_instance_id}, tp rank {tp_rank}, "
                 f"corresponding actor weight rank = {self.actor_weight_rank}"
             )
         elif weight_reload == "cpu":
@@ -471,14 +541,14 @@ class Scheduler(_Scheduler):
 
             self._rlinf_worker.log_info(
                 f"Running Scheduler dp rank {self._rlinf_worker.get_parent_rank()}, "
-                f"model instance id {self.model_instance_id}, tp rank {self.tp_rank}, "
+                f"model instance id {self.model_instance_id}, tp rank {tp_rank}, "
                 f"load weight from cpu"
             )
         elif weight_reload is None:
             # save state dict to cpu
             self._rlinf_worker.log_info(
                 f"Running Scheduler dp rank {self._rlinf_worker.get_parent_rank()}, "
-                f"model instance id {self.model_instance_id}, tp rank {self.tp_rank}, "
+                f"model instance id {self.model_instance_id}, tp rank {tp_rank}, "
                 f"no sync weight"
             )
 
@@ -504,9 +574,12 @@ class Scheduler(_Scheduler):
         # Extra arguments differ by sglang version (0.5.12 adds is_idle_batch),
         # so forward whatever arrives instead of naming them.
         if not self.patch_return_output_ids:
-            return super().stream_output_generation(
-                reqs, return_logprob, skip_req, **kwargs
-            )
+            # 0.5.19 moved this onto SchedulerOutputStreamer and no longer
+            # has Scheduler.stream_output_generation.
+            parent = getattr(_Scheduler, "stream_output_generation", None)
+            if parent is None:
+                return None
+            return parent(self, reqs, return_logprob, skip_req, **kwargs)
 
         from sglang.srt.managers.scheduler_output_processor_mixin import (
             DEFAULT_FORCE_STREAM_INTERVAL,
@@ -693,7 +766,7 @@ class Scheduler(_Scheduler):
 
             if (
                 req.finished()
-                and self.tp_rank == 0
+                and self._tp_world()[1] == 0
                 and self.server_args.enable_request_time_stats_logging
             ):
                 req.log_time_stats()

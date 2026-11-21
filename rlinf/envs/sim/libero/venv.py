@@ -223,6 +223,16 @@ def _worker(
             elif cmd == "set_camera_rendering":
                 _set_camera_rendering(env, data)
                 p.send(None)
+            elif cmd == "vlm_observe":
+                from rlinf.envs.sim.libero.vlm_controller import observe_state
+
+                p.send(observe_state(env))
+            elif cmd == "vlm_macro":
+                from rlinf.envs.sim.libero.vlm_controller import execute_action
+
+                p.send(
+                    execute_action(env, data["action"], native_budget=data["budget"])
+                )
             else:
                 p.close()
                 raise NotImplementedError
@@ -311,3 +321,34 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
             self.workers[i].parent_remote.send(["set_camera_rendering", enabled])
         for i in id:
             self.workers[i].parent_remote.recv()
+
+    def vlm_observe(self, id=None):
+        """Read the VLM Cartesian state from each selected simulator."""
+        self._assert_is_not_closed()
+        id = self._wrap_id(id)
+        for i in id:
+            self.workers[i].parent_remote.send(["vlm_observe", None])
+        return [self.workers[i].parent_remote.recv() for i in id]
+
+    def vlm_macro(self, actions, native_budget: int):
+        """Execute one VLM macro action in every environment."""
+        from rlinf.envs.sim.libero.vlm_controller import vector_to_action
+
+        self._assert_is_not_closed()
+        if isinstance(native_budget, (int, np.integer)):
+            budgets = [int(native_budget)] * len(actions)
+        else:
+            budgets = [int(item) for item in native_budget]
+        for index, action in enumerate(actions):
+            self.workers[index].parent_remote.send(
+                [
+                    "vlm_macro",
+                    {
+                        "action": vector_to_action(action),
+                        "budget": budgets[index],
+                    },
+                ]
+            )
+        return [
+            self.workers[index].parent_remote.recv() for index in range(len(actions))
+        ]

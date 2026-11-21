@@ -89,6 +89,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-mujoco_warp
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-geniesim
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-simple
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-libero-qwen3_8
 
 
 ##################################################################################################
@@ -573,6 +574,23 @@ RUN link_assets
 
 ENV OPENPI_DATA_HOME=/root/.cache/openpi
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: LIBERO + Qwen3.8-27B (torch 2.13.0, sglang 0.5.19, transformers 5.12.1)
+##################################################################################################
+FROM embodied-common-image AS embodied-libero-qwen3_8-image
+
+# Docker builds cannot see a GPU. The default drops flash-attn-4 and installs
+# FA2, which runs on Ampere (e.g. A100). Pass --build-arg UNINSTALL_FA4=0 to
+# keep FA4 for Hopper or newer.
+ARG UNINSTALL_FA4
+ENV UNINSTALL_FA4=${UNINSTALL_FA4}
+
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} \
+    embodied --venv qwen3_8 --model qwen3_8 --env libero \
+    --torch 2.13.0 --sglang 0.5.19 --transformers 5.12.1
+
+RUN echo "source ${UV_PATH}/qwen3_8/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Final image selection
