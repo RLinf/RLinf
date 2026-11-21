@@ -140,7 +140,10 @@ def get_iterator_k_split(
     Args:
         batch: Input batch data (dict or list of tensors).
         num_splits: Number of microbatches to split into.
-        enforce_divisible_batch: Whether to enforce batch size being divisible by k.
+        enforce_divisible_batch: Whether to require the dictionary batch size to
+            be divisible by k. If False, keep all samples in k chunks whose sizes
+            differ by at most one, with larger chunks first. Chunks may be empty
+            when k exceeds the batch size.
         shuffle: Whether to shuffle the batch before splitting.
         shuffle_seed: Seed for reproducible shuffling.
     """
