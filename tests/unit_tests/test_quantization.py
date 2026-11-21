@@ -766,6 +766,154 @@ def test_pi05_feed_forward_quantizes_separate_gate_up_and_down(format_name, dtyp
     assert values.grad is not None
 
 
+@pytest.mark.skipif(not _NVFP4_GEMM_CUDA, reason="requires NVFP4 GEMM CUDA")
+@pytest.mark.parametrize(
+    "m,n,k,dtype",
+    [
+        (1, 3, 17, torch.float32),
+        (40, 33, 588, torch.bfloat16),
+    ],
+)
+def test_nvfp4_cutlass_uses_logical_m_and_aligned_n(monkeypatch, m, n, k, dtype):
+    flashinfer = pytest.importorskip(
+        "flashinfer", reason="optional FlashInfer is not installed"
+    )
+
+    from rlinf.quantization.kernels.nvfp4 import nvfp4_gemm
+
+    backend = _backend("nvfp4", block_size=16)
+    activation = backend.quantize(
+        torch.randn(m, k, device="cuda"), role="activation", native=True
+    )
+    weight = backend.quantize(
+        torch.randn(n, k, device="cuda"), role="weight", native=True
+    )
+    bias = torch.randn(n, device="cuda")
+    original = flashinfer.mm_fp4
+
+    def reference():
+        output = original(
+            activation.data,
+            weight.data.T,
+            activation.scales,
+            weight.scales.T,
+            alpha=activation.global_scale * weight.global_scale,
+            out_dtype=torch.bfloat16,
+            block_size=16,
+            use_8x4_sf_layout=False,
+            backend="cutlass",
+            use_nvfp4=True,
+        )
+        return (output[:m, :n].float() + bias).to(dtype)
+
+    expected = reference()
+    observed = []
+
+    def observe(a, b, a_descale, b_descale, **kwargs):
+        observed.append(
+            (
+                tuple(a.shape),
+                tuple(b.shape),
+                a_descale.data_ptr(),
+                b_descale.data_ptr(),
+                kwargs["backend"],
+            )
+        )
+        return original(a, b, a_descale, b_descale, **kwargs)
+
+    with monkeypatch.context() as guard:
+        guard.setattr(flashinfer, "mm_fp4", observe)
+        actual = nvfp4_gemm(activation, weight, bias, dtype)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    assert observed == [
+        (
+            (m, activation.padded_shape[1] // 2),
+            (weight.padded_shape[1] // 2, (n + 31) // 32 * 32),
+            activation.scales.data_ptr(),
+            weight.scales.data_ptr(),
+            "cutlass",
+        )
+    ]
+
+
+@pytest.mark.skipif(not _NVFP4_GEMM_CUDA, reason="requires NVFP4 GEMM CUDA")
+@pytest.mark.parametrize("m,n,k", [(1, 33, 17), (40, 256, 4096)])
+def test_nvfp4_gemm_autotune_preserves_values_and_complete_writes(monkeypatch, m, n, k):
+    flashinfer = pytest.importorskip(
+        "flashinfer", reason="optional FlashInfer is not installed"
+    )
+
+    backend = _backend("nvfp4", block_size=16)
+    generator = torch.Generator(device="cuda").manual_seed(20261119)
+    weight = backend.quantize(
+        torch.randn(n, k, device="cuda", generator=generator),
+        role="weight",
+        native=True,
+    )
+    bias = torch.randn(n, device="cuda", generator=generator)
+    inputs = [
+        torch.randn(m, k, device="cuda", generator=generator),
+        torch.randn(m, k, device="cuda", generator=generator) * 3,
+        torch.zeros(m, k, device="cuda"),
+    ]
+    prepared = [
+        backend.quantize(values, role="activation", native=True) for values in inputs
+    ]
+
+    original = flashinfer.mm_fp4
+    expected = []
+    with flashinfer.autotune(False, skip_ops={"fp4_gemm"}):
+        for activation in prepared:
+            output = original(
+                activation.data[:m],
+                weight.data[: ((n + 31) // 32) * 32].T,
+                activation.scales,
+                weight.scales.T,
+                alpha=activation.global_scale * weight.global_scale,
+                out_dtype=torch.bfloat16,
+                block_size=16,
+                use_8x4_sf_layout=False,
+                backend="cutlass",
+                use_nvfp4=True,
+            )
+            expected.append(output[:m, :n].float() + bias)
+    autotune = flashinfer.autotune
+    tuning = []
+    calls = []
+
+    def observe_tuning(enabled, **kwargs):
+        tuning.append(enabled)
+        return autotune(enabled, **kwargs)
+
+    def observe(a, b, a_descale, b_descale, **kwargs):
+        assert kwargs["backend"] == "cutlass"
+        # Initialize after tuning so another candidate cannot hide partial writes.
+        output = torch.full(
+            (a.shape[0], b.shape[1]),
+            torch.nan,
+            device=a.device,
+            dtype=kwargs["out_dtype"],
+        )
+        kwargs["out"] = output
+        actual = original(a, b, a_descale, b_descale, **kwargs)
+        assert actual.data_ptr() == output.data_ptr()
+        assert torch.isfinite(output).all()
+        calls.append(tuple(output.shape))
+        return actual
+
+    with monkeypatch.context() as guard:
+        guard.setattr(flashinfer, "autotune", observe_tuning)
+        activation = prepared[0]
+        with backend.autotune():
+            backend.gemm(activation, weight, bias=bias)
+        guard.setattr(flashinfer, "mm_fp4", observe)
+        for activation, reference in zip(prepared, expected, strict=True):
+            actual = backend.gemm(activation, weight, bias=bias)
+            torch.testing.assert_close(actual, reference, rtol=0, atol=0)
+    assert tuning == [True]
+    assert calls == [(m, (n + 31) // 32 * 32)] * len(inputs)
+
+
 @pytest.mark.parametrize("format_name", ["int8", "nvfp4"])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
 def test_pi05_vision_patch_and_attention_match_quantized_projections(

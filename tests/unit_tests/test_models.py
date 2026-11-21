@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import dataclasses
 import importlib.util
 import inspect
 import logging
@@ -25,6 +26,7 @@ import math
 import os
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
@@ -433,6 +435,285 @@ def test_openpi_prefix_preserves_camera_inputs(siglip_with_history):
         [mask[:, -1:].expand(-1, 49) for mask in masks.values()], dim=1
     )
     torch.testing.assert_close(input_mask, expected_mask)
+
+
+@pytest.fixture
+def tiny_openpi_eval_graph():
+    from rlinf.models.embodiment.openpi.modules import gemma, model, utils
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+
+    compiled = utils.torch_compile_enabled()
+    utils.set_torch_compile(False)
+    torch.manual_seed(0)
+    config = Pi0Config(
+        pi05=True, dtype="float32", action_dim=8, action_horizon=3, max_token_len=4
+    )
+    policy = Pi0.__new__(Pi0)
+    model.BaseModel.__init__(policy, 8, 3, 4)
+    policy._eval_cuda_graph_enabled = False
+    policy._eval_cuda_graph = None
+    policy._config = config
+    policy.pi05, policy.pcd = True, False
+    network = gemma.Config(32, 1, 64, 4, 1, 8)
+    policy.llm = gemma.Module(
+        [network, network],
+        embed_dtype="float32",
+        adarms=[False, True],
+        use_gradient_checkpointing=False,
+    )
+    policy.llm.embedder = gemma.Embedder(vocab_size=32, embed_dim=32)
+    policy.img = SigLIPViT(variant="mu/32", pool_type="none", num_classes=32)
+    torch.nn.init.normal_(policy.img.head.weight, std=0.02)
+    policy.action_in_proj = torch.nn.Linear(8, 32)
+    policy.action_out_proj = torch.nn.Linear(32, 8)
+    policy.time_mlp_in = torch.nn.Linear(32, 32)
+    policy.time_mlp_out = torch.nn.Linear(32, 32)
+    policy._init_rlinf_runtime(
+        num_steps=2,
+        action_env_dim=8,
+        action_chunk=3,
+        config_name="pi05_libero",
+        state_indices=None,
+        rlt_cfg=None,
+    )
+    policy.eval()
+    try:
+        yield policy, config
+    finally:
+        policy.release_cuda_graph()
+        utils.set_torch_compile(compiled)
+
+
+def _openpi_graph_observation(config, device, batch=2):
+    from torch.utils._pytree import tree_map
+
+    observation = config.fake_obs(batch_size=batch)
+    return dataclasses.replace(
+        observation,
+        **{
+            field.name: tree_map(
+                lambda value: (
+                    value.to(device).clone()
+                    if isinstance(value, torch.Tensor)
+                    else value
+                ),
+                getattr(observation, field.name),
+            )
+            for field in dataclasses.fields(observation)
+        },
+    )
+
+
+def test_openpi_eval_graph_standard_api_preserves_cpu_autograd(tiny_openpi_eval_graph):
+    from rlinf.models.embodiment.openpi.modules.utils import set_torch_compile
+
+    policy, config = tiny_openpi_eval_graph
+    observation = config.fake_obs(batch_size=2)
+    noise = torch.randn(2, 3, 8, requires_grad=True)
+    expected = policy.sample_actions(observation, num_steps=2, noise=noise)
+    policy.capture_cuda_graph(train_batch_size=32, eval_batch_size=2)
+    actual = policy.sample_actions(observation, num_steps=2, noise=noise)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    actual.sum().backward()
+    assert noise.grad is not None
+    assert policy._eval_cuda_graph_enabled and policy._eval_cuda_graph is None
+    policy.release_cuda_graph()
+    policy.release_cuda_graph()
+    assert not policy._eval_cuda_graph_enabled
+    set_torch_compile(True)
+    policy.capture_cuda_graph(train_batch_size=0, eval_batch_size=2)
+    assert policy._eval_cuda_graph_enabled
+
+
+@pytest.mark.parametrize("field", ["pytorch_numerics", "short_memory"])
+def test_openpi_eval_graph_rejects_unsupported_modes(tiny_openpi_eval_graph, field):
+    policy, config = tiny_openpi_eval_graph
+    policy._config = dataclasses.replace(config, **{field: True})
+    with pytest.raises(ValueError, match=field):
+        policy.capture_cuda_graph(train_batch_size=0, eval_batch_size=2)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_openpi_eval_graph_replays_dynamic_inputs_and_recaptures(
+    tiny_openpi_eval_graph,
+):
+    from rlinf.models.embodiment.openpi.modules.utils import set_torch_compile
+
+    set_torch_compile(True)
+    policy, config = tiny_openpi_eval_graph
+    policy.cuda()
+    reference = copy.deepcopy(policy)
+    observation = _openpi_graph_observation(config, policy.device)
+    noise = torch.randn(2, 3, 8, device=policy.device)
+    policy.capture_cuda_graph(train_batch_size=32, eval_batch_size=2)
+    with torch.no_grad():
+        first = policy.sample_actions(observation, num_steps=2, noise=noise)
+        graph = policy._eval_cuda_graph.manager["sample"].graph
+        changed = _openpi_graph_observation(config, policy.device)
+        changed.images["base_0_rgb"].fill_(-0.5)
+        changed.tokenized_prompt.fill_(2)
+        changed.tokenized_prompt_mask[:, -1] = False
+        next_noise = torch.randn_like(noise)
+        actual = policy.sample_actions(changed, num_steps=2, noise=next_noise)
+        expected = reference.sample_actions(changed, num_steps=2, noise=next_noise)
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        assert policy._eval_cuda_graph.manager["sample"].graph is graph
+        assert not torch.equal(first, actual)
+
+        smaller = _openpi_graph_observation(config, policy.device, batch=1)
+        actual = policy.sample_actions(smaller, num_steps=3, noise=noise[:1])
+        expected = reference.sample_actions(smaller, num_steps=3, noise=noise[:1])
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        assert policy._eval_cuda_graph.manager["sample"].graph is not graph
+
+        graph = policy._eval_cuda_graph.manager["sample"].graph
+        reference.action_out_proj.bias.add_(0.1)
+        policy.load_state_dict(reference.state_dict())
+        actual = policy.sample_actions(smaller, num_steps=3, noise=noise[:1])
+        expected = reference.sample_actions(smaller, num_steps=3, noise=noise[:1])
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        assert policy._eval_cuda_graph.manager["sample"].graph is graph
+
+        policy.release_cuda_graph()
+        policy.load_state_dict(reference.state_dict(), assign=True)
+        policy.cpu().cuda()
+        policy.capture_cuda_graph(train_batch_size=32, eval_batch_size=2)
+        actual = policy.sample_actions(observation, num_steps=2, noise=noise)
+        expected = reference.sample_actions(observation, num_steps=2, noise=noise)
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_openpi_eval_graph_gemm_autotune_runs_before_capture_and_only_on_recapture(
+    tiny_openpi_eval_graph, monkeypatch
+):
+    if torch.version.cuda is None or torch.cuda.get_device_capability() not in {
+        (10, 0),
+        (10, 3),
+        (12, 0),
+        (12, 1),
+    }:
+        pytest.skip("requires NVFP4 GEMM CUDA")
+    flashinfer = pytest.importorskip("flashinfer")
+    from rlinf.quantization.runtime import configure_quantized_policy
+
+    tensor = {
+        "format": "nvfp4",
+        "granularity": "per_block",
+        "axis": "input",
+        "block_size": 16,
+    }
+    cfg = {
+        "qat": {"enabled": True, "weight": tensor, "activation": tensor},
+        "runner": {"task_type": "embodied"},
+        "algorithm": {
+            "loss_type": "decoupled_actor_critic",
+            "logprob_type": "chunk_level",
+        },
+        "actor": {
+            "training_backend": "fsdp",
+            "model": {
+                "model_type": "openpi",
+                "num_steps": 2,
+                "num_action_chunks": 3,
+                "action_dim": 8,
+                "openpi": {
+                    "task": "rl",
+                    "torch_compile": False,
+                    "config_name": "pi05_libero",
+                    "model_action_dim": 8,
+                    "action_horizon": 3,
+                },
+            },
+        },
+        "rollout": {"generation_backend": "huggingface"},
+        "weight_syncer": {"type": "bucket"},
+    }
+    policy, config = tiny_openpi_eval_graph
+    policy.cuda().requires_grad_(False)
+    reference = copy.deepcopy(policy)
+    runtime = configure_quantized_policy(policy, cfg, "rollout", policy.device)
+    reference_runtime = configure_quantized_policy(
+        reference, cfg, "rollout", policy.device
+    )
+    observation = _openpi_graph_observation(config, policy.device)
+    noise = torch.randn(2, 3, 8, device=policy.device)
+    original_autotune, original_mm = flashinfer.autotune, flashinfer.mm_fp4
+    tuning = False
+    contexts, calls = [], []
+
+    @contextmanager
+    def observe_autotune(enabled, *args, **kwargs):
+        nonlocal tuning
+        capturing = torch.cuda.is_current_stream_capturing()
+        assert not capturing
+        contexts.append(enabled)
+        with original_autotune(enabled, *args, **kwargs):
+            tuning = enabled
+            try:
+                yield
+            finally:
+                tuning = False
+
+    def observe_mm(*args, **kwargs):
+        assert kwargs["backend"] == "cutlass"
+        calls.append((tuning, torch.cuda.is_current_stream_capturing()))
+        return original_mm(*args, **kwargs)
+
+    monkeypatch.setattr(flashinfer, "autotune", observe_autotune)
+    monkeypatch.setattr(flashinfer, "mm_fp4", observe_mm)
+    policy.capture_cuda_graph(train_batch_size=0, eval_batch_size=2)
+    with torch.no_grad():
+        first = policy.sample_actions(observation, num_steps=2, noise=noise)
+        expected = reference.sample_actions(observation, num_steps=2, noise=noise)
+        torch.testing.assert_close(first, expected, rtol=0, atol=0)
+        graph = policy._eval_cuda_graph.manager["sample"].graph
+        assert contexts == [True]
+        addresses = tuple(buffer.data_ptr() for buffer in policy.buffers())
+        reference.action_out_proj.weight[0, 0].add_(0.5)
+        reference.action_out_proj.bias.add_(0.1)
+        policy.load_state_dict(reference.state_dict())
+        runtime.load_weights(1)
+        reference_runtime.load_weights(1)
+        assert tuple(buffer.data_ptr() for buffer in policy.buffers()) == addresses
+        actual = policy.sample_actions(observation, num_steps=2, noise=noise)
+        expected = reference.sample_actions(observation, num_steps=2, noise=noise)
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        assert not torch.equal(actual, first)
+        assert policy._eval_cuda_graph.manager["sample"].graph is graph
+        assert contexts == [True]
+
+        smaller = _openpi_graph_observation(config, policy.device, batch=1)
+        actual = policy.sample_actions(smaller, num_steps=3, noise=noise[:1])
+        expected = reference.sample_actions(smaller, num_steps=3, noise=noise[:1])
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        assert policy._eval_cuda_graph.manager["sample"].graph is not graph
+        assert contexts == [True, True]
+    assert (True, False) in calls and (False, True) in calls
+    assert (True, True) not in calls
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_openpi_eval_graph_generates_noise_outside_capture(tiny_openpi_eval_graph):
+    policy, config = tiny_openpi_eval_graph
+    policy.cuda()
+    reference = copy.deepcopy(policy)
+    observation = _openpi_graph_observation(config, policy.device)
+    actual_rng = torch.Generator(device=policy.device).manual_seed(123)
+    expected_rng = torch.Generator(device=policy.device).manual_seed(123)
+    policy.capture_cuda_graph(train_batch_size=0, eval_batch_size=2)
+    with torch.no_grad():
+        for _ in range(2):
+            actual = policy.sample_actions(observation, num_steps=2, rng=actual_rng)
+            expected = reference.sample_actions(
+                observation, num_steps=2, rng=expected_rng
+            )
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    assert torch.equal(actual_rng.get_state(), expected_rng.get_state())
+    noise = torch.randn(2, 3, 8, device=policy.device, requires_grad=True)
+    policy.sample_actions(observation, num_steps=2, noise=noise).sum().backward()
+    assert noise.grad is not None and torch.isfinite(noise.grad).all()
 
 
 @pytest.mark.parametrize("num_frames", [3, 8])

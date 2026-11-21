@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from typing import Literal
 
@@ -55,6 +56,10 @@ class QuantizationBackend(ABC):
         ):
             raise ValueError("block_size must be a positive integer")
         self.block_size = block_size
+
+    def autotune(self) -> AbstractContextManager[None]:
+        """Return an eager tuning context, with no work for untuned backends."""
+        return nullcontext()
 
     @abstractmethod
     def quantize(

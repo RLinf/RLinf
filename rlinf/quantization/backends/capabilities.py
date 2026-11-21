@@ -58,9 +58,9 @@ def probe_cuda_nvfp4_capability(device: torch.device | str | int) -> BackendCapa
         major, minor = torch.cuda.get_device_capability(device)
         if (major, minor) not in {(10, 0), (10, 3), (12, 0), (12, 1)}:
             raise ValueError("NVFP4 CUTLASS runtime requires SM100/SM120-family CUDA")
-        from rlinf.quantization.kernels.nvfp4 import _flashinfer
 
-        flashinfer = _flashinfer()
+        import flashinfer
+
         if flashinfer.__version__ != "0.7.1":
             raise RuntimeError(
                 f"NVFP4 requires FlashInfer 0.7.1, found {flashinfer.__version__}"

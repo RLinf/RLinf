@@ -194,6 +194,24 @@ def _nvfp4_training_config():
     return cfg
 
 
+def test_nvfp4_runtime_config_accepts_eval_cuda_graph():
+    cfg = _nvfp4_training_config()
+    cfg.runner.val_check_interval = 1
+    cfg.rollout.enable_cuda_graph = True
+    assert validate_qat_config(cfg).enabled
+    cfg.actor.model.openpi.torch_compile = True
+    with pytest.raises(ValueError, match="torch_compile=False"):
+        validate_qat_config(cfg)
+
+
+def test_nvfp4_eval_cuda_graph_requires_periodic_evaluation():
+    cfg = _nvfp4_training_config()
+    cfg.runner.val_check_interval = 0
+    cfg.rollout.enable_cuda_graph = True
+    with pytest.raises(ValueError, match="val_check_interval"):
+        validate_qat_config(cfg)
+
+
 def test_runtime_disabled_does_not_import_optional_quantization_dependencies():
     script = """
 import builtins
@@ -345,7 +363,7 @@ def test_runtime_config_rejects_different_sampling_or_preprocessing_contract(
         validate_qat_config(cfg)
 
 
-def _weight_runtime():
+def _weight_runtime(model_factory=nn.Module):
     from rlinf.quantization.config import (
         parse_quantization_spec,
         resolve_quantization_profile,
@@ -356,15 +374,13 @@ def _weight_runtime():
     backend = CpuInt8Backend()
     spec = parse_quantization_spec(_training_config().qat)
     profile = resolve_quantization_profile(spec, ["projection"], backend.probe("cpu"))
-    model = nn.Module()
+    model = model_factory()
     model.first = QuantizedWeight(backend)
     model.second = QuantizedWeight(CpuInt8Backend())
     fail = [None]
 
     def load(model):
         assert runtime.version is None
-        with pytest.raises(RuntimeError, match="not ready"):
-            runtime.assert_ready()
         for index, weight in enumerate((model.first, model.second)):
             if fail[0] == "incomplete" and index == 1:
                 continue
@@ -373,7 +389,7 @@ def _weight_runtime():
             if fail[0] == "packing" and index == 0:
                 raise RuntimeError("device packing failed")
 
-    runtime = QuantizedPolicyRuntime(model, profile, "rollout", load)
+    runtime = QuantizedPolicyRuntime(model, profile, "rollout", load, backend=backend)
     return model, runtime, fail
 
 
@@ -390,10 +406,8 @@ def test_runtime_publishes_complete_versions_and_invalidates_on_failure(
     failure, error, match
 ):
     model, runtime, fail = _weight_runtime()
-    with pytest.raises(RuntimeError, match="not ready"):
-        runtime.assert_ready()
+    assert runtime.version is None
     runtime.load_weights(4)
-    runtime.assert_ready()
     assert runtime.version == 4
 
     if failure in ("packing", "incomplete"):
@@ -404,19 +418,14 @@ def test_runtime_publishes_complete_versions_and_invalidates_on_failure(
         runtime.load_weights(True if failure == "version" else 5)
     assert runtime.version is None
     assert not model.first.is_loaded and not model.second.is_loaded
-    with pytest.raises(RuntimeError, match="not ready"):
-        runtime.assert_ready()
 
     fail[0] = None
     model.second.backend.block_size = 128
     runtime.load_weights(5)
-    runtime.assert_ready()
     assert runtime.version == 5
     runtime.invalidate()
     assert runtime.version is None
     assert not model.first.is_loaded and not model.second.is_loaded
-    with pytest.raises(RuntimeError, match="not ready"):
-        runtime.assert_ready()
 
 
 @pytest.mark.parametrize("output_dtype", [None, torch.float32])
@@ -571,7 +580,7 @@ def test_qat_actor_sync_preserves_selected_parameters(monkeypatch, syncer_type):
         assert any("action" in bucket for bucket in buckets)
 
 
-def test_hf_sync_blocks_sampling_during_transfer_and_publishes_only_after_pack():
+def test_hf_sync_propagates_failure_and_publishes_only_after_pack():
     from rlinf.hybrid_engines.weight_syncer import BucketWeightSyncer
     from rlinf.hybrid_engines.weight_syncer.bucket_syncer import (
         iter_named_tensor_buckets,
@@ -601,14 +610,12 @@ def test_hf_sync_blocks_sampling_during_transfer_and_publishes_only_after_pack()
 
     class Transfer:
         async def async_wait(self):
-            with pytest.raises(RuntimeError, match="not ready"):
-                predict(worker, {})
+            assert runtime.version is None
             await asyncio.sleep(0)
             return payloads.pop(0)
 
     worker.broadcast = lambda *args, **kwargs: Transfer()
     sync = inspect.unwrap(MultiStepRolloutWorker.sync_model_from_actor)
-    predict = inspect.unwrap(MultiStepRolloutWorker.predict)
 
     def apply(version, value):
         payloads.extend(
@@ -623,7 +630,6 @@ def test_hf_sync_blocks_sampling_during_transfer_and_publishes_only_after_pack()
 
     apply(1, 2.0)
     assert worker.version == runtime.version == 1
-    runtime.assert_ready()
     assert model.master.item() == 2.0
     fail[0] = "packing"
     with pytest.raises(RuntimeError, match="device packing failed"):
@@ -631,12 +637,9 @@ def test_hf_sync_blocks_sampling_during_transfer_and_publishes_only_after_pack()
     assert model.master.item() == 3.0
     assert worker.version == 1
     assert runtime.version is None
-    with pytest.raises(RuntimeError, match="not ready"):
-        predict(worker, {})
     fail[0] = None
     apply(3, 4.0)
     assert worker.version == runtime.version == 3
-    runtime.assert_ready()
 
 
 @pytest.mark.parametrize("mode,expected", [("off", 1.0), ("importance_sampling", 0.9)])
@@ -824,7 +827,6 @@ def test_runtime_cuda_actor_rollout_share_manifest_and_pack_initial_version(
             for key, value in parameters.items()
         )
         assert model.action_out_proj.backend.quantization_format == quantization_format
-    rollout_runtime.assert_ready()
     weights = [
         module for module in rollout.modules() if isinstance(module, QuantizedWeight)
     ]
@@ -837,10 +839,7 @@ def test_runtime_cuda_actor_rollout_share_manifest_and_pack_initial_version(
     with torch.no_grad():
         rollout.action_out_proj.weight.mul_(2)
     rollout_runtime.invalidate()
-    with pytest.raises(RuntimeError, match="not ready"):
-        rollout_runtime.assert_ready()
     rollout_runtime.load_weights(1)
-    rollout_runtime.assert_ready()
     after = rollout.action_out_proj(
         torch.ones((2, 4), device="cuda", dtype=torch.bfloat16)
     )

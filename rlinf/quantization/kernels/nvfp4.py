@@ -21,12 +21,6 @@ import torch
 from rlinf.quantization.backends.base import _FLOAT_DTYPES, QuantizedTensor
 
 
-def _flashinfer():
-    import flashinfer
-
-    return flashinfer
-
-
 def _validate_native_tensor(value: QuantizedTensor) -> None:
     """Check actual tensor storage once at the native GEMM boundary."""
     if value.format != "nvfp4" or value.storage != "native":
@@ -113,11 +107,15 @@ def nvfp4_gemm(
     ):
         raise ValueError("NVFP4 GEMM bias must be floating [N] on the output device")
     alpha = activation.global_scale * weight.global_scale
-    flashinfer = _flashinfer()
+    # SM100 CUTLASS requires N to retain 32-element alignment.
+    gemm_n = ((n + 31) // 32) * 32
+
+    import flashinfer
+
     with torch.cuda.device(device):
         result = flashinfer.mm_fp4(
-            activation.data,
-            weight.data.T,
+            activation.data[:m],
+            weight.data[:gemm_n].T,
             activation.scales,
             weight.scales.T,
             alpha=alpha,

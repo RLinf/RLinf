@@ -22,7 +22,7 @@ from typing import Any, Literal
 import torch
 from torch import nn
 
-from rlinf.quantization.backends import create_quantization_backend
+from rlinf.quantization.backends import QuantizationBackend, create_quantization_backend
 from rlinf.quantization.config import (
     ResolvedProfile,
     resolve_quantization_profile,
@@ -33,7 +33,7 @@ from rlinf.quantization.registry import get_quantization_model
 
 
 class QuantizedPolicyRuntime:
-    """Own model readiness and publish one version after every weight loads."""
+    """Publish a policy version after all quantized weights finish loading."""
 
     def __init__(
         self,
@@ -41,13 +41,15 @@ class QuantizedPolicyRuntime:
         profile: ResolvedProfile,
         stage: Literal["actor", "rollout"],
         load_rollout_weights: Callable[..., None],
+        *,
+        backend: QuantizationBackend,
     ) -> None:
         self.model = model
         self.profile = profile
         self.profile_hash = profile.config_hash
         self.stage = stage
+        self.backend = backend
         self._load_rollout_weights = load_rollout_weights
-        self._ready = False
         self.version: int | None = None
         self._quantized_weights: tuple[QuantizedWeight, ...] = ()
 
@@ -59,7 +61,6 @@ class QuantizedPolicyRuntime:
 
     def invalidate(self) -> None:
         """Withdraw the model version and every exposed quantized weight value."""
-        self._ready = False
         self.version = None
         self._quantized_weights = tuple(
             module
@@ -68,8 +69,6 @@ class QuantizedPolicyRuntime:
         )
         for weight in self._quantized_weights:
             weight.clear()
-        self.model._quantization_weight_version = None
-        self.model._quantization_profile_hash = None
 
     def load_weights(self, version: int) -> None:
         """Rebuild all derived weights and publish only after complete success."""
@@ -91,17 +90,9 @@ class QuantizedPolicyRuntime:
                     if not weight.is_loaded:
                         raise RuntimeError("quantized weights are not loaded")
             self.version = version
-            self.model._quantization_profile_hash = self.profile_hash
-            self.model._quantization_weight_version = version
-            self._ready = True
         except BaseException:
             self.invalidate()
             raise
-
-    def assert_ready(self) -> None:
-        """Check whether the complete model version is ready for sampling."""
-        if not self._ready:
-            raise RuntimeError("quantization runtime is not ready for sampling")
 
 
 def configure_quantized_policy(
@@ -152,7 +143,7 @@ def configure_quantized_policy(
             "quantization adapter changed master parameter identity or checkpoint keys"
         )
     runtime = QuantizedPolicyRuntime(
-        model, profile, stage, adapter.load_rollout_weights
+        model, profile, stage, adapter.load_rollout_weights, backend=backend
     )
     model._quantization_runtime = runtime
     runtime.load_weights(0)

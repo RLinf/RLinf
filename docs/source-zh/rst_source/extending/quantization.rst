@@ -25,6 +25,8 @@
      - 返回去除 padding 的逻辑 FP32 张量。logical/native 存储标记明确区分逐元素编码与原生打包布局。
    * - ``gemm(activation, weight, bias=None, output_dtype=...)``
      - 使用相容的原生低比特矩阵，在支持的硬件上计算，保持配方要求的输出舍入与 bias 顺序。
+   * - ``autotune()``
+     - 返回 eager 调优上下文，默认不做额外操作。NVFP4 用 FlashInfer 选择 CUTLASS 策略。图捕获前需退出此上下文。
    * - ``fake_quantize(values, role="weight")``
      - 完成 QDQ 和 STE；格式需要特殊 STE 前向或融合路径时覆盖此方法。
    * - ``fake_linear(input, weight, bias=None, weight_dtype=None)``
@@ -54,6 +56,10 @@ NVFP4 覆盖两个 fake 方法，保留融合 BF16 QDQ、Passthrough STE，以�
 QuantizedTensor 是一次数值操作返回的值；QuantizedWeight 是长期持有这些派生 buffers 的 Module。调用 QuantizedWeight.load_weights(master_weight) 从当前浮点权重刷新 buffers；value 每次从当前 buffers 构造 QuantizedTensor 视图。clear() 使值不可用，同时保留分配供后续刷新复用。设备/类型变换与 checkpoint 加载也会使值不可用，下一次同步重新生成量化权重。
 
 普通 Linear 使用 QuantizedLinear.load_weights() 刷新派生权重，再通过 forward 计算。函数式 FFN、QKV 或 patch 适配器直接持有 QuantizedWeight，并复用 ``rlinf/quantization/layers/linear.py`` 中的 quantized_linear 组织计算。
+
+Pi0 选择 eager 采样或图回放，用 capture_cuda_graph() 和 release_cuda_graph() 管理图的生命周期。仅在 needs_capture() 判定需要新图时，Pi0 才清理旧图、准备 policy 并调用 capture()。对于量化 policy，这一步准备是在 runtime.backend.autotune() 内，用实际观测和显式噪声执行 _sample_actions_eager()。每次符合条件的采样调用 replay()。EvalCudaGraph 管理静态输入、捕获和回放，量化准备由 Pi0 负责。
+
+迁移设备、转换 dtype 或用 load_state_dict(assign=True) 替换参数前，先调用 release_cuda_graph()，变更后调用 capture_cuda_graph()。rollout worker 的卸载和重载流程遵循这个顺序。
 
 FakeQuantLinear 和 QuantizedLinear 共用 BaseQuantizedLinear 的初始化与 from_linear 转换逻辑，复用原 Parameter、checkpoint 键、训练状态和 FSDP 包装标记。两种前向计算分别由对应子类实现。
 
@@ -133,7 +139,7 @@ register() 使用标准库 cache 保证同一进程只注册一次，避免多�
 
 运行时根据已验证的 block_size 和 quantization_format 构造后端，将 backend 传给两个安装回调。validate_qat_config 检查完整配方和 actor/rollout 配置一致性，后端创建时检查 block_size 不变量。目标发现和投影工厂检查模型结构，安装阶段同步使用已解析清单。适配器完成替换后刷新模型的 FSDP 包装标记。
 
-QuantizedPolicyRuntime 统一持有模型的版本、配方指纹和就绪状态。每次 load_weights(version) 先撤下已发布版本并清空各 QuantizedWeight 的可用标记，再调用模型加载回调。全部权重加载成功且后端配方匹配后，才发布新版本；加载失败或遗漏一层都会使整个模型不可采样。QuantizedWeight 只保留自身派生值是否可用的信息。采样入口只检查整体就绪状态，各 GEMM 在访问 QuantizedWeight 时检查自身派生值是否可用。
+QuantizedPolicyRuntime 持有模型版本和 profile hash。每次 load_weights(version) 先撤销已发布版本，使所有 QuantizedWeight 的派生值不可用，再调用模型权重加载器。所有权重加载完成且后端配方一致后，运行时才发布新版本。每个 QuantizedWeight 在加载完成后公开派生值。
 
 公开数值入口检查实际张量的设备、形状与布局，私有 kernel 启动函数复用这些已验证的数据。NVFP4 GEMM 负责输入与输出参数检查，私有 epilogue 复用这项契约。后端初始化检查 GPU 架构和依赖版本；量化、打包和 GEMM 的数值对照放在测试中。
 

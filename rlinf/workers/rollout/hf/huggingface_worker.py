@@ -522,8 +522,6 @@ class MultiStepRolloutWorker(Worker):
     def predict(
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "train"
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        if self.quantization_runtime is not None:
-            self.quantization_runtime.assert_ready()
         kwargs = (
             self._train_sampling_params
             if mode == "train"

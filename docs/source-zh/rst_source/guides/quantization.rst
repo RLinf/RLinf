@@ -92,7 +92,7 @@ INT8 需要支持 BF16 的 SM80 或更新设备；NVFP4 GEMM 需要 SM100/103/12
      - 输入维 block16
      - fake quant
 
-使用 ``qat=off`` 关闭量化，得到相同实验设置下的浮点对照。需要官方 BF16 的完整设置时，选择原有 calvin_d_d_ppo_openpi_pi05 配置。当前 QAT 实验明确使用同步 FSDP1/HF，关闭 compile、CUDA Graph、AMP 和 offload；这些是本实现的运行条件，不能当成 QAT 的普遍要求。
+使用 ``qat=off`` 关闭量化，得到相同实验设置下的浮点对照。需要官方 BF16 的完整设置时，选择原有 calvin_d_d_ppo_openpi_pi05 配置。QAT 实验使用同步 FSDP1/HF，关闭 compile、AMP 和 offload。NVFP4 验证可选开启 CUDA Graph。这些是本实现的运行条件，不能当成 QAT 的普遍要求。
 
 两种配方的权重和激活均沿输入维度分块，使用动态 scale 和 nearest_even 舍入，中点取相邻偶数编码。INT8 的每块 scale 在 FP32 中按 max(amax × (1/127), 1e-12) 计算。actor 始终使用伪量化前向，rollout 根据格式选择真实低比特 GEMM；内部数值配方标识和版本由配置推导并记入 hash，用于同步核验。
 
@@ -134,6 +134,25 @@ INT8 需要支持 BF16 的 SM80 或更新设备；NVFP4 GEMM 需要 SM100/103/12
      --cfg job --resolve
 
 确认后去掉 ``--cfg job --resolve`` 启动训练。示例沿用官方 D→D 设置：64 个环境、8 次 rollout、4 遍 PPO；默认冻结 VLM、训练 action/value，但量化覆盖视觉、语言和 action 投影。embedding、norm、softmax 和注意力分数矩阵乘法保留原实现。NVFP4 的 global scale 跨整个逻辑投影矩阵计算，batch 内其它样本可能影响量化，因此对照实验应保持批量与 placement 相同。
+
+启用验证阶段的 CUDA Graph
+--------------------------
+
+在训练命令后增加以下覆盖，可为 NVFP4 的定期验证开启 CUDA Graph。BF16 对照使用相同覆盖，并选择 ``qat=off``\ 。
+
+.. code-block:: text
+
+   rollout.enable_cuda_graph=true runner.val_check_interval=10
+
+图捕获 GPU 观测预处理、视觉与语言前缀计算，以及完整的动作去噪循环。环境输入和输出 transform 保留在图外。actor 更新与 Pi0RL 的训练 rollout 采样继续沿用原执行路径。这里的 BF16/NVFP4 对照采用双方关闭 compile 和 offload 的设置。关闭 compile 仍是当前 QAT 的要求，并非 BF16 CUDA Graph 通用接口的要求。
+
+首次验证批次负责准备图，性能统计应在捕获完成后开始。每次调用都会把新观测和采样噪声复制到静态输入缓冲区。输入布局或采样步数改变后需要重新捕获。权重同步会原地更新已有缓冲区，图直接使用更新后的值。迁移设备、转换 dtype 或替换参数前，先释放图，变更后重新捕获。rollout worker 的卸载和重载流程遵循这个顺序。
+
+NVFP4 在捕获新图前选择 CUTLASS GEMM 策略。FlashInfer 在 worker 进程内复用已有策略，为缓存未覆盖的形状调优。调优在捕获前结束，图回放直接复用选定策略。调优、预热和捕获耗时不计入热态推理时间。
+
+.. note::
+
+   图会持有 GPU 缓冲区，验证阶段的显存占用随之增加。当前 QAT 配置不支持 INT8 验证图或 actor 图。
 
 先验证一轮数据通路
 ------------------
@@ -188,4 +207,4 @@ INT8 使用 [-128,127]、中点取偶数舍入和 1e-12 scale 下限；NVFP4 使
 
 其它模型通过 :doc:`量化模型扩展 <../extending/quantization>` 的单次注册接入。当前已适配 OpenPI π0.5；自定义模型还需实现可重放的采样评分事件。
 
-当前门槛拒绝 FSDP 命名精度规则、独立 only_eval、异步/RTC、LoRA、compile、CUDA Graph 和可训练 sigma。QAT 也不支持 ``openpi.short_memory=true`` 和 ``openpi.pytorch_numerics=true``；两项默认均为 false，不影响默认 CALVIN 配置。RLinf 提供通用 CUDA Graph 管理器；当前主线 OpenPI policy 的采样器尚未实现该接口。实验分支已验证的 eval 采样器 Graph 接线需单独集成，也不能直接当成训练采样和反向已支持。预设描述 RLinf 数值规则，不代表 ApxInf 或 ModelOpt checkpoint 兼容。记录展开配置、Git SHA、依赖、模型/normalization 指纹与原始结果，才能区分环境、训练与量化导致的差异。
+当前 QAT 校验拒绝 FSDP 命名精度规则、独立 only_eval、异步/RTC、LoRA、compile、actor CUDA Graph 和可训练 sigma。QAT 也不支持 ``openpi.short_memory=true`` 和 ``openpi.pytorch_numerics=true``；两项默认均为 false，不影响默认 CALVIN 配置。NVFP4 可在 runner.val_check_interval 为正整数时开启定期验证的 CUDA Graph。预设描述 RLinf 数值规则，不代表 ApxInf 或 ModelOpt checkpoint 兼容。记录展开配置、Git SHA、依赖、模型/normalization 指纹与原始结果，才能区分环境、训练与量化导致的差异。

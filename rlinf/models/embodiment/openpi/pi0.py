@@ -30,6 +30,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from rlinf.models.embodiment.base_policy import ForwardType
+from rlinf.models.embodiment.openpi.cuda_graph import EvalCudaGraph
 from rlinf.models.embodiment.openpi.modules import gemma, model, pointnet, siglip
 from rlinf.models.embodiment.openpi.modules.utils import _str_to_dtype
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
@@ -108,6 +109,8 @@ class Pi0(model.BaseModel):
         self.pcd = config.pcd
         self.embed_dtype = _str_to_dtype(config.dtype)
         self._config = config
+        self._eval_cuda_graph_enabled = False
+        self._eval_cuda_graph = None
 
         paligemma_config = gemma.get_config(config.paligemma_variant)
         action_expert_config = gemma.get_config(config.action_expert_variant)
@@ -213,7 +216,6 @@ class Pi0(model.BaseModel):
         """
         tokens = []
         input_mask = []
-        ar_mask = []
 
         # Embed images through SigLIP in IMAGE_KEYS order (not dict iteration
         # order). Official OpenPI preprocess rebuilds cameras this way, then
@@ -254,14 +256,12 @@ class Pi0(model.BaseModel):
             input_mask.append(
                 einops.repeat(image_mask, "b -> b s", s=image_tokens.shape[1])
             )
-            ar_mask += [False] * image_tokens.shape[1]
 
         # Add language tokens
         if obs.tokenized_prompt is not None:
             tokenized_inputs = self.llm.embed(obs.tokenized_prompt)
             tokens.append(tokenized_inputs)
             input_mask.append(obs.tokenized_prompt_mask)
-            ar_mask += [False] * tokenized_inputs.shape[1]
 
         # Add point cloud tokens
         if self.pcd and obs.pcd_xyz is not None:
@@ -280,11 +280,10 @@ class Pi0(model.BaseModel):
                     pcd_tokens.shape[:2], dtype=torch.bool, device=pcd_tokens.device
                 )
             )
-            ar_mask += [False] * pcd_tokens.shape[1]
 
         tokens = torch.cat(tokens, dim=1)
         input_mask = torch.cat(input_mask, dim=1)
-        ar_mask = torch.tensor(ar_mask, device=tokens.device)
+        ar_mask = torch.zeros(tokens.shape[1], dtype=torch.bool, device=tokens.device)
         return tokens, input_mask, ar_mask
 
     def embed_suffix(
@@ -366,14 +365,10 @@ class Pi0(model.BaseModel):
         tokens = torch.cat(tokens, dim=1)
         input_mask = torch.cat(input_mask, dim=1)
 
-        # Build ar_mask with correct length matching input_mask.shape[1]
-        ar_mask = torch.zeros(
-            input_mask.shape[1], dtype=torch.bool, device=tokens.device
+        num_ar_tokens = 1 if self.pi05 else 2
+        ar_mask = (
+            torch.arange(input_mask.shape[1], device=tokens.device) < num_ar_tokens
         )
-        if not self.pi05:
-            ar_mask[:2] = True
-        else:
-            ar_mask[0] = True
 
         return tokens, input_mask, ar_mask, adarms_cond
 
@@ -560,7 +555,67 @@ class Pi0(model.BaseModel):
             if any(selector in name for selector in params_to_keep_float32):
                 param.data = param.data.to(dtype=torch.float32)
 
+    def capture_cuda_graph(self, train_batch_size: int, eval_batch_size: int) -> None:
+        """Enable lazy eval capture after model setup or an explicit release."""
+        if self._config.pytorch_numerics:
+            raise ValueError(
+                "Pi0 eval CUDA Graph does not support pytorch_numerics=True"
+            )
+        if self._config.short_memory:
+            raise ValueError("Pi0 eval CUDA Graph does not support short_memory=True")
+        self.release_cuda_graph()
+        self._eval_cuda_graph_enabled = True
+
+    def release_cuda_graph(self) -> None:
+        """Release before moving the model or replacing parameter storage."""
+        if self._eval_cuda_graph is not None:
+            self._eval_cuda_graph.clear()
+            self._eval_cuda_graph = None
+        self._eval_cuda_graph_enabled = False
+
     def sample_actions(
+        self,
+        observation: model.Observation,
+        *,
+        num_steps: int = 10,
+        noise: torch.Tensor | None = None,
+        rng: torch.Generator | None = None,
+    ) -> torch.Tensor:
+        if (
+            not self._eval_cuda_graph_enabled
+            or self.training
+            or torch.is_grad_enabled()
+            or self.device.type != "cuda"
+        ):
+            return self._sample_actions_eager(
+                observation, num_steps=num_steps, noise=noise, rng=rng
+            )
+        if noise is None:
+            noise = torch.randn(
+                observation.state.shape[0],
+                self.action_horizon,
+                self.action_dim,
+                device=observation.state.device,
+                generator=rng,
+            )
+        if self._eval_cuda_graph is None:
+            self._eval_cuda_graph = EvalCudaGraph(
+                device=self.device,
+                sampler=self._sample_actions_eager,
+            )
+        graph = self._eval_cuda_graph
+        if graph.needs_capture(observation, noise, num_steps):
+            graph.clear()
+            runtime = getattr(self, "_quantization_runtime", None)
+            if runtime is not None:
+                with runtime.backend.autotune():
+                    self._sample_actions_eager(
+                        observation, num_steps=num_steps, noise=noise
+                    )
+            graph.capture(observation, noise, num_steps)
+        return graph.replay(observation, noise)
+
+    def _sample_actions_eager(
         self,
         observation: model.Observation,
         *,

@@ -291,7 +291,14 @@ def validate_qat_config(cfg: Mapping) -> QuantizationSpec:
         for field in ("enable_offload", "enable_torch_compile"):
             _reject_enabled(values, field, scope)
     _reject_enabled(actor, "enable_cuda_graph", "actor")
-    _reject_enabled(rollout, "enable_cuda_graph", "rollout")
+    if rollout.get("enable_cuda_graph", False):
+        if not _is_nvfp4_recipe(spec):
+            raise ValueError("rollout.enable_cuda_graph requires NVFP4 quantization")
+        interval = runner.get("val_check_interval")
+        if isinstance(interval, bool) or not isinstance(interval, int) or interval <= 0:
+            raise ValueError(
+                "rollout.enable_cuda_graph requires a positive runner.val_check_interval"
+            )
     _reject_enabled(actor, "sync_weight_no_wait", "actor")
     _reject_enabled(actor.get("fsdp_config") or {}, "cpu_offload", "actor.fsdp_config")
     fsdp = actor.get("fsdp_config") or {}

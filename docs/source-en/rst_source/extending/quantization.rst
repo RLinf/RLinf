@@ -25,6 +25,8 @@ Inherit QuantizationBackend from ``rlinf/quantization/backends/base.py``. Implem
      - Return logical FP32 values, excluding padding. logical/native storage identifies unpacked codes versus native packed layouts explicitly.
    * - ``gemm(activation, weight, bias=None, output_dtype=...)``
      - Compute with compatible native low-bit matrices on supported hardware, preserving the recipe's output rounding and bias order.
+   * - ``autotune()``
+     - Return an eager tuning context, with no extra work by default. NVFP4 selects CUTLASS tactics through FlashInfer. Exit this context before graph capture.
    * - ``fake_quantize(values, role="weight")``
      - Apply QDQ and STE. Override when the format needs another STE forward or a fused numerical path.
    * - ``fake_linear(input, weight, bias=None, weight_dtype=None)``
@@ -54,6 +56,10 @@ NVFP4 overrides both fake methods: it retains fused BF16 QDQ, Passthrough STE, a
 QuantizedTensor is the value returned by one numerical operation. QuantizedWeight is the Module that retains those derived buffers. Call QuantizedWeight.load_weights(master_weight) to refresh them from current floating weights; value constructs a QuantizedTensor view from current buffers. clear() makes that value unavailable while retaining allocations for the next refresh. Device/dtype transforms and checkpoint loads also withdraw the value until the next synchronization rebuilds it.
 
 For a standard Linear, call QuantizedLinear.load_weights() to refresh derived weights, then compute through forward. Functional FFN, QKV, and patch adapters hold QuantizedWeight directly and reuse quantized_linear in ``rlinf/quantization/layers/linear.py`` to organize computation.
+
+Pi0 selects eager sampling or graph replay and manages the lifecycle through capture_cuda_graph() and release_cuda_graph(). Only when needs_capture() requests a new graph does Pi0 clear the old graph, prepare the policy, and call capture(). For quantized policies, this preparation runs _sample_actions_eager() with the actual observations and explicit noise inside runtime.backend.autotune(). Each eligible call uses replay(). EvalCudaGraph manages static inputs, capture, and replay; Pi0 owns quantization preparation.
+
+Before moving the model, changing its dtype, or replacing parameters with load_state_dict(assign=True), call release_cuda_graph(); call capture_cuda_graph() after the change. The rollout worker follows this order for offload and reload.
 
 FakeQuantLinear and QuantizedLinear share initialization and from_linear conversion through BaseQuantizedLinear, preserving the original Parameters, checkpoint keys, training state, and FSDP wrapping markers. Each subclass implements its own forward computation.
 
@@ -133,7 +139,7 @@ The factory returns four callbacks through QuantizationAdapter. Shared runtime d
 
 Runtime constructs the backend from validated block_size and quantization_format, then passes backend to both install callbacks. validate_qat_config checks the full recipe and actor/rollout configuration agreement; backends check block-size invariants on creation. Discovery and projection factories check supported model structure, and installation consumes the resolved manifest synchronously. Refresh model-specific FSDP wrapping markers after replacement in the adapter.
 
-QuantizedPolicyRuntime owns the model version, profile hash, and readiness. Each load_weights(version) withdraws the published version and clears availability on every QuantizedWeight before calling the model loader. Runtime publishes the new version only after all weights load and their backend recipes match. A failed load or a skipped weight makes the whole model unavailable for sampling. QuantizedWeight tracks only whether its own derived value is available. Sampling checks model readiness once; each GEMM checks its QuantizedWeight value when accessed.
+QuantizedPolicyRuntime owns the model version and profile hash. Each load_weights(version) withdraws the published version and clears availability on every QuantizedWeight before calling the model loader. Runtime publishes the new version only after all weights load and their backend recipes match. Each QuantizedWeight exposes its derived value after loading.
 
 Public numerical entry points validate actual tensor devices, shapes, and layouts before private kernel launches. NVFP4 GEMM owns input/output argument checks; its private epilogue reuses that contract. Backend initialization checks GPU architecture and dependency versions. Validate quantization, packing, and GEMM numerics in tests.
 

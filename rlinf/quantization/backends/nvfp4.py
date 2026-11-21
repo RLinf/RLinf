@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
+from contextlib import contextmanager
+
 import torch
 import torch.nn.functional as F
 
@@ -203,6 +206,14 @@ class Nvfp4Backend(QuantizationBackend):
         if type(block_size) is not int or block_size != 16:
             raise ValueError("NVFP4 block_size must be the integer 16")
         super().__init__(block_size=block_size)
+
+    @contextmanager
+    def autotune(self) -> Generator[None, None, None]:
+        """Select CUTLASS tactics eagerly and reuse FlashInfer's process cache."""
+        import flashinfer
+
+        with flashinfer.autotune(True):
+            yield
 
     @torch.no_grad()
     def quantize(

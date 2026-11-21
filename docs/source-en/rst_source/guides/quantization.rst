@@ -92,7 +92,7 @@ Quantization rules and behavior correction live in ``examples/embodiment/config/
      - Input block16
      - Fake quant
 
-Use ``qat=off`` for a floating-point control with the same experiment settings. For the full official BF16 setup, select the existing calvin_d_d_ppo_openpi_pi05 config. The QAT experiment explicitly uses synchronous FSDP1/HF with compile, CUDA Graph, AMP, and offload disabled. These are this implementation's operating conditions, not general QAT requirements.
+Use ``qat=off`` for a floating-point control with the same experiment settings. For the full official BF16 setup, select the existing calvin_d_d_ppo_openpi_pi05 config. The QAT experiment uses synchronous FSDP1/HF with compile, AMP, and offload disabled. CUDA Graph is opt-in for NVFP4 validation. These are this implementation's operating conditions, not general QAT requirements.
 
 Both recipes use input-axis blocks for weights and activations, dynamic scales, and nearest_even rounding: halfway values round to the nearest even code. INT8 computes each scale in FP32 as max(amax × (1/127), 1e-12). The actor always uses fake quantization, while rollout selects native low-bit GEMM from the format. The runtime derives internal numerical recipe IDs and versions and includes them in the hash used for synchronization checks.
 
@@ -134,6 +134,25 @@ Expand the configuration first to check both checkpoint paths, precision, and bu
      --cfg job --resolve
 
 Remove ``--cfg job --resolve`` to launch. The example retains the official D-to-D budget of 64 environments, 8 rollout epochs, and 4 PPO epochs. The model defaults freeze the VLM and train action/value parameters; quantization covers visual, language, and action projections. Embeddings, norms, softmax, and attention-score GEMMs keep their original implementations. NVFP4 global scales span a logical projection matrix, so keep batch composition and placement fixed across comparisons.
+
+Enable CUDA Graph for Validation
+--------------------------------
+
+To capture NVFP4 validation inference, append these overrides to the training command. Use the same overrides with ``qat=off`` for a BF16 comparison.
+
+.. code-block:: text
+
+   rollout.enable_cuda_graph=true runner.val_check_interval=10
+
+Validation captures the GPU observation preprocessing, vision/language prefix, and full action denoising loop. Environment input/output transforms remain outside the graph. Actor updates and Pi0RL training rollout sampling keep their existing execution paths. The BF16/NVFP4 comparisons here keep compile and offload disabled for both precisions. Disabling compile remains a current QAT requirement, not a general requirement of the BF16 CUDA Graph interface.
+
+The first validation batch prepares the graph; measure steady-state inference after capture. New observation values and sampling noise are copied into static input buffers on each call. Layout or sampling-step changes require another capture. Weight synchronization updates existing buffers in place, so the graph uses the updated values. Release the graph before moving the model to another device, changing its dtype, or replacing parameters, then capture again after the change. The rollout worker follows this order for offload and reload.
+
+NVFP4 selects CUTLASS GEMM tactics before capturing a new graph. FlashInfer reuses tactics in the worker process and tunes shapes not covered by its cache. Tuning finishes before capture; graph replay reuses the selected tactics. Exclude tuning, warmup, and capture from steady-state inference timing.
+
+.. note::
+
+   Captured graphs retain GPU buffers and increase validation memory use. INT8 validation graphs and actor graphs are outside the supported QAT configuration.
 
 Check One Iteration First
 -------------------------
@@ -188,4 +207,4 @@ Extend to Another Model
 
 Follow :doc:`the quantization model extension guide <../extending/quantization>` to register another model once. OpenPI pi0.5 is implemented; custom policies must also provide replayable sampling and scoring events.
 
-Current gates reject named FSDP precision rules, standalone only_eval, async/RTC, LoRA, compile, CUDA Graph, and trainable sigma. QAT also rejects ``openpi.short_memory=true`` and ``openpi.pytorch_numerics=true``; both options default to false, so the default CALVIN configuration is unaffected. RLinf has a generic CUDA Graph manager, while the current mainline OpenPI sampler has not implemented that interface. The eval sampler Graph integration validated on the experiment branch requires separate integration and does not establish support for training sampling or backward. Recipes define RLinf arithmetic, not ApxInf or ModelOpt checkpoint compatibility. Keep resolved config, Git SHA, dependencies, checkpoint/normalization fingerprints, and raw results to distinguish environment, training, and quantization effects.
+Current QAT gates reject named FSDP precision rules, standalone only_eval, async/RTC, LoRA, compile, actor CUDA Graph, and trainable sigma. QAT also rejects ``openpi.short_memory=true`` and ``openpi.pytorch_numerics=true``; both options default to false, so the default CALVIN configuration is unaffected. NVFP4 supports CUDA Graph for periodic validation with a positive runner.val_check_interval. Recipes define RLinf arithmetic, not ApxInf or ModelOpt checkpoint compatibility. Keep resolved config, Git SHA, dependencies, checkpoint/normalization fingerprints, and raw results to distinguish environment, training, and quantization effects.
