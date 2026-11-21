@@ -288,6 +288,8 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         # Let any in-flight non-blocking sync land before the workers go away.
         self.drain_pending_rollout_weight_sync()
 
+        self._finish_run()
+
         self.env.stop().wait()
         self.rollout.stop().wait()
         self.actor.stop().wait()
