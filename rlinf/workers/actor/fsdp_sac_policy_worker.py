@@ -43,7 +43,11 @@ from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict_to_chunk,
 )
-from rlinf.utils.utils import clear_memory, collect_param_names_need_sync
+from rlinf.utils.utils import (
+    clear_memory,
+    collect_param_names_need_sync,
+    seed_everything,
+)
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -69,6 +73,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
 
     def init_worker(self):
+        # This override bypasses EmbodiedFSDPActor.init_worker, so seed the global
+        # RNGs here as well (mirrors the Megatron path's _set_random_seed).
+        seed_everything(self.cfg.actor.seed + self._rank)
         self.setup_model_and_optimizer(initialize_target=True)
         self.setup_sac_components()
         self.soft_update_target_model(tau=1.0)

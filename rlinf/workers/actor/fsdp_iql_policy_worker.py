@@ -28,7 +28,7 @@ from rlinf.models.embodiment.mlp_policy.iql_mlp_policy import (
     IQLTwinCritic,
 )
 from rlinf.scheduler import Worker
-from rlinf.utils.utils import collect_param_names_need_sync
+from rlinf.utils.utils import collect_param_names_need_sync, seed_everything
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -201,6 +201,9 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
 
     def init_worker(self):
         """Initialize IQL worker"""
+        # This override bypasses EmbodiedFSDPActor.init_worker, so seed the global
+        # RNGs here as well (mirrors the Megatron path's _set_random_seed).
+        seed_everything(self.cfg.actor.seed + self._rank)
         self.setup_iql_components()
         os.makedirs(self._save_dir or ".", exist_ok=True)
         self.setup_model_and_optimizer(initialize_target=True)

@@ -494,6 +494,9 @@ class WorldModelEnv:
         ]
 
         # One seed is shared by the batch; per-trajectory seeds are future work.
+        # Derive it from the env's configured seed (+ the per-process offset, see
+        # __init__) instead of a constant 0, so the backend's generation noise is
+        # reproducible from the config and varies across processes and runs.
         self.backend.close_session(target_slots)
         self.backend.open_session(
             env_ids=target_slots,
