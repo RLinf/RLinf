@@ -639,11 +639,14 @@ def compute_evaluate_metrics(eval_metrics_list):
     return aggregated_eval_metrics
 
 
-def compute_rollout_metrics(data_buffer: dict) -> dict:
-    rollout_metrics = {}
+def compute_rollout_metric_stats(
+    data_buffer: dict,
+) -> dict[str, tuple[float, float, float, float]]:
+    """Compute distributed ``(sum, count, min, max)`` rollout stats once per buffer."""
+    stats: dict[str, tuple[float, float, float, float]] = {}
     loss_mask = data_buffer.get("loss_mask", None)
 
-    def reduce_metrics(values: torch.Tensor) -> tuple[float, float, float]:
+    def reduce_stats(values: torch.Tensor) -> tuple[float, float, float, float]:
         from rlinf.scheduler.worker.worker import Worker
 
         device = Worker.torch_platform.current_device()
@@ -673,11 +676,10 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
         )
         torch.distributed.all_reduce(reduce_min_max, op=torch.distributed.ReduceOp.MAX)
         reduced_sum, reduced_count = reduce_sum_count.tolist()
-        reduced_min, reduced_max = reduce_min_max.tolist()
-
+        reduced_neg_min, reduced_max = reduce_min_max.tolist()
         if reduced_count <= 0:
-            return float("nan"), float("nan"), float("nan")
-        return reduced_sum / reduced_count, -reduced_min, reduced_max
+            return 0.0, 0.0, float("inf"), float("-inf")
+        return reduced_sum, reduced_count, -reduced_neg_min, reduced_max
 
     def valid_values(values: torch.Tensor) -> torch.Tensor:
         if loss_mask is None:
@@ -693,44 +695,79 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
         # Every metric below is taken over the mask, and filter_rewards can mask
         # out whole groups, so they can read as clean simply because little
         # survived. Report the share of the batch that did.
-        mean_coverage, _, _ = reduce_metrics(loss_mask.float().reshape(-1))
-        rollout_metrics["loss_mask_fraction"] = mean_coverage
+        stats["loss_mask_fraction"] = reduce_stats(loss_mask.float().reshape(-1))
 
     if "rewards" in data_buffer:
-        rewards = data_buffer["rewards"]
-        rewards = valid_values(rewards)
-        mean_rewards, _, _ = reduce_metrics(rewards)
-
-        rewards_metrics = {
-            "rewards": mean_rewards,
-        }
-        rollout_metrics.update(rewards_metrics)
+        stats["rewards"] = reduce_stats(valid_values(data_buffer["rewards"]))
 
     if "advantages" in data_buffer:
-        advantages = data_buffer["advantages"]
-        advantages = valid_values(advantages)
-        mean_adv, min_adv, max_adv = reduce_metrics(advantages)
-
-        advantages_metrics = {
-            "advantages_mean": mean_adv,
-            "advantages_max": max_adv,
-            "advantages_min": min_adv,
-        }
-        rollout_metrics.update(advantages_metrics)
+        stats["advantages"] = reduce_stats(valid_values(data_buffer["advantages"]))
 
     if data_buffer.get("returns", None) is not None:
-        returns = data_buffer["returns"]
-        returns = valid_values(returns)
-        mean_ret, min_ret, max_ret = reduce_metrics(returns)
+        stats["returns"] = reduce_stats(valid_values(data_buffer["returns"]))
 
-        returns_metrics = {
-            "returns_mean": mean_ret,
-            "returns_max": max_ret,
-            "returns_min": min_ret,
-        }
-        rollout_metrics.update(returns_metrics)
+    return stats
+
+
+def merge_rollout_metric_stats(
+    stats_list: list[dict[str, tuple[float, float, float, float]]],
+) -> dict[str, tuple[float, float, float, float]]:
+    """Combine per-env rollout stats into pooled stats without another reduction."""
+    merged: dict[str, tuple[float, float, float, float]] = {}
+    for stats in stats_list:
+        for key, (total_sum, count, min_val, max_val) in stats.items():
+            if key not in merged:
+                merged[key] = (total_sum, count, min_val, max_val)
+            else:
+                prev_sum, prev_count, prev_min, prev_max = merged[key]
+                merged[key] = (
+                    prev_sum + total_sum,
+                    prev_count + count,
+                    min(prev_min, min_val),
+                    max(prev_max, max_val),
+                )
+    return merged
+
+
+def format_rollout_metrics(
+    stats: dict[str, tuple[float, float, float, float]],
+) -> dict[str, float]:
+    """Turn reduced rollout stats into the scalar metrics dict."""
+    rollout_metrics: dict[str, float] = {}
+
+    def mean_min_max(
+        entry: tuple[float, float, float, float],
+    ) -> tuple[float, float, float]:
+        total_sum, count, min_val, max_val = entry
+        if count <= 0:
+            return float("nan"), float("nan"), float("nan")
+        return total_sum / count, min_val, max_val
+
+    if "loss_mask_fraction" in stats:
+        mean_coverage, _, _ = mean_min_max(stats["loss_mask_fraction"])
+        rollout_metrics["loss_mask_fraction"] = mean_coverage
+
+    if "rewards" in stats:
+        mean_rewards, _, _ = mean_min_max(stats["rewards"])
+        rollout_metrics["rewards"] = mean_rewards
+
+    if "advantages" in stats:
+        mean_adv, min_adv, max_adv = mean_min_max(stats["advantages"])
+        rollout_metrics["advantages_mean"] = mean_adv
+        rollout_metrics["advantages_max"] = max_adv
+        rollout_metrics["advantages_min"] = min_adv
+
+    if "returns" in stats:
+        mean_ret, min_ret, max_ret = mean_min_max(stats["returns"])
+        rollout_metrics["returns_mean"] = mean_ret
+        rollout_metrics["returns_max"] = max_ret
+        rollout_metrics["returns_min"] = min_ret
 
     return rollout_metrics
+
+
+def compute_rollout_metrics(data_buffer: dict) -> dict:
+    return format_rollout_metrics(compute_rollout_metric_stats(data_buffer))
 
 
 def append_to_dict(data, new_data):

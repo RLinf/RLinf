@@ -46,6 +46,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     from rlinf.models.embodiment.openvla_oft.openvla_utils import (
         apply_film_to_vla,
         load_dataset_stats,
+        resolve_unnorm_key,
     )
 
     AutoConfig.register("openvla", OpenVLAOFTRLConfig)
@@ -103,11 +104,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     norm_stats = load_dataset_stats(cfg)
     vla.norm_stats = norm_stats
 
-    if vla.unnorm_key not in norm_stats and f"{vla.unnorm_key}_no_noops" in norm_stats:
-        vla.unnorm_key = f"{vla.unnorm_key}_no_noops"
-    assert vla.unnorm_key in norm_stats, (
-        f"Action un-norm key {vla.unnorm_key} not found in VLA `norm_stats`!"
-    )
+    vla.unnorm_key = resolve_unnorm_key(norm_stats, vla.unnorm_key)
 
     # Load processor
     processor = AutoProcessor.from_pretrained(cfg.model_path)

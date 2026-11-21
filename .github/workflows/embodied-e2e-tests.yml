@@ -437,6 +437,35 @@ jobs:
         run: |
           rm -rf .venv
 
+  embodied-openvlaoft-maniskill-libero-hetero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
+
+      - name: ManiSkill + Libero-Goal heterogeneous env GRPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/sim/maniskill/
+          bash tests/e2e_tests/embodied/run.sh maniskill_libero_grpo_openvlaoft
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+
   embodied-openpi-libero-rocm-test:
     runs-on: rocm
     steps:
