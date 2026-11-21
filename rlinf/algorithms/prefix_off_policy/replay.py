@@ -21,6 +21,7 @@ from rlinf.algorithms.prefix_off_policy.transition import (
     use_simulator_transition_replay,
 )
 from rlinf.data.schema.embodied_types import Trajectory
+from rlinf.envs.layout import EnvLayout
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
     collect_trajectory_replay_metrics,
@@ -244,7 +245,13 @@ class PrefixReplayService:
         trajectory_length = int(trajectory.actions.shape[0])
         batch_size = int(trajectory.actions.shape[1])
         num_rows = int(actions.shape[0])
-        auto_reset = bool(self.cfg.env.train.get("auto_reset", False))
+        env_path = (
+            "env.train"
+            if trajectory.env_name is None
+            else f"env.train.envs.{trajectory.env_name}"
+        )
+        env_cfg = EnvLayout.env_cfgs(self.cfg.env.train, "env.train")[env_path]
+        auto_reset = bool(env_cfg.get("auto_reset", False))
 
         for env_index in range(batch_size):
             for step_index in range(trajectory_length):
@@ -257,6 +264,7 @@ class PrefixReplayService:
                 transition = Trajectory(
                     max_episode_length=1,
                     model_weights_id=trajectory.model_weights_id,
+                    env_name=trajectory.env_name,
                 )
                 for field_name in tensor_fields:
                     value = flat.get(field_name)

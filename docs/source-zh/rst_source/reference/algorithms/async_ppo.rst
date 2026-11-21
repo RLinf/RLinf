@@ -86,7 +86,7 @@ Async PPO 在 RLinf 中的逻辑数据流可以概括为：
 
 1. runner 初始化 worker，并先将 actor 权重同步到 rollout。
 2. env 调用 ``bootstrap_step()``，生成初始观测。
-3. rollout 持续执行 ``generate_one_epoch()``：
+3. rollout 持续执行 ``generate_one_step()`` ，每次服务一个训练 step 中每个 env worker 的全部 rollout epoch：
    - 从 ``env_channel`` 读取环境输出。
    - 基于当前 rollout 权重推理动作。
    - 记录 ``prev_logprobs``、``prev_values``、``forward_inputs``。

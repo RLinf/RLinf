@@ -86,7 +86,7 @@ class PrefixUpdateSchedule:
             replay_size=replay_size,
             demo_size=demo_size,
         )
-        buffer_ready = counters["min_replay_size"] >= min_buffer_size
+        buffer_ready = counters["min_replay_size"] >= max(min_buffer_size, 1)
         warmup_required_updates = int(
             self.schedule_cfg.get("warmup_post_collect_updates", 0)
         )

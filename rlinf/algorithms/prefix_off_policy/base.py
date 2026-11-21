@@ -43,6 +43,10 @@ class PrefixOffPolicyContext(Protocol):
     torch_dtype: torch.dtype
     update_step: int
 
+    def _env_values(
+        self, field: str, env_index: torch.Tensor | None, dtype: torch.dtype
+    ) -> float | torch.Tensor: ...
+
 
 class PrefixOffPolicyAlgorithm(ABC):
     """Loss and target-action contract for Prefix off-policy algorithms."""
@@ -145,21 +149,18 @@ class PrefixOffPolicyAlgorithm(ABC):
         self._require_twin_q(all_q_values)
         return all_q_values[..., 0:1]
 
+    @staticmethod
     def _discounted_chunk_rewards(
-        self,
         rewards: torch.Tensor,
         dtype: torch.dtype,
+        gamma: float | torch.Tensor,
     ) -> torch.Tensor:
         rewards = rewards.reshape(rewards.shape[0], -1).to(dtype)
         chunk_len = rewards.shape[-1]
         discounts = torch.pow(
-            torch.as_tensor(
-                self.cfg.algorithm.gamma,
-                device=rewards.device,
-                dtype=rewards.dtype,
-            ),
-            torch.arange(chunk_len, device=rewards.device, dtype=rewards.dtype),
-        )
+            torch.as_tensor(gamma, device=rewards.device, dtype=torch.float32),
+            torch.arange(chunk_len, device=rewards.device, dtype=torch.float32),
+        ).to(rewards.dtype)
         return torch.sum(rewards * discounts, dim=-1, keepdim=True)
 
     def _human_mask(
@@ -338,6 +339,11 @@ class PrefixOffPolicyAlgorithm(ABC):
         additional heads regress to that same target.
         """
         bootstrap_type = self.cfg.algorithm.get("bootstrap_type", "standard")
+        gamma = (
+            context._env_values("gamma", batch["env_index"], torch.float32)
+            if "env_index" in batch
+            else self.cfg.algorithm.gamma
+        )
 
         curr_obs = batch["curr_obs"]
         next_obs = batch["next_obs"]
@@ -381,9 +387,12 @@ class PrefixOffPolicyAlgorithm(ABC):
             reward_target = self._discounted_chunk_rewards(
                 rewards,
                 context.torch_dtype,
+                gamma,
             )
             reward_horizon = int(rewards.reshape(rewards.shape[0], -1).shape[-1])
-            bootstrap_discount = self.cfg.algorithm.gamma**reward_horizon
+            bootstrap_discount = gamma**reward_horizon
+            if isinstance(bootstrap_discount, torch.Tensor):
+                bootstrap_discount = bootstrap_discount.to(context.torch_dtype)
             if bootstrap_type == "always":
                 target_q_values = reward_target + bootstrap_discount * q_next
             elif bootstrap_type == "standard":

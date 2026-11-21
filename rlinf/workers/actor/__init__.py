@@ -27,6 +27,7 @@ def get_actor_worker(cfg: DictConfig) -> type[Worker]:
                 "embodied_dagger",
                 "embodied_nft",
                 "prefix_off_policy",
+                "embodied_refl",
                 "embodied_art",
             }:
                 raise ValueError(

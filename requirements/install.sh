@@ -1023,6 +1023,10 @@ configure_musa() {
     PLATFORM_VENDOR_DISTS=(torch torch_musa torchvision torchaudio flash_attn)
     # Ray also comes from the image.
     PLATFORM_UV_SYNC_ARGS+=("--no-install-package" "ray")
+    # The MUSA image ships Python 3.10 and torchao 0.9.0; peft 0.19-0.21 raises
+    # ImportError on any LoRA injection when torchao < 0.16 (huggingface/peft#3964),
+    # and peft 0.22+ requires Python 3.11.
+    PLATFORM_EXTRA_CONSTRAINTS+=("peft<0.19")
 }
 
 configure_biren() {
@@ -4365,8 +4369,10 @@ install_robotwin_env() {
 
     if [ "$build_curobo_stack" -eq 1 ]; then
         uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9  --no-build-isolation
-        uv pip install warp-lang==1.11.1
-        uv pip install git+${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git  --no-build-isolation
+        # cuRobo derives its version from git through setuptools_scm; install it before
+        # building with --no-build-isolation so metadata and wheel versions match.
+        uv pip install warp-lang==1.11.1 "setuptools_scm>=6.2"
+        uv pip install git+${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git@v0.7.8 --no-build-isolation
     fi
 
     # patch sapien and mplib for robotwin

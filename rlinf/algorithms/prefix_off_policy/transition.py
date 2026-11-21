@@ -12,43 +12,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Optional
+from typing import Any
 
 import torch
 
 from rlinf.envs import SupportedEnvType
+from rlinf.envs.layout import EnvLayout
 from rlinf.models.embodiment.prefix_features import PREFIX_OBS_KEYS
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 
 PREFIX_TRANSITION_PREFIX = "rlt_transition_"
 
 
-def _train_env_type(cfg: Any) -> Optional[SupportedEnvType]:
-    train_env_cfg = cfg.env.get("train", None)
-    if train_env_cfg is None:
-        return None
-    try:
-        return SupportedEnvType(train_env_cfg.get("env_type", ""))
-    except ValueError:
-        return None
-
-
 def use_simulator_transition_replay(cfg: Any) -> bool:
-    """Return True when Prefix stores one replay row per env step.
+    """Return True for envs that store one replay row per env step.
 
-    Default: enabled for ``maniskill_rlt``. Override with
-    ``algorithm.rlt_transition_replay`` (used by realworld Stage2 to match
-    simulator critical-phase filtering).
+    Raises:
+        ValueError: If only some of the train envs store a row per env step;
+            the actor keeps one replay layout.
     """
     algo_cfg = cfg.get("algorithm", None)
     if algo_cfg is not None and "rlt_transition_replay" in algo_cfg:
         return bool(algo_cfg.get("rlt_transition_replay"))
-    return _train_env_type(cfg) == SupportedEnvType.MANISKILL_RLT
+    env_cfgs = EnvLayout.env_cfgs(cfg.env.get("train", None), "env.train")
+    per_step = {path: _is_maniskill_rlt(env_cfg) for path, env_cfg in env_cfgs.items()}
+    if len(set(per_step.values())) > 1:
+        raise ValueError(
+            "RLT replay needs every train env to be maniskill_rlt or none of "
+            f"them, got {per_step}."
+        )
+    return any(per_step.values())
+
+
+def _is_maniskill_rlt(env_cfg: Any) -> bool:
+    try:
+        return (
+            SupportedEnvType(env_cfg.get("env_type", ""))
+            == SupportedEnvType.MANISKILL_RLT
+        )
+    except ValueError:
+        return False
 
 
 def use_maniskill_rlt_env(cfg: Any) -> bool:
     """Return True when the train env is ManiSkill RLT (expert route path)."""
-    return _train_env_type(cfg) == SupportedEnvType.MANISKILL_RLT
+    env_cfgs = EnvLayout.env_cfgs(cfg.env.get("train", None), "env.train")
+    return any(_is_maniskill_rlt(env_cfg) for env_cfg in env_cfgs.values())
 
 
 def extract_prefix_obs_from_forward_inputs(

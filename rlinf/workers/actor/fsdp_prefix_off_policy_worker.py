@@ -26,7 +26,7 @@ from rlinf.algorithms.prefix_off_policy.schedule import (
 )
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.scheduler import Worker
-from rlinf.utils.metric_utils import append_to_dict, compute_split_num
+from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
     AsyncEmbodiedSACFSDPPolicy,
@@ -121,7 +121,7 @@ class PrefixOffPolicyRuntime:
         demo_size = 0 if self.demo_buffer is None else self.demo_buffer.total_samples
         return self.update_schedule.plan(
             update_step=self.update_step,
-            replay_size=self.replay_buffer.total_samples,
+            replay_size=self.replay_buffer.min_env_samples,
             demo_size=demo_size,
             replay_metrics=self._last_replay_metrics,
         )
@@ -180,9 +180,7 @@ class PrefixOffPolicyFSDPPolicy(PrefixOffPolicyRuntime, EmbodiedSACFSDPPolicy):
     async def recv_rollout_trajectories(self, input_channel) -> None:
         """Receive trajectories and pass them to the configured replay service."""
         clear_memory(sync=False)
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
+        split_num = self._rollout_geometry.shards_per_actor()
         trajectories = [
             await input_channel.get(async_op=True).async_wait()
             for _ in range(split_num)
