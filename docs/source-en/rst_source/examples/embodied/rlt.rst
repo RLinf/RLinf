@@ -84,26 +84,11 @@ Provided Configuration Files
 Installation
 ------------
 
-1. Clone RLinf Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
 .. code:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-2. Install Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~
-
-Install the OpenPI embodied environment with ``requirements/install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
-
-.. code:: bash
-
-   # For mainland China users, add `--use-mirror` for faster downloads.
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 RLT uses ``model_type: openpi`` in the configs below. The install target
 is still ``openpi`` because the vendored PyTorch model shares the OpenPI runtime

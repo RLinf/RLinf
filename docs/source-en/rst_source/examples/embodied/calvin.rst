@@ -94,28 +94,27 @@ Installation
 
 .. code:: bash
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --model openpi --env calvin
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env calvin && source .venv/bin/activate
 
 Download the Model
 ------------------
 
-Download the checkpoint for the OpenPI model you plan to fine-tune.
+Download the checkpoint for the OpenPI model you plan to fine-tune:
 
-**OpenPI π₀**
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Model
+     - Hugging Face Repo
+   * - OpenPI π₀
+     - ``RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT``
+   * - OpenPI π₀.₅
+     - ``RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT``
 
 .. code-block:: bash
 
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-   hf download RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT --local-dir RLinf-Pi0-CALVIN-ABC-D-SFT
-
-**OpenPI π₀.₅**
-
-.. code-block:: bash
-
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-   hf download RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT --local-dir RLinf-Pi05-CALVIN-ABC-D-SFT
+   hf download <repo> --local-dir <dir>
 
 .. include:: _model_path.rst
 

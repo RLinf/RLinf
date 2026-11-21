@@ -96,8 +96,7 @@ Install the Evo-1 native environment and LIBERO base dependencies in one command
 
 .. code-block:: bash
 
-    bash requirements/install.sh embodied --model evo1 --env libero --use-mirror
-    source .venv/bin/activate
+    bash requirements/install.sh embodied --model evo1 --env libero && source .venv/bin/activate
 
 Download the Model
 ------------------

@@ -84,8 +84,7 @@ Installation
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model <model> --env <env>
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model <model> --env <env> && source .venv/bin/activate
 
 Download the Model
 ------------------

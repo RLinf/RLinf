@@ -137,8 +137,7 @@ RoboCasa365 的环境配置位于：
 .. code:: bash
 
    export ROBOCASA_ASSETS_PATH=/path/to/robocasa_assets
-   bash requirements/install.sh embodied --model openpi --env robocasa365
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env robocasa365 && source .venv/bin/activate
 
 数据集任务选择
 --------------

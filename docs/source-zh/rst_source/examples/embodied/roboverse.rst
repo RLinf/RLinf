@@ -85,16 +85,13 @@
 
 .. code:: bash
 
-   # 国内用户可添加 --use-mirror。
-   bash requirements/install.sh embodied --model openpi --env roboverse
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env roboverse && source .venv/bin/activate
 
 下载默认 RoboVerse 资源：
 
 .. code:: bash
 
    cd /path/to/RLinf
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset manity/roboverse_data --local-dir .
 
 下载模型
@@ -105,7 +102,6 @@
 .. code-block:: bash
 
    cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir RLinf-Pi05-LIBERO-SFT
 
 .. include:: _model_path.rst

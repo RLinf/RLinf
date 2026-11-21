@@ -97,26 +97,22 @@ Install ABot-M0, VGGT, and the LIBERO runtime in the same Python environment as 
 
 .. include:: _setup_common.rst
 
-The installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` and ``VGGT_PATH``
-first to reuse local checkouts:
+The installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` and ``VGGT_PATH`` first to reuse local checkouts. Choose ``--env`` for the benchmark you want to run:
 
-.. code:: bash
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
 
-   # Optional: use local source checkouts instead of installer-managed clones.
-   # export ABOT_PATH=<path_to_ABot-Manipulation>
-   # export VGGT_PATH=<path_to_vggt>
+   * - Benchmark
+     - ``--env``
+   * - LIBERO
+     - ``maniskill_libero``
+   * - LIBERO-Plus
+     - ``liberoplus``
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero
-   source .venv/bin/activate
+.. code-block:: bash
 
-For LIBERO-Plus experiments, install the ``LIBERO-plus`` runtime instead:
-
-.. code:: bash
-
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model abot_m0 --env liberoplus
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model abot_m0 --env <env> && source .venv/bin/activate
 
 Download the LIBERO-Plus Assets
 -------------------------------
@@ -134,10 +130,6 @@ dataset ``Sylvest/LIBERO-plus`` and extract it into the installed
 
    echo "LIBERO_PLUS_PACKAGE_DIR=${LIBERO_PLUS_PACKAGE_DIR}"
 
-   # Optional mirror for environments that cannot access Hugging Face directly.
-   # export HF_ENDPOINT=https://hf-mirror.com
-
-   # Download the assets archive from the Hugging Face dataset repo.
    hf download --repo-type dataset Sylvest/LIBERO-plus assets.zip \
        --local-dir "${LIBERO_PLUS_PACKAGE_DIR}"
 

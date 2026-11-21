@@ -107,9 +107,7 @@ LIBERO 训练流程根据图像和任务提示生成动作块。
 
 .. code-block:: bash
 
-   # 国内用户可添加 --use-mirror 以提升下载速度。
-   bash requirements/install.sh embodied --model openvla-oft --env libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openvla-oft --env libero && source .venv/bin/activate
 
 下载模型
 --------

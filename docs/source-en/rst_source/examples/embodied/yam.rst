@@ -10,8 +10,7 @@ Use two YAM follower arms with ``flexible_4310`` grippers, three RealSense camer
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env yam
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env yam && source .venv/bin/activate
 
 The installer includes the pinned ``i2rt`` backend and PICO transport dependencies. Check that the installed robot model, tool center point, joint limits, operator-to-robot-base yaw, and motion scales match your hardware before enabling motion.
 

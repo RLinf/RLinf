@@ -86,13 +86,22 @@
 
 .. include:: _setup_common.rst
 
+按要训练的模型选择 ``--model``：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - 模型
+     - ``--model``
+   * - OpenVLA-OFT
+     - ``openvla-oft``
+   * - OpenPI（π₀ / π₀.₅）
+     - ``openpi``
+
 .. code-block:: bash
 
-   # 国内用户可以添加 --use-mirror 加速下载。
-   bash requirements/install.sh embodied --model openvla-oft --env behavior
-   # 或安装 OpenPI 环境：
-   # bash requirements/install.sh embodied --model openpi --env behavior
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model <model> --env behavior && source .venv/bin/activate
 
 
 下载资产
@@ -107,16 +116,12 @@
    curl https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-4.5.0-linux-x86_64.zip -o isaac-sim.zip
    unzip isaac-sim.zip && rm isaac-sim.zip
 
-下载 BEHAVIOR-1K 资产，并在每次运行前设置 ``OMNIGIBSON_DATA_PATH``：
+在已激活的虚拟环境中下载 BEHAVIOR-1K 资产（超过 30 GB），并在每次运行前设置 ``OMNIGIBSON_DATA_PATH``：
 
 .. code-block:: bash
 
-   # 数据集会占用超过 30 GB。
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   # 之后的 python 命令会下载数据集到 $OMNIGIBSON_DATA_PATH 中。
    mkdir -p $OMNIGIBSON_DATA_PATH
-
-   # 在已激活的 venv 中运行。国内用户可设置 HF_ENDPOINT=https://hf-mirror.com。
    python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
    python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)"
    python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
@@ -125,13 +130,22 @@
 下载模型
 ----------------------------------------
 
-下载对应模型族的检查点：
+下载对应模型的 checkpoint：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - 模型
+     - Hugging Face 仓库
+   * - OpenVLA-OFT
+     - ``RLinf/RLinf-OpenVLAOFT-Behavior``
+   * - π₀
+     - ``RLinf/RLinf-Pi0-Behavior``
 
 .. code-block:: bash
 
-   # 国内用户可设置 HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
-   hf download RLinf/RLinf-Pi0-Behavior --local-dir RLinf-Pi0-Behavior
+   hf download <repo> --local-dir <dir>
 
 .. include:: _model_path.rst
 

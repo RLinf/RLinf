@@ -108,16 +108,24 @@ Use the NVIDIA setup below, or follow :ref:`the backend-specific setup <gr00t-ha
 
 .. include:: _setup_common.rst
 
+Select ``--model`` for your GR00T version:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - GR00T Version
+     - ``--model``
+   * - GR00T-N1.5
+     - ``gr00t``
+   * - GR00T-N1.6
+     - ``gr00t_n1d6``
+   * - GR00T-N1.7
+     - ``gr00t_n1d7``
+
 .. code:: bash
 
-   # Add --use-mirror for faster downloads in mainland China.
-   # N1.5
-   bash requirements/install.sh embodied --model gr00t --env maniskill_libero
-   # N1.6
-   # bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero
-   # N1.7
-   # bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model <model> --env maniskill_libero && source .venv/bin/activate
 
 Download the Model
 ------------------
@@ -126,17 +134,26 @@ Before starting training, you need to download the corresponding pre-trained mod
 
 **N1.5: GR00T-N1.5 Few-Shot SFT Model Download**
 
-We currently support four LIBERO tasks: Spatial, Object, Goal, and Long.
+Pick the SFT checkpoint for your LIBERO task:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Task
+     - Hugging Face Repo
+   * - LIBERO-Spatial
+     - ``RLinf/RLinf-Gr00t-SFT-Spatial``
+   * - LIBERO-Object
+     - ``RLinf/RLinf-Gr00t-SFT-Object``
+   * - LIBERO-Goal
+     - ``RLinf/RLinf-Gr00t-SFT-Goal``
+   * - LIBERO-Long
+     - ``RLinf/RLinf-Gr00t-SFT-10``
 
 .. code:: bash
 
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
-
-SFT model downloads for other tasks:
-- `Libero-Object <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Object>`_
-- `Libero-Goal <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal>`_
-- `Libero-Long <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-10>`_
+   hf download <repo> --local-dir <dir>
 
 **N1.6: GR00T-N1.6 SFT Model**
 
@@ -144,7 +161,6 @@ We currently support LIBERO task Spatial and regard it as the RLinf demo for Gr0
 
 .. code:: bash
 
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
    hf download RLinf/RLinf-Gr00t-N1.6-SFT-Spatial --local-dir RLinf-Gr00t-N1.6-SFT-Spatial
 
 
@@ -168,12 +184,9 @@ Before RLinf ships its own N1.7 SFT checkpoint, you can use the following offlin
 
 .. code:: bash
 
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-   # Download Cosmos-Reason2-2B backbone
    hf download nvidia/Cosmos-Reason2-2B \
       --local-dir checkpoints/Cosmos-Reason2-2B
 
-   # Download GR00T-N1.7-LIBERO task checkpoint (libero_spatial minimum file set)
    hf download nvidia/GR00T-N1.7-LIBERO \
       --include "libero_spatial/config.json" \
                 "libero_spatial/embodiment_id.json" \

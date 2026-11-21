@@ -23,9 +23,7 @@ activate the runtime from the RLinf repository root. To use Docker instead, see
 
 .. code-block:: bash
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model psi0 --env simple
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
 
 Then complete steps 2–4:
 

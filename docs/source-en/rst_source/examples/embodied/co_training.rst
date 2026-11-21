@@ -70,10 +70,7 @@ Installation
 
 .. code:: bash
 
-   # For faster downloads in mainland China you can use:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
 
 2. Install Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -82,9 +79,7 @@ Install dependencies with ``requirements/install.sh``, or pull a prebuilt image 
 
 .. code:: bash
 
-   # Add --use-mirror for faster install in some regions
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 
 ManiSkill assets
@@ -95,8 +90,6 @@ Refer to the :doc:`ManiSkill example <maniskill>` for base asset setup, then dow
 .. code:: bash
 
    cd <path_to_RLinf>/rlinf/envs/sim/maniskill/assets
-   # For faster download in some regions you can set:
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/RLCo-maniskill-assets --include "custom_assets/*" --local-dir .
 
 
@@ -116,8 +109,6 @@ We provide a LeRobot-format dataset (50 real + 1499 sim trajectories) at `RLinf/
 
 .. code:: bash
 
-   # For faster download in some regions you can set:
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/RLCo-Example-Mix-Data --local-dir RLCo-Example-Mix-Data
 
 2. Run SFT using `OpenPi <https://github.com/Physical-Intelligence/openpi>`_ or the :doc:`SFT example <sft_openpi>`.
@@ -128,8 +119,6 @@ Skip training and use the provided SFT checkpoint:
 
 .. code:: bash
 
-   # For faster download in some regions you can set:
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT --local-dir RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
 
 Stage II: Sim-Real Co-Training (RL)
@@ -143,8 +132,6 @@ Download the 50 real trajectories in LeRobot format used for co-training:
 
 .. code:: bash
 
-   # For faster download in some regions you can set:
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/RLCo-Example-Real-Data --local-dir RLCo-Example-Real-Data
 
 **Important config**

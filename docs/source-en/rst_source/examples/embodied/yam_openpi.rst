@@ -26,10 +26,8 @@ install the model and robot dependencies in one environment:
 
 .. code-block:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-   bash requirements/install.sh embodied --model openpi --env yam
-   source .venv/bin/activate
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+   bash requirements/install.sh embodied --model openpi --env yam && source .venv/bin/activate
 
 Configure the CAN interfaces and identify the three camera serials using
 :doc:`yam`.

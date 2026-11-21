@@ -55,9 +55,7 @@ Install the robot dependencies from the repository root:
 
 .. code-block:: bash
 
-   # Mainland China users can add --use-mirror for faster downloads.
-   bash requirements/install.sh embodied --env piper
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env piper && source .venv/bin/activate
    export REPO_PATH="$PWD"
 
 Run subsequent commands from this checkout with the environment activated.

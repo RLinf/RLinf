@@ -46,7 +46,6 @@ MBridge 使用 RLinf 的 agentic 运行环境。``install.sh`` 会一并安装 M
 
 .. code:: bash
 
-   # 国内用户可设置 export HF_ENDPOINT=https://hf-mirror.com
    hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
        --local-dir /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B
 
@@ -59,7 +58,6 @@ MBridge 使用 RLinf 的 agentic 运行环境。``install.sh`` 会一并安装 M
 
 .. code:: bash
 
-   # 国内用户可设置 export HF_ENDPOINT=https://hf-mirror.com
    hf download Qwen/Qwen2.5-VL-3B-Instruct \
        --local-dir /path/to/Qwen2.5-VL-3B-Instruct
 

@@ -10,8 +10,7 @@ From the repository root:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openpi --env libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
 
 Step 2: Prepare the Model
 -------------------------
@@ -20,7 +19,7 @@ Download the SFT checkpoint from Hugging Face (``RLinf/RLinf-Pi05-LIBERO-SFT``) 
 
 .. code-block:: bash
 
-   huggingface-cli download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
+   hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
 Model hub: `RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__. You can also override ``rollout.model.model_path`` on the command line at launch time.
 

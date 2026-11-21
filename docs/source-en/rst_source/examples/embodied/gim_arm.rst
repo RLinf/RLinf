@@ -105,8 +105,6 @@ __________________________
 
 .. code:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -115,10 +113,7 @@ ________________________________
 
 .. code:: bash
 
-   # For mainland China users, you can add the `--use-mirror` flag for better download speed.
-
-   bash requirements/install.sh embodied --env gim_arm
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
 
 c. Install gim_arm_control SDK
 ________________________________
@@ -129,7 +124,6 @@ for controlling the GimArm robot. It also ships the helper shell scripts used in
 
 .. code:: bash
 
-   # Clone the SDK alongside RLinf (the example below assumes ~/gim_arm_control).
    cd ~
    git clone https://github.com/RLinf/gim_arm_control.git
    cd ~/gim_arm_control/python
@@ -212,12 +206,9 @@ Clone the RLinf repository (same as above), then install dependencies with ``req
 
 .. code:: bash
 
-   # For mainland China users, add `--use-mirror` for faster downloads.
-   bash requirements/install.sh embodied --env gim_arm
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
 
-   # To install model-specific dependencies (e.g., OpenVLA), add the --model flag:
-   # bash requirements/install.sh embodied --model openvla --env maniskill_libero
+To install model-specific dependencies (for example, OpenVLA), pass ``--model`` as well (such as ``--model openvla --env maniskill_libero``).
 
 
 Run It

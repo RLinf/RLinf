@@ -108,20 +108,24 @@ RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境�
 
 .. include:: _setup_common.rst
 
+按所用模型选择 ``--model``：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 36 64
+
+   * - 模型
+     - ``--model``
+   * - OpenVLA-OFT
+     - ``openvla-oft``
+   * - OpenPI π₀ / π₀.₅
+     - ``openpi``
+   * - Lingbot-VLA
+     - ``lingbotvla``
+
 .. code:: bash
 
-   # 国内用户可添加 --use-mirror。
-
-   # OpenVLA-OFT
-   bash requirements/install.sh embodied --model openvla-oft --env robotwin
-
-   # OpenPI π₀ / π₀.₅
-   # bash requirements/install.sh embodied --model openpi --env robotwin
-
-   # Lingbot-VLA
-   # bash requirements/install.sh embodied --model lingbotvla --env robotwin
-
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model <model> --env robotwin && source .venv/bin/activate
 
 在 AMD ROCm 上需加 ``--platform``，具体见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`。
 
@@ -145,22 +149,24 @@ RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认�
 下载模型
 ----------------------------------------
 
-下载与你的配置匹配的 SFT 检查点。示例：
+下载与配置匹配的 SFT checkpoint：
 
-**OpenVLA-OFT**
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - 模型 / 任务
+     - Hugging Face 仓库
+   * - OpenVLA-OFT（``place_empty_cup``）
+     - ``RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup``
+   * - OpenPI π₀（``adjust_bottle``）
+     - ``RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle``
+   * - OpenPI π₀.₅（``adjust_bottle``）
+     - ``RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle``
 
 .. code-block:: bash
 
-   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
-
-**OpenPI π₀ / π₀.₅**
-
-.. code-block:: bash
-
-   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir RLinf-Pi0-RoboTwin-SFT-adjust_bottle
-   hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir RLinf-Pi05-RoboTwin-SFT-adjust_bottle
+   hf download <repo> --local-dir <dir>
 
 .. include:: _model_path.rst
 

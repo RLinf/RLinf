@@ -115,9 +115,7 @@ Use the NVIDIA setup below, or follow :ref:`the backend-specific setup <pi0-hard
 
 .. code:: bash
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 --------------
 
@@ -128,7 +126,6 @@ Before starting training, download the corresponding pretrained model. For examp
 
 .. code:: bash
 
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
    hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
 Alternatively, you can download the model from ModelScope: https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal.

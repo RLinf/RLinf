@@ -76,9 +76,7 @@ From the RLinf repository root, install and activate the Psi0 + SIMPLE runtime:
 
 .. code-block:: bash
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model psi0 --env simple
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
 
 Alternatively, build the Docker image and switch to its Psi0 environment:
 
@@ -98,7 +96,6 @@ the Qwen configuration, tokenizer, and processor by model ID:
 
 .. code-block:: bash
 
-   # In mainland China, set HF_ENDPOINT=https://hf-mirror.com to download through a proxy.
    export HF_HOME=/path/to/hf-cache
    hf download Qwen/Qwen3-VL-2B-Instruct \
      chat_template.json config.json generation_config.json merges.txt \
@@ -123,7 +120,6 @@ the download.
 .. code-block:: bash
 
    export SIMPLE_ASSETS_DIR=/path/to/simple_assets
-   # In mainland China, add --use-mirror to download through a proxy.
    bash requirements/embodied/download_assets.sh --assets simple --dir "${SIMPLE_ASSETS_DIR}"
 
 .. _simple-link-assets:

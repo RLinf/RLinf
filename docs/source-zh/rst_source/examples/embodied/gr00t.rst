@@ -104,35 +104,52 @@ GR00T模型强化学习训练
 
 .. include:: _setup_common.rst
 
+按 GR00T 版本选择 ``--model``：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - GR00T 版本
+     - ``--model``
+   * - GR00T-N1.5
+     - ``gr00t``
+   * - GR00T-N1.6
+     - ``gr00t_n1d6``
+   * - GR00T-N1.7
+     - ``gr00t_n1d7``
+
 .. code:: bash
 
-   # 国内用户可添加 --use-mirror 以提升下载速度。
-   # N1.5
-   bash requirements/install.sh embodied --model gr00t --env maniskill_libero
-   # N1.6
-   # bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero
-   # N1.7
-   # bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model <model> --env maniskill_libero && source .venv/bin/activate
 
 下载模型
 ----------------------------------------
 
 开始训练前，下载对应的预训练模型。
 
-**N1.5: GR00T-N1.5 少样本SFT模型下载**
+**N1.5：GR00T-N1.5 少样本 SFT 模型下载**
 
-目前我们支持四种libero任务：Spatial, Object, Goal, and Long。
+按 LIBERO 任务选择对应的 SFT 检查点：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - 任务
+     - Hugging Face 仓库
+   * - LIBERO-Spatial
+     - ``RLinf/RLinf-Gr00t-SFT-Spatial``
+   * - LIBERO-Object
+     - ``RLinf/RLinf-Gr00t-SFT-Object``
+   * - LIBERO-Goal
+     - ``RLinf/RLinf-Gr00t-SFT-Goal``
+   * - LIBERO-Long
+     - ``RLinf/RLinf-Gr00t-SFT-10``
 
 .. code:: bash
 
-   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
-
-其他任务的SFT模型下载:
-- `Libero-Object <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Object>`_
-- `Libero-Goal <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal>`_
-- `Libero-Long <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-10>`_
+   hf download <repo> --local-dir <dir>
 
 **N1.6: GR00T-N1.6 SFT模型**
 
@@ -140,7 +157,6 @@ GR00T模型强化学习训练
 
 .. code:: bash
 
-   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Gr00t-N1.6-SFT-Spatial --local-dir RLinf-Gr00t-N1.6-SFT-Spatial
 
 **N1.7：当前临时使用官方 release checkpoint**
@@ -162,12 +178,9 @@ RLinf 目前还没有提供一个由本仓库产出的、专门用于这个 RL �
 
 .. code:: bash
 
-   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
-   # 下载 Cosmos-Reason2-2B backbone
    hf download nvidia/Cosmos-Reason2-2B \
       --local-dir checkpoints/Cosmos-Reason2-2B
 
-   # 下载 GR00T-N1.7-LIBERO 任务 checkpoint（仅 libero_spatial 所需文件）
    hf download nvidia/GR00T-N1.7-LIBERO \
       --include "libero_spatial/config.json" \
                 "libero_spatial/embodiment_id.json" \

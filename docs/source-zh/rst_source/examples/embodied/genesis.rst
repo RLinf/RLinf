@@ -80,9 +80,7 @@
 
 .. code:: bash
 
-   # 国内用户可添加 --use-mirror。
-   bash requirements/install.sh embodied --env genesis
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env genesis && source .venv/bin/activate
 
 下载模型
 ----------------------------------------
@@ -92,7 +90,6 @@ MLP + PPO 配方可跳过本节。CNN + PPO 配方需要下载 ResNet 检查点�
 .. code-block:: bash
 
    cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 然后在 ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml`` 中为 rollout 和 actor

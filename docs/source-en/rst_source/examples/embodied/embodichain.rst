@@ -84,9 +84,7 @@ Your machine must be able to reach the vendor server on port 2345.
 
 .. code:: bash
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --env embodichain
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env embodichain && source .venv/bin/activate
 
 .. warning::
 

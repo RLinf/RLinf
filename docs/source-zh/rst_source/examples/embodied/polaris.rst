@@ -98,9 +98,7 @@
 
 .. code:: bash
 
-   # 国内用户可添加 --use-mirror。
-   bash requirements/install.sh embodied --model openpi --env polaris
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env polaris && source .venv/bin/activate
 
 下载 Isaac Sim
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -127,7 +125,6 @@
 
 .. code:: bash
 
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download owhan/PolaRiS-Hub --repo-type=dataset --local-dir ./PolaRiS-Hub
    export POLARIS_DATA_PATH=/path/to/PolaRiS-Hub
 
@@ -140,23 +137,22 @@
 下载模型
 ----------------------------------------
 
-下载你要微调的 OpenPI 模型检查点。
+下载待微调的 OpenPI 模型 checkpoint：
 
-**OpenPI π₀.₅**
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - 模型
+     - Hugging Face 仓库
+   * - OpenPI π₀.₅
+     - ``RLinf/RLinf-Pi05-Polaris-droid_jointpos``
+   * - OpenPI π₀
+     - ``RLinf/RLinf-Pi0-Polaris-droid_jointpos``
 
 .. code-block:: bash
 
-   cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-Pi05-Polaris-droid_jointpos --local-dir RLinf-Pi05-Polaris-droid_jointpos
-
-**OpenPI π₀**
-
-.. code-block:: bash
-
-   cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-Pi0-Polaris-droid_jointpos --local-dir RLinf-Pi0-Polaris-droid_jointpos
+   hf download <repo> --local-dir <dir>
 
 .. include:: _model_path.rst
 

@@ -264,9 +264,7 @@ Installation
 
 .. code:: bash
 
-   # Add --use-mirror in mainland China.
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 ``--model openpi`` installs the official OpenPI **runtime** (transforms and
 data pipeline). The trained network is still ``openpi``.

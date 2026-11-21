@@ -3,7 +3,7 @@
 
 按任务规模选择对应硬件。你可以从单张 24 GB GPU 起步，无需修改代码就能将同一套配置扩展到多机集群。
 
-.. figure:: ../../_static/svg/hardware_tiers.svg
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/hardware_tiers_zh.svg
    :align: center
    :width: 100%
 

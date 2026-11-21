@@ -117,9 +117,7 @@ For NVIDIA CUDA, follow the steps below. For Huawei Ascend CANN, follow
 
 .. code:: bash
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model starvla --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model starvla --env maniskill_libero && source .venv/bin/activate
 
 Download the Model
 ~~~~~~~~~~~~~~~~~~

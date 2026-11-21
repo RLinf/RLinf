@@ -17,10 +17,8 @@ GPU 训练节点和 YAM 控制节点使用相同的 RLinf 版本，在同一环�
 
 .. code-block:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-   bash requirements/install.sh embodied --model openpi --env yam
-   source .venv/bin/activate
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+   bash requirements/install.sh embodied --model openpi --env yam && source .venv/bin/activate
 
 按照 :doc:`yam` 配置 CAN 接口并获取三路相机序列号。
 

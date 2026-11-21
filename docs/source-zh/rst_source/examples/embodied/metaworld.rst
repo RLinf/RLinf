@@ -86,27 +86,42 @@
 
 .. include:: _setup_common.rst
 
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - 模型
+     - ``--model``
+   * - π₀ / π₀.₅
+     - ``openpi``
+   * - OpenVLA-OFT
+     - ``openvla-oft``
+
 .. code-block:: bash
 
-   # 国内用户可以添加 --use-mirror 加速下载。
-   bash requirements/install.sh embodied --model openpi --env metaworld
-   # 或安装 OpenVLA-OFT 环境：
-   # bash requirements/install.sh embodied --model openvla-oft --env metaworld
-
-   source .venv/bin/activate
-
+   bash requirements/install.sh embodied --model <model> --env metaworld && source .venv/bin/activate
 
 下载模型
 ----------------------------------------
 
-下载参考配方使用的 SFT 检查点：
+下载对应模型的 SFT checkpoint：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - 模型
+     - Hugging Face 仓库
+   * - π₀
+     - ``RLinf/RLinf-Pi0-MetaWorld-SFT``
+   * - π₀.₅
+     - ``RLinf/RLinf-Pi05-MetaWorld-SFT``
+   * - OpenVLA-OFT
+     - ``RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT``
 
 .. code-block:: bash
 
-   # 国内用户可设置 HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir RLinf-Pi0-MetaWorld-SFT
-   hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir RLinf-Pi05-MetaWorld-SFT
-   hf download RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT --local-dir RLinf-OpenVLAOFT-MetaWorld-SFT
+   hf download <repo> --local-dir <dir>
 
 也可以从 ModelScope 下载模型：https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld。
 

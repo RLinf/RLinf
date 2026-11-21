@@ -91,8 +91,7 @@ IQL 工作原理
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env d4rl
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env d4rl && source .venv/bin/activate
 
 启动脚本默认设置 ``MUJOCO_GL=egl`` 与 ``PYOPENGL_PLATFORM=egl``，便于无头运行。
 

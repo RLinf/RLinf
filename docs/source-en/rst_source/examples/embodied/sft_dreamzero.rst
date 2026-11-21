@@ -52,20 +52,22 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: SFT-only environment** — install DreamZero without simulator dependencies:
+Select the install flags for your setup:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 36 64
+
+   * - Usage
+     - Flags
+   * - SFT only
+     - ``--model dreamzero``
+   * - SFT + LIBERO evaluation
+     - ``--model dreamzero --env libero``
 
 .. code-block:: bash
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model dreamzero
-   source .venv/bin/activate
-
-**Option 2: SFT + LIBERO evaluation** — add LIBERO simulator dependencies:
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model dreamzero --env libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied <flags> && source .venv/bin/activate
 
 Clone the DreamZero repository separately and set ``DREAMZERO_PATH`` before SFT or eval:
 
@@ -193,16 +195,11 @@ Supported datasets and configs:
      - Per-entry
      - ``libero_franka_mix_sft_dreamzero_5b.yaml``; ``data.train_data_paths`` takes a list with ``dataset_path``, ``embodiment_tag``, ``metadata_json_path``, and ``weight``.
 
-Download example:
+Download the dataset you need:
 
 .. code:: bash
 
-   # LIBERO
-   hf download physical-intelligence/libero --repo-type dataset --local-dir ./libero
-   # DROID
-   hf download GEAR-Dreams/DreamZero-DROID-Data --repo-type dataset --local-dir ./DreamZero-DROID-Data
-   # Franka PnP real-world data
-   hf download RLinf/dreamzero-franka-pnp --repo-type dataset --local-dir ./franka_pnp
+   hf download <repo> --repo-type dataset --local-dir <dir>
 
 Generate ``metadata.json``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

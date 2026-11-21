@@ -102,8 +102,6 @@ STEAM 工作原理
 
 .. code:: bash
 
-   # 中国大陆用户可使用以下镜像以获得更快下载速度：
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -114,9 +112,7 @@ STEAM 与 RECAP 共用 OpenPI 环境。使用 ``requirements/install.sh`` 安装
 
 .. code:: bash
 
-   # 中国大陆用户可添加 `--use-mirror` 加速下载。
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 下载模型
 ----------------------------------------
@@ -128,7 +124,6 @@ STEAM 价值模型由两个预训练 backbone 构成：
 
 .. code:: bash
 
-   # 中国大陆用户可设置 HF_ENDPOINT=https://hf-mirror.com 加速下载。
    hf download google/siglip-so400m-patch14-384 --local-dir siglip-so400m-patch14-384
    hf download google/gemma-3-270m --local-dir gemma-3-270m
 

@@ -88,13 +88,22 @@ Installation
 
 .. include:: _setup_common.rst
 
+Choose ``--model`` for the model family you plan to train:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Model
+     - ``--model``
+   * - OpenVLA-OFT
+     - ``openvla-oft``
+   * - OpenPI (π₀ / π₀.₅)
+     - ``openpi``
+
 .. code-block:: bash
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model openvla-oft --env behavior
-   # Or install the OpenPI environment:
-   # bash requirements/install.sh embodied --model openpi --env behavior
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model <model> --env behavior && source .venv/bin/activate
 
 
 Download the Assets
@@ -109,16 +118,12 @@ Download IsaacSim 4.5 and set ``ISAAC_PATH`` before every run:
    curl https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-4.5.0-linux-x86_64.zip -o isaac-sim.zip
    unzip isaac-sim.zip && rm isaac-sim.zip
 
-Download BEHAVIOR-1K assets and set ``OMNIGIBSON_DATA_PATH`` before every run:
+Download BEHAVIOR-1K assets (over 30 GB) inside the active virtual environment, and set ``OMNIGIBSON_DATA_PATH`` before every run:
 
 .. code-block:: bash
 
-   # The datasets require more than 30 GB.
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
    mkdir -p $OMNIGIBSON_DATA_PATH
-
-   # Run these inside the active venv. Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-   # The following Python command will download the dataset into $OMNIGIBSON_DATA_PATH.
    python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
    python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)"
    python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
@@ -128,11 +133,20 @@ Download the Model
 
 Download the checkpoint for your model family:
 
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Model
+     - Hugging Face Repo
+   * - OpenVLA-OFT
+     - ``RLinf/RLinf-OpenVLAOFT-Behavior``
+   * - π₀
+     - ``RLinf/RLinf-Pi0-Behavior``
+
 .. code-block:: bash
 
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-   hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
-   hf download RLinf/RLinf-Pi0-Behavior --local-dir RLinf-Pi0-Behavior
+   hf download <repo> --local-dir <dir>
 
 .. include:: _model_path.rst
 

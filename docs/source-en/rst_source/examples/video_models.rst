@@ -75,22 +75,14 @@ repository root on your GPU training host:
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --model diffusion
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
 
 The installer creates a Python 3.10 environment with Diffusers, PEFT,
 Transformers, PaddleOCR, and CPU PaddlePaddle. Both ART recipes and the SD3 NFT
-recipe use CPU OCR. Pass ``--venv /path/to/venv`` to install in another directory
-and activate that environment instead.
-
-The Wan NFT recipes set ``env.*.reward.use_gpu: True``. For GPU OCR, install GPU
-PaddlePaddle with ``--paddle-gpu`` (CUDA 11.x or 12.x), then activate the resulting
-environment:
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --model diffusion --paddle-gpu
-   source .venv/bin/activate
+recipe use CPU OCR. For the Wan NFT recipes (which set
+``env.*.reward.use_gpu: True``), add ``--paddle-gpu`` (CUDA 11.x or 12.x) to
+the install command. Pass ``--venv /path/to/venv`` to install into another
+directory.
 
 .. note::
 
@@ -103,19 +95,25 @@ environment:
 Download the Model
 ------------------
 
-Download the checkpoint for the recipe you plan to run. Accept the SD3.5 Medium
-access terms on Hugging Face before downloading that model.
+Download the checkpoint for the recipe you plan to run (accept the SD3.5 Medium
+access terms on Hugging Face first if using SD3.5):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Model
+     - Hugging Face Repo
+   * - SD3.5 Medium
+     - ``stabilityai/stable-diffusion-3.5-medium``
+   * - Wan2.2 TI2V 5B
+     - ``Wan-AI/Wan2.2-TI2V-5B-Diffusers``
 
 .. code:: bash
 
-   huggingface-cli download stabilityai/stable-diffusion-3.5-medium \
-      --local-dir /path/to/stable-diffusion-3.5-medium
+   hf download <repo> --local-dir /path/to/checkpoint
 
-   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B-Diffusers \
-      --local-dir /path/to/Wan2.2-TI2V-5B-Diffusers
-
-These commands save Diffusers checkpoints locally. Set
-``actor.model.model_path`` in your selected training YAML to the corresponding
+Set ``actor.model.model_path`` in your selected training YAML to the downloaded
 directory.
 
 .. _diffusion-ocr-dataset:

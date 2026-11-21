@@ -86,26 +86,42 @@ Installation
 
 .. include:: _setup_common.rst
 
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Model
+     - ``--model``
+   * - π₀ / π₀.₅
+     - ``openpi``
+   * - OpenVLA-OFT
+     - ``openvla-oft``
+
 .. code-block:: bash
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model openpi --env metaworld
-   # Or install the OpenVLA-OFT environment:
-   # bash requirements/install.sh embodied --model openvla-oft --env metaworld
-
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model <model> --env metaworld && source .venv/bin/activate
 
 Download the Model
 ------------------
 
-Download the SFT checkpoints used by the reference recipes:
+Download the SFT checkpoint for your model:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Model
+     - Hugging Face Repo
+   * - π₀
+     - ``RLinf/RLinf-Pi0-MetaWorld-SFT``
+   * - π₀.₅
+     - ``RLinf/RLinf-Pi05-MetaWorld-SFT``
+   * - OpenVLA-OFT
+     - ``RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT``
 
 .. code-block:: bash
 
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-   hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir RLinf-Pi0-MetaWorld-SFT
-   hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir RLinf-Pi05-MetaWorld-SFT
-   hf download RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT --local-dir RLinf-OpenVLAOFT-MetaWorld-SFT
+   hf download <repo> --local-dir <dir>
 
 Alternatively, you can also download the model from ModelScope at https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld.
 

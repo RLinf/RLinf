@@ -126,20 +126,27 @@ Installation
 
 .. code:: bash
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
 Download the Model
 ~~~~~~~~~~~~~~~~~~
 
-Download a pretrained base checkpoint:
+Download a pretrained base checkpoint for your task suite:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Task Suite
+     - Hugging Face Repo
+   * - LIBERO-90
+     - ``RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora``
+   * - LIBERO-130
+     - ``RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora``
 
 .. code:: bash
 
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+   hf download <repo> --local-dir <dir>
 
 .. include:: _model_path.rst
 
@@ -300,12 +307,22 @@ Install the RLinf-maintained forks for the suite you want.
 
 .. include:: _setup_common.rst
 
+Select ``--env`` for the suite you want:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Suite
+     - ``--env``
+   * - LIBERO-Pro
+     - ``liberopro``
+   * - LIBERO-Plus
+     - ``liberoplus``
+
 .. code:: bash
 
-    # Add --use-mirror for faster downloads in mainland China.
-    bash requirements/install.sh embodied --model openvla-oft --env liberopro    # LIBERO-Pro
-    bash requirements/install.sh embodied --model openvla-oft --env liberoplus   # LIBERO-Plus
-    source .venv/bin/activate
+   bash requirements/install.sh embodied --model openvla-oft --env <env> && source .venv/bin/activate
 
 Download the Assets (LIBERO-Plus)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -317,7 +334,6 @@ from the Hugging Face dataset ``Sylvest/LIBERO-plus`` and extract it into the in
 .. code-block:: bash
 
     LIBERO_PLUS_PACKAGE_DIR=$(python -c "import pathlib; import liberoplus.liberoplus as l_plus; print(pathlib.Path(l_plus.__file__).resolve().parent)")
-    # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
     hf download --repo-type dataset Sylvest/LIBERO-plus assets.zip --local-dir "${LIBERO_PLUS_PACKAGE_DIR}"
     unzip -o "${LIBERO_PLUS_PACKAGE_DIR}/assets.zip" -d "${LIBERO_PLUS_PACKAGE_DIR}"
 
@@ -343,11 +359,20 @@ Download the Model
 
 LIBERO-Pro / LIBERO-Plus reuse the standard LIBERO base checkpoints:
 
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Task Suite
+     - Hugging Face Repo
+   * - LIBERO-90
+     - ``RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora``
+   * - LIBERO-130
+     - ``RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora``
+
 .. code-block:: bash
 
-    # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+   hf download <repo> --local-dir <dir>
 
 .. include:: _model_path.rst
 
@@ -394,8 +419,7 @@ packages use the ``libero.libero`` Python namespace. The installer option
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openpi --env libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
    git clone https://github.com/libero-mem/libero-mem.git ../LIBERO-Mem
    git -C ../LIBERO-Mem checkout 0eee0defa4024e51511b6e15a79f30e9620209de
    uv pip uninstall rlinf-libero

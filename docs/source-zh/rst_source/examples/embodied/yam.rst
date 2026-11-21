@@ -10,8 +10,7 @@
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env yam
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env yam && source .venv/bin/activate
 
 安装脚本包含固定版本的 ``i2rt`` backend 和 PICO 传输依赖。启用运动前，核对已安装的机器人模型、工具中心点、关节限位、操作者坐标系到机械臂基座坐标系的 yaw 和运动缩放参数是否与真机一致。
 

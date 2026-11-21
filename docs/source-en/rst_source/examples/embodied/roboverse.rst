@@ -86,16 +86,13 @@ Install RoboVerse with the OpenPI dependencies:
 
 .. code:: bash
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --model openpi --env roboverse
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env roboverse && source .venv/bin/activate
 
 Download the default RoboVerse resources:
 
 .. code:: bash
 
    cd /path/to/RLinf
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset manity/roboverse_data --local-dir .
 
 Download the Model
@@ -106,7 +103,6 @@ Download the OpenPI π₀.₅ checkpoint used by the reference config:
 .. code-block:: bash
 
    cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir RLinf-Pi05-LIBERO-SFT
 
 .. include:: _model_path.rst

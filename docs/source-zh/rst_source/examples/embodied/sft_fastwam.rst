@@ -16,19 +16,22 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 进行 FSDP 
 
 .. include:: _setup_common.rst
 
-进行 SFT 时安装 FastWAM：
+按使用场景选择安装参数：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 36 64
+
+   * - 用途
+     - 参数
+   * - 仅 SFT
+     - ``--model fastwam``
+   * - SFT + LIBERO 评测
+     - ``--model fastwam --env libero``
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model fastwam
-   source .venv/bin/activate
-
-进行评测时安装 FastWAM 和 LIBERO：
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model fastwam --env libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied <flags> && source .venv/bin/activate
 
 监督微调
 --------

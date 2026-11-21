@@ -140,8 +140,7 @@ Dependency Installation
 .. code:: bash
 
    export ROBOCASA_ASSETS_PATH=/path/to/robocasa_assets
-   bash requirements/install.sh embodied --model openpi --env robocasa365
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env robocasa365 && source .venv/bin/activate
 
 Dataset Selection
 -----------------

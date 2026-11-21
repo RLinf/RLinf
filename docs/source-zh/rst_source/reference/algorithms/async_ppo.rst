@@ -150,7 +150,7 @@ actor 依据 ``staleness_threshold`` 筛选样本，保证所用样本的版本�
 7.2 解耦 actor-critic 损失
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-RLinf 的 Async PPO 使用 ``decoupled_actor_critic`` 损失。它不是直接对行为 policy 做标准 PPO clip，而是把“近端约束”和“行为分布修正”拆开处理。
+RLinf 的 Async PPO 使用 ``decoupled_actor_critic`` 损失，将“近端约束”与“行为分布修正”拆开处理，避免直接对滞后的行为 policy 做标准 PPO clip。
 
 记
 

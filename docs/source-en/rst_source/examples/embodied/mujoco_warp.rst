@@ -115,9 +115,7 @@ Install the dependencies and activate the environment:
 
 .. code:: bash
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --env mujoco_warp
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env mujoco_warp && source .venv/bin/activate
 
 The installer pins ``mujoco-warp==3.17.0`` and ``warp-lang==1.16.0``. This verified combination works with CUDA 12 drivers and avoids resolving CUDA 13-only Warp wheels during driverless Docker builds.
 

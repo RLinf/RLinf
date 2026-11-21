@@ -98,9 +98,7 @@ Installation
 
 .. code-block:: bash
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model molmoact2 --env libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model molmoact2 --env libero && source .venv/bin/activate
 
 Set ``MOLMOACT2_LEROBOT_PATH`` before installing to reuse an existing checkout of
 `RLinf/lerobot <https://github.com/RLinf/lerobot/tree/RLinf/molmoact2-hf-inference>`__.

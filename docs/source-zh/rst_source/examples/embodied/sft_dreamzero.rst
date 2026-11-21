@@ -50,20 +50,22 @@ DreamZero 监督微调和 Franka 真机部署
 
 .. include:: _setup_common.rst
 
-**选项 1：仅 SFT 环境** — 安装 DreamZero，不安装仿真器依赖：
+按使用场景选择安装参数：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 36 64
+
+   * - 用途
+     - 参数
+   * - 仅 SFT
+     - ``--model dreamzero``
+   * - SFT + LIBERO 评测
+     - ``--model dreamzero --env libero``
 
 .. code-block:: bash
 
-   # 国内用户可以添加 --use-mirror 加速下载。
-   bash requirements/install.sh embodied --model dreamzero
-   source .venv/bin/activate
-
-**选项 2：SFT + LIBERO 评测** — 额外安装 LIBERO 仿真依赖：
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model dreamzero --env libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied <flags> && source .venv/bin/activate
 
 单独克隆 DreamZero 仓库，并在 SFT 或评测前设置 ``DREAMZERO_PATH``：
 
@@ -189,16 +191,11 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
      - 按子项指定
      - ``libero_franka_mix_sft_dreamzero_5b.yaml``；``data.train_data_paths`` 为列表，每项指定 ``dataset_path``、``embodiment_tag``、``metadata_json_path`` 和 ``weight``。
 
-下载示例：
+下载所需数据集：
 
 .. code:: bash
 
-   # LIBERO
-   hf download physical-intelligence/libero --repo-type dataset --local-dir ./libero
-   # DROID
-   hf download GEAR-Dreams/DreamZero-DROID-Data --repo-type dataset --local-dir ./DreamZero-DROID-Data
-   # Franka PnP 真机数据
-   hf download RLinf/dreamzero-franka-pnp --repo-type dataset --local-dir ./franka_pnp
+   hf download <repo> --repo-type dataset --local-dir <dir>
 
 生成 metadata.json
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

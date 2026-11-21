@@ -52,21 +52,14 @@ Observation and Action
 Install the Runtime
 -------------------
 
-Clone the RLinf repository and enter its directory:
-
-.. code-block:: bash
-
-   # To use a mirror, replace the official clone command with the following line:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+.. include:: _setup_common.rst
+   :end-before: Install dependencies
 
 Install RLinf's ARX X5, camera, and LeRobot dependencies in one Python environment:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env arx5
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env arx5 && source .venv/bin/activate
 
 This command installs the dependencies listed in ``requirements/embodied/envs/arx5.txt``. Install the current Python SDK separately from `ARXroboticsX/ARX5_beta <https://github.com/ARXroboticsX/ARX5_beta>`_; its repository root contains the ``bimanual`` package used by RLinf. Before each ARX X5 session, activate the Python venv and add the cloned ``ARX5_beta`` root to ``PYTHONPATH``:
 

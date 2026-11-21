@@ -108,8 +108,7 @@ LingbotVLA 1.0 模型强化学习
 
 .. code-block:: bash
 
-    bash requirements/install.sh embodied --model lingbotvla --env robotwin --use-mirror
-    source .venv/bin/activate
+    bash requirements/install.sh embodied --model lingbotvla --env robotwin && source .venv/bin/activate
 
 RoboTwin 仓库克隆与资产下载
 ----------------------------------------
@@ -118,10 +117,7 @@ RoboTwin Assets 是 RoboTwin 环境运行所需的资源文件，需要从 Huggi
 
 .. code-block:: bash
 
-   # 1. 克隆 RoboTwin 仓库
    git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support
-
-   # 2. 下载并解压 Assets 文件
    bash script/_download_assets.sh
 
 下载模型

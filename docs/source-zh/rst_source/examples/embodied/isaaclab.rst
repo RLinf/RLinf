@@ -81,19 +81,22 @@
 
 .. include:: _setup_common.rst
 
-为你要运行的模型安装环境：
+按要运行的模型选择 ``--model``：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - 模型
+     - ``--model``
+   * - GR00T N1.5
+     - ``gr00t``
+   * - OpenPI π₀.₅
+     - ``openpi``
 
 .. code:: bash
 
-   # 国内用户可添加 --use-mirror。
-
-   # GR00T N1.5
-   bash requirements/install.sh embodied --model gr00t --env isaaclab
-   source .venv/bin/activate
-
-   # OpenPI π₀.₅
-   # bash requirements/install.sh embodied --model openpi --env isaaclab
-   # source .venv/bin/activate
+   bash requirements/install.sh embodied --model <model> --env isaaclab && source .venv/bin/activate
 
 下载 Isaac Sim
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -116,23 +119,22 @@
 下载模型
 ----------------------------------------
 
-下载你要微调的模型检查点。
+下载要微调模型的 SFT 检查点：
 
-**GR00T N1.5**
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - 模型
+     - Hugging Face 仓库
+   * - GR00T N1.5
+     - ``RLinf/RLinf-Gr00t-SFT-Stack-cube``
+   * - OpenPI π₀.₅
+     - ``YifWRobotics/RLinf-pi05-SFT-Stack-cube``
 
 .. code-block:: bash
 
-   cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir RLinf-Gr00t-SFT-Stack-cube
-
-**OpenPI π₀.₅**
-
-.. code-block:: bash
-
-   cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download YifWRobotics/RLinf-pi05-SFT-Stack-cube --local-dir RLinf-pi05-SFT-Stack-cube
+   hf download <repo> --local-dir <dir>
 
 .. include:: _model_path.rst
 

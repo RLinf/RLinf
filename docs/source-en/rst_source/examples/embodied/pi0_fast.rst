@@ -37,8 +37,7 @@ by the installer:
 
    UV_TORCH_BACKEND=cu128 bash requirements/install.sh embodied \
       --model pi0_fast --env libero \
-      --python 3.12.12 --torch 2.11.0 --no-flash-attn
-   source .venv/bin/activate
+      --python 3.12.12 --torch 2.11.0 --no-flash-attn && source .venv/bin/activate
 
 Add ``--use-mirror`` when the GitHub and PyPI mirrors are required. The validated
 command skips Flash Attention; omit ``--no-flash-attn`` to install it. Before the

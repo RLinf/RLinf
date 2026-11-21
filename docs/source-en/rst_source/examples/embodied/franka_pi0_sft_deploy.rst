@@ -104,9 +104,7 @@ both roles:
 
 .. code:: bash
 
-   # For mainland China users, you can add `--use-mirror` to the install.sh command.
-   bash requirements/install.sh embodied --model openpi --env franka
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
 .. note::
 

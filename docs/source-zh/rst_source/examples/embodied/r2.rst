@@ -120,18 +120,16 @@ Robbyant R2 配置与控制
 
 .. code-block:: bash
 
-   # 读取主机 ROS 2 所用的 Python 版本（例如 3.10）
    ROS_PY=$(/usr/bin/python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-
-   # 中国大陆用户可追加 --use-mirror 提升下载速度
    bash requirements/install.sh --no-flash-attn embodied --env dummy --python "$ROS_PY"
-
-   # 加载主机 ROS 2 环境并激活 .venv，使 rclpy、rframe 与 R2 消息包位于 PYTHONPATH 中
    source /opt/ros/humble/setup.bash
    source .venv/bin/activate
    export REPO_PATH="$PWD"
 
-   # 可选：若在该节点运行 PICO VR 遥操作，额外安装 ZeroMQ 绑定
+若在该节点运行 PICO VR 遥操作，在同一环境中安装 ZeroMQ 绑定：
+
+.. code-block:: bash
+
    uv pip install pyzmq
 
 如果 Robbyant RFrame 及 R2 消息包（``r2_motion_msgs``、``rdiagnostic_msgs``、``navigation_msgs``、``state_machine_msgs``）安装在独立的 overlay 工作空间中，请一并 ``source`` 该工作空间的 ``setup.bash``，随后运行 ``python -c "import rclpy, rframe"`` 验证导入正常。通用平台要求见 :doc:`安装 </rst_source/start/installation>`。
@@ -143,9 +141,7 @@ Robbyant R2 配置与控制
 
 .. code-block:: bash
 
-   # 中国大陆用户可追加 --use-mirror 提升下载速度
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 运行
 --------

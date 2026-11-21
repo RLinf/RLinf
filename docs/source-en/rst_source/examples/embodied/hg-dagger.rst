@@ -101,9 +101,7 @@ Use the same environment as simulator Pi0 DAgger, or pull a prebuilt image from 
 
 .. code:: bash
 
-   # For mainland China users, add `--use-mirror` for faster downloads.
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 Cluster Setup
 -------------

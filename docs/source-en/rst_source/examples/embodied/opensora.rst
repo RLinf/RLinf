@@ -97,21 +97,31 @@ Installation
 
 .. code:: bash
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model openvla-oft --env opensora
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openvla-oft --env opensora && source .venv/bin/activate
 
 Download the VLA Model
 ----------------------
 
-Download the OpenVLA-OFT SFT checkpoints:
+Download the OpenVLA-OFT SFT checkpoint for your suite:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Suite
+     - Hugging Face Repo
+   * - LIBERO-Spatial
+     - ``Haozhan72/Openvla-oft-SFT-libero-spatial-traj1``
+   * - LIBERO-Object
+     - ``Haozhan72/Openvla-oft-SFT-libero-object-traj1``
+   * - LIBERO-Goal
+     - ``Haozhan72/Openvla-oft-SFT-libero-goal-traj1``
+   * - LIBERO-Long
+     - ``Haozhan72/Openvla-oft-SFT-libero10-traj1``
 
 .. code:: bash
 
-   hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir Openvla-oft-SFT-libero-spatial-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir Openvla-oft-SFT-libero-object-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir Openvla-oft-SFT-libero-goal-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero10-traj1 --local-dir Openvla-oft-SFT-libero10-traj1
+   hf download <repo> --local-dir <dir>
 
 After downloading, set the model path and ``unnorm_key`` in the config:
 
@@ -128,13 +138,22 @@ After downloading, set the model path and ``unnorm_key`` in the config:
 Download the World Model
 ------------------------
 
-Download the OpenSora weights and the simulation-initialization dataset. RLinf currently
-provides weights and data for libero-spatial and libero-object:
+Download the OpenSora weights and simulation-initialization dataset for your suite:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Suite
+     - Hugging Face Repo
+   * - LIBERO-Spatial
+     - ``RLinf/RLinf-OpenSora-LIBERO-Spatial``
+   * - LIBERO-Object
+     - ``RLinf/RLinf-OpenSora-LIBERO-Object``
 
 .. code:: bash
 
-   hf download RLinf/RLinf-OpenSora-LIBERO-Spatial --local-dir RLinf-OpenSora-LIBERO-Spatial
-   hf download RLinf/RLinf-OpenSora-LIBERO-Object --local-dir RLinf-OpenSora-LIBERO-Object
+   hf download <repo> --local-dir <dir>
 
 The directory structure of ``RLinf-OpenSora-LIBERO-Spatial`` is:
 

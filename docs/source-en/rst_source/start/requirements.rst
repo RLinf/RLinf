@@ -3,7 +3,7 @@ Requirements
 
 Match your hardware to the workload you want to run. You can start on a single 24 GB GPU and scale the same recipes to multi-node clusters without code changes.
 
-.. figure:: ../../_static/svg/hardware_tiers.svg
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/hardware_tiers.svg
    :align: center
    :width: 100%
 

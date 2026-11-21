@@ -92,9 +92,7 @@ OpenPI π₀ 策略。
 
 .. code:: bash
 
-   # 国内用户可添加 --use-mirror。
-   bash requirements/install.sh embodied --model openpi --env robocasa
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env robocasa && source .venv/bin/activate
 
 安装 RoboCasa 后下载厨房资产：
 
@@ -114,7 +112,6 @@ OpenPI π₀ 策略。
 .. code-block:: bash
 
    cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi0-RoboCasa --local-dir RLinf-Pi0-RoboCasa
 
 .. include:: _model_path.rst

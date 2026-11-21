@@ -112,9 +112,7 @@ Use the NVIDIA setup below for the default recipe. For AMD, Ascend, or MUSA, use
 
 .. code-block:: bash
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model openvla-oft --env libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openvla-oft --env libero && source .venv/bin/activate
 
 Download the Model
 ------------------

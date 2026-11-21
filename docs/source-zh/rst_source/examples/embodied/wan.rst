@@ -102,21 +102,31 @@ NVIDIA 用户按以下步骤安装；在 NPU 上运行 Wan 世界模型推理时
 
 .. code:: bash
 
-   # 为提高国内依赖安装速度，可以添加 --use-mirror。
-   bash requirements/install.sh embodied --model openvla-oft --env wan
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openvla-oft --env wan && source .venv/bin/activate
 
 VLA 模型下载
 ----------------------------------------
 
-下载 OpenVLA-OFT SFT checkpoint：
+下载对应套件的 OpenVLA-OFT SFT checkpoint：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - 套件
+     - Hugging Face 仓库
+   * - LIBERO-Spatial
+     - ``Haozhan72/Openvla-oft-SFT-libero-spatial-traj1``
+   * - LIBERO-Object
+     - ``Haozhan72/Openvla-oft-SFT-libero-object-traj1``
+   * - LIBERO-Goal
+     - ``Haozhan72/Openvla-oft-SFT-libero-goal-traj1``
+   * - LIBERO-10
+     - ``Haozhan72/Openvla-oft-SFT-libero10-traj1``
 
 .. code:: bash
 
-   hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir Openvla-oft-SFT-libero-spatial-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir Openvla-oft-SFT-libero-object-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir Openvla-oft-SFT-libero-goal-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero10-traj1 --local-dir Openvla-oft-SFT-libero10-traj1
+   hf download <repo> --local-dir <dir>
 
 下载完成后，在配置中设置 ``model_path`` 与 ``unnorm_key``：
 
@@ -133,14 +143,24 @@ VLA 模型下载
 世界模型下载
 ----------------------------------------
 
-除 VLA 模型外，还需下载 Wan 权重与初始化数据。当前 RLinf 提供三个套件的数据/权重；每个 Wan
-权重均基于 VLA 模型 rollout 的 1500 条轨迹构建：
+除 VLA 模型外，还需下载对应套件的 Wan 权重与初始化数据（每个 Wan 权重均基于 VLA 模型 rollout 的 1500 条轨迹构建）：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - 套件
+     - Hugging Face 仓库
+   * - LIBERO-Spatial
+     - ``RLinf/RLinf-Wan-LIBERO-Spatial``
+   * - LIBERO-Object
+     - ``RLinf/RLinf-Wan-LIBERO-Object``
+   * - LIBERO-Goal
+     - ``RLinf/RLinf-Wan-LIBERO-Goal``
 
 .. code:: bash
 
-   hf download RLinf/RLinf-Wan-LIBERO-Spatial --local-dir RLinf-Wan-LIBERO-Spatial
-   hf download RLinf/RLinf-Wan-LIBERO-Object --local-dir RLinf-Wan-LIBERO-Object
-   hf download RLinf/RLinf-Wan-LIBERO-Goal --local-dir RLinf-Wan-LIBERO-Goal
+   hf download <repo> --local-dir <dir>
 
 ``RLinf-Wan-LIBERO-Spatial`` 的目录结构如下：
 

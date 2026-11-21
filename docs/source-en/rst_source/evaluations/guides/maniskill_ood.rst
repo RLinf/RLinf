@@ -10,8 +10,7 @@ Environment Setup
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
 ``evaluations/maniskill/`` currently ships only an OpenVLA-OFT example config. OpenVLA, OpenPI, and other models have ManiSkill training configs but no dedicated eval YAML yet — see :ref:`maniskill-derive-from-train` below.
 
@@ -19,10 +18,7 @@ Download ManiSkill assets if not already present:
 
 .. code-block:: bash
 
-   cd rlinf/envs/sim/maniskill
-   # For faster downloads in China, you can set:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
+   hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
 
 Models and Checkpoints
 ----------------------

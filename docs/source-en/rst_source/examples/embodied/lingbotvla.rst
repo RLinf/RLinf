@@ -110,8 +110,7 @@ Install the LingbotVLA 1.0 native environment and RoboTwin base dependencies in 
 
 .. code-block:: bash
 
-    bash requirements/install.sh embodied --model lingbotvla --env robotwin --use-mirror
-    source .venv/bin/activate
+    bash requirements/install.sh embodied --model lingbotvla --env robotwin && source .venv/bin/activate
 
 RoboTwin Repository Clone and Assets Download
 ---------------------------------------------
@@ -120,10 +119,7 @@ RoboTwin Assets are asset files required by the RoboTwin environment and need to
 
 .. code-block:: bash
 
-   # 1. Clone RoboTwin repository
    git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support
-
-   # 2. Download and extract Assets files
    bash script/_download_assets.sh
 
 Download the Model

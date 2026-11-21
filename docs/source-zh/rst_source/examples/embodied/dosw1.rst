@@ -120,19 +120,14 @@ A. 克隆 RLinf 仓库
 
 .. code:: bash
 
-   # 中国大陆用户可用下面这条加速下载：
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
 
 B. 安装依赖
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
-   # 中国大陆用户可加 --use-mirror 提高下载速度
-   bash requirements/install.sh embodied --env dosw1
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
 
 安装脚本默认从以下路径读取 AirBot SDK：
 
@@ -145,7 +140,7 @@ B. 安装依赖
 
    export DOSW1_SDK_WHEEL=/path/to/airbot_py-5.1.6-py3-none-any.whl
    export DOSW1_API_PATH=/path/to/airbot_api
-   bash requirements/install.sh embodied --env dosw1
+   bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
 
 训练 / Rollout 节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -155,19 +150,14 @@ A. 克隆 RLinf 仓库
 
 .. code:: bash
 
-   # 中国大陆用户可用下面这条加速下载：
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
 
 B. 安装依赖
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
-   # 中国大陆用户可加 --use-mirror 提高下载速度
-   bash requirements/install.sh embodied --env dosw1
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
 
 GPU 节点通常没有 ``~/dos_w1/airbot`` 目录，安装脚本会打印 warning 并
 **跳过** AirBot SDK 安装 —— 这是预期行为，其余依赖（``embodied`` extra、
@@ -187,7 +177,6 @@ Flow Matching 策略使用的 ResNet-10 预训练权重（配置里的
 
 .. code:: bash
 
-   # 中国大陆用户可设置 HF_ENDPOINT=https://hf-mirror.com 加速下载。
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 下载完成后，把 YAML 中的 ``actor.model.model_path`` 与

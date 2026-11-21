@@ -98,12 +98,9 @@ libfranka versions only for single-arm Franka.
 
 .. code-block:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-   export LIBFRANKA_VERSION=0.19.0       # or 0.15.0, matching the firmware
-   bash requirements/install.sh embodied --env franka --use-mirror
-   source .venv/bin/activate
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+   export LIBFRANKA_VERSION=0.19.0
+   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 Install GELLO dependencies on ``node 0`` by following :doc:`franka_gello`.
 The two GELLO leaders must stay local to ``node 0``; do not route their
@@ -159,10 +156,8 @@ perform SFT:
 
 .. code-block:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero --use-mirror
-   source .venv/bin/activate
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 
 Configuration

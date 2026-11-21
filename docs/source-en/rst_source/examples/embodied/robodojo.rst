@@ -130,18 +130,22 @@ space before installing:
 
 **Custom environment**
 
-From the RLinf repository root:
+From the RLinf repository root, select the install flags for your setup:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 36 64
+
+   * - Usage
+     - Flags
+   * - RoboDojo simulator only
+     - ``--env robodojo``
+   * - RoboDojo + OpenPI evaluation
+     - ``--model openpi --env robodojo``
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env robodojo
-   source .venv/bin/activate
-
-Users in mainland China can add ``--use-mirror``. To include OpenPI:
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model openpi --env robodojo
+   bash requirements/install.sh embodied <flags> && source .venv/bin/activate
 
 The installer installs PyTorch 2.7, Isaac Sim 5.1, and the pinned IsaacLab,
 and applies the validated compatibility pins. Do not install
@@ -322,8 +326,7 @@ OpenPI Pi_05 checkpoint. Install the policy dependencies as well:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openpi --env robodojo
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env robodojo && source .venv/bin/activate
 
 Then start the evaluation:
 

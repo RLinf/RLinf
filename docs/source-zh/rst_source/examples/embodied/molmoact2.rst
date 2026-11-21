@@ -95,9 +95,7 @@ episode，即完整的 500 条轨迹；step 预算为 ``max_episode_steps × 25`
 
 .. code-block:: bash
 
-   # 国内用户可以添加 --use-mirror 加速下载。
-   bash requirements/install.sh embodied --model molmoact2 --env libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model molmoact2 --env libero && source .venv/bin/activate
 
 安装前设置 ``MOLMOACT2_LEROBOT_PATH``，可以复用已有的
 `RLinf/lerobot <https://github.com/RLinf/lerobot/tree/RLinf/molmoact2-hf-inference>`__ checkout。

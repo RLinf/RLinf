@@ -84,9 +84,7 @@ Franka Panda 仿真环境。你将使用 RLinf 在状态观测上用 PPO 训练 
 
 .. code:: bash
 
-   # 国内用户可添加 --use-mirror。
-   bash requirements/install.sh embodied --model openvla --env frankasim
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openvla --env frankasim && source .venv/bin/activate
 
 下载模型
 ----------------------------------------
@@ -96,7 +94,6 @@ MLP + PPO 配方可跳过本节。CNN + SAC 配方需要下载 ResNet 检查点�
 .. code-block:: bash
 
    cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 然后在 ``examples/embodiment/config/frankasim_sac_cnn_async.yaml`` 中为 rollout 和 actor

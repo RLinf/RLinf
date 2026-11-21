@@ -107,8 +107,6 @@ After entering the XSquare Docker container, clone the RLinf repository inside i
 
 .. code:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -116,9 +114,7 @@ Then install the RLinf Python dependencies for the embodied real-world setup:
 
 .. code:: bash
 
-   # For mainland China users, you can add the `--use-mirror` flag for better speed.
-   bash requirements/install.sh embodied --env xsquare_turtle2
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env xsquare_turtle2 && source .venv/bin/activate
 
 Training / Rollout Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -128,8 +124,6 @@ A. Clone RLinf Repository
 
 .. code:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -140,10 +134,7 @@ Install dependencies with ``requirements/install.sh``, or pull a prebuilt image 
 
 .. code:: bash
 
-   # Install the openvla + maniskill_libero environment on training / rollout nodes.
-   # For mainland China users, add `--use-mirror` for faster downloads.
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
 
 Download the Model
@@ -153,7 +144,6 @@ Before starting training, download the pretrained ResNet CNN backbone:
 
 .. code:: bash
 
-   # For mainland China users, set HF_ENDPOINT=https://hf-mirror.com for faster downloads.
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 After downloading, update the ``model_path`` field in the configuration YAML file.

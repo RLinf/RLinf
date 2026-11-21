@@ -125,19 +125,14 @@ A. Clone RLinf Repository
 
 .. code:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
 
 B. Install Dependencies
 ^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code:: bash
 
-   # Mainland China users can add --use-mirror for better download speed.
-   bash requirements/install.sh embodied --env dosw1
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
 
 By default the installer looks for the AirBot SDK at:
 
@@ -150,7 +145,7 @@ If your SDK files live elsewhere, point the installer at the correct paths:
 
    export DOSW1_SDK_WHEEL=/path/to/airbot_py-5.1.6-py3-none-any.whl
    export DOSW1_API_PATH=/path/to/airbot_api
-   bash requirements/install.sh embodied --env dosw1
+   bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
 
 Training / Rollout Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -160,19 +155,14 @@ A. Clone RLinf Repository
 
 .. code:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
 
 B. Install Dependencies
 ^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code:: bash
 
-   # Mainland China users can add --use-mirror for better download speed.
-   bash requirements/install.sh embodied --env dosw1
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
 
 A GPU server typically does not have a ``~/dos_w1/airbot`` directory, so
 the installer prints a warning and **skips** the AirBot SDK step — this is
@@ -193,7 +183,6 @@ policy (``actor.model.encoder_config.ckpt_name: resnet10_pretrained.pt``):
 
 .. code:: bash
 
-   # For mainland China users, set HF_ENDPOINT=https://hf-mirror.com for faster downloads.
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 Point ``actor.model.model_path`` and ``rollout.model.model_path`` in the YAML

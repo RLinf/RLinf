@@ -91,9 +91,7 @@ GSEnv，也称 ManiSkill-GS，将 ManiSkill 物理仿真与 3D Gaussian Splattin
 
 .. code:: bash
 
-   # 国内用户可添加 --use-mirror。
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 安装 ManiSkill-GS 及其资产：
 
@@ -102,9 +100,6 @@ GSEnv，也称 ManiSkill-GS，将 ManiSkill 物理仿真与 3D Gaussian Splattin
    git clone -b v01 https://github.com/chenkang455/ManiSkill-GS.git
    cd ManiSkill-GS
    uv pip install -e .
-
-   # 下载资产到 ManiSkill-GS 项目中。
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/gsenv-assets-v0 --repo-type dataset --local-dir ./assets
 
 在 ManiSkill-GS 项目根目录验证 RLinf 接口：
@@ -125,7 +120,6 @@ GSEnv，也称 ManiSkill-GS，将 ManiSkill 物理仿真与 3D Gaussian Splattin
 .. code-block:: bash
 
    cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT --local-dir RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
 
 .. include:: _model_path.rst

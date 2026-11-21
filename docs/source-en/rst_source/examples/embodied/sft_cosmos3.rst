@@ -42,9 +42,7 @@ Install Cosmos3 (add ``--env libero`` if you also need simulation eval):
 .. code-block:: bash
 
    unset PYTHONPATH
-   # Users in China can add --use-mirror to speed up downloads.
-   bash requirements/install.sh embodied --model cosmos3 --env libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model cosmos3 --env libero && source .venv/bin/activate
 
 Cosmos3's data transforms and normalization stats depend on cosmos-framework; clone it and set the path before training:
 
@@ -66,7 +64,6 @@ Download directly into the HF cache (recommended; cache layout is automatically 
 .. code-block:: bash
 
    export HF_HOME=${HF_HOME:-~/.cache/huggingface}
-   # Use a mirror in China: export HF_ENDPOINT=https://hf-mirror.com
    hf download Qwen/Qwen3-VL-8B-Instruct
    hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e Wan2.2_VAE.pth
    hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --include "vae/*"
@@ -96,7 +93,6 @@ Download ``nvidia/Cosmos3-Nano`` from Hugging Face. It is in **diffusers/safeten
 
 .. code-block:: bash
 
-   # Use a mirror in China: export HF_ENDPOINT=https://hf-mirror.com
    hf download nvidia/Cosmos3-Nano \
      --local-dir /path/to/Cosmos3-Nano
 

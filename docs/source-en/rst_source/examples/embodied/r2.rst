@@ -120,19 +120,16 @@ Because ``rclpy`` and ``rframe`` load compiled CPython extensions from the host 
 
 .. code-block:: bash
 
-   # Check the Python version used by the host ROS 2 installation (e.g., 3.10).
    ROS_PY=$(/usr/bin/python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-
-   # Mainland China users can add --use-mirror for faster downloads.
    bash requirements/install.sh --no-flash-attn embodied --env dummy --python "$ROS_PY"
-
-   # Source the host ROS 2 and Robbyant RFrame workspaces before or after activating .venv
-   # so rclpy, rframe, and R2 message packages are on PYTHONPATH.
    source /opt/ros/humble/setup.bash
    source .venv/bin/activate
    export REPO_PATH="$PWD"
 
-   # Optional: install ZeroMQ bindings if running PICO VR teleoperation on this node.
+If you run PICO VR teleoperation on this node, install ZeroMQ bindings in the same environment:
+
+.. code-block:: bash
+
    uv pip install pyzmq
 
 If Robbyant RFrame and the R2 message packages (``r2_motion_msgs``, ``rdiagnostic_msgs``, ``navigation_msgs``, ``state_machine_msgs``) live in a separate overlay workspace on your robot computer, source that workspace's ``setup.bash`` as well, then verify imports with ``python -c "import rclpy, rframe"``. See :doc:`Installation </rst_source/start/installation>` for general platform prerequisites.
@@ -144,9 +141,7 @@ On a separate GPU server used for policy rollout and training, install the model
 
 .. code-block:: bash
 
-   # Mainland China users can add --use-mirror for faster downloads.
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 Run It
 ------

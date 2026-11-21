@@ -10,8 +10,7 @@ ManiSkill OOD 评测用于检验 VLA 策略在 ManiSkill 分布外（Out-of-Dist
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
 当前 ``evaluations/maniskill/`` 仅提供 OpenVLA-OFT 示例配置；OpenVLA、OpenPI 等模型在 ManiSkill 上有训练配置，但尚无独立评测 YAML，可从训练配置派生（见下文 :ref:`maniskill-derive-from-train`）。
 
@@ -19,10 +18,7 @@ ManiSkill OOD 评测用于检验 VLA 策略在 ManiSkill 分布外（Out-of-Dist
 
 .. code-block:: bash
 
-   cd rlinf/envs/sim/maniskill
-   # 为提升国内下载速度，可以设置：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
+   hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
 
 模型与权重
 ----------

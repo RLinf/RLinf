@@ -207,8 +207,7 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 安装脚本依次完成：
 
@@ -285,8 +284,7 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 
 .. code:: bash
 
-   hf download RLinf/RLinf-ResNet10-pretrained \
-     --local-dir ./models/RLinf-ResNet10-pretrained
+   hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./models/RLinf-ResNet10-pretrained
 
 后面的训练命令会将该目录同时传给 actor 和 rollout。
 
@@ -500,8 +498,7 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 两台计算机必须使用相同的 RLinf 代码版本、Python 版本和 Ray 版本。加入多节点集群前，先按前文采集步骤在控制计算机上收集演示，此时使用节点编号 0。然后将完整的 ``logs/franka-demo/demo_buffer`` 目录复制到 GPU 服务器。
 
@@ -547,8 +544,7 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 
 .. code:: bash
 
-   LIBFRANKA_VERSION=0.15.0 bash requirements/install.sh embodied --env franka-ros --venv franka-ros
-   source franka-ros/bin/activate
+   LIBFRANKA_VERSION=0.15.0 bash requirements/install.sh embodied --env franka-ros --venv franka-ros && source franka-ros/bin/activate
 
 安装脚本依次完成：
 
@@ -655,8 +651,7 @@ ROS 后端的实时模式在安装时由 ``FRANKA_REALTIME_CONFIG`` 决定，不
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --model openpi --env franka --venv openpi
-   source openpi/bin/activate
+   bash requirements/install.sh embodied --model openpi --env franka --venv openpi && source openpi/bin/activate
 
 按需将 ``openpi`` 替换为 ``openvla``、``openvla-oft`` 或 ``gr00t``。这些命令只安装依赖，模型权重、任务配置和训练步骤见以下指南：
 

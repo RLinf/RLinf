@@ -3,7 +3,7 @@
 
 从零开始跑通第一个 RLinf 任务，再按硬件和目标选择对应的工作流。
 
-.. figure:: ../../_static/svg/onboarding_flow.svg
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/onboarding_flow_zh.svg
    :align: center
    :width: 100%
 

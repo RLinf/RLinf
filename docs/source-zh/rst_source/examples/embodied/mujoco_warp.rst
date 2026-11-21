@@ -115,9 +115,7 @@ humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``rewa
 
 .. code:: bash
 
-   # 中国大陆用户可添加 --use-mirror。
-   bash requirements/install.sh embodied --env mujoco_warp
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env mujoco_warp && source .venv/bin/activate
 
 安装脚本固定 ``mujoco-warp==3.17.0`` 和 ``warp-lang==1.16.0``。该组合已经过 CUDA 12 驱动验证，也避免无驱动的 Docker 构建解析到仅支持 CUDA 13 的 Warp wheel。
 

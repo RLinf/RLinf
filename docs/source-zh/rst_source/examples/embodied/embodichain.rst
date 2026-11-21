@@ -81,9 +81,7 @@ PPO 训练 MLP actor-critic。
 
 .. code:: bash
 
-   # 国内用户可添加 --use-mirror。
-   bash requirements/install.sh embodied --env embodichain
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env embodichain && source .venv/bin/activate
 
 .. warning::
 

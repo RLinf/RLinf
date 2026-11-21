@@ -94,25 +94,22 @@ value clipping、可选 entropy 正则）。
 
 .. include:: _setup_common.rst
 
-安装脚本会自动克隆 ABot-M0 和 VGGT；如需复用本地源码目录，请先设置 ``ABOT_PATH`` 和 ``VGGT_PATH``：
+安装脚本会自动克隆 ABot-M0 和 VGGT；如需复用本地源码目录，先设置 ``ABOT_PATH`` 和 ``VGGT_PATH``。按要运行的 benchmark 选择 ``--env``：
 
-.. code:: bash
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
 
-   # 可选：使用本地源码目录，而不是由安装脚本自动克隆。
-   # export ABOT_PATH=<path_to_ABot-Manipulation>
-   # export VGGT_PATH=<path_to_vggt>
+   * - Benchmark
+     - ``--env``
+   * - LIBERO
+     - ``maniskill_libero``
+   * - LIBERO-Plus
+     - ``liberoplus``
 
-   # 国内用户可添加 --use-mirror 加速下载。
-   bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero
-   source .venv/bin/activate
+.. code-block:: bash
 
-如需运行 LIBERO-Plus 实验，请改用 ``LIBERO-plus`` 运行时安装命令：
-
-.. code:: bash
-
-   # 国内用户可添加 --use-mirror 加速下载。
-   bash requirements/install.sh embodied --model abot_m0 --env liberoplus
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model abot_m0 --env <env> && source .venv/bin/activate
 
 LIBERO-Plus 资产下载
 ----------------------------------------
@@ -129,10 +126,6 @@ LIBERO-Plus 需要大量新增对象、纹理和其他资产才能正常运行�
 
    echo "LIBERO_PLUS_PACKAGE_DIR=${LIBERO_PLUS_PACKAGE_DIR}"
 
-   # 如果运行环境无法直接访问 Hugging Face，可启用镜像。
-   # export HF_ENDPOINT=https://hf-mirror.com
-
-   # 从 Hugging Face dataset 仓库下载资产压缩包。
    hf download --repo-type dataset Sylvest/LIBERO-plus assets.zip \
        --local-dir "${LIBERO_PLUS_PACKAGE_DIR}"
 

@@ -52,21 +52,14 @@ ARX X5 数采配置在一台 Ubuntu 24.04 主机上运行双臂控制、三路�
 安装运行环境
 ------------
 
-克隆 RLinf 仓库并进入仓库目录：
-
-.. code-block:: bash
-
-   # 如需使用镜像，可用下一行替换官方克隆命令：
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+.. include:: _setup_common.rst
+   :end-before: 使用下面的
 
 在同一个 Python 环境中安装 RLinf 的 ARX X5、相机和 LeRobot 依赖：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env arx5
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env arx5 && source .venv/bin/activate
 
 该命令安装 ``requirements/embodied/envs/arx5.txt`` 中列出的依赖。当前 Python SDK 需要从 `ARXroboticsX/ARX5_beta <https://github.com/ARXroboticsX/ARX5_beta>`_ 单独安装，其仓库根目录直接包含 RLinf 使用的 ``bimanual`` package。每次使用 ARX X5 前，先激活 Python venv，再把克隆的 ``ARX5_beta`` 根目录加入 ``PYTHONPATH``：
 

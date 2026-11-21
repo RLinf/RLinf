@@ -74,9 +74,7 @@ Psi0 + SIMPLE 的准备分为五步。第 1–4 步由所有 SIMPLE 任务共用
 
 .. code-block:: bash
 
-   # 中国大陆用户可以添加 --use-mirror 加速下载。
-   bash requirements/install.sh embodied --model psi0 --env simple
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
 
 也可以构建 Docker 镜像，并切换到其中的 Psi0 环境：
 
@@ -96,7 +94,6 @@ tokenizer 和 processor：
 
 .. code-block:: bash
 
-   # 中国大陆用户可以设置 HF_ENDPOINT=https://hf-mirror.com，使用代理加速下载。
    export HF_HOME=/path/to/hf-cache
    hf download Qwen/Qwen3-VL-2B-Instruct \
      chat_template.json config.json generation_config.json merges.txt \
@@ -119,7 +116,6 @@ tokenizer 和 processor：
 .. code-block:: bash
 
    export SIMPLE_ASSETS_DIR=/path/to/simple_assets
-   # 中国大陆用户可以添加 --use-mirror，使用代理加速下载。
    bash requirements/embodied/download_assets.sh --assets simple --dir "${SIMPLE_ASSETS_DIR}"
 
 .. _simple-link-assets:

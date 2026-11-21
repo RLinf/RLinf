@@ -103,26 +103,11 @@ How RECAP Works
 Installation
 ------------
 
-1. Clone RLinf Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
 .. code:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-2. Install Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Install the OpenPI embodied environment with ``requirements/install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
-
-.. code:: bash
-
-   # For mainland China users, add `--use-mirror` for faster downloads.
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 
 Download the Model
@@ -138,7 +123,6 @@ The RECAP pipeline requires the following pretrained models:
 
 .. code:: bash
 
-   # For mainland China users, set HF_ENDPOINT=https://hf-mirror.com for faster downloads.
    hf download google/siglip2-so400m-patch14-224 --local-dir siglip2-so400m-patch14-224
    hf download google/gemma-3-270m --local-dir gemma-3-270m
 

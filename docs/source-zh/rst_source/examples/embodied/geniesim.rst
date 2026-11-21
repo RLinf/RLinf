@@ -101,9 +101,7 @@ GenieSim 仿真和 RLinf 训练分在两个 GPU 节点上跑。跑 RLinf 的是�
 
 .. code:: bash
 
-   # 中国大陆用户可追加 --use-mirror。
-   bash requirements/install.sh embodied --model openpi --env geniesim
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env geniesim && source .venv/bin/activate
 
 也可以从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像，或通过 ``docker/Dockerfile`` 构建 ``embodied-geniesim`` 目标；前置依赖和通用安装选项见 :doc:`安装 </rst_source/start/installation>`。
 
@@ -117,9 +115,6 @@ GenieSim 仿真和 RLinf 训练分在两个 GPU 节点上跑。跑 RLinf 的是�
 在已经激活的 OpenPI 环境里下载。用 Docker 时，在训练节点的 RLinf 容器内、``/workspace/RLinf`` 执行；用自定义环境时，在训练节点的 RLinf 仓库根目录执行。已经有检查点的话，把 ``GENIESIM_CHECKPOINT_PATH`` 设成当前环境能读到的目录，然后直接看「运行」。
 
 .. code:: bash
-
-   # 中国大陆用户可设置镜像：
-   # export HF_ENDPOINT=https://hf-mirror.com
 
    export GENIESIM_CHECKPOINT_PATH="$PWD/checkpoints/geniesim_sft"
    hf download RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT \

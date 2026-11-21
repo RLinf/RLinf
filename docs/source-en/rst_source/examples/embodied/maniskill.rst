@@ -99,12 +99,22 @@ Installation
 
 .. include:: _setup_common.rst
 
+Select ``--model`` for the model you want to run:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Model
+     - ``--model``
+   * - OpenVLA
+     - ``openvla``
+   * - OpenVLA-OFT
+     - ``openvla-oft``
+
 .. code:: bash
 
-   # Add --use-mirror for faster downloads in mainland China.
-   # Use --model openvla-oft for the OpenVLA-OFT experiments.
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model <model> --env maniskill_libero && source .venv/bin/activate
 
 Download the Assets
 -------------------
@@ -113,7 +123,6 @@ Download the ManiSkill scene assets from the repository root:
 
 .. code:: bash
 
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
    hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
 
 Download the Model
@@ -123,7 +132,6 @@ Download a pretrained base checkpoint:
 
 .. code:: bash
 
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
    hf download gen-robot/openvla-7b-rlvla-warmup --local-dir openvla-7b-rlvla-warmup
 
 .. include:: _model_path.rst

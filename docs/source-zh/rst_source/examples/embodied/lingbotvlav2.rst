@@ -117,8 +117,7 @@ LingbotVLA 2.0 的源码位于 ``/opt/venv/lingbotvlav2/lingbot-vla-v2``。
 
 .. code-block:: bash
 
-    bash requirements/install.sh embodied --model lingbotvlav2 --env robotwin
-    source .venv/bin/activate
+    bash requirements/install.sh embodied --model lingbotvlav2 --env robotwin && source .venv/bin/activate
 
 安装脚本会把 `RLinf 维护的 LingbotVLA 2.0 fork <https://github.com/RLinf/lingbot-vla-v2/tree/rlinf>`__ 的 ``rlinf`` 分支克隆到 ``.venv/lingbot-vla-v2``，该分支补充了 RLinf PPO 所需的接口。如需放在其他位置，请在安装前设置 ``LINGBOT_VLA_V2_PATH``。
 
@@ -129,10 +128,7 @@ RoboTwin Assets 是 RoboTwin 环境运行所需的资源文件，需要从 Huggi
 
 .. code-block:: bash
 
-   # 1. 克隆 RoboTwin 仓库
    git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support
-
-   # 2. 下载并解压 Assets 文件
    cd RoboTwin
    bash script/_download_assets.sh
 

@@ -96,9 +96,7 @@
 
 .. code:: bash
 
-   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
-   bash requirements/install.sh embodied --model openpi --env franka
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
 .. note::
 

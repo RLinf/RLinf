@@ -89,12 +89,9 @@
 
 .. code-block:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-   export LIBFRANKA_VERSION=0.19.0       # 或 0.15.0，与固件匹配
-   bash requirements/install.sh embodied --env franka --use-mirror
-   source .venv/bin/activate
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+   export LIBFRANKA_VERSION=0.19.0
+   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 按照 :doc:`franka_gello` 在 ``node 0`` 安装 GELLO 依赖。两台 GELLO 主手应保留在 ``node 0`` 本机，不应通过 LAN 转发 1 kHz 数据流。
 
@@ -138,10 +135,8 @@
 
 .. code-block:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero --use-mirror
-   source .venv/bin/activate
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 
 配置

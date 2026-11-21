@@ -69,9 +69,7 @@ Install the robot dependencies from the repository root:
 
 .. code-block:: bash
 
-   # Mainland China users can add --use-mirror for faster downloads.
-   bash requirements/install.sh embodied --env lekiwi --install-rlinf --no-root
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env lekiwi --install-rlinf --no-root && source .venv/bin/activate
 
 The installer includes LeRobot with Feetech support and OpenCV's headless
 build, which captures frames without the system GL libraries a camera window

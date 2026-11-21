@@ -149,15 +149,22 @@ bridge online DAgger with offline SFT or real-robot datasets.
 Installation
 ------------
 
-Install the embodied environment with ``requirements/install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. See :doc:`../../start/installation` for shared options.
+Install the embodied environment with ``requirements/install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. See :doc:`../../start/installation` for shared options. Choose ``--env`` for your simulator:
 
-.. code:: bash
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
 
-   # For mainland China users, add `--use-mirror` for faster downloads.
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   # For the RoboTwin environment, run:
-   # bash requirements/install.sh embodied --model openpi --env robotwin
-   source .venv/bin/activate
+   * - Environment
+     - ``--env``
+   * - ManiSkill / LIBERO
+     - ``maniskill_libero``
+   * - RoboTwin
+     - ``robotwin``
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --model openpi --env <env> && source .venv/bin/activate
 
 Checkpoint Setup
 ----------------
@@ -198,7 +205,6 @@ You can find pretrained Pi0 checkpoints on Hugging Face for student initializati
 
 .. code:: bash
 
-   # For mainland China users, set HF_ENDPOINT=https://hf-mirror.com for faster downloads.
    hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir /path/to/model
 
 The expert model checkpoint could also come from a PPO run in :doc:`pi0`.
@@ -223,7 +229,6 @@ In the same way, ou can find pretrained Pi0 checkpoints on Hugging Face for stud
 
 .. code:: bash
 
-   # For mainland China users, set HF_ENDPOINT=https://hf-mirror.com for faster downloads.
    hf download RLinf/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir /path/to/model
 
 The expert model checkpoint could also come from a PPO run in :doc:`pi0`.

@@ -92,28 +92,27 @@
 
 .. code:: bash
 
-   # 国内用户可添加 --use-mirror。
-   bash requirements/install.sh embodied --model openpi --env calvin
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env calvin && source .venv/bin/activate
 
 下载模型
 ----------------------------------------
 
-下载你要微调的 OpenPI 模型检查点。
+下载要微调的 OpenPI checkpoint：
 
-**OpenPI π₀**
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - 模型
+     - Hugging Face 仓库
+   * - OpenPI π₀
+     - ``RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT``
+   * - OpenPI π₀.₅
+     - ``RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT``
 
 .. code-block:: bash
 
-   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT --local-dir RLinf-Pi0-CALVIN-ABC-D-SFT
-
-**OpenPI π₀.₅**
-
-.. code-block:: bash
-
-   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT --local-dir RLinf-Pi05-CALVIN-ABC-D-SFT
+   hf download <repo> --local-dir <dir>
 
 .. include:: _model_path.rst
 

@@ -106,8 +106,6 @@ XSquare Turtle2平台自带SDK和基于ROS的控制器。**请在开始下安装
 
 .. code:: bash
 
-   # 为了提高国内下载速度，也可以使用：
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -115,9 +113,7 @@ XSquare Turtle2平台自带SDK和基于ROS的控制器。**请在开始下安装
 
 .. code:: bash
 
-   # 为提高国内依赖安装速度，可以添加 `--use-mirror` 标志
-   bash requirements/install.sh embodied --env xsquare_turtle2
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env xsquare_turtle2 && source .venv/bin/activate
 
 训练 / Rollout 节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -127,8 +123,6 @@ A. 克隆 RLinf 仓库
 
 .. code:: bash
 
-   # 为了提高国内下载速度，也可以使用：
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -139,10 +133,7 @@ B. 安装依赖
 
 .. code:: bash
 
-   # 在训练 / rollout 节点上安装 openvla + maniskill_libero 环境。
-   # 中国大陆用户可添加 `--use-mirror` 加速下载。
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
 
 下载模型
@@ -152,7 +143,6 @@ B. 安装依赖
 
 .. code:: bash
 
-   # 中国大陆用户可设置 HF_ENDPOINT=https://hf-mirror.com 加速下载。
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 下载完成后，请在对应的配置 YAML 文件中正确填写 ``model_path`` 字段。

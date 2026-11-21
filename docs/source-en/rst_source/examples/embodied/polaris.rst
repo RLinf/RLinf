@@ -99,9 +99,7 @@ Install PolaRiS with OpenPI dependencies:
 
 .. code:: bash
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --model openpi --env polaris
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env polaris && source .venv/bin/activate
 
 Download Isaac Sim
 ~~~~~~~~~~~~~~~~~~
@@ -128,7 +126,6 @@ Download the evaluation scenes and initial conditions:
 
 .. code:: bash
 
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download owhan/PolaRiS-Hub --repo-type=dataset --local-dir ./PolaRiS-Hub
    export POLARIS_DATA_PATH=/path/to/PolaRiS-Hub
 
@@ -141,23 +138,22 @@ Optionally download co-training demonstrations:
 Download the Model
 ------------------
 
-Download the checkpoint for the OpenPI model you plan to fine-tune.
+Download the checkpoint for the OpenPI model you plan to fine-tune:
 
-**OpenPI π₀.₅**
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Model
+     - Hugging Face Repo
+   * - OpenPI π₀.₅
+     - ``RLinf/RLinf-Pi05-Polaris-droid_jointpos``
+   * - OpenPI π₀
+     - ``RLinf/RLinf-Pi0-Polaris-droid_jointpos``
 
 .. code-block:: bash
 
-   cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-Pi05-Polaris-droid_jointpos --local-dir RLinf-Pi05-Polaris-droid_jointpos
-
-**OpenPI π₀**
-
-.. code-block:: bash
-
-   cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-Pi0-Polaris-droid_jointpos --local-dir RLinf-Pi0-Polaris-droid_jointpos
+   hf download <repo> --local-dir <dir>
 
 .. include:: _model_path.rst
 

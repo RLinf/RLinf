@@ -96,21 +96,31 @@ VLA 策略。OpenSora 根据当前观测与动作序列生成未来视频帧，�
 
 .. code:: bash
 
-   # 为提高国内依赖安装速度，可以添加 --use-mirror。
-   bash requirements/install.sh embodied --model openvla-oft --env opensora
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openvla-oft --env opensora && source .venv/bin/activate
 
 VLA 模型下载
 ----------------------------------------
 
-下载 OpenVLA-OFT SFT checkpoint：
+下载对应套件的 OpenVLA-OFT SFT checkpoint：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - 套件
+     - Hugging Face 仓库
+   * - LIBERO-Spatial
+     - ``Haozhan72/Openvla-oft-SFT-libero-spatial-traj1``
+   * - LIBERO-Object
+     - ``Haozhan72/Openvla-oft-SFT-libero-object-traj1``
+   * - LIBERO-Goal
+     - ``Haozhan72/Openvla-oft-SFT-libero-goal-traj1``
+   * - LIBERO-Long
+     - ``Haozhan72/Openvla-oft-SFT-libero10-traj1``
 
 .. code:: bash
 
-   hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir Openvla-oft-SFT-libero-spatial-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir Openvla-oft-SFT-libero-object-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir Openvla-oft-SFT-libero-goal-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero10-traj1 --local-dir Openvla-oft-SFT-libero10-traj1
+   hf download <repo> --local-dir <dir>
 
 下载完成后，在配置中设置模型路径与 ``unnorm_key``：
 
@@ -127,14 +137,22 @@ VLA 模型下载
 世界模型下载
 ----------------------------------------
 
-除 VLA 模型外，还需下载 OpenSora 权重与用于仿真初始化的数据集。当前 RLinf 仅提供
-libero-spatial 与 libero-object 的权重与数据（各 suite 的 OpenSora 权重均基于 VLA 模型
-rollout 的 3000 条轨迹构建）：
+除 VLA 模型外，还需下载对应套件的 OpenSora 权重与仿真初始化数据集（各 suite 的 OpenSora 权重均基于 VLA 模型 rollout 的 3000 条轨迹构建）：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - 套件
+     - Hugging Face 仓库
+   * - LIBERO-Spatial
+     - ``RLinf/RLinf-OpenSora-LIBERO-Spatial``
+   * - LIBERO-Object
+     - ``RLinf/RLinf-OpenSora-LIBERO-Object``
 
 .. code:: bash
 
-   hf download RLinf/RLinf-OpenSora-LIBERO-Spatial --local-dir RLinf-OpenSora-LIBERO-Spatial
-   hf download RLinf/RLinf-OpenSora-LIBERO-Object --local-dir RLinf-OpenSora-LIBERO-Object
+   hf download <repo> --local-dir <dir>
 
 ``RLinf-OpenSora-LIBERO-Spatial`` 的目录结构如下：
 

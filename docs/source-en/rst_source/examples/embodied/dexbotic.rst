@@ -97,19 +97,27 @@ Installation
 
 .. code-block:: bash
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model dexbotic --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model dexbotic --env maniskill_libero && source .venv/bin/activate
 
 Download the Model
 ------------------
 
-Download one or both Dexbotic checkpoints:
+Download the checkpoint for the Dexbotic model you plan to train:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Model
+     - Hugging Face Repo
+   * - Dexbotic π₀
+     - ``Dexmal/libero-db-pi0``
+   * - DM0
+     - ``Dexmal/DM0-libero``
 
 .. code-block:: bash
 
-   hf download Dexmal/libero-db-pi0 --local-dir libero-db-pi0
-   hf download Dexmal/DM0-libero --local-dir DM0-libero
+   hf download <repo> --local-dir <dir>
 
 .. include:: _model_path.rst
 

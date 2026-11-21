@@ -113,9 +113,7 @@
 
 .. code:: bash
 
-   # 国内用户可添加 --use-mirror 以提升下载速度。
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 下载模型
 ----------------------------------------
@@ -124,10 +122,9 @@
 
 .. code:: bash
 
-   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
-或者，您可以从 ModelScope 下载该模型 https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal。
+也可以从 ModelScope 下载该模型：https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal。
 
 当然，RLinf 也提供了针对其他环境的预训练模型。模型列表如下：
 

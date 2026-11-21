@@ -124,9 +124,7 @@ then activate the environment:
 
 .. code:: bash
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --model openpi --env geniesim
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env geniesim && source .venv/bin/activate
 
 You can also pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__
 or build the ``embodied-geniesim`` target from ``docker/Dockerfile``. See
@@ -150,9 +148,6 @@ root. If you already have the checkpoint, set ``GENIESIM_CHECKPOINT_PATH`` to
 a directory that environment can read, then continue to ``Run It``.
 
 .. code:: bash
-
-   # For mainland China users:
-   # export HF_ENDPOINT=https://hf-mirror.com
 
    export GENIESIM_CHECKPOINT_PATH="$PWD/checkpoints/geniesim_sft"
    hf download RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT \

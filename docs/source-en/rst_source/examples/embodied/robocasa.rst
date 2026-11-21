@@ -91,9 +91,7 @@ Install RoboCasa with the OpenPI dependencies:
 
 .. code:: bash
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --model openpi --env robocasa
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env robocasa && source .venv/bin/activate
 
 Download the kitchen assets after installing RoboCasa:
 
@@ -113,7 +111,6 @@ Download the OpenPI π₀ checkpoint:
 .. code-block:: bash
 
    cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi0-RoboCasa --local-dir RLinf-Pi0-RoboCasa
 
 .. include:: _model_path.rst

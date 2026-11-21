@@ -42,9 +42,7 @@ Cosmos3 监督微调（LIBERO）
 .. code-block:: bash
 
    unset PYTHONPATH
-   # 国内用户可加 --use-mirror 加速下载。
-   bash requirements/install.sh embodied --model cosmos3 --env libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model cosmos3 --env libero && source .venv/bin/activate
 
 Cosmos3 的数据变换与归一化统计依赖 cosmos-framework，训练前下载并设置路径：
 
@@ -66,7 +64,6 @@ SFT 与基座转换会从 Hugging Face 拉取三个模型文件，离线机器�
 .. code-block:: bash
 
    export HF_HOME=${HF_HOME:-~/.cache/huggingface}
-   # 国内可用镜像加速：export HF_ENDPOINT=https://hf-mirror.com
    hf download Qwen/Qwen3-VL-8B-Instruct
    hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e Wan2.2_VAE.pth
    hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --include "vae/*"
@@ -96,7 +93,6 @@ Cosmos3 SFT **从基座模型 Cosmos3-Nano 热启动，只训练动作头** 。`
 
 .. code-block:: bash
 
-   # 国内可用镜像加速：export HF_ENDPOINT=https://hf-mirror.com
    hf download nvidia/Cosmos3-Nano \
      --local-dir /path/to/Cosmos3-Nano
 

@@ -106,12 +106,9 @@ PICO 的 A/B/X/Y 只开合夹爪。按键时序写在「执行采集」和「执
 
 .. code-block:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-   export LIBFRANKA_VERSION=0.19.0       # 或 0.15.0，与固件匹配
-   bash requirements/install.sh embodied --env franka --use-mirror
-   source .venv/bin/activate
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+   export LIBFRANKA_VERSION=0.19.0
+   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 ``franka`` 环境会安装 Franky、相机和输入设备依赖，其中包含 PICO consumer 侧所需的 ``pyzmq``。PICO 头显、XRoboToolkit PC Service 和 ``vr_data_publisher`` 的安装与验证流程见 :doc:`franka_vr`。
 
@@ -122,10 +119,8 @@ PICO 的 A/B/X/Y 只开合夹爪。按键时序写在「执行采集」和「执
 
 .. code-block:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 Ray 节点布局
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

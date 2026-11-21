@@ -21,9 +21,7 @@ state、action 和 System-0 协议，暂不支持。
 
 .. code-block:: bash
 
-   # 中国大陆用户可以添加 --use-mirror 加速下载。
-   bash requirements/install.sh embodied --model psi0 --env simple
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
 
 然后完成第 2–4 步：
 

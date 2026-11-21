@@ -223,9 +223,7 @@ BEHAVIOR 不跑上面的脚本，而是用 ``actor.model.openpi_data.norm_stats_
 
 .. code:: bash
 
-    # 国内可加 --use-mirror
-    bash requirements/install.sh embodied --model openpi --env maniskill_libero
-    source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 ``--model openpi`` 装的是官方 OpenPI **运行环境**\ （transforms、数据管线）；训练用的网络仍是 ``openpi``。
 

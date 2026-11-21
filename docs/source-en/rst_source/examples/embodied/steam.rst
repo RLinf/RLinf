@@ -157,8 +157,6 @@ Installation
 
 .. code:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -169,9 +167,7 @@ STEAM shares the OpenPI environment with RECAP. Install it with ``requirements/i
 
 .. code:: bash
 
-   # For mainland China users, add `--use-mirror` for faster downloads.
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 Download the Model
 ------------------
@@ -183,7 +179,6 @@ The STEAM value model is built from two pretrained backbones:
 
 .. code:: bash
 
-   # For mainland China users, set HF_ENDPOINT=https://hf-mirror.com for faster downloads.
    hf download google/siglip-so400m-patch14-384 --local-dir siglip-so400m-patch14-384
    hf download google/gemma-3-270m --local-dir gemma-3-270m
 

@@ -35,8 +35,7 @@ actor update 阶段通过 teacher forcing 重放 rollout 时采样的 token。
 
    UV_TORCH_BACKEND=cu128 bash requirements/install.sh embodied \
       --model pi0_fast --env libero \
-      --python 3.12.12 --torch 2.11.0 --no-flash-attn
-   source .venv/bin/activate
+      --python 3.12.12 --torch 2.11.0 --no-flash-attn && source .venv/bin/activate
 
 需要 GitHub 和 PyPI 镜像时可增加 ``--use-mirror``。上述已验证命令跳过 Flash
 Attention；如需安装，可去掉 ``--no-flash-attn``。

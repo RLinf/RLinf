@@ -49,9 +49,7 @@ AgileX Piper 配置与控制
 
 .. code-block:: bash
 
-   # Mainland China users can add --use-mirror for faster downloads.
-   bash requirements/install.sh embodied --env piper
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env piper && source .venv/bin/activate
    export REPO_PATH="$PWD"
 
 后续命令均在此仓库目录中运行，并保持环境已激活。安装脚本会安装 ``PiperArm`` 使用的固定版本 ``pyAgxArm`` 驱动；平台要求见 :doc:`安装 </rst_source/start/installation>`。

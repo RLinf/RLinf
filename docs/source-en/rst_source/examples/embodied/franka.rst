@@ -278,8 +278,7 @@ your firmware requires libfranka 0.15.0:
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 What this does:
 
@@ -385,8 +384,7 @@ Download the pretrained ResNet encoder into the repository:
 
 .. code:: bash
 
-   hf download RLinf/RLinf-ResNet10-pretrained \
-     --local-dir ./models/RLinf-ResNet10-pretrained
+   hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./models/RLinf-ResNet10-pretrained
 
 The training command below supplies this directory to both actor and rollout.
 
@@ -673,8 +671,7 @@ and run the same installation:
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 Both computers must use the same RLinf revision, Python version, and Ray
 version. Collect demonstrations on the controller using the earlier collection
@@ -746,8 +743,7 @@ pass the libfranka version you chose:
 
 .. code:: bash
 
-   LIBFRANKA_VERSION=0.15.0 bash requirements/install.sh embodied --env franka-ros --venv franka-ros
-   source franka-ros/bin/activate
+   LIBFRANKA_VERSION=0.15.0 bash requirements/install.sh embodied --env franka-ros --venv franka-ros && source franka-ros/bin/activate
 
 What this does:
 
@@ -901,8 +897,7 @@ the model and Franka together:
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --model openpi --env franka --venv openpi
-   source openpi/bin/activate
+   bash requirements/install.sh embodied --model openpi --env franka --venv openpi && source openpi/bin/activate
 
 Replace ``openpi`` with ``openvla``, ``openvla-oft``, or ``gr00t`` as needed.
 These commands install dependencies; the guides below cover model weights,

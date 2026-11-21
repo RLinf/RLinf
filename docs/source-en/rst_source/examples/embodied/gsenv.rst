@@ -92,9 +92,7 @@ Install the ManiSkill/LIBERO environment with OpenPI dependencies:
 
 .. code:: bash
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 Install ManiSkill-GS and its assets:
 
@@ -103,9 +101,6 @@ Install ManiSkill-GS and its assets:
    git clone -b v01 https://github.com/chenkang455/ManiSkill-GS.git
    cd ManiSkill-GS
    uv pip install -e .
-
-   # Download assets into the ManiSkill-GS project.
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/gsenv-assets-v0 --repo-type dataset --local-dir ./assets
 
 Verify the RLinf interface from the ManiSkill-GS project root:
@@ -126,7 +121,6 @@ Download the OpenPI π₀.₅ SFT checkpoint:
 .. code-block:: bash
 
    cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT --local-dir RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
 
 .. include:: _model_path.rst

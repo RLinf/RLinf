@@ -110,20 +110,24 @@ Installation
 
 .. include:: _setup_common.rst
 
+Select ``--model`` for your policy:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 36 64
+
+   * - Model
+     - ``--model``
+   * - OpenVLA-OFT
+     - ``openvla-oft``
+   * - OpenPI π₀ / π₀.₅
+     - ``openpi``
+   * - Lingbot-VLA
+     - ``lingbotvla``
+
 .. code:: bash
 
-   # Mainland China users can add --use-mirror.
-
-   # OpenVLA-OFT
-   bash requirements/install.sh embodied --model openvla-oft --env robotwin
-
-   # OpenPI π₀ / π₀.₅
-   # bash requirements/install.sh embodied --model openpi --env robotwin
-
-   # Lingbot-VLA
-   # bash requirements/install.sh embodied --model lingbotvla --env robotwin
-
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model <model> --env robotwin && source .venv/bin/activate
 
 On AMD ROCm, add ``--platform`` and follow
 :ref:`Run on Different Hardware Backends <robotwin-hardware>`.
@@ -151,22 +155,24 @@ RoboTwin env configs; set it to ``null`` to keep RoboTwin's own value.
 Download the Model
 ------------------
 
-Download the SFT checkpoint that matches your config. Examples:
+Download the SFT checkpoint that matches your config:
 
-**OpenVLA-OFT**
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - Model / Task
+     - Hugging Face Repo
+   * - OpenVLA-OFT (``place_empty_cup``)
+     - ``RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup``
+   * - OpenPI π₀ (``adjust_bottle``)
+     - ``RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle``
+   * - OpenPI π₀.₅ (``adjust_bottle``)
+     - ``RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle``
 
 .. code-block:: bash
 
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-   hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
-
-**OpenPI π₀ / π₀.₅**
-
-.. code-block:: bash
-
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-   hf download RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir RLinf-Pi0-RoboTwin-SFT-adjust_bottle
-   hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir RLinf-Pi05-RoboTwin-SFT-adjust_bottle
+   hf download <repo> --local-dir <dir>
 
 .. include:: _model_path.rst
 

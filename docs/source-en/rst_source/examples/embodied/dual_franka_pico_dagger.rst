@@ -124,12 +124,9 @@ covers other libfranka versions only for single-arm Franka.
 
 .. code-block:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-   export LIBFRANKA_VERSION=0.19.0       # or 0.15.0, matching the firmware
-   bash requirements/install.sh embodied --env franka --use-mirror
-   source .venv/bin/activate
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+   export LIBFRANKA_VERSION=0.19.0
+   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 The ``franka`` environment installs Franky with the camera and input
 dependencies, including ``pyzmq`` for the PICO consumer side. See
@@ -144,10 +141,8 @@ actor / rollout components:
 
 .. code-block:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 Ray Node Layout
 ~~~~~~~~~~~~~~~

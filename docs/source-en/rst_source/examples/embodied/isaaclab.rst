@@ -82,19 +82,22 @@ Installation
 
 .. include:: _setup_common.rst
 
-Install the environment for the model you want to run:
+Select ``--model`` for the model you want to run:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Model
+     - ``--model``
+   * - GR00T N1.5
+     - ``gr00t``
+   * - OpenPI π₀.₅
+     - ``openpi``
 
 .. code:: bash
 
-   # Mainland China users can add --use-mirror.
-
-   # GR00T N1.5
-   bash requirements/install.sh embodied --model gr00t --env isaaclab
-   source .venv/bin/activate
-
-   # OpenPI π₀.₅
-   # bash requirements/install.sh embodied --model openpi --env isaaclab
-   # source .venv/bin/activate
+   bash requirements/install.sh embodied --model <model> --env isaaclab && source .venv/bin/activate
 
 Download Isaac Sim
 ~~~~~~~~~~~~~~~~~~
@@ -117,23 +120,22 @@ Download Isaac Sim 5.1.0 and initialize its shell environment:
 Download the Model
 ------------------
 
-Download the checkpoint for the model you plan to fine-tune.
+Download the SFT checkpoint for the model you plan to fine-tune:
 
-**GR00T N1.5**
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Model
+     - Hugging Face Repo
+   * - GR00T N1.5
+     - ``RLinf/RLinf-Gr00t-SFT-Stack-cube``
+   * - OpenPI π₀.₅
+     - ``YifWRobotics/RLinf-pi05-SFT-Stack-cube``
 
 .. code-block:: bash
 
-   cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir RLinf-Gr00t-SFT-Stack-cube
-
-**OpenPI π₀.₅**
-
-.. code-block:: bash
-
-   cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download YifWRobotics/RLinf-pi05-SFT-Stack-cube --local-dir RLinf-pi05-SFT-Stack-cube
+   hf download <repo> --local-dir <dir>
 
 .. include:: _model_path.rst
 

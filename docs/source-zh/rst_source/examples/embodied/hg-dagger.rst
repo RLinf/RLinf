@@ -97,9 +97,7 @@
 
 .. code:: bash
 
-   # 中国大陆用户可添加 `--use-mirror` 加速下载。
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 集群设置
 ----------------------------------------

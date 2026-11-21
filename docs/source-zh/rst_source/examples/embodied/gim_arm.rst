@@ -102,8 +102,6 @@ A. 克隆 RLinf 仓库
 
 .. code:: bash
 
-   # 中国大陆用户可使用下面的镜像以获得更好的下载速度：
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -112,10 +110,7 @@ b. 安装 RLinf 依赖
 
 .. code:: bash
 
-   # 中国大陆用户可以追加 `--use-mirror` 参数以获得更好的下载速度。
-
-   bash requirements/install.sh embodied --env gim_arm
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
 
 c. 安装 gim_arm_control SDK
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -126,7 +121,6 @@ c. 安装 gim_arm_control SDK
 
 .. code:: bash
 
-   # 将 SDK 克隆到 RLinf 旁边（下面示例假设路径为 ~/gim_arm_control）。
    cd ~
    git clone https://github.com/RLinf/gim_arm_control.git
    cd ~/gim_arm_control/python
@@ -208,12 +202,9 @@ CAN 总线需要在使用机械臂之前完成初始化。
 
 .. code:: bash
 
-   # 中国大陆用户可添加 `--use-mirror` 加速下载。
-   bash requirements/install.sh embodied --env gim_arm
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
 
-   # 如需安装特定模型相关依赖（如 OpenVLA），可添加 --model 参数：
-   # bash requirements/install.sh embodied --model openvla --env maniskill_libero
+如需安装特定模型依赖（例如 OpenVLA），可追加 ``--model`` 参数（例如 ``--model openvla --env maniskill_libero``）。
 
 
 运行

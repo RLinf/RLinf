@@ -95,26 +95,11 @@ RECAP 工作原理
 安装
 ----------------------------------------
 
-1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
 .. code:: bash
 
-   # 为提高国内下载速度，可以使用：
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-2. 安装依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-使用 ``requirements/install.sh`` 安装 OpenPI 具身环境，或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像：
-
-.. code:: bash
-
-   # 中国大陆用户可添加 `--use-mirror` 加速下载。
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 
 下载模型
@@ -130,7 +115,6 @@ RECAP 流程需要以下预训练模型：
 
 .. code:: bash
 
-   # 中国大陆用户可设置 HF_ENDPOINT=https://hf-mirror.com 加速下载。
    hf download google/siglip2-so400m-patch14-224 --local-dir siglip2-so400m-patch14-224
    hf download google/gemma-3-270m --local-dir gemma-3-270m
 

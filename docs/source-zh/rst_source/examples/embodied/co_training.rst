@@ -69,10 +69,7 @@
 
 .. code:: bash
 
-   # 为提高国内下载速度，可以使用：
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
 
 2. 安装依赖
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -81,9 +78,7 @@
 
 .. code:: bash
 
-   # 为提高国内依赖安装速度，可以添加 --use-mirror 到下面的 install.sh 命令。
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 Maniskill 资源下载
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -93,8 +88,6 @@ Maniskill 资源下载
 .. code:: bash
 
    cd <path_to_RLinf>/rlinf/envs/sim/maniskill/assets
-   # 为提升国内下载速度，可以设置：
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/RLCo-maniskill-assets --include "custom_assets/*" --local-dir .
 
 运行
@@ -103,9 +96,9 @@ Maniskill 资源下载
 Stage I：SFT 预训练
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-第一阶段旨在通过监督学习快速注入真机与仿真知识，为后续 RL 训练奠定基础。您可以选择 **自行训练** 或 **下载权重**。
+第一阶段通过监督学习注入真机与仿真数据，为后续 RL 训练打下基础。你可以 **自行训练**，也可以直接 **下载权重**。
 
-**方法A: 使用真机-仿真数据进行 SFT 训练**
+**方法 A：使用真机-仿真数据训练 SFT**
 
 我们提供了 LeRobot 格式数据集（50 条真机轨迹 + 1499 条仿真轨迹），托管于 `RLinf/RLCo-Example-Mix-Data <https://huggingface.co/datasets/RLinf/RLCo-Example-Mix-Data>`_。
 
@@ -113,8 +106,6 @@ Stage I：SFT 预训练
 
 .. code:: bash
 
-   # 为提升国内下载速度，可以设置：
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/RLCo-Example-Mix-Data --local-dir RLCo-Example-Mix-Data
 
 2. **执行训练**：
@@ -127,8 +118,6 @@ Stage I：SFT 预训练
 
 .. code:: bash
 
-   # 为提升国内下载速度，可以设置：
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT --local-dir RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
 
 Stage II：仿真-真机协同 RL 训练
@@ -142,8 +131,6 @@ Stage II：仿真-真机协同 RL 训练
 
 .. code:: bash
 
-   # 为提升国内下载速度，可以设置：
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/RLCo-Example-Real-Data --local-dir RLCo-Example-Real-Data
 
 **关键参数配置**

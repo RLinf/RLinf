@@ -99,9 +99,6 @@ Set up the environment:
 
 .. code-block:: bash
 
-   # To speed up dependency installation in China, add `--use-mirror` to the setup_uv.sh command below:
-   # bash setup_uv.sh --use-mirror
-
    bash setup_uv.sh
 
 Before starting the VR data publisher, use the virtual environment created
@@ -155,8 +152,7 @@ Install the RLinf environment that runs the PICO intervention with the
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 If you use Ray, install it and source the corresponding environment **before**
 running ``ray start``.

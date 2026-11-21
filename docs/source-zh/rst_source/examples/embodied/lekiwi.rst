@@ -44,9 +44,7 @@ LeKiwi 底盘由三个工作在速度模式下的 Feetech STS3215 舵机驱动�
 
 .. code-block:: bash
 
-   # Mainland China users can add --use-mirror for faster downloads.
-   bash requirements/install.sh embodied --env lekiwi --install-rlinf --no-root
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env lekiwi --install-rlinf --no-root && source .venv/bin/activate
 
 安装脚本包含 LeRobot 及 Feetech 支持和 OpenCV 的无界面（headless）构建，它只采集画面，不需要打开窗口所需的系统 GL 库。``--no-root`` 会跳过安装脚本原本要用 sudo 安装的系统库：下文检查只用到串口和这个无界面构建，底盘计算机并不需要它们。若还要在这一台机器上训练或跑仿真，则不要加该参数。``--install-rlinf`` 会安装 RLinf 本身。平台要求见 :doc:`安装 </rst_source/start/installation>`。请激活该虚拟环境，并在仓库根目录下使用 ``toolkits/realworld_check/test_lekiwi_env.py`` 运行下文的所有检查命令。
 

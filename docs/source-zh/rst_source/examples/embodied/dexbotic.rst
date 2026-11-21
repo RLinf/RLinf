@@ -97,19 +97,27 @@ RLinf 将 Dexbotic π\ :sub:`0`\ 和 DM0 策略作为 LIBERO 动作生成模型�
 
 .. code-block:: bash
 
-   # 国内用户可以添加 --use-mirror 加速下载。
-   bash requirements/install.sh embodied --model dexbotic --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model dexbotic --env maniskill_libero && source .venv/bin/activate
 
 下载模型
 ----------------------------------------
 
-下载一个或两个 Dexbotic 检查点：
+下载对应 Dexbotic 模型的 checkpoint：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - 模型
+     - Hugging Face 仓库
+   * - Dexbotic π₀
+     - ``Dexmal/libero-db-pi0``
+   * - DM0
+     - ``Dexmal/DM0-libero``
 
 .. code-block:: bash
 
-   hf download Dexmal/libero-db-pi0 --local-dir libero-db-pi0
-   hf download Dexmal/DM0-libero --local-dir DM0-libero
+   hf download <repo> --local-dir <dir>
 
 .. include:: _model_path.rst
 

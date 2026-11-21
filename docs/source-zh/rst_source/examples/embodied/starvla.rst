@@ -113,9 +113,7 @@ NVIDIA CUDA 按以下步骤安装。华为昇腾 CANN 请参照 :ref:`starvla-ha
 
 .. code:: bash
 
-   # 为提高国内依赖安装速度，可以添加 --use-mirror。
-   bash requirements/install.sh embodied --model starvla --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model starvla --env maniskill_libero && source .venv/bin/activate
 
 下载模型
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

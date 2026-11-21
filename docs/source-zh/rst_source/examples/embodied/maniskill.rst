@@ -97,12 +97,22 @@
 
 .. include:: _setup_common.rst
 
+按要运行的模型选择 ``--model``：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - 模型
+     - ``--model``
+   * - OpenVLA
+     - ``openvla``
+   * - OpenVLA-OFT
+     - ``openvla-oft``
+
 .. code:: bash
 
-   # 国内用户可添加 --use-mirror 以提升下载速度。
-   # OpenVLA-OFT 实验请使用 --model openvla-oft。
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model <model> --env maniskill_libero && source .venv/bin/activate
 
 下载资产
 ----------------------------------------
@@ -111,7 +121,6 @@
 
 .. code:: bash
 
-   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
 
 下载模型
@@ -121,7 +130,6 @@
 
 .. code:: bash
 
-   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
    hf download gen-robot/openvla-7b-rlvla-warmup --local-dir openvla-7b-rlvla-warmup
 
 .. include:: _model_path.rst

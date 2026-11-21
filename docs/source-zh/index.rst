@@ -39,7 +39,7 @@ RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础
 四步上手
 --------
 
-.. figure:: _static/svg/onboarding_flow.svg
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/onboarding_flow_zh.svg
    :align: center
    :width: 100%
 

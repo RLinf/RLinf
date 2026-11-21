@@ -91,8 +91,7 @@ Install the embodied stack with D4RL support:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env d4rl
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env d4rl && source .venv/bin/activate
 
 The launch script sets ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl`` by default for headless runs.
 

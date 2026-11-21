@@ -39,7 +39,7 @@ RLinf is an open-source infrastructure for reinforcement learning post-training 
 Your First Run in Four Steps
 ----------------------------
 
-.. figure:: _static/svg/onboarding_flow.svg
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/onboarding_flow.svg
    :align: center
    :width: 100%
 

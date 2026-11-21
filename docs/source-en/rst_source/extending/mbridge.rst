@@ -54,8 +54,6 @@ Download the model and dataset used by the reasoning example:
 
 .. code:: bash
 
-   # For faster downloads in mainland China, you can set:
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
        --local-dir /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B
 
@@ -68,8 +66,6 @@ Download the model and dataset used by the VLM SFT example:
 
 .. code:: bash
 
-   # For faster downloads in mainland China, you can set:
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download Qwen/Qwen2.5-VL-3B-Instruct \
        --local-dir /path/to/Qwen2.5-VL-3B-Instruct
 

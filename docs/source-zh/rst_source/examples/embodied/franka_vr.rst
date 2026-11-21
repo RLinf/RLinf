@@ -87,9 +87,6 @@ VR 数据发布进程不直接由 RLinf 启动。它需要先从 PICO / XRoboToo
 
 .. code-block:: bash
 
-   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的setup_uv.sh命令
-   # bash setup_uv.sh --use-mirror
-
    bash setup_uv.sh
 
 启动 VR 数据 publisher 前，可使用刚刚创建的虚拟环境，在 ``pico_software`` 路径下验证
@@ -139,8 +136,7 @@ PICO 与收发数据机器的 XRT 链路是否已经连通：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 如果使用 Ray，请在 ``ray start`` **之前** 完成安装并 source 对应环境。
 

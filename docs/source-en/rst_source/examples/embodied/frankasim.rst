@@ -84,9 +84,7 @@ Install Franka-Sim dependencies:
 
 .. code:: bash
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --model openvla --env frankasim
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openvla --env frankasim && source .venv/bin/activate
 
 Download the Model
 ------------------
@@ -97,7 +95,6 @@ ResNet checkpoint:
 .. code-block:: bash
 
    cd /path/to/save/model
-   # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 Then set the same checkpoint path for rollout and actor in

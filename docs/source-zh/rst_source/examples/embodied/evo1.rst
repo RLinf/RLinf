@@ -95,8 +95,7 @@ Evo-1 —— 嵌入 RLinf 的 Python 内存空间，实现零延迟、张量级�
 
 .. code-block:: bash
 
-    bash requirements/install.sh embodied --model evo1 --env libero --use-mirror
-    source .venv/bin/activate
+    bash requirements/install.sh embodied --model evo1 --env libero && source .venv/bin/activate
 
 下载模型
 --------
