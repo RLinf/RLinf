@@ -209,8 +209,6 @@ RLinf 于 2025 年发布了以下检查点。下载对应模型族的检查点�
 独立评测
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-收音机评测已使用 `π₀.₅ PT50 权重 <https://huggingface.co/RLinf/RLinf-Pi05-BEHAVIOR-1K-PT50-CS32>`_ 验证。下载和运行步骤见 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`\ 。
-
 原则上，任何在 BEHAVIOR 上有非零成功率、并且已经转换为 PyTorch
 格式的 ``pi05`` checkpoint 都可以使用该配置评估。我们只将
 OpenPI-Comet 作为示例来源：

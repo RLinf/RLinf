@@ -214,8 +214,6 @@ Launch a config with ``run_embodiment.sh``:
 Standalone Evaluation
 ~~~~~~~~~~~~~~~~~~~~~
 
-The radio evaluation has been verified with the `π₀.₅ PT50 checkpoint <https://huggingface.co/RLinf/RLinf-Pi05-BEHAVIOR-1K-PT50-CS32>`_. Download and launch it as described in the :doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>`.
-
 In principle, any ``pi05`` checkpoint that has non-zero success rate on
 Behavior and has been converted to PyTorch format can be used for evaluation
 with this config. We use OpenPI-Comet only as an example source:
