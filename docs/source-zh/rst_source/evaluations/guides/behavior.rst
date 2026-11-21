@@ -184,17 +184,11 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
 
 **切换评测任务**
 
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
-     rollout.model.model_path=/path/to/model \
-     env.eval.omni_config.task.activity_name=picking_up_trash
+按照 :ref:`behavior-public-instances` 更新评测 YAML 中的任务名、场景、完整模板、实例目录和实例编号，再重新运行上面的评测命令。
 
 **使用离线 instance 随机采样**
 
-沿用 :ref:`behavior-public-instances` 中的场景模板和实例目录。
-将 ``env.eval.omni_config.task.instance_resample_mode`` 设为 ``offline``，每次重置时会随机选择一个缓存布局。
-要跑五轮评测，将 ``env.eval.rollout_epoch`` 设为 ``5``。
+沿用 :ref:`behavior-public-instances` 中的场景模板和实例目录。将 ``env.eval.omni_config.task.instance_resample_mode`` 设为 ``offline``，每次重置时会随机选择一个缓存布局。要跑五轮评测，将 ``env.eval.rollout_epoch`` 设为 ``5``。
 
 **调整并行规模**
 

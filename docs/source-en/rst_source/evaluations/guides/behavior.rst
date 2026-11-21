@@ -184,11 +184,7 @@ Advanced Usage
 
 **Switch evaluation task**
 
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
-     rollout.model.model_path=/path/to/model \
-     env.eval.omni_config.task.activity_name=picking_up_trash
+Follow :ref:`behavior-public-instances` to set the new task and its matching scene, full template, instance directory and instance ID in the evaluation YAML. Rerun the evaluation command above.
 
 **Random offline instance sampling**
 

@@ -212,8 +212,7 @@ OpenPI-Comet 作为示例来源：
 
 感谢 OpenPI-Comet 作者开源模型和工具，这有助于 RLinf 中的可复现评估。
 
-将 ``rollout.model.model_path`` 设为转换后的模型目录。评测默认使用所选任务的官方超时。
-步数配置、成功率指标、日志和视频见 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`。
+将 ``rollout.model.model_path`` 设为转换后的模型目录。评测默认使用所选任务的官方超时。步数配置、成功率指标、日志和视频见 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`。
 
 --------------
 
