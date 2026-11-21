@@ -17,6 +17,7 @@ import os
 import random
 from dataclasses import dataclass
 from pathlib import Path
+from weakref import WeakKeyDictionary
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -26,6 +27,10 @@ TASK_INSTANCE_FILE_SUFFIX = "_template-tro_state.json"
 TASK_INSTANCE_TEMPLATE_FILE_SUFFIX = "_template.json"
 SUPPORTED_INSTANCE_RESAMPLE_MODES = ("disabled", "offline", "online")
 SUPPORTED_INSTANCE_FILE_FORMATS = ("template", "tro_state")
+
+# update_initial_file() replaces the reset snapshot on every cached instance.
+# Remember the template poses before the first instance changes any scene.
+_template_robot_poses = WeakKeyDictionary()
 
 
 @dataclass(frozen=True)
@@ -174,6 +179,12 @@ def _apply_tro_state(env, env_idx: int, instance_id: int, tro_file_path: str) ->
     with open(tro_file_path, "r", encoding="utf-8") as f:
         tro_state = recursively_convert_to_torch(json.load(f))
 
+    first_scene = env.scenes[0]
+    if first_scene not in _template_robot_poses:
+        _template_robot_poses[first_scene] = [
+            env.task.get_agent(env, idx).get_position_orientation(frame="scene")
+            for idx in range(env.num_envs)
+        ]
     scene = env.scenes[env_idx]
     robot = env.task.get_agent(env, env_idx)
     object_scope = env.task.object_scopes[env_idx]
@@ -200,17 +211,22 @@ def _apply_tro_state(env, env_idx: int, instance_id: int, tro_file_path: str) ->
             )
         entity.load_state(state, serialized=False)
 
-    if robot_poses is not None:
-        robot.reset()
-        robot_pose = get_presampled_robot_poses(
+    available_poses = (
+        get_presampled_robot_poses(
             robot_poses, robot.model, env.task.presampled_pose_key
-        )[0]
-        robot.set_position_orientation(
-            robot_pose["position"],
-            robot_pose["orientation"],
-            frame="scene",
         )
-        sync_robot_after_pose_override(robot)
+        if robot_poses
+        else []
+    )
+    if len(available_poses):
+        position = available_poses[0]["position"]
+        orientation = available_poses[0]["orientation"]
+    else:
+        position, orientation = _template_robot_poses[first_scene][env_idx]
+        robot_poses = None
+    robot.reset()
+    robot.set_position_orientation(position, orientation, frame="scene")
+    sync_robot_after_pose_override(robot)
     scene.write_task_metadata(key="robot_poses", data=robot_poses)
     if env.num_envs == 1:
         env.task.activity_instance_id = instance_id

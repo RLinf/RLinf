@@ -663,10 +663,13 @@ def test_behavior_cached_instance_prepares_only_requested_scene(
     task = mock.Mock(
         object_scopes=[{"radio": obj} for obj in objects], presampled_pose_key=None
     )
-    task.get_agent.return_value = robot
+    initial_pose = ([4.0, 5.0, 0.0], [0.0, 0.0, 1.0, 0.0])
+    robot.get_position_orientation.return_value = initial_pose
+    other_robot = mock.Mock()
+    task.get_agent.side_effect = lambda env, idx: (other_robot, robot)[idx]
     env = SimpleNamespace(num_envs=2, scenes=scenes, task=task)
     loader.prepare_reset(env, [1])
-    task.get_agent.assert_called_once_with(env, 1)
+    other_robot.set_position_orientation.assert_not_called()
     assert not scenes[0].method_calls and not objects[0].method_calls
     objects[1].load_state.assert_called_once_with({"value": 42}, serialized=False)
     scenes[1].update_initial_file.assert_called_once_with()
@@ -685,10 +688,25 @@ def test_behavior_cached_instance_prepares_only_requested_scene(
             for field, value in saved_pose.items()
         } == pose
     else:
-        robot.set_position_orientation.assert_not_called()
+        robot.set_position_orientation.assert_called_once_with(
+            *initial_pose, frame="scene"
+        )
         scenes[1].write_task_metadata.assert_called_once_with(
             key="robot_poses", data=None
         )
+
+    # The next instance has no pose after a rollout moved the robot.
+    robot.get_position_orientation.return_value = ([9.0, 9.0, 0.0], initial_pose[1])
+    state.pop("robot_poses", None)
+    for pose_fields in ({}, {"robot_poses": {}}, {"robot_poses": {"robot": []}}):
+        path.write_text(json.dumps({**state, **pose_fields}))
+        robot.set_position_orientation.reset_mock()
+        loader.prepare_reset(env, [1])
+        robot.set_position_orientation.assert_called_once_with(
+            *initial_pose, frame="scene"
+        )
+        scenes[1].write_task_metadata.assert_called_with(key="robot_poses", data=None)
+    assert not scenes[0].method_calls and not objects[0].method_calls
 
 
 class TestLoadUserExtensions:
