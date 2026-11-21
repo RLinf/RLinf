@@ -2138,7 +2138,11 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         mock_policy_output.intervene_flags = None
 
         # Patch methods on the instance
-        self.worker.recv_from = MagicMock(return_value=mock_policy_output)
+        self.worker.recv_from = MagicMock(
+            return_value=MagicMock(
+                async_wait=AsyncMock(return_value=mock_policy_output)
+            )
+        )
         self.worker.env_interact_step = MagicMock(
             return_value=(
                 EnvOutput(
@@ -2252,7 +2256,11 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         mock_policy_output.versions = torch.zeros(2, 1)
         mock_policy_output.intervene_flags = None
 
-        self.worker.recv_from = MagicMock(return_value=mock_policy_output)
+        self.worker.recv_from = MagicMock(
+            return_value=MagicMock(
+                async_wait=AsyncMock(return_value=mock_policy_output)
+            )
+        )
         self.worker.env_interact_step = MagicMock(
             return_value=(
                 EnvOutput(
