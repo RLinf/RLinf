@@ -144,6 +144,8 @@ Tokenizer 由 OpenPI 的 ``ModelTransformFactory`` 按基础模型加载，YAML 
      - LIBERO
    * - ``pi0_realworld``
      - 真机 Franka
+   * - ``pi05_ur5e``
+     - 真机 UR5e
    * - ``pi05_yam_joint``
      - 真机双臂 YAM
    * - ``pi0_aloha_robotwin``

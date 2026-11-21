@@ -49,6 +49,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/11] 🔥 RLinf supports evaluating OpenPI π₀.₅ on the RoboLab manipulation benchmark. Doc: [RoboLab evaluation](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/robolab.html).
 - [2026/11] 🔥 RLinf supports RL on π₀.₅ in [GenieSim](https://github.com/AgibotTech/genie_sim) with PPO and GRPO. Doc: [RL with GenieSim](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html).
 - [2026/11] 🔥 RLinf supports RoboDojo, an Isaac Sim-based dual-arm manipulation benchmark for ARX-X5, exposed as a Gym environment for VLA policy evaluation: the official π₀.₅ checkpoint can be converted to OpenPI format and evaluated over 55 predefined scene layouts. Doc: [RoboDojo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robodojo.html).
+- [2026/11] 🔥 RLinf supports UR5e Cartesian-space demonstration collection, OpenPI π₀.₅ supervised fine-tuning, and real-world evaluation. Doc: [UR5e](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/ur5e.html).
 - [2026/11] 🔥 RLinf supports SO-101 joint-space demonstration collection, OpenPI π₀.₅ supervised fine-tuning, and local evaluation. Doc: [SO-101](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/so101.html).
 - [2026/11] 🔥 RLinf supports Psi0 VLA and the SIMPLE humanoid simulator. Docs: [Psi0](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/psi0.html), [SIMPLE](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html).
 - [2026/11] 🔥 RLinf supports [PhyAI](https://github.com/mingti-org/phyai) as an in-process rollout backend for π₀.₅ PPO training on LIBERO, including hot weight synchronization, and cutting π₀.₅ prediction time on the rollout critical path from 142.6 s to 68.7 s on four H800 GPUs. Doc: [PhyAI rollout backend](https://rlinf.readthedocs.io/en/latest/rst_source/guides/rollout-engines/phyai.html).
@@ -340,6 +341,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/so101.html">SO101</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/r2.html">Robbyant R2</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lekiwi.html">LeKiwi</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/ur5e.html">UR5e</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>

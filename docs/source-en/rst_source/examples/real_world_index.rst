@@ -1,7 +1,7 @@
 RL with Real-World Robots
 =========================
 
-Use this section when your starting point is physical robot hardware. Start with Franka if you use a Franka arm or a Franka-based rig; use the other robot pages for ARX X5, YAM, GimArm, XSquare Turtle2, Dexmal DOS-W1, Robbyant R2, AgileX Piper, SO101, and LeKiwi.
+Use this section when your starting point is physical robot hardware. Start with Franka if you use a Franka arm or a Franka-based rig; use the other robot pages for ARX X5, YAM, GimArm, XSquare Turtle2, Dexmal DOS-W1, Robbyant R2, AgileX Piper, SO101, LeKiwi, and UR5e.
 
 Choose a guide for hardware checks, teleoperation, data collection, sim-to-real transfer, deployment, or online RL.
 
@@ -89,10 +89,10 @@ Robbyant R2
 
       Run hardware checks, whole-body PICO VR teleoperation, and ``R2ReachEnv-v1`` on the Robbyant R2 wheeled humanoid.
 
-Piper, SO101, and LeKiwi Setup
-------------------------------
+Piper, SO101, LeKiwi, and UR5e
+--------------------------------------
 
-Use these guides to connect a robot and run its hardware test script. Piper, SO101, and LeKiwi do not yet have supported real-world training workflows.
+Use these guides to connect a robot, run hardware checks, and follow the collection, training, and evaluation workflows supported by each robot.
 
 .. grid:: 1 2 2 2
    :gutter: 2
@@ -115,6 +115,12 @@ Use these guides to connect a robot and run its hardware test script. Piper, SO1
 
       Set up the wheel motors, check the front webcam, and drive the mobile base.
 
+   .. grid-item-card:: UR5e
+      :link: embodied/ur5e
+      :link-type: doc
+
+      Check the UR5e driver, record SpaceMouse demonstrations with an Orbbec camera and Robotiq gripper, and run OpenPI π₀.₅ SFT and evaluation.
+
 .. toctree::
    :hidden:
    :maxdepth: 3
@@ -130,3 +136,4 @@ Use these guides to connect a robot and run its hardware test script. Piper, SO1
    Piper <embodied/piper>
    SO101 <embodied/so101>
    LeKiwi <embodied/lekiwi>
+   UR5e <embodied/ur5e>
