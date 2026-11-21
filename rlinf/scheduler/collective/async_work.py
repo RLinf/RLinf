@@ -325,7 +325,19 @@ class AsyncChannelWork(AsyncWork):
     def _execute(self):
         method = getattr(self._channel_actor, self._method)
         future: ConcurrentFuture = method.remote(*self._args, **self._kwargs).future()
-        future.add_done_callback(lambda f: self._future.set_result(f.result()))
+        future.add_done_callback(self._complete)
+
+    def _complete(self, future: ConcurrentFuture) -> None:
+        """Complete the work's future with the remote call's outcome."""
+        try:
+            result = future.result()
+        except BaseException as exc:
+            # An exception raised in a concurrent.futures callback is only
+            # logged, leaving this future forever pending; every waiter on it
+            # and every later operation chained on the same channel key hangs.
+            self._future.set_exception(exc)
+        else:
+            self._future.set_result(result)
 
     async def async_wait(self):
         """Async wait for the work to complete.
@@ -356,7 +368,9 @@ class AsyncChannelWork(AsyncWork):
 class AsyncChannelCommWork(AsyncWork):
     """Asynchronous work for channel operations."""
 
-    channel_data_store: dict[int, Future] = {}
+    # Futures of pending gets, by (channel name, channel rank) and then by
+    # query ID.
+    channel_data_store: dict[tuple[str, int], dict[int, Future]] = {}
     store_lock = threading.Lock()  # Protect store access
 
     def __init__(
@@ -364,6 +378,7 @@ class AsyncChannelCommWork(AsyncWork):
         async_comm_work: AsyncWork,
         query_id: int,
         channel_actor: ray.actor.ActorHandle,
+        peer: tuple[str, int],
     ):
         """Initialize the AsyncChannelWork with a async recv comm of the get operation.
 
@@ -376,6 +391,8 @@ class AsyncChannelCommWork(AsyncWork):
             async_comm_work (AsyncWork): The async communication work to wrap.
             query_id (int): The query ID to associate with the work.
             channel_actor (ray.actor.ActorHandle): The actor handle for the channel.
+            peer (tuple[str, int]): The ``(channel name, channel rank)`` this
+                work's recv receives from.
 
         """
         self._async_comm_work = async_comm_work
@@ -383,19 +400,36 @@ class AsyncChannelCommWork(AsyncWork):
         # Only when the query_id's Future is set is the data available
         self._query_id = query_id
         self._channel_actor = channel_actor
+        self._peer = peer
         with AsyncChannelCommWork.store_lock:
-            if query_id not in AsyncChannelCommWork.channel_data_store:
-                AsyncChannelCommWork.channel_data_store[query_id] = Future()
-            self._data_future = AsyncChannelCommWork.channel_data_store[query_id]
+            self._data_future = AsyncChannelCommWork.channel_data_store.setdefault(
+                peer, {}
+            ).setdefault(query_id, Future())
         self._async_comm_work.then(self._store_channel_data)
 
     def _store_channel_data(self):
         """Store channel data in the channel data store."""
-        data, query_id = self._async_comm_work.wait()
+        try:
+            data, query_id = self._async_comm_work.wait()
+        except BaseException as exc:
+            # Recvs from one channel rank are not matched to gets: each takes
+            # the next message, and the query ID sent with the data names its
+            # get. After a failed recv, the data of a get still waiting on
+            # this channel rank may never arrive, so fail every such get; the
+            # getter waits on its data future, not on this callback. Gets on
+            # other channel ranks have their own recvs and are left alone.
+            with AsyncChannelCommWork.store_lock:
+                pending = AsyncChannelCommWork.channel_data_store.pop(self._peer, {})
+            for future in pending.values():
+                if not future.done():
+                    future.set_exception(exc)
+            if not self._data_future.done():
+                self._data_future.set_exception(exc)
+            return
         with AsyncChannelCommWork.store_lock:
-            if query_id not in AsyncChannelCommWork.channel_data_store:
-                AsyncChannelCommWork.channel_data_store[query_id] = Future()
-            data_future = AsyncChannelCommWork.channel_data_store[query_id]
+            data_future = AsyncChannelCommWork.channel_data_store.setdefault(
+                self._peer, {}
+            ).setdefault(query_id, Future())
         data_future.set_result(data)
 
     async def async_wait(self):
@@ -408,7 +442,9 @@ class AsyncChannelCommWork(AsyncWork):
         if not self._data_future.done():
             await _await_torch_future(self._data_future)
         with AsyncChannelCommWork.store_lock:
-            AsyncChannelCommWork.channel_data_store.pop(self._query_id, None)
+            AsyncChannelCommWork.channel_data_store.get(self._peer, {}).pop(
+                self._query_id, None
+            )
         return self._data_future.value()
 
     def wait(self):
@@ -420,7 +456,9 @@ class AsyncChannelCommWork(AsyncWork):
         """
         self._data_future.wait()
         with AsyncChannelCommWork.store_lock:
-            AsyncChannelCommWork.channel_data_store.pop(self._query_id, None)
+            AsyncChannelCommWork.channel_data_store.get(self._peer, {}).pop(
+                self._query_id, None
+            )
         return self._data_future.value()
 
     def done(self):

@@ -1,16 +1,16 @@
 Asynchronous Search-R1 Training
 ================================
 
-Run Search-R1 with the rollout and the training overlapped, so that prompts
-keep flowing into the rollout engines while the actor trains on an earlier
-weight version. This page uses
-``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml`` on two
-8-GPU nodes with the actor and the rollout placed on separate nodes. Set up
-the environment and the Qdrant wiki retrieval server first, as described in
-:doc:`index`; the model-specific configuration (data format, tokenizer,
-parallelism of the actor) is the same as in :doc:`glm4.7_flash`. For how the
-asynchronous mode works and how to size its scheduling limits, read
-:doc:`Asynchronous Agentic RL </rst_source/guides/async_agentic>`.
+This page trains GLM-4.7-Flash on Search-R1 asynchronously on two 8-GPU
+nodes. The rollout keeps generating while the actor trains on data from an
+earlier weight version. On the reference run, the step time drops from
+278.6 s with synchronous training to 139.0 s, and the reward range stays
+comparable. The config is
+``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml``; its
+model-specific settings (data format, tokenizer, actor parallelism) match
+:doc:`glm4.7_flash`. For how the asynchronous mode works and how to size its
+two scheduling limits, see :doc:`Asynchronous Agentic RL
+</rst_source/guides/async_agentic>`.
 
 Overview
 --------
@@ -156,6 +156,9 @@ How to size the two scheduling limits depends on whether generation or
 training is the bottleneck; see :doc:`Asynchronous Agentic RL
 </rst_source/guides/async_agentic>` for the mechanism and the measured
 evidence.
+
+This setup can also run with the session server; see
+:doc:`Session Server </rst_source/guides/session_server>`.
 
 Metrics to Watch
 ----------------

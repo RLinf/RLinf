@@ -1,7 +1,7 @@
 Search-R1 异步训练
 ================================
 
-以 rollout 与训练重叠的方式跑 Search-R1：prompt 持续流入 rollout 引擎，actor 同时在更早的权重版本上训练。本页使用 ``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml``，在两台 8 卡机器上把 actor 和 rollout 分别放在不同节点。请先按 :doc:`index` 搭建 RLinf 环境和 Qdrant wiki 检索服务；模型相关的配置（数据格式、tokenizer、actor 并行方式）与 :doc:`glm4.7_flash` 相同。异步模式的工作原理和两个调度上限怎么取，见 :doc:`异步 agentic RL </rst_source/guides/async_agentic>`。
+本页在两台 8 卡机器上异步训练 GLM-4.7-Flash 的 Search-R1：rollout 持续生成，actor 同时用更早权重版本的数据训练。参考运行中，每步耗时从同步训练的 278.6 s 降到 139.0 s，reward 范围与同步训练相当。配置文件是 ``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml``，模型相关的配置（数据格式、tokenizer、actor 并行方式）与 :doc:`glm4.7_flash` 相同。异步模式的原理和两个调度上限的取值见 :doc:`异步 agentic RL </rst_source/guides/async_agentic>`。
 
 概述
 --------------------------------
@@ -108,6 +108,8 @@ reward 在 agent loop 内计算（Search-R1 的规则奖励在轨迹和检索文
      - 丢弃组内各轨迹 reward 全相等的组（组内基线没有梯度信号）。
 
 两个调度上限怎么取，取决于瓶颈在生成还是训练；机制与实测证据见 :doc:`异步 agentic RL </rst_source/guides/async_agentic>`。
+
+这套配置也可以开启 session server，见 :doc:`Session Server </rst_source/guides/session_server>`。
 
 要看的指标
 --------------------------------

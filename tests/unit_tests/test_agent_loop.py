@@ -855,7 +855,7 @@ class TestTaskNamePassthrough:
             worker.is_eval = False
             out_channel = _QueueChannel()
 
-            async def _query(input_dict, answer=None):
+            async def _query(input_ids, answer=None):
                 return SimpleNamespace(
                     single_turn_outputs=[_single_turn_output(None, None)],
                     trace_prints=[],
@@ -864,7 +864,7 @@ class TestTaskNamePassthrough:
 
             worker.run_one_query = _query
             await worker.run_agentloop_rollout_group(
-                input_dict={"input_ids": [1, 2]},
+                input_ids=[1, 2],
                 answer="a",
                 group_size=2,
                 output_channel=out_channel,

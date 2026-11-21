@@ -66,6 +66,29 @@ def no_proxy_env() -> Iterator[None]:
                 os.environ[var] = val
 
 
+class HTTPStatusError(RuntimeError):
+    """An error HTTP status (400 or above) from an async POST.
+
+    Carries the status code and body text so callers can branch on them;
+    still a RuntimeError subclass with the same message format the plain
+    raise used, for backward compatibility.
+    """
+
+    def __init__(self, message: str, status: int, body: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.body = body
+
+    def __reduce__(self):
+        """Reconstruct with every argument.
+
+        The base class pickle only preserves ``args``, which here holds
+        the message alone, so without this an unpickle would call the
+        constructor with one argument instead of three.
+        """
+        return (type(self), (self.args[0], self.status, self.body))
+
+
 class InferenceHTTPClient:
     """Thin HTTP client for an sglang router or server base URL.
 
@@ -387,23 +410,56 @@ class InferenceHTTPClient:
             return [InferenceHTTPClient._to_msgpackable(v) for v in value]
         return value
 
-    async def _apost(self, path: str, body: dict) -> dict:
+    async def async_post(
+        self,
+        path: str,
+        body: dict,
+        headers: Optional[dict[str, str]] = None,
+        timeout_s: Optional[float] = None,
+    ) -> dict:
+        """POST ``body`` with custom headers and a total timeout.
+
+        Errors from ``_apost`` propagate: ``HTTPStatusError`` on an HTTP
+        status of 400 or above, with status and body text.
+
+        Args:
+            path: Path appended to the base URL.
+            body: JSON request body.
+            headers: Extra request headers, e.g. a routing key for a router.
+            timeout_s: Total timeout for the request, connect and read
+                included; None waits indefinitely.
+
+        Returns:
+            The decoded response dict.
+        """
+        return await self._apost(path, body, headers=headers, timeout_s=timeout_s)
+
+    async def _apost(
+        self,
+        path: str,
+        body: dict,
+        headers: Optional[dict[str, str]] = None,
+        timeout_s: Optional[float] = None,
+    ) -> dict:
         session = self._get_or_create_session()
         async with session.post(
             f"{self.base_url}{path}",
             json=body,
+            headers=headers,
             timeout=aiohttp.ClientTimeout(
-                total=None,
+                total=timeout_s,
                 sock_connect=self.connect_timeout,
-                sock_read=None,
+                sock_read=timeout_s,
             ),
         ) as resp:
             # ClientResponseError is not picklable and Ray would hide it
-            # behind "can't pickle"; raise a RuntimeError with status and
-            # body instead.
+            # behind "can't pickle"; raise HTTPStatusError (a RuntimeError
+            # subclass) with status and body instead.
             if resp.status >= 400:
                 text = await resp.text()
-                raise RuntimeError(
-                    f"POST {path} failed with HTTP {resp.status}: {text[:2000]}"
+                raise HTTPStatusError(
+                    f"POST {path} failed with HTTP {resp.status}: {text[:2000]}",
+                    status=resp.status,
+                    body=text,
                 )
             return await resp.json()

@@ -1,0 +1,1882 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Integration test of the session server's write and read sides.
+
+A mock sglang server (this directory's ``mock_sglang_server``,
+thread-hosted) stands in for the router's backend; the real
+``SessionServerWorker`` runs in a scheduler worker and forwards to it,
+and the payload channels are real (two shards on this node). Downstream,
+the real ``RolloutBufferWorker`` consumes the server's output. This
+driver plays the two ends the buffer connects: the agent loop (it takes
+the buffer's admitted requests and drives the HTTP protocol for each
+group) and the actor's fetch side (it takes the delivered payload refs,
+gets the payloads by key, and assembles them).
+
+Covered: a group completing normally end to end — buffered, released as
+a payload ref, fetched by key and assembled; a generate response
+arriving after an abort leaving no payload; a group whose equal rewards
+make the buffer drop it and release its payload; an under-reported
+truncation failing loud at close; a failed background payload put voiding
+the group; and the finalize part's put failing after all earlier puts
+settled — the group is discarded, not delivered. Plus a pure assembly
+check: constructed call records (one turn kept shorter than the engine
+produced) assemble to exactly what ``get_rollout_result`` produces from
+the matching agent outputs.
+
+The scenario classes run in file order, and the buffer issues group ids
+0, 1, 2, ... in admission order, so scenario k drives group id k: the two
+shard-killing scenarios depend on the id parity that picks the payload
+shard, and the last one kills a shard that every earlier scenario still
+needs.
+"""
+
+import asyncio
+import contextvars
+import json
+import threading
+import time
+from types import SimpleNamespace
+from typing import Optional
+
+import aiohttp  # noqa: E402
+import pytest
+
+pytest.importorskip("fastapi")
+
+import ray  # noqa: E402
+import requests  # noqa: E402
+from mock_sglang_server import MockSGLangServer, find_available_port  # noqa: E402
+from omegaconf import OmegaConf  # noqa: E402
+
+from rlinf.config import validate_session_server_cfg  # noqa: E402
+from rlinf.data.schema.reasoning_results import GroupDelivery  # noqa: E402
+from rlinf.scheduler import (  # noqa: E402
+    Channel,
+    Cluster,
+    NodePlacementStrategy,
+)
+from rlinf.scheduler.channel.channel import DEFAULT_KEY  # noqa: E402
+from rlinf.workers.agent.agent_loop import (  # noqa: E402
+    AgentLoopOutput,
+    MultiAgentLoopOutput,
+    MultiAgentLoopWorker,
+)
+from rlinf.workers.agent.session_server_client import (  # noqa: E402
+    SessionServerClient,
+)
+from rlinf.workers.rollout.session_server.assembly import (  # noqa: E402
+    assemble_group_payload,
+)
+from rlinf.workers.rollout.session_server.payload import (  # noqa: E402
+    GroupPayload,
+    PayloadPart,
+    create_payload_channels,
+    payload_channel_for,
+    payload_shard_for,
+)
+from rlinf.workers.rollout.session_server.server_worker import (  # noqa: E402
+    SessionServerWorker,
+)
+from rlinf.workers.rollout.session_server.turns import (  # noqa: E402
+    UnderreportedTruncation,
+    classify_turns,
+    new_turn_record,
+)
+from rlinf.workers.rollout_buffer.rollout_buffer_worker import (  # noqa: E402
+    RolloutBufferWorker,
+)
+
+TASK_NAME = "searchr1"
+GROUP_SIZE = 2
+# The training sequence length of the chat test stack, and the sampling
+# default the entry caps against it. It has to leave room for the tool block
+# the chat template renders into a prompt, which the other chat tests use.
+SEQ_LENGTH = 1024
+DEFAULT_MAX_NEW_TOKENS = 8
+LOADED_VERSION = 3
+MOCK_WEIGHT_VERSION = 5
+# The tool list the chat tests send, shaped like Search-R1's search tool.
+CHAT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search",
+            "description": "Search Wikipedia.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        },
+    }
+]
+# The buffer's dataloader forms batches of rollout_batch_size *
+# max_num_gen_batches samples and admits one group per sample; 16 samples
+# keep it issuing while the scenarios consume the first ones.
+NUM_DATASET_SAMPLES = 16
+
+
+def fake_dataset():
+    """Dataset items shaped for the buffer's reasoning collate."""
+    return [
+        SimpleNamespace(
+            prompt=[100 + sample, 200 + sample, 300 + sample],
+            length=3,
+            idx=sample,
+            answer=f"answer {sample}",
+            solution=None,
+            image_data=None,
+            prompt_text=None,
+            meta=None,
+            multi_modal_inputs=None,
+        )
+        for sample in range(NUM_DATASET_SAMPLES)
+    ]
+
+
+@pytest.fixture(scope="module")
+def cluster():
+    c = Cluster(num_nodes=1)
+    yield c
+
+
+_CHAT_FAMILIES = {
+    "qwen": ("RLINF_TEST_QWEN25_MODEL_DIR", "qwen"),
+    "glm47": ("RLINF_TEST_GLM47_MODEL_DIR", "glm47"),
+}
+
+
+def _chat_model_dir(family="qwen") -> Optional[str]:
+    """The local tokenizer directory one chat family renders with.
+
+    None when the family's environment variable is unset, which is the
+    usual case off CI. A variable naming no directory fails the test: the
+    chat tests would otherwise never run where the variable is set.
+    """
+    import os
+
+    env_var = _CHAT_FAMILIES[family][0]
+    model_dir = os.environ.get(env_var)
+    if model_dir and not os.path.isdir(model_dir):
+        pytest.fail(f"{env_var} is set to {model_dir!r}, which is not a directory")
+    return model_dir
+
+
+def _build_env(
+    cluster,
+    verify_assembly,
+    suffix,
+    chat=False,
+    family="qwen",
+    reject_equal_reward=True,
+):
+    """One session server, one real rollout buffer, two payload shards,
+    and a mock sglang server. ``verify_assembly`` picks the session
+    server's response mode; ``suffix`` keeps the channel and group names
+    of a second stack from colliding with the first; ``chat`` adds the
+    tokenizer config the chat entry needs."""
+    server_cfg = OmegaConf.create(
+        {
+            # The chat entry caps a turn at runner.seq_length; a small value
+            # keeps both the cap and the rejection reachable.
+            "runner": {"seq_length": SEQ_LENGTH},
+            "algorithm": {
+                "group_size": GROUP_SIZE,
+                "sampling_params": {"do_sample": False, "max_new_tokens": 8},
+            },
+            "rollout": {
+                "return_logprobs": True,
+                "router": {"max_idle_secs": 600.0},
+                "model": {"model_path": _chat_model_dir(family)},
+            },
+            # Only the values this test needs to pick explicitly; the rest
+            # of the session_server block is filled by config below, so
+            # keys added there reach the worker without this file
+            # drifting. Validation runs with enable still false (defaults
+            # only), then the flag flips for the worker itself.
+            "session_server": {
+                "enable": False,
+                "host": "127.0.0.1",
+                "port": find_available_port(),
+                "payload_put_timeout_s": 300.0,
+                "max_pending_payload_bytes": 512 * 1024 * 1024,
+                "generate_timeout_s": 600.0,
+                "per_task": {},
+                "verify_assembly": verify_assembly,
+            },
+        }
+    )
+    if chat:
+        server_cfg.agentloop = {
+            "agentic_tokenizer": _CHAT_FAMILIES[family][1],
+        }
+        server_cfg.session_server.chat_template_kwargs = {}
+    server_cfg = validate_session_server_cfg(server_cfg)
+    server_cfg.session_server.enable = True
+    # The buffer's config: one group per training batch, the dataset
+    # under admission, equal-reward rejection on (the normal scenario
+    # scores its trajectories differently to survive it), and no actor
+    # staleness bound so drops come only from the scenarios themselves.
+    buffer_cfg = OmegaConf.create(
+        {
+            "algorithm": {
+                "group_size": GROUP_SIZE,
+                "max_num_gen_batches": 8,
+                "down_sampling": {
+                    "do_down_sampling": True,
+                    "down_sampling_config": {
+                        "reject_equal_reward": reject_equal_reward
+                    },
+                },
+            },
+            "data": {
+                "rollout_batch_size": 1,
+                "num_workers": 0,
+                "shuffle": False,
+            },
+            "agentloop": {"task_name": TASK_NAME},
+            "rollout_buffer": {
+                # Every test in the module shares this stack, and a test that
+                # leaves its group undelivered keeps that group's in-flight
+                # slot, so the limit leaves room for all of them.
+                "max_inflight_groups": 32,
+                "max_buffered_groups": 16,
+                "max_dropped_groups_per_step": 8,
+            },
+        }
+    )
+
+    mock = MockSGLangServer()
+    mock.start()
+
+    agent_output = Channel.create(name=f"AgentOutput{suffix}")
+    dataloader = Channel.create(name=f"DataLoader{suffix}")
+    rollout = Channel.create(name=f"Rollout{suffix}")
+    payload_channels = create_payload_channels(
+        f"Payload{suffix}", num_shards=2, node_rank=0
+    )
+
+    server = SessionServerWorker.create_group(server_cfg, 0).launch(
+        cluster,
+        name=f"SessionServer{suffix}",
+        placement_strategy=NodePlacementStrategy([0]),
+    )
+    # serve() is resident: dispatch it and never wait on the handle.
+    server.serve(mock.url, agent_output, payload_channels)
+    base_url = f"http://{server.get_server_address().wait()[0]}"
+
+    for _ in range(100):
+        try:
+            if requests.get(f"{base_url}/health", timeout=1).status_code == 200:
+                break
+        except requests.RequestException:
+            pass
+        time.sleep(0.1)
+    else:
+        pytest.fail("the session server did not come up")
+
+    server.set_loaded_versions({0: LOADED_VERSION}).wait()
+
+    buffer = RolloutBufferWorker.create_group(buffer_cfg, fake_dataset()).launch(
+        cluster,
+        name=f"RolloutBuffer{suffix}",
+        placement_strategy=NodePlacementStrategy([0]),
+    )
+    buffer.set_loaded_versions({0: LOADED_VERSION}).wait()
+    # Resident like serve(): dispatch and never wait on the handle.
+    buffer.run_continuously(agent_output, dataloader, rollout, payload_channels)
+
+    return SimpleNamespace(
+        base_url=base_url,
+        server=server,
+        mock=mock,
+        buffer=buffer,
+        dataloader=dataloader,
+        rollout=rollout,
+        payload_channels=payload_channels,
+    )
+
+
+def _stop_env(env):
+    env.buffer.stop().wait()
+    env.server.stop().wait()
+    env.mock.stop()
+
+
+@pytest.fixture(scope="module")
+def env(cluster):
+    """The default stack, assembly verification off."""
+    built = _build_env(cluster, verify_assembly=False, suffix="")
+    yield built
+    _stop_env(built)
+
+
+@pytest.fixture(scope="module")
+def chat_env(cluster):
+    """The same stack with the chat entry configured; skipped when the
+    local Qwen tokenizer directory is not available."""
+    if not _chat_model_dir("qwen"):
+        pytest.skip("set RLINF_TEST_QWEN25_MODEL_DIR to run the chat tests")
+    built = _build_env(
+        cluster, verify_assembly=False, suffix="Chat", chat=True, family="qwen"
+    )
+    yield built
+    _stop_env(built)
+
+
+@pytest.fixture(scope="module")
+def chat_env_glm(cluster):
+    """The chat entry with the GLM family; skipped without its tokenizer."""
+    if not _chat_model_dir("glm47"):
+        pytest.skip("set RLINF_TEST_GLM47_MODEL_DIR to run the GLM chat tests")
+    built = _build_env(
+        cluster, verify_assembly=False, suffix="ChatGlm", chat=True, family="glm47"
+    )
+    yield built
+    _stop_env(built)
+
+
+@pytest.fixture(scope="module")
+def verify_env(cluster):
+    """The same stack with assembly verification on, so generate
+    responses carry logprobs."""
+    built = _build_env(cluster, verify_assembly=True, suffix="Verify")
+    yield built
+    _stop_env(built)
+
+
+def create_session(env, group_id, traj_index):
+    resp = requests.post(
+        f"{env.base_url}/sessions",
+        json={
+            "group_id": group_id,
+            "traj_index": traj_index,
+            "group_size": GROUP_SIZE,
+            "task_name": TASK_NAME,
+        },
+        timeout=5,
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["session_id"]
+
+
+def generate(env, session_id, input_ids, sampling_params=None, extra=None):
+    body = {"input_ids": input_ids}
+    if sampling_params is not None:
+        body["sampling_params"] = sampling_params
+    if extra is not None:
+        body.update(extra)
+    return requests.post(
+        f"{env.base_url}/sessions/{session_id}/generate", json=body, timeout=30
+    )
+
+
+def close(env, session_id, kept_lens=None, extra_fields_train=None):
+    body = {} if kept_lens is None else {"kept_lens": kept_lens}
+    if extra_fields_train is not None:
+        body["verdict"] = {"extra_fields_train": extra_fields_train}
+    return requests.post(
+        f"{env.base_url}/sessions/{session_id}/close", json=body, timeout=30
+    )
+
+
+def reward(env, session_id, value):
+    return requests.post(
+        f"{env.base_url}/sessions/{session_id}/reward",
+        json={"reward": value},
+        timeout=30,
+    )
+
+
+def poll_channel(channel, key=DEFAULT_KEY, timeout_s=5.0):
+    """Return the next item for ``key``, or None if nothing arrives in time.
+
+    Polls with non-blocking gets: a blocking get whose wait times out here
+    would stay alive inside the channel worker and silently consume
+    whatever a later scenario puts for the same key.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            return channel.get_nowait(key=key)
+        except asyncio.QueueEmpty:
+            time.sleep(0.05)
+    return None
+
+
+def next_request(env, timeout_s=10.0):
+    """Pop the next rollout request the buffer admitted."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            return env.dataloader.get_nowait()
+        except asyncio.QueueEmpty:
+            time.sleep(0.05)
+    pytest.fail("the rollout buffer admitted no request in time")
+
+
+def wait_for_drops(env, reason, timeout_s=15.0):
+    """Poll the buffer's step metrics until it counts a drop for ``reason``.
+
+    Each poll drains its own metrics window, but a drop lands in exactly
+    one window — the one spanning the moment the buffer processed it — so
+    repeated polling cannot miss it. Returns the window that saw it.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        metrics = env.buffer.get_metrics().wait()[0]
+        if metrics.get(f"dropped_{reason}", 0) >= 1:
+            return metrics
+        time.sleep(0.1)
+    pytest.fail(f"the buffer did not drop a group for reason {reason!r} in time")
+
+
+def run_group(env, request, rewards):
+    """Drive one admitted group as the agent loop would.
+
+    One session per trajectory; trajectory 0 makes two generate calls
+    (the second continues the first and overrides max_new_tokens,
+    exercising the sampling-param merge), trajectory 1 one call; then
+    close and reward. Returns the group id, the per-turn (prompt, output)
+    token pairs in call order, and the session ids.
+    """
+    group_id = request.group_ids[0]
+    prompt = list(request.input_ids[0])
+    sids = [create_session(env, group_id, index) for index in range(GROUP_SIZE)]
+    # The junk rlinf block must be stripped before forwarding.
+    first_output = generate(env, sids[0], prompt, extra={"rlinf": {"junk": 1}}).json()[
+        "output_ids"
+    ]
+    second_input = prompt + first_output
+    second_output = generate(
+        env, sids[0], second_input, sampling_params={"max_new_tokens": 5}
+    ).json()["output_ids"]
+    other_output = generate(env, sids[1], [10, 11]).json()["output_ids"]
+
+    assert (
+        close(env, sids[0], extra_fields_train={"idx_to_sub_traj": [0, 0]}).status_code
+        == 200
+    )
+    assert (
+        close(env, sids[1], extra_fields_train={"idx_to_sub_traj": [0]}).status_code
+        == 200
+    )
+    assert reward(env, sids[0], rewards[0]).json()["group_complete"] is False
+    assert reward(env, sids[1], rewards[1]).json()["group_complete"] is True
+
+    turns = [
+        (prompt, first_output),
+        (second_input, second_output),
+        ([10, 11], other_output),
+    ]
+    return group_id, turns, sids
+
+
+def payload_channel_for_group(env, group_id):
+    """The payload shard serving one group, as the shard mapping picks it."""
+    return env.payload_channels[payload_shard_for(group_id, len(env.payload_channels))]
+
+
+class TestAssembly:
+    def test_assembled_result_matches_get_rollout_result(self):
+        """Constructed call records assemble to the agent loop's result.
+
+        Trajectory 0 has two turns, the first kept shorter than the engine
+        produced (the agent truncated at a stop token); trajectory 1 one
+        full turn. The parts are handed to the assembly out of order.
+        """
+        loaded, engine = 3, 5
+
+        traj0_turn0 = PayloadPart(
+            group_id=0,
+            traj_index=0,
+            turn_index=0,
+            input_ids=[1, 2, 3],
+            output_ids=[10, 11, 12, 13, 14, 15, 16, 17],
+            logprobs=[-0.1 * i for i in range(8)],
+            version_start=loaded,
+            weight_version=engine,
+            finish_reason={"type": "stop"},
+        )
+        # The agent kept 4 tokens and built the next prompt on them; the
+        # extra token 99 stands for the appended tool response.
+        traj0_turn1 = PayloadPart(
+            group_id=0,
+            traj_index=0,
+            turn_index=1,
+            input_ids=[1, 2, 3, 10, 11, 12, 13, 99],
+            output_ids=[20, 21, 22, 23, 24],
+            logprobs=[-0.2 * i for i in range(5)],
+            version_start=loaded,
+            weight_version=engine,
+            finish_reason={"type": "stop"},
+        )
+        traj1_turn0 = PayloadPart(
+            group_id=0,
+            traj_index=1,
+            turn_index=0,
+            input_ids=[7, 8],
+            output_ids=[30, 31, 32, 33, 34, 35, 36, 37],
+            logprobs=[-0.3 * i for i in range(8)],
+            version_start=loaded,
+            weight_version=engine,
+            finish_reason={"type": "stop"},
+        )
+        finalize = PayloadPart(
+            group_id=0,
+            traj_index=-1,
+            turn_index=-1,
+            input_ids=[],
+            output_ids=[],
+            logprobs=None,
+            version_start=loaded,
+            weight_version=engine,
+            finish_reason={},
+            last=True,
+            rewards=[0.7, 0.4],
+            verdicts={
+                0: {
+                    "kept_lens": {0: 4, 1: 5},
+                    "continues_prev": [False, True],
+                    "extra_fields_train": {"idx_to_sub_traj": [0, 0]},
+                },
+                1: {
+                    "kept_lens": {0: 8},
+                    "continues_prev": [False],
+                    "extra_fields_train": {"idx_to_sub_traj": [0]},
+                },
+            },
+        )
+
+        def agent_output(part, kept, reward_score):
+            # The agent view of the same call: the same truncation the
+            # verdict declares, versions the engine stamped.
+            return AgentLoopOutput(
+                prompt_ids=list(part.input_ids),
+                response_ids=part.output_ids[:kept],
+                response_logprobs=part.logprobs[:kept],
+                reward_score=reward_score,
+                version_start=part.version_start,
+                version_end=part.weight_version,
+            )
+
+        task_results = [
+            MultiAgentLoopOutput(
+                single_turn_outputs=[
+                    agent_output(traj0_turn0, 4, 0.7),
+                    agent_output(traj0_turn1, 5, 0.7),
+                ]
+            ),
+            MultiAgentLoopOutput(
+                single_turn_outputs=[agent_output(traj1_turn0, 8, 0.4)]
+            ),
+        ]
+        # get_rollout_result only reads these two attributes.
+        worker = MultiAgentLoopWorker.__new__(MultiAgentLoopWorker)
+        worker.print_outputs = False
+        worker.return_logprobs = True
+        reference = worker.get_rollout_result(
+            task_results, None, None, None, {"idx_to_sub_traj": [0, 0, 0]}
+        )
+
+        assembled = assemble_group_payload(
+            GroupPayload(
+                group_id=0,
+                parts=[traj0_turn1, finalize, traj1_turn0, traj0_turn0],
+            ),
+            return_logprobs=True,
+        )
+
+        for field in (
+            "num_sequence",
+            "group_size",
+            "idx_to_traj",
+            "input_ids",
+            "prompt_lengths",
+            "response_lengths",
+            "rollout_logprobs",
+            "is_end",
+            "rewards",
+            "extra_fields_train",
+            "version_start",
+            "version_end",
+        ):
+            assert getattr(assembled, field) == getattr(reference, field), field
+
+
+class TestNormalCompletion:
+    def test_group_is_released_fetched_and_assembled(self, env):
+        request = next_request(env)
+        assert request.group_ids == [0]
+        assert request.task_names == [TASK_NAME]
+        assert request.n == GROUP_SIZE
+        group_id, turns, sids = run_group(env, request, rewards=(1.0, 0.5))
+
+        # What was forwarded: routing key header, stripped rlinf block,
+        # forced return_logprob, merged sampling params.
+        generates = [
+            record
+            for record in env.mock.request_log
+            if record["path"] == "/generate"
+            and record["headers"]["x-smg-routing-key"] == str(group_id)
+        ]
+        assert len(generates) == 3
+        for record in generates:
+            assert "rlinf" not in record["body"]
+            assert record["body"]["return_logprob"] is True
+        assert generates[0]["body"]["sampling_params"] == {
+            "temperature": 0,
+            "max_new_tokens": 8,
+        }
+        assert generates[1]["body"]["sampling_params"] == {
+            "temperature": 0,
+            "max_new_tokens": 5,
+        }
+
+        env.buffer.release_batch(version=0).wait()
+
+        # The buffer delivered the group as a payload ref; the actor side
+        # resolves it, fetches by key, and assembles.
+        delivery = poll_channel(env.rollout)
+        assert isinstance(delivery, GroupDelivery)
+        assert delivery.group_id == group_id
+        assert delivery.task_name == TASK_NAME
+        channel = payload_channel_for(
+            delivery.payload_ref.locator, env.payload_channels
+        )
+        payload = poll_channel(channel, key=delivery.payload_ref.key)
+        assert isinstance(payload, GroupPayload)
+        result = assemble_group_payload(payload, return_logprobs=True)
+        assert result.num_sequence == 3
+        assert result.group_size == GROUP_SIZE
+        assert result.idx_to_traj == [0, 0, 1]
+        assert result.input_ids == [prompt + output for prompt, output in turns]
+        assert result.prompt_lengths == [len(prompt) for prompt, _ in turns]
+        assert result.response_lengths == [len(output) for _, output in turns]
+        assert result.rollout_logprobs is not None
+        assert [len(lp) for lp in result.rollout_logprobs] == result.response_lengths
+        assert result.rewards == [1.0, 1.0, 0.5]
+        assert result.extra_fields_train == {"idx_to_sub_traj": [0, 0, 0]}
+        assert result.version_start == [LOADED_VERSION] * 3
+        assert result.version_end == [MOCK_WEIGHT_VERSION] * 3
+
+        # The group is taken: nothing is left under its payload key.
+        assert poll_channel(channel, key=group_id, timeout_s=1) is None
+        # The group is spent: its sessions answer unknown from now on.
+        assert generate(env, sids[0], [1]).status_code == 404
+
+    def test_retried_close_and_reward_after_delivery_answer_success(self, env):
+        """The client resends a close or reward whose response was lost.
+
+        The group is delivered by then and its sessions are gone, so the
+        retried call has nothing left to do; it must still succeed, and it
+        must not make the buffer see a second record for the group.
+        """
+        request = next_request(env)
+        group_id, _turns, sids = run_group(env, request, rewards=(1.0, 0.5))
+        env.buffer.release_batch(version=0).wait()
+        delivery = poll_channel(env.rollout)
+        assert isinstance(delivery, GroupDelivery)
+        assert delivery.group_id == group_id
+
+        # run_group's reward on the last session completed the group: that
+        # is the call whose response the client can lose.
+        retried_reward = reward(env, sids[1], 0.5)
+        assert retried_reward.status_code == 200, retried_reward.text
+        assert retried_reward.json() == {"group_complete": True}
+        retried_close = close(env, sids[0])
+        assert retried_close.status_code == 200, retried_close.text
+        assert retried_close.json() == {}
+
+        # One record for the group, and only one.
+        assert poll_channel(env.rollout, timeout_s=1) is None
+
+
+class TestAgentLoopSessionTransport:
+    """The agent loop over the session server, driven end to end.
+
+    With verify_assembly off, the session server keeps logprobs out of its
+    responses (training reads them from the payload), so the agent loop
+    must not ask for agent-side logprobs.
+    """
+
+    @staticmethod
+    def _make_worker(verify):
+        """A minimal loop worker with the loop state but no Worker init.
+
+        return_logprobs starts as AgentLoopWorker.__init__ sets it, and
+        init_worker applies the session server rule under test.
+        """
+        cfg = OmegaConf.create(
+            {
+                "algorithm": {
+                    "group_size": GROUP_SIZE,
+                    "recompute_logprobs": False,
+                },
+                "session_server": {"enable": False, "verify_assembly": verify},
+            }
+        )
+        # Validate with the path disabled: that fills the session_server
+        # defaults without the enabled-path checks, which read the runner,
+        # actor and rollout config this test does not build.
+        cfg = validate_session_server_cfg(cfg)
+        cfg.session_server.enable = True
+        worker = TwoTurnLogprobLoopWorker.__new__(TwoTurnLogprobLoopWorker)
+        worker.print_outputs = False
+        worker.cfg = cfg
+        worker.return_logprobs = not cfg.algorithm.recompute_logprobs
+        worker.extra_keys_turn = None
+        worker.extra_keys_traj = None
+        worker._session_binding = contextvars.ContextVar(
+            "rlinf_agent_session_binding", default=None
+        )
+        return worker
+
+    @pytest.mark.parametrize("verify", [False, True])
+    def test_group_runs_and_delivers_with_logprob_rule(self, request, cluster, verify):
+        env = request.getfixturevalue("verify_env" if verify else "env")
+        rollout_request = next_request(env)
+        group_id = rollout_request.group_ids[0]
+        prompt_ids = rollout_request.input_ids[0]
+
+        worker = self._make_worker(verify)
+        worker.init_worker(
+            None,
+            None,
+            None,
+            None,
+            None,
+            session_server_urls=[env.base_url],
+            session_server_generate_timeout_s=30.0,
+            session_server_keepalive_timeout_s=4.0,
+        )
+
+        asyncio.run(
+            worker.run_agentloop_rollout_group(
+                prompt_ids,
+                rollout_request.answers[0],
+                GROUP_SIZE,
+                env.rollout,
+                group_id,
+                TASK_NAME,
+            )
+        )
+        # The session-server rule under test: agent-side logprobs are
+        # collected only for the assembly check.
+        assert worker.return_logprobs is verify
+
+        env.buffer.release_batch(version=0).wait()
+        delivery = poll_channel(env.rollout)
+        assert isinstance(delivery, GroupDelivery)
+        assert delivery.group_id == group_id
+        channel = payload_channel_for(
+            delivery.payload_ref.locator, env.payload_channels
+        )
+        payload = poll_channel(channel, key=delivery.payload_ref.key)
+        assert isinstance(payload, GroupPayload)
+        result = assemble_group_payload(payload, return_logprobs=True)
+        # Every turn of both trajectories carries per-token logprobs.
+        assert result.rollout_logprobs is not None
+        assert [len(lp) for lp in result.rollout_logprobs] == result.response_lengths
+
+
+class TestSessionServerClientRetry:
+    """Connection failures on the idempotent lifecycle calls are resent.
+
+    A pooled connection the server has just closed surfaces as a reset on
+    the next request; without the resend, one such connection would fail
+    the trajectory and, through the agent loop, the whole run.
+    """
+
+    class _StubClient:
+        """An HTTP client that fails its first ``failures`` calls."""
+
+        def __init__(self, failures, error, response):
+            self.calls = 0
+            self._failures = failures
+            self._error = error
+            self._response = response
+
+        async def async_post(self, path, body, timeout_s=None):
+            self.calls += 1
+            if self.calls <= self._failures:
+                raise self._error
+            return self._response
+
+    @staticmethod
+    def _transport(stub):
+        transport = SessionServerClient(
+            ["http://127.0.0.1:1"], generate_timeout_s=30.0, keepalive_timeout_s=4.0
+        )
+        # The pool of real clients is unused: every call goes to the stub.
+        transport._clients[0] = stub
+        return transport
+
+    @pytest.mark.parametrize(
+        "error",
+        [aiohttp.ClientOSError("reset by peer"), aiohttp.ServerDisconnectedError()],
+        ids=["reset", "disconnected"],
+    )
+    def test_close_is_resent(self, error):
+        stub = self._StubClient(failures=1, error=error, response={})
+        asyncio.run(self._transport(stub).close(1, "sid", {}))
+        assert stub.calls == 2
+
+    def test_reward_and_abort_are_resent(self):
+        for path in ("reward", "abort"):
+            stub = self._StubClient(
+                failures=1, error=aiohttp.ClientOSError("x"), response={}
+            )
+            transport = self._transport(stub)
+            if path == "reward":
+                asyncio.run(transport.reward(1, "sid", 1.0))
+            else:
+                asyncio.run(transport.abort(1, "reason"))
+            assert stub.calls == 2
+
+    def test_create_and_generate_are_not_resent(self):
+        """A resent create opens a second session and a resent generate
+        samples the turn again, so neither may retry."""
+        stub = self._StubClient(
+            failures=1, error=aiohttp.ClientOSError("x"), response={}
+        )
+        with pytest.raises(aiohttp.ClientOSError):
+            asyncio.run(
+                self._transport(stub).create_session(1, 0, GROUP_SIZE, TASK_NAME)
+            )
+        assert stub.calls == 1
+
+        stub = self._StubClient(
+            failures=1, error=aiohttp.ClientOSError("x"), response={}
+        )
+        with pytest.raises(aiohttp.ClientOSError):
+            asyncio.run(self._transport(stub).generate(1, "sid", [1, 2]))
+        assert stub.calls == 1
+
+
+class TwoTurnLogprobLoopWorker(MultiAgentLoopWorker):
+    """Two generate turns per trajectory, with the per-token logprob
+    check of Search-R1.
+
+    Turn one continues into turn two (the tool response becomes the next
+    turn's input); the second generate ends the trajectory. The rewards
+    differ per trajectory so the equal-reward rejection lets the group
+    through.
+    """
+
+    async def pre_process_query(self, prompt_ids, answer):
+        return list(prompt_ids), {}
+
+    async def generate_llm_response(
+        self, generate_context, trace_prints, problem_prompt_ids, turn_prompt_ids
+    ):
+        result = await self.generate(turn_prompt_ids)
+        response_ids = result["output_ids"]
+        logprobs = result.get("logprobs") if self.return_logprobs else None
+        if self.return_logprobs and (
+            logprobs is None or len(logprobs) != len(response_ids)
+        ):
+            raise ValueError("one rollout logprob per generated token is required")
+        binding = self._session_binding.get()
+        output = AgentLoopOutput(
+            prompt_ids=turn_prompt_ids,
+            response_ids=response_ids,
+            response_logprobs=logprobs,
+            is_end=True,
+            reward_score=1.0 if binding.traj_index == 0 else 0.5,
+        )
+        generate_context["turns"] = generate_context.get("turns", 0) + 1
+        return (
+            generate_context["turns"] < 2,
+            response_ids,
+            "",
+            output,
+        )
+
+    async def generate_tool_response(
+        self,
+        generate_context,
+        trace_prints,
+        problem_prompt_ids,
+        turn_prompt_ids,
+        llm_response_ids,
+        llm_response_text,
+    ):
+        return True, turn_prompt_ids + llm_response_ids + [77]
+
+    async def post_process_query(self, generate_context, output):
+        return output
+
+
+class TestAbort:
+    def test_late_response_after_abort_is_dropped_by_the_buffer(self, env):
+        request = next_request(env)
+        group_id = request.group_ids[0]
+        sid = create_session(env, group_id, 0)
+
+        env.mock.latency_s = 0.5
+        outcome = {}
+
+        def slow_generate():
+            outcome["response"] = generate(env, sid, [1, 2, 3])
+
+        thread = threading.Thread(target=slow_generate)
+        thread.start()
+        time.sleep(0.15)
+        abort = requests.post(
+            f"{env.base_url}/groups/{group_id}/abort",
+            json={"reason": "agent_reset"},
+            timeout=5,
+        )
+        thread.join(timeout=30)
+        env.mock.latency_s = 0.0
+
+        assert abort.status_code == 200
+        # The generate was still in flight when the group was aborted: its
+        # late response is rejected and writes nothing.
+        assert outcome["response"].status_code == 410
+        # Close and reward after the abort are dropped, not errors.
+        assert close(env, sid).status_code == 200
+        assert reward(env, sid, 0.0).status_code == 200
+
+        # The buffer consumed the discard record: the group is dropped and
+        # returns its admission capacity.
+        metrics = wait_for_drops(env, "agent_reset")
+        assert metrics["dropped_groups"] == 1
+        assert (
+            poll_channel(
+                payload_channel_for_group(env, group_id), key=group_id, timeout_s=2
+            )
+            is None
+        )
+        assert poll_channel(env.rollout, timeout_s=2) is None
+
+
+class TestEqualRewardDrop:
+    def test_equal_reward_group_is_dropped_and_payload_released(self, env):
+        request = next_request(env)
+        group_id = request.group_ids[0]
+        run_group(env, request, rewards=(0.5, 0.5))
+
+        # A group whose trajectories all scored the same carries no group
+        # signal: the buffer drops it and releases its payload — the actor
+        # would never fetch it, so the queue must not hold it forever.
+        metrics = wait_for_drops(env, "equal_reward")
+        assert metrics["dropped_groups"] == 1
+        assert (
+            poll_channel(
+                payload_channel_for_group(env, group_id), key=group_id, timeout_s=2
+            )
+            is None
+        )
+        assert poll_channel(env.rollout, timeout_s=2) is None
+
+
+class TestTurnClassification:
+    """The turn-by-turn prefix classification of one trajectory."""
+
+    @staticmethod
+    def _turns(third_tail):
+        """Three turns: 10 tokens in and 5 out, then 20 in and 10 out.
+
+        ``third_tail`` is what the third turn's input adds after the second
+        turn's input, so a test picks whether the third turn kept the whole
+        second output or broke inside it.
+        """
+        first_input = list(range(10))
+        first_output = list(range(100, 105))
+        second_input = first_input + first_output + list(range(200, 205))
+        second_output = list(range(300, 310))
+        return [
+            new_turn_record(first_input, None, None, None),
+            new_turn_record(second_input, first_input, first_output, None),
+            new_turn_record(
+                second_input + third_tail, second_input, second_output, None
+            ),
+        ]
+
+    def test_third_turn_that_holds_the_second_output_continues(self):
+        """A third turn whose prompt holds the second turn's whole output
+        continues the second turn."""
+        turns = self._turns(list(range(300, 310)) + list(range(400, 402)))
+        continues, counts = classify_turns(turns, [5, 10, 2], set(), None, 0, 0)
+        assert continues == [False, True, True]
+        assert counts.continuous == 2
+
+    def test_third_turn_that_breaks_inside_the_second_output_is_underreported(self):
+        """A third turn that breaks inside the second turn's kept output is
+        an under-reported truncation.
+
+        The third prompt holds only 5 of the 10 output tokens that the close
+        declares as kept for the second turn. The check compares the third
+        turn with the second; compared with the first turn, the same prompt
+        would pass as a continuation.
+        """
+        turns = self._turns(list(range(300, 305)) + list(range(400, 403)))
+        with pytest.raises(UnderreportedTruncation):
+            classify_turns(turns, [5, 10, 2], set(), None, 0, 0)
+
+    def test_third_turn_that_breaks_inside_the_second_output_rewrites_for_chat(self):
+        """For a chat agent the same break counts as a rewritten history.
+
+        A chat agent that shortened the second answer sends such a prompt,
+        so the turn starts a new segment instead of failing the close.
+        """
+        turns = self._turns(list(range(300, 305)) + list(range(400, 403)))
+        continues, counts = classify_turns(turns, [5, 10, 2], set(), "chat", 0, 0)
+        assert continues == [False, True, False]
+        assert counts.rewritten == 1
+
+
+class TestUnderreportedTruncation:
+    def test_close_fails_loud_on_under_reported_truncation(self, env):
+        request = next_request(env)
+        group_id = request.group_ids[0]
+        sid = create_session(env, group_id, 0)
+
+        first_input = [7, 8, 9]
+        first_output = generate(env, sid, first_input).json()["output_ids"]
+        assert len(first_output) == 8
+
+        # The agent kept only 4 tokens of the first output but declares the
+        # full 8 at close: the break inside the declared kept output must
+        # fail loud instead of assembling wrong training data.
+        second_input = first_input + first_output[:4] + [424242]
+        assert generate(env, sid, second_input).status_code == 200
+
+        resp = close(env, sid, kept_lens={"0": 8})
+        assert resp.status_code == 500
+        assert "declared" in resp.json()["error"]
+
+        # Nothing left the session server, so the buffer never heard of the
+        # group: nothing delivered, nothing dropped.
+        assert poll_channel(env.rollout, timeout_s=2) is None
+        assert (
+            poll_channel(
+                payload_channel_for_group(env, group_id), key=group_id, timeout_s=2
+            )
+            is None
+        )
+        metrics = env.buffer.get_metrics().wait()[0]
+        assert metrics["dropped_groups"] == 0
+
+
+class TestVerdictValidation:
+    def test_close_rejects_unsupported_verdict_fields(self, env):
+        """A verdict the session server does not support fails at close."""
+        # A group id outside the buffer worker's sequence: this scenario
+        # never finalizes, so it must not shift the ids the drop-path
+        # scenarios pin their shard choice on.
+        group_id = 4242
+        sid = create_session(env, group_id, 0)
+        generate(env, sid, [7, 8, 9])
+
+        # An unknown verdict key, a field that does not cover the turn,
+        # and a non-scalar value are all rejected; nothing is committed,
+        # so the same session still closes cleanly afterwards.
+        resp = requests.post(
+            f"{env.base_url}/sessions/{sid}/close",
+            json={"verdict": {"per_turn_rewards": [0.5]}},
+            timeout=30,
+        )
+        assert resp.status_code == 400
+        assert "unsupported verdict fields" in resp.json()["error"]
+
+        resp = close(env, sid, extra_fields_train={"idx_to_sub_traj": [0, 0]})
+        assert resp.status_code == 400
+        assert "idx_to_sub_traj" in resp.json()["error"]
+
+        resp = close(env, sid, extra_fields_train={"idx_to_sub_traj": ["x"]})
+        assert resp.status_code == 400
+        assert "idx_to_sub_traj" in resp.json()["error"]
+
+        resp = close(env, sid, extra_fields_train={"idx_to_sub_traj": [0]})
+        assert resp.status_code == 200
+
+
+class TestNotTraining:
+    def test_dropped_turn_is_assembled_out_and_next_turn_pairs_back(self):
+        """A not_training turn stays in the payload but yields no sequence,
+        and the turn after it pairs with the last kept turn.
+
+        The flag is set server-side by the chat entry's rollback, never by
+        a close verdict; this exercises the assembly contract directly.
+        """
+        loaded, engine = 3, 5
+        first_input = [1, 2, 3]
+        first_output = [10, 11]
+        retry_output = [40, 41]
+        third_output = [20, 21]
+
+        traj0_turn0 = PayloadPart(
+            group_id=0,
+            traj_index=0,
+            turn_index=0,
+            input_ids=first_input,
+            output_ids=first_output,
+            logprobs=[-0.1, -0.2],
+            version_start=loaded,
+            weight_version=engine,
+            finish_reason={"type": "stop"},
+        )
+        traj0_turn1 = PayloadPart(
+            group_id=0,
+            traj_index=0,
+            turn_index=1,
+            input_ids=first_input + first_output,
+            output_ids=retry_output,
+            logprobs=[-0.3, -0.4],
+            version_start=loaded,
+            weight_version=engine,
+            finish_reason={"type": "stop"},
+        )
+        # Continues turn 0, not the dropped turn 1.
+        traj0_turn2 = PayloadPart(
+            group_id=0,
+            traj_index=0,
+            turn_index=2,
+            input_ids=first_input + first_output,
+            output_ids=third_output,
+            logprobs=[-0.5, -0.6],
+            version_start=loaded,
+            weight_version=engine,
+            finish_reason={"type": "stop"},
+        )
+        finalize = PayloadPart(
+            group_id=0,
+            traj_index=-1,
+            turn_index=-1,
+            input_ids=[],
+            output_ids=[],
+            logprobs=None,
+            version_start=loaded,
+            weight_version=engine,
+            finish_reason={},
+            last=True,
+            rewards=[1.0],
+            verdicts={
+                0: {
+                    "kept_lens": {0: 2, 1: 2, 2: 2},
+                    "continues_prev": [False, False, True],
+                    "not_training": {1: True},
+                    "extra_fields_train": {},
+                },
+            },
+        )
+        payload = GroupPayload(
+            group_id=0,
+            parts=[traj0_turn2, finalize, traj0_turn0, traj0_turn1],
+        )
+
+        result = assemble_group_payload(payload, return_logprobs=True)
+        assert result.num_sequence == 2
+        assert result.idx_to_traj == [0, 0]
+        assert result.input_ids == [
+            first_input + first_output,
+            first_input + first_output + third_output,
+        ]
+        assert result.response_lengths == [2, 2]
+
+    def test_extra_fields_follow_the_trained_turns(self):
+        """An extra training field covers the trained turns, not the dropped
+        one, and rides the payload in turn order.
+
+        Turn 1 (the retry) is dropped, so the two values belong to turns 0
+        and 2.
+        """
+        loaded, engine = 3, 5
+        first_input = [1, 2, 3]
+        first_output = [10, 11]
+
+        def turn(index, output_ids, input_ids):
+            return PayloadPart(
+                group_id=0,
+                traj_index=0,
+                turn_index=index,
+                input_ids=input_ids,
+                output_ids=output_ids,
+                logprobs=[-0.1, -0.2],
+                version_start=loaded,
+                weight_version=engine,
+                finish_reason={"type": "stop"},
+            )
+
+        turns = [
+            turn(0, first_output, first_input),
+            turn(1, [40, 41], first_input + first_output),
+            turn(2, [20, 21], first_input + first_output),
+        ]
+        finalize = PayloadPart(
+            group_id=0,
+            traj_index=-1,
+            turn_index=-1,
+            input_ids=[],
+            output_ids=[],
+            logprobs=None,
+            version_start=loaded,
+            weight_version=engine,
+            finish_reason={},
+            last=True,
+            rewards=[1.0],
+            verdicts={
+                0: {
+                    "kept_lens": {0: 2, 1: 2, 2: 2},
+                    "continues_prev": [False, False, True],
+                    "not_training": {1: True},
+                    "extra_fields_train": {"idx_to_sub_traj": [0, 7]},
+                },
+            },
+        )
+        payload = GroupPayload(group_id=0, parts=[*turns, finalize])
+
+        result = assemble_group_payload(payload, return_logprobs=True)
+        assert result.num_sequence == 2
+        assert result.extra_fields_train["idx_to_sub_traj"] == [0, 7]
+
+
+class TestChatCompletions:
+    """The chat entry: TITO, parsing, errors, concurrency, rollback."""
+
+    @staticmethod
+    def _chat(env, sid, body):
+        return requests.post(
+            f"{env.base_url}/sessions/{sid}/v1/chat/completions",
+            json=body,
+            timeout=30,
+        )
+
+    @staticmethod
+    def _messages(question="What is RL?", tool_answer="RL is ..."):
+        messages = [
+            {"role": "system", "content": "Answer using the search tool."},
+            {"role": "user", "content": question},
+        ]
+        return messages
+
+    def test_two_turns_with_tool_message_continue(self, chat_env):
+        env = chat_env
+        env.mock.scripted_texts = [
+            '<tool_call>\n{"name": "search", "arguments": {"query": "RL"}}\n</tool_call>',
+            "Reinforcement learning is a learning paradigm.",
+        ]
+        request = next_request(env)
+        group_id = request.group_ids[0]
+        sid = create_session(env, group_id, 0)
+
+        tools = CHAT_TOOLS
+        messages = self._messages()
+        first = self._chat(env, sid, {"messages": messages, "tools": tools})
+        assert first.status_code == 200, first.text
+        body = first.json()
+        assistant = body["choices"][0]["message"]
+        assert body["choices"][0]["finish_reason"] == "tool_calls"
+        assert assistant["tool_calls"][0]["function"]["name"] == "search"
+        assert body["usage"]["prompt_tokens"] > 0
+
+        tool_messages = [
+            *messages,
+            assistant,
+            {"role": "tool", "name": "search", "content": "RL is a paradigm."},
+        ]
+        second = self._chat(env, sid, {"messages": tool_messages, "tools": tools})
+        assert second.status_code == 200, second.text
+        second_message = second.json()["choices"][0]["message"]
+        assert second_message["content"].startswith("Reinforcement learning")
+        assert "tool_calls" not in second_message
+
+        # Both turns ride the payload, the second continuing the first.
+        assert close(env, sid).status_code == 200
+        sid1 = create_session(env, group_id, 1)
+        generate(env, sid1, [10, 11])
+        assert close(env, sid1).status_code == 200
+        assert reward(env, sid, 1.0).json()["group_complete"] is False
+        assert reward(env, sid1, 0.5).json()["group_complete"] is True
+        env.buffer.release_batch(version=0).wait()
+        delivery = poll_channel(env.rollout)
+        assert isinstance(delivery, GroupDelivery)
+        channel = payload_channel_for(
+            delivery.payload_ref.locator, env.payload_channels
+        )
+        payload = poll_channel(channel, key=delivery.payload_ref.key)
+        result = assemble_group_payload(payload, return_logprobs=True)
+        assert result.num_sequence == 3  # two chat turns + one plain turn
+        # The turn classification is counted at close.
+        metrics = env.server.get_metrics().wait()[0]
+        assert metrics["session_server/prefix_continuous"] >= 1
+        assert metrics["session_server/chat_tool_call_responses"] >= 1
+
+    def test_unreadable_tool_call_counts_and_keeps_the_text(self, chat_env):
+        """A tool-call block the parser cannot read is a parse failure, and
+        the whole text answers as content.
+
+        The parser only warns about the broken block and reports no call;
+        the content it returns stops before that block, so keeping its text
+        would drop what the model wrote.
+        """
+        env = chat_env
+        broken = (
+            '<tool_call>\n{"name": "search", "arguments": {"query": "RL"\n</tool_call>'
+        )
+        env.mock.scripted_texts = [broken]
+        request = next_request(env)
+        sid = create_session(env, request.group_ids[0], 0)
+
+        response = self._chat(
+            env, sid, {"messages": self._messages(), "tools": CHAT_TOOLS}
+        )
+        assert response.status_code == 200, response.text
+        message = response.json()["choices"][0]["message"]
+        assert message["content"] == broken
+        assert "tool_calls" not in message
+        metrics = env.server.get_metrics().wait()[0]
+        assert metrics["session_server/chat_tool_call_parse_failed"] == 1
+
+    def test_two_calls_of_one_tool_get_distinct_ids(self, chat_env):
+        env = chat_env
+        # Two calls of the same tool: the agent answers both by tool_call_id,
+        # so the ids must differ even though the tool is the same.
+        call = '<tool_call>\n{"name": "search", "arguments": {"query": "RL"}}\n</tool_call>'
+        env.mock.scripted_texts = [call + call]
+        request = next_request(env)
+        sid = create_session(env, request.group_ids[0], 0)
+
+        response = self._chat(
+            env, sid, {"messages": self._messages(), "tools": CHAT_TOOLS}
+        )
+        assert response.status_code == 200, response.text
+        calls = response.json()["choices"][0]["message"]["tool_calls"]
+        assert len(calls) == 2
+        assert len({call["id"] for call in calls}) == 2
+
+    def test_retry_of_last_request_rolls_back_and_delivers_once(self, chat_env):
+        env = chat_env
+        env.mock.scripted_texts = ["First answer."]
+        request = next_request(env)
+        group_id = request.group_ids[0]
+        sid = create_session(env, group_id, 0)
+        messages = self._messages()
+
+        first = self._chat(env, sid, {"messages": messages})
+        assert first.status_code == 200, first.text
+        # The same request again: the agent never used the first answer.
+        retry = self._chat(env, sid, {"messages": messages})
+        assert retry.status_code == 200, retry.text
+
+        # One value per trained turn: the abandoned first turn is not one.
+        assert (
+            close(env, sid, extra_fields_train={"idx_to_sub_traj": [0]}).status_code
+            == 200
+        )
+        sid1 = create_session(env, group_id, 1)
+        generate(env, sid1, [10, 11])
+        assert (
+            close(env, sid1, extra_fields_train={"idx_to_sub_traj": [0]}).status_code
+            == 200
+        )
+        assert reward(env, sid, 1.0).json()["group_complete"] is False
+        assert reward(env, sid1, 0.5).json()["group_complete"] is True
+        env.buffer.release_batch(version=0).wait()
+        delivery = poll_channel(env.rollout)
+        channel = payload_channel_for(
+            delivery.payload_ref.locator, env.payload_channels
+        )
+        payload = poll_channel(channel, key=delivery.payload_ref.key)
+        result = assemble_group_payload(payload, return_logprobs=True)
+        # Three turns in the payload (first attempt, retry, plain) but the
+        # rolled-back one trains nothing.
+        assert result.num_sequence == 2
+        # One declared value per trained turn, in trajectory order.
+        assert result.extra_fields_train["idx_to_sub_traj"] == [0, 0]
+
+    def test_rewritten_history_marks_prefix_rewritten(self, chat_env):
+        env = chat_env
+        env.mock.scripted_texts = [
+            "First answer.",
+            "Second answer.",
+        ]
+        request = next_request(env)
+        group_id = request.group_ids[0]
+        sid = create_session(env, group_id, 0)
+        messages = self._messages()
+
+        assert self._chat(env, sid, {"messages": messages}).status_code == 200
+        rewritten = [
+            {"role": "system", "content": "A different instruction."},
+            {"role": "user", "content": "Another question?"},
+        ]
+        resp = self._chat(env, sid, {"messages": rewritten})
+        assert resp.status_code == 200, resp.text
+
+        assert close(env, sid).status_code == 200
+        metrics = env.server.get_metrics().wait()[0]
+        assert metrics["session_server/prefix_rewritten"] >= 1
+
+    def test_answer_is_capped_to_the_room_the_prompt_leaves(self, chat_env):
+        """A turn cannot grow past runner.seq_length: the entry lowers
+        max_new_tokens to what the prompt leaves.
+        """
+        env = chat_env
+        env.mock.scripted_texts = ["Answer."]
+        request = next_request(env)
+        sid = create_session(env, request.group_ids[0], 0)
+        # The longest filler that still fits, sized with the tokenizer the
+        # server renders with, so the prompt crowds the limit whatever the
+        # tokenizer makes of the words.
+        from rlinf.models.tokenization.hf import hf_tokenizer
+
+        tokenizer = hf_tokenizer(_chat_model_dir("qwen"), trust_remote_code=False)
+
+        def prompt_len(words: int) -> int:
+            return len(
+                tokenizer.apply_chat_template(
+                    [{"role": "user", "content": "word " * words}],
+                    tokenize=True,
+                    add_generation_prompt=True,
+                    return_dict=False,
+                )
+            )
+
+        fits, too_long = 1, SEQ_LENGTH
+        while fits < too_long:
+            middle = (fits + too_long + 1) // 2
+            if prompt_len(middle) < SEQ_LENGTH:
+                fits = middle
+            else:
+                too_long = middle - 1
+        filler = "word " * fits
+
+        response = self._chat(
+            env, sid, {"messages": [{"role": "user", "content": filler}]}
+        )
+        assert response.status_code == 200, response.text
+        forward = [r for r in env.mock.request_log if r["path"] == "/generate"][-1]
+        room = SEQ_LENGTH - len(forward["body"]["input_ids"])
+        # The cap is what was asserted: the prompt leaves less than the
+        # configured default, and the forwarded limit is exactly the room.
+        assert 0 < room < DEFAULT_MAX_NEW_TOKENS
+        assert forward["body"]["sampling_params"]["max_new_tokens"] == room
+
+    def test_null_fields_count_as_unset(self, chat_env):
+        """A client that serializes every optional parameter as null is
+        served the configured sampling instead of a 400 or a 500.
+
+        The group id is outside the buffer worker's sequence, like the
+        rejected-request cases below: this scenario admits nothing.
+        """
+        env = chat_env
+        env.mock.scripted_texts = ["Fine."]
+        sid = create_session(env, 4311, 0)
+
+        response = self._chat(
+            env,
+            sid,
+            {
+                "messages": self._messages(),
+                "temperature": None,
+                "top_p": None,
+                "top_k": None,
+                "tool_choice": None,
+                "response_format": None,
+                "stop": None,
+                "max_completion_tokens": None,
+                "max_tokens": 4,
+            },
+        )
+        assert response.status_code == 200, response.text
+        forward = [r for r in env.mock.request_log if r["path"] == "/generate"][-1]
+        # The null max_completion_tokens does not shadow max_tokens, and
+        # the null stop adds no stop string.
+        assert forward["body"]["sampling_params"]["max_new_tokens"] == 4
+        assert "stop" not in forward["body"]["sampling_params"]
+
+    def test_output_ids_without_text_are_decoded(self, chat_env):
+        """An engine started without a tokenizer answers ids only.
+
+        The session server decodes them itself, so a tool call parses out of the
+        response exactly as it does when the engine sends its own text.
+        This scenario admits nothing either; its two sessions share one
+        group so both halves compare under the same conditions.
+        """
+        env = chat_env
+        from rlinf.models.tokenization.hf import hf_tokenizer
+
+        text = (
+            '<tool_call>\n{"name": "search", "arguments": {"query": "RL"}}\n'
+            "</tool_call>"
+        )
+
+        env.mock.scripted_texts = [text]
+        with_text = self._chat(
+            env,
+            create_session(env, 4312, 0),
+            {"messages": self._messages(), "tools": CHAT_TOOLS},
+        )
+        assert with_text.status_code == 200, with_text.text
+
+        tokenizer = hf_tokenizer(_chat_model_dir("qwen"), trust_remote_code=False)
+        env.mock.scripted_texts = []
+        env.mock.scripted_output_ids = tokenizer.encode(text, add_special_tokens=False)
+        with_ids = self._chat(
+            env,
+            create_session(env, 4312, 1),
+            {"messages": self._messages(), "tools": CHAT_TOOLS},
+        )
+        env.mock.scripted_output_ids = []
+        assert with_ids.status_code == 200, with_ids.text
+
+        def calls(response):
+            message = response.json()["choices"][0]["message"]
+            return [
+                (call["function"]["name"], call["function"]["arguments"])
+                for call in message["tool_calls"]
+            ]
+
+        assert with_ids.json()["choices"][0]["finish_reason"] == "tool_calls"
+        assert calls(with_ids) == calls(with_text) == [("search", '{"query": "RL"}')]
+
+    def test_prompt_that_does_not_fit_is_rejected(self, chat_env):
+        """A prompt that alone exceeds the training length gets a 400 and
+        nothing is forwarded or recorded."""
+        env = chat_env
+        request = next_request(env)
+        sid = create_session(env, request.group_ids[0], 0)
+        before = len(env.mock.request_log)
+
+        response = self._chat(
+            env,
+            sid,
+            {"messages": [{"role": "user", "content": "word " * (SEQ_LENGTH * 2)}]},
+        )
+        assert response.status_code == 400, response.text
+        error = response.json()["error"]
+        assert error["code"] == "context_length_exceeded"
+        assert error["type"] == "invalid_request_error"
+        # No turn was forwarded, so the group gained no turn.
+        assert len(env.mock.request_log) == before
+
+    def test_unclosed_reasoning_marker_keeps_the_whole_answer(self, chat_env):
+        """A model without reasoning markers keeps its text whole.
+
+        Qwen2.5 writes ``<think>`` as ordinary text when the prompt asks
+        for it; splitting there would put the rest of the turn, tool calls
+        included, into reasoning_content and leave the agent an empty
+        answer.
+        """
+        env = chat_env
+        tool_call = '<tool_call>\n{"name": "search", "arguments": {"query": "RL"}}\n</tool_call>'
+        env.mock.scripted_texts = [f"<think> reasoning without a closer\n{tool_call}"]
+        request = next_request(env)
+        sid = create_session(env, request.group_ids[0], 0)
+
+        response = self._chat(
+            env, sid, {"messages": self._messages(), "tools": CHAT_TOOLS}
+        )
+        assert response.status_code == 200, response.text
+        message = response.json()["choices"][0]["message"]
+        assert message["tool_calls"][0]["function"]["name"] == "search"
+        assert "reasoning_content" not in message
+        assert message["content"].startswith("<think> reasoning without a closer")
+        metrics = env.server.get_metrics().wait()[0]
+        assert metrics["session_server/chat_reasoning_responses"] == 0
+
+    def test_reasoning_parsed_from_the_engine_text(self, chat_env_glm):
+        """GLM's reasoning is split out; a model without reasoning markers
+        keeps its text whole (see the unclosed-marker test)."""
+        env = chat_env_glm
+        # GLM's generation prompt ends with the reasoning opener, so the
+        # engine text starts inside the block: the parser must be built
+        # with force_reasoning, as the entry does.
+        env.mock.scripted_texts = ["thinking out loud</think>The answer."]
+        rollout_request = next_request(env)
+        group_id = rollout_request.group_ids[0]
+        sid = create_session(env, group_id, 0)
+        response = self._chat(env, sid, {"messages": self._messages()})
+        assert response.status_code == 200, response.text
+        message = response.json()["choices"][0]["message"]
+        assert message["content"] == "The answer."
+        assert message["reasoning_content"] == "thinking out loud"
+        metrics = env.server.get_metrics().wait()[0]
+        assert metrics["session_server/chat_reasoning_responses"] >= 1
+
+    def test_stream_answers_one_chunk_and_done(self, chat_env):
+        env = chat_env
+        env.mock.scripted_texts = ["Streamed."]
+        request = next_request(env)
+        group_id = request.group_ids[0]
+        sid = create_session(env, group_id, 0)
+        response = self._chat(env, sid, {"messages": self._messages(), "stream": True})
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        text = response.text
+        assert text.endswith("data: [DONE]\n\n")
+        payload = json.loads(text.split("data: ", 1)[1].split("\n", 1)[0])
+        assert payload["object"] == "chat.completion.chunk"
+        assert payload["choices"][0]["delta"]["content"].startswith("Streamed")
+
+    @pytest.mark.parametrize(
+        "group_id,body_patch",
+        [
+            (4301, {"n": 2}),
+            (4302, {"temperature": 0.5}),
+            (4303, {"tool_choice": "required"}),
+            (4304, {"response_format": {"type": "json_object"}}),
+            (4305, {"chat_template_kwargs": {"clear_thinking": True}}),
+        ],
+    )
+    def test_invalid_requests_answer_400(self, chat_env, group_id, body_patch):
+        env = chat_env
+        # Group ids outside the buffer worker's sequence: this scenario
+        # admits nothing, so it neither finalizes nor shifts the ids the
+        # delivery scenarios pin.
+        sid = create_session(env, group_id, 0)
+        body = {"messages": self._messages(), **body_patch}
+        response = self._chat(env, sid, body)
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["type"] == "invalid_request_error"
+
+    def test_concurrent_request_on_one_session_conflicts(self, chat_env):
+        env = chat_env
+        env.mock.latency_s = 1.0
+        env.mock.scripted_texts = ["Slow answer."]
+        # Not admitted by the buffer: the scenario leaves no group pending.
+        sid = create_session(env, 4310, 0)
+
+        import threading
+
+        results = {}
+
+        def first_call():
+            results["first"] = self._chat(env, sid, {"messages": self._messages()})
+
+        thread = threading.Thread(target=first_call)
+        thread.start()
+        time.sleep(0.3)
+        second = self._chat(env, sid, {"messages": self._messages()})
+        thread.join(timeout=30)
+        assert results["first"].status_code == 200
+        assert second.status_code == 409, second.text
+
+
+class ChatCompletionsTestLoopWorker(MultiAgentLoopWorker):
+    """The minimal agent loop the chat completions endpoint needs.
+
+    It overrides the hook and nothing else: the group runner opens each
+    session, calls :meth:`run_session_trajectory`, and closes the session
+    with what it returns. Two chat turns: the first gets a tool call from
+    the engine, the second its answer.
+    """
+
+    _SEARCH_TOOL = {
+        "type": "function",
+        "function": {
+            "name": "search",
+            "description": "Search Wikipedia for information about a query.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        },
+    }
+    _MAX_TURNS = 2
+
+    async def run_session_trajectory(self, binding, input_ids, answer):
+        """One trajectory: two chat turns, closed with its extra fields."""
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(
+            base_url=self.session_server_client.session_base_url(
+                binding.group_id, binding.session_id
+            ),
+            api_key="EMPTY",
+            max_retries=0,  # a retried request is sampled again
+            timeout=30.0,
+        )
+        messages = [
+            {"role": "system", "content": "Answer with the search tool."},
+            {"role": "user", "content": "Question: what is RL?"},
+        ]
+        num_responses = 0
+        final_text = ""
+        try:
+            for _ in range(self._MAX_TURNS):
+                response = await client.chat.completions.create(
+                    model="policy", messages=messages, tools=[self._SEARCH_TOOL]
+                )
+                num_responses += 1
+                message = response.choices[0].message
+                messages.append(message.model_dump(exclude_none=True))
+                final_text = message.content or final_text
+                if not message.tool_calls:
+                    break
+                for call in message.tool_calls:
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call.id,
+                            "content": "Reinforcement learning is a paradigm.",
+                        }
+                    )
+        finally:
+            await client.close()
+        # Different rewards per trajectory: the buffer's equal-reward
+        # rejection would otherwise drop the group before delivery.
+        reward = 0.5 + 0.25 * binding.traj_index
+        close_fields = {
+            # One value per response received: one agent per trajectory.
+            "extra_fields_train": {"idx_to_sub_traj": [0] * num_responses}
+        }
+        return None, close_fields, reward
+
+
+class TestChatCompletionsAgentLoop:
+    """The hook drives the chat endpoint; the runner does the rest."""
+
+    def test_two_turns_are_delivered_with_extra_fields(self, chat_env):
+        env = chat_env
+        # Every conversation opens with a tool call and closes with the
+        # answer, whichever order the trajectories interleave in.
+        env.mock.scripted_by_turn = (
+            '<tool_call>\n{"name": "search", "arguments": {"query": "RL"}}\n</tool_call>',
+            "<answer>Reinforcement learning</answer>",
+        )
+        request = next_request(env)
+        group_id = request.group_ids[0]
+
+        worker = ChatCompletionsTestLoopWorker.__new__(ChatCompletionsTestLoopWorker)
+        worker.print_outputs = False
+        worker.return_logprobs = False
+        worker.extra_keys_turn = None
+        worker.extra_keys_traj = None
+        worker.cfg = validate_session_server_cfg(
+            OmegaConf.create(
+                {
+                    "agentloop": {"max_turns": 2},
+                    "session_server": {"enable": False},
+                    "data": {"max_prompt_length": 512},
+                    "runner": {"seq_length": 1024},
+                    "rollout": {"return_logprobs": True},
+                }
+            )
+        )
+        worker._session_binding = contextvars.ContextVar(
+            "rlinf_agent_session_binding", default=None
+        )
+        worker.init_worker(
+            None,
+            None,
+            {},
+            {},
+            None,
+            session_server_urls=[env.base_url],
+            session_server_generate_timeout_s=30.0,
+            session_server_keepalive_timeout_s=4.0,
+        )
+
+        asyncio.run(
+            worker.run_agentloop_rollout_group(
+                request.input_ids[0],
+                request.answers[0],
+                GROUP_SIZE,
+                env.rollout,
+                group_id,
+                TASK_NAME,
+            )
+        )
+
+        env.buffer.release_batch(version=0).wait()
+        delivery = poll_channel(env.rollout)
+        assert isinstance(delivery, GroupDelivery)
+        channel = payload_channel_for(
+            delivery.payload_ref.locator, env.payload_channels
+        )
+        payload = poll_channel(channel, key=delivery.payload_ref.key)
+        result = assemble_group_payload(payload, return_logprobs=True)
+        # Two trajectories, two chat turns each, and the second turn of each
+        # continues the first.
+        assert result.num_sequence == 4
+        assert sorted(set(result.idx_to_traj)) == [0, 1]
+        # The extra field covers the trained turns, one per response.
+        assert result.extra_fields_train["idx_to_sub_traj"] == [0] * 4
+        metrics = env.server.get_metrics().wait()[0]
+        assert metrics["session_server/prefix_continuous"] >= 2
+
+
+class TestPutFailure:
+    def test_failed_background_put_voids_group(self, env):
+        request = next_request(env)
+        group_id = request.group_ids[0]
+        # The group's parts all go to the shard its id maps to; kill that
+        # shard's channel worker so every payload put fails.
+        shard = group_id % len(env.payload_channels)
+        env.killed_shard = shard
+        ray.kill(env.payload_channels[shard]._main_channel_worker_actor)
+
+        sid = create_session(env, group_id, 0)
+        assert generate(env, sid, [1, 2]).status_code == 200
+
+        # The failed put voids the group server-side; the buffer consumes
+        # the discard record.
+        metrics = wait_for_drops(env, "payload_write_failed")
+        assert metrics["dropped_groups"] == 1
+
+        server_metrics = env.server.get_metrics().wait()[0]
+        assert server_metrics["session_server/payload_write_failed"] == 1
+
+
+class TestFinalizePutFailure:
+    def test_finalize_put_failure_discards_not_delivers(self, env):
+        # Must stay last: this scenario kills the shard the group's parts
+        # go to, and the scenarios above need both shards alive.
+        request = next_request(env)
+        group_id = request.group_ids[0]
+        shard = group_id % len(env.payload_channels)
+        assert shard != getattr(env, "killed_shard", None), (
+            "this scenario needs a live shard; reorder the scenarios so the "
+            "two put-failure groups land on different shards"
+        )
+        sid0 = create_session(env, group_id, 0)
+        sid1 = create_session(env, group_id, 1)
+        assert generate(env, sid0, [1, 2]).status_code == 200
+        assert generate(env, sid1, [3, 4]).status_code == 200
+
+        # Wait until the background settlements are done, then kill the
+        # shard so only the finalize part's put fails.
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            metrics = env.server.get_metrics().wait()[0]
+            if metrics["session_server/pending_payload_bytes"] == 0:
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail("payload settlements did not drain")
+        ray.kill(env.payload_channels[shard]._main_channel_worker_actor)
+
+        assert close(env, sid0).status_code == 200
+        assert close(env, sid1).status_code == 200
+        assert reward(env, sid0, 1.0).json()["group_complete"] is False
+        assert reward(env, sid1, 0.5).json()["group_complete"] is False
+
+        # The group is discarded, not delivered: the GroupDelivery would
+        # promise a payload the collector can never emit.
+        metrics = wait_for_drops(env, "payload_write_failed")
+        assert metrics["dropped_groups"] == 1
+        assert poll_channel(env.rollout, timeout_s=2) is None
+
+        server_metrics = env.server.get_metrics().wait()[0]
+        # get_metrics drains per window: the failure above landed after
+        # the last read (the pending-drain poll), so this window's count
+        # is the one failure of this scenario alone.
+        assert server_metrics["session_server/payload_write_failed"] == 1
