@@ -28,6 +28,7 @@ from torch.distributed.tensor.placement_types import Partial, Replicate, Shard
 
 from rlinf.config import validate_weight_sync_overlap_cfg
 from rlinf.data.schema.embodied_types import EnvOutput, EnvTransition
+from rlinf.envs.layout import EnvAssignment
 from rlinf.hybrid_engines.weight_syncer import (
     BucketWeightSyncer,
     PatchWeightSyncer,
@@ -2067,6 +2068,9 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
 
         # Manually set required attributes
         self.worker.cfg = self.cfg
+        self.worker.train_assignment = EnvAssignment(
+            name=None, cfg=self.cfg.env.train, rank=0, world_size=1
+        )
         self.worker._rank = 0
         self.worker._world_size = 1
         self.worker._group_name = "EnvGroup"
@@ -2134,7 +2138,11 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         mock_policy_output.intervene_flags = None
 
         # Patch methods on the instance
-        self.worker.recv_from = MagicMock(return_value=mock_policy_output)
+        self.worker.recv_from = MagicMock(
+            return_value=MagicMock(
+                async_wait=AsyncMock(return_value=mock_policy_output)
+            )
+        )
         self.worker.env_interact_step = MagicMock(
             return_value=(
                 EnvOutput(
@@ -2248,7 +2256,11 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         mock_policy_output.versions = torch.zeros(2, 1)
         mock_policy_output.intervene_flags = None
 
-        self.worker.recv_from = MagicMock(return_value=mock_policy_output)
+        self.worker.recv_from = MagicMock(
+            return_value=MagicMock(
+                async_wait=AsyncMock(return_value=mock_policy_output)
+            )
+        )
         self.worker.env_interact_step = MagicMock(
             return_value=(
                 EnvOutput(

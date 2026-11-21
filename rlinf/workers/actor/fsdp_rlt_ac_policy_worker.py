@@ -26,7 +26,6 @@ from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
     append_to_dict,
     collect_trajectory_replay_metrics,
-    compute_split_num,
     trajectory_has_bool_tensor,
 )
 from rlinf.utils.utils import clear_memory
@@ -84,14 +83,17 @@ class RLTACLossMixin:
         self._require_twin_q(all_q_values)
         return all_q_values[..., 0:1]
 
-    def _discounted_chunk_rewards(self, rewards: torch.Tensor) -> torch.Tensor:
+    def _discounted_chunk_rewards(
+        self, rewards: torch.Tensor, gamma: float | torch.Tensor
+    ) -> torch.Tensor:
+        """Discount each chunk's rewards with ``gamma``, a float or ``[B, 1]``."""
         rewards = rewards.reshape(rewards.shape[0], -1)
         rewards = rewards.to(self.torch_dtype)
         chunk_len = rewards.shape[-1]
         discounts = torch.pow(
-            torch.as_tensor(self.cfg.algorithm.gamma, device=rewards.device),
-            torch.arange(chunk_len, device=rewards.device, dtype=rewards.dtype),
-        )
+            torch.as_tensor(gamma, device=rewards.device, dtype=torch.float32),
+            torch.arange(chunk_len, device=rewards.device, dtype=torch.float32),
+        ).to(rewards.dtype)
         return torch.sum(rewards * discounts, dim=-1, keepdim=True)
 
     def _bc_metrics(
@@ -267,9 +269,12 @@ class RLTACLossMixin:
                 )
                 q_next = self._min_twin_q(all_qf_next.detach())
 
-            reward_target = self._discounted_chunk_rewards(rewards)
+            gamma = self._env_values("gamma", batch.get("env_index"), torch.float32)
+            reward_target = self._discounted_chunk_rewards(rewards, gamma)
             reward_horizon = int(rewards.reshape(rewards.shape[0], -1).shape[-1])
-            bootstrap_discount = self.cfg.algorithm.gamma**reward_horizon
+            bootstrap_discount = gamma**reward_horizon
+            if isinstance(bootstrap_discount, torch.Tensor):
+                bootstrap_discount = bootstrap_discount.to(self.torch_dtype)
             if bootstrap_type == "always":
                 target_q_values = reward_target + bootstrap_discount * q_next
             elif bootstrap_type == "standard":
@@ -495,7 +500,8 @@ class RLTACReplayMixin:
         traj_len = int(trajectory.actions.shape[0])
         bsz = int(trajectory.actions.shape[1])
         num_rows = int(actions.shape[0])
-        auto_reset = bool(self.cfg.env.train.get("auto_reset", False))
+        env_cfg = self._rollout_geometry.layout.spec(trajectory.env_name).cfg
+        auto_reset = bool(env_cfg.get("auto_reset", False))
 
         for env_idx in range(bsz):
             for t in range(traj_len):
@@ -508,6 +514,7 @@ class RLTACReplayMixin:
                 transition = Trajectory(
                     max_episode_length=1,
                     model_weights_id=trajectory.model_weights_id,
+                    env_name=trajectory.env_name,
                 )
                 for field_name in tensor_fields:
                     value = flat.get(field_name)
@@ -694,9 +701,7 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
     async def recv_rollout_trajectories(self, input_channel):
         clear_memory(sync=False)
 
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
+        split_num = self._rollout_geometry.shards_per_actor()
 
         recv_list = []
         for _ in range(split_num):
@@ -716,9 +721,10 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
             },
             op=torch.distributed.ReduceOp.SUM,
         )
+        replay_size = self.replay_buffer.min_env_samples
         minimums = all_reduce_dict(
             {
-                "min_replay_size": float(self.replay_buffer.total_samples),
+                "min_replay_size": float(replay_size),
                 "min_demo_size": float(
                     0 if self.demo_buffer is None else self.demo_buffer.total_samples
                 ),
@@ -735,7 +741,7 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
             schedule_cfg.get("warmup_min_size", replay_cfg.get("min_buffer_size", 1))
         )
         counters = self._global_rlt_counters()
-        buffer_ready = counters["min_replay_size"] >= min_buffer_size
+        buffer_ready = counters["min_replay_size"] >= max(min_buffer_size, 1)
         warmup_required_updates = int(
             schedule_cfg.get("warmup_post_collect_updates", 0)
         )

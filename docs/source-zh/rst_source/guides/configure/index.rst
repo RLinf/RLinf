@@ -13,6 +13,8 @@
      - RLinf 配置文件的结构与覆盖方式。
    * - :doc:`具身智能配置 <../embodiment_config>`
      - 具身训练专用配置项。
+   * - :doc:`异构环境 <../hetero_envs>`
+     - 在一次运行中让同一个 policy 使用不同的环境配置，例如 ManiSkill 和 LIBERO。
    * - :doc:`智能体配置 <../agentic_config>`
      - 智能体和推理训练专用配置项。
    * - :doc:`日志 <../logger>`
@@ -23,5 +25,6 @@
 
    基础配置 <../basic_config>
    具身智能配置 <../embodiment_config>
+   异构环境 <../hetero_envs>
    智能体配置 <../agentic_config>
    日志 <../logger>

@@ -1023,6 +1023,10 @@ configure_musa() {
     PLATFORM_VENDOR_DISTS=(torch torch_musa torchvision torchaudio flash_attn)
     # Ray also comes from the image.
     PLATFORM_UV_SYNC_ARGS+=("--no-install-package" "ray")
+    # The MUSA image ships Python 3.10 and torchao 0.9.0; peft 0.19-0.21 raises
+    # ImportError on any LoRA injection when torchao < 0.16 (huggingface/peft#3964),
+    # and peft 0.22+ requires Python 3.11.
+    PLATFORM_EXTRA_CONSTRAINTS+=("peft<0.19")
 }
 
 configure_biren() {

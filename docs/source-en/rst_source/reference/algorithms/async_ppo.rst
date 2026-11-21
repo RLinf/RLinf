@@ -105,7 +105,7 @@ One Async PPO training update proceeds as follows:
 
 1. The runner initializes workers and synchronizes actor weights to rollout.
 2. The env worker calls ``bootstrap_step()`` to produce initial observations.
-3. The rollout worker repeatedly executes ``generate_one_epoch()``:
+3. The rollout worker repeatedly executes ``generate_one_step()``, which serves every rollout epoch of each env worker in one training step:
    - read environment output from ``env_channel``,
    - infer actions using the current rollout weights,
    - record ``prev_logprobs``, ``prev_values``, and ``forward_inputs``,
