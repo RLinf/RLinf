@@ -76,6 +76,17 @@ VLA / WAM 模型监督微调
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/sft_gr00t.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/gr00t.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/sft_gr00t.html" style="text-decoration: underline; color: blue;">
+           <b>GR00T-N1.7 监督微调</b>
+         </a><br>
+         使用 LIBERO 示范数据全参数微调
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -88,3 +99,4 @@ VLA / WAM 模型监督微调
    Cosmos3 <embodied/sft_cosmos3>
    Qwen-VL <embodied/sft_vlm>
    DAgger <embodied/dagger>
+   GR00T-N1.7 <embodied/sft_gr00t>

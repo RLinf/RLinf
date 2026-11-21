@@ -53,6 +53,7 @@ class BasePolicy(ABC):
         - predict_value_batch
         - prepare_dagger_sft_batch
         - prepare_nft_reference_model
+        - save_sft_checkpoint_metadata
     """
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
@@ -110,6 +111,9 @@ class BasePolicy(ABC):
 
     def prepare_nft_reference_model(self) -> None:
         """Release state unused by NFT forward on a cached reference model."""
+
+    def save_sft_checkpoint_metadata(self, save_path: str) -> None:
+        """Save optional model configuration beside the SFT weights on rank zero."""
 
     @abstractmethod
     def default_forward(self, **kwargs): ...

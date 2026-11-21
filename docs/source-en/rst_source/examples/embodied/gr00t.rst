@@ -22,6 +22,8 @@ SFT cold-start, PPO training, evaluation, and visualization.
    or ManiSkill, and Ascend additionally runs N1.6 and N1.7; validate the rest
    separately on those backends.
 
+For GR00T-N1.7 supervised fine-tuning on demonstrations, see :doc:`sft_gr00t`.
+
 Overview
 --------
 
