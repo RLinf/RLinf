@@ -64,6 +64,7 @@ MAX_BODY = 65536  # GitHub rejects a longer review body
 EVENTS = ("COMMENT", "REQUEST_CHANGES", "APPROVE")
 FIX_LEAD = "Suggested fix:"
 EVIDENCE_LEAD = "Evidence:"
+WALKTHROUGH_LEAD = "Code walkthrough:"
 TEMPLATE = """\
 **<Recommendation>** · <n critical, n major, n minor, or no findings> · head `<sha7>` · base `main@<sha7>`
 
@@ -106,6 +107,7 @@ Evidence: <as for F1>
 PAYLOAD_KEYS = {"commit_id", "event", "body", "comments"}
 COMMENT_KEYS = {"path", "line", "side", "start_line", "start_side", "body"}
 MAX_COMMENT_PROSE = 1000
+MAX_MINOR_FINDINGS = 5
 
 
 @dataclass(frozen=True)
@@ -128,6 +130,30 @@ class Markdown:
     # A tag, an HTML comment, or a <placeholder> left from the template.
     HTML = re.compile(r"<!--|</?[A-Za-z][\w-]*(\s[^<>]*)?/?>")
     CODE_SPAN = re.compile(r"(`+).+?\1")
+    HEDGING = re.compile(
+        r"\b(you might want to|you may want to|perhaps consider|"
+        r"consider (?:using|adding|changing|updating|removing)|"
+        r"it might be worth|it is worth noting|just a small)\b",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def unclosed_fence(cls, text: str) -> int | None:
+        """Returns the 1-based opening line of an unclosed code fence, if any."""
+        fence, opened_at = "", None
+        for n, line in enumerate(text.splitlines(), 1):
+            m = cls.FENCE.match(line)
+            if not fence:
+                if m:
+                    fence, opened_at = m[1], n
+            elif (
+                m
+                and m[1][0] == fence[0]
+                and len(m[1]) >= len(fence)
+                and not m[2].strip()
+            ):
+                fence, opened_at = "", None
+        return opened_at
 
     @classmethod
     def unfenced(cls, text: str) -> list[tuple[int, str]]:
@@ -350,17 +376,30 @@ class ReviewLinter:
         return self.findings
 
     def check_prose(self, where: str, text: str) -> None:
+        opened_at = Markdown.unclosed_fence(text)
+        if opened_at is not None:
+            self.error(
+                where,
+                f"line {opened_at} opens a code fence that is never closed",
+            )
         for n in Markdown.wrapped(text):
             self.error(
                 where,
                 f"line {n} is hard-wrapped; GitHub renders it as a line break, so keep each paragraph on one line",
             )
         for n, line in Markdown.unfenced(text):
-            m = Markdown.HTML.search(Markdown.CODE_SPAN.sub("", line))
+            stripped = Markdown.CODE_SPAN.sub("", line)
+            m = Markdown.HTML.search(stripped)
             if m:
                 self.error(
                     where,
                     f"line {n} holds HTML or an unfilled template placeholder ({m[0][:40]!r}); write plain Markdown",
+                )
+            h = Markdown.HEDGING.search(stripped)
+            if h:
+                self.warn(
+                    where,
+                    f"line {n} uses hedging or filler ({h[0]!r}); state the issue and fix directly",
                 )
 
     def check_body(self, body: str) -> None:
@@ -386,7 +425,7 @@ class ReviewLinter:
                 f"sections must be {list(SECTIONS)} in this order, found {found}; use #### inside a section",
             )
         content = dict(reversed(sections))
-        rows = self.check_findings(content.get(FINDINGS, []))
+        rows = self.check_findings(content.get(FINDINGS, []), body.splitlines())
         self.check_inline_rows(rows)
         if REPRODUCTION in content:
             self.check_reproduction(content[REPRODUCTION])
@@ -404,7 +443,9 @@ class ReviewLinter:
                 "body", "the verdict line names several recommendations; state one"
             )
 
-    def check_findings(self, lines: list[tuple[int, str]]) -> list[Row]:
+    def check_findings(
+        self, lines: list[tuple[int, str]], raw_lines: list[str]
+    ) -> list[Row]:
         """Checks the findings table against the finding sections below it."""
         rows: list[Row] = []
         sections: dict[str, Section] = {}
@@ -436,6 +477,17 @@ class ReviewLinter:
         ranks = [SEVERITIES.index(r.severity) for r in rows if r.severity in SEVERITIES]
         if ranks != sorted(ranks):
             self.warn("body", "list the findings by severity, most severe first")
+        minor_count = sum(1 for r in rows if r.severity == "minor")
+        if minor_count > MAX_MINOR_FINDINGS:
+            self.warn(
+                "body",
+                f"review lists {minor_count} minor findings; merge or drop low-value nitpicks so major issues stay in focus",
+            )
+        starts = sorted(s.n for s in sections.values())
+        next_start = {
+            start: starts[i + 1] - 1 if i + 1 < len(starts) else len(raw_lines)
+            for i, start in enumerate(starts)
+        }
         seen: set[str] = set()
         for row in rows:
             if row.id in seen:
@@ -454,7 +506,9 @@ class ReviewLinter:
                     f"line {section.n}: the {row.id} heading says {section.severity} {section.category}, "
                     f"the table says {row.severity} {row.category}",
                 )
-            self.check_section(row, section)
+            self.check_section(
+                row, section, raw_lines[section.n : next_start[section.n]]
+            )
         for fid, section in sections.items():
             if fid not in seen:
                 self.error(
@@ -486,7 +540,7 @@ class ReviewLinter:
                 )
         return Row(n, fid, severity, category, location, posted)
 
-    def check_section(self, row: Row, section: Section) -> None:
+    def check_section(self, row: Row, section: Section, raw_slice: list[str]) -> None:
         text = "\n".join(line.strip() for line in section.lines)
         where = f"body {row.id}"
         if not any(
@@ -500,6 +554,13 @@ class ReviewLinter:
             self.error(
                 where,
                 "the suggested fix of an inline finding lives only in its inline comment",
+            )
+        if any(line.strip() == WALKTHROUGH_LEAD for line in section.lines) and not any(
+            Markdown.FENCE.match(line) for line in raw_slice
+        ):
+            self.warn(
+                where,
+                f"'{WALKTHROUGH_LEAD}' has no fenced code block; quote the relevant lines under path:line",
             )
 
     def check_inline_rows(self, rows: list[Row]) -> None:

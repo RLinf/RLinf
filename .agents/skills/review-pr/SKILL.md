@@ -31,7 +31,7 @@ gh api "repos/RLinf/RLinf/pulls/$N/comments" --paginate  # earlier review thread
 
 Check out `$PR_HEAD` in a separate git worktree; steps 3 and 6 run there, and so does any code you run to verify a finding. Never edit the PR branch or push to it. Without `gh`, read the PR page, `<PR URL>.diff` (or `<PR URL>.patch`), and files on `https://github.com/RLinf/RLinf/blob/main/<path>`; the review can still run, but posting needs `gh`. If the PR is private and neither works, tell the user and ask for an exported diff and description.
 
-On a second round of review, go through every earlier thread and every finding of the earlier main comment first. Note which ones the new commits fix and which are still open, and carry the open ones forward rather than writing them again: an open inline thread gets a reply, and an open main-comment finding keeps its earlier ID in the new review. The verdict sentence names the earlier findings the new commits fix.
+On a second round of review, go through every earlier thread and every finding of the earlier main comment first. Verify each fix in the current code rather than trusting commit messages, and check whether the fix introduced a regression or shifted the bug elsewhere. Note which ones the new commits fix and which are still open, and carry the open ones forward rather than writing them again: an open inline thread gets a reply, and an open main-comment finding keeps its earlier ID in the new review. Do not reopen a minor preference the author already answered reasonably. The verdict sentence names the earlier findings the new commits fix.
 
 ## 2. Understand the PR
 
@@ -39,7 +39,8 @@ Read the description, the linked issue, the commits, and the whole diff. Then wr
 
 - the problem the PR solves and its core idea, in one or two sentences;
 - the areas it touches (for example packaging, docs, CI, refactor) and what could regress (backends, envs, models, tasks);
-- the closest current siblings on `main` it should look like, for both code/config and docs (`git log "$BASE" -- <dir>` shows recent siblings; for docs, match the model or domain family and its shared setup pages, not only the directory or gallery the PR chose).
+- the closest current siblings on `main` it should look like, for both code/config and docs (`git log "$BASE" -- <dir>` shows recent siblings; for docs, match the model or domain family and its shared setup pages, not only the directory or gallery the PR chose);
+- every claim in the PR description (such as "behavior-preserving refactor", test coverage, hardware runs, or reported metrics) treated as a hypothesis to verify against the diff, tests, and baseline rather than a fact.
 
 ## 3. Route the change
 
@@ -75,7 +76,9 @@ Work through [reference.md](reference.md) in this order, and judge every design 
 | `docs-style` | changed pages and README text against the docs rules for their type and language, from the docs check |
 | `style` | code conventions, headers, commits, PR title and description |
 
-For every changed function, read the `main` version and the PR version side by side. Label a finding that came from reading `main` rather than the diff alone as a main-branch cross-check.
+For a large PR (more than ~15 files or ~1,000 changed lines), partition the diff by concern (core logic, tests and CI, install and config, docs) and review each group explicitly—using parallel focused agents when helpful—so files late in the diff (especially tests, configs, and Chinese docs) are not skimmed.
+
+For every changed function, read the `main` version and the PR version side by side. Whenever the PR changes a function signature, return shape, base-class contract, shared helper, or config key, grep all callers, subclasses, YAMLs, tests, and docs at `$PR_HEAD`—not only the diff—to catch broken untouched consumers. Label a finding that came from reading `main` rather than the diff alone as a main-branch cross-check.
 
 ## 6. Check each area
 
@@ -86,7 +89,7 @@ python3 "$SKILLS/route.py" check --base "$BASE"            # every touched area'
 python3 "$SKILLS/create-pr/lint_pr.py" lint --pr "$N"      # PR title and description
 ```
 
-`route.py check` runs each area's `check.py` with that area's files; the judgment list is yours to do. For docs, `check.py` only inspects build, markup, and mechanical prose checks—not readability, page density, or command quality—so you must read every changed page in full in both languages with **readability and conciseness as primary review criteria**. Actively flag:
+`route.py check` runs each area's `check.py` with that area's files; the judgment list is yours to do. For docs, `check.py` only inspects build, markup, and mechanical prose checks—not readability, page density, or command quality. Delegate the docs readability and conciseness review to a fresh agent (never a fork) that sees only the changed EN and ZH pages, their closest sibling pages on `main` (and any shared setup page they link to), and the docs rules—without reading `rlinf/` source code—so it reads like a newcomer instead of mentally filling in gaps from the implementation. Read every changed page in full in both languages with **readability and conciseness as primary review criteria**, and actively flag:
 
 - **Unreadable or unnatural prose**: stiff jargon, abstract nominalizations, convoluted sentences that do not read like plain human technical writing, or Chinese pages directly machine-translated / literally translated sentence by sentence from English.
 - **Long-winded explanations of details**: walls of prose, over-explained internals, exhaustive options, defaults, or defensive caveats that bury the main path.
@@ -105,15 +108,15 @@ When an area's script cannot run, for example without a docs virtualenv or witho
 
 ## 7. Verify every finding
 
-Before a finding goes in the report, settle it as one of:
+Try to falsify every candidate before reporting it. When a claim can be checked in seconds on CPU in the PR worktree—config resolution (`hydra.compose`, `validate_cfg`), shape/dtype/mask logic, imports, regexes, or focused unit tests—run it instead of relying on a static trace. For third-party libraries (`torch`, `transformers`, `omegaconf`, `ray`, `sglang`, `vllm`), inspect the installed version or source rather than guessing from memory. Settle each candidate as one of:
 
 - **confirmed**: there is evidence. Best is a run: a focused unit test, a scratch script in the PR worktree (CPU when it allows), or the input that fails. Otherwise a complete trace that cites every line on the PR head.
 - **unresolved**: plausible, but it needs hardware, assets, or the author's intent to settle. Say what would settle it.
 - **dismissed**: the trace shows it cannot happen, or the code matches the convention on `main`. Keep one line on why.
 
-Then give each confirmed or unresolved finding a severity on the scale in [README.md § Findings](../README.md#findings): critical, major, or minor. A script's severity is where you start; change it when the evidence says otherwise. The docs skill's Check says when a docs-style finding is major.
+Merge findings that share one root cause into a single finding that lists the affected locations instead of splitting one defect across code, YAML, test, and docs rows. Then give each confirmed or unresolved finding a severity on the scale in [README.md § Findings](../README.md#findings): critical, major, or minor. A script's severity is where you start; change it when the evidence says otherwise. Hold `critical` strictly to concrete failure paths (wrong results, crash, deadlock, data loss, broken existing path, failed docs build, or uncompletable workflow); downgrade or drop speculative edge cases with no realistic trigger. The docs skill's Check says when a docs-style finding is major.
 
-Report only problems. When correctness, design, and reuse yield nothing, the report says so and lists what was checked. Do not invent findings to fill a category.
+Report only real problems. Collapse or drop low-value minor nitpicks so major issues stay in focus. When correctness, design, and reuse yield nothing, the report says so and lists what was checked. Do not invent findings to fill a category.
 
 ## 8. Report
 
@@ -224,7 +227,7 @@ python3 .agents/skills/review-pr/lint_review.py update --pr "$N" --review <id> r
 }
 ```
 
-`event` is `COMMENT`, or `REQUEST_CHANGES` when the user asks for it. `lint` checks the verdict line, the two sections in order, that every row of the findings table has one section and every section one row, that every inline row has an inline comment at its location and every inline comment a row, that each finding's `Suggested fix:` sits in exactly one place, the `Evidence:` paragraph of every finding, HTML and leftover placeholders, the Reproduction bullets, hard-wrapped lines, the body length, and, with `--pr`, that every comment sits on a line of the PR diff and not on a line that already has a thread. `update` runs the same checks against the inline comments the review already holds and replaces only its body. GitHub rejects the whole review when one comment is outside the diff. `post` runs the same lint, posts everything as one review, and prints its URL. Report that URL and the number of inline comments to the user.
+`event` is `COMMENT`, or `REQUEST_CHANGES` when the user asks for it. `lint` checks the verdict line, the two sections in order, that every row of the findings table has one section and every section one row, that every inline row has an inline comment at its location and every inline comment a row, that each finding's `Suggested fix:` sits in exactly one place, the `Evidence:` paragraph of every finding, unclosed code fences, HTML and leftover placeholders, the Reproduction bullets, hard-wrapped lines, the body length, warnings for unquoted `Code walkthrough:` blocks, hedging phrases, or excessive minor findings, and, with `--pr`, that every comment sits on a line of the PR diff and not on a line that already has a thread. `update` runs the same checks against the inline comments the review already holds and replaces only its body. GitHub rejects the whole review when one comment is outside the diff. `post` runs the same lint, posts everything as one review, and prints its URL. Report that URL and the number of inline comments to the user.
 
 ### Where a finding goes
 
@@ -236,7 +239,7 @@ Write for a reader with little background in the module: the PR author knows the
 
 1. The first paragraph says what the code is trying to do, what happens instead, and why it matters. Start from the situation the reader recognizes, then name the identifiers, so the idea is not buried in variable names. One to three sentences.
 2. When the cause or the pattern to follow lives elsewhere, point to it as `main:<path>:<line>` or quote the line.
-3. The last paragraph starts with `Suggested fix:` and says in one sentence what to change. The fix of an inline finding is written only here, so the main comment cannot drift from it; the walkthrough and evidence stay in the finding's section of the main comment. A `suggestion` block follows when the fix replaces exactly the commented lines, so the author can apply it with one click; otherwise a fenced code block with a language tag shows the change. The code is complete and correct; run it when you can.
+3. The last paragraph starts with `Suggested fix:` and says in one sentence what to change. The fix of an inline finding is written only here, so the main comment cannot drift from it; the walkthrough and evidence stay in the finding's section of the main comment. A `suggestion` block follows when the fix replaces exactly the commented lines, so the author can apply it with one click; otherwise a fenced code block with a language tag shows the change. The code is complete and correct; verify indentation, target lines, and syntax, and run it when you can.
 
 Keep the language plain: short sentences, active voice, no hedging, no filler, no praise, and no severity labels except `Minor:` at the start of a minor finding. Keep each paragraph on one line, because GitHub shows every newline as a line break. Write in English unless the user asks otherwise.
 
