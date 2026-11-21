@@ -67,8 +67,8 @@ class FSDPVersion(str, Enum):
 
 def create_device_mesh(
     world_size: int,
-    sharding_strategy: str = "full_shard",
-    hybrid_shard_size: Optional[int] = None,
+    *,
+    hybrid_shard_size: int | None = None,
 ) -> DeviceMesh:
     """Build a sharding mesh, with an outer replica dimension for hybrid sharding.
 
@@ -76,65 +76,50 @@ def create_device_mesh(
     keep their original timeout.
 
     Args:
-        world_size (int): Number of ranks participating in FSDP.
-        sharding_strategy (str): FSDP sharding strategy.
-        hybrid_shard_size (Optional[int]): Ranks per shard group. Hybrid sharding
-            requires at least two consecutive actor ranks per group.
+        world_size: Number of ranks participating in FSDP.
+        hybrid_shard_size: Validated shard group size for hybrid sharding.
+            Leave unset for a one-dimensional mesh.
 
     Returns:
         DeviceMesh: A mesh named ``fsdp``, or ``(ddp, fsdp)`` for hybrid sharding.
 
     Raises:
-        ValueError: If the shard size is invalid or does not divide world size.
+        ValueError: If the shard size does not divide the world size.
     """
-    if sharding_strategy == "hybrid_shard":
-        if (
-            type(hybrid_shard_size) is not int
-            or hybrid_shard_size < 2
-            or world_size % hybrid_shard_size != 0
-        ):
-            raise ValueError(
-                "hybrid_shard_size must be an integer of at least 2 dividing "
-                f"the actor world size; got hybrid_shard_size={hybrid_shard_size!r}, "
-                f"world_size={world_size}."
-            )
-        mesh_shape = (world_size // hybrid_shard_size, hybrid_shard_size)
-        mesh_dim_names = ("ddp", "fsdp")
-    else:
-        if hybrid_shard_size is not None:
-            raise ValueError(
-                "hybrid_shard_size requires sharding_strategy='hybrid_shard'; "
-                f"got sharding_strategy={sharding_strategy!r}."
-            )
-        mesh_shape = (world_size,)
-        mesh_dim_names = ("fsdp",)
+    if hybrid_shard_size is not None and world_size % hybrid_shard_size:
+        raise ValueError(
+            f"Actor world size ({world_size}) must be divisible by "
+            f"hybrid_shard_size ({hybrid_shard_size})."
+        )
 
     if torch.distributed.is_initialized():
         get_logger().warning(
-            "The default process group already exists, so FSDP collectives keep "
-            f"the timeout it was created with rather than "
-            f"{Cluster.get_full_env_var_name(ClusterEnvVar.TIMEOUT)}."
+            "The existing default process group keeps its original timeout. "
+            f"{Cluster.get_full_env_var_name(ClusterEnvVar.TIMEOUT)} applies "
+            "when creating new process groups."
         )
     else:
         # No backend is passed, so torch still resolves the per-device backend
         # it would have picked on its own; only the timeout changes.
         torch.distributed.init_process_group(timeout=Cluster.get_collective_timeout())
-    if sharding_strategy != "hybrid_shard":
+    if hybrid_shard_size is None:
         return init_device_mesh(
             Worker.torch_device_type,
-            mesh_shape=mesh_shape,
-            mesh_dim_names=mesh_dim_names,
+            mesh_shape=(world_size,),
+            mesh_dim_names=("fsdp",),
         )
 
     # Explicit groups keep RLINF_TIMEOUT on both mesh dimensions across torch versions.
+    mesh_shape = (world_size // hybrid_shard_size, hybrid_shard_size)
+    mesh_dim_names = ("ddp", "fsdp")
     rank_mesh = torch.arange(world_size, device="cpu").reshape(mesh_shape)
+    rank = torch.distributed.get_rank()
+    timeout = Cluster.get_collective_timeout()
     groups = []
     for dim in range(2):
         for ranks in rank_mesh.movedim(dim, -1).reshape(-1, mesh_shape[dim]).tolist():
-            group = torch.distributed.new_group(
-                ranks=ranks, timeout=Cluster.get_collective_timeout()
-            )
-            if torch.distributed.get_rank() in ranks:
+            group = torch.distributed.new_group(ranks=ranks, timeout=timeout)
+            if rank in ranks:
                 groups.append(group)
     return DeviceMesh.from_group(
         groups, Worker.torch_device_type, mesh=rank_mesh, mesh_dim_names=mesh_dim_names

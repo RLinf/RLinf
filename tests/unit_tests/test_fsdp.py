@@ -278,7 +278,7 @@ def _hybrid_shard_worker(rank, rendezvous):
         timeout=timedelta(seconds=60),
     )
     try:
-        mesh = create_device_mesh(4, "hybrid_shard", hybrid_shard_size=2)
+        mesh = create_device_mesh(4, hybrid_shard_size=2)
         assert mesh.mesh_dim_names == ("ddp", "fsdp")
         assert tuple(mesh.mesh.shape) == (2, 2)
         shard_group = gradient_reduction_group(mesh)
@@ -365,11 +365,11 @@ def test_hybrid_mesh_accumulated_updates_match_unsharded_reference(tmp_path):
     )
 
 
-@pytest.mark.parametrize("shard_size", [1, 3, 8])
-def test_hybrid_mesh_rejects_invalid_shard_sizes_before_distributed_init(shard_size):
+@pytest.mark.parametrize("shard_size", [3, 8])
+def test_hybrid_mesh_rejects_uneven_shards_before_distributed_init(shard_size):
     assert not dist.is_initialized()
     with pytest.raises(ValueError, match="hybrid_shard_size"):
-        create_device_mesh(4, "hybrid_shard", hybrid_shard_size=shard_size)
+        create_device_mesh(4, hybrid_shard_size=shard_size)
     assert not dist.is_initialized()
 
 
