@@ -23,6 +23,9 @@ RLinf 任务一起启动或独立运行的 HTTP 服务。
    * - :doc:`PhyAI <phyai>`
      - 使用 FSDP actor 和 PhyAI 的进程内 GPU rollout 后端，在 LIBERO 上训练 PI0.5。
 
+   * - :doc:`Qwen3.5 权重同步 <../qwen35_weight_sync>`
+     - 配置 Megatron 到 SGLang 的权重同步、MTP 和视觉并行布局。
+
 .. toctree::
    :hidden:
 
@@ -31,3 +34,4 @@ RLinf 任务一起启动或独立运行的 HTTP 服务。
    InferenceHTTPClient <../inference_http_client>
    SGLang 版本切换 <../version>
    PhyAI <phyai>
+   Qwen3.5 权重同步 <../qwen35_weight_sync>

@@ -554,6 +554,203 @@ class Qwen3DenseConvertor(Qwen3BaseConvertor):
         ]
 
 
+class Qwen35Convertor(BaseConvertor):
+    """Convert target TP shards of Qwen3.5 VL, including its MTP branch."""
+
+    _LAYER = re.compile(
+        r"(?:language_model\.)?(?:decoder\.layers\.(?P<i>\d+)|"
+        r"mtp\.layers\.(?P<m>\d+)\.mtp_model_layer)\.(?P<name>.+)"
+    )
+    _VISION_QKV = re.compile(
+        r"vision_model\.decoder\.layers\.(?P<i>\d+)\.self_attention\.linear_qkv\.(?P<wb>weight|bias)"
+    )
+
+    def __init__(self, config, strict: bool = False):
+        model, tp = config.model_config, config.reshard_tp_size
+        vision = config.vision_config
+        assert vision is not None, "Qwen3.5 VL conversion requires vision_config."
+        sizes = (
+            model.num_attention_heads,
+            model.linear_num_key_heads,
+            model.linear_num_value_heads,
+            model.ffn_hidden_size,
+        )
+        assert tp >= 1 and all(size % tp == 0 for size in sizes), (
+            f"Qwen3.5 language head and FFN dimensions {sizes} must be divisible by target TP={tp}."
+        )
+        groups = model.num_query_groups
+        assert groups % tp == 0 or tp % groups == 0, (
+            f"Qwen3.5 KV groups={groups} and target TP={tp} must divide one another."
+        )
+        vision_tp = config.rollout_vision_tp_size
+        vision_sizes = (
+            vision.num_heads,
+            vision.intermediate_size,
+            vision.hidden_size * vision.spatial_merge_size**2,
+        )
+        assert all(size % vision_tp == 0 for size in vision_sizes), (
+            f"Qwen3.5 vision dimensions {vision_sizes} must be divisible by vision TP={vision_tp}."
+        )
+        super().__init__(config, strict)
+
+    def build_rules(self) -> list[ConvertorRule]:
+        rules = []
+
+        def add(source: str, target: str) -> None:
+            rules.append(
+                ConvertorRule(re.compile(source), TransformType.SPLIT_NONE, [target])
+            )
+
+        root = r"(?:language_model\.)?"
+        add(
+            root + r"embedding\.word_embeddings\.weight",
+            "model.language_model.embed_tokens.weight",
+        )
+        add(
+            root + r"decoder\.final_layernorm\.weight",
+            "model.language_model.norm.weight",
+        )
+        add(root + r"output_layer\.weight", "lm_head.weight")
+        layer_names = {
+            "self_attention.linear_qkv.layer_norm_weight": "input_layernorm.weight",
+            "self_attention.in_proj.layer_norm_weight": "input_layernorm.weight",
+            "self_attention.q_layernorm.weight": "self_attn.q_norm.weight",
+            "self_attention.k_layernorm.weight": "self_attn.k_norm.weight",
+            "self_attention.linear_proj.weight": "self_attn.o_proj.weight",
+            "self_attention.A_log": "linear_attn.A_log",
+            "self_attention.dt_bias": "linear_attn.dt_bias",
+            "self_attention.conv1d.weight": "linear_attn.conv1d.weight",
+            "self_attention.out_proj.weight": "linear_attn.out_proj.weight",
+            "mlp.gate_proj.weight": "mlp.gate_proj.weight",
+            "mlp.up_proj.weight": "mlp.up_proj.weight",
+            "mlp.linear_fc2.weight": "mlp.down_proj.weight",
+            "mlp.linear_fc1.layer_norm_weight": "post_attention_layernorm.weight",
+        }
+        for source, target in layer_names.items():
+            add(
+                root + r"decoder\.layers\.(?P<i>\d+)\." + re.escape(source),
+                rf"model.language_model.layers.\g<i>.{target}",
+            )
+            if "in_proj" not in source and "linear_attn" not in target:
+                add(
+                    root
+                    + r"mtp\.layers\.(?P<i>\d+)\.mtp_model_layer\."
+                    + re.escape(source),
+                    rf"mtp.layers.\g<i>.{target}",
+                )
+        for source, target in {
+            "eh_proj": "fc",
+            "enorm": "pre_fc_norm_embedding",
+            "hnorm": "pre_fc_norm_hidden",
+            "final_layernorm": "norm",
+        }.items():
+            add(root + rf"mtp\.layers\.0\.{source}\.weight", f"mtp.{target}.weight")
+
+        vision_names = {
+            "self_attention.linear_proj": "attn.proj",
+            "mlp.linear_fc1": "mlp.linear_fc1",
+            "mlp.linear_fc2": "mlp.linear_fc2",
+        }
+        for source, target in vision_names.items():
+            add(
+                r"vision_model\.decoder\.layers\.(?P<i>\d+)\."
+                + re.escape(source)
+                + r"\.(?P<wb>weight|bias)",
+                rf"model.visual.blocks.\g<i>.{target}.\g<wb>",
+            )
+        for source, target in (
+            ("self_attention.linear_qkv", "norm1"),
+            ("mlp.linear_fc1", "norm2"),
+        ):
+            add(
+                r"vision_model\.decoder\.layers\.(?P<i>\d+)\."
+                + re.escape(source)
+                + r"\.layer_norm_(?P<wb>weight|bias)",
+                rf"model.visual.blocks.\g<i>.{target}.\g<wb>",
+            )
+        add(
+            r"vision_model\.patch_embed\.proj\.(?P<wb>weight|bias)",
+            r"model.visual.patch_embed.proj.\g<wb>",
+        )
+        add(r"vision_model\.pos_embed\.weight", "model.visual.pos_embed.weight")
+        add(
+            r"vision_model\.merger\.patch_norm\.(?P<wb>weight|bias)",
+            r"model.visual.merger.norm.\g<wb>",
+        )
+        add(
+            r"vision_model\.merger\.(?P<fc>linear_fc[12])\.(?P<wb>weight|bias)",
+            r"model.visual.merger.\g<fc>.\g<wb>",
+        )
+        return rules
+
+    def convert(self, state_dict: dict) -> dict:
+        converted, renamed = {}, {}
+        for key, tensor in state_dict.items():
+            layer = self._LAYER.fullmatch(key)
+            vision = self._VISION_QKV.fullmatch(key)
+            if vision:
+                heads = (
+                    self.cfg.vision_config.num_heads // self.cfg.rollout_vision_tp_size
+                )
+                dim = (
+                    self.cfg.vision_config.hidden_size
+                    // self.cfg.vision_config.num_heads
+                )
+                q, k, v = tensor.reshape(heads, 3, dim, *tensor.shape[1:]).unbind(1)
+                converted[
+                    f"model.visual.blocks.{vision['i']}.attn.qkv.{vision['wb']}"
+                ] = torch.cat(
+                    [part.reshape(-1, *tensor.shape[1:]) for part in (q, k, v)], dim=0
+                ).contiguous()
+                continue
+            if layer:
+                prefix = (
+                    f"mtp.layers.{layer['m']}."
+                    if layer["m"] is not None
+                    else f"model.language_model.layers.{layer['i']}."
+                )
+                if layer["name"] == "self_attention.linear_qkv.weight":
+                    converted.update(self._split_gated_qkv(prefix, tensor))
+                    continue
+                if layer["name"] == "self_attention.in_proj.weight":
+                    converted.update(self._split_gdn_in_proj(prefix, tensor))
+                    continue
+                if layer["name"] == "self_attention.out_norm.weight":
+                    converted[prefix + "linear_attn.norm.weight"] = tensor + 1
+                    continue
+            renamed[key] = tensor
+        converted.update(super().convert(renamed))
+        return converted
+
+    def _split_gated_qkv(self, prefix: str, tensor: torch.Tensor) -> dict:
+        model = self.cfg.model_config
+        groups = max(1, model.num_query_groups // self.cfg.reshard_tp_size)
+        heads = model.num_attention_heads // max(
+            model.num_query_groups, self.cfg.reshard_tp_size
+        )
+        dim, hidden = model.kv_channels, model.hidden_size
+        qg, k, v = tensor.reshape(groups, 2 * heads + 2, dim, hidden).split(
+            [2 * heads, 1, 1], dim=1
+        )
+        qg = qg.reshape(groups, 2, heads, dim, hidden).transpose(1, 2)
+        return {
+            prefix + "self_attn.q_proj.weight": qg.reshape(-1, hidden).contiguous(),
+            prefix + "self_attn.k_proj.weight": k.reshape(-1, hidden).contiguous(),
+            prefix + "self_attn.v_proj.weight": v.reshape(-1, hidden).contiguous(),
+        }
+
+    def _split_gdn_in_proj(self, prefix: str, tensor: torch.Tensor) -> dict:
+        model, tp = self.cfg.model_config, self.cfg.reshard_tp_size
+        qk = model.linear_key_head_dim * model.linear_num_key_heads // tp
+        v = model.linear_value_head_dim * model.linear_num_value_heads // tp
+        heads = model.linear_num_value_heads // tp
+        parts = tensor.split([2 * qk + v, v, heads, heads], dim=0)
+        return {
+            prefix + f"linear_attn.in_proj_{name}.weight": part.contiguous()
+            for name, part in zip(("qkv", "z", "b", "a"), parts, strict=True)
+        }
+
+
 class Qwen3MoEConvertor(Qwen3BaseConvertor):
     def build_rules(self) -> list[ConvertorRule]:
         LID = r"(?P<i>\d+)"
@@ -944,6 +1141,7 @@ _MG2HF_CONVERTOR_REGISTRY = {
     SupportedModel.QWEN2_5: Qwen25Convertor,
     SupportedModel.QWEN2_5_VL: Qwen25VLConvertor,
     SupportedModel.QWEN3: Qwen3DenseConvertor,
+    SupportedModel.QWEN3_5: Qwen35Convertor,
     SupportedModel.QWEN3_MOE: Qwen3MoEConvertor,
     SupportedModel.DEEPSEEK_V3: DeepseekV3Convertor,
     # GLM-4.7-Flash: same MLA+MoE HF weight layout as DeepSeek-V3 (MLA q_a/kv_a/
