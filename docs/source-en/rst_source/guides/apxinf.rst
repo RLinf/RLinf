@@ -119,7 +119,6 @@ settings are:
 
    rollout:
      rollout_backend: apxinf
-     generation_backend: apxinf
      model:
        model_path: ${oc.env:APXINF_PI05_MODEL_DIR}
        num_action_chunks: 5
