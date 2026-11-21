@@ -16,9 +16,11 @@
 
    .. tab-item:: 具身智能（Embodied）
 
+      以下为 ManiSkill3 快速上手的默认安装命令（其他模型与环境按下方表格替换 ``--model`` 与 ``--env``）：
+
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --model <model> --env <env> && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
    .. tab-item:: 智能体 / 推理（Agentic）
 

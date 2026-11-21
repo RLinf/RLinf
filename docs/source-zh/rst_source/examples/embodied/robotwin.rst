@@ -108,24 +108,25 @@ RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境�
 
 .. include:: _setup_common.rst
 
-按所用模型选择 ``--model``：
+.. tab-set::
 
-.. list-table::
-   :header-rows: 1
-   :widths: 36 64
+   .. tab-item:: OpenVLA-OFT
 
-   * - 模型
-     - ``--model``
-   * - OpenVLA-OFT
-     - ``openvla-oft``
-   * - OpenPI π₀ / π₀.₅
-     - ``openpi``
-   * - Lingbot-VLA
-     - ``lingbotvla``
+      .. code-block:: bash
 
-.. code:: bash
+         bash requirements/install.sh embodied --model openvla-oft --env robotwin && source .venv/bin/activate
 
-   bash requirements/install.sh embodied --model <model> --env robotwin && source .venv/bin/activate
+   .. tab-item:: OpenPI
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
+
+   .. tab-item:: LingBotVLA
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model lingbotvla --env robotwin && source .venv/bin/activate
 
 在 AMD ROCm 上需加 ``--platform``，具体见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`。
 
@@ -151,22 +152,25 @@ RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认�
 
 下载与配置匹配的 SFT checkpoint：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 34 66
+.. tab-set::
 
-   * - 模型 / 任务
-     - Hugging Face 仓库
-   * - OpenVLA-OFT（``place_empty_cup``）
-     - ``RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup``
-   * - OpenPI π₀（``adjust_bottle``）
-     - ``RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle``
-   * - OpenPI π₀.₅（``adjust_bottle``）
-     - ``RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle``
+   .. tab-item:: OpenVLA-OFT（place_empty_cup）
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
+
+   .. tab-item:: OpenPI π₀（adjust_bottle）
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi0-RoboTwin-SFT-adjust_bottle
+
+   .. tab-item:: OpenPI π₀.₅（adjust_bottle）
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
 
 .. include:: _model_path.rst
 

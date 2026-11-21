@@ -75,20 +75,19 @@ Prompt、生成结果与奖励
 
 下载所选配置对应的 checkpoint（使用 SD3.5 Medium 前需先在 Hugging Face 接受访问条款）：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - 模型
-     - Hugging Face 仓库
-   * - SD3.5 Medium
-     - ``stabilityai/stable-diffusion-3.5-medium``
-   * - Wan2.2 TI2V 5B
-     - ``Wan-AI/Wan2.2-TI2V-5B-Diffusers``
+   .. tab-item:: SD3.5 Medium
 
-.. code:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir /path/to/checkpoint
+         hf download stabilityai/stable-diffusion-3.5-medium --local-dir ./stable-diffusion-3.5-medium
+
+   .. tab-item:: Wan2.2 TI2V 5B
+
+      .. code-block:: bash
+
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --local-dir ./Wan2.2-TI2V-5B-Diffusers
 
 在所选训练 YAML 中，将 ``actor.model.model_path`` 设为下载目录。
 

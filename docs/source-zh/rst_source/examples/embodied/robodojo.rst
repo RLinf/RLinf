@@ -114,22 +114,21 @@ RoboDojo 当前支持 Linux x86_64 和 NVIDIA CUDA GPU，暂不支持纯 CPU、m
 
 **自定义环境**
 
-在 RLinf 仓库根目录按使用场景选择安装参数：
+在 RLinf 仓库根目录按使用场景安装环境：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 36 64
+.. tab-set::
 
-   * - 用途
-     - 参数
-   * - 仅 RoboDojo 仿真器
-     - ``--env robodojo``
-   * - RoboDojo + OpenPI 评测
-     - ``--model openpi --env robodojo``
+   .. tab-item:: 仅安装环境
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied <flags> && source .venv/bin/activate
+         bash requirements/install.sh embodied --env robodojo && source .venv/bin/activate
+
+   .. tab-item:: 含 OpenPI 模型
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openpi --env robodojo && source .venv/bin/activate
 
 安装器会自动安装 PyTorch 2.7、Isaac Sim 5.1 和固定版本的 IsaacLab，并对齐 Isaac Sim 与 IsaacLab 的依赖版本。不要单独执行 ``pip install rlinf-robodojo-runtime``，否则可能得到无法启动的依赖组合。
 

@@ -1,14 +1,13 @@
 Installation
 ============
 
-Evaluation shares the same embodied environment installation flow as training. From the repository root:
+Evaluation shares the same embodied environment installation flow as training. For example, to install the environment for :doc:`quick_tour` (OpenPI on LIBERO):
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model <model> --env <env>
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
 
-Choose ``<model>`` and ``<env>`` to match your target benchmark:
+For other benchmarks, replace ``--model`` and ``--env`` using the table below:
 
 .. list-table::
    :header-rows: 1

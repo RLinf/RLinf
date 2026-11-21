@@ -140,20 +140,19 @@ Download the Model
 
 Download the checkpoint for the OpenPI model you plan to fine-tune:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+.. tab-set::
 
-   * - Model
-     - Hugging Face Repo
-   * - OpenPI π₀.₅
-     - ``RLinf/RLinf-Pi05-Polaris-droid_jointpos``
-   * - OpenPI π₀
-     - ``RLinf/RLinf-Pi0-Polaris-droid_jointpos``
+   .. tab-item:: OpenPI π₀.₅
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download RLinf/RLinf-Pi05-Polaris-droid_jointpos --local-dir ./RLinf-Pi05-Polaris-droid_jointpos
+
+   .. tab-item:: OpenPI π₀
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi0-Polaris-droid_jointpos --local-dir ./RLinf-Pi0-Polaris-droid_jointpos
 
 .. include:: _model_path.rst
 

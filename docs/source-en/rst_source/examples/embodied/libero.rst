@@ -133,20 +133,19 @@ Download the Model
 
 Download a pretrained base checkpoint for your task suite:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+.. tab-set::
 
-   * - Task Suite
-     - Hugging Face Repo
-   * - LIBERO-90
-     - ``RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora``
-   * - LIBERO-130
-     - ``RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora``
+   .. tab-item:: LIBERO-90
 
-.. code:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir ./RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+
+   .. tab-item:: LIBERO-130
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir ./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
 .. include:: _model_path.rst
 
@@ -307,22 +306,21 @@ Install the RLinf-maintained forks for the suite you want.
 
 .. include:: _setup_common.rst
 
-Select ``--env`` for the suite you want:
+Select the suite to install:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - Suite
-     - ``--env``
-   * - LIBERO-Pro
-     - ``liberopro``
-   * - LIBERO-Plus
-     - ``liberoplus``
+   .. tab-item:: LIBERO-Pro
 
-.. code:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openvla-oft --env <env> && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env liberopro && source .venv/bin/activate
+
+   .. tab-item:: LIBERO-Plus
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openvla-oft --env liberoplus && source .venv/bin/activate
 
 Download the Assets (LIBERO-Plus)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -359,20 +357,19 @@ Download the Model
 
 LIBERO-Pro / LIBERO-Plus reuse the standard LIBERO base checkpoints:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+.. tab-set::
 
-   * - Task Suite
-     - Hugging Face Repo
-   * - LIBERO-90
-     - ``RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora``
-   * - LIBERO-130
-     - ``RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora``
+   .. tab-item:: LIBERO-90
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir ./RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+
+   .. tab-item:: LIBERO-130
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir ./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
 .. include:: _model_path.rst
 

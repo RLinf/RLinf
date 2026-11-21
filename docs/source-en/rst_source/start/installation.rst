@@ -16,9 +16,11 @@ Clone the repository, then run the command for your target:
 
    .. tab-item:: Embodied
 
+      Example for the ManiSkill3 Quick Start (swap ``--model`` and ``--env`` from the table below for other setups):
+
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --model <model> --env <env> && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
    .. tab-item:: Agentic / Reasoning
 

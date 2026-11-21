@@ -126,9 +126,11 @@ Download the OpenVLA-OFT SFT checkpoint for your suite:
    * - LIBERO-10
      - ``Haozhan72/Openvla-oft-SFT-libero10-traj1``
 
-.. code:: bash
+Example for LIBERO-Spatial (swap the repo and local directory for another suite from the table above):
 
-   hf download <repo> --local-dir <dir>
+.. code-block:: bash
+
+   hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir ./Openvla-oft-SFT-libero-spatial-traj1
 
 After downloading, set ``model_path`` and ``unnorm_key`` in the config:
 
@@ -160,9 +162,11 @@ Besides the VLA model, download the Wan weights and initialization data for your
    * - LIBERO-Goal
      - ``RLinf/RLinf-Wan-LIBERO-Goal``
 
-.. code:: bash
+Example for LIBERO-Spatial (swap the repo and local directory for another suite from the table above):
 
-   hf download <repo> --local-dir <dir>
+.. code-block:: bash
+
+   hf download RLinf/RLinf-Wan-LIBERO-Spatial --local-dir ./RLinf-Wan-LIBERO-Spatial
 
 The directory structure of ``RLinf-Wan-LIBERO-Spatial`` is:
 

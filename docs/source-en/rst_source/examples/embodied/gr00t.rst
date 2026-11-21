@@ -108,24 +108,27 @@ Use the NVIDIA setup below, or follow :ref:`the backend-specific setup <gr00t-ha
 
 .. include:: _setup_common.rst
 
-Select ``--model`` for your GR00T version:
+Select your GR00T version:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - GR00T Version
-     - ``--model``
-   * - GR00T-N1.5
-     - ``gr00t``
-   * - GR00T-N1.6
-     - ``gr00t_n1d6``
-   * - GR00T-N1.7
-     - ``gr00t_n1d7``
+   .. tab-item:: GR00T N1.5
 
-.. code:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model <model> --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --model gr00t --env maniskill_libero && source .venv/bin/activate
+
+   .. tab-item:: GR00T N1.6
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero && source .venv/bin/activate
+
+   .. tab-item:: GR00T N1.7
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero && source .venv/bin/activate
 
 Download the Model
 ------------------
@@ -151,9 +154,11 @@ Pick the SFT checkpoint for your LIBERO task:
    * - LIBERO-Long
      - ``RLinf/RLinf-Gr00t-SFT-10``
 
-.. code:: bash
+For example, to download the LIBERO-Spatial checkpoint (replace the repo name and local directory for another suite from the table):
 
-   hf download <repo> --local-dir <dir>
+.. code-block:: bash
+
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
 
 **N1.6: GR00T-N1.6 SFT Model**
 

@@ -135,22 +135,21 @@ channel collector 以 LeRobot 格式收集完整 episode，经内存发送给 ac
 安装
 ----------------------------------------
 
-使用 ``requirements/install.sh`` 安装具身环境，或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像。通用安装选项见 :doc:`../../start/installation`。按目标环境选择 ``--env``：
+使用 ``requirements/install.sh`` 安装具身环境（ManiSkill 同样使用 LIBERO 标签页），或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像。通用安装选项见 :doc:`../../start/installation`。
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - 环境
-     - ``--env``
-   * - ManiSkill / LIBERO
-     - ``maniskill_libero``
-   * - RoboTwin
-     - ``robotwin``
+   .. tab-item:: LIBERO
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openpi --env <env> && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+
+   .. tab-item:: RoboTwin
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
 
 Checkpoint 配置
 ----------------------------------------

@@ -124,9 +124,11 @@ VLA 模型下载
    * - LIBERO-10
      - ``Haozhan72/Openvla-oft-SFT-libero10-traj1``
 
-.. code:: bash
+以 LIBERO-Spatial 为例（下载其他套件时，从上表替换仓库名和本地目录）：
 
-   hf download <repo> --local-dir <dir>
+.. code-block:: bash
+
+   hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir ./Openvla-oft-SFT-libero-spatial-traj1
 
 下载完成后，在配置中设置 ``model_path`` 与 ``unnorm_key``：
 
@@ -158,9 +160,11 @@ VLA 模型下载
    * - LIBERO-Goal
      - ``RLinf/RLinf-Wan-LIBERO-Goal``
 
-.. code:: bash
+以 LIBERO-Spatial 为例（下载其他套件时，从上表替换仓库名和本地目录）：
 
-   hf download <repo> --local-dir <dir>
+.. code-block:: bash
+
+   hf download RLinf/RLinf-Wan-LIBERO-Spatial --local-dir ./RLinf-Wan-LIBERO-Spatial
 
 ``RLinf-Wan-LIBERO-Spatial`` 的目录结构如下：
 

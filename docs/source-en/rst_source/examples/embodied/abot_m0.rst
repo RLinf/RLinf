@@ -97,22 +97,21 @@ Install ABot-M0, VGGT, and the LIBERO runtime in the same Python environment as 
 
 .. include:: _setup_common.rst
 
-The installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` and ``VGGT_PATH`` first to reuse local checkouts. Choose ``--env`` for the benchmark you want to run:
+The installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` and ``VGGT_PATH`` first to reuse local checkouts.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - Benchmark
-     - ``--env``
-   * - LIBERO
-     - ``maniskill_libero``
-   * - LIBERO-Plus
-     - ``liberoplus``
+   .. tab-item:: LIBERO
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model abot_m0 --env <env> && source .venv/bin/activate
+         bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero && source .venv/bin/activate
+
+   .. tab-item:: LIBERO-Plus
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model abot_m0 --env liberoplus && source .venv/bin/activate
 
 Download the LIBERO-Plus Assets
 -------------------------------

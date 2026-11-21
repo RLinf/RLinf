@@ -104,20 +104,19 @@ RLinf 将 Dexbotic π\ :sub:`0`\ 和 DM0 策略作为 LIBERO 动作生成模型�
 
 下载对应 Dexbotic 模型的 checkpoint：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+.. tab-set::
 
-   * - 模型
-     - Hugging Face 仓库
-   * - Dexbotic π₀
-     - ``Dexmal/libero-db-pi0``
-   * - DM0
-     - ``Dexmal/DM0-libero``
+   .. tab-item:: π₀
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download Dexmal/libero-db-pi0 --local-dir ./libero-db-pi0
+
+   .. tab-item:: DM0
+
+      .. code-block:: bash
+
+         hf download Dexmal/DM0-libero --local-dir ./DM0-libero
 
 .. include:: _model_path.rst
 

@@ -99,20 +99,19 @@
 
 下载要微调的 OpenPI checkpoint：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+.. tab-set::
 
-   * - 模型
-     - Hugging Face 仓库
-   * - OpenPI π₀
-     - ``RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT``
-   * - OpenPI π₀.₅
-     - ``RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT``
+   .. tab-item:: π₀
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT --local-dir ./RLinf-Pi0-CALVIN-ABC-D-SFT
+
+   .. tab-item:: π₀.₅
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT --local-dir ./RLinf-Pi05-CALVIN-ABC-D-SFT
 
 .. include:: _model_path.rst
 

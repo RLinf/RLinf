@@ -86,22 +86,23 @@
 
 .. include:: _setup_common.rst
 
-按要训练的模型选择 ``--model``：
+按所选模型安装环境：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - 模型
-     - ``--model``
-   * - OpenVLA-OFT
-     - ``openvla-oft``
-   * - OpenPI（π₀ / π₀.₅）
-     - ``openpi``
+   .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model <model> --env behavior && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env behavior && source .venv/bin/activate
+
+   .. tab-item:: OpenPI
+      :sync: openpi
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openpi --env behavior && source .venv/bin/activate
 
 
 下载资产
@@ -132,20 +133,21 @@
 
 下载对应模型的 checkpoint：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+.. tab-set::
 
-   * - 模型
-     - Hugging Face 仓库
-   * - OpenVLA-OFT
-     - ``RLinf/RLinf-OpenVLAOFT-Behavior``
-   * - π₀
-     - ``RLinf/RLinf-Pi0-Behavior``
+   .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir ./RLinf-OpenVLAOFT-Behavior
+
+   .. tab-item:: OpenPI
+      :sync: openpi
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi0-Behavior --local-dir ./RLinf-Pi0-Behavior
 
 .. include:: _model_path.rst
 

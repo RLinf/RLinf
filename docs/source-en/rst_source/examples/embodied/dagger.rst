@@ -149,22 +149,21 @@ bridge online DAgger with offline SFT or real-robot datasets.
 Installation
 ------------
 
-Install the embodied environment with ``requirements/install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. See :doc:`../../start/installation` for shared options. Choose ``--env`` for your simulator:
+Install the embodied environment with ``requirements/install.sh`` (use the LIBERO tab for ManiSkill as well), or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. See :doc:`../../start/installation` for shared options.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - Environment
-     - ``--env``
-   * - ManiSkill / LIBERO
-     - ``maniskill_libero``
-   * - RoboTwin
-     - ``robotwin``
+   .. tab-item:: LIBERO
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openpi --env <env> && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+
+   .. tab-item:: RoboTwin
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
 
 Checkpoint Setup
 ----------------

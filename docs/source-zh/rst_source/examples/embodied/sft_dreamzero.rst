@@ -50,22 +50,19 @@ DreamZero 监督微调和 Franka 真机部署
 
 .. include:: _setup_common.rst
 
-按使用场景选择安装参数：
+.. tab-set::
 
-.. list-table::
-   :header-rows: 1
-   :widths: 36 64
+   .. tab-item:: 仅 SFT 训练
 
-   * - 用途
-     - 参数
-   * - 仅 SFT
-     - ``--model dreamzero``
-   * - SFT + LIBERO 评测
-     - ``--model dreamzero --env libero``
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash requirements/install.sh embodied --model dreamzero && source .venv/bin/activate
 
-   bash requirements/install.sh embodied <flags> && source .venv/bin/activate
+   .. tab-item:: SFT + LIBERO 评测
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model dreamzero --env libero && source .venv/bin/activate
 
 单独克隆 DreamZero 仓库，并在 SFT 或评测前设置 ``DREAMZERO_PATH``：
 
@@ -191,11 +188,11 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
      - 按子项指定
      - ``libero_franka_mix_sft_dreamzero_5b.yaml``；``data.train_data_paths`` 为列表，每项指定 ``dataset_path``、``embodiment_tag``、``metadata_json_path`` 和 ``weight``。
 
-下载所需数据集：
+以 LIBERO 为例（下载其他数据集时，从上表替换仓库名和本地目录）：
 
-.. code:: bash
+.. code-block:: bash
 
-   hf download <repo> --repo-type dataset --local-dir <dir>
+   hf download physical-intelligence/libero --repo-type dataset --local-dir ./libero
 
 生成 metadata.json
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -414,7 +411,7 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
    bash examples/sft/run_vla_sft.sh droid_sft_dreamzero_14b
    bash examples/sft/run_vla_sft.sh libero_franka_mix_sft_dreamzero_5b
 
-启动脚本将日志写入 ``<repo>/logs/<timestamp>-<config_name>/run_embodiment.log``。断点续训时将 ``runner.resume_dir`` 指向 checkpoint 目录。
+启动脚本将日志写入 ``logs/<timestamp>-<config_name>/run_embodiment.log``。断点续训时将 ``runner.resume_dir`` 指向 checkpoint 目录。
 
 
 .. _sft-dreamzero-hardware:

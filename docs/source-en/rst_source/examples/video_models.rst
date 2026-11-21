@@ -98,20 +98,19 @@ Download the Model
 Download the checkpoint for the recipe you plan to run (accept the SD3.5 Medium
 access terms on Hugging Face first if using SD3.5):
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - Model
-     - Hugging Face Repo
-   * - SD3.5 Medium
-     - ``stabilityai/stable-diffusion-3.5-medium``
-   * - Wan2.2 TI2V 5B
-     - ``Wan-AI/Wan2.2-TI2V-5B-Diffusers``
+   .. tab-item:: SD3.5 Medium
 
-.. code:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir /path/to/checkpoint
+         hf download stabilityai/stable-diffusion-3.5-medium --local-dir ./stable-diffusion-3.5-medium
+
+   .. tab-item:: Wan2.2 TI2V 5B
+
+      .. code-block:: bash
+
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --local-dir ./Wan2.2-TI2V-5B-Diffusers
 
 Set ``actor.model.model_path`` in your selected training YAML to the downloaded
 directory.

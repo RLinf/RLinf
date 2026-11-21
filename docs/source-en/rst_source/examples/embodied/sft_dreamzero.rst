@@ -52,22 +52,19 @@ Installation
 
 .. include:: _setup_common.rst
 
-Select the install flags for your setup:
+.. tab-set::
 
-.. list-table::
-   :header-rows: 1
-   :widths: 36 64
+   .. tab-item:: SFT Only
 
-   * - Usage
-     - Flags
-   * - SFT only
-     - ``--model dreamzero``
-   * - SFT + LIBERO evaluation
-     - ``--model dreamzero --env libero``
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash requirements/install.sh embodied --model dreamzero && source .venv/bin/activate
 
-   bash requirements/install.sh embodied <flags> && source .venv/bin/activate
+   .. tab-item:: SFT + LIBERO Eval
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model dreamzero --env libero && source .venv/bin/activate
 
 Clone the DreamZero repository separately and set ``DREAMZERO_PATH`` before SFT or eval:
 
@@ -195,11 +192,11 @@ Supported datasets and configs:
      - Per-entry
      - ``libero_franka_mix_sft_dreamzero_5b.yaml``; ``data.train_data_paths`` takes a list with ``dataset_path``, ``embodiment_tag``, ``metadata_json_path``, and ``weight``.
 
-Download the dataset you need:
+Example for LIBERO (swap the repo and local directory for another dataset from the table above):
 
-.. code:: bash
+.. code-block:: bash
 
-   hf download <repo> --repo-type dataset --local-dir <dir>
+   hf download physical-intelligence/libero --repo-type dataset --local-dir ./libero
 
 Generate ``metadata.json``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -419,7 +416,7 @@ Launch training from the repository root with any config name above:
    bash examples/sft/run_vla_sft.sh droid_sft_dreamzero_14b
    bash examples/sft/run_vla_sft.sh libero_franka_mix_sft_dreamzero_5b
 
-The launcher writes logs to ``<repo>/logs/<timestamp>-<config_name>/run_embodiment.log``. Set ``runner.resume_dir`` to a checkpoint directory to resume training.
+The launcher writes logs to ``logs/<timestamp>-<config_name>/run_embodiment.log``. Set ``runner.resume_dir`` to a checkpoint directory to resume training.
 
 
 .. _sft-dreamzero-hardware:

@@ -99,22 +99,21 @@ Installation
 
 .. include:: _setup_common.rst
 
-Select ``--model`` for the model you want to run:
+Install the environment for your model:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - Model
-     - ``--model``
-   * - OpenVLA
-     - ``openvla``
-   * - OpenVLA-OFT
-     - ``openvla-oft``
+   .. tab-item:: OpenVLA
 
-.. code:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model <model> --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
+
+   .. tab-item:: OpenVLA-OFT
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
 Download the Assets
 -------------------

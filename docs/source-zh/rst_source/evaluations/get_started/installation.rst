@@ -1,14 +1,13 @@
 环境安装
 ========
 
-评测与训练共用同一套具身环境安装流程。在仓库根目录执行：
+评测与训练共用同一套具身环境安装流程。例如，安装 :doc:`quick_tour`\ （OpenPI + LIBERO）所需环境：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model <model> --env <env>
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
 
-其中 ``<model>`` 与 ``<env>`` 需与目标 benchmark 匹配。常用组合如下：
+评测其他 benchmark 时，按下方表格替换 ``--model`` 与 ``--env``：
 
 .. list-table::
    :header-rows: 1

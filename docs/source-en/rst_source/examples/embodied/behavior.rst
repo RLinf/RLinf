@@ -88,22 +88,23 @@ Installation
 
 .. include:: _setup_common.rst
 
-Choose ``--model`` for the model family you plan to train:
+Install the environment for your model:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - Model
-     - ``--model``
-   * - OpenVLA-OFT
-     - ``openvla-oft``
-   * - OpenPI (π₀ / π₀.₅)
-     - ``openpi``
+   .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model <model> --env behavior && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env behavior && source .venv/bin/activate
+
+   .. tab-item:: OpenPI
+      :sync: openpi
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openpi --env behavior && source .venv/bin/activate
 
 
 Download the Assets
@@ -133,20 +134,21 @@ Download the Model
 
 Download the checkpoint for your model family:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+.. tab-set::
 
-   * - Model
-     - Hugging Face Repo
-   * - OpenVLA-OFT
-     - ``RLinf/RLinf-OpenVLAOFT-Behavior``
-   * - π₀
-     - ``RLinf/RLinf-Pi0-Behavior``
+   .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir ./RLinf-OpenVLAOFT-Behavior
+
+   .. tab-item:: OpenPI
+      :sync: openpi
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi0-Behavior --local-dir ./RLinf-Pi0-Behavior
 
 .. include:: _model_path.rst
 

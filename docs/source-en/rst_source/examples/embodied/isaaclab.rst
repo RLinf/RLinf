@@ -82,22 +82,23 @@ Installation
 
 .. include:: _setup_common.rst
 
-Select ``--model`` for the model you want to run:
+Install the environment for your model:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - Model
-     - ``--model``
-   * - GR00T N1.5
-     - ``gr00t``
-   * - OpenPI π₀.₅
-     - ``openpi``
+   .. tab-item:: GR00T N1.5
+      :sync: gr00t
 
-.. code:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model <model> --env isaaclab && source .venv/bin/activate
+         bash requirements/install.sh embodied --model gr00t --env isaaclab && source .venv/bin/activate
+
+   .. tab-item:: OpenPI π₀.₅
+      :sync: openpi
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openpi --env isaaclab && source .venv/bin/activate
 
 Download Isaac Sim
 ~~~~~~~~~~~~~~~~~~
@@ -122,20 +123,21 @@ Download the Model
 
 Download the SFT checkpoint for the model you plan to fine-tune:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+.. tab-set::
 
-   * - Model
-     - Hugging Face Repo
-   * - GR00T N1.5
-     - ``RLinf/RLinf-Gr00t-SFT-Stack-cube``
-   * - OpenPI π₀.₅
-     - ``YifWRobotics/RLinf-pi05-SFT-Stack-cube``
+   .. tab-item:: GR00T N1.5
+      :sync: gr00t
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir ./RLinf-Gr00t-SFT-Stack-cube
+
+   .. tab-item:: OpenPI π₀.₅
+      :sync: openpi
+
+      .. code-block:: bash
+
+         hf download YifWRobotics/RLinf-pi05-SFT-Stack-cube --local-dir ./RLinf-pi05-SFT-Stack-cube
 
 .. include:: _model_path.rst
 

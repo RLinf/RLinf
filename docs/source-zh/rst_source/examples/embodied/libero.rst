@@ -129,20 +129,19 @@ LIBERO 提供五个任务套件，共 130 个任务，从单步抓取放置到�
 
 按任务套件下载预训练基座检查点：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+.. tab-set::
 
-   * - 任务套件
-     - Hugging Face 仓库
-   * - LIBERO-90
-     - ``RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora``
-   * - LIBERO-130
-     - ``RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora``
+   .. tab-item:: LIBERO-90
 
-.. code:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir ./RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+
+   .. tab-item:: LIBERO-130
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir ./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
 .. include:: _model_path.rst
 
@@ -300,22 +299,21 @@ LIBERO-Pro 与 LIBERO-Plus 套件
 
 .. include:: _setup_common.rst
 
-按目标套件选择 ``--env``：
+按目标套件选择安装命令：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - 套件
-     - ``--env``
-   * - LIBERO-Pro
-     - ``liberopro``
-   * - LIBERO-Plus
-     - ``liberoplus``
+   .. tab-item:: LIBERO-Pro
 
-.. code:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openvla-oft --env <env> && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env liberopro && source .venv/bin/activate
+
+   .. tab-item:: LIBERO-Plus
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openvla-oft --env liberoplus && source .venv/bin/activate
 
 下载资产（LIBERO-Plus）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -351,20 +349,19 @@ LIBERO-Plus 需要数百个额外的物体、纹理和场景。请从 Hugging Fa
 
 LIBERO-Pro / LIBERO-Plus 复用标准 LIBERO 基座检查点：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+.. tab-set::
 
-   * - 任务套件
-     - Hugging Face 仓库
-   * - LIBERO-90
-     - ``RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora``
-   * - LIBERO-130
-     - ``RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora``
+   .. tab-item:: LIBERO-90
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir ./RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+
+   .. tab-item:: LIBERO-130
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir ./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
 .. include:: _model_path.rst
 

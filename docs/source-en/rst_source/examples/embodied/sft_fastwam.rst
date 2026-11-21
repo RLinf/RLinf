@@ -18,22 +18,19 @@ Installation
 
 .. include:: _setup_common.rst
 
-Select the install flags for your setup:
+.. tab-set::
 
-.. list-table::
-   :header-rows: 1
-   :widths: 36 64
+   .. tab-item:: SFT Only
 
-   * - Usage
-     - Flags
-   * - SFT only
-     - ``--model fastwam``
-   * - SFT + LIBERO evaluation
-     - ``--model fastwam --env libero``
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash requirements/install.sh embodied --model fastwam && source .venv/bin/activate
 
-   bash requirements/install.sh embodied <flags> && source .venv/bin/activate
+   .. tab-item:: SFT + LIBERO Eval
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model fastwam --env libero && source .venv/bin/activate
 
 Supervised Fine-Tuning
 ----------------------

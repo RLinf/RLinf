@@ -86,42 +86,47 @@
 
 .. include:: _setup_common.rst
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - 模型
-     - ``--model``
-   * - π₀ / π₀.₅
-     - ``openpi``
-   * - OpenVLA-OFT
-     - ``openvla-oft``
+   .. tab-item:: OpenPI
+      :sync: openpi
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model <model> --env metaworld && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env metaworld && source .venv/bin/activate
+
+   .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openvla-oft --env metaworld && source .venv/bin/activate
 
 下载模型
 ----------------------------------------
 
 下载对应模型的 SFT checkpoint：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+.. tab-set::
 
-   * - 模型
-     - Hugging Face 仓库
-   * - π₀
-     - ``RLinf/RLinf-Pi0-MetaWorld-SFT``
-   * - π₀.₅
-     - ``RLinf/RLinf-Pi05-MetaWorld-SFT``
-   * - OpenVLA-OFT
-     - ``RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT``
+   .. tab-item:: π₀
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir ./RLinf-Pi0-MetaWorld-SFT
+
+   .. tab-item:: π₀.₅
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir ./RLinf-Pi05-MetaWorld-SFT
+
+   .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT --local-dir ./RLinf-OpenVLAOFT-MetaWorld-SFT
 
 也可以从 ModelScope 下载模型：https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld。
 

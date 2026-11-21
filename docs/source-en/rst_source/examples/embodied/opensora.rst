@@ -119,9 +119,11 @@ Download the OpenVLA-OFT SFT checkpoint for your suite:
    * - LIBERO-Long
      - ``Haozhan72/Openvla-oft-SFT-libero10-traj1``
 
-.. code:: bash
+Example for LIBERO-Spatial (swap the repo and local directory for another suite from the table above):
 
-   hf download <repo> --local-dir <dir>
+.. code-block:: bash
+
+   hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir ./Openvla-oft-SFT-libero-spatial-traj1
 
 After downloading, set the model path and ``unnorm_key`` in the config:
 
@@ -140,20 +142,19 @@ Download the World Model
 
 Download the OpenSora weights and simulation-initialization dataset for your suite:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+.. tab-set::
 
-   * - Suite
-     - Hugging Face Repo
-   * - LIBERO-Spatial
-     - ``RLinf/RLinf-OpenSora-LIBERO-Spatial``
-   * - LIBERO-Object
-     - ``RLinf/RLinf-OpenSora-LIBERO-Object``
+   .. tab-item:: LIBERO-Spatial
 
-.. code:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download RLinf/RLinf-OpenSora-LIBERO-Spatial --local-dir ./RLinf-OpenSora-LIBERO-Spatial
+
+   .. tab-item:: LIBERO-Object
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-OpenSora-LIBERO-Object --local-dir ./RLinf-OpenSora-LIBERO-Object
 
 The directory structure of ``RLinf-OpenSora-LIBERO-Spatial`` is:
 

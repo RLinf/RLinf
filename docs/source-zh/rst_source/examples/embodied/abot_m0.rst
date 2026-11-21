@@ -94,22 +94,21 @@ value clipping、可选 entropy 正则）。
 
 .. include:: _setup_common.rst
 
-安装脚本会自动克隆 ABot-M0 和 VGGT；如需复用本地源码目录，先设置 ``ABOT_PATH`` 和 ``VGGT_PATH``。按要运行的 benchmark 选择 ``--env``：
+安装脚本会自动克隆 ABot-M0 和 VGGT；如需复用本地源码目录，先设置 ``ABOT_PATH`` 和 ``VGGT_PATH``。
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - Benchmark
-     - ``--env``
-   * - LIBERO
-     - ``maniskill_libero``
-   * - LIBERO-Plus
-     - ``liberoplus``
+   .. tab-item:: LIBERO
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model abot_m0 --env <env> && source .venv/bin/activate
+         bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero && source .venv/bin/activate
+
+   .. tab-item:: LIBERO-Plus
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model abot_m0 --env liberoplus && source .venv/bin/activate
 
 LIBERO-Plus 资产下载
 ----------------------------------------

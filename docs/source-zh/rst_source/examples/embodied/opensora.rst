@@ -118,9 +118,11 @@ VLA 模型下载
    * - LIBERO-Long
      - ``Haozhan72/Openvla-oft-SFT-libero10-traj1``
 
-.. code:: bash
+以 LIBERO-Spatial 为例（下载其他套件时，从上表替换仓库名和本地目录）：
 
-   hf download <repo> --local-dir <dir>
+.. code-block:: bash
+
+   hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir ./Openvla-oft-SFT-libero-spatial-traj1
 
 下载完成后，在配置中设置模型路径与 ``unnorm_key``：
 
@@ -139,20 +141,19 @@ VLA 模型下载
 
 除 VLA 模型外，还需下载对应套件的 OpenSora 权重与仿真初始化数据集（各 suite 的 OpenSora 权重均基于 VLA 模型 rollout 的 3000 条轨迹构建）：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+.. tab-set::
 
-   * - 套件
-     - Hugging Face 仓库
-   * - LIBERO-Spatial
-     - ``RLinf/RLinf-OpenSora-LIBERO-Spatial``
-   * - LIBERO-Object
-     - ``RLinf/RLinf-OpenSora-LIBERO-Object``
+   .. tab-item:: LIBERO-Spatial
 
-.. code:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download RLinf/RLinf-OpenSora-LIBERO-Spatial --local-dir ./RLinf-OpenSora-LIBERO-Spatial
+
+   .. tab-item:: LIBERO-Object
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-OpenSora-LIBERO-Object --local-dir ./RLinf-OpenSora-LIBERO-Object
 
 ``RLinf-OpenSora-LIBERO-Spatial`` 的目录结构如下：
 

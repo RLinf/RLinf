@@ -104,20 +104,19 @@ Download the Model
 
 Download the checkpoint for the Dexbotic model you plan to train:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+.. tab-set::
 
-   * - Model
-     - Hugging Face Repo
-   * - Dexbotic π₀
-     - ``Dexmal/libero-db-pi0``
-   * - DM0
-     - ``Dexmal/DM0-libero``
+   .. tab-item:: π₀
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   hf download <repo> --local-dir <dir>
+         hf download Dexmal/libero-db-pi0 --local-dir ./libero-db-pi0
+
+   .. tab-item:: DM0
+
+      .. code-block:: bash
+
+         hf download Dexmal/DM0-libero --local-dir ./DM0-libero
 
 .. include:: _model_path.rst
 

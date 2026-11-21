@@ -97,22 +97,21 @@
 
 .. include:: _setup_common.rst
 
-按要运行的模型选择 ``--model``：
+按所选模型安装环境：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
+.. tab-set::
 
-   * - 模型
-     - ``--model``
-   * - OpenVLA
-     - ``openvla``
-   * - OpenVLA-OFT
-     - ``openvla-oft``
+   .. tab-item:: OpenVLA
 
-.. code:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model <model> --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
+
+   .. tab-item:: OpenVLA-OFT
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
 下载资产
 ----------------------------------------
