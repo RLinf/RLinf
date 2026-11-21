@@ -21,20 +21,17 @@ via supervised fine-tuning with FSDP.
 This module is self-contained and does NOT share code with fsdp_sft_worker.py.
 """
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 
 import numpy as np
 import torch
 from omegaconf import DictConfig
+from scipy.stats import rankdata
+from torch.utils._pytree import tree_map
 
-from rlinf.data.datasets.recap.utils import (
-    load_return_stats_from_dataset,
-)
-from rlinf.data.datasets.recap.value_dataset import (
-    ValueDataLoaderImpl,
-    ValueMixtureDataset,
-)
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.models import get_model
 from rlinf.scheduler import Worker
@@ -83,12 +80,8 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         if len(values_a) < 2 or len(values_b) < 2:
             return 0.0
 
-        rank_a = np.empty_like(values_a, dtype=np.float64)
-        rank_b = np.empty_like(values_b, dtype=np.float64)
-        order_a = np.argsort(values_a, kind="mergesort")
-        order_b = np.argsort(values_b, kind="mergesort")
-        rank_a[order_a] = np.arange(len(values_a), dtype=np.float64)
-        rank_b[order_b] = np.arange(len(values_b), dtype=np.float64)
+        rank_a = rankdata(values_a, method="average")
+        rank_b = rankdata(values_b, method="average")
 
         rank_a -= rank_a.mean()
         rank_b -= rank_b.mean()
@@ -124,20 +117,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             )
         }
 
-    def _gather_eval_array(self, values: np.ndarray | None) -> np.ndarray | None:
-        """Gather eval arrays across ranks for dataset-level diagnostics."""
-        if values is None:
-            return None
-        if not torch.distributed.is_initialized():
-            return values
-
-        gathered: list[np.ndarray | None] = [None for _ in range(self._world_size)]
-        torch.distributed.all_gather_object(gathered, values)
-        valid_arrays = [arr for arr in gathered if arr is not None and len(arr) > 0]
-        if not valid_arrays:
-            return None
-        return np.concatenate(valid_arrays, axis=0)
-
     def build_dataloader(self):
         """Build dataloader from ``data.train_data_paths`` list."""
         try:
@@ -147,7 +126,12 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         except (ImportError, AttributeError):
             pass
 
-        from rlinf.data.datasets.recap.value_dataset import ValueDataset
+        from rlinf.data.datasets.recap.utils import load_return_stats_from_dataset
+        from rlinf.data.datasets.recap.value_dataset import (
+            ValueDataLoaderImpl,
+            ValueDataset,
+            ValueMixtureDataset,
+        )
         from rlinf.models.embodiment.value_model.recap.data_collator import (
             ValueDataCollator,
         )
@@ -381,7 +365,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         data_config = {"model_type": "recap_value_model"}
         train_data_loader = ValueDataLoaderImpl(data_config, torch_loader)
 
-        eval_data_loaders: list[tuple[str, ValueDataLoaderImpl]] = []
+        eval_data_loaders: list[tuple[str, torch.utils.data.DataLoader]] = []
 
         eval_data_paths = data_cfg.get("eval_data_paths", []) or []
 
@@ -442,8 +426,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 collate_fn=eval_collator,
                 **eval_loader_worker_kwargs,
             )
-            eval_data_loader = ValueDataLoaderImpl(data_config, eval_torch_loader)
-            eval_data_loaders.append((ds_name, eval_data_loader))
+            eval_data_loaders.append((ds_name, eval_torch_loader))
             self.logger.info(
                 f"[ValueSFT] Eval dataset '{ds_name}' loaded: {eval_ds_path} "
                 f"({len(eval_dataset)} samples, max_samples={eval_max_samples}, "
@@ -561,145 +544,157 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
 
             return train_metrics
 
-    def run_eval(self) -> dict[str, float]:
-        """Run periodic evaluation on all eval datasets.
+    def _aggregate_eval_metrics(
+        self,
+        metric_sums: dict[str, tuple[float, int]],
+        predictions: np.ndarray,
+        targets: np.ndarray,
+    ) -> dict[str, float]:
+        """Reduce valid-sample statistics and arrays across evaluation ranks."""
+        local = (metric_sums, predictions, targets)
+        gathered = [local]
+        if torch.distributed.is_initialized():
+            gathered = [None] * torch.distributed.get_world_size()
+            torch.distributed.all_gather_object(gathered, local)
 
-        Returns metrics keyed as:
-        - ``"<dataset_name>/<metric>"`` for per-dataset metrics
-        - ``"<metric>"`` for aggregate (mean across datasets)
+        sums: dict[str, float] = {}
+        counts: dict[str, int] = {}
+        for rank_sums, _, _ in gathered:
+            for key, (total, count) in rank_sums.items():
+                sums[key] = sums.get(key, 0.0) + total
+                counts[key] = counts.get(key, 0) + count
+        metrics = {key: total / counts[key] for key, total in sums.items()}
+
+        predictions = np.concatenate([item[1] for item in gathered]).astype(np.float64)
+        targets = np.concatenate([item[2] for item in gathered]).astype(np.float64)
+        for name, values in (
+            ("predicted_value", predictions),
+            ("target_value", targets),
+        ):
+            if len(values):
+                metrics[f"{name}_mean"] = float(values.mean())
+                metrics[f"{name}_std"] = (
+                    float(values.std(ddof=1)) if len(values) > 1 else 0.0
+                )
+        metrics.update(self._compute_value_spearman_from_arrays(predictions, targets))
+        return metrics
+
+    def run_eval(self) -> dict[str, float]:
+        """Evaluate each dataset once, excluding distributed sampler padding.
+
+        Metrics use ``<dataset_name>/<metric>`` keys. Unprefixed metrics are
+        macro averages across datasets, with equal weight for each dataset.
         """
         with self.worker_timer():
             if not self.eval_data_loaders:
                 return {}
 
-            if self.cfg.actor.get("enable_offload", False):
+            offload = self.cfg.actor.get("enable_offload", False)
+            if offload:
                 with self.device_lock:
                     self.load_param_and_grad(self.device)
 
             self.model.eval()
             all_dataset_metrics: dict[str, dict[str, float]] = {}
-
-            with torch.no_grad():
-                for ds_name, loader in self.eval_data_loaders:
-                    batch_metrics: list[dict[str, float]] = []
-                    pred_batches: list[np.ndarray] = []
-                    target_batches: list[np.ndarray] = []
-                    for batch in loader:
-                        obs, target_values, _ = self._prepare_input(batch)
-
-                        with self.amp_context:
-                            result = self.model(
-                                observation=obs, target_values=target_values
-                            )
-                            loss = result.loss
-
-                        metrics: dict[str, float] = {}
-                        if result.predicted_values is not None:
-                            metrics["predicted_value_mean"] = (
-                                result.predicted_values.detach().mean().item()
-                            )
-                            metrics["predicted_value_std"] = (
-                                result.predicted_values.detach().std().item()
-                            )
-                        if result.cat_acc_best is not None:
-                            metrics["cat_acc_best"] = (
-                                result.cat_acc_best.detach().item()
-                                if isinstance(result.cat_acc_best, torch.Tensor)
-                                else result.cat_acc_best
-                            )
-                        if result.cat_acc_neighbor is not None:
-                            metrics["cat_acc_neighbor"] = (
-                                result.cat_acc_neighbor.detach().item()
-                                if isinstance(result.cat_acc_neighbor, torch.Tensor)
-                                else result.cat_acc_neighbor
-                            )
-                        if result.mae is not None:
-                            metrics["mae"] = (
-                                result.mae.detach().item()
-                                if isinstance(result.mae, torch.Tensor)
-                                else result.mae
-                            )
-                        if (
-                            result.predicted_values is not None
-                            and target_values is not None
+            try:
+                with torch.no_grad():
+                    for ds_name, loader in self.eval_data_loaders:
+                        remaining = len(loader.dataset)
+                        if isinstance(
+                            loader.sampler, torch.utils.data.DistributedSampler
                         ):
-                            metrics.update(
-                                self._compute_value_spearman(
-                                    result.predicted_values,
-                                    target_values,
+                            sampler = loader.sampler
+                            remaining = len(
+                                range(
+                                    sampler.rank,
+                                    len(loader.dataset),
+                                    sampler.num_replicas,
                                 )
                             )
-                            pred_batches.append(
-                                result.predicted_values.detach()
-                                .float()
-                                .view(-1)
-                                .cpu()
-                                .numpy()
-                            )
-                            target_batches.append(
-                                target_values.detach().float().view(-1).cpu().numpy()
-                            )
-                        metrics["loss"] = loss.detach().item()
-                        if target_values is not None:
-                            metrics["target_value_mean"] = (
-                                target_values.detach().mean().item()
-                            )
-                            metrics["target_value_std"] = (
-                                target_values.detach().std().item()
-                            )
-                        batch_metrics.append(metrics)
+                        metric_sums: dict[str, tuple[float, int]] = {}
+                        pred_batches: list[np.ndarray] = []
+                        target_batches: list[np.ndarray] = []
+                        for batch in loader:
+                            batch_size = batch["target_values"].shape[0]
+                            valid_size = min(batch_size, remaining)
+                            remaining -= valid_size
+                            if valid_size:
+                                batch = tree_map(
+                                    lambda value: value[:valid_size]
+                                    if isinstance(value, torch.Tensor)
+                                    else value,
+                                    batch,
+                                )
+                            obs, target_values, _ = self._prepare_input(batch)
+                            # Padding-only ranks still enter every FSDP forward.
+                            with self.amp_context:
+                                result = self.model(
+                                    observation=obs, target_values=target_values
+                                )
+                            if not valid_size:
+                                continue
 
-                    if batch_metrics:
-                        agg: dict[str, list[float]] = {}
-                        for m in batch_metrics:
-                            for k, v in m.items():
-                                agg.setdefault(k, []).append(v)
-                        all_dataset_metrics[ds_name] = {
-                            k: sum(v) / len(v) for k, v in agg.items()
-                        }
-                        if pred_batches and target_batches:
-                            gathered_pred = self._gather_eval_array(
-                                np.concatenate(pred_batches, axis=0)
-                            )
-                            gathered_target = self._gather_eval_array(
-                                np.concatenate(target_batches, axis=0)
-                            )
-                            if (
-                                gathered_pred is not None
-                                and gathered_target is not None
+                            for key in (
+                                "loss",
+                                "cat_acc_best",
+                                "cat_acc_neighbor",
+                                "mae",
                             ):
-                                all_dataset_metrics[ds_name].update(
-                                    self._compute_value_spearman_from_arrays(
-                                        gathered_pred,
-                                        gathered_target,
+                                value = getattr(result, key, None)
+                                if value is not None:
+                                    total, count = metric_sums.get(key, (0.0, 0))
+                                    metric_sums[key] = (
+                                        total + float(value) * valid_size,
+                                        count + valid_size,
                                     )
+                            if result.predicted_values is not None:
+                                pred_batches.append(
+                                    result.predicted_values.detach()
+                                    .float()
+                                    .view(-1)
+                                    .cpu()
+                                    .numpy()
+                                )
+                            if target_values is not None:
+                                target_batches.append(
+                                    target_values.detach()
+                                    .float()
+                                    .view(-1)
+                                    .cpu()
+                                    .numpy()
                                 )
 
-            if not all_dataset_metrics:
-                return {}
+                        metrics = self._aggregate_eval_metrics(
+                            metric_sums,
+                            np.concatenate(pred_batches)
+                            if pred_batches
+                            else np.empty(0),
+                            np.concatenate(target_batches)
+                            if target_batches
+                            else np.empty(0),
+                        )
+                        if metrics:
+                            all_dataset_metrics[ds_name] = metrics
+            finally:
+                if offload:
+                    with self.device_lock:
+                        self.offload_param_and_grad()
 
-            final_metrics: dict[str, float] = {}
-
-            for ds_name, ds_metrics in all_dataset_metrics.items():
-                for k, v in ds_metrics.items():
-                    final_metrics[f"{ds_name}/{k}"] = v
-
-            all_keys: set[str] = set()
-            for ds_metrics in all_dataset_metrics.values():
-                all_keys.update(ds_metrics.keys())
-            for k in sorted(all_keys):
-                vals = [m[k] for m in all_dataset_metrics.values() if k in m]
-                if vals:
-                    final_metrics[k] = sum(vals) / len(vals)
-
-            final_metrics = all_reduce_dict(
-                final_metrics, op=torch.distributed.ReduceOp.AVG
-            )
-
-            if self.cfg.actor.get("enable_offload", False):
-                with self.device_lock:
-                    self.offload_param_and_grad()
-
+            final_metrics = {
+                f"{name}/{key}": value
+                for name, metrics in all_dataset_metrics.items()
+                for key, value in metrics.items()
+            }
+            all_keys = {
+                key for metrics in all_dataset_metrics.values() for key in metrics
+            }
+            for key in sorted(all_keys):
+                values = [
+                    metrics[key]
+                    for metrics in all_dataset_metrics.values()
+                    if key in metrics
+                ]
+                final_metrics[key] = sum(values) / len(values)
             return final_metrics
 
     def _prepare_input(self, batch: dict):
