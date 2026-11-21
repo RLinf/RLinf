@@ -433,6 +433,26 @@ def test_config_checks_the_horizon_of_each_eval_env(maniskill_steps, accepted):
         validate_eval_env_cfg(cfg, 2, 1, num_action_chunks=8)
 
 
+def test_eval_resolves_the_behavior_budget_before_combining_envs():
+    mode = _hetero_mode(
+        radio=_env(
+            "behavior", 8, max_episode_steps=73, max_steps_per_rollout_epoch=None
+        ),
+        libero=_env("libero", 8),
+    )
+    cfg = OmegaConf.create({"env": {"eval": mode}})
+    OmegaConf.set_struct(cfg, True)
+
+    validate_eval_env_cfg(cfg, 2, 1, num_action_chunks=8)
+
+    envs = cfg.env.eval.envs
+    assert envs.radio.is_eval
+    assert envs.radio.max_episode_steps == 73
+    assert envs.radio.max_steps_per_rollout_epoch == 80
+    assert cfg.env.eval.max_steps_per_rollout_epoch == 80
+    assert envs.libero == _env("libero", 8)
+
+
 def test_config_keeps_reward_models_to_one_env_configuration():
     cfg = _training_cfg(libero=_env("libero", 8), maniskill=_env("maniskill", 8))
     cfg.reward = {"use_reward_model": True}

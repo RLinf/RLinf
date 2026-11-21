@@ -27,7 +27,7 @@ from omegaconf.dictconfig import DictConfig
 
 # Register built-in physical robots before parsing cluster hardware configs.
 import rlinf.robotics.robots  # noqa: F401
-from rlinf.envs import SupportedEnvType
+from rlinf.envs import EVAL_CONFIG_RESOLVERS, SupportedEnvType
 from rlinf.envs.layout import EnvLayout, EnvSpec
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
@@ -1355,6 +1355,10 @@ def validate_eval_env_cfg(
     Returns:
         The number of eval envs each env worker runs per pipeline stage.
     """
+    for env_cfg in EnvLayout.env_cfgs(cfg.env.eval, "env.eval").values():
+        resolver = EVAL_CONFIG_RESOLVERS.get(env_cfg.get("env_type"))
+        if resolver is not None:
+            resolver(env_cfg, num_action_chunks)
     resolve_env_mode_cfg(cfg.env.eval, "env.eval", env_world_size)
     assert cfg.env.eval.total_num_envs > 0, (
         "Total number of parallel environments for evaluation must be greater than 0"
@@ -1637,11 +1641,6 @@ def validate_embodied_cfg(cfg):
                 "runner.only_eval=True, or runner.task_type=embodied_eval."
             )
             for eval_env_cfg in EnvLayout.env_cfgs(cfg.env.eval, "env.eval").values():
-                if eval_env_cfg.env_type == SupportedEnvType.BEHAVIOR.value:
-                    from rlinf.envs.sim.behavior.utils import resolve_eval_step_limits
-
-                    eval_env_cfg.is_eval = True
-                    resolve_eval_step_limits(eval_env_cfg, model_cfg.num_action_chunks)
                 eval_env_cfg.group_size = eval_env_cfg.get("group_size", 1)
                 eval_env_cfg.early_stop_on_done = bool(
                     eval_env_cfg.get("early_stop_on_done", False)

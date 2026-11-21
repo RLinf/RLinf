@@ -15,6 +15,7 @@
 import warnings
 from enum import Enum
 
+from rlinf.envs.sim.behavior.config import resolve_behavior_eval_config
 from rlinf.utils.robosuite_compat import install_robosuite_egl_device_shim
 
 # Must run before any simulator is imported, in worker processes and in the
@@ -76,6 +77,9 @@ class SupportedEnvType(Enum):
             )
             return cls.WORLD_MODEL
         return None
+
+
+EVAL_CONFIG_RESOLVERS = {SupportedEnvType.BEHAVIOR.value: resolve_behavior_eval_config}
 
 
 def get_env_cls(env_type: str, env_cfg=None):
