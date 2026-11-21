@@ -57,7 +57,8 @@ STATUSES = ("confirmed", "unresolved")
 POSTED = ("inline", "here")
 REPRODUCTION, FINDINGS = "### Reproduction", "### Findings"
 SECTIONS = (REPRODUCTION, FINDINGS)
-REPRO_LABELS = ("- Settings:", "- Result:")
+REPRO_LABELS = ("- Result:", "- Setup:")
+REPRO_STATUSES = ("**Passed**", "**Failed**", "**Partial**", "**Not run**")
 NO_FINDINGS = "No findings."
 TABLE_COLUMNS = 7  # ID, Severity, Category, Location, Summary, Status, Posted
 MAX_BODY = 65536  # GitHub rejects a longer review body
@@ -68,12 +69,12 @@ WALKTHROUGH_LEAD = "Code walkthrough:"
 TEMPLATE = """\
 **<Recommendation>** · <n critical, n major, n minor, or no findings> · head `<sha7>` · base `main@<sha7>`
 
-<One or two sentences: what the PR does, what blocks it, and any decision a maintainer must make.>
+<One short sentence: what blocks merge, or why it is ready.>
 
 ### Reproduction
 
-- Settings: <PR revision, hardware and nodes, environment, model and dataset, config, commands, who ran it; or: not run, why, and what a run needs>
-- Result: <claimed vs. observed, functional and metric results separately, first failure and every intervention, what was not reproduced>
+- Result: **<Passed | Failed | Partial | Not run>** — <one short sentence: functional status and key metric vs. baseline, or first blocker / what is missing>
+- Setup: <hardware count/type and config or command run; or what a run needs if not run>
 
 ### Findings
 
@@ -82,32 +83,19 @@ TEMPLATE = """\
 | F1 | critical | correctness | `rlinf/x.py:42` | <one line> | confirmed | inline |
 | F2 | major | docs | `docs/source-zh/...` | <one line> | confirmed | here |
 
-#### F1 · critical · correctness: <plain title>
-
-Inline at `rlinf/x.py:42`: <one sentence: what goes wrong and when; the fix lives in the inline comment>
-
-Code walkthrough:
-
-<quoted snippets from the PR, and from main when compared, each under a `path:line` line; then the steps from the input to the bug>
-
-Evidence: <the command and its result, or the trace; for an unresolved finding, what would settle it>
-
 #### F2 · major · docs: <plain title>
 
-<what it tries to do, what happens instead, and why it matters, written like an inline comment>
+<what it tries to do, what happens instead, and why it matters, in 1-3 plain sentences>
 
 Suggested fix: <one sentence, then a code block when code changes>
 
-Code walkthrough:
-
-<as for F1>
-
-Evidence: <as for F1>
+Evidence: <one line: command and result, or trace; for unresolved, what settles it>
 """
 PAYLOAD_KEYS = {"commit_id", "event", "body", "comments"}
 COMMENT_KEYS = {"path", "line", "side", "start_line", "start_side", "body"}
 MAX_COMMENT_PROSE = 1000
 MAX_MINOR_FINDINGS = 5
+MAX_REPRO_BULLET = 300
 
 
 @dataclass(frozen=True)
@@ -494,10 +482,17 @@ class ReviewLinter:
                 self.error("body", f"line {row.n}: {row.id} has a second table row")
             seen.add(row.id)
             section = sections.get(row.id)
+            if row.posted == "inline":
+                if section is not None:
+                    self.error(
+                        "body",
+                        f"line {section.n}: {row.id} is posted inline; do not repeat it as a section in the main comment",
+                    )
+                continue
             if section is None:
                 self.error(
                     "body",
-                    f"{row.id} is in the table but has no '#### {row.id} · ...' section",
+                    f"{row.id} is posted here but has no '#### {row.id} · ...' section",
                 )
                 continue
             if (section.severity, section.category) != (row.severity, row.category):
@@ -548,13 +543,8 @@ class ReviewLinter:
             for line in text.splitlines()
         ):
             self.error(where, f"the section needs an '{EVIDENCE_LEAD}' paragraph")
-        if row.posted == "here" and FIX_LEAD not in text:
+        if FIX_LEAD not in text:
             self.error(where, f"a finding posted here needs a '{FIX_LEAD}' paragraph")
-        if row.posted == "inline" and FIX_LEAD in text:
-            self.error(
-                where,
-                "the suggested fix of an inline finding lives only in its inline comment",
-            )
         if any(line.strip() == WALKTHROUGH_LEAD for line in section.lines) and not any(
             Markdown.FENCE.match(line) for line in raw_slice
         ):
@@ -595,14 +585,31 @@ class ReviewLinter:
             if i not in matched:
                 self.error(
                     f"comment {i + 1} ({c.get('path')}:{c.get('line')})",
-                    "has no inline row in the findings table; every inline comment is a finding with a row and a section",
+                    "has no inline row in the findings table; every inline comment needs an inline row in the findings table",
                 )
 
     def check_reproduction(self, lines: list[tuple[int, str]]) -> None:
         text = [line.strip() for _, line in lines]
         for label in REPRO_LABELS:
-            if not any(t.startswith(label) and t[len(label) :].strip() for t in text):
+            matches = [
+                t for t in text if t.startswith(label) and t[len(label) :].strip()
+            ]
+            if not matches:
                 self.error("body", f"Reproduction needs a '{label}' bullet")
+                continue
+            bullet = matches[0]
+            content = bullet[len(label) :].strip()
+            if label == "- Result:" and not content.startswith(REPRO_STATUSES):
+                self.warn(
+                    "body",
+                    f"start '- Result:' with one of {', '.join(REPRO_STATUSES)} so the outcome is clear at a glance",
+                )
+            if len(bullet) > MAX_REPRO_BULLET:
+                self.warn(
+                    "body",
+                    f"Reproduction '{label}' bullet is {len(bullet)} characters (limit {MAX_REPRO_BULLET}); "
+                    "keep only outcome, key metrics, and essential hardware/command",
+                )
 
     def check_comment(self, i: int, c: dict, seen: set) -> None:
         path, line, body = c.get("path"), c.get("line"), c.get("body") or ""
@@ -630,6 +637,12 @@ class ReviewLinter:
             )
         if FIX_LEAD not in body:
             self.error(where, f"every inline comment needs a '{FIX_LEAD}' paragraph")
+        if not any(
+            line.strip().startswith(EVIDENCE_LEAD)
+            and line.strip()[len(EVIDENCE_LEAD) :].strip()
+            for _, line in Markdown.unfenced(body)
+        ):
+            self.error(where, f"every inline comment needs an '{EVIDENCE_LEAD}' line")
         if "```suggestion" in body and side == "LEFT":
             self.error(
                 where, "a suggestion block only applies to RIGHT-side (new) lines"
@@ -638,7 +651,7 @@ class ReviewLinter:
         if Markdown.prose_length(body) > MAX_COMMENT_PROSE:
             self.warn(
                 where,
-                f"prose is over {MAX_COMMENT_PROSE} characters; move the walkthrough to the finding's section in the main comment",
+                f"prose is over {MAX_COMMENT_PROSE} characters; keep the explanation to 1-3 sentences, a short fix, and a one-line Evidence",
             )
         key = (path, side, line)
         if key in seen:

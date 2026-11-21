@@ -5,7 +5,7 @@ description: Reviews an RLinf pull request for correctness, design, and code reu
 
 # Review a PR
 
-A review is one document in the fixed format of step 8: a verdict, the reproduction, and every finding with its explanation, code walkthrough, and evidence. The terminal shows it to the user exactly as it will be posted, followed by review notes that only the user needs. Only when the user asks for it does it become a GitHub review on the PR: the document as the main comment, plus one inline comment for each finding on a diff line, which carries that finding's suggested fix.
+A review is one concise document in the fixed format of step 8: a verdict, a two-bullet reproduction summary, the findings table, detail sections only for non-inline findings, and one inline comment per diff-line finding (never repeated in the main comment). The terminal shows the main comment and inline comments once, followed by a two-bullet check summary that is not posted. Only when the user asks for it does it become a GitHub review on the PR: the main comment plus the inline comments on their diff lines.
 
 Most of the review is about correctness, clean design, reuse of what RLinf already has, and changes that deviate from the existing codebase without need. Everything else is checked by the skill that owns the area: code and tests by [code](../code/SKILL.md), docs by [docs](../docs/SKILL.md), and install, Docker, and e2e by [install](../install/SKILL.md). Step 3 finds every area the PR touches and step 6 runs each one's check, so no area goes unchecked. PR formatting and commit conventions are checked but should not dominate. [code/patterns.md](../code/patterns.md) is the design standard the PR is measured against, and [reference.md](reference.md) is the checklist for correctness, design, reuse, and style. Read both before step 5.
 
@@ -50,7 +50,7 @@ In the PR worktree, list the areas the PR touches:
 python3 "$SKILLS/route.py" list --base "$BASE"
 ```
 
-It prints each touched area, the `SKILL.md` to read for it, and the area's files. Every listed area is checked in step 6 and gets a row in the report. Files no area owns, such as agent instructions, are listed as unrouted; review them yourself in step 5. The script takes the skills from `$SKILLS`, so a PR that predates them is checked by the current ones.
+It prints each touched area, the `SKILL.md` to read for it, and the area's files. Every listed area is checked in step 6, and any failed or skipped check is noted in the check summary. Files no area owns, such as agent instructions, are listed as unrouted; review them yourself in step 5. The script takes the skills from `$SKILLS`, so a PR that predates them is checked by the current ones.
 
 ## 4. Run the reproduction
 
@@ -60,7 +60,7 @@ A PR that adds or changes a user-facing workflow (a new model, env, algorithm, o
 2. **Start the run when the host has what it needs**, in the background and right away, so it runs while you review. Check first that the accelerators are free (`nvidia-smi`, and `ray status` for other users' clusters), and never stop someone else's job. The run is a fresh agent, never a fork, which would inherit what you have read. Its brief holds only the PR URL, the head SHA, the doc pages to follow, the hardware it may use, and the host's install rules. It works in its own worktree at the PR head, follows only the user docs, does not open `rlinf/` or `tests/`, fixes nothing, and reports the settings it used, the first failure, every intervention, and the functional and metric results separately. A metric claim that needs a long run gets the shortest run the docs define, such as the e2e config, and the report says what that run can and cannot show.
 3. **Otherwise say what is missing.** When the host lacks the hardware, weights, datasets, or accounts, the Reproduction section names what is missing and what a run would need. When the user hands you the record of their own run, report that instead.
 
-Every reproduction follows the user documentation, records the first failure and every intervention, and keeps functional success and metric success as separate conclusions; a run that needed undocumented changes does not show that the workflow is reproducible. You never reproduce the PR yourself, because you have read the implementation. A step of the docs that the run could not follow is a `docs` finding. A passing reproduction only proves the commands execute, not that they are clean, standard, or easy for a human to follow; judge instruction simplicity, YAML-first configuration, and shared setup reuse in step 6. The unit tests and area checks you run are not a reproduction; they belong in the review notes.
+Every reproduction follows the user documentation, records the first failure and every intervention, and keeps functional success and metric success as separate conclusions; a run that needed undocumented changes does not show that the workflow is reproducible. You never reproduce the PR yourself, because you have read the implementation. A step of the docs that the run could not follow is a `docs` finding. A passing reproduction only proves the commands execute, not that they are clean, standard, or easy for a human to follow; judge instruction simplicity, YAML-first configuration, and shared setup reuse in step 6. The unit tests and area checks you run are not a reproduction; they belong in the check summary.
 
 ## 5. Review the code
 
@@ -112,7 +112,7 @@ Try to falsify every candidate before reporting it. When a claim can be checked 
 
 - **confirmed**: there is evidence. Best is a run: a focused unit test, a scratch script in the PR worktree (CPU when it allows), or the input that fails. Otherwise a complete trace that cites every line on the PR head.
 - **unresolved**: plausible, but it needs hardware, assets, or the author's intent to settle. Say what would settle it.
-- **dismissed**: the trace shows it cannot happen, or the code matches the convention on `main`. Keep one line on why.
+- **dismissed**: the trace or run shows it cannot happen, or the code matches the convention on `main`. Drop it silently—do not list dismissed candidates in the output.
 
 Merge findings that share one root cause into a single finding that lists the affected locations instead of splitting one defect across code, YAML, test, and docs rows. Then give each confirmed or unresolved finding a severity on the scale in [README.md § Findings](../README.md#findings): critical, major, or minor. A script's severity is where you start; change it when the evidence says otherwise. Hold `critical` strictly to concrete failure paths (wrong results, crash, deadlock, data loss, broken existing path, failed docs build, or uncompletable workflow); downgrade or drop speculative edge cases with no realistic trigger. The docs skill's Check says when a docs-style finding is major.
 
@@ -120,19 +120,21 @@ Report only real problems. Collapse or drop low-value minor nitpicks so major is
 
 ## 8. Report
 
-Print the review exactly as it will be posted, then the review notes. The review puts what a maintainer decides on first: a verdict line, the reproduction, and the findings. Everything else the user needs to check your work, such as what the PR does, the area checks, the docs pages you read, and the candidates you dismissed, goes in the review notes, which stay in the terminal. A problem the notes turn up is a finding, not a note.
+Keep the output tight and free of repetition. Print the main comment as it will be posted, then each inline comment once, then a two-bullet check summary (not posted).
 
-List findings by severity, and within one severity keep the category order of step 5, so tests, docs, docs-style, and style findings sit together after the code findings. Each finding has one section, and no finding is split across sections. A finding on a diff line is posted inline (step 10): its section holds a one-sentence summary that names the line, plus the walkthrough, and the terminal prints the inline comment right after the section, marked as such, so the user reads the whole finding in one place. The walkthrough quotes the code itself on `path:line` lines (not headings); a reader should never have to chase bare line numbers ("at line 639, then at line 654") in another tab.
+- **Reproduction**: lead with the bold outcome (`**Passed**`, `**Failed**`, `**Partial**`, or `**Not run**`) and the key functional/metric conclusion in one short sentence. Under `Setup:`, keep only essential hardware count/type and the config or command run—omit hostnames, OS, driver/CUDA/Python/venv paths, and the commit SHA already in the verdict line. Keep each bullet concise (under ~300 characters); use a small 2–3 row table only when comparing multiple metrics.
+- **No duplicate findings**: the findings table indexes every finding (`F1`, `F2`, ...), sorted by severity then category. Below the table, write a `#### F<n>` section **only for `Posted = here` findings** (findings with no diff line). Do **not** write a `#### F<n>` section in the main comment for an `inline` finding—an inline finding lives once in its inline comment (carrying its problem, `Suggested fix:`, and one-line `Evidence:`).
+- **No trailing noise**: omit `Dismissed:` lists, restated Goal/Idea/Changes/Risk bullets, and per-page tables of docs that passed.
 
 ````markdown
 **<Recommendation>** · <n critical, n major, n minor, or no findings> · head `<sha7>` · base `main@<sha7>`
 
-<One or two sentences: what the PR does, what blocks it, and any decision a maintainer must make.>
+<One short sentence: what blocks merge, or why it is ready.>
 
 ### Reproduction
 
-- Settings: <the PR revision, hardware and nodes, software environment, model and dataset, config, and commands, and who ran it; or: not run, why, and what a run needs>
-- Result: <the claimed behavior or metrics next to what was observed, functional and metric results separately, with the workload, seeds, and baseline of a metric; the first failure and every intervention; what was not reproduced>
+- Result: **<Passed | Failed | Partial | Not run>** — <one short sentence: functional status and key metric vs. baseline, or first blocker / what is missing>
+- Setup: <hardware count/type and config or command run; or what a run needs if not run>
 
 ### Findings
 
@@ -141,61 +143,38 @@ List findings by severity, and within one severity keep the category order of st
 | F1 | critical | correctness | `rlinf/x.py:42` | <one line> | confirmed | inline |
 | F2 | major | docs | `docs/source-zh/...` | <one line> | confirmed | here |
 
-#### F1 · critical · correctness: <plain title>
-
-Inline at `rlinf/x.py:42`: <one sentence: what goes wrong and when>
-
-Code walkthrough:
-
-<The key snippets from the PR, and from main when compared, each under a `path:line` line, then the steps that lead from the input to the bug.>
-
-Evidence: <the command and its result, or the trace; for an unresolved finding, what would settle it>
-
 #### F2 · major · docs: <plain title>
 
 `docs/source-zh/...`, compared with `main:...` (main-branch cross-check)
 
-<What the code or page tries to do, what happens instead, and why it matters, written like an inline comment (step 10).>
+<What the code or page tries to do, what happens instead, and why it matters, in 1–3 plain sentences.>
 
 Suggested fix: <one sentence>, then a code block when code changes.
 
 Code walkthrough:
 
-<as for F1>
+<Quoted snippets from the PR and from main when compared, each under a `path:line` line, then the steps from input to failure. Omit when not about code.>
 
-Evidence: <as for F1>
+Evidence: <one line: command and result, or trace; for unresolved, what settles it>
 ````
 
-Then the review notes, which are never posted:
+Then list the inline comments once (posted as `comments[]` in step 10, never duplicated in the main comment):
 
 ````markdown
-## Review notes
+### Inline comments (posted on diff lines)
 
-- Goal: <the problem the PR solves>
-- Idea: <the core idea in one or two sentences>
-- Changes: <areas touched, with file counts>
-- Risk: <paths, backends, or envs that could regress>
-- Compared with: <the closest sibling on main>
+**F1** · `rlinf/x.py:42`
 
-`route.py check --base <base>`: <passed, or the areas with critical or major findings> · PR lint: <result>
+<inline comment body from step 10: problem, `Suggested fix:` + code/suggestion, and one-line `Evidence:`>
+````
 
-| Area | Files | Script | Findings |
-|---|---|---|---|
-| code | <n> | <rules that reported, or pass> | F1 |
-| docs | <n> | build en and zh: <clean, or warnings>; <rules that reported, or pass> | F2 |
-| install | <n> | <did not run: what it needs> | — |
+Then the check summary, which is never posted (keep to two compact bullets):
 
-Docs pages, read in full against the docs rules for their type and language:
+````markdown
+## Check summary (not posted)
 
-| Page | Type | Result |
-|---|---|---|
-| `docs/source-en/rst_source/<path>.rst` | recipe | F2 |
-
-<Or: "The PR changes no docs."> <Unrouted files and what was checked in them.> <Tests run: command, hardware, result; and the ones skipped, with why.>
-
-Dismissed:
-
-- <candidate>: <why it does not apply>
+- Checks: `route.py check` (<pass or findings>) · `lint_pr` (<result>) · tests (<command, hardware, result; or skipped + why>)
+- Context: compared with <closest sibling on main>; <any area check that could not run and why>
 ````
 
 ## 9. Post only when asked
@@ -206,7 +185,7 @@ A posted review is changed in place rather than posted again; only a second roun
 
 ## 10. Post
 
-Write the review as the JSON payload of GitHub's create-review API in the scratchpad, with `json.dump` so the escaping is right, then lint it and post it. The body is the review of step 8 without the review notes:
+Write the review as the JSON payload of GitHub's create-review API in the scratchpad, with `json.dump` so the escaping is right, then lint it and post it. The body is the main comment of step 8 (without `### Inline comments` or `## Check summary`):
 
 ```bash
 python3 .agents/skills/review-pr/lint_review.py template      # main-comment skeleton
@@ -227,7 +206,7 @@ python3 .agents/skills/review-pr/lint_review.py update --pr "$N" --review <id> r
 }
 ```
 
-`event` is `COMMENT`, or `REQUEST_CHANGES` when the user asks for it. `lint` checks the verdict line, the two sections in order, that every row of the findings table has one section and every section one row, that every inline row has an inline comment at its location and every inline comment a row, that each finding's `Suggested fix:` sits in exactly one place, the `Evidence:` paragraph of every finding, unclosed code fences, HTML and leftover placeholders, the Reproduction bullets, hard-wrapped lines, the body length, warnings for unquoted `Code walkthrough:` blocks, hedging phrases, or excessive minor findings, and, with `--pr`, that every comment sits on a line of the PR diff and not on a line that already has a thread. `update` runs the same checks against the inline comments the review already holds and replaces only its body. GitHub rejects the whole review when one comment is outside the diff. `post` runs the same lint, posts everything as one review, and prints its URL. Report that URL and the number of inline comments to the user.
+`event` is `COMMENT`, or `REQUEST_CHANGES` when the user asks for it. `lint` checks the verdict line, the two sections in order, that every `here` row of the findings table has one section (and no `inline` row is duplicated as a section in the main comment), that every inline row has an inline comment at its location and every inline comment a row, that every finding carries `Suggested fix:` and `Evidence:` in one place, unclosed code fences, HTML and leftover placeholders, the concise `Result:` / `Setup:` reproduction bullets, hard-wrapped lines, the body length, warnings for overly long reproduction bullets, unquoted `Code walkthrough:` blocks, hedging phrases, or excessive minor findings, and, with `--pr`, that every comment sits on a line of the PR diff and not on a line that already has a thread. `update` runs the same checks against the inline comments the review already holds and replaces only its body. GitHub rejects the whole review when one comment is outside the diff. `post` runs the same lint, posts everything as one review, and prints its URL. Report that URL and the number of inline comments to the user.
 
 ### Where a finding goes
 
@@ -239,7 +218,8 @@ Write for a reader with little background in the module: the PR author knows the
 
 1. The first paragraph says what the code is trying to do, what happens instead, and why it matters. Start from the situation the reader recognizes, then name the identifiers, so the idea is not buried in variable names. One to three sentences.
 2. When the cause or the pattern to follow lives elsewhere, point to it as `main:<path>:<line>` or quote the line.
-3. The last paragraph starts with `Suggested fix:` and says in one sentence what to change. The fix of an inline finding is written only here, so the main comment cannot drift from it; the walkthrough and evidence stay in the finding's section of the main comment. A `suggestion` block follows when the fix replaces exactly the commented lines, so the author can apply it with one click; otherwise a fenced code block with a language tag shows the change. The code is complete and correct; verify indentation, target lines, and syntax, and run it when you can.
+3. Next comes `Suggested fix:` saying in one sentence what to change, followed by a `suggestion` block when the fix replaces exactly the commented lines (so the author can apply it with one click), or a fenced code block with a language tag otherwise. Verify indentation, target lines, and syntax, and run the code when you can.
+4. End with one short `Evidence:` line (the command and result, or the exact trace; for an unresolved finding, what settles it). Because inline findings are not repeated in the main comment, the inline comment is self-contained.
 
 Keep the language plain: short sentences, active voice, no hedging, no filler, no praise, and no severity labels except `Minor:` at the start of a minor finding. Keep each paragraph on one line, because GitHub shows every newline as a line break. Write in English unless the user asks otherwise.
 
@@ -253,6 +233,8 @@ Suggested fix: keep `dones` boolean when you build the mask.
 ```suggestion
         mask = ~dones.bool()
 ```
+
+Evidence: `~torch.tensor([0, 1], dtype=torch.int)` returns `tensor([-1, -2])`.
 ````
 
 A design finding:
@@ -268,6 +250,8 @@ class FooPolicy(BasePolicy):
         env_obs = {**env_obs, "wrist_image": self._wrist_view(env_obs)}
         ...
 ```
+
+Evidence: `huggingface_worker.py:565` passes raw `env_obs` to every `BasePolicy.predict_action_batch` (patterns.md § Contain component code).
 ````
 
 A docs-style finding:
@@ -280,14 +264,16 @@ Suggested fix: describe the loop as the reader sees it, and keep only the config
 ```suggestion
 During rollout, the policy reads each observation from the simulator, predicts the next chunk of actions, and sends it back; the simulator steps every environment and returns the next observation. `actor.model.num_action_chunks` sets how many actions the policy predicts at a time.
 ```
+
+Evidence: `docs/code-name` flagged 4 internal class/file names on this recipe page.
 ````
 
 ### Main comment
 
-The main comment is the review of step 8 without the review notes; `lint_review.py template` prints its skeleton. It puts the problems first and holds nothing else:
+The main comment is the first block of step 8 (without `### Inline comments` or `## Check summary`); `lint_review.py template` prints its skeleton. It puts the problems first and holds nothing else:
 
-- **Verdict.** The first line names exactly one recommendation in bold, then the counts per severity and the revisions reviewed. `Ready for senior review`: no open critical or major finding, and the reproduction succeeded or was not needed. `Changes requested`: open critical or major findings the author can fix. `Blocked`: progress needs more than the author's fixes, such as a maintainer decision, hardware or assets nobody has, another PR, or a reproduction failure the docs cannot explain. The sentence after it says what blocks the PR and names any decision or expert review a maintainer must give.
-- **Reproduction.** Two bullets, `Settings:` and `Result:`, with what step 4 records. Without a run, `Settings:` says why and what a run needs, and `Result:` says what was not reproduced.
-- **Findings.** The table lists every finding, and each finding has one `####` section headed `F<n> · <severity> · <category>: <title>`. `Posted` is `inline` or `here`. An inline finding's section holds a one-sentence summary that names its line. A finding posted here holds the full comment text, written like an inline comment, with its `Suggested fix:`. Every section ends with the code walkthrough, when the finding is about code, and an `Evidence:` paragraph, so a reader can check the finding without leaving the comment. When nothing survived verification, the section says `No findings.` and, in one line, what was checked.
+- **Verdict.** The first line names exactly one recommendation in bold, then the counts per severity and the revisions reviewed. `Ready for senior review`: no open critical or major finding, and the reproduction succeeded or was not needed. `Changes requested`: open critical or major findings the author can fix. `Blocked`: progress needs more than the author's fixes, such as a maintainer decision, hardware or assets nobody has, another PR, or a reproduction failure the docs cannot explain. Follow with one short sentence stating what blocks merge or what decision a maintainer must make.
+- **Reproduction.** Two short bullets, `Result:` (starting with `**Passed**`, `**Failed**`, `**Partial**`, or `**Not run**` and one short conclusion sentence) and `Setup:` (only essential hardware count/type and the config or command run, or what is missing if not run). Omit machine, OS, driver, venv, and SHA boilerplate.
+- **Findings.** The table indexes every finding (`Posted` is `inline` or `here`). Only `here` findings get a `####` section below the table (headed `F<n> · <severity> · <category>: <title>`, with the problem, `Suggested fix:`, optional `Code walkthrough:` when about code, and `Evidence:`). `inline` findings live only in `comments[]` so nothing is repeated. When nothing survived verification, the section says `No findings.` and, in one line, what was checked.
 
 Write the main comment and every inline comment in plain Markdown: no HTML tags such as `<details>` or `<br>`, and no HTML comments; `lint` rejects them, and any `<placeholder>` left from the template. Keep each paragraph on one line, and keep the body under GitHub's limit of 65,536 characters; `lint` reports a longer one.
