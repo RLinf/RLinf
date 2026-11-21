@@ -954,7 +954,10 @@ class EnvWorker(Worker):
                 chunk_id + 1,
             )
         continue_smooth = self.smooth_intervene.on_chunk_done(
-            stage_id, env_output.intervene_flags, env_output.dones
+            stage_id,
+            env_output.intervene_flags,
+            env_output.dones,
+            env=(self.env_list[stage_id] if self.smooth_intervene.enabled else None),
         )
         if continue_smooth and not is_last:
             policy_input = self.smooth_intervene.build_external_policy_input(

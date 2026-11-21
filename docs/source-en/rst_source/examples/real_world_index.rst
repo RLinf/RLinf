@@ -92,7 +92,7 @@ Robbyant R2
 Piper, SO101, and LeKiwi Setup
 ------------------------------
 
-Use these guides to connect a robot and run its hardware test script. Piper, SO101, and LeKiwi do not yet have supported real-world training workflows.
+Use these guides for hardware setup and checks. The SO101 guide also covers online HG-DAgger with a leader arm; the LeKiwi guide covers mobile-base setup and control.
 
 .. grid:: 1 2 2 2
    :gutter: 2
@@ -107,7 +107,7 @@ Use these guides to connect a robot and run its hardware test script. Piper, SO1
       :link: embodied/so101
       :link-type: doc
 
-      Set up motors, calibrate an SO-101, and run the joint and gripper test script.
+      Set up an SO-101, collect demonstrations, run SFT and policy evaluation, and use leader takeover for online HG-DAgger.
 
    .. grid-item-card:: LeKiwi
       :link: embodied/lekiwi

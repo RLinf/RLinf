@@ -92,7 +92,7 @@ Robbyant R2
 Piper、SO101 与 LeKiwi 配置
 --------------------------------
 
-通过以下指南连接机器人并运行硬件测试脚本。Piper、SO101 和 LeKiwi 目前尚未提供真机训练流程。
+使用以下页面完成硬件配置与检查。SO101 页面还介绍主臂在线 HG-DAgger；LeKiwi 页面介绍移动底盘的配置与控制。
 
 .. grid:: 1 2 2 2
    :gutter: 2
@@ -107,7 +107,7 @@ Piper、SO101 与 LeKiwi 配置
       :link: embodied/so101
       :link-type: doc
 
-      配置电机、标定 SO-101，并运行关节与夹爪测试脚本。
+      配置 SO-101，采集示范数据、运行 SFT 和 policy 评测，并在在线 HG-DAgger 中使用主臂接管。
 
    .. grid-item-card:: LeKiwi
       :link: embodied/lekiwi

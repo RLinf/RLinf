@@ -184,6 +184,22 @@ class RealWorldEnv(gym.Env):
             holds.append(hold)
         return np.stack(holds, axis=0)
 
+    def smooth_intervention_active(self) -> bool | None:
+        """Return whether a nested teleop wrapper still owns control."""
+        states = []
+        for env in self.env.envs:
+            try:
+                get_state = env.get_wrapper_attr("smooth_intervention_active")
+            except AttributeError:
+                continue
+            if callable(get_state):
+                state = get_state()
+            else:
+                state = get_state
+            if state is not None:
+                states.append(bool(state))
+        return any(states) if states else None
+
     @property
     def action_space(self) -> gym.Space:
         return self.env.action_space
