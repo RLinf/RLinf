@@ -1,9 +1,33 @@
 PolaRiS Evaluation
 ==================
 
-PolaRiS is a tabletop manipulation simulation platform with DROID-style tasks such as TapeIntoContainer and MoveLatteCup. RLinf supports evaluating OpenPI policies on PolaRiS.
+Overview
+--------
 
-Related training doc: :doc:`../../examples/embodied/polaris`
+PolaRiS is a tabletop manipulation simulation platform built on Isaac Sim 5.1.0 with DROID-style tasks such as TapeIntoContainer and MoveLatteCup. RLinf runs parallel OpenPI evaluation on PolaRiS and reports task-level metrics such as ``eval/success_once``.
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Benchmark
+      :text-align: center
+
+      PolaRiS (DROID tabletop tasks)
+
+   .. grid-item-card:: Models
+      :text-align: center
+
+      OpenPI π₀ · π₀.₅
+
+   .. grid-item-card:: Config Dir
+      :text-align: center
+
+      ``evaluations/polaris/``
+
+   .. grid-item-card:: Related Training
+      :text-align: center
+
+      :doc:`PolaRiS Training <../../examples/embodied/polaris>`
 
 Setup and Run
 -------------
@@ -24,7 +48,7 @@ Install Isaac Sim 5.1.0 and source its ``setup_conda_env.sh`` first (see :doc:`.
          hf download owhan/PolaRiS-Hub --repo-type dataset --local-dir ./PolaRiS-Hub
          hf download RLinf/RLinf-Pi05-Polaris-droid_jointpos --local-dir ./RLinf-Pi05-Polaris-droid_jointpos
 
-         # 3. Launch
+         # 3. Evaluate
          export POLARIS_DATA_PATH="$(pwd)/PolaRiS-Hub"
          bash evaluations/run_eval.sh polaris polaris_tapeintocontainer_openpi_pi05_eval \
            rollout.model.model_path=./RLinf-Pi05-Polaris-droid_jointpos
@@ -41,32 +65,43 @@ Install Isaac Sim 5.1.0 and source its ``setup_conda_env.sh`` first (see :doc:`.
          hf download owhan/PolaRiS-Hub --repo-type dataset --local-dir ./PolaRiS-Hub
          hf download RLinf/RLinf-Pi0-Polaris-droid_jointpos --local-dir ./RLinf-Pi0-Polaris-droid_jointpos
 
-         # 3. Launch
+         # 3. Evaluate
          export POLARIS_DATA_PATH="$(pwd)/PolaRiS-Hub"
          bash evaluations/run_eval.sh polaris polaris_movelattecup_openpi_eval \
            rollout.model.model_path=./RLinf-Pi0-Polaris-droid_jointpos
 
-The terminal prints ``eval/success_once``; see :doc:`../reference/results` for logs.
+.. dropdown:: Example Configs
 
-Example Configs
----------------
+   Available under ``evaluations/polaris/``:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 44 30 26
+
+      * - Config file
+        - Task
+        - Model
+      * - ``polaris_tapeintocontainer_openpi_pi05_eval.yaml``
+        - TapeIntoContainer
+        - π₀.₅
+      * - ``polaris_movelattecup_openpi_eval.yaml``
+        - MoveLatteCup
+        - π₀
+
+Results and Troubleshooting
+---------------------------
+
+The terminal prints ``eval/success_once``; logs and videos go to ``logs/<timestamp>-<config>/`` (see :doc:`../reference/results`).
 
 .. list-table::
    :header-rows: 1
-   :widths: 40 30 30
+   :widths: 34 66
 
-   * - Config file
-     - Task
-     - Model
-   * - ``polaris_tapeintocontainer_openpi_pi05_eval.yaml``
-     - TapeIntoContainer
-     - π₀.₅
-   * - ``polaris_movelattecup_openpi_eval.yaml``
-     - MoveLatteCup
-     - π₀
-
-FAQ
----
-
-- **Dataset path:** ``POLARIS_DATA_PATH`` must point to the PolaRiS-Hub root; ``run_eval.sh`` reads it automatically.
-- **Model conversion:** JAX checkpoints must be converted to PyTorch format per the training doc before evaluation.
+   * - Symptom
+     - Fix
+   * - Scene assets not found
+     - Export ``POLARIS_DATA_PATH`` to your ``PolaRiS-Hub`` root directory; ``run_eval.sh`` reads it automatically.
+   * - Checkpoint format mismatch
+     - Convert JAX checkpoints to PyTorch format per :doc:`../../examples/embodied/polaris` before evaluation.
+   * - Isaac Sim import or startup errors
+     - Install Isaac Sim 5.1.0 and source its ``setup_conda_env.sh`` before activating ``.venv`` and launching ``run_eval.sh``.

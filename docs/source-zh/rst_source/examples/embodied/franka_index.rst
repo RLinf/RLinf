@@ -1,5 +1,5 @@
 单臂 Franka
-===============
+===========
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
    :align: center
@@ -8,9 +8,14 @@
 
    用于真机强化学习、数据采集和 policy 部署的单臂 Franka 平台。
 
-从真机强化学习示例开始，完成单臂 Franka 的配置与 policy 训练，再按需要选择遥操作、数据采集、部署或硬件扩展指南。
+先从核心流程完成单臂 Franka 配置与 policy 训练或部署，再按需求扩展遥操作设备、奖励模型、相机和末端执行器。
 
-.. grid:: 1 2 2 3
+1. 核心流程
+-----------
+
+按训练或部署目标选择单臂 Franka 的主线指南。
+
+.. grid:: 1 3 3 3
    :gutter: 3
 
    .. grid-item-card:: 真机强化学习
@@ -18,18 +23,6 @@
       :link-type: doc
 
       配置单臂 Franka，采集演示数据，并运行在线强化学习训练。
-
-   .. grid-item-card:: GELLO 数据采集
-      :link: franka_gello
-      :link-type: doc
-
-      使用 GELLO 进行关节级遥操作数据采集。
-
-   .. grid-item-card:: VR 遥操作
-      :link: franka_vr
-      :link-type: doc
-
-      使用 VR / PICO 设备进行遥操作。
 
    .. grid-item-card:: 采集、SFT 与部署
       :link: franka_pi0_sft_deploy
@@ -41,19 +34,47 @@
       :link: hg-dagger
       :link-type: doc
 
-      采集人工干预数据，并通过 Human-Gated DAgger 在线改进 Franka policy。
+      采集人工干预数据，并用 Human-Gated DAgger 在线改进 Franka policy。
+
+2. 遥操作与奖励模型
+-------------------
+
+按需为主线流程接入遥操作设备或学习型奖励模型。
+
+.. grid:: 1 3 3 3
+   :gutter: 3
+
+   .. grid-item-card:: GELLO 数据采集
+      :link: franka_gello
+      :link-type: doc
+
+      用 GELLO 采集关节级遥操作示教数据。
+
+   .. grid-item-card:: VR 遥操作
+      :link: franka_vr
+      :link-type: doc
+
+      用 VR 或 PICO 设备遥操作 Franka。
 
    .. grid-item-card:: 奖励模型
       :link: franka_reward_model
       :link-type: doc
 
-      使用学习到的奖励模型训练 Franka。
+      用学习到的奖励模型训练 Franka。
+
+3. 相机与末端执行器
+-------------------
+
+为 Franka 接入可选深度相机、夹爪和灵巧手硬件。
+
+.. grid:: 1 3 3 3
+   :gutter: 3
 
    .. grid-item-card:: ZED + Robotiq
       :link: franka_zed_robotiq
       :link-type: doc
 
-      使用 ZED 相机与 Robotiq 夹爪。
+      配置 ZED 相机与 Robotiq 夹爪。
 
    .. grid-item-card:: Orbbec 相机
       :link: franka_orbbec

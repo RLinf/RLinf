@@ -112,7 +112,7 @@ RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础
   示例 <rst_source/examples/index>
   评测 <rst_source/evaluations/index>
   指南 <rst_source/guides/index>
+  扩展开发 <rst_source/extending/index>
   概念 <rst_source/concepts/index>
   参考 <rst_source/reference/index>
-  扩展 <rst_source/extending/index>
   资源 <rst_source/resources/index>

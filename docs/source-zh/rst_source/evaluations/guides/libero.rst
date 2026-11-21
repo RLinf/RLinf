@@ -1,9 +1,33 @@
 LIBERO 评测
 ===========
 
-LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Spatial、Object、Goal、Long 等任务套件。RLinf 支持在 LIBERO 上并行评测 VLA policy 并输出任务级成功率。
+概览
+----
 
-相关训练文档：:doc:`../../examples/embodied/libero`、:doc:`../../examples/embodied/sft_fastwam`、:ref:`LIBERO-Pro 与 LIBERO-Plus <zh-liberopro-plus-benchmark>`
+LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Spatial、Object、Goal 与 Long（``libero_10``）套件以及 LIBERO-PRO、LIBERO-PLUS 扰动变体。RLinf 支持在 LIBERO 上并行评测 VLA policy，并输出 ``eval/success_once`` 等任务级指标。
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 评测基准
+      :text-align: center
+
+      LIBERO（Spatial · Object · Goal · Long · Pro · Plus）
+
+   .. grid-item-card:: 支持模型
+      :text-align: center
+
+      OpenPI · OpenVLA-OFT · StarVLA · DreamZero · FastWAM · MolmoAct2 · π₀-FAST · Cosmos3
+
+   .. grid-item-card:: 配置目录
+      :text-align: center
+
+      ``evaluations/libero/``
+
+   .. grid-item-card:: 关联训练
+      :text-align: center
+
+      :doc:`LIBERO <../../examples/embodied/libero>` · :doc:`FastWAM <../../examples/embodied/sft_fastwam>`
 
 一键上手
 --------
@@ -42,250 +66,228 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
          bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval \
            rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall
 
-使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``\ （若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``。支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam``、``molmoact2`` 和 ``pi0_fast``，安装时替换 ``--model`` 参数即可。
+使用 ``--env libero`` 时，``install.sh`` 会将 LIBERO 克隆到 ``.venv/libero``\ （若已设置 ``LIBERO_PATH`` 则复用已有目录）并写入 ``.venv/bin/activate`` 的 ``PYTHONPATH``。其他模型可将 ``--model`` 替换为 ``starvla``、``dreamzero``、``fastwam``、``molmoact2`` 或 ``pi0_fast``。SGLang 后端见 :doc:`dreamzero_sglang` 与 :doc:`cosmos3_sglang`；如需与动作块执行重叠以隐藏推理延迟，见 :doc:`RTC <../../guides/rtc>`。
 
-终端输出 ``eval/success_once``；日志见 :doc:`../reference/results`，通用 ``env.eval`` 字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`。
+.. dropdown:: 示例配置
 
-示例配置
---------
+   ``evaluations/libero/`` 已有示例配置：
 
-``evaluations/libero/`` 目录下已有以下示例：
+   .. list-table::
+      :header-rows: 1
+      :widths: 38 28 34
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 35 30
-
-   * - 配置文件
-     - 任务套件
-     - 模型
-   * - ``libero_spatial_openpi_pi05_eval.yaml``
-     - Spatial
-     - π₀.₅
-   * - ``libero_spatial_starvla_eval.yaml``
-     - Spatial
-     - StarVLA
-   * - ``libero_spatial_dreamzero_eval.yaml``
-     - Spatial
-     - DreamZero
-   * - ``libero_spatial_dreamzero_eval_sglang.yaml``
-     - Spatial
-     - DreamZero（SGLang backend）
-   * - ``libero_spatial_fastwam_eval.yaml``
-     - Spatial
-     - FastWAM
-   * - ``libero_spatial_molmoact2_eval.yaml``
-     - Spatial
-     - MolmoAct2
-   * - ``libero_object_openpi_pi05_eval.yaml``
-     - Object
-     - π₀.₅
-   * - ``libero_object_openvlaoft_eval.yaml``
-     - Object
-     - OpenVLA-OFT
-   * - ``libero_object_fastwam_eval.yaml``
-     - Object
-     - FastWAM
-   * - ``libero_object_molmoact2_eval.yaml``
-     - Object
-     - MolmoAct2
-   * - ``libero_goal_openpi_eval.yaml``
-     - Goal
-     - π₀
-   * - ``libero_goal_openvlaoft_eval.yaml``
-     - Goal
-     - OpenVLA-OFT
-   * - ``libero_goal_fastwam_eval.yaml``
-     - Goal
-     - FastWAM
-   * - ``libero_goal_molmoact2_eval.yaml``
-     - Goal
-     - MolmoAct2
-   * - ``libero_10_openpi_pi05_eval.yaml``
-     - Long (libero_10)
-     - π₀.₅
-   * - ``libero_10_apxinf_pi05_eval.yaml``
-     - Long (libero_10)
-     - π₀.₅（ApxInf backend）
-   * - ``libero_10_openvlaoft_eval.yaml``
-     - Long (libero_10)
-     - OpenVLA-OFT
-   * - ``libero_10_fastwam_eval.yaml``
-     - Long (libero_10)
-     - FastWAM
-   * - ``libero_10_molmoact2_eval.yaml``
-     - Long (libero_10)
-     - MolmoAct2
-   * - ``libero_10_pi0_fast_eval.yaml``
-     - Long (libero_10)
-     - π₀-FAST
-
-DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。Cosmos3 SGLang backend 见 :doc:`cosmos3_sglang`。
-
-如需通过与动作块执行重叠来隐藏推理延迟，请参考 :doc:`RTC <../../guides/rtc>`。
+      * - 配置文件
+        - 任务套件
+        - 模型
+      * - ``libero_spatial_openpi_pi05_eval.yaml``
+        - Spatial
+        - π₀.₅
+      * - ``libero_spatial_starvla_eval.yaml``
+        - Spatial
+        - StarVLA
+      * - ``libero_spatial_dreamzero_eval.yaml``
+        - Spatial
+        - DreamZero
+      * - ``libero_spatial_dreamzero_eval_sglang.yaml``
+        - Spatial
+        - DreamZero（SGLang 后端）
+      * - ``libero_spatial_cosmos3_eval_sglang.yaml``
+        - Spatial
+        - Cosmos3（SGLang 后端）
+      * - ``libero_spatial_fastwam_eval.yaml``
+        - Spatial
+        - FastWAM
+      * - ``libero_spatial_molmoact2_eval.yaml``
+        - Spatial
+        - MolmoAct2
+      * - ``libero_object_openpi_pi05_eval.yaml``
+        - Object
+        - π₀.₅
+      * - ``libero_object_openvlaoft_eval.yaml``
+        - Object
+        - OpenVLA-OFT
+      * - ``libero_object_fastwam_eval.yaml``
+        - Object
+        - FastWAM
+      * - ``libero_object_molmoact2_eval.yaml``
+        - Object
+        - MolmoAct2
+      * - ``libero_goal_openpi_eval.yaml``
+        - Goal
+        - π₀
+      * - ``libero_goal_openvlaoft_eval.yaml``
+        - Goal
+        - OpenVLA-OFT
+      * - ``libero_goal_fastwam_eval.yaml``
+        - Goal
+        - FastWAM
+      * - ``libero_goal_molmoact2_eval.yaml``
+        - Goal
+        - MolmoAct2
+      * - ``libero_10_openpi_pi05_eval.yaml``
+        - Long（``libero_10``）
+        - π₀.₅
+      * - ``libero_10_apxinf_pi05_eval.yaml``
+        - Long（``libero_10``）
+        - π₀.₅（ApxInf 后端）
+      * - ``libero_10_openvlaoft_eval.yaml``
+        - Long（``libero_10``）
+        - OpenVLA-OFT
+      * - ``libero_10_fastwam_eval.yaml``
+        - Long（``libero_10``）
+        - FastWAM
+      * - ``libero_10_molmoact2_eval.yaml``
+        - Long（``libero_10``）
+        - MolmoAct2
+      * - ``libero_10_pi0_fast_eval.yaml``
+        - Long（``libero_10``）
+        - π₀-FAST
 
 .. _apxinf-backend:
 
-ApxInf 推理后端
----------------
+.. dropdown:: ApxInf 推理后端
 
-ApxInf 接入仅用于评测。RLinf 通过 `APXinf-robo <https://github.com/RLinf/APXinf-robo>`_ 接入引擎，它封装了 `ApxInf <https://github.com/infinigence/ApxInf>`_ 的 L1 接口。先在 RLinf 运行环境中安装它以及它所封装的 ``apxinf_py`` CUDA binding，再将 ``APXINF_PI05_MODEL_DIR`` 指向包含 ``config.json``、``model.safetensors``、``tokenizer.model`` 与 ``norm_stats.json`` 的 checkpoint：
+   ApxInf 路径仅用于评测。RLinf 通过 `APXinf-robo <https://github.com/RLinf/APXinf-robo>`_ 调用 `ApxInf <https://github.com/infinigence/ApxInf>`_ 的 L1 接口。先在运行环境中安装它及 ``apxinf_py`` CUDA binding，再将 ``APXINF_PI05_MODEL_DIR`` 指向含 ``config.json``、``model.safetensors``、``tokenizer.model`` 与 ``norm_stats.json`` 的目录：
 
-.. code-block:: bash
+   .. code-block:: bash
 
-   export APXINF_PI05_MODEL_DIR=/path/to/pi05_libero_base
-   bash evaluations/run_eval.sh libero libero_10_apxinf_pi05_eval
+      export APXINF_PI05_MODEL_DIR=/path/to/pi05_libero_base
+      bash evaluations/run_eval.sh libero libero_10_apxinf_pi05_eval
 
-该配置保持原生 OpenPI 语义：两路已经完成方向处理的 LIBERO 图像、8 维 state、PI0.5 的无 state prompt、5 个 flow step、预测 10 步并只执行前 5 步。resize、tokenize、checkpoint 归一化与 action 反归一化由 RLinf 原生 OpenPI transforms 负责；ApxInf 的底层 ``Model.infer_rgb`` 只负责模型推理，并默认负责初始高斯 noise 采样。加载走 ``apxinf_robo.load_bare_model``，它会选中调优过的 GEMM tactics，使这个 bare handle 与 ApxInf 自身 policy 路径数值一致。做成对数值对齐时，可设置 ``rollout.model.apxinf.noise_source=observation``，并传入显式的 ``[B,10,32]`` noise tensor。默认使用 10 个环境执行 10 个 rollout epoch，对 LIBERO-10 的每个任务评测 10 个 reset state，共 100 条轨迹。
+   该配置保持原生 OpenPI 语义：两路方向已处理的 LIBERO 图像、8 维 state、π₀.₅ 无 state prompt、5 个 flow step、预测 10 步并执行前 5 步。resize、tokenize、归一化与反归一化由 RLinf 原生 OpenPI transforms 负责；ApxInf 的 ``Model.infer_rgb`` 负责推理及默认高斯噪声采样，经 ``apxinf_robo.load_bare_model`` 加载以对齐数值精度。做数值对齐测试时可设 ``rollout.model.apxinf.noise_source=observation`` 并传入显式 ``[B,10,32]`` 噪声张量。默认 10 个环境 × 10 轮评测 LIBERO-10 每任务 10 个初始状态（共 100 条轨迹）。
 
 .. _libero-eval-config:
 
-评测配置详解
-------------
+.. dropdown:: 评测配置详解
 
-LIBERO 评测会对任务套件中每个 ``(task_id, trial_id)`` 组合各跑一条轨迹，并汇总 ``eval/success_once``\ （轨迹中至少成功一次的比例）。以下字段均在 ``env.eval`` 下配置，共同决定 **并行规模**、**单条轨迹长度** 与 **测试集覆盖范围**。
+   LIBERO 评测对每个 ``(task_id, trial_id)`` 组合运行一条轨迹，并汇总 ``eval/success_once``。`官方仓库 <https://github.com/Lifelong-Robot-Learning/LIBERO>`_ 的四个标准套件（``libero_spatial``、``libero_object``、``libero_goal``、``libero_10``）各含 10 个任务、每任务约 50 个初始状态（共约 500 条轨迹）。
 
-评测协议概述
-~~~~~~~~~~~~
+   **评测协议**
 
-LIBERO 官方为每个任务提供一组固定的初始状态（``task_suite.get_task_init_states(task_id)``，来自 ``.pruned_init`` 文件），`官方仓库 <https://github.com/Lifelong-Robot-Learning/LIBERO>`_ 的标准评测套件为 **LIBERO-Spatial**、**LIBERO-Object**、**LIBERO-Goal** 与 **LIBERO-Long**\ （``libero_10``），各含 10 个任务、每任务约 50 个初始状态，完整评测一个套件约 **500** 条轨迹。RLinf 的 ``evaluations/libero/`` 示例覆盖上述四个 ``task_suite_name``：``libero_spatial``、``libero_object``、``libero_goal``、``libero_10``。
+   各任务的 trial 依次拼接为全局 ``reset_state_id``，评测模式（``is_eval=True``）下按交错顺序遍历——``(task0, trial0), (task1, trial0), …, (task0, trial1), …``——使并行环境在各任务间均匀推进。在一轮 ``rollout_epoch`` 内覆盖全部组合可用大并行（``total_num_envs >= S``）或自动重置（``auto_reset=True`` 配合 ``max_steps_per_rollout_epoch = N * max_episode_steps``）。
 
-在 RLinf 的 LIBERO 环境中，每条评测轨迹由 ``(task_id, trial_id)`` 唯一确定：
+   **各套件步数上限参考**
 
-- ``task_id``：当前 ``task_suite_name`` 下的任务索引（``0 … n_tasks-1``），决定语言指令与 BDDL 场景；
-- ``trial_id``：该任务下的初始状态索引，通过 ``get_task_init_states(task_id)[trial_id]`` 加载 MuJoCo 初始位形。
+   各套件最长训练 demo 决定 ``max_episode_steps`` 参考下限，评测配置须不低于下限且与训练一致：
 
-环境内部将各任务的 trial 依次拼接为全局 ``reset_state_id``，再由 ``reset_state_id`` 反解出 ``task_id`` 与 ``trial_id``。评测模式（``is_eval=True``）下按交错顺序遍历全部 ``reset_state_id``——``(task0, trial0), (task1, trial0), …, (task0, trial1), …``——以保证并行环境下各任务 trial 均匀推进；``auto_reset`` 触发时会按序分配下一个 ``reset_state_id``。
+   .. list-table::
+      :header-rows: 1
+      :widths: 22 20 24 34
 
-一轮 ``rollout_epoch`` 应尽量覆盖套件内全部 ``(task_id, trial_id)`` 组合。实现上有两种方式：
+      * - 套件
+        - 参考下限
+        - RLinf 示例值
+        - 示例配置
+      * - ``libero_spatial``
+        - 220
+        - 240 / 480
+        - ``libero_spatial_openpi_pi05_eval`` / ``libero_spatial_dreamzero_eval``
+      * - ``libero_object``
+        - 280
+        - 280 / 512
+        - ``libero_object_openpi_pi05_eval`` / ``libero_object_openvlaoft_eval``
+      * - ``libero_goal``
+        - 300
+        - 320 / 512
+        - ``libero_goal_openpi_eval`` / ``libero_goal_openvlaoft_eval``
+      * - ``libero_10``
+        - 520
+        - 520
+        - ``libero_10_openpi_pi05_eval`` / ``libero_10_openvlaoft_eval``
 
-1. **大并行**：令 ``total_num_envs`` ≥ 总 init state 数，``max_steps_per_rollout_epoch = max_episode_steps``，每个并行环境只跑一条轨迹（见 ``libero_spatial_openpi_pi05_eval.yaml``）。
-2. **自动重置**：在 ``auto_reset=True`` 时，episode 结束后环境立即加载下一个 init state；将 ``max_steps_per_rollout_epoch`` 设为 ``max_episode_steps`` 的 **N** 倍，则每轮可评测约 ``N × total_num_envs`` 条轨迹（见 ``libero_spatial_dreamzero_eval.yaml``）。
+   通用 ``env.eval`` 字段说明见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`。
 
-各套件步数上限参考值
-~~~~~~~~~~~~~~~~~~~~
+   **覆盖完整测试集**
 
-各套件最长训练 demo 步数决定了步数上限的参考下限；RLinf 评测 YAML 中的 ``max_episode_steps`` 因模型动作频率不同而有所差异，应不低于参考下限，并与训练配置保持一致：
+   设套件总初始状态数为 ``S``，并行环境数为 ``E``，单轨迹步数上限为 ``T``\ （``max_episode_steps``）。
+
+   *方式一：大并行*
+
+   .. code-block:: yaml
+
+      env:
+        eval:
+          total_num_envs: 500                # S，适用于 Spatial / Object / Goal / Long
+          max_episode_steps: 240
+          max_steps_per_rollout_epoch: 240   # 等于 max_episode_steps
+          auto_reset: True                   # E >= S 时可选
+          rollout_epoch: 1
+
+   每个 LIBERO 环境运行在独立进程中，reset 后约占 2 GiB 非共享主机内存（``total_num_envs: 500`` 合计约需 1 TiB）。
+
+   .. warning::
+
+      环境进程是 env worker 的子进程，不属于 Ray worker。主机内存耗尽时，Ray 内存监控可能无法选中可终止的 worker，导致节点失去响应。
+
+   *方式二：自动重置（除非每个环境能分配超过 2 GiB 主机内存并留出 rollout 显存余量，否则推荐此方式）*
+
+   .. code-block:: yaml
+
+      env:
+        eval:
+          total_num_envs: 128
+          max_episode_steps: 480
+          # N = ceil(S / E)；Spatial: ceil(500/128) = 4
+          max_steps_per_rollout_epoch: 1920  # N * max_episode_steps = 4 * 480
+          auto_reset: True
+          ignore_terminations: True
+          use_fixed_reset_state_ids: True
+          use_ordered_reset_state_ids: True
+          rollout_epoch: 1
+
+   设置 ``env.eval.rollout_epoch: 2`` 可多轮取平均。``max_steps_per_rollout_epoch`` 须能被 ``rollout.model.num_action_chunks`` 整除。多个 env worker 的种子带偏移 ``seed + rank × stage_num + stage_id``，保证分配到不同初始状态子集；开启 ``auto_reset`` 时 ``eval/success_once`` 仅在回合完成时计入一次。
+
+.. dropdown:: 进阶用法（LIBERO-PRO、LIBERO-PLUS 与并行规模）
+
+   LIBERO-PRO 与 LIBERO-PLUS 环境安装见 :ref:`LIBERO-Pro 与 LIBERO-Plus <zh-liberopro-plus-benchmark>`。
+
+   **LIBERO-PRO**
+
+   .. code-block:: bash
+
+      export LIBERO_TYPE=pro
+      export LIBERO_PERTURBATION=all
+      bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval
+
+   **LIBERO-PLUS**
+
+   .. code-block:: bash
+
+      export LIBERO_TYPE=plus
+      export LIBERO_SUFFIX=all
+      bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval
+
+   **调整并行规模**
+
+   只调小 ``total_num_envs`` 会缩小覆盖范围（64 个环境配合 240 步预算仅覆盖 500 个初始状态中的 64 个），须同步调大 ``max_steps_per_rollout_epoch``。``total_num_envs`` 须能被 env worker 数整除（``128`` 兼容 1、2、4、8 卡）：
+
+   .. code-block:: bash
+
+      # max_steps_per_rollout_epoch = ceil(500 / 128) * 240 = 960
+      bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
+        env.eval.total_num_envs=128 \
+        env.eval.max_steps_per_rollout_epoch=960 \
+        rollout.model.model_path=/path/to/model
+
+结果与常见问题
+--------------
+
+终端输出 ``eval/success_once``，日志与视频保存在 ``logs/<timestamp>-<config>/``\ （详见 :doc:`../reference/results` 与 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`）。
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 22 28 28
+   :widths: 34 66
 
-   * - 套件
-     - 参考下限
-     - RLinf 示例值
-     - 示例配置
-   * - ``libero_spatial``
-     - 220
-     - 240 / 480
-     - ``libero_spatial_openpi_pi05_eval`` / ``libero_spatial_dreamzero_eval``
-   * - ``libero_object``
-     - 280
-     - 280 / 512
-     - ``libero_object_openpi_pi05_eval`` / ``libero_object_openvlaoft_eval``
-   * - ``libero_goal``
-     - 300
-     - 320 / 512
-     - ``libero_goal_openpi_eval`` / ``libero_goal_openvlaoft_eval``
-   * - ``libero_10``
-     - 520
-     - 520
-     - ``libero_10_openpi_pi05_eval`` / ``libero_10_openvlaoft_eval``
-
-``env.eval`` 各字段的详细说明见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`。
-
-覆盖完整测试集
-~~~~~~~~~~~~~~
-
-设套件总 init state 数为 ``S``，并行环境数为 ``E``，单条轨迹步数上限为 ``T``\ （即 ``max_episode_steps``）。
-
-方式一：大并行
-~~~~~~~~~~~~~~
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       total_num_envs: 500        # S，Spatial / Object / Goal / Long
-       max_episode_steps: 240
-       max_steps_per_rollout_epoch: 240   # 等于 max_episode_steps
-       auto_reset: True           # 可选；E >= S 时影响不大
-       rollout_epoch: 1
-
-每个 LIBERO 环境运行在独立进程中，reset 后约占 2 GiB 主机内存（在 ``libero_spatial`` 上测得），且这部分内存不在环境之间共享。``total_num_envs: 500`` 时，env worker 合计约需 1 TiB 主机内存。
-
-.. warning::
-
-   这些环境进程是 env worker 的子进程，而不是 Ray worker。在一次耗尽主机内存的运行中，Ray 的内存监控（Ray 2.58.0）在日志中报告没有选中可终止的 worker，节点随后失去响应，任务并没有以内存不足错误退出。
-
-**方式二：自动重置（除非 env 节点能为每个环境提供超过约 2 GiB 的主机内存，并为 rollout 模型留出余量，否则推荐此方式）**
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       total_num_envs: 128
-       max_episode_steps: 480
-       # N = ceil(S / E)；Spatial: ceil(500/128) = 4
-       max_steps_per_rollout_epoch: 1920   # N * max_episode_steps = 4 * 480
-       auto_reset: True
-       ignore_terminations: True
-       use_fixed_reset_state_ids: True
-       use_ordered_reset_state_ids: True
-       rollout_epoch: 1
-
-每轮 ``rollout_epoch`` 评测轨迹数约为 ``N × total_num_envs``\ （``N = max_steps_per_rollout_epoch / max_episode_steps``）。例如 Spatial（``S=500``）在 ``E=128`` 时需 ``N = ceil(500/128) = 4``。
-
-**多轮平均**
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       rollout_epoch: 2           # 相同种子下跑两轮，指标取平均
-
-注意事项
-~~~~~~~~
-
-- ``max_steps_per_rollout_epoch`` 必须能被 ``rollout.model.num_action_chunks`` 整除，否则启动时会校验失败。
-- 多个 env worker 的种子带有固定偏移 ``seed + rank × stage_num + stage_id``，保证各 worker 分到不同的 init state 子集。
-- 终端输出的 ``eval/success_once`` 为所有已完成轨迹的成功率；启用 ``auto_reset`` 时，仅在新 episode 完成时计入指标，避免重复统计。
-
-进阶用法
---------
-
-**LIBERO-PRO**
-
-.. code-block:: bash
-
-   export LIBERO_TYPE=pro
-   export LIBERO_PERTURBATION=all
-   bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval
-
-**LIBERO-PLUS**
-
-.. code-block:: bash
-
-   export LIBERO_TYPE=plus
-   export LIBERO_SUFFIX=all
-   bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval
-
-**调整并行规模**
-
-只调小 ``total_num_envs`` 会同时缩小覆盖范围：64 个环境配合配置中 240 步的预算，一轮 rollout epoch 只评测 500 个 init state 中的 64 个。因此需要同步调大 ``max_steps_per_rollout_epoch``，让每个环境依次运行多条轨迹。此外，``total_num_envs`` 必须能被 env worker 进程数整除；128 在 1、2、4、8 张 GPU 上均满足：
-
-.. code-block:: bash
-
-   # max_steps_per_rollout_epoch = ceil(S / E) * max_episode_steps = ceil(500 / 128) * 240
-   bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
-     env.eval.total_num_envs=128 \
-     env.eval.max_steps_per_rollout_epoch=960 \
-     rollout.model.model_path=/path/to/model
-
-常见问题
---------
-
-- **渲染问题：** ``run_eval.sh`` 默认使用 EGL 渲染；若机器不支持 EGL，可 ``export MUJOCO_GL=osmesa`` 与 ``export PYOPENGL_PLATFORM=osmesa``。
-- **评测覆盖范围：** 见上文 :ref:`libero-eval-config`；核心是 ``total_num_envs``、``auto_reset`` 与 ``max_steps_per_rollout_epoch`` 三者的配合。
+   * - 现象
+     - 处理
+   * - 无头服务器 EGL 渲染报错
+     - ``run_eval.sh`` 默认使用 EGL 渲染；机器不支持 EGL 时执行 ``export MUJOCO_GL=osmesa`` 与 ``export PYOPENGL_PLATFORM=osmesa``。
+   * - 测试集覆盖不完整
+     - 参考 :ref:`评测配置详解 <libero-eval-config>`，协调设置 ``total_num_envs``、``auto_reset`` 与 ``max_steps_per_rollout_epoch``。
+   * - 500 并行环境导致主机内存耗尽
+     - 减小 ``total_num_envs``\ （如 ``128``）并启用 ``auto_reset: True`` 与更大的 ``max_steps_per_rollout_epoch``；单个 LIBERO 环境约占 2 GiB 主机内存。
+   * - 步数校验失败
+     - 将 ``max_steps_per_rollout_epoch`` 设为 ``rollout.model.num_action_chunks`` 的整数倍。
 
 .. toctree::
    :hidden:

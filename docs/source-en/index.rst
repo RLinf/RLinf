@@ -112,7 +112,7 @@ Why RLinf
   Examples <rst_source/examples/index>
   Evaluation <rst_source/evaluations/index>
   Guides <rst_source/guides/index>
+  Extending <rst_source/extending/index>
   Concepts <rst_source/concepts/index>
   Reference <rst_source/reference/index>
-  Extending <rst_source/extending/index>
   Resources <rst_source/resources/index>

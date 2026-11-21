@@ -1,119 +1,202 @@
 RL with Real-World Robots
 =========================
 
-Use this section when your starting point is physical robot hardware. Start with Franka if you use a Franka arm or a Franka-based rig; use the other robot pages for ARX X5, YAM, GimArm, XSquare Turtle2, Dexmal DOS-W1, Robbyant R2, AgileX Piper, SO101, and LeKiwi.
+Use this section when your starting point is physical robot hardware. Each robot page covers the steps supported for that platform, from hardware checks and teleoperation to SFT, deployment, and online RL.
 
-Choose a guide for hardware checks, teleoperation, data collection, sim-to-real transfer, deployment, or online RL.
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/realworld_flow.svg
+   :align: center
+   :width: 100%
+   :alt: RLinf real-world robot workflow
 
-.. raw:: html
+   End-to-end real-world workflow: hardware setup, teleoperation and data collection, SFT, policy deployment, and online RL.
 
-   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
+Robot Capability Matrix
+-----------------------
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/franka_index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/franka_index.html" style="text-decoration: underline; color: blue;">
-           <b>Single-Arm Franka</b>
-         </a><br>
-         Use the single-arm Franka section for real-world RL, reward models, data collection, dexterous hands, SFT, and deployment
-       </p>
-     </div>
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/dual_franka_index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/dual_franka_index.html" style="text-decoration: underline; color: blue;">
-           <b>Dual-Arm Franka</b>
-         </a><br>
-         Use the dual-arm Franka section for collection, SFT, deployment, and PICO-assisted HG-DAgger
-       </p>
-     </div>
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/gim_arm.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/gim-arm.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/gim_arm.html" style="text-decoration: underline; color: blue;">
-           <b>GimArm</b>
-         </a><br>
-         Train a 6-DOF GimArm peg-insertion task over SocketCAN with Pinocchio-based FK
-       </p>
-     </div>
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/xsquare_turtle2.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/xsquare_turtle2_arm_small.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/xsquare_turtle2.html" style="text-decoration: underline; color: blue;">
-           <b>XSquare Turtle2</b>
-         </a><br>
-         Run SAC with a CNN policy on the XSquare Turtle2 dual-arm robot
-       </p>
-     </div>
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/dosw1.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dos-w1.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/dosw1.html" style="text-decoration: underline; color: blue;">
-           <b>Dexmal DOS-W1</b>
-         </a><br>
-         Train a flow-matching + SAC pick task on the Dexmal DOS-W1 dual-arm robot
-       </p>
-     </div>
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/arx5.html" style="display: block;"><img src="https://arx-global.us/assets/img/x5.webp"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/arx5.html" style="text-decoration: underline; color: blue;">
-           <b>ARX X5</b>
-         </a><br>
-         Collect dual-arm demonstrations with PICO controllers and three RGB cameras
-       </p>
-     </div>
+Compare what each robot guide covers before choosing a platform.
 
-   </div>
+.. list-table::
+   :header-rows: 1
+   :widths: 22 10 16 14 12 26
 
-YAM
----
+   * - Robot
+     - Setup
+     - Teleop & Collect
+     - SFT / Deploy
+     - Online RL
+     - Guide
+   * - Single-Arm Franka
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - :doc:`Single-Arm Franka (9 guides) <embodied/franka_index>`
+   * - Dual-Arm Franka
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - :doc:`Dual-Arm Franka (3 guides) <embodied/dual_franka_index>`
+   * - ARX X5
+     - ✓
+     - ✓
+     - —
+     - —
+     - :doc:`ARX X5 Guide <embodied/arx5>`
+   * - YAM
+     - ✓
+     - ✓
+     - ✓
+     - —
+     - :doc:`YAM (2 guides) <embodied/yam_index>`
+   * - GimArm
+     - ✓
+     - ✓
+     - —
+     - ✓
+     - :doc:`GimArm Guide <embodied/gim_arm>`
+   * - XSquare Turtle2
+     - ✓
+     - —
+     - —
+     - ✓
+     - :doc:`Turtle2 Guide <embodied/xsquare_turtle2>`
+   * - Dexmal DOS-W1
+     - ✓
+     - ✓
+     - —
+     - ✓
+     - :doc:`DOS-W1 Guide <embodied/dosw1>`
+   * - Robbyant R2
+     - ✓
+     - ✓
+     - —
+     - ✓
+     - :doc:`Robbyant R2 Guide <embodied/r2>`
+   * - AgileX Piper
+     - ✓
+     - —
+     - —
+     - —
+     - :doc:`Piper Guide <embodied/piper>`
+   * - SO-101
+     - ✓
+     - ✓
+     - ✓
+     - —
+     - :doc:`SO-101 Guide <embodied/so101>`
+   * - LeKiwi
+     - ✓
+     - ✓
+     - —
+     - —
+     - :doc:`LeKiwi Guide <embodied/lekiwi>`
 
-Use :doc:`the YAM section <embodied/yam_index>` for dual-arm setup and data collection guides.
+Industrial & Research Arms
+--------------------------
 
-Robbyant R2
------------
+Single-arm and dual-arm manipulators for hardware setup, teleoperation, data collection, SFT, deployment, and online RL.
 
-.. grid:: 1 1 1 1
-   :gutter: 2
+.. grid:: 1 2 3 3
+   :gutter: 3
+
+   .. grid-item-card:: Single-Arm Franka
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
+      :img-alt: Single-Arm Franka
+      :link: embodied/franka_index
+      :link-type: doc
+
+      Real-world RL, teleoperation, data collection, reward models, SFT, deployment, and hardware extensions.
+
+   .. grid-item-card:: Dual-Arm Franka
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka.jpg
+      :img-alt: Dual-Arm Franka
+      :link: embodied/dual_franka_index
+      :link-type: doc
+
+      GELLO and PICO data collection, OpenPI π₀.₅ SFT, policy deployment, and online HG-DAgger.
+
+   .. grid-item-card:: ARX X5
+      :img-top: https://arx-global.us/assets/img/x5.webp
+      :img-alt: ARX X5 robot arms
+      :link: embodied/arx5
+      :link-type: doc
+
+      Collect dual-arm demonstrations with PICO controllers and three RGB cameras in LeRobot format.
+
+   .. grid-item-card:: YAM
+      :link: embodied/yam_index
+      :link-type: doc
+
+      Collect dual-arm PICO demonstrations, fine-tune OpenPI π₀.₅, and evaluate checkpoints on both arms.
+
+   .. grid-item-card:: GimArm
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/gim-arm.png
+      :img-alt: GimArm 6-DoF arm
+      :link: embodied/gim_arm
+      :link-type: doc
+
+      Train a 6-DoF GimArm peg-insertion policy over SocketCAN with VR teleoperation and SAC / RLPD.
+
+   .. grid-item-card:: AgileX Piper
+      :img-top: https://raw.githubusercontent.com/agilexrobotics/piper_ros/noetic/asserts/pictures/piper_urdf_zero.png
+      :img-alt: AgileX Piper arm
+      :link: embodied/piper
+      :link-type: doc
+
+      Configure SocketCAN and verify Piper joint feedback, motion, and gripper control.
+
+Dual-Arm & Humanoid Platforms
+-----------------------------
+
+Integrated bimanual and wheeled humanoid systems for whole-body teleoperation and real-world RL.
+
+.. grid:: 1 2 3 3
+   :gutter: 3
+
+   .. grid-item-card:: XSquare Turtle2
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/xsquare_turtle2_arm_small.jpg
+      :img-alt: XSquare Turtle2 dual-arm robot
+      :link: embodied/xsquare_turtle2
+      :link-type: doc
+
+      Train a visual SAC CNN policy for button pressing on the XSquare Turtle2 dual-arm robot.
+
+   .. grid-item-card:: Dexmal DOS-W1
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/dos-w1.png
+      :img-alt: Dexmal DOS-W1 dual-arm robot
+      :link: embodied/dosw1
+      :link-type: doc
+
+      Collect leader-arm demonstrations and train a Flow Matching + SAC pick policy on DOS-W1.
 
    .. grid-item-card:: Robbyant R2
       :link: embodied/r2
       :link-type: doc
 
-      Run hardware checks, whole-body PICO VR teleoperation, and ``R2ReachEnv-v1`` on the Robbyant R2 wheeled humanoid.
+      Run hardware checks, whole-body PICO VR teleoperation, and joint-reach RL on the Robbyant R2 wheeled humanoid.
 
-Piper, SO101, and LeKiwi
+Low-Cost & Mobile Robots
 ------------------------
 
-Use the SO-101 guide for hardware checks, leader demonstration collection, OpenPI SFT, and local evaluation. Piper and LeKiwi cover hardware setup and test scripts.
+Desktop manipulators and mobile bases built on LeRobot-compatible servo hardware.
 
-.. grid:: 1 2 2 2
-   :gutter: 2
+.. grid:: 1 2 3 3
+   :gutter: 3
 
-   .. grid-item-card:: AgileX Piper
-      :link: embodied/piper
-      :link-type: doc
-
-      Configure CAN and run the Piper joint and gripper test script.
-
-   .. grid-item-card:: SO101
+   .. grid-item-card:: SO-101
+      :img-top: https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp
+      :img-alt: SO-101 follower arm
       :link: embodied/so101
       :link-type: doc
 
-      Set up an SO-101 arm, collect leader demonstrations, run OpenPI SFT, and evaluate locally.
+      Set up and calibrate an SO-101 arm, collect leader demonstrations, run OpenPI SFT, and evaluate locally.
 
    .. grid-item-card:: LeKiwi
       :link: embodied/lekiwi
       :link-type: doc
 
-      Set up the wheel motors, check the front webcam, and drive the mobile base.
+      Configure wheel motors, check the front webcam, and drive the omnidirectional mobile base by keyboard.
 
 .. toctree::
    :hidden:

@@ -1,14 +1,38 @@
 PolaRiS 评测
 ============
 
-PolaRiS 是桌面操作仿真平台，提供 TapeIntoContainer、MoveLatteCup 等 DROID 风格操作任务。RLinf 支持在 PolaRiS 上评测 OpenPI policy。
+概览
+----
 
-相关训练文档：:doc:`../../examples/embodied/polaris`
+PolaRiS 是基于 Isaac Sim 5.1.0 的桌面操作仿真平台，提供 TapeIntoContainer、MoveLatteCup 等 DROID 风格操作任务。RLinf 支持在 PolaRiS 上并行评测 OpenPI policy，并输出 ``eval/success_once`` 等任务指标。
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 评测基准
+      :text-align: center
+
+      PolaRiS（DROID 桌面操作任务）
+
+   .. grid-item-card:: 支持模型
+      :text-align: center
+
+      OpenPI π₀ · π₀.₅
+
+   .. grid-item-card:: 配置目录
+      :text-align: center
+
+      ``evaluations/polaris/``
+
+   .. grid-item-card:: 关联训练
+      :text-align: center
+
+      :doc:`PolaRiS 训练 <../../examples/embodied/polaris>`
 
 一键上手
 --------
 
-请先按 :doc:`../../examples/embodied/polaris` 安装 Isaac Sim 5.1.0 并执行其 ``setup_conda_env.sh``。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
+先按 :doc:`../../examples/embodied/polaris` 安装 Isaac Sim 5.1.0 并执行其 ``setup_conda_env.sh``。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
 .. tab-set::
 
@@ -46,27 +70,38 @@ PolaRiS 是桌面操作仿真平台，提供 TapeIntoContainer、MoveLatteCup �
          bash evaluations/run_eval.sh polaris polaris_movelattecup_openpi_eval \
            rollout.model.model_path=./RLinf-Pi0-Polaris-droid_jointpos
 
-终端输出 ``eval/success_once``；日志见 :doc:`../reference/results`。
+.. dropdown:: 示例配置
 
-示例配置
---------
+   ``evaluations/polaris/`` 已有示例配置：
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 44 30 26
+
+      * - 配置文件
+        - 任务
+        - 模型
+      * - ``polaris_tapeintocontainer_openpi_pi05_eval.yaml``
+        - TapeIntoContainer
+        - π₀.₅
+      * - ``polaris_movelattecup_openpi_eval.yaml``
+        - MoveLatteCup
+        - π₀
+
+结果与常见问题
+--------------
+
+终端输出 ``eval/success_once``，日志与视频保存在 ``logs/<timestamp>-<config>/``\ （详见 :doc:`../reference/results`）。
 
 .. list-table::
    :header-rows: 1
-   :widths: 40 30 30
+   :widths: 34 66
 
-   * - 配置文件
-     - 任务
-     - 模型
-   * - ``polaris_tapeintocontainer_openpi_pi05_eval.yaml``
-     - TapeIntoContainer
-     - π₀.₅
-   * - ``polaris_movelattecup_openpi_eval.yaml``
-     - MoveLatteCup
-     - π₀
-
-常见问题
---------
-
-- **数据集路径：** ``POLARIS_DATA_PATH`` 必须指向 PolaRiS-Hub 根目录，``run_eval.sh`` 会自动读取。
-- **模型转换：** 若使用 JAX checkpoint，需先按训练文档转换为 PyTorch 格式。
+   * - 现象
+     - 处理
+   * - 找不到场景资产
+     - 将 ``POLARIS_DATA_PATH`` 导出为 ``PolaRiS-Hub`` 根目录，``run_eval.sh`` 会自动读取。
+   * - checkpoint 格式不匹配
+     - 若使用 JAX checkpoint，先按 :doc:`../../examples/embodied/polaris` 转换为 PyTorch 格式。
+   * - Isaac Sim 导入或启动报错
+     - 安装 Isaac Sim 5.1.0 并在激活 ``.venv`` 与运行 ``run_eval.sh`` 前执行其 ``setup_conda_env.sh``。

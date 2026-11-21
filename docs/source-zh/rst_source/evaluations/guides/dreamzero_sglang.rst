@@ -1,14 +1,38 @@
 DreamZero SGLang 评测
 =====================
 
-本文档说明如何通过 RLinf 的 SGLang embodied backend 运行 DreamZero LIBERO 评测。该路径用于只做推理评测的场景，要求 DreamZero checkpoint 已转换为 SGLang-native 的组件化目录。
+概览
+----
 
-与 :doc:`../../examples/embodied/sft_dreamzero` 中的原始 DreamZero eval 路径相比，SGLang backend 把庞大的 DreamZero 网络放在独立拉起的 ``sglang serve`` 进程里，而不是在 rollout worker 中加载。但 worker 仍然需要安装 DreamZero 的数据变换栈（包含随 DreamZero 依赖一起安装的 ``groot`` 包）。由 eval driver 拉起 SGLang server group 并把每个 server URL 下发给各 rollout worker；worker 作为瘦客户端，通过 VLA action API 向本 rank 分配到的 URL 发送 batched observation，并将返回的 action chunk 反归一化后送入 LIBERO 环境。
+通过 RLinf 的 SGLang embodied backend 在 LIBERO 上评测 SGLang-native 组件化目录格式的 DreamZero checkpoint。与 :doc:`../../examples/embodied/sft_dreamzero` 中的原始路径相比，评测驱动脚本会拉起独立的 ``sglang serve`` 服务组并向各 rollout worker 分配 server URL；worker 仅保留 DreamZero 数据变换栈（含 ``groot`` 包），以轻量客户端向对应 URL 发送批处理观测，并将返回的动作块反归一化后送入 LIBERO。
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 评测基准
+      :text-align: center
+
+      LIBERO-Spatial（``libero``）
+
+   .. grid-item-card:: 支持模型
+      :text-align: center
+
+      DreamZero WAN2.2-5B（SGLang 后端）
+
+   .. grid-item-card:: 配置目录
+      :text-align: center
+
+      ``evaluations/libero/``
+
+   .. grid-item-card:: 关联训练
+      :text-align: center
+
+      :doc:`DreamZero SFT <../../examples/embodied/sft_dreamzero>`
 
 一键上手
 --------
 
-DreamZero SGLang 评测需要 CUDA 13.0 及以上版本。DreamZero 支持仍在 SGLang PR 中，需在同一虚拟环境中从包含 `sgl-project/sglang#30679 <https://github.com/sgl-project/sglang/pull/30679>`_ 的本地目录安装带 ``diffusion`` extra 的 SGLang。
+DreamZero SGLang 评测需要 CUDA 13.0 及以上版本。由于 DreamZero 支持仍在 SGLang 评审中，需在同一虚拟环境中从包含 `sgl-project/sglang#30679 <https://github.com/sgl-project/sglang/pull/30679>`_ 的本地目录安装带 ``diffusion`` extra 的 SGLang。
 
 中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
@@ -30,69 +54,73 @@ DreamZero SGLang 评测需要 CUDA 13.0 及以上版本。DreamZero 支持仍在
          bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
            rollout.model.model_path=./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
-默认 SGLang 评测配置为 ``evaluations/libero/libero_spatial_dreamzero_eval_sglang.yaml``，使用 `RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers>`_。
+默认配置为 ``evaluations/libero/libero_spatial_dreamzero_eval_sglang.yaml``，使用 `RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers>`_。
 
-checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果 checkpoint 中没有 metadata，可从 LIBERO 数据集生成，并在启动命令中追加 ``rollout.model.metadata_json_path=./metadata.json``：
+.. dropdown:: 生成缺失的 Metadata
 
-.. code-block:: bash
+   checkpoint 中通常包含 ``experiment_cfg/metadata.json``。如果缺失，可从 LIBERO 数据集生成并在启动命令中追加 ``rollout.model.metadata_json_path=./metadata.json``：
 
-   python toolkits/lerobot/generate_dreamzero_metadata.py \
-     --preset libero_sim \
-     --dataset-root /path/to/libero \
-     --output-metadata ./metadata.json
+   .. code-block:: bash
 
-关键配置
---------
+      python toolkits/lerobot/generate_dreamzero_metadata.py \
+        --preset libero_sim \
+        --dataset-root /path/to/libero \
+        --output-metadata ./metadata.json
+
+.. dropdown:: 关键配置与并行覆盖
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 34 66
+
+      * - 字段
+        - 作用
+      * - ``rollout.rollout_backend: sglang``
+        - 选择 SGLang rollout backend。
+      * - ``rollout.sglang.serving_mode: embodied``
+        - 启用具身 SGLang 服务模式，拉起 SGLang server 组并为各 rollout worker 分配推理 URL。
+      * - ``rollout.sglang.server.pipeline_config.default_num_inference_steps``
+        - 控制 server 侧 DreamZero 去噪步数。
+      * - ``rollout.sglang.server.pipeline_config.cfg_scale``
+        - 动作推理使用的 classifier-free guidance 系数。
+      * - ``rollout.sglang.server.cfg_parallel_degree``
+        - 设为 ``2`` 时将 CFG 的正负分支分配到不同 rank。
+      * - ``rollout.sglang.server.tp_size``
+        - DreamZero DiT 的 tensor parallel size。
+      * - ``rollout.sglang.server.sp_degree``
+        - DreamZero DiT 注意力序列的 sequence parallel size。
+      * - ``rollout.model.model_path``
+        - SGLang 加载的 DreamZero Diffusers checkpoint 目录。
+      * - ``rollout.model.metadata_json_path``
+        - 动作推理前后归一化所需的统计信息文件。
+      * - ``rollout.model.num_action_chunks``
+        - 每次请求返回的动作步数；``env.eval.max_steps_per_rollout_epoch`` 须能被该值整除。
+
+   **并行覆盖参数**
+
+   调整本地并行度时，直接在 ``libero_spatial_dreamzero_eval_sglang`` 上通过 Hydra 覆盖字段：
+
+   .. code-block:: bash
+
+      bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
+        rollout.sglang.server.num_gpus=2 \
+        rollout.sglang.server.cfg_parallel_degree=2 \
+        rollout.model.model_path=./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
+
+结果与常见问题
+--------------
+
+评测日志保存在 ``logs/<timestamp>-<config>/eval_embodiment.log``，记录 SGLang server 启动命令、端口就绪状态、逐回合结果及最终 ``eval/success_once``\ （详见 :doc:`../reference/results`）。该配置开启 ``auto_reset: True`` 与有序初始状态以较少并行环境覆盖完整套件，轨迹计数规则见 :ref:`LIBERO 评测配置 <libero-eval-config>`。
 
 .. list-table::
    :header-rows: 1
-   :widths: 34 66
+   :widths: 36 64
 
-   * - 字段
-     - 作用
-   * - ``rollout.rollout_backend: sglang``
-     - 选择 SGLang rollout backend。
-   * - ``rollout.sglang.serving_mode: embodied``
-     - 启用具身 SGLang 服务模式：由评测驱动脚本拉起 SGLang server 组，并为每个 rollout worker 分配 server URL 推理。
-   * - ``rollout.sglang.server.pipeline_config.default_num_inference_steps``
-     - 控制 server 侧 DreamZero denoising steps。
-   * - ``rollout.sglang.server.pipeline_config.cfg_scale``
-     - action inference 使用的 classifier-free guidance scale。
-   * - ``rollout.sglang.server.cfg_parallel_degree``
-     - 设置为 ``2`` 时，将 CFG 的 positive / negative 分支切到不同 rank。
-   * - ``rollout.sglang.server.tp_size``
-     - DreamZero DiT tensor parallel size。
-   * - ``rollout.sglang.server.sp_degree``
-     - DreamZero DiT attention sequence parallel size。
-   * - ``rollout.model.model_path``
-     - SGLang 加载的 DreamZero Diffusers checkpoint 目录。
-   * - ``rollout.model.metadata_json_path``
-     - action inference 前后归一化使用的统计信息。
-   * - ``rollout.model.num_action_chunks``
-     - 每次模型请求返回的 action 数量；``env.eval.max_steps_per_rollout_epoch`` 必须能被该值整除。
-
-并行覆盖参数
-------------
-
-正式支持的 DreamZero SGLang evaluation 入口是 ``libero_spatial_dreamzero_eval_sglang``。本地实验需要调整并行度时，直接覆盖这个配置中的字段，不切换到其他 YAML：
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
-     rollout.sglang.server.num_gpus=2 \
-     rollout.sglang.server.cfg_parallel_degree=2 \
-     rollout.model.model_path=./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
-
-验证
-----
-
-评测日志写入 ``logs/<timestamp>-<config>/``。检查 ``eval_embodiment.log``，其中包含 SGLang server 启动命令、endpoint readiness、逐 episode 结果和最终 ``eval/success_once``。
-
-LIBERO-Spatial SGLang 配置使用 ``auto_reset: True`` 和 ordered reset states，用较少并行环境覆盖完整 suite。LIBERO 轨迹计数规则见 :ref:`libero-eval-config`。
-
-常见问题
---------
-
-- 如果 SGLang 找不到 model components，确认 ``rollout.model.model_path`` 指向下载后的 Diffusers checkpoint 目录。
-- 如果 metadata 加载失败，将 ``rollout.model.metadata_json_path`` 设置为为 ``libero_sim`` 生成的现有 ``metadata.json``。
-- 如果本地 HTTP 请求意外经过 proxy，启动前设置 ``NO_PROXY=127.0.0.1,localhost``。
+   * - 现象
+     - 处理
+   * - SGLang 找不到 model components
+     - 确认 ``rollout.model.model_path`` 指向下载后的 Diffusers checkpoint 目录。
+   * - metadata 加载失败
+     - 将 ``rollout.model.metadata_json_path`` 设为针对 ``libero_sim`` 生成的 ``metadata.json``。
+   * - 本地 HTTP 请求误走代理
+     - 启动评测前设置 ``NO_PROXY=127.0.0.1,localhost``。

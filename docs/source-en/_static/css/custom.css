@@ -605,70 +605,87 @@ html[data-theme="dark"] {
   --rlinf-tab-panel-shadow: 0 2px 12px rgba(0, 0, 0, 0.24);
 }
 
-.bd-article .sd-tab-set {
+.bd-content .bd-article .sd-tab-set {
+  align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem 0.45rem;
+  gap: 0.4rem;
   margin: 1rem 0 1.4rem;
 }
 
-.bd-article .sd-tab-set > label.sd-tab-label {
-  background: var(--rlinf-tab-bg);
+.bd-content .bd-article .sd-tab-set > label.sd-tab-label {
+  background: var(--rlinf-tab-bg) !important;
   border: 1px solid transparent !important;
-  border-radius: 8px;
-  color: var(--pst-color-text-muted);
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  color: var(--pst-color-text-muted) !important;
   cursor: pointer;
   font-size: 0.875rem;
   font-weight: 500;
-  line-height: 1.35;
-  margin: 0;
-  padding: 0.42rem 0.9rem;
+  line-height: 1.35 !important;
+  margin: 0 !important;
+  margin-inline-end: 0 !important;
+  padding: 0.42rem 0.9rem !important;
+  text-decoration: none !important;
+  transform: none !important;
   transition: background-color 150ms ease, color 150ms ease,
     border-color 150ms ease, box-shadow 150ms ease;
 }
 
-.bd-article .sd-tab-set > input:not(:checked) + label.sd-tab-label:hover {
-  background: var(--rlinf-tab-hover-bg);
+.bd-content .bd-article .sd-tab-set > input:not(:checked) + label.sd-tab-label:hover {
+  background: var(--rlinf-tab-hover-bg) !important;
   border-color: transparent !important;
-  color: var(--pst-color-text-base);
+  color: var(--pst-color-text-base) !important;
+  text-decoration: none !important;
+  transform: none !important;
 }
 
-.bd-article .sd-tab-set > input:checked + label.sd-tab-label {
-  background: var(--rlinf-tab-active-bg);
-  border-color: var(--rlinf-tab-active-border) !important;
-  box-shadow: var(--rlinf-tab-active-shadow);
+.bd-content .bd-article .sd-tab-set > input:checked + label.sd-tab-label {
+  background: var(--rlinf-tab-active-bg) !important;
+  border: 1px solid var(--rlinf-tab-active-border) !important;
+  border-radius: 8px !important;
+  box-shadow: var(--rlinf-tab-active-shadow) !important;
   color: var(--rlinf-tab-active-fg) !important;
   font-weight: 600;
+  text-decoration: none !important;
+  transform: none !important;
 }
 
-.bd-article .sd-tab-set > .sd-tab-content {
-  background: var(--rlinf-tab-panel-bg);
-  border: 1px solid var(--rlinf-tab-panel-border);
-  border-radius: 12px;
-  box-shadow: var(--rlinf-tab-panel-shadow);
+.bd-content .bd-article .sd-tab-set > input:focus-visible + label.sd-tab-label {
+  outline: 2px solid var(--pst-color-primary, #2563eb);
+  outline-offset: 2px;
+  border-radius: 8px !important;
+  transform: none !important;
+}
+
+.bd-content .bd-article .sd-tab-set > .sd-tab-content {
+  background: var(--rlinf-tab-panel-bg) !important;
+  border: 1px solid var(--rlinf-tab-panel-border) !important;
+  border-radius: 12px !important;
+  box-shadow: var(--rlinf-tab-panel-shadow) !important;
   margin-top: 0.35rem;
-  padding: 1.15rem 1.25rem;
+  padding: 1.15rem 1.25rem !important;
 }
 
-.bd-article .sd-tab-set > .sd-tab-content .highlight pre {
+.bd-content .bd-article .sd-tab-set > .sd-tab-content .highlight pre {
   border-radius: 8px;
 }
 
 /* Lighter visual treatment if any nested tab-set ever appears. */
-.bd-article .sd-tab-content .sd-tab-set {
+.bd-content .bd-article .sd-tab-content .sd-tab-set {
   margin: 0.75rem 0 1rem;
 }
 
-.bd-article .sd-tab-content .sd-tab-set > label.sd-tab-label {
+.bd-content .bd-article .sd-tab-content .sd-tab-set > label.sd-tab-label {
   font-size: 0.8125rem;
-  padding: 0.3rem 0.7rem;
+  padding: 0.3rem 0.7rem !important;
 }
 
-.bd-article .sd-tab-content .sd-tab-set > .sd-tab-content {
-  background: transparent;
-  border-style: dashed;
-  box-shadow: none;
-  padding: 0.85rem 1rem;
+.bd-content .bd-article .sd-tab-content .sd-tab-set > .sd-tab-content {
+  background: transparent !important;
+  border-style: dashed !important;
+  box-shadow: none !important;
+  padding: 0.85rem 1rem !important;
 }
 
 /* Clean, low-noise dropdowns matching the tab-set cards. */

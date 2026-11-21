@@ -8,11 +8,14 @@ Single-Arm Franka
 
    A single-arm Franka platform for real-world RL, data collection, and policy deployment.
 
-Start with Real-World RL to set up a single-arm Franka and train a policy.
-Then choose a guide for teleoperation, data collection, deployment, or hardware
-extensions.
+Start with **Core Workflows** to set up a single-arm Franka and train or deploy a policy, then pick teleoperation, reward-model, or hardware guides as needed.
 
-.. grid:: 1 2 2 3
+1. Core Workflows
+-----------------
+
+Choose the training or deployment loop you want to run on a single-arm Franka.
+
+.. grid:: 1 3 3 3
    :gutter: 3
 
    .. grid-item-card:: Real-World RL
@@ -20,18 +23,6 @@ extensions.
       :link-type: doc
 
       Set up a single-arm Franka, collect demonstrations, and run online RL training.
-
-   .. grid-item-card:: GELLO Collection
-      :link: franka_gello
-      :link-type: doc
-
-      Collect joint-level teleoperation data with GELLO.
-
-   .. grid-item-card:: VR Teleoperation
-      :link: franka_vr
-      :link-type: doc
-
-      Use VR / PICO devices for teleoperation.
 
    .. grid-item-card:: Collection / SFT / Deployment
       :link: franka_pi0_sft_deploy
@@ -45,11 +36,39 @@ extensions.
 
       Collect interventions and improve a Franka policy with online human-gated DAgger.
 
+2. Teleoperation and Reward Models
+----------------------------------
+
+Add teleoperation input devices or learned reward models to any core workflow.
+
+.. grid:: 1 3 3 3
+   :gutter: 3
+
+   .. grid-item-card:: GELLO Collection
+      :link: franka_gello
+      :link-type: doc
+
+      Collect joint-level teleoperation data with GELLO.
+
+   .. grid-item-card:: VR Teleoperation
+      :link: franka_vr
+      :link-type: doc
+
+      Use VR / PICO devices for teleoperation.
+
    .. grid-item-card:: Reward Model
       :link: franka_reward_model
       :link-type: doc
 
       Train Franka with a learned reward model.
+
+3. Cameras and End-Effectors
+----------------------------
+
+Configure optional depth cameras, grippers, and dexterous hands on your Franka rig.
+
+.. grid:: 1 3 3 3
+   :gutter: 3
 
    .. grid-item-card:: ZED + Robotiq
       :link: franka_zed_robotiq

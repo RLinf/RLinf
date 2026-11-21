@@ -6,10 +6,13 @@ Dual-Arm Franka
    :width: 80%
    :alt: Dual-Arm Franka
 
-   Dual-Franka robot platform.
+   Dual-arm Franka platform for bimanual data collection, SFT, deployment, and online HG-DAgger.
 
-This section collects RLinf workflows for dual-Franka data collection,
-supervised fine-tuning, deployment, and DAgger training.
+Choose a dual-arm Franka guide for GELLO or PICO data collection, OpenPI π₀.₅ fine-tuning and deployment, or online HG-DAgger.
+
+.. note::
+
+   **Workflow:** 1. Collect demonstrations (GELLO or PICO) → 2. SFT and deploy OpenPI π₀.₅ → 3. Improve online with PICO HG-DAgger.
 
 .. grid:: 1 2 3 3
    :gutter: 3
