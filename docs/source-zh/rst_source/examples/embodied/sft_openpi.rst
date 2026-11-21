@@ -99,12 +99,7 @@ BEHAVIOR、RoboTwin、dual-Franka 和 RLT Stage 1 SFT 配置设置 ``precision: 
 使用 FP32。该配置保留 FP32 的 action/time 输入及自适应 norm 条件，主干使用 BF16 计算。
 RLT Stage 1 配置还让 ``rlt_module`` 使用 FP32。
 
-OpenPI 支持 FSDP1 的 ``no_shard``、``shard_grad_op`` 和 ``full_shard``，
-均使用 ``use_orig_params: true``。``no_shard`` 复制全部训练状态；
-``shard_grad_op`` 对梯度和优化器状态分片；``full_shard`` 还在模块执行之间对参数分片。
-选择分片模式可降低每个 rank 的显存占用。设置 ``gradient_checkpointing: true`` 和
-``gradient_checkpointing_use_reentrant: false`` 可进一步降低激活显存。
-BEHAVIOR / RoboTwin 配置使用 ``openpi_cosine`` 学习率调度。
+OpenPI 的 FSDP1 支持 ``no_shard``、``shard_grad_op``、``full_shard`` 和 ``hybrid_shard``，均使用 ``use_orig_params: true``。``no_shard`` 复制全部训练状态。``shard_grad_op`` 对梯度和优化器状态分片，``full_shard`` 还在模块执行之间对参数分片。选择分片模式可降低每个 rank 的显存占用。设置 ``gradient_checkpointing: true`` 和 ``gradient_checkpointing_use_reentrant: false`` 可进一步降低激活显存。BEHAVIOR / RoboTwin 配置使用 ``openpi_cosine`` 学习率调度。
 
 .. code:: yaml
 
@@ -126,6 +121,23 @@ BEHAVIOR / RoboTwin 配置使用 ``openpi_cosine`` 学习率调度。
          param_dtype: bf16
          reduce_dtype: fp32
          buffer_dtype: fp32
+
+选择 ``hybrid_shard``，可以在节点内分片训练状态，并在节点间复制。用 ``hybrid_shard_size`` 指定每个分片组的 actor rank 数。每组至少有 2 个 rank，组大小须整除 actor rank 总数。以下配置适用于两个节点各有 4 个 actor rank 的情况，精度设置沿用上面的配置。
+
+.. code:: yaml
+
+   actor:
+     fsdp_config:
+       strategy: fsdp
+       sharding_strategy: hybrid_shard
+       hybrid_shard_size: 4
+       use_orig_params: true
+
+该配置创建两个副本，每个副本由连续的 4 个 actor rank 分片承载。OpenPI 的 RL 和 DAgger actor 训练也使用这组配置。
+
+.. warning::
+
+   将每组连续的 ``hybrid_shard_size`` 个 actor rank 放在同一节点，才能让参数 all-gather 和 reduce-scatter 留在节点内。按 actor 的实际 placement 设置组大小；actor 可能只占用节点上的部分 GPU。
 
 Tokenizer 由 OpenPI 的 ``ModelTransformFactory`` 按基础模型加载，YAML 里不用单独写 SentencePiece 路径。
 

@@ -107,7 +107,10 @@ class FSDPModelManager:
         if cfg.get("tokenizer", {}).get("tokenizer_model", None) is not None:
             self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
-        self._device_mesh = create_device_mesh(world_size)
+        self._device_mesh = create_device_mesh(
+            world_size,
+            hybrid_shard_size=self._cfg.fsdp_config.get("hybrid_shard_size"),
+        )
         self._dp_group = gradient_reduction_group(self._device_mesh)
 
         self._strategy = FSDPStrategyBase.create(
