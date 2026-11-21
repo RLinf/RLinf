@@ -1152,6 +1152,7 @@ class LiberoEnv(gym.Env):
         valid_action_mask = valid_action_mask_from_counts(
             valid_action_counts, chunk_size
         )
+        chunk_rewards = chunk_rewards.masked_fill(~valid_action_mask, 0)
 
         # Count only completed trials admitted by the evaluation schedule.
         eval_count_mask = None

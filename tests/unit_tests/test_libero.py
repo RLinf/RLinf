@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LIBERO observation preprocessing and episode-local history contracts."""
+"""LIBERO environment contracts."""
 
 from collections import deque
 from unittest.mock import Mock
@@ -23,6 +23,46 @@ import torch
 from omegaconf import OmegaConf
 
 from rlinf.envs.sim.libero.utils import get_libero_image, get_libero_wrist_image
+
+
+@pytest.mark.parametrize("ignore_terminations", [False, True])
+def test_libero_chunk_rewards_stop_at_termination(ignore_terminations):
+    pytest.importorskip("gym")
+    from rlinf.envs.sim.libero.libero_env import LiberoEnv
+
+    env = LiberoEnv.__new__(LiberoEnv)
+    env.cfg = OmegaConf.create({"max_episode_steps": 320, "reward_coef": 1.0})
+    env.num_envs = 1
+    env.task_descriptions = ["task"]
+    env.auto_reset = False
+    env.ignore_terminations = ignore_terminations
+    env.is_eval = False
+    env.is_libero_mem = False
+    env.short_memory = None
+    env.skip_intermediate_renders = False
+    env.use_rel_reward = True
+    env.use_step_penalty = False
+    env.prev_step_reward = np.zeros(1)
+    env._elapsed_steps = np.zeros(1, dtype=np.int32)
+    env._init_metrics()
+
+    obs = {
+        "agentview_image": np.zeros((2, 2, 3), dtype=np.uint8),
+        "robot0_eye_in_hand_image": np.zeros((2, 2, 3), dtype=np.uint8),
+        "robot0_eef_pos": np.zeros(3),
+        "robot0_eef_quat": np.array([0.0, 0.0, 0.0, 1.0]),
+        "robot0_gripper_qpos": np.zeros(2),
+    }
+    env.env = Mock()
+    env.env.step.side_effect = [
+        ([obs], [0.0], np.array([success]), [{}])
+        for success in (False, False, True, False, False)
+    ]
+
+    _, rewards, _, _, _ = env.chunk_step(np.zeros((1, 5, 7)))
+
+    expected = -1.0 if ignore_terminations else 0.0
+    assert rewards.tolist() == [[0.0, 0.0, 1.0, expected, 0.0]]
 
 
 @pytest.mark.parametrize("extract_image", [get_libero_image, get_libero_wrist_image])
