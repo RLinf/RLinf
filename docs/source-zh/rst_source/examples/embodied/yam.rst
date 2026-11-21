@@ -8,9 +8,16 @@
 
 准备两台配备 ``flexible_4310`` 夹爪的 YAM 从臂、3 台 RealSense 相机、PICO 头显与双手柄，以及 ZeroMQ PICO publisher。按 :ref:`PICO 软件准备 <pico-software-setup>` 准备 XRoboToolkit、PC Service 和 publisher，再安装 YAM 运行环境：
 
-.. code-block:: bash
+.. include:: _setup_common.rst
 
-   bash requirements/install.sh embodied --env yam && source .venv/bin/activate
+.. tab-set::
+
+   .. tab-item:: YAM 节点
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env yam && source .venv/bin/activate
 
 安装脚本包含固定版本的 ``i2rt`` backend 和 PICO 传输依赖。启用运动前，核对已安装的机器人模型、工具中心点、关节限位、操作者坐标系到机械臂基座坐标系的 yaw 和运动缩放参数是否与真机一致。
 

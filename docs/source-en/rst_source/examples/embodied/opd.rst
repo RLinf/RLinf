@@ -61,8 +61,10 @@ Implementation details:
 - After rollout, the teacher computes dense token logprobs over stored ``forward_inputs.action_tokens``.
 - OPD loss uses ``loss_mask`` to exclude invalid tokens after success or termination.
 
-Checkpoints
------------
+Setup and Run
+-------------
+
+Install with ``requirements/install.sh`` (in mainland China, append ``--use-mirror`` and set ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``), or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. See :doc:`../../start/installation` for shared options.
 
 .. list-table:: **Checkpoints used by LIBERO-Spatial OPD**
    :header-rows: 1
@@ -74,75 +76,81 @@ Checkpoints
      - ``unnorm_key``
    * - Student
      - |huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_
-     - ``actor.model.model_path`` / ``rollout.model.model_path``
+     - ``actor.model.model_path``
      - ``libero_130_no_noops_trajall``
    * - Teacher
      - |huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130 <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_
      - ``rollout.expert_model.model_path``
      - ``libero_130_no_noops_trajall``
 
-Download the checkpoints:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: OpenVLA-OFT + LIBERO
 
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130 --local-dir RLinf-OpenVLAOFT-LIBERO-130
+      Install the environment and download both student and teacher checkpoints:
 
-Configuration
--------------
+      .. code-block:: bash
 
-The example config is ``examples/embodiment/config/libero_spatial_opd_openvlaoft.yaml``.
-Key fields are:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
+         hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir ./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+         hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130 --local-dir ./RLinf-OpenVLAOFT-LIBERO-130
 
-.. code-block:: yaml
+      Set the student and teacher model paths in ``examples/embodiment/config/libero_spatial_opd_openvlaoft.yaml`` (rollout inherits ``actor.model.model_path`` automatically):
 
-   algorithm:
-     adv_type: opd
-     loss_type: opd
-     loss_agg_func: token-mean
+      .. code-block:: yaml
 
-   actor:
-     global_batch_size: 4096
-     micro_batch_size: 32
-     model:
-       model_path: /path/to/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-       unnorm_key: libero_130_no_noops_trajall
-     optim:
-       lr: 2.0e-6
+         actor:
+           model:
+             model_path: ./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
-   rollout:
-     model:
-       model_path: /path/to/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-     expert_model:
-       model_path: /path/to/RLinf-OpenVLAOFT-LIBERO-130
-       unnorm_key: libero_130_no_noops_trajall
+         rollout:
+           expert_model:
+             model_path: ./RLinf-OpenVLAOFT-LIBERO-130
 
-   env:
-     train:
-       rollout_epoch: 8
-       max_episode_steps: 240
-       max_steps_per_rollout_epoch: 240
+      Launch training:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_spatial_opd_openvlaoft
 
 .. note::
 
-   Student and teacher must use the same ``unnorm_key``. Both checkpoints in this
-   recipe use ``libero_130_no_noops_trajall``.
+   Student and teacher must use the same ``unnorm_key``. Both checkpoints in this recipe use ``libero_130_no_noops_trajall``.
 
-Run
----
+.. dropdown:: Advanced configuration (optional)
 
-Launch the full training run:
+   The shipped config already sets the OPD algorithm, batch size, learning rate, and rollout defaults:
 
-.. code-block:: bash
+   .. code-block:: yaml
 
-   source switch_env openvla-oft
-   bash examples/embodiment/run_embodiment.sh libero_spatial_opd_openvlaoft
+      algorithm:
+        adv_type: opd
+        loss_type: opd
+        loss_agg_func: token-mean
 
-Logs are written under ``runner.logger.log_path`` and can be inspected with TensorBoard:
+      actor:
+        global_batch_size: 4096
+        micro_batch_size: 32
+        model:
+          unnorm_key: libero_130_no_noops_trajall
+        optim:
+          lr: 2.0e-6
 
-.. code-block:: bash
+      rollout:
+        expert_model:
+          unnorm_key: libero_130_no_noops_trajall
 
-   tensorboard --logdir ./logs --port 6006
+      env:
+        train:
+          rollout_epoch: 8
+          max_episode_steps: 240
+          max_steps_per_rollout_epoch: 240
+
+Visualization and Results
+-------------------------
+
+Inspect logs with TensorBoard (``tensorboard --logdir ./logs --port 6006``). For metric definitions, see :doc:`Training metrics <../../reference/metrics>`.
 
 Key metrics:
 

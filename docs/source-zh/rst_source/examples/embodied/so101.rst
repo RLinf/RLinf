@@ -35,27 +35,24 @@ SO101 配置与控制
 安装
 ----
 
-在控制主机上按下方自定义环境流程安装机器人依赖。后续检查均在同一仓库目录和已激活的环境中运行。
-
-机器人控制节点
-~~~~~~~~~~~~~~
-
-在连接机器人的主机上克隆 RLinf，然后安装对应环境。
+在连接机械臂的控制主机上安装机器人依赖，后续命令均在此仓库目录中运行，并保持环境已激活。
 
 .. include:: _setup_common.rst
-   :end-before: 使用下面的
 
-在仓库根目录安装机器人依赖：
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: SO-101
 
-   bash requirements/install.sh embodied --model openpi --env so101 && source .venv/bin/activate
-   export REPO_PATH="$PWD"
+      .. code-block:: bash
 
-安装脚本包含 OpenPI、LeRobot 及 Feetech 电机依赖。后续命令均在此仓库目录中运行，并保持环境已激活。平台要求见 :doc:`安装 </rst_source/start/installation>`。
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env so101 && source .venv/bin/activate
+         export REPO_PATH="$PWD"
+
+安装脚本包含 OpenPI、LeRobot 及 Feetech 电机依赖；平台要求见 :doc:`安装 </rst_source/start/installation>`。
 
 查找串口并配置电机
-^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~
 
 连接舵机控制板的 USB 线缆，以及套件指定的电源。先查找 follower 对应的串口：
 
@@ -83,7 +80,7 @@ SO101 配置与控制
 每次仅将提示中指定的电机连接到控制板。工具设置该电机的 ID 和波特率后，才会提示连接下一个。6 个电机全部配置完成后，按指南完成组装并恢复串联接线。已配置好的机械臂可跳过电机配置，但仍需使用 RLinf 将采用的 ID 完成标定。
 
 标定 Follower
-^^^^^^^^^^^^^
+~~~~~~~~~~~~~
 
 电机配置与组装完成后，在终端中标定 follower，再让 RLinf 打开串行总线：
 
@@ -163,7 +160,7 @@ follower 折叠到初始姿态后，将 leader 放到相同姿态，再输入 ``
 采集示范数据
 -------------
 
-两台机械臂通过硬件检查后，在 ``examples/embodiment/config/realworld_so101_collect_data_joint.yaml`` 中填写 follower、leader 的串口、calibration ID、相机设备和 ``task_description``，并核对配置中的 reset 姿态。先替换设备占位符，确认 reset 姿态适合本机硬件，再连接机械臂。将占位文本 ``<task description>`` 替换为示范数据实际使用的 instruction。采集器会让两台机械臂回到配置的起始姿态，记录 leader 示范，并将可供 SO-101 SFT loader 使用的 LeRobot dataset 写入运行目录。
+两台机械臂通过硬件检查后，在 ``examples/embodiment/config/realworld_so101_collect_data_joint.yaml`` 中填写 follower、leader 的串口、calibration ID、相机设备和 ``task_description``，并核对配置中的 reset 姿态。先替换设备占位符，确认 reset 姿态适合本机硬件，再连接机械臂。将 ``task_description`` 占位符替换为示范数据实际使用的 instruction。采集器会让两台机械臂回到配置的起始姿态，记录 leader 示范，并将可供 SO-101 SFT loader 使用的 LeRobot dataset 写入运行目录。
 
 在仓库根目录启动采集：
 
@@ -200,7 +197,7 @@ RLinf 提供 SO-101 关节空间 SFT 配置和本地 fixed-checkpoint 推理配�
 
    bash examples/sft/run_vla_sft.sh realworld_sft_openpi_so101
 
-本地推理前，在 ``examples/embodiment/config/model/so101_pi05.yaml`` 中填写 checkpoint 和 norm stats 路径，并在 ``examples/embodiment/config/realworld_so101_eval_openpi.yaml`` 中填写 follower 串口、calibration ID 和相机设备，核对配置中的 reset 姿态。替换设备占位符并确认 reset 姿态适合本机硬件后，再连接机械臂。将 ``task_description`` 的占位文本 ``<task description>`` 替换为 SFT 使用的相同 instruction，然后通过统一评测入口启动：
+本地推理前，在 ``examples/embodiment/config/model/so101_pi05.yaml`` 中填写 checkpoint 和 norm stats 路径，并在 ``examples/embodiment/config/realworld_so101_eval_openpi.yaml`` 中填写 follower 串口、calibration ID 和相机设备，核对配置中的 reset 姿态。替换设备占位符并确认 reset 姿态适合本机硬件后，再连接机械臂。将 ``task_description`` 占位符替换为 SFT 使用的相同 instruction，然后通过统一评测入口启动：
 
 .. code-block:: bash
 

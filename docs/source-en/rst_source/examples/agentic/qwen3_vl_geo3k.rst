@@ -8,66 +8,79 @@ GRPO Training for Qwen3-VL Visual Language Reasoning
 
 This document introduces how to train vision-language models (VLMs) for geometric reasoning using reinforcement learning (RL) within the RLinf framework.
 
-Environment & Installation
-----------------------------
-
-**Dependency Versions**
-
-The Qwen3-VL model family requires recent versions of several key dependencies:
-
-- ``torch >= 2.8.0``
-- ``sglang == 0.5.4``
-- ``transformers == 4.57.1``
-
-Older versions of sglang or transformers either do not support or cannot correctly handle Qwen3-VL models.
-
-**One-Click Install**
-
-RLinf provides the ``requirements/install.sh`` script for one-click environment setup:
-
-.. code-block:: bash
-
-   export MEGATRON_PATH=/path/to/Megatron-LM
-   bash requirements/install.sh agentic \
-       --torch 2.8.0 \
-       --sglang 0.5.4 \
-       --transformers 4.57.1 \
-       --no-apex
-
-The script performs the following steps automatically.
-
-.. note::
-
-   ``MEGATRON_PATH`` must point to an existing Megatron-LM repository clone (the ``core_r0.13.0`` branch is recommended).
-   If the directory does not exist, the install script will exit early without installing flash-attn or apex.
-
-.. tip::
-
-   Since this example uses FSDP2 as the training backend, apex is not required. The ``--no-apex`` flag
-   skips apex installation. You may also need this flag when the system CUDA toolkit version
-   (``nvcc --version``) does not match the CUDA version that PyTorch was compiled with,
-   which can cause apex to fail building from source.
-
-**Post-Install Verification**
-
-After installation, verify that the key dependencies are working:
-
-.. code-block:: bash
-
-   source .venv/bin/activate
-   python -c "
-   import torch; print('torch:', torch.__version__)
-   import transformers; print('transformers:', transformers.__version__)
-   import sglang; print('sglang:', sglang.__version__)
-   print('All good')
-   "
-
-Dataset
+Setup and Run
 -------------
 
-We use the geo3K dataset (download from https://huggingface.co/datasets/CAIR-HKISI/geo3k), which contains geometric problems along with their corresponding images and answers.
+The Qwen3-VL model family requires ``torch >= 2.8.0``, ``sglang == 0.5.4``, and
+``transformers == 4.57.1``. In mainland China, append ``--use-mirror`` to
+``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before
+``hf download``. Prebuilt images are available on
+`Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
 
-An example training sample looks like:
+.. tab-set::
+
+   .. tab-item:: Qwen3-VL-2B-Instruct (FSDP2 + SGLang)
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         export MEGATRON_PATH=/path/to/Megatron-LM
+         bash requirements/install.sh agentic \
+             --torch 2.8.0 \
+             --sglang 0.5.4 \
+             --transformers 4.57.1 \
+             --no-apex && source .venv/bin/activate
+
+      .. note::
+
+         ``MEGATRON_PATH`` must point to an existing Megatron-LM repository clone (the ``core_r0.13.0`` branch is recommended). If the directory does not exist, the install script will exit early without installing flash-attn or apex. Since this example uses FSDP2, ``--no-apex`` skips apex compilation.
+
+      Verify the installed versions:
+
+      .. code-block:: bash
+
+         python -c "
+         import torch; print('torch:', torch.__version__)
+         import transformers; print('transformers:', transformers.__version__)
+         import sglang; print('sglang:', sglang.__version__)
+         print('All good')
+         "
+
+      **2. Download**
+
+      Download the base model and the `geo3K dataset <https://huggingface.co/datasets/CAIR-HKISI/geo3k>`__:
+
+      .. code-block:: bash
+
+         hf download Qwen/Qwen3-VL-2B-Instruct --local-dir ./Qwen3-VL-2B-Instruct
+         hf download --repo-type dataset CAIR-HKISI/geo3k --local-dir ./geo3k
+
+      **3. Launch**
+
+      Update ``rollout.model.model_path`` and ``data.train_data_paths`` in ``examples/reasoning/config/vqa/qwen3-vl-2b-grpo-fsdp-geo3k.yaml`` (keep ``rollout.model.model_type: qwen3_vl``), then start the Ray cluster and launch training:
+
+      .. code-block:: bash
+
+         cd /path_to_RLinf/ray_utils;
+         rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
+         export TOKENIZERS_PARALLELISM=false
+         bash start_ray.sh;
+         if [ "$RANK" -eq 0 ]; then
+             bash check_ray.sh 4
+             bash examples/reasoning/run_main_grpo_vqa.sh qwen3-vl-2b-grpo-fsdp-geo3k
+         else
+           sleep 10d
+           rm ray_utils/ray_head_ip.txt;
+         fi
+
+         sleep 10d
+
+Dataset Format
+--------------
+
+An example training sample from geo3K looks like:
 
 .. code-block:: text
 
@@ -132,42 +145,6 @@ Reward function:
 
 - Correct: +1 (configurable via ``reward_max_val``)
 - Incorrect: 0 (configurable via ``reward_min_val``)
-
-Running the Script
--------------------
-
-**1. Configuration File**
-
-Recommended example config:
-
-- ``examples/reasoning/config/vqa/qwen3-vl-2b-grpo-fsdp-geo3k.yaml``
-
-**2. Key Parameters**
-
-Before launching, review the configuration file. The main fields include:
-
-- Paths: ``rollout.model.model_path`` (local path to the base model), ``data.train_data_paths`` (training data paths), etc.
-- Model type: ``rollout.model.model_type`` must be set to ``qwen3_vl``.
-
-**3. Launch Command**
-
-Run the following commands to start a Ray cluster and begin training:
-
-.. code-block:: bash
-
-   cd /path_to_RLinf/ray_utils;
-   rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
-   export TOKENIZERS_PARALLELISM=false
-   bash start_ray.sh;
-   if [ "$RANK" -eq 0 ]; then
-       bash check_ray.sh 4
-       bash examples/reasoning/run_main_grpo_vqa.sh qwen3-vl-2b-grpo-fsdp-geo3k
-   else
-     sleep 10d
-     rm ray_utils/ray_head_ip.txt;
-   fi
-
-   sleep 10d
 
 Technical Details
 ------------------

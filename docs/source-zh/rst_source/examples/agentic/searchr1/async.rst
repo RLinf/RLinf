@@ -46,29 +46,51 @@ Search-R1 异步训练
 
 reward 在 agent loop 内计算（Search-R1 的规则奖励在轨迹和检索文本上解析），因此 rollout 与训练之间没有独立的 reward 模型推理步骤。
 
-启动训练
+一键上手
 --------------------------------
 
-按 :doc:`多机指南 </rst_source/guides/multi_node>` 搭建 Ray 集群：每台机器在 ``ray start`` 之前设置互不相同的 ``RLINF_NODE_RANK``，head 节点为 0，并激活 RLinf 环境。检索服务在训练前于 node 0 上启动；搜索工具 worker 也运行在 node 0 上，因此 ``tools.search.server_addr`` 只需要从 node 0 可达。
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。按 :doc:`多机指南 </rst_source/guides/multi_node>` 搭建 Ray 集群（每台机器在 ``ray start`` 之前设置互不相同的 ``RLINF_NODE_RANK``，head 节点为 0，并激活 RLinf 环境），并在训练前按 :doc:`index` 在 node 0 启动 Qdrant 检索服务。
 
-填写数据路径、模型路径和检索服务地址：
+.. tab-set::
 
-.. code-block:: yaml
+   .. tab-item:: GLM-4.7-Flash（2×8 A100 异步）
 
-   data:
-     train_data_paths: ["/path/to/data/searchr1_train_glm.jsonl"]
-   rollout:
-     model:
-       model_path: /path/to/model/GLM-4.7-Flash
-   tools:
-     search:
-       server_addr: <server_ip>:8000
+      **1. 安装环境**
 
-然后在 head 节点上启动训练：
+      .. code-block:: bash
 
-.. code-block:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-   bash examples/agent/searchr1/run_train.sh train_glm4.7_flash_2node_async
+      **2. 下载模型与数据**
+
+      下载模型与数据集（按 :doc:`glm4.7_flash` 将 ``Search-R1-Data`` 的 prompt 转换为 GLM 消息列表）：
+
+      .. code-block:: bash
+
+         hf download zai-org/GLM-4.7-Flash --local-dir ./GLM-4.7-Flash
+         hf download --repo-type dataset RLinf/Search-R1-Data --local-dir ./Search-R1-Data
+
+      **3. 启动训练**
+
+      在 ``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml`` 中填写数据路径、模型路径和检索服务地址（搜索工具 worker 运行在 node 0 上，``tools.search.server_addr`` 只需从 node 0 可达）：
+
+      .. code-block:: yaml
+
+         data:
+           train_data_paths: ["/path/to/data/searchr1_train_glm.jsonl"]
+         rollout:
+           model:
+             model_path: /path/to/model/GLM-4.7-Flash
+         tools:
+           search:
+             server_addr: <server_ip>:8000
+
+      在 head 节点上启动训练：
+
+      .. code-block:: bash
+
+         bash examples/agent/searchr1/run_train.sh train_glm4.7_flash_2node_async
 
 配置
 --------------------------------

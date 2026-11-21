@@ -53,13 +53,15 @@ ARX X5 数采配置在一台 Ubuntu 24.04 主机上运行双臂控制、三路�
 ------------
 
 .. include:: _setup_common.rst
-   :end-before: 使用下面的
 
-在同一个 Python 环境中安装 RLinf 的 ARX X5、相机和 LeRobot 依赖：
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: ARX X5
 
-   bash requirements/install.sh embodied --env arx5 && source .venv/bin/activate
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env arx5 && source .venv/bin/activate
 
 该命令安装 ``requirements/embodied/envs/arx5.txt`` 中列出的依赖。当前 Python SDK 需要从 `ARXroboticsX/ARX5_beta <https://github.com/ARXroboticsX/ARX5_beta>`_ 单独安装，其仓库根目录直接包含 RLinf 使用的 ``bimanual`` package。每次使用 ARX X5 前，先激活 Python venv，再把克隆的 ``ARX5_beta`` 根目录加入 ``PYTHONPATH``：
 
@@ -136,21 +138,13 @@ ARX X5 数采配置在一台 Ubuntu 24.04 主机上运行双臂控制、三路�
 检查 Dataset
 ------------
 
-成功 episode 会以 LeRobot shard 保存到：
+成功 episode 会以 LeRobot shard 保存到 ``logs/<timestamp>-collect_data_dual_arx5/collected_data/lerobot_dataset/rank_0/id_0/``。
 
-.. code-block:: text
-
-   logs/<timestamp>-collect_data_dual_arx5/
-   └── collected_data/
-       └── lerobot_dataset/
-           └── rank_0/
-               └── id_0/
-
-合并当次运行中的所有 shard，再导出逐帧图片、文本 metadata 和 MP4 预览：
+合并最近一次运行中的所有 shard，再导出逐帧图片、文本 metadata 和 MP4 预览：
 
 .. code-block:: bash
 
-   RUN=logs/<timestamp>-collect_data_dual_arx5
+   RUN=$(ls -td logs/*-collect_data_dual_arx5 | head -n 1)
 
    python toolkits/lerobot/merge_lerobot_datasets.py \
        --source-dir "$RUN/collected_data" \

@@ -6,22 +6,29 @@ This tutorial walks through your first embodied evaluation in about 5 minutes us
 Step 1: Install the Environment
 -------------------------------
 
-From the repository root:
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
+   .. tab-item:: OpenPI + LIBERO
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
 
 Step 2: Prepare the Model
 -------------------------
 
-Download the SFT checkpoint from Hugging Face (``RLinf/RLinf-Pi05-LIBERO-SFT``) to a local directory:
+Download the SFT checkpoint from Hugging Face (`RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__):
 
-.. code-block:: bash
+.. tab-set::
 
-   hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
+   .. tab-item:: OpenPI π₀.₅ (LIBERO)
 
-Model hub: `RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__. You can also override ``rollout.model.model_path`` on the command line at launch time.
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
 Step 3: Launch Evaluation
 -------------------------

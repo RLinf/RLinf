@@ -48,11 +48,18 @@ the training config ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``.
 Installation
 ------------
 
-1. **Pull the RLinf image:**
-   ``rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17``.
-2. **Download model weights:** `Qwen2.5-VL-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct>`_.
-3. **Download the dataset:** `Robo2VLM-1 <https://huggingface.co/datasets/keplerccc/Robo2VLM-1>`_.
-4. **Edit** ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` and run ``examples/sft/run_vlm_sft.sh``.
+Pull the RLinf image and download the `Qwen2.5-VL-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct>`_ weights and `Robo2VLM-1 <https://huggingface.co/datasets/keplerccc/Robo2VLM-1>`_ dataset together. In mainland China, set ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download`` (and append ``--use-mirror`` when running ``requirements/install.sh``).
+
+.. tab-set::
+
+   .. tab-item:: Docker + Model & Dataset
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
+         hf download keplerccc/Robo2VLM-1 --repo-type dataset --local-dir ./Robo2VLM-1
 
 .. warning::
 
@@ -69,123 +76,89 @@ Run It
 
 **1. Configuration**
 
-The launch script uses ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` by default and writes
-logs to ``<repo>/logs/<timestamp>/``. It runs:
-
-.. code:: bash
-
-   python examples/sft/train_vlm_sft.py \
-     --config-path examples/sft/config/ \
-     --config-name <your_config_name> \
-     runner.logger.log_path=<auto_generated_log_dir>
-
-The config structure matches other RLinf training configs; you mainly adapt ``data`` and
-``actor.model``. Fields you must change are commented; keep the rest unchanged for a baseline run.
+Edit ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` and set the dataset and model paths:
 
 .. code:: yaml
 
-   defaults:
-     - override hydra/job_logging: stdout
-
-   hydra:
-     run:
-       dir: .
-     output_subdir: null
-
-   cluster:
-     num_nodes: 1
-     component_placement:
-       actor: all
-
-   runner:
-     task_type: sft
-     logger:
-       log_path: "../results"
-       project_name: rlinf
-       experiment_name: "qwen2_5_vl_sft_demo"
-       logger_backends: ["tensorboard"]
-
-     max_epochs: 6000
-     max_steps: -1
-     val_check_interval: 1000
-     save_interval: 1000
-
    data:
-     type: vlm
-     dataset_name: "robo2vlmsft"
-
-     # Data paths: split train and eval files into different directories
-     train_data_paths: "/path/to/Robo2VLM-1/train_data"
-     # For eval-only runs, set train_data_paths to null
-     val_data_paths: "/path/to/Robo2VLM-1/test_data"
-
-     # Keys must match dataset columns
-     prompt_key: "question"
-     choice_key: "choices"
-     answer_key: "correct_answer"
-     image_keys: ["image"]
-
-     apply_chat_template: True
-     use_chat_template: True
-     max_prompt_length: 1024
-     lazy_loading: false
-     num_workers: 4
-
-   algorithm:
-     adv_type: gae
+     train_data_paths: "./Robo2VLM-1/train_data"
+     val_data_paths: "./Robo2VLM-1/test_data"
 
    actor:
-     group_name: "ActorGroup"
-     training_backend: "fsdp"
-     micro_batch_size: 4
-     eval_batch_size: 4
-     global_batch_size: 256
-     seed: 42
-
      model:
-       model_type: "qwen2.5_vl"
-       precision: fp32
-       # Download model weights locally and set the path here
-       model_path: "/path/to/Qwen2.5-VL-3B-Instruct"
-       is_lora: False
-
-     optim:
-       lr: 1e-5
-       adam_beta1: 0.9
-       adam_beta2: 0.999
-       adam_eps: 1.0e-08
-       weight_decay: 0.01
-       clip_grad: 1.0
-       lr_scheduler: "cosine"
-       total_training_steps: ${runner.max_epochs}
-       lr_warmup_steps: 200
-
-     fsdp_config:
-       strategy: "fsdp"
-       sharding_strategy: "no_shard"
-       use_orig_params: False
-       gradient_checkpointing: False
-       mixed_precision:
-         param_dtype: bf16
-         reduce_dtype: fp32
-         buffer_dtype: bf16
-
-   reward:
-     use_reward_model: False
-
-   critic:
-     use_critic_model: False
+       model_path: "./Qwen2.5-VL-3B-Instruct"
 
 **2. Launch**
 
-Run from the repository root:
+Run from the repository root (the script runs ``examples/sft/train_vlm_sft.py`` and writes logs to ``logs/<timestamp>/``):
 
 .. code:: bash
 
-   bash examples/sft/run_vlm_sft.sh
+   bash examples/sft/run_vlm_sft.sh qwen2_5_vl_sft_vlm
 
-- With no argument, the script uses ``qwen2_5_sft_vlm`` by default.
 - For a different config (e.g. ``my_vlm_config.yaml``), pass its name: ``bash examples/sft/run_vlm_sft.sh my_vlm_config``.
+
+.. dropdown:: Advanced configuration (optional)
+
+   The shipped ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` already sets column keys, batch sizes, optimizer, and FSDP defaults:
+
+   .. code:: yaml
+
+      cluster:
+        num_nodes: 1
+        component_placement:
+          actor: all
+
+      runner:
+        task_type: sft
+        max_epochs: -1
+        max_steps: 6000
+        val_check_interval: 1000
+        save_interval: 1000
+
+      data:
+        type: vlm
+        dataset_name: "robo2vlmsft"
+        prompt_key: "question"
+        choice_key: "choices"
+        answer_key: "correct_answer"
+        image_keys: ["image"]
+        apply_chat_template: True
+        use_chat_template: True
+        max_prompt_length: 1024
+        lazy_loading: true
+        num_workers: 16
+
+      actor:
+        group_name: "ActorGroup"
+        training_backend: "fsdp"
+        micro_batch_size: 4
+        eval_batch_size: 4
+        global_batch_size: 256
+        seed: 42
+        model:
+          model_type: "qwen2.5_vl"
+          precision: fp32
+          is_lora: False
+        optim:
+          lr: 1e-5
+          adam_beta1: 0.9
+          adam_beta2: 0.999
+          adam_eps: 1.0e-08
+          weight_decay: 0.01
+          clip_grad: 1.0
+          lr_scheduler: "cosine"
+          total_training_steps: ${runner.max_steps}
+          lr_warmup_steps: 200
+        fsdp_config:
+          strategy: "fsdp"
+          sharding_strategy: "full_shard"
+          use_orig_params: False
+          gradient_checkpointing: False
+          mixed_precision:
+            param_dtype: bf16
+            reduce_dtype: fp32
+            buffer_dtype: bf16
 
 Eval-Only Mode
 ~~~~~~~~~~~~~~
@@ -195,7 +168,7 @@ To run evaluation only, set ``data.train_data_paths: null`` and point
 
 .. code:: bash
 
-   bash examples/sft/run_vlm_sft.sh <config_name>
+   bash examples/sft/run_vlm_sft.sh qwen2_5_vl_sft_vlm
 
 Visualization and Results
 -------------------------

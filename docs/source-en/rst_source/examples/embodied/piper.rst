@@ -40,30 +40,25 @@ instructions before powering it on.
 Installation
 ------------
 
-Install the robot dependencies on the controller machine using the custom-environment
-workflow below. Run the checks from the same checkout and activated environment.
-
-Robot Controller Node
-~~~~~~~~~~~~~~~~~~~~~
-
-Clone RLinf on the machine connected to the robot, then install its environment.
+Install the robot dependencies on the controller machine connected to the arm. Run subsequent commands from this checkout with the environment activated.
 
 .. include:: _setup_common.rst
-   :end-before: Install dependencies
 
-Install the robot dependencies from the repository root:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: Piper
 
-   bash requirements/install.sh embodied --env piper && source .venv/bin/activate
-   export REPO_PATH="$PWD"
+      .. code-block:: bash
 
-Run subsequent commands from this checkout with the environment activated.
-The installer includes the pinned ``pyAgxArm`` driver used by ``PiperArm``; see
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env piper && source .venv/bin/activate
+         export REPO_PATH="$PWD"
+
+The installer includes the pinned ``pyAgxArm`` driver for Piper; see
 :doc:`Installation </rst_source/start/installation>` for platform prerequisites.
 
 Prepare the CAN Connection
-^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Find the SocketCAN interface with ``ip -brief link``. A USB-to-CAN adapter in
 SocketCAN mode normally appears as ``can0``; replace that name below if yours

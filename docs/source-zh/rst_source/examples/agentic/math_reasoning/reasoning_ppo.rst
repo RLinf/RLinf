@@ -1,12 +1,12 @@
 使用 PPO 训练 Math 推理任务
 ========================================
 
-当你需要在 :doc:`reasoning` 中的同一数学推理任务上使用 actor-critic PPO 时，使用本配方。PPO 与 GRPO 共享大部分启动和数据设置，因此本页只列出 PPO 差异。
+需要在 :doc:`reasoning` 中的同一数学推理任务上使用 actor-critic PPO 时，使用本配方。PPO 与 GRPO 共享大部分启动和数据设置，因此本页只列出 PPO 差异。
 
 概述
 ----------------------------------------
 
-当你希望在与 GRPO 示例相同的数学推理任务上使用 actor-critic PPO 时，请使用本配方。
+希望在与 GRPO 示例相同的数学推理任务上使用 actor-critic PPO 时，请使用本配方。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -31,36 +31,51 @@
 
       多 GPU Megatron 训练
 
-数据集
-----------------------------------------
-
-我们同样采用 boba 数据集，细节请参考 :doc:`reasoning`。
-
 PPO 工作方式
 ----------------------------------------
 
 使用带 GAE advantage 和 critic 的标准 PPO（Proximal Policy Optimization）。算法细节见 :doc:`PPO <../../../reference/algorithms/ppo>`。
 
-运行
+一键上手
 ----------------------------------------
 
-**1. 配置文件**
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。通用路径、集群和 runner 字段见 :doc:`训练配置 <../../../reference/configuration>`。
 
-通用路径、集群和 runner 字段见 :doc:`训练配置 <../../../reference/configuration>`。推荐配置示例：
+.. tab-set::
 
-- ``examples/reasoning/config/math/qwen2.5-1.5b-ppo-megatron.yaml``
+   .. tab-item:: Qwen2.5-1.5B-Instruct（Megatron PPO）
 
-**2. 启动命令**
+      **1. 安装环境**
 
-PPO 训练与 GRPO 训练的启动命令基本相同，也是使用 ``run_main_grpo_math.sh`` 作为入口脚本，RLinf 会通过 yaml 配置文件中是否存在 critic 相关配置以及 adv_type 的取值（PPO 通常使用 gae 作为优势函数）来自动判断是否使用 PPO 训练。
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+
+      **2. 下载模型与数据**
+
+      下载基础模型和 boba 数据集（数据格式细节见 :doc:`reasoning`）：
+
+      .. code-block:: bash
+
+         hf download Qwen/Qwen2.5-1.5B-Instruct --local-dir ./Qwen2.5-1.5B-Instruct
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
+
+      **3. 启动训练**
+
+      在 ``examples/reasoning/config/math/qwen2.5-1.5b-ppo-megatron.yaml`` 中填写模型与数据路径。PPO 与 GRPO 共用入口脚本 ``run_main_grpo_math.sh``，RLinf 根据 YAML 中的 critic 配置及 ``adv_type`` 取值（通常为 ``gae``）自动启用 PPO 训练：
+
+      .. code-block:: bash
+
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-ppo-megatron
 
 
 可视化与结果
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+----------------------------------------
 
 我们基于 Qwen2.5-1.5B-Instruct 模型使用 PPO 训练。橙色为 RLinf，蓝色为 VeRL；两者使用相同算法配置。通用指标含义见 :doc:`训练指标 <../../../reference/metrics>`。
 
-由于 Qwen2.5-1.5B-Instruct 模型基础能力较弱，所以整体 reward 数值较低，但是随着训练的进行，reward 数值明显上升。
+由于 Qwen2.5-1.5B-Instruct 模型基础能力较弱，整体 reward 数值较低，但随着训练推进，reward 数值明显上升。
 
 .. raw:: html
 

@@ -131,12 +131,18 @@ PICO 与收发数据机器的 XRT 链路是否已经连通：
 2. 安装 RLinf 侧依赖
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-运行 PICO intervention 的 RLinf 环境请直接使用 ``franka`` env 安装。
-该 env 包含基础 Franka 真机依赖，以及 VR / PICO 链路所需的 ``pyzmq``：
+运行 PICO intervention 的 RLinf 环境请直接使用 ``franka`` env 安装。该 env 包含基础 Franka 真机依赖，以及 VR / PICO 链路所需的 ``pyzmq``：
 
-.. code-block:: bash
+.. include:: _setup_common.rst
 
-   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+.. tab-set::
+
+   .. tab-item:: Franka 控制节点
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 如果使用 Ray，请在 ``ray start`` **之前** 完成安装并 source 对应环境。
 

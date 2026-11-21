@@ -79,100 +79,55 @@ Observation and Action
 
 .. note::
 
-   RoboCasa includes more atomic tasks, but the public RLinf recipe currently
-   targets ``CloseDrawer`` with ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml``.
+   RoboCasa includes more atomic tasks; the public RLinf recipe targets
+   ``CloseDrawer`` with ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml``.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-Install RoboCasa with the OpenPI dependencies:
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenPI + RoboCasa
 
-   bash requirements/install.sh embodied --model openpi --env robocasa && source .venv/bin/activate
+      **1. Install**
 
-Download the kitchen assets after installing RoboCasa:
+      .. code-block:: bash
 
-.. code:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robocasa && source .venv/bin/activate
 
-   python -m robocasa.scripts.download_kitchen_assets
+      **2. Download**
 
-.. warning::
+      Download the RoboCasa kitchen assets (~5 GB, required once) and the OpenPI π₀ checkpoint:
 
-   The RoboCasa kitchen assets are about 5 GB. Download them once before launching training.
+      .. code-block:: bash
 
-Download the Model
-------------------
+         python -m robocasa.scripts.download_kitchen_assets
+         hf download RLinf/RLinf-Pi0-RoboCasa --local-dir ./RLinf-Pi0-RoboCasa
 
-Download the OpenPI π₀ checkpoint:
+      **3. Launch**
 
-.. code-block:: bash
+      The shipped config is ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml``.
 
-   cd /path/to/save/model
-   hf download RLinf/RLinf-Pi0-RoboCasa --local-dir RLinf-Pi0-RoboCasa
+      .. include:: _model_path.rst
 
-.. include:: _model_path.rst
+      Launch PPO training with ``run_embodiment.sh``:
 
-Run It
-------
+      .. code-block:: bash
 
-Launch the CloseDrawer recipe:
+         bash examples/embodiment/run_embodiment.sh robocasa_closedrawer_ppo_openpi actor.model.model_path=$PWD/RLinf-Pi0-RoboCasa
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 46 26
+      .. dropdown:: Advanced configuration (optional)
 
-   * - Recipe
-     - Config
-     - Command suffix
-   * - OpenPI π₀ + PPO
-     - ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml``
-     - ``robocasa_closedrawer_ppo_openpi``
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh robocasa_closedrawer_ppo_openpi
-
-For standalone evaluation, use the unified :doc:`Evaluation CLI
-<../../evaluations/reference/cli>` with config fallback and the same suffix,
-``robocasa_closedrawer_ppo_openpi``.
-
-.. note::
-
-   The default config uses ``actor,env,rollout: all``. Tune
-   ``env.train.total_num_envs``, ``env.eval.total_num_envs``, and
-   ``actor.global_batch_size`` for your GPU memory budget.
+         - **Memory tuning**: the default config colocates ``actor,env,rollout: all``. Tune ``env.train.total_num_envs``, ``env.eval.total_num_envs``, and ``actor.global_batch_size`` for your GPU memory budget.
+         - **Standalone evaluation**: use the unified :doc:`Evaluation CLI <../../evaluations/reference/cli>` with config fallback and the same suffix, ``robocasa_closedrawer_ppo_openpi``.
 
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable video in the env config when you want rollout videos:
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
-
-Enable W&B or SwanLab by adding logger backends:
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 .. note::
 

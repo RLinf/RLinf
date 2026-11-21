@@ -3,29 +3,29 @@
 
 使用 RLinf 在 RoboLab 的 DROID joint-position 操作任务上评测 π₀.₅。先安装 RoboLab 和 OpenPI，再下载转换后的 checkpoint，查询任务元数据，最后运行单任务或完整的 120 任务 benchmark。观测和动作格式见 :doc:`RoboLab 概览 <../../examples/embodied/robolab>`。
 
-安装环境
+一键上手
 --------
 
-准备 Linux、Python 3.11、``uv`` 和支持 Vulkan 的 NVIDIA GPU。已有评测使用 NVIDIA A800 80 GB 显卡及 570.172.08 驱动。按照 :doc:`安装指南 </rst_source/start/installation>` 准备系统依赖后，在 RLinf 仓库根目录执行：
+准备 Linux、Python 3.11、``uv`` 和支持 Vulkan 的 NVIDIA GPU。已有评测使用 NVIDIA A800 80 GB 显卡及 570.172.08 驱动。按照 :doc:`安装指南 </rst_source/start/installation>` 准备系统依赖。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env robolab
-   source .venv/bin/activate
+   .. tab-item:: OpenPI π₀.₅ + RoboLab
 
-需要镜像源时，在安装命令中添加 ``--use-mirror``。
+      .. code-block:: bash
 
-下载模型
---------
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robolab && source .venv/bin/activate
 
-下载 ``RLinf/RLinf-Pi05-RoboLab-droid-jointpos``，它由 RoboLab 使用的 ``pi05_droid_jointpos`` checkpoint 转换为 PyTorch 格式。此配置预测关节位置，应选择 joint-position checkpoint。
+         # 2. 下载模型
+         hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos --local-dir ./RLinf-Pi05-RoboLab-droid-jointpos
 
-.. code-block:: bash
+         # 3. 启动默认任务（BowlStackingLeftOnRightTask，10 个回合）
+         bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \
+           rollout.model.model_path=./RLinf-Pi05-RoboLab-droid-jointpos
 
-   hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos \
-       --local-dir /path/to/model/RLinf-Pi05-RoboLab-droid-jointpos
-
-下载目录应包含 ``model.safetensors``、``config.json`` 和 ``assets/droid/norm_stats.json``。将 ``evaluations/robolab/robolab_pi05_droid_jointpos.yaml`` 中的 ``rollout.model.model_path`` 改为该目录。
+``RLinf/RLinf-Pi05-RoboLab-droid-jointpos`` 由 RoboLab 使用的 ``pi05_droid_jointpos`` checkpoint 转换为 PyTorch 格式（预测关节位置），下载目录应包含 ``model.safetensors``、``config.json`` 和 ``assets/droid/norm_stats.json``。也可直接修改 ``evaluations/robolab/robolab_pi05_droid_jointpos.yaml`` 中的 ``rollout.model.model_path``；其余 policy 和环境默认设置已写入该文件。
 
 查询 Benchmark 任务
 -------------------
@@ -91,17 +91,6 @@
 导出脚本已经将任务时长换算为控制步数，用户无需手动换算。使用单任务命令切换任务时，将该行的 ``max_steps`` 同时填入上表的两个步数字段；只修改任务名称不会自动更新这两个字段。例如切换到 ``BananaInBowlTask`` 时，两个字段都应设为 750。
 
 这 120 个任务的原生步数均为当前动作块长度 15 的整数倍。如果自行缩短回合上限，应将 ``max_steps_per_rollout_epoch`` 设为不小于该上限的最小 15 的整数倍，例如回合上限为 17 时，rollout 步数设为 30。原生任务终止仍可能让回合提前结束。
-
-运行单任务
-----------
-
-保存 YAML 配置后，在仓库根目录启动评估：
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos
-
-使用默认任务和回合设置时，该命令评测 ``BowlStackingLeftOnRightTask`` 的 10 个回合。其余 policy 和环境默认设置已写入 YAML。
 
 运行全部 120 个任务
 -------------------

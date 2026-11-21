@@ -101,595 +101,364 @@ Observation and Action
    * - Prompt
      - Natural-language task prompt provided with each LIBERO episode.
 
-Installation
-------------
+.. _gr00t-hardware:
 
-Use the NVIDIA setup below, or follow :ref:`the backend-specific setup <gr00t-hardware>` for your hardware.
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-Select your GR00T version:
+NVIDIA CUDA supports GR00T N1.5, N1.6, and N1.7. AMD ROCm, Huawei Ascend CANN, and Moore Threads MUSA support GR00T N1.5 on LIBERO and ManiSkill, and Ascend also supports N1.6 and N1.7 on LIBERO. N1.6 and N1.7 on AMD and MUSA, and IsaacLab on every non-NVIDIA backend, remain unvalidated.
 
 .. tab-set::
 
    .. tab-item:: GR00T N1.5
+      :sync: gr00t
 
-      .. code-block:: bash
+      .. tab-set::
 
-         bash requirements/install.sh embodied --model gr00t --env maniskill_libero && source .venv/bin/activate
+         .. tab-item:: NVIDIA CUDA
+            :sync: cuda
+
+            **1. Install**
+
+            .. code-block:: bash
+
+               git clone https://github.com/RLinf/RLinf.git && cd RLinf
+               bash requirements/install.sh embodied --model gr00t --env maniskill_libero && source .venv/bin/activate
+
+            **2. Download**
+
+            Download the SFT checkpoint for your LIBERO task suite:
+
+            .. code-block:: bash
+
+               # Spatial
+               hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
+
+               # Object
+               hf download RLinf/RLinf-Gr00t-SFT-Object --local-dir ./RLinf-Gr00t-SFT-Object
+
+               # Goal
+               hf download RLinf/RLinf-Gr00t-SFT-Goal --local-dir ./RLinf-Gr00t-SFT-Goal
+
+               # Long
+               hf download RLinf/RLinf-Gr00t-SFT-10 --local-dir ./RLinf-Gr00t-SFT-10
+
+            .. include:: _model_path.rst
+
+            **3. Launch**
+
+            Shipped N1.5 LIBERO configs under ``examples/embodiment/config/`` (see :doc:`Placement <../../concepts/placement>` to customize GPU layout):
+
+            .. list-table::
+               :header-rows: 1
+               :widths: 30 70
+
+               * - Suite
+                 - Config
+               * - LIBERO-Spatial
+                 - ``libero_spatial_ppo_gr00t.yaml``
+               * - LIBERO-Object / Goal / Long
+                 - ``libero_object_ppo_gr00t.yaml`` · ``libero_goal_ppo_gr00t.yaml`` · ``libero_10_ppo_gr00t.yaml``
+
+            Launch PPO training:
+
+            .. code-block:: bash
+
+               bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+
+         .. tab-item:: AMD ROCm
+            :sync: rocm
+
+            ROCm uses PyTorch's CUDA-compatible API, so GR00T N1.5 follows the shared AMD accelerator and installation path without a model-specific patch.
+
+            **1. Install (LIBERO)**
+
+            .. include:: _amd_libero.rst
+
+            The published image already contains the N1.5 environment:
+
+            .. code-block:: bash
+
+               source switch_env gr00t
+
+            For a native installation on a ROCm host (omit ``--rocm`` to detect the installed version):
+
+            .. code-block:: bash
+
+               bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env libero
+               source .venv/bin/activate
+
+            **2. Download**
+
+            .. code-block:: bash
+
+               hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
+
+            .. include:: _model_path.rst
+
+            **3. Launch LIBERO**
+
+            Set the model path in ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` and enable software rendering (or ``egl`` on supported Radeon GPUs) in the active environment:
+
+            .. include:: _libero_osmesa.rst
+
+            .. code-block:: bash
+
+               bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+
+            **ManiSkill on AMD ROCm**
+
+            Install the combined ManiSkill and LIBERO environment for GR00T N1.5:
+
+            .. code-block:: bash
+
+               bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env maniskill_libero
+               source .venv/bin/activate
+
+            Configure CPU simulation:
+
+            .. include:: _maniskill_non_cuda.rst
+
+            RLinf provides the ManiSkill observation and action conversion path for GR00T, without bundling a ManiSkill GR00T task config or checkpoint. Start from a ManiSkill task config and select a GR00T N1.5 checkpoint whose metadata contains the ``maniskill_widowx`` embodiment head, then configure the actor model block (rollout inherits ``model_path``):
+
+            .. code-block:: yaml
+
+               actor:
+                 model:
+                   model_type: gr00t
+                   model_path: /path/to/maniskill-gr00t-checkpoint
+                   obs_converter_type: maniskill
+                   embodiment_tag: maniskill_widowx
+
+            Match the environment's action shape and normalization statistics to the checkpoint metadata, then launch the saved config with ``run_embodiment.sh``.
+
+         .. tab-item:: Huawei Ascend CANN
+            :sync: ascend
+
+            Use the Ascend LIBERO container or a host with CANN and the NPU driver installed.
+
+            **1. Install (LIBERO)**
+
+            .. include:: _ascend_libero.rst
+
+            Inside the published RLinf container, activate the N1.5 environment:
+
+            .. code-block:: bash
+
+               source switch_env gr00t
+
+            For a native installation, select N1.5 and LIBERO explicitly (builds ``decord`` from source when needed on aarch64, applies Ascend TensorFlow pins, skips CUDA flash-attention, and applies NPU patches on model load):
+
+            .. code-block:: bash
+
+               bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
+               source .venv/bin/activate
+
+            .. include:: _ascend_torch.rst
+
+            **2. Download**
+
+            .. code-block:: bash
+
+               hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
+
+            .. include:: _model_path.rst
+
+            **3. Launch LIBERO**
+
+            Set the model path in ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` and enable software rendering in the active environment:
+
+            .. include:: _libero_osmesa.rst
+
+            .. code-block:: bash
+
+               bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+
+            **ManiSkill on Huawei Ascend CANN**
+
+            Install the combined ManiSkill and LIBERO environment for GR00T N1.5:
+
+            .. code-block:: bash
+
+               bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero
+               source .venv/bin/activate
+
+            Configure CPU simulation:
+
+            .. include:: _maniskill_non_cuda.rst
+
+            Start from a ManiSkill task config and a GR00T N1.5 checkpoint whose metadata contains the ``maniskill_widowx`` embodiment head, set the ``actor.model`` block below (rollout inherits ``model_path``), match action shape and normalization statistics to checkpoint metadata, and launch with ``run_embodiment.sh``:
+
+            .. code-block:: yaml
+
+               actor:
+                 model:
+                   model_type: gr00t
+                   model_path: /path/to/maniskill-gr00t-checkpoint
+                   obs_converter_type: maniskill
+                   embodiment_tag: maniskill_widowx
+
+         .. tab-item:: Moore Threads MUSA
+            :sync: musa
+
+            MUSA uses the shared device and installation path plus an N1.5 compatibility patch for the RADIO backbone's CUDA capability check (applied automatically when the worker detects a MUSA accelerator). The vendor image provides a working MUSA flash-attention build.
+
+            **1. Install (LIBERO)**
+
+            .. include:: _musa_libero.rst
+
+            Inside the container, install GR00T N1.5 and LIBERO:
+
+            .. code-block:: bash
+
+               bash requirements/install.sh --platform musa embodied --model gr00t --env libero
+               source .venv/bin/activate
+
+            **2. Download**
+
+            .. code-block:: bash
+
+               hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
+
+            .. include:: _model_path.rst
+
+            **3. Launch LIBERO**
+
+            Set the model path in ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` and enable software rendering in the active environment:
+
+            .. include:: _libero_osmesa.rst
+
+            .. code-block:: bash
+
+               bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+
+            **ManiSkill on Moore Threads MUSA**
+
+            Keep the vendor simulator packages and add the GR00T N1.5 model environment inside the vendor image:
+
+            .. include:: _musa_maniskill.rst
+
+            .. code-block:: bash
+
+               bash requirements/install.sh --platform musa embodied --venv gr00t --model gr00t --env libero
+               source gr00t/bin/activate
+
+            Configure CPU simulation:
+
+            .. include:: _maniskill_non_cuda.rst
+
+            Start from a ManiSkill task config and a GR00T N1.5 checkpoint whose metadata contains the ``maniskill_widowx`` embodiment head, set the ``actor.model`` block below (rollout inherits ``model_path``), match action shape and normalization statistics to checkpoint metadata, and launch with ``run_embodiment.sh``:
+
+            .. code-block:: yaml
+
+               actor:
+                 model:
+                   model_type: gr00t
+                   model_path: /path/to/maniskill-gr00t-checkpoint
+                   obs_converter_type: maniskill
+                   embodiment_tag: maniskill_widowx
+
+      .. dropdown:: Advanced configuration and design notes (optional)
+
+         - **Flow-RL knobs**: Adjust ``actor.model.num_action_chunks``, ``actor.model.denoising_steps``, ``rl_head_config.noise_level``, and ``rl_head_config.noise_method`` (`flow-sde <https://arxiv.org/abs/2505.05470>`__ or `flow-noise <https://arxiv.org/abs/2505.22094>`__). Keep ``rl_head_config.disable_dropout: True`` so dropout in the action head does not corrupt log-probabilities.
+         - **New embodiments**: GR00T N1.5 maps datasets to robot encoders through ``modality.json``, ``DataConfig``, and ``embodiment_tag``. Fine-tuning produces ``experiment_cfg/metadata.json`` (required for inference and RL); see NVIDIA's `fine-tuning guide <https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/finetune_new_embodiment.md>`__ and `inference notebook <https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/GR00T_inference.ipynb>`__.
 
    .. tab-item:: GR00T N1.6
+      :sync: gr00t_n1d6
+
+      **1. Install**
 
       .. code-block:: bash
 
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero && source .venv/bin/activate
 
-   .. tab-item:: GR00T N1.7
+      For **Huawei Ascend CANN**, add ``--platform ascend`` before ``embodied`` (see the Ascend tab under GR00T N1.5 for container, driver, and OSMesa rendering setup).
+
+      **2. Download**
+
+      Download the LIBERO-Spatial SFT checkpoint:
 
       .. code-block:: bash
 
+         hf download RLinf/RLinf-Gr00t-N1.6-SFT-Spatial --local-dir ./RLinf-Gr00t-N1.6-SFT-Spatial
+
+      .. include:: _model_path.rst
+
+      **3. Launch**
+
+      Update ``examples/embodiment/config/libero_spatial_ppo_gr00t_n1d6.yaml`` and launch PPO training:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t_n1d6
+
+      .. dropdown:: Advanced configuration and design notes (optional)
+
+         - RLinf freezes the vision-language backbone and updates the flow-matching action head with FSDP across GPUs (``actor.model.add_value_head: True``, ``num_action_chunks: 16``, ``denoising_steps: 4``). Select the embodiment adapter with ``actor.model.embodiment_tag`` (for example ``libero_panda`` or ``ROBOCASA_PANDA_OMRON``).
+
+   .. tab-item:: GR00T N1.7
+      :sync: gr00t_n1d7
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero && source .venv/bin/activate
 
-Download the Model
-------------------
+      For **Huawei Ascend CANN**, add ``--platform ascend`` before ``embodied`` (see the Ascend tab under GR00T N1.5 for container, driver, and OSMesa rendering setup).
 
-Before starting training, you need to download the corresponding pre-trained model.
+      **2. Download**
 
-**N1.5: GR00T-N1.5 Few-Shot SFT Model Download**
+      The LIBERO-Spatial example boots from the official ``nvidia/GR00T-N1.7-LIBERO`` release checkpoint alongside a local ``nvidia/Cosmos-Reason2-2B`` snapshot for offline backbone loading. Keep ``experiment_cfg/metadata.json`` in the checkpoint directory when present; RLinf falls back to modality inference if it is omitted.
 
-Pick the SFT checkpoint for your LIBERO task:
+      .. code-block:: bash
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+         hf download nvidia/Cosmos-Reason2-2B \
+           --local-dir ./Cosmos-Reason2-2B
 
-   * - Task
-     - Hugging Face Repo
-   * - LIBERO-Spatial
-     - ``RLinf/RLinf-Gr00t-SFT-Spatial``
-   * - LIBERO-Object
-     - ``RLinf/RLinf-Gr00t-SFT-Object``
-   * - LIBERO-Goal
-     - ``RLinf/RLinf-Gr00t-SFT-Goal``
-   * - LIBERO-Long
-     - ``RLinf/RLinf-Gr00t-SFT-10``
+         hf download nvidia/GR00T-N1.7-LIBERO \
+           --include "libero_spatial/config.json" \
+                     "libero_spatial/embodiment_id.json" \
+                     "libero_spatial/model-*.safetensors" \
+                     "libero_spatial/model.safetensors.index.json" \
+                     "libero_spatial/processor_config.json" \
+                     "libero_spatial/statistics.json" \
+           --local-dir ./GR00T-N1.7-LIBERO
 
-For example, to download the LIBERO-Spatial checkpoint (replace the repo name and local directory for another suite from the table):
+      .. include:: _model_path.rst
 
-.. code-block:: bash
+      Point both actor and rollout ``backbone_model_path`` in ``examples/embodiment/config/libero_spatial_ppo_gr00t_n1d7.yaml`` at your local ``Cosmos-Reason2-2B`` snapshot:
 
-   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
+      .. code-block:: yaml
 
-**N1.6: GR00T-N1.6 SFT Model**
+         rollout:
+           model:
+             backbone_model_path: /path/to/Cosmos-Reason2-2B
+         actor:
+           model:
+             model_path: /path/to/GR00T-N1.7-LIBERO/libero_spatial
+             backbone_model_path: /path/to/Cosmos-Reason2-2B
 
-We currently support LIBERO task Spatial and regard it as the RLinf demo for Gr00t N1.6
+      **3. Launch**
 
-.. code:: bash
+      .. code-block:: bash
 
-   hf download RLinf/RLinf-Gr00t-N1.6-SFT-Spatial --local-dir RLinf-Gr00t-N1.6-SFT-Spatial
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t_n1d7
 
+      .. dropdown:: Advanced configuration and design notes (optional)
 
-**N1.7: Temporary official release checkpoint usage**
-
-RLinf does **not** ship a dedicated RLinf-produced GR00T-N1.7 SFT checkpoint yet. In the current repository state, the maintained N1.7 RL example temporarily uses the official released LIBERO checkpoint as the task-checkpoint bootstrap.
-
-In other words:
-
-- ``model_path`` currently points to a locally unpacked official ``nvidia/GR00T-N1.7-LIBERO`` checkpoint, not to an RLinf-exported N1.7 SFT checkpoint produced by RLinf.
-- ``backbone_model_path`` points to a local snapshot of ``Cosmos-Reason2-2B`` so actor, rollout, and processor can run fully offline.
-- This is a practical temporary setup for RL integration and debugging.
-
-This temporary setup is also consistent with the official N1.7 release notes:
-
-- **Relative EEF Action Space**: N1.7 adopts a relative end-effector action space shared across robot and human embodiments, which is one of the key reasons for its cross-embodiment generalization.
-- **Human Video Pretraining**: N1.7 is pretrained on 20K hours of EgoScale human video together with diverse robot demonstrations, so it can transfer manipulation priors from human video into robot control.
-- **Key Changes from N1.6**: N1.7 upgrades the VLM backbone to ``Cosmos-Reason2-2B`` / Qwen3-VL, simplifies the data-processing pipeline, and adds fuller ONNX / TensorRT export support.
-
-Before RLinf ships its own N1.7 SFT checkpoint, you can use the following offline download pattern:
-
-.. code:: bash
-
-   hf download nvidia/Cosmos-Reason2-2B \
-      --local-dir checkpoints/Cosmos-Reason2-2B
-
-   hf download nvidia/GR00T-N1.7-LIBERO \
-      --include "libero_spatial/config.json" \
-                "libero_spatial/embodiment_id.json" \
-                "libero_spatial/model-*.safetensors" \
-                "libero_spatial/model.safetensors.index.json" \
-                "libero_spatial/processor_config.json" \
-                "libero_spatial/statistics.json" \
-      --local-dir checkpoints/GR00T-N1.7-LIBERO
-
-The current example can run with this minimum file set. If ``experiment_cfg/metadata.json`` is also available in your local checkpoint directory, keep it there; RLinf prefers it when present, but can fall back to modality/config inference when it is missing.
-
-Currently the maintained RLinf N1.7 RL example is LIBERO Spatial.
-
---------------
-
-GR00T Core Design Concepts
------------------------------
-
-**N1.5:**
-
-**1. Modality Config**
-
-Modality Config is a critical design feature in GR00T-N1.5.
-By defining a unified dataset interface, it enables different robot configurations to utilize the same dataset. For example, a dual-arm dataset can be used to train a single-arm model through this innovative design.
-
-**1.1 Enhanced LeRobot Dataset**
-
-The LeRobot dataset contains a ``meta`` folder that records all dataset metadata.
-GR00T-N1.5 further defines a ``modality.json`` file to determine the data interface of the dataset.
-
-**1.2 DataConfig Class**
-
-GR00T-N1.5 introduces the ``DataConfig`` class to describe all information needed for model training.
-It decouples datasets from robot configurations, enabling model training across different robots without modifying data processing code.
-
-**1.3 Embodiment Tag**
-
-The Embodiment Tag is an enum value that determines which ``DataConfig`` to use during training. The model also adopts different state and action encoders/decoders based on this tag.
-
-**2. Fine-Tuning Guide**
-
-Based on the above design, before deploying GR00T-N1.5 in new environments beyond LIBERO, users need to fine-tune it.
-The fine-tuning guide can be found at `GR00T official repo's getting_started/finetune_new_embodiment.md <https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/finetune_new_embodiment.md>`_.
-
-After fine-tuning, GR00T-N1.5 generates an ``experiment_cfg/metadata.json`` file containing all modality configs and fine-tuned dataset statistics.
-This file is essential for GR00T-N1.5 inference and RL post-training.
-For more details, see `GR00T official repo's getting_started/GR00T_inference.ipynb <https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/GR00T_inference.ipynb>`__.
-
-**N1.6:**
-
-**1. Two-Stage Decoupled Training Paradigm**
-
-RLinf adopts a highly decoupled two-stage training architecture for GR00T-N1.6:
-
-- **Stage 1 (Pure SFT)**: Uses ``Pure SFT Model`` mode. The model is completely detached from the physical simulation environment, relying solely on offline expert datasets for supervised fine-tuning.
-- **Stage 2 (PPO RL Alignment)**: Based on SFT convergence, loads the model into a FSDP-based distributed Actor for real-time interaction with the simulation environment.
-
-**2. Head-Only Fine-Tuning**
-
-To save memory while preventing "catastrophic forgetting", the framework adopts a backbone-freezing strategy:
-
-- **Backbone Freezing**: Vision-language backbone parameters are strictly locked (``requires_grad=False``).
-- **Action Head Focus**: Only the action output head participates in gradient updates.
-
-**3. Flow-Matching Action Generation**
-
-- The model generates high-frequency action chunks directly in continuous space through noise-adding and denoising flow-matching mechanisms (Flow-SDE / Diffusion).
-- Key configurations: ``num_action_chunks`` controls prediction step length, ``denoising_steps`` controls denoising depth.
-
-**4. Cross-Embodiment Generalization**
-
-- **Embodiment Tag**: Through configuration tags (e.g., ``ROBOCASA_PANDA_OMRON``), the system dynamically adapts the corresponding state encoder and action space. Both single-arm manipulators and quadruped robots can reuse the same architecture.
-
-**5. FSDP Distributed Parallel Architecture**
-
-- The underlying system has been restructured for the Actor node (``EmbodiedFSDPActor``), which shards model weights, gradients, and optimizer states across GPU nodes.
-- Given the significant increase in GR00T-N1.6 parameter scale, the Actor node has been fully restructured to break through the single-GPU memory bottleneck of traditional DDP.
-
-After fine-tuning, the system generates ``metadata.json`` and other statistical files in the output directory, preserving key modality information for inference and deployment.
-
-**N1.7:**
-
-**1. What's New in official GR00T N1.7**
-
-- GR00T N1.7 builds on N1.6 with a new VLM backbone and code-level improvements.
-- **Relative EEF Action Space**: N1.7 adopts a relative end-effector action space shared across robot and human embodiments. Representing actions as deltas from the current pose, instead of absolute targets, improves generalization and is a key reason for its cross-embodiment performance.
-- **Human Video Pretraining**: N1.7 is pretrained on 20K hours of EgoScale human video together with diverse robot demonstrations. Because the relative EEF action representation is shared across human and robot data, manipulation priors learned from human video can transfer more directly to robot control.
-
-**2. Key Changes from N1.6**
-
-- The official backbone is upgraded to ``nvidia/Cosmos-Reason2-2B`` with a Qwen3-VL style architecture, replacing the Eagle backbone used in N1.6.
-- The official ``processing_gr00t_n1d7.py`` path simplifies the data-processing pipeline compared with the older N1.6 stack.
-- The official N1.7 stack also expands ONNX / TensorRT export support.
-- The official N1.7 model config raises the default universal limits to ``max_state_dim=132``, ``max_action_dim=132``, and ``action_horizon=40``.
-
-**3. Current checkpoint strategy in RLinf**
-
-- RLinf does not yet provide a repository-produced N1.7 SFT checkpoint for this RL example.
-- The current maintained example therefore temporarily uses the official released ``GR00T-N1.7-LIBERO/libero_spatial`` checkpoint as ``model_path``.
-
-**4. RLinf N1.7 Interface Adaptation**
-
-- The current raw LIBERO state in RLinf is 8-dim before conversion, while the official N1.7 model uses a larger universal state/action representation internally.
-- The current LIBERO example uses ``embodiment_tag: libero_sim`` and applies the LIBERO gripper convention in the shared environment action utilities.
-
-**5. Checkpoint and Processor Contract**
-
-- RLinf loads the official processor directly from the checkpoint directory.
-- When running in offline or mirrored environments, ``backbone_model_path`` can redirect the official backbone id to a local ``Cosmos-Reason2-2B`` snapshot.
-- The current temporary official-release download command may omit ``experiment_cfg/metadata.json``; that is acceptable for now because RLinf has a fallback path, but keeping metadata is still recommended when available.
-
-**6. RL Training Contract in This Repository**
-
-- The maintained RLinf N1.7 RL example is ``examples/embodiment/config/libero_spatial_ppo_gr00t_n1d7.yaml``.
-- The current RL setup uses PPO with ``algorithm.loss_type: actor_critic``, so ``actor.model.add_value_head`` must be ``True`` during training.
-- With ``rl_head_config.detach_critic_input: true``, the value head learns from detached features, so its loss does not update shared policy features. Setting it to ``false`` retains joint gradient flow.
-- For BF16 N1.7 models, the loader disables ``torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction`` in each worker process. This process-wide setting persists for all CUDA BF16 GEMMs in that worker. This keeps higher-precision GEMM reductions to address observed batch-size-dependent backbone drift between rollout and actor scoring. This setting does not change parameter or optimizer storage dtypes.
-- The repository's validated LIBERO example uses ``num_action_chunks: 16`` and ``denoising_steps: 4``.
-
----------------
-
-Run It
-------
-
-**1. Key Cluster Configuration**
-
-.. code:: yaml
-
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env,rollout,actor: all
-
-You can configure the placement to share all GPUs among env, rollout, and actor components.
-
-.. code:: yaml
-
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env: 0-3
-         rollout: 4-7
-         actor: 0-7
-
-   rollout:
-      pipeline_stage_num: 2
-
-You can flexibly configure GPU counts for env, rollout, and actor components, and enable pipelining between rollout and env via ``pipeline_stage_num``.
-
-.. code:: yaml
-
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env: 0-1
-         rollout: 2-5
-         actor: 6-7
-
-You can also fully separate components, each using dedicated GPUs without offloading.
-
---------------
-
-**2. Key Model Parameters**
-
-**N1.5:**
-
-.. code:: yaml
-
-   model:
-      num_action_chunks: 5
-      denoising_steps: 4
-      rl_head_config:
-        noise_method: "flow_sde"
-        noise_level: 0.5
-        disable_dropout: True
-
-You can adjust ``noise_level`` and ``denoising_steps`` to control noise intensity and flow-matching steps.
-``num_action_chunks`` determines the number of future steps to use for forward simulation.
-GR00T-N1.5's action head contains dropout layers that interfere with log-probability calculations, so ``disable_dropout`` must be set to True to replace them with identity layers.
-Use ``noise_method`` to select different noise injection methods. Two options are available:
-`flow-sde <https://arxiv.org/abs/2505.05470>`__ and
-`flow-noise <https://arxiv.org/abs/2505.22094>`__.
-
-**N1.6:**
-
-**Actor Model & Action Head Configuration**
-
-.. code:: yaml
-
-   model:
-      model_type: "gr00t_n1d6"
-      add_value_head: True          # RL critical: dynamically inject value network for advantage prediction
-      num_action_chunks: 16         # Number of future action steps predicted per inference
-      denoising_steps: 4            # Controls flow-matching denoising steps
-
-**FSDP Sharding Strategy**
-
-.. code:: yaml
-
-   fsdp_config:
-     wrap_policy:
-       transformer_layer_cls_to_wrap:
-         - "Qwen3DecoderLayer"
-         - "Siglip2EncoderLayer"
-
-**N1.7:**
-
-**Actor Model & Action Head Configuration**
-
-.. code:: yaml
-
-   model:
-      model_type: "gr00t_n1d7"
-      add_value_head: True
-      num_action_chunks: 16
-      denoising_steps: 4
-
-**Runtime Path Configuration**
-
-.. code:: yaml
-
-   model:
-      model_path: "/path/to/GR00T-N1.7-LIBERO/libero_spatial"
-      backbone_model_path: "/path/to/Cosmos-Reason2-2B"
-
-**PPO & Optimizer Hyperparameters**
-
-.. code:: yaml
-
-   algorithm:
-      adv_type: gae
-      clip_ratio_high: 0.2
-      gamma: 0.99
-      gae_lambda: 0.95
-
-   optim:
-      lr: 5.0e-6
-      value_lr: 1.0e-4
-      clip_grad: 1.0
-
-**3. Configuration Files**
-
-**N1.5:**
-
-- GR00T-N1.5 + PPO + Libero-Spatial:
-  ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml``
-
-- GR00T-N1.5 + PPO + Libero-Object:
-  ``examples/embodiment/config/libero_object_ppo_gr00t.yaml``
-
-- GR00T-N1.5 + PPO + Libero-Goal:
-  ``examples/embodiment/config/libero_goal_ppo_gr00t.yaml``
-
-- GR00T-N1.5 + PPO + Libero-Long:
-  ``examples/embodiment/config/libero_10_ppo_gr00t.yaml``
-
-**N1.6:**
-
-- GR00T-N1.6 + PPO + Libero-Spatial:
-  ``examples/embodiment/config/libero_spatial_ppo_gr00t_n1d6.yaml``
-
-Update the SFT model path:
-
-.. code:: yaml
-
-   model:
-      model_path: "/path/to/RLinf-Gr00t-N1.6-RL-Spatial"
-
-**N1.7:**
-
-- GR00T-N1.7 + PPO + Libero-Spatial:
-  ``examples/embodiment/config/libero_spatial_ppo_gr00t_n1d7.yaml``
-
-Update the SFT model path:
-
-.. code:: yaml
-
-   model:
-      model_path: "/path/to/GR00T-N1.7-LIBERO/libero_spatial"
-      backbone_model_path: "/path/to/Cosmos-Reason2-2B"
-
---------------
-
-**4. Launch Commands**
-
-**N1.5:**
-
-::
-
-   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
-   bash examples/embodiment/run_embodiment.sh libero_object_ppo_gr00t
-   bash examples/embodiment/run_embodiment.sh libero_goal_ppo_gr00t
-   bash examples/embodiment/run_embodiment.sh libero_10_ppo_gr00t
-
-**N1.6:**
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t_n1d6
-
-**N1.7:**
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t_n1d7
-
---------------
-
-.. _gr00t-hardware:
-
-Run on Different Hardware Backends
-----------------------------------
-
-NVIDIA uses the version-specific setup above. AMD ROCm, Huawei Ascend CANN, and
-Moore Threads MUSA support GR00T N1.5 on LIBERO and ManiSkill, and Ascend also
-supports N1.6 and N1.7 on LIBERO. N1.6 and N1.7 on AMD and MUSA, and IsaacLab
-on every non-NVIDIA backend, remain unvalidated.
-
-AMD ROCm
-~~~~~~~~
-
-ROCm uses PyTorch's CUDA-compatible API, so GR00T N1.5 follows the shared AMD
-accelerator and installation path without a model-specific patch.
-
-.. include:: _amd_libero.rst
-
-The published image already contains the N1.5 environment:
-
-.. code-block:: bash
-
-   source switch_env gr00t
-
-For a native installation on a ROCm host:
-
-.. code-block:: bash
-
-   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env libero
-   source .venv/bin/activate
-
-Omit ``--rocm`` to detect the installed version, or add ``--use-mirror`` for
-downloads from mainland China.
-
-Huawei Ascend CANN
-~~~~~~~~~~~~~~~~~~
-
-Use the Ascend LIBERO container or a host with CANN and the NPU driver installed.
-
-.. include:: _ascend_libero.rst
-
-Inside the published RLinf container, activate the N1.5 environment:
-
-.. code-block:: bash
-
-   source switch_env gr00t
-
-For a native installation, select the version and LIBERO explicitly:
-
-.. code-block:: bash
-
-   bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
-   source .venv/bin/activate
-
-For N1.6 or N1.7, use ``--model gr00t_n1d6`` or ``--model gr00t_n1d7`` with
-``--env maniskill_libero``.
-
-Add ``--use-mirror`` for downloads from mainland China. The installer builds
-``decord`` from source when needed on aarch64, applies the Ascend TensorFlow
-pins, and skips CUDA flash-attention. RLinf applies the version-specific NPU
-patches when loading the model.
-
-.. include:: _ascend_torch.rst
-
-Moore Threads MUSA
-~~~~~~~~~~~~~~~~~~
-
-MUSA uses the shared device and installation path plus an N1.5 compatibility
-patch for the RADIO backbone's CUDA capability check. The vendor image provides
-a working MUSA flash-attention build.
-
-.. include:: _musa_libero.rst
-
-Inside the container, install GR00T N1.5 and LIBERO:
-
-.. code-block:: bash
-
-   bash requirements/install.sh --platform musa embodied --model gr00t --env libero
-   source .venv/bin/activate
-
-Add ``--use-mirror`` for downloads from mainland China. Model loading applies
-the MUSA patch automatically when the worker detects a MUSA accelerator.
-
-Launch LIBERO on AMD, Ascend, or MUSA
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Download the N1.5 Spatial checkpoint from the model section above and set the
-paths in ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml``.
-
-.. include:: _model_path.rst
-
-Enable software rendering in the active N1.5 environment:
-
-.. include:: _libero_osmesa.rst
-
-Launch the configured PPO run:
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
-
-ManiSkill on AMD, Ascend, or MUSA
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-On AMD or Ascend, install the combined ManiSkill and LIBERO environment for
-GR00T N1.5. Use the command for the selected model accelerator:
-
-.. code-block:: bash
-
-   # AMD ROCm
-   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env maniskill_libero
-
-   # Huawei Ascend CANN
-   bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero
-
-   source .venv/bin/activate
-
-For MUSA, keep the vendor simulator packages and add the GR00T N1.5 model
-environment inside the vendor image:
-
-.. include:: _musa_maniskill.rst
-
-.. code-block:: bash
-
-   bash requirements/install.sh --platform musa embodied --venv gr00t --model gr00t --env libero
-   source gr00t/bin/activate
-
-Configure CPU simulation for all three non-CUDA backends:
-
-.. include:: _maniskill_non_cuda.rst
-
-RLinf provides the ManiSkill observation and action conversion path for GR00T,
-but does not bundle a ManiSkill GR00T task config or checkpoint. Start from a
-ManiSkill task config and select a GR00T N1.5 checkpoint whose metadata contains
-the ``maniskill_widowx`` embodiment head. The actor model block must include:
-
-.. code-block:: yaml
-
-   actor:
-     model:
-       model_type: gr00t
-       model_path: /path/to/maniskill-gr00t-checkpoint
-       obs_converter_type: maniskill
-       embodiment_tag: maniskill_widowx
-
-Set ``rollout.model.model_path`` to the same checkpoint, then launch the saved
-config with ``run_embodiment.sh``. Match the environment's action shape and
-normalization statistics to the checkpoint metadata.
+         - N1.7 upgrades the VLM backbone to ``nvidia/Cosmos-Reason2-2B`` (Qwen3-VL architecture) with a relative end-effector action space and expanded universal state/action limits (``max_state_dim=132``, ``max_action_dim=132``, ``action_horizon=40``).
+         - The LIBERO recipe sets ``embodiment_tag: libero_sim``, ``add_value_head: True``, ``num_action_chunks: 16``, and ``denoising_steps: 4``. Set ``rl_head_config.detach_critic_input: true`` to train the value head on detached features, or ``false`` for joint gradients.
+         - For BF16 N1.7 checkpoints, RLinf disables reduced-precision BF16 GEMM reductions in each worker process to avoid batch-size-dependent backbone drift between rollout and actor scoring; parameter and optimizer dtypes remain unchanged.
 
 Visualization and Results
 -------------------------
 
-**1. TensorBoard Logs**
-
-.. code:: bash
-
-   # Launch TensorBoard
-   tensorboard --logdir ./logs --port 6006
-
-**2. Key Metrics**
-
-Watch **``env/success_once``** for the task success rate. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
---------------
-
-**3. Video Generation**
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
-
---------------
-
-**4. WandB Integration**
-
-.. code:: yaml
-
-   runner:
-     task_type: embodied
-     logger:
-       log_path: "../results"
-       project_name: rlinf
-       experiment_name: "libero_spatial_ppo_gr00t"
-       logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
-
---------------
+Launch TensorBoard with ``tensorboard --logdir ./logs --port 6006`` and watch ``env/success_once``. Pass ``env.eval.video_cfg.save_video=True`` to record evaluation videos; see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 **LIBERO Results**
 
@@ -722,7 +491,7 @@ Watch **``env/success_once``** for the task success rate. For every logged metri
      - **89.5%**
      - **+37.0%**
 
-We would like to point out that the results presented above utilize the identical hyperparameter settings as :math:`\pi_0`. These findings primarily serve to demonstrate the broad applicability and inherent robustness of the proposed RL training framework. Further optimization through parameter tuning is likely to yield enhanced model performance.
+These results reuse the same hyperparameter settings as π₀ without task-specific tuning; further parameter tuning can improve success rates.
 
 **N1.6:**
 

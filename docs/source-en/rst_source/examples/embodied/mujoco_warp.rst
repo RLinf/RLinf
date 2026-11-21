@@ -111,11 +111,14 @@ Installation
 
 .. include:: _setup_common.rst
 
-Install the dependencies and activate the environment:
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: MuJoCo Warp
 
-   bash requirements/install.sh embodied --env mujoco_warp && source .venv/bin/activate
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env mujoco_warp && source .venv/bin/activate
 
 The installer pins ``mujoco-warp==3.17.0`` and ``warp-lang==1.16.0``. This verified combination works with CUDA 12 drivers and avoids resolving CUDA 13-only Warp wheels during driverless Docker builds.
 
@@ -147,7 +150,7 @@ Launch TensorBoard from the repository root:
 
    tensorboard --logdir ../results --port 6006
 
-Watch ``eval/env/return`` for the mean evaluation episode return and ``env/return`` for training episode returns. See :doc:`Training metrics <../../reference/metrics>` for the shared metric definitions. For standalone checkpoint evaluation, run ``run_embodiment.sh`` with ``runner.only_eval=true`` and ``runner.ckpt_path=<path>``.
+Watch ``eval/env/return`` for the mean evaluation episode return and ``env/return`` for training episode returns. See :doc:`Training metrics <../../reference/metrics>` for the shared metric definitions. For standalone checkpoint evaluation, run ``run_embodiment.sh`` with ``runner.only_eval=true`` and ``runner.ckpt_path=/path/to/checkpoint``.
 
 .. list-table::
    :header-rows: 1
@@ -167,6 +170,6 @@ Video recording is disabled by default. Enable it for evaluation with:
    bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp \
        env.eval.video_cfg.save_video=true
 
-Evaluation videos are written under ``<log_path>/video/eval``. MJWarp still runs the physics. The environment copies each world's ``qpos``, ``qvel``, and ``ctrl`` into native MuJoCo and renders RGB frames; the video wrapper writes those frames to MP4. Recording adds device-to-host synchronization and per-world rendering, so leave it off for throughput runs. Use ``render_width`` and ``render_height`` for the per-world resolution, and ``video_cfg.fps`` to override the default control frequency.
+Evaluation videos are written under the run's ``video/eval`` directory. MJWarp still runs the physics. The environment copies each world's ``qpos``, ``qvel``, and ``ctrl`` into native MuJoCo and renders RGB frames; the video wrapper writes those frames to MP4. Recording adds device-to-host synchronization and per-world rendering, so leave it off for throughput runs. Use ``render_width`` and ``render_height`` for the per-world resolution, and ``video_cfg.fps`` to override the default control frequency.
 
 The first simulation step JIT-compiles MJWarp kernels and can take longer than later steps.

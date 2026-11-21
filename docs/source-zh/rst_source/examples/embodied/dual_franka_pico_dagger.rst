@@ -99,28 +99,28 @@ PICO 的 A/B/X/Y 只开合夹爪。按键时序写在「执行采集」和「执
 软件环境
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-机器人节点
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+在每台直接与 Franka 通信的机器人节点上安装基于 Franky 的 ``franka`` 环境，在 GPU 训练 / rollout 节点上安装 OpenPI 环境。中国大陆用户可在 ``requirements/install.sh`` 末尾追加 ``--use-mirror``，并在下载 Hugging Face 资源前设置 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
-在每台直接与 Franka 通信的机器人节点上分别执行机器人节点安装。双臂 Franka 始终通过 Franky 控制机械臂，默认的 ``franka`` 环境安装的正是这一 backend。安装脚本会下载内置 libfranka 的 Franky 预编译 wheel，目前只提供 libfranka ``0.15.0`` 和 ``0.19.0``\ （默认）两个版本，且仅支持 x86_64。请按 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选择与固件对应的 ``LIBFRANKA_VERSION``。如果固件需要其他版本，需要针对对应的 libfranka 自行构建 Franky wheel，并通过 ``FRANKY_WHEEL`` 传入其路径或 URL；旧版 ROS backend 支持其他 libfranka 版本，但仅适用于单臂 Franka。
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: 机器人 / 环境节点
 
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
-   export LIBFRANKA_VERSION=0.19.0
-   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+      双臂 Franka 始终通过 Franky 控制机械臂。预编译 wheel 仅支持 x86_64 下的 libfranka ``0.15.0`` 和 ``0.19.0``\ （默认）；按 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选择与固件匹配的 ``LIBFRANKA_VERSION``\ （其他固件版本需自行构建 wheel 并通过 ``FRANKY_WHEEL`` 传入）。``franka`` 环境同时安装相机、输入设备和 ``pyzmq``，PICO / XRoboToolkit 安装见 :doc:`franka_vr`。
 
-``franka`` 环境会安装 Franky、相机和输入设备依赖，其中包含 PICO consumer 侧所需的 ``pyzmq``。PICO 头显、XRoboToolkit PC Service 和 ``vr_data_publisher`` 的安装与验证流程见 :doc:`franka_vr`。
+      .. code-block:: bash
 
-推理节点
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         export LIBFRANKA_VERSION=0.19.0
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
-运行在线 DAgger actor / rollout 的 GPU 推理节点使用 OpenPI 环境：
+   .. tab-item:: 训练与 Rollout 节点
 
-.. code-block:: bash
+      在运行在线 DAgger actor 和 rollout 的 GPU 推理 / 训练节点安装 OpenPI 环境：
 
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 Ray 节点布局
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -184,13 +184,13 @@ RLinf 使用 ray 来管理分布式环境，这意味着：
 
 2. 在 Franka 控制节点上，加载 Franka / Robotiq / 相机所需的运行环境；
 
-3. 在所有节点上设置 RLinf 相关环境变量：
+3. 在所有节点上设置 RLinf 相关环境变量（按各节点替换 ``RLINF_NODE_RANK`` 和网卡名）：
 
 .. code-block:: bash
 
-   export PYTHONPATH=<path_to_your_RLinf_repo>:$PYTHONPATH
-   export RLINF_NODE_RANK=<node_rank_of_this_node>
-   export RLINF_COMM_NET_DEVICES=<network_device_for_communication> # 如果只有一个网卡可以省略
+   export PYTHONPATH=$PWD:$PYTHONPATH
+   export RLINF_NODE_RANK=0
+   export RLINF_COMM_NET_DEVICES=eth0  # 如果只有一个网卡可以省略
 
 其中 ``RLINF_NODE_RANK`` 应在集群的 ``N`` 个节点之间设置为 ``0 ~ N-1``，用来在配置文件中唯一标识每个节点。DAgger 的 env 节点没有 ``keyboard_device``，需要在 ``ray start`` 前导出键盘或脚踏：
 
@@ -202,15 +202,17 @@ RLinf 使用 ray 来管理分布式环境，这意味着：
 
 多机运行时，按下面的方式在各节点启动 Ray。单机采集跳过这一步：
 
-其中 `<head_node_ip_address>` 为 head 节点的 IP 地址，**必须** 能被集群中其他节点访问。
+其中 ``HEAD_NODE_IP`` 为 head 节点的 IP 地址，**必须** 能被集群中其他节点访问（替换为实际 IP）：
 
 .. code-block:: bash
 
    # 在 head 节点（节点 rank 0）上
-   ray start --head --port=6379 --node-ip-address=<head_node_ip_address>
+   export HEAD_NODE_IP=192.168.1.10
+   ray start --head --port=6379 --node-ip-address="$HEAD_NODE_IP"
 
    # 在 worker 节点（节点 rank 1 ~ N-1）上
-   ray start --address='<head_node_ip_address>:6379'
+   export HEAD_NODE_IP=192.168.1.10
+   ray start --address="${HEAD_NODE_IP}:6379"
 
 可以通过执行 `ray status` 来检查集群是否已正确启动。
 
@@ -334,7 +336,7 @@ DAgger 把同一段 ``teleop`` 列表和 ``pico`` 放在 ``env.train``，并设�
    cd /path/to/pico_software
    python -m vr_data_publisher --config configs/vr_bridge.yaml
 
-在运行 env worker 的节点上验证 PICO 数据可达：
+在运行 env worker 的节点上验证 PICO 数据可达（将 IP 和端口替换为 PICO publisher 地址）：
 
 .. code-block:: bash
 
@@ -342,7 +344,7 @@ DAgger 把同一段 ``teleop`` 列表和 ``pico`` 放在 ``env.train``，并设�
    source .venv/bin/activate
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
    python toolkits/realworld_check/test_pico_data.py \
-       --zmq-addr tcp://<vr_publisher_ip>:<port>
+       --zmq-addr tcp://192.168.1.20:5555
 
 输出持续刷新，并且按下 ``grip``、``trigger``、``A/B``、``X/Y`` 时数值变化，才继续启动真机采集或 DAgger。
 
@@ -397,81 +399,67 @@ PICO 双臂采集已经使用 ``realworld_dual_franka_tcp_rot6d`` 环境，数�
 使用本页 PICO 采集的数据时，数据已经来自 ``realworld_dual_franka_tcp_rot6d`` 环境，
 不需要再执行 GELLO 关节数据流程中的 ``backfill_tcp_rot6d.py``。
 
-完成 checkpoint 准备后，在
-``examples/embodiment/config/realworld_dual_franka_dagger_openpi.yaml`` 中设置：
+完成 checkpoint 准备后，在 ``examples/embodiment/config/realworld_dual_franka_dagger_openpi.yaml`` 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）和 ``openpi_data.repo_id``：
 
 .. code-block:: yaml
 
-   rollout:
-     model:
-       model_path: /path/to/deploy/global_step_<N>
-
    actor:
      model:
+       model_path: /path/to/deploy/global_step_N
        openpi_data:
-         repo_id: <repo_id>/tcp_rot6d_v1
+         repo_id: your_repo/tcp_rot6d_v1
 
 
 运行在线 HG-DAgger
 ----------------------------------------
-
-检查 DAgger 关键配置
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-启动前确认以下字段：
-
-.. code-block:: yaml
-
-   algorithm:
-     dagger:
-       only_save_expert: True
-       online_lerobot:
-         enabled: True
-         only_success: True
-         robot_type: "dual_FR3"
-         fps: 10
-         finalize_interval: 1
-         data_path: ${runner.logger.log_path}/online_lerobot
-         rolling_lerobot_window_size: 50000
-         min_frames: 1
-         lerobot_num_workers: 0
-
-   env:
-     train:
-       smooth_intervene: True
-       teleop:
-         - {pico: {drives: left}}
-         - {pico: {drives: right}}
-       keyboard_reward_wrapper: eval_control
-       pico:
-         zmq_addr: "ipc:///tmp/vr_data.ipc"
-         hand: "dual"
-         hold_current_when_inactive: False
-     eval:
-       teleop: none
-
-``online_lerobot.enabled: True`` 表示启用在线 LeRobot 数据链路。env worker 按 episode 收集 rollout，并将满足过滤条件的 episode 发送给 actor；actor 将其加入 ``RollingLeRobotDataset`` 进行训练，因此在线训练不再使用 trajectory replay buffer。
-
-``smooth_intervene: True`` 用于消除 PICO 接管时 action chunk 边界的停顿。如果一个 chunk 的最后一帧仍由人工接管，env worker 会跳过下一次策略推理，改用形状兼容的 dummy chunk 继续执行；接管侧仍使用 PICO 动作，暂时未接管的帧保持机械臂当前 TCP 位姿。最后一帧不再接管或 episode 结束后恢复模型推理。该模式只接受 PICO：``env.train.teleop`` 的每一项都必须是 pico，且当前要求每个 env worker pipeline stage 只运行一个环境。
-
-``only_success: True`` 表示失败 rollout 会被丢弃，只保存成功 episode；
-``only_save_expert: True`` 仍会归档完整的成功 episode，但训练只采样 action chunk
-内所有非 padding 帧均满足 ``intervene_flag=True`` 的起点。双臂任意一臂被替换时，
-该帧就会标记为接管，因此这样的 chunk 可能由一侧 PICO action 与另一侧 rollout
-action 共同组成。每个成功 episode 会立即归档到
-``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``。
-``env.eval.teleop: none`` 表示评测阶段只看策略本身，不混入人工接管。
-
-真机 DAgger 配置不包含 beta 相关字段，因为没有配置 ``rollout.expert_model``。Beta 只用于模型 expert 和 student 之间的动作混合；这里的人工接管由 PICO intervention wrapper 决定。
-
-执行 DAgger
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 确认 DAgger Ray 集群已经启动后，在 head 节点启动在线训练：
 
 .. code-block:: bash
 
    bash examples/embodiment/run_realworld_async.sh realworld_dual_franka_dagger_openpi
+
+.. dropdown:: 进阶配置（可选）
+
+   仓库自带的 ``realworld_dual_franka_dagger_openpi.yaml`` 已启用在线 LeRobot 归档、``smooth_intervene``、双臂 PICO 接管与纯策略评测：
+
+   .. code-block:: yaml
+
+      algorithm:
+        dagger:
+          only_save_expert: True
+          online_lerobot:
+            enabled: True
+            only_success: True
+            robot_type: "dual_FR3"
+            fps: 10
+            finalize_interval: 1
+            data_path: ${runner.logger.log_path}/online_lerobot
+            rolling_lerobot_window_size: 50000
+            min_frames: 1
+            lerobot_num_workers: 0
+
+      env:
+        train:
+          smooth_intervene: True
+          teleop:
+            - {pico: {drives: left}}
+            - {pico: {drives: right}}
+          keyboard_reward_wrapper: eval_control
+          pico:
+            zmq_addr: "ipc:///tmp/vr_data.ipc"
+            hand: "dual"
+            hold_current_when_inactive: False
+        eval:
+          teleop: none
+
+   ``online_lerobot.enabled: True`` 表示启用在线 LeRobot 数据链路。env worker 按 episode 收集 rollout，并将满足过滤条件的 episode 发送给 actor；actor 将其加入滚动 LeRobot 数据集训练，因此在线训练不再使用 trajectory replay buffer。
+
+   ``smooth_intervene: True`` 用于消除 PICO 接管时 action chunk 边界的停顿。如果一个 chunk 的最后一帧仍由人工接管，env worker 会跳过下一次策略推理，改用形状兼容的 dummy chunk 继续执行；接管侧仍使用 PICO 动作，暂时未接管的帧保持机械臂当前 TCP 位姿。最后一帧不再接管或 episode 结束后恢复模型推理。该模式要求 ``env.train.teleop`` 每一项均为 pico，且每个 env worker pipeline stage 只运行一个环境。
+
+   ``only_success: True`` 会丢弃失败 rollout，只保存成功 episode；``only_save_expert: True`` 仍归档完整成功 episode，但训练只采样 action chunk 内所有非 padding 帧均满足 ``intervene_flag=True`` 的起点。双臂任意一臂被替换时该帧即标记为接管，因此这类 chunk 可能由一侧 PICO action 与另一侧 rollout action 共同组成。每个成功 episode 会立即归档到 ``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``。``env.eval.teleop: none`` 表示评测阶段只运行策略本身，不混入人工接管。
+
+   真机 DAgger 配置不包含 beta 相关字段，因为没有配置 ``rollout.expert_model``。Beta 只用于模型 expert 和 student 之间的动作混合；这里的人工接管由 PICO intervention wrapper 决定。
 
 运行中的操作方式：
 

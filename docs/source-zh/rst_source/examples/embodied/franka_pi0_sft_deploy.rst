@@ -90,18 +90,25 @@
 软件依赖
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**机器人计算机**\ （数据采集，以及部署时的 env worker）需要 Franka 控制环境，按 :doc:`franka` 的「安装」章节配置。
+**机器人计算机**\ （数据采集，以及部署时的 env worker）需要 Franka 控制环境，按 :doc:`franka` 的安装章节配置。
 
 **训练 / Rollout 节点**\ （SFT 训练 + 部署）需要 OpenPI 模型环境。加上 ``--env franka`` 会同时安装 Franky 依赖，因此当机器人计算机就是这台 GPU 计算机时，一个环境即可承担两种角色：
 
-.. code:: bash
+.. include:: _setup_common.rst
 
-   bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
+.. tab-set::
+
+   .. tab-item:: 训练 / Rollout 节点（单机或合设）
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
 .. note::
 
    **训练 / Rollout 节点依赖安装注意事项**
-   注意在 '--model' 参数中指定 'openpi' 而不是 'openvla'。
+   注意在 ``--model`` 参数中指定 ``openpi``，不要写成 ``openvla``。
 
 环境配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

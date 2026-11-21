@@ -80,7 +80,20 @@
 安装
 ----------------------------------------
 
-先按 :doc:`franka` 安装基础 Franka 依赖，再按下方流程安装灵巧手运行环境。
+基础 Franka 控制器与实时内核准备参见 :doc:`franka`。
+
+.. include:: _setup_common.rst
+
+.. tab-set::
+
+   .. tab-item:: Franka 控制节点
+
+      ``franka`` 环境已包含 ``RLinf-dexterous-hands``，提供睿研灵巧手与数据手套驱动：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 遥操作
 ----------------------------------------
@@ -129,13 +142,7 @@ reward model 流程与 :doc:`franka_reward_model` 一致。reward 图像默认�
 运行
 ----------------------------------------
 
-1. 在 Franka 控制节点安装 Franka 环境：
-
-   .. code-block:: bash
-
-      bash requirements/install.sh embodied --env franka
-
-   Franka 环境已包含 ``RLinf-dexterous-hands``，其中提供睿研灵巧手与数据手套驱动。
+1. 在 Franka 控制节点激活上方安装的 ``franka`` 环境（已包含睿研灵巧手与数据手套驱动 ``RLinf-dexterous-hands``）。
 2. 将 Franka 机器人切换到可编程模式，手动移动到任务目标位姿，然后在 Franka 控制节点运行脚本获取目标末端位姿：
 
    .. code-block:: bash

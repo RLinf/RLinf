@@ -34,73 +34,113 @@ retrieval server.
 
       Reference run on 8×H100
 
-Training on 8×H100
-------------------
+Setup and Run
+-------------
 
-Download the `training dataset <https://huggingface.co/datasets/RLinf/Search-R1-Data>`__ from HuggingFace
-and set the model and dataset paths in your chosen configuration under
-``examples/agent/searchr1/config/``. Use ``train_qwen2.5.yaml``
-for GRPO or ``train_qwen2.5_ppo.yaml`` for PPO:
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run
+``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt
+images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
+Start the local wiki retrieval server from :doc:`index` before launching training.
 
-.. code-block:: yaml
+.. tab-set::
 
-   data:
-     ……
-     train_data_paths: ["/path/to/train.jsonl"]
-     val_data_paths: ["/path/to/train.jsonl"]
+   .. tab-item:: Megatron GRPO
 
-Set ``rollout.model.model_path`` in the same configuration:
+      **1. Install**
 
-.. code-block:: yaml
+      .. code-block:: bash
 
-   rollout:
-     group_name: "RolloutGroup"
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-     gpu_memory_utilization: 0.8
-     model:
-       model_path: /path/to/model/Qwen2.5-3B-Instruct
-       model_type: qwen2.5
+      **2. Download**
 
-If you use `sampling_params.stop` to control model stop and save training time, detokenize should be set to True.
+      Download the base model and the `training dataset <https://huggingface.co/datasets/RLinf/Search-R1-Data>`__:
 
-.. code-block:: yaml
+      .. code-block:: bash
 
-   rollout:
-      ……
-      distributed_executor_backend: mp   # ray or mp
-      disable_log_stats: False
-      detokenize: True
+         hf download Qwen/Qwen2.5-3B-Instruct --local-dir ./Qwen2.5-3B-Instruct
+         hf download --repo-type dataset RLinf/Search-R1-Data --local-dir ./Search-R1-Data
 
-The GRPO configuration recomputes logprobs, while the PPO configuration uses
-rollout logprobs directly. Keep ``rollout.return_logprobs`` equal to
-``not algorithm.recompute_logprobs``.
+      **3. Launch**
 
-Start training with the configuration name:
+      Update ``data.train_data_paths``, ``data.val_data_paths``, and ``rollout.model.model_path`` in ``examples/agent/searchr1/config/train_qwen2.5.yaml`` (set ``rollout.detokenize: True`` if using ``sampling_params.stop``, and keep ``rollout.return_logprobs`` equal to ``not algorithm.recompute_logprobs``):
 
-.. code-block:: bash
+      .. code-block:: yaml
 
-   # GRPO
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5
+         data:
+           train_data_paths: ["/path/to/train.jsonl"]
+           val_data_paths: ["/path/to/train.jsonl"]
 
-   # PPO
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
+         rollout:
+           model:
+             model_path: /path/to/model/Qwen2.5-3B-Instruct
 
-MA-FSDP Training
-~~~~~~~~~~~~~~~~
+      Start training:
 
-RLinf also provides an FSDP2 implementation of the Search-R1 GRPO multi-agent actor.
-Use `examples/agent/searchr1/config/train_qwen2.5_fsdp.yaml`, set the same
-model and dataset paths described above, and start it with:
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash examples/agent/searchr1/run_train.sh train_qwen2.5
 
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp
+   .. tab-item:: Megatron PPO
 
-With `agentloop.is_dynamic_rollout_batch: True`, the entrypoint selects
-`MAFSDPActor` for `actor.training_backend: fsdp`. The configuration sets
-`actor.pack_traj: True`, which packs compatible turns from the same trajectory
-before FSDP training to avoid recomputing shared prefixes. Keep it enabled for
-the provided Search-R1 FSDP recipe.
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download Qwen/Qwen2.5-3B-Instruct --local-dir ./Qwen2.5-3B-Instruct
+         hf download --repo-type dataset RLinf/Search-R1-Data --local-dir ./Search-R1-Data
+
+      **3. Launch**
+
+      Update ``data.train_data_paths``, ``data.val_data_paths``, and ``rollout.model.model_path`` in ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml`` (PPO uses rollout logprobs directly, keeping ``rollout.return_logprobs`` equal to ``not algorithm.recompute_logprobs``):
+
+      .. code-block:: yaml
+
+         data:
+           train_data_paths: ["/path/to/train.jsonl"]
+           val_data_paths: ["/path/to/train.jsonl"]
+
+         rollout:
+           model:
+             model_path: /path/to/model/Qwen2.5-3B-Instruct
+
+      Start training:
+
+      .. code-block:: bash
+
+         bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
+
+   .. tab-item:: MA-FSDP GRPO
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download Qwen/Qwen2.5-3B-Instruct --local-dir ./Qwen2.5-3B-Instruct
+         hf download --repo-type dataset RLinf/Search-R1-Data --local-dir ./Search-R1-Data
+
+      **3. Launch**
+
+      Update ``data.train_data_paths``, ``data.val_data_paths``, and ``rollout.model.model_path`` in ``examples/agent/searchr1/config/train_qwen2.5_fsdp.yaml`` (with ``agentloop.is_dynamic_rollout_batch: True`` and ``actor.training_backend: fsdp``, the entrypoint uses ``MAFSDPActor`` and keeps ``actor.pack_traj: True`` to pack compatible turns from the same trajectory and avoid recomputing shared prefixes):
+
+      .. code-block:: bash
+
+         bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp
 
 Checkpoint Export and Evaluation
 --------------------------------

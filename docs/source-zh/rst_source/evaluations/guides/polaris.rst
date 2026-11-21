@@ -5,14 +5,48 @@ PolaRiS 是桌面操作仿真平台，提供 TapeIntoContainer、MoveLatteCup �
 
 相关训练文档：:doc:`../../examples/embodied/polaris`
 
-环境准备
+一键上手
 --------
 
-.. code-block:: bash
+请先按 :doc:`../../examples/embodied/polaris` 安装 Isaac Sim 5.1.0 并执行其 ``setup_conda_env.sh``。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
-   bash requirements/install.sh embodied --model openpi --env polaris
-   source .venv/bin/activate
-   export POLARIS_DATA_PATH=/path/to/dataset/PolaRiS-Hub
+.. tab-set::
+
+   .. tab-item:: OpenPI π₀.₅（TapeIntoContainer）
+
+      .. code-block:: bash
+
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env polaris && source .venv/bin/activate
+
+         # 2. 下载场景与模型
+         hf download owhan/PolaRiS-Hub --repo-type dataset --local-dir ./PolaRiS-Hub
+         hf download RLinf/RLinf-Pi05-Polaris-droid_jointpos --local-dir ./RLinf-Pi05-Polaris-droid_jointpos
+
+         # 3. 启动评测
+         export POLARIS_DATA_PATH="$(pwd)/PolaRiS-Hub"
+         bash evaluations/run_eval.sh polaris polaris_tapeintocontainer_openpi_pi05_eval \
+           rollout.model.model_path=./RLinf-Pi05-Polaris-droid_jointpos
+
+   .. tab-item:: OpenPI π₀（MoveLatteCup）
+
+      .. code-block:: bash
+
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env polaris && source .venv/bin/activate
+
+         # 2. 下载场景与模型
+         hf download owhan/PolaRiS-Hub --repo-type dataset --local-dir ./PolaRiS-Hub
+         hf download RLinf/RLinf-Pi0-Polaris-droid_jointpos --local-dir ./RLinf-Pi0-Polaris-droid_jointpos
+
+         # 3. 启动评测
+         export POLARIS_DATA_PATH="$(pwd)/PolaRiS-Hub"
+         bash evaluations/run_eval.sh polaris polaris_movelattecup_openpi_eval \
+           rollout.model.model_path=./RLinf-Pi0-Polaris-droid_jointpos
+
+终端输出 ``eval/success_once``；日志见 :doc:`../reference/results`。
 
 示例配置
 --------
@@ -30,36 +64,6 @@ PolaRiS 是桌面操作仿真平台，提供 TapeIntoContainer、MoveLatteCup �
    * - ``polaris_movelattecup_openpi_eval.yaml``
      - MoveLatteCup
      - π₀
-
-完整评测流程
-------------
-
-**Step 1：下载数据集与模型**
-
-按 :doc:`../../examples/embodied/polaris` 下载 PolaRiS 数据集与 OpenPI checkpoint。
-
-**Step 2：设置环境变量**
-
-.. code-block:: bash
-
-   source .venv/bin/activate
-   export POLARIS_DATA_PATH=/path/to/dataset/PolaRiS-Hub
-
-**Step 3：编辑配置**
-
-修改 ``rollout.model.model_path`` 指向本地 checkpoint。
-
-**Step 4：启动评测**
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh polaris polaris_tapeintocontainer_openpi_pi05_eval
-   # 或：
-   bash evaluations/run_eval.sh polaris polaris_movelattecup_openpi_eval
-
-**Step 5：查看结果**
-
-终端输出 ``eval/success_once``；日志见 :doc:`../reference/results`。
 
 常见问题
 --------

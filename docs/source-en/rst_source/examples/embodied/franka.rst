@@ -262,23 +262,31 @@ Installation
 
 With the driver and kernel in place, one installation on the GPU host provides
 both Franky robot control and the training dependencies. You can install
-natively or use the Docker image described at the end of this section. Clone
-RLinf and run subsequent commands from its root directory:
+natively or use the Docker image described at the end of this section.
 
-.. code:: bash
-
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+.. include:: _setup_common.rst
 
 Install the Franka Environment
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Run the installer. Prefix the command with ``LIBFRANKA_VERSION=0.15.0`` only if
-your firmware requires libfranka 0.15.0:
+Clone RLinf and run the installer from its root directory. Select the
+``libfranka 0.15.0`` tab only if your firmware requires libfranka 0.15.0:
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+   .. tab-item:: libfranka 0.19.0 (Default)
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+
+   .. tab-item:: libfranka 0.15.0
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         LIBFRANKA_VERSION=0.15.0 bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 What this does:
 
@@ -382,9 +390,13 @@ Download the Model
 
 Download the pretrained ResNet encoder into the repository:
 
-.. code:: bash
+.. tab-set::
 
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./models/RLinf-ResNet10-pretrained
+   .. tab-item:: ResNet-10 Encoder
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./models/RLinf-ResNet10-pretrained
 
 The training command below supplies this directory to both actor and rollout.
 
@@ -660,18 +672,32 @@ control and needs no GPU. The GPU server runs actor and rollout.
 Prepare Both Computers
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Prepare the controller as the robot host above, without the NVIDIA driver:
-check the firmware and set up the real-time kernel or run without one. Then
-either install natively with the command from `Installation`_, which selects
-CPU-only PyTorch when no NVIDIA driver is present, or start the Docker image
-from `Use the Docker Image`_ without ``--gpus all``.
+Install the same RLinf revision on both computers:
 
-On the GPU server, install its NVIDIA driver, clone the same RLinf revision,
-and run the same installation:
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: Controller Computer
 
-   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+      Prepare the controller as the robot host above, without the NVIDIA driver:
+      check the firmware and set up the real-time kernel or run without one. Then
+      either install natively below (the installer selects CPU-only PyTorch when
+      no NVIDIA driver is present), or start the Docker image from
+      `Use the Docker Image`_ without ``--gpus all``:
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+
+   .. tab-item:: GPU Server
+
+      Install the NVIDIA driver, clone the same RLinf revision, and run the same
+      installation:
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 Both computers must use the same RLinf revision, Python version, and Ray
 version. Collect demonstrations on the controller using the earlier collection
@@ -741,9 +767,14 @@ Install the ROS Environment
 Install into a separate environment so it does not replace the Franky one, and
 pass the libfranka version you chose:
 
-.. code:: bash
+.. tab-set::
 
-   LIBFRANKA_VERSION=0.15.0 bash requirements/install.sh embodied --env franka-ros --venv franka-ros && source franka-ros/bin/activate
+   .. tab-item:: ROS Noetic (Ubuntu 20.04)
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         LIBFRANKA_VERSION=0.15.0 bash requirements/install.sh embodied --env franka-ros --venv franka-ros && source franka-ros/bin/activate
 
 What this does:
 
@@ -895,11 +926,32 @@ The installer combines the Franka dependencies with other models. Every Franky
 environment includes the dexterous-hand dependencies. For a VLA policy, install
 the model and Franka together:
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env franka --venv openpi && source openpi/bin/activate
+   .. tab-item:: OpenPI
 
-Replace ``openpi`` with ``openvla``, ``openvla-oft``, or ``gr00t`` as needed.
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openpi --env franka --venv openpi && source openpi/bin/activate
+
+   .. tab-item:: OpenVLA
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openvla --env franka --venv openvla && source openvla/bin/activate
+
+   .. tab-item:: OpenVLA-OFT
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openvla-oft --env franka --venv openvla-oft && source openvla-oft/bin/activate
+
+   .. tab-item:: GR00T
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model gr00t --env franka --venv gr00t && source gr00t/bin/activate
+
 These commands install dependencies; the guides below cover model weights,
 task configuration, and training:
 

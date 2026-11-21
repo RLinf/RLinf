@@ -7,10 +7,7 @@
 
    RLinf SERL fork 中的 Franka-Sim 资源。
 
-Franka-Sim 是基于
-`SERL <https://rail-berkeley.github.io/serl/docs/sim_quick_start.html>`__ 栈构建的轻量级
-Franka Panda 仿真环境。你将使用 RLinf 在状态观测上用 PPO 训练 MLP policy，或在 RGB
-观测上用异步 SAC 训练 CNN policy。
+Franka-Sim 是基于 `SERL <https://rail-berkeley.github.io/serl/docs/sim_quick_start.html>`__ 栈构建的轻量级 Franka Panda 仿真环境。你将使用 RLinf 在状态观测上用 PPO 训练 MLP policy，或在 RGB 观测上用异步 SAC 训练 CNN policy。
 
 概览
 ----------------------------------------
@@ -75,97 +72,71 @@ Franka Panda 仿真环境。你将使用 RLinf 在状态观测上用 PPO 训练 
    * - 提示词
      - 状态 MLP 配方不使用提示词；视觉策略从 env wrapper 接收任务条件观测。
 
-安装
+一键上手
 ----------------------------------------
 
 .. include:: _setup_common.rst
 
-安装 Franka-Sim 依赖：
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenVLA + FrankaSim
 
-   bash requirements/install.sh embodied --model openvla --env frankasim && source .venv/bin/activate
+      **1. 安装环境**
 
-下载模型
-----------------------------------------
+      .. code-block:: bash
 
-MLP + PPO 配方可跳过本节。CNN + SAC 配方需要下载 ResNet 检查点：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env frankasim && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. 下载模型**
 
-   cd /path/to/save/model
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+      MLP + PPO 配方可跳过此步。CNN + SAC 配方需要下载预训练 ResNet-10 检查点：
 
-然后在 ``examples/embodiment/config/frankasim_sac_cnn_async.yaml`` 中为 rollout 和 actor
-设置相同的检查点路径：
+      .. code-block:: bash
 
-.. code-block:: yaml
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
 
-   rollout:
-      model:
-         model_path: /path/to/RLinf-ResNet10-pretrained
-   actor:
-      model:
-         model_path: /path/to/RLinf-ResNet10-pretrained
+      **3. 启动训练**
 
-运行
-----------------------------------------
+      可用训练配置：
 
-可用训练配置：
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 38 20 18
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 38 20 18
+         * - 配方
+           - 配置
+           - 入口
+           - 命令后缀
+         * - MLP + PPO
+           - ``examples/embodiment/config/frankasim_ppo_mlp.yaml``
+           - ``run_embodiment.sh``
+           - ``frankasim_ppo_mlp``
+         * - CNN + SAC
+           - ``examples/embodiment/config/frankasim_sac_cnn_async.yaml``
+           - ``run_async.sh``
+           - ``frankasim_sac_cnn_async``
 
-   * - 配方
-     - 配置
-     - 入口
-     - 命令后缀
-   * - MLP + PPO
-     - ``examples/embodiment/config/frankasim_ppo_mlp.yaml``
-     - ``run_embodiment.sh``
-     - ``frankasim_ppo_mlp``
-   * - CNN + SAC
-     - ``examples/embodiment/config/frankasim_sac_cnn_async.yaml``
-     - ``run_async.sh``
-     - ``frankasim_sac_cnn_async``
+      .. include:: _model_path.rst
 
-使用对应脚本启动训练：
+      使用对应脚本启动训练：
 
-.. code:: bash
+      .. code-block:: bash
 
-   # 状态观测 PPO 配方
-   bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
+         # 状态观测 MLP + PPO
+         bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
 
-   # 视觉 SAC 配方
-   bash examples/embodiment/run_async.sh frankasim_sac_cnn_async
+         # 视觉 CNN + 异步 SAC
+         bash examples/embodiment/run_async.sh frankasim_sac_cnn_async actor.model.model_path=$PWD/RLinf-ResNet10-pretrained
 
-.. note::
+      .. dropdown:: 进阶配置（可选）
 
-   两个参考配置都运行在 GPU ``0``。如果迁移到更大的机器，请调整
-   ``cluster.component_placement``、``env.train.total_num_envs`` 和 batch size。
+         两个参考配置默认都运行在 GPU ``0``。迁移到多卡机器时，按需调整 ``cluster.component_placement``、``env.train.total_num_envs`` 和 batch size。
 
 可视化与结果
 ----------------------------------------
 
-在 RLinf 仓库根目录启动 TensorBoard：
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-关键指标是 ``env/success_once``。完整指标说明见
-:doc:`训练指标 <../../reference/metrics>`。
-
-如需保存 rollout 视频，请启用 video：
-
-.. code:: yaml
-
-   env:
-     eval:
-       video_cfg:
-         save_video: True
-         video_base_dir: ${runner.logger.log_path}/video/eval
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``env/success_once`` 曲线，通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制，完整指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
 .. list-table::
    :header-rows: 1

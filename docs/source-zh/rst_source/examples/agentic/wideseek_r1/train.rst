@@ -46,67 +46,60 @@ WideSeek-R1 训练
 - 评判模型已启动。
 - 离线检索工具已配置完成。
 
-下载基础模型
+一键上手
 ----------------------------------------
 
-主实验使用 `Qwen3-4B <https://huggingface.co/Qwen/Qwen3-4B>`__。
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。启动训练前，请先按 :doc:`环境与工具配置 <tools>` 启动评判模型和离线检索工具。
 
-下载模型后，更新 `examples/agent/wideseek_r1/config/train_qwen3_hybrid.yaml` 中的本地模型路径：
+.. tab-set::
 
-.. code-block:: yaml
+   .. tab-item:: Qwen3-4B（混合多智能体强化学习）
 
-   rollout:
-     model:
-       model_type: qwen3
-       model_path: /PATH/TO/MODEL
+      **1. 安装环境**
 
-下载训练数据
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+
+      **2. 下载模型与数据**
+
+      下载 `Qwen3-4B <https://huggingface.co/Qwen/Qwen3-4B>`__ 和 `WideSeek-R1-train-data <https://huggingface.co/datasets/RLinf/WideSeek-R1-train-data>`__\ （主实验使用其中的 ``hybrid_20k.jsonl``；另有公开语料资源 `WideSeek-R1-Corpus <https://huggingface.co/datasets/RLinf/WideSeek-R1-Corpus>`__ 供查阅）：
+
+      .. code-block:: bash
+
+         hf download Qwen/Qwen3-4B --local-dir ./Qwen3-4B
+         hf download --repo-type dataset RLinf/WideSeek-R1-train-data --local-dir ./WideSeek-R1-train-data
+
+      **3. 启动训练**
+
+      在 ``examples/agent/wideseek_r1/config/train_qwen3_hybrid.yaml`` 中填写 ``rollout.model.model_path``、``data.train_data_paths`` 和 ``agentloop.llm_ip``：
+
+      .. code-block:: yaml
+
+         rollout:
+           model:
+             model_type: qwen3
+             model_path: /PATH/TO/MODEL
+
+         data:
+           train_data_paths: /PATH/TO/TRAIN/DATASET/hybrid_20k.jsonl
+           is_hybrid: True
+
+      启动训练（多节点启动见 :ref:`wideseek-r1-multinode`）：
+
+      .. code-block:: bash
+
+         bash examples/agent/wideseek_r1/run_train.sh train_qwen3_hybrid
+
+混合与单一来源数据集
 ----------------------------------------
-
-WideSeek-R1 训练使用一个 2 万条样本的混合数据集，该数据集将广域信息检索数据与标准 QA 数据结合在一起。数据集可在 Hugging Face 获取：
-
-- `WideSeek-R1-train-data <https://huggingface.co/datasets/RLinf/WideSeek-R1-train-data>`__
-
-主实验使用 ``WideSeek-R1-train-data`` 中的 ``hybrid_20k.jsonl``。
-
-另有单独的 `WideSeek-R1-Corpus <https://huggingface.co/datasets/RLinf/WideSeek-R1-Corpus>`__
-资源，供希望查看或复用公开语料资源的用户使用。它不是主实验使用的
-``hybrid_20k.jsonl`` 训练文件。
-
-下载数据后，更新 `examples/agent/wideseek_r1/config/train_qwen3_hybrid.yaml` 中的数据集路径：
-
-.. code-block:: yaml
-
-   data:
-     train_data_paths: /PATH/TO/TRAIN/DATASET/hybrid_20k.jsonl
-     is_hybrid: True
-
-关于 ``is_hybrid`` 和 ``is_markdown``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``is_hybrid`` 表示训练集是否混合了 WideSearch 风格数据和标准 QA 数据。
 
 - 对于提供的混合训练集，请设置 ``is_hybrid: True``。
-- 如果你使用的是单一来源数据集进行训练，例如 ``width_20k`` 或 ``depth_20k``，请设置 ``is_hybrid: False``。
-- 当 ``is_hybrid`` 为 ``False`` 时，请确保 ``data.is_markdown`` 与所使用数据集的格式一致（``width_20k`` 为 True，``depth_20k`` 为 False）。
-
-运行
-----------------------------------------
-
-开始训练前，请确认以下各项均正确无误：
-
-- ``rollout.model.model_path`` 指向已下载的基础模型。
-- ``data.train_data_paths`` 指向训练数据集。
-- ``agentloop.llm_ip`` 设置正确。
-- 离线工具已配置且可访问。参见 :doc:`环境与工具配置 <tools>`。
-
-然后运行：
-
-.. code-block:: bash
-
-   bash examples/agent/wideseek_r1/run_train.sh train_qwen3_hybrid
-
-多节点启动请参见 :ref:`wideseek-r1-multinode`。
+- 如果你使用单一来源数据集训练，例如 ``width_20k`` 或 ``depth_20k``，请设置 ``is_hybrid: False``。
+- ``is_hybrid`` 设为 ``False`` 时，请确保 ``data.is_markdown`` 与所使用数据集的格式一致（``width_20k`` 为 ``True``，``depth_20k`` 为 ``False``）。
 
 可视化与结果
 ----------------------------------------
@@ -122,7 +115,7 @@ WideSeek-R1 训练使用一个 2 万条样本的混合数据集，该数据集�
 说明
 ----------------------------------------
 
-WideSeek-R1 同时支持单智能体和多智能体执行模式。可通过 YAML 配置中的 ``agentloop.workflow`` 进行切换：
+WideSeek-R1 同时支持单智能体和多智能体执行模式。可通过 YAML 配置中的 ``agentloop.workflow`` 切换：
 
 - ``mas``：多智能体训练。
 - ``sa``：单智能体训练。

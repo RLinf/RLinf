@@ -24,10 +24,16 @@ Installation
 On the GPU training node and the YAM controller, use the same RLinf revision and
 install the model and robot dependencies in one environment:
 
-.. code-block:: bash
+.. include:: _setup_common.rst
 
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
-   bash requirements/install.sh embodied --model openpi --env yam && source .venv/bin/activate
+.. tab-set::
+
+   .. tab-item:: GPU & YAM Nodes
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env yam && source .venv/bin/activate
 
 Configure the CAN interfaces and identify the three camera serials using
 :doc:`yam`.

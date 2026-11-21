@@ -7,10 +7,7 @@ ABot-M0 强化学习训练
 
    ABot-M0：以 VGGT 为空间基础的 VLA 策略。
 
-在 RLinf 中对 `ABot-M0 <https://github.com/amap-cvlab/ABot-Manipulation>`__ 进行评测与
-**PPO** 训练，覆盖标准 **LIBERO** 与 **LIBERO-Plus**。该适配使用 HuggingFace rollout
-backend 与 FSDP actor 训练：rollout 阶段 ABot-M0 生成动作块，actor 更新阶段 RLinf 基于
-rollout 中保存的输入重新计算 log probability 与 value。
+在 RLinf 中对 `ABot-M0 <https://github.com/amap-cvlab/ABot-Manipulation>`__ 运行评测与 **PPO** 训练，覆盖标准 **LIBERO** 与 **LIBERO-Plus**。该适配使用 HuggingFace rollout backend 与 FSDP actor 训练：rollout 阶段 ABot-M0 生成动作块，actor 更新阶段 RLinf 按 rollout 中保存的输入重新计算 log probability 与 value。
 
 概览
 ----------------------------------------
@@ -40,12 +37,10 @@ rollout 中保存的输入重新计算 log probability 与 value。
 
       1 节点 · GPU
 
-| **你将完成：** 安装 → 下载 ABot-M0 checkpoint 与骨干权重 → 设置 ``model_path`` → 评测 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
+| **你将完成：** 安装 → 下载 ABot-M0 checkpoint 与骨干权重 → 设置 ``model_path`` → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一个 ABot-M0 LIBERO checkpoint 及其骨干权重（见下文）。
 
-ABot-M0 作为 VLA 策略接入 RLinf：适配层冻结预训练感知模块，通过 RL objective 训练动作模型，
-并额外加入 value head 以支持 actor-critic PPO（GAE 估计 advantage/return、ratio clipping、
-value clipping、可选 entropy 正则）。
+ABot-M0 作为 VLA 策略接入 RLinf：适配层冻结预训练感知模块，通过 RL objective 训练动作模型，并额外加入 value head 以支持 actor-critic PPO（GAE 估计 advantage/return、ratio clipping、value clipping、可选 entropy 正则）。
 
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -67,7 +62,7 @@ value clipping、可选 entropy 正则）。
    * - LIBERO
      - LIBERO-10+
      - ``libero_10_plus_ppo_abot_m0``
-     - 使用 ABot-M0 进行长程 LIBERO-10+ 训练。
+     - 使用 ABot-M0 运行长程 LIBERO-10+ 训练。
 
 观测与动作
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -87,10 +82,8 @@ value clipping、可选 entropy 正则）。
    * - Prompt
      - 每个 LIBERO 任务对应的自然语言指令。
 
-安装
+一键上手
 ----------------------------------------
-
-请在同一个 Python 环境中安装 ABot-M0、VGGT 和 LIBERO 运行时。
 
 .. include:: _setup_common.rst
 
@@ -99,174 +92,187 @@ value clipping、可选 entropy 正则）。
 .. tab-set::
 
    .. tab-item:: LIBERO
+      :sync: libero
+
+      **1. 安装环境**
 
       .. code-block:: bash
 
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero && source .venv/bin/activate
 
-   .. tab-item:: LIBERO-Plus
+      **2. 下载资源与模型**
+
+      下载 10k-step LIBERO RL 基线权重（初始成功率约 40%）与 Qwen3-VL 骨干权重：
 
       .. code-block:: bash
 
+         hf download HaoyunOvO/ABot-m0-LIBERO-10k-step --local-dir ./ABot-m0-LIBERO-10k-step
+         hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir ./Qwen3-VL-4B-Instruct-Action
+
+      修改已下载 checkpoint 目录中的 ``config.yaml``，将 ``qwenvl.base_vlm`` 指向本地 ``Qwen3-VL-4B-Instruct-Action`` 目录：
+
+      .. code-block:: yaml
+
+         qwenvl:
+           base_vlm: /path/to/Qwen3-VL-4B-Instruct-Action
+
+      **3. 启动训练**
+
+      在 ``examples/embodiment/config/libero_10_ppo_abot_m0.yaml`` 中将 ``actor.model.model_path`` 指向 checkpoint 文件（rollout 会自动沿用同一路径）：
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
+
+      导出环境变量、启动 Ray 并启动 PPO 训练：
+
+      .. code-block:: bash
+
+         source .venv/bin/activate
+         export REPO_PATH=$(pwd)
+         export EMBODIED_PATH=$(pwd)/examples/embodiment
+         export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+         export MUJOCO_GL=egl
+         export PYOPENGL_PLATFORM=egl
+         export ROBOT_PLATFORM=LIBERO
+         export LIBERO_TYPE=standard
+
+         ray stop || true
+         ray start --head --port=6379
+         bash examples/embodiment/run_embodiment.sh libero_10_ppo_abot_m0
+
+      .. dropdown:: 进阶配置（可选）
+
+         - **独立评测用 SFT 权重**：如需评测官方发布的 LIBERO SFT 权重，下载 ``acvlab/ABot-M0-LIBERO``：
+
+           .. code-block:: bash
+
+              hf download acvlab/ABot-M0-LIBERO --local-dir ./ABot-M0-LIBERO
+
+         - **离线 VGGT 权重**：运行时无法访问 Hugging Face 时，提前下载 ``facebook/VGGT-1B`` 并设置 ``VGGT_MODEL_PATH``\ （``VGGT_PATH`` 用于安装时指定源码目录，``VGGT_MODEL_PATH`` 用于运行时指定权重目录）：
+
+           .. code-block:: bash
+
+              hf download facebook/VGGT-1B --local-dir ./VGGT-1B
+              export VGGT_MODEL_PATH=$PWD/VGGT-1B
+
+         - **导入完整性检查**：启动前验证包级依赖链路（正常应输出 ``IMPORT_OK``）：
+
+           .. code-block:: bash
+
+              python -c "import rlinf; import ABot; import vggt; print('IMPORT_OK')"
+
+         - **Hydra 配置参考**：完整字段说明见 :doc:`训练配置 <../../reference/configuration>`。
+
+   .. tab-item:: LIBERO-Plus
+      :sync: liberoplus
+
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model abot_m0 --env liberoplus && source .venv/bin/activate
 
-LIBERO-Plus 资产下载
-----------------------------------------
+      **2. 下载资源与模型**
 
-LIBERO-Plus 需要大量新增对象、纹理和其他资产才能正常运行。请从 Hugging Face dataset
-``Sylvest/LIBERO-plus`` 下载 ``assets.zip``，并解压到已安装的
-``liberoplus.liberoplus`` package 目录：
+      从 ``Sylvest/LIBERO-plus`` 下载并解压 LIBERO-Plus 场景资产到 ``liberoplus.liberoplus`` 包目录，同时下载 10k-step LIBERO RL 基线权重与 Qwen3-VL 骨干权重（LIBERO-Plus 资产详情见 :ref:`LIBERO-Pro 与 LIBERO-Plus 章节 <zh-liberopro-plus-benchmark>`）：
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   # 获取已安装的 liberoplus 包目录。
-   # 注意：导入 liberoplus 时可能会触发配置初始化日志，因此使用 tail -n 1 只保留最终路径。
-   export LIBERO_PLUS_PACKAGE_DIR=$(python -c "import pathlib; import liberoplus.liberoplus as l_plus; print(pathlib.Path(l_plus.__file__).resolve().parent)" | tail -n 1)
+         export LIBERO_PLUS_PACKAGE_DIR=$(python -c "import pathlib; import liberoplus.liberoplus as l_plus; print(pathlib.Path(l_plus.__file__).resolve().parent)" | tail -n 1)
+         hf download --repo-type dataset Sylvest/LIBERO-plus assets.zip --local-dir "${LIBERO_PLUS_PACKAGE_DIR}"
+         python - <<'PY'
+         import os, zipfile
+         from pathlib import Path
 
-   echo "LIBERO_PLUS_PACKAGE_DIR=${LIBERO_PLUS_PACKAGE_DIR}"
+         pkg = Path(os.environ["LIBERO_PLUS_PACKAGE_DIR"])
+         out_dir = pkg / "assets"
+         with zipfile.ZipFile(pkg / "assets.zip") as z:
+             for info in z.infolist():
+                 if "/assets/" not in info.filename:
+                     continue
+                 rel = info.filename.split("/assets/", 1)[1]
+                 if not rel:
+                     continue
+                 target = out_dir / rel
+                 if info.is_dir():
+                     target.mkdir(parents=True, exist_ok=True)
+                 else:
+                     target.parent.mkdir(parents=True, exist_ok=True)
+                     with z.open(info) as src, open(target, "wb") as dst:
+                         dst.write(src.read())
+         print("Extracted LIBERO-Plus assets to:", out_dir)
+         PY
+         ls -lh "${LIBERO_PLUS_PACKAGE_DIR}/assets"
 
-   hf download --repo-type dataset Sylvest/LIBERO-plus assets.zip \
-       --local-dir "${LIBERO_PLUS_PACKAGE_DIR}"
+         hf download HaoyunOvO/ABot-m0-LIBERO-10k-step --local-dir ./ABot-m0-LIBERO-10k-step
+         hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir ./Qwen3-VL-4B-Instruct-Action
 
-   # assets.zip 内部包含较长的原始路径前缀，因此只提取其中 assets/ 下的内容。
-   python - <<'PY'
-   import zipfile
-   from pathlib import Path
+      修改已下载 checkpoint 目录中的 ``config.yaml``，将 ``qwenvl.base_vlm`` 指向本地 ``Qwen3-VL-4B-Instruct-Action`` 目录：
 
-   pkg = Path(__import__("os").environ["LIBERO_PLUS_PACKAGE_DIR"])
-   zip_path = pkg / "assets.zip"
-   out_dir = pkg / "assets"
+      .. code-block:: yaml
 
-   with zipfile.ZipFile(zip_path) as z:
-       for info in z.infolist():
-           name = info.filename
+         qwenvl:
+           base_vlm: /path/to/Qwen3-VL-4B-Instruct-Action
 
-           if "/assets/" not in name:
-               continue
+      **3. 启动训练**
 
-           rel = name.split("/assets/", 1)[1]
-           if not rel:
-               continue
+      在 ``examples/embodiment/config/libero_10_plus_ppo_abot_m0.yaml`` 中将 ``actor.model.model_path`` 指向 checkpoint 文件（rollout 会自动沿用同一路径）：
 
-           target = out_dir / rel
+      .. code-block:: yaml
 
-           if info.is_dir():
-               target.mkdir(parents=True, exist_ok=True)
-           else:
-               target.parent.mkdir(parents=True, exist_ok=True)
-               with z.open(info) as src, open(target, "wb") as dst:
-                   dst.write(src.read())
+         actor:
+           model:
+             model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
 
-   print("Extracted LIBERO-Plus assets to:", out_dir)
-   PY
+      导出环境变量、启动 Ray 并启动 PPO 训练：
 
-   # 检查资产目录结构。
-   ls -lh "${LIBERO_PLUS_PACKAGE_DIR}/assets"
+      .. code-block:: bash
 
-解压完成后，目录应类似如下：
+         source .venv/bin/activate
+         export REPO_PATH=$(pwd)
+         export EMBODIED_PATH=$(pwd)/examples/embodiment
+         export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+         export MUJOCO_GL=egl
+         export PYOPENGL_PLATFORM=egl
+         export ROBOT_PLATFORM=LIBERO
+         export LIBERO_TYPE=plus
 
-.. code-block:: text
+         ray stop || true
+         ray start --head --port=6379
+         bash examples/embodiment/run_embodiment.sh libero_10_plus_ppo_abot_m0
 
-   <已安装的 liberoplus 包目录>/
-   └── assets/
-       ├── articulated_objects/
-       ├── new_objects/
-       ├── scenes/
-       ├── stable_hope_objects/
-       ├── stable_scanned_objects/
-       ├── textures/
-       ├── turbosquid_objects/
-       ├── serving_region.xml
-       ├── wall_frames.stl
-       └── wall.xml
+      .. dropdown:: 进阶配置（可选）
 
-LIBERO-Plus 的完整说明见 LIBERO 基准文档的 :ref:`LIBERO-Pro 与 LIBERO-Plus 章节 <zh-liberopro-plus-benchmark>`。
+         - **独立评测用 SFT 权重**：如需评测官方发布的 LIBERO SFT 权重，下载 ``acvlab/ABot-M0-LIBERO``：
 
-下载模型
-----------------------------------------
+           .. code-block:: bash
 
-训练开始前，请下载 ABot-M0 checkpoint 和所需 backbone 权重：
+              hf download acvlab/ABot-M0-LIBERO --local-dir ./ABot-M0-LIBERO
 
-* ``acvlab/ABot-M0-LIBERO``：用于独立评测的 SFT 权重。
-* ``HaoyunOvO/ABot-m0-LIBERO-10k-step``：用于 PPO 训练的 RL baseline。
-* ``StarVLA/Qwen3-VL-4B-Instruct-Action``：Qwen3-VL backbone。
-* ``facebook/VGGT-1B``：运行时无法访问 Hugging Face 时用于离线加载 VGGT。
+         - **离线 VGGT 权重**：运行时无法访问 Hugging Face 时，提前下载 ``facebook/VGGT-1B`` 并设置 ``VGGT_MODEL_PATH``\ （``VGGT_PATH`` 用于安装时指定源码目录，``VGGT_MODEL_PATH`` 用于运行时指定权重目录）：
 
-.. code-block:: bash
+           .. code-block:: bash
 
-   hf download acvlab/ABot-M0-LIBERO --local-dir ./ABot-M0-LIBERO
-   hf download HaoyunOvO/ABot-m0-LIBERO-10k-step --local-dir ./ABot-m0-LIBERO-10k-step
-   hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir ./Qwen3-VL-4B-Instruct-Action
-   hf download facebook/VGGT-1B --local-dir ./VGGT-1B
+              hf download facebook/VGGT-1B --local-dir ./VGGT-1B
+              export VGGT_MODEL_PATH=$PWD/VGGT-1B
 
-PPO 训练可使用 10k-step ABot-M0 LIBERO checkpoint 作为 RL baseline。该权重在 LIBERO
-评测中的初始成功率约为 40%，适合作为后续 RL 训练的起点。
+         - **导入完整性检查**：启动前验证包级依赖链路（正常应输出 ``IMPORT_OK``）：
 
-.. note::
+           .. code-block:: bash
 
-   ABot-M0 checkpoint 自带 ``config.yaml``。下载完成后，请修改 ``qwenvl.base_vlm``，
-   使其指向本机 ``Qwen3-VL-4B-Instruct-Action`` 路径。
+              python -c "import rlinf; import ABot; import vggt; print('IMPORT_OK')"
 
-.. code-block:: yaml
-
-   qwenvl:
-     base_vlm: /path/to/Qwen3-VL-4B-Instruct-Action
-
-RLinf 的 ABot-M0 加载路径支持 ``VGGT_MODEL_PATH``。离线运行时，在启动评测或训练之前，将该变量设置为上面下载的权重目录：
-
-.. code-block:: bash
-
-   export VGGT_MODEL_PATH=/path/to/VGGT-1B
-
-未设置时，ABot 继续使用默认的 Hub ID ``facebook/VGGT-1B``。``VGGT_PATH`` 用于安装时选择源码 checkout；``VGGT_MODEL_PATH`` 用于运行时选择权重目录。
-
-配置 ``model_path``
-----------------------------------------
-
-两个 benchmark 各对应一份配置：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 72
-
-   * - Benchmark
-     - 配置文件
-   * - LIBERO
-     - ``examples/embodiment/config/libero_10_ppo_abot_m0.yaml``
-   * - LIBERO-Plus
-     - ``examples/embodiment/config/libero_10_plus_ppo_abot_m0.yaml``
-
-请将以下两项设置为用于评测或训练的 checkpoint 路径：
-
-* ``rollout.model.model_path``
-* ``actor.model.model_path``
-
-如果使用 10k-step RL baseline，请设置为：
-
-.. code-block:: yaml
-
-   rollout:
-     model:
-       model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
-   actor:
-     model:
-       model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
-
-导入完整性验证
-----------------------------------------
-
-.. code-block:: bash
-
-   python -c "import rlinf; import ABot; import vggt; print('IMPORT_OK')"
-
-若输出 ``IMPORT_OK``，说明包级依赖链路正常。
+         - **Hydra 配置参考**：完整字段说明见 :doc:`训练配置 <../../reference/configuration>`。
 
 独立评测
 ----------------------------------------
 
-训练前请使用统一的 Evaluation 章节验证 ABot-M0 checkpoint。先阅读
-:doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`，并在评测配置中同时设置
-``actor.model.model_path`` 与 ``rollout.model.model_path`` 指向 ABot-M0 checkpoint。
+训练前可通过统一的 Evaluation 流程验证 ABot-M0 checkpoint。先阅读 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`，并在配置中将 ``actor.model.model_path`` 指向 ABot-M0 checkpoint。
 
 .. list-table::
    :header-rows: 1
@@ -277,52 +283,14 @@ RLinf 的 ABot-M0 加载路径支持 ``VGGT_MODEL_PATH``。离线运行时，在
      - 需要修改
    * - LIBERO-10
      - 通过 Evaluation 配置回退使用 ``libero_10_ppo_abot_m0``
-     - 设置 ``LIBERO_TYPE=standard``，并将两个 model path 指向 ABot-M0 checkpoint。
+     - 设置 ``LIBERO_TYPE=standard``，并将 ``actor.model.model_path`` 指向 ABot-M0 checkpoint。
    * - LIBERO-10+
      - 通过 Evaluation 配置回退使用 ``libero_10_plus_ppo_abot_m0``
-     - 设置 ``LIBERO_TYPE=plus``，并将两个 model path 指向 ABot-M0 checkpoint。
+     - 设置 ``LIBERO_TYPE=plus``，并将 ``actor.model.model_path`` 指向 ABot-M0 checkpoint。
 
-CLI 用法、Hydra 覆盖、日志和视频输出见 :doc:`Evaluation CLI 参考 <../../evaluations/reference/cli>`
-与 :doc:`Evaluation 结果参考 <../../evaluations/reference/results>`。
-
-运行
-----------------------------------------
-
-启动训练前先设置通用环境变量并启动 Ray：
-
-.. code-block:: bash
-
-   source .venv/bin/activate
-   export REPO_PATH=$(pwd)
-   export EMBODIED_PATH=$(pwd)/examples/embodiment
-   export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
-   export MUJOCO_GL=egl
-   export PYOPENGL_PLATFORM=egl
-   export ROBOT_PLATFORM=LIBERO
-
-   ray stop || true
-   ray start --head --port=6379
-
-启动 LIBERO PPO 训练：
-
-.. code-block:: bash
-
-   export LIBERO_TYPE=standard
-   bash examples/embodiment/run_embodiment.sh libero_10_ppo_abot_m0
-
-启动 LIBERO-Plus PPO 训练：
-
-.. code-block:: bash
-
-   export LIBERO_TYPE=plus
-   bash examples/embodiment/run_embodiment.sh libero_10_plus_ppo_abot_m0
+CLI 用法、Hydra 覆盖、日志和视频输出见 :doc:`Evaluation CLI 参考 <../../evaluations/reference/cli>` 与 :doc:`Evaluation 结果参考 <../../evaluations/reference/results>`。
 
 可视化与结果
 ----------------------------------------
 
-关注任务成功率指标 ``env/success_once``。各项指标的含义见
-:doc:`训练指标 <../../reference/metrics>`。
-
-.. code-block:: bash
-
-   tensorboard --logdir <runner.logger.log_path> --port 6006
+执行 ``tensorboard --logdir ./logs --port 6006`` 启动 TensorBoard，关注任务成功率指标 ``env/success_once``。传入 ``env.eval.video_cfg.save_video=True`` 可保存评估视频，完整指标与日志后端说明见 :doc:`训练指标 <../../reference/metrics>`。

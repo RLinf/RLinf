@@ -37,41 +37,51 @@ Cosmos3 监督微调（LIBERO）
 
 .. include:: _setup_common.rst
 
-安装 Cosmos3（如需仿真评测，加 ``--env libero``）：
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: Cosmos3 SFT
 
-   unset PYTHONPATH
-   bash requirements/install.sh embodied --model cosmos3 --env libero && source .venv/bin/activate
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         unset PYTHONPATH
+         bash requirements/install.sh embodied --model cosmos3 --env libero && source .venv/bin/activate
 
 Cosmos3 的数据变换与归一化统计依赖 cosmos-framework，训练前下载并设置路径：
 
 .. code-block:: bash
 
-   git clone https://github.com/NVIDIA/cosmos-framework.git /path/to/cosmos-framework
-   export COSMOS_FRAMEWORK_PATH=/path/to/cosmos-framework
+   git clone https://github.com/NVIDIA/cosmos-framework.git ./cosmos-framework
+   export COSMOS_FRAMEWORK_PATH="$PWD/cosmos-framework"
 
-离线缓存 Qwen3-VL-8B-Instruct 和 Wan2.2 模型
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+下载模型
+----------------------------------------
 
-SFT 与基座转换会从 Hugging Face 拉取三个模型文件，离线机器要先下好放进 HF 本地缓存，再开离线模式（``HF_HUB_OFFLINE=1``）让 ``from_pretrained`` / ``hf download`` 直接读缓存，否则 worker 会在网络重试处卡死：
+下载 ``nvidia/Cosmos3-Nano`` 基座权重（diffusers 格式，下文转换为 DCP），同时将 SFT 启动与 ``convert_model_to_dcp`` 所需的三个配套资产下载到 ``HF_HOME`` 缓存目录（离线机器开启 ``HF_HUB_OFFLINE=1`` 时直接读取缓存）：
 
-- **Qwen3-VL-8B-Instruct** （tokenizer / VLM 配置）：SFT 启动与 ``convert_model_to_dcp`` 重建模型时都用。
-- **Wan2.2-TI2V-5B** 与 **Wan2.2-TI2V-5B-Diffusers**：仅 ``convert_model_to_dcp`` 重建模型时下载。
+- **Cosmos3-Nano**\ （``nvidia/Cosmos3-Nano``）：diffusers/safetensors 基座权重（含 ``model_index.json``、``transformer/*.safetensors``、``vae/``、``text_tokenizer/``）。
+- **Qwen3-VL-8B-Instruct**\ （tokenizer / VLM 配置）：SFT 启动与 ``convert_model_to_dcp`` 重建模型时使用。
+- **Wan2.2-TI2V-5B** 与 **Wan2.2-TI2V-5B-Diffusers**：供 ``convert_model_to_dcp`` 与 VAE 加载使用。
 
-直接下载进 HF 缓存（推荐，缓存布局自动正确）：
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: Cosmos3 SFT
 
-   export HF_HOME=${HF_HOME:-~/.cache/huggingface}
-   hf download Qwen/Qwen3-VL-8B-Instruct
-   hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e Wan2.2_VAE.pth
-   hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --include "vae/*"
+      .. code-block:: bash
+
+         # 基座模型（diffusers 格式，下文转换为 DCP）
+         hf download nvidia/Cosmos3-Nano --local-dir ./Cosmos3-Nano
+
+         # 配套资产直接下载至 HF 缓存（供离线模式使用）
+         export HF_HOME=${HF_HOME:-~/.cache/huggingface}
+         hf download Qwen/Qwen3-VL-8B-Instruct
+         hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e Wan2.2_VAE.pth
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --include "vae/*"
 
 准备基座模型
 ----------------------------------------
 
-Cosmos3 SFT **从基座模型 Cosmos3-Nano 热启动，只训练动作头** 。``actor.model.model_path`` 必须指向一个 **DCP 格式** 的基座权重目录，``wan_vae_path`` 指向 Wan2.2 VAE：
+Cosmos3 SFT **从基座模型 Cosmos3-Nano 热启动，只训练动作头**\ 。``actor.model.model_path`` 必须指向一个 **DCP 格式** 的基座权重目录，``wan_vae_path`` 指向 Wan2.2 VAE：
 
 .. code-block:: yaml
 
@@ -80,44 +90,29 @@ Cosmos3 SFT **从基座模型 Cosmos3-Nano 热启动，只训练动作头** 。`
 
    actor:
      model:
-       model_path: /path/to/Cosmos3-Nano-DCP
+       model_path: ./Cosmos3-Nano-DCP
        wan_vae_path: /path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
        load_to_device: false          # 见下方 warning
 
-准备基座 DCP 权重
+将基座权重转换为 DCP
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**第 1 步：下载 Cosmos3-Nano（diffusers 格式）**
-
-从 Hugging Face 下载 ``nvidia/Cosmos3-Nano``。它是 **diffusers/safetensors 格式**\ （``model_index.json`` + ``transformer/*.safetensors`` 分片 + ``vae/`` + ``text_tokenizer/`` 等），**不是 DCP**——SFT 还不能直接用，需第 2 步转成 DCP。
-
-.. code-block:: bash
-
-   hf download nvidia/Cosmos3-Nano \
-     --local-dir /path/to/Cosmos3-Nano
+SFT 不能直接从 diffusers 目录加载基座：cosmos3 的基座加载器 ``_load_base_weights`` 用 ``_is_safetensors_checkpoint`` 判定格式——它只检查路径\ **顶层**\ 是否有 ``*.safetensors`` 文件（非递归）。diffusers 目录把分片放在 ``transformer/`` 子目录、顶层没有，判定为 ``False``，于是落到 DCP 加载分支，而 diffusers 目录又不是 DCP，会加载失败。因此必须先用 cosmos-framework 的 ``convert_model_to_dcp.py`` 把上文下载的 ``./Cosmos3-Nano`` diffusers 权重转成 DCP 再给 ``model_path`` 用。
 
 .. note::
 
-   基座用 ``--local-dir`` 下载到\ **普通目录**\ 即可。
-
-**第 2 步：转成 DCP**
-
-SFT 不能直接从 diffusers 目录加载基座：cosmos3 的基座加载器 ``_load_base_weights`` 用 ``_is_safetensors_checkpoint`` 判定格式——它只检查路径\ **顶层**\ 是否有 ``*.safetensors`` 文件（非递归）。diffusers 目录把分片放在 ``transformer/`` 子目录、顶层没有，判定为 ``False``，于是落到 DCP 加载分支，而 diffusers 目录又不是 DCP，会加载失败。因此必须先用 cosmos-framework 的 ``convert_model_to_dcp.py`` 把 diffusers 转成 DCP 再给 ``model_path`` 用。
-
-.. note::
-
-   本步重建整个 OmniMoTModel，会经 cosmos 的 ``hf_cli`` 下载 ``Qwen3-VL-8B-Instruct``\ （tokenizer）和 ``Wan2.2-TI2V-5B`` 的 ``Wan2.2_VAE.pth``\ （VAE）——这两个资产离线机器要先下好进 HF 缓存（见上方），再开 ``HF_HUB_OFFLINE=1`` 跑本步。
+   本步重建整个 OmniMoTModel，会经 cosmos 的 ``hf_cli`` 读取 ``Qwen3-VL-8B-Instruct``\ （tokenizer）和 ``Wan2.2-TI2V-5B`` 的 ``Wan2.2_VAE.pth``\ （VAE）——这两个资产离线机器要先下好进 HF 缓存（见上方），再开 ``HF_HUB_OFFLINE=1`` 跑本步。
 
 .. code-block:: bash
 
    # 在训练用的 venv 里跑（保证 DCP metadata 与训练 Python 版本一致）
-   export HF_HOME=/path/to/hf-cache
-   export HF_HUB_OFFLINE=1          # 走缓存；需先下好上面两个模型
+   export HF_HOME=${HF_HOME:-~/.cache/huggingface}
+   export HF_HUB_OFFLINE=1          # 走缓存；需先下好上面配套模型
    export TRANSFORMERS_OFFLINE=1
    python -m cosmos_framework.scripts.convert_model_to_dcp \
-     --checkpoint-path /path/to/Cosmos3-Nano \
+     --checkpoint-path ./Cosmos3-Nano \
      --no-use-ema-weights \
-     -o /path/to/Cosmos3-Nano-DCP
+     -o ./Cosmos3-Nano-DCP
 
 .. note::
 
@@ -149,13 +144,13 @@ SFT 不能直接从 diffusers 目录加载基座：cosmos3 的基座加载器 ``
 
    bash examples/sft/run_vla_sft.sh libero_sft_cosmos3
 
-checkpoint 每 ``save_interval`` 步保存到 ``.../checkpoints/global_step_<N>/``，日志写入 ``logs/<timestamp>-libero_sft_cosmos3/run_embodiment.log``。
+checkpoint 每 ``save_interval`` 步保存到 ``checkpoints/global_step_500/``\ （以第 500 步为例），日志写入 ``logs/YYYYMMDD-HHMMSS-libero_sft_cosmos3/run_embodiment.log``。
 
 .. warning::
 
    **初始化必设** ``actor.model.load_to_device: false``。Cosmos3 构建时 ``net``\ （bf16 ~27GB）+ ``net_ema``\ （fp32 ~54GB）≈ 81GB，单张 80GB 卡上默认的 eager ``model.to(device)`` 会在 FSDP2 ``fully_shard`` 分片\ **之前**\ 就 OOM。设为 ``false`` 让模型留在 CPU，由 ``fully_shard`` 直接分片上卡。
 
-断点续训：设 ``runner.resume_dir`` 指向某个 ``global_step_<N>`` 目录后重跑。
+断点续训：设 ``runner.resume_dir`` 指向已保存的 ``global_step_500`` 目录后重跑。
 
 关键配置
 ----------------------------------------
@@ -173,7 +168,7 @@ checkpoint 每 ``save_interval`` 步保存到 ``.../checkpoints/global_step_<N>/
    * - ``actor.model.wan_vae_path``
      - Wan2.2 VAE 权重（``Wan2.2_VAE.pth``）。
    * - ``actor.model.load_to_device``
-     - **必须** ``false`` （见上方 warning）。
+     - **必须** ``false``\ （见上方 warning）。
    * - ``actor.model.ema_enabled``
      - Cosmos3 power-EMA（rate=0.1），每个优化步更新 ``net_ema``；占一份 fp32 网络显存，若仍 OOM 可临时设 ``false``。
    * - ``actor.micro_batch_size`` / ``global_batch_size``
@@ -196,27 +191,27 @@ Cosmos3 内部用 **10 维 rot6d** 表示动作，LIBERO 环境用 **7 维 axis-
    * - 表示
      - 维度
      - 组成
-   * - ``raw_action_dim`` （模型侧）
+   * - ``raw_action_dim``\ （模型侧）
      - 10
      - 3 平移 + 6 rot6d + 1 夹爪
-   * - ``action_dim`` （环境侧）
+   * - ``action_dim``\ （环境侧）
      - 7
      - 3 平移 + 3 axis-angle + 1 夹爪
 
 用 rot6d 是因为 axis-angle 在 ±π 处不连续，扩散模型难以回归；rot6d（旋转矩阵前两列）连续、更易学。
 
-训练时 cosmos 的数据加载器会在线把 LIBERO 的 7 维动作转成 10 维 rot6d（见下方「准备数据」）；推理时再把模型输出的 10 维 rot6d 转回 7 维喂环境，详见 :doc:`SGLang 评测 <../../evaluations/guides/cosmos3_sglang>`。
+训练时 cosmos 的数据加载器会在线把 LIBERO 的 7 维动作转成 10 维 rot6d（见上方“准备数据”）；推理时再把模型输出的 10 维 rot6d 转回 7 维喂环境，详见 :doc:`SGLang 评测 <../../evaluations/guides/cosmos3_sglang>`。
 
 
 转换 Checkpoint
 ----------------------------------------
 
-SFT 产出的 ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt`` 是 FSDP2 分片格式，**不能直接评测**。Cosmos3 评测默认使用 diffusers 组件目录 ``model_diffusers``\ （含 ``model_index.json`` / ``transformer/`` / ``vae/`` / ``text_tokenizer`` / ``scheduler/``）。四步转换 —— 去掉 ``omni.`` 前缀、存成 DCP、导出 HF、拆成 diffusers 组件并修 ``_class_name`` —— 由 ``toolkits/cosmos3/convert_checkpoint.py`` 完成（依赖 cosmos-framework）：
+SFT 产出的 ``checkpoints/global_step_500/actor/model_state_dict/full_weights.pt`` 是 FSDP2 分片格式，**不能直接评测**。Cosmos3 评测默认使用 diffusers 组件目录 ``model_diffusers``\ （含 ``model_index.json`` / ``transformer/`` / ``vae/`` / ``text_tokenizer`` / ``scheduler/``）。四步转换 —— 去掉 ``omni.`` 前缀、存成 DCP、导出 HF、拆成 diffusers 组件并修 ``_class_name`` —— 由 ``toolkits/cosmos3/convert_checkpoint.py`` 完成（依赖 cosmos-framework）：
 
 .. code-block:: bash
 
    # SFT 产出的 RLinf checkpoint（omni.net.* 前缀）
-   export SRC="/path/to/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt"
+   export SRC="/path/to/checkpoints/global_step_500/actor/model_state_dict/full_weights.pt"
    # 转换工作目录
    export OUT="/path/to/converted"
    # cosmos_framework export_model 需要 LIBERO 数据集路径
@@ -236,13 +231,7 @@ SFT 产出的 ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weig
 可视化与结果
 ----------------------------------------
 
-查看训练日志与曲线：
-
-.. code-block:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-训练指标含义见 :doc:`训练指标 </rst_source/reference/metrics>`。
+运行 ``tensorboard --logdir ./logs`` 查看训练日志与曲线，指标定义见 :doc:`训练指标 <../../reference/metrics>`。
 
 常见问题
 ----------------------------------------

@@ -47,426 +47,285 @@ Fine-tune a WAN-based DreamZero world model into a manipulation policy on LeRobo
 - **Datasets:** LIBERO (``libero_sim``), OXE DROID (``oxe_droid``), Franka pick-and-place (``franka_pnp``); **mixture SFT** across embodiments (see ``libero_franka_mix_sft_dreamzero_5b.yaml``).
 - **Backbones:** WAN2.1 (e.g. DreamZero-DROID 14B), WAN2.2 (e.g. Wan2.2-TI2V-5B cold start).
 
-Installation
-------------
+.. _sft-dreamzero-hardware:
+
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
-
-.. tab-set::
-
-   .. tab-item:: SFT Only
-
-      .. code-block:: bash
-
-         bash requirements/install.sh embodied --model dreamzero && source .venv/bin/activate
-
-   .. tab-item:: SFT + LIBERO Eval
-
-      .. code-block:: bash
-
-         bash requirements/install.sh embodied --model dreamzero --env libero && source .venv/bin/activate
-
-Clone the DreamZero repository separately and set ``DREAMZERO_PATH`` before SFT or eval:
-
-.. code-block:: bash
-
-   git clone https://github.com/RLinf/dreamzero.git
-   export DREAMZERO_PATH=/path/to/dreamzero
-
-``DREAMZERO_PATH`` must point at the clone: ``examples/sft/run_vla_sft.sh`` reads it to
-make the external DreamZero package importable.
-
-Model Preparation
------------------
-
-Resume from a Checkpoint
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-Set ``actor.model.model_path`` to a downloaded checkpoint directory; architecture and weights load from that path:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 22 46 32
-
-   * - Model
-     - Checkpoints
-     - Config
-   * - DreamZero 14B (DROID / AgiBot)
-     - `DreamZero-DROID <https://huggingface.co/GEAR-Dreams/DreamZero-DROID>`_, `DreamZero-AgiBot <https://huggingface.co/GEAR-Dreams/DreamZero-AgiBot>`_
-     - ``droid_sft_dreamzero_14b.yaml``
-   * - RLinf 5B (LIBERO SFT)
-     - `RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000 <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000>`_
-     - ``libero_sft_dreamzero_5b.yaml``
-
-Download example:
-
-.. code:: bash
-
-   hf download GEAR-Dreams/DreamZero-DROID --local-dir ./DreamZero-DROID
-
-
-YAML example (DROID + official 14B; see ``droid_sft_dreamzero_14b.yaml``):
-
-.. code:: yaml
-
-   defaults:
-     - model/dreamzero_14b@actor.model
-
-   actor:
-     model:
-       model_path: ./DreamZero-DROID
-       tokenizer_path: google/umt5-xxl
-       embodiment_tag: oxe_droid
-
-For AgiBot data, set ``model_path`` to ``./DreamZero-AgiBot`` instead.
-
-Train from Scratch (WAN2.2 Component Cold Start)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Set ``model_path: null`` and fill each ``*_pretrained_path``. Download from Hugging Face:
-
-- `Wan-AI/Wan2.2-TI2V-5B <https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B>`_ (DiT, T5, VAE)
-- `Wan2.1 CLIP <https://huggingface.co/Wan-AI/Wan2.1-I2V-14B-480P>`_ file ``models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth`` (not in the 5B repo)
-- `google/umt5-xxl <https://huggingface.co/google/umt5-xxl>`_
-
-Download example:
-
-.. code:: bash
-
-   hf download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B
-   hf download Wan-AI/Wan2.1-I2V-14B-480P \
-     models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth --local-dir ./Wan2.1-CLIP
-   hf download google/umt5-xxl --local-dir ./umt5-xxl
-
-YAML example (LIBERO cold start; see ``libero_sft_dreamzero_5b.yaml``):
-
-.. code:: yaml
-
-   defaults:
-     - model/dreamzero_5b@actor.model
-
-   actor:
-     model:
-       model_path: null
-       tokenizer_path: google/umt5-xxl
-       diffusion_model_pretrained_path: Wan-AI/Wan2.2-TI2V-5B
-       image_encoder_pretrained_path: Wan-AI/Wan2.1-I2V-14B-480P/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth
-       text_encoder_pretrained_path: Wan-AI/Wan2.2-TI2V-5B/models_t5_umt5-xxl-enc-bf16.pth
-       vae_pretrained_path: Wan-AI/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
-       metadata_json_path: /path/to/metadata.json
-       embodiment_tag: libero_sim
-
-
-Data Preparation
-----------------
-
-Training data must follow the LeRobot v2/v3 layout (``meta/``, ``data/``, etc.). Set a local path or Hugging Face dataset ID via ``data.train_data_paths``.
-
-Download Datasets
-~~~~~~~~~~~~~~~~~
-
-Supported datasets and configs:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 16 26 18 40
-
-   * - Dataset
-     - Source
-     - ``embodiment_tag``
-     - Config / Notes
-   * - LIBERO
-     - `physical-intelligence/libero <https://huggingface.co/datasets/physical-intelligence/libero>`_
-     - ``libero_sim``
-     - ``libero_sft_dreamzero_14b.yaml``, ``libero_sft_dreamzero_5b.yaml``
-   * - DROID
-     - `GEAR-Dreams/DreamZero-DROID-Data <https://huggingface.co/datasets/GEAR-Dreams/DreamZero-DROID-Data>`_
-     - ``oxe_droid``
-     - ``droid_sft_dreamzero_14b.yaml``
-   * - Franka PnP
-     - `RLinf/dreamzero-franka-pnp <https://huggingface.co/datasets/RLinf/dreamzero-franka-pnp>`_
-     - ``franka_pnp``
-     - Extends the ``libero_sim`` dual-view layout.
-   * - Mixture SFT
-     - Multiple datasets
-     - Per-entry
-     - ``libero_franka_mix_sft_dreamzero_5b.yaml``; ``data.train_data_paths`` takes a list with ``dataset_path``, ``embodiment_tag``, ``metadata_json_path``, and ``weight``.
-
-Example for LIBERO (swap the repo and local directory for another dataset from the table above):
-
-.. code-block:: bash
-
-   hf download physical-intelligence/libero --repo-type dataset --local-dir ./libero
-
-Generate ``metadata.json``
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-For a new dataset or cold start (no ``experiment_cfg/metadata.json``), generate normalization stats for the corresponding ``embodiment_tag`` first:
-
-.. code:: bash
-
-   # LIBERO
-   python toolkits/lerobot/generate_dreamzero_metadata.py \
-     --preset libero_sim \
-     --dataset-root /path/to/libero \
-     --output-metadata /path/to/metadata.json
-
-   # DROID (use --merge for multiple datasets)
-   python toolkits/lerobot/generate_dreamzero_metadata.py \
-     --preset oxe_droid \
-     --dataset-root /path/to/droid \
-     --output-metadata /path/to/metadata.json \
-     --merge
-
-   # Franka PnP
-   python toolkits/lerobot/generate_dreamzero_metadata.py \
-     --preset franka_pnp \
-     --dataset-root /path/to/franka_pnp \
-     --output-metadata /path/to/franka_pnp_metadata.json
-
-Then set ``actor.model.metadata_json_path`` in config (or place the file at ``model_path/experiment_cfg/metadata.json``).
-
-
-Configure Further
------------------
-
-Configs are managed by Hydra; the entry script is ``examples/sft/train_vla_sft.py``. Below, **data fields** and **model/training fields** are explained separately.
-
-Data-Related Settings
-~~~~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 72
-
-   * - Field
-     - Meaning and role
-   * - ``train_data_paths``
-     - **Single dataset**: LeRobot root or HF ``repo_id``. **Mixture SFT**: a YAML list; each item sets ``dataset_path`` (or a list of paths), ``weight``, ``embodiment_tag``, ``metadata_json_path``, etc. ``build_dreamzero_mixture_dataset_from_spec`` samples by weight. Optional ``distribute_weights: true`` splits weight by episode length when one spec lists multiple paths.
-   * - ``lazy_load``
-     - Lazy-load mp4 videos. **Must be ``True`` for ``multi_anchor`` sampling** (otherwise anchor-based frame lookup fails).
-   * - ``sampling_mode``
-     - ``multi_anchor`` (default, recommended): sample multiple temporal anchors within the same language span; macro block count comes from ``max_chunk_size``. ``fixed_window`` is a contiguous fixed window.
-   * - ``video_backend``
-     - LeRobot video decoder: ``pyav``, ``torchcodec`` or ``decord``; affects lazy mp4 speed and compatibility. **``torchcodec`` is recommended**; use ``decord`` where ``torchcodec`` cannot load, such as Ascend.
-   * - ``video_tolerance_s``
-     - Timestamp tolerance (seconds) between video frames and target times.
-   * - ``parquet_cache_size``
-     - Max cached parquet episodes; affects memory and I/O.
-   * - ``num_workers`` / ``prefetch_factor``
-     - DataLoader parallelism and prefetch; affects throughput.
-
-**Temporal alignment (data sampling vs model blocks)**
-
-- Macro temporal block count: ``actor.model.action_head_cfg.config.diffusion_model_cfg.max_chunk_size`` (commonly **4**; official Groot DROID recipes may use **5**).
-- ``actor.model.action_horizon``: **per-block action steps in DreamTransform / WAN** (LIBERO 16, DROID 24), not the dataset macro stride.
-- Under ``multi_anchor``, dataset action length is roughly ``action_horizon * max_chunk_size`` (e.g. LIBERO 64, DROID 96).
-- Set video time dimension via ``action_head_cfg.config.num_frames`` in presets (DreamZero default 33 = ``8 * max_chunk_size + 1``); auto-derived if omitted.
-
-Model and Training Settings
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Identity and weight paths**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 72
-
-   * - Field
-     - Meaning and role
-   * - ``model_type``
-     - Must be ``dreamzero``.
-   * - ``model_path``
-     - Full checkpoint directory; when non-null, architecture loads from ``config.json`` and weights from that path. ``null`` uses YAML/preset + ``*_pretrained_path`` for cold start.
-   * - ``tokenizer_path``
-     - UMT5 tokenizer path (required for training and collate).
-   * - ``diffusion_model_pretrained_path``
-     - Causal DiT (diffusion backbone) pretrained weights; required for cold start.
-   * - ``image_encoder_pretrained_path``
-     - WAN image encoder; WAN2.2 must point to **WAN2.1 CLIP** weights.
-   * - ``text_encoder_pretrained_path``
-     - T5 text encoder weights.
-   * - ``vae_pretrained_path``
-     - VAE weights; WAN2.2 uses ``WanVideoVAE38``.
-   * - ``metadata_json_path``
-     - Dataset ``metadata.json``; falls back to ``model_path/experiment_cfg/metadata.json`` if unset.
-   * - ``embodiment_tag``
-     - Selects data transform and collate template: ``libero_sim``, ``oxe_droid``, ``franka_pnp`` (``data_transforms/embodiment_tag.py``). For a single dataset, must match the data. For mixture SFT, each list entry in ``train_data_paths`` sets its own tag; ``actor.model.embodiment_tag`` is still required (usually aligned with the primary source for policy-side metadata in ``get_model``).
-
-**Temporal and action shape (must align with data and WAN capacity)**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 72
-
-   * - Field
-     - Meaning and role
-   * - ``action_horizon``
-     - Action steps per WAN temporal block (LIBERO 16, DROID 24).
-   * - ``state_horizon``
-     - State rows per sample (usually 1, one state per macro anchor).
-   * - ``num_action_per_block``
-     - Align with DiT ``num_action_per_block`` in ``action_head_cfg`` (often equals ``action_horizon``).
-   * - ``action_head_cfg...diffusion_model_cfg.max_chunk_size``
-     - Multi-anchor macro temporal blocks / Causal DiT capacity; tied to ``data.sampling_mode: multi_anchor``. Video ``num_frames`` is derived as ``8 * max_chunk_size + 1``.
-   * - ``max_action_dim`` / ``max_state_dim`` / ``max_seq_len``
-     - Padding limits and max text sequence length in DreamTransform.
-
-**Video size and DROID-specific options**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 72
-
-   * - Field
-     - Meaning and role
-   * - ``target_video_height`` / ``target_video_width``
-     - WAN policy head target resolution **after multi-view concat** (5B preset e.g. 176×320; Libero often 160×320). Model-internal resize only; **do not** use for per-view data transform resize.
-   * - ``droid_view_height`` / ``droid_view_width``
-     - (Optional) per-view resize overrides for DROID.
-   * - ``relative_action`` / ``relative_action_keys`` / ``relative_action_per_horizon``
-     - Relative action settings; DROID often uses ``relative_action: True`` on keys like ``joint_position``.
-
-**Other training options**
-
-- ``precision``: main precision for Actor/optimizer (``fp32`` / ``bf16``). **Recommended: ``fp32``** with ``actor.fsdp_config.mixed_precision`` for mixed precision: ``precision: fp32`` keeps **optimizer states and master weights in FP32** (more stable), while FSDP runs forward/backward matmuls in **BF16** via ``mixed_precision`` (saves memory, faster). Example:
-
-  .. code:: yaml
-
-     actor:
-       model:
-         precision: fp32
-       fsdp_config:
-         mixed_precision:
-           param_dtype: bf16
-           reduce_dtype: bf16
-           buffer_dtype: bf16
-
-  Setting ``precision: bf16`` also lowers optimizer state precision and is usually less stable. With FSDP **CPU offload**, keep ``precision: fp32``.
-- ``is_lora``: LoRA fine-tuning (DreamZero SFT examples typically use full fine-tuning ``False``).
-- ``actor.micro_batch_size`` / ``actor.global_batch_size``: per-GPU micro-batch and global effective batch size.
-- ``actor.optim.*``: learning rate, warmup, cosine schedule, etc.
-- ``actor.fsdp_config``: FSDP2 sharding, gradient checkpointing; ``mixed_precision`` controls compute/comm dtypes (works with ``actor.model.precision`` above).
-
-**Example config sketch**
-
-.. code:: yaml
-
-   # ---------- data (single dataset) ----------
-   data:
-     train_data_paths: /path/to/libero
-     lazy_load: True
-     sampling_mode: multi_anchor
-     video_backend: torchcodec
-     num_workers: 8
-
-   # ---------- data (mixture; see libero_franka_mix_sft_dreamzero_5b.yaml) ----------
-   data:
-     train_data_paths:
-       - dataset_path: /path/to/libero
-         weight: 4
-         embodiment_tag: libero_sim
-         metadata_json_path: /path/to/libero_metadata.json
-       - dataset_path: /path/to/franka_pnp
-         weight: 1
-         embodiment_tag: franka_pnp
-         metadata_json_path: /path/to/franka_metadata.json
-
-   # ---------- model (resume from checkpoint) ----------
-   actor:
-     model:
-       model_path: /path/to/DreamZero-DROID
-       tokenizer_path: /path/to/umt5-xxl
-       embodiment_tag: oxe_droid
-       action_horizon: 24
-       metadata_json_path: /path/to/metadata.json   # if no experiment_cfg/metadata.json
-
-
-Run It
-------
 
 Reference SFT configs under ``examples/sft/config/``:
 
 .. list-table::
    :header-rows: 1
-   :widths: 26 42 32
+   :widths: 24 38 38
 
    * - Recipe
      - Config
-     - Backbone / Mode
+     - Backbone / Checkpoint
    * - LIBERO 14B
      - ``libero_sft_dreamzero_14b.yaml``
-     - WAN2.1 checkpoint (``dreamzero_14b``)
+     - WAN2.1 (`DreamZero-DROID <https://huggingface.co/GEAR-Dreams/DreamZero-DROID>`_)
    * - LIBERO 5B
      - ``libero_sft_dreamzero_5b.yaml``
-     - WAN2.2 cold start (``dreamzero_5b``)
+     - WAN2.2 cold start (`RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000 <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000>`_)
    * - DROID 14B
      - ``droid_sft_dreamzero_14b.yaml``
-     - WAN2.1 ``DreamZero-DROID`` (``dreamzero_14b``)
+     - WAN2.1 (`DreamZero-DROID <https://huggingface.co/GEAR-Dreams/DreamZero-DROID>`_ / `DreamZero-AgiBot <https://huggingface.co/GEAR-Dreams/DreamZero-AgiBot>`_)
    * - LIBERO + Franka mixture
      - ``libero_franka_mix_sft_dreamzero_5b.yaml``
      - WAN2.2 mixture SFT (``dreamzero_5b``)
 
-Launch training from the repository root with any config name above:
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: NVIDIA CUDA
+      :sync: cuda
 
-   bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_14b
-   bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b
-   bash examples/sft/run_vla_sft.sh droid_sft_dreamzero_14b
-   bash examples/sft/run_vla_sft.sh libero_franka_mix_sft_dreamzero_5b
+      **1. Install and clone DreamZero** (``examples/sft/run_vla_sft.sh`` reads ``DREAMZERO_PATH`` to import the external package):
 
-The launcher writes logs to ``logs/<timestamp>-<config_name>/run_embodiment.log``. Set ``runner.resume_dir`` to a checkpoint directory to resume training.
+      .. tab-set::
 
+         .. tab-item:: SFT Only
 
-.. _sft-dreamzero-hardware:
+            .. code-block:: bash
 
-Run on Different Hardware Backends
-----------------------------------
+               git clone https://github.com/RLinf/RLinf.git && cd RLinf
+               bash requirements/install.sh embodied --model dreamzero && source .venv/bin/activate
+               git clone https://github.com/RLinf/dreamzero.git ../dreamzero
+               export DREAMZERO_PATH="$(realpath ../dreamzero)"
 
-NVIDIA uses the installation and launch steps above. Huawei Ascend CANN supports
-DreamZero SFT with the same checkpoints, datasets and configurations; CI runs
-WAN2.2 5B SFT on two Ascend 910B NPUs with PyTorch and ``torch-npu`` 2.6.0.
+         .. tab-item:: SFT + LIBERO Eval
 
-Huawei Ascend CANN
-~~~~~~~~~~~~~~~~~~
+            .. code-block:: bash
 
-Start with the Ascend LIBERO container or a host with CANN and the NPU driver
-installed:
+               git clone https://github.com/RLinf/RLinf.git && cd RLinf
+               bash requirements/install.sh embodied --model dreamzero --env libero && source .venv/bin/activate
+               git clone https://github.com/RLinf/dreamzero.git ../dreamzero
+               export DREAMZERO_PATH="$(realpath ../dreamzero)"
 
-.. include:: _ascend_libero.rst
+      **2. Download model weights** (resume from a released checkpoint or cold-start from WAN2.2 components):
 
-Create a DreamZero environment from the RLinf checkout inside the container, or
-run the same command directly on the Ascend host:
+      .. tab-set::
 
-.. code-block:: bash
+         .. tab-item:: Resume from Checkpoint (14B)
 
-   bash requirements/install.sh --platform ascend embodied --model dreamzero
-   source .venv/bin/activate
+            .. code-block:: bash
 
-Add ``--use-mirror`` for downloads from mainland China. The installer installs
-the matching ``torch-npu`` package and skips CUDA flash-attention.
+               hf download GEAR-Dreams/DreamZero-DROID --local-dir ./DreamZero-DROID
 
-Prepare the model, data and ``metadata.json`` as described above, and set
-``DREAMZERO_PATH`` as in Installation. On Ascend the installer removes
-``torchcodec`` if its wheel cannot load, so set ``data.video_backend: decord``
-in the SFT config to decode videos with decord. Then launch SFT from the
-repository root:
+            Set ``actor.model.model_path`` in ``droid_sft_dreamzero_14b.yaml`` (swap for ``./DreamZero-AgiBot`` on AgiBot data):
 
-.. code-block:: bash
+            .. code-block:: yaml
 
-   bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b
+               actor:
+                 model:
+                   model_path: ./DreamZero-DROID
+                   tokenizer_path: google/umt5-xxl
+                   embodiment_tag: oxe_droid
 
-The example configs size ``actor.micro_batch_size`` for 80 GB GPUs. On 64 GB
-NPUs, lower it and keep ``actor.global_batch_size`` divisible by
-``micro_batch_size`` times the number of NPUs.
+         .. tab-item:: Cold Start from Scratch (WAN2.2 5B)
 
-When an actor or rollout worker is on an NPU, RLinf imports
-``torch_npu.contrib.transfer_to_npu`` before building DreamZero, so the CUDA
-calls in the DreamZero source run on the NPU, and it disables TorchDynamo, so
-every ``torch.compile`` runs eagerly. Both changes apply to the whole worker
-process: other code in it that calls ``torch.cuda``, ``torch.compile`` or
-``torch.jit.script`` sees the same redirection.
+            Download `Wan-AI/Wan2.2-TI2V-5B <https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B>`_, the `Wan2.1 CLIP <https://huggingface.co/Wan-AI/Wan2.1-I2V-14B-480P>`_ weights, and `google/umt5-xxl <https://huggingface.co/google/umt5-xxl>`_:
+
+            .. code-block:: bash
+
+               hf download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B
+               hf download Wan-AI/Wan2.1-I2V-14B-480P models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth --local-dir ./Wan2.1-CLIP
+               hf download google/umt5-xxl --local-dir ./umt5-xxl
+
+            Set ``model_path: null`` and each ``*_pretrained_path`` in ``libero_sft_dreamzero_5b.yaml``:
+
+            .. code-block:: yaml
+
+               actor:
+                 model:
+                   model_path: null
+                   tokenizer_path: ./umt5-xxl
+                   diffusion_model_pretrained_path: ./Wan2.2-TI2V-5B
+                   image_encoder_pretrained_path: ./Wan2.1-CLIP/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth
+                   text_encoder_pretrained_path: ./Wan2.2-TI2V-5B/models_t5_umt5-xxl-enc-bf16.pth
+                   vae_pretrained_path: ./Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+                   metadata_json_path: ./libero_metadata.json
+                   embodiment_tag: libero_sim
+
+      **3. Download a LeRobot dataset and generate ``metadata.json``** (then set ``data.train_data_paths`` and ``actor.model.metadata_json_path``):
+
+      .. tab-set::
+
+         .. tab-item:: LIBERO
+
+            .. code-block:: bash
+
+               hf download physical-intelligence/libero --repo-type dataset --local-dir ./libero
+               python toolkits/lerobot/generate_dreamzero_metadata.py \
+                 --preset libero_sim \
+                 --dataset-root ./libero \
+                 --output-metadata ./libero_metadata.json
+
+         .. tab-item:: DROID
+
+            .. code-block:: bash
+
+               hf download GEAR-Dreams/DreamZero-DROID-Data --repo-type dataset --local-dir ./droid
+               python toolkits/lerobot/generate_dreamzero_metadata.py \
+                 --preset oxe_droid \
+                 --dataset-root ./droid \
+                 --output-metadata ./droid_metadata.json \
+                 --merge
+
+         .. tab-item:: Franka PnP
+
+            .. code-block:: bash
+
+               hf download RLinf/dreamzero-franka-pnp --repo-type dataset --local-dir ./franka_pnp
+               python toolkits/lerobot/generate_dreamzero_metadata.py \
+                 --preset franka_pnp \
+                 --dataset-root ./franka_pnp \
+                 --output-metadata ./franka_pnp_metadata.json
+
+      **4. Launch training** from the repository root (logs go to ``logs/<timestamp>-<config_name>/run_embodiment.log``; set ``runner.resume_dir`` to resume):
+
+      .. code-block:: bash
+
+         bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_14b
+         bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b
+         bash examples/sft/run_vla_sft.sh droid_sft_dreamzero_14b
+         bash examples/sft/run_vla_sft.sh libero_franka_mix_sft_dreamzero_5b
+
+   .. tab-item:: Huawei Ascend CANN
+      :sync: ascend
+
+      Huawei Ascend CANN supports DreamZero SFT with the same checkpoints, datasets, and configurations; CI runs WAN2.2 5B SFT on two Ascend 910B NPUs with PyTorch and ``torch-npu`` 2.6.0.
+
+      Start with the Ascend LIBERO container or a host with CANN and the NPU driver installed:
+
+      .. include:: _ascend_libero.rst
+
+      Clone RLinf, install the Ascend DreamZero environment, and clone DreamZero (add ``--use-mirror`` in mainland China; the installer selects the matching ``torch-npu`` package and skips CUDA flash-attention):
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh --platform ascend embodied --model dreamzero && source .venv/bin/activate
+         git clone https://github.com/RLinf/dreamzero.git ../dreamzero
+         export DREAMZERO_PATH="$(realpath ../dreamzero)"
+
+      Prepare the model, data, and ``metadata.json`` as in the NVIDIA CUDA tab. On Ascend the installer removes ``torchcodec`` if its wheel cannot load, so set ``data.video_backend: decord`` in the SFT config. On 64 GB NPUs, lower ``actor.micro_batch_size`` (sized for 80 GB GPUs by default) and keep ``actor.global_batch_size`` divisible by ``micro_batch_size`` times the number of NPUs. Launch SFT from the repository root:
+
+      .. code-block:: bash
+
+         bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b
+
+      When an actor or rollout worker is on an NPU, RLinf imports ``torch_npu.contrib.transfer_to_npu`` before building DreamZero, so the CUDA calls in the DreamZero source run on the NPU, and it disables TorchDynamo, so every ``torch.compile`` runs eagerly. Both changes apply to the whole worker process: other code in it that calls ``torch.cuda``, ``torch.compile``, or ``torch.jit.script`` sees the same redirection.
+
+.. dropdown:: Advanced configuration (optional)
+
+   Configs are managed by Hydra (entry script ``examples/sft/train_vla_sft.py``) and already ship with working defaults for sampling, temporal alignment, precision, and FSDP2.
+
+   **Data-related settings**
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 28 72
+
+      * - Field
+        - Meaning and role
+      * - ``train_data_paths``
+        - **Single dataset**: LeRobot root or HF ``repo_id``. **Mixture SFT**: a YAML list; each item sets ``dataset_path`` (or a list of paths), ``weight``, ``embodiment_tag``, ``metadata_json_path``, etc. Optional ``distribute_weights: true`` splits weight by episode length when one spec lists multiple paths.
+      * - ``lazy_load``
+        - Lazy-load mp4 videos. **Must be ``True`` for ``multi_anchor`` sampling** (otherwise anchor-based frame lookup fails).
+      * - ``sampling_mode``
+        - ``multi_anchor`` (default, recommended): sample multiple temporal anchors within the same language span; macro block count comes from ``max_chunk_size``. ``fixed_window`` is a contiguous fixed window.
+      * - ``video_backend``
+        - LeRobot video decoder: ``pyav``, ``torchcodec`` or ``decord``. **``torchcodec`` is recommended**; use ``decord`` where ``torchcodec`` cannot load, such as Ascend.
+      * - ``video_tolerance_s``
+        - Timestamp tolerance (seconds) between video frames and target times.
+      * - ``parquet_cache_size``
+        - Max cached parquet episodes; affects memory and I/O.
+      * - ``num_workers`` / ``prefetch_factor``
+        - DataLoader parallelism and prefetch; affects throughput.
+
+   **Temporal alignment (data sampling vs model blocks)**
+
+   - Macro temporal block count: ``actor.model.action_head_cfg.config.diffusion_model_cfg.max_chunk_size`` (commonly **4**; official Groot DROID recipes may use **5**).
+   - ``actor.model.action_horizon``: **per-block action steps in DreamTransform / WAN** (LIBERO 16, DROID 24), not the dataset macro stride.
+   - Under ``multi_anchor``, dataset action length is roughly ``action_horizon * max_chunk_size`` (e.g. LIBERO 64, DROID 96).
+   - Set video time dimension via ``action_head_cfg.config.num_frames`` in presets (DreamZero default 33 = ``8 * max_chunk_size + 1``); auto-derived if omitted.
+
+   **Model and training settings**
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 28 72
+
+      * - Field
+        - Meaning and role
+      * - ``model_type``
+        - Must be ``dreamzero``.
+      * - ``model_path``
+        - Full checkpoint directory; when non-null, architecture loads from ``config.json`` and weights from that path. ``null`` uses YAML/preset + ``*_pretrained_path`` for cold start.
+      * - ``tokenizer_path``
+        - UMT5 tokenizer path (required for training and collate).
+      * - ``diffusion_model_pretrained_path``
+        - Causal DiT pretrained weights; required for cold start.
+      * - ``image_encoder_pretrained_path``
+        - WAN image encoder; WAN2.2 must point to **WAN2.1 CLIP** weights.
+      * - ``text_encoder_pretrained_path``
+        - T5 text encoder weights.
+      * - ``vae_pretrained_path``
+        - VAE weights; WAN2.2 uses the WAN2.2 VAE checkpoint.
+      * - ``metadata_json_path``
+        - Dataset ``metadata.json``; falls back to ``model_path/experiment_cfg/metadata.json`` if unset.
+      * - ``embodiment_tag``
+        - Selects data transform and collate template: ``libero_sim``, ``oxe_droid``, ``franka_pnp``. For mixture SFT, each list entry in ``train_data_paths`` sets its own tag while ``actor.model.embodiment_tag`` stays set to the primary source.
+      * - ``action_horizon`` / ``state_horizon`` / ``num_action_per_block``
+        - Per-block action steps (LIBERO 16, DROID 24), state rows per sample (usually 1), and DiT ``num_action_per_block``.
+      * - ``max_action_dim`` / ``max_state_dim`` / ``max_seq_len``
+        - Padding limits and max text sequence length in DreamTransform.
+      * - ``target_video_height`` / ``target_video_width``
+        - WAN policy head target resolution **after multi-view concat** (5B preset e.g. 176×320; LIBERO often 160×320). Model-internal resize only; **do not** use for per-view data transform resize.
+      * - ``droid_view_height`` / ``droid_view_width``
+        - Optional per-view resize overrides for DROID.
+      * - ``relative_action`` / ``relative_action_keys`` / ``relative_action_per_horizon``
+        - Relative action settings; DROID often uses ``relative_action: True`` on keys like ``joint_position``.
+
+   - ``precision``: keep ``precision: fp32`` with ``actor.fsdp_config.mixed_precision`` (``param_dtype``, ``reduce_dtype``, ``buffer_dtype: bf16``) so optimizer states and master weights stay in FP32 while FSDP computes in BF16.
+   - ``is_lora``: LoRA fine-tuning (DreamZero SFT examples typically use full fine-tuning ``False``).
+   - ``actor.micro_batch_size`` / ``actor.global_batch_size``, ``actor.optim.*``, ``actor.fsdp_config``: batch sizes, optimizer schedule, and FSDP2 sharding/recompute.
+
+   **Example config sketch**
+
+   .. code:: yaml
+
+      # Single dataset
+      data:
+        train_data_paths: ./libero
+        lazy_load: True
+        sampling_mode: multi_anchor
+        video_backend: torchcodec
+        num_workers: 8
+
+      # Mixture (see libero_franka_mix_sft_dreamzero_5b.yaml)
+      data:
+        train_data_paths:
+          - dataset_path: ./libero
+            weight: 4
+            embodiment_tag: libero_sim
+            metadata_json_path: ./libero_metadata.json
+          - dataset_path: ./franka_pnp
+            weight: 1
+            embodiment_tag: franka_pnp
+            metadata_json_path: ./franka_pnp_metadata.json
+
+      # Model (resume from checkpoint)
+      actor:
+        model:
+          model_path: ./DreamZero-DROID
+          tokenizer_path: ./umt5-xxl
+          embodiment_tag: oxe_droid
+          action_horizon: 24
+          metadata_json_path: ./droid_metadata.json
+
 
 Standalone Evaluation
 ---------------------
@@ -617,7 +476,7 @@ Compute normalization stats; the output key must equal ``TAG``:
 .. code:: bash
 
    python toolkits/lerobot/generate_dreamzero_metadata.py \
-     --preset <your_tag> \
+     --preset YOUR_TAG \
      --dataset-root /path/to/lerobot_dataset \
      --output-metadata /path/to/metadata.json
 
@@ -628,27 +487,27 @@ Set ``actor.model.metadata_json_path`` in training config (or ``model_path/exper
 Step 4: Author / Adjust the Training Config
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Copy ``libero_sft_dreamzero_14b.yaml``, ``libero_sft_dreamzero_5b.yaml``, or ``droid_sft_dreamzero_14b.yaml`` and update at least:
+Copy ``libero_sft_dreamzero_14b.yaml``, ``libero_sft_dreamzero_5b.yaml``, or ``droid_sft_dreamzero_14b.yaml`` and update the dataset path, ``embodiment_tag``, ``metadata_json_path``, and ``action_horizon`` (for WAN cold start, also add the new ID to ``action_head_cfg.config.action_loss_embodiment_ids`` in ``examples/sft/config/model/dreamzero_5b.yaml`` or ``dreamzero_14b.yaml``):
 
-.. code:: yaml
+.. dropdown:: Advanced configuration (optional)
 
-   data:
-     train_data_paths: /path/to/your_lerobot
-     lazy_load: True              # required for multi_anchor with mp4
-     sampling_mode: multi_anchor
+   .. code:: yaml
 
-   actor:
-     model:
-       embodiment_tag: "<your_tag>"
-       metadata_json_path: /path/to/metadata.json
-       action_horizon: <match DEFAULT_ACTION_HORIZON>
-       # when resuming: verify action_loss_embodiment_ids includes your projector ID
-       target_video_height: ...
-       target_video_width: ...
-       relative_action: ...
-       relative_action_keys: [...]
+      data:
+        train_data_paths: /path/to/your_lerobot
+        lazy_load: True              # required for multi_anchor with mp4
+        sampling_mode: multi_anchor
 
-For WAN cold start, add the new ID to ``action_head_cfg.config.action_loss_embodiment_ids`` in ``examples/sft/config/model/dreamzero_5b.yaml`` (or ``dreamzero_14b.yaml``).
+      actor:
+        model:
+          embodiment_tag: "YOUR_TAG"
+          metadata_json_path: /path/to/metadata.json
+          action_horizon: 16         # match DEFAULT_ACTION_HORIZON
+          # when resuming: verify action_loss_embodiment_ids includes your projector ID
+          target_video_height: 160
+          target_video_width: 320
+          relative_action: False
+          relative_action_keys: []
 
 Step 5: Validate with a Short Run
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

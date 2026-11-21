@@ -102,9 +102,16 @@ model environment. Adding ``--env franka`` also installs the Franky dependencies
 so when the robot computer is the GPU machine itself, this one environment serves
 both roles:
 
-.. code:: bash
+.. include:: _setup_common.rst
 
-   bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
+.. tab-set::
+
+   .. tab-item:: Training / Rollout Node (All-in-One)
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
 .. note::
 

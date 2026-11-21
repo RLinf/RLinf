@@ -5,17 +5,42 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
 
 相关训练文档：:doc:`../../examples/embodied/behavior`
 
-环境准备
+一键上手
 --------
 
-**安装依赖**
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env behavior
-   source .venv/bin/activate
+   .. tab-item:: OpenPI + BEHAVIOR-1K
 
-当前 ``evaluations/behavior/`` 仅提供 OpenPI π₀.₅ 示例；训练侧还支持 OpenVLA-OFT，可从 ``examples/embodiment/config/`` 中的训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
+      .. code-block:: bash
+
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env behavior && source .venv/bin/activate
+
+         # 2. 下载 Isaac Sim 4.5、BEHAVIOR-1K 资产（超 30 GB）与模型
+         export ISAAC_PATH="$(pwd)/isaac-sim"
+         export OMNIGIBSON_DATA_PATH="$(pwd)/BEHAVIOR-1K-datasets"
+         mkdir -p "$ISAAC_PATH" "$OMNIGIBSON_DATA_PATH"
+         curl https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-4.5.0-linux-x86_64.zip -o "$ISAAC_PATH/isaac-sim.zip"
+         unzip "$ISAAC_PATH/isaac-sim.zip" -d "$ISAAC_PATH" && rm "$ISAAC_PATH/isaac-sim.zip"
+         python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
+         python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)"
+         python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
+         hf download RLinf/RLinf-Pi0-Behavior --local-dir ./RLinf-Pi0-Behavior
+
+         # 3. 启动评测
+         export OMNIGIBSON_DATASET_PATH="${OMNIGIBSON_DATA_PATH}/behavior-1k-assets/"
+         export OMNIGIBSON_KEY_PATH="${OMNIGIBSON_DATA_PATH}/omnigibson.key"
+         export OMNIGIBSON_ASSET_PATH="${OMNIGIBSON_DATA_PATH}/omnigibson-robot-assets/"
+         bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+           rollout.model.model_path=./RLinf-Pi0-Behavior
+
+当前 ``evaluations/behavior/`` 仅提供 OpenPI π₀.₅ 示例；训练侧还支持 OpenVLA-OFT，可从 ``examples/embodiment/config/`` 中的训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。若使用第三方 OpenPI 权重（如 OpenPI-Comet），需先转换为 PyTorch 格式后再填入 ``rollout.model.model_path``。
+
+终端输出 ``eval/success_once``；日志与视频见 :doc:`../reference/results`。
 
 **硬件与 Isaac Sim**
 
@@ -23,22 +48,8 @@ BEHAVIOR 依赖 Isaac Sim 4.5，对 GPU 与驱动有额外要求，详见训练�
 
 - 建议配备支持 Ray Tracing 的 GPU（如 RTX 30/40 系列）；A100、H100 等无 RT 能力的卡渲染质量较差，画面可能出现马赛克或模糊。
 - Hopper 及以上架构 GPU 需使用 570 及以上版本 NVIDIA 驱动。
-
-也可使用官方 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.4-behavior`` 运行评测，详见 :doc:`../../examples/embodied/behavior`。
-
-**环境变量**
-
-每次评测前须设置 ``ISAAC_PATH`` 与 OmniGibson 数据路径（``run_eval.sh`` 会自动补全 ``OMNIGIBSON_DATASET_PATH`` 等衍生变量，以及 ``EXP_PATH``、``CARB_APP_PATH``）：
-
-.. code-block:: bash
-
-   export ISAAC_PATH=/path/to/isaac-sim
-   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   export OMNIGIBSON_DATASET_PATH=${OMNIGIBSON_DATA_PATH}/behavior-1k-assets/
-   export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_DATA_PATH}/omnigibson.key
-   export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_DATA_PATH}/omnigibson-robot-assets/
-
-BEHAVIOR 资源体积超过 30 GB，下载与 license 配置步骤见 :doc:`../../examples/embodied/behavior` 中的「资源下载」一节。
+- 也可使用官方 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.4-behavior`` 运行评测，详见 :doc:`../../examples/embodied/behavior`。
+- ``run_eval.sh`` 会根据 ``ISAAC_PATH`` 与 ``OMNIGIBSON_DATA_PATH`` 自动补全 ``OMNIGIBSON_DATASET_PATH``、``EXP_PATH``、``CARB_APP_PATH`` 等衍生变量。
 
 示例配置
 --------
@@ -58,40 +69,7 @@ BEHAVIOR 资源体积超过 30 GB，下载与 license 配置步骤见 :doc:`../.
 
 若 ``evaluations/behavior/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（例如 ``behavior_ppo_openpi_pi05``）。回退配置包含 ``actor`` / ``algorithm`` 等训练段，但设置 ``runner.only_eval: True`` 后仍可正常评测。
 
-完整评测流程
-------------
-
-**Step 1：激活环境并设置路径**
-
-.. code-block:: bash
-
-   source .venv/bin/activate
-   export ISAAC_PATH=/path/to/isaac-sim
-   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   export OMNIGIBSON_DATASET_PATH=${OMNIGIBSON_DATA_PATH}/behavior-1k-assets/
-   export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_DATA_PATH}/omnigibson.key
-   export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_DATA_PATH}/omnigibson-robot-assets/
-
-**Step 2：准备模型**
-
-推荐预训练权重：`RLinf/RLinf-Pi0-Behavior <https://huggingface.co/RLinf/RLinf-Pi0-Behavior>`_（下载命令见训练文档）。若使用第三方 OpenPI 权重（如 OpenPI-Comet），需先转换为 PyTorch 格式后再填入 ``rollout.model.model_path``。
-
-**Step 3：编辑配置**
-
-复制或编辑目标 YAML，至少修改 ``rollout.model.model_path``。通用 ``env.eval`` 字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`；BEHAVIOR 特有字段与评测协议见下文 :ref:`behavior-eval-config`。
-
-示例 ``behavior_openpi_pi05_eval.yaml`` 中还需保持与训练一致的 OpenPI 参数（``action_dim: 23``、``num_action_chunks: 32``、``openpi.config_name: pi05_behavior`` 等）。``num_action_chunks`` 是环境实际执行的 chunk；网络 horizon 来自 ``pi05_behavior`` 官方 ``TrainConfig.model.action_horizon``\ （**32**），除非另外设置 ``openpi.action_horizon``。
-
-**Step 4：启动评测**
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
-     rollout.model.model_path=/path/to/model
-
-**Step 5：查看结果**
-
-终端输出 ``eval/success_once``；日志与视频见 :doc:`../reference/results`。
+示例 ``behavior_openpi_pi05_eval.yaml`` 中需保持与训练一致的 OpenPI 参数（``action_dim: 23``、``num_action_chunks: 32``、``openpi.config_name: pi05_behavior`` 等）。``num_action_chunks`` 是环境实际执行的 chunk；网络 horizon 来自 ``pi05_behavior`` 官方 ``TrainConfig.model.action_horizon``\ （**32**），除非另外设置 ``openpi.action_horizon``。通用 ``env.eval`` 字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`。
 
 .. _behavior-eval-config:
 
@@ -103,7 +81,7 @@ BEHAVIOR 评测 **每次运行对应单个任务** （由 ``omni_config.task.act
 评测协议概述
 ~~~~~~~~~~~~
 
-BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/sim/behavior/behavior_task.jsonl``）。``behavior_r1pro`` preset 默认任务为 ``turning_on_radio``，场景为 ``house_double_floor_lower``。
+BEHAVIOR-1K 共 50 个家居任务。``behavior_r1pro`` preset 默认任务为 ``turning_on_radio``，场景为 ``house_double_floor_lower``。
 
 每条评测轨迹由以下配置唯一确定：
 
@@ -121,8 +99,8 @@ BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/sim/be
 
    单次启动不会自动遍历全部任务或 init state。要评测多个任务，需分别修改 ``activity_name`` 并多次运行，或编写批量脚本；要评测多个 instance，请使用 ``instance_resample_mode: offline`` 并配合 ``rollout_epoch`` 取平均。
 
-``env.eval`` 通用字段
-~~~~~~~~~~~~~~~~~~~~~
+通用评测字段
+~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
@@ -143,8 +121,8 @@ BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/sim/be
    * - ``skip_intermediate_renders``
      - 设为 ``True`` 时跳过 chunk 内中间 observation，显著加速环境步进；保存的视频仅含 chunk 边界帧。
 
-``omni_config`` 关键字段
-~~~~~~~~~~~~~~~~~~~~~~~~
+核心场景与任务配置
+~~~~~~~~~~~~~~~~~~
 
 以下字段位于 ``env.eval.omni_config`` 下（继承自 ``examples/embodiment/config/env/behavior_r1pro.yaml``，可在评测 YAML 中覆盖）：
 
@@ -164,7 +142,7 @@ BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/sim/be
            scene_model: house_double_floor_lower
            partial_scene_load: true               # 仅加载任务相关房间，缩短启动时间
 
-更完整的字段说明（``partial_scene_load``、``instance_generator.py`` 用法等）见 :doc:`../../examples/embodied/behavior` 中的「behavior_r1pro.yaml 关键配置说明」。
+更完整的字段说明（``partial_scene_load``、``instance_generator.py`` 用法等）见 :doc:`../../examples/embodied/behavior` 中的“behavior_r1pro.yaml 关键配置说明”。
 
 GPU 与集群布局
 ~~~~~~~~~~~~~~
@@ -177,7 +155,7 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
      component_placement:
        rollout,env: all          # env 与 rollout 共享全部 GPU（示例默认）
 
-也可将 env 与 rollout 分到不同 GPU 以缓解显存压力，详见训练文档「关键集群配置」一节。
+也可将 env 与 rollout 分到不同 GPU 以缓解显存压力，详见训练文档“关键集群配置”一节。
 
 进阶用法
 --------
@@ -229,5 +207,5 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
 - **渲染马赛克/模糊：** 当前 GPU 无 Ray Tracing 能力，建议换用 RTX 30/40 系列或更高。
 - **启动极慢：** 首次加载大场景耗时较长；保持 ``partial_scene_load: true`` 可只加载任务相关房间。
 - **视频帧数少于预期：** ``skip_intermediate_renders: True`` 会跳过 chunk 内中间帧，仅保留策略实际消费的 observation 对应帧。
-- **instance 加载失败：** ``activity_instance_dir`` 中的 JSON 文件名须与 ``activity_name``、``activity_definition_id``、``scene_model`` 匹配；详见 ``rlinf/envs/sim/behavior/instance_loader.py``。
+- **instance 加载失败：** ``activity_instance_dir`` 中的 JSON 文件名须与 ``activity_name``、``activity_definition_id``、``scene_model`` 匹配。
 - **步数校验失败：** ``max_steps_per_rollout_epoch`` 必须能被 ``rollout.model.num_action_chunks`` 整除。

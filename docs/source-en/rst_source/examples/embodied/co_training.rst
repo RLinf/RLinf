@@ -65,124 +65,81 @@ This example ships one demo setup; for your own robot, collect data and build a 
 Installation
 ------------
 
-1. Clone the RLinf Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Install the OpenPI + ManiSkill environment with ``requirements/install.sh`` (in mainland China, append ``--use-mirror`` and set ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``), or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. See :doc:`ManiSkill <maniskill>` for base ManiSkill asset setup.
 
-.. code:: bash
+.. tab-set::
 
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+   .. tab-item:: OpenPI + ManiSkill
 
-2. Install Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~
+      .. code-block:: bash
 
-Install dependencies with ``requirements/install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 
-ManiSkill assets
-~~~~~~~~~~~~~~~~~~
+Download Assets, Model, and Data
+--------------------------------
 
-Refer to the :doc:`ManiSkill example <maniskill>` for base asset setup, then download the assets required for this example:
+Download the custom ManiSkill digital-twin assets, the 50 real trajectories for Stage II co-training, and either the ready-to-use Stage I SFT checkpoint (recommended) or the Stage I mix dataset (`RLinf/RLCo-Example-Mix-Data <https://huggingface.co/datasets/RLinf/RLCo-Example-Mix-Data>`_, 50 real + 1499 sim trajectories):
 
-.. code:: bash
+.. tab-set::
 
-   cd <path_to_RLinf>/rlinf/envs/sim/maniskill/assets
-   hf download --repo-type dataset RLinf/RLCo-maniskill-assets --include "custom_assets/*" --local-dir .
+   .. tab-item:: Use SFT Checkpoint (Recommended)
+
+      .. code-block:: bash
+
+         hf download RLinf/RLCo-maniskill-assets --repo-type dataset --include "custom_assets/*" --local-dir ./rlinf/envs/sim/maniskill/assets
+         hf download RLinf/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT --local-dir ./RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
+         hf download RLinf/RLCo-Example-Real-Data --repo-type dataset --local-dir ./RLCo-Example-Real-Data
+
+   .. tab-item:: Train Stage I SFT First
+
+      Download the assets and datasets below, then run Stage I SFT using `OpenPi <https://github.com/Physical-Intelligence/openpi>`_ or :doc:`OpenPI SFT <sft_openpi>`:
+
+      .. code-block:: bash
+
+         hf download RLinf/RLCo-maniskill-assets --repo-type dataset --include "custom_assets/*" --local-dir ./rlinf/envs/sim/maniskill/assets
+         hf download RLinf/RLCo-Example-Mix-Data --repo-type dataset --local-dir ./RLCo-Example-Mix-Data
+         hf download RLinf/RLCo-Example-Real-Data --repo-type dataset --local-dir ./RLCo-Example-Real-Data
 
 
 Run It
 ------
 
-Stage I: SFT Pretraining
-~~~~~~~~~~~~~~~~~~~~~~~~
+This stage adds SFT loss on the 50 real trajectories into the PPO loop. The shipped config is ``examples/embodiment/config/maniskill_ppo_co_training_openpi_pi05.yaml``. For common path, cluster, and runner fields, see :doc:`Training configuration <../../reference/configuration>`; for general PPO settings, see :doc:`π₀ and π₀.₅ RL training <pi0>`.
 
-Stage I injects real and sim data via supervised learning before RL. You can either train yourself or use a provided checkpoint.
-
-**Option A: SFT with real + sim data**
-
-We provide a LeRobot-format dataset (50 real + 1499 sim trajectories) at `RLinf/RLCo-Example-Mix-Data <https://huggingface.co/datasets/RLinf/RLCo-Example-Mix-Data>`_.
-
-1. **Download the dataset**:
-
-.. code:: bash
-
-   hf download --repo-type dataset RLinf/RLCo-Example-Mix-Data --local-dir RLCo-Example-Mix-Data
-
-2. Run SFT using `OpenPi <https://github.com/Physical-Intelligence/openpi>`_ or the :doc:`SFT example <sft_openpi>`.
-
-**Option B: Use an SFT checkpoint**
-
-Skip training and use the provided SFT checkpoint:
-
-.. code:: bash
-
-   hf download RLinf/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT --local-dir RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
-
-Stage II: Sim-Real Co-Training (RL)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-This stage adds SFT loss into the PPO loop for joint optimization.
-
-**Data**
-
-Download the 50 real trajectories in LeRobot format used for co-training:
-
-.. code:: bash
-
-   hf download --repo-type dataset RLinf/RLCo-Example-Real-Data --local-dir RLCo-Example-Real-Data
-
-**Important config**
-
-The config ``maniskill_ppo_co_training_openpi_pi05.yaml`` is provided. For common path, cluster, and runner fields, see :doc:`Training configuration <../../reference/configuration>`. For general PPO settings see :doc:`π₀ and π₀.₅ RL training <pi0>`. Co-training-specific options:
-
-**Model paths**
-
-Point ``model_path`` to your SFT checkpoint and ``sft_data_path`` to the real data path:
-
-.. code-block:: yaml
-
-   rollout:
-      model:
-         model_path: /path/to/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
-   actor:
-      sft_data_path: /path/to/RLCo-Example-Real-Data
-      model:
-         model_path: /path/to/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
-
-**Co-training options**
+Point ``actor.model.model_path`` (rollout inherits it automatically) to your SFT checkpoint and ``actor.sft_data_path`` to the real data path:
 
 .. code-block:: yaml
 
    actor:
-       model:
-           openpi:
-               config_name: "pi05_maniskill_sim_real_co_training"
-       enable_sft_co_train: True
-       sft_loss_weight: 0.2
+     sft_data_path: ./RLCo-Example-Real-Data
+     model:
+       model_path: ./RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
 
-- ``enable_sft_co_train``: Set to ``True`` to enable co-training; ``False`` for PPO-only.
-- ``sft_loss_weight``: Weight :math:`\beta` for the SFT term (:math:`\mathcal{L}_{SFT}`) in the total loss.
-
-The dataconfig ``pi05_maniskill_sim_real_co_training`` is defined in ``rlinf/models/embodiment/openpi/dataconfig/__init__.py``. Keep model architecture and normalization consistent with Stage I.
-
-**Batch size**
-
-The config ``batch_size`` is the micro-batch size before gradient accumulation. Effective batch size is:
-
-.. math::
-
-   \text{True\_Batch\_Size} = \frac{\text{Global\_Batch\_Size} \times \text{Input\_Batch}}{\text{Micro\_Batch\_Size} \times \text{Num\_GPUs}}
-
-See :doc:`./pi0` for ``global_batch_size`` and ``micro_batch_size`` settings.
-
-**Run**
+Launch co-training from the repository root:
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_co_training_openpi_pi05
+
+.. dropdown:: Advanced configuration (optional)
+
+   The shipped config already sets co-training options and the ``pi05_maniskill_sim_real_co_training`` dataconfig (keep model architecture and normalization consistent with Stage I):
+
+   .. code-block:: yaml
+
+      actor:
+        model:
+          openpi:
+            config_name: "pi05_maniskill_sim_real_co_training"
+        enable_sft_co_train: True
+        sft_loss_weight: 0.2
+
+   - ``enable_sft_co_train``: Set to ``True`` to enable co-training; ``False`` for PPO-only.
+   - ``sft_loss_weight``: Weight for the SFT loss term in the total loss.
+
+   The config ``batch_size`` is the micro-batch size before gradient accumulation; effective batch size is ``(global_batch_size * input_batch) / (micro_batch_size * num_gpus)``. See :doc:`./pi0` for ``global_batch_size`` and ``micro_batch_size`` settings.
 
 
 Visualization and Results

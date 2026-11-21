@@ -111,11 +111,14 @@ humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``rewa
 
 .. include:: _setup_common.rst
 
-安装依赖并激活环境：
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: MuJoCo Warp
 
-   bash requirements/install.sh embodied --env mujoco_warp && source .venv/bin/activate
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env mujoco_warp && source .venv/bin/activate
 
 安装脚本固定 ``mujoco-warp==3.17.0`` 和 ``warp-lang==1.16.0``。该组合已经过 CUDA 12 驱动验证，也避免无驱动的 Docker 构建解析到仅支持 CUDA 13 的 Warp wheel。
 
@@ -147,7 +150,7 @@ humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``rewa
 
    tensorboard --logdir ../results --port 6006
 
-``eval/env/return`` 是平均评估回合回报，``env/return`` 是训练回合回报。共享指标定义见 :doc:`训练指标 <../../reference/metrics>`；独立评估可通过在 ``run_embodiment.sh`` 中设置 ``runner.only_eval=true`` 和 ``runner.ckpt_path=<path>`` 运行。
+``eval/env/return`` 是平均评估回合回报，``env/return`` 是训练回合回报。共享指标定义见 :doc:`训练指标 <../../reference/metrics>`；独立评估可通过在 ``run_embodiment.sh`` 中设置 ``runner.only_eval=true`` 和 ``runner.ckpt_path=/path/to/checkpoint`` 运行。
 
 .. list-table::
    :header-rows: 1
@@ -167,6 +170,6 @@ humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``rewa
    bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp \
        env.eval.video_cfg.save_video=true
 
-评估视频保存在 ``<log_path>/video/eval``\ 。物理仿真仍由 MJWarp 执行。环境把每个 world 的 ``qpos``\ 、``qvel`` 和 ``ctrl`` 复制到原生 MuJoCo 并渲染 RGB 帧，录像 wrapper 再把这些帧写成 MP4。录像会增加设备到主机的同步和逐 world 渲染开销，因此测试吞吐量时应保持关闭。可通过 ``render_width`` 和 ``render_height`` 调整单个 world 的分辨率，通过 ``video_cfg.fps`` 覆盖默认控制频率。
+评估视频保存在运行日志目录下的 ``video/eval`` 目录中。物理仿真仍由 MJWarp 执行。环境把每个 world 的 ``qpos``\ 、``qvel`` 和 ``ctrl`` 复制到原生 MuJoCo 并渲染 RGB 帧，录像 wrapper 再把这些帧写成 MP4。录像会增加设备到主机的同步和逐 world 渲染开销，因此测试吞吐量时应保持关闭。可通过 ``render_width`` 和 ``render_height`` 调整单个 world 的分辨率，通过 ``video_cfg.fps`` 覆盖默认控制频率。
 
 首次仿真步需要 JIT 编译 MJWarp kernel，耗时会高于后续步骤。

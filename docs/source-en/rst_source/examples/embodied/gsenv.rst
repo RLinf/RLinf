@@ -83,102 +83,54 @@ Observation and Action
    ``examples/embodiment/config/env/gsenv_put_cube_on_plate.yaml``. The task id
    selects the ManiSkill-GS environment.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-Install the ManiSkill/LIBERO environment with OpenPI dependencies:
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenPI + GSEnv
 
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+      **1. Install**
 
-Install ManiSkill-GS and its assets:
+      .. code-block:: bash
 
-.. code:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         git clone -b v01 https://github.com/chenkang455/ManiSkill-GS.git
+         uv pip install -e ./ManiSkill-GS
 
-   git clone -b v01 https://github.com/chenkang455/ManiSkill-GS.git
-   cd ManiSkill-GS
-   uv pip install -e .
-   hf download RLinf/gsenv-assets-v0 --repo-type dataset --local-dir ./assets
+      **2. Download**
 
-Verify the RLinf interface from the ManiSkill-GS project root:
+      Download the GSEnv 3DGS assets, verify the RLinf interface (the first run may compile ``gsplat`` kernels), and download the OpenPI π₀.₅ SFT checkpoint:
 
-.. code:: bash
+      .. code-block:: bash
 
-   python scripts/test_rlinf_interface.py
+         hf download RLinf/gsenv-assets-v0 --repo-type dataset --local-dir ./ManiSkill-GS/assets
+         (cd ManiSkill-GS && python scripts/test_rlinf_interface.py)
+         hf download RLinf/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT --local-dir ./RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
 
-.. note::
+      **3. Launch**
 
-   The first run can take time because ``gsplat`` may compile kernels.
+      The shipped config is ``examples/embodiment/config/gsenv_ppo_openpi_pi05.yaml``.
 
-Download the Model
-------------------
+      .. include:: _model_path.rst
 
-Download the OpenPI π₀.₅ SFT checkpoint:
+      Launch PPO training with ``run_embodiment.sh``:
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   cd /path/to/save/model
-   hf download RLinf/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT --local-dir RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
+         bash examples/embodiment/run_embodiment.sh gsenv_ppo_openpi_pi05 actor.model.model_path=$PWD/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
 
-.. include:: _model_path.rst
+      .. dropdown:: Advanced configuration (optional)
 
-Run It
-------
-
-Launch the GSEnv recipe:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 46 26
-
-   * - Recipe
-     - Config
-     - Command suffix
-   * - OpenPI π₀.₅ + PPO
-     - ``examples/embodiment/config/gsenv_ppo_openpi_pi05.yaml``
-     - ``gsenv_ppo_openpi_pi05``
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh gsenv_ppo_openpi_pi05
-
-.. note::
-
-   The default config uses ``actor,env,rollout: all``. Tune
-   ``cluster.component_placement``, ``env.train.total_num_envs``, and
-   ``actor.global_batch_size`` for your GPU memory budget.
+         The default config colocates ``actor,env,rollout: all``. Tune ``cluster.component_placement``, ``env.train.total_num_envs``, and ``actor.global_batch_size`` for your GPU memory budget.
 
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable video in the env config when you want 3DGS rollout videos:
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
-
-Enable W&B or SwanLab by adding logger backends:
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 .. figure:: https://github.com/user-attachments/assets/54a22c98-df04-42bd-beef-2630f69da8be
    :align: center

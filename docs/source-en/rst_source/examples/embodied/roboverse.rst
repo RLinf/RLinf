@@ -82,28 +82,33 @@ Installation
 
 .. include:: _setup_common.rst
 
-Install RoboVerse with the OpenPI dependencies:
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenPI + RoboVerse
+      :sync: openpi-roboverse
 
-   bash requirements/install.sh embodied --model openpi --env roboverse && source .venv/bin/activate
+      .. code-block:: bash
 
-Download the default RoboVerse resources:
-
-.. code:: bash
-
-   cd /path/to/RLinf
-   hf download --repo-type dataset manity/roboverse_data --local-dir .
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env roboverse && source .venv/bin/activate
 
 Download the Model
 ------------------
 
-Download the OpenPI π₀.₅ checkpoint used by the reference config:
+Download the default RoboVerse resources into the RLinf repo root and the OpenPI π₀.₅ SFT checkpoint:
 
-.. code-block:: bash
+.. tab-set::
 
-   cd /path/to/save/model
-   hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir RLinf-Pi05-LIBERO-SFT
+   .. tab-item:: OpenPI π₀.₅ + RoboVerse
+      :sync: openpi-roboverse
+
+      .. code-block:: bash
+
+         # Download RoboVerse resources
+         hf download manity/roboverse_data --repo-type dataset --local-dir ./roboverse_data
+
+         # Download the OpenPI π₀.₅ checkpoint
+         hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
 .. include:: _model_path.rst
 
@@ -140,32 +145,7 @@ For standalone evaluation, use the unified :doc:`Evaluation CLI
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable video in the env config when you want rollout videos:
-
-.. code:: yaml
-
-   env:
-     eval:
-       video_cfg:
-         save_video: True
-         video_base_dir: ${runner.logger.log_path}/video/eval
-
-Enable W&B or SwanLab by adding logger backends:
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 .. note::
 

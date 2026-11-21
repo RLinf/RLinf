@@ -48,13 +48,6 @@ Moonlight-16B-A3B-Instruct 是 DeepSeek-V3 架构的混合专家模型：
 
 actor 通过 Megatron-Bridge（``megatron-bridge``）把 HuggingFace 权重转换为 Megatron-Core 分片 checkpoint；rollout 使用 SGLang（DeepSeek-V2 后端，``model_type: deepseek_v3``），开启专家并行（``ep_size == tp_size``）。
 
-数据集
-------
-
-与通用 :doc:`数学推理 <reasoning>` 配方相同：`AReaL-boba-Data
-<https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`_，含 ``prompt`` / ``solutions`` 字段。
-若你的数据集字段名不同，参考该页面中 ``prompt_key`` / ``answer_key`` / ``apply_chat_template`` 的调整说明。
-
 GRPO 原理
 ----------
 
@@ -64,48 +57,56 @@ GRPO 原理
 - **minibatch 早停**：某 minibatch 内重要性比过大时丢弃该 minibatch，稳定训练。
 - **奖励**：最终 boxed/数值答案正确 +5；错误 -5。
 
-环境安装
+一键上手
 --------
 
-**前置**：需安装 NVIDIA 驱动 ≥580 和 CUDA 13.3 工具链（``nvcc``）。
+**前置**：需安装 NVIDIA 驱动 ≥580 和 CUDA 13.3 工具链（``nvcc``）。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。
 
-.. code-block:: bash
+.. tab-set::
 
-   cd /path/to/RLinf
-   MEGATRON_PATH=/path/to/Megatron-LM-core0.18 \
-   bash requirements/install.sh agentic \
-     --sglang 0.5.12 --torch 2.11.0 --transformers 5.6.0 \
-     --no-apex --platform nvidia --use-mirror \
-     --venv /opt/venv/reason_0512_v3
+   .. tab-item:: Moonlight-16B-A3B-Instruct（Megatron · 8×A100）
 
-该命令创建 Python 3.12 虚拟环境并安装 agentic 栈：sglang 0.5.12 + torch 2.11+cu130 + TransformerEngine 2.17 + transformers 5.6 + ``megatron-bridge`` 0.5.0 wheel + flash-attn，并通过 ``MEGATRON_PATH`` 复用 Megatron-Core 0.18 clone。
+      **1. 安装环境**
 
-启动训练
---------
+      创建 Python 3.12 虚拟环境并安装 sglang 0.5.12、torch 2.11+cu130、TransformerEngine 2.17、transformers 5.6、``megatron-bridge`` 0.5.0 和 flash-attn，并通过 ``MEGATRON_PATH`` 复用 Megatron-Core 0.18 克隆：
 
-**1. 配置文件**
+      .. code-block:: bash
 
-``examples/reasoning/config/math/moonlight-16b-grpo-megatron.yaml``
-（``model_type: deepseek_v3``，TP=8，EP=8，``multi_latent_attention: True``，
-precision-aware optimizer，``reward_type: math``）。
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         MEGATRON_PATH=/path/to/Megatron-LM-core0.18 \
+         bash requirements/install.sh agentic \
+           --sglang 0.5.12 --torch 2.11.0 --transformers 5.6.0 \
+           --no-apex --platform nvidia \
+           --venv /opt/venv/reason_0512_v3 && source /opt/venv/reason_0512_v3/bin/activate
 
-**2. 启动命令**
+      **2. 下载模型与数据**
 
-.. code-block:: bash
+      下载模型和 `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`_（如需调整 ``prompt_key`` / ``answer_key`` / ``apply_chat_template``，参考 :doc:`数学推理 <reasoning>`）：
 
-   cd /path/to/RLinf/ray_utils
-   rm -f ray_head_ip.txt
-   export TOKENIZERS_PARALLELISM=false
-   bash start_ray.sh
-   if [ "$RANK" -eq 0 ]; then
-       bash check_ray.sh 8          # 集群内 GPU 数
-       cd /path/to/RLinf
-       bash examples/reasoning/run_main_grpo_math.sh moonlight-16b-grpo-megatron
-   else
-       if [ "$RANK" -eq 1 ]; then sleep 3m; fi
-       sleep 10d
-   fi
-   sleep 10d
+      .. code-block:: bash
+
+         hf download moonshotai/Moonlight-16B-A3B-Instruct --local-dir ./Moonlight-16B-A3B-Instruct
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
+
+      **3. 启动训练**
+
+      在 ``examples/reasoning/config/math/moonlight-16b-grpo-megatron.yaml``\ （``model_type: deepseek_v3``，TP=8，EP=8，``multi_latent_attention: True``，precision-aware optimizer，``reward_type: math``）中更新模型与数据路径，然后启动 Ray 集群并开始训练：
+
+      .. code-block:: bash
+
+         cd /path/to/RLinf/ray_utils
+         rm -f ray_head_ip.txt
+         export TOKENIZERS_PARALLELISM=false
+         bash start_ray.sh
+         if [ "$RANK" -eq 0 ]; then
+             bash check_ray.sh 8          # 集群内 GPU 数
+             cd /path/to/RLinf
+             bash examples/reasoning/run_main_grpo_math.sh moonlight-16b-grpo-megatron
+         else
+             if [ "$RANK" -eq 1 ]; then sleep 3m; fi
+             sleep 10d
+         fi
+         sleep 10d
 
 可视化与结果
 ------------

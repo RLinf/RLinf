@@ -5,47 +5,78 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
 
 相关训练文档：:doc:`../../examples/embodied/robotwin`
 
-环境准备
+一键上手
 --------
 
-**安装依赖**
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openvla-oft --env robotwin
-   source .venv/bin/activate
+   .. tab-item:: OpenVLA-OFT（place_empty_cup）
 
-支持的模型包括 ``openvla-oft``、``openpi``、``lingbotvla``、``lingbotvlav2``，安装时替换 ``--model`` 参数即可。
+      .. code-block:: bash
 
-在 AMD ROCm 上安装时需加 ``--platform``，并在 task config 里设置 ``planner_backend: mplib``，详见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`。
+         # 1. 安装并下载 RoboTwin 资产
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
+         (cd ../RoboTwin && bash script/_download_assets.sh)
 
-**RoboTwin 仓库与 Assets**
+         # 2. 下载模型
+         hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
 
-评测前需克隆 RLinf 适配分支并下载仿真资产（详见训练文档）：
+         # 3. 启动评测
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         export ROBOT_PLATFORM=ALOHA
+         bash evaluations/run_eval.sh robotwin robotwin_place_empty_cup_openvlaoft_eval \
+           rollout.model.model_path=./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup \
+           env.eval.assets_path="${ROBOTWIN_PATH}"
 
-.. code-block:: bash
+   .. tab-item:: OpenPI π₀.₅（adjust_bottle）
 
-   # 1. 克隆 RoboTwin 仓库（须使用 RLinf_support 分支）
-   git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support
-   cd RoboTwin
+      .. code-block:: bash
 
-   # 2. 下载并解压 Assets
-   bash script/_download_assets.sh
+         # 1. 安装并下载 RoboTwin 资产
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
+         (cd ../RoboTwin && bash script/_download_assets.sh)
 
-默认情况下，该脚本会将资产下载到 ``/path/to/RoboTwin/assets/``。下载完成后，请将 ``env.eval.assets_path`` 设置为 ``/path/to/RoboTwin``\ （即 ``assets/`` 的上一级目录）。
+         # 2. 下载模型
+         hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
 
-RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认的 0.1 m：SAPIEN 3.0.1 会裁掉比近裁剪面更近的物体，0.1 m 会让腕部相机看不到夹爪手指。可通过 ``env.eval.camera_near`` 修改该值，设为 ``null`` 即沿用 RoboTwin 自身的取值。
+         # 3. 启动评测
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         export ROBOT_PLATFORM=ALOHA
+         bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_pi05_eval \
+           rollout.model.model_path=./RLinf-Pi05-RoboTwin-SFT-adjust_bottle \
+           env.eval.assets_path="${ROBOTWIN_PATH}"
 
-**环境变量**
+   .. tab-item:: OpenPI π₀（adjust_bottle）
 
-每次评测前须设置：
+      .. code-block:: bash
 
-.. code-block:: bash
+         # 1. 安装并下载 RoboTwin 资产
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
+         (cd ../RoboTwin && bash script/_download_assets.sh)
 
-   export ROBOTWIN_PATH=/path/to/RoboTwin
-   export ROBOT_PLATFORM=ALOHA
+         # 2. 下载模型
+         hf download RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi0-RoboTwin-SFT-adjust_bottle
 
-``run_eval.sh`` 会将 ``ROBOTWIN_PATH`` 加入 ``PYTHONPATH``；环境初始化时还会将 ``assets_path`` 写入 ``ASSETS_PATH``。
+         # 3. 启动评测
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         export ROBOT_PLATFORM=ALOHA
+         bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
+           rollout.model.model_path=./RLinf-Pi0-RoboTwin-SFT-adjust_bottle \
+           env.eval.assets_path="${ROBOTWIN_PATH}"
+
+支持的模型还包括 ``lingbotvla`` 与 ``lingbotvlav2``，安装时替换 ``--model`` 参数即可。在 AMD ROCm 上安装时需加 ``--platform``，并在 task config 里设置 ``planner_backend: mplib``，详见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`。
+
+``run_eval.sh`` 会自动将 ``ROBOTWIN_PATH`` 加入 ``PYTHONPATH``；``env.eval.assets_path`` 指向 ``assets/`` 的上一级目录（环境初始化时会自动写入 ``ASSETS_PATH``）。RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认的 0.1 m：SAPIEN 3.0.1 会裁掉比近裁剪面更近的物体，0.1 m 会让腕部相机看不到夹爪手指。可通过 ``env.eval.camera_near`` 修改该值，设为 ``null`` 即沿用 RoboTwin 自身的取值。
+
+终端输出 ``eval/success_once``；日志与视频见 :doc:`../reference/results`。
 
 **Docker（可选）**
 
@@ -88,44 +119,7 @@ RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认�
      - click_bell
      - LingbotVLA 2.0
 
-若 ``evaluations/robotwin/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.only_eval: True`` 与 ``runner.task_type: embodied_eval``）。``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` 中另有 **22 个任务** 的评测种子，其余任务可从训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
-
-完整评测流程
-------------
-
-**Step 1：激活环境并设置路径**
-
-.. code-block:: bash
-
-   source .venv/bin/activate
-   export ROBOTWIN_PATH=/path/to/RoboTwin
-   export ROBOT_PLATFORM=ALOHA
-
-**Step 2：准备模型**
-
-推荐预训练权重示例：
-
-- OpenVLA-OFT：`RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
-- π\ :sub:`0`：`RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle>`_
-- π\ :sub:`0.5`：`RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle>`_
-
-下载命令见训练文档“模型下载”一节。
-
-**Step 3：编辑配置**
-
-复制或编辑目标 YAML，至少修改 ``rollout.model.model_path`` 与 ``env.eval.assets_path``。通用 ``env.eval`` 字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`；RoboTwin 评测协议与模型差异见下文 :ref:`robotwin-eval-config`。
-
-**Step 4：启动评测**
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh robotwin robotwin_place_empty_cup_openvlaoft_eval \
-     rollout.model.model_path=/path/to/model \
-     env.eval.assets_path=/path/to/robotwin_assets
-
-**Step 5：查看结果**
-
-终端输出 ``eval/success_once``；日志与视频见 :doc:`../reference/results`。
+若 ``evaluations/robotwin/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.only_eval: True`` 与 ``runner.task_type: embodied_eval``）。内置的评测种子文件包含 **22 个任务** 的评测种子，其余任务可从训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
 
 .. _robotwin-eval-config:
 
@@ -139,7 +133,7 @@ RoboTwin 评测对 ``eval_seeds.json`` 中每个任务的 **success seed** 各�
 
 RoboTwin 评测使用预筛选的 **success seeds** 作为每条轨迹的随机种子，以固定初始场景与语言指令。内置的 ``eval_seeds.json`` 按 ``task_name`` 索引，覆盖 **22 个任务**\ （每个任务 150–320 条种子）。
 
-在 ``RoboTwinEnv`` 中：
+在 RLinf 的 RoboTwin 环境中：
 
 - 启动时从 ``seeds_path`` 加载对应任务的 ``success_seeds``，经全局 shuffle 后按 worker 切分，保证各 env worker 分到不重叠的子集；
 - 每条轨迹由分配到的 **seed** 唯一确定初始场景与语言指令；

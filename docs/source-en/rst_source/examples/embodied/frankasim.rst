@@ -75,98 +75,71 @@ Observation and Action
    * - Prompt
      - Not used by the state MLP recipe; vision policies consume task-conditioned observations from the env wrapper.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-Install Franka-Sim dependencies:
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenVLA + FrankaSim
 
-   bash requirements/install.sh embodied --model openvla --env frankasim && source .venv/bin/activate
+      **1. Install**
 
-Download the Model
-------------------
+      .. code-block:: bash
 
-Skip this section for the MLP + PPO recipe. For the CNN + SAC recipe, download the
-ResNet checkpoint:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env frankasim && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. Download**
 
-   cd /path/to/save/model
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+      Skip this step for the MLP + PPO recipe. For the CNN + SAC recipe, download the pretrained ResNet-10 checkpoint:
 
-Then set the same checkpoint path for rollout and actor in
-``examples/embodiment/config/frankasim_sac_cnn_async.yaml``:
+      .. code-block:: bash
 
-.. code-block:: yaml
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
 
-   rollout:
-      model:
-         model_path: /path/to/RLinf-ResNet10-pretrained
-   actor:
-      model:
-         model_path: /path/to/RLinf-ResNet10-pretrained
+      **3. Launch**
 
-Run It
-------
+      Available recipes:
 
-Available recipes:
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 38 20 18
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 38 20 18
+         * - Recipe
+           - Config
+           - Entrypoint
+           - Command suffix
+         * - MLP + PPO
+           - ``examples/embodiment/config/frankasim_ppo_mlp.yaml``
+           - ``run_embodiment.sh``
+           - ``frankasim_ppo_mlp``
+         * - CNN + SAC
+           - ``examples/embodiment/config/frankasim_sac_cnn_async.yaml``
+           - ``run_async.sh``
+           - ``frankasim_sac_cnn_async``
 
-   * - Recipe
-     - Config
-     - Entrypoint
-     - Command suffix
-   * - MLP + PPO
-     - ``examples/embodiment/config/frankasim_ppo_mlp.yaml``
-     - ``run_embodiment.sh``
-     - ``frankasim_ppo_mlp``
-   * - CNN + SAC
-     - ``examples/embodiment/config/frankasim_sac_cnn_async.yaml``
-     - ``run_async.sh``
-     - ``frankasim_sac_cnn_async``
+      .. include:: _model_path.rst
 
-Launch training with the matching script:
+      Launch training with the matching script:
 
-.. code:: bash
+      .. code-block:: bash
 
-   # State-observation PPO recipe
-   bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
+         # State-observation MLP + PPO
+         bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
 
-   # Vision SAC recipe
-   bash examples/embodiment/run_async.sh frankasim_sac_cnn_async
+         # Vision CNN + asynchronous SAC
+         bash examples/embodiment/run_async.sh frankasim_sac_cnn_async actor.model.model_path=$PWD/RLinf-ResNet10-pretrained
 
-.. note::
+      .. dropdown:: Advanced configuration (optional)
 
-   Both reference configs run on GPU ``0``. Tune ``cluster.component_placement``,
-   ``env.train.total_num_envs``, and batch sizes if you move to a larger machine.
+         Both reference configs run on GPU ``0`` by default. Tune ``cluster.component_placement``, ``env.train.total_num_envs``, and batch sizes when scaling to a larger machine.
 
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable video when you want rollout videos:
-
-.. code:: yaml
-
-   env:
-     eval:
-       video_cfg:
-         save_video: True
-         video_base_dir: ${runner.logger.log_path}/video/eval
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 .. list-table::
    :header-rows: 1

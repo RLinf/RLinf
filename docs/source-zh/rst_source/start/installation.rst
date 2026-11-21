@@ -6,11 +6,7 @@
 本地安装
 --------
 
-克隆仓库后，按目标场景运行对应的一行安装命令：
-
-.. code-block:: bash
-
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+选择目标场景，直接复制运行完整安装命令：
 
 .. tab-set::
 
@@ -20,19 +16,26 @@
 
       .. code-block:: bash
 
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
    .. tab-item:: 智能体 / 推理（Agentic）
 
       .. code-block:: bash
 
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
 
    .. tab-item:: 文档构建（Docs）
 
       .. code-block:: bash
 
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh docs --venv .docs-venv
+
+.. tip::
+
+   **国内镜像加速：** 在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
 支持的模型、环境与硬件平台
 --------------------------

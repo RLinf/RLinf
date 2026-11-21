@@ -31,64 +31,108 @@ Qwen2.5-3B-Instruct 的 Search-R1 训练
 
       参考运行使用 8×H100
 
-在8*H100上训练
+一键上手
 ----------------------------------------
 
-从 HuggingFace 下载 `训练集 <https://huggingface.co/datasets/RLinf/Search-R1-Data>`__，在 ``examples/agent/searchr1/config/`` 下选择配置并填写模型和数据路径。GRPO 使用 ``train_qwen2.5.yaml``，PPO 使用 ``train_qwen2.5_ppo.yaml``：
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。启动训练前，请先按 :doc:`index` 启动本地 wiki 检索服务。
 
-.. code-block:: yaml
+.. tab-set::
 
-   data:
-     ……
-     train_data_paths: ["/path/to/train.jsonl"]
+   .. tab-item:: Megatron GRPO
 
-在同一配置中设置 ``rollout.model.model_path``：
+      **1. 安装环境**
 
-.. code-block:: yaml
+      .. code-block:: bash
 
-   rollout:
-     group_name: "RolloutGroup"
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-     gpu_memory_utilization: 0.8
-     model:
-       model_path: /path/to/model/Qwen2.5-3B-Instruct
-       model_type: qwen2.5
+      **2. 下载模型与数据**
 
-如果使用 `sampling_params.stop` 来控制模型停止节省训练时间，detokenize应当设置为True
+      下载基础模型和 `训练集 <https://huggingface.co/datasets/RLinf/Search-R1-Data>`__：
 
-.. code-block:: yaml
+      .. code-block:: bash
 
-   rollout:
-      ……
-      distributed_executor_backend: mp   # ray or mp
-      disable_log_stats: False
-      detokenize: True
+         hf download Qwen/Qwen2.5-3B-Instruct --local-dir ./Qwen2.5-3B-Instruct
+         hf download --repo-type dataset RLinf/Search-R1-Data --local-dir ./Search-R1-Data
 
-GRPO 配置重算 logprobs，PPO 配置直接使用 rollout logprobs。``rollout.return_logprobs`` 应等于 ``not algorithm.recompute_logprobs``。
+      **3. 启动训练**
 
-启动时传入对应的配置名：
+      在 ``examples/agent/searchr1/config/train_qwen2.5.yaml`` 中填写 ``data.train_data_paths`` 和 ``rollout.model.model_path``\ （使用 ``sampling_params.stop`` 时设置 ``rollout.detokenize: True``，并保持 ``rollout.return_logprobs`` 等于 ``not algorithm.recompute_logprobs``）：
 
-.. code-block:: bash
+      .. code-block:: yaml
 
-   # GRPO
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5
+         data:
+           train_data_paths: ["/path/to/train.jsonl"]
 
-   # PPO
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
+         rollout:
+           model:
+             model_path: /path/to/model/Qwen2.5-3B-Instruct
 
-MA-FSDP 训练
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      启动训练：
 
-RLinf 同时提供基于 FSDP2 的 Search-R1 GRPO 多智能体 Actor 实现。使用
-`examples/agent/searchr1/config/train_qwen2.5_fsdp.yaml`，按上文设置相同的模型和数据集路径，然后运行：
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash examples/agent/searchr1/run_train.sh train_qwen2.5
 
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp
+   .. tab-item:: Megatron PPO
 
-当 `agentloop.is_dynamic_rollout_batch: True` 时，入口会在
-`actor.training_backend: fsdp` 下选择 `MAFSDPActor`。该配置设置了
-`actor.pack_traj: True`，会在 FSDP 训练前打包同一轨迹中可兼容的多轮样本，避免重复计算共享前缀。对于提供的 Search-R1 FSDP 配置，应保持该选项开启。
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+
+      **2. 下载模型与数据**
+
+      .. code-block:: bash
+
+         hf download Qwen/Qwen2.5-3B-Instruct --local-dir ./Qwen2.5-3B-Instruct
+         hf download --repo-type dataset RLinf/Search-R1-Data --local-dir ./Search-R1-Data
+
+      **3. 启动训练**
+
+      在 ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml`` 中填写 ``data.train_data_paths`` 和 ``rollout.model.model_path``\ （PPO 直接使用 rollout logprobs，保持 ``rollout.return_logprobs`` 等于 ``not algorithm.recompute_logprobs``）：
+
+      .. code-block:: yaml
+
+         data:
+           train_data_paths: ["/path/to/train.jsonl"]
+
+         rollout:
+           model:
+             model_path: /path/to/model/Qwen2.5-3B-Instruct
+
+      启动训练：
+
+      .. code-block:: bash
+
+         bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
+
+   .. tab-item:: MA-FSDP GRPO
+
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+
+      **2. 下载模型与数据**
+
+      .. code-block:: bash
+
+         hf download Qwen/Qwen2.5-3B-Instruct --local-dir ./Qwen2.5-3B-Instruct
+         hf download --repo-type dataset RLinf/Search-R1-Data --local-dir ./Search-R1-Data
+
+      **3. 启动训练**
+
+      在 ``examples/agent/searchr1/config/train_qwen2.5_fsdp.yaml`` 中填写相同的模型与数据路径（设置 ``agentloop.is_dynamic_rollout_batch: True`` 和 ``actor.training_backend: fsdp`` 后，入口使用 ``MAFSDPActor`` 并保持 ``actor.pack_traj: True`` 打包同轨迹多轮样本，避免重复计算共享前缀）：
+
+      .. code-block:: bash
+
+         bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp
 
 Checkpoint 导出与评测
 ----------------------------------------
@@ -134,7 +178,7 @@ PPO 训练会在每个 ``global_step_xxx`` 下保存 ``actor`` 和 ``critic`` �
        convertor.ckpt_path=/path/to/checkpoints/global_step_xxx/actor/model_state_dict/full_weights.pt \
        convertor.save_path=/path/to/hf_model
 
-`config.yaml` 会随训练运行写出；当它位于 `convertor.ckpt_path` 附近时，转换器也可以自动查找。将导出的 HuggingFace 模型用于独立评测。
+`config.yaml` 会随训练运行写出；如果它位于 `convertor.ckpt_path` 附近，转换器也可以自动查找。将导出的 HuggingFace 模型用于独立评测。
 
 将转换得到的 HuggingFace model 路径填入 `examples/agent/searchr1/config/eval_qwen2.5.yaml`
 
@@ -172,7 +216,7 @@ PPO 训练会在每个 ``global_step_xxx`` 下保存 ``actor`` 和 ``critic`` �
      </div>
    </div>
 
-相较于原版性能( response length 稳定后，单 step 133s)，我们加速了 55%，同时 reward 曲线和 eval 结果保持一致。
+相较于原版性能（response length 稳定后，单 step 133 s），我们加速了 55%，同时 reward 曲线和 eval 结果保持一致。
 
 .. raw:: html
 

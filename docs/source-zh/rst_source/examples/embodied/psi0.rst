@@ -62,134 +62,107 @@ adapter 将头部相机图像、机器人状态和任务指令输入模型，再
 安装
 ----
 
-Psi0 + SIMPLE 的准备分为五步。第 1–4 步由所有 SIMPLE 任务共用，
-第 5 步下载单个任务的资源。
+Psi0 + SIMPLE 的准备分为两步：先安装运行环境，再一次性下载共享的 SIMPLE 仿真资源、Qwen 元数据和 OpenOven 任务资源。中国大陆用户可在 ``requirements/install.sh`` 末尾追加 ``--use-mirror``，并在执行 ``hf download`` 前设置 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
 .. _psi0-setup-env:
 
 1. 安装运行环境
 ~~~~~~~~~~~~~~~
 
-在 RLinf 仓库根目录安装并激活 Psi0 + SIMPLE 运行环境：
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: Psi0 + SIMPLE（uv）
 
-   bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
+      .. code-block:: bash
 
-也可以构建 Docker 镜像，并切换到其中的 Psi0 环境：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
 
-.. code-block:: bash
+   .. tab-item:: Docker
 
-   docker build -f docker/Dockerfile --build-arg BUILD_TARGET=embodied-simple -t rlinf:embodied-simple .
-   # Inside the container:
-   source switch_env psi0
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         docker build -f docker/Dockerfile --build-arg BUILD_TARGET=embodied-simple -t rlinf:embodied-simple .
+         # 进入容器后：
+         source switch_env psi0
 
 .. _psi0-qwen-metadata:
-
-2. 下载 Qwen Metadata
-~~~~~~~~~~~~~~~~~~~~~
-
-联合 checkpoint 已包含 Qwen3-VL 权重，但 loader 仍会按模型 ID 读取 Qwen 的配置、
-tokenizer 和 processor：
-
-.. code-block:: bash
-
-   export HF_HOME=/path/to/hf-cache
-   hf download Qwen/Qwen3-VL-2B-Instruct \
-     chat_template.json config.json generation_config.json merges.txt \
-     preprocessor_config.json tokenizer.json tokenizer_config.json \
-     video_preprocessor_config.json vocab.json
-
-.. note::
-
-   loader 需要这些文件的 Hugging Face 原始 snapshot。下载时请设置 ``HF_HOME``，不要使用 ``--local-dir``；训练或评测前也要导出同一个 ``HF_HOME``。
-
 .. _simple-sim-assets:
-
-3. 下载仿真资源
-~~~~~~~~~~~~~~~
-
-从 `USC-PSI-Lab/SIMPLE <https://huggingface.co/datasets/USC-PSI-Lab/SIMPLE>`_
-下载各 SIMPLE 任务共用的资源（G1 机器人、GraspNet 物体、铰接物体和 vMaterials）。
-如果已经下载过，将 ``SIMPLE_ASSETS_DIR`` 设为该目录并跳过下载：
-
-.. code-block:: bash
-
-   export SIMPLE_ASSETS_DIR=/path/to/simple_assets
-   bash requirements/embodied/download_assets.sh --assets simple --dir "${SIMPLE_ASSETS_DIR}"
-
 .. _simple-link-assets:
-
-4. 链接仿真资源
-~~~~~~~~~~~~~~~
-
-SIMPLE 从其代码目录下的 ``data/`` 读取资源，安装脚本把代码放在
-``${VIRTUAL_ENV}/SIMPLE``。代码中的 ``data/`` 只有 SIMPLE 的 README 和下载脚本，
-将它替换为指向资源目录的软链：
-
-.. code-block:: bash
-
-   rm -rf "${VIRTUAL_ENV}/SIMPLE/data"
-   ln -s "${SIMPLE_ASSETS_DIR}" "${VIRTUAL_ENV}/SIMPLE/data"
-
-.. note::
-
-   ``VIRTUAL_ENV`` 是第 1 步激活的虚拟环境，默认位于 ``/path/to/rlinf/.venv``；使用 Docker 时位于 ``/opt/venv/psi0``。
-
 .. _psi0-model-download:
 
-5. 下载任务资源
-~~~~~~~~~~~~~~~
+2. 下载元数据、仿真资源与任务资源
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-下载官方 OpenOven checkpoint 及其 run 配置、OpenOven 的 reset 数据和 HSSD 场景：
+一次性下载 Qwen3-VL 元数据 snapshot（按模型 ID 从 ``HF_HOME`` 读取）、`USC-PSI-Lab/SIMPLE <https://huggingface.co/datasets/USC-PSI-Lab/SIMPLE>`_ 共享仿真资源（软链到 ``${VIRTUAL_ENV}/SIMPLE/data``），以及官方 OpenOven checkpoint、reset 数据和 HSSD 场景：
 
-.. code-block:: bash
+.. tab-set::
 
-   export PSI0_ARTIFACT_ROOT=/path/to/psi0-simple-artifacts
-   export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0
-   export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
+   .. tab-item:: OpenOven（全部下载与资源软链）
 
-   hf download USC-PSI-Lab/psi-model \
-     "${PSI0_RUN_REL}/argv.txt" \
-     "${PSI0_RUN_REL}/run_config.json" \
-     "${PSI0_RUN_REL}/checkpoints/ckpt_40000/model.safetensors" \
-     --revision d34a91932d25c45ef211582315b9224c7dc8ace9 \
-     --local-dir "${PSI0_ARTIFACT_ROOT}/psi-model"
-   export PSI0_RUN_DIR="${PSI0_ARTIFACT_ROOT}/psi-model/${PSI0_RUN_REL}"
+      .. code-block:: bash
 
-   hf download USC-PSI-Lab/psi-data "simple-eval/${SIMPLE_TASK}.zip" \
-     --repo-type dataset \
-     --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 \
-     --local-dir "${PSI0_ARTIFACT_ROOT}/psi-data"
-   export SIMPLE_RESET_DIR="${PSI0_ARTIFACT_ROOT}/reset-states/${SIMPLE_TASK}"
-   mkdir -p "${SIMPLE_RESET_DIR}"
-   unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" \
-     -d "${SIMPLE_RESET_DIR}"
+         export HF_HOME=./hf-cache
+         export SIMPLE_ASSETS_DIR=./simple_assets
+         export PSI0_ARTIFACT_ROOT=./psi0-simple-artifacts
+         export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0
+         export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
 
-   hf download USC-PSI-Lab/SIMPLE scenes_hssd_102344280.zip \
-     --repo-type dataset \
-     --local-dir "${SIMPLE_ASSETS_DIR}"
-   unzip -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip" -d "${SIMPLE_ASSETS_DIR}"
-   rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip"
+         # 1. Qwen3-VL 元数据 snapshot（不要使用 --local-dir；训练和评测前导出同一个 HF_HOME）
+         hf download Qwen/Qwen3-VL-2B-Instruct \
+           chat_template.json config.json generation_config.json merges.txt \
+           preprocessor_config.json tokenizer.json tokenizer_config.json \
+           video_preprocessor_config.json vocab.json
+
+         # 2. SIMPLE 共享仿真资源并软链到 ${VIRTUAL_ENV}/SIMPLE/data
+         bash requirements/embodied/download_assets.sh --assets simple --dir "${SIMPLE_ASSETS_DIR}"
+         rm -rf "${VIRTUAL_ENV}/SIMPLE/data"
+         ln -s "$(realpath "${SIMPLE_ASSETS_DIR}")" "${VIRTUAL_ENV}/SIMPLE/data"
+
+         # 3. OpenOven checkpoint、reset 数据和 HSSD 场景
+         hf download USC-PSI-Lab/psi-model \
+           "${PSI0_RUN_REL}/argv.txt" \
+           "${PSI0_RUN_REL}/run_config.json" \
+           "${PSI0_RUN_REL}/checkpoints/ckpt_40000/model.safetensors" \
+           --revision d34a91932d25c45ef211582315b9224c7dc8ace9 \
+           --local-dir ./psi0-simple-artifacts/psi-model
+         export PSI0_RUN_DIR="${PSI0_ARTIFACT_ROOT}/psi-model/${PSI0_RUN_REL}"
+
+         hf download USC-PSI-Lab/psi-data "simple-eval/${SIMPLE_TASK}.zip" \
+           --repo-type dataset \
+           --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 \
+           --local-dir ./psi0-simple-artifacts/psi-data
+         export SIMPLE_RESET_DIR="${PSI0_ARTIFACT_ROOT}/reset-states/${SIMPLE_TASK}"
+         mkdir -p "${SIMPLE_RESET_DIR}"
+         unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" -d "${SIMPLE_RESET_DIR}"
+
+         hf download USC-PSI-Lab/SIMPLE scenes_hssd_102344280.zip \
+           --repo-type dataset \
+           --local-dir ./simple_assets
+         unzip -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip" -d "${SIMPLE_ASSETS_DIR}"
+         rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip"
+
+.. note::
+
+   训练或评测前保持 ``HF_HOME`` 指向同一个缓存目录。``VIRTUAL_ENV`` 默认位于 ``.venv``\ （Docker 中位于 ``/opt/venv/psi0``）。若已下载过共享 SIMPLE 资源，将 ``SIMPLE_ASSETS_DIR`` 设为该目录并跳过 ``download_assets.sh``。
 
 .. _psi0-ppo-training:
 
 运行
 ----
 
-在 ``examples/embodiment/config/simple_openoven_ppo_psi0.yaml`` 中，将
-``rollout.model.model_path`` 设为第 5 步的 ``PSI0_RUN_DIR``，将
-``env.train.reset_dataset.path`` 设为 ``SIMPLE_RESET_DIR``。actor 使用同一个模型路径：
+在 ``examples/embodiment/config/simple_openoven_ppo_psi0.yaml`` 中，将 ``actor.model.model_path`` 设为 ``PSI0_RUN_DIR``\ （rollout 会自动沿用同一路径），将 ``env.train.reset_dataset.path`` 设为 ``SIMPLE_RESET_DIR``：
 
 .. code-block:: yaml
 
    env:
      train:
        reset_dataset:
-         path: /path/to/psi0-simple-artifacts/reset-states/G1WholebodyOpenOvenTeleop-v0
-   rollout:
+         path: ./psi0-simple-artifacts/reset-states/G1WholebodyOpenOvenTeleop-v0
+   actor:
      model:
-       model_path: /path/to/psi0-simple-artifacts/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
+       model_path: ./psi0-simple-artifacts/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
 
 然后启动 OpenOven 训练：
 

@@ -78,13 +78,16 @@ RLT 将表示学习和在线 RL 控制拆开。
 
 .. include:: _setup_common.rst
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+   .. tab-item:: OpenPI + LIBERO / ManiSkill
 
-下面的 RLT 配置使用 ``model_type: openpi``。安装命令仍使用
-``--model openpi``，因为 vendored PyTorch 模型复用 OpenPI 运行环境，并且 RLT
-Stage 1 dataloader 为了保持 ManiSkill 和真机行为一致，仍使用 OpenPI 数据管线。
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+
+下面的 RLT 配置使用 ``model_type: openpi``。安装命令仍使用 ``--model openpi``，因为 vendored PyTorch 模型复用 OpenPI 运行环境，并且 RLT Stage 1 dataloader 为了保持 ManiSkill 和真机行为一致，仍使用 OpenPI 数据管线。
 
 RLT 如何工作
 ------------
@@ -105,49 +108,47 @@ Stage 1 的总损失为：
 
 OpenPI 模型会暴露 VLA prefix hidden states。RLT token transformer 读取这些 prefix states，并输出紧凑向量 ``z_rl``。Stage 2 使用 ``z_rl`` 作为学习到的 RL 表示，而不是直接在图像观测上训练 actor-critic。
 
-Stage 1 中比较关键的字段：
+``repo_id``、``config_name`` 和归一化统计需要与 Stage 2 特征模型配置保持一致。``openpi_data`` 应写在 ``actor.model`` 下。
 
-.. code:: yaml
+.. dropdown:: 进阶配置（可选）
 
-   # examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml
-   data:
-     train_data_paths: "/path/to/data"
+   ``examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml`` 中的 Stage 1 默认字段：
 
-   actor:
-     model:
-       openpi_data:
-         repo_id: "realworld_peg_insertion_rlt_stage1"
-       model_type: "openpi"
-       is_lora: False
-       model_path: "/path/to/pi05_base_openpi"
-       num_action_chunks: 20
-       action_dim: 7
-       num_steps: 4
-       add_value_head: False
-       openpi:
-         task: sft
-         config_name: "pi05_franka_state"
-         num_images_in_input: 1
-         # Network prediction horizon (Pi0Config.action_horizon). Matches official
-         # TrainConfig for config_name pi05_franka_state. Distinct from action_chunk
-         # / num_action_chunks, which is the env-executed (RLT) window.
-         action_horizon: 20
-         action_chunk: ${actor.model.num_action_chunks}
-         action_env_dim: ${actor.model.action_dim}
-         num_steps: ${actor.model.num_steps}
-         model_action_dim: 32
-         paligemma_variant: "gemma_2b"
-         action_expert_variant: "gemma_300m"
-         max_token_len: 200
-         discrete_state_input: True
-         use_rlt: True
-         rlt_alpha: 1.0
-         rlt_prefix_seq_len: 1024
-         rlt_image_only: False
-         rlt_use_mask: True
+   .. code:: yaml
 
-``repo_id``、``config_name`` 和归一化统计需要与 Stage 2 特征模型配置保持一致。
-``openpi_data`` 应写在 ``actor.model`` 下。
+      data:
+        train_data_paths: "/path/to/data"
+
+      actor:
+        model:
+          openpi_data:
+            repo_id: "realworld_peg_insertion_rlt_stage1"
+          model_type: "openpi"
+          is_lora: False
+          model_path: "/path/to/pi05_base_openpi"
+          num_action_chunks: 20
+          action_dim: 7
+          num_steps: 4
+          add_value_head: False
+          openpi:
+            task: sft
+            config_name: "pi05_franka_state"
+            num_images_in_input: 1
+            # 网络预测 horizon（Pi0Config.action_horizon），区别于环境执行窗口 num_action_chunks。
+            action_horizon: 20
+            action_chunk: ${actor.model.num_action_chunks}
+            action_env_dim: ${actor.model.action_dim}
+            num_steps: ${actor.model.num_steps}
+            model_action_dim: 32
+            paligemma_variant: "gemma_2b"
+            action_expert_variant: "gemma_300m"
+            max_token_len: 200
+            discrete_state_input: True
+            use_rlt: True
+            rlt_alpha: 1.0
+            rlt_prefix_seq_len: 1024
+            rlt_image_only: False
+            rlt_use_mask: True
 
 .. note::
 
@@ -201,81 +202,73 @@ critic 使用 chunked rewards 上的 TD target。一个 action chunk 内的奖�
 
 如果 episode 已终止，并且 ``bootstrap_type`` 为 ``standard``，则不会加入 bootstrap 项。
 
-Stage 2 中比较关键的字段：
+.. dropdown:: 进阶配置（可选）
 
-.. code:: yaml
+   ``examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml`` 中的 Stage 2 默认字段：
 
-   # examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml
-   algorithm:
-     loss_type: rlt_ac
-     q_weight: 0.1
-     bc_weight: 5
-     reference_dropout_prob: 0.5
-     gamma: 0.96
-     entropy_tuning:
-       alpha_type: fixed_alpha
-       initial_alpha: 0.0
+   .. code:: yaml
 
-   rollout:
-     collect_transitions: True
-     model:
-       model_path: null
-       precision: ${actor.model.precision}
-       action_dim: ${actor.model.action_dim}
-       num_action_chunks: ${actor.model.num_action_chunks}
-       ref_num_action_chunks: ${actor.model.ref_num_action_chunks}
-     rlt_feature_model:
-       model_type: "openpi"
-       precision: bf16
-       is_lora: False
-       num_action_chunks: 20
-       action_dim: 7
-       num_steps: 4
-       add_value_head: False
-       model_path: "/path/to/stage1/checkpoint/actor"
-       openpi_data:
-         repo_id: "realworld_peg_insertion_rlt_stage1"
-         norm_stats_path: /path/to/lerobot_dataset/norm_stats.json
-       openpi:
-         task: eval
-         config_name: "pi05_franka_state"
-         num_images_in_input: 1
-         # Network prediction horizon (Pi0Config.action_horizon). Matches official
-         # TrainConfig for config_name pi05_franka_state. Distinct from action_chunk
-         # / num_action_chunks, which is the env-executed (RLT) window.
-         action_horizon: 20
-         action_chunk: ${actor.model.ref_num_action_chunks}
-         action_env_dim: ${rollout.rlt_feature_model.action_dim}
-         num_steps: ${rollout.rlt_feature_model.num_steps}
-         model_action_dim: 32
-         paligemma_variant: "gemma_2b"
-         action_expert_variant: "gemma_300m"
-         max_token_len: 200
-         discrete_state_input: True
-         state_indices: []      # 保留完整 raw state；例如 19D state
-         use_rlt: True
-         rlt_prefix_seq_len: 1024
-         rlt_image_only: False
-         rlt_use_mask: True
+      algorithm:
+        loss_type: rlt_ac
+        q_weight: 0.1
+        bc_weight: 5
+        reference_dropout_prob: 0.5
+        gamma: 0.96
+        entropy_tuning:
+          alpha_type: fixed_alpha
+          initial_alpha: 0.0
 
-   actor:
-     model:
-       model_type: "rlt_mlp_policy"
-       precision: fp32
-       add_value_head: False
-       add_q_head: True
-       q_head_type: "default"
-       fixed_std: 0.002
-       is_lora: False
-       z_dim: 2048
-       proprio_dim: 19
-       action_dim: 7
-       num_action_chunks: 10
-       ref_num_action_chunks: 20
+      rollout:
+        collect_transitions: True
+        rlt_feature_model:
+          model_type: "openpi"
+          precision: bf16
+          is_lora: False
+          num_action_chunks: 20
+          action_dim: 7
+          num_steps: 4
+          add_value_head: False
+          model_path: "/path/to/stage1/checkpoint/actor"
+          openpi_data:
+            repo_id: "realworld_peg_insertion_rlt_stage1"
+            norm_stats_path: /path/to/lerobot_dataset/norm_stats.json
+          openpi:
+            task: eval
+            config_name: "pi05_franka_state"
+            num_images_in_input: 1
+            action_horizon: 20
+            action_chunk: ${actor.model.ref_num_action_chunks}
+            action_env_dim: ${rollout.rlt_feature_model.action_dim}
+            num_steps: ${rollout.rlt_feature_model.num_steps}
+            model_action_dim: 32
+            paligemma_variant: "gemma_2b"
+            action_expert_variant: "gemma_300m"
+            max_token_len: 200
+            discrete_state_input: True
+            state_indices: []      # 保留完整 raw state；例如 19D state
+            use_rlt: True
+            rlt_prefix_seq_len: 1024
+            rlt_image_only: False
+            rlt_use_mask: True
 
-   env:
-     train:
-       keyboard_reward_wrapper: rlt_policy_switch
+      actor:
+        model:
+          model_type: "rlt_mlp_policy"
+          precision: fp32
+          add_value_head: False
+          add_q_head: True
+          q_head_type: "default"
+          fixed_std: 0.002
+          is_lora: False
+          z_dim: 2048
+          proprio_dim: 19
+          action_dim: 7
+          num_action_chunks: 10
+          ref_num_action_chunks: 20
+
+      env:
+        train:
+          keyboard_reward_wrapper: rlt_policy_switch
 
 Stage 2 的 actor loss 为：
 
@@ -328,7 +321,7 @@ LeRobot shard 位于 ``logs/<timestamp>/lerobot_dataset/rank_0/id_0/``，
 Stage 1：训练 RLT 特征模型
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-启动前先修改 Stage 1 配置中的路径：
+在 ``examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml`` 中填写数据集与基础模型路径：
 
 .. code:: yaml
 
@@ -336,14 +329,10 @@ Stage 1：训练 RLT 特征模型
      train_data_paths: /path/to/lerobot_dataset
 
    actor:
-     openpi_data:
-       repo_id: "realworld_peg_insertion_rlt_stage1"
      model:
        model_path: /path/to/pi05_base_openpi
-       openpi:
-         config_name: "pi05_franka_state"
-         num_images_in_input: 1
-         rlt_prefix_seq_len: 1024
+       openpi_data:
+         repo_id: "realworld_peg_insertion_rlt_stage1"
 
 启动 SFT：
 
@@ -357,56 +346,33 @@ Stage 1：训练 RLT 特征模型
 
    logs/<run-name>/checkpoints/global_step_<step>/actor
 
-Stage 2 中需要将这个 ``actor`` 目录填到 ``rollout.rlt_feature_model.model_path``。
-不要把 Stage 1 checkpoint 填到 ``rollout.model.model_path`` 或
-``actor.model.model_path``；这两个位置不负责加载 Stage 1 特征模型。
+Stage 2 中需要将这个 ``actor`` 目录填到 ``rollout.rlt_feature_model.model_path``。不要把 Stage 1 checkpoint 填到 ``actor.model.model_path``，该字段不负责加载 Stage 1 特征模型。
 
 Stage 2：运行 RLT Actor-Critic
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-修改 Stage 2 配置：
+在 ``examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml`` 中填写 Stage 1 检查点路径和目标位姿：
 
 .. code:: yaml
 
    rollout:
-     model:
-       model_path: null
      rlt_feature_model:
        model_path: /path/to/stage1/checkpoint/actor
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
-       openpi:
-         config_name: "pi05_franka_state"
-         num_images_in_input: 1
-         state_indices: []
-         rlt_prefix_seq_len: 1024
-
-   cluster:
-     node_groups:
-       - label: <gpu_node_group>
-         node_ranks: <gpu_node_rank>
-       - label: <env_node_group>
-         node_ranks: <env_node_rank>
-         hardware:
-           type: <robot_type>
-           configs:
-             - robot_ip: <robot_ip>
 
    env:
      train:
-       keyboard_reward_wrapper: rlt_policy_switch
        override_cfg:
-         target_ee_pose: [<target_x>, <target_y>, <target_z>, <target_roll>, <target_pitch>, <target_yaw>]
+         target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
 
-在 master node 上启动异步训练：
+按你的机器修改 ``cluster.node_groups`` 中的节点 rank 和 ``robot_ip``，然后在 master node 上启动异步训练：
 
 .. code:: bash
 
    bash examples/embodiment/run_realworld_async.sh realworld_rlt_stage2_ac_mlp
 
-当前默认键盘模块实现了 RLT 算法中的关键阶段切换：按 ``b`` 进入 Stage 2 actor
-控制阶段。其他功能可根据具体任务需求进行定制
-（``rlinf/envs/real/wrappers/episode/policy_switch.py``）。
+当前默认键盘模块实现了 RLT 的关键阶段切换：按 ``b`` 进入 Stage 2 actor 控制阶段。其他功能可在真机 policy-switch wrapper 中按任务定制。
 
 双臂 Franka Stage 2
 ~~~~~~~~~~~~~~~~~~~
@@ -449,74 +415,62 @@ Stage 1 和 Stage 2 的 OpenPI feature model 使用
    * - ``task``
      - 语言指令；也可以通过 ``default_prompt`` 固定为 ``insert the peg in the hole``。
 
-可以直接使用参考数据集
-`RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ
-<https://huggingface.co/datasets/RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ>`__。
-它包含 ManiSkill ``PegInsertionSideWideClearance-v1`` 的成功演示，动作空间为
-``pd_joint_delta_pos``，并使用上表中的 joint-control LeRobot 字段。
+可以直接下载参考数据集 `RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ <https://huggingface.co/datasets/RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ>`__，或用 ManiSkill 的 Panda motion-planning solver 重新生成，并计算与训练配置一致的归一化统计：
 
-.. code:: bash
+.. tab-set::
 
-   export HF_LEROBOT_HOME=/path/to/lerobot_root
-   hf download RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ \
-       --repo-type dataset \
-       --local-dir ${HF_LEROBOT_HOME}/maniskill_peginsertionside_joint
+   .. tab-item:: 下载参考数据集
 
-也可以用当前仓库中的采集脚本重新生成数据。该脚本会先调用 ManiSkill Panda
-motion-planning solver 生成成功轨迹，再把 ``pd_joint_pos`` solver action 转成
-``pd_joint_delta_pos`` action，并只保存 replay 成功的 episode：
+      .. code-block:: bash
 
-.. code:: bash
+         export HF_LEROBOT_HOME=./lerobot_root
+         hf download RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ \
+             --repo-type dataset \
+             --local-dir ./lerobot_root/maniskill_peginsertionside_joint
+         python toolkits/lerobot/calculate_norm_stats.py \
+             --config-name pi05_rlt_maniskill_joint \
+             --repo-id maniskill_peginsertionside_joint
 
-   python toolkits/lerobot/collect_maniskill_peg_lerobot_joint.py \
-       --repo-id maniskill_peginsertionside_joint \
-       --num-episodes 400 \
-       --seed 0 \
-       --max-attempts 4000 \
-       --overwrite
+   .. tab-item:: 用规划器重新生成
+
+      .. code-block:: bash
+
+         export HF_LEROBOT_HOME=./lerobot_root
+         python toolkits/lerobot/collect_maniskill_peg_lerobot_joint.py \
+             --repo-id maniskill_peginsertionside_joint \
+             --num-episodes 400 \
+             --seed 0 \
+             --max-attempts 4000 \
+             --overwrite
+         python toolkits/lerobot/calculate_norm_stats.py \
+             --config-name pi05_rlt_maniskill_joint \
+             --repo-id maniskill_peginsertionside_joint
 
 .. note::
 
-   采集脚本位于 ``toolkits/lerobot``，用于 RLT joint 数据准备。
-   它依赖 ManiSkill 的 PegInsertionSide Panda motion-planning solver；如果运行时报
-   solver import 错误，请先确认当前 ManiSkill 安装包含 motion-planning 示例。
-
-计算归一化统计时，``--config-name`` 和 ``--repo-id`` 要与训练配置保持一致：
-
-.. code:: bash
-
-   export HF_LEROBOT_HOME=/path/to/lerobot_root
-   python toolkits/lerobot/calculate_norm_stats.py \
-       --config-name pi05_rlt_maniskill_joint \
-       --repo-id maniskill_peginsertionside_joint
+   ``toolkits/lerobot`` 下的采集脚本依赖 ManiSkill 的 PegInsertionSide Panda motion-planning solver；若报 solver import 错误，先确认当前 ManiSkill 安装包含 motion-planning 示例。
 
 .. warning::
 
-   Stage 1 checkpoint、Stage 2 ``rollout.rlt_feature_model`` 和 OpenPI assets
-   必须使用同一套 ``norm_stats.json``。如果 SFT 基座和 Stage 2 加载了不同
-   ``repo_id`` 下的 norm stats，VLA reference action 的尺度会发生偏移。可通过 ``openpi_data.norm_stats_path`` 显式指定上述 ``norm_stats.json`` 路径。
+   Stage 1 checkpoint、Stage 2 ``rollout.rlt_feature_model`` 和 OpenPI assets 必须使用同一套 ``norm_stats.json``。如果 SFT 基座和 Stage 2 加载了不同 ``repo_id`` 下的 norm stats，VLA reference action 的尺度会发生偏移。可通过 ``openpi_data.norm_stats_path`` 显式指定上述 ``norm_stats.json`` 路径。
 
 Stage 1：联合训练 ManiSkill OpenPI + RLT 特征模型
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-修改 ``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml`` 中的数据路径：
+在 ``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml`` 中填写数据、基础模型和 ``norm_stats.json`` 路径：
 
 .. code:: yaml
 
    data:
      train_data_paths:
-       - dataset_path: /path/to/maniskill_peginsertionside_joint
+       - dataset_path: ./lerobot_root/maniskill_peginsertionside_joint
          weight: 1.0
 
    actor:
      model:
        model_path: /path/to/pi05_base_openpi
-       openpi:
-         config_name: pi05_rlt_maniskill_joint
        openpi_data:
-         repo_id: maniskill_peginsertionside_joint
-         default_prompt: insert the peg in the hole
-         norm_stats_path: /path/to/maniskill_peginsertionside_joint/norm_stats.json
+         norm_stats_path: ./lerobot_root/maniskill_peginsertionside_joint/norm_stats.json
 
 启动训练：
 
@@ -530,45 +484,20 @@ Stage 1：联合训练 ManiSkill OpenPI + RLT 特征模型
 
    logs/<run-name>/checkpoints/global_step_<step>/actor
 
-Stage 2 中需要将这个 ``actor`` 目录直接填到
-``rollout.rlt_feature_model.model_path``，例如
-``/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor``。
+Stage 2 中将这个 ``actor`` 目录直接填到 ``rollout.rlt_feature_model.model_path``。
 
 Stage 2：运行 ManiSkill RLT Actor-Critic
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-修改 ``examples/embodiment/config/maniskill_rlt_stage2_ac_mlp.yaml`` 中的
-Stage 1 checkpoint：
+在 ``examples/embodiment/config/maniskill_rlt_stage2_ac_mlp.yaml`` 中填写 Stage 1 检查点和 ``norm_stats.json`` 路径：
 
 .. code:: yaml
 
-   env:
-     train:
-       wrap_obs_mode: rlt_openpi_joint
-       rlt_policy_switch:
-         enable: True
-         task_mode: full_task
-         trigger_mode: auto
-     eval:
-       wrap_obs_mode: rlt_openpi_joint
-       rlt_policy_switch:
-         enable: True
-         task_mode: full_task
-         trigger_mode: auto
-
    rollout:
      rlt_feature_model:
-       model_path: /path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor
+       model_path: /path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_step/actor
        openpi_data:
-         repo_id: maniskill_peginsertionside_joint
-         norm_stats_path: /path/to/maniskill_peginsertionside_joint/norm_stats.json
-       openpi:
-         config_name: pi05_rlt_maniskill_joint
-     expert_model:
-       model_path: /path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_<step>/actor
-       precision: null
-       openpi:
-         use_rlt: False
+         norm_stats_path: ./lerobot_root/maniskill_peginsertionside_joint/norm_stats.json
 
 启动训练：
 
@@ -576,102 +505,99 @@ Stage 1 checkpoint：
 
    bash examples/embodiment/run_embodiment.sh maniskill_rlt_stage2_ac_mlp
 
-如需运行 TD3-MLP 变体，在 ``maniskill_rlt_stage2_td3_mlp.yaml`` 中配置相同的
-Stage 1 checkpoint，然后执行：
+如需运行 TD3-MLP 变体，在 ``maniskill_rlt_stage2_td3_mlp.yaml`` 中配置相同的 Stage 1 checkpoint，然后执行：
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_rlt_stage2_td3_mlp
 
-目前该变体只提供 ManiSkill 仿真配置。它保留冻结的 Stage 1 特征和 transition
-replay 路径，仅将 Stage 2 策略和更新目标替换为直接 TD3 actor 与 twin-Q critic。
+该变体面向 ManiSkill 仿真配置，保留冻结的 Stage 1 特征和 transition replay 路径，将 Stage 2 策略和更新目标替换为直接 TD3 actor 与 twin-Q critic。
 
-这个配置会启动 actor、rollout 和 ManiSkill env。rollout 侧冻结
-``rollout.rlt_feature_model``，只同步和执行 Stage 2 MLP actor。ManiSkill route
-在 ``ready_for_online`` 之前执行 VLA ``ref_chunk``；达到
-``algorithm.rlt_schedule.warmup_post_collect_updates`` 后，才允许 actor 在自动
-critical phase 中接管。
+这个配置会启动 actor、rollout 和 ManiSkill env。rollout 侧冻结 ``rollout.rlt_feature_model``，只同步和执行 Stage 2 MLP actor。ManiSkill route 在 ``ready_for_online`` 之前执行 VLA ``ref_chunk``；达到 ``algorithm.rlt_schedule.warmup_post_collect_updates`` 后，允许 actor 在自动 critical phase 中接管。
 
 调节 ManiSkill Critical Phase 和 Intervention
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-ManiSkill 的切换逻辑是仿真专用的。它读取 peg insertion 任务信息来打开
-``rlt_switch_flags`` / ``in_critical_phase``；如果启用 expert takeover，它还会在
-actor 连续几个 chunk 没有进展时请求 expert 接管。下面的注释只用于文档说明，
-不要写进实际 YAML 文件。
+ManiSkill 的切换逻辑读取 peg insertion 任务信息进入 critical phase（从 VLA 参考策略切到 Stage 2 actor）；开启 expert takeover 后，还会在 actor 连续无进展时请求 expert 接管。仓库自带配置已设置好默认值。
 
-.. code:: yaml
+.. dropdown:: 进阶配置（可选）
 
-   algorithm:
-     rlt_schedule:
-       enable: True                    # 使用 ManiSkill rollout / update budget。
-       warmup_post_collect_updates: 30000  # actor 上线前需要完成的 update 数。
-       train_every_transitions: 5       # 每 N 条已记录 transition 增加训练预算。
-     actor_weight_schedule:
-       enable: True                    # 使用 BC/Q 权重 ramp，而不是固定权重。
-       warmup_updates: 20000           # warmup BC/Q 权重保持的 update 数。
-       ramp_updates: 50000             # 逐步过渡到 online BC/Q 权重。
+   ``maniskill_rlt_stage2_ac_mlp.yaml`` 中的 critical phase 调度、自动门控与 expert takeover 参数（注释仅用于说明）：
 
-   env:
-     train:
-       rlt_policy_switch:
-         task_mode: full_task          # critical phase 前用 VLA，里面用 actor。
-         trigger_mode: auto            # 根据任务信息自动计算 critical phase。
-         latch_until_done: True        # 一旦进入 critical phase 就保持 actor 控制。
-         auto_gate:
-           require_grasp: True         # 抓住 peg 后才允许进入。
-           require_not_success: True   # 已成功时不再切到 actor。
-           near_hole_x_min: -0.16      # 值越大，x 方向进入门控越窄。
-           near_hole_yz_margin: 1.5    # 值越大，y/z 进入窗口越宽。
-         expert_takeover:
-           enable: True                # 只在 train rollout 中启用仿真 expert 干预。
-           trigger_mode: stalled_progress  # 连续无进展 chunk 后才接管。
-           gate:
-             near_hole_x_min: -0.10    # 足够靠近洞口后才检查是否卡住。
-             near_hole_yz_margin: 2.0  # y/z 足够接近后才检查是否卡住。
-             stuck_chunks_before_takeover: 3  # 接管前需要的无进展 chunk 数。
-             min_x_progress: 0.003     # 能重置 stall 计数的前向进展。
-             min_yz_progress: 0.0015   # 能重置 stall 计数的对齐进展。
-             min_score_progress: 0.002 # 能重置 stall 的综合分数进展。
-             progress_yz_weight: 1.0   # 综合进展分数里的 y/z 惩罚权重。
+   .. code:: yaml
 
-     eval:
-       rlt_policy_switch:
-         expert_takeover:
-           enable: False               # eval 只测 base policy + actor，不用 expert。
+      algorithm:
+        rlt_schedule:
+          enable: True                    # 使用 ManiSkill rollout / update budget。
+          warmup_post_collect_updates: 30000  # actor 上线前需要完成的 update 数。
+          train_every_transitions: 5       # 每 N 条已记录 transition 增加训练预算。
+        actor_weight_schedule:
+          enable: True                    # 使用 BC/Q 权重 ramp，而不是固定权重。
+          warmup_updates: 20000           # warmup BC/Q 权重保持的 update 数。
+          ramp_updates: 50000             # 逐步过渡到 online BC/Q 权重。
+
+      env:
+        train:
+          wrap_obs_mode: rlt_openpi_joint
+          rlt_policy_switch:
+            enable: True
+            task_mode: full_task          # critical phase 前用 VLA，里面用 actor。
+            trigger_mode: auto            # 根据任务信息自动计算 critical phase。
+            latch_until_done: True        # 一旦进入 critical phase 就保持 actor 控制。
+            auto_gate:
+              require_grasp: True         # 抓住 peg 后才允许进入。
+              require_not_success: True   # 已成功时不再切到 actor。
+              near_hole_x_min: -0.16      # 值越大，x 方向进入门控越窄。
+              near_hole_yz_margin: 1.5    # 值越大，y/z 进入窗口越宽。
+            expert_takeover:
+              enable: True                # 只在 train rollout 中启用仿真 expert 干预。
+              trigger_mode: stalled_progress  # 连续无进展 chunk 后才接管。
+              gate:
+                near_hole_x_min: -0.10    # 足够靠近洞口后才检查是否卡住。
+                near_hole_yz_margin: 2.0  # y/z 足够接近后才检查是否卡住。
+                stuck_chunks_before_takeover: 3  # 接管前需要的无进展 chunk 数。
+                min_x_progress: 0.003     # 能重置 stall 计数的前向进展。
+                min_yz_progress: 0.0015   # 能重置 stall 计数的对齐进展。
+                min_score_progress: 0.002 # 能重置 stall 的综合分数进展。
+                progress_yz_weight: 1.0   # 综合进展分数里的 y/z 惩罚权重。
+
+        eval:
+          wrap_obs_mode: rlt_openpi_joint
+          rlt_policy_switch:
+            enable: True
+            task_mode: full_task
+            trigger_mode: auto
+            expert_takeover:
+              enable: False               # eval 只测 base policy + actor，不用 expert。
 
 可选：启用 ManiSkill Expert Takeover
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-ManiSkill expert takeover 默认关闭。需要在 critical phase 中用更强的 SFT expert
-替换 actor action，并把 expert action 作为 intervention target 写入 replay 时，
-再打开这个路径：
+ManiSkill expert takeover 默认关闭。需要在 critical phase 中用更强的 SFT expert 替换 actor action，并把 expert action 作为 intervention target 写入 replay 时再启用。expert 的 OpenPI dataconfig 和 norm stats 须与 Stage 2 数据保持一致；expert 只用于 train rollout，eval rollout 不执行 expert takeover。
 
-.. code:: yaml
+.. dropdown:: 进阶配置（可选）
 
-   rollout:
-     expert_model:
-       model_path: /path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_<step>/actor
-       precision: null
-       openpi:
-         use_rlt: False
+   .. code:: yaml
 
-   env:
-     train:
-       rlt_policy_switch:
-         expert_takeover:
-           enable: True
-           trigger_mode: stalled_progress
-           gate:
-             stuck_chunks_before_takeover: 3
-             min_x_progress: 0.003
-             min_yz_progress: 0.0015
-             min_score_progress: 0.002
-             progress_yz_weight: 1.0
+      rollout:
+        expert_model:
+          model_path: /path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_step/actor
+          precision: null
+          openpi:
+            use_rlt: False
 
-也可以把 ``rollout.expert_model.model_path`` 换成你自己训练得更充分的
-joint-control SFT checkpoint。expert 的 OpenPI dataconfig 和 norm stats 需要和
-Stage 2 数据保持一致。expert 只用于 train rollout；eval rollout 不会执行 expert takeover，评测的是学到的 actor。
+      env:
+        train:
+          rlt_policy_switch:
+            expert_takeover:
+              enable: True
+              trigger_mode: stalled_progress
+              gate:
+                stuck_chunks_before_takeover: 3
+                min_x_progress: 0.003
+                min_yz_progress: 0.0015
+                min_score_progress: 0.002
+                progress_yz_weight: 1.0
 
 Replay Buffer 逻辑
 ------------------
@@ -749,7 +675,7 @@ rollout worker 会返回 RLT 特征，learner 侧把这些特征组装成 transi
 
 - Stage 1 和 Stage 2 的数据配置必须保持一致：``repo_id``、``config_name``、``action_dim``、``proprio_dim``、``ref_num_action_chunks`` 和 ``z_dim`` 都要对齐；如果保留完整 raw state，可使用 ``state_indices: []``。
 - ``rollout.rlt_feature_model`` 指向 Stage 1 检查点；``actor.model`` 是 actor-critic worker 会更新的 Stage 2 MLP 策略。
-- ``rollout.model`` 是 Stage 2 MLP 在 rollout worker 上的同步副本。Stage 2 从头训练时保持 ``rollout.model.model_path: null``；恢复 Stage 2 训练使用 ``runner.resume_dir``，加载单个 Stage 2 权重文件使用 ``runner.ckpt_path``。
+- ``rollout.model`` 是 Stage 2 MLP 在 rollout worker 上的同步副本。Stage 2 从头训练时保持 ``actor.model.model_path: null``；恢复 Stage 2 训练使用 ``runner.resume_dir``，加载单个 Stage 2 权重文件使用 ``runner.ckpt_path``。
 - 不要配置 ``actor.model.model_path`` 来加载 Stage 1；``actor.model`` 只描述 Stage 2 MLP 的输入输出维度和 Q-head 设置。
 - Stage 2 MLP 配置直接内联在各个 Stage 2 YAML 的 ``actor.model`` 下，不再使用单独的 model defaults 文件。
 - ``keyboard_reward_wrapper: rlt_policy_switch`` 只在需要人工控制关键阶段切换时使用。

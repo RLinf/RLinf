@@ -98,46 +98,90 @@ GRPO 工作方式
 - 最终 boxed/数值答案正确：+5
 - 错误：-5
 
-运行
+一键上手
 ----------------------------------------
 
-**1. 选择并修改配置**
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。通用路径、集群和 runner 字段见 :doc:`训练配置 <../../../reference/configuration>`。
 
-选择一个 Megatron GRPO 配置，并设置集群与路径字段（``cluster.num_nodes``、``runner.output_dir``、``rollout.model.model_path``、``data.train_data_paths``）。通用字段见 :doc:`训练配置 <../../../reference/configuration>`。
+.. tab-set::
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 76
+   .. tab-item:: DeepSeek-R1-Distill-Qwen-1.5B
 
-   * - 模型
-     - 配置文件
-   * - Qwen2.5-1.5B
-     - ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``
-   * - Qwen2.5-7B
-     - ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``
+      **1. 安装环境**
 
-**2. 启动训练**
+      .. code-block:: bash
 
-启动 Ray 集群并在 head 节点启动训练（传入所选配置名，不含 ``.yaml``）：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. 下载模型与数据**
 
-   cd /path_to_RLinf/ray_utils;
-   rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
-   export TOKENIZERS_PARALLELISM=false
-   bash start_ray.sh;
-   if [ "$RANK" -eq 0 ]; then
-       bash check_ray.sh 128;
-       cd /path_to_RLinf;
-       bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron # 修改配置文件
-   else
-     if [ "$RANK" -eq 1 ]; then
-         sleep 3m
-     fi
-     sleep 10d
-   fi
+      .. code-block:: bash
 
-   sleep 10d
+         hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --local-dir ./DeepSeek-R1-Distill-Qwen-1.5B
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
+
+      **3. 启动训练**
+
+      在 ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml`` 中设置 ``cluster.num_nodes``、``runner.output_dir``、``rollout.model.model_path`` 和 ``data.train_data_paths``，然后启动 Ray 集群并在 head 节点启动训练：
+
+      .. code-block:: bash
+
+         cd /path_to_RLinf/ray_utils;
+         rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
+         export TOKENIZERS_PARALLELISM=false
+         bash start_ray.sh;
+         if [ "$RANK" -eq 0 ]; then
+             bash check_ray.sh 128;
+             cd /path_to_RLinf;
+             bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron
+         else
+           if [ "$RANK" -eq 1 ]; then
+               sleep 3m
+           fi
+           sleep 10d
+         fi
+
+         sleep 10d
+
+   .. tab-item:: DeepSeek-R1-Distill-Qwen-7B
+
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+
+      **2. 下载模型与数据**
+
+      .. code-block:: bash
+
+         hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-7B --local-dir ./DeepSeek-R1-Distill-Qwen-7B
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
+
+      **3. 启动训练**
+
+      在 ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml`` 中设置 ``cluster.num_nodes``、``runner.output_dir``、``rollout.model.model_path`` 和 ``data.train_data_paths``，然后启动 Ray 集群并在 head 节点启动训练：
+
+      .. code-block:: bash
+
+         cd /path_to_RLinf/ray_utils;
+         rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
+         export TOKENIZERS_PARALLELISM=false
+         bash start_ray.sh;
+         if [ "$RANK" -eq 0 ]; then
+             bash check_ray.sh 128;
+             cd /path_to_RLinf;
+             bash examples/reasoning/run_main_grpo_math.sh qwen2.5-7b-grpo-megatron
+         else
+           if [ "$RANK" -eq 1 ]; then
+               sleep 3m
+           fi
+           sleep 10d
+         fi
+
+         sleep 10d
 
 可视化与结果
 ----------------------------------------

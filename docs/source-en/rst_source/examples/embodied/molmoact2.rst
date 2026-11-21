@@ -96,9 +96,14 @@ Installation
 
 .. include:: _setup_common.rst
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model molmoact2 --env libero && source .venv/bin/activate
+   .. tab-item:: MolmoAct2
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model molmoact2 --env libero && source .venv/bin/activate
 
 Set ``MOLMOACT2_LEROBOT_PATH`` before installing to reuse an existing checkout of
 `RLinf/lerobot <https://github.com/RLinf/lerobot/tree/RLinf/molmoact2-hf-inference>`__.
@@ -108,10 +113,13 @@ Download the Model
 
 Download the official `allenai/MolmoAct2-LIBERO <https://huggingface.co/allenai/MolmoAct2-LIBERO>`__ checkpoint:
 
-.. code-block:: bash
+.. tab-set::
 
-   hf download allenai/MolmoAct2-LIBERO \
-     --local-dir /path/to/model/MolmoAct2-LIBERO
+   .. tab-item:: MolmoAct2
+
+      .. code-block:: bash
+
+         hf download allenai/MolmoAct2-LIBERO --local-dir ./MolmoAct2-LIBERO
 
 Then set ``rollout.model.model_path`` in the eval config to that directory. The
 config has no ``actor`` section, so there is no second path to keep in sync.
@@ -124,7 +132,7 @@ Evaluate LIBERO-Long with ``evaluations/libero/libero_10_molmoact2_eval.yaml``:
 .. code-block:: bash
 
    bash evaluations/run_eval.sh libero libero_10_molmoact2_eval \
-     rollout.model.model_path=/path/to/model/MolmoAct2-LIBERO
+     rollout.model.model_path=./MolmoAct2-LIBERO
 
 Swap in any config from the Tasks table above to evaluate another suite.
 
@@ -150,7 +158,7 @@ The terminal reports ``eval/success_once``. Logs are written to:
 
 .. code-block:: text
 
-   logs/<timestamp>-libero_10_molmoact2_eval/eval_embodiment.log
+   logs/YYYYMMDD-HHMMSS-libero_10_molmoact2_eval/eval_embodiment.log
 
 See :doc:`LIBERO Evaluation <../../evaluations/guides/libero>` for the benchmark
 protocol and :doc:`Evaluation Results <../../evaluations/reference/results>` for

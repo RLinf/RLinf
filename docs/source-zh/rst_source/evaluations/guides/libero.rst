@@ -5,17 +5,46 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
 
 相关训练文档：:doc:`../../examples/embodied/libero`、:doc:`../../examples/embodied/sft_fastwam`、:ref:`LIBERO-Pro 与 LIBERO-Plus <zh-liberopro-plus-benchmark>`
 
-环境准备
+一键上手
 --------
 
-.. code-block:: bash
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
-   bash requirements/install.sh embodied --model openpi --env libero
-   source .venv/bin/activate
+.. tab-set::
 
-使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``\ （若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``。
+   .. tab-item:: OpenPI π₀.₅（LIBERO-Spatial）
 
-支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam``、``molmoact2`` 和 ``pi0_fast``，安装时替换 ``--model`` 参数即可。
+      .. code-block:: bash
+
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
+
+         # 2. 下载模型
+         hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
+
+         # 3. 启动评测
+         bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
+           rollout.model.model_path=./RLinf-Pi05-LIBERO-SFT
+
+   .. tab-item:: OpenVLA-OFT（LIBERO-10）
+
+      .. code-block:: bash
+
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env libero && source .venv/bin/activate
+
+         # 2. 下载模型
+         hf download RLinf/Openvla-oft-SFT-libero10-trajall --local-dir ./Openvla-oft-SFT-libero10-trajall
+
+         # 3. 启动评测
+         bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval \
+           rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall
+
+使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``\ （若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``。支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam``、``molmoact2`` 和 ``pi0_fast``，安装时替换 ``--model`` 参数即可。
+
+终端输出 ``eval/success_once``；日志见 :doc:`../reference/results`，通用 ``env.eval`` 字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`。
 
 示例配置
 --------
@@ -94,30 +123,6 @@ DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。Cosmos3 SGLang backend �
 
 如需通过与动作块执行重叠来隐藏推理延迟，请参考 :doc:`RTC <../../guides/rtc>`。
 
-完整评测流程
-------------
-
-**Step 1：激活环境**
-
-.. code-block:: bash
-
-   source .venv/bin/activate
-
-**Step 2：编辑配置**
-
-复制或编辑目标 YAML，至少修改 ``rollout.model.model_path``。``env.eval`` 字段说明见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`；LIBERO 评测协议与套件参数见下文 :ref:`libero-eval-config`。
-
-**Step 3：启动评测**
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
-     rollout.model.model_path=/path/to/model
-
-**Step 4：查看结果**
-
-终端输出 ``eval/success_once``；日志见 :doc:`../reference/results`。
-
 .. _apxinf-backend:
 
 ApxInf 推理后端
@@ -144,7 +149,7 @@ LIBERO 评测会对任务套件中每个 ``(task_id, trial_id)`` 组合各跑一
 
 LIBERO 官方为每个任务提供一组固定的初始状态（``task_suite.get_task_init_states(task_id)``，来自 ``.pruned_init`` 文件），`官方仓库 <https://github.com/Lifelong-Robot-Learning/LIBERO>`_ 的标准评测套件为 **LIBERO-Spatial**、**LIBERO-Object**、**LIBERO-Goal** 与 **LIBERO-Long**\ （``libero_10``），各含 10 个任务、每任务约 50 个初始状态，完整评测一个套件约 **500** 条轨迹。RLinf 的 ``evaluations/libero/`` 示例覆盖上述四个 ``task_suite_name``：``libero_spatial``、``libero_object``、``libero_goal``、``libero_10``。
 
-在 RLinf 的 ``LiberoEnv`` 中，每条评测轨迹由 ``(task_id, trial_id)`` 唯一确定：
+在 RLinf 的 LIBERO 环境中，每条评测轨迹由 ``(task_id, trial_id)`` 唯一确定：
 
 - ``task_id``：当前 ``task_suite_name`` 下的任务索引（``0 … n_tasks-1``），决定语言指令与 BDDL 场景；
 - ``trial_id``：该任务下的初始状态索引，通过 ``get_task_init_states(task_id)[trial_id]`` 加载 MuJoCo 初始位形。
@@ -156,8 +161,8 @@ LIBERO 官方为每个任务提供一组固定的初始状态（``task_suite.get
 1. **大并行**：令 ``total_num_envs`` ≥ 总 init state 数，``max_steps_per_rollout_epoch = max_episode_steps``，每个并行环境只跑一条轨迹（见 ``libero_spatial_openpi_pi05_eval.yaml``）。
 2. **自动重置**：在 ``auto_reset=True`` 时，episode 结束后环境立即加载下一个 init state；将 ``max_steps_per_rollout_epoch`` 设为 ``max_episode_steps`` 的 **N** 倍，则每轮可评测约 ``N × total_num_envs`` 条轨迹（见 ``libero_spatial_dreamzero_eval.yaml``）。
 
-各套件 ``max_episode_steps`` 参考值
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+各套件步数上限参考值
+~~~~~~~~~~~~~~~~~~~~
 
 各套件最长训练 demo 步数决定了步数上限的参考下限；RLinf 评测 YAML 中的 ``max_episode_steps`` 因模型动作频率不同而有所差异，应不低于参考下限，并与训练配置保持一致：
 
@@ -193,8 +198,8 @@ LIBERO 官方为每个任务提供一组固定的初始状态（``task_suite.get
 
 设套件总 init state 数为 ``S``，并行环境数为 ``E``，单条轨迹步数上限为 ``T``\ （即 ``max_episode_steps``）。
 
-方式一：大并行（``auto_reset`` 可有可无）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+方式一：大并行
+~~~~~~~~~~~~~~
 
 .. code-block:: yaml
 

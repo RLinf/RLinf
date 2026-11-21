@@ -1,4 +1,4 @@
-基于Behavior评测平台的强化学习训练
+基于 Behavior 评测平台的强化学习训练
 ========================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior.jpg
@@ -7,14 +7,12 @@
 
    BEHAVIOR 基准（图片来源：`BEHAVIOR <https://behavior.stanford.edu>`__）。
 
-`BEHAVIOR <https://behavior.stanford.edu>`__ 是一个基于 NVIDIA IsaacSim / OmniGibson 的日常
-家居活动基准。双臂 R1 Pro 机器人执行长程操作任务；RLinf 借助它对视觉-语言-动作（VLA）策略进行
-强化学习微调。
+`BEHAVIOR <https://behavior.stanford.edu>`__ 是一个基于 NVIDIA IsaacSim / OmniGibson 的日常家居活动基准。双臂 R1 Pro 机器人执行长程操作任务；RLinf 借助它用强化学习微调视觉-语言-动作（VLA）policy。
 
 概览
 ----------------------------------------
 
-在 BEHAVIOR 家居任务上用 PPO 对 VLA 进行强化学习微调。
+在 BEHAVIOR 家居任务上用 PPO 微调 VLA。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -70,8 +68,7 @@
    * - 动作 (Action)
      - 23 维连续动作：3 自由度底盘（x, y, rz）、4 自由度躯干、2×7 自由度手臂、2×1 自由度平行夹爪。
 
-
-安装
+一键上手
 ----------------------------------------
 
 .. warning::
@@ -81,303 +78,227 @@
    - https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html
    - https://docs.omniverse.nvidia.com/dev-guide/latest/common/technical-requirements.html
 
-   Hopper 架构 GPU 需要 NVIDIA driver 570 或更高版本。A100、H100 等不支持光线追踪的 GPU
-   可能会让 BEHAVIOR 场景出现严重渲染伪影。优先使用 RTX 30/40 系列或更新的 GPU，以获得更稳定的视觉效果和训练体验。
+   Hopper 架构 GPU 需要 NVIDIA driver 570 或更高版本。A100、H100 等不支持光线追踪的 GPU 可能会让 BEHAVIOR 场景出现严重渲染伪影。优先使用 RTX 30/40 系列或更新的 GPU，以获得更稳定的视觉效果和训练体验。
 
 .. include:: _setup_common.rst
 
-按所选模型安装环境：
-
 .. tab-set::
 
    .. tab-item:: OpenVLA-OFT
       :sync: openvla-oft
 
-      .. code-block:: bash
-
-         bash requirements/install.sh embodied --model openvla-oft --env behavior && source .venv/bin/activate
-
-   .. tab-item:: OpenPI
-      :sync: openpi
+      **1. 安装环境**
 
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --model openpi --env behavior && source .venv/bin/activate
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env behavior
+         source .venv/bin/activate
 
+      **2. 下载资源与模型**
 
-下载资产
-----------------------------------------
-
-下载 IsaacSim 4.5，并在每次运行前设置 ``ISAAC_PATH``：
-
-.. code-block:: bash
-
-   export ISAAC_PATH=/path/to/isaac-sim
-   mkdir -p $ISAAC_PATH && cd $ISAAC_PATH
-   curl https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-4.5.0-linux-x86_64.zip -o isaac-sim.zip
-   unzip isaac-sim.zip && rm isaac-sim.zip
-
-在已激活的虚拟环境中下载 BEHAVIOR-1K 资产（超过 30 GB），并在每次运行前设置 ``OMNIGIBSON_DATA_PATH``：
-
-.. code-block:: bash
-
-   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   mkdir -p $OMNIGIBSON_DATA_PATH
-   python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
-   python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)"
-   python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
-
-
-下载模型
-----------------------------------------
-
-下载对应模型的 checkpoint：
-
-.. tab-set::
-
-   .. tab-item:: OpenVLA-OFT
-      :sync: openvla-oft
+      下载 IsaacSim 4.5、BEHAVIOR-1K 资产（超过 30 GB，在已激活的虚拟环境中运行）与 OpenVLA-OFT 基座检查点。每次运行前导出 ``ISAAC_PATH`` 与 ``OMNIGIBSON_DATA_PATH``：
 
       .. code-block:: bash
 
+         export ISAAC_PATH=/path/to/isaac-sim
+         export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+         mkdir -p "$ISAAC_PATH" "$OMNIGIBSON_DATA_PATH"
+         curl https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-4.5.0-linux-x86_64.zip -o "$ISAAC_PATH/isaac-sim.zip"
+         unzip "$ISAAC_PATH/isaac-sim.zip" -d "$ISAAC_PATH" && rm "$ISAAC_PATH/isaac-sim.zip"
+         python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
+         python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)"
+         python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
          hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir ./RLinf-OpenVLAOFT-Behavior
 
-   .. tab-item:: OpenPI
-      :sync: openpi
+      **3. 启动训练**
+
+      ``examples/embodiment/config/`` 下的可用配置：
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 20 50
+
+         * - 模型
+           - 算法
+           - 配置
+         * - OpenVLA-OFT
+           - PPO
+           - ``behavior_ppo_openvlaoft.yaml``
+
+      在 ``examples/embodiment/config/behavior_ppo_openvlaoft.yaml`` 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）：
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_path: ./RLinf-OpenVLAOFT-Behavior
+
+      使用 ``run_embodiment.sh`` 启动训练：
 
       .. code-block:: bash
 
+         export ISAAC_PATH=/path/to/isaac-sim
+         export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+         bash examples/embodiment/run_embodiment.sh behavior_ppo_openvlaoft
+
+   .. tab-item:: OpenPI
+      :sync: openpi
+
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env behavior
+         source .venv/bin/activate
+
+      **2. 下载资源与模型**
+
+      下载 IsaacSim 4.5、BEHAVIOR-1K 资产（超过 30 GB，在已激活的虚拟环境中运行）与 OpenPI 基座检查点。每次运行前导出 ``ISAAC_PATH`` 与 ``OMNIGIBSON_DATA_PATH``：
+
+      .. code-block:: bash
+
+         export ISAAC_PATH=/path/to/isaac-sim
+         export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+         mkdir -p "$ISAAC_PATH" "$OMNIGIBSON_DATA_PATH"
+         curl https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-4.5.0-linux-x86_64.zip -o "$ISAAC_PATH/isaac-sim.zip"
+         unzip "$ISAAC_PATH/isaac-sim.zip" -d "$ISAAC_PATH" && rm "$ISAAC_PATH/isaac-sim.zip"
+         python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
+         python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)"
+         python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
          hf download RLinf/RLinf-Pi0-Behavior --local-dir ./RLinf-Pi0-Behavior
 
-.. include:: _model_path.rst
+      **3. 启动训练**
 
+      ``examples/embodiment/config/`` 下的可用配置：
 
-运行
-----------------------------------------
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 20 50
+
+         * - 模型
+           - 算法
+           - 配置
+         * - π₀
+           - PPO
+           - ``behavior_ppo_openpi.yaml``
+         * - π₀.₅
+           - PPO
+           - ``behavior_ppo_openpi_pi05.yaml``
+
+      在所选 YAML 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）：
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_path: ./RLinf-Pi0-Behavior
+
+      使用 ``run_embodiment.sh`` 启动训练：
+
+      .. code-block:: bash
+
+         export ISAAC_PATH=/path/to/isaac-sim
+         export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+         bash examples/embodiment/run_embodiment.sh behavior_ppo_openpi
 
 .. warning::
 
    将 BEHAVIOR env worker 放在从 0 开始的 GPU 上。IsaacSim 在 env worker 从更靠后的 GPU rank 启动时可能卡住。
 
-每个配方都是 ``examples/embodiment/config/`` 下的一个 YAML 配置：
+.. warning::
 
-.. list-table::
-   :header-rows: 1
-   :widths: 34 26 40
-
-   * - 模型 / 用途
-     - 算法
-     - 配置
-   * - OpenVLA-OFT
-     - PPO
-     - ``behavior_ppo_openvlaoft.yaml``
-   * - π₀
-     - PPO
-     - ``behavior_ppo_openpi.yaml``
-   * - π₀.₅
-     - PPO
-     - ``behavior_ppo_openpi_pi05.yaml``
-
-使用 ``run_embodiment.sh`` 启动训练：
-
-.. code-block:: bash
-
-   export ISAAC_PATH=/path/to/isaac-sim
-   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash examples/embodiment/run_embodiment.sh behavior_ppo_openvlaoft
+   已知问题：在当前 BEHAVIOR 设置下，OpenVLA-OFT / π₀ 的训练成功率（``env/success_once``）可能保持为 0。该问题会在后续版本修复。
 
 .. admonition:: 进一步配置
    :class: note
 
    - BEHAVIOR 吞吐调优 → 先增加 env GPU 数量，再调 ``env.num_env_subprocess`` 和 ``env.train.total_num_envs``。
    - 每个 BEHAVIOR 进程可能占用约 10 GiB 显存；请按 GPU 显存调节 subprocess 数量。
-   - 缓存任务实例 → 使用 ``rlinf/envs/sim/behavior/instance_generator.py`` 和 ``examples/embodiment/config/env/behavior_r1pro.yaml`` 生成。
+   - 缓存任务实例 → 使用 BEHAVIOR 实例生成脚本（见下方折叠区）与 ``examples/embodiment/config/env/behavior_r1pro.yaml`` 生成。
    - 组件放置和吞吐调优 → :doc:`组件放置 <../../concepts/placement>` 与 :doc:`执行模式 <../../concepts/execution_modes>`
    - 指标定义和日志后端 → :doc:`训练指标 <../../reference/metrics>`
 
-.. warning::
+.. dropdown:: 进阶配置与缓存任务实例（可选）
 
-   已知问题：在当前 BEHAVIOR 设置下，OpenVLA-OFT / π₀ 的训练成功率
-   （``env/success_once``）可能保持为 0。该问题会在后续版本修复。
+   BEHAVIOR 环境由 ``examples/embodiment/config/env/behavior_r1pro.yaml`` 驱动。RLinf 先加载 OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config`` 覆盖项。下表中的字段控制 reset 行为、场景加载、仿真器频率与吞吐，大多有合理默认值，仅在自定义任务或调优性能时需要修改。
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 34 66
+
+      * - 配置项
+        - 含义
+      * - ``base_config_name``
+        - 在 ``omni_config`` 覆盖前加载的 OmniGibson 基础配置（如 ``r1pro_behavior``）。
+      * - ``omni_config.task.type`` / ``omni_config.scene.type``
+        - 显式保留 ``BehaviorTask`` / ``InteractiveTraversableScene``，以确保覆盖后选中预期的上游 OmniGibson 类。
+      * - ``task_idx``
+        - 当前任务 id（0–49），映射到 ``task.activity_name``。
+      * - ``omni_config.task.instance_resample_mode``
+        - reset 时的实例切换：``disabled``\ （加载固定的 ``activity_instance_id``）、``offline``\ （启动时扫描一次 ``activity_instance_dir``，每次 reset 采样一个缓存实例——``*_template.json`` 走较重的场景重载路径，``*_template-tro_state.json`` 走较轻的原地路径），或 ``online``\ （需 ``online_object_sampling: True`` 且 ``use_presampled_robot_pose: False``）。
+      * - ``omni_config.task.activity_instance_dir``
+        - 缓存实例 JSON 目录（``*_template.json`` / ``*_template-tro_state.json``），供 ``offline`` 模式以及 ``disabled`` 模式下的固定 id 加载使用。
+      * - ``omni_config.task.instance_file_format``
+        - 缓存实例格式：``template``\ （完整重载）或 ``tro_state``\ （仅任务相关、轻量）。RLinf 接受不含 ``robot_poses`` 的 ``tro_state`` 文件，此时会清除过期的缓存机器人位姿元数据，reset 回退到任务默认机器人位姿。
+      * - ``omni_config.scene.partial_scene_load``
+        - 为 ``true`` 时自动按 ``activity_name`` 填充 ``scene.load_room_types``\ （减少启动时间与内存），需要 ``activity_name`` 与 ``scene_model``。为 ``false`` 或省略时需显式设置 ``load_room_types``。
+      * - ``camera.head_resolution`` / ``camera.wrist_resolution``
+        - 头部 / 腕部相机分辨率（默认 720×720 / 480×480，应用到 R1Pro 传感器）。
+      * - ``omni_config.env.action_frequency`` / ``rendering_frequency`` / ``physics_frequency``
+        - 动作 / 渲染 / 物理步进频率（常用默认 30 / 30 / 120）。越高越慢。
+      * - ``omni_config.env.automatic_reset``
+        - 保持 ``False``——reset 由 RLinf 训练/评估循环显式控制。
+      * - ``omni_config.env.flatten_obs_space`` / ``flatten_action_space``
+        - 保持 ``False`` 以保留结构化的观测 / 动作空间。
+      * - ``omni_config.macro.use_gpu_dynamics``
+        - ``False`` 通常更快；仅在需要粒子 / 流体时启用。
+      * - ``omni_config.macro.enable_flatcache``
+        - ``True`` 通常提升大场景性能。
+      * - ``omni_config.macro.enable_object_states``
+        - 保持 ``True``——``BehaviorTask`` 依赖物体状态。
+      * - ``omni_config.macro.enable_transition_rules``
+        - ``True`` 启用基于转移规则的状态变化（如切割、烹饪）。
+      * - ``omni_config.macro.use_numpy_controller_backend``
+        - ``True`` 使用 numpy 控制器后端，在单进程 / 中等并行下通常更快。
+      * - ``skip_intermediate_renders``
+        - 为 ``True`` 时跳过动作 chunk 内中间观测的采集（显著提升环境速度）。此时保存的视频只显示 policy 在 chunk 边界观测到的帧。
+      * - ``num_env_subprocess``
+        - 将 ``num_envs`` 拆分到多个子进程，每个子进程承载独立的 Isaac/OmniGibson 仿真。默认 ``1``。**约束：** ``num_envs`` 必须能被 ``num_env_subprocess`` 整除。提高该值可缓解环境步进瓶颈，但会成倍增加进程数与内存。
+
+   **生成缓存任务实例**
+
+   在仓库根目录运行 BEHAVIOR 实例生成脚本，直接从 ``behavior_r1pro.yaml`` 生成 ``*_template.json`` 与 ``*_template-tro_state.json`` 文件（它会读取 ``scene_model``、``activity_name``、``activity_definition_id``、机器人配置与房间加载设置，并临时切换为在线物体采样）。若设置了 ``activity_instance_dir`` 则写入该目录，否则写入 ``OMNIGIBSON_DATA_PATH`` 默认的 ``2025-challenge-task-instances`` 目录；可用 ``--output-dir`` 覆盖：
+
+   .. code-block:: bash
+
+      python rlinf/envs/sim/behavior/instance_generator.py \
+        --config examples/embodiment/config/env/behavior_r1pro.yaml \
+        --output-format template \
+        --start-idx 1 --end-idx 50
+
+      python rlinf/envs/sim/behavior/instance_generator.py \
+        --config examples/embodiment/config/env/behavior_r1pro.yaml \
+        --output-format tro_state \
+        --start-idx 1 --end-idx 50
+
+   生成的文件名遵循 ``<scene_model>_task_<activity_name>_<activity_definition_id>_<activity_instance_id>_template(.json|-tro_state.json)``，因此 ``--start-idx`` / ``--end-idx`` 决定 ``activity_instance_id`` 范围。``tro_state`` 输出仅在任务元数据提供时包含顶层 ``robot_poses``，否则省略该键，reset 回退到任务默认机器人位姿。BEHAVIOR-1K 上游的 ``multiply_b1k_tasks.py`` 仍可使用，但推荐 RLinf 的生成器，因为它直接读取 RLinf YAML 并保留 ``activity_definition_id``。
 
 独立评测
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-原则上，任何在 BEHAVIOR 上有非零成功率、并且已经转换为 PyTorch
-格式的 ``pi05`` checkpoint 都可以使用该配置评估。我们只将
-OpenPI-Comet 作为示例来源：
+任何已转换为 PyTorch 格式的 ``pi05`` checkpoint（例如使用 `openpi-comet <https://github.com/mli0603/openpi-comet>`__ 转换的 `OpenPI-Comet <https://huggingface.co/sunshk/openpi_comet/tree/main>`__，或来自 :doc:`sft_openpi` 与 OpenPI checkpoint 转换器的权重）都可以使用 ``evaluations/behavior/behavior_openpi_pi05_eval.yaml`` 评估。归一化统计直接从 checkpoint 打包的 ``physical-intelligence/behavior/norm_stats.json`` 读取。如需更长轨迹，调高 ``env.eval.max_episode_steps`` 和 ``env.eval.max_steps_per_rollout_epoch``\ （例如 ``4096``）。
 
-- https://huggingface.co/sunshk/openpi_comet/tree/main
-
-下载后，可参考以下仓库将权重转换为 PyTorch 格式：
-
-- https://github.com/mli0603/openpi-comet
-
-感谢 OpenPI-Comet 作者开源模型和工具，这有助于 RLinf 中的可复现评估。
-
-转换完成后，按如下方式更新 ``behavior_openpi_pi05_eval.yaml``：
-
-1. 将 ``rollout.model.model_path`` 设置为转换后的模型目录。
-2. 如需更长轨迹，提高 ``env.eval`` 的 ``max_episode_steps`` 与 ``max_steps_per_rollout_epoch``，例如设置为 ``4096``。
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       max_episode_steps: 4096
-       max_steps_per_rollout_epoch: 4096
-
-独立评估请走 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`。
-该指南负责 ``ISAAC_PATH`` / ``OMNIGIBSON_DATA_PATH`` 设置、
-``behavior_openpi_pi05_eval`` 启动命令和结果解读。
-
---------------
-
-**5. 评估 JAX 对齐的 Pi0.5 checkpoint**
-
-BEHAVIOR 评估使用 ``model_type: openpi``。若权重来自 :doc:`sft_openpi` 或 OpenPI checkpoint 转换器，评估配置为：
-
-- ``evaluations/behavior/behavior_openpi_pi05_eval.yaml``
-
-该配置以纯评估模式运行（``runner.only_eval: True``），并消费转换后的
-checkpoint，即由 OpenPI checkpoint 转换器
-（``ckpt_convertor.openpi`` 的 ``openpi_pytorch_to_openpi`` /
-``sft_to_openpi``）产出的权重。
-将模型路径以 ``/path/to/...`` 占位符的形式直接写在配置中：
-
-- ``rollout.model.model_path``：评估 checkpoint。
-
-归一化统计从转换后 checkpoint 中打包的
-``physical-intelligence/behavior/norm_stats.json`` 读取。
-
-.. code:: bash
-
-   export ISAAC_PATH=/path/to/isaac-sim
-   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval
+独立评测请走 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`，其中包含 ``ISAAC_PATH`` / ``OMNIGIBSON_DATA_PATH`` 设置、评估 checkpoint 路径配置、``behavior_openpi_pi05_eval`` 启动命令与结果解读。
 
 .. note::
 
-   评估时流匹配动作头使用非确定性（随机）采样噪声，因此重复运行之间，单次轨迹与
-   成功次数会有轻微差异。
-
-
-配置参考
-----------------------------------------
-
-BEHAVIOR 环境由 ``examples/embodiment/config/env/behavior_r1pro.yaml`` 驱动。RLinf 先加载
-OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config`` 覆盖项（见
-``rlinf/envs/sim/behavior/utils.py`` 中的 ``setup_omni_cfg``）。下表中的字段控制 reset 行为、场景
-加载、仿真器频率与吞吐，大多有合理默认值，仅在自定义任务或调优性能时需要修改。
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 66
-
-   * - 配置项
-     - 含义
-   * - ``base_config_name``
-     - 在 ``omni_config`` 覆盖前加载的 OmniGibson 基础配置（如 ``r1pro_behavior``）。
-   * - ``omni_config.task.type`` / ``omni_config.scene.type``
-     - 显式保留 ``BehaviorTask`` / ``InteractiveTraversableScene``，以确保覆盖后选中预期的上游
-       OmniGibson 类。
-   * - ``task_idx``
-     - 当前任务 id（0–49）。RLinf 将其映射到 ``task.activity_name``\ （见 ``behavior_env.py``）。
-   * - ``omni_config.task.instance_resample_mode``
-     - reset 时的实例切换：``disabled``\ （加载固定的 ``activity_instance_id``）、``offline``
-       （启动时扫描一次 ``activity_instance_dir``，每次 reset 采样一个缓存实例——
-       ``*_template.json`` 走较重的场景重载路径，``*_template-tro_state.json`` 走较轻的原地路径）、
-       或 ``online``\ （需 ``online_object_sampling: True`` 且 ``use_presampled_robot_pose: False``）。
-   * - ``omni_config.task.activity_instance_dir``
-     - 缓存实例 JSON 目录（``*_template.json`` / ``*_template-tro_state.json``），供 ``offline``
-       模式以及 ``disabled`` 模式下的固定 id 加载使用。
-   * - ``omni_config.task.instance_file_format``
-     - 缓存实例格式：``template``\ （完整重载）或 ``tro_state``\ （仅任务相关、轻量）。RLinf 接受不含
-       ``robot_poses`` 的 ``tro_state`` 文件，此时会清除过期的缓存机器人位姿元数据，reset 回退到
-       任务默认机器人位姿。
-   * - ``omni_config.scene.partial_scene_load``
-     - 为 ``true`` 时自动按 ``activity_name`` 填充 ``scene.load_room_types``\ （减少启动时间与内存），
-       需要 ``activity_name`` 与 ``scene_model``。为 ``false``/省略时需显式设置 ``load_room_types``。
-   * - ``camera.head_resolution`` / ``camera.wrist_resolution``
-     - 头部 / 腕部相机分辨率（默认 720×720 / 480×480，应用到 R1Pro 传感器）。
-   * - ``omni_config.env.action_frequency`` / ``rendering_frequency`` / ``physics_frequency``
-     - 动作 / 渲染 / 物理步进频率（常用默认 30 / 30 / 120）。越高越慢。
-   * - ``omni_config.env.automatic_reset``
-     - 保持 ``False``——reset 由 RLinf 训练/评估循环显式控制。
-   * - ``omni_config.env.flatten_obs_space`` / ``flatten_action_space``
-     - 保持 ``False`` 以保留结构化的观测 / 动作空间。
-   * - ``omni_config.macro.use_gpu_dynamics``
-     - ``False`` 通常更快；仅在需要粒子 / 流体时启用。
-   * - ``omni_config.macro.enable_flatcache``
-     - ``True`` 通常提升大场景性能。
-   * - ``omni_config.macro.enable_object_states``
-     - 保持 ``True``——``BehaviorTask`` 依赖物体状态。
-   * - ``omni_config.macro.enable_transition_rules``
-     - ``True`` 启用基于转移规则的状态变化（如切割、烹饪）。
-   * - ``omni_config.macro.use_numpy_controller_backend``
-     - ``True`` 使用 numpy 控制器后端，在单进程 / 中等并行下通常更快。
-   * - ``skip_intermediate_renders``
-     - 为 ``True`` 时跳过动作 chunk 内中间观测的采集（显著提升环境速度）。此时保存的视频只显示策略在
-       chunk 边界观测到的帧。
-   * - ``num_env_subprocess``
-     - 将 ``num_envs`` 拆分到多个子进程，每个子进程承载自己的 Isaac/OmniGibson 仿真（见
-       ``BehaviorProcess``）。默认 ``1``。**约束：** ``num_envs`` 必须能被 ``num_env_subprocess``
-       整除。提高该值可缓解环境步进瓶颈，但会成倍增加进程数与内存。
-
-生成缓存任务实例
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``rlinf/envs/sim/behavior/instance_generator.py`` 直接从 ``behavior_r1pro.yaml`` 生成
-``*_template.json`` 与 ``*_template-tro_state.json`` 文件（它读取 ``scene_model``、
-``activity_name``、``activity_definition_id``、机器人配置与房间加载设置，并临时切换为在线物体采样）。
-若设置了 ``activity_instance_dir`` 则写入该目录，否则写入 ``OMNIGIBSON_DATA_PATH`` 默认的
-``2025-challenge-task-instances`` 目录；可用 ``--output-dir`` 覆盖。
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-
-   python rlinf/envs/sim/behavior/instance_generator.py \
-     --config examples/embodiment/config/env/behavior_r1pro.yaml \
-     --output-format template \
-     --start-idx 1 --end-idx 50
-
-   python rlinf/envs/sim/behavior/instance_generator.py \
-     --config examples/embodiment/config/env/behavior_r1pro.yaml \
-     --output-format tro_state \
-     --start-idx 1 --end-idx 50
-
-生成的文件名遵循
-``<scene_model>_task_<activity_name>_<activity_definition_id>_<activity_instance_id>_template(.json|-tro_state.json)``，
-因此 ``--start-idx`` / ``--end-idx`` 决定 ``activity_instance_id`` 范围。``tro_state`` 输出仅在任务
-元数据提供时包含顶层 ``robot_poses``，否则省略该键，reset 回退到任务默认机器人位姿。BEHAVIOR-1K 上游的
-``multiply_b1k_tasks.py`` 仍可使用，但推荐 RLinf 的生成器，因为它直接读取 RLinf YAML 并保留
-``activity_definition_id``。
-
+   评估时流匹配动作头使用随机采样噪声，重复运行之间单次轨迹与成功次数会有轻微差异。
 
 可视化与结果
 ----------------------------------------
 
-启动 TensorBoard 实时观察训练：
+运行 ``tensorboard --logdir ./logs`` 关注 ``env/success_once``；如需保存评测视频，设置 ``env.eval.video_cfg.save_video=True``，更多日志后端与指标见 :doc:`训练指标 <../../reference/metrics>`。
 
-.. code-block:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-最值得关注的指标是 **``env/success_once``** —— 任务成功率。每个日志指标的含义见
-:doc:`训练指标 <../../reference/metrics>`。
-
-如需保存评估视频，在配置中启用：
-
-.. code-block:: yaml
-
-   env:
-      eval:
-         video_cfg:
-            save_video: True
-            video_base_dir: ${runner.logger.log_path}/video/eval
-
-
-对于 BEHAVIOR 实验，我们受到了
-`Behavior-1K baselines <https://github.com/StanfordVL/b1k-baselines.git>`_ 的启发，
-仅进行了少量修改。感谢作者发布开源代码。
+对于 BEHAVIOR 实验，我们参考了 `Behavior-1K baselines <https://github.com/StanfordVL/b1k-baselines.git>`_ 并做了少量修改。感谢作者发布开源代码。

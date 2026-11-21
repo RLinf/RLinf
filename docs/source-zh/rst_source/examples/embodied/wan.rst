@@ -12,9 +12,7 @@
 
    作为动作条件世界模型的 Wan。
 
-使用 **动作条件 Wan 世界模型** 作为环境后端，**无需真实机器人或物理仿真器** 即可闭环训练
-VLA 策略。Wan 根据当前观测与动作序列生成未来视频帧，因此可以在“想象”的 rollout 上用
-强化学习（GRPO/PPO）优化策略。
+使用 **动作条件 Wan 世界模型** 作为环境后端，**无需真实机器人或物理仿真器** 即可闭环训练 VLA policy。Wan 根据当前观测与动作序列生成未来视频帧，因此可以在“想象”的 rollout 上用强化学习（GRPO/PPO）优化 policy。
 
 概览
 ----------------------------------------
@@ -42,7 +40,7 @@ VLA 策略。Wan 根据当前观测与动作序列生成未来视频帧，因此
    .. grid-item-card:: 硬件
       :text-align: center
 
-      NVIDIA CUDA · :ref:`华为昇腾 CANN <wan-hardware>` （Wan backend）
+      NVIDIA CUDA · :ref:`华为昇腾 CANN <wan-hardware>`\ （Wan backend）
 
 | **你将完成：** 安装 → 下载 VLA 模型 → 下载 Wan 世界模型权重与初始化数据 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一个 OpenVLA-OFT SFT checkpoint · Wan 世界模型权重与初始化数据集（见下文）。
@@ -50,7 +48,7 @@ VLA 策略。Wan 根据当前观测与动作序列生成未来视频帧，因此
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-作为世界模型，Wan 原则上可以通过一致接口适配多种任务设置。RLinf 目前提供三个 LIBERO 套件的权重和初始化数据：
+作为世界模型，Wan 原则上可以通过一致接口适配多种任务设置。RLinf 提供三个 LIBERO 套件的权重和初始化数据（每个 Wan checkpoint 均基于 1,500 条 VLA rollout 轨迹训练）：
 
 .. list-table::
    :header-rows: 1
@@ -93,194 +91,222 @@ VLA 策略。Wan 根据当前观测与动作序列生成未来视频帧，因此
 
 与传统仿真器不同，Wan 没有 ``reset()``：它需要初始化帧和任务描述，因此需要下载初始化数据集并在配置中指向它。
 
-安装
-----------------------------------------
+.. _wan-hardware:
 
-NVIDIA 用户按以下步骤安装；在 NPU 上运行 Wan 世界模型推理时，请参考 :ref:`昇腾配置步骤 <wan-hardware>`。
+一键上手
+----------------------------------------
 
 .. include:: _setup_common.rst
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openvla-oft --env wan && source .venv/bin/activate
+   .. tab-item:: NVIDIA CUDA
+      :sync: cuda
 
-VLA 模型下载
-----------------------------------------
+      .. tab-set::
 
-下载对应套件的 OpenVLA-OFT SFT checkpoint：
+         .. tab-item:: LIBERO-Spatial
+            :sync: spatial
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+            **1. 安装环境**
 
-   * - 套件
-     - Hugging Face 仓库
-   * - LIBERO-Spatial
-     - ``Haozhan72/Openvla-oft-SFT-libero-spatial-traj1``
-   * - LIBERO-Object
-     - ``Haozhan72/Openvla-oft-SFT-libero-object-traj1``
-   * - LIBERO-Goal
-     - ``Haozhan72/Openvla-oft-SFT-libero-goal-traj1``
-   * - LIBERO-10
-     - ``Haozhan72/Openvla-oft-SFT-libero10-traj1``
+            .. code-block:: bash
 
-以 LIBERO-Spatial 为例（下载其他套件时，从上表替换仓库名和本地目录）：
+               git clone https://github.com/RLinf/RLinf.git && cd RLinf
+               bash requirements/install.sh embodied --model openvla-oft --env wan
+               source .venv/bin/activate
 
-.. code-block:: bash
+            **2. 下载资源与模型**
 
-   hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir ./Openvla-oft-SFT-libero-spatial-traj1
+            一并下载 OpenVLA-OFT SFT checkpoint 与 Wan 世界模型权重和初始化数据集：
 
-下载完成后，在配置中设置 ``model_path`` 与 ``unnorm_key``：
+            .. code-block:: bash
 
-.. code:: yaml
+               hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir ./Openvla-oft-SFT-libero-spatial-traj1
+               hf download RLinf/RLinf-Wan-LIBERO-Spatial --local-dir ./RLinf-Wan-LIBERO-Spatial
 
-   rollout:
-      model:
-         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   actor:
-      model:
-         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-         unnorm_key: libero_90_no_noops_trajall # 对于 RLinf-OpenVLAOFT-LIBERO-130-Base-Lora 模型，使用 libero_130_no_noops_trajall
+            **3. 启动训练**
 
-世界模型下载
-----------------------------------------
+            在 ``examples/embodiment/config/wan_libero_spatial_grpo_openvlaoft.yaml`` 中填写上述两个下载路径（rollout 会自动沿用 ``actor.model.model_path``）：
 
-除 VLA 模型外，还需下载对应套件的 Wan 权重与初始化数据（每个 Wan 权重均基于 VLA 模型 rollout 的 1500 条轨迹构建）：
+            .. code-block:: yaml
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+               actor:
+                 model:
+                   model_path: ./Openvla-oft-SFT-libero-spatial-traj1
+               env:
+                 train:
+                   wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Spatial
 
-   * - 套件
-     - Hugging Face 仓库
-   * - LIBERO-Spatial
-     - ``RLinf/RLinf-Wan-LIBERO-Spatial``
-   * - LIBERO-Object
-     - ``RLinf/RLinf-Wan-LIBERO-Object``
-   * - LIBERO-Goal
-     - ``RLinf/RLinf-Wan-LIBERO-Goal``
+            使用 ``run_embodiment.sh`` 启动训练：
 
-以 LIBERO-Spatial 为例（下载其他套件时，从上表替换仓库名和本地目录）：
+            .. code-block:: bash
 
-.. code-block:: bash
+               bash examples/embodiment/run_embodiment.sh wan_libero_spatial_grpo_openvlaoft
 
-   hf download RLinf/RLinf-Wan-LIBERO-Spatial --local-dir ./RLinf-Wan-LIBERO-Spatial
+         .. tab-item:: LIBERO-Object
+            :sync: object
 
-``RLinf-Wan-LIBERO-Spatial`` 的目录结构如下：
+            **1. 安装环境**
 
-.. code-block:: text
+            .. code-block:: bash
 
-    RLinf-Wan-LIBERO-Spatial/
-        ├── dataset/                            # 仿真初始化数据集
-        │   ├── traj0.npy                       # 仅含初始帧的轨迹
-        │   ├── traj1.npy
-        │   ├── ...
-        │   └── trajN.npy
-        │   ├── traj0_kir.npy                   # 含关键帧前置上下文的轨迹
-        │   ├── traj1_kir.npy
-        │   ├── ...
-        │   └── trajN_kir.npy
-        ├── model-00001.safetensors             # 世界模型权重
-        ├── resnet_rm.pth                       # 奖励模型权重
-        └── Wan2.2_VAE.pth                      # VAE 权重
+               git clone https://github.com/RLinf/RLinf.git && cd RLinf
+               bash requirements/install.sh embodied --model openvla-oft --env wan
+               source .venv/bin/activate
 
-下载完成后，在配置中设置世界模型路径：
+            **2. 下载资源与模型**
 
-.. code:: yaml
+            一并下载 OpenVLA-OFT SFT checkpoint 与 Wan 世界模型权重和初始化数据集：
 
-    env:
-        train:
-            wan_wm_hf_ckpt_path: /Pathto/model/RLinf-Wan-LIBERO-Spatial/
+            .. code-block:: bash
 
-运行
-----------------------------------------
+               hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir ./Openvla-oft-SFT-libero-object-traj1
+               hf download RLinf/RLinf-Wan-LIBERO-Object --local-dir ./RLinf-Wan-LIBERO-Object
 
-**1. 模型参数**
+            **3. 启动训练**
 
-以 OpenVLA-OFT 为例，配置 ``actor.model``：
+            在 ``examples/embodiment/config/wan_libero_object_grpo_openvlaoft.yaml`` 中填写上述两个下载路径（rollout 会自动沿用 ``actor.model.model_path``）：
 
-.. code-block:: yaml
+            .. code-block:: yaml
 
-   actor:
-     model:
-       model_path: "/path/to/model/Openvla-oft-SFT-libero-spatial-traj1/"    # SFT 模型路径
-       model_type: "openvla_oft"                                             # 模型类型
-       use_proprio: False                                                    # 是否使用本体感觉信息
-       num_images_in_input: 1                                                # 输入图像数量
-       num_action_chunks: 8                                                  # 动作块数量
-       unnorm_key: "libero_spatial_no_noops"                                 # 动作归一化键（与 SFT 一致）
+               actor:
+                 model:
+                   model_path: ./Openvla-oft-SFT-libero-object-traj1
+               env:
+                 train:
+                   wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Object
 
-由于世界模型不提供本体信息、不生成腕部视角且 chunk 固定，``use_proprio`` 默认为 ``False``，
-``num_images_in_input`` 默认为 ``1``，``num_action_chunks`` 默认为 ``8``。
+            使用 ``run_embodiment.sh`` 启动训练：
 
-**2. 环境配置**
+            .. code-block:: bash
 
-.. code-block:: yaml
+               bash examples/embodiment/run_embodiment.sh wan_libero_object_grpo_openvlaoft
 
-   # 推荐训练使用 wan_libero_spatial，评估使用 libero_spatial
-   env/train: wan_libero_spatial
-   env/eval: libero_spatial
+         .. tab-item:: LIBERO-Goal
+            :sync: goal
 
-   # 在 env/train/wan_libero_spatial.yaml 中：
-   env_type: world_model
-   backend: wan
-   wm_env_type: libero
-   task_suite_name: libero_spatial
-   reset_gripper_open: True
-   # 是否启用 KeyFrame-Init Rollout
-   enable_kir: True
-   # 世界模型去噪推理步数
-   num_inference_steps: 5
-   # 世界模型重置用的初始化数据集路径
-   initial_image_path: /Pathto/model/RLinf-Wan-LIBERO-Spatial/dataset
-   # VAE 权重
-   VAE_path: /Pathto/model/RLinf-Wan-LIBERO-Spatial/Wan2.2_VAE.pth
-   # 预训练世界模型权重
-   model_path: /Pathto/model/RLinf-Wan-LIBERO-Spatial/model-00001.safetensors
-   # 奖励模型
-   reward_model:
-     type: ResnetRewModel
-     from_pretrained: /Pathto/model/RLinf-Wan-LIBERO-Spatial/resnet_rm.pth
+            **1. 安装环境**
 
-环境配置关键参数：
+            .. code-block:: bash
 
-- ``enable_kir``：是否启用 KIR（KeyFrame-Init Rollout）。关闭时，重置仅采样文件名不含 ``_kir`` 的 ``.npy``；启用时，从 ``dataset/`` 中所有初始化文件采样。
-- ``num_inference_steps``：世界模型生成/推理步数（默认 ``5``）。步数越少生成越快，但可能降低画质；即使单步生成也能带来性能提升。
-- ``reward_model.type``：奖励模型类别——``ResnetRewModel`` 或 ``TaskEmbedResnetRewModel``。
-- ``reset_gripper_open``：是否以张开夹爪初始化。训练与评估默认 ``True``，不建议修改。
-- ``terminate_at_max_episode_steps``：episode 达到 ``max_episode_steps`` 时以什么方式结束。默认 ``False`` 报截断（truncation），开启 ``auto_reset`` 时 RLinf 会把末尾观测的 value 加到最后一个奖励上。当 ``max_episode_steps`` 就是任务本身的时限时设为 ``True``，例如只在结束时给一次 episode 级成功奖励：时限之后不再有回报，episode 以终止（termination）结束，在默认的 ``algorithm.bootstrap_type: standard`` 而非 ``always`` 下不做 value 自举。时限只是截断了更长的任务时保持 ``False``，例如从 KIR 关键帧起跳的短 rollout。两种情况下成功率统计都只来自奖励。``True`` 需要同时开启 ``auto_reset``；不开 ``auto_reset`` 时本来就不做自举。
+               git clone https://github.com/RLinf/RLinf.git && cd RLinf
+               bash requirements/install.sh embodied --model openvla-oft --env wan
+               source .venv/bin/activate
 
-**3. 启动**
+            **2. 下载资源与模型**
 
-OpenVLA-OFT + GRPO 使用 ``examples/embodiment/config/wan_libero_spatial_grpo_openvlaoft.yaml``：
+            一并下载 OpenVLA-OFT SFT checkpoint 与 Wan 世界模型权重和初始化数据集：
 
-.. code-block:: bash
+            .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh wan_libero_spatial_grpo_openvlaoft
+               hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir ./Openvla-oft-SFT-libero-goal-traj1
+               hf download RLinf/RLinf-Wan-LIBERO-Goal --local-dir ./RLinf-Wan-LIBERO-Goal
+
+            **3. 启动训练**
+
+            在 ``examples/embodiment/config/wan_libero_goal_grpo_openvlaoft.yaml`` 中填写上述两个下载路径（rollout 会自动沿用 ``actor.model.model_path``）：
+
+            .. code-block:: yaml
+
+               actor:
+                 model:
+                   model_path: ./Openvla-oft-SFT-libero-goal-traj1
+               env:
+                 train:
+                   wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Goal
+
+            使用 ``run_embodiment.sh`` 启动训练：
+
+            .. code-block:: bash
+
+               bash examples/embodiment/run_embodiment.sh wan_libero_goal_grpo_openvlaoft
+
+   .. tab-item:: 华为昇腾 CANN
+      :sync: ascend
+
+      使用已配置 CANN 和 NPU 驱动的昇腾宿主机或容器。Wan 直接通过世界模型生成观测，该训练流程无需 LIBERO 仿真器，也无需配置 OSMesa 渲染。
+
+      **1. 安装环境**
+
+      创建包含 OpenVLA-OFT policy 与 Wan 世界模型依赖的环境：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env wan
+         source .venv/bin/activate
+
+      安装器会添加匹配的 ``torch-npu`` 并跳过 CUDA flash-attention，但不会安装 MindIE-SD。请在已激活的环境中单独安装与 CANN、PyTorch 版本兼容的 MindIE-SD。
+
+      检查 NPU 是否可用，以及所需的 MindIE-SD 算子能否导入：
+
+      .. code-block:: bash
+
+         python - <<'PY'
+         import torch
+         import torch_npu
+         from mindiesd import rotary_position_embedding
+         from mindiesd.layers.flash_attn.attention_forward import attention_forward
+
+         assert torch.npu.is_available(), "No Ascend NPU is available"
+         PY
+
+      Wan backend 在 NPU 上运行时，RLinf 会在构建 pipeline 前自动启用加速 attention、旋转位置编码和 RMSNorm。如果依赖无法导入，则记录警告并保留 diffsynth 原有算子。这里配置的是 Wan backend，policy checkpoint 在目标硬件上的数值表现仍需单独验证。
+
+      **2. 下载资源与模型**
+
+      下载对应套件的 OpenVLA-OFT SFT checkpoint 与 Wan 世界模型权重（以 LIBERO-Spatial 为例）：
+
+      .. code-block:: bash
+
+         hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir ./Openvla-oft-SFT-libero-spatial-traj1
+         hf download RLinf/RLinf-Wan-LIBERO-Spatial --local-dir ./RLinf-Wan-LIBERO-Spatial
+
+      **3. 启动训练**
+
+      在 ``examples/embodiment/config/wan_libero_spatial_grpo_openvlaoft.yaml`` 中设置 policy 与世界模型路径，并保留配置默认的 ``runner.val_check_interval: -1`` 和 ``runner.only_eval: False``，即可使用 Wan 训练而不启用仿真器评估：
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_path: ./Openvla-oft-SFT-libero-spatial-traj1
+         env:
+           train:
+             wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Spatial
+
+      在仓库根目录启动 Wan LIBERO-Spatial GRPO 配方：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh wan_libero_spatial_grpo_openvlaoft
+
+.. dropdown:: 其他 LIBERO VLA SFT 检查点（Long）
+
+   如果在 LIBERO-Long 上使用自定义世界模型，对应的 OpenVLA-OFT SFT 仓库为 ``Haozhan72/Openvla-oft-SFT-libero10-traj1``。
+
+.. dropdown:: 进阶配置（可选）
+
+   由于世界模型不提供本体感知和腕部视角且动作 chunk 长度固定，``actor.model`` 默认设置 ``use_proprio: False``、``num_images_in_input: 1`` 和 ``num_action_chunks: 8``。切换到其他 LIBERO 套件时，同步更新 ``actor.model.unnorm_key`` 以匹配对应的 SFT checkpoint。
+
+   ``env.train`` 下的可选环境配置项：
+
+   - ``enable_kir``：是否启用 KIR（KeyFrame-Init Rollout）。设为 ``False`` 时，重置只采样文件名不含 ``_kir`` 的 ``.npy``；设为 ``True`` 时，从 ``dataset/`` 中全部初始化文件采样。
+   - ``num_inference_steps``：世界模型去噪推理步数（默认 ``5``）。步数越少速度越快，但画质会下降；单步生成同样可以提升 policy 表现。
+   - ``reward_model.type``：奖励模型类型，可选 ``ResnetRewModel`` 或 ``TaskEmbedResnetRewModel``。
+   - ``terminate_at_max_episode_steps``：episode 达到 ``max_episode_steps`` 时的结束方式。默认 ``False`` 记为截断（truncation），开启 ``auto_reset: True`` 后 RLinf 会将末尾观测的 value 自举到最后一步奖励上。如果 ``max_episode_steps`` 就是任务本身的时限（例如只在结束时给一次 episode 级成功奖励），设为 ``True`` 以按终止（termination）结束，在默认的 ``algorithm.bootstrap_type: standard`` 下不做 value 自举。如果时限只是截断了更长的任务（例如从 KIR 关键帧起步的短 rollout），保持 ``False``。设为 ``True`` 需要同时开启 ``auto_reset: True``。
 
 可视化与结果
 ----------------------------------------
 
-关注未归一化的回合成功率指标 ``env/success_once``。各项指标的含义见
-:doc:`训练指标 <../../reference/metrics>`。可通过以下配置保存生成的 rollout 视频：
+运行 ``tensorboard --logdir ./logs`` 关注 ``env/success_once``；如需保存评测视频，设置 ``env.eval.video_cfg.save_video=True``，更多日志后端与指标见 :doc:`训练指标 <../../reference/metrics>`。
 
-.. code-block:: yaml
-
-   env:
-      eval:
-         video_cfg:
-            save_video: True
-            video_base_dir: ${runner.logger.log_path}/video/eval
-
-我们评估 Object、Spatial、Goal 套件中所有 ``task_id`` × ``trial_id`` 组合——共 1500 个环境
-（10 个任务 × 150 个试次）。SFT 与 RL 训练模型均在 ``rollout.sampling_params`` 中设置
-``do_sample = True``、``temperature_train = 1.6``，并设置 ``reset_gripper_open = True``。
+我们评估 Object、Spatial、Goal 套件中所有 ``task_id`` × ``trial_id`` 组合——共 1500 个环境（10 个任务 × 150 个试次）。SFT 与 RL 训练模型均在 ``rollout.sampling_params`` 中设置 ``do_sample = True``、``temperature_train = 1.6``，并设置 ``reset_gripper_open = True``。
 
 .. note::
 
-    我们基于 `Diffsynth-Studio <https://github.com/RLinf/diffsynth-studio>`_ 进行 Wan 的训练与推理。
-    在下面的评测结果中，我们仅使用 **冻结** 的世界模型服务于 VLA 模型的强化学习训练，并未使用世界模型与
-    VLA 的协同进化。用户可手动实现协同进化以获得进一步性能提升。
+    Wan 的训练与推理构建在 `Diffsynth-Studio <https://github.com/RLinf/diffsynth-studio>`_ 之上。在下面的评测结果中，我们仅使用 **冻结** 的世界模型服务于 VLA 模型的强化学习训练，未使用世界模型与 VLA 的协同进化。用户可手动实现协同进化以获得进一步性能提升。
 
 .. list-table:: **使用 Wan 模拟器的 LIBERO 任务组评测结果**
     :header-rows: 1
@@ -302,47 +328,3 @@ OpenVLA-OFT + GRPO 使用 ``examples/embodiment/config/wan_libero_spatial_grpo_o
       - **+16.3%**
       - **+41.2%**
       - **+11.9%**
-
-.. _wan-hardware:
-
-在不同硬件后端上运行
-----------------------------------------
-
-上文的安装步骤面向 NVIDIA CUDA。在华为昇腾 CANN 上运行 Wan 世界模型推理时，先按以下步骤配置环境，再沿用上文的 checkpoint 和任务配置流程。
-
-华为昇腾 CANN
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-使用已配置 CANN 和 NPU 驱动的昇腾宿主机或容器。Wan 直接通过世界模型生成观测，该训练流程无需 LIBERO 仿真器，也无需配置 OSMesa 渲染。
-
-创建包含 OpenVLA-OFT policy 与 Wan 世界模型依赖的环境：
-
-.. code-block:: bash
-
-   bash requirements/install.sh --platform ascend embodied --model openvla-oft --env wan
-   source .venv/bin/activate
-
-中国大陆用户可添加 ``--use-mirror``。安装器会添加匹配的 ``torch-npu`` 并跳过 CUDA flash-attention，但不会安装 MindIE-SD。请在已激活的环境中单独安装与 CANN、PyTorch 版本兼容的 MindIE-SD。
-
-检查 NPU 是否可用，以及所需的 MindIE-SD 算子能否导入：
-
-.. code-block:: bash
-
-   python - <<'PY'
-   import torch
-   import torch_npu
-   from mindiesd import rotary_position_embedding
-   from mindiesd.layers.flash_attn.attention_forward import attention_forward
-
-   assert torch.npu.is_available(), "No Ascend NPU is available"
-   PY
-
-Wan backend 在 NPU 上运行时，RLinf 会在构建 pipeline 前自动启用加速 attention、旋转位置编码和 RMSNorm。如果依赖无法导入，则记录警告并保留 diffsynth 原有算子。这里配置的是 Wan backend，policy checkpoint 在目标硬件上的数值表现仍需单独验证。
-
-按上文下载 checkpoint 和初始化数据后，在 ``examples/embodiment/config/wan_libero_spatial_grpo_openvlaoft.yaml`` 中设置 policy 与世界模型路径。保留配置默认的 ``runner.val_check_interval: -1`` 和 ``runner.only_eval: False``，即可使用 Wan 训练而不启用仿真器评估。
-
-在仓库根目录启动 Wan LIBERO-Spatial GRPO 配方：
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh wan_libero_spatial_grpo_openvlaoft

@@ -47,154 +47,124 @@ Qwen-VL
 安装
 ----------------------------------------
 
-1. **拉取 RLinf 镜像：**
-   ``rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17``。
-2. **下载模型权重：** `Qwen2.5-VL-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct>`_。
-3. **下载数据集：** `Robo2VLM-1 <https://huggingface.co/datasets/keplerccc/Robo2VLM-1>`_。
-4. **修改** ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``，并运行 ``examples/sft/run_vlm_sft.sh``。
+一次性拉取 RLinf 镜像，并下载 `Qwen2.5-VL-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct>`_ 权重和 `Robo2VLM-1 <https://huggingface.co/datasets/keplerccc/Robo2VLM-1>`_ 数据集。中国大陆用户可在执行 ``hf download`` 前设置 ``export HF_ENDPOINT=https://hf-mirror.com``\ （使用 ``requirements/install.sh`` 时可追加 ``--use-mirror``）。
+
+.. tab-set::
+
+   .. tab-item:: Docker 镜像与模型/数据下载
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
+         hf download keplerccc/Robo2VLM-1 --repo-type dataset --local-dir ./Robo2VLM-1
 
 .. warning::
 
-   Robo2VLM 下载后会把 train 与 evaluate 数据放在同一目录（如
-   ``train-00000-of-00262.parquet`` 与 ``test-0000X-of-00003.parquet``）。请将它们分到不同文件夹，
-   否则 RLinf 会直接读取整个数据集。
+   Robo2VLM 下载后会把 train 与 evaluate 数据放在同一目录（如 ``train-00000-of-00262.parquet`` 与 ``test-0000X-of-00003.parquet``）。将它们分到不同文件夹，否则 RLinf 会直接读取整个数据集。
 
 .. note::
 
-   如需训练 **qwen3_vl** 或 **qwen3_vl_moe**，请确保 ``transformers >= 4.57.1``。
+   如需训练 **qwen3_vl** 或 **qwen3_vl_moe**，确保 ``transformers >= 4.57.1``。
 
 运行
 ----------------------------------------
 
 **1. 配置**
 
-启动脚本默认使用 ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``，日志重定向到
-``<repo>/logs/<timestamp>/``。实际执行命令为：
-
-.. code:: bash
-
-   python examples/sft/train_vlm_sft.py \
-     --config-path examples/sft/config/ \
-     --config-name <你的配置名> \
-     runner.logger.log_path=<自动生成的日志目录>
-
-VLM 配置与 RLinf 中其他训练配置结构基本一致，主要修改 ``data`` 和 ``actor.model``。
-下面样例中需要修改的字段已注释，其余参数保持不变即可得到基线运行。
+在 ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` 中填写数据集与模型路径：
 
 .. code:: yaml
 
-   defaults:
-     - override hydra/job_logging: stdout
-
-   hydra:
-     run:
-       dir: .
-     output_subdir: null
-
-   cluster:
-     num_nodes: 1
-     component_placement:
-       actor: all
-
-   runner:
-     task_type: sft
-     logger:
-       log_path: "../results"
-       project_name: rlinf
-       experiment_name: "qwen2_5_vl_sft_demo"
-       logger_backends: ["tensorboard"]
-
-     max_epochs: 6000
-     max_steps: -1
-     val_check_interval: 1000
-     save_interval: 1000
-
    data:
-     type: vlm
-     dataset_name: "robo2vlmsft"
-
-     # 数据路径，需要将 train 数据和 evaluate 数据分开，并分别放在不同的文件夹下
-     train_data_paths: "/path/to/Robo2VLM-1/train_data"
-     # 如果不需要进行训练，只需要进行评估，请将 train_data_paths 设置为 null
-     val_data_paths: "/path/to/Robo2VLM-1/test_data"
-
-     # 数据字段名（要和你的数据列一致）
-     prompt_key: "question"
-     choice_key: "choices"
-     answer_key: "correct_answer"
-     image_keys: ["image"]
-
-     apply_chat_template: True
-     use_chat_template: True
-     max_prompt_length: 1024
-     lazy_loading: false
-     num_workers: 4
-
-   algorithm:
-     adv_type: gae
+     train_data_paths: "./Robo2VLM-1/train_data"
+     val_data_paths: "./Robo2VLM-1/test_data"
 
    actor:
-     group_name: "ActorGroup"
-     training_backend: "fsdp"
-     micro_batch_size: 4
-     eval_batch_size: 4
-     global_batch_size: 256
-     seed: 42
-
      model:
-       model_type: "qwen2.5_vl"
-       precision: fp32
-       # 模型路径，需要将模型权重下载后放在本地，并设置为模型路径
-       model_path: "/path/to/Qwen2.5-VL-3B-Instruct"
-       is_lora: False
-
-     optim:
-       lr: 1e-5
-       adam_beta1: 0.9
-       adam_beta2: 0.999
-       adam_eps: 1.0e-08
-       weight_decay: 0.01
-       clip_grad: 1.0
-       lr_scheduler: "cosine"
-       total_training_steps: ${runner.max_epochs}
-       lr_warmup_steps: 200
-
-     fsdp_config:
-       strategy: "fsdp"
-       sharding_strategy: "no_shard"
-       use_orig_params: False
-       gradient_checkpointing: False
-       mixed_precision:
-         param_dtype: bf16
-         reduce_dtype: fp32
-         buffer_dtype: bf16
-
-   reward:
-     use_reward_model: False
-
-   critic:
-     use_critic_model: False
+       model_path: "./Qwen2.5-VL-3B-Instruct"
 
 **2. 启动**
 
-在仓库根目录执行：
+在仓库根目录执行（脚本调用 ``examples/sft/train_vlm_sft.py`` 并将日志写入 ``logs/<timestamp>/``）：
 
 .. code:: bash
 
-   bash examples/sft/run_vlm_sft.sh
+   bash examples/sft/run_vlm_sft.sh qwen2_5_vl_sft_vlm
 
-- 不传参数时，脚本默认使用 ``qwen2_5_sft_vlm``。
 - 若配置文件名不同（如 ``my_vlm_config.yaml``），将其作为参数传入：``bash examples/sft/run_vlm_sft.sh my_vlm_config``。
+
+.. dropdown:: 进阶配置（可选）
+
+   仓库自带的 ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` 已设置好数据列名、batch size、优化器和 FSDP 默认项：
+
+   .. code:: yaml
+
+      cluster:
+        num_nodes: 1
+        component_placement:
+          actor: all
+
+      runner:
+        task_type: sft
+        max_epochs: -1
+        max_steps: 6000
+        val_check_interval: 1000
+        save_interval: 1000
+
+      data:
+        type: vlm
+        dataset_name: "robo2vlmsft"
+        prompt_key: "question"
+        choice_key: "choices"
+        answer_key: "correct_answer"
+        image_keys: ["image"]
+        apply_chat_template: True
+        use_chat_template: True
+        max_prompt_length: 1024
+        lazy_loading: true
+        num_workers: 16
+
+      actor:
+        group_name: "ActorGroup"
+        training_backend: "fsdp"
+        micro_batch_size: 4
+        eval_batch_size: 4
+        global_batch_size: 256
+        seed: 42
+        model:
+          model_type: "qwen2.5_vl"
+          precision: fp32
+          is_lora: False
+        optim:
+          lr: 1e-5
+          adam_beta1: 0.9
+          adam_beta2: 0.999
+          adam_eps: 1.0e-08
+          weight_decay: 0.01
+          clip_grad: 1.0
+          lr_scheduler: "cosine"
+          total_training_steps: ${runner.max_steps}
+          lr_warmup_steps: 200
+        fsdp_config:
+          strategy: "fsdp"
+          sharding_strategy: "full_shard"
+          use_orig_params: False
+          gradient_checkpointing: False
+          mixed_precision:
+            param_dtype: bf16
+            reduce_dtype: fp32
+            buffer_dtype: bf16
 
 仅评估模式
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-若只想运行评估，将 ``data.train_data_paths`` 设为 ``null``，并将 ``data.val_data_paths``
-指向验证数据，启动命令保持不变：
+若只想运行评估，将 ``data.train_data_paths`` 设为 ``null``，并将 ``data.val_data_paths`` 指向验证数据，启动命令保持不变：
 
 .. code:: bash
 
-   bash examples/sft/run_vlm_sft.sh <配置名>
+   bash examples/sft/run_vlm_sft.sh qwen2_5_vl_sft_vlm
 
 可视化与结果
 ----------------------------------------

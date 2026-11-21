@@ -109,65 +109,32 @@ Hardware Setup
 Installation
 ------------
 
+.. include:: _setup_common.rst
+
 The robot node and the training / rollout node share the same install command,
 but only the robot node needs the official **AirBot SDK** (``airbot_py``
 wheel + ``airbot_api`` source). The GPU node talks to the robot over gRPC
 only and does not import ``airbot_py``.
 
-Robot Node
-~~~~~~~~~~
+.. tab-set::
 
-The AirBot SDK is typically pre-deployed on a DOS-W1 robot, so the install
-command below can pick it up automatically.
+   .. tab-item:: Robot Controller Node
 
-A. Clone RLinf Repository
-^^^^^^^^^^^^^^^^^^^^^^^^^
+      The AirBot SDK is typically pre-deployed on a DOS-W1 robot at ``~/dos_w1/airbot/5.1.6/airbot_py-5.1.6-py3-none-any.whl`` and ``~/dos_w1/airbot/airbot_api`` (set ``DOSW1_SDK_WHEEL`` and ``DOSW1_API_PATH`` before installing if your SDK lives elsewhere):
 
-.. code:: bash
+      .. code-block:: bash
 
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
 
-B. Install Dependencies
-^^^^^^^^^^^^^^^^^^^^^^^
+   .. tab-item:: Training / Rollout Nodes
 
-.. code:: bash
+      A GPU server typically does not have ``~/dos_w1/airbot``, so the installer prints a warning and skips the AirBot SDK step while installing the remaining dependencies:
 
-   bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
+      .. code-block:: bash
 
-By default the installer looks for the AirBot SDK at:
-
-- ``~/dos_w1/airbot/5.1.6/airbot_py-5.1.6-py3-none-any.whl``
-- ``~/dos_w1/airbot/airbot_api``  (installed in editable mode)
-
-If your SDK files live elsewhere, point the installer at the correct paths:
-
-.. code:: bash
-
-   export DOSW1_SDK_WHEEL=/path/to/airbot_py-5.1.6-py3-none-any.whl
-   export DOSW1_API_PATH=/path/to/airbot_api
-   bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
-
-Training / Rollout Nodes
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-A. Clone RLinf Repository
-^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code:: bash
-
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
-
-B. Install Dependencies
-^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
-
-A GPU server typically does not have a ``~/dos_w1/airbot`` directory, so
-the installer prints a warning and **skips** the AirBot SDK step — this is
-expected. The remaining dependencies (``embodied`` extra, ``evdev``,
-``opencv-python``, RLinf itself) are installed as usual.
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
 
 .. note::
 
@@ -181,12 +148,15 @@ Download the Model
 Download the ResNet-10 pretrained checkpoint used by the Flow Matching
 policy (``actor.model.encoder_config.ckpt_name: resnet10_pretrained.pt``):
 
-.. code:: bash
+.. tab-set::
 
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+   .. tab-item:: ResNet-10
 
-Point ``actor.model.model_path`` and ``rollout.model.model_path`` in the YAML
-at the downloaded directory.
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
+
+.. include:: _model_path.rst
 
 Run It
 ------
@@ -203,14 +173,14 @@ back the current joint positions.
    ``sh ~/dos_w1/airbot/whole_start.sh``) and verify all panels come up
    without errors.
 
-2. Activate the venv and run the teleoperation check script:
+2. Activate the venv and run the teleoperation check script (replace ``192.168.1.20`` with your DOS-W1 IP):
 
 .. code-block:: bash
 
    source .venv/bin/activate
 
    python toolkits/realworld_check/test_dosw1_controller.py \
-       --robot-url <ROBOT_IP> \
+       --robot-url 192.168.1.20 \
        --print-hz 5
 
 3. Drag the left leader arm until the left follower arm is at the desired
@@ -242,17 +212,17 @@ Real-world training uses a two-node Ray cluster: one GPU node
    starting Ray. Ray freezes the interpreter and env vars at ``ray start``
    time, so anything set after will not be visible to the workers.
 
-2. Start Ray:
+2. Start Ray (replace ``192.168.1.10`` with your GPU server IP):
 
 .. code-block:: bash
 
    # GPU node (node rank 0, Ray head)
    export RLINF_NODE_RANK=0
-   ray start --head --port=6379 --node-ip-address=<GPU_SERVER_IP>
+   ray start --head --port=6379 --node-ip-address=192.168.1.10
 
    # Robot node (node rank 1, Ray worker)
    export RLINF_NODE_RANK=1
-   ray start --address=<GPU_SERVER_IP>:6379
+   ray start --address=192.168.1.10:6379
 
 3. Verify with ``ray status`` that both nodes are connected.
 
@@ -317,9 +287,6 @@ Fields that you should update for your setup:
        state_dim: 14        # 6 joints + 1 gripper per arm, dual arm
        action_dim: 14
        image_num: 3         # 1 → cam_left only; 3 → use all three cameras
-   rollout:
-     model:
-       model_path: "/path/to/RLinf-ResNet10-pretrained"
 
 .. warning::
 
@@ -441,8 +408,8 @@ state-only MLP so it runs on a single node without cameras:
 Use this to validate the config tree and cluster plumbing end-to-end. It is
 **not** a real-robot training recipe — the image pipeline is disabled.
 
-Visualization and Results
-~~~~~~~~~~~~~~~~~~~~~~~~~
+Launch Training
+~~~~~~~~~~~~~~~
 
 Once calibration, demos, and the YAML are ready, launch training from the
 GPU node:

@@ -41,30 +41,25 @@ include the required commands.
 Installation
 ------------
 
-Install the robot dependencies on the controller machine using the custom-environment
-workflow below. Run the checks from the same checkout and activated environment.
-
-Robot Controller Node
-~~~~~~~~~~~~~~~~~~~~~
-
-Clone RLinf on the machine connected to the robot, then install its environment.
+Install the robot dependencies on the controller machine connected to the arm. Run subsequent commands from this checkout with the environment activated.
 
 .. include:: _setup_common.rst
-   :end-before: Install dependencies
 
-Install the robot dependencies from the repository root:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: SO-101
 
-   bash requirements/install.sh embodied --model openpi --env so101 && source .venv/bin/activate
-   export REPO_PATH="$PWD"
+      .. code-block:: bash
 
-The installer includes OpenPI, LeRobot, and the Feetech motor dependencies.
-Run subsequent commands from this checkout with the environment activated. See
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env so101 && source .venv/bin/activate
+         export REPO_PATH="$PWD"
+
+The installer includes OpenPI, LeRobot, and the Feetech motor dependencies. See
 :doc:`Installation </rst_source/start/installation>` for platform prerequisites.
 
 Find the Port and Configure the Motors
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Connect the servo controller's USB cable and the power supply specified for
 your kit. Find which serial device belongs to the follower:
@@ -102,7 +97,7 @@ in the guide. Skip motor setup for an already configured arm; calibration is
 still needed under the ID you will use with RLinf.
 
 Calibrate the Follower
-^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~
 
 With the motors configured and the arm assembled, calibrate the follower from
 a terminal before RLinf opens the serial bus:
@@ -221,7 +216,7 @@ ports, calibration IDs, camera device, reset pose, and
 ``task_description`` in
 ``examples/embodiment/config/realworld_so101_collect_data_joint.yaml``. Replace
 the device placeholders and verify the configured reset pose before operating
-the hardware. Replace the placeholder ``<task description>`` with the
+the hardware. Replace the placeholder ``task_description`` value with the
 instruction used for your demonstrations. The collector resets both arms to the configured start pose,
 records the leader demonstration, and writes a LeRobot dataset that the SO-101
 SFT loader can consume.
@@ -302,8 +297,7 @@ For local evaluation, set the checkpoint and normalization-statistics paths in
 calibration ID, camera device, and reset pose in
 ``examples/embodiment/config/realworld_so101_eval_openpi.yaml``. Replace its
 device placeholders and verify its configured reset pose before connecting
-hardware. Replace its ``task_description`` placeholder
-``<task description>`` with the same instruction used during SFT, then launch
+hardware. Replace its ``task_description`` placeholder with the same instruction used during SFT, then launch
 the shared evaluation entrypoint:
 
 .. code-block:: bash

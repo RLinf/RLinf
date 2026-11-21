@@ -79,34 +79,35 @@ PPO 训练 MLP actor-critic。
 
 安装 EmbodiChain 0.3.0 及其依赖。安装脚本从 ``http://pyp.open3dv.site:2345/simple/dexsim-engine/`` 获取 ``dexsim-engine==0.5.0``，其余包通过配置的 Python 包索引解析。运行安装的机器需要能够访问厂商服务器的 2345 端口。
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --env embodichain && source .venv/bin/activate
+   .. tab-item:: EmbodiChain
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env embodichain && source .venv/bin/activate
 
 .. warning::
 
-   EmbodiChain 的 ``dexsim`` 依赖需要 ``libpython3.xx.so``。如果在 UV Python 布局下遇到
-   ``libpython3.11.so`` 运行时错误，请使用 Conda 环境，并重新运行
-   ``bash requirements/install.sh embodied --env embodichain --no-root``。
+   EmbodiChain 的 ``dexsim`` 依赖需要 ``libpython3.xx.so``。如果在 UV Python 布局下遇到 ``libpython3.11.so`` 运行时错误，请使用 Conda 环境并重新运行 ``bash requirements/install.sh embodied --env embodichain --no-root``。
 
-默认使用已安装包中的配置。如需指向本地 EmbodiChain checkout，请设置：
-
-.. code:: bash
-
-   export EMBODICHAIN_PATH=/path/to/EmbodiChain
-
-如果运行时提示缺少任务资源，请在同一个 Python 环境中下载：
-
-.. code:: bash
-
-   export EMBODICHAIN_DATA_ROOT=/path/to/data
-   python -m embodichain.data download --name CartPole
-   python -m embodichain.data download --name SimResources
+默认使用已安装包中的配置；如需指向本地 EmbodiChain 源码目录，可设置 ``export EMBODICHAIN_PATH=/path/to/EmbodiChain``。
 
 下载模型
 ----------------------------------------
 
-不需要检查点。MLP policy 从头开始训练。
+不需要检查点，MLP policy 从头开始训练。如果运行时提示缺少任务资源，在同一个 Python 环境中下载：
+
+.. tab-set::
+
+   .. tab-item:: 任务资源（可选）
+
+      .. code-block:: bash
+
+         export EMBODICHAIN_DATA_ROOT="$PWD/data"
+         python -m embodichain.data download --name CartPole
+         python -m embodichain.data download --name SimResources
 
 运行
 ----------------------------------------
@@ -136,21 +137,7 @@ PPO 训练 MLP actor-critic。
 可视化与结果
 ----------------------------------------
 
-默认配置使用 W&B 记录日志。可改为 TensorBoard：
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard"]
-
-然后在 RLinf 仓库根目录启动 TensorBoard：
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-完整指标说明见 :doc:`训练指标 <../../reference/metrics>`。
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 rollout 奖励曲线（默认配置使用 W&B，可通过 ``runner.logger.logger_backends='["tensorboard"]'`` 切换到 TensorBoard），通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制，完整指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
 评测与 CI
 ----------------------------------------

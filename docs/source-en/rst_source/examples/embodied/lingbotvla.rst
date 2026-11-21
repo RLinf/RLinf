@@ -46,7 +46,7 @@ SFT then GRPO-fine-tune LingbotVLA 1.0 on RoboTwin 2.0 dual-arm manipulation tas
 
       1–2 nodes · 8–16 GPUs
 
-| **You'll do:** install (native) → clone RoboTwin + assets → download checkpoints → SFT → GRPO → watch ``env/success_once``.
+| **You'll do:** install (native) → clone RoboTwin + assets → download checkpoints → SFT / GRPO → watch ``env/success_once``.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · the RoboTwin repo and assets · the LingbotVLA 1.0 and Qwen backbone checkpoints (steps below).
 
 Tasks
@@ -89,191 +89,135 @@ Observation and Action
    * - Prompt
      - Natural-language task instruction for the RoboTwin episode.
 
-Installation
-------------
+Setup and Run
+-------------
 
-1. Clone the RLinf Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
-First, clone the RLinf repository and enter the main directory:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: GRPO Training
 
-    git clone https://github.com/RLinf/RLinf.git
-    cd RLinf
-    export RLINF_PATH=$(pwd)
+      **1. Install**
 
-2. Install Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~
+      Install the LingbotVLA 1.0 environment, clone RoboTwin, and download the RoboTwin scene assets:
 
-Install the LingbotVLA 1.0 native environment and RoboTwin base dependencies in one command, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
+      .. code-block:: bash
 
-.. code-block:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model lingbotvla --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support
+         (cd RoboTwin && bash script/_download_assets.sh)
 
-    bash requirements/install.sh embodied --model lingbotvla --env robotwin && source .venv/bin/activate
+      **2. Download**
 
-RoboTwin Repository Clone and Assets Download
----------------------------------------------
+      Download the LingbotVLA 1.0 base weights, the pinned RoboTwin SFT checkpoint (use this revision instead of ``main``), and the Qwen2.5-VL backbone:
 
-RoboTwin Assets are asset files required by the RoboTwin environment and need to be downloaded from HuggingFace.
+      .. code-block:: bash
 
-.. code-block:: bash
+         hf download robbyant/lingbot-vla-4b --local-dir ./lingbot-vla-4b
+         hf download robbyant/lingbot-vla-4b-posttrain-robotwin \
+           --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
+           --local-dir ./lingbot-vla-4b-posttrain-robotwin
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 
-   git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support
-   bash script/_download_assets.sh
+      **3. Launch**
 
-Download the Model
-------------------
+      Shipped GRPO configs under ``examples/embodiment/config/``:
 
-Before starting training, download the LingbotVLA 1.0 base weights, the RoboTwin SFT checkpoint, and the Qwen backbone model from HuggingFace. For RoboTwin SFT and RL experiments, use the pinned RoboTwin SFT checkpoint revision below instead of the latest ``main`` revision.
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 70
 
-.. code-block:: bash
+         * - Task
+           - Config
+         * - Click Bell
+           - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla.yaml``
+         * - Place Shoe
+           - ``examples/embodiment/config/robotwin_place_shoe_grpo_lingbotvla.yaml``
 
-    hf download robbyant/lingbot-vla-4b --local-dir lingbot-vla-4b
-    hf download robbyant/lingbot-vla-4b-posttrain-robotwin \
-        --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
-        --local-dir lingbot-vla-4b-posttrain-robotwin
-    hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir Qwen2.5-VL-3B-Instruct
+      Set the local model paths in your config (rollout inherits ``actor.model.model_path`` and ``tokenizer_path`` automatically), and point ``env.train.assets_path`` and ``env.eval.assets_path`` at your RoboTwin assets directory:
 
+      .. code-block:: yaml
 
-Then set ``rollout.model.model_path`` and ``actor.model.model_path`` in the configuration to your local model path (for example, ``/path/to/model/lingbot-vla-4b`` for base weights or ``/path/to/model/lingbot-vla-4b-posttrain-robotwin`` for the pinned RoboTwin SFT checkpoint), and **be sure to** set the corresponding ``tokenizer_path`` to the downloaded Tokenizer path (e.g., ``/path/to/model/Qwen2.5-VL-3B-Instruct``). Otherwise, the Rollout node will throw an error when parsing text instructions.
+         actor:
+           model:
+             model_path: /path/to/lingbot-vla-4b-posttrain-robotwin
+             tokenizer_path: /path/to/Qwen2.5-VL-3B-Instruct
+             lingbotvla:
+               config_path: /path/to/lingbot-vla-4b
 
-Run It
-------
+      Export ``ROBOT_PLATFORM="ALOHA"`` (required for the dual-arm action space) and the repository paths, then launch GRPO training:
 
-Configuration Files
-~~~~~~~~~~~~~~~~~~~
+      .. code-block:: bash
 
-RLinf supports full-parameter Supervised Fine-Tuning (SFT) and reinforcement learning alignment (GRPO) for LingbotVLA 1.0. Relevant configuration files are as follows:
+         export ROBOT_PLATFORM="ALOHA"
+         export ROBOTWIN_PATH=$PWD/RoboTwin
+         export LINGBOT_VLA_PATH=$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")
+         bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvla
 
-* **SFT (Behavior Cloning)**:
-  ``examples/sft/config/robotwin_sft_lingbotvla.yaml``
-* **GRPO (Reinforcement Learning)**:
-  ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla.yaml``
+      .. dropdown:: Advanced configuration (optional)
 
-Key Config Snippets (SFT)
-^^^^^^^^^^^^^^^^^^^^^^^^^
+         - **Unified normalization**: LingbotVLA 1.0 uses global normalization keys from ``robotwin_50.json`` (such as ``action.arm.position``), so switching RoboTwin tasks needs no ``unnorm_key`` override.
+         - **Host memory trimming (Linux/glibc)**: GRPO configs default to ``env.train.malloc_trim_reset_interval: 8`` to reclaim unused glibc heap memory every 8 automatic resets per environment instance (targets host RSS, not GPU memory). Set to ``0`` to disable; evaluation keeps it disabled unless configured.
+         - **Standalone evaluation**: follow the :doc:`RoboTwin evaluation guide <../../evaluations/guides/robotwin>` with configs such as ``robotwin_click_bell_lingbotvla_eval`` and ``robotwin_place_shoe_lingbotvla_eval``.
 
-The core of the SFT phase lies in specifying the offline dataset path (LeRobot Parquet format), the FSDP training backend, and the batch size.
+   .. tab-item:: SFT Training
 
-.. code-block:: yaml
+      **1. Install**
 
-    runner:
-      task_type: sft
-      max_epochs: 30000
+      Install the LingbotVLA 1.0 environment, clone RoboTwin, and download the RoboTwin scene assets:
 
-    data:
-      # Path to the converted LeRobot format offline dataset
-      train_data_paths: "/path/to/lerobot_data"
+      .. code-block:: bash
 
-    actor:
-      training_backend: "fsdp"
-      micro_batch_size: 1
-      global_batch_size: 8
-      model:
-        model_type: "lingbotvla"
-        model_path: "path/to/lingbot_model"
-        tokenizer_path: "/path/to/model/Qwen2.5-VL-3B-Instruct"
-        precision: bf16
-        num_action_chunks: 50
-        action_dim: 14
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model lingbotvla --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support
+         (cd RoboTwin && bash script/_download_assets.sh)
 
-Key Config Snippets (GRPO)
-^^^^^^^^^^^^^^^^^^^^^^^^^^
+      **2. Download**
 
-The top-level file dynamically assembles the environment and model via Hydra, and directly overrides the core SDE sampling parameters required for GRPO reinforcement learning under ``actor.model``.
+      Download the LingbotVLA 1.0 base weights, the pinned RoboTwin SFT checkpoint (use this revision instead of ``main``), and the Qwen2.5-VL backbone:
 
-**Note**: Because LingbotVLA 1.0 uses the unified global normalization keys (e.g., ``action.arm.position``) from ``robotwin_50.json``, there is **no need to configure or override** ``unnorm_key`` when switching between different tasks, enabling truly smooth multi-task transfer.
+      .. code-block:: bash
 
-.. code-block:: yaml
+         hf download robbyant/lingbot-vla-4b --local-dir ./lingbot-vla-4b
+         hf download robbyant/lingbot-vla-4b-posttrain-robotwin \
+           --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
+           --local-dir ./lingbot-vla-4b-posttrain-robotwin
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 
-    rollout:
-      model:
-        model_type: "lingbotvla"
+      **3. Launch**
 
-    actor:
-      model:
-        model_path: "/path/to/lingbot_sft_model"
-        tokenizer_path: "/path/to/model/Qwen2.5-VL-3B-Instruct"
-        model_type: "lingbotvla"
-        lingbotvla:
-            config_path: "/path/to/lingbot-vla-4b"
-        action_dim: 14
-        num_action_chunks: 50
-        num_steps: 10
-        noise_method: "flow_sde"
-        noise_level: 0.5
-        action_env_dim: 14
+      Set the local model paths in ``examples/sft/config/robotwin_sft_lingbotvla.yaml`` and point ``data.train_data_paths`` at your converted LeRobot dataset directory:
 
-.. note::
+      .. code-block:: yaml
 
-   To limit host-memory retention by glibc during long RoboTwin runs, the LingbotVLA GRPO examples default to ``env.train.malloc_trim_reset_interval: 8`` (Linux/glibc only). This attempts to reclaim unused heap memory every 8 resets per RoboTwin environment instance. Set it to ``0`` to disable; the default remains ``0`` when unset. Automatic resets are counted; evaluation remains disabled unless configured. This targets host RSS, not GPU memory.
+         actor:
+           model:
+             model_path: /path/to/lingbot-vla-4b-posttrain-robotwin
+             tokenizer_path: /path/to/Qwen2.5-VL-3B-Instruct
+             lingbotvla:
+               config_path: /path/to/lingbot-vla-4b
 
-   .. code-block:: yaml
+      Export ``ROBOT_PLATFORM="ALOHA"`` and the repository paths, then launch SFT:
 
-      env:
-        train:
-          malloc_trim_reset_interval: 8
+      .. code-block:: bash
 
-Launch Commands
-~~~~~~~~~~~~~~~
+         export ROBOT_PLATFORM="ALOHA"
+         export ROBOTWIN_PATH=$PWD/RoboTwin
+         export LINGBOT_VLA_PATH=$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")
+         bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvla
 
-To start training with the selected configuration, run the corresponding launch script.
+      .. dropdown:: Advanced configuration (optional)
 
-**Note**: Since the default tasks use a dual-arm robot, please ensure you declare the robot platform as ALOHA in your terminal before executing any launch scripts. Otherwise, the environment will fail to load the action space correctly:
-
-.. code-block:: bash
-
-    export ROBOT_PLATFORM="ALOHA"
-    # Set ROBOTWIN_PATH environment variable
-    export ROBOTWIN_PATH=/path/to/RoboTwin
-    # Enter the lingbot-vla directory automatically generated by install.sh
-    export LINGBOT_VLA_PATH=$(python -c "import lingbotvla; import os; print(os.path.dirname(lingbotvla.__path__[0]))")
-
-
-**1. Launch SFT Training**
-
-Perform supervised fine-tuning using the converted offline data:
-
-.. code-block:: bash
-
-    bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvla
-
-**2. Launch GRPO Training**
-
-For example, to fine-tune the SFT-trained model with the GRPO algorithm on the RoboTwin Click Bell task:
-
-.. code-block:: bash
-
-    bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvla
-
-Standalone Evaluation
----------------------
-
-Run standalone evaluation through the :doc:`RoboTwin evaluation guide <../../evaluations/guides/robotwin>`.
-Use the LingbotVLA 1.0 eval configs such as ``robotwin_click_bell_lingbotvla_eval`` and
-``robotwin_place_shoe_lingbotvla_eval``; the guide owns ``ROBOT_PLATFORM=ALOHA``,
-``ROBOTWIN_PATH``, assets, launch commands, and result interpretation.
+         - **Unified normalization**: LingbotVLA 1.0 uses global normalization keys from ``robotwin_50.json`` (such as ``action.arm.position``), so switching RoboTwin tasks needs no ``unnorm_key`` override.
+         - **Standalone evaluation**: follow the :doc:`RoboTwin evaluation guide <../../evaluations/guides/robotwin>` with configs such as ``robotwin_click_bell_lingbotvla_eval`` and ``robotwin_place_shoe_lingbotvla_eval``.
 
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Videos are saved through the env video config:
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     video_base_dir: ${runner.logger.log_path}/video/eval
+Launch TensorBoard with ``tensorboard --logdir ./logs --port 6006`` and watch ``env/success_once``. Pass ``env.eval.video_cfg.save_video=True`` to record evaluation videos; see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 .. list-table:: LingbotVLA 1.0 evaluation results on RoboTwin tasks
    :header-rows: 1

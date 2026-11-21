@@ -92,18 +92,19 @@ GenieSim 仿真和 RLinf 训练分在两个 GPU 节点上跑。跑 RLinf 的是�
 安装
 ----------------------------------------
 
-先在训练节点上、任何容器之外，执行仓库的准备命令。
-
 .. include:: _setup_common.rst
-   :end-before: 使用下面的
 
-在训练节点的仓库根目录安装 OpenPI 和 GenieSim ``v3.5.0`` 中的 ``rlinf-geniesim-client``，然后激活环境。``install.sh`` 会自动克隆对应源码；本机已有 GenieSim 源码时，将 ``GENIESIM_PATH`` 指向该目录：
+在训练节点克隆仓库并安装 OpenPI 与 GenieSim ``v3.5.0`` 中的 ``rlinf-geniesim-client``\ （``install.sh`` 会自动克隆对应源码；本机已有 GenieSim 源码时，将 ``GENIESIM_PATH`` 指向该目录）。也可以通过 ``docker/Dockerfile`` 构建 ``embodied-geniesim`` 目标。
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env geniesim && source .venv/bin/activate
+   .. tab-item:: OpenPI + GenieSim
+      :sync: openpi-geniesim
 
-也可以从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像，或通过 ``docker/Dockerfile`` 构建 ``embodied-geniesim`` 目标；前置依赖和通用安装选项见 :doc:`安装 </rst_source/start/installation>`。
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env geniesim && source .venv/bin/activate
 
 下载模型
 ----------------------------------------
@@ -112,13 +113,18 @@ GenieSim 仿真和 RLinf 训练分在两个 GPU 节点上跑。跑 RLinf 的是�
 
 这个检查点用 `GenieSim3.0-Dataset 的 instruction_and_robust 任务集 <https://huggingface.co/datasets/agibot-world/GenieSim3.0-Dataset/tree/main/task_suite/instruction_and_robust>`__ 里的 5,000 条轨迹做监督微调，训了 45,000 步，action chunk 长度是 10。
 
-在已经激活的 OpenPI 环境里下载。用 Docker 时，在训练节点的 RLinf 容器内、``/workspace/RLinf`` 执行；用自定义环境时，在训练节点的 RLinf 仓库根目录执行。已经有检查点的话，把 ``GENIESIM_CHECKPOINT_PATH`` 设成当前环境能读到的目录，然后直接看「运行」。
+在已经激活的 OpenPI 环境里下载。用 Docker 时，在训练节点的 RLinf 容器内、``/workspace/RLinf`` 执行；用自定义环境时，在训练节点的 RLinf 仓库根目录执行。已经有检查点的话，把 ``GENIESIM_CHECKPOINT_PATH`` 设成当前环境能读到的目录，然后直接看“运行”。
 
-.. code:: bash
+.. tab-set::
 
-   export GENIESIM_CHECKPOINT_PATH="$PWD/checkpoints/geniesim_sft"
-   hf download RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT \
-      --local-dir "$GENIESIM_CHECKPOINT_PATH"
+   .. tab-item:: OpenPI π₀.₅
+      :sync: openpi-geniesim
+
+      .. code-block:: bash
+
+         export GENIESIM_CHECKPOINT_PATH="$PWD/checkpoints/geniesim_sft"
+         hf download RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT \
+            --local-dir "$GENIESIM_CHECKPOINT_PATH"
 
 示例把检查点放在 RLinf 仓库下面。要换目录，下载前改 ``GENIESIM_CHECKPOINT_PATH``。训练和评测都从这个变量读模型路径，也可以在 YAML 里直接写成 RLinf 进程能访问的路径：
 
@@ -233,23 +239,7 @@ GRPO 和多任务配方列在 `可视化与结果`_。每个配方的 ``env.trai
 可视化与结果
 ----------------------------------------
 
-在 RLinf 仓库根目录启动 TensorBoard：
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-最值得看的指标是 ``env/success_once``。全部会记下来的指标见
-:doc:`训练指标 <../../reference/metrics>`。
-
-要保存 rollout 视频时，在 env 配置里打开：
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``env/success_once`` 曲线，通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制，完整指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
 下面这些实验用的是智元 G2 双臂轮式机器人，GenieSim 跑在 RTX 4090 上。
 

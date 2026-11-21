@@ -8,9 +8,16 @@ Prepare the station
 
 Use two YAM follower arms with ``flexible_4310`` grippers, three RealSense cameras, a PICO headset with two controllers, and a ZeroMQ PICO publisher. Follow :ref:`the PICO software setup <pico-software-setup>` to prepare XRoboToolkit, its PC Service, and the publisher. Install the YAM runtime in a Python environment:
 
-.. code-block:: bash
+.. include:: _setup_common.rst
 
-   bash requirements/install.sh embodied --env yam && source .venv/bin/activate
+.. tab-set::
+
+   .. tab-item:: YAM Node
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env yam && source .venv/bin/activate
 
 The installer includes the pinned ``i2rt`` backend and PICO transport dependencies. Check that the installed robot model, tool center point, joint limits, operator-to-robot-base yaw, and motion scales match your hardware before enabling motion.
 

@@ -6,13 +6,30 @@ Run common RLinf workflows with the shortest commands.
 Install
 -------
 
-Install locally with ``install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
+Install locally with ``install.sh`` (append ``--use-mirror`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` in mainland China), or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
 
-.. code-block:: bash
+.. tab-set::
 
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
-   source .venv/bin/activate
+   .. tab-item:: Embodied
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
+
+   .. tab-item:: Agentic / Reasoning
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
+
+   .. tab-item:: Docs
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh docs --venv .docs-venv
 
 Run Training
 ------------

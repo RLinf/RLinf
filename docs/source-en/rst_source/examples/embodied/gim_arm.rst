@@ -94,61 +94,63 @@ Installation
 
 The controller node and the training/rollout node(s) should be set up with different software dependencies.
 
-Robot Controller Node
-~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
-1. Installation
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. tab-set::
 
-a. Clone RLinf Repository
-__________________________
+   .. tab-item:: Robot Controller Node
 
-.. code:: bash
+      **1. Clone RLinf and install dependencies**
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+      .. code-block:: bash
 
-b. Install RLinf Dependencies
-________________________________
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
 
-.. code:: bash
+      **2. Install ``gim_arm_control`` SDK**
 
-   bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
+      The ``gim_arm_control`` package provides the low-level CAN communication driver and Python bindings
+      for controlling the GimArm robot. It also ships the helper shell scripts used in the next steps
+      (``sh/init_can.sh``, ``sh/set_zero.sh``), so install it before proceeding.
 
-c. Install gim_arm_control SDK
-________________________________
+      .. code-block:: bash
 
-The ``gim_arm_control`` package provides the low-level CAN communication driver and Python bindings
-for controlling the GimArm robot. It also ships the helper shell scripts used in the next steps
-(``sh/init_can.sh``, ``sh/set_zero.sh``), so install it before proceeding.
+         cd ~
+         git clone https://github.com/RLinf/gim_arm_control.git
+         cd ~/gim_arm_control/python
+         pip install -e .
 
-.. code:: bash
+      This builds the C++ core via CMake and installs Python bindings using nanobind.
 
-   cd ~
-   git clone https://github.com/RLinf/gim_arm_control.git
-   cd ~/gim_arm_control/python
-   pip install -e .
+      **Build requirements**: ``scikit-build-core>=0.5``, ``nanobind>=2.0``, a C++17 compiler (GCC >= 7 or Clang >= 5).
 
-This builds the C++ core via CMake and installs Python bindings using nanobind.
+      **Runtime dependencies**: ``numpy``, ``pinocchio`` (imported as ``pin``).
 
-**Build requirements**: ``scikit-build-core>=0.5``, ``nanobind>=2.0``, a C++17 compiler (GCC >= 7 or Clang >= 5).
+      .. note::
 
-**Runtime dependencies**: ``numpy``, ``pinocchio`` (imported as ``pin``).
+         ``pinocchio`` is required for forward kinematics and Jacobian computation used by the controller.
+         It is automatically installed as a dependency of the SDK.
+         For systems requiring NumPy 1.x compatibility, install with:
 
-.. note::
+         .. code-block:: bash
 
-   ``pinocchio`` is required for forward kinematics and Jacobian computation used by the controller.
-   It is automatically installed as a dependency of the SDK.
-   For systems requiring NumPy 1.x compatibility, install with:
+            pip install -e ".[pin270]"
 
-   .. code:: bash
+   .. tab-item:: Training / Rollout Nodes
 
-      pip install -e ".[pin270]"
+      Clone RLinf and install dependencies (or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__):
 
-2. CAN Interface Initialization
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      .. code-block:: bash
 
-The CAN bus must be initialized before using the robot.
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
+
+      To install model-specific dependencies (for example, OpenVLA), pass ``--model`` as well (such as ``--model openvla --env maniskill_libero``).
+
+CAN Interface Initialization
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+On the robot controller node, the CAN bus must be initialized before using the robot.
 The ``gim_arm_control`` SDK (installed in the previous step) provides a convenience script,
 or you can run the commands manually.
 
@@ -177,10 +179,10 @@ This sets a 1 Mbps standard bitrate and 5 Mbps CAN FD data bitrate.
 
      ip link show can0
 
-3. Motor Zero Calibration
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Motor Zero Calibration
+~~~~~~~~~~~~~~~~~~~~~~
 
-Before first use (or after replacing a motor), you must calibrate the motor zero positions.
+On the robot controller node, before first use (or after replacing a motor), you must calibrate the motor zero positions.
 This sets the current physical position as the zero reference for Damiao motors.
 
 From the ``gim_arm_control`` repository:
@@ -198,17 +200,6 @@ From the ``gim_arm_control`` repository:
   Calibration should only be done with the arm in its mechanical home position.
   Incorrect calibration can cause the arm to move unexpectedly.
   Requires ``can-utils`` (install with ``sudo apt install can-utils``).
-
-Training / Rollout Nodes
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-Clone the RLinf repository (same as above), then install dependencies with ``requirements/install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
-
-To install model-specific dependencies (for example, OpenVLA), pass ``--model`` as well (such as ``--model openvla --env maniskill_libero``).
 
 
 Run It

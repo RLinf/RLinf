@@ -8,22 +8,19 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
 
 所有评测相关代码与配置位于仓库根目录的 ``evaluations/`` 下：
 
-.. code-block:: text
-
-   evaluations/
-   ├── eval_embodied_agent.py   # 评测主程序
-   ├── run_eval.sh              # 一键启动脚本
-   ├── libero/                  # LIBERO 评测配置
-   ├── robotwin/                # RoboTwin 评测配置
-   ├── behavior/                # BEHAVIOR-1K 评测配置
-   ├── maniskill/               # ManiSkill OOD 评测配置
-   ├── realworld/               # 真机评测配置
-   └── polaris/                 # PolaRiS 评测配置
+- ``evaluations/eval_embodied_agent.py``：评测主程序
+- ``evaluations/run_eval.sh``：一键启动脚本
+- ``evaluations/libero/``：LIBERO 评测配置
+- ``evaluations/robotwin/``：RoboTwin 评测配置
+- ``evaluations/behavior/``：BEHAVIOR-1K 评测配置
+- ``evaluations/maniskill/``：ManiSkill OOD 评测配置
+- ``evaluations/realworld/``：真机评测配置
+- ``evaluations/polaris/``：PolaRiS 评测配置
 
 评测架构
 --------
 
-评测流程由 ``EmbodiedEvalRunner`` 驱动：Env Worker 与 Rollout Worker 通过 Channel 交互，在 ``env.eval`` 配置下完成并行评测。终端与日志中会输出 ``eval/success_once``、``eval/return`` 等指标。
+评测 runner 通过 Channel 协调 Env Worker 与 Rollout Worker，在 ``env.eval`` 配置下完成并行评测。终端与日志中会输出 ``eval/success_once``、``eval/return`` 等指标。
 
 典型数据流：
 

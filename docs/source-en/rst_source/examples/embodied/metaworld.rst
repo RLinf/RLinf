@@ -80,88 +80,159 @@ Observation and Action
    * - Reward
      - Sparse — based on task completion.
 
-
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
 .. tab-set::
 
-   .. tab-item:: OpenPI
-      :sync: openpi
+   .. tab-item:: OpenPI π₀
+      :sync: pi0
+
+      **1. Install**
 
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --model openpi --env metaworld && source .venv/bin/activate
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env metaworld
+         source .venv/bin/activate
 
-   .. tab-item:: OpenVLA-OFT
-      :sync: openvla-oft
+      **2. Download**
 
-      .. code-block:: bash
-
-         bash requirements/install.sh embodied --model openvla-oft --env metaworld && source .venv/bin/activate
-
-Download the Model
-------------------
-
-Download the SFT checkpoint for your model:
-
-.. tab-set::
-
-   .. tab-item:: π₀
+      Download the OpenPI π₀ SFT checkpoint (also available on `ModelScope <https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld>`__):
 
       .. code-block:: bash
 
          hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir ./RLinf-Pi0-MetaWorld-SFT
 
-   .. tab-item:: π₀.₅
+      **3. Launch**
+
+      Available configs under ``examples/embodiment/config/``:
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 25 25 50
+
+         * - Setting
+           - Algorithm
+           - Config
+         * - MT50
+           - PPO
+           - ``metaworld_50_ppo_openpi.yaml``
+         * - ML45
+           - PPO
+           - ``metaworld_45_ppo_openpi.yaml``
+
+      Set ``actor.model.model_path`` in the chosen YAML (rollout inherits it automatically):
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_path: ./RLinf-Pi0-MetaWorld-SFT
+
+      Launch training with ``run_embodiment.sh``:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi
+
+   .. tab-item:: OpenPI π₀.₅
+      :sync: pi05
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env metaworld
+         source .venv/bin/activate
+
+      **2. Download**
+
+      Download the OpenPI π₀.₅ SFT checkpoint:
 
       .. code-block:: bash
 
          hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir ./RLinf-Pi05-MetaWorld-SFT
 
+      **3. Launch**
+
+      Available config under ``examples/embodiment/config/``:
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 25 25 50
+
+         * - Setting
+           - Algorithm
+           - Config
+         * - MT50
+           - PPO
+           - ``metaworld_50_ppo_openpi_pi05.yaml``
+
+      Set ``actor.model.model_path`` in ``examples/embodiment/config/metaworld_50_ppo_openpi_pi05.yaml`` (rollout inherits it automatically):
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_path: ./RLinf-Pi05-MetaWorld-SFT
+
+      Launch training with ``run_embodiment.sh``:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi_pi05
+
    .. tab-item:: OpenVLA-OFT
       :sync: openvla-oft
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env metaworld
+         source .venv/bin/activate
+
+      **2. Download**
+
+      Download the OpenVLA-OFT SFT checkpoint:
 
       .. code-block:: bash
 
          hf download RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT --local-dir ./RLinf-OpenVLAOFT-MetaWorld-SFT
 
-Alternatively, you can also download the model from ModelScope at https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld.
+      **3. Launch**
 
-.. include:: _model_path.rst
+      Available config under ``examples/embodiment/config/``:
 
-Run It
-------
+      .. list-table::
+         :header-rows: 1
+         :widths: 25 25 50
 
-Each recipe is a YAML config under ``examples/embodiment/config/``:
+         * - Setting
+           - Algorithm
+           - Config
+         * - MT50
+           - GRPO
+           - ``metaworld_50_grpo_openvlaoft.yaml``
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 30 40
+      Set ``actor.model.model_path`` in ``examples/embodiment/config/metaworld_50_grpo_openvlaoft.yaml`` (rollout inherits it automatically):
 
-   * - Setting
-     - Model / algorithm
-     - Config
-   * - MT50
-     - π₀ + PPO
-     - ``metaworld_50_ppo_openpi.yaml``
-   * - MT50
-     - π₀.₅ + PPO
-     - ``metaworld_50_ppo_openpi_pi05.yaml``
-   * - MT50
-     - OpenVLA-OFT + GRPO
-     - ``metaworld_50_grpo_openvlaoft.yaml``
-   * - ML45
-     - π₀ + PPO
-     - ``metaworld_45_ppo_openpi.yaml``
+      .. code-block:: yaml
 
-Launch a config with ``run_embodiment.sh``:
+         actor:
+           model:
+             model_path: ./RLinf-OpenVLAOFT-MetaWorld-SFT
 
-.. code-block:: bash
+      Launch training with ``run_embodiment.sh``:
 
-   bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh metaworld_50_grpo_openvlaoft
 
 .. admonition:: Configure further
    :class: note
@@ -171,32 +242,14 @@ Launch a config with ``run_embodiment.sh``:
    - Metric definitions and logging backends → :doc:`Training metrics <../../reference/metrics>`
    - Resuming from a checkpoint → :doc:`Resume <../../guides/resume>`
 
-
 Visualization and Results
 -------------------------
 
-Launch TensorBoard to watch training live:
-
-.. code-block:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-The key signal to watch is **``env/success_once``** — the task success rate. For every
-logged metric, see :doc:`Training metrics <../../reference/metrics>`.
-
-To save evaluation videos, enable them in the config:
-
-.. code-block:: yaml
-
-   env:
-      eval:
-         video_cfg:
-            save_video: True
-            video_base_dir: ${runner.logger.log_path}/video/eval
-
+Watch ``env/success_once`` in TensorBoard (``tensorboard --logdir ./logs``); set ``env.eval.video_cfg.save_video=True`` to record videos, or see :doc:`Training metrics <../../reference/metrics>` for W&B/SwanLab and all metrics.
 
 MetaWorld Results
 ~~~~~~~~~~~~~~~~~
+
 The results for Diffusion Policy, TinyVLA, and SmolVLA in the table below are referenced from the `SmolVLA paper <https://arxiv.org/abs/2403.04880>`_. The SFT results for π\ :sub:`0`\  and π\ :sub:`0.5`\  are obtained by retraining using the official `dataset <https://huggingface.co/datasets/lerobot/metaworld_mt50>`_ provided by LeRobot.
 
 .. list-table:: **MetaWorld-MT50 Performance Comparison (Success Rate, %)**

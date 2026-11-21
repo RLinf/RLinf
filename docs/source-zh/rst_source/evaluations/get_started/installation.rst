@@ -3,11 +3,16 @@
 
 评测与训练共用同一套具身环境安装流程。例如，安装 :doc:`quick_tour`\ （OpenPI + LIBERO）所需环境：
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
+   .. tab-item:: OpenPI + LIBERO
 
-评测其他 benchmark 时，按下方表格替换 ``--model`` 与 ``--env``：
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
+
+中国大陆用户可在命令末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。评测其他 benchmark 时，按下方表格替换 ``--model`` 与 ``--env``：
 
 .. list-table::
    :header-rows: 1

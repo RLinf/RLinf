@@ -146,220 +146,174 @@ bridge online DAgger with offline SFT or real-robot datasets.
   streams episodes directly to the actor during DAgger training. Do **not** enable
   ``env.train.data_collection`` on the same train env when online LeRobot is on.
 
-Installation
-------------
+Setup and Run
+-------------
 
-Install the embodied environment with ``requirements/install.sh`` (use the LIBERO tab for ManiSkill as well), or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. See :doc:`../../start/installation` for shared options.
+Install with ``requirements/install.sh`` (in mainland China, append ``--use-mirror`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``), or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. See :doc:`../../start/installation` for shared options.
 
 .. tab-set::
 
-   .. tab-item:: LIBERO
+   .. tab-item:: LIBERO (Pi0)
+      :sync: libero
+
+      Install the environment and download a pretrained Pi0 student checkpoint (the expert checkpoint can come from a PPO run in :doc:`pi0`):
 
       .. code-block:: bash
 
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+
+      Set the student and expert paths in ``examples/embodiment/config/libero_spatial_dagger_openpi.yaml`` (or ``libero_spatial_dagger_openpi_lerobot.yaml`` for online LeRobot; rollout inherits ``actor.model.model_path`` automatically):
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_path: ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+
+         rollout:
+           expert_model:
+             model_path: /path/to/expert_model
+
+      Launch sync or async training (append ``_lerobot`` for the online LeRobot variant):
+
+      .. code-block:: bash
+
+         # Sync mode
+         bash examples/embodiment/run_embodiment.sh libero_spatial_dagger_openpi
+         bash examples/embodiment/run_embodiment.sh libero_spatial_dagger_openpi_lerobot
+
+         # Async mode
+         bash examples/embodiment/run_async.sh libero_spatial_dagger_openpi
+         bash examples/embodiment/run_async.sh libero_spatial_dagger_openpi_lerobot
+
+   .. tab-item:: RoboTwin (Pi0)
+      :sync: robotwin
+
+      Install the environment and download a pretrained Pi0 student checkpoint (set up RoboTwin code and assets as in :doc:`robotwin`, and obtain an expert checkpoint from :doc:`pi0`):
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
+         hf download RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi0-RoboTwin-SFT-adjust_bottle
+
+      Set the student, expert, and RoboTwin asset paths in ``examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml``:
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_path: ./RLinf-Pi0-RoboTwin-SFT-adjust_bottle
+
+         rollout:
+           expert_model:
+             model_path: /path/to/expert_model
+
+         env:
+           train:
+             assets_path: /path/to/robotwin_assets
+           eval:
+             assets_path: /path/to/robotwin_assets
+
+      Export ``ROBOT_PLATFORM`` and ``ROBOTWIN_PATH``, then launch sync or async training:
+
+      .. code-block:: bash
+
+         export ROBOT_PLATFORM=ALOHA
+         export ROBOTWIN_PATH=/path/to/RoboTwin
+         # Sync mode (or use run_async.sh for async mode)
+         bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_dagger_openpi
+
+   .. tab-item:: ManiSkill (MLP)
+      :sync: maniskill
+
+      Install the environment (reuses the ManiSkill / LIBERO environment):
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
-   .. tab-item:: RoboTwin
+      Set the expert checkpoint (from a PPO run in :doc:`mlp`) and optional student warm start in ``examples/embodiment/config/maniskill_dagger_mlp.yaml``:
+
+      .. code-block:: yaml
+
+         runner:
+           ckpt_path: null                       # Optional student warm start
+           expert_ckpt_path: /path/to/expert_ckpt
+
+      Launch sync or async training:
 
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
+         # Sync mode (or use run_async.sh for async mode)
+         bash examples/embodiment/run_embodiment.sh maniskill_dagger_mlp
 
-Checkpoint Setup
-----------------
+.. dropdown:: Advanced configuration (optional)
 
-Before launch, fill in the student and expert paths in the chosen YAML file.
+   The shipped configs already include working defaults for beta scheduling, replay buffer sizing, and online LeRobot settings. Override them only when tuning a run.
 
-**1. ManiSkill + MLP**
+   **Classic DAgger and replay-buffer parameters**
 
-The MLP DAgger config uses a student checkpoint and an expert checkpoint under
-``runner``:
+   .. code:: yaml
 
-.. code:: yaml
+      algorithm:
+        dagger:
+          only_save_expert: False   # Expert acts with probability beta and also relabels student steps
+          init_beta: 1.0
+          beta_schedule: "exponential"
+          beta_decay: 0.99
+          beta_min: 0.05            # Optional; defaults to 0.05 in code
 
-   runner:
-     ckpt_path: null                       # Optional student warm start
-     expert_ckpt_path: /path/to/expert_ckpt
+        replay_buffer:
+          enable_cache: True
+          cache_size: 2000
+          min_buffer_size: 16
+          sample_window_size: 2000
 
-The expert model in ``expert_ckpt_path`` could be produced by a PPO run in
-:doc:`mlp`.
+   For the MLP ManiSkill example, the config uses a larger replay buffer and ``beta_decay: 0.98`` by default. Check the YAML file you launch for the exact values.
 
-**2. LIBERO Spatial + Pi0**
+   **Online LeRobot parameters**
 
-The Pi0 DAgger config uses separate student and expert model paths:
+   The online LeRobot config does not use ``algorithm.replay_buffer``. Tune ``algorithm.dagger.online_lerobot`` instead:
 
-.. code:: yaml
+   .. code:: yaml
 
-   actor:
-     model:
-       model_path: /path/to/student_model
+      algorithm:
+        dagger:
+          online_lerobot:
+            enabled: True
+            only_success: True
+            robot_type: "panda"
+            fps: 10
+            finalize_interval: 8
+            data_path: ${runner.logger.log_path}/physical-intelligence/libero
+            rolling_lerobot_window_size: 50000
+            enable_decoded_cache: true
+            decoded_cache_capacity: 25000
+            cache_ingest_mode: new_shards   # or last_n / both
+            lerobot_num_workers: 0          # recommended when cache is on
 
-   rollout:
-     model:
-       model_path: /path/to/student_model
-     expert_model:
-       model_path: /path/to/expert_model
+   .. list-table::
+      :header-rows: 1
+      :widths: 34 66
 
-You can find pretrained Pi0 checkpoints on Hugging Face for student initialization. For example:
-
-.. code:: bash
-
-   hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir /path/to/model
-
-The expert model checkpoint could also come from a PPO run in :doc:`pi0`.
-
-**3. RoboTwin + Pi0**
-
-The Pi0 DAgger config uses separate student and expert model paths:
-
-.. code:: yaml
-
-   actor:
-     model:
-       model_path: /path/to/student_model
-
-   rollout:
-     model:
-       model_path: /path/to/student_model
-     expert_model:
-       model_path: /path/to/expert_model
-
-In the same way, ou can find pretrained Pi0 checkpoints on Hugging Face for student initialization. For example:
-
-.. code:: bash
-
-   hf download RLinf/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir /path/to/model
-
-The expert model checkpoint could also come from a PPO run in :doc:`pi0`.
-
-In addition, the RoboTwin environment requires separate configuration of the RoboTwin code and corresponding Assets. Refer to :doc:`robotwin` for details, and then configure the corresponding paths in your YAML file.
-
-.. code:: yaml
-
-   env:
-     train:
-       assets_path: /path/to/robotwin_assets
-     eval:
-       assets_path: /path/to/robotwin_assets
-
-**4. LIBERO Spatial + Pi0 (online LeRobot)**
-
-Use the same student and expert ``model_path`` fields as the classic LIBERO Pi0
-DAgger config above. Rolling-window and cache settings live under
-``algorithm.dagger.online_lerobot``:
-
-.. code:: yaml
-
-   algorithm:
-     dagger:
-       online_lerobot:
-         enabled: True
-         only_success: True
-         robot_type: "panda"
-         fps: 10
-         finalize_interval: 8
-         data_path: ${runner.logger.log_path}/physical-intelligence/libero
-         rolling_lerobot_window_size: 50000
-         enable_decoded_cache: true
-         decoded_cache_capacity: 25000
-         cache_ingest_mode: new_shards   # or last_n / both
-         lerobot_num_workers: 0          # recommended when cache is on
-
-See ``examples/embodiment/config/libero_spatial_dagger_openpi_lerobot.yaml`` for
-the full reference config.
-
-
-Run It
-------
-
-**1. Configuration files**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 66
-
-   * - Setup
-     - Config
-   * - MLP + ManiSkill
-     - ``examples/embodiment/config/maniskill_dagger_mlp.yaml``
-   * - Pi0 + LIBERO
-     - ``examples/embodiment/config/libero_spatial_dagger_openpi.yaml``
-   * - Pi0 + LIBERO (online LeRobot)
-     - ``examples/embodiment/config/libero_spatial_dagger_openpi_lerobot.yaml``
-   * - Pi0 + RoboTwin
-     - ``examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml``
-
-**2. Key DAgger Parameters**
-
-.. code:: yaml
-
-   algorithm:
-     dagger:
-       only_save_expert: False   # Expert acts with probability beta and also relabels student steps
-       init_beta: 1.0
-       beta_schedule: "exponential"
-       beta_decay: 0.99
-       beta_min: 0.05            # Optional; defaults to 0.05 in code
-
-     replay_buffer:
-       enable_cache: True
-       cache_size: 2000
-       min_buffer_size: 16
-       sample_window_size: 2000
-
-For the MLP ManiSkill example, the config uses a larger replay buffer and
-``beta_decay: 0.98`` by default. Check the YAML file you launch for the exact
-values.
-
-**Online LeRobot parameters**
-
-The online LeRobot config does not use ``algorithm.replay_buffer``. Tune the
-``algorithm.dagger.online_lerobot`` fields instead:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 66
-
-   * - Key
-     - Meaning
-   * - ``online_lerobot.enabled``
-     - Turn on in-memory LeRobot episode collection during DAgger training.
-   * - ``online_lerobot.only_success``
-     - Keep only successful episodes; failed rollouts are discarded.
-   * - ``online_lerobot.data_path``
-     - Root directory for LeRobot shards written by the rolling dataset.
-   * - ``online_lerobot.finalize_interval``
-     - Finalize LeRobot metadata every N completed episodes.
-   * - ``rolling_lerobot_window_size``
-     - Maximum number of frames kept in the rolling training window.
-   * - ``enable_decoded_cache``
-     - Cache decoded frames to speed up actor DataLoader sampling.
-
-**3. Launch Commands**
-
-Use the same config name with either launcher:
-
-**Sync Mode**
-
-::
-
-   bash examples/embodiment/run_embodiment.sh maniskill_dagger_mlp
-   bash examples/embodiment/run_embodiment.sh libero_spatial_dagger_openpi
-   bash examples/embodiment/run_embodiment.sh libero_spatial_dagger_openpi_lerobot
-   bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_dagger_openpi
-   # For RoboTwin, add the following two commands before running the .sh file:
-   # export ROBOT_PLATFORM=ALOHA export ROBOTWIN_PATH=/path/to/RoboTwin
-
-**Async Mode**
-
-::
-
-   bash examples/embodiment/run_async.sh maniskill_dagger_mlp
-   bash examples/embodiment/run_async.sh libero_spatial_dagger_openpi
-   bash examples/embodiment/run_async.sh libero_spatial_dagger_openpi_lerobot
-   bash examples/embodiment/run_async.sh robotwin_adjust_bottle_dagger_openpi
-   # For RoboTwin, add the following two commands before running the .sh file:
-   # export ROBOT_PLATFORM=ALOHA export ROBOTWIN_PATH=/path/to/RoboTwin
+      * - Key
+        - Meaning
+      * - ``online_lerobot.enabled``
+        - Turn on in-memory LeRobot episode collection during DAgger training.
+      * - ``online_lerobot.only_success``
+        - Keep only successful episodes; failed rollouts are discarded.
+      * - ``online_lerobot.data_path``
+        - Root directory for LeRobot shards written by the rolling dataset.
+      * - ``online_lerobot.finalize_interval``
+        - Finalize LeRobot metadata every N completed episodes.
+      * - ``rolling_lerobot_window_size``
+        - Maximum number of frames kept in the rolling training window.
+      * - ``enable_decoded_cache``
+        - Cache decoded frames to speed up actor DataLoader sampling.
 
 Visualization and Results
 -------------------------

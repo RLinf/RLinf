@@ -3,68 +3,43 @@ DreamZero SGLang 评测
 
 本文档说明如何通过 RLinf 的 SGLang embodied backend 运行 DreamZero LIBERO 评测。该路径用于只做推理评测的场景，要求 DreamZero checkpoint 已转换为 SGLang-native 的组件化目录。
 
-与 :doc:`../../examples/embodied/sft_dreamzero` 中的原始 DreamZero eval 路径相比，SGLang backend 把庞大的 DreamZero 网络放在独立拉起的 ``sglang serve`` 进程里，而不是在 rollout worker 中加载。但 worker 仍然需要安装 DreamZero 的 transform 栈：``rlinf.models.embodiment.dreamzero.sglang_adapter`` 会 import ``rlinf.data.datasets.dreamzero.data_transforms``，后者依赖由 ``install_dreamzero_deps`` 安装的 ``groot`` 包。由 eval driver 拉起 SGLang server group 并把每个 server URL 下发给各 rollout worker；worker 只是一个瘦客户端，通过 VLA action API 向本 rank 分配到的 URL 发送 batched observation，并将返回的 action chunk 反归一化后送入 LIBERO 环境。
+与 :doc:`../../examples/embodied/sft_dreamzero` 中的原始 DreamZero eval 路径相比，SGLang backend 把庞大的 DreamZero 网络放在独立拉起的 ``sglang serve`` 进程里，而不是在 rollout worker 中加载。但 worker 仍然需要安装 DreamZero 的数据变换栈（包含随 DreamZero 依赖一起安装的 ``groot`` 包）。由 eval driver 拉起 SGLang server group 并把每个 server URL 下发给各 rollout worker；worker 作为瘦客户端，通过 VLA action API 向本 rank 分配到的 URL 发送 batched observation，并将返回的 action chunk 反归一化后送入 LIBERO 环境。
 
-安装测试环境
-------------
+一键上手
+--------
 
-DreamZero SGLang 评测需要 CUDA 13.0 及以上版本。安装以下依赖前，请确认环境满足此要求。
+DreamZero SGLang 评测需要 CUDA 13.0 及以上版本。DreamZero 支持仍在 SGLang PR 中，需在同一虚拟环境中从包含 `sgl-project/sglang#30679 <https://github.com/sgl-project/sglang/pull/30679>`_ 的本地目录安装带 ``diffusion`` extra 的 SGLang。
 
-安装 embodied、LIBERO 和 DreamZero SGLang 依赖：
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
-.. code-block:: bash
+.. tab-set::
 
-   cd /path/to/RLinf
-   bash requirements/install.sh embodied --env libero --model dreamzero \
-     --venv /path/to/dreamzero_test
+   .. tab-item:: DreamZero SGLang + LIBERO
 
-DreamZero 支持仍在 SGLang PR 中，需使用包含
-`sgl-project/sglang#30679 <https://github.com/sgl-project/sglang/pull/30679>`_
-的 SGLang 代码，并启用 ``diffusion`` extra：
+      .. code-block:: bash
 
-.. code-block:: bash
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env libero --model dreamzero && source .venv/bin/activate
+         pip install -e "/path/to/sglang_dreamzero/python[diffusion]"
 
-   source /path/to/dreamzero_test/bin/activate
-   cd /path/to/sglang_dreamzero
-   pip install -e "python[diffusion]"
+         # 2. 下载 LIBERO SFT Diffusers checkpoint
+         hf download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers --local-dir ./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
-准备 Checkpoint
----------------
+         # 3. 启动 LIBERO-Spatial 评测
+         bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
+           rollout.model.model_path=./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
-从
-`RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers>`_
-下载 LIBERO SFT Diffusers checkpoint。将 ``rollout.model.model_path`` 指向下载后的 checkpoint 目录。
+默认 SGLang 评测配置为 ``evaluations/libero/libero_spatial_dreamzero_eval_sglang.yaml``，使用 `RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers>`_。
 
-.. code-block:: bash
-
-   hf download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers \
-     --local-dir /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
-
-checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果 checkpoint 中没有 metadata，可从 LIBERO 数据集生成，并显式设置 ``rollout.model.metadata_json_path``：
+checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果 checkpoint 中没有 metadata，可从 LIBERO 数据集生成，并在启动命令中追加 ``rollout.model.metadata_json_path=./metadata.json``：
 
 .. code-block:: bash
 
    python toolkits/lerobot/generate_dreamzero_metadata.py \
      --preset libero_sim \
      --dataset-root /path/to/libero \
-     --output-metadata /path/to/metadata.json
-
-运行 LIBERO-Spatial
--------------------
-
-默认 SGLang 评测配置为 ``evaluations/libero/libero_spatial_dreamzero_eval_sglang.yaml``。
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-   bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
-     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
-
-如果使用自定义 metadata 文件，额外加入：
-
-.. code-block:: bash
-
-   rollout.model.metadata_json_path=/path/to/metadata.json
+     --output-metadata ./metadata.json
 
 关键配置
 --------
@@ -78,9 +53,7 @@ checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果 checkpoi
    * - ``rollout.rollout_backend: sglang``
      - 选择 SGLang rollout backend。
    * - ``rollout.sglang.serving_mode: embodied``
-     - 选择 ``SGLangEmbodiedWorker``；SGLang serve 组由驱动脚本
-       （``launch_sglang_router_and_server``）拉起，worker 连接 driver 分配的
-       server URL 进行推理。
+     - 启用具身 SGLang 服务模式：由评测驱动脚本拉起 SGLang server 组，并为每个 rollout worker 分配 server URL 推理。
    * - ``rollout.sglang.server.pipeline_config.default_num_inference_steps``
      - 控制 server 侧 DreamZero denoising steps。
    * - ``rollout.sglang.server.pipeline_config.cfg_scale``
@@ -108,7 +81,7 @@ checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果 checkpoi
    bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
      rollout.sglang.server.num_gpus=2 \
      rollout.sglang.server.cfg_parallel_degree=2 \
-     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
+     rollout.model.model_path=./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
 验证
 ----

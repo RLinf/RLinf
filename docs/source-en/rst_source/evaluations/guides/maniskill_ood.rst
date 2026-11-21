@@ -5,30 +5,34 @@ ManiSkill OOD evaluation measures how well VLA policies generalize to out-of-dis
 
 Related training doc: :doc:`../../examples/embodied/maniskill`
 
-Environment Setup
------------------
+Setup and Run
+-------------
 
-.. code-block:: bash
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
 
-   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
+.. tab-set::
 
-``evaluations/maniskill/`` currently ships only an OpenVLA-OFT example config. OpenVLA, OpenPI, and other models have ManiSkill training configs but no dedicated eval YAML yet — see :ref:`maniskill-derive-from-train` below.
+   .. tab-item:: OpenVLA-OFT + ManiSkill
 
-Download ManiSkill assets if not already present:
+      .. code-block:: bash
 
-.. code-block:: bash
+         # 1. Install
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-   hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         # 2. Download assets and checkpoints
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         hf download RLinf/Openvla-oft-SFT-libero10-trajall --local-dir ./Openvla-oft-SFT-libero10-trajall
+         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
-Models and Checkpoints
-----------------------
+         # 3. Launch
+         bash evaluations/run_eval.sh maniskill maniskill_ood_openvlaoft_eval \
+           rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall \
+           rollout.model.lora_path=./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
-OpenVLA-OFT evaluation typically requires two weight sources:
+``evaluations/maniskill/`` ships only an OpenVLA-OFT example config (`RLinf/Openvla-oft-SFT-libero10-trajall <https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall>`_ base + `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_ LoRA). OpenVLA, OpenPI, and other models have ManiSkill training configs but no dedicated eval YAML yet — see :ref:`maniskill-derive-from-train` below.
 
-1. **Base model** ``rollout.model.model_path``: e.g. `RLinf/Openvla-oft-SFT-libero10-trajall <https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall>`_
-2. **ManiSkill LoRA** ``rollout.model.lora_path``: e.g. `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_
-
-To evaluate an RL-trained policy, pass the ``.pt`` checkpoint via ``runner.ckpt_path`` or ``CKPT_PATH``; it overrides model initialization.
+To evaluate an RL-trained policy, pass the ``.pt`` checkpoint via ``runner.ckpt_path`` or ``CKPT_PATH``; it overrides model initialization. The terminal prints ``eval/success_once``; see :doc:`../reference/results` for logs and videos.
 
 Example Configs
 ---------------
@@ -45,31 +49,6 @@ Available under ``evaluations/maniskill/``:
    * - ``maniskill_ood_openvlaoft_eval.yaml``
      - OOD generalization template (default: training scene)
      - OpenVLA-OFT
-
-End-to-End Workflow
--------------------
-
-**Step 1: Activate the environment**
-
-.. code-block:: bash
-
-   source .venv/bin/activate
-
-**Step 2: Edit the config**
-
-Copy or edit the target YAML and set at least ``rollout.model.model_path`` and ``rollout.model.lora_path``. See :doc:`../reference/configuration` (:ref:`env-eval-fields`) for general ``env.eval`` fields; see :ref:`maniskill-eval-config` below for ManiSkill scene selection and protocol.
-
-**Step 3: Launch evaluation**
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh maniskill maniskill_ood_openvlaoft_eval \
-     rollout.model.model_path=/path/to/model \
-     rollout.model.lora_path=/path/to/lora
-
-**Step 4: Check results**
-
-The terminal prints ``eval/success_once``; see :doc:`../reference/results` for logs and videos.
 
 .. _maniskill-eval-config:
 
@@ -198,7 +177,7 @@ Override ``init_params`` via Hydra to evaluate the default training scene or any
 Covering the Full Test Set
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``total_num_trials`` per scene depends on object count, plate count, and pose combinations. With sufficient resources, increase ``total_num_envs``; when resources are limited, set ``max_steps_per_rollout_epoch`` to a multiple of ``max_episode_steps`` under ``auto_reset=True`` so each ``rollout_epoch`` serially covers more ``episode_id`` values:
+The number of trials per scene depends on object count, plate count, and pose combinations. With sufficient resources, increase ``total_num_envs``; when resources are limited, set ``max_steps_per_rollout_epoch`` to a multiple of ``max_episode_steps`` under ``auto_reset=True`` so each ``rollout_epoch`` serially covers more ``episode_id`` values:
 
 .. code-block:: yaml
 
@@ -212,8 +191,8 @@ Covering the Full Test Set
        use_fixed_reset_state_ids: True
        rollout_epoch: 1
 
-Batch OOD Evaluation (``mani-ood`` mode)
-----------------------------------------
+Batch OOD Evaluation
+--------------------
 
 The ``mani-ood`` mode runs evaluation on all 13 OOD scenes (``obj_set=test``) plus 3 Semantic scenes (``obj_set=train``), for **16** runs total — matching the full OOD protocol in the training docs.
 
@@ -278,7 +257,7 @@ ManiSkill also supports training tasks such as ``PickCube-v1`` and ``PutCarrotOn
 FAQ
 ---
 
-- **Asset path:** Ensure ManiSkill assets are downloaded to ``rlinf/envs/sim/maniskill/assets``.
+- **Asset path:** Ensure ManiSkill assets have been downloaded using the asset download command above.
 - **GPU simulation:** ``sim_backend: gpu`` requires an NVIDIA GPU.
 - **LoRA path:** OpenVLA-OFT eval requires ``lora_path``; without it the ManiSkill policy cannot load correctly.
 - **Checkpoint:** Batch mode passes ``.pt`` weights via ``CKPT_PATH``; single runs use ``runner.ckpt_path``.

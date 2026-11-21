@@ -64,133 +64,81 @@
 安装
 ----------------------------------------
 
-1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+使用 ``requirements/install.sh`` 安装 OpenPI + ManiSkill 环境（中国大陆用户可在命令末尾追加 ``--use-mirror``，并在执行 ``hf download`` 前设置 ``export HF_ENDPOINT=https://hf-mirror.com``），或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像。基础 ManiSkill 资产设置见 :doc:`ManiSkill 示例 <maniskill>`。
 
-.. code:: bash
+.. tab-set::
 
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+   .. tab-item:: OpenPI + ManiSkill
 
-2. 安装依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      .. code-block:: bash
 
-使用下面的 ``requirements/install.sh`` 命令安装依赖，或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
-.. code:: bash
 
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+下载资产、模型与数据
+----------------------------------------
 
-Maniskill 资源下载
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+一次性下载数字孪生所需的 ManiSkill 资产、Stage II 协同训练用的 50 条真机轨迹，以及现成的 Stage I SFT checkpoint（推荐）或 Stage I 混合数据集（`RLinf/RLCo-Example-Mix-Data <https://huggingface.co/datasets/RLinf/RLCo-Example-Mix-Data>`_，含 50 条真机轨迹 + 1499 条仿真轨迹）：
 
-请先参考 :doc:`ManiSkill 示例 <maniskill>` 下载基础资源。随后下载本示例所需的特定资源：
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: 使用 SFT 预训练权重（推荐）
 
-   cd <path_to_RLinf>/rlinf/envs/sim/maniskill/assets
-   hf download --repo-type dataset RLinf/RLCo-maniskill-assets --include "custom_assets/*" --local-dir .
+      .. code-block:: bash
+
+         hf download RLinf/RLCo-maniskill-assets --repo-type dataset --include "custom_assets/*" --local-dir ./rlinf/envs/sim/maniskill/assets
+         hf download RLinf/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT --local-dir ./RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
+         hf download RLinf/RLCo-Example-Real-Data --repo-type dataset --local-dir ./RLCo-Example-Real-Data
+
+   .. tab-item:: 自行训练 Stage I SFT
+
+      下载资产和数据集后，参考 `OpenPi 官方代码 <https://github.com/Physical-Intelligence/openpi>`_ 或 :doc:`OpenPI 监督微调 <sft_openpi>` 运行 Stage I SFT：
+
+      .. code-block:: bash
+
+         hf download RLinf/RLCo-maniskill-assets --repo-type dataset --include "custom_assets/*" --local-dir ./rlinf/envs/sim/maniskill/assets
+         hf download RLinf/RLCo-Example-Mix-Data --repo-type dataset --local-dir ./RLCo-Example-Mix-Data
+         hf download RLinf/RLCo-Example-Real-Data --repo-type dataset --local-dir ./RLCo-Example-Real-Data
+
 
 运行
 ----------------------------------------
 
-Stage I：SFT 预训练
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+本阶段在 PPO 训练循环中加入 50 条真机轨迹的 SFT 损失。默认配置文件为 ``examples/embodiment/config/maniskill_ppo_co_training_openpi_pi05.yaml``。通用路径、集群和 runner 字段见 :doc:`训练配置 <../../reference/configuration>`；PPO 参数见 :doc:`π0 和 π0.5 模型强化学习训练 <pi0>`。
 
-第一阶段通过监督学习注入真机与仿真数据，为后续 RL 训练打下基础。你可以 **自行训练**，也可以直接 **下载权重**。
-
-**方法 A：使用真机-仿真数据训练 SFT**
-
-我们提供了 LeRobot 格式数据集（50 条真机轨迹 + 1499 条仿真轨迹），托管于 `RLinf/RLCo-Example-Mix-Data <https://huggingface.co/datasets/RLinf/RLCo-Example-Mix-Data>`_。
-
-1. **下载数据集**：
-
-.. code:: bash
-
-   hf download --repo-type dataset RLinf/RLCo-Example-Mix-Data --local-dir RLCo-Example-Mix-Data
-
-2. **执行训练**：
-
-训练方法请参考 `OpenPi 官方代码 <https://github.com/Physical-Intelligence/openpi>`_ 或 RLinf 文档中的 :doc:`监督训练微调 <sft_openpi>` 章节。
-
-**方法 B：使用 SFT 预训练权重**
-
-跳过训练步骤，直接使用我们提供的 SFT Checkpoint：
-
-.. code:: bash
-
-   hf download RLinf/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT --local-dir RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
-
-Stage II：仿真-真机协同 RL 训练
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-本阶段在 PPO 训练循环中加入 SFT 损失，实现协同优化。
-
-**数据准备**
-
-下载用于 Co-Training 的 50 条真机轨迹数据（LeRobot 格式）：
-
-.. code:: bash
-
-   hf download --repo-type dataset RLinf/RLCo-Example-Real-Data --local-dir RLCo-Example-Real-Data
-
-**关键参数配置**
-
-我们提供 ``maniskill_ppo_co_training_openpi_pi05.yaml`` 配置文件。通用路径、集群和 runner 字段见 :doc:`训练配置 <../../reference/configuration>`；PPO 训练相关参数可参照 :doc:`π0 和 π0.5 模型强化学习训练 <pi0>`。另外需关注以下参数：
-
-**模型加载路径**
-
-将 ``model_path`` 指向 SFT 权重目录，``sft_data_path`` 指向真机数据路径：
-
-.. code-block:: yaml
-
-   rollout:
-      model:
-         model_path: /path/to/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
-   actor:
-      sft_data_path: /path/to/RLCo-Example-Real-Data
-      model:
-         model_path: /path/to/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
-
-**Co-Training 策略配置**
+将 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）指向 SFT 权重目录，将 ``actor.sft_data_path`` 指向真机数据目录：
 
 .. code-block:: yaml
 
    actor:
-       model:
-           openpi:
-               config_name: "pi05_maniskill_sim_real_co_training"
+     sft_data_path: ./RLCo-Example-Real-Data
+     model:
+       model_path: ./RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
 
-       # 开启真机数据协同训练
-       enable_sft_co_train: True
-
-       # SFT Loss 权重系数 (beta)
-       sft_loss_weight: 0.2
-
-* ``enable_sft_co_train``: 设为 ``True`` 开启协同训练。若为 ``False``，则退化为纯 PPO 训练。
-* ``sft_loss_weight``: 控制 SFT Loss (:math:`\mathcal{L}_{SFT}`) 在总 Loss 中的占比权重 :math:`\beta`。
-
-**Python 配置类参考**
-
-在代码层面，``pi05_maniskill_sim_real_co_training`` 对应的配置位于 ``rlinf/models/embodiment/openpi/dataconfig/__init__.py``。需确保 ``model`` 架构与 ``normalization`` 状态与 SFT 阶段保持一致。
-
-**关于 Batch Size 的说明:**
-
-配置文件中的 batch_size 指的是梯度累积前的微批次大小。
-实际更新是单批次数据量计算公式为：
-
-.. math::
-
-   \text{True\_Batch\_Size} = \frac{\text{Global\_Batch\_Size} \times \text{Input\_Batch}}{\text{Micro\_Batch\_Size} \times \text{Num\_GPUs}}
-
-对于 ``global_batch_size`` 和 ``micro_batch_size`` 的具体数值设定请参考 :doc:`./pi0`。
-
-**运行脚本**
-
-我们提供了预设脚本，直接运行即可启动训练：
+在仓库根目录启动协同训练：
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_co_training_openpi_pi05
+
+.. dropdown:: 进阶配置（可选）
+
+   仓库自带配置已设置协同训练开关与 ``pi05_maniskill_sim_real_co_training`` 数据配置（保持模型架构和归一化统计与 Stage I 一致）：
+
+   .. code-block:: yaml
+
+      actor:
+        model:
+          openpi:
+            config_name: "pi05_maniskill_sim_real_co_training"
+        enable_sft_co_train: True
+        sft_loss_weight: 0.2
+
+   * ``enable_sft_co_train``：设为 ``True`` 开启协同训练；设为 ``False`` 时退化为纯 PPO 训练。
+   * ``sft_loss_weight``：控制 SFT 损失在总损失中的权重。
+
+   配置文件中的 ``batch_size`` 指梯度累积前的微批次大小，实际单次更新数据量为 ``(global_batch_size * input_batch) / (micro_batch_size * num_gpus)``。``global_batch_size`` 和 ``micro_batch_size`` 的设置见 :doc:`./pi0`。
 
 可视化与结果
 ----------------------------------------

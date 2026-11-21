@@ -5,30 +5,34 @@ ManiSkill OOD 评测用于检验 VLA 策略在 ManiSkill 分布外（Out-of-Dist
 
 相关训练文档：:doc:`../../examples/embodied/maniskill`
 
-环境准备
+一键上手
 --------
 
-.. code-block:: bash
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
-   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
+.. tab-set::
 
-当前 ``evaluations/maniskill/`` 仅提供 OpenVLA-OFT 示例配置；OpenVLA、OpenPI 等模型在 ManiSkill 上有训练配置，但尚无独立评测 YAML，可从训练配置派生（见下文 :ref:`maniskill-derive-from-train`）。
+   .. tab-item:: OpenVLA-OFT + ManiSkill
 
-下载 ManiSkill 资源（若尚未下载）：
+      .. code-block:: bash
 
-.. code-block:: bash
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-   hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         # 2. 下载资产与模型权重
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         hf download RLinf/Openvla-oft-SFT-libero10-trajall --local-dir ./Openvla-oft-SFT-libero10-trajall
+         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
-模型与权重
-----------
+         # 3. 启动评测
+         bash evaluations/run_eval.sh maniskill maniskill_ood_openvlaoft_eval \
+           rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall \
+           rollout.model.lora_path=./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
-OpenVLA-OFT 评测通常需要两类权重：
+当前 ``evaluations/maniskill/`` 仅提供 OpenVLA-OFT 示例配置（基座模型 `RLinf/Openvla-oft-SFT-libero10-trajall <https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall>`_ + ManiSkill LoRA `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_）；OpenVLA、OpenPI 等模型在 ManiSkill 上有训练配置，但尚无独立评测 YAML，可从训练配置派生（见下文 :ref:`maniskill-derive-from-train`）。
 
-1. **基座模型** ``rollout.model.model_path``：如 `RLinf/Openvla-oft-SFT-libero10-trajall <https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall>`_
-2. **ManiSkill LoRA** ``rollout.model.lora_path``：如 `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_
-
-若评测 RL 训练产出的策略，通过 ``runner.ckpt_path`` 或 ``CKPT_PATH`` 传入 ``.pt`` 权重即可，会覆盖模型初始化参数。
+若评测 RL 训练产出的策略，通过 ``runner.ckpt_path`` 或 ``CKPT_PATH`` 传入 ``.pt`` 权重即可，会覆盖模型初始化参数。终端输出 ``eval/success_once``；日志与视频见 :doc:`../reference/results`。
 
 示例配置
 --------
@@ -45,31 +49,6 @@ OpenVLA-OFT 评测通常需要两类权重：
    * - ``maniskill_ood_openvlaoft_eval.yaml``
      - OOD 泛化评测模板（默认训练场景）
      - OpenVLA-OFT
-
-完整评测流程
-------------
-
-**Step 1：激活环境**
-
-.. code-block:: bash
-
-   source .venv/bin/activate
-
-**Step 2：编辑配置**
-
-复制或编辑目标 YAML，至少修改 ``rollout.model.model_path`` 与 ``rollout.model.lora_path``。``env.eval`` 通用字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`；ManiSkill 场景选择与协议见下文 :ref:`maniskill-eval-config`。
-
-**Step 3：启动评测**
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh maniskill maniskill_ood_openvlaoft_eval \
-     rollout.model.model_path=/path/to/model \
-     rollout.model.lora_path=/path/to/lora
-
-**Step 4：查看结果**
-
-终端输出 ``eval/success_once``；日志与视频见 :doc:`../reference/results`。
 
 .. _maniskill-eval-config:
 
@@ -198,7 +177,7 @@ OpenVLA-OFT 模型字段
 覆盖完整测试集
 ~~~~~~~~~~~~~~
 
-每个场景的 ``total_num_trials`` 由物体数、盘子数与位姿组合数决定。资源充足时可增大 ``total_num_envs``；资源受限时在 ``auto_reset=True`` 下将 ``max_steps_per_rollout_epoch`` 设为 ``max_episode_steps`` 的整数倍，使每轮 ``rollout_epoch`` 串行覆盖更多 ``episode_id``：
+每个场景的总 trial 数由物体数、盘子数与位姿组合数决定。资源充足时可增大 ``total_num_envs``；资源受限时在 ``auto_reset=True`` 下将 ``max_steps_per_rollout_epoch`` 设为 ``max_episode_steps`` 的整数倍，使每轮 ``rollout_epoch`` 串行覆盖更多 ``episode_id``：
 
 .. code-block:: yaml
 
@@ -212,8 +191,8 @@ OpenVLA-OFT 模型字段
        use_fixed_reset_state_ids: True
        rollout_epoch: 1
 
-批量 OOD 评测（``mani-ood`` 模式）
------------------------------------
+批量 OOD 评测
+-------------
 
 ``mani-ood`` 模式会依次在上述 13 个 OOD 场景（``obj_set=test``）及 3 个 Semantic 场景（``obj_set=train``）上运行评测，合计 **16** 次，与训练文档中的完整 OOD 协议一致。
 
@@ -278,7 +257,7 @@ ManiSkill 还支持 ``PickCube-v1``、``PutCarrotOnPlateInScene-v2`` 等训练�
 常见问题
 --------
 
-- **资源路径：** 确保 ManiSkill assets 已下载到 ``rlinf/envs/sim/maniskill/assets``。
+- **资源路径：** 确保已按上文命令下载 ManiSkill 资产。
 - **GPU 仿真：** ``sim_backend: gpu`` 需要 NVIDIA GPU。
 - **LoRA 路径：** OpenVLA-OFT 评测必须设置 ``lora_path``，否则无法正确加载 ManiSkill 策略。
 - **checkpoint：** 批量模式通过 ``CKPT_PATH`` 传入 ``.pt`` 权重；单次评测使用 ``runner.ckpt_path``。

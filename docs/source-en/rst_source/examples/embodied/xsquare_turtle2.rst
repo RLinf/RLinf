@@ -95,58 +95,42 @@ The real-world setup requires:
 Installation
 ------------
 
-The controller node and the training/rollout node(s) require different software dependencies.
+.. include:: _setup_common.rst
 
-Robot Controller Node
-~~~~~~~~~~~~~~~~~~~~~
+The controller node and the training/rollout node(s) require different software dependencies:
 
-The XSquare Turtle2 platform ships with its own SDK and ROS-based controller stack. **Please ensure that you have entered the official Docker container of Xsquare before starting the following installation.**. Contact `XSquare <https://x2robot.com>`_
-for the exact Docker image and startup instructions.
+.. tab-set::
 
-After entering the XSquare Docker container, clone the RLinf repository inside it:
+   .. tab-item:: Robot Controller Node
 
-.. code:: bash
+      The XSquare Turtle2 platform ships with its own SDK and ROS-based controller stack. **Enter the official XSquare Docker container before running these commands** (contact `XSquare <https://x2robot.com>`__ for the image and startup instructions):
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+      .. code-block:: bash
 
-Then install the RLinf Python dependencies for the embodied real-world setup:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env xsquare_turtle2 && source .venv/bin/activate
 
-.. code:: bash
+   .. tab-item:: Training / Rollout Nodes
 
-   bash requirements/install.sh embodied --env xsquare_turtle2 && source .venv/bin/activate
+      .. code-block:: bash
 
-Training / Rollout Nodes
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-A. Clone RLinf Repository
-^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code:: bash
-
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-B. Install Dependencies
-^^^^^^^^^^^^^^^^^^^^^^^
-
-Install dependencies with ``requirements/install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
-
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
 Download the Model
 ------------------
 
-Before starting training, download the pretrained ResNet CNN backbone:
+Download the pretrained ResNet CNN backbone before starting training:
 
-.. code:: bash
+.. tab-set::
 
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+   .. tab-item:: ResNet-10
 
-After downloading, update the ``model_path`` field in the configuration YAML file.
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
+
+.. include:: _model_path.rst
 
 
 Run It
@@ -187,27 +171,27 @@ The script sets up the following:
 1. Source the correct virtual Python environment (see Dependency Installation above).
 2. On the controller node: ensure the XSquare SDK packages are discoverable (this is
    handled automatically when using the XSquare official Docker image).
-3. Set RLinf environment variables on all nodes:
+3. Set RLinf environment variables on all nodes (run from the RLinf repo root; replace ``0`` and ``eth0`` with your node rank and network interface):
 
 .. code-block:: bash
 
-   export PYTHONPATH=<path_to_your_RLinf_repo>:$PYTHONPATH
-   export RLINF_NODE_RANK=<node_rank_of_this_node>
-   export RLINF_COMM_NET_DEVICES=<network_device>  # Optional if only one NIC
+   export PYTHONPATH="$PWD:$PYTHONPATH"
+   export RLINF_NODE_RANK=0
+   export RLINF_COMM_NET_DEVICES=eth0  # Optional if only one NIC
 
 ``RLINF_NODE_RANK`` is set to ``0 ~ N-1`` for each of the ``N`` nodes.
 ``RLINF_COMM_NET_DEVICES`` is only needed if the machine has multiple network interfaces;
 check with ``ifconfig`` or ``ip addr``.
 
-Start Ray on each node after sourcing the script:
+Start Ray on each node after sourcing the script (replace ``192.168.1.10`` with your head node IP):
 
 .. code-block:: bash
 
    # On the head node (node rank 0)
-   ray start --head --port=6379 --node-ip-address=<head_node_ip_address>
+   ray start --head --port=6379 --node-ip-address=192.168.1.10
 
    # On worker nodes (node rank 1 ~ N-1)
-   ray start --address='<head_node_ip_address>:6379'
+   ray start --address='192.168.1.10:6379'
 
 Run ``ray status`` to verify the cluster is up.
 
@@ -258,10 +242,6 @@ Key fields to update:
       model_path: "/path/to/RLinf-ResNet10-pretrained"
       state_dim: 6    # 6 for single arm (xyz+euler); 12 for dual arm
       action_dim: 6   # 6 for single arm (xyz_delta+rpy_delta); 12 for dual arm
-
-  rollout:
-    model:
-      model_path: "/path/to/RLinf-ResNet10-pretrained"
 
 For the **button-pressing** task, the ``target_ee_pose`` defines both the success
 threshold position and the reset position (arms reset to a pose slightly above the

@@ -88,82 +88,91 @@ How DSRL Works
 Installation
 ------------
 
-DSRL uses the same environment and model dependencies as Pi0. Please refer to :doc:`pi0` for the full installation guide, including Docker image setup, dependency installation, and model download.
+.. include:: _setup_common.rst
+
+DSRL shares the OpenPI environment and model dependencies with :doc:`pi0`:
+
+.. tab-set::
+
+   .. tab-item:: OpenPI π₀ (LIBERO)
+      :sync: dsrl-pi0
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+
+Download the Model
+------------------
+
+Download the pretrained OpenPI π₀ SFT checkpoint for LIBERO-Spatial:
+
+.. tab-set::
+
+   .. tab-item:: OpenPI π₀ (LIBERO)
+      :sync: dsrl-pi0
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+
+.. include:: _model_path.rst
 
 Run It
 ------
 
-**1. Configuration File**
+Launch DSRL training using ``examples/embodiment/config/libero_spatial_dsrl_openpi.yaml``:
 
-- **DSRL Training**: ``examples/embodiment/config/libero_spatial_dsrl_openpi.yaml``
-
-**2. Key Parameter Configuration**
-
-**2.1 DSRL Model Parameters**
-
-.. code:: yaml
-
-   actor:
-     model:
-       openpi:
-         use_dsrl: True              # Enable DSRL mode
-         dsrl_state_dim: 8           # Robot proprioception dimension
-         dsrl_action_noise_dim: 32   # Noise action dimension per step
-         dsrl_num_q_heads: 10        # Number of Q-heads in ensemble critic
-         dsrl_image_latent_dim: 64   # Image encoder output dimension
-         dsrl_state_latent_dim: 64   # State encoder output dimension
-         dsrl_hidden_dims: [128, 128, 128]  # MLP hidden layer dimensions
-
-**2.2 Algorithm Parameters**
-
-.. code:: yaml
-
-   algorithm:
-     adv_type: embodied_sac
-     loss_type: embodied_sac
-     gamma: 0.999             # Discount factor
-     tau: 0.005               # Target network soft update coefficient
-     update_epoch: 200        # Training steps per interaction
-     train_actor_steps: 10    # Delay actor training for this many critic updates
-     entropy_tuning:
-       alpha_type: softplus
-       initial_alpha: 1.0
-       target_entropy: -16
-       optim:
-         lr: 3.0e-4
-
-**2.3 Environment Parameters**
-
-.. code:: yaml
-
-   env:
-     train:
-       total_num_envs: 16
-       use_step_penalty: True  # Use -1/0 reward style (step penalty + termination bonus)
-       max_episode_steps: 240
-     eval:
-       total_num_envs: 500
-       use_step_penalty: True
-
-**3. Launch Command**
-
-::
+.. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_dsrl_openpi
+
+.. dropdown:: Advanced configuration (optional)
+
+   Key default DSRL, SAC, and environment hyperparameters in ``libero_spatial_dsrl_openpi.yaml``:
+
+   .. code-block:: yaml
+
+      actor:
+        model:
+          openpi:
+            use_dsrl: True              # Enable DSRL mode
+            dsrl_state_dim: 8           # Robot proprioception dimension
+            dsrl_action_noise_dim: 32   # Noise action dimension per step
+            dsrl_num_q_heads: 10        # Number of Q-heads in ensemble critic
+            dsrl_image_latent_dim: 64   # Image encoder output dimension
+            dsrl_state_latent_dim: 64   # State encoder output dimension
+            dsrl_hidden_dims: [128, 128, 128]  # MLP hidden layer dimensions
+
+      algorithm:
+        adv_type: embodied_sac
+        loss_type: embodied_sac
+        gamma: 0.999             # Discount factor
+        tau: 0.005               # Target network soft update coefficient
+        update_epoch: 200        # Training steps per interaction
+        train_actor_steps: 10    # Delay actor training for this many critic updates
+        entropy_tuning:
+          alpha_type: softplus
+          initial_alpha: 1.0
+          target_entropy: -16
+          optim:
+            lr: 3.0e-4
+
+      env:
+        train:
+          total_num_envs: 16
+          use_step_penalty: True  # Use -1/0 reward style (step penalty + termination bonus)
+          max_episode_steps: 240
+        eval:
+          total_num_envs: 500
+          use_step_penalty: True
 
 Visualization and Results
 -------------------------
 
-**1. TensorBoard Logs**
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
-.. code-block:: bash
-
-   # Start TensorBoard
-   tensorboard --logdir ./logs
-
-**2. Key Monitoring Metrics**
-
-For metric definitions, see :doc:`Training metrics <../../reference/metrics>`. DSRL-relevant metrics:
+DSRL-relevant metrics:
 
 - **Environment Metrics**:
 

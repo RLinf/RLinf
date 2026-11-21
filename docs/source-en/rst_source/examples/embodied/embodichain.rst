@@ -82,9 +82,14 @@ Install EmbodiChain 0.3.0 and its dependencies. The installer gets
 and resolves the remaining packages through your configured Python package index.
 Your machine must be able to reach the vendor server on port 2345.
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --env embodichain && source .venv/bin/activate
+   .. tab-item:: EmbodiChain
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env embodichain && source .venv/bin/activate
 
 .. warning::
 
@@ -93,25 +98,22 @@ Your machine must be able to reach the vendor server on port 2345.
    environment and rerun ``bash requirements/install.sh embodied --env embodichain --no-root``.
 
 Use the installed package configs by default. To point at a local EmbodiChain
-checkout, set:
-
-.. code:: bash
-
-   export EMBODICHAIN_PATH=/path/to/EmbodiChain
-
-If a run fails because task resources are missing, download them in the same
-Python environment:
-
-.. code:: bash
-
-   export EMBODICHAIN_DATA_ROOT=/path/to/data
-   python -m embodichain.data download --name CartPole
-   python -m embodichain.data download --name SimResources
+checkout, set ``export EMBODICHAIN_PATH=/path/to/EmbodiChain``.
 
 Download the Model
 ------------------
 
-No checkpoint is required. The MLP policy starts from scratch.
+No checkpoint is required; the MLP policy starts from scratch. If a run fails because task resources are missing, download them in the same Python environment:
+
+.. tab-set::
+
+   .. tab-item:: Task Resources (Optional)
+
+      .. code-block:: bash
+
+         export EMBODICHAIN_DATA_ROOT="$PWD/data"
+         python -m embodichain.data download --name CartPole
+         python -m embodichain.data download --name SimResources
 
 Run It
 ------
@@ -142,22 +144,7 @@ Launch the CartPole recipe:
 Visualization and Results
 -------------------------
 
-The default config logs to W&B. You can switch to TensorBoard by setting:
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard"]
-
-Then launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
+Monitor rollout rewards with ``tensorboard --logdir ./logs --port 6006`` (the default config logs to W&B; pass ``runner.logger.logger_backends='["tensorboard"]'`` to use TensorBoard), enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 Evaluation and CI
 -----------------

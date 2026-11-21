@@ -72,92 +72,68 @@ Observation and Action
    * - Prompt
      - Not used; this is a low-dimensional/CNN policy-control recipe.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-Install Genesis dependencies:
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: Genesis
 
-   bash requirements/install.sh embodied --env genesis && source .venv/bin/activate
+      **1. Install**
 
-Download the Model
-------------------
+      .. code-block:: bash
 
-Skip this section for the MLP + PPO recipe. For the CNN + PPO recipe, download the
-ResNet checkpoint:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env genesis && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. Download**
 
-   cd /path/to/save/model
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+      Skip this step for the MLP + PPO recipe. For the CNN + PPO recipe, download the pretrained ResNet-10 checkpoint:
 
-Then set the same checkpoint path for rollout and actor in
-``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``:
+      .. code-block:: bash
 
-.. code-block:: yaml
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
 
-   rollout:
-      model:
-         model_path: /path/to/RLinf-ResNet10-pretrained
-   actor:
-      model:
-         model_path: /path/to/RLinf-ResNet10-pretrained
+      **3. Launch**
 
-Run It
-------
+      Available recipes:
 
-Available recipes:
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 48 26
 
-.. list-table::
-   :header-rows: 1
-   :widths: 26 48 26
+         * - Recipe
+           - Config
+           - Command suffix
+         * - MLP + PPO
+           - ``examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``
+           - ``genesis_cubepick_ppo_mlp``
+         * - CNN + PPO
+           - ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``
+           - ``genesis_cubepick_ppo_cnn``
 
-   * - Recipe
-     - Config
-     - Command suffix
-   * - MLP + PPO
-     - ``examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``
-     - ``genesis_cubepick_ppo_mlp``
-   * - CNN + PPO
-     - ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``
-     - ``genesis_cubepick_ppo_cnn``
+      .. include:: _model_path.rst
 
-Launch training with ``run_embodiment.sh``:
+      Launch training with ``run_embodiment.sh``:
 
-.. code:: bash
+      .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_mlp
-   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_cnn
+         # State-observation MLP + PPO
+         bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_mlp
 
-.. note::
+         # Vision CNN + PPO
+         bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_cnn actor.model.model_path=$PWD/RLinf-ResNet10-pretrained
 
-   Both configs run on GPU ``0`` by default. Tune ``cluster.component_placement``,
-   ``env.train.total_num_envs``, and batch sizes for your hardware.
+      .. dropdown:: Advanced configuration (optional)
+
+         Both configs run on GPU ``0`` by default. Tune ``cluster.component_placement``, ``env.train.total_num_envs``, and batch sizes for your hardware.
 
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable video in the env config when needed:
-
-.. code:: yaml
-
-   env:
-     eval:
-       video_cfg:
-         save_video: True
-         video_base_dir: ${runner.logger.log_path}/video/eval
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 .. list-table::
    :header-rows: 1

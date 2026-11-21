@@ -12,9 +12,7 @@
 
    GSEnv / ManiSkill-GS。
 
-GSEnv，也称 ManiSkill-GS，将 ManiSkill 物理仿真与 3D Gaussian Splatting 渲染结合，
-用于 Real2Sim2Real 操作任务。你将使用 RLinf 在 ``GSEnv-PutCubeOnPlate-v0`` 上，
-通过 PPO 微调 OpenPI π₀.₅。
+GSEnv（也称 ManiSkill-GS）将 ManiSkill 物理仿真与 3D Gaussian Splatting 渲染结合，用于 Real2Sim2Real 操作任务。你将使用 RLinf 在 ``GSEnv-PutCubeOnPlate-v0`` 上，通过 PPO 微调 OpenPI π₀.₅。
 
 概览
 ----------------------------------------
@@ -42,7 +40,7 @@ GSEnv，也称 ManiSkill-GS，将 ManiSkill 物理仿真与 3D Gaussian Splattin
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1 节点 · 8 GPUs
+      1 节点 · 8 GPU
 
 | **你将完成：** 安装 → 添加 ManiSkill-GS 资产 → 下载模型 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · ManiSkill-GS checkout · GSEnv 资产 · SFT 检查点。
@@ -79,105 +77,56 @@ GSEnv，也称 ManiSkill-GS，将 ManiSkill 物理仿真与 3D Gaussian Splattin
 
 .. note::
 
-   GSEnv 在 ``examples/embodiment/config/env/gsenv_put_cube_on_plate.yaml`` 中通过
-   ``env_type: maniskill`` 接入。任务 id 选择 ManiSkill-GS 环境。
+   GSEnv 在 ``examples/embodiment/config/env/gsenv_put_cube_on_plate.yaml`` 中通过 ``env_type: maniskill`` 接入，由任务 ID 选择 ManiSkill-GS 环境。
 
-安装
+一键上手
 ----------------------------------------
 
 .. include:: _setup_common.rst
 
-安装 ManiSkill/LIBERO 环境与 OpenPI 依赖：
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenPI + GSEnv
 
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+      **1. 安装环境**
 
-安装 ManiSkill-GS 及其资产：
+      .. code-block:: bash
 
-.. code:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         git clone -b v01 https://github.com/chenkang455/ManiSkill-GS.git
+         uv pip install -e ./ManiSkill-GS
 
-   git clone -b v01 https://github.com/chenkang455/ManiSkill-GS.git
-   cd ManiSkill-GS
-   uv pip install -e .
-   hf download RLinf/gsenv-assets-v0 --repo-type dataset --local-dir ./assets
+      **2. 下载资源与模型**
 
-在 ManiSkill-GS 项目根目录验证 RLinf 接口：
+      下载 GSEnv 3DGS 资产、验证 RLinf 接口（首次运行 ``test_rlinf_interface.py`` 可能需要编译 ``gsplat`` kernel，耗时较长），并下载 OpenPI π₀.₅ SFT 检查点：
 
-.. code:: bash
+      .. code-block:: bash
 
-   python scripts/test_rlinf_interface.py
+         hf download RLinf/gsenv-assets-v0 --repo-type dataset --local-dir ./ManiSkill-GS/assets
+         (cd ManiSkill-GS && python scripts/test_rlinf_interface.py)
+         hf download RLinf/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT --local-dir ./RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
 
-.. note::
+      **3. 启动训练**
 
-   首次运行可能需要编译 ``gsplat`` kernel，因此耗时较长。
+      内置配置为 ``examples/embodiment/config/gsenv_ppo_openpi_pi05.yaml``。
 
-下载模型
-----------------------------------------
+      .. include:: _model_path.rst
 
-下载 OpenPI π₀.₅ SFT 检查点：
+      使用 ``run_embodiment.sh`` 启动 PPO 训练：
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   cd /path/to/save/model
-   hf download RLinf/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT --local-dir RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
+         bash examples/embodiment/run_embodiment.sh gsenv_ppo_openpi_pi05 actor.model.model_path=$PWD/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
 
-.. include:: _model_path.rst
+      .. dropdown:: 进阶配置（可选）
 
-运行
-----------------------------------------
-
-启动 GSEnv 配方：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 46 26
-
-   * - 配方
-     - 配置
-     - 命令后缀
-   * - OpenPI π₀.₅ + PPO
-     - ``examples/embodiment/config/gsenv_ppo_openpi_pi05.yaml``
-     - ``gsenv_ppo_openpi_pi05``
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh gsenv_ppo_openpi_pi05
-
-.. note::
-
-   默认配置使用 ``actor,env,rollout: all`` 共置。请根据 GPU 显存预算调整
-   ``cluster.component_placement``、``env.train.total_num_envs`` 和
-   ``actor.global_batch_size``。
+         默认配置使用 ``actor,env,rollout: all`` 共置。按 GPU 显存预算调整 ``cluster.component_placement``、``env.train.total_num_envs`` 和 ``actor.global_batch_size``。
 
 可视化与结果
 ----------------------------------------
 
-在 RLinf 仓库根目录启动 TensorBoard：
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-关键指标是 ``env/success_once``。完整指标说明见
-:doc:`训练指标 <../../reference/metrics>`。
-
-如需保存 3DGS rollout 视频，请在环境配置中启用 video：
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
-
-如需启用 W&B 或 SwanLab，请添加 logger backend：
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``env/success_once`` 曲线，通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制，完整指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
 .. figure:: https://github.com/user-attachments/assets/54a22c98-df04-42bd-beef-2630f69da8be
    :align: center

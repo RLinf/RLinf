@@ -80,7 +80,20 @@ Observation and Action
 Installation
 ------------
 
-Install the base Franka dependencies from :doc:`franka`, then install the dexterous-hand runtime in the workflow below.
+Follow :doc:`franka` for base Franka controller and real-time kernel prerequisites.
+
+.. include:: _setup_common.rst
+
+.. tab-set::
+
+   .. tab-item:: Franka Control Node
+
+      The ``franka`` environment includes ``RLinf-dexterous-hands``, which provides the Ruiyan dexterous-hand and data-glove drivers:
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 Teleoperation
 -------------
@@ -129,13 +142,7 @@ If you rename a camera to ``global``, update ``main_image_key`` to ``global`` in
 Run It
 ------
 
-1. On the Franka control node, install the Franka environment:
-
-   .. code-block:: bash
-
-      bash requirements/install.sh embodied --env franka
-
-   The Franka environment includes ``RLinf-dexterous-hands``, which provides the Ruiyan dexterous-hand and data-glove drivers.
+1. On the Franka control node, activate the ``franka`` environment installed above (which includes ``RLinf-dexterous-hands`` for the Ruiyan dexterous-hand and data-glove drivers).
 2. Put the Franka robot into programming mode, manually move it to the task target pose, then run the script on the Franka control node to acquire the target end-effector pose:
 
    .. code-block:: bash

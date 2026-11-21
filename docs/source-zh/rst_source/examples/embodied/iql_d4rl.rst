@@ -87,20 +87,23 @@ IQL 工作原理
 安装
 ----------------------------------------
 
-安装带 D4RL 的 embodied 环境：
+.. include:: _setup_common.rst
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --env d4rl && source .venv/bin/activate
+   .. tab-item:: D4RL
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env d4rl && source .venv/bin/activate
 
 启动脚本默认设置 ``MUJOCO_GL=egl`` 与 ``PYOPENGL_PLATFORM=egl``，便于无头运行。
 
 运行
 ----------------------------------------
 
-**1. 配置文件**
-
-三类 D4RL 任务族的默认 IQL 配置：
+RLinf 为三类 D4RL 任务族内置了默认 IQL 配置（``data.dataset_path`` 保持 ``null`` 时，首次运行自动下载对应 D4RL 数据集）：
 
 .. list-table::
    :header-rows: 1
@@ -115,63 +118,7 @@ IQL 工作原理
    * - Kitchen / Adroit
      - ``examples/embodiment/config/d4rl_iql_kitchen_adroit.yaml``
 
-**2. 关键参数配置**
-
-**2.1 Runner 与 Algorithm**
-
-.. code-block:: yaml
-
-   runner:
-     task_type: "offline"
-
-   algorithm:
-     loss_type: "offline_iql"
-     batch_size: 256
-     actor_lr: 3.0e-4
-     value_lr: 3.0e-4
-     critic_lr: 3.0e-4
-     discount: 0.99
-     tau: 0.005
-     expectile: 0.9
-     temperature: 10.0
-     gamma: 0.99
-
-**2.2 Actor（模型）**
-
-.. code-block:: yaml
-
-   actor:
-     model:
-       iql_config:
-         type: "actor"
-         hidden_dims: [256, 256]
-         dropout_rate: null
-         log_std_min: -5.0
-         log_std_max: 2.0
-
-**2.3 数据**
-
-.. code-block:: yaml
-
-   data:
-     dataset_type: "d4rl"
-     task_name: "antmaze-large-play-v0"
-     dataset_path: null
-
-**2.4 环境**
-
-.. code-block:: yaml
-
-   env:
-     task_name: "antmaze-large-play-v0"
-
-将 ``data.dataset_type`` 设为 ``d4rl``，并将 ``data.task_name`` 和 ``env.eval.task_name`` 设为所需的 D4RL 任务（如 ``antmaze-large-play-v0``）。
-
-``data.dataset_path`` 为 ``null`` 时，RLinf 优先读取 ``~/.d4rl/datasets/<task_name>.hdf5``，该文件不存在时由 D4RL 下载对应任务的数据集。若要使用已有的 D4RL HDF5 文件，将 ``data.dataset_path`` 设为该文件路径，文件中 observation 和 action 的 shape 须与 ``data.task_name`` 对应的环境一致。标准 D4RL 文件与下载的数据集一样经过 ``d4rl.qlearning_dataset`` 转换，转换时依据 ``timeouts`` 字段切分 episode，不会把一条 episode 的最后一个 observation 与下一条 episode 的第一个 observation 配成 transition。已整理好的 transition 文件（包含 ``next_observations`` 且没有 ``timeouts``）则直接使用。
-
-**3. 启动训练**
-
-在仓库根目录启动任一任务族（不传参数时默认使用 ``d4rl_iql_mujoco``；日志写入 ``<repo>/logs/<timestamp>-<config_name>/``）：
+在仓库根目录启动任一任务族（省略参数时默认使用 ``d4rl_iql_mujoco``；日志写入 ``logs/<timestamp>-<config_name>/``）：
 
 .. code-block:: bash
 
@@ -184,6 +131,46 @@ IQL 工作原理
    # Kitchen / Adroit
    ./examples/embodiment/run_offline_rl.sh d4rl_iql_kitchen_adroit
 
+.. dropdown:: 进阶配置（可选）
+
+   修改 ``data.task_name`` 和 ``env.eval.task_name`` 可切换 D4RL 任务（如 ``antmaze-large-play-v0``）。``data.dataset_path`` 为 ``null`` 时，RLinf 优先读取 ``~/.d4rl/datasets/<task_name>.hdf5``，不存在时由 D4RL 自动下载。若要使用本地 HDF5 文件，将 ``data.dataset_path`` 设为对应路径（观测和动作维度须与 ``data.task_name`` 一致）；标准 D4RL 文件按 ``timeouts`` 经过 ``d4rl.qlearning_dataset`` 转换，已整理好的 transition 文件（包含 ``next_observations`` 且无 ``timeouts``）则直接使用。
+
+   内置配置中的主要默认超参数如下：
+
+   .. code-block:: yaml
+
+      runner:
+        task_type: "offline"
+
+      algorithm:
+        loss_type: "offline_iql"
+        batch_size: 256
+        actor_lr: 3.0e-4
+        value_lr: 3.0e-4
+        critic_lr: 3.0e-4
+        discount: 0.99
+        tau: 0.005
+        expectile: 0.9
+        temperature: 10.0
+        gamma: 0.99
+
+      actor:
+        model:
+          iql_config:
+            type: "actor"
+            hidden_dims: [256, 256]
+            dropout_rate: null
+            log_std_min: -5.0
+            log_std_max: 2.0
+
+      data:
+        dataset_type: "d4rl"
+        task_name: "antmaze-large-play-v0"
+        dataset_path: null
+
+      env:
+        task_name: "antmaze-large-play-v0"
+
 断点续训
 ----------------------------------------
 
@@ -192,59 +179,28 @@ IQL 工作原理
 可视化与结果
 ----------------------------------------
 
-**1. TensorBoard 日志**
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``eval/return`` 曲线，通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制（纯状态 D4RL 环境在 ``MUJOCO_GL=egl`` 下会自动回退到 ``env.render()``），完整指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
-.. code-block:: bash
-
-   # 启动 TensorBoard
-   tensorboard --logdir ./logs --port 6006
-
-**2. 关键跟踪指标**
-
-指标含义见 :doc:`训练指标 <../../reference/metrics>`。IQL 相关指标：
+IQL 相关指标：
 
 - **训练指标**：
 
-  - ``train/value_loss``: Value 函数 expectile 损失。
-  - ``train/actor_loss``: AWR 风格策略损失。
-  - ``train/critic_loss``: 双 Q 网络 TD 损失。
-  - ``train/v``: Value 函数估计（batch 均值）。
-  - ``train/q1``、``train/q2``: 双 Q 网络估计。
-  - ``train/adv_mean``、``train/adv_std``: 优势的均值与标准差。
+  - ``train/value_loss``：Value 函数 expectile 损失。
+  - ``train/actor_loss``：AWR 风格 policy 损失。
+  - ``train/critic_loss``：双 Q 网络 TD 损失。
+  - ``train/v``：Value 函数估计（batch 均值）。
+  - ``train/q1``、``train/q2``：双 Q 网络估计。
+  - ``train/adv_mean``、``train/adv_std``：优势的均值与标准差。
 
 - **时间指标**：
 
-  - ``time/step``: 每训练步墙钟时间（取数 + actor 更新）。
-  - ``time/eval``: 评估墙钟时间（当 ``runner.eval_episodes`` > 0 时）。
-  - ``time/actor/update_one_epoch``: 每步 actor 更新时间。
+  - ``time/step``：每训练步墙钟时间（取数 + actor 更新）。
+  - ``time/eval``：评估墙钟时间（``runner.eval_episodes`` > 0 时）。
+  - ``time/actor/update_one_epoch``：每步 actor 更新时间。
 
-- **评估指标** （当 ``runner.eval_episodes`` > 0 时）：
+- **评估指标**\ （``runner.eval_episodes`` > 0 时）：
 
-  - ``eval/return``: 评估 rollout 的平均 episode 回报。
-  - ``eval/episode_len``: 平均 episode 长度。
-  - ``eval/num_trajectories``: 评估轨迹数量。
-  - ``eval/terminated_at_end``: 以终止（非截断）结束的 episode 比例；仅当环境启用 ``ignore_terminations`` 时存在。
-
-**3. 视频生成**
-
-D4RL 观测为纯状态（无图像键）。当观测中没有图像字段时，录像会回退到 ``env.render()``，因此只需将 ``save_video`` 设为 true 即可生成评估视频。``video_base_dir`` 为可选项（默认 ``./video``），你也可以显式配置以便统一管理输出目录。需保证 MuJoCo 环境支持渲染（当 ``save_video`` 为 true 时会自动以 ``render_mode="rgb_array"`` 创建）。无头服务器请设置 ``MUJOCO_GL=egl`` 与 ``PYOPENGL_PLATFORM=egl``。
-
-.. code-block:: yaml
-
-   env:
-      eval:
-         video_cfg:
-            save_video: true
-            video_base_dir: ${runner.logger.log_path}/video/eval  # 可选，默认 ./video
-
-**4. 训练日志工具集成**
-
-.. code-block:: yaml
-
-   runner:
-      task_type: "offline"
-      logger:
-         log_path: "../results"
-         project_name: rlinf
-         experiment_name: "d4rl_iql_mujoco"
-         logger_backends: ["tensorboard"] # wandb, swanlab
+  - ``eval/return``：评估 rollout 的平均 episode 回报。
+  - ``eval/episode_len``：平均 episode 长度。
+  - ``eval/num_trajectories``：评估轨迹数量。
+  - ``eval/terminated_at_end``：以终止（非截断）结束的 episode 比例；仅在环境启用 ``ignore_terminations`` 时存在。

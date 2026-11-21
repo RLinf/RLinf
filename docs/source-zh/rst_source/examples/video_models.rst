@@ -56,13 +56,25 @@ Prompt、生成结果与奖励
 安装
 ----
 
-先满足 :doc:`RLinf 安装的前置条件 </rst_source/start/installation>`，再在 GPU 训练机器的仓库根目录执行：
+先满足 :doc:`RLinf 安装的前置条件 </rst_source/start/installation>`\ （中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``）：
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
+   .. tab-item:: CPU OCR（SD3 / ART）
 
-安装器会创建 Python 3.10 环境，并安装 Diffusers、PEFT、Transformers、PaddleOCR 与 CPU 版 PaddlePaddle。两个 ART 配置及 SD3 NFT 配置使用 CPU OCR；运行 Wan NFT 配置（设置 ``env.*.reward.use_gpu: True``）时，在安装命令中追加 ``--paddle-gpu``\ （支持 CUDA 11.x 或 12.x）。需要其他目录时可追加 ``--venv /path/to/venv``。
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
+
+   .. tab-item:: GPU OCR（Wan NFT）
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion --paddle-gpu && source .venv/bin/activate
+
+安装器会创建 Python 3.10 环境，并安装 Diffusers、PEFT、Transformers 与 PaddleOCR（``--paddle-gpu`` 支持 CUDA 11.x / 12.x，供 Wan NFT 配置使用）。需要其他目录时可追加 ``--venv /path/to/venv``。
 
 .. note::
 

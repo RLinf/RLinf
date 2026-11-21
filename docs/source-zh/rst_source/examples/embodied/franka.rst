@@ -193,21 +193,30 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 安装
 ----
 
-驱动和内核就绪后，在 GPU 主机上完成一次安装，即可同时获得 Franky 机器人控制和训练依赖。可以选择本地安装，也可以使用本节末尾介绍的 Docker 镜像。克隆 RLinf，后续命令均在仓库根目录执行：
+驱动和内核就绪后，在 GPU 主机上完成一次安装，即可同时获得 Franky 机器人控制和训练依赖。可以选择本地安装，也可以使用本节末尾介绍的 Docker 镜像。
 
-.. code:: bash
-
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+.. include:: _setup_common.rst
 
 安装 Franka 环境
 ~~~~~~~~~~~~~~~~
 
-运行安装脚本。只有固件需要 libfranka 0.15.0 时，才在命令前加上 ``LIBFRANKA_VERSION=0.15.0``：
+克隆 RLinf 并在仓库根目录运行安装脚本。只有固件需要 libfranka 0.15.0 时，才切换到 ``libfranka 0.15.0`` 标签：
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+   .. tab-item:: libfranka 0.19.0（默认）
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+
+   .. tab-item:: libfranka 0.15.0
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         LIBFRANKA_VERSION=0.15.0 bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 安装脚本依次完成：
 
@@ -282,9 +291,13 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 
 将预训练 ResNet encoder 下载到仓库内：
 
-.. code:: bash
+.. tab-set::
 
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./models/RLinf-ResNet10-pretrained
+   .. tab-item:: ResNet-10 编码器
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./models/RLinf-ResNet10-pretrained
 
 后面的训练命令会将该目录同时传给 actor 和 rollout。
 
@@ -492,13 +505,27 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 准备两台计算机
 ~~~~~~~~~~~~~~
 
-控制计算机按前文的机器人主机准备，但不需要 NVIDIA 驱动：检查固件，配置实时内核或采用不使用实时内核的方式。随后可以用 `安装`_ 中的命令本地安装，没有 NVIDIA 驱动时安装脚本会自动选择仅 CPU 的 PyTorch；也可以按 `使用 Docker 镜像`_ 启动容器，并去掉 ``--gpus all``。
+在两台计算机上安装相同版本的 RLinf：
 
-在 GPU 服务器上安装好 NVIDIA 驱动后，克隆相同版本的 RLinf，并执行相同的安装命令：
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: 控制计算机
 
-   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+      按前文的机器人主机准备控制计算机，但不需要 NVIDIA 驱动：检查固件，配置实时内核或采用不使用实时内核的方式。随后按下方命令本地安装（没有 NVIDIA 驱动时安装脚本会自动选择仅 CPU 的 PyTorch），或按 `使用 Docker 镜像`_ 启动容器并去掉 ``--gpus all``：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+
+   .. tab-item:: GPU 服务器
+
+      安装好 NVIDIA 驱动后，克隆相同版本的 RLinf，并执行相同的安装命令：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 两台计算机必须使用相同的 RLinf 代码版本、Python 版本和 Ray 版本。加入多节点集群前，先按前文采集步骤在控制计算机上收集演示，此时使用节点编号 0。然后将完整的 ``logs/franka-demo/demo_buffer`` 目录复制到 GPU 服务器。
 
@@ -542,9 +569,14 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 
 请安装到单独的环境中，避免覆盖 Franky 环境，并传入前面选定的 libfranka 版本：
 
-.. code:: bash
+.. tab-set::
 
-   LIBFRANKA_VERSION=0.15.0 bash requirements/install.sh embodied --env franka-ros --venv franka-ros && source franka-ros/bin/activate
+   .. tab-item:: ROS Noetic（Ubuntu 20.04）
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         LIBFRANKA_VERSION=0.15.0 bash requirements/install.sh embodied --env franka-ros --venv franka-ros && source franka-ros/bin/activate
 
 安装脚本依次完成：
 
@@ -649,11 +681,33 @@ ROS 后端的实时模式在安装时由 ``FRANKA_REALTIME_CONFIG`` 决定，不
 
 安装脚本可以将 Franka 依赖与其他模型组合。所有 Franky 环境都包含灵巧手依赖。使用 VLA policy 时，将模型和 Franka 一起安装：
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env franka --venv openpi && source openpi/bin/activate
+   .. tab-item:: OpenPI
 
-按需将 ``openpi`` 替换为 ``openvla``、``openvla-oft`` 或 ``gr00t``。这些命令只安装依赖，模型权重、任务配置和训练步骤见以下指南：
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openpi --env franka --venv openpi && source openpi/bin/activate
+
+   .. tab-item:: OpenVLA
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openvla --env franka --venv openvla && source openvla/bin/activate
+
+   .. tab-item:: OpenVLA-OFT
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openvla-oft --env franka --venv openvla-oft && source openvla-oft/bin/activate
+
+   .. tab-item:: GR00T
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model gr00t --env franka --venv gr00t && source gr00t/bin/activate
+
+这些命令只安装依赖，模型权重、任务配置和训练步骤见以下指南：
 
 - :doc:`franka_gello` 与 :doc:`franka_vr`：GELLO 或 PICO 遥操作。
 - :doc:`franka_pi0_sft_deploy` 与 :doc:`hg-dagger`：OpenPI policy。

@@ -97,9 +97,14 @@ RECAP 工作原理
 
 .. include:: _setup_common.rst
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+   .. tab-item:: OpenPI + LIBERO / ManiSkill
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 
 下载模型
@@ -109,25 +114,27 @@ RECAP 流程需要以下预训练模型：
 
 - **SigLIP2-so400m**：视觉编码器，用于 Step 2 价值模型训练
 - **Gemma3-270M**：语言模型，用于 Step 2 价值模型训练
-- **pi0.5 base (PyTorch)**：策略模型，用于 Step 4 CFG 训练。请参考 `openpi <https://github.com/Physical-Intelligence/openpi>`_ 获取模型权重并转换为 PyTorch 格式
+- **pi0.5 base (PyTorch)**：策略模型，用于 Step 4 CFG 训练。参考 `openpi <https://github.com/Physical-Intelligence/openpi>`_ 获取模型权重并转换为 PyTorch 格式
 
-**Step 2 所需模型下载**
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: SigLIP2 + Gemma3（价值模型）
 
-   hf download google/siglip2-so400m-patch14-224 --local-dir siglip2-so400m-patch14-224
-   hf download google/gemma-3-270m --local-dir gemma-3-270m
+      .. code-block:: bash
 
-下载完成后，请在配置文件中正确指定模型路径：
+         hf download google/siglip2-so400m-patch14-224 --local-dir ./siglip2-so400m-patch14-224
+         hf download google/gemma-3-270m --local-dir ./gemma-3-270m
+
+下载完成后，在 Step 2 和 Step 4 的配置文件中指定模型路径：
 
 .. code:: yaml
 
    # Step 2 价值模型配置
    actor:
      model:
-       siglip_path: /path/to/siglip2-so400m-patch14-224
-       gemma3_path: /path/to/gemma-3-270m
-       tokenizer_path: /path/to/gemma-3-270m
+       siglip_path: ./siglip2-so400m-patch14-224
+       gemma3_path: ./gemma-3-270m
+       tokenizer_path: ./gemma-3-270m
 
    # Step 4 策略模型配置
    actor:
@@ -199,7 +206,7 @@ Step 1：计算回报（Compute Returns）
 
 **配置文件**
 
-配置文件位于 ``examples/offline_rl/config/recap_compute_returns.yaml``：
+在 ``examples/offline_rl/config/recap_compute_returns.yaml`` 中填写数据集路径和输出 tag：
 
 .. code:: yaml
 
@@ -212,42 +219,48 @@ Step 1：计算回报（Compute Returns）
      eval_data_paths:          # 需覆盖 Step 2 的 eval_data_paths
        - dataset_path: /path/to/eval_dataset
          type: rollout
-
-     gamma: 1.0              # 折扣因子
-     failure_reward: -300.0   # 失败轨迹终止奖励
-     tag: "fail300"           # 输出文件标签
-     num_workers: 128         # 并行处理线程数
-
-**关键参数**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 15 55
-
-   * - 参数
-     - 默认值
-     - 说明
-   * - ``data.gamma``
-     - ``1.0``
-     - 折扣因子。:math:`1.0` 表示无折扣，即简单累加未来奖励
-   * - ``data.failure_reward``
-     - ``-300.0``
-     - 失败轨迹终止步的惩罚值。值越大（绝对值），成功/失败的回报区分度越高
-   * - ``data.eval_data_paths``
-     - ``[]``
-     - eval 数据集，需包含 Step 2 ``data.eval_data_paths`` 中的所有数据集
-   * - ``data.tag``
-     - ``null``
-     - 输出文件标签，生成 ``meta/returns_{tag}.parquet``
-   * - ``data.num_workers``
-     - ``128``
-     - 并行处理 parquet 文件的线程数
+     tag: "fail300"
 
 **启动命令**
 
 .. code:: bash
 
    bash examples/offline_rl/advantage_labeling/recap/process/run_compute_returns.sh recap_compute_returns
+
+.. dropdown:: 进阶配置（可选）
+
+   仓库自带配置已设置 ``gamma: 1.0``、``failure_reward: -300.0`` 和 ``num_workers: 128``：
+
+   .. code:: yaml
+
+      data:
+        gamma: 1.0              # 折扣因子
+        failure_reward: -300.0   # 失败轨迹终止奖励
+        tag: "fail300"           # 输出文件标签
+        num_workers: 128         # 并行处理线程数
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 15 55
+
+      * - 参数
+        - 默认值
+        - 说明
+      * - ``data.gamma``
+        - ``1.0``
+        - 折扣因子。``1.0`` 表示无折扣，即简单累加未来奖励
+      * - ``data.failure_reward``
+        - ``-300.0``
+        - 失败轨迹终止步的惩罚值。值越大（绝对值），成功/失败的回报区分度越高
+      * - ``data.eval_data_paths``
+        - ``[]``
+        - eval 数据集，需包含 Step 2 ``data.eval_data_paths`` 中的所有数据集
+      * - ``data.tag``
+        - ``null``
+        - 输出文件标签，生成 ``meta/returns_{tag}.parquet``
+      * - ``data.num_workers``
+        - ``128``
+        - 并行处理 parquet 文件的线程数
 
 **输出文件**
 
@@ -283,7 +296,7 @@ Step 2：训练价值模型（Value Model SFT）
 
 **配置文件**
 
-配置文件位于 ``examples/offline_rl/config/recap_value_model_sft.yaml``，核心字段如下：
+在 ``examples/offline_rl/config/recap_value_model_sft.yaml`` 中填写数据集路径、Step 1 的 ``tag`` 和上文下载的模型路径：
 
 .. code:: yaml
 
@@ -295,58 +308,6 @@ Step 2：训练价值模型（Value Model SFT）
          robot_type: "libero"
          model_type: "pi05"
      tag: "fail300"                     # 对应 Step 1 的 tag
-     action_horizon: 10
-     normalize_to_minus_one_zero: true  # 归一化到 [-1, 0]
-
-     eval_data_paths:                   # 可选，推荐配置
-       - dataset_path: /path/to/eval_dataset
-         max_samples: 10000
-         robot_type: "libero"
-         model_type: "pi05"
-
-   actor:
-     micro_batch_size: 32
-     global_batch_size: 256
-     model:
-       freeze_vlm: false         # 是否冻结 VLM backbone
-       value_dropout: 0.0        # Value Head dropout
-     optim:
-       lr: 5.0e-5               # VLM backbone 学习率
-       value_lr: 1.0e-4          # Value Head 学习率
-       weight_decay: 1.0e-10
-       lr_warmup_steps: 500
-
-   runner:
-     max_epochs: 30000
-     save_interval: 3000         # checkpoint 保存间隔
-
-**关键参数**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 35 15 50
-
-   * - 参数
-     - 默认值
-     - 说明
-   * - ``data.tag``
-     - ``null``
-     - 与 Step 1 相同的 tag，用于读取对应的 ``returns_{tag}.parquet``
-   * - ``data.normalize_to_minus_one_zero``
-     - ``true``
-     - 归一化模式。``true``：映射到 :math:`[-1, 0]`；``false``：映射到 :math:`[0, 1]`
-   * - ``actor.model.freeze_vlm``
-     - ``false``
-     - 冻结视觉编码器。设为 ``true`` 时需同时设置 ``actor.fsdp_config.use_orig_params: True``
-   * - ``actor.model.value_dropout``
-     - ``0.0``
-     - Value Head 前的 dropout 率
-   * - ``actor.optim.lr``
-     - ``5.0e-5``
-     - VLM backbone 学习率
-   * - ``actor.optim.value_lr``
-     - ``1.0e-4``
-     - Value Head 学习率
 
 **启动命令**
 
@@ -355,6 +316,63 @@ Step 2：训练价值模型（Value Model SFT）
 .. code:: bash
 
    bash examples/offline_rl/advantage_labeling/recap/run_value_sft.sh recap_value_model_sft
+
+.. dropdown:: 进阶配置（可选）
+
+   仓库自带配置已设置评估采样、batch size、优化器超参和保存间隔默认值：
+
+   .. code:: yaml
+
+      data:
+        action_horizon: 10
+        normalize_to_minus_one_zero: true  # 归一化到 [-1, 0]
+        eval_data_paths:                   # 可选，推荐配置
+          - dataset_path: /path/to/eval_dataset
+            max_samples: 10000
+            robot_type: "libero"
+            model_type: "pi05"
+
+      actor:
+        micro_batch_size: 32
+        global_batch_size: 256
+        model:
+          freeze_vlm: false         # 是否冻结 VLM backbone
+          value_dropout: 0.0        # Value Head dropout
+        optim:
+          lr: 5.0e-5               # VLM backbone 学习率
+          value_lr: 1.0e-4          # Value Head 学习率
+          weight_decay: 1.0e-10
+          lr_warmup_steps: 500
+
+      runner:
+        max_epochs: 30000
+        save_interval: 3000         # checkpoint 保存间隔
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 35 15 50
+
+      * - 参数
+        - 默认值
+        - 说明
+      * - ``data.tag``
+        - ``null``
+        - 与 Step 1 相同的 tag，用于读取对应的 ``returns_{tag}.parquet``
+      * - ``data.normalize_to_minus_one_zero``
+        - ``true``
+        - 归一化模式。``true`` 映射到 ``[-1, 0]``；``false`` 映射到 ``[0, 1]``
+      * - ``actor.model.freeze_vlm``
+        - ``false``
+        - 冻结视觉编码器。设为 ``true`` 时需同时设置 ``actor.fsdp_config.use_orig_params: True``
+      * - ``actor.model.value_dropout``
+        - ``0.0``
+        - Value Head 前的 dropout 率
+      * - ``actor.optim.lr``
+        - ``5.0e-5``
+        - VLM backbone 学习率
+      * - ``actor.optim.value_lr``
+        - ``1.0e-4``
+        - Value Head 学习率
 
 **输出**
 
@@ -391,16 +409,14 @@ Step 3：计算优势（Compute Advantages）
 
 **配置文件**
 
-配置文件位于 ``examples/offline_rl/config/recap_compute_advantages.yaml``：
+在 ``examples/offline_rl/config/recap_compute_advantages.yaml`` 中填写 Step 2 checkpoint、tag 和数据集路径：
 
 .. code:: yaml
 
    advantage:
      value_checkpoint: /path/to/value_checkpoint
-     positive_quantile: 0.3      # top 30% 标记为正样本
      tag: "fail300_N10_ckpt18000_q30"
      returns_tag: "fail300"       # 对应 Step 1 的 tag
-     batch_size: 1024
 
    data:
      train_data_paths:
@@ -408,33 +424,6 @@ Step 3：计算优势（Compute Advantages）
          robot_type: "libero"
          type: "sft"
          weight: 1.0
-     advantage_lookahead_step: 10   # N 步前瞻
-     gamma: 1.0
-
-**关键参数**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 35 15 50
-
-   * - 参数
-     - 默认值
-     - 说明
-   * - ``advantage.value_checkpoint``
-     - 必填
-     - Step 2 训练好的价值模型 checkpoint 路径
-   * - ``advantage.positive_quantile``
-     - ``0.3``
-     - 正样本比例。:math:`0.3` 表示优势值 top 30% 的样本标记为正
-   * - ``data.advantage_lookahead_step``
-     - ``10``
-     - 前瞻步数 :math:`N`，即考虑未来多少步的奖励
-   * - ``advantage.returns_tag``
-     - ``null``
-     - 读取 Step 1 生成的回报文件标签
-   * - ``advantage.tag``
-     - ``null``
-     - 输出优势文件标签，生成 ``meta/advantages_{tag}.parquet``
 
 **启动命令**
 
@@ -443,6 +432,43 @@ Step 3：计算优势（Compute Advantages）
 .. code:: bash
 
    bash examples/offline_rl/advantage_labeling/recap/process/run_compute_advantages.sh recap_compute_advantages
+
+.. dropdown:: 进阶配置（可选）
+
+   仓库自带配置已设置 ``positive_quantile: 0.3``、``batch_size: 1024``、``advantage_lookahead_step: 10`` 和 ``gamma: 1.0``：
+
+   .. code:: yaml
+
+      advantage:
+        positive_quantile: 0.3      # top 30% 标记为正样本
+        batch_size: 1024
+
+      data:
+        advantage_lookahead_step: 10   # N 步前瞻
+        gamma: 1.0
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 35 15 50
+
+      * - 参数
+        - 默认值
+        - 说明
+      * - ``advantage.value_checkpoint``
+        - 必填
+        - Step 2 训练好的价值模型 checkpoint 路径
+      * - ``advantage.positive_quantile``
+        - ``0.3``
+        - 正样本比例。``0.3`` 表示优势值 top 30% 的样本标记为正
+      * - ``data.advantage_lookahead_step``
+        - ``10``
+        - 前瞻步数 N，即考虑未来多少步的奖励
+      * - ``advantage.returns_tag``
+        - ``null``
+        - 读取 Step 1 生成的回报文件标签
+      * - ``advantage.tag``
+        - ``null``
+        - 输出优势文件标签，生成 ``meta/advantages_{tag}.parquet``
 
 **输出文件**
 
@@ -475,13 +501,12 @@ Step 4：CFG Training
 
 **配置文件**
 
-配置文件位于 ``examples/offline_rl/config/cfg_rl_openpi.yaml``：
+在 ``examples/offline_rl/config/cfg_rl_openpi.yaml`` 中填写 ``data.advantage_tag``、数据集路径和 ``actor.model.model_path``：
 
 .. code:: yaml
 
    data:
      advantage_tag: "fail300_N10_ckpt18000_q30"   # 对应 Step 3 的 advantage.tag
-     balance_dataset_weights: true
      train_data_paths:
        - dataset_path: /path/to/sft_dataset
          type: sft
@@ -491,54 +516,64 @@ Step 4：CFG Training
          weight: 1.0
 
    actor:
-     micro_batch_size: 32
-     global_batch_size: 512
      model:
        model_path: /path/to/pi05_base_pytorch
-       openpi:
-         config_name: "pi05_libero"
-         positive_only_conditional: true
-         unconditional_prob: 0.1
-         cfgrl_guidance_scale: 1.0
-     optim:
-       lr: 1.0e-5
-       lr_scheduler: cosine
-       lr_warmup_steps: 5000
-       total_training_steps: 30000
-
-**关键参数**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 40 15 45
-
-   * - 参数
-     - 默认值
-     - 说明
-   * - ``data.advantage_tag``
-     - ``null``
-     - 对应 Step 3 的 ``advantage.tag``，用于读取优势标签
-   * - ``actor.model.openpi.positive_only_conditional``
-     - ``true``
-     - 仅正样本做条件输入。``false`` 时正负样本均做条件输入
-   * - ``actor.model.openpi.unconditional_prob``
-     - ``0.1``
-     - 样本 dropout 为无条件的概率。``positive_only_conditional`` 开启时仅作用于正样本，否则作用于所有样本
-   * - ``actor.model.openpi.cfgrl_guidance_scale``
-     - ``1.0``
-     - 推理时的引导尺度。越大越偏向高优势动作
-   * - ``actor.model.openpi.config_name``
-     - ``pi05_libero``
-     - 数据变换配置。LIBERO 用 ``pi05_libero``，Franka 用 ``pi05_maniskill_sim_real_co_training``
-   * - ``data.balance_dataset_weights``
-     - ``true``
-     - 按数据集大小平衡采样权重
 
 **启动命令**
 
 .. code:: bash
 
    bash examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh cfg_rl_openpi
+
+.. dropdown:: 进阶配置（可选）
+
+   仓库自带配置已设置 CFG 条件参数、batch size 与优化器默认值：
+
+   .. code:: yaml
+
+      data:
+        balance_dataset_weights: true
+
+      actor:
+        micro_batch_size: 32
+        global_batch_size: 512
+        model:
+          openpi:
+            config_name: "pi05_libero"
+            positive_only_conditional: true
+            unconditional_prob: 0.1
+            cfgrl_guidance_scale: 1.0
+        optim:
+          lr: 1.0e-5
+          lr_scheduler: cosine
+          lr_warmup_steps: 5000
+          total_training_steps: 30000
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 40 15 45
+
+      * - 参数
+        - 默认值
+        - 说明
+      * - ``data.advantage_tag``
+        - ``null``
+        - 对应 Step 3 的 ``advantage.tag``，用于读取优势标签
+      * - ``actor.model.openpi.positive_only_conditional``
+        - ``true``
+        - 仅正样本做条件输入。``false`` 时正负样本均做条件输入
+      * - ``actor.model.openpi.unconditional_prob``
+        - ``0.1``
+        - 样本 dropout 为无条件的概率。``positive_only_conditional`` 开启时仅作用于正样本，否则作用于所有样本
+      * - ``actor.model.openpi.cfgrl_guidance_scale``
+        - ``1.0``
+        - 推理时的引导尺度。越大越偏向高优势动作
+      * - ``actor.model.openpi.config_name``
+        - ``pi05_libero``
+        - 数据变换配置。LIBERO 用 ``pi05_libero``，Franka 用 ``pi05_maniskill_sim_real_co_training``
+      * - ``data.balance_dataset_weights``
+        - ``true``
+        - 按数据集大小平衡采样权重
 
 **关键监控指标**
 
@@ -628,30 +663,7 @@ Step 3 完成后，可以使用 ``examples/offline_rl/advantage_labeling/recap/p
 可视化与结果
 ----------------------------------------
 
-指标含义见 :doc:`训练指标 <../../reference/metrics>`。
-
-
-**TensorBoard 日志**
-
-.. code:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-RECAP 流程会在 ``logs/`` 目录下生成两个子目录：
-
-- ``logs/value_sft/``：价值模型训练日志（Step 2）
-- ``logs/cfg_sft/``：CFG 策略训练日志（Step 4）
-
-**训练日志工具集成**
-
-.. code:: yaml
-
-   runner:
-     logger:
-       log_path: "../results"
-       project_name: rlinf
-       experiment_name: "recap_experiment"
-       logger_backends: ["tensorboard"]   # 也支持 wandb, swanlab
+使用 TensorBoard（``tensorboard --logdir ./logs --port 6006``）查看 Step 2（``logs/value_sft/``）和 Step 4（``logs/cfg_sft/``）的训练日志。指标含义和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
 数据集
 ----------------------------------------
@@ -725,40 +737,3 @@ RECAP 支持迭代优化：使用 Step 4 训练的策略模型采集新数据，
 
    Iter 1: tag="fail300"          → 训练 Value Model → tag="fail300_N10_ckpt18000_q30"     → CFG Training
    Iter 2: tag="fail300_iter2"    → 训练 Value Model → tag="fail300_iter2_N10_ckpt6000_q20" → CFG Training
-
-文件结构
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: text
-
-   examples/offline_rl/
-   ├── config/                                  # 共享生产配置
-   │   ├── recap_compute_returns.yaml           # Step 1
-   │   ├── recap_value_model_sft.yaml           # Step 2
-   │   ├── recap_compute_advantages.yaml        # Step 3
-   │   ├── cfg_rl_openpi.yaml                   # Step 4
-   │   └── model/
-   │       └── recap_value_model.yaml           # 价值模型架构默认配置
-   ├── advantage_labeling/
-   │   └── recap/
-   │       ├── train_value.py                    # Step 2: 训练价值模型
-   │       ├── run_value_sft.sh                  # Step 2 启动脚本
-   │       └── process/
-   │           ├── compute_returns.py            # Step 1：回报逻辑 + Hydra 入口
-   │           ├── compute_advantages.py         # Step 3：优势逻辑 + Hydra 入口
-   │           ├── relabel_advantages.py         # 阈值重标（CPU）
-   │           ├── visualize_advantage_dataset.py    # 优势可视化
-   │           ├── run_compute_returns.sh        # Step 1 启动脚本
-   │           └── run_compute_advantages.sh     # Step 3 启动脚本
-   └── policy_optimization/
-       └── cfg_rl/
-           ├── train_cfg.py                      # Step 4: CFG 策略训练
-           └── run_cfg_rl.sh                     # Step 4 启动脚本
-
-   rlinf/
-   ├── models/embodiment/value_model/recap/     # 价值评论器、配置、checkpoint 工具
-   ├── data/datasets/recap/                     # value_dataset.py、cfg_model.py 等
-   └── algorithms/offline/process/              # 共享、模型无关（RECAP + STEAM）
-       ├── advantage.py                          # 分位数阈值 + 布尔标签
-       ├── distributed.py                        # 分片推理辅助
-       └── mixture_config.py                     # meta/mixture_config.yaml tag I/O

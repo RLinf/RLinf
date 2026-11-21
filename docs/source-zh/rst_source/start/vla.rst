@@ -29,30 +29,22 @@
 前置条件
 --------
 
-先按 :doc:`安装说明 <installation>` 准备好 ManiSkill 环境。中国大陆用户可先执行 ``export HF_ENDPOINT=https://hf-mirror.com`` 加速下载。
+先按 :doc:`安装说明 <installation>` 准备好 ManiSkill 环境。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
-下载环境资产
-------------
-
-在仓库根目录下载 ManiSkill3 场景资产（只需下载一次）：
-
-.. code-block:: bash
-
-   hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
-
-下载模型并启动训练
+下载资源与启动训练
 ------------------
 
-切换下方标签选择模型。两个快速上手配置默认使用所有可用加速卡；需要指定设备时，修改 ``cluster.component_placement``，详见 :doc:`../guides/basic_config`。
+切换下方标签选择模型，所有下载与启动命令均集中在同一标签内。两个快速上手配置默认使用所有可用加速卡；需要指定设备时，修改 ``cluster.component_placement``，详见 :doc:`../guides/basic_config`。
 
 .. tab-set::
 
    .. tab-item:: OpenVLA
 
-      下载预训练权重（`论文 <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__）：
+      下载 ManiSkill3 场景资产与预训练权重（`论文 <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__）：
 
       .. code-block:: bash
 
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
          hf download gen-robot/openvla-7b-rlvla-warmup --local-dir ./checkpoints/openvla-7b-rlvla-warmup
 
       启动 PPO 训练：
@@ -64,11 +56,12 @@
 
    .. tab-item:: OpenVLA-OFT
 
-      下载基座模型与 LoRA 权重：
+      下载 ManiSkill3 场景资产、基座模型与 LoRA 权重：
 
       .. code-block:: bash
 
-         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir ./checkpoints/openvlaoft-base && \
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir ./checkpoints/openvlaoft-base
          hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./checkpoints/openvlaoft-lora
 
       启动 PPO 训练：

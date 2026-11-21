@@ -106,81 +106,48 @@ Dexmal DOS-W1 真机强化学习
 安装
 ----------------------------------------
 
-机器人节点与训练 / Rollout 节点用同一条命令安装依赖，但机器人端额外需要
-官方 **AirBot SDK**\ （``airbot_py`` wheel + ``airbot_api`` 源码）；GPU 端
-只通过 gRPC 与机器人通信，不需要 SDK。
+.. include:: _setup_common.rst
 
-机器人节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+机器人节点与训练 / Rollout 节点用同一条命令安装依赖，但机器人端额外需要官方 **AirBot SDK**\ （``airbot_py`` wheel + ``airbot_api`` 源码）；GPU 端只通过 gRPC 与机器人通信，不需要 SDK。
 
-AirBot SDK 通常已在 DOS-W1 机器上预部署，以下命令可自动检测并安装。
+.. tab-set::
 
-A. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   .. tab-item:: 机器人控制节点
 
-.. code:: bash
+      AirBot SDK 通常预部署在 DOS-W1 机器的 ``~/dos_w1/airbot/5.1.6/airbot_py-5.1.6-py3-none-any.whl`` 和 ``~/dos_w1/airbot/airbot_api``\ （如果 SDK 在其他路径，安装前先导出 ``DOSW1_SDK_WHEEL`` 和 ``DOSW1_API_PATH``）：
 
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+      .. code-block:: bash
 
-B. 安装依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
 
-.. code:: bash
+   .. tab-item:: 训练与 Rollout 节点
 
-   bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
+      GPU 节点通常没有 ``~/dos_w1/airbot`` 目录，安装脚本会打印 warning 并跳过 AirBot SDK，其余依赖正常安装：
 
-安装脚本默认从以下路径读取 AirBot SDK：
+      .. code-block:: bash
 
-- ``~/dos_w1/airbot/5.1.6/airbot_py-5.1.6-py3-none-any.whl``
-- ``~/dos_w1/airbot/airbot_api``\ （以 editable 模式安装）
-
-如果 SDK 文件不在默认路径，通过环境变量覆盖：
-
-.. code:: bash
-
-   export DOSW1_SDK_WHEEL=/path/to/airbot_py-5.1.6-py3-none-any.whl
-   export DOSW1_API_PATH=/path/to/airbot_api
-   bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
-
-训练 / Rollout 节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-A. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
-
-B. 安装依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
-
-GPU 节点通常没有 ``~/dos_w1/airbot`` 目录，安装脚本会打印 warning 并
-**跳过** AirBot SDK 安装 —— 这是预期行为，其余依赖（``embodied`` extra、
-``evdev``、``opencv-python``、RLinf 本身）都会正常安装。
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
 
 .. note::
 
-   **不要** 只执行 ``uv pip install -e .``，这样不会安装 ``embodied``
-   extra，会缺少环境侧依赖（``evdev``、``opencv-python``、RealSense
-   Python 绑定等）。
+   **不要** 只执行 ``uv pip install -e .``，这样不会安装 ``embodied`` extra，会缺少环境侧依赖（``evdev``、``opencv-python``、RealSense Python 绑定等）。
 
 下载模型
 ----------------------------------------
 
-Flow Matching 策略使用的 ResNet-10 预训练权重（配置里的
-``actor.model.encoder_config.ckpt_name: resnet10_pretrained.pt``）：
+下载 Flow Matching 策略使用的 ResNet-10 预训练权重（配置中的 ``actor.model.encoder_config.ckpt_name: resnet10_pretrained.pt``）：
 
-.. code:: bash
+.. tab-set::
 
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+   .. tab-item:: ResNet-10
 
-下载完成后，把 YAML 中的 ``actor.model.model_path`` 与
-``rollout.model.model_path`` 都指向下载目录。
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
+
+.. include:: _model_path.rst
 
 运行
 ----------------------------------------
@@ -195,14 +162,14 @@ Flow Matching 策略使用的 ResNet-10 预训练权重（配置里的
    ``sh ~/dos_w1/airbot/whole_start.sh``），确认弹出的 tmux 各 panel
    没有报错。
 
-2. 激活虚拟环境，运行遥操检查脚本：
+2. 激活虚拟环境，运行遥操检查脚本（将 ``192.168.1.20`` 替换为你的 DOS-W1 IP）：
 
 .. code-block:: bash
 
    source .venv/bin/activate
 
    python toolkits/realworld_check/test_dosw1_controller.py \
-       --robot-url <ROBOT_IP> \
+       --robot-url 192.168.1.20 \
        --print-hz 5
 
 3. 用左主动臂把左从动臂拖到期望的 **抓取** 位。终端会持续打印类似
@@ -233,17 +200,17 @@ Ray 集群启动
    才能启动 Ray。Ray 会在 ``ray start`` 时锁定当前的 Python 解释器与
    环境变量，之后再设置的变量对 Ray worker 不可见。
 
-2. 启动 Ray：
+2. 启动 Ray（将 ``192.168.1.10`` 替换为你的 GPU 服务器 IP）：
 
 .. code-block:: bash
 
    # GPU 节点（node rank 0，Ray head）
    export RLINF_NODE_RANK=0
-   ray start --head --port=6379 --node-ip-address=<GPU_SERVER_IP>
+   ray start --head --port=6379 --node-ip-address=192.168.1.10
 
    # 机器人节点（node rank 1，Ray worker）
    export RLINF_NODE_RANK=1
-   ray start --address=<GPU_SERVER_IP>:6379
+   ray start --address=192.168.1.10:6379
 
 3. 用 ``ray status`` 确认两个节点都已加入。
 
@@ -307,9 +274,6 @@ Ray 集群启动
        state_dim: 14        # 双臂：每只手臂 6 关节 + 1 夹爪
        action_dim: 14
        image_num: 3         # 1 = 仅 cam_left；3 = 三路相机全用
-   rollout:
-     model:
-       model_path: "/path/to/RLinf-ResNet10-pretrained"
 
 .. warning::
 
@@ -422,7 +386,7 @@ Dummy 自检（可选）
 
 这一步 **不是** 真机训练 recipe —— 图像相关路径被禁用，只用于流程自检。
 
-运行
+启动训练
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 标定、demo、YAML 都就位后，在 GPU 节点发起训练：
@@ -479,7 +443,7 @@ Dummy 自检（可选）
 常见问题
 ----------------------------------------
 
-**``ImportError: airbot_sdk is not installed``（机器人节点）**
+**``ImportError: airbot_sdk is not installed``**\ （机器人节点）
   默认路径下找不到 AirBot wheel。用 ``DOSW1_SDK_WHEEL`` /
   ``DOSW1_API_PATH`` 指向实际 SDK 文件后重跑 ``install.sh``。
   如果只是想做流程自检，改用 ``env.train.override_cfg.is_dummy: true``。

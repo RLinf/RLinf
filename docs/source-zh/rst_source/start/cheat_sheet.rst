@@ -6,13 +6,30 @@ RLinf 常用工作流的最短命令。
 安装
 ----
 
-使用 ``install.sh`` 本地安装，或前往 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像：
+使用 ``install.sh`` 本地安装（中国大陆用户在末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``），或前往 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像：
 
-.. code-block:: bash
+.. tab-set::
 
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
-   source .venv/bin/activate
+   .. tab-item:: 具身智能（Embodied）
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
+
+   .. tab-item:: 智能体 / 推理（Agentic）
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
+
+   .. tab-item:: 文档构建（Docs）
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh docs --venv .docs-venv
 
 启动训练
 --------

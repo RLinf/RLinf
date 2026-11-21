@@ -8,7 +8,7 @@ How It Works
 
 Each GPU runs one SGLang server (``server_type: embodied``) executing ``Cosmos3OmniDiffusersPipeline``, exposing the action policy as the HTTP endpoint ``POST /v1/actions/generations``. The eval driver hands each server URL to a rollout worker, which turns one step of N environments into one or more requests.
 
-The server only batches prompts of equal token length, so ``Cosmos3SGLangAdapter.request_groups`` first groups the environments by their augmented prompt, then splits each group into chunks of at most ``rollout.sglang.server.batching_max_size`` environments. The example config sets it to ``8``; left unset, the adapter follows SGLang's own default of ``1``, which sends every environment in its own request. The worker posts each group separately and reassembles the results in the original environment order.
+The server only batches prompts of equal token length, so the Cosmos3 SGLang adapter first groups the environments by their augmented prompt, then splits each group into chunks of at most ``rollout.sglang.server.batching_max_size`` environments. The example config sets it to ``8``; left unset, the adapter follows SGLang's own default of ``1``, which sends every environment in its own request. The worker posts each group separately and reassembles the results in the original environment order.
 
 Each response carries one record per environment: ``data[i].action.values`` holds that environment's ``[horizon, raw_action_dim]`` normalized rot6d chunk, and the adapter sorts the records by ``input_index`` before de-normalizing and converting them to 7-D axis-angle for LIBERO.
 
@@ -25,46 +25,34 @@ Each response carries one record per environment: ``data[i].action.values`` hold
         --[N, 16, 7]-->
    EnvWorker.chunk_step advances the simulation
 
-Installation
-----------------------------------------
+Setup and Run
+-------------
 
-Install the LIBERO environment and SGLang 0.5.19 with its ``diffusion`` extra. The ``sglang`` model pins torch 2.13.0 and picks the CUDA 12 or CUDA 13 build that the driver supports:
+The ``sglang`` model installs LIBERO together with SGLang 0.5.19 (``diffusion`` extra), pins torch 2.13.0, and picks the CUDA 12 or CUDA 13 build that the driver supports. Before launching, convert your SFT checkpoint into a diffusers component directory ``model_diffusers`` following the four-step "Checkpoint Conversion" section of :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>`.
 
-.. code-block:: bash
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
 
-   bash requirements/install.sh embodied --model sglang --env libero
-   source .venv/bin/activate
+.. tab-set::
 
-Prepare Checkpoint
-----------------------------------------
+   .. tab-item:: Cosmos3 SGLang + LIBERO
 
-The eval input is a diffusers component directory ``model_diffusers``, produced by converting the SFT checkpoint via cosmos-framework. The full four-step conversion is described in the "Checkpoint Conversion" section of :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>`.
+      .. code-block:: bash
+
+         # 1. Install
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model sglang --env libero && source .venv/bin/activate
+
+         # 2. Launch LIBERO-Spatial (replace model_path and action_stats_path with your local files)
+         bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang \
+           rollout.model.model_path=/path/to/model_diffusers \
+           rollout.model.action_stats_path=/path/to/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json \
+           env.eval.total_num_envs=128
+
+The default config is ``evaluations/libero/libero_spatial_cosmos3_eval_sglang.yaml`` (one SGLang server per GPU; logs go to ``logs/<timestamp>-<config>/eval_embodiment.log``). Adjust ``env.eval.total_num_envs`` to match your GPU count and memory (for example, ``128`` on 8 GPUs).
 
 .. note::
 
    Evaluation **does not** require network access to HuggingFace or the Qwen3-VL cache: the tokenizer is copied into ``model_diffusers/text_tokenizer/`` during conversion, and the server reads it directly from there.
-
-Run LIBERO-Spatial
-----------------------------------------
-
-The default config is ``evaluations/libero/libero_spatial_cosmos3_eval_sglang.yaml``. Before running, point the YAML at your local ``model_diffusers``:
-
-.. code-block:: yaml
-
-   rollout:
-     model:
-       model_path: /path/to/model_diffusers          # eval input diffusers directory
-       action_stats_path: /path/to/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json  # rot6d stats file from cosmos-framework
-
-   env:
-     eval:
-       total_num_envs: 128   # adjust by GPU count / memory (example: 128 for 8 GPUs)
-
-Launch evaluation (one SGLang server per GPU; logs go to ``logs/<timestamp>-<config>/eval_embodiment.log``):
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang
 
 Key Configuration
 ----------------------------------------

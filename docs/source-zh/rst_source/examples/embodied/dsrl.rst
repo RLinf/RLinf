@@ -87,82 +87,91 @@ DSRL 工作原理
 安装
 ----------------------------------------
 
-DSRL 使用与 Pi0 相同的环境和模型依赖。请参考 :doc:`pi0` 获取完整的安装指南，包括 Docker 镜像配置、依赖安装和模型下载。
+.. include:: _setup_common.rst
+
+DSRL 与 :doc:`pi0` 共用 OpenPI 环境与模型依赖：
+
+.. tab-set::
+
+   .. tab-item:: OpenPI π₀（LIBERO）
+      :sync: dsrl-pi0
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+
+下载模型
+----------------------------------------
+
+下载 LIBERO-Spatial 对应的 OpenPI π₀ SFT 检查点：
+
+.. tab-set::
+
+   .. tab-item:: OpenPI π₀（LIBERO）
+      :sync: dsrl-pi0
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+
+.. include:: _model_path.rst
 
 运行
 ----------------------------------------
 
-**1. 配置文件**
+使用 ``examples/embodiment/config/libero_spatial_dsrl_openpi.yaml`` 启动 DSRL 训练：
 
-- **DSRL 训练**： ``examples/embodiment/config/libero_spatial_dsrl_openpi.yaml``
-
-**2. 关键参数配置**
-
-**2.1 DSRL 模型参数**
-
-.. code:: yaml
-
-   actor:
-     model:
-       openpi:
-         use_dsrl: True              # 启用 DSRL 模式
-         dsrl_state_dim: 8           # 机器人本体感知维度
-         dsrl_action_noise_dim: 32   # 每步噪声动作维度
-         dsrl_num_q_heads: 10        # 集成 Critic 中的 Q-head 数量
-         dsrl_image_latent_dim: 64   # 图像编码器输出维度
-         dsrl_state_latent_dim: 64   # 状态编码器输出维度
-         dsrl_hidden_dims: [128, 128, 128]  # MLP 隐藏层维度
-
-**2.2 算法参数**
-
-.. code:: yaml
-
-   algorithm:
-     adv_type: embodied_sac
-     loss_type: embodied_sac
-     gamma: 0.999             # 折扣因子
-     tau: 0.005               # 目标网络软更新系数
-     update_epoch: 200        # 每次交互后的训练步数
-     train_actor_steps: 10    # Actor 训练延迟步数（先训练 Critic）
-     entropy_tuning:
-       alpha_type: softplus
-       initial_alpha: 1.0
-       target_entropy: -16
-       optim:
-         lr: 3.0e-4
-
-**2.3 环境参数**
-
-.. code:: yaml
-
-   env:
-     train:
-       total_num_envs: 16
-       use_step_penalty: True  # 使用 -1/0 奖励风格（步惩罚 + 终止奖励）
-       max_episode_steps: 240
-     eval:
-       total_num_envs: 500
-       use_step_penalty: True
-
-**3. 启动命令**
-
-::
+.. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_dsrl_openpi
+
+.. dropdown:: 进阶配置（可选）
+
+   ``libero_spatial_dsrl_openpi.yaml`` 中主要的默认 DSRL、SAC 与环境超参数如下：
+
+   .. code-block:: yaml
+
+      actor:
+        model:
+          openpi:
+            use_dsrl: True              # 启用 DSRL 模式
+            dsrl_state_dim: 8           # 机器人本体感知维度
+            dsrl_action_noise_dim: 32   # 每步噪声动作维度
+            dsrl_num_q_heads: 10        # 集成 Critic 中的 Q-head 数量
+            dsrl_image_latent_dim: 64   # 图像编码器输出维度
+            dsrl_state_latent_dim: 64   # 状态编码器输出维度
+            dsrl_hidden_dims: [128, 128, 128]  # MLP 隐藏层维度
+
+      algorithm:
+        adv_type: embodied_sac
+        loss_type: embodied_sac
+        gamma: 0.999             # 折扣因子
+        tau: 0.005               # 目标网络软更新系数
+        update_epoch: 200        # 每次交互后的训练步数
+        train_actor_steps: 10    # Actor 训练延迟步数（先训练 Critic）
+        entropy_tuning:
+          alpha_type: softplus
+          initial_alpha: 1.0
+          target_entropy: -16
+          optim:
+            lr: 3.0e-4
+
+      env:
+        train:
+          total_num_envs: 16
+          use_step_penalty: True  # 使用 -1/0 奖励风格（步惩罚 + 终止奖励）
+          max_episode_steps: 240
+        eval:
+          total_num_envs: 500
+          use_step_penalty: True
 
 可视化与结果
 ----------------------------------------
 
-**1. TensorBoard 日志**
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``env/success_once`` 曲线，通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制，完整指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
-.. code-block:: bash
-
-   # 启动 TensorBoard
-   tensorboard --logdir ./logs
-
-**2. 关键监控指标**
-
-指标含义见 :doc:`训练指标 <../../reference/metrics>`。DSRL 相关指标：
+DSRL 相关指标：
 
 - **环境指标**：
 

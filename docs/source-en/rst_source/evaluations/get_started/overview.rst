@@ -8,22 +8,19 @@ Directory Layout
 
 All evaluation code and configs live under ``evaluations/`` at the repository root:
 
-.. code-block:: text
-
-   evaluations/
-   ├── eval_embodied_agent.py   # Main evaluation program
-   ├── run_eval.sh              # One-click launcher
-   ├── libero/                  # LIBERO eval configs
-   ├── robotwin/                # RoboTwin eval configs
-   ├── behavior/                # BEHAVIOR-1K eval configs
-   ├── maniskill/               # ManiSkill OOD eval configs
-   ├── realworld/               # Real-robot eval configs
-   └── polaris/                 # PolaRiS eval configs
+- ``evaluations/eval_embodied_agent.py``: Main evaluation program
+- ``evaluations/run_eval.sh``: One-click launcher
+- ``evaluations/libero/``: LIBERO eval configs
+- ``evaluations/robotwin/``: RoboTwin eval configs
+- ``evaluations/behavior/``: BEHAVIOR-1K eval configs
+- ``evaluations/maniskill/``: ManiSkill OOD eval configs
+- ``evaluations/realworld/``: Real-robot eval configs
+- ``evaluations/polaris/``: PolaRiS eval configs
 
 Evaluation Architecture
 -----------------------
 
-Evaluation is driven by ``EmbodiedEvalRunner``: the environment worker and rollout worker communicate through Channels and run parallel evaluation under ``env.eval``. Metrics such as ``eval/success_once`` and ``eval/return`` are printed to the terminal and written to log files.
+The evaluation runner coordinates environment workers and rollout workers over channels to run parallel evaluation under ``env.eval``. Metrics such as ``eval/success_once`` and ``eval/return`` are printed to the terminal and written to log files.
 
 Typical data flow:
 

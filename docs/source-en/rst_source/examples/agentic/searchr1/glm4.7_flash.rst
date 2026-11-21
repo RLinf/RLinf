@@ -51,23 +51,86 @@ The reference run disables thinking (see below), so the user message also drops
 the sentence "You must conduct reasoning inside <think> and </think> first every
 time you get new information." from the Search-R1 instruction.
 
-Configuration
+Setup and Run
 -------------
 
-Fill in the data path, the model path, and the retrieval server address:
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run
+``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt
+images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
+Start the Qdrant wiki retrieval server from :doc:`index` before training (launch
+it with ``CUDA_VISIBLE_DEVICES=0`` to share GPU 0, using about 1 GB of GPU memory).
 
-.. code-block:: yaml
+.. tab-set::
 
-   data:
-     train_data_paths: ["/path/to/data/searchr1_train_glm.jsonl"]
-   rollout:
-     model:
-       model_path: /path/to/model/GLM-4.7-Flash
-   tools:
-     search:
-       server_addr: <server_ip>:8000
+   .. tab-item:: Single-Node (8×A100)
 
-The model-specific settings are already set in the configuration:
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+
+      **2. Download**
+
+      Download the model and dataset (convert ``Search-R1-Data`` prompts to message lists as described above):
+
+      .. code-block:: bash
+
+         hf download zai-org/GLM-4.7-Flash --local-dir ./GLM-4.7-Flash
+         hf download --repo-type dataset RLinf/Search-R1-Data --local-dir ./Search-R1-Data
+
+      **3. Launch**
+
+      Fill in the data path, model path, and retrieval server address in ``examples/agent/searchr1/config/train_glm4.7_flash.yaml``:
+
+      .. code-block:: yaml
+
+         data:
+           train_data_paths: ["/path/to/data/searchr1_train_glm.jsonl"]
+         rollout:
+           model:
+             model_path: /path/to/model/GLM-4.7-Flash
+         tools:
+           search:
+             server_addr: <server_ip>:8000
+
+      Start training:
+
+      .. code-block:: bash
+
+         bash examples/agent/searchr1/run_train.sh train_glm4.7_flash
+
+   .. tab-item:: Multi-Node (2×8 A100)
+
+      **1. Install**
+
+      Install RLinf on both nodes and set up the Ray cluster following the :doc:`multi-node guide </rst_source/guides/multi_node>` (export a unique ``RLINF_NODE_RANK`` on every node, 0 on the head, and activate the RLinf environment before ``ray start``):
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download zai-org/GLM-4.7-Flash --local-dir ./GLM-4.7-Flash
+         hf download --repo-type dataset RLinf/Search-R1-Data --local-dir ./Search-R1-Data
+
+      **3. Launch**
+
+      Fill in the same path fields in ``examples/agent/searchr1/config/train_glm4.7_flash_2node_server.yaml`` (the search tool worker runs on node 0, so ``tools.search.server_addr`` only needs to be reachable from node 0), then launch from any cluster node:
+
+      .. code-block:: bash
+
+         bash examples/agent/searchr1/run_train.sh train_glm4.7_flash_2node_server
+
+Configuration and Parallelism Notes
+-----------------------------------
+
+The model-specific settings are already configured in the shipped YAMLs:
 
 .. code-block:: yaml
 
@@ -97,9 +160,6 @@ The model-specific settings are already set in the configuration:
 - `actor.megatron.mbridge: True` loads the HuggingFace weights in process through
   Megatron-Bridge, so no offline HuggingFace-to-Megatron conversion is needed.
 
-Training on 8×A100
-------------------
-
 Parallelism on 8×A100-80G (actor and rollout collocated):
 
 - Actor (Megatron): tensor parallel 4, expert parallel 8, data parallel 2.
@@ -110,35 +170,7 @@ Parallelism on 8×A100-80G (actor and rollout collocated):
   large as the per-rank value; otherwise decoding falls out of CUDA graphs and
   becomes slower.
 
-The retrieval server can share a GPU with training. The Qdrant server starts one
-e5 query encoder on every visible GPU, so launch it with `CUDA_VISIBLE_DEVICES=0`
-(about 1 GB of GPU memory) and start it before training.
-
-Run the training with:
-
-.. code-block:: bash
-
-   bash examples/agent/searchr1/run_train.sh train_glm4.7_flash
-
-Multi-Node Training
--------------------
-
-`examples/agent/searchr1/config/train_glm4.7_flash_2node_server.yaml` runs the
-same recipe on two 8-GPU nodes, with one SGLang model instance (tensor parallel
-16, 8 GPUs per node) spanning both. Set up the Ray cluster as described in the
-:doc:`multi-node guide </rst_source/guides/multi_node>`: export a unique
-`RLINF_NODE_RANK` on every node (0 on the head) and activate the RLinf
-environment before `ray start`, so the Ray workers also find its tools on
-`PATH`. Then start the training from any node of the cluster:
-
-.. code-block:: bash
-
-   bash examples/agent/searchr1/run_train.sh train_glm4.7_flash_2node_server
-
-The search tool worker runs on node 0 (`RLINF_NODE_RANK=0`), so
-`tools.search.server_addr` only needs to be reachable from that node.
-
-Cross-node rollout instances have these requirements:
+Cross-node rollout instances (``train_glm4.7_flash_2node_server.yaml``) have these requirements:
 
 - `rollout.sglang.backend_type: server`; other backends reject a cross-node
   layout at startup.
@@ -147,7 +179,7 @@ Cross-node rollout instances have these requirements:
 - With SGLang `dp_size` greater than 1 across nodes, DP attention
   (`enable_dp_attention: True`) is required.
 
-In this example the rollout instance enables DP attention (`dp_size: 4`, so the
+In the two-node config the rollout instance enables DP attention (`dp_size: 4`, so the
 attention tensor-parallel size is 4) and expert parallelism of 16; the actor uses
 tensor parallel 4, expert parallel 8, and data parallel 4, with the expert-parallel
 group kept within one node so MoE all-to-all never crosses nodes. Scale tp / dp /

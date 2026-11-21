@@ -77,45 +77,46 @@ Observation and Action
    * - Prompt
      - <the task instruction>
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model <model> --env <env> && source .venv/bin/activate
+   .. tab-item:: <Model / Suite>
 
-Download the Model
-------------------
+      **1. Install**
 
-Download the pretrained checkpoint:
+      .. code-block:: bash
 
-.. code-block:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model <model> --env <env> && source .venv/bin/activate
 
-   hf download <org>/<repo> --local-dir /path/to/checkpoint
+      **2. Download**
 
-.. include:: _model_path.rst
+      .. code-block:: bash
 
-Run It
-------
+         hf download <org>/<repo> --local-dir ./<checkpoint>
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 40 30
+      **3. Launch**
 
-   * - Setting
-     - Config (``examples/embodiment/config/``)
-     - Notes
-   * - <model + algorithm>
-     - ``<config_name>.yaml``
-     - <one-line focus>
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 40 30
 
-Launch training:
+         * - Setting
+           - Config (``examples/embodiment/config/``)
+           - Notes
+         * - <model + algorithm>
+           - ``<config_name>.yaml``
+           - <one-line focus>
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh <config_name> actor.model.model_path=/path/to/checkpoint
+         bash examples/embodiment/run_embodiment.sh <config_name> actor.model.model_path=$PWD/<checkpoint>
+
+      .. include:: _model_path.rst
 
 Visualization and Results
 -------------------------

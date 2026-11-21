@@ -80,49 +80,47 @@ Observation and Action
 Installation
 ------------
 
-The real-world pipeline uses **different environments on different nodes**:
+The real-world pipeline uses separate environments on the robot node and the GPU training / rollout node (or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__). In mainland China, append ``--use-mirror`` to ``requirements/install.sh`` and set ``export HF_ENDPOINT=https://hf-mirror.com`` before downloading Hugging Face checkpoints.
 
-- **Robot / env node**: Use the Franka controller environment from :doc:`franka`.
-- **Training / rollout node**: Use the same environment as simulation DAgger :doc:`dagger`.
+.. tab-set::
 
-Robot / Env Node
-~~~~~~~~~~~~~~~~
+   .. tab-item:: Robot / Env Node
 
-Set up the robot node as described in the Installation section of
-:doc:`franka`: install the Franky-based ``franka`` environment directly, or use
-the ``franky`` venv in the Franka Docker image, with ``LIBFRANKA_VERSION``
-matching the firmware. Activate that environment before starting Ray. This
-recipe runs the OpenPI actor and rollout on a separate GPU node.
+      Install the Franky-based ``franka`` environment with ``LIBFRANKA_VERSION`` matching your firmware (or use the ``franky`` venv in the Franka Docker image; see :doc:`franka`):
 
-Training / Rollout Nodes
-~~~~~~~~~~~~~~~~~~~~~~~~
+      .. code-block:: bash
 
-Use the same environment as simulator Pi0 DAgger, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         export LIBFRANKA_VERSION=0.19.0
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
-.. code:: bash
+   .. tab-item:: Training / Rollout Nodes
 
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+      Install the OpenPI environment on the GPU node (same as simulator Pi0 DAgger in :doc:`dagger`):
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 Cluster Setup
 -------------
 
-Before launching any collection or training job, finish the Ray setup described
-in :doc:`franka`. The training / rollout node is typically the Ray head
-(``RLINF_NODE_RANK=0``), while the Franka controller node is the worker
-(``RLINF_NODE_RANK=1``).
+Before launching any collection or training job, finish the Ray setup described in :doc:`franka`. The training / rollout node is typically the Ray head (``RLINF_NODE_RANK=0``), while the Franka controller node is the worker (``RLINF_NODE_RANK=1``). Replace ``HEAD_NODE_IP`` with the head node's IP address:
 
 .. code-block:: bash
 
    # On the training / rollout node
    export RLINF_NODE_RANK=0
-   ray start --head --port=6379 --node-ip-address=<head_node_ip>
+   export HEAD_NODE_IP=192.168.1.10
+   ray start --head --port=6379 --node-ip-address="$HEAD_NODE_IP"
 
    # On the robot / env node
    export RLINF_NODE_RANK=1
-   ray start --address='<head_node_ip>:6379'
+   export HEAD_NODE_IP=192.168.1.10
+   ray start --address="${HEAD_NODE_IP}:6379"
 
-Ray records the current Python interpreter and environment variables at startup,
-so make sure each node has sourced the correct environment before ``ray start``.
+Ray records the current Python interpreter and environment variables at startup, so make sure each node has sourced the correct environment before ``ray start``.
 
 Run It
 ------
@@ -130,8 +128,7 @@ Run It
 1. Collect Human-Guided Real-World Data
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Start from ``examples/embodiment/config/realworld_collect_data_pico.yaml``. For the
-pick-and-place task, switch the env from peg insertion to bin relocation:
+Copy ``examples/embodiment/config/realworld_collect_data_pico.yaml`` (for example to ``my_realworld_pnp_collect.yaml``). Switch the env from peg insertion to bin relocation and fill in your robot IP, camera serials, and target pose:
 
 .. code-block:: yaml
 
@@ -139,55 +136,21 @@ pick-and-place task, switch the env from peg insertion to bin relocation:
      - env/realworld_bin_relocation@env.eval
      - override hydra/job_logging: stdout
 
-Then fill in the robot configuration and PICO publisher address, and set the
-export format to LeRobot:
-
-.. code-block:: yaml
-
    cluster:
      node_groups:
        - label: franka
-         node_ranks: 0
          hardware:
-           type: Franka
            configs:
              - robot_ip: ROBOT_IP
                node_rank: 0
 
    env:
      eval:
-       teleop: pico
-       pico:
-         zmq_addr: "ipc:///tmp/vr_data.ipc"
-         hand: "right"
-         control_trigger: "grip"
-         control_threshold: 0.85
-         gripper_close_button: "A"
-         gripper_open_button: "B"
-         position_scale: 1.0
-         rotation_scale: 1.0
-         max_stale_s: 0.2
-         calibration:
-           enabled: True
-           required: True
-           auto_calibrate_on_start: True
-           button: "trigger"
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
-         success_hold_steps: 1
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
-       data_collection:
-         enabled: True
-         save_dir: ${runner.logger.log_path}
-         export_format: [replay_buffer, lerobot_dataset]
-         only_success: True
-         robot_type: "panda"
-         fps: 10
 
-Before launching, start and verify the PICO data stream as described in
-:doc:`franka_vr`. The ``ipc://`` address above requires the publisher and env
-worker to run on the same machine; use ``tcp://<publisher_ip>:<port>`` when
-they run on different machines.
+Before launching, start and verify the PICO data stream as described in :doc:`franka_vr`. The default ``ipc:///tmp/vr_data.ipc`` address requires the publisher and env worker to run on the same machine; use ``tcp://<publisher_ip>:<port>`` in ``env.eval.pico.zmq_addr`` when they run on different machines.
 
 Launch collection with your copied config:
 
@@ -201,6 +164,40 @@ During teleoperation, the same run writes:
 - LeRobot data under ``logs/{timestamp}/lerobot_dataset/``
 
 For the collection format, see :doc:`../../guides/data_collection`.
+
+.. dropdown:: Advanced configuration (optional)
+
+   The shipped collection config already sets PICO button bindings, calibration, and LeRobot export defaults:
+
+   .. code-block:: yaml
+
+      env:
+        eval:
+          teleop: pico
+          pico:
+            zmq_addr: "ipc:///tmp/vr_data.ipc"
+            hand: "right"
+            control_trigger: "grip"
+            control_threshold: 0.85
+            gripper_close_button: "A"
+            gripper_open_button: "B"
+            position_scale: 1.0
+            rotation_scale: 1.0
+            max_stale_s: 0.2
+            calibration:
+              enabled: True
+              required: True
+              auto_calibrate_on_start: True
+              button: "trigger"
+          override_cfg:
+            success_hold_steps: 1
+          data_collection:
+            enabled: True
+            save_dir: ${runner.logger.log_path}
+            export_format: [replay_buffer, lerobot_dataset]
+            only_success: True
+            robot_type: "panda"
+            fps: 10
 
 2. Compute Normalization Statistics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -246,105 +243,103 @@ OpenPI SFT details, see :doc:`sft_openpi`.
 4. Run Async HG-DAgger on the Real Robot
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Edit ``examples/embodiment/config/realworld_pnp_dagger_openpi.yaml`` to match
-your cluster, cameras, target pose, and checkpoints:
+In ``examples/embodiment/config/realworld_pnp_dagger_openpi.yaml``, set your robot IP, cameras, target pose, SFT checkpoint, and base model path (rollout inherits ``actor.model.model_path`` automatically):
 
 .. code-block:: yaml
-
-   cluster:
-     num_nodes: 2
-     node_groups:
-       - label: "train"
-         node_ranks: 0
-       - label: franka
-         node_ranks: 1
-         hardware:
-           type: Franka
-           configs:
-             - robot_ip: ROBOT_IP
-               node_rank: 1
 
    runner:
      ckpt_path: "/path/to/sft_checkpoint/full_weights.pt"
 
-   algorithm:
-     dagger:
-       only_save_expert: True
-       online_lerobot:
-         enabled: True
-         only_success: True
-         robot_type: "panda"
-         fps: 10
-         finalize_interval: 1
-         data_path: ${runner.logger.log_path}/online_lerobot
-         rolling_lerobot_window_size: 50000
-         min_frames: 1
-         lerobot_num_workers: 0
-
-   env:
-     train:
-       smooth_intervene: True
-       teleop: pico
-       pico:
-         zmq_addr: "ipc:///tmp/vr_data.ipc"
-         hand: "right"
-         control_trigger: "grip"
-         control_threshold: 0.85
-         gripper_close_button: "A"
-         gripper_open_button: "B"
-         position_scale: 1.0
-         rotation_scale: 1.0
-         max_stale_s: 0.2
-         calibration:
-           enabled: True
-           required: True
-           auto_calibrate_on_start: True
-           button: "trigger"
-       override_cfg:
-         target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
-         camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
-     eval:
-       teleop: none
-       override_cfg:
-         target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
-         camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
-
-   rollout:
-     model:
-       model_path: "/path/to/pi0-model"
-
    actor:
      model:
        model_path: "/path/to/pi0-model"
-       openpi:
-         config_name: "pi0_realworld"
+       openpi_data:
+         repo_id: "realworld_franka_bin_relocation"
 
-``online_lerobot.enabled: True`` enables the online LeRobot data path. The env worker collects rollouts by episode and sends episodes that satisfy the configured filters to the actor; the actor adds them to ``RollingLeRobotDataset`` for training, so online training no longer uses the trajectory replay buffer.
-
-``smooth_intervene: True`` bypasses policy inference when PICO intervention continues through the last frame of an action chunk. The env worker uses a dummy chunk to keep stepping the teleoperation wrapper and resumes normal inference after ``grip`` is released or the episode ends. It is PICO-only: ``env.train.teleop`` must be ``pico``. It also requires one environment per env-worker pipeline stage. ``env.eval.teleop: none`` keeps evaluation policy-only.
-
-``only_success: True`` discards failed episodes. ``only_save_expert: True`` keeps
-the complete successful episode in the LeRobot archive, but restricts the online
-sampler to chunk starts where every non-padded frame in the action chunk has
-``intervene_flag=True``. For ``num_action_chunks: 1``, this reduces to filtering
-individual frames. Within a successful episode:
-
-* non-intervention frames remain in the physical archive but are not exposed as
-  expert-only training samples;
-* human-intervention frames store the actions actually executed by the
-  intervention device and carry ``intervene_flag=True``;
-* ``finalize_interval: 1`` writes a LeRobot shard after every successful episode;
-* ``rolling_lerobot_window_size: 50000`` limits online sampling to the most
-  recent 50,000 expert-valid logical chunk starts, while older shards remain on
-  disk.
-
-The real-world DAgger config intentionally omits beta-related fields because it does not configure ``rollout.expert_model``. Beta only controls action mixing between a model expert and the student; real-world human intervention is determined by the PICO intervention wrapper enabled under ``env.train``.
-
-Launch HG-DAgger from the Ray head node:
+Update ``cluster.node_groups`` (``robot_ip``) and ``env.{train,eval}.override_cfg`` (``target_ee_pose``, ``camera_serials``) for your hardware, then launch HG-DAgger from the Ray head node:
 
 .. code-block:: bash
 
    bash examples/embodiment/run_realworld_async.sh realworld_pnp_dagger_openpi
+
+.. dropdown:: Advanced configuration (optional)
+
+   The shipped config already sets cluster layout, online LeRobot archiving, and PICO intervention defaults:
+
+   .. code-block:: yaml
+
+      cluster:
+        num_nodes: 2
+        node_groups:
+          - label: "train"
+            node_ranks: 0
+          - label: franka
+            node_ranks: 1
+            hardware:
+              type: Franka
+              configs:
+                - robot_ip: ROBOT_IP
+                  node_rank: 1
+
+      algorithm:
+        dagger:
+          only_save_expert: True
+          online_lerobot:
+            enabled: True
+            only_success: True
+            robot_type: "panda"
+            fps: 10
+            finalize_interval: 1
+            data_path: ${runner.logger.log_path}/online_lerobot
+            rolling_lerobot_window_size: 50000
+            min_frames: 1
+            lerobot_num_workers: 0
+
+      env:
+        train:
+          smooth_intervene: True
+          teleop: pico
+          pico:
+            zmq_addr: "ipc:///tmp/vr_data.ipc"
+            hand: "right"
+            control_trigger: "grip"
+            control_threshold: 0.85
+            gripper_close_button: "A"
+            gripper_open_button: "B"
+            position_scale: 1.0
+            rotation_scale: 1.0
+            max_stale_s: 0.2
+            calibration:
+              enabled: True
+              required: True
+              auto_calibrate_on_start: True
+              button: "trigger"
+          override_cfg:
+            target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
+            camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
+        eval:
+          teleop: none
+          override_cfg:
+            target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
+            camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
+
+      actor:
+        model:
+          openpi:
+            config_name: "pi0_realworld"
+
+   ``online_lerobot.enabled: True`` enables the online LeRobot data path. The env worker collects rollouts by episode and sends episodes that satisfy the configured filters to the actor; the actor adds them to its rolling LeRobot dataset for training, so online training does not use the trajectory replay buffer.
+
+   ``smooth_intervene: True`` bypasses policy inference when PICO intervention continues through the last frame of an action chunk. The env worker uses a dummy chunk to keep stepping the teleoperation wrapper and resumes normal inference after ``grip`` is released or the episode ends. It is PICO-only: ``env.train.teleop`` must be ``pico``, and each env-worker pipeline stage must run one environment. ``env.eval.teleop: none`` keeps evaluation policy-only.
+
+   ``only_success: True`` discards failed episodes. ``only_save_expert: True`` keeps the complete successful episode in the LeRobot archive, while restricting the online sampler to chunk starts where every non-padded frame in the action chunk has ``intervene_flag=True``. For ``num_action_chunks: 1``, this reduces to filtering individual frames. Within a successful episode:
+
+   * non-intervention frames remain in the physical archive without entering expert-only training samples;
+   * human-intervention frames store the actions actually executed by the intervention device and carry ``intervene_flag=True``;
+   * ``finalize_interval: 1`` writes a LeRobot shard after every successful episode;
+   * ``rolling_lerobot_window_size: 50000`` limits online sampling to the most recent 50,000 expert-valid logical chunk starts, while older shards remain on disk.
+
+   The real-world DAgger config omits beta-related fields because it does not configure ``rollout.expert_model``. Beta only controls action mixing between a model expert and the student; real-world human intervention is controlled by the PICO intervention wrapper under ``env.train``.
 
 Visualization and Results
 -------------------------

@@ -48,52 +48,58 @@ Before launching training, complete
 - The judge model is running.
 - The offline retrieval tools are configured.
 
-Download the Base Model
------------------------
+Setup and Run
+-------------
 
-The main experiments use
-`Qwen3-4B <https://huggingface.co/Qwen/Qwen3-4B>`__.
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run
+``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt
+images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
+Complete :doc:`Environment and Tool Setup <tools>` so that the judge model and
+offline retrieval tools are running before launching training.
 
-After downloading the model, update
-`examples/agent/wideseek_r1/config/train_qwen3_hybrid.yaml`
-with the local model path:
+.. tab-set::
 
-.. code-block:: yaml
+   .. tab-item:: Qwen3-4B (Hybrid Multi-Agent RL)
 
-   rollout:
-     model:
-       model_type: qwen3
-       model_path: /PATH/TO/MODEL
+      **1. Install**
 
-Download the Training Data
---------------------------
+      .. code-block:: bash
 
-WideSeek-R1 training uses a 20k hybrid dataset that combines broad
-information-seeking data with standard QA data. The dataset is available on
-Hugging Face:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-- `WideSeek-R1-train-data <https://huggingface.co/datasets/RLinf/WideSeek-R1-train-data>`__
+      **2. Download**
 
-The main experiments use ``hybrid_20k.jsonl`` from
-``WideSeek-R1-train-data``.
+      Download `Qwen3-4B <https://huggingface.co/Qwen/Qwen3-4B>`__ and `WideSeek-R1-train-data <https://huggingface.co/datasets/RLinf/WideSeek-R1-train-data>`__ (the main experiments use ``hybrid_20k.jsonl``; a separate `WideSeek-R1-Corpus <https://huggingface.co/datasets/RLinf/WideSeek-R1-Corpus>`__ artifact is also available for corpus inspection):
 
-A separate `WideSeek-R1-Corpus <https://huggingface.co/datasets/RLinf/WideSeek-R1-Corpus>`__
-artifact is also available for users who want to inspect or reuse the public
-corpus resources. It is not the ``hybrid_20k.jsonl`` training file used by the
-main experiments.
+      .. code-block:: bash
 
-After downloading the data, update
-`examples/agent/wideseek_r1/config/train_qwen3_hybrid.yaml`
-with the dataset path:
+         hf download Qwen/Qwen3-4B --local-dir ./Qwen3-4B
+         hf download --repo-type dataset RLinf/WideSeek-R1-train-data --local-dir ./WideSeek-R1-train-data
 
-.. code-block:: yaml
+      **3. Launch**
 
-   data:
-     train_data_paths: /PATH/TO/TRAIN/DATASET/hybrid_20k.jsonl
-     is_hybrid: True
+      Update ``rollout.model.model_path``, ``data.train_data_paths``, and ``agentloop.llm_ip`` in ``examples/agent/wideseek_r1/config/train_qwen3_hybrid.yaml``:
 
-About ``is_hybrid`` and ``is_markdown``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      .. code-block:: yaml
+
+         rollout:
+           model:
+             model_type: qwen3
+             model_path: /PATH/TO/MODEL
+
+         data:
+           train_data_paths: /PATH/TO/TRAIN/DATASET/hybrid_20k.jsonl
+           is_hybrid: True
+
+      Start training (for multi-node launches, see :ref:`wideseek-r1-multinode`):
+
+      .. code-block:: bash
+
+         bash examples/agent/wideseek_r1/run_train.sh train_qwen3_hybrid
+
+Hybrid and Single-Source Datasets
+---------------------------------
 
 ``is_hybrid`` indicates whether the training set mixes WideSearch-style data and
 standard QA data.
@@ -103,24 +109,6 @@ standard QA data.
   set ``is_hybrid: False``.
 - When ``is_hybrid`` is ``False``, make sure ``data.is_markdown`` matches the
   dataset format you use (True for ``width_20k``, False for ``depth_20k``).
-
-Run It
-------
-
-Before starting training, verify all of the following:
-
-- ``rollout.model.model_path`` points to the downloaded base model.
-- ``data.train_data_paths`` points to the training dataset.
-- ``agentloop.llm_ip`` is set correctly.
-- Offline tools are configured and reachable. See :doc:`Environment and Tool Setup <tools>`.
-
-Then run:
-
-.. code-block:: bash
-
-   bash examples/agent/wideseek_r1/run_train.sh train_qwen3_hybrid
-
-For multi-node launches, see :ref:`wideseek-r1-multinode`.
 
 Visualization and Results
 -------------------------

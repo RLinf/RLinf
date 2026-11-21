@@ -165,9 +165,16 @@ The Robotiq gripper communicates over **Modbus RTU** through a USB-to-RS485
 adapter.  The required Python dependency ``pymodbus`` is **automatically
 installed** when you run the Franka installation script:
 
-.. code-block:: bash
+.. include:: _setup_common.rst
 
-   bash requirements/install.sh embodied --env franka
+.. tab-set::
+
+   .. tab-item:: Franka Controller Node (NUC)
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 The following steps set up the serial device on the node that controls the
 gripper (typically the NUC).

@@ -150,9 +150,16 @@ Install the RLinf environment that runs the PICO intervention with the
 ``franka`` env. It includes the base Franka real-world dependencies and
 ``pyzmq`` for the VR / PICO pipeline:
 
-.. code-block:: bash
+.. include:: _setup_common.rst
 
-   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+.. tab-set::
+
+   .. tab-item:: Franka Controller Node
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 If you use Ray, install it and source the corresponding environment **before**
 running ``ray start``.

@@ -75,45 +75,46 @@
    * - Prompt
      - <任务指令>
 
-安装
-----
+一键上手
+--------
 
 .. include:: _setup_common.rst
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model <model> --env <env> && source .venv/bin/activate
+   .. tab-item:: <模型 / 任务集>
 
-下载模型
---------
+      **1. 安装环境**
 
-下载预训练权重：
+      .. code-block:: bash
 
-.. code-block:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model <model> --env <env> && source .venv/bin/activate
 
-   hf download <org>/<repo> --local-dir /path/to/checkpoint
+      **2. 下载模型**
 
-.. include:: _model_path.rst
+      .. code-block:: bash
 
-运行
-----
+         hf download <org>/<repo> --local-dir ./<checkpoint>
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 40 30
+      **3. 启动训练**
 
-   * - 场景
-     - 配置（``examples/embodiment/config/``）
-     - 说明
-   * - <模型 + 算法>
-     - ``<config_name>.yaml``
-     - <一句话说明>
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 40 30
 
-启动训练：
+         * - 场景
+           - 配置（``examples/embodiment/config/``）
+           - 说明
+         * - <模型 + 算法>
+           - ``<config_name>.yaml``
+           - <一句话说明>
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh <config_name> actor.model.model_path=/path/to/checkpoint
+         bash examples/embodiment/run_embodiment.sh <config_name> actor.model.model_path=$PWD/<checkpoint>
+
+      .. include:: _model_path.rst
 
 可视化与结果
 ------------

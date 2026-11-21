@@ -6,22 +6,29 @@
 Step 1：安装环境
 ----------------
 
-在仓库根目录执行：
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
+   .. tab-item:: OpenPI + LIBERO
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
 
 Step 2：准备模型
 ----------------
 
-从 Hugging Face 下载 SFT 模型（``RLinf/RLinf-Pi05-LIBERO-SFT``）到本地：
+从 Hugging Face 下载 SFT 模型（`RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__）：
 
-.. code-block:: bash
+.. tab-set::
 
-   hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
+   .. tab-item:: OpenPI π₀.₅（LIBERO）
 
-模型地址：`RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__。也可在启动时通过命令行覆盖 ``rollout.model.model_path``。
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
 Step 3：启动评测
 ----------------

@@ -6,11 +6,7 @@ Install RLinf into a local uv virtual environment with one ``requirements/instal
 Install Locally
 ---------------
 
-Clone the repository, then run the command for your target:
-
-.. code-block:: bash
-
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+Choose your target below and run the setup commands:
 
 .. tab-set::
 
@@ -20,19 +16,26 @@ Clone the repository, then run the command for your target:
 
       .. code-block:: bash
 
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
    .. tab-item:: Agentic / Reasoning
 
       .. code-block:: bash
 
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
 
    .. tab-item:: Docs
 
       .. code-block:: bash
 
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh docs --venv .docs-venv
+
+.. tip::
+
+   **Mainland China mirror:** append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
 
 Supported Models, Environments, and Platforms
 ---------------------------------------------

@@ -91,62 +91,59 @@ GimArm 真机强化学习
 
 控制节点与训练/采样节点需要安装不同的软件依赖。
 
-机器人控制节点
+.. include:: _setup_common.rst
+
+.. tab-set::
+
+   .. tab-item:: 机器人控制节点
+
+      **1. 克隆 RLinf 并安装依赖**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
+
+      **2. 安装 ``gim_arm_control`` SDK**
+
+      ``gim_arm_control`` 包提供了用于控制 GimArm 机械臂的底层 CAN 通信驱动与 Python 绑定。它同时附带了下一步需要使用的辅助脚本（``sh/init_can.sh``、``sh/set_zero.sh``），因此请先完成本步骤的安装再继续。
+
+      .. code-block:: bash
+
+         cd ~
+         git clone https://github.com/RLinf/gim_arm_control.git
+         cd ~/gim_arm_control/python
+         pip install -e .
+
+      脚本会通过 CMake 构建 C++ 核心，并使用 nanobind 安装 Python 绑定。
+
+      **构建依赖**：``scikit-build-core>=0.5``、``nanobind>=2.0``、C++17 编译器（GCC >= 7 或 Clang >= 5）。
+
+      **运行依赖**：``numpy``、``pinocchio``\ （以 ``pin`` 名称导入）。
+
+      .. note::
+
+         ``pinocchio`` 是控制器做正运动学和 Jacobian 计算所必需的依赖，会随 SDK 自动安装。对于需要兼容 NumPy 1.x 的系统，可改用以下命令安装：
+
+         .. code-block:: bash
+
+            pip install -e ".[pin270]"
+
+   .. tab-item:: 训练 / Rollout 节点
+
+      克隆 RLinf 并安装依赖（或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像）：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
+
+      如需安装特定模型依赖（例如 OpenVLA），可追加 ``--model`` 参数（例如 ``--model openvla --env maniskill_libero``）。
+
+CAN 接口初始化
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1. 安装
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-A. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-b. 安装 RLinf 依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
-
-c. 安装 gim_arm_control SDK
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``gim_arm_control`` 包提供了用于控制 GimArm 机械臂的底层 CAN 通信驱动与 Python 绑定。
-它同时附带了下一步需要使用的辅助脚本（``sh/init_can.sh``、``sh/set_zero.sh``），
-因此请先完成本步骤的安装再继续。
-
-.. code:: bash
-
-   cd ~
-   git clone https://github.com/RLinf/gim_arm_control.git
-   cd ~/gim_arm_control/python
-   pip install -e .
-
-脚本会通过 CMake 构建 C++ 核心，并使用 nanobind 安装 Python 绑定。
-
-**构建依赖**：``scikit-build-core>=0.5``、``nanobind>=2.0``、C++17 编译器（GCC >= 7 或 Clang >= 5）。
-
-**运行依赖**：``numpy``、``pinocchio``\ （以 ``pin`` 名称导入）。
-
-.. note::
-
-   ``pinocchio`` 是控制器做正运动学和 Jacobian 计算所必需的依赖。
-   它会随 SDK 自动安装。
-   对于需要兼容 NumPy 1.x 的系统，可改用以下命令安装：
-
-   .. code:: bash
-
-      pip install -e ".[pin270]"
-
-2. CAN 接口初始化
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-CAN 总线需要在使用机械臂之前完成初始化。
-``gim_arm_control`` SDK（在上一步中安装）提供了方便脚本，或者也可以手动执行相关命令。
+在机器人控制节点上，使用机械臂前必须先初始化 CAN 总线。``gim_arm_control`` SDK（在上一步中安装）提供了方便脚本，也可以手动执行相关命令。
 
 使用 ``gim_arm_control`` 仓库自带的脚本：
 
@@ -166,45 +163,30 @@ CAN 总线需要在使用机械臂之前完成初始化。
 
 .. warning::
 
-  每次系统重启后，CAN 接口都需要重新初始化。
-  可以通过以下命令确认接口是否已经启用：
+  每次系统重启后，CAN 接口都需要重新初始化。可以通过以下命令确认接口是否已经启用：
 
   .. code:: bash
 
      ip link show can0
 
-3. 电机零点校准
+电机零点校准
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-首次使用（或更换电机后）需要对达妙电机进行零点校准。
-校准会把电机当前的物理位置设为零参考点。
+在机器人控制节点上，首次使用（或更换电机后）需要对达妙电机做零点校准，将电机当前的物理位置设为零参考点。
 
 通过 ``gim_arm_control`` 仓库的脚本：
 
 .. code:: bash
 
-   # 对单个电机进行零点校准（CAN ID 使用十六进制）
+   # 对单个电机校准零点（CAN ID 使用十六进制）
    bash sh/set_zero.sh can0 001
 
-   # 对所有电机（001-008）进行零点校准
+   # 对所有电机（001-008）校准零点
    bash sh/set_zero.sh can0 --all
 
 .. warning::
 
-  校准必须在机械臂处于机械零位时进行。
-  错误的校准会导致机械臂执行意料之外的动作。
-  该操作依赖 ``can-utils``\ （使用 ``sudo apt install can-utils`` 安装）。
-
-训练 / Rollout 节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-像上面一样克隆 RLinf 仓库，然后使用 ``requirements/install.sh`` 安装依赖，或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像：
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
-
-如需安装特定模型依赖（例如 OpenVLA），可追加 ``--model`` 参数（例如 ``--model openvla --env maniskill_libero``）。
+  校准必须在机械臂处于机械零位时操作。错误的校准会导致机械臂执行意料之外的动作。该操作依赖 ``can-utils``\ （使用 ``sudo apt install can-utils`` 安装）。
 
 
 运行

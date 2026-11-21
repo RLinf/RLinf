@@ -12,13 +12,12 @@
 
    CALVIN（图片来源：`CALVIN <https://github.com/mees/calvin/>`__）。
 
-`CALVIN <https://github.com/mees/calvin/>`__ 是基于 PyBullet 的长程语言条件机器人操作
-基准。你将使用 RLinf 在 CALVIN 场景迁移套件上，通过 PPO 微调 OpenPI π₀ 或 π₀.₅ 策略。
+`CALVIN <https://github.com/mees/calvin/>`__ 是基于 PyBullet 的长程语言条件机器人操作基准。你将使用 RLinf 在 CALVIN 场景迁移套件上，通过 PPO 微调 OpenPI π₀ 或 π₀.₅ policy。
 
 概览
 ----------------------------------------
 
-在 CALVIN 上微调 OpenPI 策略，并评估长程子任务完成能力。
+在 CALVIN 上微调 OpenPI policy，并评估长程子任务完成能力。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -82,107 +81,127 @@
 
 .. note::
 
-   RLinf 修正了 CALVIN 上游仓库中 scene A、B、C YAML 文件的部分设置。
-   背景见上游 `CALVIN issue <https://github.com/mees/calvin/issues/41>`__。
+   RLinf 修正了 CALVIN 上游仓库中 scene A、B、C YAML 文件的部分设置。背景见上游 `CALVIN issue <https://github.com/mees/calvin/issues/41>`__。
 
-安装
+一键上手
 ----------------------------------------
 
 .. include:: _setup_common.rst
 
-.. code:: bash
-
-   bash requirements/install.sh embodied --model openpi --env calvin && source .venv/bin/activate
-
-下载模型
-----------------------------------------
-
-下载要微调的 OpenPI checkpoint：
-
 .. tab-set::
 
-   .. tab-item:: π₀
+   .. tab-item:: OpenPI π₀
+      :sync: pi0
+
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env calvin
+         source .venv/bin/activate
+
+      **2. 下载资源与模型**
+
+      下载 OpenPI π₀ SFT checkpoint：
 
       .. code-block:: bash
 
          hf download RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT --local-dir ./RLinf-Pi0-CALVIN-ABC-D-SFT
 
-   .. tab-item:: π₀.₅
+      **3. 启动训练**
+
+      ``examples/embodiment/config/`` 下的可用配置：
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 50 28
+
+         * - 配方
+           - 配置
+           - 命令后缀
+         * - π₀，D→D
+           - ``examples/embodiment/config/calvin_d_d_ppo_openpi.yaml``
+           - ``calvin_d_d_ppo_openpi``
+
+      在 ``examples/embodiment/config/calvin_d_d_ppo_openpi.yaml`` 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）：
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_path: ./RLinf-Pi0-CALVIN-ABC-D-SFT
+
+      使用 ``run_embodiment.sh`` 启动训练：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi
+
+   .. tab-item:: OpenPI π₀.₅
+      :sync: pi05
+
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env calvin
+         source .venv/bin/activate
+
+      **2. 下载资源与模型**
+
+      下载 OpenPI π₀.₅ SFT checkpoint：
 
       .. code-block:: bash
 
          hf download RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT --local-dir ./RLinf-Pi05-CALVIN-ABC-D-SFT
 
-.. include:: _model_path.rst
+      **3. 启动训练**
 
-运行
-----------------------------------------
+      ``examples/embodiment/config/`` 下的可用配置：
 
-可用训练配置：
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 50 28
 
-.. list-table::
-   :header-rows: 1
-   :widths: 22 50 28
+         * - 配方
+           - 配置
+           - 命令后缀
+         * - π₀.₅，D→D
+           - ``examples/embodiment/config/calvin_d_d_ppo_openpi_pi05.yaml``
+           - ``calvin_d_d_ppo_openpi_pi05``
+         * - π₀.₅，ABC→D
+           - ``examples/embodiment/config/calvin_abc_d_ppo_openpi_pi05.yaml``
+           - ``calvin_abc_d_ppo_openpi_pi05``
+         * - π₀.₅，ABCD→D
+           - ``examples/embodiment/config/calvin_abcd_d_ppo_openpi_pi05.yaml``
+           - ``calvin_abcd_d_ppo_openpi_pi05``
 
-   * - 配方
-     - 配置
-     - 命令后缀
-   * - π₀，D→D
-     - ``examples/embodiment/config/calvin_d_d_ppo_openpi.yaml``
-     - ``calvin_d_d_ppo_openpi``
-   * - π₀.₅，D→D
-     - ``examples/embodiment/config/calvin_d_d_ppo_openpi_pi05.yaml``
-     - ``calvin_d_d_ppo_openpi_pi05``
-   * - π₀.₅，ABC→D
-     - ``examples/embodiment/config/calvin_abc_d_ppo_openpi_pi05.yaml``
-     - ``calvin_abc_d_ppo_openpi_pi05``
-   * - π₀.₅，ABCD→D
-     - ``examples/embodiment/config/calvin_abcd_d_ppo_openpi_pi05.yaml``
-     - ``calvin_abcd_d_ppo_openpi_pi05``
+      在所选 YAML 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）：
 
-使用 ``run_embodiment.sh`` 启动训练：
+      .. code-block:: yaml
 
-.. code:: bash
+         actor:
+           model:
+             model_path: ./RLinf-Pi05-CALVIN-ABC-D-SFT
 
-   bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi_pi05
+      使用 ``run_embodiment.sh`` 启动训练：
 
-独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>`，
-通过配置回退机制复用相同后缀，例如 ``calvin_d_d_ppo_openpi_pi05``。
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi_pi05
+
+独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>`，通过配置回退机制复用相同后缀，例如 ``calvin_d_d_ppo_openpi_pi05``。
 
 .. note::
 
-   CALVIN 配置默认使用 ``actor,env,rollout: all`` 共置。请根据 GPU 显存预算调整
-   ``cluster.component_placement``、``env.train.total_num_envs`` 和
-   ``actor.global_batch_size``。
+   CALVIN 配置默认使用 ``actor,env,rollout: all`` 共置。请根据 GPU 显存预算调整 ``cluster.component_placement``、``env.train.total_num_envs`` 和 ``actor.global_batch_size``。
 
 可视化与结果
 ----------------------------------------
 
-在 RLinf 仓库根目录启动 TensorBoard：
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-关键指标是 ``env/success_once``。完整指标说明见
-:doc:`训练指标 <../../reference/metrics>`。
-
-如需保存 rollout 视频，请在环境配置中启用 video：
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
-
-如需启用 W&B 或 SwanLab，请添加 logger backend：
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+运行 ``tensorboard --logdir ./logs`` 关注 ``env/success_once``；如需保存评测视频，设置 ``env.eval.video_cfg.save_video=True``，更多日志后端与指标见 :doc:`训练指标 <../../reference/metrics>`。
 
 .. list-table::
    :header-rows: 1

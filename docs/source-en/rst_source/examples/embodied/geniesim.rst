@@ -112,23 +112,19 @@ normalization uses the checkpoint's ``assets/norm_stats.json``.
 Installation
 ------------
 
-On the training node, outside any container, run the repository setup commands.
-
 .. include:: _setup_common.rst
-   :end-before: Install dependencies
 
-On the training node, from the RLinf repository root, install OpenPI and
-``rlinf-geniesim-client`` from GenieSim ``v3.5.0`` (``install.sh`` clones
-GenieSim automatically; set ``GENIESIM_PATH`` to use an existing checkout),
-then activate the environment:
+On the training node, clone RLinf and install OpenPI with ``rlinf-geniesim-client`` from GenieSim ``v3.5.0`` (``install.sh`` clones GenieSim automatically; set ``GENIESIM_PATH`` to use an existing checkout). You can also build the ``embodied-geniesim`` target from ``docker/Dockerfile``.
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env geniesim && source .venv/bin/activate
+   .. tab-item:: OpenPI + GenieSim
+      :sync: openpi-geniesim
 
-You can also pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__
-or build the ``embodied-geniesim`` target from ``docker/Dockerfile``. See
-:doc:`Installation </rst_source/start/installation>` for prerequisites and shared options.
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env geniesim && source .venv/bin/activate
 
 Download the Model
 ------------------
@@ -147,11 +143,16 @@ custom installation, run it on the training node in the RLinf repository
 root. If you already have the checkpoint, set ``GENIESIM_CHECKPOINT_PATH`` to
 a directory that environment can read, then continue to ``Run It``.
 
-.. code:: bash
+.. tab-set::
 
-   export GENIESIM_CHECKPOINT_PATH="$PWD/checkpoints/geniesim_sft"
-   hf download RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT \
-      --local-dir "$GENIESIM_CHECKPOINT_PATH"
+   .. tab-item:: OpenPI π₀.₅
+      :sync: openpi-geniesim
+
+      .. code-block:: bash
+
+         export GENIESIM_CHECKPOINT_PATH="$PWD/checkpoints/geniesim_sft"
+         hf download RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT \
+            --local-dir "$GENIESIM_CHECKPOINT_PATH"
 
 The example saves the checkpoint under the RLinf repository. Choose another
 directory by changing ``GENIESIM_CHECKPOINT_PATH`` before downloading.
@@ -294,23 +295,7 @@ for more options.
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable video in the env config when you want rollout videos:
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 The following results use the Agibot G2 dual-arm wheeled robot, with GenieSim
 running on an RTX 4090.

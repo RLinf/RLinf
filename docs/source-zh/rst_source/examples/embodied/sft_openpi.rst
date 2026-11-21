@@ -106,26 +106,30 @@ OpenPI 支持 FSDP1 的 ``no_shard``、``shard_grad_op`` 和 ``full_shard``，
 ``gradient_checkpointing_use_reentrant: false`` 可进一步降低激活显存。
 BEHAVIOR / RoboTwin 配置使用 ``openpi_cosine`` 学习率调度。
 
-.. code:: yaml
+.. dropdown:: 进阶配置（可选）
 
-   defaults:
-     - model/pi0_5@actor.model
-     - hybrid_engines/openpi_fsdp@actor.fsdp_config
-     - _self_
+   BEHAVIOR、RoboTwin、dual-Franka 和 RLT Stage 1 SFT 使用的混合精度与 FSDP1 配置示例：
 
-   actor:
-     model:
-       precision: fp32
-       openpi:
-         task: sft
-         embed_dtype: bf16
-     fsdp_config:
-       sharding_strategy: no_shard
-       use_orig_params: true
-       mixed_precision:
-         param_dtype: bf16
-         reduce_dtype: fp32
-         buffer_dtype: fp32
+   .. code:: yaml
+
+      defaults:
+        - model/pi0_5@actor.model
+        - hybrid_engines/openpi_fsdp@actor.fsdp_config
+        - _self_
+
+      actor:
+        model:
+          precision: fp32
+          openpi:
+            task: sft
+            embed_dtype: bf16
+        fsdp_config:
+          sharding_strategy: no_shard
+          use_orig_params: true
+          mixed_precision:
+            param_dtype: bf16
+            reduce_dtype: fp32
+            buffer_dtype: fp32
 
 Tokenizer 由 OpenPI 的 ``ModelTransformFactory`` 按基础模型加载，YAML 里不用单独写 SentencePiece 路径。
 
@@ -221,36 +225,30 @@ BEHAVIOR 不跑上面的脚本，而是用 ``actor.model.openpi_data.norm_stats_
 
 .. include:: _setup_common.rst
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+   .. tab-item:: OpenPI + LIBERO / ManiSkill
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 ``--model openpi`` 装的是官方 OpenPI **运行环境**\ （transforms、数据管线）；训练用的网络仍是 ``openpi``。
 
 LIBERO 与真机 Franka
 ----------------------------------------
 
-先改实验 YAML 里的数据路径和 ``actor.model.model_path``。常用覆写：
+在实验 YAML 中填写 ``data.train_data_paths`` 和 ``actor.model.model_path``：
 
 .. code:: yaml
 
    data:
      train_data_paths: /path/to/libero-data
 
-   cluster:
-     num_nodes: 1
-     component_placement:
-       actor,env,rollout: 0-0
-
    actor:
      model:
        model_path: /path/to/pi0-model
-       num_action_chunks: 4          # 环境执行长度，不是网络 horizon
-       is_lora: False                # LoRA 时改为 True，并设 lora_rank
-       openpi:
-         task: sft
-         embed_dtype: bf16
-         config_name: "pi0_libero"   # 真机改为 pi0_realworld
 
 在仓库根目录启动训练：
 
@@ -261,96 +259,80 @@ LIBERO 与真机 Franka
 
 日志和 checkpoint 写在 ``runner.logger.log_path`` 下，每 ``runner.save_interval`` 步保存到 ``.../checkpoints/global_step_<N>/``。
 
+.. dropdown:: 进阶配置（可选）
+
+   可选的 placement、LoRA 和 OpenPI 覆写（各实验 YAML 已有默认值）：
+
+   .. code:: yaml
+
+      cluster:
+        num_nodes: 1
+        component_placement:
+          actor,env,rollout: 0-0
+
+      actor:
+        model:
+          num_action_chunks: 4          # 环境执行长度，不是网络 horizon
+          is_lora: False                # LoRA 时改为 True，并设 lora_rank
+          openpi:
+            task: sft
+            embed_dtype: bf16
+            config_name: "pi0_libero"   # 真机改为 pi0_realworld
+
 Pi0.5 基础 checkpoint 下载与转换
 ----------------------------------------
 
-π₀.₅ 的 JAX 基座位于 ``gs://openpi-assets/checkpoints/pi05_base``。下载后的目录包含
-``params/``，需要先转换为 RLinf OpenPI 格式，才能填入 ``actor.model.model_path``。
-YAML 中的 ``/path/to/...`` 是占位路径，请替换为服务器上的实际目录。
+π₀.₅ 的 JAX 基座位于 ``gs://openpi-assets/checkpoints/pi05_base``。先准备好当前任务的 ``norm_stats.json``\ （见上文归一化统计），再用 Google Cloud CLI 下载并转换为 RLinf OpenPI 格式（以下以 BEHAVIOR 的 32-step horizon 为例）：
 
-在 RLinf 仓库根目录、安装了 JAX / Orbax 的 OpenPI 环境中执行以下命令；下载需要 Google Cloud CLI：
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: π₀.₅ JAX 基座 → RLinf OpenPI
 
-   mkdir -p /path/to/checkpoints/jax
-   gcloud storage cp --recursive \
-     gs://openpi-assets/checkpoints/pi05_base /path/to/checkpoints/jax/
+      .. code-block:: bash
 
-先准备当前任务的 ``norm_stats.json``\ （见上文归一化统计），再转换。以下以 BEHAVIOR 的
-32-step horizon 为例；``--input-model`` 应指向包含 ``params/`` 的父目录：
+         mkdir -p ./checkpoints/jax
+         gcloud storage cp --recursive \
+           gs://openpi-assets/checkpoints/pi05_base ./checkpoints/jax/
 
-.. code:: bash
+         python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
+           --input-model ./checkpoints/jax/pi05_base \
+           --input-norm-stats /path/to/task/norm_stats.json \
+           --output-model ./pi05_base_openpi \
+           --output-norm-stats ./pi05_base_openpi/task/norm_stats.json \
+           --action-dim 32 \
+           --action-horizon 32 \
+           --max-token-len 200
 
-   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
-     --input-model /path/to/checkpoints/jax/pi05_base \
-     --input-norm-stats /path/to/task/norm_stats.json \
-     --output-model /path/to/pi05_base_openpi \
-     --output-norm-stats /path/to/pi05_base_openpi/task/norm_stats.json \
-     --action-dim 32 \
-     --action-horizon 32 \
-     --max-token-len 200
+转换器默认处理 π₀.₅，不要添加 ``--no-pi05``。其他 π₀.₅ SFT 配置使用相同流程，按已有配置填写 ``--action-horizon``：ManiSkill RLT 为 10，Franka RLT 和 dual-Franka 为 20。
 
-转换器默认处理 π₀.₅，不要添加 ``--no-pi05``。其他 π₀.₅ SFT 配置使用相同流程，
-转换参数中的 ``--action-horizon`` 按已有配置填写：ManiSkill RLT 为 10，Franka RLT 和
-dual-Franka 为 20。无需为转换修改 YAML 中的动作维度、图像数或训练参数。
-
-确认输出目录包含 ``model.safetensors`` 和 ``config.json``，然后把
-``actor.model.model_path`` 的占位值替换为转换输出目录，并将
-``actor.model.openpi_data.norm_stats_path`` 指向同一任务的统计文件，例如：
+确认输出目录包含 ``model.safetensors`` 和 ``config.json``，再设置 ``actor.model.model_path`` 和 ``actor.model.openpi_data.norm_stats_path``：
 
 .. code:: yaml
 
    actor:
      model:
-       model_path: /path/to/pi05_base_openpi
+       model_path: ./pi05_base_openpi
        openpi_data:
-         norm_stats_path: /path/to/pi05_base_openpi/task/norm_stats.json
+         norm_stats_path: ./pi05_base_openpi/task/norm_stats.json
 
-已经是 RLinf OpenPI 格式的 checkpoint 无需重复转换。官方 OpenPI PyTorch 格式
-（权重键为 ``paligemma_with_expert.*``）即使有 ``model.safetensors``，仍需使用
-``openpi_pytorch_to_openpi`` 转换；命令见 ``rlinf/utils/ckpt_convertor/openpi/README.md``。
+已经是 RLinf OpenPI 格式的 checkpoint 无需重复转换。官方 OpenPI PyTorch 格式（权重键为 ``paligemma_with_expert.*``）即使包含 ``model.safetensors``，仍需使用 ``openpi_pytorch_to_openpi`` 转换。
 
 Pi0.5 + BEHAVIOR-1K
 ----------------------------------------
 
-路径写在实验配置里，模型形状来自 ``model/pi0_5``：
-
-.. code:: yaml
-
-   defaults:
-     - model/pi0_5@actor.model
-     - hybrid_engines/fsdp@actor.fsdp_config
-
-流式加载器只读 ``data:``，没有隐藏默认值。至少改这些路径：
+在 ``examples/sft/config/behavior_sft_openpi_pi05.yaml`` 中填写数据集、基础模型与归一化统计路径：
 
 .. code:: yaml
 
    data:
      train_data_paths: /path/to/2025-challenge-demos
      behavior_dataset_root: /path/to/2025-challenge-demos
-     repo_id: "behavior-1k/2025-challenge-demos"
-     modalities: ["rgb"]
-     num_workers: 8
-     tasks: ["turning_on_radio"]
-     use_skill: false
-     task_subtasks:
-       turning_on_radio:
-         - "move to radio"
-         - "pick up radio from coffee table"
-         - "press radio"
-         - "place radio on coffee table"
 
    actor:
      model:
-       model_path: /path/to/pi05_base_openpi   # 新格式 fp32 基础权重
-       openpi:
-         task: sft
-         embed_dtype: bf16
+       model_path: ./pi05_base_openpi
        openpi_data:
          norm_stats_path: /path/to/assets/behavior-1k/2025-challenge-demos/norm_stats.json
-
-- ``use_skill: false`` 用主任务文本；``true`` 时按窗口从 ``task_subtasks`` 取逐帧技能文本（数据集里折叠后的 orchestrator 不能当标签）。
-- ``fine_grained_level`` / ``tolerance_s`` 控制流式时间对齐。
 
 在仓库根目录启动 BEHAVIOR-1K SFT：
 
@@ -358,37 +340,85 @@ Pi0.5 + BEHAVIOR-1K
 
    bash examples/sft/run_vla_sft.sh behavior_sft_openpi_pi05
 
+.. dropdown:: 进阶配置（可选）
+
+   仓库自带配置已引入 ``model/pi0_5`` 与 ``hybrid_engines/fsdp``，并设置好 BEHAVIOR 流式加载项：
+
+   .. code:: yaml
+
+      data:
+        repo_id: "behavior-1k/2025-challenge-demos"
+        modalities: ["rgb"]
+        num_workers: 8
+        tasks: ["turning_on_radio"]
+        use_skill: false
+        task_subtasks:
+          turning_on_radio:
+            - "move to radio"
+            - "pick up radio from coffee table"
+            - "press radio"
+            - "place radio on coffee table"
+
+      actor:
+        model:
+          openpi:
+            task: sft
+            embed_dtype: bf16
+
+   - ``use_skill: false`` 用主任务文本；``true`` 时按窗口从 ``task_subtasks`` 取逐帧技能文本（数据集里折叠后的 orchestrator 不能当标签）。
+   - ``fine_grained_level`` / ``tolerance_s`` 控制流式时间对齐。
+
 Pi0 + RoboTwin
 ----------------------------------------
 
-用官方 OpenPI / LeRobot map-style 加载器，``config_name: pi0_aloha_robotwin``。示例数据：`adjust_bottle <https://huggingface.co/datasets/RLinf/RoboTwin-adjust_bottle-official-demo_clean50-Pi0_processed-data>`_；对应 HF SFT 权重：`RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle>`_。
+使用官方 OpenPI / LeRobot map-style 加载器，``config_name: pi0_aloha_robotwin``。示例数据：`adjust_bottle <https://huggingface.co/datasets/RLinf/RoboTwin-adjust_bottle-official-demo_clean50-Pi0_processed-data>`_；对应 HF SFT 权重：`RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle>`_。
+
+.. tab-set::
+
+   .. tab-item:: RoboTwin（数据集与 SFT 权重）
+
+      .. code-block:: bash
+
+         hf download RLinf/RoboTwin-adjust_bottle-official-demo_clean50-Pi0_processed-data --repo-type dataset --local-dir ./robotwin-adjust-bottle-data
+         hf download RLinf/RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle
+
+在 ``examples/sft/config/robotwin_adjust_bottle_sft_openpi.yaml`` 中填写数据集与基础模型路径：
 
 .. code:: yaml
 
    data:
-     train_data_paths: /path/to/robotwin-data
-     num_workers: 4
+     train_data_paths: ./robotwin-adjust-bottle-data
 
    actor:
      model:
        model_path: /path/to/pi0_base_pytorch_new
-       num_action_chunks: 50
-       action_dim: 14
-       openpi:
-         task: sft
-         embed_dtype: bf16
-         config_name: "pi0_aloha_robotwin"
-         num_images_in_input: 3
-       openpi_data:
-         norm_stats_path: ${actor.model.model_path}/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
-
-14 维 ALOHA 动作、3 路图像；进模型前按 OpenPI 规则 pad 到 32 维。``openpi_data.norm_stats_path`` 把训练和评估钉到同一份 ``norm_stats.json``。换任务时改路径里的任务名。
 
 在仓库根目录启动 RoboTwin SFT：
 
 .. code:: bash
 
    bash examples/sft/run_vla_sft.sh robotwin_adjust_bottle_sft_openpi
+
+.. dropdown:: 进阶配置（可选）
+
+   14 维 ALOHA 动作、3 路图像（进模型前按 OpenPI 规则 pad 到 32 维）。切换任务时修改 ``norm_stats_path`` 中的任务名：
+
+   .. code:: yaml
+
+      data:
+        num_workers: 4
+
+      actor:
+        model:
+          num_action_chunks: 50
+          action_dim: 14
+          openpi:
+            task: sft
+            embed_dtype: bf16
+            config_name: "pi0_aloha_robotwin"
+            num_images_in_input: 3
+          openpi_data:
+            norm_stats_path: ${actor.model.model_path}/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
 
 评测
 ----------------------------------------

@@ -87,20 +87,23 @@ How IQL Works
 Installation
 ------------
 
-Install the embodied stack with D4RL support:
+.. include:: _setup_common.rst
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --env d4rl && source .venv/bin/activate
+   .. tab-item:: D4RL
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env d4rl && source .venv/bin/activate
 
 The launch script sets ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl`` by default for headless runs.
 
 Run It
 ------
 
-**1. Configuration Files**
-
-Default IQL configs for the three D4RL task families:
+RLinf ships default IQL configs for three D4RL task families (D4RL datasets download automatically on first run when ``data.dataset_path`` is ``null``):
 
 .. list-table::
    :header-rows: 1
@@ -115,63 +118,7 @@ Default IQL configs for the three D4RL task families:
    * - Kitchen / Adroit
      - ``examples/embodiment/config/d4rl_iql_kitchen_adroit.yaml``
 
-**2. Key Parameter Configuration**
-
-**2.1 Runner and Algorithm**
-
-.. code-block:: yaml
-
-   runner:
-     task_type: "offline"
-
-   algorithm:
-     loss_type: "offline_iql"
-     batch_size: 256
-     actor_lr: 3.0e-4
-     value_lr: 3.0e-4
-     critic_lr: 3.0e-4
-     discount: 0.99
-     tau: 0.005
-     expectile: 0.9
-     temperature: 10.0
-     gamma: 0.99
-
-**2.2 Actor (Model)**
-
-.. code-block:: yaml
-
-   actor:
-     model:
-       iql_config:
-         type: "actor"
-         hidden_dims: [256, 256]
-         dropout_rate: null
-         log_std_min: -5.0
-         log_std_max: 2.0
-
-**2.3 Data**
-
-.. code-block:: yaml
-
-   data:
-     dataset_type: "d4rl"
-     task_name: "antmaze-large-play-v0"
-     dataset_path: null
-
-**2.4 Environment**
-
-.. code-block:: yaml
-
-   env:
-     task_name: "antmaze-large-play-v0"
-
-Set ``data.dataset_type`` to ``d4rl`` , ``data.task_name`` and ``env.eval.task_name`` to the desired D4RL task (e.g. ``antmaze-large-play-v0``).
-
-With ``data.dataset_path`` left as ``null``, RLinf reads ``~/.d4rl/datasets/<task_name>.hdf5`` if it exists and otherwise lets D4RL download the dataset for the task. To train from an existing D4RL HDF5 file, set ``data.dataset_path`` to its path; its observation and action shapes must match the environment named by ``data.task_name``. A standard D4RL file goes through the same ``d4rl.qlearning_dataset`` conversion as a downloaded dataset, which uses the ``timeouts`` field so that the last observation of an episode is never paired with the first observation of the next one. A file of prepared transitions, one with ``next_observations`` and without ``timeouts``, is used as is.
-
-**3. Launch Training**
-
-Launch any task family from the repository root (defaults to ``d4rl_iql_mujoco`` when omitted; logs write to ``<repo>/logs/<timestamp>-<config_name>/``):
+Launch any task family from the repository root (defaults to ``d4rl_iql_mujoco`` when omitted; logs write to ``logs/<timestamp>-<config_name>/``):
 
 .. code-block:: bash
 
@@ -184,6 +131,46 @@ Launch any task family from the repository root (defaults to ``d4rl_iql_mujoco``
    # Kitchen / Adroit
    ./examples/embodiment/run_offline_rl.sh d4rl_iql_kitchen_adroit
 
+.. dropdown:: Advanced configuration (optional)
+
+   Set ``data.task_name`` and ``env.eval.task_name`` to switch D4RL tasks (for example ``antmaze-large-play-v0``). With ``data.dataset_path`` left as ``null``, RLinf reads ``~/.d4rl/datasets/<task_name>.hdf5`` if it exists and otherwise lets D4RL download the dataset. To train from an existing HDF5 file, set ``data.dataset_path`` to its path (matching the observation and action shapes of ``data.task_name``); standard D4RL files go through ``d4rl.qlearning_dataset`` using ``timeouts``, while files of prepared transitions with ``next_observations`` and without ``timeouts`` are used as is.
+
+   Key default hyperparameters in the shipped YAML configs:
+
+   .. code-block:: yaml
+
+      runner:
+        task_type: "offline"
+
+      algorithm:
+        loss_type: "offline_iql"
+        batch_size: 256
+        actor_lr: 3.0e-4
+        value_lr: 3.0e-4
+        critic_lr: 3.0e-4
+        discount: 0.99
+        tau: 0.005
+        expectile: 0.9
+        temperature: 10.0
+        gamma: 0.99
+
+      actor:
+        model:
+          iql_config:
+            type: "actor"
+            hidden_dims: [256, 256]
+            dropout_rate: null
+            log_std_min: -5.0
+            log_std_max: 2.0
+
+      data:
+        dataset_type: "d4rl"
+        task_name: "antmaze-large-play-v0"
+        dataset_path: null
+
+      env:
+        task_name: "antmaze-large-play-v0"
+
 Resume Training
 ---------------
 
@@ -192,16 +179,9 @@ Set ``runner.resume_dir`` to a checkpoint directory (e.g. ``checkpoints/global_s
 Visualization and Results
 -------------------------
 
-**1. TensorBoard Logging**
+Monitor ``eval/return`` with ``tensorboard --logdir ./logs --port 6006``, enable evaluation video recording with ``env.eval.video_cfg.save_video=True`` (state-only D4RL environments fall back to ``env.render()`` automatically under ``MUJOCO_GL=egl``), and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
-.. code-block:: bash
-
-   # Start TensorBoard
-   tensorboard --logdir ./logs --port 6006
-
-**2. Key Metrics Tracked**
-
-For metric definitions, see :doc:`Training metrics <../../reference/metrics>`. IQL-relevant metrics:
+IQL-specific metrics:
 
 - **Training Metrics**:
 
@@ -224,27 +204,3 @@ For metric definitions, see :doc:`Training metrics <../../reference/metrics>`. I
   - ``eval/episode_len``: Mean episode length.
   - ``eval/num_trajectories``: Number of evaluation trajectories.
   - ``eval/terminated_at_end``: Fraction of episodes that terminated (not truncated); only present when the env uses ``ignore_terminations``.
-
-**3. Video Generation**
-
-D4RL observations are state-only (no image keys). The recorder **falls back to env.render()** when the observation has no image field, so enabling ``save_video`` is enough to generate evaluation videos. ``video_base_dir`` is optional (default: ``./video``), and you can still set it explicitly for organized outputs. Ensure the MuJoCo env is created with rendering support (e.g. ``render_mode="rgb_array"`` is set automatically when ``save_video`` is true). For headless servers, set ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl``.
-
-.. code-block:: yaml
-
-   env:
-      eval:
-         video_cfg:
-            save_video: true
-            video_base_dir: ${runner.logger.log_path}/video/eval  # optional, defaults to ./video
-
-**4. Train Log Tool Integration**
-
-.. code-block:: yaml
-
-   runner:
-      task_type: "offline"
-      logger:
-         log_path: "../results"
-         project_name: rlinf
-         experiment_name: "d4rl_iql_mujoco"
-         logger_backends: ["tensorboard"] # wandb, swanlab

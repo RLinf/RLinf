@@ -78,51 +78,57 @@ ReFL 先采样到去噪后期，再用一步预测得到干净图像。冻结的
 
 本示例将 `ImageReward 论文 <https://arxiv.org/abs/2304.05977>`_ 中的方法用于 SD3 的流匹配模型。
 
-安装
-----
+一键上手
+--------
 
-按 :ref:`安装说明 <diffusion-model-setup>` 准备 diffusion 环境，再按 :ref:`模型下载说明 <diffusion-model-checkpoints>` 下载 SD3.5 Medium。
+.. include:: _setup_common.rst
 
-下载 ImageReward 和提示词
--------------------------
+.. tab-set::
 
-下载 ImageReward 权重、tokenizer 和官方提示词文件：
+   .. tab-item:: SD3.5 Medium + ImageReward
 
-.. code-block:: bash
+      **1. 安装环境**
 
-   export IR_MODEL="$PWD/models/ImageReward"
-   export IR_DATA="$PWD/data/ImageReward"
-   mkdir -p "$IR_MODEL" "$IR_DATA"
+      按 :ref:`安装说明 <diffusion-model-setup>` 准备 diffusion 环境，再按 :ref:`模型下载说明 <diffusion-model-checkpoints>` 下载 SD3.5 Medium。
 
-   hf download zai-org/ImageReward ImageReward.pt med_config.json --local-dir "$IR_MODEL"
-   python -c 'from transformers import BertTokenizer; BertTokenizer.from_pretrained("bert-base-uncased")'
+      **2. 下载模型**
 
-   for file in refl_data.json test.json; do
-     curl --fail --location \
-       "https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/data/$file" \
-       --output "$IR_DATA/$file"
-   done
+      下载 ImageReward 权重、tokenizer 和官方提示词文件：
 
-``refl_data.json`` 用于训练，``test.json`` 用于评估。配置中的 ``actor.refl_data.exclude_path`` 指向评估文件，从训练数据中排除这些提示词。
+      .. code-block:: bash
 
-运行
-----
+         export IR_MODEL="$PWD/models/ImageReward"
+         export IR_DATA="$PWD/data/ImageReward"
+         mkdir -p "$IR_MODEL" "$IR_DATA"
 
-编辑 ``examples/diffusion/config/sd3_refl_imagereward.yaml``。将 ``actor.model.model_path`` 设为 SD3.5 Medium 目录。将 ``actor.refl_reward_model.model_path`` 和 ``actor.refl_reward_model.med_config`` 分别设为下载的 ``ImageReward.pt`` 和 ``med_config.json`` 文件路径。
+         hf download zai-org/ImageReward ImageReward.pt med_config.json --local-dir "$IR_MODEL"
+         python -c 'from transformers import BertTokenizer; BertTokenizer.from_pretrained("bert-base-uncased")'
 
-将 ``actor.refl_data.path`` 设为 ``refl_data.json`` 路径，``actor.refl_data.exclude_path`` 和 ``env.eval.dataset.path`` 均设为 ``test.json`` 路径。在同一 YAML 中配置 GPU 0–3：
+         for file in refl_data.json test.json; do
+           curl --fail --location \
+             "https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/data/$file" \
+             --output "$IR_DATA/$file"
+         done
 
-.. code-block:: yaml
+      ``refl_data.json`` 用于训练，``test.json`` 用于评估。配置中的 ``actor.refl_data.exclude_path`` 指向评估文件，从训练数据中排除这些提示词。
 
-   cluster:
-     component_placement:
-       actor,env,rollout: 0-3
+      **3. 启动训练**
 
-默认配置训练 50 步，每步 512 个样本，全局 batch size 为 64，对应 8 次奖励更新。在仓库根目录启动训练：
+      编辑 ``examples/diffusion/config/sd3_refl_imagereward.yaml``。将 ``actor.model.model_path`` 设为 SD3.5 Medium 目录。将 ``actor.refl_reward_model.model_path`` 和 ``actor.refl_reward_model.med_config`` 分别设为下载的 ``ImageReward.pt`` 和 ``med_config.json`` 文件路径。
 
-.. code-block:: bash
+      将 ``actor.refl_data.path`` 设为 ``refl_data.json`` 路径，``actor.refl_data.exclude_path`` 和 ``env.eval.dataset.path`` 均设为 ``test.json`` 路径。在同一 YAML 中配置 GPU 0–3：
 
-   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward
+      .. code-block:: yaml
+
+         cluster:
+           component_placement:
+             actor,env,rollout: 0-3
+
+      默认配置训练 50 步，每步 512 个样本，全局 batch size 为 64，对应 8 次奖励更新。在仓库根目录启动训练：
+
+      .. code-block:: bash
+
+         bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward
 
 默认 ``algorithm.refl_pre_loss_weight=0.0``，只使用奖励损失。每 10 步评估并保存一次 checkpoint，评估分数记录为 ``eval/image_reward``。日志和 checkpoint 写入 ``logs/<timestamp>-sd3_refl_imagereward/``。actor checkpoint 位于其中的 ``<experiment_name>/checkpoints/global_step_<N>/actor/``，每份约占 9.4 GiB。将 ``runner.resume_dir`` 设为上一级 ``global_step_<N>`` 目录，即可恢复训练状态，包括数据位置和采样随机状态。
 

@@ -95,57 +95,42 @@ XSquare Turtle2 真机强化学习
 安装
 ----------------------------------------
 
-控制节点与训练 / Rollout 节点需要安装不同的软件依赖。
+.. include:: _setup_common.rst
 
-机器人控制节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+控制节点与训练 / Rollout 节点需要安装不同的软件依赖：
 
-XSquare Turtle2平台自带SDK和基于ROS的控制器。**请在开始下安装之以前，确保您已进入Xsquare的官方Docker容器**。请联系`XSquare <https://x2robot.com>`_获取准确的Docker镜像和启动说明。
+.. tab-set::
 
-进入 XSquare Docker 容器后，在其中克隆 RLinf 仓库：
+   .. tab-item:: 机器人控制节点
 
-.. code:: bash
+      XSquare Turtle2 平台自带 SDK 和基于 ROS 的控制器。**开始安装前请确保已进入 XSquare 官方 Docker 容器**\ （联系 `XSquare <https://x2robot.com>`__ 获取准确的 Docker 镜像和启动说明）：
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+      .. code-block:: bash
 
-然后安装真机强化学习所需的 RLinf Python 依赖：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env xsquare_turtle2 && source .venv/bin/activate
 
-.. code:: bash
+   .. tab-item:: 训练与 Rollout 节点
 
-   bash requirements/install.sh embodied --env xsquare_turtle2 && source .venv/bin/activate
+      .. code-block:: bash
 
-训练 / Rollout 节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-A. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-B. 安装依赖
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-使用 ``requirements/install.sh`` 安装依赖，或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像：
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
-
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
 下载模型
 ----------------------------------------
 
-在开始训练之前，需要下载预训练的 ResNet CNN 骨干网络：
+训练前先下载预训练的 ResNet CNN 骨干网络：
 
-.. code:: bash
+.. tab-set::
 
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+   .. tab-item:: ResNet-10
 
-下载完成后，请在对应的配置 YAML 文件中正确填写 ``model_path`` 字段。
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
+
+.. include:: _model_path.rst
 
 
 运行
@@ -181,26 +166,26 @@ Python 解释器路径和环境变量；之后在该节点上由 Ray 启动的�
 
 1. 激活正确的虚拟 Python 环境（参见依赖安装部分）。
 2. 在控制节点上，确保 XSquare SDK 包可被正确找到（使用 XSquare 官方 Docker 镜像时已自动处理）。
-3. 在所有节点上设置 RLinf 相关环境变量：
+3. 在所有节点上设置 RLinf 相关环境变量（在 RLinf 仓库根目录执行，将 ``0`` 与 ``eth0`` 替换为当前节点的 rank 与网卡名）：
 
 .. code-block:: bash
 
-   export PYTHONPATH=<path_to_your_RLinf_repo>:$PYTHONPATH
-   export RLINF_NODE_RANK=<node_rank_of_this_node>
-   export RLINF_COMM_NET_DEVICES=<network_device>  # 仅在机器拥有多个网卡时需要设置
+   export PYTHONPATH="$PWD:$PYTHONPATH"
+   export RLINF_NODE_RANK=0
+   export RLINF_COMM_NET_DEVICES=eth0  # 仅在机器拥有多个网卡时需要设置
 
 ``RLINF_NODE_RANK`` 应在集群的 ``N`` 个节点之间设置为 ``0 ~ N-1``。
 ``RLINF_COMM_NET_DEVICES`` 为可选项，仅在多网卡机器上需要设置；可以通过 ``ifconfig`` 或 ``ip addr`` 查看。
 
-完成上述配置后，在各节点上启动 Ray：
+完成上述配置后，在各节点上启动 Ray（将 ``192.168.1.10`` 替换为 head 节点 IP）：
 
 .. code-block:: bash
 
    # 在 head 节点（节点 rank 0）上
-   ray start --head --port=6379 --node-ip-address=<head_node_ip_address>
+   ray start --head --port=6379 --node-ip-address=192.168.1.10
 
    # 在 worker 节点（节点 rank 1 ~ N-1）上
-   ray start --address='<head_node_ip_address>:6379'
+   ray start --address='192.168.1.10:6379'
 
 可以通过执行 ``ray status`` 检查集群是否已正确启动。
 
@@ -250,10 +235,6 @@ Python 解释器路径和环境变量；之后在该节点上由 Ray 启动的�
       model_path: "/path/to/RLinf-ResNet10-pretrained"
       state_dim: 6    # 单臂 6（xyz+euler），双臂 12
       action_dim: 6   # 单臂 6（xyz_delta+rpy_delta），双臂 12
-
-  rollout:
-    model:
-      model_path: "/path/to/RLinf-ResNet10-pretrained"
 
 对于按键按压任务，``target_ee_pose`` 同时定义了成功判断的阈值位置和复位位置
 （机械臂复位时会移动到目标位置 Z 轴方向稍高处）。

@@ -46,32 +46,38 @@ Installation
 ------------
 
 For the base environment, follow the RLinf
-:doc:`installation guide <../../../start/installation>`.
+:doc:`installation guide <../../../start/installation>`. In mainland China,
+append ``--use-mirror`` to ``install.sh`` and run
+``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt
+images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
 
-We recommend the prebuilt Docker image:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: Local (uv)
 
-   docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17
+      .. code-block:: bash
 
-If you prefer a local environment, install the agentic stack:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-.. code-block:: bash
+   .. tab-item:: Docker
 
-   bash requirements/install.sh agentic
+      .. code-block:: bash
 
-.. note::
-   The image above ships FA2 and no ``flash-attn-4``, so it also runs on GPUs
-   older than ``sm90`` (such as an ``A100``). On Hopper or newer GPUs, the same
-   tag with a ``-fa4`` suffix ships FA4 and no FA2, which RLinf then uses for
-   attention:
+         docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17
 
-   .. code-block:: bash
+      .. note::
 
-      docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17-fa4
+         The image above ships FA2 and no ``flash-attn-4``, so it also runs on GPUs
+         older than ``sm90`` (such as an ``A100``). On Hopper or newer GPUs, use the
+         same tag with a ``-fa4`` suffix (FA4, no FA2):
 
-   A local installation with ``bash requirements/install.sh agentic``
-   detects the GPU and makes this choice automatically.
+         .. code-block:: bash
+
+            docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17-fa4
+
+         A local installation with ``bash requirements/install.sh agentic``
+         detects the GPU and makes this choice automatically.
 
 Startup scripts and configuration files are in ``examples/agent/wideseek_r1``.
 
@@ -155,16 +161,16 @@ client:
 Download the Corpus and Retriever
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Prepare the following assets:
+Download `Wiki-2018-Corpus <https://huggingface.co/datasets/RLinf/Wiki-2018-Corpus>`__ (includes ``wiki_corpus.jsonl``, ``wiki_webpages.jsonl``, and ``qdrant/``) and `intfloat/e5-base-v2 <https://huggingface.co/intfloat/e5-base-v2>`__:
 
-- `Wiki-2018-Corpus <https://huggingface.co/datasets/RLinf/Wiki-2018-Corpus>`__
-- `intfloat/e5-base-v2 <https://huggingface.co/intfloat/e5-base-v2>`__
+.. tab-set::
 
-The corpus package includes:
+   .. tab-item:: Offline Corpus and Retriever
 
-- ``wiki_corpus.jsonl`` for retrieval snippets.
-- ``wiki_webpages.jsonl`` for webpage content lookup.
-- ``qdrant/`` containing the Qdrant collection files.
+      .. code-block:: bash
+
+         hf download --repo-type dataset RLinf/Wiki-2018-Corpus --local-dir ./Wiki-2018-Corpus
+         hf download intfloat/e5-base-v2 --local-dir ./e5-base-v2
 
 Launch the Retrieval Service
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

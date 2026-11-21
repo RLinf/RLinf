@@ -158,12 +158,18 @@ ZED 相机设置
 Robotiq 夹爪设置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信。
-所需的 Python 依赖 ``pymodbus`` 会在运行 Franka 安装脚本时 **自动安装**：
+Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信。所需的 Python 依赖 ``pymodbus`` 会在运行 Franka 安装脚本时 **自动安装**：
 
-.. code-block:: bash
+.. include:: _setup_common.rst
 
-   bash requirements/install.sh embodied --env franka
+.. tab-set::
+
+   .. tab-item:: Franka 控制节点（NUC）
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 以下步骤用于在控制夹爪的节点（通常为 NUC）上配置串口设备。
 

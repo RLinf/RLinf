@@ -53,13 +53,15 @@ Install the Runtime
 -------------------
 
 .. include:: _setup_common.rst
-   :end-before: Install dependencies
 
-Install RLinf's ARX X5, camera, and LeRobot dependencies in one Python environment:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: ARX X5
 
-   bash requirements/install.sh embodied --env arx5 && source .venv/bin/activate
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env arx5 && source .venv/bin/activate
 
 This command installs the dependencies listed in ``requirements/embodied/envs/arx5.txt``. Install the current Python SDK separately from `ARXroboticsX/ARX5_beta <https://github.com/ARXroboticsX/ARX5_beta>`_; its repository root contains the ``bimanual`` package used by RLinf. Before each ARX X5 session, activate the Python venv and add the cloned ``ARX5_beta`` root to ``PYTHONPATH``:
 
@@ -136,21 +138,13 @@ After the arms reset, press **B** to start recording. Press **X** to end and sav
 Inspect the Dataset
 -------------------
 
-Successful episodes are stored as LeRobot shards under:
+Successful episodes are stored as LeRobot shards under ``logs/<timestamp>-collect_data_dual_arx5/collected_data/lerobot_dataset/rank_0/id_0/``.
 
-.. code-block:: text
-
-   logs/<timestamp>-collect_data_dual_arx5/
-   └── collected_data/
-       └── lerobot_dataset/
-           └── rank_0/
-               └── id_0/
-
-Merge every shard from the run, then export per-frame images, text metadata, and MP4 previews:
+Merge every shard from the latest run, then export per-frame images, text metadata, and MP4 previews:
 
 .. code-block:: bash
 
-   RUN=logs/<timestamp>-collect_data_dual_arx5
+   RUN=$(ls -td logs/*-collect_data_dual_arx5 | head -n 1)
 
    python toolkits/lerobot/merge_lerobot_datasets.py \
        --source-dir "$RUN/collected_data" \

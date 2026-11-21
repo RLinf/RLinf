@@ -18,19 +18,23 @@ RLinf 支持在 Franka 机械臂上评测与部署 VLA policy，涵盖 Bin-reloc
 
 **依赖安装**
 
-控制节点与 GPU 节点需分别安装依赖：
+控制节点与 GPU 节点需分别安装依赖。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
-.. code-block:: bash
+.. tab-set::
 
-   # 机器人控制节点（Franka + 相机）
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
+   .. tab-item:: 机器人控制节点（Franka + 相机）
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   # GPU / rollout 节点（π₀ 评测）
-   bash requirements/install.sh embodied --model openpi --env franka
-   source .venv/bin/activate
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+
+   .. tab-item:: GPU / Rollout 节点（OpenPI）
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
 控制节点使用默认的 Franky backend。如需改用 ROS 控制机械臂，请参考 :doc:`../../examples/embodied/franka` 的“旧版 ROS 后端（可选）”章节。
 
@@ -190,7 +194,6 @@ Ray 集群启动
 
    env:
      eval:
-       rollout_epoch: 20
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
@@ -199,8 +202,6 @@ Ray 集群启动
    rollout:
      model:
        model_path: /path/to/pi0-model
-       openpi:
-         config_name: "pi0_realworld"
 
 ``node_ranks`` 与 ``component_placement`` 须与集群中实际的 ``RLINF_NODE_RANK`` 一致。
 
@@ -266,8 +267,8 @@ policy 以 ``runner.only_eval: True`` 模式运行；终端输出任务指标，
      - ``rollout.model.openpi``
      - PnP 任务为 ``"pi0_realworld"``
 
-关键 ``env.eval`` 字段
-~~~~~~~~~~~~~~~~~~~~~~
+关键评测字段
+~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
@@ -286,8 +287,8 @@ policy 以 ``runner.only_eval: True`` 模式运行；终端输出任务指标，
    * - ``teleop``
      - 从 policy 手中接管的设备，评测时通常填 ``none``
 
-``run_eval.sh`` 行为
-~~~~~~~~~~~~~~~~~~~~
+启动脚本行为
+~~~~~~~~~~~~
 
 - ``realworld`` benchmark **不** 调用 ``setup_sim_env``，无需仿真相关环境变量
 - 日志写入 ``logs/<时间戳>-<config_name>/eval_embodiment.log``
@@ -306,8 +307,8 @@ RLinf 提供通用真机环境 ``FrankaEnv-v1``：在 YAML 中配置 ``task_desc
 
 ``realworld_eval.yaml`` 为 **单机** 配置：``env`` 与 ``rollout`` 均部署在 Franka 节点（``num_nodes: 1``），适用于 GPU 与控制合署一机的场景。
 
-关键 ``override_cfg`` 字段
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+关键任务覆盖字段
+~~~~~~~~~~~~~~~~
 
 .. code-block:: yaml
 

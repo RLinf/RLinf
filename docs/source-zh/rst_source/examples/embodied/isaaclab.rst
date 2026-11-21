@@ -12,8 +12,7 @@
 
    IsaacLab（图片来源：`IsaacLab <https://isaac-sim.github.io/IsaacLab/develop/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf>`__）。
 
-`IsaacLab <https://isaac-sim.github.io/IsaacLab/develop/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf>`__ 是 NVIDIA 的 GPU 加速机器人学习仿真器。
-你将使用 RLinf 在自定义 Franka 方块堆叠任务上，通过 PPO 微调 GR00T N1.5 或 OpenPI π₀.₅。
+`IsaacLab <https://isaac-sim.github.io/IsaacLab/develop/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf>`__ 是 NVIDIA 的 GPU 加速机器人学习仿真器。你将使用 RLinf 在自定义 Franka 方块堆叠任务上，通过 PPO 微调 GR00T N1.5 或 OpenPI π₀.₅。
 
 概览
 ----------------------------------------
@@ -76,149 +75,113 @@
    * - 提示词
      - ``Stack the red block on the blue block, then stack the green block on the red block.``
 
-安装
+一键上手
 ----------------------------------------
 
 .. include:: _setup_common.rst
 
-按所选模型安装环境：
-
 .. tab-set::
 
    .. tab-item:: GR00T N1.5
       :sync: gr00t
 
+      **1. 安装环境**
+
+      安装 RLinf（GR00T N1.5 + IsaacLab）：
+
       .. code-block:: bash
 
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model gr00t --env isaaclab && source .venv/bin/activate
 
-   .. tab-item:: OpenPI π₀.₅
-      :sync: openpi
+      下载 Isaac Sim 5.1.0 并初始化其 shell 环境：
 
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --model openpi --env isaaclab && source .venv/bin/activate
+         mkdir -p isaac_sim && cd isaac_sim
+         wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         source ./setup_conda_env.sh
 
-下载 Isaac Sim
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      .. warning::
 
-下载 Isaac Sim 5.1.0 并初始化其 shell 环境：
+         每次在新终端中启动 IsaacLab 前，都需要运行 ``source ./setup_conda_env.sh``。
 
-.. code-block:: bash
+      **2. 下载模型**
 
-   mkdir -p isaac_sim
-   cd isaac_sim
-   wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   source ./setup_conda_env.sh
-
-.. warning::
-
-   每次在新终端中启动 IsaacLab 前，都需要运行 ``source ./setup_conda_env.sh``。
-
-下载模型
-----------------------------------------
-
-下载要微调模型的 SFT 检查点：
-
-.. tab-set::
-
-   .. tab-item:: GR00T N1.5
-      :sync: gr00t
+      下载 GR00T N1.5 的 SFT 检查点（基于 |huggingface| `IsaacLab-Stack-Cube-Data <https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data>`__ 人类演示数据微调）：
 
       .. code-block:: bash
 
          hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir ./RLinf-Gr00t-SFT-Stack-cube
 
+      .. include:: _model_path.rst
+
+      **3. 启动训练**
+
+      修改 ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t.yaml`` 中的模型路径，启动 PPO 训练：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t
+
+      GR00T 默认配置会分离 env、rollout 和 actor placement；按 GPU 显存预算调整 ``cluster.component_placement``、``rollout.pipeline_stage_num`` 和 ``actor.enable_offload``。独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>` 并传入后缀 ``isaaclab_franka_stack_cube_ppo_gr00t``。
+
    .. tab-item:: OpenPI π₀.₅
       :sync: openpi
+
+      **1. 安装环境**
+
+      安装 RLinf（OpenPI + IsaacLab）：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env isaaclab && source .venv/bin/activate
+
+      下载 Isaac Sim 5.1.0 并初始化其 shell 环境：
+
+      .. code-block:: bash
+
+         mkdir -p isaac_sim && cd isaac_sim
+         wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         source ./setup_conda_env.sh
+
+      .. warning::
+
+         每次在新终端中启动 IsaacLab 前，都需要运行 ``source ./setup_conda_env.sh``。
+
+      **2. 下载模型**
+
+      下载 OpenPI π₀.₅ 的 SFT 检查点（基于 |huggingface| `IsaacLab-Stack-Cube-Data <https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data>`__ 人类演示数据微调）：
 
       .. code-block:: bash
 
          hf download YifWRobotics/RLinf-pi05-SFT-Stack-cube --local-dir ./RLinf-pi05-SFT-Stack-cube
 
-.. include:: _model_path.rst
+      .. include:: _model_path.rst
 
-这些 SFT 检查点来自 IsaacLab stack-cube 任务的人类演示数据。
-数据集已发布在 |huggingface|
-`IsaacLab-Stack-Cube-Data <https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data>`__。
+      **3. 启动训练**
 
-运行
-----------------------------------------
+      修改 ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_openpi_pi05.yaml`` 中的模型路径，启动 PPO 训练：
 
-可用训练配置：
+      .. code-block:: bash
 
-.. list-table::
-   :header-rows: 1
-   :widths: 26 46 28
+         bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
 
-   * - 模型
-     - 配置
-     - 命令后缀
-   * - GR00T N1.5
-     - ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t.yaml``
-     - ``isaaclab_franka_stack_cube_ppo_gr00t``
-   * - OpenPI π₀.₅
-     - ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_openpi_pi05.yaml``
-     - ``isaaclab_franka_stack_cube_ppo_openpi_pi05``
-
-使用 ``run_embodiment.sh`` 启动训练：
-
-.. code:: bash
-
-   # GR00T N1.5
-   bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t
-
-   # OpenPI π₀.₅
-   bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
-
-独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>`，
-通过配置回退机制复用相同后缀：``isaaclab_franka_stack_cube_ppo_gr00t`` 和
-``isaaclab_franka_stack_cube_ppo_openpi_pi05``。
+      OpenPI 默认配置使用 ``actor,env,rollout: all`` 共置；按 GPU 显存预算调整 ``cluster.component_placement``、``rollout.pipeline_stage_num`` 和 ``actor.enable_offload``。独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>` 并传入后缀 ``isaaclab_franka_stack_cube_ppo_openpi_pi05``。
 
 .. note::
 
-   GR00T 默认配置会分离 env、rollout 和 actor placement。OpenPI 默认配置使用
-   ``actor,env,rollout: all`` 共置。请根据 GPU 显存预算调整
-   ``cluster.component_placement``、``rollout.pipeline_stage_num`` 和
-   ``actor.enable_offload``。
-
-.. note::
-
-   如需添加自定义 IsaacLab 任务，请在 ``rlinf/envs/sim/isaaclab/tasks/`` 下实现任务，
-   在 ``rlinf/envs/sim/isaaclab/__init__.py`` 中注册任务，然后在
-   ``examples/embodiment/config/env/isaaclab_stack_cube.yaml`` 等环境配置中，将
-   ``init_params.id`` 指向新的 task id。
+   如需添加自定义 IsaacLab 任务，按 :doc:`../../extending/new_env` 注册任务后，在 ``examples/embodiment/config/env/isaaclab_stack_cube.yaml`` 等环境配置中将 ``init_params.id`` 指向新的 task id。
 
 可视化与结果
 ----------------------------------------
 
-在 RLinf 仓库根目录启动 TensorBoard：
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-关键指标是 ``env/success_once``。完整指标说明见
-:doc:`训练指标 <../../reference/metrics>`。
-
-如需保存 rollout 视频，请在环境配置中启用 video：
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
-
-如需启用 W&B 或 SwanLab，请添加 logger backend：
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``env/success_once`` 曲线，通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制，完整指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
 .. list-table::
    :header-rows: 1
@@ -240,6 +203,4 @@
 致谢
 ----------------------------------------
 
-感谢 `许明辉 <https://github.com/smallcracker>`__ 和
-`杨楠 <https://github.com/AquaSage18>`__ 对 GR00T N1.5 示例的贡献与支持，也感谢
-`Yifan Wu <https://github.com/YifWRobotics>`__ 对 OpenPI π₀.₅ 示例的贡献与支持。
+感谢 `许明辉 <https://github.com/smallcracker>`__ 和 `杨楠 <https://github.com/AquaSage18>`__ 对 GR00T N1.5 示例的贡献与支持，也感谢 `Yifan Wu <https://github.com/YifWRobotics>`__ 对 OpenPI π₀.₅ 示例的贡献与支持。

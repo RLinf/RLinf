@@ -18,19 +18,23 @@ For ZED cameras or Robotiq grippers, see :doc:`../../examples/embodied/franka_ze
 
 **Dependencies**
 
-Install dependencies separately on the control node and the GPU node:
+Install dependencies separately on the control node and the GPU node. In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
 
-.. code-block:: bash
+.. tab-set::
 
-   # Robot control node (Franka + cameras)
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
+   .. tab-item:: Robot Control Node (Franka + Cameras)
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   # GPU / rollout node (π₀ evaluation)
-   bash requirements/install.sh embodied --model openpi --env franka
-   source .venv/bin/activate
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+
+   .. tab-item:: GPU / Rollout Node (OpenPI)
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
 The control node uses the default Franky backend. To drive the arm through ROS instead, follow the Legacy ROS Backend (Optional) section in :doc:`../../examples/embodied/franka`.
 
@@ -191,7 +195,6 @@ Update ``evaluations/realworld/realworld_pnp_eval.yaml`` at minimum:
 
    env:
      eval:
-       rollout_epoch: 20
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
@@ -200,8 +203,6 @@ Update ``evaluations/realworld/realworld_pnp_eval.yaml`` at minimum:
    rollout:
      model:
        model_path: /path/to/pi0-model
-       openpi:
-         config_name: "pi0_realworld"
 
 ``node_ranks`` and ``component_placement`` must match the actual ``RLINF_NODE_RANK`` on each machine.
 
@@ -267,8 +268,8 @@ Required fields
      - ``rollout.model.openpi``
      - ``"pi0_realworld"`` for PnP
 
-Key ``env.eval`` fields
-~~~~~~~~~~~~~~~~~~~~~~~
+Key Evaluation Fields
+~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
@@ -287,7 +288,7 @@ Key ``env.eval`` fields
    * - ``teleop``
      - Device that takes over from the policy; usually ``none`` for eval
 
-``run_eval.sh`` behavior
+Launcher Script Behavior
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 - The ``realworld`` benchmark **does not** call ``setup_sim_env`` (no simulation env vars needed)
@@ -307,8 +308,8 @@ RLinf ships a generic real-robot environment ``FrankaEnv-v1``: set ``task_descri
 
 ``realworld_eval.yaml`` is **single-node**: both ``env`` and ``rollout`` run on the Franka node (``num_nodes: 1``), suitable when GPU and control share one machine.
 
-Key ``override_cfg`` fields
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Key Task Override Fields
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: yaml
 

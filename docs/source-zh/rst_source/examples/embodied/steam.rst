@@ -97,35 +97,30 @@ STEAM 工作原理
 安装
 ----------------------------------------
 
-1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
-.. code:: bash
+.. tab-set::
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   .. tab-item:: OpenPI + STEAM
 
-2. 安装依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+      .. code-block:: bash
 
-STEAM 与 RECAP 共用 OpenPI 环境。使用 ``requirements/install.sh`` 安装依赖，或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像：
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 下载模型
 ----------------------------------------
 
-STEAM 价值模型由两个预训练 backbone 构成：
+下载 STEAM 价值模型所需的两个预训练 backbone（SigLIP-so400m 视觉编码器与 Gemma3-270M 语言模型）：
 
-- **SigLIP-so400m**\ （``google/siglip-so400m-patch14-384``\ ）：视觉编码器
-- **Gemma3-270M**\ （``google/gemma-3-270m``\ ）：语言模型与分词器
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: 价值模型 Backbone
 
-   hf download google/siglip-so400m-patch14-384 --local-dir siglip-so400m-patch14-384
-   hf download google/gemma-3-270m --local-dir gemma-3-270m
+      .. code-block:: bash
+
+         hf download google/siglip-so400m-patch14-384 --local-dir ./siglip-so400m-patch14-384
+         hf download google/gemma-3-270m --local-dir ./gemma-3-270m
 
 在模型配置（``examples/offline_rl/config/model/steam_value_model.yaml``\ ）中设置路径：
 
@@ -181,171 +176,84 @@ STEAM 用 **advantage tag** 在各步骤间传递数据。与 RECAP 不同，STE
 Step 1：价值模型 SFT
 ----------------------------------------
 
-训练集成进度评论器。每个成员是 SigLIP + Gemma3 backbone 加一个分类头；成员从共享 backbone 克隆而来，并对其 value head 重新设种子，使集成方差成为有意义的认知不确定性信号。
-
-**配置**
-
-配置文件位于 ``examples/offline_rl/config/steam_value_model_sft.yaml``；模型默认值在 ``examples/offline_rl/config/model/steam_value_model.yaml``。关键字段：
-
-.. code:: yaml
-
-   runner:
-     max_epochs: -1
-     max_steps: 16000
-     save_interval: 1000
-
-   data:
-     train_data_paths:
-       - dataset_path: /path/to/sft_dataset
-         type: sft
-     k: 32                       # 最大有符号步幅 K（帧对时间尺度）
-     # 评论器逐帧加载的图像（视角）名称；必须与检查点训练时的视角一致。
-     # 缺失的视角会被补成零占位（mask=False）。
-     camera_keys: [face_view, left_wrist_view, right_wrist_view]
-
-   actor:
-     micro_batch_size: 32
-     global_batch_size: 512
-     model:
-       precision: fp32            # fp32 master 参数，FSDP forward 使用 bf16
-       num_bins: 32              # 2 = 二分类进度；>2 = 多 bin（偶数）
-       ensemble_size: 3          # 集成中评论器数量
-       fusion_hidden_dim: 512
-       freeze_vision_encoder: false
-       freeze_language_model: false
-       use_gradient_checkpointing: true
-     optim:
-       lr: 5.0e-5
-       value_lr: 5.0e-5
-
-**关键参数**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 32 16 52
-
-   * - 参数
-     - 默认值
-     - 说明
-   * - ``data.k``
-     - ``32``
-     - 最大有符号步幅 :math:`K`。多 bin 模式下 ``2*K`` 必须是 ``num_bins`` 的整数倍。
-   * - ``actor.model.num_bins``
-     - ``32``
-     - bin 数量。``2`` 为二分类进度；``> 2``\ （偶数）为多 bin 有符号步幅分类。
-   * - ``actor.model.ensemble_size``
-     - ``3``
-     - 集成成员数。``> 1`` 启用 worst-of-N 聚合与不确定性统计。
-
-**启动命令**
+使用 ``examples/offline_rl/config/steam_value_model_sft.yaml`` 训练集成进度评论器。配置好 ``data.train_data_paths``\ （相机名不同时同步调整 ``data.camera_keys``）后直接启动：
 
 .. code:: bash
 
    bash examples/offline_rl/advantage_labeling/steam/run_steam_sft.sh steam_value_model_sft
 
-   # 命令行覆盖配置字段：
-   bash examples/offline_rl/advantage_labeling/steam/run_steam_sft.sh steam_value_model_sft data.k=8
+.. dropdown:: 进阶配置（可选）
 
-**输出**
+   默认配置已设好常用参数（``data.k=32``、``actor.model.num_bins=32``、``actor.model.ensemble_size=3``、``runner.max_steps=16000``），需要调参时可在 YAML 或命令行覆盖（如 ``data.k=8``）：
 
-- 检查点位于 ``logs/steam_sft/{config_name}-{timestamp}/.../checkpoints/global_step_{N}/actor``
-- TensorBoard 日志
+   .. code:: yaml
 
-**关键指标**
+      runner:
+        max_epochs: -1
+        max_steps: 16000
+        save_interval: 1000
 
-- ``train/loss``：有符号步幅 bin 上的交叉熵
-- ``train/accuracy``：精确 bin 分类准确率
-- ``train/accuracy_neighbor``：相邻 bin 容差准确率
-- ``train/grad_norm``：梯度范数
+      data:
+        train_data_paths:
+          - dataset_path: /path/to/sft_dataset
+            type: sft
+        k: 32                       # 最大有符号步幅 K；多 bin 模式下 2*K 须为 num_bins 整数倍
+        camera_keys: [face_view, left_wrist_view, right_wrist_view]
 
-如果需要比较不同 checkpoint 在留出 episode 上的表现，请配置 ``data.eval_data_paths``，并将 ``runner.val_check_interval`` 设为正数。对应指标写入 ``eval/loss``、``eval/accuracy`` 和 ``eval/accuracy_neighbor``；具名数据集还会生成 ``eval/rollout_holdout/loss`` 等路径。应根据留出集指标选择评论器 checkpoint，不要默认最后一个训练 step 的泛化效果最好。
+      actor:
+        micro_batch_size: 32
+        global_batch_size: 512
+        model:
+          precision: fp32           # fp32 master 参数，FSDP forward 使用 bf16
+          num_bins: 32              # 2 = 二分类进度；>2 = 多 bin（偶数）
+          ensemble_size: 3          # >1 启用 worst-of-N 聚合与不确定性统计
+          fusion_hidden_dim: 512
+          freeze_vision_encoder: false
+          freeze_language_model: false
+          use_gradient_checkpointing: true
+        optim:
+          lr: 5.0e-5
+          value_lr: 5.0e-5
+
+   如需在留出集上筛选检查点，设置 ``data.eval_data_paths`` 与正整数 ``runner.val_check_interval``，按 ``eval/loss`` 和 ``eval/accuracy`` 择优。
+
+检查点保存在 ``logs/steam_sft/{config_name}-{timestamp}/.../checkpoints/global_step_{N}/actor``。
 
 Step 2：计算集成优势
 ----------------------------------------
 
-用训练好的集成对每一帧推理，并写出逐帧优势标签。
-
-**配置**
-
-配置文件为 ``examples/offline_rl/config/steam_compute_advantages_ensemble.yaml``：
-
-.. code:: yaml
-
-   advantage:
-     value_checkpoint: /path/to/steam_value_ensemble/checkpoints/global_step_N/actor
-     batch_size: 256
-     label_mode: quantile        # 必填："threshold" 或 "quantile"
-     rollout_quantile: 0.3       # rollout 帧最高的 30% 标为 True
-     expert_quantile: 0.8        # 可选：sft 帧最高的 80% 标为 True
-     tag: steam_k32_ensemble3_q30
-
-   data:
-     k: 32                       # 必须与 Step 1 的 data.k 一致
-     camera_keys: [face_view, left_wrist_view, right_wrist_view]
-     train_data_paths:
-       - dataset_path: /path/to/sft_dataset
-         type: sft
-       - dataset_path: /path/to/rollout_dataset
-         type: rollout
-
-**关键参数**
-
-``label_mode`` 决定哪些旋钮生效。在 ``threshold`` 模式下，只有 ``advantage.positive_threshold`` 起作用——它是 :math:`[-1, 1]` 内的有符号分数阈值；rollout 帧分数高于它即为正样本，sft 帧恒为正。在 ``quantile`` 模式下，``positive_threshold`` 被忽略，改由 ``rollout_quantile`` / ``expert_quantile`` 两个比例分别在各自池中独立选取分数最高的帧（省略 ``expert_quantile`` 则把所有 sft 帧都标为正）。
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 14 52
-
-   * - 参数
-     - 默认值
-     - 说明
-   * - ``advantage.value_checkpoint``
-     - ``required``
-     - Step 1 集成检查点路径（``actor`` 目录）。
-   * - ``advantage.label_mode``
-     - ``quantile``
-     - ``threshold`` 或 ``quantile``。
-   * - ``advantage.positive_threshold``
-     - ``null``
-     - :math:`[-1, 1]` 内的有符号分数阈值（仅 ``label_mode=threshold``\ ）。
-   * - ``advantage.rollout_quantile``
-     - ``0.3``
-     - rollout 帧标为 True 的最高比例（``label_mode=quantile``）。
-   * - ``advantage.expert_quantile``
-     - ``0.8``
-     - sft 帧标为 True 的最高比例（``label_mode=quantile``\ ，可选）。
-   * - ``advantage.tag``
-     - ``steam_k32_ensemble3_q30``
-     - 输出 tag；写入 ``meta/advantages_{tag}.parquet``。
-   * - ``data.k``
-     - ``32``
-     - 帧对步幅；必须与 Step 1 训练的 ``data.k`` 一致。
-
-**启动命令**
+在 ``examples/offline_rl/config/steam_compute_advantages_ensemble.yaml`` 中将 ``advantage.value_checkpoint`` 指向 Step 1 的 ``actor`` 检查点目录（并保持 ``data.train_data_paths`` 与 ``data.camera_keys`` 一致），然后启动：
 
 .. code:: bash
 
-   # 自动检测 GPU 数；单卡与 torchrun 多卡均支持。
    bash examples/offline_rl/advantage_labeling/steam/process/run_compute_advantages_ensemble.sh steam_compute_advantages_ensemble
 
-   # 指定 GPU 数：
-   bash examples/offline_rl/advantage_labeling/steam/process/run_compute_advantages_ensemble.sh steam_compute_advantages_ensemble --nproc 4
+.. dropdown:: 进阶配置（可选）
 
-**输出文件**
+   默认使用 ``label_mode: quantile``\ （``rollout_quantile: 0.3``、``expert_quantile: 0.8``、``tag: steam_k32_ensemble3_q30``）。可追加 ``--nproc 4`` 指定 GPU 数，或切换为 ``label_mode: threshold`` 并设置 ``advantage.positive_threshold``\ （范围 ``[-1, 1]``）：
 
-- ``meta/advantages_{tag}.parquet``：逐帧的 ``advantage``\ （布尔）、``advantage_continuous``\ （有符号分数）、``ensemble_signed_score``\ 、逐成员值，以及集成熵 / 方差等诊断量。
-- ``meta/mixture_config.yaml``：每个 tag 一条记录，记录 ``label_mode``\ 、所用阈值、``ensemble_size``\ 、``num_bins`` 和正样本计数。
+   .. code:: yaml
+
+      advantage:
+        value_checkpoint: /path/to/steam_value_ensemble/checkpoints/global_step_N/actor
+        batch_size: 256
+        label_mode: quantile        # "threshold" 或 "quantile"
+        rollout_quantile: 0.3       # rollout 帧最高的 30% 标为 True
+        expert_quantile: 0.8        # 可选：sft 帧最高的 80% 标为 True
+        tag: steam_k32_ensemble3_q30
+
+      data:
+        k: 32                       # 必须与 Step 1 的 data.k 一致
+        camera_keys: [face_view, left_wrist_view, right_wrist_view]
+
+运行后写出 ``meta/advantages_{tag}.parquet`` 与 ``meta/mixture_config.yaml``。
 
 Step 3：CFG 训练
 ----------------------------------------
 
-策略优化直接在 STEAM 优势 parquet 上运行共享的 CFG 阶段。``cfg_rl_openpi.yaml`` 也供其他离线 RL 流程使用，因此除了将 ``data.advantage_tag`` 指向 Step 2 写出的 tag，还必须配置 STEAM 的两类数据集。runner 使用 30,000 step 上限，与 optimizer 的训练计划保持一致。
+在 ``examples/offline_rl/config/cfg_rl_openpi.yaml`` 中配置 ``data.train_data_paths`` 与 ``actor.model.model_path``\ （确认 ``openpi.config_name`` 与 ``norm_stats.json`` 匹配），再传入 Step 2 的 tag 启动：
 
 .. code:: yaml
-
-   runner:
-     max_epochs: -1
-     max_steps: 30000
 
    data:
      advantage_tag: steam_k32_ensemble3_q30
@@ -360,22 +268,13 @@ Step 3：CFG 训练
    actor:
      model:
        model_path: /path/to/pi05_base_pytorch
-       openpi:
-         config_name: pi05_libero
-         train_expert_only: false
-
-OpenPI 配置必须与数据集的观测和动作 contract 一致。对于 :doc:`RLT <rlt>` 中介绍的 ManiSkill joint-control 数据，应使用 ``config_name: pi05_rlt_maniskill_joint`` 和 ``action_dim: 8``。policy checkpoint 还必须在 ``<model_path>/<asset_id>/norm_stats.json`` 提供匹配的 OpenPI 归一化统计；该 ManiSkill 配置的 ``asset_id`` 为 ``physical-intelligence/maniskill``。
-
-完成路径与环境相关模型字段配置后启动：
 
 .. code:: bash
 
    bash examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh cfg_rl_openpi \
        data.advantage_tag=steam_k32_ensemble3_q30
 
-完整的 CFG 配置与参数见 :doc:`CFG 训练阶段 <recap>`。
-
-训练过程中应监控 ``train/loss``、``train/conditional_loss``、``train/unconditional_loss``、``train/grad_norm`` 和 ``train/learning_rate``。有限且稳定的 loss 只能证明优化过程正常，不能作为任务级验收指标；还需要在目标环境中评测最终 checkpoint 和候选中间 checkpoint，并报告成功率与 episode 数。评测入口见 :doc:`评测 </rst_source/evaluations/index>`。
+使用 :doc:`RLT <rlt>` 中的 ManiSkill 关节控制数据时，设置 ``actor.model.openpi.config_name: pi05_rlt_maniskill_joint`` 与 ``actor.model.action_dim: 8``。完整 CFG 参数见 :doc:`RECAP <recap>`，策略评测见 :doc:`评测 </rst_source/evaluations/index>`。
 
 STEAM 实验结果
 ----------------------------------------
@@ -498,43 +397,3 @@ STEAM 实验结果
 .. code:: bash
 
    tensorboard --logdir ./logs --port 6006
-
-文件结构
-----------------------------------------
-
-STEAM 将各步骤脚本自包含在 ``examples/`` 下（绑定模型的推理 + 标注逻辑），模型 / 数据集代码在 ``rlinf/models``、``rlinf/data/datasets`` 下，与 RECAP 共享的模型无关后处理在 ``rlinf/algorithms/offline/process/`` 下：
-
-.. code-block:: text
-
-   examples/offline_rl/
-   ├── config/                                  # 共享生产配置
-   │   ├── steam_value_model_sft.yaml           # Step 1
-   │   ├── steam_compute_advantages_ensemble.yaml   # Step 2
-   │   ├── cfg_rl_openpi.yaml                   # Step 3（CFG，与 RECAP 共用）
-   │   └── model/
-   │       └── steam_value_model.yaml           # 价值模型架构默认配置
-   ├── advantage_labeling/
-   │   └── steam/
-   │       ├── train_steam.py                   # Step 1：价值模型 SFT 入口
-   │       ├── run_steam_sft.sh                 # Step 1 启动脚本
-   │       └── process/                         # Step 2：自包含入口脚本（与 recap 一致）
-   │           ├── compute_advantages_ensemble.py     # Step 2：集成推理 + 标注（Hydra）
-   │           ├── relabel_advantages.py              # CLI：重标注优势（CPU）
-   │           ├── merge_steam_ensemble.py            # CLI：合并集成检查点
-   │           ├── visualize_advantage.py             # 优势可视化
-   │           └── run_compute_advantages_ensemble.sh # Step 2 启动脚本
-   └── policy_optimization/
-       └── cfg_rl/
-           ├── train_cfg.py                      # Step 3：CFG 策略训练
-           └── run_cfg_rl.sh                     # Step 3 启动脚本
-
-   rlinf/
-   ├── models/embodiment/value_model/steam/     # 评论器、集成、配置、合并
-   │   ├── modeling_steam.py / modeling_critic.py
-   │   ├── ensemble_modeling_critic.py          # worst-of-N + coerce_to_ensemble
-   │   └── checkpoint_merge.py
-   ├── data/datasets/steam/                     # pair_dataset.py、mixture.py、binning.py
-   └── algorithms/offline/process/              # 共享、模型无关（RECAP + STEAM）
-       ├── advantage.py                         # 分位数阈值 + 布尔标签
-       ├── distributed.py                       # 分片推理辅助
-       └── mixture_config.py                    # meta/mixture_config.yaml tag I/O

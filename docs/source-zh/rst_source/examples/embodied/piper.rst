@@ -35,27 +35,24 @@ AgileX Piper 配置与控制
 安装
 ----
 
-在控制主机上按下方自定义环境流程安装机器人依赖。后续检查均在同一仓库目录和已激活的环境中运行。
-
-机器人控制节点
-~~~~~~~~~~~~~~
-
-在连接机器人的主机上克隆 RLinf，然后安装对应环境。
+在连接机械臂的控制主机上安装机器人依赖，后续命令均在此仓库目录中运行，并保持环境已激活。
 
 .. include:: _setup_common.rst
-   :end-before: 使用下面的
 
-在仓库根目录安装机器人依赖：
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: Piper
 
-   bash requirements/install.sh embodied --env piper && source .venv/bin/activate
-   export REPO_PATH="$PWD"
+      .. code-block:: bash
 
-后续命令均在此仓库目录中运行，并保持环境已激活。安装脚本会安装 ``PiperArm`` 使用的固定版本 ``pyAgxArm`` 驱动；平台要求见 :doc:`安装 </rst_source/start/installation>`。
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env piper && source .venv/bin/activate
+         export REPO_PATH="$PWD"
+
+安装脚本会安装 Piper 所需的固定版本 ``pyAgxArm`` 驱动；平台要求见 :doc:`安装 </rst_source/start/installation>`。
 
 准备 CAN 连接
-^^^^^^^^^^^^^
+~~~~~~~~~~~~~
 
 运行 ``ip -brief link`` 查找 SocketCAN 接口。处于 SocketCAN 模式的 USB-to-CAN 适配器通常显示为 ``can0``；如果名称不同，请替换下列命令中的接口名。连接机器人前，将接口配置为 1 Mbit/s：
 

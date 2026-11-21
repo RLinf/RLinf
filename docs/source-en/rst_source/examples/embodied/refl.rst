@@ -85,61 +85,67 @@ each reward update follows a supervised update on image-caption pairs.
 This recipe applies the method from the
 `ImageReward paper <https://arxiv.org/abs/2304.05977>`_ to SD3 flow matching.
 
-Installation
-------------
+Setup and Run
+-------------
 
-Follow the shared :ref:`installation <diffusion-model-setup>` and
-:ref:`model download <diffusion-model-checkpoints>` instructions for SD3.5 Medium.
+.. include:: _setup_common.rst
 
-Download ImageReward and Prompts
---------------------------------
+.. tab-set::
 
-Download the ImageReward checkpoint, tokenizer, and official prompt files:
+   .. tab-item:: SD3.5 Medium + ImageReward
 
-.. code-block:: bash
+      **1. Install**
 
-   export IR_MODEL="$PWD/models/ImageReward"
-   export IR_DATA="$PWD/data/ImageReward"
-   mkdir -p "$IR_MODEL" "$IR_DATA"
+      Follow the shared :ref:`installation <diffusion-model-setup>` and
+      :ref:`model download <diffusion-model-checkpoints>` instructions for SD3.5 Medium.
 
-   hf download zai-org/ImageReward ImageReward.pt med_config.json --local-dir "$IR_MODEL"
-   python -c 'from transformers import BertTokenizer; BertTokenizer.from_pretrained("bert-base-uncased")'
+      **2. Download**
 
-   for file in refl_data.json test.json; do
-     curl --fail --location \
-       "https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/data/$file" \
-       --output "$IR_DATA/$file"
-   done
+      Download the ImageReward checkpoint, tokenizer, and official prompt files:
 
-Training uses ``refl_data.json``; evaluation uses ``test.json``.
-``actor.refl_data.exclude_path`` points to the evaluation file to exclude
-those prompts from training.
+      .. code-block:: bash
 
-Run It
-------
+         export IR_MODEL="$PWD/models/ImageReward"
+         export IR_DATA="$PWD/data/ImageReward"
+         mkdir -p "$IR_MODEL" "$IR_DATA"
 
-Edit ``examples/diffusion/config/sd3_refl_imagereward.yaml``. Set
-``actor.model.model_path`` to the SD3.5 Medium directory. Set
-``actor.refl_reward_model.model_path`` and ``actor.refl_reward_model.med_config``
-to the downloaded ``ImageReward.pt`` and ``med_config.json`` files.
+         hf download zai-org/ImageReward ImageReward.pt med_config.json --local-dir "$IR_MODEL"
+         python -c 'from transformers import BertTokenizer; BertTokenizer.from_pretrained("bert-base-uncased")'
 
-Set ``actor.refl_data.path`` to ``refl_data.json``. Point both
-``actor.refl_data.exclude_path`` and ``env.eval.dataset.path`` to ``test.json``.
-To use GPUs 0–3, set the placement in the same YAML:
+         for file in refl_data.json test.json; do
+           curl --fail --location \
+             "https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/data/$file" \
+             --output "$IR_DATA/$file"
+         done
 
-.. code-block:: yaml
+      Training uses ``refl_data.json``; evaluation uses ``test.json``.
+      ``actor.refl_data.exclude_path`` points to the evaluation file to exclude
+      those prompts from training.
 
-   cluster:
-     component_placement:
-       actor,env,rollout: 0-3
+      **3. Launch**
 
-The default config trains for 50 steps with 512 samples per step. A global
-batch size of 64 gives eight reward updates per step. Launch from the repository
-root:
+      Edit ``examples/diffusion/config/sd3_refl_imagereward.yaml``. Set
+      ``actor.model.model_path`` to the SD3.5 Medium directory. Set
+      ``actor.refl_reward_model.model_path`` and ``actor.refl_reward_model.med_config``
+      to the downloaded ``ImageReward.pt`` and ``med_config.json`` files.
 
-.. code-block:: bash
+      Set ``actor.refl_data.path`` to ``refl_data.json``. Point both
+      ``actor.refl_data.exclude_path`` and ``env.eval.dataset.path`` to ``test.json``.
+      To use GPUs 0–3, set the placement in the same YAML:
 
-   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward
+      .. code-block:: yaml
+
+         cluster:
+           component_placement:
+             actor,env,rollout: 0-3
+
+      The default config trains for 50 steps with 512 samples per step. A global
+      batch size of 64 gives eight reward updates per step. Launch from the repository
+      root:
+
+      .. code-block:: bash
+
+         bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward
 
 The default ``algorithm.refl_pre_loss_weight=0.0`` trains with the reward loss
 alone. The run evaluates and saves a checkpoint every 10 steps, and reports

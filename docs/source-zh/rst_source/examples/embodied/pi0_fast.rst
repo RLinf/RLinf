@@ -25,92 +25,93 @@ actor update 阶段通过 teacher forcing 重放 rollout 时采样的 token。
    * - 已验证运行时
      - Python 3.12.12、PyTorch 2.11.0 + CUDA 12.8、Transformers 5.5.4
 
-安装
+一键上手
 --------------------
 
-下面的命令使用本示例验证过的 π₀-FAST 运行时组合。这些版本表示已测试配置，安装脚本
-不会强制覆盖用户传入的版本：
+.. include:: _setup_common.rst
 
-.. code:: bash
+.. tab-set::
 
-   UV_TORCH_BACKEND=cu128 bash requirements/install.sh embodied \
-      --model pi0_fast --env libero \
-      --python 3.12.12 --torch 2.11.0 --no-flash-attn && source .venv/bin/activate
+   .. tab-item:: π₀-FAST（LIBERO-Long）
 
-需要 GitHub 和 PyPI 镜像时可增加 ``--use-mirror``。上述已验证命令跳过 Flash
-Attention；如需安装，可去掉 ``--no-flash-attn``。
-首次运行前需要在 Hugging Face 接受 PaliGemma 的访问条款，并执行 ``hf auth login``；
-固定版本的文本 tokenizer 位于该 gated repository 中。
+      **1. 安装环境**
 
-固定依赖坐标
-~~~~~~~~~~~~~~~~~~~~~~~~
+      下面的命令使用本示例验证过的 π₀-FAST 运行时组合。这些版本表示已测试配置，安装脚本不会强制覆盖用户传入的版本。该命令跳过 Flash Attention；如需安装，去掉 ``--no-flash-attn``。首次运行前需要在 Hugging Face 接受 PaliGemma 的访问条款，并执行 ``hf auth login``\ （固定版本的文本 tokenizer 位于该受限仓库中）：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 38 34
+      .. code-block:: bash
 
-   * - 依赖
-     - 仓库
-     - revision
-   * - LeRobot 源码
-     - ``huggingface/lerobot``
-     - ``3e37269dc60ee6195e44dd2810c95f1df5dfda99``
-   * - 策略 checkpoint
-     - ``lerobot/pi0fast-libero``
-     - ``840f4b503f4c09110421c33c810a85b6684fd658``
-   * - 文本 tokenizer
-     - ``google/paligemma-3b-pt-224``
-     - ``35e4f46485b4d07967e7e9935bc3786aad50687c``
-   * - 动作 tokenizer
-     - ``jadechoghari/tokenizer-lib-mean``
-     - ``79ae83e3cbd8786dcb84b628569f8d076ca8151e``
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         UV_TORCH_BACKEND=cu128 bash requirements/install.sh embodied \
+            --model pi0_fast --env libero \
+            --python 3.12.12 --torch 2.11.0 --no-flash-attn && source .venv/bin/activate
 
-启动 RLinf 前先下载三个资产：
+      **2. 下载模型**
 
-.. code:: bash
+      启动 RLinf 前先下载三个固定版本的 Hugging Face 资产：
 
-   hf download lerobot/pi0fast-libero \
-      --revision 840f4b503f4c09110421c33c810a85b6684fd658 \
-      --local-dir /path/to/pi0fast-libero
-   hf download google/paligemma-3b-pt-224 \
-      --revision 35e4f46485b4d07967e7e9935bc3786aad50687c \
-      --local-dir /path/to/paligemma-3b-pt-224
-   hf download jadechoghari/tokenizer-lib-mean \
-      --revision 79ae83e3cbd8786dcb84b628569f8d076ca8151e \
-      --local-dir /path/to/tokenizer-lib-mean
+      .. code-block:: bash
 
-然后修改 ``examples/embodiment/config/model/pi0_fast.yaml`` 中的字段：
+         hf download lerobot/pi0fast-libero \
+            --revision 840f4b503f4c09110421c33c810a85b6684fd658 \
+            --local-dir ./pi0fast-libero
+         hf download google/paligemma-3b-pt-224 \
+            --revision 35e4f46485b4d07967e7e9935bc3786aad50687c \
+            --local-dir ./paligemma-3b-pt-224
+         hf download jadechoghari/tokenizer-lib-mean \
+            --revision 79ae83e3cbd8786dcb84b628569f8d076ca8151e \
+            --local-dir ./tokenizer-lib-mean
 
-.. code:: yaml
+      .. list-table:: 固定依赖坐标
+         :header-rows: 1
+         :widths: 28 38 34
 
-   model_path: "/path/to/pi0fast-libero"
-   num_action_chunks: 10
-   action_dim: 7
-   pi0_fast:
-     text_tokenizer_name: "/path/to/paligemma-3b-pt-224"
-     action_tokenizer_name: "/path/to/tokenizer-lib-mean"
+         * - 依赖
+           - 仓库
+           - revision
+         * - LeRobot 源码
+           - ``huggingface/lerobot``
+           - ``3e37269dc60ee6195e44dd2810c95f1df5dfda99``
+         * - 策略 checkpoint
+           - ``lerobot/pi0fast-libero``
+           - ``840f4b503f4c09110421c33c810a85b6684fd658``
+         * - 文本 tokenizer
+           - ``google/paligemma-3b-pt-224``
+           - ``35e4f46485b4d07967e7e9935bc3786aad50687c``
+         * - 动作 tokenizer
+           - ``jadechoghari/tokenizer-lib-mean``
+           - ``79ae83e3cbd8786dcb84b628569f8d076ca8151e``
 
-``num_action_chunks`` 和 ``action_dim`` 必须与 checkpoint 的 ``n_action_steps``
-以及 action feature 维度一致。不一致时会在加载阶段直接报错，而不会静默截断 FAST
-DCT 重建。
+      然后修改 ``examples/embodiment/config/model/pi0_fast.yaml`` 中的路径字段，指向下载后的目录：
+
+      .. code-block:: yaml
+
+         model_path: "./pi0fast-libero"
+         num_action_chunks: 10
+         action_dim: 7
+         pi0_fast:
+           text_tokenizer_name: "./paligemma-3b-pt-224"
+           action_tokenizer_name: "./tokenizer-lib-mean"
+
+      ``num_action_chunks`` 和 ``action_dim`` 必须与 checkpoint 的 ``n_action_steps`` 以及 action feature 维度一致。不一致时会在加载阶段直接报错，而不会静默截断 FAST DCT 重建。
+
+      **3. 启动训练**
+
+      启动双机 16 卡 GRPO 微调参考配置，或运行 baseline 评测：
+
+      .. code-block:: bash
+
+         # GRPO 微调
+         bash examples/embodiment/run_embodiment.sh libero_10_grpo_pi0_fast
+
+         # Baseline 评测
+         bash evaluations/run_eval.sh libero libero_10_pi0_fast_eval
 
 GRPO 微调
 ------------------------
 
-使用下面的命令启动双机 16 卡参考配置：
+参考配置每次 update 采样 1,024 条轨迹（256 个并行环境、4 个 rollout epoch），group size 为 8，actor micro batch size 为 16，并且每 10 步在 256 个固定 episode 上评测。训练采样温度为 0.3，评测使用 greedy decoding。actor 采用 all-linear LoRA，并启用可选的 FP32-master AdamW；该优化器目前仅支持 FSDP1 ``NO_SHARD``。
 
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh libero_10_grpo_pi0_fast
-
-参考配置每次 update 采样 1,024 条轨迹（256 个并行环境、4 个 rollout epoch），
-group size 为 8，actor micro batch size 为 16，并且每 10 步在 256 个固定 episode
-上评测。训练采样温度为 0.3，评测使用 greedy decoding。actor 采用 all-linear
-LoRA，并启用可选的 FP32-master AdamW；该优化器目前仅支持 FSDP1
-``NO_SHARD``。
-
-一次 actor seed 1234 的开发阶段长训得到以下 ``success_once``。这些数据用于证明
-接入链路可以训练，不代表多 seed 的收敛保证：
+一次 actor seed 1234 的开发阶段长训得到以下 ``success_once``。这些数据用于证明接入链路可以训练，不代表多 seed 的收敛保证：
 
 .. list-table::
    :header-rows: 1
@@ -134,13 +135,7 @@ LoRA，并启用可选的 FP32-master AdamW；该优化器目前仅支持 FSDP1
 Baseline 评测
 ------------------------
 
-评测配置采用 greedy decoding、seed 0、LIBERO 有序固定 reset state，共运行 500 个
-episode。训练和评测共用同一套 FAST 采样与 detokenize 路径；评测不收集 replay
-log-probability。
-
-.. code:: bash
-
-   bash evaluations/run_eval.sh libero libero_10_pi0_fast_eval
+评测配置采用 greedy decoding、seed 0、LIBERO 有序固定 reset state，共运行 500 个 episode。训练和评测共用同一套 FAST 采样与 detokenize 路径；评测不收集 replay log-probability。
 
 固定运行时和依赖坐标后，开发阶段得到以下结果：
 

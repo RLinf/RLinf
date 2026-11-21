@@ -13,35 +13,90 @@ the pinned Psi0 release. ``G1WholebodyBendPickMP-v0`` and
 ``G1WholebodyTabletopGraspMP-v0`` use different state, action, and System-0
 protocols and are not supported yet.
 
-Set Up the Environment
-----------------------
+.. _simple-reset-data:
 
-All eight tasks share steps 1–4 of the
-:doc:`Psi0 guide </rst_source/examples/embodied/psi0>`. First, install and
-activate the runtime from the RLinf repository root. To use Docker instead, see
-:ref:`step 1 <psi0-setup-env>`.
+Setup and Run
+-------------
 
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
-
-Then complete steps 2–4:
+All eight tasks share steps 1–4 of the :doc:`Psi0 guide </rst_source/examples/embodied/psi0>`. Complete the shared prerequisites first (or use Docker per :ref:`step 1 <psi0-setup-env>`):
 
 - :ref:`Download the Qwen metadata <psi0-qwen-metadata>`.
-- :ref:`Download the simulation assets <simple-sim-assets>`, or reuse assets
-  you already have.
+- :ref:`Download the simulation assets <simple-sim-assets>` into ``SIMPLE_ASSETS_DIR``, or reuse assets you already have.
 - :ref:`Link the assets <simple-link-assets>` to ``${VIRTUAL_ENV}/SIMPLE/data``.
 
 .. note::
 
    The Psi0 loader needs the raw Hugging Face snapshot of the Qwen metadata. Set ``HF_HOME`` when downloading it instead of using ``--local-dir``, and export the same ``HF_HOME`` before evaluation.
 
-Step 5 depends on the task. See :ref:`Task-Specific Assets <simple-reset-data>`.
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
+
+The tab below installs the runtime, downloads OpenOven's checkpoint, reset states, and HSSD scene (unpacked into ``SIMPLE_ASSETS_DIR``), and runs ``evaluations/simple/simple_psi0_eval.yaml`` (defaults to OpenOven, one episode, DR0). All tasks share ``PSI0_ARTIFACT_ROOT``; when switching tasks, change ``SIMPLE_TASK``, ``PSI0_RUN_REL``, and ``SIMPLE_SCENE`` together using a row from :ref:`the task table <simple-tasks>`.
+
+.. tab-set::
+
+   .. tab-item:: Psi0 + SIMPLE (OpenOven Default)
+
+      .. code-block:: bash
+
+         # 1. Install
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
+
+         # 2. Download task checkpoint, reset states, and HSSD scene
+         export PSI0_ARTIFACT_ROOT=./psi0-simple-artifacts
+         export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0
+         export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
+         export SIMPLE_SCENE=102344280
+
+         mkdir -p "${PSI0_ARTIFACT_ROOT}"
+         hf download USC-PSI-Lab/psi-model \
+           "${PSI0_RUN_REL}/argv.txt" \
+           "${PSI0_RUN_REL}/run_config.json" \
+           "${PSI0_RUN_REL}/checkpoints/ckpt_40000/model.safetensors" \
+           --revision d34a91932d25c45ef211582315b9224c7dc8ace9 \
+           --local-dir "${PSI0_ARTIFACT_ROOT}/psi-model"
+
+         hf download USC-PSI-Lab/psi-data "simple-eval/${SIMPLE_TASK}.zip" \
+           --repo-type dataset \
+           --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 \
+           --local-dir "${PSI0_ARTIFACT_ROOT}/psi-data"
+
+         export PSI0_RUN_DIR="${PSI0_ARTIFACT_ROOT}/psi-model/${PSI0_RUN_REL}"
+         export SIMPLE_RESET_DIR="${PSI0_ARTIFACT_ROOT}/reset-states/${SIMPLE_TASK}"
+         mkdir -p "${SIMPLE_RESET_DIR}"
+         unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" \
+           -d "${SIMPLE_RESET_DIR}"
+
+         hf download USC-PSI-Lab/SIMPLE "scenes_hssd_${SIMPLE_SCENE}.zip" \
+           --repo-type dataset \
+           --local-dir "${SIMPLE_ASSETS_DIR}"
+         unzip -o -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_${SIMPLE_SCENE}.zip" -d "${SIMPLE_ASSETS_DIR}"
+         rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_${SIMPLE_SCENE}.zip"
+
+         # 3. Launch evaluation (1 episode, DR0)
+         bash evaluations/run_eval.sh simple simple_psi0_eval \
+           rollout.model.model_path="${PSI0_RUN_DIR}" \
+           env.eval.reset_dataset.path="${SIMPLE_RESET_DIR}"
+
+Evaluation reports ``eval/success``; logs and videos are saved under ``logs/<timestamp>-simple_psi0_eval/``.
+
+For a full evaluation, run 10 episodes at each of the three DR levels:
+
+.. code-block:: bash
+
+   for SIMPLE_DR_LEVEL in 0 1 2; do
+     bash evaluations/run_eval.sh simple simple_psi0_eval \
+       rollout.model.model_path="${PSI0_RUN_DIR}" \
+       env.eval.reset_dataset.path="${SIMPLE_RESET_DIR}" \
+       env.eval.reset_dataset.dr_level="${SIMPLE_DR_LEVEL}" \
+       env.eval.reset_dataset.num_episodes=10 \
+       env.eval.rollout_epoch=10
+   done
 
 .. _simple-tasks:
 
-Select a Task and Download Assets
----------------------------------
+Supported Tasks
+---------------
 
 The table lists the eight valid Teleop substitutions in the
 `pinned Psi0 checkpoint release <https://huggingface.co/USC-PSI-Lab/psi-model/tree/d34a91932d25c45ef211582315b9224c7dc8ace9/psi0/simple-checkpoints>`_.
@@ -98,82 +153,6 @@ levels 0, 1, and 2 in the
      - ``102344307``
      - 1000
      - 7/6/3
-
-.. _simple-reset-data:
-
-Task-Specific Assets
-~~~~~~~~~~~~~~~~~~~~
-
-The commands below use OpenOven. All tasks share the artifact root
-``PSI0_ARTIFACT_ROOT``, so set it once. When switching tasks, change only the
-annotated ``SIMPLE_TASK``, ``PSI0_RUN_REL``, and ``SIMPLE_SCENE``. All three
-values must come from the same table row. The remaining commands derive the
-matching paths from these values. The HSSD scene is unpacked into
-``SIMPLE_ASSETS_DIR`` from :ref:`step 3 <simple-sim-assets>`.
-
-.. code-block:: bash
-
-   # Set once. Reuse for every SIMPLE task.
-   export PSI0_ARTIFACT_ROOT=/path/to/psi0-simple-artifacts
-
-   # Replace these three values together for each task.
-   export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0  # Replace the task ID.
-   # Replace only the run name after psi0/simple-checkpoints/.
-   export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
-   export SIMPLE_SCENE=102344280  # Replace the HSSD scene ID.
-
-   mkdir -p "${PSI0_ARTIFACT_ROOT}"
-   hf download USC-PSI-Lab/psi-model \
-     "${PSI0_RUN_REL}/argv.txt" \
-     "${PSI0_RUN_REL}/run_config.json" \
-     "${PSI0_RUN_REL}/checkpoints/ckpt_40000/model.safetensors" \
-     --revision d34a91932d25c45ef211582315b9224c7dc8ace9 \
-     --local-dir "${PSI0_ARTIFACT_ROOT}/psi-model"
-
-   hf download USC-PSI-Lab/psi-data "simple-eval/${SIMPLE_TASK}.zip" \
-     --repo-type dataset \
-     --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 \
-     --local-dir "${PSI0_ARTIFACT_ROOT}/psi-data"
-
-   export PSI0_RUN_DIR="${PSI0_ARTIFACT_ROOT}/psi-model/${PSI0_RUN_REL}"
-   export SIMPLE_RESET_DIR="${PSI0_ARTIFACT_ROOT}/reset-states/${SIMPLE_TASK}"
-   mkdir -p "${SIMPLE_RESET_DIR}"
-   unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" \
-     -d "${SIMPLE_RESET_DIR}"
-
-   hf download USC-PSI-Lab/SIMPLE "scenes_hssd_${SIMPLE_SCENE}.zip" \
-     --repo-type dataset \
-     --local-dir "${SIMPLE_ASSETS_DIR}"
-   unzip -o -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_${SIMPLE_SCENE}.zip" -d "${SIMPLE_ASSETS_DIR}"
-   rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_${SIMPLE_SCENE}.zip"
-
-Run Evaluation
---------------
-
-``evaluations/simple/simple_psi0_eval.yaml`` defaults to OpenOven, one episode,
-and DR0. Set the local asset paths to run it:
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh simple simple_psi0_eval \
-     rollout.model.model_path="${PSI0_RUN_DIR}" \
-     env.eval.reset_dataset.path="${SIMPLE_RESET_DIR}"
-
-Evaluation reports ``eval/success``; logs and videos are saved under
-``logs/<timestamp>-simple_psi0_eval/``.
-
-For a full evaluation, run 10 episodes at each of the three DR levels:
-
-.. code-block:: bash
-
-   for SIMPLE_DR_LEVEL in 0 1 2; do
-     bash evaluations/run_eval.sh simple simple_psi0_eval \
-       rollout.model.model_path="${PSI0_RUN_DIR}" \
-       env.eval.reset_dataset.path="${SIMPLE_RESET_DIR}" \
-       env.eval.reset_dataset.dr_level="${SIMPLE_DR_LEVEL}" \
-       env.eval.reset_dataset.num_episodes=10 \
-       env.eval.rollout_epoch=10
-   done
 
 Switch to Another Task
 ~~~~~~~~~~~~~~~~~~~~~~

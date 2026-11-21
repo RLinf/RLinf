@@ -26,85 +26,95 @@ Overview
    * - Validated runtime
      - Python 3.12.12, PyTorch 2.11.0 + CUDA 12.8, Transformers 5.5.4
 
-Install
--------
+Setup and Run
+-------------
 
-The following command uses the π₀-FAST combination validated by this example.
-These versions document the tested runtime rather than hard requirements imposed
-by the installer:
+.. include:: _setup_common.rst
 
-.. code:: bash
+.. tab-set::
 
-   UV_TORCH_BACKEND=cu128 bash requirements/install.sh embodied \
-      --model pi0_fast --env libero \
-      --python 3.12.12 --torch 2.11.0 --no-flash-attn && source .venv/bin/activate
+   .. tab-item:: π₀-FAST (LIBERO-Long)
 
-Add ``--use-mirror`` when the GitHub and PyPI mirrors are required. The validated
-command skips Flash Attention; omit ``--no-flash-attn`` to install it. Before the
-first run, accept the PaliGemma access terms on Hugging Face and run
-``hf auth login``.
+      **1. Install**
 
-Pinned artifacts
-~~~~~~~~~~~~~~~~
+      The following command uses the π₀-FAST combination validated by this example.
+      These versions document the tested runtime rather than hard requirements imposed
+      by the installer. It skips Flash Attention; omit ``--no-flash-attn`` to install
+      it. Before the first run, accept the PaliGemma access terms on Hugging Face and
+      run ``hf auth login``:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 38 34
+      .. code-block:: bash
 
-   * - Artifact
-     - Repository
-     - Revision
-   * - LeRobot source
-     - ``huggingface/lerobot``
-     - ``3e37269dc60ee6195e44dd2810c95f1df5dfda99``
-   * - Policy checkpoint
-     - ``lerobot/pi0fast-libero``
-     - ``840f4b503f4c09110421c33c810a85b6684fd658``
-   * - Text tokenizer
-     - ``google/paligemma-3b-pt-224``
-     - ``35e4f46485b4d07967e7e9935bc3786aad50687c``
-   * - Action tokenizer
-     - ``jadechoghari/tokenizer-lib-mean``
-     - ``79ae83e3cbd8786dcb84b628569f8d076ca8151e``
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         UV_TORCH_BACKEND=cu128 bash requirements/install.sh embodied \
+            --model pi0_fast --env libero \
+            --python 3.12.12 --torch 2.11.0 --no-flash-attn && source .venv/bin/activate
 
-Download all three artifacts before launching RLinf:
+      **2. Download**
 
-.. code:: bash
+      Download the three pinned Hugging Face artifacts before launching RLinf:
 
-   hf download lerobot/pi0fast-libero \
-      --revision 840f4b503f4c09110421c33c810a85b6684fd658 \
-      --local-dir /path/to/pi0fast-libero
-   hf download google/paligemma-3b-pt-224 \
-      --revision 35e4f46485b4d07967e7e9935bc3786aad50687c \
-      --local-dir /path/to/paligemma-3b-pt-224
-   hf download jadechoghari/tokenizer-lib-mean \
-      --revision 79ae83e3cbd8786dcb84b628569f8d076ca8151e \
-      --local-dir /path/to/tokenizer-lib-mean
+      .. code-block:: bash
 
-Then update these fields in
-``examples/embodiment/config/model/pi0_fast.yaml``:
+         hf download lerobot/pi0fast-libero \
+            --revision 840f4b503f4c09110421c33c810a85b6684fd658 \
+            --local-dir ./pi0fast-libero
+         hf download google/paligemma-3b-pt-224 \
+            --revision 35e4f46485b4d07967e7e9935bc3786aad50687c \
+            --local-dir ./paligemma-3b-pt-224
+         hf download jadechoghari/tokenizer-lib-mean \
+            --revision 79ae83e3cbd8786dcb84b628569f8d076ca8151e \
+            --local-dir ./tokenizer-lib-mean
 
-.. code:: yaml
+      .. list-table:: Pinned artifacts
+         :header-rows: 1
+         :widths: 28 38 34
 
-   model_path: "/path/to/pi0fast-libero"
-   num_action_chunks: 10
-   action_dim: 7
-   pi0_fast:
-     text_tokenizer_name: "/path/to/paligemma-3b-pt-224"
-     action_tokenizer_name: "/path/to/tokenizer-lib-mean"
+         * - Artifact
+           - Repository
+           - Revision
+         * - LeRobot source
+           - ``huggingface/lerobot``
+           - ``3e37269dc60ee6195e44dd2810c95f1df5dfda99``
+         * - Policy checkpoint
+           - ``lerobot/pi0fast-libero``
+           - ``840f4b503f4c09110421c33c810a85b6684fd658``
+         * - Text tokenizer
+           - ``google/paligemma-3b-pt-224``
+           - ``35e4f46485b4d07967e7e9935bc3786aad50687c``
+         * - Action tokenizer
+           - ``jadechoghari/tokenizer-lib-mean``
+           - ``79ae83e3cbd8786dcb84b628569f8d076ca8151e``
 
-``num_action_chunks`` and ``action_dim`` must match the checkpoint
-(``n_action_steps`` and the action feature dim). A mismatch fails at load
-time rather than silently truncating FAST DCT reconstruction.
+      Update these fields in ``examples/embodiment/config/model/pi0_fast.yaml`` to point to the downloaded directories:
+
+      .. code-block:: yaml
+
+         model_path: "./pi0fast-libero"
+         num_action_chunks: 10
+         action_dim: 7
+         pi0_fast:
+           text_tokenizer_name: "./paligemma-3b-pt-224"
+           action_tokenizer_name: "./tokenizer-lib-mean"
+
+      ``num_action_chunks`` and ``action_dim`` must match the checkpoint
+      (``n_action_steps`` and the action feature dim). A mismatch fails at load
+      time rather than silently truncating FAST DCT reconstruction.
+
+      **3. Launch**
+
+      Launch the two-node, 16-GPU GRPO fine-tuning reference configuration or run baseline evaluation:
+
+      .. code-block:: bash
+
+         # GRPO fine-tuning
+         bash examples/embodiment/run_embodiment.sh libero_10_grpo_pi0_fast
+
+         # Baseline evaluation
+         bash evaluations/run_eval.sh libero libero_10_pi0_fast_eval
 
 GRPO fine-tuning
 ----------------
-
-Launch the two-node, 16-GPU reference configuration with:
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh libero_10_grpo_pi0_fast
 
 The reference configuration samples 1,024 trajectories per update (256
 parallel environments, four rollout epochs), uses group size 8, actor micro
@@ -141,10 +151,6 @@ Baseline evaluation
 The evaluation config uses greedy decoding, seed 0, ordered fixed LIBERO reset
 states, and 500 episodes. Train and eval share the same FAST sampler and
 detokenize path; eval does not collect replay log-probabilities.
-
-.. code:: bash
-
-   bash evaluations/run_eval.sh libero libero_10_pi0_fast_eval
 
 The pinned runtime and artifacts produced the following development result:
 

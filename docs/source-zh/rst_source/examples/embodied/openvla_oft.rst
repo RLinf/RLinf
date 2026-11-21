@@ -7,7 +7,7 @@ OpenVLA-OFT 强化学习训练
 
    原始 OFT 微调研究的 LIBERO 结果（图片来源：`OpenVLA-OFT 项目 <https://openvla-oft.github.io/>`__）。
 
-使用 RLinf 对 OpenVLA-OFT 进行强化学习微调。本页先介绍 NVIDIA 上的 LIBERO + GRPO 训练流程，再说明如何在 AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 上使用同一模型运行 LIBERO 或 ManiSkill。原始 OpenVLA 模型的训练流程见 :doc:`maniskill`。
+使用 RLinf 对 OpenVLA-OFT 做强化学习微调。本页介绍 NVIDIA CUDA 上的 LIBERO + GRPO 训练流程，以及 AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 上的 LIBERO 与 ManiSkill 运行步骤。原始 OpenVLA 模型的训练流程见 :doc:`maniskill`。
 
 概览
 ----
@@ -35,7 +35,7 @@ OpenVLA-OFT 强化学习训练
    .. grid-item-card:: 硬件
       :text-align: center
 
-      NVIDIA CUDA · :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <openvla-oft-hardware>` （LIBERO · ManiSkill）
+      NVIDIA CUDA · :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <openvla-oft-hardware>`\ （LIBERO · ManiSkill）
 
 | **你将完成：** 安装 → 下载 LIBERO-Goal checkpoint → 设置模型路径 → 启动 GRPO → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 所选后端的硬件和驱动。
@@ -98,167 +98,231 @@ LIBERO 训练流程根据图像和任务提示生成动作块。
    * - Prompt
      - 当前任务的自然语言指令。
 
-安装
-----
+.. _openvla-oft-hardware:
 
-默认流程使用下方的 NVIDIA 安装步骤。AMD、昇腾或 MUSA 用户请先完成 :ref:`对应后端的安装 <openvla-oft-hardware>`，再下载模型。
+一键上手
+--------
 
 .. include:: _setup_common.rst
 
-.. code-block:: bash
+NVIDIA CUDA 支持概览中的全部环境。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 通过共用平台安装器与 scheduler 设备 API 支持 OpenVLA-OFT 在 LIBERO 和 ManiSkill 上运行，其他环境有各自的硬件要求。
 
-   bash requirements/install.sh embodied --model openvla-oft --env libero && source .venv/bin/activate
+.. tab-set::
 
-下载模型
---------
+   .. tab-item:: NVIDIA CUDA
+      :sync: cuda
 
-下载该配置对应的 LIBERO-Goal SFT checkpoint：
+      **1. 安装环境**
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 \
-      --local-dir checkpoints/Openvla-oft-SFT-libero-goal-traj1
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env libero && source .venv/bin/activate
 
-.. include:: _model_path.rst
+      **2. 下载模型**
 
-在 ``examples/embodiment/config/libero_goal_grpo_openvlaoft.yaml`` 中设置这些路径。保留 ``actor.model.unnorm_key: libero_goal_no_noops``，以匹配 checkpoint 的动作统计数据。其他套件需要对应的 checkpoint 和 key，详见 :doc:`libero`。
+      下载 LIBERO-Goal SFT checkpoint：
 
-运行
-----
+      .. code-block:: bash
 
-激活模型环境并设置路径后，启动 LIBERO-Goal 训练：
+         hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir ./Openvla-oft-SFT-libero-goal-traj1
 
-.. code-block:: bash
+      .. include:: _model_path.rst
 
-   ROBOT_PLATFORM=LIBERO bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
+      在 ``examples/embodiment/config/libero_goal_grpo_openvlaoft.yaml`` 中设置路径，并保留 ``actor.model.unnorm_key: libero_goal_no_noops`` 以匹配 checkpoint 的动作统计数据。其他套件需要对应的 checkpoint 和 key，详见 :doc:`libero`。
 
-脚本加载指定的 YAML，按 ``cluster.component_placement`` 创建 actor、rollout 和环境 worker，然后启动 GRPO。请按设备资源调整 placement 和 batch size，参见 :doc:`../../concepts/placement` 与 :doc:`../../resources/faq`。
+      **3. 启动训练**
 
-.. _openvla-oft-hardware:
+      .. code-block:: bash
 
-在不同硬件后端上运行
---------------------
+         ROBOT_PLATFORM=LIBERO bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
 
-NVIDIA 使用上面的安装与启动流程。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 都通过共用平台安装器、scheduler 设备 API 与模型运行路径支持 OpenVLA-OFT 在 LIBERO 和 ManiSkill 上运行。概览中的其他环境有各自的硬件要求。
+      脚本加载指定的 YAML，按 ``cluster.component_placement`` 创建 actor、rollout 和环境 worker，然后启动 GRPO。按设备资源调整 placement 和 batch size，参见 :doc:`../../concepts/placement` 与 :doc:`../../resources/faq`。
 
-.. _openvla-oft-amd:
+   .. tab-item:: AMD ROCm
+      :sync: rocm
 
-AMD ROCm
-~~~~~~~~
+      **1. 安装环境（LIBERO）**
 
-可以启动 ROCm 容器，也可以在已安装 ROCm 的宿主机上直接安装。
+      可以启动 ROCm 容器，也可以在已安装 ROCm 的宿主机上直接安装。
 
-.. include:: _amd_libero.rst
+      .. include:: _amd_libero.rst
 
-发布镜像已经包含该模型环境：
+      发布镜像已经包含该模型环境：
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   source switch_env openvla-oft
+         source switch_env openvla-oft
 
-若宿主机已安装 ROCm，也可以直接安装依赖：
+      若宿主机已安装 ROCm，也可以直接安装依赖（省略 ``--rocm`` 自动检测已安装的版本）：
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env libero
-   source .venv/bin/activate
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env libero
+         source .venv/bin/activate
 
-省略 ``--rocm`` 可自动检测已安装的版本；中国大陆用户可添加 ``--use-mirror``。
+      **2. 下载模型**
 
-.. _openvla-oft-ascend:
+      .. code-block:: bash
 
-华为昇腾 CANN
-~~~~~~~~~~~~~
+         hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir ./Openvla-oft-SFT-libero-goal-traj1
 
-可以使用容器，也可以在已具备 CANN 和 NPU 驱动的宿主机上安装。
+      .. include:: _model_path.rst
 
-.. include:: _ascend_libero.rst
+      在 ``examples/embodiment/config/libero_goal_grpo_openvlaoft.yaml`` 中设置路径，并保留 ``actor.model.unnorm_key: libero_goal_no_noops``。
 
-进入已发布的 RLinf 容器后，激活模型环境：
+      **3. 启动 LIBERO 训练**
 
-.. code-block:: bash
+      在同一 shell 中启用软件渲染（受支持的 Radeon GPU 可改用 ``egl``）：
 
-   source switch_env openvla-oft
+      .. include:: _libero_osmesa.rst
 
-本地安装时，通过昇腾选项安装 CPU PyTorch 及匹配的 ``torch-npu``：
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
 
-   bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero
-   source .venv/bin/activate
+      **在 AMD ROCm 上运行 ManiSkill**
 
-中国大陆用户可添加 ``--use-mirror``。安装脚本在昇腾上会跳过 CUDA flash-attention 的构建。
+      安装 OpenVLA-OFT 的 ManiSkill + LIBERO 组合环境：
 
-.. include:: _ascend_torch.rst
+      .. code-block:: bash
 
-.. _openvla-oft-musa:
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env maniskill_libero
+         source .venv/bin/activate
 
-摩尔线程 MUSA
-~~~~~~~~~~~~~
+      配置 CPU simulation：
 
-在摩尔线程容器内运行。安装器会复用镜像中的 MUSA 版 PyTorch 与 ``torch_musa``，避免被通用 torch wheel 覆盖。
+      .. include:: _maniskill_non_cuda.rst
 
-.. include:: _musa_libero.rst
+      下载 ``RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main`` 及其 LoRA adapter，在 ``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml`` 中设置 ``model_path`` 与 ``lora_path``，根据可用设备调整 placement 与 batch size 后启动 PPO：
 
-进入容器后，选择 MUSA 平台安装 OpenVLA-OFT：
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft
 
-   bash requirements/install.sh --platform musa embodied --model openvla-oft --env libero
-   source .venv/bin/activate
+   .. tab-item:: 华为昇腾 CANN
+      :sync: ascend
 
-中国大陆用户可添加 ``--use-mirror``。RLinf 会检测 MUSA 设备，并沿用其他 GPU 后端的 placement 配置完成分配。
+      **1. 安装环境（LIBERO）**
 
-.. _openvla-oft-backend-launch:
+      可以使用容器，也可以在已具备 CANN 和 NPU 驱动的宿主机上安装。
 
-在 AMD、昇腾或 MUSA 上启动 LIBERO
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      .. include:: _ascend_libero.rst
 
-完成其中一种后端的安装后，按前面的说明下载 LIBERO-Goal checkpoint 并设置模型路径。在同一 shell 中启用软件渲染。
+      进入已发布的 RLinf 容器后，激活模型环境：
 
-.. include:: _libero_osmesa.rst
+      .. code-block:: bash
 
-启动已配置的 GRPO 训练：
+         source switch_env openvla-oft
 
-.. code-block:: bash
+      本地安装时，通过昇腾选项安装 CPU PyTorch 及匹配的 ``torch-npu``\ （会跳过 CUDA flash-attention 的构建）：
 
-   bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
+      .. code-block:: bash
 
-在 AMD、昇腾或 MUSA 上运行 ManiSkill
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero
+         source .venv/bin/activate
 
-AMD 与昇腾使用 OpenVLA-OFT 的 ManiSkill + LIBERO 组合环境。根据所选模型 accelerator 执行对应命令：
+      .. include:: _ascend_torch.rst
 
-.. code-block:: bash
+      **2. 下载模型**
 
-   # AMD ROCm
-   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env maniskill_libero
+      .. code-block:: bash
 
-   # 华为昇腾 CANN
-   bash requirements/install.sh --platform ascend embodied --model openvla-oft --env maniskill_libero
+         hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir ./Openvla-oft-SFT-libero-goal-traj1
 
-   source .venv/bin/activate
+      .. include:: _model_path.rst
 
-MUSA 需要保留厂商模拟器包，并在厂商镜像中添加 OpenVLA-OFT 模型环境：
+      在 ``examples/embodiment/config/libero_goal_grpo_openvlaoft.yaml`` 中设置路径，并保留 ``actor.model.unnorm_key: libero_goal_no_noops``。
 
-.. include:: _musa_maniskill.rst
+      **3. 启动 LIBERO 训练**
 
-.. code-block:: bash
+      在同一 shell 中启用软件渲染：
 
-   bash requirements/install.sh --platform musa embodied --venv openvla-oft --model openvla-oft --env libero
-   source openvla-oft/bin/activate
+      .. include:: _libero_osmesa.rst
 
-三种非 CUDA 后端均使用以下 CPU simulation 配置：
+      .. code-block:: bash
 
-.. include:: _maniskill_non_cuda.rst
+         bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
 
-下载 ``RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main`` 及其 LoRA adapter，在 ``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml`` 中设置 ``model_path`` 与 ``lora_path``，并根据可用设备调整 placement 与 batch size 后启动 PPO：
+      **在华为昇腾 CANN 上运行 ManiSkill**
 
-.. code-block:: bash
+      安装 OpenVLA-OFT 的 ManiSkill + LIBERO 组合环境：
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env maniskill_libero
+         source .venv/bin/activate
+
+      配置 CPU simulation：
+
+      .. include:: _maniskill_non_cuda.rst
+
+      下载 ``RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main`` 及其 LoRA adapter，在 ``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml`` 中设置 ``model_path`` 与 ``lora_path``，根据可用设备调整 placement 与 batch size 后启动 PPO：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft
+
+   .. tab-item:: 摩尔线程 MUSA
+      :sync: musa
+
+      **1. 安装环境（LIBERO）**
+
+      在摩尔线程容器内运行。安装器会复用镜像中的 MUSA 版 PyTorch 与 ``torch_musa``，避免被通用 torch wheel 覆盖。
+
+      .. include:: _musa_libero.rst
+
+      进入容器后，选择 MUSA 平台安装 OpenVLA-OFT：
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform musa embodied --model openvla-oft --env libero
+         source .venv/bin/activate
+
+      RLinf 会检测 MUSA 设备，并沿用其他 GPU 后端的 placement 配置完成分配。
+
+      **2. 下载模型**
+
+      .. code-block:: bash
+
+         hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir ./Openvla-oft-SFT-libero-goal-traj1
+
+      .. include:: _model_path.rst
+
+      在 ``examples/embodiment/config/libero_goal_grpo_openvlaoft.yaml`` 中设置路径，并保留 ``actor.model.unnorm_key: libero_goal_no_noops``。
+
+      **3. 启动 LIBERO 训练**
+
+      在同一 shell 中启用软件渲染：
+
+      .. include:: _libero_osmesa.rst
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
+
+      **在摩尔线程 MUSA 上运行 ManiSkill**
+
+      保留厂商模拟器包，并在厂商镜像中添加 OpenVLA-OFT 模型环境：
+
+      .. include:: _musa_maniskill.rst
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform musa embodied --venv openvla-oft --model openvla-oft --env libero
+         source openvla-oft/bin/activate
+
+      配置 CPU simulation：
+
+      .. include:: _maniskill_non_cuda.rst
+
+      下载 ``RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main`` 及其 LoRA adapter，在 ``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml`` 中设置 ``model_path`` 与 ``lora_path``，根据可用设备调整 placement 与 batch size 后启动 PPO：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft
 
 可视化与结果
 ------------
 
-在训练日志中观察 ``env/success_once``。指标定义见 :doc:`训练指标 <../../reference/metrics>`，已发布的训练结果见 :doc:`LIBERO 结果 <libero>`。独立评测请按 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>` 操作。
+运行 ``tensorboard --logdir ./logs`` 观察 ``env/success_once``；如需保存评测视频，设置 ``env.eval.video_cfg.save_video=True``。指标定义见 :doc:`训练指标 <../../reference/metrics>`，已发布的训练结果见 :doc:`LIBERO 结果 <libero>`，独立评测请按 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>` 操作。

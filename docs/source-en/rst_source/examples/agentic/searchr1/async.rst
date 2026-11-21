@@ -69,34 +69,57 @@ The reward is computed inside the agent loop (the Search-R1 rule-based
 reward parses the trajectory and the retrieved documents), so no separate
 reward-model inference step runs between rollout and training.
 
-Run It
-------
+Setup and Run
+-------------
 
-Set up the Ray cluster as described in the
-:doc:`multi-node guide </rst_source/guides/multi_node>`: export a unique
-``RLINF_NODE_RANK`` on every node (0 on the head) and activate the RLinf
-environment before ``ray start``. Start the Qdrant retrieval server on
-node 0 before training; the search tool worker runs there, so
-``tools.search.server_addr`` only needs to be reachable from node 0.
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run
+``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt
+images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
+Set up the Ray cluster following the :doc:`multi-node guide </rst_source/guides/multi_node>`
+(export a unique ``RLINF_NODE_RANK`` on every node, 0 on the head, and activate
+the RLinf environment before ``ray start``) and start the Qdrant retrieval server
+from :doc:`index` on node 0 before training.
 
-Fill in the data path, the model path, and the retrieval server address:
+.. tab-set::
 
-.. code-block:: yaml
+   .. tab-item:: GLM-4.7-Flash (2×8 A100 Async)
 
-   data:
-     train_data_paths: ["/path/to/data/searchr1_train_glm.jsonl"]
-   rollout:
-     model:
-       model_path: /path/to/model/GLM-4.7-Flash
-   tools:
-     search:
-       server_addr: <server_ip>:8000
+      **1. Install**
 
-Then start the training from the head node:
+      .. code-block:: bash
 
-.. code-block:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-   bash examples/agent/searchr1/run_train.sh train_glm4.7_flash_2node_async
+      **2. Download**
+
+      Download the model and dataset (convert ``Search-R1-Data`` prompts to message lists for GLM as described in :doc:`glm4.7_flash`):
+
+      .. code-block:: bash
+
+         hf download zai-org/GLM-4.7-Flash --local-dir ./GLM-4.7-Flash
+         hf download --repo-type dataset RLinf/Search-R1-Data --local-dir ./Search-R1-Data
+
+      **3. Launch**
+
+      Fill in the data path, model path, and retrieval server address in ``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml`` (the search tool worker runs on node 0, so ``tools.search.server_addr`` only needs to be reachable from node 0):
+
+      .. code-block:: yaml
+
+         data:
+           train_data_paths: ["/path/to/data/searchr1_train_glm.jsonl"]
+         rollout:
+           model:
+             model_path: /path/to/model/GLM-4.7-Flash
+         tools:
+           search:
+             server_addr: <server_ip>:8000
+
+      Start training from the head node:
+
+      .. code-block:: bash
+
+         bash examples/agent/searchr1/run_train.sh train_glm4.7_flash_2node_async
 
 Configuration
 -------------

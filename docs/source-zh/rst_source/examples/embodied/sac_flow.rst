@@ -88,102 +88,81 @@ SAC-Flow 工作原理
 
    - 为加速在真实世界的训练，SAC-Flow 也可结合 RLPD 使用预采集的离线数据作为演示缓冲区。
 
-安装
+一键上手
 ----------------------------------------
 
-对于在仿真环境运行，请参考 :doc:`../../start/installation` 进行安装。
+使用 ``requirements/install.sh`` 安装环境（中国大陆用户可在命令末尾追加 ``--use-mirror``，并在下载 Hugging Face 资源前设置 ``export HF_ENDPOINT=https://hf-mirror.com``），或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像。完整说明见 :doc:`../../start/installation`\ （仿真）和 :doc:`franka`\ （真机）。
 
-对于在真机上运行，请参考 :doc:`franka` 进行安装和硬件配置。
+.. tab-set::
 
-运行
-----------------------------------------
+   .. tab-item:: 仿真（ManiSkill）
 
-**1. 配置文件**
+      单机运行 ``examples/embodiment/config/maniskill_sac_flow_state.yaml``：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+      .. code-block:: bash
 
-   * - 环境
-     - 配置文件
-   * - 仿真（ManiSkill）
-     - ``examples/embodiment/config/maniskill_sac_flow_state.yaml``
-   * - 真机（Franka）
-     - ``examples/embodiment/config/realworld_sac_flow_image.yaml``
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
+         bash examples/embodiment/run_embodiment.sh maniskill_sac_flow_state
 
-**2. 关键参数配置**
+   .. tab-item:: 真机（Franka）
 
-**2.1 模型参数 (Model)**
+      多节点运行 ``examples/embodiment/config/realworld_sac_flow_image.yaml``\ （Actor/Policy 在 GPU 服务器，Env/Robot 在控制机）；先按 :doc:`franka` 完成集群与硬件配置，再在主节点启动：
 
-.. code:: yaml
+      .. code-block:: bash
 
-   actor:
-     model:
-       model_type: "flow_policy"
-       # 输入类型: 'state' (仿真) 或 'mixed' (真机, 图像+状态)
-       input_type: "state"
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         export LIBFRANKA_VERSION=0.19.0
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+         bash examples/embodiment/run_realworld_async.sh realworld_sac_flow_image
 
-       # Flow Matching 相关参数
-       denoising_steps: 4  # 生成动作去噪步数
-       d_model: 256        # Transformer 维度
-       n_head: 4           # 注意力头数
-       n_layers: 2         # 层数
-       use_batch_norm: False  # 是否使用批归一化
-       batch_norm_momentum: 0.99  # 批归一化动量
-       flow_actor_type: "JaxFlowTActor"  # JAX风格的 "JaxFlowTActor" 或 torch风格的"FlowTActor"。"JaxFlowTActor" 支持以下噪声标准差设置：
-       noise_std_head: False  # 是否使用单独的头来预测噪声标准差，否则使用固定标准差
-       # 推理（rollout）时使用的噪声标准差可以比训练时更小，以平衡探索与利用
-       log_std_min_train: -5  # 训练时最小对数标准差（如果使用 noise_std_head）
-       log_std_max_train: 2   # 训练时最大对数标准差（如果使用 noise_std_head）
-       log_std_min_rollout: -20  # 推理时最小对数标准差（如果使用 noise_std_head）
-       log_std_max_rollout: 0    # 推理时最大对数标准差（如果使用 noise_std_head）
-       noise_std_train: 0.3  # 训练时固定噪声标准差（如果不使用 noise_std_head）
-       noise_std_rollout: 0.02  # 推理时固定噪声标准差（如果不使用 noise_std_head）
+.. dropdown:: 进阶配置（可选）
 
+   仓库自带配置已设置好 Flow Matching 模型和 SAC 算法默认参数，仅在需要调优时修改。
 
-**2.2 算法参数 (Algorithm)**
+   **模型参数**
 
-.. code:: yaml
+   .. code:: yaml
 
-   algorithm:
-      # SAC 超参数
-      gamma: 0.96          # 折扣因子
-      tau: 0.005           # 目标网络软更新系数
-      entropy_tuning:
-         alpha_type: softplus # 熵系数参数化方式
-         initial_alpha: 0.01  # 初始熵系数
-         target_entropy: -4
-         optim:
+      actor:
+        model:
+          model_type: "flow_policy"
+          # 输入类型: 'state' (仿真) 或 'mixed' (真机, 图像+状态)
+          input_type: "state"
+
+          # Flow Matching 相关参数
+          denoising_steps: 4  # 生成动作去噪步数
+          d_model: 256        # Transformer 维度
+          n_head: 4           # 注意力头数
+          n_layers: 2         # 层数
+          use_batch_norm: False  # 是否使用批归一化
+          batch_norm_momentum: 0.99  # 批归一化动量
+          flow_actor_type: "JaxFlowTActor"  # JAX 风格的 "JaxFlowTActor" 或 torch 风格的 "FlowTActor"
+          noise_std_head: False  # 是否使用单独的头来预测噪声标准差，否则使用固定标准差
+          log_std_min_train: -5  # 训练时最小对数标准差（如果使用 noise_std_head）
+          log_std_max_train: 2   # 训练时最大对数标准差（如果使用 noise_std_head）
+          log_std_min_rollout: -20  # 推理时最小对数标准差（如果使用 noise_std_head）
+          log_std_max_rollout: 0    # 推理时最大对数标准差（如果使用 noise_std_head）
+          noise_std_train: 0.3  # 训练时固定噪声标准差（如果不使用 noise_std_head）
+          noise_std_rollout: 0.02  # 推理时固定噪声标准差（如果不使用 noise_std_head）
+
+   **算法参数**
+
+   .. code:: yaml
+
+      algorithm:
+        gamma: 0.96          # 折扣因子
+        tau: 0.005           # 目标网络软更新系数
+        entropy_tuning:
+          alpha_type: softplus # 熵系数参数化方式
+          initial_alpha: 0.01  # 初始熵系数
+          target_entropy: -4
+          optim:
             lr: 3.0e-4     # 熵系数学习率
             lr_scheduler: torch_constant
             clip_grad: 10.0
-      critic_actor_ratio: 4  # Critic 与 Actor 训练次数比例
-
-      # 训练与交互频率
-      update_epoch: 30     # 每次交互后的训练步数
-
-**2.3 集群与硬件配置 (Cluster)**
-
-对于真机训练，使用多节点配置，将 Actor/Policy 部署在 GPU 服务器上，将 Env/Robot 部署在控制机（NUC/工控机）上。具体配置可参考 :doc:`franka` 。
-
-
-**3. 启动命令**
-
-**仿真训练（ManiSkill）**
-
-在单机上启动仿真训练：
-
-::
-
-   bash examples/embodiment/run_embodiment.sh maniskill_sac_flow_state
-
-**真机训练（Franka）**
-
-在已配置集群的主节点上启动真机训练：
-
-::
-
-   bash examples/embodiment/run_realworld_async.sh realworld_sac_flow_image
+        critic_actor_ratio: 4  # Critic 与 Actor 训练次数比例
+        update_epoch: 30     # 每次交互后的训练步数
 
 可视化与结果
 ----------------------------------------

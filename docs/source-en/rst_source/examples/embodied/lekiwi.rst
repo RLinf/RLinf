@@ -63,13 +63,15 @@ Run these steps on the computer (for example, a Raspberry Pi 5) wired to the
 servo controller, not on your laptop.
 
 .. include:: _setup_common.rst
-   :end-before: Install dependencies
 
-Install the robot dependencies from the repository root:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: LeKiwi
 
-   bash requirements/install.sh embodied --env lekiwi --install-rlinf --no-root && source .venv/bin/activate
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env lekiwi --install-rlinf --no-root && source .venv/bin/activate
 
 The installer includes LeRobot with Feetech support and OpenCV's headless
 build, which captures frames without the system GL libraries a camera window
@@ -231,8 +233,8 @@ them.
    # On the robot, wired to the motors:
    python -m toolkits.realworld_check.test_lekiwi_env teleop --listen --port /dev/ttyACM0
 
-   # On the machine with the keyboard:
-   python -m toolkits.realworld_check.test_lekiwi_env teleop --remote <robot-ip>
+   # On the machine with the keyboard (replace with the robot's IP):
+   python -m toolkits.realworld_check.test_lekiwi_env teleop --remote 192.168.1.100
 
 The keys and speed levels are the same. Both sides use TCP port 5555 unless you
 change it with ``--remote-port``. The sender transmits the current movement keys
@@ -256,7 +258,7 @@ the sender from a checkout:
 
    cd /path/to/RLinf
    pip install pynput
-   PYTHONPATH=$PWD python -m toolkits.realworld_check.test_lekiwi_env teleop --remote <robot-ip>
+   PYTHONPATH=$PWD python -m toolkits.realworld_check.test_lekiwi_env teleop --remote 192.168.1.100
 
 On macOS, also allow the terminal in System Settings under Privacy & Security
 in Accessibility and Input Monitoring, then restart it. Check that key presses

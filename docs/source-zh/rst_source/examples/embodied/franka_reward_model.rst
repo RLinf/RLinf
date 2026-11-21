@@ -394,18 +394,7 @@ Qwen VLM Reward Model（动作趋势判断）
 
 将 ``X,Y,Z,RX,RY,RZ`` 替换为机器人 base frame 下的绝对目标位姿。获取目标位姿的方法请参见 :doc:`Franka Real-World RL 页面的“前置准备” <franka>`。只需位置时可填入 ``X,Y,Z``\ （3 个值），方向将被忽略。TCP 距离分数和 ``--delta-threshold`` 的单位都是米；命令中的 ``0.005`` 对应 5 mm，可作为起始值，并应按机器人的运动和 window size 调整。
 
-输出目录结构：
-
-.. code-block:: text
-
-   processed_vlm_trend_reward_data/
-   ├── dataset_info.json
-   ├── train/
-   │   ├── segments.jsonl
-   │   └── pkl/              # 每个窗口一个 pkl，含 main_frames + extra_view_frames
-   └── eval/
-       ├── segments.jsonl
-       └── pkl/
+输出目录包含 ``dataset_info.json``，以及 ``train/`` 和 ``eval/`` 两个划分目录，每个目录下均有 ``segments.jsonl`` 和 ``pkl/``\ （每个窗口对应一个 ``.pkl``，含 ``main_frames`` 与 ``extra_view_frames``）。
 
 微调 Qwen3-VL-4B
 ^^^^^^^^^^^^^^^^^^^^^^^

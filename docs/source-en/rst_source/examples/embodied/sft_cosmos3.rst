@@ -37,36 +37,46 @@ Installation
 
 .. include:: _setup_common.rst
 
-Install Cosmos3 (add ``--env libero`` if you also need simulation eval):
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: Cosmos3 SFT
 
-   unset PYTHONPATH
-   bash requirements/install.sh embodied --model cosmos3 --env libero && source .venv/bin/activate
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         unset PYTHONPATH
+         bash requirements/install.sh embodied --model cosmos3 --env libero && source .venv/bin/activate
 
 Cosmos3's data transforms and normalization stats depend on cosmos-framework; clone it and set the path before training:
 
 .. code-block:: bash
 
-   git clone https://github.com/NVIDIA/cosmos-framework.git /path/to/cosmos-framework
-   export COSMOS_FRAMEWORK_PATH=/path/to/cosmos-framework
+   git clone https://github.com/NVIDIA/cosmos-framework.git ./cosmos-framework
+   export COSMOS_FRAMEWORK_PATH="$PWD/cosmos-framework"
 
-Offline Cache: Qwen3-VL-8B-Instruct and Wan2.2 Models
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Download the Models
+----------------------------------------
 
-SFT and base checkpoint conversion pull three model files from Hugging Face. On offline machines, pre-download them into the HF cache and enable offline mode (``HF_HUB_OFFLINE=1``) so ``from_pretrained`` / ``hf download`` read directly from cache, otherwise workers hang on network retries:
+Download the ``nvidia/Cosmos3-Nano`` base checkpoint (diffusers format; convert to DCP below) together with the three companion Hugging Face assets cached under ``HF_HOME`` (required at SFT startup and when ``convert_model_to_dcp`` rebuilds the model, especially on offline machines with ``HF_HUB_OFFLINE=1``):
 
+- **Cosmos3-Nano** (``nvidia/Cosmos3-Nano``): diffusers/safetensors base weights (``model_index.json``, ``transformer/*.safetensors``, ``vae/``, ``text_tokenizer/``).
 - **Qwen3-VL-8B-Instruct** (tokenizer / VLM config): used at SFT startup and when ``convert_model_to_dcp`` rebuilds the model.
-- **Wan2.2-TI2V-5B** and **Wan2.2-TI2V-5B-Diffusers**: downloaded only when ``convert_model_to_dcp`` rebuilds the model.
+- **Wan2.2-TI2V-5B** and **Wan2.2-TI2V-5B-Diffusers**: downloaded for ``convert_model_to_dcp`` and VAE loading.
 
-Download directly into the HF cache (recommended; cache layout is automatically correct):
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: Cosmos3 SFT
 
-   export HF_HOME=${HF_HOME:-~/.cache/huggingface}
-   hf download Qwen/Qwen3-VL-8B-Instruct
-   hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e Wan2.2_VAE.pth
-   hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --include "vae/*"
+      .. code-block:: bash
+
+         # Base model (diffusers format; convert to DCP below)
+         hf download nvidia/Cosmos3-Nano --local-dir ./Cosmos3-Nano
+
+         # Companion assets downloaded directly into the HF cache (required for offline mode)
+         export HF_HOME=${HF_HOME:-~/.cache/huggingface}
+         hf download Qwen/Qwen3-VL-8B-Instruct
+         hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e Wan2.2_VAE.pth
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --include "vae/*"
 
 Prepare Base Model
 ----------------------------------------
@@ -80,44 +90,29 @@ Cosmos3 SFT **warm-starts from the Cosmos3-Nano base model, training only the ac
 
    actor:
      model:
-       model_path: /path/to/Cosmos3-Nano-DCP
+       model_path: ./Cosmos3-Nano-DCP
        wan_vae_path: /path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
        load_to_device: false          # see warning below
 
-Prepare Base DCP Weights
+Convert Base Weights to DCP
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Step 1: Download Cosmos3-Nano (diffusers format)**
-
-Download ``nvidia/Cosmos3-Nano`` from Hugging Face. It is in **diffusers/safetensors format** (``model_index.json`` + ``transformer/*.safetensors`` shards + ``vae/`` + ``text_tokenizer/`` etc.), **not DCP** — SFT cannot use it directly yet; it must be converted to DCP in Step 2.
-
-.. code-block:: bash
-
-   hf download nvidia/Cosmos3-Nano \
-     --local-dir /path/to/Cosmos3-Nano
+SFT cannot load the base from a diffusers directory directly: the cosmos3 base loader ``_load_base_weights`` uses ``_is_safetensors_checkpoint`` to detect format — it only checks whether ``*.safetensors`` files exist at the **top level** of the path (non-recursive). The diffusers directory places shards in ``transformer/`` subdirectories with nothing at the top level, so the check returns ``False``, falling through to the DCP loading branch, but the diffusers directory is not DCP, so loading fails. Therefore you must first convert the downloaded ``./Cosmos3-Nano`` diffusers weights to DCP via cosmos-framework's ``convert_model_to_dcp.py`` before using them as ``model_path``.
 
 .. note::
 
-   The base model can be downloaded with ``--local-dir`` to a **plain directory**.
-
-**Step 2: Convert to DCP**
-
-SFT cannot load the base from a diffusers directory directly: the cosmos3 base loader ``_load_base_weights`` uses ``_is_safetensors_checkpoint`` to detect format — it only checks whether ``*.safetensors`` files exist at the **top level** of the path (non-recursive). The diffusers directory places shards in ``transformer/`` subdirectories with nothing at the top level, so the check returns ``False``, falling through to the DCP loading branch, but the diffusers directory is not DCP, so loading fails. Therefore you must first convert the diffusers weights to DCP via cosmos-framework's ``convert_model_to_dcp.py`` before using them as ``model_path``.
-
-.. note::
-
-   This step rebuilds the entire OmniMoTModel and downloads ``Qwen3-VL-8B-Instruct`` (tokenizer) and ``Wan2.2-TI2V-5B``'s ``Wan2.2_VAE.pth`` (VAE) via cosmos's ``hf_cli`` — on offline machines, pre-download both into the HF cache (see above), then run with ``HF_HUB_OFFLINE=1``.
+   This step rebuilds the entire OmniMoTModel and reads ``Qwen3-VL-8B-Instruct`` (tokenizer) and ``Wan2.2-TI2V-5B``'s ``Wan2.2_VAE.pth`` (VAE) via cosmos's ``hf_cli`` — on offline machines, pre-download both into the HF cache (see above), then run with ``HF_HUB_OFFLINE=1``.
 
 .. code-block:: bash
 
    # Run in the training venv (ensures DCP metadata matches the training Python version)
-   export HF_HOME=/path/to/hf-cache
-   export HF_HUB_OFFLINE=1          # read from cache; requires the two models above pre-downloaded
+   export HF_HOME=${HF_HOME:-~/.cache/huggingface}
+   export HF_HUB_OFFLINE=1          # read from cache; requires the companion models above pre-downloaded
    export TRANSFORMERS_OFFLINE=1
    python -m cosmos_framework.scripts.convert_model_to_dcp \
-     --checkpoint-path /path/to/Cosmos3-Nano \
+     --checkpoint-path ./Cosmos3-Nano \
      --no-use-ema-weights \
-     -o /path/to/Cosmos3-Nano-DCP
+     -o ./Cosmos3-Nano-DCP
 
 .. note::
 
@@ -149,13 +144,13 @@ Launch SFT with ``examples/sft/config/libero_sft_cosmos3.yaml`` from the reposit
 
    bash examples/sft/run_vla_sft.sh libero_sft_cosmos3
 
-Checkpoints save every ``save_interval`` steps under ``.../checkpoints/global_step_<N>/``, and logs write to ``logs/<timestamp>-libero_sft_cosmos3/run_embodiment.log``.
+Checkpoints save every ``save_interval`` steps under ``checkpoints/global_step_500/`` (for step 500), and logs write to ``logs/YYYYMMDD-HHMMSS-libero_sft_cosmos3/run_embodiment.log``.
 
 .. warning::
 
    **Initialization must set** ``actor.model.load_to_device: false``. When Cosmos3 is built, ``net`` (bf16 ~27GB) + ``net_ema`` (fp32 ~54GB) ≈ 81GB; the default eager ``model.to(device)`` on a single 80GB GPU will OOM **before** FSDP2 ``fully_shard`` sharding runs. Setting it to ``false`` keeps the model on CPU and lets ``fully_shard`` shard it directly onto the GPU.
 
-To resume from a checkpoint: set ``runner.resume_dir`` to a ``global_step_<N>`` directory and re-run.
+To resume from a checkpoint: set ``runner.resume_dir`` to a saved ``global_step_500`` directory and re-run.
 
 Key Configuration
 ----------------------------------------
@@ -211,12 +206,12 @@ At training time, the cosmos data loader converts LIBERO's 7-D actions to 10-D r
 Checkpoint Conversion
 ----------------------------------------
 
-The SFT output ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt`` is in FSDP2 sharded format and **cannot be used for eval directly**. Cosmos3 eval uses a diffusers component directory ``model_diffusers`` (containing ``model_index.json`` / ``transformer/`` / ``vae/`` / ``text_tokenizer/`` / ``scheduler/``). The four-step conversion — strip the ``omni.`` prefix, save as DCP, export to HF, split into diffusers components and fix ``_class_name`` — is handled by ``toolkits/cosmos3/convert_checkpoint.py`` (requires cosmos-framework):
+The SFT output ``checkpoints/global_step_500/actor/model_state_dict/full_weights.pt`` is in FSDP2 sharded format and **cannot be used for eval directly**. Cosmos3 eval uses a diffusers component directory ``model_diffusers`` (containing ``model_index.json`` / ``transformer/`` / ``vae/`` / ``text_tokenizer/`` / ``scheduler/``). The four-step conversion — strip the ``omni.`` prefix, save as DCP, export to HF, split into diffusers components and fix ``_class_name`` — is handled by ``toolkits/cosmos3/convert_checkpoint.py`` (requires cosmos-framework):
 
 .. code-block:: bash
 
    # RLinf SFT checkpoint (omni.net.* prefix)
-   export SRC="/path/to/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt"
+   export SRC="/path/to/checkpoints/global_step_500/actor/model_state_dict/full_weights.pt"
    # Conversion working directory
    export OUT="/path/to/converted"
    # cosmos_framework export_model needs the LIBERO dataset path
@@ -236,13 +231,7 @@ The resulting ``model_diffusers`` is the ``rollout.model.model_path`` for :doc:`
 Visualization and Results
 ----------------------------------------
 
-View training logs and curves:
-
-.. code-block:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-See :doc:`Training Metrics </rst_source/reference/metrics>` for metric definitions.
+Watch training logs and curves in TensorBoard (``tensorboard --logdir ./logs``); see :doc:`Training metrics <../../reference/metrics>` for metric definitions.
 
 FAQ
 ----------------------------------------

@@ -419,18 +419,7 @@ scores are measured in metres, so ``--delta-threshold`` is also in metres;
 ``0.005`` (5 mm) is an example starting point and should be tuned for the robot
 motion and window size.
 
-Output directory structure:
-
-.. code-block:: text
-
-   processed_vlm_trend_reward_data/
-   ├── dataset_info.json
-   ├── train/
-   │   ├── segments.jsonl
-   │   └── pkl/              # one pkl per window, contains main_frames + extra_view_frames
-   └── eval/
-       ├── segments.jsonl
-       └── pkl/
+The script writes ``dataset_info.json`` along with ``train/`` and ``eval/`` splits, each containing ``segments.jsonl`` and a ``pkl/`` directory (one ``.pkl`` per window with ``main_frames`` and ``extra_view_frames``).
 
 Fine-Tune Qwen3-VL-4B
 ^^^^^^^^^^^^^^^^^^^^^

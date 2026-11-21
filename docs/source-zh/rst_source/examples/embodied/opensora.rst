@@ -12,9 +12,7 @@
 
    作为动作条件世界模型的 OpenSora。
 
-使用 **动作条件 OpenSora 世界模型** 作为环境后端，**无需真实机器人或物理仿真器** 即可闭环训练
-VLA 策略。OpenSora 根据当前观测与动作序列生成未来视频帧，因此可以在“想象”的 rollout 上用
-强化学习（GRPO/PPO）优化策略。
+使用 **动作条件 OpenSora 世界模型** 作为环境后端，**无需真实机器人或物理仿真器** 即可闭环训练 VLA policy。OpenSora 根据当前观测与动作序列生成未来视频帧，因此可以在“想象”的 rollout 上用强化学习（GRPO/PPO）优化 policy。
 
 概览
 ----------------------------------------
@@ -50,7 +48,7 @@ VLA 策略。OpenSora 根据当前观测与动作序列生成未来视频帧，�
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-作为世界模型，OpenSora 原则上可以通过一致接口适配任意任务。RLinf 目前提供两个 LIBERO 套件的权重和初始化数据：
+作为世界模型，OpenSora 原则上可以通过一致接口适配任意任务。RLinf 提供两个 LIBERO 套件的权重和初始化数据：
 
 .. list-table::
    :header-rows: 1
@@ -89,173 +87,110 @@ VLA 策略。OpenSora 根据当前观测与动作序列生成未来视频帧，�
 
 与传统仿真器不同，OpenSora 没有 ``reset()``：它需要初始化帧和任务描述，因此需要下载初始化数据集并在配置中指向它。
 
-安装
+一键上手
 ----------------------------------------
 
 .. include:: _setup_common.rst
 
-.. code:: bash
-
-   bash requirements/install.sh embodied --model openvla-oft --env opensora && source .venv/bin/activate
-
-VLA 模型下载
-----------------------------------------
-
-下载对应套件的 OpenVLA-OFT SFT checkpoint：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - 套件
-     - Hugging Face 仓库
-   * - LIBERO-Spatial
-     - ``Haozhan72/Openvla-oft-SFT-libero-spatial-traj1``
-   * - LIBERO-Object
-     - ``Haozhan72/Openvla-oft-SFT-libero-object-traj1``
-   * - LIBERO-Goal
-     - ``Haozhan72/Openvla-oft-SFT-libero-goal-traj1``
-   * - LIBERO-Long
-     - ``Haozhan72/Openvla-oft-SFT-libero10-traj1``
-
-以 LIBERO-Spatial 为例（下载其他套件时，从上表替换仓库名和本地目录）：
-
-.. code-block:: bash
-
-   hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir ./Openvla-oft-SFT-libero-spatial-traj1
-
-下载完成后，在配置中设置模型路径与 ``unnorm_key``：
-
-.. code:: yaml
-
-   rollout:
-      model:
-         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   actor:
-      model:
-         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-         unnorm_key: libero_90_no_noops_trajall # 对于 RLinf-OpenVLAOFT-LIBERO-130-Base-Lora 模型，使用 libero_130_no_noops_trajall
-
-世界模型下载
-----------------------------------------
-
-除 VLA 模型外，还需下载对应套件的 OpenSora 权重与仿真初始化数据集（各 suite 的 OpenSora 权重均基于 VLA 模型 rollout 的 3000 条轨迹构建）：
-
 .. tab-set::
 
    .. tab-item:: LIBERO-Spatial
+      :sync: spatial
+
+      **1. 安装环境**
 
       .. code-block:: bash
 
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env opensora
+         source .venv/bin/activate
+
+      **2. 下载资源与模型**
+
+      一并下载 OpenVLA-OFT SFT checkpoint 与 OpenSora 世界模型权重和初始化数据集：
+
+      .. code-block:: bash
+
+         hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir ./Openvla-oft-SFT-libero-spatial-traj1
          hf download RLinf/RLinf-OpenSora-LIBERO-Spatial --local-dir ./RLinf-OpenSora-LIBERO-Spatial
 
-   .. tab-item:: LIBERO-Object
+      **3. 启动训练**
+
+      在 ``examples/embodiment/config/opensora_libero_spatial_grpo_openvlaoft.yaml`` 中填写上述两个下载路径（rollout 会自动沿用 ``actor.model.model_path``）：
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_path: ./Openvla-oft-SFT-libero-spatial-traj1
+         env:
+           train:
+             opensora_wm_hf_ckpt_path: ./RLinf-OpenSora-LIBERO-Spatial
+
+      使用 ``run_embodiment.sh`` 启动训练：
 
       .. code-block:: bash
 
+         bash examples/embodiment/run_embodiment.sh opensora_libero_spatial_grpo_openvlaoft
+
+   .. tab-item:: LIBERO-Object
+      :sync: object
+
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env opensora
+         source .venv/bin/activate
+
+      **2. 下载资源与模型**
+
+      一并下载 OpenVLA-OFT SFT checkpoint 与 OpenSora 世界模型权重和初始化数据集：
+
+      .. code-block:: bash
+
+         hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir ./Openvla-oft-SFT-libero-object-traj1
          hf download RLinf/RLinf-OpenSora-LIBERO-Object --local-dir ./RLinf-OpenSora-LIBERO-Object
 
-``RLinf-OpenSora-LIBERO-Spatial`` 的目录结构如下：
+      **3. 启动训练**
 
-.. code-block:: text
+      在 ``examples/embodiment/config/opensora_libero_spatial_grpo_openvlaoft.yaml`` 中将 ``actor.model.model_path`` 与 ``env.train.opensora_wm_hf_ckpt_path`` 指向 LIBERO-Object 检查点，并同步更新 ``actor.model.unnorm_key``：
 
-    RLinf-OpenSora-LIBERO-Spatial/
-        ├── dataset_statistics.json             # 数据集归一化统计信息
-        ├── dataset/                            # 仿真初始化数据集
-        │   ├── traj0.npy
-        │   ├── traj1.npy
-        │   ├── ...
-        │   └── trajN.npy
-        ├── model-00001.safetensors              # 世界模型权重文件
-        ├── model.safetensors.index.json
-        ├── config.json
-        ├── resnet_rm.pth                        # 奖励模型权重文件
-        └── vae/                                 # VAE 模型权重文件
+      .. code-block:: yaml
 
-下载完成后，在配置中设置世界模型路径：
+         actor:
+           model:
+             model_path: ./Openvla-oft-SFT-libero-object-traj1
+             unnorm_key: libero_object_no_noops
+         env:
+           train:
+             opensora_wm_hf_ckpt_path: ./RLinf-OpenSora-LIBERO-Object
 
-.. code:: yaml
+      使用 ``run_embodiment.sh`` 启动训练：
 
-    env:
-        train:
-            opensora_wm_hf_ckpt_path: /Pathto/model/RLinf-OpenSora-LIBERO-Spatial/
+      .. code-block:: bash
 
-运行
-----------------------------------------
+         bash examples/embodiment/run_embodiment.sh opensora_libero_spatial_grpo_openvlaoft
 
-**1. 模型参数**
+.. dropdown:: 其他 LIBERO VLA SFT 检查点（Goal / Long）
 
-以 OpenVLA-OFT 为例，在 ``actor.model`` 中配置：
+   如果在其他套件上使用自定义世界模型，对应的 OpenVLA-OFT SFT 仓库为 ``Haozhan72/Openvla-oft-SFT-libero-goal-traj1``\ （LIBERO-Goal）和 ``Haozhan72/Openvla-oft-SFT-libero10-traj1``\ （LIBERO-Long）。
 
-.. code-block:: yaml
+.. dropdown:: 进阶配置（可选）
 
-   actor:
-     model:
-       model_path: "/path/to/model/Openvla-oft-SFT-libero-spatial-traj1/"    # SFT 模型路径
-       model_type: "openvla_oft"                                             # 模型类型设置为 openvla_oft
-       use_proprio: False                                                    # 是否使用本体感觉信息
-       num_images_in_input: 1                                                # 输入图像数量
-       num_action_chunks: 8                                                  # 动作块数量
-       unnorm_key: "libero_spatial_no_noops"                                 # 动作归一化键（与 SFT 一致）
-
-由于世界模型不提供本体信息、不生成腕部视角且 chunk 固定，``use_proprio`` 默认为 ``False``，
-``num_images_in_input`` 默认为 ``1``，``num_action_chunks`` 默认为 ``8``。
-
-**2. 环境配置**
-
-.. code-block:: yaml
-
-   # 推荐训练使用 opensora_libero_spatial，评估使用 libero_spatial
-   env/train: opensora_libero_spatial
-   env/eval: libero_spatial
-   env:
-      train:
-         opensora_wm_hf_ckpt_path: /Pathto/model/RLinf-OpenSora-LIBERO-Spatial/
-
-   # 在 env/train/opensora_libero_spatial.yaml 中：
-   env_type: world_model
-   backend: opensora
-   wm_env_type: libero
-   # world model 初始化的初始图像路径
-   initial_image_path: ${env.train.opensora_wm_hf_ckpt_path}/dataset_for_rlinf_world_model_init/base_policy_rollout_buffer
-   # 不建议修改 world_model_cfg 中的参数
-   world_model_cfg:
-      stats_path: /Pathto/model/RLinf-OpenSora-LIBERO-Spatial/best_wm_ckpt/base_policy/dataset_statistics.json
-      chunk: 8                     # 与训练和 VLA 推理长度对齐，默认 8
-      condition_frame_length: 4    # 上下文记忆长度，默认 4
-      model:
-         from_pretrained: /Pathto/model/RLinf-OpenSora-LIBERO-Spatial/best_wm_ckpt/base_policy/model
-
-**3. 启动**
-
-OpenVLA-OFT + GRPO 使用 ``examples/embodiment/config/opensora_libero_spatial_grpo_openvlaoft.yaml``：
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh opensora_libero_spatial_grpo_openvlaoft
+   由于世界模型不提供本体感知和腕部视角且动作 chunk 长度固定，``actor.model`` 默认设置 ``use_proprio: False``、``num_images_in_input: 1`` 和 ``num_action_chunks: 8``。切换到其他 LIBERO 套件时，同步更新 ``actor.model.unnorm_key`` 以匹配对应的 SFT checkpoint。
 
 可视化与结果
 ----------------------------------------
 
-关注未归一化的回合成功率指标 ``env/success_once``。各项指标的含义见
-:doc:`训练指标 <../../reference/metrics>`。可通过以下配置保存生成的 rollout 视频：
+运行 ``tensorboard --logdir ./logs`` 关注 ``env/success_once``；如需保存评测视频，设置 ``env.eval.video_cfg.save_video=True``，更多日志后端与指标见 :doc:`训练指标 <../../reference/metrics>`。
 
-.. code-block:: yaml
-
-   env:
-      eval:
-         video_cfg:
-            save_video: True
-            video_base_dir: ${runner.logger.log_path}/video/eval
-
-我们评估所有 ``task_id`` × ``trial_id`` 组合——每个套件 500 个环境（10 个任务 × 50 个试次）。
-SFT（LoRA-base）模型设置 ``do_sample = False``；RL 训练模型在 ``rollout.sampling_params`` 中设置
-``do_sample = True``、``temperature_train = 1.6``，并启用 ``env.train.rollout_epoch=2``。
+我们评估所有 ``task_id`` × ``trial_id`` 组合——每个套件 500 个环境（10 个任务 × 50 个试次）。SFT（LoRA-base）模型设置 ``do_sample = False``；RL 训练模型在 ``rollout.sampling_params`` 中设置 ``do_sample = True``、``temperature_train = 1.6``，并启用 ``env.train.rollout_epoch=2``。
 
 .. note::
 
-    选择 OpenSora 作为世界模型模拟器的动机来源于 `WMPO <https://arxiv.org/abs/2511.09515>`_；
-    在训练世界模型时我们也参考了 `OpenSora <https://github.com/RLinf/opensora>`_。
+    选择 OpenSora 作为世界模型模拟器的动机来源于 `WMPO <https://arxiv.org/abs/2511.09515>`_；训练世界模型时我们也参考了 `OpenSora <https://github.com/RLinf/opensora>`_。
 
 .. list-table:: **使用 OpenSora 模拟器的 LIBERO 任务组评测结果**
     :header-rows: 1

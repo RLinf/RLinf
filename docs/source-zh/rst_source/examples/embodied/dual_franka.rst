@@ -82,18 +82,30 @@
 安装
 ----------------------------------------
 
-机器人节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
-在 ``node 0`` 和 ``node 1`` 上分别执行机器人节点安装。双臂 Franka 始终通过 Franky 控制机械臂，默认的 ``franka`` 环境安装的正是这一 backend。安装脚本会下载内置 libfranka 的 Franky 预编译 wheel，目前只提供 libfranka ``0.15.0`` 和 ``0.19.0``\ （默认）两个版本，且仅支持 x86_64。请按 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选择与固件对应的 ``LIBFRANKA_VERSION``。如果固件需要其他版本，需要针对对应的 libfranka 自行构建 Franky wheel，并通过 ``FRANKY_WHEEL`` 传入其路径或 URL；旧版 ROS backend 支持其他 libfranka 版本，但仅适用于单臂 Franka。
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: 机器人节点
 
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
-   export LIBFRANKA_VERSION=0.19.0
-   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+      在 ``node 0`` 和 ``node 1`` 上分别执行机器人节点安装。双臂 Franka 始终通过 Franky 控制机械臂，默认的 ``franka`` 环境安装的正是这一 backend。安装脚本会下载内置 libfranka 的 Franky 预编译 wheel，目前只提供 libfranka ``0.15.0`` 和 ``0.19.0``\ （默认）两个版本，且仅支持 x86_64。请按 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选择与固件对应的 ``LIBFRANKA_VERSION``。如果固件需要其他版本，需要针对对应的 libfranka 自行构建 Franky wheel，并通过 ``FRANKY_WHEEL`` 传入其路径或 URL；旧版 ROS backend 支持其他 libfranka 版本，但仅适用于单臂 Franka。
 
-按照 :doc:`franka_gello` 在 ``node 0`` 安装 GELLO 依赖。两台 GELLO 主手应保留在 ``node 0`` 本机，不应通过 LAN 转发 1 kHz 数据流。
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         export LIBFRANKA_VERSION=0.19.0
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+
+      按照 :doc:`franka_gello` 在 ``node 0`` 安装 GELLO 依赖。两台 GELLO 主手应保留在 ``node 0`` 本机，不应通过 LAN 转发 1 kHz 数据流。
+
+   .. tab-item:: 训练节点
+
+      在执行 SFT 的远端 GPU 训练集群上安装 OpenPI 依赖：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 实时性前提
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -102,9 +114,7 @@
 
 ``DualFranka`` 硬件配置默认使用 ``realtime_config: ignore``，因此两台机械臂在未启用 PREEMPT_RT 的内核上也能启动，RLinf 会输出一条警告。在这类内核上，负载较高时 1 kHz 控制循环可能错过时限并触发机器人 reflex。如需拒绝在未启用 PREEMPT_RT 的内核上运行，请设置 ``realtime_config: enforce``。
 
-启动 Ray 前，在每台直接与 Franka 通信的工作站上执行以下示例。将
-``<FRANKA_NIC>`` 替换为机器人专用网卡；``<ROBOT_IP>`` 在 ``node 0`` 上使用
-``LEFT_ROBOT_IP``，在 ``node 1`` 上使用 ``RIGHT_ROBOT_IP``。
+启动 Ray 前，在每台直接与 Franka 通信的工作站上执行以下示例。将 ``<FRANKA_NIC>`` 替换为机器人专用网卡；``<ROBOT_IP>`` 在 ``node 0`` 上使用 ``LEFT_ROBOT_IP``，在 ``node 1`` 上使用 ``RIGHT_ROBOT_IP``。
 
 .. code-block:: bash
 
@@ -125,18 +135,7 @@
    sudo cyclictest -p 80 -t 4 -i 1000 -l 300000 -m
    ping -c 1000 -i 0.001 <ROBOT_IP> | tail -3
 
-``ulimit -r`` 应为 ``99`` 或 ``unlimited``；``ulimit -l`` 应为
-``unlimited``。每次重启机器人工作站后，都需要重新执行每次开机后的调优命令。
-
-训练节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-在执行 SFT 的远端 GPU 训练集群上安装 OpenPI 依赖：
-
-.. code-block:: bash
-
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+``ulimit -r`` 应为 ``99`` 或 ``unlimited``；``ulimit -l`` 应为 ``unlimited``。每次重启机器人工作站后，都需要重新执行每次开机后的调优命令。
 
 
 配置

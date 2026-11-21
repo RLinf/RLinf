@@ -90,149 +90,137 @@ Observation and Action
    * - Prompt
      - The task description in ``init_params.task_description``.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
-
-Install PolaRiS with OpenPI dependencies:
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --model openpi --env polaris && source .venv/bin/activate
-
-Download Isaac Sim
-~~~~~~~~~~~~~~~~~~
-
-Download Isaac Sim 5.1.0 and initialize its shell environment:
-
-.. code-block:: bash
-
-   mkdir -p isaac_sim
-   cd isaac_sim
-   wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   source ./setup_conda_env.sh
-
-.. warning::
-
-   Run ``source ./setup_conda_env.sh`` in every new terminal before launching PolaRiS.
-
-Download the Datasets
----------------------
-
-Download the evaluation scenes and initial conditions:
-
-.. code:: bash
-
-   hf download owhan/PolaRiS-Hub --repo-type=dataset --local-dir ./PolaRiS-Hub
-   export POLARIS_DATA_PATH=/path/to/PolaRiS-Hub
-
-Optionally download co-training demonstrations:
-
-.. code:: bash
-
-   hf download owhan/PolaRiS-datasets --repo-type=dataset --local-dir ./PolaRiS-datasets
-
-Download the Model
-------------------
-
-Download the checkpoint for the OpenPI model you plan to fine-tune:
 
 .. tab-set::
 
    .. tab-item:: OpenPI π₀.₅
+      :sync: pi05
+
+      **1. Install**
+
+      Install RLinf with OpenPI and PolaRiS:
 
       .. code-block:: bash
 
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env polaris && source .venv/bin/activate
+
+      Download Isaac Sim 5.1.0 and initialize its shell environment:
+
+      .. code-block:: bash
+
+         mkdir -p isaac_sim && cd isaac_sim
+         wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         source ./setup_conda_env.sh
+
+      .. warning::
+
+         Run ``source ./setup_conda_env.sh`` in every new terminal before launching PolaRiS.
+
+      **2. Download**
+
+      Download the PolaRiS evaluation scenes (``owhan/PolaRiS-Hub``) and the OpenPI π₀.₅ checkpoint:
+
+      .. code-block:: bash
+
+         hf download owhan/PolaRiS-Hub --repo-type dataset --local-dir ./PolaRiS-Hub
          hf download RLinf/RLinf-Pi05-Polaris-droid_jointpos --local-dir ./RLinf-Pi05-Polaris-droid_jointpos
 
-   .. tab-item:: OpenPI π₀
+      For optional co-training demonstrations, also run ``hf download owhan/PolaRiS-datasets --repo-type dataset --local-dir ./PolaRiS-datasets``.
+
+      .. include:: _model_path.rst
+
+      **3. Launch**
+
+      Update ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi_pi05.yaml``, initialize Isaac Sim, export ``POLARIS_DATA_PATH``, and launch PPO:
 
       .. code-block:: bash
 
+         source /path/to/isaac_sim/setup_conda_env.sh
+         export POLARIS_DATA_PATH=/path/to/PolaRiS-Hub
+         bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi_pi05
+
+      For standalone evaluation, see the :doc:`PolaRiS evaluation guide <../../evaluations/guides/polaris>` (``polaris_tapeintocontainer_openpi_pi05_eval``).
+
+   .. tab-item:: OpenPI π₀
+      :sync: pi0
+
+      **1. Install**
+
+      Install RLinf with OpenPI and PolaRiS:
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env polaris && source .venv/bin/activate
+
+      Download Isaac Sim 5.1.0 and initialize its shell environment:
+
+      .. code-block:: bash
+
+         mkdir -p isaac_sim && cd isaac_sim
+         wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         source ./setup_conda_env.sh
+
+      .. warning::
+
+         Run ``source ./setup_conda_env.sh`` in every new terminal before launching PolaRiS.
+
+      **2. Download**
+
+      Download the PolaRiS evaluation scenes (``owhan/PolaRiS-Hub``) and the OpenPI π₀ checkpoint:
+
+      .. code-block:: bash
+
+         hf download owhan/PolaRiS-Hub --repo-type dataset --local-dir ./PolaRiS-Hub
          hf download RLinf/RLinf-Pi0-Polaris-droid_jointpos --local-dir ./RLinf-Pi0-Polaris-droid_jointpos
 
-.. include:: _model_path.rst
+      For optional co-training demonstrations, also run ``hf download owhan/PolaRiS-datasets --repo-type dataset --local-dir ./PolaRiS-datasets``.
 
-Run It
-------
+      .. include:: _model_path.rst
 
-Available training configs:
+      **3. Launch**
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 48 28
+      Update ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi.yaml``, initialize Isaac Sim, export ``POLARIS_DATA_PATH``, and launch PPO:
 
-   * - Recipe
-     - Config
-     - Command suffix
-   * - π₀.₅ + PPO
-     - ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi_pi05.yaml``
-     - ``polaris_tapeintocontainer_ppo_openpi_pi05``
-   * - π₀ + PPO
-     - ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi.yaml``
-     - ``polaris_tapeintocontainer_ppo_openpi``
+      .. code-block:: bash
 
-Initialize Isaac Sim, set ``POLARIS_DATA_PATH``, and launch training with ``run_embodiment.sh``:
+         source /path/to/isaac_sim/setup_conda_env.sh
+         export POLARIS_DATA_PATH=/path/to/PolaRiS-Hub
+         bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi
 
-.. code:: bash
-
-   source /path/to/isaac_sim/setup_conda_env.sh
-   export POLARIS_DATA_PATH=/path/to/PolaRiS-Hub
-
-   bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi_pi05
-   bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi
-
-Run standalone evaluation through the :doc:`PolaRiS evaluation guide <../../evaluations/guides/polaris>`.
-It owns ``POLARIS_DATA_PATH``, the available eval configs
-(``polaris_tapeintocontainer_openpi_pi05_eval`` and ``polaris_movelattecup_openpi_eval``),
-and result interpretation.
+      For standalone evaluation, see the :doc:`PolaRiS evaluation guide <../../evaluations/guides/polaris>` (``polaris_movelattecup_openpi_eval``).
 
 .. note::
 
-   Training configs default to ``polaris_droid_tapeintocontainer``. To switch tasks,
-   change the Hydra env defaults to another ``polaris_droid_*`` env config and keep
-   ``POLARIS_DATA_PATH`` pointed at ``PolaRiS-Hub``.
+   Training configs default to ``polaris_droid_tapeintocontainer``. To switch tasks, change the Hydra env defaults to another ``polaris_droid_*`` env config and keep ``POLARIS_DATA_PATH`` pointed at ``PolaRiS-Hub``.
 
-Key PolaRiS configuration fields:
+.. dropdown:: Advanced configuration (optional)
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 70
 
-   * - Key
-     - Meaning
-   * - ``open_loop_horizon``
-     - Frequency of **high-quality** Gaussian-Splatting rendering. Within an action chunk,
-       high-quality rendering runs every ``open_loop_horizon`` steps while intermediate steps
-       use low-quality rendering to speed up the simulation.
-   * - ``num_action_chunks``
-     - Number of action steps the model generates at a time (e.g. ``15``).
-   * - ``num_images_in_input``
-     - Number of camera images fed to the policy (e.g. ``2``: external + wrist camera).
-   * - ``config_name``
-     - OpenPI config / data format selector (e.g. ``pi05_droid_polaris`` for the DROID data format).
+      * - Key
+        - Meaning
+      * - ``open_loop_horizon``
+        - Frequency of **high-quality** Gaussian-Splatting rendering. Within an action chunk, high-quality rendering runs every ``open_loop_horizon`` steps while intermediate steps use low-quality rendering to speed up the simulation.
+      * - ``num_action_chunks``
+        - Number of action steps the model generates at a time (e.g. ``15``).
+      * - ``num_images_in_input``
+        - Number of camera images fed to the policy (e.g. ``2``: external + wrist camera).
+      * - ``config_name``
+        - OpenPI config / data format selector (e.g. ``pi05_droid_polaris`` for the DROID data format).
 
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable evaluation videos in the env config when needed:
-
-.. code:: yaml
-
-   env:
-     eval:
-       video_cfg:
-         save_video: True
-         video_base_dir: ${runner.logger.log_path}/video/eval
+Launch TensorBoard with ``tensorboard --logdir ./logs --port 6006`` and watch ``env/success_once``. Pass ``env.eval.video_cfg.save_video=True`` to record evaluation videos; see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.

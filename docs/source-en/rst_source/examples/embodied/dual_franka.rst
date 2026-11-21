@@ -82,29 +82,42 @@ Observation and Action
 Installation
 ------------
 
-Robot Nodes
-~~~~~~~~~~~
+.. include:: _setup_common.rst
 
-Run the robot-node installation on both ``node 0`` and ``node 1``. Dual-arm
-Franka always drives the arms through Franky, the backend that the default
-``franka`` environment installs. The installer downloads a prebuilt Franky wheel
-with libfranka bundled; these wheels exist only for libfranka ``0.15.0`` and
-``0.19.0`` (the default) on x86_64. Set ``LIBFRANKA_VERSION`` to the one that the
-official `Franka compatibility
-matrix <https://frankarobotics.github.io/docs/compatibility.html>`_ lists for your
-firmware. For other firmware, build a Franky wheel against the matching libfranka
-and pass its path or URL in ``FRANKY_WHEEL``; the legacy ROS backend covers other
-libfranka versions only for single-arm Franka.
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: Robot Nodes
 
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
-   export LIBFRANKA_VERSION=0.19.0
-   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+      Run the robot-node installation on both ``node 0`` and ``node 1``. Dual-arm
+      Franka always drives the arms through Franky, the backend that the default
+      ``franka`` environment installs. The installer downloads a prebuilt Franky wheel
+      with libfranka bundled; these wheels exist only for libfranka ``0.15.0`` and
+      ``0.19.0`` (the default) on x86_64. Set ``LIBFRANKA_VERSION`` to the one that the
+      official `Franka compatibility
+      matrix <https://frankarobotics.github.io/docs/compatibility.html>`_ lists for your
+      firmware. For other firmware, build a Franky wheel against the matching libfranka
+      and pass its path or URL in ``FRANKY_WHEEL``; the legacy ROS backend covers other
+      libfranka versions only for single-arm Franka.
 
-Install GELLO dependencies on ``node 0`` by following :doc:`franka_gello`.
-The two GELLO leaders must stay local to ``node 0``; do not route their
-1 kHz stream over the LAN.
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         export LIBFRANKA_VERSION=0.19.0
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+
+      Install GELLO dependencies on ``node 0`` by following :doc:`franka_gello`.
+      The two GELLO leaders must stay local to ``node 0``; do not route their
+      1 kHz stream over the LAN.
+
+   .. tab-item:: Training Node
+
+      Install OpenPI dependencies on the remote GPU training cluster that will
+      perform SFT:
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 Real-time prerequisites
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -147,17 +160,6 @@ before starting Ray. Replace ``<FRANKA_NIC>`` with the dedicated robot NIC and
 
 ``ulimit -r`` should report ``99`` or ``unlimited``; ``ulimit -l`` should report
 ``unlimited``. Re-apply the per-boot tuning after every workstation reboot.
-
-Training Node
-~~~~~~~~~~~~~
-
-Install OpenPI dependencies on the remote GPU training cluster that will
-perform SFT:
-
-.. code-block:: bash
-
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 
 Configuration

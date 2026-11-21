@@ -70,19 +70,27 @@ Installation
 ------------
 
 Start from the :doc:`RLinf installation prerequisites
-</rst_source/start/installation>` and run the following commands from the
-repository root on your GPU training host:
+</rst_source/start/installation>` (in mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``):
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
+   .. tab-item:: CPU OCR (SD3 / ART)
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
+
+   .. tab-item:: GPU OCR (Wan NFT)
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion --paddle-gpu && source .venv/bin/activate
 
 The installer creates a Python 3.10 environment with Diffusers, PEFT,
-Transformers, PaddleOCR, and CPU PaddlePaddle. Both ART recipes and the SD3 NFT
-recipe use CPU OCR. For the Wan NFT recipes (which set
-``env.*.reward.use_gpu: True``), add ``--paddle-gpu`` (CUDA 11.x or 12.x) to
-the install command. Pass ``--venv /path/to/venv`` to install into another
-directory.
+Transformers, and PaddleOCR (``--paddle-gpu`` supports CUDA 11.x/12.x for Wan
+NFT recipes). Pass ``--venv /path/to/venv`` to install into another directory.
 
 .. note::
 

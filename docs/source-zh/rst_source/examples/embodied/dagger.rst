@@ -132,214 +132,174 @@ channel collector 以 LeRobot 格式收集完整 episode，经内存发送给 ac
   直接将 episode 流式传给 actor。启用 online LeRobot 时，**不要** 在同一 train env 上
   同时开启 ``env.train.data_collection``。
 
-安装
+一键上手
 ----------------------------------------
 
-使用 ``requirements/install.sh`` 安装具身环境（ManiSkill 同样使用 LIBERO 标签页），或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像。通用安装选项见 :doc:`../../start/installation`。
+使用 ``requirements/install.sh`` 安装环境（中国大陆用户可在命令末尾追加 ``--use-mirror``，并在执行 ``hf download`` 前设置 ``export HF_ENDPOINT=https://hf-mirror.com``），或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像。通用安装选项见 :doc:`../../start/installation`。
 
 .. tab-set::
 
-   .. tab-item:: LIBERO
+   .. tab-item:: LIBERO（Pi0）
+      :sync: libero
+
+      安装环境并下载预训练 Pi0 学生权重（专家权重可来自 :doc:`pi0` 的 PPO 训练结果）：
 
       .. code-block:: bash
 
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+
+      在 ``examples/embodiment/config/libero_spatial_dagger_openpi.yaml``\ （在线 LeRobot 对应 ``libero_spatial_dagger_openpi_lerobot.yaml``）中填写学生和专家路径（rollout 会自动沿用 ``actor.model.model_path``）：
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_path: ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+
+         rollout:
+           expert_model:
+             model_path: /path/to/expert_model
+
+      启动同步或异步训练：
+
+      .. code-block:: bash
+
+         # 同步模式
+         bash examples/embodiment/run_embodiment.sh libero_spatial_dagger_openpi
+         bash examples/embodiment/run_embodiment.sh libero_spatial_dagger_openpi_lerobot
+
+         # 异步模式
+         bash examples/embodiment/run_async.sh libero_spatial_dagger_openpi
+         bash examples/embodiment/run_async.sh libero_spatial_dagger_openpi_lerobot
+
+   .. tab-item:: RoboTwin（Pi0）
+      :sync: robotwin
+
+      安装环境并下载预训练 Pi0 学生权重（按 :doc:`robotwin` 准备 RoboTwin 代码与资产，专家权重可来自 :doc:`pi0`）：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
+         hf download RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi0-RoboTwin-SFT-adjust_bottle
+
+      在 ``examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml`` 中填写学生模型、专家模型和 RoboTwin 资产路径：
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_path: ./RLinf-Pi0-RoboTwin-SFT-adjust_bottle
+
+         rollout:
+           expert_model:
+             model_path: /path/to/expert_model
+
+         env:
+           train:
+             assets_path: /path/to/robotwin_assets
+           eval:
+             assets_path: /path/to/robotwin_assets
+
+      导出 ``ROBOT_PLATFORM`` 和 ``ROBOTWIN_PATH``，启动同步或异步训练：
+
+      .. code-block:: bash
+
+         export ROBOT_PLATFORM=ALOHA
+         export ROBOTWIN_PATH=/path/to/RoboTwin
+         # 同步模式（异步模式换为 run_async.sh）
+         bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_dagger_openpi
+
+   .. tab-item:: ManiSkill（MLP）
+      :sync: maniskill
+
+      安装环境（复用 ManiSkill / LIBERO 环境）：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
-   .. tab-item:: RoboTwin
+      在 ``examples/embodiment/config/maniskill_dagger_mlp.yaml`` 中配置专家 checkpoint（可来自 :doc:`mlp` 的 PPO 训练结果）和可选学生 warm start：
+
+      .. code-block:: yaml
+
+         runner:
+           ckpt_path: null                       # 可选：学生模型 warm start
+           expert_ckpt_path: /path/to/expert_ckpt
+
+      启动同步或异步训练：
 
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
+         # 同步模式（异步模式换为 run_async.sh）
+         bash examples/embodiment/run_embodiment.sh maniskill_dagger_mlp
 
-Checkpoint 配置
-----------------------------------------
+.. dropdown:: 进阶配置（可选）
 
-启动前，请先在所选 YAML 文件中补齐学生模型和专家模型的路径。
+   仓库自带配置已设置好 beta 调度、replay buffer 大小以及在线 LeRobot 参数，仅在需要调优时再覆写。
 
-**1. ManiSkill + MLP**
+   **经典 DAgger 与 replay buffer 参数**
 
-MLP DAgger 配置在 ``runner`` 下使用学生 checkpoint 与专家 checkpoint：
+   .. code:: yaml
 
-.. code:: yaml
+      algorithm:
+        dagger:
+          only_save_expert: False   # 经典 DAgger：全部样本都由专家重标注后保存
+          init_beta: 1.0
+          beta_schedule: "exponential"
+          beta_decay: 0.99
+          beta_min: 0.05            # 可选；代码默认值为 0.05
 
-   runner:
-     ckpt_path: null                       # 可选：学生模型 warm start
-     expert_ckpt_path: /path/to/expert_ckpt
+        replay_buffer:
+          enable_cache: True
+          cache_size: 2000
+          min_buffer_size: 16
+          sample_window_size: 2000
 
-其中，``expert_ckpt_path`` 中的专家策略可以来自:doc:`mlp` 的PPO训练结果。
+   MLP ManiSkill 示例默认使用更大的 replay buffer，且 ``beta_decay: 0.98``。实际取值请以启动时使用的 YAML 为准。
 
-**2. LIBERO Spatial + Pi0**
+   **在线 LeRobot 参数**
 
-Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
+   在线 LeRobot 配置不使用 ``algorithm.replay_buffer``，请调整 ``algorithm.dagger.online_lerobot`` 字段：
 
-.. code:: yaml
+   .. code:: yaml
 
-   actor:
-     model:
-       model_path: /path/to/student_model
+      algorithm:
+        dagger:
+          online_lerobot:
+            enabled: True
+            only_success: True
+            robot_type: "panda"
+            fps: 10
+            finalize_interval: 8
+            data_path: ${runner.logger.log_path}/physical-intelligence/libero
+            rolling_lerobot_window_size: 50000
+            enable_decoded_cache: true
+            decoded_cache_capacity: 25000
+            cache_ingest_mode: new_shards   # 或 last_n / both
+            lerobot_num_workers: 0          # 开启 cache 时推荐为 0
 
-   rollout:
-     model:
-       model_path: /path/to/student_model
-     expert_model:
-       model_path: /path/to/expert_model
+   .. list-table::
+      :header-rows: 1
+      :widths: 34 66
 
-你可以在Hugging Face上找到用于学生策略初始化的预训练Pi0 checkpoint。例如：
-
-.. code:: bash
-
-   hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir /path/to/model
-
-专家策略的checkpoint可以来自运行 :doc:`pi0` 的PPO训练结果。
-
-**3. RoboTwin + Pi0**
-
-Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
-
-.. code:: yaml
-
-   actor:
-     model:
-       model_path: /path/to/student_model
-
-   rollout:
-     model:
-       model_path: /path/to/student_model
-     expert_model:
-       model_path: /path/to/expert_model
-
-同样可以在Hugging Face上找到用于学生策略初始化的预训练Pi0 checkpoint。例如：
-
-.. code:: bash
-
-   hf download RLinf/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir /path/to/model
-
-专家策略的checkpoint可以来自运行 :doc:`pi0` 的PPO训练结果。
-
-此外，RoboTwin环境还需单独配置 RoboTwin 代码及相应的 Assets，可以参考 :doc:`robotwin` 里的说明，之后在yaml里配置相应的路径：
-
-.. code:: yaml
-
-   env:
-     train:
-       assets_path: /path/to/robotwin_assets
-     eval:
-       assets_path: /path/to/robotwin_assets
-
-**4. LIBERO Spatial + Pi0（在线 LeRobot）**
-
-学生与专家 ``model_path`` 配置与经典 LIBERO Pi0 DAgger 相同。滑动窗口与 cache
-参数位于 ``algorithm.dagger.online_lerobot`` 下：
-
-.. code:: yaml
-
-   algorithm:
-     dagger:
-       online_lerobot:
-         enabled: True
-         only_success: True
-         robot_type: "panda"
-         fps: 10
-         finalize_interval: 8
-         data_path: ${runner.logger.log_path}/physical-intelligence/libero
-         rolling_lerobot_window_size: 50000
-         enable_decoded_cache: true
-         decoded_cache_capacity: 25000
-         cache_ingest_mode: new_shards   # 或 last_n / both
-         lerobot_num_workers: 0          # 开启 cache 时推荐为 0
-
-完整参考配置见 ``examples/embodiment/config/libero_spatial_dagger_openpi_lerobot.yaml``。
-
-运行
-----------------------------------------
-
-**1. 配置文件**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 66
-
-   * - 组合
-     - 配置文件
-   * - MLP + ManiSkill
-     - ``examples/embodiment/config/maniskill_dagger_mlp.yaml``
-   * - Pi0 + LIBERO
-     - ``examples/embodiment/config/libero_spatial_dagger_openpi.yaml``
-   * - Pi0 + LIBERO（在线 LeRobot）
-     - ``examples/embodiment/config/libero_spatial_dagger_openpi_lerobot.yaml``
-   * - Pi0 + RoboTwin
-     - ``examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml``
-
-**2. DAgger 关键参数**
-
-.. code:: yaml
-
-   algorithm:
-     dagger:
-       only_save_expert: False   # 经典 DAgger：全部样本都由专家重标注后保存
-       init_beta: 1.0
-       beta_schedule: "exponential"
-       beta_decay: 0.99
-       beta_min: 0.05            # 可选；代码默认值为 0.05
-
-     replay_buffer:
-       enable_cache: True
-       cache_size: 2000
-       min_buffer_size: 16
-       sample_window_size: 2000
-
-对于 MLP ManiSkill 示例，默认配置使用更大的 replay buffer，且
-``beta_decay: 0.98``。实际取值请以启动时使用的 YAML 为准。
-
-**在线 LeRobot 参数**
-
-在线 LeRobot 配置不使用 ``algorithm.replay_buffer``，请调整
-``algorithm.dagger.online_lerobot`` 字段：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 66
-
-   * - 配置项
-     - 含义
-   * - ``online_lerobot.enabled``
-     - 开启 DAgger 训练过程中的在线 LeRobot episode 收集。
-   * - ``online_lerobot.only_success``
-     - 仅保留成功 episode；失败 rollout 会被丢弃。
-   * - ``online_lerobot.data_path``
-     - rolling dataset 写入 LeRobot shard 的根目录。
-   * - ``online_lerobot.finalize_interval``
-     - 每 N 个 episode finalize 一次 LeRobot 元数据。
-   * - ``rolling_lerobot_window_size``
-     - 滑动训练窗口保留的最大帧数。
-   * - ``enable_decoded_cache``
-     - 缓存解码后的帧，加速 actor DataLoader 采样。
-
-**3. 启动命令**
-
-同一份配置名既可以使用同步脚本，也可以使用异步脚本：
-
-**同步模式**
-
-::
-
-   bash examples/embodiment/run_embodiment.sh maniskill_dagger_mlp
-   bash examples/embodiment/run_embodiment.sh libero_spatial_dagger_openpi
-   bash examples/embodiment/run_embodiment.sh libero_spatial_dagger_openpi_lerobot
-   bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_dagger_openpi
-   # For RoboTwin, add the following two commands before running the .sh file:
-   # export ROBOT_PLATFORM=ALOHA export ROBOTWIN_PATH=/path/to/RoboTwin
-
-**异步模式**
-
-::
-
-   bash examples/embodiment/run_async.sh maniskill_dagger_mlp
-   bash examples/embodiment/run_async.sh libero_spatial_dagger_openpi
-   bash examples/embodiment/run_async.sh libero_spatial_dagger_openpi_lerobot
-   bash examples/embodiment/run_async.sh robotwin_adjust_bottle_dagger_openpi
-   # For RoboTwin, add the following two commands before running the .sh file:
-   # export ROBOT_PLATFORM=ALOHA export ROBOTWIN_PATH=/path/to/RoboTwin
+      * - 配置项
+        - 含义
+      * - ``online_lerobot.enabled``
+        - 开启 DAgger 训练过程中的在线 LeRobot episode 收集。
+      * - ``online_lerobot.only_success``
+        - 仅保留成功 episode；失败 rollout 会被丢弃。
+      * - ``online_lerobot.data_path``
+        - rolling dataset 写入 LeRobot shard 的根目录。
+      * - ``online_lerobot.finalize_interval``
+        - 每 N 个 episode finalize 一次 LeRobot 元数据。
+      * - ``rolling_lerobot_window_size``
+        - 滑动训练窗口保留的最大帧数。
+      * - ``enable_decoded_cache``
+        - 缓存解码后的帧，加速 actor DataLoader 采样。
 
 可视化与结果
 ----------------------------------------

@@ -3,11 +3,16 @@ Installation
 
 Evaluation shares the same embodied environment installation flow as training. For example, to install the environment for :doc:`quick_tour` (OpenPI on LIBERO):
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
+   .. tab-item:: OpenPI + LIBERO
 
-For other benchmarks, replace ``--model`` and ``--env`` using the table below:
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
+
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. For other benchmarks, replace ``--model`` and ``--env`` using the table below:
 
 .. list-table::
    :header-rows: 1

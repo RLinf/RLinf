@@ -51,108 +51,96 @@ WideSeek-R1 评测
 - 评判模型已启动。
 - 已配置相应的工具后端。
 
-下载模型
+一键上手
 ----------------------------------------
 
-已发布的 checkpoint 可从以下地址获取：
-
-- `WideSeek-R1-4B <https://huggingface.co/RLinf/WideSeek-R1-4b>`__
-
-你也可以评测你自己的 Qwen3 系列稠密模型。
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。启动评测前，请先按 :doc:`环境与工具配置 <tools>` 启动评判模型并配置对应工具后端（WideSearch 使用在线搜索，标准 QA 使用离线检索）。
 
 .. note::
 
-   已发布的 WideSeek-R1-4B checkpoint 权重实际以 fp16 存储，但其 ``config.json``
-   声明为 ``bfloat16``。默认跟随 config dtype 的推理框架（vLLM/SGLang/HF
-   Transformers 的 ``dtype="auto"``）会把权重上转为 bf16，在 WideSearch 上约损失
-   3 分 avg@4（55.9 vs 59.0）。在 RLinf 之外部署该 checkpoint 时，请显式传入
-   ``--dtype float16``。在 RLinf 内部无需额外设置：自带的评测与训练配置已指定
-   ``rollout.model.precision: fp16`` 并会传给 rollout 引擎
-   （见 `issue #1662 <https://github.com/RLinf/RLinf/issues/1662>`__）。
+   已发布的 `WideSeek-R1-4B <https://huggingface.co/RLinf/WideSeek-R1-4b>`__ checkpoint 权重实际以 fp16 存储，但其 ``config.json`` 声明为 ``bfloat16``。默认跟随 config dtype 的推理框架（vLLM/SGLang/HF Transformers 的 ``dtype="auto"``）会把权重上转为 bf16，在 WideSearch 上约损失 3 分 avg@4（55.9 vs 59.0）。在 RLinf 之外部署该 checkpoint 时，请显式传入 ``--dtype float16``。在 RLinf 内部无需额外设置：自带的评测与训练配置已指定 ``rollout.model.precision: fp16`` 并会传给 rollout 引擎（见 `issue #1662 <https://github.com/RLinf/RLinf/issues/1662>`__）。
 
-下载模型后，在评测配置中设置本地模型路径：
+.. tab-set::
 
-.. code-block:: yaml
+   .. tab-item:: WideSearch 基准
 
-   rollout:
-     model:
-       model_type: qwen3
-       model_path: /PATH/TO/MODEL
+      **1. 安装环境**
 
-评测数据集
-----------------------------------------
+      .. code-block:: bash
 
-WideSeek-R1 当前支持两类评测数据集。
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-WideSearch 基准
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      **2. 下载模型与数据**
 
-请使用 Hugging Face 上提供的格式化 WideSearch 评测集：
+      下载已发布的 checkpoint（或使用自己的 Qwen3 稠密模型）和格式化评测集 `WideSeek-R1-test-data <https://huggingface.co/datasets/RLinf/WideSeek-R1-test-data>`__：
 
-- `WideSeek-R1-test-data <https://huggingface.co/datasets/RLinf/WideSeek-R1-test-data>`__
+      .. code-block:: bash
 
-与原始未处理的基准相比，这个版本已被转换为 RLinf 所需的格式，并包含若干数据修复。
+         hf download RLinf/WideSeek-R1-4b --local-dir ./WideSeek-R1-4b
+         hf download --repo-type dataset RLinf/WideSeek-R1-test-data --local-dir ./WideSeek-R1-test-data
 
-请按如下方式更新 `examples/agent/wideseek_r1/config/eval_qwen3_widesearch.yaml`：
+      **3. 启动评测**
 
-.. code-block:: yaml
+      更新 ``examples/agent/wideseek_r1/config/eval_qwen3_widesearch.yaml``\ （保持 ``data.is_markdown: True``；``data_size: -1`` 评测全部 200 条样本，使用 8 卡生成与 8 卡评判约需 **7 小时**；设置 ``agentloop.llm_ip``）：
 
-   data:
-     is_markdown: True
-     val_data_paths: /PATH/TO/EVAL/WIDESEARCH/DATASET
-     data_size: -1
+      .. code-block:: yaml
 
-关键字段说明：
+         rollout:
+           model:
+             model_type: qwen3
+             model_path: /PATH/TO/MODEL
 
-- ``is_markdown`` 对于 WideSearch 数据集应保持为 ``True``。
-- ``val_data_paths`` 指向评测数据集。
-- ``data_size: -1`` 表示在完整数据集上进行评测。
+         data:
+           is_markdown: True
+           val_data_paths: /PATH/TO/EVAL/WIDESEARCH/DATASET
+           data_size: -1
 
-如果只是快速检查流程是否正常，建议先使用较小的 ``data_size``。
+      启动评测（多节点启动见 :ref:`wideseek-r1-multinode`）：
 
-在参考配置中，使用 8 张 GPU 做生成、8 张 GPU 运行评判模型，对 200 条 WideSearch 样本做完整评测大约需要 **7 小时** 。
+      .. code-block:: bash
 
-标准 QA 评测
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+         bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_widesearch
 
-对于标准 QA 评测，请使用 ASearcher 发布的数据集：
+   .. tab-item:: 标准 QA
 
-- `ASearcher-test-data <https://huggingface.co/datasets/inclusionAI/ASearcher-test-data>`__
+      **1. 安装环境**
 
-该数据集同时包含单跳任务（如 Natural Questions）和多跳任务（如 HotpotQA）。
+      .. code-block:: bash
 
-请按如下方式更新 `examples/agent/wideseek_r1/config/eval_qwen3_qa.yaml`：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-.. code-block:: yaml
+      **2. 下载模型与数据**
 
-   data:
-     is_markdown: False
-     val_data_paths: /PATH/TO/EVAL/QA/DATASET
-     data_size: -1
+      下载已发布的 checkpoint 和 `ASearcher-test-data <https://huggingface.co/datasets/inclusionAI/ASearcher-test-data>`__\ （含单跳与多跳 QA 任务）：
 
-这里 ``is_markdown`` 必须为 ``False``。
+      .. code-block:: bash
 
-与 WideSearch 评测相比，标准 QA 评测速度更快。
-建议先在部分标准 QA 数据上运行评测，以进行快速的基本正确性检查。
+         hf download RLinf/WideSeek-R1-4b --local-dir ./WideSeek-R1-4b
+         hf download --repo-type dataset inclusionAI/ASearcher-test-data --local-dir ./ASearcher-test-data
 
-运行评测
-----------------------------------------
+      **3. 启动评测**
 
-启动评测前，请确认以下各项：
+      更新 ``examples/agent/wideseek_r1/config/eval_qwen3_qa.yaml``\ （保持 ``data.is_markdown: False``；建议先设置较小的 ``data_size`` 快速验证流程；设置 ``agentloop.llm_ip``）：
 
-- ``rollout.model.model_path`` 指向你要评测的模型。
-- ``data.val_data_paths`` 指向正确的数据集。
-- ``agentloop.llm_ip`` 设置正确。
-- 所需工具已配置完成。参见 :doc:`环境与工具配置 <tools>`。
+      .. code-block:: yaml
 
-然后运行以下命令之一：
+         rollout:
+           model:
+             model_type: qwen3
+             model_path: /PATH/TO/MODEL
 
-.. code-block:: bash
+         data:
+           is_markdown: False
+           val_data_paths: /PATH/TO/EVAL/QA/DATASET
+           data_size: -1
 
-   bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_widesearch
-   bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_qa
+      启动评测（多节点启动见 :ref:`wideseek-r1-multinode`）：
 
-多节点启动请参见 :ref:`wideseek-r1-multinode`。
+      .. code-block:: bash
+
+         bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_qa
 
 输出文件
 ----------------------------------------
@@ -171,7 +159,7 @@ WideSearch 基准
 
 对于标准 QA 评测，``metric.json`` 还包含最终的 LLM 评判结果。
 
-对于 WideSearch 评测，RLinf 会保存生成的回答，以便使用官方 WideSearch 评测流程进行打分。
+对于 WideSearch 评测，RLinf 会保存生成的回答，以便使用官方 WideSearch 评测流程打分。
 
 额外的 WideSearch 打分
 ----------------------------------------
@@ -185,7 +173,7 @@ WideSearch 基准
 双引擎评测
 ----------------------------------------
 
-WideSeek-R1 还支持在多智能体设定下使用两个独立模型实例进行评测，从而让 planner 和 worker 角色使用不同模型。
+WideSeek-R1 还支持在多智能体设定下使用两个独立模型实例评测，从而让 planner 和 worker 角色使用不同模型。
 
 请使用 `examples/agent/wideseek_r1/config/eval_qwen3_qa_2eng.yaml`。相关字段如下：
 

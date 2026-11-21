@@ -38,13 +38,15 @@ LeKiwi 底盘由三个工作在速度模式下的 Feetech STS3215 舵机驱动�
 以下步骤请在连接舵机控制板的计算机（例如树莓派 5）上执行，而不是你的笔记本。
 
 .. include:: _setup_common.rst
-   :end-before: 使用下面的
 
-在仓库根目录安装机器人依赖：
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: LeKiwi
 
-   bash requirements/install.sh embodied --env lekiwi --install-rlinf --no-root && source .venv/bin/activate
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env lekiwi --install-rlinf --no-root && source .venv/bin/activate
 
 安装脚本包含 LeRobot 及 Feetech 支持和 OpenCV 的无界面（headless）构建，它只采集画面，不需要打开窗口所需的系统 GL 库。``--no-root`` 会跳过安装脚本原本要用 sudo 安装的系统库：下文检查只用到串口和这个无界面构建，底盘计算机并不需要它们。若还要在这一台机器上训练或跑仿真，则不要加该参数。``--install-rlinf`` 会安装 RLinf 本身。平台要求见 :doc:`安装 </rst_source/start/installation>`。请激活该虚拟环境，并在仓库根目录下使用 ``toolkits/realworld_check/test_lekiwi_env.py`` 运行下文的所有检查命令。
 
@@ -172,8 +174,8 @@ LeKiwi 底盘由三个工作在速度模式下的 Feetech STS3215 舵机驱动�
    # 在机器人上，连接电机：
    python -m toolkits.realworld_check.test_lekiwi_env teleop --listen --port /dev/ttyACM0
 
-   # 在接键盘的机器上：
-   python -m toolkits.realworld_check.test_lekiwi_env teleop --remote <机器人 IP>
+   # 在接键盘的机器上（替换为机器人的 IP）：
+   python -m toolkits.realworld_check.test_lekiwi_env teleop --remote 192.168.1.100
 
 按键与速度档位完全相同。两端默认使用 TCP 端口 5555，可用 ``--remote-port`` 修改。发送端按 ``--fps`` 周期发送当前运动按键和速度档位，默认为 30 Hz。接收端的 ``--fps`` 设置电机控制循环的频率。``--listen`` 还接受 ``--wheel-radius``、``--base-radius``、``--max-raw`` 和 ``--dry-run``。``--connect-timeout`` 限制连接和发送操作的等待时间，连接失败直接退出；请先启动接收端。
 
@@ -185,9 +187,9 @@ LeKiwi 底盘由三个工作在速度模式下的 Feetech STS3215 舵机驱动�
 
    cd /path/to/RLinf
    pip install pynput
-   PYTHONPATH=$PWD python -m toolkits.realworld_check.test_lekiwi_env teleop --remote <机器人 IP>
+   PYTHONPATH=$PWD python -m toolkits.realworld_check.test_lekiwi_env teleop --remote 192.168.1.100
 
-macOS 还需在「系统设置 > 隐私与安全性」中为终端打开「辅助功能」和「输入监控」，然后重启终端。启用电机前，先用接收端的 ``--dry-run`` 确认按键有效。
+macOS 还需在“系统设置 > 隐私与安全性”中为终端打开“辅助功能”和“输入监控”，然后重启终端。启用电机前，先用接收端的 ``--dry-run`` 确认按键有效。
 
 驱动环境
 --------

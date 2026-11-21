@@ -109,46 +109,90 @@ Reward function:
 - +5 if the final boxed/numeric answer is correct;
 - -5 if incorrect.
 
-Run It
-------
+Setup and Run
+-------------
 
-**1. Choose and Edit a Config**
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. For common path, cluster, and runner fields, see :doc:`Training configuration <../../../reference/configuration>`.
 
-Pick a Megatron GRPO config and set cluster and path fields (``cluster.num_nodes``, ``runner.output_dir``, ``rollout.model.model_path``, ``data.train_data_paths``). For common fields, see :doc:`Training configuration <../../../reference/configuration>`.
+.. tab-set::
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 76
+   .. tab-item:: DeepSeek-R1-Distill-Qwen-1.5B
 
-   * - Model
-     - Config
-   * - Qwen2.5-1.5B
-     - ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``
-   * - Qwen2.5-7B
-     - ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``
+      **1. Install**
 
-**2. Launch Training**
+      .. code-block:: bash
 
-Start the Ray cluster and launch training on the head node (pass the chosen config name without ``.yaml``):
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. Download**
 
-   cd /path_to_RLinf/ray_utils;
-   rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
-   export TOKENIZERS_PARALLELISM=false
-   bash start_ray.sh;
-   if [ "$RANK" -eq 0 ]; then
-       bash check_ray.sh 128; # set to number of accelerators/GPUs in the cluster
-       cd /path_to_RLinf;
-       bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron # change config file
-   else
-     if [ "$RANK" -eq 1 ]; then
-         sleep 3m
-     fi
-     sleep 10d
-   fi
+      .. code-block:: bash
 
-   sleep 10d
+         hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --local-dir ./DeepSeek-R1-Distill-Qwen-1.5B
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
+
+      **3. Launch**
+
+      Set ``cluster.num_nodes``, ``runner.output_dir``, ``rollout.model.model_path``, and ``data.train_data_paths`` in ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``, then start Ray and launch on the head node:
+
+      .. code-block:: bash
+
+         cd /path_to_RLinf/ray_utils;
+         rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
+         export TOKENIZERS_PARALLELISM=false
+         bash start_ray.sh;
+         if [ "$RANK" -eq 0 ]; then
+             bash check_ray.sh 128; # set to number of accelerators/GPUs in the cluster
+             cd /path_to_RLinf;
+             bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron
+         else
+           if [ "$RANK" -eq 1 ]; then
+               sleep 3m
+           fi
+           sleep 10d
+         fi
+
+         sleep 10d
+
+   .. tab-item:: DeepSeek-R1-Distill-Qwen-7B
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-7B --local-dir ./DeepSeek-R1-Distill-Qwen-7B
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
+
+      **3. Launch**
+
+      Set ``cluster.num_nodes``, ``runner.output_dir``, ``rollout.model.model_path``, and ``data.train_data_paths`` in ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``, then start Ray and launch on the head node:
+
+      .. code-block:: bash
+
+         cd /path_to_RLinf/ray_utils;
+         rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
+         export TOKENIZERS_PARALLELISM=false
+         bash start_ray.sh;
+         if [ "$RANK" -eq 0 ]; then
+             bash check_ray.sh 128; # set to number of accelerators/GPUs in the cluster
+             cd /path_to_RLinf;
+             bash examples/reasoning/run_main_grpo_math.sh qwen2.5-7b-grpo-megatron
+         else
+           if [ "$RANK" -eq 1 ]; then
+               sleep 3m
+           fi
+           sleep 10d
+         fi
+
+         sleep 10d
 
 Visualization and Results
 -------------------------

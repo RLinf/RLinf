@@ -99,22 +99,6 @@ separate clusters or cloud regions.
      - ``list``
      - Endpoint groups sharing a ``bandwidth_mbps`` budget.
 
-.. code-block:: yaml
-
-   cluster:
-     net_emulation:
-       enabled: true
-       symmetric: true
-       crossdc_pairs:
-         - src: ["Env:0-1"]
-           dst: ["Rollout:0-1", "Actor:0-1"]
-           delay_ms: 50
-       bandwidth_groups:
-         - members: ["Env:0-1"]
-           bandwidth_mbps: 1000
-         - members: ["Rollout:0-1", "Actor:0-1"]
-           bandwidth_mbps: 500
-
 Endpoint names use the ``GroupName:Rank`` convention — ``Env:0`` for the
 first Env Worker, ``Rollout:1`` for the second Rollout Worker. Inclusive rank
 ranges are supported, so ``Env:0-3`` expands to ``Env:0`` through ``Env:3``.
@@ -126,36 +110,52 @@ Requirements:
 - Independent of ``delay_sampler``. Enable either, both, or neither.
 
 
-Together
---------
+Run It
+------
 
-Combine both modules to simulate a realistic deployment:
+Prepare the RoboTwin environment and checkpoints as described in :doc:`RoboTwin <robotwin>`, then launch the shipped example config ``examples/embodiment/config/realsimulator_robotwin_adjust_bottle_dagger_openpi.yaml``:
 
-.. code-block:: yaml
+.. code-block:: bash
 
-   env:
-     delay_sampler:
-       type: uniform
-       min_delay: 0.11
-       max_delay: 0.20
+   bash examples/embodiment/run_async.sh realsimulator_robotwin_adjust_bottle_dagger_openpi
 
-   cluster:
-     net_emulation:
-       enabled: true
-       crossdc_pairs:
-         - src: ["Env:0", "Env:1"]
-           dst: ["Rollout:0", "Rollout:1"]
-           delay_ms: 50
+.. dropdown:: Advanced configuration (optional)
 
+   Full ``net_emulation`` example with ``crossdc_pairs`` and ``bandwidth_groups``:
 
-Example
--------
+   .. code-block:: yaml
 
-Full worked example:
+      cluster:
+        net_emulation:
+          enabled: true
+          symmetric: true
+          crossdc_pairs:
+            - src: ["Env:0-1"]
+              dst: ["Rollout:0-1", "Actor:0-1"]
+              delay_ms: 50
+          bandwidth_groups:
+            - members: ["Env:0-1"]
+              bandwidth_mbps: 1000
+            - members: ["Rollout:0-1", "Actor:0-1"]
+              bandwidth_mbps: 500
 
-.. code-block:: text
+   Combine both ``delay_sampler`` and ``net_emulation`` to simulate a realistic deployment:
 
-   examples/embodiment/config/realsimulator_robotwin_adjust_bottle_dagger_openpi.yaml
+   .. code-block:: yaml
+
+      env:
+        delay_sampler:
+          type: uniform
+          min_delay: 0.11
+          max_delay: 0.20
+
+      cluster:
+        net_emulation:
+          enabled: true
+          crossdc_pairs:
+            - src: ["Env:0", "Env:1"]
+              dst: ["Rollout:0", "Rollout:1"]
+              delay_ms: 50
 
 
 See also

@@ -29,30 +29,22 @@ Train **OpenVLA** or **OpenVLA-OFT** on `ManiSkill3 <https://github.com/haosulab
 Prerequisites
 -------------
 
-Install the ManiSkill environment first (:doc:`installation`). For faster Hugging Face downloads in mainland China, export ``HF_ENDPOINT=https://hf-mirror.com``.
+Install the ManiSkill environment first (:doc:`installation`). In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
 
-Download Assets
----------------
+Download and Launch Training
+----------------------------
 
-Download the ManiSkill3 scene assets once from the repository root:
-
-.. code-block:: bash
-
-   hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
-
-Download Model and Launch Training
-----------------------------------
-
-Select a model tab below. Both recipes use all available accelerators by default; edit ``cluster.component_placement`` to target specific ones (:doc:`../guides/basic_config`).
+Select a model tab below. Each tab groups all required downloads and the launch command together. Both recipes use all available accelerators by default; edit ``cluster.component_placement`` to target specific ones (:doc:`../guides/basic_config`).
 
 .. tab-set::
 
    .. tab-item:: OpenVLA
 
-      Download the warmup checkpoint (`paper <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__):
+      Download ManiSkill assets and the warmup checkpoint (`paper <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__):
 
       .. code-block:: bash
 
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
          hf download gen-robot/openvla-7b-rlvla-warmup --local-dir ./checkpoints/openvla-7b-rlvla-warmup
 
       Launch PPO training:
@@ -64,11 +56,12 @@ Select a model tab below. Both recipes use all available accelerators by default
 
    .. tab-item:: OpenVLA-OFT
 
-      Download the base model and LoRA adapter:
+      Download ManiSkill assets, the base model, and the LoRA adapter:
 
       .. code-block:: bash
 
-         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir ./checkpoints/openvlaoft-base && \
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir ./checkpoints/openvlaoft-base
          hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./checkpoints/openvlaoft-lora
 
       Launch PPO training:

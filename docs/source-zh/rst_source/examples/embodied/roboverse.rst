@@ -81,28 +81,33 @@
 
 .. include:: _setup_common.rst
 
-安装 RoboVerse 与 OpenPI 依赖：
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenPI + RoboVerse
+      :sync: openpi-roboverse
 
-   bash requirements/install.sh embodied --model openpi --env roboverse && source .venv/bin/activate
+      .. code-block:: bash
 
-下载默认 RoboVerse 资源：
-
-.. code:: bash
-
-   cd /path/to/RLinf
-   hf download --repo-type dataset manity/roboverse_data --local-dir .
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env roboverse && source .venv/bin/activate
 
 下载模型
 ----------------------------------------
 
-下载参考配置使用的 OpenPI π₀.₅ 检查点：
+在 RLinf 仓库根目录下载默认 RoboVerse 资源与 OpenPI π₀.₅ SFT 检查点：
 
-.. code-block:: bash
+.. tab-set::
 
-   cd /path/to/save/model
-   hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir RLinf-Pi05-LIBERO-SFT
+   .. tab-item:: OpenPI π₀.₅ + RoboVerse
+      :sync: openpi-roboverse
+
+      .. code-block:: bash
+
+         # 下载 RoboVerse 资源
+         hf download manity/roboverse_data --repo-type dataset --local-dir ./roboverse_data
+
+         # 下载 OpenPI π₀.₅ 检查点
+         hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
 .. include:: _model_path.rst
 
@@ -138,32 +143,7 @@
 可视化与结果
 ----------------------------------------
 
-在 RLinf 仓库根目录启动 TensorBoard：
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-关键指标是 ``env/success_once``。完整指标说明见
-:doc:`训练指标 <../../reference/metrics>`。
-
-如需保存 rollout 视频，请在环境配置中启用 video：
-
-.. code:: yaml
-
-   env:
-     eval:
-       video_cfg:
-         save_video: True
-         video_base_dir: ${runner.logger.log_path}/video/eval
-
-如需启用 W&B 或 SwanLab，请添加 logger backend：
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``env/success_once`` 曲线，通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制，完整指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
 .. note::
 

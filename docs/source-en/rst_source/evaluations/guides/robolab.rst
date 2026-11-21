@@ -3,29 +3,29 @@ Evaluate π₀.₅ on RoboLab
 
 Evaluate π₀.₅ on RoboLab's DROID joint-position manipulation tasks with RLinf. Install RoboLab and OpenPI in one environment, download the converted checkpoint, inspect the task metadata, and run a task or the 120-task benchmark. See :doc:`the RoboLab overview <../../examples/embodied/robolab>` for observation and action formats.
 
-Installation
-------------
+Setup and Run
+-------------
 
-Use Linux, Python 3.11, ``uv``, and an NVIDIA GPU with a working Vulkan driver. The evaluated setup used NVIDIA A800 80 GB GPUs and driver 570.172.08. Follow :doc:`the installation guide </rst_source/start/installation>` for system prerequisites, then run from the RLinf repository root:
+Use Linux, Python 3.11, ``uv``, and an NVIDIA GPU with a working Vulkan driver. The evaluated setup used NVIDIA A800 80 GB GPUs and driver 570.172.08. Follow :doc:`the installation guide </rst_source/start/installation>` for system prerequisites. In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env robolab
-   source .venv/bin/activate
+   .. tab-item:: OpenPI π₀.₅ + RoboLab
 
-Add ``--use-mirror`` to the install command when needed.
+      .. code-block:: bash
 
-Download the Model
-------------------
+         # 1. Install
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robolab && source .venv/bin/activate
 
-Download ``RLinf/RLinf-Pi05-RoboLab-droid-jointpos``, the PyTorch conversion of RoboLab's ``pi05_droid_jointpos`` checkpoint. This policy predicts joint positions, so choose the joint-position checkpoint for this configuration.
+         # 2. Download model
+         hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos --local-dir ./RLinf-Pi05-RoboLab-droid-jointpos
 
-.. code-block:: bash
+         # 3. Launch default task (BowlStackingLeftOnRightTask, 10 episodes)
+         bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \
+           rollout.model.model_path=./RLinf-Pi05-RoboLab-droid-jointpos
 
-   hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos \
-       --local-dir /path/to/model/RLinf-Pi05-RoboLab-droid-jointpos
-
-The checkpoint directory contains ``model.safetensors``, ``config.json``, and ``assets/droid/norm_stats.json``. Set ``rollout.model.model_path`` in ``evaluations/robolab/robolab_pi05_droid_jointpos.yaml`` to that directory.
+``RLinf/RLinf-Pi05-RoboLab-droid-jointpos`` is the PyTorch conversion of RoboLab's ``pi05_droid_jointpos`` checkpoint (predicting joint positions). The downloaded directory contains ``model.safetensors``, ``config.json``, and ``assets/droid/norm_stats.json``. You can also set ``rollout.model.model_path`` directly in ``evaluations/robolab/robolab_pi05_droid_jointpos.yaml``; the remaining policy and environment defaults are already configured there.
 
 Find the Benchmark Tasks
 ------------------------
@@ -91,17 +91,6 @@ Edit ``evaluations/robolab/robolab_pi05_droid_jointpos.yaml`` before launching a
 The export script already converts each task's duration to control steps; no manual time conversion is needed. When changing the task for the single-task command, copy that row's ``max_steps`` into both step fields above. Changing only the task name does not update these fields automatically. For example, switching to ``BananaInBowlTask`` requires setting both fields to 750.
 
 All 120 benchmark limits are multiples of the configured 15-action chunk length. If you choose a custom episode limit, set ``max_steps_per_rollout_epoch`` to the smallest multiple of 15 that covers it: an episode limit of 17 needs a rollout budget of 30. Native task termination can still end an episode before the configured limit.
-
-Run a Task
-----------
-
-After saving the YAML configuration, launch the evaluation from the repository root:
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos
-
-With the default task and episode settings, this runs ten episodes of ``BowlStackingLeftOnRightTask``. The remaining policy and environment defaults are already set in the YAML.
 
 Run All 120 Tasks
 -----------------

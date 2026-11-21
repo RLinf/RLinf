@@ -53,117 +53,109 @@ Before evaluation, complete
 - The judge model is running.
 - The appropriate tool backend is configured.
 
-Download the Model
-------------------
+Setup and Run
+-------------
 
-The released checkpoint is available at:
-
-- `WideSeek-R1-4B <https://huggingface.co/RLinf/WideSeek-R1-4b>`__
-
-You may also evaluate your own Qwen3-series dense model.
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run
+``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt
+images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
+Complete :doc:`Environment and Tool Setup <tools>` so that the judge model and
+matching tool backend (online search for WideSearch, offline retrieval for QA)
+are configured before launching evaluation.
 
 .. note::
 
-   The released WideSeek-R1-4B checkpoint stores its weights in fp16 while its
-   ``config.json`` declares ``bfloat16``. Serving engines that follow the config
-   dtype by default (vLLM/SGLang/HF Transformers with ``dtype="auto"``) therefore
-   upcast the weights, which costs about 3 points avg@4 on WideSearch
-   (55.9 vs 59.0). When serving this checkpoint outside RLinf, pass an explicit
+   The released `WideSeek-R1-4B <https://huggingface.co/RLinf/WideSeek-R1-4b>`__
+   checkpoint stores its weights in fp16 while its ``config.json`` declares
+   ``bfloat16``. Serving engines that follow the config dtype by default
+   (vLLM/SGLang/HF Transformers with ``dtype="auto"``) therefore upcast the
+   weights, which costs about 3 points avg@4 on WideSearch (55.9 vs 59.0).
+   When serving this checkpoint outside RLinf, pass an explicit
    ``--dtype float16``. Inside RLinf no extra step is needed: the shipped eval
-   and train configs set ``rollout.model.precision: fp16``, which is handed to
-   the rollout engine
+   and train configs set ``rollout.model.precision: fp16``
    (see `issue #1662 <https://github.com/RLinf/RLinf/issues/1662>`__).
 
-After downloading the model, set the local path in the evaluation config:
+.. tab-set::
 
-.. code-block:: yaml
+   .. tab-item:: WideSearch Benchmark
 
-   rollout:
-     model:
-       model_type: qwen3
-       model_path: /PATH/TO/MODEL
+      **1. Install**
 
-Evaluation Datasets
--------------------
+      .. code-block:: bash
 
-WideSeek-R1 currently supports two dataset types for evaluation.
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-WideSearch Benchmark
-~~~~~~~~~~~~~~~~~~~~
+      **2. Download**
 
-Use the formatted WideSearch evaluation set from Hugging Face:
+      Download the released checkpoint (or use your own Qwen3 dense model) and the formatted `WideSeek-R1-test-data <https://huggingface.co/datasets/RLinf/WideSeek-R1-test-data>`__:
 
-- `WideSeek-R1-test-data <https://huggingface.co/datasets/RLinf/WideSeek-R1-test-data>`__
+      .. code-block:: bash
 
-Compared with the original raw benchmark, this version is converted into the
-format expected by RLinf and includes several data fixes.
+         hf download RLinf/WideSeek-R1-4b --local-dir ./WideSeek-R1-4b
+         hf download --repo-type dataset RLinf/WideSeek-R1-test-data --local-dir ./WideSeek-R1-test-data
 
-Update
-`examples/agent/wideseek_r1/config/eval_qwen3_widesearch.yaml`
-as follows:
+      **3. Launch**
 
-.. code-block:: yaml
+      Update ``examples/agent/wideseek_r1/config/eval_qwen3_widesearch.yaml`` (keep ``data.is_markdown: True``; ``data_size: -1`` evaluates the full 200-example set, which takes about **7 hours** with 8 GPUs for generation and 8 GPUs for the judge; set ``agentloop.llm_ip`` to your judge host):
 
-   data:
-     is_markdown: True
-     val_data_paths: /PATH/TO/EVAL/WIDESEARCH/DATASET
-     data_size: -1
+      .. code-block:: yaml
 
-Key fields:
+         rollout:
+           model:
+             model_type: qwen3
+             model_path: /PATH/TO/MODEL
 
-- ``is_markdown`` should remain ``True`` for the WideSearch dataset.
-- ``val_data_paths`` points to the evaluation dataset.
-- ``data_size: -1`` means to evaluate on the full dataset.
+         data:
+           is_markdown: True
+           val_data_paths: /PATH/TO/EVAL/WIDESEARCH/DATASET
+           data_size: -1
 
-For a quick sanity check, start with a smaller ``data_size``.
+      Run evaluation (for multi-node launches, see :ref:`wideseek-r1-multinode`):
 
-In the reference setup, full evaluation on 200 WideSearch examples took about
-**7 hours** with 8 GPUs for generation and 8 GPUs for the judge model.
+      .. code-block:: bash
 
-Standard QA Evaluation
-~~~~~~~~~~~~~~~~~~~~~~
+         bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_widesearch
 
-For standard QA evaluation, use the dataset released by ASearcher:
+   .. tab-item:: Standard QA
 
-- `ASearcher-test-data <https://huggingface.co/datasets/inclusionAI/ASearcher-test-data>`__
+      **1. Install**
 
-This dataset includes both single-hop tasks, such as Natural Questions, and
-multi-hop tasks, such as HotpotQA.
+      .. code-block:: bash
 
-Update
-`examples/agent/wideseek_r1/config/eval_qwen3_qa.yaml`
-as follows:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-.. code-block:: yaml
+      **2. Download**
 
-   data:
-     is_markdown: False
-     val_data_paths: /PATH/TO/EVAL/QA/DATASET
-     data_size: -1
+      Download the released checkpoint and `ASearcher-test-data <https://huggingface.co/datasets/inclusionAI/ASearcher-test-data>`__ (single-hop and multi-hop QA):
 
-Here ``is_markdown`` must be ``False``.
+      .. code-block:: bash
 
-Compared to the WideSearch evaluation, the standard QA evaluation is much faster.
-It is recommended to first evaluate a subset of the standard QA data as a quick sanity check.
+         hf download RLinf/WideSeek-R1-4b --local-dir ./WideSeek-R1-4b
+         hf download --repo-type dataset inclusionAI/ASearcher-test-data --local-dir ./ASearcher-test-data
 
-Run Evaluation
---------------
+      **3. Launch**
 
-Before launching evaluation, verify all of the following:
+      Update ``examples/agent/wideseek_r1/config/eval_qwen3_qa.yaml`` (keep ``data.is_markdown: False``; start with a smaller ``data_size`` for a quick sanity check; set ``agentloop.llm_ip`` to your judge host):
 
-- ``rollout.model.model_path`` points to the model you want to evaluate.
-- ``data.val_data_paths`` points to the correct dataset.
-- ``agentloop.llm_ip`` is set correctly.
-- The required tools are configured. See :doc:`Environment and Tool Setup <tools>`.
+      .. code-block:: yaml
 
-Then run one of the following commands:
+         rollout:
+           model:
+             model_type: qwen3
+             model_path: /PATH/TO/MODEL
 
-.. code-block:: bash
+         data:
+           is_markdown: False
+           val_data_paths: /PATH/TO/EVAL/QA/DATASET
+           data_size: -1
 
-   bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_widesearch
-   bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_qa
+      Run evaluation (for multi-node launches, see :ref:`wideseek-r1-multinode`):
 
-For multi-node launches, see :ref:`wideseek-r1-multinode`.
+      .. code-block:: bash
+
+         bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_qa
 
 Output Files
 ------------
