@@ -321,8 +321,8 @@ class TianjiHILControl:
 
     def __init__(self, mode="training", subtask_prompts=None, *,
                  stage_switch_replan=False, event_path=None):
-        if mode not in {"training", "stage1", "inference"}:
-            raise ValueError("HIL mode must be training, stage1 or inference")
+        if mode not in {"training", "dagger", "stage1", "inference"}:
+            raise ValueError("HIL mode must be training, dagger, stage1 or inference")
         self.mode = mode
         self._stage_switch_replan = stage_switch_replan
         self._event_path = event_path
@@ -609,8 +609,8 @@ class TianjiHILControl:
                 return self.panel_snapshot()
         if command == "step_failure":
             return self.mark_step_failure()
-        if command == "discard" and self.mode != "training":
-            raise ValueError("Discard drops training data; this panel records none")
+        if command == "discard" and self.mode not in {"training", "dagger"}:
+            raise ValueError("Discard drops recorded data; this panel records none")
         if command in {"subtask", "next_subtask"}:
             with self._condition:
                 if command == "next_subtask":
@@ -842,8 +842,16 @@ class TianjiHILControl:
         )
         if self.mode == "training":
             return page
+        if self.mode == "dagger":
+            return (
+                page.replace("HIL 训练", "HIL · DAgger 采集")
+                .replace(_STEP_FAILURE_BUTTON, "")
+                .replace("（奖励 1）", "")
+                .replace("（奖励 0）", "")
+            )
         if self._stage_switch_replan:
-            page = page.replace("HIL 训练", "Stage2-30HZ-1118v1 · 小车 HIL")
+            banner = os.environ.get("TIANJI_CAR_BANNER", "").strip() or "Stage2-30HZ-1118v1 · 小车 HIL"
+            page = page.replace("HIL 训练", banner)
         return (
             page.replace(
                 "HIL 训练",

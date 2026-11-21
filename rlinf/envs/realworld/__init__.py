@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
 import os
+from typing import Any
 
 if os.environ.get("RLINF_TIANJI_STAGE1_ONLY") == "1":
     # Keep the standalone Stage1 service importable in LoopInfra's CPU
@@ -23,60 +25,69 @@ elif os.environ.get("RLINF_REALWORLD_PLATFORM") == "tianji":
     from .realworld_env import RealWorldEnv
     from .tianji import TianjiConfig, TianjiEnv
     from .tianji import tasks as tianji_tasks
+
     __all__ = ["RealWorldEnv", "TianjiConfig", "TianjiEnv", "tianji_tasks"]
 else:
-    from .a1 import A1DualEnv, A1DualRobotConfig
-    from .a1 import tasks as a1_tasks
-    from .dosw1 import DOSW1Config, DOSW1Env
-    from .dosw1 import tasks as dosw1_tasks
-    from .franka import FrankaEnv, FrankaRobotConfig, FrankaRobotState
-    from .franka import tasks as franka_tasks
-    from .franka.dual_franka_env import DualFrankaEnv, DualFrankaRobotConfig
-    from .franka.tasks.dual_franka_joint_env import (
-        DualFrankaJointEnv,
-        DualFrankaJointRobotConfig,
-    )
-    from .franka.tasks.dual_franka_tcp_env import (
-        DualFrankaTCPEnv,
-        DualFrankaTCPRobotConfig,
-    )
-    from .gim_arm import GimArmEnv, GimArmRobotConfig, GimArmRobotState
-    from .gim_arm import tasks as gim_arm_tasks
-    from .realworld_env import RealWorldEnv
-    from .tianji import TianjiConfig, TianjiEnv
-    from .tianji import tasks as tianji_tasks
-    from .xsquare import Turtle2Env, Turtle2RobotConfig, Turtle2RobotState
-    from .xsquare import tasks as xsquare_tasks
+    # Lazy-load platform submodules so importing e.g. `rlinf.envs.realworld.tianji.*`
+    # does not eagerly pull legacy `dosw1`/`franka`/`gim_arm`/`xsquare` platforms
+    # whose `*HWInfo` classes moved to `rlinf.envs.real` in origin/main.
+    _EXPORTS: dict[str, tuple[str, str | None]] = {
+        "A1DualEnv": (".a1", "A1DualEnv"),
+        "A1DualRobotConfig": (".a1", "A1DualRobotConfig"),
+        "a1_tasks": (".a1.tasks", None),
+        "DualFrankaEnv": (".franka.dual_franka_env", "DualFrankaEnv"),
+        "DualFrankaJointEnv": (
+            ".franka.tasks.dual_franka_joint_env",
+            "DualFrankaJointEnv",
+        ),
+        "DualFrankaJointRobotConfig": (
+            ".franka.tasks.dual_franka_joint_env",
+            "DualFrankaJointRobotConfig",
+        ),
+        "DualFrankaTCPEnv": (
+            ".franka.tasks.dual_franka_tcp_env",
+            "DualFrankaTCPEnv",
+        ),
+        "DualFrankaTCPRobotConfig": (
+            ".franka.tasks.dual_franka_tcp_env",
+            "DualFrankaTCPRobotConfig",
+        ),
+        "DualFrankaRobotConfig": (".franka.dual_franka_env", "DualFrankaRobotConfig"),
+        "DOSW1Config": (".dosw1", "DOSW1Config"),
+        "DOSW1Env": (".dosw1", "DOSW1Env"),
+        "dosw1_tasks": (".dosw1.tasks", None),
+        "FrankaEnv": (".franka", "FrankaEnv"),
+        "FrankaRobotConfig": (".franka", "FrankaRobotConfig"),
+        "FrankaRobotState": (".franka", "FrankaRobotState"),
+        "franka_tasks": (".franka.tasks", None),
+        "GimArmEnv": (".gim_arm", "GimArmEnv"),
+        "GimArmRobotConfig": (".gim_arm", "GimArmRobotConfig"),
+        "GimArmRobotState": (".gim_arm", "GimArmRobotState"),
+        "gim_arm_tasks": (".gim_arm.tasks", None),
+        "Turtle2Env": (".xsquare", "Turtle2Env"),
+        "Turtle2RobotConfig": (".xsquare", "Turtle2RobotConfig"),
+        "Turtle2RobotState": (".xsquare", "Turtle2RobotState"),
+        "xsquare_tasks": (".xsquare.tasks", None),
+        "RealWorldEnv": (".realworld_env", "RealWorldEnv"),
+        "TianjiConfig": (".tianji", "TianjiConfig"),
+        "TianjiEnv": (".tianji", "TianjiEnv"),
+        "tianji_tasks": (".tianji.tasks", None),
+    }
+    _setup_done = False
 
-    RealWorldEnv.realworld_setup()
+    def __getattr__(name: str) -> Any:
+        global _setup_done
+        target = _EXPORTS.get(name)
+        if target is None:
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        if name == "RealWorldEnv" and not _setup_done:
+            _setup_done = True
+            env_mod = importlib.import_module(".realworld_env", __name__)
+            env_mod.RealWorldEnv.realworld_setup()
+        mod_name, attr = target
+        mod = importlib.import_module(mod_name, __name__)
+        value = mod if attr is None else getattr(mod, attr)
+        globals()[name] = value
+        return value
 
-    __all__ = [
-        "A1DualEnv",
-        "A1DualRobotConfig",
-        "a1_tasks",
-        "DualFrankaEnv",
-        "DualFrankaJointEnv",
-        "DualFrankaJointRobotConfig",
-        "DualFrankaTCPEnv",
-        "DualFrankaTCPRobotConfig",
-        "DualFrankaRobotConfig",
-        "DOSW1Config",
-        "DOSW1Env",
-        "dosw1_tasks",
-        "FrankaEnv",
-        "FrankaRobotConfig",
-        "FrankaRobotState",
-        "franka_tasks",
-        "GimArmEnv",
-        "GimArmRobotConfig",
-        "GimArmRobotState",
-        "gim_arm_tasks",
-        "Turtle2Env",
-        "Turtle2RobotConfig",
-        "Turtle2RobotState",
-        "xsquare_tasks",
-        "RealWorldEnv",
-        "TianjiConfig",
-        "TianjiEnv",
-        "tianji_tasks",
-    ]
+    __all__ = list(_EXPORTS.keys())

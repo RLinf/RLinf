@@ -97,7 +97,12 @@ def to_tensor(
             array = array.astype(np.int32)
         elif array.dtype == np.uint32:
             array = array.astype(np.int64)
-        ret = torch.tensor(array).to(device)
+        # Use zero-copy from_numpy when contiguous and writeable to avoid image copy overhead.
+        ret = (
+            torch.from_numpy(array)
+            if (array.flags.c_contiguous and array.flags.writeable)
+            else torch.tensor(array)
+        ).to(device)
     else:
         if isinstance(array, list) and any(x is None for x in array):
             return [to_tensor(x, device=device) for x in array]

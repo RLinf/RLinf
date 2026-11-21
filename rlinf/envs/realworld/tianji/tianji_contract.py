@@ -25,8 +25,19 @@ sources the same launcher environment, so they agree on both.
 import math
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
+
+
+def default_loopinfra_root(loopinfra_root=None) -> Path:
+    """Resolve LoopInfra checkout path from explicit arg, LOOPINFRA_ROOT, or ~/LoopInfra."""
+    if loopinfra_root is not None:
+        return Path(loopinfra_root).expanduser()
+    env_val = os.environ.get("LOOPINFRA_ROOT", "").strip()
+    if env_val:
+        return Path(env_val).expanduser()
+    return Path.home() / "LoopInfra"
 
 ARM_NAMES = ("A", "B")
 JOINTS_PER_ARM = 7

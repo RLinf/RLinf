@@ -53,11 +53,14 @@ def joint_state(raw, eef_state) -> np.ndarray:
     return state.astype(np.float32)
 
 
+from .tianji_contract import default_loopinfra_root
+
+
 class NativeTcpFK:
     """Arm-local native FK of the official SDK, learned TCP at flange +Z 160 mm."""
 
     def __init__(self, loopinfra_root=None):
-        root = Path(loopinfra_root or os.environ.get("LOOPINFRA_ROOT", Path.home() / "LoopInfra_joint"))
+        root = default_loopinfra_root(loopinfra_root)
         if str(root) not in sys.path:
             sys.path.insert(0, str(root))
         from loopinfra.client.sdk_control_adapter import NativeKinematics

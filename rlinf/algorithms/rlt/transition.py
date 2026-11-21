@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from typing import Any
 
 import torch
@@ -21,6 +22,17 @@ from rlinf.envs.layout import EnvLayout
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 
 RLT_OBS_KEYS = ("z_rl", "proprio", "ref_chunk")
+# Carried when the feature model emits them (rtj joint Stage2): the critic's
+# TCP-space proprio, and the reference chunk's TCP rows (stored, never an input).
+RLT_OPTIONAL_OBS_KEYS = (
+    "critic_proprio",
+    "ref_chunk_tcp",
+    "tactile_images",
+    "tactile_valid",
+    "tactile_age_ms",
+)
+_OVERWRITE_REF_WITH_HUMAN = os.environ.get("RLT_OVERWRITE_REF_WITH_HUMAN", "0") == "1"
+_REF_OFFSET = int(os.environ.get("RLT_REF_OFFSET", "0"))
 RLT_TRANSITION_PREFIX = "rlt_transition_"
 
 
@@ -68,9 +80,67 @@ def extract_rlt_obs_from_forward_inputs(
             "rollout.rlt_feature_model is configured and the rollout worker "
             "populates RLT features."
         )
-    return copy_dict_tensor(
-        {key: forward_inputs[f"{prefix}{key}"] for key in RLT_OBS_KEYS}
+    keys = RLT_OBS_KEYS + tuple(
+        k for k in RLT_OPTIONAL_OBS_KEYS if f"{prefix}{k}" in forward_inputs
     )
+    return copy_dict_tensor({key: forward_inputs[f"{prefix}{key}"] for key in keys})
+
+
+def update_rlt_transitions(
+    stage_id: int,
+    pending_obs: list[dict[str, Any] | None],
+    trajectory_builders: list[Any],
+    policy_output: Any,
+    *,
+    cache_current: bool,
+    intervene_actions: torch.Tensor | None = None,
+    intervene_flags: torch.Tensor | None = None,
+) -> None:
+    if pending_obs[stage_id] is not None:
+        if (
+            _OVERWRITE_REF_WITH_HUMAN
+            and intervene_actions is not None
+            and intervene_flags is not None
+        ):
+            current_obs = pending_obs[stage_id]
+            ref_chunk = current_obs["ref_chunk"]
+            batch_size = ref_chunk.shape[0]
+            action_dim = int(ref_chunk.shape[-1]) if ref_chunk.dim() == 3 else 14
+            human_actions = intervene_actions.reshape(batch_size, -1, action_dim)
+            chunk_len = human_actions.shape[1]
+            flags = (
+                intervene_flags.reshape(batch_size, chunk_len, -1)
+                .to(device=ref_chunk.device)
+                .bool()
+                .any(dim=-1, keepdim=True)
+            )
+            ref_actions = ref_chunk.reshape(batch_size, -1, action_dim).clone()
+            o = _REF_OFFSET
+            if o + chunk_len > ref_actions.shape[1]:
+                raise ValueError(
+                    "RLT_REF_OFFSET=%d + chunk_len %d exceeds ref_chunk len %d"
+                    % (o, chunk_len, ref_actions.shape[1])
+                )
+            ref_actions[:, o : o + chunk_len] = torch.where(
+                flags,
+                human_actions.to(device=ref_chunk.device, dtype=ref_chunk.dtype),
+                ref_actions[:, o : o + chunk_len],
+            )
+            current_obs["ref_chunk"] = ref_actions.reshape_as(ref_chunk)
+        next_obs = extract_rlt_obs_from_forward_inputs(
+            policy_output.forward_inputs,
+            transition=True,
+        )
+        trajectory_builders[stage_id].append_transitions(
+            pending_obs[stage_id],
+            next_obs,
+        )
+        pending_obs[stage_id] = None
+
+    if cache_current:
+        pending_obs[stage_id] = extract_rlt_obs_from_forward_inputs(
+            policy_output.forward_inputs
+        )
 
 
 def apply_rlt_interventions(

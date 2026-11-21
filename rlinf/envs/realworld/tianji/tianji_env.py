@@ -196,11 +196,13 @@ class TianjiStepError(RuntimeError):
 
 
 def _hil_raw_lean(config) -> bool:
-    """11-06: training archive with the 30 Hz source recording (TIANJI_HIL_RAW_RECORDING=1):
+    """11-06: training/DAgger archive with the 30 Hz source recording (TIANJI_HIL_RAW_RECORDING=1):
     hil/ keeps only what hil_raw cannot replace (no transitions.jsonl / frames, no ~11.5 Hz
     camera stream, no per-inference full-size tactile)."""
     return bool(
-        config.episode_archive and config.recorder_dir and config.hil_mode == "training"
+        config.episode_archive
+        and config.recorder_dir
+        and config.hil_mode in {"training", "dagger"}
         and os.environ.get("TIANJI_HIL_RAW_RECORDING", "0") == "1"
     )
 
@@ -266,6 +268,7 @@ class TianjiConfig:
     hil_control: bool = False
     hil_port: int = 8879
     hil_mode: str = "training"
+    car_expected_subtasks: int | None = None
     reset_to_saved_pose: bool = True
     reset_after_episode: bool = True
     manual_episode_control_only: bool = False
@@ -308,8 +311,19 @@ class TianjiEnv(gym.Env):
             raise ValueError("step_frequency and max_num_steps must be positive")
         # The deployment's preflight requires step_frequency == TIANJI_CONTROL_HZ.
         self._car_deployment = os.environ.get("TIANJI_CAR_1118") == "1"
+        raw_car_subtasks = os.environ.get("TIANJI_CAR_NUM_SUBTASKS", "").strip()
+        self._car_expected_subtasks = (
+            int(config.car_expected_subtasks)
+            if config.car_expected_subtasks is not None
+            else (int(raw_car_subtasks) if raw_car_subtasks else (15 if self._car_deployment else None))
+        )
+        prompt_limit = (
+            max(4, self._car_expected_subtasks)
+            if self._car_deployment and self._car_expected_subtasks
+            else (15 if self._car_deployment else 4)
+        )
         self.subtask_prompts = (
-            load_subtask_prompts(config.subtask_prompts_file, limit=15 if self._car_deployment else 4)
+            load_subtask_prompts(config.subtask_prompts_file, limit=prompt_limit)
             if config.subtask_prompts_file
             else ()
         )
@@ -350,8 +364,11 @@ class TianjiEnv(gym.Env):
             }
         )
         if self._car_deployment:
-            if len(self.subtask_prompts) != 15 or not self.joint_actions:
-                raise ValueError("1118v1 requires joint actions and 15 numbered prompts")
+            expected_subtasks = self._car_expected_subtasks or 15
+            if len(self.subtask_prompts) != expected_subtasks or not self.joint_actions:
+                raise ValueError(
+                    f"car deployment requires joint actions and {expected_subtasks} numbered prompts"
+                )
             self.observation_space.spaces["car_stage_meta"] = gym.spaces.Box(
                 0, np.iinfo(np.int64).max, (6,), dtype=np.int64
             )
@@ -384,7 +401,7 @@ class TianjiEnv(gym.Env):
         )
         self.episode_archive = None
         if config.episode_archive and self._recorder is not None and (
-            config.hil_mode == "training" or self._car_deployment
+            config.hil_mode in {"training", "dagger"} or self._car_deployment
         ):
             try:
                 from .tianji_episode_archive import TianjiEpisodeArchive
@@ -486,7 +503,7 @@ class TianjiEnv(gym.Env):
                 tactile_enabled=config.tactile_enabled,
                 tactile_raw=bool(
                     config.tactile_raw_archive and config.episode_archive and config.recorder_dir
-                    and config.hil_mode == "training"
+                    and config.hil_mode in {"training", "dagger"}
                     # 11-06: hil_raw records every Xense frame at 30 Hz.
                     and not _hil_raw_lean(config)
                 ),
@@ -859,9 +876,10 @@ class TianjiEnv(gym.Env):
             time.sleep(0.1)
 
     def _ends_episode_on_fault(self):
-        """Stage2 training/inference outlive a failed step: the operator is present."""
+        """Stage2 training/dagger/inference outlive a failed step: the operator is present."""
         return self.hil is not None and self.config.hil_mode in {
             "training",
+            "dagger",
             "inference",
         }
 

@@ -75,9 +75,12 @@ class RealWorldEnv(gym.Env):
         hardware_info = None
         if worker_info is not None and env_idx < len(worker_info.hardware_infos):
             hardware_info = worker_info.hardware_infos[env_idx]
+        env_id = self.cfg.init_params.id
+        if isinstance(env_id, str) and env_id.startswith("Tianji"):
+            import rlinf.envs.realworld.tianji.tasks  # noqa: F401
         override_cfg = copy.deepcopy(self.override_cfg)
         env = gym.make(
-            id=self.cfg.init_params.id,
+            id=env_id,
             override_cfg=override_cfg,
             worker_info=worker_info,
             hardware_info=hardware_info,

@@ -55,6 +55,21 @@ def _openpi_is_dsrl(cfg: DictConfig) -> bool:
 
 
 class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
+    _RUNTIME_CHECKPOINT_FIELDS = (
+        "update_step",
+        "version",
+        "transitions_since_train",
+        "episodes_since_train",
+        "total_transitions_added",
+        "total_episodes_added",
+        "pending_update_budget",
+        "_warmup_ready_total_transitions",
+        "_warmup_ready_total_episodes",
+        "_preloaded_transitions",
+        "_ingested_transitions",
+        "_utd_updates_done",
+    )
+
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
 
@@ -201,6 +216,18 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 ),
             ),
         )
+
+        if self.cfg.algorithm.replay_buffer.get("load_path", None) is not None:
+            self.replay_buffer.load_checkpoint(
+                self.cfg.algorithm.replay_buffer.load_path,
+                is_distributed=True,
+                local_rank=self._rank,
+                world_size=self._world_size,
+            )
+            self.log_info(
+                f"replay buffer preloaded: {self.cfg.algorithm.replay_buffer.load_path} "
+                f"-> {self.replay_buffer.total_samples} samples"
+            )
 
         min_demo_buffer_size = 0
         if self.cfg.algorithm.get("demo_buffer", None) is not None:
@@ -834,6 +861,18 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         )
         self.replay_buffer.save_checkpoint(buffer_save_path)
 
+        runtime_state = {"checkpoint_step": int(self.update_step)}
+        for name in self._RUNTIME_CHECKPOINT_FIELDS:
+            if hasattr(self, name):
+                value = getattr(self, name)
+                if isinstance(value, (int, float, bool)):
+                    runtime_state[name] = value
+        runtime_path = os.path.join(
+            save_base_path, f"sac_components/runtime_state_rank_{self._rank}.pt"
+        )
+        os.makedirs(os.path.dirname(runtime_path), exist_ok=True)
+        torch.save(runtime_state, runtime_path)
+
     def load_checkpoint(self, load_base_path):
         # load model
         self._strategy.load_checkpoint(
@@ -875,3 +914,17 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             load_base_path, f"sac_components/replay_buffer/rank_{self._rank}"
         )
         self.replay_buffer.load_checkpoint(buffer_load_path)
+
+        runtime_path = os.path.join(
+            load_base_path, f"sac_components/runtime_state_rank_{self._rank}.pt"
+        )
+        if os.path.isfile(runtime_path):
+            runtime_state = torch.load(runtime_path, map_location="cpu")
+            for name in self._RUNTIME_CHECKPOINT_FIELDS:
+                if name in runtime_state:
+                    setattr(self, name, runtime_state[name])
+        else:
+            self.log_warning(
+                "Checkpoint has no runtime state at %s; update/version counters "
+                "remain at their defaults." % runtime_path
+            )

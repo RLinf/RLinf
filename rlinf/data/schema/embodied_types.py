@@ -131,6 +131,17 @@ class TrajectorySource:
         return sources
 
 
+# Chunk-level Tianji label tensors on EnvTransition / EnvOutput.
+LABEL_FIELDS = (
+    "iv_kind",
+    "exec_actions",
+    "exec_action_available",
+    "intervene_action_available",
+    "transition_padding",
+    "exec_actions_joint",
+    "intervene_actions_tcp",
+)
+
 # Collector inputs and their environment- or policy-owned payloads.
 
 
@@ -160,6 +171,14 @@ class EnvTransition:
     reward_assign_lengths: list[int] | None = None
     # Online LeRobot frame data for this chunk; batched entries start with [B, ...].
     episode_data: dict[str, Any] | None = None
+    # Tianji chunk-level intervention/execution labels.
+    iv_kind: torch.Tensor | None = None
+    exec_actions: torch.Tensor | None = None
+    exec_action_available: torch.Tensor | None = None
+    intervene_action_available: torch.Tensor | None = None
+    transition_padding: torch.Tensor | None = None
+    exec_actions_joint: torch.Tensor | None = None
+    intervene_actions_tcp: torch.Tensor | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -172,6 +191,7 @@ class EnvTransition:
             "intervene_flags",
             "rlt_switch_flags",
             "reward_model_output",
+            *LABEL_FIELDS,
         ):
             value = getattr(self, field_name)
             if value is not None:
@@ -209,6 +229,7 @@ class EnvTransition:
                 "intervene_actions",
                 "intervene_flags",
                 "rlt_switch_flags",
+                *LABEL_FIELDS,
             )
         }
 
@@ -740,7 +761,73 @@ class TrajectoryStep:
                 )
                 step.prev_logprobs = step.prev_logprobs.masked_fill(~expanded_mask, 0)
             step.forward_inputs["executed_mask"] = mask
-        if env.transition.intervene_actions is not None:
+        if (
+            env.transition.exec_actions is not None
+            and env.transition.iv_kind is not None
+        ):
+            bsz = int(env.transition.exec_actions.shape[0])
+            model_action = step.forward_inputs.get("model_action")
+            policy_action = model_action if model_action is not None else step.actions
+            if policy_action is not None:
+                step.forward_inputs.setdefault("policy_action", policy_action.clone())
+            exec_actions = (
+                env.transition.exec_actions.reshape(bsz, -1)
+                .to(torch.float32)
+                .cpu()
+                .contiguous()
+            )
+            step.actions = exec_actions
+            step.forward_inputs["action"] = exec_actions.clone()
+            step.forward_inputs.pop("model_action", None)
+            if env.transition.intervene_flags is not None:
+                step.set_intervention_flags(env.transition.intervene_flags)
+            elif (
+                step.intervene_flags is None
+                or step.intervene_flags.shape != step.actions.shape
+            ):
+                step.intervene_flags = torch.zeros_like(step.actions, dtype=torch.bool)
+            iv_kind = (
+                env.transition.iv_kind.reshape(bsz, -1)
+                .to(torch.int8)
+                .cpu()
+                .contiguous()
+            )
+            step.forward_inputs["iv_kind"] = iv_kind
+            flags = env.transition.rlt_switch_flags
+            if (
+                flags is not None
+                and flags.dim() == 2
+                and flags.shape[0] == bsz
+                and flags.shape[1] == iv_kind.shape[1]
+            ):
+                from rlinf.algorithms.rlt.human_bc import switch_steps_from_flags
+
+                step.forward_inputs["switch_step"] = (
+                    switch_steps_from_flags(flags)
+                    .reshape(bsz, -1)
+                    .to(torch.int8)
+                    .cpu()
+                    .contiguous()
+                )
+            step.forward_inputs["data_schema"] = torch.full(
+                (bsz, 1), 2, dtype=torch.int8
+            )
+            for key, value in (
+                ("exec_action_available", env.transition.exec_action_available),
+                ("human_bc_available", env.transition.intervene_action_available),
+                (
+                    "human_bc_actions",
+                    env.transition.intervene_actions
+                    if env.transition.intervene_action_available is not None
+                    else None,
+                ),
+                ("transition_padding", env.transition.transition_padding),
+                ("exec_action_joint", env.transition.exec_actions_joint),
+                ("human_bc_actions_tcp", env.transition.intervene_actions_tcp),
+            ):
+                if value is not None:
+                    step.forward_inputs[key] = value.reshape(bsz, -1).cpu().contiguous()
+        elif env.transition.intervene_actions is not None:
             step.apply_interventions(
                 env.transition.intervene_actions,
                 env.transition.intervene_flags,
@@ -816,11 +903,15 @@ class TrajectoryStep:
             if env.next_rlt_obs is None:
                 raise ValueError("RLT transitions require next-state features.")
             current_obs = extract_rlt_obs_from_forward_inputs(self.forward_inputs)
-            apply_rlt_interventions(
-                current_obs,
-                env.transition.intervene_actions,
-                env.transition.intervene_flags,
-            )
+            if not (
+                env.transition.exec_actions is not None
+                and env.transition.iv_kind is not None
+            ):
+                apply_rlt_interventions(
+                    current_obs,
+                    env.transition.intervene_actions,
+                    env.transition.intervene_flags,
+                )
             next_obs = env.next_rlt_obs
         elif collect_transitions:
             if env.next_obs is None:
@@ -1717,12 +1808,49 @@ class EnvOutput:
         """Return per-action RLT route choices."""
         return self.transition.rlt_switch_flags
 
+    @property
+    def iv_kind(self) -> torch.Tensor | None:
+        return self.transition.iv_kind
+
+    @property
+    def exec_actions(self) -> torch.Tensor | None:
+        return self.transition.exec_actions
+
+    @property
+    def exec_action_available(self) -> torch.Tensor | None:
+        return self.transition.exec_action_available
+
+    @property
+    def intervene_action_available(self) -> torch.Tensor | None:
+        return self.transition.intervene_action_available
+
+    @property
+    def transition_padding(self) -> torch.Tensor | None:
+        return self.transition.transition_padding
+
+    @property
+    def exec_actions_joint(self) -> torch.Tensor | None:
+        return self.transition.exec_actions_joint
+
+    @property
+    def intervene_actions_tcp(self) -> torch.Tensor | None:
+        return self.transition.intervene_actions_tcp
+
     def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
         """Select policy inputs and normalize task descriptions."""
         prepared = {key: obs.get(key) for key in PolicyObsSpec.KEYS}
         if obs.get("active_mask") is not None:
             prepared["active_mask"] = obs["active_mask"]
-        for key in ("reset_mask", "history"):
+        for key in (
+            "reset_mask",
+            "history",
+            "rlt_qvel",
+            "joint_states",
+            "tactile_images",
+            "tactile_valid",
+            "tactile_age_ms",
+            "car_stage_meta",
+        ):
             if key in obs:
                 prepared[key] = obs[key]
         task_descriptions = prepared["task_descriptions"]
@@ -2078,6 +2206,7 @@ def _observation_batch_size(obs: dict[str, Any]) -> int:
 
 
 __all__ = [
+    "LABEL_FIELDS",
     "TrajectoryKey",
     "TrajectorySource",
     "EnvTransition",

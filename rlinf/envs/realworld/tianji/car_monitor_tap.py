@@ -1,6 +1,7 @@
 """Optional one-way inference observation feed for the car monitor."""
 
 import io
+import os
 import queue
 import socket
 import threading
@@ -11,7 +12,11 @@ import numpy as np
 class MonitorTap:
     """Best-effort AF_UNIX datagrams. A slow subscriber never blocks rollout."""
 
-    def __init__(self, endpoint):
+    def __init__(self, endpoint, max_stage: int | None = None):
+        if max_stage is None:
+            raw_max = os.environ.get("TIANJI_CAR_NUM_SUBTASKS", "15").strip()
+            max_stage = int(raw_max) if raw_max else 15
+        self._max_stage = int(max_stage) if max_stage and int(max_stage) > 0 else None
         self._pending = queue.Queue(maxsize=4) if endpoint else None
         if self._pending is not None:
             threading.Thread(target=self._send, args=(endpoint,), daemon=True).start()
@@ -35,7 +40,9 @@ class MonitorTap:
                     if rlt.shape != (len(metadata), 2048) or joint.shape != (len(metadata), 16):
                         continue
                     for meta, z, state in zip(metadata, rlt, joint, strict=True):
-                        if meta[0] <= 0 or not meta[5] or not 1 <= meta[2] <= 15:
+                        if meta[0] <= 0 or not meta[5] or meta[2] < 1:
+                            continue
+                        if self._max_stage is not None and meta[2] > self._max_stage:
                             continue
                         if not np.isfinite(z).all() or not np.isfinite(state).all():
                             continue

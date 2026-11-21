@@ -330,7 +330,9 @@ def _encoder_python() -> str:
     explicit = os.environ.get("TIANJI_XENSE_ENCODER_PYTHON")
     if explicit:
         return explicit
-    marker = Path(os.environ.get("LOOPINFRA_ROOT", str(Path.home() / "LoopInfra_rtj"))) / ".loopinfra-python"
+    from .tianji_contract import default_loopinfra_root
+
+    marker = default_loopinfra_root() / ".loopinfra-python"
     try:
         return marker.read_text().strip() or "python3"
     except OSError:

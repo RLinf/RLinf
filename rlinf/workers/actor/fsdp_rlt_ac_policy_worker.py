@@ -37,7 +37,6 @@ from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
     append_to_dict,
     collect_trajectory_replay_metrics,
-    compute_split_num,
     trajectory_has_bool_tensor,
 )
 from rlinf.utils.utils import clear_memory
@@ -70,13 +69,28 @@ class RLTACLossMixin:
         return chunk_len, action_dim
 
     def _executor_grid_enabled(self) -> bool:
-        actor = self.cfg.get("actor") if hasattr(self.cfg, "get") else getattr(self.cfg, "actor", None)
-        model = (actor.get("model") if hasattr(actor, "get") else getattr(actor, "model", None))
-        return bool(model.get("executor_action_grid", False)) if hasattr(model, "get") else bool(getattr(model, "executor_action_grid", False))
+        actor = (
+            self.cfg.get("actor")
+            if hasattr(self.cfg, "get")
+            else getattr(self.cfg, "actor", None)
+        )
+        model = (
+            actor.get("model")
+            if hasattr(actor, "get")
+            else getattr(actor, "model", None)
+        )
+        if model is None:
+            return False
+        return bool(
+            model.get("executor_action_grid", False)
+            if hasattr(model, "get")
+            else getattr(model, "executor_action_grid", False)
+        )
 
-    def _action_grid(self) -> "ActionGrid":
-        from rlinf.algorithms.rlt.action_grid import ActionGrid
-        return ActionGrid.from_config(self.cfg.actor.model, default_offset=_RLT_REF_OFFSET)
+    def _action_grid(self) -> ActionGrid:
+        return ActionGrid.from_config(
+            self.cfg.actor.model, default_offset=_RLT_REF_OFFSET
+        )
 
     def _target_shape(self) -> tuple[int, int]:
         return self._action_grid().target_steps, int(self.cfg.actor.model.action_dim)
@@ -98,22 +112,39 @@ class RLTACLossMixin:
         plan = fi.get("target_policy_action") if grid.aligned else None
         if plan is None:
             if grid.changes_grid:
-                raise ValueError("executor-grid Q needs saved target_policy_action, not interpolated measured actions")
+                raise ValueError(
+                    "executor-grid Q needs saved target_policy_action, "
+                    "not interpolated measured actions"
+                )
             plan = fi["policy_action"]
         return plan
 
     def _env_reference(self, obs):
         grid = self._action_grid()
-        ref = obs["ref_chunk"].reshape(obs["ref_chunk"].shape[0], -1, int(self.cfg.actor.model.action_dim))
+        ref = obs["ref_chunk"].reshape(
+            obs["ref_chunk"].shape[0], -1, int(self.cfg.actor.model.action_dim)
+        )
         return grid.reference_env(ref)
 
     def _critic_joint_rel(self) -> bool:
-        return self.cfg.actor.model.get("critic_action_space", "critic") == "joint_rel"
+        mcfg = self.cfg.actor.model
+        val = (
+            mcfg.get("critic_action_space", "critic")
+            if hasattr(mcfg, "get")
+            else getattr(mcfg, "critic_action_space", "critic")
+        )
+        return val == "joint_rel"
 
     def _joint_actor(self) -> bool:
         """rtj joint Stage2: 16D joint actor, critic on 20D TCP actions."""
         _, action_dim = self._chunk_shape()
-        return int(self.cfg.actor.model.get("critic_action_dim", None) or action_dim) != action_dim
+        mcfg = self.cfg.actor.model
+        cad = (
+            mcfg.get("critic_action_dim", None)
+            if hasattr(mcfg, "get")
+            else getattr(mcfg, "critic_action_dim", None)
+        )
+        return int(cad or action_dim) != action_dim
 
     def _critic_actions(self, actions: torch.Tensor) -> torch.Tensor:
         """The actor's chunk as the critic reads it: in joint mode its TCP rows
@@ -121,27 +152,37 @@ class RLTACLossMixin:
         With critic_action_space joint_rel the critic reads the joint rows."""
         if not self._joint_actor() or self._critic_joint_rel():
             return self._flatten_chunk(actions) if self._critic_joint_rel() else actions
-        from rlinf.envs.realworld.tianji.tianji_kinematics import joint_chunk_rl_to_tcp_rl
+        from rlinf.envs.realworld.tianji.tianji_kinematics import (
+            joint_chunk_rl_to_tcp_rl,
+        )
 
         chunk_len, _ = self._target_shape()
         return joint_chunk_rl_to_tcp_rl(self._flatten_chunk(actions), chunk_len)
 
     @staticmethod
     def _with_vla_reference(batch, obs: dict) -> dict:
-        """schema 2 回放:参考一律用 VLA 原始输出(forward_inputs.ref_chunk);介入步的 curr_obs.ref_chunk
-        在旧数据里被改写成了人的动作,对残差 actor 那会把 BC 目标抹成 Δ=0(见 human_bc.py)。"""
-        fi = batch.get("forward_inputs") if isinstance(batch.get("forward_inputs"), dict) else {}
-        schema2 = isinstance(fi.get("data_schema"), torch.Tensor) and bool((fi["data_schema"].reshape(-1) == 2).all())
-        if schema2 and "ref_chunk" in fi:
+        """Schema-2 replay: always use raw VLA reference from forward_inputs.ref_chunk."""
+        fi = (
+            batch.get("forward_inputs")
+            if isinstance(batch.get("forward_inputs"), dict)
+            else {}
+        )
+        schema2 = isinstance(fi.get("data_schema"), torch.Tensor) and bool(
+            (fi["data_schema"].reshape(-1) == 2).all()
+        )
+        if schema2 and "ref_chunk" in fi and "ref_chunk" in obs:
             return {**obs, "ref_chunk": fi["ref_chunk"].to(obs["ref_chunk"].device)}
         return obs
 
     def _with_critic_plan(self, obs: dict) -> dict:
-        """actor.model.critic_relative_action: the VLA plan in the critic's
-        space, i.e. the reference rows of this chunk at the residual actor's
-        zero point (ref_tilde) through _critic_actions; an unchanged VLA chunk
-        is then a zero deviation for the critic."""
-        if not self.cfg.actor.model.get("critic_relative_action", False):
+        """Attach critic_plan in critic action space when critic_relative_action is enabled."""
+        mcfg = self.cfg.actor.model
+        enabled = (
+            mcfg.get("critic_relative_action", False)
+            if hasattr(mcfg, "get")
+            else getattr(mcfg, "critic_relative_action", False)
+        )
+        if not enabled:
             return obs
         with torch.no_grad():
             plan = self._critic_actions(ref_tilde(self._ref_chunk(obs)))
@@ -159,12 +200,15 @@ class RLTACLossMixin:
             obs["ref_chunk"].shape[0], -1, action_dim
         )
         if self._action_grid().aligned:
-            return self._action_grid().reference_targets(ref_chunk).reshape(ref_chunk.shape[0], -1)
-        # 与 rollout 侧同一偏移:动作块对应参考块的 [OFF, OFF+chunk_len)
+            return (
+                self._action_grid()
+                .reference_targets(ref_chunk)
+                .reshape(ref_chunk.shape[0], -1)
+            )
         if _RLT_REF_OFFSET + chunk_len > ref_chunk.shape[1]:
             raise ValueError(
-                "RLT_REF_OFFSET=%d + chunk_len=%d 超出参考块长度 %d"
-                % (_RLT_REF_OFFSET, chunk_len, ref_chunk.shape[1])
+                f"RLT_REF_OFFSET={_RLT_REF_OFFSET} + chunk_len={chunk_len} "
+                f"exceeds reference chunk length {ref_chunk.shape[1]}"
             )
         return ref_chunk[:, _RLT_REF_OFFSET : _RLT_REF_OFFSET + chunk_len].reshape(
             ref_chunk.shape[0], -1
@@ -186,20 +230,22 @@ class RLTACLossMixin:
         self._require_twin_q(all_q_values)
         return all_q_values[..., 0:1]
 
-    def _discounted_chunk_rewards(self, rewards: torch.Tensor) -> torch.Tensor:
+    def _discounted_chunk_rewards(
+        self, rewards: torch.Tensor, gamma: float | torch.Tensor
+    ) -> torch.Tensor:
+        """Discount each chunk's rewards with ``gamma``, a float or ``[B, 1]``."""
         rewards = rewards.reshape(rewards.shape[0], -1)
         rewards = rewards.to(self.torch_dtype)
         chunk_len = rewards.shape[-1]
         discounts = torch.pow(
-            torch.as_tensor(self.cfg.algorithm.gamma, device=rewards.device),
-            torch.arange(chunk_len, device=rewards.device, dtype=rewards.dtype),
-        )
+            torch.as_tensor(gamma, device=rewards.device, dtype=torch.float32),
+            torch.arange(chunk_len, device=rewards.device, dtype=torch.float32),
+        ).to(rewards.dtype)
         return torch.sum(rewards * discounts, dim=-1, keepdim=True)
 
     @staticmethod
     def _record_weight(batch) -> torch.Tensor | None:
-        """每个样本是否计入损失([B,1],1/0)。实机回放整段入库,"不记录"的块(每段开头原地保持的占位块等,
-        状态是空的)原先只用于统计记录率、仍参与训练;这里在损失里把它们屏蔽掉。"""
+        """Per-sample loss inclusion mask ([B, 1], 1/0) based on record_transition."""
         fi = batch.get("forward_inputs") if isinstance(batch, dict) else None
         rec = fi.get("record_transition") if isinstance(fi, dict) else None
         if not isinstance(rec, torch.Tensor):
@@ -210,7 +256,11 @@ class RLTACLossMixin:
     def _masked_mean(x: torch.Tensor, w: torch.Tensor | None) -> torch.Tensor:
         if w is None:
             return x.mean()
-        w = w.to(device=x.device, dtype=x.dtype).reshape(x.shape[0], *([1] * (x.dim() - 1))).expand_as(x)
+        w = (
+            w.to(device=x.device, dtype=x.dtype)
+            .reshape(x.shape[0], *([1] * (x.dim() - 1)))
+            .expand_as(x)
+        )
         return (x * w).sum() / w.sum().clamp_min(1.0)
 
     def _execution_weight(self, batch):
@@ -220,66 +270,70 @@ class RLTACLossMixin:
         return record
 
     def _takeover_mask(self, batch) -> torch.Tensor | None:
-        """[B, 1] chunks that began autonomous and then had a takeover step.
-
-        A1 rule for ``takeover_penalty``: the chunk's first step is a policy
-        step (iv_kind 0) and a later non-padding step is a takeover kind
-        (``takeover_kinds``; any non-zero kind when unset).
-        """
+        """[B, 1] chunks that began autonomous and then had a takeover step."""
         if float(self.cfg.algorithm.get("takeover_penalty", 0.0)) == 0.0:
             return None
-        fi = batch.get("forward_inputs") if isinstance(batch.get("forward_inputs"), dict) else {}
+        fi = (
+            batch.get("forward_inputs")
+            if isinstance(batch.get("forward_inputs"), dict)
+            else {}
+        )
         ivk = fi.get("iv_kind", None)
         if not isinstance(ivk, torch.Tensor):
             return None
         ivk = ivk.reshape(ivk.shape[0], -1)
-        # takeover_kinds narrows which steps count as a takeover (Tianji:
-        # 2 H-mode, 3 Pico; a pause hold is 1). Terminal padding never does.
         kinds = self.cfg.algorithm.get("takeover_kinds", None)
         entered = (
             ivk != 0
             if kinds is None
-            else torch.isin(ivk, torch.as_tensor(list(kinds), device=ivk.device, dtype=ivk.dtype))
+            else torch.isin(
+                ivk,
+                torch.as_tensor(list(kinds), device=ivk.device, dtype=ivk.dtype),
+            )
         )
         padding = fi.get("transition_padding", None)
         if isinstance(padding, torch.Tensor):
             entered = entered & ~padding.reshape_as(ivk).to(ivk.device).bool()
         return (ivk[:, :1] == 0) & entered.any(dim=-1, keepdim=True)
 
-    def _planned_takeovers(self, batch) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-        """Takeover chunks whose Q sample is labelled with the policy's plan.
-
-        Their executed action is incomplete (the step H came in and the holds
-        after it), so require_exec_action_validity drops them, and with them the
-        takeover penalty. With ``takeover_q_uses_policy_action`` they keep a Q
-        sample whose action is the plan the policy was executing, which led to
-        the takeover. Replays without ``policy_action`` keep the strict mask.
-        A joint actor's plan enters the critic as its TCP rows (policy_action_tcp,
-        stored only by joint Stage2).
-        """
+    def _planned_takeovers(
+        self, batch
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """Takeover chunks whose Q sample is labelled with the policy's plan."""
         if not self.cfg.algorithm.get("takeover_q_uses_policy_action", False):
             return None, None
-        fi = batch.get("forward_inputs") if isinstance(batch.get("forward_inputs"), dict) else {}
-        plan = (self._critic_actions(self._target_plan(batch)) if self._executor_grid_enabled()
-                else fi.get("policy_action_tcp", fi.get("policy_action", None)))
+        fi = (
+            batch.get("forward_inputs")
+            if isinstance(batch.get("forward_inputs"), dict)
+            else {}
+        )
+        plan = (
+            self._critic_actions(self._target_plan(batch))
+            if self._executor_grid_enabled()
+            else fi.get("policy_action_tcp", fi.get("policy_action", None))
+        )
         takeover = self._takeover_mask(batch)
         if not isinstance(plan, torch.Tensor) or takeover is None:
             return None, None
         return takeover, plan
 
-    def _commanded_policy_labels(self, batch, actions: torch.Tensor) -> torch.Tensor:
-        """Policy steps (iv_kind 0) labelled with the plan the actor commanded,
-        in the critic's space (policy_action_tcp for a joint actor): the action
-        the actor is queried with. Takeover and hold steps keep their measured
-        labels. 10-28 replay: the measured TCP after a policy step was 4.3 mm
-        (median) / 34 mm (p90) from its commanded row, not a 3-4 step lag."""
+    def _commanded_policy_labels(
+        self, batch, actions: torch.Tensor
+    ) -> torch.Tensor:
+        """Label policy steps (iv_kind == 0) with commanded policy plan in critic space."""
         if self._executor_grid_enabled() and self._action_grid().changes_grid:
             return self._critic_actions(self._target_plan(batch)).to(actions)
-        fi = batch.get("forward_inputs") if isinstance(batch.get("forward_inputs"), dict) else {}
+        fi = (
+            batch.get("forward_inputs")
+            if isinstance(batch.get("forward_inputs"), dict)
+            else {}
+        )
         plan = fi.get("policy_action_tcp", fi.get("policy_action", None))
         ivk = fi.get("iv_kind", None)
         if not isinstance(plan, torch.Tensor) or not isinstance(ivk, torch.Tensor):
-            raise ValueError("critic_policy_label=commanded needs policy_action and iv_kind in the replay")
+            raise ValueError(
+                "critic_policy_label=commanded needs policy_action and iv_kind in the replay"
+            )
         B = actions.shape[0]
         policy = ivk.reshape(B, -1).to(actions.device) == 0
         pad = fi.get("transition_padding", None)
@@ -290,14 +344,23 @@ class RLTACLossMixin:
         labels = torch.where(policy[..., None], plan, actions.reshape(B, steps, -1))
         return labels.reshape(actions.shape)
 
-    def _q_sample_weight(self, batch, takeover: torch.Tensor | None) -> torch.Tensor | None:
+    def _q_sample_weight(
+        self, batch, takeover: torch.Tensor | None
+    ) -> torch.Tensor | None:
         """Q-sample weight: executed-action validity, plus planned takeover chunks."""
         weight = self._execution_weight(batch)
         if self._executor_grid_enabled() and self._action_grid().changes_grid:
             fi = batch["forward_inputs"]
             auto = fi["iv_kind"].reshape(batch["actions"].shape[0], -1)[:, :1] == 0
             explicit = fi.get("target_exec_action_available")
-            known = torch.zeros_like(auto) if explicit is None else explicit.reshape(auto.shape[0], -1).bool().all(-1, keepdim=True).to(auto.device)
+            known = (
+                torch.zeros_like(auto)
+                if explicit is None
+                else explicit.reshape(auto.shape[0], -1)
+                .bool()
+                .all(-1, keepdim=True)
+                .to(auto.device)
+            )
             if weight is not None:
                 weight = weight * (auto | known).to(weight)
         if takeover is None or weight is None:
@@ -308,19 +371,24 @@ class RLTACLossMixin:
             keep = keep * record.to(device=weight.device, dtype=weight.dtype)
         return torch.where(takeover.to(weight.device), keep, weight)
 
-    def _smooth_loss(self, pi3: torch.Tensor, rt3: torch.Tensor, dims: list, sample_weight: torch.Tensor | None) -> torch.Tensor:
-        """残差(执行动作 − VLA 参考)沿时间的二阶差平方,只算关节维、只算残差路样本(sample_weight 已含)。
-        actor 逐维输出残差时 critic 梯度近似独立噪声,残差成了逐步锯齿(实测块内二阶差是纯 VLA 的 4 倍,真机明显抖动);
-        这里只惩罚残差的锯齿,不惩罚 VLA 本身的弯曲,也不限制残差的整体大小。"""
+    def _smooth_loss(
+        self,
+        pi3: torch.Tensor,
+        rt3: torch.Tensor,
+        dims: list,
+        sample_weight: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Second-difference smoothness penalty on residual (pi - ref_tilde) along time."""
         res = (pi3 - rt3)[..., dims]
-        d2 = (res[:, 2:] - 2 * res[:, 1:-1] + res[:, :-2]) * (self._action_grid().rate_ratio ** 2 if self._executor_grid_enabled() else 1.0)
+        rate = self._action_grid().rate_ratio**2 if self._executor_grid_enabled() else 1.0
+        d2 = (res[:, 2:] - 2 * res[:, 1:-1] + res[:, :-2]) * rate
         return self._masked_mean(d2.square().mean(dim=(-1, -2)), sample_weight)
 
     def _joint_dims(self) -> list:
         mcfg = self.cfg.actor.model
         _, action_dim = self._chunk_shape()
         if bool(mcfg.get("exclude_gripper_residual", False)):
-            g = set(int(x) for x in mcfg.get("gripper_dims", (6, 13)))
+            g = {int(x) for x in mcfg.get("gripper_dims", (6, 13))}
             return [d for d in range(action_dim) if d not in g]
         return list(range(action_dim))
 
@@ -329,10 +397,16 @@ class RLTACLossMixin:
             mcfg = self.cfg.actor.model
             scales = mcfg.get("action_scales", None)
             limits = mcfg.get("residual_limits", None)
-            self._residual_limit_cache = residual_limit_vector(
-                list(scales), float(mcfg.get("residual_limit_rad", 0.0)), tuple(mcfg.get("gripper_dims", (6, 13))),
-                limits=list(limits) if limits is not None else None,
-            ) if scales is not None else None
+            self._residual_limit_cache = (
+                residual_limit_vector(
+                    list(scales),
+                    float(mcfg.get("residual_limit_rad", 0.0)),
+                    tuple(mcfg.get("gripper_dims", (6, 13))),
+                    limits=list(limits) if limits is not None else None,
+                )
+                if scales is not None
+                else None
+            )
         return self._residual_limit_cache
 
     def _bc_metrics(
@@ -346,7 +420,6 @@ class RLTACLossMixin:
         chunk_len, action_dim = self._chunk_shape()
         pi_chunk = self._flatten_chunk(pi).reshape(-1, chunk_len, action_dim)
         action_chunk = self._flatten_chunk(actions).reshape(-1, chunk_len, action_dim)
-        # ref_chunk 已由 _ref_chunk 按偏移切好
         bc_ref_chunk = self._flatten_chunk(ref_chunk).reshape(
             ref_chunk.shape[0], chunk_len, action_dim
         )
@@ -468,21 +541,18 @@ class RLTACLossMixin:
         return bc_weight, q_weight, metrics
 
     def _stage_boundary_not_done(self, curr_obs, next_obs) -> torch.Tensor:
-        """阶段边界截断:跨阶段的那一步对"刚做完的阶段"视为终止,目标就是 r,不再自举。
-
-        为什么要截断(而不是跨模块自举):
-        - 真值 Q_k(边界)=1+γ·V_{k+1}(s'),其中对 s' 的依赖在几十到一百条边界样本、
-          2048 维特征下学不出来,剩下的只是一个常数加噪声;常数只把 Q_k 整体缩放,
-          不改变 argmax_a,所以截断不丢有用信息。
-        - 截断后每个阶段的 Q 都落在 [0,1],与论文单任务 0/1 稀疏奖励同量纲,
-          q_weight/bc_weight 才能直接沿用;否则靠前阶段的 Q 会累积到 2 以上,
-          等于每个阶段的 RL 强度都不一样。
-        - 八个阶段彻底解耦,后面阶段学歪不会顺着自举链污染前面。
-
-        阶段号来自 proprio 尾部的 one-hot(见 algorithms/rlt/rollout.py 的 _append_stage_onehot),
-        所以这里不需要任何新字段。
-        """
-        n = int(os.environ.get("RLT_NUM_STAGES", "8"))
+        """Truncate cross-stage bootstrap so each stage's Q stays decoupled."""
+        mcfg = getattr(getattr(self, "cfg", None), "actor", None)
+        model_cfg = getattr(mcfg, "model", None)
+        n_default = os.environ.get("RLT_NUM_STAGES", "8")
+        if model_cfg is not None:
+            n = int(
+                model_cfg.get("stage_onehot_dim", n_default)
+                if hasattr(model_cfg, "get")
+                else getattr(model_cfg, "stage_onehot_dim", n_default)
+            )
+        else:
+            n = int(n_default)
         if n <= 0:
             return torch.ones(1, 1, dtype=torch.bool, device=self.device)
         try:
@@ -504,112 +574,187 @@ class RLTACLossMixin:
         )
         return self._critic_actions(next_actions), log_pi, dropped
 
-    def _penalty_and_rewards(self, batch):
-        """Per-chunk (discounted rewards with the stage time cost, penalty, takeover).
-
-        Rewards keep the +1 of a completed stage; each real step costs
-        1 / T_k (algorithm.stage_time_cost_steps, the stage's median length in
-        successful episodes), so a stage's value runs from about 0 to 1 along
-        its time to completion. A "当前步失败" (-1) and a takeover (-1, no
-        bootstrap) count once per chunk, -1 in total."""
+    def _penalty_and_rewards(self, batch, gamma: float | torch.Tensor | None = None):
+        """Per-chunk (discounted rewards with stage time cost, penalty, takeover)."""
         fi = batch["forward_inputs"]
-        rewards = batch["rewards"].reshape(batch["rewards"].shape[0], -1).to(self.torch_dtype)
+        rewards = (
+            batch["rewards"]
+            .reshape(batch["rewards"].shape[0], -1)
+            .to(self.torch_dtype)
+        )
         B, C = rewards.shape
-        n = int(os.environ.get("RLT_NUM_STAGES", "8"))
+        mcfg = getattr(self.cfg.actor, "model", None)
+        n_default = os.environ.get("RLT_NUM_STAGES", "8")
+        n = int(
+            mcfg.get("stage_onehot_dim", n_default)
+            if hasattr(mcfg, "get")
+            else getattr(mcfg, "stage_onehot_dim", n_default)
+        )
         stage = self._flatten_chunk(batch["curr_obs"]["proprio"])[:, -n:].argmax(-1)
-        T = torch.as_tensor(list(self.cfg.algorithm.stage_time_cost_steps), device=rewards.device, dtype=rewards.dtype)
+        T = torch.as_tensor(
+            list(self.cfg.algorithm.stage_time_cost_steps),
+            device=rewards.device,
+            dtype=rewards.dtype,
+        )
         real = ~fi["transition_padding"].reshape(B, C).to(rewards.device).bool()
-        step_r = rewards.clamp(min=0.0) - real.to(rewards.dtype) / T[stage.clamp(max=len(T) - 1)][:, None]
-        discounts = torch.pow(torch.as_tensor(self.cfg.algorithm.gamma, device=rewards.device),
-                              torch.arange(C, device=rewards.device, dtype=rewards.dtype))
+        step_r = (
+            rewards.clamp(min=0.0)
+            - real.to(rewards.dtype) / T[stage.clamp(max=len(T) - 1)][:, None]
+        )
+        if gamma is None:
+            gamma = (
+                self._env_values("gamma", batch.get("env_index"), torch.float32)
+                if hasattr(self, "_env_values")
+                else self.cfg.algorithm.gamma
+            )
+        discounts = torch.pow(
+            torch.as_tensor(gamma, device=rewards.device, dtype=torch.float32),
+            torch.arange(C, device=rewards.device, dtype=torch.float32),
+        ).to(rewards.dtype)
         takeover = self._takeover_mask(batch)
-        takeover = torch.zeros(B, 1, dtype=torch.bool, device=rewards.device) if takeover is None else takeover.to(rewards.device).bool()
+        takeover = (
+            torch.zeros(B, 1, dtype=torch.bool, device=rewards.device)
+            if takeover is None
+            else takeover.to(rewards.device).bool()
+        )
         failed = (rewards < 0).any(-1, keepdim=True)
         penalty = (failed | takeover).to(rewards.dtype)
         return (step_r * discounts).sum(-1, keepdim=True) - penalty, penalty, takeover
 
     def _forward_critic_vboot(self, batch):
-        """algorithm.critic_target: v_bootstrap (10-28 evening).
-
-        Q(s, a) and a state-only V(s) both regress on r + gamma^C * V_target(s')
-        over the recorded transitions; nothing bootstraps through the actor's
-        own (out-of-data) actions, which drove Q above 1 at 12:58. Q learns
-        from chunks the policy began (its action is the policy's joint plan);
-        V from every chunk (algorithm.critic_value_samples: all) or the same."""
+        """algorithm.critic_target: v_bootstrap."""
         self._validate_action_grid(batch)
-        curr_obs, next_obs, fi = batch["curr_obs"], batch["next_obs"], batch["forward_inputs"]
+        curr_obs, next_obs, fi = (
+            batch["curr_obs"],
+            batch["next_obs"],
+            batch["forward_inputs"],
+        )
         chunk_len, _ = self._chunk_shape()
-        B = curr_obs["z_rl"].shape[0]
-        reward, penalty, takeover = self._penalty_and_rewards(batch)
-        done = batch["terminations"].reshape(B, -1).bool().any(-1, keepdim=True).to(reward.device)
-        not_done = ~done & self._stage_boundary_not_done(curr_obs, next_obs).to(reward.device) & ~takeover
+        B = batch["actions"].shape[0]
+        gamma = (
+            self._env_values("gamma", batch.get("env_index"), torch.float32)
+            if hasattr(self, "_env_values")
+            else self.cfg.algorithm.gamma
+        )
+        reward, penalty, takeover = self._penalty_and_rewards(batch, gamma=gamma)
+        done = (
+            batch["terminations"]
+            .reshape(B, -1)
+            .bool()
+            .any(-1, keepdim=True)
+            .to(reward.device)
+        )
+        not_done = (
+            ~done
+            & self._stage_boundary_not_done(curr_obs, next_obs).to(reward.device)
+            & ~takeover
+        )
         with torch.no_grad():
-            self.target_model.eval()               # the target V without the critic's dropout
-            v_next = self.target_model(forward_type=ForwardType.SAC_Q, obs=next_obs, value=True)
-            target = reward + not_done.to(reward.dtype) * self.cfg.algorithm.gamma ** chunk_len * v_next.to(reward.dtype)
+            self.target_model.eval()
+            v_next = self.target_model(
+                forward_type=ForwardType.SAC_Q, obs=next_obs, value=True
+            )
+            bootstrap_discount = (
+                gamma**chunk_len
+                if not isinstance(gamma, torch.Tensor)
+                else (gamma**chunk_len).to(device=reward.device, dtype=reward.dtype)
+            )
+            target = (
+                reward
+                + not_done.to(reward.dtype)
+                * bootstrap_discount
+                * v_next.to(reward.dtype)
+            )
         data_obs = curr_obs
         noise = float(self.cfg.algorithm.get("critic_z_noise_frac", 0.0))
-        if noise > 0:                              # 同 actor 的 z_noise_frac:不让 critic 只靠 2048 维 z 记住每条样本的回报
+        if noise > 0 and "z_rl" in curr_obs:
             z = curr_obs["z_rl"]
-            data_obs = {**curr_obs, "z_rl": z + torch.randn_like(z) * z.std(dim=0, keepdim=True) * noise}
+            data_obs = {
+                **curr_obs,
+                "z_rl": z + torch.randn_like(z) * z.std(dim=0, keepdim=True) * noise,
+            }
         ivk = fi["iv_kind"].reshape(B, chunk_len).to(reward.device)
         auto = (ivk[:, :1] == 0).to(reward.dtype)
         record = self._record_weight(batch)
         record = torch.ones_like(auto) if record is None else record.to(auto)
-        # Q: chunks the policy began; a takeover chunk keeps its plan (and -1) though its
-        # execution labels are incomplete, other chunks need their execution valid.
         valid = self._execution_weight(batch)
         valid = record if valid is None else valid.to(auto)
         q_w = torch.where(takeover, record, valid) * auto
-        v_w = valid if self.cfg.algorithm.get("critic_value_samples", "all") == "all" else q_w
+        v_w = (
+            valid
+            if self.cfg.algorithm.get("critic_value_samples", "all") == "all"
+            else q_w
+        )
         if self.cfg.algorithm.get("critic_balance_penalized", False):
-            # Penalized chunks are 3-4% of Q samples; weigh both classes equally
-            # (as the classifier that found them, AUC 0.93).
-            # 10-30: critic_balance_target (default 0.5) is the share of the loss mass the
-            # penalized class gets; below 0.5 the classifier stays closer to calibrated.
             pen_m = (penalty > 0).to(q_w.dtype) * q_w
             p = (pen_m.sum() / q_w.sum().clamp_min(1.0)).clamp(0.01, 0.99)
             bt = float(self.cfg.algorithm.get("critic_balance_target", 0.5))
             q_w = q_w * torch.where(penalty > 0, bt / p, (1 - bt) / (1 - p))
-        actions = self._target_plan(batch).reshape(B, -1).to(device=reward.device, dtype=reward.dtype)
+        actions = (
+            self._target_plan(batch)
+            .reshape(B, -1)
+            .to(device=reward.device, dtype=reward.dtype)
+        )
         chs_mode = self.cfg.algorithm.get("critic_human_samples", "none")
         if self._executor_grid_enabled() and self._action_grid().changes_grid:
-            # A 30 Hz human observation is not a measured 45 Hz command. Only
-            # explicit target-clock labels from a converter/recorder qualify.
             metrics_human_q = 0.0
             hj = fi.get("target_exec_action_joint")
             available = fi.get("target_exec_action_available")
-            if chs_mode in ("within_cap", "all") and isinstance(hj, torch.Tensor) and isinstance(available, torch.Tensor):
+            if (
+                chs_mode in ("within_cap", "all")
+                and isinstance(hj, torch.Tensor)
+                and isinstance(available, torch.Tensor)
+            ):
                 target_steps, action_dim = self._target_shape()
                 hj3 = hj.reshape(B, target_steps, action_dim).to(actions)
                 real = ~fi["transition_padding"].reshape(B, chunk_len).to(reward.device).bool()
-                moving = (ivk == 3) & fi["human_bc_available"].reshape(B, chunk_len).to(ivk.device).bool() & real
+                moving = (
+                    (ivk == 3)
+                    & fi["human_bc_available"].reshape(B, chunk_len).to(ivk.device).bool()
+                    & real
+                )
                 frac = moving.sum(1) / real.sum(1).clamp_min(1)
                 known = available.reshape(B, target_steps).to(ivk.device).bool().all(1)
-                ref3 = self._ref_chunk(self._with_vla_reference(batch, curr_obs)).reshape_as(hj3).to(hj3)
-                within = ((hj3 - ref_tilde(ref3)).abs() <= self._residual_limit().to(hj3)).all((1, 2))
-                human_q = (ivk[:, 0] != 0) & (frac >= .8) & known
+                ref3 = (
+                    self._ref_chunk(self._with_vla_reference(batch, curr_obs))
+                    .reshape_as(hj3)
+                    .to(hj3)
+                )
+                within = (
+                    (hj3 - ref_tilde(ref3)).abs() <= self._residual_limit().to(hj3)
+                ).all((1, 2))
+                human_q = (ivk[:, 0] != 0) & (frac >= 0.8) & known
                 if chs_mode == "within_cap":
                     human_q = human_q & within
                 actions = torch.where(human_q[:, None], hj3.reshape(B, -1), actions)
                 q_w = torch.where(human_q[:, None], valid, q_w)
                 metrics_human_q = float(human_q.float().sum())
         elif chs_mode in ("within_cap", "all"):
-            # 10-29: human chunks as Q samples (RLT paper: the intervention is the
-            # executed action in the replay). Only chunks the human drove from the
-            # first step, with >= 80% Pico-moving steps and every joint within the
-            # residual cap of the VLA reference (the same "small correction" rule
-            # as the human BC); their action is the executed joint chunk, their
-            # penalty label only a "当前步失败" (-1), never a takeover.
-            hj = fi.get("exec_action_joint", None); hb = fi.get("human_bc_available", None); limit = self._residual_limit()
-            if isinstance(hj, torch.Tensor) and isinstance(hb, torch.Tensor) and limit is not None:
+            hj = fi.get("exec_action_joint", None)
+            hb = fi.get("human_bc_available", None)
+            limit = self._residual_limit()
+            if (
+                isinstance(hj, torch.Tensor)
+                and isinstance(hb, torch.Tensor)
+                and limit is not None
+            ):
                 real = ~fi["transition_padding"].reshape(B, chunk_len).to(reward.device).bool()
                 moving = (ivk == 3) & hb.reshape(B, chunk_len).to(reward.device).bool() & real
                 frac = moving.sum(1) / real.sum(1).clamp_min(1)
-                hj3 = hj.reshape(B, chunk_len, -1).to(device=reward.device, dtype=reward.dtype)
-                ref3 = ref_tilde(self._ref_chunk(self._with_vla_reference(batch, curr_obs)).reshape(B, chunk_len, -1)).to(hj3)
+                hj3 = hj.reshape(B, chunk_len, -1).to(
+                    device=reward.device, dtype=reward.dtype
+                )
+                ref3 = ref_tilde(
+                    self._ref_chunk(self._with_vla_reference(batch, curr_obs)).reshape(
+                        B, chunk_len, -1
+                    )
+                ).to(hj3)
                 within = ((hj3 - ref3).abs() <= limit.to(hj3)).all(-1) | ~real
-                human_q = (ivk[:, 0] != 0) & (frac >= 0.8) & (within.all(1) if chs_mode == "within_cap" else True)
+                human_q = (
+                    (ivk[:, 0] != 0)
+                    & (frac >= 0.8)
+                    & (within.all(1) if chs_mode == "within_cap" else True)
+                )
                 actions = torch.where(human_q[:, None], hj3.reshape(B, -1), actions)
                 q_w = torch.where(human_q[:, None], valid, q_w)
                 metrics_human_q = float(human_q.float().sum())
@@ -621,66 +766,108 @@ class RLTACLossMixin:
         target = target.to(v.dtype)
         v_loss = self._masked_mean(torch.square(v - target), v_w)
         penalty_only = bool(getattr(self.model, "critic_penalty_only", False))
-        if penalty_only:                           # 10-30: no TD value at all, Q = -phat (model critic_penalty_only)
-            v = v.detach(); v_loss = torch.zeros_like(v_loss)
+        if penalty_only:
+            v = v.detach()
+            v_loss = torch.zeros_like(v_loss)
         penalty_head = bool(self.cfg.actor.model.get("critic_penalty_head", False))
         metrics = {"human_q_samples": metrics_human_q}
         if penalty_head:
-            # Q = V + pbar - phat (model critic_penalty_head): phat(s, a) and
-            # pbar(s) are classifiers of "this chunk got F or a takeover" on the
-            # chunks the policy began, both classes weighed equally
-            # (critic_balance_penalized); V regresses on the TD target above.
-            logits = self.model(forward_type=ForwardType.SAC_Q, obs=data_obs, actions=actions, penalty_logits=True)
-            prior = self.model(forward_type=ForwardType.SAC_Q, obs=data_obs, penalty_prior=True)
+            logits = self.model(
+                forward_type=ForwardType.SAC_Q,
+                obs=data_obs,
+                actions=actions,
+                penalty_logits=True,
+            )
+            prior = self.model(
+                forward_type=ForwardType.SAC_Q, obs=data_obs, penalty_prior=True
+            )
             label = (penalty > 0).to(logits.dtype)
-            if (int(self.cfg.algorithm.get("critic_penalty_window", 1)) >= 2 or float(self.cfg.algorithm.get("critic_penalty_decay", 0.0)) > 0) \
-                    and isinstance(fi.get("penalty_next"), torch.Tensor):
-                # 10-30: penalty_next (replay ingestion, _attach_penalty_window) is 1 for "a penalty
-                # within the next critic_penalty_window - 1 chunks", or the soft gamma^(d - 1) of the
-                # distance d to the next penalty with critic_penalty_decay; the label is the max of
-                # this chunk's own penalty and that (a Monte-Carlo target, nothing bootstraps).
-                label = torch.maximum(label, fi["penalty_next"].reshape(B, 1).to(device=label.device, dtype=label.dtype).clamp(0, 1))
+            if (
+                int(self.cfg.algorithm.get("critic_penalty_window", 1)) >= 2
+                or float(self.cfg.algorithm.get("critic_penalty_decay", 0.0)) > 0
+            ) and isinstance(fi.get("penalty_next"), torch.Tensor):
+                label = torch.maximum(
+                    label,
+                    fi["penalty_next"]
+                    .reshape(B, 1)
+                    .to(device=label.device, dtype=label.dtype)
+                    .clamp(0, 1),
+                )
             eps = float(self.cfg.algorithm.get("critic_penalty_label_smooth", 0.0))
             if eps > 0:
                 label = label * (1 - 2 * eps) + eps
-            p_loss = self._masked_mean(F.binary_cross_entropy_with_logits(logits, label.expand_as(logits), reduction="none"), q_w)
-            prior_loss = self._masked_mean(F.binary_cross_entropy_with_logits(prior, label, reduction="none"), q_w)
+            p_loss = self._masked_mean(
+                F.binary_cross_entropy_with_logits(
+                    logits, label.expand_as(logits), reduction="none"
+                ),
+                q_w,
+            )
+            prior_loss = self._masked_mean(
+                F.binary_cross_entropy_with_logits(prior, label, reduction="none"),
+                q_w,
+            )
             q_loss = p_loss + prior_loss
-            pen2q = self.model.penalty_to_q if hasattr(self.model, "penalty_to_q") else torch.sigmoid
+            pen2q = getattr(self.model, "penalty_to_q", torch.sigmoid)
             with torch.no_grad():
-                q = -pen2q(logits) if penalty_only else v + pen2q(prior) - pen2q(logits)
-            metrics.update({"p_loss": p_loss.item(), "prior_loss": prior_loss.item()})
+                q = (
+                    -pen2q(logits)
+                    if penalty_only
+                    else v + pen2q(prior) - pen2q(logits)
+                )
+            metrics.update(
+                {"p_loss": p_loss.item(), "prior_loss": prior_loss.item()}
+            )
         else:
-            q = self.model(forward_type=ForwardType.SAC_Q, obs=data_obs, actions=actions)
+            q = self.model(
+                forward_type=ForwardType.SAC_Q, obs=data_obs, actions=actions
+            )
             q_loss = self._masked_mean(torch.square(q - target.expand_as(q)), q_w)
         alpha = float(self.cfg.algorithm.get("critic_conservative_alpha", 0.0))
         cons_gap = None
         if alpha > 0:
-            # Conservative term: the actor's own plan may not look better than
-            # the data plan at the same state; only the excess is penalized
-            # (relu), so Q is not pushed down on plans it already rates lower.
-            # The 10-28 evening form (the mean gap, unbounded) sent Q to -70.
             with torch.no_grad():
-                pi, _, _ = self.model(forward_type=ForwardType.SAC, obs=self._with_vla_reference(batch, curr_obs), deterministic=True)
+                pi, _, _ = self.model(
+                    forward_type=ForwardType.SAC,
+                    obs=self._with_vla_reference(batch, curr_obs),
+                    deterministic=True,
+                )
             pi = self._critic_actions(pi)
             has = (q_w > 0).to(q_w.dtype)
             if penalty_head:
-                p_pi = pen2q(self.model(forward_type=ForwardType.SAC_Q, obs=data_obs, actions=pi, penalty_logits=True))
-                gap = pen2q(logits).detach() - p_pi               # Q(pi) - Q(data plan), in Q units
+                p_pi = pen2q(
+                    self.model(
+                        forward_type=ForwardType.SAC_Q,
+                        obs=data_obs,
+                        actions=pi,
+                        penalty_logits=True,
+                    )
+                )
+                gap = pen2q(logits).detach() - p_pi
             else:
-                gap = self.model(forward_type=ForwardType.SAC_Q, obs=data_obs, actions=pi) - q.detach()
+                gap = (
+                    self.model(
+                        forward_type=ForwardType.SAC_Q, obs=data_obs, actions=pi
+                    )
+                    - q.detach()
+                )
             q_loss = q_loss + alpha * self._masked_mean(F.relu(gap), has)
             cons_gap = float(self._masked_mean(gap.detach(), has))
         with torch.no_grad():
             adv = q[:, :1] - v
-            pen = (penalty > 0) & (q_w > 0); ok = (penalty == 0) & (q_w > 0)
-            metrics.update({
-                "q_data": float(self._masked_mean(q[:, :1], q_w)), "v_data": float(self._masked_mean(v, v_w)),
-                "td_target": float(self._masked_mean(target, q_w)), "q_loss": float(q_loss), "v_loss": float(v_loss),
-                "penalized_ratio": float(pen.float().sum() / q_w.sum().clamp_min(1.0)),
-                "adv_penalized": float(adv[pen].mean()) if pen.any() else 0.0,
-                "adv_ok": float(adv[ok].mean()) if ok.any() else 0.0,
-            })
+            pen = (penalty > 0) & (q_w > 0)
+            ok = (penalty == 0) & (q_w > 0)
+            metrics.update(
+                {
+                    "q_data": float(self._masked_mean(q[:, :1], q_w)),
+                    "v_data": float(self._masked_mean(v, v_w)),
+                    "td_target": float(self._masked_mean(target, q_w)),
+                    "q_loss": float(q_loss),
+                    "v_loss": float(v_loss),
+                    "penalized_ratio": float(pen.float().sum() / q_w.sum().clamp_min(1.0)),
+                    "adv_penalized": float(adv[pen].mean()) if pen.any() else 0.0,
+                    "adv_ok": float(adv[ok].mean()) if ok.any() else 0.0,
+                }
+            )
             if penalty_head:
                 phat = torch.sigmoid(logits).amax(-1, keepdim=True)
                 metrics["phat_penalized"] = float(phat[pen].mean()) if pen.any() else 0.0
@@ -703,12 +890,16 @@ class RLTACLossMixin:
         next_obs = batch["next_obs"]
         critic_obs = self._with_critic_plan(self._with_vla_reference(batch, curr_obs))
         next_critic_obs = self._with_critic_plan(next_obs)
-        actions = (self._critic_actions(self._target_plan(batch)) if self._executor_grid_enabled() and self._action_grid().changes_grid
-                   else batch["actions"])
+        actions = (
+            self._critic_actions(self._target_plan(batch))
+            if self._executor_grid_enabled() and self._action_grid().changes_grid
+            else batch["actions"]
+        )
         planned, plan = self._planned_takeovers(batch)
         if planned is not None:
-            # A takeover chunk's Q sample uses the plan that led to the takeover.
-            plan = plan.reshape(actions.shape).to(device=actions.device, dtype=actions.dtype)
+            plan = plan.reshape(actions.shape).to(
+                device=actions.device, dtype=actions.dtype
+            )
             pick = planned.to(actions.device).reshape(-1, *([1] * (actions.dim() - 1)))
             actions = torch.where(pick, plan, actions)
         if self.cfg.algorithm.get("critic_policy_label", "measured") == "commanded":
@@ -721,7 +912,9 @@ class RLTACLossMixin:
         not_done = ~done_source.reshape(done_source.shape[0], -1).bool().any(
             dim=-1, keepdim=True
         )
-        not_done = not_done & self._stage_boundary_not_done(curr_obs, next_obs)
+        not_done = not_done & self._stage_boundary_not_done(curr_obs, next_obs).to(
+            not_done.device
+        )
 
         with torch.no_grad():
             next_actions, _, _ = self._next_actions_for_critic_target(next_obs)
@@ -743,9 +936,12 @@ class RLTACLossMixin:
                 )
                 q_next = self._min_twin_q(all_qf_next.detach())
 
-            reward_target = self._discounted_chunk_rewards(rewards)
-            # 接手惩罚(09-28 离线验证:critic 才能学出"跑错方向 = 更差",actor 在留出接手前块上约 2/3 更朝人纠正方向):
-            # 本块内由自主转为介入(块首步自主、块内出现介入标记)→ 奖励加 takeover_penalty,且不再往后自举。
+            gamma = (
+                self._env_values("gamma", batch.get("env_index"), torch.float32)
+                if hasattr(self, "_env_values")
+                else self.cfg.algorithm.gamma
+            )
+            reward_target = self._discounted_chunk_rewards(rewards, gamma)
             tp = float(self.cfg.algorithm.get("takeover_penalty", 0.0))
             takeover = self._takeover_mask(batch)
             if takeover is not None:
@@ -754,14 +950,15 @@ class RLTACLossMixin:
                 not_done = not_done & ~takeover.to(not_done.device)
                 self._last_takeover_ratio = float(takeover.float().mean())
             reward_horizon = int(rewards.reshape(rewards.shape[0], -1).shape[-1])
-            bootstrap_discount = self.cfg.algorithm.gamma**reward_horizon
+            bootstrap_discount = gamma**reward_horizon
+            if isinstance(bootstrap_discount, torch.Tensor):
+                bootstrap_discount = bootstrap_discount.to(self.torch_dtype)
             if bootstrap_type == "always":
                 target_q_values = reward_target + bootstrap_discount * q_next
             elif bootstrap_type == "standard":
                 target_q_values = reward_target + not_done * bootstrap_discount * q_next
             else:
                 raise NotImplementedError(f"{bootstrap_type=} is not supported!")
-            # 可选:TD 目标裁剪。奖励非负时 Q>=0 恒成立,下界 0 可消掉双 Q 取 min 累积出的负基线
             q_target_min = self.cfg.algorithm.get("q_target_min", None)
             q_target_max = self.cfg.algorithm.get("q_target_max", None)
             if q_target_min is not None or q_target_max is not None:
@@ -774,9 +971,13 @@ class RLTACLossMixin:
         if not use_crossq:
             data_obs = critic_obs
             critic_z_noise = float(self.cfg.algorithm.get("critic_z_noise_frac", 0.0))
-            if critic_z_noise > 0:            # 同 actor 的 z_noise_frac:不让 critic 只靠 2048 维 z 记住每条样本的回报
+            if critic_z_noise > 0 and "z_rl" in critic_obs:
                 z = critic_obs["z_rl"]
-                data_obs = {**critic_obs, "z_rl": z + torch.randn_like(z) * z.std(dim=0, keepdim=True) * critic_z_noise}
+                data_obs = {
+                    **critic_obs,
+                    "z_rl": z
+                    + torch.randn_like(z) * z.std(dim=0, keepdim=True) * critic_z_noise,
+                }
             all_data_q_values = self.model(
                 forward_type=ForwardType.SAC_Q,
                 obs=data_obs,
@@ -794,11 +995,16 @@ class RLTACLossMixin:
         target_q_values = target_q_values.to(dtype=all_data_q_values.dtype)
         sample_weight = self._q_sample_weight(batch, planned)
         critic_loss = self._masked_mean(
-            torch.square(all_data_q_values - target_q_values.expand_as(all_data_q_values)),
+            torch.square(
+                all_data_q_values - target_q_values.expand_as(all_data_q_values)
+            ),
             sample_weight,
         )
         metrics = {"q_data": all_data_q_values.mean().item()}
-        if self.cfg.algorithm.get("require_exec_action_validity", False):
+        if (
+            self.cfg.algorithm.get("require_exec_action_validity", False)
+            and sample_weight is not None
+        ):
             metrics["critic_valid_ratio"] = sample_weight.mean().item()
         if takeover is not None:
             metrics["takeover_ratio"] = self._last_takeover_ratio
@@ -808,30 +1014,22 @@ class RLTACLossMixin:
 
     @torch.no_grad()
     def _correction_metrics(self, batch, obs: dict) -> dict:
-        """Does the critic know which way the human corrected? On the human
-        chunks in the batch (joint actor): the human drives the chunk from its
-        first step and at least 80% of its real steps are Pico moves (iv_kind
-        3) with human_bc_available. The steps right after H, while the operator
-        picks up the Pico (iv_kind 2, a median 52-79 steps), are no correction;
-        counted in, they made every direction test look good (10-28 night).
-        At the chunk's start state, with the actor's Q (twin minimum):
-
-        - corr_q_gain: Q(human chunk) - Q(VLA plan there);
-        - corr_q_vs_flip / _rand / _stop: Q(human) minus Q of the same change
-          the other way, of a change as large per step in a random fixed
-          direction, and of staying at the current joints (arm joints);
-        - corr_q_step: Q after moving the plan's arm joints one residual cap
-          toward the human, minus Q(plan); corr_q_step_vs_rand: minus the same
-          step in the random direction instead (what the residual actor can do).
-
-        Finite differences, so FSDP never sees an autograd.grad call.
-        """
         if not self._joint_actor():
             return {}
         if self._executor_grid_enabled() and self._action_grid().changes_grid:
             return {"correction_metrics_requires_target_clock_labels": 1.0}
-        fi = batch.get("forward_inputs") if isinstance(batch.get("forward_inputs"), dict) else {}
-        keys = ("iv_kind", "transition_padding", "human_bc_available", "exec_action_joint", "ref_chunk")
+        fi = (
+            batch.get("forward_inputs")
+            if isinstance(batch.get("forward_inputs"), dict)
+            else {}
+        )
+        keys = (
+            "iv_kind",
+            "transition_padding",
+            "human_bc_available",
+            "exec_action_joint",
+            "ref_chunk",
+        )
         if any(not isinstance(fi.get(k), torch.Tensor) for k in keys):
             return {}
         chunk_len, action_dim = self._chunk_shape()
@@ -839,29 +1037,42 @@ class RLTACLossMixin:
         dev = batch["actions"].device
         ivk = fi["iv_kind"].reshape(B, chunk_len).to(dev)
         real = ~fi["transition_padding"].reshape(B, chunk_len).to(dev).bool()
-        moving = (ivk == 3) & fi["human_bc_available"].reshape(B, chunk_len).to(dev).bool() & real
+        moving = (
+            (ivk == 3) & fi["human_bc_available"].reshape(B, chunk_len).to(dev).bool() & real
+        )
         frac = moving.sum(1) / real.sum(1).clamp_min(1)
         idx = torch.nonzero((ivk[:, 0] != 0) & (frac >= 0.8)).reshape(-1)
         n = int(idx.numel())
         if n < 2:
             return {}
-        sub = {k: v[idx] if torch.is_tensor(v) and v.shape[0] == B else v
-               for k, v in self._with_vla_reference(batch, obs).items()}
-        plan = ref_tilde(self._ref_chunk(sub).reshape(n, chunk_len, action_dim).to(torch.float32))
-        human = fi["exec_action_joint"].reshape(B, chunk_len, action_dim)[idx].to(dev, torch.float32)
+        sub = {
+            k: v[idx] if torch.is_tensor(v) and v.shape[0] == B else v
+            for k, v in self._with_vla_reference(batch, obs).items()
+        }
+        plan = ref_tilde(
+            self._ref_chunk(sub).reshape(n, chunk_len, action_dim).to(torch.float32)
+        )
+        human = fi["exec_action_joint"].reshape(B, chunk_len, action_dim)[idx].to(
+            dev, torch.float32
+        )
 
         def q(joints):
             a = self._critic_actions(joints.reshape(n, -1))
-            return self._min_twin_q(self.model(forward_type=ForwardType.SAC_Q, obs=sub, actions=a))[:, 0]
+            return self._min_twin_q(
+                self.model(forward_type=ForwardType.SAC_Q, obs=sub, actions=a)
+            )[:, 0]
 
         grippers = set(int(g) for g in self.cfg.actor.model.get("gripper_dims", ()))
         arm = torch.tensor([d not in grippers for d in range(action_dim)], device=dev)
         d = (human - plan) * arm
         g = torch.Generator(device=dev).manual_seed(0)
         u = torch.randn(n, 1, action_dim, device=dev, generator=g) * arm
-        rnd = u / u.norm(dim=-1, keepdim=True).clamp_min(1e-9) * d.norm(dim=-1, keepdim=True)
+        rnd = u / u.norm(dim=-1, keepdim=True).clamp_min(1e-9) * d.norm(
+            dim=-1, keepdim=True
+        )
         q_plan, q_human = q(plan), q(human)
-        q_flip, q_rand = q((2 * plan - human).clamp(-1, 1)), q((plan + rnd).clamp(-1, 1))
+        q_flip = q((2 * plan - human).clamp(-1, 1))
+        q_rand = q((plan + rnd).clamp(-1, 1))
         out = {
             "hil/corr_n": float(n),
             "hil/corr_q_gain": float((q_human - q_plan).mean()),
@@ -871,44 +1082,62 @@ class RLTACLossMixin:
             "hil/corr_q_vs_rand": float((q_human - q_rand).mean()),
             "hil/corr_q_vs_rand_pos": float((q_human > q_rand).float().mean()),
         }
-        scale, bias = self.cfg.actor.model.get("action_scales", None), self.cfg.actor.model.get("action_bias", None)
+        scale = self.cfg.actor.model.get("action_scales", None)
+        bias = self.cfg.actor.model.get("action_bias", None)
         if scale is not None and bias is not None:
-            cur = (self._flatten_chunk(sub["proprio"])[:, :action_dim].to(torch.float32)
-                   - torch.tensor(list(bias), device=dev)) / torch.tensor(list(scale), device=dev)
+            cur = (
+                self._flatten_chunk(sub["proprio"])[:, :action_dim].to(torch.float32)
+                - torch.tensor(list(bias), device=dev)
+            ) / torch.tensor(list(scale), device=dev)
             q_stop = q(torch.where(arm, cur.clamp(-1, 1)[:, None, :], plan))
             out["hil/corr_q_vs_stop"] = float((q_human - q_stop).mean())
             out["hil/corr_q_vs_stop_pos"] = float((q_human > q_stop).float().mean())
         limit = self._residual_limit()
-        if limit is not None:                 # at most one residual cap per joint
+        if limit is not None:
             cap = limit.to(d)[arm]
 
             def capped(x):
-                peak = x[..., arm].abs().amax(1).clamp_min(1e-9)              # [n, arm joints]
+                peak = x[..., arm].abs().amax(1).clamp_min(1e-9)
                 return x * (cap / peak).amin(1).clamp(max=1.0)[:, None, None]
 
-            q_step, q_step_rand = q((plan + capped(d)).clamp(-1, 1)), q((plan + capped(rnd)).clamp(-1, 1))
+            q_step = q((plan + capped(d)).clamp(-1, 1))
+            q_step_rand = q((plan + capped(rnd)).clamp(-1, 1))
             out["hil/corr_q_step"] = float((q_step - q_plan).mean())
             out["hil/corr_q_step_pos"] = float((q_step > q_plan).float().mean())
             out["hil/corr_q_step_vs_rand"] = float((q_step - q_step_rand).mean())
-            out["hil/corr_q_step_vs_rand_pos"] = float((q_step > q_step_rand).float().mean())
+            out["hil/corr_q_step_vs_rand_pos"] = float(
+                (q_step > q_step_rand).float().mean()
+            )
         return out
 
     @Worker.timer("forward_actor")
     def forward_actor(self, batch):
         self._validate_action_grid(batch)
         use_crossq = self.cfg.algorithm.get("q_head_type", "default") == "crossq"
+
         curr_obs = batch["curr_obs"]
-        fi = batch.get("forward_inputs") if isinstance(batch.get("forward_inputs"), dict) else {}
+        fi = (
+            batch.get("forward_inputs")
+            if isinstance(batch.get("forward_inputs"), dict)
+            else {}
+        )
         chunk_len, action_dim = self._target_shape()
-        B = curr_obs["z_rl"].shape[0]
-        schema2 = isinstance(fi.get("data_schema"), torch.Tensor) and bool((fi["data_schema"].reshape(-1) == 2).all())
+        B = batch["actions"].shape[0]
+        schema2 = isinstance(fi.get("data_schema"), torch.Tensor) and bool(
+            (fi["data_schema"].reshape(-1) == 2).all()
+        )
         curr_obs = self._with_vla_reference(batch, curr_obs)
         actor_obs = curr_obs
         z_noise = float(self.cfg.algorithm.get("z_noise_frac", 0.0))
-        if z_noise > 0:                       # 只加在 actor 输入上(等价于对 z 那一层做岭正则,防 2048 维特征记住少量介入事件)
+        if z_noise > 0 and "z_rl" in curr_obs:
             z = curr_obs["z_rl"]
-            actor_obs = {**curr_obs, "z_rl": z + torch.randn_like(z) * z.std(dim=0, keepdim=True) * z_noise}
-        reference_dropout_prob = float(self.cfg.algorithm.get("reference_dropout_prob", 0.0))
+            actor_obs = {
+                **curr_obs,
+                "z_rl": z + torch.randn_like(z) * z.std(dim=0, keepdim=True) * z_noise,
+            }
+        reference_dropout_prob = float(
+            self.cfg.algorithm.get("reference_dropout_prob", 0.0)
+        )
         pi, log_pi, dropped = self.model(
             forward_type=ForwardType.SAC,
             obs=actor_obs,
@@ -921,59 +1150,98 @@ class RLTACLossMixin:
 
         pi_critic = self._critic_actions(pi)
         if not use_crossq:
-            all_qf_pi = self.model(forward_type=ForwardType.SAC_Q, obs=self._with_critic_plan(curr_obs),
-                                   actions=pi_critic, detach_encoder=True)
+            all_qf_pi = self.model(
+                forward_type=ForwardType.SAC_Q,
+                obs=self._with_critic_plan(curr_obs),
+                actions=pi_critic,
+                detach_encoder=True,
+            )
         else:
-            all_qf_pi, _ = self.model(forward_type=ForwardType.CROSSQ_Q, obs=curr_obs, actions=pi_critic,
-                                      next_obs=None, next_actions=None, detach_encoder=True)
+            all_qf_pi, _ = self.model(
+                forward_type=ForwardType.CROSSQ_Q,
+                obs=curr_obs,
+                actions=pi_critic,
+                next_obs=None,
+                next_actions=None,
+                detach_encoder=True,
+            )
+
         num_q_values = all_qf_pi.shape[-1]
-        metrics = {f"q_value_{q_id}": all_qf_pi[..., q_id].mean().item() for q_id in range(num_q_values)}
-        qf_pi = self._min_twin_q(all_qf_pi) if bool(self.cfg.algorithm.get("actor_uses_min_q", True)) else self._q1(all_qf_pi)
+        metrics = {
+            f"q_value_{q_id}": all_qf_pi[..., q_id].mean().item()
+            for q_id in range(num_q_values)
+        }
+        qf_pi = (
+            self._min_twin_q(all_qf_pi)
+            if bool(self.cfg.algorithm.get("actor_uses_min_q", True))
+            else self._q1(all_qf_pi)
+        )
         metrics["q_pi"] = qf_pi.mean().item()
 
-        rec_w = self._record_weight(batch)                       # [B,1] or None
-        ref_chunk = self._ref_chunk(curr_obs)                    # [B, C*D],已按偏移切好
+        rec_w = self._record_weight(batch)
+        ref_chunk = self._ref_chunk(curr_obs)
         ref3 = self._flatten_chunk(ref_chunk).reshape(B, chunk_len, action_dim)
         pi3 = self._flatten_chunk(pi).reshape(B, chunk_len, action_dim)
         dims = self._joint_dims()
         rt3 = ref_tilde(ref3)
 
-        if self._joint_actor() and self.cfg.algorithm.get("human_bc_target", "fitted") != "direct":
-            # The replay's "actions" are the critic's TCP labels; the joint
-            # takeover targets are human_bc_actions, used by direct BC only.
+        if (
+            self._joint_actor()
+            and self.cfg.algorithm.get("human_bc_target", "fitted") != "direct"
+        ):
             raise ValueError("a joint actor needs algorithm.human_bc_target=direct")
         if self.cfg.algorithm.get("human_bc_target", "fitted") == "direct":
-            # 10-28: a penalized chunk keeps no VLA BC target on its policy
-            # steps: in RLT the reference is what the actor should stay near,
-            # and this one was judged bad. Penalized = a "当前步失败" step (the
-            # replay's only negative reward) or a takeover chunk (began
-            # autonomous, then H / Pico; its -1 is added in forward_critic), whose
-            # policy steps led to the takeover. Human steps still count.
             penalized = None
             if self.cfg.algorithm.get("bc_skip_penalized_chunks", False):
                 failed = (batch["rewards"].reshape(B, -1) < 0).any(-1, keepdim=True)
                 taken = self._takeover_mask(batch)
-                taken = torch.zeros_like(failed) if taken is None else taken.to(failed.device).bool().reshape(B, 1)
+                taken = (
+                    torch.zeros_like(failed)
+                    if taken is None
+                    else taken.to(failed.device).bool().reshape(B, 1)
+                )
                 penalized = failed | taken
                 metrics["bc_penalized_ratio"] = penalized.float().mean().item()
                 metrics["bc_takeover_skip_ratio"] = taken.float().mean().item()
             bc_loss, direct_metrics = direct_bc_loss(
-                self._action_grid().to_env(pi3), self._env_reference(curr_obs), fi, rec_w,
+                self._action_grid().to_env(pi3),
+                self._env_reference(curr_obs),
+                fi,
+                rec_w,
                 human_weight=float(self.cfg.algorithm.get("bc_human_weight_mult", 1.0)),
                 skip_auto=penalized,
-                human_within=self._residual_limit() if self.cfg.algorithm.get("human_bc_within_cap", False) else None,
+                human_within=(
+                    self._residual_limit()
+                    if self.cfg.algorithm.get("human_bc_within_cap", False)
+                    else None
+                ),
             )
             metrics.update(direct_metrics)
         elif schema2 and isinstance(fi.get("iv_kind"), torch.Tensor):
-            act3 = self._flatten_chunk(batch["actions"]).reshape(B, chunk_len, action_dim)
+            act3 = self._flatten_chunk(batch["actions"]).reshape(
+                B, chunk_len, action_dim
+            )
             iv_kind = fi["iv_kind"].reshape(B, -1).to(pi.device)
             sw = fi.get("switch_step", None)
-            sw = sw.reshape(B, -1).to(pi.device) if isinstance(sw, torch.Tensor) else None
+            sw = (
+                sw.reshape(B, -1).to(pi.device)
+                if isinstance(sw, torch.Tensor)
+                else None
+            )
             oh_dim = int(self.cfg.actor.model.get("stage_onehot_dim", 8))
             st_c = self._flatten_chunk(curr_obs["proprio"])[:, -oh_dim:].argmax(-1)
-            st_n = self._flatten_chunk(batch["next_obs"]["proprio"])[:, -oh_dim:].argmax(-1).to(st_c.device)
+            st_n = (
+                self._flatten_chunk(batch["next_obs"]["proprio"])[:, -oh_dim:]
+                .argmax(-1)
+                .to(st_c.device)
+            )
             target, step_w, hinfo = build_bc_targets(
-                ref3, act3, iv_kind, sw, st_c != st_n, self._residual_limit(),
+                ref3,
+                act3,
+                iv_kind,
+                sw,
+                st_c != st_n,
+                self._residual_limit(),
                 human_weight=float(self.cfg.algorithm.get("bc_human_weight_mult", 1.0)),
                 clip_frac=float(self.cfg.algorithm.get("human_target_clip_frac", 0.8)),
                 min_run=int(self.cfg.algorithm.get("human_fit_min_run", 5)),
@@ -982,36 +1250,58 @@ class RLTACLossMixin:
                 still_eps=float(self.cfg.algorithm.get("human_still_eps", 1e-3)),
                 still_edge_min=int(self.cfg.algorithm.get("human_still_edge_min", 8)),
             )
-            bc_err = (pi3 - target)[..., dims].square().mean(-1)      # [B,C]
+            bc_err = (pi3 - target)[..., dims].square().mean(-1)
             w = step_w * (rec_w.to(step_w.dtype) if rec_w is not None else 1.0)
             bc_loss = (bc_err * w).sum() / w.sum().clamp_min(1.0)
             active = (iv_kind == KIND_ACTIVE) & (w > 0)
             auto = (iv_kind == KIND_AUTO) & (w > 0)
-            metrics.update({
-                "bc_loss": bc_loss.detach().item(),
-                "bc_ref_loss": (bc_err[auto].mean() if auto.any() else bc_err.new_zeros(())).detach().item(),
-                "bc_human_loss": (bc_err[active].mean() if active.any() else bc_err.new_zeros(())).detach().item(),
-                "bc_human_vla_baseline": ((rt3 - target)[..., dims].square().mean(-1)[active].mean() if active.any() else bc_err.new_zeros(())).detach().item(),
-                "human_mask_ratio": hinfo["active_ratio"], "hold_ratio": hinfo["hold_ratio"], "ramp_ratio": hinfo["ramp_ratio"], "still_trim_ratio": hinfo["still_trim_ratio"],
-                "human_bc_steps": float(hinfo["human_bc_steps"]),
-                "policy_mask_ratio": 1.0 - hinfo["active_ratio"] - hinfo["hold_ratio"] - hinfo["ramp_ratio"],
-            })
+            metrics.update(
+                {
+                    "bc_loss": bc_loss.detach().item(),
+                    "bc_ref_loss": (
+                        bc_err[auto].mean() if auto.any() else bc_err.new_zeros(())
+                    )
+                    .detach()
+                    .item(),
+                    "bc_human_loss": (
+                        bc_err[active].mean() if active.any() else bc_err.new_zeros(())
+                    )
+                    .detach()
+                    .item(),
+                    "bc_human_vla_baseline": (
+                        (rt3 - target)[..., dims].square().mean(-1)[active].mean()
+                        if active.any()
+                        else bc_err.new_zeros(())
+                    )
+                    .detach()
+                    .item(),
+                    "human_mask_ratio": hinfo["active_ratio"],
+                    "hold_ratio": hinfo["hold_ratio"],
+                    "ramp_ratio": hinfo["ramp_ratio"],
+                    "still_trim_ratio": hinfo["still_trim_ratio"],
+                    "human_bc_steps": float(hinfo["human_bc_steps"]),
+                    "policy_mask_ratio": 1.0
+                    - hinfo["active_ratio"]
+                    - hinfo["hold_ratio"]
+                    - hinfo["ramp_ratio"],
+                }
+            )
         else:
             bc_loss, rlt_metrics = self._bc_metrics(
-                pi=pi, actions=batch["actions"], ref_chunk=ref_chunk,
-                intervene_flags=batch.get("intervene_flags", None), sample_weight=rec_w,
+                pi=pi,
+                actions=batch["actions"],
+                ref_chunk=ref_chunk,
+                intervene_flags=batch.get("intervene_flags", None),
+                sample_weight=rec_w,
             )
             metrics.update(rlt_metrics)
 
         entropy = -log_pi.mean()
         bc_weight, q_weight, weight_metrics = self._actor_objective_weights()
-        # Planned takeover states join the Q term too: there the actor learns
-        # to leave the plan that led to the takeover.
         q_w = self._q_sample_weight(batch, self._planned_takeovers(batch)[0])
         actor_loss = -q_weight * self._masked_mean(qf_pi, q_w) + bc_weight * bc_loss
         smooth_weight = float(self.cfg.algorithm.get("smooth_weight", 0.0))
         if smooth_weight > 0:
-            # 只算残差路(参考在场)的样本:独立头从不执行,它的输出不需要平滑
             sm_w = torch.ones(B, 1, device=pi.device, dtype=pi.dtype)
             if q_w is not None:
                 sm_w = sm_w * q_w.to(pi.device, pi.dtype)
@@ -1027,7 +1317,11 @@ class RLTACLossMixin:
             if dropped is not None and (~dropped).any():
                 res_joint = res_joint[~dropped]
             metrics["action_ref_abs_mean"] = res_joint.mean().item()
-            metrics["residual_joint_p99"] = torch.quantile(res_joint.reshape(-1).float(), 0.99).item() if res_joint.numel() > 0 else 0.0
+            metrics["residual_joint_p99"] = (
+                torch.quantile(res_joint.reshape(-1).float(), 0.99).item()
+                if res_joint.numel() > 0
+                else 0.0
+            )
         metrics["weighted_q"] = (q_weight * self._masked_mean(qf_pi, q_w)).detach().item()
         metrics["weighted_bc"] = (bc_weight * bc_loss).detach().item()
         metrics["reference_dropout_prob"] = reference_dropout_prob
@@ -1163,7 +1457,8 @@ class RLTACReplayMixin:
         traj_len = int(trajectory.actions.shape[0])
         bsz = int(trajectory.actions.shape[1])
         num_rows = int(actions.shape[0])
-        auto_reset = bool(self.cfg.env.train.get("auto_reset", False))
+        env_cfg = self._rollout_geometry.layout.spec(trajectory.env_name).cfg
+        auto_reset = bool(env_cfg.get("auto_reset", False))
 
         for env_idx in range(bsz):
             for t in range(traj_len):
@@ -1176,6 +1471,7 @@ class RLTACReplayMixin:
                 transition = Trajectory(
                     max_episode_length=1,
                     model_weights_id=trajectory.model_weights_id,
+                    env_name=trajectory.env_name,
                 )
                 for field_name in tensor_fields:
                     value = flat.get(field_name)
@@ -1192,15 +1488,15 @@ class RLTACReplayMixin:
                 if curr_obs is None:
                     raise ValueError(
                         "RLT transition replay requires curr_obs. Ensure "
-                        "update_rlt_transitions() populated transition obs "
+                        "TrajectoryCollector populated transition observations "
                         f"before replay ingestion, got row index {idx}."
                     )
                 transition.curr_obs = curr_obs
 
                 # Dones have one extra initial slot, so transition t reads
                 # terminal flags from t+1. Rewards are already action-aligned
-                # by EmbodiedTrajectoryBuilder because the initial empty reward is
-                # skipped and the final reward is appended after rollout.
+                # by the trajectory accumulator because the initial empty reward
+                # is skipped and the final reward is appended after rollout.
                 done_idx = min(
                     t + 1,
                     int(trajectory.dones.shape[0]) - 1
@@ -1233,7 +1529,7 @@ class RLTACReplayMixin:
                 else:
                     raise ValueError(
                         "RLT transition replay requires next_obs for non-terminal "
-                        "transitions. Ensure update_rlt_transitions() populated "
+                        "transitions. Ensure TrajectoryCollector populated "
                         f"transition obs before replay ingestion, got row index {idx}."
                     )
 
@@ -1275,46 +1571,56 @@ class RLTACReplayMixin:
 
     def _penalty_window_reach(self) -> int:
         """Chunks beyond the current one that the critic's penalty label looks at (0: none)."""
-        K = int(self.cfg.algorithm.get("critic_penalty_window", 1))
-        KF = int(self.cfg.algorithm.get("critic_failure_window", K))
-        decay = float(self.cfg.algorithm.get("critic_penalty_decay", 0.0))
-        if decay > 0:                                 # soft label gamma^d, out to where it falls below 0.02
+        cfg = getattr(self, "cfg", None)
+        algo = getattr(cfg, "algorithm", None) if cfg is not None else None
+        if algo is None:
+            return 0
+        K = int(algo.get("critic_penalty_window", 1))
+        KF = int(algo.get("critic_failure_window", K))
+        decay = float(algo.get("critic_penalty_decay", 0.0))
+        if decay > 0:
             return int(math.ceil(math.log(0.02) / math.log(decay)))
         return max(K, KF) - 1
 
     def _penalty_events(self, traj: Trajectory):
         """Per chunk [T, B]: takeover (began autonomous, then H / Pico), step failure (-1), episode end."""
         fi = getattr(traj, "forward_inputs", None)
-        if not isinstance(fi, dict) or not isinstance(fi.get("iv_kind"), torch.Tensor) or not isinstance(traj.rewards, torch.Tensor):
+        if (
+            not isinstance(fi, dict)
+            or not isinstance(fi.get("iv_kind"), torch.Tensor)
+            or not isinstance(traj.rewards, torch.Tensor)
+        ):
             return None
-        # Rows are counted by rewards [T, B, C]; the rollout's forward_inputs carry one
-        # trailing row more (the chunk after the last recorded one), so slice to T.
         T, B = int(traj.rewards.shape[0]), int(traj.rewards.shape[1])
         ivk = fi["iv_kind"][:T].reshape(T, B, -1)
         kinds = self.cfg.algorithm.get("takeover_kinds", None)
-        entered = ivk != 0 if kinds is None else torch.isin(ivk, torch.as_tensor(list(kinds), device=ivk.device, dtype=ivk.dtype))
+        entered = (
+            ivk != 0
+            if kinds is None
+            else torch.isin(
+                ivk, torch.as_tensor(list(kinds), device=ivk.device, dtype=ivk.dtype)
+            )
+        )
         pad = fi.get("transition_padding", None)
         if isinstance(pad, torch.Tensor):
             entered = entered & ~pad[:T].reshape(T, B, -1).to(ivk.device).bool()
         take = (ivk[..., 0] == 0) & entered.any(-1)
         fail = (traj.rewards.reshape(T, B, -1) < 0).any(-1).to(take.device)
         dones = getattr(traj, "dones", None)
-        if isinstance(dones, torch.Tensor) and int(dones.shape[0]) >= T + 1:          # dones[t + 1] closes chunk t
-            ends = dones.reshape(int(dones.shape[0]), B, -1).bool().any(-1)[1:T + 1].to(take.device)
+        if isinstance(dones, torch.Tensor) and int(dones.shape[0]) >= T + 1:
+            ends = (
+                dones.reshape(int(dones.shape[0]), B, -1)
+                .bool()
+                .any(-1)[1 : T + 1]
+                .to(take.device)
+            )
         else:
             ends = torch.zeros(T, B, dtype=torch.bool, device=take.device)
         return take, fail, ends
 
-    def _attach_penalty_window(self, traj: Trajectory, lookahead: Trajectory | None = None) -> None:
-        """10-30: forward_inputs["penalty_next"] [T, B, 1] for the critic's window label.
-
-        1 where, inside the same episode, a takeover happens within the next
-        critic_penalty_window - 1 chunks or a step failure (reward -1) within the
-        next critic_failure_window - 1 chunks; with critic_penalty_decay > 0 the
-        soft gamma^d of the distance d to the next penalty instead. The critic's
-        label is this chunk's own penalty OR / max penalty_next. ``lookahead`` is
-        the trajectory received next (same env), so the last chunks of a rollout
-        epoch see a full window; without it the window stops at the end."""
+    def _attach_penalty_window(
+        self, traj: Trajectory, lookahead: Trajectory | None = None
+    ) -> None:
         ev = self._penalty_events(traj)
         reach = self._penalty_window_reach()
         if ev is None or reach <= 0:
@@ -1323,7 +1629,9 @@ class RLTACReplayMixin:
         T, B = take.shape
         la = self._penalty_events(lookahead) if lookahead is not None else None
         if la is not None and la[0].shape[1] == B:
-            take = torch.cat([take, la[0][:reach]]); fail = torch.cat([fail, la[1][:reach]]); ends = torch.cat([ends, la[2][:reach]])
+            take = torch.cat([take, la[0][:reach]])
+            fail = torch.cat([fail, la[1][:reach]])
+            ends = torch.cat([ends, la[2][:reach]])
         K = int(self.cfg.algorithm.get("critic_penalty_window", 1))
         KF = int(self.cfg.algorithm.get("critic_failure_window", K))
         decay = float(self.cfg.algorithm.get("critic_penalty_decay", 0.0))
@@ -1342,35 +1650,45 @@ class RLTACReplayMixin:
                 nxt[t] = torch.maximum(nxt[t], (alive & hit).float() * w)
                 alive = alive & ~ends[u]
         out = nxt.to(traj.rewards.dtype).unsqueeze(-1)
-        extra = int(traj.forward_inputs["iv_kind"].shape[0]) - T                 # keep the row count of the other forward_inputs
+        extra = int(traj.forward_inputs["iv_kind"].shape[0]) - T
         if extra > 0:
-            out = torch.cat([out, torch.zeros(extra, B, 1, dtype=out.dtype, device=out.device)])
+            out = torch.cat(
+                [out, torch.zeros(extra, B, 1, dtype=out.dtype, device=out.device)]
+            )
         traj.forward_inputs["penalty_next"] = out
 
     def _wrap_replay_flatten(self, buffer) -> None:
-        """Every trajectory the replay buffer flattens gets its penalty window label if it
-        has none yet: a preloaded replay (algorithm.replay_buffer.load_path) never went
-        through _ingest_rollout_trajectories, and a batch cannot mix rows with and without
-        penalty_next. Preloaded files get no lookahead (their last chunk sees a short window)."""
-        if buffer is None or getattr(buffer, "_rlt_penalty_wrapped", False) or not hasattr(buffer, "_flatten_trajectory"):
+        if (
+            buffer is None
+            or getattr(buffer, "_rlt_penalty_wrapped", False)
+            or not hasattr(buffer, "_flatten_trajectory")
+        ):
             return
         orig = buffer._flatten_trajectory
+
         def flatten(trajectory, *args, **kwargs):
             fi = getattr(trajectory, "forward_inputs", None)
-            if isinstance(fi, dict) and "penalty_next" not in fi and self._penalty_window_reach() > 0:
+            if (
+                isinstance(fi, dict)
+                and "penalty_next" not in fi
+                and self._penalty_window_reach() > 0
+            ):
                 self._attach_penalty_window(trajectory)
             return orig(trajectory, *args, **kwargs)
+
         buffer._flatten_trajectory = flatten
         buffer._rlt_penalty_wrapped = True
 
-    def _label_and_delay_rollouts(self, recv_list: list[Trajectory]) -> list[Trajectory]:
-        """Hold the newest rollout trajectory back one ingestion so its last chunks get
-        their penalty window from the trajectory that follows (single env: the
-        trajectories arrive in time order). Returns the trajectories to ingest now."""
+    def _label_and_delay_rollouts(
+        self, recv_list: list[Trajectory]
+    ) -> list[Trajectory]:
         if self._penalty_window_reach() <= 0 or not recv_list:
             return recv_list
         trajs = [t for t in recv_list if isinstance(t, Trajectory)]
-        single_env = all(isinstance(t.rewards, torch.Tensor) and int(t.rewards.shape[1]) == 1 for t in trajs)
+        single_env = all(
+            isinstance(t.rewards, torch.Tensor) and int(t.rewards.shape[1]) == 1
+            for t in trajs
+        )
         if not single_env or len(trajs) != len(recv_list):
             for t in trajs:
                 self._attach_penalty_window(t)
@@ -1449,6 +1767,42 @@ class RLTACReplayMixin:
         self.total_episodes_added += completed
 
 
+class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
+    """Synchronous RLT AC worker with transition replay and warmup scheduling."""
+
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.rlt_schedule_cfg = cfg.algorithm.get("rlt_schedule", {}) or {}
+        self.use_rlt_schedule = bool(self.rlt_schedule_cfg.get("enable", False))
+        self.transitions_since_train = 0
+        self.episodes_since_train = 0
+        self.total_transitions_added = 0
+        self.total_episodes_added = 0
+        self._warmup_ready_total_transitions: int | None = None
+        self._warmup_ready_total_episodes: int | None = None
+        self.pending_update_budget = 0
+
+    def setup_sac_components(self):
+        """Initialize replay components and let RLT schedule own readiness."""
+        super().setup_sac_components()
+        if self.use_rlt_schedule:
+            self.buffer_dataset.min_replay_buffer_size = 1
+        self._wrap_replay_flatten(getattr(self, "replay_buffer", None))
+
+    @Worker.timer("actor/recv_traj")
+    async def recv_rollout_trajectories(self, input_channel):
+        clear_memory(sync=False)
+
+        split_num = self._rollout_geometry.shards_per_actor()
+
+        recv_list = []
+        for _ in range(split_num):
+            trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
+            recv_list.append(trajectory)
+
+        added, completed = self._ingest_rollout_trajectories(recv_list)
+        self._update_rollout_ingest_counters(added, completed)
+
     def _global_rlt_counters(self) -> dict[str, float]:
         summed = all_reduce_dict(
             {
@@ -1459,9 +1813,10 @@ class RLTACReplayMixin:
             },
             op=torch.distributed.ReduceOp.SUM,
         )
+        replay_size = self.replay_buffer.min_env_samples
         minimums = all_reduce_dict(
             {
-                "min_replay_size": float(self.replay_buffer.total_samples),
+                "min_replay_size": float(replay_size),
                 "min_demo_size": float(
                     0 if self.demo_buffer is None else self.demo_buffer.total_samples
                 ),
@@ -1478,7 +1833,7 @@ class RLTACReplayMixin:
             schedule_cfg.get("warmup_min_size", replay_cfg.get("min_buffer_size", 1))
         )
         counters = self._global_rlt_counters()
-        buffer_ready = counters["min_replay_size"] >= min_buffer_size
+        buffer_ready = counters["min_replay_size"] >= max(min_buffer_size, 1)
         warmup_required_updates = int(
             schedule_cfg.get("warmup_post_collect_updates", 0)
         )
@@ -1569,43 +1924,6 @@ class RLTACReplayMixin:
         metrics.update(getattr(self, "_last_replay_metrics", {}))
         return updates_to_run, metrics
 
-class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
-    """Synchronous RLT AC worker with transition replay and warmup scheduling."""
-
-    def __init__(self, cfg):
-        super().__init__(cfg)
-        self.rlt_schedule_cfg = cfg.algorithm.get("rlt_schedule", {}) or {}
-        self.use_rlt_schedule = bool(self.rlt_schedule_cfg.get("enable", False))
-        self.transitions_since_train = 0
-        self.episodes_since_train = 0
-        self.total_transitions_added = 0
-        self.total_episodes_added = 0
-        self._warmup_ready_total_transitions: int | None = None
-        self._warmup_ready_total_episodes: int | None = None
-        self.pending_update_budget = 0
-
-    def setup_sac_components(self):
-        """Initialize replay components and let RLT schedule own readiness."""
-        super().setup_sac_components()
-        if self.use_rlt_schedule:
-            self.buffer_dataset.min_replay_buffer_size = 1
-
-    @Worker.timer("actor/recv_traj")
-    async def recv_rollout_trajectories(self, input_channel):
-        clear_memory(sync=False)
-
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
-
-        recv_list = []
-        for _ in range(split_num):
-            trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
-            recv_list.append(trajectory)
-
-        added, completed = self._ingest_rollout_trajectories(recv_list)
-        self._update_rollout_ingest_counters(added, completed)
-
     def run_training(self):
         if not self.use_rlt_schedule:
             mean_metric_dict = super().run_training()
@@ -1643,7 +1961,7 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
         actor_updates_run = 0
         for _ in range(updates_to_run):
             update_actor = int(self.update_step) % int(self.critic_actor_ratio) == 0
-            metrics_data = self.update_one_epoch(train_actor=True)
+            metrics_data = self.update_one_epoch(train_actor=update_actor)
             append_to_dict(metrics, metrics_data)
             self.update_step += 1
             critic_updates_run += 1
@@ -1683,11 +2001,6 @@ class AsyncRLTACFSDPPolicy(
         self._warmup_ready_total_transitions: int | None = None
         self._warmup_ready_total_episodes: int | None = None
         self.pending_update_budget = 0
-        # 按新数据限速(论文 update-to-data=5):原异步循环每次调用固定做 update_epoch 次更新,
-        # 不看有没有新数据,环境停着时也一直在旧数据上训练(实测空转 3 小时多训 3.6 万步)。
-        # utd_ratio > 0 时:每条新 transition 最多换 utd_ratio 次更新,预算不够就等新数据。
-        # warmup_transitions:攒够这么多 transition 之前不训练 —— actor 是零初始化残差,
-        # 不训练时输出恰等于 VLA 参考,预热期即为纯 VLA 执行(论文的 warmup)。
         self._utd_ratio = float(cfg.algorithm.get("utd_ratio", 0.0) or 0.0)
         self._warmup_transitions = int(cfg.algorithm.get("warmup_transitions", 0) or 0)
         self._ingested_transitions = 0
@@ -1706,13 +2019,7 @@ class AsyncRLTACFSDPPolicy(
     def _filter_stale_rollout_trajectories(
         self, recv_list: list[Trajectory]
     ) -> tuple[list[Trajectory], dict[str, float]]:
-        """Drop rollout batches older than the configured actor version window.
-
-        The async SAC base class intentionally only moved trajectories to a
-        background queue.  RLT uses ``update_step`` as the weight-sync version,
-        so the filter must run immediately before replay ingestion and compare
-        against the same version sent through ``WeightSyncer``.
-        """
+        """Drop rollout batches older than the configured actor version window."""
         threshold_cfg = self.cfg.algorithm.get("staleness_threshold", None)
         current_version = int(self.get_rollout_sync_version())
         metrics = {
@@ -1740,15 +2047,15 @@ class AsyncRLTACFSDPPolicy(
             if not isinstance(versions, torch.Tensor) or versions.numel() == 0:
                 missing_versions += 1
                 discarded += 1
-                discarded_transitions += self._trajectory_transition_count_for_staleness(
-                    traj
+                discarded_transitions += (
+                    self._trajectory_transition_count_for_staleness(traj)
                 )
                 continue
             min_version = float(versions.detach().float().min().item())
             if current_version - min_version > threshold:
                 discarded += 1
-                discarded_transitions += self._trajectory_transition_count_for_staleness(
-                    traj
+                discarded_transitions += (
+                    self._trajectory_transition_count_for_staleness(traj)
                 )
                 continue
             accepted.append(traj)
@@ -1780,13 +2087,22 @@ class AsyncRLTACFSDPPolicy(
         return accepted, metrics
 
     def setup_sac_components(self):
+        """Initialize replay components and let RLT schedule own readiness."""
         super().setup_sac_components()
         if self.use_rlt_schedule:
             self.buffer_dataset.min_replay_buffer_size = 1
-        # 启动时预加载的回放(algorithm.replay_buffer.load_path)同样计入预热门槛和 update-to-data 预算,
-        # 与论文"先用 VLA 数据预填回放、随后开始学习"一致
-        self._preloaded_transitions = int(getattr(self.replay_buffer, "total_samples", 0) or 0)
-        self._wrap_replay_flatten(getattr(self, "replay_buffer", None))      # 10-30: window labels for preloaded replays
+        self._preloaded_transitions = int(
+            getattr(self.replay_buffer, "total_samples", 0) or 0
+        )
+        self._wrap_replay_flatten(getattr(self, "replay_buffer", None))
+
+    def _global_rlt_counters(self) -> dict[str, float]:
+        """Reuse the shared sync/async RLT counter reduction contract."""
+        return RLTACFSDPPolicy._global_rlt_counters(self)
+
+    def _rlt_updates_to_run(self) -> tuple[int, dict[str, float]]:
+        """Reuse the shared sync/async RLT update-budget calculation."""
+        return RLTACFSDPPolicy._rlt_updates_to_run(self)
 
     def _drain_received_trajectories(self, max_trajectories: int | None = None):
         if getattr(self, "_recv_queue", None) is None:
@@ -1827,25 +2143,27 @@ class AsyncRLTACFSDPPolicy(
             update_epoch = int(self.cfg.algorithm.get("update_epoch", 1))
             while True:
                 self._drain_received_trajectories(
-                    max_trajectories=self.cfg.actor.get("recv_drain_max_trajectories", 1024)
+                    max_trajectories=self.cfg.actor.get(
+                        "recv_drain_max_trajectories", 1024
+                    )
                 )
                 preloaded = getattr(self, "_preloaded_transitions", 0)
                 total = self._ingested_transitions + preloaded
                 if total >= self._warmup_transitions:
-                    # 新数据按 utd_ratio 计入预算;预填数据按 preload_utd_ratio(默认同 utd_ratio)。
-                    # 09-28 实测:预填 7350 条按 5 算 → 35 分钟内对同一批数据训 2 万多次,actor 过拟合、在新状态上残差失控。
-                    preload_utd = float(self.cfg.algorithm.get("preload_utd_ratio", self._utd_ratio))
-                    budget = self._utd_ratio * self._ingested_transitions + preload_utd * preloaded - self._utd_updates_done
+                    preload_utd = float(
+                        self.cfg.algorithm.get("preload_utd_ratio", self._utd_ratio)
+                    )
+                    budget = (
+                        self._utd_ratio * self._ingested_transitions
+                        + preload_utd * preloaded
+                        - self._utd_updates_done
+                    )
                     if budget >= update_epoch:
                         break
                 await asyncio.sleep(0.5)
             self._utd_updates_done += update_epoch
 
         if self.use_rlt_schedule and self._utd_ratio <= 0:
-            # Keep the async receiver thread running while waiting for enough
-            # fresh transitions to buy the next update budget.  This mirrors
-            # the synchronous RLT schedule but uses the background queue so
-            # env/rollout collection remains decoupled from learner updates.
             if self.cfg.actor.get("enable_offload", False):
                 self.load_param_and_grad(self.device)
                 self.load_optimizer(self.device)
@@ -1872,14 +2190,17 @@ class AsyncRLTACFSDPPolicy(
                 // self._world_size
             )
 
+            torch.distributed.barrier()
             self.model.train()
             metrics = {}
             critic_updates_run = 0
             actor_updates_run = 0
             for _ in range(updates_to_run):
                 await asyncio.sleep(0)
-                update_actor = int(self.update_step) % int(self.critic_actor_ratio) == 0
-                metrics_data = self.update_one_epoch(train_actor=True)
+                update_actor = (
+                    int(self.update_step) % int(self.critic_actor_ratio) == 0
+                )
+                metrics_data = self.update_one_epoch(train_actor=update_actor)
                 append_to_dict(metrics, metrics_data)
                 self.update_step += 1
                 critic_updates_run += 1
@@ -1909,10 +2230,14 @@ class AsyncRLTACFSDPPolicy(
 
         mean_metric_dict = await super().run_training()
         if self._utd_ratio > 0:
-            mean_metric_dict = {**mean_metric_dict,
-                                "rlt/ingested_transitions": float(self._ingested_transitions),
-                                "rlt/preloaded_transitions": float(getattr(self, "_preloaded_transitions", 0)),
-                                "rlt/utd_updates_done": float(self._utd_updates_done)}
+            mean_metric_dict = {
+                **mean_metric_dict,
+                "rlt/ingested_transitions": float(self._ingested_transitions),
+                "rlt/preloaded_transitions": float(
+                    getattr(self, "_preloaded_transitions", 0)
+                ),
+                "rlt/utd_updates_done": float(self._utd_updates_done),
+            }
         replay_metrics = getattr(self, "_last_replay_metrics", {})
         if replay_metrics:
             mean_metric_dict = {**mean_metric_dict, **replay_metrics}

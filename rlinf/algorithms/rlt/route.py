@@ -12,14 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import torch
 
+from rlinf.algorithms.rlt.action_grid import ActionGrid
 from rlinf.algorithms.rlt.expert import predict_expert_actions
 from rlinf.algorithms.rlt.transition import use_simulator_transition_replay
+
+_RLT_REF_OFFSET = int(os.environ.get("RLT_REF_OFFSET", "0"))
 
 
 @dataclass(kw_only=True)
@@ -33,7 +37,7 @@ class RLTRouteContext:
     intervene_requested: torch.Tensor | None = None
     expert_model: Any | None = None
     version: int = 0
-    default_actor_switch: bool = False
+    default_actor_switch: bool = bool(int(os.environ.get("RLT_FORCE_ACTOR_SWITCH", "0")))
 
 
 @dataclass(kw_only=True)
@@ -116,21 +120,43 @@ class RLTRoute(ABC):
 class RealworldRLTRoute(RLTRoute):
     """Actor/ref routing for realworld RLT (keyboard or env switch flags)."""
 
+    def __init__(self, default_actor_switch: bool | None = None):
+        self.default_actor_switch = default_actor_switch
+
     def route(self, ctx: RLTRouteContext) -> RLTRouteOutput:
         actions = ctx.student_actions
         result = ctx.result
         rlt_switch_flags = _normalize_rlt_switch_flags(
             actions,
             ctx.rlt_switch_flags,
-            default=ctx.default_actor_switch,
+            default=(
+                ctx.default_actor_switch
+                if self.default_actor_switch is None
+                else self.default_actor_switch
+            ),
         )
         ref_actions = result["forward_inputs"]["ref_chunk"].to(
             device=actions.device, dtype=actions.dtype
         )
+        fi = result["forward_inputs"]
+        if "target_action_grid" in fi:
+            grid = ActionGrid.from_metadata(fi["target_action_grid"])
+            target_ref = grid.reference_targets(ref_actions)
+            actor_on = rlt_switch_flags.reshape(actions.shape[0], -1)[:, :1]
+            fi["target_policy_action"] = torch.where(
+                actor_on,
+                fi["target_policy_action"],
+                target_ref.reshape(actions.shape[0], -1),
+            )
+            ref_env = grid.reference_env(ref_actions)
+        else:
+            ref_env = ref_actions[
+                :, _RLT_REF_OFFSET : _RLT_REF_OFFSET + actions.shape[1], : actions.shape[2]
+            ]
         routed_actions = torch.where(
             rlt_switch_flags,
             actions,
-            ref_actions[:, : actions.shape[1], : actions.shape[2]],
+            ref_env,
         ).contiguous()
         result["forward_inputs"]["action"] = routed_actions.reshape(
             routed_actions.shape[0], -1
@@ -251,4 +277,6 @@ def build_rlt_route(cfg: Any) -> RLTRoute:
             use_schedule=bool(schedule_cfg.get("enable", False)),
             warmup_updates=int(schedule_cfg.get("warmup_post_collect_updates", 0)),
         )
-    return RealworldRLTRoute()
+    return RealworldRLTRoute(
+        default_actor_switch=cfg.rollout.get("default_actor_switch", None)
+    )

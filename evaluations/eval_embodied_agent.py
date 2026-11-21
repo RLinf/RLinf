@@ -43,7 +43,8 @@ def main(cfg) -> None:
     component_placement = HybridComponentPlacement(cfg, cluster)
 
     # Create rollout worker group. Select the worker by ``rollout_backend``:
-    # only ``sglang`` and ``huggingface`` are supported here (vllm is intentionally not wired in);
+    # ``apxinf`` is an eval-only in-process backend. vLLM is intentionally not
+    # wired into embodied evaluation.
     rollout_placement = component_placement.get_strategy("rollout")
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     # Default env worker; RTC on the huggingface path overrides it below.
@@ -56,7 +57,15 @@ def main(cfg) -> None:
             from rlinf.workers.env.tianji_joint_eval_worker import TianjiVLAEnvWorker
 
             env_worker_cls = TianjiVLAEnvWorker
-    if rollout_backend == "sglang":
+    if rollout_backend == "apxinf":
+        from rlinf.workers.rollout.apxinf import ApxInfRolloutWorker
+
+        rollout_group = ApxInfRolloutWorker.create_group(cfg).launch(
+            cluster,
+            name=cfg.rollout.group_name,
+            placement_strategy=rollout_placement,
+        )
+    elif rollout_backend == "sglang":
         from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
         rollout_group = (
@@ -80,7 +89,9 @@ def main(cfg) -> None:
         else:
             rollout_worker_cls = MultiStepRolloutWorker
             if cfg.rollout.get("joint_vla_only", False):
-                from rlinf.workers.rollout.hf.tianji_vla_eval_worker import TianjiVLAEvalWorker
+                from rlinf.workers.rollout.hf.tianji_vla_eval_worker import (
+                    TianjiVLAEvalWorker,
+                )
 
                 rollout_worker_cls = TianjiVLAEvalWorker
 
@@ -88,6 +99,14 @@ def main(cfg) -> None:
         rollout_placement = component_placement.get_strategy("rollout")
         rollout_group = rollout_worker_cls.create_group(cfg).launch(
             cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
+        )
+    elif rollout_backend == "phyai":
+        from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
+
+        rollout_group = PhyAIRolloutWorker.create_group(cfg).launch(
+            cluster,
+            name=cfg.rollout.group_name,
+            placement_strategy=rollout_placement,
         )
     else:
         raise ValueError(f"Unsupported rollout backend: {rollout_backend}")
@@ -99,7 +118,7 @@ def main(cfg) -> None:
 
     # launch the sglang server
     if rollout_backend == "sglang":
-        from rlinf.workers.rollout.sglang_server import (
+        from rlinf.workers.rollout.sglang import (
             launch_sglang_router_and_server,
         )
 

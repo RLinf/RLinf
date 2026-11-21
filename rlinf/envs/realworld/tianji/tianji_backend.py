@@ -38,6 +38,7 @@ from .tianji_contract import (
     DEFAULT_CONTRACT,
     MIN_SCALED_DURATION_S,
     SEMANTICS,
+    default_loopinfra_root,
     dense_rows_from_env,
     identity_state,
     project_pose,
@@ -1203,7 +1204,7 @@ class LoopInfraPolicyBackend:
             if capabilities.get("policy_joint_target_protocol") != tianji_joint.JOINT_TARGET_PROTOCOL:
                 raise RuntimeError(
                     "LoopInfra joint targets unavailable; start the collector pair "
-                    "from ~/LoopInfra_rtj. No motion sent."
+                    f"from LOOPINFRA_ROOT ({default_loopinfra_root()}). No motion sent."
                 )
             command["joint_targets"] = {
                 "A": [float(x) for x in decoded[0:7]],
@@ -1225,7 +1226,7 @@ class LoopInfraPolicyBackend:
                     and capabilities.get("policy_joint_target_protocol") != tianji_joint.JOINT_TARGET_PROTOCOL):
                 raise RuntimeError(
                     "LoopInfra joint targets unavailable; start the collector pair "
-                    "from the joint fork (LOOPINFRA_ROOT=~/LoopInfra_rtj). No motion sent."
+                    f"from LOOPINFRA_ROOT ({default_loopinfra_root()}). No motion sent."
                 )
             if joints is not None:
                 command["deltas"] = {a: [0.0] * 6 + [deltas[a][6]] for a in ("A", "B")}
@@ -1803,8 +1804,7 @@ class LoopInfraPolicyBackend:
             detail = exc.read().decode(errors="replace")
             raise RuntimeError(
                 f"LoopInfra policy schedule unavailable ({exc.code}): {detail}; "
-                + ("start the collector from ~/LoopInfra_rtj" if self.joint_actions
-                   else "start the collector from ~/LoopInfra_rt")
+                f"start the collector from LOOPINFRA_ROOT ({default_loopinfra_root()})"
             ) from exc
         if result.get("schedule_version") != SCHEDULE_VERSION:
             raise RuntimeError("LoopInfra policy schedule protocol mismatch")

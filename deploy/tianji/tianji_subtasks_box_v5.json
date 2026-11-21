@@ -1,0 +1,10 @@
+{
+ "model": "box_v5_step18000 (tianji_box_v5_30hz_subtask)",
+ "note": "Prompts in execution order (left side before right side); enter 1-4 on the HIL panel as the box progresses. To fold the right side first, swap entries 2 and 3.",
+ "subtasks": [
+  {"name": "立后壁压盖", "prompt": "Raise the back wall and press down the top lid."},
+  {"name": "折左侧", "prompt": "Fold the left side."},
+  {"name": "折右侧", "prompt": "Fold the right side."},
+  {"name": "推回原位", "prompt": "Push the box back into place."}
+ ]
+}

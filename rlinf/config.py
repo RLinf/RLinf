@@ -15,21 +15,29 @@
 import dataclasses
 import importlib.util
 import logging
+import math
 import os
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Callable, ClassVar, Optional, Union
+from typing import TYPE_CHECKING, Callable, ClassVar, Optional
 
 import torch
 import torch.nn.functional as F
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 
+# Register built-in physical robots before parsing cluster hardware configs.
+import rlinf.robotics.robots  # noqa: F401
 from rlinf.envs import SupportedEnvType
+from rlinf.envs.layout import EnvLayout, EnvSpec
 from rlinf.scheduler.cluster import Cluster
+from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
 from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
     PlacementMode,
+)
+from rlinf.utils.precision import (
+    torch_dtype_from_precision as torch_dtype_from_precision,
 )
 
 if TYPE_CHECKING:
@@ -88,6 +96,8 @@ SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
 SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
 SupportedModel.OPENPI_RLINF = SupportedModel.register("openpi_rlinf", force=True)
+SupportedModel.PSI0 = SupportedModel.register("psi0", force=True)
+SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
 SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
@@ -98,11 +108,13 @@ SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
 SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
 SupportedModel.DREAMZERO = SupportedModel.register("dreamzero", force=True)
+SupportedModel.FASTWAM = SupportedModel.register("fastwam", force=True)
 SupportedModel.COSMOS3 = SupportedModel.register("cosmos3", force=True)
 SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
 SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
 SupportedModel.CMA_POLICY = SupportedModel.register("cma", force=True)
 SupportedModel.LINGBOTVLA = SupportedModel.register("lingbotvla", force=True)
+SupportedModel.LINGBOTVLAV2 = SupportedModel.register("lingbotvlav2", force=True)
 SupportedModel.ABOT_M0 = SupportedModel.register("abot_m0", force=True)
 SupportedModel.RESNET_REWARD = SupportedModel.register("resnet", force=True)
 SupportedModel.CFG_MODEL = SupportedModel.register("cfg_model", force=True)
@@ -120,6 +132,9 @@ SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
 SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
 SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
+# GLM-4.7-Flash: MLA (DeepSeek-V3-style) + GLM MoE + MTP, via Megatron-Bridge
+# GLM47FlashBridge (megatron-bridge >=0.5.0). Needs mcore 0.18.
+SupportedModel.GLM4_MOE_LITE = SupportedModel.register("glm4_moe_lite", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
 
@@ -131,6 +146,8 @@ EMBODIED_MODEL = set(
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
         SupportedModel.OPENPI_RLINF,
+        SupportedModel.PSI0,
+        SupportedModel.PI0_FAST,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
         SupportedModel.RLT_MLP_POLICY,
@@ -139,11 +156,13 @@ EMBODIED_MODEL = set(
         SupportedModel.DEXBOTIC_PI,
         SupportedModel.DEXBOTIC_DM0,
         SupportedModel.DREAMZERO,
+        SupportedModel.FASTWAM,
         SupportedModel.COSMOS3,
         SupportedModel.CNN_POLICY,
         SupportedModel.FLOW_POLICY,
         SupportedModel.CMA_POLICY,
         SupportedModel.LINGBOTVLA,
+        SupportedModel.LINGBOTVLAV2,
         SupportedModel.ABOT_M0,
         SupportedModel.RESNET_REWARD,
         SupportedModel.GR00T_N1D6,
@@ -154,6 +173,11 @@ EMBODIED_MODEL = set(
         SupportedModel.EVO1,
     }
 )
+
+# The models whose predict_action_batch reads each of EnvSpec.POLICY_FIELDS.
+POLICY_FIELD_MODELS: dict[str, frozenset] = {
+    "unnorm_key": frozenset({SupportedModel.OPENVLA_OFT}),
+}
 
 
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
@@ -168,23 +192,6 @@ SUPPORTED_TASK_TYPE = [
 ]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
-
-
-def torch_dtype_from_precision(
-    precision: Union[int, str, None],
-) -> Optional[torch.dtype]:
-    if precision in ["bf16", "bf16-mixed"]:
-        return torch.bfloat16
-    elif precision in [16, "16", "fp16", "16-mixed"]:
-        return torch.float16
-    elif precision in [32, "32", "fp32", "32-true"]:
-        return torch.float32
-    elif precision in [None, "null"]:
-        return None
-    else:
-        raise ValueError(
-            f"Could not parse the precision of `{precision}` to a valid torch.dtype"
-        )
 
 
 @torch.jit.script
@@ -287,6 +294,20 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         cfg.decode_log_interval = cfg.get("decode_log_interval", 500000)
         cfg.use_torch_compile = cfg.get("use_torch_compile", False)
         cfg.torch_compile_max_bs = cfg.get("torch_compile_max_bs", 128)
+
+        serving_mode = cfg.get("serving_mode", None)
+        backend_type = cfg.get("backend_type", "engine")
+        assert backend_type in ("engine", "server"), (
+            f"rollout.sglang.backend_type must be 'engine' or 'server', "
+            f"but got {backend_type!r}."
+        )
+        # Only SGLangWorker (serving_mode unset) reads backend_type; the
+        # embodied / worker_http workers would silently ignore 'server'.
+        assert not (serving_mode is not None and backend_type == "server"), (
+            f"rollout.sglang.serving_mode={serving_mode!r} does not support "
+            f"backend_type=server; the server backend is only implemented for "
+            f"the default serving worker (leave serving_mode unset)."
+        )
         return cfg
 
     def validate_vllm_cfg(cfg):
@@ -325,8 +346,10 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         cfg.return_logprobs = cfg.return_logprobs or algorithm_cfg.get(
             "importance_sampling_fix", False
         )
-        cfg.sglang = validate_sglang_cfg(cfg.sglang)
-        cfg.vllm = validate_vllm_cfg(cfg.vllm)
+        if cfg.rollout_backend == "sglang":
+            cfg.sglang = validate_sglang_cfg(cfg.sglang)
+        else:
+            cfg.vllm = validate_vllm_cfg(cfg.vllm)
 
     return cfg
 
@@ -434,8 +457,8 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         )
         cfg.model.moe_router_topk = getattr(hf_config, "num_experts_per_tok", 2)
 
-        # DeepSeek-V3 text backbone: MLA + MoE with shared expert.
-        if model_type in ("deepseek_v3",):
+        # DeepSeek-V3 and glm4_moe_lite text backbone: MLA + MoE with shared expert.
+        if model_type in ("deepseek_v3", "glm4_moe_lite"):
             cfg.model.num_moe_experts = getattr(
                 hf_config, "n_routed_experts", cfg.model.num_moe_experts
             )
@@ -464,6 +487,21 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             )
 
     return cfg
+
+
+def validate_fp32_master_adamw_config(
+    *,
+    strategy: str,
+    sharding_strategy: str,
+) -> None:
+    """Validate the FSDP backend supported by FP32 master AdamW."""
+    strategy = str(strategy).lower()
+    sharding_strategy = str(sharding_strategy).lower()
+    if strategy != "fsdp" or sharding_strategy != "no_shard":
+        raise ValueError(
+            "use_fp32_master_params requires FSDP1 "
+            "with fsdp_config.strategy=fsdp and sharding_strategy=no_shard."
+        )
 
 
 def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
@@ -516,6 +554,20 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         cfg.fsdp_config.sharding_strategy = cfg.fsdp_config.get(
             "sharding_strategy", "full_shard"
         )
+        model_type = OmegaConf.select(cfg, "model.model_type", default=None)
+        if model_type is not None and str(model_type) == SupportedModel.OPENPI.value:
+            sharding = (
+                str(cfg.fsdp_config.sharding_strategy).strip().lower().replace("-", "_")
+            )
+            assert sharding == "no_shard" or (
+                cfg.fsdp_config.strategy == "fsdp"
+                and sharding in ("shard_grad_op", "full_shard")
+            ), (
+                "openpi sharded training requires actor.fsdp_config.strategy='fsdp' "
+                "and sharding_strategy in ['shard_grad_op', 'full_shard']; "
+                f"got strategy={cfg.fsdp_config.strategy!r}, "
+                f"sharding_strategy={cfg.fsdp_config.sharding_strategy!r}."
+            )
 
         cfg.fsdp_config.forward_prefetch = cfg.fsdp_config.get(
             "forward_prefetch", False
@@ -527,6 +579,23 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "backward_prefetch", None
         )
         cfg.fsdp_config.use_orig_params = cfg.fsdp_config.get("use_orig_params", False)
+        if (
+            model_type is not None
+            and str(model_type) == SupportedModel.OPENPI.value
+            and not cfg.fsdp_config.use_orig_params
+        ):
+            # Dual-expert Gemma packs frozen VLM (expert-0) and trainable
+            # action expert (expert-1) in the same Block. FSDP FlatParameter
+            # then mixes requires_grad and rejects wrap unless
+            # use_orig_params=True. The shared hybrid_engines/fsdp default is
+            # False, so inherited CI/example YAMLs would otherwise fail at
+            # FSDP wrap time.
+            logging.info(
+                "openpi requires actor.fsdp_config.use_orig_params=True "
+                "because dual-expert Gemma Block mixes frozen and trainable "
+                "parameters. Overriding use_orig_params=False to True."
+            )
+            cfg.fsdp_config.use_orig_params = True
         cfg.fsdp_config.use_liger_kernel = cfg.fsdp_config.get(
             "use_liger_kernel", False
         )
@@ -563,6 +632,25 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "buffer_dtype", None
         )
         cfg.fsdp_config = validate_amp_cfg(cfg.fsdp_config)
+        validate_fsdp_wrapper_config(cfg.fsdp_config)
+
+        if model_type is not None and str(model_type) == SupportedModel.OPENPI.value:
+            low_precision = any(
+                torch_dtype_from_precision(mixed_precision_config[field])
+                not in (None, torch.float32)
+                for field in ("param_dtype", "reduce_dtype", "buffer_dtype")
+            )
+            if low_precision and not cfg.fsdp_config.get("mixed_precision_rules"):
+                raise ValueError(
+                    "OpenPI low-precision FSDP policies require mixed_precision_rules "
+                    "for its FP32 modules."
+                )
+
+        if cfg.get("optim", {}).get("use_fp32_master_params", False):
+            validate_fp32_master_adamw_config(
+                strategy=cfg.fsdp_config.strategy,
+                sharding_strategy=cfg.fsdp_config.sharding_strategy,
+            )
 
     return cfg
 
@@ -904,6 +992,424 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def _validate_psi0_eval_cfg(cfg, model_cfg, only_eval: bool) -> None:
+    """Validate Psi0 + SIMPLE standalone evaluation settings."""
+    assert only_eval, "Psi0 evaluation config requires an evaluation runner."
+    assert cfg.rollout.get("rollout_backend", "huggingface") == "huggingface", (
+        "Psi0 requires rollout.rollout_backend='huggingface'."
+    )
+    assert not cfg.runner.get("rtc", {}).get("enabled", False), (
+        "Psi0 uses model-side RTC; runner.rtc.enabled must be false."
+    )
+    assert not cfg.runner.get("enable_decoupled_mode", False), (
+        "Psi0 Eval does not support decoupled mode."
+    )
+    assert not (
+        cfg.rollout.get("recompute_logprobs", False)
+        or cfg.rollout.get("collect_prev_infos", False)
+    ), "Psi0 evaluation requires collect_prev_infos=false and recompute_logprobs=false."
+
+    from rlinf.envs.sim.simple.utils import SIMPLE_ACTION_CHUNK_SIZE, SIMPLE_ACTION_DIM
+
+    psi0_cfg = model_cfg.get("psi0", {})
+    plan_horizon = int(psi0_cfg.get("plan_horizon", 30))
+    execution_horizon = int(model_cfg.num_action_chunks)
+    overlap_horizon = int(psi0_cfg.get("overlap_horizon", 6))
+    assert plan_horizon == execution_horizon + overlap_horizon, (
+        "Psi0 requires plan_horizon == num_action_chunks + overlap_horizon; "
+        f"got {plan_horizon} != {execution_horizon} + {overlap_horizon}."
+    )
+    assert (
+        execution_horizon == SIMPLE_ACTION_CHUNK_SIZE
+        and int(model_cfg.action_dim) == SIMPLE_ACTION_DIM
+    ), (
+        "Psi0 SIMPLE Eval requires actions shaped "
+        f"[B, {SIMPLE_ACTION_CHUNK_SIZE}, {SIMPLE_ACTION_DIM}]."
+    )
+    assert psi0_cfg.get("sampler", "deterministic_euler") == "deterministic_euler", (
+        "Psi0 Eval requires sampler='deterministic_euler'."
+    )
+    assert psi0_cfg.get("rtc", {}).get("enabled", False), (
+        "Psi0 SIMPLE Eval requires psi0.rtc.enabled=true."
+    )
+
+    eval_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("eval", None), "env.eval")
+    assert eval_env_cfgs and all(
+        env_cfg.get("env_type") == "simple" for env_cfg in eval_env_cfgs.values()
+    ), "Psi0 Eval requires env_type='simple' on every eval env."
+
+
+def _validate_psi0_train_cfg(cfg, model_cfg, only_eval: bool) -> None:
+    """Validate Psi0 + SIMPLE PPO training settings."""
+    assert not only_eval, "Psi0 training config cannot use an Eval runner."
+    assert cfg.runner.get("val_check_interval", -1) <= 0, (
+        "Psi0 SIMPLE requires runner.val_check_interval <= 0: evaluation "
+        "during training is not supported. "
+        "Use standalone evaluation for saved checkpoints."
+    )
+    assert cfg.rollout.get("rollout_backend", "huggingface") == "huggingface", (
+        "Psi0 requires rollout.rollout_backend='huggingface'."
+    )
+    assert not cfg.runner.get("rtc", {}).get("enabled", False), (
+        "Psi0 uses model-side RTC; runner.rtc.enabled must be false."
+    )
+    assert not cfg.runner.get("enable_decoupled_mode", False), (
+        "Psi0 SIMPLE training does not support decoupled mode."
+    )
+    assert cfg.rollout.get("collect_prev_infos", False), (
+        "Psi0 training requires rollout.collect_prev_infos=true."
+    )
+    assert not cfg.rollout.get("recompute_logprobs", False), (
+        "Psi0 recomputes logprobs in the actor; rollout.recompute_logprobs must be false."
+    )
+
+    from rlinf.envs.sim.simple.utils import SIMPLE_ACTION_CHUNK_SIZE, SIMPLE_ACTION_DIM
+
+    psi0_cfg = model_cfg.get("psi0", {})
+    plan_horizon = int(psi0_cfg.get("plan_horizon", 30))
+    execution_horizon = int(model_cfg.num_action_chunks)
+    overlap_horizon = int(psi0_cfg.get("overlap_horizon", 6))
+    assert plan_horizon == execution_horizon + overlap_horizon, (
+        "Psi0 requires plan_horizon == num_action_chunks + overlap_horizon; "
+        f"got {plan_horizon} != {execution_horizon} + {overlap_horizon}."
+    )
+    assert (
+        execution_horizon == SIMPLE_ACTION_CHUNK_SIZE
+        and int(model_cfg.action_dim) == SIMPLE_ACTION_DIM
+    ), (
+        "Psi0 SIMPLE training requires actions shaped "
+        f"[B, {SIMPLE_ACTION_CHUNK_SIZE}, {SIMPLE_ACTION_DIM}]."
+    )
+    assert psi0_cfg.get("sampler") == "stochastic_transition", (
+        "Psi0 training requires sampler='stochastic_transition'."
+    )
+    assert psi0_cfg.get("rtc", {}).get("enabled", False), (
+        "Psi0 SIMPLE training requires psi0.rtc.enabled=true."
+    )
+    train_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("train", None), "env.train")
+    assert train_env_cfgs and all(
+        env_cfg.get("env_type") == "simple" for env_cfg in train_env_cfgs.values()
+    ), "Psi0 training requires env_type='simple' on every train env."
+    assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == (
+        "actor_critic"
+    ), "Psi0 supports PPO with GAE and actor_critic loss only."
+    assert model_cfg.get("add_value_head", False), (
+        "Psi0 PPO requires actor.model.add_value_head=true."
+    )
+    assert not cfg.critic.get("use_critic_model", False), (
+        "Psi0 PPO uses its model-local value head, not a separate critic model."
+    )
+    assert cfg.actor.fsdp_config.get("use_orig_params", False), (
+        "Psi0 partial freezing requires actor.fsdp_config.use_orig_params=true."
+    )
+
+
+def validate_only_eval_rollout_model(model_cfg) -> None:
+    """Fail fast when ``runner.only_eval`` uses a stub ``rollout.model``.
+
+    Eval YAMLs must put a full policy spec under ``rollout.model``.
+    """
+    missing: list[str] = []
+    if OmegaConf.select(model_cfg, "model_type", default=None) in (None, ""):
+        missing.append("rollout.model.model_type")
+    if OmegaConf.select(model_cfg, "num_action_chunks", default=None) is None:
+        missing.append("rollout.model.num_action_chunks")
+
+    model_type = str(OmegaConf.select(model_cfg, "model_type", default="") or "")
+    if model_type == SupportedModel.OPENPI.value:
+        if not OmegaConf.select(model_cfg, "openpi.config_name", default=None):
+            missing.append("rollout.model.openpi.config_name")
+        if OmegaConf.select(model_cfg, "openpi.task", default=None) in (None, ""):
+            missing.append("rollout.model.openpi.task")
+        has_num_steps = (
+            OmegaConf.select(model_cfg, "num_steps", default=None) is not None
+            or OmegaConf.select(model_cfg, "openpi.num_steps", default=None) is not None
+        )
+        if not has_num_steps:
+            missing.append("rollout.model.num_steps")
+
+    if missing:
+        raise ValueError(
+            "runner.only_eval=True requires a complete rollout.model "
+            "(path/precision alone is not enough). Missing: " + ", ".join(missing)
+        )
+
+
+def validate_weight_sync_overlap_cfg(cfg):
+    """Reject overlapping weight sync with a syncer that applies in pieces.
+
+    Patch applies a synchronization in one step. Bucket yields between buckets,
+    so a rollout generating concurrently could sample a model with only part of
+    the new weights applied.
+    """
+    if not cfg.get("actor", {}).get("sync_weight_no_wait", False):
+        return
+    assert cfg.get("weight_syncer", {}).get("type", None) == "patch", (
+        "actor.sync_weight_no_wait=true requires weight_syncer.type=patch so a "
+        "rollout cannot observe a partially applied bucket sync."
+    )
+
+
+def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
+    """Require per-step observations when online LeRobot collection is enabled.
+
+    The collector stores one observation/action pair per environment step.
+    RoboTwin, LIBERO, and Behavior envs share the field
+    ``skip_intermediate_renders``; online LeRobot requires it to be false on
+    every train env. Eval does not write the dataset.
+    """
+    enabled = bool(
+        OmegaConf.select(cfg, "algorithm.dagger.online_lerobot.enabled", default=False)
+    )
+    if not enabled:
+        return
+    only_eval = (
+        cfg.runner.get("only_eval", False)
+        or cfg.runner.get("task_type") == "embodied_eval"
+    )
+    if only_eval:
+        return
+
+    # RoboTwin skips intermediate renders unless the config turns them back on.
+    # LIBERO and Behavior render every step unless the config skips them.
+    skip_intermediate_renders_default = {
+        SupportedEnvType.ROBOTWIN: True,
+        SupportedEnvType.LIBERO: False,
+        SupportedEnvType.BEHAVIOR: False,
+    }
+    train_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("train", None), "env.train")
+    for path, train_env in train_env_cfgs.items():
+        env_type = SupportedEnvType(train_env.env_type)
+        if env_type not in skip_intermediate_renders_default:
+            continue
+        skip_intermediate_renders = bool(
+            train_env.get(
+                "skip_intermediate_renders",
+                skip_intermediate_renders_default[env_type],
+            )
+        )
+        assert not skip_intermediate_renders, (
+            "algorithm.dagger.online_lerobot.enabled requires "
+            f"{path}.skip_intermediate_renders=False for env_type "
+            f"{env_type.value!r}. Skipped intermediate renders drop the "
+            "observation for each action."
+        )
+
+
+def resolve_env_mode_cfg(mode_cfg: DictConfig, path: str, env_world_size: int) -> None:
+    """Lay a mode's envs out on the env workers and fill in its loop fields.
+
+    A heterogeneous mode takes ``total_num_envs`` and the fields its envs share
+    from them (``EnvLayout.mode_fields``), so rollout, actor, and runner read
+    one value from the mode config as they do for a homogeneous mode.
+    """
+    layout = EnvLayout(mode_cfg, env_world_size, path)
+    if not EnvLayout.is_heterogeneous(mode_cfg):
+        return
+    with open_dict(mode_cfg):
+        for key, value in layout.mode_fields().items():
+            if mode_cfg.get(key) is None:
+                mode_cfg[key] = value
+    for env_path, env_cfg in EnvLayout.env_cfgs(mode_cfg, path).items():
+        assert not env_cfg.get("smooth_intervene", False), (
+            f"{env_path}.smooth_intervene requires a homogeneous {path}: "
+            "smoothed actions bypass the policy and cannot share a rollout "
+            "batch with the policy actions of other envs."
+        )
+
+
+def validate_env_policy_fields(cfg: DictConfig, model_cfg: DictConfig) -> None:
+    """Check that the policy reads every ``EnvSpec.POLICY_FIELDS`` an env config sets."""
+    model_type = SupportedModel(model_cfg.model_type)
+    for mode in ("train", "eval"):
+        for path, env_cfg in EnvLayout.env_cfgs(
+            OmegaConf.select(cfg, f"env.{mode}", default=None), f"env.{mode}"
+        ).items():
+            for field in EnvSpec.POLICY_FIELDS:
+                readers = POLICY_FIELD_MODELS[field]
+                assert env_cfg.get(field) is None or model_type in readers, (
+                    f"{path}.{field} is read by model_type "
+                    f"{sorted(model.value for model in readers)}, got "
+                    f"{model_type.value!r}."
+                )
+
+
+def validate_env_training_cfg(
+    cfg: DictConfig, layout: EnvLayout, *, stage_num: int, actor_world_size: int
+) -> None:
+    """Check the per-env training settings against the env layout.
+
+    Args:
+        cfg: The run configuration.
+        layout: Layout of ``env.train``.
+        stage_num: ``rollout.pipeline_stage_num``.
+        actor_world_size: Number of actor workers.
+    """
+    algorithm_cfg = cfg.algorithm
+    env_names = [spec.name for spec in layout.specs]
+    for name, overrides in (algorithm_cfg.get("envs", None) or {}).items():
+        assert name in env_names, (
+            f"algorithm.envs.{name} must name an env under env.train.envs "
+            f"{[n for n in env_names if n is not None]}, got {name!r}."
+        )
+        unknown = set(overrides) - set(EnvSpec.ALGORITHM_FIELDS)
+        assert not unknown, (
+            f"algorithm.envs.{name} may set {list(EnvSpec.ALGORITHM_FIELDS)}, "
+            f"got {sorted(unknown)}."
+        )
+    for spec in layout.specs:
+        loss_weight = spec.algorithm_cfg(algorithm_cfg).get("loss_weight", 1.0)
+        assert loss_weight > 0, (
+            f"Expected a positive loss_weight for {layout.spec_path(spec)}, "
+            f"got {loss_weight!r}."
+        )
+    adv_type = algorithm_cfg.get("adv_type")
+    adv_norm_scope = algorithm_cfg.get("adv_norm_scope", "env")
+    assert adv_norm_scope in ("env", "all"), (
+        f"algorithm.adv_norm_scope must be 'env' or 'all', got {adv_norm_scope!r}."
+    )
+    normalize_advantages = algorithm_cfg.get("normalize_advantages", adv_type != "raw")
+    assert adv_norm_scope == "env" or (
+        adv_normalizes_over_batch(adv_type) and normalize_advantages
+    ), (
+        "algorithm.adv_norm_scope='all' sets the scope of the batch normalization "
+        "of algorithm.adv_type 'gae' or 'raw' with "
+        f"normalize_advantages=True, got adv_type={adv_type!r} and "
+        f"normalize_advantages={normalize_advantages}."
+    )
+    layout.reference_lengths(algorithm_cfg.get("env_weighting", "trajectory"))
+    if adv_requires_group_baseline(
+        adv_type, algorithm_cfg.get("use_reinpp_baseline", False)
+    ):
+        for spec in layout.specs:
+            group_size = spec.algorithm_cfg(algorithm_cfg).group_size
+            assert group_size > 1, (
+                f"algorithm.adv_type={adv_type!r} compares each reward with its "
+                f"group, so {layout.spec_path(spec)} needs group_size > 1, got "
+                f"{group_size}."
+            )
+    if adv_type == "grpo":
+        for spec in layout.specs:
+            assert spec.has_loss_mask, (
+                "GRPO scores each trajectory up to its first done, so "
+                f"{layout.spec_path(spec)} needs auto_reset=False and "
+                "ignore_terminations=False, got "
+                f"auto_reset={spec.cfg.auto_reset} and "
+                f"ignore_terminations={spec.cfg.ignore_terminations}."
+            )
+
+    if not EnvLayout.is_heterogeneous(cfg.env.train):
+        return
+    # These paths still take one value per mode for the loop fields.
+    single_env_paths = {
+        "runner.use_training_pipeline": cfg.runner.get("use_training_pipeline", False),
+        "algorithm.dagger.online_lerobot.enabled": OmegaConf.select(
+            cfg, "algorithm.dagger.online_lerobot.enabled", default=False
+        ),
+        "reward.use_reward_model": OmegaConf.select(
+            cfg, "reward.use_reward_model", default=False
+        ),
+    }
+    unsupported = [path for path, enabled in single_env_paths.items() if enabled]
+    assert not unsupported, (
+        "Heterogeneous env.train configs need each env's loop read per env, which "
+        f"{unsupported} does not do; use one env configuration."
+    )
+    if algorithm_cfg.get("loss_type") == "embodied_nft":
+        # The NFT loss averages its valid steps without per-env loss weights.
+        weighted = [
+            f"algorithm.envs.{name}.loss_weight"
+            for name, overrides in (algorithm_cfg.get("envs", None) or {}).items()
+            if "loss_weight" in overrides
+        ]
+        env_weighting = algorithm_cfg.get("env_weighting", "trajectory")
+        assert env_weighting == "sample" and not weighted, (
+            "NFT weights every valid step the same, so heterogeneous NFT needs "
+            "algorithm.env_weighting='sample' and no per-env loss_weight, got "
+            f"env_weighting={env_weighting!r} and {weighted}."
+        )
+    for spec in layout.specs:
+        sources = len(spec.ranks) * stage_num
+        shards_per_source = math.lcm(sources, actor_world_size) // sources
+        envs_per_source = spec.cfg.total_num_envs // sources
+        group_size = spec.cfg.get("group_size", 1)
+        assert (
+            envs_per_source % shards_per_source == 0
+            and (envs_per_source // shards_per_source) % group_size == 0
+        ), (
+            f"Each actor takes an equal share of env.train.envs.{spec.name}, so its "
+            f"{envs_per_source} envs per env worker and stage must split into "
+            f"{shards_per_source} shards of whole groups of {group_size}."
+        )
+
+
+def validate_eval_env_cfg(
+    cfg: DictConfig, env_world_size: int, stage_num: int, num_action_chunks: int
+) -> int:
+    """Resolve ``env.eval`` and check its env counts and horizons.
+
+    Args:
+        cfg: The run configuration.
+        env_world_size: Number of env workers.
+        stage_num: ``rollout.pipeline_stage_num``.
+        num_action_chunks: Action chunks the policy emits per step.
+
+    Returns:
+        The number of eval envs each env worker runs per pipeline stage.
+    """
+    resolve_env_mode_cfg(cfg.env.eval, "env.eval", env_world_size)
+    assert cfg.env.eval.total_num_envs > 0, (
+        "Total number of parallel environments for evaluation must be greater than 0"
+    )
+    assert cfg.env.eval.total_num_envs % env_world_size == 0, (
+        "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
+    )
+    assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
+        "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
+    )
+    assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
+        "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
+    )
+    eval_envs_per_stage = cfg.env.eval.total_num_envs // env_world_size // stage_num
+    for env_path, eval_env_cfg in EnvLayout.env_cfgs(cfg.env.eval, "env.eval").items():
+        group_size = eval_env_cfg.get("group_size", 1)
+        assert eval_envs_per_stage % group_size == 0, (
+            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num "
+            f"must be divisible by {env_path}.group_size"
+        )
+        assert eval_env_cfg.max_steps_per_rollout_epoch % num_action_chunks == 0, (
+            f"{env_path}.max_steps_per_rollout_epoch must be divisible by "
+            f"actor.model.num_action_chunks ({num_action_chunks}), got "
+            f"{eval_env_cfg.max_steps_per_rollout_epoch}."
+        )
+    return eval_envs_per_stage
+
+
+def validate_refl_cfg(cfg: DictConfig) -> None:
+    """Validate ReFL sampling and the sample budget of each runner step."""
+    if cfg.env.get("train") is not None:
+        raise ValueError("ReFL reads actor.refl_data; expected env.train=null.")
+    if cfg.actor.refl_data.type != "visual.prompt_dataset":
+        raise ValueError("ReFL requires actor.refl_data.type=visual.prompt_dataset.")
+    if cfg.algorithm.update_epoch != 1 or cfg.algorithm.group_size != 1:
+        raise ValueError("ReFL requires update_epoch=1 and group_size=1.")
+    if cfg.runner.get("use_training_pipeline", False) or cfg.runner.get(
+        "overlap_env_bootstrap", False
+    ):
+        raise ValueError(
+            "ReFL does not use the embodied training pipeline or env bootstrap."
+        )
+    if (cfg.get("reward") or {}).get("use_reward_model", False):
+        raise ValueError("ReFL uses actor.refl_reward_model, not a reward worker.")
+    sample_count = cfg.actor.refl_samples_per_step
+    batch_size = cfg.actor.global_batch_size
+    if batch_size <= 0 or sample_count <= 0 or sample_count % batch_size:
+        raise ValueError(
+            f"ReFL samples per step ({sample_count}) must be a positive "
+            f"multiple of actor.global_batch_size ({batch_size})."
+        )
+
+
 def _validate_tianji_prefetch(cfg, model_cfg):
     """Tianji only: the prefetch timetable, reference offset and stages agree.
 
@@ -912,8 +1418,11 @@ def _validate_tianji_prefetch(cfg, model_cfg):
     offset chunk must fit inside the frozen model's reference chunk.
     """
     env_ids = {
-        OmegaConf.select(cfg, f"env.{split}.init_params.id", default=None)
+        OmegaConf.select(env_cfg, "init_params.id", default=None)
         for split in ("train", "eval")
+        for env_cfg in EnvLayout.env_cfgs(
+            OmegaConf.select(cfg, f"env.{split}", default=None), f"env.{split}"
+        ).values()
     }
     if "TianjiRLTEnv-v1" not in env_ids:
         return
@@ -921,55 +1430,70 @@ def _validate_tianji_prefetch(cfg, model_cfg):
     chunk = int(model_cfg.num_action_chunks)
     reference = int(OmegaConf.select(model_cfg, "ref_num_action_chunks", default=chunk))
     # 11-04 speed-up: each executed row advances TIANJI_ROW_SCALE model rows (1 = off).
-    from rlinf.envs.realworld.tianji.tianji_contract import row_scale_from_env
+    from rlinf.envs.realworld.tianji.tianji_contract import (
+        dense_rows_from_env,
+        row_scale_from_env,
+    )
 
     scale = row_scale_from_env()
     from rlinf.algorithms.rlt.action_grid import ActionGrid
+
     grid = ActionGrid.from_config(model_cfg)
     if grid.aligned:
-        assert grid.offset == offset and grid.row_scale == scale, "model action grid must match the launcher timetable"
+        assert grid.offset == offset and grid.row_scale == scale, (
+            "model action grid must match the launcher timetable"
+        )
         assert os.environ.get("RLT_OVERWRITE_REF_WITH_HUMAN", "0") != "1", (
-            "executor-grid actors keep the original VLA reference; human actions are separate BC labels"
+            "executor-grid actors keep the original VLA reference; "
+            "human actions are separate BC labels"
         )
     for key in ("prefetch_at", "eval_prefetch_at"):
         prefetch_at = cfg.rollout.get(key, None)
         if prefetch_at is not None:
-            assert 0 <= int(prefetch_at) < chunk - 1, f"rollout.{key} must be inside the chunk"
+            assert 0 <= int(prefetch_at) < chunk - 1, (
+                f"rollout.{key} must be inside the chunk"
+            )
             assert offset == round(scale * (chunk - 1 - int(prefetch_at))), (
-                f"RLT_REF_OFFSET={offset} must equal TIANJI_ROW_SCALE*(num_action_chunks-1-rollout.{key})="
-                f"{scale * (chunk - 1 - int(prefetch_at)):g}; launch through the Tianji launchers"
+                f"RLT_REF_OFFSET={offset} must equal "
+                f"TIANJI_ROW_SCALE*(num_action_chunks-1-rollout.{key})="
+                f"{scale * (chunk - 1 - int(prefetch_at)):g}; "
+                "launch through the Tianji launchers"
             )
     assert offset + scale * chunk <= reference + 1e-9, (
-        f"RLT_REF_OFFSET={offset} + TIANJI_ROW_SCALE*num_action_chunks={scale * chunk:g} exceeds the "
-        f"reference chunk {reference}"
+        f"RLT_REF_OFFSET={offset} + TIANJI_ROW_SCALE*num_action_chunks="
+        f"{scale * chunk:g} exceeds the reference chunk {reference}"
     )
-    # 11-05 dense rows: TIANJI_DENSE_ROWS=1 runs every model row of the chunk on the executor
-    # (the dense rows offset .. offset+k*num_action_chunks-1 fit by the assertion above).
-    from rlinf.envs.realworld.tianji.tianji_contract import dense_rows_from_env
-
+    # 11-05 dense rows: TIANJI_DENSE_ROWS=1 runs every model row of the chunk on the executor.
     dense = dense_rows_from_env()
     if grid.aligned:
-        assert grid.dense == bool(dense), "model action_grid_dense must match the executor"
-    if scale != 1 and bool(cfg.runner.get("deploy_actor_updates", True)):
-        assert grid.aligned and bool(dense), "scaled residual deployment requires the aligned dense target grid"
-    if dense:
-        assert OmegaConf.select(cfg, "env.train.override_cfg.action_space", default=None) == "joint", (
-            "TIANJI_DENSE_ROWS=1 needs the joint Stage2 (env.train.override_cfg.action_space=joint)"
+        assert grid.dense == bool(dense), (
+            "model action_grid_dense must match the executor"
         )
-        assert grid.dense or not grid.aligned, "dense executor and model action_grid_dense must agree"
+    if scale != 1 and bool(cfg.runner.get("deploy_actor_updates", True)):
+        assert grid.aligned and bool(dense), (
+            "scaled residual deployment requires the aligned dense target grid"
+        )
+    if dense:
+        assert (
+            OmegaConf.select(cfg, "env.train.override_cfg.action_space", default=None)
+            == "joint"
+        ), (
+            "TIANJI_DENSE_ROWS=1 needs the joint Stage2 "
+            "(env.train.override_cfg.action_space=joint)"
+        )
+        assert grid.dense or not grid.aligned, (
+            "dense executor and model action_grid_dense must agree"
+        )
         assert not bool(cfg.runner.get("deploy_actor_updates", True)) or grid.aligned, (
             "dense actor deployment requires executor_action_grid=true"
         )
         assert os.environ.get("LOOPINFRA_RTJ_POLICY_LIMITS") == "x2", (
-            "TIANJI_DENSE_ROWS=1 needs the x2 executor limits: set LOOPINFRA_RTJ_POLICY_LIMITS=x2"
+            "TIANJI_DENSE_ROWS=1 needs the x2 executor limits: "
+            "set LOOPINFRA_RTJ_POLICY_LIMITS=x2"
         )
     stages = int(OmegaConf.select(model_cfg, "num_stage_actors", default=0) or 0)
     onehot = int(os.environ.get("RLT_NUM_STAGES", "8"))
-    assert stages <= onehot, (
-        f"num_stage_actors={stages} exceeds RLT_NUM_STAGES={onehot}"
-    )
-    # The policy reads the stage from its last stage_onehot_dim proprio dims;
-    # rollout writes RLT_NUM_STAGES of them.
+    assert stages <= onehot, f"num_stage_actors={stages} exceeds RLT_NUM_STAGES={onehot}"
     if stages > 0:
         dim = int(OmegaConf.select(model_cfg, "stage_onehot_dim", default=8))
         assert dim == onehot, (
@@ -982,14 +1506,219 @@ def validate_embodied_cfg(cfg):
         cfg.runner.get("only_eval", False)
         or cfg.runner.get("task_type") == "embodied_eval"
     )
+    if only_eval:
+        validate_only_eval_rollout_model(cfg.rollout.model)
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
+    if not only_eval and algorithm_cfg.get("loss_type") == "embodied_refl":
+        validate_refl_cfg(cfg)
     model_type = SupportedModel(model_cfg.model_type)
     assert model_type in EMBODIED_MODEL or model_type in DIFFUSION_MODELS, (
         f"Model type: '{model_cfg.model_type}' is not supported by the embodied runner. "
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    validate_env_policy_fields(cfg, model_cfg)
+    for index, adapter in enumerate(model_cfg.get("merged_loras", None) or []):
+        assert adapter.get("path"), (
+            f"Expected merged_loras[{index}] of the model config to set path, "
+            f"got {adapter!r}."
+        )
+    if model_type == SupportedModel.OPENPI:
+        if only_eval and model_cfg.openpi.get("short_memory", False):
+            eval_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("eval", None), "env.eval")
+            for env_path, env_cfg in eval_env_cfgs.items():
+                assert env_cfg.get("short_memory") is not None, (
+                    "rollout.model.openpi.short_memory=True requires "
+                    f"{env_path}.short_memory; got no environment history configuration."
+                )
+    for split in ("train", "eval"):
+        for env_path, env_cfg in EnvLayout.env_cfgs(
+            cfg.get("env", {}).get(split), f"env.{split}"
+        ).items():
+            if env_cfg.get("env_type") != "world_model":
+                continue
+            for env_key, model_key in (
+                ("chunk", "num_action_chunks"),
+                ("action_dim", "action_dim"),
+            ):
+                env_value = env_cfg.get(env_key)
+                model_value = model_cfg.get(model_key)
+                if env_value is not None and env_value != model_value:
+                    raise ValueError(
+                        f"Expected {env_path}.{env_key} to equal the policy's "
+                        f"{model_key} ({model_value}), got {env_value}."
+                    )
+    if model_type == SupportedModel.PSI0:
+        assert cfg.rollout.pipeline_stage_num == 1, (
+            "Psi0 SIMPLE requires rollout.pipeline_stage_num=1: "
+            "each rollout worker supports one environment and RTC stream."
+        )
+        if only_eval:
+            _validate_psi0_eval_cfg(cfg, model_cfg, only_eval)
+        else:
+            _validate_psi0_train_cfg(cfg, model_cfg, only_eval)
+
+    if model_type == SupportedModel.LINGBOTVLAV2:
+        # V2 always computes in bf16; only the FSDP actor stores fp32 weights,
+        # because the rollout has no FSDP cast to bring them back to bf16.
+        rollout_precision = cfg.rollout.model.get("precision", model_cfg.precision)
+        if torch_dtype_from_precision(rollout_precision) != torch.bfloat16:
+            raise ValueError(
+                "Expected rollout.model.precision=bf16 for LingBot-VLA V2, "
+                f"got {rollout_precision!r}."
+            )
+    if model_type == SupportedModel.LINGBOTVLAV2 and not only_eval:
+        if algorithm_cfg.reward_type != "chunk_level":
+            raise ValueError(
+                "LingBot-VLA V2 predicts one value per action chunk; expected "
+                "algorithm.reward_type=chunk_level, got "
+                f"{algorithm_cfg.reward_type!r}."
+            )
+        fsdp_cfg = cfg.actor.fsdp_config
+        if fsdp_cfg.strategy != "fsdp2":
+            raise ValueError(
+                "Expected actor.fsdp_config.strategy=fsdp2 for LingBot-VLA V2, "
+                f"got {fsdp_cfg.strategy!r}."
+            )
+        param_dtype = fsdp_cfg.mixed_precision.get("param_dtype", None)
+        if (
+            torch_dtype_from_precision(model_cfg.precision) != torch.float32
+            or torch_dtype_from_precision(param_dtype) != torch.bfloat16
+        ):
+            raise ValueError(
+                "LingBot-VLA V2 PPO keeps trainable weights in fp32 and computes "
+                "in bf16; expected actor.model.precision=fp32 and "
+                "actor.fsdp_config.mixed_precision.param_dtype=bf16, got "
+                f"{model_cfg.precision!r} and {param_dtype!r}."
+            )
+        if fsdp_cfg.mixed_precision.get("cast_forward_inputs", True):
+            raise ValueError(
+                "Expected actor.fsdp_config.mixed_precision.cast_forward_inputs="
+                "false for LingBot-VLA V2, which keeps its SDE samples in fp32."
+            )
+
+    if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
+        # The actor-side recompute reshapes flat logprobs by ``action_dim`` for
+        # the OpenVLA family and LingBot-VLA V2. OpenPI already returns the
+        # action-token layout. GR00T rescores inside its training forward.
+        assert model_type in [
+            SupportedModel.OPENVLA,
+            SupportedModel.OPENVLA_OFT,
+            SupportedModel.OPENPI,
+            SupportedModel.LINGBOTVLAV2,
+        ], (
+            f"algorithm.recompute_logprobs supports "
+            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value, SupportedModel.OPENPI.value, SupportedModel.LINGBOTVLAV2.value]}, "
+            f"got '{model_cfg.model_type}'."
+        )
+        assert algorithm_cfg.get("adv_type", None) != "opd", (
+            "algorithm.recompute_logprobs is not supported with adv_type=opd."
+        )
+    for bootstrap_flag in ("batch_bootstrap_inference", "value_only_bootstrap"):
+        flag_value = cfg.rollout.get(bootstrap_flag, False)
+        if not isinstance(flag_value, bool):
+            raise ValueError(
+                f"Expected bool for rollout.{bootstrap_flag}, got {flag_value!r}."
+            )
+    if (
+        cfg.rollout.get("batch_bootstrap_inference", False)
+        or cfg.rollout.get("value_only_bootstrap", False)
+    ) and cfg.rollout.get("rollout_backend", "huggingface") != "huggingface":
+        raise ValueError(
+            "rollout.batch_bootstrap_inference and rollout.value_only_bootstrap "
+            "require rollout.rollout_backend='huggingface'."
+        )
+    # Only the HF rollout worker serves each env configuration on its own loop.
+    rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+    listed = [
+        f"env.{mode}.envs"
+        for mode in ("train", "eval")
+        if EnvLayout.is_heterogeneous(
+            OmegaConf.select(cfg, f"env.{mode}", default=None) or {}
+        )
+    ]
+    assert rollout_backend == "huggingface" or not listed, (
+        "Expected one env configuration per mode for "
+        f"rollout.rollout_backend={rollout_backend!r}, got envs listed under "
+        f"{listed}; only rollout_backend='huggingface' runs listed envs."
+    )
+    if rollout_backend == "phyai":
+        assert model_type == SupportedModel.OPENPI, (
+            "Expected model_type='openpi' for rollout_backend='phyai', "
+            f"got {model_cfg.model_type!r}."
+        )
+        openpi_cfg = model_cfg.get("openpi", {})
+        assert model_cfg.get("pi05", True), (
+            "Expected model.pi05=True for rollout_backend='phyai', "
+            f"got {model_cfg.get('pi05')!r}."
+        )
+        assert openpi_cfg.get("config_name", ""), (
+            "Expected a non-empty model.openpi.config_name for "
+            f"rollout_backend='phyai', got {openpi_cfg.get('config_name')!r}."
+        )
+        expected_variants = {
+            "paligemma_variant": "gemma_2b",
+            "action_expert_variant": "gemma_300m",
+        }
+        for field, expected in expected_variants.items():
+            configured = openpi_cfg.get(field, expected)
+            assert configured == expected, (
+                f"Expected model.openpi.{field}={expected!r} for "
+                f"rollout_backend='phyai', got {configured!r}."
+            )
+        num_images = openpi_cfg.get("num_images_in_input", 3)
+        assert 1 <= num_images <= 3, (
+            "Expected model.openpi.num_images_in_input in [1, 3] for "
+            f"rollout_backend='phyai', got {num_images}."
+        )
+        if not only_eval:
+            loss_type = algorithm_cfg.get("loss_type")
+            assert loss_type not in {"embodied_dagger", "rlt_ac", "rlt_td3"}, (
+                "Expected an algorithm.loss_type other than embodied_dagger, "
+                f"rlt_ac, or rlt_td3 for rollout_backend='phyai', got {loss_type!r}."
+            )
+            adv_type = algorithm_cfg.get("adv_type")
+            assert adv_type != "opd", (
+                "Expected an algorithm.adv_type other than 'opd' for "
+                f"rollout_backend='phyai', got {adv_type!r}."
+            )
+            syncer_type = cfg.weight_syncer.get("type")
+            assert syncer_type == "bucket", (
+                "Expected weight_syncer.type='bucket' for rollout_backend='phyai', "
+                f"got {syncer_type!r}."
+            )
+            assert num_images == 2, (
+                "Expected actor.model.openpi.num_images_in_input=2 for PhyAI "
+                f"training, got {num_images}."
+            )
+            assert model_cfg.get("add_value_head", False), (
+                "Expected actor.model.add_value_head=True for PhyAI training, "
+                f"got {model_cfg.get('add_value_head')!r}."
+            )
+            assert openpi_cfg.get("value_after_vlm", False), (
+                "Expected actor.model.openpi.value_after_vlm=True for PhyAI "
+                f"training, got {openpi_cfg.get('value_after_vlm')!r}."
+            )
+            value_vlm_mode = openpi_cfg.get("value_vlm_mode", "mean_token")
+            assert value_vlm_mode == "mean_token", (
+                "Expected actor.model.openpi.value_vlm_mode='mean_token' for "
+                f"PhyAI training, got {value_vlm_mode!r}."
+            )
+            assert not openpi_cfg.get("joint_logprob", False), (
+                "Expected actor.model.openpi.joint_logprob=False for PhyAI "
+                f"training, got {openpi_cfg.get('joint_logprob')!r}."
+            )
+            noise_method = openpi_cfg.get("noise_method", "flow_ode")
+            assert noise_method in {"flow_ode", "flow_sde"}, (
+                "Expected actor.model.openpi.noise_method 'flow_ode' or "
+                f"'flow_sde' for PhyAI training, got {noise_method!r}."
+            )
+            noise_level = float(openpi_cfg.get("noise_level", 0.0))
+            assert math.isfinite(noise_level) and noise_level >= 0, (
+                "Expected a finite, non-negative actor.model.openpi.noise_level "
+                f"for PhyAI training, got {noise_level}."
+            )
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
     enable_eval = cfg.runner.val_check_interval > 0 or only_eval
@@ -1000,27 +1729,27 @@ def validate_embodied_cfg(cfg):
                 "env.eval config is required when runner.val_check_interval > 0, "
                 "runner.only_eval=True, or runner.task_type=embodied_eval."
             )
-            cfg.env.eval.group_size = cfg.env.eval.get("group_size", 1)
-        if algorithm_cfg.get("rollout_epoch", None) is not None:
-            logging.warning(
-                "algorithm.rollout_epoch is deprecated; use env.train.rollout_epoch instead."
-            )
-            if cfg.env.get("train", None) is not None:
-                cfg.env.train.rollout_epoch = cfg.env.train.get(
-                    "rollout_epoch", algorithm_cfg.rollout_epoch
+            for eval_env_cfg in EnvLayout.env_cfgs(cfg.env.eval, "env.eval").values():
+                eval_env_cfg.group_size = eval_env_cfg.get("group_size", 1)
+                eval_env_cfg.early_stop_on_done = bool(
+                    eval_env_cfg.get("early_stop_on_done", False)
                 )
-        if algorithm_cfg.get("eval_rollout_epoch", None) is not None:
-            logging.warning(
-                "algorithm.eval_rollout_epoch is deprecated; use env.eval.rollout_epoch instead."
-            )
-            if cfg.env.get("eval", None) is not None:
-                cfg.env.eval.rollout_epoch = cfg.env.eval.get(
-                    "rollout_epoch", algorithm_cfg.eval_rollout_epoch
+        for mode, legacy_key in (
+            ("train", "rollout_epoch"),
+            ("eval", "eval_rollout_epoch"),
+        ):
+            legacy_value = algorithm_cfg.get(legacy_key, None)
+            if legacy_value is not None:
+                logging.warning(
+                    f"algorithm.{legacy_key} is deprecated; use "
+                    f"env.{mode}.rollout_epoch instead."
                 )
-        if cfg.env.get("train", None) is not None:
-            cfg.env.train.rollout_epoch = cfg.env.train.get("rollout_epoch", 1)
-        if cfg.env.get("eval", None) is not None:
-            cfg.env.eval.rollout_epoch = cfg.env.eval.get("rollout_epoch", 1)
+            for env_cfg in EnvLayout.env_cfgs(
+                cfg.env.get(mode, None), f"env.{mode}"
+            ).values():
+                env_cfg.rollout_epoch = env_cfg.get(
+                    "rollout_epoch", 1 if legacy_value is None else legacy_value
+                )
         if cfg.rollout.get("sampling_params", None) is None:
             if algorithm_cfg.get("sampling_params", None) is not None:
                 logging.warning(
@@ -1064,6 +1793,38 @@ def validate_embodied_cfg(cfg):
                     "max_new_token", None
                 )
 
+        if not only_eval:
+            importance_sampling_fix = algorithm_cfg.get(
+                "importance_sampling_fix", False
+            )
+            if importance_sampling_fix:
+                assert cfg.algorithm.loss_type in {"actor", "actor_critic"}, (
+                    "Expected algorithm.loss_type 'actor' or 'actor_critic' with "
+                    "algorithm.importance_sampling_fix=True, "
+                    f"got {cfg.algorithm.loss_type!r}."
+                )
+                importance_sampling_clip = algorithm_cfg.get(
+                    "importance_sampling_clip", None
+                )
+                assert (
+                    importance_sampling_clip is not None
+                    and importance_sampling_clip > 0
+                ), (
+                    "Expected a positive algorithm.importance_sampling_clip with "
+                    "algorithm.importance_sampling_fix=True, "
+                    f"got {importance_sampling_clip!r}."
+                )
+                assert algorithm_cfg.get("recompute_logprobs", False), (
+                    "Expected algorithm.recompute_logprobs=True with "
+                    "algorithm.importance_sampling_fix=True, got "
+                    f"{algorithm_cfg.get('recompute_logprobs')!r}."
+                )
+            if algorithm_cfg.get("recompute_logprobs", False):
+                assert not cfg.runner.get("use_training_pipeline", False), (
+                    "algorithm.recompute_logprobs is not supported with "
+                    "runner.use_training_pipeline=True."
+                )
+
     if not only_eval and cfg.runner.get("use_training_pipeline", False):
         assert cfg.algorithm.adv_type == "gae", (
             "algorithm.adv_type only supports 'gae' now"
@@ -1099,6 +1860,160 @@ def validate_embodied_cfg(cfg):
     component_placement = HybridComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
+    if model_type == SupportedModel.PSI0:
+        assert component_placement.get_world_size("rollout") == env_world_size, (
+            "Psi0 SIMPLE requires equal env and rollout worker counts: "
+            "each rollout worker maintains RTC state for one environment."
+        )
+        psi0_mode = "eval" if only_eval else "train"
+        psi0_total_num_envs = sum(
+            env_cfg.total_num_envs
+            for env_cfg in EnvLayout.env_cfgs(
+                cfg.env[psi0_mode], f"env.{psi0_mode}"
+            ).values()
+        )
+        assert psi0_total_num_envs == env_world_size, (
+            "Psi0 SIMPLE requires exactly one environment per EnvWorker: "
+            f"total_num_envs must equal the environment worker count ({env_world_size}), "
+            f"got {psi0_total_num_envs}."
+        )
+
+    if not only_eval:
+        # Every embodied step carries its trajectory's and env's loss weight,
+        # which the losses average over all steps, as token-mean does.
+        loss_agg_func = algorithm_cfg.get("loss_agg_func", "token-mean")
+        assert loss_agg_func == "token-mean", (
+            "Embodied losses average every step with its loss_mask_ratio weight, "
+            f"so algorithm.loss_agg_func must be 'token-mean', got {loss_agg_func!r}."
+        )
+
+    if not only_eval and algorithm_cfg.get("loss_type") == "embodied_art":
+        assert not EnvLayout.is_heterogeneous(cfg.env.train), (
+            "DiffusionART expects one env configuration, got envs "
+            f"{list(cfg.env.train.envs)} under env.train.envs."
+        )
+        assert not algorithm_cfg.get("filter_rewards", False), (
+            "DiffusionART requires algorithm.filter_rewards=False; got True."
+        )
+        assert model_type in DIFFUSION_MODELS, (
+            "algorithm.loss_type='embodied_art' requires a diffusion model."
+        )
+        assert cfg.actor.training_backend == "fsdp", (
+            "algorithm.loss_type='embodied_art' currently requires actor.training_backend='fsdp'."
+        )
+        assert stage_num == 1, (
+            "algorithm.loss_type='embodied_art' requires rollout.pipeline_stage_num=1."
+        )
+        art_updates = int(algorithm_cfg.get("art_updates_per_rollout", 2))
+        assert art_updates in {1, 2} and algorithm_cfg.group_size % art_updates == 0, (
+            "DiffusionART art_updates_per_rollout must be 1 or 2 and divide "
+            "algorithm.group_size."
+        )
+        assert int(algorithm_cfg.get("update_epoch", 1)) == 1, (
+            "DiffusionART requires algorithm.update_epoch=1."
+        )
+        assert cfg.runner.get("weight_sync_interval", 1) == 1, (
+            "DiffusionART requires runner.weight_sync_interval=1."
+        )
+        assert cfg.env.train.group_size == algorithm_cfg.group_size, (
+            "DiffusionART requires env.train.group_size to match algorithm.group_size."
+        )
+        assert (
+            cfg.env.train.max_steps_per_rollout_epoch == model_cfg.num_action_chunks
+        ), "DiffusionART requires one generated sample per rollout epoch."
+        expected_global_batch_size = (
+            cfg.env.train.total_num_envs * cfg.env.train.rollout_epoch // art_updates
+        )
+        assert cfg.actor.global_batch_size == expected_global_batch_size, (
+            "DiffusionART actor.global_batch_size must equal one disjoint update "
+            f"window ({expected_global_batch_size})."
+        )
+        actor_world_size = component_placement.get_world_size("actor")
+        shard_count = math.lcm(env_world_size, actor_world_size)
+        assert (
+            cfg.env.train.total_num_envs % (shard_count * algorithm_cfg.group_size) == 0
+        ), (
+            "DiffusionART requires every actor trajectory shard to contain complete "
+            "prompt groups."
+        )
+        timestep_fraction = float(algorithm_cfg.get("art_timestep_fraction", 1.0))
+        assert 0 < timestep_fraction <= 1, (
+            "algorithm.art_timestep_fraction must be in (0, 1]."
+        )
+        assert algorithm_cfg.get("art_loss_space", "velocity_linear_sigma") in {
+            "velocity_linear_sigma",
+            "velocity_uniform",
+        }, "Unsupported algorithm.art_loss_space."
+        assert algorithm_cfg.get("art_covariance_reduction", "unbiased") in {
+            "unbiased",
+            "population",
+        }, "Unsupported algorithm.art_covariance_reduction."
+        assert algorithm_cfg.get("art_direction_mode", "historical") in {
+            "historical",
+            "normalized_aggregate",
+        }, "Unsupported algorithm.art_direction_mode."
+        assert algorithm_cfg.get("art_scale_mode", "unit_normalized_covariance") in {
+            "reward_mad",
+            "raw_covariance",
+            "reward_std_normalized_covariance",
+            "unit_normalized_covariance",
+        }, "Unsupported algorithm.art_scale_mode."
+        assert algorithm_cfg.get("art_zero_signal_mode", "exact") == "exact", (
+            "Scalar DiffusionART requires algorithm.art_zero_signal_mode='exact'."
+        )
+        supported_art_options = {
+            "art_updates_per_rollout",
+            "art_covariance_reduction",
+            "art_direction_mode",
+            "art_scale_mode",
+            "art_guidance_gain",
+            "art_zero_signal_mode",
+            "art_zero_signal_atol",
+            "art_loss_space",
+            "art_mask_metric",
+            "art_mask_threshold",
+            "art_reference_noise_level",
+            "art_corrective_mask_enabled",
+            "art_exclude_final_step",
+            "art_timestep_fraction",
+            "art_reward_reduction",
+            "art_eps",
+        }
+        unsupported_art_options = sorted(
+            option
+            for option in algorithm_cfg
+            if option.startswith("art_") and option not in supported_art_options
+        )
+        assert not unsupported_art_options, (
+            f"Unsupported DiffusionART options: {unsupported_art_options}."
+        )
+        assert algorithm_cfg.get("art_mask_metric", "sde_kl") in {
+            "fixed_mse",
+            "sde_kl",
+        }, "Unsupported algorithm.art_mask_metric."
+        for option, default in (
+            ("art_mask_threshold", 1e-5),
+            ("art_reference_noise_level", 0.8),
+        ):
+            value = algorithm_cfg.get(option, default)
+            assert type(value) in (int, float) and math.isfinite(value) and value > 0, (
+                f"algorithm.{option} must be a positive finite number."
+            )
+        assert type(algorithm_cfg.get("art_corrective_mask_enabled", True)) is bool, (
+            "algorithm.art_corrective_mask_enabled must be boolean."
+        )
+        assert algorithm_cfg.get("art_reward_reduction", "mean") in {"mean", "sum"}, (
+            "algorithm.art_reward_reduction must be 'mean' or 'sum'."
+        )
+        model_options = model_cfg.get(model_type.value)
+        assert model_options.get("rl_mode") == "art", (
+            f"actor.model.{model_type.value}.rl_mode must be 'art'."
+        )
+        if model_type == SupportedModel.SD3:
+            assert (
+                model_options.get("train_sampler") == "ode"
+                and float(model_options.get("noise_level", 0.0)) == 0.0
+            ), "SD3 DiffusionART requires deterministic ODE rollout."
 
     use_reward_model = cfg.get("reward", {}).get("use_reward_model", False)
     standalone_realworld = cfg.get("reward", {}).get("standalone_realworld", False)
@@ -1141,34 +2056,35 @@ def validate_embodied_cfg(cfg):
             "env.eval config is required when runner.val_check_interval > 0, "
             "runner.only_eval=True, or runner.task_type=embodied_eval."
         )
-        assert cfg.env.eval.total_num_envs > 0, (
-            "Total number of parallel environments for evaluation must be greater than 0"
+        eval_envs_per_stage = validate_eval_env_cfg(
+            cfg, env_world_size, stage_num, model_cfg.num_action_chunks
         )
-        assert cfg.env.eval.total_num_envs % env_world_size == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
-        )
-        assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
-        )
-        assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
-            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
-        )
-        assert (
-            cfg.env.eval.total_num_envs
-            // env_world_size
-            // stage_num
-            % cfg.env.eval.group_size
-            == 0
-        ), (
-            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
-        )
-        assert (
-            cfg.env.eval.max_steps_per_rollout_epoch % model_cfg.num_action_chunks == 0
-        ), (
-            "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
-        )
+        for env_path, eval_env_cfg in EnvLayout.env_cfgs(
+            cfg.env.eval, "env.eval"
+        ).items():
+            if not eval_env_cfg.early_stop_on_done:
+                continue
+            assert not eval_env_cfg.auto_reset, (
+                f"{env_path}.early_stop_on_done requires {env_path}.auto_reset=false: "
+                "each eval rollout epoch is one episode."
+            )
+            assert stage_num == 1, (
+                f"{env_path}.early_stop_on_done requires rollout.pipeline_stage_num=1."
+            )
+            assert eval_envs_per_stage == 1, (
+                f"{env_path}.early_stop_on_done requires one eval env per worker "
+                f"(got {eval_envs_per_stage})."
+            )
+            assert component_placement.get_world_size("rollout") == env_world_size, (
+                f"{env_path}.early_stop_on_done requires equal env and rollout "
+                "worker counts."
+            )
+            assert not cfg.runner.get("enable_decoupled_mode", False), (
+                f"{env_path}.early_stop_on_done does not support decoupled mode."
+            )
 
-    if not only_eval:
+    if not only_eval and algorithm_cfg.get("loss_type") != "embodied_refl":
+        resolve_env_mode_cfg(cfg.env.train, "env.train", env_world_size)
         assert cfg.env.train.total_num_envs > 0, (
             "Total number of parallel environments for training must be greater than 0"
         )
@@ -1181,19 +2097,29 @@ def validate_embodied_cfg(cfg):
         assert cfg.env.train.total_num_envs // env_world_size // stage_num > 0, (
             "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
         )
-        assert (
-            cfg.env.train.total_num_envs
-            // env_world_size
-            // stage_num
-            % cfg.env.train.group_size
-            == 0
-        ), (
-            "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
+        train_envs_per_stage = (
+            cfg.env.train.total_num_envs // env_world_size // stage_num
         )
-        assert (
-            cfg.env.train.max_steps_per_rollout_epoch % model_cfg.num_action_chunks == 0
-        ), (
-            "env.train.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+        for env_path, train_env_cfg in EnvLayout.env_cfgs(
+            cfg.env.train, "env.train"
+        ).items():
+            assert train_envs_per_stage % train_env_cfg.group_size == 0, (
+                "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num "
+                f"must be divisible by {env_path}.group_size"
+            )
+            assert (
+                train_env_cfg.max_steps_per_rollout_epoch % model_cfg.num_action_chunks
+                == 0
+            ), (
+                f"{env_path}.max_steps_per_rollout_epoch must be divisible by "
+                f"actor.model.num_action_chunks ({model_cfg.num_action_chunks}), got "
+                f"{train_env_cfg.max_steps_per_rollout_epoch}."
+            )
+        validate_env_training_cfg(
+            cfg,
+            EnvLayout(cfg.env.train, env_world_size, "env.train"),
+            stage_num=stage_num,
+            actor_world_size=component_placement.get_world_size("actor"),
         )
     _validate_tianji_prefetch(cfg, model_cfg)
     with open_dict(cfg):
@@ -1204,56 +2130,51 @@ def validate_embodied_cfg(cfg):
         # This is enabled only when offload is disabled to avoid resource contention.
         # Note: If EnvWorker and Actor share the same accelerator, this may increase GPU memory
         # pressure during the overlap period.
+        train_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("train", None), "env.train")
         cfg.runner.overlap_env_bootstrap = bool(
             cfg.runner.get("overlap_env_bootstrap", False)
-        ) and not cfg.env.get("train", {}).get("enable_offload", False)
-        train_env_type = (
-            SupportedEnvType(cfg.env.train.env_type)
-            if cfg.env.get("train", None) is not None
-            else None
+        ) and not any(
+            env_cfg.get("enable_offload", False) for env_cfg in train_env_cfgs.values()
         )
-        eval_env_type = (
-            SupportedEnvType(cfg.env.eval.env_type)
-            if cfg.env.get("eval", None) is not None
-            else None
-        )
-        if (
-            train_env_type == SupportedEnvType.MANISKILL
-            or eval_env_type == SupportedEnvType.MANISKILL
-        ):
+        eval_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("eval", None), "env.eval")
+        for env_cfg in eval_env_cfgs.values():
+            if SupportedEnvType(env_cfg.env_type) == SupportedEnvType.MANISKILL:
+                with open_dict(env_cfg):
+                    env_cfg._reconfigure_on_full_reset = (
+                        env_cfg.use_fixed_reset_state_ids
+                    )
 
-            def get_robot_control_mode(robot: str):
-                if robot == "panda-qpos":
-                    return "pd_joint_delta_pos"
-                elif robot == "panda-ee-dpos":
-                    return "pd_ee_delta_pos"
-                elif robot == "panda-ee-target-dpos":  # for GSEnv
-                    return "pd_ee_target_delta_pose"
-                elif "google_robot_static" in robot:
-                    return "arm_pd_ee_delta_pose_align_interpolate_by_planner_gripper_pd_joint_target_delta_pos_interpolate_by_planner"
-                elif "widowx" in robot:
-                    return "arm_pd_ee_target_delta_pose_align2_gripper_pd_joint_pos"
-                elif "panda" in robot:
-                    return "pd_ee_body_target_delta_pose_real_root_frame"
-                else:
-                    raise NotImplementedError(f"Robot {robot} not supported")
+        def get_robot_control_mode(robot: str):
+            if robot == "panda-qpos":
+                return "pd_joint_delta_pos"
+            elif robot == "panda-ee-dpos":
+                return "pd_ee_delta_pos"
+            elif robot == "panda-ee-target-dpos":  # for GSEnv
+                return "pd_ee_target_delta_pose"
+            elif "google_robot_static" in robot:
+                return "arm_pd_ee_delta_pose_align_interpolate_by_planner_gripper_pd_joint_target_delta_pos_interpolate_by_planner"
+            elif "widowx" in robot:
+                return "arm_pd_ee_target_delta_pose_align2_gripper_pd_joint_pos"
+            elif "panda" in robot:
+                return "pd_ee_body_target_delta_pose_real_root_frame"
+            else:
+                raise NotImplementedError(f"Robot {robot} not supported")
 
-            if cfg.env.get("train", None) is not None:
-                cfg.env.train.init_params.control_mode = get_robot_control_mode(
+        env_cfgs = {**train_env_cfgs, **eval_env_cfgs}
+        for env_path, env_cfg in env_cfgs.items():
+            env_type = SupportedEnvType(env_cfg.env_type)
+            if env_type == SupportedEnvType.MANISKILL:
+                env_cfg.init_params.control_mode = get_robot_control_mode(
                     model_cfg.policy_setup
                 )
-            if cfg.env.get("eval", None) is not None:
-                cfg.env.eval.init_params.control_mode = get_robot_control_mode(
-                    model_cfg.policy_setup
+            elif env_type == SupportedEnvType.BEHAVIOR:
+                assert env_cfg.base_config_name == "r1pro_behavior", (
+                    f"Only r1pro_behavior is supported for omnigibson, got "
+                    f"{env_path}.base_config_name={env_cfg.base_config_name!r}"
                 )
-        elif (
-            train_env_type == SupportedEnvType.BEHAVIOR
-            or eval_env_type == SupportedEnvType.BEHAVIOR
-        ):
-            if cfg.env.get("train", None) is not None:
-                assert cfg.env.train.base_config_name == "r1pro_behavior", (
-                    f"Only r1pro_behavior is supported for omnigibson, got {cfg.env.train.base_config_name}"
-                )
+
+    validate_online_lerobot_env_cfg(cfg)
+    validate_weight_sync_overlap_cfg(cfg)
     return cfg
 
 
@@ -1324,32 +2245,8 @@ def validate_offline_cfg(cfg: DictConfig) -> DictConfig:
         component_placement = HybridComponentPlacement(cfg, Cluster())
         stage_num = cfg.rollout.pipeline_stage_num
         env_world_size = component_placement.get_world_size("env")
-        assert cfg.env.eval.total_num_envs > 0, (
-            "Total number of parallel environments for evaluation must be greater than 0"
-        )
-        assert cfg.env.eval.total_num_envs % env_world_size == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
-        )
-        assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
-        )
-        assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
-            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
-        )
-        assert (
-            cfg.env.eval.total_num_envs
-            // env_world_size
-            // stage_num
-            % cfg.env.eval.group_size
-            == 0
-        ), (
-            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
-        )
-        assert (
-            cfg.env.eval.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
-            == 0
-        ), (
-            "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+        validate_eval_env_cfg(
+            cfg, env_world_size, stage_num, cfg.actor.model.num_action_chunks
         )
     return cfg
 
@@ -1377,10 +2274,20 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
             cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
 
         model_type = cfg.actor.model.get("model_type", None)
-        if (
-            model_type is not None
-            and SupportedModel(model_type) == SupportedModel.DREAMZERO
-        ):
+        if SupportedModel(model_type) == SupportedModel.OPENPI:
+            openpi_cfg = cfg.actor.model.openpi
+            history_cfg = cfg.data.get("short_memory")
+            if openpi_cfg.get("short_memory", False):
+                assert history_cfg is not None, (
+                    "actor.model.openpi.short_memory=True requires data.short_memory; "
+                    "got no history sampling configuration."
+                )
+            if history_cfg is not None:
+                assert not openpi_cfg.get("use_rlt", False), (
+                    "OpenPI use_rlt=True requires the RLT loader; "
+                    "got short_memory enabled in the model or data configuration."
+                )
+        elif SupportedModel(model_type) == SupportedModel.DREAMZERO:
             from rlinf.models.embodiment.dreamzero.dreamzero_config import (
                 validate_dreamzero_sft_model_cfg,
             )
@@ -1466,6 +2373,331 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
+    """Validate SearchR1 multi-agent training requirements before launch."""
+    expected_adv_type = (
+        "gae_dynamic"
+        if OmegaConf.select(cfg, "critic.use_critic_model", default=False)
+        else "grpo_dynamic"
+    )
+    if (
+        OmegaConf.select(cfg, "agentloop.is_dynamic_rollout_batch", default=False)
+        and cfg.algorithm.adv_type != expected_adv_type
+    ):
+        raise ValueError(
+            f"Multi-turn training requires algorithm.adv_type={expected_adv_type!r}, "
+            f"got {cfg.algorithm.adv_type!r}."
+        )
+    reward_cfg = cfg.get("reward", None)
+    if reward_cfg is None or reward_cfg.get("reward_type", None) != "searchr1":
+        return cfg
+
+    with open_dict(cfg.agentloop):
+        cfg.agentloop.setdefault("truncate_response", True)
+    if not cfg.agentloop.get("is_dynamic_rollout_batch", False):
+        raise ValueError("SearchR1 requires agentloop.is_dynamic_rollout_batch=True.")
+    if cfg.actor.training_backend == "fsdp" and cfg.algorithm.get(
+        "importance_sampling_fix", False
+    ):
+        raise ValueError(
+            "SearchR1 with the FSDP multi-agent actor does not support "
+            "algorithm.importance_sampling_fix=True."
+        )
+    expect_rollout_logprobs = not cfg.algorithm.recompute_logprobs
+    if cfg.rollout.get("return_logprobs", False) != expect_rollout_logprobs:
+        raise ValueError(
+            "SearchR1 requires rollout.return_logprobs == "
+            "not algorithm.recompute_logprobs "
+            f"(algorithm.recompute_logprobs={cfg.algorithm.recompute_logprobs}, "
+            f"rollout.return_logprobs={cfg.rollout.get('return_logprobs', False)}). "
+            "The agent loop slices the rollout logprobs returned by the engine; "
+            "set rollout.return_logprobs: ${not:${algorithm.recompute_logprobs}}."
+        )
+    if cfg.data.get("apply_chat_template_kwargs", {}) and not cfg.data.get(
+        "apply_chat_template", False
+    ):
+        raise ValueError(
+            "data.apply_chat_template_kwargs is set but "
+            "data.apply_chat_template is False: the kwargs only reach the chat "
+            "template through dataset prompt rendering. Set "
+            "data.apply_chat_template: True or remove the kwargs."
+        )
+    agentic_tokenizer = cfg.agentloop.get("agentic_tokenizer", "default")
+    # Imported lazily: a top-level import would be circular, since
+    # rlinf.agents imports rlinf.models, which imports rlinf.config.
+    from rlinf.agents.tokenization.agentic_tokenizer import (
+        agentic_tokenizer_tool_call_parser,
+    )
+
+    expected_parser = agentic_tokenizer_tool_call_parser(agentic_tokenizer)
+    actual_parser = OmegaConf.select(
+        cfg, "rollout.sglang.tool_call_parser", default=None
+    )
+    if expected_parser is not None and actual_parser != expected_parser:
+        raise ValueError(
+            f"agentloop.agentic_tokenizer={agentic_tokenizer!r} binds "
+            f"tool_call_parser={expected_parser!r}, but "
+            f"rollout.sglang.tool_call_parser={actual_parser!r}."
+        )
+
+    if cfg.critic.get("use_critic_model", False):
+        if not cfg.runner.get("synchronous", False):
+            raise ValueError("SearchR1 PPO requires runner.synchronous=True.")
+        if (
+            cfg.actor.training_backend != "megatron"
+            or cfg.critic.training_backend != "megatron"
+            or cfg.rollout.rollout_backend != "sglang"
+        ):
+            raise ValueError(
+                "SearchR1 PPO requires Megatron actor/critic and SGLang rollout."
+            )
+        if "sglang" not in cfg.rollout:
+            cfg.rollout.sglang = {}
+        cfg.rollout.sglang.setdefault("backend_type", "server")
+        if (
+            cfg.algorithm.adv_type != "gae_dynamic"
+            or cfg.algorithm.kl_beta != 0
+            or cfg.algorithm.get("reinpp_kl_beta", 0) != 0
+        ):
+            raise ValueError(
+                "SearchR1 PPO requires gae_dynamic and zero KL reward/loss coefficients."
+            )
+        if cfg.algorithm.group_size != 1:
+            raise ValueError("SearchR1 PPO requires algorithm.group_size=1.")
+        if cfg.algorithm.get("loss_agg_func", "token-mean") != "token-mean":
+            raise ValueError(
+                "SearchR1 PPO requires algorithm.loss_agg_func=token-mean."
+            )
+        if not cfg.algorithm.get("use_valid_token_scale", False):
+            raise ValueError(
+                "SearchR1 PPO requires algorithm.use_valid_token_scale=True."
+            )
+        if cfg.algorithm.get("loss_scales", []):
+            raise ValueError("SearchR1 PPO requires uniform action-token loss weights.")
+        for role in ("actor", "critic"):
+            if (
+                cfg[role].model.tensor_model_parallel_size != 1
+                or cfg[role].model.pipeline_model_parallel_size != 1
+                or cfg[role].model.get("context_parallel_size", 1) != 1
+            ):
+                raise ValueError(
+                    "Synchronous SearchR1 PPO currently requires TP=PP=CP=1."
+                )
+        if cfg.algorithm.get("importance_sampling_fix", False):
+            raise ValueError(
+                "Synchronous SearchR1 PPO uses a fixed old policy without importance_sampling_fix."
+            )
+
+    component_placement = ModelParallelComponentPlacement(cfg, Cluster())
+    if cfg.critic.get("use_critic_model", False) and (
+        not component_placement.is_collocated
+        or component_placement.get_hardware_ranks("critic")
+        != component_placement.get_hardware_ranks("actor")
+    ):
+        raise ValueError(
+            "Synchronous SearchR1 PPO requires actor, critic, and rollout "
+            "to share the same GPUs."
+        )
+    if not component_placement.is_collocated:
+        # The Megatron MA actor gathers the full rollout batch before
+        # training, so it also runs under disaggregated placement. The FSDP
+        # MA actor still asserts collocated placement internally.
+        if cfg.actor.training_backend != "megatron":
+            raise ValueError(
+                "SearchR1 multi-agent actors support only collocated component "
+                "placement unless actor.training_backend is megatron."
+            )
+    if cfg.runner.get("async_mode", False):
+        if not component_placement.is_disaggregated:
+            raise ValueError(
+                "SearchR1 async training requires the actor and the rollout "
+                "to be deployed on separate GPUs (disaggregated placement); "
+                "the current placement mode is "
+                f"{component_placement.placement_mode.name}."
+            )
+        # Deliberately no setdefault for backend_type: this runs after
+        # validate_sglang_cfg, and filling a default here would bypass its
+        # mutual-exclusion check between serving_mode and the server backend.
+        rollout_backend = cfg.rollout.get("rollout_backend", None)
+        backend_type = OmegaConf.select(
+            cfg, "rollout.sglang.backend_type", default="engine"
+        )
+        if rollout_backend != "sglang" or backend_type != "server":
+            raise ValueError(
+                "SearchR1 async training requires "
+                "rollout.rollout_backend: sglang with "
+                "rollout.sglang.backend_type: server: the weight sync "
+                "pauses and resumes generation through the SGLang server "
+                f"HTTP interface. Found rollout.rollout_backend="
+                f"{rollout_backend!r} and rollout.sglang.backend_type="
+                f"{backend_type!r}."
+            )
+        if cfg.algorithm.get("staleness_threshold", None) is not None:
+            raise ValueError(
+                f"algorithm.staleness_threshold is the embodied async "
+                f"runner's admission setting and is not used by async agent "
+                f"training (found {cfg.algorithm.staleness_threshold}). "
+                "Admission is controlled by rollout_buffer."
+                "max_inflight_groups and rollout_buffer.max_buffered_groups; "
+                "how stale training data may be is bounded by "
+                "rollout_buffer.max_buffered_groups and agentloop."
+                "max_actor_accept_staleness. Remove the field."
+            )
+        task_name = OmegaConf.select(cfg, "agentloop.task_name", default=None)
+        if task_name is None:
+            raise ValueError(
+                "agentloop.task_name is required in async training: it keys "
+                "the rollout buffer's per-task state and is stamped on "
+                "every rollout request. Set it to the agent task's name "
+                "(e.g. 'searchr1')."
+            )
+        max_actor_accept_staleness = OmegaConf.select(
+            cfg, "agentloop.max_actor_accept_staleness", default=None
+        )
+        if max_actor_accept_staleness is not None and (max_actor_accept_staleness < 0):
+            raise ValueError(
+                f"agentloop.max_actor_accept_staleness must be >= 0, found "
+                f"{max_actor_accept_staleness}: a negative value would drop "
+                "every group as stale."
+            )
+        # Defaults are set here once; the async runner and the rollout
+        # buffer read the fields without further fallbacks.
+        with open_dict(cfg):
+            if cfg.rollout.get("pause_mode", None) is None:
+                cfg.rollout.pause_mode = "retract"
+            rollout_batch_size = cfg.data.get("rollout_batch_size", None)
+            max_running_requests = cfg.rollout.get("max_running_requests", None)
+            if cfg.get("rollout_buffer", None) is None:
+                cfg.rollout_buffer = {}
+            if cfg.rollout_buffer.get("max_dropped_groups_per_step", None) is None:
+                if rollout_batch_size is not None:
+                    cfg.rollout_buffer.max_dropped_groups_per_step = (
+                        10 * rollout_batch_size
+                    )
+            if cfg.rollout_buffer.get("max_inflight_groups", None) is None:
+                if rollout_batch_size is not None and max_running_requests is not None:
+                    group_size = cfg.algorithm.group_size
+                    num_instances = component_placement.rollout_num_model_instances
+                    # In-flight groups' trajectories run at about 1.2x the
+                    # engine capacity: the margin covers in-flight groups
+                    # whose trajectories are waiting on tools or on the
+                    # group's slowest member.
+                    cfg.rollout_buffer.max_inflight_groups = math.ceil(
+                        max_running_requests * num_instances * 1.2 / group_size
+                    )
+            if cfg.rollout_buffer.get("max_buffered_groups", None) is None:
+                if rollout_batch_size is not None:
+                    cfg.rollout_buffer.max_buffered_groups = 2 * rollout_batch_size
+        if cfg.rollout_buffer.get("max_inflight_groups", None) is None:
+            raise ValueError(
+                "rollout_buffer.max_inflight_groups is not set and cannot "
+                "be derived: async training derives it from "
+                "rollout.max_running_requests. Set rollout."
+                "max_running_requests or rollout_buffer.max_inflight_groups."
+            )
+        if cfg.rollout_buffer.max_inflight_groups < 1:
+            raise ValueError(
+                f"rollout_buffer.max_inflight_groups must be >= 1, found "
+                f"{cfg.rollout_buffer.max_inflight_groups}."
+            )
+        rollout_batch_size = cfg.data.get("rollout_batch_size", None)
+        if rollout_batch_size is not None and (
+            cfg.rollout_buffer.max_buffered_groups < rollout_batch_size
+        ):
+            raise ValueError(
+                f"rollout_buffer.max_buffered_groups "
+                f"({cfg.rollout_buffer.max_buffered_groups}) must be >= "
+                f"data.rollout_batch_size ({rollout_batch_size}): a smaller "
+                "buffer can never hold a full training batch."
+            )
+        if cfg.rollout_buffer.max_dropped_groups_per_step < 1:
+            raise ValueError(
+                f"rollout_buffer.max_dropped_groups_per_step must be >= 1, "
+                f"found {cfg.rollout_buffer.max_dropped_groups_per_step}."
+            )
+        if (
+            max_actor_accept_staleness is not None
+            and rollout_batch_size is not None
+            and max_actor_accept_staleness
+            < math.ceil(cfg.rollout_buffer.max_buffered_groups / rollout_batch_size)
+        ):
+            # When the actor is the bottleneck, the oldest buffered group
+            # has waited about max_buffered_groups / rollout_batch_size
+            # steps; a stricter staleness cap would systematically drop it
+            # and waste the generate compute behind it.
+            logging.warning(
+                f"agentloop.max_actor_accept_staleness "
+                f"({max_actor_accept_staleness}) is below the buffer's "
+                f"depth in steps (rollout_buffer.max_buffered_groups "
+                f"{cfg.rollout_buffer.max_buffered_groups} / "
+                f"data.rollout_batch_size {rollout_batch_size}). When "
+                "training is the bottleneck, the oldest buffered groups "
+                "have waited about that many steps and will be dropped "
+                "as stale, wasting the generate compute behind them; the "
+                "actor only waits for new groups when so many are dropped "
+                "that the buffer cannot fill a batch. Raise "
+                "max_actor_accept_staleness or lower max_buffered_groups."
+            )
+        down_sampling_cfg = cfg.algorithm.get("down_sampling", None) or {}
+        if down_sampling_cfg.get("do_down_sampling", False):
+            down_sampling_config = (
+                down_sampling_cfg.get("down_sampling_config", None) or {}
+            )
+            if not down_sampling_config.get("reject_equal_reward", False):
+                raise ValueError(
+                    "Async runs support only reject_equal_reward under "
+                    "algorithm.down_sampling.down_sampling_config: group "
+                    "filtering runs in the RolloutBufferWorker and "
+                    "within-group down sampling is not implemented there."
+                )
+            unsupported = {
+                key: value
+                for key, value in down_sampling_config.items()
+                if key != "reject_equal_reward" and value
+            }
+            if unsupported:
+                raise ValueError(
+                    f"Async runs support only reject_equal_reward under "
+                    f"algorithm.down_sampling.down_sampling_config; found "
+                    f"enabled options {sorted(unsupported.keys())}. Group "
+                    "filtering runs in the RolloutBufferWorker and "
+                    "within-group down sampling is not implemented there."
+                )
+            if cfg.runner.get("max_steps", -1) < 0:
+                raise ValueError(
+                    "algorithm.down_sampling.down_sampling_config."
+                    "reject_equal_reward requires an explicit "
+                    "runner.max_steps: dropped groups consume prompts "
+                    "faster than steps, so the epoch-derived step count "
+                    "is wrong."
+                )
+        if cfg.rollout.pause_mode not in ("in_place", "retract", "drain"):
+            raise ValueError(
+                f"rollout.pause_mode must be one of in_place/retract/drain, "
+                f"found {cfg.rollout.pause_mode!r}."
+            )
+        if cfg.data.get("rollout_batch_size", None) is not None:
+            actor_dp_size = component_placement.actor_dp_size
+            if cfg.data.rollout_batch_size % actor_dp_size != 0:
+                raise ValueError(
+                    f"data.rollout_batch_size ({cfg.data.rollout_batch_size}) "
+                    f"must be divisible by the actor data-parallel size "
+                    f"({actor_dp_size}): each DP rank takes "
+                    f"rollout_batch_size // {actor_dp_size} groups per step, "
+                    "and a remainder would leave groups behind in "
+                    "rollout_channel to be picked up by the next step."
+                )
+        if cfg.rollout.pause_mode == "in_place":
+            logging.warning(
+                "rollout.pause_mode=in_place keeps the prefix cache across "
+                "weight syncs, so later requests reuse prefix KV computed "
+                "with older weights; this staleness is not reflected in "
+                "version_start/version_end. retract is recommended for "
+                "training."
+            )
+    return cfg
+
+
 def validate_reasoning_eval_cfg(cfg: DictConfig) -> DictConfig:
     with open_dict(cfg):
         assert cfg.runner.seq_length > cfg.data.max_prompt_length, (
@@ -1535,6 +2767,42 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def adv_normalizes_over_batch(adv_type: Optional[str]) -> bool:
+    """Whether an advantage estimator normalizes over the batch it is given.
+
+    These estimators honor ``algorithm.normalize_advantages``, so
+    ``algorithm.adv_norm_scope`` can widen their batch to every env. Group
+    estimators normalize within each group instead.
+    """
+    return bool(adv_type) and adv_type.lower() in ("gae", "raw")
+
+
+def adv_requires_group_baseline(
+    adv_type: Optional[str], use_reinpp_baseline: bool = False
+) -> bool:
+    """Whether an advantage estimator draws its baseline from within-group
+    statistics and therefore requires ``algorithm.group_size > 1``.
+
+    GRPO and GRPO-dynamic always normalize each reward against its group, so a
+    group of one leaves nothing to compare against. ReinForce++ only subtracts a
+    per-group mean when its baseline mode is enabled (``use_reinpp_baseline``);
+    plain ReinForce++ normalizes over the whole batch and is exempt.
+
+    ``adv_type`` is lower-cased to match how :func:`get_adv_and_returns`
+    dispatches, so a differently-cased name cannot slip past the guard and still
+    reach the group-based estimator. Offline configs leave it unset, which
+    selects no estimator and therefore needs no group.
+    """
+    if not adv_type:
+        return False
+    adv_type = adv_type.lower()
+    if adv_type in ("grpo", "grpo_dynamic"):
+        return True
+    if adv_type == "reinpp":
+        return bool(use_reinpp_baseline)
+    return False
+
+
 def validate_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
@@ -1600,8 +2868,15 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_offline_cfg(cfg)
 
     if cfg.runner.task_type != "sft" and not cfg.runner.get("only_eval", False):
-        if cfg.algorithm.adv_type in ("grpo", "grpo_dynamic", "reinpp_baseline"):
-            assert cfg.algorithm.group_size > 1
+        if adv_requires_group_baseline(
+            cfg.algorithm.adv_type,
+            cfg.algorithm.get("use_reinpp_baseline", False),
+        ):
+            assert cfg.algorithm.group_size > 1, (
+                f"algorithm.adv_type={cfg.algorithm.adv_type!r} uses a "
+                f"within-group baseline and requires algorithm.group_size > 1, "
+                f"got {cfg.algorithm.group_size}."
+            )
 
     assert cfg.actor.training_backend in SUPPORTED_TRAINING_BACKENDS, (
         f"Unsupported training_backend {cfg.actor.training_backend}. Supported training backends are {SUPPORTED_TRAINING_BACKENDS}."
@@ -1645,6 +2920,9 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             )
         elif cfg.critic.use_critic_model and cfg.critic.training_backend == "fsdp":
             cfg.critic = validate_fsdp_cfg(cfg.critic)
+
+    if cfg.runner.task_type == "reasoning":
+        cfg = validate_searchr1_cfg(cfg)
 
     return cfg
 
