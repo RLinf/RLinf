@@ -91,7 +91,7 @@ LingbotVLA 1.0 and 2.0 both install a Python package named ``lingbotvla``, so ea
 
 .. tab-set::
 
-   .. tab-item:: Local (uv)
+   .. tab-item:: LingbotVLA 2.0 + RoboTwin
 
       **1. Install**
 
@@ -140,80 +140,6 @@ LingbotVLA 1.0 and 2.0 both install a Python package named ``lingbotvla``, so ea
            stats_path: /path/to/RLinf/.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
 
       Export ``ROBOT_PLATFORM="ALOHA"`` (required for the dual-arm action space) and the RoboTwin paths, then start PPO training:
-
-      .. code-block:: bash
-
-         export ROBOT_PLATFORM="ALOHA"
-         export ROBOTWIN_PATH=$PWD/RoboTwin
-         export ROBOTWIN_ASSETS_PATH=$ROBOTWIN_PATH
-         bash examples/embodiment/run_embodiment.sh robotwin_click_bell_ppo_lingbotvlav2
-
-      .. dropdown:: Advanced configuration (optional)
-
-         - **Resume training**: set ``runner.resume_dir`` in the training config to a saved checkpoint directory.
-         - **Flow-SDE PPO & critic warmup**: rollout samples one random denoising step per chunk from the flow-SDE and integrates the rest with the ODE. PPO scores that step over the 14 decoded latent coordinates with ``logprob_type: token_level``, dual-clip ``clip_ratio_c: 3.0``, chunk-level rewards, and ``actor.optim.critic_warmup_steps: 20``.
-         - **Mixed precision**: the actor stores trainable action-expert weights in ``fp32`` so small updates do not round away, while FSDP2 computes in ``bf16`` and rollout keeps a ``bf16`` copy.
-         - **Log-prob drift guard**: before each update, the actor re-scores every sampled SDE step. ``algorithm.max_recompute_logprob_gap: 1.0e-3`` halts training if the summed log-probability differs between rollout and actor by more than the threshold (logged under ``actor/rollout_train_joint_logprob_gap_max``).
-         - **Standalone evaluation**: follow the :doc:`RoboTwin evaluation guide <../../evaluations/guides/robotwin>` with ``robotwin_click_bell_lingbotvlav2_eval`` (in a new shell, export the three variables above first). To evaluate a PPO checkpoint instead of the released weights, pass its full weights file:
-
-           .. code-block:: bash
-
-              bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
-                runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
-
-   .. tab-item:: Docker
-
-      **1. Install**
-
-      Build the RoboTwin image, activate the preinstalled ``lingbotvlav2`` environment inside the container (source checkout at ``/opt/venv/lingbotvlav2/lingbot-vla-v2``), and download the RoboTwin scene assets:
-
-      .. code-block:: bash
-
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         docker buildx build --load -f docker/Dockerfile \
-           --build-arg BUILD_TARGET=embodied-robotwin \
-           -t rlinf:embodied-robotwin .
-         # Inside the container:
-         source switch_env lingbotvlav2
-         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support
-         (cd RoboTwin && bash script/_download_assets.sh)
-
-      **2. Download**
-
-      Download the LingbotVLA 2.0 RoboTwin checkpoint and the Qwen3-VL backbone:
-
-      .. code-block:: bash
-
-         hf download robbyant/lingbot-vla-v2-6b-robotwin --local-dir ./lingbot-vla-v2-6b-robotwin
-         hf download Qwen/Qwen3-VL-4B-Instruct --local-dir ./Qwen3-VL-4B-Instruct
-
-      **3. Launch**
-
-      Shipped LingbotVLA 2.0 configs:
-
-      .. list-table::
-         :header-rows: 1
-         :widths: 32 68
-
-         * - Purpose
-           - Config
-         * - PPO (Click Bell)
-           - ``examples/embodiment/config/robotwin_click_bell_ppo_lingbotvlav2.yaml``
-         * - Model defaults (shared with eval)
-           - ``examples/embodiment/config/model/lingbotvlav2.yaml``
-
-      Fill in the empty paths in ``examples/embodiment/config/model/lingbotvlav2.yaml`` (in Docker, ``robot_config_path`` and ``stats_path`` live under ``/opt/venv/lingbotvlav2/lingbot-vla-v2``):
-
-      .. code-block:: yaml
-
-         model_path: /path/to/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
-         tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
-         lingbotvlav2:
-           training_config_path: /path/to/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml
-           robot_config_path: /opt/venv/lingbotvlav2/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
-           stats_path: /opt/venv/lingbotvlav2/lingbot-vla-v2/assets/norm_stats/robotwin.json
-
-      Export ``ROBOT_PLATFORM="ALOHA"`` and the RoboTwin paths, then start PPO training:
 
       .. code-block:: bash
 

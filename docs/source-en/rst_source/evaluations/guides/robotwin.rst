@@ -149,11 +149,9 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
 On AMD ROCm, install with ``--platform amd`` and set ``planner_backend: mplib`` in the task config (see :ref:`Run on Different Hardware Backends <robotwin-hardware>`). ``run_eval.sh`` adds ``ROBOTWIN_PATH`` to ``PYTHONPATH``, and ``env.eval.assets_path`` points to the parent folder of ``assets/``. RLinf uses a ``0.01 m`` camera near plane so SAPIEN 3.0.1 keeps gripper fingers visible in wrist views (override ``env.eval.camera_near`` or set ``null`` for RoboTwin's default ``0.1 m``).
 
-.. dropdown:: Docker and Example Configs
+.. dropdown:: Example Configs
 
-   **Docker (optional):** Use ``rlinf/rlinf:agentic-rlinf0.4-robotwin`` and switch environments inside the container via ``source switch_env openvla-oft`` or ``source switch_env openpi``.
-
-   Available under ``evaluations/robotwin/``:
+   Available under ``evaluations/robotwin/`` (for prebuilt container images, see `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__):
 
    .. list-table::
       :header-rows: 1

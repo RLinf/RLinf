@@ -83,7 +83,7 @@ LingbotVLA 1.0 与 2.0 安装的 Python 包都叫 ``lingbotvla``，需要各自�
 
 .. tab-set::
 
-   .. tab-item:: 本地安装（uv）
+   .. tab-item:: LingbotVLA 2.0 + RoboTwin
 
       **1. 安装环境**
 
@@ -132,80 +132,6 @@ LingbotVLA 1.0 与 2.0 安装的 Python 包都叫 ``lingbotvla``，需要各自�
            stats_path: /path/to/RLinf/.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
 
       先导出 ``ROBOT_PLATFORM="ALOHA"``\ （双臂任务必需）和 RoboTwin 路径，再启动 PPO 训练：
-
-      .. code-block:: bash
-
-         export ROBOT_PLATFORM="ALOHA"
-         export ROBOTWIN_PATH=$PWD/RoboTwin
-         export ROBOTWIN_ASSETS_PATH=$ROBOTWIN_PATH
-         bash examples/embodiment/run_embodiment.sh robotwin_click_bell_ppo_lingbotvlav2
-
-      .. dropdown:: 进阶配置（可选）
-
-         - **断点续训**：在训练配置中将 ``runner.resume_dir`` 设为已保存的 checkpoint 目录。
-         - **Flow-SDE PPO 与价值头预热**：rollout 在每个动作块中随机选一个去噪步按 flow-SDE 采样，其余步沿 ODE 推进。PPO 对该步解码出的 14 个 latent 坐标以 ``logprob_type: token_level`` 和 ``clip_ratio_c: 3.0`` 计算更新，配合 chunk 级奖励与 ``actor.optim.critic_warmup_steps: 20``。
-         - **混合精度**：actor 以 ``fp32`` 保存可训练的动作专家权重以避免小学习率更新被舍入，FSDP2 仍以 ``bf16`` 计算，rollout 保留 ``bf16`` 权重副本。
-         - **log-prob 漂移保护**：每次更新前 actor 重新计算每个采样 SDE 步的概率。若样本在 rollout 与 actor 间的总 log-probability 差值超过 ``algorithm.max_recompute_logprob_gap: 1.0e-3``，训练停止；最大差值记录在 ``actor/rollout_train_joint_logprob_gap_max``。
-         - **独立评测**：按 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 运行独立评测，配置为 ``robotwin_click_bell_lingbotvlav2_eval``\ （在新终端中评测前先导出上方三个环境变量）。如需评测 PPO checkpoint，传入其完整权重文件：
-
-           .. code-block:: bash
-
-              bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
-                runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
-
-   .. tab-item:: Docker
-
-      **1. 安装环境**
-
-      构建 RoboTwin 镜像，进入容器后激活预装的 ``lingbotvlav2`` 环境（源码位于 ``/opt/venv/lingbotvlav2/lingbot-vla-v2``）并下载 RoboTwin 资产：
-
-      .. code-block:: bash
-
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         docker buildx build --load -f docker/Dockerfile \
-           --build-arg BUILD_TARGET=embodied-robotwin \
-           -t rlinf:embodied-robotwin .
-         # 进入容器后执行：
-         source switch_env lingbotvlav2
-         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support
-         (cd RoboTwin && bash script/_download_assets.sh)
-
-      **2. 下载资源与模型**
-
-      下载 LingbotVLA 2.0 的 RoboTwin checkpoint 与 Qwen3-VL 底座模型：
-
-      .. code-block:: bash
-
-         hf download robbyant/lingbot-vla-v2-6b-robotwin --local-dir ./lingbot-vla-v2-6b-robotwin
-         hf download Qwen/Qwen3-VL-4B-Instruct --local-dir ./Qwen3-VL-4B-Instruct
-
-      **3. 启动训练**
-
-      LingbotVLA 2.0 配置文件一览：
-
-      .. list-table::
-         :header-rows: 1
-         :widths: 32 68
-
-         * - 用途
-           - 配置文件
-         * - PPO（Click Bell）
-           - ``examples/embodiment/config/robotwin_click_bell_ppo_lingbotvlav2.yaml``
-         * - 模型默认配置（与评测共用）
-           - ``examples/embodiment/config/model/lingbotvlav2.yaml``
-
-      在 ``examples/embodiment/config/model/lingbotvlav2.yaml`` 中填写空白的路径字段（Docker 镜像中 ``robot_config_path`` 与 ``stats_path`` 位于 ``/opt/venv/lingbotvlav2/lingbot-vla-v2`` 下）：
-
-      .. code-block:: yaml
-
-         model_path: /path/to/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
-         tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
-         lingbotvlav2:
-           training_config_path: /path/to/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml
-           robot_config_path: /opt/venv/lingbotvlav2/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
-           stats_path: /opt/venv/lingbotvlav2/lingbot-vla-v2/assets/norm_stats/robotwin.json
-
-      先导出 ``ROBOT_PLATFORM="ALOHA"`` 和 RoboTwin 路径，再启动 PPO 训练：
 
       .. code-block:: bash
 

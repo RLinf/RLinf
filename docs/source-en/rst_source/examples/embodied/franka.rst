@@ -247,7 +247,7 @@ Setup and Run
 
       **1. Install on both hosts**
 
-      Install the same RLinf revision, Python version, and Ray version on the controller host (no GPU needed; installer selects CPU-only PyTorch, or run the Docker image without ``--gpus all``) and on the GPU server:
+      Install the same RLinf revision, Python version, and Ray version on the controller host (no GPU needed; installer selects CPU-only PyTorch) and on the GPU server:
 
       .. code-block:: bash
 
@@ -372,20 +372,6 @@ Setup and Run
         max_step: 0.02
 
    The legacy ``franka_ros`` backend ignores this mapping, and joint-position commands (such as dual-arm GELLO joint teleoperation) use joint control instead of these Cartesian settings.
-
-.. dropdown:: Docker Image (Alternative to Local Install)
-
-   Run ``rlinf/rlinf:agentic-rlinf0.4-franka`` (CUDA 12.8, Ubuntu 22.04, bundles libfranka 0.19.0 and dexterous-hand dependencies) on a host with NVIDIA driver 570+ and the `NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_. For mainland China downloads, pull ``infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-franka`` instead.
-
-   .. code-block:: bash
-
-      docker run -it --name rlinf-franka \
-        --gpus all --network host --privileged \
-        --ulimit rtprio=99 --ulimit memlock=-1 \
-        -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
-        rlinf/rlinf:agentic-rlinf0.4-franka bash
-
-   The container opens in the ``franky`` environment; switch to ``openvla``, ``openvla-oft``, ``openpi``, or ``gr00t`` via ``source switch_env <name>``. The ``--ulimit`` flags grant real-time scheduling permissions inside the container while sharing the host kernel. Firmware requiring libfranka 0.15.0 must install natively with ``LIBFRANKA_VERSION=0.15.0``. Open additional shells with ``docker exec -it rlinf-franka bash``.
 
 .. dropdown:: Keyboard Reward Labeling (Optional)
 

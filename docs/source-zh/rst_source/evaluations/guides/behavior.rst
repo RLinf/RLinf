@@ -67,7 +67,7 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
 
    - 使用支持 Ray Tracing 的 GPU（RTX 30/40 系列或更新）；A100、H100 等无 RT 能力的卡渲染画面会出现马赛克或模糊。
    - Hopper 及以上架构 GPU 须使用 570 及以上版本 NVIDIA 驱动。
-   - 预构建 Docker 镜像：``rlinf/rlinf:agentic-rlinf0.4-behavior``\ （详见 :doc:`../../examples/embodied/behavior`）。
+   - 预构建容器镜像请访问 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。
 
    .. list-table::
       :header-rows: 1

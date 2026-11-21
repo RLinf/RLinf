@@ -38,7 +38,7 @@ Evaluate Psi0 on eight SIMPLE whole-body humanoid Teleop tasks through RLinf, ea
 Setup and Run
 -------------
 
-Prepare the shared prerequisites from the :doc:`Psi0 Guide </rst_source/examples/embodied/psi0>` first: :ref:`environment or Docker setup <psi0-setup-env>`, :ref:`Qwen3-VL metadata <psi0-qwen-metadata>` (cached via ``HF_HOME``, without ``--local-dir``), :ref:`SIMPLE simulation assets <simple-sim-assets>` in ``SIMPLE_ASSETS_DIR``, and :ref:`linking the assets <simple-link-assets>` to ``${VIRTUAL_ENV}/SIMPLE/data``.
+Prepare the shared prerequisites from the :doc:`Psi0 Guide </rst_source/examples/embodied/psi0>` first: :ref:`environment setup <psi0-setup-env>`, :ref:`Qwen3-VL metadata <psi0-qwen-metadata>` (cached via ``HF_HOME``, without ``--local-dir``), :ref:`SIMPLE simulation assets <simple-sim-assets>` in ``SIMPLE_ASSETS_DIR``, and :ref:`linking the assets <simple-link-assets>` to ``${VIRTUAL_ENV}/SIMPLE/data``.
 
 In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
 

@@ -149,11 +149,9 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
 
 在 AMD ROCm 上安装需加 ``--platform amd``，并在任务配置中设 ``planner_backend: mplib``\ （详见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`）。``run_eval.sh`` 会将 ``ROBOTWIN_PATH`` 加入 ``PYTHONPATH``，``env.eval.assets_path`` 指向 ``assets/`` 的父目录。RLinf 默认使用 ``0.01 m`` 相机近裁剪面，避免 SAPIEN 3.0.1 在腕部视角裁掉夹爪手指（可通过 ``env.eval.camera_near`` 修改，设为 ``null`` 沿用 RoboTwin 默认 ``0.1 m``）。
 
-.. dropdown:: Docker 镜像与示例配置
+.. dropdown:: 示例配置
 
-   **Docker（可选）：** 可使用官方镜像 ``rlinf/rlinf:agentic-rlinf0.4-robotwin``，容器内执行 ``source switch_env openvla-oft`` 或 ``source switch_env openpi`` 切换环境。
-
-   ``evaluations/robotwin/`` 已有示例配置：
+   ``evaluations/robotwin/`` 已有示例配置（预构建容器镜像请访问 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__）：
 
    .. list-table::
       :header-rows: 1

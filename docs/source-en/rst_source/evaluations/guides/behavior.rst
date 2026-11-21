@@ -67,7 +67,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    - Use a ray-tracing GPU (RTX 30/40 series or newer); non-RT GPUs (A100, H100) show rendering artifacts.
    - Hopper and later GPUs require NVIDIA driver 570 or newer.
-   - Prebuilt Docker image: ``rlinf/rlinf:agentic-rlinf0.4-behavior`` (see :doc:`../../examples/embodied/behavior`).
+   - Prebuilt container images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
 
    .. list-table::
       :header-rows: 1

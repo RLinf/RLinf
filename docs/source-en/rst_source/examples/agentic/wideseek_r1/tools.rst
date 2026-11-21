@@ -53,31 +53,14 @@ images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
 
 .. tab-set::
 
-   .. tab-item:: Local (uv)
+   .. tab-item:: WideSeek-R1
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh agentic && source .venv/bin/activate
 
-   .. tab-item:: Docker
-
-      .. code-block:: bash
-
-         docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17
-
-      .. note::
-
-         The image above ships FA2 and no ``flash-attn-4``, so it also runs on GPUs
-         older than ``sm90`` (such as an ``A100``). On Hopper or newer GPUs, use the
-         same tag with a ``-fa4`` suffix (FA4, no FA2):
-
-         .. code-block:: bash
-
-            docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17-fa4
-
-         A local installation with ``bash requirements/install.sh agentic``
-         detects the GPU and makes this choice automatically.
+``bash requirements/install.sh agentic`` detects the GPU architecture automatically (FA2 on pre-Hopper GPUs such as A100, FA4 on Hopper and newer). For prebuilt containers (including ``-fa4`` tags), see `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
 
 Startup scripts and configuration files are in ``examples/agent/wideseek_r1``.
 

@@ -49,8 +49,16 @@ HARDWARE_SECTION = re.compile(
 )
 CODE_BLOCK = re.compile(r"^(\s*)\.\.\s+code(?:-block)?::\s*(\S*)\s*$")
 TAB_SET = re.compile(r"^(\s*)\.\.\s+tab-set::\s*$")
-DROPDOWN = re.compile(r"^(\s*)\.\.\s+dropdown::")
+TAB_ITEM = re.compile(r"^(\s*)\.\.\s+tab-item::\s*(.+?)\s*$")
+DROPDOWN = re.compile(r"^(\s*)\.\.\s+dropdown::\s*(.+?)\s*$")
 HEADING_UNDERLINE = re.compile(r"^([=\-~^\"'`#*+])\1{2,}\s*$")
+HARDWARE_TAB_TITLE = re.compile(
+    r"(?:AMD\s+ROCm|Ascend|昇腾|MUSA|Moore\s+Threads|摩尔线程)", re.IGNORECASE
+)
+DOCKER_TAB_OR_DROPDOWN = re.compile(
+    r"^(?:Docker(?:\s+Image)?|使用\s*Docker|Docker\s*镜像)", re.IGNORECASE
+)
+HARDCODED_RLINF_IMAGE = re.compile(r"\brlinf/rlinf:[A-Za-z0-9_.-]+")
 
 PLACEHOLDER = re.compile(r"<[A-Za-z0-9_./-]+>")
 MIRROR_COMMENT = re.compile(
@@ -215,6 +223,52 @@ def check_page(path: Path, rel: str) -> list[route.Finding]:
             "avoid nested ``.. tab-set::`` directives (stacked tab bars hurt readability); "
             "flatten into one single-level ``.. tab-set::`` or fold secondary options into ``.. dropdown::``",
         )
+
+    # Check for dedicated Docker tabs/dropdowns or hardcoded RLinf image tags
+    # outside non-NVIDIA hardware-backend tabs (ROCm/Ascend/MUSA).
+    hw_tab_indent: int | None = None
+    for idx, raw in enumerate(lines[:cutoff], 1):
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        if hw_tab_indent is not None and indent <= hw_tab_indent:
+            hw_tab_indent = None
+        tab_match = TAB_ITEM.match(raw)
+        if tab_match:
+            title = tab_match.group(2)
+            if HARDWARE_TAB_TITLE.search(title):
+                hw_tab_indent = len(tab_match.group(1))
+                continue
+            if DOCKER_TAB_OR_DROPDOWN.search(title):
+                add(
+                    "major",
+                    idx,
+                    "docs/hardcoded-docker",
+                    "do not add a dedicated Docker tab; link to Docker Hub "
+                    "(https://hub.docker.com/r/rlinf/rlinf) via _setup_common.rst or start/installation.rst",
+                )
+            continue
+        if hw_tab_indent is not None:
+            continue
+        dd_match = DROPDOWN.match(raw)
+        if dd_match and DOCKER_TAB_OR_DROPDOWN.search(dd_match.group(2)):
+            add(
+                "major",
+                idx,
+                "docs/hardcoded-docker",
+                "do not add a dedicated Docker dropdown; link to Docker Hub "
+                "(https://hub.docker.com/r/rlinf/rlinf) via _setup_common.rst or start/installation.rst",
+            )
+            continue
+        if HARDCODED_RLINF_IMAGE.search(raw):
+            add(
+                "major",
+                idx,
+                "docs/hardcoded-docker",
+                "avoid hardcoded ``rlinf/rlinf:<tag>`` image tags in recipes/eval guides; "
+                "link to Docker Hub (https://hub.docker.com/r/rlinf/rlinf) instead",
+            )
 
     for block in blocks:
         lang = block["lang"]

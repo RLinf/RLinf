@@ -247,7 +247,7 @@ Franka 真机强化学习
 
       **1. 在两台机器上安装**
 
-      在控制机（无需 GPU，安装脚本自动选择 CPU 版 PyTorch；或运行 Docker 镜像并去掉 ``--gpus all``）与 GPU 服务器上安装相同版本的 RLinf、Python 与 Ray：
+      在控制机（无需 GPU，安装脚本自动选择 CPU 版 PyTorch）与 GPU 服务器上安装相同版本的 RLinf、Python 与 Ray：
 
       .. code-block:: bash
 
@@ -372,20 +372,6 @@ Franka 真机强化学习
         max_step: 0.02
 
    旧版 ``franka_ros`` 后端忽略此映射；关节控制指令（如双臂 GELLO 关节遥操作）不使用这些笛卡尔参数。
-
-.. dropdown:: 使用 Docker 镜像（替代本地安装）
-
-   在安装了 NVIDIA 570+ 驱动与 `NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_ 的主机上，可直接运行 ``rlinf/rlinf:agentic-rlinf0.4-franka``\ （基于 CUDA 12.8 与 Ubuntu 22.04，内置 libfranka 0.19.0 与灵巧手依赖）。中国大陆用户可改用镜像 ``infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-franka``。
-
-   .. code-block:: bash
-
-      docker run -it --name rlinf-franka \
-        --gpus all --network host --privileged \
-        --ulimit rtprio=99 --ulimit memlock=-1 \
-        -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
-        rlinf/rlinf:agentic-rlinf0.4-franka bash
-
-   容器默认激活 ``franky`` 环境，可通过 ``source switch_env <name>`` 切换至 ``openvla``、``openvla-oft``、``openpi`` 或 ``gr00t``。``--ulimit`` 用于在容器内授予实时调度权限，内核仍共享宿主机内核。固件需要 libfranka 0.15.0 时，请在宿主机用 ``LIBFRANKA_VERSION=0.15.0`` 本地安装。另开终端请执行 ``docker exec -it rlinf-franka bash``。
 
 .. dropdown:: 通过键盘标注奖励（可选）
 

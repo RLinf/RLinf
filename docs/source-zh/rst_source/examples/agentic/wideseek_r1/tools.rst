@@ -47,28 +47,14 @@
 
 .. tab-set::
 
-   .. tab-item:: 本地安装（uv）
+   .. tab-item:: WideSeek-R1
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh agentic && source .venv/bin/activate
 
-   .. tab-item:: Docker
-
-      .. code-block:: bash
-
-         docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17
-
-      .. note::
-
-         上面的镜像安装的是 FA2，不包含 ``flash-attn-4``，因此也能在早于 ``sm90`` 的 GPU（如 ``A100``）上运行。在 Hopper 及更新的 GPU 上，可以使用同一 tag 加 ``-fa4`` 后缀的镜像（安装 FA4 而不安装 FA2），RLinf 会相应改用 FA4 计算注意力：
-
-         .. code-block:: bash
-
-            docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17-fa4
-
-         使用 ``bash requirements/install.sh agentic`` 本地安装时，安装脚本会检测 GPU 并自动做出这一选择。
+``bash requirements/install.sh agentic`` 会根据 GPU 架构自动选择注意力实现（A100 等旧架构使用 FA2，Hopper 及更新架构使用 FA4）。如需预构建容器镜像（含 ``-fa4`` 标签），请访问 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。
 
 启动脚本和配置文件位于 ``examples/agent/wideseek_r1``。
 

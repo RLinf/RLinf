@@ -93,7 +93,7 @@
 
       **1. 安装依赖**
 
-      安装基于 Franky 的 ``franka`` 环境，并将 ``LIBFRANKA_VERSION`` 匹配到机械臂固件版本（或使用 Franka Docker 镜像中的 ``franky`` 环境，见 :doc:`franka`）：
+      安装基于 Franky 的 ``franka`` 环境，并将 ``LIBFRANKA_VERSION`` 匹配到机械臂固件版本：
 
       .. code-block:: bash
 

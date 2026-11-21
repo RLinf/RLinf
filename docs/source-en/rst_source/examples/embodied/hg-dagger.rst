@@ -93,7 +93,7 @@ Setup and Run
 
       **1. Install**
 
-      Install the Franky ``franka`` environment with ``LIBFRANKA_VERSION`` matching your firmware (or use the ``franky`` environment in the Franka Docker image; see :doc:`franka`):
+      Install the Franky ``franka`` environment with ``LIBFRANKA_VERSION`` matching your firmware:
 
       .. code-block:: bash
 

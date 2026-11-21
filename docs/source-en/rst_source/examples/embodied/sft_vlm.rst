@@ -37,7 +37,7 @@ Full-parameter SFT for Qwen-VL models on the Robo2VLM visual-QA dataset, with FS
 
       1–2 nodes · GPUs
 
-| **You'll do:** pull the image → download the model + Robo2VLM → edit the config → launch ``run_vlm_sft.sh`` → watch loss and eval accuracy.
+| **You'll do:** install the environment → download the model + Robo2VLM → edit the config → launch ``run_vlm_sft.sh`` → watch loss and eval accuracy.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Qwen-VL weights · the Robo2VLM dataset.
 
 This recipe centers on two files: the launch script ``examples/sft/run_vlm_sft.sh`` and the training config ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``.
@@ -45,7 +45,7 @@ This recipe centers on two files: the launch script ``examples/sft/run_vlm_sft.s
 Setup and Run
 -------------
 
-In mainland China, set ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download`` (and append ``--use-mirror`` when running ``requirements/install.sh``). See :doc:`Installation </rst_source/start/installation>` for shared options.
+.. include:: _setup_common.rst
 
 .. tab-set::
 
@@ -53,12 +53,12 @@ In mainland China, set ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf 
 
       **1. Install and Download**
 
-      Pull the RLinf image and download `Qwen2.5-VL-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct>`_ and `Robo2VLM-1 <https://huggingface.co/datasets/keplerccc/Robo2VLM-1>`_:
+      Install the agentic/VLM environment and download `Qwen2.5-VL-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct>`_ and `Robo2VLM-1 <https://huggingface.co/datasets/keplerccc/Robo2VLM-1>`_:
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17
+         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
          hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
          hf download keplerccc/Robo2VLM-1 --repo-type dataset --local-dir ./Robo2VLM-1
 

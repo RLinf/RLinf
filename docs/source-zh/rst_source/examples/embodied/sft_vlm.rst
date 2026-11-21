@@ -37,7 +37,7 @@ Qwen-VL
 
       1–2 节点 · GPU
 
-| **你将完成：** 拉取镜像 → 下载模型与 Robo2VLM → 修改配置 → 启动 ``run_vlm_sft.sh`` → 观察 loss 与评估准确率。
+| **你将完成：** 安装环境 → 下载模型与 Robo2VLM → 修改配置 → 启动 ``run_vlm_sft.sh`` → 观察 loss 与评估准确率。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · Qwen-VL 权重 · Robo2VLM 数据集。
 
 本示例围绕启动脚本 ``examples/sft/run_vlm_sft.sh`` 和训练配置 ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` 展开。
@@ -45,20 +45,20 @@ Qwen-VL
 一键上手
 ----------------------------------------
 
-中国大陆用户可在执行 ``hf download`` 前设置 ``export HF_ENDPOINT=https://hf-mirror.com``\ （使用 ``requirements/install.sh`` 时追加 ``--use-mirror``）。通用安装选项见 :doc:`安装 </rst_source/start/installation>`。
+.. include:: _setup_common.rst
 
 .. tab-set::
 
    .. tab-item:: Qwen-VL + Robo2VLM
 
-      **1. 拉取镜像并下载模型与数据**
+      **1. 安装并下载模型与数据**
 
-      拉取 RLinf 镜像，并下载 `Qwen2.5-VL-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct>`_ 权重与 `Robo2VLM-1 <https://huggingface.co/datasets/keplerccc/Robo2VLM-1>`_ 数据集：
+      安装 agentic/VLM 环境，并下载 `Qwen2.5-VL-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct>`_ 权重与 `Robo2VLM-1 <https://huggingface.co/datasets/keplerccc/Robo2VLM-1>`_ 数据集：
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17
+         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
          hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
          hf download keplerccc/Robo2VLM-1 --repo-type dataset --local-dir ./Robo2VLM-1
 
