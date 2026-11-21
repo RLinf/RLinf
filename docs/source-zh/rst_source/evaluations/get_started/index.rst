@@ -1,3 +1,5 @@
+:orphan:
+
 快速入门
 ========
 
@@ -23,11 +25,3 @@
       :link-type: doc
 
       约 5 分钟跑通 LIBERO-Spatial + OpenPI π₀.₅ 首次评测。
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
-   overview
-   installation
-   quick_tour

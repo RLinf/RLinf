@@ -90,10 +90,10 @@ The following examples include math reasoning RL and agentic AI workflows, such 
    :hidden:
    :maxdepth: 2
 
+   Math Reasoning <math_reasoning/index>
+   Search-R1 <searchr1/index>
    WideSeek-R1 <wideseek_r1/index>
+   rStar2 <rstar2>
    AgentLightning <agentlightning_calc_x>
    Coding Online RL <coding_online_rl>
-   Search-R1 <searchr1/index>
-   rStar2 <rstar2>
-   Math Reasoning <math_reasoning/index>
    Qwen3 VL GRPO <qwen3_vl_geo3k>

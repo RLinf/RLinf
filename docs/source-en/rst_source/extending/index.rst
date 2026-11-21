@@ -132,17 +132,3 @@ Start at the simplest layer that fits: if RLinf already talks to your robot hard
       :link-type: doc
 
       Integrate Megatron-Bridge and optimize actor-to-rollout weight synchronization.
-
-.. toctree::
-   :hidden:
-
-   Extending Overview <overview>
-   New Model with FSDP <new_model_fsdp>
-   New Model with Megatron <new_model_megatron>
-   SGLang Embodied Model <sglang_embodied_model>
-   New SFT Model <new_model_sft>
-   New Environment <new_env>
-   New Real-World Tasks <new_task>
-   New Robot <new_robot>
-   Reward Model <reward_model>
-   Advanced Integrations <advanced-integrations/index>

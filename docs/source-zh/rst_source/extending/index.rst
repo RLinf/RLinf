@@ -132,17 +132,3 @@
       :link-type: doc
 
       接入 Megatron-Bridge 与优化 actor 到 rollout 的权重同步链路。
-
-.. toctree::
-   :hidden:
-
-   扩展架构概览 <overview>
-   FSDP 新模型 <new_model_fsdp>
-   Megatron 新模型 <new_model_megatron>
-   SGLang 具身模型 <sglang_embodied_model>
-   新 SFT 模型 <new_model_sft>
-   新仿真环境 <new_env>
-   新增真机任务 <new_task>
-   新机器人 <new_robot>
-   奖励模型 <reward_model>
-   高级集成 <advanced-integrations/index>

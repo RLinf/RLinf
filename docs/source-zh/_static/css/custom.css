@@ -356,11 +356,29 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
   padding-top: 0.34rem;
 }
 
-/* Top-level sections: a touch larger + bold for hierarchy, but far smaller
-   than the theme default (.toctree-l1 > a is 1.3em out of the box). */
-.bd-sidebar-primary .bd-sidenav .toctree-l1 > a {
-  font-size: 0.98rem;
+/* LeRobot-style flat uppercase section captions in the left sidebar. */
+.bd-sidebar-primary .bd-docs-nav p.caption {
+  border-top: 1px solid var(--pst-color-border);
+  color: var(--pst-color-text-muted);
+  font-size: 0.75rem;
   font-weight: 700;
+  letter-spacing: 0.05em;
+  margin: 0.9rem 0.25rem 0.2rem;
+  padding: 0.65rem 0.35rem 0.15rem;
+  text-transform: uppercase;
+}
+
+.bd-sidebar-primary .bd-docs-nav p.caption:first-of-type {
+  border-top: none;
+  margin-top: 0.15rem;
+  padding-top: 0.15rem;
+}
+
+/* Direct entries under each caption stay clean and scannable (not oversized
+   like the theme default .toctree-l1 > a at 1.3em). */
+.bd-sidebar-primary .bd-sidenav .toctree-l1 > a {
+  font-size: 0.88rem;
+  font-weight: 500;
 }
 
 /* Clean rounded-pill hover + active state (LeRobot style), replacing the

@@ -73,18 +73,3 @@
       :link-type: doc
 
       计算资源的灵活与动态调度，并将任务分配到最合适的硬件设备。
-
-.. toctree::
-   :hidden:
-   :maxdepth: 2
-
-   模拟器 <simulators_index>
-   真机 <real_world_index>
-   具身模型 <vla_wam_index>
-   世界模型 <world_model_index>
-   奖励模型 <embodied/reward_model_index>
-   SFT <sft_index>
-   RL <methods_index>
-   图像与视频生成 <video_models>
-   智能体 <agentic/index>
-   系统 <system/index>

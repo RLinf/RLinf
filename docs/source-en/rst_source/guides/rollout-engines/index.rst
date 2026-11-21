@@ -28,8 +28,8 @@ independently of an RLinf task.
 .. toctree::
    :hidden:
 
-   ApxInf <../apxinf>
    SGLang Server & Router <../sglang_server>
    InferenceHTTPClient <../inference_http_client>
    SGLang Version Switching <../version>
    PhyAI <phyai>
+   ApxInf <../apxinf>

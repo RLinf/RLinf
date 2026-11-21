@@ -76,18 +76,3 @@ Beyond embodiment:
       :link-type: doc
 
       Flexible, dynamic scheduling of compute resources across the most suitable hardware devices.
-
-.. toctree::
-   :hidden:
-   :maxdepth: 2
-
-   Simulators <simulators_index>
-   Robots <real_world_index>
-   Embodied Models <vla_wam_index>
-   World Models <world_model_index>
-   Reward Models <embodied/reward_model_index>
-   SFT <sft_index>
-   RL <methods_index>
-   Image and Video Generation <video_models>
-   Agents <agentic/index>
-   Systems <system/index>

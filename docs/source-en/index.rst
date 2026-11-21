@@ -103,16 +103,133 @@ Why RLinf
      - Built-in PPO, GRPO, DAPO, SAC, and Reinforce++ with verified recipes for embodied and reasoning tasks.
 
 .. toctree::
+  :caption: Get Started
+  :maxdepth: 2
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  Overview <rst_source/start/index>
+  Requirements <rst_source/start/requirements>
+  Installation <rst_source/start/installation>
+  VLA Quick Start <rst_source/start/vla>
+  Cheat Sheet <rst_source/start/cheat_sheet>
+  FAQ <rst_source/resources/faq>
+
+.. toctree::
+  :caption: Embodied Training
   :maxdepth: 3
   :includehidden:
   :titlesonly:
   :hidden:
 
-  Get Started <rst_source/start/index>
-  Examples <rst_source/examples/index>
-  Evaluation <rst_source/evaluations/index>
-  Guides <rst_source/guides/index>
-  Extending <rst_source/extending/index>
+  Example Gallery <rst_source/examples/index>
+  Simulators <rst_source/examples/simulators_index>
+  Embodied Models <rst_source/examples/vla_wam_index>
+  SFT & Imitation <rst_source/examples/sft_index>
+  RL Recipes <rst_source/examples/methods_index>
+  World Models <rst_source/examples/world_model_index>
+
+.. toctree::
+  :caption: Real-World Robots
+  :maxdepth: 3
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  Overview <rst_source/examples/real_world_index>
+  Single-Arm Franka <rst_source/examples/embodied/franka_index>
+  Dual-Arm Franka <rst_source/examples/embodied/dual_franka_index>
+  YAM <rst_source/examples/embodied/yam_index>
+  ARX X5 <rst_source/examples/embodied/arx5>
+  GimArm <rst_source/examples/embodied/gim_arm>
+  AgileX Piper <rst_source/examples/embodied/piper>
+  XSquare Turtle2 <rst_source/examples/embodied/xsquare_turtle2>
+  Dexmal DOS-W1 <rst_source/examples/embodied/dosw1>
+  Robbyant R2 <rst_source/examples/embodied/r2>
+  SO-101 <rst_source/examples/embodied/so101>
+  LeKiwi <rst_source/examples/embodied/lekiwi>
+
+.. toctree::
+  :caption: Evaluation
+  :maxdepth: 3
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  Overview <rst_source/evaluations/index>
+  Architecture & Layout <rst_source/evaluations/get_started/overview>
+  Installation <rst_source/evaluations/get_started/installation>
+  Quick Tour <rst_source/evaluations/get_started/quick_tour>
+  Benchmarks <rst_source/evaluations/guides/index>
+  Eval Reference <rst_source/evaluations/reference/index>
+
+.. toctree::
+  :caption: Agentic & Generative
+  :maxdepth: 3
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  Agentic & Reasoning <rst_source/examples/agentic/index>
+  Image & Video Generation <rst_source/examples/video_models>
+
+.. toctree::
+  :caption: Guides
+  :maxdepth: 2
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  Guides Overview <rst_source/guides/index>
+  Configure <rst_source/guides/configure/index>
+  Data & Checkpoints <rst_source/guides/data-checkpoints/index>
+  Launch & Scale <rst_source/guides/launch-scale/index>
+  Performance & Parallelism <rst_source/guides/performance/index>
+  Rollout Engines <rst_source/guides/rollout-engines/index>
+
+.. toctree::
+  :caption: Extending
+  :maxdepth: 2
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  Extending Hub <rst_source/extending/index>
+  Extension Registries <rst_source/extending/overview>
+  New Model (FSDP) <rst_source/extending/new_model_fsdp>
+  New Model (Megatron) <rst_source/extending/new_model_megatron>
+  SGLang Embodied Model <rst_source/extending/sglang_embodied_model>
+  New SFT Model <rst_source/extending/new_model_sft>
+  New Simulator Env <rst_source/extending/new_env>
+  New Real-World Robot <rst_source/extending/new_robot>
+  New Real-World Task <rst_source/extending/new_task>
+  Reward Model <rst_source/extending/reward_model>
+  Advanced Integrations <rst_source/extending/advanced-integrations/index>
+
+.. toctree::
+  :caption: Concepts & Reference
+  :maxdepth: 3
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
   Concepts <rst_source/concepts/index>
-  Reference <rst_source/reference/index>
-  Resources <rst_source/resources/index>
+  Algorithms <rst_source/reference/algorithms/index>
+  Config & Metrics <rst_source/reference/training/index>
+  Python API <rst_source/reference/api/index>
+
+.. toctree::
+  :caption: Resources
+  :maxdepth: 2
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  Why RLinf <rst_source/resources/why_rlinf>
+  v0.4 Release Notes <rst_source/resources/release_v0.4>
+  v0.3 Release Notes <rst_source/resources/release_v0.3>
+  v0.1 & v0.2 Release Notes <rst_source/resources/release_v0.1_v0.2>
+  Blog <rst_source/resources/blog/index>
+  Publications <rst_source/resources/publications/index>
+  Contributor Policy <rst_source/resources/maintainer_policy>

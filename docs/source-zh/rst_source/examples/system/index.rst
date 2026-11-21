@@ -1,3 +1,5 @@
+:orphan:
+
 系统级优化
 ========================================
 
@@ -25,9 +27,4 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
      </div>
    </div>
 
-
-.. toctree::
-   :hidden:
-   :maxdepth: 2
-
-   fusco
+MoE All-to-All 通信加速详见 :doc:`FUSCO <fusco>`。

@@ -1,9 +1,6 @@
-// Expand every top-level navigation section by default, like the LeRobot docs
-// where the section groups land open. The pydata theme only opens the branch
-// containing the active page, so here we open all first-level sections (their
-// immediate children show; deeper sub-trees stay collapsed). Because the
-// expanded sidebar is tall, also scroll the current page's entry into view so a
-// fresh load / refresh does not leave the sidebar parked at the top.
+// Scroll the active sidebar entry into view on page load. Top-level section
+// captions are always visible via Sphinx :caption: groups (LeRobot style),
+// while collapsible sub-trees stay closed unless they contain the active page.
 (function () {
   "use strict";
 
@@ -32,11 +29,6 @@
   function init() {
     var nav = document.querySelector(".bd-docs-nav");
     if (!nav) return;
-    nav.querySelectorAll("li.toctree-l1.has-children > details").forEach(
-      function (section) {
-        section.setAttribute("open", "");
-      }
-    );
     revealCurrent(nav);
   }
 

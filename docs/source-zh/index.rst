@@ -103,16 +103,133 @@ RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础
      - 内建 PPO、GRPO、DAPO、SAC 与 Reinforce++，并提供具身与推理任务的复现配置。
 
 .. toctree::
+  :caption: 快速开始
+  :maxdepth: 2
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  总览 <rst_source/start/index>
+  环境要求 <rst_source/start/requirements>
+  安装说明 <rst_source/start/installation>
+  VLA 快速上手 <rst_source/start/vla>
+  命令速查表 <rst_source/start/cheat_sheet>
+  常见问题（FAQ） <rst_source/resources/faq>
+
+.. toctree::
+  :caption: 具身训练
   :maxdepth: 3
   :includehidden:
   :titlesonly:
   :hidden:
 
-  快速开始 <rst_source/start/index>
-  示例 <rst_source/examples/index>
-  评测 <rst_source/evaluations/index>
-  指南 <rst_source/guides/index>
-  扩展开发 <rst_source/extending/index>
-  概念 <rst_source/concepts/index>
-  参考 <rst_source/reference/index>
-  资源 <rst_source/resources/index>
+  示例库 <rst_source/examples/index>
+  模拟器 <rst_source/examples/simulators_index>
+  具身模型 <rst_source/examples/vla_wam_index>
+  SFT 与模仿学习 <rst_source/examples/sft_index>
+  RL 算法示例 <rst_source/examples/methods_index>
+  世界模型 <rst_source/examples/world_model_index>
+
+.. toctree::
+  :caption: 真机机器人
+  :maxdepth: 3
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  真机总览 <rst_source/examples/real_world_index>
+  单臂 Franka <rst_source/examples/embodied/franka_index>
+  双臂 Franka <rst_source/examples/embodied/dual_franka_index>
+  YAM <rst_source/examples/embodied/yam_index>
+  ARX X5 <rst_source/examples/embodied/arx5>
+  GimArm <rst_source/examples/embodied/gim_arm>
+  AgileX Piper <rst_source/examples/embodied/piper>
+  XSquare Turtle2 <rst_source/examples/embodied/xsquare_turtle2>
+  Dexmal DOS-W1 <rst_source/examples/embodied/dosw1>
+  Robbyant R2 <rst_source/examples/embodied/r2>
+  SO-101 <rst_source/examples/embodied/so101>
+  LeKiwi <rst_source/examples/embodied/lekiwi>
+
+.. toctree::
+  :caption: 统一评测
+  :maxdepth: 3
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  评测总览 <rst_source/evaluations/index>
+  架构与目录 <rst_source/evaluations/get_started/overview>
+  评测安装 <rst_source/evaluations/get_started/installation>
+  快速上手 <rst_source/evaluations/get_started/quick_tour>
+  评测基准 <rst_source/evaluations/guides/index>
+  评测参考 <rst_source/evaluations/reference/index>
+
+.. toctree::
+  :caption: 智能体与生成
+  :maxdepth: 3
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  智能体与推理 <rst_source/examples/agentic/index>
+  图像与视频生成 <rst_source/examples/video_models>
+
+.. toctree::
+  :caption: 使用指南
+  :maxdepth: 2
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  指南总览 <rst_source/guides/index>
+  配置 <rst_source/guides/configure/index>
+  数据与 Checkpoint <rst_source/guides/data-checkpoints/index>
+  启动与扩展 <rst_source/guides/launch-scale/index>
+  性能与并行 <rst_source/guides/performance/index>
+  Rollout 引擎 <rst_source/guides/rollout-engines/index>
+
+.. toctree::
+  :caption: 扩展开发
+  :maxdepth: 2
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  扩展总览 <rst_source/extending/index>
+  扩展架构说明 <rst_source/extending/overview>
+  FSDP 新模型 <rst_source/extending/new_model_fsdp>
+  Megatron 新模型 <rst_source/extending/new_model_megatron>
+  SGLang 具身模型 <rst_source/extending/sglang_embodied_model>
+  新 SFT 模型 <rst_source/extending/new_model_sft>
+  新仿真环境 <rst_source/extending/new_env>
+  新机器人 <rst_source/extending/new_robot>
+  新增真机任务 <rst_source/extending/new_task>
+  奖励模型 <rst_source/extending/reward_model>
+  高级集成 <rst_source/extending/advanced-integrations/index>
+
+.. toctree::
+  :caption: 原理与参考
+  :maxdepth: 3
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  核心概念 <rst_source/concepts/index>
+  算法参考 <rst_source/reference/algorithms/index>
+  配置与指标 <rst_source/reference/training/index>
+  Python API <rst_source/reference/api/index>
+
+.. toctree::
+  :caption: 社区与资源
+  :maxdepth: 2
+  :includehidden:
+  :titlesonly:
+  :hidden:
+
+  为什么选择 RLinf <rst_source/resources/why_rlinf>
+  v0.4 发布说明 <rst_source/resources/release_v0.4>
+  v0.3 发布说明 <rst_source/resources/release_v0.3>
+  v0.1 & v0.2 发布说明 <rst_source/resources/release_v0.1_v0.2>
+  博客 <rst_source/resources/blog/index>
+  论文与技术报告 <rst_source/resources/publications/index>
+  贡献者政策 <rst_source/resources/maintainer_policy>

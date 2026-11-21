@@ -96,12 +96,3 @@
       :link-type: doc
 
       排查渲染、显存、网络与 Ray 问题。
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
-   requirements
-   installation
-   vla
-   cheat_sheet

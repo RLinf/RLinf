@@ -197,19 +197,3 @@ Desktop manipulators and mobile bases built on LeRobot-compatible servo hardware
       :link-type: doc
 
       Configure wheel motors, check the front webcam, and drive the omnidirectional mobile base by keyboard.
-
-.. toctree::
-   :hidden:
-   :maxdepth: 3
-
-   Single-Arm Franka <embodied/franka_index>
-   Dual-Arm Franka <embodied/dual_franka_index>
-   ARX X5 <embodied/arx5>
-   YAM <embodied/yam_index>
-   GimArm <embodied/gim_arm>
-   XSquare Turtle2 <embodied/xsquare_turtle2>
-   DOS-W1 <embodied/dosw1>
-   Robbyant R2 <embodied/r2>
-   Piper <embodied/piper>
-   SO101 <embodied/so101>
-   LeKiwi <embodied/lekiwi>

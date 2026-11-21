@@ -120,11 +120,3 @@ Reference
       Logs, metrics, and video output.
 
 For non-embodied math reasoning LLM evaluation, use `LLMEvalKit <https://github.com/RLinf/LLMEvalKit>`_. For full environment setup options, see :doc:`../start/installation` (model-specific standalone scripts live under ``toolkits/standalone_eval_scripts/``).
-
-.. toctree::
-   :hidden:
-   :maxdepth: 2
-
-   get_started/index
-   guides/index
-   reference/index

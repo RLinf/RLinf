@@ -29,6 +29,8 @@
      - 为大模型配置 5D 并行。
    * - :doc:`异步 agentic RL <../async_agentic>`
      - 让多轮 agent rollout 与训练重叠，用两个准入上限约束训练数据的新旧程度。
+   * - :doc:`FUSCO（MoE All-to-All） <../../examples/system/fusco>`
+     - 融合数据变换与通信，加速 Megatron MoE 的 All-to-All 通信。
 
 .. toctree::
    :hidden:
@@ -43,3 +45,4 @@
    Profiling <../profile>
    5D 并行 <../5D>
    异步 agentic RL <../async_agentic>
+   FUSCO（MoE All-to-All） <../../examples/system/fusco>

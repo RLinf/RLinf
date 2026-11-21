@@ -1,3 +1,5 @@
+:orphan:
+
 Get Started
 ===========
 
@@ -23,11 +25,3 @@ Pick this section to understand RLinf's embodied evaluation layout, install depe
       :link-type: doc
 
       Run your first LIBERO-Spatial evaluation with OpenPI π₀.₅ in about 5 minutes.
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
-   overview
-   installation
-   quick_tour

@@ -120,11 +120,3 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
       日志、指标与视频输出。
 
 非具身的数学推理 LLM 评测请使用 `LLMEvalKit <https://github.com/RLinf/LLMEvalKit>`_。完整安装说明见 :doc:`../start/installation`\ （模型专属 standalone 评测脚本位于 ``toolkits/standalone_eval_scripts/``）。
-
-.. toctree::
-   :hidden:
-   :maxdepth: 2
-
-   get_started/index
-   guides/index
-   reference/index

@@ -6,18 +6,6 @@ Pick a benchmark below for its end-to-end installation, checkpoint download, lau
 .. grid:: 1 2 2 2
    :gutter: 2
 
-   .. grid-item-card:: RealWorld
-      :link: realworld
-      :link-type: doc
-
-      Franka PnP, custom ``FrankaEnv-v1`` tasks, and Dual Franka RTC real-robot evaluation.
-
-   .. grid-item-card:: BEHAVIOR-1K
-      :link: behavior
-      :link-type: doc
-
-      50 household tasks on OmniGibson and Isaac Sim 4.5 with OpenPI π₀.₅.
-
    .. grid-item-card:: LIBERO
       :link: libero
       :link-type: doc
@@ -29,6 +17,18 @@ Pick a benchmark below for its end-to-end installation, checkpoint download, lau
       :link-type: doc
 
       Batch evaluation across 13 out-of-distribution scenes and in-distribution splits.
+
+   .. grid-item-card:: RoboTwin
+      :link: robotwin
+      :link-type: doc
+
+      Bimanual manipulation tasks with OpenVLA-OFT, OpenPI, and LingbotVLA.
+
+   .. grid-item-card:: BEHAVIOR-1K
+      :link: behavior
+      :link-type: doc
+
+      50 household tasks on OmniGibson and Isaac Sim 4.5 with OpenPI π₀.₅.
 
    .. grid-item-card:: PolaRiS
       :link: polaris
@@ -42,17 +42,17 @@ Pick a benchmark below for its end-to-end installation, checkpoint download, lau
 
       Single-task and full 120-task DROID joint-position evaluation with π₀.₅.
 
-   .. grid-item-card:: RoboTwin
-      :link: robotwin
-      :link-type: doc
-
-      Bimanual manipulation tasks with OpenVLA-OFT, OpenPI, and LingbotVLA.
-
    .. grid-item-card:: SIMPLE
       :link: simple
       :link-type: doc
 
       Eight G1 whole-body humanoid Teleop tasks evaluated with Psi0 across 3 DR levels.
+
+   .. grid-item-card:: RealWorld
+      :link: realworld
+      :link-type: doc
+
+      Franka PnP, custom ``FrankaEnv-v1`` tasks, and Dual Franka RTC real-robot evaluation.
 
 SGLang Serving Guides
 ---------------------
@@ -80,13 +80,13 @@ Dedicated guides for world-action models served through RLinf's SGLang embodied 
 
 .. toctree::
    :hidden:
-   :maxdepth: 1
+   :maxdepth: 2
 
-   realworld
-   behavior
    libero
    maniskill_ood
+   robotwin
+   behavior
    polaris
    robolab
-   robotwin
    simple
+   realworld

@@ -30,6 +30,8 @@ training efficiency becomes the bottleneck.
      - Configure 5D parallelism for large models.
    * - :doc:`Asynchronous Agentic RL <../async_agentic>`
      - Overlap multi-turn agent rollout with training; two admission limits bound how stale the training data gets.
+   * - :doc:`FUSCO (MoE All-to-All) <../../examples/system/fusco>`
+     - Fuse data transformation and All-to-All communication to accelerate Megatron MoE training.
 
 .. toctree::
    :hidden:
@@ -44,3 +46,4 @@ training efficiency becomes the bottleneck.
    Profiling <../profile>
    5D Parallelism <../5D>
    Asynchronous Agentic RL <../async_agentic>
+   FUSCO (MoE All-to-All) <../../examples/system/fusco>

@@ -197,19 +197,3 @@
       :link-type: doc
 
       配置轮电机、检查前置摄像头，并用键盘本地或远程驱动全向移动底盘。
-
-.. toctree::
-   :hidden:
-   :maxdepth: 3
-
-   单臂 Franka <embodied/franka_index>
-   双臂 Franka <embodied/dual_franka_index>
-   ARX X5 <embodied/arx5>
-   YAM <embodied/yam_index>
-   GimArm <embodied/gim_arm>
-   XSquare Turtle2 <embodied/xsquare_turtle2>
-   DOS-W1 <embodied/dosw1>
-   Robbyant R2 <embodied/r2>
-   Piper <embodied/piper>
-   SO101 <embodied/so101>
-   LeKiwi <embodied/lekiwi>

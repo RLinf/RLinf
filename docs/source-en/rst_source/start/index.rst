@@ -96,12 +96,3 @@ What's Next
       :link-type: doc
 
       Fixes for rendering, OOM, network, and Ray issues.
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
-   requirements
-   installation
-   vla
-   cheat_sheet

@@ -26,8 +26,8 @@ RLinf 任务一起启动或独立运行的 HTTP 服务。
 .. toctree::
    :hidden:
 
-   ApxInf <../apxinf>
    SGLang Server 与 Router <../sglang_server>
    InferenceHTTPClient <../inference_http_client>
    SGLang 版本切换 <../version>
    PhyAI <phyai>
+   ApxInf <../apxinf>

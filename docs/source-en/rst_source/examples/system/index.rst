@@ -1,3 +1,5 @@
+:orphan:
+
 System-level Optimizations
 ==============================
 
@@ -27,9 +29,4 @@ Thanks to this decoupled design, workers can be flexibly and dynamically schedul
      </div>
    </div>
 
-
-.. toctree::
-   :hidden:
-   :maxdepth: 2
-
-   fusco
+See :doc:`FUSCO <fusco>` for MoE All-to-All communication optimization.
