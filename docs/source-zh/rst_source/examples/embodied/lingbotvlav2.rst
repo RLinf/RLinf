@@ -231,6 +231,53 @@ actor 以 fp32 保存可训练的动作专家权重，因为在当前学习率�
     bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
       runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
 
+监督微调
+----------------------------------------
+
+从 Foundation Base 微调 RoboTwin 动作。SFT 更新动作专家和投影层，冻结 Qwen-VL 主干与 MoE 路由器，并与推理共用上游模型配置。FSDP2 对主干使用 BF16，动作专家与梯度规约使用 FP32。
+
+安装 ModelScope CLI 后，从 `ModelScope <https://modelscope.cn/models/Robbyant/lingbot-vla-v2-6b>`__ 下载 Foundation Base 权重：
+
+.. code-block:: bash
+
+    python -m pip install modelscope
+    modelscope download --model Robbyant/lingbot-vla-v2-6b --local_dir lingbot-vla-v2-6b-foundation-modelscope
+
+转换数据前先设置模型、源码和数据路径：
+
+.. code-block:: bash
+
+    export LINGBOT_VLA_V2_PATH=/path/to/.venv/lingbot-vla-v2
+    export LINGBOT_VLA_V2_MODEL_ROOT=/path/to/lingbot-vla-v2-6b-robotwin
+    export LINGBOT_VLA_V2_CHECKPOINT=/path/to/lingbot-vla-v2-6b-foundation-modelscope
+    export QWEN3VL_PATH=/path/to/Qwen3-VL-4B-Instruct
+    export LINGBOT_VLA_SFT_DATASET=/path/to/robotwin_train.txt
+
+``LINGBOT_VLA_V2_MODEL_ROOT`` 指向包含共享 ``lingbotvla_cli.yaml`` 的目录。Foundation checkpoint 缺少模型字段时，SFT 会从这份 YAML 读取。``LINGBOT_VLA_V2_PATH`` 指向包含机器人配置和归一化统计的源码目录。``LINGBOT_VLA_V2_CHECKPOINT`` 指向下载后的 Foundation Base 目录。
+
+转换解压后的 RoboTwin 数据集。每个输入目录需要包含 ``data/episode<i>.hdf5`` 和 ``instructions/episode<i>.json``：
+
+.. code-block:: bash
+
+    python toolkits/lerobot/convert_robotwin_to_lerobot.py \
+      --raw-root /path/to/click_bell/aloha-agilex_clean_50 \
+      --output-root /path/to/robotwin2_lerobot/click_bell_clean_50
+    printf 'robotwin /path/to/robotwin2_lerobot/click_bell_clean_50\n' > "$LINGBOT_VLA_SFT_DATASET"
+
+数据清单每行写一个 ``robot_name dataset_path``。启动 SFT：
+
+.. code-block:: bash
+
+    bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvlav2
+
+SFT 训练记录 ``train/l1_loss``。评测保存的完整权重时，使用与 SFT 相同的 attention 设置：
+
+.. code-block:: bash
+
+    bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
+      runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt \
+      rollout.model.lingbotvlav2.attention_implementation=flex_cached
+
 可视化与结果
 ----------------------------------------
 
