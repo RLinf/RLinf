@@ -1976,8 +1976,10 @@ def test_starvla_autocast_targets_the_worker_accelerator(monkeypatch):
     monkeypatch.setattr(Worker, "torch_device_type", "cpu")
 
     with accelerator.accelerator_autocast(torch.bfloat16):
-        assert torch.is_autocast_enabled("cpu")
-        assert torch.get_autocast_dtype("cpu") == torch.bfloat16
+        # Use the CPU-specific queries because torch_musa's patch on
+        # torch.is_autocast_enabled ignores the "cpu" device argument.
+        assert torch.is_autocast_cpu_enabled()
+        assert torch.get_autocast_cpu_dtype() == torch.bfloat16
 
 
 def test_starvla_autocast_is_a_noop_without_an_accelerator(monkeypatch):
@@ -1985,7 +1987,7 @@ def test_starvla_autocast_is_a_noop_without_an_accelerator(monkeypatch):
     monkeypatch.setattr(Worker, "torch_device_type", None)
 
     with accelerator.accelerator_autocast(torch.bfloat16):
-        assert not torch.is_autocast_enabled("cpu")
+        assert not torch.is_autocast_cpu_enabled()
         assert not torch.is_autocast_enabled("cuda")
 
 
