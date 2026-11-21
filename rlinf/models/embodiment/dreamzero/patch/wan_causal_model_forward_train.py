@@ -15,9 +15,7 @@
 import torch
 from groot.vla.model.dreamzero.modules.wan2_1_submodule import sinusoidal_embedding_1d
 
-# This patch is a minimal modification to DreamZero's CausalWanModel._forward_train
-# to disable gradient checkpointing when the micro batch size is greater than 1
-# (due to a PyTorch bug in this scenario). Registered in get_model.
+# Registered in get_model to select the checkpoint implementation and block interval.
 
 
 def _forward_train(
@@ -132,8 +130,10 @@ def _forward_train(
 
         return custom_forward
 
-    for block in self.blocks:
-        use_ckpt = torch.is_grad_enabled() and self.gradient_checkpointing
+    checkpoint_interval = getattr(self, "checkpoint_every_n_blocks", 1)
+    checkpoint_enabled = torch.is_grad_enabled() and self.gradient_checkpointing
+    for block_index, block in enumerate(self.blocks):
+        use_ckpt = checkpoint_enabled and block_index % checkpoint_interval == 0
 
         if use_ckpt:
             ckpt_use_reentrant = getattr(

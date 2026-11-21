@@ -13,10 +13,14 @@
 # limitations under the License.
 
 import logging
+from contextlib import contextmanager, nullcontext
 from typing import Any, Optional
 
 import numpy as np
 import torch
+from groot.vla.model.dreamzero.action_head.wan_flow_matching_action_tf import (
+    WANPolicyHead,
+)
 from groot.vla.model.dreamzero.base_vla import VLA
 from tianshou.data import Batch
 
@@ -25,9 +29,52 @@ from rlinf.data.datasets.dreamzero.data_transforms import (
     convert_rollout_env_obs,
     rollout_obs_layout_for_embodiment,
 )
+from rlinf.data.datasets.dreamzero.dataloader import PROMPT_CACHE_KEYS
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.dreamzero.dreamzero_config import DreamZeroConfig
+from rlinf.models.embodiment.dreamzero.prompt_cache import SFTPromptCache
 from rlinf.scheduler import AcceleratorType, Worker
+
+
+class DreamZeroSFTHead(WANPolicyHead):
+    """Apply the opt-in SFT encoder optimizations with the original weight layout."""
+
+    def __init__(self, config, prompt_cache_size: int, skip_unused_condition_vae: bool):
+        super().__init__(config)
+        self.skip_unused_condition_vae = skip_unused_condition_vae
+        self.prompt_cache = (
+            SFTPromptCache(prompt_cache_size) if prompt_cache_size else None
+        )
+        self._sft_prompt_keys: list[tuple[bytes, bytes]] | None = None
+
+    @contextmanager
+    def sft_batch(self, prompt_keys: list[tuple[bytes, bytes]]):
+        """Bind prompt keys for one upstream SFT forward."""
+        self._sft_prompt_keys = prompt_keys
+        try:
+            yield
+        finally:
+            self._sft_prompt_keys = None
+
+    def encode_prompt(self, input_ids, attention_mask):
+        if self.prompt_cache is None or self._sft_prompt_keys is None:
+            return super().encode_prompt(input_ids, attention_mask)
+        return self.prompt_cache.encode(
+            self.text_encoder, self._sft_prompt_keys, input_ids, attention_mask
+        )
+
+    def encode_image(self, image, num_frames, height, width):
+        if (
+            self._sft_prompt_keys is not None
+            and self.skip_unused_condition_vae
+            and self.model.model_type == "ti2v"
+            and not self.model.concat_first_frame_latent
+        ):
+            with torch.amp.autocast(image.device.type, dtype=torch.bfloat16):
+                clip_context = self.image_encoder.encode_image(image)
+            # The upstream forward transfers this tensor before the DiT ignores it.
+            return clip_context, image.new_empty(0), None
+        return super().encode_image(image, num_frames, height, width)
 
 
 class DreamZeroPolicy(VLA, BasePolicy):
@@ -48,6 +95,9 @@ class DreamZeroPolicy(VLA, BasePolicy):
     ):
         super().__init__(config)
         self.config = config
+        checkpoint_interval = config.checkpoint_every_n_blocks
+        if checkpoint_interval != 1:
+            self.action_head.model.checkpoint_every_n_blocks = checkpoint_interval
         embodiment_tag = config.embodiment_tag
         if embodiment_tag is None:
             raise ValueError(
@@ -327,7 +377,17 @@ class DreamZeroPolicy(VLA, BasePolicy):
         # Upstream uses _device for latent transfers, noise and autocast, and
         # moves the inputs to self.device; keep the two on the same device.
         self.action_head._device = self.device
-        outputs = super().forward(data)
+        head = self.action_head
+        sft_context = nullcontext()
+        if isinstance(head, DreamZeroSFTHead):
+            prompt_keys = []
+            if head.prompt_cache is not None:
+                data = dict(data)
+                # Older PyTorch pin-memory workers convert tuples to lists.
+                prompt_keys = [tuple(key) for key in data.pop(PROMPT_CACHE_KEYS)]
+            sft_context = head.sft_batch(prompt_keys)
+        with sft_context:
+            outputs = super().forward(data)
         if hasattr(outputs, "data"):
             outputs = outputs.data
         if "loss" not in outputs:

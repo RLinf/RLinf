@@ -29,6 +29,7 @@ from rlinf.data.datasets.dreamzero.data_transforms import (
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
+PROMPT_CACHE_KEYS = "_dreamzero_prompt_cache_keys"
 
 
 class DreamZeroCollator:
@@ -39,6 +40,7 @@ class DreamZeroCollator:
         tokenizer_path: str,
         max_seq_len: int,
         embodiment_tag_mapping: dict[str, int],
+        cache_prompts: bool = False,
     ):
         from groot.vla.model.dreamzero.transform.dreamzero_cotrain import (
             HuggingfaceTokenizer,
@@ -50,6 +52,7 @@ class DreamZeroCollator:
             clean="whitespace",
         )
         self.embodiment_tag_mapping = embodiment_tag_mapping
+        self.cache_prompts = cache_prompts
 
     @staticmethod
     def collate_batch(
@@ -88,7 +91,18 @@ class DreamZeroCollator:
         return batch
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
-        return self.collate_batch(features, self.tokenizer, self.embodiment_tag_mapping)
+        batch = self.collate_batch(
+            features, self.tokenizer, self.embodiment_tag_mapping
+        )
+        if self.cache_prompts:
+            # Build keys before FSDP moves the batch to the accelerator.
+            batch[PROMPT_CACHE_KEYS] = [
+                (ids.numpy().tobytes(), mask.numpy().tobytes())
+                for ids, mask in zip(
+                    batch["text"], batch["text_attention_mask"], strict=True
+                )
+            ]
+        return batch
 
 
 def build_dreamzero_sft_dataloader(
@@ -162,6 +176,7 @@ def build_dreamzero_sft_dataloader(
             tokenizer_path=tokenizer_path,
             max_seq_len=max_seq_len,
             embodiment_tag_mapping=dict(embodiment_tag_mapping),
+            cache_prompts=model_cfg.get("sft_prompt_cache_size", 0) > 0,
         ),
     )
     return data_loader, {"num_samples": len(dataset)}

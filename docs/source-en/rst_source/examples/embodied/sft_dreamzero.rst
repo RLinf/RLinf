@@ -299,8 +299,6 @@ Model and Training Settings
      - Meaning and role
    * - ``target_video_height`` / ``target_video_width``
      - WAN policy head target resolution **after multi-view concat** (5B preset e.g. 176×320; Libero often 160×320). Model-internal resize only; **do not** use for per-view data transform resize.
-   * - ``droid_view_height`` / ``droid_view_width``
-     - (Optional) per-view resize overrides for DROID.
    * - ``relative_action`` / ``relative_action_keys`` / ``relative_action_per_horizon``
      - Relative action settings; DROID often uses ``relative_action: True`` on keys like ``joint_position``.
 
@@ -378,20 +376,107 @@ From the repository root:
    # LIBERO + Franka mixture (WAN2.2; see libero_franka_mix_sft_dreamzero_5b.yaml)
    bash examples/sft/run_vla_sft.sh libero_franka_mix_sft_dreamzero_5b
 
-Equivalent command:
+To pass Hydra overrides on the command line, invoke the Python entry point.
+For example, send the 5B run's TensorBoard logs to ``logs/dreamzero-5b``.
 
 .. code:: bash
 
+   export EMBODIED_PATH="$PWD/examples/sft"
+   export PYTHONPATH="$PWD:$DREAMZERO_PATH${PYTHONPATH:+:$PYTHONPATH}"
    python examples/sft/train_vla_sft.py \
-     --config-path examples/sft/config/ \
-     --config-name <config_name> \
-     runner.logger.log_path=<auto_log_dir>
+     --config-name libero_sft_dreamzero_5b \
+     runner.logger.log_path="$PWD/logs/dreamzero-5b"
 
-Logs:
-
-- ``<repo>/logs/<timestamp>-<config_name>/run_embodiment.log``
+The shell wrapper writes console logs to
+``<repo>/logs/<timestamp>-<config_name>/run_embodiment.log``.
 
 Resume training with ``runner.resume_dir`` pointing to a checkpoint directory (field provided in example configs such as ``droid_sft_dreamzero_14b.yaml`` and ``libero_sft_dreamzero_5b.yaml``).
+
+
+Speed Up WAN2.2 5B SFT on CUDA
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you train WAN2.2 5B on CUDA with FSDP2, you can reuse text embeddings,
+skip an unused VAE pass, and reduce the cost of backward and optimizer updates.
+Start with ``examples/sft/config/libero_sft_dreamzero_5b.yaml``. Set the model,
+tokenizer, LIBERO data and ``metadata.json`` paths as described above, then
+edit the following fields in that file. Keep the rest of the recipe.
+
+.. code-block:: yaml
+
+   data:
+     sampling_mode: fixed_window  # LIBERO with images stored in Parquet
+   actor:
+     micro_batch_size: 2
+     global_batch_size: 16
+     fsdp_config:
+       strategy: fsdp2
+       gradient_checkpointing: true
+     model:
+       checkpoint_every_n_blocks: 2
+       sft_prompt_cache_size: 64
+       sft_skip_unused_condition_vae: true
+     optim:
+       fused_adamw: true
+
+The batch sizes above are for eight 80 GB GPUs. On a different allocation,
+keep the global batch size divisible by the number of GPUs times the
+per-GPU micro-batch size.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 32 18 50
+
+   * - Setting
+     - Example default
+     - When to use it
+   * - ``actor.model.checkpoint_every_n_blocks``
+     - ``1``
+     - With gradient checkpointing enabled, ``2`` checkpoints every other
+       transformer block. Backward recomputes fewer blocks and retains more
+       activations in GPU memory. Restore ``1`` if you run out of GPU memory.
+   * - ``actor.model.sft_prompt_cache_size``
+     - ``0``
+     - Cache this many frozen T5 embeddings in CPU memory per training rank.
+       At 512 tokens and 4096 features per token in BF16, 64 entries use
+       about 256 MiB per rank for the embeddings.
+       Repeated prompts benefit once all ranks have their current batch in
+       cache. T5 weights stay loaded for misses, and a resumed run fills the
+       cache again. Use ``0`` for datasets with little prompt reuse.
+   * - ``actor.model.sft_skip_unused_condition_vae``
+     - ``false``
+     - Skip encoding the first-frame condition in SFT when the WAN model is
+       ``ti2v`` and ``concat_first_frame_latent`` is false. CLIP and training
+       video encoding still run.
+   * - ``actor.optim.fused_adamw``
+     - ``false``
+     - Use native fused AdamW on CUDA FSDP2. Keep optimizer parameters on the
+       GPU, with FSDP CPU offload and ``actor.optim.use_fp32_master_params``
+       disabled. The PyTorch build must support fused AdamW on sharded
+       tensors. The reference run used PyTorch 2.13.0 with CUDA 12.9.
+
+For an initial run, set ``runner.max_steps: 12`` and
+``runner.save_interval: -1`` to inspect training without saving checkpoints.
+Launch from the repository root.
+
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b
+
+Check that ``train/loss`` and ``train/grad_norm`` stay finite. To measure
+throughput, compare ``time/step`` after compilation and cache warmup against a
+run with the same data, seed and batch sizes and with the four settings at
+their defaults. A 12-step LIBERO check on two separate eight-A800 nodes measured
+a median of 1.731 s/step with the defaults and 1.225 s/step with the options
+above over steps 4–12. Including the first three steps, the training loops took
+about 51 and 72 seconds respectively. Use the steady-state timing to estimate
+throughput for longer runs.
+
+Restore the planned training length and save interval for a full run. If you
+resume with ``runner.resume_dir``, the checkpoint restores its saved optimizer
+settings. To start a new optimizer with fused AdamW from existing model
+weights, use the model checkpoint setup above and leave
+``runner.resume_dir`` unset.
 
 
 .. _sft-dreamzero-hardware:

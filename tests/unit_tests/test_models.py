@@ -2128,6 +2128,39 @@ def test_wan_npu_patches_rebind_the_dit_operators_on_every_build(wan_dit, monkey
 _DREAMZERO_NPU_PATCHES = "rlinf.models.embodiment.dreamzero.patch.npu_patches"
 
 
+def test_dreamzero_sft_prompt_cache_masks_at_the_current_batch_length():
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "rlinf/models/embodiment/dreamzero/prompt_cache.py"
+    )
+    spec = importlib.util.spec_from_file_location("dreamzero_prompt_cache", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class TextEncoder(torch.nn.Module):
+        calls = 0
+
+        def forward(self, ids, mask):
+            self.calls += 1
+            return ids[..., None].float()
+
+    cache = module.SFTPromptCache(capacity=2)
+    encoder = TextEncoder()
+    long_key, short_key = (b"long", b"mask"), (b"short", b"mask")
+    ids = torch.tensor([[1, 2, 3], [4, 5, 6]])
+    mask = torch.tensor([[1, 1, 1], [1, 0, 0]])
+
+    torch.testing.assert_close(
+        cache.encode(encoder, [long_key, short_key], ids, mask).squeeze(-1),
+        torch.tensor([[1, 0, 0], [4, 0, 0]], dtype=torch.bfloat16),
+    )
+    torch.testing.assert_close(
+        cache.encode(encoder, [long_key], ids[:1], mask[:1]).squeeze(-1),
+        ids[:1].to(torch.bfloat16),
+    )
+    assert encoder.calls == 1
+
+
 @pytest.fixture
 def dreamzero_npu_patches(monkeypatch) -> ModuleType:
     """DreamZero's NPU operators, loaded without the DreamZero (groot) package.

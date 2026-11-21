@@ -183,6 +183,25 @@ def validate_dreamzero_sft_model_cfg(model_cfg: DictConfig) -> DictConfig:
             _merge_checkpoint_with_yaml(loaded_dict, yaml_snapshot)
         )
 
+    checkpoint_interval = model_cfg.get("checkpoint_every_n_blocks", 1)
+    if type(checkpoint_interval) is not int or checkpoint_interval < 1:
+        raise ValueError(
+            "DreamZero checkpoint_every_n_blocks must be a positive integer, "
+            f"got {checkpoint_interval!r}."
+        )
+    prompt_cache_size = model_cfg.get("sft_prompt_cache_size", 0)
+    if type(prompt_cache_size) is not int or prompt_cache_size < 0:
+        raise ValueError(
+            "DreamZero sft_prompt_cache_size must be a non-negative integer, "
+            f"got {prompt_cache_size!r}."
+        )
+    skip_condition_vae = model_cfg.get("sft_skip_unused_condition_vae", False)
+    if not isinstance(skip_condition_vae, bool):
+        raise ValueError(
+            "DreamZero sft_skip_unused_condition_vae must be a boolean, "
+            f"got {skip_condition_vae!r}."
+        )
+
     assert model_cfg.get("embodiment_tag"), (
         "DreamZero SFT requires actor.model.embodiment_tag"
     )
@@ -214,6 +233,7 @@ def validate_dreamzero_sft_model_cfg(model_cfg: DictConfig) -> DictConfig:
 @dataclass
 class DreamZeroConfig(VLAConfig):
     model_type = "dreamzero"
+    checkpoint_every_n_blocks: int = 1
     backbone_cfg: PretrainedConfig = field(
         default=None, metadata={"help": "Backbone configuration."}
     )
