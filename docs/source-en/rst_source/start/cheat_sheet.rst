@@ -34,10 +34,14 @@ Install locally with ``install.sh`` (append ``--use-mirror`` and run ``export HF
 Run Training
 ------------
 
-Download the ManiSkill scene assets once, then launch training. Single-node runs start Ray automatically, and quickstart configs download their default Hugging Face checkpoints on first run:
+Single-node runs start Ray automatically. Run a 1-GPU zero-download MLP check, or launch a VLA quickstart (downloads its default Hugging Face checkpoint on first run after fetching ManiSkill assets once):
 
 .. code-block:: bash
 
+   # 1-GPU zero-download MLP check (install with: bash requirements/install.sh embodied --env maniskill_libero)
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
+
+   # 7B VLA PPO quickstart
    hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 

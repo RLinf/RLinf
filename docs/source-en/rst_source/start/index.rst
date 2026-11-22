@@ -21,11 +21,11 @@ Core Setup
 
       One-line ``install.sh`` setup or prebuilt Docker Hub images.
 
-   .. grid-item-card:: 3. VLA Quick Start
+   .. grid-item-card:: 3. Quick Start
       :link: vla
       :link-type: doc
 
-      Train OpenVLA or OpenVLA-OFT on ManiSkill3 with PPO.
+      Run a 1-GPU MLP smoke test (no downloads) or OpenVLA / OpenVLA-OFT PPO on ManiSkill3.
 
    .. grid-item-card:: 4. Cheat Sheet
       :link: cheat_sheet
@@ -48,12 +48,12 @@ Start with the entry point closest to your goal:
    * - Verify setup in ~5 minutes
      - 1 GPU (24 GB+)
      - :doc:`LIBERO Evaluation Quick Tour <../evaluations/get_started/quick_tour>`
-   * - Lightweight RL (no large checkpoint)
-     - 1 GPU (24 GB+)
-     - :doc:`MLP Policy RL <../examples/embodied/mlp>`
+   * - Lightweight RL (no downloads)
+     - 1 GPU (8–24 GB+)
+     - :doc:`Quick Start — MLP Tab <vla>`
    * - VLA RL fine-tuning in simulation
      - 1–8 GPUs (40–80 GB)
-     - :doc:`VLA Quick Start (ManiSkill3) <vla>`
+     - :doc:`Quick Start — OpenVLA / OpenVLA-OFT <vla>`
    * - Real-world robot setup and RL
      - Controller PC + GPU node
      - :doc:`Real-World Robots <../examples/real_world_index>`

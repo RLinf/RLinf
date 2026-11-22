@@ -1,7 +1,7 @@
-VLA Quick Start
-===============
+Quick Start
+===========
 
-Train **OpenVLA** or **OpenVLA-OFT** on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ with PPO in four steps.
+Verify your setup in minutes with a **single-GPU MLP** run on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ (no model or scene asset downloads), or jump straight into **OpenVLA** / **OpenVLA-OFT** PPO training.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -11,10 +11,10 @@ Train **OpenVLA** or **OpenVLA-OFT** on `ManiSkill3 <https://github.com/haosulab
 
       ``install.sh`` or Docker Hub
 
-   .. grid-item-card:: 2. Download
+   .. grid-item-card:: 2. Pick a Track
       :text-align: center
 
-      ManiSkill assets (model auto-downloads)
+      1-GPU MLP (zero downloads) or 7B VLA
 
    .. grid-item-card:: 3. Train
       :text-align: center
@@ -29,11 +29,30 @@ Train **OpenVLA** or **OpenVLA-OFT** on `ManiSkill3 <https://github.com/haosulab
 Setup and Run
 -------------
 
-Select a model tab below — each tab contains the full install, download, and launch commands. Both recipes use all available accelerators by default; edit ``cluster.component_placement`` to target specific devices (:doc:`../reference/configuration`). If you already installed another model or environment in ``.venv``, pass ``--venv <dir>`` to ``install.sh`` so you do not overwrite it. For mainland China mirrors or prebuilt Docker Hub images, see :doc:`installation`.
+Select a tab below — start with **MLP** for the fastest zero-download verification on a single GPU, or choose **OpenVLA** / **OpenVLA-OFT** for full VLA PPO training. If you already installed another model or environment in ``.venv``, pass ``--venv <dir>`` to ``install.sh`` so you do not overwrite it. For mainland China mirrors or prebuilt Docker Hub images, see :doc:`installation`.
 
 .. tab-set::
 
-   .. tab-item:: OpenVLA
+   .. tab-item:: MLP (1 GPU · No Downloads)
+
+      Trains a lightweight MLP policy from scratch with PPO on ManiSkill3's built-in ``PickCube-v1`` task using GPU 0 — no Hugging Face checkpoint or external scene asset downloads required.
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
+
+      **2. Launch PPO Training**
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
+
+      For a quick ~1-minute smoke check, append ``runner.max_epochs=3 runner.val_check_interval=-1``. More MLP / SAC / GRPO recipes are in :doc:`MLP Policy RL <../examples/embodied/mlp>`.
+
+   .. tab-item:: OpenVLA (7B VLA)
       :sync: openvla
 
       **1. Install**
@@ -55,7 +74,7 @@ Select a model tab below — each tab contains the full install, download, and l
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
-   .. tab-item:: OpenVLA-OFT
+   .. tab-item:: OpenVLA-OFT (7B LoRA VLA)
       :sync: openvla-oft
 
       **1. Install**
@@ -77,7 +96,7 @@ Select a model tab below — each tab contains the full install, download, and l
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
 
-Rollout inherits ``actor.model.model_path`` automatically. To use pre-downloaded local checkpoints instead of Hugging Face repo IDs, pass overrides on the command line (``actor.model.model_path=/path/to/checkpoint`` and, for OpenVLA-OFT, ``actor.model.lora_path=/path/to/lora``) or see :doc:`Training Configuration <../reference/configuration>`.
+The two VLA quickstarts use all available accelerators by default; edit ``cluster.component_placement`` to target specific devices (:doc:`../reference/configuration`). Rollout inherits ``actor.model.model_path`` automatically — to use local checkpoints instead of Hugging Face repo IDs, pass ``actor.model.model_path=/path/to/checkpoint`` (and for OpenVLA-OFT, ``actor.model.lora_path=/path/to/lora``).
 
 Results and Troubleshooting
 ---------------------------
@@ -88,7 +107,7 @@ Training writes logs and checkpoints under ``./logs``. Open TensorBoard (``tenso
    :align: center
    :width: 90%
 
-   TensorBoard training curves for the ManiSkill3 quick start.
+   TensorBoard training curves for the ManiSkill3 VLA quick start.
 
 .. list-table::
    :header-rows: 1

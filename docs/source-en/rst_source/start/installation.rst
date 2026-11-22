@@ -132,11 +132,11 @@ Troubleshooting and Next Steps
 .. grid:: 1 3 3 3
    :gutter: 2
 
-   .. grid-item-card:: VLA Quick Start
+   .. grid-item-card:: Quick Start
       :link: vla
       :link-type: doc
 
-      Train OpenVLA or OpenVLA-OFT on ManiSkill3 in four steps.
+      Run a 1-GPU zero-download MLP check or train OpenVLA / OpenVLA-OFT on ManiSkill3.
 
    .. grid-item-card:: Scale to a Cluster
       :link: ../guides/launch-scale/index

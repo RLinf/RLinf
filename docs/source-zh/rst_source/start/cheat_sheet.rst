@@ -34,10 +34,14 @@ RLinf 常用工作流的最短命令。
 启动训练
 --------
 
-首次运行前下载 ManiSkill 场景资产，再启动训练。单机运行会自动启动本地 Ray，快速开始配置首次运行时会自动缓存下载默认 Hugging Face 权重：
+单机运行会自动启动本地 Ray。可以先跑单卡零下载的 MLP 冒烟验证，或直接启动 VLA 快速开始（下载一次 ManiSkill 场景资产后首次运行自动缓存默认 Hugging Face 权重）：
 
 .. code-block:: bash
 
+   # 单卡零下载 MLP 验证（环境安装：bash requirements/install.sh embodied --env maniskill_libero）
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
+
+   # 7B VLA PPO 快速开始
    hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
@@ -59,6 +63,6 @@ RLinf 常用工作流的最短命令。
 ------
 
 - :doc:`安装说明 <installation>`：安装目标、常用参数与 Docker Hub 入口。
-- :doc:`VLA 快速开始 <vla>`：ManiSkill3 四步入门示例。
+- :doc:`训练快速开始 <vla>`：单卡 MLP 与 ManiSkill3 VLA 入门示例。
 - :doc:`启动与扩展 <../guides/launch-scale/index>`：多机与真机部署。
 - :doc:`评测 <../evaluations/index>`：支持的 benchmark 与评测配置。

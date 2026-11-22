@@ -38,11 +38,11 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ```bash
 git clone https://github.com/RLinf/RLinf.git && cd RLinf
-bash requirements/install.sh embodied --model openvla --env maniskill_libero
-source .venv/bin/activate
+bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
+bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 ```
 
-完成安装后，按 [VLA 快速开始](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/vla.html) 运行第一个 ManiSkill3 PPO 示例，或体验 [5 分钟评测快速体验](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/get_started/quick_tour.html)，也可前往 [示例库](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html) 与 [安装说明](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html) 查看更多配方与选项。
+上述命令会在单张 GPU 上直接跑通 ManiSkill3 PPO MLP 训练（无需下载模型权重与场景资产）。进阶可按 [训练快速开始](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/vla.html) 运行 OpenVLA / OpenVLA-OFT，体验 [5 分钟评测快速体验](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/get_started/quick_tour.html)，或前往 [具身训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html) 与 [安装说明](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html) 查看更多配方与选项。
 
 ## 最新动态
 

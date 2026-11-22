@@ -1,7 +1,7 @@
-VLA 快速开始
+训练快速开始
 ============
 
-四步在 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ 上用 PPO 训练 **OpenVLA** 或 **OpenVLA-OFT**。
+在 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ 上几分钟完成 **单卡 MLP** 零下载验证，或直接启动 **OpenVLA** / **OpenVLA-OFT** 的 PPO 训练。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -11,10 +11,10 @@ VLA 快速开始
 
       ``install.sh`` 或 Docker Hub
 
-   .. grid-item-card:: 2. 下载资源
+   .. grid-item-card:: 2. 选择起点
       :text-align: center
 
-      ManiSkill 场景资产（权重自动下载）
+      单卡 MLP（零下载）或 7B VLA
 
    .. grid-item-card:: 3. 启动训练
       :text-align: center
@@ -29,11 +29,30 @@ VLA 快速开始
 一键上手
 --------
 
-切换下方标签选择模型，每个标签内均包含完整的安装、下载与启动命令。两个快速开始配置默认使用所有可用加速卡；需要指定设备时，修改 ``cluster.component_placement``，详见 :doc:`../reference/configuration`。如果 ``.venv`` 里已经安装了其他模型或环境，在 ``install.sh`` 末尾加 ``--venv <dir>`` 避免覆盖。国内镜像加速与 Docker Hub 预构建镜像见 :doc:`installation`。
+切换下方标签选择起点：首次验证环境推荐先跑 **MLP**\ （单卡、无需下载模型权重与场景资产），需要 VLA 强化学习时直接切到 **OpenVLA** 或 **OpenVLA-OFT**。如果 ``.venv`` 里已经安装了其他模型或环境，在 ``install.sh`` 末尾加 ``--venv <dir>`` 避免覆盖。国内镜像加速与 Docker Hub 预构建镜像见 :doc:`installation`。
 
 .. tab-set::
 
-   .. tab-item:: OpenVLA
+   .. tab-item:: MLP（单卡 · 零权重下载）
+
+      在 GPU 0 上基于 ManiSkill3 内置 ``PickCube-v1`` 任务从零训练轻量 MLP 策略——无需下载任何 Hugging Face 权重或外部场景资产。
+
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
+
+      **2. 启动 PPO 训练**
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
+
+      如需约 1 分钟的极速冒烟验证，追加 ``runner.max_epochs=3 runner.val_check_interval=-1``。更多 MLP / SAC / GRPO 示例见 :doc:`MLP 策略强化学习 <../examples/embodied/mlp>`。
+
+   .. tab-item:: OpenVLA（7B VLA）
       :sync: openvla
 
       **1. 安装环境**
@@ -55,7 +74,7 @@ VLA 快速开始
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
-   .. tab-item:: OpenVLA-OFT
+   .. tab-item:: OpenVLA-OFT（7B LoRA VLA）
       :sync: openvla-oft
 
       **1. 安装环境**
@@ -77,7 +96,7 @@ VLA 快速开始
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
 
-rollout 会自动沿用 ``actor.model.model_path``。若使用本地预下载权重，只需在命令行覆盖 ``actor.model.model_path=/path/to/checkpoint``\ （OpenVLA-OFT 同步传 ``actor.model.lora_path=/path/to/lora``），配置细节见 :doc:`训练配置 <../reference/configuration>`。
+两个 VLA 快速开始配置默认使用所有可用加速卡；需要指定设备时，修改 ``cluster.component_placement``\ （详见 :doc:`../reference/configuration`\ ）。rollout 会自动沿用 ``actor.model.model_path``；若使用本地预下载权重，只需在命令行覆盖 ``actor.model.model_path=/path/to/checkpoint``\ （OpenVLA-OFT 同步传 ``actor.model.lora_path=/path/to/lora``）。
 
 结果与常见问题
 --------------
@@ -88,7 +107,7 @@ rollout 会自动沿用 ``actor.model.model_path``。若使用本地预下载权
    :align: center
    :width: 90%
 
-   ManiSkill3 快速开始的 TensorBoard 训练曲线。
+   ManiSkill3 VLA 快速开始的 TensorBoard 训练曲线。
 
 .. list-table::
    :header-rows: 1
@@ -118,8 +137,8 @@ rollout 会自动沿用 ``actor.model.model_path``。若使用本地预下载权
 
       在具身基准上评估训练后的权重。
 
-   .. grid-item-card:: 性能优化指南
+   .. grid-item-card:: 性能调优
       :link: ../guides/performance/index
       :link-type: doc
 
-      了解 :doc:`训练流水线模式 <../guides/training_pipeline>` 与 :doc:`执行模式 <../concepts/execution_modes>`。
+      学习 :doc:`流水线训练模式 <../guides/training_pipeline>` 与 :doc:`执行模式 <../concepts/execution_modes>`。

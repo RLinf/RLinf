@@ -115,8 +115,8 @@ Next Steps
 
       Configure export formats, streaming shards, and dataset merging.
 
-   .. grid-item-card:: VLA Quick Start
+   .. grid-item-card:: Quick Start
       :link: ../start/vla
       :link-type: doc
 
-      Launch your first ManiSkill3 PPO run in one command.
+      Launch a 1-GPU MLP check or ManiSkill3 VLA PPO run in one command.

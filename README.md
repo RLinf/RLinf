@@ -39,11 +39,11 @@ Install locally with `requirements/install.sh` (pass `--venv <dir>` when keeping
 
 ```bash
 git clone https://github.com/RLinf/RLinf.git && cd RLinf
-bash requirements/install.sh embodied --model openvla --env maniskill_libero
-source .venv/bin/activate
+bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
+bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 ```
 
-Then follow the [VLA Quick Start](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html) to run your first ManiSkill3 PPO job, try the [5-Minute Evaluation Quick Tour](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/get_started/quick_tour.html), or browse the [Example Gallery](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) and [Installation Guide](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html).
+That runs a 1-GPU ManiSkill3 PPO MLP job with no model or scene asset downloads. Follow the [Quick Start](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html) for OpenVLA / OpenVLA-OFT PPO training, try the [5-Minute Evaluation Quick Tour](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/get_started/quick_tour.html), or browse [Embodied Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) and the [Installation Guide](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html).
 
 ## What's NEW!
 

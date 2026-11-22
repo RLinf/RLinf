@@ -21,11 +21,11 @@
 
       一行 ``install.sh`` 本地安装，或前往 Docker Hub 拉取镜像。
 
-   .. grid-item-card:: 3. VLA 快速开始
+   .. grid-item-card:: 3. 训练快速开始
       :link: vla
       :link-type: doc
 
-      在 ManiSkill3 上用 PPO 训练 OpenVLA 或 OpenVLA-OFT。
+      单卡零下载跑通 MLP，或在 ManiSkill3 上用 PPO 训练 OpenVLA / OpenVLA-OFT。
 
    .. grid-item-card:: 4. 速查表
       :link: cheat_sheet
@@ -48,12 +48,12 @@
    * - 约 5 分钟验证环境
      - 单卡（24 GB 起）
      - :doc:`LIBERO 评测快速体验 <../evaluations/get_started/quick_tour>`
-   * - 轻量 RL（无需下载大模型）
-     - 单卡（24 GB 起）
-     - :doc:`MLP policy 强化学习 <../examples/embodied/mlp>`
+   * - 轻量 RL（零权重下载）
+     - 单卡（8–24 GB 起）
+     - :doc:`训练快速开始（MLP） <vla>`
    * - 仿真环境 VLA 强化学习
      - 1–8 卡（40–80 GB）
-     - :doc:`VLA 快速开始（ManiSkill3） <vla>`
+     - :doc:`训练快速开始（OpenVLA / OpenVLA-OFT） <vla>`
    * - 真机联调、数据采集与训练
      - 控制机 + GPU 节点
      - :doc:`真实机器人强化学习 <../examples/real_world_index>`

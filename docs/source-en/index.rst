@@ -112,7 +112,7 @@ Why RLinf
   Overview <rst_source/start/index>
   Requirements <rst_source/start/requirements>
   Installation <rst_source/start/installation>
-  VLA Quick Start <rst_source/start/vla>
+  Quick Start <rst_source/start/vla>
   Cheat Sheet <rst_source/start/cheat_sheet>
   FAQ <rst_source/resources/faq>
 

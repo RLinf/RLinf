@@ -115,8 +115,8 @@ Collocated、Disaggregated 与 Hybrid 对应同一套 worker 的三种硬件放�
 
       了解导出格式配置、流式分片与数据集合并。
 
-   .. grid-item-card:: VLA 快速上手
+   .. grid-item-card:: 训练快速开始
       :link: ../start/vla
       :link-type: doc
 
-      一行命令启动 ManiSkill3 PPO 训练。
+      一行命令启动单卡 MLP 或 ManiSkill3 VLA PPO 训练。

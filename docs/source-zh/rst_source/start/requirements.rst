@@ -21,10 +21,10 @@
      - 推荐入口
    * - 单卡（24 GB 起）
      - MLP / CNN 仿真 RL、VLA 评测、LoRA SFT、真机数据采集与部署
-     - :doc:`评测快速体验 <../evaluations/get_started/quick_tour>`、:doc:`MLP 强化学习 <../examples/embodied/mlp>`
+     - :doc:`训练快速开始（MLP） <vla>`、:doc:`评测快速体验 <../evaluations/get_started/quick_tour>`
    * - 1–2 卡（40–80 GB）
      - 单机 OpenVLA / OpenPI 快速开始、共置 PPO / GRPO
-     - :doc:`VLA 快速开始 <vla>`
+     - :doc:`训练快速开始（VLA） <vla>`
    * - 4–8 卡（80 GB）
      - VLA 全参 SFT 与基准复现（LIBERO、ManiSkill、RoboTwin）、7B–14B 推理 RL
      - :doc:`具身训练 <../examples/index>`

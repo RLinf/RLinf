@@ -132,11 +132,11 @@
 .. grid:: 1 3 3 3
    :gutter: 2
 
-   .. grid-item-card:: VLA 快速开始
+   .. grid-item-card:: 训练快速开始
       :link: vla
       :link-type: doc
 
-      四步在 ManiSkill3 上用 PPO 训练 OpenVLA 或 OpenVLA-OFT。
+      单卡零下载跑通 MLP，或在 ManiSkill3 上用 PPO 训练 OpenVLA / OpenVLA-OFT。
 
    .. grid-item-card:: 扩展到多机集群
       :link: ../guides/launch-scale/index

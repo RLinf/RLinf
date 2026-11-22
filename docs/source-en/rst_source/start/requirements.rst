@@ -21,10 +21,10 @@ GPU Tiers by Workload
      - Example Starting Point
    * - 1 GPU (24 GB+)
      - MLP / CNN simulation RL, VLA evaluation, LoRA SFT, real-robot data collection, and deployment
-     - :doc:`Evaluation Quick Tour <../evaluations/get_started/quick_tour>`, :doc:`MLP RL <../examples/embodied/mlp>`
+     - :doc:`Quick Start (MLP) <vla>`, :doc:`Evaluation Quick Tour <../evaluations/get_started/quick_tour>`
    * - 1–2 GPUs (40–80 GB)
      - Single-workstation OpenVLA / OpenPI RL quick start, collocated PPO / GRPO
-     - :doc:`VLA Quick Start <vla>`
+     - :doc:`Quick Start (VLA) <vla>`
    * - 4–8 GPUs (80 GB)
      - Full-parameter VLA SFT and RL benchmarks (LIBERO, ManiSkill, RoboTwin), 7B–14B reasoning RL
      - :doc:`Embodied Training <../examples/index>`
