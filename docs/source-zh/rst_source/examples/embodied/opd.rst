@@ -16,11 +16,6 @@ OPD（On-Policy Distillation）在 student 策略自己的 on-policy rollout 上
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: 环境
-      :text-align: center
-
-      LIBERO-Spatial
-
    .. grid-item-card:: 算法
       :text-align: center
 
@@ -31,7 +26,12 @@ OPD（On-Policy Distillation）在 student 策略自己的 on-policy rollout 上
 
       OpenVLA-OFT student · OpenVLA-OFT teacher
 
-   .. grid-item-card:: 硬件
+   .. grid-item-card:: 环境 / 数据
+      :text-align: center
+
+      LIBERO-Spatial
+
+   .. grid-item-card:: 训练
       :text-align: center
 
       1 节点 · 8 张 GPU
@@ -53,7 +53,7 @@ OPD 以 teacher 与 student 在同一条 student 动作 token 序列上的 log-p
 一键上手
 ----------------------------------------
 
-使用 ``requirements/install.sh`` 安装环境（中国大陆用户可在命令末尾追加 ``--use-mirror``，并在执行 ``hf download`` 前设置 ``export HF_ENDPOINT=https://hf-mirror.com``），或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像。通用安装选项见 :doc:`../../start/installation`。
+.. include:: _setup_common.rst
 
 .. list-table:: **LIBERO-Spatial OPD 使用的权重**
    :header-rows: 1

@@ -102,8 +102,7 @@ Setup and Run
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env calvin
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env calvin && source .venv/bin/activate
 
       **2. Download**
 
@@ -150,8 +149,7 @@ Setup and Run
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env calvin
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env calvin && source .venv/bin/activate
 
       **2. Download**
 

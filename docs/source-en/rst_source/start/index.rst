@@ -3,12 +3,6 @@ Get Started
 
 Go from a fresh machine to your first RLinf run, then pick the workflow that matches your hardware and task.
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/onboarding_flow.svg
-   :align: center
-   :width: 100%
-
-   The four-step path from installation to monitoring and scaling.
-
 Core Setup
 ----------
 

@@ -198,7 +198,7 @@ Setup and Run
 
            .. code-block:: bash
 
-              bash evaluations/run_eval.sh robocasa365_eval_openpi \
+              bash evaluations/run_eval.sh robocasa365 robocasa365_eval_openpi \
                 env.eval.task_soup=composite_unseen \
                 env.eval.task_mode=composite
 

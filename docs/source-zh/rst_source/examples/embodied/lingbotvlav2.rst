@@ -124,18 +124,17 @@ LingbotVLA 1.0 与 2.0 安装的 Python 包都叫 ``lingbotvla``，需要各自�
 
       .. code-block:: yaml
 
-         model_path: /path/to/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
-         tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
+         model_path: ./lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
+         tokenizer_path: ./Qwen3-VL-4B-Instruct
          lingbotvlav2:
-           training_config_path: /path/to/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml
-           robot_config_path: /path/to/RLinf/.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
-           stats_path: /path/to/RLinf/.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
+           training_config_path: ./lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml
+           robot_config_path: ./.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
+           stats_path: ./.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
 
-      先导出 ``ROBOT_PLATFORM="ALOHA"``\ （双臂任务必需）和 RoboTwin 路径，再启动 PPO 训练：
+      先导出 RoboTwin 路径，再启动 PPO 训练：
 
       .. code-block:: bash
 
-         export ROBOT_PLATFORM="ALOHA"
          export ROBOTWIN_PATH=$PWD/RoboTwin
          export ROBOTWIN_ASSETS_PATH=$ROBOTWIN_PATH
          bash examples/embodiment/run_embodiment.sh robotwin_click_bell_ppo_lingbotvlav2
@@ -146,12 +145,12 @@ LingbotVLA 1.0 与 2.0 安装的 Python 包都叫 ``lingbotvla``，需要各自�
          - **Flow-SDE PPO 与价值头预热**：rollout 在每个动作块中随机选一个去噪步按 flow-SDE 采样，其余步沿 ODE 推进。PPO 对该步解码出的 14 个 latent 坐标以 ``logprob_type: token_level`` 和 ``clip_ratio_c: 3.0`` 计算更新，配合 chunk 级奖励与 ``actor.optim.critic_warmup_steps: 20``。
          - **混合精度**：actor 以 ``fp32`` 保存可训练的动作专家权重以避免小学习率更新被舍入，FSDP2 仍以 ``bf16`` 计算，rollout 保留 ``bf16`` 权重副本。
          - **log-prob 漂移保护**：每次更新前 actor 重新计算每个采样 SDE 步的概率。若样本在 rollout 与 actor 间的总 log-probability 差值超过 ``algorithm.max_recompute_logprob_gap: 1.0e-3``，训练停止；最大差值记录在 ``actor/rollout_train_joint_logprob_gap_max``。
-         - **独立评测**：按 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 运行独立评测，配置为 ``robotwin_click_bell_lingbotvlav2_eval``\ （在新终端中评测前先导出上方三个环境变量）。如需评测 PPO checkpoint，传入其完整权重文件：
+         - **独立评测**：按 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 运行独立评测，配置为 ``robotwin_click_bell_lingbotvlav2_eval``\ （在新终端中评测前先导出上方两个环境变量）。如需评测 PPO checkpoint，传入其完整权重文件：
 
            .. code-block:: bash
 
-              bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
-                runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
+              bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvlav2_eval \
+                runner.ckpt_path=./logs/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt
 
 可视化与结果
 ----------------------------------------

@@ -1,11 +1,9 @@
 Megatron-Bridge
 ===============
 
-RLinf 通过 Megatron-LM 训练后端支持 `Megatron-Bridge`。该集成允许你直接从
-HuggingFace 格式的 checkpoint 启动 Megatron-LM 训练，使用 Megatron-Bridge 支持的模型结构，
-同时保持 RLinf 的训练循环、数据管线、日志记录和 checkpoint 工作流不变。
+RLinf 通过 Megatron-LM 训练后端支持 Megatron-Bridge，可以直接从 HuggingFace 格式的 checkpoint 启动 Megatron-LM 训练，使用 Megatron-Bridge 支持的模型结构，同时保持 RLinf 的训练循环、数据管线、日志记录和 checkpoint 工作流不变。
 
-当你有以下需求时，建议使用 Megatron-Bridge：
+满足以下场景时，建议使用 Megatron-Bridge：
 
 - actor 侧模型较大，FSDP 或 FSDP2 已经成为性能瓶颈；
 - 模型架构尚未被 RLinf 原生 Megatron-LM 集成支持。
@@ -21,26 +19,18 @@ Megatron-Bridge 相关仓库：
 安装环境
 --------
 
-MBridge 使用 RLinf 的 agentic 运行环境。``install.sh`` 会一并安装 Megatron-Bridge 和
-匹配的 Megatron-LM，不需要另外下载源码或设置 ``PYTHONPATH``：
+MBridge 使用 RLinf 的 agentic 运行环境。``install.sh`` 会一并安装 Megatron-Bridge 和匹配的 Megatron-LM，不需要另外下载源码或设置 ``PYTHONPATH``：
 
 .. code:: bash
 
-   bash requirements/install.sh agentic
-   source .venv/bin/activate
+   bash requirements/install.sh agentic && source .venv/bin/activate
    python -c "from megatron.bridge import AutoBridge; print('Megatron-Bridge OK')"
 
-该命令会创建 Python 3.12 虚拟环境，安装 ``megatron-bridge`` 0.5.0 与 ``nvidia-modelopt`` 0.45.0，
-并把 Megatron-LM ``core_r0.18.0`` 克隆到虚拟环境目录下，由 ``.venv/bin/activate`` 加入 ``PYTHONPATH``。
-如需复用已有的 Megatron-LM 目录，可在安装前设置 ``MEGATRON_PATH=/path/to/Megatron-LM``；
-``install.sh`` 会直接复用该目录、不会切换分支，请自行确认它位于 ``core_r0.18.0``。
+该命令会创建 Python 3.12 虚拟环境，安装 ``megatron-bridge`` 0.5.0 与 ``nvidia-modelopt`` 0.45.0，并把 Megatron-LM ``core_r0.18.0`` 克隆到虚拟环境目录下，由 ``.venv/bin/activate`` 加入 ``PYTHONPATH``。如需复用已有的 Megatron-LM 目录，可在安装前设置 ``MEGATRON_PATH=/path/to/Megatron-LM``；``install.sh`` 会直接复用该目录、不会切换分支，请自行确认它位于 ``core_r0.18.0``。
 
 .. note::
 
-   Megatron-Bridge 需要 Python 3.12。如果通过 ``--python`` 指定了更低的版本，
-   ``install.sh`` 会跳过 Megatron-Bridge 并打印 WARNING，上面的导入检查会失败。
-   当前 Reasoning 镜像中的虚拟环境是 Python 3.11，不包含 ``megatron.bridge``；
-   使用 MBridge 时请按上面的命令安装环境。
+   Megatron-Bridge 需要 Python 3.12。如果通过 ``--python`` 指定了更低的版本，``install.sh`` 会跳过 Megatron-Bridge 并打印 WARNING，上面的导入检查会失败。当前 Reasoning 镜像中的虚拟环境是 Python 3.11，不包含 ``megatron.bridge``；使用 MBridge 时请按上面的命令安装环境。
 
 下载 Reasoning 示例使用的模型和数据集：
 
@@ -67,20 +57,14 @@ MBridge 使用 RLinf 的 agentic 运行环境。``install.sh`` 会一并安装 M
 
 .. warning::
 
-   Robo2VLM 下载后会把训练和评估文件放在同一目录，例如
-   ``train-00000-of-00262.parquet`` 和
-   ``test-0000X-of-00003.parquet``。训练前请将它们移动到不同目录。
-   否则，RLinf 会把整个数据集当作训练数据读取。
+   Robo2VLM 下载后会把训练和评估文件放在同一目录，例如 ``train-00000-of-00262.parquet`` 和 ``test-0000X-of-00003.parquet``。训练前请将它们移动到不同目录。否则，RLinf 会把整个数据集当作训练数据读取。
 
-示例 SFT 配置默认读取 ``/path/to/Robo2VLM-1/data`` 和
-``/path/to/Robo2VLM-1/eval_data``。如果数据集放在其他路径，请同步更新
-``data.train_data_paths`` 和 ``data.eval_data_paths``。
+示例 SFT 配置默认读取 ``/path/to/Robo2VLM-1/data`` 和 ``/path/to/Robo2VLM-1/eval_data``。如果数据集放在其他路径，请同步更新 ``data.train_data_paths`` 和 ``data.eval_data_paths``。
 
 使用介绍
 --------
 
-启用 MBridge 后，RLinf 会通过 ``Megatron-Bridge`` 导入并构建 Megatron-LM 模型，
-而不是使用传统的 Megatron checkpoint 转换流程。
+启用 MBridge 后，RLinf 会通过 ``Megatron-Bridge`` 导入并构建 Megatron-LM 模型，而不是使用传统的 Megatron checkpoint 转换流程。
 
 关键配置如下。
 
@@ -96,8 +80,7 @@ MBridge 使用 RLinf 的 agentic 运行环境。``install.sh`` 会一并安装 M
        ckpt_convertor:
          hf_model_path: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B
 
-当 ``actor.megatron.mbridge`` 为 ``True`` 且 ``use_hf_ckpt`` 为 ``True`` 时，
-RLinf 会读取 ``ckpt_convertor.hf_model_path`` 设定的模型路径，并交由 MBridge 构建 Megatron model provider。
+当 ``actor.megatron.mbridge`` 为 ``True`` 且 ``use_hf_ckpt`` 为 ``True`` 时，RLinf 会读取 ``ckpt_convertor.hf_model_path`` 设定的模型路径，并交由 MBridge 构建 Megatron model provider。
 
 对于 SFT 任务：
 
@@ -112,8 +95,7 @@ RLinf 会读取 ``ckpt_convertor.hf_model_path`` 设定的模型路径，并交�
        use_hf_ckpt: True
        mbridge: True
 
-当 ``actor.megatron.mbridge`` 为 ``True`` 时，
-RLinf 会读取 ``actor.model.model_path`` 设定的模型路径，并交由 MBridge 构建 Megatron model provider。
+当 ``actor.megatron.mbridge`` 为 ``True`` 时，RLinf 会读取 ``actor.model.model_path`` 设定的模型路径，并交由 MBridge 构建 Megatron model provider。
 
 快速开始
 --------
@@ -137,7 +119,24 @@ RLinf 会读取 ``actor.model.model_path`` 设定的模型路径，并交由 MBr
    /path/to/Robo2VLM-1/data
    /path/to/Robo2VLM-1/eval_data
 
-3. 在配置文件中更新模型、tokenizer 和数据集路径：
+3. 在配置文件中更新模型、tokenizer 和数据集路径（详见下方 `路径差异`_）。
+
+4. 启动对应的训练脚本：
+
+在仓库根目录启动 Reasoning 训练。这里直接使用 Python 入口，确保显式应用 MBridge 配置覆盖：
+
+.. code:: bash
+
+   python examples/reasoning/main_grpo.py \
+       --config-path "$(pwd)/examples/reasoning/config/math" \
+       --config-name qwen2.5-1.5b-grpo-megatron \
+       +actor.megatron.mbridge=True
+
+在仓库根目录启动 VLM SFT 训练脚本：
+
+.. code:: bash
+
+   bash examples/sft/run_vlm_sft.sh qwen2_5_vl_megatron_sft_vlm
 
 路径差异
 --------
@@ -189,29 +188,10 @@ SFT 示例：
      train_data_paths: "/path/to/Robo2VLM-1/data"
      eval_data_paths: "/path/to/Robo2VLM-1/eval_data"
 
-4. 启动对应的训练脚本:
-
-在仓库根目录启动 Reasoning 训练。这里直接使用 Python 入口，确保显式应用
-MBridge 配置覆盖：
-
-.. code:: bash
-
-   python examples/reasoning/main_grpo.py \
-       --config-path "$(pwd)/examples/reasoning/config/math" \
-       --config-name qwen2.5-1.5b-grpo-megatron \
-       +actor.megatron.mbridge=True
-
-在仓库根目录启动 VLM SFT 训练脚本:
-
-.. code:: bash
-
-   bash examples/sft/run_vlm_sft.sh qwen2_5_vl_megatron_sft_vlm
-
 Checkpoint 加载模式
 -------------------
 
-当前，RLinf 中使用 Megatron-Bridge 时，会同时保存两份模型的 checkpoint，包含 HF checkpoint 和 Megatron checkpoint。
-文件结构如下：
+当前，RLinf 中使用 Megatron-Bridge 时，会同时保存两份模型的 checkpoint，包含 HF checkpoint 和 Megatron checkpoint。文件结构如下：
 
 .. code:: text
 
@@ -232,13 +212,9 @@ Checkpoint 加载模式
    └── global_step_20/
        └── …
 
-hf_model 目录下保存了 HF checkpoint 的模型权重和 tokenizer 文件。
-iter_XXXXXXX 目录下保存了 Megatron checkpoint 的模型权重和 optimizer 文件。
-latest_checkpointed_iteration.txt 文件保存了当前 checkpoint 的 step 信息。
-如例子中 ``global_step_10/`` 和 ``global_step_20/`` 是两个不同的 checkpoint，分别对应 step 10 和 step 20 的 checkpoint。
+hf_model 目录下保存了 HF checkpoint 的模型权重和 tokenizer 文件。iter_XXXXXXX 目录下保存了 Megatron checkpoint 的模型权重和 optimizer 文件。latest_checkpointed_iteration.txt 文件保存了当前 checkpoint 的 step 信息。如例子中 ``global_step_10/`` 和 ``global_step_20/`` 是两个不同的 checkpoint，分别对应 step 10 和 step 20 的 checkpoint。
 
-如果只是想重新断点续训，可以只加载 Megatron checkpoint，无需加载 HF checkpoint。
-加载方式：
+如果只是想重新断点续训，可以只加载 Megatron checkpoint，无需加载 HF checkpoint。加载方式：
 
 .. code:: yaml
 
@@ -249,8 +225,7 @@ latest_checkpointed_iteration.txt 文件保存了当前 checkpoint 的 step 信�
 --------
 
 - 当 ``use_hf_ckpt: True`` 时，保持 ``actor.model.megatron_checkpoint: null``。
-- 只有在加载已准备好的 Megatron checkpoint 时，才设置
-  ``actor.megatron.use_hf_ckpt: False``。
+- 只有在加载已准备好的 Megatron checkpoint 时，才设置 ``actor.megatron.use_hf_ckpt: False``。
 - 对于 Qwen3-VL 模型，保持 ``actor.model.apply_rope_fusion: False``。
 - 对于 Qwen2.5 模型，qkv_bias 会被强制打开以适配模型。
 - 对于 Qwen3 模型，qk_layernorm 会被强制打开以适配模型。
@@ -260,15 +235,10 @@ latest_checkpointed_iteration.txt 文件保存了当前 checkpoint 的 step 信�
 --------
 
 ``model.megatron_checkpoint is required if use_hf_ckpt is False``
-  当前关闭了 ``use_hf_ckpt``，但没有提供 Megatron checkpoint 路径。
-  请设置 ``actor.megatron.use_hf_ckpt: True``，或者提供 ``resume_dir`` 路径。
+  当前关闭了 ``use_hf_ckpt``，但没有提供 Megatron checkpoint 路径。请设置 ``actor.megatron.use_hf_ckpt: True``，或者提供 ``resume_dir`` 路径。
 
 ``model.megatron_checkpoint should be None if use_hf_ckpt is True``
   HuggingFace 加载和 Megatron checkpoint 加载被同时启用了。
 
 Qwen3-VL 报 ``deepstack_visual_indexes`` 相关断言
-  模型的 visual deepstack 配置与当前 pipeline 切分不匹配。
-  可以先尝试 ``pipeline_model_parallel_size: 1``。如果必须开启 pipeline parallel，
-  需要确保第一段 language pipeline stage 的层数能够容纳所有
-  ``deepstack_visual_indexes``。如果使用的是裁剪层数后的 checkpoint，还需要确认
-  visual deepstack 配置与语言模型层数一致。
+  模型的 visual deepstack 配置与当前 pipeline 切分不匹配。可以先尝试 ``pipeline_model_parallel_size: 1``。如果必须开启 pipeline parallel，需要确保第一段 language pipeline stage 的层数能够容纳所有 ``deepstack_visual_indexes``。如果使用的是裁剪层数后的 checkpoint，还需要确认 visual deepstack 配置与语言模型层数一致。

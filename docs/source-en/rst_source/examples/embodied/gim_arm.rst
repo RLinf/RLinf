@@ -119,9 +119,9 @@ Setup and Run
          bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
 
          git clone https://github.com/RLinf/gim_arm_control.git ~/gim_arm_control
-         pip install -e ~/gim_arm_control/python
+         uv pip install -e ~/gim_arm_control/python
 
-      For systems requiring NumPy 1.x compatibility, install the SDK with ``pip install -e "~/gim_arm_control/python[pin270]"``.
+      For systems requiring NumPy 1.x compatibility, install the SDK with ``uv pip install -e "~/gim_arm_control/python[pin270]"``.
 
       **2. Initialize CAN FD and calibrate motor zero**
 
@@ -144,7 +144,7 @@ Setup and Run
 
       .. code-block:: bash
 
-         python toolkits/realworld_check/test_gim_arm_env.py --can can0 --variant gim_arm_xl
+         python -m toolkits.realworld_check.test_gim_arm_env --can can0 --variant gim_arm_xl
 
       The script runs forward kinematics on the live joint angles and prints the TCP position and quaternion. Move the arm manually to the target peg-insertion pose, record the printed values, and convert the quaternion to Euler XYZ radians for ``target_ee_pose``.
 
@@ -156,7 +156,7 @@ Setup and Run
 
             .. code-block:: bash
 
-               sudo dpkg -i XRoboToolkit_PC_Service_1.0.0_ubuntu_22.04_amd64.deb
+               sudo dpkg -i XRoboToolkit-PC-Service-1.1.1.deb
                bash /opt/apps/roboticsservice/runService.sh
 
          2. Install `XRoboToolkit-PICO-1.1.1.apk <https://github.com/XR-Robotics/XRoboToolkit-Unity-Client/releases/download/v1.1.1/XRoboToolkit-PICO-1.1.1.apk>`__ on the headset, connect to the controller PC IP, and enable ``head``, ``hand``, and ``controller`` as needed.
@@ -252,6 +252,14 @@ Setup and Run
                 override_cfg:
                   target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
 
+      **3. Start Ray and launch training**
+
+      No standalone GimArm training YAML ships in ``examples/embodiment/config/`` yet—start from an existing real-world SAC/RLPD config (such as ``realworld_peginsertion_rlpd_cnn_async.yaml``) and apply the hardware and env blocks above. Bring up the two-node Ray cluster following :doc:`../../guides/multi_node` (head on GPU rank ``0``, worker on controller rank ``1``), then launch from the head node:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_realworld_async.sh <your_config>
+
 Results and Troubleshooting
 ---------------------------
 
@@ -268,7 +276,7 @@ Monitor training on the Ray head node with ``tensorboard --logdir ./logs --port 
    * - Unexpected arm motion after motor replacement
      - Return the arm to its mechanical home position and re-run ``bash ~/gim_arm_control/sh/set_zero.sh can0 --all``.
    * - ``pinocchio`` or NumPy 1.x version conflict
-     - Reinstall the SDK bindings with ``pip install -e "~/gim_arm_control/python[pin270]"``.
+     - Reinstall the SDK bindings with ``uv pip install -e "~/gim_arm_control/python[pin270]"``.
    * - Running without RealSense cameras attached
      - Set ``camera_serials: []`` in the hardware config to receive an empty ``frames`` dict for state-only checks.
 

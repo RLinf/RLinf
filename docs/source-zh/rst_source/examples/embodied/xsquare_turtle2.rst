@@ -22,7 +22,7 @@ XSquare Turtle2 在线强化学习
 
       XSquare Turtle2 · 单臂 / 双臂
 
-   .. grid-item-card:: 传感器与遥操
+   .. grid-item-card:: 传感器与遥操作
       :text-align: center
 
       最多 3 路 RGB 相机（ID 0–2）
@@ -66,7 +66,7 @@ XSquare Turtle2 在线强化学习
    * - 观测
      - 最多 3 路 RGB 相机流，以及每条活动机械臂的 TCP 位姿。
    * - 动作
-     - 每条机械臂 7 维连续增量位姿与夹爪指令。
+     - 按键任务使用每臂 6 维连续增量位姿（双臂 12 维，夹爪固定闭合；机械臂硬件本身支持含夹爪的 7 维控制）。
    * - 奖励
      - 按键成功时返回 ``1.0``，可选指数稠密奖励。
    * - 指令
@@ -116,10 +116,11 @@ XSquare Turtle2 在线强化学习
 
       **3. 加入 Ray 集群**
 
-      Ray 在执行 ``ray start`` 时锁定当前 Python 解释器与环境变量。修改并 source ``ray_utils/realworld/setup_before_ray.sh``，或在仓库根目录导出变量后启动 worker（将 ``192.168.1.10`` 替换为 head 节点 IP，多网卡机器按需修改 ``eth0``）：
+      Ray 在执行 ``ray start`` 时锁定当前 Python 解释器与环境变量。在仓库根目录激活 ``.venv`` 并导出环境变量后启动 worker（将 ``192.168.1.10`` 替换为 head 节点 IP，多网卡机器按需修改 ``eth0``）：
 
       .. code-block:: bash
 
+         source .venv/bin/activate
          export RLINF_NODE_RANK=1
          export RLINF_COMM_NET_DEVICES=eth0  # 仅多网卡机器需要设置
          ray start --address='192.168.1.10:6379'
@@ -131,7 +132,7 @@ XSquare Turtle2 在线强化学习
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --env xsquare_turtle2 && source .venv/bin/activate
          hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
 
       **2. 启动 Ray head**

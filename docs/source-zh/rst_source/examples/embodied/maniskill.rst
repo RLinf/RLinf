@@ -104,8 +104,7 @@ ManiSkill 强化学习
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
       **2. 下载资源与模型**
 
@@ -175,8 +174,7 @@ ManiSkill 强化学习
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
       **2. 下载资源与模型**
 

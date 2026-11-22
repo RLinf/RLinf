@@ -1,9 +1,9 @@
 RL 算法示例
 ===========
 
-本类示例以 **训练算法或方法** 为主线，独立于具体基准或模型，覆盖离线 RL、模仿学习、仿真-真机协同训练以及残差 / 噪声空间策略调控。
+本类示例以 **训练算法或方法** 为主线，独立于具体基准或模型，覆盖离策略与离线 RL、在线策略蒸馏、仿真-真机协同训练以及噪声空间 policy 调控。
 
-如果你在思考 *如何训练*（PPO 还是 SAC？IQL 还是 DAgger？RECAP？），而不是要在 *什么任务上* 训练或 *微调哪个模型*，请参考本节。
+按训练方法选型（SAC-Flow、DSRL、RLT、OPD、RECAP、STEAM、IQL 或仿真-真机协同训练）时，从本节进入。
 
 .. raw:: html
 
@@ -90,21 +90,10 @@ RL 算法示例
        <a href="embodied/iql_d4rl.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/iql_d4rl.html" style="text-decoration: underline; color: blue;">
+         <a href="embodied/iql_d4rl.html" style="text-decoration: underline;">
            <b>IQL：基于 D4RL 的离线强化学习</b>
          </a><br>
          支持 D4RL 场景的 IQL 离线训练
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/refl.html" style="display: block;"><img src="https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/figures/ImageReward.jpg"
-            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/refl.html" style="text-decoration: underline; color: blue;">
-           <b>ReFL：基于 ImageReward 的 SD3 奖励反馈微调</b>
-         </a><br>
-         使用 ImageReward 和可选的图文监督更新微调 SD3
        </p>
      </div>
 
@@ -122,4 +111,3 @@ RL 算法示例
    RECAP <embodied/recap>
    STEAM <embodied/steam>
    IQL (D4RL) <embodied/iql_d4rl>
-   ReFL <embodied/refl>

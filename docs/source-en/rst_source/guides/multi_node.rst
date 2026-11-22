@@ -89,8 +89,12 @@ When all nodes mount the **same shared directory** and can read/write
    # ...
 
 The script uses ``RANK`` for head/worker roles and does **not** set ``RLINF_NODE_RANK``
-automatically. Still export ``RLINF_NODE_RANK`` per Option A before running the script,
+automatically. Export ``RLINF_NODE_RANK`` per Option A before running the script,
 or bake it into your launch script.
+
+.. warning::
+
+   ``ray_utils/start_ray.sh`` defaults to port ``29500`` (override with ``RAY_PORT``) and passes a hardcoded ``--memory=461708984320`` (~430 GB) to ``ray start``. On machines with less RAM or custom ports, use Option A instead.
 
 
 Step 3: Enable code sync (optional)
@@ -151,7 +155,7 @@ Step 5: Launch RLinf training
 -----------------------------
 
 1. Set ``cluster.num_nodes`` in your task YAML to the actual node count (consistent with ``RLINF_NODE_RANK``).
-2. On **any node** that has joined the Ray cluster, ``cd`` to the RLinf repo and run an entry script, e.g. embodied:
+2. On the **head node** (``RLINF_NODE_RANK=0``), ``cd`` to the RLinf repo and run the entry script, e.g. embodied:
 
 .. code-block:: bash
 

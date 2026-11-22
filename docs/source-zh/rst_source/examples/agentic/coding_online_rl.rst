@@ -70,7 +70,7 @@
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh agentic && source .venv/bin/activate
-         uv pip install httpx asyncio
+         uv pip install httpx
 
       在 ``~/.continue/config.yaml`` 中添加模型与反馈上报配置（将 ``http://xxx:xx/`` 替换为实际的 RLinf 服务地址），然后在 Continue 的“Models”页面将“Autocomplete 模型”设为 ``my-autocomplete``：
 
@@ -132,12 +132,13 @@
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh agentic && source .venv/bin/activate
-         uv pip install httpx asyncio
+         uv pip install httpx
 
       **2. 下载模型与数据**
 
       .. code-block:: bash
 
+         uv pip install modelscope
          hf download Qwen/Qwen2.5-Coder-1.5B --local-dir ./Qwen2.5-Coder-1.5B
          modelscope download --dataset "paxionfruit/code-fim-v2-python-filtered" --local_dir ./code-fim-v2-python-filtered
 
@@ -176,17 +177,17 @@
 
    .. code-block:: bash
 
-      tail -f results/ppo-1.5b/train.log
+      tail -f results/online-ppo-1.5b-pipeline/train.log
 
 2. **启动 TensorBoard**
 
    .. code-block:: bash
 
-      tensorboard --logdir results/grpo-1.5b
+      tensorboard --logdir results/Qwen2.5-Coder-1.5B-grpo-llm_judge
 
 3. **检查 checkpoint**
 
-   训练过程中会定期将 checkpoint 保存到 ``results/grpo-1.5b/checkpoints/`` 目录。
+   训练过程中会定期将 checkpoint 保存到 ``results/Qwen2.5-Coder-1.5B-grpo-llm_judge/checkpoints/`` 目录（在线 PPO 保存在 ``results/online-ppo-1.5b-pipeline/checkpoints/``）。
 
 验证客户端
 ----------------------------------------

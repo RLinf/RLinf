@@ -66,7 +66,7 @@ Observation and Action
    * - Observation
      - Up to three RGB camera streams plus TCP pose per active arm.
    * - Action
-     - 7-D continuous delta pose and gripper command per arm.
+     - 6-D continuous delta pose per arm for button pressing (12-D dual arm, gripper fixed closed; the arm hardware supports 7-D with gripper).
    * - Reward
      - ``1.0`` on button-press success; optional dense exponential shaping.
    * - Prompt
@@ -116,10 +116,11 @@ Setup and Run
 
       **3. Start the Ray worker**
 
-      Ray freezes the active Python interpreter and environment variables at ``ray start`` time. Update and source ``ray_utils/realworld/setup_before_ray.sh`` (or export the variables below from the repo root, replacing ``192.168.1.10`` with your head node IP and ``eth0`` if you have multiple NICs):
+      Ray freezes the active Python interpreter and environment variables at ``ray start`` time. Activate ``.venv`` and export the variables below from the repo root (replace ``192.168.1.10`` with your head node IP and ``eth0`` if you have multiple NICs):
 
       .. code-block:: bash
 
+         source .venv/bin/activate
          export RLINF_NODE_RANK=1
          export RLINF_COMM_NET_DEVICES=eth0  # Optional if only one NIC
          ray start --address='192.168.1.10:6379'
@@ -131,7 +132,7 @@ Setup and Run
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --env xsquare_turtle2 && source .venv/bin/activate
          hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
 
       **2. Start the Ray head**

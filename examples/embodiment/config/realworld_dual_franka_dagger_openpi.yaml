@@ -179,6 +179,7 @@ rollout:
   collect_prev_infos: False
   sync_weight_nccl_max_ctas: 32
   model:
+    model_path: ${actor.model.model_path}
     # SFT ckpt expected layout:
     #   <model_path>/actor/model_state_dict/full_weights.pt
     #   <model_path>/<openpi_data.repo_id>/norm_stats.json

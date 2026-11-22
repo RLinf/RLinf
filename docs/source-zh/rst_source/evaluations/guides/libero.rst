@@ -107,21 +107,28 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
 
    .. tab-item:: StarVLA
 
+      **1. 安装**
+
       .. code-block:: bash
 
-         # 1. 安装
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model starvla --env libero && source .venv/bin/activate
 
-         # 2. 下载模型与基座 VLM
+      **2. 下载模型与基座 VLM**
+
+      .. code-block:: bash
+
          hf download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
          hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 
-         # 3. 启动评测（LIBERO-Spatial）
+      将 ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` 中的 ``framework.qwenvl.base_vlm`` 改为 ``./Qwen2.5-VL-3B-Instruct``\ （详见 :doc:`../../examples/embodied/starvla`）。
+
+      **3. 启动评测（LIBERO-Spatial）**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh libero libero_spatial_starvla_eval \
            rollout.model.model_path=./Qwen2.5-VL-OFT-LIBERO-4in1
-
-      执行第 3 步前，将 ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` 中的 ``framework.qwenvl.base_vlm`` 改为 ``./Qwen2.5-VL-3B-Instruct``\ （详见 :doc:`../../examples/embodied/starvla`）。
 
    .. tab-item:: π₀-FAST
 
@@ -435,10 +442,3 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
      - 减小 ``total_num_envs``\ （如 ``128``）并启用 ``auto_reset: True`` 与更大的 ``max_steps_per_rollout_epoch``；单个 LIBERO 环境约占 2 GiB 主机内存。
    * - 步数校验失败
      - 将 ``max_steps_per_rollout_epoch`` 设为 ``rollout.model.num_action_chunks`` 的整数倍。
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
-   DreamZero SGLang <dreamzero_sglang>
-   Cosmos3 SGLang <cosmos3_sglang>

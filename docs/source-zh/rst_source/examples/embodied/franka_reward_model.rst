@@ -119,7 +119,7 @@ Franka 奖励模型
 
         .. code-block:: bash
 
-           python examples/reward/preprocess_reward_dataset.py \
+           python -m examples.reward.preprocess_reward_dataset \
                --raw-data-path logs/xxx/pickle_episode \
                --output-dir logs/xxx/processed_reward_data \
                --fail-success-ratio 3

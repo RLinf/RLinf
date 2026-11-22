@@ -13,7 +13,7 @@
    .. tab-item:: 具身仿真（Embodied）
       :sync: embodied
 
-      以下为 ManiSkill3 快速上手的默认安装命令（其他模型与环境按下方表格替换 ``--model`` 与 ``--env``）：
+      以下为 ManiSkill3 快速开始的默认安装命令（其他模型与环境按下方表格替换 ``--model`` 与 ``--env``）：
 
       .. code-block:: bash
 
@@ -24,7 +24,7 @@
    .. tab-item:: 真机机器人（Real-World）
       :sync: realworld
 
-      在机器人控制节点安装驱动与传感器依赖（无需 GPU），在 GPU 节点安装模型与驱动（按需将 ``franka`` 替换为 ``arx5``、``yam``、``xsquare_turtle2``、``so101``、``piper``、``lekiwi``、``dosw1`` 或 ``gim_arm``，详见 :doc:`../examples/real_world_index`）：
+      在机器人控制节点安装驱动与传感器依赖（无需 GPU），在 GPU 节点安装模型与驱动（按需将 ``franka`` 替换为 ``arx5``、``yam``、``xsquare_turtle2``、``so101``、``piper``、``lekiwi``、``dosw1`` 或 ``gim_arm``；Robbyant R2 通过 RFrame 与 ROS 2 接入，见 :doc:`../examples/embodied/r2`，完整列表见 :doc:`../examples/real_world_index`）：
 
       .. code-block:: bash
 
@@ -66,7 +66,7 @@
 
 .. tip::
 
-   **国内镜像加速：** 在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
+   **国内镜像加速与多环境隔离：** 在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。切换不同模型或环境组合时，使用 ``--venv <dir>`` 指定独立虚拟环境，避免覆盖默认的 ``.venv``。
 
 支持的模型、环境与硬件平台
 --------------------------
@@ -88,11 +88,11 @@
    * - ``--env``\ （世界模型）
      - ``opensora``、``wan``
    * - ``--env``\ （真机）
-     - ``franka``、``franka-ros``、``xsquare_turtle2``、``dosw1``、``gim_arm``、``so101``、``lekiwi``、``piper``、``arx5``、``yam``、``dummy``
+     - ``franka``、``franka-ros``、``xsquare_turtle2``、``dosw1``、``gim_arm``、``so101``、``lekiwi``、``piper``、``arx5``、``yam``、``dummy``\ （Robbyant R2 使用 RFrame 与 ROS 2，见 :doc:`../examples/embodied/r2`）
    * - ``--engine``
      - ``sglang``\ （``agentic`` 默认）、``vllm``\ （``agentic``）、``phyai``\ （``embodied`` 搭配 ``--model openpi --env libero``）
    * - ``--platform``
-     - ``nvidia``\ （默认）、``amd``、``ascend``、``musa``、``kunlun``、``biren``、``metax``\ （详见 :ref:`硬件支持矩阵 <model-hardware-support>`）
+     - ``nvidia``\ （默认）、``amd``、``ascend``、``musa``、``kunlun``、``biren``、``metax``\ （Intel XPU 使用 PyTorch XPU 环境，暂未通过 ``--platform`` 选项安装，详见 :ref:`硬件支持矩阵 <model-hardware-support>`）
 
 .. dropdown:: 更多安装参数（可选）
 
@@ -132,7 +132,7 @@
 .. grid:: 1 3 3 3
    :gutter: 2
 
-   .. grid-item-card:: VLA 快速上手
+   .. grid-item-card:: VLA 快速开始
       :link: vla
       :link-type: doc
 

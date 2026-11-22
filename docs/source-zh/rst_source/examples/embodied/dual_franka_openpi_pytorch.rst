@@ -13,7 +13,7 @@
 概览
 ----
 
-本页在双臂 Franka GELLO 闭环基础上，补齐数据集清洗合并、RLinf 原生 OpenPI PyTorch 微调、``sft2deploy`` 权重转换以及单机 RTC 部署流程。单臂配置与 GELLO 组装见 :doc:`franka` 与 :doc:`franka_gello`。
+本页在双臂 Franka GELLO 闭环（:doc:`dual_franka`）基础上，补齐数据集清洗合并、RLinf 原生 OpenPI PyTorch 微调、``sft2deploy`` 权重转换以及单机 RTC 部署流程。单臂配置与 GELLO 组装见 :doc:`franka` 与 :doc:`franka_gello`。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -23,7 +23,7 @@
 
       2× Franka（Franky）· 2× Robotiq
 
-   .. grid-item-card:: 遥操与相机
+   .. grid-item-card:: 遥操作与相机
       :text-align: center
 
       2× GELLO · 脚踏 · RealSense + 2× Lumos
@@ -106,8 +106,8 @@
 
       export GELLO_PORT=/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0  # 替换为实际 FTDI 设备
 
-      python toolkits/realworld_check/test_gello.py calibrate
-      python toolkits/realworld_check/test_gello.py align-sequential
+      python -m toolkits.realworld_check.test_gello calibrate
+      python -m toolkits.realworld_check.test_gello align-sequential
 
    对齐成功时的预期输出：
 
@@ -140,7 +140,7 @@
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
       **在** ``node 0`` **完成硬件自检**\ （启动 Ray 前）：为脚踏授予权限（将 ``event12`` 替换为实际设备编号），核对相机 USB-3 速率（``lsusb -t`` 显示 ``5000M``），并验证两台 GELLO 主手输出。
 
@@ -187,16 +187,16 @@
          bash examples/embodiment/collect_data.sh \
              realworld_collect_data_gello_joint_dual_franka 2>&1 | tee logs/collect.log
 
-      在另一终端运行 ``python toolkits/realworld_check/collect_monitor.py logs/collect.log`` 监控进度。脚踏按键：``a`` 开始录制（录制中再按中止并丢弃缓存），``b`` 递增 ``segment_id``，``c`` 标记成功并写入 LeRobot shard。需要续采时，设置 ``data_collection.resume: true`` 并保持相同的 ``data_collection.save_dir``。
+      在另一终端运行 ``python -m toolkits.realworld_check.collect_monitor logs/collect.log`` 监控进度。脚踏按键：``a`` 开始录制（录制中再按中止并丢弃缓存），``b`` 递增 ``segment_id``，``c`` 标记成功并写入 LeRobot shard。需要续采时，设置 ``data_collection.resume: true`` 并保持相同的 ``data_collection.save_dir``。
 
       **清洗合并、回填 tcp_rot6d 并同步至训练节点：**
 
       .. code-block:: bash
 
          # 可选：先试跑删脏数据与合并多 shard（去掉 --dry-run 生效）
-         python toolkits/dual_franka/delete_lerobot.py \
+         python -m toolkits.dual_franka.delete_lerobot \
              --data-dir ./logs/collect_run/lerobot_dataset/rank_0 --delete "id_0:3,5" --dry-run
-         python toolkits/dual_franka/merge_lerobot.py \
+         python -m toolkits.dual_franka.merge_lerobot \
              --rank-dir ./logs/collect_run/lerobot_dataset --out-dir ./logs/collect_run/lerobot_dataset \
              --log-file ./logs/collect.log --dry-run
 
@@ -206,7 +206,7 @@
          export SFT_REPO_ID="$DATA_REPO_ID/tcp_rot6d_v1"
          export TRAINER_IP="192.168.1.50"                # 替换为训练节点 IP
 
-         python toolkits/dual_franka/backfill_tcp_rot6d.py \
+         python -m toolkits.dual_franka.backfill_tcp_rot6d \
              --src "$HF_LEROBOT_HOME/$DATA_REPO_ID/joint_v1" \
              --dst "$HF_LEROBOT_HOME/$SFT_REPO_ID"
 
@@ -221,7 +221,7 @@
          export HF_LEROBOT_HOME="$HOME/lerobot_data"            # 替换为 LeRobot 数据根目录
          export SFT_REPO_ID="my_org/dual_franka_demo/tcp_rot6d_v1"
 
-         python toolkits/lerobot/calculate_norm_stats.py \
+         python -m toolkits.lerobot.calculate_norm_stats \
              --config-name pi05_dualfranka_tcp_rot6d \
              --repo-id "$SFT_REPO_ID"
 
@@ -247,14 +247,15 @@
       .. code-block:: bash
 
          export TRAINER_IP="192.168.1.50"                       # 替换为训练节点 IP
+         export TRAINER_DEPLOY_CKPT="$HOME/deploy/global_step_10000"  # 训练节点 sft2deploy 的 --output 目录
          export TRAIN_LOG="./logs/sft_run"                      # 替换为训练节点 SFT 日志目录
-         export DEPLOY_CKPT="$HOME/deploy/global_step_10000"    # 替换为目标步数与部署目录
+         export DEPLOY_CKPT="$HOME/deploy/global_step_10000"    # 替换为 node 0 目标部署目录
          export SFT_REPO_ID="my_org/dual_franka_demo/tcp_rot6d_v1"
 
          mkdir -p "$DEPLOY_CKPT/actor/model_state_dict" "$DEPLOY_CKPT/$SFT_REPO_ID"
 
          rsync -av \
-             "$TRAINER_IP:$TRAIN_LOG/checkpoints/global_step_10000/actor/model_state_dict/full_weights.pt" \
+             "$TRAINER_IP:$TRAINER_DEPLOY_CKPT/actor/model_state_dict/full_weights.pt" \
              "$DEPLOY_CKPT/actor/model_state_dict/full_weights.pt"
          rsync -av \
              "$TRAINER_IP:$TRAIN_LOG/checkpoints/global_step_10000/$SFT_REPO_ID/norm_stats.json" \
@@ -262,7 +263,17 @@
 
       在 ``examples/embodiment/config/realworld_eval_dual_franka.yaml`` 中将 ``rollout.model.model_path`` 设为 ``$DEPLOY_CKPT``，将 ``actor.model.openpi_data.repo_id`` 设为 ``<repo_id>/tcp_rot6d_v1``。
 
-      **启动真机评测**\ ：按 :doc:`真机评测指南 <../../evaluations/guides/realworld>` 启动。双节点部署使用 ``realworld_eval_dual_franka``；GPU 与两台机械臂同机并需要推理与动作重叠执行时，使用 ``realworld_dual_franka_pi05_RTC``。复位后在键盘或脚踏上按 ``a`` 启动 policy（``b`` 标记失败并复位，``c`` 标记成功并复位）。
+      **启动真机评测**\ ：在 ``node 0`` 运行（更多选项见 :doc:`真机评测指南 <../../evaluations/guides/realworld>`）。双节点部署使用 ``realworld_eval_dual_franka``；GPU 与两台机械臂同机并需要推理与动作重叠执行时，使用 ``realworld_dual_franka_pi05_RTC``：
+
+      .. code-block:: bash
+
+         # 双节点部署
+         bash evaluations/run_eval.sh realworld_eval_dual_franka
+
+         # 单工作站 RTC 部署
+         bash evaluations/run_eval.sh realworld_dual_franka_pi05_RTC
+
+      复位后在键盘或脚踏上按 ``a`` 启动 policy（``b`` 标记失败并复位，``c`` 标记成功并复位）。
 
 .. dropdown:: 配置文件、统计量与权重转换说明
 
@@ -294,16 +305,16 @@
    * ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION`` 与 ``LEFT_GELLO_PORT`` / ``RIGHT_GELLO_PORT``：稳定的 ``/dev/serial/by-id`` 路径。
    * ``TASK_DESCRIPTION``：采集、SFT 与部署共用的自然语言任务描述。
    * ``openpi_data.norm_stats_path``：指向 ``calculate_norm_stats.py`` 生成的 ``norm_stats.json``\ （通常为 ``./assets/pi05_dualfranka_tcp_rot6d/<repo_id>/norm_stats.json``）；省略时按 OpenPI TrainConfig 默认从 ``model_path`` 读取。
-   * 基础 ``openpi-jax`` 转换步骤见 :doc:`sft_openpi`；PyTorch 转 safetensors 脚本调用方式如下：
+   * 基础 ``openpi-jax`` 转换步骤见 :doc:`sft_openpi`；如需将 RLinf SFT ``full_weights.pt`` 转换为 OpenPI safetensors 格式，见 :doc:`../../guides/convertor` 或查看命令行参数：
 
    .. code-block:: bash
 
-      python rlinf/utils/ckpt_convertor/openpi/pt_to_safetensors.py
+      python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft_to_openpi --help
 
 结果与常见问题
 --------------
 
-在训练节点运行 ``tensorboard --logdir ./logs`` 观察训练损失与学习率，在 ``node 0`` 运行 ``python toolkits/realworld_check/collect_monitor.py logs/collect.log`` 监控实时采集进度。
+在训练节点运行 ``tensorboard --logdir ./logs`` 观察训练损失与学习率，在 ``node 0`` 运行 ``python -m toolkits.realworld_check.collect_monitor logs/collect.log`` 监控实时采集进度。
 
 .. list-table::
    :header-rows: 1

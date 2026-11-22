@@ -105,8 +105,7 @@ Setup and Run
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env opensora
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env opensora && source .venv/bin/activate
 
       **2. Download**
 
@@ -144,8 +143,7 @@ Setup and Run
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env opensora
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env opensora && source .venv/bin/activate
 
       **2. Download**
 
@@ -205,14 +203,14 @@ trials) per suite. SFT (LoRA-base) models use ``do_sample = False``; RL-trained 
     :widths: 50 25 25
 
     * - Model
-      - Object
       - Spatial
-    * - |huggingface| `OpenVLA-OFT (LoRA-base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_
-      - 50.20%
-      - 51.61%
+      - Object
+    * - OpenVLA-OFT (LoRA-base)
+      - 61.2%
+      - 36.7%
     * - OpenVLA-OFT (RLinf-GRPO with OpenSora as world model simulator)
       - 75.5%
       - 64.5%
     * - **Improvement**
-      - **+25.3%**
-      - **+12.9%**
+      - **+14.3%**
+      - **+27.8%**

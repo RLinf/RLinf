@@ -25,7 +25,7 @@
       :link: launch-scale/index
       :link-type: doc
 
-      在多节点、异构硬件、云边协同或真实机器人上运行。
+      在多节点、异构硬件、云边协同或真机上运行。
 
    .. grid-item-card:: 性能与并行
       :link: performance/index

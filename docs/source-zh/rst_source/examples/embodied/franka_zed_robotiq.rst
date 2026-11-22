@@ -75,7 +75,7 @@ Franka ZED 与 Robotiq
          source .venv/bin/activate
          python3 /usr/local/zed/get_python_api.py
          # 或直接安装 wheel：
-         # python -m pip install --ignore-installed /usr/local/zed/pyzed-*.whl
+         # uv pip install --reinstall /usr/local/zed/pyzed-*.whl
 
       查询已连接的 ZED 相机并记录序列号：
 

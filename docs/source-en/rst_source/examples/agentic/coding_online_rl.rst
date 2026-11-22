@@ -70,7 +70,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh agentic && source .venv/bin/activate
-         uv pip install httpx asyncio
+         uv pip install httpx
 
       Add the autocomplete model and feedback tracking settings to ``~/.continue/config.yaml`` (replace ``http://xxx:xx/`` with your RLinf service host), then set **Autocomplete Model** to ``my-autocomplete`` in the Continue **Models** settings:
 
@@ -132,12 +132,13 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh agentic && source .venv/bin/activate
-         uv pip install httpx asyncio
+         uv pip install httpx
 
       **2. Download**
 
       .. code-block:: bash
 
+         uv pip install modelscope
          hf download Qwen/Qwen2.5-Coder-1.5B --local-dir ./Qwen2.5-Coder-1.5B
          modelscope download --dataset "paxionfruit/code-fim-v2-python-filtered" --local_dir ./code-fim-v2-python-filtered
 
@@ -176,17 +177,17 @@ Monitor logs, TensorBoard, and checkpoints. For common metric meanings, see :doc
 
    .. code-block:: bash
 
-      tail -f results/ppo-1.5b/train.log
+      tail -f results/online-ppo-1.5b-pipeline/train.log
 
 2. **Launch TensorBoard**
 
    .. code-block:: bash
 
-      tensorboard --logdir results/grpo-1.5b
+      tensorboard --logdir results/Qwen2.5-Coder-1.5B-grpo-llm_judge
 
 3. **Check checkpoints**
 
-   Model checkpoints are saved periodically under ``results/grpo-1.5b/checkpoints/``.
+   Model checkpoints are saved periodically under ``results/Qwen2.5-Coder-1.5B-grpo-llm_judge/checkpoints/`` (or ``results/online-ppo-1.5b-pipeline/checkpoints/`` for online PPO).
 
 Verify the Client
 -----------------

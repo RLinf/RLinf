@@ -30,8 +30,7 @@ need to clone extra repositories or set ``PYTHONPATH``:
 
 .. code:: bash
 
-   bash requirements/install.sh agentic
-   source .venv/bin/activate
+   bash requirements/install.sh agentic && source .venv/bin/activate
    python -c "from megatron.bridge import AutoBridge; print('Megatron-Bridge OK')"
 
 This creates a Python 3.12 virtual environment, installs ``megatron-bridge``
@@ -147,7 +146,25 @@ Quick Start
    /path/to/Robo2VLM-1/data
    /path/to/Robo2VLM-1/eval_data
 
-3. Update the model, tokenizer, and dataset paths in the config.
+3. Update the model, tokenizer, and dataset paths in the config (see `Path Differences`_ below).
+
+4. Launch the corresponding training script.
+
+Start reasoning training from the repository root. Use the Python entrypoint so
+the MBridge override is applied explicitly:
+
+.. code:: bash
+
+   python examples/reasoning/main_grpo.py \
+       --config-path "$(pwd)/examples/reasoning/config/math" \
+       --config-name qwen2.5-1.5b-grpo-megatron \
+       +actor.megatron.mbridge=True
+
+Start VLM SFT training from the repository root:
+
+.. code:: bash
+
+   bash examples/sft/run_vlm_sft.sh qwen2_5_vl_megatron_sft_vlm
 
 Path Differences
 ----------------
@@ -205,24 +222,6 @@ SFT example:
    data:
      train_data_paths: "/path/to/Robo2VLM-1/data"
      eval_data_paths: "/path/to/Robo2VLM-1/eval_data"
-
-4. Launch the corresponding training script.
-
-Start reasoning training from the repository root. Use the Python entrypoint so
-the MBridge override is applied explicitly:
-
-.. code:: bash
-
-   python examples/reasoning/main_grpo.py \
-       --config-path "$(pwd)/examples/reasoning/config/math" \
-       --config-name qwen2.5-1.5b-grpo-megatron \
-       +actor.megatron.mbridge=True
-
-Start VLM SFT training from the repository root:
-
-.. code:: bash
-
-   bash examples/sft/run_vlm_sft.sh qwen2_5_vl_megatron_sft_vlm
 
 Checkpoint Loading
 ------------------

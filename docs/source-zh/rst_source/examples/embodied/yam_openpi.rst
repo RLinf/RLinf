@@ -16,7 +16,7 @@ YAM π₀.₅ SFT 与评测
 
       2× YAM · ``flexible_4310`` 夹爪
 
-   .. grid-item-card:: 遥操与相机
+   .. grid-item-card:: 遥操作与相机
       :text-align: center
 
       3 台 RealSense RGB（顶 / 左腕 / 右腕）
@@ -81,13 +81,13 @@ SFT 在 GPU 节点运行。真机评估使用双节点 Ray 集群：GPU 节点�
          mkdir -p "$(dirname "$YAM_DATASET")"
 
          # 合并成功回合（可先加 --dry-run 预览）
-         python toolkits/lerobot/merge_lerobot_datasets.py \
+         python -m toolkits.lerobot.merge_lerobot_datasets \
              --source-dir "$YAM_COLLECTION/lerobot_dataset" --output-dir "$YAM_DATASET" \
              --only-success
 
          # 查看记录的任务文本并生成 norm_stats.json
          head -n 5 "$YAM_DATASET/meta/tasks.jsonl"
-         python toolkits/lerobot/calculate_norm_stats.py \
+         python -m toolkits.lerobot.calculate_norm_stats \
              --config-name pi05_yam_joint --repo-id "$YAM_DATASET"
 
       评估提示词请直接使用 ``meta/tasks.jsonl`` 中记录的任务文本，并在训练与评估阶段共用同一份 ``norm_stats.json``。
@@ -166,7 +166,7 @@ SFT 在 GPU 节点运行。真机评估使用双节点 Ray 集群：GPU 节点�
 
       .. code-block:: bash
 
-         bash evaluations/run_eval.sh realworld realworld_dual_yam_openpi_pi05_eval \
+         bash evaluations/run_eval.sh realworld_dual_yam_openpi_pi05_eval \
              rollout.model.model_path="$YAM_CHECKPOINT" \
              rollout.model.openpi_data.norm_stats_path="$YAM_DATASET/norm_stats.json"
 

@@ -194,7 +194,7 @@ RoboCasa365 是 RLinf 中面向基准测试的厨房操作集成。与旧版 :do
 
            .. code-block:: bash
 
-              bash evaluations/run_eval.sh robocasa365_eval_openpi \
+              bash evaluations/run_eval.sh robocasa365 robocasa365_eval_openpi \
                 env.eval.task_soup=composite_unseen \
                 env.eval.task_mode=composite
 

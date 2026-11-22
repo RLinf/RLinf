@@ -194,7 +194,7 @@ Franka 在线强化学习
 
       .. code-block:: bash
 
-         python toolkits/realworld_check/test_franka_camera.py
+         python -m toolkits.realworld_check.test_franka_camera
 
       在 ``examples/embodiment/config/realworld_collect_data.yaml`` 和 ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml`` 中，仅替换 ``cluster.node_groups`` 下 ``label: franka`` 对应的条目（训练配置还需将 ``cluster.num_nodes`` 设为 ``1``；保持 ``4090`` 节点组不变，该名称只指代 GPU 节点 0，不限 GPU 型号）：
 
@@ -258,7 +258,7 @@ Franka 在线强化学习
 
       .. warning::
 
-         Ray 会在 ``ray start`` 时记录当前终端的 Python 环境与环境变量。两台机器均须先导出 ``RLINF_NODE_RANK`` 并激活 ``.venv``，再执行 ``ray start``\ （可参考 ``ray_utils/realworld/setup_before_ray.sh``）。填写两台机器在互通网络上的 IP（不要填机械臂 IP）；存在多张网卡时导出 ``RLINF_COMM_NET_DEVICES`` 指定通信网卡。
+         Ray 会在 ``ray start`` 时记录当前终端的 Python 环境与环境变量。两台机器均须先激活 ``.venv`` 并导出 ``RLINF_NODE_RANK``，再执行 ``ray start``。填写两台机器在互通网络上的 IP（不要填机械臂 IP）；存在多张网卡时导出 ``RLINF_COMM_NET_DEVICES`` 指定通信网卡。
 
       在两台机器上启动 Ray：
 

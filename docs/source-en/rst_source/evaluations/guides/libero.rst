@@ -107,21 +107,28 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: StarVLA
 
+      **1. Install**
+
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model starvla --env libero && source .venv/bin/activate
 
-         # 2. Download
+      **2. Download**
+
+      .. code-block:: bash
+
          hf download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
          hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 
-         # 3. Evaluate (LIBERO-Spatial)
+      Set ``framework.qwenvl.base_vlm`` in ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` to ``./Qwen2.5-VL-3B-Instruct`` (see :doc:`../../examples/embodied/starvla`).
+
+      **3. Evaluate (LIBERO-Spatial)**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh libero libero_spatial_starvla_eval \
            rollout.model.model_path=./Qwen2.5-VL-OFT-LIBERO-4in1
-
-      Before step 3, set ``framework.qwenvl.base_vlm`` in ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` to ``./Qwen2.5-VL-3B-Instruct`` (see :doc:`../../examples/embodied/starvla`).
 
    .. tab-item:: π₀-FAST
 
@@ -435,10 +442,3 @@ The terminal prints ``eval/success_once``; logs and videos go to ``logs/<timesta
      - Lower ``total_num_envs`` (such as ``128``) and enable ``auto_reset: True`` with a larger ``max_steps_per_rollout_epoch``; each LIBERO env uses ~2 GiB of host RAM.
    * - Step count validation error
      - Set ``max_steps_per_rollout_epoch`` to a multiple of ``rollout.model.num_action_chunks``.
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
-   DreamZero SGLang <dreamzero_sglang>
-   Cosmos3 SGLang <cosmos3_sglang>

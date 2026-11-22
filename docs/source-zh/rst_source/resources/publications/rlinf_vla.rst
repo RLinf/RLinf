@@ -11,7 +11,7 @@ RLinf-VLA: A Unified and Efficient Framework for VLA+RL Training
 概述
 ----
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/rlinf-vla/rlinf_vla_overview.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/rlinf_vla_overview.png
    :alt: RLinf-VLA 概述
    :align: center
 
@@ -29,11 +29,11 @@ RLinf-VLA 是面向 VLA 模型可扩展 RL 训练的统一高效框架，通过�
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-vla/mani_openvla.png" alt="mani_openvla" width="350"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/mani_openvla.png" alt="mani_openvla" width="350"/>
          <br/><strong>OpenVLA</strong>
        </td>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-vla/mani_openvlaoft.png" alt="mani_openvlaoft" width="350"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/mani_openvlaoft.png" alt="mani_openvlaoft" width="350"/>
          <br/><strong>OpenVLA-OFT</strong>
        </td>
      </tr>

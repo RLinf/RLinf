@@ -2,7 +2,7 @@ Configure
 =========
 
 Use these guides when you need to edit YAML, logging, or workload-specific
-settings before launching a run.
+settings before launching a run. Start with the one-page :doc:`Training Configuration <../../reference/configuration>` map for minimal YAML presets and the five most-tuned keys, then use the guides below for full field references.
 
 .. list-table::
    :header-rows: 1

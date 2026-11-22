@@ -180,12 +180,12 @@ Franka HG-DAgger
 
       **1. 安装依赖**
 
-      在 GPU 节点安装与仿真 Pi0 DAgger（见 :doc:`dagger`）相同的 OpenPI 环境：
+      在 GPU 节点安装 OpenPI 与 Franka 环境：
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
       **2. 启动 Ray head 节点**
 
@@ -202,7 +202,7 @@ Franka HG-DAgger
       .. code-block:: bash
 
          export HF_LEROBOT_HOME=/path/to/lerobot_root
-         python toolkits/lerobot/calculate_norm_stats.py \
+         python -m toolkits.lerobot.calculate_norm_stats \
              --config-name pi0_realworld \
              --repo-id realworld_franka_bin_relocation
 

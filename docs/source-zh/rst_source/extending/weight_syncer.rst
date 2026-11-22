@@ -1,27 +1,21 @@
 权重同步
 ==============================
 
-使用 ``weight_syncer`` 机制优化具身训练中 actor 侧训练权重向 rollout 侧策略
-模型的同步过程，减少每次参数更新后的通信与加载开销。
+使用 ``weight_syncer`` 机制优化具身训练中 actor 侧训练权重向 rollout 侧策略模型的同步过程，减少每次参数更新后的通信与加载开销。
 
-当前这套能力主要面向具身训练中的 **FSDP actor + HuggingFace rollout**
-链路，也就是 ``examples/embodiment/train_embodied_agent.py`` 与
-``examples/embodiment/train_async.py`` 所使用的路径。
+当前这套能力主要面向具身训练中的 **FSDP actor + HuggingFace rollout** 链路，也就是 ``examples/embodiment/train_embodied_agent.py`` 与 ``examples/embodiment/train_async.py`` 所使用的路径。
 
 
 为什么需要 Weight Syncer
 ------------------------------
 
-在具身 RL 中，actor 每完成一次训练更新，通常都需要把最新权重同步给 rollout。
-对于 OpenPI、OpenVLA、OpenVLA-OFT、GR00T 等大模型，如果每次都执行全量权重传输，
-代价会很高：
+在具身 RL 中，actor 每完成一次训练更新，通常都需要把最新权重同步给 rollout。对于 OpenPI、OpenVLA、OpenVLA-OFT、GR00T 等大模型，如果每次都执行全量权重传输，代价会很高：
 
 - 模型参数量大，全量同步很容易成为 step 时间中的主要瓶颈。
 - rollout 侧如果逐次加载完整 ``state_dict``，还会引入额外的显存和 CPU 开销。
 - 在 async 场景下，阻塞式全量同步会直接影响 rollout 吞吐与策略新鲜度。
 
-因此，RLinf 将这部分能力抽象为统一的 ``WeightSyncer`` 接口，让不同同步策略
-复用相同的发送端 / 接收端流程。
+因此，RLinf 将这部分能力抽象为统一的 ``WeightSyncer`` 接口，让不同同步策略复用相同的发送端 / 接收端流程。
 
 
 整体接口
@@ -34,11 +28,9 @@
 - ``sync(...)``：发送当前版本权重。
 - ``apply(...)``：接收并应用权重，同时返回本次应用的 ``version``。
 
-这意味着 rollout 侧不需要关心底层到底是 patch 同步还是 bucket 同步，
-只需要在初始化后统一调用 ``apply(...)`` 即可。
+这意味着 rollout 侧不需要关心底层到底是 patch 同步还是 bucket 同步，只需要在初始化后统一调用 ``apply(...)`` 即可。
 
-当前实现代码位于 ``rlinf/hybrid_engines/weight_syncer/``，但 YAML 配置入口
-仍保持为独立的 ``weight_syncer`` Hydra config group。
+当前实现代码位于 ``rlinf/hybrid_engines/weight_syncer/``，但 YAML 配置入口仍保持为独立的 ``weight_syncer`` Hydra config group。
 
 
 当前支持的同步策略
@@ -47,15 +39,10 @@
 目前 RLinf 提供两种策略：
 
 ``patch``
-  增量同步。发送端维护一份 snapshot，仅发送相对于 snapshot 发生变化的参数位置与数值。
-  在当前 FSDP actor 集成中，增量 patch 路径只跟踪 trainable parameters
-  和 persistent buffers；``requires_grad=False`` 的冻结参数不会进入增量 patch
-  构建流程。
+  增量同步。发送端维护一份 snapshot，仅发送相对于 snapshot 发生变化的参数位置与数值。在当前 FSDP actor 集成中，增量 patch 路径只跟踪 trainable parameters 和 persistent buffers；``requires_grad=False`` 的冻结参数不会进入增量 patch 构建流程。
 
 ``bucket``
-  分桶整 tensor 同步。对选中的 tensor 做整量发送，并按 bucket 顺序传输。
-  在当前 FSDP actor 集成中，选中的 key 通常也是 trainable parameters 和
-  persistent buffers，因此冻结参数同样会被排除在外。
+  分桶整 tensor 同步。对选中的 tensor 做整量发送，并按 bucket 顺序传输。在当前 FSDP actor 集成中，选中的 key 通常也是 trainable parameters 和 persistent buffers，因此冻结参数同样会被排除在外。
 
 
 State Dict 设备要求
@@ -64,26 +51,12 @@ State Dict 设备要求
 不同 ``weight_syncer`` 对发送端 ``state_dict`` 的设备要求不同：
 
 ``bucket``
-  对 ``sync(...)`` 传入的发送端 ``state_dict`` 设备没有特殊要求。参数可以位于
-  CPU 或 GPU，bucket syncer 会在发送前按 ``bucket_device`` 和 ``bucket_dtype``
-  搬运 / 转换。接收端 ``apply(...)`` 通过 ``load_state_dict`` 加载权重，PyTorch
-  会把输入 tensor 拷贝到目标模型参数所在设备并转换为目标参数 dtype。在当前
-  actor 集成中，``init_sender(...)`` 还会提供一份待同步 key 子集，因此 bucket
-  模式通常只传输 trainable parameters 和 persistent buffers，而不是整个
-  ``state_dict``。
+  对 ``sync(...)`` 传入的发送端 ``state_dict`` 设备没有特殊要求。参数可以位于 CPU 或 GPU，bucket syncer 会在发送前按 ``bucket_device`` 和 ``bucket_dtype`` 搬运 / 转换。接收端 ``apply(...)`` 通过 ``load_state_dict`` 加载权重，PyTorch 会把输入 tensor 拷贝到目标模型参数所在设备并转换为目标参数 dtype。在当前 actor 集成中，``init_sender(...)`` 还会提供一份待同步 key 子集，因此 bucket 模式通常只传输 trainable parameters 和 persistent buffers，而不是整个 ``state_dict``。
 
 ``patch``
-  要求 ``init_sender(...)`` 和 ``sync(...)`` 传入的发送端 ``state_dict`` 位于
-  GPU。即使配置为 ``snapshot_device: cpu``，也只是让 sender 侧 snapshot 常驻
-  CPU；patch 的差异比较、``nonzero`` 和新值收集仍然在 GPU 上完成。
-  如果把发送端 ``state_dict`` 放在 CPU 上，patch 构建会退化为 CPU 扫描，
-  无法利用当前优化路径，也不符合 patch 模式的设计目标。
+  要求 ``init_sender(...)`` 和 ``sync(...)`` 传入的发送端 ``state_dict`` 位于 GPU。即使配置为 ``snapshot_device: cpu``，也只是让 sender 侧 snapshot 常驻 CPU；patch 的差异比较、``nonzero`` 和新值收集仍然在 GPU 上完成。如果把发送端 ``state_dict`` 放在 CPU 上，patch 构建会退化为 CPU 扫描，无法利用当前优化路径，也不符合 patch 模式的设计目标。
 
-接收端 ``apply(...)`` 会把收到的 patch payload 搬到目标模型参数所在设备后再写入，
-但模型结构和参数顺序仍需满足 patch 模式的 metadata 约束。若启用
-``init_sync.enabled=true``，patch 模式还可以在
-``init_sender(...)`` / ``init_receiver(...)`` 阶段先做一次初始
-``state_dict`` 自举，再进入后续增量 patch 同步。
+接收端 ``apply(...)`` 会把收到的 patch payload 搬到目标模型参数所在设备后再写入，但模型结构和参数顺序仍需满足 patch 模式的 metadata 约束。若启用 ``init_sync.enabled=true``，patch 模式还可以在 ``init_sender(...)`` / ``init_receiver(...)`` 阶段先做一次初始 ``state_dict`` 自举，再进入后续增量 patch 同步。
 
 
 推荐结论
@@ -92,8 +65,7 @@ State Dict 设备要求
 对目前具身训练中的主流 VLA 配置，推荐默认使用 ``patch``，原因是：
 
 - actor 每步更新后的权重变化通常非常稀疏。
-- Pi 系列以及其它基于 VLM 的策略通常会冻结大部分甚至全部 VLM，因此跳过冻结权重
-  可以显著减少 patch 比较和传输开销。
+- Pi 系列以及其它基于 VLM 的策略通常会冻结大部分甚至全部 VLM，因此跳过冻结权重可以显著减少 patch 比较和传输开销。
 - 通常 actor 与 rollout 会从同一份 checkpoint / model path 初始化。
 - patch 模式在同步数据量上通常远小于全量传输。
 
@@ -101,16 +73,11 @@ State Dict 设备要求
 
 .. warning::
 
-   增量 patch 主路径发送的仍然是“相对于发送端 snapshot 的增量”，而不是一份
-   独立的完整模型快照。
+   增量 patch 主路径发送的仍然是“相对于发送端 snapshot 的增量”，而不是一份独立的完整模型快照。
 
-   为了让本地额外挂载模块的模型也能安全工作，RLinf 现在支持在 patch 模式下
-   做一次 init bootstrap。推荐默认开启
-   ``patch.init_sync.enabled=true``，并使用 ``prefixes: null``，这样 rollout
-   会在第一轮真实 patch 前先和 sender 对齐。
+   为了让本地额外挂载模块的模型也能安全工作，RLinf 现在支持在 patch 模式下做一次 init bootstrap。推荐默认开启 ``patch.init_sync.enabled=true``，并使用 ``prefixes: null``，这样 rollout 会在第一轮真实 patch 前先和 sender 对齐。
 
-   只有在你显式关闭 init bootstrap 时，actor 与 rollout 才仍然必须以完全一致的
-   初始权重启动，尤其是那些不会再进入后续增量 patch 同步的冻结参数。
+   只有在你显式关闭 init bootstrap 时，actor 与 rollout 才仍然必须以完全一致的初始权重启动，尤其是那些不会再进入后续增量 patch 同步的冻结参数。
 
 
 如何在 YAML 中启用
@@ -151,17 +118,12 @@ State Dict 设备要求
        compression: none
 
 ``use_ring_sync``
-  设为 ``true`` 时，强制权重同步 broadcast 使用 ``CollectiveGroupOptions``
-  中的 ring broadcast 路径。
+  设为 ``true`` 时，强制权重同步 broadcast 使用 ``CollectiveGroupOptions`` 中的 ring broadcast 路径。
 
 ``nccl_max_ctas`` / ``nccl_min_ctas``
-  分别传给 ``CollectiveGroupOptions.accel_max_ctas`` 和
-  ``CollectiveGroupOptions.accel_min_ctas``，用于调整权重同步期间 accelerator
-  通信占用的计算资源。
+  分别传给 ``CollectiveGroupOptions.accel_max_ctas`` 和 ``CollectiveGroupOptions.accel_min_ctas``，用于调整权重同步期间 accelerator 通信占用的计算资源。
 
-这些选项对两种 syncer 类型通用，因此必须直接放在 ``weight_syncer`` 下，而不是
-``patch`` 或 ``bucket`` 子节点下。它们只改变传给 broadcast/send/recv 调用的
-collective options，不改变 bucket 或 patch payload 的格式。
+这些选项对两种 syncer 类型通用，因此必须直接放在 ``weight_syncer`` 下，而不是 ``patch`` 或 ``bucket`` 子节点下。它们只改变传给 broadcast/send/recv 调用的 collective options，不改变 bucket 或 patch payload 的格式。
 
 
 Patch 模式
@@ -189,14 +151,10 @@ Patch 模式
   固定为 ``patch``，表示使用增量同步。
 
 ``patch.snapshot_device``
-  snapshot 所在设备。可选 ``cpu`` 或 ``cuda``。当前推荐优先使用 ``cpu``：
-  它可以避免 sender 侧额外占用一份模型大小的 GPU 显存，并且经过 GPU 侧比较、
-  异步预取与后台写回等优化后，同步耗时已经接近 ``snapshot_device: cuda``。
-  如果 GPU 显存非常充足，``cuda`` 仍然是最直接的低延迟路径。
+  snapshot 所在设备。可选 ``cpu`` 或 ``cuda``。当前推荐优先使用 ``cpu``：它可以避免 sender 侧额外占用一份模型大小的 GPU 显存，并且经过 GPU 侧比较、异步预取与后台写回等优化后，同步耗时已经接近 ``snapshot_device: cuda``。如果 GPU 显存非常充足，``cuda`` 仍然是最直接的低延迟路径。
 
 ``patch.transport_device``
-  patch 发送前所搬运到的设备。默认可设为 ``cpu``。若需要 GPU 上压缩或 GPU 通信，
-  通常设为 ``cuda``。
+  patch 发送前所搬运到的设备。默认可设为 ``cpu``。若需要 GPU 上压缩或 GPU 通信，通常设为 ``cuda``。
 
 ``patch.delta_encoding``
   是否对 COO 坐标做 delta encoding。默认建议开启。
@@ -208,22 +166,15 @@ Patch 模式
   - ``nvcomp_lz4``：使用 nvCOMP 在 GPU 上做无损压缩
 
 ``patch.init_sync.enabled``
-  是否在正常 patch 同步开始前，于 ``init_sender(...)`` /
-  ``init_receiver(...)`` 阶段执行一次性 bootstrap。启用后，sender 会先发送一轮
-  分桶的 ``state_dict`` 子集，然后 patch 模式再继续走后续常规的增量
-  snapshot 同步。
+  是否在正常 patch 同步开始前，于 ``init_sender(...)`` / ``init_receiver(...)`` 阶段执行一次性 bootstrap。启用后，sender 会先发送一轮分桶的 ``state_dict`` 子集，然后 patch 模式再继续走后续常规的增量 snapshot 同步。
 
 ``patch.init_sync.prefixes``
-  指定需要 bootstrap 的 ``state_dict`` key 前缀。若设置为 ``null``，RLinf 会对
-  完整 ``state_dict`` 做 bootstrap，包括 parameters 和 persistent buffers；
-  若设置为 list，则只同步匹配 ``prefix`` 或 ``prefix.`` 的 key。
+  指定需要 bootstrap 的 ``state_dict`` key 前缀。若设置为 ``null``，RLinf 会对完整 ``state_dict`` 做 bootstrap，包括 parameters 和 persistent buffers；若设置为 list，则只同步匹配 ``prefix`` 或 ``prefix.`` 的 key。
 
-  ``null`` 是更推荐的默认值，因为定向 prefix 很容易漏掉
-  ``action_head.value_head`` 这类嵌套模块路径。
+  ``null`` 是更推荐的默认值，因为定向 prefix 很容易漏掉 ``action_head.value_head`` 这类嵌套模块路径。
 
 ``patch.init_sync.bucket_size``
-  每个 init bootstrap bucket 的最大字节数。它只影响这一次性的 init bootstrap
-  路径，不影响后续增量 patch payload 的组织方式。
+  每个 init bootstrap bucket 的最大字节数。它只影响这一次性的 init bootstrap 路径，不影响后续增量 patch payload 的组织方式。
 
 
 Patch 模式的工作流程
@@ -238,8 +189,7 @@ Patch 模式大致分为两个阶段：
      metadata，并发送一次完整 ``state_dict`` 或指定 prefix 子集的分桶 bootstrap。
    - 接收端会把这批 bootstrap 权重直接应用到本地 ``state_dict``。
    - 发送端随后再建立用于后续增量 patch 的 snapshot。
-     这份 snapshot 只覆盖会参与增量同步的 key：当前即 trainable parameters
-     和 persistent buffers。
+     这份 snapshot 只覆盖会参与增量同步的 key：当前即 trainable parameters 和 persistent buffers。
 
    当前 metadata 主要包括：
 
@@ -247,10 +197,7 @@ Patch 模式大致分为两个阶段：
    - 每个张量的原始形状 ``original_shapes``
    - 每个张量在接收端的 dtype
 
-   接收端 **不会保存发送端 snapshot** ，它只保存足够把 patch 正确落到本地模型上的结构信息。
-   发送端 snapshot 的 dtype 与接收端对应权重的 dtype 保持一致，因此可以正确支持
-   ``bfloat16`` 与 ``float32`` 混合精度模型。init bootstrap 也会按接收端每个 key
-   的 dtype 进行对齐。
+   接收端 **不会保存发送端 snapshot** ，它只保存足够把 patch 正确落到本地模型上的结构信息。发送端 snapshot 的 dtype 与接收端对应权重的 dtype 保持一致，因此可以正确支持 ``bfloat16`` 与 ``float32`` 混合精度模型。init bootstrap 也会按接收端每个 key 的 dtype 进行对齐。
 
 2. 每次同步阶段
 
@@ -263,15 +210,13 @@ Patch 模式大致分为两个阶段：
 CPU Snapshot 的优化路径
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-当 ``snapshot_device: cpu`` 时，发送端 snapshot 常驻 CPU，但当前 ``state_dict``
-仍然位于 GPU。为了避免把 patch 构建主路径退回到 CPU，RLinf 对这一场景做了专门优化：
+当 ``snapshot_device: cpu`` 时，发送端 snapshot 常驻 CPU，但当前 ``state_dict`` 仍然位于 GPU。为了避免把 patch 构建主路径退回到 CPU，RLinf 对这一场景做了专门优化：
 
 - CPU snapshot 使用 pinned memory 保存，便于 CPU 与 GPU 之间进行异步拷贝。
 - 每个 tensor 在比较前，会先把对应的 CPU snapshot 异步预取到 state tensor 所在 GPU。
 - snapshot 预取使用独立 CUDA copy stream，与其他 tensor 的 GPU 侧比较尽量重叠。
 - 差异比较、``nonzero`` 以及新值收集都在 GPU 上完成，避免 CPU 逐元素扫描。
-- 生成 patch 所需的 ``rows``、``cols`` 和 ``values`` 会异步拷贝到 pinned CPU staging buffer，
-  并通过 ``torch.cuda.Event`` 标记拷贝完成时刻。
+- 生成 patch 所需的 ``rows``、``cols`` 和 ``values`` 会异步拷贝到 pinned CPU staging buffer，并通过 ``torch.cuda.Event`` 标记拷贝完成时刻。
 - sender 会在 patch 构造完成后立即返回并继续执行后续传输；CPU snapshot 的写回由后台线程完成。
 - 下一次 patch 构建开始前，会等待上一轮后台写回完成，从而保证 snapshot 一致性。
 
@@ -282,9 +227,7 @@ CPU Snapshot 的优化路径
    CPU snapshot -> GPU prefetch -> GPU compare/nonzero/gather
    -> pinned CPU staging -> background snapshot flush
 
-这种方式用少量额外的异步拷贝和后台写回，换取了显著更低的 GPU 显存占用。
-在当前具身 VLA 训练配置中，CPU snapshot 的权重同步耗时已经可以接近 GPU snapshot；
-因此当 GPU 显存紧张时，优先选择 ``snapshot_device: cpu`` 通常是更稳妥的默认配置。
+这种方式用少量额外的异步拷贝和后台写回，换取了显著更低的 GPU 显存占用。在当前具身 VLA 训练配置中，CPU snapshot 的权重同步耗时已经可以接近 GPU snapshot；因此当 GPU 显存紧张时，优先选择 ``snapshot_device: cpu`` 通常是更稳妥的默认配置。
 
 
 Patch 的数据组织方式
@@ -327,8 +270,7 @@ Delta Encoding
 压缩
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Patch 模式的压缩只作用于后续的增量 patch 本身，而不是完整模型权重。一次性的
-init bootstrap 走的是分桶权重传输，不经过 patch compressor。
+Patch 模式的压缩只作用于后续的增量 patch 本身，而不是完整模型权重。一次性的 init bootstrap 走的是分桶权重传输，不经过 patch compressor。
 
 当前 RLinf 已实现的压缩器有：
 
@@ -340,8 +282,7 @@ init bootstrap 走的是分桶权重传输，不经过 patch compressor。
 - ``transport_device: cuda``
 - 运行环境已安装 ``nvidia-nvcomp-cu12``
 
-如果你是通过 ``bash requirements/install.sh embodied ...`` 安装具身环境，
-该依赖会自动随具身公共依赖安装。
+如果你是通过 ``bash requirements/install.sh embodied ...`` 安装具身环境，该依赖会自动随具身公共依赖安装。
 
 
 什么时候 patch 不合适
@@ -381,9 +322,7 @@ Bucket 模式
   每个 bucket 的最大字节数。
 
 ``bucket.bucket_dtype``
-  发送时使用的数据类型。若设置为 ``null``，则保留每个张量的原始 dtype；
-  若设置为 ``bfloat16``、``float16`` 或 ``float32``，则仅对浮点张量进行转换，
-  ``int`` / ``bool`` 等非浮点 buffer 会保留原 dtype，避免状态信息被破坏。
+  发送时使用的数据类型。若设置为 ``null``，则保留每个张量的原始 dtype；若设置为 ``bfloat16``、``float16`` 或 ``float32``，则仅对浮点张量进行转换，``int`` / ``bool`` 等非浮点 buffer 会保留原 dtype，避免状态信息被破坏。
 
 ``bucket.bucket_device``
   bucket 所在设备，通常为 ``cuda``。
@@ -404,22 +343,15 @@ Bucket 模式会把当前选中的同步子集切成多个块顺序发送。它�
 - 优点：不依赖发送端 snapshot，也不要求稀疏更新。
 - 缺点：通信量通常远大于 patch。
 
-如果 ``load_instant=true``，接收端会在每个 bucket 到达时立即加载。  
-如果 ``load_instant=false``，接收端会先暂存，最后再统一加载。
+如果 ``load_instant=true``，接收端会在每个 bucket 到达时立即加载。如果 ``load_instant=false``，接收端会先暂存，最后再统一加载。
 
 
 Async 场景下的行为
 ------------------------------
 
-``AsyncEmbodiedRunner`` 与 ``AsyncPPOEmbodiedRunner`` 都支持
-``actor.sync_weight_no_wait``。当它为 ``true`` 时，actor 更新后的同步会立即把控制权
-交还给 runner，而 rollout worker 在后台 ``asyncio`` task 中接收并应用权重。
-actor 到 rollout 的首次同步仍然是阻塞的，确保新任务或恢复的任务不会在权重尚未落地时
-就开始采样。
+``AsyncEmbodiedRunner`` 与 ``AsyncPPOEmbodiedRunner`` 都支持 ``actor.sync_weight_no_wait``。当它为 ``true`` 时，actor 更新后的同步会立即把控制权交还给 runner，而 rollout worker 在后台 ``asyncio`` task 中接收并应用权重。actor 到 rollout 的首次同步仍然是阻塞的，确保新任务或恢复的任务不会在权重尚未落地时就开始采样。
 
-该选项要求 ``weight_syncer.type=patch``。patch 模式一次性完成整轮应用，而 bucket
-模式会在 bucket 之间让出执行权，可能让推理观察到只应用了部分新权重的模型。
-RLinf 会直接拒绝这种组合，而不是放任这种撕裂读取。
+该选项要求 ``weight_syncer.type=patch``。patch 模式一次性完成整轮应用，而 bucket 模式会在 bucket 之间让出执行权，可能让推理观察到只应用了部分新权重的模型。RLinf 会直接拒绝这种组合，而不是放任这种撕裂读取。
 
 这意味着：
 
@@ -428,13 +360,9 @@ RLinf 会直接拒绝这种组合，而不是放任这种撕裂读取。
 - 权重的“请求时刻”与“生效时刻”之间可能存在一个小延迟。
 - 如果上一次同步仍在进行，新请求会被合并而不是排队，因此慢传输不会堆积成积压。
 
-runner 跟踪的是 rollout 侧的\ **应用**\ 完成状态，而不只是发送端的完成状态。
-后续的阻塞式同步和 runner 正常退出，都会先等待后台的权重应用结束。
+runner 跟踪的是 rollout 侧的\ **应用**\ 完成状态，而不只是发送端的完成状态。后续的阻塞式同步和 runner 正常退出，都会先等待后台的权重应用结束。
 
-因此在 async 场景下，``version`` 的传递就比较重要。
-当前 ``WeightSyncer.apply(...)`` 会返回本次真正应用到 rollout 上的版本号，
-rollout 再据此更新自身版本状态。生成的 trajectory 会带上这个已应用版本号，
-async PPO 正是据此统计并过滤陈旧数据。
+因此在 async 场景下，``version`` 的传递就比较重要。当前 ``WeightSyncer.apply(...)`` 会返回本次真正应用到 rollout 上的版本号，rollout 再据此更新自身版本状态。生成的 trajectory 会带上这个已应用版本号，async PPO 正是据此统计并过滤陈旧数据。
 
 
 性能建议
@@ -443,45 +371,29 @@ async PPO 正是据此统计并过滤陈旧数据。
 如果你的目标是优先优化同步耗时，建议按下面顺序调：
 
 1. 先使用 ``patch``，并保持 ``init_sync.enabled=true``。
-2. 除非你非常确定只需要同步一小部分 key，否则优先使用
-   ``init_sync.prefixes: null``。
-3. 默认优先使用 ``snapshot_device: cpu``，在不额外占用一份模型大小 GPU 显存的前提下，
-   获得接近 GPU snapshot 的同步耗时。
+2. 除非你非常确定只需要同步一小部分 key，否则优先使用 ``init_sync.prefixes: null``。
+3. 默认优先使用 ``snapshot_device: cpu``，在不额外占用一份模型大小 GPU 显存的前提下，获得接近 GPU snapshot 的同步耗时。
 4. 保持 ``delta_encoding: true``。
 5. 先用 ``compression: none`` 跑通，再评估是否需要 ``nvcomp_lz4``。
 6. 如果 GPU 显存非常充足且追求最低同步延迟，可以评估 ``snapshot_device: cuda``。
-7. 若你想用最简单的逐 tensor 传输语义验证当前选中子集的同步链路，可以切回
-   ``bucket``。如果你需要重新对齐包含冻结权重在内的完整模型，请依赖 init
-   bootstrap 或其它显式的全量权重加载方式。
+7. 若你想用最简单的逐 tensor 传输语义验证当前选中子集的同步链路，可以切回 ``bucket``。如果你需要重新对齐包含冻结权重在内的完整模型，请依赖 init bootstrap 或其它显式的全量权重加载方式。
 
-需要注意的是，patch 模式会额外保存一份 sender 侧 snapshot。若
-``snapshot_device: cuda``，这部分会占用 GPU 显存，大小约为模型参数量乘以
-接收端对应权重 dtype 的字节数。
-因此在大模型或显存较紧张的配置下，需要为 snapshot 预留显存，避免训练或同步时
-OOM。
+patch 模式会额外保存一份 sender 侧 snapshot。若 ``snapshot_device: cuda``，这部分会占用 GPU 显存，大小约为模型参数量乘以接收端对应权重 dtype 的字节数。因此在大模型或显存较紧张的配置下，需要为 snapshot 预留显存，避免训练或同步时 OOM。
 
-若 ``snapshot_device: cpu``，这部分 snapshot 不占用 GPU 显存，但会占用一份
-CPU pinned memory。其大小同样约为模型参数量乘以接收端对应权重 dtype 的字节数。
-该模式下 patch 比较仍在 GPU 上完成，并通过预取、事件同步和后台写回减少 CPU snapshot
-带来的额外延迟。对于显存紧张的训练任务，这是当前更推荐的配置。此外，
-``nvcomp_lz4`` 需要 ``transport_device`` 为 ``cuda``。
+若 ``snapshot_device: cpu``，这部分 snapshot 不占用 GPU 显存，但会占用一份 CPU pinned memory。其大小同样约为模型参数量乘以接收端对应权重 dtype 的字节数。该模式下 patch 比较仍在 GPU 上完成，并通过预取、事件同步和后台写回减少 CPU snapshot 带来的额外延迟。对于显存紧张的训练任务，这是当前更推荐的配置。此外，``nvcomp_lz4`` 需要 ``transport_device`` 为 ``cuda``。
 
 限制与注意事项
 ------------------------------
 
 当前实现有以下限制需要注意：
 
-- 如果 ``patch.init_sync.enabled=false``，则 ``patch`` 模式默认假设 actor 与
-  rollout 以相同初始权重启动。
-- 定向配置 ``patch.init_sync.prefixes`` 时，如果 prefix 不完整，可能会漏掉嵌套
-  模块路径；``null`` 是最稳妥的默认值。
+- 如果 ``patch.init_sync.enabled=false``，则 ``patch`` 模式默认假设 actor 与 rollout 以相同初始权重启动。
+- 定向配置 ``patch.init_sync.prefixes`` 时，如果 prefix 不完整，可能会漏掉嵌套模块路径；``null`` 是最稳妥的默认值。
 - ``patch`` 模式当前主要为具身 HuggingFace rollout 路径设计。
 - 高维张量在内部会被转成 2D 视图；若 trailing 维无法以 view 的方式展平，patch 模式会报错。
 - 当前文档中的压缩配置仅指 patch payload 压缩，不是模型权重本体压缩。
-- 当前 ``bucket`` 也会沿用 actor 集成中的选 key 过滤，因此它并不保证会重新
-  对齐所有冻结权重。
-- 如果你只是希望用最简单语义验证选中 key 子集的传输链路，请优先选 ``bucket``；
-  如果你要追求高效同步，再切到 ``patch``。
+- 当前 ``bucket`` 也会沿用 actor 集成中的选 key 过滤，因此它并不保证会重新对齐所有冻结权重。
+- 如果你只是希望用最简单语义验证选中 key 子集的传输链路，请优先选 ``bucket``；如果你要追求高效同步，再切到 ``patch``。
 
 
 推荐使用方式
@@ -497,6 +409,5 @@ CPU pinned memory。其大小同样约为模型参数量乘以接收端对应权
 如果你不确定当前链路是否满足 patch 的前提，最安全的做法是：
 
 - 先确保 actor 与 rollout 的 ``state_dict`` 结构一致
-- 保持 patch init bootstrap 开启，或者先用 ``bucket`` 验证选中 key 子集的
-  传输链路
+- 保持 patch init bootstrap 开启，或者先用 ``bucket`` 验证选中 key 子集的传输链路
 - 再切到 ``patch`` 做性能优化

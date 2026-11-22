@@ -165,7 +165,7 @@ checkpoint 的导出方式取决于训练后端。
    rm -rf "${CKPT_PATH_MF}"
    rm -f "${CKPT_PATH_HF}"/*.done
    shopt -s extglob
-   cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index.json) "${CKPT_PATH_HF}"
+   cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index).json "${CKPT_PATH_HF}"
 
 PPO 训练会在每个 ``global_step_xxx`` 下保存 ``actor`` 和 ``critic`` 两个目录。导出模型时，用上面的命令转换 ``actor`` 目录。恢复训练时，将 ``runner.resume_dir`` 设为该 ``global_step_xxx`` 目录，RLinf 会同时恢复 actor 和 critic。
 
@@ -178,9 +178,9 @@ PPO 训练会在每个 ``global_step_xxx`` 下保存 ``actor`` 和 ``critic`` �
        convertor.ckpt_path=/path/to/checkpoints/global_step_xxx/actor/model_state_dict/full_weights.pt \
        convertor.save_path=/path/to/hf_model
 
-`config.yaml` 会随训练运行写出；如果它位于 `convertor.ckpt_path` 附近，转换器也可以自动查找。将导出的 HuggingFace 模型用于独立评测。
+``config.yaml`` 会随训练运行写出；如果它位于 ``convertor.ckpt_path`` 附近，转换器也可以自动查找。将导出的 HuggingFace 模型用于独立评测。
 
-将转换得到的 HuggingFace model 路径填入 `examples/agent/searchr1/config/eval_qwen2.5.yaml`
+将转换得到的 HuggingFace model 路径填入 ``examples/agent/searchr1/config/eval_qwen2.5.yaml``：
 
 .. code-block:: yaml
 
@@ -192,7 +192,7 @@ PPO 训练会在每个 ``global_step_xxx`` 下保存 ``actor`` 和 ``critic`` �
        model_path: /path/to/eval/model
        model_type: qwen2.5
 
-修改测试数据集路径
+修改测试数据集路径：
 
 .. code-block:: yaml
 
@@ -200,7 +200,7 @@ PPO 训练会在每个 ``global_step_xxx`` 下保存 ``actor`` 和 ``critic`` �
      ……
      val_data_paths: ["/path/to/eval.jsonl"]
 
-运行 `bash examples/agent/searchr1/run_eval.sh` 启动测试。
+运行 ``bash examples/agent/searchr1/run_eval.sh`` 启动测试。
 
 可视化与结果
 ----------------------------------------

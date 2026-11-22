@@ -10,7 +10,7 @@ CLI 参考
 显式指定 benchmark
 ------------------
 
-依次传入 ``evaluations/`` 下的 benchmark 目录名与 YAML 配置名（不带 ``.yaml`` 后缀）：
+依次传入 ``evaluations/`` 下的 benchmark 目录名与 YAML 配置名（不带 ``.yaml`` 后缀）。该形式既适用于 ``evaluations/<benchmark>/`` 下的评测配置，也适用于通过配置回退加载 ``examples/embodiment/config/`` 中的训练配置：
 
 .. code-block:: bash
 
@@ -24,7 +24,7 @@ CLI 参考
 自动推断 benchmark
 ------------------
 
-配置名以受支持的 benchmark 前缀开头时，可省略 benchmark 参数：
+配置名以受支持的 benchmark 前缀开头时，可省略 benchmark 参数，直接按 ``<config_name> [hydra_overrides...]`` 调用：
 
 .. code-block:: bash
 
@@ -104,7 +104,7 @@ Hydra 参数覆盖
 配置回退
 --------
 
-若 ``evaluations/<benchmark>/<config>.yaml`` 不存在，``run_eval.sh`` 会自动回退到 ``examples/embodiment/config/`` 下同名配置。
+若 ``evaluations/<benchmark>/<config>.yaml`` 不存在，``run_eval.sh`` 会自动回退到 ``examples/embodiment/config/<config>.yaml``。显式指定 ``<benchmark> <config_name> [hydra_overrides...]``\ （只要 ``evaluations/<benchmark>/`` 目录存在）与自动推断 ``<config_name> [hydra_overrides...]``\ （使用受支持前缀）两种形式均支持该回退。
 
 各 benchmark 的完整启动示例见对应指南：
 

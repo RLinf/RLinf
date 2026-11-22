@@ -3,12 +3,6 @@
 
 从零开始跑通第一个 RLinf 任务，再按硬件和目标选择对应的工作流。
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/onboarding_flow_zh.svg
-   :align: center
-   :width: 100%
-
-   从安装到监控与扩展的四步上手路径。
-
 基础准备
 --------
 
@@ -27,7 +21,7 @@
 
       一行 ``install.sh`` 本地安装，或前往 Docker Hub 拉取镜像。
 
-   .. grid-item-card:: 3. VLA 快速上手
+   .. grid-item-card:: 3. VLA 快速开始
       :link: vla
       :link-type: doc
 
@@ -42,7 +36,7 @@
 选择你的第一个任务
 ------------------
 
-按目标直接进入对应的上手页面：
+按目标直接进入对应的入口页面：
 
 .. list-table::
    :header-rows: 1
@@ -59,7 +53,7 @@
      - :doc:`MLP policy 强化学习 <../examples/embodied/mlp>`
    * - 仿真环境 VLA 强化学习
      - 1–8 卡（40–80 GB）
-     - :doc:`VLA 快速上手（ManiSkill3） <vla>`
+     - :doc:`VLA 快速开始（ManiSkill3） <vla>`
    * - 真机联调、数据采集与训练
      - 控制机 + GPU 节点
      - :doc:`真实机器人强化学习 <../examples/real_world_index>`
@@ -89,7 +83,7 @@
       :link: ../guides/index
       :link-type: doc
 
-      配置启动、日志、检查点与多机集群。
+      配置启动、日志、checkpoint 与多机集群。
 
    .. grid-item-card:: 常见问题
       :link: ../resources/faq

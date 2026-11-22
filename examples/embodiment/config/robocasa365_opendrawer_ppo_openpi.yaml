@@ -115,6 +115,7 @@ rollout:
     max_new_tokens: null
 
   model:
+    model_path: ${actor.model.model_path}
     precision: null
 
 actor:

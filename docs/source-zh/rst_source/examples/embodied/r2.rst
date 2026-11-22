@@ -16,7 +16,7 @@ Robbyant R2 配置与强化学习
 
       Robbyant R2 · 20/21 自由度轮式双臂人形
 
-   .. grid-item-card:: 传感器与遥操
+   .. grid-item-card:: 传感器与遥操作
       :text-align: center
 
       RFrame 相机 · PICO VR（6 自由度 IK）
@@ -24,7 +24,7 @@ Robbyant R2 配置与强化学习
    .. grid-item-card:: 工作流
       :text-align: center
 
-      Mock/硬件自检 · PICO 遥操 · R2ReachEnv-v1
+      Mock/硬件自检 · PICO 遥操作 · R2ReachEnv-v1
 
    .. grid-item-card:: 硬件
       :text-align: center
@@ -265,6 +265,14 @@ Robbyant R2 配置与强化学习
                   target_joint_qpos: [-0.35, 0.20, 1.00, -0.70, 0.0, -0.30, 0.0,
                                       -0.35, -0.20, 1.00, 0.70, 0.0, -0.30, 0.0]
 
+      **3. 启动 Ray 集群并开始训练**
+
+      ``examples/embodiment/config/`` 尚未内置独立的 R2 训练配置，可基于现有真机训练配置替换上方的 ``cluster`` 与 ``R2ReachEnv-v1`` 配置块。按 :doc:`../../guides/multi_node` 启动双节点 Ray 集群（GPU 节点为 head rank ``0``，R2 控制节点为 worker rank ``1``），再在 head 节点启动训练：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_realworld_async.sh <your_config>
+
 结果与常见问题
 --------------
 
@@ -282,7 +290,7 @@ Robbyant R2 配置与强化学习
      - 物理急停会被锁存且不会自动恢复，请先人工旋开急停并确认安全，再在 ``test_r2_env`` 中输入 ``recover``。
    * - 创建 ``R2ReachEnv-v1`` 时机械臂立即复位运动
      - ``reset_on_init`` 默认为 ``true``，在 ``override_cfg`` 中设为 ``false``\ （或在 ``test_r2_env`` 中不传 ``--reset``）即可从当前实测姿态启动。
-   * - PICO 遥操因丢追踪或报错暂停
+   * - PICO 遥操作因丢追踪或报错暂停
      - 完全松开两侧侧握键后再重新握住，即可平稳恢复跟随。
 
 如需以编程方式调用全身控制与故障恢复接口，参见 :doc:`机器人接口 <../../concepts/robotics>`；如需在 R2 上开发新任务，参见 :doc:`新增真机任务 <../../extending/new_task>`。

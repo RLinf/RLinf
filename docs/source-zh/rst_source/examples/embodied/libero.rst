@@ -98,11 +98,11 @@ LIBERO 强化学习
 
    * - 字段
      - 说明
-   * - 观测 (Observation)
+   * - 观测
      - 第三人称（agentview）相机与腕部相机的 RGB 图像（通常 128×128 或 224×224），以及 8 维本体感知（末端执行器位姿与夹爪）。
-   * - 动作 (Action)
+   * - 动作
      - 7 维连续动作，``Box(-1, 1)``：6 自由度末端执行器增量（3D 位置 + 3D 旋转）与 1 维夹爪开合。
-   * - 奖励 (Reward)
+   * - 奖励
      - 稀疏奖励——每步为 ``0``，仅在回合结束成功时为 ``1``。
    * - 任务提示
      - ``In: What action should the robot take to [task_description]? Out:``
@@ -237,7 +237,7 @@ LIBERO 强化学习
          * - 相机视角
            - 第三人称相机的距离、球面位置（方位角/仰角）与朝向。
          * - 机器人初始状态
-           - 对机械臂初始关节角度 (qpos) 施加随机扰动。
+           - 对机械臂初始关节角度（qpos）施加随机扰动。
          * - 语言指令
            - 使用 LLM 重写指令，加入对话式干扰、常识或复杂推理。
          * - 光照条件
@@ -302,20 +302,14 @@ LIBERO 强化学习
          export LIBERO_CONFIG_PATH="$PWD/.libero-mem"
          python -c "import libero.libero"
 
-      **2. 下载资源与模型**
+      **2. 复制初始状态**
 
-      下载固定版本的 200 个初始状态（10 个任务 × 20 个状态，来自 `LIBERO-Mem-Raw 数据集 <https://huggingface.co/datasets/libero-mem/LIBERO-Mem-Raw>`__ 第 101–120 号 demonstration）并校验（来源说明和许可证位于 ``evaluations/libero/init_states/libero_mem/``）：
+      将仓库内置的 200 个初始状态（10 个任务 × 20 个状态，来自 `LIBERO-Mem-Raw 数据集 <https://huggingface.co/datasets/libero-mem/LIBERO-Mem-Raw>`__ 第 101–120 号 demonstration，存放在 ``evaluations/libero/init_states/libero_mem/``）复制到 LIBERO-Mem 目录：
 
       .. code-block:: bash
 
-         INIT_URL=https://raw.githubusercontent.com/anHappyDog/RLinf/8d0f7cffcd5d315182faa104adb31b9ca52de9e4/evaluations/libero/init_states/libero_mem
-         INIT_DIR=../LIBERO-Mem/libero/libero/init_files/libero_mem
-         mkdir -p "$INIT_DIR"
-         curl -fL "$INIT_URL/SHA256SUMS" -o "$INIT_DIR/SHA256SUMS"
-         while read -r checksum filename; do
-           curl -fL "$INIT_URL/$filename" -o "$INIT_DIR/$filename"
-         done < "$INIT_DIR/SHA256SUMS"
-         (cd "$INIT_DIR" && sha256sum -c SHA256SUMS)
+         mkdir -p ../LIBERO-Mem/libero/libero/init_files/libero_mem
+         cp evaluations/libero/init_states/libero_mem/*.pruned_init ../LIBERO-Mem/libero/libero/init_files/libero_mem/
 
       **3. 启动训练**
 
@@ -391,7 +385,7 @@ LIBERO 结果
 
 .. note::
 
-   该统一基座模型由我们自行微调得到。详情请参阅论文 https://arxiv.org/abs/2510.06710。
+   该统一基座模型由我们自行微调得到，详见 `论文 <https://arxiv.org/abs/2510.06710>`__。
 
 .. list-table:: **统一模型在五个 LIBERO 任务组上的评测结果**
    :header-rows: 1

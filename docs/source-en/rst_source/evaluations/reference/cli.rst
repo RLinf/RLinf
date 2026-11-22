@@ -10,7 +10,7 @@ Activate your virtual environment from the repository root, then launch evaluati
 Explicit Benchmark
 ------------------
 
-Pass the benchmark folder name under ``evaluations/`` followed by the YAML config name (without ``.yaml``):
+Pass the benchmark folder name under ``evaluations/`` followed by the YAML config name (without ``.yaml``). This form works both for configs inside ``evaluations/<benchmark>/`` and for training configs in ``examples/embodiment/config/`` via config fallback:
 
 .. code-block:: bash
 
@@ -24,7 +24,7 @@ Pass the benchmark folder name under ``evaluations/`` followed by the YAML confi
 Auto-Infer Benchmark
 --------------------
 
-When the config name starts with a recognized benchmark prefix, omit the benchmark argument:
+When the config name starts with a recognized benchmark prefix, omit the benchmark argument and run ``<config_name> [hydra_overrides...]`` directly:
 
 .. code-block:: bash
 
@@ -104,7 +104,7 @@ Supported Benchmark Prefixes
 Config Fallback
 ---------------
 
-If ``evaluations/<benchmark>/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` with the same config name.
+If ``evaluations/<benchmark>/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to ``examples/embodiment/config/<config>.yaml``. Both ``<benchmark> <config_name> [hydra_overrides...]`` (when ``evaluations/<benchmark>/`` exists) and ``<config_name> [hydra_overrides...]`` (with a recognized prefix) support this fallback.
 
 Full launch examples per benchmark:
 

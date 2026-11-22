@@ -174,7 +174,7 @@ Launch the Retrieval Service
       hostname -I
 
 3. Edit
-   `examples/agent/tools/search_local_server_qdrant/launch_local_server.sh`
+   ``examples/agent/tools/search_local_server_qdrant/launch_local_server.sh``
    and update these variables:
 
    - ``WIKI2018_DIR``: ``/PATH/TO/Wiki-2018-Corpus``

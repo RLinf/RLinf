@@ -307,20 +307,14 @@ Setup and Run
          export LIBERO_CONFIG_PATH="$PWD/.libero-mem"
          python -c "import libero.libero"
 
-      **2. Download**
+      **2. Copy Initial States**
 
-      Download the fixed 200 initial states (10 tasks × 20 states from demonstrations 101–120 in `LIBERO-Mem-Raw <https://huggingface.co/datasets/libero-mem/LIBERO-Mem-Raw>`__) and verify checksums (source details and license live in ``evaluations/libero/init_states/libero_mem/``):
+      Copy the bundled 200 initial states (10 tasks × 20 states from demonstrations 101–120 in `LIBERO-Mem-Raw <https://huggingface.co/datasets/libero-mem/LIBERO-Mem-Raw>`__, stored under ``evaluations/libero/init_states/libero_mem/``) into the LIBERO-Mem checkout:
 
       .. code-block:: bash
 
-         INIT_URL=https://raw.githubusercontent.com/anHappyDog/RLinf/8d0f7cffcd5d315182faa104adb31b9ca52de9e4/evaluations/libero/init_states/libero_mem
-         INIT_DIR=../LIBERO-Mem/libero/libero/init_files/libero_mem
-         mkdir -p "$INIT_DIR"
-         curl -fL "$INIT_URL/SHA256SUMS" -o "$INIT_DIR/SHA256SUMS"
-         while read -r checksum filename; do
-           curl -fL "$INIT_URL/$filename" -o "$INIT_DIR/$filename"
-         done < "$INIT_DIR/SHA256SUMS"
-         (cd "$INIT_DIR" && sha256sum -c SHA256SUMS)
+         mkdir -p ../LIBERO-Mem/libero/libero/init_files/libero_mem
+         cp evaluations/libero/init_states/libero_mem/*.pruned_init ../LIBERO-Mem/libero/libero/init_files/libero_mem/
 
       **3. Launch**
 
@@ -400,8 +394,7 @@ RL models use ``do_sample = True`` and ``temperature_train = 1.6`` in ``rollout.
 
 .. note::
 
-   This unified base model is fine-tuned by ourselves. For details, see the paper
-   https://arxiv.org/abs/2510.06710.
+   This unified base model is fine-tuned by ourselves. For details, see the `paper <https://arxiv.org/abs/2510.06710>`__.
 
 .. list-table:: **Unified model evaluated on the five LIBERO task groups**
    :header-rows: 1

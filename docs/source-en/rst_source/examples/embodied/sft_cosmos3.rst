@@ -59,13 +59,13 @@ Setup and Run
 
       .. code-block:: bash
 
-         # Base model (diffusers format; convert to DCP below)
+         # Base model (diffusers format; convert to DCP below) and Wan2.2 VAE
          hf download nvidia/Cosmos3-Nano --local-dir ./Cosmos3-Nano
+         hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e Wan2.2_VAE.pth --local-dir ./Wan2.2-TI2V-5B
 
          # Companion assets downloaded directly into the HF cache (required for offline mode)
          export HF_HOME=${HF_HOME:-~/.cache/huggingface}
          hf download Qwen/Qwen3-VL-8B-Instruct
-         hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e Wan2.2_VAE.pth
          hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --include "vae/*"
 
       **3. Prepare Base Model and Data**
@@ -89,11 +89,11 @@ Setup and Run
          actor:
            model:
              model_path: ./Cosmos3-Nano-DCP
-             wan_vae_path: /path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+             wan_vae_path: ./Wan2.2-TI2V-5B/Wan2.2_VAE.pth
              load_to_device: false
 
          data:
-           train_data_paths: /path/to/LIBERO_LeRobot
+           train_data_paths: ./LIBERO_LeRobot
            data_type: "libero_all"          # all LIBERO suites; or "libero_10"
 
       .. warning::
@@ -159,9 +159,9 @@ Setup and Run
 
    .. code-block:: bash
 
-      export SRC="/path/to/checkpoints/global_step_500/actor/model_state_dict/full_weights.pt"
-      export OUT="/path/to/converted"
-      export LIBERO_ROOT=/path/to/LIBERO_LeRobot_v3
+      export SRC="./checkpoints/global_step_500/actor/model_state_dict/full_weights.pt"
+      export OUT="./converted"
+      export LIBERO_ROOT="./LIBERO_LeRobot"
       mkdir -p "$OUT"
 
       python toolkits/cosmos3/convert_checkpoint.py --src "$SRC" --out "$OUT"

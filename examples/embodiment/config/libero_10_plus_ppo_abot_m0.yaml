@@ -100,6 +100,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
+    model_path: ${actor.model.model_path}
     precision: "bf16"
 
 actor:

@@ -22,18 +22,18 @@
       :link: sft_index
       :link-type: doc
 
-      OpenPI、VLM、DreamZero、FastWAM 与 Cosmos3 监督微调配方。
+      监督微调与模仿学习配方——OpenPI、DreamZero、FastWAM、Cosmos3、Qwen-VL 与 DAgger。
 
    .. grid-item-card:: RL 算法示例
       :link: methods_index
       :link-type: doc
 
-      按算法切入——DAgger、RECAP、STEAM、RLT、SAC-Flow、DSRL、IQL、仿真-真机协同训练与 MLP。
+      按算法切入——SAC-Flow、DSRL、RL Token、仿真-真机协同训练、OPD、RECAP、STEAM 与 IQL。
 
    .. grid-item-card:: 世界模型
       :link: world_model_index
       :link-type: doc
 
-      结合世界模型的闭环强化学习——OpenSora、Wan、WoVR 与 BWM。
+      用世界模型作为模拟器做 VLA 闭环强化学习——OpenSora、Wan 与 BWM。
 
-其他方向请见 :doc:`真机机器人 <real_world_index>`、:doc:`统一评测 <../evaluations/index>`、:doc:`智能体与推理 <agentic/index>` 与 :doc:`图像与视频生成 <video_models>`。
+其他方向请见 :doc:`真机机器人 <real_world_index>`、:doc:`评测 <../evaluations/index>`、:doc:`智能体与推理 <agentic/index>` 与 :doc:`图像与视频生成 <video_models>`。

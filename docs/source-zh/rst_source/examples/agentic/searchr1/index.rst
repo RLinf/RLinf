@@ -86,7 +86,7 @@ Wiki 配置文件
 
    bash examples/agent/tools/search_local_server_faiss/build_index.sh
 
-将之前下载好的 wiki 文件路径和 index 路径等写入 ``examples/agent/searchr1/launch_local_server.sh``：
+将之前下载好的 wiki 文件路径和 index 路径等写入 ``examples/agent/tools/search_local_server_faiss/launch_local_server.sh``：
 
 .. code-block:: bash
 
@@ -123,7 +123,7 @@ Wiki 配置文件
 
 下载 `qdrant <https://github.com/qdrant/qdrant/releases>`__ 并按照以下步骤构建 qdrant collection。首先，创建一个文件夹并把下载好的 qdrant 二进制文件放入该文件夹中，方便后续存储 qdrant 程序及其构建的 collection 文件。
 
-在 `examples/agent/tools/search_local_server_qdrant/build_index.sh` 和 `examples/agent/tools/search_local_server_qdrant/launch_local_server.sh` 中，根据之前下载的 wiki corpus, e5-base-v2 和 qdrant 路径更新 `WIKI2018_DIR`、 `retriever_path` 和 `qdrant_path` 的文件路径。
+在 ``examples/agent/tools/search_local_server_qdrant/build_index.sh`` 和 ``examples/agent/tools/search_local_server_qdrant/launch_local_server.sh`` 中，根据之前下载的 wiki corpus、e5-base-v2 和 qdrant 路径更新 ``WIKI2018_DIR``、``retriever_path`` 和 ``qdrant_path``。
 
 使用以下指令构建 qdrant wiki 服务器的 collection：
 

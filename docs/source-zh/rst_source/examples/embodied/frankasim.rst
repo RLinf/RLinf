@@ -79,7 +79,7 @@ Franka-Sim 是基于 `SERL <https://rail-berkeley.github.io/serl/docs/sim_quick_
 
 .. tab-set::
 
-   .. tab-item:: OpenVLA + FrankaSim
+   .. tab-item:: MLP / CNN + FrankaSim
 
       **1. 安装环境**
 

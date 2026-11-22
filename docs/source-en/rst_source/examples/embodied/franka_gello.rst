@@ -125,7 +125,7 @@ Setup and Run
              | tee logs/collect.log
 
          # Terminal 2 — live progress bar (pass --no-replay to tail from EOF)
-         python toolkits/realworld_check/collect_monitor.py logs/collect.log
+         python -m toolkits.realworld_check.collect_monitor logs/collect.log
 
 .. dropdown:: GELLO YAML fields and dual-arm reference
 

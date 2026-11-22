@@ -22,7 +22,7 @@ GimArm 在线强化学习
 
       GimArm 6 自由度 · 平行夹爪
 
-   .. grid-item-card:: 传感器与遥操
+   .. grid-item-card:: 传感器与遥操作
       :text-align: center
 
       RealSense（可选）· PICO 4 Ultra VR
@@ -30,7 +30,7 @@ GimArm 在线强化学习
    .. grid-item-card:: 工作流
       :text-align: center
 
-      CAN 初始化 · 零位校准 · VR 遥操 · SAC / RLPD
+      CAN 初始化 · 零位校准 · VR 遥操作 · SAC / RLPD
 
    .. grid-item-card:: 硬件
       :text-align: center
@@ -52,7 +52,7 @@ GimArm 在线强化学习
      - 验证控制器启动、状态读取、关节运动、复位与夹爪开合。
    * - 数据采集
      - ``gim_arm_teleop``
-     - 使用 PICO 4 Ultra 头显采集 VR 遥操示教。
+     - 使用 PICO 4 Ultra 头显采集 VR 遥操作示教。
    * - 真机训练
      - GimArm 真机配置
      - 以目标位姿奖励训练 CNN 插孔 policy。
@@ -119,9 +119,9 @@ GimArm 在线强化学习
          bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
 
          git clone https://github.com/RLinf/gim_arm_control.git ~/gim_arm_control
-         pip install -e ~/gim_arm_control/python
+         uv pip install -e ~/gim_arm_control/python
 
-      若环境需要兼容 NumPy 1.x，改用 ``pip install -e "~/gim_arm_control/python[pin270]"``。
+      若环境需要兼容 NumPy 1.x，改用 ``uv pip install -e "~/gim_arm_control/python[pin270]"``。
 
       **2. 初始化 CAN FD 并校准电机零位**
 
@@ -144,7 +144,7 @@ GimArm 在线强化学习
 
       .. code-block:: bash
 
-         python toolkits/realworld_check/test_gim_arm_env.py --can can0 --variant gim_arm_xl
+         python -m toolkits.realworld_check.test_gim_arm_env --can can0 --variant gim_arm_xl
 
       脚本会对当前关节角做正运动学计算，并打印 TCP 位置与四元数。手动将机械臂移到插孔目标位姿，记录输出并将四元数转为 Euler XYZ 弧度，填入 ``target_ee_pose``。
 
@@ -156,12 +156,12 @@ GimArm 在线强化学习
 
             .. code-block:: bash
 
-               sudo dpkg -i XRoboToolkit_PC_Service_1.0.0_ubuntu_22.04_amd64.deb
+               sudo dpkg -i XRoboToolkit-PC-Service-1.1.1.deb
                bash /opt/apps/roboticsservice/runService.sh
 
          2. 在头显安装 `XRoboToolkit-PICO-1.1.1.apk <https://github.com/XR-Robotics/XRoboToolkit-Unity-Client/releases/download/v1.1.1/XRoboToolkit-PICO-1.1.1.apk>`__，连接控制主机 IP，并按需勾选 ``head``、``hand`` 与 ``controller``。
 
-         3. 按 `gim_arm_teleop <https://github.com/RLinf/gim_arm_teleop>`__ 说明配置环境后，启动硬件遥操脚本同步记录 VR 指令与机械臂状态：
+         3. 按 `gim_arm_teleop <https://github.com/RLinf/gim_arm_teleop>`__ 说明配置环境后，启动硬件遥操作脚本同步记录 VR 指令与机械臂状态：
 
             .. code-block:: bash
 
@@ -252,6 +252,14 @@ GimArm 在线强化学习
                 override_cfg:
                   target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
 
+      **3. 启动 Ray 集群并开始训练**
+
+      ``examples/embodiment/config/`` 尚未内置独立的 GimArm 训练配置，可基于现有真机 SAC/RLPD 配置（如 ``realworld_peginsertion_rlpd_cnn_async.yaml``）替换上方的硬件与环境配置块。按 :doc:`../../guides/multi_node` 启动双节点 Ray 集群（GPU 节点为 head rank ``0``，控制节点为 worker rank ``1``），再在 head 节点启动训练：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_realworld_async.sh <your_config>
+
 结果与常见问题
 --------------
 
@@ -268,7 +276,7 @@ GimArm 在线强化学习
    * - 更换电机后机械臂运动异常
      - 将机械臂摆回机械零位，再运行 ``bash ~/gim_arm_control/sh/set_zero.sh can0 --all`` 重新校零。
    * - ``pinocchio`` 或 NumPy 1.x 版本冲突
-     - 使用 ``pip install -e "~/gim_arm_control/python[pin270]"`` 重装 SDK 绑定。
+     - 使用 ``uv pip install -e "~/gim_arm_control/python[pin270]"`` 重装 SDK 绑定。
    * - 尚未接入 RealSense 相机
      - 在硬件配置中将 ``camera_serials`` 设为 ``[]``，以纯状态模式运行。
 

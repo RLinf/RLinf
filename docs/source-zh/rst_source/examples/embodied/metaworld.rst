@@ -93,8 +93,7 @@ MetaWorld 强化学习
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env metaworld
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env metaworld && source .venv/bin/activate
 
       **2. 下载资源与模型**
 
@@ -144,8 +143,7 @@ MetaWorld 强化学习
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env metaworld
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env metaworld && source .venv/bin/activate
 
       **2. 下载资源与模型**
 
@@ -192,8 +190,7 @@ MetaWorld 强化学习
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env metaworld
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env metaworld && source .venv/bin/activate
 
       **2. 下载资源与模型**
 

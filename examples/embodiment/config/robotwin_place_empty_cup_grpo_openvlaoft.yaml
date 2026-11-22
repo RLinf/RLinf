@@ -113,6 +113,7 @@ rollout:
   enable_offload: True
   pipeline_stage_num: 1
   model:
+    model_path: ${actor.model.model_path}
     model_type: "openvla_oft"
     precision: ${actor.model.precision}
 

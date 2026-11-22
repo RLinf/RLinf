@@ -166,8 +166,7 @@ Setup and Run
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform ascend embodied --model starvla --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model starvla --env libero && source .venv/bin/activate
 
       **2. Download**
 

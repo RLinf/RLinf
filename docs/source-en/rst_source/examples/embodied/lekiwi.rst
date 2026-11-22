@@ -172,7 +172,7 @@ Setup and Run
 
             git clone https://github.com/RLinf/RLinf.git && cd RLinf
             pip install pynput
-            PYTHONPATH=$PWD python -m toolkits.realworld_check.test_lekiwi_env teleop --remote 192.168.1.100
+            python -m toolkits.realworld_check.test_lekiwi_env teleop --remote 192.168.1.100
 
       **2. Configure LeKiwiDriveEnv-v1**
 

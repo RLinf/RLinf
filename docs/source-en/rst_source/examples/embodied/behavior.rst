@@ -97,17 +97,16 @@ Setup and Run
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env behavior
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env behavior && source .venv/bin/activate
 
       **2. Download**
 
-      Download IsaacSim 4.5, BEHAVIOR-1K assets (over 30 GB, inside the active virtual environment), and the OpenVLA-OFT base checkpoint. Export ``ISAAC_PATH`` and ``OMNIGIBSON_DATA_PATH`` before every run:
+      Download IsaacSim 4.5, BEHAVIOR-1K assets (over 30 GB, inside the active virtual environment), and the OpenVLA-OFT base checkpoint. Keep ``ISAAC_PATH`` and ``OMNIGIBSON_DATA_PATH`` exported in your launch shell:
 
       .. code-block:: bash
 
-         export ISAAC_PATH=/path/to/isaac-sim
-         export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+         export ISAAC_PATH="$PWD/isaac-sim"
+         export OMNIGIBSON_DATA_PATH="$PWD/BEHAVIOR-1K-datasets"
          mkdir -p "$ISAAC_PATH" "$OMNIGIBSON_DATA_PATH"
          curl https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-4.5.0-linux-x86_64.zip -o "$ISAAC_PATH/isaac-sim.zip"
          unzip "$ISAAC_PATH/isaac-sim.zip" -d "$ISAAC_PATH" && rm "$ISAAC_PATH/isaac-sim.zip"
@@ -143,8 +142,6 @@ Setup and Run
 
       .. code-block:: bash
 
-         export ISAAC_PATH=/path/to/isaac-sim
-         export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
          bash examples/embodiment/run_embodiment.sh behavior_ppo_openvlaoft
 
    .. tab-item:: OpenPI
@@ -155,17 +152,16 @@ Setup and Run
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env behavior
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env behavior && source .venv/bin/activate
 
       **2. Download**
 
-      Download IsaacSim 4.5, BEHAVIOR-1K assets (over 30 GB, inside the active virtual environment), and the OpenPI base checkpoint. Export ``ISAAC_PATH`` and ``OMNIGIBSON_DATA_PATH`` before every run:
+      Download IsaacSim 4.5, BEHAVIOR-1K assets (over 30 GB, inside the active virtual environment), and the OpenPI base checkpoint. Keep ``ISAAC_PATH`` and ``OMNIGIBSON_DATA_PATH`` exported in your launch shell:
 
       .. code-block:: bash
 
-         export ISAAC_PATH=/path/to/isaac-sim
-         export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+         export ISAAC_PATH="$PWD/isaac-sim"
+         export OMNIGIBSON_DATA_PATH="$PWD/BEHAVIOR-1K-datasets"
          mkdir -p "$ISAAC_PATH" "$OMNIGIBSON_DATA_PATH"
          curl https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-4.5.0-linux-x86_64.zip -o "$ISAAC_PATH/isaac-sim.zip"
          unzip "$ISAAC_PATH/isaac-sim.zip" -d "$ISAAC_PATH" && rm "$ISAAC_PATH/isaac-sim.zip"
@@ -204,8 +200,6 @@ Setup and Run
 
       .. code-block:: bash
 
-         export ISAAC_PATH=/path/to/isaac-sim
-         export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
          bash examples/embodiment/run_embodiment.sh behavior_ppo_openpi
 
 .. warning::

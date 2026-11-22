@@ -1,8 +1,7 @@
 5D 并行配置
 ================================
 
-RLinf 使用 **NVIDIA Megatron-LM** 作为大规模 Transformer 训练的后端，  
-并提供五种相互独立的并行模式：
+RLinf 使用 **NVIDIA Megatron-LM** 作为大规模 Transformer 训练的后端，并提供五种相互独立的并行模式：
 
 1. **Tensor Parallelism (TP)** 张量并行  
 2. **Data Parallelism (DP)** 数据并行  
@@ -10,8 +9,7 @@ RLinf 使用 **NVIDIA Megatron-LM** 作为大规模 Transformer 训练的后端�
 4. **Sequence Parallelism (SP)** 序列并行  
 5. **Context Parallelism (CP)** 上下文并行  
 
-合适的组合可以让系统从单节点扩展到数百 GPU 的集群，  
-同时在内存、通信和利用率之间取得平衡。  
+合适的组合可以让系统从单节点扩展到数百 GPU 的集群，同时在内存、通信和利用率之间取得平衡。  
 
 下面将详细介绍这五种并行模式，并给出启动时的配置方法。
 
@@ -24,9 +22,7 @@ RLinf 使用 **NVIDIA Megatron-LM** 作为大规模 Transformer 训练的后端�
 
 **机制**
 
-* 线性层  
-  – ``Linear(h, 4h)`` 按 **列** 切分  
-  – ``Linear(4h, h)`` 按 **行** 切分  
+* 线性层 – ``Linear(h, 4h)`` 按 **列** 切分 – ``Linear(4h, h)`` 按 **行** 切分  
 * 注意力投影 – :math:`Q,K,V` 按 head 维度切分  
 * 每次切分计算后通过 *all-reduce* 将结果合并  
 
@@ -40,7 +36,7 @@ RLinf 使用 **NVIDIA Megatron-LM** 作为大规模 Transformer 训练的后端�
 
 **优点**
 
-* 避免单 GPU 内存瓶颈  
+* 避免单卡显存瓶颈
 * 在 GPU 之间平衡计算  
 
 **缺点**
@@ -193,5 +189,4 @@ Megatron 的 *序列并行* 在 TP 的基础上扩展，用于减少 **长上下
 总结
 -------
 
-Megatron-LM 灵活组合 **TP、DP、PP、SP 和 CP**，使 RLinf 可以通过 *宽度* （TP）、*数据规模* （DP）、*深度* （PP）或 *上下文长度* （SP / CP）来扩展模型。  
-选择合适的规模取决于模型结构、目标序列长度、GPU 内存和互联拓扑，以获得最佳吞吐量。  
+Megatron-LM 灵活组合 **TP、DP、PP、SP 和 CP**，使 RLinf 可以通过 *宽度* （TP）、*数据规模* （DP）、*深度* （PP）或 *上下文长度* （SP / CP）来扩展模型。选择合适的规模取决于模型结构、目标序列长度、显存容量和互联拓扑，以获得最佳吞吐量。

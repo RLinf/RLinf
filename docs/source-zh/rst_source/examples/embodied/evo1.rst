@@ -124,7 +124,6 @@ Evo-1 强化学习
 
       .. code-block:: bash
 
-         export ROBOT_PLATFORM="LIBERO"
          bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_evo1 actor.model.model_path=$PWD/Evo1_LIBERO
 
       .. dropdown:: 进阶配置（可选）

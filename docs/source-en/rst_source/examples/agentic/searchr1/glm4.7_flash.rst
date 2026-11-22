@@ -3,7 +3,7 @@ Search-R1 Training for GLM-4.7-Flash
 
 Train GLM-4.7-Flash (an MoE model with about 3B active parameters) to answer
 questions by calling a search tool, using
-`examples/agent/searchr1/config/train_glm4.7_flash.yaml`. Set up the RLinf
+``examples/agent/searchr1/config/train_glm4.7_flash.yaml``. Set up the RLinf
 environment and the Qdrant wiki retrieval server first, as described in
 :doc:`index`.
 
@@ -39,13 +39,13 @@ Megatron-Bridge actor and SGLang rollout.
 Data
 ----
 
-GLM needs samples whose `prompt` field is a message list
-(`[{"role": "system", ...}, {"role": "user", ...}]`), rendered with GLM's own chat
-template (`data.apply_chat_template: True`). The released `RLinf/Search-R1-Data`
+GLM needs samples whose ``prompt`` field is a message list
+(``[{"role": "system", ...}, {"role": "user", ...}]``), rendered with GLM's own chat
+template (``data.apply_chat_template: True``). The released ``RLinf/Search-R1-Data``
 is pre-rendered with the Qwen chat template and cannot be used for GLM as is:
-GLM's vocabulary has no `<|im_start|>` token, so the Qwen markers would reach the
+GLM's vocabulary has no ``<|im_start|>`` token, so the Qwen markers would reach the
 model as plain text without any error. Convert the prompts into message lists
-first and keep the other fields (`solutions`, ...) unchanged.
+first and keep the other fields (``solutions``, ...) unchanged.
 
 The reference run disables thinking (see below), so the user message also drops
 the sentence "You must conduct reasoning inside <think> and </think> first every
@@ -121,7 +121,7 @@ it with ``CUDA_VISIBLE_DEVICES=0`` to share GPU 0, using about 1 GB of GPU memor
 
       **3. Launch**
 
-      Fill in the same path fields in ``examples/agent/searchr1/config/train_glm4.7_flash_2node_server.yaml`` (the search tool worker runs on node 0, so ``tools.search.server_addr`` only needs to be reachable from node 0), then launch from any cluster node:
+      Fill in the same path fields in ``examples/agent/searchr1/config/train_glm4.7_flash_2node_server.yaml`` (the search tool worker runs on node 0, so ``tools.search.server_addr`` only needs to be reachable from node 0), then launch from the head node:
 
       .. code-block:: bash
 
@@ -148,16 +148,16 @@ The model-specific settings are already configured in the shipped YAMLs:
      megatron:
        mbridge: True
 
-- `agentloop.agentic_tokenizer` selects the model-specific tokenization used by
-  the agent loop (`default`, `qwen` or `glm47`; `default` if unset). It locates
+- ``agentloop.agentic_tokenizer`` selects the model-specific tokenization used by
+  the agent loop (``default``, ``qwen`` or ``glm47``; ``default`` if unset). It locates
   the end of the reasoning block, so that the response is truncated at the first
-  `</search>` of the answer rather than at one written while reasoning.
-- `rollout.sglang.tool_call_parser` must match the parser bound to the selected
+  ``</search>`` of the answer rather than at one written while reasoning.
+- ``rollout.sglang.tool_call_parser`` must match the parser bound to the selected
   tokenizer type; a mismatch fails at startup.
-- `enable_thinking` is passed to GLM's chat template and only affects the
+- ``enable_thinking`` is passed to GLM's chat template and only affects the
   generation prompt of the first turn. Later turns append the tool output to the
   conversation directly.
-- `actor.megatron.mbridge: True` loads the HuggingFace weights in process through
+- ``actor.megatron.mbridge: True`` loads the HuggingFace weights in process through
   Megatron-Bridge, so no offline HuggingFace-to-Megatron conversion is needed.
 
 Parallelism on 8×A100-80G (actor and rollout collocated):
@@ -165,29 +165,29 @@ Parallelism on 8×A100-80G (actor and rollout collocated):
 - Actor (Megatron): tensor parallel 4, expert parallel 8, data parallel 2.
 - Rollout (SGLang): one engine across the 8 GPUs with attention data parallel 2
   and expert parallel 8.
-- `rollout.max_running_requests: 512` is split across the two attention data
-  parallel ranks (256 each). Keep `rollout.cuda_graph_max_bs` (256) at least as
+- ``rollout.max_running_requests: 512`` is split across the two attention data
+  parallel ranks (256 each). Keep ``rollout.cuda_graph_max_bs`` (256) at least as
   large as the per-rank value; otherwise decoding falls out of CUDA graphs and
   becomes slower.
 
 Cross-node rollout instances (``train_glm4.7_flash_2node_server.yaml``) have these requirements:
 
-- `rollout.sglang.backend_type: server`; other backends reject a cross-node
+- ``rollout.sglang.backend_type: server``; other backends reject a cross-node
   layout at startup.
 - Every node carries the same number of rollout GPUs, and tp×pp is divisible
   by that per-node count (16 and 8 here).
-- With SGLang `dp_size` greater than 1 across nodes, DP attention
-  (`enable_dp_attention: True`) is required.
+- With SGLang ``dp_size`` greater than 1 across nodes, DP attention
+  (``enable_dp_attention: True``) is required.
 
-In the two-node config the rollout instance enables DP attention (`dp_size: 4`, so the
+In the two-node config the rollout instance enables DP attention (``dp_size: 4``, so the
 attention tensor-parallel size is 4) and expert parallelism of 16; the actor uses
 tensor parallel 4, expert parallel 8, and data parallel 4, with the expert-parallel
 group kept within one node so MoE all-to-all never crosses nodes. Scale tp / dp /
-ep and `component_placement` the same way for other cluster sizes, under the same
+ep and ``component_placement`` the same way for other cluster sizes, under the same
 constraints.
 
 If NCCL stalls on cross-node transfers over RoCE/IB, make sure the GPUs on both
-nodes use NICs in the same subnet, for example by restricting `NCCL_IB_HCA`.
+nodes use NICs in the same subnet, for example by restricting ``NCCL_IB_HCA``.
 Two full 8-GPU nodes with matching local GPU indices need no such setting.
 
 To run the same recipe with rollout and training overlapped instead —
@@ -200,7 +200,7 @@ Visualization and Results
 The following shows the training curves of GLM-4.7-Flash with thinking disabled,
 using 512 prompts × 4 samples per step on 8×A100-80G and the Qdrant retrieval server
 from :doc:`index`. The x-axis counts parameter updates: each rollout step performs four of
-them (`algorithm.n_minibatches: 4`), so the 100 rollout steps span about 400
+them (``algorithm.n_minibatches: 4``), so the 100 rollout steps span about 400
 updates. Over these 100 rollout steps the trajectory reward rises from 0.28 to 0.54
 (mean of the first and of the last five steps), the average number of turns per
 trajectory grows from 1.7 to 2.0, and one rollout step takes about 870 s.

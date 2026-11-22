@@ -16,7 +16,7 @@ RLinf Execution Overview
 
 The following figure demonstrates the overview of RLinf execution flow, including the main code flow (left), the main process corresponding to the code flow (middle), and the concept of Worker, WorkerGroup, and Channel (right).
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/rlinf_exec_flow.jpg
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf_exec_flow.jpg
    :alt: RLinf execution flow
    :width: 95%
    :align: center

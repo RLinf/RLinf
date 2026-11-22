@@ -62,7 +62,7 @@ Franka Orbbec 相机
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env franka && source .venv/bin/activate
-         python -m pip install --no-deps pyorbbecsdk2==2.1.2
+         uv pip install --no-deps pyorbbecsdk2==2.1.2
 
       **2. 查询相机序列号**
 

@@ -16,7 +16,7 @@ LeKiwi 移动底盘
 
       LeKiwi · 3 路 Feetech STS3215 全向轮
 
-   .. grid-item-card:: 传感器与遥操
+   .. grid-item-card:: 传感器与遥操作
       :text-align: center
 
       前置 UVC 摄像头 · 本地 / TCP 键盘
@@ -172,7 +172,7 @@ LeKiwi 移动底盘
 
             git clone https://github.com/RLinf/RLinf.git && cd RLinf
             pip install pynput
-            PYTHONPATH=$PWD python -m toolkits.realworld_check.test_lekiwi_env teleop --remote 192.168.1.100
+            python -m toolkits.realworld_check.test_lekiwi_env teleop --remote 192.168.1.100
 
       **2. 配置 LeKiwiDriveEnv-v1 环境**
 

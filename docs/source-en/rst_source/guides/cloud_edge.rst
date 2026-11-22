@@ -206,7 +206,7 @@ the cloud head node. For example:
 
 .. code-block:: bash
 
-   python examples/embodiment/train_embodied_agent.py --config-name <config_name>
+   bash examples/embodiment/run_embodiment.sh <config_name>
 
 or:
 

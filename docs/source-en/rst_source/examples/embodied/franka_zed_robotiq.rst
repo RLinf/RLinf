@@ -75,7 +75,7 @@ Setup and Run
          source .venv/bin/activate
          python3 /usr/local/zed/get_python_api.py
          # Or direct wheel install:
-         # python -m pip install --ignore-installed /usr/local/zed/pyzed-*.whl
+         # uv pip install --reinstall /usr/local/zed/pyzed-*.whl
 
       List connected ZED cameras and record their serial numbers:
 

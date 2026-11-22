@@ -9,7 +9,7 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
 .. grid:: 1 3 3 3
    :gutter: 2
 
-   .. grid-item-card:: 快速上手（5 分钟）
+   .. grid-item-card:: 快速体验（5 分钟）
       :link: get_started/quick_tour
       :link-type: doc
 

@@ -187,7 +187,7 @@ Setup and Run
       .. code-block:: bash
 
          export HF_LEROBOT_HOME=/absolute/path/to/datasets
-         python toolkits/lerobot/calculate_norm_stats.py \
+         python -m toolkits.lerobot.calculate_norm_stats \
            --config-name pi05_so101_joint \
            --repo-id so101_dataset
 

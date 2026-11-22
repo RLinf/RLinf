@@ -16,8 +16,8 @@ connect RLinf to physical hardware.
      - Configure mixed hardware and node groups.
    * - :doc:`Cloud-Edge Collaboration <../cloud_edge>`
      - Split inference and training across cloud and edge.
-   * - :doc:`Real-World Robots <../realworld_robot>`
-     - Run RL on physical robot hardware.
+   * - :doc:`Multi-Node Robot Launch <../realworld_robot>`
+     - Launch RL across controller and GPU nodes on physical robot hardware.
    * - :doc:`Teleoperation <../teleoperation>`
      - Let an operator take over from the policy mid-rollout.
 
@@ -27,5 +27,5 @@ connect RLinf to physical hardware.
    Multi-Node Training <../multi_node>
    Heterogeneous Clusters <../hetero>
    Cloud-Edge Collaboration <../cloud_edge>
-   Real-World Robots <../realworld_robot>
+   Multi-Node Robot Launch <../realworld_robot>
    Teleoperation <../teleoperation>

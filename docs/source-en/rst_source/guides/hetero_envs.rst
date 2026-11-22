@@ -119,8 +119,7 @@ Prerequisites:
 
    .. code-block:: bash
 
-      bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-      source .venv/bin/activate
+      bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
 2. Download the checkpoints:
 

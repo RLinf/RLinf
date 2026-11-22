@@ -160,7 +160,7 @@ OpenPI 监督微调
 
          python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
            --input-model ./checkpoints/jax/pi05_base \
-           --input-norm-stats /path/to/assets/behavior-1k/2025-challenge-demos/norm_stats.json \
+           --input-norm-stats ./assets/behavior-1k/2025-challenge-demos/norm_stats.json \
            --output-model ./pi05_base_openpi \
            --output-norm-stats ./pi05_base_openpi/task/norm_stats.json \
            --action-dim 32 \
@@ -342,7 +342,7 @@ OpenPI 监督微调
       # 本地数据集目录（含 meta/info.json）：
       python toolkits/lerobot/calculate_norm_stats.py \
           --config-name pi0_realworld \
-          --repo-id /path/to/realworld_franka_bin_relocation
+          --repo-id ./realworld_franka_bin_relocation
 
       # 或 Hugging Face repo id（默认缓存在 ~/.cache/huggingface/lerobot）：
       python toolkits/lerobot/calculate_norm_stats.py \
@@ -362,8 +362,8 @@ OpenPI 监督微调
    .. code-block:: bash
 
       bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
-        rollout.model.model_path=/path/to/logs/.../checkpoints/global_step_30000 \
-        rollout.model.openpi_data.norm_stats_path=/path/to/pi0_base_pytorch_new/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
+        rollout.model.model_path=./logs/checkpoints/global_step_30000 \
+        rollout.model.openpi_data.norm_stats_path=./pi0_base_pytorch_new/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
 
    详细评测步骤见 :doc:`BEHAVIOR-1K 评测 <../../evaluations/guides/behavior>` 和 :doc:`RoboTwin 评测 <../../evaluations/guides/robotwin>`。如需导出可分发的独立目录（``model.safetensors`` + ``config.json`` + ``norm_stats.json``），使用 OpenPI 检查点转换器的 ``sft_to_openpi`` 模式（见 :doc:`检查点转换 <../../guides/convertor>`）。
 

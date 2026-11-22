@@ -50,17 +50,18 @@ rStar2 强化学习
          bash requirements/install.sh agentic && source .venv/bin/activate
          uv pip install math-verify sympy pylatexenc
 
-         # 安装 Code Judge 与 rStar2 agent 依赖
+         # 安装 Code Judge 依赖
          sudo apt-get update -y && sudo apt-get install redis -y
          git clone https://github.com/0xWJ/code-judge examples/agent/rstar2/code-judge
          uv pip install -r examples/agent/rstar2/code-judge/requirements.txt
          uv pip install -e examples/agent/rstar2/code-judge
-         uv pip install -r examples/agent/rstar2/requirements.txt
 
-      启动 Redis、Code Judge Server（仅 master 节点）和 Code Judge Workers（将 ``$WORKSPACE`` 和 ``$MASTER_ADDR`` 替换为实际值）：
+      启动 Redis、Code Judge Server（仅 master 节点）和 Code Judge Workers（跨机部署时按实际地址修改 ``MASTER_ADDR``）：
 
       .. code-block:: bash
 
+         export WORKSPACE=$(pwd)
+         export MASTER_ADDR=127.0.0.1
          redis-server --daemonize yes --protected-mode no --bind 0.0.0.0
 
          tmux new-session -d -s server \
@@ -106,7 +107,7 @@ rStar2 强化学习
 
       .. code-block:: bash
 
-         bash examples/agent/rstar2/run_rstar2.sh
+         bash examples/agent/rstar2/run_rstar2.sh rstar2-qwen2.5-7b-megatron
 
 
 可视化与结果

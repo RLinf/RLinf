@@ -4,26 +4,20 @@ Soft Actor-Critic（SAC）
 1. 引言
 ---------------
 
-Soft Actor-Critic (SAC) 是目前应用最广泛的强化学习 (RL) 算法之一。  
-它包含两个核心部分：  
+Soft Actor-Critic (SAC) 是目前应用最广泛的强化学习 (RL) 算法之一。它包含两个核心部分：  
 
 - Actor （策略模型）: 根据当前状态生成动作。  
 - Critic （Q值模型）: 评估当前状态与所选动作的价值。  
 
-SAC 是一种用于连续动作控制的 off-policy 深度强化学习算法。
-它基于最大熵强化学习框架，用熵扩展标准的强化学习优化目标，以平衡利用与探索。
-SAC 利用熵正则化的 Bellman 方程和自动温度调控，同时学习一个随机策略和多个Q函数。
-因其样本效率和稳定性，SAC 在机器人控制领域有广泛应用。
+SAC 是一种用于连续动作控制的 off-policy 深度强化学习算法。它基于最大熵强化学习框架，用熵扩展标准的强化学习优化目标，以平衡利用与探索。SAC 利用熵正则化的 Bellman 方程和自动温度调控，同时学习一个随机策略和多个Q函数。因其样本效率和稳定性，SAC 在机器人控制领域有广泛应用。
 
-更多细节请参考原始论文  
-`SAC <https://arxiv.org/abs/1801.01290>`_.
+更多细节请参考原始论文 `SAC <https://arxiv.org/abs/1801.01290>`_.
 
 
 2. 目标函数
 ----------------------
 
-设策略为 :math:`\pi`。则 :math:`\pi` 的 Q 值函数定义为: :math:`Q^{\pi}(s, a)`。
-在 SAC 里，Q 值函数满足如下松弛的 Bellman 公式： 
+设策略为 :math:`\pi`。则 :math:`\pi` 的 Q 值函数定义为: :math:`Q^{\pi}(s, a)`。在 SAC 里，Q 值函数满足如下松弛的 Bellman 公式： 
 
 .. math::
 
@@ -34,7 +28,7 @@ SAC 利用熵正则化的 Bellman 方程和自动温度调控，同时学习一�
       r(s, a) + \gamma (Q^{\pi}(s', a') - \alpha \log \pi(a'|s'))
    \right].
 
-这里 :math:`\gamma` 是折扣因子, :math:`H` 是策略的熵, and :math:`\alpha` 是温度参数（平衡熵和期望回报）。
+这里 :math:`\gamma` 是折扣因子，:math:`H` 是策略的熵，:math:`\alpha` 是温度参数（平衡熵和期望回报）。
 
 因此，第 i 个 Q 值函数的损失函数 :math:`Q_{\phi_{i}}` 如下：
 
@@ -68,8 +62,7 @@ SAC 利用熵正则化的 Bellman 方程和自动温度调控，同时学习一�
 3. 配置
 -----------------
 
-目前，在我们的框架中，SAC 仅支持具身任务。  
-算法配置如下所示：  
+目前，在我们的框架中，SAC 仅支持具身任务。算法配置如下所示：  
 
 .. code-block:: yaml
 
@@ -84,6 +77,7 @@ SAC 利用熵正则化的 Bellman 方程和自动温度调控，同时学习一�
       loss_agg_func: "token-mean"
       
       bootstrap_type: standard # [standard, always]. 是否累积下一步 Q 值的判断准则。
+      gamma: 0.8 # 折扣因子。
       tau: 0.01  # 松弛更新目标Q值网络的比例
       target_update_freq: 1  # 目标Q函数的更新频率
       entropy_tuning:

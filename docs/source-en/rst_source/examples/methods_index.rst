@@ -1,9 +1,9 @@
 RL Algorithm Recipes
 ====================
 
-This category groups examples in which the **training algorithm or recipe** is the headline — independent of any single benchmark or model. They cover offline RL, imitation learning, hybrid sim-real co-training, and residual / noise-space policy steering.
+This category groups examples in which the **training algorithm or recipe** is the headline — independent of any single benchmark or model. They cover off-policy and offline RL, online distillation, hybrid sim-real co-training, and noise-space policy steering.
 
-Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgger vs RECAP …) rather than *what* to train on or *what model* to fine-tune.
+Use this section when choosing *how* to train (SAC-Flow, DSRL, RLT, OPD, RECAP, STEAM, IQL, or Sim-Real Co-Training) instead of starting from a benchmark or model family.
 
 .. raw:: html
 
@@ -90,21 +90,10 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
        <a href="embodied/iql_d4rl.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/iql_d4rl.html" style="text-decoration: underline; color: blue;">
+         <a href="embodied/iql_d4rl.html" style="text-decoration: underline;">
            <b>IQL: Offline RL on D4RL</b>
          </a><br>
          Support IQL offline training for D4RL scenarios
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/refl.html" style="display: block;"><img src="https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/figures/ImageReward.jpg"
-            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/refl.html" style="text-decoration: underline; color: blue;">
-           <b>ReFL: Fine-Tune SD3 with ImageReward</b>
-         </a><br>
-         Fine-tune SD3 with ImageReward and optional supervised image-text updates
        </p>
      </div>
 
@@ -122,4 +111,3 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
    RECAP <embodied/recap>
    STEAM <embodied/steam>
    IQL (D4RL) <embodied/iql_d4rl>
-   ReFL <embodied/refl>

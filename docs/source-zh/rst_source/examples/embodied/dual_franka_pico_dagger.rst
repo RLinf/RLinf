@@ -25,7 +25,7 @@
 
       2× Franka（Franky）· 2× Robotiq
 
-   .. grid-item-card:: 遥操与相机
+   .. grid-item-card:: 遥操作与相机
       :text-align: center
 
       PICO 双手柄 · USB 脚踏 · 3 路相机
@@ -88,11 +88,12 @@
 
 .. dropdown:: 多机 Ray 集群启动（HG-DAgger 或双机数据采集必填）
 
-   单机数据采集会自动启动 Ray，跳过此项。三节点 HG-DAgger，或两台机器人分机数据采集（设 ``num_nodes: 2``、``node_rank: 0``、``left_controller_node_rank: 0``、``right_controller_node_rank: 1``）时，按实际环境修改并在每个节点 source ``ray_utils/realworld/setup_before_ray.sh``，再导出变量并启动 Ray：
+   单机数据采集会自动启动 Ray，跳过此项。三节点 HG-DAgger，或两台机器人分机数据采集（设 ``num_nodes: 2``、``node_rank: 0``、``left_controller_node_rank: 0``、``right_controller_node_rank: 1``）时，在每个节点激活 ``.venv`` 并导出环境变量，再启动 Ray：
 
    .. code-block:: bash
 
       # 每个节点均需执行（按节点设置 RLINF_NODE_RANK 为 0/1/2；单网卡可省略 NIC）
+      source .venv/bin/activate
       export RLINF_NODE_RANK=0
       export RLINF_COMM_NET_DEVICES=eth0
 
@@ -131,7 +132,7 @@
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
       **启动 PICO 数据流并在 env 节点验流**\ （确认数据正常后再启用机械臂）：
 
@@ -145,7 +146,7 @@
          python -m vr_data_publisher --config configs/vr_bridge.yaml
 
          # env 节点（在 RLinf 根目录且 .venv 已激活；将 IP:端口 替换为 publisher 地址）
-         python toolkits/realworld_check/test_pico_data.py \
+         python -m toolkits.realworld_check.test_pico_data \
              --zmq-addr tcp://192.168.1.20:5555
 
       确认终端输出持续刷新，且按下 ``grip``、``trigger``、``A/B`` 与 ``X/Y`` 时数值变化后再继续。

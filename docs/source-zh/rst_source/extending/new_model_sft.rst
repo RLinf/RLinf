@@ -1,9 +1,7 @@
 接入 SFT 模型
 =============
 
-本文档重点介绍如何使用 HuggingFace Transformers 库与 PyTorch FSDP（Fully Sharded Data Parallel，全分片数据并行）  
-来训练和生成模型。它支持 HuggingFace 中实现的任意模型，只要兼容 PyTorch 即可。  
-作为示例，本节将提供一个逐步的操作流程，展示如何按照 sft 模式将一个新的 HuggingFace 模型集成到 RLinf 中。  
+本文档重点介绍如何使用 HuggingFace Transformers 库与 PyTorch FSDP（Fully Sharded Data Parallel，全分片数据并行）来训练和生成模型。它支持 HuggingFace 中实现的任意模型，只要兼容 PyTorch 即可。作为示例，本节将提供一个逐步的操作流程，展示如何按照 sft 模式将一个新的 HuggingFace 模型集成到 RLinf 中。  
 
 前置条件
 -------------
@@ -75,24 +73,26 @@
 
 ----
 
-识别模型类型
-------------
+注册模型类型与构建函数
+----------------------
 
-让 RLinf 配置文件识别你的模型类型
-
-RLinf 通过 ``SupportedModel`` 识别模型类型。对于自定义 SFT 模型，
-你已经不需要再直接修改 ``SupportedModel`` 源码。
-
-推荐做法是在 ``build_config(...)`` 或训练启动前先注册模型类型，
-然后在 YAML 中把 ``actor.model.model_type`` 设为注册后的值。
-
-示例：
+使用 ``register_model(...)`` 注册模型构建函数，使配置校验（``SupportedModel``）与 ``get_model(cfg)`` 都能识别你的模型。对于以扩展包形式在 Ray worker 上运行的仓库外代码，请通过环境变量 ``RLINF_EXT_MODULE`` 指定包含 ``register()`` 的模块（见 :doc:`new_model_fsdp`）：
 
 .. code:: python
 
-   from rlinf.config import SupportedModel
+   from rlinf.models import register_model
 
-   SupportedModel.register("my_new_model")
+   def build_my_model(cfg, torch_dtype):
+       from transformers import AutoModelForCausalLM
+
+       return AutoModelForCausalLM.from_pretrained(
+           cfg.model_path,
+           torch_dtype=torch_dtype,
+           trust_remote_code=cfg.get("trust_remote_code", False),
+       )
+
+   def register():
+       register_model("my_new_model", build_my_model, category="sft")
 
 示例 YAML：
 
@@ -145,9 +145,9 @@ RLinf 通过 ``SupportedModel`` 识别模型类型。对于自定义 SFT 模型�
        def __init__(self, cfg: DictConfig):
            super().__init__(cfg)
 
-       def build_dataloader(self, data_paths: list[str], eval_dataset: bool = False):
-           # 1) 构建 dataset
-           # 3) 返回 data_loader 和 data_config(dict)
+       def build_dataloader(self):
+           # 1) 根据 self.cfg.data 构建训练/评估数据集与 dataloader
+           # 2) 返回 data_loader 和 data_config（dict）
            ...
            return data_loader, {"num_samples": len(dataset)}
 

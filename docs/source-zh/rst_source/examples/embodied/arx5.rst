@@ -131,11 +131,11 @@ ARX X5 数据采集
 
          RUN=$(ls -td logs/*-collect_data_dual_arx5 | head -n 1)
 
-         python toolkits/lerobot/merge_lerobot_datasets.py \
+         python -m toolkits.lerobot.merge_lerobot_datasets \
              --source-dir "$RUN/collected_data" \
              --output-dir "$RUN/lerobot_merged"
 
-         python toolkits/lerobot/visualize_lerobot_dataset.py \
+         python -m toolkits.lerobot.visualize_lerobot_dataset \
              --dataset-path "$RUN/lerobot_merged" \
              --output-dir "$RUN/formatted_samples" \
              --export-mp4 --mp4-fps 30

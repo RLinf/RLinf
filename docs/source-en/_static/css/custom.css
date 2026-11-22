@@ -28,6 +28,9 @@ img.logo-img {
 .red { color: red; font-weight: bold; }
 .green { color: green; }
 
+html[data-theme="dark"] .red { color: #ff6b6b; }
+html[data-theme="dark"] .green { color: #69db7c; }
+
 /* --- Home hero ----------------------------------------------------------
    Logo on top of a centered "Welcome to RLinf", Ray-style. The rst section
    title is hidden (kept only for the page <title>); the visible hero lives in
@@ -311,6 +314,11 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
   transform: translateY(-2px);
 }
 
+html[data-theme="dark"] .rlinf-ask-ai-fab {
+  background-color: #7c4dff;
+  color: #ffffff;
+}
+
 .rlinf-ai-modal-open .rlinf-ask-ai-fab {
   opacity: 0;
   pointer-events: none;
@@ -515,7 +523,9 @@ html[data-theme="dark"] {
 }
 
 .bd-article div[style*="max-width: 300px"] > img,
-.bd-article div[style*="max-width: 300px"] > video {
+.bd-article div[style*="max-width: 300px"] > video,
+.bd-article div[style*="max-width: 300px"] > a > img,
+.bd-article div[style*="max-width: 300px"] > a > video {
   border-radius: var(--rlinf-card-radius) var(--rlinf-card-radius) 0 0 !important;
   box-shadow: none !important;
   display: block;
@@ -602,8 +612,8 @@ div.highlight button.copybtn {
   --rlinf-tab-bg: #f1f5f9;
   --rlinf-tab-hover-bg: #e2e8f0;
   --rlinf-tab-active-bg: #ffffff;
-  --rlinf-tab-active-fg: var(--pst-color-primary, #1d4ed8);
-  --rlinf-tab-active-border: rgba(37, 99, 235, 0.28);
+  --rlinf-tab-active-fg: var(--pst-color-primary, #673ab7);
+  --rlinf-tab-active-border: rgba(103, 58, 183, 0.28);
   --rlinf-tab-active-shadow: 0 1px 3px rgba(15, 23, 42, 0.08),
     0 1px 2px rgba(15, 23, 42, 0.05);
   --rlinf-tab-panel-bg: #ffffff;
@@ -614,9 +624,9 @@ div.highlight button.copybtn {
 html[data-theme="dark"] {
   --rlinf-tab-bg: rgba(148, 163, 184, 0.1);
   --rlinf-tab-hover-bg: rgba(148, 163, 184, 0.18);
-  --rlinf-tab-active-bg: rgba(59, 130, 246, 0.18);
-  --rlinf-tab-active-fg: #93c5fd;
-  --rlinf-tab-active-border: rgba(96, 165, 250, 0.45);
+  --rlinf-tab-active-bg: rgba(187, 134, 252, 0.18);
+  --rlinf-tab-active-fg: #d8b4fe;
+  --rlinf-tab-active-border: rgba(187, 134, 252, 0.45);
   --rlinf-tab-active-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
   --rlinf-tab-panel-bg: rgba(30, 41, 59, 0.45);
   --rlinf-tab-panel-border: rgba(148, 163, 184, 0.22);
@@ -740,14 +750,22 @@ html[data-theme="dark"] {
 }
 
 /* Transparent canvas + dark-mode adaptation for RLinf architecture/flow SVGs
-   (overrides pydata-sphinx-theme's default white image backdrop in dark mode). */
-.bd-article img[src^="https://raw.githubusercontent.com/RLinf/misc/"][src$=".svg"] {
+   and inline badge icons (overrides pydata-sphinx-theme's white image backdrop). */
+.bd-article img.inline-icon {
+  background-color: transparent !important;
+}
+
+.bd-article img[src^="https://raw.githubusercontent.com/RLinf/misc/"][src$=".svg"],
+.bd-article img[src*="_static/svg/"][src$=".svg"]:not(.rlinf-sidebar-brand__mark):not(.rlinf-hero-logo):not(.inline-icon) {
   background-color: transparent !important;
 }
 
 html[data-theme="dark"]
   .bd-article
-  img[src^="https://raw.githubusercontent.com/RLinf/misc/"][src$=".svg"] {
+  img[src^="https://raw.githubusercontent.com/RLinf/misc/"][src$=".svg"],
+html[data-theme="dark"]
+  .bd-article
+  img[src*="_static/svg/"][src$=".svg"]:not(.rlinf-sidebar-brand__mark):not(.rlinf-hero-logo):not(.inline-icon) {
   background-color: transparent !important;
   filter: invert(0.92) hue-rotate(180deg) saturate(1.15);
 }

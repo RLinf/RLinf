@@ -1,11 +1,6 @@
 Moonlight-16B Math GRPO
 =======================
 
-.. |huggingface| image:: /_static/svg/hf-logo.svg
-   :width: 16px
-   :height: 16px
-   :class: inline-icon
-
 Train the Moonlight-16B-A3B-Instruct model (DeepSeek-V3 architecture: Multi-Latent Attention + MoE) with GRPO on math data. Compared with supervised fine-tuning, RL encourages diverse reasoning paths while optimizing final-answer correctness.
 
 Overview
@@ -72,16 +67,12 @@ Setup and Run
 
       **1. Install**
 
-      Creates a Python 3.12 venv with sglang 0.5.12, torch 2.11+cu130, TransformerEngine 2.17, transformers 5.6, ``megatron-bridge`` 0.5.0, and flash-attn, reusing the Megatron-Core 0.18 clone via ``MEGATRON_PATH``:
+      The default ``agentic`` environment installs SGLang 0.5.12.post1, PyTorch 2.11, Megatron-Core 0.18, and ``megatron-bridge`` 0.5.0:
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         MEGATRON_PATH=/path/to/Megatron-LM-core0.18 \
-         bash requirements/install.sh agentic \
-           --sglang 0.5.12 --torch 2.11.0 --transformers 5.6.0 \
-           --no-apex --platform nvidia \
-           --venv /opt/venv/reason_0512_v3 && source /opt/venv/reason_0512_v3/bin/activate
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
       **2. Download**
 

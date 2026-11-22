@@ -22,7 +22,7 @@ Dexmal DOS-W1 在线强化学习
 
       Dexmal DOS-W1 · 双臂 + 主动臂
 
-   .. grid-item-card:: 传感器与遥操
+   .. grid-item-card:: 传感器与遥操作
       :text-align: center
 
       最多 3 路 RealSense · 主动臂 · 键盘门控
@@ -52,7 +52,7 @@ Dexmal DOS-W1 在线强化学习
      - 无需相机与真机，验证配置和集群连通性。
    * - 数据采集
      - ``dosw1_collect_data``
-     - 可选采集主动臂遥操示教，用于 RLPD 热启动。
+     - 可选采集主动臂遥操作示教，用于 RLPD 热启动。
    * - 真机训练
      - ``dosw1_pick_sac_flow(_async)``
      - 在抓取任务上用 SAC 训练 ResNet-10 Flow Matching policy。
@@ -129,7 +129,7 @@ Dexmal DOS-W1 在线强化学习
 
       .. code-block:: bash
 
-         python toolkits/realworld_check/test_dosw1_controller.py \
+         python -m toolkits.realworld_check.test_dosw1_controller \
              --robot-url 192.168.1.20 \
              --print-hz 5
 
@@ -150,7 +150,7 @@ Dexmal DOS-W1 在线强化学习
          * - 按键
            - 作用
          * - ``s`` / ``r`` / ``d``
-           - 从自由遥操开始新 episode / 中止并丢弃当前 episode / 标记完成并保存。
+           - 从自由遥操作开始新 episode / 中止并丢弃当前 episode / 标记完成并保存。
          * - ``p`` / ``t`` / ``m``
            - 从 ``MODEL`` 或 ``TELEOP`` 暂停 / 切入 ``TELEOP`` / 切回 ``MODEL``\ （开启 ``manual_episode_control_only`` 时忽略）。
 
@@ -163,7 +163,7 @@ Dexmal DOS-W1 在线强化学习
          export RLINF_NODE_RANK=1
          ray start --address=192.168.1.10:6379
 
-      .. dropdown:: 采集遥操示教用于 RLPD（可选）
+      .. dropdown:: 采集遥操作示教用于 RLPD（可选）
 
          先修改 ``examples/embodiment/config/dosw1_collect_data.yaml`` 中的 ``robot_url``、四个 gRPC 端口与 ``camera_serials``\ （单节点配置，``cluster.num_nodes: 1``，会自动启动 Ray），再在机器人节点运行：
 
@@ -171,7 +171,7 @@ Dexmal DOS-W1 在线强化学习
 
             bash examples/embodiment/collect_data.sh dosw1_collect_data
 
-         用主动臂摆好初始姿态后按 ``s`` 开始，遥操完成抓取与抬起，按 ``d`` 保存或按 ``r`` 放弃重来。达到 ``runner.num_data_episodes``\ （默认 ``20``）条后自动退出，数据写入 ``<log_path>/demo_buffer/``\ （原始回合位于 ``<log_path>/pickle_episode/``）。在训练配置中指向该目录即可启用 RLPD：
+         用主动臂摆好初始姿态后按 ``s`` 开始，遥操作完成抓取与抬起，按 ``d`` 保存或按 ``r`` 放弃重来。达到 ``runner.num_data_episodes``\ （默认 ``20``）条后自动退出，数据写入 ``<log_path>/demo_buffer/``\ （原始回合位于 ``<log_path>/pickle_episode/``）。在训练配置中指向该目录即可启用 RLPD：
 
          .. code-block:: yaml
 
@@ -288,7 +288,7 @@ Dexmal DOS-W1 在线强化学习
       .. code-block:: bash
 
          # 可选：单机 dummy 冒烟自检（无需相机与真机）
-         python examples/embodiment/train_embodied_agent.py \
+         PYTHONPATH=$PWD python examples/embodiment/train_embodied_agent.py \
              --config-path "$PWD/tests/e2e_tests/embodied" \
              --config-name dosw1_dummy_sac_mlp_pick \
              runner.max_epochs=1

@@ -19,10 +19,7 @@
 
 .. important::
 
-   Ray 会在执行 ``ray start`` 时 **冻结** 当时的 Python 解释器路径与环境变量；
-   之后在该节点上由 Ray 拉起的进程都会继承这套环境。
-   请在 **每个节点** 上先 ``source`` 虚拟环境、安装好依赖，再执行 ``ray start``。
-   ``ray start`` **之后** 再安装的包对 Ray worker **不可见**。
+   Ray 会在执行 ``ray start`` 时 **冻结** 当时的 Python 解释器路径与环境变量；之后在该节点上由 Ray 拉起的进程都会继承这套环境。请在 **每个节点** 上先 ``source`` 虚拟环境、安装好依赖，再执行 ``ray start``。``ray start`` **之后** 再安装的包对 Ray worker **不可见**。
 
 
 步骤 1：在各节点配置环境变量
@@ -80,15 +77,17 @@
    RANK=1 bash ray_utils/start_ray.sh   # worker 1
    # ...
 
-脚本通过 ``RANK`` 区分 head/worker，**不会** 自动设置 ``RLINF_NODE_RANK``；
-请仍按方式 A 在各节点 ``export RLINF_NODE_RANK`` 后再运行脚本，或把该变量写入你的启动脚本。
+脚本通过 ``RANK`` 区分 head/worker，**不会** 自动设置 ``RLINF_NODE_RANK``；请先按方式 A 在各节点 ``export RLINF_NODE_RANK`` 再运行脚本，或把该变量写入启动脚本。
+
+.. warning::
+
+   ``ray_utils/start_ray.sh`` 默认使用端口 ``29500``\ （可通过 ``RAY_PORT`` 覆盖），并在 ``ray start`` 中硬编码了 ``--memory=461708984320``\ （约 430 GB）。内存较小或使用自定义端口的机器请直接使用方式 A。
 
 
 步骤 3：开启代码同步（可选）
 ----------------------------
 
-当 driver 与 worker **不共享同一文件系统**\ （云边、异构机房等）时，可在 **启动训练脚本之前** 开启 Ray 任务级代码同步：
-由 driver 将 ``rlinf/`` 包打包进 ``runtime_env.py_modules``，worker 无需本地有一份相同 checkout。
+driver 与 worker **不共享同一文件系统**\ （云边、异构机房等）时，可在 **启动训练脚本之前** 开启 Ray 任务级代码同步：由 driver 将核心包打包进 ``runtime_env.py_modules``，worker 无需本地保存相同 checkout。
 
 .. code-block:: bash
 
@@ -122,8 +121,7 @@
 
    ray status
 
-确认 **节点数量** 、每节点 **CPU/GPU** 与 **状态** （``ALIVE``）是否符合预期。
-例如 ``2`` 个节点、每节点 ``8`` 块 GPU 时，应看到 GPU 合计 ``16``。
+确认 **节点数量** 、每节点 **CPU/GPU** 与 **状态** （``ALIVE``）是否符合预期。例如 ``2`` 个节点、每节点 ``8`` 块 GPU 时，应看到 GPU 合计 ``16``。
 
 也可使用辅助脚本等待资源就绪（参数为集群 **GPU 总数**）：
 
@@ -138,7 +136,7 @@
 -----------------------
 
 1. 在任务 YAML 中设置 ``cluster.num_nodes`` 为实际节点数（与 ``RLINF_NODE_RANK`` 范围一致）。
-2. 在 **已加入 Ray 集群的任意节点** 上进入 RLinf 仓库目录，执行入口脚本，例如具身智能：
+2. 在 **head 节点**\ （``RLINF_NODE_RANK=0``）上进入 RLinf 仓库目录，执行入口脚本，例如具身智能：
 
 .. code-block:: bash
 
@@ -159,8 +157,7 @@
 
 .. note::
 
-   使用 ``node_groups``、跨机型放置时，请参阅 :doc:`../concepts/placement` 与 :doc:`hetero`。
-   云边场景下的 ``component_placement`` 示例见 :doc:`cloud_edge`。
+   使用 ``node_groups``、跨机型放置时，请参阅 :doc:`../concepts/placement` 与 :doc:`hetero`。云边场景下的 ``component_placement`` 示例见 :doc:`cloud_edge`。
 
 
 停止与重建集群

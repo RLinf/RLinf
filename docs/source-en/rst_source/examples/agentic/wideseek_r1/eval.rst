@@ -194,7 +194,7 @@ WideSeek-R1 also supports evaluation with two separate model instances in the
 multi-agent setting, so the planner and worker roles can use different models.
 
 Use
-`examples/agent/wideseek_r1/config/eval_qwen3_qa_2eng.yaml`.
+``examples/agent/wideseek_r1/config/eval_qwen3_qa_2eng.yaml``.
 The relevant fields are:
 
 .. code-block:: yaml

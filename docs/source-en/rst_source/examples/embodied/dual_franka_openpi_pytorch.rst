@@ -13,7 +13,7 @@ Collect dual-arm GELLO demonstrations, clean and merge shards, convert them to `
 Overview
 --------
 
-This guide extends the dual-Franka GELLO pipeline with native OpenPI PyTorch fine-tuning, dataset cleaning and shard merging, ``sft2deploy`` checkpoint conversion, and optional single-workstation RTC deployment. For single-arm setup and GELLO assembly, see :doc:`franka` and :doc:`franka_gello`.
+This guide extends the dual-Franka GELLO pipeline (:doc:`dual_franka`) with native OpenPI PyTorch fine-tuning, dataset cleaning and shard merging, ``sft2deploy`` checkpoint conversion, and optional single-workstation RTC deployment. For single-arm setup and GELLO assembly, see :doc:`franka` and :doc:`franka_gello`.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -106,8 +106,8 @@ Configure the PCsensor FootSwitch keys once as ``a`` / ``b`` / ``c`` with the ve
 
       export GELLO_PORT=/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0  # replace with your FTDI device
 
-      python toolkits/realworld_check/test_gello.py calibrate
-      python toolkits/realworld_check/test_gello.py align-sequential
+      python -m toolkits.realworld_check.test_gello calibrate
+      python -m toolkits.realworld_check.test_gello align-sequential
 
    Expected output on success:
 
@@ -140,7 +140,7 @@ Setup and Run
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
       **Hardware checks on** ``node 0`` (before starting Ray): configure foot-pedal permissions (replace ``event12`` with your resolved event device), verify USB-3 camera links (``5000M`` in ``lsusb -t``), and check both GELLO leaders.
 
@@ -187,16 +187,16 @@ Setup and Run
          bash examples/embodiment/collect_data.sh \
              realworld_collect_data_gello_joint_dual_franka 2>&1 | tee logs/collect.log
 
-      Monitor progress in another terminal with ``python toolkits/realworld_check/collect_monitor.py logs/collect.log``. Foot-pedal controls: ``a`` starts recording (press again to abort and drop the buffer), ``b`` increments ``segment_id``, and ``c`` marks success and writes the LeRobot shard. Set ``data_collection.resume: true`` with the same ``data_collection.save_dir`` to append new ``id_*`` shards.
+      Monitor progress in another terminal with ``python -m toolkits.realworld_check.collect_monitor logs/collect.log``. Foot-pedal controls: ``a`` starts recording (press again to abort and drop the buffer), ``b`` increments ``segment_id``, and ``c`` marks success and writes the LeRobot shard. Set ``data_collection.resume: true`` with the same ``data_collection.save_dir`` to append new ``id_*`` shards.
 
       **Clean, merge, backfill tcp_rot6d, and sync to the training node:**
 
       .. code-block:: bash
 
          # Optional: dry-run episode removal and multi-shard merge (drop --dry-run to apply)
-         python toolkits/dual_franka/delete_lerobot.py \
+         python -m toolkits.dual_franka.delete_lerobot \
              --data-dir ./logs/collect_run/lerobot_dataset/rank_0 --delete "id_0:3,5" --dry-run
-         python toolkits/dual_franka/merge_lerobot.py \
+         python -m toolkits.dual_franka.merge_lerobot \
              --rank-dir ./logs/collect_run/lerobot_dataset --out-dir ./logs/collect_run/lerobot_dataset \
              --log-file ./logs/collect.log --dry-run
 
@@ -206,7 +206,7 @@ Setup and Run
          export SFT_REPO_ID="$DATA_REPO_ID/tcp_rot6d_v1"
          export TRAINER_IP="192.168.1.50"                # replace with your training node IP
 
-         python toolkits/dual_franka/backfill_tcp_rot6d.py \
+         python -m toolkits.dual_franka.backfill_tcp_rot6d \
              --src "$HF_LEROBOT_HOME/$DATA_REPO_ID/joint_v1" \
              --dst "$HF_LEROBOT_HOME/$SFT_REPO_ID"
 
@@ -221,7 +221,7 @@ Setup and Run
          export HF_LEROBOT_HOME="$HOME/lerobot_data"            # replace with your LeRobot data root
          export SFT_REPO_ID="my_org/dual_franka_demo/tcp_rot6d_v1"
 
-         python toolkits/lerobot/calculate_norm_stats.py \
+         python -m toolkits.lerobot.calculate_norm_stats \
              --config-name pi05_dualfranka_tcp_rot6d \
              --repo-id "$SFT_REPO_ID"
 
@@ -247,14 +247,15 @@ Setup and Run
       .. code-block:: bash
 
          export TRAINER_IP="192.168.1.50"                       # replace with your training node IP
+         export TRAINER_DEPLOY_CKPT="$HOME/deploy/global_step_10000"  # --output dir from sft2deploy on trainer
          export TRAIN_LOG="./logs/sft_run"                      # replace with your SFT log dir on trainer
-         export DEPLOY_CKPT="$HOME/deploy/global_step_10000"    # replace with your target step/dir
+         export DEPLOY_CKPT="$HOME/deploy/global_step_10000"    # replace with your target step/dir on node 0
          export SFT_REPO_ID="my_org/dual_franka_demo/tcp_rot6d_v1"
 
          mkdir -p "$DEPLOY_CKPT/actor/model_state_dict" "$DEPLOY_CKPT/$SFT_REPO_ID"
 
          rsync -av \
-             "$TRAINER_IP:$TRAIN_LOG/checkpoints/global_step_10000/actor/model_state_dict/full_weights.pt" \
+             "$TRAINER_IP:$TRAINER_DEPLOY_CKPT/actor/model_state_dict/full_weights.pt" \
              "$DEPLOY_CKPT/actor/model_state_dict/full_weights.pt"
          rsync -av \
              "$TRAINER_IP:$TRAIN_LOG/checkpoints/global_step_10000/$SFT_REPO_ID/norm_stats.json" \
@@ -262,7 +263,17 @@ Setup and Run
 
       Set ``rollout.model.model_path`` to ``$DEPLOY_CKPT`` and ``actor.model.openpi_data.repo_id`` to ``<repo_id>/tcp_rot6d_v1`` in ``examples/embodiment/config/realworld_eval_dual_franka.yaml``.
 
-      **Launch evaluation** through the :doc:`real-world evaluation guide <../../evaluations/guides/realworld>`: use ``realworld_eval_dual_franka`` for two-node deployment, or ``realworld_dual_franka_pi05_RTC`` when the GPU and both arms share one workstation with overlapped inference. After homing, press ``a`` on the keyboard or foot pedal to start policy execution (``b`` marks failure and resets; ``c`` marks success and resets).
+      **Launch evaluation** on ``node 0`` (see the :doc:`real-world evaluation guide <../../evaluations/guides/realworld>` for options). Use ``realworld_eval_dual_franka`` for two-node deployment, or ``realworld_dual_franka_pi05_RTC`` when the GPU and both arms share one workstation with overlapped inference:
+
+      .. code-block:: bash
+
+         # Two-node deployment
+         bash evaluations/run_eval.sh realworld_eval_dual_franka
+
+         # Single-workstation RTC deployment
+         bash evaluations/run_eval.sh realworld_dual_franka_pi05_RTC
+
+      After homing, press ``a`` on the keyboard or foot pedal to start policy execution (``b`` marks failure and resets; ``c`` marks success and resets).
 
 .. dropdown:: Config files, norm stats, and checkpoint conversion notes
 
@@ -294,16 +305,16 @@ Setup and Run
    * ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION`` and ``LEFT_GELLO_PORT`` / ``RIGHT_GELLO_PORT``: stable ``/dev/serial/by-id`` paths.
    * ``TASK_DESCRIPTION``: natural-language task prompt shared across collection, SFT, and deployment.
    * ``openpi_data.norm_stats_path``: path to the ``norm_stats.json`` written by ``calculate_norm_stats.py`` (typically ``./assets/pi05_dualfranka_tcp_rot6d/<repo_id>/norm_stats.json``); omit this key to use the OpenPI TrainConfig default under ``model_path``.
-   * Base ``openpi-jax`` conversion follows :doc:`sft_openpi`; PyTorch-to-safetensors conversion is also available via:
+   * Base ``openpi-jax`` conversion follows :doc:`sft_openpi`; to convert RLinf SFT ``full_weights.pt`` checkpoints to OpenPI safetensors layout, see :doc:`../../guides/convertor` or inspect the CLI flags:
 
    .. code-block:: bash
 
-      python rlinf/utils/ckpt_convertor/openpi/pt_to_safetensors.py
+      python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft_to_openpi --help
 
 Results and Troubleshooting
 ---------------------------
 
-Monitor SFT loss and learning rate on the training node with ``tensorboard --logdir ./logs`` and track live collection on ``node 0`` with ``python toolkits/realworld_check/collect_monitor.py logs/collect.log``.
+Monitor SFT loss and learning rate on the training node with ``tensorboard --logdir ./logs`` and track live collection on ``node 0`` with ``python -m toolkits.realworld_check.collect_monitor logs/collect.log``.
 
 .. list-table::
    :header-rows: 1

@@ -155,8 +155,7 @@ StarVLA 推理输出动作块 ``[B, T, D_action]``，其中 ``T = actor.model.nu
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform ascend embodied --model starvla --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model starvla --env libero && source .venv/bin/activate
 
       **2. 下载模型**
 

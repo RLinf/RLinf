@@ -9,7 +9,7 @@ This tool automatically generates optimal component placement configurations for
 Overview
 ~~~~~~~~
 
-The auto placement tool consists of three main components in `toolkits/auto_placement`:
+The auto placement tool consists of three main components in ``toolkits/auto_placement``:
 
 - **scheduler_task.py**: Main scheduler that performs time and space division multiplexing to find optimal placements
 - **resource_allocator.py**: Handles resource allocation for different components
@@ -34,7 +34,7 @@ Add the profile data to your YAML configuration file under the ``profile_data`` 
 
 **How to collect profile data:**
 
-1. Run your training with origin cluster in collocated mode for several iterations
+1. Run your training on the original cluster in collocated mode for several iterations
 2. Use profiling tools to measure the time each component takes per iteration
 3. Record the average time per iteration for each component
 
@@ -63,9 +63,7 @@ The output of this script is like:
 Step 3: Apply the Results
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The tool will output a new configuration with optimized component placement. Copy the ``cluster.component_placement`` section from the output and replace the corresponding section in your original YAML file.
-
-Replace the ``cluster.component_placement`` section in your original configuration file with this optimized placement.
+The tool outputs a new configuration with optimized component placement. Copy the ``cluster.component_placement`` section from the output and replace the corresponding section in your original YAML file.
 
 Troubleshooting
 ~~~~~~~~~~~~~~~

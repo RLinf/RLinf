@@ -180,12 +180,12 @@ Setup and Run
 
       **1. Install**
 
-      Install the OpenPI environment on the GPU node (same environment as simulator Pi0 DAgger in :doc:`dagger`):
+      Install the OpenPI and Franka environment on the GPU node:
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
       **2. Start the Ray head node**
 
@@ -202,7 +202,7 @@ Setup and Run
       .. code-block:: bash
 
          export HF_LEROBOT_HOME=/path/to/lerobot_root
-         python toolkits/lerobot/calculate_norm_stats.py \
+         python -m toolkits.lerobot.calculate_norm_stats \
              --config-name pi0_realworld \
              --repo-id realworld_franka_bin_relocation
 

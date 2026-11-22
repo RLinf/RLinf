@@ -166,12 +166,19 @@ Why RLinf
 
 .. toctree::
   :caption: Agentic & Generative
-  :maxdepth: 3
+  :maxdepth: 2
   :includehidden:
   :titlesonly:
   :hidden:
 
-  Agentic & Reasoning <rst_source/examples/agentic/index>
+  Overview <rst_source/examples/agentic/index>
+  Math Reasoning <rst_source/examples/agentic/math_reasoning/index>
+  Search-R1 <rst_source/examples/agentic/searchr1/index>
+  WideSeek-R1 <rst_source/examples/agentic/wideseek_r1/index>
+  rStar2 <rst_source/examples/agentic/rstar2>
+  AgentLightning <rst_source/examples/agentic/agentlightning_calc_x>
+  Coding Online RL <rst_source/examples/agentic/coding_online_rl>
+  Qwen3-VL GRPO <rst_source/examples/agentic/qwen3_vl_geo3k>
   Image & Video Generation <rst_source/examples/video_models>
 
 .. toctree::

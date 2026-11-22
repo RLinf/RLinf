@@ -141,7 +141,7 @@ Setup and Run
       .. code-block:: bash
 
          export HF_LEROBOT_HOME=/path/to/lerobot_data
-         python toolkits/lerobot/calculate_norm_stats.py \
+         python -m toolkits.lerobot.calculate_norm_stats \
              --config-name pi0_realworld \
              --repo-id realworld_franka_bin_relocation
 
@@ -195,7 +195,13 @@ Setup and Run
                target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
                task_description: "pick up the object and place it into the container"
 
-      For multi-node setups, start the Ray cluster as in :doc:`franka`; on a single host, launch directly. Run deployment with ``realworld_pnp_eval`` following the :doc:`real-world evaluation guide <../../evaluations/guides/realworld>`. The policy autonomously controls the arm for ``env.eval.rollout_epoch`` episodes.
+      ``evaluations/realworld/realworld_pnp_eval.yaml`` defaults to a two-node cluster (``cluster.num_nodes: 2`` with ``franka`` on ``node_rank: 1``). For multi-node deployment, start the Ray cluster as in :doc:`franka`. For single-host deployment, set ``cluster.num_nodes: 1`` and set both ``node_ranks: 0`` and ``node_rank: 0`` on the ``franka`` group (or use the single-node ``realworld_eval`` config below), otherwise Ray waits indefinitely for a second node. Launch deployment from the repository root (see the :doc:`real-world evaluation guide <../../evaluations/guides/realworld>` for options):
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh realworld_pnp_eval
+
+      The policy autonomously controls the arm for ``env.eval.rollout_epoch`` episodes.
 
 .. dropdown:: Generic Real-World SFT Environment (FrankaEnv-v1)
 
@@ -213,7 +219,11 @@ Setup and Run
         ee_pose_limit_min: [0.4, -0.2, 0.05, -3.64, -0.5, -0.5]
         ee_pose_limit_max: [0.6,  0.2, 0.35, -2.64,  0.5,  0.5]
 
-   For standalone deployment with this generic environment and a π₀ policy, edit ``ROBOT_IP`` and ``MODEL_PATH`` in ``evaluations/realworld/realworld_eval.yaml`` and launch per the :doc:`real-world evaluation guide <../../evaluations/guides/realworld>`.
+   For single-node standalone deployment with this generic environment and a π₀ policy, edit ``ROBOT_IP`` and ``MODEL_PATH`` in ``evaluations/realworld/realworld_eval.yaml`` and run (see the :doc:`real-world evaluation guide <../../evaluations/guides/realworld>`):
+
+   .. code-block:: bash
+
+      bash evaluations/run_eval.sh realworld_eval
 
 Results and Troubleshooting
 ---------------------------

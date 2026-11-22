@@ -290,8 +290,7 @@ NVIDIA CUDA supports all four environments listed above (select **π₀** or **�
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env libero && source .venv/bin/activate
 
       **2. Download**
 
@@ -319,8 +318,7 @@ NVIDIA CUDA supports all four environments listed above (select **π₀** or **�
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
       Configure CPU simulation:
 
@@ -345,8 +343,7 @@ NVIDIA CUDA supports all four environments listed above (select **π₀** or **�
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform ascend embodied --model openpi --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model openpi --env libero && source .venv/bin/activate
 
       .. include:: _ascend_torch.rst
 
@@ -376,8 +373,7 @@ NVIDIA CUDA supports all four environments listed above (select **π₀** or **�
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform ascend embodied --model openpi --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
       Configure CPU simulation:
 
@@ -402,8 +398,7 @@ NVIDIA CUDA supports all four environments listed above (select **π₀** or **�
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform musa embodied --model openpi --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform musa embodied --model openpi --env libero && source .venv/bin/activate
 
       If a Transformers model path requests ``attn_implementation: flash_attention_2`` and Transformers cannot detect the vendor package, select ``sdpa`` instead.
 

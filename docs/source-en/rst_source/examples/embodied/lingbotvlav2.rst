@@ -132,18 +132,17 @@ LingbotVLA 1.0 and 2.0 both install a Python package named ``lingbotvla``, so ea
 
       .. code-block:: yaml
 
-         model_path: /path/to/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
-         tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
+         model_path: ./lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
+         tokenizer_path: ./Qwen3-VL-4B-Instruct
          lingbotvlav2:
-           training_config_path: /path/to/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml
-           robot_config_path: /path/to/RLinf/.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
-           stats_path: /path/to/RLinf/.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
+           training_config_path: ./lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml
+           robot_config_path: ./.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
+           stats_path: ./.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
 
-      Export ``ROBOT_PLATFORM="ALOHA"`` (required for the dual-arm action space) and the RoboTwin paths, then start PPO training:
+      Export the RoboTwin paths, then start PPO training:
 
       .. code-block:: bash
 
-         export ROBOT_PLATFORM="ALOHA"
          export ROBOTWIN_PATH=$PWD/RoboTwin
          export ROBOTWIN_ASSETS_PATH=$ROBOTWIN_PATH
          bash examples/embodiment/run_embodiment.sh robotwin_click_bell_ppo_lingbotvlav2
@@ -154,12 +153,12 @@ LingbotVLA 1.0 and 2.0 both install a Python package named ``lingbotvla``, so ea
          - **Flow-SDE PPO & critic warmup**: rollout samples one random denoising step per chunk from the flow-SDE and integrates the rest with the ODE. PPO scores that step over the 14 decoded latent coordinates with ``logprob_type: token_level``, dual-clip ``clip_ratio_c: 3.0``, chunk-level rewards, and ``actor.optim.critic_warmup_steps: 20``.
          - **Mixed precision**: the actor stores trainable action-expert weights in ``fp32`` so small updates do not round away, while FSDP2 computes in ``bf16`` and rollout keeps a ``bf16`` copy.
          - **Log-prob drift guard**: before each update, the actor re-scores every sampled SDE step. ``algorithm.max_recompute_logprob_gap: 1.0e-3`` halts training if the summed log-probability differs between rollout and actor by more than the threshold (logged under ``actor/rollout_train_joint_logprob_gap_max``).
-         - **Standalone evaluation**: follow the :doc:`RoboTwin evaluation guide <../../evaluations/guides/robotwin>` with ``robotwin_click_bell_lingbotvlav2_eval`` (in a new shell, export the three variables above first). To evaluate a PPO checkpoint instead of the released weights, pass its full weights file:
+         - **Standalone evaluation**: follow the :doc:`RoboTwin evaluation guide <../../evaluations/guides/robotwin>` with ``robotwin_click_bell_lingbotvlav2_eval`` (in a new shell, export the two variables above first). To evaluate a PPO checkpoint instead of the released weights, pass its full weights file:
 
            .. code-block:: bash
 
-              bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
-                runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
+              bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvlav2_eval \
+                runner.ckpt_path=./logs/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt
 
 Visualization and Results
 -------------------------

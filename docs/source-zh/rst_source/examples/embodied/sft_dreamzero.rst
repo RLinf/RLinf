@@ -283,7 +283,7 @@ DreamZero 监督微调
 
    **配置示例对照**
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       # 数据（单数据集）
       data:
@@ -396,7 +396,7 @@ DreamZero 监督微调
 
 2. 启动 TensorBoard：
 
-.. code:: bash
+.. code-block:: bash
 
    tensorboard --logdir ./logs --port 6006
 

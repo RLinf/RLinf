@@ -4,22 +4,19 @@ REINFORCE++
 1. 引言
 ---------------
 
-**REINFORCE++** 是一种轻量级的强化学习后训练方法。  
-它基于经典的 REINFORCE 算法，并借鉴了 PPO 的两个关键思想 —— *逐 token 的 KL 惩罚* 和 *优势归一化* ——  
-同时 **避免了额外的策略裁剪损失**，因为裁剪可能会导致梯度估计出现偏差。  
+**REINFORCE++** 是一种轻量级的强化学习后训练方法。它基于经典的 REINFORCE 算法，并借鉴了 PPO 的两个关键思想 —— *逐 token 的 KL 惩罚* 和 *优势归一化* ——同时 **避免了额外的策略裁剪损失**，因为裁剪可能会导致梯度估计出现偏差。  
 
 核心设计选择包括：  
 
-* **单响应训练** (`group_size = 1`)：每个 prompt 只采样一个答案。  
-* **逐 token KL 惩罚** （默认 *k₂*）：KL 不作为额外损失项加入，而是从标量奖励中扣除。  
-* **全局优势归一化**：在整个 batch 上进行归一化。  
-* **REINFORCE++ 基线** （`use_reinpp_baseline: True`，要求 `group_size > 1`）：使用每个 prompt 内的平均奖励作为基线，*然后* 再进行全局归一化。
+* **单响应训练**\ （``group_size = 1``）：每个 prompt 只采样一个答案。
+* **逐 token KL 惩罚**\ （默认 *k₂*）：KL 不作为额外损失项加入，而是从标量奖励中扣除。
+* **全局优势归一化**：在整个 batch 上归一化。
+* **REINFORCE++ 基线**\ （``use_reinpp_baseline: True``，要求 ``group_size > 1``）：使用每个 prompt 内的平均奖励作为基线，*然后* 再做全局归一化。
 
 2. 目标函数
 ----------------------
 
-设 :math:`q` 为 prompt，:math:`o_{1:T}` 为生成的 token 序列，:math:`\pi_{\theta}^{\text{RL}}` 为当前策略。  
-在时间步 :math:`t` 的逐 token 优势为：  
+设 :math:`q` 为 prompt，:math:`o_{1:T}` 为生成的 token 序列，:math:`\pi_{\theta}^{\text{RL}}` 为当前策略。在时间步 :math:`t` 的逐 token 优势为：  
 
 .. math::
 
@@ -66,6 +63,7 @@ REINFORCE++
      reinpp_kl_beta: 0.001         # REINFORCE++中的KL惩罚系数，与计算loss时使用的kl系数的区分
      use_reinpp_baseline: False    # 不使用基线
      group_size:    1              # 每个 prompt 一个响应
+     kl_beta:       0.0001
 
    data:
      rollout_batch_size: 8192

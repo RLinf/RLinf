@@ -125,7 +125,7 @@ Franka GELLO 遥操作
              | tee logs/collect.log
 
          # 终端 2 —— 实时进度条（传 --no-replay 可直接从日志末尾开始监听）
-         python toolkits/realworld_check/collect_monitor.py logs/collect.log
+         python -m toolkits.realworld_check.collect_monitor logs/collect.log
 
 .. dropdown:: GELLO 配置项与双臂说明
 

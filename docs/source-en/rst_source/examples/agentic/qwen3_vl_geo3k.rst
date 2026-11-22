@@ -1,12 +1,7 @@
 Qwen3-VL GRPO
 =============
 
-.. |huggingface| image:: /_static/svg/hf-logo.svg
-   :width: 16px
-   :height: 16px
-   :class: inline-icon
-
-This document introduces how to train vision-language models (VLMs) for geometric reasoning using reinforcement learning (RL) within the RLinf framework.
+Train vision-language models (VLMs) for geometric reasoning using reinforcement learning (RL) in RLinf.
 
 Setup and Run
 -------------
@@ -26,7 +21,6 @@ The Qwen3-VL model family requires ``torch >= 2.8.0``, ``sglang == 0.5.4``, and
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         export MEGATRON_PATH=/path/to/Megatron-LM
          bash requirements/install.sh agentic \
              --torch 2.8.0 \
              --sglang 0.5.4 \
@@ -35,7 +29,7 @@ The Qwen3-VL model family requires ``torch >= 2.8.0``, ``sglang == 0.5.4``, and
 
       .. note::
 
-         ``MEGATRON_PATH`` must point to an existing Megatron-LM repository clone (the ``core_r0.13.0`` branch is recommended). If the directory does not exist, the install script will exit early without installing flash-attn or apex. Since this example uses FSDP2, ``--no-apex`` skips apex compilation.
+         Since this example uses FSDP2, ``--no-apex`` skips apex compilation.
 
       **2. Download**
 
@@ -162,13 +156,13 @@ We conducted experiments using Qwen3-VL-2B-Instruct. The training curves are sho
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/qwen3vl_grpo_reward.jpeg" style="width: 50%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/qwen3vl_grpo_reward.jpeg" style="width: 50%;"/>
        <p><em>reward with TIS</em></p>
      </div>
    </div>
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/qwen3vl_grpo_entropy.jpeg" style="width: 50%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/qwen3vl_grpo_entropy.jpeg" style="width: 50%;"/>
        <p><em>entropy with TIS</em></p>
      </div>
    </div>
@@ -181,13 +175,13 @@ Without TIS, there is a high probability that the reward curve will collapse aft
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/qwen3vl_grpo_reward_wo_tis.jpeg" style="width: 50%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/qwen3vl_grpo_reward_wo_tis.jpeg" style="width: 50%;"/>
        <p><em>reward without TIS</em></p>
      </div>
    </div>
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/qwen3vl_grpo_entropy_wo_tis.jpeg" style="width: 50%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/qwen3vl_grpo_entropy_wo_tis.jpeg" style="width: 50%;"/>
        <p><em>entropy without TIS</em></p>
      </div>
    </div>

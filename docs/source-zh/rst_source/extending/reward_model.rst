@@ -8,12 +8,12 @@
 
 完整流程包括四个阶段：
 
-1. 数据收集：在 RL 运行过程中采集原始 episode 数据。
+1. 数据采集：在 RL 运行过程中采集原始 episode 数据。
 2. 数据转换：将原始 episode 转成图像分类数据或 VLM SFT 数据。
 3. Reward model 训练：训练 ResNet reward model，或微调 VLM reward model。
 4. Reward model 在 RL 中推理：将训练好的模型接入在线 rollout，参与最终 reward 计算。
 
-1. 数据收集
+1. 数据采集
 ^^^^^^^^^^^
 
 reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供了统一的数据采集封装，相关用法可参考 :doc:`数据采集教程 <../guides/data_collection>`。

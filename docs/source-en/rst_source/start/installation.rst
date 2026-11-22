@@ -24,7 +24,7 @@ Choose your target below and run the setup commands:
    .. tab-item:: Real-World Robot
       :sync: realworld
 
-      Install the robot driver stack on the controller node (no GPU needed) and the model stack on the GPU node (swap ``franka`` for ``arx5``, ``yam``, ``xsquare_turtle2``, ``so101``, ``piper``, ``lekiwi``, ``dosw1``, or ``gim_arm``; see :doc:`../examples/real_world_index`):
+      Install the robot driver stack on the controller node (no GPU needed) and the model stack on the GPU node (swap ``franka`` for ``arx5``, ``yam``, ``xsquare_turtle2``, ``so101``, ``piper``, ``lekiwi``, ``dosw1``, or ``gim_arm``; for Robbyant R2 over RFrame/ROS 2, see :doc:`../examples/embodied/r2`, and see :doc:`../examples/real_world_index` for all robots):
 
       .. code-block:: bash
 
@@ -66,7 +66,7 @@ Choose your target below and run the setup commands:
 
 .. tip::
 
-   **Mainland China mirror:** append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
+   **Mainland China mirror:** append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Pass ``--venv <dir>`` when installing multiple model/environment stacks so each stack keeps its own virtual environment instead of overwriting ``.venv``.
 
 Supported Models, Environments, and Platforms
 ---------------------------------------------
@@ -88,11 +88,11 @@ Pass any of the values below to ``--model``, ``--env``, ``--engine``, or ``--pla
    * - ``--env`` (World Models)
      - ``opensora``, ``wan``
    * - ``--env`` (Real Robots)
-     - ``franka``, ``franka-ros``, ``xsquare_turtle2``, ``dosw1``, ``gim_arm``, ``so101``, ``lekiwi``, ``piper``, ``arx5``, ``yam``, ``dummy``
+     - ``franka``, ``franka-ros``, ``xsquare_turtle2``, ``dosw1``, ``gim_arm``, ``so101``, ``lekiwi``, ``piper``, ``arx5``, ``yam``, ``dummy`` (Robbyant R2 uses RFrame and ROS 2 rather than an ``install.sh --env`` target; see :doc:`../examples/embodied/r2`)
    * - ``--engine``
      - ``sglang`` (default for ``agentic``), ``vllm`` (``agentic``), ``phyai`` (``embodied`` with ``--model openpi --env libero``)
    * - ``--platform``
-     - ``nvidia`` (default), ``amd``, ``ascend``, ``musa``, ``kunlun``, ``biren``, ``metax`` (see :ref:`the hardware matrix <model-hardware-support>`)
+     - ``nvidia`` (default), ``amd``, ``ascend``, ``musa``, ``kunlun``, ``biren``, ``metax`` (Intel XPU uses a PyTorch XPU environment rather than a ``--platform`` flag; see :ref:`the hardware matrix <model-hardware-support>`)
 
 .. dropdown:: More installer flags (optional)
 

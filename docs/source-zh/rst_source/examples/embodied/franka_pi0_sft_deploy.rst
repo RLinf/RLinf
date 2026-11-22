@@ -141,7 +141,7 @@ Franka π₀ SFT 与部署
       .. code-block:: bash
 
          export HF_LEROBOT_HOME=/path/to/lerobot_data
-         python toolkits/lerobot/calculate_norm_stats.py \
+         python -m toolkits.lerobot.calculate_norm_stats \
              --config-name pi0_realworld \
              --repo-id realworld_franka_bin_relocation
 
@@ -195,7 +195,13 @@ Franka π₀ SFT 与部署
                target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
                task_description: "pick up the object and place it into the container"
 
-      多机部署先按 :doc:`franka` 启动 Ray 集群，单机部署可直接启动。参照 :doc:`真机评测指南 <../../evaluations/guides/realworld>` 使用 ``realworld_pnp_eval`` 运行部署，policy 会按 ``env.eval.rollout_epoch`` 指定的轮数自主控制机械臂。
+      ``evaluations/realworld/realworld_pnp_eval.yaml`` 默认为双节点集群（``cluster.num_nodes: 2``，``franka`` 位于 ``node_rank: 1``）。多机部署先按 :doc:`franka` 启动 Ray 集群；单机部署须将 ``cluster.num_nodes`` 改为 ``1``，并将 ``franka`` 组的 ``node_ranks`` 与 ``node_rank`` 均改为 ``0``\ （或改用下方单机配置 ``realworld_eval``），否则 Ray 会一直等待第二个节点。在仓库根目录启动部署（更多选项见 :doc:`真机评测指南 <../../evaluations/guides/realworld>`）：
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh realworld_pnp_eval
+
+      policy 会按 ``env.eval.rollout_epoch`` 指定的轮数自主控制机械臂。
 
 .. dropdown:: 通用真机 SFT 环境（FrankaEnv-v1）
 
@@ -213,7 +219,11 @@ Franka π₀ SFT 与部署
         ee_pose_limit_min: [0.4, -0.2, 0.05, -3.64, -0.5, -0.5]
         ee_pose_limit_max: [0.6,  0.2, 0.35, -2.64,  0.5,  0.5]
 
-   使用该通用环境部署 π₀ 时，替换 ``evaluations/realworld/realworld_eval.yaml`` 中的 ``ROBOT_IP`` 与 ``MODEL_PATH``，再按 :doc:`真机评测指南 <../../evaluations/guides/realworld>` 启动。
+   使用该通用环境单机部署 π₀ 时，替换 ``evaluations/realworld/realworld_eval.yaml`` 中的 ``ROBOT_IP`` 与 ``MODEL_PATH``，然后运行（详见 :doc:`真机评测指南 <../../evaluations/guides/realworld>`）：
+
+   .. code-block:: bash
+
+      bash evaluations/run_eval.sh realworld_eval
 
 结果与常见问题
 --------------

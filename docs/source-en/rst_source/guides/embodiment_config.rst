@@ -51,7 +51,7 @@ runner
    * - ``runner.overlap_env_bootstrap``
      - Overlap environment bootstrap (reset) with actor training to hide reset
        latency. Useful when environment reset is slow. Only effective when
-       ``env.enable_offload`` is False; enabling it may increase GPU memory
+       ``env.train.enable_offload`` is False; enabling it may increase GPU memory
        pressure when the environment and actor share the same accelerator.
    * - ``runner.enable_decoupled_mode``
      - Decouple Env Workers from Rollout Workers. When enabled, an Env Worker is
@@ -104,7 +104,7 @@ algorithm
    * - ``algorithm.normalize_advantages``
      - Normalize advantages across the batch.
    * - ``algorithm.kl_penalty``
-     - How to estimate the KL divergence (``kl`` or ``kl_penalty``).
+     - How to estimate the KL divergence (``kl``, ``abs``, ``mse``, ``low_var_kl``, or ``full``).
    * - ``algorithm.reward_type``
      - Reward aggregation level (``chunk_level`` or ``action_level``). Also drives
        ``actor.model.value_type`` by default.
@@ -154,9 +154,9 @@ env
 
   env:
     group_name: "EnvGroup"
-    enable_offload: True
 
     train:
+      enable_offload: True
       rollout_epoch: 1
       total_num_envs: 128
       auto_reset: True
@@ -166,6 +166,7 @@ env
       max_steps_per_rollout_epoch: 160
 
     eval:
+      enable_offload: True
       rollout_epoch: 1
       total_num_envs: 16
       auto_reset: True
@@ -182,8 +183,8 @@ env
      - Description
    * - ``env.group_name``
      - Logical name for the environment worker group.
-   * - ``env.enable_offload``
-     - Offload the environment to reduce memory usage.
+   * - ``env.train.enable_offload`` / ``env.eval.enable_offload``
+     - Offload the training/evaluation environment to reduce GPU memory usage.
    * - ``env.train.rollout_epoch`` / ``env.eval.rollout_epoch``
      - Number of rollout epochs per training/evaluation step. Evaluation metrics
        are averaged over passes with the same seeds.

@@ -74,7 +74,7 @@ runner
 .. code:: yaml
 
   runner:
-    task_type: math
+    task_type: reasoning
     logger:
       log_path: ${runner.output_dir}/${runner.experiment_name}
       project_name: rlinf
@@ -100,7 +100,7 @@ runner
    * - 参数
      - 说明
    * - ``runner.task_type``
-     - 任务类型标识（``math`` 或 ``embodied``）。
+     - 任务类型标识（``embodied``、``embodied_eval``、``reasoning``、``reasoning_eval``、``coding_online_rl``、``sft`` 或 ``offline``）。
    * - ``runner.logger.log_path``
      - 日志输出的根目录。
    * - ``runner.logger.project_name``
@@ -143,6 +143,7 @@ algorithm
 
     adv_type: grpo
     normalize_advantages: True
+    recompute_logprobs: True
     early_stop_imp_ratio: 5.0
     use_valid_token_scale: False
 
@@ -172,7 +173,7 @@ algorithm
    * - ``algorithm.kl_beta``
      - 加入到奖励中的 KL 权重。
    * - ``algorithm.kl_penalty_type``
-     - KL 形态（如 ``low_var_kl``）。
+     - KL 形态（``kl``、``abs``、``mse``、``low_var_kl`` 或 ``full``）。
    * - ``algorithm.ratio_clip_eps``
      - PPO 比率裁剪阈值。
    * - ``algorithm.entropy_bonus``
@@ -184,7 +185,9 @@ algorithm
    * - ``algorithm.adv_type``
      - 优势函数估计类型（如 ``grpo``）。
    * - ``algorithm.normalize_advantages``
-     - 是否对优势进行归一化。
+     - 是否对优势归一化。
+   * - ``algorithm.recompute_logprobs``
+     - 是否在 actor 侧为采样序列重新计算对数概率。
    * - ``algorithm.early_stop_imp_ratio``
      - 当重要性比超出阈值时提前终止本次更新。
    * - ``algorithm.use_valid_token_scale``
@@ -214,8 +217,6 @@ rollout
       model_path: ../../model/DeepSeek-R1-Distill-Qwen-1.5B/
       model_type: qwen2.5
 
-    recompute_logprobs: True
-
 .. list-table::
    :header-rows: 1
    :widths: 32 68
@@ -230,8 +231,6 @@ rollout
      - 生成后端所用 HF 模型路径。
    * - ``rollout.model.model_type``
      - 后端内部使用的模型架构标记（如 ``qwen2.5``）。
-   * - ``rollout.recompute_logprobs``
-     - 是否为采样序列重新计算对数概率。
 
 actor
 ~~~~~~~~~~~~~~~

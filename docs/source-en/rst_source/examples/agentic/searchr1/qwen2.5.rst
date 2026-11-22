@@ -64,13 +64,12 @@ Start the local wiki retrieval server from :doc:`index` before launching trainin
 
       **3. Launch**
 
-      Update ``data.train_data_paths``, ``data.val_data_paths``, and ``rollout.model.model_path`` in ``examples/agent/searchr1/config/train_qwen2.5.yaml`` (set ``rollout.detokenize: True`` if using ``sampling_params.stop``, and keep ``rollout.return_logprobs`` equal to ``not algorithm.recompute_logprobs``):
+      Update ``data.train_data_paths`` and ``rollout.model.model_path`` in ``examples/agent/searchr1/config/train_qwen2.5.yaml`` (set ``rollout.detokenize: True`` if using ``sampling_params.stop``, and keep ``rollout.return_logprobs`` equal to ``not algorithm.recompute_logprobs``):
 
       .. code-block:: yaml
 
          data:
            train_data_paths: ["/path/to/train.jsonl"]
-           val_data_paths: ["/path/to/train.jsonl"]
 
          rollout:
            model:
@@ -100,13 +99,12 @@ Start the local wiki retrieval server from :doc:`index` before launching trainin
 
       **3. Launch**
 
-      Update ``data.train_data_paths``, ``data.val_data_paths``, and ``rollout.model.model_path`` in ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml`` (PPO uses rollout logprobs directly, keeping ``rollout.return_logprobs`` equal to ``not algorithm.recompute_logprobs``):
+      Update ``data.train_data_paths`` and ``rollout.model.model_path`` in ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml`` (PPO uses rollout logprobs directly, keeping ``rollout.return_logprobs`` equal to ``not algorithm.recompute_logprobs``):
 
       .. code-block:: yaml
 
          data:
            train_data_paths: ["/path/to/train.jsonl"]
-           val_data_paths: ["/path/to/train.jsonl"]
 
          rollout:
            model:
@@ -136,7 +134,7 @@ Start the local wiki retrieval server from :doc:`index` before launching trainin
 
       **3. Launch**
 
-      Update ``data.train_data_paths``, ``data.val_data_paths``, and ``rollout.model.model_path`` in ``examples/agent/searchr1/config/train_qwen2.5_fsdp.yaml`` (with ``agentloop.is_dynamic_rollout_batch: True`` and ``actor.training_backend: fsdp``, the entrypoint uses ``MAFSDPActor`` and keeps ``actor.pack_traj: True`` to pack compatible turns from the same trajectory and avoid recomputing shared prefixes):
+      Update ``data.train_data_paths`` and ``rollout.model.model_path`` in ``examples/agent/searchr1/config/train_qwen2.5_fsdp.yaml`` (with ``agentloop.is_dynamic_rollout_batch: True`` and ``actor.training_backend: fsdp``, the entrypoint uses ``MAFSDPActor`` and keeps ``actor.pack_traj: True`` to pack compatible turns from the same trajectory and avoid recomputing shared prefixes):
 
       .. code-block:: bash
 
@@ -174,7 +172,7 @@ HuggingFace model:
    rm -rf "${CKPT_PATH_MF}"
    rm -f "${CKPT_PATH_HF}"/*.done
    shopt -s extglob
-   cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index.json) "${CKPT_PATH_HF}"
+   cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index).json "${CKPT_PATH_HF}"
 
 A PPO run saves an ``actor`` and a ``critic`` directory under each
 ``global_step_xxx``. Export the ``actor`` directory with the commands above.
@@ -193,12 +191,12 @@ directory:
        convertor.ckpt_path=/path/to/checkpoints/global_step_xxx/actor/model_state_dict/full_weights.pt \
        convertor.save_path=/path/to/hf_model
 
-`config.yaml` is written with the training run. The converter can also locate
-it automatically when it is stored near `convertor.ckpt_path`. Use the exported
+``config.yaml`` is written with the training run. The converter can also locate
+it automatically when it is stored near ``convertor.ckpt_path``. Use the exported
 HuggingFace model for standalone evaluation.
 
 Fill the converted HuggingFace model path into
-`examples/agent/searchr1/config/eval_qwen2.5.yaml`:
+``examples/agent/searchr1/config/eval_qwen2.5.yaml``:
 
 .. code-block:: yaml
 
@@ -216,10 +214,9 @@ Modify the evaluation dataset path:
 
    data:
      ……
-     train_data_paths: ["/path/to/eval.jsonl"]
      val_data_paths: ["/path/to/eval.jsonl"]
 
-Run `bash examples/agent/searchr1/run_eval.sh` to start evaluation.
+Run ``bash examples/agent/searchr1/run_eval.sh`` to start evaluation.
 
 Visualization and Results
 -------------------------

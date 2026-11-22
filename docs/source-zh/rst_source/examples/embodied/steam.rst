@@ -36,63 +36,14 @@ STEAM
 | **你将完成：** SFT 一个集成进度评论器 → 计算集成优势 → CFG 训练策略 → 评测。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · SigLIP + Gemma3 + π₀.₅ 检查点 · LeRobot 格式数据集（见下文步骤）。
 
-流程
-----------------------------------------
-
-一次 STEAM 运行包含两个 STEAM 特有阶段，外加一个 CFG 训练阶段：
-
-.. code-block:: text
-
-   ┌────────────────────────┐     ┌────────────────────────┐     ┌──────────────────────┐
-   │  Step 1                │     │  Step 2                │     │  Step 3              │
-   │  STEAM Value Model SFT │────▶│  Compute Ensemble      │────▶│  CFG Training        │
-   │                        │     │  Advantages            │     │                      │
-   │  Train an ensemble of  │     │  Worst-of-N ensemble   │     │  Train the policy    │
-   │  pair-classification   │     │  signed score -> bool  │     │  with classifier-    │
-   │  progress critics      │     │  advantage labels      │     │  free guidance       │
-   └────────────────────────┘     └────────────────────────┘     └──────────────────────┘
-
-**核心思路**
-
-1. **Value Model SFT**：训练一组进度评论器（SigLIP + Gemma3 backbone + 分类头）。每个成员接收帧对 :math:`(o_t, o_{t+k})`，将有符号的帧步幅分类到若干 bin，因此预测的是\ **时间进度**\ 而非回归回报。
-
-2. **Compute Ensemble Advantages**：对每一帧，让所有集成成员在帧对 :math:`(o_t, o_{t+k})` 上推理，并以 **worst-of-N** 规则（:math:`A = \min_m A_m`）聚合，得到有符号分数 ``advantage_continuous`` :math:`\in [-1, 1]`，再按阈值或分位数规则将帧标记为正/负。
-
-3. **CFG Training**：将优势标签交给 CFG 阶段——正样本（高优势）作为条件输入，负样本作为无条件输入，实现 classifier-free guidance 策略优化。
-
 STEAM 工作原理
 ----------------------------------------
 
-**STEAM 核心组件**
+STEAM（Self-supervised Temporal Ensemble Advantage Modeling，自监督时序集成优势建模）全程离线运行，包含三个阶段：
 
-1. **优势建模（advantage modeling）**
-
-   STEAM（Self-supervised Temporal Ensemble Advantage Modeling，自监督时序集成优势建模）仅从专家演示的\ **时序顺序**\ 中学习优势——无需奖励、人工标注或外部价值模型。对专家轨迹中的帧对 :math:`(f_i, f_j)`\ ，**时序偏移（temporal offset）** 就是有符号帧步幅 :math:`j - i`：把一帧与未来帧配对监督前向进度，而把帧对反向输入则给出负偏移，从而仅用成功演示就暴露回退行为。偏移还会\ **按轨迹长度归一化**\ （:math:`\propto L_{\max}/L_\tau`\ ），使目标衡量的是\ **时序效率（temporal efficiency）**\ 而非原始步数——更短、更高效的执行得分更高，更慢或次优的执行得分更低。
-
-   每个预测器（SigLIP 视觉编码器 + Gemma3 语言模型 + 任务相关的预测头）将帧对与语言指令映射为 :math:`N`\ （``num_bins``\ ）个时序偏移 bin 上的类别分布，并以交叉熵损失对分箱后的偏移目标进行训练。逐成员的优势会从预测的期望 bin 中\ **减去一个固定的基线（baseline）偏移**\ ，因此衡量的是相对“期望进度速度”的进展：
-
-   .. math::
-
-      A_m = \frac{2}{N}\left( E_{b \sim p_{\theta_m}}[b] - b_{\mathrm{ref}} \right) \in [-1, 1]
-
-   其中 :math:`E_{b}[b]` 是预测器 :math:`m` 分布的期望 bin 索引，:math:`b_{\mathrm{ref}}` 是确定性的参考基线——即在最长 episode 上、固定前瞻 :math:`H` 对应的、经长度归一化的真实偏移。:math:`A_m` 在高效进展处高、在停滞或回退处低（甚至为负）。（``num_bins == 2`` 退化为二分类进度判别器。）
-
-2. **优势估计（advantage estimation）**
-
-   单个预测器在分布外 rollout 状态上可能高估。成员在分布内一致、但在陌生状态上发散，因此 STEAM 用保守的 **worst-of-N** 规则聚合 :math:`M` 个预测器——通过惩罚高方差来抑制假阳性：
-
-   .. math::
-
-      A_{\text{STEAM}} = \min_{m \in \{1, \dots, M\}} A_m
-
-   :math:`A_{\text{STEAM}}` 写入 ``advantage_continuous``\ ；逐成员的均值 / 最小值 / 方差作为诊断量记录下来。由于不同数据源的优势分布不同，``advantage_continuous`` 会按数据源、通过两种 ``label_mode`` 规则之一转化为布尔 ``advantage``：
-
-   - ``threshold``：对 rollout 帧 ``advantage = advantage_continuous > positive_threshold``\ （:math:`[-1, 1]` 内的有符号分数阈值）；sft 帧恒为 True（按构造是成功演示）。
-   - ``quantile``：将 rollout 帧中分数最高的 ``rollout_quantile`` 比例标为 True；当设置了 ``expert_quantile`` 时，再将 sft 帧中最高的 ``expert_quantile`` 比例标为 True——两个池独立打分。
-
-3. **无分类器引导（Classifier-Free Guidance, CFG）训练**
-
-   STEAM 的优势标签驱动 OpenPI（π₀.₅）策略上的 CFG 阶段：正样本（高优势）作为条件输入，负样本作为无条件输入，实现 classifier-free guidance 策略优化。完整的 CFG 机制（``positive_only_conditional``\ 、``unconditional_prob``\ 、``cfgrl_guidance_scale``\ ）见 :doc:`CFG 训练阶段 <recap>`。
+1. **价值模型 SFT（进度评论器集成）**：在专家演示帧对上训练一组进度评论器（SigLIP 视觉编码器 + Gemma3 语言模型 + 分类头）。每个成员预测按轨迹长度归一化的有符号帧步幅（归入 ``num_bins`` 个 bin，反向帧对作为负向进度样本），无需奖励函数或人工标注即可度量时间效率。
+2. **计算集成优势（worst-of-N）**：用全部集成成员为每一帧打分，取最小值（worst-of-N）抑制分布外 rollout 状态上的高估。得到的连续分数 ``advantage_continuous``\ （范围 ``[-1, 1]``）按数据源通过 ``label_mode: threshold``\ （rollout 帧高于 ``positive_threshold`` 为正，SFT 帧恒为 ``True``）或 ``label_mode: quantile``\ （取 rollout 帧前 ``rollout_quantile`` 与可选 SFT 帧前 ``expert_quantile``）转为布尔 ``advantage`` 标签。
+3. **CFG 训练**：将优势标签送入 OpenPI π₀.₅ 的无分类器引导（CFG）训练阶段，正样本作为条件输入、负样本作为无条件输入。完整 CFG 参数（``positive_only_conditional``、``unconditional_prob``、``cfgrl_guidance_scale``）见 :doc:`RECAP <recap>`。
 
 安装
 ----------------------------------------
@@ -124,13 +75,13 @@ STEAM 工作原理
 
 在模型配置（``examples/offline_rl/config/model/steam_value_model.yaml``\ ）中设置路径：
 
-.. code:: yaml
+.. code-block:: yaml
 
    actor:
      model:
-       vision_repo_id: /path/to/siglip-so400m-patch14-384
-       language_repo_id: /path/to/gemma-3-270m
-       tokenizer_path: /path/to/gemma-3-270m
+       vision_repo_id: ./siglip-so400m-patch14-384
+       language_repo_id: ./gemma-3-270m
+       tokenizer_path: ./gemma-3-270m
 
 数据准备
 ----------------------------------------
@@ -142,7 +93,7 @@ STEAM 使用 LeRobot 格式数据集，分为两类：
 
 示例数据配置：
 
-.. code:: yaml
+.. code-block:: yaml
 
    data:
      train_data_paths:
@@ -178,7 +129,7 @@ Step 1：价值模型 SFT
 
 使用 ``examples/offline_rl/config/steam_value_model_sft.yaml`` 训练集成进度评论器。配置好 ``data.train_data_paths``\ （相机名不同时同步调整 ``data.camera_keys``）后直接启动：
 
-.. code:: bash
+.. code-block:: bash
 
    bash examples/offline_rl/advantage_labeling/steam/run_steam_sft.sh steam_value_model_sft
 
@@ -186,7 +137,7 @@ Step 1：价值模型 SFT
 
    默认配置已设好常用参数（``data.k=32``、``actor.model.num_bins=32``、``actor.model.ensemble_size=3``、``runner.max_steps=16000``），需要调参时可在 YAML 或命令行覆盖（如 ``data.k=8``）：
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       runner:
         max_epochs: -1
@@ -224,7 +175,7 @@ Step 2：计算集成优势
 
 在 ``examples/offline_rl/config/steam_compute_advantages_ensemble.yaml`` 中将 ``advantage.value_checkpoint`` 指向 Step 1 的 ``actor`` 检查点目录（并保持 ``data.train_data_paths`` 与 ``data.camera_keys`` 一致），然后启动：
 
-.. code:: bash
+.. code-block:: bash
 
    bash examples/offline_rl/advantage_labeling/steam/process/run_compute_advantages_ensemble.sh steam_compute_advantages_ensemble
 
@@ -232,7 +183,7 @@ Step 2：计算集成优势
 
    默认使用 ``label_mode: quantile``\ （``rollout_quantile: 0.3``、``expert_quantile: 0.8``、``tag: steam_k32_ensemble3_q30``）。可追加 ``--nproc 4`` 指定 GPU 数，或切换为 ``label_mode: threshold`` 并设置 ``advantage.positive_threshold``\ （范围 ``[-1, 1]``）：
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       advantage:
         value_checkpoint: /path/to/steam_value_ensemble/checkpoints/global_step_N/actor
@@ -253,7 +204,7 @@ Step 3：CFG 训练
 
 在 ``examples/offline_rl/config/cfg_rl_openpi.yaml`` 中配置 ``data.train_data_paths`` 与 ``actor.model.model_path``\ （确认 ``openpi.config_name`` 与 ``norm_stats.json`` 匹配），再传入 Step 2 的 tag 启动：
 
-.. code:: yaml
+.. code-block:: yaml
 
    data:
      advantage_tag: steam_k32_ensemble3_q30
@@ -269,17 +220,56 @@ Step 3：CFG 训练
      model:
        model_path: /path/to/pi05_base_pytorch
 
-.. code:: bash
+.. code-block:: bash
 
    bash examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh cfg_rl_openpi \
        data.advantage_tag=steam_k32_ensemble3_q30
 
 使用 :doc:`RLT <rlt>` 中的 ManiSkill 关节控制数据时，设置 ``actor.model.openpi.config_name: pi05_rlt_maniskill_joint`` 与 ``actor.model.action_dim: 8``。完整 CFG 参数见 :doc:`RECAP <recap>`，策略评测见 :doc:`评测 </rst_source/evaluations/index>`。
 
-STEAM 实验结果
+.. dropdown:: 进阶用法（合并、重标注与可视化）
+
+   **合并集成 checkpoint**
+
+   将独立训练的单模型（或用 ``PATH:idx`` 从已有集成中抽取第 ``idx`` 个成员）合并为一个集成推理 checkpoint：
+
+   .. code-block:: bash
+
+      python examples/offline_rl/advantage_labeling/steam/process/merge_steam_ensemble.py \
+          --member ./logs/seed1/checkpoints/global_step_5000/actor \
+          --member ./logs/seed2/checkpoints/global_step_5000/actor \
+          --member ./logs/ensemble/checkpoints/global_step_6000/actor:2 \
+          --output ./merged_steam_actor
+
+   **阈值 / 分位数重标注**
+
+   无需重跑 GPU 推理，直接在 CPU 上复用 ``advantage_continuous`` 更改标注规则：
+
+   .. code-block:: bash
+
+      python examples/offline_rl/advantage_labeling/steam/process/relabel_advantages.py \
+          --dataset_paths ./datasets/sft ./datasets/rollout \
+          --source_tag steam_k32_ensemble3_q30 \
+          --new_tag steam_k32_ensemble3_q20 \
+          --mode quantile --rollout_quantile 0.2
+
+   **可视化优势**
+
+   从优势 parquet 渲染分布、逐成员、不确定性与 episode 时间线诊断图：
+
+   .. code-block:: bash
+
+      python examples/offline_rl/advantage_labeling/steam/process/visualize_advantage.py \
+          --dataset ./datasets/rollout \
+          --tag steam_k32_ensemble3_q30 \
+          --output ./outputs/steam_viz
+
+可视化与结果
 ----------------------------------------
 
-我们在四个真实机器人操作任务上，将 STEAM 与行为克隆（**BC**）、**HG-DAgger** 以及 :doc:`RECAP <recap>` 进行对比。STEAM 在每个任务上都显著提升了任务成功率（相对 BC 基线的绝对提升以 ↑ 标注）：
+使用 ``tensorboard --logdir ./logs --port 6006`` 查看日志，完整指标定义见 :doc:`训练指标 <../../reference/metrics>`。
+
+我们在四个真机操作任务上将 STEAM 与行为克隆（**BC**）、**HG-DAgger** 以及 :doc:`RECAP <recap>` 对比（↑ 表示相对 BC 基线的绝对提升）：
 
 .. list-table:: 成功率（%）——越高越好
    :header-rows: 1
@@ -340,60 +330,3 @@ STEAM 实验结果
      - —
      - 46
      - **90**
-
-在四个任务上，STEAM 将成功率提升至 75–93.8%，并取得最高吞吐量，其中 Towel Folding（↑59）与 Chips Checkout（↑54.3）的成功率提升最大。（↑ 表示相对 BC 基线的绝对提升。）
-
-进阶用法
-----------------------------------------
-
-合并集成检查点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-作为独立单模型训练（或从已有集成中抽取）的成员，可以融合为一个集成推理检查点。每个 ``--member`` 是一个检查点路径，或用 ``PATH:idx`` 从集成中抽取第 ``idx`` 个成员：
-
-.. code:: bash
-
-   python examples/offline_rl/advantage_labeling/steam/process/merge_steam_ensemble.py \
-       --member /path/to/seed1/checkpoints/global_step_5000/actor \
-       --member /path/to/seed2/checkpoints/global_step_5000/actor \
-       --member /path/to/ensemble/checkpoints/global_step_6000/actor:2 \
-       --output /path/to/merged/actor
-
-合并逻辑位于
-``rlinf.models.embodiment.value_model.steam.checkpoint_merge.merge_ensemble_checkpoints``。
-
-阈值 / 分位数重标注
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-若要在不重跑 GPU 推理的情况下改变标注阈值，可对已有优势 parquet 重标注（纯 CPU——复用 ``advantage_continuous``\ ）：
-
-.. code:: bash
-
-   python examples/offline_rl/advantage_labeling/steam/process/relabel_advantages.py \
-       --dataset_paths /path/to/sft_ds /path/to/rollout_ds \
-       --source_tag steam_k32_ensemble3_q30 \
-       --new_tag steam_k32_ensemble3_q20 \
-       --mode quantile --rollout_quantile 0.2
-
-重标注逻辑位于 ``examples/offline_rl/advantage_labeling/steam/process/relabel_advantages.py``。
-
-可视化优势
-~~~~~~~~~~~~~~~~~~~~~~
-
-从优势 parquet 渲染分布、逐成员、不确定性、逐 episode 以及 episode 时间线等诊断图：
-
-.. code:: bash
-
-   python examples/offline_rl/advantage_labeling/steam/process/visualize_advantage.py \
-       --dataset /path/to/dataset \
-       --tag steam_k32_ensemble3_q30 \
-       --output outputs/steam_viz
-
-可视化与结果
-----------------------------------------
-
-指标定义见 :doc:`训练指标 <../../reference/metrics>`。
-
-.. code:: bash
-
-   tensorboard --logdir ./logs --port 6006

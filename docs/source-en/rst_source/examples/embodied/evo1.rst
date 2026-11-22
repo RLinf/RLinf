@@ -128,7 +128,6 @@ Setup and Run
 
       .. code-block:: bash
 
-         export ROBOT_PLATFORM="LIBERO"
          bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_evo1 actor.model.model_path=$PWD/Evo1_LIBERO
 
       .. dropdown:: Advanced configuration (optional)

@@ -12,17 +12,14 @@ CrossQ是 :doc:`SAC <sac>` 算法的一种轻量级进化版本，旨在提高�
 
 - 更宽的Critic网络：扩展Critic网络层的宽度(例如扩展到2048个单元)以增强表示能力和优化速度。
 
-通过移除目标网络，Cross-Q避免了价值传播中的延迟，而批重归一化的应用确保了以前在RL中难以实现的训练稳定性。
-这种架构使CrossQ能够达到或超越REDQ和DroQ等计算昂贵方法的样本效率，同时保持UTD为1，且计算占用显著降低。
-更多详情，请参阅原版 `CrossQ <https://arxiv.org/abs/1902.05605>`_ 论文。
+通过移除目标网络，Cross-Q避免了价值传播中的延迟，而批重归一化的应用确保了以前在RL中难以实现的训练稳定性。这种架构使CrossQ能够达到或超越REDQ和DroQ等计算昂贵方法的样本效率，同时保持UTD为1，且计算占用显著降低。更多详情，请参阅原版 `CrossQ <https://arxiv.org/abs/1902.05605>`_ 论文。
 
 
 
 2. 目标函数
 ----------------
 
-CrossQ与SAC使用相同的最大熵RL目标。
-设策略为 :math:`\pi` 。则 :math:`\pi` 的Q函数满足相同的贝尔曼方程：
+CrossQ与SAC使用相同的最大熵RL目标。设策略为 :math:`\pi` 。则 :math:`\pi` 的Q函数满足相同的贝尔曼方程：
 
 .. math::
 
@@ -63,14 +60,14 @@ CrossQ 引入了三个关键的设计：
 
   \left[ \begin{matrix} q \ q' \end{matrix} \right] = Q_{\phi} \left( \left[ \begin{matrix} s \ s' \end{matrix} \right], \left[ \begin{matrix} a \ a' \end{matrix} \right] \right),
 
-这确保了BRN的统计量是在当前数据和回放数据的混合上计算的 。
+这确保了 BRN 的统计量是在当前数据和回放数据的混合上计算的。
 
 - 更宽的Critic网络：CrossQ扩展了Critic网络层的宽度 (例如从256个隐藏单元增加到2048个)。增加的宽度结合BRN，加速了优化并显著提高了相较于标准SAC架构的样本效率。
 
 4. 配置
 ----------
 
-CrossQ与SAC使用几乎相同的配置。参数 `q_head_type` 可用于在CrossQ和标准SAC架构之间切换。
+CrossQ 与 SAC 使用几乎相同的配置。参数 ``q_head_type`` 可用于在 CrossQ 和标准 SAC 架构之间切换。
 
 .. code-block:: yaml
 

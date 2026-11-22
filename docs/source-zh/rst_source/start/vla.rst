@@ -1,4 +1,4 @@
-VLA 快速上手
+VLA 快速开始
 ============
 
 四步在 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ 上用 PPO 训练 **OpenVLA** 或 **OpenVLA-OFT**。
@@ -14,7 +14,7 @@ VLA 快速上手
    .. grid-item-card:: 2. 下载资源
       :text-align: center
 
-      模型权重与 ManiSkill 资产
+      ManiSkill 场景资产（权重自动下载）
 
    .. grid-item-card:: 3. 启动训练
       :text-align: center
@@ -29,7 +29,7 @@ VLA 快速上手
 一键上手
 --------
 
-切换下方标签选择模型，每个标签内均包含完整的安装、下载与启动命令。两个快速上手配置默认使用所有可用加速卡；需要指定设备时，修改 ``cluster.component_placement``，详见 :doc:`../guides/basic_config`。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``\ （或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像）。
+切换下方标签选择模型，每个标签内均包含完整的安装、下载与启动命令。两个快速开始配置默认使用所有可用加速卡；需要指定设备时，修改 ``cluster.component_placement``，详见 :doc:`../reference/configuration`。如果 ``.venv`` 里已经安装了其他模型或环境，在 ``install.sh`` 末尾加 ``--venv <dir>`` 避免覆盖。国内镜像加速与 Docker Hub 预构建镜像见 :doc:`installation`。
 
 .. tab-set::
 
@@ -88,7 +88,7 @@ rollout 会自动沿用 ``actor.model.model_path``。若使用本地预下载权
    :align: center
    :width: 90%
 
-   ManiSkill3 快速上手的 TensorBoard 训练曲线。
+   ManiSkill3 快速开始的 TensorBoard 训练曲线。
 
 .. list-table::
    :header-rows: 1

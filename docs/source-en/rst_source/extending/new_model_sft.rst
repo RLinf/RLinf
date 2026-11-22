@@ -81,22 +81,29 @@ Before adaptation, make sure you have:
 
 ----
 
-Make RLinf Config Recognize Your Model Type
--------------------------------------------
+Register Your Model Type and Builder
+------------------------------------
 
-RLinf uses ``SupportedModel`` to identify model types. For a custom SFT model,
-you no longer need to edit ``SupportedModel`` source directly.
-
-Instead, register the model type before ``build_config(...)`` or training starts,
-and set ``actor.model.model_type`` to the registered value in YAML.
-
-Example:
+Register a model builder with ``register_model(...)`` so both config validation
+(``SupportedModel``) and ``get_model(cfg)`` recognize your model. For out-of-tree
+code running on Ray workers, expose a ``register()`` function in a module pointed
+to by ``RLINF_EXT_MODULE`` (see :doc:`new_model_fsdp`):
 
 .. code:: python
 
-   from rlinf.config import SupportedModel
+   from rlinf.models import register_model
 
-   SupportedModel.register("my_new_model")
+   def build_my_model(cfg, torch_dtype):
+       from transformers import AutoModelForCausalLM
+
+       return AutoModelForCausalLM.from_pretrained(
+           cfg.model_path,
+           torch_dtype=torch_dtype,
+           trust_remote_code=cfg.get("trust_remote_code", False),
+       )
+
+   def register():
+       register_model("my_new_model", build_my_model, category="sft")
 
 YAML example:
 
@@ -145,9 +152,9 @@ Inherit from ``FSDPSftWorker`` and implement the 3 methods.
        def __init__(self, cfg: DictConfig):
            super().__init__(cfg)
 
-       def build_dataloader(self, data_paths: list[str], eval_dataset: bool = False):
-           # 1) Build dataset
-           # 3) Return data_loader and data_config(dict)
+       def build_dataloader(self):
+           # 1) Build train/eval datasets and dataloaders from self.cfg.data
+           # 2) Return data_loader and data_config (dict)
            ...
            return data_loader, {"num_samples": len(dataset)}
 

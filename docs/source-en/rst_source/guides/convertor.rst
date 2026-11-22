@@ -22,18 +22,18 @@ The FSDP checkpoint file structure is as follows:
    │       │   ├── __2_0.distcp
    │       │   └── __3_0.distcp
    │       └── model_state_dict/
-   │           └── full_weigths.pt
+   │           └── full_weights.pt
    └── global_step_20/
        └── …
 
-RLinf saves a complete copy of model weights when saving checkpoints, such as ``global_step_10/actor/model_state_dict/full_weigths.pt``.
+RLinf saves a complete copy of model weights when saving checkpoints, such as ``global_step_10/actor/model_state_dict/full_weights.pt``.
 This pt file can be used to evaluate checkpoints (set ``runner.ckpt_path`` to this file path), or continue converting to safetensors format.
 
 
 Converting distcp Format to pt Format
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-If you are using the latest code to save checkpoints, the ``model_state_dict/full_weigths.pt`` file has already been saved, and you can skip this step.
+If you are using the latest code to save checkpoints, the ``model_state_dict/full_weights.pt`` file has already been saved, and you can skip this step.
 If you still want to convert the saved ``.distcp`` files to ``.pt`` format, or if you are using older code that only saved ``.distcp`` format files, you can use ``RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/convert_dcp_to_pt.py``
 to first convert ``.distcp`` to ``.pt`` format, then proceed with subsequent operations.
 
@@ -75,17 +75,25 @@ Please check that the following 7 parameters are correct:
         is_lora: True                                                # Whether LoRA is enabled
 
 
-2. **（Optional）Add model_save_helper**
+2. **(Optional) Add a custom save helper**
 
-If your model has special saving logic, please add the corresponding save function in the ``get_model_save_helper`` in the ``RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/utils.py`` file.
+If your model requires special saving logic, add a matching save helper to the FSDP checkpoint convertor utilities.
 
 3. **Run the script**
 
+From the repository root, run the convertor with either your training config (recommended) or the edited ``fsdp_model_convertor.yaml``:
 
 .. code-block:: bash
 
+   # Recommended: pass the training config directly
    python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
-       --config-path /path/to/RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/config \
+       convertor.train_config_path=/path/to/train_config.yaml \
+       convertor.ckpt_path=/path/to/model_state_dict/full_weights.pt \
+       convertor.save_path=/path/to/save
+
+   # Or use the standalone convertor YAML
+   python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
+       --config-path "$(pwd)/rlinf/utils/ckpt_convertor/fsdp_convertor/config" \
        --config-name fsdp_model_convertor
 
 4. **View saved safetensors files**

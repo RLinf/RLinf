@@ -11,14 +11,9 @@
 采集有两个入口，写出的目录相同。``save_dir`` 默认是 ``${runner.logger.log_path}``。
 
 - **真机遥操作**：``examples/embodiment/collect_data.sh`` 启动 ``collect_real_data.py``。``export_format`` 可以选一种，也可以让 ``replay_buffer`` 和一种 episode 格式一起写。
-- **训练或评估**：在 ``env`` 的 ``data_collection`` 里打开。env worker 一次只写一种
-  episode 格式。
+- **训练或评估**：在 ``env`` 的 ``data_collection`` 里打开。env worker 一次只写一种 episode 格式。
 
-两个入口使用同一组名字：``replay_buffer``、``pickle_episode``、``lerobot_dataset``。
-``pickle_episode`` 与 ``lerobot_dataset`` 不能同时选择，env worker 不写
-``replay_buffer``。真机脚本不写 ``export_format`` 时，默认写出 ``replay_buffer``
-和 ``lerobot_dataset``。旧名字 ``pickle`` 和 ``lerobot`` 仍对应两种 episode
-格式，但会给出弃用警告。
+两个入口使用同一组名字：``replay_buffer``、``pickle_episode``、``lerobot_dataset``。``pickle_episode`` 与 ``lerobot_dataset`` 不能同时选择，env worker 不写 ``replay_buffer``。真机脚本不写 ``export_format`` 时，默认写出 ``replay_buffer`` 和 ``lerobot_dataset``。旧名字 ``pickle`` 和 ``lerobot`` 仍对应两种 episode 格式，但会给出弃用警告。
 
 .. list-table::
    :header-rows: 1
@@ -29,7 +24,7 @@
      - 谁来读
    * - ``replay_buffer``
      - ``{save_dir}/demo_buffer/``
-     - RLPD。训练配置 ``algorithm.demo_buffer.load_path`` 指向该目录，例如 Franka 插孔和 DoSW1。
+     - RLPD。训练配置 ``algorithm.demo_buffer.load_path`` 指向该目录，例如 Franka 插孔和 DOS-W1。
    * - ``lerobot_dataset``
      - ``{save_dir}/lerobot_dataset/``
      - OpenPI SFT、HG-DAgger，以及其他读取 LeRobot shard 的模仿学习。
@@ -52,7 +47,7 @@
 
 .. code-block:: bash
 
-   python toolkits/lerobot/merge_lerobot_datasets.py \
+   python -m toolkits.lerobot.merge_lerobot_datasets \
        --source-dir logs/{timestamp}/lerobot_dataset \
        --output-dir logs/{timestamp}/lerobot_merged \
        --only-success
@@ -69,9 +64,7 @@
          export_format: pickle_episode
          only_success: True
 
-``maniskill_ppo_mlp_collect`` 就是这个用法。``.pkl`` 在
-``{save_dir}/pickle_episode/``。把 ``export_format`` 改成 ``lerobot_dataset``
-时，shard 在 ``{save_dir}/lerobot_dataset/rank_*/id_*/``。
+``maniskill_ppo_mlp_collect`` 就是这个用法。``.pkl`` 在 ``{save_dir}/pickle_episode/``。把 ``export_format`` 改成 ``lerobot_dataset`` 时，shard 在 ``{save_dir}/lerobot_dataset/rank_*/id_*/``。
 
 真机遥操作数据采集步骤
 ----------------------
@@ -82,9 +75,10 @@
 
    cluster:
      node_groups:
-       hardware:
-         configs:
-           robot_ip: "192.168.1.100"
+       - label: franka
+         hardware:
+           configs:
+             - robot_ip: "192.168.1.100"
    env:
      eval:
        teleop: spacemouse          # spacemouse、gello、pico 或 none
@@ -109,26 +103,23 @@
    ├── demo_buffer/
    └── lerobot_dataset/rank_0/id_0/    # 选 pickle_episode 时为 pickle_episode/*.pkl
 
-``demo_buffer`` 里每条成功轨迹是一个 ``.pt``，``intervene_flags`` 全为 1，表示专家数据。
-追加数据时，让新的一次采集指向同一个 ``demo_buffer`` 目录。
+``demo_buffer`` 里每条成功轨迹是一个 ``.pt``，干预标记全为 1，表示专家数据。追加数据时，让新的一次采集指向同一个 ``demo_buffer`` 目录。
 
 检查数据：
 
 .. code-block:: bash
 
-   python toolkits/replay_buffer/visualize.py \
+   python -m toolkits.replay_buffer.visualize \
        --replay_dir logs/{timestamp}/demo_buffer
 
-   python toolkits/lerobot/visualize_lerobot_dataset.py \
+   python -m toolkits.lerobot.visualize_lerobot_dataset \
        --dataset-path logs/{timestamp}/lerobot_dataset/rank_0/id_0 \
        --output-dir logs/{timestamp}/lerobot_visualized
 
 数据格式细节
 ------------
 
-写入由 ``CollectEpisode`` 在后台线程完成，``env.close()`` 时做最后一次刷盘，
-不挡住训练的 step。多个 env worker 各自使用不同 ``rank``，文件名和 shard
-目录都带这个编号。
+数据写入在后台线程完成，环境关闭时做最后一次刷盘，不挡住训练的 step。多个 env worker 各自使用不同 ``rank``，文件名和 shard 目录都带这个编号。
 
 **replay_buffer**
 
@@ -153,8 +144,7 @@
 
 **pickle_episode**
 
-``CollectEpisode`` 在 episode 结束时写一个 ``.pkl``。非流式且
-``only_success: true`` 时丢掉失败 episode。文件名：
+每条 episode 结束时写入一个 ``.pkl``。非流式且 ``only_success: true`` 时丢掉失败 episode。文件名：
 
 .. code-block:: text
 
@@ -180,9 +170,7 @@
 
 **lerobot_dataset**
 
-``CollectEpisode`` 把一个或多个 episode 写成一个 shard：
-``lerobot_dataset/rank_{rank}/id_{N}/``；流式采集每个 shard 只放一条保留的录制。
-``resume: true`` 时从已有 shard 往后编号，不改已写完的数据。
+采集器把一个或多个 episode 写成一个 shard：``lerobot_dataset/rank_{rank}/id_{N}/``；流式采集每个 shard 只放一条保留的录制。``resume: true`` 时从已有 shard 往后编号，不改已写完的数据。
 
 .. code-block:: text
 
@@ -212,10 +200,7 @@
    * - ``done`` / ``is_success``
      - 该步是否为 episode 最后一帧；该 episode 是否成功
 
-图像从观测里按 ``main_images``、``image``、``full_image`` 的顺序取主视角，按
-``extra_view_images``、``extra_view_image`` 取其余视角；``[N, H, W, C]``
-会拆成 ``extra_view_image-0``、``extra_view_image-1``。状态键优先
-``states``，其次 ``state``。浮点图像若在 ``[0, 1]`` 会乘 255 变成 uint8。
+图像从观测里按 ``main_images``、``image``、``full_image`` 的顺序取主视角，按 ``extra_view_images``、``extra_view_image`` 取其余视角；``[N, H, W, C]`` 会拆成 ``extra_view_image-0``、``extra_view_image-1``。状态键优先 ``states``，其次 ``state``。浮点图像若在 ``[0, 1]`` 会乘 255 变成 uint8。
 
 在自己的脚本里包一层环境时，把父目录传给 ``save_dir``，格式子目录由 wrapper 添加：
 
@@ -233,6 +218,4 @@
 
 ``streaming: true`` 时每帧的各个视角立刻写成未压缩的 PNG，episode 结束再写 parquet。parquet 原样保存这些字节，640x480 的一个视角每帧约占 0.9 MB 磁盘。成功和失败都保存，``is_success`` 在结束时写入。操作员丢弃会删掉当前未发布的 episode；录制队列溢出的片段移到该 shard 的 ``invalid_episodes/``，不作为正式 episode。流式 shard 旁还有 ``stream_frames.jsonl``，记录每帧的 ``state`` 和 ``actions``。
 
-每步 info 先看 ``final_info`` 和 ``episode`` 里的 ``success_once``、
-``success_at_end``、``success``，这些都没有再看 info 根字段。任一来源为真即记为成功。
-全程都没有这些字段时，用采集过程中维护的成功标志。
+每步 info 先看 ``final_info`` 和 ``episode`` 里的 ``success_once``、``success_at_end``、``success``，这些都没有再看 info 根字段。任一来源为真即记为成功。全程都没有这些字段时，用采集过程中维护的成功标志。

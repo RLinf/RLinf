@@ -1,11 +1,6 @@
 Moonlight-16B 数学推理 GRPO
 ===========================
 
-.. |huggingface| image:: /_static/svg/hf-logo.svg
-   :width: 16px
-   :height: 16px
-   :class: inline-icon
-
 使用 GRPO 在数学数据上训练 Moonlight-16B-A3B-Instruct 模型（DeepSeek-V3 架构：多头潜在注意力 MLA + MoE）。相比监督微调，强化学习能鼓励多样化的推理路径，同时优化最终答案的正确性。
 
 概述
@@ -68,16 +63,12 @@ GRPO 原理
 
       **1. 安装环境**
 
-      创建 Python 3.12 虚拟环境并安装 sglang 0.5.12、torch 2.11+cu130、TransformerEngine 2.17、transformers 5.6、``megatron-bridge`` 0.5.0 和 flash-attn，并通过 ``MEGATRON_PATH`` 复用 Megatron-Core 0.18 克隆：
+      默认的 ``agentic`` 环境已包含 SGLang 0.5.12.post1、PyTorch 2.11、Megatron-Core 0.18 与 ``megatron-bridge`` 0.5.0：
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         MEGATRON_PATH=/path/to/Megatron-LM-core0.18 \
-         bash requirements/install.sh agentic \
-           --sglang 0.5.12 --torch 2.11.0 --transformers 5.6.0 \
-           --no-apex --platform nvidia \
-           --venv /opt/venv/reason_0512_v3 && source /opt/venv/reason_0512_v3/bin/activate
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
       **2. 下载模型与数据**
 

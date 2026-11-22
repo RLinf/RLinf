@@ -142,16 +142,15 @@ Setup and Run
 
          actor:
            model:
-             model_path: /path/to/lingbot-vla-4b-posttrain-robotwin
-             tokenizer_path: /path/to/Qwen2.5-VL-3B-Instruct
+             model_path: ./lingbot-vla-4b-posttrain-robotwin
+             tokenizer_path: ./Qwen2.5-VL-3B-Instruct
              lingbotvla:
-               config_path: /path/to/lingbot-vla-4b
+               config_path: ./lingbot-vla-4b
 
-      Export ``ROBOT_PLATFORM="ALOHA"`` (required for the dual-arm action space) and the repository paths, then launch GRPO training:
+      Export the repository paths, then launch GRPO training:
 
       .. code-block:: bash
 
-         export ROBOT_PLATFORM="ALOHA"
          export ROBOTWIN_PATH=$PWD/RoboTwin
          export LINGBOT_VLA_PATH=$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")
          bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvla
@@ -195,16 +194,15 @@ Setup and Run
 
          actor:
            model:
-             model_path: /path/to/lingbot-vla-4b-posttrain-robotwin
-             tokenizer_path: /path/to/Qwen2.5-VL-3B-Instruct
+             model_path: ./lingbot-vla-4b-posttrain-robotwin
+             tokenizer_path: ./Qwen2.5-VL-3B-Instruct
              lingbotvla:
-               config_path: /path/to/lingbot-vla-4b
+               config_path: ./lingbot-vla-4b
 
-      Export ``ROBOT_PLATFORM="ALOHA"`` and the repository paths, then launch SFT:
+      Export the repository paths, then launch SFT:
 
       .. code-block:: bash
 
-         export ROBOT_PLATFORM="ALOHA"
          export ROBOTWIN_PATH=$PWD/RoboTwin
          export LINGBOT_VLA_PATH=$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")
          bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvla

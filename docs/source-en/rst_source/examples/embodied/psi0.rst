@@ -18,12 +18,12 @@ Fine-tune the official OpenOven checkpoint with PPO.
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: Environment
+   .. grid-item-card:: Environments
       :text-align: center
 
       SIMPLE
 
-   .. grid-item-card:: Algorithm
+   .. grid-item-card:: Algorithms
       :text-align: center
 
       PPO

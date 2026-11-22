@@ -227,6 +227,7 @@ rollout:
   collect_prev_infos: True
 
   model:
+    model_path: ${actor.model.model_path}
     model_type: ${actor.model.model_type}
     precision: ${actor.model.precision}
     policy_setup: ${actor.model.policy_setup}

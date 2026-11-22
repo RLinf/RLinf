@@ -90,3 +90,5 @@ SGLang 服务评测
    RoboLab <robolab>
    SIMPLE <simple>
    真机评测 <realworld>
+   Cosmos3（SGLang） <cosmos3_sglang>
+   DreamZero（SGLang） <dreamzero_sglang>

@@ -13,7 +13,7 @@
 概览
 ----
 
-本页走通双臂 Franka 的完整真机闭环：在双节点上用 GELLO 采集关节轨迹，转换为笛卡尔 ``tcp_rot6d`` 动作，运行 OpenPI π₀.₅ SFT，并在真机上完成评测部署。单臂配置与 GELLO 组装见 :doc:`franka` 与 :doc:`franka_gello`。
+本页走通双臂 Franka 的完整真机闭环：在双节点上用 GELLO 采集关节轨迹，转换为笛卡尔 ``tcp_rot6d`` 动作，运行 OpenPI π₀.₅ SFT，并在真机上完成评测部署。数据集清洗合并、``sft2deploy`` 权重转换与单机 RTC 部署见 :doc:`dual_franka_openpi_pytorch`，单臂配置与 GELLO 组装见 :doc:`franka` 与 :doc:`franka_gello`。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -23,7 +23,7 @@
 
       2× Franka（Franky）· 2× Robotiq
 
-   .. grid-item-card:: 遥操与相机
+   .. grid-item-card:: 遥操作与相机
       :text-align: center
 
       2× GELLO · 脚踏 · RealSense + 2× Lumos
@@ -106,8 +106,8 @@
 
       export GELLO_PORT=/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0  # 替换为实际 FTDI 设备
 
-      python toolkits/realworld_check/test_gello.py calibrate
-      python toolkits/realworld_check/test_gello.py align-sequential
+      python -m toolkits.realworld_check.test_gello calibrate
+      python -m toolkits.realworld_check.test_gello align-sequential
 
    对齐成功时的预期输出：
 
@@ -140,7 +140,7 @@
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
       **在** ``node 0`` **完成硬件自检**\ （启动 Ray 前）：为脚踏授予读写权限（将 ``event12`` 替换为实际设备编号），核对相机 USB-3 速率（``lsusb -t`` 应显示 ``5000M``，``480M`` 说明降级为 USB 2），并确认 GELLO 持续输出平滑关节值。
 
@@ -187,7 +187,7 @@
          bash examples/embodiment/collect_data.sh \
              realworld_collect_data_gello_joint_dual_franka 2>&1 | tee logs/collect.log
 
-      在 ``node 0`` 另开终端运行 ``python toolkits/realworld_check/collect_monitor.py logs/collect.log`` 监控进度。脚踏按键：``a`` 开始录制（录制中再按中止并丢弃当前缓存），``b`` 递增 ``segment_id`` 标记子任务边界，``c`` 标记成功并写入 LeRobot shard。需要续采时，设置 ``data_collection.resume: true`` 并保持相同的 ``data_collection.save_dir`` 即可追加新的 ``id_*`` shard。
+      在 ``node 0`` 另开终端运行 ``python -m toolkits.realworld_check.collect_monitor logs/collect.log`` 监控进度。脚踏按键：``a`` 开始录制（录制中再按中止并丢弃当前缓存），``b`` 递增 ``segment_id`` 标记子任务边界，``c`` 标记成功并写入 LeRobot shard。需要续采时，设置 ``data_collection.resume: true`` 并保持相同的 ``data_collection.save_dir`` 即可追加新的 ``id_*`` shard。
 
       **回填 tcp_rot6d 并同步至训练节点：**
 
@@ -198,7 +198,7 @@
          export SFT_REPO_ID="$DATA_REPO_ID/tcp_rot6d_v1"
          export TRAINER_IP="192.168.1.50"                # 替换为训练节点 IP
 
-         python toolkits/dual_franka/backfill_tcp_rot6d.py \
+         python -m toolkits.dual_franka.backfill_tcp_rot6d \
              --src "$HF_LEROBOT_HOME/$DATA_REPO_ID/joint_v1" \
              --dst "$HF_LEROBOT_HOME/$SFT_REPO_ID"
 
@@ -215,7 +215,7 @@
          export PI05_BASE_CKPT="$HOME/models/pi05_torch"        # 替换为基座 checkpoint 目录
          export SFT_REPO_ID="my_org/dual_franka_demo/tcp_rot6d_v1"
 
-         python toolkits/lerobot/calculate_norm_stats.py \
+         python -m toolkits.lerobot.calculate_norm_stats \
              --config-name pi05_dualfranka_tcp_rot6d \
              --repo-id "$SFT_REPO_ID"
 
@@ -249,7 +249,11 @@
 
       在 ``examples/embodiment/config/realworld_eval_dual_franka.yaml`` 中将 ``rollout.model.model_path`` 设为 ``$DEPLOY_CKPT``，将 ``actor.model.openpi_data.repo_id`` 设为 ``<repo_id>/tcp_rot6d_v1``。
 
-      **启动真机评测**\ ：复用双节点 Ray 集群，按 :doc:`真机评测指南 <../../evaluations/guides/realworld>` 使用配置 ``realworld_eval_dual_franka`` 启动。
+      **启动真机评测**\ ：复用双节点 Ray 集群，在 ``node 0`` 运行（更多选项见 :doc:`真机评测指南 <../../evaluations/guides/realworld>`）：
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh realworld_eval_dual_franka
 
       部署阶段脚踏按键：``a`` 从 idle 状态启动 policy，``b`` 标记失败并复位，``c`` 标记成功并复位。每次复位后 wrapper 会等待再次按下 ``a``，方便重新布置场景。
 
@@ -287,7 +291,7 @@
 结果与常见问题
 --------------
 
-在训练节点运行 ``tensorboard --logdir ./logs`` 查看 SFT 训练曲线，在 ``node 0`` 运行 ``python toolkits/realworld_check/collect_monitor.py logs/collect.log`` 实时观察采集进度。
+在训练节点运行 ``tensorboard --logdir ./logs`` 查看 SFT 训练曲线，在 ``node 0`` 运行 ``python -m toolkits.realworld_check.collect_monitor logs/collect.log`` 实时观察采集进度。
 
 .. list-table::
    :header-rows: 1

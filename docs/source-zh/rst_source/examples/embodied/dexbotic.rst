@@ -148,7 +148,7 @@ Dexbotic 强化学习
 
               python toolkits/standalone_eval_scripts/dexbotic/libero_eval.py \
                 --config_name db_pi0_libero \
-                --pretrained_path /path/to/checkpoint \
+                --pretrained_path ./libero-db-pi0 \
                 --task_suite_name libero_spatial \
                 --num_trials_per_task 50 \
                 --action_chunk 5 \
@@ -192,7 +192,7 @@ Dexbotic 强化学习
 
               python toolkits/standalone_eval_scripts/dexbotic/libero_eval.py \
                 --config_name dm0_libero \
-                --pretrained_path /path/to/checkpoint \
+                --pretrained_path ./DM0-libero \
                 --task_suite_name libero_spatial \
                 --num_trials_per_task 50 \
                 --action_chunk 10 \

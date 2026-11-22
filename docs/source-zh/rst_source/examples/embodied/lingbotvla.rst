@@ -138,16 +138,15 @@ LingbotVLA 1.0 强化学习
 
          actor:
            model:
-             model_path: /path/to/lingbot-vla-4b-posttrain-robotwin
-             tokenizer_path: /path/to/Qwen2.5-VL-3B-Instruct
+             model_path: ./lingbot-vla-4b-posttrain-robotwin
+             tokenizer_path: ./Qwen2.5-VL-3B-Instruct
              lingbotvla:
-               config_path: /path/to/lingbot-vla-4b
+               config_path: ./lingbot-vla-4b
 
-      先导出 ``ROBOT_PLATFORM="ALOHA"``\ （双臂任务必需）及相关仓库路径，再启动 GRPO 训练：
+      先导出相关仓库路径，再启动 GRPO 训练：
 
       .. code-block:: bash
 
-         export ROBOT_PLATFORM="ALOHA"
          export ROBOTWIN_PATH=$PWD/RoboTwin
          export LINGBOT_VLA_PATH=$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")
          bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvla
@@ -191,16 +190,15 @@ LingbotVLA 1.0 强化学习
 
          actor:
            model:
-             model_path: /path/to/lingbot-vla-4b-posttrain-robotwin
-             tokenizer_path: /path/to/Qwen2.5-VL-3B-Instruct
+             model_path: ./lingbot-vla-4b-posttrain-robotwin
+             tokenizer_path: ./Qwen2.5-VL-3B-Instruct
              lingbotvla:
-               config_path: /path/to/lingbot-vla-4b
+               config_path: ./lingbot-vla-4b
 
-      先导出 ``ROBOT_PLATFORM="ALOHA"`` 及相关仓库路径，再启动 SFT 训练：
+      先导出相关仓库路径，再启动 SFT 训练：
 
       .. code-block:: bash
 
-         export ROBOT_PLATFORM="ALOHA"
          export ROBOTWIN_PATH=$PWD/RoboTwin
          export LINGBOT_VLA_PATH=$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")
          bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvla

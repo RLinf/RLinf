@@ -128,7 +128,7 @@ BWM 强化学习
 
       .. code-block:: bash
 
-         export ROBOT_PLATFORM=ALOHA ROBOTWIN_PATH=/path/to/RoboTwin
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          bash examples/embodiment/run_embodiment.sh bwm_robotwin_adjust_bottle_ppo_openpi_pi05
 
       本示例运行 PPO + GAE（gamma 1.0），每步 48 个环境 x 2 个 rollout epoch，共 14 步：前 4 步只训练 critic，之后 10 步联合更新。critic 读取 VLM 特征（``value_after_vlm``）。使用 FSDP ``no_shard``\ （openpi 的要求）。在 Triton 缺少 ``triton_key`` 的 ROCm 环境中，加上 ``actor.model.openpi.torch_compile=False``。
@@ -145,15 +145,16 @@ BWM 强化学习
 
       .. code-block:: bash
 
-         export ROBOT_PLATFORM=ALOHA ROBOTWIN_PATH=/path/to/RoboTwin
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_pi05_eval \
-           rollout.model.model_path=/path/to/sft runner.ckpt_path=/path/to/full_weights.pt \
+           rollout.model.model_path=./WorldArena \
+           runner.ckpt_path=./logs/checkpoints/global_step_14/actor/model_state_dict/full_weights.pt \
            rollout.model.num_steps=4 rollout.model.openpi.task=rl rollout.model.openpi.noise_level=0.5 \
            ++rollout.model.openpi.value_after_vlm=True \
            ++rollout.model.openpi.value_head_hidden_sizes=[512,256,128] \
            ++rollout.model.openpi_data.adapt_to_pi=false \
-           ++rollout.model.openpi_data.norm_stats_path=/path/to/sft/assets/robotwin_clean \
-           env.eval.assets_path=/path/to/RoboTwin \
+           ++rollout.model.openpi_data.norm_stats_path=./WorldArena/assets/robotwin_clean \
+           env.eval.assets_path="${ROBOTWIN_PATH}" \
            env.eval.task_config.camera.head_camera_type=Large_D435 \
            env.eval.task_config.camera.collect_wrist_camera=false
 

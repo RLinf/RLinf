@@ -33,7 +33,7 @@ the two episode formats, with a deprecation warning.
      - Reader
    * - ``replay_buffer``
      - ``{save_dir}/demo_buffer/``
-     - RLPD. Set ``algorithm.demo_buffer.load_path`` to this directory, for example Franka peg insertion and DoSW1.
+     - RLPD. Set ``algorithm.demo_buffer.load_path`` to this directory, for example Franka peg insertion and DOS-W1.
    * - ``lerobot_dataset``
      - ``{save_dir}/lerobot_dataset/``
      - OpenPI SFT, HG-DAgger, and other imitation pipelines that read LeRobot shards.
@@ -63,7 +63,7 @@ unsuccessful takes:
 
 .. code-block:: bash
 
-   python toolkits/lerobot/merge_lerobot_datasets.py \
+   python -m toolkits.lerobot.merge_lerobot_datasets \
        --source-dir logs/{timestamp}/lerobot_dataset \
        --output-dir logs/{timestamp}/lerobot_merged \
        --only-success
@@ -94,9 +94,10 @@ Set the robot, teleoperation device, and target pose in
 
    cluster:
      node_groups:
-       hardware:
-         configs:
-           robot_ip: "192.168.1.100"
+       - label: franka
+         hardware:
+           configs:
+             - robot_ip: "192.168.1.100"
    env:
      eval:
        teleop: spacemouse          # spacemouse, gello, pico, or none
@@ -130,10 +131,10 @@ Inspect the outputs:
 
 .. code-block:: bash
 
-   python toolkits/replay_buffer/visualize.py \
+   python -m toolkits.replay_buffer.visualize \
        --replay_dir logs/{timestamp}/demo_buffer
 
-   python toolkits/lerobot/visualize_lerobot_dataset.py \
+   python -m toolkits.lerobot.visualize_lerobot_dataset \
        --dataset-path logs/{timestamp}/lerobot_dataset/rank_0/id_0 \
        --output-dir logs/{timestamp}/lerobot_visualized
 

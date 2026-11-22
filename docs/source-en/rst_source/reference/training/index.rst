@@ -1,5 +1,5 @@
-Configuration
-=============
+Config & Metrics
+================
 
 Use these references when you need exact training configuration fields or metric
 namespaces.

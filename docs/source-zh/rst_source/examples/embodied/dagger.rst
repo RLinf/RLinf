@@ -94,7 +94,7 @@ DAgger 工作原理
 一键上手
 ----------------------------------------
 
-使用 ``requirements/install.sh`` 安装环境（中国大陆用户可在命令末尾追加 ``--use-mirror``，并在执行 ``hf download`` 前设置 ``export HF_ENDPOINT=https://hf-mirror.com``），或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像。通用安装选项见 :doc:`../../start/installation`。
+.. include:: _setup_common.rst
 
 .. tab-set::
 
@@ -158,16 +158,15 @@ DAgger 工作原理
 
          env:
            train:
-             assets_path: /path/to/robotwin_assets
+             assets_path: ../RoboTwin
            eval:
-             assets_path: /path/to/robotwin_assets
+             assets_path: ../RoboTwin
 
-      导出 ``ROBOT_PLATFORM`` 和 ``ROBOTWIN_PATH``，启动同步或异步训练：
+      导出 ``ROBOTWIN_PATH``，启动同步或异步训练：
 
       .. code-block:: bash
 
-         export ROBOT_PLATFORM=ALOHA
-         export ROBOTWIN_PATH=/path/to/RoboTwin
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          # 同步模式（异步模式换为 run_async.sh）
          bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_dagger_openpi
 
@@ -227,7 +226,7 @@ DAgger 工作原理
 
    **经典 DAgger 与 replay buffer 参数**
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       algorithm:
         dagger:
@@ -249,7 +248,7 @@ DAgger 工作原理
 
    在线 LeRobot 配置不使用 ``algorithm.replay_buffer``，请调整 ``algorithm.dagger.online_lerobot`` 字段：
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       algorithm:
         dagger:

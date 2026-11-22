@@ -76,7 +76,7 @@ runner
 .. code:: yaml
 
   runner:
-    task_type: math
+    task_type: reasoning
     logger:
       log_path: ${runner.output_dir}/${runner.experiment_name}
       project_name: rlinf
@@ -102,7 +102,8 @@ runner
    * - Parameter
      - Description
    * - ``runner.task_type``
-     - Task type identifier (``math`` or ``embodied``).
+     - Task type identifier (``embodied``, ``embodied_eval``, ``reasoning``,
+       ``reasoning_eval``, ``coding_online_rl``, ``sft``, or ``offline``).
    * - ``runner.logger.log_path``
      - Base directory for log files.
    * - ``runner.logger.project_name``
@@ -147,6 +148,7 @@ algorithm
 
     adv_type: grpo
     normalize_advantages: True
+    recompute_logprobs: True
     early_stop_imp_ratio: 5.0
     use_valid_token_scale: False
 
@@ -176,7 +178,7 @@ algorithm
    * - ``algorithm.kl_beta``
      - Weight of the KL penalty added to rewards.
    * - ``algorithm.kl_penalty_type``
-     - KL shaping variant (e.g., ``low_var_kl``).
+     - KL shaping variant (``kl``, ``abs``, ``mse``, ``low_var_kl``, or ``full``).
    * - ``algorithm.ratio_clip_eps``
      - PPO clipping epsilon for importance ratios.
    * - ``algorithm.entropy_bonus``
@@ -189,6 +191,8 @@ algorithm
      - Advantage estimator type (e.g., ``grpo``).
    * - ``algorithm.normalize_advantages``
      - Normalize advantages across the batch.
+   * - ``algorithm.recompute_logprobs``
+     - Recompute log-probs for sampled sequences on the actor.
    * - ``algorithm.early_stop_imp_ratio``
      - Stop an update early if ratios exceed this threshold.
    * - ``algorithm.use_valid_token_scale``
@@ -218,8 +222,6 @@ rollout
       model_path: ../../model/DeepSeek-R1-Distill-Qwen-1.5B/
       model_type: qwen2.5
 
-    recompute_logprobs: True
-
 .. list-table::
    :header-rows: 1
    :widths: 32 68
@@ -234,8 +236,6 @@ rollout
      - Path to the HF model used by the generation backend.
    * - ``rollout.model.model_type``
      - Internal architecture tag used by the backend (e.g., ``qwen2.5``).
-   * - ``rollout.recompute_logprobs``
-     - Recompute log-probs for sampled sequences.
 
 actor
 ~~~~~~~~~~~~~~~

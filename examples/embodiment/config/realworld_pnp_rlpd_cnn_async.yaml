@@ -135,6 +135,7 @@ rollout:
   collect_prev_infos: False
 
   model:
+    model_path: ${actor.model.model_path}
     action_dim: 7
     image_num: 2
     precision: ${actor.model.precision}

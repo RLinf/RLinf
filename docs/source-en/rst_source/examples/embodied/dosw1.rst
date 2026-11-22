@@ -129,7 +129,7 @@ Setup and Run
 
       .. code-block:: bash
 
-         python toolkits/realworld_check/test_dosw1_controller.py \
+         python -m toolkits.realworld_check.test_dosw1_controller \
              --robot-url 192.168.1.20 \
              --print-hz 5
 
@@ -288,7 +288,7 @@ Setup and Run
       .. code-block:: bash
 
          # Optional single-node dummy smoke test (no hardware or cameras)
-         python examples/embodiment/train_embodied_agent.py \
+         PYTHONPATH=$PWD python examples/embodiment/train_embodied_agent.py \
              --config-path "$PWD/tests/e2e_tests/embodied" \
              --config-name dosw1_dummy_sac_mlp_pick \
              runner.max_epochs=1

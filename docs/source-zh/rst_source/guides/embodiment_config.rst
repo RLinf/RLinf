@@ -48,9 +48,7 @@ runner
    * - ``runner.only_eval``
      - 仅运行评估，不进行训练。
    * - ``runner.overlap_env_bootstrap``
-     - 让环境引导（重置）与 Actor 训练重叠，以隐藏重置延迟。当环境重置较慢时尤为有用。
-       仅当 ``env.enable_offload`` 为 False 时生效；当环境与 Actor 共用同一加速器时，
-       开启此选项可能增加显存压力。
+     - 让环境引导（重置）与 Actor 训练重叠，以隐藏重置延迟。当环境重置较慢时尤为有用。仅当 ``env.train.enable_offload`` 为 False 时生效；环境与 Actor 共用同一加速器时，开启此选项可能增加显存压力。
    * - ``runner.enable_decoupled_mode``
      - 将 Env Worker 与 Rollout Worker 解耦。开启后，Env Worker 不再绑定到固定的
        Rollout Worker rank：Env Worker 将观测推送到共享 Channel，空闲的 Rollout
@@ -100,7 +98,7 @@ algorithm
    * - ``algorithm.normalize_advantages``
      - 在批次内对优势进行归一化。
    * - ``algorithm.kl_penalty``
-     - 如何估计 KL 散度（``kl`` 或 ``kl_penalty``）。
+     - KL 散度估计方式（``kl``、``abs``、``mse``、``low_var_kl`` 或 ``full``）。
    * - ``algorithm.reward_type``
      - 奖励聚合粒度（``chunk_level`` 或 ``action_level``）。默认同时驱动
        ``actor.model.value_type``。
@@ -149,9 +147,9 @@ env
 
   env:
     group_name: "EnvGroup"
-    enable_offload: True
 
     train:
+      enable_offload: True
       rollout_epoch: 1
       total_num_envs: 128
       auto_reset: True
@@ -161,6 +159,7 @@ env
       max_steps_per_rollout_epoch: 160
 
     eval:
+      enable_offload: True
       rollout_epoch: 1
       total_num_envs: 16
       auto_reset: True
@@ -177,8 +176,8 @@ env
      - 说明
    * - ``env.group_name``
      - 环境 Worker 组的逻辑名称。
-   * - ``env.enable_offload``
-     - 卸载环境以降低内存占用。
+   * - ``env.train.enable_offload`` / ``env.eval.enable_offload``
+     - 卸载训练/评估环境以降低显存占用。
    * - ``env.train.rollout_epoch`` / ``env.eval.rollout_epoch``
      - 每个训练/评估步的 rollout 轮数。评估指标会在相同种子的多次遍历上取平均。
    * - ``env.train.total_num_envs`` / ``env.eval.total_num_envs``

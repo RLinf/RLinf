@@ -97,7 +97,7 @@ and build the index
 
    bash examples/agent/tools/search_local_server_faiss/build_index.sh
 
-Write the paths to the previously downloaded wiki files and the index into examples/agent/searchr1/launch_local_server.sh
+Write the paths to the previously downloaded wiki files and the index into ``examples/agent/tools/search_local_server_faiss/launch_local_server.sh``:
 
 .. code-block:: bash
 
@@ -121,7 +121,7 @@ Write the paths to the previously downloaded wiki files and the index into examp
                                                --retriever_model $retriever_path \
                                                --faiss_gpu --port 8000
 
-Run `launch_local_server.sh` to start the Local Wiki Server.
+Run ``launch_local_server.sh`` to start the Local Wiki Server.
 Wait until server IP information is printed — indicating successful startup.
 
 (Optional) Using Qdrant as Local Wiki Server
@@ -133,9 +133,9 @@ Download the local retrieval wiki corpus files provided by ASearcher using the m
 
 Download the `e5-base-v2 <https://huggingface.co/intfloat/e5-base-v2>`__ embedding model from HuggingFace.
 
-Download `qdrant <https://github.com/qdrant/qdrant/releases>`__ binary file and build a qdrant collection with follwing steps. First, Create a new folder and put the qdrant binary into this folder, to facilitate the subsequent storage of qdrant binary and constructed collection files.
+Download the `qdrant <https://github.com/qdrant/qdrant/releases>`__ binary and build a qdrant collection with the following steps. First, create a new folder and put the qdrant binary into it to store the binary and the constructed collection files together.
 
-In `examples/agent/tools/search_local_server_qdrant/build_index.sh` and `examples/agent/tools/search_local_server_qdrant/launch_local_server.sh`, update the file paths for `WIKI2018_DIR`, `retriever_path`, and `qdrant_path` according to your downloaded wiki corpus, e5-base-v2, and qdrant paths.
+In ``examples/agent/tools/search_local_server_qdrant/build_index.sh`` and ``examples/agent/tools/search_local_server_qdrant/launch_local_server.sh``, update the file paths for ``WIKI2018_DIR``, ``retriever_path``, and ``qdrant_path`` according to your downloaded wiki corpus, e5-base-v2, and qdrant paths.
 
 Use the following commands to build the qdrant wiki server collection:
 

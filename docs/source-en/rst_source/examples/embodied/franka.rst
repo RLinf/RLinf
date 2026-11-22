@@ -194,7 +194,7 @@ Setup and Run
 
       .. code-block:: bash
 
-         python toolkits/realworld_check/test_franka_camera.py
+         python -m toolkits.realworld_check.test_franka_camera
 
       In both ``examples/embodiment/config/realworld_collect_data.yaml`` and ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml``, replace only the ``label: franka`` entry under ``cluster.node_groups`` with your robot IP and camera serial (and set ``cluster.num_nodes: 1`` in the training config; leave the ``4090`` group unchanged—it names GPU node 0 regardless of GPU model):
 
@@ -258,7 +258,7 @@ Setup and Run
 
       .. warning::
 
-         Ray captures the active Python environment and environment variables when ``ray start`` runs. Export ``RLINF_NODE_RANK`` and activate ``.venv`` before ``ray start`` on both machines (adapt ``ray_utils/realworld/setup_before_ray.sh`` as needed). Use each machine's IP on their shared network—not the arm's IP—and export ``RLINF_COMM_NET_DEVICES`` if a host has multiple network interfaces.
+         Ray captures the active Python environment and environment variables when ``ray start`` runs. Activate ``.venv`` and export ``RLINF_NODE_RANK`` before ``ray start`` on both machines. Use each machine's IP on their shared network—not the arm's IP—and export ``RLINF_COMM_NET_DEVICES`` if a host has multiple network interfaces.
 
       Start Ray on both nodes:
 

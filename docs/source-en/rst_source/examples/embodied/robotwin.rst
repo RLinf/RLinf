@@ -191,7 +191,6 @@ Select a model tab for NVIDIA CUDA, or switch to **AMD ROCm** for AMD GPUs.
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
          (cd ../RoboTwin && bash script/_download_assets.sh)
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
-         export ROBOT_PLATFORM=ALOHA
 
       **2. Download**
 
@@ -255,7 +254,6 @@ Select a model tab for NVIDIA CUDA, or switch to **AMD ROCm** for AMD GPUs.
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
          (cd ../RoboTwin && bash script/_download_assets.sh)
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
-         export ROBOT_PLATFORM=ALOHA
 
       **2. Download**
 
@@ -311,7 +309,6 @@ Select a model tab for NVIDIA CUDA, or switch to **AMD ROCm** for AMD GPUs.
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
          (cd ../RoboTwin && bash script/_download_assets.sh)
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
-         export ROBOT_PLATFORM=ALOHA
 
       .. dropdown:: Build and run the ROCm Docker image (optional)
 

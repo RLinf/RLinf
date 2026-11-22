@@ -90,3 +90,5 @@ Dedicated guides for world-action models served through RLinf's SGLang embodied 
    RoboLab <robolab>
    SIMPLE <simple>
    RealWorld <realworld>
+   Cosmos3 (SGLang) <cosmos3_sglang>
+   DreamZero (SGLang) <dreamzero_sglang>

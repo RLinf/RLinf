@@ -120,4 +120,4 @@ Logs go to ``logs/<timestamp>-<config>/eval_embodiment.log`` (see :doc:`../refer
    * - LIBERO rendering errors
      - ``run_eval.sh`` uses EGL by default; on hosts without EGL, set ``MUJOCO_GL=osmesa`` and ``PYOPENGL_PLATFORM=osmesa``.
    * - GPU not released before re-run
-     - Confirm ``ray stop`` completed, ``nvidia-smi`` shows GPUs free, and no leftover SGLang server processes remain.
+     - Check ``nvidia-smi`` for leftover SGLang server processes; on a dedicated host, stop your Ray session with ``ray stop`` (check ``ray status`` first on shared machines because ``ray stop`` is machine-wide).

@@ -1,7 +1,7 @@
 World Models
 ============
 
-This category collects examples for training and fine-tuning world models in RLinf.
+Train VLA policies with closed-loop RL using learned world models as simulators.
 
 .. raw:: html
 

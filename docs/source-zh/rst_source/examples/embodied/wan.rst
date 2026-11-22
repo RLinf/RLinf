@@ -110,8 +110,7 @@ NVIDIA CUDA 按任务套件选择对应标签页；昇腾 NPU 请切换到 **华
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env wan
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env wan && source .venv/bin/activate
 
       **2. 下载资源与模型**
 
@@ -149,8 +148,7 @@ NVIDIA CUDA 按任务套件选择对应标签页；昇腾 NPU 请切换到 **华
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env wan
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env wan && source .venv/bin/activate
 
       **2. 下载资源与模型**
 
@@ -188,8 +186,7 @@ NVIDIA CUDA 按任务套件选择对应标签页；昇腾 NPU 请切换到 **华
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env wan
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env wan && source .venv/bin/activate
 
       **2. 下载资源与模型**
 
@@ -231,8 +228,7 @@ NVIDIA CUDA 按任务套件选择对应标签页；昇腾 NPU 请切换到 **华
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env wan
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env wan && source .venv/bin/activate
 
       安装器会添加匹配的 ``torch-npu`` 并跳过 CUDA flash-attention，但不会安装 MindIE-SD。请在已激活的环境中单独安装与 CANN、PyTorch 版本兼容的 MindIE-SD。
 

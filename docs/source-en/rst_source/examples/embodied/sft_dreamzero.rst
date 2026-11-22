@@ -285,7 +285,7 @@ Reference SFT configs under ``examples/sft/config/``:
 
    **Example config sketch**
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       # Single dataset
       data:
@@ -398,7 +398,7 @@ Visualization and Results
 
 2. Launch TensorBoard:
 
-.. code:: bash
+.. code-block:: bash
 
    tensorboard --logdir ./logs --port 6006
 

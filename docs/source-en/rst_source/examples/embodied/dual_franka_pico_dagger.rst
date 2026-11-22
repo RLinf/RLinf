@@ -88,11 +88,12 @@ Collection runs on a single host by default (rank ``0`` owns both arms via dual 
 
 .. dropdown:: Multi-node Ray cluster setup (required for HG-DAgger and 2-host collection)
 
-   Skip this block for default single-host collection (single-node runs auto-start Ray). For 3-node HG-DAgger—or 2-host collection with ``num_nodes: 2``, ``node_rank: 0``, ``left_controller_node_rank: 0``, and ``right_controller_node_rank: 1``—source ``ray_utils/realworld/setup_before_ray.sh`` (customized for your virtualenv and hardware) on every node, then export node variables and start Ray:
+   Skip this block for default single-host collection (single-node runs auto-start Ray). For 3-node HG-DAgger—or 2-host collection with ``num_nodes: 2``, ``node_rank: 0``, ``left_controller_node_rank: 0``, and ``right_controller_node_rank: 1``—activate ``.venv`` and export the node variables on every node before starting Ray:
 
    .. code-block:: bash
 
       # On every node (set RLINF_NODE_RANK to 0, 1, or 2; omit NIC if only one exists)
+      source .venv/bin/activate
       export RLINF_NODE_RANK=0
       export RLINF_COMM_NET_DEVICES=eth0
 
@@ -131,7 +132,7 @@ Setup and Run
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
       **Start the PICO publisher** (on the publisher PC) and verify reception on the env node before touching the arms:
 
@@ -145,7 +146,7 @@ Setup and Run
          python -m vr_data_publisher --config configs/vr_bridge.yaml
 
          # Env node (from the RLinf root with .venv active; replace IP:port with your publisher)
-         python toolkits/realworld_check/test_pico_data.py \
+         python -m toolkits.realworld_check.test_pico_data \
              --zmq-addr tcp://192.168.1.20:5555
 
       Continue only after the output refreshes continuously and ``grip``, ``trigger``, ``A/B``, and ``X/Y`` update as you press them.

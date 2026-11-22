@@ -98,8 +98,7 @@ CALVIN 强化学习
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env calvin
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env calvin && source .venv/bin/activate
 
       **2. 下载资源与模型**
 
@@ -146,8 +145,7 @@ CALVIN 强化学习
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env calvin
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env calvin && source .venv/bin/activate
 
       **2. 下载资源与模型**
 

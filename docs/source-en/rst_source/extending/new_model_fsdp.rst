@@ -39,7 +39,7 @@ RLinf.
           torch_dtype=torch_dtype,
           hidden_size=cfg.hidden_size,
           unnorm_key=cfg.unnorm_key,
-          action_dim=cfg.action_token_len,
+          action_dim=cfg.action_dim,
           attn_implementation=cfg.attn_implementation,
           low_cpu_mem_usage=cfg.low_cpu_mem_usage,
           trust_remote_code=cfg.trust_remote_code,
@@ -87,14 +87,14 @@ environment variable when running those tools as well.
 2. Model Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Create your class in `rlinf/models/embodiment/your_model_action_model.py` and
+Create your class in ``rlinf/models/embodiment/your_model_action_model.py`` and
 inherit from a HuggingFace base class.
-For a custom VLA model integrated into RLinf, you should follow the interface
-contract of `rlinf.models.embodiment.base_policy.BasePolicy` and provide at
-least `forward` and `predict_action_batch`. If you inherit directly from
-`BasePolicy`, you will usually need to implement `default_forward` and
-`predict_action_batch`, while `forward` is dispatched by the base class.
-`predict_action_batch` is used to encapsulate generation, decoding, and optional
+For a custom VLA model integrated into RLinf, follow the interface
+contract of ``rlinf.models.embodiment.base_policy.BasePolicy`` and provide at
+least ``forward`` and ``predict_action_batch``. If you inherit directly from
+``BasePolicy``, implement ``default_forward`` and
+``predict_action_batch``, while ``forward`` is dispatched by the base class.
+``predict_action_batch`` encapsulates generation, decoding, and optional
 value computation so the RL-specific logic stays inside the model.
 
 .. code-block:: python
@@ -135,7 +135,7 @@ value computation so the RL-specific logic stays inside the model.
           }
           return actions, result
 
-Refer to `rlinf/models/embodiment/openpi/tasks/rl.py`. The inputs and
+Refer to ``rlinf/models/embodiment/openpi/tasks/rl.py``. The inputs and
 outputs of these interfaces are best understood as follows:
 
 - ``forward(forward_type=..., **kwargs)``:
@@ -268,17 +268,17 @@ to ``tests/unit_tests/test_diffusion.py``:
 3. Configuration File
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Create `examples/embodiment/config/your_config.yaml`.
-It should include fields such as `model_type`, `action_token_len`, and
-`precision`. This template exposes your model hyperparameters so experiments are
+Create ``examples/embodiment/config/your_config.yaml``.
+It should include fields such as ``model_type``, ``action_dim``, ``num_action_chunks``, and
+``precision``. This template exposes your model hyperparameters so experiments are
 easy to configure.
 
 .. code-block:: yaml
 
   model:
     model_type: "your_model_type"
-    action_token_len: 7
-    action_chunks_len: 1
+    action_dim: 7
+    num_action_chunks: 1
     unnorm_key: your_action_key
     precision: "bf16"
     vocab_size: 32000

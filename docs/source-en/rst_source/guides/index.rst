@@ -40,7 +40,7 @@ Choose a Workflow
 
       Launch SGLang servers and routers, or run PhyAI / ApxInf embodied rollout backends.
 
-   .. grid-item-card:: Agentic Scenarios
+   .. grid-item-card:: Agentic & Reasoning
       :link: ../examples/agentic/index
       :link-type: doc
 

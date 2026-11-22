@@ -165,7 +165,7 @@ GenieSim 训练横跨两个节点：在 **RLinf 训练节点** 安装依赖、�
       .. code-block:: bash
 
          export GENIESIM_EVAL_SERVER_ADDR=tcp://sim-host:5601
-         bash evaluations/run_eval.sh geniesim_pick_block_color_eval
+         bash evaluations/run_eval.sh geniesim geniesim_pick_block_color_eval
 
    .. tab-item:: GenieSim 仿真节点
       :sync: geniesim-server

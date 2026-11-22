@@ -6,9 +6,6 @@ Use this recipe when you want actor-critic PPO for the same math-reasoning task 
 Overview
 --------
 
-Use this recipe when you want actor-critic PPO for the same math-reasoning setup
-used by the GRPO example.
-
 .. grid:: 2 4 4 4
    :gutter: 2
 

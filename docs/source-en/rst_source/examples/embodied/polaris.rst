@@ -142,8 +142,8 @@ Setup and Run
 
       .. code-block:: bash
 
-         source /path/to/isaac_sim/setup_conda_env.sh
-         export POLARIS_DATA_PATH=/path/to/PolaRiS-Hub
+         source ./isaac_sim/setup_conda_env.sh
+         export POLARIS_DATA_PATH="$PWD/PolaRiS-Hub"
          bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi_pi05
 
       For standalone evaluation, see the :doc:`PolaRiS evaluation guide <../../evaluations/guides/polaris>` (``polaris_tapeintocontainer_openpi_pi05_eval``).
@@ -193,8 +193,8 @@ Setup and Run
 
       .. code-block:: bash
 
-         source /path/to/isaac_sim/setup_conda_env.sh
-         export POLARIS_DATA_PATH=/path/to/PolaRiS-Hub
+         source ./isaac_sim/setup_conda_env.sh
+         export POLARIS_DATA_PATH="$PWD/PolaRiS-Hub"
          bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi
 
       For standalone evaluation, see the :doc:`PolaRiS evaluation guide <../../evaluations/guides/polaris>` (``polaris_movelattecup_openpi_eval``).

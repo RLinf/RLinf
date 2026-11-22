@@ -1,77 +1,24 @@
 FAQ
 ===
 
-Below are RLinf's frequently asked questions. This section will be continuously updated, and everyone is welcome to keep asking questions to help us improve!
+Below are RLinf's frequently asked questions, ordered from common first-run blockers to cluster and debugging issues.
 
-.. _faq-rendering:
+Download and Network Issues
+---------------------------
 
-Rendering Issues
-------------------------------------
+Slow or Timed-Out Hugging Face / GitHub Downloads
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Which GPU does EGL rendering use?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**Symptom:** ``hf download`` or ``requirements/install.sh`` stalls or times out when fetching models, datasets, or Python wheels.
 
-RLinf assigns each worker its own rendering device: it asks the driver for the
-EGL index of the GPU that worker was given and exports it as
-``MUJOCO_EGL_DEVICE_ID`` (MuJoCo, robosuite) and ``EGL_DEVICE_ID`` (other EGL
-renderers, e.g. pyrender). This matters because EGL device indices and CUDA
-device ids are different namespaces: EGL lists every device the driver can see,
-so in a container holding a subset of a node's GPUs, CUDA device 0 is usually
-*not* EGL device 0.
+**Fix:** In mainland China or behind a restricted network, enable the mirror options:
 
-Set ``MUJOCO_EGL_DEVICE_ID`` yourself only to override that choice; an explicit
-value is always respected. Setting it to a CUDA ordinal renders on the wrong GPU
-whenever the two namespaces disagree.
+.. code-block:: bash
 
-RuntimeError: The MUJOCO_EGL_DEVICE_ID environment variable must be an integer between 0 and 0 (inclusive), got 1.
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   export HF_ENDPOINT=https://hf-mirror.com
+   bash requirements/install.sh embodied --model openvla --env maniskill_libero --use-mirror
 
-**Symptom:** The above error message when running simulators with MUJOCO_GL environment variable set to "egl".
-
-**Cause:** This error occurs because your GPU environment is not properly setup for graphics rendering, especially on NVIDIA GPUs.
-
-**Fix:** Check whether you have this file `/usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.0`. 
-
-1. If you have this file, check whether you also have `/usr/share/glvnd/egl_vendor.d/10_nvidia.json`. If not, create this file and add the following content:
-
-   .. code-block:: json
-
-      {
-         "file_format_version" : "1.0.0",
-         "ICD" : {
-            "library_path" : "libEGL_nvidia.so.0"
-         }
-      }
-
-   And add the following environment variable to your running script:
-
-   .. code-block:: shell
-
-      export NVIDIA_DRIVER_CAPABILITIES="all"
-
-2. If you do not have this file, it means your NVIDIA driver is not properly installed with the graphics capability. You can try the following solutions:
-
-   * Reinstall the NVIDIA driver with the correct options to enable graphics capabilities. There are several options when installing the NVIDIA driver that disable the graphics driver. Therefore, you need to try installing NVIDIA's graphics driver. On Ubuntu, this can be done with the command ``apt install libnvidia-gl-<driver-version>``, see NVIDIA's documentation at https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/ubuntu.html#compute-only-headless-and-desktop-only-no-compute-installation for details.
-
-   * Use **osmesa** for rendering, change the `MUJOCO_GL` and `PYOPENGL_PLATFORM` environment variables in our running script to "osmesa" for this. However, this may cause the rollout process to be 10x slower than EGL as it uses CPU for rendering.
-
-Vulkan Incompatible GPU Driver
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Symptom:** Incompatible GPU driver when running Vulkan-based simulators like ManiSkill.
-
-**Cause:** The GPU driver is not properly installed with graphics rendering capability or the version is not compatible.
-
-**Fix:** 
-
-1. Check the above to ensure your GPU driver is installed with graphics rendering support.
-2. Check the driver version of your device via ``nvidia-smi``.
-   
-   * For Ampere GPUs (A100, A800, and RTX 30 series), recommend using driver version 535 (frequently tested: 535.161.08). Higher versions like 570 and 580 are known to trigger this problem.
-   * For Hopper GPUs (H100, L40S, and RTX 40 series), recommend using driver version 570.
-  
-Network Issues
------------------
+You can also pull prebuilt images from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ (see :doc:`../start/installation`).
 
 Cannot Connect to GCS at ip:port
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -123,7 +70,7 @@ Out of Memory (OOM) During Training
 Keep ``actor.global_batch_size`` divisible by ``actor.micro_batch_size`` times the number of actor workers, and keep ``env.train.total_num_envs`` divisible by the number of env workers times ``rollout.pipeline_stage_num``.
 
 NCCL "cuda invalid argument" During Task Transfer
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Symptom:** P2P task transmission fails with ``NCCL cuda invalid argument``.
 
@@ -133,19 +80,19 @@ NCCL "cuda invalid argument" During Task Transfer
 
    ray stop
 
-NCCL "cuda invalid argument" When SGLang Loads parameters
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+NCCL "cuda invalid argument" When SGLang Loads Parameters
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Symptom:** SGLang reports ``NCCL cuda invalid argument`` while loading weights.
 
-**Cause:** Placement mismatch. For example, the config uses *colocate* but the
+**Cause:** Placement mismatch. For example, the config uses *collocated* placement but the
 trainer and generation actually run on different GPUs.
 
 **Fix:** Verify the placement strategy. Ensure trainer and generation groups are
 placed on the GPUs implied by your ``cluster.component_placement`` settings.
 
 CUDA CUresult Error (result=2) in torch_memory_saver.cpp
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Symptom:**
 ``CUresult error result=2 file=csrc/torch_memory_saver.cpp func=cu_mem_create line=103``
@@ -159,7 +106,7 @@ buffers; often happens if inference weights were not unloaded before an update.
 - Ensure inference weights are properly released before reloading.
 
 Gloo Timeout / "Global rank x is not part of group"
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Symptoms:**
 
@@ -176,7 +123,7 @@ generation from completing. Megatron then waits until Gloo times out.
 3. Relaunch the job (and Ray, if needed).
 
 FSDP Collective Times Out on the Backend Watchdog
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Symptom:** An FSDP actor is killed by the collective watchdog even though the
 step was still making progress:
@@ -204,19 +151,19 @@ inter-worker communication, which defaults to 180 minutes. Raise it with
 Ray captures the environment when it starts, so export this on every node
 **before** ``ray start``.
 
-Numerical Precision / Inference backend
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Numerical Precision / Inference Backend
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Tip:** By default, SGLang uses **flashinfer** for attention. For stability or
-compatibility, try **triton**:
+**Tip:** RLinf defaults ``rollout.sglang.attention_backend`` to ``triton`` for stability and compatibility across GPUs (you can switch to ``flashinfer`` if supported on your GPU; for vLLM, configure ``rollout.vllm.attention_backend``, which defaults to ``FLASH_ATTN``):
 
 .. code-block:: yaml
 
    rollout:
-     attention_backend: triton
+     sglang:
+       attention_backend: triton  # or flashinfer
 
 Worker Aborts While Creating a Process Group
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Symptom:** A worker exits while it connects to a new peer. The first native
 error in its log is:
@@ -243,6 +190,73 @@ created once per collective group, so a rare abort is still possible. Use
 PyTorch 2.7 or later where the rest of the stack allows it. When reporting a
 failure, include the PyTorch version and the first native stack trace; Ray's
 ``actor died`` message does not identify the cause.
+
+.. _faq-rendering:
+
+Rendering Issues
+----------------
+
+Which GPU does EGL rendering use?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+RLinf assigns each worker its own rendering device: it asks the driver for the
+EGL index of the GPU that worker was given and exports it as
+``MUJOCO_EGL_DEVICE_ID`` (MuJoCo, robosuite) and ``EGL_DEVICE_ID`` (other EGL
+renderers, e.g. pyrender). This matters because EGL device indices and CUDA
+device ids are different namespaces: EGL lists every device the driver can see,
+so in a container holding a subset of a node's GPUs, CUDA device 0 is usually
+*not* EGL device 0.
+
+Set ``MUJOCO_EGL_DEVICE_ID`` yourself only to override that choice; an explicit
+value is always respected. Setting it to a CUDA ordinal renders on the wrong GPU
+whenever the two namespaces disagree.
+
+RuntimeError: The MUJOCO_EGL_DEVICE_ID environment variable must be an integer between 0 and 0 (inclusive), got 1.
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Symptom:** The above error message when running simulators with ``MUJOCO_GL`` set to ``"egl"``.
+
+**Cause:** This error occurs because your GPU environment is not set up for graphics rendering, especially on NVIDIA GPUs.
+
+**Fix:** Check whether you have ``/usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.0``.
+
+1. If you have this file, check whether you also have ``/usr/share/glvnd/egl_vendor.d/10_nvidia.json``. If not, create this file with the following content:
+
+   .. code-block:: json
+
+      {
+         "file_format_version" : "1.0.0",
+         "ICD" : {
+            "library_path" : "libEGL_nvidia.so.0"
+         }
+      }
+
+   And add the following environment variable to your running script:
+
+   .. code-block:: shell
+
+      export NVIDIA_DRIVER_CAPABILITIES="all"
+
+2. If you do not have this file, your NVIDIA driver is installed without graphics capability. Try one of the following solutions:
+
+   * Reinstall the NVIDIA driver with graphics capabilities enabled. On Ubuntu, run ``apt install libnvidia-gl-<driver-version>``; see NVIDIA's `Ubuntu driver installation guide <https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/ubuntu.html#compute-only-headless-and-desktop-only-no-compute-installation>`__ for details.
+
+   * Use **osmesa** for rendering by setting ``MUJOCO_GL=osmesa`` and ``PYOPENGL_PLATFORM=osmesa`` in your running script. CPU rendering with osmesa is roughly 10× slower than EGL.
+
+Vulkan Incompatible GPU Driver
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Symptom:** Incompatible GPU driver when running Vulkan-based simulators like ManiSkill.
+
+**Cause:** The GPU driver is not installed with graphics rendering capability or the version is not compatible.
+
+**Fix:**
+
+1. Check the steps above to ensure your GPU driver has graphics rendering support.
+2. Check your driver version via ``nvidia-smi``:
+
+   * For Ampere GPUs (A100, A800, and RTX 30 series), use driver version 535 (frequently tested: 535.161.08). Higher versions like 570 and 580 are known to trigger this issue.
+   * For Hopper (H100) and Ada Lovelace (L40S, RTX 40 series) GPUs, use driver version 570.
 
 .. _faq-debugging:
 

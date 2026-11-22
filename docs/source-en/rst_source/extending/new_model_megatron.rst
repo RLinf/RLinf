@@ -3,7 +3,11 @@ Add a Megatron Model
 
 
 Add a new HuggingFace model to RLinf with the Megatron+SGLang backend. This
-guide walks through the required steps end to end.
+guide walks through the manual Megatron integration path end to end.
+
+.. tip::
+
+   For modern HuggingFace models (such as Qwen3, Qwen3-MoE, Qwen2.5-VL, Qwen3-VL, DeepSeek-V3/Moonlight-16B, and GLM-4.7-Flash), prefer :doc:`mbridge` (``actor.megatron.mbridge: True``), which loads HuggingFace weights directly in-process and avoids writing manual ``megatron_convertor`` and ``mcore_weight_reshard`` rules.
 
 Prerequisites
 -------------
@@ -85,18 +89,18 @@ For example:
 .. code-block:: yaml
 
    actor:
-    group_name: "ActorGroup"
-    training_backend: megatron
-    mcore_gpt: True
-    spec_name: decoder_gpt
-    model:
-      megatron_checkpoint: null
-   megatron:
-    use_hf_ckpt: True
-    ckpt_convertor:
-      model: DeepSeek-R1-Distill-Qwen-1.5B
-      hf_model_path: ${rollout.model.model_path}
-      save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+     group_name: "ActorGroup"
+     training_backend: megatron
+     mcore_gpt: True
+     spec_name: decoder_gpt
+     model:
+       megatron_checkpoint: null
+     megatron:
+       use_hf_ckpt: True
+       ckpt_convertor:
+         model: DeepSeek-R1-Distill-Qwen-1.5B
+         hf_model_path: ${rollout.model.model_path}
+         save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
 
 This approach will perform a one-time Megatron-LM format checkpoint conversion during RLinf's first training run. 
 
@@ -109,18 +113,18 @@ For example:
 .. code-block:: yaml
 
    actor:
-    group_name: "ActorGroup"
-    training_backend: megatron
-    mcore_gpt: True
-    spec_name: decoder_gpt
-    model:
-      megatron_checkpoint: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
-   megatron:
-    use_hf_ckpt: False
-    ckpt_convertor:
-      model: DeepSeek-R1-Distill-Qwen-1.5B
-      hf_model_path: ${rollout.model.model_path}
-      save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+     group_name: "ActorGroup"
+     training_backend: megatron
+     mcore_gpt: True
+     spec_name: decoder_gpt
+     model:
+       megatron_checkpoint: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+     megatron:
+       use_hf_ckpt: False
+       ckpt_convertor:
+         model: DeepSeek-R1-Distill-Qwen-1.5B
+         hf_model_path: ${rollout.model.model_path}
+         save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
 
 
 This way, RLinf will use the converted checkpoint directly without needing to convert it again.
@@ -164,7 +168,7 @@ RLinf only supports models that have already been adapted by SGLang.
 If you need a new model, add the adaptation code to SGLang itself. 
 
 See the official guide:
-`SGLang-support-new-model <https://docs.SGLang.ai/supported_models/support_new_models.html>`__.
+`SGLang-support-new-model <https://docs.sglang.io/supported_models/support_new_models.html>`__.
 
 4. Weight Sync from Megatron to SGLang
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -411,7 +415,7 @@ The code for MegatronActor to shard weights is in the ``rlinf/utils/convertor/ut
                 ),
             ]
 
-At present only the *Qwen-2.5* family is implemented.
+This manual convertor path covers legacy models such as Qwen2.5; newer architectures (Qwen3, Qwen3-MoE, Qwen2.5-VL, Qwen3-VL, DeepSeek-V3/Moonlight-16B, and GLM-4.7-Flash) use :doc:`mbridge`.
 
 After completing the above steps, MegatronActor will send the weights to SGLangActor, which will update its current weights. 
 
@@ -442,7 +446,7 @@ The code for SGLangActor to receive weights is in the ``rlinf/hybrid_engines/sgl
                 list_args = list(args)
                 # NOTE: the key is to change device id to the current device id
                 # in case two processes have different CUDA_VISIBLE_DEVICES
-                list_args[6] = torch.cuda.current_device()
+                list_args[6] = Worker.torch_platform.current_device()
                 new_weight = func(*list_args)
 
                 model.load_weights([(name, new_weight)])
@@ -475,57 +479,58 @@ Set Megatron parameters used by RLinf.
 
 .. code-block:: yaml
 
-   # Megatron parameters
-   model:
-    precision: fp16
-    add_bias_linear: False
+   actor:
+     # Megatron parameters
+     model:
+       precision: fp16
+       add_bias_linear: False
 
-    tensor_model_parallel_size: 2
-    pipeline_model_parallel_size: 1
+       tensor_model_parallel_size: 2
+       pipeline_model_parallel_size: 1
 
-    activation: swiglu
-    sequence_parallel: True
-    # recompute_method: block
-    # recompute_granularity: selective
+       activation: swiglu
+       sequence_parallel: True
+       # recompute_method: block
+       # recompute_granularity: selective
 
-    recompute_method: block
-    recompute_granularity: full
-    recompute_num_layers: 20
+       recompute_method: block
+       recompute_granularity: full
+       recompute_num_layers: 20
 
-    seq_length: ${runner.seq_length}
-    encoder_seq_length: ${runner.seq_length}
+       seq_length: ${runner.seq_length}
+       encoder_seq_length: ${runner.seq_length}
 
-    normalization: rmsnorm
+       normalization: rmsnorm
 
-    position_embedding_type: rope
+       position_embedding_type: rope
 
-    apply_rope_fusion: True
-    bias_dropout_fusion: False
-    persist_layer_norm: False
-    bias_activation_fusion: False
-    attention_softmax_in_fp32: True
-    batch_p2p_comm: False
-    variable_seq_lengths: True
-    gradient_accumulation_fusion: False
-    moe_token_dispatcher_type: alltoall
-    use_cpu_initialization: False
+       apply_rope_fusion: True
+       bias_dropout_fusion: False
+       persist_layer_norm: False
+       bias_activation_fusion: False
+       attention_softmax_in_fp32: True
+       batch_p2p_comm: False
+       variable_seq_lengths: True
+       gradient_accumulation_fusion: False
+       moe_token_dispatcher_type: alltoall
+       use_cpu_initialization: False
 
-   megatron:
-    ddp_bucket_size: null
-    distributed_backend: nccl # Support 'nccl' and 'gloo'
-    distributed_timeout_minutes: 30
-    ckpt_format: torch
-    use_dist_ckpt: False
-    tp_comm_bootstrap_backend: nccl
-    tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
-    use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
+     megatron:
+       ddp_bucket_size: null
+       distributed_backend: nccl # Support 'nccl' and 'gloo'
+       distributed_timeout_minutes: 30
+       ckpt_format: torch
+       use_dist_ckpt: False
+       tp_comm_bootstrap_backend: nccl
+       tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
+       use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
 
-    ckpt_convertor: # config for ckpt convertor
-      model: DeepSeek-R1-Distill-Qwen-1.5B
-      hf_model_path: ${rollout.model.model_path} # path to the hf model
-      save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
-      use_gpu_num : 0
-      use_gpu_index: null
-      process_num: 16 # number of processes to use for checkpointing
-      tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
-      pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
+       ckpt_convertor: # config for ckpt convertor
+         model: DeepSeek-R1-Distill-Qwen-1.5B
+         hf_model_path: ${rollout.model.model_path} # path to the hf model
+         save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+         use_gpu_num : 0
+         use_gpu_index: null
+         process_num: 16 # number of processes to use for checkpointing
+         tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
+         pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}

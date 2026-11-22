@@ -1,8 +1,7 @@
 接入仿真环境
 ============
 
-为 RLinf 添加一个新的强化学习环境。  
-RLinf 支持多种强化学习环境，包括机器人操作（例如 ManiSkill3、LIBERO）等。  
+为 RLinf 添加一个新的强化学习仿真环境。RLinf 支持多种强化学习环境，包括机器人操作（例如 ManiSkill3、LIBERO）等。
 
 RLinf 的环境系统由以下组件构成：
 
@@ -30,9 +29,9 @@ RLinf 的环境系统由以下组件构成：
            self.seed = self.cfg.seed + rank
 
            # 初始化环境相关参数
-           self.num_envs = num_envs
+           self._num_envs = num_envs
            self.group_size = self.cfg.group_size
-           self.num_group = self.num_envs // self.group_size
+           self.num_group = self._num_envs // self.group_size
 
            # 初始化环境内部
            self._init_environment()
@@ -105,7 +104,7 @@ RLinf 的环境系统由以下组件构成：
    @property
    def num_envs(self):
        """向量化环境的数量。"""
-       return self.num_envs
+       return self._num_envs
 
    @property
    def device(self):
@@ -115,15 +114,14 @@ RLinf 的环境系统由以下组件构成：
 2. 实现环境的 Offload 支持（可选）
 ----------------------------------------------------------------------
 
-如果需要支持保存/恢复环境状态，可以继承 ``EnvOffloadMixin``：
+如果模拟器需要在 CPU 与 GPU 之间卸载状态，可实现 ``get_state`` / ``load_state``\ （可参考 ``rlinf/envs/sim/maniskill/maniskill_offload_env.py`` 中的 ``EnvOffloadMixin`` 实现）：
 
 .. code-block:: python
 
-   from rlinf.envs.env_offload_wrapper import EnvOffloadMixin
    import io
    import torch
 
-   class YourCustomEnv(gym.Env, EnvOffloadMixin):
+   class YourCustomOffloadEnv(YourCustomEnv):
        def get_state(self) -> bytes:
            """序列化环境状态为字节。"""
            state = {
@@ -143,32 +141,16 @@ RLinf 的环境系统由以下组件构成：
            self._generator.set_state(state["rng_state"])
            # 根据需要恢复其他状态
 
-3. 创建环境封装器
+3. 添加动作处理工具
 -----------------------------------
 
-如果实现了 offload 功能，需要创建对应的封装器：
-
-.. code-block:: python
-
-   # 在 env_offload_wrapper.py 中
-   class YourCustomEnv(BaseYourCustomEnv, EnvOffloadMixin):
-       def get_state(self) -> bytes:
-           # 实现状态保存
-           pass
-
-       def load_state(self, state_buffer: bytes):
-           # 实现状态恢复
-           pass
-
-4. 添加动作处理工具
------------------------------------
-
-在 ``action_utils.py`` 中添加动作处理函数：
+在 ``rlinf/envs/action_utils.py`` 中添加对应环境的动作格式化函数：
 
 .. code-block:: python
 
    def prepare_actions_for_your_env(
        raw_chunk_actions,
+       model_type,
        num_action_chunks,
        action_dim,
        action_scale,
@@ -179,16 +161,21 @@ RLinf 的环境系统由以下组件构成：
        pass
 
    def prepare_actions(
-       env_type,
        raw_chunk_actions,
+       env_type: str,
+       model_type: str,
        num_action_chunks,
        action_dim,
        action_scale: float = 1.0,
-       policy: str = "default",
+       policy: str = "widowx_bridge",
+       wm_env_type=None,
+       env_cfg=None,
    ):
-       if env_type == "your_env":
+       env_type = SupportedEnvType(env_type)
+       if env_type == SupportedEnvType.YOUR_ENV:
            chunk_actions = prepare_actions_for_your_env(
                raw_chunk_actions=raw_chunk_actions,
+               model_type=model_type,
                num_action_chunks=num_action_chunks,
                action_dim=action_dim,
                action_scale=action_scale,
@@ -197,14 +184,14 @@ RLinf 的环境系统由以下组件构成：
        # ... 其他环境类型
        return chunk_actions
 
-5. 创建任务变体（可选）
+4. 放置环境代码与任务变体
 -----------------------------------
 
-如果需要特定任务变体，可以将其放在 ``envs/YOUR_ENV/tasks/variants/`` 下：
+将模拟器包放在 ``rlinf/envs/sim/<your_env>/`` 下（含 ``__init__.py``）。可选的任务变体可放在 ``rlinf/envs/sim/<your_env>/tasks/variants/`` 下：
 
 .. code-block:: python
 
-   # envs/YOUR_ENV/tasks/variants/your_task_variant.py
+   # rlinf/envs/sim/your_env/tasks/variants/your_task_variant.py
    class YourTaskVariant:
        def __init__(self, config):
            self.config = config
@@ -221,31 +208,37 @@ RLinf 的环境系统由以下组件构成：
            """任务成功时返回 True。"""
            pass
 
-6. 更新配置文件
------------------------------------
+5. 在 ``rlinf/envs/__init__.py`` 中注册环境
+-------------------------------------------
 
-添加你的环境配置：
-
-.. code-block:: yaml
-
-   your_env:
-     env_type: "your_env"
-     total_num_envs: 8
-     group_size: 4
-     seed: 42
-     # 其他环境特定设置
-
-7. 注册环境
------------------------------------
-
-在包中暴露新环境：
+在 ``rlinf/envs/__init__.py`` 的 ``SupportedEnvType`` 枚举中添加成员，并在 ``get_env_cls()`` 中添加延迟导入分支，避免在未选中该环境时导入可选依赖：
 
 .. code-block:: python
 
-   # 在 __init__.py 或相关模块中
-   from .your_custom_env import YourCustomEnv
+   class SupportedEnvType(Enum):
+       ...
+       YOUR_ENV = "your_env"
 
-   __all__ = ["YourCustomEnv"]
+   def get_env_cls(env_type: str | SupportedEnvType, env_cfg=None):
+       env_type = SupportedEnvType(env_type)
+       ...
+       elif env_type == SupportedEnvType.YOUR_ENV:
+           from rlinf.envs.sim.your_env.your_custom_env import YourCustomEnv
+
+           return YourCustomEnv
+
+6. 添加环境配置预设
+-----------------------------------
+
+在 ``examples/embodiment/config/env/`` 下新增 Hydra 环境预设：
+
+.. code-block:: yaml
+
+   env_type: your_env
+   total_num_envs: 8
+   group_size: 4
+   seed: 42
+   # 其他环境特定设置
 
 测试与验证
 -----------------------------------
@@ -257,7 +250,7 @@ RLinf 的环境系统由以下组件构成：
    def test_your_env():
        """对环境的基本测试。"""
        cfg = get_test_config()
-       env = YourCustomEnv(cfg, rank=0)
+       env = YourCustomEnv(cfg, rank=0, num_envs=cfg.total_num_envs)
 
        # Reset
        obs, info = env.reset()

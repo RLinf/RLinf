@@ -22,22 +22,22 @@ This example trains an **OpenVLA-OFT student** with an **OpenVLA-OFT teacher** o
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: Environment
-      :text-align: center
-
-      LIBERO-Spatial
-
    .. grid-item-card:: Algorithm
       :text-align: center
 
       OPD
 
-   .. grid-item-card:: Model
+   .. grid-item-card:: Models
       :text-align: center
 
       OpenVLA-OFT student · OpenVLA-OFT teacher
 
-   .. grid-item-card:: Hardware
+   .. grid-item-card:: Environments / Data
+      :text-align: center
+
+      LIBERO-Spatial
+
+   .. grid-item-card:: Training
       :text-align: center
 
       1 node · 8 GPUs
@@ -59,7 +59,7 @@ Implementation details:
 Setup and Run
 -------------
 
-Install with ``requirements/install.sh`` (in mainland China, append ``--use-mirror`` and set ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``), or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. See :doc:`../../start/installation` for shared options.
+.. include:: _setup_common.rst
 
 .. list-table:: **Checkpoints used by LIBERO-Spatial OPD**
    :header-rows: 1

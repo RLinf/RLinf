@@ -58,25 +58,34 @@ ManiSkill OOD 评测用于检验 VLA policy 在分布外（Out-of-Distribution�
 
    .. tab-item:: 批量 16 场景 OOD（mani-ood）
 
+      **1. 安装**
+
       .. code-block:: bash
 
-         # 1. 安装
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-         # 2. 下载资产与模型权重
+      **2. 下载资产与模型权重**
+
+      .. code-block:: bash
+
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
          hf download RLinf/Openvla-oft-SFT-libero10-trajall --local-dir ./Openvla-oft-SFT-libero10-trajall
          hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
-         # 3. 批量评测全部 16 个 OOD 场景（须先在 evaluations/maniskill/maniskill_ood_openvlaoft_eval.yaml 中填写 model_path 与 lora_path）
+      在 ``evaluations/maniskill/maniskill_ood_openvlaoft_eval.yaml`` 中设置 ``rollout.model.model_path: ./Openvla-oft-SFT-libero10-trajall`` 与 ``rollout.model.lora_path: ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora``。
+
+      **3. 批量评测全部 16 个 OOD 场景**
+
+      .. code-block:: bash
+
          export EVAL_NAME=my_ood_eval
          export CKPT_PATH=./logs/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt
          export TOTAL_NUM_ENVS=16
          export EVAL_ROLLOUT_EPOCH=1
          bash evaluations/run_eval.sh mani-ood maniskill_ood_openvlaoft_eval
 
-      执行第 3 步前，先在 ``evaluations/maniskill/maniskill_ood_openvlaoft_eval.yaml`` 中设置 ``rollout.model.model_path: ./Openvla-oft-SFT-libero10-trajall`` 与 ``rollout.model.lora_path: ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora``。批量日志保存在 ``logs/eval/<EVAL_NAME>/<时间戳>-<env_id>-<obj_set>/run_ppo.log``；``mani-ood`` 默认将 ``HF_ENDPOINT`` 设为 ``https://hf-mirror.com``，提前导出即可覆盖。
+      批量日志保存在 ``logs/eval/<EVAL_NAME>/<时间戳>-<env_id>-<obj_set>/run_ppo.log``；``mani-ood`` 默认将 ``HF_ENDPOINT`` 设为 ``https://hf-mirror.com``，提前导出即可覆盖。
 
 ``evaluations/maniskill/`` 提供 OpenVLA-OFT 示例配置（基座模型 `RLinf/Openvla-oft-SFT-libero10-trajall <https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall>`_ + ManiSkill LoRA `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_）。OpenVLA、OpenPI 或其他 ManiSkill 任务可参考 :ref:`从训练配置派生评测 <maniskill-derive-from-train>`。
 

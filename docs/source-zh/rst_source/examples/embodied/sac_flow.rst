@@ -90,7 +90,7 @@ SAC-Flow 工作原理
 一键上手
 ----------------------------------------
 
-使用 ``requirements/install.sh`` 安装环境（中国大陆用户可在命令末尾追加 ``--use-mirror``，并在下载 Hugging Face 资源前设置 ``export HF_ENDPOINT=https://hf-mirror.com``），或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像。完整说明见 :doc:`../../start/installation`\ （仿真）和 :doc:`franka`\ （真机）。
+.. include:: _setup_common.rst
 
 .. tab-set::
 
@@ -121,12 +121,12 @@ SAC-Flow 工作原理
 
    **模型参数**
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       actor:
         model:
           model_type: "flow_policy"
-          # 输入类型: 'state' (仿真) 或 'mixed' (真机, 图像+状态)
+          # 输入类型：'state'（仿真）或 'mixed'（真机，图像 + 状态）
           input_type: "state"
 
           # Flow Matching 相关参数
@@ -147,7 +147,7 @@ SAC-Flow 工作原理
 
    **算法参数**
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       algorithm:
         gamma: 0.96          # 折扣因子
@@ -177,43 +177,43 @@ SAC-Flow 工作原理
 
 指标含义见 :doc:`训练指标 <../../reference/metrics>`。SAC 相关指标：
 
-- **环境指标**:
+- **环境指标**：
 
   - ``env/episode_len``：该回合实际经历的环境步数（单位：step）
   - ``env/return``：回合总回报
   - ``env/reward``：环境的 step-level 奖励
   - ``env/success_once``：回合中至少成功一次标志（0 或 1）
 
-- **Training Metrics**:
+- **训练指标**：
 
-  - ``train/sac/critic_loss``: Q 函数的损失
-  - ``train/critic/grad_norm``: Q 函数的梯度范数
+  - ``train/sac/critic_loss``：Q 函数的损失
+  - ``train/critic/grad_norm``：Q 函数的梯度范数
 
-  - ``train/sac/actor_loss``: 策略损失
-  - ``train/actor/entropy``: 策略熵
-  - ``train/actor/grad_norm``: 策略的梯度范数
+  - ``train/sac/actor_loss``：policy 损失
+  - ``train/actor/entropy``：policy 熵
+  - ``train/actor/grad_norm``：policy 梯度范数
 
-  - ``train/sac/alpha_loss``: 温度参数的损失
-  - ``train/sac/alpha``: 温度参数的值
-  - ``train/alpha/grad_norm``: 温度参数的梯度范数
+  - ``train/sac/alpha_loss``：温度参数的损失
+  - ``train/sac/alpha``：温度参数的值
+  - ``train/alpha/grad_norm``：温度参数的梯度范数
 
-  - ``train/replay_buffer/size``: 当前重放缓冲区的大小
-  - ``train/replay_buffer/max_reward``: 重放缓冲区中存储的最大奖励
-  - ``train/replay_buffer/min_reward``: 重放缓冲区中存储的最小奖励
-  - ``train/replay_buffer/mean_reward``: 重放缓冲区中存储的平均奖励
-  - ``train/replay_buffer/std_reward``: 重放缓冲区中存储的奖励标准差
-  - ``train/replay_buffer/utilization``: 重放缓冲区的利用率
+  - ``train/replay_buffer/size``：当前 replay buffer 大小
+  - ``train/replay_buffer/max_reward``：replay buffer 中的最大奖励
+  - ``train/replay_buffer/min_reward``：replay buffer 中的最小奖励
+  - ``train/replay_buffer/mean_reward``：replay buffer 中的平均奖励
+  - ``train/replay_buffer/std_reward``：replay buffer 中的奖励标准差
+  - ``train/replay_buffer/utilization``：replay buffer 利用率
 
-真实世界结果
+真机结果
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-以下提供了 SAC-Flow 算法插块插入任务的演示视频（经加速处理）和训练曲线。在 30 分钟的训练时间内，机器人能够学习到一套持续成功完成任务的策略。
 
-.. raw:: html
+下方是 SAC-Flow 在插销任务上的加速演示视频与训练曲线。训练约 30 分钟后，机器人即可稳定完成任务。
 
-  <div style="flex: 0.8; text-align: center;">
-      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-success-rate.png" style="width: 100%;"/>
-      <p><em>训练曲线</em></p>
-    </div>
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-success-rate.png
+   :align: center
+   :width: 80%
+
+   训练曲线
 
 .. raw:: html
 

@@ -51,17 +51,18 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
          bash requirements/install.sh agentic && source .venv/bin/activate
          uv pip install math-verify sympy pylatexenc
 
-         # Install Code Judge and rStar2 agent dependencies
+         # Install Code Judge dependencies
          sudo apt-get update -y && sudo apt-get install redis -y
          git clone https://github.com/0xWJ/code-judge examples/agent/rstar2/code-judge
          uv pip install -r examples/agent/rstar2/code-judge/requirements.txt
          uv pip install -e examples/agent/rstar2/code-judge
-         uv pip install -r examples/agent/rstar2/requirements.txt
 
-      Start Redis, the Code Judge server (master node), and Code Judge workers (replace ``$WORKSPACE`` and ``$MASTER_ADDR`` with your values):
+      Start Redis, the Code Judge server (master node), and Code Judge workers (adjust ``MASTER_ADDR`` if running across nodes):
 
       .. code-block:: bash
 
+         export WORKSPACE=$(pwd)
+         export MASTER_ADDR=127.0.0.1
          redis-server --daemonize yes --protected-mode no --bind 0.0.0.0
 
          tmux new-session -d -s server \
@@ -107,7 +108,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       .. code-block:: bash
 
-         bash examples/agent/rstar2/run_rstar2.sh
+         bash examples/agent/rstar2/run_rstar2.sh rstar2-qwen2.5-7b-megatron
 
 
 Visualization and Results

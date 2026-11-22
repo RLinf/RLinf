@@ -120,4 +120,4 @@ Cosmos3 SGLang 评测
    * - LIBERO 渲染报错
      - ``run_eval.sh`` 默认使用 EGL；无 EGL 时设置 ``MUJOCO_GL=osmesa`` 与 ``PYOPENGL_PLATFORM=osmesa``。
    * - 重跑前 GPU 未释放
-     - 确认 ``ray stop`` 已完成、``nvidia-smi`` 显示显存空闲且无残留 SGLang server 进程。
+     - 用 ``nvidia-smi`` 检查是否仍有残留 SGLang server 进程；独占机器上可执行 ``ray stop`` 清理 Ray 会话（共享机器上先用 ``ray status`` 确认无他人任务，因为 ``ray stop`` 会影响整机）。

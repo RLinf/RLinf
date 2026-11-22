@@ -81,13 +81,13 @@ Setup and Run
          mkdir -p "$(dirname "$YAM_DATASET")"
 
          # Merge successful takes (pass --dry-run first to preview)
-         python toolkits/lerobot/merge_lerobot_datasets.py \
+         python -m toolkits.lerobot.merge_lerobot_datasets \
              --source-dir "$YAM_COLLECTION/lerobot_dataset" --output-dir "$YAM_DATASET" \
              --only-success
 
          # Check recorded task prompt and compute norm_stats.json
          head -n 5 "$YAM_DATASET/meta/tasks.jsonl"
-         python toolkits/lerobot/calculate_norm_stats.py \
+         python -m toolkits.lerobot.calculate_norm_stats \
              --config-name pi05_yam_joint --repo-id "$YAM_DATASET"
 
       Use the exact task string from ``meta/tasks.jsonl`` as your evaluation prompt and keep the same ``norm_stats.json`` for both training and evaluation.
@@ -166,7 +166,7 @@ Setup and Run
 
       .. code-block:: bash
 
-         bash evaluations/run_eval.sh realworld realworld_dual_yam_openpi_pi05_eval \
+         bash evaluations/run_eval.sh realworld_dual_yam_openpi_pi05_eval \
              rollout.model.model_path="$YAM_CHECKPOINT" \
              rollout.model.openpi_data.norm_stats_path="$YAM_DATASET/norm_stats.json"
 

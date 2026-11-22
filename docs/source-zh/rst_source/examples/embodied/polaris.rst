@@ -139,8 +139,8 @@ PolaRiS 强化学习
 
       .. code-block:: bash
 
-         source /path/to/isaac_sim/setup_conda_env.sh
-         export POLARIS_DATA_PATH=/path/to/PolaRiS-Hub
+         source ./isaac_sim/setup_conda_env.sh
+         export POLARIS_DATA_PATH="$PWD/PolaRiS-Hub"
          bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi_pi05
 
       独立评估请走 :doc:`PolaRiS 评测指南 <../../evaluations/guides/polaris>`\ （``polaris_tapeintocontainer_openpi_pi05_eval``）。
@@ -190,8 +190,8 @@ PolaRiS 强化学习
 
       .. code-block:: bash
 
-         source /path/to/isaac_sim/setup_conda_env.sh
-         export POLARIS_DATA_PATH=/path/to/PolaRiS-Hub
+         source ./isaac_sim/setup_conda_env.sh
+         export POLARIS_DATA_PATH="$PWD/PolaRiS-Hub"
          bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi
 
       独立评估请走 :doc:`PolaRiS 评测指南 <../../evaluations/guides/polaris>`\ （``polaris_movelattecup_openpi_eval``）。

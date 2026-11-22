@@ -82,7 +82,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: OpenVLA + FrankaSim
+   .. tab-item:: MLP / CNN + FrankaSim
 
       **1. Install**
 

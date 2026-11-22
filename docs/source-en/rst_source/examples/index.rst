@@ -22,18 +22,18 @@ Choose an entry point by benchmark, model family, or training paradigm:
       :link: sft_index
       :link-type: doc
 
-      Supervised fine-tuning recipes for OpenPI, VLM, DreamZero, FastWAM, and Cosmos3.
+      Supervised fine-tuning and imitation recipes — OpenPI, DreamZero, FastWAM, Cosmos3, Qwen-VL, and DAgger.
 
    .. grid-item-card:: RL Recipes
       :link: methods_index
       :link-type: doc
 
-      Algorithm-focused recipes — DAgger, RECAP, STEAM, RLT, SAC-Flow, DSRL, IQL, Co-Training, and MLP.
+      Algorithm-focused recipes — SAC-Flow, DSRL, RL Token, Sim-Real Co-Training, OPD, RECAP, STEAM, and IQL.
 
    .. grid-item-card:: World Models
       :link: world_model_index
       :link-type: doc
 
-      Closed-loop RL with learned world models — OpenSora, Wan, WoVR, and BWM.
+      Closed-loop VLA RL using learned world models as simulators — OpenSora, Wan, and BWM.
 
 Looking for other tracks? See :doc:`Real-World Robots <real_world_index>`, :doc:`Evaluation <../evaluations/index>`, :doc:`Agentic & Reasoning <agentic/index>`, and :doc:`Image & Video Generation <video_models>`.

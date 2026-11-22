@@ -74,7 +74,7 @@ Prepare the PICO headset and XRoboToolkit PC Service on the publisher PC, then v
 
       .. code-block:: bash
 
-         git clone git@github.com:tiny-xie/pico_software.git && cd pico_software
+         git clone https://github.com/tiny-xie/pico_software.git && cd pico_software
          (cd XRoboToolkit-Teleop-Sample-Python && bash setup_uv.sh)
          source XRoboToolkit-Teleop-Sample-Python/.venv/bin/activate
          python test_pico_xrt_pipeline.py
@@ -126,18 +126,18 @@ Setup and Run
 
       .. warning::
 
-         Install and activate this environment **before** running ``ray start``. Ray captures the Python interpreter and environment variables at startup; configuring ``pyzmq``, the Franka environment, or ``PYTHONPATH`` afterward causes workers to miss the controller or ZeroMQ stream.
+         Install and activate this environment **before** running ``ray start``. Ray captures the Python interpreter and environment variables at startup; configuring ``pyzmq`` or the Franka environment afterward causes workers to miss the controller or ZeroMQ stream.
 
       With the VR data publisher running, verify ZeroMQ reception on the node that reads the controller:
 
       .. code-block:: bash
 
          # Same-machine IPC
-         python toolkits/realworld_check/test_pico_data.py \
+         python -m toolkits.realworld_check.test_pico_data \
              --zmq-addr ipc:///tmp/vr_data.ipc
 
          # Cross-machine TCP (replace with your publisher IP:port; matches env.eval.pico.zmq_addr)
-         python toolkits/realworld_check/test_pico_data.py \
+         python -m toolkits.realworld_check.test_pico_data \
              --zmq-addr tcp://192.168.1.100:5555
 
       Confirm continuously refreshing output as you move the controller and press ``grip``, ``trigger``, ``A``, or ``B``:
@@ -164,8 +164,8 @@ Setup and Run
 
       **Startup order**
 
-      1. Activate the ``franka`` environment and export ``PYTHONPATH`` on the controller node.
-      2. Start the Ray cluster (single-node or multi-node, as in :doc:`franka`).
+      1. Activate the ``franka`` environment (``source .venv/bin/activate``) on the controller node.
+      2. For multi-node runs, start the Ray cluster as in :doc:`franka` (single-node runs auto-start Ray).
       3. Start the XRoboToolkit PC Service and verify the headset and controller are connected.
       4. Start ``vr_data_publisher``.
       5. On the first run or after changing the ZeroMQ address, verify with ``test_pico_data.py``.

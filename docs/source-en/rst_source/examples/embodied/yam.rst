@@ -107,7 +107,7 @@ Setup and Run
          export YAM_RIGHT_OPERATOR_TO_ROBOT_YAW='0.0'        # replace with measured yaw (rad)
 
          # Verify live headset, controller, and button updates (Ctrl-C to exit)
-         python toolkits/realworld_check/test_pico_data.py --zmq-addr "$YAM_PICO_ZMQ_ADDR"
+         python -m toolkits.realworld_check.test_pico_data --zmq-addr "$YAM_PICO_ZMQ_ADDR"
 
          # Launch collection
          bash examples/embodiment/collect_data.sh realworld_dual_yam_collect_data_pico
@@ -118,7 +118,7 @@ Setup and Run
 
       .. code-block:: bash
 
-         python toolkits/lerobot/merge_lerobot_datasets.py \
+         python -m toolkits.lerobot.merge_lerobot_datasets \
              --source-dir "logs/20261121-120000-realworld_dual_yam_collect_data_pico/lerobot_dataset" \
              --output-dir logs/yam_merged \
              --only-success  # replace timestamp with your run directory

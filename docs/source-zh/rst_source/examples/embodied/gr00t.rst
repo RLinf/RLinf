@@ -270,8 +270,7 @@ NVIDIA CUDA 支持 GR00T N1.5、N1.6 和 N1.7（在下方选择对应版本标�
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env libero && source .venv/bin/activate
 
       **2. 下载模型**
 
@@ -297,8 +296,7 @@ NVIDIA CUDA 支持 GR00T N1.5、N1.6 和 N1.7（在下方选择对应版本标�
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env maniskill_libero && source .venv/bin/activate
 
       配置 CPU simulation：
 
@@ -336,8 +334,7 @@ NVIDIA CUDA 支持 GR00T N1.5、N1.6 和 N1.7（在下方选择对应版本标�
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model gr00t --env libero && source .venv/bin/activate
 
       .. include:: _ascend_torch.rst
 
@@ -365,8 +362,7 @@ NVIDIA CUDA 支持 GR00T N1.5、N1.6 和 N1.7（在下方选择对应版本标�
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero && source .venv/bin/activate
 
       配置 CPU simulation：
 
@@ -396,8 +392,7 @@ NVIDIA CUDA 支持 GR00T N1.5、N1.6 和 N1.7（在下方选择对应版本标�
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform musa embodied --model gr00t --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform musa embodied --model gr00t --env libero && source .venv/bin/activate
 
       **2. 下载模型**
 
@@ -425,8 +420,7 @@ NVIDIA CUDA 支持 GR00T N1.5、N1.6 和 N1.7（在下方选择对应版本标�
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform musa embodied --venv gr00t --model gr00t --env libero
-         source gr00t/bin/activate
+         bash requirements/install.sh --platform musa embodied --venv gr00t --model gr00t --env libero && source gr00t/bin/activate
 
       配置 CPU simulation：
 
@@ -483,14 +477,11 @@ NVIDIA CUDA 支持 GR00T N1.5、N1.6 和 N1.7（在下方选择对应版本标�
 
 **N1.6:**
 
-.. raw:: html
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gr00t_1.6_ppo_success_rate.png
+   :align: center
+   :width: 55%
 
-   <div style="display: flex; justify-content: center; margin: 20px 0;">
-     <div style="flex: 0.5; text-align: center;">
-       <img src="https://github.com/RLinf/misc/blob/main/pic/gr00t_1.6_ppo_success_rate.png?raw=true" style="width: 100%;"/>
-       <p><em>GR00T-N1.6 SFT + PPO 在 LIBERO_Spatial 的成功率曲线</em></p>
-     </div>
-   </div>
+   GR00T-N1.6 SFT + PPO 在 LIBERO_Spatial 的成功率曲线。
 
 .. list-table:: **GR00T-N1.6 使用 Flow-SDE 方法在 LIBERO Spatial 上的结果**
    :header-rows: 1

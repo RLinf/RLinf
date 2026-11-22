@@ -113,7 +113,7 @@ To override, set ``output_dir`` explicitly:
    cluster:
      profiling:
        backend: nsight
-       output_dir: /mnt/public/profiles/my_run
+       output_dir: /path/to/profiles/my_run
 
 
 How To Override Worker Groups

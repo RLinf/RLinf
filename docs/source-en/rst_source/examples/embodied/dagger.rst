@@ -101,7 +101,7 @@ How DAgger Works
 Setup and Run
 -------------
 
-Install with ``requirements/install.sh`` (in mainland China, append ``--use-mirror`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``), or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. See :doc:`../../start/installation` for shared options.
+.. include:: _setup_common.rst
 
 .. tab-set::
 
@@ -165,16 +165,15 @@ Install with ``requirements/install.sh`` (in mainland China, append ``--use-mirr
 
          env:
            train:
-             assets_path: /path/to/robotwin_assets
+             assets_path: ../RoboTwin
            eval:
-             assets_path: /path/to/robotwin_assets
+             assets_path: ../RoboTwin
 
-      Export ``ROBOT_PLATFORM`` and ``ROBOTWIN_PATH``, then launch sync or async training:
+      Export ``ROBOTWIN_PATH``, then launch sync or async training:
 
       .. code-block:: bash
 
-         export ROBOT_PLATFORM=ALOHA
-         export ROBOTWIN_PATH=/path/to/RoboTwin
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          # Sync mode (or use run_async.sh for async mode)
          bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_dagger_openpi
 
@@ -234,7 +233,7 @@ Install with ``requirements/install.sh`` (in mainland China, append ``--use-mirr
 
    **Classic DAgger and replay-buffer parameters**
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       algorithm:
         dagger:
@@ -256,7 +255,7 @@ Install with ``requirements/install.sh`` (in mainland China, append ``--use-mirr
 
    The online LeRobot config does not use ``algorithm.replay_buffer``. Tune ``algorithm.dagger.online_lerobot`` instead:
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       algorithm:
         dagger:

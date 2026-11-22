@@ -1,26 +1,13 @@
 日志与训练可视化
 ================
 
-RLinf 支持实时实验追踪。  
-你可以将损失曲线、准确率、GPU 利用率以及任意自定义指标，  
-流式传输到以下一个或多个后端：
+RLinf 支持实时实验追踪。你可以将损失曲线、准确率、GPU 利用率以及任意自定义指标流式传输到以下一个或多个后端：
 
-- `TensorBoard <https://www.tensorflow.org/tensorboard>`_:  
-  一个广泛使用的开源可视化工具  
-  （来自 TensorFlow，同时兼容 PyTorch、Hugging Face 等），  
-  可以追踪损失和准确率等指标，  
-  并可视化模型计算图、embedding、图像等。  
+- `TensorBoard <https://www.tensorflow.org/tensorboard>`_\ ：开源可视化工具（来自 TensorFlow，同时兼容 PyTorch、Hugging Face 等），可以追踪损失和准确率等指标，并可视化模型计算图、embedding、图像等。
 
-- `Weights & Biases (W&B) <https://wandb.ai/site/>`_:  
-  一个基于 SaaS 的平台，提供实验追踪、超参数搜索、  
-  artifacts（用于模型与数据的版本管理）、  
-  报告与团队协作功能。  
+- `Weights & Biases (W&B) <https://wandb.ai/site/>`_\ ：SaaS 平台，提供实验追踪、超参数搜索、artifacts（用于模型与数据的版本管理）、报告与团队协作功能。
 
-- `SwanLab <https://pypi.org/project/swanlab/>`_:  
-  一个开源、轻量级的实验日志与可视化工具，  
-  适用于本地或自建环境。  
-  它提供直观的 Python API，记录指标、超参数、硬件与代码信息，  
-  并通过简洁的界面支持实验对比 —— 非常适合注重隐私的工作流。  
+- `SwanLab <https://pypi.org/project/swanlab/>`_\ ：开源、轻量级的实验日志与可视化工具，适用于本地或自建环境。它提供直观的 Python API，记录指标、超参数、硬件与代码信息，并通过简洁的界面支持实验对比，适合注重隐私的工作流。
 
 启用后端
 -------------------
@@ -30,7 +17,7 @@ RLinf 支持实时实验追踪。
 .. code-block:: yaml
 
    runner:
-     task_type: math
+     task_type: reasoning
      logger:
        log_path: ${runner.output_dir}/${runner.experiment_name}
        project_name: rlinf
@@ -59,36 +46,33 @@ TensorBoard
 
    tensorboard --logdir ./logs/grpo-1.5b/tensorboard --port 6006
 
-在浏览器中打开 `http://localhost:6006`  
-即可查看标量曲线、直方图和计算图。  
+在浏览器中打开 ``http://localhost:6006`` 即可查看标量曲线、直方图和计算图。
 
 
 Weights & Biases (WandB)
 ------------------------
 
-#. 在 `wandb.ai <https://wandb.ai>`__ 创建一个免费账户并复制你的 *API key*。  
-#. 在每台机器上认证一次：  
+#. 在 `wandb.ai <https://wandb.ai>`__ 创建一个免费账户并复制你的 *API key*。
+#. 在每台机器上认证一次：
 
 .. code-block:: bash
 
     wandb login          # 按提示粘贴 API key
 
-之后 RLinf 会自动启动一个新的 *run* 并流式传输所有指标。  
-你可以通过 dashboard 查看这些指标。  
+之后 RLinf 会自动启动一个新的 *run* 并流式传输所有指标。你可以在 dashboard 查看这些指标。
 
 
 SwanLab
 -------
 
-#. 在 `swanlab.ai <https://swanlab.ai>`__ 注册并获取 *access token*。  
-#. 认证：  
+#. 在 `swanlab.ai <https://swanlab.ai>`__ 注册并获取 *access token*。
+#. 认证：
 
 .. code-block:: bash
 
     swanlab login        # 按提示粘贴 access token
 
-之后 RLinf 会自动启动一个新的 *run* 并流式传输所有指标。  
-你可以通过 dashboard 查看这些指标。  
+之后 RLinf 会自动启动一个新的 *run* 并流式传输所有指标。你可以在 dashboard 查看这些指标。
 
 
 .. tip::

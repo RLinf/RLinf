@@ -286,8 +286,7 @@ NVIDIA CUDA 支持上方列出的全部四个环境（在下方选择 **π₀** 
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env libero && source .venv/bin/activate
 
       **2. 下载模型**
 
@@ -315,8 +314,7 @@ NVIDIA CUDA 支持上方列出的全部四个环境（在下方选择 **π₀** 
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
       配置 CPU simulation：
 
@@ -341,8 +339,7 @@ NVIDIA CUDA 支持上方列出的全部四个环境（在下方选择 **π₀** 
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform ascend embodied --model openpi --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model openpi --env libero && source .venv/bin/activate
 
       .. include:: _ascend_torch.rst
 
@@ -372,8 +369,7 @@ NVIDIA CUDA 支持上方列出的全部四个环境（在下方选择 **π₀** 
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform ascend embodied --model openpi --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
       配置 CPU simulation：
 
@@ -398,8 +394,7 @@ NVIDIA CUDA 支持上方列出的全部四个环境（在下方选择 **π₀** 
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform musa embodied --model openpi --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform musa embodied --model openpi --env libero && source .venv/bin/activate
 
       若 Transformers 模型路径指定 ``attn_implementation: flash_attention_2``，但 Transformers 无法检测厂商包，请改用 ``sdpa``。
 

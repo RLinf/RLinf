@@ -69,7 +69,6 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
          # 3. Evaluate
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
-         export ROBOT_PLATFORM=ALOHA
          bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_pi05_eval \
            rollout.model.model_path=./RLinf-Pi05-RoboTwin-SFT-adjust_bottle \
            env.eval.assets_path="${ROBOTWIN_PATH}"
@@ -88,7 +87,6 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
          # 3. Evaluate
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
-         export ROBOT_PLATFORM=ALOHA
          bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
            rollout.model.model_path=./RLinf-Pi0-RoboTwin-SFT-adjust_bottle \
            env.eval.assets_path="${ROBOTWIN_PATH}"
@@ -111,7 +109,6 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
          # 3. Evaluate
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
-         export ROBOT_PLATFORM=ALOHA
          export LINGBOT_VLA_PATH="$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")"
          bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvla_eval \
            rollout.model.model_path=./lingbot-vla-4b-posttrain-robotwin \
@@ -137,13 +134,12 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
          # 3. Evaluate
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          export ROBOTWIN_ASSETS_PATH="${ROBOTWIN_PATH}"
-         export ROBOT_PLATFORM=ALOHA
          bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvlav2_eval \
-           rollout.model.model_path="$(pwd)/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt" \
-           rollout.model.tokenizer_path="$(pwd)/Qwen3-VL-4B-Instruct" \
-           rollout.model.lingbotvlav2.training_config_path="$(pwd)/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml" \
-           rollout.model.lingbotvlav2.robot_config_path="$(pwd)/.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml" \
-           rollout.model.lingbotvlav2.stats_path="$(pwd)/.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json"
+           rollout.model.model_path=./lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt \
+           rollout.model.tokenizer_path=./Qwen3-VL-4B-Instruct \
+           rollout.model.lingbotvlav2.training_config_path=./lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml \
+           rollout.model.lingbotvlav2.robot_config_path=./.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml \
+           rollout.model.lingbotvlav2.stats_path=./.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
 
       Default placement uses 2 GPUs (``rollout: 0``, ``env: 1``). Keep LingbotVLA 1.0 and 2.0 in separate virtual environments because both install a ``lingbotvla`` package (see :doc:`../../examples/embodied/lingbotvlav2`).
 
@@ -296,7 +292,7 @@ The terminal prints ``eval/success_once``; logs and videos go to ``logs/<timesta
    * - ``ROBOTWIN_PATH`` not found on import
      - Export ``ROBOTWIN_PATH`` to your RoboTwin checkout (``RLinf_support`` branch); ``run_eval.sh`` adds it to ``PYTHONPATH`` when set.
    * - Startup failure or missing scenes
-     - Set ``env.eval.assets_path`` (or ``ROBOTWIN_ASSETS_PATH`` for LingbotVLA 2.0) to the parent directory of ``assets/``, and export ``ROBOT_PLATFORM=ALOHA``.
+     - Set ``env.eval.assets_path`` (or ``ROBOTWIN_ASSETS_PATH`` for LingbotVLA 2.0) to the parent directory of ``assets/``; for OpenVLA-OFT, also export ``ROBOT_PLATFORM=ALOHA``.
    * - GPU out of memory
      - Set ``env.enable_offload: True`` and ``rollout.enable_offload: True``, or lower ``env.eval.total_num_envs``.
    * - Incomplete seed coverage

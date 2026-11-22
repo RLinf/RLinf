@@ -58,25 +58,34 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: Batch 16-Scene OOD (mani-ood)
 
+      **1. Install**
+
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-         # 2. Download assets and checkpoints
+      **2. Download**
+
+      .. code-block:: bash
+
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
          hf download RLinf/Openvla-oft-SFT-libero10-trajall --local-dir ./Openvla-oft-SFT-libero10-trajall
          hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
-         # 3. Evaluate all 16 OOD runs (after setting model_path and lora_path in evaluations/maniskill/maniskill_ood_openvlaoft_eval.yaml)
+      Set ``rollout.model.model_path: ./Openvla-oft-SFT-libero10-trajall`` and ``rollout.model.lora_path: ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora`` in ``evaluations/maniskill/maniskill_ood_openvlaoft_eval.yaml``.
+
+      **3. Evaluate (all 16 OOD runs)**
+
+      .. code-block:: bash
+
          export EVAL_NAME=my_ood_eval
          export CKPT_PATH=./logs/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt
          export TOTAL_NUM_ENVS=16
          export EVAL_ROLLOUT_EPOCH=1
          bash evaluations/run_eval.sh mani-ood maniskill_ood_openvlaoft_eval
 
-      Before step 3, set ``rollout.model.model_path: ./Openvla-oft-SFT-libero10-trajall`` and ``rollout.model.lora_path: ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora`` in ``evaluations/maniskill/maniskill_ood_openvlaoft_eval.yaml``. Batch logs go to ``logs/eval/<EVAL_NAME>/<timestamp>-<env_id>-<obj_set>/run_ppo.log``; ``mani-ood`` defaults ``HF_ENDPOINT`` to ``https://hf-mirror.com`` unless already exported.
+      Batch logs go to ``logs/eval/<EVAL_NAME>/<timestamp>-<env_id>-<obj_set>/run_ppo.log``; ``mani-ood`` defaults ``HF_ENDPOINT`` to ``https://hf-mirror.com`` unless already exported.
 
 ``evaluations/maniskill/`` ships an OpenVLA-OFT example config (`RLinf/Openvla-oft-SFT-libero10-trajall <https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall>`_ base + `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_ LoRA). For OpenVLA, OpenPI, or other ManiSkill tasks, see :ref:`Derive Eval Configs from Training <maniskill-derive-from-train>`.
 

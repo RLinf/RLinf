@@ -265,6 +265,14 @@ Setup and Run
                   target_joint_qpos: [-0.35, 0.20, 1.00, -0.70, 0.0, -0.30, 0.0,
                                       -0.35, -0.20, 1.00, 0.70, 0.0, -0.30, 0.0]
 
+      **3. Start Ray and launch training**
+
+      No standalone R2 training YAML ships in ``examples/embodiment/config/`` yet—start from an existing real-world training config and apply the ``cluster`` and ``R2ReachEnv-v1`` blocks above. Start the two-node Ray cluster following :doc:`../../guides/multi_node` (head on GPU rank ``0``, worker on R2 controller rank ``1``), then launch from the head node:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_realworld_async.sh <your_config>
+
 Results and Troubleshooting
 ---------------------------
 

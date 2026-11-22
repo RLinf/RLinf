@@ -160,7 +160,7 @@ API 密钥
 
       hostname -I
 
-3. 编辑 `examples/agent/tools/search_local_server_qdrant/launch_local_server.sh` 并更新以下变量：
+3. 编辑 ``examples/agent/tools/search_local_server_qdrant/launch_local_server.sh`` 并更新以下变量：
 
    - ``WIKI2018_DIR``：``/PATH/TO/Wiki-2018-Corpus``
    - ``retriever_path``：``/PATH/TO/e5-model``

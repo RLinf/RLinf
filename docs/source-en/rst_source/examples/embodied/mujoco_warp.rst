@@ -160,7 +160,7 @@ Visualization and Results
 
 Launch TensorBoard from the repository root:
 
-.. code:: bash
+.. code-block:: bash
 
    tensorboard --logdir ../results --port 6006
 
@@ -179,7 +179,7 @@ Watch ``eval/env/return`` for the mean evaluation episode return and ``env/retur
 
 Video recording is disabled by default. Enable it for evaluation with:
 
-.. code:: bash
+.. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp \
        env.eval.video_cfg.save_video=true

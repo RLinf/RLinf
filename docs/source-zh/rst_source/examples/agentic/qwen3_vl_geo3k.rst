@@ -1,12 +1,7 @@
 Qwen3-VL GRPO 视觉推理
 ======================
 
-.. |huggingface| image:: /_static/svg/hf-logo.svg
-   :width: 16px
-   :height: 16px
-   :class: inline-icon
-
-本文档介绍如何在 RLinf 框架下，使用强化学习（RL）训练视觉语言模型（VLM）完成几何推理。
+在 RLinf 中使用强化学习（RL）训练视觉语言模型（VLM）完成几何推理。
 
 一键上手
 ----------------------
@@ -22,7 +17,6 @@ Qwen3-VL 系列模型需要 ``torch >= 2.8.0``、``sglang == 0.5.4`` 和 ``trans
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         export MEGATRON_PATH=/path/to/Megatron-LM
          bash requirements/install.sh agentic \
              --torch 2.8.0 \
              --sglang 0.5.4 \
@@ -31,7 +25,7 @@ Qwen3-VL 系列模型需要 ``torch >= 2.8.0``、``sglang == 0.5.4`` 和 ``trans
 
       .. note::
 
-         ``MEGATRON_PATH`` 需要指向一个已有的 Megatron-LM 仓库克隆（推荐 ``core_r0.13.0`` 分支）；如果该目录不存在，安装脚本会提前退出，不执行后续的 flash-attn 和 apex 安装步骤。本示例使用 FSDP2 作为训练后端，通过 ``--no-apex`` 跳过 apex 编译。
+         本示例使用 FSDP2 作为训练后端，通过 ``--no-apex`` 跳过 apex 编译。
 
       **2. 下载模型与数据**
 
@@ -153,13 +147,13 @@ Qwen3-VL 训练使用 FSDP2 作为训练后端。关键配置包括：
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/qwen3vl_grpo_reward.jpeg" style="width: 50%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/qwen3vl_grpo_reward.jpeg" style="width: 50%;"/>
        <p><em>reward with TIS</em></p>
      </div>
    </div>
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/qwen3vl_grpo_entropy.jpeg" style="width: 50%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/qwen3vl_grpo_entropy.jpeg" style="width: 50%;"/>
        <p><em>entropy with TIS</em></p>
      </div>
    </div>
@@ -172,13 +166,13 @@ Qwen3-VL 训练使用 FSDP2 作为训练后端。关键配置包括：
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/qwen3vl_grpo_reward_wo_tis.jpeg" style="width: 50%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/qwen3vl_grpo_reward_wo_tis.jpeg" style="width: 50%;"/>
        <p><em>reward without TIS</em></p>
      </div>
    </div>
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/qwen3vl_grpo_entropy_wo_tis.jpeg" style="width: 50%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/qwen3vl_grpo_entropy_wo_tis.jpeg" style="width: 50%;"/>
        <p><em>entropy without TIS</em></p>
      </div>
    </div>

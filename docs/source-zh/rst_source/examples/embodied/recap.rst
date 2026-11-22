@@ -40,57 +40,15 @@ RECAP
 | **你将完成：** 计算回报 → SFT 价值模型 → 计算优势 → CFG 训练策略 → 评测。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · SigLIP2 + Gemma3 + π₀.₅ 检查点 · LeRobot 格式数据集（见下文步骤）。
 
-流程
-----------------------------------------
-
-RECAP 包含四个顺序执行的阶段：
-
-.. code-block:: text
-
-   ┌──────────────────────┐     ┌──────────────────────┐     ┌────────────────────────┐     ┌──────────────────────┐
-   │  Step 1              │     │  Step 2              │     │  Step 3                │     │  Step 4              │
-   │  Compute Returns     │────▶│  Value Model SFT     │────▶│  Compute Advantages    │────▶│  CFG Training        │
-   └──────────────────────┘     └──────────────────────┘     └────────────────────────┘     └──────────────────────┘
-
-**核心思路**
-
-1. **Compute Returns**：对数据集中的每条轨迹，按 :math:`G_t = r_t + \gamma \cdot G_{t+1}` 逆序计算折扣回报，生成 sidecar 文件而不修改原始数据。
-
-2. **Value Model SFT**：训练一个价值模型（基于 VLM backbone + Value Head），使其从观察（图像 + 语言指令）预测归一化回报。
-
-3. **Compute Advantages**：利用训练好的价值模型，按 :math:`A_t = \text{normalize}(r_{t:t+N}) + \gamma^N \cdot V(o_{t+N}) - V(o_t)` 计算每个时间步的优势，并根据分位数阈值将样本标记为正/负。
-
-4. **CFG Training**：使用优势标签训练策略模型——正样本（高优势）作为条件输入，负样本（低优势）作为无条件输入，实现 classifier-free guidance 策略优化。
-
 RECAP 工作原理
 ----------------------------------------
 
-**RECAP 核心组件**
+RECAP 全程离线运行，包含四个阶段：
 
-1. **回报计算（Return Computation）**
-
-   - 对 SFT 数据集（全部成功轨迹）：每步奖励 :math:`r_t = -1`，终止步 :math:`r_T = 0`
-   - 对 rollout 数据集（含失败轨迹）：失败轨迹终止步 :math:`r_T = r_{\text{fail}}`\ （如 :math:`-300`\ ）
-   - 折扣因子 :math:`\gamma` 默认为 :math:`1.0`\ （无折扣）
-
-2. **价值模型（Value Model）**
-
-   - 基于 SigLIP2 视觉编码器 + Gemma3 语言模型 + 可学习 Critic Expert
-   - 采用分布式价值预测（Categorical Value Distribution），默认 201 个 bin
-   - 输出范围 :math:`[-1, 0]`\ （归一化后的回报空间）
-
-3. **优势估计（Advantage Estimation）**
-
-   - N 步前瞻优势：:math:`A_t = \text{normalize}(r_{t:t+N}) + \gamma^N \cdot V(o_{t+N}) - V(o_t)`
-   - 分位数阈值：top :math:`X\%` 的样本标记为正样本（默认 :math:`X = 30`）
-   - 支持多 GPU 分布式推理
-
-4. **Classifier-Free Guidance（CFG）训练**
-
-   - 基于 OpenPI (pi0.5) 策略模型
-   - ``positive_only_conditional`` 模式：仅正样本作为条件输入，负样本一律无条件
-   - 正样本以 ``unconditional_prob`` 概率随机转为无条件（默认 :math:`0.1`），实现 dropout 正则化
-   - 推理时通过 ``cfgrl_guidance_scale`` 控制引导强度
+1. **计算回报（Compute Returns）**：对每条轨迹逆序计算折扣累积回报（默认 ``gamma: 1.0``；SFT 成功轨迹每步奖励 ``-1``、终止步 ``0``，失败 rollout 轨迹终止步惩罚为 ``failure_reward``，如 ``-300``），结果以 sidecar 文件保存，不修改原始数据。
+2. **训练价值模型（Value Model SFT）**：训练价值模型（SigLIP2 视觉编码器 + Gemma3 语言模型 + 可学习 Critic Expert），输出归一化回报空间 ``[-1, 0]`` 上 201 个 bin 的分类价值分布。
+3. **计算优势（Compute Advantages）**：用训练好的价值模型在多卡上分布式推理，计算 N 步前瞻优势，并将排名前 ``positive_quantile``\ （默认前 30%）的样本标记为正样本。
+4. **CFG 训练**：用优势标签对 OpenPI π₀.₅ 做无分类器引导（CFG）训练——正样本作为条件输入（按 ``unconditional_prob`` 概率随机丢弃为无条件，默认 ``0.1``），负样本始终作为无条件输入；推理时通过 ``cfgrl_guidance_scale`` 引导模型生成高优势动作。
 
 安装
 ----------------------------------------
@@ -127,7 +85,7 @@ RECAP 流程需要以下预训练模型：
 
 下载完成后，在 Step 2 和 Step 4 的配置文件中指定模型路径：
 
-.. code:: yaml
+.. code-block:: yaml
 
    # Step 2 价值模型配置
    actor:
@@ -152,7 +110,7 @@ RECAP 流程使用 LeRobot 格式的数据集。数据集分为两类：
 
 数据集配置示例：
 
-.. code:: yaml
+.. code-block:: yaml
 
    data:
      train_data_paths:
@@ -208,7 +166,7 @@ Step 1：计算回报（Compute Returns）
 
 在 ``examples/offline_rl/config/recap_compute_returns.yaml`` 中填写数据集路径和输出 tag：
 
-.. code:: yaml
+.. code-block:: yaml
 
    data:
      train_data_paths:
@@ -223,7 +181,7 @@ Step 1：计算回报（Compute Returns）
 
 **启动命令**
 
-.. code:: bash
+.. code-block:: bash
 
    bash examples/offline_rl/advantage_labeling/recap/process/run_compute_returns.sh recap_compute_returns
 
@@ -231,7 +189,7 @@ Step 1：计算回报（Compute Returns）
 
    仓库自带配置已设置 ``gamma: 1.0``、``failure_reward: -300.0`` 和 ``num_workers: 128``：
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       data:
         gamma: 1.0              # 折扣因子
@@ -269,11 +227,11 @@ Step 1：计算回报（Compute Returns）
 
 **验证方法**
 
-.. code:: bash
+.. code-block:: bash
 
    python3 -c "
    import json
-   stats = json.load(open('/path/to/dataset/meta/stats.json'))
+   stats = json.load(open('./datasets/rollout/meta/stats.json'))
    assert 'return' in stats
    print('return stats:', stats['return'])
    "
@@ -292,13 +250,13 @@ Step 2：训练价值模型（Value Model SFT）
 - **语言模型**：Gemma3-270M（640 维）—— 处理语言指令
 - **Critic Expert**：可学习专家头，将多模态表征映射到价值预测
 
-输出为分类分布（Categorical Value Distribution），覆盖 :math:`[-1, 0]` 区间的 201 个 bin。
+输出为分类分布（Categorical Value Distribution），覆盖 ``[-1, 0]`` 区间的 201 个 bin。
 
 **配置文件**
 
 在 ``examples/offline_rl/config/recap_value_model_sft.yaml`` 中填写数据集路径、Step 1 的 ``tag`` 和上文下载的模型路径：
 
-.. code:: yaml
+.. code-block:: yaml
 
    data:
      train_data_paths:
@@ -313,7 +271,7 @@ Step 2：训练价值模型（Value Model SFT）
 
 训练脚本会自动初始化 Ray 集群：
 
-.. code:: bash
+.. code-block:: bash
 
    bash examples/offline_rl/advantage_labeling/recap/run_value_sft.sh recap_value_model_sft
 
@@ -321,7 +279,7 @@ Step 2：训练价值模型（Value Model SFT）
 
    仓库自带配置已设置评估采样、batch size、优化器超参和保存间隔默认值：
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       data:
         action_horizon: 10
@@ -397,21 +355,13 @@ Step 2：训练价值模型（Value Model SFT）
 Step 3：计算优势（Compute Advantages）
 -------------------------------------------
 
-使用 Step 2 训练好的价值模型，对数据集中每个时间步计算优势值，并根据分位数阈值将样本标记为正/负。
-
-**优势计算公式**
-
-.. math::
-
-   A_t = \text{normalize}\left(\sum_{k=0}^{N-1} \gamma^k r_{t+k}\right) + \gamma^N \cdot V(o_{t+N}) - V(o_t)
-
-其中 :math:`N` 为前瞻步数（``advantage_lookahead_step``），:math:`\gamma` 为折扣因子。
+使用 Step 2 训练好的价值模型，按 ``advantage_lookahead_step`` 与 ``gamma`` 计算数据集中每个时间步的 N 步前瞻优势值，并根据分位数阈值将样本标记为正/负。
 
 **配置文件**
 
 在 ``examples/offline_rl/config/recap_compute_advantages.yaml`` 中填写 Step 2 checkpoint、tag 和数据集路径：
 
-.. code:: yaml
+.. code-block:: yaml
 
    advantage:
      value_checkpoint: /path/to/value_checkpoint
@@ -429,7 +379,7 @@ Step 3：计算优势（Compute Advantages）
 
 支持多 GPU 分布式推理：
 
-.. code:: bash
+.. code-block:: bash
 
    bash examples/offline_rl/advantage_labeling/recap/process/run_compute_advantages.sh recap_compute_advantages
 
@@ -437,7 +387,7 @@ Step 3：计算优势（Compute Advantages）
 
    仓库自带配置已设置 ``positive_quantile: 0.3``、``batch_size: 1024``、``advantage_lookahead_step: 10`` 和 ``gamma: 1.0``：
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       advantage:
         positive_quantile: 0.3      # top 30% 标记为正样本
@@ -477,11 +427,11 @@ Step 3：计算优势（Compute Advantages）
 
 **验证方法**
 
-.. code:: bash
+.. code-block:: bash
 
    python3 -c "
    import pandas as pd
-   df = pd.read_parquet('/path/to/dataset/meta/advantages_fail300_N10_ckpt18000_q30.parquet')
+   df = pd.read_parquet('./datasets/rollout/meta/advantages_fail300_N10_ckpt18000_q30.parquet')
    print(f'samples={len(df)}, columns={list(df.columns)}')
    print(df[['advantage_continuous']].describe())
    "
@@ -503,7 +453,7 @@ Step 4：CFG Training
 
 在 ``examples/offline_rl/config/cfg_rl_openpi.yaml`` 中填写 ``data.advantage_tag``、数据集路径和 ``actor.model.model_path``：
 
-.. code:: yaml
+.. code-block:: yaml
 
    data:
      advantage_tag: "fail300_N10_ckpt18000_q30"   # 对应 Step 3 的 advantage.tag
@@ -521,7 +471,7 @@ Step 4：CFG Training
 
 **启动命令**
 
-.. code:: bash
+.. code-block:: bash
 
    bash examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh cfg_rl_openpi
 
@@ -529,7 +479,7 @@ Step 4：CFG Training
 
    仓库自带配置已设置 CFG 条件参数、batch size 与优化器默认值：
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       data:
         balance_dataset_weights: true
@@ -580,160 +530,50 @@ Step 4：CFG Training
 - ``train/actor/loss``：策略训练损失
 - ``train/actor/grad_norm``：梯度范数
 
-可视化优势分布
-----------------------------------------
+.. dropdown:: 可视化优势分布（可选）
 
-Step 3 完成后，可以使用 ``examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py`` 对优势分布进行可视化分析，
-包括优势直方图、价值预测分布、逐 episode 正样本率等统计图，以及带优势标注的 episode 回放视频。
+   Step 3 完成后，运行 ``visualize_advantage_dataset.py`` 生成综合分布面板（``advantage_distribution.png``）、逐 episode 汇总图（``episode_{N}_summary.png``）和带优势标注的回放视频（``episode_{N}.mp4``）。传入 ``--no-video`` 仅输出静态图，传入 ``--episodes 0 5 10`` 指定具体 episode：
 
-**基本用法**
+   .. code-block:: bash
 
-生成分布图和 episode 视频：
+      python examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py \
+          --dataset ./datasets/rollout \
+          --output ./outputs/advantage_viz \
+          --tag "fail300_N10_ckpt18000_q30" \
+          --num-episodes 10
 
-.. code:: bash
+.. dropdown:: 进阶用法（阈值重标与迭代优化）
 
-   python examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py \
-       --dataset /path/to/your/dataset \
-       --output outputs/advantage_viz \
-       --tag "fail300_N10_ckpt18000_q30" \
-       --num-episodes 10
+   **优势阈值重标**
 
-仅生成分布图（不生成视频）：
+   无需重跑 GPU 推理，在 CPU 上直接复用 ``advantage_continuous`` 调整分位数阈值；传入 ``--dataset_root`` 与 ``--advantage_lookahead_step`` 可对目录下多个数据集重算优势：
 
-.. code:: bash
+   .. code-block:: bash
 
-   python examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py \
-       --dataset /path/to/your/dataset \
-       --output outputs/advantage_viz \
-       --tag "fail300_N10_ckpt18000_q30" \
-       --no-video
+      python examples/offline_rl/advantage_labeling/recap/process/relabel_advantages.py \
+          --dataset_paths ./datasets/sft ./datasets/rollout \
+          --source_tag "fail300_N10_ckpt18000_q30" \
+          --new_tag "fail300_N10_ckpt18000_q20" \
+          --positive_quantile 0.2
 
-指定 episode 可视化：
+   **迭代优化**
 
-.. code:: bash
+   用 Step 4 训练出的 policy 采集新数据后，更换 tag 从 Step 1 重新迭代：
 
-   python examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py \
-       --dataset /path/to/your/dataset \
-       --output outputs/advantage_viz \
-       --tag "fail300_N10_ckpt18000_q30" \
-       --episodes 0 5 10 20
+   .. code-block:: text
 
-**关键参数**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 15 55
-
-   * - 参数
-     - 默认值
-     - 说明
-   * - ``--dataset``
-     - 必填
-     - LeRobot 数据集路径
-   * - ``--output``
-     - ``outputs/advantage_viz``
-     - 输出目录
-   * - ``--tag``
-     - ``null``
-     - 优势文件标签，读取 ``meta/advantages_{tag}.parquet``
-   * - ``--num-episodes``
-     - ``10``
-     - 可视化的 episode 数量（``0`` 表示全部）
-   * - ``--episodes``
-     - ``null``
-     - 指定要可视化的 episode 索引列表
-   * - ``--no-video``
-     - ``false``
-     - 跳过视频生成，仅输出静态图
-   * - ``--threshold``
-     - 自动检测
-     - 优势阈值。未设置时自动从 ``mixture_config.yaml`` 或数据中推断
-
-**输出内容**
-
-- ``advantage_distribution.png``：6 子图的综合统计面板（优势直方图、价值分布、散点图、逐 episode 正样本率、逐 episode 优势均值、统计摘要）
-- ``episode_{N}_summary.png``：每个 episode 的关键帧 + 价值/优势时序图（高于阈值的帧用绿色边框标注）
-- ``episode_{N}.mp4``：带优势标注的逐帧回放视频
-
-运行
-----------------------------------------
-
-按照上面的 RECAP 阶段依次计算 return、训练价值模型、计算 advantage，并训练 CFG policy。
+      Iter 1: tag="fail300"          → 训练 Value Model → tag="fail300_N10_ckpt18000_q30"     → CFG Training
+      Iter 2: tag="fail300_iter2"    → 训练 Value Model → tag="fail300_iter2_N10_ckpt6000_q20" → CFG Training
 
 可视化与结果
 ----------------------------------------
 
 使用 TensorBoard（``tensorboard --logdir ./logs --port 6006``）查看 Step 2（``logs/value_sft/``）和 Step 4（``logs/cfg_sft/``）的训练日志。指标含义和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
-数据集
-----------------------------------------
+我们在 `LIBERO-10 <https://github.com/Lifelong-Robot-Learning/LIBERO>`_ Task 0 上使用 `RECAP-Libero10-Task0-48succ-Data <https://huggingface.co/datasets/RLinf/RECAP-Libero10-Task0-48succ-Data/tree/main>`_ 数据集（包含专家 SFT 示范、few-shot π\ :sub:`0.5` policy 采集的 4,096 条混合 rollout 轨迹与留出验证集）复现了 RECAP 流程。执行一轮 RECAP 迭代后，成功率从 **48.8%**\ （该紧凑实验设置下的 few-shot SFT 基线）提升至 **66.5%**\ （+17.7%）。
 
-我们在 `LIBERO-10 <https://github.com/Lifelong-Robot-Learning/LIBERO>`_ 基准（Task 0）上提供了可复现的实验，演示完整的 RECAP 流程。
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/recap_libero10_task0.png
+   :align: center
+   :width: 55%
 
-- **SFT 数据**：LIBERO-10 的专家演示数据（成功轨迹）
-- **Rollout 数据**：few-shot π\ :sub:`0.5` 策略在 Task 0 上采集的 4,096 条轨迹，包含成功和失败的 episode
-- **Eval 数据**：同样由 few-shot π\ :sub:`0.5` 策略采集的验证集，用于 Step 2 监控价值模型是否过拟合
-
-.. note::
-
-   本页有意使用初始成功率适中的 few-shot π\ :sub:`0.5` 策略，以便在紧凑的
-   Task 0 示例中观察 RECAP 的离线提升。下方 baseline 仅对应该可复现实验设置，
-   不代表 π\ :sub:`0.5` SFT 在完整 LIBERO benchmark 上的通用表现。
-
-数据集可从 `此处 <https://huggingface.co/datasets/RLinf/RECAP-Libero10-Task0-48succ-Data/tree/main>`_ 下载。
-
-
-
-RECAP 实验结果
-----------------------------------------
-
-在 LIBERO-10 Task 0 上执行一轮 RECAP 迭代后，成功率从 **48.8%**\ （本页设置下的 few-shot SFT baseline）提升至 **66.5%**\ （RECAP），绝对提升 **17.7%**。
-
-.. raw:: html
-
-   <div style="display: flex; justify-content: center; margin: 20px 0;">
-     <div style="flex: 0.5; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/recap_libero10_task0.png" style="width: 100%;"/>
-       <p><em>LIBERO-10 Task 0 上的 RECAP 实验结果</em></p>
-     </div>
-   </div>
-
-高级用法
-----------------------------------------
-
-优势阈值重标
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-如果需要修改分位数阈值（如从 30% 调整为 20%），无需重新运行完整的 Step 3。
-可以使用 ``relabel_advantages.py`` 仅重标阈值：
-
-.. code:: bash
-
-   cd examples/offline_rl/advantage_labeling/recap/process
-   python relabel_advantages.py \
-       --dataset_paths /path/to/sft_dataset /path/to/rollout_dataset \
-       --source_tag "fail300_N10_ckpt18000_q30" \
-       --new_tag "fail300_N10_ckpt18000_q20" \
-       --positive_quantile 0.2
-
-也可以使用 ``--dataset_root`` 指定包含多个数据集的根目录，配合 ``--advantage_lookahead_step`` 重算优势：
-
-.. code:: bash
-
-   python relabel_advantages.py \
-       --dataset_root /path/to/dataset_root \
-       --advantage_lookahead_step 20 \
-       --positive_quantile 0.3
-
-该脚本会读取已有的连续优势值（``advantage_continuous``），仅更新阈值和布尔标签，避免重复的 GPU 推理。
-
-迭代优化
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-RECAP 支持迭代优化：使用 Step 4 训练的策略模型采集新数据，然后从 Step 1 重新开始。
-每一轮可以使用不同的 tag 来区分不同迭代的结果：
-
-.. code-block:: text
-
-   Iter 1: tag="fail300"          → 训练 Value Model → tag="fail300_N10_ckpt18000_q30"     → CFG Training
-   Iter 2: tag="fail300_iter2"    → 训练 Value Model → tag="fail300_iter2_N10_ckpt6000_q20" → CFG Training
+   LIBERO-10 Task 0 上的 RECAP 实验结果。

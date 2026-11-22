@@ -63,9 +63,9 @@ BEHAVIOR-1K 强化学习
 
    * - 字段
      - 说明
-   * - 观测 (Observation)
+   * - 观测
      - 头部相机 RGB（720×720）以及左右腕部 RealSense RGB（480×480）。
-   * - 动作 (Action)
+   * - 动作
      - 23 维连续动作：3 自由度底盘（x, y, rz）、4 自由度躯干、2×7 自由度手臂、2×1 自由度平行夹爪。
 
 一键上手
@@ -92,17 +92,16 @@ BEHAVIOR-1K 强化学习
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env behavior
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env behavior && source .venv/bin/activate
 
       **2. 下载资源与模型**
 
-      下载 IsaacSim 4.5、BEHAVIOR-1K 资产（超过 30 GB，在已激活的虚拟环境中运行）与 OpenVLA-OFT 基座检查点。每次运行前导出 ``ISAAC_PATH`` 与 ``OMNIGIBSON_DATA_PATH``：
+      下载 IsaacSim 4.5、BEHAVIOR-1K 资产（超过 30 GB，在已激活的虚拟环境中运行）与 OpenVLA-OFT 基座 checkpoint，并在启动 shell 中保留 ``ISAAC_PATH`` 与 ``OMNIGIBSON_DATA_PATH``：
 
       .. code-block:: bash
 
-         export ISAAC_PATH=/path/to/isaac-sim
-         export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+         export ISAAC_PATH="$PWD/isaac-sim"
+         export OMNIGIBSON_DATA_PATH="$PWD/BEHAVIOR-1K-datasets"
          mkdir -p "$ISAAC_PATH" "$OMNIGIBSON_DATA_PATH"
          curl https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-4.5.0-linux-x86_64.zip -o "$ISAAC_PATH/isaac-sim.zip"
          unzip "$ISAAC_PATH/isaac-sim.zip" -d "$ISAAC_PATH" && rm "$ISAAC_PATH/isaac-sim.zip"
@@ -138,8 +137,6 @@ BEHAVIOR-1K 强化学习
 
       .. code-block:: bash
 
-         export ISAAC_PATH=/path/to/isaac-sim
-         export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
          bash examples/embodiment/run_embodiment.sh behavior_ppo_openvlaoft
 
    .. tab-item:: OpenPI
@@ -150,17 +147,16 @@ BEHAVIOR-1K 强化学习
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env behavior
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env behavior && source .venv/bin/activate
 
       **2. 下载资源与模型**
 
-      下载 IsaacSim 4.5、BEHAVIOR-1K 资产（超过 30 GB，在已激活的虚拟环境中运行）与 OpenPI 基座检查点。每次运行前导出 ``ISAAC_PATH`` 与 ``OMNIGIBSON_DATA_PATH``：
+      下载 IsaacSim 4.5、BEHAVIOR-1K 资产（超过 30 GB，在已激活的虚拟环境中运行）与 OpenPI 基座 checkpoint，并在启动 shell 中保留 ``ISAAC_PATH`` 与 ``OMNIGIBSON_DATA_PATH``：
 
       .. code-block:: bash
 
-         export ISAAC_PATH=/path/to/isaac-sim
-         export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+         export ISAAC_PATH="$PWD/isaac-sim"
+         export OMNIGIBSON_DATA_PATH="$PWD/BEHAVIOR-1K-datasets"
          mkdir -p "$ISAAC_PATH" "$OMNIGIBSON_DATA_PATH"
          curl https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-4.5.0-linux-x86_64.zip -o "$ISAAC_PATH/isaac-sim.zip"
          unzip "$ISAAC_PATH/isaac-sim.zip" -d "$ISAAC_PATH" && rm "$ISAAC_PATH/isaac-sim.zip"
@@ -199,8 +195,6 @@ BEHAVIOR-1K 强化学习
 
       .. code-block:: bash
 
-         export ISAAC_PATH=/path/to/isaac-sim
-         export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
          bash examples/embodiment/run_embodiment.sh behavior_ppo_openpi
 
 .. warning::

@@ -34,28 +34,31 @@ RLinf 常用工作流的最短命令。
 启动训练
 --------
 
-单机运行会自动启动本地 Ray，快速上手配置首次运行时会自动缓存下载默认 Hugging Face 权重：
+首次运行前下载 ManiSkill 场景资产，再启动训练。单机运行会自动启动本地 Ray，快速开始配置首次运行时会自动缓存下载默认 Hugging Face 权重：
 
 .. code-block:: bash
 
+   hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
-如需替换为本地权重或其他 Hugging Face ``owner/repo``，传入 ``actor.model.model_path=...`` 即可（rollout 自动继承）。快速上手配置默认使用全部加速卡；需要指定设备时修改 ``cluster.component_placement``，详见 :doc:`../reference/configuration`。多机训练前，先在每个节点设置 ``RLINF_NODE_RANK``，再执行 ``ray start``，详见 :doc:`../guides/multi_node`。
+如需替换为本地权重或其他 Hugging Face ``owner/repo``，传入 ``actor.model.model_path=...`` 即可（rollout 自动继承）。快速开始配置默认使用全部加速卡；需要指定设备时修改 ``cluster.component_placement``，详见 :doc:`../reference/configuration`。多机训练前，先在每个节点设置 ``RLINF_NODE_RANK``，再执行 ``ray start``，详见 :doc:`../guides/multi_node`。
 
 运行评测
 --------
 
-运行具身独立评测：
+运行具身独立评测（需使用 ``openpi`` + ``libero`` 环境；如需与训练环境隔离，安装时用 ``--venv`` 指定独立目录）：
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
-     rollout.model.model_path=/path/to/checkpoint
+     rollout.model.model_path=RLinf/RLinf-Pi05-LIBERO-SFT
+
+如已提前下载到本地，可将 ``RLinf/RLinf-Pi05-LIBERO-SFT`` 替换为本地权重目录。
 
 下一步
 ------
 
 - :doc:`安装说明 <installation>`：安装目标、常用参数与 Docker Hub 入口。
-- :doc:`快速上手 <vla>`：ManiSkill3 四步入门示例。
+- :doc:`VLA 快速开始 <vla>`：ManiSkill3 四步入门示例。
 - :doc:`启动与扩展 <../guides/launch-scale/index>`：多机与真机部署。
 - :doc:`评测 <../evaluations/index>`：支持的 benchmark 与评测配置。

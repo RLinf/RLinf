@@ -1,7 +1,7 @@
 Logging & Visualization
 =======================
 
-RLinf support for real-time experiment tracking.
+RLinf supports real-time experiment tracking.
 You can stream loss curves, accuracy, GPU utilization and arbitrary
 custom metrics to one or more of the following backends:
 
@@ -27,7 +27,7 @@ Add the desired logger(s) to ``runner.logger.logger_backends`` in your YAML:
 .. code-block:: yaml
 
    runner:
-     task_type: math
+     task_type: reasoning
      logger:
        log_path: ${runner.output_dir}/${runner.experiment_name}
        project_name: rlinf
@@ -57,7 +57,7 @@ TensorBoard
 
    tensorboard --logdir ./logs/grpo-1.5b/tensorboard --port 6006
 
-Open `http://localhost:6006` in your browser
+Open ``http://localhost:6006`` in your browser
 to inspect scalar plots, histograms and the computation graph.
 
 

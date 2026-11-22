@@ -34,10 +34,11 @@ Install locally with ``install.sh`` (append ``--use-mirror`` and run ``export HF
 Run Training
 ------------
 
-Single-node runs start Ray automatically, and quickstart configs download their default Hugging Face checkpoints on first run:
+Download the ManiSkill scene assets once, then launch training. Single-node runs start Ray automatically, and quickstart configs download their default Hugging Face checkpoints on first run:
 
 .. code-block:: bash
 
+   hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
 Pass ``actor.model.model_path=/path/to/checkpoint`` (or another Hugging Face ``owner/repo``) to override the model; rollout inherits it automatically. Quickstart configs default to ``all`` accelerators; change ``cluster.component_placement`` to target specific devices (:doc:`../reference/configuration`). For multi-node runs, set ``RLINF_NODE_RANK`` before running ``ray start`` on each node (:doc:`../guides/multi_node`).
@@ -45,12 +46,14 @@ Pass ``actor.model.model_path=/path/to/checkpoint`` (or another Hugging Face ``o
 Evaluate
 --------
 
-Run standalone embodied evaluation:
+Run standalone embodied evaluation (requires an ``openpi`` + ``libero`` environment; pass ``--venv`` to ``install.sh`` if keeping a separate training venv):
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
-     rollout.model.model_path=/path/to/checkpoint
+     rollout.model.model_path=RLinf/RLinf-Pi05-LIBERO-SFT
+
+Replace ``RLinf/RLinf-Pi05-LIBERO-SFT`` with a local checkpoint directory if you already downloaded the weights.
 
 Next Steps
 ----------

@@ -14,7 +14,7 @@ Train **OpenVLA** or **OpenVLA-OFT** on `ManiSkill3 <https://github.com/haosulab
    .. grid-item-card:: 2. Download
       :text-align: center
 
-      Checkpoint + ManiSkill assets
+      ManiSkill assets (model auto-downloads)
 
    .. grid-item-card:: 3. Train
       :text-align: center
@@ -29,7 +29,7 @@ Train **OpenVLA** or **OpenVLA-OFT** on `ManiSkill3 <https://github.com/haosulab
 Setup and Run
 -------------
 
-Select a model tab below — each tab contains the full install, download, and launch commands. Both recipes use all available accelerators by default; edit ``cluster.component_placement`` to target specific devices (:doc:`../guides/basic_config`). In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download`` (or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__).
+Select a model tab below — each tab contains the full install, download, and launch commands. Both recipes use all available accelerators by default; edit ``cluster.component_placement`` to target specific devices (:doc:`../reference/configuration`). If you already installed another model or environment in ``.venv``, pass ``--venv <dir>`` to ``install.sh`` so you do not overwrite it. For mainland China mirrors or prebuilt Docker Hub images, see :doc:`installation`.
 
 .. tab-set::
 

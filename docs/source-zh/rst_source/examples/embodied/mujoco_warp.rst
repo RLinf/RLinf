@@ -160,7 +160,7 @@ humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``rewa
 
 在仓库根目录启动 TensorBoard：
 
-.. code:: bash
+.. code-block:: bash
 
    tensorboard --logdir ../results --port 6006
 
@@ -179,7 +179,7 @@ humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``rewa
 
 视频录制默认关闭。通过以下命令为评估启用录像：
 
-.. code:: bash
+.. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp \
        env.eval.video_cfg.save_video=true

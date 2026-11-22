@@ -69,7 +69,6 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
 
          # 3. 启动评测
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
-         export ROBOT_PLATFORM=ALOHA
          bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_pi05_eval \
            rollout.model.model_path=./RLinf-Pi05-RoboTwin-SFT-adjust_bottle \
            env.eval.assets_path="${ROBOTWIN_PATH}"
@@ -88,7 +87,6 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
 
          # 3. 启动评测
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
-         export ROBOT_PLATFORM=ALOHA
          bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
            rollout.model.model_path=./RLinf-Pi0-RoboTwin-SFT-adjust_bottle \
            env.eval.assets_path="${ROBOTWIN_PATH}"
@@ -111,7 +109,6 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
 
          # 3. 启动评测
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
-         export ROBOT_PLATFORM=ALOHA
          export LINGBOT_VLA_PATH="$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")"
          bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvla_eval \
            rollout.model.model_path=./lingbot-vla-4b-posttrain-robotwin \
@@ -137,13 +134,12 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
          # 3. 启动评测
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          export ROBOTWIN_ASSETS_PATH="${ROBOTWIN_PATH}"
-         export ROBOT_PLATFORM=ALOHA
          bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvlav2_eval \
-           rollout.model.model_path="$(pwd)/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt" \
-           rollout.model.tokenizer_path="$(pwd)/Qwen3-VL-4B-Instruct" \
-           rollout.model.lingbotvlav2.training_config_path="$(pwd)/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml" \
-           rollout.model.lingbotvlav2.robot_config_path="$(pwd)/.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml" \
-           rollout.model.lingbotvlav2.stats_path="$(pwd)/.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json"
+           rollout.model.model_path=./lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt \
+           rollout.model.tokenizer_path=./Qwen3-VL-4B-Instruct \
+           rollout.model.lingbotvlav2.training_config_path=./lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml \
+           rollout.model.lingbotvlav2.robot_config_path=./.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml \
+           rollout.model.lingbotvlav2.stats_path=./.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
 
       默认使用 2 张 GPU（``rollout: 0``、``env: 1``）。LingbotVLA 1.0 与 2.0 均安装 ``lingbotvla`` 包，须分别使用独立的虚拟环境（详见 :doc:`../../examples/embodied/lingbotvlav2`）。
 
@@ -296,7 +292,7 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
    * - 导入时找不到 ``ROBOTWIN_PATH``
      - 将 ``ROBOTWIN_PATH`` 导出为 RoboTwin 仓库根目录（``RLinf_support`` 分支）；``run_eval.sh`` 仅在该变量已设置时将其加入 ``PYTHONPATH``。
    * - 启动失败或场景缺失
-     - 将 ``env.eval.assets_path``\ （LingbotVLA 2.0 使用 ``ROBOTWIN_ASSETS_PATH``）指向 ``assets/`` 的父目录，并导出 ``ROBOT_PLATFORM=ALOHA``。
+     - 将 ``env.eval.assets_path``\ （LingbotVLA 2.0 使用 ``ROBOTWIN_ASSETS_PATH``）指向 ``assets/`` 的父目录；OpenVLA-OFT 还须导出 ``ROBOT_PLATFORM=ALOHA``。
    * - GPU 显存不足
      - 在 YAML 中开启 ``env.enable_offload: True`` 与 ``rollout.enable_offload: True``，或调小 ``env.eval.total_num_envs``。
    * - 种子覆盖不完整

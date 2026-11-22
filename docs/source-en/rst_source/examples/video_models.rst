@@ -7,11 +7,7 @@ Image and Video Generation
 
    SD3 and Wan2.2 image/video generation models.
 
-Fine-tune SD3 and Wan2.2 with OCR rewards using Diffusion-NFT or DiffusionART.
-Both methods use the same models, prompt dataset, and diffusion environment.
-Prepare these shared dependencies below, then follow a training guide.
-
-For ImageReward-based preference tuning of SD3, see :doc:`embodied/refl`.
+Fine-tune SD3 and Wan2.2 with OCR rewards using **Diffusion-NFT** or **DiffusionART**, or tune SD3.5 Medium with ImageReward using **ReFL**. Diffusion-NFT and DiffusionART share the models, OCR prompt dataset, and diffusion environment setup below; ReFL has its own self-contained setup on its recipe page.
 
 Choose a Training Method
 ------------------------
@@ -19,7 +15,7 @@ Choose a Training Method
 Choose the method before launching training; the guides contain its configs,
 update settings, and expected results.
 
-.. grid:: 1 2 2 2
+.. grid:: 1 3 3 3
    :gutter: 3
 
    .. grid-item-card:: Diffusion-NFT
@@ -35,6 +31,13 @@ update settings, and expected results.
 
       Build shared reward guidance over prompt groups and train against frozen
       velocity targets. Includes SD3 image OCR and Wan2.2 video OCR recipes.
+
+   .. grid-item-card:: ReFL
+      :link: embodied/refl
+      :link-type: doc
+
+      Fine-tune SD3.5 Medium with differentiable ImageReward feedback and
+      optional supervised image-text updates.
 
 Prompts, Outputs, and Rewards
 -----------------------------
@@ -132,7 +135,7 @@ Both methods use the OCR prompts from
 `NVlabs/DiffusionNFT <https://github.com/NVlabs/DiffusionNFT/tree/main/dataset/ocr>`__.
 Download the training and test splits into one directory:
 
-.. code:: bash
+.. code-block:: bash
 
    mkdir -p /path/to/dataset/ocr
    curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/train.txt \
@@ -157,3 +160,4 @@ place, continue with
 
    Diffusion-NFT <diffusion_nft>
    DiffusionART <diffusion_art>
+   ReFL <embodied/refl>

@@ -7,16 +7,14 @@
 
    SD3 与 Wan2.2 图像/视频生成模型。
 
-使用 Diffusion-NFT 或 DiffusionART，以 OCR 奖励微调 SD3 和 Wan2.2。两种方法共用模型、prompt 数据集和 diffusion 环境。先按本页准备依赖、模型与数据，再进入对应的训练指南。
-
-使用 ImageReward 微调 SD3 的流程见 :doc:`embodied/refl`。
+使用 **Diffusion-NFT** 或 **DiffusionART** 以 OCR 奖励微调 SD3 和 Wan2.2，或使用 **ReFL** 以 ImageReward 微调 SD3.5 Medium。Diffusion-NFT 与 DiffusionART 共用下方的依赖、模型与 OCR prompt 数据集准备流程；ReFL 在独立页面内给出完整安装与运行步骤。
 
 选择训练方法
 ------------
 
 根据需要选择训练方法；各指南包含对应配置、更新参数和预期结果。
 
-.. grid:: 1 2 2 2
+.. grid:: 1 3 3 3
    :gutter: 3
 
    .. grid-item-card:: Diffusion-NFT
@@ -30,6 +28,12 @@
       :link-type: doc
 
       在 prompt 组内构造共享奖励引导，并向冻结的速度目标训练，包含 SD3 图像 OCR 和 Wan2.2 视频 OCR 配置。
+
+   .. grid-item-card:: ReFL
+      :link: embodied/refl
+      :link-type: doc
+
+      使用可微 ImageReward 反馈及可选图文监督更新微调 SD3.5 Medium。
 
 Prompt、生成结果与奖励
 ----------------------
@@ -130,3 +134,4 @@ Prompt、生成结果与奖励
 
    Diffusion-NFT <diffusion_nft>
    DiffusionART <diffusion_art>
+   ReFL <embodied/refl>

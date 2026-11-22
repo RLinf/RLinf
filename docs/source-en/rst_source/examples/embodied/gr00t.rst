@@ -274,8 +274,7 @@ NVIDIA CUDA supports GR00T N1.5, N1.6, and N1.7 (select a version tab below). AM
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env libero && source .venv/bin/activate
 
       **2. Download**
 
@@ -301,8 +300,7 @@ NVIDIA CUDA supports GR00T N1.5, N1.6, and N1.7 (select a version tab below). AM
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env maniskill_libero && source .venv/bin/activate
 
       Configure CPU simulation:
 
@@ -340,8 +338,7 @@ NVIDIA CUDA supports GR00T N1.5, N1.6, and N1.7 (select a version tab below). AM
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model gr00t --env libero && source .venv/bin/activate
 
       .. include:: _ascend_torch.rst
 
@@ -369,8 +366,7 @@ NVIDIA CUDA supports GR00T N1.5, N1.6, and N1.7 (select a version tab below). AM
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero && source .venv/bin/activate
 
       Configure CPU simulation:
 
@@ -400,8 +396,7 @@ NVIDIA CUDA supports GR00T N1.5, N1.6, and N1.7 (select a version tab below). AM
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform musa embodied --model gr00t --env libero
-         source .venv/bin/activate
+         bash requirements/install.sh --platform musa embodied --model gr00t --env libero && source .venv/bin/activate
 
       **2. Download**
 
@@ -429,8 +424,7 @@ NVIDIA CUDA supports GR00T N1.5, N1.6, and N1.7 (select a version tab below). AM
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform musa embodied --venv gr00t --model gr00t --env libero
-         source gr00t/bin/activate
+         bash requirements/install.sh --platform musa embodied --venv gr00t --model gr00t --env libero && source gr00t/bin/activate
 
       Configure CPU simulation:
 
@@ -487,14 +481,11 @@ These results reuse the same hyperparameter settings as π₀ without task-speci
 
 **N1.6:**
 
-.. raw:: html
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gr00t_1.6_ppo_success_rate.png
+   :align: center
+   :width: 55%
 
-   <div style="display: flex; justify-content: center; margin: 20px 0;">
-     <div style="flex: 0.5; text-align: center;">
-       <img src="https://github.com/RLinf/misc/blob/main/pic/gr00t_1.6_ppo_success_rate.png?raw=true" style="width: 100%;"/>
-       <p><em>GR00T-N1.6 SFT + PPO Accuracy Curve on LIBERO_Spatial</em></p>
-     </div>
-   </div>
+   GR00T-N1.6 SFT + PPO Accuracy Curve on LIBERO_Spatial.
 
 .. list-table:: **GR00T-N1.6 Results with Flow-SDE on LIBERO Spatial**
    :header-rows: 1

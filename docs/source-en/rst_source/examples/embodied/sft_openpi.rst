@@ -160,7 +160,7 @@ Setup and Run
 
          python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
            --input-model ./checkpoints/jax/pi05_base \
-           --input-norm-stats /path/to/assets/behavior-1k/2025-challenge-demos/norm_stats.json \
+           --input-norm-stats ./assets/behavior-1k/2025-challenge-demos/norm_stats.json \
            --output-model ./pi05_base_openpi \
            --output-norm-stats ./pi05_base_openpi/task/norm_stats.json \
            --action-dim 32 \
@@ -342,7 +342,7 @@ Setup and Run
       # Local dataset directory (contains meta/info.json):
       python toolkits/lerobot/calculate_norm_stats.py \
           --config-name pi0_realworld \
-          --repo-id /path/to/realworld_franka_bin_relocation
+          --repo-id ./realworld_franka_bin_relocation
 
       # Or a Hugging Face repo id (cached under ~/.cache/huggingface/lerobot):
       python toolkits/lerobot/calculate_norm_stats.py \
@@ -362,8 +362,8 @@ Setup and Run
    .. code-block:: bash
 
       bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
-        rollout.model.model_path=/path/to/logs/.../checkpoints/global_step_30000 \
-        rollout.model.openpi_data.norm_stats_path=/path/to/pi0_base_pytorch_new/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
+        rollout.model.model_path=./logs/checkpoints/global_step_30000 \
+        rollout.model.openpi_data.norm_stats_path=./pi0_base_pytorch_new/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
 
    See :doc:`BEHAVIOR-1K evaluation <../../evaluations/guides/behavior>` and :doc:`RoboTwin evaluation <../../evaluations/guides/robotwin>`. To export a standalone ``model.safetensors`` + ``config.json`` + ``norm_stats.json`` directory, run the OpenPI checkpoint converter in ``sft_to_openpi`` mode (see :doc:`Checkpoint conversion <../../guides/convertor>`).
 

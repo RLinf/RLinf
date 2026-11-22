@@ -31,9 +31,9 @@ The RLinf environment system consists of the following components:
            self.seed = self.cfg.seed + rank
 
            # Initialize environment-related parameters
-           self.num_envs = num_envs
+           self._num_envs = num_envs
            self.group_size = self.cfg.group_size
-           self.num_group = self.num_envs // self.group_size
+           self.num_group = self._num_envs // self.group_size
 
            # Initialize environment internals
            self._init_environment()
@@ -106,7 +106,7 @@ The RLinf environment system consists of the following components:
    @property
    def num_envs(self):
        """Number of vectorized environments."""
-       return self.num_envs
+       return self._num_envs
 
    @property
    def device(self):
@@ -116,15 +116,14 @@ The RLinf environment system consists of the following components:
 2. Implement Environment Offload Support (Optional)
 ----------------------------------------------------------------------
 
-If you need to support saving/restoring environment state, inherit from ``EnvOffloadMixin``:
+If your simulator supports offloading state between CPU and GPU, implement ``get_state`` / ``load_state`` (see ``rlinf/envs/sim/maniskill/maniskill_offload_env.py`` for a reference ``EnvOffloadMixin`` implementation):
 
 .. code-block:: python
 
-   from rlinf.envs.env_offload_wrapper import EnvOffloadMixin
    import io
    import torch
 
-   class YourCustomEnv(gym.Env, EnvOffloadMixin):
+   class YourCustomOffloadEnv(YourCustomEnv):
        def get_state(self) -> bytes:
            """Serialize environment state to bytes."""
            state = {
@@ -144,32 +143,16 @@ If you need to support saving/restoring environment state, inherit from ``EnvOff
            self._generator.set_state(state["rng_state"])
            # Restore other states as needed
 
-3. Create Environment Wrapper
+3. Add Action Processing Tools
 -----------------------------------
 
-If you implement offload functionality, create a corresponding wrapper:
-
-.. code-block:: python
-
-   # In env_offload_wrapper.py
-   class YourCustomEnv(BaseYourCustomEnv, EnvOffloadMixin):
-       def get_state(self) -> bytes:
-           # Implement state saving
-           pass
-
-       def load_state(self, state_buffer: bytes):
-           # Implement state restoration
-           pass
-
-4. Add Action Processing Tools
------------------------------------
-
-Add action processing utilities in ``action_utils.py``:
+Add action formatting for your environment in ``rlinf/envs/action_utils.py``:
 
 .. code-block:: python
 
    def prepare_actions_for_your_env(
        raw_chunk_actions,
+       model_type,
        num_action_chunks,
        action_dim,
        action_scale,
@@ -180,16 +163,21 @@ Add action processing utilities in ``action_utils.py``:
        pass
 
    def prepare_actions(
-       env_type,
        raw_chunk_actions,
+       env_type: str,
+       model_type: str,
        num_action_chunks,
        action_dim,
        action_scale: float = 1.0,
-       policy: str = "default",
+       policy: str = "widowx_bridge",
+       wm_env_type=None,
+       env_cfg=None,
    ):
-       if env_type == "your_env":
+       env_type = SupportedEnvType(env_type)
+       if env_type == SupportedEnvType.YOUR_ENV:
            chunk_actions = prepare_actions_for_your_env(
                raw_chunk_actions=raw_chunk_actions,
+               model_type=model_type,
                num_action_chunks=num_action_chunks,
                action_dim=action_dim,
                action_scale=action_scale,
@@ -198,14 +186,14 @@ Add action processing utilities in ``action_utils.py``:
        # ... other environment types
        return chunk_actions
 
-5. Create Task Variants (Optional)
------------------------------------
+4. Place Environment Code and Task Variants
+-------------------------------------------
 
-If you require specific task variants, place them under ``envs/YOUR_ENV/tasks/variants/``:
+Place your simulator package under ``rlinf/envs/sim/<your_env>/`` (with an ``__init__.py``). Optional task variants can live under ``rlinf/envs/sim/<your_env>/tasks/variants/``:
 
 .. code-block:: python
 
-   # envs/YOUR_ENV/tasks/variants/your_task_variant.py
+   # rlinf/envs/sim/your_env/tasks/variants/your_task_variant.py
    class YourTaskVariant:
        def __init__(self, config):
            self.config = config
@@ -222,31 +210,37 @@ If you require specific task variants, place them under ``envs/YOUR_ENV/tasks/va
            """Return True if the task is successful."""
            pass
 
-6. Update Configuration Files
------------------------------------
+5. Register Environment in ``rlinf/envs/__init__.py``
+-----------------------------------------------------
 
-Add your environment configuration:
-
-.. code-block:: yaml
-
-   your_env:
-     env_type: "your_env"
-     total_num_envs: 8
-     group_size: 4
-     seed: 42
-     # Other environment-specific settings
-
-7. Register Environment
------------------------------------
-
-Expose the new environment in the package:
+Add a member to ``SupportedEnvType`` and a lazy-import branch in ``get_env_cls()`` inside ``rlinf/envs/__init__.py`` so simulator dependencies are imported only when that environment is selected:
 
 .. code-block:: python
 
-   # In __init__.py or the relevant module
-   from .your_custom_env import YourCustomEnv
+   class SupportedEnvType(Enum):
+       ...
+       YOUR_ENV = "your_env"
 
-   __all__ = ["YourCustomEnv"]
+   def get_env_cls(env_type: str | SupportedEnvType, env_cfg=None):
+       env_type = SupportedEnvType(env_type)
+       ...
+       elif env_type == SupportedEnvType.YOUR_ENV:
+           from rlinf.envs.sim.your_env.your_custom_env import YourCustomEnv
+
+           return YourCustomEnv
+
+6. Add Configuration Preset
+-----------------------------------
+
+Add a Hydra environment preset under ``examples/embodiment/config/env/``:
+
+.. code-block:: yaml
+
+   env_type: your_env
+   total_num_envs: 8
+   group_size: 4
+   seed: 42
+   # Other environment-specific settings
 
 Testing and Validation
 -----------------------------------
@@ -258,7 +252,7 @@ Testing and Validation
    def test_your_env():
        """Basic smoke test for your environment."""
        cfg = get_test_config()
-       env = YourCustomEnv(cfg, rank=0)
+       env = YourCustomEnv(cfg, rank=0, num_envs=cfg.total_num_envs)
 
        # Reset
        obs, info = env.reset()

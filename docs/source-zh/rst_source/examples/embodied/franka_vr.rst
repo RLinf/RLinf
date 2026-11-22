@@ -74,7 +74,7 @@ VR 链路最多涉及三类节点角色。publisher 与 RLinf env worker 在同�
 
       .. code-block:: bash
 
-         git clone git@github.com:tiny-xie/pico_software.git && cd pico_software
+         git clone https://github.com/tiny-xie/pico_software.git && cd pico_software
          (cd XRoboToolkit-Teleop-Sample-Python && bash setup_uv.sh)
          source XRoboToolkit-Teleop-Sample-Python/.venv/bin/activate
          python test_pico_xrt_pipeline.py
@@ -126,18 +126,18 @@ VR 链路最多涉及三类节点角色。publisher 与 RLinf env worker 在同�
 
       .. warning::
 
-         必须在执行 ``ray start`` 之前完成安装并激活环境。Ray 会在启动时捕获 Python 解释器和环境变量，之后再配置 ``pyzmq``、Franka 环境或 ``PYTHONPATH`` 会导致 worker 无法读取控制器或连接 ZeroMQ。
+         必须在执行 ``ray start`` 之前完成安装并激活环境。Ray 会在启动时捕获 Python 解释器和环境变量，之后再配置 ``pyzmq`` 或 Franka 环境会导致 worker 无法读取控制器或连接 ZeroMQ。
 
       启动 VR 数据 publisher 后，在读取控制器的节点运行内置脚本验证 ZeroMQ 数据流：
 
       .. code-block:: bash
 
          # 同机 IPC
-         python toolkits/realworld_check/test_pico_data.py \
+         python -m toolkits.realworld_check.test_pico_data \
              --zmq-addr ipc:///tmp/vr_data.ipc
 
          # 跨机 TCP（替换为实际 publisher IP:端口，与 env.eval.pico.zmq_addr 保持一致）
-         python toolkits/realworld_check/test_pico_data.py \
+         python -m toolkits.realworld_check.test_pico_data \
              --zmq-addr tcp://192.168.1.100:5555
 
       移动手柄并按下 ``grip``、``trigger``、``A`` 或 ``B``，确认终端持续刷新如下输出：
@@ -146,7 +146,7 @@ VR 链路最多涉及三类节点角色。publisher 与 RLinf env worker 在同�
 
          [000012] recv_rate=79.8Hz | headset: pos=[0.120 1.430 0.210] quat=[0.000 0.707 0.000 0.707] | right: pos=[0.320 1.120 0.850] quat=[0.010 0.690 0.020 0.724] grip=0.000 trigger=0.000 | buttons_active=none
 
-   .. tab-item:: 2. 配置与遥操运行
+   .. tab-item:: 2. 配置与遥操作运行
 
       编辑 ``examples/embodiment/config/realworld_collect_data_pico.yaml``，将 ``env.eval.pico.zmq_addr`` 与 publisher 地址对齐（同机填 ``ipc:///tmp/vr_data.ipc``，跨机填 ``tcp://<vr_publisher_ip>:<port>``，不要填 ``tcp://0.0.0.0:<port>``）：
 
@@ -164,8 +164,8 @@ VR 链路最多涉及三类节点角色。publisher 与 RLinf env worker 在同�
 
       **启动顺序**
 
-      1. 在 Franka 控制节点激活 ``franka`` 环境并设置 ``PYTHONPATH``。
-      2. 按 :doc:`franka` 启动单节点或多节点 Ray 集群。
+      1. 在 Franka 控制节点激活 ``franka`` 环境（``source .venv/bin/activate``）。
+      2. 多机运行时按 :doc:`franka` 启动 Ray 集群（单机运行会自动启动本地 Ray，无需手动执行 ``ray start``）。
       3. 启动 XRoboToolkit PC Service，确认头显与手柄已连接。
       4. 启动 ``vr_data_publisher``。
       5. 首次运行或更改 ZeroMQ 地址后，先用 ``test_pico_data.py`` 验证数据可达。

@@ -90,7 +90,7 @@ How SAC-Flow Works
 Setup and Run
 -------------
 
-Install with ``requirements/install.sh`` (in mainland China, append ``--use-mirror`` and set ``export HF_ENDPOINT=https://hf-mirror.com`` before downloading Hugging Face assets), or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. See :doc:`../../start/installation` (simulation) or :doc:`franka` (real hardware) for details.
+.. include:: _setup_common.rst
 
 .. tab-set::
 
@@ -121,7 +121,7 @@ Install with ``requirements/install.sh`` (in mainland China, append ``--use-mirr
 
    **Model parameters**
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       actor:
         model:
@@ -147,7 +147,7 @@ Install with ``requirements/install.sh`` (in mainland China, append ``--use-mirr
 
    **Algorithm parameters**
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       algorithm:
         gamma: 0.96          # Discount factor
@@ -208,12 +208,11 @@ Real World Results
 ~~~~~~~~~~~~~~~~~~
 Below are the demo video (accelerated) and training curve for the SAC-Flow algorithm on the Peg Insertion task. Within 30 minutes of training, the robot learns a policy capable of consistently completing the task.
 
-.. raw:: html
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-success-rate.png
+   :align: center
+   :width: 80%
 
-  <div style="flex: 0.8; text-align: center;">
-      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-success-rate.png" style="width: 100%;"/>
-      <p><em>Training Curve</em></p>
-    </div>
+   Training Curve
 
 .. raw:: html
 

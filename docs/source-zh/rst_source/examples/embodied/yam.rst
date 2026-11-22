@@ -107,7 +107,7 @@ YAM PICO 数据采集
          export YAM_RIGHT_OPERATOR_TO_ROBOT_YAW='0.0'        # 替换为实测 yaw（弧度）
 
          # 检查头显、双手柄位姿与按键更新（按 Ctrl-C 退出）
-         python toolkits/realworld_check/test_pico_data.py --zmq-addr "$YAM_PICO_ZMQ_ADDR"
+         python -m toolkits.realworld_check.test_pico_data --zmq-addr "$YAM_PICO_ZMQ_ADDR"
 
          # 启动采集
          bash examples/embodiment/collect_data.sh realworld_dual_yam_collect_data_pico
@@ -118,7 +118,7 @@ YAM PICO 数据采集
 
       .. code-block:: bash
 
-         python toolkits/lerobot/merge_lerobot_datasets.py \
+         python -m toolkits.lerobot.merge_lerobot_datasets \
              --source-dir "logs/20261121-120000-realworld_dual_yam_collect_data_pico/lerobot_dataset" \
              --output-dir logs/yam_merged \
              --only-success  # 将时间戳替换为实际采集目录

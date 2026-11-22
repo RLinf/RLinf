@@ -113,8 +113,7 @@ Select a LIBERO suite tab for NVIDIA CUDA, or switch to **Huawei Ascend CANN** f
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env wan
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env wan && source .venv/bin/activate
 
       **2. Download**
 
@@ -152,8 +151,7 @@ Select a LIBERO suite tab for NVIDIA CUDA, or switch to **Huawei Ascend CANN** f
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env wan
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env wan && source .venv/bin/activate
 
       **2. Download**
 
@@ -191,8 +189,7 @@ Select a LIBERO suite tab for NVIDIA CUDA, or switch to **Huawei Ascend CANN** f
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env wan
-         source .venv/bin/activate
+         bash requirements/install.sh embodied --model openvla-oft --env wan && source .venv/bin/activate
 
       **2. Download**
 
@@ -234,8 +231,7 @@ Select a LIBERO suite tab for NVIDIA CUDA, or switch to **Huawei Ascend CANN** f
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env wan
-         source .venv/bin/activate
+         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env wan && source .venv/bin/activate
 
       The installer adds the matching ``torch-npu`` package and skips CUDA flash-attention. Install MindIE-SD separately in this activated environment, using a build compatible with your CANN and PyTorch versions. The installer does not install MindIE-SD.
 

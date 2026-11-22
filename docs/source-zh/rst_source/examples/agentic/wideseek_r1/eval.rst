@@ -175,7 +175,7 @@ WideSeek-R1 评测
 
 WideSeek-R1 还支持在多智能体设定下使用两个独立模型实例评测，从而让 planner 和 worker 角色使用不同模型。
 
-请使用 `examples/agent/wideseek_r1/config/eval_qwen3_qa_2eng.yaml`。相关字段如下：
+请使用 ``examples/agent/wideseek_r1/config/eval_qwen3_qa_2eng.yaml``。相关字段如下：
 
 .. code-block:: yaml
 

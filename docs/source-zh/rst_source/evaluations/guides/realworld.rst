@@ -47,7 +47,7 @@
          bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
          # 2. 在 GPU head 节点启动评测（替换为本地模型与权重路径）
-         bash evaluations/run_eval.sh realworld_pnp_eval \
+         bash evaluations/run_eval.sh realworld realworld_pnp_eval \
            rollout.model.model_path=./pi0-model \
            runner.ckpt_path=./full_weights.pt
 
@@ -62,7 +62,7 @@
          bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
          # 2. 启动评测
-         bash evaluations/run_eval.sh realworld_eval \
+         bash evaluations/run_eval.sh realworld realworld_eval \
            rollout.model.model_path=./pi0-sft-model
 
    .. tab-item:: 单机双臂 RTC（π₀.₅）
@@ -76,7 +76,7 @@
          bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
          # 2. 启动评测
-         bash evaluations/run_eval.sh realworld_dual_franka_pi05_RTC \
+         bash evaluations/run_eval.sh realworld realworld_dual_franka_pi05_RTC \
            rollout.model.model_path=./pi05-dual-franka
 
 .. warning::
