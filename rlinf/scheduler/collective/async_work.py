@@ -136,12 +136,33 @@ class AsyncFuncWork(AsyncWork):
             self._perf_time += perf_time
 
     def __call__(self, future: Future):
-        """Execute the function and set the done flag."""
+        """Execute the function and set the done flag.
+
+        No exception may escape this call: the work queue thread calls it,
+        and an exception that leaves it ends the thread, so this work and
+        every later work on the same queue would stay pending forever. A
+        failure is set on the done future instead.
+        """
         start = time.perf_counter()
-        if self._pass_self:
-            self._result = self._func(self, *self._args, **self._kwargs)
-        else:
-            self._result = self._func(*self._args, **self._kwargs)
+        if future is not None:
+            # A work chained with then() is called with the previous step's
+            # done future; when that step failed, this one has no input to
+            # work on.
+            try:
+                future.wait()
+            except BaseException as exc:
+                self._exec_time = time.perf_counter() - start
+                self._done.set_exception(exc)
+                return
+        try:
+            if self._pass_self:
+                self._result = self._func(self, *self._args, **self._kwargs)
+            else:
+                self._result = self._func(*self._args, **self._kwargs)
+        except BaseException as exc:
+            self._exec_time = time.perf_counter() - start
+            self._done.set_exception(exc)
+            return
         self._exec_time = time.perf_counter() - start
         if (
             Worker.current_worker.has_accelerator
@@ -150,15 +171,34 @@ class AsyncFuncWork(AsyncWork):
             self._cuda_event = Worker.torch_platform.Event()
             self._cuda_event.record()
         if isinstance(self._result, AsyncWork):
-            # If the result is another AsyncWork, find the last work in the chain
-            # Set the flag only after all works are done
+            # If the result is another AsyncWork, find the last work in the
+            # chain and complete only after all of them are done; an error
+            # anywhere in the chain reaches this work's waiter.
             last_work_in_chain = self._result.get_last_work()
-            last_work_in_chain.then(self._done.set_result, True)
+            last_work_in_chain.add_done_callback(
+                lambda _: self._complete_after_chain(last_work_in_chain)
+            )
+        else:
+            self._done.set_result(True)
+
+    def _complete_after_chain(self, last_work: "AsyncWork") -> None:
+        """Complete this work once the AsyncWork it returned has finished.
+
+        Registered with add_done_callback, so it also runs when the chain
+        failed and passes that failure on to this work's waiters.
+        """
+        try:
+            last_work.wait()
+        except BaseException as exc:
+            self._done.set_exception(exc)
         else:
             self._done.set_result(True)
 
     def then(self, func: Callable, *args, **kwargs) -> "AsyncFuncWork":
         """Set a callback function to be called when the work is completed.
+
+        A work chained with then() does not run its function when the work
+        before it failed; it passes the exception on.
 
         Args:
             func (Callable): The function to call when the work is completed. Currently doesn't support return values.
@@ -173,6 +213,16 @@ class AsyncFuncWork(AsyncWork):
         self._done.then(next_work)
         return next_work
 
+    def add_done_callback(self, func: Callable[[Future], None]) -> None:
+        """Call ``func`` when this work completes, whether it succeeded or failed.
+
+        Unlike :meth:`then`, the callback also runs after a failure, so it can
+        pass the error on. It is called with this work's done future; calling
+        ``wait()`` on that future raises the work's exception. It runs in the
+        thread that completes the work.
+        """
+        self._done.add_done_callback(func)
+
     async def async_wait(self):
         """Async wait for the work to complete.
 
@@ -182,6 +232,9 @@ class AsyncFuncWork(AsyncWork):
         """
         if not self._done.done():
             await _await_torch_future(self._done)
+        # Waiting above does not read the future; this raises when the work
+        # failed, as wait() does.
+        self._done.wait()
         if self._cuda_event is not None:
             self._cuda_event.wait()
         result = self._result
@@ -264,6 +317,19 @@ class AsyncCollWork(AsyncWork):
         self._futures[0].then(next_work)
         return next_work
 
+    def add_done_callback(self, func: Callable[[Future], None]) -> None:
+        """Call ``func`` when this work completes, whether it succeeded or failed.
+
+        Unlike :meth:`then`, the callback also runs after a failure, so it can
+        pass the error on. It is called with the future of its collective;
+        calling ``wait()`` on that future raises the work's exception. It runs
+        in the thread that completes the work.
+        """
+        assert len(self._works) == 1, (
+            "add_done_callback() does not support multiple works"
+        )
+        self._futures[0].add_done_callback(func)
+
     def get_next_work(self):
         """Get the next AsyncWork chained to this one."""
         return self._next_work
@@ -282,8 +348,9 @@ class AsyncCollWork(AsyncWork):
 class AsyncChannelWork(AsyncWork):
     """Asynchronous work for channel operations."""
 
-    # Global thread lock
-    lock: threading.Lock = threading.Lock()
+    # Global thread lock, reentrant: a remote call that has already finished
+    # runs _complete in the thread that registers it, which may hold this lock.
+    lock: threading.RLock = threading.RLock()
     # Last future per key in execution loop
     last_future_per_key: dict[str, Future] = {}
 
@@ -338,6 +405,14 @@ class AsyncChannelWork(AsyncWork):
             self._future.set_exception(exc)
         else:
             self._future.set_result(result)
+        with AsyncChannelWork.lock:
+            # Keys are per group on the payload channels: keeping the entry of
+            # a completed key grows this table for the whole run.
+            if (
+                AsyncChannelWork.last_future_per_key.get(self._channel_key)
+                is self._future
+            ):
+                del AsyncChannelWork.last_future_per_key[self._channel_key]
 
     async def async_wait(self):
         """Async wait for the work to complete.
@@ -405,7 +480,9 @@ class AsyncChannelCommWork(AsyncWork):
             self._data_future = AsyncChannelCommWork.channel_data_store.setdefault(
                 peer, {}
             ).setdefault(query_id, Future())
-        self._async_comm_work.then(self._store_channel_data)
+        # Runs on success and on failure: a failed recv has to reach the
+        # gets still waiting on this channel rank.
+        self._async_comm_work.add_done_callback(lambda _: self._store_channel_data())
 
     def _store_channel_data(self):
         """Store channel data in the channel data store."""
@@ -420,17 +497,18 @@ class AsyncChannelCommWork(AsyncWork):
             # other channel ranks have their own recvs and are left alone.
             with AsyncChannelCommWork.store_lock:
                 pending = AsyncChannelCommWork.channel_data_store.pop(self._peer, {})
-            for future in pending.values():
-                if not future.done():
-                    future.set_exception(exc)
-            if not self._data_future.done():
-                self._data_future.set_exception(exc)
+                for future in pending.values():
+                    if not future.done():
+                        future.set_exception(exc)
+                if not self._data_future.done():
+                    self._data_future.set_exception(exc)
             return
         with AsyncChannelCommWork.store_lock:
             data_future = AsyncChannelCommWork.channel_data_store.setdefault(
                 self._peer, {}
             ).setdefault(query_id, Future())
-        data_future.set_result(data)
+            if not data_future.done():
+                data_future.set_result(data)
 
     async def async_wait(self):
         """Async wait for the work to complete.
