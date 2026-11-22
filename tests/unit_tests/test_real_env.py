@@ -2003,6 +2003,97 @@ def test_so101_hg_dagger_switches_control_only_at_chunk_boundaries(monkeypatch):
     np.testing.assert_array_equal(inner.actions[-1], [6.0])
 
 
+def test_so101_hg_dagger_success_hold_is_not_labeled_as_intervention(monkeypatch):
+    from rlinf.envs.real.so101.wrappers import SO101HGDAggerWrapper
+    from rlinf.envs.real.wrappers.episode import session as session_module
+
+    class FakeListener:
+        def __init__(self, device=None):
+            self.batches = []
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    class Leader:
+        manual_start_hold_seconds = 0.0
+
+        def set_dagger_control_mode(self, mode):
+            self.mode = mode
+
+        def align_to_follower(self, context):
+            del context
+
+        def release_for_manual(self, context):
+            del context
+
+        def hold_for_reset(self, context):
+            del context
+
+    class Device(TeleopDevice):
+        timeout = 0.0
+
+        def __init__(self, leader):
+            self.leader = leader
+            self.group = SimpleNamespace(devices=(leader,))
+
+        def context_from(self, env):
+            del env
+            return {}
+
+        def read(self, env, policy_action):
+            del env
+            if self.leader.mode == "manual":
+                return TeleopSample(np.full_like(policy_action, 7.0), active=True)
+            return TeleopSample(None, active=False)
+
+        def on_action_chunk_begin(self):
+            pass
+
+        def get_hold_action(self, env, fallback_action=None):
+            del env
+            return np.full_like(fallback_action, -1.0)
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.actions = []
+
+        def reset(self, seed=None, options=None):
+            del seed, options
+            return {}, {}
+
+        def step(self, action):
+            self.actions.append(np.asarray(action).copy())
+            return {}, 0.0, False, False, {}
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    inner = Env()
+    leader = Leader()
+    wrapper = SO101HGDAggerWrapper(TeleopIntervention(inner, Device(leader)))
+    wrapper.DEBOUNCE_S = 0.0
+    wrapper.reset()
+    wrapper.listener.batches = [["a"]]
+
+    wrapper.step(np.array([1.0]))
+    wrapper.listener.batches = [["Key.space"]]
+    assert wrapper.smooth_intervention_active()
+    wrapper.on_action_chunk_begin()
+    _, _, _, _, manual = wrapper.step(np.array([2.0]))
+    assert manual["intervene_flag"].tolist() == [True]
+    np.testing.assert_array_equal(inner.actions[-1], [7.0])
+
+    wrapper.listener.batches = [["c"]]
+    _, reward, terminated, _, info = wrapper.step(np.array([2.0]))
+
+    np.testing.assert_array_equal(inner.actions[-1], [-1.0])
+    assert leader.mode == "policy"
+    assert reward == 1.0
+    assert terminated
+    assert info["keyboard_event"] == "end_success"
+    assert info["success"] is True
+    assert "intervene_action" not in info
+    assert "intervene_flag" not in info
+
+
 def test_so101_hg_dagger_leader_uses_explicit_control_owner():
     """Route leader actions only while HG-DAgger assigns manual ownership."""
     from rlinf.robotics.parts.teleop import SO101Leader

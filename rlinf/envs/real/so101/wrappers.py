@@ -218,15 +218,16 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
         # reach task's joint-distance reward.
         reward = 0.0
         idle_hold_action = info.pop("so101_idle_hold_action", None)
-        if self._recording and idle_hold_action is not None:
-            info["intervene_action"] = idle_hold_action
-            info["intervene_flag"] = np.ones(1, dtype=bool)
-        if hold:
-            # This wrapper bypasses TeleopIntervention for explicit holds. Keep
-            # the executed hold action visible to the collector instead of
-            # leaving the caller's usually-zero policy action in the dataset.
-            info["intervene_action"] = action
-            info["intervene_flag"] = np.ones(1, dtype=bool)
+        if not success:
+            if self._recording and idle_hold_action is not None:
+                info["intervene_action"] = idle_hold_action
+                info["intervene_flag"] = np.ones(1, dtype=bool)
+            if hold:
+                # This wrapper bypasses TeleopIntervention for explicit holds.
+                # Keep the executed hold action visible to the collector
+                # instead of leaving the caller's usually-zero policy action.
+                info["intervene_action"] = action
+                info["intervene_flag"] = np.ones(1, dtype=bool)
         terminated = aborted
         truncated = False
         record_reset = False
