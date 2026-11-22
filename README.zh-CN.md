@@ -42,7 +42,7 @@ bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin
 bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp runner.max_epochs=10 runner.val_check_interval=-1
 ```
 
-上述命令会在单张 GPU 上跑通 10 轮 ManiSkill3 PPO MLP 训练，无需下载任何模型权重或场景资产（实测峰值显存约 3.7 GB，端到端约 1.5 分钟；去掉末尾覆盖参数即跑完整 1000 轮）。进阶可按 [训练快速开始](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/vla.html) 运行 OpenVLA / OpenVLA-OFT，阅读 [快速熟悉 RLinf](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/walkthrough.html) 图解了解框架与仓库结构，体验 [5 分钟评测快速体验](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/get_started/quick_tour.html)，或前往 [具身训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html) 与 [安装说明](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html) 查看更多配方与选项。
+上述命令会在单张 GPU 上跑通 10 轮 ManiSkill3 PPO MLP 训练，去掉末尾覆盖参数即可跑完整 1000 轮。进阶可按 [训练快速开始](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/vla.html) 运行 OpenVLA / OpenVLA-OFT，阅读 [快速熟悉 RLinf](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/walkthrough.html) 图解了解框架与仓库结构，体验 [5 分钟评测快速体验](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/get_started/quick_tour.html)，或前往 [具身训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html) 与 [安装说明](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html) 查看更多配方与选项。
 
 ## 最新动态
 

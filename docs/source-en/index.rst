@@ -11,12 +11,12 @@ Welcome to RLinf
      <p class="rlinf-hero-subtitle">RL Post-Training Infrastructure for Embodied Policies and Foundation Models</p>
    </div>
 
-Train, fine-tune, and evaluate vision-language-action (VLA) policies, real-world robots, and reasoning agents on one GPU or across multi-node clusters.
+Train, fine-tune, and evaluate VLA policies, real-world robots, and reasoning agents on one GPU or across multi-node clusters.
 
-Try RLinf in ~2 Minutes (1 GPU · ~4 GB VRAM · No Downloads)
------------------------------------------------------------
+Quick Try
+---------
 
-Run PPO on ManiSkill3 ``PickCube-v1`` with zero checkpoint or asset downloads (verified ~3.7 GB peak VRAM, ~1.5 min end-to-end):
+Run 10 PPO epochs on ManiSkill3 ``PickCube-v1``:
 
 .. code-block:: bash
 
@@ -39,13 +39,13 @@ Choose Your Path
 .. grid:: 1 2 2 2
    :gutter: 3
 
-   .. grid-item-card:: First RL Training (1 GPU · ~4 GB VRAM)
+   .. grid-item-card:: Quick Training
       :link: rst_source/start/vla
       :link-type: doc
 
-      Verify RL training with zero-download MLP in ~1.5 min, or step up to OpenVLA / OpenVLA-OFT PPO on ManiSkill3.
+      Start with MLP PPO on ManiSkill3, or scale up to OpenVLA / OpenVLA-OFT.
 
-   .. grid-item-card:: 5-Minute VLA Evaluation (24 GB+ GPU)
+   .. grid-item-card:: VLA Evaluation
       :link: rst_source/evaluations/get_started/quick_tour
       :link-type: doc
 

@@ -1,7 +1,7 @@
 Quick Start
 ===========
 
-Verify your setup in minutes with a **single-GPU MLP** run on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ (no downloads), or jump straight into **OpenVLA** / **OpenVLA-OFT** PPO training.
+Start PPO training on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ with **MLP**, **OpenVLA**, or **OpenVLA-OFT**.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -33,9 +33,9 @@ Pick a starting track below and run the commands in order. For regional mirrors,
 
 .. tab-set::
 
-   .. tab-item:: MLP (1 GPU · ~4 GB VRAM · No Downloads)
+   .. tab-item:: MLP
 
-      Trains a lightweight MLP policy on ManiSkill3's built-in ``PickCube-v1`` task using GPU 0 — no checkpoints or external assets required (~3.7 GB peak VRAM, ~1.5 min for a 10-epoch check).
+      Trains a lightweight MLP policy on ManiSkill3's built-in ``PickCube-v1`` task on GPU 0.
 
       **1. Install**
 
@@ -50,9 +50,9 @@ Pick a starting track below and run the commands in order. For regional mirrors,
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp runner.max_epochs=10 runner.val_check_interval=-1
 
-      Drop ``runner.max_epochs=10 runner.val_check_interval=-1`` for full 1000-epoch training (``success_once`` climbs above ``0.90``).
+      Drop ``runner.max_epochs=10 runner.val_check_interval=-1`` for full 1000-epoch training.
 
-   .. tab-item:: OpenVLA (7B VLA)
+   .. tab-item:: OpenVLA
       :sync: openvla
 
       **1. Install**
@@ -76,7 +76,7 @@ Pick a starting track below and run the commands in order. For regional mirrors,
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
-   .. tab-item:: OpenVLA-OFT (7B LoRA VLA)
+   .. tab-item:: OpenVLA-OFT
       :sync: openvla-oft
 
       **1. Install**
@@ -112,7 +112,7 @@ Results and Troubleshooting
 
 Logs, TensorBoard events, and checkpoints are written to ``logs/<timestamp>-<config>/``. Start TensorBoard with ``tensorboard --host 0.0.0.0 --logdir ./logs`` and watch ``rollout/env_info/return`` and ``rollout/env_info/success_once``.
 
-A 10-epoch MLP quick check finishes in about 1.5 minutes on one GPU (~3.7 GB peak VRAM) and prints a metric table at each step:
+The 10-epoch MLP run prints a metric table at each step:
 
 .. code-block:: text
 

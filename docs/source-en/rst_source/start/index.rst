@@ -19,7 +19,7 @@ Core Setup
       :link: vla
       :link-type: doc
 
-      Run a 1-GPU MLP check (~4 GB VRAM, no downloads) or OpenVLA / OpenVLA-OFT PPO on ManiSkill3.
+      Run MLP PPO on ManiSkill3, or start OpenVLA / OpenVLA-OFT training.
 
    .. grid-item-card:: 3. RLinf Walkthrough
       :link: walkthrough
@@ -45,14 +45,14 @@ Start with the entry point closest to your goal:
    * - Goal
      - Typical Hardware
      - Recommended Starting Point
-   * - Lightweight RL (no downloads)
-     - 1 GPU (~4 GB VRAM)
+   * - Lightweight RL
+     - 1 GPU, 4 GB+
      - :doc:`Quick Start — MLP Tab <vla>`
    * - Verify VLA eval in ~5 minutes
-     - 1 GPU (24 GB+)
+     - 1 GPU, 24 GB+
      - :doc:`LIBERO Evaluation Quick Tour <../evaluations/get_started/quick_tour>`
    * - VLA RL fine-tuning in simulation
-     - 1–8 GPUs (40–80 GB)
+     - 1–8 GPUs, 40–80 GB
      - :doc:`Quick Start — OpenVLA / OpenVLA-OFT <vla>`
    * - Real-world robot setup and RL
      - Controller PC + GPU node

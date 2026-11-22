@@ -19,7 +19,7 @@
       :link: vla
       :link-type: doc
 
-      单卡零下载跑通 MLP（~4 GB 显存），或在 ManiSkill3 上训练 OpenVLA / OpenVLA-OFT。
+      在 ManiSkill3 上跑通 MLP PPO，或启动 OpenVLA / OpenVLA-OFT 训练。
 
    .. grid-item-card:: 3. 快速熟悉 RLinf
       :link: walkthrough
@@ -45,15 +45,15 @@
    * - 目标
      - 典型硬件
      - 推荐起点
-   * - 轻量 RL（零权重下载）
-     - 单卡（~4 GB 显存）
-     - :doc:`训练快速开始（MLP） <vla>`
+   * - 轻量 RL
+     - 单卡 4 GB+
+     - :doc:`训练快速开始 — MLP <vla>`
    * - 约 5 分钟体验 VLA 评测
-     - 单卡（24 GB 起）
+     - 单卡 24 GB+
      - :doc:`LIBERO 评测快速体验 <../evaluations/get_started/quick_tour>`
    * - 仿真环境 VLA 强化学习
-     - 1–8 卡（40–80 GB）
-     - :doc:`训练快速开始（OpenVLA / OpenVLA-OFT） <vla>`
+     - 1–8 卡，40–80 GB
+     - :doc:`训练快速开始 — OpenVLA / OpenVLA-OFT <vla>`
    * - 真机联调、数据采集与训练
      - 控制机 + GPU 节点
      - :doc:`真实机器人强化学习 <../examples/real_world_index>`

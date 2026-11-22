@@ -1,7 +1,7 @@
 训练快速开始
 ============
 
-在 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ 上几分钟完成 **单卡 MLP** 零下载验证，或直接启动 **OpenVLA** / **OpenVLA-OFT** 的 PPO 训练。
+在 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ 上快速跑通 **MLP**、**OpenVLA** 或 **OpenVLA-OFT** 的 PPO 训练。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -33,9 +33,9 @@
 
 .. tab-set::
 
-   .. tab-item:: MLP（单卡 · ~4 GB 显存 · 零下载）
+   .. tab-item:: MLP
 
-      在 GPU 0 上基于 ManiSkill3 内置 ``PickCube-v1`` 任务训练轻量 MLP policy，无需下载权重或外部资产（实测峰值显存约 3.7 GB，10 轮快速验证约 1.5 分钟）。
+      在 GPU 0 上基于 ManiSkill3 内置 ``PickCube-v1`` 任务训练轻量 MLP policy。
 
       **1. 安装环境**
 
@@ -50,9 +50,9 @@
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp runner.max_epochs=10 runner.val_check_interval=-1
 
-      去掉末尾的 ``runner.max_epochs=10 runner.val_check_interval=-1`` 即可跑完整 1000 轮训练（``success_once`` 升至 ``0.90`` 以上）。
+      去掉末尾的 ``runner.max_epochs=10 runner.val_check_interval=-1`` 即可跑完整 1000 轮训练。
 
-   .. tab-item:: OpenVLA（7B VLA）
+   .. tab-item:: OpenVLA
       :sync: openvla
 
       **1. 安装环境**
@@ -76,7 +76,7 @@
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
-   .. tab-item:: OpenVLA-OFT（7B LoRA VLA）
+   .. tab-item:: OpenVLA-OFT
       :sync: openvla-oft
 
       **1. 安装环境**
@@ -112,7 +112,7 @@
 
 日志、TensorBoard 事件与 checkpoint 保存在 ``logs/<时间戳>-<配置名>/`` 下。启动 ``tensorboard --host 0.0.0.0 --logdir ./logs``，重点观察 ``rollout/env_info/return`` 和 ``rollout/env_info/success_once``。
 
-单卡运行 10 轮 MLP 快速验证约 1.5 分钟完成（峰值显存约 3.7 GB），每步会在终端输出指标表：
+10 轮 MLP 训练每步会在终端输出指标表：
 
 .. code-block:: text
 
