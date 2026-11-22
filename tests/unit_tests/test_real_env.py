@@ -1994,8 +1994,8 @@ def test_so101_hg_dagger_switches_control_only_at_chunk_boundaries(monkeypatch):
 
     _, _, _, _, stale = wrapper.step(np.array([5.0]))
     np.testing.assert_array_equal(inner.actions[-1], [-1.0])
-    np.testing.assert_array_equal(stale["intervene_action"], [-1.0])
-    assert stale["intervene_flag"].tolist() == [True]
+    assert "intervene_action" not in stale
+    assert "intervene_flag" not in stale
     assert not wrapper.smooth_intervention_active()
 
     wrapper.on_action_chunk_begin()

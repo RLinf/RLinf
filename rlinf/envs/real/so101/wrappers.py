@@ -400,10 +400,7 @@ class SO101HGDAggerWrapper(SO101StartEndWrapper):
             action = self._hold_action(action)
         obs, reward, terminated, truncated, info = super().step(action)
 
-        if stale_policy_chunk:
-            info["intervene_action"] = action
-            info["intervene_flag"] = np.ones(1, dtype=bool)
-        elif self._control_mode == "manual" and "intervene_action" in info:
+        if self._control_mode == "manual" and "intervene_action" in info:
             info["intervene_flag"] = np.ones(1, dtype=bool)
 
         if info["keyboard_event"] in {"abort", "end_success"}:
