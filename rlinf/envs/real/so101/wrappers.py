@@ -274,7 +274,9 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
             self._recording_since = -math.inf
             self._last_segment_ts = -math.inf
 
-        info["pre_record"] = not self._recording and event != "end_success"
+        # The success transition only closes the episode after the safety hold;
+        # keep that hold out of the recorded action sequence.
+        info["pre_record"] = not self._recording
         info["episode_discarded"] = bool(event == "abort")
         info["record_reset"] = record_reset
         info["keyboard_phase"] = (

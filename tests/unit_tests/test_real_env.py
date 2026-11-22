@@ -1717,7 +1717,7 @@ def test_so101_start_end_preserves_abort_lockout_and_episode_accounting(monkeypa
     assert info["success"] is True
     assert terminated
     assert reward == 1.0
-    assert info["pre_record"] is False
+    assert info["pre_record"] is True
 
 
 def test_so101_hold_bypasses_inner_teleop_intervention(monkeypatch):
@@ -2090,6 +2090,7 @@ def test_so101_hg_dagger_success_hold_is_not_labeled_as_intervention(monkeypatch
     assert terminated
     assert info["keyboard_event"] == "end_success"
     assert info["success"] is True
+    assert info["pre_record"] is True
     assert "intervene_action" not in info
     assert "intervene_flag" not in info
 
