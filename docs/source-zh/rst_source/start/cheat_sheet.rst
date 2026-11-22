@@ -51,7 +51,7 @@ RLinf 常用工作流的最短命令。
 
          source .venv/bin/activate
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
-           runner.max_epochs=3 runner.val_check_interval=-1
+           runner.max_epochs=10 runner.val_check_interval=-1
 
    .. tab-item:: VLA PPO（OpenVLA）
 
@@ -63,12 +63,16 @@ RLinf 常用工作流的最短命令。
 
    .. tab-item:: 智能体 / 推理（单卡）
 
-      在 ``examples/reasoning/config/math/qwen2.5-1.5b-single-gpu.yaml`` 中填写 ``rollout.model.model_path``、``actor.model.model_path``、``actor.tokenizer.tokenizer_model`` 与 ``data.train_data_paths`` 后启动：
+      通过命令行传入本地模型与数学数据集路径直接启动：
 
       .. code-block:: bash
 
          source .venv-agentic/bin/activate
-         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-single-gpu
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-single-gpu \
+           rollout.model.model_path=./Qwen2.5-1.5B-Instruct \
+           actor.model.model_path=./Qwen2.5-1.5B-Instruct \
+           actor.tokenizer.tokenizer_model=./Qwen2.5-1.5B-Instruct \
+           data.train_data_paths=./math_data
 
 具身训练如需替换为本地权重或其他 Hugging Face ``owner/repo``，传入 ``actor.model.model_path=...`` 即可（rollout 自动继承）。多机训练前，先在每个节点导出 ``RLINF_NODE_RANK`` 再执行 ``ray start``\ （详见 :doc:`../guides/multi_node`）。
 

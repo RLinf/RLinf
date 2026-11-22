@@ -51,7 +51,7 @@ Single-node runs start Ray automatically. Config names map directly to YAML file
 
          source .venv/bin/activate
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
-           runner.max_epochs=3 runner.val_check_interval=-1
+           runner.max_epochs=10 runner.val_check_interval=-1
 
    .. tab-item:: VLA PPO (OpenVLA)
 
@@ -63,12 +63,16 @@ Single-node runs start Ray automatically. Config names map directly to YAML file
 
    .. tab-item:: Agentic / Reasoning (1 GPU)
 
-      Set ``rollout.model.model_path``, ``actor.model.model_path``, ``actor.tokenizer.tokenizer_model``, and ``data.train_data_paths`` in ``examples/reasoning/config/math/qwen2.5-1.5b-single-gpu.yaml``, then launch:
+      Pass your local model and math dataset paths on the command line:
 
       .. code-block:: bash
 
          source .venv-agentic/bin/activate
-         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-single-gpu
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-single-gpu \
+           rollout.model.model_path=./Qwen2.5-1.5B-Instruct \
+           actor.model.model_path=./Qwen2.5-1.5B-Instruct \
+           actor.tokenizer.tokenizer_model=./Qwen2.5-1.5B-Instruct \
+           data.train_data_paths=./math_data
 
 Pass ``actor.model.model_path=/path/to/checkpoint`` (or a Hugging Face ``owner/repo``) to override embodied model weights; rollout inherits it automatically. For multi-node runs, export ``RLINF_NODE_RANK`` before ``ray start`` on each node (:doc:`../guides/multi_node`).
 
