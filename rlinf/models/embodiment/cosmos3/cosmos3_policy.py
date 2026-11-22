@@ -56,9 +56,21 @@ class Cosmos3Policy(Cosmos3DAggerInputs, Cosmos3EnvIO, nn.Module, BasePolicy):
             getattr(getattr(model, "config", None), "ema", None)
             and model.config.ema.enabled
         )
+        if not self._ema_enabled:
+            self.register_load_state_dict_pre_hook(self._exclude_ema_weights)
         self._global_step: int = 0
         self._rollout_config = dict(rollout_config or {})
         self._action_normalizer = None
+
+    @staticmethod
+    def _exclude_ema_weights(_module, state_dict, prefix, *_args) -> None:
+        """Allow a training checkpoint to initialize a policy built without EMA."""
+        ema_prefix = prefix + "omni.net_ema."
+        ema_keys = [key for key in state_dict if key.startswith(ema_prefix)]
+        for key in ema_keys:
+            del state_dict[key]
+        if ema_keys:
+            logger.info("Cosmos3: excluded %d EMA checkpoint keys", len(ema_keys))
 
     @staticmethod
     def get_weight_sync_param_names(module: nn.Module) -> list[str]:

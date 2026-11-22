@@ -83,18 +83,9 @@ def _load_base_weights(
 
 
 def load_inference_checkpoint(model: Cosmos3Policy, checkpoint_path: str) -> None:
-    """Load RLinf weights, excluding EMA state when the policy disables EMA."""
+    """Load RLinf weights from a memory-mapped CPU checkpoint."""
     state_dict = torch.load(
         checkpoint_path, map_location="cpu", weights_only=True, mmap=True
     )
-    ema_keys = []
-    if not model._ema_enabled:
-        ema_keys = [key for key in state_dict if key.startswith("omni.net_ema.")]
-        for key in ema_keys:
-            del state_dict[key]
     model.load_state_dict(state_dict, strict=True)
-    logger.info(
-        "Cosmos3: loaded inference checkpoint %s (excluded EMA keys=%d)",
-        checkpoint_path,
-        len(ema_keys),
-    )
+    logger.info("Cosmos3: loaded inference checkpoint %s", checkpoint_path)
