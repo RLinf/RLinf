@@ -1,97 +1,62 @@
 Add an SFT Model
 ================
 
-This document explains how to use HuggingFace Transformers together with PyTorch FSDP
-(Fully Sharded Data Parallel) to train and generate with models.  
-It supports any model implemented in HuggingFace as long as it is compatible with PyTorch.  
-As an example, this guide provides a step-by-step workflow showing how to integrate a new
-HuggingFace model into RLinf under SFT mode.
+Plug a PyTorch or Hugging Face Transformers model and dataset into RLinf's FSDP supervised fine-tuning (SFT) pipeline. Once integrated, you can train, evaluate, and resume from checkpoints using the shared SFT runner.
 
-Prerequisites
--------------
+At a Glance
+-----------
 
-- Familiarity with **HuggingFace Transformers**
-- Understanding of the **RLinf** framework architecture
-- Basic knowledge of **PyTorch** and distributed training
+.. list-table::
+   :header-rows: 1
+   :widths: 24 76
 
-Goal
-----
+   * - Item
+     - Details
+   * - Files to create/edit
+     - ``rlinf/workers/sft/<name>_sft_worker.py`` (or an external module) and ``examples/sft/config/<name>.yaml``
+   * - Extension point
+     - ``register_model`` and ``FSDPSftWorker`` (see :ref:`out-of-tree-extensions` for external packages)
+   * - Required methods
+     - ``build_dataloader``, ``get_train_model_output``, and ``get_eval_model_output``
+   * - Launch command
+     - ``bash examples/sft/run_vla_sft.sh <config_name>`` (or ``bash examples/sft/run_vlm_sft.sh <config_name>`` for VLM SFT)
 
-You will learn how to integrate a new model into RLinf's SFT training pipeline, and run:
+SFT Pipeline Flow
+-----------------
 
-- training
-- evaluation
-- resume from checkpoint
+RLinf's SFT loop connects two components: ``SFTRunner`` in ``rlinf/runners/sft_runner.py`` and the abstract worker base class ``FSDPSftWorker`` in ``rlinf/workers/sft/fsdp_sft_worker.py``:
 
-This tutorial is based on RLinf's current SFT pipeline:
+1. ``SFTRunner.init_workers()`` initializes the worker (model, optimizer, LR scheduler, and dataloaders) and optionally loads ``runner.resume_dir``.
+2. Each step calls ``FSDPSftWorker.run_training()``, which pulls ``self.gradient_accumulation`` micro-batches, invokes ``get_train_model_output(batch)``, runs scaled backward passes, and steps the optimizer and LR scheduler.
+3. At ``runner.val_check_interval`` and ``runner.save_interval``, ``SFTRunner.run()`` calls ``run_eval()`` (which invokes ``get_eval_model_output(batch)`` and aggregates ``eval_accuracy``) and ``save_checkpoint()``.
 
-- ``rlinf/runners/sft_runner.py`` (training scheduler)
-- ``rlinf/workers/sft/fsdp_sft_worker.py`` (SFT worker base class)
+To connect a custom model and dataset, subclass ``FSDPSftWorker`` and implement its three abstract methods:
 
-The main SFT process in RLinf is:
+.. code-block:: python
 
-1. Start the Runner
-2. Runner initializes Worker (model, optimizer, data)
-3. Each step calls Worker ``run_training()``
-4. At configured intervals, call ``run_eval()`` / ``save_checkpoint()``
-5. Repeat until training ends
+   @abstractmethod
+   def build_dataloader(self):
+       raise NotImplementedError
 
-Code mapping:
+   @abstractmethod
+   def get_train_model_output(
+       self, batch: dict[str, Any]
+   ) -> tuple[torch.Tensor, dict[str, Any]]:
+       raise NotImplementedError
 
-- ``SFTRunner.run()``
-  - calls ``self.actor.run_training()``
-  - decides eval/save based on ``val_check_interval`` and ``save_interval``
-- ``FSDPSftWorker.run_training()``
-  - reads batch from dataloader
-  - calls your ``get_train_model_output(batch)``
-  - backward + optimizer step + lr scheduler step
-- ``FSDPSftWorker.run_eval()``
-  - calls your ``get_eval_model_output(batch)`` for each batch
-  - aggregates SFT evaluation metric ``eval_accuracy``
+   @abstractmethod
+   def get_eval_model_output(self, batch: dict[str, Any]):
+       raise NotImplementedError
 
-To adapt a new model, the key is to implement the three abstract methods in
-``rlinf/workers/sft/fsdp_sft_worker.py`` so the new dataset and model can enter the SFT pipeline:
+1. Register the Model Type and Builder
+--------------------------------------
 
-.. code:: python
+Register a builder with ``register_model`` so config validation (``SupportedModel``) and ``get_model(cfg)`` recognize your model. For out-of-tree packages running on Ray workers, expose ``register()`` and export ``RLINF_EXT_MODULE`` (see :ref:`out-of-tree-extensions`):
 
-    @abstractmethod
-    def build_dataloader(self):
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_train_model_output(self, batch: dict[str, Any]):
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_eval_model_output(self, batch: dict[str, Any]):
-        raise NotImplementedError
-
-----
-
-Pre-training Checklist
-----------------------
-
-Before adaptation, make sure you have:
-
-- Downloaded model weights for SFT (HF path or local path)
-- Downloaded the target SFT dataset (text / vision-language / multimodal)
-- Understood dataset format and preprocessing logic
-- Defined the supervision target (e.g., next-token loss, classification accuracy)
-- Prepared an evaluation dataset for validation
-
-----
-
-Register Your Model Type and Builder
-------------------------------------
-
-Register a model builder with ``register_model(...)`` so both config validation
-(``SupportedModel``) and ``get_model(cfg)`` recognize your model. For out-of-tree
-code running on Ray workers, expose a ``register()`` function in a module pointed
-to by ``RLINF_EXT_MODULE`` (see :doc:`new_model_fsdp`):
-
-.. code:: python
+.. code-block:: python
 
    from rlinf.models import register_model
+
 
    def build_my_model(cfg, torch_dtype):
        from transformers import AutoModelForCausalLM
@@ -102,126 +67,100 @@ to by ``RLINF_EXT_MODULE`` (see :doc:`new_model_fsdp`):
            trust_remote_code=cfg.get("trust_remote_code", False),
        )
 
+
    def register():
        register_model("my_new_model", build_my_model, category="sft")
 
-YAML example:
+Select the registered name in YAML:
 
-.. code:: yaml
+.. code-block:: yaml
 
    actor:
      model:
        model_type: "my_new_model"
        model_path: "/path/to/your/model"
 
-----
+Verify FSDP Model Loading
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Ensure FSDP Supports Your Model 
----------------------------------
+``FSDPSftWorker.model_provider_func()`` builds the actor model with:
 
-``FSDPSftWorker.model_provider_func()`` calls:
-
-.. code:: python
+.. code-block:: python
 
    model = get_model(self.cfg.actor.model)
+   if model is not None:
+       return model
+   return super().model_provider_func()
 
-You must ensure ``FSDPModelManager.model_provider_func()`` can return your model:
+Make sure ``get_model(cfg)`` returns your PyTorch module (or that ``FSDPModelManager.model_provider_func()`` handles it) and that the returned model supports a differentiable training forward pass.
 
-- ``get_model`` can recognize ``my_new_model``
-- returned model supports training forward (typically ``model(..., labels=...)`` returns ``loss``)
+2. Create an SFT Worker
+-----------------------
 
-----
+Create a subclass of ``FSDPSftWorker`` (for example ``rlinf/workers/sft/fsdp_my_model_sft_worker.py``) and implement the three methods:
 
-Create a Worker
-------------------
-
-Recommended new file:
-
-- ``rlinf/workers/sft/fsdp_my_model_sft_worker.py``
-
-Inherit from ``FSDPSftWorker`` and implement the 3 methods.
-
-.. code:: python
+.. code-block:: python
 
    from typing import Any
+
    import torch
    from omegaconf import DictConfig
+
    from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
+
 
    class FSDPMyModelSftWorker(FSDPSftWorker):
        def __init__(self, cfg: DictConfig):
            super().__init__(cfg)
 
-       def build_dataloader(self):
-           # 1) Build train/eval datasets and dataloaders from self.cfg.data
-           # 2) Return data_loader and data_config (dict)
+       def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
+           # Build train or eval dataset and dataloader from self.cfg.data
+           # Return (data_loader, data_config)
            ...
            return data_loader, {"num_samples": len(dataset)}
 
-       def get_train_model_output(self, batch: dict[str, Any]):
-           # Core training logic
-           # Return loss (Tensor)
+       def get_train_model_output(
+           self, batch: dict[str, Any]
+       ) -> tuple[torch.Tensor, dict[str, Any]]:
+           # Run forward pass and return (loss, step_metrics)
            ...
-           return loss
+           return loss, {"loss": loss.detach().item()}
 
-       def get_eval_model_output(self, batch: dict[str, Any]):
-           # Core evaluation logic
-           # Return number of correct samples in current batch (int)
+       def get_eval_model_output(self, batch: dict[str, Any]) -> int:
+           # Run inference and return number of correct samples in the batch
            ...
            return correct_count
 
-----
+Launch this worker from an entry script modeled on ``examples/sft/train_vla_sft.py`` (or ``examples/sft/train_vlm_sft.py``). If your model fits directly into an existing worker family, you can instead add a branch to ``FSDPVlaSftWorker`` (``rlinf/workers/sft/fsdp_vla_sft_worker.py``) or ``FSDPVlmSftWorker`` (``rlinf/workers/sft/fsdp_vlm_sft_worker.py``) and reuse the existing launch scripts unchanged.
 
-Implement build_dataloader
-------------------------------
+3. Build the Dataloader
+-----------------------
 
-``build_dataloader`` constructs your dataloader. You must ensure it can correctly serve both train and eval.
+``FSDPSftWorker.__init__`` calls ``self.build_dataloader(self.cfg.data.train_data_paths, eval_dataset=False)`` when ``data.train_data_paths`` is set, and ``self.build_dataloader(self.cfg.data.val_data_paths, eval_dataset=True)`` when ``data.val_data_paths`` is set. Return ``(data_loader, data_config)`` where ``data_config`` is a metadata dict (for example ``{"num_samples": len(dataset)}``).
 
-You must keep batch fields consistent with later training logic.
+Inside ``run_training()``, the worker reads ``batch = next(self.data_iter)`` and passes it directly to ``self.get_train_model_output(batch)``. Every key accessed in your training or evaluation method must be produced by your ``collate_fn``:
 
-Inside ``run_training()``:
+- **Train batch**: include model inputs (such as ``input_ids`` and ``attention_mask``) plus ``labels`` or the fields needed to build them.
+- **Eval batch**: include inference inputs and reference targets for accuracy scoring.
 
-- ``batch = next(self.data_iter)``
-- ``losses = self.get_train_model_output(batch)``
+Avoid three common dataloader mistakes:
 
-So every key used in ``get_train_model_output`` must be produced by your collate function.
+1. Returning ``list[dict]`` from ``collate_fn`` when ``get_train_model_output`` indexes ``batch`` as a ``dict``.
+2. Dropping optional multimodal fields on some samples so tensors misalign across a batch.
+3. Setting ``drop_last=True`` on evaluation when the dataset is smaller than one batch across ranks.
 
-Suggested checklist:
+4. Compute Training Loss
+------------------------
 
-- Train batch should include at least:
-  - ``input_ids`` (or equivalent field names)
-  - ``attention_mask`` (optional but recommended)
-  - ``labels`` or enough fields to construct labels
-- Eval batch should include at least:
-  - model inference input
-  - reference answer (for accuracy)
+``FSDPSftWorker.run_training()`` unpacks ``loss, step_metrics = self.get_train_model_output(batch)``, appends ``step_metrics`` to logged training metrics, divides ``loss`` by ``self.gradient_accumulation``, and calls ``self.grad_scaler.scale(loss).backward()``.
 
-Common mistakes:
+Return a scalar ``loss`` tensor with gradient attached and a ``step_metrics`` dict of detached floats or scalars:
 
-1. ``collate_fn`` outputs ``list[dict]``, but training code treats it as ``dict``
-2. Some samples miss multimodal fields, causing batch misalignment
-3. Eval still uses ``drop_last=True``, dropping evaluation samples
+.. code-block:: python
 
-----
-
-Implement get_train_model_output
-------------------------------------
-
-``get_train_model_output`` returns training output. Ensure the return can be used for training.
-
-``FSDPSftWorker`` handles your returned loss by:
-
-- auto-normalizing list/tuple/tensor
-- gradient accumulation
-- scaler backward
-
-So you only need to guarantee the final return is a loss tensor (or stackable loss list).
-
-Recommended CausalLM style:
-
-.. code:: python
-
-   def get_train_model_output(self, batch):
+   def get_train_model_output(
+       self, batch: dict[str, Any]
+   ) -> tuple[torch.Tensor, dict[str, Any]]:
        input_ids = batch["input_ids"].to(self.device)
        attention_mask = batch["attention_mask"].to(self.device)
        labels = batch["labels"].to(self.device)
@@ -232,40 +171,30 @@ Recommended CausalLM style:
                attention_mask=attention_mask,
                labels=labels,
            )
-       return outputs.loss
+       loss = outputs.loss
+       return loss, {"loss": loss.detach().item()}
 
-----
+5. Compute Evaluation Metrics
+-----------------------------
 
-Implement get_eval_model_output
------------------------------------
+``FSDPSftWorker.run_eval()`` iterates over ``self.eval_data_loader``, adds each return value of ``get_eval_model_output(batch)`` to ``correct``, and divides by ``eval_step * self.eval_batch_size`` to report ``eval_accuracy`` (averaged across ranks).
 
-``get_eval_model_output`` returns evaluation output. Ensure it can be used for metric aggregation.
+.. code-block:: python
 
-``run_eval()`` logic:
-
-- accumulates batch return values into ``correct``
-- divides by ``total`` to get ``eval_accuracy``
-
-So your ``get_eval_model_output`` should return the number of correct samples in the current batch.
-
-Example:
-
-.. code:: python
-
-   def get_eval_model_output(self, batch):
-       # 1) Generate prediction
-       # 2) Compare with ground truth
-       # 3) Return number of correct samples
+   def get_eval_model_output(self, batch: dict[str, Any]) -> int:
+       # 1) Generate predictions under torch.no_grad()
+       # 2) Compare against ground-truth targets
+       # 3) Return the number of correct samples in this batch
        return correct
 
-----
+If your task does not run inline evaluation (as in ``FSDPVlaSftWorker``), raise ``NotImplementedError`` in ``get_eval_model_output`` and set ``runner.val_check_interval: -1``.
 
-YAML Configuration
-------------------
+6. YAML Configuration and Launch
+--------------------------------
 
-Start with conservative settings:
+Create a config under ``examples/sft/config/<config_name>.yaml`` starting from conservative batch sizes:
 
-.. code:: yaml
+.. code-block:: yaml
 
    runner:
      task_type: sft
@@ -285,25 +214,19 @@ Start with conservative settings:
      train_data_paths: /path/to/train_path
      val_data_paths: /path/to/eval_path
 
-After this runs successfully, gradually increase batch size and enable eval/save intervals.
+Launch SFT training with the VLA or VLM entry script (export ``RLINF_EXT_MODULE`` first if your model lives outside RLinf):
 
-----
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh <config_name>
+
+Once training runs cleanly, scale up ``global_batch_size`` and enable ``val_check_interval`` and ``save_interval``.
 
 Troubleshooting
 ---------------
 
-1. ``KeyError: xxx``  
-   - Your collate function did not output the fields required by training code
-
-2. ``Expected all tensors on same device``  
-   - Some batch fields were not moved via ``to(self.device)``
-
-3. ``global_batch_size is not divisible ...``  
-   - Adjust ``global_batch_size / micro_batch_size / world_size``
-
-4. ``eval_accuracy is unexpectedly low``  
-   - Check answer extraction/parsing in eval
-   - Check whether ``drop_last`` is dropping eval samples
-
-5. ``data repeats/skips after resume``  
-   - Check save/load flow for ``_data_epoch`` and ``_data_iter_offset``
+- ``KeyError`` in ``get_train_model_output``: your ``collate_fn`` does not emit every key read by the training step.
+- ``Expected all tensors to be on the same device``: move all tensor fields in ``batch`` with ``.to(self.device)``.
+- ``global_batch_size is not divisible by micro_batch_size * world_size``: set ``actor.global_batch_size`` to a multiple of ``actor.micro_batch_size * world_size``.
+- Unexpectedly low ``eval_accuracy``: verify answer extraction and confirm ``eval_batch_size`` matches the dataloader batch size.
+- Repeated or skipped samples after resume: override ``save_checkpoint`` and ``load_checkpoint`` to persist ``_data_epoch`` and dataloader state (see ``FSDPVlaSftWorker`` or ``FSDPVlmSftWorker`` for examples).

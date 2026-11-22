@@ -1,7 +1,7 @@
 适配 SGLang 具身模型
 ====================
 
-本文介绍如何将一个已适配 SGLang Server 的具身 VLA 模型接入 RLinf 的评测 rollout，并使用 RLinf 支持的各类仿真器进行模型评测。
+本文介绍如何将一个已适配 SGLang Server 的具身 VLA 模型接入 RLinf 的评测 rollout，并使用 RLinf 支持的各类模拟器评测模型。
 
 全文分为两部分：
 
@@ -10,22 +10,44 @@
 
 .. note::
 
-   本文只介绍 **eval rollout / sglang-serve** 路径。该路径负责在评测时将环境观测转换成动作，不包含训练侧的模型注册、FSDP Policy 或 SFT 适配。训练侧适配请参考
-   :doc:`使用 FSDP 添加新模型 <new_model_fsdp>` 和
-   :doc:`添加新的 SFT 模型 <new_model_sft>`。
+   本文只介绍 **eval rollout / sglang-serve** 路径。该路径负责在评测时将环境观测转换成动作，不包含训练侧的模型注册、FSDP Policy 或 SFT 适配。训练侧适配请参考 :doc:`使用 FSDP 添加新模型 <new_model_fsdp>` 和 :doc:`添加新的 SFT 模型 <new_model_sft>`。
+
+接入速览
+--------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 34 48
+
+   * - 步骤
+     - 涉及文件
+     - 主要修改
+   * - 1. 注册模型类型
+     - ``rlinf/config.py``
+     - 添加 ``SupportedModel.register("<your_model>", force=True)`` 并加入 ``EMBODIED_MODEL``。
+   * - 2. 实现 adapter
+     - ``rlinf/models/embodiment/<your_model>/sglang_adapter.py``
+     - 编写独立 adapter 类，声明 ``action_path`` 并实现 ``build_request`` 与 ``parse_response``\ （不持有 HTTP client，不加载权重）。
+   * - 3. 注册 adapter
+     - ``rlinf/models/embodiment/sglang_adapter.py``
+     - 在 ``_register_builtin_sglang_adapters()`` 中用 ``register_sglang_adapter`` 注册按需加载的 builder（worker 通过 ``get_sglang_adapter_cls`` 查找）。
+   * - 4. 添加配置 YAML
+     - ``examples/embodiment/config/model/<your_model>.yaml`` 与 ``evaluations/<benchmark>/<your_model>_eval_sglang.yaml``
+     - 设置 ``rollout.rollout_backend: sglang``、``rollout.sglang.serving_mode: embodied``、``rollout.sglang.server_type: embodied`` 和 ``rollout.model.model_type: "<your_model>"``。
+   * - 5. 运行评测
+     - ``evaluations/run_eval.sh``
+     - 执行 ``bash evaluations/run_eval.sh <benchmark> <config>``。
 
 
 第一部分：适配新模型
-====================
+--------------------
 
 整体架构
---------
+~~~~~~~~
 
 SGLang 具身评测路径将通用逻辑与模型逻辑分开：
 
-- 驱动脚本（如 ``eval_embodied_agent.py``）通过
-  :func:`launch_sglang_router_and_server` 启动一个或多个 sglang server 进程，
-  并把每个 server 的 URL 推送给 rollout worker；server 的启动、``/health`` 轮询和端口分配由 ``SGLangServerWorker``\ （driver 侧）负责，rollout worker 本身不再持有 server 子进程；
+- 驱动脚本（如 ``eval_embodied_agent.py``）通过 :func:`launch_sglang_router_and_server` 启动一个或多个 sglang server 进程，并把每个 server 的 URL 推送给 rollout worker；server 的启动、``/health`` 轮询和端口分配由 ``SGLangServerWorker``\ （driver 侧）负责，rollout worker 本身不再持有 server 子进程；
 - ``SGLangEmbodiedWorker`` 按自己的 rank 取一个 driver 分配的 server URL，用它创建一个 :class:`InferenceHTTPClient`，加载模型对应的 **sglang adapter**，并通过 channel 与环境 Worker 交换 observation 和 action。**向 server 发起的 HTTP 请求（msgpack 编码 + 重试）由 worker 自己完成**；
 - **sglang adapter**\ （一个独立的普通类，例如 ``DreamZeroSGLangAdapter``）只负责模型特有的纯逻辑：``build_request`` 把 env observation 转成请求 payload，``parse_response`` 把 server 响应转成动作，``action_path`` 声明动作端点。它 **不持有 HTTP client，也不亲自发请求**。
 
@@ -81,12 +103,12 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
 
 
 适配步骤
---------
+~~~~~~~~
 
 下面按照推荐顺序说明新模型需要完成的工作。
 
 步骤一：确认 SGLang Server 的动作接口
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 RLinf 的 sglang adapter 为 SGLang Server 构造请求、解析响应（实际的 HTTP 收发由 worker 完成）。在编写 RLinf 代码前，先确认 SGLang 侧已经具备以下能力：
 
@@ -99,8 +121,8 @@ RLinf 的 sglang adapter 为 SGLang Server 构造请求、解析响应（实际�
    RLinf 仓库中的 sglang adapter 只负责构造 action 请求、解析响应。模型 Pipeline、动作路由及相关 ``sglang serve`` 参数仍需在所使用的 SGLang 版本中实现。
 
 
-步骤二：注册 ``model_type``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+步骤二：注册模型类型
+^^^^^^^^^^^^^^^^^^^^
 
 在 ``rlinf/config.py`` 中注册模型，使配置校验能够识别该名称：
 
@@ -120,8 +142,8 @@ RLinf 的 sglang adapter 为 SGLang Server 构造请求、解析响应（实际�
 ``"your_model"``、``register_sglang_adapter`` 注册时使用的名称和 YAML 中的 ``rollout.model.model_type`` 必须一致。adapter registry 查找时不区分大小写，但仍建议全部使用小写。
 
 
-步骤三：实现 sglang adapter
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+步骤三：实现 SGLang Adapter
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 在模型自己的目录下新建 adapter 文件（放在 model 层，与训练侧模型代码同级）：
 
@@ -177,8 +199,8 @@ adapter 是一个 **独立的普通类**\ （不需要继承任何基类），�
    不要在 adapter 中加载模型。模型应只存在于 ``sglang serve`` 子进程中。adapter 中只保留数据变换和少量请求上下文，否则会造成重复加载权重和额外显存占用。
 
 
-步骤四：注册 adapter
-~~~~~~~~~~~~~~~~~~~~
+步骤四：注册 Adapter
+^^^^^^^^^^^^^^^^^^^^
 
 adapter 使用 **lazy builder** 注册在 ``rlinf/models/embodiment/sglang_adapter.py`` 的 ``_register_builtin_sglang_adapters()`` 中（与 ``rlinf.models`` 的模型注册风格一致）：把重依赖的 import 放进 builder 内部，只有真正 lookup 到该 ``model_type`` 时才会导入你的 adapter 模块：
 
@@ -203,7 +225,7 @@ worker 在 ``init_worker`` 时通过 ``get_sglang_adapter_cls(model_type)`` 查�
 
 
 步骤五：添加模型 YAML 和评测 YAML
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 推荐分别维护模型配置和 SGLang 评测配置：
 
@@ -216,7 +238,7 @@ worker 在 ``init_worker`` 时通过 ``get_sglang_adapter_cls(model_type)`` 查�
 
 
 步骤六：测试和调试
-~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^
 
 第一次运行时建议将 ``env.eval.total_num_envs`` 降低，并依次确认：
 
@@ -230,7 +252,7 @@ worker 在 ``init_worker`` 时通过 ``get_sglang_adapter_cls(model_type)`` 查�
 
 
 第二部分：以 DreamZero 为例
-===========================
+---------------------------
 
 DreamZero 的 SGLang 评测路径由以下文件组成：
 
@@ -245,7 +267,7 @@ DreamZero 的 SGLang 评测路径由以下文件组成：
    * - ``rlinf/models/embodiment/dreamzero/sglang_adapter.py``
      - ``DreamZeroSGLangAdapter``：观测变换、请求构造、响应解析和动作后处理
    * - ``rlinf/models/embodiment/sglang_adapter.py``
-     - adapter registry（``register_sglang_adapter`` / ``get_sglang_adapter_cls``）， DreamZero adapter
+     - adapter registry（``register_sglang_adapter`` / ``get_sglang_adapter_cls``），按需注册 DreamZero adapter
    * - ``examples/embodiment/config/model/dreamzero_5b.yaml``
      - DreamZero 5B 模型配置
    * - ``evaluations/libero/libero_spatial_dreamzero_eval_sglang.yaml``
@@ -253,10 +275,10 @@ DreamZero 的 SGLang 评测路径由以下文件组成：
 
 
 代码适配
---------
+~~~~~~~~
 
 注册模型
-~~~~~~~~
+^^^^^^^^
 
 DreamZero 在 ``rlinf/config.py`` 中的注册如下：
 
@@ -274,7 +296,7 @@ DreamZero 在 ``rlinf/config.py`` 中的注册如下：
 
 
 Adapter 适配
-~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^
 
 ``sglang_adapter.py`` 用\ **一个类** ``DreamZeroSGLangAdapter`` 承载全部 DreamZero 适配逻辑（观测/动作变换 + 请求组装 + 响应解析）：
 
@@ -323,7 +345,7 @@ adapter 通过 builder 注册（见 ``rlinf/models/embodiment/sglang_adapter.py`
 
 
 HTTP 请求
-~~~~~~~~~~~~~
+^^^^^^^^^
 
 adapter 的 ``build_request`` 组装发往 ``POST /v1/actions/generations`` 的 payload，由 worker 用 ``http_client.post(..., msgpack=True)`` 发送。payload 的逻辑结构如下（用 msgpack 传输，Tensor 和 ndarray 不需要先展开成大列表）：
 
@@ -374,9 +396,9 @@ worker 从以下位置读取 Server 返回的归一化动作，并交给 ``parse
 
 
 Server 参数和 Pipeline 配置
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-server 的启动参数完全来自 YAML 的 ``rollout.sglang.server`` 块。该块被原样转发给 ``sglang.multimodal_gen`` 的 ``ServerArgs.from_kwargs(**)``：顶层参数 ``ServerArgs`` 字段，``pipeline_config`` 子块由 ``from_kwargs`` dispatch 到 ``DreamZeroPipelineConfig``\ （按 ``pipeline_class_name`` 匹配），并把 ``backend`` / ``disagg_role`` 等字符串转成枚举。结构如下：
+server 的启动参数完全来自 YAML 的 ``rollout.sglang.server`` 块。该块被原样转发给 ``sglang.multimodal_gen`` 的 ``ServerArgs.from_kwargs(**)``：顶层键对应 ``ServerArgs`` 字段，``pipeline_config`` 子块由 ``from_kwargs`` dispatch 到 ``DreamZeroPipelineConfig``\ （按 ``pipeline_class_name`` 匹配），并把 ``backend`` / ``disagg_role`` 等字符串转成枚举。结构如下：
 
 .. code-block:: yaml
 
@@ -413,7 +435,7 @@ server 的启动参数完全来自 YAML 的 ``rollout.sglang.server`` 块。该�
 
 
 模型 YAML
----------
+~~~~~~~~~
 
 DreamZero 模型配置位于 ``examples/embodiment/config/model/dreamzero_5b.yaml``。与 SGLang 评测直接相关的字段可以概括为：
 
@@ -472,12 +494,12 @@ DreamZero 模型配置位于 ``examples/embodiment/config/model/dreamzero_5b.yam
 
 
 评测 YAML 详解
---------------
+~~~~~~~~~~~~~~
 
 完整示例位于 ``evaluations/libero/libero_spatial_dreamzero_eval_sglang.yaml``。下面按配置块说明。
 
-Hydra defaults
-~~~~~~~~~~~~~~
+Hydra Defaults
+^^^^^^^^^^^^^^
 
 .. code-block:: yaml
 
@@ -494,7 +516,7 @@ Hydra defaults
 
 
 集群与 Runner 配置
-~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^
 
 .. code-block:: yaml
 
@@ -519,7 +541,7 @@ Hydra defaults
 
 
 环境并行与评测步数
-~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^
 
 .. code-block:: yaml
 
@@ -551,7 +573,7 @@ Hydra defaults
 
 
 SGLang Worker 分发
-~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^
 
 .. code-block:: yaml
 
@@ -577,7 +599,7 @@ SGLang Worker 分发
 
 
 Server 启动与并行配置
-~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^
 
 ``rollout.sglang`` 顶层放 RLinf 私有的参数（HTTP 客户端、并行度、launch 开关），``server`` 子块放转发给 sglang 的 ``ServerArgs`` 字段：
 
@@ -615,8 +637,7 @@ RLinf 私有参数字段说明：
    * - 字段
      - 含义
    * - ``tensor_parallel_size``
-     - 每个 server engine 的 TP 大小；launcher 按 ``tp×pp`` 把硬件 rank 打包成
-       engine（4 卡 tp=2 → 2 个 2-GPU server；tp=4 → 1 个 4-GPU server）
+     - 每个 server engine 的 TP 大小；launcher 按 ``tp×pp`` 把硬件 rank 打包成 engine（4 卡 tp=2 → 2 个 2-GPU server；tp=4 → 1 个 4-GPU server）
    * - ``pipeline_parallel_size``
      - 每个 server engine 的 PP 大小
    * - ``launch_server`` / ``launch_router``
@@ -632,7 +653,7 @@ RLinf 私有参数字段说明：
 
 
 HTTP Client 配置
-~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^
 
 .. code-block:: yaml
 
@@ -642,8 +663,7 @@ HTTP Client 配置
        http_max_retries: 5
        http_retry_backoff_s: 1.0
 
-这些字段由 ``SGLangEmbodiedWorker`` 读取，用于创建向 server 发请求的
-:class:`InferenceHTTPClient`。字段说明：
+这些字段由 ``SGLangEmbodiedWorker`` 读取，用于创建向 server 发请求的 :class:`InferenceHTTPClient`。字段说明：
 
 - ``http_timeout_s`` 是单次 action 请求的超时时间；
 - ``http_max_retries`` 是遇到连接错误或可重试 5xx 时的重试次数；
@@ -655,7 +675,7 @@ HTTP Client 配置
 
 
 DreamZero 模型与数据配置
-~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: yaml
 
@@ -687,13 +707,13 @@ DreamZero 模型与数据配置
 
 
 生成 metadata
-~~~~~~~~~~~~~
+^^^^^^^^^^^^^
 
 DreamZero 的观测归一化和动作反归一化依赖数据集 metadata。LIBERO 示例可以使用：
 
 .. code-block:: bash
 
-   python toolkits/lerobot/generate_dreamzero_metadata.py \
+   python -m toolkits.lerobot.generate_dreamzero_metadata \
      --preset libero_sim \
      --dataset-root /path/to/libero \
      --output-metadata /path/to/metadata.json
@@ -702,7 +722,7 @@ DreamZero 的观测归一化和动作反归一化依赖数据集 metadata。LIBE
 
 
 运行评测
---------
+~~~~~~~~
 
 准备好 DreamZero 依赖、支持 ``DreamZeroPipeline`` 的 SGLang 环境、checkpoint 和 metadata 后，在仓库根目录运行：
 
@@ -732,12 +752,12 @@ DreamZero 的观测归一化和动作反归一化依赖数据集 metadata。LIBE
 ``run_eval.sh`` 会设置 ``EMBODIED_PATH``，并将 ``DREAMZERO_PATH`` 加入 ``PYTHONPATH``。请确保 ``DREAMZERO_PATH`` 指向包含 ``groot`` 包的 DreamZero 代码目录。
 
 常见问题
---------
+~~~~~~~~
 
-Worker 不是 ``SGLangEmbodiedWorker``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Rollout Worker 类型不正确
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
-检查是否同时设置：
+如果日志中的 rollout worker 不是 ``SGLangEmbodiedWorker``，检查是否同时设置：
 
 .. code-block:: yaml
 
@@ -747,8 +767,8 @@ Worker 不是 ``SGLangEmbodiedWorker``
        serving_mode: embodied
 
 
-提示 sglang adapter 未注册
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+提示 SGLang Adapter 未注册
+^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 确认以下三个名称一致，并确认 adapter 已在 ``rlinf/models/embodiment/sglang_adapter.py`` 的 ``_register_builtin_sglang_adapters()`` 中注册：
 
@@ -760,7 +780,7 @@ Worker 不是 ``SGLangEmbodiedWorker``
 
 
 Server 无法启动
-~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^
 
 日志会打印 ``multimodal_gen sglang serve: launching in-process ...`` 行和 server 子进程的输出（直接流到 Ray actor 的 stdout/stderr）。优先检查：
 
@@ -772,13 +792,13 @@ Server 无法启动
 
 
 请求本地 Server 超时
-~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^
 
 ``NO_PROXY`` 必须包含 ``127.0.0.1,localhost``，否则 ``/health`` 和 action 请求可能被发送到上游代理。Worker 启动本地 Server 时会自动设置；若手动启动或单独测试 Client，需要自行检查代理环境变量。
 
 
 动作 shape 或尺度错误
-~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^
 
 依次核对：
 
@@ -791,6 +811,6 @@ Server 无法启动
 
 
 显存占用异常
-~~~~~~~~~~~~
+^^^^^^^^^^^^
 
 确认 sglang adapter 没有导入并创建本地 DreamZero 大模型。模型只能由 ``sglang serve`` 加载。还需要检查 ``max_sessions``、eval batch size、编译选项和并行配置；DreamZero 默认将 ``max_sessions`` 设为当前 Worker 的 eval batch size，增加并行环境数也会增加 Server 侧缓存需求。
