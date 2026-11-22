@@ -13,6 +13,17 @@ Welcome to RLinf
 
 Train, fine-tune, and evaluate vision-language-action (VLA) policies, real-world robots, and reasoning agents on one GPU or across multi-node clusters.
 
+Try RLinf in ~2 Minutes (1 GPU · ~4 GB VRAM · No Downloads)
+-----------------------------------------------------------
+
+Run PPO on ManiSkill3 ``PickCube-v1`` with zero checkpoint or asset downloads (verified ~3.7 GB peak VRAM, ~1.5 min end-to-end):
+
+.. code-block:: bash
+
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+   bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp runner.max_epochs=10 runner.val_check_interval=-1
+
 Your First Run in Four Steps
 ----------------------------
 
@@ -28,17 +39,17 @@ Choose Your Path
 .. grid:: 1 2 2 2
    :gutter: 3
 
-   .. grid-item-card:: 5-Minute First Run (Evaluate VLA)
-      :link: rst_source/evaluations/get_started/quick_tour
-      :link-type: doc
-
-      Verify your setup by evaluating OpenPI π₀.₅ on LIBERO Spatial in about 5 minutes.
-
-   .. grid-item-card:: Embodied Simulation RL
+   .. grid-item-card:: First RL Training (1 GPU · ~4 GB VRAM)
       :link: rst_source/start/vla
       :link-type: doc
 
-      Train OpenVLA or OpenVLA-OFT on ManiSkill3 with PPO, then branch to LIBERO, RoboTwin, and more.
+      Verify RL training with zero-download MLP in ~1.5 min, or step up to OpenVLA / OpenVLA-OFT PPO on ManiSkill3.
+
+   .. grid-item-card:: 5-Minute VLA Evaluation (24 GB+ GPU)
+      :link: rst_source/evaluations/get_started/quick_tour
+      :link-type: doc
+
+      Evaluate OpenPI π₀.₅ on LIBERO Spatial with automatic Hugging Face checkpoint caching.
 
    .. grid-item-card:: Real-World Robots
       :link: rst_source/examples/real_world_index

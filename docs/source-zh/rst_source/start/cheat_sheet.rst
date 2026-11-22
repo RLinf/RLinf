@@ -81,13 +81,12 @@ RLinf 常用工作流的最短命令。
 
    source .venv-eval/bin/activate
 
-   # 评测 Hugging Face 或本地基座模型
-   bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
-     rollout.model.model_path=RLinf/RLinf-Pi05-LIBERO-SFT
+   # 评测默认 Hugging Face 基座模型（8 个并行环境）
+   bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval env.eval.total_num_envs=8
 
    # 在基座模型上加载 RL / SFT 产出的 .pt 权重
    bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
-     rollout.model.model_path=RLinf/RLinf-Pi05-LIBERO-SFT \
+     env.eval.total_num_envs=8 \
      runner.ckpt_path=./logs/<run>/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt
 
 常用操作与参数覆盖

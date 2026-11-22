@@ -19,26 +19,23 @@ If ``.venv`` already holds another model/environment stack, pass ``--venv .venv-
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
 
-      **2. Launch Evaluation** (auto-downloads `RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__ into the Hugging Face cache on first run)
+      **2. Launch Evaluation** (auto-downloads `RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__ on first run; runtime ~5 minutes on a 24 GB+ GPU after install and download)
 
-      For a quick check (~5 minutes on 1, 2, 4, or 8 GPUs), set ``env.eval.total_num_envs=8``:
+      For a quick check across 1, 2, 4, or 8 GPUs, set ``env.eval.total_num_envs=8``:
 
       .. code-block:: bash
 
-         bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
-           rollout.model.model_path=RLinf/RLinf-Pi05-LIBERO-SFT \
-           env.eval.total_num_envs=8
+         bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval env.eval.total_num_envs=8
 
       To evaluate the full 500-episode suite without exhausting host RAM (each LIBERO env uses ~2 GiB host RAM, so the default 500 parallel envs needs ~1 TiB RAM; see :doc:`../guides/libero`), run 128 parallel envs with auto-reset:
 
       .. code-block:: bash
 
          bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
-           rollout.model.model_path=RLinf/RLinf-Pi05-LIBERO-SFT \
            env.eval.total_num_envs=128 \
            env.eval.max_steps_per_rollout_epoch=960
 
-      For offline runs, pre-download ``RLinf/RLinf-Pi05-LIBERO-SFT`` to a local directory and pass ``rollout.model.model_path=/path/to/RLinf-Pi05-LIBERO-SFT``.
+      For offline runs, download ``RLinf/RLinf-Pi05-LIBERO-SFT`` to a local directory and append ``rollout.model.model_path=/path/to/RLinf-Pi05-LIBERO-SFT``.
 
 Results and Next Steps
 ----------------------

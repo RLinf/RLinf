@@ -19,26 +19,23 @@
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
 
-      **2. 启动评测**\ （首次运行自动缓存下载 `RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__）
+      **2. 启动评测**\ （首次运行自动缓存下载 `RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__，环境与权重就绪后在 24 GB+ 单卡上约 5 分钟完成）
 
-      在 1、2、4 或 8 张 GPU 上做快速验证（约 5 分钟），设置 ``env.eval.total_num_envs=8``：
+      在 1、2、4 或 8 张 GPU 上做快速验证，设置 ``env.eval.total_num_envs=8``：
 
       .. code-block:: bash
 
-         bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
-           rollout.model.model_path=RLinf/RLinf-Pi05-LIBERO-SFT \
-           env.eval.total_num_envs=8
+         bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval env.eval.total_num_envs=8
 
       如需评测完整 500 条轨迹套件，使用 128 并行环境配合自动重置，避免耗尽主机内存（单个 LIBERO 环境约占 2 GiB 主机内存，默认 500 并行约需 1 TiB，详见 :doc:`../guides/libero`）：
 
       .. code-block:: bash
 
          bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
-           rollout.model.model_path=RLinf/RLinf-Pi05-LIBERO-SFT \
            env.eval.total_num_envs=128 \
            env.eval.max_steps_per_rollout_epoch=960
 
-      离线环境可先将 ``RLinf/RLinf-Pi05-LIBERO-SFT`` 下载到本地，再把 ``rollout.model.model_path`` 改为本地目录路径。
+      离线环境可先将 ``RLinf/RLinf-Pi05-LIBERO-SFT`` 下载到本地，并在命令末尾追加 ``rollout.model.model_path=/path/to/RLinf-Pi05-LIBERO-SFT``。
 
 结果与下一步
 ------------

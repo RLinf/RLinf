@@ -81,13 +81,12 @@ Run standalone embodied evaluation (configs live in ``evaluations/<benchmark>/<c
 
    source .venv-eval/bin/activate
 
-   # Evaluate a Hugging Face or local base model
-   bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
-     rollout.model.model_path=RLinf/RLinf-Pi05-LIBERO-SFT
+   # Evaluate the default Hugging Face base model (8 parallel envs)
+   bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval env.eval.total_num_envs=8
 
    # Evaluate an RL/SFT .pt checkpoint on top of the base model
    bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
-     rollout.model.model_path=RLinf/RLinf-Pi05-LIBERO-SFT \
+     env.eval.total_num_envs=8 \
      runner.ckpt_path=./logs/<run>/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt
 
 Operations and Overrides

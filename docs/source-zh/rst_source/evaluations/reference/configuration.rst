@@ -81,7 +81,7 @@
         enable_offload: False
         pipeline_stage_num: 1
         model:
-          model_path: "/path/to/model/RLinf-Pi05-SFT"
+          model_path: "RLinf/RLinf-Pi05-LIBERO-SFT"
           model_type: "openpi"
           num_action_chunks: 5
           num_steps: 3

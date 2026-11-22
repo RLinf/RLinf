@@ -33,9 +33,9 @@ Pick a starting track below and run the commands in order. For regional mirrors,
 
 .. tab-set::
 
-   .. tab-item:: MLP (1 GPU · No Downloads)
+   .. tab-item:: MLP (1 GPU · ~4 GB VRAM · No Downloads)
 
-      Trains a lightweight MLP policy on ManiSkill3's built-in ``PickCube-v1`` task using GPU 0 — no checkpoints or external assets required.
+      Trains a lightweight MLP policy on ManiSkill3's built-in ``PickCube-v1`` task using GPU 0 — no checkpoints or external assets required (~3.7 GB peak VRAM, ~1.5 min for a 10-epoch check).
 
       **1. Install**
 
@@ -48,7 +48,9 @@ Pick a starting track below and run the commands in order. For regional mirrors,
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp runner.max_epochs=10 runner.val_check_interval=-1
+
+      Drop ``runner.max_epochs=10 runner.val_check_interval=-1`` for full 1000-epoch training (``success_once`` climbs above ``0.90``).
 
    .. tab-item:: OpenVLA (7B VLA)
       :sync: openvla
@@ -102,7 +104,6 @@ Each config name matches a YAML file under ``examples/embodiment/config/`` — s
 
 .. dropdown:: Common Overrides (Optional)
 
-   - **~1-minute quick check (MLP):** append ``runner.max_epochs=3 runner.val_check_interval=-1``.
    - **Use local checkpoints instead of Hugging Face:** append ``actor.model.model_path=/path/to/checkpoint`` (rollout inherits it automatically; for OpenVLA-OFT also pass ``actor.model.lora_path=/path/to/lora``).
    - **Target specific GPUs:** the two VLA quickstarts use all available GPUs by default; set ``cluster.component_placement`` to pin devices (:doc:`../reference/configuration`).
 
@@ -111,16 +112,18 @@ Results and Troubleshooting
 
 Logs, TensorBoard events, and checkpoints are written to ``logs/<timestamp>-<config>/``. Start TensorBoard with ``tensorboard --host 0.0.0.0 --logdir ./logs`` and watch ``rollout/env_info/return`` and ``rollout/env_info/success_once``.
 
-A 3-epoch MLP quick check finishes in about 1 minute on one GPU and prints a metric table at each step:
+A 10-epoch MLP quick check finishes in about 1.5 minutes on one GPU (~3.7 GB peak VRAM) and prints a metric table at each step:
 
 .. code-block:: text
 
-   ╭────────────────────────────── Metric Table ──────────────────────────────╮
-   │ Global Step:    3/3 │ Progress: ████████████████████ │ 100.0%            │
-   │ Elapsed: 00:52      │ ETA: 00:00                     │ Step Time: 17.3s  │
-   ├─────────────────────────────── Rollout ──────────────────────────────────┤
-   │ env_info/return=12.400  │ env_info/success_once=0.062 │ rewards=0.248    │
-   ╰──────────────────────────────────────────────────────────────────────────╯
+   ╭───────────────────────────── Metric Table ──────────────────────────────╮
+   │ Global Step: 10/10 │ Progress: ████████████████████ │ 100.0%            │
+   │ Elapsed: 00:51     │ ETA: 00:00                     │ Step Time: 5.122s │
+   ├───────────────────────────── Environment ───────────────────────────────┤
+   │ episode_len=50.0   │ num_trajectories=1024          │ return=7.187      │
+   ├──────────────────────────── Training/Actor ─────────────────────────────┤
+   │ actor/policy_loss=-0.013 │ actor/clip_fraction=0.179 │ critic/explained_variance=0.646 │
+   ╰─────────────────────────────────────────────────────────────────────────╯
 
 On full runs, MLP ``success_once`` climbs above ``0.90`` within a few hundred epochs, while the VLA quickstarts improve steadily from their SFT baselines:
 

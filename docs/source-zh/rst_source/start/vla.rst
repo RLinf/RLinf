@@ -33,9 +33,9 @@
 
 .. tab-set::
 
-   .. tab-item:: MLP（单卡 · 零权重下载）
+   .. tab-item:: MLP（单卡 · ~4 GB 显存 · 零下载）
 
-      在 GPU 0 上基于 ManiSkill3 内置 ``PickCube-v1`` 任务从零训练轻量 MLP policy，无需下载权重或外部资产。
+      在 GPU 0 上基于 ManiSkill3 内置 ``PickCube-v1`` 任务训练轻量 MLP policy，无需下载权重或外部资产（实测峰值显存约 3.7 GB，10 轮快速验证约 1.5 分钟）。
 
       **1. 安装环境**
 
@@ -48,7 +48,9 @@
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp runner.max_epochs=10 runner.val_check_interval=-1
+
+      去掉末尾的 ``runner.max_epochs=10 runner.val_check_interval=-1`` 即可跑完整 1000 轮训练（``success_once`` 升至 ``0.90`` 以上）。
 
    .. tab-item:: OpenVLA（7B VLA）
       :sync: openvla
@@ -102,7 +104,6 @@
 
 .. dropdown:: 常用启动覆盖（可选）
 
-   - **约 1 分钟快速验证（MLP）**：在命令末尾追加 ``runner.max_epochs=3 runner.val_check_interval=-1``。
    - **改用本地权重**：追加 ``actor.model.model_path=/path/to/checkpoint``\ （rollout 自动沿用；OpenVLA-OFT 同步传 ``actor.model.lora_path=/path/to/lora``）。
    - **指定 GPU 卡号**：两个 VLA 快速开始默认使用全部可见卡；需要限定设备时修改 ``cluster.component_placement``\ （见 :doc:`../reference/configuration`\ ）。
 
@@ -111,16 +112,18 @@
 
 日志、TensorBoard 事件与 checkpoint 保存在 ``logs/<时间戳>-<配置名>/`` 下。启动 ``tensorboard --host 0.0.0.0 --logdir ./logs``，重点观察 ``rollout/env_info/return`` 和 ``rollout/env_info/success_once``。
 
-单卡运行 3 轮 MLP 快速验证约 1 分钟完成，每步会在终端输出指标表：
+单卡运行 10 轮 MLP 快速验证约 1.5 分钟完成（峰值显存约 3.7 GB），每步会在终端输出指标表：
 
 .. code-block:: text
 
-   ╭────────────────────────────── Metric Table ──────────────────────────────╮
-   │ Global Step:    3/3 │ Progress: ████████████████████ │ 100.0%            │
-   │ Elapsed: 00:52      │ ETA: 00:00                     │ Step Time: 17.3s  │
-   ├─────────────────────────────── Rollout ──────────────────────────────────┤
-   │ env_info/return=12.400  │ env_info/success_once=0.062 │ rewards=0.248    │
-   ╰──────────────────────────────────────────────────────────────────────────╯
+   ╭───────────────────────────── Metric Table ──────────────────────────────╮
+   │ Global Step: 10/10 │ Progress: ████████████████████ │ 100.0%            │
+   │ Elapsed: 00:51     │ ETA: 00:00                     │ Step Time: 5.122s │
+   ├───────────────────────────── Environment ───────────────────────────────┤
+   │ episode_len=50.0   │ num_trajectories=1024          │ return=7.187      │
+   ├──────────────────────────── Training/Actor ─────────────────────────────┤
+   │ actor/policy_loss=-0.013 │ actor/clip_fraction=0.179 │ critic/explained_variance=0.646 │
+   ╰─────────────────────────────────────────────────────────────────────────╯
 
 完整运行数百轮后，MLP 的 ``success_once`` 会升至 ``0.90`` 以上；VLA 快速开始则从 SFT 基线稳步上升：
 

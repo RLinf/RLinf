@@ -13,6 +13,17 @@
 
 在一张 GPU 或多机集群上完成 VLA policy、真机机器人与推理智能体的训练、微调和评测。
 
+1 张普通 GPU（~4 GB 显存）零下载体验
+------------------------------------
+
+在 ManiSkill3 内置 ``PickCube-v1`` 任务上跑 10 轮 PPO，无需下载任何模型权重或场景资产（实测峰值显存约 3.7 GB，端到端约 1.5 分钟）：
+
+.. code-block:: bash
+
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+   bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp runner.max_epochs=10 runner.val_check_interval=-1
+
 四步上手
 --------
 
@@ -28,17 +39,17 @@
 .. grid:: 1 2 2 2
    :gutter: 3
 
-   .. grid-item-card:: 5 分钟首次跑通（VLA 评测）
-      :link: rst_source/evaluations/get_started/quick_tour
-      :link-type: doc
-
-      在 LIBERO Spatial 上评测 OpenPI π₀.₅，约 5 分钟验证完整环境。
-
-   .. grid-item-card:: 具身仿真 RL
+   .. grid-item-card:: 单卡零下载快速训练（~4 GB 显存）
       :link: rst_source/start/vla
       :link-type: doc
 
-      在 ManiSkill3 上用 PPO 训练 OpenVLA 或 OpenVLA-OFT，再扩展到 LIBERO、RoboTwin 等基准。
+      约 1.5 分钟跑通零下载 MLP PPO，或进一步在 ManiSkill3 上训练 OpenVLA / OpenVLA-OFT。
+
+   .. grid-item-card:: 5 分钟 VLA 评测体验（24 GB+ GPU）
+      :link: rst_source/evaluations/get_started/quick_tour
+      :link-type: doc
+
+      在 LIBERO Spatial 上评测 OpenPI π₀.₅，自动缓存下载 Hugging Face 权重。
 
    .. grid-item-card:: 真机机器人
       :link: rst_source/examples/real_world_index
