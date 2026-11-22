@@ -154,24 +154,14 @@ NVIDIA CUDA 按模型选择对应标签页；AMD GPU 请切换到 **AMD ROCm** �
            - ``examples/embodiment/config/robotwin_place_empty_cup_ppo_openvlaoft.yaml``
            - ``robotwin_place_empty_cup_ppo_openvlaoft``
 
-      在所选 YAML 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径），并将 ``env.train.assets_path`` 与 ``env.eval.assets_path`` 设为 ``RoboTwin`` 目录（即 ``assets/`` 的上一级目录）：
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
-         env:
-           train:
-             assets_path: ../RoboTwin
-           eval:
-             assets_path: ../RoboTwin
-
-      使用 ``run_embodiment.sh`` 启动训练：
+      通过命令行覆盖 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）以及 ``env.train.assets_path`` 和 ``env.eval.assets_path``\ （指向 ``RoboTwin`` 目录，即 ``assets/`` 的上一级目录），直接启动训练（也可以在所选 YAML 中填写相同的键）：
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup \
+           env.train.assets_path=../RoboTwin \
+           env.eval.assets_path=../RoboTwin
 
    .. tab-item:: OpenPI
       :sync: openpi
@@ -352,8 +342,11 @@ NVIDIA CUDA 按模型选择对应标签页；AMD GPU 请切换到 **AMD ROCm** �
 .. dropdown:: 进阶配置（可选）
 
    - **相机近裁剪面（``camera_near``）：** RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认的 0.1 m：SAPIEN 3.0.1 会裁掉比近裁剪面更近的物体，0.1 m 会让腕部相机看不到夹爪手指。在 RoboTwin 环境配置中将 ``camera_near`` 设为 ``null`` 即可沿用 RoboTwin 自身的取值。
+
    - **动作归一化键（``unnorm_key``）：** 配置中的 ``unnorm_key``\ （例如 ``unnorm_key: "place_empty_cup"``）必须与训练该 SFT 检查点时所用的键一致，否则动作会被错误地反归一化。
+
    - **种子文件：** 提供的配置使用 RLinf 内置的 RoboTwin train/eval seed 文件。
+
    - **独立评测：** 独立评测请走 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>`，其中包含 ``ROBOTWIN_PATH`` / ``assets_path`` 设置、``robotwin_place_empty_cup_openvlaoft_eval`` 与 ``robotwin_adjust_bottle_openpi_pi05_eval`` 等评测配置以及结果解读。
 
 可视化与结果

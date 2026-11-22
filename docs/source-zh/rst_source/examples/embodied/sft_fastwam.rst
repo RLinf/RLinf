@@ -49,23 +49,31 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 做 FSDP 监
 
    .. tab-item:: SFT 训练（LIBERO）
 
-      **1. 安装环境、下载数据与 Wan 组件，并预处理 embedding：**
+      **1. 安装环境**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model fastwam && source .venv/bin/activate
 
-         # LIBERO LeRobot 数据与归一化统计
+      **2. 下载数据与 Wan 组件**
+
+      下载 LIBERO LeRobot 数据集、归一化统计以及 Wan2.2 / Wan2.1 组件：
+
+      .. code-block:: bash
+
          hf download yuanty/LIBERO-fastwam --repo-type dataset --local-dir ./LIBERO-fastwam
          for archive in ./LIBERO-fastwam/*.tar.gz; do
            tar -xzf "$archive" -C ./LIBERO-fastwam
          done
          hf download yuanty/fastwam libero_uncond_2cam224_dataset_stats.json --local-dir ./fastwam
-
-         # Wan 组件与 ActionDiT backbone 预处理
          hf download Wan-AI/Wan2.2-TI2V-5B --local-dir ./checkpoints/Wan-AI/Wan2.2-TI2V-5B
          hf download Wan-AI/Wan2.1-T2V-1.3B --include "google/umt5-xxl/*" --local-dir ./checkpoints/Wan-AI/Wan2.1-T2V-1.3B
+
+      **3. 预处理 ActionDiT backbone 与 T5 embedding**
+
+      .. code-block:: bash
+
          export DIFFSYNTH_MODEL_BASE_PATH=./checkpoints
          python .venv/FastWAM/scripts/preprocess_action_dit_backbone.py \
            --model-config .venv/FastWAM/configs/model/fastwam.yaml \
@@ -73,14 +81,13 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 做 FSDP 监
            --device cuda \
            --dtype bfloat16
 
-         # 预计算 T5 embedding
          python .venv/FastWAM/scripts/precompute_text_embeds.py \
            task=libero_uncond_2cam224_1e-4 \
            "data.train.dataset_dirs=[./LIBERO-fastwam/libero_spatial_no_noops_lerobot,./LIBERO-fastwam/libero_object_no_noops_lerobot,./LIBERO-fastwam/libero_goal_no_noops_lerobot,./LIBERO-fastwam/libero_10_no_noops_lerobot]" \
            "data.train.text_embedding_cache_dir=./text_embeds_cache/libero" \
            model.redirect_common_files=true
 
-      **2. 在** ``examples/sft/config/libero_sft_fastwam.yaml`` **和** ``examples/sft/config/model/fastwam.yaml`` **中填写路径：**
+      **4. 在** ``examples/sft/config/libero_sft_fastwam.yaml`` **和** ``examples/sft/config/model/fastwam.yaml`` **中填写路径：**
 
       .. code-block:: yaml
 
@@ -101,7 +108,7 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 做 FSDP 监
            overrides:
              - model.action_dit_pretrained_path=./fastwam/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt
 
-      **3. 启动 SFT：**
+      **5. 启动 SFT：**
 
       .. code-block:: bash
 

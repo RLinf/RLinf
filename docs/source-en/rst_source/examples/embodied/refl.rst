@@ -195,67 +195,72 @@ subdirectories:
 
 The results below use 20,000 image-caption pairs from
 `PD3M <https://huggingface.co/datasets/Spawning/PD3M>`_. Prepare them in a
-separate environment. The script samples image-caption pairs from the first two
-metadata shards using seed ``42``. It keeps images with license information, a
-width and height of at least 512 pixels, and an aspect ratio of at most 2:1. It
-excludes iNaturalist images and captions that describe monochrome images or
-documents:
+separate environment with the steps below, or use your own image-caption
+directory.
 
-.. code-block:: bash
+.. dropdown:: Optional: Prepare 20,000 PD3M image-caption pairs
 
-   export PD3M_DIR="$PWD/data/PD3M"
-   uv venv --python 3.10 "$PD3M_DIR/.venv"
-   uv pip install --python "$PD3M_DIR/.venv/bin/python" \
-     huggingface_hub pyarrow img2dataset==1.47.0
+   The script samples 20,000 image-caption pairs from the first two PD3M
+   metadata shards using seed ``42``. It keeps images with license information,
+   width and height of at least 512 pixels, and an aspect ratio of at most 2:1,
+   while excluding iNaturalist images and captions that describe monochrome
+   images or documents.
 
-   "$PD3M_DIR/.venv/bin/hf" download Spawning/PD3M \
-     metadata/pd3m.00.parquet metadata/pd3m.01.parquet \
-     --repo-type dataset --local-dir "$PD3M_DIR"
+   .. code-block:: bash
 
-   "$PD3M_DIR/.venv/bin/python" - "$PD3M_DIR" <<'PYTHON'
-   import random
-   import re
-   import sys
+      export PD3M_DIR="$PWD/data/PD3M"
+      uv venv --python 3.10 "$PD3M_DIR/.venv"
+      uv pip install --python "$PD3M_DIR/.venv/bin/python" \
+        huggingface_hub pyarrow img2dataset==1.47.0
 
-   import pyarrow as pa
-   import pyarrow.parquet as pq
+      "$PD3M_DIR/.venv/bin/hf" download Spawning/PD3M \
+        metadata/pd3m.00.parquet metadata/pd3m.01.parquet \
+        --repo-type dataset --local-dir "$PD3M_DIR"
 
-   root = sys.argv[1]
-   columns = ["id", "url", "caption", "width", "height", "license", "source"]
-   rows = []
-   for shard in ("00", "01"):
-       rows += pq.read_table(
-           f"{root}/metadata/pd3m.{shard}.parquet", columns=columns
-       ).to_pylist()
+      "$PD3M_DIR/.venv/bin/python" - "$PD3M_DIR" <<'PYTHON'
+      import random
+      import re
+      import sys
 
-   mono = re.compile(r"black[- ]and[- ]white|grayscale|sepia|monochrome", re.I)
-   document = re.compile(
-       r"\b(book|page|newspaper|document|letter|map|poster|stamp|coin|text (on|at|in))\b",
-       re.I,
-   )
-   selected = [
-       row for row in rows
-       if row["license"]
-       and row["source"] != "iNaturalist"
-       and min(row["width"], row["height"]) >= 512
-       and max(row["width"], row["height"]) <= 2 * min(row["width"], row["height"])
-       and not mono.search(row["caption"])
-       and not document.search(row["caption"])
-   ]
-   random.Random(42).shuffle(selected)
-   pairs = [{key: row[key] for key in ("id", "url", "caption")}
-            for row in selected[:20000]]
-   pq.write_table(pa.Table.from_pylist(pairs), f"{root}/pd3m_refl.parquet")
-   PYTHON
+      import pyarrow as pa
+      import pyarrow.parquet as pq
 
-   export PRE_DATA="$PD3M_DIR/images_512"
-   "$PD3M_DIR/.venv/bin/img2dataset" \
-     --url_list="$PD3M_DIR/pd3m_refl.parquet" \
-     --input_format=parquet --url_col=url --caption_col=caption \
-     --output_format=files --output_folder="$PRE_DATA" \
-     --image_size=512 --resize_mode=keep_ratio --resize_only_if_bigger=True \
-     --number_sample_per_shard=1000 --processes_count=16 --thread_count=32 \
-     --timeout=60 --retries=2 --enable_wandb=False
+      root = sys.argv[1]
+      columns = ["id", "url", "caption", "width", "height", "license", "source"]
+      rows = []
+      for shard in ("00", "01"):
+          rows += pq.read_table(
+              f"{root}/metadata/pd3m.{shard}.parquet", columns=columns
+          ).to_pylist()
+
+      mono = re.compile(r"black[- ]and[- ]white|grayscale|sepia|monochrome", re.I)
+      document = re.compile(
+          r"\b(book|page|newspaper|document|letter|map|poster|stamp|coin|text (on|at|in))\b",
+          re.I,
+      )
+      selected = [
+          row for row in rows
+          if row["license"]
+          and row["source"] != "iNaturalist"
+          and min(row["width"], row["height"]) >= 512
+          and max(row["width"], row["height"]) <= 2 * min(row["width"], row["height"])
+          and not mono.search(row["caption"])
+          and not document.search(row["caption"])
+      ]
+      random.Random(42).shuffle(selected)
+      pairs = [{key: row[key] for key in ("id", "url", "caption")}
+               for row in selected[:20000]]
+      pq.write_table(pa.Table.from_pylist(pairs), f"{root}/pd3m_refl.parquet")
+      PYTHON
+
+      export PRE_DATA="$PD3M_DIR/images_512"
+      "$PD3M_DIR/.venv/bin/img2dataset" \
+        --url_list="$PD3M_DIR/pd3m_refl.parquet" \
+        --input_format=parquet --url_col=url --caption_col=caption \
+        --output_format=files --output_folder="$PRE_DATA" \
+        --image_size=512 --resize_mode=keep_ratio --resize_only_if_bigger=True \
+        --number_sample_per_shard=1000 --processes_count=16 --thread_count=32 \
+        --timeout=60 --retries=2 --enable_wandb=False
 
 The downloader writes image-caption pairs under ``$PRE_DATA``. The loader
 resizes and center-crops the images to 512 × 512. The config sets

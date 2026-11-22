@@ -150,11 +150,10 @@ RoboDojo 支持 Linux x86_64 与 NVIDIA CUDA GPU（暂不支持纯 CPU、macOS �
 
       **3. 验证环境**
 
-      启动单个环境验证 Isaac Sim、相机与资产：
+      运行以下 Python 脚本，启动单个环境验证 Isaac Sim、相机与资产：
 
-      .. code-block:: bash
+      .. code-block:: python
 
-         python - <<'PY'
          import numpy as np
          from robodojo_runtime.bridge import VectorEnv
 
@@ -176,13 +175,15 @@ RoboDojo 支持 Linux x86_64 与 NVIDIA CUDA GPU（暂不支持纯 CPU、macOS �
              env.step(np.zeros((1, 1, 14), dtype=np.float32))
          finally:
              env.close()
-         PY
 
 .. dropdown:: 进阶配置（可选）
 
    - **固定版本与兼容性覆盖**：``requirements/install.sh`` 与 ``requirements/embodied/envs/robodojo-override.txt`` 统一锁定 Python 3.11、RoboDojo runtime 0.3.0（``6d76a0c``）、PyTorch 2.7.0（cu126，CUDA 12.8+ 用 cu128）、TorchVision 0.22.0 / TorchAudio 2.7.0、Isaac Sim 5.1.0 与 IsaacLab 0.54.3（``afca7b09``），不要手工升级存在重叠版本约束的包。
+
    - **扩展多环境并行**：默认运行单个环境；稳定后可通过 Hydra 覆盖提高并行度，例如 ``env.eval.total_num_envs=4``、``cluster.component_placement.env=0-3`` 与 ``cluster.component_placement.rollout=0-3``。
+
    - **使用 ModelScope 下载**：执行 ``uv pip install "modelscope>=1.40.0"`` 后，使用相同的 ``--repo-type dataset``、``--local-dir`` 与 ``--include`` 参数运行 ``modelscope download``。
+
    - **验证依赖与 CUDA**\ （不启动仿真器）：
 
      .. code-block:: bash

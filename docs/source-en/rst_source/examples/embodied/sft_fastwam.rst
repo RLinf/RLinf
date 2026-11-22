@@ -53,23 +53,31 @@ Setup and Run
 
    .. tab-item:: SFT (LIBERO)
 
-      **1. Install, download data and Wan components, and preprocess embeddings:**
+      **1. Install**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model fastwam && source .venv/bin/activate
 
-         # LIBERO LeRobot datasets and normalization stats
+      **2. Download Data and Wan Components**
+
+      Download the LIBERO LeRobot datasets, normalization stats, and Wan2.2 / Wan2.1 components:
+
+      .. code-block:: bash
+
          hf download yuanty/LIBERO-fastwam --repo-type dataset --local-dir ./LIBERO-fastwam
          for archive in ./LIBERO-fastwam/*.tar.gz; do
            tar -xzf "$archive" -C ./LIBERO-fastwam
          done
          hf download yuanty/fastwam libero_uncond_2cam224_dataset_stats.json --local-dir ./fastwam
-
-         # Wan components and ActionDiT backbone preprocessing
          hf download Wan-AI/Wan2.2-TI2V-5B --local-dir ./checkpoints/Wan-AI/Wan2.2-TI2V-5B
          hf download Wan-AI/Wan2.1-T2V-1.3B --include "google/umt5-xxl/*" --local-dir ./checkpoints/Wan-AI/Wan2.1-T2V-1.3B
+
+      **3. Preprocess ActionDiT Backbone and T5 Embeddings**
+
+      .. code-block:: bash
+
          export DIFFSYNTH_MODEL_BASE_PATH=./checkpoints
          python .venv/FastWAM/scripts/preprocess_action_dit_backbone.py \
            --model-config .venv/FastWAM/configs/model/fastwam.yaml \
@@ -77,14 +85,13 @@ Setup and Run
            --device cuda \
            --dtype bfloat16
 
-         # Precompute T5 embeddings
          python .venv/FastWAM/scripts/precompute_text_embeds.py \
            task=libero_uncond_2cam224_1e-4 \
            "data.train.dataset_dirs=[./LIBERO-fastwam/libero_spatial_no_noops_lerobot,./LIBERO-fastwam/libero_object_no_noops_lerobot,./LIBERO-fastwam/libero_goal_no_noops_lerobot,./LIBERO-fastwam/libero_10_no_noops_lerobot]" \
            "data.train.text_embedding_cache_dir=./text_embeds_cache/libero" \
            model.redirect_common_files=true
 
-      **2. Set paths** in ``examples/sft/config/libero_sft_fastwam.yaml`` and ``examples/sft/config/model/fastwam.yaml``:
+      **4. Set paths** in ``examples/sft/config/libero_sft_fastwam.yaml`` and ``examples/sft/config/model/fastwam.yaml``:
 
       .. code-block:: yaml
 
@@ -105,7 +112,7 @@ Setup and Run
            overrides:
              - model.action_dit_pretrained_path=./fastwam/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt
 
-      **3. Launch SFT:**
+      **5. Launch SFT:**
 
       .. code-block:: bash
 

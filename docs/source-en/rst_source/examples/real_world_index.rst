@@ -10,6 +10,24 @@ Use this section when your starting point is physical robot hardware. Each robot
 
    End-to-end real-world workflow: hardware setup, teleoperation and data collection, SFT, policy deployment, and online RL.
 
+Shared Real-World Guides
+------------------------
+
+.. grid:: 1 3 3 3
+   :gutter: 3
+
+   .. grid-item-card:: Cluster Setup
+
+      Connect robot control nodes and GPU training nodes in one Ray cluster: :doc:`Two-Node Robot + GPU Ray Setup <../guides/realworld_robot>`.
+
+   .. grid-item-card:: Teleoperation
+
+      Configure SpaceMouse, GELLO, leader arms, or VR rigs: :doc:`Teleoperation Devices <../guides/teleoperation>` (for PICO VR software setup, see :ref:`PICO VR software setup <pico-software-setup>`).
+
+   .. grid-item-card:: Data & Replay
+
+      Record replay buffers and LeRobot shards during teleoperation or rollouts: :doc:`Data Collection & Replay <../guides/data_collection>`.
+
 Robot Capability Matrix
 -----------------------
 
@@ -17,15 +35,17 @@ Compare what each robot guide covers before choosing a platform.
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 10 16 14 12 26
+   :widths: 18 8 9 13 12 18 22
 
    * - Robot
      - Setup
-     - Teleop & Collect
+     - Teleop
+     - Data Collection
      - SFT / Deploy
      - Online RL
      - Guide
    * - Single-Arm Franka
+     - ✓
      - ✓
      - ✓
      - ✓
@@ -36,8 +56,10 @@ Compare what each robot guide covers before choosing a platform.
      - ✓
      - ✓
      - ✓
+     - ✓
      - :doc:`Dual-Arm Franka (3 guides) <embodied/dual_franka_index>`
    * - YAM
+     - ✓
      - ✓
      - ✓
      - ✓
@@ -46,17 +68,20 @@ Compare what each robot guide covers before choosing a platform.
    * - ARX X5
      - ✓
      - ✓
+     - ✓
      - —
      - —
      - :doc:`ARX X5 Guide <embodied/arx5>`
    * - GimArm
      - ✓
      - ✓
-     - —
      - ✓
+     - —
+     - Env only (custom config)
      - :doc:`GimArm Guide <embodied/gim_arm>`
    * - AgileX Piper
      - ✓
+     - —
      - —
      - —
      - —
@@ -64,10 +89,12 @@ Compare what each robot guide covers before choosing a platform.
    * - Robbyant R2
      - ✓
      - ✓
-     - —
      - ✓
+     - —
+     - Env only (custom config)
      - :doc:`Robbyant R2 Guide <embodied/r2>`
    * - Dexmal DOS-W1
+     - ✓
      - ✓
      - ✓
      - —
@@ -77,9 +104,11 @@ Compare what each robot guide covers before choosing a platform.
      - ✓
      - —
      - —
+     - —
      - ✓
      - :doc:`XSquare Turtle2 Guide <embodied/xsquare_turtle2>`
    * - SO-101
+     - ✓
      - ✓
      - ✓
      - ✓
@@ -88,6 +117,7 @@ Compare what each robot guide covers before choosing a platform.
    * - LeKiwi
      - ✓
      - ✓
+     - —
      - —
      - —
      - :doc:`LeKiwi Guide <embodied/lekiwi>`

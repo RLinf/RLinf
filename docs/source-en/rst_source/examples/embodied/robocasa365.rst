@@ -93,54 +93,44 @@ Setup and Run
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env robocasa365 && source .venv/bin/activate
 
-      **2. Download**
+      **2a. Download Assets & Checkpoint**
 
-      Download and extract the RoboCasa365 scene assets into ``$ROBOCASA_ASSETS_PATH``, and download the official RoboCasa365 OpenPI π₀ checkpoint:
+      Download the RoboCasa365 scene archives into ``$ROBOCASA_ASSETS_PATH/_downloads`` and the official RoboCasa365 OpenPI π₀ checkpoint:
 
       .. code-block:: bash
 
          export ROBOCASA_ASSETS_PATH="$PWD/robocasa_assets"
 
-         hf download robocasa/robocasa-assets \
-           --repo-type dataset \
+         hf download robocasa/robocasa-assets --repo-type dataset \
            --include textures.zip generative_textures.zip fixtures.zip objaverse.zip aigen_objs.zip \
            --local-dir "$ROBOCASA_ASSETS_PATH/_downloads"
-         hf download nvidia/PhysicalAI-Robotics-Manipulation-Objects-Kitchen-MJCF \
-           --repo-type dataset \
+         hf download nvidia/PhysicalAI-Robotics-Manipulation-Objects-Kitchen-MJCF --repo-type dataset \
            --include "fixtures_lightwheel/*.zip" \
            --local-dir "$ROBOCASA_ASSETS_PATH/_downloads"
-         hf download nvidia/PhysicalAI-Robotics-Manipulation-Objects-Kitchen-MJCF \
-           --repo-type dataset \
+         hf download nvidia/PhysicalAI-Robotics-Manipulation-Objects-Kitchen-MJCF --repo-type dataset \
            --include "objects_lightwheel/*.zip" \
            --local-dir "$ROBOCASA_ASSETS_PATH/_downloads"
-
-         for item in \
-           textures.zip:textures \
-           generative_textures.zip:generative_textures \
-           objaverse.zip:objects/objaverse \
-           aigen_objs.zip:objects/aigen_objs; do
-           zip_name="${item%%:*}"
-           target_rel="${item#*:}"
-           parent_rel="$(dirname "$target_rel")"
-           if [[ "$parent_rel" == "." ]]; then
-             unzip_dir="$ROBOCASA_ASSETS_PATH"
-           else
-             unzip_dir="$ROBOCASA_ASSETS_PATH/$parent_rel"
-           fi
-           mkdir -p "$unzip_dir"
-           unzip -q "$ROBOCASA_ASSETS_PATH/_downloads/$zip_name" -d "$unzip_dir"
-         done
-
-         mkdir -p "$ROBOCASA_ASSETS_PATH/fixtures"
-         find "$ROBOCASA_ASSETS_PATH/_downloads/fixtures_lightwheel" -name "*.zip" \
-           -exec unzip -q {} -d "$ROBOCASA_ASSETS_PATH/fixtures" \;
-
-         mkdir -p "$ROBOCASA_ASSETS_PATH/objects/lightwheel"
-         find "$ROBOCASA_ASSETS_PATH/_downloads/objects_lightwheel" -name "*.zip" \
-           -exec unzip -q {} -d "$ROBOCASA_ASSETS_PATH/objects/lightwheel" \;
-
          hf download RLinf/RLinf-pi0-robocasa-pretrain-human300 \
            --local-dir ./RLinf-pi0-robocasa-pretrain-human300
+
+      **2b. Extract Assets**
+
+      Unpack the downloaded archives into the layout expected under ``$ROBOCASA_ASSETS_PATH``:
+
+      .. code-block:: bash
+
+         export ROBOCASA_ASSETS_PATH="$PWD/robocasa_assets"
+         mkdir -p "$ROBOCASA_ASSETS_PATH"/{fixtures,objects/lightwheel}
+
+         unzip -q "$ROBOCASA_ASSETS_PATH/_downloads/textures.zip" -d "$ROBOCASA_ASSETS_PATH"
+         unzip -q "$ROBOCASA_ASSETS_PATH/_downloads/generative_textures.zip" -d "$ROBOCASA_ASSETS_PATH"
+         unzip -q "$ROBOCASA_ASSETS_PATH/_downloads/objaverse.zip" -d "$ROBOCASA_ASSETS_PATH/objects"
+         unzip -q "$ROBOCASA_ASSETS_PATH/_downloads/aigen_objs.zip" -d "$ROBOCASA_ASSETS_PATH/objects"
+
+         find "$ROBOCASA_ASSETS_PATH/_downloads/fixtures_lightwheel" -name "*.zip" \
+           -exec unzip -q {} -d "$ROBOCASA_ASSETS_PATH/fixtures" \;
+         find "$ROBOCASA_ASSETS_PATH/_downloads/objects_lightwheel" -name "*.zip" \
+           -exec unzip -q {} -d "$ROBOCASA_ASSETS_PATH/objects/lightwheel" \;
 
       **3. Launch**
 

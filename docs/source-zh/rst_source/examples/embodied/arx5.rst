@@ -159,3 +159,12 @@ ARX X5 数据采集
      - 在 ``collect_data_dual_arx5.yaml`` 中为对应视角设置顺时针 ``camera_rotations``\ （``0`` / ``90`` / ``180`` / ``270``）。
    * - CAN 接口打开失败或机械臂无响应
      - 重新运行 ``ARX5_beta`` 的 ``ARX_CAN_doctor``，确认 ``can1`` 与 ``can3`` 已启动且与配置中的 ``left_can_port`` / ``right_can_port`` 一致。
+
+下一步：训练 OpenPI SFT
+-----------------------
+
+抽查导出的 MP4 预览确认画面和轨迹正常后，可按 :doc:`sft_openpi` 中的 **自定义 LeRobot 数据集** 标签页在 ``$RUN/lerobot_merged`` 上训练 OpenPI policy：
+
+1. 按三路 RGB 视角和 20 维双臂 ``[xyz, rot6d, gripper]`` 状态与动作空间调整 ``pi0_custom``\ （或注册专用 ARX X5 dataconfig）。
+2. 使用相同的 dataconfig 名称和 ``$RUN/lerobot_merged`` 运行 ``toolkits/lerobot/calculate_norm_stats.py`` 生成 ``norm_stats.json``。
+3. 参照 :doc:`sft_openpi` 启动 ``examples/sft/run_vla_sft.sh custom_sft_openpi``，并通过命令行覆盖 ``data.train_data_paths``、``actor.model.model_path`` 与 ``actor.model.openpi_data.norm_stats_path``。

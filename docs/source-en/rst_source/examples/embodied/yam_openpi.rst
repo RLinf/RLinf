@@ -116,7 +116,7 @@ Setup and Run
              --output-norm-stats "$YAM_MODELS/pi05_base_openpi/yam/norm_stats.json" \
              --action-dim 32 --action-horizon 30 --max-token-len 200
 
-      **Edit three absolute paths** in ``examples/sft/config/realworld_dual_yam_sft_openpi_pi05.yaml``:
+      **Configure three absolute paths** in ``examples/sft/config/realworld_dual_yam_sft_openpi_pi05.yaml`` (or pass them via Hydra CLI overrides below):
 
       .. list-table::
          :header-rows: 1
@@ -137,7 +137,10 @@ Setup and Run
 
       .. code-block:: bash
 
-         bash examples/sft/run_vla_sft.sh realworld_dual_yam_sft_openpi_pi05
+         bash examples/sft/run_vla_sft.sh realworld_dual_yam_sft_openpi_pi05 \
+             data.train_data_paths="$YAM_DATASET" \
+             actor.model.model_path="$YAM_MODELS/pi05_base_openpi" \
+             actor.model.openpi_data.norm_stats_path="$YAM_DATASET/norm_stats.json"
 
          # In another terminal on the GPU node, list checkpoints containing actor/model_state_dict/full_weights.pt
          find logs -type d -path '*/checkpoints/global_step_*'

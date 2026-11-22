@@ -159,3 +159,12 @@ Merged datasets write to ``$RUN/lerobot_merged`` and per-frame images, metadata,
      - Set clockwise ``camera_rotations`` (``0`` / ``90`` / ``180`` / ``270``) for that view in ``collect_data_dual_arx5.yaml``.
    * - CAN interface fails to open or arms stay unresponsive
      - Re-run ``ARX_CAN_doctor`` from ``ARX5_beta`` and verify ``can1`` and ``can3`` are up and match ``left_can_port`` / ``right_can_port``.
+
+Next Steps: Train OpenPI SFT
+----------------------------
+
+Once the exported MP4 previews look clean, train an OpenPI policy on ``$RUN/lerobot_merged`` by following the **Custom LeRobot Dataset** tab in :doc:`sft_openpi`:
+
+1. Adapt ``pi0_custom`` (or register an ARX X5 dataconfig) for the three RGB views and the 20-D ``[xyz, rot6d, gripper]`` dual-arm state and action space.
+2. Compute ``norm_stats.json`` with ``toolkits/lerobot/calculate_norm_stats.py`` using that dataconfig name and ``$RUN/lerobot_merged``.
+3. Launch ``examples/sft/run_vla_sft.sh custom_sft_openpi`` with ``data.train_data_paths``, ``actor.model.model_path``, and ``actor.model.openpi_data.norm_stats_path`` overrides as shown in :doc:`sft_openpi`.

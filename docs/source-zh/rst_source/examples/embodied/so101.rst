@@ -178,7 +178,7 @@ SO-101 配置与 SFT
 
          bash examples/embodiment/collect_data.sh realworld_so101_collect_data_joint
 
-      按键说明：``a`` 开始或放弃录制、``b`` 切换分段、``c`` 保存成功 episode、``q`` 安全退出；主机接有多个键盘时设置 ``RLINF_KEYBOARD_DEVICE`` 指向稳定的 ``/dev/input/by-id/...`` 路径。数据写入运行目录的 ``collected_data``；若要合并多次独立采集，须先合并为单个包含 ``meta/info.json`` 的 LeRobot dataset 根目录，再计算统计量与训练。
+      按键说明：``a`` 开始或放弃录制、``b`` 切换分段、``c`` 保存成功 episode、``q`` 安全退出；主机接有多个键盘时设置 ``RLINF_KEYBOARD_DEVICE`` 指向稳定的 ``/dev/input/by-id/...`` 路径。数据写入运行目录的 ``collected_data``；需要合并多次采集或导出 MP4 预览画面时，可在计算统计量与训练前使用 ``toolkits/lerobot/merge_lerobot_datasets.py`` 与 ``toolkits/lerobot/visualize_lerobot_dataset.py``。
 
       **3. 计算 OpenPI 归一化统计量**
 
@@ -191,25 +191,30 @@ SO-101 配置与 SFT
            --config-name pi05_so101_joint \
            --repo-id so101_dataset
 
-      将 ``Writing stats to:`` 后输出的 ``norm_stats.json`` 路径填入 SFT 与评测配置的 ``actor.model.openpi_data.norm_stats_path``\ （输出目录由 OpenPI 训练配置决定，可能与 ``assets_dir`` 不同）。
+      将 ``Writing stats to:`` 后输出的 ``norm_stats.json`` 路径填入 ``openpi_data.norm_stats_path``\ （SFT 对应 ``actor.model.openpi_data.norm_stats_path``，评测对应 ``rollout.model.openpi_data.norm_stats_path``；训练和评测都不会在 ``full_weights.pt`` 同级目录自动查找该文件）。
 
    .. tab-item:: 3. SFT 与本地评测
 
       **1. 运行 OpenPI SFT 训练**
 
-      在 ``examples/sft/config/realworld_sft_openpi_so101.yaml`` 中填写 ``data.train_data_paths``\ （直接包含 ``meta/info.json`` 的目录）、基础 checkpoint 与 ``norm_stats.json`` 路径，启动训练：
+      编辑 ``examples/sft/config/realworld_sft_openpi_so101.yaml``，或直接通过 Hydra CLI 参数传入数据集根目录（包含 ``meta/info.json``）、基座 checkpoint 与 ``norm_stats.json`` 路径：
 
       .. code-block:: bash
 
-         bash examples/sft/run_vla_sft.sh realworld_sft_openpi_so101
+         bash examples/sft/run_vla_sft.sh realworld_sft_openpi_so101 \
+           data.train_data_paths=./so101_dataset \
+           actor.model.model_path=./pi05_base_pytorch \
+           actor.model.openpi_data.norm_stats_path=./assets/pi05_so101_joint/so101_dataset/norm_stats.json
 
       **2. 本地 Fixed-Checkpoint 评测**
 
-      在 ``examples/embodiment/config/model/so101_pi05.yaml`` 中填写与 ``pi05_so101_joint`` 兼容的 checkpoint 与对应的 ``norm_stats.json``，并在 ``examples/embodiment/config/realworld_so101_eval_openpi.yaml`` 中更新从臂串口、标定 ID、相机设备、核对后的 reset 姿态及与 SFT 一致的 ``task_description``，再启动评测：
+      在 ``examples/embodiment/config/realworld_so101_eval_openpi.yaml`` 中更新从臂串口、标定 ID、相机设备、核对后的 reset 姿态及与 SFT 一致的 ``task_description``。在 ``examples/embodiment/config/model/so101_pi05.yaml`` 中填写与 ``pi05_so101_joint`` 兼容的 checkpoint 与对应的 ``norm_stats.json``，或直接通过 Hydra CLI 参数传入：
 
       .. code-block:: bash
 
-         bash evaluations/run_eval.sh realworld_so101_eval_openpi
+         bash evaluations/run_eval.sh realworld_so101_eval_openpi \
+           rollout.model.model_path=./logs/checkpoints/global_step_10000 \
+           rollout.model.openpi_data.norm_stats_path=./assets/pi05_so101_joint/so101_dataset/norm_stats.json
 
       按 ``a`` 开始评测 episode，按 ``c`` 记录成功，按 ``b`` 记录失败。
 

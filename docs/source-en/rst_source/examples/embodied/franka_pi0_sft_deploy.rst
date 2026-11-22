@@ -145,32 +145,22 @@ Setup and Run
              --config-name pi0_realworld \
              --repo-id realworld_franka_bin_relocation
 
-      ``config-name`` must match the OpenPI data config used in training, and ``repo-id`` must match your LeRobot dataset directory name. Copy the generated ``norm_stats.json`` into ``<model_path>/realworld_franka_bin_relocation/norm_stats.json`` (alongside ``config.json`` and ``model.safetensors``), where the OpenPI loader reads it at runtime.
+      ``config-name`` must match the OpenPI data config used in training, and ``repo-id`` must match your LeRobot dataset directory name. The script writes ``./assets/pi0_realworld/realworld_franka_bin_relocation/norm_stats.json``. Consistent with :doc:`sft_openpi`, training and evaluation do not look beside SFT ``full_weights.pt`` for this file: pass it via ``openpi_data.norm_stats_path`` (recommended) or copy it to ``<model_path>/realworld_franka_bin_relocation/norm_stats.json`` for the default fallback.
 
       **Run OpenPI SFT**
 
-      Set the dataset and base model paths in ``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml``:
-
-      .. code-block:: yaml
-
-         data:
-           train_data_paths: "/path/to/lerobot_data"
-
-         actor:
-           model:
-             model_path: "/path/to/pi0-model"
-             openpi:
-               config_name: "pi0_realworld"
-
-      Launch SFT training (see :doc:`sft_openpi` for full OpenPI SFT details):
+      Edit ``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml`` or pass the dataset, base model, and normalization stats paths as Hydra CLI overrides (see :doc:`sft_openpi` for full OpenPI SFT details):
 
       .. code-block:: bash
 
-         bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
+         bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi \
+           data.train_data_paths=./lerobot_data/realworld_franka_bin_relocation \
+           actor.model.model_path=./pi0-model \
+           +actor.model.openpi_data.norm_stats_path=./assets/pi0_realworld/realworld_franka_bin_relocation/norm_stats.json
 
    .. tab-item:: 3. Deploy on Robot
 
-      Edit ``evaluations/realworld/realworld_pnp_eval.yaml`` with your robot IP, measured target pose, base model path, and exported SFT checkpoint (RealSense cameras are auto-discovered; set ``camera_serials`` only to select a subset or fix camera order):
+      Edit ``evaluations/realworld/realworld_pnp_eval.yaml`` with your robot IP and measured target pose (RealSense cameras are auto-discovered; set ``camera_serials`` only to select a subset or fix camera order):
 
       .. code-block:: yaml
 
@@ -181,13 +171,6 @@ Setup and Run
                  configs:
                    - robot_ip: ROBOT_IP
 
-         runner:
-           ckpt_path: "/path/to/your/sft/checkpoint/full_weights.pt"
-
-         rollout:
-           model:
-             model_path: "/path/to/pi0-model"
-
          env:
            eval:
              rollout_epoch: 20
@@ -195,11 +178,14 @@ Setup and Run
                target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
                task_description: "pick up the object and place it into the container"
 
-      ``evaluations/realworld/realworld_pnp_eval.yaml`` defaults to a two-node cluster (``cluster.num_nodes: 2`` with ``franka`` on ``node_rank: 1``). For multi-node deployment, start the Ray cluster as in :doc:`franka`. For single-host deployment, set ``cluster.num_nodes: 1`` and set both ``node_ranks: 0`` and ``node_rank: 0`` on the ``franka`` group (or use the single-node ``realworld_eval`` config below), otherwise Ray waits indefinitely for a second node. Launch deployment from the repository root (see the :doc:`real-world evaluation guide <../../evaluations/guides/realworld>` for options):
+      ``evaluations/realworld/realworld_pnp_eval.yaml`` defaults to a two-node cluster (``cluster.num_nodes: 2`` with ``franka`` on ``node_rank: 1``). For multi-node deployment, start the Ray cluster as in :doc:`franka`. For single-host deployment, set ``cluster.num_nodes: 1`` and set both ``node_ranks: 0`` and ``node_rank: 0`` on the ``franka`` group (or use the single-node ``realworld_eval`` config below), otherwise Ray waits indefinitely for a second node. Launch deployment from the repository root with Hydra CLI overrides for the checkpoint, base model, and ``norm_stats.json`` (see the :doc:`real-world evaluation guide <../../evaluations/guides/realworld>` for options):
 
       .. code-block:: bash
 
-         bash evaluations/run_eval.sh realworld_pnp_eval
+         bash evaluations/run_eval.sh realworld_pnp_eval \
+           runner.ckpt_path=./logs/checkpoints/global_step_2000/actor/model_state_dict/full_weights.pt \
+           rollout.model.model_path=./pi0-model \
+           +rollout.model.openpi_data.norm_stats_path=./assets/pi0_realworld/realworld_franka_bin_relocation/norm_stats.json
 
       The policy autonomously controls the arm for ``env.eval.rollout_epoch`` episodes.
 
@@ -239,7 +225,7 @@ Track SFT loss in TensorBoard (``tensorboard --logdir ./logs``) and verify auton
    * - ``calculate_norm_stats.py`` cannot find dataset
      - Export ``HF_LEROBOT_HOME`` to the parent directory containing ``<repo_id>/{data,meta}`` and match ``--repo-id`` to that folder name.
    * - Missing ``norm_stats.json`` during SFT or deployment
-     - Copy the generated ``norm_stats.json`` into ``<model_path>/<repo_id>/norm_stats.json`` where the OpenPI loader expects it.
+     - Pass the generated ``norm_stats.json`` through ``openpi_data.norm_stats_path`` (recommended, matching :doc:`sft_openpi`) or copy it into ``<model_path>/<repo_id>/norm_stats.json``.
    * - Gripper stays closed during collection
      - Set ``env.eval.no_gripper: False`` in ``realworld_collect_data.yaml``.
    * - Arm hits container rim or workspace limit

@@ -10,6 +10,24 @@
 
    真机端到端流程：硬件配置、遥操作与数据采集、SFT、policy 部署与在线 RL。
 
+通用真机指南
+------------
+
+.. grid:: 1 3 3 3
+   :gutter: 3
+
+   .. grid-item-card:: 集群搭建
+
+      将机器人控制节点与 GPU 训练节点接入同一 Ray 集群：:doc:`双节点机器人与 GPU Ray 配置 <../guides/realworld_robot>`。
+
+   .. grid-item-card:: 遥操作设备
+
+      配置 SpaceMouse、GELLO、主臂或 VR 遥操作设备：:doc:`遥操作设备指南 <../guides/teleoperation>`\ （PICO VR 软件准备见 :ref:`PICO 软件配置 <pico-software-setup>`）。
+
+   .. grid-item-card:: 数据采集与回放
+
+      在遥操作或 rollout 中录制 replay buffer 与 LeRobot 分片：:doc:`数据采集与回放 <../guides/data_collection>`。
+
 机器人能力矩阵
 --------------
 
@@ -17,15 +35,17 @@
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 10 16 14 12 26
+   :widths: 18 8 9 13 12 18 22
 
    * - 机器人
      - 硬件配置
-     - 遥操作与数据采集
+     - 遥操作
+     - 数据采集
      - SFT / 部署
      - 在线 RL
      - 指南
    * - 单臂 Franka
+     - ✓
      - ✓
      - ✓
      - ✓
@@ -36,8 +56,10 @@
      - ✓
      - ✓
      - ✓
+     - ✓
      - :doc:`双臂 Franka（3 篇） <embodied/dual_franka_index>`
    * - YAM
+     - ✓
      - ✓
      - ✓
      - ✓
@@ -46,17 +68,20 @@
    * - ARX X5
      - ✓
      - ✓
+     - ✓
      - —
      - —
      - :doc:`ARX X5 指南 <embodied/arx5>`
    * - GimArm
      - ✓
      - ✓
-     - —
      - ✓
+     - —
+     - 仅环境（需自定义配置）
      - :doc:`GimArm 指南 <embodied/gim_arm>`
    * - AgileX Piper
      - ✓
+     - —
      - —
      - —
      - —
@@ -64,10 +89,12 @@
    * - Robbyant R2
      - ✓
      - ✓
-     - —
      - ✓
+     - —
+     - 仅环境（需自定义配置）
      - :doc:`Robbyant R2 指南 <embodied/r2>`
    * - Dexmal DOS-W1
+     - ✓
      - ✓
      - ✓
      - —
@@ -77,9 +104,11 @@
      - ✓
      - —
      - —
+     - —
      - ✓
      - :doc:`XSquare Turtle2 指南 <embodied/xsquare_turtle2>`
    * - SO-101
+     - ✓
      - ✓
      - ✓
      - ✓
@@ -88,6 +117,7 @@
    * - LeKiwi
      - ✓
      - ✓
+     - —
      - —
      - —
      - :doc:`LeKiwi 指南 <embodied/lekiwi>`

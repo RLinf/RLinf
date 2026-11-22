@@ -158,24 +158,14 @@ Select a model tab for NVIDIA CUDA, or switch to **AMD ROCm** for AMD GPUs.
            - ``examples/embodiment/config/robotwin_place_empty_cup_ppo_openvlaoft.yaml``
            - ``robotwin_place_empty_cup_ppo_openvlaoft``
 
-      Set ``actor.model.model_path`` (rollout inherits it automatically) and point ``env.train.assets_path`` / ``env.eval.assets_path`` to the ``RoboTwin`` directory (the parent folder of ``assets/``):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
-         env:
-           train:
-             assets_path: ../RoboTwin
-           eval:
-             assets_path: ../RoboTwin
-
-      Launch training with ``run_embodiment.sh``:
+      Launch training with ``run_embodiment.sh``, overriding ``actor.model.model_path`` (rollout inherits it automatically) and ``env.train.assets_path`` / ``env.eval.assets_path`` (pointing to the ``RoboTwin`` directory, parent of ``assets/``) on the command line (or set the same keys in the selected YAML):
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup \
+           env.train.assets_path=../RoboTwin \
+           env.eval.assets_path=../RoboTwin
 
    .. tab-item:: OpenPI
       :sync: openpi
@@ -356,8 +346,11 @@ Select a model tab for NVIDIA CUDA, or switch to **AMD ROCm** for AMD GPUs.
 .. dropdown:: Advanced configuration (optional)
 
    - **Camera near plane (``camera_near``):** RLinf creates RoboTwin's cameras with a 0.01 m near plane instead of RoboTwin's 0.1 m: SAPIEN 3.0.1 clips everything closer than the near plane, and 0.1 m hides the gripper fingers from the wrist cameras. Set ``camera_near: null`` in the RoboTwin env config to keep RoboTwin's own value.
+
    - **Action normalization (``unnorm_key``):** ``unnorm_key`` in the config (e.g. ``unnorm_key: "place_empty_cup"``) must match the key used when the SFT checkpoint was trained, otherwise actions are denormalized incorrectly.
+
    - **Seed files:** The provided configs use RLinf's bundled RoboTwin train/eval seed files.
+
    - **Standalone evaluation:** Run standalone evaluation through the :doc:`RoboTwin evaluation guide <../../evaluations/guides/robotwin>`, which covers ``ROBOTWIN_PATH`` / ``assets_path`` setup, eval configs such as ``robotwin_place_empty_cup_openvlaoft_eval`` and ``robotwin_adjust_bottle_openpi_pi05_eval``, and result interpretation.
 
 Visualization and Results

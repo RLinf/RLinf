@@ -76,49 +76,56 @@ adapter 将头部相机图像、机器人状态和任务指令输入模型，再
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
 
-      **2. 下载元数据、仿真资源与任务资源**
+      **2a. 下载 Qwen3-VL 元数据与 SIMPLE 共享资源**
 
-      一次性下载 Qwen3-VL 元数据 snapshot（按模型 ID 从 ``HF_HOME`` 读取）、`USC-PSI-Lab/SIMPLE <https://huggingface.co/datasets/USC-PSI-Lab/SIMPLE>`_ 共享仿真资源（软链到 ``${VIRTUAL_ENV}/SIMPLE/data``），以及官方 OpenOven checkpoint、reset 数据和 HSSD 场景：
+      下载 Qwen3-VL 元数据 snapshot（按模型 ID 从 ``HF_HOME`` 读取，不要传入 ``--local-dir``）与 `USC-PSI-Lab/SIMPLE <https://huggingface.co/datasets/USC-PSI-Lab/SIMPLE>`_ 共享仿真资源，并软链到 ``${VIRTUAL_ENV}/SIMPLE/data``：
 
       .. code-block:: bash
 
          export HF_HOME=./hf-cache
          export SIMPLE_ASSETS_DIR=./simple_assets
-         export PSI0_ARTIFACT_ROOT=./psi0-simple-artifacts
-         export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0
-         export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
 
-         # 1. Qwen3-VL 元数据 snapshot（不要使用 --local-dir；训练和评测前导出同一个 HF_HOME）
          hf download Qwen/Qwen3-VL-2B-Instruct \
            chat_template.json config.json generation_config.json merges.txt \
            preprocessor_config.json tokenizer.json tokenizer_config.json \
            video_preprocessor_config.json vocab.json
 
-         # 2. SIMPLE 共享仿真资源并软链到 ${VIRTUAL_ENV}/SIMPLE/data
          bash requirements/embodied/download_assets.sh --assets simple --dir "${SIMPLE_ASSETS_DIR}"
          rm -rf "${VIRTUAL_ENV}/SIMPLE/data"
          ln -s "$(realpath "${SIMPLE_ASSETS_DIR}")" "${VIRTUAL_ENV}/SIMPLE/data"
 
-         # 3. OpenOven checkpoint、reset 数据和 HSSD 场景
+      **2b. 下载 OpenOven checkpoint 与 reset 数据**
+
+      下载官方 OpenOven checkpoint 与任务 reset 数据：
+
+      .. code-block:: bash
+
+         export PSI0_ARTIFACT_ROOT=./psi0-simple-artifacts
+         export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0
+         export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
+
          hf download USC-PSI-Lab/psi-model \
-           "${PSI0_RUN_REL}/argv.txt" \
-           "${PSI0_RUN_REL}/run_config.json" \
+           "${PSI0_RUN_REL}/argv.txt" "${PSI0_RUN_REL}/run_config.json" \
            "${PSI0_RUN_REL}/checkpoints/ckpt_40000/model.safetensors" \
-           --revision d34a91932d25c45ef211582315b9224c7dc8ace9 \
-           --local-dir ./psi0-simple-artifacts/psi-model
+           --revision d34a91932d25c45ef211582315b9224c7dc8ace9 --local-dir ./psi0-simple-artifacts/psi-model
          export PSI0_RUN_DIR="${PSI0_ARTIFACT_ROOT}/psi-model/${PSI0_RUN_REL}"
 
          hf download USC-PSI-Lab/psi-data "simple-eval/${SIMPLE_TASK}.zip" \
-           --repo-type dataset \
-           --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 \
+           --repo-type dataset --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 \
            --local-dir ./psi0-simple-artifacts/psi-data
          export SIMPLE_RESET_DIR="${PSI0_ARTIFACT_ROOT}/reset-states/${SIMPLE_TASK}"
          mkdir -p "${SIMPLE_RESET_DIR}"
          unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" -d "${SIMPLE_RESET_DIR}"
 
+      **2c. 下载 HSSD 场景**
+
+      下载并解压 HSSD 场景到 ``SIMPLE_ASSETS_DIR``：
+
+      .. code-block:: bash
+
+         export SIMPLE_ASSETS_DIR=./simple_assets
          hf download USC-PSI-Lab/SIMPLE scenes_hssd_102344280.zip \
-           --repo-type dataset \
-           --local-dir ./simple_assets
+           --repo-type dataset --local-dir ./simple_assets
          unzip -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip" -d "${SIMPLE_ASSETS_DIR}"
          rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip"
 

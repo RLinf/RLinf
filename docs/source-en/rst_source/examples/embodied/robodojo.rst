@@ -162,11 +162,10 @@ RoboDojo supports Linux x86_64 with an NVIDIA CUDA GPU (CPU-only, macOS, and AMD
 
       **3. Launch**
 
-      Start one environment to verify Isaac Sim, cameras, and the downloaded assets:
+      Run the following Python snippet to start one environment and verify Isaac Sim, cameras, and the downloaded assets:
 
-      .. code-block:: bash
+      .. code-block:: python
 
-         python - <<'PY'
          import numpy as np
          from robodojo_runtime.bridge import VectorEnv
 
@@ -188,13 +187,15 @@ RoboDojo supports Linux x86_64 with an NVIDIA CUDA GPU (CPU-only, macOS, and AMD
              env.step(np.zeros((1, 1, 14), dtype=np.float32))
          finally:
              env.close()
-         PY
 
 .. dropdown:: Advanced configuration (optional)
 
    - **Pinned runtime and compatibility overrides**: ``requirements/install.sh`` and ``requirements/embodied/envs/robodojo-override.txt`` pin Python 3.11, RoboDojo runtime 0.3.0 (``6d76a0c``), PyTorch 2.7.0 (cu126, or cu128 on CUDA 12.8+), TorchVision 0.22.0 / TorchAudio 2.7.0, Isaac Sim 5.1.0, and IsaacLab 0.54.3 (``afca7b09``). Do not upgrade overlapping pins manually.
+
    - **Scale up parallel environments**: the default runs one environment; once verified, scale up with Hydra overrides such as ``env.eval.total_num_envs=4``, ``cluster.component_placement.env=0-3``, and ``cluster.component_placement.rollout=0-3``.
+
    - **ModelScope mirror download**: install ``modelscope>=1.40.0`` with ``uv pip install "modelscope>=1.40.0"`` and run ``modelscope download`` with the same ``--repo-type dataset``, ``--local-dir``, and ``--include`` flags.
+
    - **Verify package and CUDA imports** (without starting Isaac Sim):
 
      .. code-block:: bash

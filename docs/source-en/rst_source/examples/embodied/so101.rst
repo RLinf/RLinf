@@ -178,7 +178,7 @@ Setup and Run
 
          bash examples/embodiment/collect_data.sh realworld_so101_collect_data_joint
 
-      Use ``a`` to start or discard a recording, ``b`` to advance a segment, ``c`` to save a successful episode, and ``q`` to stop cleanly. Set ``RLINF_KEYBOARD_DEVICE`` to a stable ``/dev/input/by-id/...`` path if multiple keyboards are attached. Episodes are written under the run's ``collected_data`` directory; if combining multiple separate runs, merge them into one LeRobot dataset root (containing ``meta/info.json``) before computing stats or running SFT.
+      Use ``a`` to start or discard a recording, ``b`` to advance a segment, ``c`` to save a successful episode, and ``q`` to stop cleanly. Set ``RLINF_KEYBOARD_DEVICE`` to a stable ``/dev/input/by-id/...`` path if multiple keyboards are attached. Episodes are written under the run's ``collected_data`` directory; to combine multiple runs or inspect recorded frames as MP4 previews, run ``toolkits/lerobot/merge_lerobot_datasets.py`` and ``toolkits/lerobot/visualize_lerobot_dataset.py`` before computing stats or starting SFT.
 
       **3. Compute OpenPI normalization statistics**
 
@@ -191,25 +191,30 @@ Setup and Run
            --config-name pi05_so101_joint \
            --repo-id so101_dataset
 
-      Copy the ``norm_stats.json`` path printed after ``Writing stats to:`` into ``actor.model.openpi_data.norm_stats_path`` for both SFT and evaluation (this path depends on the OpenPI training config and can differ from ``assets_dir``).
+      Copy the ``norm_stats.json`` path printed after ``Writing stats to:`` into ``openpi_data.norm_stats_path`` (``actor.model.openpi_data.norm_stats_path`` for SFT and ``rollout.model.openpi_data.norm_stats_path`` for evaluation; training and evaluation do not auto-discover this file beside ``full_weights.pt``).
 
    .. tab-item:: 3. SFT & Evaluate
 
       **1. Train OpenPI SFT**
 
-      Set ``data.train_data_paths`` (the dataset root containing ``meta/info.json``), base checkpoint path, and ``norm_stats.json`` path in ``examples/sft/config/realworld_sft_openpi_so101.yaml``, then launch:
+      Edit ``examples/sft/config/realworld_sft_openpi_so101.yaml`` or pass the dataset root (containing ``meta/info.json``), base checkpoint, and ``norm_stats.json`` directly as Hydra CLI overrides:
 
       .. code-block:: bash
 
-         bash examples/sft/run_vla_sft.sh realworld_sft_openpi_so101
+         bash examples/sft/run_vla_sft.sh realworld_sft_openpi_so101 \
+           data.train_data_paths=./so101_dataset \
+           actor.model.model_path=./pi05_base_pytorch \
+           actor.model.openpi_data.norm_stats_path=./assets/pi05_so101_joint/so101_dataset/norm_stats.json
 
       **2. Evaluate locally with a fixed checkpoint**
 
-      Set the trained checkpoint (compatible with ``pi05_so101_joint``) and matching ``norm_stats.json`` in ``examples/embodiment/config/model/so101_pi05.yaml``. Update the follower port, calibration ID, camera device, verified reset pose, and identical ``task_description`` in ``examples/embodiment/config/realworld_so101_eval_openpi.yaml``, then run:
+      Update the follower port, calibration ID, camera device, verified reset pose, and identical ``task_description`` in ``examples/embodiment/config/realworld_so101_eval_openpi.yaml``. Set the trained checkpoint (compatible with ``pi05_so101_joint``) and matching ``norm_stats.json`` in ``examples/embodiment/config/model/so101_pi05.yaml``, or pass them via Hydra CLI overrides:
 
       .. code-block:: bash
 
-         bash evaluations/run_eval.sh realworld_so101_eval_openpi
+         bash evaluations/run_eval.sh realworld_so101_eval_openpi \
+           rollout.model.model_path=./logs/checkpoints/global_step_10000 \
+           rollout.model.openpi_data.norm_stats_path=./assets/pi05_so101_joint/so101_dataset/norm_stats.json
 
       Press ``a`` to start an evaluation episode, ``c`` to record success, or ``b`` to record failure.
 

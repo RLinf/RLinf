@@ -84,49 +84,56 @@ Setup and Run
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
 
-      **2. Download**
+      **2a. Qwen3-VL Metadata & Shared SIMPLE Assets**
 
-      Download the Qwen3-VL metadata snapshot (loaded by model ID from ``HF_HOME``), the shared `USC-PSI-Lab/SIMPLE <https://huggingface.co/datasets/USC-PSI-Lab/SIMPLE>`_ simulation assets (linked to ``${VIRTUAL_ENV}/SIMPLE/data``), and the official OpenOven checkpoint, reset states, and HSSD scene together:
+      Download the Qwen3-VL metadata snapshot (loaded by model ID from ``HF_HOME``; do not pass ``--local-dir``) and the shared `USC-PSI-Lab/SIMPLE <https://huggingface.co/datasets/USC-PSI-Lab/SIMPLE>`_ simulation assets, then symlink them to ``${VIRTUAL_ENV}/SIMPLE/data``:
 
       .. code-block:: bash
 
          export HF_HOME=./hf-cache
          export SIMPLE_ASSETS_DIR=./simple_assets
-         export PSI0_ARTIFACT_ROOT=./psi0-simple-artifacts
-         export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0
-         export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
 
-         # 1. Qwen3-VL metadata snapshot (do not use --local-dir; export the same HF_HOME before training/eval)
          hf download Qwen/Qwen3-VL-2B-Instruct \
            chat_template.json config.json generation_config.json merges.txt \
            preprocessor_config.json tokenizer.json tokenizer_config.json \
            video_preprocessor_config.json vocab.json
 
-         # 2. Shared SIMPLE simulation assets + symlink into ${VIRTUAL_ENV}/SIMPLE/data
          bash requirements/embodied/download_assets.sh --assets simple --dir "${SIMPLE_ASSETS_DIR}"
          rm -rf "${VIRTUAL_ENV}/SIMPLE/data"
          ln -s "$(realpath "${SIMPLE_ASSETS_DIR}")" "${VIRTUAL_ENV}/SIMPLE/data"
 
-         # 3. OpenOven checkpoint, reset states, and HSSD scene
+      **2b. OpenOven Checkpoint & Reset States**
+
+      Download the official OpenOven checkpoint and task reset states:
+
+      .. code-block:: bash
+
+         export PSI0_ARTIFACT_ROOT=./psi0-simple-artifacts
+         export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0
+         export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
+
          hf download USC-PSI-Lab/psi-model \
-           "${PSI0_RUN_REL}/argv.txt" \
-           "${PSI0_RUN_REL}/run_config.json" \
+           "${PSI0_RUN_REL}/argv.txt" "${PSI0_RUN_REL}/run_config.json" \
            "${PSI0_RUN_REL}/checkpoints/ckpt_40000/model.safetensors" \
-           --revision d34a91932d25c45ef211582315b9224c7dc8ace9 \
-           --local-dir ./psi0-simple-artifacts/psi-model
+           --revision d34a91932d25c45ef211582315b9224c7dc8ace9 --local-dir ./psi0-simple-artifacts/psi-model
          export PSI0_RUN_DIR="${PSI0_ARTIFACT_ROOT}/psi-model/${PSI0_RUN_REL}"
 
          hf download USC-PSI-Lab/psi-data "simple-eval/${SIMPLE_TASK}.zip" \
-           --repo-type dataset \
-           --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 \
+           --repo-type dataset --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 \
            --local-dir ./psi0-simple-artifacts/psi-data
          export SIMPLE_RESET_DIR="${PSI0_ARTIFACT_ROOT}/reset-states/${SIMPLE_TASK}"
          mkdir -p "${SIMPLE_RESET_DIR}"
          unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" -d "${SIMPLE_RESET_DIR}"
 
+      **2c. HSSD Scene**
+
+      Download and extract the HSSD scene into ``SIMPLE_ASSETS_DIR``:
+
+      .. code-block:: bash
+
+         export SIMPLE_ASSETS_DIR=./simple_assets
          hf download USC-PSI-Lab/SIMPLE scenes_hssd_102344280.zip \
-           --repo-type dataset \
-           --local-dir ./simple_assets
+           --repo-type dataset --local-dir ./simple_assets
          unzip -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip" -d "${SIMPLE_ASSETS_DIR}"
          rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip"
 

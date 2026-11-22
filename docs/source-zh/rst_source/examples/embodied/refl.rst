@@ -167,63 +167,67 @@ ReFL 先采样到去噪后期，再用一步预测得到干净图像。冻结的
      00001.png
      00001.txt
 
-下方实验使用 `PD3M <https://huggingface.co/datasets/Spawning/PD3M>`_ 的 20,000 对图文数据。下面的命令在独立环境中准备数据。脚本读取前两个元数据分片，保留有授权信息、宽高均不小于 512 像素、长边不超过短边两倍的图像。排除 iNaturalist 来源及描述单色图像或文档的样本，再以随机种子 ``42`` 打乱，取前 20,000 条。
+下方实验使用 `PD3M <https://huggingface.co/datasets/Spawning/PD3M>`_ 的 20,000 对图文数据。可展开下方步骤在独立环境中准备数据，也可直接使用自己的图文目录。
 
-.. code-block:: bash
+.. dropdown:: 可选：准备 20,000 对 PD3M 图文数据
 
-   export PD3M_DIR="$PWD/data/PD3M"
-   uv venv --python 3.10 "$PD3M_DIR/.venv"
-   uv pip install --python "$PD3M_DIR/.venv/bin/python" \
-     huggingface_hub pyarrow img2dataset==1.47.0
+   脚本读取前两个元数据分片，保留有授权信息、宽高均不小于 512 像素、长边不超过短边两倍的图像。排除 iNaturalist 来源及描述单色图像或文档的样本，再以随机种子 ``42`` 打乱，取前 20,000 条。
 
-   "$PD3M_DIR/.venv/bin/hf" download Spawning/PD3M \
-     metadata/pd3m.00.parquet metadata/pd3m.01.parquet \
-     --repo-type dataset --local-dir "$PD3M_DIR"
+   .. code-block:: bash
 
-   "$PD3M_DIR/.venv/bin/python" - "$PD3M_DIR" <<'PYTHON'
-   import random
-   import re
-   import sys
+      export PD3M_DIR="$PWD/data/PD3M"
+      uv venv --python 3.10 "$PD3M_DIR/.venv"
+      uv pip install --python "$PD3M_DIR/.venv/bin/python" \
+        huggingface_hub pyarrow img2dataset==1.47.0
 
-   import pyarrow as pa
-   import pyarrow.parquet as pq
+      "$PD3M_DIR/.venv/bin/hf" download Spawning/PD3M \
+        metadata/pd3m.00.parquet metadata/pd3m.01.parquet \
+        --repo-type dataset --local-dir "$PD3M_DIR"
 
-   root = sys.argv[1]
-   columns = ["id", "url", "caption", "width", "height", "license", "source"]
-   rows = []
-   for shard in ("00", "01"):
-       rows += pq.read_table(
-           f"{root}/metadata/pd3m.{shard}.parquet", columns=columns
-       ).to_pylist()
+      "$PD3M_DIR/.venv/bin/python" - "$PD3M_DIR" <<'PYTHON'
+      import random
+      import re
+      import sys
 
-   mono = re.compile(r"black[- ]and[- ]white|grayscale|sepia|monochrome", re.I)
-   document = re.compile(
-       r"\b(book|page|newspaper|document|letter|map|poster|stamp|coin|text (on|at|in))\b",
-       re.I,
-   )
-   selected = [
-       row for row in rows
-       if row["license"]
-       and row["source"] != "iNaturalist"
-       and min(row["width"], row["height"]) >= 512
-       and max(row["width"], row["height"]) <= 2 * min(row["width"], row["height"])
-       and not mono.search(row["caption"])
-       and not document.search(row["caption"])
-   ]
-   random.Random(42).shuffle(selected)
-   pairs = [{key: row[key] for key in ("id", "url", "caption")}
-            for row in selected[:20000]]
-   pq.write_table(pa.Table.from_pylist(pairs), f"{root}/pd3m_refl.parquet")
-   PYTHON
+      import pyarrow as pa
+      import pyarrow.parquet as pq
 
-   export PRE_DATA="$PD3M_DIR/images_512"
-   "$PD3M_DIR/.venv/bin/img2dataset" \
-     --url_list="$PD3M_DIR/pd3m_refl.parquet" \
-     --input_format=parquet --url_col=url --caption_col=caption \
-     --output_format=files --output_folder="$PRE_DATA" \
-     --image_size=512 --resize_mode=keep_ratio --resize_only_if_bigger=True \
-     --number_sample_per_shard=1000 --processes_count=16 --thread_count=32 \
-     --timeout=60 --retries=2 --enable_wandb=False
+      root = sys.argv[1]
+      columns = ["id", "url", "caption", "width", "height", "license", "source"]
+      rows = []
+      for shard in ("00", "01"):
+          rows += pq.read_table(
+              f"{root}/metadata/pd3m.{shard}.parquet", columns=columns
+          ).to_pylist()
+
+      mono = re.compile(r"black[- ]and[- ]white|grayscale|sepia|monochrome", re.I)
+      document = re.compile(
+          r"\b(book|page|newspaper|document|letter|map|poster|stamp|coin|text (on|at|in))\b",
+          re.I,
+      )
+      selected = [
+          row for row in rows
+          if row["license"]
+          and row["source"] != "iNaturalist"
+          and min(row["width"], row["height"]) >= 512
+          and max(row["width"], row["height"]) <= 2 * min(row["width"], row["height"])
+          and not mono.search(row["caption"])
+          and not document.search(row["caption"])
+      ]
+      random.Random(42).shuffle(selected)
+      pairs = [{key: row[key] for key in ("id", "url", "caption")}
+               for row in selected[:20000]]
+      pq.write_table(pa.Table.from_pylist(pairs), f"{root}/pd3m_refl.parquet")
+      PYTHON
+
+      export PRE_DATA="$PD3M_DIR/images_512"
+      "$PD3M_DIR/.venv/bin/img2dataset" \
+        --url_list="$PD3M_DIR/pd3m_refl.parquet" \
+        --input_format=parquet --url_col=url --caption_col=caption \
+        --output_format=files --output_folder="$PRE_DATA" \
+        --image_size=512 --resize_mode=keep_ratio --resize_only_if_bigger=True \
+        --number_sample_per_shard=1000 --processes_count=16 --thread_count=32 \
+        --timeout=60 --retries=2 --enable_wandb=False
 
 下载后的图像和描述文件位于 ``$PRE_DATA``。训练加载时将图像缩放并中心裁剪到 512 × 512。配置中的 ``actor.refl_pre_data.caption_prefix`` 为 ``"The image shows "``，用于去掉 PD3M 描述开头的这段文字。要保留自己的描述原文，将该配置项设为 ``""``。
 

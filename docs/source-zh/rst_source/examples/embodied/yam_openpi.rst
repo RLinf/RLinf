@@ -116,7 +116,7 @@ SFT 在 GPU 节点运行。真机评估使用双节点 Ray 集群：GPU 节点�
              --output-norm-stats "$YAM_MODELS/pi05_base_openpi/yam/norm_stats.json" \
              --action-dim 32 --action-horizon 30 --max-token-len 200
 
-      **在** ``examples/sft/config/realworld_dual_yam_sft_openpi_pi05.yaml`` **中填入三个绝对路径：**
+      **在** ``examples/sft/config/realworld_dual_yam_sft_openpi_pi05.yaml`` **中配置三个绝对路径**\ （或直接用下方 Hydra CLI 参数传入）：
 
       .. list-table::
          :header-rows: 1
@@ -137,7 +137,10 @@ SFT 在 GPU 节点运行。真机评估使用双节点 Ray 集群：GPU 节点�
 
       .. code-block:: bash
 
-         bash examples/sft/run_vla_sft.sh realworld_dual_yam_sft_openpi_pi05
+         bash examples/sft/run_vla_sft.sh realworld_dual_yam_sft_openpi_pi05 \
+             data.train_data_paths="$YAM_DATASET" \
+             actor.model.model_path="$YAM_MODELS/pi05_base_openpi" \
+             actor.model.openpi_data.norm_stats_path="$YAM_DATASET/norm_stats.json"
 
          # 在 GPU 节点另开终端列出包含 actor/model_state_dict/full_weights.pt 的目录
          find logs -type d -path '*/checkpoints/global_step_*'

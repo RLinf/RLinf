@@ -145,32 +145,22 @@ Franka π₀ SFT 与部署
              --config-name pi0_realworld \
              --repo-id realworld_franka_bin_relocation
 
-      ``config-name`` 须与训练使用的 OpenPI 数据配置一致，``repo-id`` 须与数据集目录名一致。将生成的 ``norm_stats.json`` 复制到 ``<model_path>/realworld_franka_bin_relocation/norm_stats.json``\ （与 ``config.json``、``model.safetensors`` 同级），OpenPI 加载器会在运行时自动读取。
+      ``config-name`` 须与训练使用的 OpenPI 数据配置一致，``repo-id`` 须与数据集目录名一致。脚本会生成 ``./assets/pi0_realworld/realworld_franka_bin_relocation/norm_stats.json``。与 :doc:`sft_openpi` 一致，训练和评测都不会在 SFT ``full_weights.pt`` 同级目录查找统计文件：推荐通过 ``openpi_data.norm_stats_path`` 显式指定路径，或将其复制到 ``<model_path>/realworld_franka_bin_relocation/norm_stats.json`` 以走默认回退路径。
 
       **启动 OpenPI SFT**
 
-      修改 ``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml`` 中的数据集与模型路径：
-
-      .. code-block:: yaml
-
-         data:
-           train_data_paths: "/path/to/lerobot_data"
-
-         actor:
-           model:
-             model_path: "/path/to/pi0-model"
-             openpi:
-               config_name: "pi0_realworld"
-
-      运行 SFT 训练脚本（更多 OpenPI SFT 选项见 :doc:`sft_openpi`）：
+      编辑 ``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml``，或直接通过 Hydra CLI 参数传入数据集、基座模型与归一化统计路径（更多 OpenPI SFT 选项见 :doc:`sft_openpi`）：
 
       .. code-block:: bash
 
-         bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
+         bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi \
+           data.train_data_paths=./lerobot_data/realworld_franka_bin_relocation \
+           actor.model.model_path=./pi0-model \
+           +actor.model.openpi_data.norm_stats_path=./assets/pi0_realworld/realworld_franka_bin_relocation/norm_stats.json
 
    .. tab-item:: 3. 真机部署
 
-      编辑 ``evaluations/realworld/realworld_pnp_eval.yaml``，填入机械臂 IP、实测目标位姿、基础模型路径与导出的 SFT checkpoint（RealSense 相机自动发现，仅需筛选子集或固定顺序时才填写 ``camera_serials``）：
+      编辑 ``evaluations/realworld/realworld_pnp_eval.yaml``，填入机械臂 IP 与实测目标位姿（RealSense 相机自动发现，仅需筛选子集或固定顺序时才填写 ``camera_serials``）：
 
       .. code-block:: yaml
 
@@ -181,13 +171,6 @@ Franka π₀ SFT 与部署
                  configs:
                    - robot_ip: ROBOT_IP
 
-         runner:
-           ckpt_path: "/path/to/your/sft/checkpoint/full_weights.pt"
-
-         rollout:
-           model:
-             model_path: "/path/to/pi0-model"
-
          env:
            eval:
              rollout_epoch: 20
@@ -195,11 +178,14 @@ Franka π₀ SFT 与部署
                target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
                task_description: "pick up the object and place it into the container"
 
-      ``evaluations/realworld/realworld_pnp_eval.yaml`` 默认为双节点集群（``cluster.num_nodes: 2``，``franka`` 位于 ``node_rank: 1``）。多机部署先按 :doc:`franka` 启动 Ray 集群；单机部署须将 ``cluster.num_nodes`` 改为 ``1``，并将 ``franka`` 组的 ``node_ranks`` 与 ``node_rank`` 均改为 ``0``\ （或改用下方单机配置 ``realworld_eval``），否则 Ray 会一直等待第二个节点。在仓库根目录启动部署（更多选项见 :doc:`真机评测指南 <../../evaluations/guides/realworld>`）：
+      ``evaluations/realworld/realworld_pnp_eval.yaml`` 默认为双节点集群（``cluster.num_nodes: 2``，``franka`` 位于 ``node_rank: 1``）。多机部署先按 :doc:`franka` 启动 Ray 集群；单机部署须将 ``cluster.num_nodes`` 改为 ``1``，并将 ``franka`` 组的 ``node_ranks`` 与 ``node_rank`` 均改为 ``0``\ （或改用下方单机配置 ``realworld_eval``），否则 Ray 会一直等待第二个节点。在仓库根目录通过 Hydra CLI 参数传入 checkpoint、基座模型与 ``norm_stats.json`` 路径并启动部署（更多选项见 :doc:`真机评测指南 <../../evaluations/guides/realworld>`）：
 
       .. code-block:: bash
 
-         bash evaluations/run_eval.sh realworld_pnp_eval
+         bash evaluations/run_eval.sh realworld_pnp_eval \
+           runner.ckpt_path=./logs/checkpoints/global_step_2000/actor/model_state_dict/full_weights.pt \
+           rollout.model.model_path=./pi0-model \
+           +rollout.model.openpi_data.norm_stats_path=./assets/pi0_realworld/realworld_franka_bin_relocation/norm_stats.json
 
       policy 会按 ``env.eval.rollout_epoch`` 指定的轮数自主控制机械臂。
 
@@ -239,7 +225,7 @@ Franka π₀ SFT 与部署
    * - ``calculate_norm_stats.py`` 找不到数据集
      - 将 ``HF_LEROBOT_HOME`` 指向包含 ``<repo_id>/{data,meta}`` 的父目录，并确保 ``--repo-id`` 与目录名一致。
    * - SFT 或部署时提示缺少 ``norm_stats.json``
-     - 将生成的 ``norm_stats.json`` 复制到 ``<model_path>/<repo_id>/norm_stats.json``。
+     - 通过 ``openpi_data.norm_stats_path`` 显式传入生成的 ``norm_stats.json``\ （推荐，与 :doc:`sft_openpi` 一致），或将其复制到 ``<model_path>/<repo_id>/norm_stats.json``。
    * - 数据采集时夹爪无法开合
      - 在 ``realworld_collect_data.yaml`` 中设置 ``env.eval.no_gripper: False``。
    * - 机械臂碰触容器边缘或触发限位

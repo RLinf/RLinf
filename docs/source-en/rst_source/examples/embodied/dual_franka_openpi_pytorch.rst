@@ -38,85 +38,9 @@ This guide extends the dual-Franka GELLO pipeline (:doc:`dual_franka`) with nati
 
       2 robot nodes (or 1 GPU workstation for RTC) · GPU SFT node
 
-Observation and Action
-~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _dual_franka_setup.rst
 
-.. list-table::
-   :header-rows: 1
-   :widths: 22 78
-
-   * - Field
-     - Description
-   * - Observation
-     - Base RealSense view, left/right Lumos wrist views, and dual-arm robot state.
-   * - Action
-     - 20-D dual-arm ``tcp_rot6d`` target: ``[L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]``.
-   * - Reward
-     - Operator-gated episode labels from the USB foot pedal (``a`` / ``b`` / ``c``).
-   * - Prompt
-     - Natural-language ``TASK_DESCRIPTION`` stored in dataset and OpenPI metadata.
-
-Hardware and Safety
--------------------
-
-Connect the left Franka arm, all three cameras, both GELLO leaders, and the PCsensor FootSwitch to ``node 0``, and connect the right Franka arm to ``node 1``. Keep both GELLO leaders local to ``node 0`` so their 1 kHz serial stream never crosses the LAN. For single-workstation RTC deployment, attach both arms, all three cameras, and the GPU to one host.
-
-.. warning::
-
-   Keep an emergency stop within reach and clear the dual-arm workspace before enabling either arm. Verify both arms sit in a safe starting pose and confirm ``target_ee_pose`` stays inside the ``realworld_dual_franka_tcp_rot6d`` workspace box: ``x`` in ``[0.3, 0.9]``, ``y`` in ``[-0.4, 0.4]``, and ``z`` in ``[0.02, 0.7]``. Never route the 1 kHz GELLO stream over the network.
-
-Configure the PCsensor FootSwitch keys once as ``a`` / ``b`` / ``c`` with the vendor tool, and note your FCI IPs, camera serials or ``/dev/v4l/by-id`` paths, Robotiq ``/dev/serial/by-id`` paths, and GELLO FTDI paths.
-
-.. dropdown:: Real-time kernel prerequisites and tuning (recommended)
-
-   The ``franka`` environment drives each arm at 1 kHz through Franky and libfranka. Configure a ``PREEMPT_RT`` kernel and real-time permissions according to the `Franka real-time kernel guide <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_.
-
-   Dual-arm hardware configs default to ``realtime_config: ignore``, so both arms also start on a standard kernel with a warning; under load, missed 1 kHz deadlines can trigger a robot reflex. Set ``realtime_config: enforce`` to require ``PREEMPT_RT``.
-
-   Run the tuning and link checks below on every robot workstation before starting Ray (replace ``eth0`` and ``172.16.0.2`` for each node):
-
-   .. code-block:: bash
-
-      # Per-boot tuning (re-apply after every reboot).
-      sudo bash -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-          echo performance > "$g"
-      done'
-      sudo sysctl -w kernel.sched_rt_runtime_us=-1
-      sudo ethtool -C eth0 rx-usecs 0 tx-usecs 0 2>/dev/null || true  # replace with your Franka NIC
-
-      # Optional: persist the RT scheduling budget across reboots.
-      echo 'kernel.sched_rt_runtime_us = -1' | sudo tee /etc/sysctl.d/99-franka-rt.conf
-
-      # Verify real-time permissions and robot link latency.
-      uname -a | grep -o PREEMPT_RT
-      ulimit -r
-      ulimit -l
-      sudo cyclictest -p 80 -t 4 -i 1000 -l 300000 -m
-      ping -c 1000 -i 0.001 172.16.0.2 | tail -3  # replace with your robot IP
-
-   Confirm ``ulimit -r`` reports ``99`` or ``unlimited`` and ``ulimit -l`` reports ``unlimited``.
-
-.. _dual-franka-openpi-gello-calibration:
-
-.. dropdown:: GELLO calibration (first-time setup)
-
-   From the RLinf repository root with ``.venv`` active, calibrate each GELLO leader once against the left arm on ``node 0`` and verify alignment with ``align-sequential``. Repeat both commands for the second leader by updating ``GELLO_PORT``:
-
-   .. code-block:: bash
-
-      export GELLO_PORT=/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0  # replace with your FTDI device
-
-      python -m toolkits.realworld_check.test_gello calibrate
-      python -m toolkits.realworld_check.test_gello align-sequential
-
-   Expected output on success:
-
-   .. code-block:: text
-
-      ALL JOINTS ALIGNED
-        per-joint Δ (rad): ['+0.012', '-0.008', '+0.005', '+0.021', '-0.041', '+0.009', '-0.003']
-        max |Δ| = 0.041 rad on J5 (stream gate threshold = 0.5 rad — well under)
-      You can now Ctrl-C and start collect_data.sh.
+For single-workstation RTC deployment, attach both arms, all three cameras, and the GPU to one host.
 
 Setup and Run
 -------------
@@ -161,7 +85,7 @@ Setup and Run
          python -m rlinf.robotics.parts.teleop.gello_joint \
              --port /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0  # replace with your left GELLO device
 
-      Expected GELLO output refreshes continuously as ``joints=[+0.012 -0.604 ...]  gripper=[0.035]``. If values stall or jump by ``2π``, run :ref:`align-sequential <dual-franka-openpi-gello-calibration>`.
+      Expected GELLO output refreshes continuously as ``joints=[+0.012 -0.604 ...]  gripper=[0.035]``. If values stall or jump by ``2π``, run ``align-sequential`` (see *GELLO calibration* above).
 
    .. tab-item:: 2. Collect & SFT
 
@@ -180,7 +104,7 @@ Setup and Run
 
       Confirm ``ray status`` on ``node 0`` reports both nodes ``ALIVE``.
 
-      **Collect demonstrations** on ``node 0`` after :ref:`align-sequential <dual-franka-openpi-gello-calibration>` passes:
+      **Collect demonstrations** on ``node 0`` after ``align-sequential`` (see *GELLO calibration* above) passes:
 
       .. code-block:: bash
 
@@ -329,7 +253,7 @@ Monitor SFT loss and learning rate on the training node with ``tensorboard --log
    * - RealSense shows USB 2 speed
      - Replace the USB cable or port so ``lsusb -t`` reports ``5000M`` instead of ``480M``.
    * - GELLO stops streaming or jumps by ``2π``
-     - Power-cycle the leader, replug the FTDI adapter, verify with ``gello_joint --port ...``, and re-run :ref:`align-sequential <dual-franka-openpi-gello-calibration>`.
+     - Power-cycle the leader, replug the FTDI adapter, verify with ``gello_joint --port ...``, and re-run ``align-sequential`` (see *GELLO calibration* above).
    * - One arm stalls during reset
      - Run ``ping -c 100 <robot_ip>`` on that controller node; fix any NIC/FCI packet loss or power-cycle the robot.
    * - Deployment cannot locate ``norm_stats.json``

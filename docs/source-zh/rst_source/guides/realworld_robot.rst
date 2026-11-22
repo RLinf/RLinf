@@ -1,20 +1,19 @@
 真机机器人训练启动
 ====================
 
-本页说明如何将 **多台 Franka 真机** 与 **GPU 训练节点** 接入同一 Ray 集群，完成 YAML 配置并启动真机强化学习训练。
+本页说明如何将 **任意真机机器人控制节点**\ （如 Franka、双臂 Franka、YAM、DOS-W1、SO-101 等）与 **GPU 训练节点** 接入同一 Ray 集群，完成 YAML 资源放置配置并启动真机训练或评测。下文 YAML 配置以 Franka 作为具体示例。
 
 .. note::
 
    单机部署会自动启动 Ray，无需设置 ``RLINF_NODE_RANK`` 或手动执行 ``ray start``；仅在连接多台节点时按本指南操作。
 
-更完整的硬件安装、依赖、数据采集与任务说明，请参阅：
+各机器人平台的硬件安装、依赖、数据采集与任务说明见 :doc:`../examples/real_world_index`，Franka 具体示例见：
 
 - :doc:`../examples/embodied/franka` — RealSense + Franka 夹爪的标准真机流程
 - :doc:`../examples/embodied/franka_zed_robotiq` — ZED 相机 + Robotiq 夹爪的异构双节点部署
 - :doc:`../examples/embodied/franka_orbbec` — Orbbec 相机及对齐深度
 
-Ray 集群的基础启动步骤（``RLINF_NODE_RANK``、``ray start``、代码同步等）见 :doc:`multi_node`；
-``node_groups`` / ``component_placement`` 的通用语义见 :doc:`hetero`。
+Ray 集群的基础启动步骤（``RLINF_NODE_RANK``、``ray start``、代码同步等）见 :doc:`multi_node`；``node_groups`` / ``component_placement`` 的通用语义见 :doc:`hetero`。
 
 
 典型拓扑
@@ -34,13 +33,13 @@ Ray 集群的基础启动步骤（``RLINF_NODE_RANK``、``ray start``、代码�
      - 运行 ``actor`` 、``rollout`` （及可选 ``reward``）；仅在此节点提交训练入口脚本
    * - rank 1 至 N
      - 机器人控制
-     - 运行 ``env`` worker 和 Franka 机械臂；每台机械臂对应一个控制节点 rank（多台机械臂共用一个控制节点时，需参照示例文档单独配置）
+     - 运行 ``env`` worker 与机器人硬件控制；通常每台机器人对应一个控制节点 rank（多台机器人共用一个控制节点时，参照对应平台指南配置）
 
-所有节点须处于 **同一局域网** （或 overlay 网络，见 :doc:`cloud_edge`），且 ``cluster.num_nodes`` 等于实际加入 Ray 的节点总数。
+所有节点须处于 **同一局域网**\ （或 overlay 网络，见 :doc:`cloud_edge`），且 ``cluster.num_nodes`` 等于实际加入 Ray 的节点总数。
 
 .. important::
 
-   - 控制节点需预先安装 Franka 控制环境（默认为内置 libfranka 的 Franky），详见 :doc:`../examples/embodied/franka`。
+   - 控制节点需预先安装对应机器人的驱动与运行环境（Franka 默认使用内置 libfranka 的 Franky，各平台说明见 :doc:`../examples/real_world_index`）。
    - Ray 在 ``ray start`` 时冻结 Python 与环境变量；请在 **每个节点** 安装好依赖后再启动 Ray。
    - 可使用 ``ray_utils/realworld/setup_before_ray.sh`` 统一设置各节点环境，再执行 ``ray start``。
 
@@ -261,8 +260,7 @@ YAML 配置
    export ROBOT_IP=<ip_arm0>,<ip_arm1>     # 两台机器人
    export DISABLE_VALIDATE=true,true       # 每台机器人一个取值
 
-此模式下，所设置的每个变量都必须提供与 ``ROBOT_IP`` 相同数量的逗号分隔取值；数量不一致会使枚举报错并中止。
-其他机器人类型使用各自的标识字段（``GimArm`` → ``CAN_INTERFACE`` 、``DOSW1`` → ``ROBOT_URL``）。
+此模式下，所设置的每个变量都必须提供与 ``ROBOT_IP`` 相同数量的逗号分隔取值；数量不一致会使枚举报错并中止。其他机器人类型使用各自的标识字段（GimArm → ``CAN_INTERFACE``、DOS-W1 → ``ROBOT_URL``）。
 
 
 启动真机训练
