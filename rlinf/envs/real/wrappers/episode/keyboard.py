@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import errno
 import os
 import threading
 import time
@@ -169,8 +168,8 @@ class KeyboardListener:
         return required_codes.issubset(supported_key_codes)
 
     def _listen_loop(self) -> None:
-        # Retain the path so the listener can recover after USB disconnects.
-        device_path = self.device.path
+        """Read press edges and reopen the selected keyboard after I/O failures."""
+        device_path = self._configured_path()[0] or self.device.path
         while True:
             try:
                 for event in self.device.read_loop():
@@ -182,21 +181,16 @@ class KeyboardListener:
                             device_path,
                         )
             except OSError as exc:
-                if exc.errno != errno.ENODEV:
-                    _logger.error(
-                        "Keyboard device %s read failed (errno=%s): %s",
-                        device_path,
-                        exc.errno,
-                        exc,
-                    )
-                    raise
                 _logger.warning(
-                    "Keyboard device %s disconnected (errno=ENODEV); "
+                    "Keyboard device %s read failed (errno=%s): %s; "
                     "reopening until it returns.",
                     device_path,
+                    exc.errno,
+                    exc,
                 )
                 with self.state_lock:
                     self.latest_data["key"] = None
+                    self._press_events.clear()
                 try:
                     self.device.close()
                 except Exception:
@@ -205,7 +199,14 @@ class KeyboardListener:
                 while True:
                     time.sleep(0.5)
                     try:
-                        self.device = self._input_device_cls(device_path)
+                        device = self._input_device_cls(device_path)
+                        try:
+                            if not self._is_keyboard_device(device):
+                                raise OSError("Reopened input device is not a keyboard")
+                        except Exception:
+                            device.close()
+                            raise
+                        self.device = device
                         break
                     except (FileNotFoundError, OSError):
                         continue

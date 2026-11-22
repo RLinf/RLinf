@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import dataclasses
+import errno
 import importlib
 import importlib.util
 import io
@@ -1583,6 +1584,57 @@ def test_streaming_device_lifecycle_without_hardware():
 # Keyboard sessions
 
 
+def test_keyboard_reopens_its_stable_path_after_a_connection_reset(monkeypatch):
+    """A reset drops stale edges and resumes reading from the selected keyboard."""
+    from collections import deque
+
+    from rlinf.envs.real.wrappers.episode import keyboard
+
+    class Finished(BaseException):
+        pass
+
+    class Device:
+        path = "/dev/input/event9"
+
+        def __init__(self, failed):
+            self.failed = failed
+
+        def read_loop(self):
+            if self.failed:
+                raise OSError(errno.ECONNRESET, "Connection reset")
+            yield SimpleNamespace(type=1, code=30, value=1)
+            raise Finished
+
+        def capabilities(self, verbose=False):
+            return {1: [30, 48, 46, 16]}
+
+        def close(self):
+            pass
+
+    listener = object.__new__(keyboard.KeyboardListener)
+    listener._device_path = "/dev/input/by-id/test-keyboard"
+    listener._ecodes = SimpleNamespace(
+        EV_KEY=1, KEY_A=30, KEY_B=48, KEY_C=46, KEY_Q=16,
+        bytype={1: {30: "KEY_A"}},
+    )
+    listener.state_lock = threading.Lock()
+    listener.latest_data = {"key": "c"}
+    listener._press_events = deque(["c"])
+    listener.device = Device(failed=True)
+    opened = []
+
+    def reopen(path):
+        opened.append(path)
+        return Device(failed=False)
+
+    listener._input_device_cls = reopen
+    monkeypatch.setattr(keyboard.time, "sleep", lambda _: None)
+    with pytest.raises(Finished):
+        listener._listen_loop()
+    assert opened == ["/dev/input/by-id/test-keyboard"]
+    assert listener.pop_pressed_keys() == ["a"]
+
+
 def _keyboard_session(monkeypatch, queued):
     """Build a keyboard session that replays queued key batches."""
     from rlinf.envs.real.wrappers.episode import session as session_module
@@ -1865,6 +1917,51 @@ def test_realworld_env_exposes_optional_wrapper_smooth_control_state():
     env.env = SimpleNamespace(envs=[EpisodeWrapper()])
 
     assert env.smooth_intervention_active() is True
+
+
+def test_realworld_chunk_retains_the_actual_terminal_step():
+    """A mid-chunk termination preserves its metadata and excludes later slots."""
+    from rlinf.data.schema.embodied_trajectory import LeRobotEpisodeAccumulator
+    from rlinf.envs.real.env import RealWorldEnv
+
+    env = object.__new__(RealWorldEnv)
+    env.num_envs = 1
+    env.auto_reset = True
+    env.ignore_terminations = False
+    env.use_fixed_reset_state_ids = False
+    env._notify_action_chunk_begin = lambda: None
+    results = iter(
+        (
+            {"states": torch.tensor([[float(i)]])},
+            torch.tensor([float(i == 1)]),
+            torch.tensor([i == 1]),
+            torch.tensor([False]),
+            {"pre_record": i > 1, "success": i == 1},
+        )
+        for i in range(4)
+    )
+    env.step = lambda *args, **kwargs: next(results)
+    env.reset = lambda **kwargs: ({"states": torch.tensor([[99.0]])}, {})
+    obs, _, term, trunc, infos = env.chunk_step(np.zeros((1, 4, 1)))
+    assert bool(infos[-1]["final_info"]["success"])
+    assert infos[-1]["final_observation"]["states"].item() == 1
+    assert infos[-1]["valid_action_mask"].tolist() == [[True, True, False, False]]
+    accumulator = LeRobotEpisodeAccumulator(
+        num_envs=1, num_action_chunks=4, action_dim=1, only_success=True
+    )
+    accumulator.append_chunk_episode_data(
+        policy_output=None,
+        chunk_actions=np.zeros((1, 4, 1)),
+        initial_observation={"states": torch.tensor([[-1.0]])},
+        obs_list=obs,
+        terminations=term,
+        truncations=trunc,
+        infos_list=infos,
+        valid_action_mask=infos[-1]["valid_action_mask"],
+    )
+    [episode] = accumulator.drain_episodes()
+    assert len(episode) == 2
+    assert [frame["state"].item() for frame in episode] == [-1.0, 0.0]
 
 
 def test_so101_hg_dagger_switches_control_only_at_chunk_boundaries(monkeypatch):
@@ -4194,6 +4291,94 @@ def test_so101_leader_releases_the_servo_bus():
         assert handle.is_connected
         leader.disconnect()
         assert not handle.is_connected
+
+
+@pytest.mark.parametrize(
+    "message,retry",
+    [
+        ("Missing motor IDs:\n  - 3", True),
+        ("Missing motor IDs:\nMotors with incorrect model numbers:", False),
+        ("[RxPacketError] Overheat error!", False),
+        ("[RxPacketError] Overload error!", False),
+    ],
+)
+def test_so101_leader_retries_missing_responses_but_propagates_faults(
+    monkeypatch, message, retry
+):
+    """Only recoverable vendor errors may consume another connection attempt."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
+
+    with mocked_sdks() as made:
+        vendor = made["lerobot.teleoperators.so_leader"].SO101Leader
+        original_connect = vendor.connect
+        attempts = []
+
+        def connect(device, *args, **kwargs):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise RuntimeError(message)
+            return original_connect(device, *args, **kwargs)
+
+        monkeypatch.setattr(vendor, "connect", connect)
+        leader = SO101Leader(port="/dev/mock-leader")
+        if retry:
+            leader.connect()
+            leader.disconnect()
+            assert len(attempts) == 2
+        else:
+            with pytest.raises(RuntimeError, match="RxPacketError|Missing motor IDs"):
+                leader.connect()
+            assert len(attempts) == 1
+
+
+def test_so101_leader_closes_a_partially_connected_bus_before_retry(monkeypatch):
+    """A failed handshake cannot leave the serial handle open for the retry."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
+
+    with mocked_sdks() as made:
+        vendor = made["lerobot.teleoperators.so_leader"].SO101Leader
+        original_connect = vendor.connect
+        original_disconnect = vendor.disconnect
+        attempts = []
+        forced_disconnects = []
+        cleanup_failure = True
+
+        def disconnect(device, *args, **kwargs):
+            nonlocal cleanup_failure
+            if cleanup_failure:
+                cleanup_failure = False
+                raise RuntimeError("torque disable failed")
+            return original_disconnect(device, *args, **kwargs)
+
+        def connect(device, *args, **kwargs):
+            attempts.append(1)
+            if len(attempts) == 1:
+                device.is_connected = True
+                device.bus.is_connected = True
+
+                def force_disconnect(*, disable_torque=True):
+                    forced_disconnects.append(disable_torque)
+                    device.bus.is_connected = False
+
+                device.bus.disconnect = force_disconnect
+                raise RuntimeError("Missing motor IDs:\n  - 3")
+            if device.bus.is_connected:
+                raise ConnectionError("serial handle is still open")
+            return original_connect(device, *args, **kwargs)
+
+        monkeypatch.setattr(vendor, "connect", connect)
+        monkeypatch.setattr(vendor, "disconnect", disconnect)
+        leader = SO101Leader(port="/dev/mock-leader")
+        leader.connect()
+        try:
+            assert len(attempts) == 2
+            assert forced_disconnects == [False]
+        finally:
+            leader.disconnect()
 
 
 def test_so101_leader_refuses_an_uncalibrated_arm():

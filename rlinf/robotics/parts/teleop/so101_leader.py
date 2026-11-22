@@ -152,6 +152,43 @@ class SO101Leader(TeleopDevice):
 
     # Hardware.
 
+    @staticmethod
+    def _cleanup_failed_connection(device: Any) -> None:
+        """Close a partially connected leader without another torque write."""
+        try:
+            device.disconnect()
+        except Exception:  # noqa: BLE001 - preserve the connection failure
+            pass
+
+        bus = getattr(device, "bus", None)
+        if not (
+            getattr(device, "is_connected", False)
+            or getattr(bus, "is_connected", False)
+        ):
+            return
+
+        try:
+            # A failed handshake can leave one motor absent.  The normal
+            # disconnect first disables torque on every motor, so close the
+            # serial handle directly once that cleanup has failed.
+            bus.disconnect(disable_torque=False)
+        except Exception:  # noqa: BLE001 - try the SDK's final close hook
+            pass
+
+        if not (
+            getattr(device, "is_connected", False)
+            or getattr(bus, "is_connected", False)
+        ):
+            return
+
+        try:
+            port_handler = getattr(bus, "port_handler", None)
+            close_port = getattr(port_handler, "closePort", None)
+            if callable(close_port):
+                close_port()
+        except Exception:  # noqa: BLE001 - original error is primary
+            pass
+
     def _open(self) -> Any:
         """Open the leader's servo bus and return lerobot's handle for it.
 
@@ -182,8 +219,11 @@ class SO101Leader(TeleopDevice):
                 try:
                     leader.connect(calibrate=False)
                     break
-                except ConnectionError:
-                    if attempt == self.SERIAL_CONNECT_RETRIES:
+                except (ConnectionError, RuntimeError) as exc:
+                    if (
+                        not self._is_retryable_bus_error(exc)
+                        or attempt == self.SERIAL_CONNECT_RETRIES
+                    ):
                         raise
                     self._logger.warning(
                         "SO-101 leader connection did not receive a status packet; "
@@ -191,10 +231,7 @@ class SO101Leader(TeleopDevice):
                         attempt + 1,
                         self.SERIAL_CONNECT_RETRIES,
                     )
-                    try:
-                        leader.disconnect()
-                    except Exception:  # noqa: BLE001 - retry the original connection
-                        pass
+                    self._cleanup_failed_connection(leader)
                     time.sleep(self.SERIAL_RETRY_DELAY_S)
             if not leader.is_calibrated:
                 if not self._calibrate:
@@ -214,10 +251,7 @@ class SO101Leader(TeleopDevice):
             return leader
         finally:
             if not accepted:
-                try:
-                    leader.disconnect()
-                except Exception:  # noqa: BLE001 - preserve startup failure
-                    pass
+                self._cleanup_failed_connection(leader)
 
     def _release(self, device: Any) -> None:
         """lerobot spells this ``disconnect``, which the base does not try."""
@@ -438,6 +472,24 @@ class SO101Leader(TeleopDevice):
                     self._set_torque(False)
                 raise
 
+    @staticmethod
+    def _is_retryable_bus_error(exc: Exception) -> bool:
+        """Retry missing responses, but propagate motor faults and model mismatches."""
+        if isinstance(exc, ConnectionError):
+            return True
+        message = str(exc)
+        return (
+            "Missing motor IDs:" in message
+            and "Motors with incorrect model numbers:" not in message
+        ) or any(
+            marker in message
+            for marker in (
+                "[TxRxResult] Failed get status packet from device!",
+                "[TxRxResult] There is no status packet!",
+                "[TxRxResult] Incorrect status packet!",
+            )
+        )
+
     def _set_torque(self, enabled: bool) -> None:
         """Set leader torque with a short retry for transient bus timeouts."""
         operation = (
@@ -451,8 +503,11 @@ class SO101Leader(TeleopDevice):
                 operation()
                 self._torque_enabled = enabled
                 return
-            except ConnectionError:
-                if attempt == self.TORQUE_WRITE_RETRIES:
+            except (ConnectionError, RuntimeError) as exc:
+                if (
+                    not self._is_retryable_bus_error(exc)
+                    or attempt == self.TORQUE_WRITE_RETRIES
+                ):
                     raise
                 self._logger.warning(
                     "SO-101 leader torque %s did not receive a status packet; "
