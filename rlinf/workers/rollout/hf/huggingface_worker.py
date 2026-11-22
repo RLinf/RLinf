@@ -16,7 +16,6 @@ import asyncio
 import copy
 import gc
 import time
-import zipfile
 from typing import Any, Callable, Literal, Optional
 
 import numpy as np
@@ -176,15 +175,9 @@ class MultiStepRolloutWorker(Worker):
                 f"predict_value_batch, got {type(self.hf_model).__name__}."
             )
 
-        checkpoint_path = self.cfg.runner.get("ckpt_path")
-        if checkpoint_path:
-            self.hf_model.load_state_dict(
-                torch.load(
-                    checkpoint_path,
-                    map_location="cpu",
-                    mmap=zipfile.is_zipfile(checkpoint_path),
-                )
-            )
+        if self.cfg.runner.get("ckpt_path", None):
+            model_dict = torch.load(self.cfg.runner.ckpt_path)
+            self.hf_model.load_state_dict(model_dict)
 
         rlt_feature_model_config = OmegaConf.select(
             self.cfg, "rollout.rlt_feature_model", default=None
@@ -203,15 +196,9 @@ class MultiStepRolloutWorker(Worker):
             )
             self.expert_model = get_model(expert_model_config)
 
-            expert_checkpoint_path = self.cfg.runner.get("expert_ckpt_path")
-            if expert_checkpoint_path:
-                self.expert_model.load_state_dict(
-                    torch.load(
-                        expert_checkpoint_path,
-                        map_location="cpu",
-                        mmap=zipfile.is_zipfile(expert_checkpoint_path),
-                    )
-                )
+            if self.cfg.runner.get("expert_ckpt_path", None):
+                expert_model_dict = torch.load(self.cfg.runner.expert_ckpt_path)
+                self.expert_model.load_state_dict(expert_model_dict)
 
         self.hf_model.eval()
         if self.expert_model is not None:
