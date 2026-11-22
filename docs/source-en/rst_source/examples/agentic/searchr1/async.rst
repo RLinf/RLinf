@@ -6,8 +6,8 @@ keep flowing into the rollout engines while the actor trains on an earlier
 weight version. This page uses
 ``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml`` on two
 8-GPU nodes with the actor and the rollout placed on separate nodes. Set up
-the environment and the Qdrant wiki retrieval server first, as described in
-:doc:`index`; the model-specific configuration (data format, tokenizer,
+the environment and start the Qdrant server from
+:doc:`Local Wiki Retriever <retriever>` first; the model-specific configuration (data format, tokenizer,
 parallelism of the actor) is the same as in :doc:`glm4.7_flash`. For how the
 asynchronous mode works and how to size its scheduling limits, read
 :doc:`Asynchronous Agentic RL </rst_source/guides/async_agentic>`.
@@ -48,7 +48,7 @@ reward worker is launched.
   watch ``rollout/buffer/*``.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` ·
   :doc:`multi-node guide </rst_source/guides/multi_node>` · the retrieval
-  server from :doc:`index`.
+  server from :doc:`Local Wiki Retriever <retriever>`.
 
 Requirements
 ------------
@@ -78,7 +78,7 @@ images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
 Set up the Ray cluster following the :doc:`multi-node guide </rst_source/guides/multi_node>`
 (export a unique ``RLINF_NODE_RANK`` on every node, 0 on the head, and activate
 the RLinf environment before ``ray start``) and start the Qdrant retrieval server
-from :doc:`index` on node 0 before training.
+from :doc:`Local Wiki Retriever <retriever>` on node 0 before training.
 
 .. tab-set::
 

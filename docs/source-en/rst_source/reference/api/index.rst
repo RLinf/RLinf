@@ -31,11 +31,13 @@ RL Components, Models, Robotics, and Data
    * - API
      - What you get
    * - :doc:`Actor <actor>`
-     - FSDP and Megatron actor workers.
+     - Megatron and FSDP actor and SFT workers plus model managers.
    * - :doc:`Rollout <rollout>`
-     - Hugging Face and SGLang rollout workers.
+     - SGLang, vLLM, and Hugging Face rollout workers.
    * - :doc:`Env <env>`
-     - Environment worker wrappers for embodied tasks.
+     - Environment worker, factory (``get_env_cls``, ``SupportedEnvType``), and ``RealWorldEnv``.
+   * - :doc:`Runners <runners>`
+     - Top-level training loops for embodied, reasoning, agentic, and SFT workloads.
    * - :doc:`Models & Policies <models>`
      - Model registry (``register_model``, ``get_model``) and embodied ``BasePolicy`` contract.
    * - :doc:`Robotics <robotics>`
@@ -60,6 +62,7 @@ RL Components, Models, Robotics, and Data
    Actor <actor>
    Rollout <rollout>
    Environment <env>
+   Runners <runners>
    Models & Policies <models>
    Robotics <robotics>
    Algorithms & Registries <algorithms>

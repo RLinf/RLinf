@@ -1,7 +1,7 @@
 GLM-4.7-Flash 的 Search-R1 训练
 ========================================
 
-使用 ``examples/agent/searchr1/config/train_glm4.7_flash.yaml`` 训练 GLM-4.7-Flash（激活参数约 3B 的 MoE 模型）通过调用搜索工具回答问题。请先按 :doc:`index` 搭建 RLinf 环境和 Qdrant wiki 检索服务。
+使用 ``examples/agent/searchr1/config/train_glm4.7_flash.yaml`` 训练 GLM-4.7-Flash（激活参数约 3B 的 MoE 模型）通过调用搜索工具回答问题。请先按 :doc:`RLinf 安装指南 </rst_source/start/installation>` 与 :doc:`本地 Wiki 检索服务 <retriever>` 完成环境搭建并启动 Qdrant 检索服务。
 
 概述
 ----------------------------------------
@@ -41,7 +41,7 @@ GLM 需要 ``prompt`` 字段为消息列表（``[{"role": "system", ...}, {"role
 一键上手
 ----------------------------------------
 
-中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。训练前先按 :doc:`index` 启动 Qdrant wiki 检索服务（检索服务可与训练共用 GPU，请用 ``CUDA_VISIBLE_DEVICES=0`` 启动，约占 1 GB 显存）。
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。训练前先按 :doc:`本地 Wiki 检索服务 <retriever>` 启动 Qdrant 检索服务（检索服务可与训练共用 GPU，请用 ``CUDA_VISIBLE_DEVICES=0`` 启动，约占 1 GB 显存）。
 
 .. tab-set::
 
@@ -157,7 +157,7 @@ GLM 需要 ``prompt`` 字段为消息列表（``[{"role": "system", ...}, {"role
 可视化与结果
 ----------------------------------------
 
-下面是关闭思考模式时 GLM-4.7-Flash 的训练曲线：8×A100-80G，每步 512 个 prompt × 4 个采样，检索服务为 :doc:`index` 中的 Qdrant。横轴是参数更新次数：每个 rollout 步更新 4 次（``algorithm.n_minibatches: 4``），因此 100 个 rollout 步对应横轴上约 400 次更新。100 个 rollout 步内，轨迹 reward 从 0.28 上升到 0.54（分别取前 5 步和后 5 步的均值），每条轨迹的平均轮数从 1.7 增加到 2.0，每个 rollout 步约 870 s。
+下面是关闭思考模式时 GLM-4.7-Flash 的训练曲线：8×A100-80G，每步 512 个 prompt × 4 个采样，检索服务为 :doc:`本地 Wiki 检索服务 <retriever>` 中的 Qdrant。横轴是参数更新次数：每个 rollout 步更新 4 次（``algorithm.n_minibatches: 4``），因此 100 个 rollout 步对应横轴上约 400 次更新。100 个 rollout 步内，轨迹 reward 从 0.28 上升到 0.54（分别取前 5 步和后 5 步的均值），每条轨迹的平均轮数从 1.7 增加到 2.0，每个 rollout 步约 870 s。
 
 .. raw:: html
 

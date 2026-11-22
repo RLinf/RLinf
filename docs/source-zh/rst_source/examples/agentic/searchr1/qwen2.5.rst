@@ -1,7 +1,7 @@
 Qwen2.5-3B-Instruct 的 Search-R1 训练
 ========================================
 
-训练 Qwen2.5-3B-Instruct 通过调用搜索工具回答问题。请先按 :doc:`index` 搭建 RLinf 环境和本地 wiki 检索服务。
+训练 Qwen2.5-3B-Instruct 通过调用搜索工具回答问题。请先按 :doc:`RLinf 安装指南 </rst_source/start/installation>` 和 :doc:`本地 Wiki 检索服务 <retriever>` 完成环境搭建并启动检索服务。
 
 概述
 ----------------------------------------
@@ -34,7 +34,7 @@ Qwen2.5-3B-Instruct 的 Search-R1 训练
 一键上手
 ----------------------------------------
 
-中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。启动训练前，请先按 :doc:`index` 启动本地 wiki 检索服务。
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。启动训练前，请先按 :doc:`本地 Wiki 检索服务 <retriever>` 启动检索服务。
 
 .. tab-set::
 

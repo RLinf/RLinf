@@ -4,8 +4,8 @@ Search-R1 Training for GLM-4.7-Flash
 Train GLM-4.7-Flash (an MoE model with about 3B active parameters) to answer
 questions by calling a search tool, using
 ``examples/agent/searchr1/config/train_glm4.7_flash.yaml``. Set up the RLinf
-environment and the Qdrant wiki retrieval server first, as described in
-:doc:`index`.
+environment and start the Qdrant server from :doc:`Local Wiki Retriever <retriever>`
+first.
 
 Overview
 --------
@@ -57,7 +57,7 @@ Setup and Run
 In mainland China, append ``--use-mirror`` to ``install.sh`` and run
 ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt
 images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
-Start the Qdrant wiki retrieval server from :doc:`index` before training (launch
+Start the Qdrant server from :doc:`Local Wiki Retriever <retriever>` before training (launch
 it with ``CUDA_VISIBLE_DEVICES=0`` to share GPU 0, using about 1 GB of GPU memory).
 
 .. tab-set::
@@ -199,7 +199,7 @@ Visualization and Results
 
 The following shows the training curves of GLM-4.7-Flash with thinking disabled,
 using 512 prompts × 4 samples per step on 8×A100-80G and the Qdrant retrieval server
-from :doc:`index`. The x-axis counts parameter updates: each rollout step performs four of
+from :doc:`Local Wiki Retriever <retriever>`. The x-axis counts parameter updates: each rollout step performs four of
 them (``algorithm.n_minibatches: 4``), so the 100 rollout steps span about 400
 updates. Over these 100 rollout steps the trajectory reward rises from 0.28 to 0.54
 (mean of the first and of the last five steps), the average number of turns per

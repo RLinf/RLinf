@@ -16,16 +16,16 @@ Get Started
       Run your first LIBERO-Spatial evaluation end to end.
 
    .. grid-item-card:: Installation
-      :link: get_started/installation
+      :link: ../start/installation
       :link-type: doc
 
-      Set up environments and benchmark-specific variables.
+      Install embodied environments and model dependencies.
 
-   .. grid-item-card:: Overview
-      :link: get_started/overview
+   .. grid-item-card:: Benchmark Guides
+      :link: guides/index
       :link-type: doc
 
-      Evaluation architecture and the ``evaluations/`` directory layout.
+      Step-by-step evaluation guides for every supported benchmark.
 
 Supported Benchmarks
 --------------------
@@ -110,6 +110,53 @@ Dedicated guides for world-action models served through RLinf's SGLang embodied 
 .. note::
 
    **Config fallback:** If ``evaluations/<benchmark>/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` for eval-ready configs that define ``rollout.model`` (with ``model_type`` and ``num_action_chunks``). To evaluate a training-only config that defines only ``actor.model``, rebind ``@rollout.model`` per :doc:`reference/configuration`. Standard LIBERO, LIBERO-PRO, and LIBERO-PLUS are switched via environment variables (see :doc:`guides/libero`).
+
+Evaluation Architecture
+-----------------------
+
+The evaluation runner coordinates env workers and rollout workers over channels to run parallel rollouts under ``env.eval``, printing and logging metrics such as ``eval/success_once`` and ``eval/return``.
+
+1. **Load config:** Hydra reads the YAML under ``evaluations/<benchmark>/`` and composes environment and model presets from ``examples/embodiment/config/`` via ``defaults``.
+2. **Launch workers:** Env and rollout workers start on hardware according to ``cluster.component_placement``.
+3. **Run parallel rollouts:** Env workers reset environments and send observations; rollout workers return action chunks until episodes finish.
+4. **Aggregate metrics:** Task-level metrics such as ``eval/success_once`` and ``eval/return`` are computed and logged.
+
+.. dropdown:: Directory Layout
+
+   All evaluation entry points and benchmark configs live under ``evaluations/`` at the repository root:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 36 64
+
+      * - Path
+        - Contents
+      * - ``evaluations/eval_embodied_agent.py``
+        - Main embodied evaluation program.
+      * - ``evaluations/run_eval.sh``
+        - Unified launcher with benchmark inference, log setup, and simulator env setup.
+      * - ``evaluations/behavior/``
+        - BEHAVIOR-1K household evaluation configs.
+      * - ``evaluations/geniesim/``
+        - GenieSim server-backed evaluation configs.
+      * - ``evaluations/libero/``
+        - LIBERO evaluation configs (Spatial, Object, Goal, 10, Mem, RTC, ApxInf, SGLang) and custom init states.
+      * - ``evaluations/maniskill/``
+        - ManiSkill out-of-distribution (OOD) evaluation configs.
+      * - ``evaluations/polaris/``
+        - PolaRiS tabletop manipulation evaluation configs.
+      * - ``evaluations/realworld/``
+        - Franka single-arm, Dual Franka RTC, and Dual YAM real-robot evaluation configs.
+      * - ``evaluations/robocasa365/``
+        - RoboCasa365 pretrain task-slice evaluation configs.
+      * - ``evaluations/robodojo/``
+        - RoboDojo Isaac Sim evaluation configs.
+      * - ``evaluations/robolab/``
+        - RoboLab 120-task DROID joint-position evaluation configs.
+      * - ``evaluations/robotwin/``
+        - RoboTwin bimanual manipulation evaluation configs.
+      * - ``evaluations/simple/``
+        - SIMPLE whole-body humanoid evaluation configs for Psi0.
 
 Reference
 ---------

@@ -9,13 +9,13 @@ Pick this section to understand RLinf's embodied evaluation layout, install depe
    :gutter: 2
 
    .. grid-item-card:: Overview
-      :link: overview
+      :link: ../index
       :link-type: doc
 
       Unified evaluation architecture and the ``evaluations/`` directory layout.
 
    .. grid-item-card:: Installation
-      :link: installation
+      :link: ../../start/installation
       :link-type: doc
 
       Install embodied dependencies with ``requirements/install.sh`` and configure benchmark variables.

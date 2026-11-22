@@ -12,12 +12,12 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    .. grid-item-card:: 评测基准
       :text-align: center
 
-      LIBERO（Spatial · Object · Goal · Long · Pro · Plus）
+      LIBERO（Spatial · Object · Goal · Long · Mem · Pro · Plus）
 
    .. grid-item-card:: 支持模型
       :text-align: center
 
-      OpenPI · OpenVLA-OFT · FastWAM · MolmoAct2 · StarVLA · π₀-FAST · DreamZero · Cosmos3
+      OpenPI · OpenVLA-OFT · FastWAM · MolmoAct2 · StarVLA · Evo-1 · π₀-FAST · DreamZero · Cosmos3
 
    .. grid-item-card:: 配置目录
       :text-align: center
@@ -284,6 +284,12 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
       * - ``libero_spatial_openpi_pi05_eval.yaml``
         - Spatial
         - π₀.₅
+      * - ``libero_spatial_eval_pi05_RTC.yaml``
+        - Spatial
+        - π₀.₅（RTC）
+      * - ``libero_spatial_evo1_eval.yaml``
+        - Spatial
+        - Evo-1
       * - ``libero_spatial_starvla_eval.yaml``
         - Spatial
         - StarVLA
@@ -344,6 +350,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
       * - ``libero_10_pi0_fast_eval.yaml``
         - Long（``libero_10``）
         - π₀-FAST
+      * - ``libero_mem_openpi_pi05_eval.yaml``
+        - LIBERO-Mem（``libero_mem``）
+        - π₀.₅（Short Memory）
 
 .. _apxinf-backend:
 

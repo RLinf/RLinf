@@ -2,8 +2,7 @@ Search-R1 Training for Qwen2.5-3B-Instruct
 ==========================================
 
 Train Qwen2.5-3B-Instruct to answer questions by calling a search tool. Set up
-the RLinf environment and the local wiki retrieval server first, as described
-in :doc:`index`.
+the RLinf environment and start the :doc:`Local Wiki Retriever <retriever>` first.
 
 Overview
 --------
@@ -40,7 +39,7 @@ Setup and Run
 In mainland China, append ``--use-mirror`` to ``install.sh`` and run
 ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt
 images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
-Start the local wiki retrieval server from :doc:`index` before launching training.
+Start the :doc:`Local Wiki Retriever <retriever>` before launching training.
 
 .. tab-set::
 

@@ -134,8 +134,6 @@
   :hidden:
 
   总览 <rst_source/evaluations/index>
-  架构与目录 <rst_source/evaluations/get_started/overview>
-  评测安装 <rst_source/evaluations/get_started/installation>
   快速体验 <rst_source/evaluations/get_started/quick_tour>
   评测基准 <rst_source/evaluations/guides/index>
   评测参考 <rst_source/evaluations/reference/index>

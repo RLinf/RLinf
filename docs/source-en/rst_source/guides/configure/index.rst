@@ -1,8 +1,11 @@
 Configure
 =========
 
-Use these guides when you need to edit YAML, logging, or workload-specific
-settings before launching a run. Start with the one-page :doc:`Training Configuration <../../reference/configuration>` map for minimal YAML presets and the five most-tuned keys, then use the guides below for full field references.
+Use these guides to configure heterogeneous training environments and experiment logging before launching a run.
+
+.. note::
+
+   For full YAML field schemas and metric namespaces, see :doc:`Config & Metrics <../../reference/training/index>`. For adapter settings on VLA and diffusion models, see :doc:`LoRA Fine-Tuning <../lora>`.
 
 .. list-table::
    :header-rows: 1
@@ -10,22 +13,13 @@ settings before launching a run. Start with the one-page :doc:`Training Configur
 
    * - Guide
      - What you get
-   * - :doc:`Basic Configuration <../basic_config>`
-     - How RLinf config files are structured and overridden.
-   * - :doc:`Embodied Configuration <../embodiment_config>`
-     - Config keys specific to embodied training.
    * - :doc:`Heterogeneous Envs <../hetero_envs>`
      - Run different env configurations, such as ManiSkill and LIBERO, for one policy in one run.
-   * - :doc:`Agentic Configuration <../agentic_config>`
-     - Config keys specific to agentic and reasoning training.
    * - :doc:`Logging & Visualization <../logger>`
-     - TensorBoard, wandb, and swanlab logger setup.
+     - TensorBoard, W&B, and SwanLab setup, including offline logging and multi-node API keys.
 
 .. toctree::
    :hidden:
 
-   Basic Configuration <../basic_config>
-   Embodied Configuration <../embodiment_config>
    Heterogeneous Envs <../hetero_envs>
-   Agentic Configuration <../agentic_config>
    Logging & Visualization <../logger>

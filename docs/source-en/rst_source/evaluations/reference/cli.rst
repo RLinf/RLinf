@@ -101,6 +101,31 @@ Supported Benchmark Prefixes
      - ``simple``
      - SIMPLE
 
+Benchmark Environment Variables
+-------------------------------
+
+``run_eval.sh`` reads these optional environment variables automatically and configures ``PYTHONPATH`` when needed:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 48 30
+
+   * - Benchmark
+     - Environment Variable(s)
+     - Notes
+   * - RoboTwin
+     - ``ROBOTWIN_PATH=/path/to/RoboTwin``, ``ROBOT_PLATFORM=ALOHA``
+     - Path to cloned RoboTwin checkout
+   * - BEHAVIOR-1K
+     - ``OMNIGIBSON_DATA_PATH``
+     - See :doc:`../../examples/embodied/behavior`
+   * - DreamZero
+     - ``DREAMZERO_PATH=/path/to/DreamZero``
+     - Path to DreamZero checkout
+   * - PolaRiS
+     - ``POLARIS_DATA_PATH=/path/to/PolaRiS-Hub``
+     - Path to downloaded PolaRiS-Hub assets
+
 Config Fallback
 ---------------
 

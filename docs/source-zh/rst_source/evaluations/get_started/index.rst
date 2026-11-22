@@ -9,13 +9,13 @@
    :gutter: 2
 
    .. grid-item-card:: 概览
-      :link: overview
+      :link: ../index
       :link-type: doc
 
       了解统一评测架构与 ``evaluations/`` 目录结构。
 
    .. grid-item-card:: 安装
-      :link: installation
+      :link: ../../start/installation
       :link-type: doc
 
       使用 ``requirements/install.sh`` 安装具身依赖，并配置各 benchmark 环境变量。

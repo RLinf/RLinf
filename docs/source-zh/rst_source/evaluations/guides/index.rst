@@ -76,7 +76,7 @@ SGLang 服务评测
 
 .. note::
 
-   RoboCasa365、RoboDojo 与 GenieSim 的配置也位于 ``evaluations/`` 下（见 :doc:`../get_started/overview`）。对于 IsaacLab、MetaWorld 等尚无独立 ``evaluations/`` 目录的模拟器，:doc:`配置回退 <../reference/cli>` 仅支持 ``examples/embodiment/config/`` 中已定义 ``rollout.model``\ （含 ``model_type`` 与 ``num_action_chunks``）的评测就绪配置；若要评测 :doc:`../../examples/simulators_index` 中的纯训练配置，请按 :doc:`../reference/configuration` 改写为评测 YAML。
+   RoboCasa365、RoboDojo 与 GenieSim 的配置也位于 ``evaluations/`` 下（见 :doc:`../index`）。对于 IsaacLab、MetaWorld 等尚无独立 ``evaluations/`` 目录的模拟器，:doc:`配置回退 <../reference/cli>` 仅支持 ``examples/embodiment/config/`` 中已定义 ``rollout.model``\ （含 ``model_type`` 与 ``num_action_chunks``）的评测就绪配置；若要评测 :doc:`../../examples/simulators_index` 中的纯训练配置，请按 :doc:`../reference/configuration` 改写为评测 YAML。
 
 .. toctree::
    :hidden:

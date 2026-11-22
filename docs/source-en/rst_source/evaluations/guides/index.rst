@@ -76,7 +76,7 @@ Dedicated guides for world-action models served through RLinf's SGLang embodied 
 
 .. note::
 
-   Configs for RoboCasa365, RoboDojo, and GenieSim also live under ``evaluations/`` (see :doc:`../get_started/overview`). For simulators without a dedicated ``evaluations/`` folder such as IsaacLab or MetaWorld, :doc:`config fallback <../reference/cli>` loads eval-ready YAMLs from ``examples/embodiment/config/`` that define ``rollout.model`` (with ``model_type`` and ``num_action_chunks``); to evaluate a training-only config from :doc:`../../examples/simulators_index`, adapt it per :doc:`../reference/configuration`.
+   Configs for RoboCasa365, RoboDojo, and GenieSim also live under ``evaluations/`` (see :doc:`../index`). For simulators without a dedicated ``evaluations/`` folder such as IsaacLab or MetaWorld, :doc:`config fallback <../reference/cli>` loads eval-ready YAMLs from ``examples/embodiment/config/`` that define ``rollout.model`` (with ``model_type`` and ``num_action_chunks``); to evaluate a training-only config from :doc:`../../examples/simulators_index`, adapt it per :doc:`../reference/configuration`.
 
 .. toctree::
    :hidden:

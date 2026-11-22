@@ -31,11 +31,13 @@ RL 组件、模型、机器人与数据
    * - API
      - 内容
    * - :doc:`Actor <actor>`
-     - 基于 FSDP 与 Megatron 的 actor worker。
+     - 基于 Megatron 与 FSDP 的 actor、SFT worker 与模型管理类。
    * - :doc:`Rollout <rollout>`
-     - 基于 Hugging Face 与 SGLang 的 rollout worker。
+     - 基于 SGLang、vLLM 与 Hugging Face 的 rollout worker。
    * - :doc:`Env <env>`
-     - 面向具身任务的环境 worker 封装。
+     - 环境 worker、环境工厂（``get_env_cls``、``SupportedEnvType``）与 ``RealWorldEnv``。
+   * - :doc:`Runners <runners>`
+     - 面向具身、推理、智能体与 SFT 任务的顶层训练循环 runner。
    * - :doc:`模型与 Policy <models>`
      - 模型注册表（``register_model``、``get_model``）与具身 ``BasePolicy`` 接口。
    * - :doc:`Robotics <robotics>`
@@ -60,6 +62,7 @@ RL 组件、模型、机器人与数据
    Actor <actor>
    Rollout <rollout>
    Environment <env>
+   Runners <runners>
    模型与 Policy <models>
    Robotics <robotics>
    算法与注册表 <algorithms>

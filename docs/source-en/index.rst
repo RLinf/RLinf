@@ -134,8 +134,6 @@ Why RLinf
   :hidden:
 
   Overview <rst_source/evaluations/index>
-  Architecture & Layout <rst_source/evaluations/get_started/overview>
-  Installation <rst_source/evaluations/get_started/installation>
   Quick Tour <rst_source/evaluations/get_started/quick_tour>
   Benchmarks <rst_source/evaluations/guides/index>
   Eval Reference <rst_source/evaluations/reference/index>

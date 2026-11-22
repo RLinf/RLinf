@@ -117,7 +117,7 @@ API 密钥
 离线模式
 ~~~~~~~~
 
-离线模式使用本地 Qdrant 检索服务，并配合本地语料库与网页存储。
+离线模式使用本地 Qdrant 检索服务，并配合本地语料库与网页存储。这套预构建 Wiki-2018 语料与 Qdrant 服务与 :doc:`Search-R1 本地 Wiki 检索服务 <../searchr1/retriever>` 共用（该页也包含 FAISS GPU 方案）。
 
 前置条件
 ^^^^^^^^

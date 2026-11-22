@@ -1,7 +1,7 @@
 Search-R1 异步训练
 ================================
 
-以 rollout 与训练重叠的方式跑 Search-R1：prompt 持续流入 rollout 引擎，actor 同时在更早的权重版本上训练。本页使用 ``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml``，在两台 8 卡机器上把 actor 和 rollout 分别放在不同节点。请先按 :doc:`index` 搭建 RLinf 环境和 Qdrant wiki 检索服务；模型相关的配置（数据格式、tokenizer、actor 并行方式）与 :doc:`glm4.7_flash` 相同。异步模式的工作原理和两个调度上限怎么取，见 :doc:`异步 agentic RL </rst_source/guides/async_agentic>`。
+以 rollout 与训练重叠的方式跑 Search-R1：prompt 持续流入 rollout 引擎，actor 同时在更早的权重版本上训练。本页使用 ``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml``，在两台 8 卡机器上把 actor 和 rollout 分别放在不同节点。请先按 :doc:`RLinf 安装指南 </rst_source/start/installation>` 与 :doc:`本地 Wiki 检索服务 <retriever>` 完成环境搭建并启动 Qdrant 检索服务；模型相关的配置（数据格式、tokenizer、actor 并行方式）与 :doc:`glm4.7_flash` 相同。异步模式的工作原理和两个调度上限怎么取，见 :doc:`异步 agentic RL </rst_source/guides/async_agentic>`。
 
 概述
 --------------------------------
@@ -32,7 +32,7 @@ Search-R1 异步训练
       参考运行使用 2×8 A100-80G
 
 | **你要做的：** 搭建 Ray 集群 → 填三处路径 → 启动 → 观察 ``rollout/buffer/*``。
-| **前提：** :doc:`RLinf 安装 </rst_source/start/installation>` · :doc:`多机指南 </rst_source/guides/multi_node>` · :doc:`index` 中的检索服务。
+| **前提：** :doc:`RLinf 安装 </rst_source/start/installation>` · :doc:`多机指南 </rst_source/guides/multi_node>` · :doc:`本地 Wiki 检索服务 <retriever>` 中的检索服务。
 
 前提条件
 --------------------------------
@@ -49,7 +49,7 @@ reward 在 agent loop 内计算（Search-R1 的规则奖励在轨迹和检索文
 一键上手
 --------------------------------
 
-中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。按 :doc:`多机指南 </rst_source/guides/multi_node>` 搭建 Ray 集群（每台机器在 ``ray start`` 之前设置互不相同的 ``RLINF_NODE_RANK``，head 节点为 0，并激活 RLinf 环境），并在训练前按 :doc:`index` 在 node 0 启动 Qdrant 检索服务。
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。按 :doc:`多机指南 </rst_source/guides/multi_node>` 搭建 Ray 集群（每台机器在 ``ray start`` 之前设置互不相同的 ``RLINF_NODE_RANK``，head 节点为 0，并激活 RLinf 环境），并在训练前按 :doc:`本地 Wiki 检索服务 <retriever>` 在 node 0 启动 Qdrant 检索服务。
 
 .. tab-set::
 

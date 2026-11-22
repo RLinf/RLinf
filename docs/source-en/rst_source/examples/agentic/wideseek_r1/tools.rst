@@ -128,7 +128,7 @@ Offline Mode
 ~~~~~~~~~~~~
 
 Offline mode uses a local Qdrant retrieval service together with a local corpus
-and webpage store.
+and webpage store. This shares the same prebuilt Wiki-2018 corpus and Qdrant server setup as :doc:`Search-R1 Local Wiki Retriever <../searchr1/retriever>` (which also covers the FAISS GPU option).
 
 Prerequisites
 ^^^^^^^^^^^^^

@@ -13,9 +13,18 @@
      - Hydra YAML 结构与最常调的配置项。
    * - :doc:`训练指标 <../metrics>`
      - ``train/``、``eval/``、``env/``、``rollout/`` 与 ``time/`` 命名空间。
+   * - :doc:`基础配置 <../../guides/basic_config>`
+     - RLinf 配置文件的结构与覆盖方式。
+   * - :doc:`具身智能配置 <../../guides/embodiment_config>`
+     - 具身训练专用配置项。
+   * - :doc:`智能体配置 <../../guides/agentic_config>`
+     - 智能体与推理训练专用配置项。
 
 .. toctree::
    :hidden:
 
    训练配置 <../configuration>
    训练指标 <../metrics>
+   基础配置 <../../guides/basic_config>
+   具身智能配置 <../../guides/embodiment_config>
+   智能体配置 <../../guides/agentic_config>

@@ -101,6 +101,31 @@ Hydra 参数覆盖
      - ``simple``
      - SIMPLE
 
+Benchmark 环境变量
+------------------
+
+``run_eval.sh`` 会自动读取下列可选环境变量，并按需配置 ``PYTHONPATH``：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 48 30
+
+   * - Benchmark
+     - 环境变量
+     - 说明
+   * - RoboTwin
+     - ``ROBOTWIN_PATH=/path/to/RoboTwin``、``ROBOT_PLATFORM=ALOHA``
+     - RoboTwin 仓库路径
+   * - BEHAVIOR-1K
+     - ``OMNIGIBSON_DATA_PATH``
+     - 详见 :doc:`../../examples/embodied/behavior`
+   * - DreamZero
+     - ``DREAMZERO_PATH=/path/to/DreamZero``
+     - DreamZero 仓库路径
+   * - PolaRiS
+     - ``POLARIS_DATA_PATH=/path/to/PolaRiS-Hub``
+     - 下载的 PolaRiS-Hub 资产路径
+
 配置回退
 --------
 
