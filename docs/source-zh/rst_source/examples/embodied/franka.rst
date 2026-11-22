@@ -11,7 +11,7 @@ Franka 在线强化学习
 概览
 ----
 
-使用 RLinf 在 Franka 机械臂上训练 CNN policy，涵盖从 SpaceMouse 演示采集到异步在线 RLPD 训练的完整流程。默认方案在一台运行 Ubuntu 20.04 或 22.04 的 x86-64 NVIDIA GPU 主机上同时运行 Franky（libfranka 的 Python 绑定）、rollout 与训练，也支持多机部署与旧版 ROS Noetic 后端。
+使用 RLinf 在 Franka 机械臂上训练 CNN policy，涵盖从 SpaceMouse 数据采集到异步在线 RLPD 训练的全流程。默认方案在一台运行 Ubuntu 20.04 或 22.04 的 x86-64 NVIDIA GPU 主机上同时运行 Franky（libfranka 的 Python 绑定）、rollout 与训练，也支持控制机与 GPU 服务器分离的多机部署。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -19,7 +19,7 @@ Franka 在线强化学习
    .. grid-item-card:: 机器人
       :text-align: center
 
-      Franka Emika Panda（Franky / ROS）
+      Franka Emika Panda（Franky）
 
    .. grid-item-card:: 传感器与遥操作
       :text-align: center
@@ -29,7 +29,7 @@ Franka 在线强化学习
    .. grid-item-card:: 流程
       :text-align: center
 
-      演示采集 → 在线 RLPD（SAC）
+      数据采集 → 在线 RLPD（SAC）
 
    .. grid-item-card:: 硬件
       :text-align: center
@@ -69,7 +69,9 @@ Franka 在线强化学习
 硬件与安全准备
 --------------
 
-通过有线网口将 Franka 机械臂连接到 Ubuntu 20.04 或 22.04 x86-64 主机，并通过 USB 连接 Intel RealSense 相机与 SpaceMouse。当前 Linux 账户需具备相机和 SpaceMouse 的 USB 读取权限（SpaceMouse 的 udev 规则见 `SpaceMouse 安装说明 <https://github.com/JakubAndrysek/PySpaceMouse#installation>`_）。连接机械臂前，在 Franka Desk（``http://<robot_ip>/desk``）中解锁关节并激活 FCI，同时关闭其他占用 FCI 连接的程序。在 GPU 主机上安装 RLinf 前，先确认 ``nvidia-smi`` 正常工作，否则安装脚本会选择仅 CPU 的 PyTorch。
+用有线网口将 Franka 机械臂连到 Ubuntu 20.04 或 22.04 x86-64 主机，再用 USB 连接 Intel RealSense 相机与 SpaceMouse。当前 Linux 账户需具备相机和 SpaceMouse 的 USB 读取权限（SpaceMouse 的 udev 规则见 `SpaceMouse 安装说明 <https://github.com/JakubAndrysek/PySpaceMouse#installation>`_）。
+
+连接机械臂前，在 Franka Desk（``http://<robot_ip>/desk``）中解锁关节并激活 FCI，同时关闭其他占用 FCI 连接的程序。在 GPU 主机上安装 RLinf 前，先确认 ``nvidia-smi`` 正常工作，否则安装脚本会选择仅 CPU 的 PyTorch。
 
 .. list-table::
    :header-rows: 1
@@ -100,7 +102,7 @@ Franka 在线强化学习
 
       Franka Desk 中的 Control 固件版本。
 
-   对照 `Franka 兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选定兼容的 libfranka 版本。预编译 Franky wheel 在 x86-64 上内置 libfranka ``0.19.0``\ （默认）和 ``0.15.0``；若固件需要其他版本，请使用下方的“旧版 ROS 后端”标签。
+   对照 `Franka 兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选定兼容的 libfranka 版本。预编译 Franky wheel 在 x86-64 上内置 libfranka 0.19.0（默认）和 0.15.0；若固件需要其他版本，请使用下方的\ **旧版 ROS 后端（Ubuntu 20.04）**\ 标签。
 
    RLinf 已验证两种组合：固件 5.9.2 + libfranka 0.19.0（标准内核，关闭实时检查）和固件 5.7.2 至 5.9.0 + libfranka 0.15.0（实时内核）。不要仅为匹配示例而修改机器人固件。
 
@@ -171,14 +173,14 @@ Franka 在线强化学习
 
       **1. 安装依赖**
 
-      克隆仓库并安装 Franka 环境（内置 ``libfranka 0.19.0``，采用 manylinux 2.28 wheel，兼容 Ubuntu 20.04/22.04）：
+      克隆仓库并安装 Franka 环境（内置 libfranka 0.19.0，采用 manylinux 2.28 wheel，兼容 Ubuntu 20.04/22.04）：
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
-      若固件需要 0.15.0，在命令前加 ``LIBFRANKA_VERSION=0.15.0``；需要自定义 wheel 时通过 ``FRANKY_WHEEL`` 指定 URL 或本地路径；系统 APT 依赖已装好时可追加 ``--no-root``。
+      若固件需要 0.15.0，在命令前加 ``LIBFRANKA_VERSION=0.15.0``；需要自定义 wheel 时用 ``FRANKY_WHEEL`` 指定 URL 或本地路径；系统 APT 依赖已装好时可追加 ``--no-root``。
 
       **2. 下载权重**
 
@@ -196,7 +198,9 @@ Franka 在线强化学习
 
          python -m toolkits.realworld_check.test_franka_camera
 
-      在 ``examples/embodiment/config/realworld_collect_data.yaml`` 和 ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml`` 中，仅替换 ``cluster.node_groups`` 下 ``label: franka`` 对应的条目（训练配置还需将 ``cluster.num_nodes`` 设为 ``1``；保持 ``4090`` 节点组不变，该名称只指代 GPU 节点 0，不限 GPU 型号）：
+      在 ``examples/embodiment/config/realworld_collect_data.yaml`` 和 ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml`` 中，更新 ``cluster.node_groups`` 下 ``label: franka`` 对应的机械臂 IP 与相机序列号。
+
+      在训练配置中同时将 ``cluster.num_nodes`` 设为 1，保持 ``4090`` 节点组不变（该名称只指代 GPU 节点 0，不限 GPU 型号）：
 
       .. code-block:: yaml
 
@@ -209,13 +213,26 @@ Franka 在线强化学习
                  node_rank: 0
                  camera_serials: ["CAMERA_SERIAL"]
 
-      通过引导模式将插销移至目标插入位姿，在 Franka Desk 中解锁机械臂并启用 FCI，然后读取目标位姿（输入 ``getpos_euler``，再输入 ``q`` 释放机械臂；工具还支持 ``getpos``、``getjoint``、``getstate``、``gethand``、``clear``、``home``、``open``、``close``、``--robot-ip`` 与 ``--realtime-config enforce``）：
+      用引导模式将插销移至目标插入位姿，在 Franka Desk 中解锁机械臂并启用 FCI，再读取目标位姿（输入 ``getpos_euler``，再输入 ``q`` 释放机械臂）：
 
       .. code-block:: bash
 
          export FRANKA_ROBOT_IP=192.168.1.10  # 替换为机械臂 IP
          python -m toolkits.realworld_check.test_franka_controller
          export FRANKA_TARGET_POSE='[x, y, z, roll, pitch, yaw]'  # 替换全部六个数值
+
+      .. dropdown:: 控制器检查工具更多命令（可选）
+
+         .. list-table::
+            :header-rows: 1
+            :widths: 28 72
+
+            * - 类别
+              - 可用项
+            * - 交互命令
+              - ``getpos``、``getpos_euler``、``getjoint``、``getstate``、``gethand``、``clear``、``home``、``open``、``close``、``q``
+            * - 命令行参数
+              - ``--robot-ip``、``--realtime-config enforce``
 
       用 SpaceMouse 采集 20 条演示（保存至 ``logs/franka-demo/demo_buffer``，同级可选导出 ``pickle_episode/`` 与 ``lerobot_dataset/``；使用 GELLO 采集见 :doc:`franka_gello`），待采集退出并释放机械臂后启动在线 RLPD 训练：
 
@@ -254,7 +271,7 @@ Franka 在线强化学习
 
       **3. 启动 Ray 集群并训练**
 
-      在 GPU 服务器上编辑 ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml``：将 ``cluster.num_nodes`` 改为 ``2``，并将 Franka 节点组的 ``node_ranks`` 与硬件条目的 ``node_rank`` 均设为 ``1``\ （actor 与 rollout 保留在节点 0 的 GPU 0 上）。
+      在 GPU 服务器上编辑 ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml``：将 ``cluster.num_nodes`` 设为 2，Franka 节点组的 ``node_ranks`` 与硬件条目的 ``node_rank`` 均设为 1（actor 与 rollout 留在节点 0 的 GPU 0 上）。
 
       .. warning::
 
@@ -277,9 +294,9 @@ Franka 在线强化学习
 
       在 GPU 服务器上用 ``ray status`` 确认两个节点均在线后，仅在 GPU 服务器上运行“单机部署”中的训练命令（控制机无需模型权重与 ``demo_buffer``）。多机器人部署见 :doc:`/rst_source/guides/realworld_robot` 与 :doc:`/rst_source/guides/hetero`。
 
-   .. tab-item:: 旧版 ROS 后端（可选）
+   .. tab-item:: 旧版 ROS 后端（Ubuntu 20.04）
 
-      已有 ROS Noetic 部署，或固件需要 ``0.15.0``、``0.19.0`` 以外的 libfranka 版本时，在 Ubuntu 20.04 宿主机上本地安装 ``franka_ros`` 与 ``serl_franka_controllers`` 后端到独立虚拟环境：
+      已有 ROS Noetic 部署，或固件需要 0.15.0、0.19.0 以外的 libfranka 版本时，在 Ubuntu 20.04 宿主机上本地安装 ``franka_ros`` 与 ``serl_franka_controllers`` 后端到独立虚拟环境：
 
       **1. 安装依赖**
 
@@ -288,11 +305,35 @@ Franka 在线强化学习
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          LIBFRANKA_VERSION=0.15.0 bash requirements/install.sh embodied --env franka-ros --venv franka-ros && source franka-ros/bin/activate
 
-      安装脚本在 ``franka-ros/franka_catkin_ws`` 编译 libfranka、RLinf 的 ``franka_ros`` 分支及 ``serl_franka_controllers``，并将 ROS 初始化脚本追加到 ``franka-ros/bin/activate``。执行 ``rospack find serl_franka_controllers`` 确认编译成功。可选环境变量：``LIBFRANKA_VERSION``\ （默认 ``0.15.0``）、``FRANKA_ROS_VERSION``\ （默认 ``0.10.0``）、``FRANKA_REALTIME_CONFIG``\ （默认 ``enforce``；改为 ``ignore`` 后重跑安装脚本即可切换，无需重编）和 ``SKIP_ROS``\ （默认 ``0``；设为 ``1`` 时跳过 ROS 与 catkin 构建）。
+      安装脚本在 ``franka-ros/franka_catkin_ws`` 编译 libfranka、RLinf 的 ``franka_ros`` 分支及 ``serl_franka_controllers``，并将 ROS 初始化脚本追加到 ``franka-ros/bin/activate``。
+
+      执行 ``rospack find serl_franka_controllers`` 确认编译成功。可用以下环境变量覆盖安装默认值：
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 32 16 52
+
+         * - 环境变量
+           - 默认值
+           - 说明
+         * - ``LIBFRANKA_VERSION``
+           - ``0.15.0``
+           - 与固件匹配的 libfranka 版本。
+         * - ``FRANKA_ROS_VERSION``
+           - ``0.10.0``
+           - 编译的 ``franka_ros`` 版本。
+         * - ``FRANKA_REALTIME_CONFIG``
+           - ``enforce``
+           - 非实时内核设为 ``ignore`` 后重跑安装脚本即可切换，无需重编。
+         * - ``SKIP_ROS``
+           - ``0``
+           - 设为 ``1`` 时复用已有 ROS 与 catkin 安装。
 
       .. warning::
 
-         设置 ``SKIP_ROS=1`` 时需自行准备 ROS Noetic、libfranka、``franka_ros`` 与 ``serl_franka_controllers``，并在每次启动前（多机部署须在 ``ray start`` 前）source ``/opt/ros/noetic/setup.bash`` 与 catkin ``devel/setup.bash``，同时确保 libfranka 位于 ``LD_LIBRARY_PATH``。手动安装见 `ROS Noetic <https://wiki.ros.org/noetic/Installation/Ubuntu>`_、`libfranka <https://frankarobotics.github.io/docs/libfranka/docs/installation.html>`_ 与 `serl_franka_controllers <https://github.com/rail-berkeley/serl_franka_controllers>`_。
+         设置 ``SKIP_ROS=1`` 时需自行准备 ROS Noetic、libfranka、``franka_ros`` 与 ``serl_franka_controllers``\ （手动安装见 `ROS Noetic <https://wiki.ros.org/noetic/Installation/Ubuntu>`_、`libfranka <https://frankarobotics.github.io/docs/libfranka/docs/installation.html>`_ 与 `serl_franka_controllers <https://github.com/rail-berkeley/serl_franka_controllers>`_）。
+
+         每次启动前（多机部署须在 ``ray start`` 前）source ``/opt/ros/noetic/setup.bash`` 与 catkin ``devel/setup.bash``，同时确保 libfranka 位于 ``LD_LIBRARY_PATH``。
 
       **2. 配置并运行**
 
@@ -312,7 +353,26 @@ Franka 在线强化学习
 
          python -m toolkits.realworld_check.test_franka_controller --backend franka_ros
 
-      RLinf 会自动管理 ``roscore``、``roslaunch serl_franka_controllers impedance.launch`` 以及关节复位时的 ``joint.launch``。与 Franky 的差异：仅接受笛卡尔位姿目标（关节控制需使用 Franky）；``gripper_type: franka`` 通过 ``/franka_gripper`` 话题通信，仅在机械臂连接时响应；阻抗增益由 ``dynamic_reconfigure`` 控制，硬件配置中的 ``compliance`` 字段无效。多机部署时仅控制机需要 ``franka-ros`` 环境，GPU 服务器使用标准 ``franka`` 环境。
+      RLinf 会自动管理 ``roscore``、``roslaunch serl_franka_controllers impedance.launch`` 以及关节复位时的 ``joint.launch``。多机部署时仅控制机需要 ``franka-ros`` 环境，GPU 服务器使用标准 ``franka`` 环境。
+
+      **与 Franky 的差异及 ROS 常见问题：**
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 70
+
+         * - 项目
+           - 旧版 ROS 后端说明
+         * - 控制模式
+           - 仅接受笛卡尔位姿目标，关节位置控制需使用 Franky。
+         * - 夹爪
+           - ``gripper_type: franka`` 通过 ``/franka_gripper`` 话题通信，仅在机械臂连接时响应。
+         * - 阻抗增益
+           - 由 ``dynamic_reconfigure`` 控制，YAML 硬件配置中的 ``compliance`` 字段无效。
+         * - 非实时内核报错
+           - 出现 ``Running kernel does not have realtime capabilities`` 时，用 ``FRANKA_REALTIME_CONFIG=ignore`` 重跑安装脚本。
+         * - 机械臂未就绪或 FCI 被占用
+           - 确认 Franka Desk 已激活 FCI 并关闭其他控制程序。崩溃后先 ``ray stop`` 再 ``pkill -f roslaunch``，可用 ``rostopic echo -n 1 /franka_state_controller/franka_states`` 验证状态话题。
 
 .. _franka-motion-settings:
 
@@ -346,7 +406,9 @@ Franka 在线强化学习
         - 0.10 rad
         - 每次调用目标姿态相对上一次指令目标的最大变化量。
 
-   首次目标以实测位姿为基准限幅。目标变化上限按单次调用生效（非速度上限），误差限幅仅约束控制器力矩计算误差（非工作空间边界），环境仍会先应用动作缩放与工作空间限制。复位时任务可通过 ``compliance_param`` 请求新参数，Franky 默认将刚度上限限制在 1200 N/m 和 80 Nm/rad、误差限幅下限限制在 5 mm 和 0.02 rad（插孔任务复位后采用 5 mm x/y、10 mm z 和 0.02 rad 限幅；``max_step`` 与 ``max_step_rad`` 复位后继续生效）。
+   首次目标以实测位姿为基准限幅。目标变化上限按单次调用生效，误差限幅仅约束控制器力矩计算误差；环境仍会先应用动作缩放与工作空间限制。
+
+   复位时任务可通过 ``compliance_param`` 请求新参数，Franky 默认将刚度上限限制在 1200 N/m 和 80 Nm/rad、误差限幅下限限制在 5 mm 和 0.02 rad（插孔任务复位后采用 5 mm x/y、10 mm z 和 0.02 rad 限幅；``max_step`` 与 ``max_step_rad`` 复位后继续生效）。
 
    如需覆盖局部参数，在 ``robot_ip`` 同级添加 ``compliance`` 映射（键名拼写错误会在连接前直接报错）：
 
@@ -355,11 +417,11 @@ Franka 在线强化学习
       compliance:
         max_step: 0.02
 
-   旧版 ``franka_ros`` 后端忽略此映射；关节控制指令（如双臂 GELLO 关节遥操作）不使用这些笛卡尔参数。
+   关节位置指令（如双臂 GELLO 关节遥操作）走关节控制通道，不使用这些笛卡尔参数。
 
 .. dropdown:: 通过键盘标注奖励（可选）
 
-   对于没有自动位姿成功信号的任务，可在训练配置中启用键盘奖励标注：
+   没有自动位姿成功信号的任务，可在训练配置中启用键盘奖励标注：
 
    .. code-block:: yaml
 
@@ -367,7 +429,18 @@ Franka 在线强化学习
         train:
           keyboard_reward_wrapper: single_stage  # 或 multi_stage
 
-   ``single_stage`` 模式下 ``a`` / ``b`` / ``c`` 分别输出失败、中性和成功奖励；``multi_stage`` 模式下 ``a`` / ``b`` / ``c`` 切换奖励阶段、``q`` 输出负奖励。在机器人主机上查找键盘设备、赋权并在启动前导出 ``RLINF_KEYBOARD_DEVICE``\ （多机部署须在 ``ray start`` 前导出）：
+   .. list-table::
+      :header-rows: 1
+      :widths: 28 72
+
+      * - 模式
+        - 按键说明
+      * - ``single_stage``
+        - ``a`` 失败，``b`` 中性，``c`` 成功。
+      * - ``multi_stage``
+        - ``a`` / ``b`` / ``c`` 切换奖励阶段，``q`` 输出负奖励。
+
+   在机器人主机上查找键盘设备、赋权并在启动前导出 ``RLINF_KEYBOARD_DEVICE``\ （多机部署须在 ``ray start`` 前导出）：
 
    .. code-block:: bash
 
@@ -430,12 +503,10 @@ Franka 在线强化学习
    * - ``torch.cuda.is_available()`` 输出 ``False``
      - 确认当前内核下 ``nvidia-smi`` 正常（PREEMPT_RT 内核需带 ``IGNORE_PREEMPT_RT_PRESENCE=1`` 重新编译驱动），然后重跑 ``requirements/install.sh``。
    * - ``Running kernel does not have realtime capabilities``
-     - 切换至 PREEMPT_RT 内核，或使用 Franky 默认的 ``realtime_config: ignore``\ （ROS 后端用 ``FRANKA_REALTIME_CONFIG=ignore`` 重跑安装脚本）。
+     - 切换至 PREEMPT_RT 内核，或使用 Franky 默认的 ``realtime_config: ignore``。
    * - libfranka 版本不兼容报错
-     - 对照 Franka 兼容性表将 ``LIBFRANKA_VERSION`` 匹配到 Franka Desk 的 ``Control`` 固件版本（Franky 支持 ``0.19.0`` 和 ``0.15.0``，其余版本改用旧版 ROS 后端）。
+     - 对照 Franka 兼容性表将 ``LIBFRANKA_VERSION``\ （0.19.0 或 0.15.0）匹配到 Franka Desk 的 ``Control`` 固件版本。
    * - 触发 ``communication_constraints_violation`` reflex
      - 标准内核下训练负载导致 1 kHz 控制超时，建议改用 PREEMPT_RT 内核或将机械臂控制拆至独立控制机。
    * - Franky 阻抗控制器意外停止
-     - RLinf 会直接上报运动错误而不静默重启；排查故障后再重启训练（直接调用 Python 接口时需先断开再重连，仅清除错误不会恢复跟踪）。
-   * - 机械臂一直未就绪或 FCI 被占用（ROS）
-     - 确认 Franka Desk 已激活 FCI 并关闭其他控制程序；崩溃后先 ``ray stop`` 再 ``pkill -f roslaunch``，可用 ``rostopic echo -n 1 /franka_state_controller/franka_states`` 验证状态话题。
+     - RLinf 会上报运动错误并安全停止；排查故障后再重启训练（直接调用 Python 接口时需先断开再重连，仅清除错误不会恢复跟踪）。

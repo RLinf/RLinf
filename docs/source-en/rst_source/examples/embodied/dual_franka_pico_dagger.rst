@@ -58,12 +58,25 @@ Observation and Action
    * - Prompt
      - ``task_description`` stored in the dataset and used as the OpenPI language condition.
 
-Episode labels come from the USB keyboard or pedal: collection (``start_end``) uses ``a`` to start/abort, ``b`` to increment ``segment_id``, and ``c`` for success; DAgger (``eval_control``) uses ``a`` to start the policy, ``b`` for failure, and ``c`` for success. PICO ``X/Y`` and ``A/B`` only close and open the left and right grippers.
+Episode labels come from the USB keyboard or foot pedal; PICO ``X/Y`` and ``A/B`` only close and open the left and right grippers:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Mode
+     - USB keyboard / pedal keys
+   * - Collection (``start_end``)
+     - ``a`` starts or aborts recording; ``b`` increments ``segment_id``; ``c`` marks success.
+   * - HG-DAgger (``eval_control``)
+     - ``a`` starts the policy; ``b`` marks failure; ``c`` marks success.
 
 Hardware and Safety
 -------------------
 
-Collection runs on a single host by default (rank ``0`` owns both arms via dual NICs or a switch, both grippers, all three cameras, the USB keyboard/pedal, and the PICO consumer; the launch script starts a local Ray instance, so skip ``ray start``). Online HG-DAgger uses three Ray nodes:
+Collection runs on a single host by default: rank 0 owns both arms (via dual NICs or a switch), both grippers, all three cameras, the USB keyboard or pedal, and the PICO consumer. The collection script starts a local Ray instance automatically, so skip ``ray start``.
+
+Online HG-DAgger uses three Ray nodes:
 
 .. list-table::
    :header-rows: 1
@@ -84,11 +97,15 @@ Collection runs on a single host by default (rank ``0`` owns both arms via dual 
 
 .. warning::
 
-   Keep an emergency stop within reach and clear the dual-arm workspace before enabling motion. In the DAgger config, replace the all-zero ``joint_reset_qpos`` placeholder with first-frame joint means or a verified safe home pose (7 joint angles per arm), and keep every ``target_ee_pose`` inside the shared ``realworld_dual_franka_tcp_rot6d`` workspace box: ``x`` in ``[0.3, 0.9]``, ``y`` in ``[-0.4, 0.4]``, and ``z`` in ``[0.02, 0.7]``. Ray captures your virtualenv and environment variables at ``ray start`` time—export ``RLINF_NODE_RANK`` and ``RLINF_KEYBOARD_DEVICE`` before starting Ray.
+   Keep an emergency stop within reach and clear the dual-arm workspace before enabling motion.
+
+   In the DAgger config, replace the all-zero ``joint_reset_qpos`` placeholder with first-frame joint means or a verified safe home pose (7 joint angles per arm). Keep every ``target_ee_pose`` inside the ``realworld_dual_franka_tcp_rot6d`` workspace box: x in [0.3, 0.9], y in [-0.4, 0.4], and z in [0.02, 0.7] m.
+
+   Ray captures your virtualenv and environment variables at ``ray start`` time, so export ``RLINF_NODE_RANK`` and ``RLINF_KEYBOARD_DEVICE`` before starting Ray.
 
 .. dropdown:: Multi-node Ray cluster setup (required for HG-DAgger and 2-host collection)
 
-   Skip this block for default single-host collection (single-node runs auto-start Ray). For 3-node HG-DAgger—or 2-host collection with ``num_nodes: 2``, ``node_rank: 0``, ``left_controller_node_rank: 0``, and ``right_controller_node_rank: 1``—activate ``.venv`` and export the node variables on every node before starting Ray:
+   Skip this block for default single-host collection, which starts Ray automatically. For 3-node HG-DAgger—or 2-host collection with ``num_nodes: 2``, ``node_rank: 0``, ``left_controller_node_rank: 0``, and ``right_controller_node_rank: 1``—activate ``.venv`` and export the node variables on every node before starting Ray:
 
    .. code-block:: bash
 
@@ -108,7 +125,9 @@ Collection runs on a single host by default (rank ``0`` owns both arms via dual 
       export HEAD_NODE_IP=192.168.1.10
       ray start --address="${HEAD_NODE_IP}:6379"
 
-   Run ``ray status`` on the head node to confirm all nodes are connected. Cluster ranks are global cluster ranks (``node_rank: 1``, ``left_controller_node_rank: 1``, ``right_controller_node_rank: 2`` in the DAgger config, with ``node_rank`` inside the ``franka`` node group).
+   Run ``ray status`` on the head node to confirm all nodes are connected.
+
+   Ranks are global cluster ranks. The DAgger config defaults to ``node_rank: 1`` (inside the ``franka`` node group), ``left_controller_node_rank: 1``, and ``right_controller_node_rank: 2``.
 
 Setup and Run
 -------------
@@ -119,7 +138,7 @@ Setup and Run
 
    .. tab-item:: 1. Install & PICO Stream
 
-      **Robot / env nodes** (every host wired to a Franka arm): prebuilt Franky wheels on x86_64 bundle libfranka ``0.15.0`` or ``0.19.0`` (default); match ``LIBFRANKA_VERSION`` to the `Franka compatibility matrix <https://frankarobotics.github.io/docs/compatibility.html>`_ (or pass ``FRANKY_WHEEL``). The ``franka`` environment installs camera, input, and ``pyzmq`` dependencies; see :doc:`franka_vr` for XRoboToolkit setup.
+      **Robot / env nodes** (every host wired to a Franka arm): prebuilt x86_64 Franky wheels bundle libfranka 0.15.0 or 0.19.0 (default). Match ``LIBFRANKA_VERSION`` to the `Franka compatibility matrix <https://frankarobotics.github.io/docs/compatibility.html>`_ (or pass ``FRANKY_WHEEL``); the ``franka`` environment installs camera, input, and ZeroMQ dependencies (see :doc:`franka_vr` for XRoboToolkit setup).
 
       .. code-block:: bash
 
@@ -162,10 +181,14 @@ Setup and Run
       **Controls during collection:**
 
       1. Wear the headset facing the front of the workspace and pull ``trigger`` to calibrate the operator base.
-      2. Press ``a`` on the USB keyboard/pedal to start recording (a second ``a`` after 1.5 s aborts and drops the buffer); press ``b`` to increment ``segment_id`` (1 s debounce); press ``c`` to mark success and write the LeRobot shard.
-      3. Hold left/right ``grip`` to drive the matching arm (releasing holds the current TCP), ``X/Y`` to close/open the left gripper, and ``A/B`` to close/open the right gripper.
 
-      Recordings save under ``logs/<timestamp>/`` in ``demo_buffer/`` and ``lerobot_dataset/rank_0/id_0/`` (headless machines keep ``enable_camera_player: False``; set a fixed ``data_collection.save_dir`` when using ``data_collection.resume: True``).
+      2. Press ``a`` on the USB keyboard or pedal to start recording (a second ``a`` after 1.5 s aborts and drops the buffer), ``b`` to increment ``segment_id`` (1 s debounce), and ``c`` to mark success and write the LeRobot shard.
+
+      3. Hold left or right ``grip`` to drive the matching arm (releasing holds the current TCP), ``X/Y`` to close or open the left gripper, and ``A/B`` to close or open the right gripper.
+
+      Recordings save under ``logs/<timestamp>/`` in ``demo_buffer/`` and ``lerobot_dataset/rank_0/id_0/``.
+
+      On headless machines, keep ``enable_camera_player: False``. To resume across sessions, set ``data_collection.resume: True`` with a fixed ``data_collection.save_dir``.
 
       **Prepare the OpenPI π₀.₅ checkpoint** using the SFT and deployment-checkpoint steps in :doc:`dual_franka`. Skip ``backfill_tcp_rot6d.py`` because PICO collection already records ``tcp_rot6d`` actions. Then point ``examples/embodiment/config/realworld_dual_franka_dagger_openpi.yaml`` at your staged checkpoint (rollout inherits ``actor.model.model_path`` automatically):
 
@@ -187,24 +210,68 @@ Setup and Run
 
       **Runtime controls:**
 
-      * ``a``: start one autonomous rollout from idle.
-      * Left / right ``grip``: intervene on that arm while the other arm keeps running the policy; holding either ``grip`` composes a 20-D ``[PICO 10D, rollout 10D]`` record and marks the frame as intervened.
-      * ``b``: mark failure, discard the rollout, and reset.
-      * ``c``: mark success, stream the complete episode to the actor as an online LeRobot shard, and reset.
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 78
+
+         * - Control
+           - Behavior
+         * - ``a``
+           - Start one autonomous rollout from idle.
+         * - Left / right ``grip``
+           - Intervene on that arm while the other arm keeps running the policy; holding either ``grip`` composes a 20-D ``[PICO 10D, rollout 10D]`` record and marks the frame as intervened.
+         * - ``b``
+           - Mark failure, discard the rollout, and reset.
+         * - ``c``
+           - Mark success, stream the complete episode to the actor as an online LeRobot shard, and reset.
 
       After every reset, the environment waits in idle for ``a``. The actor archives complete successful episodes and trains only on action chunks whose non-padded frames are all intervention-labeled.
 
 .. dropdown:: Hardware placeholders and PICO configuration
 
-   Key configs:
+   Key configs for this workflow:
 
-   * ``examples/embodiment/config/realworld_dual_franka_collect_data_pico.yaml`` (PICO collection; three ``realsense`` cameras by default)
-   * ``examples/embodiment/config/realworld_dual_franka_dagger_openpi.yaml`` (3-node online HG-DAgger; ``realsense`` base + two ``lumos`` wrists by default)
-   * ``examples/embodiment/config/env/realworld_dual_franka_tcp_rot6d.yaml`` (shared ``tcp_rot6d`` hardware defaults)
+   .. list-table::
+      :header-rows: 1
+      :widths: 52 48
 
-   Replace ``LEFT_ROBOT_IP`` / ``RIGHT_ROBOT_IP``, ``BASE_CAMERA_SERIAL`` / ``LEFT_CAMERA_SERIAL`` / ``RIGHT_CAMERA_SERIAL`` (librealsense ASIC serials for RealSense; ``/dev/v4l/by-id`` paths for Lumos), ``left_gripper_type`` / ``right_gripper_type``, ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``, ``keyboard_device`` (collection only), ``TASK_DESCRIPTION``, ``joint_reset_qpos`` (DAgger), and ``target_ee_pose`` (inside the TCP xyz box, e.g., ``[0.5, ±0.2, 0.5, -3.14, 0, 0]``).
+      * - Config file
+        - Role
+      * - ``examples/embodiment/config/realworld_dual_franka_collect_data_pico.yaml``
+        - PICO collection (three ``realsense`` cameras by default).
+      * - ``examples/embodiment/config/realworld_dual_franka_dagger_openpi.yaml``
+        - 3-node online HG-DAgger (``realsense`` base and two ``lumos`` wrists by default).
+      * - ``examples/embodiment/config/env/realworld_dual_franka_tcp_rot6d.yaml``
+        - Shared ``tcp_rot6d`` hardware defaults.
 
-   ``teleop`` binds each arm separately and ``pico.hand: dual`` maps left/right controllers to left/right arms. Collection sets ``hold_current_when_inactive: True`` under ``env.eval`` so released arms hold TCP; DAgger sets ``hold_current_when_inactive: False`` under ``env.train`` so released arms execute rollout actions. Across machines, bind the publisher to ``tcp://0.0.0.0:<port>`` and set ``zmq_addr`` on the consumer to ``tcp://<vr_publisher_ip>:<port>`` (never ``0.0.0.0``).
+   Replace the hardware placeholders for your workstation:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 44 56
+
+      * - Placeholder or key
+        - What to set
+      * - ``LEFT_ROBOT_IP``, ``RIGHT_ROBOT_IP``
+        - IP addresses of the left and right Franka arms.
+      * - ``BASE_CAMERA_SERIAL``, ``LEFT_CAMERA_SERIAL``, ``RIGHT_CAMERA_SERIAL``
+        - librealsense ASIC serials for RealSense, or ``/dev/v4l/by-id`` paths for Lumos.
+      * - ``left_gripper_type``, ``right_gripper_type``, ``LEFT_GRIPPER_CONNECTION``, ``RIGHT_GRIPPER_CONNECTION``
+        - Gripper type and connection string for each arm.
+      * - ``keyboard_device``
+        - USB keyboard or pedal event path (collection only).
+      * - ``TASK_DESCRIPTION``
+        - Language prompt stored in the dataset and used by OpenPI.
+      * - ``joint_reset_qpos``
+        - First-frame joint means or safe 7-DOF home pose per arm (DAgger).
+      * - ``target_ee_pose``
+        - Target pose inside the TCP xyz box (for example ``[0.5, ±0.2, 0.5, -3.14, 0, 0]``).
+
+   ``teleop`` binds each arm separately, and ``pico.hand: dual`` maps left and right controllers to the left and right arms.
+
+   Collection sets ``hold_current_when_inactive: True`` under ``env.eval`` so released arms hold TCP. DAgger sets it to ``False`` under ``env.train`` so released arms follow policy rollouts.
+
+   Across machines, bind the publisher to ``tcp://0.0.0.0:<port>`` and set ``zmq_addr`` on the consumer to ``tcp://<vr_publisher_ip>:<port>`` (never ``0.0.0.0``):
 
    .. code-block:: yaml
 
@@ -225,7 +292,24 @@ Setup and Run
 
 .. dropdown:: Arm compliance tuning (optional)
 
-   The collection config sets a shared ``compliance`` block (translational stiffness ``1000 N/m``, rotational stiffness ``56 Nm/rad``, translational clip ``0.024 m``, rotational clip ``0.15 rad``, per-step translation limit ``0.06 m``, per-step rotation limit ``0.15 rad``, default ``max_delta_tau`` ``0.3 Nm`` per cycle). ``max_step: 0.03`` at 10 Hz can trip ``joint_velocity_violation`` with a Robotiq payload; lower ``max_step`` if needed. The DAgger config omits ``compliance`` and uses Franky defaults—copy the collection block to match feel. See :ref:`Configure Arm Motion <franka-motion-settings>` for defaults and reset behavior.
+   The collection config sets a shared ``compliance`` block for both arms (see :ref:`Configure Arm Motion <franka-motion-settings>` for defaults and reset behavior):
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 45 55
+
+      * - Setting
+        - Collection default
+      * - Translational / rotational stiffness
+        - 1000 N/m / 56 Nm/rad
+      * - Translational / rotational clip
+        - 0.024 m / 0.15 rad
+      * - Per-step translation / rotation limit
+        - 0.06 m / 0.15 rad
+      * - Default ``max_delta_tau``
+        - 0.3 Nm per cycle
+
+   With a Robotiq payload at 10 Hz, ``max_step: 0.03`` can trigger ``joint_velocity_violation``; lower ``max_step`` if needed. The DAgger config omits ``compliance`` and uses Franky defaults—copy the collection block to match feel.
 
    A per-arm ``left_compliance`` or ``right_compliance`` mapping replaces the shared block for that side (omitted keys fall back to Franky defaults; ``{}`` selects all backend defaults):
 
@@ -272,14 +356,42 @@ Setup and Run
         eval:
           teleop: none
 
-   * ``online_lerobot.enabled: True`` streams filtered episodes directly to the actor's rolling LeRobot dataset (stored under ``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``).
-   * ``smooth_intervene: True`` removes action-chunk boundary stalls during human intervention by skipping policy inference whenever the last frame of a chunk is intervened, requiring all ``env.train.teleop`` entries to be ``pico`` and one environment per pipeline stage.
-   * ``only_success: True`` discards failed rollouts; ``only_save_expert: True`` samples only action chunks whose non-padded frames all carry ``intervene_flag=True``; ``env.eval.teleop: none`` keeps evaluation policy-only. Beta fields are omitted because intervention comes from PICO, with no ``rollout.expert_model``.
+   .. list-table::
+      :header-rows: 1
+      :widths: 32 68
+
+      * - Setting
+        - Behavior
+      * - ``online_lerobot.enabled: True``
+        - Streams filtered episodes directly to the actor's rolling LeRobot dataset under ``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``.
+      * - ``smooth_intervene: True``
+        - Eliminates action-chunk boundary stalls during intervention by skipping policy inference whenever the last frame of a chunk is intervened. Requires all ``env.train.teleop`` entries to be ``pico`` and one environment per pipeline stage.
+      * - ``only_success: True``
+        - Discards failed rollouts.
+      * - ``only_save_expert: True``
+        - Samples only action chunks whose non-padded frames all carry ``intervene_flag=True``.
+      * - ``env.eval.teleop: none``
+        - Keeps evaluation policy-only. Beta fields are omitted because intervention comes from PICO, with no ``rollout.expert_model``.
 
 Results and Troubleshooting
 ---------------------------
 
-Monitor online HG-DAgger with ``tensorboard --logdir ./logs``—watch ``train/dagger/actor_loss``, ``train/lerobot_dataset/total_episodes``, ``train/lerobot_dataset/physical_frames``, ``train/lerobot_dataset/logical_samples``, ``train/lerobot_dataset/num_sub_datasets``, ``train/actor/lr``, and ``train/actor/grad_norm``. Inspect ``logs/<timestamp>/run_embodiment.log`` for episode counts and ``logs/<timestamp>-realworld_dual_franka_dagger_openpi/online_lerobot/rank_0/`` for archived shards.
+Monitor online HG-DAgger in TensorBoard with ``tensorboard --logdir ./logs`` and inspect logs and archived shards under ``./logs``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Signal or artifact
+     - Metric name or path
+   * - Actor loss & optimizer
+     - ``train/dagger/actor_loss``, ``train/actor/lr``, ``train/actor/grad_norm``
+   * - Online dataset counters
+     - ``train/lerobot_dataset/total_episodes``, ``train/lerobot_dataset/physical_frames``, ``train/lerobot_dataset/logical_samples``, ``train/lerobot_dataset/num_sub_datasets``
+   * - Episode log
+     - ``logs/<timestamp>/run_embodiment.log``
+   * - Archived shards
+     - ``logs/<timestamp>-realworld_dual_franka_dagger_openpi/online_lerobot/rank_0/``
 
 .. list-table::
    :header-rows: 1
@@ -291,7 +403,7 @@ Monitor online HG-DAgger with ``tensorboard --logdir ./logs``—watch ``train/da
      - Expected under ``keyboard_reward_wrapper: eval_control``; press ``a`` on the USB keyboard or pedal to start a rollout.
    * - Episode keys have no effect
      - Confirm keys come from ``keyboard_device`` / ``RLINF_KEYBOARD_DEVICE`` (USB keyboard or pedal), not the SSH terminal or PICO face buttons, and re-export before ``ray start`` for DAgger.
-   * - ``test_pico_data.py`` receives no packets
+   * - ``test_pico_data`` receives no packets
      - Verify XRoboToolkit PC Service and ``vr_data_publisher`` are running, and set ``zmq_addr`` to the publisher's reachable IP (never ``0.0.0.0``).
    * - ``joint_velocity_violation`` during fast motion
      - Lower ``compliance.max_step`` (or ``left_compliance`` / ``right_compliance``) for your Robotiq payload and 10 Hz control rate.

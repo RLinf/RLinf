@@ -7,7 +7,7 @@ OpenPI 监督微调
 
    OpenPI π₀ / π₀.₅ 视觉-语言-动作模型。
 
-在 RLinf 中对 π₀ / π₀.₅ 做 **全量 SFT** 或 **LoRA**。策略统一为 ``model_type: openpi``：这是与 JAX 参考对齐的 PyTorch 实现（官方 openpi 仓库自带的 PyTorch 代码并未对齐）。SFT 通常是强化学习前的冷启动：先模仿示范，再在较好先验上做 RL。
+在 RLinf 中对 π₀ / π₀.₅ 做 **全量 SFT** 或 **LoRA**。policy 统一使用 ``model_type: openpi``，即与 JAX 参考实现对齐的 PyTorch 版本。SFT 通常作为强化学习的冷启动：先模仿示范数据，再在更好的先验上继续做 RL。
 
 在 LIBERO-Mem 上使用视觉历史时，参阅 :doc:`OpenPI Short Memory 评测与训练 </rst_source/examples/embodied/pi0/short_memory>`；双 Franka 真机的 SFT 与部署见 :doc:`dual_franka_openpi_pytorch`。
 
@@ -45,7 +45,7 @@ OpenPI 监督微调
 配置一览
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-实验配置通过 Hydra ``defaults`` 引入模型模板，再覆盖路径和任务字段。启动前把 ``/path/to/...`` 换成本地路径。
+实验配置通过 Hydra ``defaults`` 引入不含路径的模型模板，并设置任务选项。启动时直接通过 Hydra 命令行覆盖本地数据集、基座权重和归一化统计路径。
 
 .. list-table::
    :header-rows: 1
@@ -95,28 +95,26 @@ OpenPI 监督微调
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
-      **2. 配置路径**
+      **2. 准备数据**
 
-      新采集的真机或自定义 LeRobot 数据集需先计算 ``norm_stats.json``\ （见下文“新 LeRobot 数据集的归一化统计”）。在 ``examples/sft/config/libero_sft_openpi.yaml``\ （或 ``realworld_bin_relocation_sft_openpi.yaml``）中填写数据集与模型路径：
-
-      .. code-block:: yaml
-
-         data:
-           train_data_paths: /path/to/libero-data
-
-         actor:
-           model:
-             model_path: /path/to/pi0-model
+      新采集的真机 Franka 数据集需先计算 ``norm_stats.json``\ （见下文“新 LeRobot 数据集的归一化统计”）。
 
       **3. 启动训练**
 
-      在仓库根目录启动训练（日志和 checkpoint 写入 ``runner.logger.log_path``，每 ``runner.save_interval`` 步保存到 ``.../checkpoints/global_step_<N>/``）：
+      在仓库根目录通过 Hydra CLI 覆盖数据集与基座权重路径启动训练（日志和 checkpoint 写入 ``runner.logger.log_path``，每 ``runner.save_interval`` 步保存到 ``.../checkpoints/global_step_<N>/``）：
 
       .. code-block:: bash
 
-         bash examples/sft/run_vla_sft.sh libero_sft_openpi
-         # 真机 Franka：
-         bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
+         # LIBERO
+         bash examples/sft/run_vla_sft.sh libero_sft_openpi \
+           data.train_data_paths=./libero-data \
+           actor.model.model_path=./pi0_base_openpi
+
+         # 真机 Franka
+         bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi \
+           data.train_data_paths=./realworld-franka-bin-relocation \
+           actor.model.model_path=./pi0_base_openpi \
+           +actor.model.openpi_data.norm_stats_path=./assets/pi0_realworld/realworld_franka_bin_relocation/norm_stats.json
 
       .. dropdown:: 进阶配置（可选）
 
@@ -131,7 +129,7 @@ OpenPI 监督微调
 
             actor:
               model:
-                num_action_chunks: 4          # 环境执行长度，不是网络 horizon
+                num_action_chunks: 4          # 环境执行长度，非网络 horizon
                 is_lora: False                # LoRA 时改为 True，并设 lora_rank
                 openpi:
                   task: sft
@@ -167,31 +165,25 @@ OpenPI 监督微调
            --action-horizon 32 \
            --max-token-len 200
 
-      确认 ``./pi05_base_openpi`` 包含 ``model.safetensors`` 和 ``config.json``。其他 π₀.₅ SFT 配置按各自 horizon 调整 ``--action-horizon``\ （ManiSkill RLT 为 10，Franka RLT 与 dual-Franka 为 20）。官方 OpenPI PyTorch 格式（键名为 ``paligemma_with_expert.*``）即使包含 ``model.safetensors``，仍需使用 ``--mode openpi_pytorch_to_openpi`` 转换。
+      确认 ``./pi05_base_openpi`` 包含 ``model.safetensors`` 和 ``config.json``。
 
-      在 ``examples/sft/config/behavior_sft_openpi_pi05.yaml`` 中填写路径：
-
-      .. code-block:: yaml
-
-         data:
-           train_data_paths: /path/to/2025-challenge-demos
-           behavior_dataset_root: /path/to/2025-challenge-demos
-
-         actor:
-           model:
-             model_path: ./pi05_base_openpi
-             openpi_data:
-               norm_stats_path: /path/to/assets/behavior-1k/2025-challenge-demos/norm_stats.json
+      其他 π₀.₅ SFT 配置按各自 horizon 调整 ``--action-horizon``\ （ManiSkill RLT 为 10，Franka RLT 与 dual-Franka 为 20）。官方 OpenPI PyTorch 格式（键名为 ``paligemma_with_expert.*``）即使包含 ``model.safetensors``，仍需使用 ``--mode openpi_pytorch_to_openpi`` 转换。
 
       **3. 启动训练**
 
+      通过 Hydra CLI 覆盖数据集、转换后的基座权重与归一化统计路径：
+
       .. code-block:: bash
 
-         bash examples/sft/run_vla_sft.sh behavior_sft_openpi_pi05
+         bash examples/sft/run_vla_sft.sh behavior_sft_openpi_pi05 \
+           data.train_data_paths=./2025-challenge-demos \
+           data.behavior_dataset_root=./2025-challenge-demos \
+           actor.model.model_path=./pi05_base_openpi \
+           actor.model.openpi_data.norm_stats_path=./assets/behavior-1k/2025-challenge-demos/norm_stats.json
 
       .. dropdown:: 进阶配置（可选）
 
-         仓库自带配置已引入 ``model/pi0_5`` 与 ``hybrid_engines/fsdp``，并设置好 BEHAVIOR 流式加载项：
+         仓库自带配置已引入 ``model/pi0_5`` 与 ``hybrid_engines/openpi_fsdp``，并设置好 BEHAVIOR 流式加载项：
 
          .. code-block:: yaml
 
@@ -214,8 +206,9 @@ OpenPI 监督微调
                   task: sft
                   embed_dtype: bf16
 
-         - ``use_skill: false`` 用主任务文本；``true`` 按窗口从 ``task_subtasks`` 取逐帧技能文本（数据集里折叠后的 orchestrator 不能当标签）。
-         - ``fine_grained_level`` / ``tolerance_s`` 控制流式时间对齐。
+         - ``use_skill: false`` 用主任务文本；``true`` 按窗口从 ``task_subtasks`` 取逐帧技能文本（数据集里折叠后的 orchestrator 不能作为标签）。
+
+         - ``fine_grained_level`` 与 ``tolerance_s`` 控制流式时间对齐。
 
    .. tab-item:: RoboTwin
       :sync: robotwin
@@ -236,26 +229,19 @@ OpenPI 监督微调
          hf download RLinf/RoboTwin-adjust_bottle-official-demo_clean50-Pi0_processed-data --repo-type dataset --local-dir ./robotwin-adjust-bottle-data
          hf download RLinf/RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle
 
-      在 ``examples/sft/config/robotwin_adjust_bottle_sft_openpi.yaml`` 中填写数据集与基础模型路径：
-
-      .. code-block:: yaml
-
-         data:
-           train_data_paths: ./robotwin-adjust-bottle-data
-
-         actor:
-           model:
-             model_path: /path/to/pi0_base_pytorch_new
-
       **3. 启动训练**
+
+      通过 Hydra CLI 覆盖数据集与基座权重路径（``norm_stats_path`` 自动按 ``actor.model.model_path`` 解析）：
 
       .. code-block:: bash
 
-         bash examples/sft/run_vla_sft.sh robotwin_adjust_bottle_sft_openpi
+         bash examples/sft/run_vla_sft.sh robotwin_adjust_bottle_sft_openpi \
+           data.train_data_paths=./robotwin-adjust-bottle-data \
+           actor.model.model_path=./pi0_base_pytorch_new
 
       .. dropdown:: 进阶配置（可选）
 
-         14 维 ALOHA 动作、3 路图像（进模型前按 OpenPI 规则 pad 到 32 维）。切换任务时修改 ``norm_stats_path`` 中的任务名：
+         使用 14 维 ALOHA 动作与 3 路图像（进模型前按 OpenPI 规则补零至 32 维）。切换任务时修改 ``norm_stats_path`` 中的任务名：
 
          .. code-block:: yaml
 
@@ -286,7 +272,9 @@ OpenPI 监督微调
 
       **2. 准备数据集与 dataconfig**
 
-      将 LeRobot 数据集目录（直接包含 ``meta/info.json`` 和 ``data/``）放到训练机，数据需包含观测字段（``image``、``state``）、``actions`` 与任务文本（``task`` 或 ``prompt``）。``examples/sft/config/custom_sft_openpi.yaml`` 默认使用 ``actor.model.openpi.config_name: "pi0_custom"``，按你的相机键名、状态与动作维度以及增量或绝对动作格式调整该 dataconfig，或在 OpenPI dataconfig 注册表中新增条目。
+      将 LeRobot 数据集目录（直接包含 ``meta/info.json`` 和 ``data/``）放到训练机，数据需包含相机图像、状态、动作与任务文本（``task`` 或 ``prompt``）。
+
+      ``examples/sft/config/custom_sft_openpi.yaml`` 默认使用 ``actor.model.openpi.config_name: "pi0_custom"``。按你的相机键名、状态与动作维度以及增量或绝对动作格式调整该 dataconfig，或在 OpenPI dataconfig 注册表中新增条目。
 
       用与训练一致的 ``--config-name`` 计算 ``norm_stats.json``：
 
@@ -300,14 +288,14 @@ OpenPI 监督微调
 
       **3. 启动训练**
 
-      通过 Hydra CLI 参数传入数据集、基座权重和归一化统计路径：
+      通过 Hydra CLI 覆盖数据集、基座权重和归一化统计路径：
 
       .. code-block:: bash
 
          bash examples/sft/run_vla_sft.sh custom_sft_openpi \
            data.train_data_paths=./custom-lerobot-data \
            actor.model.model_path=./pi0_base_openpi \
-           actor.model.openpi_data.norm_stats_path=./assets/pi0_custom/custom-lerobot-data/norm_stats.json
+           +actor.model.openpi_data.norm_stats_path=./assets/pi0_custom/custom-lerobot-data/norm_stats.json
 
       .. dropdown:: 进阶配置（可选）
 
@@ -339,15 +327,19 @@ OpenPI 监督微调
       * - 任务模式
         - 训练时设 ``openpi.task: sft``，评测配置设 ``eval``。
       * - 动作 chunk 与网络 horizon
-        - ``num_action_chunks``\ （及 ``openpi.action_chunk``）控制环境单次执行步数；``openpi.action_horizon`` 控制网络预测长度（``pi05_behavior`` 为 **32**，``pi0_aloha_robotwin`` 与 ``pi0_libero`` 为 **50**，``pi0_realworld`` 为 **10**）。
+        - ``num_action_chunks`` 控制环境单次执行步数；``openpi.action_horizon`` 控制网络预测长度（``pi05_behavior`` 为 **32**，``pi0_aloha_robotwin`` 与 ``pi0_libero`` 为 **50**，``pi0_realworld`` 为 **10**）。
       * - 数据窗口长度
         - 标准 LeRobot SFT 按 dataconfig 的 horizon 切分数据窗口；BEHAVIOR 与双臂 Franka 流式加载器按 ``num_action_chunks`` 切分，这两份配置需将其设为与网络 horizon 一致。
-      * - 精度
-        - 设 ``actor.model.precision: fp32`` 保持主权重与优化器更新为 FP32，设 ``actor.model.openpi.embed_dtype: bf16`` 让主干激活使用 BF16（省略 ``embed_dtype`` 时跟随 ``model.precision``，``precision: null`` 对应 BF16）。
-      * - FSDP1 与显存
-        - 使用 ``hybrid_engines/openpi_fsdp`` 可在主干 BF16 计算时保留 projection、RMSNorm、视觉 embedding 与 RLT Stage 1 模块为 FP32。OpenPI 支持 ``no_shard``、``shard_grad_op`` 和 ``full_shard``\ （需 ``use_orig_params: true``），开启 ``gradient_checkpointing: true`` 与 ``gradient_checkpointing_use_reentrant: false`` 可降低激活显存。BEHAVIOR 与 RoboTwin 使用 ``openpi_cosine`` 学习率调度。
+      * - 主权重与激活精度
+        - 设 ``actor.model.precision: fp32`` 保持主权重与优化器更新为 FP32，设 ``actor.model.openpi.embed_dtype: bf16`` 让主干激活使用 BF16。省略 ``embed_dtype`` 时跟随 ``model.precision``\ （``precision: null`` 对应 BF16）。
+      * - 混合精度（FSDP1）
+        - 使用 ``hybrid_engines/openpi_fsdp`` 可在主干 BF16 计算时，保留 projection、RMSNorm、视觉 embedding 与 RLT Stage 1 权重为 FP32。
+      * - 分片策略
+        - OpenPI 支持 ``no_shard``、``shard_grad_op`` 和 ``full_shard``，且需开启 ``use_orig_params: true``。
+      * - 激活显存与学习率
+        - 开启 ``gradient_checkpointing: true`` 与 ``gradient_checkpointing_use_reentrant: false`` 可降低激活显存。BEHAVIOR 与 RoboTwin 使用 ``openpi_cosine`` 学习率调度。
       * - Tokenizer
-        - 自动从基础模型加载，无需单独配置 SentencePiece 路径。
+        - 自动从基座模型加载。
 
    .. code-block:: yaml
 
@@ -399,7 +391,7 @@ OpenPI 监督微调
       * - ``pi0_custom``
         - 自定义 LeRobot
 
-   **自定义 LeRobot 数据集：** 在 ``examples/sft/config/custom_sft_openpi.yaml`` 中设置 ``actor.model.openpi.config_name: "pi0_custom"``，并在 OpenPI dataconfig 注册表中注册 ``pi0_custom``、按实际观测字段和动作空间调整自定义数据配置类。
+   **自定义 LeRobot 数据集：** 在 ``examples/sft/config/custom_sft_openpi.yaml`` 中设置 ``actor.model.openpi.config_name: "pi0_custom"``，在 OpenPI dataconfig 注册表中注册 ``pi0_custom``，并按实际观测字段和动作空间调整自定义数据配置类。
 
 .. dropdown:: 新 LeRobot 数据集的归一化统计
 
@@ -417,15 +409,25 @@ OpenPI 监督微调
           --config-name pi0_realworld \
           --repo-id realworld_franka_bin_relocation
 
-   - ``--repo-id`` 支持本地路径或 LeRobot HF repo id，可用 ``HF_LEROBOT_HOME`` 修改缓存目录。
-   - ``--config-name`` 必须与训练用的 dataconfig 一致。
-   - 脚本默认写出到 ``./assets/<config_name>/<repo_id>/norm_stats.json``。训练和评测 **不会** 自动从 SFT 的 ``full_weights.pt`` 目录寻找该文件，请显式配置 ``openpi_data.norm_stats_path``\ （省略时会回退到 ``{assets_dir}/{asset_id}/norm_stats.json`` 并打印警告；RoboTwin 将统计固定在基础权重旁的 ``physical-intelligence/robotwin/<task>/norm_stats.json``）。
-   - 若标准差过小或 q99–q01 过窄，适当放宽通常更稳，尤其是 SFT 后还要做在线 RL 时。
-   - BEHAVIOR 不使用该脚本，直接用 ``actor.model.openpi_data.norm_stats_path`` 指向已有的 ``{assets}/{asset_id}/norm_stats.json``。
+   - **输入与缓存**：``--repo-id`` 支持本地路径或 LeRobot HF repo id，可用 ``HF_LEROBOT_HOME`` 修改缓存目录。
+
+   - **配置一致**：``--config-name`` 必须与训练使用的 dataconfig 一致。
+
+   - **输出位置**：脚本默认写出到 ``./assets/<config_name>/<repo_id>/norm_stats.json``。
+
+   - **显式传入统计路径**：训练和评测不会自动从 SFT 的 ``full_weights.pt`` 目录寻找统计文件，需显式传入 ``openpi_data.norm_stats_path``\ （省略时会回退到 ``{assets_dir}/{asset_id}/norm_stats.json`` 并打印警告）。
+
+   - **RoboTwin 与 BEHAVIOR**：RoboTwin 将统计固定在基础权重旁的 ``physical-intelligence/robotwin/<task>/norm_stats.json``；BEHAVIOR 不使用该脚本，直接用 ``actor.model.openpi_data.norm_stats_path`` 指向已有统计文件。
+
+   - **训练稳定性**：若标准差过小或 q99–q01 范围过窄，适当放宽通常更稳，尤其是 SFT 后继续做在线 RL 时。
 
 .. dropdown:: 评测 SFT 检查点
 
-   ``openpi`` 评测可直接加载 ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``\ （或 ``global_step_<N>`` 目录），无需先转成 ``model.safetensors``。评测配置必须保持 ``openpi.task: eval``，让 ``config_name`` 与 ``num_action_chunks`` 同训练一致，并显式将 ``openpi_data.norm_stats_path`` 指回训练统计文件（不能依赖指向“权重和统计在同一目录”的默认插值）：
+   ``openpi`` 评测可直接加载 ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``\ （或 ``global_step_<N>`` 目录），无需先转成 ``model.safetensors``。
+
+   - 评测配置保持 ``openpi.task: eval``，并让 ``config_name`` 与 ``num_action_chunks`` 同训练一致。
+
+   - 显式将 ``openpi_data.norm_stats_path`` 指回训练统计文件：
 
    .. code-block:: bash
 
@@ -433,7 +435,7 @@ OpenPI 监督微调
         rollout.model.model_path=./logs/checkpoints/global_step_30000 \
         rollout.model.openpi_data.norm_stats_path=./pi0_base_pytorch_new/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
 
-   详细评测步骤见 :doc:`BEHAVIOR-1K 评测 <../../evaluations/guides/behavior>` 和 :doc:`RoboTwin 评测 <../../evaluations/guides/robotwin>`。如需导出可分发的独立目录（``model.safetensors`` + ``config.json`` + ``norm_stats.json``），使用 OpenPI 检查点转换器的 ``sft_to_openpi`` 模式（见 :doc:`检查点转换 <../../guides/convertor>`）。
+   详细评测步骤见 :doc:`BEHAVIOR-1K 评测 <../../evaluations/guides/behavior>` 和 :doc:`RoboTwin 评测 <../../evaluations/guides/robotwin>`。如需导出独立目录（``model.safetensors``、``config.json`` 与 ``norm_stats.json``），使用 OpenPI 检查点转换器的 ``sft_to_openpi`` 模式（见 :doc:`检查点转换 <../../guides/convertor>`）。
 
 可视化与结果
 ----------------------------------------
