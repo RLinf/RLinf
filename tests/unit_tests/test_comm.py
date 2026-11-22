@@ -2699,6 +2699,53 @@ def test_collective_group_prepares_compressed_cpu_tensors():
         buffer.release()
 
 
+@pytest.mark.parametrize("compressed", [False, True])
+def test_dataclass_cpu_payload_is_coalesced_and_restored(compressed):
+    """Nested mixed-dtype tensors use one CPU payload and preserve shared leaves."""
+    @dataclass
+    class Payload:
+        values: dict
+
+    shared = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+    payload = Payload(
+        {"frames": [torch.zeros(32, 32, 3, dtype=torch.uint8) for _ in range(20)],
+         "state": shared, "alias": shared, "done": torch.tensor(True),
+         "empty": torch.empty(0, dtype=torch.int64)}
+    )
+    group = object.__new__(CollectiveGroup)
+    group._peer_rank = 0
+    group._group_info = SimpleNamespace(group_name="test")
+    group._logger = logging.getLogger(__name__)
+    options = LZ4CompressionConfig(min_bytes=1) if compressed else None
+    provider = options.create_codec_provider() if options else None
+    group._worker = SimpleNamespace(
+        _tensor_compression_config=options,
+        _tensor_buffer_pool=TensorBufferPool(TensorBufferPoolConfig()),
+        _get_tensor_codec_provider=lambda: provider,
+    )
+    messages = []
+    group._send = lambda tensor, *args, **kwargs: messages.append(tensor.clone())
+    _, data = group._get_object_info(payload)
+    data, buffers = group._compress_tensor_data(data)
+    try:
+        group._send_tensor_dataclass(payload, comm_id=0, tensor_data=data)
+    finally:
+        for buffer in buffers:
+            buffer.release()
+    # Two list metadata messages, one CPU payload, and two skeleton messages.
+    assert len(messages) == 5
+    incoming = iter(messages)
+    group._recv = lambda tensor, *args, **kwargs: tensor.copy_(next(incoming))
+    restored, _ = group._recv_tensor_dataclass(comm_id=0)
+    assert torch.equal(restored.values["state"], shared)
+    assert restored.values["alias"] is restored.values["state"]
+    assert restored.values["done"].item() is True
+    assert restored.values["empty"].shape == (0,)
+    assert all(torch.equal(x, y) for x, y in zip(
+        restored.values["frames"], payload.values["frames"]
+    ))
+
+
 def test_collective_group_restores_a_compressed_cpu_tensor():
     """Tensor-list metadata restores a compressed CPU payload in place."""
     options = LZ4CompressionConfig(min_bytes=1)

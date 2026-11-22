@@ -2235,6 +2235,7 @@ class CollectiveGroup:
         async_op: bool = False,
         piggyback_payload: Optional[Any] = None,
         work: Optional[AsyncFuncWork] = None,
+        coalesce_cpu: bool = False,
     ) -> Optional[AsyncWork]:
         """Send a list of tensors to the specified destination address in the collective group.
 
@@ -2246,6 +2247,7 @@ class CollectiveGroup:
             piggyback_payload (Optional[Any]): The payload to piggyback on the send operation.
             work (Optional[AsyncFuncWork]): If provided, payload-transfer time is
                 attributed to this work via :meth:`_track_payload_time`.
+            coalesce_cpu (bool): Send CPU payloads in one byte buffer.
 
         Returns:
             Optional[AsyncWork]: If async_op is True, returns an AsyncWork object for the asynchronous operation. If async_op is False, returns None.
@@ -2268,6 +2270,9 @@ class CollectiveGroup:
             "pb": piggyback_payload,
             "cpu_tensor_mask": cpu_tensor_mask,
         }
+        coalesce_cpu = coalesce_cpu and len(cpu_tensors) > 1
+        if coalesce_cpu:
+            metadata["coalesced_cpu"] = True
         if tensor_data.compression is not None:
             metadata["compression"] = tensor_data.compression
         self._logger.debug(
@@ -2293,7 +2298,16 @@ class CollectiveGroup:
         )
 
         with self._track_payload_time(work=work):
-            for tensor in cpu_tensors:
+            cpu_payloads = (
+                [
+                    torch.cat(
+                        [tensor.reshape(-1).view(torch.uint8) for tensor in cpu_tensors]
+                    )
+                ]
+                if coalesce_cpu
+                else cpu_tensors
+            )
+            for tensor in cpu_payloads:
                 last_work = self._send(
                     tensor,
                     device=CollectiveGroup.CPU,
@@ -2414,9 +2428,26 @@ class CollectiveGroup:
                 accel_entries.append((idx, tensor, shape_dtype))
 
         with self._track_payload_time(work=work):
+            packed_cpu = None
+            packed_offset = 0
+            if metadata.get("coalesced_cpu", False):
+                packed_bytes = sum(
+                    tensor.numel() * tensor.element_size()
+                    if wire_numel is None
+                    else wire_numel
+                    for tensor, wire_numel in zip(cpu_tensors, compressed_numel)
+                )
+                packed_cpu = torch.empty(packed_bytes, dtype=torch.uint8)
+                self._recv(packed_cpu, CollectiveGroup.CPU, comm_id)
             for tensor, wire_numel in zip(cpu_tensors, compressed_numel):
                 if wire_numel is None:
-                    self._recv(tensor, CollectiveGroup.CPU, comm_id)
+                    if packed_cpu is None:
+                        self._recv(tensor, CollectiveGroup.CPU, comm_id)
+                    else:
+                        target_bytes = tensor.reshape(-1).view(torch.uint8)
+                        end = packed_offset + target_bytes.numel()
+                        target_bytes.copy_(packed_cpu[packed_offset:end])
+                        packed_offset = end
                     continue
 
                 tensor_bytes = tensor.numel() * tensor.element_size()
@@ -2431,7 +2462,12 @@ class CollectiveGroup:
                 )
                 decompressor = None
                 try:
-                    self._recv(wire_tensor, CollectiveGroup.CPU, comm_id)
+                    if packed_cpu is None:
+                        self._recv(wire_tensor, CollectiveGroup.CPU, comm_id)
+                    else:
+                        end = packed_offset + wire_numel
+                        wire_tensor.copy_(packed_cpu[packed_offset:end])
+                        packed_offset = end
                     decompressor = codec_provider.acquire_decompressor()
                     decompressor.decompress_into(
                         wire_tensor,
@@ -2586,13 +2622,15 @@ class CollectiveGroup:
         assert tensor_data.skeleton is not None
         flat_tensors = tensor_data.tensors_list
 
-        # Send tensors independently from the lightweight nested skeleton.
+        # Nested episodes contain many small CPU leaves; one payload avoids
+        # paying a collective round trip for every low-level step and field.
         self._send_tensor_list(
             flat_tensors,
             comm_id,
             tensor_data=tensor_data,
             async_op=async_op,
             work=work,
+            coalesce_cpu=True,
         )
         return self._send_object(
             tensor_data.skeleton,
