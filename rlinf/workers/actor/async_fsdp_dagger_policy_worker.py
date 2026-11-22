@@ -17,10 +17,8 @@ import queue
 import threading
 import time
 
-import torch
-
 from rlinf.scheduler import Worker
-from rlinf.utils.metric_utils import append_to_dict, compute_split_num
+from rlinf.utils.metric_utils import compute_split_num
 from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
 
 
@@ -112,9 +110,7 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
                 return
             await asyncio.sleep(1)
 
-    @Worker.timer("run_training")
-    async def run_training(self):
-        """Run async DAgger updates with replay-buffer samples."""
+    async def _prepare_training(self) -> bool:
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
@@ -125,6 +121,13 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             )
             await self._wait_for_replay_buffer_ready(min_buffer_size)
         elif self._skip_lerobot_training():
+            return False
+        return True
+
+    @Worker.timer("run_training")
+    async def run_training(self):
+        """Run async DAgger updates with replay-buffer samples."""
+        if not await self._prepare_training():
             return {}
 
         assert (
@@ -143,14 +146,9 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
             await asyncio.sleep(0)
-            metrics_data = self.update_one_epoch()
-            append_to_dict(metrics, metrics_data)
-            self.update_step += 1
+            self._record_sft_update(metrics, self.update_one_epoch())
 
-        torch.cuda.synchronize()
-        torch.distributed.barrier()
-        torch.cuda.empty_cache()
-        return self.process_train_metrics(metrics)
+        return self._finish_sft_updates(metrics)
 
     async def stop(self):
         self.should_stop = True

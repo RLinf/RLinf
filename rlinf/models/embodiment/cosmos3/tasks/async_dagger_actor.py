@@ -16,8 +16,7 @@ import asyncio
 import threading
 import time
 
-from rlinf.scheduler import Worker
-from rlinf.utils.metric_utils import append_to_dict, compute_split_num
+from rlinf.utils.metric_utils import compute_split_num
 from rlinf.workers.actor.async_fsdp_dagger_policy_worker import (
     AsyncEmbodiedDAGGERFSDPPolicy,
 )
@@ -96,28 +95,9 @@ class Cosmos3AsyncDAggerActor(AsyncEmbodiedDAGGERFSDPPolicy, Cosmos3DAggerActor)
                 return
             await asyncio.sleep(1)
 
-    @Worker.timer("run_training")
-    async def run_training(self):
+    async def _prepare_training(self) -> bool:
         self._check_receiver()
-        if self.cfg.actor.get("enable_offload", False):
-            self.load_param_and_grad(self.device)
-            self.load_optimizer(self.device)
-
-        if not self.enable_online_lerobot:
-            await self._wait_for_replay_buffer_ready(
-                self.cfg.algorithm.replay_buffer.get("min_buffer_size", 100)
-            )
-        elif self._skip_lerobot_training():
-            return {}
-
-        if self.should_stop:
-            return {}
-        self._begin_sft_updates()
-        metrics = {}
-        for _ in range(self.cfg.algorithm.get("update_epoch", 1)):
-            await asyncio.sleep(0)
-            append_to_dict(metrics, self.update_one_epoch())
-        return self._finish_sft_updates(metrics)
+        return await super()._prepare_training() and not self.should_stop
 
     def save_checkpoint(self, save_base_path, step):
         self._check_receiver()

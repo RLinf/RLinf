@@ -488,31 +488,10 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 drq.apply_drq(batch["next_obs"], pad=4)
             train_micro_batch_list[idx] = batch
 
-        self.optimizer.zero_grad()
-        gbs_actor_loss = []
-        for mb_idx, batch in enumerate(train_micro_batch_list):
-            backward_ctx = self.before_micro_batch(
-                self.model,
-                is_last_micro_batch=(mb_idx + 1) == self.gradient_accumulation,
-            )
-            with self.amp_context:
-                actor_loss = self.forward_actor(batch["forward_inputs"])
-            actor_loss = actor_loss / self.gradient_accumulation
-            with backward_ctx:
-                self.grad_scaler.scale(actor_loss).backward()
-            gbs_actor_loss.append(actor_loss.item() * self.gradient_accumulation)
-
-        actor_grad_norm = self.model.clip_grad_norm_(
-            max_norm=self.cfg.actor.optim.clip_grad
+        return self._update_sft_batches(
+            (batch["forward_inputs"] for batch in train_micro_batch_list),
+            self.gradient_accumulation,
         )
-        self.optimizer.step()
-        self.lr_scheduler.step()
-
-        return {
-            "dagger/actor_loss": np.mean(gbs_actor_loss),
-            "actor/lr": self.optimizer.param_groups[0]["lr"],
-            "actor/grad_norm": actor_grad_norm,
-        }
 
     def update_lerobot_one_epoch(self):
         """Run one LeRobot update epoch."""
@@ -524,16 +503,28 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                     next(self._lerobot_iter) for _ in range(num_batches)
                 ]
             for idx, batch in enumerate(train_micro_batch_list):
-                batch = put_tensor_device(batch, device=self.device)
-                if self.enable_drq:
-                    drq.apply_drq(batch["curr_obs"], pad=4)
-                train_micro_batch_list[idx] = batch
+                train_micro_batch_list[idx] = self._stage_lerobot_batch(batch)
 
+        result = self._update_sft_batches(train_micro_batch_list, num_batches)
+        with self._lerobot_loader_lock:
+            self._data_epoch += 1
+            if hasattr(self._lerobot_loader.sampler, "set_epoch"):
+                self._lerobot_loader.sampler.set_epoch(self._data_epoch)
+            self._lerobot_iter = iter(self._lerobot_loader)
+        return result
+
+    def _stage_lerobot_batch(self, batch):
+        batch = put_tensor_device(batch, device=self.device)
+        if self.enable_drq:
+            drq.apply_drq(batch["curr_obs"], pad=4)
+        return batch
+
+    def _update_sft_batches(self, batches, num_batches):
+        """Accumulate the microbatches for one optimizer update."""
         self.optimizer.zero_grad()
         gbs_actor_loss = []
 
-        for idx, batch in enumerate(train_micro_batch_list):
-            # set the gradient accumulation backward_ctx
+        for idx, batch in enumerate(batches):
             backward_ctx = self.before_micro_batch(
                 self.model,
                 is_last_micro_batch=(idx + 1) == num_batches,
@@ -553,11 +544,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self.optimizer.step()
         self.lr_scheduler.step()
 
-        with self._lerobot_loader_lock:
-            self._data_epoch += 1
-            if hasattr(self._lerobot_loader.sampler, "set_epoch"):
-                self._lerobot_loader.sampler.set_epoch(self._data_epoch)
-            self._lerobot_iter = iter(self._lerobot_loader)
         return {
             "dagger/actor_loss": np.mean(gbs_actor_loss),
             "actor/lr": self.optimizer.param_groups[0]["lr"],
@@ -660,10 +646,14 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         metrics = {}
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
-            metrics_data = self.update_one_epoch()
-            append_to_dict(metrics, metrics_data)
-            self.update_step += 1
+            self._record_sft_update(metrics, self.update_one_epoch())
+        return self._finish_sft_updates(metrics)
 
+    def _record_sft_update(self, metrics, update_metrics):
+        append_to_dict(metrics, update_metrics)
+        self.update_step += 1
+
+    def _finish_sft_updates(self, metrics):
         torch.cuda.synchronize()
         torch.distributed.barrier()
         torch.cuda.empty_cache()
