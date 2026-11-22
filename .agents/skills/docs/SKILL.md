@@ -58,15 +58,33 @@ Page findings count only on the lines the change adds, because many existing pag
 | `docs/zh-style` | minor | 您, 「」, 值得注意的是, 进行, 当……时, 不是/并非……而是……, half-width punctuation in a Chinese sentence, or no space between Chinese and English or digits ([rules/chinese.md](rules/chinese.md)) |
 | `docs/zh-hard-wrap` | minor | Chinese prose wrapped inside a paragraph or list item, which renders as a space |
 | `docs/command-placeholder` | major | an `install.sh` or `hf download` command containing unrunnable `<...>` placeholders on `examples/` or `evaluations/` pages |
-| `docs/command-legacy` | major | `huggingface-cli download`, `pip install huggingface-hub`, `git lfs`, `git clone https://huggingface.co/`, or `CUDA_VISIBLE_DEVICES` |
+| `docs/command-legacy` | major | `huggingface-cli download`, `pip install huggingface-hub`, `git lfs`, `git clone https://huggingface.co/`, or `CUDA_VISIBLE_DEVICES` (on recipes, eval guides, and `guides/`) |
 | `docs/command-cd` | major | `cd` immediately before `hf download`, or `--local-dir .` / `--local-dir /path/to/...` |
 | `docs/command-tabset` | major | an `install.sh` or `hf download` block on `examples/` or `evaluations/` (outside hardware-backend subsections) not wrapped in `.. tab-set::` |
+| `docs/command-bloat` | major | mega bash blocks combining `git clone` + launch script, >= 16 command lines outside `.. dropdown::`, shell argument arrays, or >= 6 Hydra overrides on one launch line |
 | `docs/nested-tabset` | major | nested `.. tab-set::` directives (stacked tab bars); flatten into one single-level `.. tab-set::` |
+| `docs/tab-title` | major | `.. tab-item::` title > 48 chars or concatenating `Model + Benchmark` (e.g. `OpenPI + RoboCasa`) |
+| `docs/tab-parity` | major | paired EN/ZH pages with mismatched `.. tab-set::` or `.. tab-item::` counts |
 | `docs/mirror-comment` | major | commented `--use-mirror`, `HF_ENDPOINT`, `hf-mirror`, or `gh-proxy` lines inside bash blocks |
 | `docs/dir-tree` | major | decorative ASCII directory trees (`├──` / `└──`) outside `.. dropdown::` |
 | `docs/boilerplate-yaml` | major | stale `rollout.model.model_path` alongside `actor.model.model_path`, or repeated `logger_backends:` / `video_base_dir:` YAML blocks |
-| `docs/long-yaml` | minor | a YAML block with ≥ 25 lines outside `.. dropdown::` on `examples/` or `evaluations/` pages |
+| `docs/long-yaml` | minor | a YAML block with ≥ 20 lines outside `.. dropdown::` on `start/`, `examples/`, `evaluations/`, or `guides/` pages |
+| `docs/yaml-edit-friction` | minor | a recipe telling readers to manually edit `model_path` / `train_data_paths` in YAML without showing a copy-pasteable Hydra CLI override |
+| `docs/eval-command` | major | `env.eval.total_num_envs=10` (crashes on 4/8 GPUs), passing a training-only YAML to `evaluations/run_eval.sh`, or claiming arbitrary training configs work via eval fallback |
+| `docs/multinode-trap` | major | launching a YAML whose `cluster.num_nodes > 1` without stating the node count or giving a `cluster.num_nodes=1` quick-start override |
 | `docs/local-asset` | major | a new image/diagram file added under `docs/**/_static/` instead of hosted in `RLinf/misc` under `pic/` |
+| `docs/no-todo` | major | unfinished `TODO`, `TBD`, or `FIXME` marker in published docs (prose, table cells, or comments) |
+| `docs/jargon` | major | testing jargon (`冒烟测试` / `smoke test` / `smoke check`) or informal ZH shorthand (`采数` / `数采` / `遥操`) |
+| `docs/long-paragraph` | minor | wall-of-text paragraph (> 120 EN words or > 260 ZH chars) on a recipe or guide page |
+| `docs/raw-html-grid` | major | `.. raw:: html` navigation card grid or hardcoded `color: blue` (use `sphinx-design` `.. grid::`) |
+| `docs/index-style` | major | non-hidden toctree on an index page, missing cards/table routing, or hidden toctree entry omitted from the page body |
+| `docs/path-exists` | major | repository file path (`rlinf/`, `examples/`, `evaluations/`, `toolkits/`, `requirements/`) cited in prose or commands that does not exist on disk |
+| `docs/extending-no-pytest` | major | boilerplate `tests/unit_tests/` or `pytest` unit-test section in `extending/` (use standalone local CPU verification instead) |
+| `docs/extending-structure` | major | `extending/` page missing top At-a-Glance `.. list-table::` or runnable verification step |
+| `docs/guide-quality` | major | ultra-thin stub guide (< 40 non-empty lines) in `guides/` |
+| `docs/concept-purity` | major | `.. autoclass::` / `.. autofunction::`, ultra-thin stub (< 40 lines), or PR migration history in `concepts/` |
+| `docs/algo-keys` | major | YAML key on `reference/algorithms/` that does not exist in `rlinf/` / `examples/` / `evaluations/`, or missing runnable config/recipe link |
+| `docs/latex-sanity` | major | broken LaTeX subscript omission (`\mathbb{E}{`, `\pi{\theta}`) or orphan paper equation tags (`\tag{8}`) in `reference/` |
 
 Then read every changed page in full, in both languages, as a reader new to RLinf who has not seen its code, and inspect every command block (the script above checks build, markup, and prose, not command quality or workflow design):
 

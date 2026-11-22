@@ -55,6 +55,7 @@ except ImportError:
 import check_doc_symbols  # noqa: E402
 import check_recipe  # noqa: E402
 import check_rst_markup  # noqa: E402
+import check_sections  # noqa: E402
 import check_writing  # noqa: E402
 
 LANGS = {"docs/source-en/": "docs/source-zh/", "docs/source-zh/": "docs/source-en/"}
@@ -169,6 +170,68 @@ def check_toctrees(pages: list[str]) -> list[route.Finding]:
     return findings
 
 
+TAB_SET_LINE = re.compile(r"^\s*\.\.\s+tab-set::", re.MULTILINE)
+TAB_ITEM_LINE = re.compile(r"^\s*\.\.\s+tab-item::", re.MULTILINE)
+
+
+def check_tabs(pages: list[str]) -> list[route.Finding]:
+    """Ensure paired EN and ZH pages have the same number of tab-sets and tabs."""
+    findings = []
+    pairs = {
+        (page, counterpart(page))
+        if page.startswith("docs/source-en/")
+        else (counterpart(page), page)
+        for page in pages
+        if counterpart(page)
+    }
+    for en_page, zh_page in sorted(pairs):
+        mine, theirs = route.REPO_ROOT / en_page, route.REPO_ROOT / zh_page
+        if not (mine.exists() and theirs.exists()):
+            continue
+        en_text, zh_text = (
+            mine.read_text(encoding="utf-8"),
+            theirs.read_text(encoding="utf-8"),
+        )
+        en_counts = (
+            len(TAB_SET_LINE.findall(en_text)),
+            len(TAB_ITEM_LINE.findall(en_text)),
+        )
+        zh_counts = (
+            len(TAB_SET_LINE.findall(zh_text)),
+            len(TAB_ITEM_LINE.findall(zh_text)),
+        )
+        if en_counts != zh_counts:
+            findings.append(
+                route.Finding(
+                    "major",
+                    en_page,
+                    None,
+                    "docs/tab-parity",
+                    f"tab structure differs between EN ({en_counts[0]} tab-set, "
+                    f"{en_counts[1]} tab-item) and ZH ({zh_counts[0]} tab-set, "
+                    f"{zh_counts[1]} tab-item)",
+                )
+            )
+    return findings
+
+
+def _expand_file_args(files: list[str]) -> list[str]:
+    """Expand any directory arguments into their ``*.rst`` files."""
+    expanded: list[str] = []
+    for raw in files:
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = route.REPO_ROOT / candidate
+        if candidate.is_dir():
+            expanded.extend(
+                p.resolve().relative_to(route.REPO_ROOT).as_posix()
+                for p in sorted(candidate.rglob("*.rst"))
+            )
+        else:
+            expanded.append(raw)
+    return expanded
+
+
 def is_cjk(char: str) -> bool:
     return unicodedata.east_asian_width(char) in ("W", "F")
 
@@ -276,6 +339,8 @@ def main() -> int:
     parser = route.check_parser(__doc__.splitlines()[0])
     parser.add_argument("--no-build", action="store_true", help="skip the Sphinx build")
     args = parser.parse_args()
+    if args.files:
+        args.files = _expand_file_args(args.files)
     selection = route.select("docs", args)
     changes = selection.changes
     pages = [
@@ -294,6 +359,7 @@ def main() -> int:
     findings = (
         check_parity(changes)
         + check_toctrees(pages)
+        + check_tabs(pages)
         + check_recipe.check_static_assets(changes)
     )
     for page in pages:
@@ -301,6 +367,7 @@ def main() -> int:
         page_findings = check_page(path, page, known)
         page_findings += check_writing.check_page(path, page, names, page in added)
         page_findings += check_recipe.check_page(path, page)
+        page_findings += check_sections.check_page(path, page, route.REPO_ROOT)
         findings += selection.relevant(page_findings)
     if args.no_build:
         print("skipped: the Sphinx build (--no-build)")

@@ -72,6 +72,29 @@ EN_PHRASES = re.compile(
     r"in order to|allows you to|enables you to|a wide range of|currently|not just)\b",
     re.IGNORECASE,
 )
+JARGON_PATTERNS = (
+    (
+        re.compile(
+            r"冒烟测试|冒烟验证|冒烟检查|\bsmoke[\s-]*(?:test(?:ed|ing)?|check|run)\b",
+            re.IGNORECASE,
+        ),
+        "avoid testing jargon (smoke test / 冒烟测试); say quick check / 快速验证 or 自检",
+    ),
+    (
+        re.compile(r"采数|数采"),
+        "use the formal term 数据采集 instead of 采数 / 数采",
+    ),
+    (
+        re.compile(r"遥操(?!作)"),
+        "use the formal term 遥操作 instead of 遥操",
+    ),
+)
+TODO_PATTERN = re.compile(r"\b(?:TODO|TBD|FIXME)\b")
+SKIP_TODO_PATHS = (
+    "/resources/release_v0",
+    "/resources/blog/",
+    "/resources/publications/",
+)
 HAN = r"一-鿿"
 ZH_PATTERNS = (
     (re.compile("您"), "address the reader as 你, or omit the subject"),
@@ -220,6 +243,48 @@ def check_page(
                 "docs/structure",
                 f"remove the generic {generic!r} section; link to Reference",
             )
+
+    if not any(skip in rel for skip in SKIP_TODO_PATHS):
+        for number, line in enumerate(lines, 1):
+            if TODO_PATTERN.search(line):
+                add(
+                    "major",
+                    number,
+                    "docs/no-todo",
+                    "remove unfinished TODO / TBD / FIXME marker from published docs",
+                )
+            for pattern, advice in JARGON_PATTERNS:
+                if pattern.search(line):
+                    add("major", number, "docs/jargon", advice)
+
+    if kind in ("recipe", "guide"):
+        for block in check_rst_markup.prose_blocks(source):
+            if any(
+                row.lstrip().startswith(("* -", "| ", "+-", "=="))
+                for row in block.text.splitlines()
+            ):
+                continue
+            plain = MARKUP.sub(" X ", block.text)
+            if lang == "zh":
+                char_count = len(re.sub(r"\s+", "", plain))
+                if char_count > 260:
+                    add(
+                        "minor",
+                        block.lines[0],
+                        "docs/long-paragraph",
+                        f"paragraph has {char_count} Chinese characters on a {kind} page; "
+                        "split into short scannable paragraphs or a table",
+                    )
+            else:
+                word_count = len(plain.split())
+                if word_count > 120:
+                    add(
+                        "minor",
+                        block.lines[0],
+                        "docs/long-paragraph",
+                        f"paragraph has {word_count} words on a {kind} page; "
+                        "split into short scannable paragraphs or a table",
+                    )
 
     for number, text in rows:
         if lang == "en":

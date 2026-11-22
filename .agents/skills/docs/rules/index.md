@@ -4,18 +4,19 @@ An index page routes readers to other pages; it does not explain anything itself
 
 ## Where a page goes
 
-The docs have eight top-level axes, in this order: **Get Started · Examples · Evaluation · Guides · Concepts · Reference · Extending · Resources**. Every page belongs to exactly one, chosen by the reader's starting question rather than by the team that owns the feature.
+The docs have nine top-level chapters in the sidebar, in this order: **Get Started · Embodied Training · Real-World Robots · Evaluation · Agentic & Generative · Guides · Extending · Concepts & Reference · Resources**. Every page belongs to exactly one, chosen by the reader's starting question rather than by the team that owns the feature.
 
-| Axis | Owns |
+| Chapter | Owns |
 |---|---|
-| Get Started | install, quickstarts, requirements, cheat sheet |
-| Examples | the recipe galleries: simulators, robots, models, SFT, algorithms, agents, systems |
-| Evaluation | eval onboarding, benchmark eval guides, eval CLI, config, and results reference |
-| Guides | operational how-tos: configure, launch and scale, data and checkpoints, performance, agent workflows |
-| Concepts | the mental model: execution flow, workers, channels, cluster, placement, execution modes, replay buffer |
-| Reference | exact specs: APIs, algorithm specs, configuration keys and metrics, evaluation reference |
-| Extending | contributor how-tos: new env, model, or SFT model, advanced integrations |
-| Resources | why RLinf, blog, publications, release notes, FAQ |
+| Get Started | overview, installation & requirements, quickstart, cheat sheet, FAQ |
+| Embodied Training | overview, simulators, embodied models, SFT & imitation, RL recipes, world models |
+| Real-World Robots | overview, shared real-world workflow, and per-robot bring-up / SFT / RL pages |
+| Evaluation | eval overview, quick tour, benchmark eval guides, eval CLI/config/models/results reference |
+| Agentic & Generative | math reasoning, Search-R1, WideSeek-R1, rStar2, AgentLightning, Coding RL, VLM, image & video generation |
+| Guides | operational how-tos: configure, data & checkpoints, launch & scale, performance & parallelism, rollout engines |
+| Extending | contributor how-tos (embodied first, in overview order): models, envs, robots/tasks, rewards, algorithms, agents, Megatron-Bridge, accelerators, advanced integrations |
+| Concepts & Reference | concepts (execution, scheduling, robotics), algorithm specs, config & metrics, Python API |
+| Resources | why RLinf, release notes, blog, publications, contributor policy |
 
 - **Information ownership.** A page is owned by the section where readers look for its task. When a mixed page holds a concept that Concepts needs, move the concept to a dedicated Concepts page and link the operational and reference parts from their own sections.
 - **Examples categories.** Simulators and benchmarks go in `simulators_index`, physical hardware in `real_world_index`, model families and policy classes (including lightweight policies such as MLP) in `vla_wam_index`, training recipes and algorithms in `methods_index`, and SFT-only workflows in `sft_index`. A page appears in one gallery index only.
@@ -28,8 +29,8 @@ The docs have eight top-level axes, in this order: **Get Started · Examples · 
 
 - **The landing page (`index.rst`)** routes tasks: a one-line value proposition, a centered hero (logo, title, subtitle), cards for Get Started, Install, Examples, and Evaluation, a "Choose Your Path" card grid, and a short "Why RLinf" teaser. The full pitch lives on the Why RLinf page under Resources.
 - **The Get Started landing** is install, one copy-paste first run, requirements, and "What's Next" routing.
-- **Every section and sub-section index** opens with one line saying when to pick it ("Pick this when…"), then routes with a `sphinx-design` card grid (`.. grid::` with `grid-item-card`, `:link:`, `:link-type: doc`) or a `list-table` when columns carry information. Never bullet lists or one `:doc:` per line in the body. `examples/index.rst` is the model.
-- **The toctree is `:hidden:`.** It drives the sidebar and page order; the body shows the same entries as cards or tables.
+- **Every section and sub-section index** opens with one line saying when to pick it ("Pick this when…"), then routes with a `sphinx-design` card grid (`.. grid::` with `grid-item-card`, `:link:`, `:link-type: doc`) or a `list-table` when columns carry information. Never use bullet lists, one `:doc:` per line, or `.. raw:: html` card grids with hardcoded inline styles (`color: blue`). `examples/real_world_index.rst` and `examples/agentic/index.rst` are the models.
+- **The toctree is `:hidden:`.** It drives the sidebar and page order; every entry in the hidden toctree must appear in the page's cards or table (`docs/index-style`).
 
 ## Navigation labels
 
