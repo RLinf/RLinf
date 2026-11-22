@@ -52,7 +52,7 @@ class Cosmos3DAggerAdapter:
     def stage_lerobot_batch(
         batch: dict[str, Any], device: torch.device
     ) -> dict[str, Any]:
-        # Leave pixels on the host until Cosmos builds its video batch.
+        # Video packing moves pixels. Sequence plans read the padding mask on the CPU.
         prepared = {
             key: batch[key]
             for key in (
@@ -62,30 +62,23 @@ class Cosmos3DAggerAdapter:
                 "vision_images",
                 "vision_wrist_images",
                 "vision_valid",
+                "actions_is_pad",
             )
             if key in batch
         }
-        prepared.update(
-            put_tensor_device(
-                {
-                    key: batch[key]
-                    for key in ("actions", "actions_is_pad")
-                    if key in batch
-                },
-                device=device,
-            )
-        )
+        if "actions" in batch:
+            prepared["actions"] = put_tensor_device(batch["actions"], device=device)
         return prepared
 
     @staticmethod
     def loss_and_metrics(
         output: torch.Tensor | dict,
-    ) -> tuple[torch.Tensor, dict[str, float]]:
-        """Keep the native loss graph and detach Cosmos reporting metrics."""
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Keep the native loss graph and snapshot metrics for later reporting."""
         if not isinstance(output, dict):
             return output, {}
         metrics = {
-            f"dagger/{key}": value.detach().float().item()
+            f"dagger/{key}": value.detach().to(torch.float32, copy=True).reshape(())
             for key, value in output.items()
             if key != "loss" and torch.is_tensor(value) and value.numel() == 1
         }
@@ -103,11 +96,9 @@ class Cosmos3DAggerInputs:
 
         return prepare_lerobot_batch(
             batch,
-            horizon=int(self._rollout_config.get("num_frames", 17)) - 1,
             max_action_dim=int(self.omni.config.max_action_dim),
             normalizer=self._get_action_normalizer(),
             prepare_observation_batch=self._prepare_sft_observation_batch,
-            video_key=self.omni.input_video_key,
             include_vision=self._rollout_config.get("sft_objective") == "joint",
         )
 
@@ -201,14 +192,20 @@ class Cosmos3DAggerInputs:
             views = []
             for current, clip in cameras:
                 if mode == "wam":
-                    pixels = torch.as_tensor(clip)
-                    pixels = pixels.to(self.device, non_blocking=True)
+                    frames = torch.as_tensor(clip).to(self.device, non_blocking=True)
                     if len(indices) != batch_size:
-                        pixels = pixels[indices]
-                    frames = self._rollout_images(
-                        pixels.flatten(0, 1), device=self.device
-                    )
-                    del pixels
+                        frames = frames[indices]
+                    frames = frames.flatten(0, 1)
+                    # Cached camera frames already have the target uint8 NCHW layout.
+                    if (
+                        frames.dtype == torch.uint8
+                        and frames.shape[1:] == (3, image_size, image_size)
+                        and frames.shape[-1] != 3
+                        and frames.is_contiguous()
+                    ):
+                        views.append(frames)
+                        continue
+                    frames = self._rollout_images(frames, device=self.device)
                 else:
                     frames = self._rollout_images(current, device=self.device)[indices]
                 views.append(self._resize_camera_frames(frames, image_size))

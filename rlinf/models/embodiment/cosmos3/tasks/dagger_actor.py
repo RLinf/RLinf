@@ -141,8 +141,7 @@ class Cosmos3DAggerActor(EmbodiedDAGGERFSDPPolicy):
 
     def _update_sft_batches(self, batches, num_batches):
         self.optimizer.zero_grad()
-        actor_losses = []
-        metrics = {}
+        logged_batches = []
         for idx, batch in enumerate(batches):
             backward_ctx = self.before_micro_batch(
                 self.model, is_last_micro_batch=(idx + 1) == num_batches
@@ -154,8 +153,7 @@ class Cosmos3DAggerActor(EmbodiedDAGGERFSDPPolicy):
                     )
                 loss = loss / num_batches
                 self.grad_scaler.scale(loss).backward()
-            append_to_dict(metrics, step_metrics)
-            actor_losses.append(loss.item() * num_batches)
+            logged_batches.append((loss.detach().reshape(()), step_metrics))
 
         grad_norm, _ = self.optimizer_step()
         successful = bool(torch.isfinite(torch.as_tensor(grad_norm)).all())
@@ -164,6 +162,20 @@ class Cosmos3DAggerActor(EmbodiedDAGGERFSDPPolicy):
             self.update_step += 1
             self.model.set_global_step(self.update_step)
         self.optimizer.zero_grad(set_to_none=True)
+        # Defer host reads until the optimizer has finished with the gradients.
+        actor_losses = []
+        metrics = {}
+        for scaled_loss, step_metrics in logged_batches:
+            scalars = [scaled_loss, *step_metrics.values()]
+            if all(
+                type(value) is torch.Tensor and value.device == scaled_loss.device
+                for value in scalars
+            ):
+                loss_value, *metric_values = torch.stack(scalars).tolist()
+            else:
+                loss_value, *metric_values = [value.item() for value in scalars]
+            actor_losses.append(loss_value * num_batches)
+            append_to_dict(metrics, dict(zip(step_metrics, metric_values, strict=True)))
         result = {key: float(np.mean(values)) for key, values in metrics.items()}
         result.update(
             {

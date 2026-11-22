@@ -32,6 +32,7 @@ class Cosmos3AsyncDAggerActor(AsyncEmbodiedDAGGERFSDPPolicy, Cosmos3DAggerActor)
         super().__init__(cfg)
         self.should_stop = False
         self._lerobot_ingest_lock = threading.RLock()
+        self._lerobot_receiver_drained = threading.Event()
         self._recv_error: Exception | None = None
 
     def _check_receiver(self):
@@ -47,7 +48,11 @@ class Cosmos3AsyncDAggerActor(AsyncEmbodiedDAGGERFSDPPolicy, Cosmos3DAggerActor)
 
     def _recv_lerobot_thread_main(self, input_channel):
         try:
-            super()._recv_lerobot_thread_main(input_channel)
+            try:
+                super()._recv_lerobot_thread_main(input_channel)
+            finally:
+                self._lerobot_receiver_drained.set()
+                self._archive_pending_lerobot_episodes()
         except Exception as error:
             self._recv_error = error
 
@@ -116,5 +121,15 @@ class Cosmos3AsyncDAggerActor(AsyncEmbodiedDAGGERFSDPPolicy, Cosmos3DAggerActor)
     async def stop(self):
         await super().stop()
         if self.enable_online_lerobot:
-            await asyncio.to_thread(self._archive_pending_lerobot_episodes)
+            receiver = getattr(self, "_recv_lerobot_thread", None)
+            if receiver is None:
+                await asyncio.to_thread(self._archive_pending_lerobot_episodes)
+            elif receiver.is_alive():
+                if not self._lerobot_receiver_drained.is_set():
+                    raise TimeoutError(
+                        "The LeRobot receiver is still processing episodes. "
+                        "It will finalize the archive when it exits."
+                    )
+                # The input has drained; allow the final disk write to finish.
+                await asyncio.to_thread(receiver.join)
         self._check_receiver()

@@ -26,13 +26,11 @@ import torch
 def prepare_lerobot_batch(
     batch: Mapping[str, Any],
     *,
-    horizon: int,
     max_action_dim: int,
     normalizer: Any,
     prepare_observation_batch: Callable[
         ..., tuple[dict[str, Any], dict[str, torch.Tensor]]
     ],
-    video_key: str = "video",
     include_vision: bool = False,
 ) -> dict[str, Any]:
     """Convert physical LIBERO labels and observations to Cosmos SFT inputs.
@@ -40,12 +38,10 @@ def prepare_lerobot_batch(
     Args:
         batch: LeRobot observations, task strings, raw actions [B,H,7], and a
             boolean ``actions_is_pad`` episode-tail mask [B,H].
-        horizon: Number of action targets in each training window.
         max_action_dim: Padded Cosmos action width, at least 10.
         normalizer: Fixed LIBERO rot6d action normalizer, shared with inference.
         prepare_observation_batch: Builds grouped Cosmos observation metadata and
             batched prompt tokens with their validity mask.
-        video_key: Native Cosmos model's input video field.
         include_vision: Train on real future observations where a complete
             ``vision_images`` clip is available, as indicated by ``vision_valid``.
 
