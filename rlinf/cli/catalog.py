@@ -24,8 +24,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
-import yaml
-
 _OC_ENV_RE = re.compile(r"\$\{oc\.env:([A-Za-z_][A-Za-z0-9_]*)(,[^}]*)?\}")
 
 # Repo-derived path env vars automatically populated by the CLI launcher.
@@ -749,7 +747,7 @@ def resolve_recipe_any_mode(
         )
 
     all_recipes = discover_recipes(repo_root)
-    normalized = target.removesuffix(".yaml").removesuffix(".yml")
+    normalized = _strip_yaml_suffix(target)
     lookup_subgroup = subgroup
     lookup_name = normalized
     if "/" in normalized:
@@ -783,7 +781,19 @@ def resolve_recipe_any_mode(
     )
 
 
+def _strip_yaml_suffix(name: str) -> str:
+    if name.endswith(".yaml"):
+        return name[:-5]
+    if name.endswith(".yml"):
+        return name[:-4]
+    return name
+
+
 def _read_yaml_dict(yaml_path: Path) -> dict:
+    try:
+        import yaml
+    except ImportError:
+        return {}
     try:
         parsed = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
@@ -1052,7 +1062,7 @@ def resolve_recipe(
         )
 
     # 2. Named recipe lookup (optional ``subgroup/name`` and optional ``.yaml`` suffix).
-    normalized = target.removesuffix(".yaml").removesuffix(".yml")
+    normalized = _strip_yaml_suffix(target)
     lookup_subgroup = effective_subgroup
     lookup_name = normalized
     if "/" in normalized:

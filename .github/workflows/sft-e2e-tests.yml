@@ -17,7 +17,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model dreamzero
+          python3 -m rlinf.cli install embodied --model dreamzero
 
       - name: DreamZero DROID WAN22 SFT test
         timeout-minutes: 30
@@ -45,7 +45,7 @@ jobs:
           export DREAMZERO_PATH=/workspace/dataset/DreamZero/dreamzero
           export DECORD_PATH=/workspace/dataset/decord
           source .github/scripts/ascend_ci_workspace.sh setup
-          bash requirements/install.sh --platform ascend embodied --model dreamzero
+          python3 -m rlinf.cli install --platform ascend embodied --model dreamzero
 
       - name: DreamZero DROID WAN22 SFT test
         timeout-minutes: 30
@@ -76,7 +76,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openpi --env maniskill_libero
+          python3 -m rlinf.cli install embodied --model openpi --env maniskill_libero
 
       - name: SFT ManiSkill OpenPI test
         timeout-minutes: 20
@@ -114,7 +114,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export LIBERO_PATH=/workspace/dataset/LIBERO
-          bash requirements/install.sh embodied --model fastwam --env libero
+          python3 -m rlinf.cli install embodied --model fastwam --env libero
 
       - name: FastWAM LIBERO FSDP SFT test
         timeout-minutes: 25
@@ -160,7 +160,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export BEHAVIOR_PATH=/workspace/dataset/BEHAVIOR-1K
           export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
-          bash requirements/install.sh embodied --model openpi --env behavior
+          python3 -m rlinf.cli install embodied --model openpi --env behavior
 
       - name: SFT BEHAVIOR OpenPI test
         timeout-minutes: 30
@@ -193,7 +193,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
+          python3 -m rlinf.cli install agentic
 
       - name: SFT Robo2vlm train test
         timeout-minutes: 20
@@ -240,7 +240,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openvla --env maniskill_libero
+          python3 -m rlinf.cli install embodied --model openvla --env maniskill_libero
 
       - name: ResNet Reward Model Training test
         timeout-minutes: 20
@@ -269,8 +269,8 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model cosmos3 --env libero
-          bash requirements/install.sh embodied --model sglang --env libero --venv .venv-sglang
+          python3 -m rlinf.cli install embodied --model cosmos3 --env libero
+          python3 -m rlinf.cli install embodied --model sglang --env libero --venv .venv-sglang
 
       - name: Cosmos3 LIBERO SFT test
         timeout-minutes: 40

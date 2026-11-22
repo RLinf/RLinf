@@ -21,6 +21,7 @@ import difflib
 import importlib.metadata
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Sequence, TextIO
@@ -37,13 +38,20 @@ from .catalog import (
     resolve_recipe_any_mode,
 )
 from .doctor import render_doctor
-from .launcher import build_launch_plan, execute_launch_plan
+from .installer import (
+    build_install_plan,
+    execute_install_plan,
+    format_install_options,
+    load_install_options,
+)
+from .launcher import build_launch_plan, execute_launch_plan, resolve_venv_python
 
 _KNOWN_LAUNCH_FLAGS: tuple[str, ...] = (
     "--family",
     "--subgroup",
     "--benchmark",
     "--log-dir",
+    "--venv",
     "--dry-run",
     "--check",
     "--async",
@@ -74,10 +82,12 @@ _HYDRA_CLI_FLAGS: frozenset[str] = frozenset(
 
 
 def _get_version() -> str:
-    try:
-        return importlib.metadata.version("rlinf")
-    except importlib.metadata.PackageNotFoundError:
-        return "0.4.0"
+    for dist_name in ("rlinf", "rlinf-cli"):
+        try:
+            return importlib.metadata.version(dist_name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+    return "0.4.0"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -95,6 +105,124 @@ def _build_parser() -> argparse.ArgumentParser:
         version=f"%(prog)s {_get_version()}",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # rlinf install
+    install_parser = subparsers.add_parser(
+        "install",
+        help="Install an RLinf virtual environment via requirements/install.sh.",
+        description=(
+            "Install an RLinf environment (embodied, agentic, or docs) backed by "
+            "requirements/install.sh. Run 'rlinf install --list' to inspect all "
+            "supported models, environments, engines, and platforms."
+        ),
+    )
+    install_parser.add_argument(
+        "target",
+        nargs="?",
+        default="embodied",
+        help="Install target: embodied (default), agentic, or docs.",
+    )
+    install_parser.add_argument(
+        "--list",
+        dest="list_options",
+        action="store_true",
+        help="List all supported targets, models, envs, engines, and platforms.",
+    )
+    install_parser.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Emit machine-readable JSON when combined with --list.",
+    )
+    install_parser.add_argument("--model", help="Embodied model to install.")
+    install_parser.add_argument("--env", help="Embodied environment to install.")
+    install_parser.add_argument(
+        "--engine",
+        help="Rollout engine (sglang, vllm for agentic; phyai for embodied).",
+    )
+    install_parser.add_argument(
+        "--venv",
+        help="Virtual environment directory (default: .venv).",
+    )
+    install_parser.add_argument(
+        "--platform",
+        help="Hardware platform (nvidia, amd, ascend, musa, kunlun, biren, metax).",
+    )
+    install_parser.add_argument(
+        "--python",
+        dest="python_version",
+        help="Python version for the virtual environment (e.g. 3.11.14).",
+    )
+    install_parser.add_argument(
+        "--torch",
+        dest="torch_version",
+        help="Override PyTorch version (e.g. 2.7.0).",
+    )
+    install_parser.add_argument(
+        "--rocm",
+        dest="rocm_version",
+        help="ROCm version override for --platform amd.",
+    )
+    install_parser.add_argument(
+        "--sglang",
+        dest="sglang_version",
+        help="Override SGLang version.",
+    )
+    install_parser.add_argument(
+        "--vllm",
+        dest="vllm_version",
+        help="Override vLLM version.",
+    )
+    install_parser.add_argument(
+        "--transformers",
+        dest="transformers_version",
+        help="Override Transformers version.",
+    )
+    install_parser.add_argument(
+        "--use-mirror",
+        action="store_true",
+        help="Use mainland China download mirrors.",
+    )
+    install_parser.add_argument(
+        "--paddle-gpu",
+        action="store_true",
+        help="Install CUDA PaddlePaddle for diffusion OCR rewards.",
+    )
+    install_parser.add_argument(
+        "--no-root",
+        action="store_true",
+        help="Skip system dependency installation.",
+    )
+    install_parser.add_argument(
+        "--no-flash-attn",
+        action="store_true",
+        help="Skip flash-attn installation.",
+    )
+    install_parser.add_argument(
+        "--no-apex",
+        action="store_true",
+        help="Skip apex installation.",
+    )
+    install_parser.add_argument(
+        "--no-natten",
+        action="store_true",
+        help="Skip natten installation.",
+    )
+    install_parser.add_argument(
+        "--install-rlinf",
+        action="store_true",
+        help="Explicitly install RLinf editable into the venv.",
+    )
+    install_parser.add_argument(
+        "--no-install-rlinf",
+        action="store_true",
+        help="Skip installing RLinf itself (--no-install-project).",
+    )
+    install_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the resolved requirements/install.sh command without running it.",
+    )
 
     # rlinf list
     list_parser = subparsers.add_parser(
@@ -206,6 +334,11 @@ def _build_parser() -> argparse.ArgumentParser:
             help="Explicit log directory passed as runner.logger.log_path.",
         )
         sub.add_argument(
+            "--venv",
+            type=Path,
+            help="Virtual environment directory whose Python should run this command.",
+        )
+        sub.add_argument(
             "--dry-run",
             action="store_true",
             help="Print the resolved command and environment without launching.",
@@ -247,6 +380,11 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor_parser = subparsers.add_parser(
         "doctor",
         help="Inspect Python, accelerators, rendering libraries, Ray, and Hugging Face.",
+    )
+    doctor_parser.add_argument(
+        "--venv",
+        type=Path,
+        help="Virtual environment directory to inspect instead of the active Python.",
     )
     doctor_parser.add_argument(
         "--network",
@@ -364,6 +502,47 @@ def _format_show_summary(info: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _handle_install(
+    args: argparse.Namespace,
+    extra_args: list[str],
+    *,
+    repo_root: Path | None,
+    stream: TextIO,
+) -> int:
+    root = find_repo_root(repo_root)
+    if args.list_options:
+        options = load_install_options(root)
+        stream.write(format_install_options(options, as_json=args.as_json))
+        stream.flush()
+        return 0
+
+    plan = build_install_plan(
+        root,
+        target=args.target,
+        model=args.model,
+        env=args.env,
+        engine=args.engine,
+        venv=args.venv,
+        platform=args.platform,
+        python_version=args.python_version,
+        torch_version=args.torch_version,
+        rocm_version=args.rocm_version,
+        sglang_version=args.sglang_version,
+        vllm_version=args.vllm_version,
+        transformers_version=args.transformers_version,
+        use_mirror=args.use_mirror,
+        paddle_gpu=args.paddle_gpu,
+        no_root=args.no_root,
+        no_flash_attn=args.no_flash_attn,
+        no_apex=args.no_apex,
+        no_natten=args.no_natten,
+        install_rlinf=args.install_rlinf,
+        no_install_rlinf=args.no_install_rlinf,
+        extra_args=extra_args,
+    )
+    return execute_install_plan(plan, dry_run=args.dry_run, stream=stream)
+
+
 def _handle_list(
     args: argparse.Namespace,
     *,
@@ -440,6 +619,70 @@ def _handle_show(
     return 0
 
 
+def _handle_doctor(
+    args: argparse.Namespace,
+    *,
+    repo_root: Path | None,
+    stream: TextIO,
+    err_stream: TextIO,
+) -> int:
+    if os.environ.get("_RLINF_DOCTOR_DELEGATED") != "1":
+        try:
+            root = find_repo_root(repo_root)
+        except FileNotFoundError:
+            root = None
+        if root is not None:
+            target_py, resolved_venv = resolve_venv_python(root, venv=args.venv)
+            if os.path.abspath(target_py) != os.path.abspath(sys.executable):
+                child_env = dict(os.environ)
+                child_env["_RLINF_DOCTOR_DELEGATED"] = "1"
+                child_env["REPO_PATH"] = str(root)
+                existing_pp = child_env.get("PYTHONPATH", "")
+                child_env["PYTHONPATH"] = (
+                    f"{root}{os.pathsep}{existing_pp}" if existing_pp else str(root)
+                )
+                if resolved_venv is not None:
+                    child_env["VIRTUAL_ENV"] = str(resolved_venv)
+                    bin_dir = str(
+                        resolved_venv / ("Scripts" if os.name == "nt" else "bin")
+                    )
+                    existing_path = child_env.get("PATH", "")
+                    child_env["PATH"] = (
+                        f"{bin_dir}{os.pathsep}{existing_path}"
+                        if existing_path
+                        else bin_dir
+                    )
+                cmd = [target_py, "-m", "rlinf.cli", "doctor"]
+                if args.network:
+                    cmd.append("--network")
+                if args.as_json:
+                    cmd.append("--json")
+                proc = subprocess.run(
+                    cmd,
+                    env=child_env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if proc.stdout:
+                    stream.write(proc.stdout)
+                    stream.flush()
+                if proc.stderr:
+                    err_stream.write(proc.stderr)
+                    err_stream.flush()
+                return proc.returncode
+        elif args.venv is not None:
+            # Explicit --venv outside a repo checkout still validates the path.
+            resolve_venv_python(Path.cwd(), venv=args.venv)
+
+    return render_doctor(
+        repo_root=repo_root,
+        check_network=args.network,
+        as_json=args.as_json,
+        stream=stream,
+    )
+
+
 def _handle_launch(
     args: argparse.Namespace,
     overrides: list[str],
@@ -464,6 +707,7 @@ def _handle_launch(
         root,
         overrides,
         log_dir=args.log_dir,
+        venv=args.venv,
     )
     return execute_launch_plan(
         plan,
@@ -519,21 +763,27 @@ def main(
             err.flush()
             return 2
         overrides = [*unknown, *passthrough]
+    elif raw_args[0] == "install" and "--" in raw_args:
+        sep = raw_args.index("--")
+        args = parser.parse_args(raw_args[:sep])
+        overrides = raw_args[sep + 1 :]
     else:
         args = parser.parse_args(raw_args)
         overrides = []
 
     try:
+        if args.command == "install":
+            return _handle_install(args, overrides, repo_root=repo_root, stream=out)
         if args.command == "list":
             return _handle_list(args, repo_root=repo_root, stream=out)
         if args.command == "show":
             return _handle_show(args, repo_root=repo_root, stream=out)
         if args.command == "doctor":
-            return render_doctor(
+            return _handle_doctor(
+                args,
                 repo_root=repo_root,
-                check_network=args.network,
-                as_json=args.as_json,
                 stream=out,
+                err_stream=err,
             )
         mode_map = {
             "train": RecipeMode.TRAIN,

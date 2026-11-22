@@ -20,8 +20,8 @@ jobs:
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           # One venv per engine: sglang and vllm pin the same kernel libraries to
           # different versions, so a shared venv breaks whichever is installed first.
-          bash requirements/install.sh agentic --engine sglang
-          bash requirements/install.sh agentic --venv .venv-vllm --engine vllm
+          python3 -m rlinf.cli install agentic --engine sglang
+          python3 -m rlinf.cli install agentic --venv .venv-vllm --engine vllm
 
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
@@ -100,7 +100,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
+          python3 -m rlinf.cli install agentic
           
       - name: Install dependencies
         run: |
@@ -141,7 +141,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
+          python3 -m rlinf.cli install agentic
 
       - name: PPO Megatron SGLang Collocated mode
         timeout-minutes: 20
@@ -184,7 +184,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
+          python3 -m rlinf.cli install agentic
 
       - name: Clone code-judge
         uses: actions/checkout@v5
@@ -272,7 +272,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
+          python3 -m rlinf.cli install agentic
 
       - name: Train with SGLang Megatron Collocated mode
         timeout-minutes: 20
@@ -329,7 +329,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
+          python3 -m rlinf.cli install agentic
 
       - name: Train with SGLang Megatron Collocated mode
         timeout-minutes: 20
@@ -375,8 +375,8 @@ jobs:
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           # One venv per engine: sglang and vllm pin the same kernel libraries to
           # different versions, so a shared venv breaks whichever is installed first.
-          bash requirements/install.sh agentic --engine sglang
-          bash requirements/install.sh agentic --venv .venv-vllm --engine vllm
+          python3 -m rlinf.cli install agentic --engine sglang
+          python3 -m rlinf.cli install agentic --venv .venv-vllm --engine vllm
 
       - name: FSDP SGLang Collocated mode
         timeout-minutes: 20
@@ -440,7 +440,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic --no-apex
+          python3 -m rlinf.cli install agentic --no-apex
 
       - name: FSDP SGLang Collocated mode
         timeout-minutes: 20
@@ -470,7 +470,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
+          python3 -m rlinf.cli install agentic
 
       - name: MoE sequential MLP Collocated mode 
         timeout-minutes: 20
@@ -570,7 +570,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
+          python3 -m rlinf.cli install agentic
 
       - name: Clone FUSCO
         uses: actions/checkout@v5
@@ -623,7 +623,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
+          python3 -m rlinf.cli install agentic
 
       - name: Train Qwen2.5-1.5B with SGLang Megatron-Bridge Collocated mode
         timeout-minutes: 20

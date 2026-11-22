@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rlinf-cli"
+version = "0.4.0"
+description = "Lightweight zero-dependency CLI launcher for RLinf"
+requires-python = ">=3.8"
+license = { text = "Apache-2.0" }
+authors = [{ name = "RLinf Contributors" }]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/RLinf/RLinf"
+Repository = "https://github.com/RLinf/RLinf"
+Documentation = "https://rlinf.readthedocs.io/"
+
+[project.scripts]
+rlinf = "rlinf_cli:main"
+
+[tool.setuptools]
+packages = ["rlinf_cli"]

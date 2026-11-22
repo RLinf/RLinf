@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shlex
 import signal
@@ -165,12 +166,103 @@ def _has_override_key(overrides: Sequence[str], key: str) -> bool:
     return any(item.startswith(prefixes) for item in overrides)
 
 
+def _venv_python_path(venv_dir: Path) -> Path:
+    if os.name == "nt":
+        return venv_dir / "Scripts" / "python.exe"
+    return venv_dir / "bin" / "python"
+
+
+def _prepend_path_env(env: dict[str, str], entry: str) -> None:
+    existing = [p for p in env.get("PATH", "").split(os.pathsep) if p]
+    if existing and existing[0] == entry:
+        return
+    ordered = [entry, *(p for p in existing if p != entry)]
+    env["PATH"] = os.pathsep.join(ordered)
+
+
+def resolve_venv_python(
+    repo_root: Path,
+    *,
+    venv: Path | None = None,
+    base_env: Mapping[str, str] | None = None,
+) -> tuple[str, Path | None]:
+    """Resolve the target Python executable and optional venv directory.
+
+    Resolution order:
+    1. Explicit ``--venv`` path (fails with :class:`FileNotFoundError` if missing).
+    2. Active ``VIRTUAL_ENV`` when it points to a valid Python interpreter.
+    3. Current ``sys.executable`` when it already has RLinf's runtime stack.
+    4. Default ``<repo_root>/.venv`` when running from a bare/global CLI launcher.
+    5. Current ``sys.executable`` as final fallback.
+
+    Args:
+        repo_root: RLinf repository root.
+        venv: Optional explicit virtual environment directory.
+        base_env: Environment mapping to inspect for ``VIRTUAL_ENV``.
+
+    Returns:
+        Tuple of ``(python_executable, resolved_venv_dir_or_none)``.
+
+    Raises:
+        FileNotFoundError: If an explicit ``venv`` does not contain a Python binary.
+    """
+    current_py_abs = os.path.abspath(sys.executable)
+
+    if venv is not None:
+        expanded = venv.expanduser()
+        if expanded.is_absolute():
+            candidate = expanded
+        else:
+            cwd_candidate = Path.cwd() / expanded
+            repo_candidate = repo_root / expanded
+            candidate = (
+                cwd_candidate
+                if _venv_python_path(cwd_candidate).is_file()
+                or not _venv_python_path(repo_candidate).is_file()
+                else repo_candidate
+            )
+        py_path = _venv_python_path(candidate)
+        if not py_path.is_file():
+            raise FileNotFoundError(
+                f"Virtual environment not found at '{venv}' (expected '{py_path}'). "
+                f"Run 'rlinf install ... --venv {venv}' first."
+            )
+        resolved_venv = candidate.resolve()
+        py_abs = os.path.abspath(str(py_path))
+        if current_py_abs == py_abs:
+            return sys.executable, resolved_venv
+        return py_abs, resolved_venv
+
+    env_map = os.environ if base_env is None else base_env
+    active_venv_raw = env_map.get("VIRTUAL_ENV")
+    if active_venv_raw:
+        active_venv = Path(active_venv_raw).expanduser()
+        active_py = _venv_python_path(active_venv)
+        if active_py.is_file():
+            resolved_active = active_venv.resolve()
+            active_py_abs = os.path.abspath(str(active_py))
+            if current_py_abs == active_py_abs:
+                return sys.executable, resolved_active
+            return active_py_abs, resolved_active
+
+    if importlib.util.find_spec("hydra") is not None:
+        return sys.executable, None
+
+    default_venv = repo_root / ".venv"
+    default_py = _venv_python_path(default_venv)
+    if default_py.is_file():
+        return os.path.abspath(str(default_py)), default_venv.resolve()
+
+    return sys.executable, None
+
+
 def build_launch_plan(
     recipe: RecipeSpec,
     repo_root: Path,
     overrides: Sequence[str] = (),
     *,
     log_dir: Path | None = None,
+    venv: Path | None = None,
     base_env: Mapping[str, str] | None = None,
     python_executable: str | None = None,
 ) -> LaunchPlan:
@@ -181,14 +273,24 @@ def build_launch_plan(
         repo_root: RLinf repository root.
         overrides: Raw Hydra overrides forwarded verbatim.
         log_dir: Optional explicit log directory (overrides default timestamped dir).
+        venv: Optional virtual environment directory whose Python should launch the run.
         base_env: Base environment mapping (defaults to ``os.environ``).
-        python_executable: Python interpreter path (defaults to ``sys.executable``).
+        python_executable: Explicit Python interpreter path (takes precedence over ``venv``).
 
     Returns:
         A :class:`LaunchPlan` ready for execution or dry-run inspection.
     """
     env = _build_env(recipe, repo_root, os.environ if base_env is None else base_env)
-    py = python_executable or sys.executable
+    if python_executable is not None:
+        py = python_executable
+        resolved_venv: Path | None = None
+    else:
+        py, resolved_venv = resolve_venv_python(repo_root, venv=venv, base_env=env)
+        if resolved_venv is not None:
+            env["VIRTUAL_ENV"] = str(resolved_venv)
+            _prepend_path_env(
+                env, str(resolved_venv / ("Scripts" if os.name == "nt" else "bin"))
+            )
 
     command: list[str] = [
         py,

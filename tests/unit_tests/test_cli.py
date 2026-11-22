@@ -19,14 +19,19 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
+import shlex
+import shutil
 import signal
 import stat
 import subprocess
 import sys
 import time
+import venv
 from pathlib import Path
 
 import pytest
+import yaml
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import OmegaConf
@@ -42,7 +47,13 @@ from rlinf.cli.catalog import (
     resolve_recipe,
 )
 from rlinf.cli.doctor import CheckStatus, run_doctor
-from rlinf.cli.launcher import LaunchPlan, build_launch_plan, execute_launch_plan
+from rlinf.cli.installer import InstallPlan, execute_install_plan, load_install_options
+from rlinf.cli.launcher import (
+    LaunchPlan,
+    build_launch_plan,
+    execute_launch_plan,
+    resolve_venv_python,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -1084,3 +1095,373 @@ def test_cli_runs_from_outside_repo_and_does_not_import_torch_or_ray(tmp_path):
         check=False,
     )
     assert proc.returncode == 0, proc.stderr
+
+
+def test_install_list_parses_real_install_sh():
+    options = load_install_options(REPO_ROOT)
+    assert set(options.targets) == {"embodied", "agentic", "docs"}
+    assert "openvla" in options.models and "openpi" in options.models
+    assert "maniskill_libero" in options.envs and "libero" in options.envs
+    assert {"sglang", "vllm", "phyai"}.issubset(set(options.engines))
+    assert {"nvidia", "amd", "ascend", "musa"}.issubset(set(options.platforms))
+
+    out = io.StringIO()
+    assert main(["install", "--list"], repo_root=REPO_ROOT, stream=out) == 0
+    assert "maniskill_libero" in out.getvalue()
+    assert "rlinf install embodied" in out.getvalue()
+
+    out_json = io.StringIO()
+    assert (
+        main(["install", "--list", "--json"], repo_root=REPO_ROOT, stream=out_json) == 0
+    )
+    data = json.loads(out_json.getvalue())
+    assert "openvla" in data["models"]
+    assert "maniskill_libero" in data["envs"]
+
+
+def test_install_dry_run_and_validation_hints():
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(
+        [
+            "install",
+            "embodied",
+            "--model",
+            "openvla",
+            "--env",
+            "maniskill_libero",
+            "--venv",
+            ".venv-vla",
+            "--use-mirror",
+            "--no-flash-attn",
+            "--dry-run",
+        ],
+        repo_root=REPO_ROOT,
+        stream=out,
+        err_stream=err,
+    )
+    assert rc == 0, err.getvalue()
+    text = out.getvalue()
+    assert (
+        "requirements/install.sh embodied --model openvla --env maniskill_libero"
+        in text
+    )
+    assert "--venv .venv-vla" in text
+    assert "--use-mirror --no-flash-attn" in text
+
+    out_agent = io.StringIO()
+    assert (
+        main(
+            ["install", "agentic", "--engine", "sglang", "--dry-run"],
+            repo_root=REPO_ROOT,
+            stream=out_agent,
+        )
+        == 0
+    )
+    assert "requirements/install.sh agentic --engine sglang" in out_agent.getvalue()
+
+    err_model = io.StringIO()
+    assert (
+        main(
+            ["install", "embodied", "--model", "opnevla", "--dry-run"],
+            repo_root=REPO_ROOT,
+            stream=io.StringIO(),
+            err_stream=err_model,
+        )
+        == 2
+    )
+    assert "Did you mean: openvla" in err_model.getvalue()
+
+    err_env = io.StringIO()
+    assert (
+        main(
+            ["install", "embodied", "--env", "maniskill", "--dry-run"],
+            repo_root=REPO_ROOT,
+            stream=io.StringIO(),
+            err_stream=err_env,
+        )
+        == 2
+    )
+    assert "maniskill_libero" in err_env.getvalue()
+
+    err_combo = io.StringIO()
+    assert (
+        main(
+            ["install", "agentic", "--model", "openvla", "--dry-run"],
+            repo_root=REPO_ROOT,
+            stream=io.StringIO(),
+            err_stream=err_combo,
+        )
+        == 2
+    )
+    assert "apply only to target 'embodied'" in err_combo.getvalue()
+
+
+def test_install_works_without_omegaconf_or_torch(tmp_path):
+    # Simulates a fresh machine running system python3 before any venv exists.
+    system_py = Path("/usr/bin/python3")
+    interpreter = str(system_py) if system_py.is_file() else sys.executable
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    proc = subprocess.run(
+        [
+            interpreter,
+            "-m",
+            "rlinf.cli",
+            "install",
+            "embodied",
+            "--model",
+            "openvla",
+            "--env",
+            "maniskill_libero",
+            "--dry-run",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert (
+        "requirements/install.sh embodied --model openvla --env maniskill_libero"
+        in proc.stdout
+    )
+
+
+def test_execute_install_plan_prints_activation_and_propagates_exit_code():
+    ok_plan = InstallPlan(
+        target="embodied",
+        venv_dir=".venv-test",
+        script_path=REPO_ROOT / "requirements/install.sh",
+        repo_root=REPO_ROOT,
+        command=[sys.executable, "-c", "pass"],
+    )
+    out = io.StringIO()
+    assert execute_install_plan(ok_plan, stream=out) == 0
+    assert "source .venv-test/bin/activate" in out.getvalue()
+    assert "rlinf doctor" in out.getvalue()
+
+    fail_plan = InstallPlan(
+        target="embodied",
+        venv_dir=".venv-test",
+        script_path=REPO_ROOT / "requirements/install.sh",
+        repo_root=REPO_ROOT,
+        command=[sys.executable, "-c", "import sys; sys.exit(3)"],
+    )
+    out_fail = io.StringIO()
+    assert execute_install_plan(fail_plan, stream=out_fail) == 3
+    assert "Install failed (exit 3)" in out_fail.getvalue()
+
+
+def test_all_ci_workflow_install_commands_resolve_cleanly():
+    workflows_dir = REPO_ROOT / ".github/workflows"
+    install_re = re.compile(r"python3\s+-m\s+rlinf\.cli\s+install([^\n]*)")
+    checked = 0
+    for wf_path in sorted(workflows_dir.glob("*.yml")):
+        data = yaml.safe_load(wf_path.read_text(encoding="utf-8"))
+        for job_name, job_spec in (data.get("jobs") or {}).items():
+            for step in job_spec.get("steps") or []:
+                run_block = (step.get("run") or "").replace("\\\n", " ")
+                for match in install_re.finditer(run_block):
+                    argv = ["install", *shlex.split(match.group(1)), "--dry-run"]
+                    out = io.StringIO()
+                    err = io.StringIO()
+                    rc = main(argv, repo_root=REPO_ROOT, stream=out, err_stream=err)
+                    assert rc == 0, (
+                        f"{wf_path.name}:{job_name} failed for {argv}: {err.getvalue()}"
+                    )
+                    assert "requirements/install.sh" in out.getvalue()
+                    checked += 1
+
+    assert checked == 89
+
+
+def test_venv_flag_and_auto_venv_resolution(tmp_path):
+    custom_venv = tmp_path / "custom-venv"
+    fake_py = custom_venv / "bin" / "python"
+    fake_py.parent.mkdir(parents=True)
+    fake_py.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake_py.chmod(0o755)
+
+    py_path, resolved = resolve_venv_python(REPO_ROOT, venv=custom_venv)
+    assert Path(py_path).resolve() == fake_py.resolve()
+    assert resolved == custom_venv.resolve()
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(
+        ["train", "maniskill_ppo_mlp", "--venv", str(custom_venv), "--dry-run"],
+        repo_root=REPO_ROOT,
+        stream=out,
+        err_stream=err,
+    )
+    assert rc == 0, err.getvalue()
+    assert str(fake_py) in out.getvalue()
+
+    err_missing = io.StringIO()
+    rc_missing = main(
+        [
+            "train",
+            "maniskill_ppo_mlp",
+            "--venv",
+            str(tmp_path / "missing"),
+            "--dry-run",
+        ],
+        repo_root=REPO_ROOT,
+        stream=io.StringIO(),
+        err_stream=err_missing,
+    )
+    assert rc_missing == 2
+    assert "Virtual environment not found" in err_missing.getvalue()
+
+    # Active VIRTUAL_ENV overrides sys.executable when pointing to another venv.
+    py_active, active_dir = resolve_venv_python(
+        REPO_ROOT, base_env={"VIRTUAL_ENV": str(custom_venv)}
+    )
+    assert Path(py_active).resolve() == fake_py.resolve()
+    assert active_dir == custom_venv.resolve()
+
+    # Auto-detect <repo_root>/.venv when current interpreter lacks runtime deps.
+    fake_repo = tmp_path / "repo"
+    default_py = fake_repo / ".venv" / "bin" / "python"
+    default_py.parent.mkdir(parents=True)
+    default_py.write_text("#!/bin/sh\n", encoding="utf-8")
+    default_py.chmod(0o755)
+    bare_py = Path("/usr/bin/python3")
+    if bare_py.is_file():
+        code = (
+            "from pathlib import Path\n"
+            "from rlinf.cli.launcher import resolve_venv_python\n"
+            f"py, venv_dir = resolve_venv_python(Path({str(fake_repo)!r}), base_env={{}})\n"
+            f"assert Path(py).resolve() == Path({str(default_py)!r}).resolve(), py\n"
+            f"assert venv_dir == Path({str(fake_repo / '.venv')!r}).resolve()\n"
+        )
+        proc = subprocess.run(
+            [str(bare_py), "-c", code],
+            env={"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(REPO_ROOT)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+
+
+def test_doctor_delegates_to_explicit_venv(tmp_path):
+    alt_venv = tmp_path / "alt-venv"
+    alt_py = alt_venv / "bin" / "python"
+    alt_py.parent.mkdir(parents=True)
+    alt_py.symlink_to(Path(sys.executable))
+
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = main(
+        ["doctor", "--venv", str(alt_venv), "--json"],
+        repo_root=REPO_ROOT,
+        stream=out,
+        err_stream=err,
+    )
+    assert rc in (0, 1), err.getvalue()
+    checks = json.loads(out.getvalue())
+    py_detail = next(c["detail"] for c in checks if c["name"] == "Python")
+    assert str(alt_venv) in py_detail
+
+
+def test_lightweight_global_cli_package_end_to_end(tmp_path):
+    cli_pkg_dir = REPO_ROOT / "cli"
+    assert (cli_pkg_dir / "pyproject.toml").is_file()
+
+    # Build/install cli/ into an isolated zero-dependency venv and test the `rlinf` binary.
+    tool_venv = tmp_path / "tool-venv"
+    venv.create(tool_venv, with_pip=False, symlinks=True)
+    tool_py = tool_venv / "bin" / "python"
+    uv_bin = shutil.which("uv")
+    if uv_bin is not None:
+        install_cmd = [
+            uv_bin,
+            "pip",
+            "install",
+            "--python",
+            str(tool_py),
+            "--no-deps",
+            "--no-build-isolation",
+            str(cli_pkg_dir),
+        ]
+        # Give setuptools visibility for --no-build-isolation without touching network.
+        env_install = dict(os.environ)
+        site_paths = [p for p in sys.path if "site-packages" in p]
+        if site_paths:
+            env_install["PYTHONPATH"] = os.pathsep.join(site_paths)
+        proc_install = subprocess.run(
+            install_cmd,
+            env=env_install,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc_install.returncode != 0:
+            pytest.skip(f"uv pip install ./cli unavailable: {proc_install.stderr}")
+    else:
+        pytest.skip("uv not available to build cli/ package")
+
+    rlinf_bin = tool_venv / "bin" / "rlinf"
+    assert rlinf_bin.is_file()
+
+    clean_env = {"PATH": os.environ.get("PATH", ""), "HOME": str(tmp_path)}
+    ver = subprocess.run(
+        [str(rlinf_bin), "--version"],
+        cwd=tmp_path,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert ver.returncode == 0, ver.stderr
+    assert ver.stdout.strip().startswith("rlinf ")
+
+    # Outside a checkout, global rlinf reports a clear actionable error.
+    outside = subprocess.run(
+        [str(rlinf_bin), "list"],
+        cwd=tmp_path,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert outside.returncode == 2
+    assert "RLinf repository checkout" in outside.stderr
+
+    # Inside the checkout, global rlinf delegates to rlinf/cli with zero third-party deps.
+    dry = subprocess.run(
+        [
+            str(rlinf_bin),
+            "install",
+            "embodied",
+            "--model",
+            "openvla",
+            "--env",
+            "maniskill_libero",
+            "--dry-run",
+        ],
+        cwd=REPO_ROOT,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert dry.returncode == 0, dry.stderr
+    assert (
+        "requirements/install.sh embodied --model openvla --env maniskill_libero"
+        in dry.stdout
+    )
+
+    lst = subprocess.run(
+        [str(rlinf_bin), "list", "--family", "embodied"],
+        cwd=REPO_ROOT,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert lst.returncode == 0, lst.stderr
+    assert "maniskill_ppo_mlp" in lst.stdout

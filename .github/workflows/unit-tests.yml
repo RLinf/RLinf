@@ -13,7 +13,7 @@ jobs:
       - name: Create environment and install dependencies
         run: |
           unset UV_DEFAULT_INDEX
-          bash requirements/install.sh --no-flash-attn embodied --env dummy
+          python3 -m rlinf.cli install --no-flash-attn embodied --env dummy
           source .venv/bin/activate
           uv pip install "transformers<=5.9.0"
 
@@ -102,7 +102,7 @@ jobs:
           export UV_PATH=/workspace/dataset/.uv
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh --platform amd --no-flash-attn embodied --env dummy
+          python3 -m rlinf.cli install --platform amd --no-flash-attn embodied --env dummy
           source .venv/bin/activate
           uv pip install "transformers<=5.9.0"
 
@@ -147,7 +147,7 @@ jobs:
       - name: Create CANN environment and install dependencies
         run: |
           source .github/scripts/ascend_ci_workspace.sh setup
-          bash requirements/install.sh --platform ascend --no-flash-attn embodied --env dummy
+          python3 -m rlinf.cli install --platform ascend --no-flash-attn embodied --env dummy
           source .venv/bin/activate
           uv pip install "transformers<=5.9.0"
 
@@ -199,7 +199,7 @@ jobs:
           export UV_PATH=/workspace/dataset/.uv
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh --platform musa embodied --env dummy
+          python3 -m rlinf.cli install --platform musa embodied --env dummy
           source .venv/bin/activate
           uv pip install "transformers<=5.9.0"
 
@@ -269,7 +269,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh --platform amd embodied --model openvla --env maniskill_libero
+          python3 -m rlinf.cli install --platform amd embodied --model openvla --env maniskill_libero
 
       - name: OpenVLA accelerator unit test
         timeout-minutes: 40
@@ -297,7 +297,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh --platform amd embodied --model openvla-oft --env libero
+          python3 -m rlinf.cli install --platform amd embodied --model openvla-oft --env libero
 
       - name: OpenVLA-OFT accelerator unit test
         timeout-minutes: 40
@@ -324,7 +324,7 @@ jobs:
           export UV_PATH=/workspace/dataset/.uv
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh --platform musa embodied --model openvla --env maniskill_libero
+          python3 -m rlinf.cli install --platform musa embodied --model openvla --env maniskill_libero
 
       - name: OpenVLA accelerator unit test
         timeout-minutes: 60
@@ -354,7 +354,7 @@ jobs:
           export UV_PATH=/workspace/dataset/.uv
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh --platform musa embodied --model openvla-oft --env libero
+          python3 -m rlinf.cli install --platform musa embodied --model openvla-oft --env libero
 
       - name: OpenVLA-OFT accelerator unit test
         timeout-minutes: 60
@@ -381,7 +381,7 @@ jobs:
       - name: Create Ascend OpenVLA environment
         run: |
           source .github/scripts/ascend_ci_workspace.sh setup
-          bash requirements/install.sh --platform ascend embodied --model openvla --env maniskill_libero
+          python3 -m rlinf.cli install --platform ascend embodied --model openvla --env maniskill_libero
 
       - name: OpenVLA accelerator unit test
         timeout-minutes: 60
@@ -407,7 +407,7 @@ jobs:
       - name: Create Ascend OpenVLA-OFT environment
         run: |
           source .github/scripts/ascend_ci_workspace.sh setup
-          bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero
+          python3 -m rlinf.cli install --platform ascend embodied --model openvla-oft --env libero
 
       - name: OpenVLA-OFT accelerator unit test
         timeout-minutes: 60
