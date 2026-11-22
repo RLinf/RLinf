@@ -86,7 +86,7 @@ GSEnv（也称 ManiSkill-GS）将 ManiSkill 物理仿真与 3D Gaussian Splattin
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + GSEnv
+   .. tab-item:: OpenPI π₀.₅
 
       **1. 安装环境**
 

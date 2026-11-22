@@ -86,7 +86,7 @@ RoboCasa 强化学习
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + RoboCasa
+   .. tab-item:: OpenPI π₀
 
       **1. 安装环境**
 

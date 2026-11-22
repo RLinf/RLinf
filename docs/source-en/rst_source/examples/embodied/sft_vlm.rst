@@ -49,7 +49,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: Qwen-VL + Robo2VLM
+   .. tab-item:: Qwen2.5-VL (Robo2VLM)
 
       **1. Install and Download**
 

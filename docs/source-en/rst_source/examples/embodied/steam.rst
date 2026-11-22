@@ -62,7 +62,7 @@ Installation
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + STEAM
+   .. tab-item:: OpenPI
 
       .. code-block:: bash
 

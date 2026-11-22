@@ -81,7 +81,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: OpenPI π₀.₅ + RoboLab
+   .. tab-item:: OpenPI π₀.₅
 
       **1. Install**
 

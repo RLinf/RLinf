@@ -36,7 +36,7 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + BEHAVIOR-1K
+   .. tab-item:: OpenPI π₀.₅
 
       .. code-block:: bash
 

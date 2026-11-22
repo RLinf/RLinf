@@ -38,7 +38,7 @@ DreamZero SGLang 评测
 
 .. tab-set::
 
-   .. tab-item:: DreamZero SGLang + LIBERO
+   .. tab-item:: LIBERO
 
       .. code-block:: bash
 

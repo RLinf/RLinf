@@ -82,7 +82,7 @@ RoboVerse 强化学习
 
 .. tab-set::
 
-   .. tab-item:: OpenPI π₀.₅ + RoboVerse
+   .. tab-item:: OpenPI π₀.₅
       :sync: openpi-roboverse
 
       **1. 安装环境**

@@ -1,101 +1,262 @@
-/* Custom CSS to enforce a purple-themed color scheme */
+/* ==========================================================================
+   RLinf Docs (ZH) — Modern Flat UI System (LeRobot / Hugging Face-inspired)
+   ========================================================================== */
+
+/* --- Design tokens -------------------------------------------------------- */
+:root,
 html[data-theme="light"] {
-  --pst-color-primary: #673ab7;
-  --pst-color-secondary: #ab47bc;
-  --rlinf-nav-active-bg: rgba(103, 58, 183, 0.1);
-  --rlinf-nav-hover-bg: rgba(103, 58, 183, 0.06);
+  --pst-color-primary: #6d28d9;
+  --pst-color-secondary: #9333ea;
+  --pst-color-inline-code: #5b21b6;
+  --pst-font-family-base: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Segoe UI",
+    sans-serif;
+  --pst-font-family-heading: "Inter", -apple-system, BlinkMacSystemFont,
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC",
+    "Segoe UI", sans-serif;
+  --pst-font-family-monospace: "JetBrains Mono", ui-monospace, SFMono-Regular,
+    Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  --rlinf-surface: #ffffff;
+  --rlinf-surface-subtle: #f8fafc;
+  --rlinf-surface-muted: #f1f5f9;
+  --rlinf-border: #e2e8f0;
+  --rlinf-border-strong: #cbd5e1;
+  --rlinf-nav-active-bg: rgba(109, 40, 217, 0.09);
+  --rlinf-nav-hover-bg: rgba(109, 40, 217, 0.05);
+  --rlinf-row-hover: rgba(109, 40, 217, 0.03);
+  --rlinf-card-radius: 12px;
+  --rlinf-card-gap: 1rem;
+  --rlinf-card-shadow: none;
+  --rlinf-card-shadow-hover: 0 4px 16px rgba(109, 40, 217, 0.08);
+
+  --rlinf-tab-bg: #f1f5f9;
+  --rlinf-tab-hover-bg: #e2e8f0;
+  --rlinf-tab-active-bg: #ffffff;
+  --rlinf-tab-active-fg: #6d28d9;
+  --rlinf-tab-active-border: rgba(109, 40, 217, 0.32);
+  --rlinf-tab-active-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --rlinf-tab-panel-bg: #ffffff;
+  --rlinf-tab-panel-border: #e2e8f0;
+  --rlinf-tab-panel-shadow: none;
+
+  --rlinf-code-bg: #f8fafc;
+  --rlinf-inline-code-bg: #f1f5f9;
+  --rlinf-inline-code-border: #e2e8f0;
+
+  --rlinf-admon-note-bg: #f5f3ff;
+  --rlinf-admon-note-border: #7c3aed;
+  --rlinf-admon-tip-bg: #ecfdf5;
+  --rlinf-admon-tip-border: #10b981;
+  --rlinf-admon-warn-bg: #fffbeb;
+  --rlinf-admon-warn-border: #f59e0b;
+  --rlinf-admon-danger-bg: #fef2f2;
+  --rlinf-admon-danger-border: #ef4444;
 }
 
 html[data-theme="dark"] {
-  --pst-color-primary: #BB86FC;
-  --pst-color-secondary: #CF9BFF;
-  --rlinf-nav-active-bg: rgba(187, 134, 252, 0.18);
-  --rlinf-nav-hover-bg: rgba(187, 134, 252, 0.1);
+  --pst-color-primary: #c084fc;
+  --pst-color-secondary: #d8b4fe;
+  --pst-color-inline-code: #e9d5ff;
+
+  --rlinf-surface: #141720;
+  --rlinf-surface-subtle: #11131b;
+  --rlinf-surface-muted: #1c2130;
+  --rlinf-border: rgba(148, 163, 184, 0.18);
+  --rlinf-border-strong: rgba(148, 163, 184, 0.3);
+  --rlinf-nav-active-bg: rgba(192, 132, 252, 0.16);
+  --rlinf-nav-hover-bg: rgba(192, 132, 252, 0.08);
+  --rlinf-row-hover: rgba(192, 132, 252, 0.06);
+  --rlinf-card-shadow: none;
+  --rlinf-card-shadow-hover: 0 4px 18px rgba(0, 0, 0, 0.32);
+
+  --rlinf-tab-bg: rgba(148, 163, 184, 0.1);
+  --rlinf-tab-hover-bg: rgba(148, 163, 184, 0.18);
+  --rlinf-tab-active-bg: rgba(192, 132, 252, 0.16);
+  --rlinf-tab-active-fg: #e9d5ff;
+  --rlinf-tab-active-border: rgba(192, 132, 252, 0.45);
+  --rlinf-tab-active-shadow: none;
+  --rlinf-tab-panel-bg: rgba(20, 23, 32, 0.72);
+  --rlinf-tab-panel-border: rgba(148, 163, 184, 0.18);
+  --rlinf-tab-panel-shadow: none;
+
+  --rlinf-code-bg: #11141d;
+  --rlinf-inline-code-bg: rgba(148, 163, 184, 0.14);
+  --rlinf-inline-code-border: rgba(148, 163, 184, 0.22);
+
+  --rlinf-admon-note-bg: rgba(139, 92, 246, 0.1);
+  --rlinf-admon-note-border: #a78bfa;
+  --rlinf-admon-tip-bg: rgba(16, 185, 129, 0.1);
+  --rlinf-admon-tip-border: #34d399;
+  --rlinf-admon-warn-bg: rgba(245, 158, 11, 0.1);
+  --rlinf-admon-warn-border: #fbbf24;
+  --rlinf-admon-danger-bg: rgba(239, 68, 68, 0.1);
+  --rlinf-admon-danger-border: #f87171;
+}
+
+/* --- Base typography & links (CJK-tuned line height) ---------------------- */
+.bd-article {
+  font-size: 0.96rem;
+  line-height: 1.78;
+}
+
+.bd-article p,
+.bd-article li {
+  line-height: 1.78;
+}
+
+.bd-article h1,
+.bd-article h2,
+.bd-article h3,
+.bd-article h4 {
+  color: var(--pst-color-text-base);
+  letter-spacing: -0.015em;
+}
+
+.bd-article h1 {
+  font-size: 1.95rem;
+  font-weight: 700;
+  line-height: 1.3;
+  margin-bottom: 1.25rem;
+}
+
+.bd-article h2 {
+  border-bottom: 1px solid var(--rlinf-border);
+  font-size: 1.4rem;
+  font-weight: 650;
+  margin-top: 2.25rem;
+  margin-bottom: 0.9rem;
+  padding-bottom: 0.45rem;
+}
+
+.bd-article h3 {
+  font-size: 1.12rem;
+  font-weight: 600;
+  margin-top: 1.65rem;
+  margin-bottom: 0.6rem;
+}
+
+.bd-article h4 {
+  font-size: 0.98rem;
+  font-weight: 600;
+  margin-top: 1.25rem;
+  margin-bottom: 0.45rem;
 }
 
 a.reference,
 a.reference.external,
 a.reference.internal {
-  font-weight: bold !important;
-  text-decoration: none !important;
+  font-weight: 500;
+  text-decoration: none;
+  text-underline-offset: 3px;
+  transition: color 140ms ease, text-decoration-color 140ms ease;
+}
+
+.bd-article a.reference:hover,
+.bd-article a.reference.external:hover,
+.bd-article a.reference.internal:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+}
+
+.bd-article hr {
+  border: 0;
+  border-top: 1px solid var(--rlinf-border);
+  margin: 2rem 0;
+  opacity: 1;
+}
+
+.bd-article blockquote {
+  background: var(--rlinf-surface-subtle);
+  border-left: 3px solid var(--pst-color-primary);
+  border-radius: 0 8px 8px 0;
+  color: var(--pst-color-text-muted);
+  margin: 1.25rem 0;
+  padding: 0.75rem 1.1rem;
 }
 
 img.logo-img {
-    margin-top: 30px;
-    margin-bottom: 30px;
+  margin-top: 30px;
+  margin-bottom: 30px;
 }
 
-.red { color: red; font-weight: bold; }
-.green { color: green; }
+.red {
+  color: #dc2626;
+  font-weight: 600;
+}
 
-html[data-theme="dark"] .red { color: #ff6b6b; }
-html[data-theme="dark"] .green { color: #69db7c; }
+.green {
+  color: #16a34a;
+  font-weight: 600;
+}
 
-/* --- Home hero ----------------------------------------------------------
-   Logo on top of a centered "Welcome to RLinf", Ray-style. The rst section
-   title is hidden (kept only for the page <title>); the visible hero lives in
-   .rlinf-hero. */
+html[data-theme="dark"] .red {
+  color: #f87171;
+}
+
+html[data-theme="dark"] .green {
+  color: #4ade80;
+}
+
+/* --- Home hero ------------------------------------------------------------ */
 #home + h1 {
   display: none;
 }
 
 .rlinf-hero {
-  margin: 0.5rem 0 2rem;
+  margin: 0.5rem 0 2.25rem;
   text-align: center;
 }
 
 .rlinf-hero-logo {
-  background-color: transparent !important; /* override the theme's dark-mode white image bg */
+  background-color: transparent !important;
   display: block;
   margin: 0 auto;
-  max-width: 360px;
+  max-width: 340px;
   width: 100%;
 }
 
 .rlinf-hero-title {
+  letter-spacing: -0.02em;
   margin-bottom: 0.5rem;
-  margin-top: 2rem;
+  margin-top: 1.75rem;
 }
 
 .rlinf-hero-subtitle {
   color: var(--pst-color-text-muted);
-  font-size: 1.4rem;
-  font-weight: 600;
+  font-size: 1.22rem;
+  font-weight: 500;
   margin: 0;
 }
 
-/* if you want also to remove underline on hover
-a.reference:hover,
-a.reference.external:hover,
-a.reference.internal:hover {
-  text-decoration: none !important;
-} */
-
-/* --- Wider content area -------------------------------------------------
-   pydata-sphinx-theme caps the article column at 60em and the page at 88rem,
-   which leaves large empty gutters and a cramped content column on wide
-   screens. Widen both and slim the side navigations a touch so the content
-   gets more horizontal room. */
+/* --- Balanced reading layout ---------------------------------------------- */
 .bd-page-width {
-  max-width: 100rem;            /* was 88rem (~1408px) */
-}
-.bd-main .bd-content .bd-article-container {
-  max-width: 84rem;            /* was 60em (~960px) — let prose, cards and tables breathe */
-}
-.bd-sidebar-primary {
-  max-width: 18rem;            /* compact global docs sidebar */
-}
-.bd-sidebar-secondary {
-  max-width: 15rem;            /* slimmer right "On this page" */
+  max-width: 100rem;
 }
 
-/* --- Sidebar-only docs chrome ------------------------------------------
-   Match the compact LeRobot/Hugging Face docs pattern: logo, search, utility
-   controls, then a single global navigation tree. */
-/* Collapse the empty top navbar (sidebar-only model). The theme reserves a 4rem
-   header band above the sidebar; with no navbar items it is just blank space.
-   The Ask AI button is position:fixed, so it stays visible even with a
-   zero-height header. */
+.bd-main .bd-content .bd-article-container {
+  max-width: 70rem;
+}
+
+@media (min-width: 960px) {
+  .bd-main .bd-content .bd-article-container {
+    padding-left: 2.25rem;
+    padding-right: 2.25rem;
+  }
+}
+
+.bd-sidebar-primary {
+  background-color: var(--rlinf-surface-subtle);
+  border-right: 1px solid var(--rlinf-border);
+  max-width: 18rem;
+}
+
+.bd-sidebar-secondary {
+  border-left: 0;
+  max-width: 15.5rem;
+}
+
+/* --- Sidebar-only docs chrome (LeRobot style) ----------------------------- */
 :root {
   --pst-header-height: 0rem;
 }
@@ -114,28 +275,23 @@ a.reference.internal:hover {
   display: none !important;
 }
 
-/* Condense the sidebar header chrome. The theme uses padding:2rem 1rem 1rem,
-   gap:1rem, and .5rem padding on every item, which spreads the logo / search /
-   version rows far apart — tighten all of it. */
 .bd-sidebar-primary {
   gap: 0.3rem;
-  padding-left: 0.5rem;
-  padding-right: 0.5rem;
-  padding-top: 0.25rem;
+  padding-left: 0.65rem;
+  padding-right: 0.65rem;
+  padding-top: 0.5rem;
 }
 
 .bd-sidebar-primary .sidebar-primary-items__start {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 0.35rem;
 }
 
 .bd-sidebar-primary .sidebar-header-items {
   display: none;
 }
 
-/* 3-class selector to beat the theme's .sidebar-primary-items__start
-   .sidebar-primary-item { padding: .5rem 0 }. */
 .bd-sidebar-primary .sidebar-primary-items__start .sidebar-primary-item {
   margin: 0;
   padding: 0.15rem 0;
@@ -146,7 +302,7 @@ a.reference.internal:hover {
   color: var(--pst-color-text-base) !important;
   display: flex;
   gap: 0.5rem;
-  padding: 0 0.25rem;
+  padding: 0.15rem 0.25rem;
   text-decoration: none !important;
 }
 
@@ -159,27 +315,35 @@ a.reference.internal:hover {
 .rlinf-sidebar-brand__text {
   font-size: 1rem;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 
 .bd-sidebar-primary .bd-search {
-  margin: 0 0.25rem;
+  background: var(--rlinf-surface);
+  border: 1px solid var(--rlinf-border);
+  border-radius: 8px;
+  margin: 0 0.2rem;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
-/* Keep the theme's search "pill" (border + absolutely-positioned magnifier on
-   .bd-search); only shrink the inner input so the field is compact. */
+.bd-sidebar-primary .bd-search:focus-within {
+  border-color: var(--pst-color-primary);
+  box-shadow: 0 0 0 3px var(--rlinf-nav-active-bg);
+}
+
 .bd-sidebar-primary .bd-search input.form-control {
-  font-size: 0.85rem;
-  min-height: 1.85rem;
+  background: transparent;
+  border: 0;
+  box-shadow: none !important;
+  font-size: 0.84rem;
+  min-height: 1.95rem;
 }
 
-/* Render the Ctrl+K hint as one small pill (LeRobot-style) instead of two
-   separate key boxes. */
 .bd-sidebar-primary .bd-search .search-button__kbd-shortcut {
   align-items: center;
-  background-color: var(--pst-color-surface);
-  border: 1px solid var(--pst-color-border);
-  border-radius: 0.3rem;
+  background-color: var(--rlinf-surface-muted);
+  border: 1px solid var(--rlinf-border);
+  border-radius: 5px;
   display: inline-flex;
   font-size: 0.62rem;
   margin-inline-end: 0.4rem;
@@ -194,14 +358,13 @@ a.reference.internal:hover {
   padding: 0;
 }
 
-/* Tools: one compact row (LeRobot-style) — version + language switchers on the
-   left, the color-mode toggle and repository icons on the right. */
+/* Tools row: version + language on left, theme + repo icons on right. */
 .rlinf-sidebar-tools {
   align-items: center;
   display: flex;
   flex-wrap: nowrap;
   gap: 0.3rem;
-  padding: 0 0.25rem;
+  padding: 0 0.2rem;
 }
 
 .rlinf-sidebar-tools__version,
@@ -217,31 +380,24 @@ a.reference.internal:hover {
   margin-left: auto;
 }
 
-/* Version + language dropdown buttons: compact so the whole tools row (both
-   switchers + color toggle + repo icons) fits on a single line without wrapping.
-   Label sits left, caret right. */
 .rlinf-sidebar-tools .version-switcher__button,
 .rlinf-lang-button {
-  font-size: 0.75rem;
+  background-color: var(--rlinf-surface);
+  border: 1px solid var(--rlinf-border);
+  border-radius: 6px;
+  font-size: 0.74rem;
   justify-content: space-between;
   margin: 0;
   min-width: 0;
-  padding: 0.25rem 0.45rem;
+  padding: 0.24rem 0.48rem;
   white-space: nowrap;
   width: auto;
 }
 
-/* Match the version switcher's theme-aware colors so the language label stays
-   readable in dark mode (the bootstrap .btn default is near-black). */
 .rlinf-lang-button {
-  background-color: transparent;
-  border: 1px solid var(--pst-color-border);
-  border-radius: 0.25rem;
   color: var(--pst-color-text-base);
 }
 
-/* Two-state (light/dark) color-mode toggle in the sidebar tools. The icon
-   reflects the active theme: sun in light mode, moon in dark mode. */
 .rlinf-theme-toggle {
   border: 0;
   color: var(--pst-color-text-muted);
@@ -267,7 +423,6 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
   margin: 0;
 }
 
-/* Live GitHub star count rendered beside the repository icon (js/github-stars.js). */
 .rlinf-sidebar-tools a.rlinf-gh-link {
   align-items: center;
   display: inline-flex;
@@ -276,46 +431,73 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
 
 .rlinf-sidebar-tools .rlinf-gh-stars {
   color: var(--pst-color-text-muted);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: 600;
   line-height: 1;
 }
 
 .bd-sidebar-primary .bd-docs-nav {
-  border-top: 1px solid var(--pst-color-border);
+  border-top: 1px solid var(--rlinf-border);
   margin-top: 0.25rem;
   padding-top: 0.5rem;
 }
 
-/* Floating "Ask AI" button — pinned to the bottom-right corner of the viewport,
-   matching the LeRobot docs chat affordance. */
+/* Right "On this page" TOC */
+.bd-sidebar-secondary .page-toc {
+  font-size: 0.8125rem;
+}
+
+.bd-sidebar-secondary .toc-h2,
+.bd-sidebar-secondary .toc-h3 {
+  line-height: 1.5;
+}
+
+.bd-sidebar-secondary .nav-link {
+  border-left: 2px solid transparent;
+  color: var(--pst-color-text-muted);
+  padding: 0.22rem 0.65rem;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+
+.bd-sidebar-secondary .nav-link:hover {
+  color: var(--pst-color-text-base);
+}
+
+.bd-sidebar-secondary .nav-link.active {
+  border-left-color: var(--pst-color-primary);
+  color: var(--pst-color-primary);
+  font-weight: 600;
+}
+
+/* Floating "Ask AI" button */
 .rlinf-ask-ai-fab {
   align-items: center;
   background-color: var(--pst-color-primary);
   border: none;
-  border-radius: 50px;
+  border-radius: 999px;
   bottom: 1.25rem;
-  box-shadow: 0 6px 20px rgba(50, 0, 65, 0.28);
+  box-shadow: 0 4px 14px rgba(109, 40, 217, 0.24);
   color: #fff;
   cursor: pointer;
   display: inline-flex;
-  font-size: 0.875rem;
+  font-size: 0.85rem;
   font-weight: 600;
   gap: 0.4rem;
-  padding: 0.6rem 1rem;
+  padding: 0.55rem 0.95rem;
   position: fixed;
   right: 1.25rem;
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
   z-index: 1050;
 }
 
 .rlinf-ask-ai-fab:hover {
-  box-shadow: 0 8px 26px rgba(50, 0, 65, 0.42);
-  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(109, 40, 217, 0.34);
+  transform: translateY(-1px);
 }
 
 html[data-theme="dark"] .rlinf-ask-ai-fab {
-  background-color: #7c4dff;
+  background-color: #7c3aed;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   color: #ffffff;
 }
 
@@ -340,11 +522,9 @@ html[data-theme="dark"] .rlinf-ask-ai-fab {
 }
 
 .bd-sidebar-primary .bd-sidenav {
-  padding: 0 0.25rem;
+  padding: 0 0.15rem;
 }
 
-/* Compact, LeRobot-style nav rows: smaller text, tighter line height and less
-   vertical padding so more of the tree is visible without scrolling. */
 .bd-sidebar-primary .bd-sidenav li {
   margin: 0;
 }
@@ -357,21 +537,22 @@ html[data-theme="dark"] .rlinf-ask-ai-fab {
 
 .bd-sidebar-primary .bd-sidenav li > a,
 .bd-sidebar-primary .bd-sidenav li > .reference {
-  border-radius: 0.5rem;
-  font-size: 0.9rem;
-  line-height: 1.4;
-  padding-bottom: 0.34rem;
-  padding-top: 0.34rem;
+  border-radius: 7px;
+  font-size: 0.865rem;
+  font-weight: 450;
+  line-height: 1.45;
+  padding-bottom: 0.32rem;
+  padding-top: 0.32rem;
 }
 
-/* LeRobot-style flat uppercase section captions in the left sidebar. */
+/* Slightly larger caption size for CJK readability. */
 .bd-sidebar-primary .bd-docs-nav p.caption {
-  border-top: 1px solid var(--pst-color-border);
+  border-top: 1px solid var(--rlinf-border);
   color: var(--pst-color-text-muted);
-  font-size: 0.75rem;
+  font-size: 0.74rem;
   font-weight: 700;
-  letter-spacing: 0.05em;
-  margin: 0.9rem 0.25rem 0.2rem;
+  letter-spacing: 0.04em;
+  margin: 0.85rem 0.2rem 0.2rem;
   padding: 0.65rem 0.35rem 0.15rem;
   text-transform: uppercase;
 }
@@ -382,32 +563,23 @@ html[data-theme="dark"] .rlinf-ask-ai-fab {
   padding-top: 0.15rem;
 }
 
-/* Direct entries under each caption stay clean and scannable (not oversized
-   like the theme default .toctree-l1 > a at 1.3em). */
 .bd-sidebar-primary .bd-sidenav .toctree-l1 > a {
-  font-size: 0.88rem;
+  font-size: 0.865rem;
   font-weight: 500;
 }
 
-/* Clean rounded-pill hover + active state (LeRobot style), replacing the
-   theme's underline-on-hover and the inset left-border bar on the current
-   page. */
 .bd-sidebar-primary .bd-sidenav li > a:hover {
   background-color: var(--rlinf-nav-hover-bg);
   color: var(--pst-color-text-base);
   text-decoration: none !important;
 }
 
-/* The theme tags every breadcrumb ancestor <li> with .current, so neutralise
-   the highlight on the ancestor links first... */
 .bd-sidebar-primary .bd-sidenav li.current > a {
   background-color: transparent;
   box-shadow: none !important;
   color: var(--pst-color-text-muted);
 }
 
-/* ...then apply the pill only to the current page itself: its <a> (not just the
-   <li>) carries the .current class, which the ancestor links do not. */
 .bd-sidebar-primary .bd-sidenav li.current > a.current,
 .bd-sidebar-primary .bd-sidenav li.current > a.current:hover {
   background-color: var(--rlinf-nav-active-bg);
@@ -415,13 +587,12 @@ html[data-theme="dark"] .rlinf-ask-ai-fab {
   font-weight: 600;
 }
 
-/* Shrink the collapse chevron to match the rows. */
 .bd-sidebar-primary .bd-sidenav .toctree-toggle {
-  padding: 0.3rem 0.4rem;
+  padding: 0.28rem 0.4rem;
 }
 
 .bd-sidebar-primary .bd-sidenav .toctree-toggle .fa-chevron-down {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
 }
 
 .rlinf-sidebar-toggle {
@@ -431,7 +602,7 @@ html[data-theme="dark"] .rlinf-ask-ai-fab {
 @media (max-width: 959.98px) {
   .rlinf-sidebar-toggle {
     align-items: center !important;
-    border-radius: 4px !important;
+    border-radius: 8px !important;
     display: inline-flex !important;
     height: 2.25rem !important;
     justify-content: center !important;
@@ -446,46 +617,157 @@ html[data-theme="dark"] .rlinf-ask-ai-fab {
   }
 }
 
-/* --- Ray-style cards ----------------------------------------------------
-   Ray's docs use compact PyData cards with a clean surface, subtle shadow,
-   small radius, and stronger hover affordance. Apply that treatment globally
-   to sphinx-design overview cards and the raw-HTML example gallery cards. */
-:root {
-  --rlinf-card-radius: 4px;
-  --rlinf-card-gap: 1em;
-  --rlinf-card-shadow: 0px 4px 10px 0px rgba(0, 0, 0, 0.08);
-  --rlinf-card-shadow-hover: 0px 6px 30px 5px rgba(0, 0, 0, 0.12);
+/* --- Modern flat tables --------------------------------------------------- */
+.bd-article .pst-scrollable-table-container {
+  border: 1px solid var(--rlinf-border);
+  border-radius: 10px;
+  margin: 1.25rem 0;
+  overflow-x: auto;
 }
 
-html[data-theme="dark"] {
-  --rlinf-card-shadow: 0px 4px 10px 0px rgba(0, 0, 0, 0.32);
-  --rlinf-card-shadow-hover: 0px 6px 30px 5px rgba(0, 0, 0, 0.42);
-}
-
-.sd-card {
-  background: var(--pst-color-surface, var(--pst-color-background)) !important;
+.bd-article .pst-scrollable-table-container table.table {
   border: 0 !important;
+  border-radius: 0;
+  margin: 0 !important;
+}
+
+.bd-article table.table,
+.bd-article table.docutils {
+  background: var(--rlinf-surface);
+  border: 1px solid var(--rlinf-border);
+  border-collapse: separate;
+  border-radius: 10px;
+  border-spacing: 0;
+  font-size: 0.89rem;
+  line-height: 1.62;
+  margin: 1.25rem 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+.bd-article table.table caption,
+.bd-article table.docutils caption {
+  caption-side: top;
+  color: var(--pst-color-text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.55rem 0.9rem 0.4rem;
+  text-align: left;
+}
+
+.bd-article table.table thead th,
+.bd-article table.docutils thead th {
+  background-color: var(--rlinf-surface-subtle) !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--rlinf-border) !important;
+  color: var(--pst-color-text-base);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.65rem 0.9rem;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.bd-article table.table tbody tr,
+.bd-article table.docutils tbody tr {
+  background-color: transparent !important;
+  transition: background-color 120ms ease;
+}
+
+.bd-article table.table tbody tr:hover,
+.bd-article table.docutils tbody tr:hover {
+  background-color: var(--rlinf-row-hover) !important;
+}
+
+.bd-article table.table tbody td,
+.bd-article table.table tbody th,
+.bd-article table.docutils tbody td,
+.bd-article table.docutils tbody th {
+  background: transparent !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--rlinf-border) !important;
+  color: var(--pst-color-text-base);
+  padding: 0.62rem 0.9rem;
+  vertical-align: top;
+}
+
+.bd-article table.table tbody tr:last-child td,
+.bd-article table.table tbody tr:last-child th,
+.bd-article table.docutils tbody tr:last-child td,
+.bd-article table.docutils tbody tr:last-child th {
+  border-bottom: 0 !important;
+}
+
+.bd-article table.table td p,
+.bd-article table.table th p,
+.bd-article table.docutils td p,
+.bd-article table.docutils th p {
+  margin: 0;
+}
+
+.bd-article table.table td p + p,
+.bd-article table.docutils td p + p {
+  margin-top: 0.35rem;
+}
+
+/* Compact success-rate comparison on the GenieSim page. */
+.bd-article table.geniesim-results-table {
+  font-size: 0.86rem;
+}
+
+.bd-article table.geniesim-results-table th,
+.bd-article table.geniesim-results-table td {
+  padding: 0.45rem 0.6rem;
+  vertical-align: middle;
+}
+
+.bd-article table.geniesim-results-table th:not(:first-child),
+.bd-article table.geniesim-results-table td:not(:first-child) {
+  text-align: center;
+}
+
+.bd-article table.geniesim-results-table td:not(:first-child) {
+  white-space: nowrap;
+}
+
+/* --- Flat modern cards (sphinx-design + legacy gallery cards) ------------- */
+.sd-card {
+  background: var(--rlinf-surface) !important;
+  border: 1px solid var(--rlinf-border) !important;
   border-radius: var(--rlinf-card-radius) !important;
   box-shadow: var(--rlinf-card-shadow) !important;
   color: var(--pst-color-text-base) !important;
   overflow: hidden;
   transition: border-color 160ms ease, box-shadow 160ms ease,
-    transform 160ms ease;
+    transform 160ms ease, background-color 160ms ease;
 }
 
 .sd-card:hover {
+  border-color: var(--pst-color-primary) !important;
   box-shadow: var(--rlinf-card-shadow-hover) !important;
-  transform: translateY(-2px);
+  transform: translateY(-1px);
+}
+
+.sd-card .sd-card-header {
+  background: var(--rlinf-surface-subtle) !important;
+  border-bottom: 1px solid var(--rlinf-border) !important;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.65rem 1.05rem;
 }
 
 .sd-card .sd-card-title {
   color: var(--pst-color-text-base) !important;
-  font-weight: 600;
-  margin-bottom: 0.25rem;
+  font-size: 0.98rem;
+  font-weight: 650;
+  margin-bottom: 0.35rem;
 }
 
 .sd-card .sd-card-body {
-  padding: 1rem;
+  color: var(--pst-color-text-muted);
+  font-size: 0.89rem;
+  line-height: 1.62;
+  padding: 1.05rem 1.15rem;
 }
 
 .sd-card .sd-card-body p:last-child {
@@ -501,8 +783,8 @@ html[data-theme="dark"] {
 .bd-article div[style*="display: grid"][style*="grid-template-columns"] > div[style*="max-width: 300px"],
 .bd-article div[style*="display: flex"][style*="justify-content: center"][style*="flex-wrap: wrap"] > div[style*="max-width: 300px"] {
   align-self: stretch;
-  background: var(--pst-color-surface, var(--pst-color-background)) !important;
-  border: 1px solid var(--pst-color-border) !important;
+  background: var(--rlinf-surface) !important;
+  border: 1px solid var(--rlinf-border) !important;
   border-radius: var(--rlinf-card-radius) !important;
   box-shadow: var(--rlinf-card-shadow) !important;
   display: flex !important;
@@ -519,13 +801,14 @@ html[data-theme="dark"] {
 .bd-article div[style*="display: flex"][style*="justify-content: center"][style*="flex-wrap: wrap"] > div[style*="max-width: 300px"]:hover {
   border-color: var(--pst-color-primary) !important;
   box-shadow: var(--rlinf-card-shadow-hover) !important;
-  transform: translateY(-2px);
+  transform: translateY(-1px);
 }
 
 .bd-article div[style*="max-width: 300px"] > img,
 .bd-article div[style*="max-width: 300px"] > video,
 .bd-article div[style*="max-width: 300px"] > a > img,
 .bd-article div[style*="max-width: 300px"] > a > video {
+  border-bottom: 1px solid var(--rlinf-border);
   border-radius: var(--rlinf-card-radius) var(--rlinf-card-radius) 0 0 !important;
   box-shadow: none !important;
   display: block;
@@ -536,8 +819,10 @@ html[data-theme="dark"] {
   display: flex;
   flex: 1;
   flex-direction: column;
+  font-size: 0.875rem !important;
+  line-height: 1.55 !important;
   margin: 0 !important;
-  padding: 1rem;
+  padding: 0.95rem 1rem;
 }
 
 .bd-article div[style*="max-width: 300px"] > p a.reference,
@@ -561,83 +846,151 @@ html[data-theme="dark"] {
   }
 }
 
-/* --- Sphinx copybutton --------------------------------------------------
-   pydata-sphinx-theme sets code blocks to flex column. sphinx-copybutton
-   inserts the button after <pre>; without absolute positioning it becomes a
-   full-width row below the block. Pin it to the top-right inside instead. */
+/* --- Flat soft-tinted callouts / admonitions ------------------------------ */
+.bd-article .admonition,
+.bd-article div.admonition {
+  background-color: var(--rlinf-admon-note-bg) !important;
+  border: 1px solid var(--rlinf-border) !important;
+  border-left: 3px solid var(--rlinf-admon-note-border) !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  margin: 1.25rem 0 !important;
+  padding: 0.85rem 1.05rem !important;
+}
+
+.bd-article .admonition > .admonition-title {
+  background: transparent !important;
+  border: 0 !important;
+  color: var(--pst-color-text-base) !important;
+  font-size: 0.88rem;
+  font-weight: 650;
+  margin: 0 0 0.35rem !important;
+  padding: 0 0 0 1.55rem !important;
+}
+
+.bd-article .admonition > .admonition-title::after {
+  left: 0 !important;
+  top: 0.1rem !important;
+}
+
+.bd-article .admonition > p:last-child {
+  margin-bottom: 0;
+}
+
+.bd-article .admonition.tip,
+.bd-article .admonition.hint {
+  background-color: var(--rlinf-admon-tip-bg) !important;
+  border-left-color: var(--rlinf-admon-tip-border) !important;
+}
+
+.bd-article .admonition.warning,
+.bd-article .admonition.important,
+.bd-article .admonition.attention {
+  background-color: var(--rlinf-admon-warn-bg) !important;
+  border-left-color: var(--rlinf-admon-warn-border) !important;
+}
+
+.bd-article .admonition.caution,
+.bd-article .admonition.danger,
+.bd-article .admonition.error {
+  background-color: var(--rlinf-admon-danger-bg) !important;
+  border-left-color: var(--rlinf-admon-danger-border) !important;
+}
+
+/* --- Crisp inline code & flat code blocks --------------------------------- */
+.bd-article code.literal,
+.bd-article code.docutils.literal,
+.bd-article p > code,
+.bd-article li > code,
+.bd-article td > code {
+  background-color: var(--rlinf-inline-code-bg);
+  border: 1px solid var(--rlinf-inline-code-border);
+  border-radius: 5px;
+  color: var(--pst-color-inline-code);
+  font-size: 0.84em;
+  font-weight: 500;
+  padding: 0.08em 0.36em;
+}
+
 div.highlight,
 div[class*="highlight-"] {
   position: relative;
 }
 
+.bd-article div.highlight pre {
+  background-color: var(--rlinf-code-bg);
+  border: 1px solid var(--rlinf-border);
+  border-radius: 10px;
+  box-shadow: none !important;
+  font-size: 0.845rem;
+  line-height: 1.6;
+  padding: 0.9rem 1.1rem;
+}
+
 div.highlight button.copybtn {
-  position: absolute;
-  top: 0.3em;
-  right: 0.3em;
-  width: 1.7em;
-  height: 1.7em;
+  align-self: auto;
+  background: var(--rlinf-surface);
+  border: 1px solid var(--rlinf-border);
+  border-radius: 6px;
+  flex: none;
+  height: 1.85em;
   margin: 0;
   padding: 0;
+  position: absolute;
+  right: 0.45em;
+  top: 0.45em;
+  width: 1.85em;
   z-index: 1;
-  flex: none;
-  align-self: auto;
 }
 
-/* Compact success-rate comparison on the GenieSim page. */
-.bd-article table.geniesim-results-table {
-  font-size: 0.9rem;
+div.highlight button.copybtn:hover {
+  border-color: var(--pst-color-primary);
 }
 
-.bd-article table.geniesim-results-table th,
-.bd-article table.geniesim-results-table td {
-  padding: 0.4rem 0.55rem;
-  vertical-align: middle;
+/* --- Figures & media ------------------------------------------------------ */
+.bd-article figure {
+  margin: 1.5rem auto;
 }
 
-.bd-article table.geniesim-results-table p {
-  margin: 0;
+.bd-article figure img,
+.bd-article figure video {
+  border-radius: 10px;
 }
 
-.bd-article table.geniesim-results-table th:not(:first-child),
-.bd-article table.geniesim-results-table td:not(:first-child) {
-  text-align: center;
+.bd-article figure figcaption {
+  color: var(--pst-color-text-muted);
+  font-size: 0.84rem;
+  margin-top: 0.55rem;
 }
 
-.bd-article table.geniesim-results-table td:not(:first-child) {
-  white-space: nowrap;
+/* --- Prev / Next flat footer cards ---------------------------------------- */
+.prev-next-area {
+  gap: 0.9rem;
+  margin-top: 2.5rem;
 }
 
-/* --- Modern segmented-pill tab-sets & clean dropdowns ------------------- */
-:root {
-  --rlinf-tab-bg: #f1f5f9;
-  --rlinf-tab-hover-bg: #e2e8f0;
-  --rlinf-tab-active-bg: #ffffff;
-  --rlinf-tab-active-fg: var(--pst-color-primary, #673ab7);
-  --rlinf-tab-active-border: rgba(103, 58, 183, 0.28);
-  --rlinf-tab-active-shadow: 0 1px 3px rgba(15, 23, 42, 0.08),
-    0 1px 2px rgba(15, 23, 42, 0.05);
-  --rlinf-tab-panel-bg: #ffffff;
-  --rlinf-tab-panel-border: #e2e8f0;
-  --rlinf-tab-panel-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
+.prev-next-area a.left-next,
+.prev-next-area a.right-next {
+  background: var(--rlinf-surface);
+  border: 1px solid var(--rlinf-border);
+  border-radius: 10px;
+  padding: 0.7rem 1rem;
+  text-decoration: none !important;
+  transition: border-color 150ms ease, background-color 150ms ease;
 }
 
-html[data-theme="dark"] {
-  --rlinf-tab-bg: rgba(148, 163, 184, 0.1);
-  --rlinf-tab-hover-bg: rgba(148, 163, 184, 0.18);
-  --rlinf-tab-active-bg: rgba(187, 134, 252, 0.18);
-  --rlinf-tab-active-fg: #d8b4fe;
-  --rlinf-tab-active-border: rgba(187, 134, 252, 0.45);
-  --rlinf-tab-active-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-  --rlinf-tab-panel-bg: rgba(30, 41, 59, 0.45);
-  --rlinf-tab-panel-border: rgba(148, 163, 184, 0.22);
-  --rlinf-tab-panel-shadow: 0 2px 12px rgba(0, 0, 0, 0.24);
+.prev-next-area a.left-next:hover,
+.prev-next-area a.right-next:hover {
+  background: var(--rlinf-surface-subtle);
+  border-color: var(--pst-color-primary);
 }
 
+/* --- Modern segmented-pill tab-sets & flat dropdowns ---------------------- */
 .bd-content .bd-article .sd-tab-set {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 0.35rem;
   margin: 1rem 0 1.4rem;
 }
 
@@ -648,16 +1001,16 @@ html[data-theme="dark"] {
   box-shadow: none !important;
   color: var(--pst-color-text-muted) !important;
   cursor: pointer;
-  font-size: 0.875rem;
+  font-size: 0.855rem;
   font-weight: 500;
   line-height: 1.35 !important;
   margin: 0 !important;
   margin-inline-end: 0 !important;
-  padding: 0.42rem 0.9rem !important;
+  padding: 0.4rem 0.85rem !important;
   text-decoration: none !important;
   transform: none !important;
-  transition: background-color 150ms ease, color 150ms ease,
-    border-color 150ms ease, box-shadow 150ms ease;
+  transition: background-color 140ms ease, color 140ms ease,
+    border-color 140ms ease;
 }
 
 .bd-content .bd-article .sd-tab-set > input:not(:checked) + label.sd-tab-label:hover {
@@ -680,7 +1033,7 @@ html[data-theme="dark"] {
 }
 
 .bd-content .bd-article .sd-tab-set > input:focus-visible + label.sd-tab-label {
-  outline: 2px solid var(--pst-color-primary, #2563eb);
+  outline: 2px solid var(--pst-color-primary);
   outline-offset: 2px;
   border-radius: 8px !important;
   transform: none !important;
@@ -692,14 +1045,13 @@ html[data-theme="dark"] {
   border-radius: 12px !important;
   box-shadow: var(--rlinf-tab-panel-shadow) !important;
   margin-top: 0.35rem;
-  padding: 1.15rem 1.25rem !important;
+  padding: 1.1rem 1.25rem !important;
 }
 
 .bd-content .bd-article .sd-tab-set > .sd-tab-content .highlight pre {
   border-radius: 8px;
 }
 
-/* Lighter visual treatment if any nested tab-set ever appears. */
 .bd-content .bd-article .sd-tab-content .sd-tab-set {
   margin: 0.75rem 0 1rem;
 }
@@ -716,7 +1068,6 @@ html[data-theme="dark"] {
   padding: 0.85rem 1rem !important;
 }
 
-/* Clean, low-noise dropdowns matching the tab-set cards. */
 .bd-article details.sd-dropdown {
   background: var(--rlinf-tab-panel-bg) !important;
   border: 1px solid var(--rlinf-tab-panel-border) !important;
@@ -732,25 +1083,24 @@ html[data-theme="dark"] {
 }
 
 .bd-article details.sd-dropdown > summary.sd-summary-title {
-  background: var(--rlinf-tab-bg) !important;
+  background: var(--rlinf-surface-subtle) !important;
   color: var(--pst-color-text-base) !important;
-  font-size: 0.9rem;
+  font-size: 0.89rem;
   font-weight: 600;
   padding: 0.65rem 1rem !important;
-  transition: background-color 150ms ease;
+  transition: background-color 140ms ease;
 }
 
 .bd-article details.sd-dropdown > summary.sd-summary-title:hover {
-  background: var(--rlinf-tab-hover-bg) !important;
+  background: var(--rlinf-surface-muted) !important;
 }
 
 .bd-article details.sd-dropdown > .sd-summary-content {
-  border-top: 1px solid var(--rlinf-tab-panel-border);
+  border-top: 1px solid var(--rlinf-border);
   padding: 0.95rem 1.15rem !important;
 }
 
-/* Transparent canvas + dark-mode adaptation for RLinf architecture/flow SVGs
-   and inline badge icons (overrides pydata-sphinx-theme's white image backdrop). */
+/* --- Transparent canvas + dark-mode adaptation for SVGs & inline icons ---- */
 .bd-article img.inline-icon {
   background-color: transparent !important;
 }

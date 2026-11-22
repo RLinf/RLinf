@@ -88,7 +88,7 @@ Installation
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + LIBERO / ManiSkill
+   .. tab-item:: OpenPI (LIBERO / ManiSkill)
 
       .. code-block:: bash
 

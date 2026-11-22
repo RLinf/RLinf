@@ -85,7 +85,7 @@ ReFL 先采样到去噪后期，再用一步预测得到干净图像。冻结的
 
 .. tab-set::
 
-   .. tab-item:: SD3.5 Medium + ImageReward
+   .. tab-item:: SD3.5 Medium
 
       **1. 安装环境**
 

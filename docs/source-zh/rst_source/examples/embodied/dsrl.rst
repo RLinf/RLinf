@@ -93,7 +93,7 @@ DSRL 与 :doc:`pi0` 共用 OpenPI 环境与模型依赖。
 
 .. tab-set::
 
-   .. tab-item:: OpenPI π₀（LIBERO）
+   .. tab-item:: LIBERO（OpenPI π₀）
       :sync: dsrl-pi0
 
       **1. 安装环境**

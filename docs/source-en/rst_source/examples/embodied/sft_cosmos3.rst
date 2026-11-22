@@ -39,7 +39,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: Cosmos3 SFT (LIBERO)
+   .. tab-item:: LIBERO
 
       **1. Install**
 

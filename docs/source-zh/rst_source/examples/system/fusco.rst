@@ -38,7 +38,7 @@ RLinf 通过 Patch 方式集成 FUSCO，支持以 Megatron-LM 为后端的 MoE �
 
 .. tab-set::
 
-   .. tab-item:: Megatron MoE + FUSCO
+   .. tab-item:: Megatron MoE
 
       **1. 安装环境**
 

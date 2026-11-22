@@ -84,7 +84,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + RoboCasa365
+   .. tab-item:: OpenPI π₀
 
       **1. Install**
 

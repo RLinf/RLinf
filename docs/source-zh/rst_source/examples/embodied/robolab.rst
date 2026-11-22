@@ -81,7 +81,7 @@ RoboLab 是基于 Isaac Sim 的机器人操作 benchmark，包含 120 个任务�
 
 .. tab-set::
 
-   .. tab-item:: OpenPI π₀.₅ + RoboLab
+   .. tab-item:: OpenPI π₀.₅
 
       **1. 安装环境**
 

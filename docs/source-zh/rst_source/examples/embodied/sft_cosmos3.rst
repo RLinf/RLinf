@@ -39,7 +39,7 @@ Cosmos3 监督微调
 
 .. tab-set::
 
-   .. tab-item:: Cosmos3 SFT（LIBERO）
+   .. tab-item:: LIBERO
 
       **1. 安装环境**
 

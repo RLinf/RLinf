@@ -89,7 +89,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + RoboCasa
+   .. tab-item:: OpenPI π₀
 
       **1. Install**
 

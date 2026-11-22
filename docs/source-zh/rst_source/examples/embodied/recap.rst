@@ -57,7 +57,7 @@ RECAP 全程离线运行，包含四个阶段：
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + LIBERO / ManiSkill
+   .. tab-item:: OpenPI（LIBERO / ManiSkill）
 
       .. code-block:: bash
 

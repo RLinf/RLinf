@@ -89,7 +89,7 @@ MolmoAct2 评测
 
 .. tab-set::
 
-   .. tab-item:: MolmoAct2
+   .. tab-item:: LIBERO
 
       **1. 安装环境**
 

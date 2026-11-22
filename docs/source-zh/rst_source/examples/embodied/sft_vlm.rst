@@ -49,7 +49,7 @@ Qwen-VL 监督微调
 
 .. tab-set::
 
-   .. tab-item:: Qwen-VL + Robo2VLM
+   .. tab-item:: Qwen2.5-VL（Robo2VLM）
 
       **1. 安装并下载模型与数据**
 

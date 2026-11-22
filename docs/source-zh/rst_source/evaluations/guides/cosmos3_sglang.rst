@@ -38,7 +38,7 @@ Cosmos3 SGLang 评测
 
 .. tab-set::
 
-   .. tab-item:: Cosmos3 SGLang + LIBERO
+   .. tab-item:: LIBERO
 
       .. code-block:: bash
 

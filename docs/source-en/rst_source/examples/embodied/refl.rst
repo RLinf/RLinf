@@ -92,7 +92,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: SD3.5 Medium + ImageReward
+   .. tab-item:: SD3.5 Medium
 
       **1. Install**
 

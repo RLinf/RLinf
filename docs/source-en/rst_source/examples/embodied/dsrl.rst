@@ -94,7 +94,7 @@ DSRL shares the OpenPI environment and model dependencies with :doc:`pi0`.
 
 .. tab-set::
 
-   .. tab-item:: OpenPI π₀ (LIBERO)
+   .. tab-item:: LIBERO (OpenPI π₀)
       :sync: dsrl-pi0
 
       **1. Install**

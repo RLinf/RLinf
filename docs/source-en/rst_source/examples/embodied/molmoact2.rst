@@ -98,7 +98,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: MolmoAct2
+   .. tab-item:: LIBERO
 
       **1. Install**
 

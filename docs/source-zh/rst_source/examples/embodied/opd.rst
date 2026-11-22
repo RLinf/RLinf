@@ -74,7 +74,7 @@ OPD 以 teacher 与 student 在同一条 student 动作 token 序列上的 log-p
 
 .. tab-set::
 
-   .. tab-item:: OpenVLA-OFT + LIBERO
+   .. tab-item:: LIBERO（OpenVLA-OFT）
 
       安装环境并一次性下载 student 与 teacher 权重：
 

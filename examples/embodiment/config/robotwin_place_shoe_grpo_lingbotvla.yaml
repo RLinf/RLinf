@@ -111,8 +111,8 @@ rollout:
   enable_offload: True
   pipeline_stage_num: 1
   model:
-    model_path: ${actor.model.model_path}
     model_type: "lingbotvla"
+    model_path: ${actor.model.model_path}
     tokenizer_path: ${actor.model.tokenizer_path}
     precision: ${actor.model.precision}
 

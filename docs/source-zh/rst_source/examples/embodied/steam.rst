@@ -52,7 +52,7 @@ STEAM（Self-supervised Temporal Ensemble Advantage Modeling，自监督时序�
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + STEAM
+   .. tab-item:: OpenPI
 
       .. code-block:: bash
 

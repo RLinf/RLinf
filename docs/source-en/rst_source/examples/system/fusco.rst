@@ -39,7 +39,7 @@ RLinf integrates FUSCO through patching, supporting MoE training with Megatron-L
 
 .. tab-set::
 
-   .. tab-item:: Megatron MoE + FUSCO
+   .. tab-item:: Megatron MoE
 
       **1. Install**
 

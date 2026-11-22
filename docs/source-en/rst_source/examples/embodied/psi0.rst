@@ -75,7 +75,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: Psi0 + SIMPLE
+   .. tab-item:: SIMPLE
 
       **1. Install**
 

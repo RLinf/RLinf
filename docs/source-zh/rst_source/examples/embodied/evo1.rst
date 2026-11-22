@@ -80,7 +80,7 @@ Evo-1 强化学习
 
 .. tab-set::
 
-   .. tab-item:: Evo-1 + LIBERO
+   .. tab-item:: LIBERO
 
       **1. 安装环境**
 

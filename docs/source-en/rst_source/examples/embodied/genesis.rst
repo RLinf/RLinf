@@ -79,7 +79,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: Genesis
+   .. tab-item:: MLP / CNN
 
       **1. Install**
 

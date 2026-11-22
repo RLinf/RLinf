@@ -36,7 +36,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + BEHAVIOR-1K
+   .. tab-item:: OpenPI π₀.₅
 
       .. code-block:: bash
 

@@ -38,7 +38,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
 .. tab-set::
 
-   .. tab-item:: Cosmos3 SGLang + LIBERO
+   .. tab-item:: LIBERO
 
       .. code-block:: bash
 

@@ -77,7 +77,7 @@ RLT 将表示学习和在线 RL 控制拆开。
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + LIBERO / ManiSkill
+   .. tab-item:: OpenPI（LIBERO / ManiSkill）
 
       .. code-block:: bash
 

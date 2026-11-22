@@ -14,7 +14,6 @@
 
 import copy
 import os
-import re
 from typing import Callable, Optional
 
 from omegaconf import DictConfig, open_dict
@@ -31,10 +30,6 @@ from rlinf.utils.logging import get_logger
 ModelBuilder = Callable[[DictConfig, Optional[object]], object]
 _MODEL_REGISTRY: dict[str, ModelBuilder] = {}
 
-_HF_REPO_ID_RE = re.compile(
-    r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?/"
-    r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$"
-)
 _LOCAL_FILE_SUFFIXES = (
     ".pt",
     ".pth",
@@ -49,10 +44,11 @@ _LOCAL_FILE_SUFFIXES = (
 
 
 def is_hf_repo_id(path: str) -> bool:
-    """Return whether ``path`` looks like a Hugging Face Hub ``owner/repo`` ID.
+    """Return whether ``path`` is a Hugging Face Hub ``owner/repo`` ID.
 
-    Existing local paths, paths starting with filesystem prefixes (``/``,
-    ``./``, ``../``, ``~``), URIs, and checkpoint file paths return ``False``.
+    Validates syntax with ``huggingface_hub.utils.validate_repo_id`` while
+    excluding existing local paths, single-segment names, and checkpoint file
+    paths.
 
     Args:
         path: Candidate local path or Hugging Face repository identifier.
@@ -60,13 +56,18 @@ def is_hf_repo_id(path: str) -> bool:
     Returns:
         ``True`` if ``path`` should be resolved from the Hugging Face Hub.
     """
-    if not path or os.path.exists(os.path.expanduser(path)):
+    if not path or "/" not in path or os.path.exists(os.path.expanduser(path)):
         return False
-    if path.startswith(("/", "./", "../", "~")) or "\\" in path or "://" in path:
+    if path.lower().endswith(_LOCAL_FILE_SUFFIXES):
         return False
-    if ".." in path or path.lower().endswith(_LOCAL_FILE_SUFFIXES):
+
+    from huggingface_hub.utils import HFValidationError, validate_repo_id
+
+    try:
+        validate_repo_id(path)
+    except HFValidationError:
         return False
-    return bool(_HF_REPO_ID_RE.match(path))
+    return True
 
 
 def resolve_model_path(path: str) -> str:

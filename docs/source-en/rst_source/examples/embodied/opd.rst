@@ -80,7 +80,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: OpenVLA-OFT + LIBERO
+   .. tab-item:: LIBERO (OpenVLA-OFT)
 
       Install the environment and download both student and teacher checkpoints:
 

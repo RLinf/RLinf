@@ -77,7 +77,7 @@ Genesis 强化学习
 
 .. tab-set::
 
-   .. tab-item:: Genesis
+   .. tab-item:: MLP / CNN
 
       **1. 安装环境**
 

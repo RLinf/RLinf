@@ -84,7 +84,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: Evo-1 + LIBERO
+   .. tab-item:: LIBERO
 
       **1. Install**
 

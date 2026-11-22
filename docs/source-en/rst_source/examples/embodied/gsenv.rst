@@ -90,7 +90,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + GSEnv
+   .. tab-item:: OpenPI π₀.₅
 
       **1. Install**
 

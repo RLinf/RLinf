@@ -113,7 +113,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: MuJoCo Warp
+   .. tab-item:: MLP
 
       **1. Install**
 

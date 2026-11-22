@@ -77,7 +77,7 @@ EmbodiChain 强化学习
 
 .. tab-set::
 
-   .. tab-item:: EmbodiChain
+   .. tab-item:: MLP
 
       **1. 安装环境**
 

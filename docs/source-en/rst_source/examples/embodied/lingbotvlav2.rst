@@ -91,7 +91,7 @@ LingbotVLA 1.0 and 2.0 both install a Python package named ``lingbotvla``, so ea
 
 .. tab-set::
 
-   .. tab-item:: LingbotVLA 2.0 + RoboTwin
+   .. tab-item:: RoboTwin
 
       **1. Install**
 

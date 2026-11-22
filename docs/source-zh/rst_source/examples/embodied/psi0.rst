@@ -67,7 +67,7 @@ adapter 将头部相机图像、机器人状态和任务指令输入模型，再
 
 .. tab-set::
 
-   .. tab-item:: Psi0 + SIMPLE
+   .. tab-item:: SIMPLE
 
       **1. 安装环境**
 

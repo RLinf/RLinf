@@ -83,7 +83,7 @@ LingbotVLA 1.0 与 2.0 安装的 Python 包都叫 ``lingbotvla``，需要各自�
 
 .. tab-set::
 
-   .. tab-item:: LingbotVLA 2.0 + RoboTwin
+   .. tab-item:: RoboTwin
 
       **1. 安装环境**
 

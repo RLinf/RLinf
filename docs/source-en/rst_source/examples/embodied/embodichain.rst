@@ -79,7 +79,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: EmbodiChain
+   .. tab-item:: MLP
 
       **1. Install**
 

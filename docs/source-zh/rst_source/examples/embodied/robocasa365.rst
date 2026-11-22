@@ -80,7 +80,7 @@ RoboCasa365 是 RLinf 中面向基准测试的厨房操作集成。与旧版 :do
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + RoboCasa365
+   .. tab-item:: OpenPI π₀
 
       **1. 安装环境**
 

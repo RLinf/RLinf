@@ -113,7 +113,7 @@ humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``rewa
 
 .. tab-set::
 
-   .. tab-item:: MuJoCo Warp
+   .. tab-item:: MLP
 
       **1. 安装环境**
 

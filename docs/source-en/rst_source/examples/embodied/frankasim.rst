@@ -82,7 +82,7 @@ Setup and Run
 
 .. tab-set::
 
-   .. tab-item:: MLP / CNN + FrankaSim
+   .. tab-item:: MLP / CNN
 
       **1. Install**
 
