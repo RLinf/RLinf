@@ -1,5 +1,5 @@
-Configure
-=========
+Envs & Logging
+==============
 
 Use these guides to configure heterogeneous training environments and experiment logging before launching a run.
 

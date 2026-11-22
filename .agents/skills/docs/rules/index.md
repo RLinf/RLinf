@@ -13,7 +13,7 @@ The docs have nine top-level chapters in the sidebar, in this order: **Get Start
 | Real-World Robots | overview, shared real-world workflow, and per-robot bring-up / SFT / RL pages |
 | Evaluation | eval overview, quick tour, benchmark eval guides, eval CLI/config/models/results reference |
 | Agentic & Generative | math reasoning, Search-R1, WideSeek-R1, rStar2, AgentLightning, Coding RL, VLM, image & video generation |
-| Guides | operational how-tos: configure, data & checkpoints, launch & scale, performance & parallelism, rollout engines |
+| Guides | operational how-tos: envs & logging, data & checkpoints, launch & scale, performance & parallelism, rollout engines |
 | Extending | contributor how-tos (embodied first, in overview order): models, envs, robots/tasks, rewards, algorithms, agents, Megatron-Bridge, accelerators, advanced integrations |
 | Concepts & Reference | concepts (execution, scheduling, robotics), algorithm specs, config & metrics, Python API |
 | Resources | why RLinf, release notes, blog, publications, contributor policy |

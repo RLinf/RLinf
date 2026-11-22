@@ -9,11 +9,11 @@
 .. grid:: 1 2 2 3
    :gutter: 2
 
-   .. grid-item-card:: 配置
+   .. grid-item-card:: 环境与日志
       :link: configure/index
       :link-type: doc
 
-      设置 Hydra 配置、日志与不同工作负载的专用选项。
+      配置异构训练环境，以及 TensorBoard、W&B 与 SwanLab 实验日志。
 
    .. grid-item-card:: 数据与 Checkpoint
       :link: data-checkpoints/index

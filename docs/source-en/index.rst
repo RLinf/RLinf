@@ -163,7 +163,7 @@ Why RLinf
   :hidden:
 
   Overview <rst_source/guides/index>
-  Configure <rst_source/guides/configure/index>
+  Envs & Logging <rst_source/guides/configure/index>
   Data & Checkpoints <rst_source/guides/data-checkpoints/index>
   Launch & Scale <rst_source/guides/launch-scale/index>
   Performance & Parallelism <rst_source/guides/performance/index>

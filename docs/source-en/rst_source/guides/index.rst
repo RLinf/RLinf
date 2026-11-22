@@ -10,11 +10,11 @@ Choose a Workflow
 .. grid:: 1 2 2 3
    :gutter: 2
 
-   .. grid-item-card:: Configure
+   .. grid-item-card:: Envs & Logging
       :link: configure/index
       :link-type: doc
 
-      Set up Hydra configs, logging, and workload-specific options.
+      Configure heterogeneous training environments and TensorBoard, W&B, or SwanLab logging.
 
    .. grid-item-card:: Data & Checkpoints
       :link: data-checkpoints/index
