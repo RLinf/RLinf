@@ -70,11 +70,11 @@ runner:
   val_check_interval: -1
   save_interval: -1
   resume_dir: null
-  ckpt_path: "/path/to/checkpoint"
+  ckpt_path: null
 
 algorithm:
   dagger:
-    # Retain every frame from successful episodes, including policy actions.
+    # Sample only chunks/windows fully driven by the leader for training.
     only_save_expert: true
     online_lerobot:
       enabled: true
@@ -109,7 +109,7 @@ env:
     keyboard_reward_wrapper: null
     so101_episode_wrapper: hg_dagger
     max_steps_per_rollout_epoch: 1000
-    max_episode_steps: 1000
+    max_episode_steps: null
     override_cfg:
       max_num_steps: 1000
       task_description: "Pick something and place it into the box."
