@@ -15,14 +15,16 @@
 """Measure peak CUDA memory for dense and chunked BF16 LM head forward/backward."""
 
 import argparse
+import sys
+from pathlib import Path
 
 import torch
 import torch.nn.functional as F
 
-from rlinf.hybrid_engines.megatron.lm_head import chunked_vocab_parallel_log_probs
-
 
 def measure(chunk_size, args):
+    from rlinf.hybrid_engines.megatron.lm_head import chunked_vocab_parallel_log_probs
+
     torch.manual_seed(0)
     hidden = torch.randn(
         args.tokens, args.hidden_size, device="cuda", dtype=torch.bfloat16
@@ -59,6 +61,8 @@ def measure(chunk_size, args):
 
 
 if __name__ == "__main__":
+    # The agentic environment can run directly from a checkout without installing RLinf.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tokens", type=int, default=4096)
     parser.add_argument("--hidden-size", type=int, default=1024)

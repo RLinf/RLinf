@@ -254,8 +254,6 @@ actor
   actor:
     training_backend: megatron
     mcore_gpt: True
-    logprob_chunk_size: 0
-    response_only_logits: False
     spec_name: decoder_gpt
 
     offload_optimizer: True
@@ -265,10 +263,12 @@ actor
     enable_dp_load_balance: False
     calculate_flops: False
     seed: 1234
+    response_only_logits: False
+    logprob_chunk_size: 0
 
     model:
+      lm_head_chunk_size: 0  # 启用时要求 PP=CP=1、load_mtp=False、entropy_bonus=0
       precision: fp16
-      lm_head_chunk_size: 0
       add_bias_linear: False
 
       tensor_model_parallel_size: 1
@@ -379,7 +379,7 @@ actor
       grad_scaler:
         enabled: False
 
-**顶层**
+**Actor 参数**
 
 .. list-table::
    :header-rows: 1
@@ -403,12 +403,14 @@ actor
      - 启用数据并行负载均衡。
    * - ``actor.calculate_flops``
      - 计算并记录 FLOPs 以供性能分析。
-   * - ``actor.logprob_chunk_size``
-     - 每次计算词表 softmax 的位置数，取非负整数。设为 0 时，如果开启 ``response_only_logits`` 并关闭熵计算，默认每块 256 个位置。选项对比和实测数据见 :doc:`actor_logprob_memory`。
-   * - ``actor.response_only_logits``
-     - 只在预测回复 token 的位置计算输出层投影。要求上下文并行度为 1。
    * - ``actor.seed``
      - 用于可复现性的全局随机种子。
+   * - ``actor.response_only_logits``
+     - 只在预测回复 token 的位置计算词表分数（Megatron 动态批次，CP=1）。
+   * - ``actor.logprob_chunk_size``
+     - Megatron 动态批次的 softmax 分块大小，设为正数须关闭熵计算和熵奖励。设为 0 时，若只投影回复位置且关闭熵计算，每块取 256 个位置。
+   * - ``actor.model.lm_head_chunk_size``
+     - Qwen3.5 MBridge 文本训练中，输出层每块投影的 token 数。设为 0 时关闭。
 
 **模型子节**
 
@@ -418,8 +420,6 @@ actor
 
    * - 参数
      - 说明
-   * - ``actor.model.lm_head_chunk_size``
-     - 输出层每次投影的位置数，取非负整数。适用于使用 MBridge 的 Qwen3.5。
    * - ``actor.model.precision``
      - 训练的数值精度（例如 ``fp16``）。
    * - ``actor.model.add_bias_linear``
