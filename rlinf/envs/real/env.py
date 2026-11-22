@@ -422,6 +422,8 @@ class RealWorldEnv(gym.Env):
         raw_chunk_intervene_actions = []
         raw_chunk_intervene_flag = []
         raw_chunk_rlt_switch_flags = []
+        terminal_obs = None
+        terminal_info = None
         self._notify_action_chunk_begin()
         for i in range(chunk_size):
             actions = chunk_actions[:, i]
@@ -430,6 +432,9 @@ class RealWorldEnv(gym.Env):
             )
             obs_list.append(extracted_obs)
             infos_list.append(infos)
+            if terminal_info is None and (terminations | truncations).any():
+                terminal_obs = copy.deepcopy(extracted_obs)
+                terminal_info = copy.deepcopy(infos)
             if "intervene_action" in infos:
                 raw_chunk_intervene_actions.append(infos["intervene_action"])
                 raw_chunk_intervene_flag.append(infos["intervene_flag"])
@@ -466,9 +471,18 @@ class RealWorldEnv(gym.Env):
             infos_list[-1] = infos_last
 
         if past_dones.any() and self.auto_reset:
+            # RealWorldEnv owns one environment per worker. Preserve its first
+            # terminal result while retaining chunk-shaped intervention data.
+            for key in ("intervene_action", "intervene_flag", "rlt_switch_flags"):
+                if key in infos_last:
+                    terminal_info[key] = infos_last[key]
             obs_list[-1], infos_list[-1] = self._handle_auto_reset(
-                past_dones.cpu().numpy(), obs_list[-1], infos_list[-1]
+                past_dones.cpu().numpy(), terminal_obs, terminal_info
             )
+            raw_dones = raw_chunk_terminations | raw_chunk_truncations
+            infos_list[-1]["valid_action_mask"] = (
+                raw_dones.long().cumsum(dim=1) - raw_dones.long()
+            ) == 0
 
         if self.auto_reset or self.ignore_terminations:
             chunk_terminations = torch.zeros_like(raw_chunk_terminations)

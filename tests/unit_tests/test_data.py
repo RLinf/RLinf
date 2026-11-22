@@ -2458,6 +2458,44 @@ def test_online_lerobot_accumulator_preserves_auto_reset_observation():
     assert second[0]["state"].item() == 100.0
 
 
+def test_online_lerobot_accumulator_uses_terminal_info_at_chunk_end():
+    """A terminal action at the end of an auto-reset chunk closes the take."""
+    accumulator = LeRobotEpisodeAccumulator(
+        num_envs=1,
+        only_success=True,
+        num_action_chunks=2,
+        action_dim=1,
+    )
+    accumulator.append_chunk_episode_data(
+        policy_output=None,
+        chunk_actions=torch.tensor([[[1.0], [2.0]]]),
+        initial_observation={"states": torch.tensor([[0.0]])},
+        obs_list=[
+            {"states": torch.tensor([[1.0]])},
+            {"states": torch.tensor([[99.0]])},
+        ],
+        terminations=torch.tensor([[False, True]]),
+        truncations=torch.tensor([[False, False]]),
+        infos_list=[
+            {"pre_record": False},
+            {
+                "final_observation": {"states": torch.tensor([[2.0]])},
+                "final_info": {
+                    "pre_record": True,
+                    "success": torch.tensor([True]),
+                },
+            },
+        ],
+        valid_action_mask=torch.tensor([[True, True]]),
+    )
+
+    [episode] = accumulator.drain_episodes()
+    assert len(episode) == 1
+    assert episode[0]["state"].item() == 0.0
+    assert bool(episode[0]["is_success"])
+    assert bool(episode[0]["done"])
+
+
 def test_online_lerobot_accumulator_filters_unsuccessful_episodes():
     accumulator = LeRobotEpisodeAccumulator(
         num_envs=1,
@@ -2602,6 +2640,28 @@ def test_online_lerobot_accumulator_applies_recording_controls():
     assert episode[0]["state"].item() == 20.0
     assert episode[0]["actions"].item() == 3.0
     assert episode[0]["segment_id"].item() == 1
+
+
+@pytest.mark.parametrize("only_success", [False, True])
+def test_online_lerobot_finishes_recorded_frames_on_an_idle_terminal(only_success):
+    """An idle terminal closes retained frames without creating an idle episode."""
+    accumulator = LeRobotEpisodeAccumulator(
+        num_envs=1, num_action_chunks=1, action_dim=1, only_success=only_success
+    )
+    for pre_record, done in ((False, False), (True, True), (True, True)):
+        accumulator.append_chunk_episode_data(
+            policy_output=None,
+            chunk_actions=torch.tensor([[[1.0]]]),
+            initial_observation={"states": torch.tensor([[0.0]])},
+            obs_list=[{"states": torch.tensor([[1.0]])}],
+            terminations=torch.tensor([[done]]),
+            truncations=torch.tensor([[False]]),
+            infos_list=[{"pre_record": pre_record, "success": done}],
+        )
+    [episode] = accumulator.drain_episodes()
+    assert len(episode) == 1
+    assert bool(episode[-1]["done"])
+    assert bool(episode[-1]["is_success"])
 
 
 def test_lerobot_frame_owns_observation_and_image_conversion():

@@ -56,6 +56,7 @@ from rlinf.scheduler.channel.channel import DEFAULT_KEY
 from rlinf.scheduler.worker.routing import CommMapper
 from rlinf.utils.distributed import masked_stats, normalize_from_stats
 from rlinf.utils.nested_dict_process import split_dict_to_chunk
+from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import (
     flatten_embodied_batch,
     pack_batch,
@@ -68,6 +69,8 @@ SourceID: TypeAlias = tuple[int, int]
 CollectionScope: TypeAlias = int | tuple[int, ...]
 # Channel collector protocol: ``(queue key, payload)``.
 CollectedItem: TypeAlias = tuple[str, Any]
+
+_logger = get_logger()
 
 
 # Public configuration and collector API.
@@ -686,14 +689,28 @@ class LerobotOutput(TrajectoryOutput):
 
         scope = (chunk.key.step_id, *chunk.source)
         expected = self._cfg.env.train.rollout_epoch * self._chunk_count
+        received = sum(
+            self._lerobot_scope(key) == scope for key in self._completed_keys
+        )
+        if received == 1:
+            _logger.info(
+                "Online LeRobot step %s source %s: received 1/%d chunks; "
+                "completed episodes are sent at the rollout step boundary.",
+                chunk.key.step_id, chunk.source, expected,
+            )
         if (
-            sum(self._lerobot_scope(key) == scope for key in self._completed_keys)
-            != expected
+            received != expected
         ):
             return
 
         shards_per_source = self._geometry.shards_per_source
         episodes = accumulator.drain_episodes()
+        _logger.info(
+            "Online LeRobot step %s source %s: received %d/%d chunks, "
+            "emitting %d episodes; pending_frames=%d.",
+            chunk.key.step_id, chunk.source, expected, expected,
+            len(episodes), accumulator.pending_frames,
+        )
         outputs = [
             (DEFAULT_KEY, episodes[shard::shards_per_source])
             for shard in range(shards_per_source)
@@ -900,6 +917,11 @@ class LeRobotEpisodeAccumulator:
         self._episodes = []
         return episodes
 
+    @property
+    def pending_frames(self) -> int:
+        """Return recorded frames waiting for an episode boundary."""
+        return sum(len(state.frames) for state in self._states)
+
     def clear(self) -> None:
         """Discard in-progress frames, preceding observations, and completed output."""
         self._states = [LeRobotEpisodeState() for _ in range(self.num_envs)]
@@ -918,24 +940,29 @@ class LeRobotEpisodeAccumulator:
         if step.info_flag("record_reset"):
             state.reset_episode()
             return
-        if step.info_flag("pre_record"):
+        pre_record = step.info_flag("pre_record")
+        if pre_record and not step.done:
             return
         if step.info_flag("segment_advance"):
             state.segment_id += 1
 
-        frame = self._converter.to_frame(
-            step,
-            observation=observation,
-            info=step.info,
-            segment_id=state.segment_id,
-            action_dim=self.action_dim,
-        )
-        if frame is None:
-            return
-
-        state.append(frame)
+        if not pre_record:
+            frame = self._converter.to_frame(
+                step,
+                observation=observation,
+                info=step.info,
+                segment_id=state.segment_id,
+                action_dim=self.action_dim,
+            )
+            if frame is not None:
+                state.append(frame)
         if not step.done:
             return
+
+        for info in (step.info, step.completion_info):
+            success = LeRobotFrame.success_from_info(info)
+            if success is not None:
+                state.success = state.success or success
 
         should_emit = not self.only_success or (state.success and step.terminated)
         if should_emit and self.intervene_step_filter > 0:
@@ -947,4 +974,17 @@ class LeRobotEpisodeAccumulator:
             episode = state.finish()
             if episode:
                 self._episodes.append(episode)
+                _logger.info(
+                    "Online LeRobot episode accepted: env=%d frames=%d success=%s; "
+                    "%d completed episodes await the rollout step boundary.",
+                    step.env_index, len(episode), state.success, len(self._episodes),
+                )
+        elif state.frames:
+            _logger.info(
+                "Online LeRobot episode filtered: env=%d frames=%d success=%s "
+                "terminated=%s only_success=%s intervention_frames=%d required=%d.",
+                step.env_index, len(state.frames), state.success, step.terminated,
+                self.only_success, sum(frame.intervene_flag for frame in state.frames),
+                self.intervene_step_filter,
+            )
         state.reset_episode()

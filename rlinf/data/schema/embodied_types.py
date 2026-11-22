@@ -1297,9 +1297,9 @@ class LeRobotChunk:
         # A shortened chunk's last observation is the next pre-action state;
         # completion metadata carries its terminal outcome separately.
         has_final_observation = (
-            self.valid_action_mask is None
-            and isinstance(step_info, dict)
+            isinstance(step_info, dict)
             and "final_observation" in step_info
+            and "final_info" in step_info
         )
         if has_final_observation and done:
             info_without_reset = copy.deepcopy(step_info)
