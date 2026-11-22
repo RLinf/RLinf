@@ -14,12 +14,18 @@ RLinf repository root with that environment activated.
 Run It
 ------
 
-A clip folder holds ``clip_*.pt`` files, loaded in file-name order, and
-optionally a ``manifest.json``. With the manifest present, the loader
-refuses a clip whose SHA-256 differs or that the manifest does not list.
-Without it, the loader checks the format only. Point
-``SUPERMIMIC_MOTION_PATH`` at the folder, then train and evaluate with the
-commands in the main guide plus the overrides below.
+A clip folder holds ``clip_*.pt`` files, loaded in file-name order. Run the
+setup block of the main guide first, then point ``SUPERMIMIC_MOTION_PATH`` at
+the folder, and train and evaluate with the commands in the main guide plus
+the overrides in the sections below.
+
+Motion-tracking evaluation plays each clip in its own environment and is
+sized for the 40 LAFAN1 clips. With more than 40 loaded clips,
+``env.eval.num_clips=null`` alone fails a capacity check at startup. Also
+raise ``env.eval.total_num_envs``, or ``env.eval.rollout_epoch`` to play the
+clips in several rounds, so that their product covers the clip count. If a
+clip runs longer than ``env.eval.max_steps_per_rollout_epoch`` control steps
+(13656 by default), raise that too.
 
 BONES-SEED (Experimental)
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -41,16 +47,19 @@ against an official CSV.
        --input /data/bones-seed/g1/csv \
        --output /data/bones_g1
    python toolkits/supermimic/bones_feasibility.py --clips /data/bones_g1 \
-       --out /data/bones_g1_filtered
-   export SUPERMIMIC_MOTION_PATH=/data/bones_g1_filtered
+       --out /data/bones_g1_annotated
+   export SUPERMIMIC_MOTION_PATH=/data/bones_g1_annotated
 
 ``--input`` is one CSV or a directory scanned recursively. Clips are
 resampled to 50 Hz, existing outputs are kept unless ``--overwrite`` is set,
 and a broken CSV is reported without stopping the rest. The converter is
 tested on synthetic CSVs only.
 
-To train on the filtered clips, append these overrides to a training or
-evaluation launch:
+``bones_feasibility.py`` writes every clip to the ``--out`` folder with its
+geometry annotations and drops none. Training and motion-tracking evaluation
+filter the clips by motion name and by those annotations when they load
+them. To train or evaluate on these clips, append these overrides to the
+launch command:
 
 .. code-block:: bash
 
@@ -67,13 +76,10 @@ Write each clip in the format below, put them in one folder, and train with
 ``env.train.num_clips=null`` (and ``env.eval.num_clips=null`` for
 evaluation), which loads every clip in the folder.
 
-Evaluation plays each clip in its own environment and is sized for the 40
-LAFAN1 clips. With more clips, ``env.eval.num_clips=null`` alone fails a
-capacity check at startup. Also raise ``env.eval.total_num_envs``, or
-``env.eval.rollout_epoch`` to play the clips in several rounds, so that
-their product covers the clip count. If a clip runs longer than
-``env.eval.max_steps_per_rollout_epoch`` control steps (13656 by default),
-raise that as well.
+The folder may also hold a ``manifest.json``. With the manifest present, the
+loader refuses a clip whose SHA-256 differs or that the manifest does not
+list. Without it, the loader checks the format only. The BONES-SEED format
+does not read a manifest.
 
 Clip File Format
 ----------------

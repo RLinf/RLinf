@@ -11,7 +11,9 @@ SuperMimic 动作数据
 运行
 ----
 
-一个片段目录里放若干 ``clip_*.pt``\ （按文件名排序加载），可以再放一个 ``manifest.json``。有清单时，加载器会拒绝 SHA-256 对不上或清单里没有的片段；没有清单时只检查格式。把 ``SUPERMIMIC_MOTION_PATH`` 指到这个目录，再用主指南里的训练和评测命令，加上下面的覆盖项。
+一个片段目录里放若干 ``clip_*.pt``\ （按文件名排序加载）。先在终端里执行主指南的设置代码，再把 ``SUPERMIMIC_MOTION_PATH`` 改成这个目录，然后用主指南里的训练和评测命令，加上下面各节的覆盖项。
+
+动作跟踪评测时每条片段占一个环境，默认规模按 40 条 LAFAN1 片段设定。加载的片段超过 40 条时，只设 ``env.eval.num_clips=null`` 会在启动时的容量校验里报错，还要增大 ``env.eval.total_num_envs``，或增大 ``env.eval.rollout_epoch`` 分几轮播放，让两者的乘积不少于片段数。如果有片段超过 ``env.eval.max_steps_per_rollout_epoch`` 个控制步（默认 13656），也要相应调大。
 
 BONES-SEED（实验性）
 ~~~~~~~~~~~~~~~~~~~~
@@ -24,12 +26,12 @@ BONES-SEED（实验性）
        --input /data/bones-seed/g1/csv \
        --output /data/bones_g1
    python toolkits/supermimic/bones_feasibility.py --clips /data/bones_g1 \
-       --out /data/bones_g1_filtered
-   export SUPERMIMIC_MOTION_PATH=/data/bones_g1_filtered
+       --out /data/bones_g1_annotated
+   export SUPERMIMIC_MOTION_PATH=/data/bones_g1_annotated
 
 ``--input`` 可以是单个 CSV 或递归扫描的目录。片段重采样到 50 Hz，已有输出默认不覆盖（``--overwrite`` 除外），单个损坏的 CSV 会报告原因而不影响其他文件。转换器只在合成 CSV 上测试过。
 
-用过滤后的片段训练或评测时，在启动命令后追加：
+``bones_feasibility.py`` 把每条片段连同几何标注写进 ``--out`` 目录，不删除任何片段。训练和动作跟踪评测加载时，按动作名和这些标注筛掉不合格的片段。用这些片段训练或评测时，在启动命令后追加：
 
 .. code-block:: bash
 
@@ -43,7 +45,7 @@ BONES-SEED 的加载器把动作库放在主机内存，只把查询到的行传
 
 按下面的格式写出每条片段，放进同一个目录，训练时加 ``env.train.num_clips=null``\ （评测加 ``env.eval.num_clips=null``），加载目录里的全部片段。
 
-评测时每条片段占一个环境，默认规模按 40 条 LAFAN1 片段设定。片段更多时，只设 ``env.eval.num_clips=null`` 会在启动时的容量校验里报错，还要增大 ``env.eval.total_num_envs``，或增大 ``env.eval.rollout_epoch`` 分几轮播放，让两者的乘积不少于片段数。如果有片段超过 ``env.eval.max_steps_per_rollout_epoch`` 个控制步（默认 13656），也要相应调大。
+目录里可以再放一个 ``manifest.json``。有清单时，加载器会拒绝 SHA-256 对不上或清单里没有的片段；没有清单时只检查格式。BONES-SEED 格式不读清单。
 
 片段文件格式
 ------------

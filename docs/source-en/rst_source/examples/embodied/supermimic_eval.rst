@@ -8,8 +8,9 @@ metrics each evaluation writes.
 Installation
 ------------
 
-Use the environment and the clips from :doc:`supermimic`, and run its
-setup block in the shell first. The commands below read ``RUN_DIR`` from
+Use the environment from :doc:`supermimic`, and run its setup block in the
+shell first. Motion tracking also needs the LAFAN1 clips prepared there;
+standing push recovery uses a built-in standing pose and reads no clips. The commands below read ``RUN_DIR`` from
 that block and evaluate the checkpoints of its training run.
 
 Run It
@@ -90,14 +91,19 @@ Motion-tracking metrics:
 * ``body_pos_err``: the position error of the tracked bodies relative to the
   pelvis, in meters, averaged over the steps each clip played.
 
-Push-recovery metrics, over all trials and again for each speed:
+Push-recovery metrics, over all trials and again for each speed. A trial
+in which the robot falls, leaves its joint limits, or produces non-finite
+values before the push counts as an initialization failure. The first three
+rates below are shares of the trials that received the push:
 
-* ``recovery_rate``: the share of trials in which the robot settled again,
-  with its root slower than 0.15 m/s horizontally and its body upright for
-  0.5 s.
-* ``fall_rate``: the share of trials in which the robot fell.
+* ``recovery_rate``: the share in which the robot settled again: horizontal
+  root speed at most 0.15 m/s, pelvis tilt error at most 0.35, and torso
+  orientation error at most 0.5 rad, held for 0.5 s.
+* ``fall_rate``: the share in which the robot fell.
 * ``timeout_rate``: the share that neither settled nor fell within five
   seconds.
+* ``initialization_failed_rate``: the share of all trials that failed
+  initialization.
 * ``recovery_time_mean_s`` and ``recovery_time_median_s``: for the trials
   that recovered, the time from the push to the end of that 0.5 s settled
   stretch.
