@@ -160,8 +160,8 @@
    * - 档位
      - 适用任务
      - 推荐入口
-   * - 单卡（8–24 GB 起）
-     - MLP / CNN 仿真 RL、VLA 评测、LoRA SFT、真机数据采集与部署
+   * - 单卡（4–24 GB）
+     - MLP / CNN 仿真 RL（~4 GB）、VLA 评测（24 GB 起）、LoRA SFT、真机数据采集与部署
      - :doc:`训练快速开始（MLP） <vla>`、:doc:`评测快速体验 <../evaluations/get_started/quick_tour>`
    * - 1–2 卡（40–80 GB）
      - 单机 OpenVLA / OpenPI 快速开始、共置 PPO / GRPO
