@@ -6,28 +6,22 @@
 基础准备
 --------
 
-.. grid:: 1 2 2 4
+.. grid:: 1 3 3 3
    :gutter: 2
 
-   .. grid-item-card:: 1. 环境要求
-      :link: requirements
-      :link-type: doc
-
-      从单张 24 GB 显卡到多机集群的硬件档位说明。
-
-   .. grid-item-card:: 2. 安装
+   .. grid-item-card:: 1. 安装与环境
       :link: installation
       :link-type: doc
 
-      一行 ``install.sh`` 本地安装，或前往 Docker Hub 拉取镜像。
+      硬件档位、一行 ``install.sh`` 本地安装，或前往 Docker Hub 拉取镜像。
 
-   .. grid-item-card:: 3. 训练快速开始
+   .. grid-item-card:: 2. 训练快速开始
       :link: vla
       :link-type: doc
 
       单卡零下载跑通 MLP，或在 ManiSkill3 上用 PPO 训练 OpenVLA / OpenVLA-OFT。
 
-   .. grid-item-card:: 4. 速查表
+   .. grid-item-card:: 3. 速查表
       :link: cheat_sheet
       :link-type: doc
 

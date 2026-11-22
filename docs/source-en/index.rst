@@ -110,7 +110,6 @@ Why RLinf
   :hidden:
 
   Overview <rst_source/start/index>
-  Requirements <rst_source/start/requirements>
   Installation <rst_source/start/installation>
   Quick Start <rst_source/start/vla>
   Cheat Sheet <rst_source/start/cheat_sheet>

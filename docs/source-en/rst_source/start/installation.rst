@@ -1,24 +1,24 @@
 Installation
 ============
 
-Install RLinf into a local ``uv`` virtual environment with ``requirements/install.sh``, or use a prebuilt image from Docker Hub.
+Install RLinf into a local ``uv`` virtual environment with ``requirements/install.sh``, or pull a prebuilt image from Docker Hub. Every recipe page also includes its exact setup command; use this page as the global installer and hardware reference.
 
 Setup and Verify
 ----------------
 
-Choose your target below and run the setup commands:
+Choose your target stack below and run the commands:
 
 .. tab-set::
 
    .. tab-item:: Embodied (Sim)
       :sync: embodied
 
-      Example for the ManiSkill3 Quick Start (swap ``--model`` and ``--env`` from the table below for other setups):
+      Swap ``--model`` and ``--env`` from the table below to match your model and simulator (omit ``--model`` for lightweight MLP / CNN policies):
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
          python -c "import rlinf; print(rlinf.__file__)" && ray --version
 
    .. tab-item:: Real-World Robot
@@ -66,7 +66,7 @@ Choose your target below and run the setup commands:
 
 .. tip::
 
-   **Mainland China mirror:** append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Pass ``--venv <dir>`` when installing multiple model/environment stacks so each stack keeps its own virtual environment instead of overwriting ``.venv``.
+   **Mainland China mirror & multiple stacks:** append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Pass ``--venv <dir>`` when installing multiple model/environment stacks so each stack keeps its own virtual environment instead of overwriting ``.venv``.
 
 Supported Models, Environments, and Platforms
 ---------------------------------------------
@@ -115,37 +115,73 @@ Pass any of the values below to ``--model``, ``--env``, ``--engine``, or ``--pla
 
    Run ``bash requirements/install.sh --help`` for all version-override flags.
 
-Troubleshooting and Next Steps
-------------------------------
+.. _hardware-and-software-requirements:
 
-.. list-table::
+Hardware and Software Requirements
+----------------------------------
+
+Match your hardware to the workload you want to run. You can start on a single GPU and scale the same recipes to multi-node clusters without code changes.
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/hardware_tiers.svg
+   :align: center
+   :width: 100%
+
+   RLinf hardware tiers from a single GPU to multi-node clusters.
+
+.. list-table:: GPU Tiers by Workload
    :header-rows: 1
-   :widths: 34 66
+   :widths: 22 44 34
 
-   * - Symptom
-     - Fix
-   * - EGL or Vulkan rendering error
-     - Check graphics driver and EGL setup in :ref:`Rendering Issues <faq-rendering>`.
-   * - Stale Ray cluster or NCCL error
-     - Reset local Ray with ``ray stop`` (:ref:`CUDA and Memory Issues <faq-cuda>`).
+   * - Tier
+     - Workloads
+     - Example Starting Point
+   * - 1 GPU (8–24 GB+)
+     - MLP / CNN simulation RL, VLA evaluation, LoRA SFT, real-robot data collection, and deployment
+     - :doc:`Quick Start (MLP) <vla>`, :doc:`Evaluation Quick Tour <../evaluations/get_started/quick_tour>`
+   * - 1–2 GPUs (40–80 GB)
+     - Single-workstation OpenVLA / OpenPI RL quick start, collocated PPO / GRPO
+     - :doc:`Quick Start (VLA) <vla>`
+   * - 4–8 GPUs (80 GB)
+     - Full-parameter VLA SFT and RL benchmarks (LIBERO, ManiSkill, RoboTwin), 7B–14B reasoning RL
+     - :doc:`Embodied Training <../examples/index>`
+   * - Multi-node (8×H100+)
+     - Large-scale disaggregated and hybrid runs, Megatron + SGLang / vLLM, world models
+     - :doc:`Multi-Node Training <../guides/multi_node>`
 
-.. grid:: 1 3 3 3
-   :gutter: 2
+RLinf also supports AMD ROCm, Huawei Ascend CANN, Moore Threads MUSA, Intel XPU, Kunlunxin XPU, MetaX MACA, and Biren SUPA. See :ref:`the hardware support matrix <model-hardware-support>` for verified model and environment combinations.
 
-   .. grid-item-card:: Quick Start
-      :link: vla
-      :link-type: doc
+.. list-table:: Software Prerequisites
+   :header-rows: 1
+   :widths: 30 70
 
-      Run a 1-GPU zero-download MLP check or train OpenVLA / OpenVLA-OFT on ManiSkill3.
+   * - Component
+     - Supported / Tested
+   * - Operating System
+     - Linux (tested on Ubuntu 22.04)
+   * - Python
+     - 3.10–3.12 (managed automatically by ``requirements/install.sh``)
+   * - NVIDIA Driver & CUDA
+     - Driver 535+ with graphics / EGL support for simulation rendering; CUDA 12.4+
+   * - Containers (optional)
+     - Docker 26+ with NVIDIA Container Toolkit (images on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__)
 
-   .. grid-item-card:: Scale to a Cluster
-      :link: ../guides/launch-scale/index
-      :link-type: doc
+.. dropdown:: Large-Scale Reference Cluster (8×H100+)
 
-      Configure placement and multi-node Ray clusters.
+   Multi-node benchmarks and full reproductions typically run on this cluster profile:
 
-   .. grid-item-card:: Cheat Sheet
-      :link: cheat_sheet
-      :link-type: doc
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 70
 
-      Shortest commands for install, training, and evaluation.
+      * - Component
+        - Reference Configuration
+      * - GPU
+        - 8×H100 per node
+      * - CPU
+        - 192 cores per node
+      * - Memory
+        - 1.8 TB per node
+      * - Network
+        - NVLink + RoCE / IB (3.2 Tbps)
+      * - Storage
+        - 1 TB local SSD (single-node) / 10 TB shared NAS (multi-node)

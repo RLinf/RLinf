@@ -110,8 +110,7 @@ RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础
   :hidden:
 
   总览 <rst_source/start/index>
-  环境要求 <rst_source/start/requirements>
-  安装说明 <rst_source/start/installation>
+  安装与环境 <rst_source/start/installation>
   训练快速开始 <rst_source/start/vla>
   命令速查表 <rst_source/start/cheat_sheet>
   常见问题 <rst_source/resources/faq>

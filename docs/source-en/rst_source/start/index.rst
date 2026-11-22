@@ -6,28 +6,22 @@ Go from a fresh machine to your first RLinf run, then pick the workflow that mat
 Core Setup
 ----------
 
-.. grid:: 1 2 2 4
+.. grid:: 1 3 3 3
    :gutter: 2
 
-   .. grid-item-card:: 1. Requirements
-      :link: requirements
-      :link-type: doc
-
-      GPU tiers from a single 24 GB card to multi-node clusters.
-
-   .. grid-item-card:: 2. Install
+   .. grid-item-card:: 1. Installation & Requirements
       :link: installation
       :link-type: doc
 
-      One-line ``install.sh`` setup or prebuilt Docker Hub images.
+      Hardware tiers, one-line ``install.sh`` setup, and prebuilt Docker Hub images.
 
-   .. grid-item-card:: 3. Quick Start
+   .. grid-item-card:: 2. Quick Start
       :link: vla
       :link-type: doc
 
       Run a 1-GPU MLP quick test (no downloads) or OpenVLA / OpenVLA-OFT PPO on ManiSkill3.
 
-   .. grid-item-card:: 4. Cheat Sheet
+   .. grid-item-card:: 3. Cheat Sheet
       :link: cheat_sheet
       :link-type: doc
 

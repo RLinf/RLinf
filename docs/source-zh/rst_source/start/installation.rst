@@ -1,7 +1,7 @@
-安装说明
-========
+安装与环境
+==========
 
-使用 ``requirements/install.sh`` 在本地 ``uv`` 虚拟环境中一键安装 RLinf，或直接拉取 Docker Hub 预构建镜像。
+使用 ``requirements/install.sh`` 在本地 ``uv`` 虚拟环境中一键安装 RLinf，或直接拉取 Docker Hub 预构建镜像。各教程页面都附带对应命令，本页作为全局安装参数与硬件环境参考。
 
 安装与验证
 ----------
@@ -13,12 +13,12 @@
    .. tab-item:: 具身仿真（Embodied）
       :sync: embodied
 
-      以下为 ManiSkill3 快速开始的默认安装命令（其他模型与环境按下方表格替换 ``--model`` 与 ``--env``）：
+      按下方表格将 ``--model`` 与 ``--env`` 替换为目标模型和仿真器（轻量 MLP / CNN 策略可省略 ``--model``）：
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
          python -c "import rlinf; print(rlinf.__file__)" && ray --version
 
    .. tab-item:: 真机机器人（Real-World）
@@ -115,37 +115,73 @@
 
    运行 ``bash requirements/install.sh --help`` 查看全部版本覆盖参数。
 
-常见问题与下一步
-----------------
+.. _hardware-and-software-requirements:
 
-.. list-table::
+硬件与软件要求
+--------------
+
+按任务规模选择对应硬件。你可以从单张 GPU 起步，无需修改代码就能将同一套配置扩展到多机集群。
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/hardware_tiers_zh.svg
+   :align: center
+   :width: 100%
+
+   RLinf 从单卡到多机集群的硬件档位。
+
+.. list-table:: 按场景划分的 GPU 档位
    :header-rows: 1
-   :widths: 34 66
+   :widths: 22 44 34
 
-   * - 现象
-     - 解决方法
-   * - EGL 或 Vulkan 渲染报错
-     - 按 :ref:`渲染问题 <faq-rendering>` 检查驱动与图形渲染配置。
-   * - Ray 残留或 NCCL 报错
-     - 执行 ``ray stop`` 清理本机残留进程，详见 :ref:`CUDA 与显存问题 <faq-cuda>`。
+   * - 档位
+     - 适用任务
+     - 推荐入口
+   * - 单卡（8–24 GB 起）
+     - MLP / CNN 仿真 RL、VLA 评测、LoRA SFT、真机数据采集与部署
+     - :doc:`训练快速开始（MLP） <vla>`、:doc:`评测快速体验 <../evaluations/get_started/quick_tour>`
+   * - 1–2 卡（40–80 GB）
+     - 单机 OpenVLA / OpenPI 快速开始、共置 PPO / GRPO
+     - :doc:`训练快速开始（VLA） <vla>`
+   * - 4–8 卡（80 GB）
+     - VLA 全参 SFT 与基准复现（LIBERO、ManiSkill、RoboTwin）、7B–14B 推理 RL
+     - :doc:`具身训练 <../examples/index>`
+   * - 多机集群（8×H100 起）
+     - 大规模分离式与混合式训练、Megatron + SGLang / vLLM、世界模型
+     - :doc:`多节点训练 <../guides/multi_node>`
 
-.. grid:: 1 3 3 3
-   :gutter: 2
+除 NVIDIA GPU 外，RLinf 还支持 AMD ROCm、华为昇腾 CANN、摩尔线程 MUSA、Intel XPU、昆仑芯 XPU、沐曦 MACA 与壁仞 SUPA。已验证的模型与环境组合见 :ref:`硬件支持矩阵 <model-hardware-support>`。
 
-   .. grid-item-card:: 训练快速开始
-      :link: vla
-      :link-type: doc
+.. list-table:: 软件环境
+   :header-rows: 1
+   :widths: 30 70
 
-      单卡零下载跑通 MLP，或在 ManiSkill3 上用 PPO 训练 OpenVLA / OpenVLA-OFT。
+   * - 组件
+     - 支持 / 测试版本
+   * - 操作系统
+     - Linux（已在 Ubuntu 22.04 上测试）
+   * - Python
+     - 3.10–3.12（由 ``requirements/install.sh`` 自动管理）
+   * - NVIDIA 驱动与 CUDA
+     - 驱动 535+（仿真渲染需支持图形与 EGL）；CUDA 12.4+
+   * - 容器（可选）
+     - Docker 26+ 与 NVIDIA Container Toolkit（预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__）
 
-   .. grid-item-card:: 扩展到多机集群
-      :link: ../guides/launch-scale/index
-      :link-type: doc
+.. dropdown:: 大规模参考集群配置（8×H100 起）
 
-      配置多 GPU 与多节点 Ray 集群部署。
+   多机大规模训练与完整基准复现通常在以下集群配置上验证：
 
-   .. grid-item-card:: 命令速查表
-      :link: cheat_sheet
-      :link-type: doc
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 70
 
-      安装、训练与评测的最短常用命令。
+      * - 组件
+        - 参考配置
+      * - GPU
+        - 每节点 8×H100
+      * - CPU
+        - 每节点 192 核
+      * - 内存
+        - 每节点 1.8 TB
+      * - 网络
+        - NVLink + RoCE / IB（3.2 Tbps）
+      * - 存储
+        - 单机 1 TB 本地盘 / 多机 10 TB 共享存储（NAS）
