@@ -76,11 +76,18 @@ def main(cfg) -> None:
             raise ValueError(
                 "runner.use_training_pipeline=True is not supported for embodied_dagger."
             )
-        from rlinf.workers.actor.fsdp_dagger_policy_worker import (
-            EmbodiedDAGGERFSDPPolicy,
-        )
+        if cfg.actor.model.model_type == "cosmos3":
+            from rlinf.models.embodiment.cosmos3.tasks.dagger_actor import (
+                Cosmos3DAggerActor,
+            )
 
-        actor_worker_cls = EmbodiedDAGGERFSDPPolicy
+            actor_worker_cls = Cosmos3DAggerActor
+        else:
+            from rlinf.workers.actor.fsdp_dagger_policy_worker import (
+                EmbodiedDAGGERFSDPPolicy,
+            )
+
+            actor_worker_cls = EmbodiedDAGGERFSDPPolicy
     elif cfg.algorithm.loss_type == "embodied_nft":
         if use_training_pipeline:
             raise ValueError(
