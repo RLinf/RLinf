@@ -16,7 +16,7 @@ import asyncio
 import os
 import queue
 import threading
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import torch
@@ -40,7 +40,7 @@ from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
 def flatten_rollout_batch_for_train(
-    nested_dict: dict, shuffle_id: Optional[torch.Tensor]
+    nested_dict: dict, shuffle_id: torch.Tensor | None
 ) -> dict:
     """Flatten [T, B, ...] rollout tensors to [T*B, ...] for actor training."""
     ret_dict = {}
@@ -427,8 +427,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                         "loss_mask": loss_mask,
                         "loss_mask_ratio": loss_mask_ratio,
                         "task_type": self.cfg.runner.task_type,
-                        "critic_warmup": self.optimizer_steps
-                        < self.critic_warmup_steps,
+                        "critic_warmup": self.optimizer_warmup.active,
                     }
 
                     loss, metrics_data = policy_loss(**loss_kwargs)

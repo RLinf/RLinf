@@ -28,6 +28,7 @@ from rlinf.data.datasets.dagger import (
 )
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
+from rlinf.hybrid_engines.fsdp.checkpoint import Checkpoint
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils import drq
@@ -684,14 +685,16 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if self.enable_online_lerobot:
             self._archive_pending_lerobot_episodes()
 
-        self._strategy.save_checkpoint(
-            model=self.model,
-            optimizers=[self.optimizer],
-            lr_schedulers=[self.lr_scheduler],
-            save_path=save_base_path,
+        Checkpoint(
+            save_base_path,
+            self._strategy.get_fsdp_version(),
             checkpoint_format="local_shard"
             if self.cfg.actor.fsdp_config.use_orig_params
             else "dcp",
+        ).save(
+            model=self.model,
+            optimizers=[self.optimizer],
+            lr_schedulers=[self.lr_scheduler],
         )
         if not self.enable_online_lerobot:
             buffer_save_path = os.path.join(
@@ -700,14 +703,16 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self.replay_buffer.save_checkpoint(buffer_save_path)
 
     def load_checkpoint(self, load_base_path):
-        self._strategy.load_checkpoint(
-            model=self.model,
-            optimizers=[self.optimizer],
-            lr_schedulers=[self.lr_scheduler],
-            load_path=load_base_path,
+        Checkpoint(
+            load_base_path,
+            self._strategy.get_fsdp_version(),
             checkpoint_format="local_shard"
             if self.cfg.actor.fsdp_config.use_orig_params
             else "dcp",
+        ).load(
+            model=self.model,
+            optimizers=[self.optimizer],
+            lr_schedulers=[self.lr_scheduler],
         )
 
         if not self.enable_online_lerobot:

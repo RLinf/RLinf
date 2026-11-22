@@ -22,6 +22,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
+from rlinf.hybrid_engines.fsdp.checkpoint import Checkpoint
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.mlp_policy.iql_mlp_policy import (
     IQLMLPPolicy,
@@ -859,30 +860,37 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
         os.makedirs(save_base_path, exist_ok=True)
 
         # Save model
-        self._strategy.save_checkpoint(
+        fsdp_version = self._strategy.get_fsdp_version()
+        Checkpoint(
+            os.path.join(save_base_path, "actor_policy"),
+            fsdp_version,
+            checkpoint_format="local_shard",
+        ).save(
             model=self.model,
             optimizers=[self.optimizer] if self.optimizer is not None else [],
             lr_schedulers=[self.lr_scheduler] if self.lr_scheduler is not None else [],
-            save_path=os.path.join(save_base_path, "actor_policy"),
-            checkpoint_format="local_shard",
         )
-        self._strategy.save_checkpoint(
+        Checkpoint(
+            os.path.join(save_base_path, "critic"),
+            fsdp_version,
+            checkpoint_format="local_shard",
+        ).save(
             model=self.critic_model,
             optimizers=[self.qf_optimizer] if self.qf_optimizer is not None else [],
             lr_schedulers=[self.qf_lr_scheduler]
             if self.qf_lr_scheduler is not None
             else [],
-            save_path=os.path.join(save_base_path, "critic"),
-            checkpoint_format="local_shard",
         )
-        self._strategy.save_checkpoint(
+        Checkpoint(
+            os.path.join(save_base_path, "value"),
+            fsdp_version,
+            checkpoint_format="local_shard",
+        ).save(
             model=self.value_model,
             optimizers=[self.vf_optimizer] if self.vf_optimizer is not None else [],
             lr_schedulers=[self.vf_lr_scheduler]
             if self.vf_lr_scheduler is not None
             else [],
-            save_path=os.path.join(save_base_path, "value"),
-            checkpoint_format="local_shard",
         )
 
         # Save iql components
@@ -915,30 +923,37 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
         assert self.model is not None, "init_worker() must initialize self.model first."
 
         # Load model
-        self._strategy.load_checkpoint(
+        fsdp_version = self._strategy.get_fsdp_version()
+        Checkpoint(
+            os.path.join(load_base_path, "actor_policy"),
+            fsdp_version,
+            checkpoint_format="local_shard",
+        ).load(
             model=self.model,
             optimizers=[self.optimizer] if self.optimizer is not None else [],
             lr_schedulers=[self.lr_scheduler] if self.lr_scheduler is not None else [],
-            load_path=os.path.join(load_base_path, "actor_policy"),
-            checkpoint_format="local_shard",
         )
-        self._strategy.load_checkpoint(
+        Checkpoint(
+            os.path.join(load_base_path, "critic"),
+            fsdp_version,
+            checkpoint_format="local_shard",
+        ).load(
             model=self.critic_model,
             optimizers=[self.qf_optimizer] if self.qf_optimizer is not None else [],
             lr_schedulers=[self.qf_lr_scheduler]
             if self.qf_lr_scheduler is not None
             else [],
-            load_path=os.path.join(load_base_path, "critic"),
-            checkpoint_format="local_shard",
         )
-        self._strategy.load_checkpoint(
+        Checkpoint(
+            os.path.join(load_base_path, "value"),
+            fsdp_version,
+            checkpoint_format="local_shard",
+        ).load(
             model=self.value_model,
             optimizers=[self.vf_optimizer] if self.vf_optimizer is not None else [],
             lr_schedulers=[self.vf_lr_scheduler]
             if self.vf_lr_scheduler is not None
             else [],
-            load_path=os.path.join(load_base_path, "value"),
-            checkpoint_format="local_shard",
         )
 
         # Load iql components

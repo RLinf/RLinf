@@ -1225,6 +1225,164 @@ def test_fp32_trainable_weights_beside_frozen_bf16_keep_small_updates(
     assert (after != before).all()
 
 
+class _CheckpointModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.actor = nn.Linear(2, 2)
+        self.value_head = nn.Linear(2, 2)
+        self.frozen = nn.Parameter(torch.ones(2), requires_grad=False)
+
+    def forward(self, x):
+        return self.actor(x) + self.value_head(x) + self.frozen
+
+
+@pytest.fixture
+def cpu_checkpoint_manager(single_rank_env, monkeypatch):
+    """Build real FSDP managers with the accelerator boundary adapted to CPU."""
+    from types import SimpleNamespace
+
+    from torch.distributed.fsdp import FullyShardedDataParallel, ShardingStrategy
+
+    from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+    from rlinf.hybrid_engines.fsdp.strategy.fsdp import FSDPStrategy
+
+    monkeypatch.setattr(
+        Worker,
+        "torch_platform",
+        SimpleNamespace(
+            set_device=torch.cpu.set_device,
+            current_device=torch.cpu.current_device,
+            synchronize=torch.cpu.synchronize,
+            ipc_collect=lambda: None,
+            empty_cache=lambda: None,
+            is_available=lambda: False,
+        ),
+    )
+
+    def wrap_cpu(self, model, device_mesh):
+        return FullyShardedDataParallel(
+            model,
+            device_id=torch.device("cpu"),
+            device_mesh=device_mesh,
+            sharding_strategy=ShardingStrategy.NO_SHARD,
+            use_orig_params=True,
+        )
+
+    monkeypatch.setattr(FSDPStrategy, "wrap_model", wrap_cpu)
+
+    class CheckpointManager(FSDPModelManager):
+        def model_provider_func(self):
+            return _CheckpointModel()
+
+    def create():
+        manager = CheckpointManager(
+            OmegaConf.create(
+                {
+                    "model": {"precision": "fp32", "add_value_head": True},
+                    "optim": {
+                        "lr": 0.01,
+                        "value_lr": 0.02,
+                        "adam_beta1": 0.9,
+                        "adam_beta2": 0.99,
+                        "clip_grad": 1.0,
+                        "critic_warmup_steps": 2,
+                        "lr_scheduler": "torch_cosine",
+                        "total_training_steps": 8,
+                    },
+                    "fsdp_config": {
+                        "strategy": "fsdp",
+                        "amp_autocast": {"enabled": False},
+                        "grad_scaler": {"enabled": False},
+                        "save_full_model_weights": False,
+                    },
+                }
+            ),
+            world_size=1,
+            rank=0,
+        )
+        manager.setup_model_and_optimizer()
+        return manager
+
+    return create
+
+
+def _checkpoint_optimizer_step(manager):
+    batch = torch.tensor([[1.0, -2.0], [0.5, 3.0]])
+    manager.optimizer.zero_grad(set_to_none=True)
+    manager.model(batch).square().mean().backward()
+    manager.optimizer_step()
+    manager.lr_scheduler.step()
+
+
+def _assert_checkpoint_training_state(continuous, resumed):
+    warmup_active = continuous.optimizer_warmup.optimizer_steps < 2
+    assert (
+        resumed.optimizer_warmup.optimizer_steps
+        == continuous.optimizer_warmup.optimizer_steps
+    )
+    assert resumed.optimizer_warmup.active == warmup_active
+    assert len(resumed.optimizer.param_groups) == (1 if warmup_active else 2)
+    assert all(
+        param.requires_grad == (not warmup_active)
+        for param in resumed.model.actor.parameters()
+    )
+    assert resumed.model.value_head.weight.requires_grad
+    assert not resumed.model.frozen.requires_grad
+    torch.testing.assert_close(
+        continuous.model.state_dict(), resumed.model.state_dict(), rtol=0, atol=0
+    )
+    torch.testing.assert_close(
+        continuous.optimizer.state_dict(),
+        resumed.optimizer.state_dict(),
+        rtol=0,
+        atol=0,
+    )
+    assert continuous.lr_scheduler.state_dict() == resumed.lr_scheduler.state_dict()
+
+
+@pytest.mark.parametrize("saved_steps", [1, 2, 3], ids=["during", "boundary", "after"])
+def test_resume_critic_warmup(cpu_checkpoint_manager, tmp_path, saved_steps):
+    continuous = cpu_checkpoint_manager()
+    resumed = cpu_checkpoint_manager()
+    checkpoint_path = str(tmp_path / "checkpoint")
+    for _ in range(saved_steps):
+        _checkpoint_optimizer_step(continuous)
+    continuous.save_checkpoint(checkpoint_path)
+    resumed.load_checkpoint(checkpoint_path)
+
+    _assert_checkpoint_training_state(continuous, resumed)
+    _checkpoint_optimizer_step(continuous)
+    _checkpoint_optimizer_step(resumed)
+    _assert_checkpoint_training_state(continuous, resumed)
+
+
+def test_resume_legacy_checkpoint(cpu_checkpoint_manager, tmp_path, caplog):
+    from rlinf.hybrid_engines.fsdp.checkpoint import Checkpoint
+
+    continuous = cpu_checkpoint_manager()
+    resumed = cpu_checkpoint_manager()
+    for _ in range(3):
+        _checkpoint_optimizer_step(continuous)
+    checkpoint_path = str(tmp_path / "legacy")
+    Checkpoint(checkpoint_path, continuous._strategy.get_fsdp_version()).save(
+        continuous.model,
+        continuous.optimizer,
+        continuous.lr_scheduler,
+        save_full_model_weights=False,
+    )
+
+    resumed.load_checkpoint(checkpoint_path)
+
+    assert resumed.optimizer_warmup.optimizer_steps == 0
+    assert len(resumed.optimizer.param_groups) == 1
+    assert not resumed.model.actor.weight.requires_grad
+    torch.testing.assert_close(
+        continuous.model.state_dict(), resumed.model.state_dict()
+    )
+    assert "actor optimizer state" in caplog.text.lower()
+    assert "may be skipped" in caplog.text.lower()
+
+
 def _embodied_actor(mode_cfg, *, mix_envs=True, rank=0, world_size=1, actor_cls=None):
     """An embodied FSDP actor holding only the state its batch planning reads."""
     from rlinf.data.schema.embodied_trajectory import RolloutGeometry

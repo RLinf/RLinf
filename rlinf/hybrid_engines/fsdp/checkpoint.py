@@ -13,11 +13,14 @@
 # limitations under the License.
 
 from collections.abc import Iterable
-from typing import Union
+from pathlib import Path
+from typing import TypedDict
 
 import torch
+from torch.distributed import checkpoint as dcp
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
+    get_model_state_dict,
     get_state_dict,
     set_state_dict,
 )
@@ -27,21 +30,30 @@ from torch.optim.lr_scheduler import LRScheduler
 
 from rlinf.hybrid_engines.fsdp import FSDP, DTensor, FSDPModule
 from rlinf.hybrid_engines.fsdp.utils import FSDPVersion, to_local_if_dtensor
+from rlinf.scheduler import Worker
 from rlinf.utils.logging import get_logger
-from rlinf.utils.utils import get_rng_state, set_rng_state
+from rlinf.utils.utils import clear_memory, get_rng_state, set_rng_state
 
 
-class Checkpoint(Stateful):
+class OptimizerProgress(TypedDict):
+    """Update count and configured warmup length for the saved optimizer."""
+
+    optimizer_steps: int
+    critic_warmup_steps: int
+
+
+class _TrainingState(Stateful):
     """Training state; DCP state dictionaries must be built on every rank."""
 
     def __init__(
         self,
-        model: Union[FSDP, FSDPModule],
-        optimizers: Union[Optimizer, Iterable[Optimizer]],
-        lr_schedulers: Union[LRScheduler, Iterable[LRScheduler]],
+        model: FSDP | FSDPModule,
+        optimizers: Optimizer | Iterable[Optimizer],
+        lr_schedulers: LRScheduler | Iterable[LRScheduler],
         opts: StateDictOptions,
         fsdp_version: FSDPVersion,
         checkpoint_format: str = "dcp",
+        optimizer_progress: OptimizerProgress | None = None,
     ):
         self.model = model
         self.optimizers = optimizers
@@ -53,6 +65,7 @@ class Checkpoint(Stateful):
         self.opts = opts
         self.fsdp_version = fsdp_version
         self.checkpoint_format = checkpoint_format
+        self.optimizer_progress = optimizer_progress
         self.legacy_rng_state = False
 
     def _get_local_optim_state_dicts(self):
@@ -125,6 +138,8 @@ class Checkpoint(Stateful):
                 "fsdp_version": self.fsdp_version.value,
                 "rng": rng_state,
             }
+        if self.optimizer_progress is not None:
+            out["optimizer_progress"] = self.optimizer_progress
         return out
 
     def load_state_dict(self, state):
@@ -193,3 +208,147 @@ class Checkpoint(Stateful):
 
         if rng_state is not None:
             set_rng_state(rng_state)
+
+
+class Checkpoint:
+    """Save and load training state for one checkpoint path on all ranks."""
+
+    def __init__(
+        self,
+        path: str,
+        fsdp_version: FSDPVersion,
+        *,
+        checkpoint_format: str = "dcp",
+    ) -> None:
+        self._path = Path(path)
+        self._format = checkpoint_format
+        self._fsdp_version = fsdp_version
+        # Reuse the same source when inspecting progress before loading.
+        self._source: dict | tuple[dcp.FileSystemReader, dict] | None = None
+
+    def _open(self) -> dict | tuple[dcp.FileSystemReader, dict]:
+        if self._source is not None:
+            return self._source
+
+        path = self._path
+        rank = torch.distributed.get_rank()
+        if self._format == "local_shard":
+            shard = path / "local_shard_checkpoint" / f"checkpoint_rank_{rank}.pt"
+            if rank == 0:
+                get_logger().info(f"Loading local shard checkpoint from {shard.parent}")
+            self._source = torch.load(shard, weights_only=False)
+        else:
+            dcp_dir = path / "dcp_checkpoint"
+            if dcp_dir.is_dir():
+                path = dcp_dir
+            if rank == 0:
+                get_logger().info(f"Loading DCP checkpoint from {path}")
+            reader = dcp.FileSystemReader(path)
+            self._source = (reader, reader.read_metadata().state_dict_metadata)
+        return self._source
+
+    def read_optimizer_progress(self) -> OptimizerProgress | None:
+        """Read the saved optimizer progress before constructing parameter groups."""
+        source = self._open()
+        if isinstance(source, dict):
+            return source.get("optimizer_progress")
+        reader, metadata = source
+        if "fsdp_checkpoint.optimizer_progress.optimizer_steps" not in metadata:
+            return None
+
+        progress = OptimizerProgress(optimizer_steps=0, critic_warmup_steps=0)
+        dcp.load(
+            {"fsdp_checkpoint": {"optimizer_progress": progress}},
+            storage_reader=reader,
+        )
+        return progress
+
+    def load(
+        self,
+        model: FSDP | FSDPModule,
+        optimizers: Optimizer | Iterable[Optimizer],
+        lr_schedulers: LRScheduler | Iterable[LRScheduler],
+    ) -> None:
+        """Restore into the supplied model, optimizers, and schedulers on every rank."""
+        source = self._open()
+        self._source = None
+        training_state = _TrainingState(
+            model=model,
+            optimizers=optimizers,
+            lr_schedulers=lr_schedulers,
+            opts=StateDictOptions(full_state_dict=False, cpu_offload=True),
+            fsdp_version=self._fsdp_version,
+            checkpoint_format=self._format,
+        )
+        if isinstance(source, dict):
+            training_state.load_state_dict(source)
+        else:
+            reader, metadata = source
+            # Old DCP checkpoints flattened a single RNG dictionary.
+            training_state.legacy_rng_state = "fsdp_checkpoint.rng" not in metadata
+            dcp.load(
+                {"fsdp_checkpoint": training_state},
+                storage_reader=reader,
+            )
+
+        torch.distributed.barrier()
+
+    def save(
+        self,
+        model: FSDP | FSDPModule,
+        optimizers: Optimizer | Iterable[Optimizer],
+        lr_schedulers: LRScheduler | Iterable[LRScheduler],
+        *,
+        save_full_model_weights: bool = True,
+        optimizer_progress: OptimizerProgress | None = None,
+    ) -> None:
+        """Save training state collectively and optionally export full model weights.
+
+        All ranks must call this function with initialized optimizer state.
+        """
+        self._source = None
+        clear_memory()
+        torch.distributed.barrier()
+        rank = torch.distributed.get_rank()
+        training_state = _TrainingState(
+            model,
+            optimizers,
+            lr_schedulers,
+            StateDictOptions(full_state_dict=False, cpu_offload=True),
+            fsdp_version=self._fsdp_version,
+            checkpoint_format=self._format,
+            optimizer_progress=optimizer_progress,
+        )
+        if self._format == "local_shard":
+            shard_dir = self._path / "local_shard_checkpoint"
+            shard_dir.mkdir(parents=True, exist_ok=True)
+            torch.save(
+                training_state.state_dict(), shard_dir / f"checkpoint_rank_{rank}.pt"
+            )
+        else:
+            dcp.save(
+                {"fsdp_checkpoint": training_state},
+                checkpoint_id=self._path / "dcp_checkpoint",
+            )
+        torch.distributed.barrier()
+
+        if save_full_model_weights:
+            opts = StateDictOptions(full_state_dict=True, cpu_offload=True)
+            model_state = get_model_state_dict(model=model, options=opts)
+            if rank == 0:
+                weights_dir = self._path / "model_state_dict"
+                weights_dir.mkdir(parents=True, exist_ok=True)
+                weights_path = weights_dir / "full_weights.pt"
+                if Worker.torch_device_type == "npu":
+                    model_state = {
+                        key: value.cpu()
+                        if isinstance(value, torch.Tensor) and value.is_npu
+                        else value
+                        for key, value in model_state.items()
+                    }
+                    torch.save(
+                        model_state, weights_path, _use_new_zipfile_serialization=True
+                    )
+                else:
+                    torch.save(model_state, weights_path)
+            torch.distributed.barrier()
