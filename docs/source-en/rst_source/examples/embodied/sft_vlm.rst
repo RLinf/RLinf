@@ -196,7 +196,7 @@ Setup and Run
         - Verify ``prompt_key``, ``choice_key``, ``answer_key``, and ``image_keys`` match your dataset columns.
       * - OOM (out of memory)
         - Reduce ``micro_batch_size`` first, then ``num_workers``; if it persists, use a smaller model or shorter input length.
-      * - Quick smoke test
+      * - Quick verification
         - Use a small data subset, set ``max_epochs: 1``, and lower ``save_interval`` for faster feedback.
 
 Visualization and Results

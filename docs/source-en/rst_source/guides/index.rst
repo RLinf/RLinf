@@ -39,9 +39,3 @@ Choose a Workflow
       :link-type: doc
 
       Launch SGLang servers and routers, or run PhyAI / ApxInf embodied rollout backends.
-
-   .. grid-item-card:: Agentic & Reasoning
-      :link: ../examples/agentic/index
-      :link-type: doc
-
-      Browse end-to-end reasoning, search, coding, and multi-agent workflows.

@@ -8,33 +8,10 @@ Welcome to RLinf
    <div class="rlinf-hero">
      <img class="rlinf-hero-logo" src="_static/svg/logo_white.svg" alt="RLinf logo" />
      <h1 class="rlinf-hero-title">Welcome to RLinf</h1>
-     <p class="rlinf-hero-subtitle">Scalable RL Post-Training for Foundation Models and Embodied Agents</p>
+     <p class="rlinf-hero-subtitle">RL Post-Training Infrastructure for Embodied Policies and Foundation Models</p>
    </div>
 
-RLinf is an open-source infrastructure for reinforcement learning post-training of embodied policies and foundation models.
-
-.. grid:: 2 4 4 4
-   :gutter: 2
-
-   .. grid-item-card:: Get Started
-      :link: rst_source/start/index
-      :link-type: doc
-      :text-align: center
-
-   .. grid-item-card:: Install
-      :link: rst_source/start/installation
-      :link-type: doc
-      :text-align: center
-
-   .. grid-item-card:: Embodied Training
-      :link: rst_source/examples/index
-      :link-type: doc
-      :text-align: center
-
-   .. grid-item-card:: Evaluation
-      :link: rst_source/evaluations/index
-      :link-type: doc
-      :text-align: center
+Train, fine-tune, and evaluate vision-language-action (VLA) policies, real-world robots, and reasoning agents on one GPU or across multi-node clusters.
 
 Your First Run in Four Steps
 ----------------------------
@@ -96,7 +73,7 @@ Why RLinf
    * - Strength
      - What it gives you
    * - Fast
-     - Hybrid fine-grained pipelining delivers 120%+ higher throughput than comparable frameworks, plus automatic online scaling.
+     - Hybrid fine-grained pipelining delivers :doc:`120%+ higher throughput <rst_source/resources/why_rlinf>` than comparable frameworks, plus automatic online scaling.
    * - Flexible
      - Switch FSDP + Hugging Face for prototyping or Megatron + SGLang for large-scale training, with no code changes.
    * - Proven

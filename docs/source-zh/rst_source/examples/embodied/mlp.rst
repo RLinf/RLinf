@@ -100,7 +100,7 @@ MLP 策略是一种轻量网络，用于从低维状态输入（关节角、末�
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
 
       **2. 启动训练**
 
@@ -141,7 +141,7 @@ MLP 策略是一种轻量网络，用于从低维状态输入（关节角、末�
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla --env frankasim && source .venv/bin/activate
+         bash requirements/install.sh embodied --env frankasim && source .venv/bin/activate
 
       **2. 启动训练**
 

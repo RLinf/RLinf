@@ -50,7 +50,7 @@
 推理后端
 --------
 
-评测支持通过 ``rollout.rollout_backend`` 切换三种推理后端：
+评测支持通过 ``rollout.rollout_backend`` 切换四种推理后端：
 
 .. list-table::
    :header-rows: 1
@@ -64,11 +64,13 @@
      - 独立 SGLang 具身服务组，适用于 Cosmos3（:doc:`../guides/cosmos3_sglang`）与 DreamZero（:doc:`../guides/dreamzero_sglang`）等世界动作模型。
    * - ``apxinf``
      - 进程内 Rust/CUDA 低延迟推理后端，支持 OpenPI π₀.₅ 在 LIBERO 上评测（``libero_10_apxinf_pi05_eval``，见 :doc:`../../guides/apxinf`）。
+   * - ``phyai``
+     - 面向 OpenPI π₀.₅ 的 PhyAI 加速 rollout 后端（安装时传入 ``--engine phyai``，见 :doc:`../../guides/rollout-engines/phyai`）。
 
 模型路径设置
 ------------
 
-在 YAML 或命令行中设置 ``rollout.model.model_path`` 指向本地模型目录。加载 RL 或 SFT 训练产出的 ``.pt`` 权重时，额外设置 ``runner.ckpt_path``。
+在 YAML 或命令行中将 ``rollout.model.model_path`` 设为本地模型目录或 Hugging Face ``owner/repo``\ （首次运行自动下载到 Hugging Face 缓存）。加载 RL 或 SFT 训练产出的 ``.pt`` 权重时，额外设置 ``runner.ckpt_path``。
 
 Standalone 评测脚本
 -------------------

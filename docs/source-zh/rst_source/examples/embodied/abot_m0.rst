@@ -119,19 +119,12 @@ ABot-M0 作为 VLA 策略接入 RLinf：适配层冻结预训练感知模块，�
 
       **3. 启动训练**
 
-      在 ``examples/embodiment/config/libero_10_ppo_abot_m0.yaml`` 中将 ``actor.model.model_path`` 指向 checkpoint 文件（rollout 会自动沿用同一路径）：
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
-
-      启动 PPO 训练：
+      通过命令行覆盖 ``actor.model.model_path`` 启动 PPO 训练（rollout 会自动沿用同一路径）：
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh libero_10_ppo_abot_m0
+         bash examples/embodiment/run_embodiment.sh libero_10_ppo_abot_m0 \
+           actor.model.model_path=./ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
 
       .. dropdown:: 进阶配置（可选）
 
@@ -162,62 +155,46 @@ ABot-M0 作为 VLA 策略接入 RLinf：适配层冻结预训练感知模块，�
 
       **2. 下载资源与模型**
 
-      从 ``Sylvest/LIBERO-plus`` 下载并解压 LIBERO-Plus 场景资产到 ``liberoplus.liberoplus`` 包目录，同时下载 10k-step LIBERO RL 基线权重与 Qwen3-VL 骨干权重（LIBERO-Plus 资产详情见 :ref:`LIBERO-Pro 与 LIBERO-Plus 章节 <zh-liberopro-plus-benchmark>`）：
+      下载 LIBERO-Plus 场景资产、10k-step LIBERO RL 基线权重与 Qwen3-VL 骨干权重（LIBERO-Plus 资产详情见 :ref:`LIBERO-Pro 与 LIBERO-Plus 章节 <zh-liberopro-plus-benchmark>`）：
 
       .. code-block:: bash
 
          export LIBERO_PLUS_PACKAGE_DIR=$(python -c "import pathlib; import liberoplus.liberoplus as l_plus; print(pathlib.Path(l_plus.__file__).resolve().parent)" | tail -n 1)
          hf download --repo-type dataset Sylvest/LIBERO-plus assets.zip --local-dir "${LIBERO_PLUS_PACKAGE_DIR}"
+         hf download HaoyunOvO/ABot-m0-LIBERO-10k-step --local-dir ./ABot-m0-LIBERO-10k-step
+         hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir ./Qwen3-VL-4B-Instruct-Action
+
+      将 ``assets.zip`` 中的 ``assets/`` 目录解压到已安装的 ``liberoplus.liberoplus`` 包目录：
+
+      .. code-block:: bash
+
          python - <<'PY'
          import os, zipfile
          from pathlib import Path
-
          pkg = Path(os.environ["LIBERO_PLUS_PACKAGE_DIR"])
-         out_dir = pkg / "assets"
          with zipfile.ZipFile(pkg / "assets.zip") as z:
              for info in z.infolist():
-                 if "/assets/" not in info.filename:
-                     continue
-                 rel = info.filename.split("/assets/", 1)[1]
-                 if not rel:
-                     continue
-                 target = out_dir / rel
-                 if info.is_dir():
-                     target.mkdir(parents=True, exist_ok=True)
-                 else:
-                     target.parent.mkdir(parents=True, exist_ok=True)
-                     with z.open(info) as src, open(target, "wb") as dst:
-                         dst.write(src.read())
-         print("Extracted LIBERO-Plus assets to:", out_dir)
+                 if "/assets/" in info.filename and (rel := info.filename.split("/assets/", 1)[1]):
+                     target = pkg / "assets" / rel
+                     target.mkdir(parents=True, exist_ok=True) if info.is_dir() else (target.parent.mkdir(parents=True, exist_ok=True), target.write_bytes(z.read(info)))
          PY
-         ls -lh "${LIBERO_PLUS_PACKAGE_DIR}/assets"
-
-         hf download HaoyunOvO/ABot-m0-LIBERO-10k-step --local-dir ./ABot-m0-LIBERO-10k-step
-         hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir ./Qwen3-VL-4B-Instruct-Action
 
       修改已下载 checkpoint 目录中的 ``config.yaml``，将 ``qwenvl.base_vlm`` 指向本地 ``Qwen3-VL-4B-Instruct-Action`` 目录：
 
       .. code-block:: yaml
 
          qwenvl:
-           base_vlm: /path/to/Qwen3-VL-4B-Instruct-Action
+           base_vlm: ./Qwen3-VL-4B-Instruct-Action
 
       **3. 启动训练**
 
-      在 ``examples/embodiment/config/libero_10_plus_ppo_abot_m0.yaml`` 中将 ``actor.model.model_path`` 指向 checkpoint 文件（rollout 会自动沿用同一路径）：
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
-
-      指定 LIBERO-Plus 套件并启动 PPO 训练：
+      指定 LIBERO-Plus 套件并通过命令行覆盖 ``actor.model.model_path`` 启动 PPO 训练（rollout 会自动沿用同一路径）：
 
       .. code-block:: bash
 
          export LIBERO_TYPE=plus
-         bash examples/embodiment/run_embodiment.sh libero_10_plus_ppo_abot_m0
+         bash examples/embodiment/run_embodiment.sh libero_10_plus_ppo_abot_m0 \
+           actor.model.model_path=./ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
 
       .. dropdown:: 进阶配置（可选）
 

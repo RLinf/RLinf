@@ -57,7 +57,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
          uv pip install -r examples/agent/rstar2/code-judge/requirements.txt
          uv pip install -e examples/agent/rstar2/code-judge
 
-      Start Redis, the Code Judge server (master node), and Code Judge workers (adjust ``MASTER_ADDR`` if running across nodes):
+      Start Redis and export the workspace address (set ``MASTER_ADDR`` to the master IP on multi-node setups):
 
       .. code-block:: bash
 
@@ -65,21 +65,19 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
          export MASTER_ADDR=127.0.0.1
          redis-server --daemonize yes --protected-mode no --bind 0.0.0.0
 
+      Start the Code Judge server (master node only):
+
+      .. code-block:: bash
+
          tmux new-session -d -s server \
-         'cd $WORKSPACE/examples/agent/rstar2/code-judge && \
-            MAX_EXECUTION_TIME=4 \
-            REDIS_URI="redis://$MASTER_ADDR:6379" \
-            RUN_WORKERS=0 \
-            uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 16 \
-            2>&1 | tee server.log'
+             'cd $WORKSPACE/examples/agent/rstar2/code-judge && MAX_EXECUTION_TIME=4 REDIS_URI="redis://$MASTER_ADDR:6379" RUN_WORKERS=0 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 16 2>&1 | tee server.log'
+
+      Start the Code Judge workers:
+
+      .. code-block:: bash
 
          tmux new-session -d -s worker \
-         'cd $WORKSPACE/examples/agent/rstar2/code-judge && \
-            MAX_EXECUTION_TIME=4 \
-            REDIS_URI="redis://$MASTER_ADDR:6379" \
-            MAX_WORKERS=64 \
-            python run_workers.py \
-            2>&1 | tee worker.log'
+             'cd $WORKSPACE/examples/agent/rstar2/code-judge && MAX_EXECUTION_TIME=4 REDIS_URI="redis://$MASTER_ADDR:6379" MAX_WORKERS=64 python run_workers.py 2>&1 | tee worker.log'
 
       **2. Download**
 

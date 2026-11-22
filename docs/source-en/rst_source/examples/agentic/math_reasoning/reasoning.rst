@@ -32,7 +32,7 @@ Overview
    .. grid-item-card:: Hardware
       :text-align: center
 
-      Multi-node Megatron training
+      16 nodes default (single-node quick start supported)
 
 
 Dataset
@@ -134,13 +134,29 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       **3. Launch**
 
-      Update ``runner.output_dir``, ``rollout.model.model_path``, and ``data.train_data_paths`` in ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``, then launch training:
+      .. warning::
+
+         ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml`` defaults to **16 nodes** (``cluster.num_nodes: 16``), which fails on a single machine unless overridden.
+
+      **Single-node quick start** (overrides node count, model path, and dataset path via Hydra CLI; requires at least 2 GPUs for ``tensor_model_parallel_size=2``):
+
+      .. code-block:: bash
+
+         PYTHONPATH=$(pwd):/opt/Megatron-LM:$PYTHONPATH \
+         python examples/reasoning/main_grpo.py \
+             --config-path examples/reasoning/config/math \
+             --config-name qwen2.5-1.5b-grpo-megatron \
+             cluster.num_nodes=1 \
+             rollout.model.model_path=./DeepSeek-R1-Distill-Qwen-1.5B \
+             actor.tokenizer.tokenizer_model=./DeepSeek-R1-Distill-Qwen-1.5B \
+             data.train_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
+             data.val_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]'
+
+      **Full 16-node run**: update ``runner.output_dir``, ``rollout.model.model_path``, ``actor.tokenizer.tokenizer_model``, and ``data.train_data_paths`` in ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``, start the Ray cluster following :doc:`/rst_source/guides/multi_node`, and run on the head node:
 
       .. code-block:: bash
 
          bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron
-
-      For multi-node training, set ``cluster.num_nodes`` in the YAML, start the Ray cluster following :doc:`/rst_source/guides/multi_node`, and run the command above on the head node.
 
    .. tab-item:: DeepSeek-R1-Distill-Qwen-7B
 
@@ -160,13 +176,33 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       **3. Launch**
 
-      Update ``runner.output_dir``, ``rollout.model.model_path``, and ``data.train_data_paths`` in ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``, then launch training:
+      .. warning::
+
+         ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml`` defaults to **16 nodes** (``cluster.num_nodes: 16``), which fails on a single machine unless overridden.
+
+      **Single-node quick start** (overrides node count, model path, and dataset path via Hydra CLI; requires at least 4 GPUs for ``tensor_model_parallel_size=4``):
+
+      .. code-block:: bash
+
+         PYTHONPATH=$(pwd):/opt/Megatron-LM:$PYTHONPATH \
+         python examples/reasoning/main_grpo.py \
+             --config-path examples/reasoning/config/math \
+             --config-name qwen2.5-7b-grpo-megatron \
+             cluster.num_nodes=1 \
+             rollout.model.model_path=./DeepSeek-R1-Distill-Qwen-7B \
+             actor.tokenizer.tokenizer_model=./DeepSeek-R1-Distill-Qwen-7B \
+             data.train_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
+             data.val_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]'
+
+      **Full 16-node run**: update ``runner.output_dir``, ``rollout.model.model_path``, ``actor.tokenizer.tokenizer_model``, and ``data.train_data_paths`` in ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``, start the Ray cluster following :doc:`/rst_source/guides/multi_node`, and run on the head node:
 
       .. code-block:: bash
 
          bash examples/reasoning/run_main_grpo_math.sh qwen2.5-7b-grpo-megatron
 
-      For multi-node training, set ``cluster.num_nodes`` in the YAML, start the Ray cluster following :doc:`/rst_source/guides/multi_node`, and run the command above on the head node.
+.. note::
+
+   **Switch rollout backend to vLLM:** install the vLLM environment with ``bash requirements/install.sh agentic --engine vllm``, then pass ``rollout.rollout_backend=vllm`` (or set it in the YAML). See :doc:`Rollout Engine Versions </rst_source/guides/version>` for supported engine versions.
 
 Visualization and Results
 -------------------------

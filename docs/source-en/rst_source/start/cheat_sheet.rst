@@ -6,23 +6,30 @@ Run common RLinf workflows with the shortest commands.
 Install
 -------
 
-Install locally with ``install.sh`` (append ``--use-mirror`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` in mainland China), or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
+Each virtual environment holds one model + environment stack — pass ``--venv <dir>`` when keeping multiple stacks side by side. In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. For prebuilt images, visit `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
 
 .. tab-set::
 
-   .. tab-item:: Embodied
+   .. tab-item:: Embodied Training
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
+   .. tab-item:: Embodied Eval
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env libero --venv .venv-eval && source .venv-eval/bin/activate
+
    .. tab-item:: Agentic / Reasoning
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
+         bash requirements/install.sh agentic --engine sglang --venv .venv-agentic && source .venv-agentic/bin/activate
 
    .. tab-item:: Docs
 
@@ -34,30 +41,73 @@ Install locally with ``install.sh`` (append ``--use-mirror`` and run ``export HF
 Run Training
 ------------
 
-Single-node runs start Ray automatically. Run a 1-GPU zero-download MLP check, or launch a VLA quickstart (downloads its default Hugging Face checkpoint on first run after fetching ManiSkill assets once):
+Single-node runs start Ray automatically. Config names map directly to YAML files on disk: embodied RL in ``examples/embodiment/config/``, SFT in ``examples/sft/config/``, reasoning and agentic in ``examples/reasoning/config/`` and ``examples/agent/``, and evaluation in ``evaluations/<benchmark>/``.
 
-.. code-block:: bash
+.. tab-set::
 
-   # 1-GPU zero-download MLP check (install with: bash requirements/install.sh embodied --env maniskill_libero)
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
+   .. tab-item:: MLP (1 GPU · No Downloads)
 
-   # 7B VLA PPO quickstart
-   hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
+      .. code-block:: bash
 
-Pass ``actor.model.model_path=/path/to/checkpoint`` (or another Hugging Face ``owner/repo``) to override the model; rollout inherits it automatically. Quickstart configs default to ``all`` accelerators; change ``cluster.component_placement`` to target specific devices (:doc:`../reference/configuration`). For multi-node runs, set ``RLINF_NODE_RANK`` before running ``ray start`` on each node (:doc:`../guides/multi_node`).
+         source .venv/bin/activate
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
+           runner.max_epochs=3 runner.val_check_interval=-1
+
+   .. tab-item:: VLA PPO (OpenVLA)
+
+      .. code-block:: bash
+
+         source .venv/bin/activate
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
+
+   .. tab-item:: Agentic / Reasoning (1 GPU)
+
+      Set ``rollout.model.model_path``, ``actor.model.model_path``, ``actor.tokenizer.tokenizer_model``, and ``data.train_data_paths`` in ``examples/reasoning/config/math/qwen2.5-1.5b-single-gpu.yaml``, then launch:
+
+      .. code-block:: bash
+
+         source .venv-agentic/bin/activate
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-single-gpu
+
+Pass ``actor.model.model_path=/path/to/checkpoint`` (or a Hugging Face ``owner/repo``) to override embodied model weights; rollout inherits it automatically. For multi-node runs, export ``RLINF_NODE_RANK`` before ``ray start`` on each node (:doc:`../guides/multi_node`).
 
 Evaluate
 --------
 
-Run standalone embodied evaluation (requires an ``openpi`` + ``libero`` environment; pass ``--venv`` to ``install.sh`` if keeping a separate training venv):
+Run standalone embodied evaluation (configs live in ``evaluations/<benchmark>/<config_name>.yaml``):
 
 .. code-block:: bash
 
+   source .venv-eval/bin/activate
+
+   # Evaluate a Hugging Face or local base model
    bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
      rollout.model.model_path=RLinf/RLinf-Pi05-LIBERO-SFT
 
-Replace ``RLinf/RLinf-Pi05-LIBERO-SFT`` with a local checkpoint directory if you already downloaded the weights.
+   # Evaluate an RL/SFT .pt checkpoint on top of the base model
+   bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
+     rollout.model.model_path=RLinf/RLinf-Pi05-LIBERO-SFT \
+     runner.ckpt_path=./logs/<run>/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt
+
+Operations and Overrides
+------------------------
+
+.. code-block:: bash
+
+   # Watch training and eval curves in TensorBoard
+   tensorboard --host 0.0.0.0 --logdir ./logs
+
+   # Resume training from a saved checkpoint directory
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart \
+     runner.resume_dir=./logs/<run>/checkpoints/global_step_50
+
+   # Restrict a multi-GPU config to GPU 0
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart \
+     cluster.component_placement.actor,rollout,env=0
+
+   # Clean up a stale local Ray session (check `ray status` first on shared hosts)
+   ray stop
 
 Next Steps
 ----------

@@ -14,12 +14,28 @@ Output Paths
      - Path
    * - Default run log
      - ``logs/<timestamp>-<config_name>/eval_embodiment.log``
+   * - Metrics summary table
+     - ``<log_path>/metrics.log`` (same formatted table printed to stdout at the end of evaluation)
    * - ManiSkill OOD batch log
      - ``logs/eval/<EVAL_NAME>/<timestamp>-<env_id>-<obj_set>/run_ppo.log``
    * - Rollout videos
      - ``<log_path>/video/eval/`` (when ``env.eval.video_cfg.save_video: True``; ``log_path`` is set by ``runner.logger.log_path`` and ``run_eval.sh``)
    * - TensorBoard / tracker logs
      - ``<log_path>/`` (when ``tensorboard``, ``wandb``, or ``swanlab`` is enabled in ``runner.logger.logger_backends``)
+
+Sample Terminal Output
+----------------------
+
+At the end of an evaluation run, RLinf prints a summary table and appends it to ``<log_path>/metrics.log``:
+
+.. code-block:: text
+
+   ╭────────────────────────────── Metric Table ──────────────────────────────╮
+   │ Global Step:    1/1 │ Progress: ████████████████████ │ 100.0%            │
+   │ Elapsed: 03:45      │ ETA: 00:00                     │ Step Time: 225.0s │
+   ├────────────────────────────── Evaluation ────────────────────────────────┤
+   │ episode_len=142.3   │ num_trajectories=500           │ success_once=0.96 │
+   ╰──────────────────────────────────────────────────────────────────────────╯
 
 Key Metrics
 -----------

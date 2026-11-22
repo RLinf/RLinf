@@ -4,24 +4,73 @@
 本示例将 LeRobot 的 ``PI0FastPolicy`` 接入 RLinf，用于 LIBERO-Long 的确定性评测和 token-level GRPO 微调。接入层保留 π₀-FAST 原生的自回归动作序列，并在 actor update 阶段通过 teacher forcing 重放 rollout 时采样的 token。
 
 概览
---------------------
+----
+
+在 LIBERO-10（Long）上评测并用 GRPO 微调 LeRobot π₀-FAST。
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 环境
+      :text-align: center
+
+      LIBERO-10（Long）
+
+   .. grid-item-card:: 算法
+      :text-align: center
+
+      GRPO（逐 token clipping）
+
+   .. grid-item-card:: 任务
+      :text-align: center
+
+      10 个长程 LIBERO 任务
+
+   .. grid-item-card:: 硬件
+      :text-align: center
+
+      2 节点 · 16 GPU（支持单节点覆盖）
+
+| **你将完成：** 安装已验证的 π₀-FAST 运行时 → 下载三个固定版本权重 → 启动 ``run_embodiment.sh``\ （或 ``run_eval.sh``）→ 观察 ``eval/success_once``。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 已获取 ``google/paligemma-3b-pt-224`` 的 Hugging Face 访问权限。
+
+任务
+~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 38
+   :widths: 20 22 34 24
 
-   * - 项目
-     - 配置
    * - 环境
+     - 任务 / 套件
+     - 配置 / 权重
+     - 重点
+   * - LIBERO
      - LIBERO-10（Long）
-   * - 基础策略
-     - ``lerobot/pi0fast-libero``
-   * - 算法
-     - GRPO，逐 token PPO clipping
-   * - 可训练参数
-     - all-linear LoRA，rank 16
-   * - 已验证运行时
-     - Python 3.12.12、PyTorch 2.11.0 + CUDA 12.8、Transformers 5.5.4
+     - ``libero_10_grpo_pi0_fast``、``lerobot/pi0fast-libero``
+     - 使用 all-linear LoRA（rank 16）做逐 token GRPO（验证环境：Python 3.12.12 / PyTorch 2.11.0 + CUDA 12.8）。
+   * - LIBERO
+     - LIBERO-10（Long）
+     - ``libero_10_pi0_fast_eval``
+     - 在 500 个固定 episode 上运行确定性贪婪评测。
+
+观测与动作
+~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 76
+
+   * - 字段
+     - 说明
+   * - 观测
+     - 第三人称（agentview）与腕部 RGB 图像，以及 8 维机器人本体状态。
+   * - 动作
+     - 由原生自回归 FAST 动作 token 解码得到的 10 步连续动作块（每步 7 自由度）。
+   * - 奖励
+     - 稀疏 LIBERO 任务成功奖励（0/1）。
+   * - 提示词
+     - LIBERO 自然语言任务指令。
 
 一键上手
 --------------------
@@ -73,11 +122,15 @@
 
       **3. 启动训练**
 
-      启动双机 16 卡 GRPO 微调参考配置（每次 update 采样 1,024 条轨迹：256 并行环境 × 4 rollout epoch，group size 8，micro batch size 16，采样温度 0.3，all-linear LoRA，并启用可选的 FP32-master AdamW，该优化器支持 FSDP1 ``NO_SHARD``）：
+      ``libero_10_grpo_pi0_fast.yaml`` 默认配置为 **2 节点**\ （``cluster.num_nodes: 2``，共 16 卡；每次 update 采样 1,024 条轨迹：256 并行环境 × 4 rollout epoch，group size 8，micro batch size 16，采样温度 0.3，all-linear LoRA，并启用支持 FSDP1 ``NO_SHARD`` 的可选 FP32-master AdamW）：
 
       .. code-block:: bash
 
+         # 2 节点（16 卡）参考配置：
          bash examples/embodiment/run_embodiment.sh libero_10_grpo_pi0_fast
+
+         # 单节点快速启动（覆盖 cluster.num_nodes=1）：
+         bash examples/embodiment/run_embodiment.sh libero_10_grpo_pi0_fast cluster.num_nodes=1
 
    .. tab-item:: Baseline 评测
       :sync: eval

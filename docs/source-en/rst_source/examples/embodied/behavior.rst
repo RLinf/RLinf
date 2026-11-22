@@ -130,19 +130,12 @@ Setup and Run
            - PPO
            - ``behavior_ppo_openvlaoft.yaml``
 
-      Set ``actor.model.model_path`` in ``examples/embodiment/config/behavior_ppo_openvlaoft.yaml`` (rollout inherits it automatically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-OpenVLAOFT-Behavior
-
-      Launch training with ``run_embodiment.sh``:
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` on the command line (rollout inherits it automatically):
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh behavior_ppo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh behavior_ppo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-Behavior
 
    .. tab-item:: OpenPI
       :sync: openpi
@@ -188,19 +181,12 @@ Setup and Run
            - PPO
            - ``behavior_ppo_openpi_pi05.yaml``
 
-      Set ``actor.model.model_path`` in the chosen YAML (rollout inherits it automatically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-Pi0-Behavior
-
-      Launch training with ``run_embodiment.sh``:
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` on the command line (rollout inherits it automatically):
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh behavior_ppo_openpi
+         bash examples/embodiment/run_embodiment.sh behavior_ppo_openpi \
+           actor.model.model_path=./RLinf-Pi0-Behavior
 
 .. warning::
 

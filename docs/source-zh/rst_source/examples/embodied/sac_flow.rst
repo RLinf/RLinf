@@ -96,23 +96,39 @@ SAC-Flow 工作原理
 
    .. tab-item:: 仿真（ManiSkill）
 
-      单机运行 ``examples/embodiment/config/maniskill_sac_flow_state.yaml``：
+      **1. 安装环境**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
+
+      **2. 启动训练**
+
+      在单机上运行 ``examples/embodiment/config/maniskill_sac_flow_state.yaml``：
+
+      .. code-block:: bash
+
          bash examples/embodiment/run_embodiment.sh maniskill_sac_flow_state
 
    .. tab-item:: 真机（Franka）
 
-      多节点运行 ``examples/embodiment/config/realworld_sac_flow_image.yaml``\ （Actor/Policy 在 GPU 服务器，Env/Robot 在控制机）；先按 :doc:`franka` 完成集群与硬件配置，再在主节点启动：
+      **1. 安装环境**
+
+      在 GPU 训练节点和 Franka 控制节点上安装环境：
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          export LIBFRANKA_VERSION=0.19.0
          bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+
+      **2. 启动训练**
+
+      ``examples/embodiment/config/realworld_sac_flow_image.yaml`` 默认使用 **2 节点**\ （``cluster.num_nodes: 2``：GPU 服务器运行 Actor/Policy，Franka 控制机运行 Env/Robot）。先按 :doc:`franka` 完成集群与硬件配置，再在 head 节点启动：
+
+      .. code-block:: bash
+
          bash examples/embodiment/run_realworld_async.sh realworld_sac_flow_image
 
 .. dropdown:: 进阶配置（可选）

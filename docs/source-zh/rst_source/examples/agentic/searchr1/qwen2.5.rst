@@ -139,33 +139,38 @@ Checkpoint 导出与评测
 
 checkpoint 的导出方式取决于训练后端。
 
-对于 Megatron，运行以下命令将 checkpoint 转换为 HuggingFace model：
+Megatron 后端按以下三步将 checkpoint 转换为 Hugging Face 模型：
 
-.. code-block:: bash
+1. 设置源目录与目标目录，先将 Megatron 权重转为中间格式：
 
-   CKPT_PATH_MG={your_output_dir}/{exp_name}/checkpoints/global_step_xxx/actor
-   CKPT_PATH_HF={path/to/save/huggingface/model}
-   CKPT_PATH_ORIGINAL_HF={path/to/model/Qwen2.5-3B-Instruct}
-   CKPT_PATH_MF="${CKPT_PATH_HF}_middle_file"
+   .. code-block:: bash
 
-   python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_mg_to_middle_file \
-       --load-path "${CKPT_PATH_MG}" \
-       --save-path "${CKPT_PATH_MF}" \
-       --model qwen_2.5_3b \
-       --tp-size 1 --ep-size 1 --pp-size 1 \
-       --te-ln-linear-qkv true --te-ln-linear-mlp_fc1 true \
-       --te-extra-state-check-none true --use-gpu-num 0 --process-num 16
+      CKPT_PATH_MG={your_output_dir}/{exp_name}/checkpoints/global_step_xxx/actor
+      CKPT_PATH_HF={path/to/save/huggingface/model}
+      CKPT_PATH_ORIGINAL_HF={path/to/model/Qwen2.5-3B-Instruct}
+      CKPT_PATH_MF="${CKPT_PATH_HF}_middle_file"
 
-   python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_middle_file_to_hf \
-       --load-path "${CKPT_PATH_MF}" \
-       --save-path "${CKPT_PATH_HF}" \
-       --model qwen_2.5_3b \
-       --use-gpu-num 0 --process-num 16
+      python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_mg_to_middle_file \
+          --load-path "${CKPT_PATH_MG}" --save-path "${CKPT_PATH_MF}" \
+          --model qwen_2.5_3b --tp-size 1 --ep-size 1 --pp-size 1 \
+          --te-ln-linear-qkv true --te-ln-linear-mlp_fc1 true \
+          --te-extra-state-check-none true --use-gpu-num 0 --process-num 16
 
-   rm -rf "${CKPT_PATH_MF}"
-   rm -f "${CKPT_PATH_HF}"/*.done
-   shopt -s extglob
-   cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index).json "${CKPT_PATH_HF}"
+2. 将中间格式权重导出为 Hugging Face 格式：
+
+   .. code-block:: bash
+
+      python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_middle_file_to_hf \
+          --load-path "${CKPT_PATH_MF}" --save-path "${CKPT_PATH_HF}" \
+          --model qwen_2.5_3b --use-gpu-num 0 --process-num 16
+
+3. 清理中间文件并从原始模型目录复制配置与 tokenizer 文件：
+
+   .. code-block:: bash
+
+      rm -rf "${CKPT_PATH_MF}" && rm -f "${CKPT_PATH_HF}"/*.done
+      shopt -s extglob
+      cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index).json "${CKPT_PATH_HF}"
 
 PPO 训练会在每个 ``global_step_xxx`` 下保存 ``actor`` 和 ``critic`` 两个目录。导出模型时，用上面的命令转换 ``actor`` 目录。恢复训练时，将 ``runner.resume_dir`` 设为该 ``global_step_xxx`` 目录，RLinf 会同时恢复 actor 和 critic。
 

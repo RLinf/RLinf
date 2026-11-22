@@ -134,19 +134,12 @@ Setup and Run
          * - GRPO
            - ``maniskill_grpo_openvla.yaml``
 
-      Set ``actor.model.model_path`` in the chosen YAML (rollout inherits it automatically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./openvla-7b-rlvla-warmup
-
-      Launch training with ``run_embodiment.sh``:
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` on the command line (rollout inherits it automatically):
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla \
+           actor.model.model_path=./openvla-7b-rlvla-warmup
 
       .. dropdown:: Advanced configuration (optional)
 
@@ -205,20 +198,13 @@ Setup and Run
          * - GRPO
            - ``maniskill_grpo_openvlaoft.yaml``
 
-      Set ``actor.model.model_path`` and ``actor.model.lora_path`` in the chosen YAML (rollout inherits ``model_path`` automatically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-OpenVLAOFT-ManiSkill-Base-Main
-             lora_path: ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
-
-      Launch training with ``run_embodiment.sh``:
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` and ``actor.model.lora_path`` on the command line (rollout inherits ``model_path`` automatically):
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-ManiSkill-Base-Main \
+           actor.model.lora_path=./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
       .. dropdown:: Advanced configuration (optional)
 

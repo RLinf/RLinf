@@ -50,7 +50,7 @@ Eval configs compose model presets from ``examples/embodiment/config/model/`` vi
 Rollout Backends
 ----------------
 
-Evaluation supports three rollout backends selected by ``rollout.rollout_backend``:
+Evaluation supports four rollout backends selected by ``rollout.rollout_backend``:
 
 .. list-table::
    :header-rows: 1
@@ -64,11 +64,13 @@ Evaluation supports three rollout backends selected by ``rollout.rollout_backend
      - Standalone SGLang embodied server group for world-action models such as Cosmos3 (:doc:`../guides/cosmos3_sglang`) and DreamZero (:doc:`../guides/dreamzero_sglang`).
    * - ``apxinf``
      - In-process Rust/CUDA inference backend for low-latency OpenPI π₀.₅ evaluation (``libero_10_apxinf_pi05_eval``; see :doc:`../../guides/apxinf`).
+   * - ``phyai``
+     - Accelerated PhyAI rollout engine for OpenPI π₀.₅ on LIBERO (install with ``--engine phyai``; see :doc:`../../guides/rollout-engines/phyai`).
 
 Model Path
 ----------
 
-Set ``rollout.model.model_path`` in YAML or on the command line to a local model directory. For ``.pt`` checkpoints from RL or SFT training, also set ``runner.ckpt_path``.
+Set ``rollout.model.model_path`` in YAML or on the command line to either a local model directory or a Hugging Face ``owner/repo`` ID (downloaded into your local Hugging Face cache automatically on first run). For ``.pt`` checkpoints from RL or SFT training, also set ``runner.ckpt_path``.
 
 Standalone Eval Scripts
 -----------------------

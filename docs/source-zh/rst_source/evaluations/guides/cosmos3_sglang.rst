@@ -40,13 +40,17 @@ Cosmos3 SGLang 评测
 
    .. tab-item:: LIBERO
 
+      **1. 安装**
+
       .. code-block:: bash
 
-         # 1. 安装
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model sglang --env libero && source .venv/bin/activate
 
-         # 2. 启动 LIBERO-Spatial 评测
+      **2. 启动 LIBERO-Spatial 评测**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang \
            rollout.model.model_path=./model_diffusers \
            rollout.model.action_stats_path=./libero_native_frame_wise_relative_rot6d.json \
@@ -59,8 +63,11 @@ Cosmos3 SGLang 评测
    每张 GPU 启动一个 SGLang server 并绑定给对应的 rollout worker，单步推理按以下四步流转：
 
    1. **按 prompt 分组：** rollout worker 接收 LIBERO 图像与任务指令，按补全后的 prompt 给并行环境分组（server 仅批处理 token 长度相同的 prompt），再按 ``rollout.sglang.server.batching_max_size`` 切分批次（示例 ``8``，默认 ``1``）。
+
    2. **扩散推理：** 每个批次通过 ``POST /v1/actions/generations`` 发往 SGLang server，执行 ``num_inference_steps`` 步扩散推理，为每个环境返回 ``[horizon, 10]`` 的归一化 rot6d 动作块。
+
    3. **动作后处理：** rollout worker 按 ``input_index`` 排序响应，对 10 维输出做 quantile 去归一化，并将 6 维 rot6d 旋转转为 3 维 axis-angle，得到 7 维 LIBERO 动作。
+
    4. **推进仿真：** rollout worker 按原始环境顺序拼回 ``[N, 16, 7]`` 动作块，送入 LIBERO env worker 推进仿真。
 
 .. dropdown:: 关键配置

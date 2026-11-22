@@ -1,7 +1,11 @@
 动态调度
 ==============
 
-动态调度（Dynamic Scheduling）是在训练运行期根据系统各组件（actor / rollout / inference）的实时状态，对资源进行秒级动态调整与迁移，以提升整体吞吐与资源利用率的机制。它依托于 Megatron-LM 的在线扩缩容能力（秒级扩缩）与 SGLang/vLLM 的请求迁移功能，在不终止训练的前提下，对集群中的 GPU 资源进行弹性重分配。
+动态调度（Dynamic Scheduling）在训练运行期根据系统各组件（actor / rollout / inference）的实时状态，秒级动态调整与迁移资源，以提升整体吞吐与资源利用率。它依托于 Megatron-LM 的在线扩缩容能力（秒级扩缩）与 SGLang/vLLM 的请求迁移功能，在不终止训练的前提下弹性重分配集群中的 GPU 资源。
+
+.. warning::
+
+   **旧版环境前置要求**：动态调度依赖独立的 **Megatron-LM 0.11** 分支与外部预编译重分片包（``params_resharding_release``），不兼容默认 ``bash requirements/install.sh agentic`` 环境（安装 Megatron-LM 0.18）。可运行的参考配置见 ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron-dynamic.yaml``\ （配好下方前置依赖后，运行 ``bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron-dynamic`` 启动）。
 
 .. contents::
    :depth: 2
@@ -10,7 +14,7 @@
 在线扩缩机制
 ------------
 
-自动扩缩（也称为弹性训练）是一项强大的功能，可以在 1 秒内完成 GPU 切换，实现训练资源的动态扩缩。通过这一能力，你可以根据集群可用性、任务需求或资源优化目标，实时调整训练所使用的 GPU 和节点数量。
+在线扩缩（也称弹性训练）可以在 1 秒内完成 GPU 切换，动态调整训练资源。你可以根据集群可用性、任务需求或资源优化目标，实时调整训练使用的 GPU 和节点数量。
 
 什么是在线扩缩？
 ^^^^^^^^^^^^^^^^
@@ -33,7 +37,7 @@
 为什么在线扩缩很重要？
 ^^^^^^^^^^^^^^^^^^^^^^
 
-当使用 RLinf 的分离式模式并结合细粒度流水线时，rollout 和 inference 阶段通常会在 actor 阶段结束前就完成。此时，可以在 **几秒内** 将 rollout 和 inference 所使用的资源重新分配给 actor 阶段，从而加速 actor 的训练，并提升整个系统的性能。
+在 RLinf 的分离式模式下结合细粒度流水线时，rollout 和 inference 阶段通常会在 actor 阶段结束前就完成。此时，可以在 **几秒内** 将 rollout 和 inference 所使用的资源重新分配给 actor 阶段，从而加速 actor 的训练，并提升整个系统的性能。
 
 优势与收益
 ^^^^^^^^^^
@@ -142,5 +146,5 @@
 - ``use_wait_before_last_iter_policy``
 
   1. 每轮迭代中，actor 最后一个 iter 开始前，先等待 rollout 与 inference 完成；
-  2. 随后 actor 获得全部资源进行扩容训练；
+  2. 随后 actor 获得全部资源扩容训练；
   3. 得益于流水特性，rollout/inference 通常早于 actor 完成，调度恰当时可利用全集群资源完成最后一次 actor 计算。

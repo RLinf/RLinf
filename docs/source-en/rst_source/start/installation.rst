@@ -1,7 +1,7 @@
 Installation
 ============
 
-Install RLinf into a local ``uv`` virtual environment with ``requirements/install.sh``, or pull a prebuilt image from Docker Hub. Every recipe page also includes its exact setup command; use this page as the global installer and hardware reference.
+Install RLinf into a local ``uv`` virtual environment with ``requirements/install.sh``, or pull a prebuilt image from Docker Hub. Each virtual environment holds one ``--model`` + ``--env`` (or ``agentic --engine``) stack; pass ``--venv <dir>`` when installing additional stacks so you do not overwrite ``.venv``. Every recipe page also includes its exact setup command; use this page as the global installer and hardware reference.
 
 Setup and Verify
 ----------------
@@ -19,7 +19,14 @@ Choose your target stack below and run the commands:
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
-         python -c "import rlinf; print(rlinf.__file__)" && ray --version
+         python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
+
+      Expected output:
+
+      .. code-block:: text
+
+         /path/to/RLinf/rlinf/__init__.py CUDA: True
+         ray, version 2.x.x
 
    .. tab-item:: Real-World Robot
       :sync: realworld
@@ -43,10 +50,26 @@ Choose your target stack below and run the commands:
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
-         python -c "import rlinf; print(rlinf.__file__)" && ray --version
+         python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
+
+      Expected output:
+
+      .. code-block:: text
+
+         /path/to/RLinf/rlinf/__init__.py CUDA: True
+         ray, version 2.x.x
 
    .. tab-item:: Prebuilt Docker
       :sync: docker
+
+      Pick an image tag from Docker Hub for your model and simulator, then launch a GPU container with graphics/EGL enabled:
+
+      .. code-block:: bash
+
+         docker run -it --rm --gpus all --shm-size=16g --network=host \
+           -e NVIDIA_DRIVER_CAPABILITIES=all \
+           -v "$(pwd)":/workspace/RLinf \
+           rlinf/rlinf:<tag> bash
 
       .. grid:: 1 1 1 1
          :gutter: 2
@@ -66,7 +89,7 @@ Choose your target stack below and run the commands:
 
 .. tip::
 
-   **Mainland China mirror & multiple stacks:** append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Pass ``--venv <dir>`` when installing multiple model/environment stacks so each stack keeps its own virtual environment instead of overwriting ``.venv``.
+   **Mainland China mirror:** append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
 
 Supported Models, Environments, and Platforms
 ---------------------------------------------
@@ -79,15 +102,15 @@ Pass any of the values below to ``--model``, ``--env``, ``--engine``, or ``--pla
 
    * - Option
      - Supported Values
-   * - ``--model`` (VLA)
+   * - ``--model`` (:doc:`VLA <../examples/vla_wam_index>`)
      - ``openvla``, ``openvla-oft``, ``openpi``, ``psi0``, ``pi0_fast``, ``gr00t``, ``gr00t_n1d6``, ``gr00t_n1d7``, ``dexbotic``, ``starvla``, ``lingbotvla``, ``lingbotvlav2``, ``abot_m0``, ``molmoact2``, ``evo1``
-   * - ``--model`` (WAM / VLM / Gen)
+   * - ``--model`` (:doc:`WAM / VLM / Gen <../examples/vla_wam_index>`)
      - ``dreamzero``, ``fastwam``, ``cosmos3``, ``qwen3_vl``, ``diffusion``, ``sglang``
-   * - ``--env`` (Simulators)
+   * - ``--env`` (:doc:`Simulators <../examples/simulators_index>`)
      - ``maniskill_libero``, ``libero``, ``liberopro``, ``liberoplus``, ``behavior``, ``metaworld``, ``calvin``, ``isaaclab``, ``robocasa``, ``robocasa365``, ``frankasim``, ``robotwin``, ``robodojo``, ``roboverse``, ``habitat``, ``genesis``, ``geniesim``, ``embodichain``, ``d4rl``, ``mujoco_warp``, ``polaris``, ``simple``, ``robolab``
-   * - ``--env`` (World Models)
+   * - ``--env`` (:doc:`World Models <../examples/world_model_index>`)
      - ``opensora``, ``wan``
-   * - ``--env`` (Real Robots)
+   * - ``--env`` (:doc:`Real Robots <../examples/real_world_index>`)
      - ``franka``, ``franka-ros``, ``xsquare_turtle2``, ``dosw1``, ``gim_arm``, ``so101``, ``lekiwi``, ``piper``, ``arx5``, ``yam``, ``dummy`` (Robbyant R2 uses RFrame and ROS 2 rather than an ``install.sh --env`` target; see :doc:`../examples/embodied/r2`)
    * - ``--engine``
      - ``sglang`` (default for ``agentic``), ``vllm`` (``agentic``), ``phyai`` (``embodied`` with ``--model openpi --env libero``)

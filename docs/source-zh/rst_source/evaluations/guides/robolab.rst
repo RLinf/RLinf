@@ -38,16 +38,23 @@ RoboLab 评测
 
    .. tab-item:: 单任务（默认）
 
+      **1. 安装**
+
       .. code-block:: bash
 
-         # 1. 安装
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env robolab && source .venv/bin/activate
 
-         # 2. 下载模型
+      **2. 下载模型**
+
+      .. code-block:: bash
+
          hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos --local-dir ./RLinf-Pi05-RoboLab-droid-jointpos
 
-         # 3. 启动默认任务（BowlStackingLeftOnRightTask，10 个回合）
+      **3. 启动默认任务（BowlStackingLeftOnRightTask，10 个回合）**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \
            rollout.model.model_path=./RLinf-Pi05-RoboLab-droid-jointpos
 
@@ -55,16 +62,23 @@ RoboLab 评测
 
       保持 ``total_num_envs=10`` 与 ``rollout_epoch=1``\ （共 1200 个回合），在单张 GPU 上依次跑完全部 120 个 benchmark 任务：
 
+      **1. 安装**
+
       .. code-block:: bash
 
-         # 1. 安装
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env robolab && source .venv/bin/activate
 
-         # 2. 下载模型
+      **2. 下载模型**
+
+      .. code-block:: bash
+
          hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos --local-dir ./RLinf-Pi05-RoboLab-droid-jointpos
 
-         # 3. 导出任务表并运行全部 120 个任务
+      **3. 导出任务表并运行全部 120 个任务**
+
+      .. code-block:: bash
+
          python -m toolkits.standalone_eval_scripts.robolab.export_tasks
          while IFS=$'\t' read -r task max_steps rest; do
              bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \

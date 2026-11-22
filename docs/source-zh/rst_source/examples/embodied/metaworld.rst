@@ -121,19 +121,12 @@ MetaWorld 强化学习
            - PPO
            - ``metaworld_45_ppo_openpi.yaml``
 
-      在所选 YAML 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）：
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-Pi0-MetaWorld-SFT
-
-      使用 ``run_embodiment.sh`` 启动训练：
+      通过命令行覆盖 ``actor.model.model_path`` 启动训练（rollout 会自动沿用同一路径）：
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi
+         bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi \
+           actor.model.model_path=./RLinf-Pi0-MetaWorld-SFT
 
    .. tab-item:: OpenPI π₀.₅
       :sync: pi05
@@ -168,19 +161,12 @@ MetaWorld 强化学习
            - PPO
            - ``metaworld_50_ppo_openpi_pi05.yaml``
 
-      在 ``examples/embodiment/config/metaworld_50_ppo_openpi_pi05.yaml`` 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）：
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-Pi05-MetaWorld-SFT
-
-      使用 ``run_embodiment.sh`` 启动训练：
+      通过命令行覆盖 ``actor.model.model_path`` 启动训练（rollout 会自动沿用同一路径）：
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi_pi05
+         bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi_pi05 \
+           actor.model.model_path=./RLinf-Pi05-MetaWorld-SFT
 
    .. tab-item:: OpenVLA-OFT
       :sync: openvla-oft
@@ -215,19 +201,12 @@ MetaWorld 强化学习
            - GRPO
            - ``metaworld_50_grpo_openvlaoft.yaml``
 
-      在 ``examples/embodiment/config/metaworld_50_grpo_openvlaoft.yaml`` 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）：
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-OpenVLAOFT-MetaWorld-SFT
-
-      使用 ``run_embodiment.sh`` 启动训练：
+      通过命令行覆盖 ``actor.model.model_path`` 启动训练（rollout 会自动沿用同一路径）：
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh metaworld_50_grpo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh metaworld_50_grpo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-MetaWorld-SFT
 
 .. admonition:: 进一步配置
    :class: note

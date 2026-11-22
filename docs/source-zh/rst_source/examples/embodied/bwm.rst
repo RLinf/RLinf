@@ -3,6 +3,10 @@ BWM 强化学习
 
 本示例在 Boundless World Model（BWM，基于 Wan2.2-TI2V-5B 的动作条件视频世界模型）中，用 PPO 训练单视角 pi0.5 policy 完成 RoboTwin ``adjust_bottle`` 任务。训练过程不调用仿真器，训练后的 checkpoint 在 RoboTwin 中评测。
 
+.. note::
+
+   **实验状态：** 移植到主干后的 BWM 后端尚未复现早期原型上的 PPO 提升，最新进展见 `#1713 <https://github.com/RLinf/RLinf/issues/1713>`_。
+
 概览
 ----
 
@@ -141,7 +145,7 @@ BWM 强化学习
 
       **2. 启动评测**
 
-      使用 RoboTwin pi0.5 评测配置及本示例的 policy 设置与单头部视角评测 checkpoint：
+      在 ``evaluations/robotwin/robotwin_adjust_bottle_openpi_pi05_eval.yaml`` 中应用下方的 BWM policy 与单视角配置后，传入权重和资产路径启动评测：
 
       .. code-block:: bash
 
@@ -149,14 +153,31 @@ BWM 强化学习
          bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_pi05_eval \
            rollout.model.model_path=./WorldArena \
            runner.ckpt_path=./logs/checkpoints/global_step_14/actor/model_state_dict/full_weights.pt \
-           rollout.model.num_steps=4 rollout.model.openpi.task=rl rollout.model.openpi.noise_level=0.5 \
-           ++rollout.model.openpi.value_after_vlm=True \
-           ++rollout.model.openpi.value_head_hidden_sizes=[512,256,128] \
-           ++rollout.model.openpi_data.adapt_to_pi=false \
-           ++rollout.model.openpi_data.norm_stats_path=./WorldArena/assets/robotwin_clean \
-           env.eval.assets_path="${ROBOTWIN_PATH}" \
-           env.eval.task_config.camera.head_camera_type=Large_D435 \
-           env.eval.task_config.camera.collect_wrist_camera=false
+           env.eval.assets_path="${ROBOTWIN_PATH}"
+
+      .. dropdown:: BWM policy 与单视角评测配置（可选）
+
+         将以下配置写入评测 YAML（或通过 CLI 覆盖），使评测与 BWM 训练设置保持一致：
+
+         .. code-block:: yaml
+
+            rollout:
+              model:
+                num_steps: 4
+                openpi:
+                  task: rl
+                  noise_level: 0.5
+                  value_after_vlm: True
+                  value_head_hidden_sizes: [512, 256, 128]
+                openpi_data:
+                  adapt_to_pi: false
+                  norm_stats_path: ./WorldArena/assets/robotwin_clean
+            env:
+              eval:
+                task_config:
+                  camera:
+                    head_camera_type: Large_D435
+                    collect_wrist_camera: false
 
 可视化与结果
 ------------

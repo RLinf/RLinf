@@ -96,23 +96,39 @@ Setup and Run
 
    .. tab-item:: Simulation (ManiSkill)
 
-      Uses ``examples/embodiment/config/maniskill_sac_flow_state.yaml`` on a single machine:
+      **1. Install**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
+
+      **2. Launch**
+
+      Run ``examples/embodiment/config/maniskill_sac_flow_state.yaml`` on a single machine:
+
+      .. code-block:: bash
+
          bash examples/embodiment/run_embodiment.sh maniskill_sac_flow_state
 
    .. tab-item:: Real World (Franka)
 
-      Uses ``examples/embodiment/config/realworld_sac_flow_image.yaml`` across a GPU server (Actor/Policy) and a Franka control machine (Env/Robot); finish multi-node cluster and hardware setup in :doc:`franka` before launching on the head node:
+      **1. Install**
+
+      Install on both the GPU training node and the Franka control node:
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          export LIBFRANKA_VERSION=0.19.0
          bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+
+      **2. Launch**
+
+      ``examples/embodiment/config/realworld_sac_flow_image.yaml`` defaults to **2 nodes** (``cluster.num_nodes: 2``: GPU server for Actor/Policy + Franka control machine for Env/Robot). Complete cluster and hardware setup in :doc:`franka`, then launch on the head node:
+
+      .. code-block:: bash
+
          bash examples/embodiment/run_realworld_async.sh realworld_sac_flow_image
 
 .. dropdown:: Advanced configuration (optional)

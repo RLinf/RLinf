@@ -131,7 +131,7 @@ Setup and Run
 
       Copy the reward raw episodes to the training node (or use shared storage), preprocess with ``examples/reward/preprocess_reward_dataset.py``, and train the reward model with ``examples/reward/run_reward_training.sh`` per :doc:`franka_reward_model`.
 
-      Start the two-node Ray cluster per :doc:`franka` (training node as head, Franka control node as worker), then launch async RLPD on the training node:
+      ``realworld_dexpnp_rlpd_cnn_async.yaml`` defaults to **2 nodes** (``cluster.num_nodes: 2``: GPU training node as head, Franka control node as worker). Start the 2-node Ray cluster per :doc:`franka`, then launch async RLPD on the training node:
 
       .. code-block:: bash
 

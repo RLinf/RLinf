@@ -30,7 +30,7 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
 支持的评测基准
 --------------
 
-下表汇总了 ``evaluations/`` 中可通过 ``evaluations/run_eval.sh`` 直接启动的 benchmark 与对应的 SGLang 评测指南。
+下表汇总了 ``evaluations/`` 中可通过 ``evaluations/run_eval.sh`` 直接启动的具身评测基准。
 
 .. list-table::
    :header-rows: 1
@@ -45,7 +45,7 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
      - ``libero/libero_spatial_openpi_pi05_eval.yaml`` 等
      - :doc:`LIBERO <../examples/embodied/libero>`
    * - :doc:`ManiSkill OOD <guides/maniskill_ood>`
-     - ``maniskill_ood_template``\ （13 个 OOD 场景 + 训练分布内）
+     - ``maniskill_ood_template``\ （13 个分布外场景 + 分布内场景）
      - ``maniskill/maniskill_ood_openvlaoft_eval.yaml``
      - :doc:`ManiSkill <../examples/embodied/maniskill>`
    * - :doc:`BEHAVIOR-1K <guides/behavior>`
@@ -61,33 +61,55 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
      - ``polaris/polaris_tapeintocontainer_openpi_pi05_eval.yaml``、``polaris/polaris_movelattecup_openpi_eval.yaml``
      - :doc:`PolaRiS <../examples/embodied/polaris>`
    * - :doc:`RoboLab <guides/robolab>`
-     - 120 个 DROID joint-position 操作任务
+     - 120 个 DROID 关节位置控制操作任务
      - ``robolab/robolab_pi05_droid_jointpos.yaml``
      - :doc:`RoboLab <../examples/embodied/robolab>`
    * - RoboCasa365
-     - ``robocasa365`` pretrain 任务切片
+     - ``robocasa365`` 预训练任务切片
      - ``robocasa365/robocasa365_eval_openpi.yaml``
      - :doc:`RoboCasa365 <../examples/embodied/robocasa365>`
+   * - RoboDojo
+     - Isaac Sim 机械臂操作任务
+     - ``robodojo/robodojo_put_bottles_into_dustbin_pi05_eval.yaml``
+     - :doc:`RoboDojo <../examples/embodied/robodojo>`
+   * - GenieSim
+     - 基于仿真服务端的人形操作任务
+     - ``geniesim/geniesim_pick_block_color_eval.yaml``
+     - :doc:`GenieSim <../examples/embodied/geniesim>`
    * - :doc:`SIMPLE <guides/simple>`
-     - 8 个 G1 人形全身 Teleop 任务（``G1WholebodyOpenOvenTeleop-v0`` 等）
+     - 8 个 G1 人形全身遥操作任务（``G1WholebodyOpenOvenTeleop-v0`` 等）
      - ``simple/simple_psi0_eval.yaml``
      - :doc:`Psi0 <../examples/embodied/psi0>`
-   * - :doc:`RealWorld <guides/realworld>`
-     - ``realworld_franka_sft_env``、``realworld_bin_relocation``、Dual Franka
+   * - :doc:`真机评测 <guides/realworld>`
+     - ``realworld_franka_sft_env``、``realworld_bin_relocation``、双臂 Franka
      - ``realworld/realworld_pnp_eval.yaml``、``realworld/realworld_eval.yaml``、``realworld/realworld_pnp_eval_dreamzero.yaml``
      - :doc:`Franka <../examples/embodied/franka>`
-   * - :doc:`Cosmos3 (SGLang) <guides/cosmos3_sglang>`
-     - LIBERO-Spatial（SGLang embodied server）
+
+SGLang 服务评测指南
+-------------------
+
+面向通过 RLinf SGLang 具身推理服务在 LIBERO 上评测的世界动作模型：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 26 32 20
+
+   * - 模型指南
+     - 评测基准
+     - 示例配置
+     - 训练指南
+   * - :doc:`Cosmos3（SGLang） <guides/cosmos3_sglang>`
+     - LIBERO-Spatial（SGLang 具身推理服务）
      - ``libero/libero_spatial_cosmos3_eval_sglang.yaml``
      - :doc:`Cosmos3 SFT <../examples/embodied/sft_cosmos3>`
-   * - :doc:`DreamZero (SGLang) <guides/dreamzero_sglang>`
-     - LIBERO-Spatial（SGLang embodied server）
+   * - :doc:`DreamZero（SGLang） <guides/dreamzero_sglang>`
+     - LIBERO-Spatial（SGLang 具身推理服务）
      - ``libero/libero_spatial_dreamzero_eval_sglang.yaml``
      - :doc:`DreamZero SFT <../examples/embodied/sft_dreamzero>`
 
 .. note::
 
-   **配置回退：** 若 ``evaluations/<benchmark>/<config>.yaml`` 不存在，``run_eval.sh`` 会自动回退到 ``examples/embodiment/config/`` 下同名配置，便于复用训练配置做评测。标准 LIBERO、LIBERO-PRO 与 LIBERO-PLUS 均支持，通过环境变量切换（见 :doc:`guides/libero`）。
+   **配置回退：** 若 ``evaluations/<benchmark>/<config>.yaml`` 不存在，``run_eval.sh`` 仅对 ``examples/embodiment/config/`` 中已定义 ``rollout.model``\ （含 ``model_type`` 与 ``num_action_chunks``）的评测就绪配置生效。若要评测只定义了 ``actor.model`` 的训练配置，请按 :doc:`reference/configuration` 将模型预设重绑定到 ``@rollout.model``。标准 LIBERO、LIBERO-PRO 与 LIBERO-PLUS 通过环境变量切换（见 :doc:`guides/libero`）。
 
 参考
 ----
@@ -119,4 +141,4 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
 
       日志、指标与视频输出。
 
-非具身的数学推理 LLM 评测请使用 `LLMEvalKit <https://github.com/RLinf/LLMEvalKit>`_。完整安装说明见 :doc:`../start/installation`\ （模型专属 standalone 评测脚本位于 ``toolkits/standalone_eval_scripts/``）。
+非具身的数学推理 LLM 评测请使用 `LLMEvalKit <https://github.com/RLinf/LLMEvalKit>`_。完整安装说明见 :doc:`../start/installation`\ （模型专属独立评测脚本位于 ``toolkits/standalone_eval_scripts/``）。

@@ -38,34 +38,48 @@ PolaRiS 是基于 Isaac Sim 5.1.0 的桌面操作仿真平台，提供 TapeIntoC
 
    .. tab-item:: OpenPI π₀.₅（TapeIntoContainer）
 
+      **1. 安装**
+
       .. code-block:: bash
 
-         # 1. 安装
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env polaris && source .venv/bin/activate
 
-         # 2. 下载场景与模型
+      **2. 下载场景与模型**
+
+      .. code-block:: bash
+
          hf download owhan/PolaRiS-Hub --repo-type dataset --local-dir ./PolaRiS-Hub
          hf download RLinf/RLinf-Pi05-Polaris-droid_jointpos --local-dir ./RLinf-Pi05-Polaris-droid_jointpos
 
-         # 3. 启动评测
+      **3. 启动评测**
+
+      .. code-block:: bash
+
          export POLARIS_DATA_PATH="$(pwd)/PolaRiS-Hub"
          bash evaluations/run_eval.sh polaris polaris_tapeintocontainer_openpi_pi05_eval \
            rollout.model.model_path=./RLinf-Pi05-Polaris-droid_jointpos
 
    .. tab-item:: OpenPI π₀（MoveLatteCup）
 
+      **1. 安装**
+
       .. code-block:: bash
 
-         # 1. 安装
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env polaris && source .venv/bin/activate
 
-         # 2. 下载场景与模型
+      **2. 下载场景与模型**
+
+      .. code-block:: bash
+
          hf download owhan/PolaRiS-Hub --repo-type dataset --local-dir ./PolaRiS-Hub
          hf download RLinf/RLinf-Pi0-Polaris-droid_jointpos --local-dir ./RLinf-Pi0-Polaris-droid_jointpos
 
-         # 3. 启动评测
+      **3. 启动评测**
+
+      .. code-block:: bash
+
          export POLARIS_DATA_PATH="$(pwd)/PolaRiS-Hub"
          bash evaluations/run_eval.sh polaris polaris_movelattecup_openpi_eval \
            rollout.model.model_path=./RLinf-Pi0-Polaris-droid_jointpos

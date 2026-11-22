@@ -121,7 +121,7 @@ it with ``CUDA_VISIBLE_DEVICES=0`` to share GPU 0, using about 1 GB of GPU memor
 
       **3. Launch**
 
-      Fill in the same path fields in ``examples/agent/searchr1/config/train_glm4.7_flash_2node_server.yaml`` (the search tool worker runs on node 0, so ``tools.search.server_addr`` only needs to be reachable from node 0), then launch from the head node:
+      Fill in the same path fields in ``examples/agent/searchr1/config/train_glm4.7_flash_2node_server.yaml`` (this config sets ``cluster.num_nodes: 2`` for 2 nodes of 8×A100-80G; use the Single-Node tab above for a 1-node machine; the search tool worker runs on node 0, so ``tools.search.server_addr`` only needs to be reachable from node 0), then launch from the head node:
 
       .. code-block:: bash
 

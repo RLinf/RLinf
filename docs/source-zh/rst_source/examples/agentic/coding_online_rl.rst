@@ -26,10 +26,10 @@
 
       Continue 接受 / 拒绝事件或 LLM-as-judge 标签
 
-   .. grid-item-card:: 服务
+   .. grid-item-card:: 硬件
       :text-align: center
 
-      ``8081`` 推理服务与 ``8082`` 反馈接收服务
+      单机 8 卡用于在线 PPO（分离式 ``0-3`` / ``4-5`` / ``6-7``）；单机 1–8 卡用于离线 GRPO（共置）
 
 .. list-table::
    :header-rows: 1
@@ -51,7 +51,7 @@
      - RLinf 训练服务
      - 根据反馈更新 policy
 
-本示例同时包含在线强化学习（接入 Continue）和离线验证两条路径。离线验证路径用大模型模拟人类偏好打分，无需安装 Continue。
+本示例包含在线强化学习（接入 Continue，端口 ``8081`` 提供推理、端口 ``8082`` 接收反馈）和离线验证两条路径，离线验证用大模型模拟人类偏好打分，无需安装 Continue。在线 PPO 配置（``qwen2.5-1.5b-ppo.yaml``）要求单机 8 卡分离式部署（``rollout: 0-3``、``inference: 4-5``、``actor: 6-7``、``reward: 0-3``）；离线 GRPO 配置（``qwen2.5-1.5b-grpo-llm_judge.yaml``）将所有组件共置在单机 1–8 卡（``actor,rollout,reward: all``）。
 
 一键上手
 ----------------------------------------

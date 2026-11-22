@@ -1,7 +1,7 @@
 安装与环境
 ==========
 
-使用 ``requirements/install.sh`` 在本地 ``uv`` 虚拟环境中一键安装 RLinf，或直接拉取 Docker Hub 预构建镜像。各教程页面都附带对应命令，本页作为全局安装参数与硬件环境参考。
+使用 ``requirements/install.sh`` 在本地 ``uv`` 虚拟环境中一键安装 RLinf，或直接拉取 Docker Hub 预构建镜像。每个虚拟环境对应一套 ``--model`` + ``--env``\ （或 ``agentic --engine``）组合；需要共存多套组合时传入 ``--venv <dir>``，避免覆盖默认的 ``.venv``。各教程页面都附带对应命令，本页作为全局安装参数与硬件环境参考。
 
 安装与验证
 ----------
@@ -13,13 +13,20 @@
    .. tab-item:: 具身仿真（Embodied）
       :sync: embodied
 
-      按下方表格将 ``--model`` 与 ``--env`` 替换为目标模型和仿真器（轻量 MLP / CNN 策略可省略 ``--model``）：
+      按下方表格将 ``--model`` 与 ``--env`` 替换为目标模型和仿真器（轻量 MLP / CNN policy 可省略 ``--model``）：
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
-         python -c "import rlinf; print(rlinf.__file__)" && ray --version
+         python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
+
+      预期输出：
+
+      .. code-block:: text
+
+         /path/to/RLinf/rlinf/__init__.py CUDA: True
+         ray, version 2.x.x
 
    .. tab-item:: 真机机器人（Real-World）
       :sync: realworld
@@ -43,10 +50,26 @@
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
-         python -c "import rlinf; print(rlinf.__file__)" && ray --version
+         python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
+
+      预期输出：
+
+      .. code-block:: text
+
+         /path/to/RLinf/rlinf/__init__.py CUDA: True
+         ray, version 2.x.x
 
    .. tab-item:: 预构建 Docker 镜像
       :sync: docker
+
+      从 Docker Hub 选取匹配模型与仿真器的镜像标签后，启用 GPU 与 EGL 图形能力启动容器：
+
+      .. code-block:: bash
+
+         docker run -it --rm --gpus all --shm-size=16g --network=host \
+           -e NVIDIA_DRIVER_CAPABILITIES=all \
+           -v "$(pwd)":/workspace/RLinf \
+           rlinf/rlinf:<tag> bash
 
       .. grid:: 1 1 1 1
          :gutter: 2
@@ -66,7 +89,7 @@
 
 .. tip::
 
-   **国内镜像加速与多环境隔离：** 在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。切换不同模型或环境组合时，使用 ``--venv <dir>`` 指定独立虚拟环境，避免覆盖默认的 ``.venv``。
+   **国内镜像加速：** 在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
 支持的模型、环境与硬件平台
 --------------------------
@@ -79,15 +102,15 @@
 
    * - 参数
      - 支持的值
-   * - ``--model``\ （VLA）
+   * - ``--model``\ （:doc:`VLA <../examples/vla_wam_index>`）
      - ``openvla``、``openvla-oft``、``openpi``、``psi0``、``pi0_fast``、``gr00t``、``gr00t_n1d6``、``gr00t_n1d7``、``dexbotic``、``starvla``、``lingbotvla``、``lingbotvlav2``、``abot_m0``、``molmoact2``、``evo1``
-   * - ``--model``\ （WAM / VLM / 生成）
+   * - ``--model``\ （:doc:`WAM / VLM / 生成 <../examples/vla_wam_index>`）
      - ``dreamzero``、``fastwam``、``cosmos3``、``qwen3_vl``、``diffusion``、``sglang``
-   * - ``--env``\ （仿真器）
+   * - ``--env``\ （:doc:`仿真器 <../examples/simulators_index>`）
      - ``maniskill_libero``、``libero``、``liberopro``、``liberoplus``、``behavior``、``metaworld``、``calvin``、``isaaclab``、``robocasa``、``robocasa365``、``frankasim``、``robotwin``、``robodojo``、``roboverse``、``habitat``、``genesis``、``geniesim``、``embodichain``、``d4rl``、``mujoco_warp``、``polaris``、``simple``、``robolab``
-   * - ``--env``\ （世界模型）
+   * - ``--env``\ （:doc:`世界模型 <../examples/world_model_index>`）
      - ``opensora``、``wan``
-   * - ``--env``\ （真机）
+   * - ``--env``\ （:doc:`真机 <../examples/real_world_index>`）
      - ``franka``、``franka-ros``、``xsquare_turtle2``、``dosw1``、``gim_arm``、``so101``、``lekiwi``、``piper``、``arx5``、``yam``、``dummy``\ （Robbyant R2 使用 RFrame 与 ROS 2，见 :doc:`../examples/embodied/r2`）
    * - ``--engine``
      - ``sglang``\ （``agentic`` 默认）、``vllm``\ （``agentic``）、``phyai``\ （``embodied`` 搭配 ``--model openpi --env libero``）

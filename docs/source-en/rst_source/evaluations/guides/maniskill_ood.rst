@@ -38,18 +38,25 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: Single-Scene Eval
 
+      **1. Install**
+
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-         # 2. Download assets and checkpoints
+      **2. Download**
+
+      .. code-block:: bash
+
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
          hf download RLinf/Openvla-oft-SFT-libero10-trajall --local-dir ./Openvla-oft-SFT-libero10-trajall
          hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
-         # 3. Evaluate (in-distribution default; override id/obj_set for any OOD scene)
+      **3. Evaluate (in-distribution default)**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh maniskill maniskill_ood_openvlaoft_eval \
            rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall \
            rollout.model.lora_path=./RLinf-OpenVLAOFT-ManiSkill-Base-Lora

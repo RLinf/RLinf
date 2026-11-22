@@ -1,9 +1,22 @@
 Add a Megatron Model
 ====================
 
+Add a HuggingFace model to RLinf with the Megatron+SGLang backend. This guide walks through the manual Megatron integration path end to end.
 
-Add a new HuggingFace model to RLinf with the Megatron+SGLang backend. This
-guide walks through the manual Megatron integration path end to end.
+.. list-table:: At a Glance
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Item
+     - Details
+   * - Extension point
+     - Manual Megatron model provider, checkpoint convertor, and weight resharding to ``SGLangWorker``
+   * - Core hooks
+     - ``model_provider_func``, ``convert_hf_to_mg``, ``get_tp_gather_fn``, ``get_mg2hf_convertor``
+   * - Config selector
+     - ``actor.training_backend: megatron``, ``rollout.model.model_type``
+   * - Files touched
+     - ``rlinf/hybrid_engines/megatron/megatron_model_manager.py``, ``rlinf/utils/ckpt_convertor/megatron_convertor/``, ``rlinf/utils/resharding/utils.py``, ``rlinf/utils/convertor/utils.py``
 
 .. tip::
 
@@ -173,26 +186,26 @@ See the official guide:
 4. Weight Sync from Megatron to SGLang
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-In RLinf, before each training run starts, the MegatronActor converts its current weights and syncs them to each SGLangActor.
+In RLinf, before each training run starts, the MegatronActor converts its current weights and syncs them to each SGLangWorker.
 
-This process involves converting the weight format from that of MegatronActor to SGLangActor.
+This process involves converting the weight format from that of MegatronActor to SGLangWorker.
 
 The weight conversion has two stages:
 
-1. The MegatronActor converts its weights to SGLang format and sends them to each SGLangActor.
+1. The MegatronActor converts its weights to SGLang format and sends them to each SGLangWorker.
 
-2. Each SGLangActor loads the received weights and updates its own current weights.
+2. Each SGLangWorker loads the received weights and updates its own current weights.
 
 **File:** ``rlinf/utils/resharding/mcore_weight_reshard.py``  
 
 Before each rollout, the **MegatronActor** uses ``gather_and_reshard_model`` to convert the weight format. 
 
-In collocated mode, each MegatronActor sends weights to a corresponding SGLangActor in a one-to-one manner.
+In collocated mode, each MegatronActor sends weights to a corresponding SGLangWorker in a one-to-one manner.
 
 First, the weights are re-sharded according to the MegatronActor's parallel configuration, then the sharded weights are renamed.
-Finally, they are converted to SGLangActor's weight format. 
+Finally, they are converted to SGLangWorker's weight format. 
 
-The converted weights are sent to the corresponding SGLangActor through the send interface.
+The converted weights are sent to the corresponding SGLangWorker through the send interface.
 
 .. code-block:: python
 
@@ -267,12 +280,12 @@ The converted weights are sent to the corresponding SGLangActor through the send
                 model_state_dict, self.merge_factor, tp_sub_group
             )
         
-        # Rename sharded weights and finally convert to SGLangActor's weight format
+        # Rename sharded weights and finally convert to SGLangWorker's weight format
         if self.config.convert_fn is not None:
             model_state_dict = self.config.convert_fn(model_state_dict)
         ...
 
-To support more models, you need to add new ``tp_reshard_fn`` and ``pp_reshard_fn`` methods to handle the corresponding weight splitting and conversion for the new models, and add new ``convert_fn`` conversion rules to rename the sharded weights.
+To support a new model architecture manually, register its TP gather helper (``tp_gather_fn``, and ``tpe_gather_fn`` for MoE models) in ``rlinf/utils/resharding/utils.py`` and its Megatron-to-HuggingFace naming rules (``convert_fn``) in ``rlinf/utils/convertor/utils.py``.
 
 Take qwen2.5 as an example:
 
@@ -417,9 +430,9 @@ The code for MegatronActor to shard weights is in the ``rlinf/utils/convertor/ut
 
 This manual convertor path covers legacy models such as Qwen2.5; newer architectures (Qwen3, Qwen3-MoE, Qwen2.5-VL, Qwen3-VL, DeepSeek-V3/Moonlight-16B, and GLM-4.7-Flash) use :doc:`mbridge`.
 
-After completing the above steps, MegatronActor will send the weights to SGLangActor, which will update its current weights. 
+After completing the above steps, MegatronActor will send the weights to SGLangWorker, which will update its current weights. 
 
-The code for SGLangActor to receive weights is in the ``rlinf/hybrid_engines/sglang/common/sgl_scheduler.py`` file.
+The code for SGLangWorker to receive weights is in the ``rlinf/hybrid_engines/sglang/common/sgl_scheduler.py`` file.
 
 .. code-block:: python
 
@@ -458,7 +471,7 @@ The code for SGLangActor to receive weights is in the ``rlinf/hybrid_engines/sgl
         self.flush_cache()
         return SyncHFWeightOutput()
 
-Special handling of the weights received by the SGLangActor requires modifications here.
+Special handling of the weights received by the SGLangWorker requires modifications here.
 
 If you have any questions throughout the process of adapting new models, feel free to submit an issue to our RLinf `RLinf <https://github.com/RLinf/RLinf/issues>`__ repository.
 
@@ -534,3 +547,21 @@ Set Megatron parameters used by RLinf.
          process_num: 16 # number of processes to use for checkpointing
          tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
          pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
+
+Verification
+------------
+
+Before running on GPUs, verify locally on CPU that your model type resolves both a Megatron-to-HuggingFace weight convertor and a TP gather function:
+
+.. code-block:: bash
+
+   python -c '
+   from rlinf.utils.convertor.utils import get_mg2hf_convertor
+   from rlinf.utils.resharding.utils import get_tp_gather_fn
+
+   gather_fn = get_tp_gather_fn("qwen2.5")
+   assert callable(gather_fn), "Expected callable TP gather function"
+   print("Resolved gather_fn:", gather_fn.__name__)
+   '
+
+Replace ``"qwen2.5"`` with your new ``rollout.model.model_type`` to confirm the registry lookup succeeds before launching distributed training.

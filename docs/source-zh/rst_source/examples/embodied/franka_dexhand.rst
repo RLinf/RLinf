@@ -131,7 +131,7 @@ Franka 灵巧手
 
       将奖励原始数据复制到训练节点（或提前写入共享存储），按 :doc:`franka_reward_model` 使用 ``examples/reward/preprocess_reward_dataset.py`` 预处理并用 ``examples/reward/run_reward_training.sh`` 训练奖励模型。
 
-      按 :doc:`franka` 启动双机 Ray 集群（训练节点为 head，Franka 控制节点为 worker），然后在训练节点启动异步 RLPD：
+      ``realworld_dexpnp_rlpd_cnn_async.yaml`` 默认使用 **2 节点**\ （``cluster.num_nodes: 2``：GPU 训练节点为 head，Franka 控制节点为 worker）。按 :doc:`franka` 启动 2 节点 Ray 集群后，在训练节点启动异步 RLPD：
 
       .. code-block:: bash
 

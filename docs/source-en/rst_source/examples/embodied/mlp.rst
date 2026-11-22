@@ -103,7 +103,7 @@ No pretrained checkpoint is needed; the MLP policy trains from scratch.
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
 
       **2. Launch**
 
@@ -144,7 +144,7 @@ No pretrained checkpoint is needed; the MLP policy trains from scratch.
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla --env frankasim && source .venv/bin/activate
+         bash requirements/install.sh embodied --env frankasim && source .venv/bin/activate
 
       **2. Launch**
 

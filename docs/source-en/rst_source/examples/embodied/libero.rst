@@ -113,8 +113,6 @@ Observation and Action
      - ``In: What action should the robot take to [task_description]? Out:``
 
 .. _libero-benchmark:
-.. _liberopro-plus-benchmark:
-.. _libero-mem-benchmark:
 
 Setup and Run
 -------------
@@ -160,22 +158,17 @@ Setup and Run
          * - LIBERO-130
            - ``libero_130_grpo_openvlaoft.yaml``
 
-      Set ``actor.model.model_path`` in the chosen YAML (rollout inherits it automatically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-
-      Launch training with ``run_embodiment.sh``:
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` on the command line (rollout inherits it automatically):
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
    .. tab-item:: LIBERO-Pro
       :sync: libero-pro
+
+      .. _liberopro-plus-benchmark:
 
       LIBERO-Pro shares the robosuite/MuJoCo setup and 7-DoF action space of standard LIBERO while applying four orthogonal anti-memorization perturbations:
 
@@ -211,20 +204,13 @@ Setup and Run
 
       **3. Launch**
 
-      LIBERO-Pro reuses the standard LIBERO configs and selects the suite via ``LIBERO_TYPE=pro``. Set ``actor.model.model_path`` in ``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml`` (rollout inherits it automatically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-
-      Launch training with ``run_embodiment.sh`` (for standalone evaluation such as ``libero_10_openvlaoft_eval``, see :doc:`LIBERO evaluation guide <../../evaluations/guides/libero>`):
+      LIBERO-Pro reuses the standard LIBERO configs and selects the suite via ``LIBERO_TYPE=pro``. Launch training with ``run_embodiment.sh`` (for standalone evaluation such as ``libero_10_openvlaoft_eval``, see :doc:`LIBERO evaluation guide <../../evaluations/guides/libero>`):
 
       .. code-block:: bash
 
          export LIBERO_TYPE=pro
-         bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
    .. tab-item:: LIBERO-Plus
       :sync: libero-plus
@@ -272,23 +258,18 @@ Setup and Run
 
       **3. Launch**
 
-      LIBERO-Plus reuses the standard LIBERO configs and selects the suite via ``LIBERO_TYPE=plus``. Set ``actor.model.model_path`` in ``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml`` (rollout inherits it automatically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-
-      Launch training with ``run_embodiment.sh`` (for standalone evaluation such as ``libero_10_openvlaoft_eval``, see :doc:`LIBERO evaluation guide <../../evaluations/guides/libero>`):
+      LIBERO-Plus reuses the standard LIBERO configs and selects the suite via ``LIBERO_TYPE=plus``. Launch training with ``run_embodiment.sh`` (for standalone evaluation such as ``libero_10_openvlaoft_eval``, see :doc:`LIBERO evaluation guide <../../evaluations/guides/libero>`):
 
       .. code-block:: bash
 
          export LIBERO_TYPE=plus
-         bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
    .. tab-item:: LIBERO-Mem
       :sync: libero-mem
+
+      .. _libero-mem-benchmark:
 
       Use LIBERO-Mem to evaluate 10 ordered-subgoal tasks that require remembering previous interactions. It reuses RLinf's ``libero`` environment, camera observations, and 7-dimensional action space, with a 700-control-step episode limit for OpenPI. LIBERO-Mem reads task instructions from BDDL and vertically flips both cameras to match its demonstrations, while standard LIBERO keeps its existing camera convention.
 
@@ -367,6 +348,8 @@ Setup and Run
               - Seconds relative to the current frame, whose offset is zero. Padding also uses zero and is excluded by the mask.
 
          **Interpreting success:** completing the ordered sequence and retaining the final goal are both required. ``strict_success`` reports that condition at the current step (including the fork's overshoot check), and per-task evaluation statistics use ``strict_success`` at episode completion (``success_at_end`` records the same condition). ``success_once`` stays latched after any successful step even if the final condition is later lost. For diagnostics, inspect ``subgoals_completed``, ``subgoals_total``, ``subgoal_progress`` (completed / total), and ``overshot`` in episode info; progress advances once per control step and resets on episode reset (reset settling steps do not count).
+
+**Other Supported Models on LIBERO:** :doc:`OpenPI π₀ / π₀.₅ <pi0>` · :doc:`GR00T <gr00t>` · :doc:`Dexbotic <dexbotic>` · :doc:`ABot-M0 <abot_m0>` · :doc:`StarVLA <starvla>`
 
 .. admonition:: Configure further
    :class: note

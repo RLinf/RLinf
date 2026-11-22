@@ -386,7 +386,7 @@ Set the Stage 1 checkpoint path, robot IP, and target pose in ``examples/embodim
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
 
-Update ``cluster.node_groups`` with your GPU and Franka node ranks and ``robot_ip``, then launch the async run from the master node:
+``realworld_rlt_stage2_ac_mlp.yaml`` defaults to **2 nodes** (``cluster.num_nodes: 2``: GPU training node + Franka controller node). Update ``cluster.node_groups`` with your GPU and Franka node ranks and ``robot_ip``, then launch the async run from the head node:
 
 .. code-block:: bash
 

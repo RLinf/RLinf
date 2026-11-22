@@ -3,6 +3,34 @@ Qwen3-VL GRPO 视觉推理
 
 在 RLinf 中使用强化学习（RL）训练视觉语言模型（VLM）完成几何推理。
 
+概述
+----
+
+使用本配方基于 FSDP2 与 SGLang，在 Geo3K 数据集上用带截断重要性采样（TIS）的 GRPO 训练 Qwen3-VL-2B-Instruct。
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 模型
+      :text-align: center
+
+      Qwen3-VL-2B-Instruct
+
+   .. grid-item-card:: 算法
+      :text-align: center
+
+      GRPO + TIS（FSDP2 + SGLang）
+
+   .. grid-item-card:: 数据
+      :text-align: center
+
+      Geo3K 几何推理数据集
+
+   .. grid-item-card:: 硬件
+      :text-align: center
+
+      单机 1–8 卡（共置 ``actor,rollout,reward: all``）
+
 一键上手
 ----------------------
 

@@ -124,7 +124,7 @@ env.eval 字段说明
 必须修改的字段
 --------------
 
-1. ``rollout.model.model_path``：指向本地模型目录或 Hugging Face 缓存路径。
+1. ``rollout.model.model_path``：本地模型目录或 Hugging Face ``owner/repo``\ （首次运行自动下载到 Hugging Face 缓存）。
 2. ``env.eval`` 资源配置：按硬件调整 ``total_num_envs``、``max_episode_steps`` 以及 benchmark 资产路径（例如 RoboTwin 的 ``assets_path``）。
 3. ``cluster.component_placement``：按可用 GPU 调整 ``env`` 与 ``rollout`` 的 placement。
 4. **真机评测：** 在 ``cluster.node_groups`` 中填写机械臂 IP 与节点拓扑（见 :doc:`../guides/realworld`）。
@@ -132,9 +132,18 @@ env.eval 字段说明
 从训练配置派生
 --------------
 
-复制 ``examples/embodiment/config/`` 或 ``tests/e2e_tests/embodied/`` 中对应的训练 YAML，删除 ``algorithm``、``actor`` 等训练段，保留 ``env.eval`` 与 ``rollout``，并将 ``runner.task_type`` 设为 ``embodied_eval``、``runner.only_eval`` 设为 ``True``。
+``examples/embodiment/config/`` 中的纯训练配置通常将模型预设绑定到 ``@actor.model``，而 ``rollout.model`` 缺少 ``model_type`` 和 ``num_action_chunks``，直接交给 ``run_eval.sh`` 会触发校验失败。将训练 YAML 复制到 ``evaluations/<benchmark>/``，删除 ``algorithm`` 与 ``actor``，把模型预设从 ``@actor.model`` 重绑定到 ``@rollout.model``，并开启评测模式：
+
+.. code-block:: yaml
+
+   defaults:
+     - env/behavior_r1pro@env.eval
+     - model/pi0_5@rollout.model        # 从 @actor.model 重绑定
+   runner:
+     task_type: embodied_eval
+     only_eval: True
 
 配置回退
 --------
 
-若 ``evaluations/<benchmark>/<config>.yaml`` 不存在，``run_eval.sh`` 会自动回退到 ``examples/embodiment/config/`` 下同名配置。详见 :doc:`cli`。
+若 ``evaluations/<benchmark>/<config>.yaml`` 不存在，``run_eval.sh`` 仅对 ``examples/embodiment/config/`` 中已定义 ``rollout.model``\ （含 ``model_type`` 与 ``num_action_chunks``）的评测就绪配置生效。详见 :doc:`cli`。

@@ -46,7 +46,7 @@ RLinf 支持三种执行模式，决定 Worker 如何在 GPU 之间放置以及�
      offload_weight: True
      offload_grad: True
 
-如果为 actor 启用了卸载，actor 会在运行前加载到显存中，运行结束后卸载到 CPU 内存。如果没有启用卸载，共享式的 Worker（假设运行在 GPU 上）会争夺显存，可能导致 OOM 错误。完整配置请参考 :doc:`../guides/basic_config`。
+如果为 actor 启用了卸载，actor 会在运行前加载到显存中，运行结束后卸载到 CPU 内存。如果没有启用卸载，共享式的 Worker（假设运行在 GPU 上）会争夺显存，可能导致 OOM 错误。完整配置请参考 :doc:`../reference/configuration`。
 
 **ComponentPlacement 编程**
 
@@ -103,7 +103,7 @@ Worker 被分配到不同的 GPU 上。GPU 集合通过全局 GPU 索引指定�
 .. note::
    ``pipeline_stage_num`` 配置应调整以实现所需的流水线效果。
 
-完整配置请参考 :doc:`../guides/basic_config`。
+完整配置请参考 :doc:`../reference/configuration`。
 
 **ComponentPlacement 编程**
 
@@ -149,7 +149,7 @@ RLinf 在共享式模式和分离式模式的基础上，进一步引入了混�
 .. note::
    ``pipeline_stage_num`` 配置应调整以实现所需的流水线效果。对于具身RL训练，建议在混合模式设置为 2，以实现 rollout 和 env 之间的流水线重叠。
 
-完整配置请参考 :doc:`../guides/basic_config`。
+完整配置请参考 :doc:`../reference/configuration`。
 
 **ComponentPlacement 编程**
 

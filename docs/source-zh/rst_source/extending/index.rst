@@ -56,32 +56,9 @@
      - 底层 Megatron 权重切分 / ``WeightSyncer``
      - :doc:`高级集成 <advanced-integrations/index>`
 
-.. _out-of-tree-extensions:
+.. tip::
 
-外部仓库扩展
-------------
-
-无需 fork 或修改 RLinf 源码，即可在自己的仓库里注册自定义模型、优势估计、策略损失、规则奖励或工具调用解析器。由于 Ray 会在独立 Python 进程中拉起各个 worker，仅在入口脚本里调用注册函数不会生效到 worker 进程。
-
-将注册调用放进外部包的 ``register()`` 函数，并在启动训练或 checkpoint 转换前导出 ``RLINF_EXT_MODULE``：
-
-.. code-block:: python
-
-   # my_pkg/rlinf_ext.py
-   from rlinf.models import register_model
-
-   def build_my_model(cfg, torch_dtype):
-       from my_pkg.policy import CustomPolicy
-       return CustomPolicy(cfg, torch_dtype)
-
-   def register():
-       register_model("my_custom_model", build_my_model, category="embodied")
-
-.. code-block:: bash
-
-   export RLINF_EXT_MODULE=my_pkg.rlinf_ext
-
-RLinf 会在每个 worker 进程及独立转换工具初始化时自动导入该模块并调用 ``register()``，完成与主进程一致的注册。
+   **无需 fork 主仓库：** 可以在自己的外部仓库里注册自定义模型、优势估计、策略损失、规则奖励或工具调用解析器——只需暴露 ``register()`` 函数并在启动前导出 ``RLINF_EXT_MODULE=<your_pkg.module>``\ （完整示例见 :doc:`FSDP 模型 <new_model_fsdp>` 中的 :ref:`out-of-tree-extensions` 与 :doc:`算法与规则奖励 <new_algorithm>`\ ）。
 
 1. 具身模型
 -----------
@@ -93,7 +70,7 @@ RLinf 会在每个 worker 进程及独立转换工具初始化时自动导入该
       :link: new_model_fsdp
       :link-type: doc
 
-      在 FSDP 后端注册 Hugging Face 模型或具身 VLA 策略。
+      在 FSDP 后端注册 Hugging Face 模型或具身 VLA policy。
 
    .. grid-item-card:: SFT 模型
       :link: new_model_sft

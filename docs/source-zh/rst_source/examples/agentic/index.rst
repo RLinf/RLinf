@@ -5,6 +5,8 @@
 
 运行智能体或推理示例前，先通过 ``bash requirements/install.sh agentic`` 安装环境（见 :doc:`安装指南 <../../start/installation>`\ ）；图像与视频生成示例使用 ``bash requirements/install.sh embodied --model diffusion``。
 
+如果只有单机或单卡，可以先从 :doc:`Qwen3-VL GRPO <qwen3_vl_geo3k>`\ （单机 FSDP2）、带单机快速启动覆盖参数的 :doc:`Qwen2.5 数学推理 GRPO <math_reasoning/reasoning>` 或 :doc:`SD3.5 Medium 图像生成 <../video_models>` 入手。
+
 按场景选择
 ----------
 
@@ -89,7 +91,7 @@
       :link: rstar2
       :link-type: doc
 
-      结合本地 Python 代码执行服务，训练模型进行多轮数学推理与自我反思。
+      结合本地 Python 代码执行服务，训练模型完成多轮数学推理与自我反思。
 
    .. grid-item-card:: AgentLightning
       :link: agentlightning_calc_x
@@ -106,7 +108,7 @@
 图像与视频生成
 --------------
 
-.. grid:: 1 2 3 3
+.. grid:: 1 2 2 4
    :gutter: 3
 
    .. grid-item-card:: 图像与视频生成总览
@@ -115,11 +117,17 @@
 
       SD3.5 Medium 与 Wan2.2 TI2V 5B 的公共扩散环境安装、OCR 提示数据集与权重下载。
 
-   .. grid-item-card:: Diffusion-NFT 与 DiffusionART
+   .. grid-item-card:: Diffusion-NFT
       :link: ../diffusion_nft
       :link-type: doc
 
-      面向 SD3 与 Wan2.2 的 OCR 奖励强化学习微调（另见 :doc:`DiffusionART <../diffusion_art>`\ ）。
+      使用正负速度候选与 OCR 奖励微调 SD3.5 Medium 和 Wan2.2。
+
+   .. grid-item-card:: DiffusionART
+      :link: ../diffusion_art
+      :link-type: doc
+
+      在 prompt 组内构造共享奖励引导，面向 SD3.5 Medium 图像 OCR 与 Wan2.2 视频 OCR 训练。
 
    .. grid-item-card:: ReFL
       :link: ../embodied/refl

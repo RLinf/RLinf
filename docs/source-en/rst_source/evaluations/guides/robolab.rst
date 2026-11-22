@@ -38,16 +38,23 @@ Requires Linux, Python 3.11, ``uv``, and an NVIDIA GPU with a working Vulkan dri
 
    .. tab-item:: Single Task (Default)
 
+      **1. Install**
+
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env robolab && source .venv/bin/activate
 
-         # 2. Download model
+      **2. Download Model**
+
+      .. code-block:: bash
+
          hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos --local-dir ./RLinf-Pi05-RoboLab-droid-jointpos
 
-         # 3. Evaluate default task (BowlStackingLeftOnRightTask, 10 episodes)
+      **3. Evaluate Default Task (BowlStackingLeftOnRightTask, 10 Episodes)**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \
            rollout.model.model_path=./RLinf-Pi05-RoboLab-droid-jointpos
 
@@ -55,16 +62,23 @@ Requires Linux, Python 3.11, ``uv``, and an NVIDIA GPU with a working Vulkan dri
 
       Run all 120 benchmark tasks sequentially on one GPU with ``total_num_envs=10`` and ``rollout_epoch=1`` (1,200 episodes total):
 
+      **1. Install**
+
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env robolab && source .venv/bin/activate
 
-         # 2. Download model
+      **2. Download Model**
+
+      .. code-block:: bash
+
          hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos --local-dir ./RLinf-Pi05-RoboLab-droid-jointpos
 
-         # 3. Export task table and evaluate all 120 tasks
+      **3. Export Task Table and Evaluate All 120 Tasks**
+
+      .. code-block:: bash
+
          python -m toolkits.standalone_eval_scripts.robolab.export_tasks
          while IFS=$'\t' read -r task max_steps rest; do
              bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \

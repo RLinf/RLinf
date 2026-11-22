@@ -5,6 +5,8 @@ Train reasoning LLMs, multi-turn tool-using agents, multi-agent systems, and dif
 
 Before starting an agentic or reasoning recipe, install the agentic stack with ``bash requirements/install.sh agentic`` (see :doc:`Installation <../../start/installation>`). Image and video generation recipes use ``bash requirements/install.sh embodied --model diffusion``.
 
+Starting on a single node or a single GPU? Begin with :doc:`Qwen3-VL GRPO <qwen3_vl_geo3k>` (single-node FSDP2), :doc:`Qwen2.5 Math GRPO <math_reasoning/reasoning>` using its single-node quick-start override, or :doc:`SD3.5 Medium <../video_models>` for image generation.
+
 Choose a Track
 --------------
 
@@ -106,7 +108,7 @@ Tool-Using & Multi-Agent RL
 Image & Video Generation
 ------------------------
 
-.. grid:: 1 2 3 3
+.. grid:: 1 2 2 4
    :gutter: 3
 
    .. grid-item-card:: Image & Video Generation Overview
@@ -115,11 +117,17 @@ Image & Video Generation
 
       Shared diffusion setup, OCR prompt dataset, and checkpoint downloads for SD3.5 Medium and Wan2.2 TI2V 5B.
 
-   .. grid-item-card:: Diffusion-NFT & DiffusionART
+   .. grid-item-card:: Diffusion-NFT
       :link: ../diffusion_nft
       :link-type: doc
 
-      RL fine-tuning of SD3 and Wan2.2 with OCR rewards (also see :doc:`DiffusionART <../diffusion_art>`).
+      RL fine-tuning of SD3.5 Medium and Wan2.2 with positive/negative velocity candidates and OCR rewards.
+
+   .. grid-item-card:: DiffusionART
+      :link: ../diffusion_art
+      :link-type: doc
+
+      Group reward guidance against frozen velocity targets for SD3.5 Medium image OCR and Wan2.2 video OCR.
 
    .. grid-item-card:: ReFL
       :link: ../embodied/refl

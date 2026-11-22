@@ -41,8 +41,29 @@ implementation with real tensor shapes or outputs.>
 2. Register and Select in Config
 --------------------------------
 
-<Show both in-tree registration and ``RLINF_EXT_MODULE`` out-of-tree usage, plus
-the minimal YAML snippet that selects the new component.>
+Choose whether to register inside RLinf or from an external repository:
+
+.. tab-set::
+
+   .. tab-item:: In-Tree (Inside RLinf)
+      :sync: ext-in-tree
+
+      <In-tree registration call>
+
+   .. tab-item:: Out-of-Tree (External Repo)
+      :sync: ext-out-of-tree
+
+      .. code-block:: python
+
+         # my_pkg/rlinf_ext.py
+         def register():
+             <registration call>
+
+      .. code-block:: bash
+
+         export RLINF_EXT_MODULE=my_pkg.rlinf_ext
+
+Select the registered name in your Hydra YAML:
 
 .. code-block:: yaml
 

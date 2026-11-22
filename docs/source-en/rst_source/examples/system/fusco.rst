@@ -30,7 +30,7 @@ Use this page to enable FUSCO acceleration for Megatron-backed MoE training in R
    .. grid-item-card:: Test
       :text-align: center
 
-      Reasoning e2e FUSCO smoke test
+      Reasoning e2e FUSCO verification
 
 Setup and Run
 -------------

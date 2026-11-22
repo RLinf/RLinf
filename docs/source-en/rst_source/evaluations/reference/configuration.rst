@@ -124,7 +124,7 @@ Fields under ``env.eval`` control parallelism, trajectory length, and test-set c
 Fields You Must Customize
 -------------------------
 
-1. ``rollout.model.model_path``: Local model directory or Hugging Face cache path.
+1. ``rollout.model.model_path``: Local model directory or Hugging Face ``owner/repo`` ID (downloaded into the Hugging Face cache automatically on first run).
 2. ``env.eval`` resource settings: ``total_num_envs``, ``max_episode_steps``, and benchmark asset paths (for example ``assets_path`` on RoboTwin).
 3. ``cluster.component_placement``: Match ``env`` and ``rollout`` placement to your GPUs.
 4. **Real-robot evaluation:** Set robot IPs and node topology in ``cluster.node_groups`` (see :doc:`../guides/realworld`).
@@ -132,9 +132,18 @@ Fields You Must Customize
 Deriving from a Training Config
 -------------------------------
 
-Copy the matching YAML from ``examples/embodiment/config/`` or ``tests/e2e_tests/embodied/``, remove training-only blocks (``algorithm``, ``actor``), keep ``env.eval`` and ``rollout``, and set ``runner.task_type: embodied_eval`` and ``runner.only_eval: True``.
+Training-only configs under ``examples/embodiment/config/`` bind the model preset to ``@actor.model`` and leave ``rollout.model`` without ``model_type`` or ``num_action_chunks``, so passing them directly to ``run_eval.sh`` fails eval validation. Copy the training YAML into ``evaluations/<benchmark>/``, remove ``algorithm`` and ``actor``, rebind the model default from ``@actor.model`` to ``@rollout.model``, and set eval mode:
+
+.. code-block:: yaml
+
+   defaults:
+     - env/behavior_r1pro@env.eval
+     - model/pi0_5@rollout.model        # rebind from @actor.model
+   runner:
+     task_type: embodied_eval
+     only_eval: True
 
 Config Fallback
 ---------------
 
-If ``evaluations/<benchmark>/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` with the same config name. See :doc:`cli`.
+If ``evaluations/<benchmark>/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` for eval-ready configs that define ``rollout.model`` (with ``model_type`` and ``num_action_chunks``). See :doc:`cli`.

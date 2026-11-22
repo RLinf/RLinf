@@ -3,6 +3,10 @@ BWM RL
 
 This recipe trains a single-view pi0.5 policy with PPO on RoboTwin ``adjust_bottle`` inside the Boundless World Model (BWM), an action-conditioned video world model built on Wan2.2-TI2V-5B. Training never touches the simulator; checkpoints are scored in RoboTwin afterwards.
 
+.. note::
+
+   **Experimental status:** Training with the ported in-tree BWM backend has not yet reproduced the PPO gain measured on the earlier prototype. Track reproduction progress in `#1713 <https://github.com/RLinf/RLinf/issues/1713>`_.
+
 Overview
 --------
 
@@ -141,7 +145,7 @@ Install the openpi model and the RoboTwin environment as in :doc:`RoboTwin <robo
 
       **2. Launch**
 
-      Score a trained checkpoint with the RoboTwin pi0.5 evaluation config using this recipe's policy settings and single head view:
+      Copy ``evaluations/robotwin/robotwin_adjust_bottle_openpi_pi05_eval.yaml`` with the BWM policy and single-view settings below, then run evaluation with the checkpoint and asset paths:
 
       .. code-block:: bash
 
@@ -149,14 +153,31 @@ Install the openpi model and the RoboTwin environment as in :doc:`RoboTwin <robo
          bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_pi05_eval \
            rollout.model.model_path=./WorldArena \
            runner.ckpt_path=./logs/checkpoints/global_step_14/actor/model_state_dict/full_weights.pt \
-           rollout.model.num_steps=4 rollout.model.openpi.task=rl rollout.model.openpi.noise_level=0.5 \
-           ++rollout.model.openpi.value_after_vlm=True \
-           ++rollout.model.openpi.value_head_hidden_sizes=[512,256,128] \
-           ++rollout.model.openpi_data.adapt_to_pi=false \
-           ++rollout.model.openpi_data.norm_stats_path=./WorldArena/assets/robotwin_clean \
-           env.eval.assets_path="${ROBOTWIN_PATH}" \
-           env.eval.task_config.camera.head_camera_type=Large_D435 \
-           env.eval.task_config.camera.collect_wrist_camera=false
+           env.eval.assets_path="${ROBOTWIN_PATH}"
+
+      .. dropdown:: Policy & single-view evaluation settings (optional)
+
+         Add these overrides to your eval YAML (or pass them on the CLI) so evaluation matches the BWM training setup:
+
+         .. code-block:: yaml
+
+            rollout:
+              model:
+                num_steps: 4
+                openpi:
+                  task: rl
+                  noise_level: 0.5
+                  value_after_vlm: True
+                  value_head_hidden_sizes: [512, 256, 128]
+                openpi_data:
+                  adapt_to_pi: false
+                  norm_stats_path: ./WorldArena/assets/robotwin_clean
+            env:
+              eval:
+                task_config:
+                  camera:
+                    head_camera_type: Large_D435
+                    collect_wrist_camera: false
 
 Visualization and Results
 -------------------------

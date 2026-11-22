@@ -123,19 +123,12 @@ CALVIN 强化学习
            - ``examples/embodiment/config/calvin_d_d_ppo_openpi.yaml``
            - ``calvin_d_d_ppo_openpi``
 
-      在 ``examples/embodiment/config/calvin_d_d_ppo_openpi.yaml`` 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）：
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-Pi0-CALVIN-ABC-D-SFT
-
-      使用 ``run_embodiment.sh`` 启动训练：
+      通过命令行覆盖 ``actor.model.model_path`` 启动训练（rollout 会自动沿用同一路径）：
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi
+         bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi \
+           actor.model.model_path=./RLinf-Pi0-CALVIN-ABC-D-SFT
 
    .. tab-item:: OpenPI π₀.₅
       :sync: pi05
@@ -176,19 +169,12 @@ CALVIN 强化学习
            - ``examples/embodiment/config/calvin_abcd_d_ppo_openpi_pi05.yaml``
            - ``calvin_abcd_d_ppo_openpi_pi05``
 
-      在所选 YAML 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）：
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-Pi05-CALVIN-ABC-D-SFT
-
-      使用 ``run_embodiment.sh`` 启动训练：
+      通过命令行覆盖 ``actor.model.model_path`` 启动训练（rollout 会自动沿用同一路径）：
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi_pi05
+         bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi_pi05 \
+           actor.model.model_path=./RLinf-Pi05-CALVIN-ABC-D-SFT
 
 独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>`，通过配置回退机制复用相同后缀，例如 ``calvin_d_d_ppo_openpi_pi05``。
 

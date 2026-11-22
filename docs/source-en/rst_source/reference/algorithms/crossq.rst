@@ -1,103 +1,94 @@
-Cross-Q
-==================================
+CrossQ
+======
 
 1. Introduction
------------------
+---------------
 
-CrossQ is a lightweight evolution of the :doc:`Soft Actor-Critic (SAC) <sac>` algorithm designed for greater sample efficiency. It introduces three distinct architectural updates upon the standard SAC framework:
+CrossQ builds on :doc:`Soft Actor-Critic (SAC) <sac>` for higher sample efficiency without target networks. It introduces three architectural changes:
 
-- Removal of Target Networks: Eliminates the lagging target Q-networks to accelerate value learning.
+- **Removal of Target Networks**: eliminates lagging target Q-networks to accelerate value propagation.
+- **Batch Renormalization (BRN)**: applies Batch Renormalization in the critic and actor, using a joint forward pass over current and next states to align batch statistics.
+- **Wider Critic Networks**: increases critic layer width (for example, to 2048 units) to boost representation capacity and optimization speed.
 
-- Batch Renormalization (BRN): Integrates Batch Renormalization into the critic and actor to stabilize training, using a joint forward pass of current and future states to correct distribution statistics.
-
-- Wider Critic Networks: Expands the width of critic network layers (e.g., to 2048 units) to enhance representation power and optimization speed.
-
-By removing target networks, Cross-Q avoids the artificial delay in value propagation, while the careful application of Batch Renormalization ensures training stability that was previously difficult to achieve in RL. This architecture allows CrossQ to match or surpass the sample efficiency of computationally expensive methods like REDQ and DroQ, all while maintaining a standard UTD ratio of 1 and a significantly lower computational footprint.
-
-For more details, see the original `CrossQ <https://arxiv.org/abs/1902.05605>`_ paper.
+For details, see the original `CrossQ paper <https://arxiv.org/abs/1902.05605>`__.
 
 2. Objective Function
-------------------------
+---------------------
 
-CrossQ shares the same maximum entropy RL objective as SAC. Let the policy be :math:`\pi`. Then the Q function for :math:`\pi` satisfies the same soft Bellman equation found in SAC:
-
-.. math::
-
-   Q^{\pi}(s, a) = \mathbb{E}_{s' \sim P, a \sim \pi} \left[ r(s, a) + \gamma (Q^{\pi}(s', a') - \alpha \log \pi(a'|s')) \right].
-
-Here :math:`\gamma` is the discount factor and :math:`\alpha` is the temperature parameter. CrossQ diverges from SAC in how it parameterizes and updates the Q-function to estimate this value. Specifically, it removes the target networks entirely.
-
-Therefore, the loss for the i-th Q-function :math:`Q_{\phi_{i}}` is defined using the current network parameters :math:`\phi_{i}` rather than a separate target network:
+CrossQ optimizes the same maximum-entropy objective as SAC. Let the policy be :math:`\pi`. Its soft Q-function satisfies the soft Bellman equation:
 
 .. math::
 
-   L(\phi_{i}, D) = \mathbb{E}{(s, a, r, s', d) \sim D} \left[ \frac{1}{2} \left( Q_{\phi_{i}}(s, a) - (r + \gamma (1 - d) \cdot \text{sg}(\min_{i} Q_{\phi_{i}}(s', a') - \alpha \log \pi_{\theta}(a'|s'))) \right)^2 \right],
+   Q^{\pi}(s, a) = \mathbb{E}_{s' \sim P,\, a' \sim \pi} \left[ r(s, a) + \gamma \left( Q^{\pi}(s', a') - \alpha \log \pi(a' \mid s') \right) \right].
 
-where :math:`D` is the replay buffer, :math:`\text{sg}(\cdot)` denotes the stop-gradient operator (preventing gradients from flowing back through the bootstrapping target), and :math:`a'` is sampled from the current policy :math:`\pi_{\theta}`.
-
-The actor loss remains identical to SAC. The actor :math:`\pi_{\theta}` is trained to maximize the expected Q value and entropy:
+Here :math:`\gamma` is the discount factor and :math:`\alpha` is the entropy temperature. Without target networks, the loss for the :math:`i`-th critic :math:`Q_{\phi_{i}}` uses the current parameters :math:`\phi_{i}` with a stop-gradient on the bootstrap target:
 
 .. math::
 
-   L(\theta, D) = \mathbb{E}{s \sim D, a \sim \pi{\theta}} \left[ \alpha \log \pi_{\theta}(a|s) - \min_{i} Q_{\phi_i}(s, a) \right].   
+   L(\phi_{i}, D) = \mathbb{E}_{(s, a, r, s', d) \sim D} \left[ \frac{1}{2} \left( Q_{\phi_{i}}(s, a) - \left(r + \gamma (1 - d) \cdot \operatorname{sg}\!\left(\min_{j} Q_{\phi_{j}}(s', a') - \alpha \log \pi_{\theta}(a' \mid s')\right)\right) \right)^2 \right],
 
-Similarly, the temperature coefficient :math:`\alpha` is learned via the same loss function:
+where :math:`D` is the replay buffer, :math:`\operatorname{sg}(\cdot)` is the stop-gradient operator, and :math:`a' \sim \pi_{\theta}(\cdot \mid s')`.
+
+The actor :math:`\pi_{\theta}` minimizes the same maximum-entropy policy loss as SAC:
 
 .. math::
 
-   L(\alpha, D) = - \alpha (H_{\text{targ}} - H(\pi(\cdot, d))).
+   L(\theta, D) = \mathbb{E}_{s \sim D,\, a \sim \pi_{\theta}} \left[ \alpha \log \pi_{\theta}(a \mid s) - \min_{i} Q_{\phi_i}(s, a) \right].
+
+The learnable temperature :math:`\alpha` is updated with:
+
+.. math::
+
+   L(\alpha, D) = \mathbb{E}_{s \sim D} \left[ -\alpha \left( H_{\mathrm{targ}} - H(\pi(\cdot \mid s)) \right) \right].
 
 3. Specific Designs
-----------------------
+-------------------
 
-CrossQ introduces three key design choices:
+- **Joint Forward Pass for BRN**: to resolve distribution mismatch between current state-action pairs :math:`(s, a)` and bootstrapped pairs :math:`(s', a')`, CrossQ concatenates both batches into a single critic forward pass:
 
-- Removal of Target Networks: Unlike SAC, which relies on slowly updating target networks :math:`\phi_{\text{targ}}` to stabilize learning, CrossQ uses the current network :math:`\phi` for calculating the TD target. Gradients are explicitly stopped on the target bootstrapping term to prevent divergence.
+  .. math::
 
-- Batch Renormalization (BRN): To stabilize training without target networks, CrossQ integrates Batch Renormalization into the critic and actor networks. To resolve the distribution mismatch between training samples :math:`(s, a)` and bootstrapping samples :math:`(s', a')`, CrossQ performs a joint forward pass by concatenating these batches:
+     \begin{bmatrix} q \\ q' \end{bmatrix} = Q_{\phi} \left( \begin{bmatrix} s \\ s' \end{bmatrix}, \begin{bmatrix} a \\ a' \end{bmatrix} \right),
 
-.. math::
-
-  \left[ \begin{matrix} q \\ q' \end{matrix} \right] = Q_{\phi} \left( \left[ \begin{matrix} s \\ s' \end{matrix} \right], \left[ \begin{matrix} a \\ a' \end{matrix} \right] \right),
- 
-This ensures the BN statistics are computed over a mixture of current and replay data.
-
-- Wider Critic Networks: CrossQ expands the width of the critic network layers (e.g., from 256 to 2048 hidden units). This increased width, combined with BRN, accelerates optimization and significantly improves sample efficiency compared to standard SAC architectures.
+  computing Batch Renormalization statistics over the mixture of current and next transitions.
+- **Stop-Gradient Bootstrap**: target values come directly from :math:`Q_{\phi}` with gradients detached instead of an EMA target copy.
+- **Wider Critic Layers**: expanding hidden widths (for example, from 256 to 2048) with BRN improves sample efficiency at a UTD ratio of 1.
 
 4. Configuration
---------------------
+----------------
 
-CrossQ shares a nearly identical configuration with SAC. A single parameter, `q_head_type`, can be used to toggle between the CrossQ and standard SAC architectures.
+CrossQ shares the SAC configuration and switches the critic head via ``q_head_type: "crossq"``. See the :doc:`MLP Policy recipe <../../examples/embodied/mlp>` and runnable config ``examples/embodiment/config/maniskill_crossq_mlp.yaml``:
 
 .. code-block:: yaml
 
    algorithm:
       update_epoch: 32
       group_size: 1
-      agg_q: min # ["min", "mean"]. Option to aggregate multiple Q-values.
-
-
+      agg_q: min                     # ["min", "mean"]
       adv_type: embodied_sac
       loss_type: embodied_sac
       loss_agg_func: "token-mean"
-      q_head_type: "crossq" # ["crossq", "default"]. Choose CrossQ or standard SAC Q-head.
-      
-      bootstrap_type: standard # [standard, always]. Bootstrap Q-values according to terminations and truncations. "standard" only bootstraps when truncations, while "always" bootstraps when truncations or terminations.
-      gamma: 0.8 # Discount factor.
-      tau: 0.01  # Soft update coefficient for target networks
-      target_update_freq: 1  # Frequency of target network updates
+      q_head_type: "crossq"          # ["crossq", "default"]
+      critic_actor_ratio: 2
+      bootstrap_type: always         # ["standard", "always"]
+      gamma: 0.8
+      tau: 0.01
+      target_update_freq: 1
       entropy_tuning:
-         alpha_type: softplus  # ["softplus","exp","fixed_alpha"]
-         initial_alpha: 0.01  # Initial temperature value
-         target_entropy: -4  # Target entropy (-action_dim)
+         alpha_type: softplus        # ["softplus", "exp", "fixed_alpha"]
+         initial_alpha: 0.01
+         target_entropy: -4          # -action_dim
          optim:
-            lr: 3.0e-4  # Learning rate for temperature parameter
+            lr: 3.0e-4
             lr_scheduler: torch_constant
             clip_grad: 10.0
-      
-      # Replay buffer settings
       replay_buffer:
-         enable_cache: True # Enable memory cache to reduce I/O overhead
-         cache_size: 6000  # number of trajectories cached in memory
-         sample_window_size: 6000  # number of latest trajectories to sample from for replay buffer
-         min_buffer_size: 2  # Minimum buffer size before training starts (in number of trajectories)
+         enable_cache: True
+         cache_size: 10000
+         sample_window_size: 10000
+         min_buffer_size: 0
+
+   actor:
+      model:
+         add_q_head: True
+         q_head_type: "crossq"

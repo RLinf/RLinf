@@ -130,19 +130,12 @@ ManiSkill 强化学习
          * - GRPO
            - ``maniskill_grpo_openvla.yaml``
 
-      在所选 YAML 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）：
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./openvla-7b-rlvla-warmup
-
-      使用 ``run_embodiment.sh`` 启动训练：
+      通过命令行覆盖 ``actor.model.model_path`` 启动训练（rollout 会自动沿用同一路径）：
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla \
+           actor.model.model_path=./openvla-7b-rlvla-warmup
 
       .. dropdown:: 进阶配置（可选）
 
@@ -201,20 +194,13 @@ ManiSkill 强化学习
          * - GRPO
            - ``maniskill_grpo_openvlaoft.yaml``
 
-      在所选 YAML 中设置 ``actor.model.model_path`` 与 ``actor.model.lora_path``\ （rollout 会自动沿用 ``model_path``）：
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-OpenVLAOFT-ManiSkill-Base-Main
-             lora_path: ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
-
-      使用 ``run_embodiment.sh`` 启动训练：
+      通过命令行覆盖 ``actor.model.model_path`` 与 ``actor.model.lora_path`` 启动训练（rollout 会自动沿用 ``model_path``）：
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-ManiSkill-Base-Main \
+           actor.model.lora_path=./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
       .. dropdown:: 进阶配置（可选）
 

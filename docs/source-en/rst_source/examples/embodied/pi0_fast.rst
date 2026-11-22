@@ -9,22 +9,71 @@ with teacher forcing during the actor update.
 Overview
 --------
 
+Evaluate and GRPO-fine-tune LeRobot π₀-FAST on LIBERO-10 (Long).
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Environments
+      :text-align: center
+
+      LIBERO-10 (Long)
+
+   .. grid-item-card:: Algorithms
+      :text-align: center
+
+      GRPO (token-level clipping)
+
+   .. grid-item-card:: Tasks
+      :text-align: center
+
+      10 long-horizon LIBERO tasks
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      2 nodes · 16 GPUs (or 1 node override)
+
+| **You'll do:** install the validated π₀-FAST runtime → download the three pinned checkpoints → launch ``run_embodiment.sh`` (or ``run_eval.sh``) → watch ``eval/success_once``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Hugging Face access to ``google/paligemma-3b-pt-224``.
+
+Tasks
+~~~~~
+
 .. list-table::
    :header-rows: 1
-   :widths: 24 38
+   :widths: 20 22 34 24
 
-   * - Item
-     - Configuration
    * - Environment
+     - Task / Suite
+     - Config / Weights
+     - Focus
+   * - LIBERO
      - LIBERO-10 (Long)
-   * - Base policy
-     - ``lerobot/pi0fast-libero``
-   * - Algorithm
-     - GRPO with token-level PPO clipping
-   * - Trainable parameters
-     - All-linear LoRA, rank 16
-   * - Validated runtime
-     - Python 3.12.12, PyTorch 2.11.0 + CUDA 12.8, Transformers 5.5.4
+     - ``libero_10_grpo_pi0_fast``, ``lerobot/pi0fast-libero``
+     - Token-level GRPO with all-linear LoRA (rank 16) on Python 3.12.12 / PyTorch 2.11.0 + CUDA 12.8.
+   * - LIBERO
+     - LIBERO-10 (Long)
+     - ``libero_10_pi0_fast_eval``
+     - Deterministic greedy evaluation across 500 fixed episodes.
+
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 76
+
+   * - Field
+     - Description
+   * - Observation
+     - Third-person (agentview) and wrist RGB images plus 8-dim robot proprioception.
+   * - Action
+     - 10-step continuous action chunk (7-DoF per step) decoded from native autoregressive FAST action tokens.
+   * - Reward
+     - Sparse LIBERO task success reward (0/1).
+   * - Prompt
+     - Natural-language LIBERO task instruction.
 
 Setup and Run
 -------------
@@ -76,11 +125,15 @@ Setup and Run
 
       **3. Launch**
 
-      Launch the two-node, 16-GPU GRPO fine-tuning reference configuration (1,024 trajectories per update across 256 parallel envs × 4 rollout epochs, group size 8, micro batch size 16, temperature 0.3, all-linear LoRA, and optional FP32-master AdamW supporting FSDP1 ``NO_SHARD``):
+      ``libero_10_grpo_pi0_fast.yaml`` defaults to **2 nodes** (``cluster.num_nodes: 2``, 16 GPUs total; 1,024 trajectories per update across 256 parallel envs × 4 rollout epochs, group size 8, micro batch size 16, temperature 0.3, all-linear LoRA, and optional FP32-master AdamW supporting FSDP1 ``NO_SHARD``):
 
       .. code-block:: bash
 
+         # 2-node (16-GPU) reference run:
          bash examples/embodiment/run_embodiment.sh libero_10_grpo_pi0_fast
+
+         # Single-node quick start (override cluster.num_nodes=1):
+         bash examples/embodiment/run_embodiment.sh libero_10_grpo_pi0_fast cluster.num_nodes=1
 
    .. tab-item:: Baseline Evaluation
       :sync: eval

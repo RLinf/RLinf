@@ -10,7 +10,7 @@ Activate your virtual environment from the repository root, then launch evaluati
 Explicit Benchmark
 ------------------
 
-Pass the benchmark folder name under ``evaluations/`` followed by the YAML config name (without ``.yaml``). This form works both for configs inside ``evaluations/<benchmark>/`` and for training configs in ``examples/embodiment/config/`` via config fallback:
+Pass the benchmark folder name under ``evaluations/`` followed by the YAML config name (without ``.yaml``). This form loads configs from ``evaluations/<benchmark>/``, or falls back to eval-ready configs in ``examples/embodiment/config/`` that define ``rollout.model``:
 
 .. code-block:: bash
 
@@ -104,7 +104,7 @@ Supported Benchmark Prefixes
 Config Fallback
 ---------------
 
-If ``evaluations/<benchmark>/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to ``examples/embodiment/config/<config>.yaml``. Both ``<benchmark> <config_name> [hydra_overrides...]`` (when ``evaluations/<benchmark>/`` exists) and ``<config_name> [hydra_overrides...]`` (with a recognized prefix) support this fallback.
+If ``evaluations/<benchmark>/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to ``examples/embodiment/config/<config>.yaml``. Fallback only works for eval-ready configs that define ``rollout.model`` (with ``model_type`` and ``num_action_chunks``); training-only configs that define only ``actor.model`` fail validation and must be adapted per :doc:`configuration`. Both ``<benchmark> <config_name> [hydra_overrides...]`` (when ``evaluations/<benchmark>/`` exists) and ``<config_name> [hydra_overrides...]`` (with a recognized prefix) support this fallback.
 
 Full launch examples per benchmark:
 

@@ -40,17 +40,24 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: LIBERO
 
+      **1. Install**
+
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env libero --model dreamzero && source .venv/bin/activate
          pip install -e "./sglang/python[diffusion]"
 
-         # 2. Download LIBERO SFT Diffusers checkpoint
+      **2. Download LIBERO SFT Diffusers Checkpoint**
+
+      .. code-block:: bash
+
          hf download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers --local-dir ./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
-         # 3. Evaluate LIBERO-Spatial
+      **3. Evaluate LIBERO-Spatial**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
            rollout.model.model_path=./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 

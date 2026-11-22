@@ -8,33 +8,10 @@
    <div class="rlinf-hero">
      <img class="rlinf-hero-logo" src="_static/svg/logo_white.svg" alt="RLinf logo" />
      <h1 class="rlinf-hero-title">欢迎使用 RLinf</h1>
-     <p class="rlinf-hero-subtitle">面向基础模型与具身智能体的可扩展强化学习后训练框架</p>
+     <p class="rlinf-hero-subtitle">面向具身 policy 与基础模型的强化学习后训练框架</p>
    </div>
 
-RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础设施。
-
-.. grid:: 2 4 4 4
-   :gutter: 2
-
-   .. grid-item-card:: 快速开始
-      :link: rst_source/start/index
-      :link-type: doc
-      :text-align: center
-
-   .. grid-item-card:: 安装
-      :link: rst_source/start/installation
-      :link-type: doc
-      :text-align: center
-
-   .. grid-item-card:: 具身训练
-      :link: rst_source/examples/index
-      :link-type: doc
-      :text-align: center
-
-   .. grid-item-card:: 评测
-      :link: rst_source/evaluations/index
-      :link-type: doc
-      :text-align: center
+在一张 GPU 或多机集群上完成 VLA policy、真机机器人与推理智能体的训练、微调和评测。
 
 四步上手
 --------
@@ -96,7 +73,7 @@ RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础
    * - 优势
      - 你将获得
    * - 快
-     - 结合细粒度流水线的混合式执行架构，吞吐率比同类框架高 120% 以上，并支持自动在线扩缩。
+     - 结合细粒度流水线的混合式执行架构，吞吐率比同类框架\ :doc:`高 120% 以上 <rst_source/resources/why_rlinf>`\ ，并支持自动在线扩缩。
    * - 灵活
      - 在 FSDP + Hugging Face（快速原型）与 Megatron + SGLang（大规模训练）之间切换，无需修改代码。
    * - 可靠

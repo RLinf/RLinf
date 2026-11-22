@@ -39,7 +39,29 @@
 2. 注册并在配置中启用
 ---------------------
 
-<说明仓库内注册与通过 ``RLINF_EXT_MODULE`` 外部注册的方式，并给出最小 YAML 片段。>
+按代码存放位置选择主仓库内注册或外部仓库注册：
+
+.. tab-set::
+
+   .. tab-item:: 主仓库内注册（In-Tree）
+      :sync: ext-in-tree
+
+      <主仓库内注册代码>
+
+   .. tab-item:: 外部仓库注册（Out-of-Tree）
+      :sync: ext-out-of-tree
+
+      .. code-block:: python
+
+         # my_pkg/rlinf_ext.py
+         def register():
+             <外部仓库注册代码>
+
+      .. code-block:: bash
+
+         export RLINF_EXT_MODULE=my_pkg.rlinf_ext
+
+在 Hydra YAML 中启用注册名称：
 
 .. code-block:: yaml
 

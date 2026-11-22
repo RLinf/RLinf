@@ -17,7 +17,7 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
    .. grid-item-card:: 支持模型
       :text-align: center
 
-      OpenPI π₀.₅（示例） · OpenVLA-OFT（配置回退）
+      OpenPI π₀.₅（示例） · OpenVLA-OFT（派生配置）
 
    .. grid-item-card:: 配置目录
       :text-align: center
@@ -38,13 +38,17 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
 
    .. tab-item:: OpenPI π₀.₅
 
+      **1. 安装**
+
       .. code-block:: bash
 
-         # 1. 安装
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env behavior && source .venv/bin/activate
 
-         # 2. 下载 Isaac Sim 4.5、BEHAVIOR-1K 资产（超 30 GB）与模型
+      **2. 下载 Isaac Sim 4.5、BEHAVIOR-1K 资产（超 30 GB）与模型**
+
+      .. code-block:: bash
+
          export ISAAC_PATH="$(pwd)/isaac-sim"
          export OMNIGIBSON_DATA_PATH="$(pwd)/BEHAVIOR-1K-datasets"
          mkdir -p "$ISAAC_PATH" "$OMNIGIBSON_DATA_PATH"
@@ -55,7 +59,10 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
          python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
          hf download RLinf/RLinf-Pi0-Behavior --local-dir ./RLinf-Pi0-Behavior
 
-         # 3. 启动评测
+      **3. 启动评测**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
            rollout.model.model_path=./RLinf-Pi0-Behavior
 
@@ -80,7 +87,7 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
         - ``behavior_r1pro``
         - π₀.₅（``openpi``）
 
-   若 ``evaluations/behavior/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（如 ``behavior_ppo_openpi_pi05`` 配合 ``runner.only_eval: True``）。保持 ``action_dim: 23``、``num_action_chunks: 32`` 与 ``openpi.config_name: pi05_behavior`` 与训练一致。通用 ``env.eval`` 字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`。
+   若 ``evaluations/behavior/<config>.yaml`` 不存在，``run_eval.sh`` 仅对 ``examples/embodiment/config/`` 中已定义 ``rollout.model``\ （含 ``model_type`` 与 ``num_action_chunks``）的评测就绪配置生效；纯训练配置须按 :doc:`../reference/configuration` 将 ``@actor.model`` 重绑定到 ``@rollout.model``。保持 ``action_dim: 23``、``num_action_chunks: 32`` 与 ``openpi.config_name: pi05_behavior`` 与训练一致。通用 ``env.eval`` 字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`。
 
 .. _behavior-eval-config:
 
@@ -165,13 +172,6 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
               instance_file_format: tro_state
               instance_resample_mode: offline
           rollout_epoch: 5
-
-   **从训练配置评测**
-
-   .. code-block:: bash
-
-      bash evaluations/run_eval.sh behavior behavior_ppo_openpi_pi05 \
-        rollout.model.model_path=./RLinf-Pi0-Behavior
 
 结果与常见问题
 --------------

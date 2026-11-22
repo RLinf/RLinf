@@ -274,12 +274,80 @@ Setup and Run
                 openpi_data:
                   norm_stats_path: ${actor.model.model_path}/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
 
+   .. tab-item:: Custom LeRobot Dataset
+      :sync: custom-lerobot
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+
+      **2. Prepare Dataset and Dataconfig**
+
+      Place your LeRobot dataset directory (containing ``meta/info.json`` and ``data/``) on the training host with observation keys (``image``, ``state``), ``actions``, and task text (``task`` or ``prompt``). ``examples/sft/config/custom_sft_openpi.yaml`` selects ``actor.model.openpi.config_name: "pi0_custom"`` by default; adapt that custom dataconfig (or register your own entry in the OpenPI dataconfig registry) to match your camera keys, state/action dimensions, and delta or absolute action convention.
+
+      Compute ``norm_stats.json`` for the dataset using the same ``--config-name`` as training:
+
+      .. code-block:: bash
+
+         python toolkits/lerobot/calculate_norm_stats.py \
+           --config-name pi0_custom \
+           --repo-id ./custom-lerobot-data
+
+      The command writes ``./assets/pi0_custom/custom-lerobot-data/norm_stats.json``.
+
+      **3. Launch**
+
+      Pass the dataset, base checkpoint, and normalization stats paths as Hydra CLI overrides:
+
+      .. code-block:: bash
+
+         bash examples/sft/run_vla_sft.sh custom_sft_openpi \
+           data.train_data_paths=./custom-lerobot-data \
+           actor.model.model_path=./pi0_base_openpi \
+           actor.model.openpi_data.norm_stats_path=./assets/pi0_custom/custom-lerobot-data/norm_stats.json
+
+      .. dropdown:: Advanced configuration (optional)
+
+         Key fields in ``examples/sft/config/custom_sft_openpi.yaml``:
+
+         .. code-block:: yaml
+
+            data:
+              train_data_paths: ./custom-lerobot-data
+
+            actor:
+              model:
+                model_path: ./pi0_base_openpi
+                num_action_chunks: 4
+                openpi:
+                  task: sft
+                  config_name: "pi0_custom"
+                openpi_data:
+                  norm_stats_path: ./assets/pi0_custom/custom-lerobot-data/norm_stats.json
+
 .. dropdown:: Shared conventions (precision, FSDP, action horizon)
 
-   - **Task mode:** ``openpi.task`` must be ``sft`` during training. Eval YAMLs use ``eval``; do not copy the training value.
-   - **Action chunk vs horizon:** ``num_action_chunks`` / ``openpi.action_chunk`` sets how many actions the env executes per step, while network ``action_horizon`` comes from ``openpi.action_horizon`` or the official ``TrainConfig.model.action_horizon`` for ``openpi.config_name`` (BEHAVIOR ``pi05_behavior``: **32**; RoboTwin ``pi0_aloha_robotwin`` / LIBERO ``pi0_libero``: **50**; real-world ``pi0_realworld``: **10**). Official LeRobot SFT sizes its data window from ``TrainConfig.model.action_horizon``. The BEHAVIOR and dual-Franka streaming SFT loaders still use ``num_action_chunks`` as the data window, so those configs keep it equal to the official horizon.
-   - **Precision & FSDP1:** Set ``actor.model.precision: fp32`` for FP32 master weights and optimizer updates, and ``actor.model.openpi.embed_dtype: bf16`` for BF16 backbone activations (if null/omitted, ``embed_dtype`` follows ``model.precision``; ``precision: null`` selects BF16 activations). Use ``hybrid_engines/openpi_fsdp`` to keep projections, RMSNorm weights, vision embeddings, and RLT Stage 1 ``rlt_module`` in FP32 while the backbone computes in BF16. OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard`` with ``use_orig_params: true``; enable ``gradient_checkpointing: true`` with ``gradient_checkpointing_use_reentrant: false`` to reduce activation memory. BEHAVIOR and RoboTwin configs use the ``openpi_cosine`` LR schedule.
-   - **Tokenizer:** OpenPI's ``ModelTransformFactory`` loads the tokenizer from the base model; no separate SentencePiece path is needed.
+   .. list-table::
+      :header-rows: 1
+      :widths: 26 74
+
+      * - Topic
+        - Convention
+      * - Task mode
+        - Set ``openpi.task: sft`` during training and ``eval`` during evaluation.
+      * - Action chunk vs. horizon
+        - ``num_action_chunks`` (and ``openpi.action_chunk``) sets env-executed steps per call; ``openpi.action_horizon`` sets network horizon (**32** for ``pi05_behavior``, **50** for ``pi0_aloha_robotwin`` and ``pi0_libero``, **10** for ``pi0_realworld``).
+      * - Data window sizing
+        - Standard LeRobot SFT sizes its window from the dataconfig horizon; BEHAVIOR and dual-Franka streaming loaders use ``num_action_chunks``, so keep it equal to the network horizon there.
+      * - Precision
+        - Set ``actor.model.precision: fp32`` for FP32 master weights and ``actor.model.openpi.embed_dtype: bf16`` for BF16 backbone activations (omitted ``embed_dtype`` follows ``model.precision``; ``precision: null`` selects BF16).
+      * - FSDP1 & memory
+        - Use ``hybrid_engines/openpi_fsdp`` to keep projections, RMSNorm, vision embeddings, and RLT Stage 1 weights in FP32 while the backbone computes in BF16. OpenPI supports ``no_shard``, ``shard_grad_op``, and ``full_shard`` with ``use_orig_params: true``; enable ``gradient_checkpointing: true`` with ``gradient_checkpointing_use_reentrant: false`` to reduce activation memory. BEHAVIOR and RoboTwin use the ``openpi_cosine`` LR schedule.
+      * - Tokenizer
+        - Loaded automatically from the base model; no separate SentencePiece path is needed.
 
    .. code-block:: yaml
 

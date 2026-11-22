@@ -8,7 +8,7 @@ PhyAI 具身 Rollout 后端
 准备工作
 --------
 
-需要一台配备 NVIDIA GPU 的 Linux 机器和 Python 3.12。目前该后端支持在 LIBERO 上用同步 PPO 训练 PI0.5，每个 rollout worker 使用一张 GPU。训练流程已使用 RLinf PI0.5 LIBERO SFT checkpoint，在两张 NVIDIA H800 80 GB GPU 上完成 smoke test。
+需要一台配备 NVIDIA GPU 的 Linux 机器和 Python 3.12。该后端支持在 LIBERO 上用同步 PPO 训练 PI0.5，每个 rollout worker 使用一张 GPU。训练流程已使用 RLinf PI0.5 LIBERO SFT checkpoint，在两张 NVIDIA H800 80 GB GPU 上完成快速验证。
 
 安装
 ----

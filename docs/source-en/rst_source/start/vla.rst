@@ -98,10 +98,25 @@ Select a tab below — start with **MLP** for the fastest zero-download verifica
 
 The two VLA quickstarts use all available accelerators by default; edit ``cluster.component_placement`` to target specific devices (:doc:`../reference/configuration`). Rollout inherits ``actor.model.model_path`` automatically — to use local checkpoints instead of Hugging Face repo IDs, pass ``actor.model.model_path=/path/to/checkpoint`` (and for OpenVLA-OFT, ``actor.model.lora_path=/path/to/lora``).
 
+Each config name maps directly to a YAML file on disk: embodied RL configs live in ``examples/embodiment/config/<config_name>.yaml`` (for example, ``examples/embodiment/config/maniskill_ppo_mlp.yaml`` and ``examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml``), SFT configs live in ``examples/sft/config/``, reasoning and agentic configs live in ``examples/reasoning/config/`` and ``examples/agent/``, and evaluation configs live in ``evaluations/<benchmark>/<config_name>.yaml``.
+
 Results and Troubleshooting
 ---------------------------
 
-Training writes logs and checkpoints under ``./logs``. Open TensorBoard (``tensorboard --host 0.0.0.0 --logdir ./logs``) and track ``rollout/env_info/return`` and ``rollout/env_info/success_once``.
+Each run creates ``logs/<timestamp>-<config>/`` containing ``run_embodiment.log``, ``metrics.log``, TensorBoard events, and saved checkpoints. Open TensorBoard (``tensorboard --host 0.0.0.0 --logdir ./logs``) and track ``rollout/env_info/return`` and ``rollout/env_info/success_once``.
+
+The 3-epoch MLP check (``runner.max_epochs=3 runner.val_check_interval=-1``) finishes in about 1 minute on a single GPU and prints a metric table at each step (also appended to ``metrics.log``):
+
+.. code-block:: text
+
+   ╭────────────────────────────── Metric Table ──────────────────────────────╮
+   │ Global Step:    3/3 │ Progress: ████████████████████ │ 100.0%            │
+   │ Elapsed: 00:52      │ ETA: 00:00                     │ Step Time: 17.3s  │
+   ├─────────────────────────────── Rollout ──────────────────────────────────┤
+   │ env_info/return=12.400  │ env_info/success_once=0.062 │ rewards=0.248    │
+   ╰──────────────────────────────────────────────────────────────────────────╯
+
+On full ``maniskill_ppo_mlp`` runs, ``rollout/env_info/success_once`` climbs above ``0.90`` within a few hundred epochs. On the VLA quickstarts, ``rollout/env_info/success_once`` starts near the SFT baseline and rises steadily as PPO updates progress:
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/embody-quickstart-metric.jpg
    :align: center

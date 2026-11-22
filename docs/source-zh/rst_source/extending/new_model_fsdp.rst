@@ -132,58 +132,88 @@
 
    Local check passed: {'logprobs': (2, 4), 'entropy': (2, 4), 'values': (2, 1)}
 
+.. _out-of-tree-extensions:
+
 2. 注册模型构建函数
 -------------------
 
-在 ``rlinf/models/__init__.py``\ （主仓内）或外部扩展模块中调用 ``register_model`` 注册构建函数。构建函数接收 ``(cfg, torch_dtype)`` 并返回模型实例；如果加载 Hugging Face 权重，在构建函数内调用 ``from_pretrained(cfg.model_path, torch_dtype=torch_dtype, ...)``，并把所需的 ``processor`` 一并挂载到模型实例上。
+使用 ``register_model`` 注册模型构建函数。构建函数接收 ``(cfg, torch_dtype)`` 并返回模型实例；加载 Hugging Face 权重时，在构建函数内调用 ``from_pretrained(cfg.model_path, torch_dtype=torch_dtype, ...)`` 并挂载所需的 ``processor``。
 
-.. code-block:: python
+调用 ``register_model`` 会同步将模型名加入 ``SupportedModel``\ （使 Hydra 校验通过），并在 ``get_model`` 中绑定构建函数；传入 ``force=True`` 可覆盖主仓内置实现并沿用原有 ``model_type``。按代码存放位置选择扩展方式：
 
-   from omegaconf import OmegaConf
+.. tab-set::
 
-   from rlinf.config import SupportedModel
-   from rlinf.models import get_model, register_model
+   .. tab-item:: 主仓库内注册（In-Tree）
+      :sync: ext-in-tree
+
+      在 ``rlinf/models/__init__.py`` 中注册构建函数（所有 worker 导入时自动生效），并在本地 CPU 上配合 ``load_to_device: False`` 验证解析：
+
+      .. code-block:: python
+
+         from omegaconf import OmegaConf
+
+         from rlinf.config import SupportedModel
+         from rlinf.models import get_model, register_model
 
 
-   def build_my_model(cfg, torch_dtype):
-       return TinyGaussianPolicy(
-           obs_dim=cfg.obs_dim,
-           action_dim=cfg.action_dim,
-           hidden_dim=cfg.get("hidden_dim", 64),
-       ).to(dtype=torch_dtype)
+         def build_my_model(cfg, torch_dtype):
+             return TinyGaussianPolicy(
+                 obs_dim=cfg.obs_dim,
+                 action_dim=cfg.action_dim,
+                 hidden_dim=cfg.get("hidden_dim", 64),
+             ).to(dtype=torch_dtype)
 
 
-   register_model("tiny_gaussian", build_my_model, category="embodied")
+         register_model("tiny_gaussian", build_my_model, category="embodied")
 
-   assert SupportedModel("tiny_gaussian").value == "tiny_gaussian"
-   cfg = OmegaConf.create(
-       {
-           "model_type": "tiny_gaussian",
-           "obs_dim": 8,
-           "action_dim": 4,
-           "hidden_dim": 64,
-           "precision": "fp32",
-           "is_lora": False,
-           "load_to_device": False,
-       }
-   )
-   model = get_model(cfg)
-   assert isinstance(model, TinyGaussianPolicy)
+         assert SupportedModel("tiny_gaussian").value == "tiny_gaussian"
+         cfg = OmegaConf.create(
+             {
+                 "model_type": "tiny_gaussian",
+                 "obs_dim": 8,
+                 "action_dim": 4,
+                 "hidden_dim": 64,
+                 "precision": "fp32",
+                 "is_lora": False,
+                 "load_to_device": False,
+             }
+         )
+         model = get_model(cfg)
+         assert isinstance(model, TinyGaussianPolicy)
 
-调用 ``register_model`` 会同步将模型名加入 ``SupportedModel``\ （使 Hydra 校验通过），并在 ``get_model`` 中绑定构建函数。传入 ``force=True`` 可以覆盖主仓已有的内置实现并沿用原有 ``model_type``。将 ``load_to_device`` 设为 ``False`` 后，即使在 GPU 机器上也会把验证模型保留在 CPU。
+   .. tab-item:: 外部仓库注册（Out-of-Tree）
+      :sync: ext-out-of-tree
 
-外部包的分布式注册
-~~~~~~~~~~~~~~~~~~
+      无需 fork 或修改 RLinf 源码。由于 Ray 会在独立 Python 进程中拉起各个 rollout 和 actor worker，仅在主进程入口脚本里调用 ``register_model`` 不会同步到 worker 进程。把注册逻辑放进外部包的 ``register()`` 函数，并在启动前导出 ``RLINF_EXT_MODULE``\ （环境变量定义见 ``rlinf/scheduler/cluster/cluster.py`` 中的 ``ClusterEnvVar.EXT_MODULE``\ ）：
 
-Ray worker 运行在独立的 Python 进程中，仅在主进程入口脚本调用 ``register_model`` 无法同步到 rollout 或 actor worker。把注册逻辑放进外部模块的 ``register()`` 函数，并在启动前导出 ``RLINF_EXT_MODULE``\ （模块结构见 :ref:`out-of-tree-extensions`，环境变量格式见 ``rlinf/scheduler/cluster/cluster.py`` 中的 ``ClusterEnvVar.EXT_MODULE``\ ）：
+      .. code-block:: python
 
-.. code-block:: bash
+         # my_pkg/rlinf_ext.py
+         from rlinf.models import register_model
 
-   export RLINF_EXT_MODULE=my_pkg.rlinf_ext
 
-.. note::
+         def build_my_model(cfg, torch_dtype):
+             from my_pkg.policy import TinyGaussianPolicy
 
-   独立运行的 checkpoint 转换工具（例如 ``python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf``\ ）在调用 ``get_model`` 前同样会加载 ``RLINF_EXT_MODULE``。如果 ``model_type`` 仅在外部包中注册，运行转换工具前也需要设置这个环境变量。
+             return TinyGaussianPolicy(
+                 obs_dim=cfg.obs_dim,
+                 action_dim=cfg.action_dim,
+                 hidden_dim=cfg.get("hidden_dim", 64),
+             ).to(dtype=torch_dtype)
+
+
+         def register():
+             register_model("tiny_gaussian", build_my_model, category="embodied")
+
+      .. code-block:: bash
+
+         export RLINF_EXT_MODULE=my_pkg.rlinf_ext
+
+      RLinf 会在每个 worker 进程初始化时自动导入该模块并调用 ``register()``，在读取配置和构建模型之前完成注册。
+
+      .. note::
+
+         独立运行的 checkpoint 转换工具（例如 ``python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf``\ ）在调用 ``get_model`` 前同样会加载 ``RLINF_EXT_MODULE``。如果 ``model_type`` 仅在外部包中注册，运行转换工具前也需要设置这个环境变量。
 
 3. 添加 Hydra 模型与 FSDP 配置
 ------------------------------

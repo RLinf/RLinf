@@ -121,11 +121,10 @@ Prerequisites:
 
       bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-2. Download the checkpoints:
+2. Download the checkpoints (set ``HF_ENDPOINT=https://hf-mirror.com`` in mainland China):
 
    .. code-block:: bash
 
-      # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
       hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Main
       hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 

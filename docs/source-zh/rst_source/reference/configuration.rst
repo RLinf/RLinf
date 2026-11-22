@@ -1,7 +1,44 @@
 训练配置
 ========
 
-RLinf 配方采用可组合的 Hydra YAML 预设。本页是一页式配置地图，涵盖带注释的最小 YAML、单卡最常调参数与预设结构；具体示例页面直接链接到此页，不再重复罗列长字段表。
+RLinf 配方采用可组合的 Hydra YAML 预设。本页是一页式配置地图，涵盖配置文件路径、带注释的最小 YAML 与单卡常用参数；具体示例页面直接链接到此页，不再重复罗列长字段表。
+
+配置文件位置
+------------
+
+所有可运行的配置文件按工作负载存放在 ``examples/`` 与 ``evaluations/`` 下：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 36 40
+
+   * - 工作负载
+     - 配置目录
+     - 启动入口
+   * - 具身 RL（仿真与真机）
+     - ``examples/embodiment/config/``
+     - ``bash examples/embodiment/run_embodiment.sh <config>``\ （异步用 ``run_async.sh``）
+   * - SFT（VLA 与 VLM）
+     - ``examples/sft/config/``
+     - ``bash examples/sft/run_vla_sft.sh <config>``\ （或 ``run_vlm_sft.sh``）
+   * - 离线 RL
+     - ``examples/offline_rl/config/``
+     - ``examples/offline_rl/`` 下的对应启动脚本
+   * - 奖励模型与数据采集
+     - ``examples/reward/config/``
+     - ``examples/reward/`` 下的对应脚本
+   * - 数学与 VQA 推理
+     - ``examples/reasoning/config/``
+     - ``examples/reasoning/run_main_grpo_math.sh``\ （或 ``run_main_grpo_vqa.sh``）
+   * - 智能体工作流
+     - ``examples/agent/<task>/config/``
+     - ``examples/agent/<task>/`` 下的启动脚本（``searchr1``、``rstar2``、``wideseek_r1``、``coding_online_rl``）
+   * - 扩散与视频生成
+     - ``examples/diffusion/config/``
+     - ``examples/diffusion/`` 下的对应脚本
+   * - 独立评测
+     - ``evaluations/<benchmark>/``
+     - ``bash evaluations/run_eval.sh <benchmark> <config>``
 
 带注释的最小 YAML
 -----------------

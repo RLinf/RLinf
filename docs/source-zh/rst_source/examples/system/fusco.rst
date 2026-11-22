@@ -29,7 +29,7 @@ FUSCO MoE 通信加速
    .. grid-item-card:: 测试
       :text-align: center
 
-      Reasoning e2e FUSCO smoke test
+      Reasoning 端到端 FUSCO 快速验证
 
 一键上手
 ----------------------------------------

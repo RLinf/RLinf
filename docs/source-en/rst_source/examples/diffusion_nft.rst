@@ -39,13 +39,13 @@ and derivation, see the
 
       Image / Video
 
-   .. grid-item-card:: Reward
+   .. grid-item-card:: Hardware
       :text-align: center
 
-      OCR / Video OCR
+      1–8 GPUs (SD3.5 Medium); 4–8× 80 GB GPUs (Wan2.2 TI2V 5B)
 
 | **You'll do:** select a recipe → launch training → inspect OCR reward and generated samples.
-| **Prerequisites:** :doc:`Shared installation, model, and dataset setup <video_models>`.
+| **Prerequisites:** :doc:`Shared installation, model, and dataset setup <video_models>` · 1–8 GPUs for SD3.5 Medium (BF16 + LoRA), 4–8× 80 GB GPUs (A800/A100/H100) for Wan2.2 TI2V 5B.
 
 Tasks
 ~~~~~

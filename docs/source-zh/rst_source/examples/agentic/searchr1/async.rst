@@ -86,7 +86,7 @@ reward 在 agent loop 内计算（Search-R1 的规则奖励在轨迹和检索文
            search:
              server_addr: <server_ip>:8000
 
-      在 head 节点上启动训练：
+      在 head 节点上启动训练（该配置默认 ``cluster.num_nodes: 2``，需要已就绪的 2 个 8×A100-80G 节点组成的 Ray 集群）：
 
       .. code-block:: bash
 

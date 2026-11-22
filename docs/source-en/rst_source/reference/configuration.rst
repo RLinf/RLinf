@@ -3,6 +3,43 @@ Training Configuration
 
 RLinf recipes are Hydra YAML configs composed from reusable presets. Use this page as the one-page configuration map; example pages link here instead of repeating key tables.
 
+Where Config Files Live
+-----------------------
+
+All runnable configs live under ``examples/`` and ``evaluations/``, grouped by workload:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 36 38
+
+   * - Workload
+     - Config Directory
+     - Launcher
+   * - Embodied RL (sim & real)
+     - ``examples/embodiment/config/``
+     - ``bash examples/embodiment/run_embodiment.sh <config>`` (or ``run_async.sh``)
+   * - SFT (VLA & VLM)
+     - ``examples/sft/config/``
+     - ``bash examples/sft/run_vla_sft.sh <config>`` (or ``run_vlm_sft.sh``)
+   * - Offline RL
+     - ``examples/offline_rl/config/``
+     - Recipe-specific scripts under ``examples/offline_rl/``
+   * - Reward Models & Collection
+     - ``examples/reward/config/``
+     - Scripts under ``examples/reward/``
+   * - Math & VQA Reasoning
+     - ``examples/reasoning/config/``
+     - ``examples/reasoning/run_main_grpo_math.sh`` (or ``run_main_grpo_vqa.sh``)
+   * - Agentic Workflows
+     - ``examples/agent/<task>/config/``
+     - Launcher inside ``examples/agent/<task>/`` (``searchr1``, ``rstar2``, ``wideseek_r1``, ``coding_online_rl``)
+   * - Diffusion & Video Gen
+     - ``examples/diffusion/config/``
+     - Scripts under ``examples/diffusion/``
+   * - Standalone Evaluation
+     - ``evaluations/<benchmark>/``
+     - ``bash evaluations/run_eval.sh <benchmark> <config>``
+
 Annotated Minimal YAML
 ----------------------
 

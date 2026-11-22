@@ -53,41 +53,36 @@ SIMPLE 评测
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
 
-      **2. 下载任务资源**
+      **2. 下载权重与 Reset 数据**
 
-      下载 OpenOven checkpoint、reset 数据与对应 HSSD 场景（依赖 Psi0 指南中导出的 ``SIMPLE_ASSETS_DIR`` 与 ``HF_HOME``）：
+      下载 OpenOven checkpoint 与 reset 数据（依赖 Psi0 指南中导出的 ``HF_HOME``）：
 
       .. code-block:: bash
 
          export PSI0_ARTIFACT_ROOT=./psi0-simple-artifacts
          export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0
          export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
-         export SIMPLE_SCENE=102344280
-
-         hf download USC-PSI-Lab/psi-model \
-           "${PSI0_RUN_REL}/argv.txt" \
-           "${PSI0_RUN_REL}/run_config.json" \
-           "${PSI0_RUN_REL}/checkpoints/ckpt_40000/model.safetensors" \
-           --revision d34a91932d25c45ef211582315b9224c7dc8ace9 \
-           --local-dir ./psi0-simple-artifacts/psi-model
-
-         hf download USC-PSI-Lab/psi-data "simple-eval/${SIMPLE_TASK}.zip" \
-           --repo-type dataset \
-           --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 \
-           --local-dir ./psi0-simple-artifacts/psi-data
-
          export PSI0_RUN_DIR="${PSI0_ARTIFACT_ROOT}/psi-model/${PSI0_RUN_REL}"
          export SIMPLE_RESET_DIR="${PSI0_ARTIFACT_ROOT}/reset-states/${SIMPLE_TASK}"
-         mkdir -p "${SIMPLE_RESET_DIR}"
-         unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" -d "${SIMPLE_RESET_DIR}"
 
+         hf download USC-PSI-Lab/psi-model \
+           "${PSI0_RUN_REL}/argv.txt" "${PSI0_RUN_REL}/run_config.json" "${PSI0_RUN_REL}/checkpoints/ckpt_40000/model.safetensors" \
+           --revision d34a91932d25c45ef211582315b9224c7dc8ace9 --local-dir ./psi0-simple-artifacts/psi-model
+         hf download USC-PSI-Lab/psi-data "simple-eval/${SIMPLE_TASK}.zip" \
+           --repo-type dataset --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 --local-dir ./psi0-simple-artifacts/psi-data
+         mkdir -p "${SIMPLE_RESET_DIR}" && unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" -d "${SIMPLE_RESET_DIR}"
+
+      **3. 下载 HSSD 场景**\ （依赖 Psi0 指南中导出的 ``SIMPLE_ASSETS_DIR``）
+
+      .. code-block:: bash
+
+         export SIMPLE_SCENE=102344280
          hf download USC-PSI-Lab/SIMPLE "scenes_hssd_${SIMPLE_SCENE}.zip" \
-           --repo-type dataset \
-           --local-dir "${SIMPLE_ASSETS_DIR}"
+           --repo-type dataset --local-dir "${SIMPLE_ASSETS_DIR}"
          unzip -o -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_${SIMPLE_SCENE}.zip" -d "${SIMPLE_ASSETS_DIR}"
          rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_${SIMPLE_SCENE}.zip"
 
-      **3. 启动评测**
+      **4. 启动评测**
 
       .. code-block:: bash
 
@@ -106,41 +101,34 @@ SIMPLE 评测
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
 
-      **2. 下载任务资源**
-
-      下载 OpenOven checkpoint、reset 数据与 HSSD 场景（与单条轨迹快测相同）：
+      **2. 下载权重与 Reset 数据**
 
       .. code-block:: bash
 
          export PSI0_ARTIFACT_ROOT=./psi0-simple-artifacts
          export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0
          export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
-         export SIMPLE_SCENE=102344280
-
-         hf download USC-PSI-Lab/psi-model \
-           "${PSI0_RUN_REL}/argv.txt" \
-           "${PSI0_RUN_REL}/run_config.json" \
-           "${PSI0_RUN_REL}/checkpoints/ckpt_40000/model.safetensors" \
-           --revision d34a91932d25c45ef211582315b9224c7dc8ace9 \
-           --local-dir ./psi0-simple-artifacts/psi-model
-
-         hf download USC-PSI-Lab/psi-data "simple-eval/${SIMPLE_TASK}.zip" \
-           --repo-type dataset \
-           --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 \
-           --local-dir ./psi0-simple-artifacts/psi-data
-
          export PSI0_RUN_DIR="${PSI0_ARTIFACT_ROOT}/psi-model/${PSI0_RUN_REL}"
          export SIMPLE_RESET_DIR="${PSI0_ARTIFACT_ROOT}/reset-states/${SIMPLE_TASK}"
-         mkdir -p "${SIMPLE_RESET_DIR}"
-         unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" -d "${SIMPLE_RESET_DIR}"
 
+         hf download USC-PSI-Lab/psi-model \
+           "${PSI0_RUN_REL}/argv.txt" "${PSI0_RUN_REL}/run_config.json" "${PSI0_RUN_REL}/checkpoints/ckpt_40000/model.safetensors" \
+           --revision d34a91932d25c45ef211582315b9224c7dc8ace9 --local-dir ./psi0-simple-artifacts/psi-model
+         hf download USC-PSI-Lab/psi-data "simple-eval/${SIMPLE_TASK}.zip" \
+           --repo-type dataset --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 --local-dir ./psi0-simple-artifacts/psi-data
+         mkdir -p "${SIMPLE_RESET_DIR}" && unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" -d "${SIMPLE_RESET_DIR}"
+
+      **3. 下载 HSSD 场景**
+
+      .. code-block:: bash
+
+         export SIMPLE_SCENE=102344280
          hf download USC-PSI-Lab/SIMPLE "scenes_hssd_${SIMPLE_SCENE}.zip" \
-           --repo-type dataset \
-           --local-dir "${SIMPLE_ASSETS_DIR}"
+           --repo-type dataset --local-dir "${SIMPLE_ASSETS_DIR}"
          unzip -o -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_${SIMPLE_SCENE}.zip" -d "${SIMPLE_ASSETS_DIR}"
          rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_${SIMPLE_SCENE}.zip"
 
-      **3. 启动评测**
+      **4. 启动评测**
 
       .. code-block:: bash
 

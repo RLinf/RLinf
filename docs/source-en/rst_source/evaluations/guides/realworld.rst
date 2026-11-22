@@ -29,6 +29,35 @@ Evaluate and deploy VLA policies on Franka arms across bin-relocation (pick-and-
 
       :doc:`Franka SFT <../../examples/embodied/franka_pi0_sft_deploy>` · :doc:`Franka <../../examples/embodied/franka>` · :doc:`DreamZero <../../examples/embodied/sft_dreamzero>`
 
+Step 0: Pre-flight Checks and Two-Node Ray Setup
+------------------------------------------------
+
+.. warning::
+
+   Verify workspace limits (``ee_pose_limit_min`` / ``ee_pose_limit_max``) and the emergency stop before moving the arm. Start with a small ``env.eval.rollout_epoch`` on the first run. Set ``is_dummy: True`` under ``override_cfg`` to verify cluster wiring without moving the arm.
+
+Run the camera and controller checks on the robot control node (with ``.venv`` active) before launching evaluation:
+
+.. code-block:: bash
+
+   python -m toolkits.realworld_check.test_franka_camera
+   export FRANKA_ROBOT_IP=192.168.1.20
+   python -m toolkits.realworld_check.test_franka_controller
+
+For **two-node configs only** (such as ``PnP Two-Node (π₀)`` and ``realworld_dual_yam_openpi_pi05_eval``), start Ray on both nodes with ``.venv`` active and ``RLINF_NODE_RANK`` exported before ``ray start`` (replace ``192.168.1.10`` GPU head and ``192.168.1.20`` Franka controller with your IPs; on multi-NIC hosts also export ``RLINF_COMM_NET_DEVICES=eth0``, or customize ``ray_utils/realworld/setup_before_ray.sh``). Single-node configs auto-start Ray, so skip this block for single-workstation runs:
+
+.. code-block:: bash
+
+   # GPU head node (rank 0)
+   export RLINF_NODE_RANK=0
+   ray start --head --port=6379 --node-ip-address=192.168.1.10
+
+   # Franka control node (rank 1)
+   export RLINF_NODE_RANK=1
+   ray start --address=192.168.1.10:6379
+
+Run ``ray status`` to confirm both nodes are online before launching below.
+
 Setup and Run
 -------------
 
@@ -38,81 +67,64 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: PnP Two-Node (π₀)
 
-      Install ``--model openpi --env franka`` on the GPU head node (rank 0) and ``--env franka`` on the robot control node (rank 1, no GPU required). Start Ray on both nodes (see the Ray dropdown below), update ``robot_ip``, ``camera_serials``, and ``target_ee_pose`` in ``evaluations/realworld/realworld_pnp_eval.yaml``, and launch from the head node:
+      Install ``--model openpi --env franka`` on the GPU head node (rank 0) and ``--env franka`` on the robot control node (rank 1, no GPU required). Complete Step 0, update ``robot_ip``, ``camera_serials``, and ``target_ee_pose`` in ``evaluations/realworld/realworld_pnp_eval.yaml``, and launch from the head node:
+
+      **1. Install (GPU Head Node; Omit ``--model openpi`` on Control Node)**
 
       .. code-block:: bash
 
-         # 1. Install on GPU head node (on the control node, omit --model openpi)
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
-         # 2. Launch from the GPU head node (replace paths with your local model and checkpoint)
+      **2. Launch from the GPU Head Node**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh realworld realworld_pnp_eval \
            rollout.model.model_path=./pi0-model \
            runner.ckpt_path=./full_weights.pt
 
    .. tab-item:: Custom Task (Single-Node)
 
-      When GPU rollout and Franka control share one workstation, set ``robot_ip`` and task geometry in ``evaluations/realworld/realworld_eval.yaml`` (``FrankaEnv-v1``) and launch (single-node configs auto-start Ray):
+      When GPU rollout and Franka control share one workstation, complete the hardware check in Step 0, set ``robot_ip`` and task geometry in ``evaluations/realworld/realworld_eval.yaml`` (``FrankaEnv-v1``), and launch (auto-starts Ray):
+
+      **1. Install**
 
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
-         # 2. Launch
+      **2. Launch**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh realworld realworld_eval \
            rollout.model.model_path=./pi0-sft-model
 
    .. tab-item:: Dual Franka RTC (π₀.₅)
 
-      Single-workstation dual-arm RTC evaluation runs GPU inference, both Franka arms, and three RealSense cameras on one host (``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``; auto-starts Ray). Fill in arm IPs, camera serials, gripper ports, ``keyboard_device``, ``norm_stats_path``, and ``task_description``. After homing, press ``a`` on the USB keyboard or pedal to start, ``c`` for success, and ``b`` for failure:
+      Single-workstation dual-arm RTC evaluation runs GPU inference, both Franka arms, and three RealSense cameras on one host (``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``; auto-starts Ray). Complete the hardware check in Step 0 and fill in arm IPs, camera serials, gripper ports, ``keyboard_device``, ``norm_stats_path``, and ``task_description``. After homing, press ``a`` on the USB keyboard or pedal to start, ``c`` for success, and ``b`` for failure:
+
+      **1. Install**
 
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
-         # 2. Launch
+      **2. Launch**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh realworld realworld_dual_franka_pi05_RTC \
            rollout.model.model_path=./pi05-dual-franka
-
-.. warning::
-
-   Verify workspace limits (``ee_pose_limit_min`` / ``ee_pose_limit_max``) and the emergency stop before moving the arm. Start with a small ``env.eval.rollout_epoch`` on the first run.
-
-.. dropdown:: Pre-flight Checks and Starting Ray
-
-   **Step 1 (Hardware checks):** run on the robot control node with ``.venv`` active before launching evaluation.
-
-   **Step 2 (Ray cluster):** required **only for two-node configs** (``PnP Two-Node (π₀)``, ``realworld_dual_yam_openpi_pi05_eval``, and other two-node configs). Single-node tabs (``Custom Task (Single-Node)`` and ``Dual Franka RTC (π₀.₅)``) auto-start Ray, so skip ``RLINF_NODE_RANK`` and ``ray start``.
-
-   On two-node runs, keep ``.venv`` active on both nodes (or customize and source ``ray_utils/realworld/setup_before_ray.sh``), export ``RLINF_NODE_RANK`` before ``ray start`` (Ray freezes environment variables at startup), and replace the example IPs (``192.168.1.10`` GPU head, ``192.168.1.20`` Franka controller):
-
-   .. code-block:: bash
-
-      # 1. Inspect RealSense camera serials and record target_ee_pose (enter getpos_euler)
-      python -m toolkits.realworld_check.test_franka_camera
-      export FRANKA_ROBOT_IP=192.168.1.20
-      python -m toolkits.realworld_check.test_franka_controller
-
-      # 2a. Two-node only — GPU head node (rank 0; on multi-NIC hosts also export RLINF_COMM_NET_DEVICES=eth0)
-      export RLINF_NODE_RANK=0
-      ray start --head --port=6379 --node-ip-address=192.168.1.10
-
-      # 2b. Two-node only — Franka control node (rank 1; on multi-NIC hosts also export RLINF_COMM_NET_DEVICES=eth0)
-      export RLINF_NODE_RANK=1
-      ray start --address=192.168.1.10:6379
-
-   Run ``ray status`` to confirm both nodes are online. Set ``is_dummy: True`` under ``override_cfg`` to verify cluster wiring without moving the arm.
 
 .. _realworld-eval-config:
 
 .. dropdown:: Evaluation Config Reference
 
-   Available configs under ``evaluations/realworld/`` (``realworld`` skips simulator env setup; missing names fall back to ``examples/embodiment/config/``, such as two-node ``realworld_eval_dual_franka``):
+   Available configs under ``evaluations/realworld/`` (``realworld`` skips simulator env setup; missing names fall back to eval-ready configs in ``examples/embodiment/config/`` that define ``rollout.model``):
 
    .. list-table::
       :header-rows: 1

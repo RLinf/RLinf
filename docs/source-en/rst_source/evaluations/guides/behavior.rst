@@ -17,7 +17,7 @@ BEHAVIOR-1K is a household scene simulation benchmark built on OmniGibson and Is
    .. grid-item-card:: Models
       :text-align: center
 
-      OpenPI π₀.₅ (example) · OpenVLA-OFT (via fallback)
+      OpenPI π₀.₅ (example) · OpenVLA-OFT (derived)
 
    .. grid-item-card:: Config Dir
       :text-align: center
@@ -38,13 +38,17 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: OpenPI π₀.₅
 
+      **1. Install**
+
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env behavior && source .venv/bin/activate
 
-         # 2. Download Isaac Sim 4.5, BEHAVIOR-1K assets (>30 GB), and checkpoint
+      **2. Download Isaac Sim 4.5, BEHAVIOR-1K Assets (>30 GB), and Checkpoint**
+
+      .. code-block:: bash
+
          export ISAAC_PATH="$(pwd)/isaac-sim"
          export OMNIGIBSON_DATA_PATH="$(pwd)/BEHAVIOR-1K-datasets"
          mkdir -p "$ISAAC_PATH" "$OMNIGIBSON_DATA_PATH"
@@ -55,7 +59,10 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
          python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
          hf download RLinf/RLinf-Pi0-Behavior --local-dir ./RLinf-Pi0-Behavior
 
-         # 3. Evaluate
+      **3. Evaluate**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
            rollout.model.model_path=./RLinf-Pi0-Behavior
 
@@ -80,7 +87,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
         - ``behavior_r1pro``
         - π₀.₅ (``openpi``)
 
-   When ``evaluations/behavior/<config>.yaml`` is absent, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` (such as ``behavior_ppo_openpi_pi05`` with ``runner.only_eval: True``). Keep ``action_dim: 23``, ``num_action_chunks: 32``, and ``openpi.config_name: pi05_behavior`` aligned with training. Generic ``env.eval`` fields live in :ref:`env-eval-fields` (:doc:`../reference/configuration`).
+   When ``evaluations/behavior/<config>.yaml`` is absent, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` only for eval-ready configs that define ``rollout.model`` (with ``model_type`` and ``num_action_chunks``). To evaluate a training-only config, rebind ``@actor.model`` to ``@rollout.model`` per :doc:`../reference/configuration`. Keep ``action_dim: 23``, ``num_action_chunks: 32``, and ``openpi.config_name: pi05_behavior`` aligned with training. Generic ``env.eval`` fields live in :ref:`env-eval-fields` (:doc:`../reference/configuration`).
 
 .. _behavior-eval-config:
 
@@ -165,13 +172,6 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
               instance_file_format: tro_state
               instance_resample_mode: offline
           rollout_epoch: 5
-
-   **Evaluate from a training config**
-
-   .. code-block:: bash
-
-      bash evaluations/run_eval.sh behavior behavior_ppo_openpi_pi05 \
-        rollout.model.model_path=./RLinf-Pi0-Behavior
 
 Results and Troubleshooting
 ---------------------------

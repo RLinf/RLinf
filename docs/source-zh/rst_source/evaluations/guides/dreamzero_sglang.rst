@@ -40,17 +40,24 @@ DreamZero SGLang 评测
 
    .. tab-item:: LIBERO
 
+      **1. 安装**
+
       .. code-block:: bash
 
-         # 1. 安装
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env libero --model dreamzero && source .venv/bin/activate
          pip install -e "./sglang/python[diffusion]"
 
-         # 2. 下载 LIBERO SFT Diffusers checkpoint
+      **2. 下载 LIBERO SFT Diffusers Checkpoint**
+
+      .. code-block:: bash
+
          hf download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers --local-dir ./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
-         # 3. 启动 LIBERO-Spatial 评测
+      **3. 启动 LIBERO-Spatial 评测**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
            rollout.model.model_path=./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 

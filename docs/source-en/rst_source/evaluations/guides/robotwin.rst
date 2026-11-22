@@ -38,17 +38,24 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: OpenVLA-OFT (place_empty_cup)
 
+      **1. Install and Download RoboTwin Assets**
+
       .. code-block:: bash
 
-         # 1. Install and download RoboTwin assets
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla-oft --env robotwin && source .venv/bin/activate
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-         # 2. Download model
+      **2. Download Model**
+
+      .. code-block:: bash
+
          hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
 
-         # 3. Evaluate
+      **3. Evaluate**
+
+      .. code-block:: bash
+
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          export ROBOT_PLATFORM=ALOHA
          bash evaluations/run_eval.sh robotwin robotwin_place_empty_cup_openvlaoft_eval \
@@ -57,17 +64,24 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: OpenPI π₀.₅ (adjust_bottle)
 
+      **1. Install and Download RoboTwin Assets**
+
       .. code-block:: bash
 
-         # 1. Install and download RoboTwin assets
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-         # 2. Download model
+      **2. Download Model**
+
+      .. code-block:: bash
+
          hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
 
-         # 3. Evaluate
+      **3. Evaluate**
+
+      .. code-block:: bash
+
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_pi05_eval \
            rollout.model.model_path=./RLinf-Pi05-RoboTwin-SFT-adjust_bottle \
@@ -75,17 +89,24 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: OpenPI π₀ (adjust_bottle)
 
+      **1. Install and Download RoboTwin Assets**
+
       .. code-block:: bash
 
-         # 1. Install and download RoboTwin assets
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-         # 2. Download model
+      **2. Download Model**
+
+      .. code-block:: bash
+
          hf download RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi0-RoboTwin-SFT-adjust_bottle
 
-         # 3. Evaluate
+      **3. Evaluate**
+
+      .. code-block:: bash
+
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
            rollout.model.model_path=./RLinf-Pi0-RoboTwin-SFT-adjust_bottle \
@@ -93,21 +114,28 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: LingbotVLA 1.0 (click_bell)
 
+      **1. Install and Download RoboTwin Assets**
+
       .. code-block:: bash
 
-         # 1. Install and download RoboTwin assets
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model lingbotvla --env robotwin && source .venv/bin/activate
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-         # 2. Download base weights, pinned RoboTwin SFT checkpoint, and Qwen2.5-VL backbone
+      **2. Download Weights and Qwen2.5-VL Backbone**
+
+      .. code-block:: bash
+
          hf download robbyant/lingbot-vla-4b --local-dir ./lingbot-vla-4b
          hf download robbyant/lingbot-vla-4b-posttrain-robotwin \
            --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
            --local-dir ./lingbot-vla-4b-posttrain-robotwin
          hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 
-         # 3. Evaluate
+      **3. Evaluate**
+
+      .. code-block:: bash
+
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          export LINGBOT_VLA_PATH="$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")"
          bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvla_eval \
@@ -120,18 +148,25 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: LingbotVLA 2.0 (click_bell)
 
+      **1. Install and Download RoboTwin Assets**
+
       .. code-block:: bash
 
-         # 1. Install and download RoboTwin assets
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model lingbotvlav2 --env robotwin && source .venv/bin/activate
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-         # 2. Download RoboTwin checkpoint and Qwen3-VL backbone
+      **2. Download Checkpoint and Qwen3-VL Backbone**
+
+      .. code-block:: bash
+
          hf download robbyant/lingbot-vla-v2-6b-robotwin --local-dir ./lingbot-vla-v2-6b-robotwin
          hf download Qwen/Qwen3-VL-4B-Instruct --local-dir ./Qwen3-VL-4B-Instruct
 
-         # 3. Evaluate
+      **3. Evaluate**
+
+      .. code-block:: bash
+
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          export ROBOTWIN_ASSETS_PATH="${ROBOTWIN_PATH}"
          bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvlav2_eval \
@@ -142,6 +177,10 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
            rollout.model.lingbotvlav2.stats_path=./.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
 
       Default placement uses 2 GPUs (``rollout: 0``, ``env: 1``). Keep LingbotVLA 1.0 and 2.0 in separate virtual environments because both install a ``lingbotvla`` package (see :doc:`../../examples/embodied/lingbotvlav2`).
+
+.. note::
+
+   **Memory & full-seed coverage:** Default configs run ``total_num_envs: 128`` with ``use_fixed_reset_state_ids: True``, which evaluates ~128 of 150–320 task seeds. On memory-constrained hosts, lower ``env.eval.total_num_envs`` (or enable ``env.enable_offload: True`` and ``rollout.enable_offload: True``), and to cover all seeds set ``use_fixed_reset_state_ids: False`` with ``auto_reset: True`` and a larger ``max_steps_per_rollout_epoch`` (see :ref:`Evaluation Configuration <robotwin-eval-config>`).
 
 On AMD ROCm, install with ``--platform amd`` and set ``planner_backend: mplib`` in the task config (see :ref:`Run on Different Hardware Backends <robotwin-hardware>`). ``run_eval.sh`` adds ``ROBOTWIN_PATH`` to ``PYTHONPATH``, and ``env.eval.assets_path`` points to the parent folder of ``assets/``. RLinf uses a ``0.01 m`` camera near plane so SAPIEN 3.0.1 keeps gripper fingers visible in wrist views (override ``env.eval.camera_near`` or set ``null`` for RoboTwin's default ``0.1 m``).
 
@@ -178,7 +217,7 @@ On AMD ROCm, install with ``--platform amd`` and set ``planner_backend: mplib`` 
         - ``click_bell``
         - LingbotVLA 2.0
 
-   If ``evaluations/robotwin/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` (set ``runner.only_eval: True`` and ``runner.task_type: embodied_eval``). The bundled ``eval_seeds.json`` covers **22 tasks**; derive other tasks from training configs (see :doc:`../reference/configuration`).
+   If ``evaluations/robotwin/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` only for eval-ready configs that define ``rollout.model`` (with ``model_type`` and ``num_action_chunks``). The bundled ``eval_seeds.json`` covers **22 tasks**; to evaluate a training-only config, adapt it per :doc:`../reference/configuration`.
 
 .. _robotwin-eval-config:
 

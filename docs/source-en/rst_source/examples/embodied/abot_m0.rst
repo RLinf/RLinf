@@ -127,19 +127,12 @@ The installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` and ``VGG
 
       **3. Launch**
 
-      Set ``actor.model.model_path`` in ``examples/embodiment/config/libero_10_ppo_abot_m0.yaml`` (rollout inherits the same path automatically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
-
-      Launch PPO training:
+      Launch PPO training, passing ``actor.model.model_path`` on the command line (rollout inherits the same path automatically):
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh libero_10_ppo_abot_m0
+         bash examples/embodiment/run_embodiment.sh libero_10_ppo_abot_m0 \
+           actor.model.model_path=./ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
 
       .. dropdown:: Advanced configuration (optional)
 
@@ -170,62 +163,46 @@ The installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` and ``VGG
 
       **2. Download**
 
-      Download and extract the LIBERO-Plus scene assets from ``Sylvest/LIBERO-plus`` into the installed ``liberoplus.liberoplus`` package directory, along with the 10k-step LIBERO RL baseline and Qwen3-VL backbone (see the :ref:`LIBERO-Pro & LIBERO-Plus section <liberopro-plus-benchmark>` for asset details):
+      Download the LIBERO-Plus scene assets, the 10k-step LIBERO RL baseline, and the Qwen3-VL backbone (see the :ref:`LIBERO-Pro & LIBERO-Plus section <liberopro-plus-benchmark>` for asset details):
 
       .. code-block:: bash
 
          export LIBERO_PLUS_PACKAGE_DIR=$(python -c "import pathlib; import liberoplus.liberoplus as l_plus; print(pathlib.Path(l_plus.__file__).resolve().parent)" | tail -n 1)
          hf download --repo-type dataset Sylvest/LIBERO-plus assets.zip --local-dir "${LIBERO_PLUS_PACKAGE_DIR}"
+         hf download HaoyunOvO/ABot-m0-LIBERO-10k-step --local-dir ./ABot-m0-LIBERO-10k-step
+         hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir ./Qwen3-VL-4B-Instruct-Action
+
+      Extract the ``assets/`` subtree from ``assets.zip`` into the installed ``liberoplus.liberoplus`` package directory:
+
+      .. code-block:: bash
+
          python - <<'PY'
          import os, zipfile
          from pathlib import Path
-
          pkg = Path(os.environ["LIBERO_PLUS_PACKAGE_DIR"])
-         out_dir = pkg / "assets"
          with zipfile.ZipFile(pkg / "assets.zip") as z:
              for info in z.infolist():
-                 if "/assets/" not in info.filename:
-                     continue
-                 rel = info.filename.split("/assets/", 1)[1]
-                 if not rel:
-                     continue
-                 target = out_dir / rel
-                 if info.is_dir():
-                     target.mkdir(parents=True, exist_ok=True)
-                 else:
-                     target.parent.mkdir(parents=True, exist_ok=True)
-                     with z.open(info) as src, open(target, "wb") as dst:
-                         dst.write(src.read())
-         print("Extracted LIBERO-Plus assets to:", out_dir)
+                 if "/assets/" in info.filename and (rel := info.filename.split("/assets/", 1)[1]):
+                     target = pkg / "assets" / rel
+                     target.mkdir(parents=True, exist_ok=True) if info.is_dir() else (target.parent.mkdir(parents=True, exist_ok=True), target.write_bytes(z.read(info)))
          PY
-         ls -lh "${LIBERO_PLUS_PACKAGE_DIR}/assets"
-
-         hf download HaoyunOvO/ABot-m0-LIBERO-10k-step --local-dir ./ABot-m0-LIBERO-10k-step
-         hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir ./Qwen3-VL-4B-Instruct-Action
 
       Update ``qwenvl.base_vlm`` in the downloaded checkpoint's ``config.yaml`` to your local ``Qwen3-VL-4B-Instruct-Action`` path:
 
       .. code-block:: yaml
 
          qwenvl:
-           base_vlm: /path/to/Qwen3-VL-4B-Instruct-Action
+           base_vlm: ./Qwen3-VL-4B-Instruct-Action
 
       **3. Launch**
 
-      Set ``actor.model.model_path`` in ``examples/embodiment/config/libero_10_plus_ppo_abot_m0.yaml`` (rollout inherits the same path automatically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
-
-      Select the LIBERO-Plus suite and launch PPO training:
+      Select the LIBERO-Plus suite and launch PPO training, passing ``actor.model.model_path`` on the command line (rollout inherits the same path automatically):
 
       .. code-block:: bash
 
          export LIBERO_TYPE=plus
-         bash examples/embodiment/run_embodiment.sh libero_10_plus_ppo_abot_m0
+         bash examples/embodiment/run_embodiment.sh libero_10_plus_ppo_abot_m0 \
+           actor.model.model_path=./ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
 
       .. dropdown:: Advanced configuration (optional)
 

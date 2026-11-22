@@ -73,7 +73,23 @@ The minimal token classifier below stands in for a Hugging Face ``AutoModelForCa
    def register():
        register_model("my_new_model", build_my_model, category="sft")
 
-For a Hugging Face model, call ``AutoModelForCausalLM.from_pretrained(cfg.model_path, torch_dtype=torch_dtype, trust_remote_code=cfg.get("trust_remote_code", False))`` inside ``build_my_model``. When your code lives outside RLinf, expose ``register()`` and export ``RLINF_EXT_MODULE`` so every Ray worker loads the registration (see :ref:`out-of-tree-extensions`).
+For a Hugging Face model, call ``AutoModelForCausalLM.from_pretrained(cfg.model_path, torch_dtype=torch_dtype, trust_remote_code=cfg.get("trust_remote_code", False))`` inside ``build_my_model``. Choose how to register your model builder:
+
+.. tab-set::
+
+   .. tab-item:: In-Tree (Inside RLinf)
+      :sync: ext-in-tree
+
+      Add ``register_model("my_new_model", build_my_model, category="sft")`` to ``rlinf/models/__init__.py`` so every worker process imports it automatically.
+
+   .. tab-item:: Out-of-Tree (External Repo)
+      :sync: ext-out-of-tree
+
+      Keep ``register()`` in your own package (for example ``my_pkg/rlinf_ext.py``) and export ``RLINF_EXT_MODULE`` before launching so every Ray worker and standalone checkpoint convertor loads the registration automatically (see :ref:`out-of-tree-extensions`):
+
+      .. code-block:: bash
+
+         export RLINF_EXT_MODULE=my_pkg.rlinf_ext
 
 2. Implement the SFT Worker Subclass
 ------------------------------------

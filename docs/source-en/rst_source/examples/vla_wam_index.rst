@@ -44,144 +44,104 @@ Model Recipes
 
 Open a model page for the full workflow and its supported environments.
 
-.. raw:: html
+.. grid:: 1 2 3 3
+   :gutter: 3
 
-   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
+   .. grid-item-card:: π₀ / π₀.₅ (OpenPI)
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg
+      :img-alt: OpenPI π₀ and π₀.₅ models
+      :link: embodied/pi0
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/openvla_oft.html" style="display: block;"><img src="https://openvla-oft.github.io/static/images/libero_task_performance_results.png"
-            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/openvla_oft.html" style="text-decoration: underline; color: blue;">
-           <b>OpenVLA-OFT</b>
-         </a><br>
-         LIBERO training on NVIDIA CUDA, AMD ROCm, Huawei Ascend CANN, and Moore Threads MUSA
-       </p>
-     </div>
+      Fine-tune π₀ and π₀.₅ with Flow-SDE or Flow-Noise PPO across LIBERO, ManiSkill, RoboTwin, CALVIN, and MetaWorld.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/mlp.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/3_layer_mlp.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/mlp.html" style="text-decoration: underline; color: blue;">
-           <b>RL on MLP Policy</b>
-         </a><br>
-         Train a lightweight MLP policy with PPO, SAC, or GRPO across simulation environments
-       </p>
-     </div>
+   .. grid-item-card:: OpenVLA-OFT
+      :img-top: https://openvla-oft.github.io/static/images/libero_task_performance_results.png
+      :img-alt: OpenVLA-OFT results
+      :link: embodied/openvla_oft
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/pi0_fast.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/pi0_fast.html" style="text-decoration: underline; color: blue;">
-           <b>RL on π₀-FAST</b>
-         </a><br>
-         LeRobot π₀-FAST + LIBERO-Long + token-level GRPO
-       </p>
-     </div>
+      Train OpenVLA-OFT on LIBERO and ManiSkill across NVIDIA CUDA, AMD ROCm, Huawei Ascend CANN, and Moore Threads MUSA.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/pi0.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/pi0.html" style="text-decoration: underline; color: blue;">
-           <b>RL on π₀ and π₀.₅ Models</b>
-         </a><br>
-         Significant improvement in RL training on π₀ and π₀.₅
-       </p>
-     </div>
+   .. grid-item-card:: GR00T
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/gr00t.png
+      :img-alt: NVIDIA GR00T models
+      :link: embodied/gr00t
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/gr00t.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/gr00t.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/gr00t.html" style="text-decoration: underline; color: blue;">
-           <b>RL on GR00T Models</b>
-         </a><br>
-         Support GR00T-N1.5, N1.6 and N1.7 RL fine-tuning.
-       </p>
-     </div>
+      Fine-tune GR00T N1.5, N1.6, and N1.7 with PPO on LIBERO, ManiSkill, and IsaacLab.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/dexbotic.html" style="display: block;"><img src="https://raw.githubusercontent.com/dexmal/dexbotic/main/resources/intro.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/dexbotic.html" style="text-decoration: underline; color: blue;">
-           <b>RL on Dexbotic Model</b>
-         </a><br>
-         Dexbotic (π₀.₅-based) + LIBERO + PPO training
-       </p>
-     </div>
+   .. grid-item-card:: MLP Policy
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/3_layer_mlp.jpg
+      :img-alt: MLP policy network
+      :link: embodied/mlp
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/starvla.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/starvla.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/starvla.html" style="text-decoration: underline; color: blue;">
-           <b>RL on StarVLA Models</b>
-         </a><br>
-         StarVLA + LIBERO + GRPO embodied RL training
-       </p>
-     </div>
+      Train a lightweight MLP policy with PPO, SAC, or GRPO across simulation environments.
 
-     <!-- TODO: swap for a 3:2 pic/molmoact2.png in RLinf/misc once available. -->
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/molmoact2.html" style="display: block;"><img src="https://raw.githubusercontent.com/allenai/molmoact2/main/assets/MolmoAct2.svg"
-            style="width: 100%; height: 200px; object-fit: contain; background: #ffffff; padding: 24px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/molmoact2.html" style="text-decoration: underline; color: blue;">
-           <b>MolmoAct2 Evaluation</b>
-         </a><br>
-         Evaluate the official MolmoAct2-LIBERO checkpoint on LIBERO
-       </p>
-     </div>
+   .. grid-item-card:: π₀-FAST
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg
+      :img-alt: π₀-FAST model
+      :link: embodied/pi0_fast
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/lingbotvla_index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/lingbotvla_index.html" style="text-decoration: underline; color: blue;">
-           <b>RL with LingbotVLA Models</b>
-         </a><br>
-         Support LingbotVLA 1.0 (GRPO) and 2.0 (PPO) + RoboTwin
-       </p>
-     </div>
+      Run LeRobot π₀-FAST deterministic evaluation and token-level GRPO fine-tuning on LIBERO-Long.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/evo1.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/evo1.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/evo1.html" style="text-decoration: underline; color: blue;">
-           <b>RL on Evo-1 Models</b>
-         </a><br>
-         Train the Evo-1 vision-language-action model with embodied RL
-       </p>
-     </div>
+   .. grid-item-card:: LingbotVLA
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla.png
+      :img-alt: LingbotVLA models
+      :link: embodied/lingbotvla_index
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/abot_m0.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/ABot-M0.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/abot_m0.html" style="text-decoration: underline; color: blue;">
-           <b>RL on ABot-M0 Model</b>
-         </a><br>
-         ABot-M0 native integration with LIBERO-plus PPO training
-       </p>
-     </div>
+      Train LingbotVLA 1.0 (GRPO) and 2.0 (PPO) on RoboTwin manipulation tasks.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/psi0.html" style="display: block;"><img src="https://raw.githubusercontent.com/physical-superintelligence-lab/Psi0/a32e57a3fabb8590c80677f9cd3d1fc3db60eb06/assets/media/arch.png" alt="Psi0 model architecture"
-            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/psi0.html" style="text-decoration: underline; color: blue;">
-           <b>RL on Psi0 Model</b>
-         </a><br>
-         Psi0 + SIMPLE + PPO humanoid RL training
-       </p>
-     </div>
+   .. grid-item-card:: StarVLA
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/starvla.png
+      :img-alt: StarVLA models
+      :link: embodied/starvla
+      :link-type: doc
 
-   </div>
+      Fine-tune StarVLA models with GRPO on LIBERO benchmarks.
+
+   .. grid-item-card:: Dexbotic
+      :img-top: https://raw.githubusercontent.com/dexmal/dexbotic/main/resources/intro.png
+      :img-alt: Dexbotic model
+      :link: embodied/dexbotic
+      :link-type: doc
+
+      Train the π₀.₅-based Dexbotic policy with PPO on LIBERO.
+
+   .. grid-item-card:: MolmoAct2
+      :img-top: https://raw.githubusercontent.com/allenai/molmoact2/main/assets/MolmoAct2.svg
+      :img-alt: MolmoAct2 logo
+      :link: embodied/molmoact2
+      :link-type: doc
+
+      Evaluate the official MolmoAct2-LIBERO checkpoint across LIBERO suites.
+
+   .. grid-item-card:: Evo-1
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/evo1.png
+      :img-alt: Evo-1 model
+      :link: embodied/evo1
+      :link-type: doc
+
+      Train the Evo-1 vision-language-action model with embodied RL.
+
+   .. grid-item-card:: ABot-M0
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/ABot-M0.png
+      :img-alt: ABot-M0 model
+      :link: embodied/abot_m0
+      :link-type: doc
+
+      Fine-tune ABot-M0 with PPO on standard LIBERO and LIBERO-Plus.
+
+   .. grid-item-card:: Psi0
+      :img-top: https://raw.githubusercontent.com/physical-superintelligence-lab/Psi0/a32e57a3fabb8590c80677f9cd3d1fc3db60eb06/assets/media/arch.png
+      :img-alt: Psi0 model architecture
+      :link: embodied/psi0
+      :link-type: doc
+
+      Train Psi0 with PPO on SIMPLE humanoid manipulation tasks.
 
 .. toctree::
    :hidden:

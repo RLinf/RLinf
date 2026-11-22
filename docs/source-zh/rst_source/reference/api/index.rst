@@ -1,43 +1,53 @@
 API 手册
 ========
 
-带你了解 RLinf 中最核心的 API 接口及其用法。这些关键 API 是暴露给用户的，用来简化 RL 中复杂的数据流，让用户只需关注高层抽象，而无需关心底层的具体实现。
+查阅 RLinf 的公开 Python 接口，按自底向上的层次涵盖调度原语、worker、模型、真机机器人、算法注册表与数据容器。
 
-本 API 文档采用自底向上的方式展开，首先介绍 RLinf 的基础 API，包括：
+基础调度 API
+------------
 
 .. list-table::
    :header-rows: 1
+   :widths: 28 72
 
    * - API
      - 内容
    * - :doc:`Worker <worker>`
-     - Worker 与 Worker 组的统一接口。
+     - 分布式执行与通信的 ``Worker`` 与 ``WorkerGroup`` 抽象。
    * - :doc:`Placement <placement>`
-     - RLinf 的 GPU Placement 策略介绍。
+     - 将 worker 组映射到节点与加速器的 placement 策略。
    * - :doc:`Cluster <cluster>`
-     - 通过集群支持分布式训练。
+     - Ray 集群发现、节点组与 worker 分配。
    * - :doc:`Channel <channel>`
-     - 底层通信原语，包括生产者-消费者队列抽象。
+     - 支持 collector 与 dispatcher 的异步生产者-消费者队列。
 
-随后我们介绍上层 API，用于实现 RL 的不同阶段：
+RL 组件、模型、机器人与数据
+---------------------------
 
 .. list-table::
    :header-rows: 1
+   :widths: 28 72
 
    * - API
      - 内容
    * - :doc:`Actor <actor>`
-     - 基于 FSDP 与 Megatron 的 Actor 封装。
+     - 基于 FSDP 与 Megatron 的 actor worker。
    * - :doc:`Rollout <rollout>`
-     - 基于 Hugging Face 与 SGLang 的 Rollout 封装。
+     - 基于 Hugging Face 与 SGLang 的 rollout worker。
    * - :doc:`Env <env>`
-     - 面向具身智能场景的环境封装。
+     - 面向具身任务的环境 worker 封装。
+   * - :doc:`模型与 Policy <models>`
+     - 模型注册表（``register_model``、``get_model``）与具身 ``BasePolicy`` 接口。
+   * - :doc:`Robotics <robotics>`
+     - 真机 ``Connection``、``RobotPart``、``Robot`` 与硬件发现 API。
+   * - :doc:`算法与注册表 <algorithms>`
+     - 优势函数、policy 损失、损失缩放与工具调用解析器注册表。
    * - :doc:`Agentic 数据 <data>`
-     - Agentic Rollout 请求与结果数据结构。
+     - Agentic rollout 请求与结果数据结构。
    * - :doc:`Embodied Data <embodied_data>`
-     - 具身场景的 Env/Rollout 数据结构。
+     - 具身环境与 rollout 数据结构。
    * - :doc:`Replay Buffer <replay_buffer>`
-     - 轨迹级 Replay Buffer 的设计与采样机制。
+     - ``TrajectoryReplayBuffer``、``TrajectoryCache`` 与预加载数据集。
 
 .. toctree::
    :hidden:
@@ -50,6 +60,9 @@ API 手册
    Actor <actor>
    Rollout <rollout>
    Environment <env>
+   模型与 Policy <models>
+   Robotics <robotics>
+   算法与注册表 <algorithms>
    Data <data>
    Embodied Data <embodied_data>
    Replay Buffer <replay_buffer>

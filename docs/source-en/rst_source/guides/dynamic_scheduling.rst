@@ -6,6 +6,10 @@ in real time during training to improve overall throughput and resource utilizat
 It relies on Megatron-LM's online scaling (second-level elasticity) and SGLang/vLLM's migrate capability
 to reallocate GPU resources without stopping training.
 
+.. warning::
+
+   **Legacy environment prerequisite:** Dynamic scheduling requires a dedicated **Megatron-LM 0.11** checkout plus the external prebuilt resharding package (``params_resharding_release``), which is incompatible with the default ``bash requirements/install.sh agentic`` environment (Megatron-LM 0.18). For a runnable reference config, see ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron-dynamic.yaml`` (launch with ``bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron-dynamic`` after preparing the prerequisites below).
+
 .. contents::
    :depth: 2
    :local:
@@ -14,8 +18,8 @@ Online Scaling Mechanism
 ------------------------
 
 Online scaling (also known as elastic training)
-is a powerful feature that enables dynamic scaling of training resources, with GPU switching performed within 1 second.
-This capability allows you to adjust the number of GPUs and nodes used for training in real time,
+adjusts training resources dynamically, completing GPU switching within 1 second.
+You can scale the number of GPUs and nodes used for training in real time
 based on cluster availability, workload demands, or resource optimization goals.
 
 What is Online Scaling?
@@ -76,7 +80,7 @@ Prerequisites
 
 .. warning::
 
-   Online scaling currently requires a dedicated **Megatron-LM 0.11** environment rather than the default ``install.sh agentic`` virtual environment (which installs Megatron-LM 0.18).
+   Online scaling requires a dedicated **Megatron-LM 0.11** environment rather than the default ``install.sh agentic`` virtual environment (which installs Megatron-LM 0.18).
 
 1) Prepare Megatron-LM online scaling dependency (prebuilt):
 

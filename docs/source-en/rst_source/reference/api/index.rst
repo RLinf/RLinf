@@ -1,45 +1,53 @@
 APIs
-==========
+====
 
+Look up RLinf's public Python interfaces, organized from foundational scheduling primitives up to workers, models, robotics, algorithms, and data containers.
 
-Walk through RLinf's most essential API interfaces and how to use them.
-These key APIs are exposed to users to simplify the complex data flows of RL, allowing them to focus on higher-level abstractions without needing to worry about the underlying implementations.
-
-This API documentation proceeds bottom-up, starting with the foundational APIs of RLinf, including:
+Foundational Scheduling APIs
+----------------------------
 
 .. list-table::
    :header-rows: 1
+   :widths: 28 72
 
    * - API
      - What you get
    * - :doc:`Worker <worker>`
-     - A unified interface for workers and worker groups.
+     - ``Worker`` and ``WorkerGroup`` abstractions for distributed execution and communication.
    * - :doc:`Placement <placement>`
-     - An introduction to RLinf’s GPU placement strategies.
+     - Placement strategies mapping worker groups onto nodes and accelerators.
    * - :doc:`Cluster <cluster>`
-     - Support for distributed training via clusters.
+     - Ray cluster discovery, node groups, and worker allocation.
    * - :doc:`Channel <channel>`
-     - Low-level communication primitives, including a producer-consumer queue abstraction.
+     - Asynchronous producer-consumer queues with optional collectors and dispatchers.
 
-After that, we introduce the upper-layer APIs used to implement different stages of RL:
+RL Components, Models, Robotics, and Data
+-----------------------------------------
 
 .. list-table::
    :header-rows: 1
+   :widths: 28 72
 
    * - API
      - What you get
    * - :doc:`Actor <actor>`
-     - Actor wrappers based on FSDP and Megatron.
+     - FSDP and Megatron actor workers.
    * - :doc:`Rollout <rollout>`
-     - Rollout wrappers built on Hugging Face and SGLang.
+     - Hugging Face and SGLang rollout workers.
    * - :doc:`Env <env>`
-     - Environment wrappers for embodied intelligence scenarios.
+     - Environment worker wrappers for embodied tasks.
+   * - :doc:`Models & Policies <models>`
+     - Model registry (``register_model``, ``get_model``) and embodied ``BasePolicy`` contract.
+   * - :doc:`Robotics <robotics>`
+     - Hardware ``Connection``, ``RobotPart``, ``Robot``, and discovery APIs.
+   * - :doc:`Algorithms & Registries <algorithms>`
+     - Advantage, policy-loss, loss-scale, and tool-call parser registries.
    * - :doc:`Agentic Data <data>`
      - Agentic rollout requests and result structures.
    * - :doc:`Embodied Data <embodied_data>`
-     - Embodied Env/Rollout data structures.
+     - Embodied environment and rollout data structures.
    * - :doc:`Replay Buffer <replay_buffer>`
-     - Trajectory replay buffer design and sampling.
+     - ``TrajectoryReplayBuffer``, ``TrajectoryCache``, and preload datasets.
 
 .. toctree::
    :hidden:
@@ -52,6 +60,9 @@ After that, we introduce the upper-layer APIs used to implement different stages
    Actor <actor>
    Rollout <rollout>
    Environment <env>
+   Models & Policies <models>
+   Robotics <robotics>
+   Algorithms & Registries <algorithms>
    Data <data>
    Embodied Data <embodied_data>
    Replay Buffer <replay_buffer>

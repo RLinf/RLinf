@@ -40,13 +40,17 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: LIBERO
 
+      **1. Install**
+
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model sglang --env libero && source .venv/bin/activate
 
-         # 2. Evaluate LIBERO-Spatial
+      **2. Evaluate LIBERO-Spatial**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang \
            rollout.model.model_path=./model_diffusers \
            rollout.model.action_stats_path=./libero_native_frame_wise_relative_rot6d.json \
@@ -59,8 +63,11 @@ The default config is ``evaluations/libero/libero_spatial_cosmos3_eval_sglang.ya
    Each GPU hosts one SGLang server assigned to a rollout worker. Each inference step runs in four stages:
 
    1. **Group by prompt:** Rollout workers receive LIBERO images and task instructions, group the parallel environments by augmented prompt (the server batches prompts of equal token length), and split each group into batches of at most ``rollout.sglang.server.batching_max_size`` environments (example ``8``; default ``1``).
+
    2. **Diffusion inference:** Each batch is sent via ``POST /v1/actions/generations`` to the SGLang server, which runs ``num_inference_steps`` diffusion steps and returns ``[horizon, 10]`` normalized rot6d chunks per environment.
+
    3. **Post-process actions:** Rollout workers sort responses by ``input_index``, quantile de-normalize the 10-D output, and convert 6-D rot6d rotations to 3-D axis-angle (producing 7-D LIBERO actions).
+
    4. **Step simulation:** Rollout workers reassemble the ``[N, 16, 7]`` action chunks in environment order and send them to the LIBERO env workers to advance simulation.
 
 .. dropdown:: Key Configuration

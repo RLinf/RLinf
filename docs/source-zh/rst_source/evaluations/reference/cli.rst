@@ -10,7 +10,7 @@ CLI 参考
 显式指定 benchmark
 ------------------
 
-依次传入 ``evaluations/`` 下的 benchmark 目录名与 YAML 配置名（不带 ``.yaml`` 后缀）。该形式既适用于 ``evaluations/<benchmark>/`` 下的评测配置，也适用于通过配置回退加载 ``examples/embodiment/config/`` 中的训练配置：
+依次传入 ``evaluations/`` 下的 benchmark 目录名与 YAML 配置名（不带 ``.yaml`` 后缀）。该形式加载 ``evaluations/<benchmark>/`` 下的评测配置，或回退加载 ``examples/embodiment/config/`` 中已定义 ``rollout.model`` 的评测就绪配置：
 
 .. code-block:: bash
 
@@ -104,7 +104,7 @@ Hydra 参数覆盖
 配置回退
 --------
 
-若 ``evaluations/<benchmark>/<config>.yaml`` 不存在，``run_eval.sh`` 会自动回退到 ``examples/embodiment/config/<config>.yaml``。显式指定 ``<benchmark> <config_name> [hydra_overrides...]``\ （只要 ``evaluations/<benchmark>/`` 目录存在）与自动推断 ``<config_name> [hydra_overrides...]``\ （使用受支持前缀）两种形式均支持该回退。
+若 ``evaluations/<benchmark>/<config>.yaml`` 不存在，``run_eval.sh`` 会回退查找 ``examples/embodiment/config/<config>.yaml``。配置回退仅适用于已定义 ``rollout.model``\ （含 ``model_type`` 与 ``num_action_chunks``）的评测就绪配置；只定义了 ``actor.model`` 的训练配置无法通过校验，须按 :doc:`configuration` 改写。显式指定 ``<benchmark> <config_name> [hydra_overrides...]``\ （只要 ``evaluations/<benchmark>/`` 目录存在）与自动推断 ``<config_name> [hydra_overrides...]``\ （使用受支持前缀）两种形式均支持该回退。
 
 各 benchmark 的完整启动示例见对应指南：
 

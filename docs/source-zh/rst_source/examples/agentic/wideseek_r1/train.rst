@@ -28,10 +28,10 @@ WideSeek-R1 训练
 
       WideSeek-R1-train-data 中的 ``hybrid_20k.jsonl``
 
-   .. grid-item-card:: 工具
+   .. grid-item-card:: 硬件
       :text-align: center
 
-      离线检索与 judge model server
+      参考配置：8×H100 训练 + 8×H100 外部评判模型（共 16 张 H100）
 
 .. contents::
    :depth: 2
@@ -42,6 +42,7 @@ WideSeek-R1 训练
 
 开始训练前，请先完成 :doc:`环境与工具配置 <tools>`：
 
+- **硬件要求**：参考实验使用 **8×H100** 运行 RLinf 训练，另配 **8×H100** 部署外部 ``Qwen3-30B-A3B-Instruct-2507`` 评判服务（共 8+8 张 H100）。卡数较少时，可调小评判服务的 ``--dp``，或改用单机本地评判配置 ``train_qwen3_hybrid_local_judge.yaml``。
 - RLinf 环境已安装。
 - 评判模型已启动。
 - 离线检索工具已配置完成。

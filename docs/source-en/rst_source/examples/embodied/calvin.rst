@@ -127,19 +127,12 @@ Setup and Run
            - ``examples/embodiment/config/calvin_d_d_ppo_openpi.yaml``
            - ``calvin_d_d_ppo_openpi``
 
-      Set ``actor.model.model_path`` in ``examples/embodiment/config/calvin_d_d_ppo_openpi.yaml`` (rollout inherits it automatically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-Pi0-CALVIN-ABC-D-SFT
-
-      Launch training with ``run_embodiment.sh``:
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` on the command line (rollout inherits it automatically):
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi
+         bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi \
+           actor.model.model_path=./RLinf-Pi0-CALVIN-ABC-D-SFT
 
    .. tab-item:: OpenPI π₀.₅
       :sync: pi05
@@ -180,19 +173,12 @@ Setup and Run
            - ``examples/embodiment/config/calvin_abcd_d_ppo_openpi_pi05.yaml``
            - ``calvin_abcd_d_ppo_openpi_pi05``
 
-      Set ``actor.model.model_path`` in the chosen YAML (rollout inherits it automatically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-Pi05-CALVIN-ABC-D-SFT
-
-      Launch training with ``run_embodiment.sh``:
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` on the command line (rollout inherits it automatically):
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi_pi05
+         bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi_pi05 \
+           actor.model.model_path=./RLinf-Pi05-CALVIN-ABC-D-SFT
 
 For standalone evaluation, use the unified :doc:`Evaluation CLI
 <../../evaluations/reference/cli>` with config fallback and the same suffix, for

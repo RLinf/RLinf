@@ -509,4 +509,4 @@ These results reuse the same hyperparameter settings as π₀ without task-speci
      - Spatial
 
    * - GR00T-N1.7 PPO
-     - |huggingface| TODO
+     - —

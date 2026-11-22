@@ -1,8 +1,7 @@
 RLinf Execution Flow
 ====================
 
-Use this page to understand how RLinf executes an RL training job before you
-tune workers, channels, or placement.
+Every RLinf job runs through the same four-stage lifecycle: an entry script reads a Hydra config, starts a Ray-backed ``Cluster``, launches each role as a ``WorkerGroup``, and hands control to a runner loop that drives rollout, reward, advantage, and training. Read this page before tuning workers, channels, or placement.
 
 .. figure:: ../../_static/svg/overview.svg
    :width: 90%
@@ -11,21 +10,66 @@ tune workers, channels, or placement.
 
    RLinf system architecture overview.
 
-RLinf Execution Overview
-------------------------
+End-to-End Architecture
+-----------------------
 
-The following figure demonstrates the overview of RLinf execution flow, including the main code flow (left), the main process corresponding to the code flow (middle), and the concept of Worker, WorkerGroup, and Channel (right).
+The figure below maps the entry script (left) to the driver process (middle) and the core abstractions—``Worker``, ``WorkerGroup``, and ``Channel``—that decouple logical RL workflows from physical hardware layout (right).
 
 .. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf_exec_flow.jpg
    :alt: RLinf execution flow
    :width: 95%
    :align: center
 
-- **Code Flow Overview.** Let's first look at the main code flow shown in the left of the figure. The `run.sh` script runs `main_grpo.py` which serves as the entry point. In `main_grpo.py`, the main function first determines the placement for Workers (e.g, actor, rollout) based on the YAML configuration (i.e., `cluster/component_placement`). Specifically, each Worker can be flexibly assigned to any number of GPUs (or other types of accelerators) through the YAML configuration. After determining the placement, the script launches WorkGroups, each consisting of one or more Worker processes of the same type. These WorkerGroups are then passed to the Runner, where the main RL training workflow is encapsulated in the `run()` function.
+Stage 1: Configuration and Cluster Boot
+---------------------------------------
 
-- **Main Process.** Here, Worker placement defined in the YAML `placement` configuration is translated into our `Worker Placement Strategy`, which dictates on which node and/or which GPU a worker process should run. Based on this, worker processes are launched in the cluster via `Worker`'s `launch()` API. The `launch` API returns a handle to collectively manage all remote processes of the same Worker class, e.g. RolloutWorker, termed a `WorkerGroup`. You can command a group's processes to simultaneously execute any public functions of the Worker class via this `WorkerGroup` handle. The `Runner` then obtains these handles and orchestrates the execution of Worker processes remotely. However, communication between Workers is not conducted via the main `Runner` process. Instead, `Runner` establishes communication Channels (`Channel.Create()`) for inter-worker data exchange. For example, in a typical `Runner` iteration, it first calls RolloutGroup's `rollout` to execute the `rollout` function on all RolloutWorker processes, and then similarly executes ActorGroup's `train` function. For each function, it passes in the created Channels for them to communicate.
+A launcher script such as ``examples/embodiment/run_embodiment.sh`` or ``examples/reasoning/run_main_grpo_math.sh`` invokes an entry script (``examples/embodiment/train_embodied_agent.py`` for embodied RL, ``examples/reasoning/main_grpo.py`` for math reasoning). The entry script validates the Hydra YAML config and creates a singleton ``Cluster``.
 
-- **Key Concepts and Features.** The right side of the figure highlights three core features of RLinf. (i) Flexible Worker placement, a WorkerGroup can be elastically placed on any node or GPU. (ii) Easy-to-use communication interface, users can send or receive data by referencing only the WorkerGroup's name. (iii) Distributed data Channels, Workers can easily exchange data using `channel.put` and `channel.get`.
+``Cluster`` connects to Ray, discovers available nodes and accelerators, and starts the global management actors (``NodeManager``, ``WorkerManager``, and ``CollectiveManager``). On multi-node runs, Ray must already be started on every node with a unique ``RLINF_NODE_RANK``, and the entry script runs only on the head node.
 
-RLinf adopts a modular design that abstracts distributed complexity through the Worker, WorkerGroup, and Channel features.
-This design enables users to build large-scale RL training pipelines with minimal distributed programming effort, especially for embodied intelligence and agent-based systems.
+Stage 2: Placement and Launching WorkerGroups
+---------------------------------------------
+
+Next, the entry script parses ``cluster.component_placement`` into a placement strategy for each component (actor, rollout, env, reward, critic, or agent). Depending on the task, RLinf uses either ``ModelParallelComponentPlacement`` (collocated or disaggregated LLM runs) or ``HybridComponentPlacement`` (embodied and flexible mixed layouts).
+
+For each component, calling ``WorkerClass.create_group(...).launch(cluster, placement_strategy=...)`` spawns one or more remote worker processes on the assigned nodes and GPUs and returns a ``WorkerGroup`` handle. Through that handle, the driver can call any public worker method across all ranks in parallel without writing Ray plumbing directly:
+
+.. code-block:: text
+
+   Entry Script (Hydra YAML)
+       │
+       ├──► Cluster(num_nodes=...)              # Discover nodes & start managers
+       ├──► ComponentPlacement(cfg, cluster)    # Map roles to GPU / node ranks
+       ├──► Worker.create_group().launch(...)   # Spawn Actor, Rollout, Env, Reward
+       └──► Runner(cfg, actor, rollout, ...)    # Own the training / eval loop
+
+Stage 3: Channel Setup and Runner Orchestration
+-----------------------------------------------
+
+The entry script passes the launched ``WorkerGroup`` handles into a task runner (such as ``EmbodiedRunner``, ``AsyncEmbodiedRunner``, or ``ReasoningRunner``) and calls ``runner.init_workers()`` followed by ``runner.run()``.
+
+Workers never route bulk rollouts or observations through the driver process. Instead, the runner creates distributed queues via ``Channel.create()`` and passes those channel handles into worker methods:
+
+- In embodied training, ``env_channel`` carries actions to environments, ``rollout_channel`` carries observations to rollout workers, and ``actor_channel`` assembles completed trajectories for the actor.
+- Workers push and pull payloads directly with ``channel.put()`` and ``channel.get()``, while ``CollectiveGroup`` handles high-throughput weight synchronization and tensor transfers between worker groups.
+
+Stage 4: One Training Iteration
+-------------------------------
+
+Inside ``runner.run()``, one synchronous training step follows a consistent sequence:
+
+1. **Weight sync**: the actor broadcasts updated weights to rollout workers.
+2. **Rollout and environment interaction**: rollout workers and environment workers (or tool/agent loops) exchange actions and observations over channels and publish completed trajectories.
+3. **Reward and advantage**: optional reward workers score trajectories, and actor workers compute advantages and returns (such as GAE or GRPO).
+4. **Policy update**: actor workers (and critic workers, when present) run forward, backward, and optimizer steps, then return aggregated metrics and stage timings to the runner.
+5. **Evaluation and checkpointing**: at configured intervals, the runner runs validation and saves actor checkpoints.
+
+In pipelined or asynchronous runners (such as ``AsyncEmbodiedRunner`` or ``AsyncPPOEmbodiedRunner``), environment stepping, rollout inference, and actor training overlap continuously over the same channel interfaces while the runner controls weight sync cadence and staleness bounds.
+
+Next Steps
+----------
+
+- :doc:`cluster`: how ``Cluster`` boots Ray and tracks node topology.
+- :doc:`worker`: how ``Worker`` and ``WorkerGroup`` expose distributed execution and timers.
+- :doc:`channel`: how distributed queues decouple producers and consumers.
+- :doc:`placement` and :doc:`execution_modes`: how collocated, disaggregated, and hybrid placement map onto hardware.

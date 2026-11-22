@@ -108,8 +108,6 @@ LIBERO 强化学习
      - ``In: What action should the robot take to [task_description]? Out:``
 
 .. _zh-libero-benchmark:
-.. _zh-liberopro-plus-benchmark:
-.. _zh-libero-mem-benchmark:
 
 一键上手
 ----------------------------------------
@@ -155,22 +153,17 @@ LIBERO 强化学习
          * - LIBERO-130
            - ``libero_130_grpo_openvlaoft.yaml``
 
-      在所选 YAML 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）：
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-
-      使用 ``run_embodiment.sh`` 启动训练：
+      通过命令行覆盖 ``actor.model.model_path`` 启动训练（rollout 会自动沿用同一路径）：
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
    .. tab-item:: LIBERO-Pro
       :sync: libero-pro
+
+      .. _zh-liberopro-plus-benchmark:
 
       LIBERO-Pro 与标准 LIBERO 共享 robosuite/MuJoCo 设置和 7 自由度动作空间，但施加四个正交的反记忆扰动以检验泛化能力：
 
@@ -206,20 +199,13 @@ LIBERO 强化学习
 
       **3. 启动训练**
 
-      LIBERO-Pro 复用标准 LIBERO 配置族，并通过 ``LIBERO_TYPE=pro`` 选择套件。在 ``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml`` 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）：
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-
-      使用 ``run_embodiment.sh`` 启动训练（``libero_10_openvlaoft_eval`` 等独立评测见 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`）：
+      LIBERO-Pro 复用标准 LIBERO 配置族，并通过 ``LIBERO_TYPE=pro`` 选择套件。使用 ``run_embodiment.sh`` 启动训练（``libero_10_openvlaoft_eval`` 等独立评测见 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`）：
 
       .. code-block:: bash
 
          export LIBERO_TYPE=pro
-         bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
    .. tab-item:: LIBERO-Plus
       :sync: libero-plus
@@ -267,23 +253,18 @@ LIBERO 强化学习
 
       **3. 启动训练**
 
-      LIBERO-Plus 复用标准 LIBERO 配置族，并通过 ``LIBERO_TYPE=plus`` 选择套件。在 ``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml`` 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）：
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-
-      使用 ``run_embodiment.sh`` 启动训练（``libero_10_openvlaoft_eval`` 等独立评测见 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`）：
+      LIBERO-Plus 复用标准 LIBERO 配置族，并通过 ``LIBERO_TYPE=plus`` 选择套件。使用 ``run_embodiment.sh`` 启动训练（``libero_10_openvlaoft_eval`` 等独立评测见 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`）：
 
       .. code-block:: bash
 
          export LIBERO_TYPE=plus
-         bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
    .. tab-item:: LIBERO-Mem
       :sync: libero-mem
+
+      .. _zh-libero-mem-benchmark:
 
       LIBERO-Mem 包含 10 个需要记住先前交互、按顺序完成子目标的任务，复用 RLinf 的 ``libero`` 环境、相机观测和 7 维动作空间，OpenPI 配置将回合上限设为 700 个控制步。LIBERO-Mem 从 BDDL 读取任务指令并对两路相机图像垂直翻转以匹配示范数据，标准 LIBERO 保持原有相机处理方式。
 
@@ -362,6 +343,8 @@ LIBERO 强化学习
               - 相对当前帧的秒数，当前帧为零。填充位置也使用零，由 mask 排除。
 
          **成功指标解读：** 有序任务要求完成整个子目标序列并保留最终目标状态。``strict_success`` 表示当前控制步是否满足该条件（含 fork 的 overshoot 检查），各任务评测统计以回合结束时的 ``strict_success`` 为准（``success_at_end`` 记录同一条件）。``success_once`` 在任意一步成功后保持为真，即使之后失去最终状态也是如此。诊断进度可查看 episode info 中的 ``subgoals_completed``、``subgoals_total``、``subgoal_progress``\ （已完成数 / 总数）与 ``overshot``；进度每控制步推进一次并在重置时清空（重置稳定步骤不计入）。
+
+**LIBERO 上的其他支持模型：** :doc:`OpenPI π₀ / π₀.₅ <pi0>` · :doc:`GR00T <gr00t>` · :doc:`Dexbotic <dexbotic>` · :doc:`ABot-M0 <abot_m0>` · :doc:`StarVLA <starvla>`
 
 .. admonition:: 进一步配置
    :class: note

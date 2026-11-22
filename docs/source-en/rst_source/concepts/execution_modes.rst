@@ -40,7 +40,7 @@ The following is an example of placing workers. There are two nodes for this tra
      component_placement:
        actor,rollout: all # or 0-15
 
-Additonally, some workers support offloading to release GPUs to other workers during some time period. For example, math RL actor support some offloading options:
+Additionally, some workers support offloading to release GPUs to other workers between stages. For example, math RL actors support offloading options:
 
 .. code:: yaml
 
@@ -50,7 +50,7 @@ Additonally, some workers support offloading to release GPUs to other workers du
      offload_grad: True
 
 If offloading is enabled for actor, the actor is loaded into GPU memory before it runs, then it is offloaded into CPU memory after it finishes its execution. If offloading is not enabled, the collocated workers (assuming workers run on GPUs) will compete for GPU memory, which may lead to OOM error.
-Refer to :doc:`../guides/basic_config` for the complete configuration.
+Refer to :doc:`../reference/configuration` for the complete configuration.
 
 **ComponentPlacement programming**
 
@@ -80,7 +80,7 @@ Disaggregated Mode
    :align: center
    :class: dis-img
 
-Different RL tasks are mapped to different GPU groups according to their computation needs. There also two execution modes: the workers run sequentially one after another or the workers run concurrently with fine-grained pipelining.
+Different RL tasks are mapped to different GPU groups according to their computation needs. There are also two execution modes: the workers run sequentially one after another or the workers run concurrently with fine-grained pipelining.
 
 **Pros**
 
@@ -108,7 +108,7 @@ The workers are assigned to separate GPUs. The set of GPUs is specified using gl
 .. note::
    The ``pipeline_stage_num`` configuration should be adjusted to achieve the desired pipelining effect.
 
-Refer to :doc:`../guides/basic_config` for complete configuration.
+Refer to :doc:`../reference/configuration` for complete configuration.
 
 **ComponentPlacement programming**
 
@@ -127,7 +127,7 @@ RLinf further augments the collocated mode and disaggregated mode, by introducin
 
 The above figure shows a concrete placement and execution example for an embodied RL training.
 Simulation workers are placed on GPU 0-1, generation workers are placed on GPU 2-3. Two *data queues* decouple producer and consumer rates,
-helping to smooth the pipeline, balance the load, and virtually eliminate performance bottlenecks.After the rollout stage (i.e., simulation+generation), Inference workers are placed and executed on GPU 0-3, and training workers are also on GPU 0-3 afterward. You can see that hybrid mode combines collocated mode and disaggregated mode. The communication utilities in RLinf facilitate such flexible placement and execution mode.
+helping to smooth the pipeline, balance the load, and reduce performance bottlenecks. After the rollout stage (i.e., simulation+generation), Inference workers are placed and executed on GPU 0-3, and training workers are also on GPU 0-3 afterward. You can see that hybrid mode combines collocated mode and disaggregated mode. The communication utilities in RLinf facilitate such flexible placement and execution mode.
 
 **Example configuration**
 
@@ -156,11 +156,11 @@ In most cases, `env`, `rollout`, and `actor` should enable offloading as below t
 .. note::
    The ``pipeline_stage_num`` configuration should be adjusted to achieve the desired pipelining effect. For embodied RL training, it is recommended to set ``pipeline_stage_num`` to ``2`` for Hybrid Mode to enable pipeline overlap between rollout and env.
 
-Refer to :doc:`../guides/basic_config` for complete configuration.
+Refer to :doc:`../reference/configuration` for complete configuration.
 
 **ComponentPlacement programming**
 
-Different from collocated and disaggregated modes, hybrid mode uses `HybridComponentPlacement`, which has less constraints on worker placement.
+Different from collocated and disaggregated modes, hybrid mode uses `HybridComponentPlacement`, which has fewer constraints on worker placement.
 
 .. code:: python
 

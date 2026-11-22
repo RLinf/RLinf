@@ -346,7 +346,7 @@ Stage 2：运行 RLT Actor-Critic
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
 
-按你的机器修改 ``cluster.node_groups`` 中的节点 rank 和 ``robot_ip``，然后在 master node 上启动异步训练：
+``realworld_rlt_stage2_ac_mlp.yaml`` 默认使用 **2 节点**\ （``cluster.num_nodes: 2``：GPU 训练节点与 Franka 控制节点）。按你的机器修改 ``cluster.node_groups`` 中的节点 rank 和 ``robot_ip``，然后在 head 节点启动异步训练：
 
 .. code-block:: bash
 

@@ -121,11 +121,10 @@ env worker 按列出顺序根据 ``total_num_envs`` 的比例分配：
 
       bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-2. 下载权重：
+2. 下载权重（中国大陆用户可先设置 ``HF_ENDPOINT=https://hf-mirror.com``）：
 
    .. code-block:: bash
 
-      # 在中国大陆可设置 HF_ENDPOINT=https://hf-mirror.com
       hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Main
       hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 

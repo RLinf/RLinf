@@ -38,18 +38,25 @@ ManiSkill OOD 评测用于检验 VLA policy 在分布外（Out-of-Distribution�
 
    .. tab-item:: 单场景评测
 
+      **1. 安装**
+
       .. code-block:: bash
 
-         # 1. 安装
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-         # 2. 下载资产与模型权重
+      **2. 下载资产与模型权重**
+
+      .. code-block:: bash
+
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
          hf download RLinf/Openvla-oft-SFT-libero10-trajall --local-dir ./Openvla-oft-SFT-libero10-trajall
          hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
-         # 3. 启动评测（默认训练分布内场景；覆盖 id 与 obj_set 可测任意 OOD 场景）
+      **3. 启动评测（默认训练分布内场景）**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh maniskill maniskill_ood_openvlaoft_eval \
            rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall \
            rollout.model.lora_path=./RLinf-OpenVLAOFT-ManiSkill-Base-Lora

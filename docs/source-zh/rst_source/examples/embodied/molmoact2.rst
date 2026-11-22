@@ -141,7 +141,7 @@ MolmoAct2 评测
 
 .. warning::
 
-   完整 suite 包含 500 条轨迹，可能需要数小时。如果只需 smoke test，请调小 ``env.eval.max_steps_per_rollout_epoch``：每个环境跑一个 episode 即 ``max_episode_steps``。
+   完整 suite 包含 500 条轨迹，可能需要数小时。如果只需快速验证，请调小 ``env.eval.max_steps_per_rollout_epoch``：每个环境跑一个 episode 即 ``max_episode_steps``。
 
 .. dropdown:: 进阶配置（可选）
 

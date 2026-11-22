@@ -38,9 +38,3 @@
       :link-type: doc
 
       启动 SGLang server 与 router，或使用 PhyAI / ApxInf 具身 rollout 后端。
-
-   .. grid-item-card:: 智能体与推理
-      :link: ../examples/agentic/index
-      :link-type: doc
-
-      浏览数学推理、搜索、编程与多智能体端到端工作流。

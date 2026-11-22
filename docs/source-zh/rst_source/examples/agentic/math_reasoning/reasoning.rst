@@ -32,7 +32,7 @@ Qwen2.5 数学推理 GRPO
    .. grid-item-card:: 硬件
       :text-align: center
 
-      多节点 Megatron 训练
+      默认 16 节点（支持单机快速启动）
 
 数据集
 ----------------------------------------
@@ -123,13 +123,29 @@ GRPO 工作方式
 
       **3. 启动训练**
 
-      在 ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml`` 中填写 ``runner.output_dir``、``rollout.model.model_path`` 和 ``data.train_data_paths``，然后启动训练：
+      .. warning::
+
+         ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml`` 默认面向 **16 节点**\ （``cluster.num_nodes: 16``），在单机上直接运行会报错，必须通过参数覆盖节点数。
+
+      **单机快速启动**\ （通过 Hydra 命令行覆盖节点数、模型与数据路径；因 ``tensor_model_parallel_size=2``，至少需要 2 张 GPU）：
+
+      .. code-block:: bash
+
+         PYTHONPATH=$(pwd):/opt/Megatron-LM:$PYTHONPATH \
+         python examples/reasoning/main_grpo.py \
+             --config-path examples/reasoning/config/math \
+             --config-name qwen2.5-1.5b-grpo-megatron \
+             cluster.num_nodes=1 \
+             rollout.model.model_path=./DeepSeek-R1-Distill-Qwen-1.5B \
+             actor.tokenizer.tokenizer_model=./DeepSeek-R1-Distill-Qwen-1.5B \
+             data.train_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
+             data.val_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]'
+
+      **完整 16 节点训练**：在 ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml`` 中填写 ``runner.output_dir``、``rollout.model.model_path``、``actor.tokenizer.tokenizer_model`` 和 ``data.train_data_paths``，按 :doc:`/rst_source/guides/multi_node` 启动 Ray 集群后在 head 节点运行：
 
       .. code-block:: bash
 
          bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron
-
-      多机训练时，在 YAML 中设置 ``cluster.num_nodes``，按 :doc:`/rst_source/guides/multi_node` 启动 Ray 集群，再在 head 节点运行上述命令。
 
    .. tab-item:: DeepSeek-R1-Distill-Qwen-7B
 
@@ -149,13 +165,33 @@ GRPO 工作方式
 
       **3. 启动训练**
 
-      在 ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml`` 中填写 ``runner.output_dir``、``rollout.model.model_path`` 和 ``data.train_data_paths``，然后启动训练：
+      .. warning::
+
+         ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml`` 默认面向 **16 节点**\ （``cluster.num_nodes: 16``），在单机上直接运行会报错，必须通过参数覆盖节点数。
+
+      **单机快速启动**\ （通过 Hydra 命令行覆盖节点数、模型与数据路径；因 ``tensor_model_parallel_size=4``，至少需要 4 张 GPU）：
+
+      .. code-block:: bash
+
+         PYTHONPATH=$(pwd):/opt/Megatron-LM:$PYTHONPATH \
+         python examples/reasoning/main_grpo.py \
+             --config-path examples/reasoning/config/math \
+             --config-name qwen2.5-7b-grpo-megatron \
+             cluster.num_nodes=1 \
+             rollout.model.model_path=./DeepSeek-R1-Distill-Qwen-7B \
+             actor.tokenizer.tokenizer_model=./DeepSeek-R1-Distill-Qwen-7B \
+             data.train_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
+             data.val_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]'
+
+      **完整 16 节点训练**：在 ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml`` 中填写 ``runner.output_dir``、``rollout.model.model_path``、``actor.tokenizer.tokenizer_model`` 和 ``data.train_data_paths``，按 :doc:`/rst_source/guides/multi_node` 启动 Ray 集群后在 head 节点运行：
 
       .. code-block:: bash
 
          bash examples/reasoning/run_main_grpo_math.sh qwen2.5-7b-grpo-megatron
 
-      多机训练时，在 YAML 中设置 ``cluster.num_nodes``，按 :doc:`/rst_source/guides/multi_node` 启动 Ray 集群，再在 head 节点运行上述命令。
+.. note::
+
+   **切换 rollout 后端至 vLLM**：使用 ``bash requirements/install.sh agentic --engine vllm`` 安装 vLLM 环境，并在启动命令中追加 ``rollout.rollout_backend=vllm``\ （或在 YAML 中修改该项）。支持的引擎版本见 :doc:`Rollout 引擎版本 </rst_source/guides/version>`。
 
 可视化与结果
 ----------------------------------------

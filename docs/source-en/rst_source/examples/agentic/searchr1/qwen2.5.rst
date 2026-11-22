@@ -145,34 +145,38 @@ Checkpoint Export and Evaluation
 
 Checkpoint export depends on the training backend.
 
-For Megatron, run the following commands to convert a checkpoint into a
-HuggingFace model:
+For Megatron, convert a checkpoint into a Hugging Face model in three steps:
 
-.. code-block:: bash
+1. Set the source and destination paths, then convert Megatron weights to an intermediate directory:
 
-   CKPT_PATH_MG={your_output_dir}/{exp_name}/checkpoints/global_step_xxx/actor
-   CKPT_PATH_HF={path/to/save/huggingface/model}
-   CKPT_PATH_ORIGINAL_HF={path/to/model/Qwen2.5-3B-Instruct}
-   CKPT_PATH_MF="${CKPT_PATH_HF}_middle_file"
+   .. code-block:: bash
 
-   python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_mg_to_middle_file \
-       --load-path "${CKPT_PATH_MG}" \
-       --save-path "${CKPT_PATH_MF}" \
-       --model qwen_2.5_3b \
-       --tp-size 1 --ep-size 1 --pp-size 1 \
-       --te-ln-linear-qkv true --te-ln-linear-mlp_fc1 true \
-       --te-extra-state-check-none true --use-gpu-num 0 --process-num 16
+      CKPT_PATH_MG={your_output_dir}/{exp_name}/checkpoints/global_step_xxx/actor
+      CKPT_PATH_HF={path/to/save/huggingface/model}
+      CKPT_PATH_ORIGINAL_HF={path/to/model/Qwen2.5-3B-Instruct}
+      CKPT_PATH_MF="${CKPT_PATH_HF}_middle_file"
 
-   python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_middle_file_to_hf \
-       --load-path "${CKPT_PATH_MF}" \
-       --save-path "${CKPT_PATH_HF}" \
-       --model qwen_2.5_3b \
-       --use-gpu-num 0 --process-num 16
+      python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_mg_to_middle_file \
+          --load-path "${CKPT_PATH_MG}" --save-path "${CKPT_PATH_MF}" \
+          --model qwen_2.5_3b --tp-size 1 --ep-size 1 --pp-size 1 \
+          --te-ln-linear-qkv true --te-ln-linear-mlp_fc1 true \
+          --te-extra-state-check-none true --use-gpu-num 0 --process-num 16
 
-   rm -rf "${CKPT_PATH_MF}"
-   rm -f "${CKPT_PATH_HF}"/*.done
-   shopt -s extglob
-   cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index).json "${CKPT_PATH_HF}"
+2. Export the intermediate weights to Hugging Face format:
+
+   .. code-block:: bash
+
+      python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_middle_file_to_hf \
+          --load-path "${CKPT_PATH_MF}" --save-path "${CKPT_PATH_HF}" \
+          --model qwen_2.5_3b --use-gpu-num 0 --process-num 16
+
+3. Clean up intermediate files and copy tokenizer/config JSON files from the base model:
+
+   .. code-block:: bash
+
+      rm -rf "${CKPT_PATH_MF}" && rm -f "${CKPT_PATH_HF}"/*.done
+      shopt -s extglob
+      cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index).json "${CKPT_PATH_HF}"
 
 A PPO run saves an ``actor`` and a ``critic`` directory under each
 ``global_step_xxx``. Export the ``actor`` directory with the commands above.

@@ -132,58 +132,88 @@ Expected output:
 
    Local check passed: {'logprobs': (2, 4), 'entropy': (2, 4), 'values': (2, 1)}
 
+.. _out-of-tree-extensions:
+
 2. Register the Model Builder
 -----------------------------
 
-Register a builder with ``register_model`` in ``rlinf/models/__init__.py`` (in-tree) or in an external extension module. The builder takes ``(cfg, torch_dtype)`` and returns the instantiated model; for Hugging Face checkpoints, call ``from_pretrained(cfg.model_path, torch_dtype=torch_dtype, ...)`` and attach any ``processor`` inside the builder.
+Register a builder with ``register_model``. The builder takes ``(cfg, torch_dtype)`` and returns the instantiated model; for Hugging Face checkpoints, call ``from_pretrained(cfg.model_path, torch_dtype=torch_dtype, ...)`` and attach any ``processor`` inside the builder.
 
-.. code-block:: python
+Calling ``register_model`` registers the string in ``SupportedModel`` so Hydra validation accepts it, and maps ``model_type`` to your builder in ``get_model``. Pass ``force=True`` to replace a built-in implementation while keeping its ``model_type``. Choose how you want to host your code:
 
-   from omegaconf import OmegaConf
+.. tab-set::
 
-   from rlinf.config import SupportedModel
-   from rlinf.models import get_model, register_model
+   .. tab-item:: In-Tree (Inside RLinf)
+      :sync: ext-in-tree
+
+      Register the builder inside ``rlinf/models/__init__.py`` (so every worker imports it automatically), then check locally on CPU with ``load_to_device: False``:
+
+      .. code-block:: python
+
+         from omegaconf import OmegaConf
+
+         from rlinf.config import SupportedModel
+         from rlinf.models import get_model, register_model
 
 
-   def build_my_model(cfg, torch_dtype):
-       return TinyGaussianPolicy(
-           obs_dim=cfg.obs_dim,
-           action_dim=cfg.action_dim,
-           hidden_dim=cfg.get("hidden_dim", 64),
-       ).to(dtype=torch_dtype)
+         def build_my_model(cfg, torch_dtype):
+             return TinyGaussianPolicy(
+                 obs_dim=cfg.obs_dim,
+                 action_dim=cfg.action_dim,
+                 hidden_dim=cfg.get("hidden_dim", 64),
+             ).to(dtype=torch_dtype)
 
 
-   register_model("tiny_gaussian", build_my_model, category="embodied")
+         register_model("tiny_gaussian", build_my_model, category="embodied")
 
-   assert SupportedModel("tiny_gaussian").value == "tiny_gaussian"
-   cfg = OmegaConf.create(
-       {
-           "model_type": "tiny_gaussian",
-           "obs_dim": 8,
-           "action_dim": 4,
-           "hidden_dim": 64,
-           "precision": "fp32",
-           "is_lora": False,
-           "load_to_device": False,
-       }
-   )
-   model = get_model(cfg)
-   assert isinstance(model, TinyGaussianPolicy)
+         assert SupportedModel("tiny_gaussian").value == "tiny_gaussian"
+         cfg = OmegaConf.create(
+             {
+                 "model_type": "tiny_gaussian",
+                 "obs_dim": 8,
+                 "action_dim": 4,
+                 "hidden_dim": 64,
+                 "precision": "fp32",
+                 "is_lora": False,
+                 "load_to_device": False,
+             }
+         )
+         model = get_model(cfg)
+         assert isinstance(model, TinyGaussianPolicy)
 
-Calling ``register_model`` registers the string in ``SupportedModel`` so Hydra validation accepts it, and maps ``model_type`` to your builder in ``get_model``. Pass ``force=True`` to replace a built-in implementation while keeping its ``model_type``. Setting ``load_to_device: False`` keeps the verification model on CPU even on a GPU host.
+   .. tab-item:: Out-of-Tree (External Repo)
+      :sync: ext-out-of-tree
 
-Out-of-Tree Registration
-~~~~~~~~~~~~~~~~~~~~~~~~
+      You do not need to fork RLinf. Because Ray launches each rollout and actor worker in its own Python process, calling ``register_model`` only in your driver script does not reach workers. Put your registration inside a ``register()`` hook in your own package and export ``RLINF_EXT_MODULE`` before launching (see ``ClusterEnvVar.EXT_MODULE`` in ``rlinf/scheduler/cluster/cluster.py``):
 
-Ray workers run in separate Python processes, so calling ``register_model`` in your driver script does not reach rollout or actor workers. Put your registration calls inside a ``register()`` hook and export ``RLINF_EXT_MODULE`` before launching (see :ref:`out-of-tree-extensions` for module layout and ``ClusterEnvVar.EXT_MODULE`` in ``rlinf/scheduler/cluster/cluster.py``):
+      .. code-block:: python
 
-.. code-block:: bash
+         # my_pkg/rlinf_ext.py
+         from rlinf.models import register_model
 
-   export RLINF_EXT_MODULE=my_pkg.rlinf_ext
 
-.. note::
+         def build_my_model(cfg, torch_dtype):
+             from my_pkg.policy import TinyGaussianPolicy
 
-   Standalone checkpoint tools such as ``python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf`` also load ``RLINF_EXT_MODULE`` before calling ``get_model``. Export it before running them when your ``model_type`` lives in an external package.
+             return TinyGaussianPolicy(
+                 obs_dim=cfg.obs_dim,
+                 action_dim=cfg.action_dim,
+                 hidden_dim=cfg.get("hidden_dim", 64),
+             ).to(dtype=torch_dtype)
+
+
+         def register():
+             register_model("tiny_gaussian", build_my_model, category="embodied")
+
+      .. code-block:: bash
+
+         export RLINF_EXT_MODULE=my_pkg.rlinf_ext
+
+      RLinf imports this module and calls ``register()`` automatically in every worker process before loading configs or models.
+
+      .. note::
+
+         Standalone checkpoint tools such as ``python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf`` also load ``RLINF_EXT_MODULE`` before calling ``get_model``. Export it before running them when your ``model_type`` lives in an external package.
 
 3. Add Hydra Model and FSDP Configuration
 -----------------------------------------

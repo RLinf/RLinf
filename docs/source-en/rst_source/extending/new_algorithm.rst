@@ -193,21 +193,38 @@ Select it in your reasoning or agentic YAML:
      reward_type: exact_match
      reward_scale: 1.0
 
-4. Out-of-Tree Packaging
-------------------------
+4. Package and Launch
+---------------------
 
-To keep custom algorithms outside the RLinf tree, register them inside your extension module's ``register()`` hook and export ``RLINF_EXT_MODULE``:
+Choose whether to add your algorithm inside the RLinf repository or load it from an external package:
 
-.. code-block:: python
+.. tab-set::
 
-   # my_pkg/rlinf_ext.py
-   def register():
-       import my_pkg.my_advantages  # executes @register_advantage
-       import my_pkg.my_losses      # executes @register_policy_loss
-       import my_pkg.my_rewards     # executes register_reward(...)
+   .. tab-item:: In-Tree (Inside RLinf)
+      :sync: ext-in-tree
 
-.. code-block:: bash
+      Place your functions in ``rlinf/algorithms/advantages.py``, ``rlinf/algorithms/losses.py``, or ``rlinf/algorithms/rewards/`` so every worker imports them automatically, then launch with your registered names:
 
-   export RLINF_EXT_MODULE=my_pkg.rlinf_ext
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
-     algorithm.adv_type=centered_reward algorithm.loss_type=clipped_pg
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
+           algorithm.adv_type=centered_reward algorithm.loss_type=clipped_pg
+
+   .. tab-item:: Out-of-Tree (External Repo)
+      :sync: ext-out-of-tree
+
+      Import your modules inside your external package's ``register()`` hook and export ``RLINF_EXT_MODULE`` before launching so every Ray worker runs the decorators on startup:
+
+      .. code-block:: python
+
+         # my_pkg/rlinf_ext.py
+         def register():
+             import my_pkg.my_advantages  # executes @register_advantage
+             import my_pkg.my_losses      # executes @register_policy_loss
+             import my_pkg.my_rewards     # executes register_reward(...)
+
+      .. code-block:: bash
+
+         export RLINF_EXT_MODULE=my_pkg.rlinf_ext
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
+           algorithm.adv_type=centered_reward algorithm.loss_type=clipped_pg

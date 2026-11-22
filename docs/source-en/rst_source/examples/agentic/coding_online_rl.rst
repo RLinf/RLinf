@@ -26,10 +26,10 @@ Overview
 
       Continue accept / reject events or LLM-as-judge labels
 
-   .. grid-item-card:: Services
+   .. grid-item-card:: Hardware
       :text-align: center
 
-      Inference on ``8081`` and feedback ingestion on ``8082``
+      1 node · 8 GPUs for online PPO (disaggregated ``0-3`` / ``4-5`` / ``6-7``); 1–8 GPUs for offline GRPO (collocated)
 
 .. list-table::
    :header-rows: 1
@@ -51,7 +51,7 @@ Overview
      - RLinf training service
      - Updates the policy from feedback
 
-This recipe includes both an online RL path (with Continue) and an offline validation path that simulates human preference with an LLM judge (no Continue extension required).
+This recipe includes both an online RL path (with Continue, serving inference on port ``8081`` and feedback ingestion on port ``8082``) and an offline validation path that simulates human preference with an LLM judge (no Continue extension required). Online PPO requires a disaggregated 8-GPU single-node layout (``rollout: 0-3``, ``inference: 4-5``, ``actor: 6-7``, ``reward: 0-3`` in ``qwen2.5-1.5b-ppo.yaml``); offline GRPO collocates all workers on 1–8 GPUs (``actor,rollout,reward: all``).
 
 Setup and Run
 -------------

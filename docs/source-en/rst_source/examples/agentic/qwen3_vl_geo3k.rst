@@ -3,6 +3,34 @@ Qwen3-VL GRPO
 
 Train vision-language models (VLMs) for geometric reasoning using reinforcement learning (RL) in RLinf.
 
+Overview
+--------
+
+Use this recipe to train Qwen3-VL-2B-Instruct with GRPO and Truncated Importance Sampling (TIS) on the Geo3K dataset using FSDP2 and SGLang.
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Model
+      :text-align: center
+
+      Qwen3-VL-2B-Instruct
+
+   .. grid-item-card:: Algorithm
+      :text-align: center
+
+      GRPO with TIS (FSDP2 + SGLang)
+
+   .. grid-item-card:: Data
+      :text-align: center
+
+      Geo3K geometric reasoning
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      Single node (1–8 GPUs, collocated ``actor,rollout,reward: all``)
+
 Setup and Run
 -------------
 

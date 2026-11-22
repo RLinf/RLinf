@@ -104,7 +104,7 @@ GLM 需要 ``prompt`` 字段为消息列表（``[{"role": "system", ...}, {"role
 
       **3. 启动训练**
 
-      在 ``examples/agent/searchr1/config/train_glm4.7_flash_2node_server.yaml`` 中填写相同路径字段（搜索工具 worker 运行在 0 号节点，``tools.search.server_addr`` 只需从该节点可达），然后在 head 节点启动训练：
+      在 ``examples/agent/searchr1/config/train_glm4.7_flash_2node_server.yaml`` 中填写相同路径字段（该配置默认 ``cluster.num_nodes: 2``，需要 2 个 8×A100-80G 节点；单机请使用上方“单机”标签页；搜索工具 worker 运行在 0 号节点，``tools.search.server_addr`` 只需从该节点可达），然后在 head 节点启动训练：
 
       .. code-block:: bash
 

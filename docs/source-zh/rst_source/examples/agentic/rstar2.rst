@@ -56,7 +56,7 @@ rStar2 强化学习
          uv pip install -r examples/agent/rstar2/code-judge/requirements.txt
          uv pip install -e examples/agent/rstar2/code-judge
 
-      启动 Redis、Code Judge Server（仅 master 节点）和 Code Judge Workers（跨机部署时按实际地址修改 ``MASTER_ADDR``）：
+      启动 Redis 并设置工作目录与主节点地址（跨机部署时将 ``MASTER_ADDR`` 改为主节点 IP）：
 
       .. code-block:: bash
 
@@ -64,21 +64,19 @@ rStar2 强化学习
          export MASTER_ADDR=127.0.0.1
          redis-server --daemonize yes --protected-mode no --bind 0.0.0.0
 
+      启动 Code Judge Server（仅在 master 节点运行）：
+
+      .. code-block:: bash
+
          tmux new-session -d -s server \
-         'cd $WORKSPACE/examples/agent/rstar2/code-judge && \
-            MAX_EXECUTION_TIME=4 \
-            REDIS_URI="redis://$MASTER_ADDR:6379" \
-            RUN_WORKERS=0 \
-            uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 16 \
-            2>&1 | tee server.log'
+             'cd $WORKSPACE/examples/agent/rstar2/code-judge && MAX_EXECUTION_TIME=4 REDIS_URI="redis://$MASTER_ADDR:6379" RUN_WORKERS=0 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 16 2>&1 | tee server.log'
+
+      启动 Code Judge Workers：
+
+      .. code-block:: bash
 
          tmux new-session -d -s worker \
-         'cd $WORKSPACE/examples/agent/rstar2/code-judge && \
-            MAX_EXECUTION_TIME=4 \
-            REDIS_URI="redis://$MASTER_ADDR:6379" \
-            MAX_WORKERS=64 \
-            python run_workers.py \
-            2>&1 | tee worker.log'
+             'cd $WORKSPACE/examples/agent/rstar2/code-judge && MAX_EXECUTION_TIME=4 REDIS_URI="redis://$MASTER_ADDR:6379" MAX_WORKERS=64 python run_workers.py 2>&1 | tee worker.log'
 
       **2. 下载模型与数据**
 

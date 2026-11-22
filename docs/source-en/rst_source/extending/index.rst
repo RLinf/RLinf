@@ -56,32 +56,9 @@ Which Guide Should I Read?
      - Low-level Megatron resharding / ``WeightSyncer``
      - :doc:`Advanced Integrations <advanced-integrations/index>`
 
-.. _out-of-tree-extensions:
+.. tip::
 
-Out-of-Tree Extensions
-----------------------
-
-You do not need to fork RLinf to register a custom model, advantage, policy loss, rule-based reward, or tool-call parser. Because Ray launches each worker in its own Python process, a registration call made only in your driver script does not reach worker processes.
-
-Put your registration calls inside a ``register()`` function in your own package and export ``RLINF_EXT_MODULE`` before launching training or checkpoint conversion:
-
-.. code-block:: python
-
-   # my_pkg/rlinf_ext.py
-   from rlinf.models import register_model
-
-   def build_my_model(cfg, torch_dtype):
-       from my_pkg.policy import CustomPolicy
-       return CustomPolicy(cfg, torch_dtype)
-
-   def register():
-       register_model("my_custom_model", build_my_model, category="embodied")
-
-.. code-block:: bash
-
-   export RLINF_EXT_MODULE=my_pkg.rlinf_ext
-
-RLinf imports the module and calls ``register()`` automatically in every worker process and standalone checkpoint convertor before loading configs or models.
+   **No fork needed:** To register a custom model, advantage, policy loss, rule reward, or tool-call parser from your own repository, expose a ``register()`` hook and export ``RLINF_EXT_MODULE=<your_pkg.module>`` before launching (see :ref:`out-of-tree-extensions` in :doc:`FSDP Model <new_model_fsdp>` and :doc:`Algorithms & Rule Rewards <new_algorithm>`).
 
 1. Embodied Models
 ------------------

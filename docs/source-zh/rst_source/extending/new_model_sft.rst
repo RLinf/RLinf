@@ -73,7 +73,23 @@
    def register():
        register_model("my_new_model", build_my_model, category="sft")
 
-接入 Hugging Face 模型时，在 ``build_my_model`` 中调用 ``AutoModelForCausalLM.from_pretrained(cfg.model_path, torch_dtype=torch_dtype, trust_remote_code=cfg.get("trust_remote_code", False))`` 即可。代码位于外部仓库时，暴露 ``register()`` 并导出 ``RLINF_EXT_MODULE``，确保每个 Ray worker 都能加载注册逻辑（见 :ref:`out-of-tree-extensions`\ ）。
+接入 Hugging Face 模型时，在 ``build_my_model`` 中调用 ``AutoModelForCausalLM.from_pretrained(cfg.model_path, torch_dtype=torch_dtype, trust_remote_code=cfg.get("trust_remote_code", False))`` 即可。按代码存放位置选择注册方式：
+
+.. tab-set::
+
+   .. tab-item:: 主仓库内注册（In-Tree）
+      :sync: ext-in-tree
+
+      在 ``rlinf/models/__init__.py`` 中添加 ``register_model("my_new_model", build_my_model, category="sft")``，所有 worker 导入时自动生效。
+
+   .. tab-item:: 外部仓库注册（Out-of-Tree）
+      :sync: ext-out-of-tree
+
+      在自己的包中（例如 ``my_pkg/rlinf_ext.py``\ ）保留上面的 ``register()`` 函数，并在启动前导出 ``RLINF_EXT_MODULE``，每个 Ray worker 和独立 checkpoint 转换工具都会自动加载注册逻辑（详见 :ref:`out-of-tree-extensions`\ ）：
+
+      .. code-block:: bash
+
+         export RLINF_EXT_MODULE=my_pkg.rlinf_ext
 
 2. 实现 SFT Worker 子类
 -----------------------

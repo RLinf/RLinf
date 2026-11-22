@@ -274,12 +274,80 @@ OpenPI 监督微调
                 openpi_data:
                   norm_stats_path: ${actor.model.model_path}/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
 
+   .. tab-item:: 自定义 LeRobot 数据集
+      :sync: custom-lerobot
+
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+
+      **2. 准备数据集与 dataconfig**
+
+      将 LeRobot 数据集目录（直接包含 ``meta/info.json`` 和 ``data/``）放到训练机，数据需包含观测字段（``image``、``state``）、``actions`` 与任务文本（``task`` 或 ``prompt``）。``examples/sft/config/custom_sft_openpi.yaml`` 默认使用 ``actor.model.openpi.config_name: "pi0_custom"``，按你的相机键名、状态与动作维度以及增量或绝对动作格式调整该 dataconfig，或在 OpenPI dataconfig 注册表中新增条目。
+
+      用与训练一致的 ``--config-name`` 计算 ``norm_stats.json``：
+
+      .. code-block:: bash
+
+         python toolkits/lerobot/calculate_norm_stats.py \
+           --config-name pi0_custom \
+           --repo-id ./custom-lerobot-data
+
+      该命令会在 ``./assets/pi0_custom/custom-lerobot-data/norm_stats.json`` 生成统计文件。
+
+      **3. 启动训练**
+
+      通过 Hydra CLI 参数传入数据集、基座权重和归一化统计路径：
+
+      .. code-block:: bash
+
+         bash examples/sft/run_vla_sft.sh custom_sft_openpi \
+           data.train_data_paths=./custom-lerobot-data \
+           actor.model.model_path=./pi0_base_openpi \
+           actor.model.openpi_data.norm_stats_path=./assets/pi0_custom/custom-lerobot-data/norm_stats.json
+
+      .. dropdown:: 进阶配置（可选）
+
+         ``examples/sft/config/custom_sft_openpi.yaml`` 中的核心路径配置：
+
+         .. code-block:: yaml
+
+            data:
+              train_data_paths: ./custom-lerobot-data
+
+            actor:
+              model:
+                model_path: ./pi0_base_openpi
+                num_action_chunks: 4
+                openpi:
+                  task: sft
+                  config_name: "pi0_custom"
+                openpi_data:
+                  norm_stats_path: ./assets/pi0_custom/custom-lerobot-data/norm_stats.json
+
 .. dropdown:: 通用约定（精度、FSDP 与 action horizon）
 
-   - **任务模式：** 训练时 ``openpi.task`` 必须为 ``sft``；评测 YAML 用 ``eval``，不要把训练的 ``sft`` 抄过去。
-   - **动作 chunk 与 horizon：** ``num_action_chunks`` / ``openpi.action_chunk`` 表示环境单次执行步数，网络 ``action_horizon`` 优先取 ``openpi.action_horizon``，否则取 ``openpi.config_name`` 对应的官方 ``TrainConfig.model.action_horizon``\ （BEHAVIOR ``pi05_behavior`` 为 **32**，RoboTwin ``pi0_aloha_robotwin`` / LIBERO ``pi0_libero`` 为 **50**，真机 ``pi0_realworld`` 为 **10**）。官方 LeRobot SFT 的数据窗口来自 ``TrainConfig.model.action_horizon``；BEHAVIOR 与 dual-Franka 的流式加载器仍使用 ``num_action_chunks`` 作数据窗口，因此这两份配置需将其设为与官方 horizon 一致。
-   - **精度与 FSDP1：** 设置 ``actor.model.precision: fp32`` 让原始参数与优化器更新保持 FP32，设置 ``actor.model.openpi.embed_dtype: bf16`` 让主干激活与残差使用 BF16（未设置或为 null 时沿用 ``model.precision``，``precision: null`` 对应 BF16 激活）。使用 ``hybrid_engines/openpi_fsdp`` 可在主干 BF16 计算的同时，保留 projection、RMSNorm、视觉 embedding 及 RLT Stage 1 ``rlt_module`` 为 FP32。OpenPI 支持 FSDP1 ``no_shard``、``shard_grad_op`` 和 ``full_shard``\ （需 ``use_orig_params: true``），开启 ``gradient_checkpointing: true`` 与 ``gradient_checkpointing_use_reentrant: false`` 可降低激活显存。BEHAVIOR / RoboTwin 配置使用 ``openpi_cosine`` 学习率调度。
-   - **Tokenizer：** 由 OpenPI 的 ``ModelTransformFactory`` 按基础模型加载，YAML 中无需单独配置 SentencePiece 路径。
+   .. list-table::
+      :header-rows: 1
+      :widths: 26 74
+
+      * - 项目
+        - 约定
+      * - 任务模式
+        - 训练时设 ``openpi.task: sft``，评测配置设 ``eval``。
+      * - 动作 chunk 与网络 horizon
+        - ``num_action_chunks``\ （及 ``openpi.action_chunk``）控制环境单次执行步数；``openpi.action_horizon`` 控制网络预测长度（``pi05_behavior`` 为 **32**，``pi0_aloha_robotwin`` 与 ``pi0_libero`` 为 **50**，``pi0_realworld`` 为 **10**）。
+      * - 数据窗口长度
+        - 标准 LeRobot SFT 按 dataconfig 的 horizon 切分数据窗口；BEHAVIOR 与双臂 Franka 流式加载器按 ``num_action_chunks`` 切分，这两份配置需将其设为与网络 horizon 一致。
+      * - 精度
+        - 设 ``actor.model.precision: fp32`` 保持主权重与优化器更新为 FP32，设 ``actor.model.openpi.embed_dtype: bf16`` 让主干激活使用 BF16（省略 ``embed_dtype`` 时跟随 ``model.precision``，``precision: null`` 对应 BF16）。
+      * - FSDP1 与显存
+        - 使用 ``hybrid_engines/openpi_fsdp`` 可在主干 BF16 计算时保留 projection、RMSNorm、视觉 embedding 与 RLT Stage 1 模块为 FP32。OpenPI 支持 ``no_shard``、``shard_grad_op`` 和 ``full_shard``\ （需 ``use_orig_params: true``），开启 ``gradient_checkpointing: true`` 与 ``gradient_checkpointing_use_reentrant: false`` 可降低激活显存。BEHAVIOR 与 RoboTwin 使用 ``openpi_cosine`` 学习率调度。
+      * - Tokenizer
+        - 自动从基础模型加载，无需单独配置 SentencePiece 路径。
 
    .. code-block:: yaml
 

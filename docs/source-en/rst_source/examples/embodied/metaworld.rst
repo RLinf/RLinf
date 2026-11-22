@@ -123,19 +123,12 @@ Setup and Run
            - PPO
            - ``metaworld_45_ppo_openpi.yaml``
 
-      Set ``actor.model.model_path`` in the chosen YAML (rollout inherits it automatically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-Pi0-MetaWorld-SFT
-
-      Launch training with ``run_embodiment.sh``:
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` on the command line (rollout inherits it automatically):
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi
+         bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi \
+           actor.model.model_path=./RLinf-Pi0-MetaWorld-SFT
 
    .. tab-item:: OpenPI π₀.₅
       :sync: pi05
@@ -170,19 +163,12 @@ Setup and Run
            - PPO
            - ``metaworld_50_ppo_openpi_pi05.yaml``
 
-      Set ``actor.model.model_path`` in ``examples/embodiment/config/metaworld_50_ppo_openpi_pi05.yaml`` (rollout inherits it automatically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-Pi05-MetaWorld-SFT
-
-      Launch training with ``run_embodiment.sh``:
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` on the command line (rollout inherits it automatically):
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi_pi05
+         bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi_pi05 \
+           actor.model.model_path=./RLinf-Pi05-MetaWorld-SFT
 
    .. tab-item:: OpenVLA-OFT
       :sync: openvla-oft
@@ -217,19 +203,12 @@ Setup and Run
            - GRPO
            - ``metaworld_50_grpo_openvlaoft.yaml``
 
-      Set ``actor.model.model_path`` in ``examples/embodiment/config/metaworld_50_grpo_openvlaoft.yaml`` (rollout inherits it automatically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./RLinf-OpenVLAOFT-MetaWorld-SFT
-
-      Launch training with ``run_embodiment.sh``:
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` on the command line (rollout inherits it automatically):
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh metaworld_50_grpo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh metaworld_50_grpo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-MetaWorld-SFT
 
 .. admonition:: Configure further
    :class: note

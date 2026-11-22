@@ -152,7 +152,7 @@ Setup and Run
 .. warning::
 
    A full suite covers 500 trajectories and can take several hours. Lower
-   ``env.eval.max_steps_per_rollout_epoch`` for a smoke test — one episode per
+   ``env.eval.max_steps_per_rollout_epoch`` for a quick check — one episode per
    environment is ``max_episode_steps``.
 
 .. dropdown:: Advanced configuration (optional)

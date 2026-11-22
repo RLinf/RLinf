@@ -115,7 +115,7 @@ from :doc:`index` on node 0 before training.
            search:
              server_addr: <server_ip>:8000
 
-      Start training from the head node:
+      Start training from the head node (this config sets ``cluster.num_nodes: 2``, requiring 2 nodes of 8×A100-80G with the Ray cluster already running):
 
       .. code-block:: bash
 

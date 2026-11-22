@@ -30,7 +30,7 @@ Get Started
 Supported Benchmarks
 --------------------
 
-The matrix below covers benchmarks with ready-to-run configs under ``evaluations/`` launched via ``evaluations/run_eval.sh``, plus dedicated SGLang serving guides.
+The matrix below covers benchmarks with ready-to-run configs under ``evaluations/`` launched via ``evaluations/run_eval.sh``.
 
 .. list-table::
    :header-rows: 1
@@ -68,6 +68,14 @@ The matrix below covers benchmarks with ready-to-run configs under ``evaluations
      - ``robocasa365`` pretrain task slices
      - ``robocasa365/robocasa365_eval_openpi.yaml``
      - :doc:`RoboCasa365 <../examples/embodied/robocasa365>`
+   * - RoboDojo
+     - Isaac Sim manipulation tasks
+     - ``robodojo/robodojo_put_bottles_into_dustbin_pi05_eval.yaml``
+     - :doc:`RoboDojo <../examples/embodied/robodojo>`
+   * - GenieSim
+     - Server-backed humanoid manipulation tasks
+     - ``geniesim/geniesim_pick_block_color_eval.yaml``
+     - :doc:`GenieSim <../examples/embodied/geniesim>`
    * - :doc:`SIMPLE <guides/simple>`
      - 8 G1 whole-body Teleop tasks (``G1WholebodyOpenOvenTeleop-v0``, etc.)
      - ``simple/simple_psi0_eval.yaml``
@@ -76,6 +84,20 @@ The matrix below covers benchmarks with ready-to-run configs under ``evaluations
      - ``realworld_franka_sft_env``, ``realworld_bin_relocation``, Dual Franka
      - ``realworld/realworld_pnp_eval.yaml``, ``realworld/realworld_eval.yaml``, ``realworld/realworld_pnp_eval_dreamzero.yaml``
      - :doc:`Franka <../examples/embodied/franka>`
+
+SGLang Serving Guides
+---------------------
+
+Dedicated guides for world-action models served through RLinf's SGLang embodied backend on LIBERO:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 26 32 20
+
+   * - Model Guide
+     - Benchmark
+     - Example Config
+     - Training Guide
    * - :doc:`Cosmos3 (SGLang) <guides/cosmos3_sglang>`
      - LIBERO-Spatial (SGLang embodied server)
      - ``libero/libero_spatial_cosmos3_eval_sglang.yaml``
@@ -87,7 +109,7 @@ The matrix below covers benchmarks with ready-to-run configs under ``evaluations
 
 .. note::
 
-   **Config fallback:** If ``evaluations/<benchmark>/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` with the same config name, so training configs can be reused for evaluation. Standard LIBERO, LIBERO-PRO, and LIBERO-PLUS are switched via environment variables (see :doc:`guides/libero`).
+   **Config fallback:** If ``evaluations/<benchmark>/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` for eval-ready configs that define ``rollout.model`` (with ``model_type`` and ``num_action_chunks``). To evaluate a training-only config that defines only ``actor.model``, rebind ``@rollout.model`` per :doc:`reference/configuration`. Standard LIBERO, LIBERO-PRO, and LIBERO-PLUS are switched via environment variables (see :doc:`guides/libero`).
 
 Reference
 ---------

@@ -193,21 +193,38 @@
      reward_type: exact_match
      reward_scale: 1.0
 
-4. 外部仓库注册
----------------
+4. 打包与启动
+-------------
 
-如需在 RLinf 仓库之外维护自定义算法，在扩展模块的 ``register()`` 中导入这些模块并导出 ``RLINF_EXT_MODULE``：
+按代码存放位置选择仓库内集成或外部仓库加载：
 
-.. code-block:: python
+.. tab-set::
 
-   # my_pkg/rlinf_ext.py
-   def register():
-       import my_pkg.my_advantages  # 执行 @register_advantage
-       import my_pkg.my_losses      # 执行 @register_policy_loss
-       import my_pkg.my_rewards     # 执行 register_reward(...)
+   .. tab-item:: 主仓库内注册（In-Tree）
+      :sync: ext-in-tree
 
-.. code-block:: bash
+      将实现放入 ``rlinf/algorithms/advantages.py``、``rlinf/algorithms/losses.py`` 或 ``rlinf/algorithms/rewards/``\ （所有 worker 导入时自动生效），然后用注册名称启动训练：
 
-   export RLINF_EXT_MODULE=my_pkg.rlinf_ext
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
-     algorithm.adv_type=centered_reward algorithm.loss_type=clipped_pg
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
+           algorithm.adv_type=centered_reward algorithm.loss_type=clipped_pg
+
+   .. tab-item:: 外部仓库注册（Out-of-Tree）
+      :sync: ext-out-of-tree
+
+      在外部扩展包的 ``register()`` 中导入对应模块，启动前导出 ``RLINF_EXT_MODULE``，确保每个 Ray worker 初始化时自动执行注册装饰器：
+
+      .. code-block:: python
+
+         # my_pkg/rlinf_ext.py
+         def register():
+             import my_pkg.my_advantages  # 执行 @register_advantage
+             import my_pkg.my_losses      # 执行 @register_policy_loss
+             import my_pkg.my_rewards     # 执行 register_reward(...)
+
+      .. code-block:: bash
+
+         export RLINF_EXT_MODULE=my_pkg.rlinf_ext
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
+           algorithm.adv_type=centered_reward algorithm.loss_type=clipped_pg

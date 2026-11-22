@@ -1,46 +1,37 @@
 Math Reasoning
 ==============
 
-RL training for math reasoning on large language models — GRPO and PPO on
-Qwen-based and DeepSeek-V3 (Moonlight-16B) architectures — using the
-Megatron-Bridge actor with SGLang rollout.
+Train large language models on math reasoning benchmarks (AIME24, AIME25, GPQA-diamond) with GRPO and PPO using the Megatron actor and SGLang or vLLM rollout. Pick a model family and algorithm below.
 
-.. raw:: html
+.. grid:: 1 2 3 3
+   :gutter: 3
 
-   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="reasoning.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/math_numbers_small.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="reasoning.html" style="text-decoration: underline; color: blue;">
-          <b>GRPO training for Math Reasoning</b>
-         </a><br>
-         SOTA RL training for math reasoning (AIME24/AIME25/GPQA-diamond) with Qwen-based models
-       </p>
-     </div>
+   .. grid-item-card:: Qwen2.5 GRPO
+      :link: reasoning
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="reasoning_ppo.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/ppo_vs_grpo.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="reasoning_ppo.html" style="text-decoration: underline; color: blue;">
-          <b>PPO training for Math Reasoning</b>
-         </a><br>
-           Math reasoning RL training using the PPO algorithm
-       </p>
-     </div>
+      .. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/math_numbers_small.jpg
+         :alt: Qwen2.5 Math GRPO
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="moonlight.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/moonlight/moonlight_grpo_reward.jpeg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="moonlight.html" style="text-decoration: underline; color: blue;">
-          <b>Moonlight-16B GRPO</b>
-         </a><br>
-         GRPO training for Moonlight-16B-A3B-Instruct (DeepSeek-V3 MLA + MoE)
-       </p>
-     </div>
-   </div>
+      GRPO training for DeepSeek-R1-Distill-Qwen (1.5B and 7B) on AReaL-boba math data.
+
+   .. grid-item-card:: Qwen2.5 PPO
+      :link: reasoning_ppo
+      :link-type: doc
+
+      .. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/ppo_vs_grpo.png
+         :alt: Qwen2.5 Math PPO
+
+      PPO training with an actor and critic on Qwen2.5-1.5B math reasoning tasks.
+
+   .. grid-item-card:: Moonlight-16B GRPO
+      :link: moonlight
+      :link-type: doc
+
+      .. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/moonlight/moonlight_grpo_reward.jpeg
+         :alt: Moonlight-16B GRPO
+
+      GRPO training for Moonlight-16B-A3B-Instruct (DeepSeek-V3 MLA + MoE) via Megatron-Bridge.
 
 .. toctree::
    :hidden:

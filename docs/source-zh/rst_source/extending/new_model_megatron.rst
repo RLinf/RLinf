@@ -3,6 +3,21 @@
 
 使用 Megatron+SGLang 后端为 RLinf 添加新的 HuggingFace 模型，本指南介绍手动适配 Megatron 模型的完整步骤。
 
+.. list-table:: 速览
+   :header-rows: 1
+   :widths: 24 76
+
+   * - 项目
+     - 说明
+   * - 扩展点
+     - 手动适配 Megatron 模型构建、checkpoint 转换与同步到 ``SGLangWorker`` 的权重重分片
+   * - 核心接口
+     - ``model_provider_func``、``convert_hf_to_mg``、``get_tp_gather_fn``、``get_mg2hf_convertor``
+   * - 配置入口
+     - ``actor.training_backend: megatron``、``rollout.model.model_type``
+   * - 涉及文件
+     - ``rlinf/hybrid_engines/megatron/megatron_model_manager.py``、``rlinf/utils/ckpt_convertor/megatron_convertor/``、``rlinf/utils/resharding/utils.py``、``rlinf/utils/convertor/utils.py``
+
 .. tip::
 
    对于较新的 HuggingFace 模型（如 Qwen3、Qwen3-MoE、Qwen2.5-VL、Qwen3-VL、DeepSeek-V3/Moonlight-16B 与 GLM-4.7-Flash），优先使用 :doc:`mbridge`\ （``actor.megatron.mbridge: True``），可在进程内直接加载 HuggingFace 权重，无需手动编写 ``megatron_convertor`` 和 ``mcore_weight_reshard`` 规则。
@@ -165,23 +180,23 @@ RLinf 仅支持已经被 SGLang 适配过的模型。
 4. 从 Megatron 同步权重到 SGLang
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-在 RLinf 中 MegatronActor 在每次开始训练前将当前的权重转换为同步到各个 SGLangActor 中。
+在 RLinf 中 MegatronActor 在每次开始训练前将当前的权重转换为同步到各个 SGLangWorker 中。
 
-其中就会涉及到对 MegatronActor 的权重格式转换到 SGLangActor 的权重格式。
+其中就会涉及到对 MegatronActor 的权重格式转换到 SGLangWorker 的权重格式。
 
-权重转换分为两个阶段，第一个阶段是 MegatronActor 会将权重转换为 Sglang 格式并发送给各个 SGLangActor。
+权重转换分为两个阶段，第一个阶段是 MegatronActor 会将权重转换为 Sglang 格式并发送给各个 SGLangWorker。
 
-第二个阶段是 SGLangActor 会将接收到的权重进行加载并更新当前自己的权重。
+第二个阶段是 SGLangWorker 会将接收到的权重进行加载并更新当前自己的权重。
 
 **文件：** ``rlinf/utils/resharding/mcore_weight_reshard.py``  
 
 在每次 rollout 前，**MegatronActor** 会使用 gather_and_reshard_model 将权重格式进行转换。
 
-共享式下每个 MegatronActor 会一一对应给一个 SGLangActor 发送权重。  
+共享式下每个 MegatronActor 会一一对应给一个 SGLangWorker 发送权重。  
 
-首先会按照 MegatronActor 的并行配置重新进行权重的合并以及切分，然后对切分后的权重进行重命名，最后转换为 SGLangActor 的权重格式。
+首先会按照 MegatronActor 的并行配置重新进行权重的合并以及切分，然后对切分后的权重进行重命名，最后转换为 SGLangWorker 的权重格式。
 
-转换后的权重会通过 send 接口发送给对应的 SGLangActor。
+转换后的权重会通过 send 接口发送给对应的 SGLangWorker。
 
 .. code-block:: python
 
@@ -256,7 +271,7 @@ RLinf 仅支持已经被 SGLang 适配过的模型。
                 model_state_dict, self.merge_factor, tp_sub_group
             )
         
-        # 对切分后的权重进行重命名，最后转换为 SGLangActor 的权重格式
+        # 对切分后的权重进行重命名，最后转换为 SGLangWorker 的权重格式
         if self.config.convert_fn is not None:
             model_state_dict = self.config.convert_fn(model_state_dict)
         ...
@@ -406,9 +421,9 @@ MegatronActor 对切分后的权重进行重命名代码在 ``rlinf/utils/conver
 
 这套手动转换路径用于 Qwen2.5 等模型；较新的架构（Qwen3、Qwen3-MoE、Qwen2.5-VL、Qwen3-VL、DeepSeek-V3/Moonlight-16B 与 GLM-4.7-Flash）请使用 :doc:`mbridge`。
 
-完成上述步骤后，MegatronActor 会将权重发送给 SGLangActor，更新当前 SGLangActor 的权重。
+完成上述步骤后，MegatronActor 会将权重发送给 SGLangWorker，更新当前 SGLangWorker 的权重。
 
-SGLangActor 接收权重代码位于 ``rlinf/hybrid_engines/sglang/common/sgl_scheduler.py``。
+SGLangWorker 接收权重代码位于 ``rlinf/hybrid_engines/sglang/common/sgl_scheduler.py``。
 
 .. code-block:: python
 
@@ -447,7 +462,7 @@ SGLangActor 接收权重代码位于 ``rlinf/hybrid_engines/sglang/common/sgl_sc
         self.flush_cache()
         return SyncHFWeightOutput()
 
-若需要对 SGLangActor 接收的权重做特殊处理，可在此处修改。
+若需要对 SGLangWorker 接收的权重做特殊处理，可在此处修改。
 
 如果对适配新模型的过程有任何疑问，欢迎在 `RLinf <https://github.com/RLinf/RLinf/issues>`__ 仓库提交 issue，我们会尽快解答。
 
@@ -517,3 +532,22 @@ SGLangActor 接收权重代码位于 ``rlinf/hybrid_engines/sglang/common/sgl_sc
          process_num: 16 # 用于 checkpoint 转换的进程数
          tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
          pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
+
+本地验证
+--------
+
+启动多卡训练前，可先在本地 CPU 环境检查新模型类型是否已正确解析 TP 聚合函数与权重转换器：
+
+.. code-block:: bash
+
+   python -c '
+   from rlinf.utils.convertor.utils import get_mg2hf_convertor
+   from rlinf.utils.resharding.utils import get_tp_gather_fn
+
+   gather_fn = get_tp_gather_fn("qwen2.5")
+   assert callable(gather_fn), "Expected callable TP gather function"
+   print("Resolved gather_fn:", gather_fn.__name__)
+   '
+
+将 ``"qwen2.5"`` 替换为新接入的 ``rollout.model.model_type``，确认注册查找通过后再启动分布式训练。
+

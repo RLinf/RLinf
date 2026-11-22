@@ -38,16 +38,23 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: OpenPI π₀.₅
 
+      **1. Install**
+
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
 
-         # 2. Download
+      **2. Download**
+
+      .. code-block:: bash
+
          hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
-         # 3. Evaluate (LIBERO-Spatial)
+      **3. Evaluate (LIBERO-Spatial)**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
            rollout.model.model_path=./RLinf-Pi05-LIBERO-SFT
 
@@ -55,16 +62,23 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: OpenVLA-OFT
 
+      **1. Install**
+
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla-oft --env libero && source .venv/bin/activate
 
-         # 2. Download
+      **2. Download**
+
+      .. code-block:: bash
+
          hf download RLinf/Openvla-oft-SFT-libero10-trajall --local-dir ./Openvla-oft-SFT-libero10-trajall
 
-         # 3. Evaluate (LIBERO-10)
+      **3. Evaluate (LIBERO-10)**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval \
            rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall
 
@@ -72,16 +86,23 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: FastWAM
 
+      **1. Install**
+
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model fastwam --env libero && source .venv/bin/activate
 
-         # 2. Download
+      **2. Download**
+
+      .. code-block:: bash
+
          hf download yuanty/fastwam libero_uncond_2cam224.pt libero_uncond_2cam224_dataset_stats.json --local-dir ./fastwam
 
-         # 3. Evaluate (LIBERO-Spatial)
+      **3. Evaluate (LIBERO-Spatial)**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval \
            rollout.model.model_path=./fastwam/libero_uncond_2cam224.pt \
            rollout.model.dataset_stats_path=./fastwam/libero_uncond_2cam224_dataset_stats.json
@@ -90,16 +111,23 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: MolmoAct2
 
+      **1. Install**
+
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model molmoact2 --env libero && source .venv/bin/activate
 
-         # 2. Download
+      **2. Download**
+
+      .. code-block:: bash
+
          hf download allenai/MolmoAct2-LIBERO --local-dir ./MolmoAct2-LIBERO
 
-         # 3. Evaluate (LIBERO-10)
+      **3. Evaluate (LIBERO-10)**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh libero libero_10_molmoact2_eval \
            rollout.model.model_path=./MolmoAct2-LIBERO
 
@@ -132,15 +160,19 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: π₀-FAST
 
+      **1. Install**
+
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          UV_TORCH_BACKEND=cu128 bash requirements/install.sh embodied \
            --model pi0_fast --env libero \
            --python 3.12.12 --torch 2.11.0 --no-flash-attn && source .venv/bin/activate
 
-         # 2. Download
+      **2. Download**
+
+      .. code-block:: bash
+
          hf download lerobot/pi0fast-libero \
            --revision 840f4b503f4c09110421c33c810a85b6684fd658 \
            --local-dir ./pi0fast-libero
@@ -151,7 +183,10 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
            --revision 79ae83e3cbd8786dcb84b628569f8d076ca8151e \
            --local-dir ./tokenizer-lib-mean
 
-         # 3. Evaluate (LIBERO-10)
+      **3. Evaluate (LIBERO-10)**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh libero libero_10_pi0_fast_eval \
            rollout.model.model_path=./pi0fast-libero \
            rollout.model.pi0_fast.text_tokenizer_name=./paligemma-3b-pt-224 \
@@ -161,14 +196,18 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: DreamZero
 
+      **1. Install**
+
       .. code-block:: bash
 
-         # 1. Install
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model dreamzero --env libero && source .venv/bin/activate
          git clone https://github.com/RLinf/dreamzero.git ../dreamzero
 
-         # 2. Download checkpoints, WAN2.2 components, and generate LIBERO metadata
+      **2. Download Checkpoints, WAN2.2 Components, and Generate LIBERO Metadata**
+
+      .. code-block:: bash
+
          hf download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000 --local-dir ./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000
          hf download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B
          hf download Wan-AI/Wan2.1-I2V-14B-480P models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth --local-dir ./Wan2.1-CLIP
@@ -179,24 +218,25 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
            --dataset-root ./libero \
            --output-metadata ./libero_metadata.json
 
-         # 3. Evaluate (LIBERO-Spatial)
+      Set ``tokenizer_path`` (``./umt5-xxl``), ``diffusion_model_pretrained_path`` (``./Wan2.2-TI2V-5B``), ``image_encoder_pretrained_path`` (``./Wan2.1-CLIP/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth``), ``text_encoder_pretrained_path`` (``./Wan2.2-TI2V-5B/models_t5_umt5-xxl-enc-bf16.pth``), and ``vae_pretrained_path`` (``./Wan2.2-TI2V-5B/Wan2.2_VAE.pth``) under ``rollout.model`` in ``evaluations/libero/libero_spatial_dreamzero_eval.yaml``.
+
+      **3. Evaluate (LIBERO-Spatial)**
+
+      .. code-block:: bash
+
          export DREAMZERO_PATH="$(realpath ../dreamzero)"
          bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval \
            runner.ckpt_path=./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000/model.pt \
-           rollout.model.tokenizer_path=./umt5-xxl \
-           rollout.model.diffusion_model_pretrained_path=./Wan2.2-TI2V-5B \
-           rollout.model.image_encoder_pretrained_path=./Wan2.1-CLIP/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth \
-           rollout.model.text_encoder_pretrained_path=./Wan2.2-TI2V-5B/models_t5_umt5-xxl-enc-bf16.pth \
-           rollout.model.vae_pretrained_path=./Wan2.2-TI2V-5B/Wan2.2_VAE.pth \
            rollout.model.metadata_json_path=./libero_metadata.json
 
       Point ``runner.ckpt_path`` at your ``.pt`` weights (such as ``full_weights.pt`` from SFT). For SGLang serving with the Diffusers checkpoint, see :doc:`dreamzero_sglang`.
 
    .. tab-item:: ApxInf
 
+      **1. Install RLinf and Build APXinf-robo CUDA Binding**
+
       .. code-block:: bash
 
-         # 1. Install RLinf and build APXinf-robo CUDA binding
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
          git clone --recursive https://github.com/RLinf/APXinf-robo.git ../APXinf-robo
@@ -207,16 +247,26 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
            pip install -e ./apxinf/python/apxinf --config-settings editable_mode=strict && \
            pip install -e ".[rlinf]")
 
-         # 2. Download π₀.₅ checkpoint and normalization stats
+      **2. Download π₀.₅ Checkpoint and Normalization Stats**
+
+      .. code-block:: bash
+
          hf download lerobot/pi05_libero_base --local-dir ./pi05_libero_base
          curl -fL https://storage.googleapis.com/openpi-assets/checkpoints/pi05_libero/assets/physical-intelligence/libero/norm_stats.json \
            -o ./pi05_libero_base/norm_stats.json
 
-         # 3. Evaluate (LIBERO-10)
+      **3. Evaluate (LIBERO-10)**
+
+      .. code-block:: bash
+
          export APXINF_PI05_MODEL_DIR="$(pwd)/pi05_libero_base"
          bash evaluations/run_eval.sh libero libero_10_apxinf_pi05_eval
 
       Requires Linux with an NVIDIA GPU, CUDA toolkit, and Rust toolchain; see :ref:`ApxInf Backend <apxinf-backend>` and :doc:`../../guides/apxinf`.
+
+.. note::
+
+   **Host RAM & full-suite coverage:** Each LIBERO env holds ~2 GiB of host RAM, so configs defaulting to ``total_num_envs=500`` need ~1 TiB RAM. On standard hosts, lower ``env.eval.total_num_envs`` and raise ``env.eval.max_steps_per_rollout_epoch`` together (for example ``env.eval.total_num_envs=128 env.eval.max_steps_per_rollout_epoch=960`` on ``libero_spatial``) so ``auto_reset`` still covers all 500 states (see :ref:`Evaluation Configuration <libero-eval-config>`).
 
 With ``--env libero``, ``install.sh`` clones LIBERO into ``.venv/libero`` (or reuses ``LIBERO_PATH``) and adds it to ``PYTHONPATH`` in ``.venv/bin/activate``. For SGLang serving, see :doc:`dreamzero_sglang` and :doc:`cosmos3_sglang`; to overlap inference latency with action-chunk execution, see :doc:`RTC <../../guides/rtc>`.
 

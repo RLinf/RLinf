@@ -29,6 +29,35 @@
 
       :doc:`Franka SFT <../../examples/embodied/franka_pi0_sft_deploy>` · :doc:`Franka <../../examples/embodied/franka>` · :doc:`DreamZero <../../examples/embodied/sft_dreamzero>`
 
+步骤 0：安全检查与双节点 Ray 启动
+----------------------------------
+
+.. warning::
+
+   真机评测前务必核对工作空间限位（``ee_pose_limit_min`` / ``ee_pose_limit_max``）与急停开关，首次运行先用较小的 ``env.eval.rollout_epoch``。可在 ``override_cfg`` 中设 ``is_dummy: True``，在不移动机械臂的情况下验证集群链路。
+
+启动评测前，在机器人控制节点（保持 ``.venv`` 激活）检查相机序列号与控制器位姿（输入 ``getpos_euler`` 记录 ``target_ee_pose``）：
+
+.. code-block:: bash
+
+   python -m toolkits.realworld_check.test_franka_camera
+   export FRANKA_ROBOT_IP=192.168.1.20
+   python -m toolkits.realworld_check.test_franka_controller
+
+**仅双节点配置**\ （如 ``双节点 PnP（π₀）`` 与 ``realworld_dual_yam_openpi_pi05_eval``）需要在两台机器上保持 ``.venv`` 激活、在 ``ray start`` 前导出 ``RLINF_NODE_RANK`` 并手动启动 Ray（将 ``192.168.1.10`` GPU head 与 ``192.168.1.20`` 控制节点替换为实际 IP；多网卡主机额外导出 ``RLINF_COMM_NET_DEVICES=eth0``，或修改并 source ``ray_utils/realworld/setup_before_ray.sh``）。单机配置会自动启动 Ray，跳过此步即可：
+
+.. code-block:: bash
+
+   # GPU head 节点（rank 0）
+   export RLINF_NODE_RANK=0
+   ray start --head --port=6379 --node-ip-address=192.168.1.10
+
+   # Franka 控制节点（rank 1）
+   export RLINF_NODE_RANK=1
+   ray start --address=192.168.1.10:6379
+
+启动评测前运行 ``ray status``，确认两个节点均在线。
+
 一键上手
 --------
 
@@ -38,81 +67,64 @@
 
    .. tab-item:: 双节点 PnP（π₀）
 
-      在 GPU head 节点（rank 0）安装 ``--model openpi --env franka``，在机器人控制节点（rank 1，无需 GPU）仅安装 ``--env franka``。双节点启动 Ray（见下方折叠区），修改 ``evaluations/realworld/realworld_pnp_eval.yaml`` 中的 ``robot_ip``、``camera_serials`` 与 ``target_ee_pose`` 后，从 head 节点启动评测：
+      在 GPU head 节点（rank 0）安装 ``--model openpi --env franka``，在机器人控制节点（rank 1，无需 GPU）仅安装 ``--env franka``。完成步骤 0 并更新 ``evaluations/realworld/realworld_pnp_eval.yaml`` 中的 ``robot_ip``、``camera_serials`` 与 ``target_ee_pose`` 后，从 head 节点启动评测：
+
+      **1. 安装（GPU head 节点；控制节点去掉 ``--model openpi``）**
 
       .. code-block:: bash
 
-         # 1. 在 GPU head 节点安装（控制节点去掉 --model openpi）
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
-         # 2. 在 GPU head 节点启动评测（替换为本地模型与权重路径）
+      **2. 在 GPU head 节点启动评测**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh realworld realworld_pnp_eval \
            rollout.model.model_path=./pi0-model \
            runner.ckpt_path=./full_weights.pt
 
    .. tab-item:: 单机自定义任务
 
-      GPU 推理与 Franka 控制合署同一工作站时，更新 ``evaluations/realworld/realworld_eval.yaml``\ （``FrankaEnv-v1``）中的 ``robot_ip`` 与任务空间参数后直接启动（单机配置会自动启动 Ray）：
+      GPU 推理与 Franka 控制合署同一工作站时，先完成步骤 0 硬件检查，再更新 ``evaluations/realworld/realworld_eval.yaml``\ （``FrankaEnv-v1``）中的 ``robot_ip`` 与任务空间参数后启动（自动启动 Ray）：
+
+      **1. 安装**
 
       .. code-block:: bash
 
-         # 1. 安装
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
-         # 2. 启动评测
+      **2. 启动评测**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh realworld realworld_eval \
            rollout.model.model_path=./pi0-sft-model
 
    .. tab-item:: 单机双臂 RTC（π₀.₅）
 
-      单机双臂 RTC 在一台机器上运行 GPU 推理、两台 Franka 与三路 RealSense 相机（``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``，自动启动 Ray）。填入双臂 IP、相机序列号、夹爪串口、``keyboard_device``、``norm_stats_path`` 与 ``task_description``；复位后在 USB 键盘或脚踏上按 ``a`` 启动、``c`` 记成功、``b`` 记失败：
+      单机双臂 RTC 在一台机器上运行 GPU 推理、两台 Franka 与三路 RealSense 相机（``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``，自动启动 Ray）。先完成步骤 0 硬件检查并填入双臂 IP、相机序列号、夹爪串口、``keyboard_device``、``norm_stats_path`` 与 ``task_description``；复位后在 USB 键盘或脚踏上按 ``a`` 启动、``c`` 记成功、``b`` 记失败：
+
+      **1. 安装**
 
       .. code-block:: bash
 
-         # 1. 安装
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
-         # 2. 启动评测
+      **2. 启动评测**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh realworld realworld_dual_franka_pi05_RTC \
            rollout.model.model_path=./pi05-dual-franka
-
-.. warning::
-
-   真机评测前务必核对工作空间限位（``ee_pose_limit_min`` / ``ee_pose_limit_max``）与急停开关，首次运行先用较小的 ``env.eval.rollout_epoch``。
-
-.. dropdown:: 启动前检查与 Ray 集群启动
-
-   **步骤 1（硬件检查）：** 评测前在机器人控制节点保持 ``.venv`` 激活并检查相机与机械臂。
-
-   **步骤 2（启动 Ray 集群）：** 仅适用于双节点配置（``双节点 PnP（π₀）``、``realworld_dual_yam_openpi_pi05_eval`` 等）。单机配置（``单机自定义任务`` 与 ``单机双臂 RTC（π₀.₅）``）会自动启动 Ray，无需导出 ``RLINF_NODE_RANK`` 或手动执行 ``ray start``。
-
-   双节点运行时，在两台机器上保持 ``.venv`` 已激活（也可按需修改并 source ``ray_utils/realworld/setup_before_ray.sh``），在 ``ray start`` 前导出 ``RLINF_NODE_RANK``\ （Ray 会在启动时冻结环境变量），并按实际替换示例 IP（GPU head 节点 ``192.168.1.10``、Franka 控制节点 ``192.168.1.20``）：
-
-   .. code-block:: bash
-
-      # 1. 查询 RealSense 序列号与目标位姿（输入 getpos_euler 获取 target_ee_pose）
-      python -m toolkits.realworld_check.test_franka_camera
-      export FRANKA_ROBOT_IP=192.168.1.20
-      python -m toolkits.realworld_check.test_franka_controller
-
-      # 2a. 仅双节点需要 —— GPU head 节点（rank 0；多网卡主机额外导出 RLINF_COMM_NET_DEVICES=eth0）
-      export RLINF_NODE_RANK=0
-      ray start --head --port=6379 --node-ip-address=192.168.1.10
-
-      # 2b. 仅双节点需要 —— Franka 控制节点（rank 1；多网卡主机额外导出 RLINF_COMM_NET_DEVICES=eth0）
-      export RLINF_NODE_RANK=1
-      ray start --address=192.168.1.10:6379
-
-   运行 ``ray status`` 确认两个节点均在线。可在 ``override_cfg`` 中设 ``is_dummy: True``，在不移动机械臂的情况下验证集群链路。
 
 .. _realworld-eval-config:
 
 .. dropdown:: 评测配置参考
 
-   ``evaluations/realworld/`` 已有配置如下（``realworld`` 跳过仿真环境初始化；缺省配置会回退到 ``examples/embodiment/config/``，例如双节点 ``realworld_eval_dual_franka``）：
+   ``evaluations/realworld/`` 已有配置如下（``realworld`` 跳过仿真环境初始化；缺省配置仅回退加载 ``examples/embodiment/config/`` 中已定义 ``rollout.model`` 的评测就绪配置）：
 
    .. list-table::
       :header-rows: 1

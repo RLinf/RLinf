@@ -38,17 +38,24 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
 
    .. tab-item:: OpenVLA-OFT（place_empty_cup）
 
+      **1. 安装并下载 RoboTwin 资产**
+
       .. code-block:: bash
 
-         # 1. 安装并下载 RoboTwin 资产
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla-oft --env robotwin && source .venv/bin/activate
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-         # 2. 下载模型
+      **2. 下载模型**
+
+      .. code-block:: bash
+
          hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
 
-         # 3. 启动评测
+      **3. 启动评测**
+
+      .. code-block:: bash
+
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          export ROBOT_PLATFORM=ALOHA
          bash evaluations/run_eval.sh robotwin robotwin_place_empty_cup_openvlaoft_eval \
@@ -57,17 +64,24 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
 
    .. tab-item:: OpenPI π₀.₅（adjust_bottle）
 
+      **1. 安装并下载 RoboTwin 资产**
+
       .. code-block:: bash
 
-         # 1. 安装并下载 RoboTwin 资产
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-         # 2. 下载模型
+      **2. 下载模型**
+
+      .. code-block:: bash
+
          hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
 
-         # 3. 启动评测
+      **3. 启动评测**
+
+      .. code-block:: bash
+
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_pi05_eval \
            rollout.model.model_path=./RLinf-Pi05-RoboTwin-SFT-adjust_bottle \
@@ -75,17 +89,24 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
 
    .. tab-item:: OpenPI π₀（adjust_bottle）
 
+      **1. 安装并下载 RoboTwin 资产**
+
       .. code-block:: bash
 
-         # 1. 安装并下载 RoboTwin 资产
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-         # 2. 下载模型
+      **2. 下载模型**
+
+      .. code-block:: bash
+
          hf download RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi0-RoboTwin-SFT-adjust_bottle
 
-         # 3. 启动评测
+      **3. 启动评测**
+
+      .. code-block:: bash
+
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
            rollout.model.model_path=./RLinf-Pi0-RoboTwin-SFT-adjust_bottle \
@@ -93,21 +114,28 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
 
    .. tab-item:: LingbotVLA 1.0（click_bell）
 
+      **1. 安装并下载 RoboTwin 资产**
+
       .. code-block:: bash
 
-         # 1. 安装并下载 RoboTwin 资产
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model lingbotvla --env robotwin && source .venv/bin/activate
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-         # 2. 下载基座权重、指定版本的 RoboTwin SFT 权重与 Qwen2.5-VL 骨干
+      **2. 下载基座权重、SFT 权重与 Qwen2.5-VL 骨干**
+
+      .. code-block:: bash
+
          hf download robbyant/lingbot-vla-4b --local-dir ./lingbot-vla-4b
          hf download robbyant/lingbot-vla-4b-posttrain-robotwin \
            --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
            --local-dir ./lingbot-vla-4b-posttrain-robotwin
          hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 
-         # 3. 启动评测
+      **3. 启动评测**
+
+      .. code-block:: bash
+
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          export LINGBOT_VLA_PATH="$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")"
          bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvla_eval \
@@ -120,18 +148,25 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
 
    .. tab-item:: LingbotVLA 2.0（click_bell）
 
+      **1. 安装并下载 RoboTwin 资产**
+
       .. code-block:: bash
 
-         # 1. 安装并下载 RoboTwin 资产
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model lingbotvlav2 --env robotwin && source .venv/bin/activate
          git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-         # 2. 下载 RoboTwin 权重与 Qwen3-VL 骨干
+      **2. 下载 RoboTwin 权重与 Qwen3-VL 骨干**
+
+      .. code-block:: bash
+
          hf download robbyant/lingbot-vla-v2-6b-robotwin --local-dir ./lingbot-vla-v2-6b-robotwin
          hf download Qwen/Qwen3-VL-4B-Instruct --local-dir ./Qwen3-VL-4B-Instruct
 
-         # 3. 启动评测
+      **3. 启动评测**
+
+      .. code-block:: bash
+
          export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
          export ROBOTWIN_ASSETS_PATH="${ROBOTWIN_PATH}"
          bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvlav2_eval \
@@ -142,6 +177,10 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
            rollout.model.lingbotvlav2.stats_path=./.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
 
       默认使用 2 张 GPU（``rollout: 0``、``env: 1``）。LingbotVLA 1.0 与 2.0 均安装 ``lingbotvla`` 包，须分别使用独立的虚拟环境（详见 :doc:`../../examples/embodied/lingbotvlav2`）。
+
+.. note::
+
+   **显存与全种子覆盖：** 默认配置使用 ``total_num_envs: 128`` 与 ``use_fixed_reset_state_ids: True``，每轮约覆盖 150–320 条任务种子中的 128 条。内存或显存受限时可调小 ``env.eval.total_num_envs``\ （或开启 ``env.enable_offload: True`` 与 ``rollout.enable_offload: True``）；如需覆盖全部种子，将 ``use_fixed_reset_state_ids`` 设为 ``False`` 并配合 ``auto_reset: True`` 与更大的 ``max_steps_per_rollout_epoch``\ （详见 :ref:`评测配置详解 <robotwin-eval-config>`）。
 
 在 AMD ROCm 上安装需加 ``--platform amd``，并在任务配置中设 ``planner_backend: mplib``\ （详见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`）。``run_eval.sh`` 会将 ``ROBOTWIN_PATH`` 加入 ``PYTHONPATH``，``env.eval.assets_path`` 指向 ``assets/`` 的父目录。RLinf 默认使用 ``0.01 m`` 相机近裁剪面，避免 SAPIEN 3.0.1 在腕部视角裁掉夹爪手指（可通过 ``env.eval.camera_near`` 修改，设为 ``null`` 沿用 RoboTwin 默认 ``0.1 m``）。
 
@@ -178,7 +217,7 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
         - ``click_bell``
         - LingbotVLA 2.0
 
-   若 ``evaluations/robotwin/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.only_eval: True`` 与 ``runner.task_type: embodied_eval``）。内置 ``eval_seeds.json`` 覆盖 **22 个任务**，其余任务可从训练配置派生（见 :doc:`../reference/configuration`）。
+   若 ``evaluations/robotwin/<config>.yaml`` 不存在，``run_eval.sh`` 仅对 ``examples/embodiment/config/`` 中已定义 ``rollout.model``\ （含 ``model_type`` 与 ``num_action_chunks``）的评测就绪配置生效。内置 ``eval_seeds.json`` 覆盖 **22 个任务**，若要评测纯训练配置请按 :doc:`../reference/configuration` 改写为评测 YAML。
 
 .. _robotwin-eval-config:
 

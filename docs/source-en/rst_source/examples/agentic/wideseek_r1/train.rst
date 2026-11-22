@@ -29,10 +29,10 @@ Use this page to prepare the model, data, and config for WideSeek-R1 training.
 
       ``hybrid_20k.jsonl`` from WideSeek-R1-train-data
 
-   .. grid-item-card:: Tools
+   .. grid-item-card:: Hardware
       :text-align: center
 
-      Offline retrieval and judge model server
+      Reference run: 8×H100 training + 8×H100 external judge (16 H100 total)
 
 .. contents::
    :depth: 2
@@ -44,6 +44,7 @@ Prerequisites
 Before launching training, complete
 :doc:`Environment and Tool Setup <tools>`:
 
+- **Hardware**: the reference setup uses **8×H100** for RLinf training plus **8×H100** for the external ``Qwen3-30B-A3B-Instruct-2507`` judge server (8+8 H100). On smaller clusters, reduce ``--dp`` on the judge server or switch to the single-node local judge config ``train_qwen3_hybrid_local_judge.yaml``.
 - The RLinf environment is installed.
 - The judge model is running.
 - The offline retrieval tools are configured.

@@ -105,7 +105,14 @@ Prompt、生成结果与奖励
 
          hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --local-dir ./Wan2.2-TI2V-5B-Diffusers
 
-在所选训练 YAML 中，将 ``actor.model.model_path`` 设为下载目录。
+启动 ``run_diffusion.sh`` 时可直接通过 Hydra 命令行覆盖模型与数据路径（也可以修改所选 YAML 中的 ``actor.model.model_path``、``env.train.dataset.path`` 和 ``env.eval.dataset.path``）：
+
+.. code-block:: bash
+
+   bash examples/diffusion/run_diffusion.sh sd3_nft_ocr \
+       actor.model.model_path=./stable-diffusion-3.5-medium \
+       env.train.dataset.path=./ocr_data \
+       env.eval.dataset.path=./ocr_data
 
 .. _diffusion-ocr-dataset:
 

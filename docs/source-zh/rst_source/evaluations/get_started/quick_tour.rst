@@ -21,21 +21,40 @@
 
       **2. 启动评测**\ （首次运行自动缓存下载 `RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__）
 
-      在单张 24 GB GPU 上做快速验证（约 5 分钟），传入 ``env.eval.total_num_envs=10``：
+      在 1、2、4 或 8 张 GPU 上做快速验证（约 5 分钟），设置 ``env.eval.total_num_envs=8``：
 
       .. code-block:: bash
 
          bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
            rollout.model.model_path=RLinf/RLinf-Pi05-LIBERO-SFT \
-           env.eval.total_num_envs=10
+           env.eval.total_num_envs=8
 
-      去掉 ``env.eval.total_num_envs=10`` 即按 YAML 默认的 500 个环境运行完整套件。离线环境可先将 ``RLinf/RLinf-Pi05-LIBERO-SFT`` 下载到本地，再把 ``rollout.model.model_path`` 改为本地目录路径。
+      如需评测完整 500 条轨迹套件，使用 128 并行环境配合自动重置，避免耗尽主机内存（单个 LIBERO 环境约占 2 GiB 主机内存，默认 500 并行约需 1 TiB，详见 :doc:`../guides/libero`）：
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
+           rollout.model.model_path=RLinf/RLinf-Pi05-LIBERO-SFT \
+           env.eval.total_num_envs=128 \
+           env.eval.max_steps_per_rollout_epoch=960
+
+      离线环境可先将 ``RLinf/RLinf-Pi05-LIBERO-SFT`` 下载到本地，再把 ``rollout.model.model_path`` 改为本地目录路径。
 
 结果与下一步
 ------------
 
-- 终端会输出 ``eval/success_once``、``eval/return`` 等评测指标。
-- 日志保存在 ``logs/<时间戳>-libero_spatial_openpi_pi05_eval/eval_embodiment.log``。
+评测结束后会在终端打印指标汇总表，并同步写入 ``metrics.log``。``RLinf/RLinf-Pi05-LIBERO-SFT`` 在 LIBERO Spatial 上的 ``eval/success_once`` 预期约为 **0.95+**\ ：
+
+.. code-block:: text
+
+   ╭────────────────────────────── Metric Table ──────────────────────────────╮
+   │ Global Step:    1/1 │ Progress: ████████████████████ │ 100.0%            │
+   │ Elapsed: 03:45      │ ETA: 00:00                     │ Step Time: 225.0s │
+   ├────────────────────────────── Evaluation ────────────────────────────────┤
+   │ episode_len=142.3   │ num_trajectories=8             │ success_once=1.00 │
+   ╰──────────────────────────────────────────────────────────────────────────╯
+
+- 日志与指标表保存在 ``logs/<时间戳>-libero_spatial_openpi_pi05_eval/eval_embodiment.log`` 与 ``metrics.log``。
 - 该配置默认开启视频录制（``save_video: True``），视频保存在 ``<log_path>/video/eval/``；如需关闭，传入 ``env.eval.video_cfg.save_video=False``\ （详见 :doc:`../reference/results`）。
 
 .. grid:: 1 3 3 3

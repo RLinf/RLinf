@@ -123,8 +123,14 @@ access terms on Hugging Face first if using SD3.5):
 
          hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --local-dir ./Wan2.2-TI2V-5B-Diffusers
 
-Set ``actor.model.model_path`` in your selected training YAML to the downloaded
-directory.
+Pass the downloaded checkpoint and dataset paths directly via Hydra CLI overrides when launching ``run_diffusion.sh`` (or update ``actor.model.model_path``, ``env.train.dataset.path``, and ``env.eval.dataset.path`` in the YAML):
+
+.. code-block:: bash
+
+   bash examples/diffusion/run_diffusion.sh sd3_nft_ocr \
+       actor.model.model_path=./stable-diffusion-3.5-medium \
+       env.train.dataset.path=./ocr_data \
+       env.eval.dataset.path=./ocr_data
 
 .. _diffusion-ocr-dataset:
 

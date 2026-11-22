@@ -32,13 +32,13 @@ Diffusion-NFT
 
       图像 / 视频
 
-   .. grid-item-card:: 奖励
+   .. grid-item-card:: 硬件
       :text-align: center
 
-      OCR / 视频 OCR
+      SD3.5 Medium：1–8 张 GPU；Wan2.2 TI2V 5B：4–8 张 80 GB GPU
 
 | **操作流程：** 选择配置 → 启动训练 → 检查 OCR reward 和生成样本。
-| **前置条件：** :doc:`共用安装、模型与数据集准备 <video_models>`。
+| **前置条件：** :doc:`共用安装、模型与数据集准备 <video_models>` · SD3.5 Medium（BF16 + LoRA）需要 1–8 张 GPU，Wan2.2 TI2V 5B 需要 4–8 张 80 GB GPU（A800/A100/H100）。
 
 任务
 ~~~~

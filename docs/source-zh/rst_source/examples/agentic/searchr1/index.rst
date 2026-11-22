@@ -5,42 +5,35 @@ Search-R1 强化学习训练
 
 本页介绍所有模型共用的环境和本地 wiki 检索服务。请在下方选择模型，查看对应的训练配方与结果。
 
-.. raw:: html
+.. grid:: 1 2 3 3
+   :gutter: 3
 
-   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 960px; margin: 0 auto;">
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="qwen2.5.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/searchr1.png"
-            style="width: 100%; height: 200px; object-fit: cover; object-position: left center; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="qwen2.5.html" style="text-decoration: underline; color: blue;">
-          <b>Qwen2.5-3B Search-R1</b>
-         </a><br>
-         在 8×H100 上训练 Search-R1，相比原版实现加速 55%
-       </p>
-     </div>
+   .. grid-item-card:: Qwen2.5-3B Search-R1
+      :link: qwen2.5
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="glm4.7_flash.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/glm_searchr1_reward.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="glm4.7_flash.html" style="text-decoration: underline; color: blue;">
-          <b>GLM-4.7-Flash Search-R1</b>
-         </a><br>
-         在 8×A100 上训练 MoE 模型（激活参数约 3B）
-       </p>
-     </div>
+      .. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/searchr1.png
+         :alt: Qwen2.5-3B Search-R1
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="async.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/glm_searchr1_async_step_time.png"
-            style="width: 100%; height: 200px; object-fit: cover; object-position: left center; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="async.html" style="text-decoration: underline; color: blue;">
-          <b>Search-R1 异步训练</b>
-         </a><br>
-         rollout 与训练重叠：2×8 A100 上步时从 278.6 s 降到 139.0 s
-       </p>
-     </div>
-   </div>
+      在 8×H100 上训练 Search-R1，相比原版实现加速 55%。
+
+   .. grid-item-card:: GLM-4.7-Flash Search-R1
+      :link: glm4.7_flash
+      :link-type: doc
+
+      .. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/glm_searchr1_reward.png
+         :alt: GLM-4.7-Flash Search-R1
+
+      在 8×A100 或 2×8 A100 上训练 MoE 模型（激活参数约 3B）。
+
+   .. grid-item-card:: Search-R1 异步训练
+      :link: async
+      :link-type: doc
+
+      .. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/glm_searchr1_async_step_time.png
+         :alt: Search-R1 异步训练
+
+      rollout 与训练重叠：2×8 A100 上步时从 278.6 s 降到 139.0 s。
 
 环境
 ----------------------------------------
@@ -48,7 +41,7 @@ Search-R1 强化学习训练
 RLinf 环境
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-RLinf 环境配置参照 :doc:`RLinf Installation </rst_source/start/installation>`。
+RLinf 环境配置参照 :doc:`RLinf 安装指南 </rst_source/start/installation>`。
 
 Local Wiki Server 运行环境
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -152,16 +145,12 @@ Wiki 配置文件
 
 Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化，请参考 `Qdrant 文档 <https://qdrant.tech/documentation/guides/optimize/>`__。
 
-References
-----------
+参考资料
+--------
 
-search-r1: https://github.com/PeterGriffinJin/Search-R1
-
-Search-R1 &
-veRL-SGLang:
-https://github.com/zhaochenyang20/Awesome-ML-SYS-Tutorial/blob/main/rlhf/verl/multi-turn/tool_examples/verl-multiturn-searchR1-like_ZH.md
-
-Asearcher: https://github.com/inclusionAI/ASearcher
+- Search-R1：https://github.com/PeterGriffinJin/Search-R1
+- Search-R1 & veRL-SGLang：https://github.com/zhaochenyang20/Awesome-ML-SYS-Tutorial/blob/main/rlhf/verl/multi-turn/tool_examples/verl-multiturn-searchR1-like_ZH.md
+- ASearcher：https://github.com/inclusionAI/ASearcher
 
 .. toctree::
    :hidden:
