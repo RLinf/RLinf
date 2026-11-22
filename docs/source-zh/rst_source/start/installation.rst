@@ -10,7 +10,7 @@
 
 .. tab-set::
 
-   .. tab-item:: 具身仿真（Embodied）
+   .. tab-item:: 具身仿真
       :sync: embodied
 
       按下方表格将 ``--model`` 与 ``--env`` 替换为目标模型和仿真器（轻量 MLP / CNN policy 可省略 ``--model``）：
@@ -28,7 +28,7 @@
          /path/to/RLinf/rlinf/__init__.py CUDA: True
          ray, version 2.x.x
 
-   .. tab-item:: 真机机器人（Real-World）
+   .. tab-item:: 真机机器人
       :sync: realworld
 
       在机器人控制节点安装驱动与传感器依赖（无需 GPU），在 GPU 节点安装模型与驱动（按需将 ``franka`` 替换为 ``arx5``、``yam``、``xsquare_turtle2``、``so101``、``piper``、``lekiwi``、``dosw1`` 或 ``gim_arm``；Robbyant R2 通过 RFrame 与 ROS 2 接入，见 :doc:`../examples/embodied/r2`，完整列表见 :doc:`../examples/real_world_index`）：
@@ -43,7 +43,7 @@
          # GPU 训练 / 推理节点（或单机同配 GPU 与机器人）
          bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
-   .. tab-item:: 智能体 / 推理（Agentic）
+   .. tab-item:: 智能体 / 推理
       :sync: agentic
 
       .. code-block:: bash
@@ -79,7 +79,7 @@
 
             在 Docker Hub 查看全部预构建镜像标签、容器启动命令与国内镜像站说明。
 
-   .. tab-item:: 文档构建（Docs）
+   .. tab-item:: 文档构建
       :sync: docs
 
       .. code-block:: bash
