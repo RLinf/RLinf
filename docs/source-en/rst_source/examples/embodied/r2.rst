@@ -41,7 +41,7 @@ Tasks
    * - Task
      - Config / Entry Point
      - Description
-   * - Mock smoke check
+   * - Mock hardware check
      - ``test_r2_env --mock``
      - Verify environment spaces, whole-body kinematics, and stepping without hardware.
    * - Hardware check

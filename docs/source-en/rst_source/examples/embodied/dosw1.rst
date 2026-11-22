@@ -47,7 +47,7 @@ Tasks
    * - Task
      - Config / Entry Point
      - Description
-   * - Dummy smoke test
+   * - Dummy self-check
      - ``dosw1_dummy_sac_mlp_pick.yaml``
      - Validate config wiring and cluster plumbing without cameras or hardware calls.
    * - Data collection
@@ -281,13 +281,13 @@ Setup and Run
                 action_dim: 14
                 image_num: 3         # 1 -> cam_left only; 3 -> all three cameras
 
-      **4. Run dummy smoke test (optional) and launch training**
+      **4. Run dummy self-check (optional) and launch training**
 
       Validate config wiring on a single node with the state-only dummy config (auto-starts Ray), then launch two-node real-world training from the GPU node (logs write to ``logs/<timestamp>-<config>/``):
 
       .. code-block:: bash
 
-         # Optional single-node dummy smoke test (no hardware or cameras)
+         # Optional single-node dummy self-check (no hardware or cameras)
          PYTHONPATH=$PWD python examples/embodiment/train_embodied_agent.py \
              --config-path "$PWD/tests/e2e_tests/embodied" \
              --config-name dosw1_dummy_sac_mlp_pick \

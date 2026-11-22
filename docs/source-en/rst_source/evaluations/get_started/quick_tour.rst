@@ -21,7 +21,7 @@ If ``.venv`` already holds another model/environment stack, pass ``--venv .venv-
 
       **2. Launch Evaluation** (auto-downloads `RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__ into the Hugging Face cache on first run)
 
-      For a quick single-GPU smoke check (~5 minutes on a 24 GB GPU), override ``env.eval.total_num_envs=10``:
+      For a quick single-GPU check (~5 minutes on a 24 GB GPU), override ``env.eval.total_num_envs=10``:
 
       .. code-block:: bash
 

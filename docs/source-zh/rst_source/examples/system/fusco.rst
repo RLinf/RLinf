@@ -69,7 +69,7 @@ RLinf 通过 Patch 方式集成 FUSCO，支持以 Megatron-LM 为后端的 MoE �
 
       **3. 启动测试**
 
-      使用 reasoning MoE 冒烟测试验证 FUSCO：
+      使用 reasoning MoE 端到端测试验证 FUSCO：
 
       .. code-block:: bash
 

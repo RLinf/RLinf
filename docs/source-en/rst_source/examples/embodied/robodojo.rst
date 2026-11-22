@@ -210,7 +210,7 @@ RoboDojo supports Linux x86_64 with an NVIDIA CUDA GPU (CPU-only, macOS, and AMD
         print("assets:", assets_root())
         PY
 
-   - **Single-environment smoke test**: verify Isaac Sim, cameras, and assets directly before launching multi-environment rollout (same snippet as step 3 of the **Environment Only** tab).
+   - **Single-environment check**: verify Isaac Sim, cameras, and assets directly before launching multi-environment rollout (same snippet as step 3 of the **Environment Only** tab).
 
 Visualization and Results
 -------------------------

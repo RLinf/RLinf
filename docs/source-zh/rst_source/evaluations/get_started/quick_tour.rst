@@ -21,7 +21,7 @@
 
       **2. 启动评测**\ （首次运行自动缓存下载 `RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__）
 
-      在单张 24 GB GPU 上做快速冒烟验证（约 5 分钟），传入 ``env.eval.total_num_envs=10``：
+      在单张 24 GB GPU 上做快速验证（约 5 分钟），传入 ``env.eval.total_num_envs=10``：
 
       .. code-block:: bash
 

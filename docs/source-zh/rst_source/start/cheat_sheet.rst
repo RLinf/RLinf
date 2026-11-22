@@ -34,7 +34,7 @@ RLinf 常用工作流的最短命令。
 启动训练
 --------
 
-单机运行会自动启动本地 Ray。可以先跑单卡零下载的 MLP 冒烟验证，或直接启动 VLA 快速开始（下载一次 ManiSkill 场景资产后首次运行自动缓存默认 Hugging Face 权重）：
+单机运行会自动启动本地 Ray。可以先跑单卡零下载的 MLP 快速验证，或直接启动 VLA 快速开始（下载一次 ManiSkill 场景资产后首次运行自动缓存默认 Hugging Face 权重）：
 
 .. code-block:: bash
 

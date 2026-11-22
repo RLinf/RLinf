@@ -70,7 +70,7 @@ RLinf integrates FUSCO through patching, supporting MoE training with Megatron-L
 
       **3. Launch**
 
-      Verify FUSCO with the reasoning MoE smoke test:
+      Verify FUSCO with the reasoning MoE end-to-end test:
 
       .. code-block:: bash
 

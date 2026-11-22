@@ -50,7 +50,7 @@
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
-      如需约 1 分钟的极速冒烟验证，追加 ``runner.max_epochs=3 runner.val_check_interval=-1``。更多 MLP / SAC / GRPO 示例见 :doc:`MLP 策略强化学习 <../examples/embodied/mlp>`。
+      如需约 1 分钟的快速验证，追加 ``runner.max_epochs=3 runner.val_check_interval=-1``。更多 MLP / SAC / GRPO 示例见 :doc:`MLP 策略强化学习 <../examples/embodied/mlp>`。
 
    .. tab-item:: OpenVLA（7B VLA）
       :sync: openvla

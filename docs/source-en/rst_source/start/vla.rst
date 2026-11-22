@@ -50,7 +50,7 @@ Select a tab below — start with **MLP** for the fastest zero-download verifica
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
-      For a quick ~1-minute smoke check, append ``runner.max_epochs=3 runner.val_check_interval=-1``. More MLP / SAC / GRPO recipes are in :doc:`MLP Policy RL <../examples/embodied/mlp>`.
+      For a ~1-minute quick check, append ``runner.max_epochs=3 runner.val_check_interval=-1``. More MLP / SAC / GRPO recipes are in :doc:`MLP Policy RL <../examples/embodied/mlp>`.
 
    .. tab-item:: OpenVLA (7B VLA)
       :sync: openvla

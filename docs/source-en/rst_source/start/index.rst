@@ -25,7 +25,7 @@ Core Setup
       :link: vla
       :link-type: doc
 
-      Run a 1-GPU MLP smoke test (no downloads) or OpenVLA / OpenVLA-OFT PPO on ManiSkill3.
+      Run a 1-GPU MLP quick test (no downloads) or OpenVLA / OpenVLA-OFT PPO on ManiSkill3.
 
    .. grid-item-card:: 4. Cheat Sheet
       :link: cheat_sheet

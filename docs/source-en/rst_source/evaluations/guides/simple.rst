@@ -44,7 +44,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
 .. tab-set::
 
-   .. tab-item:: 1-Episode Smoke (DR0)
+   .. tab-item:: 1-Episode Quick Check (DR0)
 
       **1. Install**
 
@@ -108,7 +108,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       **2. Download**
 
-      Download the OpenOven checkpoint, reset states, and HSSD scene (same as the 1-Episode Smoke tab):
+      Download the OpenOven checkpoint, reset states, and HSSD scene (same as the 1-Episode Quick Check tab):
 
       .. code-block:: bash
 

@@ -877,7 +877,7 @@ Reward Model 训练
 
 此功能的适用场景：
 
-- 对 reward model 在真实机器人观测上的准确性进行冒烟测试（sanity check）。
+- 在真实机器人观测上快速检查 reward model 的准确性。
 - 采集符合人类判断的成功/失败数据，用于进一步扩充数据集。
 - 定性评估 reward model 对当前场景的泛化能力。
 

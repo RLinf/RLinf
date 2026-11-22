@@ -41,7 +41,7 @@ Robbyant R2 配置与强化学习
    * - 任务
      - 配置 / 入口
      - 说明
-   * - Mock 冒烟检查
+   * - 无硬件 Mock 自检
      - ``test_r2_env --mock``
      - 无需连接真机，验证环境空间、全身运动学与步进循环。
    * - 硬件检查
@@ -124,7 +124,7 @@ Robbyant R2 配置与强化学习
 
       **2. 运行 Mock、只读与交互式硬件检查**
 
-      依次运行无硬件 mock 冒烟检查、只读探测（自动从 ``/robotic/joint_states`` 探测 ``body_dof`` 20/21 与 ``end_effector_type``）和交互式终端（默认保持当前实测姿态启动，可按需追加 ``--no-cameras`` 或 ``--no-base``）：
+      依次运行无硬件 mock 自检、只读探测（自动从 ``/robotic/joint_states`` 探测 ``body_dof`` 20/21 与 ``end_effector_type``）和交互式终端（默认保持当前实测姿态启动，可按需追加 ``--no-cameras`` 或 ``--no-base``）：
 
       .. code-block:: bash
 

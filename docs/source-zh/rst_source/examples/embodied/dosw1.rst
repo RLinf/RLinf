@@ -287,7 +287,7 @@ Dexmal DOS-W1 在线强化学习
 
       .. code-block:: bash
 
-         # 可选：单机 dummy 冒烟自检（无需相机与真机）
+         # 可选：单机无硬件自检（无需相机与真机）
          PYTHONPATH=$PWD python examples/embodiment/train_embodied_agent.py \
              --config-path "$PWD/tests/e2e_tests/embodied" \
              --config-name dosw1_dummy_sac_mlp_pick \
