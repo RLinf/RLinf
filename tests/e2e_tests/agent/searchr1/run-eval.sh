@@ -11,7 +11,7 @@ export TOKENIZERS_PARALLELISM=false
 export RAY_DEDUP_LOGS=0
 export PYTHONPATH="${REPO_PATH}${PYTHONPATH:+:${PYTHONPATH}}"
 
-if [ -z "$1" ]; then
+if [ -z "$1" ] || [[ "$1" == *=* ]] || [[ "$1" == +* ]] || [[ "$1" == ~* ]] || [[ "$1" == -* ]]; then
     CONFIG_NAME=qwen2.5-1.5b-eval
 else
     CONFIG_NAME="${1%.yaml}"

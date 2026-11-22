@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import signal
 import stat
@@ -651,6 +652,94 @@ def test_e2e_shell_wrappers_invoke_rlinf_cli(tmp_path):
         (
             [
                 "bash",
+                "tests/e2e_tests/embodied/run_eval.sh",
+                "maniskill_sac_mlp",
+                "egl",
+                "--dry-run",
+            ],
+            "eval_embodied_agent.py",
+            "maniskill_sac_mlp",
+        ),
+        (
+            [
+                "bash",
+                "tests/e2e_tests/offline_rl/run_recap_value_model_sft.sh",
+                "recap_value_model_sft_libero",
+                "egl",
+                "--dry-run",
+            ],
+            "train_value.py",
+            "recap_value_model_sft_libero",
+        ),
+        (
+            [
+                "bash",
+                "tests/e2e_tests/offline_rl/run_steam_value_model_sft.sh",
+                "steam_value_model_sft_libero",
+                "egl",
+                "--dry-run",
+            ],
+            "train_steam.py",
+            "steam_value_model_sft_libero",
+        ),
+        (
+            [
+                "bash",
+                "tests/e2e_tests/dynamic_scheduler/run.sh",
+                "qwen2.5-1.5b-grpo-dynamic-mg-sgl",
+                "--dry-run",
+            ],
+            "main_grpo.py",
+            "qwen2.5-1.5b-grpo-dynamic-mg-sgl",
+        ),
+        (
+            [
+                "bash",
+                "tests/e2e_tests/agent/coding_online_rl/run.sh",
+                "--dry-run",
+            ],
+            "main_coding_online_rl.py",
+            "qwen2.5-1.5b-ppo",
+        ),
+        (
+            [
+                "bash",
+                "tests/e2e_tests/agent/rstar2/run.sh",
+                "--dry-run",
+            ],
+            "main_rstar2.py",
+            "qwen2.5-1.5b-megatron",
+        ),
+        (
+            [
+                "bash",
+                "tests/e2e_tests/agent/wideseek/run-train.sh",
+                "--dry-run",
+            ],
+            "examples/agent/wideseek_r1/train.py",
+            "qwen3-train",
+        ),
+        (
+            [
+                "bash",
+                "tests/e2e_tests/agent/wideseek/run-eval.sh",
+                "--dry-run",
+            ],
+            "examples/agent/wideseek_r1/eval.py",
+            "qwen3-eval",
+        ),
+        (
+            [
+                "bash",
+                "tests/e2e_tests/agentlightning/run.sh",
+                "--dry-run",
+            ],
+            "examples/agent/agentlightning/calc_x/main.py",
+            "qwen2.5-1.5b-multiturn",
+        ),
+        (
+            [
+                "bash",
                 "tests/e2e_tests/embodied/run_async.sh",
                 "maniskill_sac_mlp_async",
                 "egl",
@@ -796,3 +885,202 @@ def test_doctor_runs_cleanly_and_surfaces_resource_env(monkeypatch):
     assert rc in (0, 1)
     assert "[OK  ] Python" in out.getvalue()
     assert "[OK  ] Repository" in out.getvalue()
+
+    out_json = io.StringIO()
+    rc_json = main(["doctor", "--json"], repo_root=REPO_ROOT, stream=out_json)
+    assert rc_json in (0, 1)
+    parsed = json.loads(out_json.getvalue())
+    assert [entry["name"] for entry in parsed] == names
+
+
+def test_cli_no_args_and_version(capsys):
+    out = io.StringIO()
+    assert main([], repo_root=REPO_ROOT, stream=out) == 0
+    assert "usage: rlinf" in out.getvalue()
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--version"], repo_root=REPO_ROOT)
+    assert exc_info.value.code == 0
+    assert "rlinf " in capsys.readouterr().out
+
+
+def test_list_verbose_json_and_multi_token_search():
+    out_v = io.StringIO()
+    assert (
+        main(
+            ["list", "--search", "libero openpi", "--verbose"],
+            repo_root=REPO_ROOT,
+            stream=out_v,
+        )
+        == 0
+    )
+    text_v = out_v.getvalue()
+    assert "SCRIPT" in text_v and "CONFIG" in text_v
+    assert "libero_spatial_ppo_openpi_pi05" in text_v
+
+    out_j = io.StringIO()
+    assert (
+        main(
+            ["list", "--family", "sft", "--model", "openpi", "--json"],
+            repo_root=REPO_ROOT,
+            stream=out_j,
+        )
+        == 0
+    )
+    items = json.loads(out_j.getvalue())
+    assert items and any(item["name"] == "libero_sft_openpi" for item in items)
+
+
+def test_show_summary_raw_json_and_env_var_status(monkeypatch):
+    monkeypatch.delenv("POLARIS_DATA_PATH", raising=False)
+    out = io.StringIO()
+    assert (
+        main(
+            ["show", "polaris_tapeintocontainer_ppo_openpi"],
+            repo_root=REPO_ROOT,
+            stream=out,
+        )
+        == 0
+    )
+    summary = out.getvalue()
+    assert "Recipe:    polaris_tapeintocontainer_ppo_openpi (embodied/train)" in summary
+    assert "POLARIS_DATA_PATH [UNSET]" in summary
+    assert "Run:       rlinf train polaris_tapeintocontainer_ppo_openpi" in summary
+
+    monkeypatch.setenv("POLARIS_DATA_PATH", "/data/polaris")
+    out_set = io.StringIO()
+    assert (
+        main(
+            ["show", "polaris_tapeintocontainer_ppo_openpi", "--json"],
+            repo_root=REPO_ROOT,
+            stream=out_set,
+        )
+        == 0
+    )
+    info = json.loads(out_set.getvalue())
+    assert info["family"] == "embodied"
+    assert "POLARIS_DATA_PATH" in info["required_env_vars"]
+
+    out_raw = io.StringIO()
+    assert (
+        main(
+            ["show", "maniskill_ppo_mlp", "--raw"], repo_root=REPO_ROOT, stream=out_raw
+        )
+        == 0
+    )
+    assert "maniskill_pick_cube" in out_raw.getvalue()
+
+
+def test_wrong_mode_and_typo_flag_and_double_dash_passthrough():
+    err_mode = io.StringIO()
+    rc = main(
+        ["train", "libero_spatial_openpi_pi05_eval"],
+        repo_root=REPO_ROOT,
+        stream=io.StringIO(),
+        err_stream=err_mode,
+    )
+    assert rc == 2
+    assert "rlinf eval libero/libero_spatial_openpi_pi05_eval" in err_mode.getvalue()
+
+    err_flag = io.StringIO()
+    rc_flag = main(
+        ["train", "maniskill_ppo_mlp", "--dr-run"],
+        repo_root=REPO_ROOT,
+        stream=io.StringIO(),
+        err_stream=err_flag,
+    )
+    assert rc_flag == 2
+    assert "Did you mean '--dry-run'?" in err_flag.getvalue()
+
+    out_pass = io.StringIO()
+    rc_pass = main(
+        ["train", "maniskill_ppo_mlp", "--dry-run", "--", "--custom-raw-flag"],
+        repo_root=REPO_ROOT,
+        stream=out_pass,
+        err_stream=io.StringIO(),
+    )
+    assert rc_pass == 0
+    assert "--custom-raw-flag" in out_pass.getvalue()
+
+
+def test_check_flag_validates_hydra_overrides_and_rejects_typos():
+    out_ok = io.StringIO()
+    err_ok = io.StringIO()
+    rc_ok = main(
+        ["train", "maniskill_ppo_mlp", "--check", "runner.max_epochs=2"],
+        repo_root=REPO_ROOT,
+        stream=out_ok,
+        err_stream=err_ok,
+    )
+    assert rc_ok == 0, err_ok.getvalue()
+    assert "Config OK: embodied/train (maniskill_ppo_mlp)" in out_ok.getvalue()
+
+    out_bad = io.StringIO()
+    err_bad = io.StringIO()
+    rc_bad = main(
+        ["train", "maniskill_ppo_mlp", "--check", "runer.max_epochs=2"],
+        repo_root=REPO_ROOT,
+        stream=out_bad,
+        err_stream=err_bad,
+    )
+    assert rc_bad != 0
+    assert "runer" in err_bad.getvalue()
+
+
+def test_preflight_blocks_missing_searchpath_env_and_warns_on_body_env(tmp_path):
+    bad_sp = tmp_path / "missing_sp.yaml"
+    bad_sp.write_text(
+        "hydra:\n  searchpath:\n    - file://${oc.env:RLINF_TEST_MISSING_SP}/config\n"
+        "runner:\n  task_type: embodied\n",
+        encoding="utf-8",
+    )
+    err = io.StringIO()
+    rc = main(
+        ["train", str(bad_sp), "--check"],
+        repo_root=REPO_ROOT,
+        stream=io.StringIO(),
+        err_stream=err,
+    )
+    assert rc == 2
+    assert "RLINF_TEST_MISSING_SP" in err.getvalue()
+
+    body_env = tmp_path / "missing_body.yaml"
+    body_env.write_text(
+        "runner:\n  task_type: embodied\nmodel_path: ${oc.env:RLINF_TEST_MISSING_BODY}\n",
+        encoding="utf-8",
+    )
+    out_dry = io.StringIO()
+    assert (
+        main(
+            ["train", str(body_env), "--dry-run"],
+            repo_root=REPO_ROOT,
+            stream=out_dry,
+            err_stream=io.StringIO(),
+        )
+        == 0
+    )
+    assert "RLINF_TEST_MISSING_BODY" in out_dry.getvalue()
+
+
+def test_cli_runs_from_outside_repo_and_does_not_import_torch_or_ray(tmp_path):
+    env = dict(os.environ)
+    env["RLINF_REPO_PATH"] = str(REPO_ROOT)
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    code = (
+        "import io, sys\n"
+        "from rlinf.cli import main\n"
+        "out = io.StringIO()\n"
+        "rc = main(['list'], stream=out)\n"
+        "assert rc == 0 and 'maniskill_ppo_mlp' in out.getvalue()\n"
+        "assert 'torch' not in sys.modules, 'torch imported eagerly by rlinf list'\n"
+        "assert 'ray' not in sys.modules, 'ray imported eagerly by rlinf list'\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr

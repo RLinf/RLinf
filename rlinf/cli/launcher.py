@@ -22,12 +22,13 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Mapping, Sequence, TextIO
 
-from .catalog import RecipeMode, RecipeSpec
+from .catalog import RecipeMode, RecipeSpec, extract_required_env_vars
 
 _KEY_ENV_KEYS: tuple[str, ...] = (
     "REPO_PATH",
@@ -61,6 +62,8 @@ class LaunchPlan:
     env: dict[str, str]
     log_dir: Path | None
     log_file: Path | None
+    missing_searchpath_env: tuple[str, ...] = ()
+    missing_body_env: tuple[str, ...] = ()
 
 
 def _prepend_pythonpath(env: dict[str, str], paths: Sequence[str]) -> None:
@@ -220,12 +223,24 @@ def build_launch_plan(
             command.append(f"runner.logger.log_path={resolved_log_dir}")
 
     command.extend(overrides)
+    env_search_dirs = [
+        recipe.config_dir,
+        *recipe.searchpath,
+        repo_root / "examples/embodiment/config",
+    ]
+    searchpath_vars, body_vars = extract_required_env_vars(
+        recipe.config_file, search_dirs=env_search_dirs
+    )
+    missing_searchpath = tuple(v for v in searchpath_vars if not env.get(v))
+    missing_body = tuple(v for v in body_vars if not env.get(v))
     return LaunchPlan(
         recipe=recipe,
         command=command,
         env=env,
         log_dir=resolved_log_dir,
         log_file=resolved_log_file,
+        missing_searchpath_env=missing_searchpath,
+        missing_body_env=missing_body,
     )
 
 
@@ -235,6 +250,14 @@ def format_dry_run(plan: LaunchPlan) -> str:
         f"# recipe: {plan.recipe.family.value}/{plan.recipe.mode.value} ({plan.recipe.qualified_name})",
         f"# config: {plan.recipe.config_file}",
     ]
+    if plan.missing_searchpath_env:
+        lines.append(
+            f"# error: missing required searchpath env var(s): {', '.join(plan.missing_searchpath_env)}"
+        )
+    if plan.missing_body_env:
+        lines.append(
+            f"# warning: unset env var(s) referenced in YAML: {', '.join(plan.missing_body_env)}"
+        )
     for key in _KEY_ENV_KEYS:
         if key in plan.env:
             lines.append(f"export {key}={shlex.quote(plan.env[key])}")
@@ -242,13 +265,83 @@ def format_dry_run(plan: LaunchPlan) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _format_duration(seconds: float) -> str:
+    total = int(round(seconds))
+    mins, secs = divmod(total, 60)
+    hours, mins = divmod(mins, 60)
+    if hours:
+        return f"{hours}h{mins:02d}m{secs:02d}s"
+    if mins:
+        return f"{mins}m{secs:02d}s"
+    return f"{seconds:.1f}s"
+
+
+def check_launch_plan(
+    plan: LaunchPlan,
+    *,
+    stream: TextIO | None = None,
+    err_stream: TextIO | None = None,
+) -> int:
+    """Validate Hydra config composition and overrides via ``--cfg job`` without launching Ray.
+
+    Args:
+        plan: Resolved :class:`LaunchPlan`.
+        stream: Output stream for confirmation messages.
+        err_stream: Error stream for validation failures.
+
+    Returns:
+        ``0`` if Hydra composes the configuration cleanly, otherwise non-zero.
+    """
+    out = sys.stdout if stream is None else stream
+    err = sys.stderr if err_stream is None else err_stream
+
+    if plan.missing_searchpath_env:
+        missing = ", ".join(plan.missing_searchpath_env)
+        err.write(
+            f"error: recipe '{plan.recipe.qualified_name}' requires environment "
+            f"variable(s) in hydra.searchpath: {missing}.\n"
+        )
+        err.flush()
+        return 2
+
+    check_cmd = [*plan.command, "--cfg", "job"]
+    proc = subprocess.run(
+        check_cmd,
+        env=plan.env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        if proc.stderr:
+            err.write(proc.stderr)
+        elif proc.stdout:
+            err.write(proc.stdout)
+        err.flush()
+        return proc.returncode
+
+    out.write(
+        f"[rlinf] Config OK: {plan.recipe.family.value}/{plan.recipe.mode.value} "
+        f"({plan.recipe.qualified_name})\n"
+    )
+    if plan.missing_body_env:
+        out.write(
+            f"[rlinf] Note: YAML references unset env var(s): "
+            f"{', '.join(plan.missing_body_env)}\n"
+        )
+    out.flush()
+    return 0
+
+
 def execute_launch_plan(
     plan: LaunchPlan,
     *,
     dry_run: bool = False,
+    check_only: bool = False,
     stream: TextIO | None = None,
+    err_stream: TextIO | None = None,
 ) -> int:
-    """Execute ``plan`` or print its resolved command when ``dry_run`` is set.
+    """Execute ``plan``, validate config when ``check_only`` is set, or preview on ``dry_run``.
 
     Forwards ``SIGINT`` and ``SIGTERM`` to the child process so Ray workers and
     accelerator resources run their shutdown handlers before the CLI exits.
@@ -256,16 +349,44 @@ def execute_launch_plan(
     Args:
         plan: Resolved :class:`LaunchPlan`.
         dry_run: When ``True``, print the resolved command and exit ``0``.
+        check_only: When ``True``, run Hydra ``--cfg job`` validation without starting Ray.
         stream: Output stream (defaults to ``sys.stdout``).
+        err_stream: Error stream (defaults to ``sys.stderr``).
 
     Returns:
-        Subprocess exit code (``0`` on dry run).
+        Subprocess exit code (``0`` on dry run or successful validation).
     """
     out = sys.stdout if stream is None else stream
+    err = sys.stderr if err_stream is None else err_stream
     if dry_run:
         out.write(format_dry_run(plan))
         out.flush()
         return 0
+    if check_only:
+        return check_launch_plan(plan, stream=out, err_stream=err)
+
+    if plan.missing_searchpath_env:
+        missing = ", ".join(plan.missing_searchpath_env)
+        err.write(
+            f"error: recipe '{plan.recipe.qualified_name}' requires environment "
+            f"variable(s) in hydra.searchpath: {missing}. Export them before running.\n"
+        )
+        err.flush()
+        return 2
+
+    if plan.missing_body_env:
+        err.write(
+            f"[rlinf] warning: YAML references unset env var(s): "
+            f"{', '.join(plan.missing_body_env)}\n"
+        )
+        err.flush()
+
+    log_note = f" | Logs: {plan.log_file}" if plan.log_file is not None else ""
+    out.write(
+        f"[rlinf] Launching {plan.recipe.family.value}/{plan.recipe.mode.value}: "
+        f"{plan.recipe.qualified_name}{log_note}\n"
+    )
+    out.flush()
 
     log_handle = None
     if plan.log_dir is not None and plan.log_file is not None:
@@ -274,6 +395,7 @@ def execute_launch_plan(
         log_handle.write(shlex.join(plan.command) + "\n")
         log_handle.flush()
 
+    start_time = time.monotonic()
     proc = subprocess.Popen(
         plan.command,
         env=plan.env,
@@ -299,13 +421,19 @@ def execute_launch_plan(
                 out.flush()
                 log_handle.write(line)
                 log_handle.flush()
-        return proc.wait()
+        rc = proc.wait()
     except KeyboardInterrupt:
         if proc.poll() is None:
             proc.send_signal(signal.SIGINT)
-        return proc.wait()
+        rc = proc.wait()
     finally:
         if prev_sigterm is not None:
             signal.signal(signal.SIGTERM, prev_sigterm)
         if log_handle is not None:
             log_handle.close()
+
+    elapsed = _format_duration(time.monotonic() - start_time)
+    status_word = "Finished" if rc == 0 else f"Failed (exit {rc})"
+    out.write(f"[rlinf] {status_word} in {elapsed}{log_note}\n")
+    out.flush()
+    return rc

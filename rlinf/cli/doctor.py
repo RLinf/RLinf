@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import ctypes.util
+import json
 import os
 import platform
 import shutil
@@ -270,11 +271,19 @@ def render_doctor(
     *,
     repo_root: Path | None = None,
     check_network: bool = False,
+    as_json: bool = False,
     stream: TextIO | None = None,
 ) -> int:
     """Execute ``rlinf doctor``, write the report to ``stream``, and return exit code."""
     out = sys.stdout if stream is None else stream
     results = run_doctor(repo_root=repo_root, check_network=check_network)
-    out.write(format_doctor_report(results))
+    if as_json:
+        payload = [
+            {"name": r.name, "status": r.status.value, "detail": r.detail}
+            for r in results
+        ]
+        out.write(json.dumps(payload, indent=2) + "\n")
+    else:
+        out.write(format_doctor_report(results))
     out.flush()
     return 1 if any(r.status == CheckStatus.FAIL for r in results) else 0

@@ -18,12 +18,27 @@ from __future__ import annotations
 
 import difflib
 import os
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import yaml
+
+_OC_ENV_RE = re.compile(r"\$\{oc\.env:([A-Za-z_][A-Za-z0-9_]*)(,[^}]*)?\}")
+
+# Repo-derived path env vars automatically populated by the CLI launcher.
+_AUTO_MANAGED_ENV_VARS: frozenset[str] = frozenset(
+    {
+        "REPO_PATH",
+        "EMBODIED_PATH",
+        "EVALUATIONS_PATH",
+        "DIFFUSION_PATH",
+        "REWARD_PATH",
+        "VLM_PATH",
+    }
+)
 
 
 class RecipeFamily(str, Enum):
@@ -501,13 +516,17 @@ def filter_recipes(
         token = model.lower()
         filtered = [r for r in filtered if token in r.name.lower()]
     if search:
-        token = search.lower()
+        tokens = [t for t in search.lower().split() if t]
         filtered = [
             r
             for r in filtered
-            if token in r.name.lower()
-            or token in r.subgroup.lower()
-            or token in r.family.value
+            if all(
+                token in r.name.lower()
+                or token in r.subgroup.lower()
+                or token in r.family.value
+                or token in r.mode.value
+                for token in tokens
+            )
         ]
     if featured_only:
         order = {key: idx for idx, key in enumerate(FEATURED_RECIPES)}
@@ -515,6 +534,253 @@ def filter_recipes(
         featured.sort(key=lambda r: order[(r.family, r.mode, r.name)])
         return featured
     return filtered
+
+
+def _collect_default_yaml_files(yaml_path: Path, search_dirs: list[Path]) -> list[Path]:
+    """Resolve one level of ``defaults`` entries to existing YAML files."""
+    parsed = _read_yaml_dict(yaml_path)
+    raw_defaults = parsed.get("defaults")
+    if not isinstance(raw_defaults, list):
+        return []
+
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for item in raw_defaults:
+        rel_candidates: list[str] = []
+        if isinstance(item, str):
+            if item.startswith("override ") or item == "_self_":
+                continue
+            rel_candidates.append(item.split("@", 1)[0].strip())
+        elif isinstance(item, dict):
+            for key, val in item.items():
+                key_str = str(key).split("@", 1)[0].strip()
+                if key_str.startswith("override ") or not isinstance(val, str):
+                    continue
+                rel_candidates.append(f"{key_str}/{val}")
+
+        for rel in rel_candidates:
+            rel_path = rel if rel.endswith((".yaml", ".yml")) else f"{rel}.yaml"
+            for base_dir in search_dirs:
+                candidate = (base_dir / rel_path).resolve()
+                if candidate.is_file() and candidate not in seen:
+                    seen.add(candidate)
+                    found.append(candidate)
+                    break
+    return found
+
+
+def extract_required_env_vars(
+    yaml_path: Path,
+    search_dirs: list[Path] | None = None,
+) -> tuple[list[str], list[str]]:
+    """Return ``(searchpath_vars, body_vars)`` referenced via ``${oc.env:VAR}`` without a default.
+
+    Inspects ``yaml_path`` and any direct ``defaults:`` YAML files found under
+    ``search_dirs`` so inherited env requirements (e.g. ``POLARIS_DATA_PATH``)
+    are surfaced before launch.
+
+    Args:
+        yaml_path: Path to a Hydra YAML configuration file.
+        search_dirs: Optional config roots used to resolve ``defaults:`` entries.
+
+    Returns:
+        Two sorted lists of environment variable names: those required inside
+        ``hydra.searchpath`` (evaluated before CLI overrides) and those required
+        elsewhere in the YAML or its direct defaults.
+    """
+    try:
+        raw = yaml_path.read_text(encoding="utf-8")
+    except OSError:
+        return [], []
+
+    parsed = _read_yaml_dict(yaml_path)
+    searchpath_vars: set[str] = set()
+    hydra_cfg = parsed.get("hydra")
+    if isinstance(hydra_cfg, dict):
+        sp = hydra_cfg.get("searchpath")
+        if isinstance(sp, list):
+            for entry in sp:
+                if isinstance(entry, str):
+                    for match in _OC_ENV_RE.finditer(entry):
+                        if match.group(2) is None:
+                            searchpath_vars.add(match.group(1))
+
+    body_vars: set[str] = set()
+    files_to_scan = [yaml_path]
+    if search_dirs:
+        files_to_scan.extend(_collect_default_yaml_files(yaml_path, search_dirs))
+
+    for cfg_file in files_to_scan:
+        try:
+            content = (
+                raw if cfg_file == yaml_path else cfg_file.read_text(encoding="utf-8")
+            )
+        except OSError:
+            continue
+        for line in content.splitlines():
+            code_part = line.split("#", 1)[0]
+            for match in _OC_ENV_RE.finditer(code_part):
+                if match.group(2) is None and match.group(1) not in searchpath_vars:
+                    body_vars.add(match.group(1))
+
+    return sorted(searchpath_vars), sorted(body_vars)
+
+
+def inspect_recipe(spec: RecipeSpec, repo_root: Path) -> dict[str, Any]:
+    """Extract a concise, human- and JSON-friendly metadata summary for ``spec``.
+
+    Args:
+        spec: Resolved :class:`RecipeSpec`.
+        repo_root: Repository root used to compute relative paths when inside repo.
+
+    Returns:
+        Dictionary of summary fields for ``rlinf show``.
+    """
+    parsed = _read_yaml_dict(spec.config_file)
+    search_dirs = [
+        spec.config_dir,
+        *spec.searchpath,
+        repo_root / _FAMILY_CONFIG_ROOTS[spec.family],
+    ]
+    searchpath_vars, body_vars = extract_required_env_vars(
+        spec.config_file, search_dirs=search_dirs
+    )
+    user_env_vars = sorted(
+        (set(searchpath_vars) | set(body_vars)) - _AUTO_MANAGED_ENV_VARS
+    )
+
+    def _rel(path: Path) -> str:
+        try:
+            return str(path.resolve().relative_to(repo_root.resolve()))
+        except ValueError:
+            return str(path)
+
+    defaults_list: list[str] = []
+    raw_defaults = parsed.get("defaults")
+    if isinstance(raw_defaults, list):
+        for item in raw_defaults:
+            if (
+                isinstance(item, str)
+                and not item.startswith("override ")
+                and item != "_self_"
+            ):
+                defaults_list.append(item)
+            elif isinstance(item, dict):
+                for k, v in item.items():
+                    if not str(k).startswith("override "):
+                        defaults_list.append(f"{k}: {v}")
+
+    cluster = parsed.get("cluster") if isinstance(parsed.get("cluster"), dict) else {}
+    runner = parsed.get("runner") if isinstance(parsed.get("runner"), dict) else {}
+    actor = parsed.get("actor") if isinstance(parsed.get("actor"), dict) else {}
+    actor_model = actor.get("model") if isinstance(actor.get("model"), dict) else {}
+    rollout = parsed.get("rollout") if isinstance(parsed.get("rollout"), dict) else {}
+    rollout_model = (
+        rollout.get("model") if isinstance(rollout.get("model"), dict) else {}
+    )
+
+    model_path = actor_model.get("model_path") or rollout_model.get("model_path")
+    return {
+        "name": spec.name,
+        "qualified_name": spec.qualified_name,
+        "family": spec.family.value,
+        "mode": spec.mode.value,
+        "config_file": _rel(spec.config_file),
+        "entry_script": _rel(spec.entry_script),
+        "defaults": defaults_list,
+        "num_nodes": cluster.get("num_nodes"),
+        "component_placement": cluster.get("component_placement"),
+        "task_type": runner.get("task_type"),
+        "max_epochs": runner.get("max_epochs"),
+        "max_steps": runner.get("max_steps"),
+        "model_path": model_path,
+        "required_env_vars": user_env_vars,
+        "launch_command": f"rlinf {spec.mode.value} {spec.qualified_name}",
+    }
+
+
+def resolve_recipe_any_mode(
+    target: str,
+    repo_root: Path,
+    *,
+    mode: RecipeMode | None = None,
+    family: RecipeFamily | None = None,
+    subgroup: str | None = None,
+) -> RecipeSpec:
+    """Resolve ``target`` across modes (used by ``rlinf show``).
+
+    Args:
+        target: Recipe name, ``subgroup/name``, or path to a local YAML file.
+        repo_root: RLinf repository root.
+        mode: Optional explicit mode filter.
+        family: Optional family filter.
+        subgroup: Optional subgroup filter.
+
+    Returns:
+        Resolved :class:`RecipeSpec`.
+
+    Raises:
+        FileNotFoundError: If ``target`` looks like a missing YAML file path.
+        ValueError: If no recipe matches or multiple recipes match ambiguously.
+    """
+    if mode is not None:
+        return resolve_recipe(target, mode, repo_root, family=family, subgroup=subgroup)
+
+    candidate_path = Path(target).expanduser()
+    if candidate_path.is_file():
+        inferred_mode = (
+            RecipeMode.EVAL
+            if "eval" in candidate_path.stem.lower()
+            else (
+                RecipeMode.COLLECT
+                if "collect" in candidate_path.stem.lower()
+                else RecipeMode.TRAIN
+            )
+        )
+        return resolve_recipe(
+            target, inferred_mode, repo_root, family=family, subgroup=subgroup
+        )
+    if target.endswith((".yaml", ".yml")) and (
+        os.sep in target or target.startswith(".")
+    ):
+        raise FileNotFoundError(
+            f"Config file not found: '{target}'. Expected an existing YAML file "
+            "or a recipe name from 'rlinf list'."
+        )
+
+    all_recipes = discover_recipes(repo_root)
+    normalized = target.removesuffix(".yaml").removesuffix(".yml")
+    lookup_subgroup = subgroup
+    lookup_name = normalized
+    if "/" in normalized:
+        lookup_subgroup, lookup_name = normalized.split("/", 1)
+    if lookup_subgroup is not None:
+        lookup_subgroup = _AGENT_SUBGROUP_ALIASES.get(
+            lookup_subgroup.lower(), lookup_subgroup
+        )
+
+    pool = all_recipes
+    if family is not None:
+        pool = [r for r in pool if r.family == family]
+    if lookup_subgroup is not None:
+        pool = [r for r in pool if r.subgroup == lookup_subgroup]
+
+    matches = [r for r in pool if r.name == lookup_name]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        options = ", ".join(
+            f"--mode {m.mode.value} --family {m.family.value} {m.qualified_name}"
+            for m in matches
+        )
+        raise ValueError(f"Ambiguous recipe '{target}'. Disambiguate with: {options}.")
+
+    all_names = sorted({r.name for r in all_recipes})
+    close = difflib.get_close_matches(lookup_name, all_names, n=5, cutoff=0.5)
+    hint = f" Did you mean: {', '.join(close)}?" if close else ""
+    raise ValueError(
+        f"Unknown recipe '{target}'.{hint} Run 'rlinf list --all' to view available recipes."
+    )
 
 
 def _read_yaml_dict(yaml_path: Path) -> dict:
@@ -836,25 +1102,31 @@ def resolve_recipe(
         return _apply_mode_overrides(matches[0], repo_root, mode, use_async)
 
     if len(matches) > 1:
-        options = ", ".join(f"{m.family.value}:{m.qualified_name}" for m in matches)
+        commands = ", ".join(
+            f"'rlinf {mode.value} --family {m.family.value} {m.qualified_name}'"
+            for m in matches
+        )
         raise ValueError(
             f"Ambiguous recipe '{target}' for mode '{mode.value}'. "
-            f"Matching recipes: {options}. Disambiguate with '--family' or "
-            "'<subgroup>/<name>'."
+            f"Disambiguate with one of: {commands}."
         )
 
-    # Helpful error message with close matches.
+    # Helpful error message with close matches and wrong-mode command suggestions.
+    other_matches = [r for r in all_recipes if r.name == lookup_name]
+    if other_matches:
+        suggestions = ", ".join(
+            f"'rlinf {m.mode.value} {m.qualified_name}'" for m in other_matches
+        )
+        raise ValueError(
+            f"Recipe '{target}' is not a {mode.value} recipe. "
+            f"Did you mean: {suggestions}?"
+        )
+
     mode_names = sorted({r.name for r in all_recipes if r.mode == mode})
     close = difflib.get_close_matches(lookup_name, mode_names, n=5, cutoff=0.5)
     hint = f" Did you mean: {', '.join(close)}?" if close else ""
-    other_modes = sorted({r.mode.value for r in all_recipes if r.name == lookup_name})
-    mode_hint = (
-        f" Note: '{lookup_name}' exists under mode(s): {', '.join(other_modes)}."
-        if other_modes
-        else ""
-    )
     raise ValueError(
-        f"Unknown {mode.value} recipe '{target}'.{hint}{mode_hint} "
+        f"Unknown {mode.value} recipe '{target}'.{hint} "
         "Run 'rlinf list --all' to inspect available recipes."
     )
 

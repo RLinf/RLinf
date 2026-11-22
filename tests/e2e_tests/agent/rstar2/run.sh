@@ -11,9 +11,10 @@ export TOKENIZERS_PARALLELISM=false
 export RAY_DEDUP_LOGS=0
 export PYTHONPATH="${REPO_PATH}${PYTHONPATH:+:${PYTHONPATH}}"
 
-CONFIG_NAME="${1:-qwen2.5-1.5b-megatron}"
-CONFIG_NAME="${CONFIG_NAME%.yaml}"
-if [ "$#" -gt 0 ]; then
+if [ -z "$1" ] || [[ "$1" == *=* ]] || [[ "$1" == +* ]] || [[ "$1" == ~* ]] || [[ "$1" == -* ]]; then
+    CONFIG_NAME="qwen2.5-1.5b-megatron"
+else
+    CONFIG_NAME="${1%.yaml}"
     shift
 fi
 
