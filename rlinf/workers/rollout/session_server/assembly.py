@@ -118,6 +118,7 @@ def assemble_group_payload(
         )
         kept_lens = verdict["kept_lens"]
         continues_prev = verdict["continues_prev"]
+        ended = verdict["is_end"]
         dropped = verdict.get("not_training") or {}
         traj_fields = verdict.get("extra_fields_train", {})
         names = set(traj_fields)
@@ -173,7 +174,7 @@ def assemble_group_payload(
                     f"carry them"
                 )
                 rollout_logprobs.append(part.logprobs[:kept])
-            is_end.append(False)
+            is_end.append(ended[part.turn_index])
             rewards.append(finalize.rewards[traj_index])
             version_start.append(part.version_start)
             version_end.append(part.weight_version)

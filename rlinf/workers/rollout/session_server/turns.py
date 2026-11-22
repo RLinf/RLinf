@@ -42,8 +42,12 @@ class TurnRecord:
     previous turn's input+output, None on the first turn. ``kept_len`` and
     ``continues_prev`` are filled when the agent declares them (close, or the
     per-turn ``prev_kept_len`` declaration); until then the kept length is the
-    full output and the classification is pending. In verify mode
-    ``merged_sampling_params`` holds the params this call was forwarded with.
+    full output and the classification is pending. ``is_end`` is the agent's
+    declaration, at close, of whether this turn's sequence ended (the agent's
+    ``AgentLoopOutput.is_end``); it feeds the properly-ended fraction of the
+    rollout metrics, and an agent that declares nothing leaves it False. In
+    verify mode ``merged_sampling_params`` holds the params this call was
+    forwarded with.
     """
 
     input_len: int
@@ -52,6 +56,7 @@ class TurnRecord:
     declared_prev_kept_len: Optional[int] = None
     kept_len: Optional[int] = None
     continues_prev: Optional[bool] = None
+    is_end: bool = False
     merged_sampling_params: Optional[dict] = None
 
 

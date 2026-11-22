@@ -48,6 +48,7 @@ from rlinf.data.schema.reasoning_results import (
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.http_client import InferenceHTTPClient
 from rlinf.workers.rollout.session_server.chat_completions import (
+    ChatCheckpoint,
     ChatCompletions,
     ChatConversation,
 )
@@ -69,6 +70,11 @@ from rlinf.workers.rollout.session_server.turns import (
 from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
 
 _WRITE_FAILED = "payload_write_failed"
+# A session serves one request at a time; a second request, or a close,
+# sent while one runs gets this answer.
+_SESSION_BUSY = (
+    "a request of this session is still running; wait for it or abort the group"
+)
 
 # Bounded history of groups whose completion metadata was sent; guards a
 # straggler abort from producing a second record for the buffer worker.
@@ -99,10 +105,11 @@ class _SessionState:
     # sessions only the generate entry has served. The turn classification
     # differs between the two entries.
     entry: Optional[str] = None
-    # The chat entry's server-side conversation and its
-    # single-request-in-flight flag.
+    # The chat entry's server-side conversation.
     chat: Optional[ChatConversation] = None
-    chat_inflight: bool = False
+    # Set while a request of this session is being served, by either
+    # endpoint: a session handles one request at a time.
+    inflight: bool = False
 
 
 @dataclass
@@ -129,6 +136,10 @@ class _GroupState:
     group_id: int
     task_name: str
     group_size: int
+    # Payload channel this group writes to, taken in creation order. It is
+    # recorded here so every part of the group lands in one channel process,
+    # and so ``payload_ref`` can name that channel.
+    payload_shard: int = 0
     sessions: dict[int, _SessionState] = field(default_factory=dict)
     closed: set[int] = field(default_factory=set)
     rewarded: set[int] = field(default_factory=set)
@@ -199,6 +210,10 @@ class SessionServerWorker(Worker):
         self._agent_output_channel: Optional[Channel] = None
         # Built by serve(), once the payload channels exist.
         self._payload_writer: Optional[PayloadWriter] = None
+        # Shard handed to the next group created; advanced in creation order
+        # so every shard of this session server is used, whatever
+        # num_servers is.
+        self._next_payload_shard = 0
         self._http_server: Optional[uvicorn.Server] = None
         self._http_server_task: Optional[asyncio.Task] = None
         # Set when serving has ended (normally or not), with the exception
@@ -354,24 +369,27 @@ class SessionServerWorker(Worker):
         """
         assert self._http_server_task is None, "serve is already running."
         assert payload_channels, "serve needs at least one payload channel."
-        # The length the actor trains on, which the chat entry enforces.
-        self._max_seq_length = int(self._cfg.runner.seq_length)
-        # Load the chat entry's tokenizer now, so a bad model path or chat
-        # template fails at startup instead of on the first chat request.
-        self._setup_chat()
-        self._router_client = InferenceHTTPClient(router_url, keepalive_timeout=4.0)
-        self._agent_output_channel = agent_output_channel
-        self._payload_writer = PayloadWriter(
-            payload_channels,
-            max_pending_bytes=int(self._cfg.session_server.max_pending_payload_bytes),
-            put_timeout_s=self._payload_put_timeout_s,
-            on_write_failure=self._note_write_failure,
-        )
-        self._http_server_task = asyncio.create_task(self._run_http_server())
-        self.log_info(
-            f"Session server {self._server_index} serving on {self._host}:{self._port}"
-        )
         try:
+            # The length the actor trains on, which the chat entry enforces.
+            self._max_seq_length = int(self._cfg.runner.seq_length)
+            # Load the chat entry's tokenizer now, so a bad model path or chat
+            # template fails at startup instead of on the first chat request.
+            self._setup_chat()
+            self._router_client = InferenceHTTPClient(router_url, keepalive_timeout=4.0)
+            self._agent_output_channel = agent_output_channel
+            self._payload_writer = PayloadWriter(
+                payload_channels,
+                max_pending_bytes=int(
+                    self._cfg.session_server.max_pending_payload_bytes
+                ),
+                put_timeout_s=self._payload_put_timeout_s,
+                on_write_failure=self._note_write_failure,
+            )
+            self._http_server_task = asyncio.create_task(self._run_http_server())
+            self.log_info(
+                f"Session server {self._server_index} serving on "
+                f"{self._host}:{self._port}"
+            )
             await self._http_server_task
         except BaseException as exc:
             self._serve_error = exc
@@ -517,6 +535,7 @@ class SessionServerWorker(Worker):
                 group_id=group_id,
                 task_name=task_name,
                 group_size=group_size,
+                payload_shard=self._take_payload_shard(),
                 rewards=[None] * group_size,
             )
             self._groups[group_id] = group
@@ -596,34 +615,41 @@ class SessionServerWorker(Worker):
         session, error = self._session(sid)
         if error is not None:
             return self._error(*error)
-        rlinf_block = body.get("rlinf") or {}
-        # Every other body field rides through to the engine unchanged:
-        # the request is sglang's /generate shape apart from the rlinf block.
-        passthrough = {
-            key: value
-            for key, value in body.items()
-            if key not in ("rlinf", "input_ids", "sampling_params")
-        }
-        result, error = await self._generate_core(
-            session,
-            body.get("input_ids"),
-            body.get("sampling_params"),
-            rlinf_block.get("prev_kept_len"),
-            passthrough,
-        )
-        if error is not None:
-            return self._error(*error)
-        content = {
-            "output_ids": list(result["output_ids"]),
-            "finish_reason": dict(result["finish_reason"]),
-            "weight_version": result["weight_version"],
-            "cached_tokens": result["cached_tokens"],
-        }
-        if self._verify_assembly:
-            # Only the verification needs the agent-side logprobs; normal
-            # responses keep them out of the data plane.
-            content["logprobs"] = result["logprobs"]
-        return JSONResponse(content=content)
+        if session.inflight:
+            return self._error(409, _SESSION_BUSY)
+        session.inflight = True
+        try:
+            rlinf_block = body.get("rlinf") or {}
+            # Every other body field rides through to the engine unchanged:
+            # the request is sglang's /generate shape apart from the rlinf
+            # block.
+            passthrough = {
+                key: value
+                for key, value in body.items()
+                if key not in ("rlinf", "input_ids", "sampling_params")
+            }
+            result, error = await self._generate_core(
+                session,
+                body.get("input_ids"),
+                body.get("sampling_params"),
+                rlinf_block.get("prev_kept_len"),
+                passthrough,
+            )
+            if error is not None:
+                return self._error(*error)
+            content = {
+                "output_ids": list(result["output_ids"]),
+                "finish_reason": dict(result["finish_reason"]),
+                "weight_version": result["weight_version"],
+                "cached_tokens": result["cached_tokens"],
+            }
+            if self._verify_assembly:
+                # Only the verification needs the agent-side logprobs; normal
+                # responses keep them out of the data plane.
+                content["logprobs"] = result["logprobs"]
+            return JSONResponse(content=content)
+        finally:
+            session.inflight = False
 
     async def _generate_core(
         self,
@@ -653,7 +679,7 @@ class SessionServerWorker(Worker):
                 ``sampling_params`` and ``return_logprob`` are always
                 overwritten by this server's merged values.
         """
-        _, error = self._live_group(session)
+        group, error = self._live_group(session)
         if error is not None:
             # An abort-discarded group answers 410 so the agent fails its
             # turn; other failures pass through.
@@ -661,6 +687,17 @@ class SessionServerWorker(Worker):
             if status < 400:
                 status, message = 410, f"group {session.group_id} was discarded"
             return None, (status, message)
+        if group.finalized or session.traj_index in group.closed:
+            # A closed trajectory takes no more turns: its turns are already
+            # classified, so another one would reach the payload without a
+            # place in the training data. A close cannot arrive while this
+            # request runs (a session serves one request at a time), so the
+            # check holds through the forward below.
+            return None, (
+                410,
+                f"trajectory {session.traj_index} of group {session.group_id} "
+                f"is already closed",
+            )
         if not isinstance(input_ids, list) or not input_ids:
             return None, (400, "input_ids must be a non-empty list")
         if prev_kept_len is not None and (
@@ -873,13 +910,9 @@ class SessionServerWorker(Worker):
         )
         if reason is not None:
             return self._openai_error(400, reason, "invalid_request")
-        if session.chat_inflight:
-            return self._openai_error(
-                409,
-                "this session already has a chat request in flight",
-                "session_busy",
-            )
-        session.chat_inflight = True
+        if session.inflight:
+            return self._openai_error(409, _SESSION_BUSY, "session_busy")
+        session.inflight = True
         try:
             if session.entry is None:
                 session.entry = "chat"
@@ -913,10 +946,13 @@ class SessionServerWorker(Worker):
                 self._roll_back_last_turn(session)
             # Captured before the forward: this is where a later retry of
             # this request rolls back to.
-            checkpoint = (
-                list(session.chat.messages) if session.chat is not None else [],
-                session.last_input,
-                session.last_output,
+            checkpoint = ChatCheckpoint(
+                messages=(
+                    list(session.chat.messages) if session.chat is not None else []
+                ),
+                last_input=session.last_input,
+                last_output=session.last_output,
+                tools=session.chat.tools if session.chat is not None else tools,
             )
             result, error = await self._generate_core(
                 session,
@@ -948,7 +984,9 @@ class SessionServerWorker(Worker):
             if parsed.tool_call_parse_failed:
                 self._metrics["session_server/chat_tool_call_parse_failed"] += 1
             session.chat = ChatConversation(
-                messages=[*messages, parsed.message], checkpoint=checkpoint
+                messages=[*rendered.messages, parsed.message],
+                tools=tools,
+                checkpoint=checkpoint,
             )
             response = self._chat_entry.response_body(
                 body, parsed, result, rendered.input_ids
@@ -962,7 +1000,7 @@ class SessionServerWorker(Worker):
                 )
             return JSONResponse(content=response)
         finally:
-            session.chat_inflight = False
+            session.inflight = False
 
     def _session_max_len(self, session: _SessionState) -> int:
         """The longest sequence this session's turns may produce.
@@ -984,16 +1022,24 @@ class SessionServerWorker(Worker):
         ``last_input`` / ``last_output`` are restored from the checkpoint
         here because the generate core derives the new turn's prefix match
         from them, and the match must be taken against the kept turn, not
-        the abandoned one. The abandoned turn keeps its payload: the engine
-        already sampled it.
+        the abandoned one. The checkpoint is consumed: restoring it again
+        would roll back the same turn twice, and a request that needs to go
+        back further re-renders the whole conversation. The abandoned turn
+        keeps its payload: the engine already sampled it.
         """
         checkpoint = session.chat.checkpoint
         session.not_training_turns.add(len(session.turns) - 1)
         session.chat = ChatConversation(
-            messages=list(checkpoint[0]), checkpoint=checkpoint
+            messages=list(checkpoint.messages),
+            tools=checkpoint.tools,
+            checkpoint=None,
         )
-        session.last_input = None if checkpoint[1] is None else list(checkpoint[1])
-        session.last_output = None if checkpoint[2] is None else list(checkpoint[2])
+        session.last_input = (
+            None if checkpoint.last_input is None else list(checkpoint.last_input)
+        )
+        session.last_output = (
+            None if checkpoint.last_output is None else list(checkpoint.last_output)
+        )
 
     # ------------------------------------------------------------------
     # Payload writes
@@ -1005,10 +1051,10 @@ class SessionServerWorker(Worker):
         the task finalize waits for are the session's state, so they are
         recorded here.
         """
-        nbytes, task = await self._payload_writer.emit_part(part)
         group = self._groups.get(part.group_id)
         if group is None:
             return
+        nbytes, task = await self._payload_writer.emit_part(group.payload_shard, part)
         group.payload_bytes += nbytes
         if task is not None and not group.finalized:
             group.pending_settles.append(task)
@@ -1055,6 +1101,13 @@ class SessionServerWorker(Worker):
                 return JSONResponse(content={})
             return self._error(status, message)
 
+        if session.inflight:
+            return self._error(409, _SESSION_BUSY)
+        if session.traj_index in group.closed:
+            # A close retried after its response was lost, or sent twice: the
+            # trajectory is already closed, so there is nothing to classify.
+            return JSONResponse(content={})
+
         turns = session.turns
         verdict = body.get("verdict") or {}
         if not isinstance(verdict, dict):
@@ -1075,6 +1128,12 @@ class SessionServerWorker(Worker):
                 f"got {extra_fields_train!r}",
             )
         trained_turn_count = len(turns) - len(session.not_training_turns)
+        if trained_turn_count == 0:
+            return self._error(
+                400,
+                f"trajectory {session.traj_index} of group {session.group_id} "
+                f"has no trained turn; abort the group instead of closing it",
+            )
         for name, values in extra_fields_train.items():
             if (
                 not isinstance(values, list)
@@ -1090,6 +1149,14 @@ class SessionServerWorker(Worker):
         kept_lens = body.get("kept_lens") or {}
         if not isinstance(kept_lens, dict):
             return self._error(400, "kept_lens must map turn_index to a kept length")
+        is_end = body.get("is_end") or {}
+        if not isinstance(is_end, dict):
+            return self._error(400, "is_end must map turn_index to a bool")
+        for turn_index, value in is_end.items():
+            if not isinstance(value, bool):
+                return self._error(
+                    400, f"is_end[{turn_index}] must be a bool, got {value!r}"
+                )
         verify_result = body.get("verify_result")
         if verify_result is not None:
             if not isinstance(verify_result, dict) or not isinstance(
@@ -1127,6 +1194,9 @@ class SessionServerWorker(Worker):
         for turn_index, turn in enumerate(turns):
             turn.kept_len = kept[turn_index]
             turn.continues_prev = continues[turn_index]
+            # JSON keys arrive as strings, so look up both forms, as kept_len
+            # does; a turn the agent declares nothing about did not end.
+            turn.is_end = is_end.get(turn_index, is_end.get(str(turn_index), False))
         session.extra_fields_train = extra_fields_train
 
         group.closed.add(session.traj_index)
@@ -1174,6 +1244,7 @@ class SessionServerWorker(Worker):
                 group_id=group_id,
                 task_name="",
                 group_size=0,
+                payload_shard=self._take_payload_shard(),
                 finalized=True,
             )
             group.discard_reason = reason
@@ -1248,6 +1319,10 @@ class SessionServerWorker(Worker):
                 "continues_prev": [
                     turn.continues_prev is True for turn in session.turns
                 ],
+                "is_end": {
+                    turn_index: turn.is_end
+                    for turn_index, turn in enumerate(session.turns)
+                },
                 "not_training": dict.fromkeys(session.not_training_turns, True),
                 "extra_fields_train": dict(session.extra_fields_train),
             }
@@ -1269,6 +1344,7 @@ class SessionServerWorker(Worker):
             verify=verify,
         )
         if not await self._payload_writer.put(
+            group.payload_shard,
             group_id,
             finalize_part,
             await_completion=True,
@@ -1277,7 +1353,7 @@ class SessionServerWorker(Worker):
             # The writer already reported the failure, which voided the group
             # and removed any container the part produced.
             return False
-        payload_channel = self._payload_writer.channel_for(group_id)
+        payload_channel = self._payload_writer.channel_for(group.payload_shard)
         metadata = GroupMetadata(
             group_id=group_id,
             task_name=group.task_name,
@@ -1303,7 +1379,7 @@ class SessionServerWorker(Worker):
             # told. Drop the container; the dead agent_output_channel makes
             # every future result equally undeliverable, so the run fails
             # instead of leaking admission slot after slot.
-            await self._payload_writer.remove_key(group_id)
+            await self._payload_writer.remove_key(group.payload_shard, group_id)
             self._fail_serving(f"GroupMetadata put for group {group_id}", exc)
             return False
         group.reported = True
@@ -1324,8 +1400,9 @@ class SessionServerWorker(Worker):
         The record — group identity, reason, timestamp — stays so late
         traffic for the group is answered (410 for write failures, drop for
         aborts) and a straggler abort cannot produce a second record; the
-        token buffers go. The record itself expires after its TTL (see
-        ``_expire_discard_records``). First voiding only.
+        token buffers and the declared turn state go. The record itself
+        expires after its TTL (see ``_expire_discard_records``). First
+        voiding only.
         """
         group = self._groups.get(group_id)
         if group is None or group.reported or group.discard_reason is not None:
@@ -1339,18 +1416,25 @@ class SessionServerWorker(Worker):
             session.turns.clear()
             session.last_input = None
             session.last_output = None
+            session.chat = None
+            session.extra_fields_train.clear()
+            session.not_training_turns.clear()
+        group.verify_result = None
         if reason == _WRITE_FAILED:
             self._metrics["session_server/payload_write_failed"] += 1
         await self._report_discard(group_id, reason)
         await self._payload_writer.put(
-            group_id, PayloadDiscard(group_id=group_id), await_completion=False
+            group.payload_shard,
+            group_id,
+            PayloadDiscard(group_id=group_id),
+            await_completion=False,
         )
         if reason == _WRITE_FAILED:
             # A part can land although its settlement failed or timed out;
             # with the finalize part, the collector will then have emitted a
             # container no one will fetch. remove_key chains after all puts
             # already issued for the key and drops the whole queue.
-            await self._payload_writer.remove_key(group_id)
+            await self._payload_writer.remove_key(group.payload_shard, group_id)
 
     async def _report_discard(self, group_id: int, reason: str) -> None:
         """Report a discard record to the buffer worker, awaited."""
@@ -1379,6 +1463,12 @@ class SessionServerWorker(Worker):
             self._fatal_error = RuntimeError(f"{context} failed: {exc!r}")
         self.log_error(f"{context} failed ({exc!r}); stopping the session server.")
         self._http_server.should_exit = True
+
+    def _take_payload_shard(self) -> int:
+        """The shard for the next group, taken in creation order."""
+        shard = self._next_payload_shard
+        self._next_payload_shard = (shard + 1) % self._payload_writer.num_shards
+        return shard
 
     def _remember_reported(self, group_id: int, session_ids: tuple[str, ...]) -> None:
         """Track recently reported groups and their sessions, bounded.

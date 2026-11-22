@@ -27,9 +27,23 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 from rlinf.agents.tokenization.agentic_tokenizer import AgenticTokenizer
+
+
+class ChatCheckpoint(NamedTuple):
+    """The state a turn started from, for a retried request to render from.
+
+    Restoring a rollback means restoring all four at once, and the rollback
+    that uses it consumes it: a conversation's checkpoint is None once one
+    rollback has run.
+    """
+
+    messages: list[dict]
+    last_input: Optional[list[int]]
+    last_output: Optional[list[int]]
+    tools: Optional[list]
 
 
 @dataclass
@@ -37,21 +51,31 @@ class ChatConversation:
     """The server-side copy of one session's chat history.
 
     ``messages`` is the conversation as the server knows it, the assistant
-    messages it parsed itself included. ``checkpoint`` is the state the last
-    turn started from — ``(messages, last_input, last_output)`` — kept so a
-    retried request renders from before that turn; the two are set together
-    once a turn has run.
+    messages it parsed itself included. ``tools`` is the tool list the
+    stored tokens were rendered under. ``checkpoint`` is the state the last
+    turn started from, kept so a retried request renders from before that
+    turn; it is None once a rollback has consumed it. The three are set
+    together once a turn has run.
     """
 
     messages: list[dict]
-    checkpoint: tuple
+    tools: Optional[list]
+    checkpoint: Optional[ChatCheckpoint]
 
 
 @dataclass
 class RenderedInput:
-    """The token ids of one rendered request."""
+    """One rendered request: its token ids and the history to store.
+
+    ``messages`` is the conversation as it stands after this request's
+    messages, without the answer: the stored history, plus what this request
+    added to it. The server keeps its own copy of the earlier turns, so a
+    client that drops a field it sent before (reasoning_content, say) does
+    not erase it from the history.
+    """
 
     input_ids: list[int]
+    messages: list[dict]
     # The request repeats the last one, so the worker drops that turn.
     rollback: bool = False
 
@@ -167,8 +191,9 @@ class ChatCompletions:
         messages on top of the previous turn's tokens. A retry of the last
         request rolls back instead: the returned ``rollback`` tells the
         worker to drop that turn from the training data, and the retried
-        request renders from the checkpoint. Any other request re-renders the
-        whole conversation and starts a new segment.
+        request renders from the checkpoint. A request that changes the tool
+        list, or any other request, re-renders the whole conversation and
+        starts a new segment.
 
         Args:
             conversation: The session's stored conversation, None before its
@@ -178,34 +203,46 @@ class ChatCompletions:
             tools: The request's tools, or None.
         """
         stored = conversation.messages if conversation is not None else []
+        stored_tools = conversation.tools if conversation is not None else None
         rollback = False
-        if (
-            stored
-            and len(messages) == len(stored) - 1
-            and _match_prefix(messages, stored[:-1]) is not None
-        ):
-            # The request repeats itself, so the client never used the last
-            # turn's answer. Render from before that turn.
-            checkpoint = conversation.checkpoint
-            rollback = True
-            stored = list(checkpoint[0])
-            last_tokens = list(checkpoint[1] or []) + list(checkpoint[2] or [])
-        if (
-            stored
-            and len(messages) > len(stored)
-            and _match_prefix(messages, stored) is not None
-        ):
-            suffix = messages[len(stored) :]
-            clear_thinking = self._tokenizer.chat_template_kwargs.get(
-                "clear_thinking", False
-            )
-            if not (clear_thinking and _has_user_message(suffix)):
-                return RenderedInput(
-                    self._tokenizer.build_native_tool_response(
-                        list(last_tokens), suffix
-                    ),
-                    rollback=rollback,
+        # The stored tokens were rendered under the stored tool list, so a
+        # request that changes it cannot reuse them.
+        if _tools_equal(tools, stored_tools):
+            if (
+                conversation is not None
+                and conversation.checkpoint is not None
+                and stored
+                and len(messages) == len(stored) - 1
+                and _match_prefix(messages, stored[:-1]) is not None
+            ):
+                # The request repeats itself, so the client never used the
+                # last turn's answer. Render from before that turn. The
+                # checkpoint is consumed here: a further rollback has no
+                # state of its own to restore, and such a request renders
+                # the whole conversation instead.
+                checkpoint = conversation.checkpoint
+                rollback = True
+                stored = list(checkpoint.messages)
+                last_tokens = list(checkpoint.last_input or []) + list(
+                    checkpoint.last_output or []
                 )
+            if (
+                stored
+                and len(messages) > len(stored)
+                and _match_prefix(messages, stored) is not None
+            ):
+                suffix = messages[len(stored) :]
+                clear_thinking = self._tokenizer.chat_template_kwargs.get(
+                    "clear_thinking", False
+                )
+                if not (clear_thinking and _has_user_message(suffix)):
+                    return RenderedInput(
+                        self._tokenizer.build_native_tool_response(
+                            list(last_tokens), suffix
+                        ),
+                        messages=[*stored, *suffix],
+                        rollback=rollback,
+                    )
         return RenderedInput(
             self._tokenizer.apply_chat_template(
                 _template_messages(messages),
@@ -214,6 +251,7 @@ class ChatCompletions:
                 tokenize=True,
                 return_dict=False,
             ),
+            messages=list(messages),
             rollback=rollback,
         )
 
@@ -474,17 +512,19 @@ def _match_prefix(request_messages: list[dict], stored: list[dict]) -> Optional[
     """Where the request stops matching the stored conversation.
 
     Returns the length of the matching prefix when ``request_messages``
-    starts with ``stored``, else None. Tool-call arguments compare by their
-    parsed JSON; an assistant's reasoning_content counts as matching when
-    the request omits it or sends it empty, so a client that clears history
-    thinking still continues the conversation.
+    starts with ``stored``, else None. A message's content counts as
+    matching when both sides carry none (None, missing, and "" all mean no
+    content). Tool-call arguments compare by their parsed JSON; an
+    assistant's reasoning_content counts as matching when the request omits
+    it or sends it empty, so a client that clears history thinking still
+    continues the conversation.
     """
     if len(request_messages) < len(stored):
         return None
     for request, saved in zip(request_messages, stored):
         if request.get("role") != saved.get("role"):
             return None
-        if request.get("content") != saved.get("content"):
+        if (request.get("content") or "") != (saved.get("content") or ""):
             return None
         if not _tool_calls_equal(request.get("tool_calls"), saved.get("tool_calls")):
             return None
@@ -497,12 +537,25 @@ def _match_prefix(request_messages: list[dict], stored: list[dict]) -> Optional[
     return len(stored)
 
 
+def _tools_equal(request_tools: Any, stored_tools: Any) -> bool:
+    """Whether a request's tool list matches the one the tokens were rendered
+    under. No tools (None, missing, or an empty list) equals no tools."""
+    request_none = request_tools is None or request_tools == []
+    stored_none = stored_tools is None or stored_tools == []
+    if request_none or stored_none:
+        return request_none and stored_none
+    return request_tools == stored_tools
+
+
 def _tool_calls_equal(
     request_calls: Optional[list], stored_calls: Optional[list]
 ) -> bool:
-    """Tool calls match on id, name, order, and parsed arguments."""
-    if request_calls is None and stored_calls is None:
-        return True
+    """Tool calls match on id, name, order, and parsed arguments. No tool
+    calls (None, missing, or an empty list) equals no tool calls."""
+    request_none = request_calls is None or request_calls == []
+    stored_none = stored_calls is None or stored_calls == []
+    if request_none or stored_none:
+        return request_none and stored_none
     if not isinstance(request_calls, list) or not isinstance(stored_calls, list):
         return False
     if len(request_calls) != len(stored_calls):

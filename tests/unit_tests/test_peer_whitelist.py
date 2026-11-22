@@ -23,7 +23,7 @@ Two parts:
 - The URL split the whitelist forces on ``SGLangServerProcess``: the
   control-plane base URL stays loopback even when the server advertises
   its node IP, and the advertise URL keeps pointing at the node IP for
-  router registration.
+  router registration. These cases need SGLang and skip without it.
 """
 
 import asyncio
@@ -162,6 +162,7 @@ class TestPeerWhitelistMiddleware:
 
 class TestControlPlaneUrl:
     def _unstarted_process(self, bind_host, advertise_host):
+        pytest.importorskip("sglang")
         from rlinf.workers.rollout.sglang.process import SGLangServerProcess
 
         process = SGLangServerProcess(

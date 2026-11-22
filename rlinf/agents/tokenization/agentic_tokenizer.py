@@ -250,11 +250,14 @@ class QwenAgenticTokenizer(AgenticTokenizer):
     ) -> list[int]:
         incremental = self.render_incremental(tool_messages)
         prefix = list(prefix_ids)
-        # The engine output ends the turn at <|im_end|>, while the template
-        # renders the assistant turn as <|im_end|>\n before the next
-        # message's <|im_start|>: supply the missing newline token.
+        # The template closes an assistant turn with <|im_end|>\n before the
+        # next message's <|im_start|>. The engine output ends at <|im_end|>
+        # when the model stops, and without it when the turn was cut at
+        # max_new_tokens; supply what is missing.
         end_of_turn_id = self.maybe_token_id("<|im_end|>")
-        if end_of_turn_id is not None and prefix and prefix[-1] == end_of_turn_id:
+        if end_of_turn_id is not None and prefix:
+            if prefix[-1] != end_of_turn_id:
+                prefix = prefix + [end_of_turn_id]
             prefix = prefix + self.tokenizer.encode("\n", add_special_tokens=False)
         return prefix + incremental
 

@@ -2433,9 +2433,17 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
             if task_settings.get("generate_timeout_s", None) is None:
                 task_settings.generate_timeout_s = session_cfg.generate_timeout_s
         session_cfg.verify_assembly = bool(session_cfg.get("verify_assembly", False))
-        session_cfg.chat_template_kwargs = dict(
-            session_cfg.get("chat_template_kwargs", None) or {}
-        )
+        # Checked before the conversion: dict() of anything else raises a
+        # TypeError naming the call, not the config key.
+        chat_template_kwargs = session_cfg.get("chat_template_kwargs", None)
+        if chat_template_kwargs is not None and not isinstance(
+            chat_template_kwargs, (dict, DictConfig)
+        ):
+            raise ValueError(
+                f"session_server.chat_template_kwargs must be a mapping of chat "
+                f"template arguments, found {chat_template_kwargs!r}."
+            )
+        session_cfg.chat_template_kwargs = dict(chat_template_kwargs or {})
     if not cfg.session_server.enable:
         return cfg
     if cfg.session_server.type != "http":
@@ -2561,12 +2569,6 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
                 f"SGLANG_TIMEOUT_KEEP_ALIVE both take ints), found "
                 f"{cfg.session_server[name]!r}."
             )
-    if not isinstance(cfg.session_server.chat_template_kwargs, (dict, DictConfig)):
-        raise ValueError(
-            f"session_server.chat_template_kwargs must be a mapping of chat "
-            f"template arguments, found "
-            f"{cfg.session_server.chat_template_kwargs!r}."
-        )
     if cfg.session_server.keep_alive_s <= 1:
         raise ValueError(
             f"session_server.keep_alive_s must be > 1, found "
@@ -2614,6 +2616,13 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
 
 
 def validate_reasoning_eval_cfg(cfg: DictConfig) -> DictConfig:
+    session_cfg = cfg.get("session_server", None)
+    if session_cfg is not None and session_cfg.get("enable", False):
+        raise ValueError(
+            "session_server.enable is not supported for runner.task_type "
+            "'reasoning_eval': only the asynchronous training runner drives "
+            "the session servers."
+        )
     with open_dict(cfg):
         assert cfg.runner.seq_length > cfg.data.max_prompt_length, (
             f"runner.seq_length ({cfg.runner.seq_length}) must be greater than data.max_prompt_length ({cfg.data.max_prompt_length})"

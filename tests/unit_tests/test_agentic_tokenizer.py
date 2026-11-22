@@ -303,12 +303,36 @@ def _tito_messages(tool_call_parser: str) -> list[dict]:
     ]
 
 
-@pytest.mark.parametrize(
-    "tokenizer_type,env_var,end_token", _TITO_CASES, ids=["qwen", "glm47"]
-)
-def test_incremental_turns_match_whole_conversation_render(
-    tokenizer_type, env_var, end_token
-):
+def _tito_streams(agentic, tokenizer_type, tool_messages):
+    """The first-turn prompt, the engine's turn output, and the whole render.
+
+    The engine's output for the assistant message is the template's own
+    rendering of that message, minus the generation prompt that preceded it
+    and any trailing newline the template adds after the end token; what the
+    caller adds to or removes from its tail is what the engine would have
+    emitted (or not) at the end of the turn.
+    """
+    messages = _tito_messages(tokenizer_type)
+    first_prompt = agentic.apply_chat_template(
+        messages[:2], add_generation_prompt=True, tokenize=True, return_dict=False
+    )
+    whole = agentic.apply_chat_template(
+        [*messages, *tool_messages],
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=False,
+    )
+    after_assistant = agentic.apply_chat_template(
+        messages, add_generation_prompt=False, tokenize=True, return_dict=False
+    )
+    engine_output = list(after_assistant[len(first_prompt) :])
+    assert engine_output, "the assistant message rendered to no tokens"
+    if agentic.tokenizer.decode(engine_output[-1:]) == "\n":
+        engine_output = engine_output[:-1]
+    return first_prompt, engine_output, whole
+
+
+def _load_tito_agentic(env_var, tokenizer_type):
     import os
 
     model_dir = os.environ.get(env_var)
@@ -321,37 +345,24 @@ def test_incremental_turns_match_whole_conversation_render(
 
     from transformers import AutoTokenizer
 
-    hf_tokenizer = AutoTokenizer.from_pretrained(model_dir)
-    agentic = get_agentic_tokenizer(hf_tokenizer, tokenizer_type=tokenizer_type)
+    return get_agentic_tokenizer(
+        AutoTokenizer.from_pretrained(model_dir), tokenizer_type=tokenizer_type
+    )
 
+
+@pytest.mark.parametrize(
+    "tokenizer_type,env_var,end_token", _TITO_CASES, ids=["qwen", "glm47"]
+)
+def test_incremental_turns_match_whole_conversation_render(
+    tokenizer_type, env_var, end_token
+):
+    agentic = _load_tito_agentic(env_var, tokenizer_type)
     tool_messages = [
         {"role": "tool", "name": "search", "content": "Reinforcement learning is ..."}
     ]
-    messages = _tito_messages(tokenizer_type)
-
-    # First turn: render up to the generation prompt.
-    first_prompt = agentic.apply_chat_template(
-        messages[:2], add_generation_prompt=True, tokenize=True, return_dict=False
+    first_prompt, engine_output, whole = _tito_streams(
+        agentic, tokenizer_type, tool_messages
     )
-    # The engine's output for the assistant message: the template's own
-    # rendering of that message, minus the generation prompt that preceded
-    # it and any trailing newline the template adds after the end token.
-    whole = agentic.apply_chat_template(
-        [*messages[:2], messages[2], *tool_messages],
-        add_generation_prompt=True,
-        tokenize=True,
-        return_dict=False,
-    )
-    after_assistant = agentic.apply_chat_template(
-        [*messages[:2], messages[2]],
-        add_generation_prompt=False,
-        tokenize=True,
-        return_dict=False,
-    )
-    engine_output = list(after_assistant[len(first_prompt) :])
-    assert engine_output, "the assistant message rendered to no tokens"
-    if agentic.tokenizer.decode(engine_output[-1:]) == "\n":
-        engine_output = engine_output[:-1]
     # The engine's own turn output: the template's assistant render plus
     # the marker the engine emits when the turn ends. Qwen's template
     # already ends at its end-of-turn token; GLM's stops at </tool_call>
@@ -366,6 +377,38 @@ def test_incremental_turns_match_whole_conversation_render(
     assert incremental == whole, (
         f"{tokenizer_type}: incremental turn build diverges from the whole "
         f"conversation render at token "
+        f"{next(i for i, (a, b) in enumerate(zip(incremental, whole)) if a != b)}"
+        if incremental[: len(whole)] != whole
+        else f"{tokenizer_type}: incremental build is longer than the whole render"
+    )
+
+
+@pytest.mark.parametrize(
+    "tokenizer_type,env_var,end_token", _TITO_CASES, ids=["qwen", "glm47"]
+)
+def test_truncated_turn_continues_to_the_whole_render(
+    tokenizer_type, env_var, end_token
+):
+    """A turn cut at max_new_tokens emits no end-of-turn marker, and the tool
+    message that follows still has to continue the conversation token for
+    token: the boundary the template renders before it must not be lost."""
+    agentic = _load_tito_agentic(env_var, tokenizer_type)
+    tool_messages = [
+        {"role": "tool", "name": "search", "content": "Reinforcement learning is ..."}
+    ]
+    first_prompt, engine_output, whole = _tito_streams(
+        agentic, tokenizer_type, tool_messages
+    )
+    if agentic.tokenizer.decode(engine_output[-1:]) == end_token:
+        engine_output = engine_output[:-1]
+    assert agentic.tokenizer.decode(engine_output[-1:]) != end_token
+
+    incremental = agentic.build_native_tool_response(
+        list(first_prompt) + engine_output, tool_messages
+    )
+    assert incremental == whole, (
+        f"{tokenizer_type}: the tool turn after a truncated turn diverges "
+        f"from the whole conversation render at token "
         f"{next(i for i, (a, b) in enumerate(zip(incremental, whole)) if a != b)}"
         if incremental[: len(whole)] != whole
         else f"{tokenizer_type}: incremental build is longer than the whole render"

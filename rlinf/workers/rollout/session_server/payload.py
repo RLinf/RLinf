@@ -46,7 +46,6 @@ __all__ = [
     "PayloadWriter",
     "routing_key_for",
     "payload_key_for",
-    "payload_shard_for",
     "create_payload_channels",
     "payload_locator_for",
     "payload_channel_for",
@@ -84,8 +83,9 @@ class PayloadPart:
         last: True only on the finalize part.
         rewards: Group rewards, on the finalize part only.
         verdicts: Verdicts indexed by traj_index, on the finalize part only:
-            kept lengths, continuity flags, and each trajectory's slice of
-            the training extra fields.
+            kept lengths, continuity flags, the agent's per-turn is_end flags,
+            and each
+            trajectory's slice of the training extra fields.
         verify: Assembly-verification record, on the finalize part only and
             only in verify mode: the reference result fields the agent
             reported at close, both sides' per-turn sampling params.
@@ -200,8 +200,8 @@ class PayloadWriter:
         """
         Args:
             payload_channels: The same-node payload channels, one per shard.
-                Every part of a group goes to the shard
-                :func:`payload_shard_for` picks for it.
+                Every write names the shard it goes to, so a group's parts
+                stay in one channel process.
             max_pending_bytes: Budget for bytes still being written. Past it,
                 each response waits for its own write instead of queueing
                 more, which slows the writers but bounds memory.
@@ -219,15 +219,22 @@ class PayloadWriter:
         self._tasks: set[asyncio.Task] = set()
 
     @property
+    def num_shards(self) -> int:
+        """Number of payload channels this writer writes to."""
+        return len(self._channels)
+
+    @property
     def pending_bytes(self) -> int:
         """Bytes put but not yet known to have landed."""
         return self._pending_bytes
 
-    def channel_for(self, group_id: int) -> Channel:
-        """The payload channel that serves a group."""
-        return self._channels[payload_shard_for(group_id, len(self._channels))]
+    def channel_for(self, shard: int) -> Channel:
+        """The payload channel of one shard."""
+        return self._channels[shard]
 
-    async def emit_part(self, part: PayloadPart) -> tuple[int, Optional[asyncio.Task]]:
+    async def emit_part(
+        self, shard: int, part: PayloadPart
+    ) -> tuple[int, Optional[asyncio.Task]]:
         """Put one part in the background, with backpressure.
 
         The put is issued synchronously here (issuance order is the queue
@@ -243,7 +250,7 @@ class PayloadWriter:
             step already sees its outcome.
         """
         nbytes = _estimate_part_bytes(part)
-        work = self.channel_for(part.group_id).put(
+        work = self.channel_for(shard).put(
             part, key=payload_key_for(part.group_id), async_op=True
         )
         self._pending_bytes += nbytes
@@ -255,11 +262,17 @@ class PayloadWriter:
         return nbytes, task
 
     async def put(
-        self, group_id: int, item: Any, await_completion: bool, weight: int = 0
+        self,
+        shard: int,
+        group_id: int,
+        item: Any,
+        await_completion: bool,
+        weight: int = 0,
     ) -> bool:
         """Put a payload-channel item under the group's key.
 
         Args:
+            shard: The payload channel the item goes to.
             group_id: Group whose key the item is put under.
             item: A :class:`PayloadPart` (the finalize part, awaited) or a
                 :class:`PayloadDiscard` marker (background).
@@ -273,7 +286,7 @@ class PayloadWriter:
         Returns:
             The settlement result when awaited, True when backgrounded.
         """
-        work = self.channel_for(group_id).put(
+        work = self.channel_for(shard).put(
             item, weight=weight, key=payload_key_for(group_id), async_op=True
         )
         if await_completion:
@@ -282,7 +295,7 @@ class PayloadWriter:
         self._track(task)
         return True
 
-    async def remove_key(self, group_id: int) -> None:
+    async def remove_key(self, shard: int, group_id: int) -> None:
         """Drop the group's payload queue, after everything already issued.
 
         Chains on the same key as the puts (AsyncChannelWork order), so this
@@ -291,7 +304,7 @@ class PayloadWriter:
         out: the collector emitted a container no one will fetch.
         """
         try:
-            work = self.channel_for(group_id).remove_key(
+            work = self.channel_for(shard).remove_key(
                 key=payload_key_for(group_id), async_op=True
             )
             await asyncio.wait_for(work.async_wait(), timeout=self._put_timeout_s)
@@ -362,22 +375,6 @@ def payload_key_for(group_id: int) -> int:
     changing this function only.
     """
     return group_id
-
-
-def payload_shard_for(group_id: int, num_shards: int) -> int:
-    """Return the payload shard that serves a group.
-
-    Args:
-        group_id: Group to place.
-        num_shards: Number of payload channels on the session server's node.
-
-    Returns:
-        The shard index in ``[0, num_shards)``. A group maps to exactly one
-        shard, so its parts never split across channel processes.
-    """
-    if num_shards < 1:
-        raise ValueError(f"num_shards must be >= 1, got {num_shards}.")
-    return group_id % num_shards
 
 
 def create_payload_channels(

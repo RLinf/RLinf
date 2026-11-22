@@ -901,6 +901,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                     close_fields.get("kept_lens", {}),
                     traj_fields_slices[index],
                     verify,
+                    is_end=close_fields.get("is_end", {}),
                 )
                 await self.session_server_client.reward(
                     group_id, binding.session_id, reward
@@ -969,7 +970,13 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             ``algorithm.loss_scales`` includes ``agent_level``.
         """
         output = await self.run_one_query(copy.deepcopy(input_ids), answer=answer)
-        close_fields = {"kept_lens": self._declared_kept_lens(binding, output)}
+        close_fields = {
+            "kept_lens": self._declared_kept_lens(binding, output),
+            "is_end": {
+                turn_index: turn_output.is_end
+                for turn_index, turn_output in enumerate(output.single_turn_outputs)
+            },
+        }
         return output, close_fields, self._trajectory_reward(output)
 
     def _declared_kept_lens(

@@ -196,9 +196,13 @@ class SessionServerClient:
         kept_lens: dict[int, int],
         extra_fields_train: Optional[dict[str, list]] = None,
         verify_result: Optional[dict] = None,
+        *,
+        is_end: Optional[dict[int, bool]] = None,
     ) -> None:
         """Declare the trajectory's verdict; it produces no more tokens."""
         body: dict[str, Any] = {"kept_lens": kept_lens}
+        if is_end:
+            body["is_end"] = is_end
         if extra_fields_train:
             body["verdict"] = {"extra_fields_train": extra_fields_train}
         if verify_result is not None:

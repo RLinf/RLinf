@@ -36,14 +36,14 @@ produced) assemble to exactly what ``get_rollout_result`` produces from
 the matching agent outputs.
 
 The scenario classes run in file order, and the buffer issues group ids
-0, 1, 2, ... in admission order, so scenario k drives group id k: the two
-shard-killing scenarios depend on the id parity that picks the payload
-shard, and the last one kills a shard that every earlier scenario still
-needs.
+0, 1, 2, ... in admission order, so scenario k drives group id k. The two
+payload put-failure scenarios run last: each kills every payload shard,
+which every earlier scenario still needs.
 """
 
 import asyncio
 import contextvars
+import importlib.util
 import json
 import threading
 import time
@@ -53,14 +53,32 @@ from typing import Optional
 import aiohttp  # noqa: E402
 import pytest
 
-pytest.importorskip("fastapi")
+# The session server's HTTP layer, its mock engine, and the SGLang module its
+# worker imports (for the default sampling params) need these packages. The
+# whole file skips without them, the config cases included: they build no
+# server, but they live with the rest of the component.
+_HAS_SESSION_SERVER_DEPS = all(
+    importlib.util.find_spec(name) is not None for name in ("fastapi", "sglang")
+)
+pytestmark = pytest.mark.skipif(
+    not _HAS_SESSION_SERVER_DEPS,
+    reason="the session server needs fastapi and SGLang",
+)
 
 import ray  # noqa: E402
 import requests  # noqa: E402
-from mock_sglang_server import MockSGLangServer, find_available_port  # noqa: E402
 from omegaconf import OmegaConf  # noqa: E402
 
-from rlinf.config import validate_session_server_cfg  # noqa: E402
+if _HAS_SESSION_SERVER_DEPS:
+    from mock_sglang_server import (  # noqa: E402
+        MockSGLangServer,
+        find_available_port,
+    )
+
+from rlinf.config import (  # noqa: E402
+    validate_reasoning_eval_cfg,
+    validate_session_server_cfg,
+)
 from rlinf.data.schema.reasoning_results import GroupDelivery  # noqa: E402
 from rlinf.scheduler import (  # noqa: E402
     Channel,
@@ -70,6 +88,7 @@ from rlinf.scheduler import (  # noqa: E402
 from rlinf.scheduler.channel.channel import DEFAULT_KEY  # noqa: E402
 from rlinf.workers.agent.agent_loop import (  # noqa: E402
     AgentLoopOutput,
+    GroupDiscarded,
     MultiAgentLoopOutput,
     MultiAgentLoopWorker,
 )
@@ -78,17 +97,24 @@ from rlinf.workers.agent.session_server_client import (  # noqa: E402
 )
 from rlinf.workers.rollout.session_server.assembly import (  # noqa: E402
     assemble_group_payload,
+    verify_group_assembly,
+)
+from rlinf.workers.rollout.session_server.chat_completions import (  # noqa: E402
+    ChatConversation,
 )
 from rlinf.workers.rollout.session_server.payload import (  # noqa: E402
     GroupPayload,
     PayloadPart,
     create_payload_channels,
     payload_channel_for,
-    payload_shard_for,
 )
-from rlinf.workers.rollout.session_server.server_worker import (  # noqa: E402
-    SessionServerWorker,
-)
+
+if _HAS_SESSION_SERVER_DEPS:
+    from rlinf.workers.rollout.session_server.server_worker import (  # noqa: E402
+        SessionServerWorker,
+        _GroupState,
+        _SessionState,
+    )
 from rlinf.workers.rollout.session_server.turns import (  # noqa: E402
     UnderreportedTruncation,
     classify_turns,
@@ -301,6 +327,7 @@ def _build_env(
     return SimpleNamespace(
         base_url=base_url,
         server=server,
+        server_cfg=server_cfg,
         mock=mock,
         buffer=buffer,
         dataloader=dataloader,
@@ -484,9 +511,89 @@ def run_group(env, request, rewards):
     return group_id, turns, sids
 
 
-def payload_channel_for_group(env, group_id):
-    """The payload shard serving one group, as the shard mapping picks it."""
-    return env.payload_channels[payload_shard_for(group_id, len(env.payload_channels))]
+def payload_group_item(env, group_id, timeout_s=2.0):
+    """Poll every payload shard for one group's parts, or return None.
+
+    The session server picks a group's shard, so look in every shard: a
+    group's parts are in exactly one of them, and a group whose payload was
+    released leaves nothing in any.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        for channel in env.payload_channels:
+            if channel.qsize(group_id):
+                return channel.get_nowait(key=group_id)
+        time.sleep(0.05)
+    return None
+
+
+def _make_worker(worker_cls, verify, base_url):
+    """A loop worker built without Worker.__init__, set up against the
+    session server at ``base_url``.
+
+    return_logprobs starts as AgentLoopWorker.__init__ sets it, and
+    init_worker applies the session server rule: with ``verify`` off, the
+    worker must not ask for agent-side logprobs.
+    """
+    cfg = OmegaConf.create(
+        {
+            "algorithm": {"group_size": GROUP_SIZE, "recompute_logprobs": False},
+            "session_server": {"enable": False, "verify_assembly": verify},
+        }
+    )
+    # Validate with the path disabled: that fills the session_server
+    # defaults without the enabled-path checks, which read the runner,
+    # actor and rollout config these tests do not build.
+    cfg = validate_session_server_cfg(cfg)
+    cfg.session_server.enable = True
+    worker = worker_cls.__new__(worker_cls)
+    worker.print_outputs = False
+    worker.cfg = cfg
+    worker.return_logprobs = not cfg.algorithm.recompute_logprobs
+    worker.extra_keys_turn = None
+    worker.extra_keys_traj = None
+    worker._session_binding = contextvars.ContextVar(
+        "rlinf_agent_session_binding", default=None
+    )
+    worker.init_worker(
+        None,
+        None,
+        None,
+        None,
+        None,
+        session_server_urls=[base_url],
+        session_server_generate_timeout_s=30.0,
+        session_server_keepalive_timeout_s=4.0,
+    )
+    return worker
+
+
+class TestSessionServerConfig:
+    """The config checks, which build no environment."""
+
+    @staticmethod
+    def _session_server_cfg(**session_server):
+        return OmegaConf.create({"session_server": {"enable": False, **session_server}})
+
+    @pytest.mark.parametrize("enable", [False, True])
+    def test_chat_template_kwargs_must_be_a_mapping(self, enable):
+        """A non-mapping chat_template_kwargs is refused by name, with the
+        flag off as well: the check runs before the value is converted."""
+        cfg = self._session_server_cfg(enable=enable, chat_template_kwargs=123)
+        with pytest.raises(ValueError, match="chat_template_kwargs must be a mapping"):
+            validate_session_server_cfg(cfg)
+
+    def test_reasoning_eval_rejects_an_enabled_session_server(self):
+        """Only the asynchronous training runner drives the session servers:
+        an eval run with them enabled would wait for closes no agent sends."""
+        cfg = OmegaConf.create(
+            {
+                "runner": {"task_type": "reasoning_eval"},
+                "session_server": {"enable": True},
+            }
+        )
+        with pytest.raises(ValueError, match="is not supported for runner.task_type"):
+            validate_reasoning_eval_cfg(cfg)
 
 
 class TestAssembly:
@@ -550,11 +657,13 @@ class TestAssembly:
                 0: {
                     "kept_lens": {0: 4, 1: 5},
                     "continues_prev": [False, True],
+                    "is_end": {0: False, 1: False},
                     "extra_fields_train": {"idx_to_sub_traj": [0, 0]},
                 },
                 1: {
                     "kept_lens": {0: 8},
                     "continues_prev": [False],
+                    "is_end": {0: False},
                     "extra_fields_train": {"idx_to_sub_traj": [0]},
                 },
             },
@@ -712,38 +821,6 @@ class TestAgentLoopSessionTransport:
     must not ask for agent-side logprobs.
     """
 
-    @staticmethod
-    def _make_worker(verify):
-        """A minimal loop worker with the loop state but no Worker init.
-
-        return_logprobs starts as AgentLoopWorker.__init__ sets it, and
-        init_worker applies the session server rule under test.
-        """
-        cfg = OmegaConf.create(
-            {
-                "algorithm": {
-                    "group_size": GROUP_SIZE,
-                    "recompute_logprobs": False,
-                },
-                "session_server": {"enable": False, "verify_assembly": verify},
-            }
-        )
-        # Validate with the path disabled: that fills the session_server
-        # defaults without the enabled-path checks, which read the runner,
-        # actor and rollout config this test does not build.
-        cfg = validate_session_server_cfg(cfg)
-        cfg.session_server.enable = True
-        worker = TwoTurnLogprobLoopWorker.__new__(TwoTurnLogprobLoopWorker)
-        worker.print_outputs = False
-        worker.cfg = cfg
-        worker.return_logprobs = not cfg.algorithm.recompute_logprobs
-        worker.extra_keys_turn = None
-        worker.extra_keys_traj = None
-        worker._session_binding = contextvars.ContextVar(
-            "rlinf_agent_session_binding", default=None
-        )
-        return worker
-
     @pytest.mark.parametrize("verify", [False, True])
     def test_group_runs_and_delivers_with_logprob_rule(self, request, cluster, verify):
         env = request.getfixturevalue("verify_env" if verify else "env")
@@ -751,17 +828,7 @@ class TestAgentLoopSessionTransport:
         group_id = rollout_request.group_ids[0]
         prompt_ids = rollout_request.input_ids[0]
 
-        worker = self._make_worker(verify)
-        worker.init_worker(
-            None,
-            None,
-            None,
-            None,
-            None,
-            session_server_urls=[env.base_url],
-            session_server_generate_timeout_s=30.0,
-            session_server_keepalive_timeout_s=4.0,
-        )
+        worker = _make_worker(TwoTurnLogprobLoopWorker, verify, env.base_url)
 
         asyncio.run(
             worker.run_agentloop_rollout_group(
@@ -790,6 +857,12 @@ class TestAgentLoopSessionTransport:
         # Every turn of both trajectories carries per-token logprobs.
         assert result.rollout_logprobs is not None
         assert [len(lp) for lp in result.rollout_logprobs] == result.response_lengths
+        if verify:
+            # This agent marks every turn's answer as ended; the assembled
+            # result must carry those flags, not a default.
+            assert result.is_end == [True] * result.num_sequence
+            verify_record = next(part.verify for part in payload.parts if part.last)
+            verify_group_assembly(result, verify_record, env.server_cfg)
 
 
 class TestSessionServerClientRetry:
@@ -955,12 +1028,7 @@ class TestAbort:
         # returns its admission capacity.
         metrics = wait_for_drops(env, "agent_reset")
         assert metrics["dropped_groups"] == 1
-        assert (
-            poll_channel(
-                payload_channel_for_group(env, group_id), key=group_id, timeout_s=2
-            )
-            is None
-        )
+        assert payload_group_item(env, group_id) is None
         assert poll_channel(env.rollout, timeout_s=2) is None
 
 
@@ -975,12 +1043,7 @@ class TestEqualRewardDrop:
         # would never fetch it, so the queue must not hold it forever.
         metrics = wait_for_drops(env, "equal_reward")
         assert metrics["dropped_groups"] == 1
-        assert (
-            poll_channel(
-                payload_channel_for_group(env, group_id), key=group_id, timeout_s=2
-            )
-            is None
-        )
+        assert payload_group_item(env, group_id) is None
         assert poll_channel(env.rollout, timeout_s=2) is None
 
 
@@ -1063,12 +1126,7 @@ class TestUnderreportedTruncation:
         # Nothing left the session server, so the buffer never heard of the
         # group: nothing delivered, nothing dropped.
         assert poll_channel(env.rollout, timeout_s=2) is None
-        assert (
-            poll_channel(
-                payload_channel_for_group(env, group_id), key=group_id, timeout_s=2
-            )
-            is None
-        )
+        assert payload_group_item(env, group_id) is None
         metrics = env.buffer.get_metrics().wait()[0]
         assert metrics["dropped_groups"] == 0
 
@@ -1104,6 +1162,31 @@ class TestVerdictValidation:
 
         resp = close(env, sid, extra_fields_train={"idx_to_sub_traj": [0]})
         assert resp.status_code == 200
+
+    def test_close_rejects_a_non_bool_is_end(self, env):
+        """is_end must map a turn index to a bool: it becomes each sequence's
+        ended flag, so another shape is rejected, and the session still
+        closes cleanly afterwards."""
+        sid = create_session(env, 4241, 0)
+        generate(env, sid, [7, 8, 9])
+
+        resp = requests.post(
+            f"{env.base_url}/sessions/{sid}/close",
+            json={"is_end": {"0": 1}},
+            timeout=30,
+        )
+        assert resp.status_code == 400
+        assert "is_end[0] must be a bool" in resp.json()["error"]
+
+        resp = requests.post(
+            f"{env.base_url}/sessions/{sid}/close",
+            json={"is_end": [True]},
+            timeout=30,
+        )
+        assert resp.status_code == 400
+        assert "is_end must map" in resp.json()["error"]
+
+        assert close(env, sid).status_code == 200
 
 
 class TestNotTraining:
@@ -1171,6 +1254,7 @@ class TestNotTraining:
                     "kept_lens": {0: 2, 1: 2, 2: 2},
                     "continues_prev": [False, False, True],
                     "not_training": {1: True},
+                    "is_end": {0: False, 1: False, 2: False},
                     "extra_fields_train": {},
                 },
             },
@@ -1235,6 +1319,7 @@ class TestNotTraining:
                     "kept_lens": {0: 2, 1: 2, 2: 2},
                     "continues_prev": [False, False, True],
                     "not_training": {1: True},
+                    "is_end": {0: False, 1: False, 2: False},
                     "extra_fields_train": {"idx_to_sub_traj": [0, 7]},
                 },
             },
@@ -1399,6 +1484,252 @@ class TestChatCompletions:
         assert result.num_sequence == 2
         # One declared value per trained turn, in trajectory order.
         assert result.extra_fields_train["idx_to_sub_traj"] == [0, 0]
+
+    def test_stored_history_keeps_reasoning_the_request_dropped(self, chat_env_glm):
+        """What later requests are matched against is the server's own copy
+        of the assistant message: a client that drops reasoning_content when
+        it replays that message does not erase it, so a later request that
+        sends the original message back still continues the conversation
+        instead of re-rendering it.
+        """
+        env = chat_env_glm
+        env.mock.scripted_texts = [
+            "first thoughts</think>First answer.",
+            "second thoughts</think>Second answer.",
+            "third thoughts</think>Third answer.",
+        ]
+        sid = create_session(env, 4321, 0)
+        messages = self._messages()
+
+        first = self._chat(env, sid, {"messages": messages})
+        assert first.status_code == 200, first.text
+        assistant = first.json()["choices"][0]["message"]
+        assert assistant["reasoning_content"] == "first thoughts"
+
+        # The client clears the reasoning when it replays the message.
+        dropped = {k: v for k, v in assistant.items() if k != "reasoning_content"}
+        tool = {"role": "tool", "name": "search", "content": "RL is a paradigm."}
+        second = self._chat(env, sid, {"messages": [*messages, dropped, tool]})
+        assert second.status_code == 200, second.text
+        # Drained here: the close below then counts this session's turns
+        # alone.
+        env.server.get_metrics().wait()
+
+        # A later request brings the reasoning back, as a client that kept
+        # the original message would.
+        third = self._chat(
+            env,
+            sid,
+            {
+                "messages": [
+                    *messages,
+                    assistant,
+                    tool,
+                    second.json()["choices"][0]["message"],
+                    {"role": "user", "content": "And which algorithms?"},
+                ]
+            },
+        )
+        assert third.status_code == 200, third.text
+        assert close(env, sid).status_code == 200
+        metrics = env.server.get_metrics().wait()[0]
+        assert metrics["session_server/prefix_rewritten"] == 0
+
+    def test_replayed_messages_match_with_empty_content_and_tool_calls(self, chat_env):
+        """A replayed assistant message matches whether the client sends an
+        empty field or leaves it out: None, missing and "" all mean "no
+        content", and a missing tool_calls list means no tool calls.
+        """
+        env = chat_env
+        tool_call = (
+            '<tool_call>\n{"name": "search", "arguments": {"query": "RL"}}\n'
+            "</tool_call>"
+        )
+        messages = self._messages()
+        tool = {"role": "tool", "name": "search", "content": "RL is a paradigm."}
+
+        def replay(group_id, scripted, mutate):
+            env.mock.scripted_texts = list(scripted)
+            sid = create_session(env, group_id, 0)
+            first = self._chat(env, sid, {"messages": messages, "tools": CHAT_TOOLS})
+            assert first.status_code == 200, first.text
+            replayed = mutate(first.json()["choices"][0]["message"])
+            # Drained here: the close below then counts this session's turns
+            # alone.
+            env.server.get_metrics().wait()
+            second = self._chat(
+                env,
+                sid,
+                {"messages": [*messages, replayed, tool], "tools": CHAT_TOOLS},
+            )
+            assert second.status_code == 200, second.text
+            assert close(env, sid).status_code == 200
+            metrics = env.server.get_metrics().wait()[0]
+            assert metrics["session_server/prefix_rewritten"] == 0
+            assert metrics["session_server/prefix_continuous"] == 1
+
+        # A tool-call answer carries no content: replayed as an explicit
+        # null, then with the field left out. One scripted text per case:
+        # the mock repeats its last text once a script runs out.
+        replay(4322, [tool_call], lambda m: {**m, "content": None})
+        replay(
+            4323,
+            [tool_call],
+            lambda m: {k: v for k, v in m.items() if k != "content"},
+        )
+        # An answer with no tool calls: replayed with an empty list.
+        replay(
+            4324,
+            ["Plain answer."],
+            lambda m: {**m, "tool_calls": []},
+        )
+
+    def test_changing_the_tools_rerenders_the_conversation(self, chat_env):
+        """The stored tokens were rendered under the tool list the session
+        started with, so a request that changes that list cannot continue
+        them: the conversation is rendered again from its start.
+        """
+        from rlinf.models.tokenization.hf import hf_tokenizer
+
+        env = chat_env
+        env.mock.scripted_texts = ["First answer.", "Second answer."]
+        sid = create_session(env, 4325, 0)
+        messages = self._messages()
+        first = self._chat(env, sid, {"messages": messages, "tools": CHAT_TOOLS})
+        assert first.status_code == 200, first.text
+        reply = first.json()["choices"][0]["message"]
+        follow_up = {"role": "user", "content": "And which algorithms?"}
+        extended_tools = [
+            *CHAT_TOOLS,
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "description": "Look a term up.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ]
+
+        second = self._chat(
+            env,
+            sid,
+            {"messages": [*messages, reply, follow_up], "tools": extended_tools},
+        )
+        assert second.status_code == 200, second.text
+
+        # What was forwarded is the whole conversation rendered under the
+        # new tool list, not the stored tokens plus an increment.
+        tokenizer = hf_tokenizer(_chat_model_dir("qwen"), trust_remote_code=False)
+        expected = tokenizer.apply_chat_template(
+            [*messages, reply, follow_up],
+            tools=extended_tools,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=False,
+        )
+        forward = [r for r in env.mock.request_log if r["path"] == "/generate"][-1]
+        assert forward["body"]["input_ids"] == list(expected)
+
+        assert close(env, sid).status_code == 200
+        metrics = env.server.get_metrics().wait()[0]
+        # The re-render starts a new segment instead of pairing with the
+        # turn rendered under the old list.
+        assert metrics["session_server/prefix_rewritten"] == 1
+
+    def test_a_consumed_checkpoint_rolls_back_once(self, chat_env, monkeypatch):
+        """A rollback consumes the checkpoint, so a request that repeats an
+        earlier turn afterwards is a rewrite: no turn is dropped a second
+        time."""
+        env = chat_env
+        env.mock.scripted_texts = [
+            "First answer.",
+            "Second answer.",
+            "Third answer.",
+        ]
+        sid = create_session(env, 4326, 0)
+        messages = self._messages()
+        first = self._chat(env, sid, {"messages": messages})
+        assert first.status_code == 200, first.text
+        turn_one = [
+            *messages,
+            first.json()["choices"][0]["message"],
+            {"role": "user", "content": "And which algorithms?"},
+        ]
+        second = self._chat(env, sid, {"messages": turn_one})
+        assert second.status_code == 200, second.text
+
+        # The retry of the second turn rolls that turn back, and then its
+        # forward fails.
+        abort = {"value": True}
+        response_body = env.mock._generate_response
+
+        def response_with_abort(body):
+            response = response_body(body)
+            if abort["value"]:
+                response["meta_info"]["finish_reason"] = {"type": "abort"}
+            return response
+
+        monkeypatch.setattr(env.mock, "_generate_response", response_with_abort)
+        retry = self._chat(env, sid, {"messages": turn_one})
+        assert retry.status_code == 503, retry.text
+
+        # The opening turn's request again: the checkpoint is gone, so this
+        # turn is rendered as a rewrite, and the only dropped turn is still
+        # the one the client abandoned.
+        abort["value"] = False
+        rewrite = self._chat(env, sid, {"messages": messages})
+        assert rewrite.status_code == 200, rewrite.text
+        # One declared value per trained turn: the two that trained.
+        assert (
+            close(env, sid, extra_fields_train={"idx_to_sub_traj": [0, 0]}).status_code
+            == 200
+        )
+
+    def test_a_retry_after_a_failed_retry_continues(self, chat_env, monkeypatch):
+        """A failed retry drops its turn; the next request repeats it and
+        continues the conversation, so the first and third turns train and
+        the abandoned second one does not."""
+        env = chat_env
+        env.mock.scripted_texts = ["First answer.", "Second answer.", "Third answer."]
+        sid = create_session(env, 4327, 0)
+        messages = self._messages()
+        first = self._chat(env, sid, {"messages": messages})
+        assert first.status_code == 200, first.text
+        turn_one = [
+            *messages,
+            first.json()["choices"][0]["message"],
+            {"role": "user", "content": "And which algorithms?"},
+        ]
+        assert self._chat(env, sid, {"messages": turn_one}).status_code == 200
+
+        abort = {"value": True}
+        response_body = env.mock._generate_response
+
+        def response_with_abort(body):
+            response = response_body(body)
+            if abort["value"]:
+                response["meta_info"]["finish_reason"] = {"type": "abort"}
+            return response
+
+        monkeypatch.setattr(env.mock, "_generate_response", response_with_abort)
+        assert self._chat(env, sid, {"messages": turn_one}).status_code == 503
+
+        # The same request again, served this time: the abandoned turn is
+        # not retrained, the new one is.
+        abort["value"] = False
+        env.server.get_metrics().wait()
+        again = self._chat(env, sid, {"messages": turn_one})
+        assert again.status_code == 200, again.text
+        assert (
+            close(env, sid, extra_fields_train={"idx_to_sub_traj": [0, 0]}).status_code
+            == 200
+        )
+        metrics = env.server.get_metrics().wait()[0]
+        # The new turn continued the first one; the abandoned turn is not
+        # part of the chain.
+        assert metrics["session_server/prefix_continuous"] == 1
+        assert metrics["session_server/prefix_rewritten"] == 0
 
     def test_rewritten_history_marks_prefix_rewritten(self, chat_env):
         env = chat_env
@@ -1814,39 +2145,269 @@ class TestChatCompletionsAgentLoop:
         assert metrics["session_server/prefix_continuous"] >= 2
 
 
-class TestPutFailure:
-    def test_failed_background_put_voids_group(self, env):
+def _minimal_server_cfg(agentic_tokenizer: str):
+    """A session server config, with the given agentic tokenizer family."""
+    cfg = OmegaConf.create(
+        {
+            "runner": {"seq_length": SEQ_LENGTH},
+            "algorithm": {
+                "group_size": GROUP_SIZE,
+                "sampling_params": {"do_sample": False, "max_new_tokens": 8},
+            },
+            "rollout": {
+                "return_logprobs": True,
+                "router": {"max_idle_secs": 600.0},
+                "model": {"model_path": _chat_model_dir()},
+            },
+            "session_server": {
+                "enable": False,
+                "host": "127.0.0.1",
+                "port": find_available_port(),
+                "payload_put_timeout_s": 300.0,
+                "max_pending_payload_bytes": 512 * 1024 * 1024,
+                "generate_timeout_s": 600.0,
+                "per_task": {},
+                "verify_assembly": False,
+                "chat_template_kwargs": {},
+            },
+            "agentloop": {"agentic_tokenizer": agentic_tokenizer},
+        }
+    )
+    cfg = validate_session_server_cfg(cfg)
+    cfg.session_server.enable = True
+    return cfg
+
+
+class TestStartupFailure:
+    """A server whose chat entry cannot be built fails while starting.
+
+    The worker object is driven directly, with the serving task and the
+    waiter in one event loop: in a worker group, a worker method that raises
+    signals the main process, which shuts the cluster down.
+    """
+
+    def test_a_bad_chat_entry_fails_serving(self):
+        """A chat entry that cannot be built ends serving with that error.
+
+        wait_until_serving() raises it, so the runner's liveness monitor ends
+        the run instead of the agent loop waiting for a server that never
+        listened; the cause is the startup error itself.
+        """
+        if not _chat_model_dir("qwen"):
+            pytest.skip("set RLINF_TEST_QWEN25_MODEL_DIR to run the chat tests")
+        server = SessionServerWorker.__new__(SessionServerWorker)
+        server._cfg = _minimal_server_cfg("no_such_family")
+        server._server_index = 0
+        server._host = "127.0.0.1"
+        server._port = find_available_port()
+        server._chat_template_kwargs = {}
+        server._http_server = SimpleNamespace(started=False)
+        server._http_server_task = None
+        server._serve_error = None
+        server._serve_ended = False
+        server._fatal_error = None
+
+        async def scenario():
+            serving = asyncio.create_task(
+                server.serve("http://127.0.0.1:1", None, [None])
+            )
+            try:
+                with pytest.raises(RuntimeError) as excinfo:
+                    await asyncio.wait_for(server.wait_until_serving(), timeout=30)
+                return excinfo.value
+            finally:
+                await asyncio.gather(serving, return_exceptions=True)
+
+        error = asyncio.run(scenario())
+        assert isinstance(error.__cause__, ValueError)
+        assert server._serve_ended
+        assert server._serve_error is error.__cause__
+
+
+class TestOneRequestAtATime:
+    """A session serves one request at a time, on either endpoint."""
+
+    @staticmethod
+    def _generate_in_background(env, sid, input_ids):
+        """Start a generate that the mock holds open, and return its thread.
+
+        Returns once the mock has logged the request, which means the
+        session server holds the session and is forwarding: a second
+        request now sees the session busy.
+        """
+        env.mock.latency_s = 1.0
+        responses = []
+
+        def _send():
+            responses.append(generate(env, sid, input_ids))
+
+        before = len(env.mock.request_log)
+        thread = threading.Thread(target=_send)
+        thread.start()
+        deadline = time.monotonic() + 10
+        while len(env.mock.request_log) == before:
+            assert time.monotonic() < deadline, "the generate never reached the engine"
+            time.sleep(0.01)
+        return thread, responses
+
+    @staticmethod
+    def _finish(env, thread):
+        env.mock.latency_s = 0.0
+        thread.join(timeout=30)
+
+    def test_a_second_generate_conflicts(self, env):
+        """A second request on a busy session gets a 409 instead of queueing
+        behind the first, which the engine would interleave."""
+        request = next_request(env)
+        sid = create_session(env, request.group_ids[0], 0)
+        thread, responses = self._generate_in_background(env, sid, [1, 2])
+        try:
+            second = generate(env, sid, [3, 4])
+            assert second.status_code == 409
+        finally:
+            self._finish(env, thread)
+        assert responses[0].status_code == 200
+
+    def test_a_close_while_a_generate_runs_conflicts(self, env):
+        """A close mid-generation would classify a turn that is still being
+        written, so it gets a 409; afterwards it closes and the group
+        finishes normally."""
         request = next_request(env)
         group_id = request.group_ids[0]
-        # The group's parts all go to the shard its id maps to; kill that
-        # shard's channel worker so every payload put fails.
-        shard = group_id % len(env.payload_channels)
-        env.killed_shard = shard
-        ray.kill(env.payload_channels[shard]._main_channel_worker_actor)
+        sid0 = create_session(env, group_id, 0)
+        sid1 = create_session(env, group_id, 1)
+        thread, responses = self._generate_in_background(env, sid0, [1, 2])
+        try:
+            during = close(env, sid0)
+            assert during.status_code == 409
+        finally:
+            self._finish(env, thread)
+        assert responses[0].status_code == 200
 
-        sid = create_session(env, group_id, 0)
-        assert generate(env, sid, [1, 2]).status_code == 200
+        assert close(env, sid0).status_code == 200
+        assert generate(env, sid1, [3, 4]).status_code == 200
+        assert close(env, sid1).status_code == 200
+        assert reward(env, sid0, 1.0).json()["group_complete"] is False
+        assert reward(env, sid1, 0.5).json()["group_complete"] is True
+        env.buffer.release_batch(version=0).wait()
+        delivery = poll_channel(env.rollout)
+        assert isinstance(delivery, GroupDelivery)
+        assert delivery.group_id == group_id
 
-        # The failed put voids the group server-side; the buffer consumes
-        # the discard record.
-        metrics = wait_for_drops(env, "payload_write_failed")
-        assert metrics["dropped_groups"] == 1
+    def test_a_generate_after_close_adds_no_turn(self, env):
+        """A closed trajectory takes no more turns: the request gets a 410 and
+        the training data keeps only the turns the close classified."""
+        request = next_request(env)
+        group_id = request.group_ids[0]
+        sid0 = create_session(env, group_id, 0)
+        sid1 = create_session(env, group_id, 1)
+        assert generate(env, sid0, [1, 2]).status_code == 200
+        assert close(env, sid0).status_code == 200
 
-        server_metrics = env.server.get_metrics().wait()[0]
-        assert server_metrics["session_server/payload_write_failed"] == 1
+        late = generate(env, sid0, [3, 4])
+        assert late.status_code == 410
+
+        assert generate(env, sid1, [5, 6]).status_code == 200
+        assert close(env, sid1).status_code == 200
+        assert reward(env, sid0, 1.0).json()["group_complete"] is False
+        assert reward(env, sid1, 0.5).json()["group_complete"] is True
+        env.buffer.release_batch(version=0).wait()
+        delivery = poll_channel(env.rollout)
+        assert isinstance(delivery, GroupDelivery)
+        channel = payload_channel_for(
+            delivery.payload_ref.locator, env.payload_channels
+        )
+        payload = poll_channel(channel, key=delivery.payload_ref.key)
+        result = assemble_group_payload(payload, return_logprobs=True)
+        # One turn per trajectory: the rejected request added none.
+        assert result.num_sequence == 2
+
+
+class TestNoTrainedTurn:
+    """A trajectory without a trained turn cannot be closed."""
+
+    def test_a_close_without_a_turn_is_rejected(self, env):
+        """Closing a trajectory the agent never sampled would deliver a group
+        with nothing to train on, so it gets a 400."""
+        request = next_request(env)
+        sid = create_session(env, request.group_ids[0], 0)
+        resp = close(env, sid)
+        assert resp.status_code == 400
+        assert "has no trained turn" in resp.json()["error"]
+
+    def test_a_first_turn_that_cannot_be_sampled_aborts_the_group(
+        self, request, cluster
+    ):
+        """An agent that gives up on its first turn aborts the group, so the
+        buffer records a discard and no half-built trajectory is delivered."""
+        env = request.getfixturevalue("env")
+        rollout_request = next_request(env)
+        group_id = rollout_request.group_ids[0]
+        prompt_ids = rollout_request.input_ids[0]
+
+        worker = _make_worker(_DiscardingLoopWorker, False, env.base_url)
+
+        asyncio.run(
+            worker.run_agentloop_rollout_group(
+                prompt_ids,
+                rollout_request.answers[0],
+                GROUP_SIZE,
+                env.rollout,
+                group_id,
+                TASK_NAME,
+            )
+        )
+
+        wait_for_drops(env, "context_length_exceeded")
+        # Nothing of the group reaches the actor.
+        assert poll_channel(env.rollout, timeout_s=2) is None
+
+
+class _DiscardingLoopWorker(TwoTurnLogprobLoopWorker):
+    """A loop whose first turn cannot be sampled: it gives the group up."""
+
+    async def run_session_trajectory(self, binding, input_ids, answer):
+        raise GroupDiscarded("context_length_exceeded")
+
+
+class TestPayloadShards:
+    """The payload shards are handed to groups in creation order."""
+
+    def test_groups_take_the_shards_in_turn(self, env):
+        """Four groups in a row use both shards twice, whatever the number of
+        session servers on the node: a session server only receives the
+        groups whose id picks it, so an id-based shard choice leaves shards
+        unused."""
+        group_ids = []
+        for _ in range(4):
+            request = next_request(env)
+            group_id, _turns, _sids = run_group(env, request, rewards=(1.0, 0.5))
+            group_ids.append(group_id)
+            env.buffer.release_batch(version=0).wait()
+
+        shards = []
+        for group_id in group_ids:
+            delivery = poll_channel(env.rollout)
+            assert isinstance(delivery, GroupDelivery)
+            assert delivery.group_id == group_id
+            channel = payload_channel_for(
+                delivery.payload_ref.locator, env.payload_channels
+            )
+            shards.append(env.payload_channels.index(channel))
+
+        # Both shards are used, two groups each.
+        assert len(set(shards)) == len(env.payload_channels)
+        for shard in set(shards):
+            assert shards.count(shard) == 2
 
 
 class TestFinalizePutFailure:
+    """Runs before TestPutFailure: its leading puts need live shards, and
+    it kills both only once they have settled."""
+
     def test_finalize_put_failure_discards_not_delivers(self, env):
-        # Must stay last: this scenario kills the shard the group's parts
-        # go to, and the scenarios above need both shards alive.
         request = next_request(env)
         group_id = request.group_ids[0]
-        shard = group_id % len(env.payload_channels)
-        assert shard != getattr(env, "killed_shard", None), (
-            "this scenario needs a live shard; reorder the scenarios so the "
-            "two put-failure groups land on different shards"
-        )
         sid0 = create_session(env, group_id, 0)
         sid1 = create_session(env, group_id, 1)
         assert generate(env, sid0, [1, 2]).status_code == 200
@@ -1862,7 +2423,10 @@ class TestFinalizePutFailure:
             time.sleep(0.1)
         else:
             pytest.fail("payload settlements did not drain")
-        ray.kill(env.payload_channels[shard]._main_channel_worker_actor)
+        # The leading puts have settled, so killing both shards leaves only
+        # the finalize part's put to fail.
+        for channel in env.payload_channels:
+            ray.kill(channel._main_channel_worker_actor)
 
         assert close(env, sid0).status_code == 200
         assert close(env, sid1).status_code == 200
@@ -1880,3 +2444,82 @@ class TestFinalizePutFailure:
         # the last read (the pending-drain poll), so this window's count
         # is the one failure of this scenario alone.
         assert server_metrics["session_server/payload_write_failed"] == 1
+
+
+class TestPutFailure:
+    """Last of the payload scenarios: it kills both payload shards, which
+    only a scenario that expects every put to fail can survive."""
+
+    def test_failed_background_put_voids_group(self, env):
+        request = next_request(env)
+        group_id = request.group_ids[0]
+        # Kill every shard, so this group's puts fail whichever shard it was
+        # given.
+        for channel in env.payload_channels:
+            ray.kill(channel._main_channel_worker_actor)
+
+        sid = create_session(env, group_id, 0)
+        assert generate(env, sid, [1, 2]).status_code == 200
+
+        # The failed put voids the group server-side; the buffer consumes
+        # the discard record.
+        metrics = wait_for_drops(env, "payload_write_failed")
+        assert metrics["dropped_groups"] == 1
+
+        server_metrics = env.server.get_metrics().wait()[0]
+        assert server_metrics["session_server/payload_write_failed"] == 1
+
+
+class TestVoidCleanup:
+    """A voided group keeps its record, not the state it had buffered.
+
+    No env stack: the state is the point, and the voiding path is driven
+    directly on the worker.
+    """
+
+    def test_voiding_clears_the_buffered_state(self):
+        """Voiding drops each session's turns, prefix, chat conversation and
+        declared verdict state, and the group's verification reference, so a
+        discarded group holds no token buffers until its record expires."""
+        worker = SessionServerWorker.__new__(SessionServerWorker)
+        recorded = []
+
+        async def record_discard(group_id, reason):
+            recorded.append((group_id, reason))
+
+        class _Writer:
+            async def put(self, *args, **kwargs):
+                return True
+
+        worker._groups = {}
+        worker._metrics = {}
+        worker._report_discard = record_discard
+        worker._payload_writer = _Writer()
+
+        group = _GroupState(group_id=4501, task_name=TASK_NAME, group_size=1)
+        session = _SessionState(session_id="sid", group_id=4501, traj_index=0)
+        session.turns = [new_turn_record([1, 2, 3], None, None, None)]
+        session.last_input = [1, 2]
+        session.last_output = [3]
+        session.extra_fields_train = {"idx_to_sub_traj": [0]}
+        session.not_training_turns = {1}
+        session.chat = ChatConversation(
+            messages=[{"role": "user", "content": "u0"}],
+            tools=None,
+            checkpoint=None,
+        )
+        group.sessions[0] = session
+        group.verify_result = {"kept_lens": [3]}
+        worker._groups[group.group_id] = group
+
+        asyncio.run(worker._void_group(group.group_id, "context_length_exceeded"))
+
+        assert recorded == [(group.group_id, "context_length_exceeded")]
+        assert group.discard_reason == "context_length_exceeded"
+        assert session.turns == []
+        assert session.last_input is None
+        assert session.last_output is None
+        assert session.chat is None
+        assert session.extra_fields_train == {}
+        assert session.not_training_turns == set()
+        assert group.verify_result is None
