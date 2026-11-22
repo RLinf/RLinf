@@ -64,6 +64,7 @@ runner:
     project_name: so101-dagger
     experiment_name: "realworld_so101_hg_dagger_openpi"
     logger_backends: ["tensorboard"]
+  per_worker_log: true
   max_epochs: 8000
   max_steps: -1
   only_eval: false
@@ -156,8 +157,10 @@ rollout:
 actor:
   group_name: ActorGroup
   training_backend: fsdp
-  micro_batch_size: 32
+  micro_batch_size: 8
   global_batch_size: 32
+  fsdp_config:
+    gradient_checkpointing: true
   seed: 0
   enable_offload: false
   model:
