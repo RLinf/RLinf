@@ -16,24 +16,20 @@ At a Glance
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 28 24 26
+   :widths: 22 44 34
 
    * - Strategy
      - Mechanism
      - Config / Extension Point
-     - Unit Tests
    * - ``patch`` (default)
      - Incremental sparse delta sync against a sender snapshot (with optional one-time init bootstrap)
      - ``weight_syncer/patch_syncer@weight_syncer``
-     - ``tests/unit_tests/test_weight_syncer.py``
    * - ``bucket``
      - Full bucketized tensor transfer for the selected parameter subset
      - ``weight_syncer/bucket_syncer@weight_syncer``
-     - ``tests/unit_tests/test_weight_syncer.py``
    * - Custom ``WeightSyncer``
      - Subclass ``WeightSyncer`` (``init_sender``, ``init_receiver``, ``sync``, ``apply``)
      - ``WeightSyncer.create()`` in ``rlinf/hybrid_engines/weight_syncer/base.py``
-     - ``tests/unit_tests/test_weight_syncer.py``
 
 
 Why Weight Syncer Exists
@@ -692,43 +688,37 @@ attaches them to ``syncer.comm_options``. Add a matching Hydra preset at
 
    type: custom_dict
 
-Add a CPU unit test in ``tests/unit_tests/test_weight_syncer.py`` exercising
-the full sender/receiver round-trip over an in-memory ``asyncio.Queue``:
+Verify the sender/receiver round-trip locally on CPU over an in-memory ``asyncio.Queue``:
 
 .. code-block:: python
 
-   def test_dict_weight_syncer_roundtrip():
-       import asyncio
-       import torch
+   import asyncio
+   import torch
 
-       async def _run():
-           queue: asyncio.Queue = asyncio.Queue()
-           sender_model = torch.nn.Linear(4, 2)
-           receiver_model = torch.nn.Linear(4, 2)
-           param_names = [
-               name for name, p in sender_model.named_parameters() if p.requires_grad
-           ]
 
-           sender = DictWeightSyncer()
-           receiver = DictWeightSyncer()
-           await sender.init_sender(sender_model.state_dict(), param_names, queue.put)
-           await receiver.init_receiver(receiver_model.state_dict(), queue.get)
+   async def main():
+       queue: asyncio.Queue = asyncio.Queue()
+       sender_model = torch.nn.Linear(4, 2)
+       receiver_model = torch.nn.Linear(4, 2)
+       param_names = [
+           name for name, p in sender_model.named_parameters() if p.requires_grad
+       ]
 
-           await sender.sync(sender_model.state_dict(), queue.put, version=3)
-           applied_version = await receiver.apply(receiver_model, queue.get)
+       sender = DictWeightSyncer()
+       receiver = DictWeightSyncer()
+       await sender.init_sender(sender_model.state_dict(), param_names, queue.put)
+       await receiver.init_receiver(receiver_model.state_dict(), queue.get)
 
-           assert applied_version == 3
-           for name in param_names:
-               torch.testing.assert_close(
-                   receiver_model.state_dict()[name],
-                   sender_model.state_dict()[name],
-               )
+       await sender.sync(sender_model.state_dict(), queue.put, version=3)
+       applied_version = await receiver.apply(receiver_model, queue.get)
 
-       asyncio.run(_run())
+       assert applied_version == 3
+       for name in param_names:
+           torch.testing.assert_close(
+               receiver_model.state_dict()[name],
+               sender_model.state_dict()[name],
+           )
+       print("DictWeightSyncer check passed, version:", applied_version)
 
-Run the weight syncer unit tests with:
 
-.. code-block:: bash
-
-   export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
-   pytest tests/unit_tests/test_weight_syncer.py
+   asyncio.run(main())

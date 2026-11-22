@@ -15,13 +15,13 @@
    * - 项目
      - 说明
    * - 创建或修改的文件
-     - ``rlinf/scheduler/hardware/accelerators/<name>.py``、``rlinf/scheduler/hardware/accelerators/accelerator.py``、``rlinf/scheduler/hardware/accelerators/__init__.py``、``requirements/install.sh`` 与 ``tests/unit_tests/test_worker.py``
+     - ``rlinf/scheduler/hardware/accelerators/<name>.py``、``rlinf/scheduler/hardware/accelerators/accelerator.py``、``rlinf/scheduler/hardware/accelerators/__init__.py`` 与 ``requirements/install.sh``
    * - 扩展点
      - ``AcceleratorType``、``@AcceleratorManager.register_manager``、``@AcceleratorManager.register_profiling_config``、``AcceleratorUtil.CCL_SUPPORT_LIST`` 与 ``SUPPORTED_PLATFORMS``
    * - 核心契约
      - ``AcceleratorManager`` 上的一组静态方法，负责设备数量、型号名称、可见性环境变量、集合通信后端、网卡环境变量、PyTorch 平台模块、设备类型与进程组选项
    * - 本地 CPU 验证
-     - 通过 ``AcceleratorUtil`` 执行契约脚本与 ``pytest tests/unit_tests/test_worker.py``
+     - 通过 ``AcceleratorUtil`` 执行契约检查脚本
 
 1. 实现加速卡管理器
 -------------------
@@ -241,16 +241,3 @@ RLinf 将所有厂商相关的加速卡逻辑收敛在 ``rlinf/scheduler/hardwar
 .. code-block:: text
 
    backend: bccl device_type: supa env: {'SUPA_VISIBLE_DEVICES': '0,2', 'RAY_EXPERIMENTAL_NOSET_SUPA_VISIBLE_DEVICES': '1'}
-
-在 ``tests/unit_tests/test_worker.py`` 中补充 CPU 单元测试（参考 ``IntelGPUManager`` 用例，通过 ``monkeypatch`` 模拟厂商模块，覆盖 ``get_num_devices()``、``get_accelerator_model()``、``get_visible_devices()`` 与非法参数报错），并在本地运行：
-
-.. code-block:: bash
-
-   export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
-   pytest tests/unit_tests/test_worker.py -k "IntelGPUManager"
-
-如需运行完整的 worker 测试文件（会启动本地 Ray），在共享机器上请先执行 ``ray status`` 确认无其他任务，结束后再清理 Ray：
-
-.. code-block:: bash
-
-   pytest tests/unit_tests/test_worker.py; ray stop

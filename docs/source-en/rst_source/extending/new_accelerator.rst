@@ -15,13 +15,13 @@ At a Glance
    * - Aspect
      - Details
    * - Files to create or edit
-     - ``rlinf/scheduler/hardware/accelerators/<name>.py``, ``rlinf/scheduler/hardware/accelerators/accelerator.py``, ``rlinf/scheduler/hardware/accelerators/__init__.py``, ``requirements/install.sh``, and ``tests/unit_tests/test_worker.py``
+     - ``rlinf/scheduler/hardware/accelerators/<name>.py``, ``rlinf/scheduler/hardware/accelerators/accelerator.py``, ``rlinf/scheduler/hardware/accelerators/__init__.py``, and ``requirements/install.sh``
    * - Extension points
      - ``AcceleratorType``, ``@AcceleratorManager.register_manager``, ``@AcceleratorManager.register_profiling_config``, ``AcceleratorUtil.CCL_SUPPORT_LIST``, and ``SUPPORTED_PLATFORMS``
    * - Core contract
      - Static methods on ``AcceleratorManager`` for device count, model name, visibility env vars, CCL backend, socket interface env var, PyTorch platform, device type, and process-group options
    * - Local CPU check
-     - Direct contract check via ``AcceleratorUtil`` and ``pytest tests/unit_tests/test_worker.py``
+     - Direct contract check via ``AcceleratorUtil``
 
 1. Implement the Accelerator Manager
 ------------------------------------
@@ -241,16 +241,3 @@ Expected output:
 .. code-block:: text
 
    backend: bccl device_type: supa env: {'SUPA_VISIBLE_DEVICES': '0,2', 'RAY_EXPERIMENTAL_NOSET_SUPA_VISIBLE_DEVICES': '1'}
-
-Add CPU unit tests for your manager in ``tests/unit_tests/test_worker.py`` (following the ``IntelGPUManager`` tests, which stub vendor modules with ``monkeypatch`` to verify ``get_num_devices()``, ``get_accelerator_model()``, ``get_visible_devices()``, and error cases). Run your tests locally:
-
-.. code-block:: bash
-
-   export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
-   pytest tests/unit_tests/test_worker.py -k "IntelGPUManager"
-
-To run the full worker test file (which starts a local Ray session), check ``ray status`` on shared hosts first and stop Ray afterwards:
-
-.. code-block:: bash
-
-   pytest tests/unit_tests/test_worker.py; ray stop

@@ -1,9 +1,9 @@
 接入 FSDP 模型
 ==============
 
-将 PyTorch 或 Hugging Face Transformers 模型接入 RLinf 的 FSDP（Fully Sharded Data Parallel，全分片数据并行）后端，用于强化学习 rollout 与训练。完成后，你会得到一个 ``BasePolicy`` 子类、注册好的模型构建函数、Hydra 与 FSDP 包装配置，以及可在 CPU 上运行的单元测试。
+将 PyTorch 或 Hugging Face Transformers 模型接入 RLinf 的 FSDP（Fully Sharded Data Parallel，全分片数据并行）后端，用于强化学习 rollout 与训练。完成后，你会得到一个 ``BasePolicy`` 子类、注册好的模型构建函数，以及 Hydra 与 FSDP 包装配置。
 
-接入过程分为四个检查点：先在本地实现 policy 接口并跑通 rollout 到训练的 CPU 闭环；接着注册构建函数，确认 ``get_model`` 能解析模型；随后补充 Hydra 模型与 FSDP 配置；最后在 ``tests/unit_tests/test_models.py`` 中补充单元测试。
+接入过程分为三个检查点：先在本地实现 policy 接口并跑通 rollout 到训练的 CPU 闭环；接着注册构建函数，确认 ``get_model`` 能解析模型；最后补充 Hydra 模型与 FSDP 配置。
 
 接入速览
 --------
@@ -15,13 +15,13 @@
    * - 项目
      - 说明
    * - 新增或修改的文件
-     - ``rlinf/models/embodiment/<name>/``\ （或外部包）、``examples/embodiment/config/<name>.yaml`` 与 ``tests/unit_tests/test_models.py``
+     - ``rlinf/models/embodiment/<name>/``\ （或外部包）与 ``examples/embodiment/config/<name>.yaml``
    * - 扩展点
      - ``register_model`` 与 ``RLINF_EXT_MODULE``\ （见 :ref:`out-of-tree-extensions`\ ）
    * - 必选方法
      - 继承 ``BasePolicy``，实现 ``default_forward`` 与 ``predict_action_batch``
    * - 验证方式
-     - 先在本地 CPU 上跑通前向与反向检查，再运行 ``pytest tests/unit_tests/test_models.py``
+     - 在本地 CPU 上直接跑通前向闭环与 ``get_model`` 解析检查
 
 1. 在本地实现 Policy 接口
 -------------------------
@@ -220,73 +220,6 @@ Ray worker 运行在独立的 Python 进程中，仅在主进程入口脚本调�
 - ``module_classes_to_wrap``：按类名指定主干之外需要单独包装的模块（如 vision encoder、projector、adapter）。
 - ``no_split_names``：按模块上的 ``_fsdp_wrap_name`` 属性做细粒度包装。
 
-4. 添加单元测试
----------------
-
-在 ``tests/unit_tests/test_models.py`` 中新增一条 CPU 单元测试，覆盖模型注册、``get_model`` 实例化、``predict_action_batch`` 与 ``default_forward`` 闭环及梯度回传：
-
-.. code-block:: python
-
-   import time
-
-   import torch
-   from omegaconf import OmegaConf
-
-   from rlinf.config import SupportedModel
-   from rlinf.models import get_model, register_model
-   from rlinf.models.embodiment.base_policy import ForwardType
-
-
-   def test_tiny_gaussian_policy_contract():
-       model_type = f"tiny_gaussian_{int(time.time() * 1000)}"
-
-       def _builder(cfg, torch_dtype):
-           return TinyGaussianPolicy(
-               obs_dim=cfg.obs_dim,
-               action_dim=cfg.action_dim,
-               hidden_dim=cfg.hidden_dim,
-           ).to(dtype=torch_dtype)
-
-       register_model(model_type, _builder, category="embodied")
-       assert SupportedModel(model_type).value == model_type
-
-       cfg = OmegaConf.create(
-           {
-               "model_type": model_type,
-               "obs_dim": 8,
-               "action_dim": 4,
-               "hidden_dim": 64,
-               "precision": "fp32",
-               "is_lora": False,
-               "load_to_device": False,
-           }
-       )
-       model = get_model(cfg)
-       assert isinstance(model, TinyGaussianPolicy)
-
-       actions, result = model.predict_action_batch({"states": torch.randn(2, 8)})
-       out = model(
-           forward_type=ForwardType.DEFAULT,
-           forward_inputs=result["forward_inputs"],
-       )
-
-       assert actions.shape == (2, 4)
-       assert out["logprobs"].shape == (2, 4)
-       assert out["values"].shape == (2, 1)
-       assert out["entropy"].shape == (2, 4)
-       assert torch.allclose(out["logprobs"], result["prev_logprobs"], atol=1e-6)
-
-       loss = -(out["logprobs"].mean() + out["entropy"].mean()) + out["values"].pow(2).mean()
-       loss.backward()
-       assert model.actor_mean.weight.grad is not None
-
-在 CPU 上运行单条用例与完整模型测试集：
-
-.. code-block:: bash
-
-   pytest tests/unit_tests/test_models.py -k tiny_gaussian
-   pytest tests/unit_tests/test_models.py
-
 .. _refl-model-interface:
 
 通过可微奖励训练
@@ -328,12 +261,6 @@ SD3 的输入为 ``forward_inputs={"prompts": prompts}``，其中 ``prompts`` �
      actor.refl_reward_model.type=custom_image_reward
 
 每个 worker 导入 ``RLINF_EXT_MODULE`` 并调用 ``register()``。更换打分器时，修改 builder 中的 scorer 构造逻辑。
-
-在 ``tests/unit_tests/test_models.py`` 中测试奖励 shape、参数冻结和从奖励到样本的梯度：
-
-.. code-block:: bash
-
-   pytest tests/unit_tests/test_models.py -k refl_scorer
 
 按 Wrapper 设置混合精度（FSDP1）
 --------------------------------

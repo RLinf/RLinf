@@ -1,9 +1,9 @@
 Add an FSDP Model
 =================
 
-Integrate a PyTorch or Hugging Face Transformers policy into RLinf's FSDP (Fully Sharded Data Parallel) backend for RL rollout and training. By the end, you have a ``BasePolicy`` subclass, a registered model builder, Hydra and FSDP wrapping configuration, and CPU unit tests.
+Integrate a PyTorch or Hugging Face Transformers policy into RLinf's FSDP (Fully Sharded Data Parallel) backend for RL rollout and training. By the end, you have a ``BasePolicy`` subclass, a registered model builder, and Hydra and FSDP wrapping configuration.
 
-The work follows four checkpoints. First, implement the policy contract and verify a rollout-to-training round-trip locally on CPU. Next, register the builder and check that ``get_model`` resolves it. Then add the Hydra model and FSDP configuration. Finally, add unit tests under ``tests/unit_tests/test_models.py``.
+The work follows three checkpoints. First, implement the policy contract and verify a rollout-to-training round-trip locally on CPU. Next, register the builder and check that ``get_model`` resolves it. Finally, add the Hydra model and FSDP configuration.
 
 At a Glance
 -----------
@@ -15,13 +15,13 @@ At a Glance
    * - Item
      - Details
    * - Files to create/edit
-     - ``rlinf/models/embodiment/<name>/`` (or an external package), ``examples/embodiment/config/<name>.yaml``, and ``tests/unit_tests/test_models.py``
+     - ``rlinf/models/embodiment/<name>/`` (or an external package) and ``examples/embodiment/config/<name>.yaml``
    * - Extension point
      - ``register_model`` and ``RLINF_EXT_MODULE`` (see :ref:`out-of-tree-extensions`)
    * - Required methods
      - ``BasePolicy`` subclass implementing ``default_forward`` and ``predict_action_batch``
    * - Verification
-     - Run the local CPU round-trip check, then ``pytest tests/unit_tests/test_models.py``
+     - Direct local CPU round-trip and ``get_model`` check
 
 1. Implement the Policy Contract Locally
 ----------------------------------------
@@ -220,73 +220,6 @@ When your architecture needs explicit FSDP sharding boundaries, set ``fsdp_confi
 - ``module_classes_to_wrap``: class names of extra modules outside the main backbone such as vision encoders, projectors, or adapters.
 - ``no_split_names``: fine-grained wrapping matched against each module's ``_fsdp_wrap_name`` attribute.
 
-4. Add Unit Tests
------------------
-
-Add a CPU test case to ``tests/unit_tests/test_models.py`` covering model registration, ``get_model`` instantiation, ``predict_action_batch``, and ``default_forward`` gradient flow:
-
-.. code-block:: python
-
-   import time
-
-   import torch
-   from omegaconf import OmegaConf
-
-   from rlinf.config import SupportedModel
-   from rlinf.models import get_model, register_model
-   from rlinf.models.embodiment.base_policy import ForwardType
-
-
-   def test_tiny_gaussian_policy_contract():
-       model_type = f"tiny_gaussian_{int(time.time() * 1000)}"
-
-       def _builder(cfg, torch_dtype):
-           return TinyGaussianPolicy(
-               obs_dim=cfg.obs_dim,
-               action_dim=cfg.action_dim,
-               hidden_dim=cfg.hidden_dim,
-           ).to(dtype=torch_dtype)
-
-       register_model(model_type, _builder, category="embodied")
-       assert SupportedModel(model_type).value == model_type
-
-       cfg = OmegaConf.create(
-           {
-               "model_type": model_type,
-               "obs_dim": 8,
-               "action_dim": 4,
-               "hidden_dim": 64,
-               "precision": "fp32",
-               "is_lora": False,
-               "load_to_device": False,
-           }
-       )
-       model = get_model(cfg)
-       assert isinstance(model, TinyGaussianPolicy)
-
-       actions, result = model.predict_action_batch({"states": torch.randn(2, 8)})
-       out = model(
-           forward_type=ForwardType.DEFAULT,
-           forward_inputs=result["forward_inputs"],
-       )
-
-       assert actions.shape == (2, 4)
-       assert out["logprobs"].shape == (2, 4)
-       assert out["values"].shape == (2, 1)
-       assert out["entropy"].shape == (2, 4)
-       assert torch.allclose(out["logprobs"], result["prev_logprobs"], atol=1e-6)
-
-       loss = -(out["logprobs"].mean() + out["entropy"].mean()) + out["values"].pow(2).mean()
-       loss.backward()
-       assert model.actor_mean.weight.grad is not None
-
-Run your test case and the full model test suite on CPU:
-
-.. code-block:: bash
-
-   pytest tests/unit_tests/test_models.py -k tiny_gaussian
-   pytest tests/unit_tests/test_models.py
-
 .. _refl-model-interface:
 
 Train from Differentiable Rewards
@@ -328,12 +261,6 @@ Prepare the models, data, and launch-argument array from the :doc:`SD3 recipe </
      actor.refl_reward_model.type=custom_image_reward
 
 Each worker imports ``RLINF_EXT_MODULE`` and calls ``register()``. To use your own scorer, change how the builder constructs it.
-
-Add tests for reward shape, frozen parameters, and gradients back to the samples to ``tests/unit_tests/test_models.py``:
-
-.. code-block:: bash
-
-   pytest tests/unit_tests/test_models.py -k refl_scorer
 
 Per-Wrapper Mixed Precision (FSDP1)
 -----------------------------------

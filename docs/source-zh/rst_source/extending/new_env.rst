@@ -229,44 +229,35 @@
 5. 在本地 CPU 上验证
 --------------------
 
-启动完整 Ray 训练前，在 ``tests/unit_tests/test_envs.py`` 中添加 pytest 单元测试，直接在本地 CPU 上验证 ``reset``、``step``、张量形状、数据类型以及必选属性：
+启动完整 Ray 训练前，直接在本地 CPU 上验证 ``reset``、``step``、张量形状、数据类型以及必选属性：
 
 .. code-block:: python
 
-   def test_point_reach_env_contract():
-       import torch
-       from omegaconf import OmegaConf
+   import torch
+   from omegaconf import OmegaConf
 
-       from rlinf.envs.sim.point_reach.point_reach_env import PointReachEnv
+   from rlinf.envs.sim.point_reach.point_reach_env import PointReachEnv
 
-       cfg = OmegaConf.create(
-           {
-               "env_type": "point_reach",
-               "total_num_envs": 8,
-               "group_size": 4,
-               "max_episode_steps": 50,
-               "seed": 42,
-           }
-       )
-       env = PointReachEnv(cfg, num_envs=cfg.total_num_envs)
+   cfg = OmegaConf.create(
+       {
+           "env_type": "point_reach",
+           "total_num_envs": 8,
+           "group_size": 4,
+           "max_episode_steps": 50,
+           "seed": 42,
+       }
+   )
+   env = PointReachEnv(cfg, num_envs=cfg.total_num_envs)
 
-       obs, info = env.reset(seed=42)
-       assert obs["states"].shape == (8, 4)
-       assert info == {}
+   obs, info = env.reset(seed=42)
+   assert obs["states"].shape == (8, 4) and info == {}
 
-       actions = torch.zeros(env.num_envs, 2)
-       next_obs, reward, terminated, truncated, step_info = env.step(actions)
-       assert next_obs["states"].shape == (8, 4)
-       assert reward.shape == (8,) and reward.dtype == torch.float32
-       assert terminated.shape == (8,) and terminated.dtype == torch.bool
-       assert truncated.shape == (8,) and truncated.dtype == torch.bool
-       assert "distance" in step_info and "success" in step_info
-       assert env.total_num_group_envs == 2
-       assert env.device == torch.device("cpu")
-
-运行单元测试：
-
-.. code-block:: bash
-
-   export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
-   pytest tests/unit_tests/test_envs.py
+   actions = torch.zeros(env.num_envs, 2)
+   next_obs, reward, terminated, truncated, step_info = env.step(actions)
+   assert next_obs["states"].shape == (8, 4)
+   assert reward.shape == (8,) and reward.dtype == torch.float32
+   assert terminated.shape == (8,) and terminated.dtype == torch.bool
+   assert truncated.shape == (8,) and truncated.dtype == torch.bool
+   assert "distance" in step_info and "success" in step_info
+   assert env.total_num_group_envs == 2 and env.device == torch.device("cpu")
+   print("PointReachEnv check passed:", env.num_envs, env.device)

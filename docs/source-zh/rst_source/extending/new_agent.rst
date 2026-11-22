@@ -3,7 +3,7 @@
 
 无需改动 RLinf 的推理引擎或 runner，即可接入自定义工具调用解析器、工具 worker 与多轮智能体循环。完成本指南后，示例计算器智能体会从模型输出中解析 ``<calc>...</calc>`` 标签，在独立的 ``ToolWorker`` 中求值算术表达式，将工具结果按 ``response_mask`` 屏蔽策略损失后拼回对话，并在 ``AgentRunner`` 中完整运行。
 
-接入流程分为四个检查点：先在本地 CPU 上编写并验证工具调用解析器，再实现基于通道通信的无状态 ``ToolWorker``，接着继承 ``AgentLoopWorker`` 编排多轮生成与工具调用，最后完成 YAML 配置、入口脚本与单元测试。如需了解智能体 runner 的调度与训练数据流，请参阅 :doc:`执行流程 <../concepts/execution_flow>` 与 :doc:`Agentic RL 指南 <../guides/agentic>`。
+接入流程分为四个检查点：先在本地 CPU 上编写并验证工具调用解析器，再实现基于通道通信的无状态 ``ToolWorker``，接着继承 ``AgentLoopWorker`` 编排多轮生成与工具调用，最后完成 YAML 配置与入口脚本接入。如需了解智能体 runner 的调度与训练数据流，请参阅 :doc:`执行流程 <../concepts/execution_flow>` 与 :doc:`Agentic RL 指南 <../guides/agentic>`。
 
 接入速览
 --------
@@ -21,7 +21,7 @@
    * - 必须实现的方法
      - 解析器 ``async def __call__(response_text)``；工具 worker ``start_server()`` 与 ``stop_server()``；智能体循环 ``generate_llm_response()`` 与 ``generate_tool_response()``
    * - 本地验证
-     - 本地 CPU 解析器检查与 ``pytest tests/unit_tests/test_agent_loop.py``
+     - 启动 ``AgentRunner`` 前直接在本地 CPU 上验证解析器
 
 1. 解析工具调用
 ---------------
@@ -313,10 +313,3 @@ HTTP 工具实现可参考 ``rlinf/agents/searchr1/search_tool_worker.py``，带
 .. code-block:: bash
 
    export RLINF_EXT_MODULE=my_pkg.rlinf_ext
-
-在 ``tests/unit_tests/test_agent_loop.py`` 中补充解析器提取、异常兜底与多轮循环控制的 CPU 单元测试，并运行测试套件（无需启动 Ray）：
-
-.. code-block:: bash
-
-   export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
-   pytest tests/unit_tests/test_agent_loop.py

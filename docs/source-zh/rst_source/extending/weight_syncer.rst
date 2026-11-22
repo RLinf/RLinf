@@ -11,24 +11,20 @@
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 28 24 26
+   :widths: 22 44 34
 
    * - 同步策略
      - 工作机制
      - 配置 / 扩展点
-     - 单元测试
    * - ``patch``\ （默认）
      - 基于发送端 snapshot 的稀疏增量同步（支持可选的一次性 init bootstrap）
      - ``weight_syncer/patch_syncer@weight_syncer``
-     - ``tests/unit_tests/test_weight_syncer.py``
    * - ``bucket``
      - 按分桶顺序全量传输选中参数子集
      - ``weight_syncer/bucket_syncer@weight_syncer``
-     - ``tests/unit_tests/test_weight_syncer.py``
    * - 自定义 ``WeightSyncer``
      - 继承 ``WeightSyncer`` 实现 ``init_sender``、``init_receiver``、``sync``、``apply``
      - ``rlinf/hybrid_engines/weight_syncer/base.py`` 中的 ``WeightSyncer.create()``
-     - ``tests/unit_tests/test_weight_syncer.py``
 
 
 为什么需要 Weight Syncer
@@ -516,42 +512,37 @@ patch 模式会额外保存一份 sender 侧 snapshot。若 ``snapshot_device: c
 
    type: custom_dict
 
-在 ``tests/unit_tests/test_weight_syncer.py`` 中补充基于内存 ``asyncio.Queue`` 的 CPU 单元测试，覆盖完整的发送与接收闭环：
+在本地 CPU 上用内存 ``asyncio.Queue`` 直接验证发送与接收闭环：
 
 .. code-block:: python
 
-   def test_dict_weight_syncer_roundtrip():
-       import asyncio
-       import torch
+   import asyncio
+   import torch
 
-       async def _run():
-           queue: asyncio.Queue = asyncio.Queue()
-           sender_model = torch.nn.Linear(4, 2)
-           receiver_model = torch.nn.Linear(4, 2)
-           param_names = [
-               name for name, p in sender_model.named_parameters() if p.requires_grad
-           ]
 
-           sender = DictWeightSyncer()
-           receiver = DictWeightSyncer()
-           await sender.init_sender(sender_model.state_dict(), param_names, queue.put)
-           await receiver.init_receiver(receiver_model.state_dict(), queue.get)
+   async def main():
+       queue: asyncio.Queue = asyncio.Queue()
+       sender_model = torch.nn.Linear(4, 2)
+       receiver_model = torch.nn.Linear(4, 2)
+       param_names = [
+           name for name, p in sender_model.named_parameters() if p.requires_grad
+       ]
 
-           await sender.sync(sender_model.state_dict(), queue.put, version=3)
-           applied_version = await receiver.apply(receiver_model, queue.get)
+       sender = DictWeightSyncer()
+       receiver = DictWeightSyncer()
+       await sender.init_sender(sender_model.state_dict(), param_names, queue.put)
+       await receiver.init_receiver(receiver_model.state_dict(), queue.get)
 
-           assert applied_version == 3
-           for name in param_names:
-               torch.testing.assert_close(
-                   receiver_model.state_dict()[name],
-                   sender_model.state_dict()[name],
-               )
+       await sender.sync(sender_model.state_dict(), queue.put, version=3)
+       applied_version = await receiver.apply(receiver_model, queue.get)
 
-       asyncio.run(_run())
+       assert applied_version == 3
+       for name in param_names:
+           torch.testing.assert_close(
+               receiver_model.state_dict()[name],
+               sender_model.state_dict()[name],
+           )
+       print("DictWeightSyncer check passed, version:", applied_version)
 
-运行权重同步器单元测试：
 
-.. code-block:: bash
-
-   export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
-   pytest tests/unit_tests/test_weight_syncer.py
+   asyncio.run(main())

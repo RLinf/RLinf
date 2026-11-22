@@ -3,7 +3,7 @@ Agent & Tool Calling
 
 Add a tool-call parser, a tool worker, and a multi-turn agent loop without changing RLinf's rollout engines or runners. By the end of this guide, a calculator agent parses ``<calc>...</calc>`` tags from model completions, evaluates arithmetic expressions inside a ``ToolWorker``, feeds results back into the conversation with tool tokens masked out of policy loss, and runs inside ``AgentRunner``.
 
-The integration proceeds through four checkpoints. First, implement and verify the tool-call parser locally on CPU. Next, build a stateless ``ToolWorker`` that executes requests over RLinf channels. Then subclass ``AgentLoopWorker`` to orchestrate multi-turn LLM generation and tool calls. Finally, wire the YAML configuration, entry script, and unit tests. For an overview of how agentic runners schedule rollout and training, see :doc:`Execution Flow <../concepts/execution_flow>` and :doc:`Agentic RL Guide <../guides/agentic>`.
+The integration proceeds through four checkpoints. First, implement and verify the tool-call parser locally on CPU. Next, build a stateless ``ToolWorker`` that executes requests over RLinf channels. Then subclass ``AgentLoopWorker`` to orchestrate multi-turn LLM generation and tool calls. Finally, wire the YAML configuration and entry script. For an overview of how agentic runners schedule rollout and training, see :doc:`Execution Flow <../concepts/execution_flow>` and :doc:`Agentic RL Guide <../guides/agentic>`.
 
 At a Glance
 -----------
@@ -21,7 +21,7 @@ At a Glance
    * - Required methods
      - Parser ``async def __call__(response_text)``; tool worker ``start_server()`` and ``stop_server()``; agent loop ``generate_llm_response()`` and ``generate_tool_response()``
    * - Local verification
-     - Direct CPU parser check and ``pytest tests/unit_tests/test_agent_loop.py``
+     - Direct CPU parser check before launching ``AgentRunner``
 
 1. Parse Tool Calls
 -------------------
@@ -313,10 +313,3 @@ If your parser lives outside the RLinf tree, register it inside your package's `
 .. code-block:: bash
 
    export RLINF_EXT_MODULE=my_pkg.rlinf_ext
-
-Add CPU unit tests for parser extraction, error handling, and loop control flow in ``tests/unit_tests/test_agent_loop.py``, then run the suite without launching Ray:
-
-.. code-block:: bash
-
-   export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
-   pytest tests/unit_tests/test_agent_loop.py

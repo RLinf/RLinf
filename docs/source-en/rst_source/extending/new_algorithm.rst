@@ -193,8 +193,8 @@ Select it in your reasoning or agentic YAML:
      reward_type: exact_match
      reward_scale: 1.0
 
-4. Out-of-Tree Packaging and Testing
-------------------------------------
+4. Out-of-Tree Packaging
+------------------------
 
 To keep custom algorithms outside the RLinf tree, register them inside your extension module's ``register()`` hook and export ``RLINF_EXT_MODULE``:
 
@@ -211,55 +211,3 @@ To keep custom algorithms outside the RLinf tree, register them inside your exte
    export RLINF_EXT_MODULE=my_pkg.rlinf_ext
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
      algorithm.adv_type=centered_reward algorithm.loss_type=clipped_pg
-
-Add a CPU pytest unit test to ``tests/unit_tests/test_utils.py`` verifying registry dispatch, output shapes, mask handling, and gradient flow:
-
-.. code-block:: python
-
-   def test_centered_reward_and_clipped_pg():
-       import torch
-
-       from rlinf.algorithms.registry import (
-           calculate_adv_and_returns,
-           policy_loss,
-       )
-
-       out = calculate_adv_and_returns(
-           adv_type="centered_reward",
-           task_type="embodied",
-           reward_type="chunk_level",
-           logprob_type="chunk_level",
-           rewards=torch.tensor([[[1.0], [0.0]], [[0.5], [0.0]]]),
-           dones=torch.zeros(3, 2, 1, dtype=torch.bool),
-           loss_mask=torch.ones(2, 2, 1, dtype=torch.bool),
-           group_size=2,
-           normalize_advantages=True,
-       )
-       advantages = out["advantages"]
-       assert advantages.shape == (2, 2, 1)
-       assert abs(advantages.mean().item()) < 1e-4
-
-       logprobs = torch.zeros(2, 2, 1, dtype=torch.float32, requires_grad=True)
-       old_logprobs = torch.zeros(2, 2, 1, dtype=torch.float32)
-       loss_mask = torch.ones(2, 2, 1, dtype=torch.bool)
-       loss, metrics = policy_loss(
-           loss_type="clipped_pg",
-           task_type="embodied",
-           logprobs=logprobs,
-           old_logprobs=old_logprobs,
-           advantages=advantages.float(),
-           loss_mask=loss_mask,
-           clip_ratio_low=0.2,
-           clip_ratio_high=0.2,
-       )
-       assert loss.ndim == 0 and torch.isfinite(loss)
-       assert "actor/policy_loss" in metrics and "actor/ratio" in metrics
-       loss.backward()
-       assert logprobs.grad is not None
-
-Run the unit tests with:
-
-.. code-block:: bash
-
-   export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
-   pytest tests/unit_tests/test_utils.py
