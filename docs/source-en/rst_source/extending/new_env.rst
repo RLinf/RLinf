@@ -229,37 +229,42 @@ Create a Hydra preset at ``examples/embodiment/config/env/point_reach.yaml`` wit
 5. Verify Locally on CPU
 ------------------------
 
-Before launching a full Ray training job, verify reset, step, tensor shapes, dtypes, and required properties directly on CPU:
+Before launching a full Ray training job, add a pytest unit test to ``tests/unit_tests/test_envs.py`` verifying reset, step, tensor shapes, dtypes, and required properties directly on CPU:
 
 .. code-block:: python
 
-   import torch
-   from omegaconf import OmegaConf
+   def test_point_reach_env_contract():
+       import torch
+       from omegaconf import OmegaConf
 
-   cfg = OmegaConf.create(
-       {
-           "env_type": "point_reach",
-           "total_num_envs": 8,
-           "group_size": 4,
-           "max_episode_steps": 50,
-           "seed": 42,
-       }
-   )
-   env = PointReachEnv(cfg, num_envs=cfg.total_num_envs)
+       from rlinf.envs.sim.point_reach.point_reach_env import PointReachEnv
 
-   obs, info = env.reset()
-   assert obs["states"].shape == (8, 4)
+       cfg = OmegaConf.create(
+           {
+               "env_type": "point_reach",
+               "total_num_envs": 8,
+               "group_size": 4,
+               "max_episode_steps": 50,
+               "seed": 42,
+           }
+       )
+       env = PointReachEnv(cfg, num_envs=cfg.total_num_envs)
 
-   actions = torch.zeros(env.num_envs, 2)
-   obs, reward, terminated, truncated, info = env.step(actions)
-   assert obs["states"].shape == (8, 4)
-   assert reward.shape == (8,)
-   assert terminated.shape == (8,) and terminated.dtype == torch.bool
-   assert truncated.shape == (8,) and truncated.dtype == torch.bool
-   assert env.total_num_group_envs == 2
-   assert env.device == torch.device("cpu")
+       obs, info = env.reset(seed=42)
+       assert obs["states"].shape == (8, 4)
+       assert info == {}
 
-Add unit tests covering your environment's contract and action formatting under ``tests/unit_tests/test_envs.py``, then run them with:
+       actions = torch.zeros(env.num_envs, 2)
+       next_obs, reward, terminated, truncated, step_info = env.step(actions)
+       assert next_obs["states"].shape == (8, 4)
+       assert reward.shape == (8,) and reward.dtype == torch.float32
+       assert terminated.shape == (8,) and terminated.dtype == torch.bool
+       assert truncated.shape == (8,) and truncated.dtype == torch.bool
+       assert "distance" in step_info and "success" in step_info
+       assert env.total_num_group_envs == 2
+       assert env.device == torch.device("cpu")
+
+Run the unit tests with:
 
 .. code-block:: bash
 

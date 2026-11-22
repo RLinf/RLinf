@@ -212,7 +212,52 @@
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
      algorithm.adv_type=centered_reward algorithm.loss_type=clipped_pg
 
-在 ``tests/unit_tests/`` 中补充 CPU 单元测试，覆盖输出形状、mask 处理与注册表分发：
+在 ``tests/unit_tests/test_utils.py`` 中补充 CPU 单元测试，覆盖注册表分发、输出形状、mask 处理以及梯度反传：
+
+.. code-block:: python
+
+   def test_centered_reward_and_clipped_pg():
+       import torch
+
+       from rlinf.algorithms.registry import (
+           calculate_adv_and_returns,
+           policy_loss,
+       )
+
+       out = calculate_adv_and_returns(
+           adv_type="centered_reward",
+           task_type="embodied",
+           reward_type="chunk_level",
+           logprob_type="chunk_level",
+           rewards=torch.tensor([[[1.0], [0.0]], [[0.5], [0.0]]]),
+           dones=torch.zeros(3, 2, 1, dtype=torch.bool),
+           loss_mask=torch.ones(2, 2, 1, dtype=torch.bool),
+           group_size=2,
+           normalize_advantages=True,
+       )
+       advantages = out["advantages"]
+       assert advantages.shape == (2, 2, 1)
+       assert abs(advantages.mean().item()) < 1e-4
+
+       logprobs = torch.zeros(2, 2, 1, dtype=torch.float32, requires_grad=True)
+       old_logprobs = torch.zeros(2, 2, 1, dtype=torch.float32)
+       loss_mask = torch.ones(2, 2, 1, dtype=torch.bool)
+       loss, metrics = policy_loss(
+           loss_type="clipped_pg",
+           task_type="embodied",
+           logprobs=logprobs,
+           old_logprobs=old_logprobs,
+           advantages=advantages.float(),
+           loss_mask=loss_mask,
+           clip_ratio_low=0.2,
+           clip_ratio_high=0.2,
+       )
+       assert loss.ndim == 0 and torch.isfinite(loss)
+       assert "actor/policy_loss" in metrics and "actor/ratio" in metrics
+       loss.backward()
+       assert logprobs.grad is not None
+
+运行单元测试：
 
 .. code-block:: bash
 

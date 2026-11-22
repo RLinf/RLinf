@@ -3,8 +3,8 @@ Build a Reward Model
 
 Train and deploy learned reward models for embodied RL in RLinf, or plug in a custom reward model class. Choose the path that fits your task:
 
-- **Path A: Train and use built-in reward models** — collect trajectories, preprocess them, train a ResNet binary image classifier or fine-tune a VLM reward model (single-frame, history-window VLM Trend, or Success + Potential shaped VLM), and wire it into simulation or real-world RL.
-- **Path B: Implement and register a custom reward model** — subclass ``BaseRewardModel`` and register it in ``reward_model_registry``, or register custom VLM input builders and output parsers on top of the built-in VLM reward models.
+- **Path A: Implement and register a custom reward model** — subclass ``BaseRewardModel`` and register it in ``reward_model_registry``, or register custom VLM input builders and output parsers on top of the built-in VLM reward models.
+- **Path B: Train and use built-in reward models** — collect trajectories, preprocess them, train a ResNet binary image classifier or fine-tune a VLM reward model (single-frame, history-window VLM Trend, or Success + Potential shaped VLM), and wire it into simulation or real-world RL.
 
 At a Glance
 -----------
@@ -16,23 +16,123 @@ At a Glance
    * - Workflow
      - What It Covers
      - Jump To
-   * - Simulation reward models
-     - Episode collection, preprocessing, ResNet / VLM Trend / Success + Potential training, and online RL inference (local Hugging Face or SGLang API)
-     - :ref:`Simulation Reward Model <sim-reward-model>`
-   * - Real-world reward models
-     - Franka keyboard-labeled or fixed-pose data collection, dataset conversion, training, and live teleop reward inference
-     - :ref:`Real-World Reward Model <realworld-reward-model>`
    * - Custom reward model
      - Subclassing ``BaseRewardModel``, registering in ``reward_model_registry``, or adding VLM ``input_builder`` / ``reward_parser`` plugins
-     - :ref:`Custom Reward Model <custom-reward-model>`
+     - :ref:`1. Custom Reward Model <custom-reward-model>`
+   * - Built-in simulation workflow
+     - Episode collection, preprocessing, ResNet / VLM Trend / Success + Potential training, and online RL inference (local Hugging Face or SGLang API)
+     - :ref:`2. Built-In Simulation Workflow <sim-reward-model>`
+   * - Built-in real-world workflow
+     - Franka keyboard-labeled or fixed-pose data collection, dataset conversion, training, and live teleop reward inference
+     - :ref:`3. Built-In Real-World Workflow <realworld-reward-model>`
    * - Rule-based text rewards
      - Deterministic rewards for reasoning and agentic tasks via ``register_reward``
      - :doc:`Algorithms & Rule-Based Rewards <new_algorithm>`
 
+.. _custom-reward-model:
+
+1. Custom Reward Model
+----------------------
+
+To add a new learned reward model architecture, subclass ``BaseRewardModel`` and register the class in ``rlinf/models/embodiment/reward/__init__.py``. Both ``EmbodiedRewardWorker`` (online RL inference) and ``FSDPRewardWorker`` (reward training) resolve ``model_type`` through ``get_reward_model_class``.
+
+Implement the Reward Model Class
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Create a module under ``rlinf/models/embodiment/reward/`` and implement ``forward`` (training loss and metrics) and ``compute_reward`` (no-gradient inference returning a ``[B]`` or ``[B, 1]`` tensor):
+
+.. code-block:: python
+
+   # rlinf/models/embodiment/reward/my_reward_model.py
+   from typing import Any, Optional
+
+   import torch
+   import torch.nn as nn
+   import torch.nn.functional as F
+   from omegaconf import DictConfig
+
+   from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
+
+
+   class MyRewardModel(BaseRewardModel):
+       def __init__(self, cfg: DictConfig):
+           super().__init__(cfg)
+           self.head = nn.Linear(cfg.state_dim, 1)
+
+       def forward(
+           self,
+           input_data: torch.Tensor,
+           labels: Optional[torch.Tensor] = None,
+       ) -> dict[str, Any]:
+           logits = self.head(input_data).squeeze(-1)
+           loss = F.binary_cross_entropy_with_logits(logits, labels.float())
+           preds = (torch.sigmoid(logits) >= 0.5).long()
+           acc = (preds == labels.long()).float().mean()
+           return {"loss": loss, "accuracy": acc}
+
+       @torch.no_grad()
+       def compute_reward(self, observations: dict[str, Any]) -> torch.Tensor:
+           logits = self.head(observations["states"]).squeeze(-1)
+           return torch.sigmoid(logits)
+
+Register the Reward Model
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Add a lazy import entry to ``_REWARD_MODEL_IMPORTS`` in ``rlinf/models/embodiment/reward/__init__.py`` (which backs ``reward_model_registry`` and ``get_reward_model_class``):
+
+.. code-block:: python
+
+   _REWARD_MODEL_IMPORTS = {
+       # ...
+       "my_reward": (
+           "rlinf.models.embodiment.reward.my_reward_model",
+           "MyRewardModel",
+       ),
+   }
+
+If you train the model through ``FSDPRewardWorker`` and need config validation on ``actor.model.model_type``, also register the name in ``SupportedModel`` in ``rlinf/config.py``.
+
+Select in YAML and Verify
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Select the registered name in your RL or reward-training YAML:
+
+.. code-block:: yaml
+
+   reward:
+     use_reward_model: True
+     model:
+       model_type: "my_reward"
+       state_dim: 16
+
+Verify class lookup and ``compute_reward`` locally on CPU:
+
+.. code-block:: bash
+
+   python -c '
+   import torch
+   from omegaconf import OmegaConf
+   from rlinf.models.embodiment.reward import get_reward_model_class
+
+   cls = get_reward_model_class("my_reward")
+   model = cls(OmegaConf.create({"state_dim": 16}))
+   out = model.compute_reward({"states": torch.zeros(4, 16)})
+   assert out.shape == (4,)
+   '
+
+Custom VLM Input Builders and Parsers
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+If your custom reward uses a VLM backbone and only changes the prompt formatting or output parsing, keep ``model_type: "vlm"`` or ``"buffered_vlm"`` and register plugins instead of writing a new model class:
+
+- Register a prompt/input builder with ``@register_input_builder("<name>")`` in ``rlinf/models/embodiment/reward/vlm_reward_utils/input_builder.py`` and set ``reward.model.input_builder_name``.
+- Register a response parser with ``@register_reward_parser("<name>")`` in ``rlinf/models/embodiment/reward/vlm_reward_utils/reward_parser.py`` and set ``reward.model.reward_parser_name``.
+
+
 .. _sim-reward-model:
 
-Simulation Reward Model
------------------------
+2. Built-In Simulation Workflow
+-------------------------------
 
 The full workflow has four stages:
 
@@ -754,8 +854,8 @@ The full workflow is:
 
 .. _realworld-reward-model:
 
-Real-World Reward Model
------------------------
+3. Built-In Real-World Workflow
+-------------------------------
 
 Collect and preprocess a reward model training dataset directly on a real-world
 Franka robot. Two data collection approaches are supported:
@@ -1202,103 +1302,3 @@ Inside ``TeleopWorker``:
 Compared with the full RL pipeline in :doc:`../examples/embodied/franka_reward_model`,
 the teleop script runs no policy, no actor, and no rollout worker — it is purely
 human-in-the-loop evaluation of the reward model.
-
-
-.. _custom-reward-model:
-
-Custom Reward Model
--------------------
-
-To add a new learned reward model architecture, subclass ``BaseRewardModel`` and register the class in ``rlinf/models/embodiment/reward/__init__.py``. Both ``EmbodiedRewardWorker`` (online RL inference) and ``FSDPRewardWorker`` (reward training) resolve ``model_type`` through ``get_reward_model_class``.
-
-1. Subclass ``BaseRewardModel``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Create a module under ``rlinf/models/embodiment/reward/`` and implement ``forward`` (training loss and metrics) and ``compute_reward`` (no-gradient inference returning a ``[B]`` or ``[B, 1]`` tensor):
-
-.. code-block:: python
-
-   # rlinf/models/embodiment/reward/my_reward_model.py
-   from typing import Any, Optional
-
-   import torch
-   import torch.nn as nn
-   import torch.nn.functional as F
-   from omegaconf import DictConfig
-
-   from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
-
-
-   class MyRewardModel(BaseRewardModel):
-       def __init__(self, cfg: DictConfig):
-           super().__init__(cfg)
-           self.head = nn.Linear(cfg.state_dim, 1)
-
-       def forward(
-           self,
-           input_data: torch.Tensor,
-           labels: Optional[torch.Tensor] = None,
-       ) -> dict[str, Any]:
-           logits = self.head(input_data).squeeze(-1)
-           loss = F.binary_cross_entropy_with_logits(logits, labels.float())
-           preds = (torch.sigmoid(logits) >= 0.5).long()
-           acc = (preds == labels.long()).float().mean()
-           return {"loss": loss, "accuracy": acc}
-
-       @torch.no_grad()
-       def compute_reward(self, observations: dict[str, Any]) -> torch.Tensor:
-           logits = self.head(observations["states"]).squeeze(-1)
-           return torch.sigmoid(logits)
-
-2. Register in ``reward_model_registry``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Add a lazy import entry to ``_REWARD_MODEL_IMPORTS`` in ``rlinf/models/embodiment/reward/__init__.py`` (which backs ``reward_model_registry`` and ``get_reward_model_class``):
-
-.. code-block:: python
-
-   _REWARD_MODEL_IMPORTS = {
-       # ...
-       "my_reward": (
-           "rlinf.models.embodiment.reward.my_reward_model",
-           "MyRewardModel",
-       ),
-   }
-
-If you train the model through ``FSDPRewardWorker`` and need config validation on ``actor.model.model_type``, also register the name in ``SupportedModel`` in ``rlinf/config.py``.
-
-3. Select in YAML and Verify
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Select the registered name in your RL or reward-training YAML:
-
-.. code-block:: yaml
-
-   reward:
-     use_reward_model: True
-     model:
-       model_type: "my_reward"
-       state_dim: 16
-
-Verify class lookup and ``compute_reward`` locally on CPU:
-
-.. code-block:: bash
-
-   python -c '
-   import torch
-   from omegaconf import OmegaConf
-   from rlinf.models.embodiment.reward import get_reward_model_class
-
-   cls = get_reward_model_class("my_reward")
-   model = cls(OmegaConf.create({"state_dim": 16}))
-   out = model.compute_reward({"states": torch.zeros(4, 16)})
-   assert out.shape == (4,)
-   '
-
-Custom VLM Input Builders and Parsers
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-If your custom reward uses a VLM backbone and only changes the prompt formatting or output parsing, keep ``model_type: "vlm"`` or ``"buffered_vlm"`` and register plugins instead of writing a new model class:
-
-- Register a prompt/input builder with ``@register_input_builder("<name>")`` in ``rlinf/models/embodiment/reward/vlm_reward_utils/input_builder.py`` and set ``reward.model.input_builder_name``.
-- Register a response parser with ``@register_reward_parser("<name>")`` in ``rlinf/models/embodiment/reward/vlm_reward_utils/reward_parser.py`` and set ``reward.model.reward_parser_name``.

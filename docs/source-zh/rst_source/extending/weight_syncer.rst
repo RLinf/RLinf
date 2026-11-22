@@ -6,6 +6,31 @@
 当前这套能力主要面向具身训练中的 **FSDP actor + HuggingFace rollout** 链路，也就是 ``examples/embodiment/train_embodied_agent.py`` 与 ``examples/embodiment/train_async.py`` 所使用的路径。
 
 
+接入速览
+------------------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 28 24 26
+
+   * - 同步策略
+     - 工作机制
+     - 配置 / 扩展点
+     - 单元测试
+   * - ``patch``\ （默认）
+     - 基于发送端 snapshot 的稀疏增量同步（支持可选的一次性 init bootstrap）
+     - ``weight_syncer/patch_syncer@weight_syncer``
+     - ``tests/unit_tests/test_weight_syncer.py``
+   * - ``bucket``
+     - 按分桶顺序全量传输选中参数子集
+     - ``weight_syncer/bucket_syncer@weight_syncer``
+     - ``tests/unit_tests/test_weight_syncer.py``
+   * - 自定义 ``WeightSyncer``
+     - 继承 ``WeightSyncer`` 实现 ``init_sender``、``init_receiver``、``sync``、``apply``
+     - ``rlinf/hybrid_engines/weight_syncer/base.py`` 中的 ``WeightSyncer.create()``
+     - ``tests/unit_tests/test_weight_syncer.py``
+
+
 为什么需要 Weight Syncer
 ------------------------------
 
@@ -185,11 +210,9 @@ Patch 模式大致分为两个阶段：
 1. 一次性初始化阶段
 
    - 接收端在 ``init_receiver(...)`` 中发送本地模型 metadata。
-   - 若 ``init_sync.enabled=true``，发送端会在 ``init_sender(...)`` 中接收
-     metadata，并发送一次完整 ``state_dict`` 或指定 prefix 子集的分桶 bootstrap。
+   - 若 ``init_sync.enabled=true``，发送端会在 ``init_sender(...)`` 中接收 metadata，并发送一次完整 ``state_dict`` 或指定 prefix 子集的分桶 bootstrap。
    - 接收端会把这批 bootstrap 权重直接应用到本地 ``state_dict``。
-   - 发送端随后再建立用于后续增量 patch 的 snapshot。
-     这份 snapshot 只覆盖会参与增量同步的 key：当前即 trainable parameters 和 persistent buffers。
+   - 发送端随后再建立用于后续增量 patch 的 snapshot。这份 snapshot 只覆盖会参与增量同步的 key：当前即 trainable parameters 和 persistent buffers。
 
    当前 metadata 主要包括：
 
@@ -197,12 +220,11 @@ Patch 模式大致分为两个阶段：
    - 每个张量的原始形状 ``original_shapes``
    - 每个张量在接收端的 dtype
 
-   接收端 **不会保存发送端 snapshot** ，它只保存足够把 patch 正确落到本地模型上的结构信息。发送端 snapshot 的 dtype 与接收端对应权重的 dtype 保持一致，因此可以正确支持 ``bfloat16`` 与 ``float32`` 混合精度模型。init bootstrap 也会按接收端每个 key 的 dtype 进行对齐。
+   接收端 **不会保存发送端 snapshot** ，它只保存足够把 patch 正确落到本地模型上的结构信息。发送端 snapshot 的 dtype 与接收端对应权重的 dtype 保持一致，因此可以正确支持 ``bfloat16`` 与 ``float32`` 混合精度模型。init bootstrap 也会按接收端每个 key 的 dtype 对齐。
 
 2. 每次同步阶段
 
-   - 发送端比较当前增量同步子集
-     （trainable parameters 和 persistent buffers）与 snapshot 的差异。
+   - 发送端比较当前增量同步子集（trainable parameters 和 persistent buffers）与 snapshot 的差异。
    - 将变化项组织成 patch 后发送。
    - 接收端收到 patch 后，直接把变化应用到本地模型参数。
 
@@ -210,9 +232,9 @@ Patch 模式大致分为两个阶段：
 CPU Snapshot 的优化路径
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-当 ``snapshot_device: cpu`` 时，发送端 snapshot 常驻 CPU，但当前 ``state_dict`` 仍然位于 GPU。为了避免把 patch 构建主路径退回到 CPU，RLinf 对这一场景做了专门优化：
+配置 ``snapshot_device: cpu`` 时，发送端 snapshot 常驻 CPU，但当前 ``state_dict`` 仍然位于 GPU。为了避免把 patch 构建主路径退回到 CPU，RLinf 对这一场景做了专门优化：
 
-- CPU snapshot 使用 pinned memory 保存，便于 CPU 与 GPU 之间进行异步拷贝。
+- CPU snapshot 使用 pinned memory 保存，便于 CPU 与 GPU 之间异步拷贝。
 - 每个 tensor 在比较前，会先把对应的 CPU snapshot 异步预取到 state tensor 所在 GPU。
 - snapshot 预取使用独立 CUDA copy stream，与其他 tensor 的 GPU 侧比较尽量重叠。
 - 差异比较、``nonzero`` 以及新值收集都在 GPU 上完成，避免 CPU 逐元素扫描。
@@ -227,13 +249,13 @@ CPU Snapshot 的优化路径
    CPU snapshot -> GPU prefetch -> GPU compare/nonzero/gather
    -> pinned CPU staging -> background snapshot flush
 
-这种方式用少量额外的异步拷贝和后台写回，换取了显著更低的 GPU 显存占用。在当前具身 VLA 训练配置中，CPU snapshot 的权重同步耗时已经可以接近 GPU snapshot；因此当 GPU 显存紧张时，优先选择 ``snapshot_device: cpu`` 通常是更稳妥的默认配置。
+这种方式用少量额外的异步拷贝和后台写回，换取了显著更低的 GPU 显存占用。在当前具身 VLA 训练配置中，CPU snapshot 的权重同步耗时已经可以接近 GPU snapshot；因此 GPU 显存紧张时，优先选择 ``snapshot_device: cpu`` 通常是更稳妥的默认配置。
 
 
 Patch 的数据组织方式
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-当前 patch 使用扁平化后的张量索引信息进行表示，核心字段包括：
+当前 patch 使用扁平化后的张量索引信息表示，核心字段包括：
 
 - ``ordinals``：哪个 tensor 发生了变化
 - ``nnz_per_tensor``：该 tensor 里有多少个非零变化项
@@ -254,7 +276,7 @@ Patch 的数据组织方式
 Delta Encoding
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-当 ``delta_encoding=true`` 时，``rows`` 与 ``cols`` 不直接发送绝对坐标，而是发送差分编码后的结果：
+启用 ``delta_encoding=true`` 时，``rows`` 与 ``cols`` 不直接发送绝对坐标，而是发送差分编码后的结果：
 
 - ``rows`` 发送相邻行坐标的增量
 - 如果当前元素仍在同一行内，``cols`` 发送列增量
@@ -322,7 +344,7 @@ Bucket 模式
   每个 bucket 的最大字节数。
 
 ``bucket.bucket_dtype``
-  发送时使用的数据类型。若设置为 ``null``，则保留每个张量的原始 dtype；若设置为 ``bfloat16``、``float16`` 或 ``float32``，则仅对浮点张量进行转换，``int`` / ``bool`` 等非浮点 buffer 会保留原 dtype，避免状态信息被破坏。
+  发送时使用的数据类型。若设置为 ``null``，则保留每个张量的原始 dtype；若设置为 ``bfloat16``、``float16`` 或 ``float32``，则仅转换浮点张量，``int`` / ``bool`` 等非浮点 buffer 会保留原 dtype，避免状态信息被破坏。
 
 ``bucket.bucket_device``
   bucket 所在设备，通常为 ``cuda``。
@@ -349,7 +371,7 @@ Bucket 模式会把当前选中的同步子集切成多个块顺序发送。它�
 Async 场景下的行为
 ------------------------------
 
-``AsyncEmbodiedRunner`` 与 ``AsyncPPOEmbodiedRunner`` 都支持 ``actor.sync_weight_no_wait``。当它为 ``true`` 时，actor 更新后的同步会立即把控制权交还给 runner，而 rollout worker 在后台 ``asyncio`` task 中接收并应用权重。actor 到 rollout 的首次同步仍然是阻塞的，确保新任务或恢复的任务不会在权重尚未落地时就开始采样。
+``AsyncEmbodiedRunner`` 与 ``AsyncPPOEmbodiedRunner`` 都支持 ``actor.sync_weight_no_wait``。设为 ``true`` 时，actor 更新后的同步会立即把控制权交还给 runner，而 rollout worker 在后台 ``asyncio`` task 中接收并应用权重。actor 到 rollout 的首次同步仍然是阻塞的，确保新任务或恢复的任务不会在权重尚未落地时就开始采样。
 
 该选项要求 ``weight_syncer.type=patch``。patch 模式一次性完成整轮应用，而 bucket 模式会在 bucket 之间让出执行权，可能让推理观察到只应用了部分新权重的模型。RLinf 会直接拒绝这种组合，而不是放任这种撕裂读取。
 
@@ -358,7 +380,7 @@ Async 场景下的行为
 - actor 发起同步请求后，rollout 不一定立刻阻塞等待。
 - 新权重要等到后台任务完成后，才真正对 rollout 生效。
 - 权重的“请求时刻”与“生效时刻”之间可能存在一个小延迟。
-- 如果上一次同步仍在进行，新请求会被合并而不是排队，因此慢传输不会堆积成积压。
+- 如果上一次同步尚未结束，新请求会被合并而不是排队，因此慢传输不会堆积成积压。
 
 runner 跟踪的是 rollout 侧的\ **应用**\ 完成状态，而不只是发送端的完成状态。后续的阻塞式同步和 runner 正常退出，都会先等待后台的权重应用结束。
 
@@ -411,3 +433,125 @@ patch 模式会额外保存一份 sender 侧 snapshot。若 ``snapshot_device: c
 - 先确保 actor 与 rollout 的 ``state_dict`` 结构一致
 - 保持 patch init bootstrap 开启，或者先用 ``bucket`` 验证选中 key 子集的传输链路
 - 再切到 ``patch`` 做性能优化
+
+
+实现自定义权重同步器
+------------------------------
+
+新增自定义同步策略时，继承 ``rlinf/hybrid_engines/weight_syncer/base.py`` 中的 ``WeightSyncer``，并实现四个异步生命周期方法：``init_sender``、``init_receiver``、``sync`` 和 ``apply``。
+
+.. code-block:: python
+
+   # rlinf/hybrid_engines/weight_syncer/custom_dict_syncer.py
+   from __future__ import annotations
+
+   import torch
+   from torch.distributed.tensor import DTensor
+
+   from .base import RecvFn, SendFn, WeightSyncer
+
+
+   class DictWeightSyncer(WeightSyncer):
+       def __init__(self):
+           super().__init__()
+           self._param_names: list[str] = []
+
+       async def init_sender(
+           self,
+           state_dict: dict[str, torch.Tensor | DTensor],
+           param_names_need_sync: list[str],
+           send: SendFn,
+           recv: RecvFn | None = None,
+           is_sender: bool = True,
+       ) -> None:
+           self._param_names = list(param_names_need_sync)
+           self._sender_initialized = True
+
+       async def init_receiver(
+           self,
+           state_dict: dict[str, torch.Tensor | DTensor] | None,
+           recv: RecvFn,
+           send: SendFn | None = None,
+       ) -> None:
+           self._receiver_initialized = True
+
+       async def sync(
+           self,
+           state_dict: dict[str, torch.Tensor | DTensor],
+           send: SendFn,
+           version: int | torch.Tensor,
+       ) -> None:
+           payload = {}
+           for name in self._param_names:
+               tensor = state_dict[name]
+               if isinstance(tensor, DTensor):
+                   tensor = tensor.full_tensor()
+               payload[name] = tensor.detach().clone()
+           await send({"version": int(version), "weights": payload})
+
+       async def apply(self, model: torch.nn.Module, recv: RecvFn) -> int:
+           packet = await recv()
+           model.load_state_dict(packet["weights"], strict=False)
+           return int(packet["version"])
+
+各方法的调用约定如下：
+
+- ``init_sender(state_dict, param_names_need_sync, send, recv=None, is_sender=True)``：在 actor 侧运行一次，记录待同步参数名并将 ``self._sender_initialized`` 置为 ``True``。
+- ``init_receiver(state_dict, recv, send=None)``：在 rollout 侧运行一次，并将 ``self._receiver_initialized`` 置为 ``True``。
+- ``sync(state_dict, send, version)``：将 ``DTensor`` 转为完整张量，把选中权重与 ``version`` 打包后通过 ``await send(...)`` 发送。
+- ``apply(model, recv)``：通过 ``await recv()`` 接收数据包，写入 ``model`` 并返回实际应用的整数 ``version``。
+
+在 ``rlinf/hybrid_engines/weight_syncer/base.py`` 的 ``WeightSyncer.create()`` 中添加分发分支，并在 ``rlinf/hybrid_engines/weight_syncer/__init__.py`` 中导出该类：
+
+.. code-block:: python
+
+   elif syncer_type == "custom_dict":
+       from .custom_dict_syncer import DictWeightSyncer
+
+       syncer = DictWeightSyncer()
+
+``WeightSyncer.create()`` 会自动读取 ``weight_syncer`` 顶层的 ``use_ring_sync``、``nccl_max_ctas`` 和 ``nccl_min_ctas``，并写入 ``syncer.comm_options``。接着在 ``examples/embodiment/config/weight_syncer/custom_dict_syncer.yaml`` 中添加对应的 Hydra 预设：
+
+.. code-block:: yaml
+
+   type: custom_dict
+
+在 ``tests/unit_tests/test_weight_syncer.py`` 中补充基于内存 ``asyncio.Queue`` 的 CPU 单元测试，覆盖完整的发送与接收闭环：
+
+.. code-block:: python
+
+   def test_dict_weight_syncer_roundtrip():
+       import asyncio
+       import torch
+
+       async def _run():
+           queue: asyncio.Queue = asyncio.Queue()
+           sender_model = torch.nn.Linear(4, 2)
+           receiver_model = torch.nn.Linear(4, 2)
+           param_names = [
+               name for name, p in sender_model.named_parameters() if p.requires_grad
+           ]
+
+           sender = DictWeightSyncer()
+           receiver = DictWeightSyncer()
+           await sender.init_sender(sender_model.state_dict(), param_names, queue.put)
+           await receiver.init_receiver(receiver_model.state_dict(), queue.get)
+
+           await sender.sync(sender_model.state_dict(), queue.put, version=3)
+           applied_version = await receiver.apply(receiver_model, queue.get)
+
+           assert applied_version == 3
+           for name in param_names:
+               torch.testing.assert_close(
+                   receiver_model.state_dict()[name],
+                   sender_model.state_dict()[name],
+               )
+
+       asyncio.run(_run())
+
+运行权重同步器单元测试：
+
+.. code-block:: bash
+
+   export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+   pytest tests/unit_tests/test_weight_syncer.py

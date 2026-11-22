@@ -203,14 +203,16 @@ Why RLinf
 
   Overview <rst_source/extending/index>
   FSDP Model <rst_source/extending/new_model_fsdp>
-  Megatron-Bridge <rst_source/extending/mbridge>
-  SGLang Embodied <rst_source/extending/sglang_embodied_model>
   SFT Model <rst_source/extending/new_model_sft>
+  SGLang Embodied <rst_source/extending/sglang_embodied_model>
   Simulator Env <rst_source/extending/new_env>
   Real-World Robot <rst_source/extending/new_robot>
   Real-World Task <rst_source/extending/new_task>
-  Algorithms & Rule Rewards <rst_source/extending/new_algorithm>
   Reward Model <rst_source/extending/reward_model>
+  Algorithms & Rule Rewards <rst_source/extending/new_algorithm>
+  Agent & Tool Calling <rst_source/extending/new_agent>
+  Megatron-Bridge <rst_source/extending/mbridge>
+  Accelerator Backend <rst_source/extending/new_accelerator>
   Advanced Integrations <rst_source/extending/advanced-integrations/index>
 
 .. toctree::

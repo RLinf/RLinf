@@ -3,8 +3,8 @@
 
 在 RLinf 中训练并部署具身 RL 的奖励模型，或接入自定义奖励模型类。按需求选择对应路径：
 
-- **路径 A：训练并使用内置奖励模型**——采集轨迹、预处理数据、训练 ResNet 图像二分类模型或微调 VLM 奖励模型（单帧、历史窗口 VLM Trend，或 Success + Potential shaping VLM），并接入仿真或真机 RL。
-- **路径 B：实现并注册自定义奖励模型**——继承 ``BaseRewardModel`` 并注册到 ``reward_model_registry``，或在内置 VLM 奖励模型上注册自定义输入构造器与输出解析器。
+- **路径 A：实现并注册自定义奖励模型**——继承 ``BaseRewardModel`` 并注册到 ``reward_model_registry``，或在内置 VLM 奖励模型上注册自定义输入构造器与输出解析器。
+- **路径 B：训练并使用内置奖励模型**——采集轨迹、预处理数据、训练 ResNet 图像二分类模型或微调 VLM 奖励模型（单帧、历史窗口 VLM Trend，或 Success + Potential shaping VLM），并接入仿真或真机 RL。
 
 速览
 ----
@@ -16,22 +16,122 @@
    * - 场景
      - 内容
      - 直达章节
-   * - 仿真场景奖励模型
-     - 轨迹采集、数据预处理、ResNet / VLM Trend / Success + Potential 训练，以及在线 RL 推理（本地 Hugging Face 或 SGLang API）
-     - :ref:`仿真场景 Reward Model <sim-reward-model>`
-   * - 真机场景奖励模型
-     - Franka 键盘标注或固定位姿采集、数据集转换、模型训练与遥操作在线推理
-     - :ref:`真机场景 Reward Model <realworld-reward-model>`
    * - 自定义奖励模型
      - 继承 ``BaseRewardModel``、在 ``reward_model_registry`` 中注册，或扩展 VLM ``input_builder`` / ``reward_parser`` 插件
-     - :ref:`自定义 Reward Model <custom-reward-model>`
+     - :ref:`1. 自定义奖励模型 <custom-reward-model>`
+   * - 内置仿真场景工作流
+     - 轨迹采集、数据预处理、ResNet / VLM Trend / Success + Potential 训练，以及在线 RL 推理（本地 Hugging Face 或 SGLang API）
+     - :ref:`2. 内置仿真场景工作流 <sim-reward-model>`
+   * - 内置真机场景工作流
+     - Franka 键盘标注或固定位姿采集、数据集转换、模型训练与遥操作在线推理
+     - :ref:`3. 内置真机场景工作流 <realworld-reward-model>`
    * - 规则类文本奖励
      - 通过 ``register_reward`` 为推理和 agent 任务编写确定性奖励
      - :doc:`算法与规则奖励 <new_algorithm>`
 
+.. _custom-reward-model:
+
+1. 自定义奖励模型
+-----------------
+
+新增自定义奖励模型架构时，继承 ``BaseRewardModel`` 并在 ``rlinf/models/embodiment/reward/__init__.py`` 中注册。在线 RL 推理使用的 ``EmbodiedRewardWorker`` 与训练使用的 ``FSDPRewardWorker`` 都会通过 ``get_reward_model_class`` 按 ``model_type`` 查找实现类。
+
+实现奖励模型类
+^^^^^^^^^^^^^^
+
+在 ``rlinf/models/embodiment/reward/`` 下新建模块，实现训练前向 ``forward``\ （返回包含 ``loss`` 和 ``accuracy`` 的字典）与无梯度推理 ``compute_reward``\ （返回形状为 ``[B]`` 或 ``[B, 1]`` 的张量）：
+
+.. code-block:: python
+
+   # rlinf/models/embodiment/reward/my_reward_model.py
+   from typing import Any, Optional
+
+   import torch
+   import torch.nn as nn
+   import torch.nn.functional as F
+   from omegaconf import DictConfig
+
+   from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
+
+
+   class MyRewardModel(BaseRewardModel):
+       def __init__(self, cfg: DictConfig):
+           super().__init__(cfg)
+           self.head = nn.Linear(cfg.state_dim, 1)
+
+       def forward(
+           self,
+           input_data: torch.Tensor,
+           labels: Optional[torch.Tensor] = None,
+       ) -> dict[str, Any]:
+           logits = self.head(input_data).squeeze(-1)
+           loss = F.binary_cross_entropy_with_logits(logits, labels.float())
+           preds = (torch.sigmoid(logits) >= 0.5).long()
+           acc = (preds == labels.long()).float().mean()
+           return {"loss": loss, "accuracy": acc}
+
+       @torch.no_grad()
+       def compute_reward(self, observations: dict[str, Any]) -> torch.Tensor:
+           logits = self.head(observations["states"]).squeeze(-1)
+           return torch.sigmoid(logits)
+
+注册奖励模型
+^^^^^^^^^^^^
+
+在 ``rlinf/models/embodiment/reward/__init__.py`` 的 ``_REWARD_MODEL_IMPORTS`` 中添加按需导入项（``reward_model_registry`` 与 ``get_reward_model_class`` 均读取该表）：
+
+.. code-block:: python
+
+   _REWARD_MODEL_IMPORTS = {
+       # ...
+       "my_reward": (
+           "rlinf.models.embodiment.reward.my_reward_model",
+           "MyRewardModel",
+       ),
+   }
+
+如需通过 ``FSDPRewardWorker`` 训练并经过 ``actor.model.model_type`` 配置校验，同时在 ``rlinf/config.py`` 的 ``SupportedModel`` 中注册该名称。
+
+在 YAML 中选择并验证
+^^^^^^^^^^^^^^^^^^^^
+
+在 RL 或奖励模型训练配置中指定注册名：
+
+.. code-block:: yaml
+
+   reward:
+     use_reward_model: True
+     model:
+       model_type: "my_reward"
+       state_dim: 16
+
+在 CPU 上本地验证注册查找和 ``compute_reward`` 输出形状：
+
+.. code-block:: bash
+
+   python -c '
+   import torch
+   from omegaconf import OmegaConf
+   from rlinf.models.embodiment.reward import get_reward_model_class
+
+   cls = get_reward_model_class("my_reward")
+   model = cls(OmegaConf.create({"state_dim": 16}))
+   out = model.compute_reward({"states": torch.zeros(4, 16)})
+   assert out.shape == (4,)
+   '
+
+自定义 VLM 输入构造器与输出解析器
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+如果自定义奖励复用 VLM 底座、只需修改 prompt 格式或文本解析逻辑，保持 ``model_type: "vlm"`` 或 ``"buffered_vlm"``，直接注册插件即可，无需新建模型类：
+
+- 在 ``rlinf/models/embodiment/reward/vlm_reward_utils/input_builder.py`` 中用 ``@register_input_builder("<name>")`` 注册输入构造器，并在 YAML 中设置 ``reward.model.input_builder_name``。
+- 在 ``rlinf/models/embodiment/reward/vlm_reward_utils/reward_parser.py`` 中用 ``@register_reward_parser("<name>")`` 注册解析器，并在 YAML 中设置 ``reward.model.reward_parser_name``。
+
+
 .. _sim-reward-model:
 
-仿真场景 Reward Model
+2. 内置仿真场景工作流
 ---------------------
 
 完整流程包括四个阶段：
@@ -649,7 +749,7 @@ ManiSkill PickCube3View 实验从独立评估成功率为 58.89% 的 policy chec
 
 .. _realworld-reward-model:
 
-真机场景 Reward Model
+3. 内置真机场景工作流
 ---------------------
 
 在真实世界的 Franka 机械臂上直接采集并预处理 reward model 训练数据集。支持两种数据采集方式：**通用键盘标注方式** 和 **固定位姿方式**\ （通过预定的目标位姿驱动 episode 成功/失败）。
@@ -1050,103 +1150,3 @@ SpaceMouse 控制说明：
 4. 原始 sigmoid 概率输出到终端。``standalone_realworld=True`` 时，reward model 还直接驱动成功/失败判定和环境重置。
 
 与 :doc:`../examples/embodied/franka_reward_model` 中的完整 RL 流程相比，遥操作脚本不运行 policy、actor 或 rollout worker——它纯粹是人在回路的 reward model 评估。
-
-
-.. _custom-reward-model:
-
-自定义 Reward Model
--------------------
-
-新增自定义奖励模型架构时，继承 ``BaseRewardModel`` 并在 ``rlinf/models/embodiment/reward/__init__.py`` 中注册。在线 RL 推理使用的 ``EmbodiedRewardWorker`` 与训练使用的 ``FSDPRewardWorker`` 都会通过 ``get_reward_model_class`` 按 ``model_type`` 查找实现类。
-
-1. 继承 ``BaseRewardModel``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-在 ``rlinf/models/embodiment/reward/`` 下新建模块，实现训练前向 ``forward``\ （返回包含 ``loss`` 和 ``accuracy`` 的字典）与无梯度推理 ``compute_reward``\ （返回形状为 ``[B]`` 或 ``[B, 1]`` 的张量）：
-
-.. code-block:: python
-
-   # rlinf/models/embodiment/reward/my_reward_model.py
-   from typing import Any, Optional
-
-   import torch
-   import torch.nn as nn
-   import torch.nn.functional as F
-   from omegaconf import DictConfig
-
-   from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
-
-
-   class MyRewardModel(BaseRewardModel):
-       def __init__(self, cfg: DictConfig):
-           super().__init__(cfg)
-           self.head = nn.Linear(cfg.state_dim, 1)
-
-       def forward(
-           self,
-           input_data: torch.Tensor,
-           labels: Optional[torch.Tensor] = None,
-       ) -> dict[str, Any]:
-           logits = self.head(input_data).squeeze(-1)
-           loss = F.binary_cross_entropy_with_logits(logits, labels.float())
-           preds = (torch.sigmoid(logits) >= 0.5).long()
-           acc = (preds == labels.long()).float().mean()
-           return {"loss": loss, "accuracy": acc}
-
-       @torch.no_grad()
-       def compute_reward(self, observations: dict[str, Any]) -> torch.Tensor:
-           logits = self.head(observations["states"]).squeeze(-1)
-           return torch.sigmoid(logits)
-
-2. 注册到 ``reward_model_registry``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-在 ``rlinf/models/embodiment/reward/__init__.py`` 的 ``_REWARD_MODEL_IMPORTS`` 中添加按需导入项（``reward_model_registry`` 与 ``get_reward_model_class`` 均读取该表）：
-
-.. code-block:: python
-
-   _REWARD_MODEL_IMPORTS = {
-       # ...
-       "my_reward": (
-           "rlinf.models.embodiment.reward.my_reward_model",
-           "MyRewardModel",
-       ),
-   }
-
-如需通过 ``FSDPRewardWorker`` 训练并经过 ``actor.model.model_type`` 配置校验，同时在 ``rlinf/config.py`` 的 ``SupportedModel`` 中注册该名称。
-
-3. 在 YAML 中选择并验证
-^^^^^^^^^^^^^^^^^^^^^^^
-
-在 RL 或奖励模型训练配置中指定注册名：
-
-.. code-block:: yaml
-
-   reward:
-     use_reward_model: True
-     model:
-       model_type: "my_reward"
-       state_dim: 16
-
-在 CPU 上本地验证注册查找和 ``compute_reward`` 输出形状：
-
-.. code-block:: bash
-
-   python -c '
-   import torch
-   from omegaconf import OmegaConf
-   from rlinf.models.embodiment.reward import get_reward_model_class
-
-   cls = get_reward_model_class("my_reward")
-   model = cls(OmegaConf.create({"state_dim": 16}))
-   out = model.compute_reward({"states": torch.zeros(4, 16)})
-   assert out.shape == (4,)
-   '
-
-自定义 VLM 输入构造器与输出解析器
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-如果自定义奖励复用 VLM 底座、只需修改 prompt 格式或文本解析逻辑，保持 ``model_type: "vlm"`` 或 ``"buffered_vlm"``，直接注册插件即可，无需新建模型类：
-
-- 在 ``rlinf/models/embodiment/reward/vlm_reward_utils/input_builder.py`` 中用 ``@register_input_builder("<name>")`` 注册输入构造器，并在 YAML 中设置 ``reward.model.input_builder_name``。
-- 在 ``rlinf/models/embodiment/reward/vlm_reward_utils/reward_parser.py`` 中用 ``@register_reward_parser("<name>")`` 注册解析器，并在 YAML 中设置 ``reward.model.reward_parser_name``。

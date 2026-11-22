@@ -203,14 +203,16 @@ RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础
 
   总览 <rst_source/extending/index>
   FSDP 模型 <rst_source/extending/new_model_fsdp>
-  Megatron-Bridge <rst_source/extending/mbridge>
-  SGLang 具身模型 <rst_source/extending/sglang_embodied_model>
   SFT 模型 <rst_source/extending/new_model_sft>
+  SGLang 具身模型 <rst_source/extending/sglang_embodied_model>
   仿真环境 <rst_source/extending/new_env>
   真机机器人 <rst_source/extending/new_robot>
   真机任务 <rst_source/extending/new_task>
-  算法与规则奖励 <rst_source/extending/new_algorithm>
   奖励模型 <rst_source/extending/reward_model>
+  算法与规则奖励 <rst_source/extending/new_algorithm>
+  智能体与工具调用 <rst_source/extending/new_agent>
+  Megatron-Bridge <rst_source/extending/mbridge>
+  加速卡后端 <rst_source/extending/new_accelerator>
   高级集成 <rst_source/extending/advanced-integrations/index>
 
 .. toctree::
