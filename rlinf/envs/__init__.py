@@ -48,6 +48,7 @@ class SupportedEnvType(Enum):
     POLARIS = "polaris"
     ROBOLAB = "robolab"
     SIMPLE = "simple"
+    ALOHA = "aloha"
 
     @classmethod
     def _missing_(cls, value: object) -> "SupportedEnvType | None":
@@ -138,6 +139,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.sim.metaworld.metaworld_env import MetaWorldEnv
 
         return MetaWorldEnv
+    elif env_type == SupportedEnvType.ALOHA:
+        from rlinf.envs.sim.aloha.aloha_env import AlohaEnv
+
+        return AlohaEnv
     elif env_type == SupportedEnvType.BEHAVIOR:
         from rlinf.envs.sim.behavior.behavior_env import BehaviorEnv
 
