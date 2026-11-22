@@ -6,15 +6,33 @@ build-backend = "setuptools.build_meta"
 name = "rlinf-cli"
 version = "0.4.0"
 description = "Lightweight zero-dependency CLI launcher for RLinf"
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.8"
 license = { text = "Apache-2.0" }
 authors = [{ name = "RLinf Contributors" }]
+keywords = [
+    "reinforcement-learning",
+    "embodied-ai",
+    "robotics",
+    "cli",
+    "rlinf",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/RLinf/RLinf"
 Repository = "https://github.com/RLinf/RLinf"
 Documentation = "https://rlinf.readthedocs.io/"
+"Bug Report" = "https://github.com/RLinf/RLinf/issues"
 
 [project.scripts]
 rlinf = "rlinf_cli:main"
