@@ -111,7 +111,7 @@
 
       在 LIBERO 上用 PPO 训练基于 π₀.₅ 的 Dexbotic policy。
 
-   .. grid-item-card:: MolmoAct2
+   .. grid-item-card:: MolmoAct2（仅评测）
       :img-top: https://raw.githubusercontent.com/allenai/molmoact2/main/assets/MolmoAct2.svg
       :img-alt: MolmoAct2 标识
       :link: embodied/molmoact2
@@ -155,7 +155,7 @@
    LingbotVLA <embodied/lingbotvla_index>
    StarVLA <embodied/starvla>
    Dexbotic <embodied/dexbotic>
-   MolmoAct2 <embodied/molmoact2>
+   MolmoAct2（仅评测） <embodied/molmoact2>
    Evo-1 <embodied/evo1>
    ABot-M0 <embodied/abot_m0>
    Psi0 <embodied/psi0>

@@ -149,6 +149,12 @@ On full runs, MLP ``success_once`` climbs above ``0.90`` within a few hundred ep
 .. grid:: 1 3 3 3
    :gutter: 2
 
+   .. grid-item-card:: RLinf Walkthrough
+      :link: walkthrough
+      :link-type: doc
+
+      Visual tour of how RLinf runs, scales across GPUs, and organizes configs and tools.
+
    .. grid-item-card:: Embodied Training
       :link: ../examples/index
       :link-type: doc
@@ -160,9 +166,3 @@ On full runs, MLP ``success_once`` climbs above ``0.90`` within a few hundred ep
       :link-type: doc
 
       Evaluate trained checkpoints across embodied benchmarks.
-
-   .. grid-item-card:: Performance Tuning
-      :link: ../guides/performance/index
-      :link-type: doc
-
-      Learn :doc:`Training Pipeline Mode <../guides/training_pipeline>` and :doc:`Execution Modes <../concepts/execution_modes>`.

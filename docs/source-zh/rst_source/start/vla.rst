@@ -149,6 +149,12 @@
 .. grid:: 1 3 3 3
    :gutter: 2
 
+   .. grid-item-card:: 快速熟悉 RLinf
+      :link: walkthrough
+      :link-type: doc
+
+      通过图示看懂训练闭环、多卡扩展方式以及配置和工具的目录位置。
+
    .. grid-item-card:: 具身训练
       :link: ../examples/index
       :link-type: doc
@@ -160,9 +166,3 @@
       :link-type: doc
 
       在具身基准上评估训练后的权重。
-
-   .. grid-item-card:: 性能调优
-      :link: ../guides/performance/index
-      :link-type: doc
-
-      学习 :doc:`流水线训练模式 <../guides/training_pipeline>` 与 :doc:`执行模式 <../concepts/execution_modes>`。

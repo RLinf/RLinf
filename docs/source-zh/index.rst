@@ -58,10 +58,10 @@
       在 Franka、SO-101、ARX X5、R2 等真机上运行硬件测试、遥操作与数据采集、SFT 与在线 RL。
 
    .. grid-item-card:: 智能体 / 推理 RL
-      :link: rst_source/examples/agentic/math_reasoning/reasoning
+      :link: rst_source/examples/agentic/index
       :link-type: doc
 
-      从 Qwen2.5 数学推理 GRPO 入手，或继续浏览多智能体与工具调用示例。
+      按场景选择数学推理、多轮工具调用、多智能体与图像/视频生成示例，支持单机到多节点扩展。
 
    .. grid-item-card:: 自定义扩展
       :link: rst_source/extending/index
@@ -100,6 +100,7 @@
   总览 <rst_source/start/index>
   安装与环境 <rst_source/start/installation>
   训练快速开始 <rst_source/start/vla>
+  快速熟悉 RLinf <rst_source/start/walkthrough>
   命令速查表 <rst_source/start/cheat_sheet>
   常见问题 <rst_source/resources/faq>
 

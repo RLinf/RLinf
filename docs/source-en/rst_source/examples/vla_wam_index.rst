@@ -111,7 +111,7 @@ Open a model page for the full workflow and its supported environments.
 
       Train the π₀.₅-based Dexbotic policy with PPO on LIBERO.
 
-   .. grid-item-card:: MolmoAct2
+   .. grid-item-card:: MolmoAct2 (Eval Only)
       :img-top: https://raw.githubusercontent.com/allenai/molmoact2/main/assets/MolmoAct2.svg
       :img-alt: MolmoAct2 logo
       :link: embodied/molmoact2
@@ -155,7 +155,7 @@ Open a model page for the full workflow and its supported environments.
    LingbotVLA <embodied/lingbotvla_index>
    StarVLA <embodied/starvla>
    Dexbotic <embodied/dexbotic>
-   MolmoAct2 <embodied/molmoact2>
+   MolmoAct2 (Eval Only) <embodied/molmoact2>
    Evo-1 <embodied/evo1>
    ABot-M0 <embodied/abot_m0>
    Psi0 <embodied/psi0>

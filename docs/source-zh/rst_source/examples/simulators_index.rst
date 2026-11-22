@@ -80,7 +80,7 @@
 
       在 RoboCasa365 基准套件上用 PPO 训练 π₀。
 
-   .. grid-item-card:: RoboLab
+   .. grid-item-card:: RoboLab（仅评测）
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png
       :img-alt: RoboLab 操作基准
       :link: embodied/robolab
@@ -96,7 +96,7 @@
 
       在 PolaRiS 桌面操作任务上用 PPO 训练 OpenPI policy。
 
-   .. grid-item-card:: RoboDojo
+   .. grid-item-card:: RoboDojo（仅评测）
       :img-top: https://media.luminis-sim.com/media/home/teaser.png
       :img-alt: RoboDojo 基准
       :link: embodied/robodojo
@@ -177,9 +177,9 @@
    IsaacLab <embodied/isaaclab>
    RoboCasa <embodied/robocasa>
    RoboCasa365 <embodied/robocasa365>
-   RoboLab <embodied/robolab>
+   RoboLab（仅评测） <embodied/robolab>
    PolaRiS <embodied/polaris>
-   RoboDojo <embodied/robodojo>
+   RoboDojo（仅评测） <embodied/robodojo>
    RoboVerse <embodied/roboverse>
    Franka-Sim <embodied/frankasim>
    EmbodiChain <embodied/embodichain>

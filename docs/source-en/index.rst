@@ -58,10 +58,10 @@ Choose Your Path
       Run hardware checks, teleoperation, data collection, SFT, and online RL on Franka, SO-101, ARX X5, R2, and more.
 
    .. grid-item-card:: Agentic / Reasoning RL
-      :link: rst_source/examples/agentic/math_reasoning/reasoning
+      :link: rst_source/examples/agentic/index
       :link-type: doc
 
-      Start with Qwen2.5 math reasoning GRPO, or browse multi-agent and tool-use workflows.
+      Pick a single-node or multi-node track across math reasoning, tool-use agents, multimodal RL, and diffusion.
 
    .. grid-item-card:: Bring Your Own
       :link: rst_source/extending/index
@@ -100,6 +100,7 @@ Why RLinf
   Overview <rst_source/start/index>
   Installation <rst_source/start/installation>
   Quick Start <rst_source/start/vla>
+  RLinf Walkthrough <rst_source/start/walkthrough>
   Cheat Sheet <rst_source/start/cheat_sheet>
   FAQ <rst_source/resources/faq>
 

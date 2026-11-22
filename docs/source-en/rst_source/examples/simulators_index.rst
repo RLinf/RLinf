@@ -80,7 +80,7 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
 
       Train π₀ with PPO on the RoboCasa365 benchmark suite.
 
-   .. grid-item-card:: RoboLab
+   .. grid-item-card:: RoboLab (Eval Only)
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png
       :img-alt: RoboLab manipulation benchmark
       :link: embodied/robolab
@@ -96,7 +96,7 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
 
       Train OpenPI policies with PPO on PolaRiS tabletop manipulation tasks.
 
-   .. grid-item-card:: RoboDojo
+   .. grid-item-card:: RoboDojo (Eval Only)
       :img-top: https://media.luminis-sim.com/media/home/teaser.png
       :img-alt: RoboDojo benchmark
       :link: embodied/robodojo
@@ -177,9 +177,9 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
    IsaacLab <embodied/isaaclab>
    RoboCasa <embodied/robocasa>
    RoboCasa365 <embodied/robocasa365>
-   RoboLab <embodied/robolab>
+   RoboLab (Eval Only) <embodied/robolab>
    PolaRiS <embodied/polaris>
-   RoboDojo <embodied/robodojo>
+   RoboDojo (Eval Only) <embodied/robodojo>
    RoboVerse <embodied/roboverse>
    Franka-Sim <embodied/frankasim>
    EmbodiChain <embodied/embodichain>
