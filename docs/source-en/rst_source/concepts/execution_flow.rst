@@ -3,13 +3,6 @@ RLinf Execution Flow
 
 Every RLinf job runs through four runtime stages: an entry script loads configuration and boots a Ray-backed cluster, launches each role as a worker group, wires distributed channels into a task runner, and executes the training loop. Read this page for the end-to-end lifecycle of a run; see :doc:`flow` for the Python programming model and :doc:`execution_modes` for GPU placement trade-offs.
 
-.. figure:: ../../_static/svg/overview.svg
-   :width: 90%
-   :align: center
-   :class: overview-svg
-
-   RLinf system architecture overview.
-
 End-to-End Architecture
 -----------------------
 

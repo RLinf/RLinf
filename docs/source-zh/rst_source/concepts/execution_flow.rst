@@ -3,13 +3,6 @@ RLinf 执行流程
 
 RLinf 的每次训练任务都按四个运行时阶段推进：入口脚本加载配置并启动 Ray 集群、为各角色拉起 worker 组、建立分布式通道并交由 runner 编排，随后进入训练迭代循环。本页梳理端到端的运行生命周期；Python 编程模型见 :doc:`flow`，GPU 部署模式的权衡见 :doc:`execution_modes`。
 
-.. figure:: ../../_static/svg/overview.svg
-   :width: 90%
-   :align: center
-   :class: overview-svg
-
-   RLinf 系统架构总览。
-
 端到端架构
 ----------
 
