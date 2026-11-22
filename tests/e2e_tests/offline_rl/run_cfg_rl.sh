@@ -3,15 +3,20 @@ set -x
 
 tabs 4
 
-CONFIG=$1
-BACKEND=${2:-"egl"}
+REPO_PATH="${REPO_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+export REPO_PATH
+
+CONFIG="${1%.yaml}"
+if [[ -n "${2:-}" && "${2:-}" != +* && "${2:-}" != *=* && "${2:-}" != -* && "${2:-}" != ~* ]]; then
+    BACKEND=$2
+    shift 2
+else
+    BACKEND="egl"
+    shift 1
+fi
 
 export MUJOCO_GL=${BACKEND}
 export PYOPENGL_PLATFORM=${BACKEND}
-export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+export PYTHONPATH="${REPO_PATH}${PYTHONPATH:+:${PYTHONPATH}}"
 
-E2E_CONFIG="${REPO_PATH}/tests/e2e_tests/offline_rl"
-
-python "${REPO_PATH}/examples/offline_rl/policy_optimization/cfg_rl/train_cfg.py" \
-  --config-path "${E2E_CONFIG}" \
-  --config-name "${CONFIG}"
+rlinf train --family offline_rl "${REPO_PATH}/tests/e2e_tests/offline_rl/${CONFIG}.yaml" "$@"

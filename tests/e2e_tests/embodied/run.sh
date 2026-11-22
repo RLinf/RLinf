@@ -3,11 +3,14 @@ set -x
 
 tabs 4
 
-CONFIG=$1
+REPO_PATH="${REPO_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+export REPO_PATH
+
+CONFIG="${1%.yaml}"
 
 # $2 is a backend only if it's non-empty and not a hydra override, which is
 # either "+key=value" or a plain "key=value".
-if [[ -n "${2:-}" && "${2:-}" != +* && "${2:-}" != *=* ]]; then
+if [[ -n "${2:-}" && "${2:-}" != +* && "${2:-}" != *=* && "${2:-}" != -* && "${2:-}" != ~* ]]; then
     BACKEND=$2
     SHIFT_COUNT=2
 else
@@ -17,9 +20,7 @@ fi
 
 export MUJOCO_GL=${BACKEND}
 export PYOPENGL_PLATFORM=${BACKEND}
-export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
-# setup_sim_env is defined in sim_env.sh.
-source "${REPO_PATH}/examples/embodiment/sim_env.sh"
+export PYTHONPATH="${REPO_PATH}${PYTHONPATH:+:${PYTHONPATH}}"
 
 # A "mock" config runs a real-world env against faked vendor SDKs, so the
 # hardware paths run without a robot. The fakes install themselves through
@@ -27,11 +28,9 @@ source "${REPO_PATH}/examples/embodiment/sim_env.sh"
 # which is why this is an environment setting rather than a config field.
 if [[ "${CONFIG}" == *mock* ]]; then
     export RLINF_ROBOT_MOCKS=1
-    export PYTHONPATH=${REPO_PATH}/tests:${REPO_PATH}/tests/robot_mocks:$PYTHONPATH
+    export PYTHONPATH="${REPO_PATH}/tests:${REPO_PATH}/tests/robot_mocks:${PYTHONPATH}"
     echo "[mock] faking the vendor SDKs; no robot is required"
 fi
-
-setup_sim_env
 
 # Libero variant: standard, pro, plus
 export LIBERO_TYPE=${LIBERO_TYPE:-"standard"}
@@ -47,14 +46,12 @@ fi
 
 shift $SHIFT_COUNT
 
-# A config named for a stage runs that stage's entry point. The Franka guide
-# walks through collection, then dataset processing, then training, and each
-# is a different script that reaches RealWorldEnv its own way.
+CONFIG_FILE="${REPO_PATH}/tests/e2e_tests/embodied/${CONFIG}.yaml"
 case "${CONFIG}" in
-    *collect_dataset*)  ENTRY=examples/reward/realworld_collect_process_dataset.py ;;
-    *collect_data*)     ENTRY=examples/embodiment/collect_real_data.py ;;
-    *)                  ENTRY=examples/embodiment/train_embodied_agent.py ;;
+    *collect_dataset*|*collect_data*)
+        rlinf collect "${CONFIG_FILE}" "$@"
+        ;;
+    *)
+        rlinf train "${CONFIG_FILE}" "$@"
+        ;;
 esac
-echo "[entry] ${ENTRY}"
-
-python ${REPO_PATH}/${ENTRY} --config-path ${REPO_PATH}/tests/e2e_tests/embodied --config-name ${CONFIG} $@

@@ -76,6 +76,9 @@ Repository = "https://github.com/RLinf/RLinf"
 Documentation = "https://rlinf.readthedocs.io/"
 "Bug Report" = "https://github.com/RLinf/RLinf/issues"
 
+[project.scripts]
+rlinf = "rlinf.cli:main"
+
 [project.optional-dependencies]
 agentic = [
     "numpy==2.2",

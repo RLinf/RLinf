@@ -3,14 +3,20 @@ set -x
 
 tabs 4
 
-CONFIG=$1
-BACKEND=${2:-"egl"}
+REPO_PATH="${REPO_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+export REPO_PATH
+
+CONFIG="${1%.yaml}"
+if [[ -n "${2:-}" && "${2:-}" != +* && "${2:-}" != *=* && "${2:-}" != -* && "${2:-}" != ~* ]]; then
+    BACKEND=$2
+    shift 2
+else
+    BACKEND="egl"
+    shift 1
+fi
 
 export MUJOCO_GL=${BACKEND}
 export PYOPENGL_PLATFORM=${BACKEND}
-export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
-# setup_sim_env is defined in sim_env.sh.
-source "${REPO_PATH}/examples/embodiment/sim_env.sh"
-setup_sim_env
+export PYTHONPATH="${REPO_PATH}${PYTHONPATH:+:${PYTHONPATH}}"
 
-python ${REPO_PATH}/examples/embodiment/train_async.py --config-path ${REPO_PATH}/tests/e2e_tests/embodied --config-name ${CONFIG}
+rlinf train --async "${REPO_PATH}/tests/e2e_tests/embodied/${CONFIG}.yaml" "$@"

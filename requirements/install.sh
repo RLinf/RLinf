@@ -126,7 +126,15 @@ USE_MIRRORS=0
 # where it defaults to https://gh-proxy.com/ (see setup_mirror).
 GITHUB_PREFIX="${GITHUB_PREFIX:-}"
 NO_ROOT=0
-NO_INSTALL_RLINF_CMD="--no-install-project"
+# Install RLinf editable by default inside a full repository checkout so the
+# `rlinf` CLI entry point is available in the venv. Docker builds only copy
+# pyproject.toml and requirements/, so they automatically stay --no-install-project.
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+if [ -d "$REPO_ROOT/rlinf" ] && [ -f "$REPO_ROOT/README.md" ] && [ -f "$REPO_ROOT/LICENSE" ]; then
+    NO_INSTALL_RLINF_CMD=""
+else
+    NO_INSTALL_RLINF_CMD="--no-install-project"
+fi
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
@@ -200,7 +208,8 @@ Common options:
     --no-natten            Skip natten install. Useful when no SHI-Labs wheel matches the
                            installed torch x cuda x python combo; install manually from
                            https://whl.natten.org instead.
-    --install-rlinf        Install RLinf itself into the python.
+    --install-rlinf        Install RLinf itself into the python (default in a repo checkout).
+    --no-install-rlinf     Skip installing RLinf itself (--no-install-project).
 EOF
 }
 
@@ -319,6 +328,10 @@ parse_args() {
                 ;;
             --install-rlinf)
                 NO_INSTALL_RLINF_CMD=""
+                shift
+                ;;
+            --no-install-rlinf)
+                NO_INSTALL_RLINF_CMD="--no-install-project"
                 shift
                 ;;
             --no-flash-attn)
