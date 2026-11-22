@@ -58,7 +58,7 @@
       :link: advanced-integrations/index
       :link-type: doc
 
-      添加 Megatron-Bridge 与权重同步工作流。
+      添加 Megatron-Bridge、权重同步与 session server 工作流。
 
 .. toctree::
    :hidden:

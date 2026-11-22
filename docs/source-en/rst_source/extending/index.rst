@@ -62,7 +62,7 @@ SFT, then use Advanced Integrations for backend integration and weight transport
       :link: advanced-integrations/index
       :link-type: doc
 
-      Add Megatron-Bridge and weight synchronization workflows.
+      Add Megatron-Bridge, weight synchronization, and session server workflows.
 
 .. toctree::
    :hidden:

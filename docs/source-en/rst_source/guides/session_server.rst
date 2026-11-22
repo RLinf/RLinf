@@ -99,19 +99,29 @@ The parent config places the Megatron actor on node 0 and the SGLang server
 rollout (8 instances at TP1) on node 1. Each step uses
 ``rollout_batch_size`` 512 × ``group_size`` 4.
 
-Fill in the data path, the Qwen2.5-3B-Instruct model path, and the retrieval
-server address in ``train_qwen2.5_async.yaml``, as in the
-:doc:`asynchronous Search-R1 example
-</rst_source/examples/agentic/searchr1/async>`. Then start training from the
-head node:
+Start the retrieval server as described in :doc:`Search-R1
+</rst_source/examples/agentic/searchr1/index>`. Then fill in three values in
+``train_qwen2.5_async.yaml``:
+
+.. code-block:: yaml
+
+   data:
+     train_data_paths: ["/path/to/data/searchr1_train.jsonl"]
+   rollout:
+     model:
+       model_path: /path/to/model/Qwen2.5-3B-Instruct
+   tools:
+     search:
+       server_addr: 0.0.0.0:8000  # the retrieval server
+
+Start training from the head node:
 
 .. code-block:: bash
 
    bash examples/agent/searchr1/run_train.sh train_qwen2.5_async_session_server
 
 Besides the asynchronous run, the script starts a session server, its payload
-channel, and a router on node 1. The agent loop sends its generate requests to
-the session server.
+channel, and a router on node 1.
 
 The results below come from three 100-step runs on 2×8 A100-80G: two on this
 config and one on ``train_qwen2.5_async.yaml`` without the session server.
@@ -335,8 +345,7 @@ Use the OpenAI Chat Completions Endpoint
 ----------------------------------------
 
 Each session server also serves the OpenAI chat completions API at
-``/sessions/<session id>/v1/chat/completions``. Agents built on the OpenAI
-API can send it messages instead of token ids. The session server renders
+``/sessions/<session id>/v1/chat/completions``. The session server renders
 the messages into token ids with the chat template of the model family set
 by ``agentloop.agentic_tokenizer``. It sends them to the engine the same way
 as a ``generate`` request and returns an OpenAI ``chat.completion``
@@ -369,7 +378,10 @@ session that is already open:
 
    from openai import AsyncOpenAI, BadRequestError
 
-   from rlinf.workers.agent.agent_loop import MultiAgentLoopWorker
+   from rlinf.workers.agent.agent_loop import (
+       GroupDiscarded,
+       MultiAgentLoopWorker,
+   )
 
 
    class MyChatAgentLoopWorker(MultiAgentLoopWorker):
@@ -405,6 +417,9 @@ session that is already open:
                        messages.append(
                            {"role": "tool", "tool_call_id": call.id, "content": result}
                        )
+           if num_responses == 0:
+               # Not even the first request fit: drop the whole group.
+               raise GroupDiscarded("context_length_exceeded")
            content = (message.content or "") if message is not None else ""
            reward = score(content, answer)  # your reward
            close_fields = {
@@ -427,9 +442,10 @@ agent loop.
 Set ``max_retries=0`` on the client. A retried request is sampled again,
 and only one of the two answers is trained.
 
-A prompt that leaves no room in ``runner.seq_length`` gets a 400 with the
-code ``context_length_exceeded``. The example ends the trajectory there and
-scores the last answer.
+When a request no longer fits in ``runner.seq_length`` (see the limits
+below), the example ends the trajectory and scores the last answer. If not
+even the first request fits, it drops the whole group, because a trajectory
+without a trained turn cannot be closed.
 
 The session server reuses the tokens of earlier turns. A turn's prompt is the
 previous turn's prompt and output tokens, exactly as the engine produced
@@ -470,8 +486,8 @@ The endpoint also rejects the following with a 400 and an OpenAI error body:
 - ``response_format``;
 - ``chat_template_kwargs`` different from the config.
 
-A session handles one request at a time. A request sent while another one is
-still running gets a 409.
+A session handles one request at a time, on either endpoint. A request or a
+close sent while another request is still running gets a 409.
 
 Configuration and Limitations
 -----------------------------
@@ -567,7 +583,8 @@ Limitations
 ^^^^^^^^^^^
 
 - Requires the asynchronous runner, a Megatron actor, the SGLang server
-  backend, and the Search-R1 agent.
+  backend, and the Search-R1 agent. To connect the session server to another
+  runner, see :doc:`/rst_source/extending/session_server_runner`.
 - The chat completions endpoint has no real streaming. With
   ``stream: true``, the whole turn comes back in one chunk, followed by
   ``[DONE]``.
@@ -582,27 +599,3 @@ Limitations
   server it assembles only for that check.
 - HTTP is the only transport (``session_server.type: http``).
 - If a session server dies, the run ends. Nothing restarts it.
-
-Use It from Another Runner
-^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-The session server does not depend on asynchronous training. RLinf connects
-only the asynchronous runner to it. Another runner, such as the synchronous
-agent runner, must:
-
-- launch the router and the session servers, and register the engines.
-  The agent runner has a startup hook for this. When the hook returns the
-  session server URLs, the agent loop sends its requests to the session
-  servers;
-- watch the session servers, so a failure ends the run;
-- send the session servers the loaded weight versions after each sync;
-- collect the session server metrics every step;
-- pass the payload channels to the actor;
-- for each finished group, tell the actor where to fetch its data, and delete
-  the data of every group it drops.
-
-With the asynchronous runner, the buffer worker does the last item. A
-synchronous runner should not use the buffer worker, because it admits groups
-ahead of training. You must also relax the ``runner.async_mode`` check in
-config validation. Only the asynchronous runner has been tested with the
-session server.
