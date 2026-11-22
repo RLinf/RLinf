@@ -3,6 +3,10 @@ Basic Configuration
 
 For an annotated minimal YAML, Hydra preset overview, and the five keys most commonly tuned on a single GPU, start with :doc:`../reference/configuration`. This page provides the full key-by-key reference for shared parameters across embodied and agentic workloads; for task-specific keys, see :doc:`embodiment_config` and :doc:`agentic_config`.
 
+.. tip::
+
+   **Where config files live:** runnable training YAMLs live under ``examples/<task>/config/`` (such as ``examples/embodiment/config/``, ``examples/sft/config/``, and ``examples/reasoning/config/``), and evaluation YAMLs live under ``evaluations/<benchmark>/``. See :doc:`../reference/configuration` for the full directory map.
+
 hydra
 ~~~~~~
 

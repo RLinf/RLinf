@@ -1,7 +1,7 @@
 Quick Start
 ===========
 
-Verify your setup in minutes with a **single-GPU MLP** run on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ (no model or scene asset downloads), or jump straight into **OpenVLA** / **OpenVLA-OFT** PPO training.
+Verify your setup in minutes with a **single-GPU MLP** run on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ (no downloads), or jump straight into **OpenVLA** / **OpenVLA-OFT** PPO training.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -14,7 +14,7 @@ Verify your setup in minutes with a **single-GPU MLP** run on `ManiSkill3 <https
    .. grid-item-card:: 2. Pick a Track
       :text-align: center
 
-      1-GPU MLP (zero downloads) or 7B VLA
+      1-GPU MLP or 7B VLA
 
    .. grid-item-card:: 3. Train
       :text-align: center
@@ -29,13 +29,13 @@ Verify your setup in minutes with a **single-GPU MLP** run on `ManiSkill3 <https
 Setup and Run
 -------------
 
-Select a tab below — start with **MLP** for the fastest zero-download verification on a single GPU, or choose **OpenVLA** / **OpenVLA-OFT** for full VLA PPO training. If you already installed another model or environment in ``.venv``, pass ``--venv <dir>`` to ``install.sh`` so you do not overwrite it. For mainland China mirrors or prebuilt Docker Hub images, see :doc:`installation`.
+Pick a starting track below and run the commands in order. For regional mirrors, multiple virtual environments, or Docker Hub images, see :doc:`installation`.
 
 .. tab-set::
 
    .. tab-item:: MLP (1 GPU · No Downloads)
 
-      Trains a lightweight MLP policy from scratch with PPO on ManiSkill3's built-in ``PickCube-v1`` task using GPU 0 — no Hugging Face checkpoint or external scene asset downloads required.
+      Trains a lightweight MLP policy on ManiSkill3's built-in ``PickCube-v1`` task using GPU 0 — no checkpoints or external assets required.
 
       **1. Install**
 
@@ -44,13 +44,11 @@ Select a tab below — start with **MLP** for the fastest zero-download verifica
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
 
-      **2. Launch PPO Training**
+      **2. Launch Training**
 
       .. code-block:: bash
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
-
-      For a ~1-minute quick check, append ``runner.max_epochs=3 runner.val_check_interval=-1``. More MLP / SAC / GRPO recipes are in :doc:`MLP Policy RL <../examples/embodied/mlp>`.
 
    .. tab-item:: OpenVLA (7B VLA)
       :sync: openvla
@@ -62,13 +60,15 @@ Select a tab below — start with **MLP** for the fastest zero-download verifica
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
-      **2. Download ManiSkill Assets** (`paper <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__)
+      **2. Download ManiSkill Assets**
 
       .. code-block:: bash
 
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
 
-      **3. Launch PPO Training** (downloads ``gen-robot/openvla-7b-rlvla-warmup`` into your Hugging Face cache automatically on first run)
+      **3. Launch Training**
+
+      First run downloads the default Hugging Face checkpoint automatically:
 
       .. code-block:: bash
 
@@ -90,22 +90,28 @@ Select a tab below — start with **MLP** for the fastest zero-download verifica
 
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
 
-      **3. Launch PPO Training** (downloads ``RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main`` and ``Base-Lora`` automatically on first run)
+      **3. Launch Training**
+
+      First run downloads the default base and LoRA checkpoints automatically:
 
       .. code-block:: bash
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
 
-The two VLA quickstarts use all available accelerators by default; edit ``cluster.component_placement`` to target specific devices (:doc:`../reference/configuration`). Rollout inherits ``actor.model.model_path`` automatically — to use local checkpoints instead of Hugging Face repo IDs, pass ``actor.model.model_path=/path/to/checkpoint`` (and for OpenVLA-OFT, ``actor.model.lora_path=/path/to/lora``).
+Each config name matches a YAML file under ``examples/embodiment/config/`` — see :doc:`../reference/configuration` for all config directories and tuning presets.
 
-Each config name maps directly to a YAML file on disk: embodied RL configs live in ``examples/embodiment/config/<config_name>.yaml`` (for example, ``examples/embodiment/config/maniskill_ppo_mlp.yaml`` and ``examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml``), SFT configs live in ``examples/sft/config/``, reasoning and agentic configs live in ``examples/reasoning/config/`` and ``examples/agent/``, and evaluation configs live in ``evaluations/<benchmark>/<config_name>.yaml``.
+.. dropdown:: Common Overrides (Optional)
+
+   - **~1-minute quick check (MLP):** append ``runner.max_epochs=3 runner.val_check_interval=-1``.
+   - **Use local checkpoints instead of Hugging Face:** append ``actor.model.model_path=/path/to/checkpoint`` (rollout inherits it automatically; for OpenVLA-OFT also pass ``actor.model.lora_path=/path/to/lora``).
+   - **Target specific GPUs:** the two VLA quickstarts use all available GPUs by default; set ``cluster.component_placement`` to pin devices (:doc:`../reference/configuration`).
 
 Results and Troubleshooting
 ---------------------------
 
-Each run creates ``logs/<timestamp>-<config>/`` containing ``run_embodiment.log``, ``metrics.log``, TensorBoard events, and saved checkpoints. Open TensorBoard (``tensorboard --host 0.0.0.0 --logdir ./logs``) and track ``rollout/env_info/return`` and ``rollout/env_info/success_once``.
+Logs, TensorBoard events, and checkpoints are written to ``logs/<timestamp>-<config>/``. Start TensorBoard with ``tensorboard --host 0.0.0.0 --logdir ./logs`` and watch ``rollout/env_info/return`` and ``rollout/env_info/success_once``.
 
-The 3-epoch MLP check (``runner.max_epochs=3 runner.val_check_interval=-1``) finishes in about 1 minute on a single GPU and prints a metric table at each step (also appended to ``metrics.log``):
+A 3-epoch MLP quick check finishes in about 1 minute on one GPU and prints a metric table at each step:
 
 .. code-block:: text
 
@@ -116,7 +122,7 @@ The 3-epoch MLP check (``runner.max_epochs=3 runner.val_check_interval=-1``) fin
    │ env_info/return=12.400  │ env_info/success_once=0.062 │ rewards=0.248    │
    ╰──────────────────────────────────────────────────────────────────────────╯
 
-On full ``maniskill_ppo_mlp`` runs, ``rollout/env_info/success_once`` climbs above ``0.90`` within a few hundred epochs. On the VLA quickstarts, ``rollout/env_info/success_once`` starts near the SFT baseline and rises steadily as PPO updates progress:
+On full runs, MLP ``success_once`` climbs above ``0.90`` within a few hundred epochs, while the VLA quickstarts improve steadily from their SFT baselines:
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/embody-quickstart-metric.jpg
    :align: center

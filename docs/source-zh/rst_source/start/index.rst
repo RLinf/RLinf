@@ -55,6 +55,67 @@
      - 4–8 卡（80 GB）
      - :doc:`数学推理 GRPO <../examples/agentic/math_reasoning/reasoning>`
 
+快速熟悉 RLinf 仓库
+-------------------
+
+日常会用到的配置文件、启动脚本和工具都在六个核心目录里，按目标查找即可：
+
+.. grid:: 1 2 3 3
+   :gutter: 2
+
+   .. grid-item-card:: 训练入口与配置（``examples/``）
+      :link: ../reference/configuration
+      :link-type: doc
+
+      按任务分目录存放启动脚本与 Hydra YAML 配置：具身 RL、SFT、离线 RL、推理、智能体与扩散模型。
+
+   .. grid-item-card:: 独立评测（``evaluations/``）
+      :link: ../evaluations/index
+      :link-type: doc
+
+      统一评测入口 ``run_eval.sh`` 与各基准评测配置（LIBERO、RoboTwin、BEHAVIOR、ManiSkill、真机等）。
+
+   .. grid-item-card:: 实用工具箱（``toolkits/``）
+
+      按需调用的辅助脚本：LeRobot 数据处理、真机硬件自检、Replay Buffer 可视化、自动 Placement 与权重转换。
+
+   .. grid-item-card:: 核心框架（``rlinf/``）
+      :link: ../concepts/overview
+      :link-type: doc
+
+      分布式调度与 worker、runner 循环、模型、仿真与真机环境、机器人硬件抽象及算法注册表。
+
+   .. grid-item-card:: 安装脚本与镜像（``requirements/`` 与 ``docker/``）
+      :link: installation
+      :link-type: doc
+
+      一键环境构建脚本 ``install.sh`` 及各硬件平台 Dockerfile。
+
+   .. grid-item-card:: 测试与扩展（``tests/`` 与 ``docs/``）
+      :link: ../extending/index
+      :link-type: doc
+
+      单元测试、端到端配置、真机假驱动（``robot_mocks/``）及中英文文档源码。
+
+.. dropdown:: 查看 ``toolkits/`` 常用工具速查
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 70
+
+      * - 子目录
+        - 用途
+      * - ``toolkits/lerobot/``
+        - 计算 ``norm_stats.json``、合并多个 LeRobot 数据集、导出 MP4 视频预览。
+      * - ``toolkits/realworld_check/``
+        - 真机训练前的交互式硬件自检（机械臂、夹爪、相机、GELLO、PICO）。
+      * - ``toolkits/replay_buffer/``
+        - 查看、可视化、合并或拆分已保存的轨迹 Replay Buffer。
+      * - ``toolkits/auto_placement/``
+        - 根据实测单步耗时自动搜索最优共置/分离 GPU 放置方案。
+      * - ``toolkits/cosmos3/``、``dual_franka/``、``standalone_eval_scripts/``
+        - 特定模型与机型的权重转换、数据清理与独立评测脚本。
+
 接下来
 ------
 

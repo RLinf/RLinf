@@ -14,7 +14,7 @@
    .. grid-item-card:: 2. 选择起点
       :text-align: center
 
-      单卡 MLP（零下载）或 7B VLA
+      单卡 MLP 或 7B VLA
 
    .. grid-item-card:: 3. 启动训练
       :text-align: center
@@ -29,13 +29,13 @@
 一键上手
 --------
 
-切换下方标签选择起点：首次验证环境推荐先跑 **MLP**\ （单卡、无需下载模型权重与场景资产），需要 VLA 强化学习时直接切到 **OpenVLA** 或 **OpenVLA-OFT**。如果 ``.venv`` 里已经安装了其他模型或环境，在 ``install.sh`` 末尾加 ``--venv <dir>`` 避免覆盖。国内镜像加速与 Docker Hub 预构建镜像见 :doc:`installation`。
+在下方选一个起点，按顺序执行命令即可。需要国内镜像加速、共存多套虚拟环境或使用 Docker 镜像，见 :doc:`installation`。
 
 .. tab-set::
 
    .. tab-item:: MLP（单卡 · 零权重下载）
 
-      在 GPU 0 上基于 ManiSkill3 内置 ``PickCube-v1`` 任务从零训练轻量 MLP policy，无需下载任何 Hugging Face 权重或外部场景资产。
+      在 GPU 0 上基于 ManiSkill3 内置 ``PickCube-v1`` 任务从零训练轻量 MLP policy，无需下载权重或外部资产。
 
       **1. 安装环境**
 
@@ -44,13 +44,11 @@
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
 
-      **2. 启动 PPO 训练**
+      **2. 启动训练**
 
       .. code-block:: bash
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
-
-      如需约 1 分钟的快速验证，追加 ``runner.max_epochs=3 runner.val_check_interval=-1``。更多 MLP / SAC / GRPO 示例见 :doc:`MLP policy 强化学习 <../examples/embodied/mlp>`。
 
    .. tab-item:: OpenVLA（7B VLA）
       :sync: openvla
@@ -62,13 +60,15 @@
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
-      **2. 下载场景资产**\ （`论文 <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__）
+      **2. 下载场景资产**
 
       .. code-block:: bash
 
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
 
-      **3. 启动 PPO 训练**\ （首次运行自动缓存下载 ``gen-robot/openvla-7b-rlvla-warmup``）
+      **3. 启动训练**
+
+      首次运行会自动缓存下载默认 Hugging Face 权重：
 
       .. code-block:: bash
 
@@ -90,22 +90,28 @@
 
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
 
-      **3. 启动 PPO 训练**\ （首次运行自动缓存下载 ``RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main`` 与 ``Base-Lora``）
+      **3. 启动训练**
+
+      首次运行会自动缓存下载默认基座与 LoRA 权重：
 
       .. code-block:: bash
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
 
-两个 VLA 快速开始配置默认使用所有可用加速卡；需要指定设备时，修改 ``cluster.component_placement``\ （详见 :doc:`../reference/configuration`\ ）。rollout 会自动沿用 ``actor.model.model_path``；若使用本地预下载权重，只需在命令行覆盖 ``actor.model.model_path=/path/to/checkpoint``\ （OpenVLA-OFT 同步传 ``actor.model.lora_path=/path/to/lora``）。
+命令行中的配置名对应 ``examples/embodiment/config/`` 下的同名 YAML 文件，完整配置目录与常用参数见 :doc:`../reference/configuration`。
 
-命令行中的配置名直接对应仓库中的 YAML 文件：具身强化学习配置位于 ``examples/embodiment/config/<config_name>.yaml``\ （例如 ``examples/embodiment/config/maniskill_ppo_mlp.yaml`` 与 ``examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml``），SFT 配置位于 ``examples/sft/config/``，推理与智能体配置位于 ``examples/reasoning/config/`` 与 ``examples/agent/``，评测配置位于 ``evaluations/<benchmark>/<config_name>.yaml``。
+.. dropdown:: 常用启动覆盖（可选）
+
+   - **约 1 分钟快速验证（MLP）**：在命令末尾追加 ``runner.max_epochs=3 runner.val_check_interval=-1``。
+   - **改用本地权重**：追加 ``actor.model.model_path=/path/to/checkpoint``\ （rollout 自动沿用；OpenVLA-OFT 同步传 ``actor.model.lora_path=/path/to/lora``）。
+   - **指定 GPU 卡号**：两个 VLA 快速开始默认使用全部可见卡；需要限定设备时修改 ``cluster.component_placement``\ （见 :doc:`../reference/configuration`\ ）。
 
 结果与常见问题
 --------------
 
-每次运行都会在 ``logs/<时间戳>-<配置名>/`` 下保存 ``run_embodiment.log``、``metrics.log``、TensorBoard 事件文件与 checkpoint。启动 TensorBoard（``tensorboard --host 0.0.0.0 --logdir ./logs``），重点关注 ``rollout/env_info/return`` 和 ``rollout/env_info/success_once``。
+日志、TensorBoard 事件与 checkpoint 保存在 ``logs/<时间戳>-<配置名>/`` 下。启动 ``tensorboard --host 0.0.0.0 --logdir ./logs``，重点观察 ``rollout/env_info/return`` 和 ``rollout/env_info/success_once``。
 
-3 轮 MLP 快速验证（``runner.max_epochs=3 runner.val_check_interval=-1``）在单卡上约 1 分钟完成，每步会在终端打印指标表并同步追加到 ``metrics.log``：
+单卡运行 3 轮 MLP 快速验证约 1 分钟完成，每步会在终端输出指标表：
 
 .. code-block:: text
 
@@ -116,7 +122,7 @@
    │ env_info/return=12.400  │ env_info/success_once=0.062 │ rewards=0.248    │
    ╰──────────────────────────────────────────────────────────────────────────╯
 
-完整运行 ``maniskill_ppo_mlp`` 数百轮后，``rollout/env_info/success_once`` 会升至 ``0.90`` 以上；VLA 快速开始则从 SFT 基线起步并随 PPO 更新稳步上升：
+完整运行数百轮后，MLP 的 ``success_once`` 会升至 ``0.90`` 以上；VLA 快速开始则从 SFT 基线稳步上升：
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/embody-quickstart-metric.jpg
    :align: center

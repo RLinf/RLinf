@@ -1,7 +1,9 @@
 Installation
 ============
 
-Install RLinf into a local ``uv`` virtual environment with ``requirements/install.sh``, or pull a prebuilt image from Docker Hub. Each virtual environment holds one ``--model`` + ``--env`` (or ``agentic --engine``) stack; pass ``--venv <dir>`` when installing additional stacks so you do not overwrite ``.venv``. Every recipe page also includes its exact setup command; use this page as the global installer and hardware reference.
+Install RLinf into a local ``uv`` virtual environment with ``requirements/install.sh``, or pull a prebuilt image from Docker Hub.
+
+Each virtual environment holds one model-and-environment stack; pass ``--venv <dir>`` when keeping multiple stacks side by side. Every recipe page includes its exact setup command, and this page serves as the global installer and hardware reference.
 
 Setup and Verify
 ----------------
@@ -31,7 +33,7 @@ Choose your target stack below and run the commands:
    .. tab-item:: Real-World Robot
       :sync: realworld
 
-      Install the robot driver stack on the controller node (no GPU needed) and the model stack on the GPU node (swap ``franka`` for ``arx5``, ``yam``, ``xsquare_turtle2``, ``so101``, ``piper``, ``lekiwi``, ``dosw1``, or ``gim_arm``; for Robbyant R2 over RFrame/ROS 2, see :doc:`../examples/embodied/r2`, and see :doc:`../examples/real_world_index` for all robots):
+      Install the robot driver stack on the controller node (no GPU needed) and the model stack on the GPU node. Swap ``franka`` for your robot target from the table below (see :doc:`../examples/real_world_index` for all supported robots, including Robbyant R2 over ROS 2):
 
       .. code-block:: bash
 

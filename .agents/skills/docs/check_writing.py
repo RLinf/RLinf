@@ -265,6 +265,15 @@ def check_page(
             ):
                 continue
             plain = MARKUP.sub(" X ", block.text)
+            inline_literals = LITERAL.findall(block.text)
+            if len(inline_literals) >= 6:
+                add(
+                    "minor",
+                    block.lines[0],
+                    "docs/inline-code-density",
+                    f"paragraph packs {len(inline_literals)} inline code literals on a {kind} page; "
+                    "keep setup prose simple and move lists of paths or options into a table or dropdown",
+                )
             if lang == "zh":
                 char_count = len(re.sub(r"\s+", "", plain))
                 if char_count > 260:

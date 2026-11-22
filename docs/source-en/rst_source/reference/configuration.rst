@@ -40,6 +40,21 @@ All runnable configs live under ``examples/`` and ``evaluations/``, grouped by w
      - ``evaluations/<benchmark>/``
      - ``bash evaluations/run_eval.sh <benchmark> <config>``
 
+.. dropdown:: Reusable Hydra Preset Subdirectories (under ``examples/embodiment/config/``)
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 32 68
+
+      * - Subdirectory
+        - Purpose
+      * - ``base/`` & ``cluster/``
+        - Shared ``base/embodied_rl`` scaffolding and ``cluster/collocated`` placement (use ``override /cluster@cluster: null`` for custom layouts).
+      * - ``algorithm/``
+        - Reusable ``ppo`` and ``grpo`` defaults mounted at ``@algorithm``.
+      * - ``env/``, ``model/``, ``hybrid_engines/``
+        - Simulator/robot presets, policy templates, and FSDP defaults.
+
 Annotated Minimal YAML
 ----------------------
 
@@ -105,38 +120,6 @@ Five Keys to Tune on One GPU
      - Lower ``micro_batch_size`` to fix actor OOM; keep ``global_batch_size`` divisible by ``micro_batch_size * actor_world_size``.
    * - ``actor.enable_offload`` / ``rollout.enable_offload``
      - Defaults to ``True`` in ``base/embodied_rl`` so collocated single-GPU runs fit in VRAM; set ``False`` on disaggregated multi-GPU clusters.
-
-Hydra Presets and Config Locations
-----------------------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 32 40
-
-   * - Preset / Workload
-     - Location
-     - Role / Launcher
-   * - Embodied base & cluster
-     - ``examples/embodiment/config/{base,cluster}/``
-     - Shared ``base/embodied_rl`` scaffolding and ``cluster/collocated`` placement (override with ``override /cluster@cluster: null`` for custom layouts).
-   * - Algorithm presets
-     - ``examples/embodiment/config/algorithm/``
-     - Reusable ``ppo`` and ``grpo`` defaults mounted at ``@algorithm``.
-   * - Env, model, backend
-     - ``examples/embodiment/config/{env,model,hybrid_engines}/``
-     - Simulator/robot presets, model templates, and FSDP defaults.
-   * - Embodied RL recipes
-     - ``examples/embodiment/config/*.yaml``
-     - ``bash examples/embodiment/run_embodiment.sh <config_name>``
-   * - Reasoning & Agentic RL
-     - ``examples/{reasoning,agent}/**/config/*.yaml``
-     - ``run_main_grpo_{math,vqa}.sh`` or recipe-specific launcher under ``examples/agent/<recipe>/``
-   * - SFT
-     - ``examples/sft/config/*.yaml``
-     - ``bash examples/sft/run_vla_sft.sh <config_name>`` (or ``run_vlm_sft.sh``)
-   * - Standalone Evaluation
-     - ``evaluations/<benchmark>/*.yaml``
-     - ``bash evaluations/run_eval.sh <benchmark> <config_name>``
 
 Top-Level Sections
 ------------------

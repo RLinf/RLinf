@@ -76,6 +76,7 @@ Page findings count only on the lines the change adds, because many existing pag
 | `docs/no-todo` | major | unfinished `TODO`, `TBD`, or `FIXME` marker in published docs (prose, table cells, or comments) |
 | `docs/jargon` | major | testing jargon (`冒烟测试` / `smoke test` / `smoke check`) or informal ZH shorthand (`采数` / `数采` / `遥操`) |
 | `docs/long-paragraph` | minor | wall-of-text paragraph (> 120 EN words or > 260 ZH chars) on a recipe or guide page |
+| `docs/inline-code-density` | minor | single prose paragraph packing >= 6 inline code literals (`` ``...`` ``) on a recipe or guide page; simplify or move into a table/dropdown |
 | `docs/raw-html-grid` | major | `.. raw:: html` navigation card grid or hardcoded `color: blue` (use `sphinx-design` `.. grid::`) |
 | `docs/index-style` | major | non-hidden toctree on an index page, missing cards/table routing, or hidden toctree entry omitted from the page body |
 | `docs/path-exists` | major | repository file path (`rlinf/`, `examples/`, `evaluations/`, `toolkits/`, `requirements/`) cited in prose or commands that does not exist on disk |

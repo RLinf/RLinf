@@ -1,7 +1,9 @@
 安装与环境
 ==========
 
-使用 ``requirements/install.sh`` 在本地 ``uv`` 虚拟环境中一键安装 RLinf，或直接拉取 Docker Hub 预构建镜像。每个虚拟环境对应一套 ``--model`` + ``--env``\ （或 ``agentic --engine``）组合；需要共存多套组合时传入 ``--venv <dir>``，避免覆盖默认的 ``.venv``。各教程页面都附带对应命令，本页作为全局安装参数与硬件环境参考。
+使用 ``requirements/install.sh`` 在本地 ``uv`` 虚拟环境中一键安装 RLinf，或直接拉取 Docker Hub 预构建镜像。
+
+每个虚拟环境对应一套模型与环境组合，共存多套环境时传入 ``--venv <dir>`` 即可避免覆盖默认环境。各教程页面都附带对应命令，本页作为全局安装参数与硬件参考。
 
 安装与验证
 ----------
@@ -31,7 +33,7 @@
    .. tab-item:: 真机机器人
       :sync: realworld
 
-      在机器人控制节点安装驱动与传感器依赖（无需 GPU），在 GPU 节点安装模型与驱动（按需将 ``franka`` 替换为 ``arx5``、``yam``、``xsquare_turtle2``、``so101``、``piper``、``lekiwi``、``dosw1`` 或 ``gim_arm``；Robbyant R2 通过 RFrame 与 ROS 2 接入，见 :doc:`../examples/embodied/r2`，完整列表见 :doc:`../examples/real_world_index`）：
+      在机器人控制节点安装驱动与传感器依赖（无需 GPU），在 GPU 节点安装模型与驱动。按下方表格把 ``franka`` 换成你的机型（完整真机列表及 Robbyant R2 的 ROS 2 接入见 :doc:`../examples/real_world_index`）：
 
       .. code-block:: bash
 

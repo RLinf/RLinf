@@ -3,6 +3,10 @@
 
 如需带注释的最小 YAML、Hydra 预设地图及单卡最常调参数，建议先阅读 :doc:`../reference/configuration`。本页提供具身智能与智能体训练共用基础参数的完整逐字段说明；任务专用字段请参见 :doc:`embodiment_config` 与 :doc:`agentic_config`。
 
+.. tip::
+
+   **配置文件位置：** 训练 YAML 位于 ``examples/<任务>/config/``\ （例如 ``examples/embodiment/config/``、``examples/sft/config/`` 与 ``examples/reasoning/config/``），独立评测 YAML 位于 ``evaluations/<benchmark>/``。完整目录速查见 :doc:`../reference/configuration`。
+
 hydra
 ~~~~~~
 

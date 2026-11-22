@@ -40,6 +40,21 @@ RLinf 配方采用可组合的 Hydra YAML 预设。本页是一页式配置地�
      - ``evaluations/<benchmark>/``
      - ``bash evaluations/run_eval.sh <benchmark> <config>``
 
+.. dropdown:: 可复用的 Hydra 预设子目录（位于 ``examples/embodiment/config/`` 下）
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 32 68
+
+      * - 子目录
+        - 用途
+      * - ``base/`` 与 ``cluster/``
+        - 通用 ``base/embodied_rl`` 骨架与 ``cluster/collocated`` 放置（自定义放置可加 ``override /cluster@cluster: null``）。
+      * - ``algorithm/``
+        - 挂载在 ``@algorithm`` 的 ``ppo`` 与 ``grpo`` 公共默认参数。
+      * - ``env/``、``model/``、``hybrid_engines/``
+        - 仿真器/真机预设、模型模板与 FSDP 默认配置。
+
 带注释的最小 YAML
 -----------------
 
@@ -105,38 +120,6 @@ RLinf 配方采用可组合的 Hydra YAML 预设。本页是一页式配置地�
      - 训练显存不足（OOM）时调小 ``micro_batch_size``，同时保证 ``global_batch_size`` 能被 ``micro_batch_size * actor 卡数`` 整除。
    * - ``actor.enable_offload`` / ``rollout.enable_offload``
      - ``base/embodied_rl`` 默认开启 ``True`` 以适配单卡/共置显存；多卡分离部署时可设为 ``False`` 提速。
-
-Hydra 预设与配置位置
---------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 26 34 40
-
-   * - 预设 / 工作负载
-     - 路径
-     - 职责 / 启动入口
-   * - 具身基础与集群预设
-     - ``examples/embodiment/config/{base,cluster}/``
-     - 通用 ``base/embodied_rl`` 骨架与 ``cluster/collocated`` 放置（自定义放置可加 ``override /cluster@cluster: null``）。
-   * - 算法预设
-     - ``examples/embodiment/config/algorithm/``
-     - 挂载在 ``@algorithm`` 的 ``ppo`` 与 ``grpo`` 公共默认参数。
-   * - 环境、模型与后端预设
-     - ``examples/embodiment/config/{env,model,hybrid_engines}/``
-     - 仿真器/真机预设、模型模板与 FSDP 默认配置。
-   * - 具身 RL 配方
-     - ``examples/embodiment/config/*.yaml``
-     - ``bash examples/embodiment/run_embodiment.sh <config_name>``
-   * - 推理与智能体 RL
-     - ``examples/{reasoning,agent}/**/config/*.yaml``
-     - ``run_main_grpo_{math,vqa}.sh`` 或 ``examples/agent/<recipe>/`` 下对应启动脚本
-   * - SFT
-     - ``examples/sft/config/*.yaml``
-     - ``bash examples/sft/run_vla_sft.sh <config_name>``\ （或 ``run_vlm_sft.sh``）
-   * - 独立评测
-     - ``evaluations/<benchmark>/*.yaml``
-     - ``bash evaluations/run_eval.sh <benchmark> <config_name>``
 
 顶层配置段
 ----------
