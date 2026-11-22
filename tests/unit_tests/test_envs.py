@@ -14,9 +14,15 @@
 
 """Heterogeneous env modes, and the observations env workers send the policy."""
 
+import os
+import signal
+import threading
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import torch
+import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 
 import rlinf.workers.env.env_worker as env_worker_module
@@ -30,6 +36,7 @@ from rlinf.config import (
 from rlinf.data.schema.embodied_types import PolicyInput
 from rlinf.envs.layout import EnvLayout
 from rlinf.envs.policy_obs import PolicyObsSpec
+from rlinf.envs.sim.isaaclab.venv import SubProcIsaacLabEnv
 from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.workers.env.env_worker import EnvWorker
 
@@ -722,3 +729,121 @@ def test_config_needs_grpo_envs_to_stop_trajectories_at_their_first_done():
 
     with pytest.raises(AssertionError, match=r"env.train.envs.maniskill needs"):
         validate_env_training_cfg(cfg, layout, stage_num=1, actor_world_size=2)
+
+
+def _isaac_env_fn(fail_at: str | None = None, fail_by: str = "raise"):
+    """Build an env factory that cloudpickle ships to the subprocess by value."""
+
+    def fail():
+        if fail_by == "exit":
+            os._exit(3)
+        raise ValueError("simulator failed")
+
+    def env_fn():
+        if fail_at == "init":
+            fail()
+
+        class FakeIsaacEnv:
+            device_reads = 0
+
+            @property
+            def device(self):
+                self.device_reads += 1
+                if fail_at == "device" and self.device_reads > 1:
+                    fail()
+                return "cpu"
+
+            def reset(self, seed=None, env_ids=None):
+                if fail_at == "reset":
+                    fail()
+                return torch.tensor([seed]), {}
+
+            def step(self, action):
+                if fail_at == "step_payload":
+                    threading.Timer(0.2, os._exit, [9]).start()
+                    return bytes(16 * 1024 * 1024)
+                return action + 1
+
+            def close(self):
+                if fail_at == "device":
+                    threading.Event().wait()
+
+        return FakeIsaacEnv(), SimpleNamespace(close=lambda: None)
+
+    return env_fn
+
+
+@pytest.fixture
+def isaac_subprocess():
+    """Build ``SubProcIsaacLabEnv``, failing the test if a call never returns."""
+
+    def on_timeout(signum, frame):
+        raise AssertionError("Expected SubProcIsaacLabEnv to return within 60 s.")
+
+    start_method = mp.get_start_method(allow_none=True)
+    previous_handler = signal.signal(signal.SIGALRM, on_timeout)
+    signal.alarm(60)
+    envs = []
+
+    def build(env_fn):
+        envs.append(SubProcIsaacLabEnv(env_fn))
+        return envs[-1]
+
+    yield build
+
+    signal.alarm(0)
+    signal.signal(signal.SIGALRM, previous_handler)
+    for env in envs:
+        env.isaac_lab_process.kill()
+    mp.set_start_method(start_method, force=True)
+
+
+@pytest.mark.parametrize(
+    ("fail_at", "fail_by", "match"),
+    [
+        ("init", "raise", "simulator failed"),
+        ("reset", "raise", "simulator failed"),
+        ("reset", "exit", "exit code 3"),
+    ],
+)
+def test_isaaclab_subprocess_failure_reaches_the_caller(
+    isaac_subprocess, fail_at, fail_by, match
+):
+    env = isaac_subprocess(_isaac_env_fn(fail_at, fail_by))
+
+    with pytest.raises(RuntimeError, match=match):
+        env.reset(seed=0)
+
+    env.close()
+    env.close()
+    assert not env.isaac_lab_process.is_alive()
+
+
+def test_isaaclab_subprocess_failure_arrives_while_cleanup_is_stuck(isaac_subprocess):
+    env = isaac_subprocess(_isaac_env_fn("device"))
+
+    with pytest.raises(RuntimeError, match="simulator failed"):
+        env.device()
+
+
+def test_isaaclab_subprocess_death_ends_a_partial_result(isaac_subprocess):
+    env = isaac_subprocess(_isaac_env_fn("step_payload"))
+    env.parent_remote.send("step")
+    env.action_queue.put(torch.tensor([1]))
+    env.isaac_lab_process.join()
+
+    with pytest.raises(RuntimeError, match="exit code 9"):
+        env._recv()
+
+
+def test_isaaclab_subprocess_returns_results_and_closes_twice(isaac_subprocess):
+    env = isaac_subprocess(_isaac_env_fn())
+
+    obs, _ = env.reset(seed=7)
+    assert obs.item() == 7
+    assert env.step(torch.tensor([1])).item() == 2
+    assert env.device() == "cpu"
+
+    env.close()
+    env.close()
+    assert env.isaac_lab_process.exitcode == 0
