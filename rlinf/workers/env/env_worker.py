@@ -1300,6 +1300,15 @@ class EnvWorker(Worker):
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
                     )
+            else:
+                # Auto-reset envs keep running across epochs; let envs with a
+                # fixed reset pool start a fresh pass over it for this epoch.
+                for stage_id in range(self.stage_num):
+                    start_eval_pass = get_env_attr(
+                        self.eval_env_list[stage_id], "start_eval_pass"
+                    )
+                    if callable(start_eval_pass):
+                        start_eval_pass()
 
             eval_epoch_done = False
             for eval_step in range(self.n_eval_chunk_steps):

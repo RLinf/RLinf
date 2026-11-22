@@ -227,17 +227,20 @@ def record_completed_episode_task_stats(
     task_ids: np.ndarray,
     trial_ids: np.ndarray,
     num_envs: int,
-    eval_seen_trials: set[tuple[int, int]],
+    eval_seen_trials: set[tuple[int, int, int]],
     task_success_stats: dict[int, dict[str, int]],
     logger=None,
     *,
+    pass_ids: np.ndarray,
     success_key: str = "success_once",
 ) -> np.ndarray:
     """Record per-task eval stats and return which envs count toward metrics.
 
-    In eval mode each (task_id, trial_id) is counted at most once. Duplicate
-    completions from auto_reset cycling are excluded so aggregated eval metrics
-    match the benchmark suite size instead of counting every episode termination.
+    In eval mode each (pass_id, task_id, trial_id) is counted at most once.
+    Duplicate completions from auto_reset cycling are excluded so aggregated eval
+    metrics match the benchmark suite size times the number of passes instead of
+    counting every episode termination. ``pass_ids`` gives the reset pool pass
+    (eval rollout epoch) each env's current trial was assigned in.
     """
     logger = logger or get_logger()
     count_mask = np.zeros(num_envs, dtype=bool)
@@ -256,7 +259,7 @@ def record_completed_episode_task_stats(
         tid = int(task_ids[eid])
         trial_id = int(trial_ids[eid])
         ok = bool(success[eid])
-        trial_key = (tid, trial_id)
+        trial_key = (int(pass_ids[eid]), tid, trial_id)
         if trial_key in eval_seen_trials:
             logger.warning(
                 f"[libero eval] duplicate episode skipped: "
