@@ -146,9 +146,9 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         payload = channel.get(key=delivery.payload_ref.key)
         # A keyed get leaves an empty queue under the key; without this
         # removal the payload channel keeps one empty queue per trained
-        # group. Operations on one key run in the order they are issued, so
-        # the removal runs after the get, and a group is delivered once, so
-        # no other get waits on this key.
+        # group. The get above has already returned the data, so the removal
+        # cannot overtake it, and a group is delivered once, so no other get
+        # waits on this key.
         channel.remove_key(key=delivery.payload_ref.key, async_op=True)
         result = assemble_group_payload(
             payload, not self.cfg.algorithm.recompute_logprobs
