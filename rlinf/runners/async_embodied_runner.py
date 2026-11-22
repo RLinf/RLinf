@@ -297,17 +297,3 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         env_handle.wait()
         rollout_handle.wait()
         actor_handle.wait()
-
-
-class AsyncDAggerRunner(AsyncEmbodiedRunner):
-    """Publish the runner step as the DAgger rollout weight version."""
-
-    def update_rollout_weights(self, no_wait: bool = False) -> None:
-        self.actor.set_global_step(self.global_step).wait()
-        super().update_rollout_weights(no_wait=no_wait)
-
-    def run(self) -> None:
-        if self.global_step > 0:
-            self.rollout.set_global_step(self.global_step).wait()
-        super().run()
-        self._finish_run()

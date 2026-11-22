@@ -70,6 +70,20 @@ class Cosmos3DAggerAdapter:
             prepared["actions"] = put_tensor_device(batch["actions"], device=device)
         return prepared
 
+    @staticmethod
+    def loss_and_metrics(
+        output: torch.Tensor | dict,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Keep the native loss graph and snapshot metrics for later reporting."""
+        if not isinstance(output, dict):
+            return output, {}
+        metrics = {
+            f"dagger/{key}": value.detach().to(torch.float32, copy=True).reshape(())
+            for key, value in output.items()
+            if key != "loss" and torch.is_tensor(value) and value.numel() == 1
+        }
+        return output["loss"], metrics
+
 
 class Cosmos3DAggerInputs:
     """Prepare LeRobot training windows for the native Cosmos SFT loss."""

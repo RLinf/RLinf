@@ -14,9 +14,9 @@
 
 """FSDP DAgger training for a Cosmos3 student."""
 
-from contextlib import nullcontext
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from rlinf.models import get_model
@@ -26,6 +26,9 @@ from rlinf.models.embodiment.cosmos3.datasets.dataset import (
 )
 from rlinf.models.embodiment.cosmos3.tasks.dagger import Cosmos3DAggerAdapter
 from rlinf.scheduler import Worker
+from rlinf.utils import drq
+from rlinf.utils.metric_utils import append_to_dict
+from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
 from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
 
 
@@ -84,14 +87,73 @@ class Cosmos3DAggerActor(EmbodiedDAGGERFSDPPolicy):
         """Publish the rollout version. The optimizer owns the model step."""
         self.version = global_step
 
-    def _stage_lerobot_batch(self, batch):
-        return Cosmos3DAggerAdapter.stage_lerobot_batch(batch, self.device)
+    def update_buffer_one_epoch(self):
+        """Run one replay-buffer update epoch for DAgger."""
+        global_batch_size_per_rank = (
+            self.cfg.actor.global_batch_size // self._world_size
+        )
+        with self.worker_timer("sample"):
+            global_batch = self.replay_buffer.sample(
+                num_chunks=global_batch_size_per_rank
+            )
 
-    def _sft_micro_batch_contexts(self, sync_context):
-        # Match native Cosmos SFT, including forward inside the FSDP no-sync scope.
-        return sync_context, nullcontext()
+        train_micro_batch_list = split_dict_to_chunk(
+            global_batch,
+            global_batch_size_per_rank // self.cfg.actor.micro_batch_size,
+        )
+        for idx, batch in enumerate(train_micro_batch_list):
+            batch = put_tensor_device(batch, device=self.device)
+            if self.enable_drq:
+                drq.apply_drq(batch["curr_obs"], pad=4)
+                drq.apply_drq(batch["next_obs"], pad=4)
+            train_micro_batch_list[idx] = batch
 
-    def _finish_sft_update(self):
+        return self._update_sft_batches(
+            (batch["forward_inputs"] for batch in train_micro_batch_list),
+            self.gradient_accumulation,
+        )
+
+    def update_lerobot_one_epoch(self):
+        """Run one LeRobot update epoch."""
+
+        with self.worker_timer("prepare_micro_batches"):
+            with self._lerobot_loader_lock:
+                num_batches = len(self._lerobot_loader)
+                train_micro_batch_list = [
+                    next(self._lerobot_iter) for _ in range(num_batches)
+                ]
+            for idx, batch in enumerate(train_micro_batch_list):
+                if self.enable_drq:
+                    batch = put_tensor_device(batch, device=self.device)
+                    drq.apply_drq(batch["curr_obs"], pad=4)
+                else:
+                    batch = Cosmos3DAggerAdapter.stage_lerobot_batch(batch, self.device)
+                train_micro_batch_list[idx] = batch
+
+        result = self._update_sft_batches(train_micro_batch_list, num_batches)
+        with self._lerobot_loader_lock:
+            self._data_epoch += 1
+            if hasattr(self._lerobot_loader.sampler, "set_epoch"):
+                self._lerobot_loader.sampler.set_epoch(self._data_epoch)
+            self._lerobot_iter = iter(self._lerobot_loader)
+        return result
+
+    def _update_sft_batches(self, batches, num_batches):
+        self.optimizer.zero_grad()
+        logged_batches = []
+        for idx, batch in enumerate(batches):
+            backward_ctx = self.before_micro_batch(
+                self.model, is_last_micro_batch=(idx + 1) == num_batches
+            )
+            with backward_ctx:
+                with self.amp_context:
+                    loss, step_metrics = Cosmos3DAggerAdapter.loss_and_metrics(
+                        self.forward_actor(batch)
+                    )
+                loss = loss / num_batches
+                self.grad_scaler.scale(loss).backward()
+            logged_batches.append((loss.detach().reshape(()), step_metrics))
+
         grad_norm, _ = self.optimizer_step()
         successful = bool(torch.isfinite(torch.as_tensor(grad_norm)).all())
         if successful:
@@ -99,10 +161,73 @@ class Cosmos3DAggerActor(EmbodiedDAGGERFSDPPolicy):
             self.update_step += 1
             self.model.set_global_step(self.update_step)
         self.optimizer.zero_grad(set_to_none=True)
-        return {
-            "actor/grad_norm": grad_norm,
-            "dagger/update_skipped": float(not successful),
-        }
+        # Defer host reads until the optimizer has finished with the gradients.
+        actor_losses = []
+        metrics = {}
+        for scaled_loss, step_metrics in logged_batches:
+            scalars = [scaled_loss, *step_metrics.values()]
+            if all(
+                type(value) is torch.Tensor and value.device == scaled_loss.device
+                for value in scalars
+            ):
+                loss_value, *metric_values = torch.stack(scalars).tolist()
+            else:
+                loss_value, *metric_values = [value.item() for value in scalars]
+            actor_losses.append(loss_value * num_batches)
+            append_to_dict(metrics, dict(zip(step_metrics, metric_values, strict=True)))
+        result = {key: float(np.mean(values)) for key, values in metrics.items()}
+        result.update(
+            {
+                "dagger/update_skipped": float(not successful),
+                "dagger/actor_loss": np.mean(actor_losses),
+                "actor/lr": self.optimizer.param_groups[0]["lr"],
+                "actor/grad_norm": grad_norm,
+            }
+        )
+        return result
+
+    @Worker.timer("run_training")
+    def run_training(self):
+        """Run DAgger updates with replay-buffer samples."""
+        if self.cfg.actor.get("enable_offload", False):
+            self.load_param_and_grad(self.device)
+            self.load_optimizer(self.device)
+        if not self.enable_online_lerobot:
+            min_buffer_size = self.cfg.algorithm.replay_buffer.get(
+                "min_buffer_size", 100
+            )
+            if not self.replay_buffer.is_ready(min_buffer_size):
+                self.log_on_first_rank(
+                    f"Replay buffer size {len(self.replay_buffer)} < {min_buffer_size}, skipping training"
+                )
+                return {}
+        elif self._skip_lerobot_training():
+            return {}
+        self._begin_sft_updates()
+        metrics = {}
+        for _ in range(self.cfg.algorithm.get("update_epoch", 1)):
+            append_to_dict(metrics, self.update_one_epoch())
+        return self._finish_sft_updates(metrics)
+
+    def _begin_sft_updates(self):
+        assert (
+            self.cfg.actor.global_batch_size
+            % (self.cfg.actor.micro_batch_size * self._world_size)
+            == 0
+        )
+        self.gradient_accumulation = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
+
+        self.model.train()
+
+    def _finish_sft_updates(self, metrics):
+        self.torch_platform.synchronize()
+        torch.distributed.barrier()
+        self.torch_platform.empty_cache()
+        return self.process_train_metrics(metrics)
 
     def load_checkpoint(self, load_base_path):
         super().load_checkpoint(load_base_path)
