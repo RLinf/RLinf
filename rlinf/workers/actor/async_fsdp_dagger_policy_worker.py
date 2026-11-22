@@ -20,42 +20,49 @@ import time
 import torch
 
 from rlinf.scheduler import Worker
-from rlinf.utils.metric_utils import append_to_dict, compute_split_num
+from rlinf.utils.metric_utils import append_to_dict
 from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
 
 
 class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
-    should_stop = False
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.should_stop = False
+        self._recv_thread: threading.Thread | None = None
+        self._recv_queue = queue.Queue()
+        self._recv_error: Exception | None = None
+        self._lerobot_receiver_drained = threading.Event()
+
+    def _check_receiver(self):
+        if self._recv_error is not None:
+            raise RuntimeError(
+                "The DAgger trajectory receiver failed."
+            ) from self._recv_error
 
     async def recv_rollout_trajectories(self, input_channel):
-        if self.enable_online_lerobot:
-            if (
-                getattr(self, "_recv_lerobot_thread", None) is None
-                or not self._recv_lerobot_thread.is_alive()
-            ):
-                if input_channel is not None:
-                    self._recv_lerobot_thread = threading.Thread(
-                        target=self._recv_lerobot_thread_main,
-                        args=(input_channel,),
-                        daemon=True,
-                    )
-                    self._recv_lerobot_thread.start()
+        self._check_receiver()
+        if self.should_stop or input_channel is None or self._recv_thread is not None:
             return
-        if getattr(self, "_recv_queue", None) is None:
-            self._recv_queue = queue.Queue()
-        if (
-            getattr(self, "_recv_rollout_thread", None) is None
-            or not self._recv_rollout_thread.is_alive()
-        ):
-            self._recv_rollout_thread = threading.Thread(
-                target=self._recv_rollout_thread_main,
-                args=(input_channel,),
-                daemon=True,
-            )
-            self._recv_rollout_thread.start()
+        self._recv_thread = threading.Thread(
+            target=self._recv_trajectories, args=(input_channel,), daemon=True
+        )
+        self._recv_thread.start()
+
+    def _recv_trajectories(self, input_channel):
+        try:
+            if self.enable_online_lerobot:
+                try:
+                    self._recv_lerobot_thread_main(input_channel)
+                finally:
+                    self._lerobot_receiver_drained.set()
+                    self._archive_pending_lerobot_episodes()
+            else:
+                self._recv_rollout_thread_main(input_channel)
+        except Exception as error:
+            self._recv_error = error
 
     def _recv_lerobot_thread_main(self, input_channel):
-        """Background thread: receive episode batches from EnvWorker.
+        """Receive complete episode batches from the trajectory channel.
 
         Each received episode is appended to the actor's live in-memory
         LeRobot dataset immediately. Archive writes are flushed separately by
@@ -70,18 +77,15 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
                 time.sleep(0.1)
 
     def _recv_rollout_thread_main(self, input_channel):
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
         while not self.should_stop:
-            for _ in range(split_num):
-                trajectory = input_channel.get()
-                self._recv_queue.put(trajectory)
+            try:
+                trajectory = input_channel.get_nowait()
+            except asyncio.QueueEmpty:
+                time.sleep(0.1)
+                continue
+            self._recv_queue.put(trajectory)
 
     def _drain_received_trajectories(self, max_trajectories: int | None = None):
-        if getattr(self, "_recv_queue", None) is None:
-            return
-
         recv_list = []
         processed = 0
         while True:
@@ -104,7 +108,8 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             self.replay_buffer.add_trajectories(intervene_traj_list)
 
     async def _wait_for_replay_buffer_ready(self, min_buffer_size: int):
-        while True:
+        while not self.should_stop:
+            self._check_receiver()
             self._drain_received_trajectories(
                 max_trajectories=self.cfg.actor.get("recv_drain_max_trajectories", 1024)
             )
@@ -114,7 +119,8 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
 
     @Worker.timer("run_training")
     async def run_training(self):
-        """Run async DAgger updates with replay-buffer samples."""
+        """Train on samples from the online dataset or replay buffer."""
+        self._check_receiver()
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
@@ -125,6 +131,9 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             )
             await self._wait_for_replay_buffer_ready(min_buffer_size)
         elif self._skip_lerobot_training():
+            return {}
+
+        if self.should_stop:
             return {}
 
         assert (
@@ -145,18 +154,30 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             await asyncio.sleep(0)
             metrics_data = self.update_one_epoch()
             append_to_dict(metrics, metrics_data)
-            self.update_step += 1
 
-        torch.cuda.synchronize()
+        self.torch_platform.synchronize()
         torch.distributed.barrier()
-        torch.cuda.empty_cache()
+        self.torch_platform.empty_cache()
         return self.process_train_metrics(metrics)
+
+    def save_checkpoint(self, save_base_path, step):
+        self._check_receiver()
+        return super().save_checkpoint(save_base_path, step)
 
     async def stop(self):
         self.should_stop = True
-        recv_thread = getattr(self, "_recv_rollout_thread", None)
-        if recv_thread is not None and recv_thread.is_alive():
-            await asyncio.to_thread(recv_thread.join, 5)
-        lerobot_thread = getattr(self, "_recv_lerobot_thread", None)
-        if lerobot_thread is not None and lerobot_thread.is_alive():
-            await asyncio.to_thread(lerobot_thread.join, 5)
+        receiver = self._recv_thread
+        if receiver is not None:
+            await asyncio.to_thread(receiver.join, 5)
+        if self.enable_online_lerobot:
+            if receiver is None:
+                await asyncio.to_thread(self._archive_pending_lerobot_episodes)
+            elif receiver.is_alive():
+                if not self._lerobot_receiver_drained.is_set():
+                    raise TimeoutError(
+                        "The LeRobot receiver is still processing episodes. "
+                        "It will finalize the archive when it exits."
+                    )
+                # The input has drained; allow the final disk write to finish.
+                await asyncio.to_thread(receiver.join)
+        self._check_receiver()
