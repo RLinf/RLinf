@@ -40,10 +40,10 @@ Install locally with `requirements/install.sh` (pass `--venv <dir>` when keeping
 ```bash
 git clone https://github.com/RLinf/RLinf.git && cd RLinf
 bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
-bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp runner.max_epochs=10 runner.val_check_interval=-1
+bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 ```
 
-That runs a 10-epoch ManiSkill3 PPO MLP job on one GPU; drop the trailing overrides for full 1000-epoch training. Next, follow the [Quick Start](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html) for OpenVLA / OpenVLA-OFT PPO training, read the [RLinf Walkthrough](https://rlinf.readthedocs.io/en/latest/rst_source/start/walkthrough.html) for a visual tour of the framework and repo layout, try the [5-Minute Evaluation Quick Tour](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/get_started/quick_tour.html), or browse [Embodied Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) and the [Installation Guide](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html).
+That launches ManiSkill3 PPO MLP training on one GPU. Next, follow the [Quick Start](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html) for OpenVLA / OpenVLA-OFT PPO training, read the [RLinf Walkthrough](https://rlinf.readthedocs.io/en/latest/rst_source/start/walkthrough.html) for a visual tour of the framework and repo layout, try the [5-Minute Evaluation Quick Tour](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/get_started/quick_tour.html), or browse [Embodied Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) and the [Installation Guide](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html).
 
 ## What's NEW!
 

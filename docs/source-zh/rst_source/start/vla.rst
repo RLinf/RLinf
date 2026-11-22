@@ -48,9 +48,7 @@
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp runner.max_epochs=10 runner.val_check_interval=-1
-
-      去掉末尾的 ``runner.max_epochs=10 runner.val_check_interval=-1`` 即可跑完整 1000 轮训练。
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
    .. tab-item:: OpenVLA
       :sync: openvla
@@ -112,13 +110,13 @@
 
 日志、TensorBoard 事件与 checkpoint 保存在 ``logs/<时间戳>-<配置名>/`` 下。启动 ``tensorboard --host 0.0.0.0 --logdir ./logs``，重点观察 ``rollout/env_info/return`` 和 ``rollout/env_info/success_once``。
 
-10 轮 MLP 训练每步会在终端输出指标表：
+MLP 训练每步会在终端输出指标表：
 
 .. code-block:: text
 
    ╭───────────────────────────── Metric Table ──────────────────────────────╮
-   │ Global Step: 10/10 │ Progress: ████████████████████ │ 100.0%            │
-   │ Elapsed: 00:51     │ ETA: 00:00                     │ Step Time: 5.122s │
+   │ Global Step: 10/1000 │ Progress: ████░░░░░░░░░░░░░░ │ 1.0%              │
+   │ Elapsed: 00:51       │ ETA: 01:24:09                │ Step Time: 5.122s │
    ├───────────────────────────── Environment ───────────────────────────────┤
    │ episode_len=50.0   │ num_trajectories=1024          │ return=7.187      │
    ├──────────────────────────── Training/Actor ─────────────────────────────┤

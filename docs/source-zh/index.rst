@@ -16,13 +16,13 @@
 快速体验
 --------
 
-在 ManiSkill3 ``PickCube-v1`` 上跑 10 轮 PPO：
+在 ManiSkill3 ``PickCube-v1`` 上启动 PPO 训练：
 
 .. code-block:: bash
 
    git clone https://github.com/RLinf/RLinf.git && cd RLinf
    bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp runner.max_epochs=10 runner.val_check_interval=-1
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
 四步上手
 --------

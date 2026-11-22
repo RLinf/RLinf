@@ -45,15 +45,14 @@ RLinf 常用工作流的最短命令。
 
 .. tab-set::
 
-   .. tab-item:: MLP（单卡 · 零权重下载）
+   .. tab-item:: MLP
 
       .. code-block:: bash
 
          source .venv/bin/activate
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
-           runner.max_epochs=10 runner.val_check_interval=-1
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
-   .. tab-item:: VLA PPO（OpenVLA）
+   .. tab-item:: VLA PPO
 
       .. code-block:: bash
 
@@ -61,7 +60,7 @@ RLinf 常用工作流的最短命令。
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
-   .. tab-item:: 智能体 / 推理（单卡）
+   .. tab-item:: 智能体 / 推理
 
       通过命令行传入本地模型与数学数据集路径直接启动：
 

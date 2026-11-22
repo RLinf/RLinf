@@ -16,13 +16,13 @@ Train, fine-tune, and evaluate VLA policies, real-world robots, and reasoning ag
 Quick Try
 ---------
 
-Run 10 PPO epochs on ManiSkill3 ``PickCube-v1``:
+Launch PPO training on ManiSkill3 ``PickCube-v1``:
 
 .. code-block:: bash
 
    git clone https://github.com/RLinf/RLinf.git && cd RLinf
    bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp runner.max_epochs=10 runner.val_check_interval=-1
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
 Your First Run in Four Steps
 ----------------------------

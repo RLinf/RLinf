@@ -48,9 +48,7 @@ Pick a starting track below and run the commands in order. For regional mirrors,
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp runner.max_epochs=10 runner.val_check_interval=-1
-
-      Drop ``runner.max_epochs=10 runner.val_check_interval=-1`` for full 1000-epoch training.
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
    .. tab-item:: OpenVLA
       :sync: openvla
@@ -112,13 +110,13 @@ Results and Troubleshooting
 
 Logs, TensorBoard events, and checkpoints are written to ``logs/<timestamp>-<config>/``. Start TensorBoard with ``tensorboard --host 0.0.0.0 --logdir ./logs`` and watch ``rollout/env_info/return`` and ``rollout/env_info/success_once``.
 
-The 10-epoch MLP run prints a metric table at each step:
+The MLP run prints a metric table at each step:
 
 .. code-block:: text
 
    ╭───────────────────────────── Metric Table ──────────────────────────────╮
-   │ Global Step: 10/10 │ Progress: ████████████████████ │ 100.0%            │
-   │ Elapsed: 00:51     │ ETA: 00:00                     │ Step Time: 5.122s │
+   │ Global Step: 10/1000 │ Progress: ████░░░░░░░░░░░░░░ │ 1.0%              │
+   │ Elapsed: 00:51       │ ETA: 01:24:09                │ Step Time: 5.122s │
    ├───────────────────────────── Environment ───────────────────────────────┤
    │ episode_len=50.0   │ num_trajectories=1024          │ return=7.187      │
    ├──────────────────────────── Training/Actor ─────────────────────────────┤

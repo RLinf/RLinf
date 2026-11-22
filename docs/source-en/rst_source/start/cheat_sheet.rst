@@ -45,15 +45,14 @@ Single-node runs start Ray automatically. Config names map directly to YAML file
 
 .. tab-set::
 
-   .. tab-item:: MLP (1 GPU · No Downloads)
+   .. tab-item:: MLP
 
       .. code-block:: bash
 
          source .venv/bin/activate
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
-           runner.max_epochs=10 runner.val_check_interval=-1
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
-   .. tab-item:: VLA PPO (OpenVLA)
+   .. tab-item:: VLA PPO
 
       .. code-block:: bash
 
@@ -61,7 +60,7 @@ Single-node runs start Ray automatically. Config names map directly to YAML file
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
-   .. tab-item:: Agentic / Reasoning (1 GPU)
+   .. tab-item:: Agentic / Reasoning
 
       Pass your local model and math dataset paths on the command line:
 
