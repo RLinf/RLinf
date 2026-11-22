@@ -18,12 +18,12 @@ Guides
 
    * - Guide
      - What you get
+   * - :doc:`Rollout Engine Versions (SGLang & vLLM) <../version>`
+     - Install and switch between supported SGLang and vLLM builds in separate virtual environments.
    * - :doc:`SGLang Server & Router <../sglang_server>`
      - Launch an SGLang HTTP server group and router with one OpenAI-compatible endpoint for ``/generate`` and ``/v1/chat/completions``.
    * - :doc:`Calling SGLang with InferenceHTTPClient <../inference_http_client>`
      - Send sync and async ``/generate`` and ``/v1/chat/completions`` requests to a router or single server from your own code.
-   * - :doc:`Rollout Engine Versions (SGLang & vLLM) <../version>`
-     - Install and switch between supported SGLang and vLLM builds in separate virtual environments.
    * - :doc:`PhyAI <phyai>`
      - Train PI0.5 on LIBERO with an FSDP actor and PhyAI's in-process GPU rollout backend.
    * - :doc:`ApxInf <../apxinf>`
@@ -32,8 +32,8 @@ Guides
 .. toctree::
    :hidden:
 
+   Rollout Engine Versions (SGLang & vLLM) <../version>
    SGLang Server <../sglang_server>
    InferenceHTTPClient <../inference_http_client>
-   Rollout Engine Versions (SGLang & vLLM) <../version>
    PhyAI <phyai>
    ApxInf <../apxinf>

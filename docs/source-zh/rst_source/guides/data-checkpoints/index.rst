@@ -9,16 +9,16 @@
 
    * - 指南
      - 内容
-   * - :doc:`数据采集 <../data_collection>`
-     - 采集并预处理示教数据。
-   * - :doc:`Checkpoint 转换 <../convertor>`
-     - 在不同格式之间转换 checkpoint。
    * - :doc:`恢复训练 <../resume>`
      - Checkpoint 频率与断点续训。
+   * - :doc:`Checkpoint 转换 <../convertor>`
+     - 在不同格式之间转换 checkpoint。
+   * - :doc:`数据采集 <../data_collection>`
+     - 采集并预处理示教数据。
 
 .. toctree::
    :hidden:
 
-   数据采集 <../data_collection>
-   Checkpoint 转换 <../convertor>
    恢复训练 <../resume>
+   Checkpoint 转换 <../convertor>
+   数据采集 <../data_collection>

@@ -163,10 +163,10 @@ Why RLinf
   :hidden:
 
   Overview <rst_source/guides/index>
-  Envs & Logging <rst_source/guides/configure/index>
-  Data & Checkpoints <rst_source/guides/data-checkpoints/index>
   Launch & Scale <rst_source/guides/launch-scale/index>
+  Data & Checkpoints <rst_source/guides/data-checkpoints/index>
   Performance & Parallelism <rst_source/guides/performance/index>
+  Envs & Logging <rst_source/guides/configure/index>
   Rollout Engines <rst_source/guides/rollout-engines/index>
 
 .. toctree::

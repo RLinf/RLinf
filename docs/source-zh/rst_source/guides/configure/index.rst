@@ -13,13 +13,13 @@
 
    * - 指南
      - 内容
-   * - :doc:`异构环境 <../hetero_envs>`
-     - 在一次运行中让同一个 policy 使用不同的环境配置，例如 ManiSkill 和 LIBERO。
    * - :doc:`日志与可视化 <../logger>`
      - TensorBoard、W&B 与 SwanLab 配置，包括离线日志与多节点 API 密钥传递。
+   * - :doc:`异构环境 <../hetero_envs>`
+     - 在一次运行中让同一个 policy 使用不同的环境配置，例如 ManiSkill 和 LIBERO。
 
 .. toctree::
    :hidden:
 
-   异构环境 <../hetero_envs>
    日志与可视化 <../logger>
+   异构环境 <../hetero_envs>

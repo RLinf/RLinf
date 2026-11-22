@@ -10,16 +10,16 @@ resume a stopped run.
 
    * - Guide
      - What you get
-   * - :doc:`Data Collection <../data_collection>`
-     - Collect and preprocess demonstration data.
-   * - :doc:`Checkpoint Conversion <../convertor>`
-     - Convert checkpoints between formats.
    * - :doc:`Resume Training <../resume>`
      - Checkpoint cadence and resuming a run.
+   * - :doc:`Checkpoint Conversion <../convertor>`
+     - Convert checkpoints between formats.
+   * - :doc:`Data Collection <../data_collection>`
+     - Collect and preprocess demonstration data.
 
 .. toctree::
    :hidden:
 
-   Data Collection <../data_collection>
-   Checkpoint Conversion <../convertor>
    Resume Training <../resume>
+   Checkpoint Conversion <../convertor>
+   Data Collection <../data_collection>

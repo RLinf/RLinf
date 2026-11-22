@@ -163,10 +163,10 @@
   :hidden:
 
   总览 <rst_source/guides/index>
-  环境与日志 <rst_source/guides/configure/index>
-  数据与 Checkpoint <rst_source/guides/data-checkpoints/index>
   启动与扩展 <rst_source/guides/launch-scale/index>
+  数据与 Checkpoint <rst_source/guides/data-checkpoints/index>
   性能与并行 <rst_source/guides/performance/index>
+  环境与日志 <rst_source/guides/configure/index>
   Rollout 引擎 <rst_source/guides/rollout-engines/index>
 
 .. toctree::

@@ -18,12 +18,12 @@ Rollout 引擎
 
    * - 指南
      - 说明
+   * - :doc:`Rollout 引擎版本（SGLang 与 vLLM） <../version>`
+     - 在独立虚拟环境中安装并切换受支持的 SGLang 与 vLLM 版本。
    * - :doc:`SGLang 服务与路由 <../sglang_server>`
      - 启动一组 SGLang HTTP server 与一个 router，对外提供统一的 OpenAI 兼容 ``/generate`` 与 ``/v1/chat/completions`` 接口。
    * - :doc:`使用 InferenceHTTPClient 调用 SGLang <../inference_http_client>`
      - 在自己的代码里向 router 或单个 server 发送同步/异步的 ``/generate`` 与 ``/v1/chat/completions`` 请求。
-   * - :doc:`Rollout 引擎版本（SGLang 与 vLLM） <../version>`
-     - 在独立虚拟环境中安装并切换受支持的 SGLang 与 vLLM 版本。
    * - :doc:`PhyAI <phyai>`
      - 使用 FSDP actor 和 PhyAI 进程内 GPU rollout 后端，在 LIBERO 上训练 PI0.5。
    * - :doc:`ApxInf <../apxinf>`
@@ -32,8 +32,8 @@ Rollout 引擎
 .. toctree::
    :hidden:
 
+   Rollout 引擎版本（SGLang 与 vLLM） <../version>
    SGLang 服务与路由 <../sglang_server>
    InferenceHTTPClient <../inference_http_client>
-   Rollout 引擎版本（SGLang 与 vLLM） <../version>
    PhyAI <phyai>
    ApxInf <../apxinf>

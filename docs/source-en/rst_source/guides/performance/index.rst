@@ -30,18 +30,18 @@ Embodied Throughput
    * - Guide
      - Pick this when (symptom)
      - What you get
-   * - :doc:`RTC <../rtc>`
-     - Policy inference latency causes pauses between action chunks on robots or simulators.
-     - Overlap policy inference with action-chunk execution in simulation and on real robots.
-   * - :doc:`Env Decoupled <../env_decoupled_mode>`
-     - Slow or variable simulator steps leave rollout GPUs waiting on stragglers.
-     - Decouple env workers from rollout workers for dynamic embodied rollout scheduling.
    * - :doc:`Training Pipeline Mode <../training_pipeline>`
      - Actor GPUs sit idle until a full rollout epoch finishes, or large trajectory transfers stall steps.
      - Split rollout into pipeline stages and stream packed micro-batches from env workers to FSDP actors.
+   * - :doc:`Env Decoupled <../env_decoupled_mode>`
+     - Slow or variable simulator steps leave rollout GPUs waiting on stragglers.
+     - Decouple env workers from rollout workers for dynamic embodied rollout scheduling.
    * - :doc:`Observation Compression <../obs_compression>`
      - High-resolution image frames saturate network or IPC bandwidth between env and rollout.
      - Losslessly compress image observations on the env-to-rollout channel with ``lz4`` or ``zstd``.
+   * - :doc:`RTC <../rtc>`
+     - Policy inference latency causes pauses between action chunks on robots or simulators.
+     - Overlap policy inference with action-chunk execution in simulation and on real robots.
 
 Large-Model & Agentic
 ---------------------
@@ -62,24 +62,24 @@ Large-Model & Agentic
    * - :doc:`Auto Placement <../auto_placement>`
      - You want the fastest collocated vs disaggregated GPU split for a Megatron reasoning run.
      - Search optimal ``cluster.component_placement`` layouts from measured per-iteration timings.
-   * - :doc:`Dynamic Scheduling <../dynamic_scheduling>`
-     - Rollout finishes long before actor updates on disaggregated Megatron-LM 0.11 pipelines.
-     - Reallocate GPUs across rollout, inference, and actor at runtime (legacy Megatron-LM 0.11 setup).
    * - :doc:`FUSCO <../../examples/system/fusco>`
      - MoE All-to-All communication dominates Megatron actor step time.
      - Fuse token permutation and All-to-All communication to accelerate Megatron MoE training.
+   * - :doc:`Dynamic Scheduling <../dynamic_scheduling>`
+     - Rollout finishes long before actor updates on disaggregated Megatron-LM 0.11 pipelines.
+     - Reallocate GPUs across rollout, inference, and actor at runtime (legacy Megatron-LM 0.11 setup).
 
 .. toctree::
    :hidden:
 
-   RTC <../rtc>
-   Env Decoupled <../env_decoupled_mode>
-   Training Pipeline Mode <../training_pipeline>
-   Observation Compression <../obs_compression>
    LoRA <../lora>
-   Auto Placement <../auto_placement>
-   Dynamic Scheduling <../dynamic_scheduling>
    Profiling <../profile>
+   Training Pipeline Mode <../training_pipeline>
+   Env Decoupled <../env_decoupled_mode>
+   Observation Compression <../obs_compression>
+   RTC <../rtc>
    5D Parallelism <../5D>
    Async Agentic RL <../async_agentic>
+   Auto Placement <../auto_placement>
    FUSCO <../../examples/system/fusco>
+   Dynamic Scheduling <../dynamic_scheduling>

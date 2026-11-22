@@ -13,13 +13,13 @@ Use these guides to configure heterogeneous training environments and experiment
 
    * - Guide
      - What you get
-   * - :doc:`Heterogeneous Envs <../hetero_envs>`
-     - Run different env configurations, such as ManiSkill and LIBERO, for one policy in one run.
    * - :doc:`Logging & Visualization <../logger>`
      - TensorBoard, W&B, and SwanLab setup, including offline logging and multi-node API keys.
+   * - :doc:`Heterogeneous Envs <../hetero_envs>`
+     - Run different env configurations, such as ManiSkill and LIBERO, for one policy in one run.
 
 .. toctree::
    :hidden:
 
-   Heterogeneous Envs <../hetero_envs>
    Logging & Visualization <../logger>
+   Heterogeneous Envs <../hetero_envs>
