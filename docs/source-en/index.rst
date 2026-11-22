@@ -202,14 +202,14 @@ Why RLinf
   :hidden:
 
   Overview <rst_source/extending/index>
-  Architecture <rst_source/extending/overview>
   FSDP Model <rst_source/extending/new_model_fsdp>
-  Megatron Model <rst_source/extending/new_model_megatron>
+  Megatron-Bridge <rst_source/extending/mbridge>
   SGLang Embodied <rst_source/extending/sglang_embodied_model>
   SFT Model <rst_source/extending/new_model_sft>
   Simulator Env <rst_source/extending/new_env>
   Real-World Robot <rst_source/extending/new_robot>
   Real-World Task <rst_source/extending/new_task>
+  Algorithms & Rule Rewards <rst_source/extending/new_algorithm>
   Reward Model <rst_source/extending/reward_model>
   Advanced Integrations <rst_source/extending/advanced-integrations/index>
 
