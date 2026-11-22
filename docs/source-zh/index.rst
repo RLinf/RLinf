@@ -8,10 +8,12 @@
    <div class="rlinf-hero">
      <img class="rlinf-hero-logo" src="_static/svg/logo_white.svg" alt="RLinf logo" />
      <h1 class="rlinf-hero-title">欢迎使用 RLinf</h1>
-     <p class="rlinf-hero-subtitle">面向具身 policy 与基础模型的强化学习后训练框架</p>
+     <p class="rlinf-hero-subtitle">为具身智能、世界模型与智能体而生的强化学习基础设施</p>
    </div>
 
-在一张 GPU 或多机集群上完成 VLA policy、真机机器人与推理智能体的训练、微调和评测。
+**RLinf** 是一个灵活、可扩展的开源强化学习后训练框架。名称中的 **inf** 既代表 **Infrastructure**，为下一代智能体与机器人训练提供坚实底座；也代表 **Infinite**，寓意开放式学习与持续泛化的无限可能。
+
+同一套框架打通 **VLA 与世界模型仿真训练**、**真机机器人在线 RL** 与 **多轮推理 / 工具调用智能体**，从单卡原型平滑扩展到多机异构集群。
 
 快速体验
 --------
@@ -98,8 +100,8 @@
   :hidden:
 
   总览 <rst_source/start/index>
-  安装与环境 <rst_source/start/installation>
-  训练快速开始 <rst_source/start/vla>
+  安装 <rst_source/start/installation>
+  快速开始 <rst_source/start/vla>
   快速熟悉 RLinf <rst_source/start/walkthrough>
   命令速查表 <rst_source/start/cheat_sheet>
   常见问题 <rst_source/resources/faq>

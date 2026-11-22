@@ -15,7 +15,7 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
 
       端到端跑通首个 LIBERO-Spatial 评测。
 
-   .. grid-item-card:: 安装与环境
+   .. grid-item-card:: 安装
       :link: ../start/installation
       :link-type: doc
 

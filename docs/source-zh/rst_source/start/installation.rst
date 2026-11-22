@@ -1,5 +1,5 @@
-安装与环境
-==========
+安装
+====
 
 使用 ``requirements/install.sh`` 在本地 ``uv`` 虚拟环境中一键安装 RLinf，或直接拉取 Docker Hub 预构建镜像。
 
@@ -162,10 +162,10 @@
      - 推荐入口
    * - 单卡（4–24 GB）
      - MLP / CNN 仿真 RL（~4 GB）、VLA 评测（24 GB 起）、LoRA SFT、真机数据采集与部署
-     - :doc:`训练快速开始（MLP） <vla>`、:doc:`评测快速体验 <../evaluations/get_started/quick_tour>`
+     - :doc:`快速开始（MLP） <vla>`、:doc:`评测快速体验 <../evaluations/get_started/quick_tour>`
    * - 1–2 卡（40–80 GB）
      - 单机 OpenVLA / OpenPI 快速开始、共置 PPO / GRPO
-     - :doc:`训练快速开始（VLA） <vla>`
+     - :doc:`快速开始（VLA） <vla>`
    * - 4–8 卡（80 GB）
      - VLA 全参 SFT 与基准复现（LIBERO、ManiSkill、RoboTwin）、7B–14B 推理 RL
      - :doc:`具身训练 <../examples/index>`

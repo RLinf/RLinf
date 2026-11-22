@@ -9,13 +9,13 @@
 .. grid:: 1 2 2 4
    :gutter: 2
 
-   .. grid-item-card:: 1. 安装与环境
+   .. grid-item-card:: 1. 安装
       :link: installation
       :link-type: doc
 
       硬件档位、一行 ``install.sh`` 本地安装，或前往 Docker Hub 拉取镜像。
 
-   .. grid-item-card:: 2. 训练快速开始
+   .. grid-item-card:: 2. 快速开始
       :link: vla
       :link-type: doc
 
@@ -47,13 +47,13 @@
      - 推荐起点
    * - 轻量 RL
      - 单卡 4 GB+
-     - :doc:`训练快速开始 — MLP <vla>`
+     - :doc:`快速开始 — MLP <vla>`
    * - 约 5 分钟体验 VLA 评测
      - 单卡 24 GB+
      - :doc:`LIBERO 评测快速体验 <../evaluations/get_started/quick_tour>`
    * - 仿真环境 VLA 强化学习
      - 1–8 卡，40–80 GB
-     - :doc:`训练快速开始 — OpenVLA / OpenVLA-OFT <vla>`
+     - :doc:`快速开始 — OpenVLA / OpenVLA-OFT <vla>`
    * - 真机联调、数据采集与训练
      - 控制机 + GPU 节点
      - :doc:`真实机器人强化学习 <../examples/real_world_index>`

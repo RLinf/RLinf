@@ -1,5 +1,5 @@
-训练快速开始
-============
+快速开始
+========
 
 在 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ 上快速跑通 **MLP**、**OpenVLA** 或 **OpenVLA-OFT** 的 PPO 训练。
 

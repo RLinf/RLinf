@@ -42,7 +42,7 @@ bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin
 bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 ```
 
-上述命令会在单张 GPU 上启动 ManiSkill3 PPO MLP 训练。进阶可按 [训练快速开始](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/vla.html) 运行 OpenVLA / OpenVLA-OFT，阅读 [快速熟悉 RLinf](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/walkthrough.html) 图解了解框架与仓库结构，体验 [5 分钟评测快速体验](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/get_started/quick_tour.html)，或前往 [具身训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html) 与 [安装说明](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html) 查看更多配方与选项。
+上述命令会在单张 GPU 上启动 ManiSkill3 PPO MLP 训练。进阶可按 [快速开始](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/vla.html) 运行 OpenVLA / OpenVLA-OFT，阅读 [快速熟悉 RLinf](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/walkthrough.html) 图解了解框架与仓库结构，体验 [5 分钟评测快速体验](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/get_started/quick_tour.html)，或前往 [具身训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html) 与 [安装](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html) 查看更多配方与选项。
 
 ## 最新动态
 

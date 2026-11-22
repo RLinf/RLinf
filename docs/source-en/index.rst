@@ -8,10 +8,12 @@ Welcome to RLinf
    <div class="rlinf-hero">
      <img class="rlinf-hero-logo" src="_static/svg/logo_white.svg" alt="RLinf logo" />
      <h1 class="rlinf-hero-title">Welcome to RLinf</h1>
-     <p class="rlinf-hero-subtitle">RL Post-Training Infrastructure for Embodied Policies and Foundation Models</p>
+     <p class="rlinf-hero-subtitle">Reinforcement Learning Infrastructure for Embodied, World-Model, and Agentic AI</p>
    </div>
 
-Train, fine-tune, and evaluate VLA policies, real-world robots, and reasoning agents on one GPU or across multi-node clusters.
+**RLinf** is a flexible, scalable open-source reinforcement learning infrastructure built for Embodied and Agentic AI. The **inf** stands for both **Infrastructure**, highlighting its role as a backbone for next-generation post-training, and **Infinite**, reflecting open-ended learning and continuous generalization.
+
+One framework unifies **VLA and world-model simulation**, **real-world robot online RL**, and **multi-turn reasoning and tool-use agents**, scaling from a single GPU to multi-node heterogeneous clusters.
 
 Quick Try
 ---------

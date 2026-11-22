@@ -114,7 +114,7 @@ RLinf 常用工作流的最短命令。
 下一步
 ------
 
-- :doc:`安装说明 <installation>`：安装目标、常用参数与 Docker Hub 入口。
-- :doc:`训练快速开始 <vla>`：单卡 MLP 与 ManiSkill3 VLA 入门示例。
+- :doc:`安装 <installation>`：安装目标、常用参数与 Docker Hub 入口。
+- :doc:`快速开始 <vla>`：单卡 MLP 与 ManiSkill3 VLA 入门示例。
 - :doc:`启动与扩展 <../guides/launch-scale/index>`：多机与真机部署。
 - :doc:`评测 <../evaluations/index>`：支持的 benchmark 与评测配置。

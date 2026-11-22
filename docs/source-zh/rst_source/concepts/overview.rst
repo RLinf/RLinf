@@ -115,7 +115,7 @@ Collocated、Disaggregated 与 Hybrid 对应同一套 worker 的三种硬件放�
 
       了解导出格式配置、流式分片与数据集合并。
 
-   .. grid-item-card:: 训练快速开始
+   .. grid-item-card:: 快速开始
       :link: ../start/vla
       :link-type: doc
 
