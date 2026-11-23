@@ -130,7 +130,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple" "robolab")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "rmbench" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple" "robolab")
 
 #=======================Utility Functions=======================
 
@@ -1167,6 +1167,7 @@ apply_env_default_torch() {
         robolab) env_torch="2.7.1" ;;
         simple) env_torch="2.7.0" ;;
         robodojo) env_torch="2.7.0" ;;
+        rmbench) [ -n "$MODEL" ] || env_torch="2.6.0" ;;
     esac
     if [ -n "$env_torch" ]; then
         TORCH_VERSION="$env_torch"
@@ -1690,7 +1691,7 @@ apply_model_default_torch() {
     local model_torch="-"
     case "$MODEL" in
         openpi)
-            if [ "$ENV_NAME" = "yam" ]; then
+            if [ "$ENV_NAME" = "yam" ] || [ "$ENV_NAME" = "rmbench" ]; then
                 # OpenPI 0.1.1 requires torch 2.7.1; sync its matching vision/codec stack.
                 model_torch="2.7.1"
             fi
@@ -2709,6 +2710,12 @@ EOF
             install_flash_attn
             install_robocasa365_env
             ;;
+        rmbench)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_lerobot "rlinf-openpi==0.1.1" h5py
+            install_flash_attn
+            ;;
         robotwin)
             create_and_sync_venv
             install_common_embodied_deps
@@ -3615,6 +3622,10 @@ install_env_only() {
             install_common_embodied_deps
             install_simple_env
             ;;
+        rmbench)
+            install_common_embodied_deps
+            install_rmbench_env
+            ;;
         robodojo)
             install_common_embodied_deps
             install_robodojo_env
@@ -4409,6 +4420,19 @@ install_robotwin_env() {
     # 808                 return {"status": "screw plan failed"}
     PLANNER=$MPLIB_LOCATION/planner.py
     sed -i -E 's/(if np.linalg.norm\(delta_twist\) < 1e-4 )(or collide )(or not within_joint_limit:)/\1\3/g' $PLANNER
+}
+
+install_rmbench_env() {
+    if [ "$PLATFORM" != "nvidia" ]; then
+        echo "RMBench evaluation requires NVIDIA CUDA for its CuRobo expert planner." >&2
+        exit 1
+    fi
+
+    set_torch_cuda_arch_list
+    uv pip install 'numpy<2' 'opencv-python<4.12' sapien==3.0.0b1 mplib==0.2.1 \
+        gymnasium==0.29.1 open3d==0.18.0 transforms3d==0.4.2 toppra==0.6.3 \
+        trimesh h5py huggingface_hub warp-lang==1.12.0 'setuptools_scm>=6.2'
+    uv pip install git+${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git@v0.7.8 --no-build-isolation
 }
 
 install_frankasim_env() {

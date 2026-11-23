@@ -129,6 +129,7 @@ jobs:
               - 'toolkits/realworld_check/**'
               - 'toolkits/replay_buffer/**'
               - 'toolkits/lerobot/**'
+              - 'toolkits/rmbench/**'
               - 'toolkits/dual_franka/**'
               - 'toolkits/cosmos3/**'
               - 'toolkits/__init__.py'
@@ -198,6 +199,7 @@ jobs:
               # real-world compatibility suite, maniskill offload, delay
               # sampler), so env changes have to trigger this job.
               - 'rlinf/envs/**'
+              - 'evaluations/rmbench/simulator.py'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
               # The agent loop, rollout buffer, agentic tokenizer, Megatron MA actor

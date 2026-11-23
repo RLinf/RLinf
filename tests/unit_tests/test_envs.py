@@ -20,6 +20,7 @@ import torch
 from omegaconf import OmegaConf
 
 import rlinf.workers.env.env_worker as env_worker_module
+from evaluations.rmbench import simulator as rmbench
 from rlinf.config import (
     resolve_env_mode_cfg,
     validate_embodied_cfg,
@@ -51,6 +52,90 @@ def _env(env_type: str, total_num_envs: int, **fields) -> dict:
 
 def _hetero_mode(**envs: dict):
     return OmegaConf.create({"envs": envs})
+
+
+def test_rmbench_policy_samples_control_ticks_and_resets_history():
+    class PolicyConnection:
+        def __init__(self):
+            self.requests = []
+
+        def send(self, request):
+            self.requests.append(request)
+
+        def recv(self):
+            return np.zeros((3, 14), dtype=np.float32)
+
+    class Task:
+        take_action_cnt = 0
+        step_lim = 5
+        eval_success = False
+        observation_calls = 0
+
+        def get_instruction(self):
+            return "Pick up the block."
+
+        def get_obs(self):
+            self.observation_calls += 1
+            tick = self.take_action_cnt
+            return {
+                "observation": {
+                    name: {"rgb": np.full((2, 2, 3), tick + offset, dtype=np.uint8)}
+                    for name, offset in (
+                        ("head_camera", 1),
+                        ("left_camera", 21),
+                        ("right_camera", 41),
+                    )
+                },
+                "joint_action": {"vector": np.full(14, tick)},
+            }
+
+        def take_action(self, action, action_type):
+            assert action_type == "qpos"
+            np.testing.assert_array_equal(action, np.zeros(14))
+            self.take_action_cnt += 1
+
+    connection = PolicyConnection()
+    memory = rmbench.PolicyClient(
+        connection, {"num_frames": 3, "stride": 2, "fps": 2.0}
+    )
+    task = Task()
+    with torch.random.fork_rng(devices=[]):
+        torch.random.default_generator.manual_seed(100000)
+        rmbench.reset_model(memory)
+        rmbench.eval(task, memory, task.get_obs())
+        rmbench.eval(task, memory, task.get_obs())
+        torch.random.default_generator.manual_seed(100001)
+        rmbench.reset_model(memory)
+        second_task = Task()
+        rmbench.eval(second_task, memory, second_task.get_obs())
+
+    assert task.take_action_cnt == task.step_lim
+    seed, query = connection.requests[1]
+    assert seed == 100000
+    assert query["task_descriptions"] == ["Pick up the block."]
+    np.testing.assert_array_equal(query["states"], np.full((1, 14), 3))
+    history = query["history"]
+    np.testing.assert_array_equal(history["main_images"][0, :, 0, 0, 0], [0, 2, 4])
+    np.testing.assert_array_equal(
+        history["wrist_images"][0, :, :, 0, 0, 0], [[0, 0], [22, 42], [24, 44]]
+    )
+    np.testing.assert_array_equal(history["frame_mask"], [[False, True, True]])
+    np.testing.assert_array_equal(history["time_offsets"], [[-2.0, -1.0, 0.0]])
+    new_seed, first_query_after_reset = connection.requests[2]
+    assert new_seed == 100001
+    np.testing.assert_array_equal(
+        first_query_after_reset["history"]["frame_mask"], [[False, False, True]]
+    )
+
+    client = rmbench.PolicyClient(connection)
+    task = Task()
+    rmbench.eval(task, client, task.get_obs())
+    _, query = connection.requests[-1]
+    assert task.take_action_cnt == 3
+    assert task.observation_calls == 1
+    assert "history" not in query
+    np.testing.assert_array_equal(query["main_images"], np.full((1, 2, 2, 3), 1))
+    np.testing.assert_array_equal(query["wrist_images"][0, :, 0, 0, 0], [21, 41])
 
 
 def test_homogeneous_mode_is_hosted_unchanged_by_every_worker():

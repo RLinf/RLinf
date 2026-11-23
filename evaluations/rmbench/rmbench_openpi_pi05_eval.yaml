@@ -1,0 +1,35 @@
+rmbench_path: /path/to/RMBench
+sim_python: /path/to/.rmbench-venv/bin/python
+
+task_name: observe_and_pickup
+episodes: 100
+seed: 0
+instruction_type: seen
+save_video: false
+device: cuda:0
+
+runner:
+  logger:
+    log_path: logs/rmbench
+
+short_memory:
+  num_frames: 8
+  stride: 53
+  fps: 15.0
+
+model:
+  model_path: /path/to/checkpoints/global_step_10000
+  precision: bf16
+  action_dim: 14
+  num_action_chunks: 32
+  openpi:
+    task: eval
+    config_name: pi05_rmbench
+    num_images_in_input: 3
+    action_horizon: 32
+    discrete_state_input: true
+    short_memory: true
+    short_memory_temporal_layers: [3, 7, 11, 15]
+    short_memory_drop_history_layer: 15
+  openpi_data:
+    norm_stats_path: /path/to/norm_stats.json

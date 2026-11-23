@@ -12,17 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LeRobot dataset writer for saving rollout data."""
+"""Write LeRobot datasets from rollout frames or encoded episodes."""
 
 import gc
 from concurrent.futures import Future, ThreadPoolExecutor, wait
+from io import BytesIO
+from pathlib import Path
 from types import MethodType
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
 from rlinf.data.storage.lerobot.compat import add_frame_to_dataset
 from rlinf.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from datasets import Features
+    from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 
 
 def _write_png(image: Any, fpath: Any) -> None:
@@ -49,22 +55,21 @@ def _write_png(image: Any, fpath: Any) -> None:
         raise OSError(f"Failed to write recording image: {fpath}")
 
 
-def _save_episode_table(dataset, episode_buffer: dict, episode_index: int) -> None:
-    """Write LeRobot v2 rows in small batches without retaining past episodes."""
+def _write_episode_parquet(
+    path: Path, features: "Features", columns: dict[str, Any]
+) -> None:
     import datasets
     import pyarrow.parquet as pq
     from datasets.table import embed_table_storage
 
-    features = dataset.hf_features
-    path = dataset.root / dataset.meta.get_data_file_path(ep_index=episode_index)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = path.with_suffix(".parquet.tmp")
     try:
         with pq.ParquetWriter(temporary_path, features.arrow_schema) as writer:
             # Bound embedded image bytes, including incompressible RGB frames.
-            for start in range(0, len(episode_buffer["index"]), 16):
+            for start in range(0, len(columns["index"]), 16):
                 batch = datasets.Dataset.from_dict(
-                    {key: episode_buffer[key][start : start + 16] for key in features},
+                    {key: columns[key][start : start + 16] for key in features},
                     features=features,
                 )
                 table = embed_table_storage(batch.data.table)
@@ -73,6 +78,78 @@ def _save_episode_table(dataset, episode_buffer: dict, episode_index: int) -> No
         temporary_path.replace(path)
     finally:
         temporary_path.unlink(missing_ok=True)
+
+
+def _save_episode_table(dataset, episode_buffer: dict, episode_index: int) -> None:
+    """Write LeRobot v2 rows in small batches without retaining past episodes."""
+    path = dataset.root / dataset.meta.get_data_file_path(ep_index=episode_index)
+    _write_episode_parquet(path, dataset.hf_features, episode_buffer)
+
+
+def _embedded_image_stats(images: list[bytes]) -> dict[str, np.ndarray]:
+    from lerobot.common.datasets.compute_stats import (
+        auto_downsample_height_width,
+        get_feature_stats,
+        sample_indices,
+    )
+    from PIL import Image
+
+    samples = []
+    for index in sample_indices(len(images)):
+        with Image.open(BytesIO(images[index])) as image:
+            array = np.asarray(image).transpose(2, 0, 1)
+            samples.append(auto_downsample_height_width(array))
+    stats = get_feature_stats(np.stack(samples), axis=(0, 2, 3), keepdims=True)
+    return {
+        key: value if key == "count" else value.squeeze(0) / 255.0
+        for key, value in stats.items()
+    }
+
+
+def write_embedded_episode(
+    metadata: "LeRobotDatasetMetadata",
+    columns: dict[str, np.ndarray],
+    images: dict[str, list[bytes]],
+    task: str,
+) -> None:
+    """Append one fixed-rate LeRobot v2.1 episode with embedded RGB images.
+
+    Args:
+        metadata: Destination dataset metadata with the declared feature schema.
+        columns: Aligned per-frame data for the declared non-image features.
+        images: Encoded RGB frames for each declared image feature.
+        task: Language instruction shared by all frames in the episode.
+    """
+    from lerobot.common.datasets.compute_stats import compute_episode_stats
+    from lerobot.common.datasets.utils import get_hf_features_from_features
+
+    lengths = {key: len(values) for key, values in {**columns, **images}.items()}
+    if len(set(lengths.values())) != 1 or 0 in lengths.values():
+        raise ValueError(f"Expected aligned, nonempty episode columns, got {lengths}.")
+    num_frames = next(iter(lengths.values()))
+    episode_index = metadata.total_episodes
+    frame_indices = np.arange(num_frames, dtype=np.int64)
+    if metadata.get_task_index(task) is None:
+        metadata.add_task(task)
+    columns = {
+        **columns,
+        "index": frame_indices + metadata.total_frames,
+        "frame_index": frame_indices,
+        "episode_index": np.full(num_frames, episode_index, dtype=np.int64),
+        "task_index": np.full(
+            num_frames, metadata.get_task_index(task), dtype=np.int64
+        ),
+        "timestamp": (frame_indices / metadata.fps).astype(np.float32),
+    }
+    stats = compute_episode_stats(columns, metadata.features)
+    stats.update({key: _embedded_image_stats(value) for key, value in images.items()})
+    path = metadata.root / metadata.get_data_file_path(episode_index)
+    features = get_hf_features_from_features(metadata.features)
+    image_columns = {
+        key: [{"bytes": value} for value in data] for key, data in images.items()
+    }
+    _write_episode_parquet(path, features, {**columns, **image_columns})
+    metadata.save_episode(episode_index, num_frames, [task], stats)
 
 
 def _silence_hf_datasets_progress_bars() -> None:

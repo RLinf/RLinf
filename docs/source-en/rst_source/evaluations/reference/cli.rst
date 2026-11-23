@@ -45,6 +45,7 @@ Supported Benchmark Prefixes
 ``run_eval.sh`` infers the benchmark from the config name prefix:
 
 - ``libero_*`` → libero
+- ``rmbench_*`` → rmbench
 - ``robotwin_*`` → robotwin
 - ``behavior_*`` → behavior
 - ``realworld_*`` → realworld

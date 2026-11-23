@@ -45,6 +45,7 @@ CLI 参考
 ``run_eval.sh`` 根据配置名前缀自动推断 benchmark：
 
 - ``libero_*`` → libero
+- ``rmbench_*`` → rmbench
 - ``robotwin_*`` → robotwin
 - ``behavior_*`` → behavior
 - ``realworld_*`` → realworld

@@ -28,6 +28,9 @@ Benchmark 指南
    * - RoboLab
      - 包含 120 个操作任务的 DROID joint-position benchmark
      - :doc:`robolab`
+   * - RMBench
+     - 需要记忆历史观测的双臂操作
+     - :doc:`rmbench`
    * - RoboTwin
      - 双臂操作仿真，多任务场景
      - :doc:`robotwin`
@@ -49,5 +52,6 @@ Benchmark 指南
    maniskill_ood
    polaris
    robolab
+   rmbench
    robotwin
    simple

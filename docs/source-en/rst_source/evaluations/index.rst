@@ -32,6 +32,9 @@ The table below lists benchmarks that have example configs under ``evaluations/`
    * - RoboLab
      - 120 DROID joint-position manipulation tasks
      - ``robolab/robolab_pi05_droid_jointpos.yaml``
+   * - RMBench
+     - ``observe_and_pickup``
+     - ``rmbench/rmbench_openpi_pi05_eval.yaml``
    * - RoboTwin
      - ``robotwin_place_empty_cup``, ``robotwin_adjust_bottle``, ``robotwin_place_shoe``, ``robotwin_click_bell``
      - ``robotwin/robotwin_place_empty_cup_openvlaoft_eval.yaml``, etc.
@@ -85,6 +88,8 @@ End-to-end evaluation workflows per benchmark (setup → config → launch → r
      - PolaRiS tabletop manipulation.
    * - :doc:`RoboLab <guides/robolab>`
      - RoboLab evaluation through RLinf environment workers and the evaluation runner.
+   * - :doc:`RMBench <guides/rmbench>`
+     - Closed-loop evaluation of π₀.₅ with Short Memory.
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin bimanual manipulation.
    * - :doc:`SIMPLE <guides/simple>`

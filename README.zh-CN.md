@@ -34,6 +34,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/11] 🔥 RLinf 支持在 RMBench 上微调带 Short Memory 的 π₀.₅，并在模拟器中评测任务成功率。文档：[RMBench](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/rmbench.html)。
 - [2026/11] 🔥 RLinf 支持奖励反馈学习（ReFL），使用 ImageReward 微调 SD3.5 Medium。文档：[ReFL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/refl.html)。
 - [2026/11] 🔥 RLinf 支持 Intel GPU。支持的模型与环境组合见[硬件支持矩阵](#硬件支持)，PR：[Intel GPU 支持（#1832）](https://github.com/RLinf/RLinf/pull/1832)。
 - [2026/11] 🔥 RLinf 支持 Robbyant R2 轮式双臂人形机器人的真机强化学习、全身 PICO VR 遥操作，以及双臂、夹爪或灵巧手、躯干与全向底盘的协同控制。文档：[Robbyant R2](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/r2.html)。
@@ -207,6 +208,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html#zh-liberopro-plus-benchmark">LIBERO-Pro & LIBERO-Plus</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html#zh-libero-mem-benchmark">LIBERO-Mem</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robotwin.html">RoboTwin</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/rmbench.html">RMBench</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/roboverse.html">RoboVerse</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/behavior.html">BEHAVIOR</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/metaworld.html">MetaWorld</a> ✅</li>

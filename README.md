@@ -35,6 +35,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports supervised fine-tuning and evaluation of π₀.₅ with Short Memory on RMBench. Doc: [RMBench](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rmbench.html).
 - [2026/11] 🔥 RLinf supports Reward Feedback Learning (ReFL) for fine-tuning SD3.5 Medium with ImageReward. Doc: [ReFL](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html).
 - [2026/11] 🔥 RLinf supports Intel GPUs. See the [hardware support matrix](#hardware-support) and PR: [Intel GPU support (#1832)](https://github.com/RLinf/RLinf/pull/1832).
 - [2026/11] 🔥 RLinf supports the Robbyant R2 wheeled humanoid robot for real-world RL, whole-body PICO VR teleoperation, and coordinated control across dual arms, grippers or dexterous hands, torso, and omnidirectional base. Doc: [Robbyant R2](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/r2.html).
@@ -206,6 +207,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#liberopro-plus-benchmark">LIBERO-Pro & LIBERO-Plus</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#libero-mem-benchmark">LIBERO-Mem</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robotwin.html">RoboTwin</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rmbench.html">RMBench</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/roboverse.html">RoboVerse</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/behavior.html">BEHAVIOR</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/metaworld.html">MetaWorld</a> ✅</li>

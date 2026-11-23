@@ -32,6 +32,9 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
    * - RoboLab
      - 120 个 DROID joint-position 操作任务
      - ``robolab/robolab_pi05_droid_jointpos.yaml``
+   * - RMBench
+     - ``observe_and_pickup``
+     - ``rmbench/rmbench_openpi_pi05_eval.yaml``
    * - RoboTwin
      - ``robotwin_place_empty_cup``、``robotwin_adjust_bottle``、``robotwin_place_shoe``、``robotwin_click_bell``
      - ``robotwin/robotwin_place_empty_cup_openvlaoft_eval.yaml`` 等
@@ -85,6 +88,8 @@ Benchmark 指南
      - PolaRiS 桌面操作。
    * - :doc:`RoboLab <guides/robolab>`
      - 通过 RLinf 环境 worker 和统一评估 runner 运行 RoboLab。
+   * - :doc:`RMBench <guides/rmbench>`
+     - 带 Short Memory 的 π₀.₅ 闭环评测。
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin 双臂操作。
    * - :doc:`SIMPLE <guides/simple>`

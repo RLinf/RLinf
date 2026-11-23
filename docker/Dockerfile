@@ -75,6 +75,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa365
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-isaaclab
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robotwin
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-rmbench
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-opensora
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-frankasim
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-wan
@@ -424,6 +425,17 @@ RUN link_assets
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
+
+
+##################################################################################################
+# Embodied: RMBench
+##################################################################################################
+FROM embodied-common-image AS embodied-rmbench-image
+
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env rmbench && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv rmbench-sim --env rmbench
+
+RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################

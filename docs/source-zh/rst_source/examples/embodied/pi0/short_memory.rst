@@ -82,6 +82,8 @@ SFT 的 ``num_frames`` 和 ``stride`` 放在 ``data.short_memory`` 下，评测�
 
 默认评测 20 个环境、每条轨迹 700 个控制步。保留 ``env.eval.skip_intermediate_renders=False``，以记录 action chunk 内的历史。当前帧评测同时设置 ``rollout.model.openpi.short_memory=False`` 和 ``env.eval.short_memory=null``。结果与成功判定见 :doc:`LIBERO 评测 </rst_source/evaluations/guides/libero>`。
 
+使用 Aloha 演示训练和评测的步骤见 :doc:`RMBench 配方 <../rmbench>`。
+
 .. note::
 
    Short Memory 支持 ``openpi.task=eval`` 和 ``sft``。RL 训练的 replay 输入尚未携带相机历史，因此不支持该训练路径。

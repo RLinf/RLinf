@@ -19,6 +19,7 @@ infer_benchmark() {
         behavior_*|behavior-* ) echo "behavior" ;;
         libero_*|libero-* ) echo "libero" ;;
         robotwin_*|robotwin-* ) echo "robotwin" ;;
+        rmbench_*|rmbench-* ) echo "rmbench" ;;
         robodojo_*|robodojo-* ) echo "robodojo" ;;
         realworld_*|realworld-* ) echo "realworld" ;;
         maniskill_*|maniskill-* ) echo "maniskill" ;;
@@ -159,6 +160,10 @@ fi
 if [ "${BENCHMARK}" = "robocasa365" ]; then
     # Disable numba JIT to avoid LLVM crashes with multiple env subprocesses.
     export NUMBA_DISABLE_JIT="${NUMBA_DISABLE_JIT:-1}"
+fi
+
+if [ "${BENCHMARK}" = "rmbench" ]; then
+    SRC_FILE="${EVALUATIONS_PATH}/rmbench/evaluate.py"
 fi
 
 if [ "${BENCHMARK}" = "libero" ]; then

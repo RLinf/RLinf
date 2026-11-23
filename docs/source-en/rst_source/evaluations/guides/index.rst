@@ -28,6 +28,9 @@ This section provides end-to-end evaluation workflows organized by benchmark. Ea
    * - RoboLab
      - DROID joint-position benchmark with 120 manipulation tasks
      - :doc:`robolab`
+   * - RMBench
+     - Memory-dependent bimanual manipulation
+     - :doc:`rmbench`
    * - RoboTwin
      - Bimanual manipulation simulation with multiple tasks
      - :doc:`robotwin`
@@ -49,5 +52,6 @@ This section provides end-to-end evaluation workflows organized by benchmark. Ea
    maniskill_ood
    polaris
    robolab
+   rmbench
    robotwin
    simple
