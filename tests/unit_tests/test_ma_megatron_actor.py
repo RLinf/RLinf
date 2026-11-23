@@ -146,7 +146,7 @@ def test_get_step_batch_assembles_delivered_groups(monkeypatch):
     delivery = GroupDelivery(
         group_id=7,
         task_name="searchr1",
-        payload_ref=PayloadRef(locator="channel://Payload", key=7, parts={}),
+        payload_ref=PayloadRef(locator="channel://Payload", key=7),
     )
     assembled = DynamicRolloutResult(
         num_sequence=1,

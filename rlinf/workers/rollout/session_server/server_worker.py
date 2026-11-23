@@ -384,6 +384,7 @@ class SessionServerWorker(Worker):
                 ),
                 put_timeout_s=self._payload_put_timeout_s,
                 on_write_failure=self._note_write_failure,
+                on_peer_failure=lambda exc: self._fail_serving("payload put", exc),
             )
             self._http_server_task = asyncio.create_task(self._run_http_server())
             self.log_info(
@@ -608,6 +609,39 @@ class SessionServerWorker(Worker):
             return None, (200, "")
         return group, None
 
+    def _turn_refusal(self, session: _SessionState) -> Optional[tuple[int, str]]:
+        """The status and message that refuse a new turn of this session, or
+        None when the trajectory may take one.
+
+        Both entries call this before they change any session state, so a
+        request refused here leaves the session as it was: a trajectory
+        closed since the last request keeps the turns, the not-training
+        turns and the extra fields that its close already classified.
+
+        Returns:
+            The status and message to answer with, or None.
+        """
+        group, error = self._live_group(session)
+        if error is not None:
+            # An abort-discarded group answers 410 so the agent fails its
+            # turn; other failures pass through.
+            status, message = error
+            if status < 400:
+                status, message = 410, f"group {session.group_id} was discarded"
+            return status, message
+        if group.finalized or session.traj_index in group.closed:
+            # A closed trajectory takes no more turns: its turns are already
+            # classified, so another one would reach the payload without a
+            # place in the training data. A close cannot arrive while a
+            # request runs (a session serves one request at a time), so the
+            # check holds until the request's turn is recorded.
+            return (
+                410,
+                f"trajectory {session.traj_index} of group {session.group_id} "
+                f"is already closed",
+            )
+        return None
+
     # ------------------------------------------------------------------
     # Data plane
     # ------------------------------------------------------------------
@@ -619,6 +653,9 @@ class SessionServerWorker(Worker):
             return self._error(409, _SESSION_BUSY)
         session.inflight = True
         try:
+            error = self._turn_refusal(session)
+            if error is not None:
+                return self._error(*error)
             rlinf_block = body.get("rlinf") or {}
             # Every other body field rides through to the engine unchanged:
             # the request is sglang's /generate shape apart from the rlinf
@@ -663,7 +700,9 @@ class SessionServerWorker(Worker):
 
         Validates the inputs, records the prefix bookkeeping, forwards to
         the router, checks the abort / weight-version contracts, writes the
-        payload part, and updates the metrics and versions.
+        payload part, and updates the metrics and versions. The caller has
+        already checked with :meth:`_turn_refusal` that the trajectory may
+        take a turn, before changing any session state.
 
         Returns:
             The engine result (``text``, ``output_ids``, ``finish_reason``,
@@ -679,25 +718,6 @@ class SessionServerWorker(Worker):
                 ``sampling_params`` and ``return_logprob`` are always
                 overwritten by this server's merged values.
         """
-        group, error = self._live_group(session)
-        if error is not None:
-            # An abort-discarded group answers 410 so the agent fails its
-            # turn; other failures pass through.
-            status, message = error
-            if status < 400:
-                status, message = 410, f"group {session.group_id} was discarded"
-            return None, (status, message)
-        if group.finalized or session.traj_index in group.closed:
-            # A closed trajectory takes no more turns: its turns are already
-            # classified, so another one would reach the payload without a
-            # place in the training data. A close cannot arrive while this
-            # request runs (a session serves one request at a time), so the
-            # check holds through the forward below.
-            return None, (
-                410,
-                f"trajectory {session.traj_index} of group {session.group_id} "
-                f"is already closed",
-            )
         if not isinstance(input_ids, list) or not input_ids:
             return None, (400, "input_ids must be a non-empty list")
         if prev_kept_len is not None and (
@@ -716,10 +736,6 @@ class SessionServerWorker(Worker):
         turn = new_turn_record(
             input_ids, session.last_input, session.last_output, prev_kept_len
         )
-        if turn.continues_prev is False:
-            # The arrival-time classification found a break inside the
-            # previous input, which is a history rewrite.
-            self._metrics["session_server/prefix_rewritten"] += 1
 
         forwarded = dict(body_fields or {})
         forwarded["input_ids"] = input_ids
@@ -804,6 +820,11 @@ class SessionServerWorker(Worker):
             # response is rejected like any other post-discard request.
             return None, (410, f"group {session.group_id} was discarded")
         session.turns.append(turn)
+        if turn.continues_prev is False:
+            # The arrival-time classification found a break inside the
+            # previous input, which is a history rewrite. Counted here: a
+            # turn a failed forward never records is no rewrite either.
+            self._metrics["session_server/prefix_rewritten"] += 1
         session.last_input = list(input_ids)
         session.last_output = list(output_ids)
         if self._verify_assembly:
@@ -914,6 +935,9 @@ class SessionServerWorker(Worker):
             return self._openai_error(409, _SESSION_BUSY, "session_busy")
         session.inflight = True
         try:
+            error = self._turn_refusal(session)
+            if error is not None:
+                return self._openai_error(*error, "generation_failed")
             if session.entry is None:
                 session.entry = "chat"
             messages = body["messages"]
@@ -1365,9 +1389,7 @@ class SessionServerWorker(Worker):
             payload_ref=PayloadRef(
                 locator=payload_locator_for(payload_channel),
                 key=payload_key_for(group_id),
-                parts={"tokens": group.payload_bytes},
             ),
-            payload_bytes=group.payload_bytes,
         )
         try:
             work = self._agent_output_channel.put(metadata, async_op=True)

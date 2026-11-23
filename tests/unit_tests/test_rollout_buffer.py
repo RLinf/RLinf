@@ -32,7 +32,7 @@ from omegaconf import OmegaConf, open_dict
 from torch.utils.data import Dataset
 
 from rlinf.data.datasets.common.item import DatasetItem
-from rlinf.data.schema import DiscardedGroup, GroupMetadata
+from rlinf.data.schema import DiscardedGroup, GroupMetadata, PayloadRef
 from rlinf.scheduler import Worker
 from rlinf.workers.rollout_buffer.rollout_buffer_worker import (
     RolloutBuffer,
@@ -126,6 +126,39 @@ class _QueueChannel:
 
     def get_nowait(self, key=None):
         return self._queue.get_nowait()
+
+
+class _RecordingPayloadChannel:
+    """A payload channel that records the keys it is asked to drop."""
+
+    def __init__(self, name="Payload"):
+        self.name = name
+        self.removed: list = []
+
+    def remove_key(self, key, async_op=False):
+        self.removed.append(key)
+
+        async def _wait():
+            return None
+
+        return mock.MagicMock(async_wait=_wait)
+
+
+def _ref_result(group_id, earliest_version, key=None):
+    """A finished group delivered by reference, as the session server sends it:
+    the metadata itself, with the group's payload left in its channel."""
+    return GroupMetadata(
+        group_id=group_id,
+        task_name=None,
+        rewards=[1.0, 0.5],
+        earliest_version=earliest_version,
+        completion_version=earliest_version,
+        num_gen_tokens=0,
+        num_generate_calls=0,
+        payload_ref=PayloadRef(
+            locator="channel://Payload", key=group_id if key is None else key
+        ),
+    )
 
 
 def _result(group_id=None, earliest_version=None, rewards=None, task_name=None):
@@ -814,6 +847,79 @@ class TestWorkerResident:
                 ]
                 assert [r.group_id for r in released] == [0, 1]
                 assert worker.buffer.pending_release_version is None
+            finally:
+                await worker.stop()
+                await asyncio.wait_for(resident, timeout=5)
+
+        asyncio.run(run())
+
+    def test_a_stale_group_releases_its_payload_at_arrival(self):
+        """A group too stale when it arrives is dropped, and the payload its
+        reference names is removed from the channel: nothing would fetch it."""
+
+        async def run():
+            worker = _make_worker(rollout_batch_size=2, max_actor_accept_staleness=1)
+            worker.buffer.loaded_versions = {0: 5}
+            payload_channel = _RecordingPayloadChannel()
+            dataloader_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
+            rollout_channel = _QueueChannel()
+            resident = asyncio.create_task(
+                worker.run_continuously(
+                    agent_output_channel,
+                    dataloader_channel,
+                    rollout_channel,
+                    [payload_channel],
+                )
+            )
+            try:
+                await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
+                agent_output_channel.put(_ref_result(0, earliest_version=0))
+                for _ in range(100):
+                    if payload_channel.removed:
+                        break
+                    await asyncio.sleep(0.01)
+                assert payload_channel.removed == [0]
+                assert worker.buffer._task(None)["num_dropped_groups"]["stale"] == 1
+            finally:
+                await worker.stop()
+                await asyncio.wait_for(resident, timeout=5)
+
+        asyncio.run(run())
+
+    def test_a_group_stale_only_at_release_releases_its_payload(self):
+        """A group that arrives in time but is too stale for the training
+        version is dropped at release, and its payload removed."""
+
+        async def run():
+            worker = _make_worker(rollout_batch_size=1, max_actor_accept_staleness=1)
+            worker.buffer.loaded_versions = {0: 5}
+            payload_channel = _RecordingPayloadChannel()
+            dataloader_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
+            rollout_channel = _QueueChannel()
+            resident = asyncio.create_task(
+                worker.run_continuously(
+                    agent_output_channel,
+                    dataloader_channel,
+                    rollout_channel,
+                    [payload_channel],
+                )
+            )
+            try:
+                await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
+                # In time for the loaded version (5 - 4 = 1 is not above the
+                # limit), and the batch runs under a newer one.
+                agent_output_channel.put(_ref_result(0, earliest_version=4))
+                await asyncio.sleep(0.05)
+                assert payload_channel.removed == []
+                await worker.release_batch(version=9)
+                for _ in range(100):
+                    if payload_channel.removed:
+                        break
+                    await asyncio.sleep(0.01)
+                assert payload_channel.removed == [0]
+                assert rollout_channel._queue.empty()
             finally:
                 await worker.stop()
                 await asyncio.wait_for(resident, timeout=5)

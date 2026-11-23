@@ -2619,7 +2619,6 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
         session_cfg.enable = bool(session_cfg.get("enable", False))
         if session_cfg.get("group_name", None) is None:
             session_cfg.group_name = "SessionServer"
-        session_cfg.type = session_cfg.get("type", "http")
         session_cfg.host = session_cfg.get("host", "0.0.0.0")
         session_cfg.port = int(session_cfg.get("port", 8030))
         session_cfg.num_servers = int(session_cfg.get("num_servers", 1))
@@ -2664,11 +2663,6 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
         session_cfg.chat_template_kwargs = dict(chat_template_kwargs or {})
     if not cfg.session_server.enable:
         return cfg
-    if cfg.session_server.type != "http":
-        raise ValueError(
-            f"session_server.type must be 'http' (the only transport "
-            f"implemented), found {cfg.session_server.type!r}."
-        )
 
     reward_cfg = cfg.get("reward", None)
     reward_type = (

@@ -205,44 +205,48 @@ class ChatCompletions:
         stored = conversation.messages if conversation is not None else []
         stored_tools = conversation.tools if conversation is not None else None
         rollback = False
-        # The stored tokens were rendered under the stored tool list, so a
-        # request that changes it cannot reuse them.
-        if _tools_equal(tools, stored_tools):
-            if (
-                conversation is not None
-                and conversation.checkpoint is not None
-                and stored
-                and len(messages) == len(stored) - 1
-                and _match_prefix(messages, stored[:-1]) is not None
-            ):
-                # The request repeats itself, so the client never used the
-                # last turn's answer. Render from before that turn. The
-                # checkpoint is consumed here: a further rollback has no
-                # state of its own to restore, and such a request renders
-                # the whole conversation instead.
-                checkpoint = conversation.checkpoint
-                rollback = True
-                stored = list(checkpoint.messages)
-                last_tokens = list(checkpoint.last_input or []) + list(
-                    checkpoint.last_output or []
+        # The stored tokens were rendered under the stored tool list, and a
+        # checkpoint's tokens under its own, so a request whose tools differ
+        # from the tokens it would continue renders the whole conversation.
+        if (
+            _tools_equal(tools, stored_tools)
+            and conversation is not None
+            and conversation.checkpoint is not None
+            and stored
+            and len(messages) == len(stored) - 1
+            and _match_prefix(messages, stored[:-1]) is not None
+        ):
+            # The request repeats itself, so the client never used the last
+            # turn's answer. Render from before that turn, under the tool
+            # list those tokens were rendered with. The checkpoint is
+            # consumed here: a further rollback has no state of its own to
+            # restore, and such a request renders the whole conversation
+            # instead.
+            checkpoint = conversation.checkpoint
+            rollback = True
+            stored = list(checkpoint.messages)
+            stored_tools = checkpoint.tools
+            last_tokens = list(checkpoint.last_input or []) + list(
+                checkpoint.last_output or []
+            )
+        if (
+            _tools_equal(tools, stored_tools)
+            and stored
+            and len(messages) > len(stored)
+            and _match_prefix(messages, stored) is not None
+        ):
+            suffix = messages[len(stored) :]
+            clear_thinking = self._tokenizer.chat_template_kwargs.get(
+                "clear_thinking", False
+            )
+            if not (clear_thinking and _has_user_message(suffix)):
+                return RenderedInput(
+                    self._tokenizer.build_native_tool_response(
+                        list(last_tokens), suffix
+                    ),
+                    messages=[*stored, *suffix],
+                    rollback=rollback,
                 )
-            if (
-                stored
-                and len(messages) > len(stored)
-                and _match_prefix(messages, stored) is not None
-            ):
-                suffix = messages[len(stored) :]
-                clear_thinking = self._tokenizer.chat_template_kwargs.get(
-                    "clear_thinking", False
-                )
-                if not (clear_thinking and _has_user_message(suffix)):
-                    return RenderedInput(
-                        self._tokenizer.build_native_tool_response(
-                            list(last_tokens), suffix
-                        ),
-                        messages=[*stored, *suffix],
-                        rollback=rollback,
-                    )
         return RenderedInput(
             self._tokenizer.apply_chat_template(
                 _template_messages(messages),

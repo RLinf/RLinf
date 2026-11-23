@@ -20,8 +20,9 @@ request bodies, so while the sglang server binds only loopback the trust
 boundary is "same machine". The multi-node rollout data plane needs the
 router on another node to reach the server, so the server then binds a
 network address — and this middleware keeps the trust boundary from
-widening with it: requests from the server's own machine pass, requests
-from any other machine must hit a whitelisted path exactly or get a 403
+widening with it: requests whose TCP peer is a loopback address pass,
+requests from any other address must hit a whitelisted path exactly or get
+a 403
 before any handler runs (in particular, before a pickled body is
 deserialized).
 

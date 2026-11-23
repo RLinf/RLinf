@@ -118,11 +118,6 @@ class AgentLoopWorker(Worker):
     Subclasses must implement the run_one_query method.
     """
 
-    # Class-level default so generate dispatch is safe even when the
-    # instance is built without running ``__init__`` (e.g. ``object.__new__``
-    # in unit tests); ``init_worker`` installs the real transport.
-    session_server_client = None
-
     def __init__(
         self,
         cfg: DictConfig,
@@ -966,7 +961,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             output — it holds no agent-side training data — and puts what
             the close needs in the fields: ``kept_lens`` when the override
             truncates turns, and ``extra_fields_train``, whose every field
-            carries one value per chat response received, when
+            carries one value per trained turn (a repeated request rolls
+            back the turn before it, and that turn is not trained), when
             ``algorithm.loss_scales`` includes ``agent_level``.
         """
         output = await self.run_one_query(copy.deepcopy(input_ids), answer=answer)

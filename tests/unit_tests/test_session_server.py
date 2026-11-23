@@ -37,8 +37,9 @@ the matching agent outputs.
 
 The scenario classes run in file order, and the buffer issues group ids
 0, 1, 2, ... in admission order, so scenario k drives group id k. The two
-payload put-failure scenarios run last: each kills every payload shard,
-which every earlier scenario still needs.
+payload put-failure scenarios use their own stacks with a failing payload
+collector, so they inject isolated write failures without taking down a
+channel worker or the shared stack.
 """
 
 import asyncio
@@ -65,9 +66,9 @@ pytestmark = pytest.mark.skipif(
     reason="the session server needs fastapi and SGLang",
 )
 
-import ray  # noqa: E402
 import requests  # noqa: E402
 from omegaconf import OmegaConf  # noqa: E402
+from ray.exceptions import ActorDiedError  # noqa: E402
 
 if _HAS_SESSION_SERVER_DEPS:
     from mock_sglang_server import (  # noqa: E402
@@ -86,6 +87,7 @@ from rlinf.scheduler import (  # noqa: E402
     NodePlacementStrategy,
 )
 from rlinf.scheduler.channel.channel import DEFAULT_KEY  # noqa: E402
+from rlinf.scheduler.collective import PeerCommunicationError  # noqa: E402
 from rlinf.workers.agent.agent_loop import (  # noqa: E402
     AgentLoopOutput,
     GroupDiscarded,
@@ -104,7 +106,9 @@ from rlinf.workers.rollout.session_server.chat_completions import (  # noqa: E40
 )
 from rlinf.workers.rollout.session_server.payload import (  # noqa: E402
     GroupPayload,
+    PayloadCollector,
     PayloadPart,
+    PayloadWriter,
     create_payload_channels,
     payload_channel_for,
 )
@@ -207,6 +211,7 @@ def _build_env(
     chat=False,
     family="qwen",
     reject_equal_reward=True,
+    payload_collector=None,
 ):
     """One session server, one real rollout buffer, two payload shards,
     and a mock sglang server. ``verify_assembly`` picks the session
@@ -290,9 +295,19 @@ def _build_env(
     agent_output = Channel.create(name=f"AgentOutput{suffix}")
     dataloader = Channel.create(name=f"DataLoader{suffix}")
     rollout = Channel.create(name=f"Rollout{suffix}")
-    payload_channels = create_payload_channels(
-        f"Payload{suffix}", num_shards=2, node_rank=0
-    )
+    if payload_collector is None:
+        payload_channels = create_payload_channels(
+            f"Payload{suffix}", num_shards=2, node_rank=0
+        )
+    else:
+        payload_channels = [
+            Channel.create(
+                name=f"Payload{suffix}_{shard}",
+                collector=payload_collector,
+                node_rank=0,
+            )
+            for shard in range(2)
+        ]
 
     server = SessionServerWorker.create_group(server_cfg, 0).launch(
         cluster,
@@ -1005,9 +1020,15 @@ class TestAbort:
         def slow_generate():
             outcome["response"] = generate(env, sid, [1, 2, 3])
 
+        before = len(env.mock.request_log)
         thread = threading.Thread(target=slow_generate)
         thread.start()
-        time.sleep(0.15)
+        # Wait until the generate reached the engine: the mock logs a request
+        # before it starts its latency, so the request is in flight.
+        deadline = time.monotonic() + 10
+        while len(env.mock.request_log) == before:
+            assert time.monotonic() < deadline, "the generate never reached the engine"
+            time.sleep(0.01)
         abort = requests.post(
             f"{env.base_url}/groups/{group_id}/abort",
             json={"reason": "agent_reset"},
@@ -1101,6 +1122,41 @@ class TestTurnClassification:
         continues, counts = classify_turns(turns, [5, 10, 2], set(), "chat", 0, 0)
         assert continues == [False, True, False]
         assert counts.rewritten == 1
+
+
+class TestRewriteMetric:
+    """prefix_rewritten counts the turns that are recorded."""
+
+    def test_a_rewrite_whose_forward_fails_is_counted_once(self, env, monkeypatch):
+        """A request that rewrites history counts only when its turn is
+        recorded: a failed forward writes no turn, and the retry that
+        succeeds counts the rewrite once."""
+        request = next_request(env)
+        sid = create_session(env, request.group_ids[0], 0)
+        assert generate(env, sid, [1, 2, 3]).status_code == 200
+        env.server.get_metrics().wait()
+
+        # A request that breaks inside the first turn's input is a rewrite.
+        abort = {"value": True}
+        response_body = env.mock._generate_response
+
+        def response_with_abort(body):
+            response = response_body(body)
+            if abort["value"]:
+                response["meta_info"]["finish_reason"] = {"type": "abort"}
+            return response
+
+        monkeypatch.setattr(env.mock, "_generate_response", response_with_abort)
+        assert generate(env, sid, [7, 8, 9]).status_code == 503
+        metrics = env.server.get_metrics().wait()[0]
+        assert metrics.get("session_server/prefix_rewritten", 0) == 0
+
+        abort["value"] = False
+        assert generate(env, sid, [7, 8, 9]).status_code == 200
+        # The rewrite is counted with the turn it belongs to.
+        metrics = env.server.get_metrics().wait()[0]
+        assert metrics.get("session_server/prefix_rewritten", 0) == 1
+        assert close(env, sid).status_code == 200
 
 
 class TestUnderreportedTruncation:
@@ -1341,6 +1397,31 @@ class TestChatCompletions:
             json=body,
             timeout=30,
         )
+
+    @staticmethod
+    def _chat_in_background(env, sid, body):
+        """Start a chat request the mock holds open, and return its thread.
+
+        Returns once the mock has logged the forwarded generate, which means
+        the session server holds the session: a second request now sees the
+        session busy.
+        """
+        env.mock.latency_s = 1.0
+        responses = []
+
+        def _send():
+            responses.append(TestChatCompletions._chat(env, sid, body))
+
+        before = len(env.mock.request_log)
+        thread = threading.Thread(target=_send)
+        thread.start()
+        deadline = time.monotonic() + 10
+        while len(env.mock.request_log) == before:
+            assert time.monotonic() < deadline, (
+                "the chat request never reached the engine"
+            )
+            time.sleep(0.01)
+        return thread, responses
 
     @staticmethod
     def _messages(question="What is RL?", tool_answer="RL is ..."):
@@ -1636,6 +1717,67 @@ class TestChatCompletions:
         # The re-render starts a new segment instead of pairing with the
         # turn rendered under the old list.
         assert metrics["session_server/prefix_rewritten"] == 1
+
+    def test_a_rolled_back_turn_keeps_the_tools_of_the_restored_tokens(self, chat_env):
+        """A rollback restores the tool list the checkpoint's tokens were
+        rendered with, so the retried request is rendered under the tools it
+        sends, not under the ones those tokens saw.
+
+        Without that, the retry appends its messages to tokens rendered under
+        another tool list, and the engine is asked with tool definitions that
+        do not match the prompt it continues.
+        """
+        from rlinf.models.tokenization.hf import hf_tokenizer
+
+        env = chat_env
+        env.mock.scripted_texts = ["First answer.", "Second answer."]
+        request = next_request(env)
+        sid = create_session(env, request.group_ids[0], 0)
+        messages = self._messages()
+        extended_tools = [
+            *CHAT_TOOLS,
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "description": "Look a term up.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ]
+        first = self._chat(env, sid, {"messages": messages, "tools": CHAT_TOOLS})
+        assert first.status_code == 200, first.text
+        reply = first.json()["choices"][0]["message"]
+        body = {
+            "messages": [
+                *messages,
+                reply,
+                {"role": "user", "content": "And which algorithms?"},
+            ],
+            "tools": extended_tools,
+        }
+
+        second = self._chat(env, sid, body)
+        assert second.status_code == 200, second.text
+        forwarded = [r for r in env.mock.request_log if r["path"] == "/generate"][-1]
+        tokenizer = hf_tokenizer(_chat_model_dir("qwen"), trust_remote_code=False)
+        expected = tokenizer.apply_chat_template(
+            body["messages"],
+            tools=extended_tools,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=False,
+        )
+        # The changed tool list governs this turn: the whole conversation is
+        # rendered under it.
+        assert forwarded["body"]["input_ids"] == list(expected)
+
+        # The same request again, which the chat entry rolls back: the retry
+        # must be rendered exactly as the first attempt was.
+        retry = self._chat(env, sid, body)
+        assert retry.status_code == 200, retry.text
+        retried = [r for r in env.mock.request_log if r["path"] == "/generate"][-1]
+        assert retried["body"]["input_ids"] == forwarded["body"]["input_ids"]
 
     def test_a_consumed_checkpoint_rolls_back_once(self, chat_env, monkeypatch):
         """A rollback consumes the checkpoint, so a request that repeats an
@@ -1979,24 +2121,17 @@ class TestChatCompletions:
 
     def test_concurrent_request_on_one_session_conflicts(self, chat_env):
         env = chat_env
-        env.mock.latency_s = 1.0
         env.mock.scripted_texts = ["Slow answer."]
         # Not admitted by the buffer: the scenario leaves no group pending.
         sid = create_session(env, 4310, 0)
+        body = {"messages": self._messages()}
 
-        import threading
-
-        results = {}
-
-        def first_call():
-            results["first"] = self._chat(env, sid, {"messages": self._messages()})
-
-        thread = threading.Thread(target=first_call)
-        thread.start()
-        time.sleep(0.3)
-        second = self._chat(env, sid, {"messages": self._messages()})
+        thread, responses = self._chat_in_background(env, sid, body)
+        second = self._chat(env, sid, body)
+        env.mock.latency_s = 0.0
         thread.join(timeout=30)
-        assert results["first"].status_code == 200
+
+        assert responses[0].status_code == 200
         assert second.status_code == 409, second.text
 
 
@@ -2322,6 +2457,57 @@ class TestOneRequestAtATime:
         # One turn per trajectory: the rejected request added none.
         assert result.num_sequence == 2
 
+    def test_a_chat_retry_on_a_closed_trajectory_changes_nothing(self, chat_env):
+        """A closed trajectory's training data is frozen for the chat entry
+        too: a retry that the chat entry would roll back is refused before it
+        touches the session, so the group still assembles.
+
+        The retry repeats the request the server answered last, which the
+        chat entry reads as a rollback; the trajectory is closed, so its
+        turns are already classified and its declared fields already
+        validated.
+        """
+        env = chat_env
+        chat = TestChatCompletions._chat
+        messages = TestChatCompletions._messages()
+        env.mock.scripted_texts = ["First answer.", "Second answer."]
+        request = next_request(env)
+        group_id = request.group_ids[0]
+        sid0 = create_session(env, group_id, 0)
+        body = {"messages": messages}
+
+        assert chat(env, sid0, body).status_code == 200
+        assert (
+            close(env, sid0, extra_fields_train={"idx_to_sub_traj": [0]}).status_code
+            == 200
+        )
+
+        # The same request again: the chat entry would roll the closed
+        # trajectory's last turn back.
+        retry = chat(env, sid0, body)
+        assert retry.status_code == 410
+
+        # The group finishes, and the actor assembles both trajectories'
+        # turns; the refused retry neither added nor dropped one.
+        sid1 = create_session(env, group_id, 1)
+        assert chat(env, sid1, body).status_code == 200
+        assert (
+            close(env, sid1, extra_fields_train={"idx_to_sub_traj": [0]}).status_code
+            == 200
+        )
+        assert reward(env, sid0, 1.0).json()["group_complete"] is False
+        assert reward(env, sid1, 0.5).json()["group_complete"] is True
+        env.buffer.release_batch(version=0).wait()
+        delivery = poll_channel(env.rollout)
+        assert isinstance(delivery, GroupDelivery)
+        channel = payload_channel_for(
+            delivery.payload_ref.locator, env.payload_channels
+        )
+        payload = poll_channel(channel, key=delivery.payload_ref.key)
+        result = assemble_group_payload(payload, return_logprobs=True)
+        assert result.num_sequence == 2
+        assert result.extra_fields_train["idx_to_sub_traj"] == [0, 0]
+
 
 class TestNoTrainedTurn:
     """A trajectory without a trained turn cannot be closed."""
@@ -2401,73 +2587,98 @@ class TestPayloadShards:
             assert shards.count(shard) == 2
 
 
+class _FailingPayloadCollector(PayloadCollector):
+    """A PayloadCollector that raises on either part or finalize writes.
+
+    Runs inside the real ChannelWorker after ``self.recv`` completes, so the
+    collective stream stays healthy and the error reaches PayloadWriter as an
+    isolated write failure rather than a dead channel peer.
+    """
+
+    def __init__(self, *, fail_on_last: bool) -> None:
+        super().__init__()
+        self._fail_on_last = fail_on_last
+
+    def collect(self, item, key):
+        if isinstance(item, PayloadPart) and item.last is self._fail_on_last:
+            raise RuntimeError("simulated payload write failure")
+        yield from PayloadCollector.collect(self, item, key)
+
+
 class TestFinalizePutFailure:
-    """Runs before TestPutFailure: its leading puts need live shards, and
-    it kills both only once they have settled."""
+    """The finalize part's put fails after every earlier part has settled."""
 
-    def test_finalize_put_failure_discards_not_delivers(self, env):
-        request = next_request(env)
-        group_id = request.group_ids[0]
-        sid0 = create_session(env, group_id, 0)
-        sid1 = create_session(env, group_id, 1)
-        assert generate(env, sid0, [1, 2]).status_code == 200
-        assert generate(env, sid1, [3, 4]).status_code == 200
+    def test_finalize_put_failure_discards_not_delivers(self, cluster):
+        fail_env = _build_env(
+            cluster,
+            verify_assembly=False,
+            suffix="FinalizeFail",
+            payload_collector=_FailingPayloadCollector(fail_on_last=True),
+        )
+        try:
+            request = next_request(fail_env)
+            group_id = request.group_ids[0]
+            sid0 = create_session(fail_env, group_id, 0)
+            sid1 = create_session(fail_env, group_id, 1)
+            assert generate(fail_env, sid0, [1, 2]).status_code == 200
+            assert generate(fail_env, sid1, [3, 4]).status_code == 200
 
-        # Wait until the background settlements are done, then kill the
-        # shard so only the finalize part's put fails.
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            metrics = env.server.get_metrics().wait()[0]
-            if metrics["session_server/pending_payload_bytes"] == 0:
-                break
-            time.sleep(0.1)
-        else:
-            pytest.fail("payload settlements did not drain")
-        # The leading puts have settled, so killing both shards leaves only
-        # the finalize part's put to fail.
-        for channel in env.payload_channels:
-            ray.kill(channel._main_channel_worker_actor)
+            # Wait until the background settlements are done; the collector
+            # accepts non-last parts and raises only on the finalize part.
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                metrics = fail_env.server.get_metrics().wait()[0]
+                if metrics["session_server/pending_payload_bytes"] == 0:
+                    break
+                time.sleep(0.1)
+            else:
+                pytest.fail("payload settlements did not drain")
 
-        assert close(env, sid0).status_code == 200
-        assert close(env, sid1).status_code == 200
-        assert reward(env, sid0, 1.0).json()["group_complete"] is False
-        assert reward(env, sid1, 0.5).json()["group_complete"] is False
+            assert close(fail_env, sid0).status_code == 200
+            assert close(fail_env, sid1).status_code == 200
+            assert reward(fail_env, sid0, 1.0).json()["group_complete"] is False
+            assert reward(fail_env, sid1, 0.5).json()["group_complete"] is False
 
-        # The group is discarded, not delivered: the GroupDelivery would
-        # promise a payload the collector can never emit.
-        metrics = wait_for_drops(env, "payload_write_failed")
-        assert metrics["dropped_groups"] == 1
-        assert poll_channel(env.rollout, timeout_s=2) is None
+            # The group is discarded, not delivered: the GroupDelivery would
+            # promise a payload the collector can never emit.
+            metrics = wait_for_drops(fail_env, "payload_write_failed")
+            assert metrics["dropped_groups"] == 1
+            assert poll_channel(fail_env.rollout, timeout_s=2) is None
 
-        server_metrics = env.server.get_metrics().wait()[0]
-        # get_metrics drains per window: the failure above landed after
-        # the last read (the pending-drain poll), so this window's count
-        # is the one failure of this scenario alone.
-        assert server_metrics["session_server/payload_write_failed"] == 1
+            server_metrics = fail_env.server.get_metrics().wait()[0]
+            # get_metrics drains per window: the failure above landed after
+            # the last read (the pending-drain poll), so this window's count
+            # is the one failure of this scenario alone.
+            assert server_metrics["session_server/payload_write_failed"] == 1
+        finally:
+            _stop_env(fail_env)
 
 
 class TestPutFailure:
-    """Last of the payload scenarios: it kills both payload shards, which
-    only a scenario that expects every put to fail can survive."""
+    """A background part put fails while the channel worker stays alive."""
 
-    def test_failed_background_put_voids_group(self, env):
-        request = next_request(env)
-        group_id = request.group_ids[0]
-        # Kill every shard, so this group's puts fail whichever shard it was
-        # given.
-        for channel in env.payload_channels:
-            ray.kill(channel._main_channel_worker_actor)
+    def test_failed_background_put_voids_group(self, cluster):
+        fail_env = _build_env(
+            cluster,
+            verify_assembly=False,
+            suffix="PutFail",
+            payload_collector=_FailingPayloadCollector(fail_on_last=False),
+        )
+        try:
+            request = next_request(fail_env)
+            group_id = request.group_ids[0]
+            sid = create_session(fail_env, group_id, 0)
+            assert generate(fail_env, sid, [1, 2]).status_code == 200
 
-        sid = create_session(env, group_id, 0)
-        assert generate(env, sid, [1, 2]).status_code == 200
+            # The failed put voids the group server-side; the buffer consumes
+            # the discard record and the server keeps running.
+            metrics = wait_for_drops(fail_env, "payload_write_failed")
+            assert metrics["dropped_groups"] == 1
 
-        # The failed put voids the group server-side; the buffer consumes
-        # the discard record.
-        metrics = wait_for_drops(env, "payload_write_failed")
-        assert metrics["dropped_groups"] == 1
-
-        server_metrics = env.server.get_metrics().wait()[0]
-        assert server_metrics["session_server/payload_write_failed"] == 1
+            server_metrics = fail_env.server.get_metrics().wait()[0]
+            assert server_metrics["session_server/payload_write_failed"] == 1
+        finally:
+            _stop_env(fail_env)
 
 
 class TestVoidCleanup:
@@ -2523,3 +2734,107 @@ class TestVoidCleanup:
         assert session.extra_fields_train == {}
         assert session.not_training_turns == set()
         assert group.verify_result is None
+
+
+class _FakePutWork:
+    """A payload put that settles the way the test asks it to."""
+
+    def __init__(self, error=None, delay_s=0.0):
+        self._error = error
+        self._delay_s = delay_s
+
+    async def async_wait(self):
+        if self._delay_s:
+            await asyncio.sleep(self._delay_s)
+        if self._error is not None:
+            raise self._error
+
+
+class _FakePayloadChannel:
+    """A payload channel whose puts settle as the test asks."""
+
+    def __init__(self, work):
+        self._work = work
+
+    def put(self, item, **kwargs):
+        return self._work
+
+
+class TestPayloadWriterFailures:
+    """How the writer tells the two kinds of put failure apart."""
+
+    @staticmethod
+    def _writer(work, **kwargs):
+        written, peers = [], []
+        writer = PayloadWriter(
+            [_FakePayloadChannel(work)],
+            max_pending_bytes=1024 * 1024,
+            put_timeout_s=kwargs.get("put_timeout_s", 5.0),
+            on_write_failure=lambda group_id: _append_async(written, group_id),
+            on_peer_failure=peers.append,
+        )
+        return writer, written, peers
+
+    def test_a_failed_channel_peer_stops_the_caller(self):
+        """A put refused because the channel's collective direction failed is
+        not one group's failure: the writer reports it to the caller, which
+        stops serving, instead of voiding group after group."""
+        error = PeerCommunicationError("an earlier send in collective group c failed")
+        writer, written, peers = self._writer(_FakePutWork(error=error))
+
+        success = asyncio.run(
+            writer.put(0, group_id=7, item="part", await_completion=True)
+        )
+
+        assert success is False
+        assert peers == [error]
+        assert written == []
+
+    def test_a_dead_channel_worker_stops_the_caller(self):
+        """A dead payload channel worker cannot accept any later write either,
+        so the writer reports it through on_peer_failure instead of voiding
+        group after group."""
+        error = ActorDiedError()
+        writer, written, peers = self._writer(_FakePutWork(error=error))
+
+        success = asyncio.run(
+            writer.put(0, group_id=10, item="part", await_completion=True)
+        )
+
+        assert success is False
+        assert peers == [error]
+        assert written == []
+
+    def test_a_timed_out_put_voids_its_group(self):
+        """A put that timed out is one group's failure: the group is voided
+        and serving continues."""
+        writer, written, peers = self._writer(
+            _FakePutWork(delay_s=0.2), put_timeout_s=0.05
+        )
+
+        success = asyncio.run(
+            writer.put(0, group_id=8, item="part", await_completion=True)
+        )
+
+        assert success is False
+        assert written == [8]
+        assert peers == []
+
+    def test_another_failure_voids_its_group(self):
+        """Any other put failure voids the group, as it did before."""
+        writer, written, peers = self._writer(
+            _FakePutWork(error=ValueError("channel down"))
+        )
+
+        success = asyncio.run(
+            writer.put(0, group_id=9, item="part", await_completion=True)
+        )
+
+        assert success is False
+        assert written == [9]
+        assert peers == []
+
+
+async def _append_async(target, value):
+    """Record a group id the way the writer's callback does."""
+    target.append(value)

@@ -64,6 +64,7 @@ class _QueueChannel:
 def _make_worker() -> AgentLoopWorker:
     """An AgentLoopWorker with the loop state but no Worker init."""
     worker = AgentLoopWorker.__new__(AgentLoopWorker)
+    worker.session_server_client = None
     worker._agentloop_task = None
     worker._agent_metric_channel = None
     worker._producer_error = None
@@ -86,6 +87,7 @@ def _request(n_groups=1, group_size=2, group_ids=None, task_names=None):
 def _make_group_worker(worker_cls=AgentLoopWorker):
     """A group-method worker: enough state to build one group result."""
     worker = worker_cls.__new__(worker_cls)
+    worker.session_server_client = None
     worker.print_outputs = False
     worker.return_logprobs = False
     worker.cfg = OmegaConf.create(
@@ -418,6 +420,7 @@ class TestGroupDiscarded:
         from rlinf.workers.agent.agent_loop import AgentLoopWorker
 
         worker = AgentLoopWorker.__new__(AgentLoopWorker)
+        worker.session_server_client = None
         worker.print_outputs = False
         worker.return_logprobs = False
         worker.cfg = OmegaConf.create(
@@ -616,6 +619,7 @@ def _single_turn_output(
 
 def _make_multi_worker():
     worker = MultiAgentLoopWorker.__new__(MultiAgentLoopWorker)
+    worker.session_server_client = None
     worker.print_outputs = False
     worker.return_logprobs = True
     return worker
@@ -682,6 +686,7 @@ class TestIdleStats:
     @staticmethod
     def _make_worker():
         worker = AgentLoopWorker.__new__(AgentLoopWorker)
+        worker.session_server_client = None
         worker._agentloop_task = None
         worker._agent_metric_channel = None
         worker._producer_error = None

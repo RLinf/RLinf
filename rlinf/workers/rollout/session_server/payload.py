@@ -27,14 +27,17 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Iterator, Optional
 
+from ray.exceptions import RayActorError
+
 from rlinf.scheduler.channel import Channel, Collector, register_collector
+from rlinf.scheduler.collective import PeerCommunicationError
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
 
 # Rough per-element byte cost of a serialized part's token and logprob lists;
-# used for the pending-bytes backpressure and the payload_bytes report, which
-# need an estimate, not an exact size.
+# used for the pending-bytes backpressure, which needs an estimate, not an
+# exact size.
 _BYTES_PER_LIST_ELEMENT = 8
 _PART_OVERHEAD_BYTES = 256
 
@@ -196,6 +199,7 @@ class PayloadWriter:
         max_pending_bytes: int,
         put_timeout_s: float,
         on_write_failure: Callable[[int], Awaitable[None]],
+        on_peer_failure: Callable[[BaseException], None],
     ):
         """
         Args:
@@ -210,11 +214,16 @@ class PayloadWriter:
                 it reports is never cleared again.
             on_write_failure: Called with a group id when one of its writes
                 fails or times out.
+            on_peer_failure: Called with the error when a write failed because
+                the payload channel worker died or its collective direction
+                failed. That channel carries nothing more, so the caller stops
+                serving instead of failing group after group.
         """
         self._channels = list(payload_channels)
         self._max_pending_bytes = max_pending_bytes
         self._put_timeout_s = put_timeout_s
         self._on_write_failure = on_write_failure
+        self._on_peer_failure = on_peer_failure
         self._pending_bytes = 0
         self._tasks: set[asyncio.Task] = set()
 
@@ -335,16 +344,29 @@ class PayloadWriter:
             so the failure this reports is never cleared again.
         """
         success = True
+        peer_failure = None
         try:
             await asyncio.wait_for(work.async_wait(), timeout=self._put_timeout_s)
         except asyncio.CancelledError:
             raise
+        except (PeerCommunicationError, RayActorError) as exc:
+            # The channel worker died or its collective direction failed, so
+            # this is not one group's bad luck: every later put fails the
+            # same way.
+            success = False
+            peer_failure = exc
+            logger.error(
+                f"Payload put reached a failed channel peer for group "
+                f"{group_id} ({exc!r})."
+            )
         except BaseException as exc:
             success = False
             logger.error(f"Payload put failed for group {group_id} ({exc!r}).")
         finally:
             self._pending_bytes -= nbytes
-        if not success:
+        if peer_failure is not None:
+            self._on_peer_failure(peer_failure)
+        elif not success:
             await self._on_write_failure(group_id)
         return success
 
@@ -402,8 +424,7 @@ def create_payload_channels(
             ``producer``.
 
     Returns:
-        The channels indexed by shard; select a group's channel with
-        ``channels[payload_shard_for(group_id, num_shards)]``.
+        The channels indexed by shard.
     """
     if num_shards < 1:
         raise ValueError(f"num_shards must be >= 1, got {num_shards}.")

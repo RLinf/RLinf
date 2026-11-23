@@ -836,9 +836,6 @@ class PayloadRef:
     # Channel location, "channel://<channel-name>".
     locator: str
     key: int
-    # Approximate per-item byte counts backing the ref, e.g.
-    # {"tokens": N}; diagnostics only, not used to read the payload.
-    parts: dict[str, int]
 
 
 @dataclass(kw_only=True)
@@ -870,9 +867,6 @@ class GroupMetadata:
     # keeps the result itself out-of-band (with the session server); None when
     # the result travels with this metadata.
     payload_ref: Optional[PayloadRef] = None
-    # Bytes of payload written for the group, counted by the producer at
-    # emit time; 0 on the in-band path.
-    payload_bytes: int = 0
 
 
 @dataclass(kw_only=True)
