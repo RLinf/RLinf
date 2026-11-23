@@ -1,13 +1,113 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-labelledby="title desc">
-<title id="title">FlexRLT</title><desc id="desc">A frozen VLA supplies prefix features to a trainable actor and critic, with replay shared by AC and TD3.</desc>
-<rect width="600" height="400" rx="16" fill="#10253a"/>
-<g font-family="sans-serif" text-anchor="middle" fill="#f8fafc">
-<text x="300" y="62" font-size="34" font-weight="700">FlexRLT</text>
-<rect x="40" y="106" width="180" height="94" rx="12" fill="#23556b"/>
-<text x="130" y="145" font-size="22">Frozen VLA</text><text x="130" y="176" font-size="17">pooled / RL tokens</text>
-<path d="M226 153h70m-12-10 12 10-12 10" fill="none" stroke="#6ee7b7" stroke-width="5"/>
-<rect x="310" y="106" width="250" height="94" rx="12" fill="#355275"/>
-<text x="435" y="145" font-size="22">Actor + Critic</text><text x="435" y="176" font-size="17">AC / TD3</text>
-<text x="300" y="290" font-size="20">Rollout · Replay · Online updates</text>
-<text x="300" y="340" font-size="17" fill="#b7d3e5">Choose features, heads, and update rules</text>
-</g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 480" role="img" aria-labelledby="title desc">
+<title id="title">FlexRLT</title>
+<desc id="desc">冻结 VLA 提供池化特征或 RL token，独立选择 Actor、Critic 和 AC / TD3，通过采集与回放在线训练。</desc>
+<defs>
+<marker id="arrow-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1 9 5 1 9z" fill="#617181"/></marker>
+<marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1 9 5 1 9z" fill="#387ca5"/></marker>
+<marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1 9 5 1 9z" fill="#bb7035"/></marker>
+<marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1 9 5 1 9z" fill="#638a65"/></marker>
+</defs>
+<rect width="720" height="480" rx="18" fill="#ffffff"/>
+<g font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" fill="#263746" stroke-linejoin="round" stroke-linecap="round">
+<text x="34" y="56" font-size="38" font-weight="700" fill="#263746" text-anchor="start" >FlexRLT</text>
+<text x="35" y="88" font-size="18" font-weight="400" fill="#617181" text-anchor="start" >冻结 VLA 表示，在线训练轻量 policy</text>
+<rect x="30" y="119" width="282" height="241" rx="16" fill="#edf5fb" stroke="#a6c6dd" stroke-width="1.5" />
+<path d="M46.00 149.00L66.00 149.00" fill="none" stroke="#387ca5" stroke-width="1.8" />
+<path d="M51.00 140.34L61.00 157.66" fill="none" stroke="#387ca5" stroke-width="1.8" />
+<path d="M61.00 140.34L51.00 157.66" fill="none" stroke="#387ca5" stroke-width="1.8" />
+<path d="M66.00 149.00l-2.47 2.47" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M66.00 149.00l-2.47 -2.47" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M61.00 157.66l-3.38 -0.91" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M61.00 157.66l0.91 -3.38" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M51.00 157.66l-0.91 -3.38" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M51.00 157.66l3.38 -0.91" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M46.00 149.00l2.47 -2.47" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M46.00 149.00l2.47 2.47" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M51.00 140.34l3.38 0.91" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M51.00 140.34l-0.91 3.38" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M61.00 140.34l0.91 3.38" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M61.00 140.34l-3.38 0.91" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<text x="77" y="157" font-size="24" font-weight="700" fill="#387ca5" text-anchor="start" >冻结 VLA</text>
+<rect x="53" y="180" width="52" height="36" rx="5" fill="#fff" stroke="#a6c6dd" stroke-width="1.5" />
+<circle cx="90.44" cy="190.08" r="4" fill="#e4c985" stroke="none" />
+<path d="M59 208l13.0 -13.68 9.88 7.2 8.32 -4.68 9.36 11.16" fill="none" stroke="#387ca5" stroke-width="2" />
+<rect x="119" y="180" width="169" height="36" rx="6" fill="white" stroke="#a6c6dd" stroke-width="1.5" />
+<text x="203" y="203" font-size="16" font-weight="400" fill="#617181" text-anchor="middle" >图像 + 指令</text>
+<path d="M171 220v15" fill="none" stroke="#387ca5" stroke-width="2" marker-end="url(#arrow-blue)" />
+<rect x="53" y="242" width="236" height="44" rx="8" fill="white" stroke="#a6c6dd" stroke-width="1.5" />
+<text x="171" y="270" font-size="20" font-weight="600" fill="#263746" text-anchor="middle" >VLA 主干</text>
+<path d="M171 290v15" fill="none" stroke="#387ca5" stroke-width="2" marker-end="url(#arrow-blue)" />
+<rect x="59" y="317" width="22" height="17" rx="4" fill="#cfe0ee" stroke="none" stroke-width="1.5" />
+<rect x="86" y="317" width="22" height="17" rx="4" fill="#a7c4dc" stroke="none" stroke-width="1.5" />
+<rect x="113" y="317" width="22" height="17" rx="4" fill="#739ebe" stroke="none" stroke-width="1.5" />
+<rect x="140" y="317" width="22" height="17" rx="4" fill="#e2c478" stroke="none" stroke-width="1.5" />
+<rect x="167" y="317" width="22" height="17" rx="4" fill="#b2cbdc" stroke="none" stroke-width="1.5" />
+<rect x="194" y="317" width="22" height="17" rx="4" fill="#d5e3ed" stroke="none" stroke-width="1.5" />
+<text x="225" y="331" font-size="19" font-weight="600" fill="#387ca5" text-anchor="start" >→ z</text>
+<path d="M313 274h57" fill="none" stroke="#387ca5" stroke-width="3" marker-end="url(#arrow-blue)" />
+<text x="343" y="257" font-size="15" font-weight="600" fill="#387ca5" text-anchor="middle" >特征</text>
+<rect x="380" y="119" width="310" height="241" rx="16" fill="#fff3e5" stroke="#dfb994" stroke-width="1.5" />
+<text x="402" y="154" font-size="17" font-weight="700" fill="#bb7035" text-anchor="start" >在线强化学习</text>
+<rect x="401" y="177" width="124" height="123" rx="10" fill="white" stroke="#dfb994" stroke-width="1.5" />
+<rect x="545" y="177" width="124" height="123" rx="10" fill="white" stroke="#dfb994" stroke-width="1.5" />
+<text x="463" y="206" font-size="23" font-weight="700" fill="#263746" text-anchor="middle" >Actor</text>
+<text x="607" y="206" font-size="23" font-weight="700" fill="#263746" text-anchor="middle" >Critic</text>
+<path d="M428 238.5L462.5 228" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M428 238.5L462.5 249.0" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M428 238.5L462.5 270" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M428 259.5L462.5 228" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M428 259.5L462.5 249.0" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M428 259.5L462.5 270" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M462.5 228L497 238.5" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M462.5 228L497 259.5" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M462.5 249.0L497 238.5" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M462.5 249.0L497 259.5" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M462.5 270L497 238.5" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M462.5 270L497 259.5" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<circle cx="428" cy="238.5" r="3.5" fill="white" stroke="#bb7035" />
+<circle cx="428" cy="259.5" r="3.5" fill="white" stroke="#bb7035" />
+<circle cx="462.5" cy="228" r="3.5" fill="white" stroke="#bb7035" />
+<circle cx="462.5" cy="249.0" r="3.5" fill="white" stroke="#bb7035" />
+<circle cx="462.5" cy="270" r="3.5" fill="white" stroke="#bb7035" />
+<circle cx="497" cy="238.5" r="3.5" fill="white" stroke="#bb7035" />
+<circle cx="497" cy="259.5" r="3.5" fill="white" stroke="#bb7035" />
+<path d="M572 238.5L606.5 228" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M572 238.5L606.5 249.0" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M572 238.5L606.5 270" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M572 259.5L606.5 228" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M572 259.5L606.5 249.0" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M572 259.5L606.5 270" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M606.5 228L641 238.5" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M606.5 228L641 259.5" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M606.5 249.0L641 238.5" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M606.5 249.0L641 259.5" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M606.5 270L641 238.5" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<path d="M606.5 270L641 259.5" fill="none" stroke="#bb7035" stroke-width="1" opacity="0.35"/>
+<circle cx="572" cy="238.5" r="3.5" fill="white" stroke="#bb7035" />
+<circle cx="572" cy="259.5" r="3.5" fill="white" stroke="#bb7035" />
+<circle cx="606.5" cy="228" r="3.5" fill="white" stroke="#bb7035" />
+<circle cx="606.5" cy="249.0" r="3.5" fill="white" stroke="#bb7035" />
+<circle cx="606.5" cy="270" r="3.5" fill="white" stroke="#bb7035" />
+<circle cx="641" cy="238.5" r="3.5" fill="white" stroke="#bb7035" />
+<circle cx="641" cy="259.5" r="3.5" fill="white" stroke="#bb7035" />
+<rect x="423" y="315" width="96" height="29" rx="14" fill="#f8e4c9" stroke="none" stroke-width="1.5" />
+<text x="471" y="335" font-size="17" font-weight="700" fill="#bb7035" text-anchor="middle" >AC</text>
+<rect x="545" y="315" width="96" height="29" rx="14" fill="#f8e4c9" stroke="none" stroke-width="1.5" />
+<text x="593" y="335" font-size="17" font-weight="700" fill="#bb7035" text-anchor="middle" >TD3</text>
+<text x="171" y="353" font-size="16" font-weight="500" fill="#387ca5" text-anchor="middle" >池化 / RL token</text>
+<path d="M30 383h660" fill="none" stroke="#e3e8ec" stroke-width="1" />
+<circle cx="69" cy="423" r="20" fill="#edf5fb" stroke="none" />
+<path d="M57 423a12 12 0 0 1 20-8M79 423a12 12 0 0 1-20 8" fill="none" stroke="#387ca5" stroke-width="2" />
+<path d="M72 414h6v-6M63 432h-6v6" fill="none" stroke="#387ca5" stroke-width="2" />
+<text x="100" y="430" font-size="21" font-weight="600" fill="#263746" text-anchor="start" >采集</text>
+<path d="M203 423h43" fill="none" stroke="#617181" stroke-width="2" marker-end="url(#arrow-ink)" />
+<path d="M272 411v24c0 11 38 11 38 0V411" fill="white" stroke="#387ca5" stroke-width="2"/>
+<ellipse cx="291.0" cy="411" rx="19.0" ry="8" fill="white" stroke="#387ca5" stroke-width="2"/>
+<path d="M272 423.0c0 11 38 11 38 0" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<text x="325" y="430" font-size="21" font-weight="600" fill="#263746" text-anchor="start" >回放</text>
+<path d="M433 423h43" fill="none" stroke="#617181" stroke-width="2" marker-end="url(#arrow-ink)" />
+<circle cx="511" cy="423" r="20" fill="#fff3e5" stroke="none" />
+<path d="M504 434v-19m-6 7 6-7 6 7M517 412v19m-6-7 6 7 6-7" fill="none" stroke="#bb7035" stroke-width="2" />
+<text x="543" y="430" font-size="21" font-weight="600" fill="#263746" text-anchor="start" >更新</text>
+</g>
+</svg>

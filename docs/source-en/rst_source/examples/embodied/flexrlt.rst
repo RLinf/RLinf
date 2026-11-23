@@ -170,10 +170,10 @@ Logs and TensorBoard events are under ``logs/<timestamp>-maniskill_prefix_stage2
 Expected Results
 ----------------
 
-The experiments use four 80 GiB GPUs, a frozen π0.5, and STEAM on ManiSkill peg insertion, with 64 training environments and 256 evaluation environments. SR is the fraction of episodes that succeed at least once (``success_once``).
+The curves compare RL Token (TD3) with FlexRLT on ManiSkill peg insertion, using 64 training environments and 256 evaluation environments. RL Token uses 8 GPUs; the FlexRLT runs use 4 GPUs and a frozen π0.5 with STEAM. SR is the fraction of episodes that succeed at least once (``success_once``).
 
 .. figure:: ../../../_static/svg/flexrlt_maniskill_sr.svg
-   :alt: ManiSkill training and evaluation success rates for min-Q and TD3 configurations
+   :alt: RL Token and FlexRLT training and evaluation success rates on ManiSkill peg insertion
    :width: 100%
 
    Train shows raw SR and a trailing 20-step mean; eval shows the recorded checkpoints.
@@ -181,19 +181,28 @@ The experiments use four 80 GiB GPUs, a frozen π0.5, and STEAM on ManiSkill peg
 .. list-table:: ManiSkill Peg Insertion Success Rate
    :header-rows: 1
 
-   * - Actor configuration
+   * - Method
+     - GPUs
      - Train mean, steps 235–254
      - Eval, step 250
      - Best eval through 250
-   * - min-Q (run 1)
+   * - RL Token (TD3)
+     - 8
+     - 57.19%
+     - 57.03%
+     - 59.38%
+   * - FlexRLT, min-Q (run 1)
+     - 4
      - 56.09%
      - 61.72%
      - 61.72%
-   * - min-Q (run 2)
+   * - FlexRLT, min-Q (run 2)
+     - 4
      - 57.34%
      - 62.89%
      - 62.89%
-   * - TD3 (Q1)
+   * - FlexRLT, TD3 (Q1)
+     - 4
      - 59.61%
      - 56.25%
      - 60.16%

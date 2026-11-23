@@ -170,10 +170,10 @@ tokenizer 和 image processor 文件留在同一个 ``actor`` 目录。gate 从�
 预期实验结果
 ------------
 
-实验在 ManiSkill 插入任务上使用冻结的 π0.5 和 STEAM，硬件为 4 张 80 GiB GPU，训练环境 64 个，评估环境 256 个。SR 为 episode 中至少成功一次的比例，对应 ``success_once``。
+下图比较 RL Token（TD3）与 FlexRLT 在 ManiSkill 插入任务上的训练结果，每组均有 64 个训练环境和 256 个评估环境。RL Token 使用 8 卡，FlexRLT 使用 4 卡，采用冻结的 π0.5 和 STEAM。SR 为至少成功一次的 episode 占比，对应 ``success_once``。
 
 .. figure:: ../../../_static/svg/flexrlt_maniskill_sr.svg
-   :alt: min-Q 与 TD3 配置在 ManiSkill 上的训练和评估成功率
+   :alt: RL Token 与 FlexRLT 在 ManiSkill 插入任务上的训练和评估成功率
    :width: 100%
 
    左图为训练 SR 原始值和最近 20 步均值，右图为各检查点的评估 SR。
@@ -181,19 +181,28 @@ tokenizer 和 image processor 文件留在同一个 ``actor`` 目录。gate 从�
 .. list-table:: ManiSkill 插入任务成功率
    :header-rows: 1
 
-   * - Actor 配置
+   * - 方法
+     - GPU 数
      - Train，第 235–254 步均值
      - Eval，第 250 步
      - 截至第 250 步的最高 Eval
-   * - min-Q（运行 1）
+   * - RL Token（TD3）
+     - 8
+     - 57.19%
+     - 57.03%
+     - 59.38%
+   * - FlexRLT，min-Q（运行 1）
+     - 4
      - 56.09%
      - 61.72%
      - 61.72%
-   * - min-Q（运行 2）
+   * - FlexRLT，min-Q（运行 2）
+     - 4
      - 57.34%
      - 62.89%
      - 62.89%
-   * - TD3（Q1）
+   * - FlexRLT，TD3（Q1）
+     - 4
      - 59.61%
      - 56.25%
      - 60.16%

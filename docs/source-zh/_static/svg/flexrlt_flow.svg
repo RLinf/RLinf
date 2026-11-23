@@ -1,53 +1,158 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 535" role="img" aria-labelledby="title desc">
-<title id="title">FlexRLT 在线训练流程</title>
-<desc id="desc">A frozen VLA extracts features and reference actions. A compact actor proposes actions. Optional STEAM routing selects the action source. Replay stores transitions; learning updates only actor and critic and synchronizes the actor back to rollout.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#536b86"/></marker><marker id="learn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#b85b13"/></marker></defs>
-<rect width="1240" height="535" rx="16" fill="#f7f9fc"/>
-<g font-family="Arial, Noto Sans CJK SC, Microsoft YaHei, sans-serif">
-<text x="32" y="36" text-anchor="start" font-size="25" font-weight="700" fill="#314259">FlexRLT 在线训练流程</text>
-<text x="32" y="82" text-anchor="start" font-size="14" font-weight="700" fill="#65758b">采集</text>
-<text x="32" y="398" text-anchor="start" font-size="14" font-weight="700" fill="#65758b">训练</text>
-<rect x="32" y="118" width="185" height="96" rx="12" fill="#eaf0f7" stroke="#d4dce8"/>
-<text x="124.5" y="154" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">环境观测</text>
-<text x="124.5" y="183" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">图像 · 语言 · 关节状态</text>
-<rect x="252" y="118" width="205" height="96" rx="12" fill="#dcecfb" stroke="#d4dce8"/>
-<text x="354.5" y="154" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">冻结 VLA</text>
-<text x="354.5" y="183" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">prefix 表示 + 参考动作</text>
-<rect x="515" y="118" width="205" height="96" rx="12" fill="#ffead5" stroke="#d4dce8"/>
-<text x="617.5" y="154" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">可训练 Actor</text>
-<text x="617.5" y="183" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">输出动作块</text>
-<rect x="775" y="118" width="218" height="96" rx="12" fill="#eaf0f7" stroke="#d4dce8"/>
-<text x="884.0" y="154" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">动作路由</text>
-<text x="884.0" y="183" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">参考动作 / Actor / Expert</text>
-<rect x="1030" y="118" width="180" height="96" rx="12" fill="#eaf0f7" stroke="#d4dce8"/>
-<text x="1120.0" y="154" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">执行动作</text>
-<text x="1120.0" y="183" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">环境返回奖励</text>
-<rect x="768" y="279" width="232" height="96" rx="12" fill="#dcf4e8" stroke="#d4dce8"/>
-<text x="884.0" y="315" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">STEAM Gate（可选）</text>
-<text x="884.0" y="344" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">判断关键阶段与停滞</text>
-<rect x="1030" y="279" width="180" height="96" rx="12" fill="#dcecfb" stroke="#d4dce8"/>
-<text x="1120.0" y="315" text-anchor="middle" font-size="17" font-weight="700" fill="#314259">Expert VLA（可选）</text>
-<text x="1120.0" y="344" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">预训练的接管模型</text>
-<rect x="980" y="409" width="230" height="96" rx="12" fill="#eaf0f7" stroke="#d4dce8"/>
-<text x="1095.0" y="445" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">Replay Buffer</text>
-<text x="1095.0" y="474" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">状态转移（含实际动作）</text>
-<rect x="515" y="409" width="255" height="96" rx="12" fill="#ffead5" stroke="#d4dce8"/>
-<text x="642.5" y="445" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">更新 Actor / Critic</text>
-<text x="642.5" y="474" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">BC + Q 目标</text>
-<path d="M217 166H252" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
-<path d="M457 166H515" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
-<path d="M720 166H775" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
-<path d="M993 166H1030" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
-<path d="M354 118V70H884V118" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
-<text x="627" y="62" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">参考动作</text>
-<text x="616" y="242" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">特征 + 参考动作 + 状态</text>
-<text x="354" y="243" text-anchor="middle" font-size="15" font-weight="400" fill="#47698b">冻结 VLA 特征</text>
-<path d="M124 214V326H768" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
-<text x="445" y="315" text-anchor="middle" font-size="16" font-weight="400" fill="#314259">图像与历史</text>
-<path d="M884 279V214" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
-<path d="M1120 279V253H962V214" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
-<path d="M1120 214H1222V457H1210" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
-<path d="M980 457H770" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
-<path d="M617 409V260H667V214" fill="none" stroke="#b85b13" stroke-width="2.4" stroke-dasharray="7 5" marker-end="url(#learn)"/>
-<text x="643" y="390" text-anchor="middle" font-size="15" font-weight="400" fill="#b85b13">同步 Actor 权重</text>
-</g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 790" role="img" aria-labelledby="title desc">
+<title id="title">FlexRLT · 在线学习流程</title>
+<desc id="desc">冻结 VLA 提取表示和参考动作。Actor 输出动作块，STEAM 与专家模型参与动作选择。环境中的实际动作与状态转移进入回放，训练端更新 Actor 和 Critic，并同步 Actor 权重。</desc>
+<defs>
+<marker id="arrow-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1 9 5 1 9z" fill="#617181"/></marker>
+<marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1 9 5 1 9z" fill="#387ca5"/></marker>
+<marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1 9 5 1 9z" fill="#bb7035"/></marker>
+<marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1 9 5 1 9z" fill="#638a65"/></marker>
+</defs>
+<rect width="1440" height="790" rx="18" fill="#ffffff"/>
+<g font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" fill="#263746" stroke-linejoin="round" stroke-linecap="round">
+<text x="34" y="46" font-size="29" font-weight="700" fill="#263746" text-anchor="start" >FlexRLT：从冻结表示到在线控制</text>
+<path d="M1041.00 38.00L1059.00 38.00" fill="none" stroke="#387ca5" stroke-width="1.8" />
+<path d="M1045.50 30.21L1054.50 45.79" fill="none" stroke="#387ca5" stroke-width="1.8" />
+<path d="M1054.50 30.21L1045.50 45.79" fill="none" stroke="#387ca5" stroke-width="1.8" />
+<path d="M1059.00 38.00l-2.23 2.23" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M1059.00 38.00l-2.23 -2.23" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M1054.50 45.79l-3.04 -0.82" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M1054.50 45.79l0.82 -3.04" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M1045.50 45.79l-0.82 -3.04" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M1045.50 45.79l3.04 -0.82" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M1041.00 38.00l2.23 -2.23" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M1041.00 38.00l2.23 2.23" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M1045.50 30.21l3.04 0.82" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M1045.50 30.21l-0.82 3.04" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M1054.50 30.21l0.82 3.04" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M1054.50 30.21l-3.04 0.82" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<text x="1068" y="44" font-size="16" font-weight="400" fill="#387ca5" text-anchor="start" >冻结</text>
+<circle cx="1167" cy="38" r="6" fill="#bb7035" stroke="none" />
+<text x="1180" y="44" font-size="16" font-weight="400" fill="#bb7035" text-anchor="start" >可训练</text>
+<path d="M1291 38h29" fill="none" stroke="#638a65" stroke-width="2" stroke-dasharray="7 6" />
+<text x="1332" y="44" font-size="16" font-weight="400" fill="#638a65" text-anchor="start" >路由</text>
+<rect x="28" y="82" width="1384" height="480" rx="16" fill="#fcfdff" stroke="#d7dfe5" stroke-width="1.5" />
+<text x="49" y="113" font-size="17" font-weight="700" fill="#617181" text-anchor="start" >01  数据采集</text>
+<path d="M1305 266V150H126V266" fill="none" stroke="#617181" stroke-width="2" marker-end="url(#arrow-ink)" />
+<text x="726" y="140" font-size="17" font-weight="400" fill="#617181" text-anchor="middle" >下一帧观测</text>
+<path d="M480 218V199H997V266" fill="none" stroke="#387ca5" stroke-width="2.4" marker-end="url(#arrow-blue)" />
+<text x="749" y="188" font-size="17" font-weight="500" fill="#387ca5" text-anchor="middle" >VLA 参考动作</text>
+<circle cx="718" cy="199" r="3.2" fill="#387ca5" stroke="none" />
+<path d="M718 199V266" fill="none" stroke="#387ca5" stroke-width="2.2" marker-end="url(#arrow-blue)" />
+<rect x="49" y="266" width="163" height="100" rx="12" fill="white" stroke="#d7dfe5" stroke-width="1.5" />
+<rect x="64" y="280" width="39" height="30" rx="5" fill="#fff" stroke="#a6c6dd" stroke-width="1.5" />
+<circle cx="92.08" cy="288.4" r="4" fill="#e4c985" stroke="none" />
+<path d="M70 302l9.75 -11.4 7.41 6.0 6.24 -3.9000000000000004 7.02 9.3" fill="none" stroke="#387ca5" stroke-width="2" />
+<rect x="112" y="282" width="79" height="23" rx="4" fill="#f6f7f9" stroke="none" stroke-width="1.5" />
+<text x="151" y="298" font-size="11" font-weight="400" fill="#617181" text-anchor="middle" >语言指令</text>
+<text x="130" y="338" font-size="23" font-weight="700" fill="#263746" text-anchor="middle" >环境观测</text>
+<text x="130" y="357" font-size="14" font-weight="400" fill="#617181" text-anchor="middle" >图像 · 关节状态</text>
+<rect x="250" y="218" width="300" height="170" rx="12" fill="#edf5fb" stroke="#a6c6dd" stroke-width="1.5" />
+<path d="M264.00 240.00L280.00 240.00" fill="none" stroke="#387ca5" stroke-width="1.8" />
+<path d="M268.00 233.07L276.00 246.93" fill="none" stroke="#387ca5" stroke-width="1.8" />
+<path d="M276.00 233.07L268.00 246.93" fill="none" stroke="#387ca5" stroke-width="1.8" />
+<path d="M280.00 240.00l-1.98 1.98" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M280.00 240.00l-1.98 -1.98" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M276.00 246.93l-2.70 -0.72" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M276.00 246.93l0.72 -2.70" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M268.00 246.93l-0.72 -2.70" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M268.00 246.93l2.70 -0.72" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M264.00 240.00l1.98 -1.98" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M264.00 240.00l1.98 1.98" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M268.00 233.07l2.70 0.72" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M268.00 233.07l-0.72 2.70" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M276.00 233.07l0.72 2.70" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M276.00 233.07l-2.70 0.72" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<text x="288" y="247" font-size="23" font-weight="700" fill="#387ca5" text-anchor="start" >冻结 VLA</text>
+<rect x="271" y="260" width="258" height="39" rx="7" fill="white" stroke="#a6c6dd" stroke-width="1.5" />
+<text x="400" y="285" font-size="19" font-weight="600" fill="#263746" text-anchor="middle" >VLA 主干</text>
+<path d="M400 300v12" fill="none" stroke="#387ca5" stroke-width="1.8" marker-end="url(#arrow-blue)" />
+<rect x="271" y="321" width="258" height="49" rx="7" fill="white" stroke="#a6c6dd" stroke-width="1.5" />
+<rect x="282" y="335" width="17" height="16" rx="4" fill="#cfe0ee" stroke="none" stroke-width="1.5" />
+<rect x="303" y="335" width="17" height="16" rx="4" fill="#a7c4dc" stroke="none" stroke-width="1.5" />
+<rect x="324" y="335" width="17" height="16" rx="4" fill="#739ebe" stroke="none" stroke-width="1.5" />
+<rect x="345" y="335" width="17" height="16" rx="4" fill="#e2c478" stroke="none" stroke-width="1.5" />
+<text x="383" y="351" font-size="16" font-weight="500" fill="#387ca5" text-anchor="start" >池化 / RL token</text>
+<path d="M212 316h38" fill="none" stroke="#617181" stroke-width="2.2" marker-end="url(#arrow-ink)" />
+<path d="M550 316h66" fill="none" stroke="#387ca5" stroke-width="2.4" marker-end="url(#arrow-blue)" />
+<text x="582" y="302" font-size="19" font-weight="600" fill="#387ca5" text-anchor="middle" font-style="italic">z</text>
+<rect x="616" y="266" width="204" height="100" rx="12" fill="#fff3e5" stroke="#dfb994" stroke-width="1.5" />
+<circle cx="636" cy="285" r="4.5" fill="#bb7035" stroke="none" />
+<text x="718" y="307" font-size="25" font-weight="700" fill="#263746" text-anchor="middle" >Actor</text>
+<text x="718" y="338" font-size="18" font-weight="400" fill="#bb7035" text-anchor="middle" >输出动作块</text>
+<path d="M820 316h90" fill="none" stroke="#bb7035" stroke-width="2.4" marker-end="url(#arrow-orange)" />
+<text x="865" y="301" font-size="16" font-weight="400" fill="#bb7035" text-anchor="middle" >动作</text>
+<rect x="910" y="266" width="180" height="100" rx="12" fill="white" stroke="#d7dfe5" stroke-width="1.5" />
+<circle cx="952" cy="287" r="3" fill="#387ca5" stroke="none" />
+<circle cx="1000" cy="287" r="3" fill="#bb7035" stroke="none" />
+<circle cx="1048" cy="287" r="3" fill="#638a65" stroke="none" />
+<text x="1000" y="319" font-size="22" font-weight="700" fill="#263746" text-anchor="middle" >选择动作</text>
+<text x="1000" y="347" font-size="14" font-weight="400" fill="#617181" text-anchor="middle" >VLA / Actor / 专家</text>
+<path d="M1090 316h60" fill="none" stroke="#617181" stroke-width="2.2" marker-end="url(#arrow-ink)" />
+<rect x="1150" y="266" width="220" height="100" rx="12" fill="#f4f6fa" stroke="#d7dfe5" stroke-width="1.5" />
+<rect x="1169" y="286" width="38" height="12" rx="2" fill="#c89b5a" stroke="#b0854b" stroke-width="1.5" />
+<path d="M1212 279h22v26h-22v-7h11v-12h-11z" fill="none" stroke="#617181" stroke-width="2" />
+<text x="1260" y="336" font-size="23" font-weight="700" fill="#263746" text-anchor="middle" >环境执行</text>
+<text x="1260" y="356" font-size="15" font-weight="400" fill="#617181" text-anchor="middle" >动作 → 奖励</text>
+<path d="M170 366V410H718V366" fill="none" stroke="#617181" stroke-width="1.8" marker-end="url(#arrow-ink)" />
+<text x="435" y="399" font-size="16" font-weight="400" fill="#617181" text-anchor="middle" >关节状态</text>
+<rect x="586" y="434" width="524" height="111" rx="12" fill="#eff6ed" stroke="#b5cdb0" stroke-width="1.5" stroke-dasharray="5 5"/>
+<text x="601" y="453" font-size="12" font-weight="700" fill="#638a65" text-anchor="start" >可选路由</text>
+<rect x="607" y="467" width="214" height="61" rx="8" fill="white" stroke="#b5cdb0" stroke-width="1.5" />
+<text x="714" y="492" font-size="21" font-weight="700" fill="#638a65" text-anchor="middle" >STEAM</text>
+<text x="714" y="516" font-size="15" font-weight="400" fill="#617181" text-anchor="middle" >关键阶段 + 任务进度</text>
+<rect x="910" y="467" width="180" height="61" rx="8" fill="white" stroke="#a6c6dd" stroke-width="1.5" />
+<path d="M922.00 485.00L934.00 485.00" fill="none" stroke="#387ca5" stroke-width="1.8" />
+<path d="M925.00 479.80L931.00 490.20" fill="none" stroke="#387ca5" stroke-width="1.8" />
+<path d="M931.00 479.80L925.00 490.20" fill="none" stroke="#387ca5" stroke-width="1.8" />
+<path d="M934.00 485.00l-1.48 1.48" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M934.00 485.00l-1.48 -1.48" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M931.00 490.20l-2.03 -0.54" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M931.00 490.20l0.54 -2.03" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M925.00 490.20l-0.54 -2.03" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M925.00 490.20l2.03 -0.54" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M922.00 485.00l1.48 -1.48" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M922.00 485.00l1.48 1.48" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M925.00 479.80l2.03 0.54" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M925.00 479.80l-0.54 2.03" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M931.00 479.80l0.54 2.03" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<path d="M931.00 479.80l-2.03 0.54" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<text x="1004" y="492" font-size="19" font-weight="700" fill="#387ca5" text-anchor="middle" >专家 VLA</text>
+<text x="1000" y="516" font-size="15" font-weight="400" fill="#617181" text-anchor="middle" >接管动作</text>
+<path d="M110 366V497H607" fill="none" stroke="#617181" stroke-width="1.8" marker-end="url(#arrow-ink)" />
+<text x="372" y="485" font-size="17" font-weight="400" fill="#617181" text-anchor="middle" >图像 + 各环境的历史帧</text>
+<path d="M821 498H866V390H962V366" fill="none" stroke="#638a65" stroke-width="2.2" stroke-dasharray="7 6" marker-end="url(#arrow-green)" />
+<text x="885" y="423" font-size="15" font-weight="400" fill="#638a65" text-anchor="start" >门控</text>
+<path d="M1034 467V366" fill="none" stroke="#387ca5" stroke-width="2.2" marker-end="url(#arrow-blue)" />
+<text x="1047" y="421" font-size="15" font-weight="400" fill="#387ca5" text-anchor="start" >专家动作</text>
+<rect x="28" y="592" width="1384" height="170" rx="16" fill="#f6f7f9" stroke="#d7dfe5" stroke-width="1.5" />
+<text x="49" y="623" font-size="17" font-weight="700" fill="#617181" text-anchor="start" >02  从回放中学习</text>
+<text x="50" y="665" font-size="22" font-weight="700" fill="#263746" text-anchor="start" >选择更新算法</text>
+<rect x="50" y="684" width="82" height="33" rx="16" fill="#fff3e5" stroke="#dfb994" stroke-width="1.5" />
+<text x="91" y="707" font-size="18" font-weight="700" fill="#bb7035" text-anchor="middle" >AC</text>
+<rect x="146" y="684" width="82" height="33" rx="16" fill="#fff3e5" stroke="#dfb994" stroke-width="1.5" />
+<text x="187" y="707" font-size="18" font-weight="700" fill="#bb7035" text-anchor="middle" >TD3</text>
+<text x="253" y="706" font-size="17" font-weight="400" fill="#617181" text-anchor="start" >复用 BC 与权重调度</text>
+<rect x="616" y="630" width="204" height="105" rx="10" fill="#fff3e5" stroke="#dfb994" stroke-width="1.5" />
+<rect x="840" y="630" width="204" height="105" rx="10" fill="#fff3e5" stroke="#dfb994" stroke-width="1.5" />
+<text x="718" y="662" font-size="22" font-weight="700" fill="#263746" text-anchor="middle" >更新 Critic</text>
+<text x="718" y="691" font-size="17" font-weight="400" fill="#bb7035" text-anchor="middle" >Q 值回归</text>
+<text x="718" y="717" font-size="15" font-weight="400" fill="#617181" text-anchor="middle" >动作块奖励 + 目标 Q</text>
+<text x="942" y="662" font-size="22" font-weight="700" fill="#263746" text-anchor="middle" >更新 Actor</text>
+<text x="942" y="691" font-size="17" font-weight="400" fill="#bb7035" text-anchor="middle" >Q 目标 + BC</text>
+<text x="942" y="717" font-size="15" font-weight="400" fill="#617181" text-anchor="middle" >参考动作约束</text>
+<rect x="1120" y="630" width="250" height="105" rx="10" fill="white" stroke="#d7dfe5" stroke-width="1.5" />
+<path d="M1138 665v34c0 11 42 11 42 0V665" fill="white" stroke="#387ca5" stroke-width="2"/>
+<ellipse cx="1159.0" cy="665" rx="21.0" ry="8" fill="white" stroke="#387ca5" stroke-width="2"/>
+<path d="M1138 682.0c0 11 42 11 42 0" fill="none" stroke="#387ca5" stroke-width="1.5" />
+<text x="1195" y="668" font-size="21" font-weight="700" fill="#263746" text-anchor="start" >经验回放</text>
+<text x="1195" y="697" font-size="15" font-weight="400" fill="#617181" text-anchor="start" >存储实际状态转移</text>
+<path d="M1276 366V630" fill="none" stroke="#617181" stroke-width="2.4" marker-end="url(#arrow-ink)" />
+<text x="1290" y="575" font-size="18" font-weight="400" fill="#617181" text-anchor="start" >s, a, r, s′</text>
+<path d="M1120 682H1080V748H718V735" fill="none" stroke="#617181" stroke-width="2.2" marker-end="url(#arrow-ink)" />
+<circle cx="942" cy="748" r="3" fill="#617181" stroke="none" />
+<path d="M942 748V735" fill="none" stroke="#617181" stroke-width="2.2" marker-end="url(#arrow-ink)" />
+<text x="1083" y="740" font-size="13" font-weight="400" fill="#617181" text-anchor="start" >采样</text>
+<path d="M942 630V574H854V390H785V366" fill="none" stroke="#bb7035" stroke-width="2.4" stroke-dasharray="7 6" marker-end="url(#arrow-orange)" />
+<text x="844" y="581" font-size="16" font-weight="400" fill="#bb7035" text-anchor="end" >同步 Actor 权重</text>
+</g>
+</svg>
