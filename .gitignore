@@ -11,6 +11,7 @@ kernel_meta/
 *.out
 build
 docs/build
+docs/__pycache__/
 dist
 logs/*
 logs_baseline/*

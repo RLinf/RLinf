@@ -7,54 +7,43 @@ Diffusion Model Fine-Tuning with ART
 
    SD3 and Wan2.2 generation models trained with DiffusionART.
 
-Fine-tune SD3 or Wan2.2 with DiffusionART to improve text rendering using OCR
-rewards. ART combines rewards and clean latent endpoints within each prompt
-group into a shared direction, then trains against frozen velocity targets at
-states visited during generation. Complete the :doc:`shared setup <video_models>`,
-choose an image or video recipe, and inspect the training results below.
+Fine-tune SD3 or Wan2.2 with DiffusionART to improve text rendering in images
+and videos using OCR rewards. Complete the :doc:`shared setup <video_models>`,
+then launch the image or video config.
 
 Overview
 --------
 
-Both recipes use LoRA with FSDP2 and deterministic ODE generation. They split
-each prompt's candidates into two disjoint update windows that share targets
-frozen before the first update. Corrective masking suppresses updates that would
-move an already-drifted prediction farther outward. For the derivation and
-reference implementation, see the
-`DiffusionART paper <https://arxiv.org/abs/2610.12572>`_,
-`official code <https://github.com/vanzll/DiffusionART>`_, and
-`project page <https://vanzll.github.io/diffusionart-project/>`_.
+Both configs use LoRA, FSDP2, and deterministic ODE sampling. OCR rewards measure
+how closely the generated text matches the target text in the prompt.
 
 .. grid:: 2 4 4 4
    :gutter: 2
-
-   .. grid-item-card:: Models
-      :text-align: center
-
-      SD3 / Wan2.2
 
    .. grid-item-card:: Algorithm
       :text-align: center
 
       DiffusionART
 
-   .. grid-item-card:: Output
+   .. grid-item-card:: Models
       :text-align: center
 
-      Image / Video
+      SD3 / Wan2.2
 
-   .. grid-item-card:: Reward
+   .. grid-item-card:: Environments / Data
       :text-align: center
 
-      OCR / Video OCR
+      OCR prompts
 
-| **You'll do:** select a recipe → launch training → inspect OCR reward and generated samples.
-| **Prerequisites:** :doc:`Shared installation, model, and dataset setup <video_models>`. The recorded Wan experiment used four NVIDIA A800 GPUs.
+   .. grid-item-card:: Training
+      :text-align: center
+
+      LoRA · FSDP2 · BF16
 
 Tasks
 ~~~~~
 
-Choose the config for the output you want to generate.
+Choose the config for image or video generation.
 
 .. list-table::
    :header-rows: 1
@@ -73,8 +62,8 @@ Choose the config for the output you want to generate.
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
 
-The environment scores each completed candidate; video rewards are averaged
-before ART builds guidance for the prompt group.
+Each generated sample receives one OCR score. For videos, the reward is the
+mean score across sampled frames.
 
 .. list-table::
    :header-rows: 1
@@ -85,96 +74,92 @@ before ART builds guidance for the prompt group.
    * - Observation
      - A text prompt containing quoted target text.
    * - Action
-     - The generated image or video.
+     - A generated image or video.
    * - Reward
-     - One scalar OCR similarity score in ``[0, 1]`` per candidate.
+     - An OCR similarity score in ``[0, 1]``.
 
-Installation and Assets
------------------------
+How ART Works
+-------------
+
+ART combines each prompt group's rewards and final latents into a shared
+update direction. Training uses denoising states from the generated trajectories.
+Both update windows share velocity targets frozen before the first update.
+
+For the derivation and reference implementation, see the
+`DiffusionART paper <https://arxiv.org/abs/2610.12572>`_,
+`official code <https://github.com/vanzll/DiffusionART>`_, and
+`project page <https://vanzll.github.io/diffusionart-project/>`_.
+
+Installation
+------------
 
 Follow the shared :ref:`installation <diffusion-model-setup>`,
 :ref:`model download <diffusion-model-checkpoints>`, and
-:ref:`OCR dataset download <diffusion-ocr-dataset>` instructions. Both ART
-recipes set ``env.*.reward.use_gpu: False`` and use the CPU OCR installation.
+:ref:`OCR dataset download <diffusion-ocr-dataset>` instructions.
+Both ART configs use CPU OCR.
 
-Run Training
-------------
+Run It
+------
 
 Open ``examples/diffusion/config/sd3_art_ocr.yaml`` or
-``examples/diffusion/config/wan22_ti2v_5b_art_video_ocr.yaml`` before launching.
-In the selected YAML, set ``actor.model.model_path``,
-``env.train.dataset.path``, and ``env.eval.dataset.path`` to your downloaded
-directories. Check ``cluster.num_nodes``, ``cluster.component_placement``, and
-the batch settings against your hardware and the ART constraints below.
+``examples/diffusion/config/wan22_ti2v_5b_art_video_ocr.yaml`` and set
+``actor.model.model_path``, ``env.train.dataset.path``, and
+``env.eval.dataset.path`` to your model and data directories.
+Set GPU placement with ``cluster.component_placement``.
 
-After checking the YAML, run its config name from the repository root:
+Launch the chosen config from the repository root:
 
-.. code:: bash
+.. code-block:: bash
 
    bash examples/diffusion/run_diffusion.sh sd3_art_ocr
 
    bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_art_video_ocr
 
-The launcher generates and scores candidates, updates LoRA parameters, and
-writes logs under ``logs/<timestamp>-<config>/``.
+Logs go under ``logs/<timestamp>-<config>/``. Training reports image OCR scores
+as ``env/avg`` and video OCR scores as ``env/video_ocr``.
 
-Configure the ART Update
-------------------------
+Configure ART Updates
+~~~~~~~~~~~~~~~~~~~~~
 
-When changing rollout size or placement, each actor shard must receive
-complete prompt groups.
-``algorithm.art_updates_per_rollout`` must be ``1`` or ``2`` and divide
-``algorithm.group_size``; ``env.train.group_size`` must match that group size.
+Each round generates ``env.train.total_num_envs * env.train.rollout_epoch``
+samples. The default ``algorithm.art_updates_per_rollout=2`` splits each round
+into two updates, so ``actor.global_batch_size`` is half the samples per round.
+For example, 96 environments and 12 rollout epochs give 1152 samples per round
+and a global batch size of 576.
 
-.. warning::
+The main update settings are:
 
-   Set ``actor.global_batch_size`` to
-   ``env.train.total_num_envs * env.train.rollout_epoch`` divided by
-   ``algorithm.art_updates_per_rollout``. For 96 environments, 12 rollout
-   epochs, and two updates, use ``actor.global_batch_size=576``. Each per-rank
-   update window must be divisible by ``actor.micro_batch_size``. Environment
-   counts must preserve complete groups across both env and actor ranks.
-
-ART requires ``actor.training_backend=fsdp``, ``rollout.pipeline_stage_num=1``,
-``algorithm.update_epoch=1``, and ``runner.weight_sync_interval=1``. Keep
-``env.train.max_steps_per_rollout_epoch=actor.model.num_action_chunks`` so that
-each rollout epoch produces one complete candidate. SD3 uses
-``actor.model.sd3.train_sampler=ode`` with ``actor.model.sd3.noise_level=0.0``;
-Wan records ODE trajectories.
-
-.. list-table:: Main Update Options
+.. list-table::
    :header-rows: 1
    :widths: 40 60
 
-   * - Option
+   * - Setting
      - Effect
    * - ``algorithm.art_timestep_fraction``
-     - Fraction of denoising states used for training: ``0.5`` for SD3 and ``0.25`` for Wan in the supplied recipes.
+     - Fraction of denoising states used for training: ``0.5`` for SD3, ``0.25`` for Wan.
    * - ``algorithm.art_guidance_gain``
-     - Scales reward guidance; both recipes use ``1.0``.
+     - Reward guidance scale; defaults to ``1.0``.
    * - ``algorithm.art_corrective_mask_enabled``
-     - Enables the corrective movement mask; both recipes use ``True``.
+     - Enables the corrective movement mask; defaults to ``True``.
    * - ``algorithm.art_mask_threshold``
-     - Movement threshold for the mask; both recipes use ``1e-5`` with ``art_mask_metric=sde_kl``.
+     - Movement threshold for the mask; defaults to ``1e-5`` with the ``sde_kl`` metric.
 
 .. _diffusion-art-results:
 
 Expected Results
 ----------------
 
-Watch ``env/video_ocr`` for Wan or ``env/avg`` for SD3 and inspect generated
-samples. ``actor/active_group_frac`` shows whether prompt groups supply guidance;
-``actor/skipped_zero_guidance`` marks rounds with no usable guidance on any rank.
-Use :doc:`Training Metrics </rst_source/reference/metrics>` for logging and
-TensorBoard setup. OCR reward alone does not measure visual quality or temporal
-consistency, and ART and NFT losses are not directly comparable.
+The experiments use four NVIDIA A800 80 GB GPUs, Wan2.2 TI2V 5B, LoRA
+(rank ``32``, alpha ``64``), FSDP2, BF16, and CPU OCR. Generation uses
+512 × 512 resolution, five frames, ten denoising steps, and guidance scale ``1.0``.
 
-The runs started on November 11, 2026 used four NVIDIA A800 80 GB GPUs,
-Wan2.2 TI2V 5B, LoRA (rank ``32``, alpha ``64``), FSDP2, BF16, and CPU OCR.
-The first table compares **40,320 generated trajectories**: round 35 for ART
-and round 70 for NFT. For each run, reward is the mean ``env/video_ocr`` over
-the last 5760 trajectories at that budget. The NFT entry reports the mean and
-sample standard deviation across two runs; the ART entry is one run.
+ART uses the ``wan22_ti2v_5b_art_video_ocr`` config; NFT uses
+``wan22_ti2v_5b_nft_video_ocr``. Training reward is the mean ``env/video_ocr``
+over the last 5760 trajectories. For repeated runs, the table reports the mean
+± sample standard deviation.
+
+The first comparison uses ``video_level`` rewards for ART and ``frame_level``
+rewards for NFT.
 
 .. list-table:: Wan Video OCR at 40,320 Generated Trajectories
    :header-rows: 1
@@ -185,7 +170,7 @@ sample standard deviation across two runs; the ART entry is one run.
      - Trajectories per Round
      - Learning Rate
      - Training Reward
-     - Elapsed Time (h)
+     - Training Time (h)
    * - ART
      - 1
      - 1152
@@ -199,19 +184,15 @@ sample standard deviation across two runs; the ART entry is one run.
      - 0.7565 ± 0.0544
      - 11.29 ± 0.52
 
-At this sample budget, ART's reward is **13.5% higher** than the NFT mean
-(an absolute increase of ``0.1019``), with **11.3% less elapsed training time**.
-Elapsed time comes from the training-loop log and excludes model initialization.
-ART first reached a reward of ``0.8`` over the same 5760-trajectory window at
-21,888 trajectories (5.48 h); neither NFT run reached that windowed threshold
-within 40,320 trajectories.
+With these configurations, ART's training reward at 40,320 trajectories is
+**13.5% higher** and its training time **11.3% shorter** than the NFT averages. Training time comes
+from the training-loop timer.
 
-The NFT run with the same trajectories per round and learning rate as ART
-recorded 29 rounds before it was stopped. Compare both at **33,408 generated
-trajectories**, using the same last-5760-trajectory reward window. Each entry
-below is one run.
+The second comparison matches trajectories per round and learning rate.
+Both methods use ``video_level`` rewards, with one run each. The table compares
+the first 29 rounds of each run.
 
-.. list-table:: Matched Trajectories per Round and Learning Rate
+.. list-table:: Wan Video OCR at 33,408 Generated Trajectories
    :header-rows: 1
    :widths: 18 22 18 22 20
 
@@ -219,7 +200,7 @@ below is one run.
      - Trajectories per Round
      - Learning Rate
      - Training Reward
-     - Elapsed Time (h)
+     - Training Time (h)
    * - ART
      - 1152
      - 1e-4
@@ -231,39 +212,72 @@ below is one run.
      - 0.1076
      - 8.23
 
-With matched trajectories per round and learning rate, ART's reward is
-``0.7370`` higher (**685.2% relative improvement**), with similar elapsed time.
-This comparison covers only the first 29 rounds, not final convergence.
-These are training rewards, not held-out evaluation scores. The 576-trajectory
-NFT configuration in the first table also changes learning rate and reward
-reduction; that comparison does not isolate the algorithm's effect.
+To reproduce the experiments, set the model and data paths in the chosen
+config and apply these shared settings:
 
-To reproduce the configurations, use ``wan22_ti2v_5b_art_video_ocr`` for ART or
-``wan22_ti2v_5b_nft_video_ocr`` for NFT with the model and data paths prepared
-above. Set ``cluster.component_placement`` to ``{"actor,env,rollout": "0,1,2,3"}``,
-``env.train.total_num_envs=96``, ``algorithm.group_size=8``, and
-``runner.val_check_interval=-1``. Set ``env.train.reward.use_gpu`` and
-``env.eval.reward.use_gpu`` to ``False``. Under ``actor.model.wan22_ti2v_5b``,
-use ``max_generation_batch_size=2``, ``compile_transformer_forward=True``, and
-``offload_auxiliary_modules=True``; retain the recipes' 512 × 512 resolution,
-five frames, ten denoising steps, and guidance scale of ``1.0``.
+.. code-block:: yaml
 
-For ART, set ``env.train.rollout_epoch=12``, ``actor.global_batch_size=576``,
-``actor.micro_batch_size=2``, ``actor.optim.lr=1e-4``,
-``runner.save_interval=10``, ``runner.max_epochs=70``, and
-``runner.max_steps=70``. For NFT with 576 trajectories per round, use
-``env.train.rollout_epoch=6``, ``actor.global_batch_size=288``,
-``actor.micro_batch_size=1``, ``actor.optim.lr=4e-4``,
-``runner.save_interval=-1``, ``runner.max_epochs=70``, and
-``runner.max_steps=70``. Set ``env.*.reward.reward_type`` to ``video_level``
-for ART or ``frame_level`` for this NFT configuration.
+   cluster:
+     component_placement:
+       actor,env,rollout: "0-3"
+   algorithm:
+     group_size: 8
+   actor:
+     seed: 42
+     model:
+       wan22_ti2v_5b:
+         max_generation_batch_size: 2
+         compile_transformer_forward: True
+         offload_auxiliary_modules: True
+   env:
+     train:
+       total_num_envs: 96
+       seed: 42
+       reward:
+         use_gpu: False
+     eval:
+       seed: 42
+       reward:
+         use_gpu: False
+   runner:
+     val_check_interval: -1
 
-For NFT with 1152 trajectories per round, use the NFT recipe with the ART
-overrides above, including ``video_level`` rewards, but set
-``runner.max_epochs=200`` and ``runner.max_steps=200``; the recorded run was
-stopped after round 29. Both NFT configurations retain
-``algorithm.nft_tau=[1.0,0.01,0,70]``.
+The batch and step settings for each configuration are below. Both NFT
+configurations use ``algorithm.nft_tau=[1.0,0.01,0,70]``.
 
-All runs used ``actor.seed=42`` and environment seeds of ``42``. These settings
-do not fix every global RNG used for LoRA initialization and sampling; repeat
-runs and record the revision, dependencies, and RNG seeds when comparing results.
+.. list-table:: Training Configurations
+   :header-rows: 1
+   :widths: 46 18 18 18
+
+   * - Setting
+     - ART, 1152/Round
+     - NFT, 576/Round
+     - NFT, 1152/Round
+   * - ``env.train.rollout_epoch``
+     - 12
+     - 6
+     - 12
+   * - ``actor.global_batch_size``
+     - 576
+     - 288
+     - 576
+   * - ``actor.micro_batch_size``
+     - 2
+     - 1
+     - 2
+   * - ``actor.optim.lr``
+     - 1e-4
+     - 4e-4
+     - 1e-4
+   * - ``env.train.reward.reward_type``
+     - ``video_level``
+     - ``frame_level``
+     - ``video_level``
+   * - ``runner.max_epochs`` / ``runner.max_steps``
+     - 70
+     - 70
+     - 200
+   * - ``runner.save_interval``
+     - 10
+     - -1
+     - 10
