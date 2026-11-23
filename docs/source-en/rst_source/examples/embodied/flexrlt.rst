@@ -6,7 +6,7 @@ Train a compact actor and critic from a frozen VLA checkpoint.
 Overview
 --------
 
-.. figure:: ../../../_static/svg/flexrlt_flow.svg
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/flexrlt_flow.png
    :alt: FlexRLT rollout, optional STEAM routing, replay, and actor-critic updates
    :width: 100%
 
@@ -172,7 +172,7 @@ Expected Results
 
 The curves compare RL Token (TD3) with FlexRLT on ManiSkill peg insertion, using 64 training environments and 256 evaluation environments. RL Token uses 8 GPUs; the FlexRLT runs use 4 GPUs and a frozen π0.5 with STEAM. SR is the fraction of episodes that succeed at least once (``success_once``).
 
-.. figure:: ../../../_static/svg/flexrlt_maniskill_sr.svg
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/flexrlt_maniskill_sr.png
    :alt: RL Token and FlexRLT training and evaluation success rates on ManiSkill peg insertion
    :width: 100%
 

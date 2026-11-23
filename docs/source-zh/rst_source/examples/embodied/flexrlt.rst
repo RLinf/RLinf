@@ -6,7 +6,7 @@ FlexRLT：用冻结 VLA 做在线 RL
 概览
 ----
 
-.. figure:: ../../../_static/svg/flexrlt_flow.svg
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/flexrlt_flow_zh.png
    :alt: FlexRLT 的采集、可选 STEAM 路由、replay 和 actor-critic 更新流程
    :width: 100%
 
@@ -172,7 +172,7 @@ tokenizer 和 image processor 文件留在同一个 ``actor`` 目录。gate 从�
 
 下图比较 RL Token（TD3）与 FlexRLT 在 ManiSkill 插入任务上的训练结果，每组均有 64 个训练环境和 256 个评估环境。RL Token 使用 8 卡，FlexRLT 使用 4 卡，采用冻结的 π0.5 和 STEAM。SR 为至少成功一次的 episode 占比，对应 ``success_once``。
 
-.. figure:: ../../../_static/svg/flexrlt_maniskill_sr.svg
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/flexrlt_maniskill_sr_zh.png
    :alt: RL Token 与 FlexRLT 在 ManiSkill 插入任务上的训练和评估成功率
    :width: 100%
 
