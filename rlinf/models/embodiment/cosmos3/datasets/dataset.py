@@ -22,10 +22,8 @@ from typing import Any
 import numpy as np
 
 from rlinf.data.datasets.dagger.dataset import RollingLeRobotDataset
+from rlinf.data.datasets.dagger.in_memory_store import InMemoryArrowStore
 from rlinf.data.datasets.dagger.lerobot_io import _hf_column_to_numpy_bool_1d
-from rlinf.models.embodiment.cosmos3.datasets.in_memory_store import (
-    Cosmos3InMemoryArrowStore,
-)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -56,8 +54,8 @@ class Cosmos3RollingLeRobotDataset(RollingLeRobotDataset):
             self._valid_physical_indices = []
             self._valid_physical_set = set()
 
-    def _new_in_memory_store(self) -> Cosmos3InMemoryArrowStore:
-        return Cosmos3InMemoryArrowStore(
+    def _new_in_memory_store(self) -> InMemoryArrowStore:
+        return InMemoryArrowStore(
             chunk_size=self._shard_cache_chunk_size,
             action_sequence_keys=self._shard_cache_action_keys,
             fps=self._shard_cache_fps,
@@ -178,7 +176,7 @@ class Cosmos3RollingLeRobotDataset(RollingLeRobotDataset):
             self._valid_physical_set.add(index)
 
     def _append_valid_indices_for_store(
-        self, store: Cosmos3InMemoryArrowStore, physical_base: int
+        self, store: InMemoryArrowStore, physical_base: int
     ) -> None:
         """Add eligible indices for one attached in-memory store."""
         if self._valid_physical_indices is None:

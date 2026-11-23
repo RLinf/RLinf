@@ -50,7 +50,10 @@ class InMemoryArrowStore:
             companion ``*_is_pad`` masks.
         fps: Frames per second used for the ``timestamp`` metadata column.
         image_transforms: Optional callable applied to image tensors after
-            ``hf_transform_to_torch`` converts PIL → float32 ``[C,H,W]``.
+            decoding, or to cached current frames when caching is enabled.
+        vision_horizon: Number of future frames to return with the current
+            main and wrist camera frames. Zero leaves video fields disabled.
+        keep_uint8_images: Store camera pixels as uint8 tensors outside Arrow.
     """
 
     def __init__(
@@ -59,15 +62,21 @@ class InMemoryArrowStore:
         action_sequence_keys: list[str] | None = None,
         fps: int = 10,
         image_transforms: Callable | None = None,
+        *,
+        vision_horizon: int = 0,
+        keep_uint8_images: bool = False,
     ) -> None:
         self._chunk_size = chunk_size
         self._fps = max(fps, 1)
         self._image_transforms = image_transforms
+        self._vision_horizon = vision_horizon
+        self._keep_uint8_images = keep_uint8_images
         keys = action_sequence_keys or []
         self._delta_indices: dict[str, list[int]] = (
             {k: list(range(chunk_size)) for k in keys} if chunk_size > 1 else {}
         )
         self._episode_datasets: deque[Any] = deque()
+        self._episode_images: deque[dict[str, torch.Tensor]] = deque()
         self._ep_from: deque[int] = deque()
         self._ep_to: deque[int] = deque()
         self._total_frames: int = 0
@@ -82,7 +91,9 @@ class InMemoryArrowStore:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _infer_hf_features(frame: dict) -> tuple[Any, set[str]]:
+    def _infer_hf_features(
+        frame: dict, *, keep_uint8_images: bool = False
+    ) -> tuple[Any, set[str]]:
         """Derive a HuggingFace ``Features`` schema from a raw frame dict.
 
         Returns the schema and the set of keys that hold image arrays
@@ -106,8 +117,9 @@ class InMemoryArrowStore:
             if not isinstance(val, np.ndarray):
                 continue
             if val.dtype == np.uint8 and val.ndim == 3:
-                data_features[key] = hf_datasets.Image()
                 image_keys.add(key)
+                if not keep_uint8_images:
+                    data_features[key] = hf_datasets.Image()
             elif val.shape == (1,):
                 dtype_str = (
                     "bool" if np.issubdtype(val.dtype, np.bool_) else str(val.dtype)
@@ -153,7 +165,9 @@ class InMemoryArrowStore:
         hf_features = self._hf_features
         image_keys = self._image_keys
         if hf_features is None:
-            hf_features, image_keys = self._infer_hf_features(ep_frames[0])
+            hf_features, image_keys = self._infer_hf_features(
+                ep_frames[0], keep_uint8_images=self._keep_uint8_images
+            )
 
         ep_idx = len(self._ep_from) if episode_index is None else int(episode_index)
         base = self._total_frames if base is None else int(base)
@@ -200,7 +214,7 @@ class InMemoryArrowStore:
 
         ep_ds = Dataset.from_dict(ep_dict, features=hf_features)
         ep_ds.set_transform(hf_transform_to_torch)
-        return {
+        prepared = {
             "dataset": ep_ds,
             "base": base,
             "num_frames": n,
@@ -209,6 +223,13 @@ class InMemoryArrowStore:
             "task_to_idx": task_to_idx,
             "tasks": tasks,
         }
+        if self._keep_uint8_images:
+            images = {}
+            for key in image_keys:
+                pixels = np.stack([frame[key] for frame in ep_frames])
+                images[key] = torch.from_numpy(pixels).permute(0, 3, 1, 2).contiguous()
+            prepared["images"] = images
+        return prepared
 
     def _commit_prepared_episode(self, prepared_episode: dict[str, Any]) -> int:
         if not prepared_episode:
@@ -224,6 +245,8 @@ class InMemoryArrowStore:
         self._task_to_idx = prepared_episode["task_to_idx"]
         self._tasks = prepared_episode["tasks"]
         self._episode_datasets.append(prepared_episode["dataset"])
+        if self._keep_uint8_images:
+            self._episode_images.append(prepared_episode["images"])
         self._ep_from.append(base)
         self._ep_to.append(base + n)
         self._total_frames += n
@@ -271,6 +294,9 @@ class InMemoryArrowStore:
         item: dict[str, Any] = ep_ds[local_frame]
         item["task"] = self._tasks.get(int(item["task_index"].item()), "")
 
+        images = self._episode_images[ep_idx] if self._keep_uint8_images else {}
+        for key, frames in images.items():
+            item[key] = frames[local_frame].clone()
         if self._image_transforms is not None:
             for k in self._image_keys:
                 if k in item:
@@ -300,4 +326,44 @@ class InMemoryArrowStore:
             for k, v in query_result.items():
                 item[k] = v
 
+        if self._vision_horizon:
+            valid = local_idx + self._vision_horizon < ep_end
+            self._add_vision_window(item, ep_ds, images, local_frame, valid)
         return item
+
+    def _add_vision_window(
+        self,
+        item: dict[str, Any],
+        ep_ds: Any,
+        images: dict[str, torch.Tensor],
+        local_frame: int,
+        valid: bool,
+    ) -> None:
+        image_to_window = {"image": "vision_images"}
+        if "wrist_image" in self._image_keys:
+            image_to_window["wrist_image"] = "vision_wrist_images"
+
+        item["vision_valid"] = valid
+        if not valid:
+            for image_key, window_key in image_to_window.items():
+                item[window_key] = (
+                    item[image_key]
+                    .unsqueeze(0)
+                    .expand(self._vision_horizon + 1, -1, -1, -1)
+                )
+            return
+
+        end = local_frame + self._vision_horizon + 1
+        if images:
+            for image_key, window_key in image_to_window.items():
+                item[window_key] = images[image_key][local_frame:end].clone()
+            return
+
+        future_frames = ep_ds.select_columns(list(image_to_window))[
+            local_frame + 1 : end
+        ]
+        for image_key, window_key in image_to_window.items():
+            frames = future_frames[image_key]
+            if self._image_transforms is not None:
+                frames = [self._image_transforms(frame) for frame in frames]
+            item[window_key] = torch.stack([item[image_key], *frames])
