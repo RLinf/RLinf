@@ -201,23 +201,27 @@ Train for 20,000 SFT steps, saving a checkpoint every 2000 steps:
 
    bash examples/sft/run_vla_sft.sh dexjoco_sft_cnn
 
-The 20,000-step run produces ten checkpoints. In the recorded SFT sweep, each
-was evaluated on 64 episodes with one worker. Among the ten checkpoints trained
-with NLL, step 8000 achieved the highest success rate, 50/64 (78.1%). PPO therefore
-starts from step 8000. With the eight-worker evaluation configuration, its
-baseline is 42/64 (65.6%), as reported below. Use that same configuration when
-comparing the SFT and PPO checkpoints.
+Before PPO, evaluate the SFT step-8000 checkpoint. Set the checkpoint, experiment
+name, ResNet path, and action statistics in
+``evaluations/dexjoco/dexjoco_cnn_eval.yaml``:
 
-Evaluate the SFT checkpoint before PPO with the same eight-worker, 64-episode
-configuration, seed 10000, 10-action chunks, and 1000-step episode limit:
+.. code:: yaml
+
+   runner:
+     logger:
+       experiment_name: dexjoco_cnn_nll_sft8000_eval
+     ckpt_path: /path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_nll/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
+   rollout:
+     model:
+       model_path: /path/to/RLinf-ResNet10-pretrained
+       action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
+
+Run the evaluation on eight GPUs. The config uses eight workers and the same
+64 initial states, with seed 10000, 10-action chunks, and a 1000-step episode limit:
 
 .. code:: bash
 
-   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval \
-     'runner.ckpt_path="/path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_nll/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt"' \
-     rollout.model.model_path=/path/to/RLinf-ResNet10-pretrained \
-     rollout.model.action_norm_stats=/path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json \
-     runner.logger.experiment_name=dexjoco_cnn_nll_sft8000_eval
+   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval
 
 Set the model, normalization, and selected checkpoint paths in
 ``examples/embodiment/config/dexjoco_ppo_cnn.yaml``:
@@ -243,25 +247,21 @@ PPO uses 128 environments, action-level log-probabilities, policy learning rate
 
 PPO saves its checkpoints under
 ``logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_nll/checkpoints``.
-Evaluate the iteration-200 checkpoint using the same action normalization
-statistics as SFT and PPO. Set these fields
-in ``evaluations/dexjoco/dexjoco_cnn_eval.yaml``:
+To evaluate iteration 200, change only the checkpoint and experiment name
+in the same eval YAML:
 
 .. code:: yaml
 
    runner:
+     logger:
+       experiment_name: dexjoco_cnn_nll_ppo200_eval
      ckpt_path: /path/to/RLinf/logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_nll/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt
-   rollout:
-     model:
-       model_path: /path/to/RLinf-ResNet10-pretrained
-       action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
 
-The following command runs 64 episodes across the eight GPUs:
+Run the PPO checkpoint evaluation:
 
 .. code:: bash
 
-   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval \
-     runner.logger.experiment_name=dexjoco_cnn_nll_ppo200_eval
+   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval
 
 π₀.₅: SFT and PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -313,7 +313,9 @@ learning-rate schedule. Launch it on the head node:
 The reported PPO run starts from the final SFT checkpoint at step 5000.
 SFT saves it under
 ``logs/<sft-timestamp>-dexjoco_sft_openpi_pi05/dexjoco_sft_openpi_pi05/checkpoints/global_step_5000``.
-Evaluate this checkpoint on one node before PPO. Set the following paths in
+Run evaluation and PPO on the eight-GPU head node. Ensure that this node can
+read the checkpoint directory and the dataset's ``norm_stats.json``.
+Set the following paths in
 ``evaluations/dexjoco/dexjoco_openpi_pi05_eval.yaml``:
 
 .. code:: yaml
@@ -331,8 +333,8 @@ Run the SFT baseline evaluation:
    bash evaluations/run_eval.sh dexjoco dexjoco_openpi_pi05_eval \
      runner.logger.experiment_name=dexjoco_pi05_sft5000_eval
 
-The evaluation config runs 64 episodes on eight workers with seed 10000,
-10-action chunks, 5 denoising steps, and a 1000-step episode limit.
+The evaluation config uses the same 64 initial states on eight workers with
+seed 10000, 10-action chunks, 5 denoising steps, and a 1000-step episode limit.
 Use the same config for the PPO checkpoint below.
 
 Initialize PPO from that same SFT checkpoint. Set these paths in
@@ -349,9 +351,9 @@ Initialize PPO from that same SFT checkpoint. Set these paths in
        openpi_data:
          norm_stats_path: /path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json
 
-Launch PPO on one node. The default recipe trains for 150 PPO iterations with
-token-level log-probabilities, policy learning rate 5e-6, and value learning rate
-2e-4. It evaluates and saves a checkpoint every iteration:
+Launch PPO on the same head node. The default recipe trains for 150 PPO
+iterations with token-level log-probabilities, policy learning rate 5e-6, and
+value learning rate 2e-4. It evaluates and saves a checkpoint every iteration:
 
 .. code:: bash
 
@@ -393,9 +395,10 @@ the MSE run:
        experiment_name: dexjoco_ppo_cnn_mse
      ckpt_path: /path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_mse/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
 
-For the MSE SFT baseline, repeat the SFT evaluation command above with the
+For the MSE SFT baseline, set the eval YAML to the
 ``dexjoco_sft_cnn_mse`` step-8000 checkpoint and experiment name
-``dexjoco_cnn_mse_sft8000_eval``. For the PPO evaluation, set the experiment name
+``dexjoco_cnn_mse_sft8000_eval``, then run the same evaluation command.
+For the PPO evaluation, set the experiment name
 to ``dexjoco_cnn_mse_ppo200_eval`` and
 ``runner.ckpt_path`` to
 ``/path/to/RLinf/logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_mse/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt``.
@@ -429,12 +432,20 @@ In the CNN figure, iteration 0 is the standalone evaluation of the SFT step-8000
 checkpoint. Iterations 1–200 are in-training evaluations; TensorBoard step
 ``N - 1`` records the evaluation after PPO iteration ``N``.
 
+The CNN SFT sweep evaluates all ten NLL checkpoints on 64 episodes with one
+worker. Step 8000 has the highest success rate, 50/64 (78.1%), and is selected
+as the PPO starting point. Its baseline on the eight-worker evaluation config
+is 42/64 (65.6%). The SFT and PPO checkpoint comparisons use that same config.
+
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/dc2607a2769dfd49cca117cdf42e5ef3f70b8dcf/pic/dexjoco_pi05_sft_ppo.png
    :align: center
    :width: 100%
    :alt: Success rate through 5000 SFT steps and 150 PPO iterations on water_plant.
 
    π₀.₅ SFT + PPO on ``water_plant`` (64 evaluation episodes).
+
+The π₀.₅ rows below report standalone evaluations of the SFT and PPO checkpoints
+on the same 64 initial states.
 
 .. list-table::
    :header-rows: 1
@@ -449,6 +460,6 @@ checkpoint. Iterations 1–200 are in-training evaluations; TensorBoard step
    * - CNN + PPO (NLL SFT)
      - Iteration 200 (standalone): 59/64 (92.2%); in-training peak (first reached at iteration 163): 64/64 (100%).
    * - π₀.₅ + SFT
-     - Step 5000: 50/64 (78.1%).
+     - Step 5000 (standalone): 50/64 (78.1%).
    * - π₀.₅ + PPO
-     - Iteration 150: 63/64 (98.44%); peak (iteration 120): 64/64 (100%).
+     - Iteration 150 (standalone): 63/64 (98.44%); standalone peak (iteration 120): 64/64 (100%).

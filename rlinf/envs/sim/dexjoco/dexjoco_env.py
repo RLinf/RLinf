@@ -171,6 +171,9 @@ class DexJoCoEnv(gym.Env):
         self.dual_arm = cfg.task_name.startswith("bimanual_")
         self.task_description = cfg.task_description
         self.update_reset_state_ids()
+        if self.cfg.is_eval and self.use_fixed_reset_state_ids:
+            # Fixed evaluation starts from the same RNG position as a sampled reset.
+            self.update_reset_state_ids()
         self._init_env()
 
         self.prev_step_reward = np.zeros(self.num_envs, dtype=np.float32)
@@ -300,10 +303,6 @@ class DexJoCoEnv(gym.Env):
         env_idx = np.atleast_1d(env_idx)
 
         if self.is_start:
-            if self.cfg.is_eval:
-                # Every evaluation replays the same initial states.
-                self._generator = np.random.default_rng(seed=self.seed)
-                self.update_reset_state_ids()
             reset_state_ids = (
                 self.reset_state_ids if self.use_fixed_reset_state_ids else None
             )

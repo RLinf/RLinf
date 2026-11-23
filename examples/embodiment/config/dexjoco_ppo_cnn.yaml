@@ -91,6 +91,7 @@ env:
     group_size: ${algorithm.group_size}
     auto_reset: False
     ignore_terminations: False
+    use_fixed_reset_state_ids: True
 
     use_rel_reward: False
     reward_coef: ${algorithm.reward_coef}

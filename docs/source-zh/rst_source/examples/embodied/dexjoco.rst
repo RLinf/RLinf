@@ -176,17 +176,24 @@ CNN：SFT 与 PPO
 
    bash examples/sft/run_vla_sft.sh dexjoco_sft_cnn
 
-20,000 步训练共保存 10 个 checkpoint。记录中的 SFT 评测逐个检查了这些权重，每次用一个 worker 运行 64 个 episode。10 个 NLL checkpoint 中，第 8000 步的成功率最高，为 50/64（78.1%），因此选它作为 PPO 起点。下文的 8 个 worker 评测配置测得这个起点的成功率为 42/64（65.6%）。比较 SFT 与 PPO 时，应沿用相同的评测配置。
+开始 PPO 前，先评测 SFT 第 8000 步的 checkpoint。在 ``evaluations/dexjoco/dexjoco_cnn_eval.yaml`` 中设置实验名，填写 checkpoint、ResNet 和动作统计量的路径：
 
-开始 PPO 前，先评测这个 SFT checkpoint。沿用 8 个 worker、64 个 episode、随机种子 10000、每次预测执行 10 个动作、每个 episode 最多执行 1000 步动作：
+.. code:: yaml
+
+   runner:
+     logger:
+       experiment_name: dexjoco_cnn_nll_sft8000_eval
+     ckpt_path: /path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_nll/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
+   rollout:
+     model:
+       model_path: /path/to/RLinf-ResNet10-pretrained
+       action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
+
+在 8 张 GPU 上运行评测。配置使用 8 个 worker 和同一组 64 个初始状态，随机种子为 10000。每次预测执行 10 个动作，每个 episode 最多执行 1000 步动作：
 
 .. code:: bash
 
-   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval \
-     'runner.ckpt_path="/path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_nll/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt"' \
-     rollout.model.model_path=/path/to/RLinf-ResNet10-pretrained \
-     rollout.model.action_norm_stats=/path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json \
-     runner.logger.experiment_name=dexjoco_cnn_nll_sft8000_eval
+   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval
 
 在 ``examples/embodiment/config/dexjoco_ppo_cnn.yaml`` 中填写模型、归一化统计量和选定 checkpoint 的路径：
 
@@ -208,23 +215,20 @@ PPO 使用 128 个环境和动作级对数概率（action-level），policy 学�
 
    bash examples/embodiment/run_embodiment.sh dexjoco_ppo_cnn
 
-PPO 将 checkpoint 保存在 ``logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_nll/checkpoints`` 下。评测第 200 轮的 checkpoint，沿用 SFT 和 PPO 的动作归一化统计量。在 ``evaluations/dexjoco/dexjoco_cnn_eval.yaml`` 中设置：
+PPO 将 checkpoint 保存在 ``logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_nll/checkpoints`` 下。评测第 200 轮时，在同一份评测 YAML 中只修改 checkpoint 和实验名：
 
 .. code:: yaml
 
    runner:
+     logger:
+       experiment_name: dexjoco_cnn_nll_ppo200_eval
      ckpt_path: /path/to/RLinf/logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_nll/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt
-   rollout:
-     model:
-       model_path: /path/to/RLinf-ResNet10-pretrained
-       action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
 
-下面的命令在 8 张 GPU 上运行 64 个 episode：
+运行 PPO checkpoint 评测：
 
 .. code:: bash
 
-   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval \
-     runner.logger.experiment_name=dexjoco_cnn_nll_ppo200_eval
+   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval
 
 π₀.₅：SFT 与 PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -265,7 +269,9 @@ SFT 的全局批大小为 32，每张 GPU 的微批大小为 2，学习率按 30
 
    bash examples/sft/run_vla_sft.sh dexjoco_sft_openpi_pi05
 
-实验使用 SFT 结束时第 5000 步的 checkpoint 初始化 PPO。这个 checkpoint 保存在 ``logs/<sft-timestamp>-dexjoco_sft_openpi_pi05/dexjoco_sft_openpi_pi05/checkpoints/global_step_5000``\ 。开始 PPO 前，先在单节点上评测它。在 ``evaluations/dexjoco/dexjoco_openpi_pi05_eval.yaml`` 中设置：
+实验使用 SFT 结束时第 5000 步的 checkpoint 初始化 PPO。这个 checkpoint 保存在 ``logs/<sft-timestamp>-dexjoco_sft_openpi_pi05/dexjoco_sft_openpi_pi05/checkpoints/global_step_5000``\ 。
+
+后续评测和 PPO 均在有 8 张 GPU 的头节点上运行。确认头节点能读取这个 checkpoint 目录，以及数据集目录下的 ``norm_stats.json``\ 。先评测 SFT 基线，在 ``evaluations/dexjoco/dexjoco_openpi_pi05_eval.yaml`` 中填写这两个路径：
 
 .. code:: yaml
 
@@ -282,7 +288,7 @@ SFT 的全局批大小为 32，每张 GPU 的微批大小为 2，学习率按 30
    bash evaluations/run_eval.sh dexjoco dexjoco_openpi_pi05_eval \
      runner.logger.experiment_name=dexjoco_pi05_sft5000_eval
 
-评测配置使用 8 个 worker，共运行 64 个 episode，随机种子为 10000。每次预测执行 10 个动作，模型采样使用 5 步去噪，每个 episode 最多执行 1000 步动作。下文评测 PPO checkpoint 时沿用这套配置。
+评测配置使用 8 个 worker 和同一组 64 个初始状态，随机种子为 10000。每次预测执行 10 个动作，模型采样使用 5 步去噪，每个 episode 最多执行 1000 步动作。下文评测 PPO checkpoint 时沿用这套配置。
 
 用同一个 SFT checkpoint 初始化 PPO。在 ``examples/embodiment/config/dexjoco_ppo_openpi_pi05.yaml`` 中设置：
 
@@ -297,7 +303,7 @@ SFT 的全局批大小为 32，每张 GPU 的微批大小为 2，学习率按 30
        openpi_data:
          norm_stats_path: /path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json
 
-在单节点上启动 PPO。默认配置训练 150 轮，使用 token 级对数概率（token-level），policy 学习率为 5e-6，价值网络学习率为 2e-4。每轮评测并保存 checkpoint：
+在同一头节点上启动 PPO。默认配置训练 150 轮，使用 token 级对数概率（token-level），policy 学习率为 5e-6，价值网络学习率为 2e-4。每轮评测并保存 checkpoint：
 
 .. code:: bash
 
@@ -332,7 +338,7 @@ CNN：复现 MSE 对照
        experiment_name: dexjoco_ppo_cnn_mse
      ckpt_path: /path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_mse/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
 
-评测 MSE 的 SFT 基线时，复用上面的 SFT 评测命令，改用 ``dexjoco_sft_cnn_mse`` 的第 8000 步 checkpoint，并将实验名设为 ``dexjoco_cnn_mse_sft8000_eval``\ 。
+评测 MSE 的 SFT 基线时，在评测 YAML 中改用 ``dexjoco_sft_cnn_mse`` 的第 8000 步 checkpoint，实验名设为 ``dexjoco_cnn_mse_sft8000_eval``\ ，再运行同一条评测命令。
 
 PPO 评测的实验名设为 ``dexjoco_cnn_mse_ppo200_eval``\ ，``runner.ckpt_path`` 设为 ``/path/to/RLinf/logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_mse/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt``\ 。两处时间戳分别填写 MSE SFT 和 MSE PPO 运行目录的时间戳，其余设置保持一致。
 
@@ -362,12 +368,16 @@ PPO 评测的实验名设为 ``dexjoco_cnn_mse_ppo200_eval``\ ，``runner.ckpt_p
 
 CNN 图中的第 0 轮来自 SFT 第 8000 步 checkpoint 的独立评测，第 1–200 轮来自训练期间的评测。TensorBoard 的 step ``N - 1`` 记录完成第 ``N`` 轮 PPO 后的评测结果。
 
+CNN 的 SFT 评测逐个检查了 10 个 NLL checkpoint，每次用一个 worker 运行 64 个 episode。第 8000 步的成功率最高，为 50/64（78.1%），因此选它作为 PPO 起点。使用 8 个 worker 的评测配置后，这个起点的成功率为 42/64（65.6%）。SFT 与 PPO checkpoint 的对比沿用这套配置。
+
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/dc2607a2769dfd49cca117cdf42e5ef3f70b8dcf/pic/dexjoco_pi05_sft_ppo.png
    :align: center
    :width: 100%
    :alt: π₀.₅ 在 water_plant 上经过 5000 步 SFT 和 150 轮 PPO 的成功率。
 
    π₀.₅ 在 ``water_plant`` 上的 SFT + PPO 成功率（64 个评测 episode）。
+
+下表中 π₀.₅ 的 SFT 和 PPO checkpoint 均在同一组 64 个初始状态上独立评测。
 
 .. list-table::
    :header-rows: 1
@@ -382,6 +392,6 @@ CNN 图中的第 0 轮来自 SFT 第 8000 步 checkpoint 的独立评测，第 1
    * - CNN + PPO（NLL SFT）
      - 第 200 轮（独立评测）：59/64（92.2%）；训练期间的评测首次峰值（第 163 轮）：64/64（100%）。
    * - π₀.₅ + SFT
-     - 第 5000 步：50/64（78.1%）。
+     - 第 5000 步（独立评测）：50/64（78.1%）。
    * - π₀.₅ + PPO
-     - 第 150 轮：63/64（98.44%）；峰值（第 120 轮）：64/64（100%）。
+     - 第 150 轮（独立评测）：63/64（98.44%）；独立评测峰值（第 120 轮）：64/64（100%）。
