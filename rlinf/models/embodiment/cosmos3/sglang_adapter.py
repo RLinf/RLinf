@@ -50,8 +50,6 @@ from typing import Any, Literal
 import numpy as np
 import torch
 
-from rlinf.models.embodiment.cosmos3.transforms import CONCAT_VIEW_DESCRIPTION
-
 
 class Cosmos3SGLangAdapter:
     """Cosmos3 env-obs <-> action-chunks adapter for the ``/v1/actions/generations`` path."""
@@ -235,7 +233,11 @@ class Cosmos3SGLangAdapter:
         p += (
             " This video contains concatenated views from multiple camera perspectives."
         )
-        return f"{p} {CONCAT_VIEW_DESCRIPTION}"
+        p += (
+            " The left half shows the third-person view; the right half shows"
+            " the wrist-mounted camera."
+        )
+        return p
 
     def parse_response(
         self, resp: dict, state: dict[str, Any]
