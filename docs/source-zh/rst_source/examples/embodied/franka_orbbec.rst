@@ -47,6 +47,7 @@ Franka Orbbec 相机
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 .. tab-set::

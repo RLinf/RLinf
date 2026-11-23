@@ -48,6 +48,7 @@ reward 在 agent loop 内计算（Search-R1 的规则奖励在轨迹和检索文
 
 安装与运行
 ----------
+
 中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。按 :doc:`多机指南 </rst_source/guides/multi_node>` 搭建 Ray 集群（每台机器在 ``ray start`` 之前设置互不相同的 ``RLINF_NODE_RANK``，head 节点为 0，并激活 RLinf 环境），并在训练前按 :doc:`本地 Wiki 检索服务 <retriever>` 在 node 0 启动 Qdrant 检索服务。
 
 .. tab-set::

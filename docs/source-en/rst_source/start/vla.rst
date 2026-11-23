@@ -1,116 +1,66 @@
-Quick Start
-===========
+First Training Run
+==================
 
-Start PPO training on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ with **MLP**, **OpenVLA**, or **OpenVLA-OFT**.
-
-.. grid:: 2 4 4 4
-   :gutter: 2
-
-   .. grid-item-card:: 1. Install
-      :text-align: center
-
-      ``install.sh`` or Docker Hub
-
-   .. grid-item-card:: 2. Pick a Track
-      :text-align: center
-
-      1-GPU MLP or 7B VLA
-
-   .. grid-item-card:: 3. Train
-      :text-align: center
-
-      Run launch script
-
-   .. grid-item-card:: 4. Watch Results
-      :text-align: center
-
-      TensorBoard curves
+Pick either the **Embodied MLP** or **Agent & LLM** single-GPU track to complete your first RLinf training run and inspect metrics.
 
 Setup and Run
 -------------
 
-Pick a starting track below and run the commands in order. For regional mirrors, multiple virtual environments, or Docker Hub images, see :doc:`installation`.
+Clone the repository and prepare your environment first (for mirrors, multiple virtual environments, or Docker Hub images, see :doc:`installation`), then run the commands for your track:
 
 .. tab-set::
 
-   .. tab-item:: MLP
+   .. tab-item:: Embodied MLP (ManiSkill3)
+      :sync: embodied
 
-      Trains a lightweight MLP policy on ManiSkill3's built-in ``PickCube-v1`` task on GPU 0.
-
-      **1. Install**
+      Trains a lightweight MLP policy on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__'s built-in ``PickCube-v1`` task (~4 GB VRAM on 1 GPU, no extra asset or checkpoint downloads):
 
       .. code-block:: bash
 
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
-
-      **2. Launch Training**
-
-      .. code-block:: bash
-
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
-   .. tab-item:: OpenVLA
-      :sync: openvla
+   .. tab-item:: Agent & LLM (GRPO)
+      :sync: agentic
 
-      **1. Install**
-
-      .. code-block:: bash
-
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
-
-      **2. Download ManiSkill Assets**
+      Runs single-GPU GRPO math reasoning training on ``DeepSeek-R1-Distill-Qwen-1.5B`` with SGLang and Megatron (config ``examples/reasoning/config/math/qwen2.5-1.5b-single-gpu.yaml``):
 
       .. code-block:: bash
 
-         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
+         hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --local-dir ./DeepSeek-R1-Distill-Qwen-1.5B
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-single-gpu \
+           rollout.model.model_path=./DeepSeek-R1-Distill-Qwen-1.5B \
+           actor.tokenizer.tokenizer_model=./DeepSeek-R1-Distill-Qwen-1.5B \
+           data.train_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
+           data.val_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]'
 
-      **3. Launch Training**
+Each config name matches a YAML file in the repository (``examples/embodiment/config/`` for embodied, ``examples/reasoning/config/math/`` for reasoning) — see :doc:`../reference/configuration` for all config directories and tuning presets.
 
-      First run downloads the default Hugging Face checkpoint automatically:
+.. dropdown:: Common Overrides and Operations (Optional)
 
-      .. code-block:: bash
+   .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
+      # Resume from a saved checkpoint directory
+      bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
+        runner.resume_dir=./logs/<run>/checkpoints/global_step_50
 
-   .. tab-item:: OpenVLA-OFT
-      :sync: openvla-oft
+      # Pin a run to GPU 0
+      bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
+        cluster.component_placement.actor,rollout,env=0
 
-      **1. Install**
-
-      .. code-block:: bash
-
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
-
-      **2. Download ManiSkill Assets**
-
-      .. code-block:: bash
-
-         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
-
-      **3. Launch Training**
-
-      First run downloads the default base and LoRA checkpoints automatically:
-
-      .. code-block:: bash
-
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
-
-Each config name matches a YAML file under ``examples/embodiment/config/`` — see :doc:`../reference/configuration` for all config directories and tuning presets.
-
-.. dropdown:: Common Overrides (Optional)
-
-   - **Use local checkpoints instead of Hugging Face:** append ``actor.model.model_path=/path/to/checkpoint`` (rollout inherits it automatically; for OpenVLA-OFT also pass ``actor.model.lora_path=/path/to/lora``).
-   - **Target specific GPUs:** the two VLA quickstarts use all available GPUs by default; set ``cluster.component_placement`` to pin devices (:doc:`../reference/configuration`).
+      # Clear a stale local Ray session (check `ray status` first on shared hosts)
+      ray stop
 
 Results and Troubleshooting
 ---------------------------
 
-Logs, TensorBoard events, and checkpoints are written to ``logs/<timestamp>-<config>/``. Start TensorBoard with ``tensorboard --host 0.0.0.0 --logdir ./logs`` and watch ``rollout/env_info/return`` and ``rollout/env_info/success_once``.
+Logs, TensorBoard events, and checkpoints are written to the configured output directory (``logs/<timestamp>-<config>/`` for embodied, ``../results/grpo-1.5b/`` for reasoning).
 
-The MLP run prints a metric table at each step:
+Start ``tensorboard --host 0.0.0.0 --logdir ./logs`` to inspect curves: watch ``rollout/env_info/return`` and ``rollout/env_info/success_once`` for embodied runs, or ``rollout/rewards`` and response length for Agent & LLM runs.
+
+The MLP run prints a metric table at each step, and ``success_once`` climbs above ``0.90`` within a few hundred epochs:
 
 .. code-block:: text
 
@@ -119,17 +69,9 @@ The MLP run prints a metric table at each step:
    │ Elapsed: 00:51       │ ETA: 01:24:09                │ Step Time: 5.122s │
    ├───────────────────────────── Environment ───────────────────────────────┤
    │ episode_len=50.0   │ num_trajectories=1024          │ return=7.187      │
-   ├──────────────────────────── Training/Actor ─────────────────────────────┤
+   ├───────────────────────────── Training/Actor ─────────────────────────────┤
    │ actor/policy_loss=-0.013 │ actor/clip_fraction=0.179 │ critic/explained_variance=0.646 │
    ╰─────────────────────────────────────────────────────────────────────────╯
-
-On full runs, MLP ``success_once`` climbs above ``0.90`` within a few hundred epochs, while the VLA quickstarts improve steadily from their SFT baselines:
-
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/embody-quickstart-metric.jpg
-   :align: center
-   :width: 90%
-
-   TensorBoard training curves for the ManiSkill3 VLA quick start.
 
 .. list-table::
    :header-rows: 1
@@ -147,20 +89,20 @@ On full runs, MLP ``success_once`` climbs above ``0.90`` within a few hundred ep
 .. grid:: 1 3 3 3
    :gutter: 2
 
-   .. grid-item-card:: RLinf Walkthrough
+   .. grid-item-card:: Tour of RLinf
       :link: walkthrough
       :link-type: doc
 
       Visual tour of how RLinf runs, scales across GPUs, and organizes configs and tools.
 
-   .. grid-item-card:: Embodied Training
+   .. grid-item-card:: Embodied AI
       :link: ../examples/index
       :link-type: doc
 
-      Explore LIBERO, RoboTwin, OpenPI, SFT, and world models.
+      Explore OpenVLA, OpenPI, LIBERO, RoboTwin, SFT, and world models.
 
-   .. grid-item-card:: Standalone Evaluation
-      :link: ../evaluations/index
+   .. grid-item-card:: Agent & LLM
+      :link: ../examples/agentic/index
       :link-type: doc
 
-      Evaluate trained checkpoints across embodied benchmarks.
+      Explore Search-R1, WideSeek-R1, rStar2, AgentLightning, and math reasoning.

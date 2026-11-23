@@ -52,6 +52,7 @@ OPD 以 teacher 与 student 在同一条 student 动作 token 序列上的 log-p
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 .. list-table:: **LIBERO-Spatial OPD 使用的权重**

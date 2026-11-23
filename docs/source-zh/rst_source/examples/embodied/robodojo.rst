@@ -70,6 +70,7 @@ RLinf 提供 ``put_bottles_into_dustbin`` 的环境配置，用作接入和验�
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 RoboDojo 支持 Linux x86_64 与 NVIDIA CUDA GPU（暂不支持纯 CPU、macOS 或 AMD ROCm）；安装前先用 ``nvidia-smi``、``uname -m`` 与 ``df -h .`` 检查驱动和磁盘空间。安装前导出 ``ROBODOJO_ASSETS_ROOT``，安装器会将其写入 ``.venv/bin/activate``\ （未设置时默认为 RLinf 仓库根目录下的 ``data/robodojo``）。安装器会设置 ``OMNI_KIT_ACCEPT_EULA=YES``，继续安装即表示接受 NVIDIA Omniverse 许可条款；不要单独执行 ``pip install rlinf-robodojo-runtime``。

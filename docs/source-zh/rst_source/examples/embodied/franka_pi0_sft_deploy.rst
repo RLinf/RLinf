@@ -78,6 +78,7 @@ Franka π₀ SFT 与部署
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 .. tab-set::

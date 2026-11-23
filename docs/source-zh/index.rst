@@ -15,25 +15,14 @@
 
 同一套框架打通 **VLA 与世界模型仿真训练**、**真机机器人在线 RL** 与 **多轮推理 / 工具调用智能体**，支持从单卡开发扩展到多机异构集群。
 
-快速体验
---------
-
-在 ManiSkill3 ``PickCube-v1`` 上启动 PPO 训练：
-
-.. code-block:: bash
-
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
-   bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
-
-四步上手
+工作流程
 --------
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/onboarding_flow_zh.svg
    :align: center
    :width: 100%
 
-   从安装到跑通第一个任务的四步流程。
+   从安装环境、选择场景到启动训练与扩展集群的流程。
 
 选择你的路径
 ------------
@@ -41,11 +30,17 @@
 .. grid:: 1 2 2 2
    :gutter: 3
 
-   .. grid-item-card:: 快速训练
+   .. grid-item-card:: 安装与第一个任务
+      :link: rst_source/start/installation
+      :link-type: doc
+
+      配置本地 ``uv`` 环境或 Docker 镜像，并了解硬件要求。
+
+   .. grid-item-card:: 第一个训练任务
       :link: rst_source/start/vla
       :link-type: doc
 
-      在 ManiSkill3 上跑通 MLP PPO，或进一步训练 OpenVLA / OpenVLA-OFT。
+      在单卡上运行具身 MLP（ManiSkill3）或 Agent / LLM（GRPO）训练示例。
 
    .. grid-item-card:: VLA 评测
       :link: rst_source/evaluations/get_started/quick_tour
@@ -69,13 +64,7 @@
       :link: rst_source/extending/index
       :link-type: doc
 
-      接入自定义模型、环境、机器人或算法。
-
-   .. grid-item-card:: 扩展到集群
-      :link: rst_source/guides/launch-scale/index
-      :link-type: doc
-
-      配置跨多 GPU 与多节点的共置、分离式与混合式部署。
+      接入自定义模型、Env、机器人、算法、Reward 或硬件后端。
 
 为什么选择 RLinf
 ----------------
@@ -93,17 +82,15 @@
      - 内建 PPO、GRPO、DAPO、SAC 与 Reinforce++，并提供具身与推理任务的复现配置。
 
 .. toctree::
-  :caption: 快速开始
+  :caption: 入门
   :maxdepth: 2
   :includehidden:
   :titlesonly:
   :hidden:
 
-  总览 <rst_source/start/index>
   安装 <rst_source/start/installation>
-  快速开始 <rst_source/start/vla>
-  快速熟悉 RLinf <rst_source/start/walkthrough>
-  命令速查表 <rst_source/start/cheat_sheet>
+  第一个训练任务 <rst_source/start/vla>
+  框架导览 <rst_source/start/walkthrough>
   常见问题 <rst_source/resources/faq>
 
 .. toctree::

@@ -76,6 +76,7 @@ RoboLab 是基于 Isaac Sim 的机器人操作 benchmark，包含 120 个任务�
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 .. tab-set::

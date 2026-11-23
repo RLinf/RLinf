@@ -74,6 +74,7 @@ BWM 强化学习
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 先按 :doc:`RoboTwin <robotwin>` 安装 openpi 模型与 RoboTwin 环境（仿真器只用于评测和提供动作桥所需的 URDF）。

@@ -81,6 +81,7 @@ GSEnv（也称 ManiSkill-GS）将 ManiSkill 物理仿真与 3D Gaussian Splattin
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 .. tab-set::

@@ -8,7 +8,13 @@ Each virtual environment holds one model-and-environment stack; pass ``--venv <d
 Setup and Verify
 ----------------
 
-Choose your target stack below and run the commands:
+Clone the repository first:
+
+.. code-block:: bash
+
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+
+Then pick your target stack below:
 
 .. tab-set::
 
@@ -19,7 +25,6 @@ Choose your target stack below and run the commands:
 
       .. code-block:: bash
 
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
          python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
 
@@ -37,20 +42,17 @@ Choose your target stack below and run the commands:
 
       .. code-block:: bash
 
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
-
          # Robot controller node (driver + sensors)
          bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
          # GPU / training node (or single workstation with both GPU and robot)
          bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
-   .. tab-item:: Agentic / Reasoning
+   .. tab-item:: Agent & LLM
       :sync: agentic
 
       .. code-block:: bash
 
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
          python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
 
@@ -86,7 +88,6 @@ Choose your target stack below and run the commands:
 
       .. code-block:: bash
 
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh docs --venv .docs-venv
 
 .. tip::
@@ -162,10 +163,10 @@ Match your hardware to the workload you want to run; the same recipes scale from
      - Example Starting Point
    * - 1 GPU (4–24 GB)
      - MLP / CNN simulation RL (~4 GB), VLA evaluation (24 GB+), LoRA SFT, real-robot data collection, and deployment
-     - :doc:`Quick Start (MLP) <vla>`, :doc:`Evaluation Quick Tour <../evaluations/get_started/quick_tour>`
+     - :doc:`First Training Run (MLP) <vla>`, :doc:`Evaluation Quick Tour <../evaluations/get_started/quick_tour>`
    * - 1–2 GPUs (40–80 GB)
-     - Single-workstation OpenVLA / OpenPI RL quick start, collocated PPO / GRPO
-     - :doc:`Quick Start (VLA) <vla>`
+     - Single-workstation OpenVLA / OpenPI RL, collocated PPO / GRPO, 1.5B Agent & LLM GRPO
+     - :doc:`First Training Run (Agent & LLM) <vla>`, :doc:`Embodied AI <../examples/index>`
    * - 4–8 GPUs (80 GB)
      - Full-parameter VLA SFT and RL benchmarks (LIBERO, ManiSkill, RoboTwin), 7B–14B reasoning RL
      - :doc:`Embodied Training <../examples/index>`

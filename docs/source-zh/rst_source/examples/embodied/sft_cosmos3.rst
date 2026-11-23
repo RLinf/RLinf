@@ -34,6 +34,7 @@ Cosmos3 监督微调
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 .. tab-set::

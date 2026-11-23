@@ -115,8 +115,8 @@ Next Steps
 
       Configure export formats, streaming shards, and dataset merging.
 
-   .. grid-item-card:: Quick Start
+   .. grid-item-card:: First Training Run
       :link: ../start/vla
       :link-type: doc
 
-      Run a 1-GPU MLP or ManiSkill3 VLA PPO example.
+      Run a single-GPU Embodied MLP or Agent & LLM GRPO example.

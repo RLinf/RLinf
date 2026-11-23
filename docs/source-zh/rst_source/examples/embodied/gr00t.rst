@@ -101,6 +101,7 @@ GR00T 强化学习
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 NVIDIA CUDA 支持 GR00T N1.5、N1.6 和 N1.7（在下方选择对应版本标签页）。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 支持 GR00T N1.5 在 LIBERO 和 ManiSkill 上运行，昇腾还支持 N1.6 与 N1.7 在 LIBERO 上运行。AMD 与 MUSA 上的 N1.6、N1.7，以及所有非 NVIDIA 后端上的 IsaacLab，尚未验证。

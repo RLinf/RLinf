@@ -105,6 +105,7 @@ RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境�
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 NVIDIA CUDA 按模型选择对应标签页；AMD GPU 请切换到 **AMD ROCm** 标签页。

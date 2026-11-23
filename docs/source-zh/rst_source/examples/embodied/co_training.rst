@@ -61,6 +61,7 @@
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 基础 ManiSkill 资产设置见 :doc:`ManiSkill 示例 <maniskill>`。你可以直接在 **阶段二** 使用已发布的 Stage I SFT 权重（推荐），或先在 **阶段一** 自行训练 SFT。

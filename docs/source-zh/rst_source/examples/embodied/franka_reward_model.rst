@@ -87,6 +87,7 @@ Franka 奖励模型
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 .. tab-set::

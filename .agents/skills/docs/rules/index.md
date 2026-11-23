@@ -8,7 +8,7 @@ The docs have eight top-level chapters in the sidebar, in this order: **Get Star
 
 | Chapter | Owns |
 |---|---|
-| Get Started | overview, installation & requirements, quickstart, walkthrough, cheat sheet, FAQ |
+| Get Started | installation & hardware requirements, first training run, tour of RLinf, FAQ |
 | Embodied AI | overview, simulators, embodied models, SFT & imitation, RL recipes, world models, embodied evaluation (quick tour, benchmark guides, eval reference) |
 | Real-World Robots | overview, shared real-world workflows (multi-node robot launch, teleoperation, data collection), and per-robot bring-up / SFT / RL pages |
 | Agent & LLM | math reasoning, Search-R1, WideSeek-R1, rStar2, AgentLightning, Coding RL, VLM, image & video generation |

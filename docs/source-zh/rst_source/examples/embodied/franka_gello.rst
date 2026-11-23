@@ -62,6 +62,7 @@ Franka GELLO 遥操作
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 .. tab-set::

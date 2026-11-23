@@ -54,6 +54,7 @@ GRPO 原理
 
 安装与运行
 ----------
+
 **前置**：需安装 NVIDIA 驱动 ≥580 和 CUDA 13.3 工具链（``nvcc``）。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。
 
 .. tab-set::

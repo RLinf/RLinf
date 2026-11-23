@@ -91,6 +91,7 @@ SO-101 配置与 SFT
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 .. tab-set::

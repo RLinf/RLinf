@@ -86,6 +86,7 @@ MLP 策略是一种轻量网络，用于从低维状态输入（关节角、末�
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 无需预训练 checkpoint，MLP 策略从头训练。

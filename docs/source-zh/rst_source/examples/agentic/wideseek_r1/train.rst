@@ -49,6 +49,7 @@ WideSeek-R1 训练
 
 安装与运行
 ----------
+
 中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。启动训练前，请先按 :doc:`环境与工具配置 <tools>` 启动评判模型和离线检索工具。
 
 .. tab-set::

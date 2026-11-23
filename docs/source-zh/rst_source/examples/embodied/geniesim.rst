@@ -91,6 +91,7 @@ GenieSim 仿真和 RLinf 训练分在两个 GPU 节点上跑。跑 RLinf 的是�
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 GenieSim 训练横跨两个节点：在 **RLinf 训练节点** 安装依赖、下载权重并启动训练，在 **GenieSim 仿真节点**\ （RTX 系列 GPU）启动仿真服务。

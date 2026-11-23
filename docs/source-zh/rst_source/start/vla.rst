@@ -1,115 +1,66 @@
-快速开始
-========
+第一个训练任务
+==============
 
-在 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ 上快速跑通 **MLP**、**OpenVLA** 或 **OpenVLA-OFT** 的 PPO 训练。
-
-.. grid:: 2 4 4 4
-   :gutter: 2
-
-   .. grid-item-card:: 1. 安装环境
-      :text-align: center
-
-      ``install.sh`` 或 Docker Hub
-
-   .. grid-item-card:: 2. 选择起点
-      :text-align: center
-
-      单卡 MLP 或 7B VLA
-
-   .. grid-item-card:: 3. 启动训练
-      :text-align: center
-
-      运行启动脚本
-
-   .. grid-item-card:: 4. 查看曲线
-      :text-align: center
-
-      TensorBoard 监控指标
+选择 **具身 MLP** 或 **Agent 与 LLM** 两条单卡路径之一，完成第一次 RLinf 训练并查看指标输出。
 
 安装与运行
 ----------
-在下方选一个起点，按顺序执行命令即可。需要国内镜像加速、共存多套虚拟环境或使用 Docker 镜像，见 :doc:`installation`。
+
+请先在仓库根目录完成环境准备（国内镜像、多环境共存与 Docker 镜像见 :doc:`installation`），再按目标方向执行对应命令：
 
 .. tab-set::
 
-   .. tab-item:: MLP
+   .. tab-item:: 具身 MLP（ManiSkill3）
+      :sync: embodied
 
-      在 GPU 0 上基于 ManiSkill3 内置 ``PickCube-v1`` 任务训练轻量 MLP policy。
-
-      **1. 安装环境**
+      在单卡上基于 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ 内置 ``PickCube-v1`` 任务训练轻量 MLP policy（约需 4 GB 显存，无需额外下载权重或资产）：
 
       .. code-block:: bash
 
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
-
-      **2. 启动训练**
-
-      .. code-block:: bash
-
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
-   .. tab-item:: OpenVLA
-      :sync: openvla
+   .. tab-item:: Agent 与 LLM（GRPO）
+      :sync: agentic
 
-      **1. 安装环境**
-
-      .. code-block:: bash
-
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
-
-      **2. 下载场景资产**
+      在单卡上使用 SGLang + Megatron 对 ``DeepSeek-R1-Distill-Qwen-1.5B`` 运行数学推理 GRPO 训练（配置 ``examples/reasoning/config/math/qwen2.5-1.5b-single-gpu.yaml``）：
 
       .. code-block:: bash
 
-         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
+         hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --local-dir ./DeepSeek-R1-Distill-Qwen-1.5B
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-single-gpu \
+           rollout.model.model_path=./DeepSeek-R1-Distill-Qwen-1.5B \
+           actor.tokenizer.tokenizer_model=./DeepSeek-R1-Distill-Qwen-1.5B \
+           data.train_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
+           data.val_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]'
 
-      **3. 启动训练**
+命令行中的配置名对应仓库中的同名 YAML 文件（具身示例位于 ``examples/embodiment/config/``，推理示例位于 ``examples/reasoning/config/math/``），完整配置目录与常用参数见 :doc:`../reference/configuration`。
 
-      首次运行会自动缓存下载默认 Hugging Face 权重：
+.. dropdown:: 常用操作与参数覆盖（可选）
 
-      .. code-block:: bash
+   .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
+      # 从已保存的 checkpoint 目录断点续训
+      bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
+        runner.resume_dir=./logs/<run>/checkpoints/global_step_50
 
-   .. tab-item:: OpenVLA-OFT
-      :sync: openvla-oft
+      # 限定到 0 号 GPU 运行
+      bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp \
+        cluster.component_placement.actor,rollout,env=0
 
-      **1. 安装环境**
-
-      .. code-block:: bash
-
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
-
-      **2. 下载场景资产**
-
-      .. code-block:: bash
-
-         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
-
-      **3. 启动训练**
-
-      首次运行会自动缓存下载默认基座与 LoRA 权重：
-
-      .. code-block:: bash
-
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
-
-命令行中的配置名对应 ``examples/embodiment/config/`` 下的同名 YAML 文件，完整配置目录与常用参数见 :doc:`../reference/configuration`。
-
-.. dropdown:: 常用启动覆盖（可选）
-
-   - **改用本地权重**：追加 ``actor.model.model_path=/path/to/checkpoint``\ （rollout 自动沿用；OpenVLA-OFT 同步传 ``actor.model.lora_path=/path/to/lora``）。
-   - **指定 GPU 卡号**：两个 VLA 快速开始默认使用全部可见卡；需要限定设备时修改 ``cluster.component_placement``\ （见 :doc:`../reference/configuration`\ ）。
+      # 清理残留的本地 Ray 会话（共享机器上先用 ray status 确认无他人任务）
+      ray stop
 
 结果与常见问题
 --------------
 
-日志、TensorBoard 事件与 checkpoint 保存在 ``logs/<时间戳>-<配置名>/`` 下。启动 ``tensorboard --host 0.0.0.0 --logdir ./logs``，重点观察 ``rollout/env_info/return`` 和 ``rollout/env_info/success_once``。
+日志、TensorBoard 事件与 checkpoint 保存在配置指定的输出目录下（具身默认 ``logs/<时间戳>-<配置名>/``，推理默认 ``../results/grpo-1.5b/``）。
 
-MLP 训练每步会在终端输出指标表：
+启动 ``tensorboard --host 0.0.0.0 --logdir ./logs`` 查看曲线：具身任务重点关注 ``rollout/env_info/return`` 与 ``rollout/env_info/success_once``，Agent / LLM 任务重点关注 ``rollout/rewards`` 与响应长度。
+
+MLP 训练每步会在终端输出指标表，完整运行数百轮后 ``success_once`` 会升至 ``0.90`` 以上：
 
 .. code-block:: text
 
@@ -118,17 +69,9 @@ MLP 训练每步会在终端输出指标表：
    │ Elapsed: 00:51       │ ETA: 01:24:09                │ Step Time: 5.122s │
    ├───────────────────────────── Environment ───────────────────────────────┤
    │ episode_len=50.0   │ num_trajectories=1024          │ return=7.187      │
-   ├──────────────────────────── Training/Actor ─────────────────────────────┤
+   ├───────────────────────────── Training/Actor ─────────────────────────────┤
    │ actor/policy_loss=-0.013 │ actor/clip_fraction=0.179 │ critic/explained_variance=0.646 │
    ╰─────────────────────────────────────────────────────────────────────────╯
-
-完整运行数百轮后，MLP 的 ``success_once`` 会升至 ``0.90`` 以上；VLA 快速开始则从 SFT 基线稳步上升：
-
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/embody-quickstart-metric.jpg
-   :align: center
-   :width: 90%
-
-   ManiSkill3 VLA 快速开始的 TensorBoard 训练曲线。
 
 .. list-table::
    :header-rows: 1
@@ -146,20 +89,20 @@ MLP 训练每步会在终端输出指标表：
 .. grid:: 1 3 3 3
    :gutter: 2
 
-   .. grid-item-card:: 快速熟悉 RLinf
+   .. grid-item-card:: 框架导览
       :link: walkthrough
       :link-type: doc
 
-      通过图示看懂训练闭环、多卡扩展方式以及配置和工具的目录位置。
+      通过图示了解训练闭环、多卡扩展方式以及配置和工具的目录位置。
 
-   .. grid-item-card:: 具身训练
+   .. grid-item-card:: 具身智能
       :link: ../examples/index
       :link-type: doc
 
-      查看 LIBERO、RoboTwin、OpenPI、SFT 与世界模型示例。
+      查看 OpenVLA、OpenPI、LIBERO、RoboTwin、SFT 与世界模型示例。
 
-   .. grid-item-card:: 运行独立评测
-      :link: ../evaluations/index
+   .. grid-item-card:: Agent 与 LLM
+      :link: ../examples/agentic/index
       :link-type: doc
 
-      在具身基准上评估训练后的权重。
+      查看 Search-R1、WideSeek-R1、rStar2、AgentLightning 与数学推理示例。

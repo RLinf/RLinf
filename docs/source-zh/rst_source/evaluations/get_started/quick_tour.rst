@@ -5,6 +5,7 @@
 
 安装与运行
 ----------
+
 如果 ``.venv`` 里已经安装了其他模型或环境，在 ``install.sh`` 末尾加 ``--venv .venv-eval`` 并激活 ``.venv-eval``，避免覆盖原有环境。国内镜像加速与 Docker Hub 预构建镜像见 :doc:`../../start/installation`。
 
 .. tab-set::

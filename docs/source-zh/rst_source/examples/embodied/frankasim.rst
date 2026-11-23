@@ -74,6 +74,7 @@ Franka-Sim 是基于 `SERL <https://rail-berkeley.github.io/serl/docs/sim_quick_
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 .. tab-set::

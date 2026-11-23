@@ -8,7 +8,13 @@
 安装与验证
 ----------
 
-选择目标场景，直接复制运行完整安装与验证命令：
+先克隆仓库并进入根目录：
+
+.. code-block:: bash
+
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
+
+再按目标场景选择对应的安装命令：
 
 .. tab-set::
 
@@ -19,7 +25,6 @@
 
       .. code-block:: bash
 
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
          python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
 
@@ -37,20 +42,17 @@
 
       .. code-block:: bash
 
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
-
          # 机器人控制节点（驱动与传感器）
          bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
          # GPU 训练 / 推理节点（或单机同配 GPU 与机器人）
          bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
-   .. tab-item:: 智能体 / 推理
+   .. tab-item:: Agent 与 LLM
       :sync: agentic
 
       .. code-block:: bash
 
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
          python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
 
@@ -86,7 +88,6 @@
 
       .. code-block:: bash
 
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh docs --venv .docs-venv
 
 .. tip::
@@ -162,10 +163,10 @@
      - 推荐入口
    * - 单卡（4–24 GB）
      - MLP / CNN 仿真 RL（~4 GB）、VLA 评测（24 GB 起）、LoRA SFT、真机数据采集与部署
-     - :doc:`快速开始（MLP） <vla>`、:doc:`评测快速体验 <../evaluations/get_started/quick_tour>`
+     - :doc:`第一个训练任务（MLP） <vla>`、:doc:`评测快速体验 <../evaluations/get_started/quick_tour>`
    * - 1–2 卡（40–80 GB）
-     - 单机 OpenVLA / OpenPI 快速开始、共置 PPO / GRPO
-     - :doc:`快速开始（VLA） <vla>`
+     - 单机 OpenVLA / OpenPI 训练、共置 PPO / GRPO、1.5B Agent / LLM GRPO
+     - :doc:`第一个训练任务（Agent 与 LLM） <vla>`、:doc:`具身智能 <../examples/index>`
    * - 4–8 卡（80 GB）
      - VLA 全参 SFT 与基准复现（LIBERO、ManiSkill、RoboTwin）、7B–14B 推理 RL
      - :doc:`具身训练 <../examples/index>`

@@ -31,6 +31,7 @@ ManiSkill OOD 评测用于检验 VLA policy 在分布外（Out-of-Distribution�
 
 安装与运行
 ----------
+
 中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
 .. tab-set::

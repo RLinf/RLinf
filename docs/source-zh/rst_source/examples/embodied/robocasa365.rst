@@ -75,6 +75,7 @@ RoboCasa365 是 RLinf 中面向基准测试的厨房操作集成。与旧版 :do
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 .. tab-set::

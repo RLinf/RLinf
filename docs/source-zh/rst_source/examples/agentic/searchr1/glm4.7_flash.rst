@@ -40,6 +40,7 @@ GLM 需要 ``prompt`` 字段为消息列表（``[{"role": "system", ...}, {"role
 
 安装与运行
 ----------
+
 中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。训练前先按 :doc:`本地 Wiki 检索服务 <retriever>` 启动 Qdrant 检索服务（检索服务可与训练共用 GPU，请用 ``CUDA_VISIBLE_DEVICES=0`` 启动，约占 1 GB 显存）。
 
 .. tab-set::

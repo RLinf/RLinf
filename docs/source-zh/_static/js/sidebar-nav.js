@@ -108,18 +108,30 @@
 
   // Convert relative href/src attributes to root-relative paths so persistent
   // chrome (sidebar, header) and swapped <main> work across directory depths.
-  function rebaseUrls(container, baseUrl) {
+  // When resolveSelfHash is true, Sphinx's current-page `href="#"` link in the
+  // sidebar is rewritten to the initial page's pathname so pushState does not
+  // later make it falsely match every navigated URL.
+  function rebaseUrls(container, baseUrl, resolveSelfHash) {
     if (!container) return;
 
     var links = container.querySelectorAll("a[href]");
     for (var i = 0; i < links.length; i++) {
       var a = links[i];
       var raw = a.getAttribute("href");
-      if (
-        !raw ||
-        raw.charAt(0) === "#" ||
-        /^(?:mailto:|tel:|javascript:|data:)/i.test(raw)
-      ) {
+      if (!raw || /^(?:mailto:|tel:|javascript:|data:)/i.test(raw)) {
+        continue;
+      }
+      if (raw === "#") {
+        if (!resolveSelfHash) continue;
+        try {
+          var selfUrl = new URL(baseUrl);
+          a.setAttribute("href", selfUrl.pathname);
+        } catch (_err) {
+          // Ignore invalid baseUrl.
+        }
+        continue;
+      }
+      if (raw.charAt(0) === "#") {
         continue;
       }
       try {
@@ -322,7 +334,7 @@
     }
   }
 
-  function updateSidebarActive(nav, targetUrl) {
+  function updateSidebarActive(nav, targetUrl, opts) {
     if (!nav) return;
     var targetKey = canonicalPath(targetUrl);
 
@@ -331,12 +343,19 @@
       prevActive[i].classList.remove("current", "active");
     }
 
-    var links = nav.querySelectorAll("a[href]");
-    var matched = null;
-    for (var j = 0; j < links.length; j++) {
-      if (canonicalPath(links[j].getAttribute("href")) === targetKey) {
-        matched = links[j];
-        break;
+    var matched =
+      opts && opts.clickedLink && nav.contains(opts.clickedLink)
+        ? opts.clickedLink
+        : null;
+    if (!matched) {
+      var links = nav.querySelectorAll("a[href]");
+      for (var j = 0; j < links.length; j++) {
+        var href = links[j].getAttribute("href");
+        if (!href || href.charAt(0) === "#") continue;
+        if (canonicalPath(href) === targetKey) {
+          matched = links[j];
+          break;
+        }
       }
     }
     if (!matched) return;
@@ -366,9 +385,11 @@
     }
 
     if (openSet) saveOpenSet(openSet);
-    requestAnimationFrame(function () {
-      ensureCurrentVisible(nav);
-    });
+    if (!opts || !opts.fromSidebar) {
+      requestAnimationFrame(function () {
+        ensureCurrentVisible(nav);
+      });
+    }
   }
 
   function updateLanguageSwitcher() {
@@ -613,7 +634,10 @@
         closeMobileDialogs();
 
         var nav = document.querySelector(".bd-sidebar-primary .bd-docs-nav");
-        updateSidebarActive(nav, finalUrl.href);
+        updateSidebarActive(nav, finalUrl.href, {
+          clickedLink: opts.clickedLink,
+          fromSidebar: opts.fromSidebar,
+        });
         scrollToTarget(finalUrl.hash, opts.savedScrollY);
         hideProgress();
       })
@@ -630,13 +654,19 @@
     docRootPath = computeDocRootPath();
     lastLoadedKey = canonicalPath(window.location.href) + window.location.search;
 
-    // Normalize relative URLs in persistent chrome once before any pushState.
-    rebaseUrls(document.getElementById("pst-primary-sidebar"), window.location.href);
+    // Normalize relative URLs (and Sphinx's `href="#"` self-link) in persistent
+    // chrome once before any pushState.
+    rebaseUrls(
+      document.getElementById("pst-primary-sidebar"),
+      window.location.href,
+      true
+    );
     rebaseUrls(
       document.getElementById("pst-primary-sidebar-modal"),
-      window.location.href
+      window.location.href,
+      true
     );
-    rebaseUrls(document.querySelector(".bd-header"), window.location.href);
+    rebaseUrls(document.querySelector(".bd-header"), window.location.href, true);
 
     // Warm the cache with the initial page HTML snapshot on Back navigation.
     try {
@@ -691,9 +721,10 @@
       var link = e.target && e.target.closest ? e.target.closest("a[href]") : null;
       if (!link || !isPjaxEligibleLink(link)) return;
 
+      var fromSidebar = Boolean(nav && nav.contains(link));
       // Option A: clicking a collapsed sidebar folder opens its children while
       // instantly swapping the right-hand overview page.
-      if (nav && nav.contains(link)) {
+      if (fromSidebar) {
         var li = link.parentElement;
         if (li && li.classList.contains("has-children")) {
           var details = li.querySelector(":scope > details");
@@ -718,7 +749,11 @@
       }
 
       e.preventDefault();
-      navigateTo(url.href, { fromPopstate: false });
+      navigateTo(url.href, {
+        fromPopstate: false,
+        fromSidebar: fromSidebar,
+        clickedLink: fromSidebar ? link : null,
+      });
     });
 
     window.addEventListener("popstate", function (e) {

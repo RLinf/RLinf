@@ -108,6 +108,7 @@ humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``rewa
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 .. tab-set::

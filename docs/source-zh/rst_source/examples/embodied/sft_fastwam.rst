@@ -42,6 +42,7 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 做 FSDP 监
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 .. tab-set::

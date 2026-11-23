@@ -1,5 +1,5 @@
-RLinf Walkthrough
-=================
+Tour of RLinf
+=============
 
 Start from the launch command you just ran and work inward in three steps: where files live in the repository, how a training run executes, and the core abstractions that let RLinf scale across GPUs, accelerators, robots, and models.
 

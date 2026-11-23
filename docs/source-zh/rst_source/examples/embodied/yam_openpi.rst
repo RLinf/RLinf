@@ -58,6 +58,7 @@ SFT 在 GPU 节点运行。真机评估使用双节点 Ray 集群：GPU 节点�
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 .. tab-set::

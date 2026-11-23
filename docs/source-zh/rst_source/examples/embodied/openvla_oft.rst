@@ -102,6 +102,7 @@ LIBERO 训练流程根据图像和任务提示生成动作块。
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 NVIDIA CUDA 支持概览中的全部环境。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 通过共用平台安装器与 scheduler 设备 API 支持 OpenVLA-OFT 在 LIBERO 和 ManiSkill 上运行，其他环境有各自的硬件要求。

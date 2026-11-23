@@ -15,25 +15,14 @@ Welcome to RLinf
 
 One framework unifies **VLA and world-model simulation**, **real-world robot online RL**, and **multi-turn reasoning and tool-use agents**, scaling from a single GPU to multi-node heterogeneous clusters.
 
-Quick Try
----------
-
-Launch PPO training on ManiSkill3 ``PickCube-v1``:
-
-.. code-block:: bash
-
-   git clone https://github.com/RLinf/RLinf.git && cd RLinf
-   bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
-
-Your First Run in Four Steps
-----------------------------
+Workflow
+--------
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/onboarding_flow.svg
    :align: center
    :width: 100%
 
-   From install to your first run in four steps.
+   Workflow from installation and stack selection to training and cluster scaling.
 
 Choose Your Path
 ----------------
@@ -41,11 +30,17 @@ Choose Your Path
 .. grid:: 1 2 2 2
    :gutter: 3
 
-   .. grid-item-card:: Quick Training
+   .. grid-item-card:: Installation
+      :link: rst_source/start/installation
+      :link-type: doc
+
+      Set up a local ``uv`` environment or pull a Docker Hub image, and check hardware requirements.
+
+   .. grid-item-card:: First Training Run
       :link: rst_source/start/vla
       :link-type: doc
 
-      Start with MLP PPO on ManiSkill3, or scale up to OpenVLA / OpenVLA-OFT.
+      Run a single-GPU Embodied MLP (ManiSkill3) or Agent & LLM (GRPO) training example.
 
    .. grid-item-card:: VLA Evaluation
       :link: rst_source/evaluations/get_started/quick_tour
@@ -65,17 +60,11 @@ Choose Your Path
 
       Pick a single-node or multi-node track across math reasoning, tool-use agents, multimodal RL, and diffusion.
 
-   .. grid-item-card:: Bring Your Own
+   .. grid-item-card:: Extending RLinf
       :link: rst_source/extending/index
       :link-type: doc
 
-      Add a model, environment, robot, or algorithm and plug it into RLinf.
-
-   .. grid-item-card:: Scale to a Cluster
-      :link: rst_source/guides/launch-scale/index
-      :link-type: doc
-
-      Configure collocated, disaggregated, and hybrid placement across GPUs and nodes.
+      Add a custom model, environment, robot, algorithm, reward, or hardware backend.
 
 Why RLinf
 ---------
@@ -99,11 +88,9 @@ Why RLinf
   :titlesonly:
   :hidden:
 
-  Overview <rst_source/start/index>
   Installation <rst_source/start/installation>
-  Quick Start <rst_source/start/vla>
-  RLinf Walkthrough <rst_source/start/walkthrough>
-  Cheat Sheet <rst_source/start/cheat_sheet>
+  First Training Run <rst_source/start/vla>
+  Tour of RLinf <rst_source/start/walkthrough>
   FAQ <rst_source/resources/faq>
 
 .. toctree::

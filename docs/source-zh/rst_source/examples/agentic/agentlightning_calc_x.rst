@@ -33,6 +33,7 @@ AgentLightning 强化学习
 
 安装与运行
 ----------
+
 AgentLightning 0.3.0 需要使用 RLinf 约束的 OpenTelemetry 版本，因为 OpenTelemetry 1.45 修改了将 rollout span 路由到 Lightning Store 的 exporter 实现。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__，其他安装选项和支持的平台请参考 :doc:`RLinf Installation </rst_source/start/installation>`。
 
 .. tab-set::

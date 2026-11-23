@@ -49,6 +49,7 @@ DreamZero 监督微调
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 ``examples/sft/config/`` 下的 SFT 参考配置：

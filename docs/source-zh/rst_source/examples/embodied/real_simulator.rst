@@ -106,6 +106,7 @@
 
 安装与运行
 ----------
+
 按 :doc:`RoboTwin <robotwin>` 准备好环境与 checkpoint 后，启动内置示例配置 ``examples/embodiment/config/realsimulator_robotwin_adjust_bottle_dagger_openpi.yaml``：
 
 .. code-block:: bash

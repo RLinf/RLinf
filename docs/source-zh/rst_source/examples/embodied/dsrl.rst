@@ -86,6 +86,7 @@ DSRL 原理
 
 安装与运行
 ----------
+
 .. include:: _setup_common.rst
 
 DSRL 与 :doc:`pi0` 共用 OpenPI 环境与模型依赖。
