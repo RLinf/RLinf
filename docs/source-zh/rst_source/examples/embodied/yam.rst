@@ -65,9 +65,8 @@ YAM PICO 数据采集
    * **publisher 地址：** 在 publisher PC 上用 ``ip -brief address`` 查出 YAM 节点可达的 IP，端口取 ``configs/vr_bridge.yaml`` 中的 ``zmq.ipc_addr``。将 ``YAM_PICO_ZMQ_ADDR`` 设为 ``tcp://<publisher-PC-address>:<port>``\ （切勿填头显 IP 或 ``0.0.0.0``；同机运行也可用一致的 IPC 地址）。
    * **分臂测量 yaw：** 左右臂需分别测量。校准时头显面向的水平方向为操作者 ``+X``\ （左侧 ``+Y``，上方 ``+Z``）；按模型与厂家坐标图将操作者前方表示为各臂基座水平面内的 ``(dx, dy)``，设 yaw 为 ``atan2(dy, dx)``\ （弧度，正值绕基座 ``+Z`` 按右手定则旋转；角度乘 ``π/180`` 换算；仅水平轴同向时填 ``0``，yaw 不能补偿基座倾斜）。启动时面向实测方向并松开两侧 grip，操作朝向改变后需重新测量校准。
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

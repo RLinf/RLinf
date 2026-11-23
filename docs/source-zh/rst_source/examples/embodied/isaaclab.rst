@@ -75,9 +75,8 @@ IsaacLab 强化学习
    * - 提示词
      - ``Stack the red block on the blue block, then stack the green block on the red block.``
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

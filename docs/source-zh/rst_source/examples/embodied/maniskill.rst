@@ -89,9 +89,8 @@ ManiSkill 强化学习
 
    各模型在 ManiSkill 上的后端配置见 :ref:`OpenVLA-OFT <openvla-oft-hardware>`、:ref:`GR00T N1.5 <gr00t-hardware>` 与 :ref:`OpenPI π₀ / π₀.₅ <pi0-hardware>`。AMD、昇腾和 MUSA 使用 CPU PhysX simulation，模型仍在所选 accelerator 上运行。GR00T 需要带有 ``maniskill_widowx`` embodiment head 的兼容 checkpoint；MUSA 需要厂商模拟器包。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

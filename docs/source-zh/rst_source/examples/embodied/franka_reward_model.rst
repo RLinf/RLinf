@@ -85,9 +85,8 @@ Franka 奖励模型
 .. _franka-resnet-reward-model:
 .. _franka-vlm-reward-model:
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

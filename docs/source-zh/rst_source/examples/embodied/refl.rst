@@ -78,9 +78,8 @@ ReFL 先采样到去噪后期，再用一步预测得到干净图像。冻结的
 
 本示例将 `ImageReward 论文 <https://arxiv.org/abs/2304.05977>`_ 中的方法用于 SD3 的流匹配模型。
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

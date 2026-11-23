@@ -83,9 +83,8 @@ CALVIN 强化学习
 
    RLinf 修正了 CALVIN 上游仓库中 scene A、B、C YAML 文件的部分设置。背景见上游 `CALVIN issue <https://github.com/mees/calvin/issues/41>`__。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

@@ -29,9 +29,8 @@ PolaRiS 是基于 Isaac Sim 5.1.0 的桌面操作仿真平台，提供 TapeIntoC
 
       :doc:`PolaRiS 训练 <../../examples/embodied/polaris>`
 
-一键上手
---------
-
+安装与运行
+----------
 先按 :doc:`../../examples/embodied/polaris` 安装 Isaac Sim 5.1.0，并在每个新终端中执行其 ``setup_conda_env.sh``。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
 .. tab-set::

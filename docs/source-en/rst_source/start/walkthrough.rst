@@ -3,8 +3,8 @@ RLinf Walkthrough
 
 Start from the launch command you just ran and work inward in three steps: where files live in the repository, how a training run executes, and the core abstractions that let RLinf scale across GPUs, accelerators, robots, and models.
 
-1. From One Command to the Repository
--------------------------------------
+1. From a Launch Command to the Repository
+------------------------------------------
 
 Every RLinf run follows the same pattern: pick a launcher and a YAML config name, optionally override keys on the CLI, and inspect results under ``logs/``.
 

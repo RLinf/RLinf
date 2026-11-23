@@ -29,9 +29,8 @@ DreamZero SGLang 评测
 
       :doc:`DreamZero SFT <../../examples/embodied/sft_dreamzero>`
 
-一键上手
---------
-
+安装与运行
+----------
 需要 CUDA 13.0 及以上版本。在 `sgl-project/sglang#30679 <https://github.com/sgl-project/sglang/pull/30679>`_ 合入上游前，将包含该 PR 的 SGLang 仓库放在 ``./sglang``，并在同一虚拟环境中安装 ``diffusion`` extra。
 
 中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。

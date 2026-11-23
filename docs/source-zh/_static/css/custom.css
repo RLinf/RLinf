@@ -325,7 +325,6 @@ html[data-theme="dark"] .rlinf-hero {
 .bd-sidebar-primary {
   background-color: var(--rlinf-sidebar-bg);
   border-right: 1px solid var(--rlinf-border);
-  contain: layout style;
   gap: 0.25rem;
   max-width: 17.5rem;
   padding: 0.85rem 0.75rem 1.75rem;
@@ -697,7 +696,6 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
 /* --- Right "On this page" TOC (flat indicator rail) ----------------------- */
 .bd-sidebar-secondary {
   border-left: 0;
-  contain: layout style;
   max-width: 15.5rem;
   padding-top: 1.5rem;
   scrollbar-color: var(--rlinf-border-strong) transparent;

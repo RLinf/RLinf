@@ -129,9 +129,8 @@
 
    配置中的 rank 均为集群全局 rank。DAgger 默认配置为 ``node_rank: 1``\ （属于 ``franka`` 节点组）、``left_controller_node_rank: 1`` 与 ``right_controller_node_rank: 2``。
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

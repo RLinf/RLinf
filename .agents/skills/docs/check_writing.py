@@ -46,7 +46,7 @@ GALLERY_PAGE = re.compile(
     r"docs/source-(en|zh)/rst_source/examples/embodied/(?!_)[^/]+\.rst"
 )
 RECIPE_SECTIONS = {"en": ("Installation", "Run It"), "zh": ("安装", "运行")}
-RECIPE_ALT_SECTIONS = {"en": ("Setup and Run",), "zh": ("一键上手",)}
+RECIPE_ALT_SECTIONS = {"en": ("Setup and Run",), "zh": ("安装与运行",)}
 GENERIC_SECTIONS = {"Algorithm", "Environment", "算法", "环境"}
 
 #: Severity of an internal code name, by page type; other types are not checked.

@@ -32,9 +32,8 @@ Cosmos3 监督微调
 | **你将完成：** 安装环境 → 下载并将基座权重转为 DCP → 配置数据路径 → 启动 ``run_vla_sft.sh`` → 转换 checkpoint 用于评测。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · Cosmos3-Nano 基座权重（DCP）· Wan2.2 VAE · LIBERO LeRobot v3 数据集。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

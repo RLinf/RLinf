@@ -145,7 +145,7 @@ Pass any of the values below to ``--model``, ``--env``, ``--engine``, or ``--pla
 Hardware and Software Requirements
 ----------------------------------
 
-Match your hardware to the workload you want to run. You can start on a single GPU and scale the same recipes to multi-node clusters without code changes.
+Match your hardware to the workload you want to run; the same recipes scale from a single GPU to multi-node clusters.
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/hardware_tiers.svg
    :align: center

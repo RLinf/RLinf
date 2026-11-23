@@ -60,9 +60,8 @@ adapter 将头部相机图像、机器人状态和任务指令输入模型，再
 .. _psi0-model-download:
 .. _psi0-ppo-training:
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

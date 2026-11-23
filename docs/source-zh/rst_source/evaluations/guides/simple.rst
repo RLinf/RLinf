@@ -35,9 +35,8 @@ SIMPLE 评测
 
 .. _simple-reset-data:
 
-一键上手
---------
-
+安装与运行
+----------
 先按 :doc:`Psi0 指南 </rst_source/examples/embodied/psi0>` 完成共用准备：:ref:`环境安装 <psi0-setup-env>`、:ref:`下载 Qwen3-VL 元数据 <psi0-qwen-metadata>`\ （通过 ``HF_HOME`` 缓存，不使用 ``--local-dir``）、将 :ref:`SIMPLE 仿真资源 <simple-sim-assets>` 下载到 ``SIMPLE_ASSETS_DIR``，并 :ref:`软链资源 <simple-link-assets>` 到 ``${VIRTUAL_ENV}/SIMPLE/data``。
 
 中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。

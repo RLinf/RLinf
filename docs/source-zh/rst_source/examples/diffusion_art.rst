@@ -81,9 +81,8 @@ ART 根据同一提示词下各候选的奖励和最终潜变量计算共享更�
 
 算法推导与参考实现见 `DiffusionART 论文 <https://arxiv.org/abs/2610.12572>`_、`官方代码 <https://github.com/vanzll/DiffusionART>`_ 和 `项目页 <https://vanzll.github.io/diffusionart-project/>`_。
 
-一键上手
---------
-
+安装与运行
+----------
 中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。两个 ART 配置均使用 CPU OCR，完整共用说明见 :doc:`video_models`。
 
 .. tab-set::

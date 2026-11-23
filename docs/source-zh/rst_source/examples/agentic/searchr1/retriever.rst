@@ -11,7 +11,7 @@
 选择检索后端
 ------------
 
-推荐使用预构建的 Qdrant 方案（`RLinf/Wiki-2018-Corpus <https://huggingface.co/datasets/RLinf/Wiki-2018-Corpus>`__）：开箱即用、省去数小时建索引的时间，且 Qdrant 检索运行在 CPU 上，仅 ``e5-base-v2`` 编码器占用约 1 GB 显存。如需沿用 ASearcher 原版索引流程，可切换到 FAISS GPU 标签页。
+推荐使用预构建的 Qdrant 方案（`RLinf/Wiki-2018-Corpus <https://huggingface.co/datasets/RLinf/Wiki-2018-Corpus>`__）：下载后即可使用，省去数小时建索引的时间，且 Qdrant 检索运行在 CPU 上，仅 ``e5-base-v2`` 编码器占用约 1 GB 显存。如需沿用 ASearcher 原版索引流程，可切换到 FAISS GPU 标签页。
 
 .. tab-set::
 

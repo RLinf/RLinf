@@ -51,9 +51,8 @@ WideSeek-R1 评测
 - 评判模型已启动。
 - 已配置相应的工具后端。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。启动评测前，请先按 :doc:`环境与工具配置 <tools>` 启动评判模型并配置对应工具后端（WideSearch 使用在线搜索，标准 QA 使用离线检索）。
 
 .. note::

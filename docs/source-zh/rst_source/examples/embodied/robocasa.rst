@@ -79,9 +79,8 @@ RoboCasa 强化学习
 
    RoboCasa 包含更多原子任务，公开的 RLinf 配方使用 ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml`` 训练 ``CloseDrawer``。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

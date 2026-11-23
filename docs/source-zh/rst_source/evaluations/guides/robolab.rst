@@ -29,9 +29,8 @@ RoboLab 评测
 
       :doc:`RoboLab 概览 <../../examples/embodied/robolab>`
 
-一键上手
---------
-
+安装与运行
+----------
 需要 Linux、Python 3.11、``uv`` 与支持 Vulkan 的 NVIDIA GPU（已在 NVIDIA A800 80 GB + 570.172.08 驱动验证，系统依赖见 :doc:`安装指南 </rst_source/start/installation>`）。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
 .. tab-set::

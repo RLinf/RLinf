@@ -19,16 +19,15 @@
    .. grid-item-card:: 3. 启动训练
       :text-align: center
 
-      一行命令直接跑通
+      运行启动脚本
 
    .. grid-item-card:: 4. 查看曲线
       :text-align: center
 
       TensorBoard 监控指标
 
-一键上手
---------
-
+安装与运行
+----------
 在下方选一个起点，按顺序执行命令即可。需要国内镜像加速、共存多套虚拟环境或使用 Docker 镜像，见 :doc:`installation`。
 
 .. tab-set::

@@ -100,9 +100,8 @@ GimArm 在线强化学习
 
       bash ~/gim_arm_control/sh/set_zero.sh can0 001
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

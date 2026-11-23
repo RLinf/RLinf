@@ -89,9 +89,8 @@ Dexbotic 强化学习
    * - Prompt
      - 策略 processor 消费的 LIBERO 自然语言指令。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

@@ -98,9 +98,8 @@ Robbyant R2 配置与强化学习
 
    控制主机上存在 ``/opt/robbyant/dynamic_participant.xml`` 时，RLinf 会在初始化 RFrame 前自动设置 ``FASTRTPS_DEFAULT_PROFILES_FILE``。
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

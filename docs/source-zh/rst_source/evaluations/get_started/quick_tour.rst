@@ -1,11 +1,10 @@
 评测快速体验
 ============
 
-以 **LIBERO Spatial + OpenPI π₀.₅** 为例（``evaluations/libero/libero_spatial_openpi_pi05_eval.yaml``），约 5 分钟完成第一次具身评测。
+以 **LIBERO Spatial + OpenPI π₀.₅** 为例（``evaluations/libero/libero_spatial_openpi_pi05_eval.yaml``），演示一次完整的具身评测流程。
 
-一键上手
---------
-
+安装与运行
+----------
 如果 ``.venv`` 里已经安装了其他模型或环境，在 ``install.sh`` 末尾加 ``--venv .venv-eval`` 并激活 ``.venv-eval``，避免覆盖原有环境。国内镜像加速与 Docker Hub 预构建镜像见 :doc:`../../start/installation`。
 
 .. tab-set::

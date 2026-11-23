@@ -98,9 +98,8 @@ StarVLA 推理输出动作块 ``[B, T, D_action]``，其中 ``T = actor.model.nu
 
 .. _starvla-hardware:
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

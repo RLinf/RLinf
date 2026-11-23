@@ -79,9 +79,8 @@ GSEnv（也称 ManiSkill-GS）将 ManiSkill 物理仿真与 3D Gaussian Splattin
 
    GSEnv 在 ``examples/embodiment/config/env/gsenv_put_cube_on_plate.yaml`` 中通过 ``env_type: maniskill`` 接入，由任务 ID 选择 ManiSkill-GS 环境。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

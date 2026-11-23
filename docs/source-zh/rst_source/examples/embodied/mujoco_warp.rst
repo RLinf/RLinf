@@ -106,9 +106,8 @@ humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``rewa
 
    MJWarp 没有 PGS solver。加载时，solver 已经是 PGS 的模型会改成 CG。随包资源里只有 humanoid 写了 ``solver="PGS"``\ ，因此它的接触动力学与 Gymnasium 的 MuJoCo CPU 后端不同。
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

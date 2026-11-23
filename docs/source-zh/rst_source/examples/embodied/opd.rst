@@ -50,9 +50,8 @@ OPD 以 teacher 与 student 在同一条 student 动作 token 序列上的 log-p
 - teacher 在 rollout 之后对保存的 ``forward_inputs.action_tokens`` 计算 dense token logprob。
 - OPD loss 使用 ``loss_mask`` 屏蔽成功或终止后的无效 token，避免无效 token 继续贡献梯度。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. list-table:: **LIBERO-Spatial OPD 使用的权重**

@@ -74,9 +74,8 @@ LingbotVLA 2.0 强化学习
    * - Prompt
      - RoboTwin episode 的自然语言任务指令。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 LingbotVLA 1.0 与 2.0 安装的 Python 包都叫 ``lingbotvla``，需要各自使用独立的虚拟环境。安装脚本默认将 `RLinf 维护的 LingbotVLA 2.0 fork <https://github.com/RLinf/lingbot-vla-v2/tree/rlinf>`__ 的 ``rlinf`` 分支克隆到 ``.venv/lingbot-vla-v2``；如需其他位置，在安装前设置 ``LINGBOT_VLA_V2_PATH``。

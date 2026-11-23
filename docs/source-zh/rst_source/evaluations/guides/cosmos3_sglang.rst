@@ -29,9 +29,8 @@ Cosmos3 SGLang 评测
 
       :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>`
 
-一键上手
---------
-
+安装与运行
+----------
 ``sglang`` 目标会安装 LIBERO 与带 ``diffusion`` extra 的 SGLang 0.5.19，固定 PyTorch 2.13.0 并按驱动选择 CUDA 12 或 CUDA 13 的 wheel。启动前，先按 :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>` 将 SFT checkpoint 转换为 ``./model_diffusers``，并准备好 NVIDIA ``cosmos-framework`` 中的 ``libero_native_frame_wise_relative_rot6d.json`` 统计文件。
 
 中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。

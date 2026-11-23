@@ -87,9 +87,8 @@ PolaRiS 强化学习
    * - 提示词
      - ``init_params.task_description`` 中的任务描述。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

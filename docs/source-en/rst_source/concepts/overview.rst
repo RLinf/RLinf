@@ -119,4 +119,4 @@ Next Steps
       :link: ../start/vla
       :link-type: doc
 
-      Launch a 1-GPU MLP check or ManiSkill3 VLA PPO run in one command.
+      Run a 1-GPU MLP or ManiSkill3 VLA PPO example.

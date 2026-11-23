@@ -162,9 +162,8 @@ Franka 在线强化学习
 
       在标准内核上，较重的训练负载可能导致 libfranka 错过控制周期并触发 ``communication_constraints_violation`` reflex。开始训练前，应在操作员监控下以目标训练负载验证控制稳定性。
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

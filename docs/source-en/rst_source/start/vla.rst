@@ -19,7 +19,7 @@ Start PPO training on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ wit
    .. grid-item-card:: 3. Train
       :text-align: center
 
-      One launch command
+      Run launch script
 
    .. grid-item-card:: 4. Watch Results
       :text-align: center

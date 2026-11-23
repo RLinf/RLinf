@@ -85,9 +85,8 @@ LingbotVLA 1.0 强化学习
    * - Prompt
      - RoboTwin episode 的自然语言任务指令。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

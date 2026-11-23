@@ -13,7 +13,7 @@
       :link: installation
       :link-type: doc
 
-      硬件档位、一行 ``install.sh`` 本地安装，或前往 Docker Hub 拉取镜像。
+      硬件要求、``install.sh`` 本地安装与 Docker Hub 预构建镜像。
 
    .. grid-item-card:: 2. 快速开始
       :link: vla
@@ -48,7 +48,7 @@
    * - 轻量 RL
      - 单卡 4 GB+
      - :doc:`快速开始 — MLP <vla>`
-   * - 约 5 分钟体验 VLA 评测
+   * - 运行 VLA 评测
      - 单卡 24 GB+
      - :doc:`LIBERO 评测快速体验 <../evaluations/get_started/quick_tour>`
    * - 仿真环境 VLA 强化学习
@@ -71,7 +71,7 @@
       :link: walkthrough
       :link-type: doc
 
-      一页看懂训练闭环、部署模式与配置文件、工具箱的存放位置。
+      梳理训练闭环、部署模式以及配置文件与工具脚本的目录结构。
 
    .. grid-item-card:: 具身训练
       :link: ../examples/index

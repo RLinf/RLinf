@@ -75,9 +75,8 @@
    * - Prompt
      - <任务指令>
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

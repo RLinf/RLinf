@@ -42,9 +42,8 @@ Qwen-VL 监督微调
 
 本示例围绕启动脚本 ``examples/sft/run_vlm_sft.sh`` 和训练配置 ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` 展开。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

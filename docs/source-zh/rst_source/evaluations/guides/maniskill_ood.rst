@@ -29,9 +29,8 @@ ManiSkill OOD 评测用于检验 VLA policy 在分布外（Out-of-Distribution�
 
       :doc:`ManiSkill 训练 <../../examples/embodied/maniskill>`
 
-一键上手
---------
-
+安装与运行
+----------
 中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
 .. tab-set::
@@ -235,7 +234,7 @@ ManiSkill OOD 评测用于检验 VLA policy 在分布外（Out-of-Distribution�
    * - 现象
      - 处理
    * - 缺少 ManiSkill 资产
-     - 按一键上手中的资产下载命令下载 ``RLinf/maniskill_assets``。
+     - 按安装与运行中的资产下载命令下载 ``RLinf/maniskill_assets``。
    * - GPU 仿真报错
      - ``sim_backend: gpu`` 需要 NVIDIA GPU。
    * - OpenVLA-OFT 加载失败

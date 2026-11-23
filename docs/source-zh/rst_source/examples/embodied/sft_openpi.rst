@@ -76,9 +76,8 @@ OpenPI 监督微调
      - ``model/pi0``
      - ``robotwin_adjust_bottle_sft_openpi``
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 ``--model openpi`` 会安装官方 OpenPI 运行环境（transforms 与数据管线），训练网络使用 RLinf 的 ``openpi`` 实现。

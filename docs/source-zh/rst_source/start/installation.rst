@@ -1,7 +1,7 @@
 安装
 ====
 
-使用 ``requirements/install.sh`` 在本地 ``uv`` 虚拟环境中一键安装 RLinf，或直接拉取 Docker Hub 预构建镜像。
+使用 ``requirements/install.sh`` 在本地 ``uv`` 虚拟环境中安装 RLinf，或直接拉取 Docker Hub 预构建镜像。
 
 每个虚拟环境对应一套模型与环境组合，共存多套环境时传入 ``--venv <dir>`` 即可避免覆盖默认环境。各教程页面都附带对应命令，本页作为全局安装参数与硬件参考。
 
@@ -145,7 +145,7 @@
 硬件与软件要求
 --------------
 
-按任务规模选择对应硬件。你可以从单张 GPU 起步，无需修改代码就能将同一套配置扩展到多机集群。
+按任务规模选择对应硬件，从单张 GPU 到多机集群均可复用同一套配置。
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/hardware_tiers_zh.svg
    :align: center

@@ -16,7 +16,7 @@
       :link: ../resume
       :link-type: doc
 
-      定期保存训练状态，并在任务中断后无缝恢复。
+      定期保存训练状态，并在任务中断后从检查点恢复。
 
    .. grid-item-card:: Checkpoint 转换
       :link: ../convertor

@@ -72,9 +72,8 @@ Franka-Sim 是基于 `SERL <https://rail-berkeley.github.io/serl/docs/sim_quick_
    * - 提示词
      - 状态 MLP 配方不使用提示词；视觉策略从 env wrapper 接收任务条件观测。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

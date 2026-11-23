@@ -91,9 +91,8 @@ DAgger 工作原理
    - ``beta_schedule`` 和 ``beta_decay`` 控制从专家逐步切换到学生的速度。
    - ``beta_min`` 为可选项，用于设置 ``beta`` 的下界。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

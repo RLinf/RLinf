@@ -13,7 +13,7 @@ Core Setup
       :link: installation
       :link-type: doc
 
-      Hardware tiers, one-line ``install.sh`` setup, and prebuilt Docker Hub images.
+      Hardware requirements, local ``install.sh`` setup, and prebuilt Docker Hub images.
 
    .. grid-item-card:: 2. Quick Start
       :link: vla
@@ -31,7 +31,7 @@ Core Setup
       :link: cheat_sheet
       :link-type: doc
 
-      Shortest commands once you know the workflow.
+      Common commands once you know the workflow.
 
 Pick Your First Run
 -------------------
@@ -48,7 +48,7 @@ Start with the entry point closest to your goal:
    * - Lightweight RL
      - 1 GPU, 4 GB+
      - :doc:`Quick Start — MLP Tab <vla>`
-   * - Verify VLA eval in ~5 minutes
+   * - Run VLA evaluation
      - 1 GPU, 24 GB+
      - :doc:`LIBERO Evaluation Quick Tour <../evaluations/get_started/quick_tour>`
    * - VLA RL fine-tuning in simulation

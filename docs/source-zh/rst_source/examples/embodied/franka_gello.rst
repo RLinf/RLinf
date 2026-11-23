@@ -60,9 +60,8 @@ Franka GELLO 遥操作
 
    启动遥操作前，请将 Franka 急停按钮放在伸手可及处并清空工作空间障碍物。先将 GELLO 主臂摆到接近 Franka 安全初始姿态的位置，防止接管瞬间机械臂跳变；同时确认 Franka Desk 处于可编程模式，且没有其他进程占用机械臂控制权。
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

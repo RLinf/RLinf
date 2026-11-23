@@ -67,9 +67,8 @@ ARX X5 数据采集
 
 启动 RLinf 前，按 `ARX5_beta 说明 <https://github.com/ARXroboticsX/ARX5_beta/blob/main/readme-CN.md>`_ 运行 ``ARX_CAN_doctor``，将左右臂分别映射为 ``can1`` 与 ``can3`` 并拉起两路 CAN 接口。
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

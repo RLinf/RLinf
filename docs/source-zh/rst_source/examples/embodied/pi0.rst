@@ -104,9 +104,8 @@
 
 .. _pi0-hardware:
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 NVIDIA CUDA 支持上方列出的全部四个环境（在下方选择 **π₀** 或 **π₀.₅** 标签页）。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 通过共用平台安装器与 scheduler 设备 API 支持 OpenPI π₀ / π₀.₅ 在 LIBERO 和 ManiSkill 上运行；非 CUDA 后端上的 ManiSkill 使用 CPU simulation，MUSA 还需要厂商模拟器包。

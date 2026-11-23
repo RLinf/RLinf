@@ -40,9 +40,8 @@
 
 .. include:: _dual_franka_setup.rst
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

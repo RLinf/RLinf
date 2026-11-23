@@ -104,9 +104,8 @@
 - 同步和异步 runner 均可使用。
 - 与 ``delay_sampler`` 独立，可单独启用、组合启用或全部关闭。
 
-一键上手
---------
-
+安装与运行
+----------
 按 :doc:`RoboTwin <robotwin>` 准备好环境与 checkpoint 后，启动内置示例配置 ``examples/embodiment/config/realsimulator_robotwin_adjust_bottle_dagger_openpi.yaml``：
 
 .. code-block:: bash

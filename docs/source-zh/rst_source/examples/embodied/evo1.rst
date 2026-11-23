@@ -73,9 +73,8 @@ Evo-1 强化学习
    * - 指令
      - LIBERO episode 的自然语言任务指令。
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

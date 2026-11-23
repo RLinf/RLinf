@@ -109,9 +109,8 @@ LIBERO 强化学习
 
 .. _zh-libero-benchmark:
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

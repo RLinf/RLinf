@@ -40,7 +40,7 @@
 组件部署模式
 ------------
 
-Collocated、Disaggregated 与 Hybrid 对应同一套 worker 的三种硬件放置方式，只需调整 YAML 中的 ``cluster.component_placement``，无需修改业务代码。
+Collocated、Disaggregated 与 Hybrid 对应同一套 worker 的三种硬件放置方式，通过 YAML 中的 ``cluster.component_placement`` 即可切换。
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/deployment_modes_zh.svg
    :align: center
@@ -119,4 +119,4 @@ Collocated、Disaggregated 与 Hybrid 对应同一套 worker 的三种硬件放�
       :link: ../start/vla
       :link-type: doc
 
-      一行命令启动单卡 MLP 或 ManiSkill3 VLA PPO 训练。
+      运行单卡 MLP 或 ManiSkill3 VLA PPO 训练示例。

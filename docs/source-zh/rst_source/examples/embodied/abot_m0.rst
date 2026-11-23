@@ -82,9 +82,8 @@ ABot-M0 作为 VLA 策略接入 RLinf：适配层冻结预训练感知模块，�
    * - Prompt
      - 每个 LIBERO 任务对应的自然语言指令。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 安装脚本会自动克隆 ABot-M0 和 VGGT；如需复用本地源码目录，先设置 ``ABOT_PATH`` 和 ``VGGT_PATH``。

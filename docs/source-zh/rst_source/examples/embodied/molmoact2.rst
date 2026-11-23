@@ -82,9 +82,8 @@ MolmoAct2 评测
    * - 提示词
      - 来自 ``task_descriptions`` 的自然语言任务指令。
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

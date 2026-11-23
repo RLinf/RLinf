@@ -747,6 +747,39 @@
       }
       saveOpenSet(openSet);
 
+      // Prevent Safari from focusing 0px-height <summary> elements inside the
+      // sticky sidebar on mouse click, which otherwise yanks window.scrollY to 0.
+      nav.addEventListener("mousedown", function (event) {
+        if (
+          event.target &&
+          event.target.closest &&
+          event.target.closest("li.has-children > details > summary")
+        ) {
+          event.preventDefault();
+        }
+      });
+
+      nav.addEventListener("click", function (event) {
+        var summary =
+          event.target && event.target.closest
+            ? event.target.closest("li.has-children > details > summary")
+            : null;
+        if (!summary || event.detail === 0) return;
+        var details = summary.parentElement;
+        if (!details || details.tagName !== "DETAILS") return;
+        event.preventDefault();
+        var winY = window.scrollY;
+        var box = scrollableAncestor(summary);
+        var boxY = box ? box.scrollTop : 0;
+        details.open = !details.open;
+        if (window.scrollY !== winY) {
+          window.scrollTo(window.scrollX, winY);
+        }
+        if (box && box.scrollTop !== boxY) {
+          box.scrollTop = boxY;
+        }
+      });
+
       // Use capture phase because `toggle` does not bubble.
       nav.addEventListener(
         "toggle",

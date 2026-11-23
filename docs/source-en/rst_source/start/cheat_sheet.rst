@@ -1,7 +1,7 @@
 Cheat Sheet
 ===========
 
-Run common RLinf workflows with the shortest commands.
+Common commands for RLinf workflows.
 
 Install
 -------

@@ -49,9 +49,8 @@ Franka ZED 与 Robotiq
 
 .. _franka-zed-robotiq-data-collection:
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

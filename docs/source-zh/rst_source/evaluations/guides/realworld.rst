@@ -58,9 +58,8 @@
 
 启动评测前运行 ``ray status``，确认两个节点均在线。
 
-一键上手
---------
-
+安装与运行
+----------
 中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
 .. tab-set::

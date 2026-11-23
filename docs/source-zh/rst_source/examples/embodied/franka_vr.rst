@@ -108,9 +108,8 @@ VR 链路最多涉及三类节点角色。publisher 与 RLinf env worker 在同�
       source XRoboToolkit-Teleop-Sample-Python/.venv/bin/activate
       python -m vr_data_publisher --config configs/vr_bridge.yaml
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

@@ -105,9 +105,8 @@ Dexmal DOS-W1 在线强化学习
    2. **绝对关节限幅**：将目标裁剪到 ``[joint_limit_min, joint_limit_max]``\ （默认 ``±π``，可按工况收紧）。
    3. **末端安全盒**：沿关节空间插值做二分搜索，取正运动学结果仍落在 ``left_ee_pose_limit_min/max`` 和 ``right_ee_pose_limit_min/max`` 内的最大比例，自动截断越界动作。
 
-一键上手
---------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::

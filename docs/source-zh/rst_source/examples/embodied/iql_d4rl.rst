@@ -84,9 +84,8 @@ IQL 原理
 
    每个 update step：Actor 从各 rank 本地的离线数据加载器取一个 batch，然后按顺序执行 IQL 更新：更新 Value → 更新 Actor → 更新 Critic → 软更新目标 Critic。
 
-一键上手
-----------------------------------------
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
 .. tab-set::
