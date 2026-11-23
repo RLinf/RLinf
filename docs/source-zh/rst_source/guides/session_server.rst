@@ -6,10 +6,10 @@ Session server 在 rollout 节点上收集 agent 的轨迹，并整理成训练�
 session server 还提供：
 
 - **控制面与数据面分离。** buffer worker 只按组的元数据调度。actor 取走之前，轨迹一直留在 rollout 节点上。
-- **经 SGLang router 路由。** 可以使用 router 自带的两种策略：``manual`` 把每个组固定在同一个引擎上，``cache_aware`` 按前缀亲和选引擎。
+- **经 SGLang router 路由。** 见 `选择路由策略`_。
 - **OpenAI chat completions 接口。** 基于 OpenAI API 编写的 agent 可以发送消息，不必发送 token id；见 `使用 OpenAI chat completions 接口`_。
 
-目前只有异步 runner 接入了 session server；如果还不熟悉异步 runner，请先读 :doc:`异步 agentic RL <async_agentic>`。`开启 session server`_ 一节附有一个 Search-R1 的完整示例。
+如果还不熟悉异步 runner，请先读 :doc:`异步 agentic RL <async_agentic>`。`开启 session server`_ 一节附有一个 Search-R1 的完整示例。
 
 何时使用 session server
 -----------------------
@@ -31,28 +31,20 @@ session server 还提供：
 开启 session server
 -------------------
 
-在异步 agentic 配置里加两个配置块：
+在异步 agentic 配置里加这个配置块：
 
 .. code-block:: yaml
 
    session_server:
-     enable: true          # agent 改为向 session server 发请求
-     num_servers: 1        # session server 个数，分布在各 rollout 节点上
-     payload_shards: 1     # 每个 session server 的 payload channel 数
+     enable: true
 
-   rollout:
-     router:
-       policy: manual      # 或 cache_aware
-
-只有 ``enable`` 必须设置，上面其他值都是默认值。
-
-入口脚本还会在 rollout 节点上启动三个组件：
+启动时，rollout 节点上会启动三个组件：
 
 - **session server**：HTTP 服务，agent loop 向它发请求
 - **payload channel**：每个分片一个，存放记录下来的轨迹
 - **SGLang router**：只有一个，所有引擎都注册到它上面
 
-开启后需要满足以下条件：
+开启 session server 需要满足以下条件：
 
 - ``runner.async_mode: True``，actor 使用 Megatron
 - ``rollout.sglang.backend_type: server``
@@ -68,19 +60,11 @@ session server 还提供：
 
 下面的例子在两台机器上运行异步 Search-R1 训练，模型用 Qwen2.5-3B-Instruct，并开启 session server。
 
-配置是 ``examples/agent/searchr1/config/train_qwen2.5_async_session_server.yaml``，它继承 ``train_qwen2.5_async.yaml``，只多两项：
-
-.. code-block:: yaml
-
-   session_server:
-     enable: true
-   rollout:
-     router:
-       policy: manual
+配置是 ``examples/agent/searchr1/config/train_qwen2.5_async_session_server.yaml``，它继承 ``train_qwen2.5_async.yaml``，加上 ``session_server.enable: true`` 和 ``rollout.router.policy: manual`` 两项。
 
 ``train_qwen2.5_async.yaml`` 里，Megatron actor 放在 node 0，SGLang server rollout（8 个实例，TP1）放在 node 1。每步用 ``rollout_batch_size`` 512 × ``group_size`` 4。
 
-先按 :doc:`Search-R1 </rst_source/examples/agentic/searchr1/index>` 的说明启动检索服务，再填好 ``train_qwen2.5_async.yaml`` 里的三项：
+先按 :doc:`多机指南 <multi_node>` 在两台机器上启动 Ray 集群。再按 :doc:`Search-R1 </rst_source/examples/agentic/searchr1/index>` 启动检索服务，然后填好 ``train_qwen2.5_async.yaml`` 里的三项：
 
 .. code-block:: yaml
 
@@ -99,8 +83,6 @@ session server 还提供：
 
    bash examples/agent/searchr1/run_train.sh train_qwen2.5_async_session_server
 
-这条命令除了启动普通的异步训练进程，还会在 node 1 上启动一个 session server 及其 payload channel，以及一个 router。
-
 下面的结果来自 2×8 A100-80G 上三次 100 步的训练：两次用这份配置，一次用 ``train_qwen2.5_async.yaml`` 且不开启 session server。
 
 .. list-table::
@@ -117,7 +99,7 @@ session server 还提供：
      - 2.0
      - 2.0
 
-无论是否开启 session server，训练表现都一致。两次开启 session server 的训练都没有 payload 写入失败，``rollout/session_server/payload_queued_groups`` 始终与 ``rollout/buffer/size`` 同步变化。另有一次开启 ``session_server.verify_assembly: true`` 的 5 步训练，2,560 个组全部通过逐项比对。这些指标的含义见 :ref:`监控指标 <session-server-metrics>`。
+无论是否开启 session server，训练表现都一致。两次开启 session server 的训练都没有 payload 写入失败，``rollout/session_server/payload_queued_groups`` 始终与 ``rollout/buffer/size`` 同步变化。这些指标的含义见 :ref:`监控指标 <session-server-metrics>`。
 
 工作原理
 --------
@@ -137,9 +119,7 @@ session server 还会检查每一轮的 prompt 是否接续上一轮。如果 ag
 控制面与数据面
 ^^^^^^^^^^^^^^
 
-不开启 session server 时，buffer worker 收到每个组的完整训练数据，一直存到交付。负责调度的进程同时在搬运数据。
-
-开启 session server 后，两者分开：
+开启 session server 后，调度和搬运数据分开：
 
 .. list-table::
    :header-rows: 1
@@ -157,7 +137,7 @@ session server 还会检查每一轮的 prompt 是否接续上一轮。如果 ag
 
 调度逻辑不变。投放、缓冲上限、staleness 和丢弃规则都和不开启 session server 时一样，只是改为依据元数据。
 
-buffer worker 是 node 0 上的单个进程（见 :doc:`多机指南 <multi_node>`）。开启 session server 后，buffer worker 的内存不随训练数据增长。每组数据量越大，好处越明显，例如开启 routed-expert replay（R3）时，或者上下文很长时。
+buffer worker 是 node 0 上的单个进程。开启 session server 后，buffer worker 的内存不随训练数据增长。每组数据量越大，好处越明显，例如开启 routed-expert replay（R3）时，或者上下文很长时。
 
 各 rollout worker 把权重同步等控制调用直接发给自己的引擎，不经过 router。
 
@@ -171,12 +151,12 @@ buffer worker 丢弃一个组时，payload channel 会删除这个组的数据�
 - 只有连不上 router 时，session server 才会重发请求。这种请求没有到达引擎，同一轮不会重复采样。
 - generate 请求超时或被引擎中止，训练失败。
 
-唯一可以恢复的错误是 payload 写入失败。session server 作废这个组，buffer worker 丢弃它。
+唯一可以恢复的错误是单次 payload 写入失败或超时：session server 作废这个组，buffer worker 丢弃它。如果 payload channel 进程退出或通信方向失败，后续写入都无法成功，session server 会停止服务并让训练失败。
 
 选择路由策略
 ------------
 
-所有 prompt 共享长前缀时用 ``manual``\ （默认），Search-R1 就属于这种情况。prompt 从开头就各不相同时可以试 ``cache_aware``，但这种情况还没有实测。
+所有 prompt 共享长前缀时用 ``manual``，Search-R1 就属于这种情况。
 
 session server 的所有请求都经 router 转发。RLinf 支持 router 的两种策略：
 
@@ -196,9 +176,9 @@ session server 的所有请求都经 router 转发。RLinf 支持 router 的两�
 多节点部署
 ----------
 
-有多个 rollout 节点时，引擎改为监听 ``0.0.0.0``，不再只监听回环地址，这样 router 才能访问其他节点上的引擎。
+开启 session server 后，引擎监听 ``0.0.0.0``，这样 router 才能访问其他节点上的引擎。
 
-引擎上还有 RLinf 自己的控制接口，接受 pickle 格式的请求体。为了不让这些接口对外开放，来自其他机器的请求只能访问四个路径：``/generate``、``/health``、``/server_info`` 和 ``/model_info``。访问其余路径的请求在读取请求体之前就会被拒绝，返回 403。来自本机的请求不受限制。
+引擎上还有 RLinf 自己的控制接口，接受 pickle 格式的请求体。为了不让这些接口对外开放，来自其他机器的请求只能访问四个路径：``/generate``、``/health``、``/server_info`` 和 ``/model_info``。访问其余路径的请求在读取请求体之前就会被拒绝，返回 403。通过回环地址发来的请求不受限制。
 
 空闲 HTTP 连接必须由客户端先断开，否则客户端可能复用服务端刚关掉的连接。配置校验会检查 ``keep_alive_s`` 和 ``engine_keep_alive_s`` 是否满足这条规则，通常保持默认值即可。
 
@@ -223,7 +203,7 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
    * - 指标
      - 含义
    * - ``forward_count``、``forward_time_total_s``、``forward_time_avg_s``
-     - 这一步转发的 generate 请求数，以及总耗时和平均耗时。
+     - 这一步转发的 generate 请求数，以及总耗时和平均耗时。平均耗时只在有转发的步里上报。
    * - ``prefix_continuous``、``prefix_rewritten``、``prefix_underreported``
      - 每一轮 prompt 与上一轮的关系。``prefix_underreported`` 应当一直为 0。``prefix_rewritten`` 统计 agent 改动了历史的轮；发 token id 的 agent 应当一直为 0，chat agent 则可能不为 0。
    * - ``payload_write_failed``
@@ -264,13 +244,13 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
      sglang:
        tool_call_parser: qwen25  # GLM-4.7 填 glm47
 
-另外两个取值是 ``glm47`` 和 ``default``；``default`` 只渲染消息，不解析 tool call。不设 ``agentloop.agentic_tokenizer`` 时，chat 请求返回 500。
+其他模型填 ``agentic_tokenizer: default``，它只渲染消息，不解析 tool call，``tool_call_parser`` 可以不填。不设 ``agentloop.agentic_tokenizer`` 时，chat 请求返回 500。
 
-使用时，写一个自行执行每条轨迹的 agent loop，写法见下面的示例。agent loop 仍负责创建和关闭 session、上报 reward、丢弃失败的组；新写的 hook 只需在已经打开的 session 上执行一条轨迹：
+使用时，写一个自行执行每条轨迹的 agent loop，写法见下面的示例。agent loop 仍负责创建和关闭 session、上报 reward、丢弃失败的组；你的代码只需在已经打开的 session 上执行一条轨迹：
 
 .. code-block:: python
 
-   from openai import AsyncOpenAI, BadRequestError
+   from openai import APIStatusError, AsyncOpenAI, BadRequestError
 
    from rlinf.workers.agent.agent_loop import (
        GroupDiscarded,
@@ -301,6 +281,11 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
                        if exc.code != "context_length_exceeded":
                            raise
                        break  # 没有空间再跑一轮
+                   except APIStatusError as exc:
+                       if exc.status_code != 410:
+                           raise
+                       # session server 已经丢弃了这个组。
+                       raise GroupDiscarded("group_discarded") from exc
                    num_responses += 1
                    message = response.choices[0].message
                    messages.append(message.model_dump(exclude_none=True))
@@ -317,7 +302,7 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
            content = (message.content or "") if message is not None else ""
            reward = score(content, answer)  # 你的打分
            close_fields = {
-               # 每收到一个回答给一个值：一条轨迹一个 agent。
+               # 每个训练的回答给一个值：一条轨迹一个 agent。
                "extra_fields_train": {"idx_to_sub_traj": [0] * num_responses}
            }
            return None, close_fields, reward
@@ -326,9 +311,11 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
 
 在入口脚本里启动这个类，替换原来发送 token id 的 agent loop，写法参照 ``examples/agent/searchr1/train.py`` 启动 Search-R1 agent loop 的方式。``algorithm.loss_scales`` 里包含 ``agent_level`` 时需要 ``idx_to_sub_traj``。
 
+返回 410 说明 session server 已经丢弃了这个组，比如 payload 写入失败之后。示例随即丢弃整个组，和 agent loop 处理其他无法完成的组一样。
+
 客户端要设置 ``max_retries=0``：重发的请求会被重新采样，两次回答只有一次参与训练。
 
-请求放不下 ``runner.seq_length`` 时（长度限制见下文），示例结束这条轨迹，用最后一条回答打分。如果第一轮请求就放不下，示例会丢弃整个组，因为没有训练轮的轨迹不能关闭。
+请求放不下 ``runner.seq_length`` 时，示例结束这条轨迹，用最后一条回答打分；如果第一轮请求就放不下，示例会丢弃整个组。
 
 session server 会复用之前各轮的 token：一轮的 prompt 是上一轮的 prompt 加上输出 token，再接上新消息；这些输出 token 与引擎生成的完全一致。如果按文本重新渲染历史，得到的 token 可能不同。session server 按以下三种情况处理请求：
 
@@ -336,7 +323,7 @@ session server 会复用之前各轮的 token：一轮的 prompt 是上一轮的
 - **重发**：请求与上一次请求相同，说明 agent 没有用到上一轮的回答。session server 把对话回退到那一轮之前。被放弃的那一轮仍留在 payload 中，但不参与训练。
 - **改写**：其他请求按其中的完整消息重新渲染。例如 agent 为了节省上下文截短或修改了之前的回答，就会发出这类请求。``prefix_rewritten`` 会统计这类请求，它们的数据照常参与训练。
 
-session server 保存一份自己的对话记录。每个请求都与这份记录比对，请求内容不会覆盖这份记录。如果请求里 assistant 消息的 ``reasoning_content`` 缺失或为空，session server 沿用自己记录中的内容。因此，即使客户端从历史中去掉了思考内容，对话也能接续。
+请求接续对话时，session server 使用自己保存的前几轮内容，包括 ``reasoning_content``。所以客户端从历史里去掉思考内容，对话照样能接续。
 
 一轮的 prompt 和回答的总长度不能超过 ``runner.seq_length``，也就是 actor 训练的长度。接口会把 ``max_tokens`` 降到剩余长度；prompt 本身放不下时返回 400，错误码是 ``context_length_exceeded``。
 
@@ -438,6 +425,5 @@ session server 保存一份自己的对话记录。每个请求都与这份记�
 - chat completions 接口不支持 ``tool_choice: required``、指定函数和 ``response_format``，并忽略 ``seed``。
 - ``session_server.verify_assembly`` 只适用于发送 token id 的 agent loop。开启它时，chat completions 接口会拒绝所有请求。
 - agent 可以附带 ``extra_fields_train``；其他按轮、按轨迹或按组的额外字段，session server 一律拒绝。
-- ``agentloop.print_outputs`` 只在开启 ``verify_assembly`` 时生效：agent loop 在装配训练数据时打印，而使用 session server 时，只有开启这项检查才会在 agent loop 里装配。
-- 只支持 HTTP（``session_server.type: http``）。
+- 使用 session server 时，``agentloop.print_outputs`` 只在开启 ``verify_assembly`` 后才打印。
 - session server 退出时训练会结束，不会自动重启。

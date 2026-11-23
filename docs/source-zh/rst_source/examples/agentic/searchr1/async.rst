@@ -109,7 +109,7 @@ reward 在 agent loop 内计算（Search-R1 的规则奖励在轨迹和检索文
 
 两个调度上限怎么取，取决于瓶颈在生成还是训练；机制与实测证据见 :doc:`异步 agentic RL </rst_source/guides/async_agentic>`。
 
-这套配置也可以开启 session server，见 :doc:`Session Server </rst_source/guides/session_server>`。
+要开启 session server，加上 ``session_server.enable: true``，具体要求见 :doc:`Session Server </rst_source/guides/session_server>`。
 
 要看的指标
 --------------------------------

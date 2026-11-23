@@ -10,15 +10,13 @@ It also provides:
 - **Separate control and data planes.** The buffer worker schedules groups
   using only their metadata. The trajectories stay on the rollout nodes until
   the actor fetches them.
-- **Routing through an SGLang router.** You can use two of the router's own
-  policies: ``manual`` pins each group to one engine, and ``cache_aware``
-  routes by prefix affinity.
+- **Routing through an SGLang router.** See `Choose a Routing Policy`_.
 - **An OpenAI chat completions endpoint.** Agents built on the OpenAI API
   can send messages instead of token ids; see
   `Use the OpenAI Chat Completions Endpoint`_.
 
-The session server works only with the asynchronous runner. If you have not
-used that runner, read :doc:`Asynchronous Agentic RL <async_agentic>` first.
+If you have not used the asynchronous runner, read :doc:`Asynchronous
+Agentic RL <async_agentic>` first.
 `Enable the Session Server`_ includes a worked example on Search-R1.
 
 When to Use the Session Server
@@ -43,22 +41,14 @@ Enable the session server when:
 Enable the Session Server
 -------------------------
 
-Add two blocks to an asynchronous agentic config:
+Add this block to an asynchronous agentic config:
 
 .. code-block:: yaml
 
    session_server:
-     enable: true          # agents send generate requests to session servers
-     num_servers: 1        # session servers, spread over the rollout nodes
-     payload_shards: 1     # trajectory stores per session server
+     enable: true
 
-   rollout:
-     router:
-       policy: manual      # or cache_aware
-
-Only ``enable`` is required; the other values above are the defaults.
-
-At launch, the entry script starts three components on the rollout nodes:
+At launch, three components start on the rollout nodes:
 
 - the **session servers**, HTTP services that the agent loop sends its
   requests to;
@@ -85,22 +75,16 @@ Qwen2.5-3B-Instruct and the session server enabled.
 
 The config is
 ``examples/agent/searchr1/config/train_qwen2.5_async_session_server.yaml``.
-It inherits ``train_qwen2.5_async.yaml`` and adds two keys:
-
-.. code-block:: yaml
-
-   session_server:
-     enable: true
-   rollout:
-     router:
-       policy: manual
+It inherits ``train_qwen2.5_async.yaml`` and adds
+``session_server.enable: true`` and ``rollout.router.policy: manual``.
 
 The parent config places the Megatron actor on node 0 and the SGLang server
 rollout (8 instances at TP1) on node 1. Each step uses
 ``rollout_batch_size`` 512 × ``group_size`` 4.
 
-Start the retrieval server as described in :doc:`Search-R1
-</rst_source/examples/agentic/searchr1/index>`. Then fill in three values in
+Start a Ray cluster on the two nodes as described in :doc:`multi_node`. Then
+start the retrieval server as described in :doc:`Search-R1
+</rst_source/examples/agentic/searchr1/index>` and fill in three values in
 ``train_qwen2.5_async.yaml``:
 
 .. code-block:: yaml
@@ -119,9 +103,6 @@ Start training from the head node:
 .. code-block:: bash
 
    bash examples/agent/searchr1/run_train.sh train_qwen2.5_async_session_server
-
-Besides the asynchronous run, the script starts a session server, its payload
-channel, and a router on node 1.
 
 The results below come from three 100-step runs on 2×8 A100-80G: two on this
 config and one on ``train_qwen2.5_async.yaml`` without the session server.
@@ -143,9 +124,7 @@ config and one on ``train_qwen2.5_async.yaml`` without the session server.
 Training behaves the same with and without the session server. In both session
 server runs, no payload write failed, and
 ``rollout/session_server/payload_queued_groups`` tracked
-``rollout/buffer/size``. In a separate 5-step run with
-``session_server.verify_assembly: true``, all 2,560 groups passed the
-field-by-field check. See :ref:`Metrics to Watch <session-server-metrics>` for
+``rollout/buffer/size``. See :ref:`Metrics to Watch <session-server-metrics>` for
 how to read these series.
 
 How It Works
@@ -175,11 +154,7 @@ turn. A rewritten history shows up in the ``prefix_*`` metrics.
 Control and Data Planes
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-Without the session server, the buffer worker receives each group's full
-training data and holds it until hand-off. One process both schedules the
-groups and moves their data.
-
-With the session server, the two split:
+With the session server, scheduling and data movement split:
 
 .. list-table::
    :header-rows: 1
@@ -202,13 +177,12 @@ Scheduling does not change. Admission, buffer limits, staleness, and
 dropping work as they do without the session server, but use only the
 metadata.
 
-The buffer worker is a single process on node 0 (see the
-:doc:`multi-node guide <multi_node>`). With the session server, its memory
-does not grow with the training data. That matters when groups are large, for
-example with routed-expert replay (R3) or long contexts.
+The buffer worker is a single process on node 0. With the session server, its
+memory does not grow with the training data. That matters when groups are
+large, for example with routed-expert replay (R3) or long contexts.
 
 Weight sync and other control calls go from each rollout worker straight to
-its engine. They never pass through the router.
+its engine.
 
 Dropped Groups and Failures
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -222,15 +196,15 @@ Errors while serving a request fail the run:
   router. That request never reached an engine, so no turn is sampled twice.
 - If a generate request times out or the engine aborts it, the run fails.
 
-A failed payload write is the one recoverable error. The session server voids
-that group, and the buffer worker drops it.
+An isolated payload write failure or timeout is the one recoverable error:
+the session server voids that group, and the buffer worker drops it. If the
+payload channel worker dies or its communication fails, later writes on it
+cannot succeed, so the session server stops and fails the run.
 
 Choose a Routing Policy
 -----------------------
 
-Use ``manual``, the default, when the prompts share a long prefix, as
-Search-R1's do. ``cache_aware`` may suit prompts that differ from the
-start, but no run has measured that case yet.
+Use ``manual`` when the prompts share a long prefix, as Search-R1's do.
 
 The session servers forward every request through the router. RLinf
 supports two of the router's policies:
@@ -261,14 +235,14 @@ and the run logs a warning.
 Deploy on Multiple Nodes
 ------------------------
 
-With several rollout nodes, the engines listen on ``0.0.0.0`` instead of
-loopback, so the router can reach engines on other nodes.
+With the session server, the engines listen on ``0.0.0.0``, so the router
+can reach engines on other nodes.
 
 The engines also serve RLinf's control endpoints, which accept pickled
 request bodies. To protect them, the engines accept requests from other
 machines on four paths only: ``/generate``, ``/health``, ``/server_info``,
 and ``/model_info``. Everything else gets a 403 before the body is read.
-Requests from the same machine are not restricted.
+Requests over loopback are not restricted.
 
 Idle HTTP connections follow one rule: the client must close them before the
 server does. Otherwise a client may reuse a connection the server has just
@@ -300,7 +274,8 @@ Counts and times cover the step; bytes and queue sizes are snapshots.
      - How to read it
    * - ``forward_count``, ``forward_time_total_s``, ``forward_time_avg_s``
      - Generate requests forwarded in the step, with their total and mean
-       latency.
+       latency. The average is reported only in steps with at least one
+       forward.
    * - ``prefix_continuous``, ``prefix_rewritten``, ``prefix_underreported``
      - How each prompt relates to the previous turn.
        ``prefix_underreported`` should stay at 0. ``prefix_rewritten``
@@ -365,8 +340,8 @@ checks the pair:
      sglang:
        tool_call_parser: qwen25  # glm47 for GLM-4.7
 
-The other values are ``glm47`` and ``default``; ``default`` renders the
-messages but does not parse tool calls. Without
+For other models, set ``agentic_tokenizer: default``. It renders the messages
+but does not parse tool calls, and ``tool_call_parser`` can stay unset. Without
 ``agentloop.agentic_tokenizer``, chat requests fail with 500.
 
 To use it, write an agent loop that runs each trajectory itself, as in the
@@ -376,7 +351,7 @@ session that is already open:
 
 .. code-block:: python
 
-   from openai import AsyncOpenAI, BadRequestError
+   from openai import APIStatusError, AsyncOpenAI, BadRequestError
 
    from rlinf.workers.agent.agent_loop import (
        GroupDiscarded,
@@ -407,6 +382,11 @@ session that is already open:
                        if exc.code != "context_length_exceeded":
                            raise
                        break  # no room left for another turn
+                   except APIStatusError as exc:
+                       if exc.status_code != 410:
+                           raise
+                       # The session server dropped the group.
+                       raise GroupDiscarded("group_discarded") from exc
                    num_responses += 1
                    message = response.choices[0].message
                    messages.append(message.model_dump(exclude_none=True))
@@ -423,7 +403,7 @@ session that is already open:
            content = (message.content or "") if message is not None else ""
            reward = score(content, answer)  # your reward
            close_fields = {
-               # One value per response received: one agent per trajectory.
+               # One value per trained response: one agent per trajectory.
                "extra_fields_train": {"idx_to_sub_traj": [0] * num_responses}
            }
            return None, close_fields, reward
@@ -439,13 +419,16 @@ agent loop.
 ``idx_to_sub_traj`` is needed when ``algorithm.loss_scales`` includes
 ``agent_level``.
 
+A 410 means the session server has already dropped the group, for example
+after a failed payload write. The example drops the whole group, as the agent
+loop does for any group it cannot finish.
+
 Set ``max_retries=0`` on the client. A retried request is sampled again,
 and only one of the two answers is trained.
 
-When a request no longer fits in ``runner.seq_length`` (see the limits
-below), the example ends the trajectory and scores the last answer. If not
-even the first request fits, it drops the whole group, because a trajectory
-without a trained turn cannot be closed.
+When a request no longer fits in ``runner.seq_length``, the example ends the
+trajectory and scores the last answer; if not even the first request fits, it
+drops the whole group.
 
 The session server reuses the tokens of earlier turns. A turn's prompt is the
 previous turn's prompt and output tokens, exactly as the engine produced
@@ -467,11 +450,9 @@ three ways:
   ``prefix_rewritten`` counts these requests, and their data is trained as
   usual.
 
-The session server keeps its own copy of the conversation. It compares each
-request with this copy and never overwrites the copy with the request. If a
-request leaves out an assistant's ``reasoning_content`` or sends it empty,
-the server keeps its own. A client that drops reasoning from its history
-therefore still continues the conversation.
+When a request continues the conversation, the session server uses its own
+stored copy of the earlier turns, including ``reasoning_content``. A client
+that drops reasoning from its history still continues the conversation.
 
 A turn's prompt and answer together must fit in ``runner.seq_length``, the
 length the actor trains on. The endpoint lowers ``max_tokens`` to the remaining
@@ -594,8 +575,6 @@ Limitations
   token ids. With it on, the chat completions endpoint rejects every request.
 - Agents can attach ``extra_fields_train``. Other per-turn, per-trajectory,
   and per-group extra fields are rejected.
-- ``agentloop.print_outputs`` works only with ``verify_assembly`` on. The
-  agent loop prints while it assembles training data, and with the session
-  server it assembles only for that check.
-- HTTP is the only transport (``session_server.type: http``).
+- With the session server, ``agentloop.print_outputs`` prints only when
+  ``verify_assembly`` is on.
 - If a session server dies, the run ends. Nothing restarts it.

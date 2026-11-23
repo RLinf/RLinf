@@ -157,8 +157,8 @@ training is the bottleneck; see :doc:`Asynchronous Agentic RL
 </rst_source/guides/async_agentic>` for the mechanism and the measured
 evidence.
 
-This setup can also run with the session server; see
-:doc:`Session Server </rst_source/guides/session_server>`.
+To run it with the session server, add ``session_server.enable: true``; see
+:doc:`Session Server </rst_source/guides/session_server>` for the requirements.
 
 Metrics to Watch
 ----------------
