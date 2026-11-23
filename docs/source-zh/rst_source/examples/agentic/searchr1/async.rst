@@ -228,9 +228,9 @@ rollout buffer worker 会把 dataloader 位置存进 checkpoint（``data/data.pt
 在共享 GPU 上运行 SAO
 ---------------------
 
-使用 ``examples/agent/searchr1/config/train_qwen2.5_sao.yaml``，在单个节点的 8 张 GPU 上用 SAO 训练 Qwen2.5。配置继承同步 PPO 的模型、数据和 optimizer 设置，actor、critic 和 rollout 共用 GPU。每次 learner 更新后，未完成的轨迹会继续生成。
+使用 ``examples/agent/searchr1/config/train_qwen2.5_sao.yaml``，在单台 8 卡机器上用 SAO 训练 Qwen2.5，需要 SGLang 0.5.12 或更高版本。配置继承同步 PPO 的模型、数据和 optimizer 设置，actor、critic 和 rollout 共用 GPU。每次 learner 更新后，未完成的轨迹会继续生成。
 
-按 :doc:`qwen2.5` 的说明，在 SAO 配置中填写 ``rollout.model.model_path``、``data.train_data_paths`` 和 ``tools.search.server_addr``\ 。启动 Wiki 服务后运行：
+按 :doc:`qwen2.5` 的说明，在 SAO 继承的 ``train_qwen2.5_ppo.yaml`` 中填写 ``rollout.model.model_path``、``data.train_data_paths`` 和 ``tools.search.server_addr``\ 。启动 Wiki 服务后运行：
 
 .. code-block:: bash
 
@@ -238,9 +238,9 @@ rollout buffer worker 会把 dataloader 位置存进 checkpoint（``data/data.pt
 
 默认每批只有一个 minibatch，先更新两次 critic，再更新一次 actor。critic 使用均方误差（``algorithm.critic_loss_type=mse``），并在更新后计算 policy advantage（``critic.compute_advantages_after_update=true``）。``critic.update_epochs`` 控制 critic 遍历全部 minibatch 的轮数。
 
-SAO 使用 rollout 记录的 logprob，保留 ``algorithm.recompute_logprobs=false`` 和 ``agentloop.truncate_response=false``\ 。policy loss 使用双侧 importance sampling，advantage 估计按轨迹长度调整，critic target 不做归一化。算法说明见 `SAO 论文 <https://arxiv.org/abs/2607.07508>`__\ 。本配置不包含离线 critic 预训练。
+SAO 使用 rollout 记录的 logprob，保留 ``algorithm.recompute_logprobs=false`` 和 ``agentloop.truncate_response=false``\ 。policy loss 使用双侧 importance sampling，advantage 估计按轨迹长度调整，critic target 不做归一化。算法说明见 `SAO 论文 <https://arxiv.org/abs/2607.07508>`__\ 。critic 继承 PPO 的 10 步学习率 warmup，actor 从第一批开始更新，不包含单独的 critic-only warmup 或离线 critic 预训练。
 
-查看 ``critic_update/critic/*`` 中每次 critic 更新的指标。actor 指标按 learner step 记录。共享 GPU 交替执行生成和训练，吞吐取决于轨迹长度与模型切换开销。
+每次 critic 更新的指标记录在 ``critic_update/<index>/critic/*`` 中，按 learner step 记录，每批的更新索引从 0 开始。共享 GPU 交替执行生成和训练，吞吐取决于轨迹长度与模型切换开销。
 
 对比 PPO 与 SAO
 ~~~~~~~~~~~~~~~

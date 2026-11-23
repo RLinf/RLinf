@@ -325,11 +325,13 @@ Run SAO on Shared GPUs
 
 Use ``examples/agent/searchr1/config/train_qwen2.5_sao.yaml`` to train
 Qwen2.5 with SAO on one 8-GPU node. This config inherits the synchronous PPO
-recipe's model, data, and optimizer settings. Actor, critic, and rollout share
+recipe's model, data, and optimizer settings. Use SGLang 0.5.12 or later.
+Actor, critic, and rollout share
 the GPUs; unfinished trajectories continue across learner updates.
 
 Fill in ``rollout.model.model_path``, ``data.train_data_paths``, and
-``tools.search.server_addr`` in the SAO config as described in :doc:`qwen2.5`.
+``tools.search.server_addr`` in ``train_qwen2.5_ppo.yaml``, which the SAO config
+inherits, as described in :doc:`qwen2.5`.
 With the Wiki server running, launch:
 
 .. code-block:: bash
@@ -347,10 +349,13 @@ SAO uses the log probabilities recorded during rollout. Keep
 The policy loss uses double-sided importance sampling, and its advantage
 estimator adapts to trajectory length. Critic targets remain unnormalized. See the
 `SAO paper <https://arxiv.org/abs/2607.07508>`__ for the algorithm.
-This recipe does not include offline critic pretraining.
+The critic inherits PPO's 10-step learning-rate warmup. Actor updates begin
+with the first batch; there is no separate critic-only warmup or offline
+critic pretraining.
 
-``critic_update/critic/*`` records metrics for each critic update; actor metrics
-are logged by learner step. Shared GPUs alternate generation and training, so
+Monitor ``critic_update/<index>/critic/*`` for each critic update's metrics.
+Metrics use the learner step; ``<index>`` starts at 0 for each batch.
+Shared GPUs alternate generation and training, so
 throughput depends on rollout lengths and the cost of switching models.
 
 Compare PPO and SAO

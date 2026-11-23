@@ -188,7 +188,7 @@ class Scheduler(_Scheduler):
         return set(recv_req.tags)
 
     def release_memory_occupation(self, recv_req: ReleaseMemoryOccupationReqInput):
-        if self._engine_paused and not self.is_fully_idle():
+        if getattr(self, "_engine_paused", False) and not self.is_fully_idle():
             self._park_requests()
         requested_tags = self.resolve_memory_tags(recv_req)
         already_offloaded = {

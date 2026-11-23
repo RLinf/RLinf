@@ -44,14 +44,14 @@ rejected when the configuration is validated, before any worker starts.
 Share GPUs
 ~~~~~~~~~~
 
-For a shared-GPU run, place actor and rollout on the same GPUs, enable the
+For a shared-GPU run, use SGLang 0.5.12 or later. Place actor and rollout on the same GPUs, enable the
 actor's weight, gradient, and optimizer offload, and set
 ``rollout.pause_mode=retract``. Generation pauses after a full training batch
 has been dispatched. Unfinished requests retain their generated tokens and
 behavior logprobs while their GPU memory is released. After training and
 weight synchronization, rollout processes the retained token prefixes again
 under the updated weights, then resumes generation.
-Tool calls can finish while the GPU models train.
+Tool calls can finish during training.
 
 SAO adds a critic on the same GPU set with the same offload settings. It updates
 the critic twice, computes policy advantages using the updated values, and

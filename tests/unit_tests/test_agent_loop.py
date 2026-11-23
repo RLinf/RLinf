@@ -37,10 +37,48 @@ from rlinf.workers.agent.agent_loop import (
 )
 
 
+def test_sglang_legacy_offload_does_not_require_pause_state(monkeypatch):
+    pytest.importorskip("sglang")
+    from sglang.srt.managers.io_struct import (
+        ReleaseMemoryOccupationReqInput,
+        ResumeMemoryOccupationReqInput,
+    )
+
+    from rlinf.hybrid_engines.sglang.common.sgl_scheduler import Scheduler, _Scheduler
+
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler._parked_requests = None
+    scheduler.offloaded_tags = {"weights": False}
+    scheduler.weight_reload = "sync"
+    calls = []
+    monkeypatch.delattr(_Scheduler, "is_fully_idle", raising=False)
+    monkeypatch.setattr(
+        _Scheduler,
+        "release_memory_occupation",
+        lambda self, req: calls.append("release"),
+    )
+    monkeypatch.setattr(
+        _Scheduler, "resume_memory_occupation", lambda self, req: calls.append("resume")
+    )
+    assert not hasattr(scheduler, "_engine_paused")
+    scheduler.release_memory_occupation(
+        ReleaseMemoryOccupationReqInput(tags=["weights"])
+    )
+    scheduler.resume_memory_occupation(ResumeMemoryOccupationReqInput(tags=["weights"]))
+    assert calls == ["release", "resume"]
+    assert scheduler.offloaded_tags == {"weights": False}
+
+
 def test_shared_sglang_retraction_retains_prefix_logprobs_and_late_requests(
     monkeypatch,
 ):
     pytest.importorskip("sglang")
+    from importlib.metadata import version
+
+    from packaging.version import Version
+
+    if Version(version("sglang")) < Version("0.5.12"):
+        pytest.skip("Collocated async rollout requires SGLang >= 0.5.12.")
     from sglang.srt.managers.schedule_batch import Req
     from sglang.srt.sampling.sampling_params import SamplingParams
 
@@ -1001,7 +1039,8 @@ class TestTaskNamePassthrough:
 
 
 @pytest.mark.parametrize("infer_after_update", [False, True])
-def test_critic_inference_order_and_epoch_metrics(infer_after_update):
+@pytest.mark.parametrize("n_minibatches", [1, 2])
+def test_critic_inference_order_and_epoch_metrics(infer_after_update, n_minibatches):
     pytest.importorskip("megatron.core")
     import torch
 
@@ -1025,8 +1064,8 @@ def test_critic_inference_order_and_epoch_metrics(infer_after_update):
             task_type="reasoning",
             adv_type="sao_gae",
             rewards=torch.tensor([1.0]),
-            loss_mask=mask,
-            values=torch.full((1, 3), value),
+            loss_mask=list(mask),
+            values=list(torch.full((1, 3), value)),
             idx_to_traj=[0],
             prompt_lengths=torch.tensor([1]),
             group_size=1,
@@ -1046,18 +1085,31 @@ def test_critic_inference_order_and_epoch_metrics(infer_after_update):
             output_channel.advantages = input_channel.advantages
             self.value += epochs
             return RemoteResult(
-                [(None, [{"critic/value_loss": float(i + 1)} for i in range(epochs)])]
+                [
+                    (
+                        None,
+                        [
+                            {"critic/value_loss": float(i + 1)}
+                            for i in range(epochs * n_minibatches)
+                        ],
+                    )
+                ]
             )
 
     class ActorGroup:
         def run_training(self, input_channel, version):
             assert version == 7
             self.advantages = input_channel.advantages
-            return RemoteResult([(None, [{"actor/policy_loss": 0.0}])])
+            return RemoteResult(
+                [(None, [{"actor/policy_loss": 0.0} for _ in range(n_minibatches)])]
+            )
 
     runner = AgentPPORunner.__new__(AgentPPORunner)
     runner.cfg = OmegaConf.create(
-        {"critic": {"compute_advantages_after_update": infer_after_update}}
+        {
+            "critic": {"compute_advantages_after_update": infer_after_update},
+            "algorithm": {"n_minibatches": n_minibatches},
+        }
     )
     runner.critic, runner.actor = CriticGroup(), ActorGroup()
     runner.rollout_channel = SimpleNamespace(advantages=None)
@@ -1073,8 +1125,18 @@ def test_critic_inference_order_and_epoch_metrics(infer_after_update):
     torch.testing.assert_close(
         runner.actor.advantages, advantages(2.0 if infer_after_update else 0.0)
     )
-    assert [step for step, _ in metrics] == list(range(7 * epochs, 8 * epochs))
-    assert [values["critic_update/critic/value_loss"] for _, values in metrics] == [
-        float(i + 1) for i in range(epochs)
-    ]
-    assert actor_metrics[0]["critic/value_loss"] == float(epochs)
+    for i in range(n_minibatches):
+        runner.metric_logger.log(
+            {"train/actor/policy_loss": 0.0}, 7 * n_minibatches + i
+        )
+    assert [step for step, _ in metrics] == sorted(step for step, _ in metrics)
+    assert [step for step, _ in metrics[: epochs * n_minibatches]] == [
+        7 * n_minibatches
+    ] * (epochs * n_minibatches)
+    assert [
+        values[f"critic_update/{i}/critic/value_loss"]
+        for i, (_, values) in enumerate(metrics[: epochs * n_minibatches])
+    ] == [float(i + 1) for i in range(epochs * n_minibatches)]
+    assert actor_metrics[0]["critic/value_loss"] == float(
+        (epochs - 1) * n_minibatches + 1
+    )

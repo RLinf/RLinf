@@ -85,10 +85,13 @@ class AgentPPORunner(AgentRunner):
             input_channel=actor_input_channel, version=version
         )
         rollout_metrics, training_metrics = actor_handle.wait()[0]
-        for step, metrics in enumerate(critic_training_metrics):
+        for update, metrics in enumerate(critic_training_metrics):
             self.metric_logger.log(
-                {f"critic_update/{key}": value for key, value in metrics.items()},
-                self.global_steps * len(critic_training_metrics) + step,
+                {
+                    f"critic_update/{update}/{key}": value
+                    for key, value in metrics.items()
+                },
+                self.global_steps * self.cfg.algorithm.n_minibatches,
             )
         for actor_metrics, critic_metrics in zip(
             training_metrics,

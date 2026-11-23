@@ -44,6 +44,7 @@ from torch.optim import Optimizer
 from transformers.trainer_pt_utils import get_module_class_from_name
 
 from rlinf.config import SupportedModel
+from rlinf.data.schema.actor_batch import TokenRows
 from rlinf.hybrid_engines.fsdp import (
     FSDP,
     BackwardPrefetch,
@@ -1004,21 +1005,20 @@ def unpack_sequences(
     input_tensor: torch.Tensor,  # [1, max_seq_len]
     idx_starts: list[int],  # [B]
     idx_ends: list[int],  # [B]
-    max_seq_len: int,
+    max_seq_len: Optional[int],
     pad_val,
-):
-    """Restore a packed sequence from pack_sequences back to padded batch format.
-
-    Slices by idx_starts/idx_ends into B segments, places each at [idx_start, idx_end) per row,
-    fills the rest with pad_val. Same 2D layout as before packing for per-sample loss/metrics.
+) -> torch.Tensor | TokenRows:
+    """Restore packed segments as real-length rows or a dense batch.
 
     Args:
         input_tensor: Packed sequence [1, packed_len].
         idx_starts, idx_ends: Start/end (exclusive) in packed sequence per sample (length B).
-        max_seq_len: Sequence length per sample after unpacking. pad_val: Fill for non-valid positions.
+        max_seq_len: Dense output width, or None to return real-length rows.
+        pad_val: Fill for non-valid positions.
 
     Returns:
-        Tensor [B, max_seq_len]; valid content in [idx_start, idx_end), rest pad_val.
+        Real-length rows when max_seq_len is None; otherwise a tensor with
+        valid content in [idx_start, idx_end) and pad_val elsewhere.
     """
     assert len(input_tensor.shape) == 2
     assert input_tensor.shape[0] == 1
@@ -1031,6 +1031,9 @@ def unpack_sequences(
         length = idx_end - idx_start
         input_tensors_splits.append(input_tensor[0, cu_len : cu_len + length])
         cu_len += length
+
+    if max_seq_len is None:
+        return input_tensors_splits
 
     # [B, max_seq_len]
     output_tensor = torch.stack(
@@ -1082,8 +1085,8 @@ def prepare_pack_fsdp(
 
 
 def pack_fsdp_input(
-    input_ids,
-    position_ids,
+    input_ids: torch.Tensor | TokenRows,
+    position_ids: torch.Tensor | TokenRows,
     *,
     idx_starts,
     idx_ends,
@@ -1091,19 +1094,26 @@ def pack_fsdp_input(
     eos_token_id,
     pad_to_fixed_len: bool = False,
 ):
-    """Pack FSDP training input_ids and position_ids from [B, seq_len] to [1, max_seq_len_pack].
+    """Pack dense inputs or real-length token rows into one FSDP sequence.
 
     Uses pack_sequences to remove padding; sets attention_mask=None so flash-attn can derive
     cu_seqlens from position_ids.
 
     Args:
-        input_ids, position_ids: [B, seq_len]. idx_starts, idx_ends: From prepare_pack_fsdp.
+        input_ids, position_ids: Dense [B, seq_len] tensors or real-length rows.
+        idx_starts, idx_ends: From prepare_pack_fsdp for dense inputs.
         max_seq_len_pack: Packed length. eos_token_id: Pad value for input_ids end.
         pad_to_fixed_len: Whether to pad to fixed max_seq_len_pack.
 
     Returns:
-        input_ids, position_ids: [1, max_seq_len_pack]. attention_mask: None.
+        Packed input_ids and position_ids [1, packed_len], and attention_mask=None.
     """
+    if isinstance(input_ids, list):
+        return (
+            torch.cat(input_ids).unsqueeze(0),
+            torch.cat(position_ids).unsqueeze(0),
+            None,
+        )
     input_ids = pack_sequences(
         input_ids,
         idx_starts,
@@ -1127,22 +1137,24 @@ def unpack_fsdp_logprobs(
     *,
     idx_starts,
     idx_ends,
-    max_seq_len_unpack,
+    max_seq_len_unpack: Optional[int],
     eos_token_id,
     compute_logprobs_fn,
-):
-    """Compute logprobs from packed model output and unpack to per-sample [B, max_seq_len_unpack].
+) -> torch.Tensor | TokenRows:
+    """Compute packed logprobs and restore their per-sequence token positions.
 
     Builds response targets from input_ids (shift right + eos), calls compute_logprobs_fn(logits, responses),
     then unpack_sequences with idx_starts/idx_ends. Non-valid positions are 0.
 
     Args:
         logits: Model logits in packed format. input_ids: Packed [1, packed_len], for building targets.
-        idx_starts, idx_ends: From prepare_pack_fsdp. max_seq_len_unpack: Seq length per sample after unpack.
+        idx_starts, idx_ends: From prepare_pack_fsdp.
+        max_seq_len_unpack: Dense output width, or None to return real-length rows.
         eos_token_id: Appended when building targets. compute_logprobs_fn: (logits, response_ids) -> logprobs.
 
     Returns:
-        Logprobs [B, max_seq_len_unpack]; valid positions = log prob, rest = 0.
+        Real-length probability rows, or dense [B, max_seq_len_unpack] logprobs
+        with zeros outside the valid segment.
     """
     responses = torch.cat(
         [

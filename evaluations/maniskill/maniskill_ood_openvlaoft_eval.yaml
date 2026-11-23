@@ -60,7 +60,7 @@ rollout:
     repetition_penalty: 1.0
 
   group_name: "RolloutGroup"
-  backend: "huggingface"
+  rollout_backend: "huggingface"
   gpu_memory_utilization: 0.5
   enforce_eager: True
   enable_offload: True

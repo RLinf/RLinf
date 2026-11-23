@@ -31,7 +31,9 @@
 共享 GPU
 ~~~~~~~~
 
-共享部署把 actor 和 rollout 放在同一组 GPU 上，并开启 actor 的权重、梯度和 optimizer 卸载，设置 ``rollout.pause_mode=retract``\ 。完整训练批次交付后，生成才会暂停。未完成请求保留生成的 token 和 behavior logprob，释放显存。训练并同步权重后，rollout 用更新后的权重重新处理保留的 token 前缀，再继续生成。工具调用可以在 GPU 模型训练期间完成。
+共享部署需要 SGLang 0.5.12 或更高版本。把 actor 和 rollout 放在同一组 GPU 上，开启 actor 的权重、梯度和 optimizer 卸载，并设置 ``rollout.pause_mode=retract``\ 。
+
+完整训练批次交付后，生成才会暂停。未完成请求保留生成的 token 和 behavior logprob，释放显存。训练并同步权重后，rollout 用更新后的权重重新处理保留的 token 前缀，再继续生成。工具调用可以在训练期间完成。
 
 SAO 的 critic 也放在这组 GPU 上，并开启同样的卸载设置。每批先更新两次 critic，用更新后的 value 计算 policy advantage，再更新一次 actor。Qwen2.5 SAO 的运行命令和 critic 配置见 :ref:`searchr1-sao`。下文的性能测试中，actor 与 rollout 使用不同的 GPU。
 
