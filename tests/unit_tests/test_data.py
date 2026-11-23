@@ -22,6 +22,7 @@ import json
 import pickle
 import random
 import shutil
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -2662,6 +2663,41 @@ def test_online_lerobot_finishes_recorded_frames_on_an_idle_terminal(only_succes
     assert len(episode) == 1
     assert bool(episode[-1]["done"])
     assert bool(episode[-1]["is_success"])
+
+
+@pytest.mark.parametrize("episodes", [[], [[{"state": np.zeros(1)}]]])
+def test_dagger_actor_waits_for_completed_episode_shard(episodes):
+    from rlinf.scheduler.channel import Channel
+    from rlinf.scheduler.channel.channel_worker import LocalChannel
+    from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
+
+    channel = Channel()
+    channel._initialize(
+        "dagger-receive-test", None, None, None, local_channel=LocalChannel()
+    )
+    actor = object.__new__(EmbodiedDAGGERFSDPPolicy)
+    actor.stage_num = 1
+    actor._component_placement = SimpleNamespace(get_world_size=lambda group: 1)
+    actor.dataset = SimpleNamespace(is_ready=lambda: False)
+    received = []
+    actor._append_lerobot_episode = received.append
+    finished = threading.Event()
+
+    def receive():
+        try:
+            actor.recv_lerobot_rollout_trajectories(channel)
+        finally:
+            finished.set()
+
+    thread = threading.Thread(target=receive, daemon=True)
+    thread.start()
+    try:
+        assert not finished.wait(0.05)
+    finally:
+        channel.put(episodes)
+        thread.join(timeout=5)
+    assert finished.is_set()
+    assert received == episodes
 
 
 def test_lerobot_frame_owns_observation_and_image_conversion():

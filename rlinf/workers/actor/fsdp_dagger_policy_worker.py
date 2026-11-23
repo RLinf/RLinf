@@ -336,7 +336,13 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         completes; if the dataset is still below ``min_frames``, training is
         skipped later.
         """
-        self._recv_lerobot_episodes_from_channel(input_channel)
+        send_num = self._component_placement.get_world_size("env") * self.stage_num
+        recv_num = self._component_placement.get_world_size("actor")
+        for _ in range(compute_split_num(send_num, recv_num)):
+            episodes = input_channel.get()
+            for ep_frames in episodes:
+                if ep_frames:
+                    self._append_lerobot_episode(ep_frames)
         if self.dataset.is_ready():
             self._ensure_lerobot_loader()
 
