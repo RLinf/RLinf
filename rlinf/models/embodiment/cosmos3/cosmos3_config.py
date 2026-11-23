@@ -14,7 +14,6 @@
 
 """Configure Cosmos3 models for RLinf SFT and DAgger."""
 
-import copy
 import json
 import os
 from pathlib import Path
@@ -65,7 +64,7 @@ def _apply_checkpoint_model_config(cosmos_cfg, model_cfg: DictConfig) -> None:
             "parallelism",
             "rectified_flow_training_config",
         ):
-            checkpoint_model.config[key] = copy.deepcopy(getattr(recipe_config, key))
+            checkpoint_model.config[key] = getattr(recipe_config, key)
         checkpoint_model.config.diffusion_expert_config.load_weights_from_pretrained = (
             recipe_config.diffusion_expert_config.load_weights_from_pretrained
         )
