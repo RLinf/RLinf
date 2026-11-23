@@ -39,6 +39,8 @@ from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
 class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
+    _cosmos_training = None
+
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
         self.replay_buffer = None
@@ -63,6 +65,20 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self._lerobot_resume_thread: threading.Thread | None = None
         self._lerobot_resume_error: Exception | None = None
 
+    def model_provider_func(self) -> torch.nn.Module:
+        if self._cosmos_training is not None and self.cfg.runner.get("ckpt_path"):
+            return self._cosmos_training.load_student(
+                self.cfg.actor.model, self.cfg.runner.ckpt_path
+            )
+        return super().model_provider_func()
+
+    def set_global_step(self, global_step: int) -> None:
+        if self._cosmos_training is None:
+            super().set_global_step(global_step)
+        else:
+            # Cosmos tracks the rollout version separately from its optimizer and EMA.
+            self.version = global_step
+
     def _online_lerobot_cfg(self) -> DictConfig:
         return OmegaConf.select(
             self.cfg, "algorithm.dagger.online_lerobot", default=OmegaConf.create({})
@@ -76,14 +92,21 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             raise ValueError(
                 "algorithm.dagger.online_lerobot.lerobot_num_workers must be non-negative."
             )
-        self.dataset = RollingLeRobotDataset(
-            root_dir=self.cfg.algorithm.dagger.online_lerobot.data_path,
-            chunk_size=self.cfg.actor.model.num_action_chunks,
+        only_expert = self.cfg.algorithm.dagger.get("only_save_expert", False)
+        if self._cosmos_training is None:
+            dataset_type = RollingLeRobotDataset
+            window_options = {"chunk_size": self.cfg.actor.model.num_action_chunks}
+        else:
+            dataset_type = self._cosmos_training.dataset_type
+            window_options = self._cosmos_training.lerobot_window_options(
+                self.cfg.actor.model, online_lerobot_cfg, only_expert
+            )
+        self.dataset = dataset_type(
+            root_dir=online_lerobot_cfg.data_path,
+            **window_options,
             min_frames=online_lerobot_cfg.get("min_frames", 1),
             wait_interval_s=online_lerobot_cfg.get("wait_interval_s", 10.0),
-            require_all_intervene=self.cfg.algorithm.dagger.get(
-                "only_save_expert", False
-            ),
+            require_all_intervene=only_expert,
             window_size=online_lerobot_cfg.get("rolling_lerobot_window_size", None),
             in_memory_mode=True,
             fps=int(
@@ -98,6 +121,10 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             Path(self.cfg.algorithm.dagger.online_lerobot.data_path)
             / f"rank_{self._rank}"
         )
+        if self._cosmos_training is not None:
+            self._next_lerobot_archive_id = self._cosmos_training.next_archive_id(
+                rank_dir, self._next_lerobot_archive_id
+            )
         if not rank_dir.is_dir():
             self.log_info(
                 f"No LeRobot resume directory found for actor rank {self._rank}: {rank_dir}"
@@ -441,6 +468,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     def _prepare_sft_batch(self, batch):
         """Prepare model-specific DAgger training inputs."""
+        if self._cosmos_training is not None:
+            return self._cosmos_training.prepare_sft_batch(self, batch)
+        return self._prepare_model_inputs(batch)
+
+    def _prepare_model_inputs(self, batch):
         if not self.enable_online_lerobot:
             # Replay-buffer samples store model inputs under forward_inputs.
             if "forward_inputs" in batch:
@@ -514,6 +546,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         return result
 
     def _stage_lerobot_batch(self, batch):
+        if self._cosmos_training is not None and not self.enable_drq:
+            return self._cosmos_training.stage_lerobot_batch(batch, self.device)
         batch = put_tensor_device(batch, device=self.device)
         if self.enable_drq:
             drq.apply_drq(batch["curr_obs"], pad=4)
@@ -521,6 +555,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     def _update_sft_batches(self, batches, num_batches):
         """Accumulate the microbatches for one optimizer update."""
+        if self._cosmos_training is not None:
+            return self._cosmos_training.update_sft_batches(self, batches, num_batches)
+
         self.optimizer.zero_grad()
         gbs_actor_loss = []
 
@@ -651,12 +688,16 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     def _record_sft_update(self, metrics, update_metrics):
         append_to_dict(metrics, update_metrics)
-        self.update_step += 1
+        if self._cosmos_training is None:
+            self.update_step += 1
 
     def _finish_sft_updates(self, metrics):
-        torch.cuda.synchronize()
+        platform = (
+            self.torch_platform if self._cosmos_training is not None else torch.cuda
+        )
+        platform.synchronize()
         torch.distributed.barrier()
-        torch.cuda.empty_cache()
+        platform.empty_cache()
         return self.process_train_metrics(metrics)
 
     @Worker.timer("actor/compute_adv")
@@ -706,3 +747,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 load_base_path, f"dagger_components/replay_buffer/rank_{self._rank}"
             )
             self.replay_buffer.load_checkpoint(buffer_load_path)
+
+        if self._cosmos_training is not None:
+            self._cosmos_training.restore_update_step(self)

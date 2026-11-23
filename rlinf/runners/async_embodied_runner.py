@@ -40,6 +40,8 @@ if TYPE_CHECKING:
 
 
 class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
+    _is_cosmos3_dagger = False
+
     def __init__(
         self,
         cfg: DictConfig,
@@ -50,6 +52,10 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         critic=None,
     ):
         super().__init__(cfg, actor, rollout, env, reward, critic)
+        self._is_cosmos3_dagger = (
+            cfg.algorithm.loss_type == "embodied_dagger"
+            and cfg.actor.model.model_type == "cosmos3"
+        )
 
         # Data channels
         self.env_metric_channel = Channel.create("EnvMetric")
@@ -126,7 +132,14 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         eval_metrics = compute_evaluate_metrics(eval_metrics_list)
         return eval_metrics
 
+    def _before_rollout_weight_sync(self) -> None:
+        if self._is_cosmos3_dagger:
+            # Publish the runner step as the version of the weights being sent.
+            self.actor.set_global_step(self.global_step).wait()
+
     def run(self):
+        if self._is_cosmos3_dagger and self.global_step > 0:
+            self.rollout.set_global_step(self.global_step).wait()
         start_step = self.global_step
         start_time = time.time()
         self.env.set_global_step(self.global_step).wait()
@@ -297,3 +310,5 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         env_handle.wait()
         rollout_handle.wait()
         actor_handle.wait()
+        if self._is_cosmos3_dagger:
+            self._finish_run()
