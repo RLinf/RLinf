@@ -25,16 +25,15 @@ sharded to GPU later by FSDP2. Model defaults live in the Hydra config group
 from __future__ import annotations
 
 import contextlib
+import os
+import re
 from pathlib import Path
 
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
-from rlinf.models.embodiment.cosmos3.checkpoint import (
-    _load_base_weights,
-    load_inference_checkpoint,
-)
+from rlinf.models.embodiment.cosmos3.checkpoint import load_inference_checkpoint
 from rlinf.models.embodiment.cosmos3.cosmos3_config import (
     _apply_checkpoint_model_config,
     _configure_sft_objective,
@@ -94,6 +93,60 @@ def _apply_freeze(cosmos3_model: nn.Module, keys_to_select: list[str]) -> None:
         trainable / 1e6,
         frozen / 1e6,
         keys_to_select,
+    )
+
+
+def _load_base_weights(
+    cosmos3_model: nn.Module, model_path: str, keys_to_skip: list[str]
+) -> None:
+    """Warm-start ``cosmos3_model`` from a base checkpoint, skipping action heads + net_ema.
+
+    Reuses cosmos's loaders so the AC prefix and DTensor resharding are handled:
+    ``load_vfm_model`` (HF safetensors dir, regex skip on ``cosmos3_model.net``) or
+    ``_load_model`` (DCP dir, substring skip via ``CustomLoadPlanner``).
+    """
+    from cosmos_framework.utils.generator.model_loader import (
+        _is_safetensors_checkpoint,
+        _load_model,
+    )
+
+    if _is_safetensors_checkpoint(model_path, None):
+        from cosmos_framework.model.generator.utils.safetensors_loader import (
+            load_vfm_model,
+        )
+
+        skip_patterns = [f".*{re.escape(s)}.*" for s in keys_to_skip]
+        vfm = getattr(cosmos3_model, "net", cosmos3_model)
+        logger.info(
+            "Cosmos3: loading safetensors base into cosmos3_model.net from %s (skip=%s)",
+            model_path,
+            skip_patterns,
+        )
+        load_vfm_model(
+            vfm,
+            model_path,
+            credential_path=None,
+            parallel_dims=getattr(cosmos3_model, "parallel_dims", None),
+            skip_patterns=skip_patterns or None,
+        )
+        return
+
+    # DCP dir; accept either model_path or model_path/model layouts.
+    dcp_dir = (
+        os.path.join(model_path, "model")
+        if os.path.isdir(os.path.join(model_path, "model"))
+        else model_path
+    )
+    logger.info(
+        "Cosmos3: loading DCP base into cosmos3_model from %s (skip=%s)",
+        dcp_dir,
+        keys_to_skip,
+    )
+    _load_model(
+        cosmos3_model,
+        dcp_dir,
+        credential_path=None,
+        keys_to_skip_loading=keys_to_skip or None,
     )
 
 
