@@ -287,6 +287,25 @@ def execute_install_plan(
         return 0
 
     out.write(f"[rlinf] Installing target '{plan.target}' into '{plan.venv_dir}'\n")
+    if (
+        not is_shell_hook_active()
+        and auto_install_shell_hook
+        and not is_ci_environment()
+    ):
+        hook_res = install_shell_hook()
+        if hook_res.status in ("installed", "updated"):
+            assert hook_res.rc_path is not None and hook_res.shell is not None
+            reload_cmd = manual_reload_command(hook_res.rc_path, hook_res.shell)
+            verb = "Installed" if hook_res.status == "installed" else "Updated"
+            out.write(
+                f"[rlinf] {verb} {hook_res.shell} shell hook in {hook_res.rc_path} "
+                f"(future shells auto-activate; reload now with '{reload_cmd}').\n"
+            )
+        elif hook_res.status in ("unsupported", "error"):
+            out.write(
+                "[rlinf] Shell hook could not be installed automatically "
+                f"({hook_res.detail}). Run 'rlinf shell-init --install <shell>' to set it up.\n"
+            )
     out.flush()
 
     start_time = time.monotonic()
@@ -326,25 +345,8 @@ def execute_install_plan(
             )
         else:
             activate_cmd = manual_activate_command(plan.venv_dir)
-            out.write(f"[rlinf] Install complete in {elapsed:.1f}s.\n")
-            hook_note = ""
-            if auto_install_shell_hook and not is_ci_environment():
-                hook_res = install_shell_hook()
-                if hook_res.status in ("installed", "updated"):
-                    assert hook_res.rc_path is not None and hook_res.shell is not None
-                    reload_cmd = manual_reload_command(hook_res.rc_path, hook_res.shell)
-                    hook_note = (
-                        f"[rlinf] Installed {hook_res.shell} shell hook in {hook_res.rc_path} "
-                        f"(future shells auto-activate; reload now with '{reload_cmd}').\n"
-                    )
-                elif hook_res.status in ("unsupported", "error"):
-                    hook_note = (
-                        "[rlinf] Shell hook could not be installed automatically "
-                        f"({hook_res.detail}). Run 'rlinf shell-init --install <shell>' to set it up.\n"
-                    )
-            if hook_note:
-                out.write(hook_note)
             out.write(
+                f"[rlinf] Install complete in {elapsed:.1f}s.\n"
                 "[rlinf] Shell hook is not active in this shell. Activate manually:\n"
                 f"  {activate_cmd}\n"
                 "  rlinf doctor\n"

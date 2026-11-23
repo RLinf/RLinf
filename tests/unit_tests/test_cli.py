@@ -1272,6 +1272,11 @@ def test_execute_install_plan_prints_activation_and_propagates_exit_code(
         (REPO_ROOT / ".venv-test").resolve()
     )
 
+    # Even if install.sh fails mid-run, shell hook was already installed up front.
+    fail_home = tmp_path / "fail-home"
+    fail_home.mkdir()
+    monkeypatch.setenv("HOME", str(fail_home))
+    monkeypatch.delenv(ACTIVATE_FILE_ENV, raising=False)
     fail_plan = InstallPlan(
         target="embodied",
         venv_dir=".venv-test",
@@ -1282,6 +1287,7 @@ def test_execute_install_plan_prints_activation_and_propagates_exit_code(
     out_fail = io.StringIO()
     assert execute_install_plan(fail_plan, stream=out_fail) == 3
     assert "Install failed (exit 3)" in out_fail.getvalue()
+    assert HOOK_START in (fail_home / ".bashrc").read_text(encoding="utf-8")
 
 
 def test_all_ci_workflow_install_commands_resolve_cleanly():
@@ -1593,19 +1599,38 @@ def test_use_without_hook_prints_manual_source_and_lists_venvs(tmp_path):
     assert f"* {venv_b.resolve()}" in out_list.getvalue()
     assert f"  {venv_a.resolve()}" in out_list.getvalue()
 
-    # Without shell hook, prints clear manual source command and shell-init hint.
+    # Without shell hook, auto-installs hook into shell rc (outside CI) and still
+    # prints manual source + reload guidance for the current shell.
     out_manual = io.StringIO()
     rc_manual = handle_use(
         ".venv-openpi",
         repo_root=fake_repo,
         stream=out_manual,
         err_stream=io.StringIO(),
+        home=tmp_path,
         env={"SHELL": "/usr/bin/fish"},
     )
     assert rc_manual == 0
+    assert "Installed fish shell hook" in out_manual.getvalue()
     assert "Shell hook is not active" in out_manual.getvalue()
     assert f"source {venv_b.resolve()}/bin/activate.fish" in out_manual.getvalue()
-    assert "rlinf shell-init --install" in out_manual.getvalue()
+    assert HOOK_START in (tmp_path / ".config/fish/config.fish").read_text(
+        encoding="utf-8"
+    )
+
+    # In CI, skips rc file writes and shows explicit shell-init guidance.
+    out_ci = io.StringIO()
+    rc_ci = handle_use(
+        ".venv-openpi",
+        repo_root=fake_repo,
+        stream=out_ci,
+        err_stream=io.StringIO(),
+        home=tmp_path / "ci-home",
+        env={"SHELL": "/bin/bash", "CI": "true"},
+    )
+    assert rc_ci == 0
+    assert "rlinf shell-init --install" in out_ci.getvalue()
+    assert not (tmp_path / "ci-home" / ".bashrc").exists()
 
     # With active shell hook, writes target venv to RLINF_ACTIVATE_FILE.
     act_file = tmp_path / "act.txt"

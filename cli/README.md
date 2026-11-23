@@ -5,15 +5,12 @@ Lightweight, zero-dependency CLI launcher for [RLinf](https://github.com/RLinf/R
 ## Install
 
 ```bash
-# Recommended: install globally as a standalone tool
-uv tool install rlinf-cli
-
-# Or with pip / pipx
-pip install rlinf-cli
-
-# Enable automatic venv activation on `rlinf install` and `rlinf use`
+# Recommended: install globally and enable automatic venv activation
 # (supports bash, zsh, fish, and pwsh)
-rlinf shell-init --install
+uv tool install rlinf-cli && rlinf shell-init --install
+
+# Or with pip
+pip install rlinf-cli && rlinf shell-init --install
 ```
 
 Or run one-off without installing:

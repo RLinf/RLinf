@@ -466,9 +466,11 @@ def handle_use(
     venv_arg: str | None = None,
     *,
     list_venvs: bool = False,
+    auto_install_shell_hook: bool = True,
     repo_root: Path | None = None,
     stream: TextIO | None = None,
     err_stream: TextIO | None = None,
+    home: Path | None = None,
     env: Mapping[str, str] | None = None,
 ) -> int:
     """Execute ``rlinf use [venv]`` or ``rlinf use --list``."""
@@ -512,11 +514,29 @@ def handle_use(
         return 0
 
     activate_cmd = manual_activate_command(resolved, env=env_map)
+    reload_hint: str | None = None
+    if auto_install_shell_hook and not is_ci_environment(env_map):
+        hook_res = install_shell_hook(home=home, env=env_map)
+        if hook_res.status in ("installed", "updated"):
+            assert hook_res.rc_path is not None and hook_res.shell is not None
+            verb = "Installed" if hook_res.status == "installed" else "Updated"
+            out.write(
+                f"[rlinf] {verb} {hook_res.shell} shell hook in {hook_res.rc_path} "
+                "(future shells auto-activate).\n"
+            )
+            reload_hint = manual_reload_command(hook_res.rc_path, hook_res.shell)
+        elif hook_res.status == "already_installed":
+            assert hook_res.rc_path is not None and hook_res.shell is not None
+            reload_hint = manual_reload_command(hook_res.rc_path, hook_res.shell)
+
     out.write(
         "[rlinf] Shell hook is not active in this shell, so 'rlinf use' cannot "
         "switch the parent shell automatically.\n"
         f"Activate manually:\n  {activate_cmd}\n"
-        "Enable automatic switching once:\n  rlinf shell-init --install\n"
     )
+    if reload_hint is not None:
+        out.write(f"Reload shell hook in this shell:\n  {reload_hint}\n")
+    else:
+        out.write("Enable automatic switching once:\n  rlinf shell-init --install\n")
     out.flush()
     return 0
