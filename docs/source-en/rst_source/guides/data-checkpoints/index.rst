@@ -12,6 +12,8 @@ resume a stopped run.
      - What you get
    * - :doc:`Data Collection <../data_collection>`
      - Collect and preprocess demonstration data.
+   * - :doc:`Isaac Lab Demonstrations <../isaaclab_data_collection>`
+     - Generate grasp trajectories with GraspGen and cuRobo.
    * - :doc:`Checkpoint Conversion <../convertor>`
      - Convert checkpoints between formats.
    * - :doc:`Resume Training <../resume>`
@@ -21,5 +23,6 @@ resume a stopped run.
    :hidden:
 
    Data Collection <../data_collection>
+   Isaac Lab Demonstrations <../isaaclab_data_collection>
    Checkpoint Conversion <../convertor>
    Resume Training <../resume>

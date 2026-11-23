@@ -11,6 +11,8 @@
      - 内容
    * - :doc:`数据采集 <../data_collection>`
      - 采集并预处理示教数据。
+   * - :doc:`Isaac Lab 抓取示范 <../isaaclab_data_collection>`
+     - 用 GraspGen 和 cuRobo 自动生成抓取轨迹。
    * - :doc:`Checkpoint 转换 <../convertor>`
      - 在不同格式之间转换 checkpoint。
    * - :doc:`恢复训练 <../resume>`
@@ -20,5 +22,6 @@
    :hidden:
 
    数据采集 <../data_collection>
+   Isaac Lab 抓取示范 <../isaaclab_data_collection>
    Checkpoint 转换 <../convertor>
    恢复训练 <../resume>

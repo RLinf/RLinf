@@ -16,6 +16,7 @@
 
 import gc
 from concurrent.futures import Future, ThreadPoolExecutor, wait
+from pathlib import Path
 from types import MethodType
 from typing import Any, Optional
 
@@ -128,6 +129,7 @@ class LeRobotDatasetWriter:
         extra_view_image_keys: dict[str, tuple[int, ...]] | None = None,
         has_intervene_flag: bool = True,
         has_segment_id: bool = False,
+        root: str | Path | None = None,
     ) -> None:
         """
         Create a new LeRobot dataset.
@@ -155,6 +157,7 @@ class LeRobotDatasetWriter:
             has_segment_id: Whether to include per-frame ``segment_id``
                 (uint8, shape ``(1,)``) in auto-generated features. Used for
                 in-episode sub-task boundaries set by KeyboardStartEndWrapper.
+            root: Local dataset directory. Defaults to LeRobot's cache location.
 
         """
 
@@ -218,6 +221,7 @@ class LeRobotDatasetWriter:
         self.logger.info(
             f"Creating LeRobot dataset: repo_id={repo_id}, robot_type={robot_type}, fps={fps}"
         )
+        root_kwargs = {"root": root} if root is not None else {}
         self.dataset = LeRobotDataset.create(
             repo_id=repo_id,
             robot_type=robot_type,
@@ -225,6 +229,7 @@ class LeRobotDatasetWriter:
             features=features,
             image_writer_threads=image_writer_threads,
             image_writer_processes=image_writer_processes,
+            **root_kwargs,
         )
         if hasattr(self.dataset, "_save_episode_table"):
             # LeRobot v2 normally concatenates all embedded episodes in RAM.

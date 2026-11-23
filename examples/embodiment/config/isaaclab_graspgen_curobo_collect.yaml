@@ -1,0 +1,29 @@
+# Run from the RLinf repository root with:
+# python -m toolkits.isaaclab.collect_graspgen_curobo --config <this-file>
+# Install the pinned external runtime and its separate Python environments first.
+runtime:
+  root: /path/to/graspgen-curobo-collect
+  sim_python: /path/to/isaaclab/bin/python
+  planner_python: /path/to/curobo/bin/python
+  graspgen_python: /path/to/graspgen/bin/python
+  graspgen_config: /path/to/models/checkpoints/graspgen_franka_panda.yml
+
+output: /path/to/new_collection
+candidates:
+  root: /path/to/candidates_200
+  num_grasps: 200
+
+collection:
+  objects: [block55, slender95, cylinder36h52, disk56h24]
+  episodes_per_object: 2
+  workers: 1
+  gpus: "0"
+  seed: 2026207000
+  execution_profile: accelerated
+  arm_speed_profile: baseline
+  obstacle: none
+  startup_timeout: 1200
+  episode_timeout: 1200
+
+dataset:
+  repo_id: local/isaaclab_graspgen_curobo
