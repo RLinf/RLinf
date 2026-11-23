@@ -45,10 +45,7 @@ def build_reward_backend(cfg: Any) -> Any:
     raise ValueError(f"Unknown diffusion reward type: {reward_type}")
 
 
-from rlinf.envs.sim.diffusion.generation_env import GenerationEnv  # noqa: E402
-
 __all__ = [
-    "GenerationEnv",
     "build_reward_backend",
     "build_reward_dataset",
 ]

@@ -112,6 +112,10 @@ def get_env_cls(env_type: str, env_cfg=None):
 
         return LiberoEnv
     elif env_type == SupportedEnvType.ROBOTWIN:
+        if env_cfg is not None and env_cfg.get("capture_dream_observations", False):
+            from rlinf.envs.sim.robotwin.dream_env import DreamRobotwinEnv
+
+            return DreamRobotwinEnv
         from rlinf.envs.sim.robotwin.robotwin_env import RoboTwinEnv
 
         return RoboTwinEnv
@@ -195,7 +199,7 @@ def get_env_cls(env_type: str, env_cfg=None):
 
         return MujocoWarpEnv
     elif env_type == SupportedEnvType.DIFFUSION:
-        from rlinf.envs.sim.diffusion import GenerationEnv
+        from rlinf.envs.sim.diffusion.generation_env import GenerationEnv
 
         return GenerationEnv
     elif env_type == SupportedEnvType.POLARIS:

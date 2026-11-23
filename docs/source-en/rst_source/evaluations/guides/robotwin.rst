@@ -137,9 +137,7 @@ The terminal prints ``eval/success_once``; see :doc:`../reference/results` for l
 Dream API Evaluation
 --------------------
 
-Use the Dream API to run the RoboTwin task ``click_bell``. Dream API is a hosted inference service from Dream Labs. It predicts robot actions from camera images, robot state, and a task instruction.
-
-Run the evaluation with the ALOHA-AgileX dual-arm platform or a pair of AgileX Piper arms. The default checkpoint is ``dreamlabs/dream-1-beta``. To select another checkpoint, set ``rollout.model.checkpoint``.
+Run RoboTwin's ``click_bell`` task with the Dream API on ALOHA-AgileX or a pair of AgileX Piper arms. Set ``rollout.model.checkpoint`` to select a checkpoint. The default is ``dreamlabs/dream-1-beta``.
 
 **Install dependencies**
 
@@ -156,44 +154,48 @@ Prepare the RoboTwin repository and assets as described in Environment Setup. Us
      dreamlabs==1.0.17 dreamlabs-client==1.0.9 \
      "ray==$(python -c 'import ray; print(ray.__version__)')"
 
-MPLib uses NumPy 1. Install NumPy 1, pandas, and OpenCV together in ``.venv``. The Dream SDK uses NumPy 2, so RLinf starts the rollout worker with the interpreter in ``DREAM_ROLLOUT_PYTHON``.
+MPLib uses NumPy 1. The Dream SDK uses NumPy 2 and runs in the interpreter set by ``DREAM_ROLLOUT_PYTHON``.
 
 **Launch evaluation**
 
-Set ``ROBOTWIN_PATH`` to the RoboTwin repository root containing ``assets/``. Set ``DREAM_IK_ARM_FILE`` to a JSON arm file for your robot. The evaluation config reads it as ``rollout.dream.arm``. The URDF, joint order, base frame, and TCP must match the simulated robot.
+Set ``ROBOTWIN_PATH`` to the RoboTwin repository root containing ``assets/``. The URDF, joint order, base frame, and TCP in the arm file must match the simulated robot.
 
-The JSON arm file requires seven fields (``urdf``, ``base``, ``flange``, ``tcp``, ``approach``, ``jaw``, and ``rest``). The reported ALOHA runs use ``assets/embodiments/aloha-agilex/urdf/arx5_description_isaac.urdf``. The Piper runs use a copy of ``assets/embodiments/piper/piper.urdf`` with the six arm joint limits widened to ±6.283185307 radians for inverse kinematics (IK).
+Use these values in the JSON arm file. Set ``urdf`` to the absolute path of the indicated URDF.
 
-Replace ``<your-api-key>`` with your Dream API key and run the ALOHA config:
+- ALOHA uses ``assets/embodiments/aloha-agilex/urdf/arx5_description_isaac.urdf``. Set ``base`` to ``fl_base_link`` and ``flange`` to ``fl_link6``. Use ``tcp: [0.12, 0, 0]``, ``approach: [1, 0, 0]``, ``jaw: [0, 1, 0]``, and ``rest: [0, 0, 0, 0, 0, 0]``.
+- Piper uses a copy of ``assets/embodiments/piper/piper.urdf`` with the six arm joint limits widened to ±6.283185307 radians for IK. Set ``base`` to ``base_link`` and ``flange`` to ``link6``. Use ``tcp: [0, 0, 0.12]``, ``approach: [0, 0, 1]``, ``jaw: [0, 1, 0]``, and ``rest: [0, 0.662, -0.1, 0, -0.216, 0]``.
+
+Set the RoboTwin path and your Dream API key before launching either robot.
 
 .. code-block:: bash
 
    export ROBOTWIN_PATH=/path/to/RoboTwin
-   export DREAM_IK_ARM_FILE=/path/to/aloha-arm.json
    export DREAM_API_KEY='<your-api-key>'
+
+Run the ALOHA evaluation with the ALOHA arm file.
+
+.. code-block:: bash
+
+   export DREAM_IK_ARM_FILE=/path/to/aloha-arm.json
    bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
      env.eval.assets_path=${ROBOTWIN_PATH}
 
-For Piper, switch the JSON arm file, embodiment, and action frequency:
+In the same shell, set the arm file, embodiment, and action frequency for Piper:
 
 .. code-block:: bash
 
-   export ROBOTWIN_PATH=/path/to/RoboTwin
    export DREAM_IK_ARM_FILE=/path/to/piper-arm.json
-   export DREAM_API_KEY='<your-api-key>'
    bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
      env.eval.assets_path=${ROBOTWIN_PATH} \
-     'env.eval.task_config.embodiment=[piper,piper,0.6]' rollout.dream.action_hz=30
-
-The ``click_bell`` correction is off by default. Set ``rollout.dream.eef_target_bias=true`` to enable it when the task assigns one active arm to press the bell. Once per trajectory, RLinf compares the last target in the first action chunk with the observed end-effector height. If the target is above the observed height minus 8 cm, RLinf shifts that arm's targets by -0.003 m along x and -0.04 m along z in its base frame before IK.
+     'env.eval.task_config.embodiment=[piper,piper,0.6]' rollout.model.dream.action_hz=30
 
 **Check results**
 
-RLinf runs one trajectory for each of ten distinct pre-filtered success seeds, as described in :ref:`robotwin-eval-config`. ALOHA runs at 20 Hz and Piper at 30 Hz. Both use 48-step, 14-dimensional action chunks.
+Each run shuffles the :ref:`pre-filtered success seeds <robotwin-eval-config>` with ``env.eval.seed`` and uses the first seed for one trajectory. Dream uses one environment with ``env.eval.auto_reset=false`` and ``env.eval.skip_intermediate_renders=false``.
 
-Dream uses one environment with ``env.eval.auto_reset=false``. Set ``env.eval.max_steps_per_rollout_epoch`` to the smallest multiple of 48 that is at least ``env.eval.max_episode_steps``. With a 400-step limit, the budget must be 432. RLinf schedules nine chunks and executes the first 16 steps of the last chunk. For shorter trajectories, lower ``env.eval.max_episode_steps`` and recalculate the budget. The full-test-set recipes on this page use other backends.
+If you change ``env.eval.max_episode_steps``, round it up to a multiple of 48 for ``env.eval.max_steps_per_rollout_epoch``. The default limit is 400 and the budget is 432. RLinf clips the ninth chunk to 16 actions.
 
-Read ``eval/success_once`` for the success rate. See :doc:`../reference/results` for logs and videos.
+Read ``eval/success_once`` to see whether the trajectory succeeded. See :doc:`../reference/results` for logs and videos.
 
 .. _robotwin-eval-config:
 
@@ -282,10 +284,6 @@ LingbotVLA 2.0
 - ``rollout.model.precision: bf16``; fp32 weights belong only to the PPO actor
 - ``task_config.embodiment: [aloha-agilex]`` and ``task_config.camera.collect_wrist_camera: true``; the model reads both wrist cameras
 - ``rollout.model.num_action_chunks: 50``; ``max_episode_steps: 400``
-
-Dream API
-
-- See :ref:`robotwin-dream-eval` for setup, launch commands, and step limits.
 
 Covering the full test set
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

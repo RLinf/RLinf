@@ -4,6 +4,7 @@ An English page reads as if an engineer who writes English natively explained th
 
 ## Voice
 
+- Write in plain, readable English that a colleague understands on the first read. Prefer concrete verbs and straightforward sentences over abstract jargon, stacked noun phrases, or stiff spec-sheet wording.
 - Address the reader as "you" and give instructions in the imperative: "Set `cluster.num_nodes`", "Run the script". Use "we" and "let's" only to walk through an example on a concept page, and sparingly there.
 - Write in the present tense and the active voice: "The env worker sends the observations", not "The observations are sent".
 - Lead with the outcome: say what the reader gets or does, then how.
@@ -23,7 +24,7 @@ An English page reads as if an engineer who writes English natively explained th
 
 ## Constructions to avoid
 
-- "Not just X, but Y" and "X rather than Y" when nothing suggested X.
+- Negative-contrast framing ("this is not A, not B, but C", "not just X, but Y", "X rather than Y") and restating a point by saying what it is not after saying what it is. State directly what it is unless a real misconception needs clearing up.
 - A trailing "-ing" clause that claims a benefit: "…, ensuring reliable training". State the consequence, or cut it.
 - Lists and adjective series padded to three items. List the real number.
 - A closing sentence that praises the design or restates the paragraph, and a closing section that summarizes the page.

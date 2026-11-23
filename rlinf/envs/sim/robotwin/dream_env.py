@@ -24,77 +24,26 @@ from omegaconf import DictConfig
 from PIL import Image, ImageOps
 
 from rlinf.envs.sim.robotwin.robotwin_env import RoboTwinEnv
-from rlinf.scheduler import Channel, WorkerInfo
-from rlinf.workers.env.env_worker import EnvWorker
+from rlinf.scheduler import WorkerInfo
 
 
-class DreamObservationBuffer:
-    """Collect one environment's control observations before worker transport."""
-
-    def __init__(self) -> None:
-        self.episode_id = 0
-        self.samples: list[dict[str, Any]] = []
-        self.last_sample: dict[str, Any] | None = None
-
-    def reset(self) -> None:
-        """Start an episode with an empty observation history."""
-        self.episode_id += 1
-        self.samples = []
-        self.last_sample = None
-
-    def append(
-        self,
-        observation: dict[str, Any],
-        timestamp: float,
-    ) -> None:
-        """Encode camera frames before transport and keep their state and time."""
-        main, wrists = observation["main_images"], observation["wrist_images"]
-        frames = {}
-        for role, image in zip(
-            ("overhead", "wrist_l", "wrist_r"),
-            (main[0], wrists[0, 0], wrists[0, 1]),
-            strict=True,
-        ):
-            buffer = io.BytesIO()
-            ImageOps.pad(
-                Image.fromarray(image.cpu().numpy()),
-                (320, 240),
-                method=Image.Resampling.BILINEAR,
-                color=(0, 0, 0),
-            ).save(buffer, format="JPEG", quality=85)
-            frames[f"video.{role}"] = base64.b64encode(buffer.getvalue()).decode(
-                "ascii"
-            )
-        sample = {
-            "frames": frames,
-            "state": observation["states"].detach().cpu().clone(),
-            "timestamp": timestamp,
-        }
-        self.samples.append(sample)
-        self.last_sample = sample
-
-    def pack(
-        self,
-        task_descriptions: list[str],
-        commanded: torch.Tensor | None,
-        *,
-        finished: bool,
-        active_arms: tuple[str, ...] = ("left", "right"),
-    ) -> dict[str, Any]:
-        """Return a single-environment batch with an explicit control time axis."""
-        samples = self.samples or [self.last_sample]
-        return {
-            "frames": [[sample["frames"] for sample in samples]],
-            "states": torch.stack([sample["state"] for sample in samples], dim=1),
-            "timestamps": torch.tensor(
-                [[sample["timestamp"] for sample in samples]], dtype=torch.float64
-            ),
-            "task_descriptions": task_descriptions,
-            "episode_id": torch.tensor([self.episode_id]),
-            "finished": torch.tensor([finished]),
-            "commanded": commanded,
-            "active_arms": [active_arms],
-        }
+def _encode_frames(observation: dict[str, Any]) -> dict[str, str]:
+    main, wrists = observation["main_images"], observation["wrist_images"]
+    frames = {}
+    for role, image in zip(
+        ("overhead", "wrist_l", "wrist_r"),
+        (main[0], wrists[0, 0], wrists[0, 1]),
+        strict=True,
+    ):
+        buffer = io.BytesIO()
+        ImageOps.pad(
+            Image.fromarray(image.cpu().numpy()),
+            (320, 240),
+            method=Image.Resampling.BILINEAR,
+            color=(0, 0, 0),
+        ).save(buffer, format="JPEG", quality=85)
+        frames[f"video.{role}"] = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return frames
 
 
 class DreamRobotwinEnv(RoboTwinEnv):
@@ -113,8 +62,6 @@ class DreamRobotwinEnv(RoboTwinEnv):
         super().__init__(
             cfg, num_envs, seed_offset, total_num_processes, worker_info, record_metrics
         )
-        self.observations = DreamObservationBuffer()
-        self.commanded = None
 
     def _detach_capture(self) -> None:
         if self._observed_task is not None:
@@ -169,90 +116,64 @@ class DreamRobotwinEnv(RoboTwinEnv):
             values.append(float(np.clip((opening - low) / (high - low), 0, 1)))
         return torch.tensor([values], dtype=torch.float32)
 
-    def _pack(self, finished: bool = False) -> dict[str, Any]:
-        return self.observations.pack(
-            self.instructions,
-            self.commanded,
-            finished=finished,
-            active_arms=tuple(self.active_arms),
-        )
+    def _attach_history(
+        self,
+        observations: list[dict[str, Any]],
+        times: list[float],
+        commanded: torch.Tensor | None = None,
+        finished: bool = False,
+    ) -> None:
+        frames, states, timestamps = [], [], []
+        for observation, timestamp in zip(observations, times, strict=True):
+            if timestamps and timestamp <= timestamps[-1]:
+                continue
+            frames.append(_encode_frames(observation))
+            states.append(observation["states"].cpu())
+            timestamps.append(timestamp)
+        last_obs = observations[-1]
+        last_obs["history"] = [
+            {
+                "frames": [frames],
+                "states": torch.stack(states, dim=1),
+                "timestamps": torch.tensor([timestamps], dtype=torch.float64),
+                "task_descriptions": last_obs["task_descriptions"],
+                "finished": torch.tensor([finished]),
+                "commanded": commanded,
+                "active_arms": [self.active_arms],
+            }
+        ]
 
     def reset(self, *args: Any, **kwargs: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         """Start SDK observation capture from the native reset observation."""
         self._detach_capture()
         observation, info = super().reset(*args, **kwargs)
         self._attach_capture()
-        self.observations.reset()
-        self.commanded = None
-        self.instructions = observation["task_descriptions"]
         side = str(self.venv.envs[0].task.get_info().get("{a}", "")).lower()
-        self.active_arms = [side] if side in ("left", "right") else ["left", "right"]
+        self.active_arms = (side,) if side in ("left", "right") else ("left", "right")
         observation["states"] = self._measured_state()
-        self.observations.append(observation, 0.0)
-        info["dream_observations"] = self._pack()
+        self._attach_history([observation], [0.0])
         return observation, info
 
     def chunk_step(self, actions: torch.Tensor) -> tuple:
         """Execute native RoboTwin actions and attach measured observations."""
         remaining = self.cfg.max_episode_steps - int(self.elapsed_steps[0])
-        if remaining <= 0:
-            raise RuntimeError(
-                f"Dream received an action chunk after env.eval.max_episode_steps="
-                f"{self.cfg.max_episode_steps}. Check env.eval.max_steps_per_rollout_epoch."
-            )
-        result = super().chunk_step(actions[:, :remaining])
+        actions = actions[:, :remaining]
+        result = super().chunk_step(actions)
         observations, infos = result[0], result[-1]
-        self.observations.samples.clear()
-        for observation in observations:
-            timestamp = float(observation["dream_sim_time"][0])
-            if (
-                not self.observations.samples
-                or timestamp > self.observations.last_sample["timestamp"]
-            ):
-                self.observations.append(observation, timestamp)
         finished = bool(
             result[2].any()
             or result[3].any()
             or torch.as_tensor(infos[-1]["success"]).any()
         )
-        self.commanded = torch.as_tensor(actions[:, :remaining][:, -1]).detach().cpu()
-        infos[-1]["dream_observations"] = self._pack(finished)
+        self._attach_history(
+            observations,
+            [float(observation["dream_sim_time"][0]) for observation in observations],
+            commanded=torch.as_tensor(actions[:, -1]).detach().cpu(),
+            finished=finished,
+        )
         return result
 
     def close(self) -> None:
         """Restore capture hooks and release the native environment."""
         self._detach_capture()
         self.offload()
-
-
-class DreamEnvWorker(EnvWorker):
-    """Attach Dream observation capture before the standard RLinf wrappers."""
-
-    def _setup_env_and_wrappers(
-        self, env_cls: type, env_cfg: DictConfig, num_envs_per_stage: int
-    ) -> list:
-        if self._world_size != 1:
-            raise ValueError("Dream requires exactly one environment worker.")
-        return super()._setup_env_and_wrappers(
-            DreamRobotwinEnv, env_cfg, num_envs_per_stage
-        )
-
-    def _build_rollout_input_data(self, env_batch: dict[str, Any]) -> dict[str, Any]:
-        data = super()._build_rollout_input_data(env_batch)
-        data["obs"] = {"history": [env_batch["env_infos"]["dream_observations"]]}
-        return data
-
-    def close(self) -> None:
-        """Close the environments initialized by this worker."""
-        for env in self.eval_env_list:
-            env.close()
-        self.eval_env_list = []
-
-    def evaluate(
-        self, input_channel: Channel, rollout_channel: Channel
-    ) -> dict[str, torch.Tensor]:
-        """Evaluate and release the environment on completion or failure."""
-        try:
-            return super().evaluate(input_channel, rollout_channel)
-        finally:
-            self.close()

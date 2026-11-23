@@ -41,11 +41,18 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 from rlinf.algorithms.losses import compute_ppo_critic_loss
-from rlinf.config import SupportedModel, validate_embodied_cfg
+from rlinf.algorithms.refl_scorers import build_refl_scorer, register_refl_scorer
+from rlinf.config import (
+    SupportedModel,
+    _validate_dream_eval_cfg,
+    validate_cfg,
+    validate_embodied_cfg,
+)
 from rlinf.data.schema.embodied_types import EnvOutput
-from rlinf.envs.sim.robotwin.dream_env import DreamEnvWorker, DreamObservationBuffer
+from rlinf.envs import get_env_cls
 from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
     RLTTokenTransformer,
 )
@@ -72,7 +79,8 @@ from rlinf.utils.env_helpers.delay_sampler import (
     GaussianDelaySampler,
     UniformDelaySampler,
 )
-from rlinf.workers.rollout.dream_worker import DreamPolicy, DreamRolloutWorker
+from rlinf.workers.env.env_worker import EnvWorker
+from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 from rlinf.workers.rollout.phyai import phyai_rollout_worker
 from rlinf.workers.rollout.phyai.phyai_rollout_worker import PhyAIRolloutWorker
 
@@ -1036,6 +1044,63 @@ def test_custom_model_registration_smoke():
     assert received["torch_dtype"] == torch.float32
 
 
+class _TinyProjModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.embed = torch.nn.Embedding(5, 4)
+        self.proj = torch.nn.Linear(4, 3)
+
+
+def test_get_model_folds_scaled_lora_adapters_into_the_base_weights(tmp_path):
+    peft = pytest.importorskip("peft")
+    torch.manual_seed(0)
+    base = _TinyProjModel()
+    adapted = peft.get_peft_model(
+        _clone_module(base),
+        peft.LoraConfig(
+            r=2,
+            lora_alpha=4,
+            target_modules=["embed", "proj"],
+            init_lora_weights=False,
+        ),
+    )
+    adapted.save_pretrained(tmp_path)
+    proj = adapted.base_model.model.proj
+    update = (proj.lora_B["default"].weight @ proj.lora_A["default"].weight) * (4 / 2)
+    embed = adapted.base_model.model.embed
+    embed_update = (
+        embed.lora_embedding_B["default"] @ embed.lora_embedding_A["default"]
+    ).T * (4 / 2)
+    model_type = f"custom_model_merged_lora_{int(time.time() * 1000)}"
+    register_model(model_type, lambda cfg, torch_dtype: _clone_module(base))
+
+    model = get_model(
+        OmegaConf.create(
+            {
+                "model_type": model_type,
+                "precision": "fp32",
+                "is_lora": False,
+                "load_to_device": False,
+                "merged_loras": [{"path": str(tmp_path), "scale": 0.5}],
+            }
+        )
+    )
+
+    assert torch.allclose(model.proj.weight, base.proj.weight + 0.5 * update, atol=1e-6)
+    assert torch.allclose(
+        model.embed.weight, base.embed.weight + 0.5 * embed_update, atol=1e-6
+    )
+    assert not any("lora" in name for name, _ in model.named_parameters())
+    # Without a trainable LoRA on top, the merged weights are fully fine-tuned.
+    assert all(param.requires_grad for param in model.parameters())
+
+
+def _clone_module(module: torch.nn.Module) -> torch.nn.Module:
+    clone = type(module)()
+    clone.load_state_dict(module.state_dict())
+    return clone
+
+
 def test_custom_model_registration_with_fsdp_wrap_policy():
     model_type = f"custom_model_fsdp_{int(time.time() * 1000)}"
 
@@ -1924,8 +1989,10 @@ def test_starvla_autocast_targets_the_worker_accelerator(monkeypatch):
     monkeypatch.setattr(Worker, "torch_device_type", "cpu")
 
     with accelerator.accelerator_autocast(torch.bfloat16):
-        assert torch.is_autocast_enabled("cpu")
-        assert torch.get_autocast_dtype("cpu") == torch.bfloat16
+        # Use the CPU-specific queries because torch_musa's patch on
+        # torch.is_autocast_enabled ignores the "cpu" device argument.
+        assert torch.is_autocast_cpu_enabled()
+        assert torch.get_autocast_cpu_dtype() == torch.bfloat16
 
 
 def test_starvla_autocast_is_a_noop_without_an_accelerator(monkeypatch):
@@ -1933,7 +2000,7 @@ def test_starvla_autocast_is_a_noop_without_an_accelerator(monkeypatch):
     monkeypatch.setattr(Worker, "torch_device_type", None)
 
     with accelerator.accelerator_autocast(torch.bfloat16):
-        assert not torch.is_autocast_enabled("cpu")
+        assert not torch.is_autocast_cpu_enabled()
         assert not torch.is_autocast_enabled("cuda")
 
 
@@ -4541,35 +4608,95 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     assert cfg.runner.max_steps == 1 and cfg.env.train.total_num_envs == 4
 
 
+def test_entropy_temperatures_are_tuned_per_env_and_keep_scalar_checkpoints():
+    from rlinf.models.embodiment.modules.entropy_tunning import EntropyTemperature
+
+    temperature = EntropyTemperature(initial_alpha=0.1, num_temperatures=2)
+    with torch.no_grad():
+        temperature.base_alpha[1] += 1.0
+
+    # Index -1 marks a demo sample, which belongs to no env.
+    alpha = temperature.sample_alpha(torch.tensor([1, 0, -1]))
+
+    assert alpha.shape == (3, 1)
+    assert alpha[0, 0] > alpha[1, 0]
+    assert torch.isclose(alpha[2, 0], temperature.temperatures().mean())
+    assert temperature.sample_alpha(None) == temperature.temperatures().mean()
+
+    # One temperature keeps the 0-dim parameter that checkpoints already hold.
+    single = EntropyTemperature(initial_alpha=0.1)
+    assert single.state_dict()["base_alpha"].shape == torch.Size([])
+    single.load_state_dict({"base_alpha": torch.tensor(0.5)})
+    expected = torch.nn.functional.softplus(torch.tensor(0.5))
+    assert torch.allclose(
+        single.sample_alpha(torch.tensor([0, -1])), expected.expand(2, 1)
+    )
+
+
 _DREAM_ROOT = Path(__file__).resolve().parents[2]
 
 
-class _DreamSDK:
+class _DreamCamera:
+    def load_camera(self, scene):
+        pass
+
+
+class _DreamTask:
     def __init__(self):
-        self.calls = self.closes = self.resets = 0
-        self.observations = []
-        self._policy = SimpleNamespace(_post=lambda observation: None)
-        self.right = np.full((48, 7), 0.75)
+        self.tick = 0
+        self.scene = SimpleNamespace(step=self.step, get_timestep=lambda: 0.125)
+        self.robot = SimpleNamespace()
+        for side, start, finger in (("left", 0, 0.5), ("right", 6, 1.0)):
+            joints = list(range(7))
+            entity = SimpleNamespace(
+                get_active_joints=lambda joints=joints: joints,
+                get_qpos=lambda start=start, finger=finger: [
+                    *(np.arange(6) + start + self.tick),
+                    finger,
+                ],
+            )
+            setattr(self.robot, f"{side}_entity", entity)
+            setattr(self.robot, f"{side}_arm_joints", joints[:6])
+            setattr(self.robot, f"{side}_gripper", [(joints[-1], 0.5, 0.5)])
+            setattr(self.robot, f"{side}_gripper_scale", (-1.0, 1.0))
 
-    def policy(self, config):
-        self.config = config
+    def step(self):
+        self.tick += 1
 
-    def reset_episode(self):
-        self.resets += 1
+    def get_info(self):
+        return {"{a}": "Left"}
 
-    def set_observation(self, frames, state, *, timestamp):
-        self.observations.append((frames, state, timestamp))
+    def get_obs(self):
+        return {"joint_action": {"vector": np.full(14, -1, dtype=np.float32)}}
 
-    def get_action(self, *, commanded=None):
-        self.calls += 1
-        self.action_before_ik = self._policy._post(
-            {"state.left_eef_xyz": [0, 0, 0.1], "state.right_eef_xyz": [0, 0, 0.1]}
-        )
-        self.commanded = commanded
-        return {"q_l_chunk": np.full((48, 7), 0.25), "q_r_chunk": self.right}
 
-    def close(self):
-        self.closes += 1
+class _DreamVectorEnv:
+    def __init__(self, **kwargs):
+        self.envs = [SimpleNamespace(task=_DreamTask())]
+
+    def reset(self, **kwargs):
+        self.envs[0].task = _DreamTask()
+
+    def get_obs(self):
+        raw = self.envs[0].task.get_obs()
+        rgb = np.full((8, 12, 3), 255, dtype=np.uint8)
+        return [
+            {
+                "full_image": rgb,
+                "left_wrist_image": rgb,
+                "right_wrist_image": rgb,
+                "state": raw["joint_action"]["vector"].copy(),
+                "instruction": "press the bell",
+            }
+        ]
+
+    def step_with_full_obs(self, actions):
+        self.actions = actions
+        observations = []
+        for _ in actions[0]:
+            self.envs[0].task.scene.step()
+            observations.append(self.get_obs())
+        return observations, [0.0], [False], [False], [{"success": False}]
 
 
 def _dream_config(monkeypatch):
@@ -4582,113 +4709,128 @@ def _dream_config(monkeypatch):
         return compose(config_name="robotwin_dream_aloha_click_bell_eval")
 
 
-def _dream_observation():
-    return {
-        "main_images": torch.full((1, 8, 12, 3), 255, dtype=torch.uint8),
-        "wrist_images": torch.full((1, 2, 8, 12, 3), 255, dtype=torch.uint8),
-        "states": torch.arange(14, dtype=torch.float32)[None] / 14,
-    }
-
-
-def test_dream_api_images_and_sdk_lifecycle(monkeypatch):
+def test_dream_policy_with_robotwin_observations(monkeypatch):
     cfg = _dream_config(monkeypatch)
-    buffer = DreamObservationBuffer()
-    buffer.reset()
-    obs = _dream_observation()
-    buffer.append(obs, 0.0)
-    samples = buffer.pack(["press the bell"], torch.ones((1, 14)), finished=False)
-    sdk = _DreamSDK()
-    client = DreamPolicy(sdk, cfg.rollout)
-    worker = object.__new__(DreamEnvWorker)
-    worker.enable_rlt = False
-    env_batch = EnvOutput(obs=obs, env_infos={"dream_observations": samples}).to_dict()
-    data = worker._build_rollout_input_data(env_batch)
-    assert set(data) == {"obs", "final_obs"}
-    assert set(data["obs"]) == {"history"}
-    assert DreamRolloutWorker._infer_env_batch_size(data) == 1
-    rollout = object.__new__(DreamRolloutWorker)
-    data = rollout._merge_obs_batches([data])
-    actions, _ = client.predict_action_batch(data["obs"], mode="eval")
-    np.testing.assert_allclose(actions[0, 0], [0.25] * 7 + [0.75] * 7)
-    frames, state, timestamp = sdk.observations[0]
-    assert timestamp == 0 and sdk.resets == 1
-    assert set(frames) == {"video.overhead", "video.wrist_l", "video.wrist_r"}
-    assert set(state) == {
-        "prompt",
-        "state.left_arm",
-        "state.left_grip",
-        "state.right_arm",
-        "state.right_grip",
-    }
-    for encoded in frames.values():
-        image = Image.open(io.BytesIO(base64.b64decode(encoded)))
-        assert image.size == (320, 240)
-        assert image.getpixel((160, 0)) == (0, 0, 0)
-        assert image.getpixel((160, 120)) == (255, 255, 255)
-    np.testing.assert_allclose(state["state.right_arm"], np.arange(7, 13) / 14)
-    np.testing.assert_allclose(sdk.commanded["q_l_chunk"], 1)
-    data["obs"]["history"][0]["finished"] = [True]
-    hold, _ = client.predict_action_batch(data["obs"], mode="eval")
-    np.testing.assert_allclose(hold[:, 0], samples["states"][:, -1])
-    assert sdk.calls == 1
-    client.close()
-    client.close()
-    assert sdk.closes == 1
-
-
-def test_dream_api_click_bell_bias_before_ik(monkeypatch):
-    cfg = _dream_config(monkeypatch)
-    assert not cfg.rollout.dream.eef_target_bias
-    sdk = _DreamSDK()
-    post = sdk._policy._post
-    disabled = DreamPolicy(sdk, cfg.rollout)
-    assert sdk._policy._post is post
-    disabled.close()
-
-    sdk = _DreamSDK()
-    left, right = "action.left_eef_xyz", "action.right_eef_xyz"
-    targets = {left: [[0, 0, 0.05]], right: [[0, 0, 0]]}
-    sdk._policy._post = lambda observation: {"per_key": targets.copy()}
-    cfg.rollout.dream.eef_target_bias = True
-    client = DreamPolicy(sdk, cfg.rollout)
-    assert client.task_arm is None and client.eef_bias is None
-    buffer = DreamObservationBuffer()
-
-    for side, expected in (("left", [[-0.003, 0, 0.01]]), ("right", targets[left])):
-        buffer.reset()
-        buffer.append(_dream_observation(), 0.0)
-        sample = buffer.pack(["press"], None, finished=False, active_arms=(side,))
-        client.predict_action_batch({"history": [sample]})
-        action = sdk.action_before_ik["per_key"]
-        np.testing.assert_allclose(action[left], expected)
-        np.testing.assert_allclose(action[right], targets[right])
-        if side == "left":
-            targets[left] = [[0, 0, -0.1]]
-            client.predict_action_batch({"history": [sample]})
-            np.testing.assert_allclose(
-                sdk.action_before_ik["per_key"][left], [[-0.003, 0, -0.14]]
-            )
-            targets[left] = [[0, 0, 0.05]]
-
-
-def test_dream_api_nonfinite_active_arm_fails(monkeypatch):
-    cfg = _dream_config(monkeypatch)
-    sdk = _DreamSDK()
-    sdk.right[:] = np.nan
-    client = DreamPolicy(sdk, cfg.rollout)
-    buffer = DreamObservationBuffer()
-    buffer.reset()
-    obs = _dream_observation()
-    obs["states"].zero_()
-    buffer.append(obs, 0.0)
-    sample = buffer.pack(["press"], None, finished=False, active_arms=("left",))
-    np.testing.assert_allclose(
-        client.predict_action_batch({"history": [sample]}, mode="eval")[0][..., 7:], 0
+    cfg.env.eval.max_episode_steps = 3
+    monkeypatch.setitem(
+        sys.modules, "envs.camera", SimpleNamespace(Camera=_DreamCamera)
     )
-    sample["active_arms"] = [["left", "right"]]
+    monkeypatch.setitem(
+        sys.modules,
+        "robotwin.envs.vector_env",
+        SimpleNamespace(VectorEnv=_DreamVectorEnv),
+    )
+    sdk = MagicMock()
+    right = np.full((48, 7), 0.75)
+    sdk.get_action.return_value = {
+        "q_l_chunk": np.full((48, 7), 0.25),
+        "q_r_chunk": right,
+    }
+    monkeypatch.setitem(sys.modules, "dream", SimpleNamespace(DreamClient=lambda: sdk))
+    policy = get_model(cfg.rollout.model)
+    env = get_env_cls(cfg.env.eval.env_type, cfg.env.eval)(cfg.env.eval, 1, 0, 1, None)
+    worker = object.__new__(EnvWorker)
+    worker.enable_rlt = False
+    rollout = object.__new__(MultiStepRolloutWorker)
+
+    def policy_input(obs):
+        batch = worker._build_rollout_input_data(EnvOutput(obs=obs).to_dict())
+        assert rollout._infer_env_batch_size(batch) == 1
+        return rollout._merge_obs_batches([batch])["obs"]
+
+    observation, _ = env.reset()
+    initial = observation["history"][0]
+    expected = torch.tensor([*range(6), 0.5, *range(6, 12), 1.0])
+    torch.testing.assert_close(initial["states"][0, 0], expected)
+    assert initial["active_arms"] == [("left",)]
+    actions, _ = policy.predict_action_batch(policy_input(observation))
+    np.testing.assert_allclose(actions[0, 0], [0.25] * 7 + [0.75] * 7)
+    args, kwargs = sdk.set_observation.call_args
+    frames, state = args
+    assert kwargs["timestamp"] == 0
+    assert state["prompt"] == "press the bell"
+    assert state["state.right_arm"] == list(range(6, 12))
+    assert set(frames) == {"video.overhead", "video.wrist_l", "video.wrist_r"}
+    for encoded in frames.values():
+        with Image.open(io.BytesIO(base64.b64decode(encoded))) as image:
+            assert image.size == (320, 240)
+            assert image.getpixel((160, 0)) == (0, 0, 0)
+            assert image.getpixel((160, 120)) == (255, 255, 255)
+
+    observations, *_ = env.chunk_step(actions[:, :2])
+    right[:] = np.nan
+    payload = policy_input(observations[-1])
+    actions, _ = policy.predict_action_batch(payload)
+    np.testing.assert_allclose(actions[0, 0, 7:], [*range(8, 14), 1.0])
+    commanded = sdk.get_action.call_args.kwargs["commanded"]
+    np.testing.assert_allclose(commanded["q_l_chunk"], 0.25)
+    payload["history"][0]["active_arms"] = [("right",)]
     with pytest.raises(ValueError, match="active right arm"):
-        client.predict_action_batch({"history": [sample]}, mode="eval")
-    client.close()
+        policy.predict_action_batch(payload)
+
+    observations, _, terminated, truncated, _ = env.chunk_step(actions)
+    assert len(observations) == 1
+    assert truncated.tolist() == [[True]] and not terminated.any()
+    np.testing.assert_array_equal(env.venv.actions, actions[:, :1])
+    packed = observations[-1]["history"][0]
+    expected[:6] += 3
+    expected[7:13] += 3
+    torch.testing.assert_close(packed["states"][0, 0], expected)
+    torch.testing.assert_close(packed["commanded"], torch.from_numpy(actions[:, 0]))
+    assert packed["timestamps"].tolist() == [[0.375]]
+    calls = sdk.get_action.call_count
+    hold, _ = policy.predict_action_batch(policy_input(observations[-1]))
+    np.testing.assert_allclose(hold[:, 0], packed["states"][:, -1])
+    assert sdk.get_action.call_count == calls
+    policy.close()
+    sdk.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("env.eval.max_steps_per_rollout_epoch", 384),
+        ("env.eval.max_steps_per_rollout_epoch", 480),
+        ("env.eval.auto_reset", True),
+        ("env.eval.total_num_envs", 2),
+        ("env.eval.rollout_epoch", 2),
+    ],
+)
+def test_dream_api_invalid_config_fails_before_ray(monkeypatch, key, value):
+    cfg = _dream_config(monkeypatch)
+    OmegaConf.update(cfg, key, value)
+    with patch("rlinf.config.Cluster") as cluster:
+        with pytest.raises(ValueError, match=key):
+            validate_cfg(cfg)
+        cluster.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("component", "placement"),
+    [("env", "0:0-1"), ("rollout", "0-1"), ("rollout", "0,1"), ("rollout", "all")],
+)
+def test_dream_api_invalid_worker_count_fails_before_ray(
+    monkeypatch, component, placement
+):
+    cfg = _dream_config(monkeypatch)
+    cfg.cluster.component_placement[component].placement = placement
+    with patch("rlinf.config.Cluster") as cluster:
+        with pytest.raises(ValueError, match="cluster.component_placement"):
+            validate_cfg(cfg)
+        cluster.assert_not_called()
+
+
+def test_dream_api_accepts_final_partial_chunk_budget(monkeypatch):
+    cfg = _dream_config(monkeypatch)
+    assert cfg.env.eval.max_episode_steps == 400
+    assert cfg.env.eval.max_steps_per_rollout_epoch == 432
+    _validate_dream_eval_cfg(cfg)
+
+
+def test_dream_api_accepts_grouped_placement_with_explicit_process_rank(monkeypatch):
+    cfg = _dream_config(monkeypatch)
+    cfg.cluster.component_placement = OmegaConf.create({"env, rollout": "all:0"})
+    _validate_dream_eval_cfg(cfg)
 
 
 @pytest.mark.parametrize(
@@ -5160,11 +5302,13 @@ def test_starvla_predict_action_batch_gates_device_images_by_vlm_and_head(
     monkeypatch.setattr(
         starvla_mod,
         "get_rollout_handler",
-        lambda _: lambda model, **kw: {
-            "output": {"normalized_actions": np.zeros((1, 2, 7), dtype=np.float32)},
-            "model_inputs": {},
-            "forward_inputs": {},
-        },
+        lambda _: (
+            lambda model, **kw: {
+                "output": {"normalized_actions": np.zeros((1, 2, 7), dtype=np.float32)},
+                "model_inputs": {},
+                "forward_inputs": {},
+            }
+        ),
     )
     monkeypatch.setattr(
         starvla_mod.action_space_utils,
@@ -5198,3 +5342,509 @@ def test_starvla_predict_action_batch_gates_device_images_by_vlm_and_head(
         )
 
     assert seen_devices == [torch.device("cpu"), None, None]
+
+
+def test_mlp_policy_cuda_graph_falls_back_to_eager_for_uncaptured_batch_size(
+    monkeypatch,
+):
+    from rlinf.models.embodiment.mlp_policy.mlp_policy import MLPPolicy
+
+    policy = MLPPolicy(
+        obs_dim=4,
+        action_dim=2,
+        num_action_chunks=1,
+        add_value_head=True,
+        add_q_head=False,
+    )
+    replayed = []
+
+    class FakeManager:
+        def replay(self, graph_name, inputs):
+            replayed.append((graph_name, inputs["states"].shape[0]))
+            action, chunk_actions, chunk_logprobs, chunk_values = (
+                policy._eager_generate_actions(inputs["states"], "train", True)
+            )
+            return {
+                "action": action,
+                "chunk_actions": chunk_actions,
+                "chunk_logprobs": chunk_logprobs,
+                "chunk_values": chunk_values,
+            }
+
+    policy.cuda_graph_manager = FakeManager()
+    monkeypatch.setattr(policy, "capture_action_generation", lambda **kwargs: None)
+    policy.capture_cuda_graph(train_batch_size=4, eval_batch_size=2)
+
+    actions, _, _, _ = policy._generate_actions(
+        torch.zeros(4, 4), mode="train", calculate_values=True
+    )
+    assert actions.shape == (4, 2)
+    assert len(replayed) == 1
+
+    smaller_actions, _, _, _ = policy._generate_actions(
+        torch.zeros(2, 4), mode="train", calculate_values=True
+    )
+    assert smaller_actions.shape == (2, 2)
+    assert len(replayed) == 1
+
+
+@pytest.mark.parametrize("pre_weight", [0.0, 0.1, 0.01])
+@pytest.mark.parametrize("image_size,max_tokens", [(224, 35), (32, 7)])
+def test_refl_config_composes(monkeypatch, pre_weight, image_size, max_tokens):
+    from hydra import compose, initialize_config_dir
+
+    repo = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(repo))
+    monkeypatch.setenv("DIFFUSION_PATH", str(repo / "examples/diffusion"))
+    with initialize_config_dir(
+        config_dir=str(repo / "examples/diffusion/config"), version_base="1.1"
+    ):
+        cfg = compose(
+            config_name="sd3_refl_imagereward",
+            overrides=[
+                f"algorithm.refl_pre_loss_weight={pre_weight}",
+                f"actor.refl_reward_model.image_size={image_size}",
+                f"actor.refl_reward_model.max_tokens={max_tokens}",
+            ],
+        )
+        OmegaConf.resolve(cfg)
+    from rlinf.config import validate_refl_cfg
+
+    validate_refl_cfg(cfg)
+    assert cfg.algorithm.loss_type == "embodied_refl"
+    assert "refl_sampling" not in cfg.algorithm
+    assert cfg.actor.model.sd3.rl_mode == "refl"
+    assert cfg.actor.refl_reward_model.type == "image_reward"
+    assert cfg.actor.refl_reward_model.image_size == image_size
+    assert cfg.actor.refl_reward_model.max_tokens == max_tokens
+    assert cfg.env.eval.reward.image_size == image_size
+    assert cfg.env.eval.reward.max_tokens == max_tokens
+    assert cfg.actor.refl_pre_data.num_workers == 0
+    assert cfg.algorithm.refl_pre_loss_weight == pre_weight
+    assert cfg.env.train is None
+    assert cfg.actor.refl_data.type == "visual.prompt_dataset"
+    assert cfg.actor.refl_samples_per_step == 512
+    assert cfg.env.eval.reward.model_path == cfg.actor.refl_reward_model.model_path
+    assert cfg.env.eval.sequential_eval
+    assert cfg.runner.max_epochs == cfg.runner.max_steps == 50
+    assert cfg.runner.val_check_interval == cfg.runner.save_interval == 10
+    assert cfg.actor.micro_batch_size == 1
+    assert cfg.actor.global_batch_size == 64
+    assert cfg.env.eval.total_num_envs == 4
+    assert cfg.env.eval.rollout_epoch == 128
+    assert cfg.env.eval.reward.batch_size == 1
+    assert cfg.rollout.rollout_backend == "huggingface"
+    assert "generation_backend" not in cfg.rollout
+    assert not {
+        "kl_penalty",
+        "kl_penalty_type",
+        "kl_beta",
+        "entropy_bonus",
+        "clip_ratio_high",
+        "clip_ratio_low",
+        "clip_ratio_c",
+    }.intersection(cfg.algorithm)
+
+
+class _VectorPolicy(torch.nn.Module, BasePolicy):
+    forward = BasePolicy.forward
+
+    def __init__(self):
+        super().__init__()
+        self.projection = torch.nn.Linear(3, 4)
+
+    def default_forward(self, features):
+        return self.projection(features)
+
+    def predict_action_batch(self, env_obs, **kwargs):
+        return self.default_forward(env_obs["features"]), {}
+
+    def refl_forward(self, forward_inputs, xt_source="rollout", **kwargs):
+        return {"samples": self.default_forward(forward_inputs["features"])}
+
+
+class _VectorScorer(torch.nn.Module):
+    def __init__(self, target, device):
+        super().__init__()
+        self.target = torch.nn.Parameter(
+            torch.full((4,), target, device=device), requires_grad=False
+        )
+
+    def forward(self, samples, forward_inputs):
+        error = samples - self.target - forward_inputs["offset"]
+        return -error.square().flatten(1).mean(1)
+
+
+def test_refl_scorer_supports_non_image_samples_and_policy_gradients():
+    register_refl_scorer(
+        "test_vector_reward", lambda cfg, device: _VectorScorer(cfg["target"], device)
+    )
+    scorer = build_refl_scorer({"type": "test_vector_reward", "target": 0.5}, "cpu")
+    policy = _VectorPolicy()
+    samples = policy(
+        forward_type=ForwardType.REFL,
+        forward_inputs={"features": torch.ones(2, 5, 3)},
+    )["samples"]
+    rewards = scorer(samples, {"offset": torch.zeros(2, 5, 4)})
+    assert rewards.shape == (2,) and torch.isfinite(rewards).all()
+    torch.nn.functional.relu(2 - rewards).mean().backward()
+    assert policy.projection.weight.grad is not None
+    assert policy.projection.weight.grad.abs().sum() > 0
+    assert all(not p.requires_grad and p.grad is None for p in scorer.parameters())
+    with pytest.raises(ValueError, match="already registered"):
+        register_refl_scorer("test_vector_reward", lambda cfg, device: scorer)
+
+
+def test_refl_scorer_rejects_invalid_registration_and_unknown_types():
+    with pytest.raises(ValueError, match="non-empty"):
+        register_refl_scorer("", lambda cfg, device: None)
+    with pytest.raises(TypeError, match="callable"):
+        register_refl_scorer("invalid_builder", None)
+    with pytest.raises(ValueError, match="Unknown ReFL scorer 'unknown'"):
+        build_refl_scorer({"type": "unknown"}, "cpu")
+
+
+class _ExternalImageReward(torch.nn.Module):
+    """Small replacement for the external checkpoint, not the RLinf scorer."""
+
+    def __init__(self, tokenizer):
+        super().__init__()
+        self.projection = torch.nn.Linear(3, 1)
+        self.blip = SimpleNamespace(tokenizer=tokenizer)
+        self.image_shapes = []
+
+    def score_gard(self, input_ids, attention_mask, pixels):
+        self.image_shapes.append(pixels.shape)
+        return self.projection(pixels.mean(dim=(-2, -1)))
+
+
+@pytest.fixture
+def image_reward_package(tmp_path, monkeypatch):
+    pytest.importorskip("torchvision")
+    from transformers import BertTokenizer
+
+    vocab = tmp_path / "vocab.txt"
+    vocab.write_text("[PAD]\n[UNK]\n[CLS]\n[SEP]\n[MASK]\na\nfox\ncat\n")
+    external_model = _ExternalImageReward(BertTokenizer(vocab_file=str(vocab)))
+    reward_package = ModuleType("ImageReward")
+    reward_package.load = lambda *args, **kwargs: external_model
+    monkeypatch.setitem(sys.modules, "ImageReward", reward_package)
+    reward_cfg = {
+        "model_path": "local-checkpoint",
+        "med_config": "local-config",
+        "precision": "fp32",
+    }
+    return reward_cfg, external_model
+
+
+@pytest.mark.parametrize("scorer_type", [None, "image_reward"])
+@pytest.mark.parametrize("preprocess_cfg", [{}, {"image_size": 32, "max_tokens": 7}])
+def test_image_reward_freezes_weights_but_preserves_image_gradients(
+    image_reward_package, scorer_type, preprocess_cfg
+):
+    from rlinf.envs.sim.diffusion.rewards.visual.image_reward import ImageRewardBackend
+
+    reward_cfg, external_model = image_reward_package
+    reward_cfg.update(preprocess_cfg)
+    if scorer_type is not None:
+        reward_cfg["type"] = scorer_type
+    scorer = build_refl_scorer(reward_cfg, device="cpu")
+    images = torch.full((2, 3, 16, 16), 0.5, requires_grad=True)
+    tokens = scorer.tokenize(["a fox", "a cat"])
+    rewards = scorer(images, {"prompts": ["a fox", "a cat"]})
+    torch.testing.assert_close(
+        rewards,
+        scorer(
+            images, {"reward_input_ids": tokens[0], "reward_attention_mask": tokens[1]}
+        ),
+    )
+    torch.testing.assert_close(rewards, scorer.score(images, *tokens))
+    assert rewards.shape == (2,)
+    assert tokens[0].shape == (2, preprocess_cfg.get("max_tokens", 35))
+    rewards.sum().backward()
+    assert images.grad is not None and images.grad.abs().sum() > 0
+    assert all(
+        not p.requires_grad and p.grad is None for p in external_model.parameters()
+    )
+
+    backend = ImageRewardBackend.from_config(
+        {**reward_cfg, "use_gpu": False, "batch_size": 1}
+    )
+    scores = backend.score(
+        np.full((2, 16, 16, 3), 128, dtype=np.uint8),
+        [{"task_description": "a fox"}, {"task_description": "a cat"}],
+    )
+    expected = scorer.score(torch.full((2, 3, 16, 16), 128 / 255), *tokens).detach()
+    torch.testing.assert_close(scores["image_reward"], expected)
+    torch.testing.assert_close(scores["avg"], expected)
+    assert not scores["image_reward"].requires_grad
+    image_size = preprocess_cfg.get("image_size", 224)
+    assert all(
+        shape[-2:] == (image_size, image_size) for shape in external_model.image_shapes
+    )
+
+
+@pytest.fixture
+def sd3_policy(monkeypatch):
+    if isinstance(sys.modules.get("imageio"), MagicMock):
+        monkeypatch.delitem(sys.modules, "imageio")
+    pytest.importorskip("imageio")
+    pytest.importorskip("torchvision")
+    diffusers = pytest.importorskip("diffusers", minversion="0.38.0")
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import Whitespace
+    from transformers import (
+        CLIPTextConfig,
+        CLIPTextModelWithProjection,
+        PreTrainedTokenizerFast,
+        T5Config,
+        T5EncoderModel,
+    )
+
+    from rlinf.models.diffusion.sd3 import StableDiffusion3, StableDiffusion3Config
+    from rlinf.models.diffusion.sd3.utils import configure_pipeline_trainability
+
+    torch.manual_seed(42)
+    previous_threads = torch.get_num_threads()
+    torch.set_num_threads(1)
+    vocab = {
+        word: i
+        for i, word in enumerate(
+            [
+                "[PAD]",
+                "[UNK]",
+                "[BOS]",
+                "[EOS]",
+                "a",
+                "fox",
+                "cat",
+            ]
+        )
+    }
+    tokenizer_backend = Tokenizer(WordLevel(vocab, unk_token="[UNK]"))
+    tokenizer_backend.pre_tokenizer = Whitespace()
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=tokenizer_backend,
+        pad_token="[PAD]",
+        unk_token="[UNK]",
+        bos_token="[BOS]",
+        eos_token="[EOS]",
+        model_max_length=8,
+    )
+    clip_config = CLIPTextConfig(
+        vocab_size=len(vocab),
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        max_position_embeddings=8,
+        projection_dim=16,
+        pad_token_id=0,
+        bos_token_id=2,
+        eos_token_id=3,
+    )
+    transformer = diffusers.SD3Transformer2DModel(
+        sample_size=8,
+        patch_size=2,
+        in_channels=16,
+        out_channels=16,
+        num_layers=1,
+        attention_head_dim=8,
+        num_attention_heads=2,
+        joint_attention_dim=32,
+        caption_projection_dim=16,
+        pooled_projection_dim=32,
+        pos_embed_max_size=8,
+    )
+    vae = diffusers.AutoencoderKL(
+        down_block_types=("DownEncoderBlock2D", "DownEncoderBlock2D"),
+        up_block_types=("UpDecoderBlock2D", "UpDecoderBlock2D"),
+        block_out_channels=(8, 16),
+        latent_channels=16,
+        norm_num_groups=4,
+        use_quant_conv=False,
+        use_post_quant_conv=False,
+        scaling_factor=1.5305,
+        shift_factor=0.0609,
+    )
+    pipeline = diffusers.StableDiffusion3Pipeline(
+        transformer=transformer,
+        vae=vae,
+        scheduler=diffusers.FlowMatchEulerDiscreteScheduler(shift=3.0),
+        text_encoder=CLIPTextModelWithProjection(clip_config),
+        tokenizer=tokenizer,
+        text_encoder_2=CLIPTextModelWithProjection(clip_config),
+        tokenizer_2=tokenizer,
+        text_encoder_3=T5EncoderModel(
+            T5Config(
+                vocab_size=len(vocab),
+                d_model=32,
+                d_ff=32,
+                d_kv=8,
+                num_layers=1,
+                num_heads=2,
+            )
+        ),
+        tokenizer_3=tokenizer,
+    )
+    configure_pipeline_trainability(pipeline, train_transformer=True)
+    config = StableDiffusion3Config(
+        resolution=16,
+        num_steps=4,
+        max_sequence_length=8,
+        rl_mode="refl",
+        cfg=False,
+        guidance_scale=1.0,
+        train_sampler="ode",
+        refl_late_fraction=0.5,
+        use_lora=False,
+        offload_auxiliary_modules=False,
+    )
+    try:
+        yield StableDiffusion3(config, pipeline)
+    finally:
+        torch.set_num_threads(previous_threads)
+
+
+@pytest.mark.parametrize("xt_source", ["rollout", "resample"])
+@pytest.mark.parametrize("native_time_scale", [1000, 2000])
+def test_refl_batch_sampling_preserves_gradients(
+    sd3_policy, xt_source, native_time_scale
+):
+    from diffusers import FlowMatchEulerDiscreteScheduler
+
+    model = sd3_policy
+    model.pipeline.scheduler = FlowMatchEulerDiscreteScheduler(
+        num_train_timesteps=native_time_scale
+    )
+    forwards = []
+    decodes = []
+    hook = model.transformer.register_forward_pre_hook(
+        lambda module, args: forwards.append(torch.is_grad_enabled())
+    )
+    decode_hook = model.pipeline.vae.decoder.register_forward_pre_hook(
+        lambda module, args: decodes.append(torch.is_grad_enabled())
+    )
+    try:
+        output = model(
+            forward_type=ForwardType.REFL,
+            forward_inputs={"prompts": ["a fox", "a cat"]},
+            xt_source=xt_source,
+        )
+    finally:
+        hook.remove()
+        decode_hook.remove()
+    prefix_steps = model.config.num_steps - (xt_source == "rollout")
+    assert forwards == [False] * prefix_steps + [True]
+    assert decodes == [True]
+    context = output["forward_inputs"]
+    assert context["prompts"] == ["a fox", "a cat"]
+    assert all(
+        not value.requires_grad for value in context.values() if torch.is_tensor(value)
+    )
+    assert output["samples"].shape[:2] == (2, 3)
+    output["samples"].square().mean().backward()
+    grads = [p.grad for p in model.transformer.parameters() if p.grad is not None]
+    assert grads and all(torch.isfinite(g).all() for g in grads)
+    assert sum(g.abs().sum() for g in grads) > 0
+    assert all(p.grad is None for p in model.pipeline.vae.parameters())
+
+
+def test_sd3_pretraining_matches_flow_velocity_target(sd3_policy):
+    model = sd3_policy
+    model.eval()
+    for module in (
+        model.pipeline.vae,
+        model.pipeline.text_encoder,
+        model.pipeline.text_encoder_2,
+        model.pipeline.text_encoder_3,
+    ):
+        module.eval()
+    with torch.no_grad():
+        for parameter in model.transformer.parameters():
+            parameter.zero_()
+        model.transformer.proj_out.bias.fill_(0.25)
+
+    images = torch.zeros(1, 3, 16, 16)
+    vae = model.pipeline.vae
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(7)
+        with torch.no_grad():
+            latents = vae.encode(images).latent_dist.sample()
+            latents = (latents - vae.config.shift_factor) * vae.config.scaling_factor
+            torch.randn(1)  # The logit-normal time draw precedes the image noise.
+            noise = torch.randn_like(latents)
+            expected = ((0.25 - (noise - latents)) ** 2).mean()
+        torch.manual_seed(7)
+        actual = model(
+            forward_type=ForwardType.SFT,
+            data={"images": images, "prompts": ["a fox"]},
+        )
+    torch.testing.assert_close(actual, expected)
+
+
+def test_refl_config_validates_training_batches():
+    from rlinf.config import validate_refl_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "algorithm": {"update_epoch": 1, "group_size": 1},
+            "actor": {
+                "global_batch_size": 64,
+                "refl_samples_per_step": 512,
+                "refl_data": {"type": "visual.prompt_dataset"},
+            },
+            "runner": {},
+            "env": {"train": None},
+        }
+    )
+    validate_refl_cfg(cfg)
+    cfg.actor.refl_samples_per_step = 511
+    with pytest.raises(ValueError, match="positive multiple"):
+        validate_refl_cfg(cfg)
+    cfg.actor.refl_samples_per_step = 512
+    cfg.algorithm.update_epoch = 2
+    with pytest.raises(ValueError, match="update_epoch=1"):
+        validate_refl_cfg(cfg)
+    cfg.algorithm.update_epoch = 1
+    cfg.actor.refl_data.type = "visual.image_text_dataset"
+    with pytest.raises(ValueError, match="refl_data.type=visual.prompt_dataset"):
+        validate_refl_cfg(cfg)
+
+
+@pytest.mark.parametrize("offload", [False, True])
+def test_sd3_pretraining_auxiliary_placement_and_gradients(sd3_policy, offload):
+    if Worker.torch_platform is None or not Worker.torch_platform.is_available():
+        pytest.skip("An accelerator is required to verify GPU-to-CPU offloading")
+    device = torch.device(Worker.torch_device_type, 0)
+    model = sd3_policy.to(device)
+    model.config.offload_auxiliary_modules = offload
+    auxiliary = (
+        model.pipeline.vae,
+        model.pipeline.text_encoder,
+        model.pipeline.text_encoder_2,
+        model.pipeline.text_encoder_3,
+    )
+    placements = []
+    hook = model.transformer.register_forward_pre_hook(
+        lambda module, args: placements.append(
+            [next(part.parameters()).device for part in auxiliary]
+        )
+    )
+    try:
+        loss = model(
+            forward_type=ForwardType.SFT,
+            data={"images": torch.zeros(1, 3, 16, 16), "prompts": ["a fox"]},
+        )
+        expected_device = torch.device("cpu") if offload else device
+        assert placements == [[expected_device] * len(auxiliary)]
+        assert torch.isfinite(loss) and loss > 0
+        loss.backward()
+        grads = [p.grad for p in model.transformer.parameters() if p.grad is not None]
+        assert grads and all(torch.isfinite(grad).all() for grad in grads)
+        assert sum(grad.abs().sum() for grad in grads) > 0
+        assert all(p.grad is None for part in auxiliary for p in part.parameters())
+    finally:
+        hook.remove()
+        model.to("cpu")

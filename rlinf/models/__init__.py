@@ -14,6 +14,7 @@
 
 from typing import Callable, Optional
 
+import torch
 from omegaconf import DictConfig
 
 from rlinf.config import (
@@ -54,6 +55,11 @@ def register_model(
 
 
 def _register_builtin_models():
+    def _build_dream(cfg: DictConfig, _torch_dtype):
+        from rlinf.models.embodiment.dream import get_model
+
+        return get_model(cfg)
+
     def _build_openvla(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openvla import get_model
 
@@ -368,6 +374,12 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
+        SupportedModel.DREAM.value,
+        _build_dream,
+        category="embodied",
+        force=True,
+    )
+    register_model(
         SupportedModel.EVO1.value,
         _build_evo1,
         category="embodied",
@@ -378,23 +390,60 @@ def _register_builtin_models():
 _register_builtin_models()
 
 
+def merge_lora(model, path: str, scale: float):
+    """Fold a saved LoRA adapter, scaled by ``scale``, into ``model``'s weights.
+
+    Each adapted weight becomes ``W + scale * (lora_alpha / r) * B @ A``. The
+    returned model has no adapter modules, so a trainable LoRA can be added on
+    top as for any base model.
+
+    Args:
+        model: The base model the adapter was trained on.
+        path: Directory of the adapter, as written by ``save_pretrained``.
+        scale: Fraction of the adapter's update to merge.
+
+    Returns:
+        ``model`` with the scaled update merged into its weights, each
+        parameter as trainable as it was before.
+    """
+    from peft import PeftModel
+    from peft.tuners.lora import LoraLayer
+
+    # Loading an adapter for inference freezes every parameter of the model.
+    trainable = {name: param.requires_grad for name, param in model.named_parameters()}
+    peft_model = PeftModel.from_pretrained(model, path)
+    # Every LoRA layer type, embeddings included, merges through its scaling.
+    for module in peft_model.modules():
+        if isinstance(module, LoraLayer):
+            for adapter in module.scaling:
+                module.scaling[adapter] *= scale
+    merged = peft_model.merge_and_unload()
+    for name, param in merged.named_parameters():
+        param.requires_grad_(trainable[name])
+    return merged
+
+
 def get_model(cfg: DictConfig):
     model_type = str(cfg.model_type)
     model_builder = _MODEL_REGISTRY.get(model_type)
     if model_builder is None:
         return None
 
-    torch_dtype = torch_dtype_from_precision(cfg.precision)
+    torch_dtype = torch_dtype_from_precision(cfg.get("precision"))
     model = model_builder(cfg, torch_dtype)
 
     if (
-        Worker.torch_platform is not None
+        isinstance(model, torch.nn.Module)
+        and Worker.torch_platform is not None
         and Worker.torch_platform.is_available()
         and cfg.get("load_to_device", True)
     ):
         model = model.to(Worker.torch_device_type)
 
-    if cfg.is_lora:
+    for adapter in cfg.get("merged_loras", None) or []:
+        model = merge_lora(model, adapter.path, adapter.get("scale", 1.0))
+
+    if cfg.get("is_lora", False):
         from peft import (
             LoraConfig,
             PeftModel,

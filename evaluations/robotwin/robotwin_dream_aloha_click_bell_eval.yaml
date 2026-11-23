@@ -22,7 +22,6 @@ cluster:
 runner:
   task_type: embodied_eval
   only_eval: true
-  val_check_interval: -1
   logger:
     log_path: ../results
     project_name: rlinf
@@ -32,9 +31,10 @@ runner:
 env:
   group_name: EnvGroup
   eval:
+    capture_dream_observations: true
     total_num_envs: 1
     max_steps_per_rollout_epoch: 432
-    rollout_epoch: 10
+    rollout_epoch: 1
     ignore_terminations: true
     is_eval: true
     skip_intermediate_renders: false
@@ -57,7 +57,6 @@ env:
 
 rollout:
   group_name: RolloutGroup
-  rollout_backend: dream
   pipeline_stage_num: 1
   collect_prev_infos: false
   model:
@@ -65,11 +64,10 @@ rollout:
     checkpoint: dreamlabs/dream-1-beta
     action_dim: 14
     num_action_chunks: 48
-  dream:
-    arm: ${oc.env:DREAM_IK_ARM_FILE}
-    action_hz: 20
-    eef_target_bias: false
-    timeout_ms: 30000
+    dream:
+      arm: ${oc.env:DREAM_IK_ARM_FILE}
+      action_hz: 20
+      timeout_ms: 30000
 
 hydra:
   run:
