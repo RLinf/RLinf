@@ -26,9 +26,6 @@ from omegaconf import DictConfig
 
 from rlinf.models import get_model
 from rlinf.models.embodiment.cosmos3.checkpoint import load_inference_checkpoint
-from rlinf.models.embodiment.cosmos3.datasets.dataset import (
-    Cosmos3RollingLeRobotDataset,
-)
 from rlinf.scheduler import Worker
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.nested_dict_process import put_tensor_device
@@ -39,8 +36,6 @@ if TYPE_CHECKING:
 
 class Cosmos3DAggerTraining:
     """Cosmos SFT operations shared by synchronous and asynchronous DAgger actors."""
-
-    dataset_type = Cosmos3RollingLeRobotDataset
 
     @staticmethod
     def lerobot_window_options(
@@ -53,6 +48,7 @@ class Cosmos3DAggerTraining:
             "chunk_size": horizon,
             "vision_horizon": horizon if joint else 0,
             "require_full_window": joint,
+            "keep_latest_shard": True,
             "keep_uint8_images": (
                 joint
                 and not require_all_intervene

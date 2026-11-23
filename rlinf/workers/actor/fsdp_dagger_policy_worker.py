@@ -99,14 +99,12 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             )
         only_expert = self.cfg.algorithm.dagger.get("only_save_expert", False)
         if self._cosmos_training is None:
-            dataset_type = RollingLeRobotDataset
             window_options = {"chunk_size": self.cfg.actor.model.num_action_chunks}
         else:
-            dataset_type = self._cosmos_training.dataset_type
             window_options = self._cosmos_training.lerobot_window_options(
                 self.cfg.actor.model, online_lerobot_cfg, only_expert
             )
-        self.dataset = dataset_type(
+        self.dataset = RollingLeRobotDataset(
             root_dir=online_lerobot_cfg.data_path,
             **window_options,
             min_frames=online_lerobot_cfg.get("min_frames", 1),
