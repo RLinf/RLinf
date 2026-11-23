@@ -119,4 +119,4 @@ Collocated、Disaggregated 与 Hybrid 对应同一套 worker 的三种硬件放�
       :link: ../start/vla
       :link-type: doc
 
-      运行单卡具身 MLP 或 Agent / LLM GRPO 训练示例。
+      运行单卡具身智能或 Agent / LLM 训练示例。

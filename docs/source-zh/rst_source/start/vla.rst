@@ -1,23 +1,22 @@
 第一个训练任务
 ==============
 
-选择 **具身 MLP** 或 **Agent 与 LLM** 两条单卡路径之一，完成第一次 RLinf 训练并查看指标输出。
+选择 **具身智能** 或 **Agent 与 LLM** 两条单卡路径之一，完成第一次 RLinf 训练并查看指标输出。
 
-安装与运行
-----------
+启动训练
+--------
 
-请先在仓库根目录完成环境准备（国内镜像、多环境共存与 Docker 镜像见 :doc:`installation`），再按目标方向执行对应命令：
+开始前请先按 :doc:`安装 <installation>` 准备并激活对应的虚拟环境（具身需 ``--env maniskill_libero``，Agent 与 LLM 需 ``agentic --engine sglang``）。
 
 .. tab-set::
 
-   .. tab-item:: 具身 MLP（ManiSkill3）
+   .. tab-item:: 具身智能（ManiSkill3）
       :sync: embodied
 
-      在单卡上基于 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ 内置 ``PickCube-v1`` 任务训练轻量 MLP policy（约需 4 GB 显存，无需额外下载权重或资产）：
+      在单卡上基于 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ 内置 ``PickCube-v1`` 任务运行 PPO 训练（约需 4 GB 显存，无需额外下载权重或资产）：
 
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
    .. tab-item:: Agent 与 LLM（GRPO）
@@ -27,7 +26,6 @@
 
       .. code-block:: bash
 
-         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
          hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --local-dir ./DeepSeek-R1-Distill-Qwen-1.5B
          hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
          bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-single-gpu \
@@ -60,7 +58,7 @@
 
 启动 ``tensorboard --host 0.0.0.0 --logdir ./logs`` 查看曲线：具身任务重点关注 ``rollout/env_info/return`` 与 ``rollout/env_info/success_once``，Agent / LLM 任务重点关注 ``rollout/rewards`` 与响应长度。
 
-MLP 训练每步会在终端输出指标表，完整运行数百轮后 ``success_once`` 会升至 ``0.90`` 以上：
+具身训练每步会在终端输出指标表，完整运行数百轮后 ``success_once`` 会升至 ``0.90`` 以上：
 
 .. code-block:: text
 

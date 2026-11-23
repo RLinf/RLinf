@@ -163,7 +163,7 @@ Match your hardware to the workload you want to run; the same recipes scale from
      - Example Starting Point
    * - 1 GPU (4–24 GB)
      - MLP / CNN simulation RL (~4 GB), VLA evaluation (24 GB+), LoRA SFT, real-robot data collection, and deployment
-     - :doc:`First Training Run (MLP) <vla>`, :doc:`Evaluation Quick Tour <../evaluations/get_started/quick_tour>`
+     - :doc:`First Training Run (Embodied AI) <vla>`, :doc:`Evaluation Quick Tour <../evaluations/get_started/quick_tour>`
    * - 1–2 GPUs (40–80 GB)
      - Single-workstation OpenVLA / OpenPI RL, collocated PPO / GRPO, 1.5B Agent & LLM GRPO
      - :doc:`First Training Run (Agent & LLM) <vla>`, :doc:`Embodied AI <../examples/index>`

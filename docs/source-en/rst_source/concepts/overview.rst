@@ -119,4 +119,4 @@ Next Steps
       :link: ../start/vla
       :link-type: doc
 
-      Run a single-GPU Embodied MLP or Agent & LLM GRPO example.
+      Run a single-GPU Embodied AI or Agent & LLM training example.

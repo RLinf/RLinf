@@ -1,23 +1,22 @@
 First Training Run
 ==================
 
-Pick either the **Embodied MLP** or **Agent & LLM** single-GPU track to complete your first RLinf training run and inspect metrics.
+Pick either the **Embodied AI** or **Agent & LLM** single-GPU track to complete your first RLinf training run and inspect metrics.
 
-Setup and Run
--------------
+Launch Training
+---------------
 
-Clone the repository and prepare your environment first (for mirrors, multiple virtual environments, or Docker Hub images, see :doc:`installation`), then run the commands for your track:
+Prepare and activate the matching virtual environment from :doc:`installation` first (``--env maniskill_libero`` for Embodied AI, ``agentic --engine sglang`` for Agent & LLM).
 
 .. tab-set::
 
-   .. tab-item:: Embodied MLP (ManiSkill3)
+   .. tab-item:: Embodied AI (ManiSkill3)
       :sync: embodied
 
-      Trains a lightweight MLP policy on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__'s built-in ``PickCube-v1`` task (~4 GB VRAM on 1 GPU, no extra asset or checkpoint downloads):
+      Runs PPO training on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__'s built-in ``PickCube-v1`` task (~4 GB VRAM on 1 GPU, no extra asset or checkpoint downloads):
 
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
    .. tab-item:: Agent & LLM (GRPO)
@@ -27,7 +26,6 @@ Clone the repository and prepare your environment first (for mirrors, multiple v
 
       .. code-block:: bash
 
-         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
          hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --local-dir ./DeepSeek-R1-Distill-Qwen-1.5B
          hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
          bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-single-gpu \
@@ -60,7 +58,7 @@ Logs, TensorBoard events, and checkpoints are written to the configured output d
 
 Start ``tensorboard --host 0.0.0.0 --logdir ./logs`` to inspect curves: watch ``rollout/env_info/return`` and ``rollout/env_info/success_once`` for embodied runs, or ``rollout/rewards`` and response length for Agent & LLM runs.
 
-The MLP run prints a metric table at each step, and ``success_once`` climbs above ``0.90`` within a few hundred epochs:
+The embodied run prints a metric table at each step, and ``success_once`` climbs above ``0.90`` within a few hundred epochs:
 
 .. code-block:: text
 

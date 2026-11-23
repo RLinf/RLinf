@@ -40,7 +40,7 @@
       :link: rst_source/start/vla
       :link-type: doc
 
-      在单卡上运行具身 MLP（ManiSkill3）或 Agent / LLM（GRPO）训练示例。
+      在单卡上运行具身智能（ManiSkill3）或 Agent / LLM（GRPO）训练示例。
 
    .. grid-item-card:: VLA 评测
       :link: rst_source/evaluations/get_started/quick_tour

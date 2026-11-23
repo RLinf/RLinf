@@ -40,7 +40,7 @@ Choose Your Path
       :link: rst_source/start/vla
       :link-type: doc
 
-      Run a single-GPU Embodied MLP (ManiSkill3) or Agent & LLM (GRPO) training example.
+      Run a single-GPU Embodied AI (ManiSkill3) or Agent & LLM (GRPO) training example.
 
    .. grid-item-card:: VLA Evaluation
       :link: rst_source/evaluations/get_started/quick_tour
