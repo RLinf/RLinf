@@ -299,6 +299,175 @@ def test_clip_grad_scales_dtensor_shards_in_place(single_rank_env):
     )
 
 
+def test_fp32_master_adamw_accumulates_bf16_dtensor_updates(single_rank_env):
+    from torch.distributed.tensor import DTensor, Shard
+
+    from rlinf.hybrid_engines.fsdp.optim import build_adamw
+
+    mesh = create_device_mesh(1)
+    initial = torch.full((2, 2), 0.02, dtype=torch.bfloat16)
+    weight = nn.Parameter(DTensor.from_local(initial.clone(), mesh, [Shard(0)]))
+    reference = nn.Parameter(initial.float())
+    optimizer = build_adamw(
+        [{"params": [weight], "lr": 1e-6, "betas": (0.9, 0.99)}],
+        eps=1e-8,
+        weight_decay=0.01,
+        use_fp32_master_params=True,
+    )
+    reference_optimizer = torch.optim.AdamW(
+        [reference],
+        lr=1e-6,
+        betas=(0.9, 0.99),
+        eps=1e-8,
+        weight_decay=0.01,
+        foreach=False,
+        fused=False,
+    )
+    for _ in range(180):
+        weight.grad = torch.full_like(weight, 0.01)
+        reference.grad = torch.full_like(initial, 0.01).float()
+        optimizer.step()
+        reference_optimizer.step()
+    torch.testing.assert_close(
+        weight.to_local(), reference.detach().bfloat16(), rtol=0, atol=0
+    )
+    assert torch.all(weight.to_local() != initial)
+    for key in ("fp32_master_param", "exp_avg", "exp_avg_sq"):
+        state = optimizer.state[weight][key]
+        assert isinstance(state, DTensor)
+        assert state.dtype == torch.float32
+        assert state.placements == weight.placements
+        expected = (
+            reference.detach()
+            if key == "fp32_master_param"
+            else reference_optimizer.state[reference][key]
+        )
+        torch.testing.assert_close(state.to_local(), expected, rtol=0, atol=0)
+
+
+def _check_fp32_master_fsdp2_checkpoint(
+    rank, rendezvous, checkpoint_dir, reshard_after_forward
+):
+    import torch.distributed.checkpoint as dcp
+    from torch.distributed.checkpoint.state_dict import (
+        StateDictOptions,
+        get_state_dict,
+        set_state_dict,
+    )
+    from torch.distributed.device_mesh import init_device_mesh
+    from torch.distributed.fsdp import fully_shard
+    from torch.distributed.tensor import DTensor, Shard
+
+    from rlinf.hybrid_engines.fsdp.optim import build_adamw
+    from rlinf.utils.utils import warmup_optimizer_state
+
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{rendezvous}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=90),
+    )
+    try:
+        mesh = init_device_mesh("cpu", (2,))
+
+        def build():
+            model = nn.Linear(4, 4, bias=False, dtype=torch.bfloat16)
+            nn.init.constant_(model.weight, 0.02)
+            fully_shard(
+                model,
+                mesh=mesh,
+                reshard_after_forward=reshard_after_forward,
+                mp_policy=MixedPrecisionPolicy(
+                    param_dtype=torch.bfloat16, reduce_dtype=torch.bfloat16
+                ),
+            )
+            optimizer = build_adamw(
+                [{"params": list(model.parameters()), "lr": 1e-4}],
+                eps=1e-8,
+                weight_decay=0.01,
+                use_fp32_master_params=True,
+            )
+            warmup_optimizer_state(optimizer)
+            return model, optimizer
+
+        def step(model, optimizer):
+            optimizer.zero_grad()
+            inputs = torch.full((2, 4), float(rank + 1), dtype=torch.bfloat16)
+            model(inputs).float().square().mean().backward()
+            assert isinstance(model.weight.grad, DTensor)
+            optimizer.step()
+
+        model, optimizer = build()
+        for _ in range(3):
+            step(model, optimizer)
+        options = StateDictOptions(full_state_dict=False, cpu_offload=True)
+        model_state, optimizer_state = get_state_dict(model, optimizer, options=options)
+        dcp.save(
+            {"model": model_state, "optimizer": optimizer_state},
+            checkpoint_id=checkpoint_dir,
+        )
+
+        resumed_model, resumed_optimizer = build()
+        resumed_state, resumed_opt_state = get_state_dict(
+            resumed_model, resumed_optimizer, options=options
+        )
+        dcp.load(
+            {"model": resumed_state, "optimizer": resumed_opt_state},
+            checkpoint_id=checkpoint_dir,
+        )
+        set_state_dict(
+            resumed_model,
+            resumed_optimizer,
+            model_state_dict=resumed_state,
+            optim_state_dict=resumed_opt_state,
+            options=options,
+        )
+        step(model, optimizer)
+        step(resumed_model, resumed_optimizer)
+        torch.testing.assert_close(
+            model.weight.full_tensor(),
+            resumed_model.weight.full_tensor(),
+            rtol=0,
+            atol=0,
+        )
+        for key in ("fp32_master_param", "exp_avg", "exp_avg_sq"):
+            current = optimizer.state[model.weight][key]
+            resumed = resumed_optimizer.state[resumed_model.weight][key]
+            for state in (current, resumed):
+                assert isinstance(state, DTensor)
+                assert state.dtype == torch.float32
+                assert state.placements == (Shard(0),)
+                assert state.to_local().shape == (2, 4)
+            torch.testing.assert_close(
+                current.to_local(), resumed.to_local(), rtol=0, atol=0
+            )
+        torch.testing.assert_close(
+            optimizer.state[model.weight]["step"],
+            resumed_optimizer.state[resumed_model.weight]["step"],
+            rtol=0,
+            atol=0,
+        )
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("reshard_after_forward", [True, False])
+def test_fp32_master_adamw_fsdp2_checkpoint_on_two_cpu_ranks(
+    tmp_path, reshard_after_forward
+):
+    torch.multiprocessing.spawn(
+        _check_fp32_master_fsdp2_checkpoint,
+        args=(
+            str(tmp_path / "rendezvous"),
+            str(tmp_path / "checkpoint"),
+            reshard_after_forward,
+        ),
+        nprocs=2,
+        join=True,
+    )
+
+
 class _DomainTable(torch.nn.Module):
     """Reads its embedding weights directly, like cosmos ``DomainAwareLinear``."""
 
