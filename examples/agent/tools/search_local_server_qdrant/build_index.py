@@ -21,7 +21,6 @@ import warnings
 from typing import Any, Optional
 
 import datasets
-import torch
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     CollectionStatus,
@@ -30,7 +29,7 @@ from qdrant_client.models import (
     PointStruct,
     VectorParams,
 )
-from qdrant_encoder import Encoder
+from qdrant_encoder import Encoder, get_devices
 from tqdm import tqdm
 
 global_encoder = None
@@ -40,7 +39,8 @@ global_client = None
 def set_global(retrieval_method, config):
     from multiprocessing import current_process
 
-    process_idx = current_process()._identity[0]
+    process_idx = current_process()._identity[0] - 1
+    devices = get_devices(config.device_type)
 
     global global_encoder
     global_encoder = Encoder(
@@ -49,7 +49,7 @@ def set_global(retrieval_method, config):
         pooling_method=config.retrieval_pooling_method,
         max_length=config.retrieval_query_max_length,
         use_fp16=config.retrieval_use_fp16,
-        device=torch.device(f"cuda:{process_idx % torch.cuda.device_count()}"),
+        device=devices[process_idx % len(devices)],
     )
 
     global global_client
@@ -88,9 +88,9 @@ class QdrantIndexBuilder:
         self.collection_name = config.qdrant_collection_name
 
     def build(self):
-        # Initialize encoder first (needed for building collection)
-        self.topk = config.retrieval_topk
-        self.batch_size = config.retrieval_batch_size
+        get_devices(self.config.device_type)
+        self.topk = self.config.retrieval_topk
+        self.batch_size = self.config.retrieval_batch_size
 
         if self.config.debug:
             # Check if collection exists, if not, build it from corpus
@@ -115,7 +115,7 @@ class QdrantIndexBuilder:
         else:
             logging.info(f"Collection '{self.collection_name}' not found.")
         logging.info("Building collection from corpus...")
-        self._build_collection_from_corpus(config.corpus_text_field)
+        self._build_collection_from_corpus(self.config.corpus_text_field)
         logging.info(f"Collection '{self.collection_name}' built successfully!")
 
     @staticmethod
@@ -155,7 +155,7 @@ class QdrantIndexBuilder:
             pooling_method=self.config.retrieval_pooling_method,
             max_length=self.config.retrieval_query_max_length,
             use_fp16=self.config.retrieval_use_fp16,
-            device=torch.device("cuda:1"),
+            device=get_devices(self.config.device_type)[0],
         )
         sample_emb = encoder.encode(sample_text, is_query=False)
         vector_size = sample_emb.shape[1]
@@ -187,71 +187,77 @@ class QdrantIndexBuilder:
 
         # Encode and insert documents in batches
         # Multiprocessing setup for parallel document processing
-        from multiprocessing import Pool
+        from multiprocessing import get_context
 
         # Create a process pool with the specified number of parallel workers
         # The initializer function 'set_global' is called once per worker process
         # to initialize the global encoder and client for each worker
-        pool = Pool(
+        pool = get_context("spawn").Pool(
             self.config.build_parallel,
             initializer=set_global,
             initargs=(self.config.retrieval_method, self.config),
         )
-        handles = queue.Queue()
+        try:
+            handles = queue.Queue()
 
-        batch_texts = []
-        batch_indices = []
-        batch_payload = []
-        for idx in tqdm(range(corpus_size), desc="Building collection"):
-            doc = corpus_data[idx]
-            assert self.config.retrieval_method == "e5", (
-                f"Expected retrieval_method to be 'e5', but got '{self.config.retrieval_method}'"
-            )
-            text = doc["contents"]
+            batch_texts = []
+            batch_indices = []
+            batch_payload = []
+            for idx in tqdm(range(corpus_size), desc="Building collection"):
+                doc = corpus_data[idx]
+                assert self.config.retrieval_method == "e5", (
+                    f"Expected retrieval_method to be 'e5', but got '{self.config.retrieval_method}'"
+                )
+                text = doc["contents"]
 
-            # Skip empty texts
-            if not text or len(text.strip()) == 0:
-                warnings.warn(f"Document {idx} has empty text, skipping...")
-                continue
-            batch_texts.append(text)
-            batch_indices.append(idx)
-            batch_payload.append(doc)
+                # Skip empty texts
+                if not text or len(text.strip()) == 0:
+                    warnings.warn(f"Document {idx} has empty text, skipping...")
+                    continue
+                batch_texts.append(text)
+                batch_indices.append(idx)
+                batch_payload.append(doc)
 
-            # Process batch when it reaches batch_size
-            if len(batch_texts) >= self.batch_size:
-                # Submit batch for parallel processing using async execution
-                # This returns a handle that can be used to track task completion
+                # Process batch when it reaches batch_size
+                if len(batch_texts) >= self.batch_size:
+                    # Submit batch for parallel processing using async execution
+                    # This returns a handle that can be used to track task completion
+                    handle = pool.apply_async(
+                        QdrantIndexBuilder.encode_and_upsert,
+                        (self.config, batch_texts, batch_indices, batch_payload),
+                    )
+                    handles.put(handle)
+
+                    # Control memory usage by waiting for some tasks to complete
+                    # if too many tasks are queued (prevents memory overflow)
+                    if handles.qsize() >= self.config.build_parallel * 10:
+                        handles.get().get()
+
+                    # Reset batch variables for next batch
+                    batch_texts = []
+                    batch_indices = []
+                    batch_payload = []
+
+            # Process remaining items
+            if batch_texts:
                 handle = pool.apply_async(
                     QdrantIndexBuilder.encode_and_upsert,
                     (self.config, batch_texts, batch_indices, batch_payload),
                 )
                 handles.put(handle)
 
-                # Control memory usage by waiting for some tasks to complete
-                # if too many tasks are queued (prevents memory overflow)
-                if handles.qsize() >= self.config.build_parallel * 10:
-                    handles.get().wait()
+            # Wait for all remaining tasks to complete
+            # This ensures all documents are processed before closing the pool
+            while not handles.empty():
+                handles.get().get()
 
-                # Reset batch variables for next batch
-                batch_texts = []
-                batch_indices = []
-                batch_payload = []
-
-        # Process remaining items
-        if batch_texts:
-            handle = pool.apply_async(
-                QdrantIndexBuilder.encode_and_upsert,
-                (self.config, batch_texts, batch_indices, batch_payload),
-            )
-            handles.put(handle)
-
-        # Wait for all remaining tasks to complete
-        # This ensures all documents are processed before closing the pool
-        while not handles.empty():
-            handles.get().wait()
-
-        pool.close()
-        pool.join()
+        except BaseException:
+            pool.terminate()
+            raise
+        else:
+            pool.close()
+        finally:
+            pool.join()
 
         # Wait for the collection to be ready (GREEN status)
         # This ensures all data has been properly indexed and is available for querying
@@ -293,6 +299,7 @@ class Config:
         retrieval_use_fp16: bool = False,
         retrieval_batch_size: int = 128,
         debug: bool = False,
+        device_type: str = "cuda",
     ):
         self.retrieval_method = retrieval_method
         self.retrieval_topk = retrieval_topk
@@ -310,6 +317,7 @@ class Config:
         self.retrieval_use_fp16 = retrieval_use_fp16
         self.retrieval_batch_size = retrieval_batch_size
         self.debug = debug
+        self.device_type = device_type
 
 
 if __name__ == "__main__":
@@ -362,6 +370,10 @@ if __name__ == "__main__":
         default=False,
         help="Enable debug mode to delete existing collection before building",
     )
+    parser.add_argument(
+        "--batch_size", type=int, default=1024, help="Documents per encoder batch"
+    )
+    parser.add_argument("--device_type", choices=("cuda", "npu"), default="cuda")
     args = parser.parse_args()
     logging.getLogger().setLevel(logging.INFO)
     # 1) Build a config (could also parse from arguments).
@@ -378,8 +390,9 @@ if __name__ == "__main__":
         retrieval_pooling_method="mean",
         retrieval_query_max_length=256,
         retrieval_use_fp16=True,
-        retrieval_batch_size=1024,
+        retrieval_batch_size=args.batch_size,
         debug=args.debug,
+        device_type=args.device_type,
     )
 
     # 2) Instantiate a global retriever so it is loaded once and reused.

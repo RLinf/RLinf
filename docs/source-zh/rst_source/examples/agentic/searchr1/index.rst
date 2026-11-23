@@ -47,19 +47,27 @@ Search-R1 强化学习训练
    .. tab-item:: 1. 本地检索服务
       :sync: searchr1-retriever
 
-      Qdrant 与 FAISS 后端均使用 `intfloat/e5-base-v2 <https://huggingface.co/intfloat/e5-base-v2>`__ 编码，在 ``8000`` 端口暴露 ``POST /retrieve`` 与 ``POST /access`` 接口。推荐使用预构建 Qdrant 方案：检索在 CPU 上运行，仅编码器占约 1 GB 显存。
+      Qdrant 与 FAISS 后端均使用 `intfloat/e5-base-v2 <https://huggingface.co/intfloat/e5-base-v2>`__ 编码，在 ``8000`` 端口暴露 ``POST /retrieve`` 与 ``POST /access`` 接口。推荐使用预构建 Qdrant 索引。Qdrant 在 CPU 上存储和检索向量，E5 编码器可在 NVIDIA GPU 或 Ascend NPU 上运行。
 
       **1. 安装与下载（Qdrant，推荐）**
 
       .. code-block:: bash
 
-         uv pip install qdrant-client==1.16.2
+         uv pip install qdrant-client==1.16.2 datasets transformers fastapi uvicorn
          hf download --repo-type dataset RLinf/Wiki-2018-Corpus --local-dir ./Wiki-2018-Corpus
          hf download intfloat/e5-base-v2 --local-dir ./e5-base-v2
 
       **2. 启动 Qdrant 与检索服务**
 
-      在 tmux 中启动 Qdrant（``cd ./Wiki-2018-Corpus/qdrant && ./qdrant``），更新 ``examples/agent/tools/search_local_server_qdrant/launch_local_server.sh`` 中的 ``WIKI2018_DIR``、``retriever_path`` 与 ``qdrant_url``\ （集合名 wiki_collection_m32_cef512，HNSW ef 256），再启动服务：
+      在 tmux 中启动 Qdrant（``cd ./Wiki-2018-Corpus/qdrant && ./qdrant``）。在 ``examples/agent/tools/search_local_server_qdrant/launch_local_server.sh`` 中，将 ``WIKI2018_DIR`` 设为下载的语料目录，``retriever_path`` 设为 E5 模型目录。
+
+      将 ``qdrant_url`` 设为服务地址。使用预构建索引时，设置 ``qdrant_collection_name=wiki_collection_m32_cef512`` 和 ``qdrant_search_param='{"hnsw_ef":256}'``\。
+
+      .. note::
+
+         使用 Ascend 时，安装版本兼容的 PyTorch、torch-npu 和 CANN，并加载 CANN 环境变量。在启动脚本中设置 ``device_type=npu``\；自建索引时，构建脚本也需设置此项。启动前可用 ``ASCEND_RT_VISIBLE_DEVICES`` 指定 NPU，单卡即可运行。
+
+      启动检索服务，等待输出 ``Server is ready at port 8000`` 后再发送请求：
 
       .. code-block:: bash
 
@@ -69,7 +77,19 @@ Search-R1 强化学习训练
 
       .. dropdown:: 自建 Qdrant 索引与 FAISS GPU（ASearcher）方案
 
-         **自建 Qdrant 索引：** 从 `Qdrant Releases <https://github.com/qdrant/qdrant/releases>`__ 下载二进制并启动，配置并运行 ``examples/agent/tools/search_local_server_qdrant/build_index.sh``\ （HNSW 调优见 `Qdrant 优化文档 <https://qdrant.tech/documentation/guides/optimize/>`__）。
+         **自建 Qdrant 索引：** 从 `Qdrant Releases <https://github.com/qdrant/qdrant/releases>`__ 下载二进制，在其所在目录启动 Qdrant。在 ``examples/agent/tools/search_local_server_qdrant/build_index.sh`` 中，将 ``WIKI2018_DIR`` 设为包含 ``wiki_corpus.jsonl`` 的目录，``retriever_path`` 设为 E5 模型目录。
+
+         在构建和启动脚本中设置相同的 ``qdrant_url`` 和 ``qdrant_collection_name``\，然后构建索引：
+
+         .. code-block:: bash
+
+            bash examples/agent/tools/search_local_server_qdrant/build_index.sh
+
+         .. warning::
+
+            构建索引会替换指定的 Qdrant collection。若需保留已有索引，请在两个脚本中设置新的 collection 名称。
+
+         构建完成后再启动检索服务。HNSW 调优见 `Qdrant 优化文档 <https://qdrant.tech/documentation/guides/optimize/>`__。
 
          **FAISS GPU（ASearcher）：** 创建包含 PyTorch 2.4.0、``faiss-gpu=1.8.0``、transformers、datasets、pyserini、uvicorn 和 fastapi 的 ``retriever`` conda 环境，在 ``examples/agent/tools/search_local_server_faiss/`` 下的两个脚本中填好路径后下载、建索引并启动服务：
 

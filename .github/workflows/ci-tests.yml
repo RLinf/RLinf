@@ -196,6 +196,7 @@ jobs:
               - 'tests/e2e_tests/offline_rl/**'
               - '.github/workflows/offline_rl-e2e-tests.yml'
             unit_test_filter: &unit
+              - 'examples/agent/tools/search_local_server_qdrant/**'
               - *shared
               - 'rlinf/workers/actor/fsdp_prefix_off_policy_worker.py'
               - 'rlinf/workers/sft/fsdp_steam_sft_worker.py'

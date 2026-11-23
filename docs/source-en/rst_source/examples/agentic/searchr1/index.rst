@@ -47,19 +47,27 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
    .. tab-item:: 1. Local Wiki Retriever
       :sync: searchr1-retriever
 
-      Both backends expose ``POST /retrieve`` and ``POST /access`` on port ``8000`` using `intfloat/e5-base-v2 <https://huggingface.co/intfloat/e5-base-v2>`__. Prebuilt Qdrant is recommended: Qdrant runs on CPU, so only the encoder uses GPU memory (~1 GB).
+      Both backends expose ``POST /retrieve`` and ``POST /access`` on port ``8000`` using `intfloat/e5-base-v2 <https://huggingface.co/intfloat/e5-base-v2>`__. The prebuilt Qdrant index is recommended. Qdrant stores and searches vectors on CPU; the E5 encoder runs on NVIDIA GPUs or Ascend NPUs.
 
       **1. Install & Download (Qdrant, recommended)**
 
       .. code-block:: bash
 
-         uv pip install qdrant-client==1.16.2
+         uv pip install qdrant-client==1.16.2 datasets transformers fastapi uvicorn
          hf download --repo-type dataset RLinf/Wiki-2018-Corpus --local-dir ./Wiki-2018-Corpus
          hf download intfloat/e5-base-v2 --local-dir ./e5-base-v2
 
       **2. Start Qdrant & Retrieval Server**
 
-      Start Qdrant in tmux (``cd ./Wiki-2018-Corpus/qdrant && ./qdrant``), then configure ``WIKI2018_DIR``, ``retriever_path``, and ``qdrant_url`` in ``examples/agent/tools/search_local_server_qdrant/launch_local_server.sh`` (collection wiki_collection_m32_cef512, HNSW ef 256) and launch:
+      Start Qdrant in tmux (``cd ./Wiki-2018-Corpus/qdrant && ./qdrant``). In ``examples/agent/tools/search_local_server_qdrant/launch_local_server.sh``, set ``WIKI2018_DIR`` to the downloaded corpus directory and ``retriever_path`` to the E5 model directory.
+
+      Set ``qdrant_url`` to the server URL. For the prebuilt index, use ``qdrant_collection_name=wiki_collection_m32_cef512`` and ``qdrant_search_param='{"hnsw_ef":256}'``.
+
+      .. note::
+
+         For Ascend, install compatible PyTorch, torch-npu, and CANN versions and load the CANN environment. Set ``device_type=npu`` in the launch script and, when building an index, in the build script. Use ``ASCEND_RT_VISIBLE_DEVICES`` to select the NPUs before launching; a single NPU is sufficient.
+
+      Start the retrieval service and wait for ``Server is ready at port 8000`` before sending requests:
 
       .. code-block:: bash
 
@@ -69,7 +77,19 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       .. dropdown:: Custom Qdrant index and FAISS GPU (ASearcher) option
 
-         **Custom Qdrant index:** download a binary from `Qdrant Releases <https://github.com/qdrant/qdrant/releases>`__, configure ``examples/agent/tools/search_local_server_qdrant/build_index.sh``, and run it (see the `Qdrant optimization guide <https://qdrant.tech/documentation/guides/optimize/>`__).
+         **Custom Qdrant index:** download a binary from `Qdrant Releases <https://github.com/qdrant/qdrant/releases>`__ and start Qdrant from its directory. In ``examples/agent/tools/search_local_server_qdrant/build_index.sh``, set ``WIKI2018_DIR`` to the directory containing ``wiki_corpus.jsonl`` and ``retriever_path`` to the E5 model directory.
+
+         Set ``qdrant_url`` and ``qdrant_collection_name`` to the same values in the build and launch scripts, then build the index:
+
+         .. code-block:: bash
+
+            bash examples/agent/tools/search_local_server_qdrant/build_index.sh
+
+         .. warning::
+
+            Building an index replaces the selected Qdrant collection. Choose a new collection name in both scripts to preserve an existing index.
+
+         Start the retrieval service after the build completes. See the `Qdrant optimization guide <https://qdrant.tech/documentation/guides/optimize/>`__ for HNSW tuning.
 
          **FAISS GPU (ASearcher):** create a ``retriever`` conda environment with PyTorch 2.4.0, ``faiss-gpu=1.8.0``, transformers, datasets, pyserini, uvicorn, and fastapi. Set paths in both scripts under ``examples/agent/tools/search_local_server_faiss/``, then download, index, and serve:
 

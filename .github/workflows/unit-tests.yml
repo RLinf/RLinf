@@ -15,7 +15,7 @@ jobs:
           unset UV_DEFAULT_INDEX
           bash requirements/install.sh --no-flash-attn embodied --env dummy
           source .venv/bin/activate
-          uv pip install "transformers<=5.9.0"
+          uv pip install "transformers<=5.9.0" qdrant-client fastapi uvicorn
 
       - name: Run pytest
         timeout-minutes: 40
@@ -62,7 +62,7 @@ jobs:
           source .venv/bin/activate
           UV_TORCH_BACKEND=auto uv sync
           UV_TORCH_BACKEND=cpu uv pip install gymnasium imageio opencv-python "torchvision==0.26.0"
-          uv pip install "transformers<=5.9.0"
+          uv pip install "transformers<=5.9.0" qdrant-client fastapi uvicorn
 
       - name: Run pytest
         timeout-minutes: 40
@@ -149,7 +149,7 @@ jobs:
           source .github/scripts/ascend_ci_workspace.sh setup
           bash requirements/install.sh --platform ascend --no-flash-attn embodied --env dummy
           source .venv/bin/activate
-          uv pip install "transformers<=5.9.0"
+          uv pip install "transformers<=5.9.0" qdrant-client fastapi uvicorn
 
       - name: Run unit tests
         timeout-minutes: 120
