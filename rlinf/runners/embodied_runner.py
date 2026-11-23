@@ -98,8 +98,12 @@ class EmbodiedRunner:
         )
 
         # Data channels
-        self.env_channel = Channel.create("Env")
-        self.rollout_channel = Channel.create("Rollout")
+        self.env_channel = Channel.create(
+            "Env", producers=[self.rollout], consumers=[self.env]
+        )
+        self.rollout_channel = Channel.create(
+            "Rollout", producers=[self.env], consumers=[self.rollout]
+        )
         # Trajectory assembly runs on the channel worker, so neither the env
         # nor the rollout worker has to hold partial trajectory state.
         self.actor_channel = Channel.create(
