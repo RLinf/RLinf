@@ -5000,7 +5000,9 @@ def test_rollout_runs_requested_terminal_inference_without_a_value_head(value_on
 
     rollout._publish_env_part(completion, None, None, actor_channel)
 
-    rollout.predict.assert_called_once_with(completion.next_obs, policy_kwargs=None)
+    rollout.predict.assert_called_once_with(
+        completion.next_obs, mode="train", policy_kwargs=None, dagger_beta=None
+    )
     part = actor_channel.put.call_args.args[0]
     assert torch.equal(part.bootstrap_values, torch.zeros(1, 1))
     assert torch.equal(part.final_prev_values, torch.zeros(1, 1))

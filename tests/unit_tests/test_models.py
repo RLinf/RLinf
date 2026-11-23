@@ -7045,9 +7045,10 @@ def test_prefix_rollout_preserves_steam_sources_and_epoch_resets():
 
 
 def _prefix_pool_model(rlt_cfg):
-    from rlinf.models.embodiment.openpi.prefix import OpenPiPrefixMixin
+    from rlinf.models.embodiment.openpi.tasks.eval import Pi0Eval
 
-    model = OpenPiPrefixMixin()
+    model = Pi0Eval.__new__(Pi0Eval)
+    torch.nn.Module.__init__(model)
     model.rlt_cfg = rlt_cfg
     return model
 
