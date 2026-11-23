@@ -41,6 +41,7 @@ from rlinf.data.schema.reasoning_results import (
 from rlinf.hybrid_engines.megatron.megatron_model_manager import (
     MegatronModelManager,
 )
+from rlinf.hybrid_engines.megatron.utils import collect_mtp_loss
 from rlinf.scheduler import Channel, Worker
 from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_channel,
@@ -629,6 +630,13 @@ class MegatronWorker(MegatronModelManager, Worker):
             // self.cfg.algorithm.n_minibatches
         )
         success, grad_norm, num_zeros_in_grad, lr = self.optimizer_step(increment)
+
+        if self.trains_mtp:
+            train_metrics[f"{self.role}/mtp_loss"] = collect_mtp_loss(
+                self.num_microbatches,
+                self.provider.mtp_num_layers,
+                next(self.model[-1].parameters()).device,
+            ).item()
 
         # Training metrics
         train_metrics[f"{self.role}/grad_norm"] = (

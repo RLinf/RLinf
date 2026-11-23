@@ -64,7 +64,7 @@ def _assert_tensor_bits_equal(actual, expected):
                 "speculative_algorithm": "NEXTN",
                 "speculative_draft_model_path": "/old/checkpoint",
             },
-            True,
+            False,
         ),
         (
             True,
@@ -89,7 +89,7 @@ def _assert_tensor_bits_equal(actual, expected):
                 "speculative_algorithm": "STANDALONE",
                 "speculative_draft_model_path": "/external/draft",
             },
-            True,
+            False,
         ),
         (
             True,
@@ -101,7 +101,7 @@ def _assert_tensor_bits_equal(actual, expected):
             },
             True,
         ),
-        (True, {"speculative_draft_model_path": "/compatible/draft"}, True),
+        (True, {"speculative_draft_model_path": "/compatible/draft"}, False),
         (
             True,
             {"mamba_scheduler_strategy": "extra_buffer", "disable_radix_cache": False},
@@ -142,8 +142,9 @@ def test_qwen35_mtp_loading_needs_only_one_switch(load_mtp, sglang_options, acce
         for name, value in sglang_options.items():
             if value is not None:
                 assert result.sglang[name] == value
-        assert actor.model.get("load_mtp", True) is (load_mtp is not False)
-        if load_mtp is not False:
+        assert actor.model.load_mtp is (load_mtp is True)
+        assert actor.model.mtp_loss_scaling_factor == 0.1
+        if load_mtp is True:
             assert result.sglang.speculative_algorithm.upper() in ("NEXTN", "EAGLE")
             assert result.sglang.speculative_draft_model_path == sglang_options.get(
                 "speculative_draft_model_path", rollout.model.model_path
@@ -160,7 +161,7 @@ def test_qwen35_mtp_loading_needs_only_one_switch(load_mtp, sglang_options, acce
         validate_rollout_cfg(result, OmegaConf.create({}), actor)
         assert OmegaConf.to_container(result, resolve=True) == normalized
     else:
-        with pytest.raises(AssertionError, match="load_mtp"):
+        with pytest.raises(AssertionError, match="load_mtp|external draft"):
             validate_rollout_cfg(rollout, OmegaConf.create({}), actor)
 
 
@@ -303,6 +304,8 @@ def test_sglang_options_reach_all_model_backends(
         "speculative_num_draft_tokens": 8,
         "speculative_eagle_topk": 2,
     }
+    if model_type == "qwen3_5" and training_backend == "megatron":
+        options["speculative_draft_model_path"] = "/unused/checkpoint"
     worker = sglang_args_worker(
         model_type,
         training_backend,
@@ -1592,7 +1595,11 @@ def test_virtual_pipeline_buckets_preserve_repeated_names(vp_size, monkeypatch):
         _assert_tensor_bits_equal(value, chunks[index].weight)
 
 
-def test_qwen35_provider_keeps_virtual_pipeline_config(tmp_path, monkeypatch):
+@pytest.mark.parametrize("load_mtp", [False, True])
+@pytest.mark.parametrize("loss_scale", [0.1, 0.25])
+def test_qwen35_provider_keeps_virtual_pipeline_config(
+    tmp_path, monkeypatch, load_mtp, loss_scale
+):
     pytest.importorskip("megatron.bridge.models.qwen_vl.qwen35_vl_provider")
     from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLModelProvider
     from omegaconf import OmegaConf
@@ -1603,12 +1610,18 @@ def test_qwen35_provider_keeps_virtual_pipeline_config(tmp_path, monkeypatch):
     )
 
     config = Qwen3_5Config(architectures=["Qwen3_5ForConditionalGeneration"])
+    config.text_config.mtp_num_hidden_layers = 1
+    config.text_config.mtp_use_dedicated_embeddings = False
     config.save_pretrained(tmp_path)
     state = SimpleNamespace(
         _cfg=OmegaConf.create(
             {
                 "megatron": {"load": str(tmp_path)},
-                "model": {"model_type": "qwen3_5", "load_mtp": False},
+                "model": {
+                    "model_type": "qwen3_5",
+                    "load_mtp": load_mtp,
+                    "mtp_loss_scaling_factor": loss_scale,
+                },
                 "optim": {"use_distributed_optimizer": False},
             }
         ),
@@ -1626,6 +1639,10 @@ def test_qwen35_provider_keeps_virtual_pipeline_config(tmp_path, monkeypatch):
         pass
 
     def check_provider(provider, **kwargs):
+        assert worker.trains_mtp is load_mtp
+        assert provider.mtp_num_layers == int(load_mtp)
+        if load_mtp:
+            assert provider.mtp_loss_scaling_factor == loss_scale
         assert provider.pipeline_model_parallel_size == 2
         assert provider.virtual_pipeline_model_parallel_size == 2
         raise ModelConstructionReached
@@ -1635,18 +1652,11 @@ def test_qwen35_provider_keeps_virtual_pipeline_config(tmp_path, monkeypatch):
     )
     with pytest.raises(ModelConstructionReached):
         worker.setup_mbridge_model_and_optimizer()
-    from rlinf.hybrid_engines.megatron.utils import prepare_full_model_inputs
-
-    assert worker.custom_forward.keywords["prepare_inputs"] is prepare_full_model_inputs
 
 
 @pytest.mark.parametrize(
     "model_type,backend,load_mtp,algorithm,expected",
     [
-        ("qwen3_5", "megatron", False, None, "dummy"),
-        ("qwen3_5", "megatron", True, "NEXTN", "dummy"),
-        ("qwen3_5", "megatron", False, "NEXTN", "auto"),
-        ("qwen3_5", "megatron", False, "STANDALONE", "auto"),
         ("qwen3_5", "fsdp", False, "NEXTN", "auto"),
         ("deepseek_v3", "megatron", False, "NEXTN", "auto"),
         ("glm4_moe_lite", "megatron", False, "NEXTN", "auto"),
@@ -1893,7 +1903,16 @@ def _inference_sync_model(config, model_type, iteration):
             and vp == (config.virtual_pipeline_model_parallel_size or 1) - 1
         ):
             entries.append(
-                (prefix + "output_layer.weight", "output", (32, 8), 0, None, False)
+                (
+                    prefix + "output_layer.weight",
+                    "embedding"
+                    if config.share_embeddings_and_output_weights
+                    else "output",
+                    (32, 8),
+                    0,
+                    None,
+                    False,
+                )
             )
             if model_type == "qwen3_5":
                 entries.extend(
@@ -1919,6 +1938,12 @@ def _inference_sync_model(config, model_type, iteration):
                 )
         model = torch.nn.Module()
         for name, global_key, shape, dim, segments, expert in entries:
+            if (
+                config.share_embeddings_and_output_weights
+                and config.pipeline_model_parallel_size == 1
+                and name.endswith("output_layer.weight")
+            ):
+                continue
             value = (
                 (
                     (torch.arange(np.prod(shape)) % 257) / 32
@@ -1950,6 +1975,10 @@ def _inference_sync_model(config, model_type, iteration):
             module.register_parameter(
                 parts[-1], torch.nn.Parameter(value.clone().contiguous())
             )
+        language = getattr(model, "language_model", model)
+        language.share_embeddings_and_output_weights = (
+            config.share_embeddings_and_output_weights
+        )
         models.append(model)
     return models
 
@@ -1971,7 +2000,7 @@ def _inference_sync_rank(process_rank, cases, queues, barrier, directory):
     from rlinf.workers.megatron_worker import MegatronWorker
 
     torch.set_num_threads(1)
-    for case_index, (model_type, source, target) in enumerate(cases):
+    for case_index, (model_type, source, target, tied) in enumerate(cases):
         source_world, target_world = source[0], target[0]
         active = process_rank < source_world + target_world
         if active:
@@ -2016,6 +2045,7 @@ def _inference_sync_rank(process_rank, cases, queues, barrier, directory):
             )
             config.linear_key_head_dim = config.linear_value_head_dim = 2
             config.linear_num_key_heads, config.linear_num_value_heads = 4, 8
+            config.share_embeddings_and_output_weights = tied
             worker = object.__new__(
                 MegatronWorker if sending else MegatronActorInference
             )
@@ -2104,7 +2134,16 @@ def test_megatron_inference_sync_across_parallel_layouts(tmp_path):
         ("qwen3_5", (4, 1, 2, None, 2, 1, 1, None), (1, 1, 1, None, 1, 1, 1, None)),
         ("qwen3_5", (2, 1, 2, 2, 1, 1, 1, None), (2, 1, 2, 2, 1, 1, 1, None)),
     ]
-    processes = max(source[0] + target[0] for _, source, target in cases)
+    cases = [
+        (model_type, source, target, False) for model_type, source, target in cases
+    ]
+    cases += [
+        ("qwen3_5", (1, 1, 1, None, 1, 1, 1, None), (2, 1, 2, 2, 1, 1, 1, None), True),
+        ("qwen3_5", (2, 2, 1, None, 1, 1, 2, None), (2, 1, 2, 2, 1, 1, 1, None), True),
+        ("qwen3_5", (2, 1, 2, 2, 1, 1, 1, None), (1, 1, 1, None, 1, 1, 1, None), True),
+        ("qwen2.5", (1, 1, 1, None, 1, 1, 1, None), (2, 1, 2, 2, 1, 1, 1, None), True),
+    ]
+    processes = max(source[0] + target[0] for _, source, target, _ in cases)
     ctx = torch.multiprocessing.get_context("spawn")
     with ctx.Manager() as manager:
         queues = [(manager.Queue(), manager.Queue()) for _ in range(4)]
@@ -2161,3 +2200,15 @@ def test_inference_config_preserves_explicit_layout_overrides():
     assert worker.cfg.inference.model.context_parallel_size == 2
     assert worker.cfg.inference.model.decoder_first_pipeline_num_layers == 1
     assert worker.trainer_role_cfg.model.virtual_pipeline_model_parallel_size == 2
+
+
+def test_qwen35_rejects_text_only_architecture(tmp_path):
+    from omegaconf import OmegaConf
+    from transformers import Qwen3_5TextConfig
+
+    from rlinf.config import validate_model_cfg_by_hf_config
+
+    Qwen3_5TextConfig(architectures=["Qwen3_5ForCausalLM"]).save_pretrained(tmp_path)
+    cfg = OmegaConf.create({"model": {"model_type": "qwen3_5"}})
+    with pytest.raises(ValueError, match="architectures=.*Qwen3_5ForCausalLM"):
+        validate_model_cfg_by_hf_config(cfg, str(tmp_path))

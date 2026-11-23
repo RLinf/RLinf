@@ -14,7 +14,7 @@ Install the agentic SGLang environment from the repository root:
 
    bash requirements/install.sh agentic --engine sglang
 
-The agentic environment selects SGLang 0.5.12.post1 and installs Megatron Bridge and FLA. FLA supplies the gated delta network kernels used by Qwen3.5. The weight synchronization checks used BF16, Megatron Bridge 0.5.0, Transformers 5.6.1, and fla-core 0.6.0 on NVIDIA A100 GPUs. See :doc:`version` for engine version selection.
+The agentic environment selects SGLang 0.5.12.post1 and installs Megatron Bridge and FLA. FLA supplies the gated delta network kernels used by Qwen3.5. Weight synchronization was tested on NVIDIA A100 GPUs with BF16, Megatron Bridge 0.5.0, Transformers 5.6.1, and fla-core 0.6.0. See :doc:`version` for engine version selection.
 
 Configure the Model and MTP
 ------------------------------------------------------
@@ -28,7 +28,8 @@ Add these settings to your Megatron/SGLang task configuration. Replace ``<checkp
      model:
        model_type: qwen3_5
        precision: bf16
-       load_mtp: true
+       load_mtp: false
+       mtp_loss_scaling_factor: 0.1
      tokenizer:
        tokenizer_model: <checkpoint>
      megatron:
@@ -46,15 +47,15 @@ Add these settings to your Megatron/SGLang task configuration. Replace ``<checkp
        mm_enable_dp_encoder: true
        disable_radix_cache: true
 
-``actor.model.load_mtp`` defaults to ``true``. With MTP enabled, the actor loads its prediction branch and SGLang uses NEXTN speculative decoding with the rollout checkpoint as the draft model. SGLang treats NEXTN as EAGLE. Explicit NEXTN or EAGLE settings, draft checkpoint paths, and decoding parameters take precedence. Other speculative decoding algorithms fail configuration validation while actor MTP is enabled. The supported MTP architecture has one prediction layer and shares embeddings with the main model.
+``actor.model.load_mtp`` defaults to ``false``. This loads and synchronizes the language model, vision encoder, and merger without constructing MTP layers or enabling speculative decoding.
 
-Set ``actor.model.load_mtp: false`` to load and synchronize the language model, vision encoder, and merger without MTP. Requesting this checkpoint's MTP draft while disabling actor MTP fails configuration validation. A separately configured external draft remains independent of actor MTP synchronization.
+Set ``actor.model.load_mtp: true`` to train and synchronize the MTP branch and enable NEXTN speculative decoding in SGLang. The draft uses the same checkpoint as the rollout model; external draft checkpoints are not supported for this Megatron/SGLang integration. Explicit NEXTN or EAGLE settings and decoding parameters take precedence. SGLang treats NEXTN as EAGLE. The supported MTP architecture has one prediction layer and shares embeddings with the main model.
 
-An external draft loads its own checkpoint at startup. In SGLang 0.5.12.post1, the main model and draft share a load format, so the main model also loads its checkpoint before receiving actor weights. This adds checkpoint I/O at startup, including when resuming training.
+With MTP enabled, RL actor updates include an auxiliary multi-token prediction loss on response tokens. ``actor.model.mtp_loss_scaling_factor`` controls its weight and defaults to ``0.1``. MTP gradients also update the language model backbone. Check ``actor/mtp_loss`` in the training metrics to monitor the unscaled auxiliary loss. Logprob recomputation and dedicated inference do not add this loss.
 
 With actor MTP enabled, the default for ``rollout.sglang.disable_radix_cache`` depends on the Mamba scheduling mode: ``true`` for ``no_buffer``, or ``false`` for ``extra_buffer``. Explicit values take precedence, and SGLang checks compatibility with the scheduling mode. With actor MTP disabled, SGLang's default applies unless you set the value explicitly.
 
-When the actor supplies all main-model and draft weights, SGLang uses dummy initialization unless checkpoint-reference validation is enabled. It receives actor weights before rollout. Enabling ``rollout.validate_weight_first_sync`` loads the checkpoint first and checks both the main model and the enabled MTP draft after synchronization. This built-in check compares position-aware norms with a tolerance; use byte comparisons for bitwise verification. Resuming training disables the first-sync checkpoint comparison because the actor's resumed weights can differ from the initial checkpoint.
+When the actor supplies all main-model and draft weights, SGLang uses dummy initialization unless validation against the checkpoint is enabled. It receives actor weights before rollout. Enabling ``rollout.validate_weight_first_sync`` loads the checkpoint first and checks both the main model and the enabled MTP draft after synchronization. This built-in check compares position-aware norms with a tolerance; use byte comparisons for bitwise verification. Resuming training disables the first-sync checkpoint comparison because the actor's resumed weights can differ from the initial checkpoint.
 
 Choose the Vision Layout
 ------------------------------------------------
@@ -75,21 +76,17 @@ For example, with rollout engine TP 4 and attention DP 2, attention TP is 2. Wit
    * - Vision encoder with vision DP enabled
      - 1
 
-Use ``rollout.tensor_parallel_size: 4``, ``rollout.sglang.enable_dp_attention: true``, and ``rollout.sglang.dp_size: 2`` for this language layout. Set ``rollout.pipeline_parallel_size: 1``: the RLinf SGLang launch integration does not yet forward rollout PP to the engine. This restriction does not apply to actor pipeline or virtual pipeline parallelism; both have passed full-model weight synchronization checks.
+Use ``rollout.tensor_parallel_size: 4``, ``rollout.sglang.enable_dp_attention: true``, and ``rollout.sglang.dp_size: 2`` for this language layout. Set ``rollout.pipeline_parallel_size: 1``: the RLinf SGLang launch integration does not forward rollout PP to the engine. This restriction does not apply to actor pipeline or virtual pipeline parallelism; both have passed full-model weight synchronization checks.
 
 Verify Weight Loading
 ------------------------------------------
 
-Run the component tests in the agentic environment from the repository root:
+Activate the agentic environment, then run the component tests from the repository root. Preserve the environment's existing Python paths:
 
 .. code-block:: bash
 
-   PYTHONPATH=.:tests/unit_tests python -m pytest tests/unit_tests/test_ckpt_convertor.py -q
+   export PYTHONPATH="$PWD:$PWD/tests/unit_tests:$PYTHONPATH"
+   CUDA_VISIBLE_DEVICES="" python -m pytest tests/unit_tests/test_ckpt_convertor.py -q
+   CUDA_VISIBLE_DEVICES="" python -m pytest tests/unit_tests/test_megatron.py -q
 
-With the tested dependencies installed, the component tests should pass. Inspect skipped tests if you use a different environment: if SGLang or Megatron dependencies are missing, passing tests do not verify loading weights with those libraries. CPU tests check SGLang configuration forwarding, external draft checkpoint loading, and detection of incorrect MTP weights during first-sync validation.
-
-CPU tests also send two successive weight updates to dedicated Megatron inference workers and compare every received parameter byte after each update. The tests use small parameter sets, real Gloo collectives, and Megatron parallel groups. Process queues replace transport between workers. Coverage includes equal and unequal tensor parallel sizes, redistribution across pipeline stages, virtual pipeline chunks, context and data parallel replicas, and expert parallel layouts. The tests check weight transfer and loading without running a model forward pass.
-
-Full-model checks compare every destination parameter's shape, dtype, and raw bytes with an independent reference loaded through SGLang's full-checkpoint loader. They cover initial weights and deliberately changed weights, colocated and disaggregated placement, unequal actor/rollout TP, actor PP/VP, attention DP, and vision DP. The 4B checks also cover shared output embeddings and MTP disabled. These checks establish weight loading correctness, not generated-output equality, training convergence, or speculative decoding speedup.
-
-Asynchronous weight updates while inference requests are running, full-model context parallelism, and multi-node synchronization still require integration tests. Use the existing task's pause and resume lifecycle when integrating asynchronous training.
+With the required dependencies installed, all tests should pass without skips. A missing SGLang or Megatron dependency can skip the corresponding tests; install it before treating the run as validation. These CPU checks do not establish full-model GPU training convergence or speculative decoding performance.

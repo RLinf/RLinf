@@ -90,6 +90,25 @@ def postprocess_ragged_seqs(
     return rows
 
 
+def collect_mtp_loss(
+    num_microbatches: int, num_layers: int, device: torch.device
+) -> torch.Tensor:
+    """Reduce the step's mean MTP loss to every pipeline stage and clear its tracker."""
+    from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
+
+    MTPLossLoggingHelper.reduce_loss_in_tracker()
+    values = MTPLossLoggingHelper.tracker.get("values")
+    loss = torch.zeros((), device=device)
+    if values is not None:
+        loss.copy_(values.sum() / (num_microbatches * num_layers))
+        MTPLossLoggingHelper.clean_loss_in_tracker()
+    if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+        torch.distributed.all_reduce(
+            loss, group=parallel_state.get_pipeline_model_parallel_group()
+        )
+    return loss
+
+
 def preprocess_packed_seqs(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
@@ -180,32 +199,44 @@ def prepare_packed_model_inputs(
     return tokens.contiguous(), None, params
 
 
+def model_packs_inputs(model: torch.nn.Module) -> bool:
+    """Whether the backend packs and CP-splits complete input sequences."""
+    from megatron.training.training import unwrap_model
+
+    try:
+        from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+    except ImportError:
+        return False
+    return isinstance(unwrap_model(model), Qwen3VLModel)
+
+
 def prepare_full_model_inputs(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
     pre_process: bool,
     padding_seqlen: Optional[int] = None,
 ) -> tuple[torch.Tensor, torch.Tensor, PackedSeqParams]:
-    """Keep complete sequences for models that pack and CP-split embeddings.
+    """Left-align complete sequences before model-owned mRoPE and CP packing.
 
     Fixed-size trailing padding is a separate dummy sequence, so the model's
     internal packing produces the same local extent as RLinf's padded labels.
     """
     mask = attention_mask.bool()
-    tokens = input_ids
+    lengths = mask.sum(-1)
     tp = parallel_state.get_tensor_model_parallel_world_size()
     cp = parallel_state.get_context_parallel_world_size()
     alignment = tp * cp * 2 if cp > 1 else tp
-    # Materialize alignment zeros before Bridge slices; a short source slice
-    # otherwise broadcasts a single token across the padded half-chunk.
-    pad_counts = (-mask.sum(-1)) % alignment
-    width = int(pad_counts.max())
-    if width:
-        tokens = torch.nn.functional.pad(tokens, (0, width))
-        padding_mask = (
-            torch.arange(width, device=mask.device)[None, :] < pad_counts[:, None]
-        )
-        mask = torch.cat((mask, padding_mask), dim=1)
+    aligned = (lengths + alignment - 1) // alignment * alignment
+    width = int(aligned.max())
+    # Bridge numbers mRoPE by column, so each sample starts at column zero.
+    order = torch.sort((~mask).to(torch.int8), dim=1, stable=True).indices
+    tokens = input_ids.gather(1, order)
+    tokens = torch.nn.functional.pad(tokens, (0, max(width - tokens.shape[1], 0)))[
+        :, :width
+    ]
+    columns = torch.arange(width, device=mask.device)
+    tokens = tokens.masked_fill(columns >= lengths[:, None], 0)
+    mask = columns < aligned[:, None]
     if padding_seqlen is not None:
         lengths = mask.sum(-1)
         packed_length = ((lengths + alignment - 1) // alignment * alignment).sum()

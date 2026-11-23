@@ -369,7 +369,10 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
             and actor_cfg is not None
             and actor_cfg.get("training_backend") == "megatron"
         ):
-            load_mtp = actor_cfg.model.get("load_mtp", True)
+            with open_dict(actor_cfg.model):
+                actor_cfg.model.setdefault("load_mtp", False)
+                actor_cfg.model.setdefault("mtp_loss_scaling_factor", 0.1)
+            load_mtp = actor_cfg.model.get("load_mtp", False)
             assert isinstance(load_mtp, bool), (
                 f"actor.model.load_mtp must be a boolean, got {load_mtp!r}."
             )
@@ -385,6 +388,15 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
             ):
                 algorithm = cfg.sglang.get("speculative_algorithm")
                 draft_path = cfg.sglang.get("speculative_draft_model_path")
+                assert draft_path in (None, cfg.model.model_path), (
+                    "Qwen3.5 does not support an external draft checkpoint; "
+                    f"expected {cfg.model.model_path!r}, got {draft_path!r}."
+                )
+                if not load_mtp:
+                    assert algorithm is None and draft_path is None, (
+                        "Qwen3.5 speculative decoding requires load_mtp=True; "
+                        f"got algorithm={algorithm!r}, draft={draft_path!r}."
+                    )
                 if load_mtp:
                     assert algorithm is None or algorithm.upper() in (
                         "NEXTN",
@@ -407,16 +419,7 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
                     for name, value in defaults.items():
                         if cfg.sglang.get(name) is None:
                             cfg.sglang[name] = value
-                elif (
-                    algorithm is not None
-                    and algorithm.upper() in ("NEXTN", "EAGLE")
-                    and draft_path in (None, cfg.model.model_path)
-                ):
-                    assert False, (
-                        "The Qwen3.5 checkpoint's MTP draft requires "
-                        "actor.model.load_mtp=True for weight synchronization; "
-                        f"got load_mtp=False and speculative_algorithm={algorithm!r}."
-                    )
+
         else:
             cfg.vllm = validate_vllm_cfg(cfg.vllm)
 
@@ -429,7 +432,7 @@ def sglang_syncs_mtp(actor_cfg: Optional[DictConfig], rollout_cfg: DictConfig) -
         actor_cfg is not None
         and actor_cfg.get("training_backend") == "megatron"
         and rollout_cfg.model.model_type == "qwen3_5"
-        and actor_cfg.model.get("load_mtp", True)
+        and actor_cfg.model.get("load_mtp", False)
     )
 
 
@@ -468,6 +471,13 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     from transformers import AutoConfig
 
     hf_config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=True)
+    if getattr(cfg.model, "model_type", None) == "qwen3_5" and (
+        "Qwen3_5ForConditionalGeneration" not in (hf_config.architectures or [])
+    ):
+        raise ValueError(
+            "model_type qwen3_5 requires a Qwen3_5ForConditionalGeneration "
+            f"checkpoint, got architectures={hf_config.architectures}."
+        )
 
     if (
         "Qwen2ForCausalLM" in hf_config.architectures
@@ -484,7 +494,6 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         or "Qwen3VLForConditionalGeneration" in hf_config.architectures
         or "Qwen3VLMoeForConditionalGeneration" in hf_config.architectures
         or "Qwen3_5ForConditionalGeneration" in hf_config.architectures
-        or "Qwen3_5ForCausalLM" in hf_config.architectures
     ):
         qk_layernorm = True
     else:
@@ -502,9 +511,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             # reported as rope_scaling=None and so left this untouched.
             cfg.model.seq_len_interpolation_factor = None
         model_type = getattr(cfg.model, "model_type", None)
-        if model_type in ("qwen3_vl", "qwen3_vl_moe", "qwen3_5") and hasattr(
-            hf_config, "text_config"
-        ):
+        if model_type in ("qwen3_vl", "qwen3_vl_moe", "qwen3_5"):
             # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
             hf_config = hf_config.text_config
 

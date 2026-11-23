@@ -540,6 +540,7 @@ class MegatronCoreWeightReshard:
                 * parallel_state.get_expert_model_parallel_rank()
             )
         chunks = []
+        aliases = {}
         for idx, chunk in enumerate(unwrap_model(model)):
             names = {
                 key: key
@@ -559,6 +560,14 @@ class MegatronCoreWeightReshard:
                     )
                 global_names[key] = local_name
             chunks.append(global_names)
+            language_model = getattr(chunk, "language_model", chunk)
+            if getattr(language_model, "share_embeddings_and_output_weights", False):
+                for key in global_names:
+                    if key.endswith("output_layer.weight"):
+                        aliases[key] = (
+                            key.removesuffix("output_layer.weight")
+                            + "embedding.word_embeddings.weight"
+                        )
         return {
             "tp_rank": parallel_state.get_tensor_model_parallel_rank(),
             "tp_size": parallel_state.get_tensor_model_parallel_world_size(),
@@ -567,11 +576,17 @@ class MegatronCoreWeightReshard:
                 parallel_state.get_expert_tensor_parallel_world_size(),
             ),
             "chunks": chunks,
+            "aliases": aliases,
         }
 
     def narrow_to_model(self, full_sd: dict, layout: dict) -> dict:
         """Select this bucket's weights in a Megatron receiver's chunk layout."""
         needed = {key for chunk in layout["chunks"] for key in chunk}
+        # PP1 tied models may store only the embedding; PP receivers own an output copy.
+        full_sd = dict(full_sd)
+        for destination, source in layout["aliases"].items():
+            if source in full_sd and destination not in full_sd:
+                full_sd[destination] = full_sd[source]
         local = self.narrow_to_target(
             {key: value for key, value in full_sd.items() if key in needed},
             layout["tp_rank"],

@@ -181,6 +181,11 @@ class MegatronActor(MegatronWorker):
 
             logits_processor_args = {"label": label, "label_mask": label_mask}
 
+            train_mtp = self.return_loss and self.trains_mtp
+            mtp_mask = None
+            if train_mtp:
+                mtp_mask = torch.zeros_like(attention_mask)
+                mtp_mask[:, :-1] = batch["response_mask"][:, 1:]
             output = self.custom_forward(
                 model,
                 input_ids,
@@ -189,6 +194,8 @@ class MegatronActor(MegatronWorker):
                 sequence_parallel=self.transformer_config.sequence_parallel,
                 logits_processor=logits_processor,
                 logits_processor_args=logits_processor_args,
+                mtp_labels=label if train_mtp else None,
+                mtp_loss_mask=mtp_mask,
                 temperature=self.cfg.algorithm.sampling_params.temperature,
                 padding_seqlen=padding_seqlen,
             )
