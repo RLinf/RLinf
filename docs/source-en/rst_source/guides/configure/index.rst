@@ -1,25 +1,46 @@
-Envs & Logging
-==============
+Configure & Run
+===============
 
-Use these guides to configure heterogeneous training environments and experiment logging before launching a run.
+Start here once your first run works: monitor training curves, resume interrupted jobs, export checkpoints, reduce GPU memory with LoRA, or train on multiple environments together.
 
-.. note::
+.. grid:: 1 2 3 3
+   :gutter: 2
 
-   For full YAML field schemas and metric namespaces, see :doc:`Config & Metrics <../../reference/training/index>`. For adapter settings on VLA and diffusion models, see :doc:`LoRA Fine-Tuning <../lora>`.
+   .. grid-item-card:: Logging & Visualization
+      :link: ../logger
+      :link-type: doc
 
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
+      Stream metrics and videos to TensorBoard, Weights & Biases, or SwanLab.
 
-   * - Guide
-     - What you get
-   * - :doc:`Logging & Visualization <../logger>`
-     - TensorBoard, W&B, and SwanLab setup, including offline logging and multi-node API keys.
-   * - :doc:`Heterogeneous Envs <../hetero_envs>`
-     - Run different env configurations, such as ManiSkill and LIBERO, for one policy in one run.
+   .. grid-item-card:: Resume Training
+      :link: ../resume
+      :link-type: doc
+
+      Save periodic checkpoints and resume interrupted training cleanly.
+
+   .. grid-item-card:: Checkpoint Conversion
+      :link: ../convertor
+      :link-type: doc
+
+      Convert FSDP or Megatron training checkpoints into Hugging Face or evaluation formats.
+
+   .. grid-item-card:: LoRA Fine-Tuning
+      :link: ../lora
+      :link-type: doc
+
+      Train large policies with lower GPU memory using LoRA adapters.
+
+   .. grid-item-card:: Multi-Env Training
+      :link: ../hetero_envs
+      :link-type: doc
+
+      Train or evaluate one policy across multiple environment configurations in a single run.
 
 .. toctree::
    :hidden:
 
    Logging & Visualization <../logger>
-   Heterogeneous Envs <../hetero_envs>
+   Resume Training <../resume>
+   Checkpoint Conversion <../convertor>
+   LoRA Fine-Tuning <../lora>
+   Multi-Env Training <../hetero_envs>

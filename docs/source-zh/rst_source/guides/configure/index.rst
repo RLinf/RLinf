@@ -1,25 +1,46 @@
-环境与日志
+配置与运行
 ==========
 
-启动训练前需要配置异构环境或实验日志时，使用这些指南。
+跑通首个任务后从这里开始：接入日志监控、配置断点续训、导出 Checkpoint、用 LoRA 降低显存占用，或在一次训练中混合多个环境。
 
-.. note::
+.. grid:: 1 2 3 3
+   :gutter: 2
 
-   完整的 YAML 字段说明与指标命名空间见 :doc:`配置与指标 <../../reference/training/index>`；VLA 与扩散模型的 adapter 配置见 :doc:`LoRA 微调 <../lora>`。
+   .. grid-item-card:: 日志与可视化
+      :link: ../logger
+      :link-type: doc
 
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
+      将训练曲线与评测视频接入 TensorBoard、Weights & Biases 或 SwanLab。
 
-   * - 指南
-     - 内容
-   * - :doc:`日志与可视化 <../logger>`
-     - TensorBoard、W&B 与 SwanLab 配置，包括离线日志与多节点 API 密钥传递。
-   * - :doc:`异构环境 <../hetero_envs>`
-     - 在一次运行中让同一个 policy 使用不同的环境配置，例如 ManiSkill 和 LIBERO。
+   .. grid-item-card:: 断点续训
+      :link: ../resume
+      :link-type: doc
+
+      定期保存训练状态，并在任务中断后无缝恢复。
+
+   .. grid-item-card:: Checkpoint 转换
+      :link: ../convertor
+      :link-type: doc
+
+      将 FSDP 或 Megatron 训练产物转换为 Hugging Face 或评测格式。
+
+   .. grid-item-card:: LoRA 微调
+      :link: ../lora
+      :link-type: doc
+
+      通过 LoRA 适配器显著降低大模型与 VLA 训练显存。
+
+   .. grid-item-card:: 多环境混合训练
+      :link: ../hetero_envs
+      :link-type: doc
+
+      在单次运行中同时使用多个不同的仿真或真机环境配置。
 
 .. toctree::
    :hidden:
 
    日志与可视化 <../logger>
-   异构环境 <../hetero_envs>
+   断点续训 <../resume>
+   Checkpoint 转换 <../convertor>
+   LoRA 微调 <../lora>
+   多环境混合训练 <../hetero_envs>

@@ -107,7 +107,7 @@ Why RLinf
   FAQ <rst_source/resources/faq>
 
 .. toctree::
-  :caption: Embodied Training
+  :caption: Embodied AI
   :maxdepth: 3
   :includehidden:
   :titlesonly:
@@ -119,6 +119,7 @@ Why RLinf
   SFT & Imitation <rst_source/examples/sft_index>
   RL Recipes <rst_source/examples/methods_index>
   World Models <rst_source/examples/world_model_index>
+  Evaluation <rst_source/evaluations/index>
 
 .. toctree::
   :caption: Real-World Robots
@@ -128,6 +129,7 @@ Why RLinf
   :hidden:
 
   Overview <rst_source/examples/real_world_index>
+  Workflows <rst_source/examples/real_world_workflows_index>
   Single-Arm Franka <rst_source/examples/embodied/franka_index>
   Dual-Arm Franka <rst_source/examples/embodied/dual_franka_index>
   YAM <rst_source/examples/embodied/yam_index>
@@ -139,18 +141,6 @@ Why RLinf
   XSquare Turtle2 <rst_source/examples/embodied/xsquare_turtle2>
   SO-101 <rst_source/examples/embodied/so101>
   LeKiwi <rst_source/examples/embodied/lekiwi>
-
-.. toctree::
-  :caption: Evaluation
-  :maxdepth: 3
-  :includehidden:
-  :titlesonly:
-  :hidden:
-
-  Overview <rst_source/evaluations/index>
-  Quick Tour <rst_source/evaluations/get_started/quick_tour>
-  Benchmarks <rst_source/evaluations/guides/index>
-  Eval Reference <rst_source/evaluations/reference/index>
 
 .. toctree::
   :caption: Agentic & Generative
@@ -177,11 +167,10 @@ Why RLinf
   :hidden:
 
   Overview <rst_source/guides/index>
-  Launch & Scale <rst_source/guides/launch-scale/index>
-  Data & Checkpoints <rst_source/guides/data-checkpoints/index>
-  Performance & Parallelism <rst_source/guides/performance/index>
-  Envs & Logging <rst_source/guides/configure/index>
-  Rollout Engines <rst_source/guides/rollout-engines/index>
+  Configure & Run <rst_source/guides/configure/index>
+  Scale to a Cluster <rst_source/guides/launch-scale/index>
+  Profile & Speed Up <rst_source/guides/performance/index>
+  Rollout Backends <rst_source/guides/rollout-engines/index>
 
 .. toctree::
   :caption: Extending
@@ -191,18 +180,10 @@ Why RLinf
   :hidden:
 
   Overview <rst_source/extending/index>
-  FSDP Model <rst_source/extending/new_model_fsdp>
-  SFT Model <rst_source/extending/new_model_sft>
-  SGLang Embodied <rst_source/extending/sglang_embodied_model>
-  Simulator Env <rst_source/extending/new_env>
-  Real-World Robot <rst_source/extending/new_robot>
-  Real-World Task <rst_source/extending/new_task>
-  Reward Model <rst_source/extending/reward_model>
-  Algorithms & Rule Rewards <rst_source/extending/new_algorithm>
-  Agent & Tool Calling <rst_source/extending/new_agent>
-  Megatron-Bridge <rst_source/extending/mbridge>
-  Accelerator Backend <rst_source/extending/new_accelerator>
-  Advanced Integrations <rst_source/extending/advanced-integrations/index>
+  Add a Model <rst_source/extending/models/index>
+  Add an Environment or Robot <rst_source/extending/envs-robots/index>
+  Add Algorithms, Rewards & Agents <rst_source/extending/algorithms-agents/index>
+  Add Hardware & System Backends <rst_source/extending/backends/index>
 
 .. toctree::
   :caption: Concepts & Reference
@@ -224,9 +205,7 @@ Why RLinf
   :hidden:
 
   Why RLinf <rst_source/resources/why_rlinf>
-  v0.4 Release Notes <rst_source/resources/release_v0.4>
-  v0.3 Release Notes <rst_source/resources/release_v0.3>
-  v0.1–v0.2 Release Notes <rst_source/resources/release_v0.1_v0.2>
+  Release Notes <rst_source/resources/releases_index>
   Blog <rst_source/resources/blog/index>
   Publications <rst_source/resources/publications/index>
   Contributor Policy <rst_source/resources/maintainer_policy>

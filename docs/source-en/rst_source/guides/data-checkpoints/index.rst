@@ -1,25 +1,21 @@
+:orphan:
+
 Data & Checkpoints
 ==================
 
-Use these guides when you prepare demonstrations, move checkpoint formats, or
-resume a stopped run.
+These guides have been reorganized into workflow-based sections:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
+.. grid:: 1 2 2 2
+   :gutter: 2
 
-   * - Guide
-     - What you get
-   * - :doc:`Resume Training <../resume>`
-     - Checkpoint cadence and resuming a run.
-   * - :doc:`Checkpoint Conversion <../convertor>`
-     - Convert checkpoints between formats.
-   * - :doc:`Data Collection <../data_collection>`
-     - Collect and preprocess demonstration data.
+   .. grid-item-card:: Configure & Run
+      :link: ../configure/index
+      :link-type: doc
 
-.. toctree::
-   :hidden:
+      Resume training and convert FSDP / Megatron checkpoints.
 
-   Resume Training <../resume>
-   Checkpoint Conversion <../convertor>
-   Data Collection <../data_collection>
+   .. grid-item-card:: Real-World Workflows
+      :link: ../../examples/real_world_workflows_index
+      :link-type: doc
+
+      Collect real-world demonstration datasets and replay buffers.

@@ -116,5 +116,5 @@ Next Steps
 
 - :doc:`Installation <installation>` — targets, flags, and Docker Hub link.
 - :doc:`Quick Start <vla>` — four-step ManiSkill3 walkthrough.
-- :doc:`Launch & Scale <../guides/launch-scale/index>` — multi-node and real-world runs.
+- :doc:`Scale to a Cluster <../guides/launch-scale/index>` — multi-node, heterogeneous, and cloud-edge runs.
 - :doc:`Evaluation <../evaluations/index>` — supported benchmarks and eval configs.

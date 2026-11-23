@@ -1,21 +1,21 @@
+:orphan:
+
 高级集成
 ========
 
-需要底层后端定制时使用以下指南：包括手动编写 Megatron 模型适配（Megatron-Bridge 暂未覆盖你的模型结构时参考 :doc:`Megatron-Bridge <../mbridge>`\ 之外的底层方案）以及优化 actor 到 rollout 的权重同步传输。
+本组指南已按接入目标重新归类：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
+.. grid:: 1 2 2 2
+   :gutter: 2
 
-   * - 指南
-     - 内容
-   * - :doc:`手动接入 Megatron 模型 <../new_model_megatron>`
-     - 手动编写 Megatron actor 适配与 SGLang 权重重切分逻辑。
-   * - :doc:`权重同步 <../weight_syncer>`
-     - 优化具身训练中 actor 到 rollout 的权重同步。
+   .. grid-item-card:: 新增模型
+      :link: ../models/index
+      :link-type: doc
 
-.. toctree::
-   :hidden:
+      手动 Megatron 模型接入与 Megatron-Bridge、具身模型统一归档。
 
-   手动接入 Megatron 模型 <../new_model_megatron>
-   权重同步 <../weight_syncer>
+   .. grid-item-card:: 新增硬件与系统后端
+      :link: ../backends/index
+      :link-type: doc
+
+      Actor 到 Rollout 权重同步与新加速卡后端接入。

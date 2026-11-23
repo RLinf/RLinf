@@ -59,11 +59,11 @@
 
       在 Franka、SO-101、ARX X5、R2 等真机上运行硬件测试、遥操作与数据采集、SFT 与在线 RL。
 
-   .. grid-item-card:: 智能体 / 推理 RL
+   .. grid-item-card:: Agent / 推理 RL
       :link: rst_source/examples/agentic/index
       :link-type: doc
 
-      按场景选择数学推理、多轮工具调用、多智能体与图像/视频生成示例，支持单机到多节点扩展。
+      按场景选择数学推理、多轮工具调用、多 Agent 与图像/视频生成示例，支持单机到多节点扩展。
 
    .. grid-item-card:: 自定义扩展
       :link: rst_source/extending/index
@@ -107,7 +107,7 @@
   常见问题 <rst_source/resources/faq>
 
 .. toctree::
-  :caption: 具身训练
+  :caption: 具身智能
   :maxdepth: 3
   :includehidden:
   :titlesonly:
@@ -119,6 +119,7 @@
   SFT 与模仿学习 <rst_source/examples/sft_index>
   RL 算法示例 <rst_source/examples/methods_index>
   世界模型 <rst_source/examples/world_model_index>
+  模型评测 <rst_source/evaluations/index>
 
 .. toctree::
   :caption: 真机机器人
@@ -128,6 +129,7 @@
   :hidden:
 
   总览 <rst_source/examples/real_world_index>
+  通用流程 <rst_source/examples/real_world_workflows_index>
   单臂 Franka <rst_source/examples/embodied/franka_index>
   双臂 Franka <rst_source/examples/embodied/dual_franka_index>
   YAM <rst_source/examples/embodied/yam_index>
@@ -141,19 +143,7 @@
   LeKiwi <rst_source/examples/embodied/lekiwi>
 
 .. toctree::
-  :caption: 评测
-  :maxdepth: 3
-  :includehidden:
-  :titlesonly:
-  :hidden:
-
-  总览 <rst_source/evaluations/index>
-  快速体验 <rst_source/evaluations/get_started/quick_tour>
-  评测基准 <rst_source/evaluations/guides/index>
-  评测参考 <rst_source/evaluations/reference/index>
-
-.. toctree::
-  :caption: 智能体与生成
+  :caption: Agent 与生成
   :maxdepth: 2
   :includehidden:
   :titlesonly:
@@ -177,11 +167,10 @@
   :hidden:
 
   总览 <rst_source/guides/index>
-  启动与扩展 <rst_source/guides/launch-scale/index>
-  数据与 Checkpoint <rst_source/guides/data-checkpoints/index>
-  性能与并行 <rst_source/guides/performance/index>
-  环境与日志 <rst_source/guides/configure/index>
-  Rollout 引擎 <rst_source/guides/rollout-engines/index>
+  配置与运行 <rst_source/guides/configure/index>
+  扩展到多机集群 <rst_source/guides/launch-scale/index>
+  性能诊断与提速 <rst_source/guides/performance/index>
+  Rollout 后端与服务 <rst_source/guides/rollout-engines/index>
 
 .. toctree::
   :caption: 扩展开发
@@ -191,18 +180,10 @@
   :hidden:
 
   总览 <rst_source/extending/index>
-  FSDP 模型 <rst_source/extending/new_model_fsdp>
-  SFT 模型 <rst_source/extending/new_model_sft>
-  SGLang 具身模型 <rst_source/extending/sglang_embodied_model>
-  仿真环境 <rst_source/extending/new_env>
-  真机机器人 <rst_source/extending/new_robot>
-  真机任务 <rst_source/extending/new_task>
-  奖励模型 <rst_source/extending/reward_model>
-  算法与规则奖励 <rst_source/extending/new_algorithm>
-  智能体与工具调用 <rst_source/extending/new_agent>
-  Megatron-Bridge <rst_source/extending/mbridge>
-  加速卡后端 <rst_source/extending/new_accelerator>
-  高级集成 <rst_source/extending/advanced-integrations/index>
+  新增模型 <rst_source/extending/models/index>
+  新增环境与机器人 <rst_source/extending/envs-robots/index>
+  新增算法、Reward 与 Agent <rst_source/extending/algorithms-agents/index>
+  新增硬件与系统后端 <rst_source/extending/backends/index>
 
 .. toctree::
   :caption: 原理与参考
@@ -224,9 +205,7 @@
   :hidden:
 
   为什么选择 RLinf <rst_source/resources/why_rlinf>
-  v0.4 发布说明 <rst_source/resources/release_v0.4>
-  v0.3 发布说明 <rst_source/resources/release_v0.3>
-  v0.1–v0.2 发布说明 <rst_source/resources/release_v0.1_v0.2>
+  发布说明 <rst_source/resources/releases_index>
   博客 <rst_source/resources/blog/index>
   论文 <rst_source/resources/publications/index>
   贡献者政策 <rst_source/resources/maintainer_policy>

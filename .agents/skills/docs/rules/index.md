@@ -4,18 +4,17 @@ An index page routes readers to other pages; it does not explain anything itself
 
 ## Where a page goes
 
-The docs have nine top-level chapters in the sidebar, in this order: **Get Started · Embodied Training · Real-World Robots · Evaluation · Agentic & Generative · Guides · Extending · Concepts & Reference · Resources**. Every page belongs to exactly one, chosen by the reader's starting question rather than by the team that owns the feature.
+The docs have eight top-level chapters in the sidebar, in this order: **Get Started · Embodied AI · Real-World Robots · Agentic & Generative · Guides · Extending · Concepts & Reference · Resources**. Every page belongs to exactly one, chosen by the reader's starting question rather than by the team that owns the feature.
 
 | Chapter | Owns |
 |---|---|
-| Get Started | overview, installation & requirements, quickstart, cheat sheet, FAQ |
-| Embodied Training | overview, simulators, embodied models, SFT & imitation, RL recipes, world models |
-| Real-World Robots | overview, shared real-world workflow, and per-robot bring-up / SFT / RL pages |
-| Evaluation | eval overview, quick tour, benchmark eval guides, eval CLI/config/models/results reference |
+| Get Started | overview, installation & requirements, quickstart, walkthrough, cheat sheet, FAQ |
+| Embodied AI | overview, simulators, embodied models, SFT & imitation, RL recipes, world models, embodied evaluation (quick tour, benchmark guides, eval reference) |
+| Real-World Robots | overview, shared real-world workflows (multi-node robot launch, teleoperation, data collection), and per-robot bring-up / SFT / RL pages |
 | Agentic & Generative | math reasoning, Search-R1, WideSeek-R1, rStar2, AgentLightning, Coding RL, VLM, image & video generation |
-| Guides | operational how-tos: envs & logging, data & checkpoints, launch & scale, performance & parallelism, rollout engines |
-| Extending | contributor how-tos (embodied first, in overview order): models, envs, robots/tasks, rewards, algorithms, agents, Megatron-Bridge, accelerators, advanced integrations |
-| Concepts & Reference | concepts (execution, scheduling, robotics), algorithm specs, config & metrics, Python API |
+| Guides | workflow-ordered operational how-tos: Configure & Run, Scale to a Cluster, Profile & Speed Up, Rollout Backends |
+| Extending | goal-grouped contributor how-tos: Add a Model (all 5 model paths), Add an Environment or Robot, Add Algorithms, Rewards & Agents, Add Hardware & System Backends |
+| Concepts & Reference | concepts (overview, execution, scheduling, robotics), algorithm specs, config & metrics, Python API |
 | Resources | why RLinf, release notes, blog, publications, contributor policy |
 
 - **Information ownership.** A page is owned by the section where readers look for its task. When a mixed page holds a concept that Concepts needs, move the concept to a dedicated Concepts page and link the operational and reference parts from their own sections.
@@ -24,10 +23,11 @@ The docs have nine top-level chapters in the sidebar, in this order: **Get Start
 - **Evaluation.** The sidebar has 4 items: `Overview` (`evaluations/index`), `Quick Tour` (`evaluations/get_started/quick_tour`), `Benchmarks` (`evaluations/guides/index`), and `Eval Reference` (`evaluations/reference/index`), with `start/installation.rst` as the single installation hub. `evaluations/guides/` owns benchmark-specific eval workflows, and `evaluations/reference/` owns the eval CLI, config, models, and results. Training pages may show training-time validation and compact results, and link to Evaluation for the rest.
 - **Robots and Franka.** Franka sits under the Robots gallery. The Robots toctree links `Franka <embodied/franka>`, the base Real-World RL page, which owns the nested Franka variants (Reward Model, ZED + Robotiq, GELLO, Dual-Arm, Dexterous Hand, Pi0 SFT, HG-DAgger).
 - **Sidebar grouping.** When a section's sidebar grows long and flat, group its children under small intent-based sub-indexes, each a short landing page of cards or tables. Keep file names when regrouping, and update the EN and ZH toctrees together. The groupings are:
-  - **Evaluation**: `Overview · Quick Tour · Benchmarks · Eval Reference` (`start/installation.rst` is the single installation hub).
-  - **Guides**: `Overview · Configure · Data & Checkpoints · Launch & Scale · Performance & Parallelism · Rollout Engines`. `Guides -> Configure` owns task-oriented configuration guides (`Heterogeneous Envs`, `Logging & Visualization`).
+  - **Embodied AI → Evaluation**: `Quick Tour · Benchmarks · Eval Reference` (`start/installation.rst` is the single installation hub).
+  - **Real-World Robots → Workflows**: `Multi-Node Robot Launch · Teleoperation · Data Collection`.
+  - **Guides**: `Overview · Configure & Run · Scale to a Cluster · Profile & Speed Up · Rollout Backends`.
+  - **Extending**: `Overview · Add a Model · Add an Environment or Robot · Add Algorithms, Rewards & Agents · Add Hardware & System Backends`.
   - **Concepts & Reference**: `Concepts` (`Overview · Execution · Scheduling · Robotics`), `Algorithms`, `Config & Metrics` (owns `Training Configuration`, `Training Metrics`, and the 3 full schema reference pages: `basic_config`, `embodiment_config`, `agentic_config`), and `Python API`.
-  - **Extending**: the add-component pages as direct children, with Megatron-Bridge, weight synchronization, and the reward-model workflow under Advanced Integrations. Examples keeps its gallery categories.
 
 ## Landing and index pages
 
@@ -55,4 +55,4 @@ The docs have nine top-level chapters in the sidebar, in this order: **Get Start
 
 ## Global navigation
 
-The top bar is removed. The left sidebar holds the logo and title, the search field, a compact row with the version selector and the repository link with its live star count, and then the section navigation, which shows all eight axes from every page. Top-level sections expand to their direct children (`js/sidebar-nav.js`), and deeper trees stay collapsed. The Ask AI button floats at the bottom right of the viewport. Keep `navbar_start: []`, `navbar_center: []`, `navbar_end: []`, `html_sidebars` ordered as `sidebar-brand`, `search-field`, `sidebar-tools`, `global-sidebar-nav`, `collapse_navigation: False`, `show_nav_level: 1`, `navigation_depth: 5`, and `--pst-header-height: 0` unless a layout change revises them on purpose. The root `index.rst` toctree stays hidden.
+The top bar is removed. The left sidebar holds the logo and title, the search field, a compact row with the version selector and the repository link with its live star count, and then the section navigation, which shows all eight axes from every page. Expanded sidebar branches persist in `sessionStorage` (`js/sidebar-nav.js`) so multiple sections can remain open simultaneously across page navigations. The Ask AI button floats at the bottom right of the viewport. Keep `navbar_start: []`, `navbar_center: []`, `navbar_end: []`, `html_sidebars` ordered as `sidebar-brand`, `search-field`, `sidebar-tools`, `global-sidebar-nav`, `collapse_navigation: False`, `show_nav_level: 1`, `navigation_depth: 4`, and `--pst-header-height: 0` unless a layout change revises them on purpose. The root `index.rst` toctree stays hidden.

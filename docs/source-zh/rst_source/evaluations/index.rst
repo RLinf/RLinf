@@ -188,4 +188,12 @@ SGLang 服务评测指南
 
       日志、指标与视频输出。
 
-非具身的数学推理 LLM 评测请使用 `LLMEvalKit <https://github.com/RLinf/LLMEvalKit>`_。完整安装说明见 :doc:`../start/installation`\ （模型专属独立评测脚本位于 ``toolkits/standalone_eval_scripts/``）。
+完整的命令行参数、配置字段、支持模型与输出格式见 :doc:`评测参考 <reference/index>`。非具身的数学推理 LLM 评测请使用 `LLMEvalKit <https://github.com/RLinf/LLMEvalKit>`_。完整安装说明见 :doc:`../start/installation`\ （模型专属独立评测脚本位于 ``toolkits/standalone_eval_scripts/``）。
+
+.. toctree::
+   :hidden:
+   :maxdepth: 2
+
+   快速体验 <get_started/quick_tour>
+   评测基准 <guides/index>
+   评测参考 <reference/index>

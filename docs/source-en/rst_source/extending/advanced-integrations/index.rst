@@ -1,21 +1,21 @@
+:orphan:
+
 Advanced Integrations
 =====================
 
-Use these guides when you need low-level backend integration—manual Megatron weight resharding (when :doc:`Megatron-Bridge <../mbridge>` does not cover your model) or custom actor-to-rollout weight transport.
+These guides have been moved into goal-oriented extension categories:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
+.. grid:: 1 2 2 2
+   :gutter: 2
 
-   * - Guide
-     - What you get
-   * - :doc:`Manual Megatron Model <../new_model_megatron>`
-     - Hand-written Megatron actor and SGLang weight resharding integration.
-   * - :doc:`Weight Synchronization <../weight_syncer>`
-     - Optimize actor-to-rollout weight sync in embodied training.
+   .. grid-item-card:: Add a Model
+      :link: ../models/index
+      :link-type: doc
 
-.. toctree::
-   :hidden:
+      Manual Megatron model integration alongside Megatron-Bridge and embodied models.
 
-   Manual Megatron Model <../new_model_megatron>
-   Weight Synchronization <../weight_syncer>
+   .. grid-item-card:: Add Hardware & System Backends
+      :link: ../backends/index
+      :link-type: doc
+
+      Actor-to-rollout weight synchronization and new accelerator backends.

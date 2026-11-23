@@ -1,7 +1,7 @@
 Extending RLinf
 ===============
 
-Plug your own model, simulator, physical robot, reward, algorithm, agent tool, or accelerator into RLinf without modifying the distributed runtime. Pick the smallest extension layer that matches your goal.
+Plug your own model, simulator, physical robot, reward, algorithm, agent tool, or hardware backend into RLinf without modifying the distributed runtime. Pick the group that matches what you want to add.
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/extending_map.svg
    :align: center
@@ -14,146 +14,81 @@ Which Guide Should I Read?
 
 .. list-table::
    :header-rows: 1
-   :widths: 34 38 28
+   :widths: 36 36 28
 
-   * - Goal
+   * - What You Want to Add
      - Extension Point
-     - Start Here
-   * - Train a new VLA or embodied RL policy (FSDP)
+     - Guide
+   * - New VLA or embodied RL policy (FSDP)
      - ``register_model`` + ``BasePolicy``
-     - :doc:`FSDP Model <new_model_fsdp>`
-   * - Add a supervised fine-tuning model
+     - :doc:`Embodied Policy (FSDP) <new_model_fsdp>`
+   * - New supervised fine-tuning model & dataset
      - ``register_model`` + ``FSDPSftWorker``
-     - :doc:`SFT Model <new_model_sft>`
-   * - Run embodied evaluation rollout with SGLang
+     - :doc:`SFT Model & Dataset <new_model_sft>`
+   * - New embodied rollout model on SGLang
      - SGLang embodied adapter registry
-     - :doc:`SGLang Embodied <sglang_embodied_model>`
-   * - Add a new physics simulator
+     - :doc:`Embodied Rollout (SGLang) <sglang_embodied_model>`
+   * - New Hugging Face LLM on Megatron + SGLang (recommended)
+     - Megatron-Bridge actor backend
+     - :doc:`LLM via Megatron-Bridge <mbridge>`
+   * - Custom Megatron LLM adapter (manual resharding)
+     - Manual Megatron actor & weight mapping
+     - :doc:`LLM via Manual Megatron <new_model_megatron>`
+   * - New physics simulator
      - ``SupportedEnvType`` + ``get_env_cls()``
-     - :doc:`Simulator Env <new_env>`
-   * - Connect a new sensor, arm, or physical robot
-     - Local part → compose parts → remote placement
-     - :doc:`Real-World Robot <new_robot>`
-   * - Add a task on an already-supported robot
-     - Real-world task config overlay (no robotics code)
+     - :doc:`Simulator Environment <new_env>`
+   * - New sensor, arm, or physical robot
+     - Local part → robot tree → remote placement
+     - :doc:`Real-World Robot Hardware <new_robot>`
+   * - New task on an already-supported robot
+     - Real-world task config overlay
      - :doc:`Real-World Task <new_task>`
-   * - Train or subclass a learned embodied reward model
-     - ``BaseRewardModel`` + ``reward.use_reward_model``
-     - :doc:`Reward Model <reward_model>`
-   * - Add an advantage, policy loss, or rule reward
+   * - New advantage, policy loss, or rule reward
      - ``@register_advantage`` / ``@register_policy_loss`` / ``register_reward``
-     - :doc:`Algorithms & Rule Rewards <new_algorithm>`
-   * - Add a multi-turn agent loop, tool, or parser
+     - :doc:`Advantage, Loss & Rule Reward <new_algorithm>`
+   * - New learned embodied reward model
+     - ``BaseRewardModel`` + ``reward.use_reward_model``
+     - :doc:`Learned Reward Model <reward_model>`
+   * - New multi-turn agent loop, tool, or parser
      - ``AgentLoopWorker`` / ``ToolWorker`` / ``@register_toolcall_parser``
-     - :doc:`Agent & Tool Calling <new_agent>`
-   * - Train a Hugging Face LLM with Megatron + SGLang
-     - Megatron-Bridge actor backend (recommended)
-     - :doc:`Megatron-Bridge <mbridge>`
-   * - Port RLinf to a new GPU or NPU accelerator
-     - ``AcceleratorManager`` subclass + ``install.sh --platform``
+     - :doc:`Agent Loop & Tool Calling <new_agent>`
+   * - New GPU or NPU accelerator backend
+     - ``AcceleratorManager`` + ``install.sh --platform``
      - :doc:`Accelerator Backend <new_accelerator>`
-   * - Write a manual Megatron adapter or custom weight sync
-     - Low-level Megatron resharding / ``WeightSyncer``
-     - :doc:`Advanced Integrations <advanced-integrations/index>`
+   * - Custom actor-to-rollout weight synchronization
+     - ``WeightSyncer`` transport layer
+     - :doc:`Weight Synchronization <weight_syncer>`
 
 .. tip::
 
-   **No fork needed:** To register a custom model, advantage, policy loss, rule reward, or tool-call parser from your own repository, expose a ``register()`` hook and export ``RLINF_EXT_MODULE=<your_pkg.module>`` before launching (see :ref:`out-of-tree-extensions` in :doc:`FSDP Model <new_model_fsdp>` and :doc:`Algorithms & Rule Rewards <new_algorithm>`).
+   **No fork needed:** To register a custom model, advantage, policy loss, rule reward, or tool-call parser from your own repository, expose a ``register()`` hook and export ``RLINF_EXT_MODULE=<your_pkg.module>`` before launching (see :ref:`out-of-tree-extensions` in :doc:`Embodied Policy (FSDP) <new_model_fsdp>` and :doc:`Advantage, Loss & Rule Reward <new_algorithm>`).
 
-1. Embodied Models
-------------------
-
-.. grid:: 1 3 3 3
-   :gutter: 2
-
-   .. grid-item-card:: FSDP Model
-      :link: new_model_fsdp
-      :link-type: doc
-
-      Register a Hugging Face or embodied VLA policy on the FSDP backend.
-
-   .. grid-item-card:: SFT Model
-      :link: new_model_sft
-      :link-type: doc
-
-      Plug a new model and dataset into the RLinf SFT training pipeline.
-
-   .. grid-item-card:: SGLang Embodied
-      :link: sglang_embodied_model
-      :link-type: doc
-
-      Adapt an embodied policy to the SGLang rollout worker for fast evaluation.
-
-2. Embodied Environments, Robots & Rewards
-------------------------------------------
-
-Start at the simplest layer that fits: if RLinf already talks to your robot hardware, add a real-world task without writing robotics code; for new hardware, verify one local part before composing or placing it remotely.
+Choose an Extension Area
+------------------------
 
 .. grid:: 1 2 2 2
    :gutter: 2
 
-   .. grid-item-card:: Simulator Env
-      :link: new_env
+   .. grid-item-card:: 1. Add a Model
+      :link: models/index
       :link-type: doc
 
-      Wrap a simulator backend, register its environment type, and map action formats.
+      Add an embodied FSDP policy, SFT model, SGLang embodied rollout model, or Megatron LLM (Bridge or manual).
 
-   .. grid-item-card:: Real-World Robot
-      :link: new_robot
+   .. grid-item-card:: 2. Add an Environment or Robot
+      :link: envs-robots/index
       :link-type: doc
 
-      Build one local part, compose a robot tree, and move it to remote placement.
+      Integrate a new physics simulator, bring up new robot hardware, or add a task on a supported robot.
 
-   .. grid-item-card:: Real-World Task
-      :link: new_task
+   .. grid-item-card:: 3. Add Algorithms, Rewards & Agents
+      :link: algorithms-agents/index
       :link-type: doc
 
-      Define a new task on physical hardware RLinf already supports.
+      Register custom advantages, policy losses, learned or rule rewards, and multi-turn agent tools.
 
-   .. grid-item-card:: Reward Model
-      :link: reward_model
+   .. grid-item-card:: 4. Add Hardware & System Backends
+      :link: backends/index
       :link-type: doc
 
-      Extend ``BaseRewardModel`` or train built-in ResNet / VLM reward models for embodied RL.
-
-3. Algorithms, Agents & LLMs
-----------------------------
-
-.. grid:: 1 3 3 3
-   :gutter: 2
-
-   .. grid-item-card:: Algorithms & Rule Rewards
-      :link: new_algorithm
-      :link-type: doc
-
-      Register custom advantage estimators, policy losses, and rule-based text rewards.
-
-   .. grid-item-card:: Agent & Tool Calling
-      :link: new_agent
-      :link-type: doc
-
-      Implement custom multi-turn agent loops, tool workers, and tool-call parsers.
-
-   .. grid-item-card:: Megatron-Bridge
-      :link: mbridge
-      :link-type: doc
-
-      Recommended path for training Hugging Face LLMs on Megatron + SGLang without manual weight conversion.
-
-4. Hardware & Advanced Integrations
------------------------------------
-
-.. grid:: 1 2 2 2
-   :gutter: 2
-
-   .. grid-item-card:: Accelerator Backend
-      :link: new_accelerator
-      :link-type: doc
-
-      Add a new GPU or NPU accelerator backend to RLinf's hardware scheduler and installer.
-
-   .. grid-item-card:: Advanced Integrations
-      :link: advanced-integrations/index
-      :link-type: doc
-
-      Manual Megatron model integration and custom actor-to-rollout weight synchronization.
+      Port RLinf to a new GPU / NPU accelerator or customize actor-to-rollout weight synchronization.

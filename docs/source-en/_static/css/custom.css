@@ -26,17 +26,17 @@ html[data-theme="light"] {
   --rlinf-nav-active-bg: rgba(109, 40, 217, 0.09);
   --rlinf-nav-hover-bg: rgba(15, 23, 42, 0.045);
   --rlinf-row-hover: rgba(109, 40, 217, 0.03);
-  --rlinf-card-radius: 12px;
+  --rlinf-card-radius: 10px;
   --rlinf-card-gap: 1rem;
-  --rlinf-card-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
-  --rlinf-card-shadow-hover: 0 8px 24px -6px rgba(109, 40, 217, 0.14);
+  --rlinf-card-shadow: none;
+  --rlinf-card-shadow-hover: none;
 
   --rlinf-tab-bg: #f1f5f9;
   --rlinf-tab-hover-bg: #e2e8f0;
   --rlinf-tab-active-bg: #ffffff;
   --rlinf-tab-active-fg: #6d28d9;
   --rlinf-tab-active-border: rgba(109, 40, 217, 0.28);
-  --rlinf-tab-active-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  --rlinf-tab-active-shadow: none;
   --rlinf-tab-panel-bg: #ffffff;
   --rlinf-tab-panel-border: rgba(15, 23, 42, 0.09);
   --rlinf-tab-panel-shadow: none;
@@ -73,7 +73,7 @@ html[data-theme="dark"] {
   --rlinf-nav-hover-bg: rgba(148, 163, 184, 0.09);
   --rlinf-row-hover: rgba(167, 139, 250, 0.06);
   --rlinf-card-shadow: none;
-  --rlinf-card-shadow-hover: 0 10px 26px -6px rgba(0, 0, 0, 0.48);
+  --rlinf-card-shadow-hover: none;
 
   --rlinf-tab-bg: rgba(148, 163, 184, 0.09);
   --rlinf-tab-hover-bg: rgba(148, 163, 184, 0.16);
@@ -103,7 +103,6 @@ html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  scroll-behavior: smooth;
 }
 
 body {
@@ -326,6 +325,7 @@ html[data-theme="dark"] .rlinf-hero {
 .bd-sidebar-primary {
   background-color: var(--rlinf-sidebar-bg);
   border-right: 1px solid var(--rlinf-border);
+  contain: layout style;
   gap: 0.25rem;
   max-width: 17.5rem;
   padding: 0.85rem 0.75rem 1.75rem;
@@ -567,18 +567,13 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
   margin-top: 0.1rem !important;
 }
 
-.bd-sidebar-primary .bd-docs-nav p.caption:has(+ ul.current) {
-  color: var(--pst-color-primary);
-  opacity: 1;
-}
-
 .bd-sidebar-primary .bd-sidenav {
   padding: 0 !important;
   margin: 0 !important;
 }
 
 .bd-sidebar-primary .bd-sidenav li {
-  margin: 0.08rem 0 !important;
+  margin: 0.06rem 0 !important;
   position: relative;
 }
 
@@ -588,22 +583,22 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
   margin: 0;
 }
 
-/* Base sidebar links: generous pill padding */
+/* Base sidebar links: clean flat hit target */
 .bd-sidebar-primary .bd-docs-nav .bd-sidenav li > a,
 .bd-sidebar-primary .bd-docs-nav .bd-sidenav li > .reference {
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--pst-color-text-muted);
   display: block;
-  font-size: 0.855rem;
-  font-weight: 460;
+  font-size: 0.85rem;
+  font-weight: 450;
   line-height: 1.42;
   margin-right: 0 !important;
-  padding: 0.35rem 1.75rem 0.35rem 0.68rem !important;
-  transition: background-color 130ms ease, color 130ms ease;
+  padding: 0.32rem 1.9rem 0.32rem 0.65rem !important;
+  transition: background-color 90ms ease, color 90ms ease;
 }
 
 .bd-sidebar-primary .bd-docs-nav .bd-sidenav li:not(.has-children) > a {
-  padding-right: 0.68rem !important;
+  padding-right: 0.65rem !important;
 }
 
 .bd-sidebar-primary .bd-docs-nav .bd-sidenav li > a:hover {
@@ -620,44 +615,46 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
   font-weight: 560;
 }
 
-/* Active current page: crisp tinted pill + subtle inner left accent bar */
+/* Active current page: pure flat pill (LeRobot / Mintlify style) */
 .bd-sidebar-primary .bd-docs-nav .bd-sidenav li.current > a.current,
 .bd-sidebar-primary .bd-docs-nav .bd-sidenav li.current > a.current:hover,
 .bd-sidebar-primary .bd-docs-nav .bd-sidenav li.active > a.current {
   background-color: var(--rlinf-nav-active-bg) !important;
-  box-shadow: inset 2.5px 0 0 var(--pst-color-primary) !important;
+  box-shadow: none !important;
   color: var(--pst-color-primary) !important;
-  font-weight: 620 !important;
+  font-weight: 580 !important;
 }
 
-/* Nested sub-trees: continuous hairline vertical guide rail */
+/* Nested sub-trees: subtle hairline guide rail */
 .bd-sidebar-primary .bd-docs-nav .bd-sidenav ul {
   border-left: 1px solid var(--rlinf-border);
-  margin: 0.15rem 0 0.3rem 0.85rem !important;
-  padding: 0.05rem 0 0.05rem 0.5rem !important;
+  margin: 0.12rem 0 0.25rem 0.82rem !important;
+  padding: 0.04rem 0 0.04rem 0.45rem !important;
 }
 
 .bd-sidebar-primary .bd-docs-nav .bd-sidenav ul li > a {
-  font-size: 0.83rem;
-  padding: 0.3rem 0.6rem !important;
+  font-size: 0.825rem;
+  padding: 0.28rem 0.58rem !important;
 }
 
-/* Sleek chevron toggle */
+/* Wide, responsive chevron toggle */
 .bd-sidebar-primary .bd-sidenav li.has-children > details > summary .toctree-toggle {
   align-items: center;
+  border-radius: 5px;
   color: var(--pst-color-text-muted);
   display: inline-flex;
   height: 1.85rem;
   justify-content: center;
-  padding: 0;
-  right: 0.2rem;
-  top: 0.12rem;
-  width: 1.6rem;
   opacity: 0.72;
-  transition: opacity 140ms ease, color 140ms ease;
+  padding: 0;
+  right: 0.12rem;
+  top: 0.1rem;
+  width: 1.85rem;
+  transition: opacity 90ms ease, color 90ms ease, background-color 90ms ease;
 }
 
 .bd-sidebar-primary .bd-sidenav li.has-children > details > summary .toctree-toggle:hover {
+  background-color: var(--rlinf-nav-hover-bg);
   color: var(--pst-color-text-base);
   opacity: 1;
 }
@@ -665,7 +662,7 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
 .bd-sidebar-primary .bd-sidenav li.has-children > details > summary .toctree-toggle .fa-chevron-down {
   font-size: 0.66rem;
   transform: rotate(-90deg) !important;
-  transition: transform 160ms ease;
+  transition: transform 120ms ease;
 }
 
 .bd-sidebar-primary .bd-sidenav li.has-children > details[open] > summary .toctree-toggle .fa-chevron-down {
@@ -697,9 +694,10 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
   }
 }
 
-/* --- Right "On this page" TOC (sleek sliding rail) ------------------------ */
+/* --- Right "On this page" TOC (flat indicator rail) ----------------------- */
 .bd-sidebar-secondary {
   border-left: 0;
+  contain: layout style;
   max-width: 15.5rem;
   padding-top: 1.5rem;
   scrollbar-color: var(--rlinf-border-strong) transparent;
@@ -777,11 +775,11 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
 
 .bd-sidebar-secondary .toc-entry a.nav-link.active,
 .bd-sidebar-secondary .toc-entry a.nav-link.active:hover {
-  background: linear-gradient(90deg, var(--rlinf-nav-active-bg), transparent);
+  background: transparent;
   border-left-color: var(--pst-color-primary);
   box-shadow: none;
   color: var(--pst-color-primary);
-  font-weight: 600;
+  font-weight: 580;
   text-decoration: none;
 }
 
@@ -955,17 +953,16 @@ html[data-theme="dark"] .rlinf-ask-ai-fab {
   background: var(--rlinf-surface) !important;
   border: 1px solid var(--rlinf-border) !important;
   border-radius: var(--rlinf-card-radius) !important;
-  box-shadow: var(--rlinf-card-shadow) !important;
+  box-shadow: none !important;
   color: var(--pst-color-text-base) !important;
   overflow: hidden;
-  transition: border-color 160ms ease, box-shadow 160ms ease,
-    transform 160ms ease, background-color 160ms ease;
+  transition: border-color 120ms ease, background-color 120ms ease;
 }
 
 .sd-card:hover {
+  background: var(--rlinf-surface-subtle) !important;
   border-color: var(--pst-color-primary) !important;
-  box-shadow: var(--rlinf-card-shadow-hover) !important;
-  transform: translateY(-2px);
+  box-shadow: none !important;
 }
 
 .sd-card > .sd-card-img-top {
@@ -1175,18 +1172,16 @@ html[data-theme="dark"] .highlight .nv { color: #93c5fd; }
 .prev-next-area a.right-next {
   background: var(--rlinf-surface);
   border: 1px solid var(--rlinf-border);
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 0.75rem 1.05rem;
   text-decoration: none !important;
-  transition: border-color 150ms ease, background-color 150ms ease,
-    transform 150ms ease;
+  transition: border-color 120ms ease, background-color 120ms ease;
 }
 
 .prev-next-area a.left-next:hover,
 .prev-next-area a.right-next:hover {
   background: var(--rlinf-surface-subtle);
   border-color: var(--pst-color-primary);
-  transform: translateY(-1px);
 }
 
 /* --- Modern segmented-pill tab-sets & flat dropdowns ---------------------- */
