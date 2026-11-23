@@ -54,6 +54,17 @@ from rlinf.cli.launcher import (
     execute_launch_plan,
     resolve_venv_python,
 )
+from rlinf.cli.shell import (
+    ACTIVATE_FILE_ENV,
+    HOOK_END,
+    HOOK_START,
+    SUPPORTED_SHELLS,
+    handle_shell_init,
+    handle_use,
+    install_shell_hook,
+    render_shell_hook,
+    uninstall_shell_hook,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -1229,7 +1240,15 @@ def test_install_works_without_omegaconf_or_torch(tmp_path):
     )
 
 
-def test_execute_install_plan_prints_activation_and_propagates_exit_code():
+def test_execute_install_plan_prints_activation_and_propagates_exit_code(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    monkeypatch.delenv(ACTIVATE_FILE_ENV, raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
     ok_plan = InstallPlan(
         target="embodied",
         venv_dir=".venv-test",
@@ -1241,6 +1260,17 @@ def test_execute_install_plan_prints_activation_and_propagates_exit_code():
     assert execute_install_plan(ok_plan, stream=out) == 0
     assert "source .venv-test/bin/activate" in out.getvalue()
     assert "rlinf doctor" in out.getvalue()
+    assert HOOK_START in (tmp_path / ".bashrc").read_text(encoding="utf-8")
+
+    # When invoked through an active shell hook, writes target venv to RLINF_ACTIVATE_FILE.
+    act_file = tmp_path / "activate.target"
+    monkeypatch.setenv(ACTIVATE_FILE_ENV, str(act_file))
+    out_hook = io.StringIO()
+    assert execute_install_plan(ok_plan, stream=out_hook) == 0
+    assert "Activating '.venv-test' in the current shell" in out_hook.getvalue()
+    assert act_file.read_text(encoding="utf-8").strip() == str(
+        (REPO_ROOT / ".venv-test").resolve()
+    )
 
     fail_plan = InstallPlan(
         target="embodied",
@@ -1465,3 +1495,139 @@ def test_lightweight_global_cli_package_end_to_end(tmp_path):
     )
     assert lst.returncode == 0, lst.stderr
     assert "maniskill_ppo_mlp" in lst.stdout
+
+    # shell-init works even outside any RLinf checkout.
+    hook_out = subprocess.run(
+        [str(rlinf_bin), "shell-init", "bash"],
+        cwd=tmp_path,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert hook_out.returncode == 0, hook_out.stderr
+    assert HOOK_START in hook_out.stdout
+
+    # Real bash end-to-end test: eval shell hook + `rlinf use` switches VIRTUAL_ENV!
+    target_venv = tmp_path / "target-venv"
+    venv.create(target_venv, with_pip=False, symlinks=True)
+    bash_script = (
+        f'export PATH="{tool_venv / "bin"}:$PATH"\n'
+        'eval "$(rlinf shell-init bash)"\n'
+        f'rlinf use "{target_venv}"\n'
+        'printf "VIRTUAL_ENV=%s\\n" "${VIRTUAL_ENV:-}"\n'
+    )
+    bash_proc = subprocess.run(
+        ["bash", "-c", bash_script],
+        cwd=tmp_path,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert bash_proc.returncode == 0, bash_proc.stderr
+    assert f"VIRTUAL_ENV={target_venv.resolve()}" in bash_proc.stdout
+
+
+def test_shell_module_stays_synced_between_cli_and_rlinf():
+    rlinf_shell = (REPO_ROOT / "rlinf/cli/shell.py").read_text(encoding="utf-8")
+    cli_shell = (REPO_ROOT / "cli/rlinf_cli/shell.py").read_text(encoding="utf-8")
+    assert rlinf_shell == cli_shell
+
+
+def test_shell_init_install_update_and_uninstall_all_shells(tmp_path):
+    for sh in SUPPORTED_SHELLS:
+        snippet = render_shell_hook(sh)
+        assert HOOK_START in snippet and HOOK_END in snippet
+
+        res1 = install_shell_hook(sh, home=tmp_path, env={})
+        assert res1.status == "installed"
+        assert res1.rc_path is not None and res1.rc_path.is_file()
+        content = res1.rc_path.read_text(encoding="utf-8")
+        assert HOOK_START in content and HOOK_END in content
+
+        # Second install is idempotent.
+        res2 = install_shell_hook(sh, home=tmp_path, env={})
+        assert res2.status == "already_installed"
+
+        # Uninstall cleans up the block.
+        res3 = uninstall_shell_hook(sh, home=tmp_path, env={})
+        assert res3.status == "removed"
+        assert HOOK_START not in res1.rc_path.read_text(encoding="utf-8")
+
+    # handle_shell_init --install prints reload guidance when hook is not active yet.
+    out = io.StringIO()
+    err = io.StringIO()
+    rc = handle_shell_init(
+        shell="zsh",
+        install=True,
+        stream=out,
+        err_stream=err,
+        home=tmp_path,
+        env={"SHELL": "/bin/zsh"},
+    )
+    assert rc == 0, err.getvalue()
+    assert "Installed zsh shell hook" in out.getvalue()
+    assert "source " in out.getvalue()
+
+
+def test_use_without_hook_prints_manual_source_and_lists_venvs(tmp_path):
+    fake_repo = tmp_path / "repo"
+    venv_a = fake_repo / ".venv"
+    venv_b = fake_repo / ".venv-openpi"
+    for v in (venv_a, venv_b):
+        py = v / "bin" / "python"
+        py.parent.mkdir(parents=True)
+        py.write_text("#!/bin/sh\n", encoding="utf-8")
+        py.chmod(0o755)
+
+    out_list = io.StringIO()
+    rc_list = handle_use(
+        list_venvs=True,
+        repo_root=fake_repo,
+        stream=out_list,
+        err_stream=io.StringIO(),
+        env={"VIRTUAL_ENV": str(venv_b)},
+    )
+    assert rc_list == 0
+    assert f"* {venv_b.resolve()}" in out_list.getvalue()
+    assert f"  {venv_a.resolve()}" in out_list.getvalue()
+
+    # Without shell hook, prints clear manual source command and shell-init hint.
+    out_manual = io.StringIO()
+    rc_manual = handle_use(
+        ".venv-openpi",
+        repo_root=fake_repo,
+        stream=out_manual,
+        err_stream=io.StringIO(),
+        env={"SHELL": "/usr/bin/fish"},
+    )
+    assert rc_manual == 0
+    assert "Shell hook is not active" in out_manual.getvalue()
+    assert f"source {venv_b.resolve()}/bin/activate.fish" in out_manual.getvalue()
+    assert "rlinf shell-init --install" in out_manual.getvalue()
+
+    # With active shell hook, writes target venv to RLINF_ACTIVATE_FILE.
+    act_file = tmp_path / "act.txt"
+    out_active = io.StringIO()
+    rc_active = handle_use(
+        ".venv-openpi",
+        repo_root=fake_repo,
+        stream=out_active,
+        err_stream=io.StringIO(),
+        env={ACTIVATE_FILE_ENV: str(act_file)},
+    )
+    assert rc_active == 0
+    assert act_file.read_text(encoding="utf-8").strip() == str(venv_b.resolve())
+
+    # Missing venv returns exit 2.
+    err_missing = io.StringIO()
+    rc_missing = handle_use(
+        ".venv-does-not-exist",
+        repo_root=fake_repo,
+        stream=io.StringIO(),
+        err_stream=err_missing,
+        env={},
+    )
+    assert rc_missing == 2
+    assert "not found" in err_missing.getvalue()

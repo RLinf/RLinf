@@ -10,6 +10,10 @@ uv tool install rlinf-cli
 
 # Or with pip / pipx
 pip install rlinf-cli
+
+# Enable automatic venv activation on `rlinf install` and `rlinf use`
+# (supports bash, zsh, fish, and pwsh)
+rlinf shell-init --install
 ```
 
 Or run one-off without installing:
@@ -26,13 +30,17 @@ Inside an [RLinf](https://github.com/RLinf/RLinf) checkout (or with `RLINF_REPO_
 # 1. Inspect supported targets, models, environments, engines, and platforms
 rlinf install --list
 
-# 2. Install an environment (backed by requirements/install.sh)
+# 2. Install an environment (auto-activates in the current shell when the shell hook is loaded)
 rlinf install embodied --model openvla --env maniskill_libero
 
-# 3. Verify Python, accelerators, rendering libraries, Ray, and Hugging Face
+# 3. Switch between installed virtual environments
+rlinf use --list
+rlinf use .venv-openpi
+
+# 4. Verify Python, accelerators, rendering libraries, Ray, and Hugging Face
 rlinf doctor
 
-# 4. Discover, inspect, validate, and launch recipes
+# 5. Discover, inspect, validate, and launch recipes
 rlinf list
 rlinf show maniskill_ppo_mlp
 rlinf train maniskill_ppo_mlp --check

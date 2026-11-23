@@ -29,6 +29,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence, TextIO
 
+from .shell import (
+    install_shell_hook,
+    is_ci_environment,
+    is_shell_hook_active,
+    manual_activate_command,
+    manual_reload_command,
+    request_shell_activation,
+)
+
 _ARRAY_RE = re.compile(
     r"^(SUPPORTED_(?:TARGETS|ENGINES|MODELS|ENVS|PLATFORMS))=\(([^)]*)\)",
     re.MULTILINE,
@@ -249,16 +258,22 @@ def execute_install_plan(
     plan: InstallPlan,
     *,
     dry_run: bool = False,
+    auto_install_shell_hook: bool = True,
     stream: TextIO | None = None,
 ) -> int:
     """Execute ``plan`` in ``plan.repo_root`` or print the shell command on ``dry_run``.
 
     Forwards ``SIGINT`` and ``SIGTERM`` so ``requirements/install.sh`` runs its
-    exit trap and restores ``pyproject.toml`` cleanly if interrupted.
+    exit trap and restores ``pyproject.toml`` cleanly if interrupted. When
+    invoked through the ``rlinf`` shell hook, activates the installed venv in
+    the parent shell automatically; otherwise attempts to install the shell
+    hook (outside CI) and prints the manual ``source`` command.
 
     Args:
         plan: Resolved :class:`InstallPlan`.
         dry_run: When ``True``, print the command and return ``0``.
+        auto_install_shell_hook: When ``True`` (and outside CI), install the
+            shell hook into the user's shell rc file if not active yet.
         stream: Output stream (defaults to ``sys.stdout``).
 
     Returns:
@@ -298,11 +313,42 @@ def execute_install_plan(
 
     elapsed = time.monotonic() - start_time
     if rc == 0:
-        out.write(
-            f"[rlinf] Install complete in {elapsed:.1f}s. Activate with:\n"
-            f"  source {plan.venv_dir}/bin/activate\n"
-            "  rlinf doctor\n"
-        )
+        venv_path = Path(plan.venv_dir).expanduser()
+        if not venv_path.is_absolute():
+            venv_path = (plan.repo_root / venv_path).resolve()
+        else:
+            venv_path = venv_path.resolve()
+
+        if is_shell_hook_active() and request_shell_activation(venv_path):
+            out.write(
+                f"[rlinf] Install complete in {elapsed:.1f}s. "
+                f"Activating '{plan.venv_dir}' in the current shell.\n"
+            )
+        else:
+            activate_cmd = manual_activate_command(plan.venv_dir)
+            out.write(f"[rlinf] Install complete in {elapsed:.1f}s.\n")
+            hook_note = ""
+            if auto_install_shell_hook and not is_ci_environment():
+                hook_res = install_shell_hook()
+                if hook_res.status in ("installed", "updated"):
+                    assert hook_res.rc_path is not None and hook_res.shell is not None
+                    reload_cmd = manual_reload_command(hook_res.rc_path, hook_res.shell)
+                    hook_note = (
+                        f"[rlinf] Installed {hook_res.shell} shell hook in {hook_res.rc_path} "
+                        f"(future shells auto-activate; reload now with '{reload_cmd}').\n"
+                    )
+                elif hook_res.status in ("unsupported", "error"):
+                    hook_note = (
+                        "[rlinf] Shell hook could not be installed automatically "
+                        f"({hook_res.detail}). Run 'rlinf shell-init --install <shell>' to set it up.\n"
+                    )
+            if hook_note:
+                out.write(hook_note)
+            out.write(
+                "[rlinf] Shell hook is not active in this shell. Activate manually:\n"
+                f"  {activate_cmd}\n"
+                "  rlinf doctor\n"
+            )
     else:
         out.write(f"[rlinf] Install failed (exit {rc}) after {elapsed:.1f}s.\n")
     out.flush()

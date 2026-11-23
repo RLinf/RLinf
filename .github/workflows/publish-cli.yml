@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "cli/**"
+      - "pyproject.toml"
   workflow_dispatch:
 
 concurrency:
@@ -32,14 +33,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(python3 -c 'import tomllib; print(tomllib.load(open("cli/pyproject.toml", "rb"))["project"]["version"])')"
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           status="$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/rlinf-cli/${version}/json")"
           if [ "$status" = "200" ]; then
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
             {
               echo "### rlinf-cli ${version} already published"
-              echo "Skipped upload because \`rlinf-cli==${version}\` already exists on PyPI. Bump \`version\` in \`cli/pyproject.toml\` to publish a new release."
+              echo "Skipped upload because \`rlinf-cli==${version}\` already exists on PyPI. Bump \`version\` in root \`pyproject.toml\` to publish a new release."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "rlinf-cli ${version} is already on PyPI; skipping publish."
           elif [ "$status" = "404" ]; then

@@ -16,24 +16,30 @@
 
 Locates the active RLinf repository checkout and delegates to its
 ``rlinf.cli.main`` module so globally installed ``rlinf`` (via
-``uv tool install ./cli`` or ``uvx --from ./cli rlinf ...``) always stays in
+``uv tool install rlinf-cli`` or ``pip install rlinf-cli``) always stays in
 sync with the current checkout and works before ``.venv`` exists.
+
+``rlinf shell-init`` and ``rlinf use`` work directly even outside an RLinf
+checkout.
 """
 
 from __future__ import annotations
 
+import argparse
 import importlib.metadata
 import os
 import sys
 from pathlib import Path
 from typing import Sequence
 
+from .shell import SUPPORTED_SHELLS, handle_shell_init, handle_use
+
 
 def _get_version() -> str:
     try:
         return importlib.metadata.version("rlinf-cli")
     except importlib.metadata.PackageNotFoundError:
-        return "0.4.0"
+        return "0.5.0.dev0"
 
 
 def _is_rlinf_checkout(path: Path) -> bool:
@@ -69,6 +75,66 @@ def find_checkout_root(start: Path | None = None) -> Path:
     )
 
 
+def _try_find_checkout_root() -> Path | None:
+    try:
+        return find_checkout_root()
+    except FileNotFoundError:
+        return None
+
+
+def _run_standalone_shell_init(args: Sequence[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="rlinf shell-init",
+        description="Print or install the rlinf shell hook for automatic venv activation.",
+    )
+    parser.add_argument(
+        "shell",
+        nargs="?",
+        choices=SUPPORTED_SHELLS,
+        help="Target shell (defaults to detecting $SHELL).",
+    )
+    parser.add_argument(
+        "--install",
+        action="store_true",
+        help="Install or update the shell hook in your shell startup file.",
+    )
+    parser.add_argument(
+        "--uninstall",
+        action="store_true",
+        help="Remove the shell hook from your shell startup file.",
+    )
+    parsed = parser.parse_args(list(args))
+    return handle_shell_init(
+        shell=parsed.shell,
+        install=parsed.install,
+        uninstall=parsed.uninstall,
+    )
+
+
+def _run_standalone_use(args: Sequence[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="rlinf use",
+        description="Switch to an RLinf virtual environment (requires shell hook for auto-activation).",
+    )
+    parser.add_argument(
+        "venv",
+        nargs="?",
+        help="Virtual environment directory (defaults to .venv).",
+    )
+    parser.add_argument(
+        "--list",
+        dest="list_venvs",
+        action="store_true",
+        help="List discovered virtual environments (.venv, .venv-*).",
+    )
+    parsed = parser.parse_args(list(args))
+    return handle_use(
+        parsed.venv,
+        list_venvs=parsed.list_venvs,
+        repo_root=_try_find_checkout_root(),
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Delegate ``rlinf`` CLI invocations to the current RLinf checkout."""
     raw_args = list(sys.argv[1:] if argv is None else argv)
@@ -76,6 +142,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.stdout.write(f"rlinf {_get_version()}\n")
         sys.stdout.flush()
         return 0
+    if raw_args and raw_args[0] == "shell-init":
+        return _run_standalone_shell_init(raw_args[1:])
+    if raw_args and raw_args[0] == "use":
+        return _run_standalone_use(raw_args[1:])
 
     try:
         repo_root = find_checkout_root()

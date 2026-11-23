@@ -45,6 +45,7 @@ from .installer import (
     load_install_options,
 )
 from .launcher import build_launch_plan, execute_launch_plan, resolve_venv_python
+from .shell import SUPPORTED_SHELLS, handle_shell_init, handle_use
 
 _KNOWN_LAUNCH_FLAGS: tuple[str, ...] = (
     "--family",
@@ -87,7 +88,7 @@ def _get_version() -> str:
             return importlib.metadata.version(dist_name)
         except importlib.metadata.PackageNotFoundError:
             continue
-    return "0.4.0"
+    return "0.5.0.dev0"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -222,6 +223,50 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Print the resolved requirements/install.sh command without running it.",
+    )
+    install_parser.add_argument(
+        "--no-shell-hook",
+        action="store_true",
+        help="Skip installing the rlinf shell hook into your shell rc file.",
+    )
+
+    # rlinf use
+    use_parser = subparsers.add_parser(
+        "use",
+        help="Switch to an RLinf virtual environment (auto-activates when shell hook is installed).",
+    )
+    use_parser.add_argument(
+        "venv",
+        nargs="?",
+        help="Virtual environment directory (defaults to .venv).",
+    )
+    use_parser.add_argument(
+        "--list",
+        dest="list_venvs",
+        action="store_true",
+        help="List discovered virtual environments (.venv, .venv-*).",
+    )
+
+    # rlinf shell-init
+    shell_init_parser = subparsers.add_parser(
+        "shell-init",
+        help="Print or install the rlinf shell hook (bash, zsh, fish, pwsh) for automatic venv switching.",
+    )
+    shell_init_parser.add_argument(
+        "shell",
+        nargs="?",
+        choices=SUPPORTED_SHELLS,
+        help="Target shell (defaults to detecting $SHELL).",
+    )
+    shell_init_parser.add_argument(
+        "--install",
+        action="store_true",
+        help="Install or update the shell hook in your shell startup file.",
+    )
+    shell_init_parser.add_argument(
+        "--uninstall",
+        action="store_true",
+        help="Remove the shell hook from your shell startup file.",
     )
 
     # rlinf list
@@ -540,7 +585,12 @@ def _handle_install(
         no_install_rlinf=args.no_install_rlinf,
         extra_args=extra_args,
     )
-    return execute_install_plan(plan, dry_run=args.dry_run, stream=stream)
+    return execute_install_plan(
+        plan,
+        dry_run=args.dry_run,
+        auto_install_shell_hook=not args.no_shell_hook,
+        stream=stream,
+    )
 
 
 def _handle_list(
@@ -774,6 +824,26 @@ def main(
     try:
         if args.command == "install":
             return _handle_install(args, overrides, repo_root=repo_root, stream=out)
+        if args.command == "use":
+            try:
+                resolved_root = find_repo_root(repo_root)
+            except FileNotFoundError:
+                resolved_root = None
+            return handle_use(
+                args.venv,
+                list_venvs=args.list_venvs,
+                repo_root=resolved_root,
+                stream=out,
+                err_stream=err,
+            )
+        if args.command == "shell-init":
+            return handle_shell_init(
+                shell=args.shell,
+                install=args.install,
+                uninstall=args.uninstall,
+                stream=out,
+                err_stream=err,
+            )
         if args.command == "list":
             return _handle_list(args, repo_root=repo_root, stream=out)
         if args.command == "show":
