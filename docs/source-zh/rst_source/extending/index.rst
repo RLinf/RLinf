@@ -43,9 +43,12 @@
    * - 在已有真机平台上新增任务
      - 真机任务配置叠加（无需改驱动）
      - :doc:`新增真机任务 <new_task>`
-   * - 新增优势估计、策略损失或规则 Reward
-     - ``@register_advantage`` / ``@register_policy_loss`` / ``register_reward``
-     - :doc:`优势、损失与规则 Reward <new_algorithm>`
+   * - 新增 Advantage 或 Policy Loss
+     - ``@register_advantage`` / ``@register_policy_loss``
+     - :doc:`Advantage 与 Policy Loss <new_algorithm>`
+   * - 新增规则文本 Reward
+     - ``register_reward``
+     - :doc:`规则 Reward <rule_reward>`
    * - 训练或自定义学习型具身 Reward 模型
      - ``BaseRewardModel`` 与 ``reward.use_reward_model``
      - :doc:`学习型 Reward 模型 <reward_model>`
@@ -61,7 +64,7 @@
 
 .. tip::
 
-   **无需 fork 主仓库：** 可以在自己的外部仓库里注册自定义模型、优势估计、策略损失、规则 Reward 或工具调用解析器——只需暴露 ``register()`` 函数并在启动前导出 ``RLINF_EXT_MODULE=<your_pkg.module>``\ （完整示例见 :doc:`具身与 VLA 模型（FSDP） <new_model_fsdp>` 中的 :ref:`out-of-tree-extensions` 与 :doc:`优势、损失与规则 Reward <new_algorithm>`\ ）。
+   **无需 fork 主仓库：** 可以在自己的外部仓库里注册自定义模型、Advantage、Policy Loss、规则 Reward 或工具调用解析器——只需暴露 ``register()`` 函数并在启动前导出 ``RLINF_EXT_MODULE=<your_pkg.module>``\ （完整示例见 :doc:`具身与 VLA 模型（FSDP） <new_model_fsdp>` 中的 :ref:`out-of-tree-extensions` 与 :doc:`Advantage 与 Policy Loss <new_algorithm>`\ ）。
 
 按组件类别进入
 --------------
@@ -82,18 +85,24 @@
       接入新物理仿真器、接入新真机硬件，或在已支持真机上定义新任务。
 
    .. grid-item-card:: 3. 新增算法
-      :link: algorithms-agents/index
+      :link: new_algorithm
       :link-type: doc
 
-      注册自定义优势估计、策略损失，以及规则 Reward 或学习型 Reward 模型。
+      注册自定义 Advantage 函数与 Policy Loss 函数。
 
-   .. grid-item-card:: 4. 新增 Agent
+   .. grid-item-card:: 4. 新增 Reward
+      :link: rewards/index
+      :link-type: doc
+
+      注册规则文本 Reward，或训练并接入学习型具身 Reward 模型。
+
+   .. grid-item-card:: 5. 新增 Agent
       :link: new_agent
       :link-type: doc
 
       实现自定义多轮 Agent 循环、工具 Worker 与工具调用解析器。
 
-   .. grid-item-card:: 5. 新增硬件后端
+   .. grid-item-card:: 6. 新增硬件后端
       :link: new_accelerator
       :link-type: doc
 

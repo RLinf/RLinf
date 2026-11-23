@@ -182,7 +182,8 @@
   总览 <rst_source/extending/index>
   新增模型 <rst_source/extending/models/index>
   新增 Env 与真机 <rst_source/extending/envs-robots/index>
-  新增算法 <rst_source/extending/algorithms-agents/index>
+  新增算法 <rst_source/extending/new_algorithm>
+  新增 Reward <rst_source/extending/rewards/index>
   新增 Agent <rst_source/extending/new_agent>
   新增硬件后端 <rst_source/extending/new_accelerator>
 

@@ -246,7 +246,6 @@ def setup(app):
     )
 
     app.connect("html-page-context", setup_html_context)
-    app.add_css_file("css/custom.css")
 
     return {
         "version": "0.2",

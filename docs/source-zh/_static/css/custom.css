@@ -1067,7 +1067,22 @@ html[data-theme="dark"] .rlinf-ask-ai-fab {
 
 div.highlight,
 div[class*="highlight-"] {
+  display: block;
   position: relative;
+}
+
+.bd-article div[class*="highlight-"] {
+  margin: 1rem 0;
+}
+
+.bd-article div.literal-block-wrapper div[class*="highlight-"] {
+  margin: 0;
+}
+
+.bd-article pre,
+.bd-article div.highlight pre {
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .bd-article div.highlight pre {
@@ -1077,29 +1092,33 @@ div[class*="highlight-"] {
   box-shadow: none !important;
   font-size: 0.84rem;
   line-height: 1.62;
-  padding: 0.95rem 1.15rem;
+  margin: 0;
+  padding: 0.95rem 2.75rem 0.95rem 1.15rem;
 }
 
 div.highlight button.copybtn {
   align-self: auto;
   background: var(--rlinf-surface);
-  border: 1px solid var(--rlinf-border-strong);
+  border: 1px solid var(--rlinf-border);
   border-radius: 7px;
+  color: var(--pst-color-text-muted);
   flex: none;
   height: 1.9em;
   margin: 0;
-  opacity: 0.55;
+  opacity: 1;
   padding: 0;
   position: absolute;
-  right: 0.5em;
-  top: 0.5em;
-  transition: opacity 150ms ease, border-color 150ms ease;
+  right: 0.55em;
+  top: 0.55em;
+  transition: border-color 150ms ease, color 150ms ease, background-color 150ms ease;
   width: 1.9em;
   z-index: 1;
 }
 
 div.highlight:hover button.copybtn,
 div.highlight button.copybtn:focus {
+  border-color: var(--rlinf-border-strong);
+  color: var(--pst-color-text-base);
   opacity: 1;
 }
 
@@ -1301,4 +1320,30 @@ html[data-theme="dark"]
   img[src*="_static/svg/"][src$=".svg"]:not(.rlinf-sidebar-brand__mark):not(.rlinf-hero-logo):not(.inline-icon) {
   background-color: transparent !important;
   filter: invert(0.92) hue-rotate(180deg) saturate(1.15);
+}
+
+/* --- Subtle top progress bar for slow PJAX page swaps --------------------- */
+#rlinf-pjax-bar {
+  background: var(--pst-color-primary);
+  height: 2px;
+  left: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: fixed;
+  top: 0;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 240ms ease, opacity 180ms ease;
+  width: 100%;
+  z-index: 2000;
+}
+
+#rlinf-pjax-bar.is-loading {
+  opacity: 1;
+  transform: scaleX(0.72);
+}
+
+#rlinf-pjax-bar.is-done {
+  opacity: 0;
+  transform: scaleX(1);
 }

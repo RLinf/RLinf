@@ -27,7 +27,7 @@ At a Glance
      - :ref:`3. Built-In Real-World Workflow <realworld-reward-model>`
    * - Rule-based text rewards
      - Deterministic rewards for reasoning and agentic tasks via ``register_reward``
-     - :doc:`Algorithms & Rule-Based Rewards <new_algorithm>`
+     - :doc:`Rule-Based Reward <rule_reward>`
 
 .. _custom-reward-model:
 

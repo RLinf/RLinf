@@ -1,36 +1,32 @@
-Algorithms & Rule-Based Rewards
-===============================
+Add an Algorithm (Advantage & Policy Loss)
+==========================================
 
-Register a custom advantage estimator, policy loss, or rule-based text reward without touching RLinf's runners or workers. After registration, any existing YAML config can select your component through ``algorithm.adv_type``, ``algorithm.loss_type``, or ``reward.reward_type``.
+Register a custom advantage estimator or policy loss without touching RLinf's runners or workers. After registration, any existing YAML config can select your component through ``algorithm.adv_type`` or ``algorithm.loss_type``.
 
 Extension Points at a Glance
 ----------------------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 28 24 26
+   :widths: 24 28 22 26
 
    * - Component
      - Register With
      - Selected By
      - Reference File
-   * - Advantage estimator
+   * - Advantage
      - ``@register_advantage(name)``
      - ``algorithm.adv_type``
      - ``rlinf/algorithms/advantages.py``
-   * - Policy loss
+   * - Policy Loss
      - ``@register_policy_loss(name)``
      - ``algorithm.loss_type``
      - ``rlinf/algorithms/losses.py``
-   * - Rule-based reward
-     - ``register_reward(name, cls)``
-     - ``reward.reward_type``
-     - ``rlinf/algorithms/rewards/__init__.py``
 
-All three registries are per-process. In-tree additions register at module import; out-of-tree repositories register through ``RLINF_EXT_MODULE`` (see :ref:`out-of-tree-extensions`).
+Both registries are per-process. In-tree additions register at module import; out-of-tree repositories register through ``RLINF_EXT_MODULE`` (see :ref:`out-of-tree-extensions`). For custom rewards, see :doc:`Rule-Based Reward <rule_reward>` and :doc:`Learned Reward Model <reward_model>`.
 
-1. Custom Advantage Estimator
------------------------------
+1. Custom Advantage
+-------------------
 
 Implement a function decorated with ``@register_advantage(name)`` in ``rlinf/algorithms/advantages.py`` (or in your own extension module). Accept ``**kwargs`` so RLinf can pass shared batch fields, and return a ``(advantages, returns)`` tuple (set ``returns`` to ``None`` for critic-free methods).
 
@@ -148,52 +144,7 @@ Select it in YAML or via a CLI override:
      clip_ratio_low: 0.2
      clip_ratio_high: 0.2
 
-3. Custom Rule-Based Reward
----------------------------
-
-For reasoning and agentic tasks, ``RewardWorker`` scores text completions with a registered Python class when ``reward.use_reward_model`` is ``False``. Create a module under ``rlinf/algorithms/rewards/<name>/__init__.py`` (or in your external package) implementing ``__init__(self, config)`` and ``get_reward(self, completions, answers, **kwargs)``, then register it with ``register_reward``.
-
-.. code-block:: python
-
-   from omegaconf import DictConfig
-
-   from rlinf.algorithms.rewards import register_reward
-
-
-   class ExactMatchReward:
-       def __init__(self, config: DictConfig):
-           self.scale = float(config.get("reward_scale", 1.0))
-
-       def get_reward(
-           self,
-           completions: list[str],
-           answers: list[str],
-           **kwargs,
-       ) -> list[float]:
-           return [
-               self.scale if pred.strip() == str(ans).strip() else 0.0
-               for pred, ans in zip(completions, answers)
-           ]
-
-
-   register_reward("exact_match", ExactMatchReward)
-
-How the calls fit together:
-
-- ``__init__(self, config)`` receives the ``cfg.reward`` section from Hydra.
-- ``get_reward(self, completions, answers, **kwargs)`` returns one float score per completion. Set ``reward.use_prompt: True`` in YAML if you also want ``kwargs["prompts"]`` passed in.
-- ``register_reward("exact_match", ExactMatchReward)`` adds the class to ``reward_registry`` so ``get_rule_based_reward_class("exact_match")`` instantiates it inside ``RewardWorker``.
-
-Select it in your reasoning or agentic YAML:
-
-.. code-block:: yaml
-
-   reward:
-     use_reward_model: False
-     reward_type: exact_match
-     reward_scale: 1.0
-
-4. Package and Launch
+3. Package and Launch
 ---------------------
 
 Choose whether to add your algorithm inside the RLinf repository or load it from an external package:
@@ -203,7 +154,7 @@ Choose whether to add your algorithm inside the RLinf repository or load it from
    .. tab-item:: In-Tree (Inside RLinf)
       :sync: ext-in-tree
 
-      Place your functions in ``rlinf/algorithms/advantages.py``, ``rlinf/algorithms/losses.py``, or ``rlinf/algorithms/rewards/`` so every worker imports them automatically, then launch with your registered names:
+      Place your functions in ``rlinf/algorithms/advantages.py`` or ``rlinf/algorithms/losses.py`` so every worker imports them automatically, then launch with your registered names:
 
       .. code-block:: bash
 
@@ -221,7 +172,6 @@ Choose whether to add your algorithm inside the RLinf repository or load it from
          def register():
              import my_pkg.my_advantages  # executes @register_advantage
              import my_pkg.my_losses      # executes @register_policy_loss
-             import my_pkg.my_rewards     # executes register_reward(...)
 
       .. code-block:: bash
 

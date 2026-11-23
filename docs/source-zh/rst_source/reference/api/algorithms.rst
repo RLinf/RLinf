@@ -1,10 +1,10 @@
 算法与注册表接口
 ================
 
-查阅 ``rlinf.algorithms.registry`` 中的注册装饰器与统一调度入口。算法目标函数与配置见 :doc:`../algorithms/index`，新增优势函数或损失函数的步骤见 :doc:`../../extending/new_algorithm`。
+查阅 ``rlinf.algorithms.registry`` 中的注册装饰器与统一调度入口。算法目标函数与配置见 :doc:`../algorithms/index`，新增 Advantage 或 Loss 函数的步骤见 :doc:`../../extending/new_algorithm`。
 
-优势函数注册表
---------------
+Advantage 注册表
+----------------
 
 .. autofunction:: rlinf.algorithms.registry.register_advantage
 
@@ -12,8 +12,8 @@
 
 .. autofunction:: rlinf.algorithms.registry.calculate_adv_and_returns
 
-Policy 损失注册表
------------------
+Policy Loss 注册表
+------------------
 
 .. autofunction:: rlinf.algorithms.registry.register_policy_loss
 
@@ -21,8 +21,8 @@ Policy 损失注册表
 
 .. autofunction:: rlinf.algorithms.registry.policy_loss
 
-损失缩放与工具调用解析器注册表
-------------------------------
+Loss Scale 与工具调用解析器注册表
+---------------------------------
 
 .. autofunction:: rlinf.algorithms.registry.register_loss_scale
 

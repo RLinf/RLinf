@@ -25,9 +25,9 @@
    * - 内置真机场景工作流
      - Franka 键盘标注或固定位姿采集、数据集转换、模型训练与遥操作在线推理
      - :ref:`3. 内置真机场景工作流 <realworld-reward-model>`
-   * - 规则类文本奖励
-     - 通过 ``register_reward`` 为推理和 agent 任务编写确定性奖励
-     - :doc:`算法与规则奖励 <new_algorithm>`
+   * - 规则类文本 Reward
+     - 通过 ``register_reward`` 为推理和 Agent 任务编写确定性 Reward
+     - :doc:`规则 Reward <rule_reward>`
 
 .. _custom-reward-model:
 

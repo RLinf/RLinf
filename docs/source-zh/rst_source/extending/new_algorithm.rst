@@ -1,36 +1,32 @@
-算法与规则奖励
-==============
+新增算法（Advantage 与 Policy Loss）
+====================================
 
-无需修改 RLinf 的 runner 或 worker，即可注册自定义优势估计函数、策略损失函数或基于规则的文本奖励。注册完成后，任意现有 YAML 配置都能通过 ``algorithm.adv_type``、``algorithm.loss_type`` 或 ``reward.reward_type`` 直接选用。
+无需修改 RLinf 的 runner 或 worker，即可注册自定义 Advantage 函数或 Policy Loss 函数。注册完成后，任意现有 YAML 配置都能通过 ``algorithm.adv_type`` 或 ``algorithm.loss_type`` 直接选用。
 
 扩展点速览
 ----------
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 28 24 26
+   :widths: 24 28 22 26
 
    * - 扩展组件
      - 注册方式
      - 配置字段
      - 参考源码
-   * - 优势估计（Advantage）
+   * - Advantage 函数
      - ``@register_advantage(name)``
      - ``algorithm.adv_type``
      - ``rlinf/algorithms/advantages.py``
-   * - 策略损失（Policy Loss）
+   * - Policy Loss 函数
      - ``@register_policy_loss(name)``
      - ``algorithm.loss_type``
      - ``rlinf/algorithms/losses.py``
-   * - 规则奖励（Rule Reward）
-     - ``register_reward(name, cls)``
-     - ``reward.reward_type``
-     - ``rlinf/algorithms/rewards/__init__.py``
 
-三类注册表均按进程独立维护：主仓内新增组件在模块导入时自动注册；外部仓库通过 ``RLINF_EXT_MODULE`` 在每个 worker 中完成注册（见 :ref:`out-of-tree-extensions`\ ）。
+两类注册表均按进程独立维护：主仓内新增组件在模块导入时自动注册；外部仓库通过 ``RLINF_EXT_MODULE`` 在每个 worker 中完成注册（见 :ref:`out-of-tree-extensions`\ ）。自定义 Reward 请见 :doc:`规则 Reward <rule_reward>` 与 :doc:`学习型 Reward 模型 <reward_model>`。
 
-1. 自定义优势估计（Advantage）
-------------------------------
+1. 自定义 Advantage 函数
+------------------------
 
 在 ``rlinf/algorithms/advantages.py``\ （或外部扩展模块）中编写带 ``@register_advantage(name)`` 装饰器的函数。函数签名需保留 ``**kwargs`` 以接收公共 batch 字段，并返回 ``(advantages, returns)`` 二元组（无 critic 的算法可将 ``returns`` 设为 ``None``）。
 
@@ -91,8 +87,8 @@
    print("advantages shape:", out["advantages"].shape)
    '
 
-2. 自定义策略损失（Policy Loss）
---------------------------------
+2. 自定义 Policy Loss 函数
+--------------------------
 
 在 ``rlinf/algorithms/losses.py``\ （或外部扩展模块）中编写带 ``@register_policy_loss(name)`` 装饰器的函数。保留 ``**kwargs``，对 ``float32`` 精度做断言以保证数值稳定，并返回 ``(loss, metrics_dict)``，其中 ``loss`` 为标量张量，``metrics_dict`` 中各项为已 ``detach()`` 的标量张量或浮点数。
 
@@ -136,8 +132,8 @@
 
 调用链路说明：
 
-- ``@register_policy_loss("clipped_pg")`` 将损失函数写入 ``LOSS_REGISTRY``。
-- ``policy_loss(loss_type="clipped_pg", task_type=..., ...)`` 会完成具身任务输入预处理、调用你的损失函数并整理日志指标。
+- ``@register_policy_loss("clipped_pg")`` 将 Loss 函数写入 ``LOSS_REGISTRY``。
+- ``policy_loss(loss_type="clipped_pg", task_type=..., ...)`` 会完成具身任务输入预处理、调用你的 Loss 函数并整理日志指标。
 
 在 YAML 或命令行中启用：
 
@@ -148,52 +144,7 @@
      clip_ratio_low: 0.2
      clip_ratio_high: 0.2
 
-3. 自定义规则奖励（Rule-Based Reward）
---------------------------------------
-
-在推理与智能体任务中，将 ``reward.use_reward_model`` 设为 ``False`` 时，``RewardWorker`` 会通过已注册的规则奖励类为文本生成结果打分。在 ``rlinf/algorithms/rewards/<name>/__init__.py``\ （或外部包）中实现 ``__init__(self, config)`` 与 ``get_reward(self, completions, answers, **kwargs)``，并通过 ``register_reward`` 注册。
-
-.. code-block:: python
-
-   from omegaconf import DictConfig
-
-   from rlinf.algorithms.rewards import register_reward
-
-
-   class ExactMatchReward:
-       def __init__(self, config: DictConfig):
-           self.scale = float(config.get("reward_scale", 1.0))
-
-       def get_reward(
-           self,
-           completions: list[str],
-           answers: list[str],
-           **kwargs,
-       ) -> list[float]:
-           return [
-               self.scale if pred.strip() == str(ans).strip() else 0.0
-               for pred, ans in zip(completions, answers)
-           ]
-
-
-   register_reward("exact_match", ExactMatchReward)
-
-调用链路说明：
-
-- ``__init__(self, config)`` 接收 Hydra 配置中的 ``cfg.reward`` 节点。
-- ``get_reward(self, completions, answers, **kwargs)`` 按顺序为每条回复返回一个浮点分值；如需同时获取输入 prompt，在 YAML 中设置 ``reward.use_prompt: True`` 即可通过 ``kwargs["prompts"]`` 读取。
-- ``register_reward("exact_match", ExactMatchReward)`` 将类写入 ``reward_registry``，``RewardWorker`` 启动时会通过 ``get_rule_based_reward_class("exact_match")`` 实例化它。
-
-在推理或智能体 YAML 中启用：
-
-.. code-block:: yaml
-
-   reward:
-     use_reward_model: False
-     reward_type: exact_match
-     reward_scale: 1.0
-
-4. 打包与启动
+3. 打包与启动
 -------------
 
 按代码存放位置选择仓库内集成或外部仓库加载：
@@ -203,7 +154,7 @@
    .. tab-item:: 主仓库内注册（In-Tree）
       :sync: ext-in-tree
 
-      将实现放入 ``rlinf/algorithms/advantages.py``、``rlinf/algorithms/losses.py`` 或 ``rlinf/algorithms/rewards/``\ （所有 worker 导入时自动生效），然后用注册名称启动训练：
+      将实现放入 ``rlinf/algorithms/advantages.py`` 或 ``rlinf/algorithms/losses.py``\ （所有 worker 导入时自动生效），然后用注册名称启动训练：
 
       .. code-block:: bash
 
@@ -221,7 +172,6 @@
          def register():
              import my_pkg.my_advantages  # 执行 @register_advantage
              import my_pkg.my_losses      # 执行 @register_policy_loss
-             import my_pkg.my_rewards     # 执行 register_reward(...)
 
       .. code-block:: bash
 

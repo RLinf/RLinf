@@ -182,7 +182,8 @@ Why RLinf
   Overview <rst_source/extending/index>
   Add a Model <rst_source/extending/models/index>
   Add an Env or Robot <rst_source/extending/envs-robots/index>
-  Add an Algorithm <rst_source/extending/algorithms-agents/index>
+  Add an Algorithm <rst_source/extending/new_algorithm>
+  Add a Reward <rst_source/extending/rewards/index>
   Add an Agent <rst_source/extending/new_agent>
   Add a Hardware Backend <rst_source/extending/new_accelerator>
 

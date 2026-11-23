@@ -43,9 +43,12 @@ Which Guide Should I Read?
    * - New task on an already-supported robot
      - Real-world task config overlay
      - :doc:`Real-World Task <new_task>`
-   * - New advantage, policy loss, or rule reward
-     - ``@register_advantage`` / ``@register_policy_loss`` / ``register_reward``
-     - :doc:`Advantage, Loss & Rule Reward <new_algorithm>`
+   * - New advantage or policy loss
+     - ``@register_advantage`` / ``@register_policy_loss``
+     - :doc:`Advantage & Policy Loss <new_algorithm>`
+   * - New rule-based text reward
+     - ``register_reward``
+     - :doc:`Rule-Based Reward <rule_reward>`
    * - New learned embodied reward model
      - ``BaseRewardModel`` + ``reward.use_reward_model``
      - :doc:`Learned Reward Model <reward_model>`
@@ -61,7 +64,7 @@ Which Guide Should I Read?
 
 .. tip::
 
-   **No fork needed:** To register a custom model, advantage, policy loss, rule reward, or tool-call parser from your own repository, expose a ``register()`` hook and export ``RLINF_EXT_MODULE=<your_pkg.module>`` before launching (see :ref:`out-of-tree-extensions` in :doc:`Embodied Policy (FSDP) <new_model_fsdp>` and :doc:`Advantage, Loss & Rule Reward <new_algorithm>`).
+   **No fork needed:** To register a custom model, advantage, policy loss, rule reward, or tool-call parser from your own repository, expose a ``register()`` hook and export ``RLINF_EXT_MODULE=<your_pkg.module>`` before launching (see :ref:`out-of-tree-extensions` in :doc:`Embodied Policy (FSDP) <new_model_fsdp>` and :doc:`Advantage & Policy Loss <new_algorithm>`).
 
 Choose an Extension Area
 ------------------------
@@ -82,18 +85,24 @@ Choose an Extension Area
       Integrate a new physics simulator, bring up new robot hardware, or add a task on a supported robot.
 
    .. grid-item-card:: 3. Add an Algorithm
-      :link: algorithms-agents/index
+      :link: new_algorithm
       :link-type: doc
 
-      Register custom advantages, policy losses, and rule-based or learned reward models.
+      Register custom advantage estimators and policy loss functions.
 
-   .. grid-item-card:: 4. Add an Agent
+   .. grid-item-card:: 4. Add a Reward
+      :link: rewards/index
+      :link-type: doc
+
+      Register rule-based text scorers or train and plug in learned embodied reward models.
+
+   .. grid-item-card:: 5. Add an Agent
       :link: new_agent
       :link-type: doc
 
       Implement custom multi-turn agent loops, tool workers, and tool-call parsers.
 
-   .. grid-item-card:: 5. Add a Hardware Backend
+   .. grid-item-card:: 6. Add a Hardware Backend
       :link: new_accelerator
       :link-type: doc
 
