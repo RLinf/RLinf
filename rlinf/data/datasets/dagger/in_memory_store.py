@@ -91,9 +91,7 @@ class InMemoryArrowStore:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _infer_hf_features(
-        frame: dict, *, keep_uint8_images: bool = False
-    ) -> tuple[Any, set[str]]:
+    def _infer_hf_features(frame: dict) -> tuple[Any, set[str]]:
         """Derive a HuggingFace ``Features`` schema from a raw frame dict.
 
         Returns the schema and the set of keys that hold image arrays
@@ -117,9 +115,8 @@ class InMemoryArrowStore:
             if not isinstance(val, np.ndarray):
                 continue
             if val.dtype == np.uint8 and val.ndim == 3:
+                data_features[key] = hf_datasets.Image()
                 image_keys.add(key)
-                if not keep_uint8_images:
-                    data_features[key] = hf_datasets.Image()
             elif val.shape == (1,):
                 dtype_str = (
                     "bool" if np.issubdtype(val.dtype, np.bool_) else str(val.dtype)
@@ -151,7 +148,7 @@ class InMemoryArrowStore:
         episode_index: int | None = None,
     ) -> dict[str, Any]:
         import PIL.Image as PILImage
-        from datasets import Dataset
+        from datasets import Dataset, Features
 
         try:  # lerobot >= 0.2 layout
             from lerobot.datasets.utils import hf_transform_to_torch
@@ -165,9 +162,15 @@ class InMemoryArrowStore:
         hf_features = self._hf_features
         image_keys = self._image_keys
         if hf_features is None:
-            hf_features, image_keys = self._infer_hf_features(
-                ep_frames[0], keep_uint8_images=self._keep_uint8_images
-            )
+            hf_features, image_keys = self._infer_hf_features(ep_frames[0])
+            if self._keep_uint8_images:
+                hf_features = Features(
+                    {
+                        key: feature
+                        for key, feature in hf_features.items()
+                        if key not in image_keys
+                    }
+                )
 
         ep_idx = len(self._ep_from) if episode_index is None else int(episode_index)
         base = self._total_frames if base is None else int(base)
