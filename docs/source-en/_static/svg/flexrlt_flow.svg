@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 535" role="img" aria-labelledby="title desc">
+<title id="title">FlexRLT online training</title>
+<desc id="desc">A frozen VLA extracts features and reference actions. A compact actor proposes actions. Optional STEAM routing selects the action source. Replay stores transitions; learning updates only actor and critic and synchronizes the actor back to rollout.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#536b86"/></marker><marker id="learn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#b85b13"/></marker></defs>
+<rect width="1240" height="535" rx="16" fill="#f7f9fc"/>
+<g font-family="Arial, Noto Sans CJK SC, Microsoft YaHei, sans-serif">
+<text x="32" y="36" text-anchor="start" font-size="25" font-weight="700" fill="#314259">FlexRLT online training</text>
+<text x="32" y="82" text-anchor="start" font-size="14" font-weight="700" fill="#65758b">ROLLOUT</text>
+<text x="32" y="398" text-anchor="start" font-size="14" font-weight="700" fill="#65758b">LEARNING</text>
+<rect x="32" y="118" width="185" height="96" rx="12" fill="#eaf0f7" stroke="#d4dce8"/>
+<text x="124.5" y="154" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">Observation</text>
+<text x="124.5" y="183" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">Images · language · state</text>
+<rect x="252" y="118" width="205" height="96" rx="12" fill="#dcecfb" stroke="#d4dce8"/>
+<text x="354.5" y="154" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">Frozen VLA</text>
+<text x="354.5" y="183" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">Prefix features + reference</text>
+<rect x="515" y="118" width="205" height="96" rx="12" fill="#ffead5" stroke="#d4dce8"/>
+<text x="617.5" y="154" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">Trainable Actor</text>
+<text x="617.5" y="183" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">Action chunk</text>
+<rect x="775" y="118" width="218" height="96" rx="12" fill="#eaf0f7" stroke="#d4dce8"/>
+<text x="884.0" y="154" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">Action Routing</text>
+<text x="884.0" y="183" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">Reference / Actor / Expert</text>
+<rect x="1030" y="118" width="180" height="96" rx="12" fill="#eaf0f7" stroke="#d4dce8"/>
+<text x="1120.0" y="154" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">Environment</text>
+<text x="1120.0" y="183" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">Execute action · get reward</text>
+<rect x="768" y="279" width="232" height="96" rx="12" fill="#dcf4e8" stroke="#d4dce8"/>
+<text x="884.0" y="315" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">STEAM Gate (optional)</text>
+<text x="884.0" y="344" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">Critical phase · stalled progress</text>
+<rect x="1030" y="279" width="180" height="96" rx="12" fill="#dcecfb" stroke="#d4dce8"/>
+<text x="1120.0" y="315" text-anchor="middle" font-size="17" font-weight="700" fill="#314259">Expert VLA (optional)</text>
+<text x="1120.0" y="344" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">Pretrained takeover model</text>
+<rect x="980" y="409" width="230" height="96" rx="12" fill="#eaf0f7" stroke="#d4dce8"/>
+<text x="1095.0" y="445" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">Replay Buffer</text>
+<text x="1095.0" y="474" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">State · executed action · result</text>
+<rect x="515" y="409" width="255" height="96" rx="12" fill="#ffead5" stroke="#d4dce8"/>
+<text x="642.5" y="445" text-anchor="middle" font-size="21" font-weight="700" fill="#314259">Update Actor / Critic</text>
+<text x="642.5" y="474" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">BC + Q objective</text>
+<path d="M217 166H252" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
+<path d="M457 166H515" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
+<path d="M720 166H775" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
+<path d="M993 166H1030" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
+<path d="M354 118V70H884V118" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
+<text x="627" y="62" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">Reference action</text>
+<text x="616" y="242" text-anchor="middle" font-size="15" font-weight="400" fill="#314259">Features + reference + state</text>
+<text x="354" y="243" text-anchor="middle" font-size="15" font-weight="400" fill="#47698b">Frozen VLA features</text>
+<path d="M124 214V326H768" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
+<text x="445" y="315" text-anchor="middle" font-size="16" font-weight="400" fill="#314259">Images and history</text>
+<path d="M884 279V214" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
+<path d="M1120 279V253H962V214" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
+<path d="M1120 214H1222V457H1210" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
+<path d="M980 457H770" fill="none" stroke="#536b86" stroke-width="2.4"  marker-end="url(#arrow)"/>
+<path d="M617 409V260H667V214" fill="none" stroke="#b85b13" stroke-width="2.4" stroke-dasharray="7 5" marker-end="url(#learn)"/>
+<text x="643" y="390" text-anchor="middle" font-size="15" font-weight="400" fill="#b85b13">Sync actor weights</text>
+</g></svg>

@@ -22,14 +22,12 @@ def build_expert_model_config(
     cfg: Any,
     model_cfg: Any,
     *,
-    prefix_feature_model_config: Any | None = None,
+    rlt_feature_model_config: Any | None = None,
 ):
     """Build a teacher/expert model config from rollout.expert_model overrides."""
     expert_cfg = cfg.rollout.expert_model
     expert_model_config = copy.deepcopy(
-        prefix_feature_model_config
-        if prefix_feature_model_config is not None
-        else model_cfg
+        rlt_feature_model_config if rlt_feature_model_config is not None else model_cfg
     )
 
     with open_dict(expert_model_config):

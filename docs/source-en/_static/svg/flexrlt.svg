@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-labelledby="title desc">
+<title id="title">FlexRLT</title><desc id="desc">A frozen VLA supplies prefix features to a trainable actor and critic, with replay shared by AC and TD3.</desc>
+<rect width="600" height="400" rx="16" fill="#10253a"/>
+<g font-family="sans-serif" text-anchor="middle" fill="#f8fafc">
+<text x="300" y="62" font-size="34" font-weight="700">FlexRLT</text>
+<rect x="40" y="106" width="180" height="94" rx="12" fill="#23556b"/>
+<text x="130" y="145" font-size="22">Frozen VLA</text><text x="130" y="176" font-size="17">pooled / RL tokens</text>
+<path d="M226 153h70m-12-10 12 10-12 10" fill="none" stroke="#6ee7b7" stroke-width="5"/>
+<rect x="310" y="106" width="250" height="94" rx="12" fill="#355275"/>
+<text x="435" y="145" font-size="22">Actor + Critic</text><text x="435" y="176" font-size="17">AC / TD3</text>
+<text x="300" y="290" font-size="20">Rollout · Replay · Online updates</text>
+<text x="300" y="340" font-size="17" fill="#b7d3e5">Choose features, heads, and update rules</text>
+</g></svg>

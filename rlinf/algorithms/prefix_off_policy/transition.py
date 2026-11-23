@@ -55,9 +55,12 @@ def _is_maniskill_rlt(env_cfg: Any) -> bool:
 
 
 def use_maniskill_rlt_env(cfg: Any) -> bool:
-    """Return True when the train env is ManiSkill RLT (expert route path)."""
-    env_cfgs = EnvLayout.env_cfgs(cfg.env.get("train", None), "env.train")
-    return any(_is_maniskill_rlt(env_cfg) for env_cfg in env_cfgs.values())
+    """Return whether every environment in the active layout is ManiSkill RLT."""
+    mode = "eval" if cfg.runner.get("only_eval", False) else "train"
+    env_cfgs = EnvLayout.env_cfgs(cfg.env.get(mode, None), f"env.{mode}")
+    return bool(env_cfgs) and all(
+        _is_maniskill_rlt(env_cfg) for env_cfg in env_cfgs.values()
+    )
 
 
 def extract_prefix_obs_from_forward_inputs(

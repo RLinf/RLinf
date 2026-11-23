@@ -23,6 +23,7 @@ env:
       routing_source: environment
 
 rollout:
+  expert_model: null
   routing_gate:
     actor_switch:
       enable: False

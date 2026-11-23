@@ -18,8 +18,8 @@ from typing import Any, Literal
 
 import torch
 
-from rlinf.algorithms.prefix_off_policy.expert import predict_expert_actions
 from rlinf.algorithms.prefix_off_policy.transition import use_maniskill_rlt_env
+from rlinf.algorithms.rlt.expert import predict_expert_actions
 
 
 @dataclass(kw_only=True)
@@ -101,69 +101,6 @@ class PrefixRoute(ABC):
     @abstractmethod
     def route(self, ctx: PrefixRouteContext) -> PrefixRouteOutput:
         """Route student actions among actor, reference, and optional expert."""
-
-
-class RealworldPrefixRoute(PrefixRoute):
-    """Actor/ref routing for realworld RLT (keyboard critical-phase switch).
-
-    Aligned with :class:`SimulatorPrefixRoute`:
-      - ``record_transition`` = critical (press ``b``)
-      - ``actor_switch`` = critical ∧ ready_for_online (``warmup_post_collect_updates``)
-
-    During warmup after ``b``, the arm still follows VLA ``ref_chunk``. SpaceMouse
-    intervention remains available at the env wrapper layer and can override the
-    executed action; intervening steps are stored with human actions as BC targets.
-    """
-
-    def __init__(self, *, use_schedule: bool = False, warmup_updates: int = 0):
-        self.use_schedule = use_schedule
-        self.warmup_updates = warmup_updates
-
-    def _ready_for_online(self, version: int) -> bool:
-        return not self.use_schedule or int(version) >= self.warmup_updates
-
-    def actor_routing_enabled(self, version: int) -> bool:
-        return self._ready_for_online(version)
-
-    def route(self, ctx: PrefixRouteContext) -> PrefixRouteOutput:
-        actions = ctx.student_actions
-        result = ctx.result
-        batch_size, chunk_len, action_dim = actions.shape
-        ready_for_online = self._ready_for_online(ctx.version)
-
-        critical_phase = _last_info_bool(
-            ctx.rlt_switch_flags,
-            batch_size=batch_size,
-            device=actions.device,
-            default=ctx.default_actor_switch,
-        )
-        actor_switch = critical_phase
-        if self.use_schedule:
-            actor_switch = actor_switch & torch.full(
-                (batch_size,),
-                ready_for_online,
-                dtype=torch.bool,
-                device=actions.device,
-            )
-
-        base_actions = _base_ref_actions(
-            ctx.rlt_obs["ref_chunk"],
-            chunk_len=chunk_len,
-            action_dim=action_dim,
-            device=actions.device,
-            dtype=actions.dtype,
-        )
-        routed_actions = torch.where(
-            actor_switch[:, None, None],
-            actions,
-            base_actions,
-        ).contiguous()
-
-        forward_inputs = result["forward_inputs"]
-        forward_inputs["action"] = _flatten_action_chunk(routed_actions).detach()
-        forward_inputs["record_transition"] = critical_phase[:, None]
-        forward_inputs["actor_switch"] = actor_switch[:, None]
-        return PrefixRouteOutput(actions=routed_actions, result=result)
 
 
 class SimulatorPrefixRoute(PrefixRoute):
@@ -281,12 +218,12 @@ def build_prefix_route(cfg: Any) -> PrefixRoute:
     schedule_cfg = cfg.algorithm.get("rlt_schedule", {}) or {}
     use_schedule = bool(schedule_cfg.get("enable", False))
     warmup_updates = int(schedule_cfg.get("warmup_post_collect_updates", 0))
-    if use_maniskill_rlt_env(cfg):
-        return SimulatorPrefixRoute(
-            use_schedule=use_schedule,
-            warmup_updates=warmup_updates,
+    if not use_maniskill_rlt_env(cfg):
+        raise ValueError(
+            "Prefix rollout routing currently requires env_type=maniskill_rlt; "
+            "real-world tasks retain the existing rlt_ac or rlt_td3 route."
         )
-    return RealworldPrefixRoute(
+    return SimulatorPrefixRoute(
         use_schedule=use_schedule,
         warmup_updates=warmup_updates,
     )

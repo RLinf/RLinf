@@ -48,7 +48,6 @@ class PrefixOffPolicyRuntime:
             )
         self.replay_service = PrefixReplayService(cfg, trace_writer=trace_writer)
         self.update_schedule = PrefixUpdateSchedule(cfg)
-        self._last_replay_metrics: dict[str, float] = {}
 
     def get_rollout_sync_version(self) -> int:
         """Return the model version that controls online actor routing."""
@@ -111,7 +110,6 @@ class PrefixOffPolicyRuntime:
         trajectories: list[Trajectory],
     ) -> None:
         result = self.replay_service.ingest(trajectories)
-        self._last_replay_metrics = result.metrics
         self.update_schedule.record_ingest(
             transitions=result.transitions,
             completed_episodes=result.completed_episodes,
@@ -123,7 +121,7 @@ class PrefixOffPolicyRuntime:
             update_step=self.update_step,
             replay_size=self.replay_buffer.min_env_samples,
             demo_size=demo_size,
-            replay_metrics=self._last_replay_metrics,
+            replay_metrics=self.replay_service.collect_metrics(),
         )
 
     def _prepare_scheduled_training(self) -> None:
@@ -191,9 +189,7 @@ class PrefixOffPolicyFSDPPolicy(PrefixOffPolicyRuntime, EmbodiedSACFSDPPolicy):
         """Run shared SAC training or a Prefix-scheduled update batch."""
         if not self.update_schedule.enabled:
             mean_metrics = super().run_training()
-            if self._last_replay_metrics:
-                mean_metrics = {**mean_metrics, **self._last_replay_metrics}
-            return mean_metrics
+            return {**mean_metrics, **self.replay_service.collect_metrics()}
 
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
@@ -252,9 +248,7 @@ class AsyncPrefixOffPolicyFSDPPolicy(
 
         if not self.update_schedule.enabled:
             mean_metrics = await super().run_training()
-            if self._last_replay_metrics:
-                mean_metrics = {**mean_metrics, **self._last_replay_metrics}
-            return mean_metrics
+            return {**mean_metrics, **self.replay_service.collect_metrics()}
 
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)

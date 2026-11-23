@@ -99,19 +99,22 @@ def pool_prefix(
         )
     hidden = hidden.to(dtype=torch.float32)
     batch_size, seq_len, _ = hidden.shape
-
     if mode == "mean":
         return hidden.mean(dim=1)
+
+    if mask is not None:
+        if mask.ndim == 3 and mask.shape[-1] == 1:
+            mask = mask.squeeze(-1)
+        if mask.shape != (batch_size, seq_len):
+            raise ValueError(
+                f"pool_prefix expects mask [B={batch_size}, T={seq_len}] or "
+                f"[B, T, 1], got {tuple(mask.shape)}."
+            )
 
     if mode == "last":
         if mask is None:
             return hidden[:, -1]
         keep = mask.to(device=hidden.device, dtype=torch.bool)
-        if keep.shape[:2] != (batch_size, seq_len):
-            raise ValueError(
-                f"pool_prefix mask shape {tuple(keep.shape)} does not match "
-                f"hidden [B={batch_size}, T={seq_len}]."
-            )
         positions = torch.arange(seq_len, device=hidden.device)
         last_index = positions.expand_as(keep).masked_fill(~keep, 0).amax(dim=1)
         batch_index = torch.arange(batch_size, device=hidden.device)
@@ -128,11 +131,6 @@ def pool_prefix(
     keep = mask.to(device=hidden.device, dtype=hidden.dtype)
     if keep.ndim == 2:
         keep = keep[..., None]
-    if keep.shape[:2] != (batch_size, seq_len):
-        raise ValueError(
-            f"pool_prefix mask shape {tuple(mask.shape)} does not match "
-            f"hidden [B={batch_size}, T={seq_len}]."
-        )
     denom = keep.sum(dim=1).clamp(min=1.0)
     return (hidden * keep).sum(dim=1) / denom
 

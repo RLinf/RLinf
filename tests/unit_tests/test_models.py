@@ -61,6 +61,7 @@ from rlinf.models.embodiment.openpi.modules.siglip import (
     Encoder1DBlock,
     SigLIPViT,
 )
+from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
 from rlinf.models.embodiment.prefix_features import (
     PREFIX_OBS_KEYS,
     PrefixFeatureModel,
@@ -4598,14 +4599,12 @@ def _compose_prefix_config(monkeypatch, config_dir, config_name):
             for name in (
                 "maniskill_rlt_stage2_ac_mlp",
                 "maniskill_rlt_stage2_td3_mlp",
-                "realworld_dual_franka_rlt_stage2_ac_mlp",
             )
         ],
         *[
             (config_dir, name, "actor.model", "rlt_token", False)
             for config_dir, name in (
                 ("examples/sft/config", "maniskill_rlt_stage1_sft_openpi_pi05"),
-                ("examples/sft/config", "realworld_rlt_stage1_sft_openpi_pi05"),
                 ("tests/e2e_tests/sft", "maniskill_rlt_stage1_sft_openpi_pi05"),
             )
         ],
@@ -4649,17 +4648,19 @@ def test_steam_presets_use_each_checkpoint_for_normalization(monkeypatch, config
     cfg = _compose_prefix_config(monkeypatch, "examples/embodiment/config", config_name)
     OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
     feature_cfg = cfg.rollout.prefix_feature_model
-    expert_cfg = build_expert_model_config(
-        cfg, cfg.rollout.model, prefix_feature_model_config=feature_cfg
-    )
-
     assert feature_cfg.openpi_data.norm_stats_path is None
-    assert expert_cfg.openpi_data.norm_stats_path is None
     assert feature_cfg.openpi_data.repo_id == "maniskill_peginsertionside_joint"
-    assert expert_cfg.openpi_data.repo_id == feature_cfg.openpi_data.repo_id
+    if cfg.rollout.expert_model is not None:
+        expert_cfg = build_expert_model_config(
+            cfg, cfg.rollout.model, rlt_feature_model_config=feature_cfg
+        )
+        assert expert_cfg.openpi_data.norm_stats_path is None
+        assert expert_cfg.openpi_data.repo_id == feature_cfg.openpi_data.repo_id
+        assert Path(expert_cfg.model_path).name == "actor"
     checkpoint_root = Path("/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints")
     assert Path(feature_cfg.model_path) == (checkpoint_root / "global_step_1000/actor")
-    assert Path(expert_cfg.model_path) == (checkpoint_root / "global_step_3000/actor")
+    if cfg.rollout.expert_model is not None:
+        assert Path(expert_cfg.model_path) == checkpoint_root / "global_step_3000/actor"
     assert cfg.rollout.routing_gate.model.model_path == (
         "/path/to/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor"
     )
@@ -4680,6 +4681,8 @@ def test_steam_calibration_preset_collects_without_a_phase_head(monkeypatch):
     assert not gate.controls_actor_routing
     assert gate.emit_phase_features
     assert gate.expert_mode == "shadow"
+    assert cfg.rollout.expert_model is None
+    assert cfg.rollout.rollout_backend == "huggingface"
     assert cfg.runner.max_steps == 20
     assert cfg.runner.val_check_interval == cfg.runner.save_interval == -1
     assert cfg.algorithm.rlt_gate_calibration.enable
@@ -4755,30 +4758,15 @@ def test_prefix_e2e_config_builds_current_policy_and_algorithm(monkeypatch):
     )
 
 
-def test_prefix_realworld_config_preserves_block_peg_task():
-    from rlinf.models.embodiment.openpi.rlt_config import build_rlt_config
-
-    root = Path(__file__).resolve().parents[2]
-    cfg = OmegaConf.load(
-        root / "examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml"
-    )
-    assert cfg.defaults[:2] == [
-        "env/realworld_block_peg_insertion@env.train",
-        "env/realworld_block_peg_insertion@env.eval",
-    ]
-    model_cfg = cfg.rollout.prefix_feature_model
-    rlt_cfg = build_rlt_config(model_cfg.openpi, parent_cfg=model_cfg)
-    assert rlt_cfg.prefix_pool == "rlt_token"
-    assert rlt_cfg.prefix_image_only is False
-
-
 @pytest.mark.parametrize(
     "legacy_key", ["stage2_z_source", "prefix_pool", "rlt_image_only"]
 )
 def test_build_rlt_config_rejects_openpi_pooling_fields(legacy_key):
     from rlinf.models.embodiment.openpi.rlt_config import build_rlt_config
 
-    model_cfg = OmegaConf.create({"openpi": {"use_rlt": True, legacy_key: False}})
+    model_cfg = OmegaConf.create(
+        {"prefix": {}, "openpi": {"use_rlt": True, legacy_key: False}}
+    )
     with pytest.raises(ValueError, match=f"openpi.{legacy_key} is no longer"):
         build_rlt_config(model_cfg.openpi, parent_cfg=model_cfg)
 
@@ -4940,38 +4928,6 @@ def test_steam_gate_maps_processor_cameras_to_env_observations():
         )
     with pytest.raises(ValueError, match="routing_gate.main_image_key"):
         SteamRoutingGate(_FakeSteamCritic(), _steam_gate_cfg(main_image_key="image"))
-
-
-def test_dual_franka_rlt_stage2_builds_prefix_policy(monkeypatch):
-    from hydra import compose, initialize_config_dir
-
-    root = Path(__file__).resolve().parents[2]
-    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
-    with initialize_config_dir(
-        config_dir=str(root / "examples/embodiment/config"), version_base="1.1"
-    ):
-        cfg = compose(config_name="realworld_dual_franka_rlt_stage2_ac_mlp")
-    OmegaConf.resolve(cfg)
-
-    assert cfg.algorithm.loss_type == "prefix_off_policy"
-    algorithm = build_prefix_off_policy_algorithm(cfg)
-    assert algorithm.actor_capabilities.distribution == "stochastic"
-    assert algorithm.num_q_heads == 2
-    feature_cfg = cfg.rollout.prefix_feature_model
-    assert feature_cfg.openpi.config_name == "pi05_dualfranka_tcp_rot6d"
-    assert feature_cfg.openpi.action_env_dim == 20
-    assert feature_cfg.openpi.action_chunk == 20
-
-    model = get_model(cfg.actor.model)
-    assert isinstance(model, PrefixPolicy)
-    obs = {
-        "z_rl": torch.zeros(2, 2048),
-        "proprio": torch.zeros(2, 20),
-        "ref_chunk": torch.zeros(2, 20, 20),
-    }
-    actions, info = model.predict_action_batch(obs, mode="eval")
-    assert actions.shape == (2, 10, 20)
-    assert info["prev_logprobs"].shape == (2, 200)
 
 
 def _gr00t_npu_patch_modules():
@@ -5537,7 +5493,8 @@ class _PrefixFeatureModel:
         }
 
 
-def test_pool_prefix_masked_mean():
+@pytest.mark.parametrize("trailing_dim", [False, True])
+def test_pool_prefix_masked_mean(trailing_dim):
     hidden = torch.tensor(
         [
             [[1.0, 0.0], [3.0, 0.0], [9.0, 0.0]],
@@ -5545,7 +5502,9 @@ def test_pool_prefix_masked_mean():
         ]
     )
     mask = torch.tensor([[True, True, False], [True, False, False]])
-    pooled = pool_prefix(hidden, mask, mode="masked_mean")
+    pooled = pool_prefix(
+        hidden, mask[..., None] if trailing_dim else mask, mode="masked_mean"
+    )
     torch.testing.assert_close(pooled[0], torch.tensor([2.0, 0.0]))
     torch.testing.assert_close(pooled[1], torch.tensor([2.0, 0.0]))
 
@@ -5558,13 +5517,17 @@ def test_pool_prefix_masked_mean():
         ([[False, False, False, False], [True, False, False, False]], [0, 0]),
     ],
 )
-def test_pool_prefix_mean_and_last(mask, expected_indices):
+@pytest.mark.parametrize("trailing_dim", [False, True])
+def test_pool_prefix_mean_and_last(mask, expected_indices, trailing_dim):
     hidden = torch.arange(24, dtype=torch.float32).reshape(2, 4, 3)
     mean = pool_prefix(hidden, None, mode="mean")
     torch.testing.assert_close(mean, hidden.mean(dim=1))
     last = pool_prefix(hidden, None, mode="last")
     torch.testing.assert_close(last, hidden[:, -1])
-    last_valid = pool_prefix(hidden, torch.tensor(mask), mode="last")
+    mask = torch.tensor(mask)
+    last_valid = pool_prefix(
+        hidden, mask[..., None] if trailing_dim else mask, mode="last"
+    )
     torch.testing.assert_close(last_valid, hidden[torch.arange(2), expected_indices])
 
 
@@ -6981,6 +6944,16 @@ def test_sd3_pretraining_auxiliary_placement_and_gradients(sd3_policy, offload):
         model.to("cpu")
 
 
+def test_prefix_rollout_keeps_realworld_on_existing_rlt_route():
+    from rlinf.algorithms.prefix_off_policy.route import build_prefix_route
+
+    cfg = OmegaConf.create(
+        {"runner": {}, "algorithm": {}, "env": {"train": {"env_type": "real"}}}
+    )
+    with pytest.raises(ValueError, match="real-world tasks retain the existing rlt_ac"):
+        build_prefix_route(cfg)
+
+
 def test_prefix_rollout_preserves_steam_sources_and_epoch_resets():
     from rlinf.algorithms.prefix_off_policy.rollout import PrefixRolloutRuntime
     from rlinf.algorithms.rlt.rlt_steam_critical_phase_gate import SteamRoutingGate
@@ -7000,7 +6973,13 @@ def test_prefix_rollout_preserves_steam_sources_and_epoch_resets():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.version = 0
     rollout.prefix_runtime = PrefixRolloutRuntime(
-        OmegaConf.create({"algorithm": {}, "env": {"train": {}}}),
+        OmegaConf.create(
+            {
+                "runner": {},
+                "algorithm": {},
+                "env": {"train": {"env_type": "maniskill_rlt"}},
+            }
+        ),
         policy,
         _PrefixFeatureModel(),
         gate=gate,
@@ -7017,6 +6996,9 @@ def test_prefix_rollout_preserves_steam_sources_and_epoch_resets():
             }
             for pixel in pixels
         ]
+        for index, shard in enumerate(shards):
+            shape = (1,) if index == 0 else (1, 4)
+            shard["dones"] = torch.zeros(shape, dtype=torch.bool)
         payload = rollout._predict_eval_shards(
             shards, (), peer_ranks=ranks, stage_id=stage_id
         )
@@ -7060,3 +7042,87 @@ def test_prefix_rollout_preserves_steam_sources_and_epoch_resets():
         )
         _, result = rollout._predict_rollout_actions(request)
         assert bool(result["rollout_infos"]["rlt_gate_score_ready"].any()) is ready
+
+
+def _prefix_pool_model(rlt_cfg):
+    from rlinf.models.embodiment.openpi.prefix import OpenPiPrefixMixin
+
+    model = OpenPiPrefixMixin()
+    model.rlt_cfg = rlt_cfg
+    return model
+
+
+def test_encode_vlm_prefix_flat_mean_pool_with_mask():
+    model = _prefix_pool_model(OpenPiPytorchRLTConfig(prefix_pool="masked_mean"))
+    prefix = torch.tensor(
+        [
+            [[1.0, 0.0], [3.0, 0.0], [9.0, 0.0]],
+            [[2.0, 0.0], [4.0, 0.0], [8.0, 0.0]],
+        ]
+    )
+    mask = torch.tensor([[True, True, False], [True, False, False]])
+    pooled = model._encode_vlm_prefix_flat(prefix, mask)
+    torch.testing.assert_close(pooled[0], torch.tensor([2.0, 0.0]))
+    torch.testing.assert_close(pooled[1], torch.tensor([2.0, 0.0]))
+
+
+def test_encode_vlm_prefix_flat_mean_pool_without_mask():
+    model = _prefix_pool_model(OpenPiPytorchRLTConfig(prefix_pool="mean"))
+    prefix = torch.ones(2, 4, 3)
+    pooled = model._encode_vlm_prefix_flat(prefix, torch.ones(2, 4, dtype=torch.bool))
+    torch.testing.assert_close(pooled, torch.ones(2, 3))
+
+
+def test_encode_vlm_prefix_flat_uses_shared_pool_prefix():
+    from rlinf.models.embodiment.prefix_features import pool_prefix
+
+    model = _prefix_pool_model(OpenPiPytorchRLTConfig(prefix_pool="last"))
+    prefix = torch.arange(12, dtype=torch.float32).reshape(2, 2, 3)
+    mask = torch.tensor([[True, False], [True, True]])
+    pooled = model._encode_vlm_prefix_flat(prefix, mask)
+    torch.testing.assert_close(pooled, pool_prefix(prefix, mask, mode="last"))
+
+
+def test_prefix_pooling_requires_rlt_only_for_rlt_tokens():
+    for pool, use_rlt, required in (
+        ("masked_mean", False, False),
+        ("rlt_token", True, True),
+    ):
+        model = _prefix_pool_model(
+            OpenPiPytorchRLTConfig(use_rlt=use_rlt, prefix_pool=pool)
+        )
+        assert model._stage2_requires_rlt() is required
+
+
+@pytest.mark.parametrize("image_only,expected", [(True, 2.0), (False, 51.0)])
+def test_stage2_pooling_respects_explicit_image_only_setting(image_only, expected):
+    from rlinf.models.embodiment.openpi.rlt_config import build_rlt_config
+
+    cfg = OmegaConf.create(
+        {
+            "prefix": {"pool": "masked_mean", "image_only": image_only},
+            "openpi": {"use_rlt": False},
+        }
+    )
+    model = _prefix_pool_model(build_rlt_config(cfg.openpi, parent_cfg=cfg))
+    hidden = torch.tensor([[[2.0], [4.0], [100.0]]])
+    mask = torch.tensor([[True, False, True]])
+    language = torch.ones(1, 1, dtype=torch.long)
+    pooled = model._encode_stage2_z(hidden, mask, language)
+    torch.testing.assert_close(pooled, torch.tensor([[expected]]))
+
+
+@pytest.mark.parametrize(
+    "config_name",
+    [
+        "maniskill_prefix_stage2_td3_mlp_steam",
+    ],
+)
+def test_prefix_eval_config_validates_without_actor(monkeypatch, config_name):
+    cfg = _compose_prefix_config(monkeypatch, "examples/embodiment/config", config_name)
+    OmegaConf.resolve(cfg)
+    cfg.runner.only_eval = True
+    cfg.cluster.component_placement = {"env,rollout": "0"}
+    del cfg.actor
+    validate_embodied_cfg(cfg)
+    assert isinstance(get_model(cfg.rollout.model), PrefixPolicy)

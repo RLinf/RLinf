@@ -99,7 +99,7 @@ class PrefixRolloutRuntime:
         expert_model = None
         if cfg.rollout.get("expert_model", None):
             expert_cfg = build_expert_model_config(
-                cfg, model_cfg, prefix_feature_model_config=feature_cfg
+                cfg, model_cfg, rlt_feature_model_config=feature_cfg
             )
             expert_model = get_model(expert_cfg)
             if cfg.runner.get("expert_ckpt_path", None):

@@ -44,7 +44,6 @@ class OpenPiPytorchRLTConfig:
 _LEGACY_PREFIX_FIELDS = {
     "stage2_z_source": "prefix.pool",
     "prefix_pool": "prefix.pool",
-    "rlt_image_only": "prefix.image_only",
 }
 
 
@@ -66,9 +65,20 @@ def build_rlt_config(model_cfg: Any, *, parent_cfg: Any) -> OpenPiPytorchRLTConf
                 f"openpi.{legacy_key} is no longer supported; set {replacement} "
                 "beside the openpi block instead."
             )
+    if (
+        OmegaConf.select(parent_cfg, "prefix", default=None) is not None
+        and OmegaConf.select(model_cfg, "rlt_image_only", default=None) is not None
+    ):
+        raise ValueError(
+            "openpi.rlt_image_only is no longer supported with prefix; "
+            "set prefix.image_only beside the openpi block instead."
+        )
     use_rlt = bool(OmegaConf.select(model_cfg, "use_rlt", default=False))
     prefix_pool = OmegaConf.select(parent_cfg, "prefix.pool", default=None)
-    image_only = OmegaConf.select(parent_cfg, "prefix.image_only", default=True)
+    legacy_image_only = OmegaConf.select(model_cfg, "rlt_image_only", default=True)
+    image_only = OmegaConf.select(
+        parent_cfg, "prefix.image_only", default=legacy_image_only
+    )
 
     return OpenPiPytorchRLTConfig(
         use_rlt=use_rlt,

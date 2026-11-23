@@ -67,6 +67,10 @@ class OpenPiPrefixMixin:
             return self._encode_rlt_flat(selected_prefix, selected_mask)
         return self._encode_vlm_prefix_flat(selected_prefix, selected_mask)
 
+    def extract_rlt_obs(self, env_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
+        """Return the observations consumed by the existing RLT policies."""
+        return self.extract_prefix_obs(env_obs)
+
     @torch.no_grad()
     def extract_prefix_obs(self, env_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
         """Extract the frozen Stage1 features consumed by the Stage2 RLT head."""

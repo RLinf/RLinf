@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+from collections.abc import Callable
 from typing import Any, Optional, Protocol, Union
 
 import numpy as np
@@ -81,6 +82,17 @@ def get_env_attr(env, name: str, default: Any = None) -> Any:
         except AttributeError:
             inner = getattr(inner, "env", None)
     return default
+
+
+def get_rollout_info_receiver(env: Any) -> Callable[[dict[str, torch.Tensor]], None]:
+    """Require a routing-feedback receiver on an environment or its wrappers."""
+    receiver = get_env_attr(env, "set_rollout_infos")
+    if not callable(receiver):
+        raise ValueError(
+            f"Routing feedback requires {type(env).__name__} to implement "
+            "set_rollout_infos(infos)."
+        )
+    return receiver
 
 
 def to_tensor(

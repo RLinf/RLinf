@@ -399,24 +399,30 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
                 "min_episode_length": data_cfg.get("min_episode_length", None),
             }
 
-            rlt_keys = ("temporal_stride", "anchor_stride", "boundary_mode")
+            rlt_defaults = {
+                "temporal_stride": 1,
+                "anchor_stride": 1,
+                "boundary_mode": "clamp",
+            }
+            rlt_options = {
+                key: entry.get(key) if entry.get(key) is not None else data_cfg.get(key)
+                for key in rlt_defaults
+            }
             use_rlt_chunk_dataset = any(
-                key in entry or key in data_cfg for key in rlt_keys
+                value is not None for value in rlt_options.values()
             )
             if not use_rlt_chunk_dataset:
                 return PairDataset(**dataset_kwargs)
 
+            rlt_options = {
+                key: default if rlt_options[key] is None else rlt_options[key]
+                for key, default in rlt_defaults.items()
+            }
             return RLTChunkPairDataset(
                 **dataset_kwargs,
-                temporal_stride=int(
-                    entry.get("temporal_stride", data_cfg.get("temporal_stride", 1))
-                ),
-                anchor_stride=int(
-                    entry.get("anchor_stride", data_cfg.get("anchor_stride", 1))
-                ),
-                boundary_mode=str(
-                    entry.get("boundary_mode", data_cfg.get("boundary_mode", "clamp"))
-                ),
+                temporal_stride=int(rlt_options["temporal_stride"]),
+                anchor_stride=int(rlt_options["anchor_stride"]),
+                boundary_mode=str(rlt_options["boundary_mode"]),
             )
 
         balance_dataset_weights = bool(

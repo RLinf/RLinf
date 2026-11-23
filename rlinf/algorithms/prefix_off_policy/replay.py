@@ -31,11 +31,10 @@ from rlinf.utils.metric_utils import (
 
 @dataclass(frozen=True)
 class ReplayIngestResult:
-    """Counts and metrics produced by one replay-ingestion batch."""
+    """Counts produced by one local replay-ingestion batch."""
 
     transitions: int
     completed_episodes: int
-    metrics: dict[str, float]
 
 
 class PrefixReplayService:
@@ -46,6 +45,25 @@ class PrefixReplayService:
         self.trace_writer = trace_writer
         self.replay_buffer = None
         self.demo_buffer = None
+        self._metric_totals = dict.fromkeys(
+            (
+                "record_transition_sum",
+                "record_transition_count",
+                "actor_switch_sum",
+                "actor_switch_count",
+                "intervention_requested_sum",
+                "intervention_requested_count",
+                "intervention_sum",
+                "intervention_count",
+                "transition_count",
+                "reward_sum",
+                "reward_count",
+                "reward_positive_sum",
+                "done_sum",
+                "done_count",
+            ),
+            0.0,
+        )
 
     def bind_buffers(self, replay_buffer: Any, demo_buffer: Any | None) -> None:
         """Bind worker-owned buffers after SAC runtime initialization."""
@@ -62,6 +80,9 @@ class PrefixReplayService:
         for trajectory in trajectories:
             trajectory.trajectory_infos = {}
 
+        collect_trajectory_replay_metrics(
+            trajectories, reducer=self._accumulate_metric_totals
+        )
         if use_simulator_transition_replay(self.cfg):
             replay_trajectories: list[Trajectory] = []
             completed_episodes = 0
@@ -71,19 +92,12 @@ class PrefixReplayService:
                 )
                 replay_trajectories.extend(transition_trajectories)
                 completed_episodes += completed
-            metrics = {
-                **self._transition_replay_metrics(replay_trajectories),
-                **collect_trajectory_replay_metrics(
-                    trajectories,
-                    reducer=all_reduce_dict,
-                ),
-            }
+            self._record_transition_metrics(replay_trajectories)
             self.replay_buffer.add_trajectories(replay_trajectories)
             self._add_transition_demonstrations(replay_trajectories)
             return ReplayIngestResult(
                 transitions=len(replay_trajectories),
                 completed_episodes=completed_episodes,
-                metrics=metrics,
             )
 
         self.replay_buffer.add_trajectories(trajectories)
@@ -95,11 +109,40 @@ class PrefixReplayService:
             self._trajectory_completed_episodes(trajectory)
             for trajectory in trajectories
         )
-        metrics = collect_trajectory_replay_metrics(
-            trajectories,
-            reducer=all_reduce_dict,
-        )
-        return ReplayIngestResult(transitions, completed_episodes, metrics)
+        return ReplayIngestResult(transitions, completed_episodes)
+
+    def _accumulate_metric_totals(self, totals: dict[str, float]) -> dict[str, float]:
+        for key, value in totals.items():
+            self._metric_totals[key] += value
+        return totals
+
+    def collect_metrics(self) -> dict[str, float]:
+        """Reduce local sums and counts once at a synchronized learner boundary."""
+        totals = all_reduce_dict(self._metric_totals)
+        self._metric_totals = dict.fromkeys(self._metric_totals, 0.0)
+        metrics = {}
+        for name, numerator, denominator in (
+            (
+                "record_transition_rate",
+                "record_transition_sum",
+                "record_transition_count",
+            ),
+            ("actor_switch_rate", "actor_switch_sum", "actor_switch_count"),
+            (
+                "intervention_requested_rate",
+                "intervention_requested_sum",
+                "intervention_requested_count",
+            ),
+            ("intervention_rate", "intervention_sum", "intervention_count"),
+            ("reward_mean", "reward_sum", "reward_count"),
+            ("reward_positive_rate", "reward_positive_sum", "reward_count"),
+            ("done_rate", "done_sum", "done_count"),
+        ):
+            if totals[denominator] > 0:
+                metrics[f"replay/{name}"] = totals[numerator] / totals[denominator]
+        if use_simulator_transition_replay(self.cfg):
+            metrics["replay/transition_count"] = totals["transition_count"]
+        return metrics
 
     def _add_transition_demonstrations(
         self,
@@ -335,30 +378,15 @@ class PrefixReplayService:
 
         return replay_trajectories, completed_episodes
 
-    def _transition_replay_metrics(
-        self,
-        trajectories: list[Trajectory],
-    ) -> dict[str, float]:
-        metrics = {"replay/transition_count": float(len(trajectories))}
-        reward_values = [
-            reward
-            for trajectory in trajectories
-            if (reward := self._transition_reward_value(trajectory)) is not None
-        ]
-        if reward_values:
-            metrics["replay/reward_mean"] = float(
-                sum(reward_values) / len(reward_values)
-            )
-            metrics["replay/reward_positive_rate"] = float(
-                sum(reward > 0.0 for reward in reward_values) / len(reward_values)
-            )
-        done_values = [
-            done
-            for trajectory in trajectories
-            if (done := self._transition_done_value(trajectory)) is not None
-        ]
-        if done_values:
-            metrics["replay/done_rate"] = float(
-                sum(bool(done) for done in done_values) / len(done_values)
-            )
-        return metrics
+    def _record_transition_metrics(self, trajectories: list[Trajectory]) -> None:
+        self._metric_totals["transition_count"] += len(trajectories)
+        for trajectory in trajectories:
+            reward = self._transition_reward_value(trajectory)
+            if reward is not None:
+                self._metric_totals["reward_sum"] += reward
+                self._metric_totals["reward_count"] += 1
+                self._metric_totals["reward_positive_sum"] += reward > 0.0
+            done = self._transition_done_value(trajectory)
+            if done is not None:
+                self._metric_totals["done_sum"] += done
+                self._metric_totals["done_count"] += 1

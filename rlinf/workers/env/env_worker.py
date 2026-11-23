@@ -38,7 +38,7 @@ from rlinf.envs import SupportedEnvType, get_env_cls
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.layout import EnvAssignment, EnvLayout
 from rlinf.envs.policy_obs import PolicyObsSpec
-from rlinf.envs.utils import get_env_attr
+from rlinf.envs.utils import get_env_attr, get_rollout_info_receiver
 from rlinf.envs.wrappers import InsertDelay, RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker, merge_batches
 from rlinf.utils.env_helpers import HistoryManager, SmoothInterveneController
@@ -84,9 +84,11 @@ class EnvWorker(Worker):
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.collect_final_values = self.cfg.rollout.get("collect_final_values", True)
         self.stage_num = self.cfg.rollout.pipeline_stage_num
-        self.enable_prefix = is_prefix_off_policy_loss(
-            OmegaConf.select(self.cfg, "algorithm.loss_type", default="")
-        )
+        loss_type = OmegaConf.select(self.cfg, "algorithm.loss_type", default="")
+        self.enable_prefix = is_prefix_off_policy_loss(loss_type) or loss_type in {
+            "rlt_ac",
+            "rlt_td3",
+        }
         # Env-declared diagnostics ride the trajectory only for a trace consumer.
         self.export_trajectory_infos = self.enable_prefix and is_gate_trace_enabled(
             self.cfg
@@ -267,6 +269,10 @@ class EnvWorker(Worker):
                 assert all(
                     callable(get_env_attr(env, "offload")) for env in self.eval_env_list
                 ), "eval envs must have an offload method to enable offload!"
+
+        if OmegaConf.select(self.cfg, "rollout.routing_gate.enable", default=False):
+            for env in (*self.env_list, *self.eval_env_list):
+                get_rollout_info_receiver(env)
 
         if self.enable_train:
             if self.reward_mode == "history_buffer":
@@ -1186,14 +1192,7 @@ class EnvWorker(Worker):
         """Apply optional rollout diagnostics and return executable actions."""
         if isinstance(payload, ActionPayload):
             if payload.rollout_infos:
-                receiver = get_env_attr(env, "set_rollout_infos")
-                if not callable(receiver):
-                    raise ValueError(
-                        f"Rollout sent infos {sorted(payload.rollout_infos)}, but "
-                        f"{type(env).__name__} does not implement "
-                        "set_rollout_infos(infos)."
-                    )
-                receiver(payload.rollout_infos)
+                get_rollout_info_receiver(env)(payload.rollout_infos)
             return payload.actions
         # Other rollout backends may return their own action response object.
         if hasattr(payload, "actions"):

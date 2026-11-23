@@ -107,6 +107,10 @@ SupportedModel.PSI0 = SupportedModel.register("psi0", force=True)
 SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
+SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
+SupportedModel.RLT_TD3_MLP_POLICY = SupportedModel.register(
+    "rlt_td3_mlp_policy", force=True
+)
 SupportedModel.PREFIX_POLICY = SupportedModel.register("prefix_policy", force=True)
 SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
@@ -165,6 +169,8 @@ EMBODIED_MODEL = set(
         SupportedModel.PI0_FAST,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
+        SupportedModel.RLT_MLP_POLICY,
+        SupportedModel.RLT_TD3_MLP_POLICY,
         SupportedModel.PREFIX_POLICY,
         SupportedModel.GR00T,
         SupportedModel.DEXBOTIC_PI,
@@ -1463,7 +1469,8 @@ def validate_embodied_cfg(cfg):
             build_prefix_off_policy_algorithm,
         )
 
-        build_prefix_off_policy_algorithm(cfg)
+        if not only_eval:
+            build_prefix_off_policy_algorithm(cfg)
     if model_type == SupportedModel.OPENPI:
         if only_eval and model_cfg.openpi.get("short_memory", False):
             eval_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("eval", None), "env.eval")
@@ -1614,8 +1621,14 @@ def validate_embodied_cfg(cfg):
         )
         if not only_eval:
             loss_type = algorithm_cfg.get("loss_type")
-            assert loss_type not in {"embodied_dagger", "prefix_off_policy"}, (
-                "Expected an algorithm.loss_type other than embodied_dagger or "
+            assert loss_type not in {
+                "embodied_dagger",
+                "rlt_ac",
+                "rlt_td3",
+                "prefix_off_policy",
+            }, (
+                "Expected an algorithm.loss_type other than embodied_dagger, rlt_ac, "
+                "rlt_td3, or "
                 f"prefix_off_policy for rollout_backend='phyai', got {loss_type!r}."
             )
             adv_type = algorithm_cfg.get("adv_type")

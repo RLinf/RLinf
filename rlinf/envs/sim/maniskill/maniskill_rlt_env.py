@@ -1029,8 +1029,31 @@ class ManiskillRLTEnv(ManiskillEnv):
         self._reset_rlt_switch(options.get("env_idx"))
         self._show_goal_site_visual()
         extracted_obs = self._wrap_obs(raw_obs, infos=infos)
-        self._attach_rlt_switch_info(infos, after_reset=True)
+        if options.get("env_idx") is None:
+            self._attach_rlt_switch_info(infos, after_reset=True)
         return extracted_obs, infos
+
+    def _handle_auto_reset(self, dones, extracted_obs, infos):
+        extracted_obs, reset_infos = super()._handle_auto_reset(
+            dones, extracted_obs, infos
+        )
+        if self._rlt_switch_state is None:
+            return extracted_obs, reset_infos
+        reset_flags = self._export_rlt_switch_info(device=self.device)
+        for key in (
+            "rlt_switch_flags",
+            "intervene_flag",
+            *self._RLT_ATTACHED_INFO_KEYS,
+        ):
+            if key in infos:
+                reset_infos[key] = infos[key].clone()
+                if key in ("rlt_switch_flags", "intervene_flag"):
+                    flags = reset_infos[key]
+                    if flags.ndim == 3:
+                        flags[dones, -1] = reset_flags[key][dones]
+                    else:
+                        flags[dones] = reset_flags[key][dones]
+        return extracted_obs, reset_infos
 
     def step(
         self, actions: Union[Array, dict] = None, auto_reset=True

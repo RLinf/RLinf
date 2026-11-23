@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import copy
 import gc
 import time
 from dataclasses import replace
@@ -28,6 +29,8 @@ from rlinf.algorithms.prefix_off_policy.rollout import PrefixRolloutRuntime
 from rlinf.algorithms.prefix_off_policy.transition import (
     extract_prefix_obs_from_forward_inputs,
 )
+from rlinf.algorithms.rlt import build_rlt_route, predict_rlt_actions
+from rlinf.algorithms.rlt.transition import extract_rlt_obs_from_forward_inputs
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import (
     ActionPayload,
@@ -103,6 +106,7 @@ class MultiStepRolloutWorker(Worker):
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.enable_dagger = self.algorithm_cfg.get("loss_type") == "embodied_dagger"
         self.enable_opd = self.algorithm_cfg.get("adv_type") == "opd"
+        self.enable_rlt = self.algorithm_cfg.get("loss_type") in {"rlt_ac", "rlt_td3"}
         self.enable_prefix = is_prefix_off_policy_loss(
             self.algorithm_cfg.get("loss_type")
         )
@@ -114,6 +118,8 @@ class MultiStepRolloutWorker(Worker):
         )
         self.expert_model = None
         self.prefix_runtime = None
+        self.rlt_feature_model = None
+        self.rlt_route = None
 
         self.total_num_train_envs = (
             cfg.env.train.total_num_envs if self.enable_train else 0
@@ -188,7 +194,7 @@ class MultiStepRolloutWorker(Worker):
     @property
     def collect_raw_transition_obs(self) -> bool:
         """Return whether Actor training requires raw transition observations."""
-        return self.collect_transitions and not self.enable_prefix
+        return self.collect_transitions and not (self.enable_prefix or self.enable_rlt)
 
     def init_worker(self):
         if self.enable_prefix:
@@ -218,6 +224,15 @@ class MultiStepRolloutWorker(Worker):
             self.cfg, self.hf_model, device=f"{self.torch_device_type}:{self.device}"
         )
 
+        rlt_feature_model_config = OmegaConf.select(
+            self.cfg, "rollout.rlt_feature_model", default=None
+        )
+        if rlt_feature_model_config is not None:
+            self.rlt_feature_model = get_model(copy.deepcopy(rlt_feature_model_config))
+            self.rlt_feature_model.eval()
+            self.rlt_feature_model.requires_grad_(False)
+            self.rlt_route = build_rlt_route(self.cfg)
+
         if (
             self.cfg.rollout.get("expert_model", None)
             and not self.enable_opd
@@ -226,6 +241,7 @@ class MultiStepRolloutWorker(Worker):
             expert_model_config = build_expert_model_config(
                 self.cfg,
                 self.model_cfg,
+                rlt_feature_model_config=rlt_feature_model_config,
             )
             self.expert_model = get_model(expert_model_config)
 
@@ -715,6 +731,19 @@ class MultiStepRolloutWorker(Worker):
             return self.prefix_runtime.predict(
                 request, mode=mode, version=self.version, stage_id=stage_id
             )
+        if self.rlt_feature_model is not None:
+            return predict_rlt_actions(
+                policy_model=self.hf_model,
+                feature_model=self.rlt_feature_model,
+                rlt_route=self.rlt_route,
+                env_obs=request.obs,
+                final_obs=request.final_obs,
+                mode=mode,
+                version=self.version,
+                rlt_switch_flags=request.rlt_switch_flags,
+                intervene_requested=request.intervene_flags,
+                expert_model=self.expert_model,
+            )
         return self.predict(
             request.obs,
             mode=mode,
@@ -848,13 +877,16 @@ class MultiStepRolloutWorker(Worker):
     ) -> dict[str, Any]:
         if self.model_cfg.model_type == SupportedModel.PSI0.value or (
             self.value_only_bootstrap
-            and not self.enable_prefix
+            and not (self.enable_prefix or self.enable_rlt)
             and not self.enable_dagger
             and self.prefix_runtime is None
+            and self.rlt_feature_model is None
             and self._can_predict_value_only()
         ):
             return {"prev_values": self.hf_model.predict_value_batch(env_obs)}
-        _, result = self.predict(env_obs, policy_kwargs=policy_kwargs)
+        _, result = self._predict_rollout_actions(
+            PolicyInput(obs=env_obs), policy_kwargs=policy_kwargs
+        )
         return result
 
     def _publish_env_part(
@@ -884,13 +916,22 @@ class MultiStepRolloutWorker(Worker):
                 else self._predict_bootstrap(next_obs, policy_kwargs)
             )
             values = result.get("prev_values")
+            if (
+                self.enable_rlt
+                and self.model_cfg.model_type != SupportedModel.PSI0.value
+            ):
+                next_rlt_obs = extract_rlt_obs_from_forward_inputs(
+                    result.get("forward_inputs"), transition=True
+                )
             if values is not None:
                 final_prev_values = values.cpu().contiguous()
         # Republish environment-owned data here to keep one Actor-channel writer.
         actor_channel.put(
             env_part.complete(
                 next_obs=(next_obs if self.collect_raw_transition_obs else None),
-                next_rlt_obs=next_rlt_obs if self.enable_prefix else None,
+                next_rlt_obs=next_rlt_obs
+                if (self.enable_prefix or self.enable_rlt)
+                else None,
                 final_prev_values=final_prev_values,
             ),
             async_op=True,
@@ -921,6 +962,10 @@ class MultiStepRolloutWorker(Worker):
             if self.enable_prefix and forward_inputs is not None
             else None
         )
+        if self.enable_rlt and forward_inputs is not None:
+            next_rlt_obs = extract_rlt_obs_from_forward_inputs(
+                forward_inputs, transition=True
+            )
         next_rlt_observations = (
             split_batch_value(next_rlt_obs, policy_input.request_sizes)
             if next_rlt_obs is not None
@@ -942,7 +987,7 @@ class MultiStepRolloutWorker(Worker):
         bootstrap_results = [None] * part_count
         if (
             self.batch_bootstrap_inference
-            and not self.enable_prefix
+            and not (self.enable_prefix or self.enable_rlt)
             and not self.enable_dagger
             and self.prefix_runtime is None
         ):
@@ -1637,6 +1682,8 @@ class MultiStepRolloutWorker(Worker):
                 self.prefix_runtime.to("cpu")
             if self.expert_model is not None:
                 self.expert_model.to("cpu")
+            if self.rlt_feature_model is not None:
+                self.rlt_feature_model.to("cpu")
         self.torch_platform.empty_cache()
 
     def reload_model(self):
@@ -1645,6 +1692,8 @@ class MultiStepRolloutWorker(Worker):
             self.prefix_runtime.to(self.device)
         if self.expert_model is not None:
             self.expert_model.to(self.device)
+        if self.rlt_feature_model is not None:
+            self.rlt_feature_model.to(self.device)
         if self.enable_cuda_graph:
             self.hf_model.capture_cuda_graph(
                 train_batch_size=self.per_node_train_batch_size,
@@ -1692,7 +1741,12 @@ class MultiStepRolloutWorker(Worker):
         intervene_flags_list = [
             obs_batch.get("intervene_flags", None) for obs_batch in obs_batches
         ]
-        dones_list = [obs_batch.get("dones", None) for obs_batch in obs_batches]
+        dones_list = [
+            dones.reshape(self._infer_env_batch_size(obs_batch), -1).any(dim=1)
+            if (dones := obs_batch.get("dones")) is not None
+            else None
+            for obs_batch in obs_batches
+        ]
 
         def _merge_obs_dicts(dicts: list[dict[str, Any]]) -> dict[str, Any]:
             merged: dict[str, Any] = {}
