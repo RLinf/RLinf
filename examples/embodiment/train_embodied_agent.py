@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import json
+import os
+from pathlib import Path
 
 import hydra
 import torch.multiprocessing as mp
@@ -35,6 +37,10 @@ _REWARD_SERVER_COMPONENT_NAME = "reward_server"
     version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
 )
 def main(cfg) -> None:
+    if (cfg.get("mps") or {}).get("enabled", False) is True:
+        from toolkits.auto_mps_tuning.tuning import launch_config
+
+        raise SystemExit(launch_config(cfg, Path(__file__)))
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
@@ -177,6 +183,20 @@ def main(cfg) -> None:
             placement_strategy=reward_placement,
         )
 
+    if (cfg.get("mps") or {}).get("trial", False) or os.environ.get(
+        "RLINF_MPS_SESSION"
+    ):
+        from toolkits.auto_mps_tuning.measurement import run_mps
+
+        return run_mps(
+            cfg,
+            actor_group,
+            rollout_group,
+            env_group,
+            reward_group,
+            router_group,
+            server_group,
+        )
     runner = EmbodiedRunner(
         cfg=cfg,
         actor=actor_group,

@@ -849,6 +849,10 @@ class Cluster:
                 merged_env_vars,
                 self._runtime_code_sync_strip_roots,
             )
+        if merged_env_vars.get("RLINF_MPS_SESSION"):
+            from rlinf.scheduler.hardware.accelerators.mps import worker_environment
+
+            merged_env_vars.update(worker_environment(merged_env_vars))
         runtime_env_vars = {
             key: value
             for key, value in merged_env_vars.items()
