@@ -56,15 +56,13 @@ class Cosmos3Policy(Cosmos3EnvIO, nn.Module, BasePolicy):
         super().__init__()
         self.omni = model
         self.lr_multipliers: dict[str, float] = dict(lr_multipliers or {})
-        self._ema_enabled = bool(ema_enabled) and bool(
-            getattr(getattr(model, "config", None), "ema", None)
-            and model.config.ema.enabled
-        )
+        self._ema_enabled = bool(ema_enabled and model.config.ema.enabled)
         if not self._ema_enabled:
             self.register_load_state_dict_pre_hook(self._exclude_ema_weights)
         self._global_step: int = 0
         self._rollout_config = dict(rollout_config or {})
         self._action_normalizer = None
+        self._vae_patch_applied = False
 
     @staticmethod
     def _exclude_ema_weights(_module, state_dict, prefix, *_args) -> None:
@@ -118,25 +116,9 @@ class Cosmos3Policy(Cosmos3EnvIO, nn.Module, BasePolicy):
     @torch.no_grad()
     def _update_ema(self, iteration: int) -> None:
         model = self.omni
-        if not getattr(model, "config", None) or not model.config.ema.enabled:
-            return
-        net = getattr(model, "net", None)
-        net_ema = getattr(model, "net_ema", None)
-        worker = getattr(model, "net_ema_worker", None)
-        if net is None or net_ema is None or worker is None:
-            return
-        if getattr(model, "_uses_aux_loss_free_load_balancing", False) or getattr(
-            model, "_uses_ema_router_bias", False
-        ):
-            for sync_fn in ("sync_expert_biases_to_ema", "sync_router_biases_to_ema"):
-                fn = getattr(model, sync_fn, None)
-                if callable(fn):
-                    try:
-                        fn()
-                    except Exception:  # noqa: BLE001 - best-effort buffer sync
-                        pass
-        beta = model.ema_beta(iteration)
-        worker.update_average(net, net_ema, beta=beta)
+        model.net_ema_worker.update_average(
+            model.net, model.net_ema, beta=model.ema_beta(iteration)
+        )
 
     def prepare_lerobot_sft_batch(self, batch: Mapping[str, Any]) -> dict[str, Any]:
         """Prepare expert actions and optional observed video for online SFT."""
@@ -161,16 +143,9 @@ class Cosmos3Policy(Cosmos3EnvIO, nn.Module, BasePolicy):
             f"Cosmos3Policy supports ForwardType.SFT only, got {forward_type}."
         )
 
-    def sft_forward(self, data: Any = None, **kwargs) -> dict[str, torch.Tensor]:
+    def sft_forward(self, data: Mapping[str, Any], **kwargs) -> dict[str, torch.Tensor]:
         """Compute the native SFT loss for one batch."""
         torch.compiler.cudagraph_mark_step_begin()
-
-        if data is None:
-            data = kwargs.get("data")
-        if data is None:
-            raise ValueError(
-                "Cosmos3 sft_forward requires `data` from the SFT dataloader."
-            )
 
         from cosmos_framework.utils.misc import to as _cosmos_to
 
@@ -182,12 +157,12 @@ class Cosmos3Policy(Cosmos3EnvIO, nn.Module, BasePolicy):
             for key, value in data.items()
         }
 
-        if not getattr(self, "_vae_patch_applied", False):
+        if not self._vae_patch_applied:
             self._vae_patch_applied = True
             _orig_fn = type(self.omni)._encode_vision_item
 
             def _patched(omni_self, state, *args, **kwargs):
-                if hasattr(state, "device") and state.device != self.device:
+                if state.device != self.device:
                     state = state.to(self.device)
                 return _orig_fn(omni_self, state, *args, **kwargs)
 
@@ -195,12 +170,9 @@ class Cosmos3Policy(Cosmos3EnvIO, nn.Module, BasePolicy):
         output_batch, loss = self.omni.training_step(data, self._global_step)
 
         result: dict[str, Any] = {"loss": loss}
-        if isinstance(output_batch, dict):
-            for key, value in output_batch.items():
-                if key == "loss":
-                    continue
-                if torch.is_tensor(value) and value.numel() == 1:
-                    result[key] = value.detach()
+        for key, value in output_batch.items():
+            if key != "loss" and torch.is_tensor(value) and value.numel() == 1:
+                result[key] = value.detach()
         return result
 
     def gradient_checkpointing_enable(self, **kwargs) -> None:
