@@ -75,47 +75,30 @@ class Cosmos3Policy(Cosmos3DAggerInputs, Cosmos3EnvIO, nn.Module, BasePolicy):
     @staticmethod
     def get_weight_sync_param_names(module: nn.Module) -> list[str]:
         """Resolve Cosmos checkpoint-wrapper names in the outermost model state dict."""
-        trainable = {
-            id(param): name
-            for name, param in module.named_parameters(remove_duplicate=False)
-            if param.requires_grad
-        }
-        persistent_buffers: dict[int, str] = {}
-        for module_name, submodule in module.named_modules(remove_duplicate=False):
-            non_persistent_buffers = getattr(
-                submodule, "_non_persistent_buffers_set", set()
-            )
-            for buffer_name, buffer in submodule.named_buffers(
+        # Checkpoint wrappers rewrite parameter names. Resolve their serialized keys
+        # by tensor identity, including every alias of a tied weight or buffer.
+        state = module.state_dict(keep_vars=True)
+        names_by_id: dict[int, list[str]] = {}
+        for name, tensor in state.items():
+            names_by_id.setdefault(id(tensor), []).append(name)
+
+        trainable_names = set()
+        for param in module.parameters():
+            if param.requires_grad:
+                trainable_names.update(names_by_id[id(param)])
+
+        buffer_names = set()
+        for submodule in module.modules():
+            for name, buffer in submodule.named_buffers(
                 recurse=False, remove_duplicate=False
             ):
-                if buffer_name not in non_persistent_buffers:
-                    full_name = (
-                        buffer_name
-                        if not module_name
-                        else f"{module_name}.{buffer_name}"
-                    )
-                    persistent_buffers[id(buffer)] = full_name
+                if name not in submodule._non_persistent_buffers_set:
+                    buffer_names.update(names_by_id[id(buffer)])
 
-        # Checkpoint wrappers expose canonical state keys while traversal names include
-        # wrapper modules. keep_vars preserves identity without copying tensor storage.
-        state_dict = module.state_dict(keep_vars=True)
-        state_ids = {id(value) for value in state_dict.values()}
-        selected = trainable | persistent_buffers
-        missing = selected.keys() - state_ids
-        if missing:
-            names = sorted(selected[identity] for identity in missing)
-            raise RuntimeError(
-                f"State dict does not preserve selected tensor identities: {names}"
-            )
-        trainable_names = [
-            name for name, value in state_dict.items() if id(value) in trainable
+        buffer_names.difference_update(trainable_names)
+        return [name for name in state if name in trainable_names] + [
+            name for name in state if name in buffer_names
         ]
-        buffer_names = [
-            name
-            for name, value in state_dict.items()
-            if id(value) in persistent_buffers and id(value) not in trainable
-        ]
-        return trainable_names + buffer_names
 
     @property
     def device(self) -> torch.device:

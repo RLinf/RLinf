@@ -71,14 +71,8 @@ class Cosmos3RollingLeRobotDataset(RollingLeRobotDataset):
             return
         path = Path(path)
         with self._rolling_access_lock:
-            if path in self._in_memory_shards:
-                ds_idx = self._sub_datasets.index(path)
-                if ds_idx != len(self._sub_datasets) - 1:
-                    raise ValueError(
-                        "Can only append to the latest in-memory LeRobot shard."
-                    )
-                store = self._in_memory_shards[path]
-            else:
+            store = self._in_memory_shards.get(path)
+            if store is None:
                 store = self._new_in_memory_store()
             old_len = len(store)
             episode_index = store.num_episodes
@@ -89,8 +83,6 @@ class Cosmos3RollingLeRobotDataset(RollingLeRobotDataset):
             base=old_len,
             episode_index=episode_index,
         )
-        if not prepared_episode:
-            return
 
         with self._rolling_access_lock:
             if path in self._in_memory_shards:
@@ -107,10 +99,7 @@ class Cosmos3RollingLeRobotDataset(RollingLeRobotDataset):
                 physical_base = self._cumulative_lengths[-1]
                 self._cumulative_lengths.append(physical_base)
 
-            old_len = int(prepared_episode["base"])
             added_frames = store._commit_prepared_episode(prepared_episode)
-            if added_frames <= 0:
-                return
 
             self._cumulative_lengths[-1] += added_frames
             self._total_episodes += 1

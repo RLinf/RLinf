@@ -28,22 +28,24 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
     def __init__(self, cfg):
         super().__init__(cfg)
         if self._cosmos_training is not None:
-            self.should_stop = False
             self._lerobot_ingest_lock = threading.RLock()
-            self._lerobot_receiver_drained = threading.Event()
-            self._recv_error: Exception | None = None
-
-    def _check_receiver(self):
-        if self._cosmos_training is not None and self._recv_error is not None:
-            raise RuntimeError(
-                "The DAgger trajectory receiver failed."
-            ) from self._recv_error
+            self._receiver_future = None
 
     async def recv_rollout_trajectories(self, input_channel):
         if self._cosmos_training is not None:
-            self._check_receiver()
             if self.should_stop or input_channel is None:
                 return
+            if self._receiver_future is None:
+                receive = self._recv_lerobot_thread_main
+                if not self.enable_online_lerobot:
+                    self._recv_queue = queue.Queue()
+                    receive = self._recv_rollout_thread_main
+                # Keep the receive RPC alive so RLinf can observe the thread's result.
+                self._receiver_future = asyncio.get_running_loop().run_in_executor(
+                    None, receive, input_channel
+                )
+            await self._receiver_future
+            return
         if self.enable_online_lerobot:
             if (
                 getattr(self, "_recv_lerobot_thread", None) is None
@@ -71,18 +73,6 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             self._recv_rollout_thread.start()
 
     def _recv_lerobot_thread_main(self, input_channel):
-        if self._cosmos_training is None:
-            return self._receive_lerobot_episodes(input_channel)
-        try:
-            try:
-                self._receive_lerobot_episodes(input_channel)
-            finally:
-                self._lerobot_receiver_drained.set()
-                self._archive_pending_lerobot_episodes()
-        except Exception as error:
-            self._recv_error = error
-
-    def _receive_lerobot_episodes(self, input_channel):
         """Background thread: receive episode batches from EnvWorker.
 
         Each received episode is appended to the actor's live in-memory
@@ -90,12 +80,16 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
         ``algorithm.dagger.online_lerobot.finalize_interval`` and are not part of training
         readiness.
         """
-        while not self.should_stop:
-            received_any = self._recv_lerobot_episodes_from_channel(input_channel)
-            if self.dataset.is_ready():
-                self._ensure_lerobot_loader()
-            if not received_any:
-                time.sleep(0.1)
+        try:
+            while not self.should_stop:
+                received_any = self._recv_lerobot_episodes_from_channel(input_channel)
+                if self.dataset.is_ready():
+                    self._ensure_lerobot_loader()
+                if not received_any:
+                    time.sleep(0.1)
+        finally:
+            if self._cosmos_training is not None:
+                self._archive_pending_lerobot_episodes()
 
     def _append_lerobot_episode(self, ep_frames):
         if self._cosmos_training is None:
@@ -121,22 +115,19 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
                     self._recv_queue.put(trajectory)
             return
 
-        try:
-            while not self.should_stop:
-                received_any = False
-                for _ in range(split_num):
-                    if self.should_stop:
-                        break
-                    try:
-                        trajectory = input_channel.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                    self._recv_queue.put(trajectory)
-                    received_any = True
-                if not received_any:
-                    time.sleep(0.1)
-        except Exception as error:
-            self._recv_error = error
+        while not self.should_stop:
+            received_any = False
+            for _ in range(split_num):
+                if self.should_stop:
+                    break
+                try:
+                    trajectory = input_channel.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                self._recv_queue.put(trajectory)
+                received_any = True
+            if not received_any:
+                time.sleep(0.1)
 
     def _drain_received_trajectories(self, max_trajectories: int | None = None):
         if getattr(self, "_recv_queue", None) is None:
@@ -165,7 +156,6 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
 
     async def _wait_for_replay_buffer_ready(self, min_buffer_size: int):
         while self._cosmos_training is None or not self.should_stop:
-            self._check_receiver()
             self._drain_received_trajectories(
                 max_trajectories=self.cfg.actor.get("recv_drain_max_trajectories", 1024)
             )
@@ -174,7 +164,6 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             await asyncio.sleep(1)
 
     async def _prepare_training(self) -> bool:
-        self._check_receiver()
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
@@ -214,29 +203,17 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
 
         return self._finish_sft_updates(metrics)
 
-    def save_checkpoint(self, save_base_path, step):
-        self._check_receiver()
-        return super().save_checkpoint(save_base_path, step)
-
     async def stop(self):
         self.should_stop = True
+        if self._cosmos_training is not None:
+            if self._receiver_future is not None:
+                await self._receiver_future
+            elif self.enable_online_lerobot:
+                await asyncio.to_thread(self._archive_pending_lerobot_episodes)
+            return
         recv_thread = getattr(self, "_recv_rollout_thread", None)
         if recv_thread is not None and recv_thread.is_alive():
             await asyncio.to_thread(recv_thread.join, 5)
         lerobot_thread = getattr(self, "_recv_lerobot_thread", None)
         if lerobot_thread is not None and lerobot_thread.is_alive():
             await asyncio.to_thread(lerobot_thread.join, 5)
-        if self._cosmos_training is None:
-            return
-        if self.enable_online_lerobot:
-            if lerobot_thread is None:
-                await asyncio.to_thread(self._archive_pending_lerobot_episodes)
-            elif lerobot_thread.is_alive():
-                if not self._lerobot_receiver_drained.is_set():
-                    raise TimeoutError(
-                        "The LeRobot receiver is still processing episodes. "
-                        "It will finalize the archive when it exits."
-                    )
-                # The input has drained; allow the final disk write to finish.
-                await asyncio.to_thread(lerobot_thread.join)
-        self._check_receiver()
