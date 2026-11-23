@@ -31,9 +31,9 @@ RMBench 评测
      - 已下载资产的 RMBench 目录。
    * - ``sim_python``
      - ``.rmbench-venv/bin/python``。
-   * - ``model.model_path``
+   * - ``rollout.model.model_path``
      - SFT 保存的 ``global_step_<N>`` 目录。
-   * - ``model.openpi_data.norm_stats_path``
+   * - ``rollout.model.openpi_data.norm_stats_path``
      - SFT 用的 ``norm_stats.json`` 文件。
 
 默认评测 ``observe_and_pickup``，使用 ``seen`` 指令集。RMBench 先用 expert 筛选 seed，再用通过筛选的 seed 跑 policy，共评测 100 个 episode。第一次可以把 ``episodes`` 设为 1，确认跑通后改回 100。
@@ -46,7 +46,7 @@ RMBench 评测
 
 模拟器每个控制步都记录观测，包括 action chunk 内的控制步。policy 每次读取 8 帧，从当前帧往前每隔 53 步取一帧。模型按演示数据的标称频率 15 Hz 计算时间偏移。
 
-如果只用当前帧评测，把 ``model.openpi.short_memory`` 设为 ``false``，并填入对应的 checkpoint。
+如果只用当前帧评测，把 ``rollout.model.openpi.short_memory`` 设为 ``false``，并填入对应的 checkpoint。
 
 结果
 ----

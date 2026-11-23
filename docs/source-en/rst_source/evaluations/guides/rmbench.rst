@@ -37,9 +37,9 @@ In ``evaluations/rmbench/rmbench_openpi_pi05_eval.yaml``, set these paths.
      - The RMBench checkout with the downloaded assets.
    * - ``sim_python``
      - ``.rmbench-venv/bin/python``.
-   * - ``model.model_path``
+   * - ``rollout.model.model_path``
      - The SFT checkpoint directory ``global_step_<N>``.
-   * - ``model.openpi_data.norm_stats_path``
+   * - ``rollout.model.openpi_data.norm_stats_path``
      - The ``norm_stats.json`` used for SFT.
 
 The configuration uses the ``seen`` instruction split for ``observe_and_pickup``.
@@ -57,7 +57,7 @@ training. The simulator records each control step, including those within a
 using the demonstrations' nominal 15 Hz rate.
 
 To evaluate with current camera frames only, set
-``model.openpi.short_memory: false`` and use a matching checkpoint.
+``rollout.model.openpi.short_memory: false`` and use a matching checkpoint.
 
 Results
 -------

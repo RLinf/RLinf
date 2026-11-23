@@ -13,28 +13,19 @@
 # limitations under the License.
 
 
-import argparse
 import json
 import subprocess
 from multiprocessing.connection import Pipe
 from pathlib import Path
 
+import hydra
 import numpy as np
-from omegaconf import OmegaConf
-
-REPO_PATH = Path(__file__).resolve().parents[2]
+from omegaconf import DictConfig, OmegaConf
 
 
-def main() -> None:
+@hydra.main(version_base="1.1", config_path=".", config_name="rmbench_openpi_pi05_eval")
+def main(cfg: DictConfig) -> None:
     """Load the RLinf policy and serve the local RMBench evaluation process."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config-path", type=Path, required=True)
-    parser.add_argument("--config-name", required=True)
-    args, overrides = parser.parse_known_args()
-    cfg = OmegaConf.merge(
-        OmegaConf.load(args.config_path / f"{args.config_name}.yaml"),
-        OmegaConf.from_dotlist(overrides),
-    )
     rmbench_path = Path(cfg.rmbench_path).expanduser().resolve()
     for relative_path in ("assets/embodiments/aloha-agilex", "assets/objects"):
         if not (rmbench_path / relative_path).is_dir():
@@ -43,10 +34,7 @@ def main() -> None:
                 "Run bash scripts/_download_assets.sh from the RMBench checkout."
             )
 
-    cfg.model = OmegaConf.merge(
-        OmegaConf.load(REPO_PATH / "examples/embodiment/config/model/pi0_5.yaml"),
-        cfg.model,
-    )
+    model_cfg = cfg.rollout.model
     log_dir = Path(cfg.runner.logger.log_path).resolve()
     sim_cfg = {
         "task_name": cfg.task_name,
@@ -57,7 +45,7 @@ def main() -> None:
         "log_dir": str(log_dir),
         "short_memory": (
             OmegaConf.to_container(cfg.short_memory, resolve=True)
-            if cfg.model.openpi.short_memory
+            if OmegaConf.select(model_cfg, "openpi.short_memory", default=False)
             else None
         ),
     }
@@ -65,15 +53,15 @@ def main() -> None:
     import torch
     from torch.utils._pytree import tree_map
 
-    from rlinf.models.embodiment.openpi import get_model
+    from rlinf.models import get_model
 
-    model = get_model(cfg.model).to(cfg.device).eval()
+    model = get_model(model_cfg).to(cfg.device).eval()
     policy_conn, sim_conn = Pipe()
     with policy_conn, sim_conn:
         command = [
             str(Path(cfg.sim_python).expanduser().absolute()),
             "-m",
-            "evaluations.rmbench.simulator",
+            "rlinf.envs.sim.rmbench.sim_worker",
             str(sim_conn.fileno()),
             json.dumps(sim_cfg),
         ]

@@ -134,7 +134,7 @@ def run(connection: Connection, cfg: dict[str, Any]) -> None:
     log_dir = Path(cfg["log_dir"])
     log_dir.mkdir(parents=True, exist_ok=True)
     args, _ = load_task_args(
-        {"task_name": task_name, "policy_name": "evaluations.rmbench.simulator"}
+        {"task_name": task_name, "policy_name": "rlinf.envs.sim.rmbench.sim_worker"}
     )
     args["ckpt_setting"] = "RLinf"
     args["data_type"]["endpose"] = False
@@ -170,6 +170,11 @@ def run(connection: Connection, cfg: dict[str, Any]) -> None:
     )
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Run the benchmark in its simulator Python environment."""
     with Connection(int(sys.argv[1])) as connection:
         run(connection, json.loads(sys.argv[2]))
+
+
+if __name__ == "__main__":
+    main()

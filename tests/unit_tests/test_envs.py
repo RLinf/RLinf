@@ -20,7 +20,6 @@ import torch
 from omegaconf import OmegaConf
 
 import rlinf.workers.env.env_worker as env_worker_module
-from evaluations.rmbench import simulator as rmbench
 from rlinf.config import (
     resolve_env_mode_cfg,
     validate_embodied_cfg,
@@ -31,6 +30,7 @@ from rlinf.config import (
 from rlinf.data.schema.embodied_types import PolicyInput
 from rlinf.envs.layout import EnvLayout
 from rlinf.envs.policy_obs import PolicyObsSpec
+from rlinf.envs.sim.rmbench import sim_worker as rmbench
 from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.workers.env.env_worker import EnvWorker
 
