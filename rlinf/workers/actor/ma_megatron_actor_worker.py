@@ -14,7 +14,6 @@
 
 from contextlib import nullcontext
 from dataclasses import replace
-from functools import partial
 from typing import Optional
 
 import torch
@@ -43,10 +42,8 @@ from rlinf.data.schema.reasoning_results import (
 )
 from rlinf.hybrid_engines.megatron.utils import (
     align_next_token_scores,
-    output_layer_positions,
     postprocess_ragged_seqs,
     preprocess_ragged_seqs,
-    supports_fp32_output,
 )
 from rlinf.scheduler import Channel
 from rlinf.utils.data_iter_utils import (
@@ -83,8 +80,6 @@ from rlinf.workers.rollout.session_server.assembly import (
 )
 from rlinf.workers.rollout.session_server.payload import payload_channel_for
 
-_RESPONSE_LOGPROB_CHUNK_SIZE = 256
-
 
 class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
     """The class for running the actor training using Megatron."""
@@ -93,19 +88,13 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         self, cfg: DictConfig, placement: ModelParallelComponentPlacement, role="actor"
     ):
         super().__init__(cfg, placement)
-        self.response_only_logits = cfg.actor.get("response_only_logits", False)
-        self.scoring_forward = None
-        lm_head_chunk_size = cfg.actor.model.get("lm_head_chunk_size", 0)
-        if lm_head_chunk_size:
-            from rlinf.hybrid_engines.megatron.qwen_vl import (
-                forward_qwen_vl_with_chunked_log_probs,
-            )
-
-            self.scoring_forward = partial(
-                forward_qwen_vl_with_chunked_log_probs,
-                chunk_size=lm_head_chunk_size,
-                calculate_entropy=self.calculate_entropy,
-            )
+        self.response_only_logits = role == "actor" and cfg.actor.get(
+            "response_only_logits", False
+        )
+        self.lm_head_chunk_size = (
+            cfg.actor.model.get("lm_head_chunk_size", 0) if role == "actor" else 0
+        )
+        self._scoring_reference = False
         self._init_auto_scheduler(role)
         # Set by run_training for the duration of a training call and read
         # by _assemble_delivery.
@@ -191,34 +180,71 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             self.torch_platform.current_device(),
         )
 
+    def model_provider_func(self, pre_process, post_process, config=None, **kwargs):
+        model = super().model_provider_func(pre_process, post_process, config, **kwargs)
+        if self.lm_head_chunk_size and post_process:
+            from rlinf.hybrid_engines.megatron.output_projection import (
+                install_chunked_projection,
+            )
+
+            install_chunked_projection(model)
+        return model
+
+    def _provide_bridge_model(self, ddp_config):
+        if self.lm_head_chunk_size:
+            from rlinf.hybrid_engines.megatron.output_projection import (
+                install_chunked_projection,
+            )
+
+            def prepare(models):
+                for model in models:
+                    install_chunked_projection(model, bridge=True)
+                return models
+
+            self.provider.register_pre_wrap_hook(prepare)
+        return super()._provide_bridge_model(ddp_config)
+
     def _score_packed_tokens(
         self, model, input_ids, position_ids, packed_params, label, label_mask
     ):
-        """Project packed tokens and return scores in their original positions."""
-        module = unwrap_model(model)
+        module = None
+        if (
+            self.lm_head_chunk_size or self.response_only_logits
+        ) and not self._scoring_reference:
+            module = unwrap_model(model)
         temperature = self.cfg.algorithm.sampling_params.temperature
-        if self.scoring_forward is not None:
-            return self.scoring_forward(
-                model,
+        if self.lm_head_chunk_size and module is not None and module.post_process:
+            from rlinf.hybrid_engines.megatron.output_projection import chunked_scoring
+
+            with chunked_scoring(
                 module,
-                input_ids=input_ids,
-                attention_mask=None,
-                position_ids=position_ids,
-                packed_seq_params=packed_params,
-                temperature=temperature,
-                label=label,
+                labels=label,
                 label_mask=label_mask,
-            )
+                temperature=temperature,
+                chunk_size=self.lm_head_chunk_size,
+                calculate_entropy=self.calculate_entropy,
+                response_only=self.response_only_logits,
+            ):
+                scores = model(
+                    input_ids=input_ids.contiguous(),
+                    attention_mask=None,
+                    position_ids=position_ids,
+                    packed_seq_params=packed_params,
+                )
+            output = {"log_probs": scores[..., 0]}
+            if self.calculate_entropy:
+                output["entropy"] = scores[..., 1].detach()
+            return output
+
         positions = None
         projection = nullcontext()
-        if self.response_only_logits and module.post_process:
+        if self.response_only_logits and module is not None and module.post_process:
             positions = label_mask[0].nonzero(as_tuple=True)[0]
             if positions.numel() == 0:
                 positions = positions.new_zeros(1)
-            projection = output_layer_positions(module, positions)
+            from rlinf.hybrid_engines.megatron.utils import output_layer_positions
 
-        chunk_size = self.cfg.actor.get("logprob_chunk_size", 0)
-        scale_in_softmax = self.response_only_logits and not self.calculate_entropy
+            projection = output_layer_positions(module, positions)
 
         def process_logits(logits, label, label_mask):
             assert logits.shape[:2] == label.shape == label_mask.shape
@@ -226,18 +252,12 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 entropy, log_probs = vocab_parallel_entropy_and_log_probs(
                     logits, label, calculate_entropy_loss=self.calculate_entropy_loss
                 )
-                output = {"entropy": entropy}
-            else:
-                log_probs = vocab_parallel_log_probs_from_logits(
-                    logits,
-                    label,
-                    chunk_size=chunk_size
-                    or (_RESPONSE_LOGPROB_CHUNK_SIZE if scale_in_softmax else 0),
-                    temperature=temperature if scale_in_softmax else 1.0,
-                )
-                output = {}
-            output["log_probs"] = log_probs.masked_fill(~label_mask, 0.0)
-            return output
+                return {
+                    "log_probs": log_probs.masked_fill(~label_mask, 0.0),
+                    "entropy": entropy,
+                }
+            log_probs = vocab_parallel_log_probs_from_logits(logits, label)
+            return {"log_probs": log_probs.masked_fill(~label_mask, 0.0)}
 
         with projection:
             output = self.custom_forward(
@@ -253,13 +273,8 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     if positions is None
                     else label_mask[:, positions],
                 },
-                temperature=1.0 if scale_in_softmax else temperature,
+                temperature=temperature,
                 packed_seq_params=packed_params,
-                **(
-                    {"fp32_output": False}
-                    if scale_in_softmax and supports_fp32_output(model)
-                    else {}
-                ),
             )
         if positions is None:
             return output
@@ -285,7 +300,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             )
             labels = [torch.cat((row[1:], row.new_zeros(1))) for row in rows]
             label, _ = preprocess_ragged_seqs(labels)
-            if self.response_only_logits or self.scoring_forward is not None:
+            if self.response_only_logits and not self._scoring_reference:
                 # Shift in each trajectory before the packing step inserts TP padding.
                 masks = [
                     torch.cat((mask[1:], mask.new_zeros(1))).to(input_ids.device)
@@ -771,7 +786,11 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     "ref_policy_state_dict must be set to compute ref_logprobs"
                 )
                 with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
-                    reference = self.inference_step(batch)
+                    self._scoring_reference = True
+                    try:
+                        reference = self.inference_step(batch)
+                    finally:
+                        self._scoring_reference = False
         offset = 0
         for result in results:
             end = offset + result.num_sequence

@@ -381,7 +381,7 @@ class MegatronModelManager:
         ddp_config.finalize()
 
         # Get Megatron Model
-        model = self.provider.provide_distributed_model(ddp_config=ddp_config)
+        model = self._provide_bridge_model(ddp_config)
 
         args = get_args()
         from megatron.training.training import get_megatron_optimizer_config
@@ -399,6 +399,9 @@ class MegatronModelManager:
         lr_scheduler = get_optimizer_param_scheduler(optimizer)
 
         return model, optimizer, lr_scheduler
+
+    def _provide_bridge_model(self, ddp_config):
+        return self.provider.provide_distributed_model(ddp_config=ddp_config)
 
     def model_provider_func(self, pre_process, post_process, config=None, **kwargs):
         """Model depends on pipeline paralellism.

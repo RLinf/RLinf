@@ -264,10 +264,9 @@ actor
     calculate_flops: False
     seed: 1234
     response_only_logits: False
-    logprob_chunk_size: 0
 
     model:
-      lm_head_chunk_size: 0  # 启用时要求 PP=CP=1、load_mtp=False、entropy_bonus=0
+      lm_head_chunk_size: 0
       precision: fp16
       add_bias_linear: False
 
@@ -407,10 +406,8 @@ actor
      - 用于可复现性的全局随机种子。
    * - ``actor.response_only_logits``
      - 只在预测回复 token 的位置计算词表分数（Megatron 动态批次，CP=1）。
-   * - ``actor.logprob_chunk_size``
-     - Megatron 动态批次的 softmax 分块大小，设为正数须关闭熵计算和熵奖励。设为 0 时，若只投影回复位置且关闭熵计算，每块取 256 个位置。
    * - ``actor.model.lm_head_chunk_size``
-     - Qwen3.5 MBridge 文本训练中，输出层每块投影的 token 数。设为 0 时关闭。
+     - Megatron 动态批次 Actor 每次投影的 token 数，设为 0 时关闭。与回复位置开关一起用，可以跳过提示词。要求 CP=1，输出层使用标准列并行线性层，熵仅用于记录。
 
 **模型子节**
 

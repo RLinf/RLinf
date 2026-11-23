@@ -159,139 +159,86 @@ def test_chunked_lm_head_two_rank_vocab_shards(tmp_path):
     )
 
 
-@pytest.mark.parametrize("instance_override", [False, True])
-def test_chunked_forward_restores_postprocess_after_failure(instance_override):
-    from types import SimpleNamespace
-
-    from rlinf.hybrid_engines.megatron.qwen_vl import (
-        forward_qwen_vl_with_chunked_log_probs,
+def test_pipeline_output_projection(tmp_path):
+    pytest.importorskip("megatron.core")
+    torch.multiprocessing.spawn(
+        _pipeline_output_projection, args=((tmp_path / "pg").as_uri(),), nprocs=2
     )
 
-    class LanguageModel(torch.nn.Module):
-        def _postprocess(self, **kwargs):
-            return kwargs
 
-    language = LanguageModel()
-    language.post_process = True
-    language.mtp_process = False
-    language.config = SimpleNamespace(
-        mtp_num_layers=0, use_mup=False, defer_embedding_wgrad_compute=False, fp8=False
+def _pipeline_output_projection(rank, rendezvous):
+    import torch.distributed as dist
+    from megatron.core import ModelParallelConfig, parallel_state
+    from megatron.core.tensor_parallel.layers import ColumnParallelLinear
+
+    from rlinf.hybrid_engines.megatron.output_projection import (
+        chunked_scoring,
+        install_chunked_projection,
     )
-    language.pg_collection = SimpleNamespace(tp=None)
-    if instance_override:
-        language._postprocess = lambda **kwargs: kwargs
-    original = language._postprocess
-    model = SimpleNamespace(language_model=language, post_process=True)
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+    from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 
-    def fail(**kwargs):
-        assert language._postprocess is not original
-        raise RuntimeError("decoder failed")
+    dist.init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=2)
+    try:
+        groups = [dist.new_group([i], backend="gloo") for i in range(2)]
+        with pytest.MonkeyPatch.context() as mp:
+            for name in ("_TENSOR_MODEL_PARALLEL_GROUP", "_DATA_PARALLEL_GROUP"):
+                mp.setattr(parallel_state, name, groups[rank])
+            model = torch.nn.Module()
+            model.post_process = rank == 1
+            if rank == 0:
+                install_chunked_projection(model)
+                hidden = torch.randn(5, 1, 4)
+                dist.send(hidden, 1)
+                grad = torch.empty_like(hidden)
+                dist.recv(grad, 1)
+                assert torch.isfinite(grad).all() and grad.abs().sum() > 0
+                return
+            model.output_layer = ColumnParallelLinear(
+                4,
+                8,
+                config=ModelParallelConfig(use_cpu_initialization=True),
+                init_method=torch.nn.init.xavier_uniform_,
+                bias=False,
+            )
+            hidden = torch.empty(5, 1, 4)
+            dist.recv(hidden, 0)
+            hidden.requires_grad_()
+            labels = torch.arange(5).unsqueeze(0)
+            dense, _ = model.output_layer(hidden)
+            keys = list(model.state_dict())
+            params = {k: id(v) for k, v in model.named_parameters()}
+            layer = model.output_layer
+            hooks = (dict(layer._forward_pre_hooks), dict(layer._forward_hooks))
+            actor = MAMegatronActor.__new__(MAMegatronActor)
+            mp.setattr(MegatronActor, "model_provider_func", lambda *args: model)
+            for size in (0, 2):
+                actor.lm_head_chunk_size = size
+                assert actor.model_provider_func(False, True) is model
+                assert (type(layer) is ColumnParallelLinear) == (size == 0)
+                assert hooks == (layer._forward_pre_hooks, layer._forward_hooks)
+                assert list(model.state_dict()) == keys
+                assert {k: id(v) for k, v in model.named_parameters()} == params
 
-    with pytest.raises(RuntimeError, match="decoder failed"):
-        forward_qwen_vl_with_chunked_log_probs(
-            fail,
-            model,
-            label=torch.zeros(1, 2, dtype=torch.long),
-            label_mask=torch.ones(1, 2, dtype=torch.bool),
-            chunk_size=1,
-            temperature=1.0,
-        )
-    assert ("_postprocess" in language.__dict__) is instance_override
-    assert language._postprocess == original
-
-
-@pytest.mark.parametrize("load_mtp", [None, True, False])
-def test_chunked_qwen_scoring_requires_explicit_mtp_disable(load_mtp):
-    from omegaconf import OmegaConf
-
-    from rlinf.hybrid_engines.megatron.qwen_vl import validate_qwen_vl_chunked_cfg
-
-    model = {
-        "model_type": "qwen3_5",
-        "lm_head_chunk_size": 256,
-        "pipeline_model_parallel_size": 1,
-    }
-    if load_mtp is not None:
-        model["load_mtp"] = load_mtp
-    cfg = OmegaConf.create(
-        {
-            "actor": {
-                "training_backend": "megatron",
-                "model": model,
-                "megatron": {"mbridge": True},
-            },
-            "agentloop": {"is_dynamic_rollout_batch": True},
-            "algorithm": {
-                "calculate_entropy": False,
-                "entropy_bonus": 0,
-                "sampling_params": {"temperature": 1.0},
-            },
-        }
-    )
-    if load_mtp is False:
-        validate_qwen_vl_chunked_cfg(cfg)
-        cfg.algorithm.entropy_bonus = 0.1
-        with pytest.raises(ValueError, match="entropy_bonus must be zero"):
-            validate_qwen_vl_chunked_cfg(cfg)
-    else:
-        with pytest.raises(ValueError, match="load_mtp=False"):
-            validate_qwen_vl_chunked_cfg(cfg)
-
-
-def test_qwen_chunked_adapter_bypasses_dense_projection(monkeypatch):
-    from types import SimpleNamespace
-
-    from rlinf.hybrid_engines.megatron.qwen_vl import (
-        forward_qwen_vl_with_chunked_log_probs,
-    )
-
-    torch.manual_seed(12)
-    hidden = torch.randn(7, 1, 4, requires_grad=True)
-    head = torch.nn.Linear(4, 11)
-    head.gradient_accumulation_fusion = False
-    labels = torch.tensor([[2, 4, 1, 3, 5, 2, 8]])
-    mask = labels.remainder(2).bool()
-    temperature = 0.7
-    logits = head(hidden).transpose(0, 1) / temperature
-    expected = logits.log_softmax(-1).gather(-1, labels.unsqueeze(-1)).squeeze(-1)
-    expected = expected.masked_fill(~mask, 0)
-    parameters = (hidden, head.weight, head.bias)
-    gradients = torch.autograd.grad(expected.sum(), parameters)
-
-    # This is the Bridge/Core output-processor boundary. A regular head call
-    # after the decoder would materialize the full vocabulary tensor.
-    def postprocess(*, output_processor):
-        return output_processor(
-            hidden_states=hidden,
-            output_layer=head,
-            output_weight=None,
-            labels=None,
-            inference_context=None,
-        )
-
-    language = SimpleNamespace(
-        post_process=True,
-        mtp_process=False,
-        pg_collection=SimpleNamespace(tp=None),
-        config=SimpleNamespace(
-            mtp_num_layers=0,
-            use_mup=False,
-            defer_embedding_wgrad_compute=False,
-            fp8=False,
-        ),
-        _postprocess=postprocess,
-    )
-    monkeypatch.setattr(head, "forward", lambda *_: pytest.fail("dense projection"))
-    result = forward_qwen_vl_with_chunked_log_probs(
-        lambda: language._postprocess(),
-        SimpleNamespace(post_process=True, language_model=language),
-        label=labels,
-        label_mask=mask,
-        chunk_size=2,
-        temperature=temperature,
-    )["log_probs"]
-    torch.testing.assert_close(result, expected)
-    for actual, reference in zip(
-        torch.autograd.grad(result.sum(), parameters), gradients
-    ):
-        torch.testing.assert_close(actual, reference)
+            with chunked_scoring(
+                model,
+                labels=labels,
+                label_mask=torch.ones_like(labels, dtype=torch.bool),
+                chunk_size=2,
+            ):
+                scores, _ = model.output_layer(hidden)
+            expected = (
+                dense.transpose(0, 1).log_softmax(-1).gather(-1, labels[..., None])
+            )
+            torch.testing.assert_close(scores.transpose(0, 1), expected)
+            grads = torch.autograd.grad(
+                scores.sum(), (hidden, model.output_layer.weight)
+            )
+            reference = torch.autograd.grad(
+                expected.sum(), (hidden, model.output_layer.weight)
+            )
+            torch.testing.assert_close(grads, reference)
+            dist.send(grads[0].contiguous(), 0)
+            assert torch.equal(model.output_layer(hidden)[0], dense)
+    finally:
+        dist.destroy_process_group()

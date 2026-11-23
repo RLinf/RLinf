@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import inspect
 from contextlib import contextmanager
 from typing import Optional
 
 import torch
 
 try:
-    from megatron.core import parallel_state, tensor_parallel
+    from megatron.core import parallel_state
     from megatron.core.packed_seq_params import PackedSeqParams
 
 except (ImportError, ModuleNotFoundError) as e:
@@ -97,15 +96,6 @@ def align_next_token_scores(scores: torch.Tensor) -> torch.Tensor:
     return torch.nn.functional.pad(scores[..., :-1], (1, 0))
 
 
-def supports_fp32_output(model: torch.nn.Module) -> bool:
-    """Return whether a precision wrapper accepts fp32_output before dispatch to GPT."""
-    while hasattr(model, "module"):
-        if "fp32_output" in inspect.signature(type(model).forward).parameters:
-            return True
-        model = model.module
-    return False
-
-
 def _resolve_output_layer(module: torch.nn.Module) -> torch.nn.Module:
     """Return the layer that produces logits for ``module``.
 
@@ -132,6 +122,8 @@ def output_layer_positions(module: torch.nn.Module, positions: torch.Tensor):
     selected rows are scattered back for the output layer's own SP collectives.
     Context parallelism is not supported.
     """
+
+    from megatron.core import tensor_parallel
 
     output_layer = _resolve_output_layer(module)
     sequence_parallel = getattr(output_layer, "sequence_parallel", False)

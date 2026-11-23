@@ -273,10 +273,9 @@ actor
     calculate_flops: False
     seed: 1234
     response_only_logits: False
-    logprob_chunk_size: 0
 
     model:
-      lm_head_chunk_size: 0  # Enabling chunking requires PP=CP=1, load_mtp=False and entropy_bonus=0
+      lm_head_chunk_size: 0
       precision: fp16
       add_bias_linear: False
 
@@ -416,10 +415,8 @@ actor
      - Global seed for reproducibility.
    * - ``actor.response_only_logits``
      - Project only positions that predict response tokens (dynamic Megatron batches, CP=1).
-   * - ``actor.logprob_chunk_size``
-     - Softmax chunk size for dynamic Megatron batches. For positive values, disable both entropy computation and the entropy bonus. At zero, response-only projection with entropy off uses 256 positions per chunk.
    * - ``actor.model.lm_head_chunk_size``
-     - Tokens per output projection chunk for Qwen3.5 MBridge text training. Set to 0 to disable.
+     - Tokens per output projection chunk for a dynamic Megatron Actor (CP=1). Zero disables chunking. Combine with response-only projection to skip prompt positions. Chunking requires a standard column-parallel output layer and supports entropy for logging.
 
 **Model sub-section**
 
