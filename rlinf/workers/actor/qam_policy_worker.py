@@ -18,7 +18,9 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.distributed as dist
 from omegaconf import DictConfig, OmegaConf
+from torch.distributed.tensor import DTensor
 
 from rlinf.algorithms.qam import qam_update
 from rlinf.data.datasets.ogbench import OGBenchDataset
@@ -26,6 +28,82 @@ from rlinf.models import get_model
 from rlinf.scheduler import Worker
 from rlinf.utils.utils import collect_param_names_need_sync
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
+
+
+class _TargetEMA:
+    """Route online parameter slices to the ranks that own the matching targets."""
+
+    def __init__(self, pairs, mesh, device):
+        self.group = mesh.get_group()
+        self.device = device
+        rank = dist.get_rank(self.group)
+        world_size = dist.get_world_size(self.group)
+        self.pairs = pairs
+        self.local = []
+        self.send = [[] for _ in range(world_size)]
+        self.recv = [[] for _ in range(world_size)]
+
+        # FSDP1 can split the online and target parameters at different offsets.
+        # Exchange their sizes once. DTensors shard each pair identically.
+        sizes = torch.tensor(
+            [[self._flat(p).numel() for p in pair] for pair in pairs], device=device
+        )
+        all_sizes = [torch.empty_like(sizes) for _ in range(world_size)]
+        dist.all_gather(all_sizes, sizes, group=self.group)
+        counts = torch.stack(all_sizes).cpu()
+        offsets = counts.cumsum(0) - counts
+        for i, (source, target) in enumerate(pairs):
+            if torch.equal(counts[:, i, 0], counts[:, i, 1]):
+                self.local.append((source, target))
+                continue
+            for peer in range(world_size):
+                for src, dst, plan, column in (
+                    (rank, peer, self.send, 0),
+                    (peer, rank, self.recv, 1),
+                ):
+                    start = max(int(offsets[src, i, 0]), int(offsets[dst, i, 1]))
+                    end = min(
+                        int(offsets[src, i, 0] + counts[src, i, 0]),
+                        int(offsets[dst, i, 1] + counts[dst, i, 1]),
+                    )
+                    if start < end:
+                        offset = start - int(offsets[(src, dst)[column], i, column])
+                        plan[peer].append((pairs[i][column], offset, end - start))
+        self.send_sizes = [sum(n for _, _, n in peer) for peer in self.send]
+        self.recv_sizes = [sum(n for _, _, n in peer) for peer in self.recv]
+        self.needs_exchange = not torch.equal(counts[:, :, 0], counts[:, :, 1])
+
+    @staticmethod
+    def _flat(param):
+        local = param.to_local() if isinstance(param, DTensor) else param
+        return local.view(-1)
+
+    @torch.no_grad()
+    def update(self, tau):
+        for source, target in self.local:
+            self._flat(target).mul_(1 - tau).add_(self._flat(source), alpha=tau)
+        if not self.needs_exchange:
+            return
+        slices = [
+            self._flat(param).narrow(0, offset, size)
+            for peer in self.send
+            for param, offset, size in peer
+        ]
+        template = self._flat(self.pairs[0][0])
+        outgoing = torch.cat(slices) if slices else template.new_empty(0)
+        # CPU-offloaded shards still use the actor mesh device for collectives.
+        outgoing = outgoing.to(self.device)
+        incoming = outgoing.new_empty(sum(self.recv_sizes))
+        dist.all_to_all_single(
+            incoming, outgoing, self.recv_sizes, self.send_sizes, group=self.group
+        )
+        incoming = incoming.to(template.device)
+        pos = 0
+        for peer in self.recv:
+            for param, offset, size in peer:
+                target = self._flat(param).narrow(0, offset, size)
+                target.mul_(1 - tau).add_(incoming.narrow(0, pos, size), alpha=tau)
+                pos += size
 
 
 class QAMPolicyWorker(EmbodiedFSDPActor):
@@ -91,6 +169,17 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
                 model=module,
                 device_mesh=self._device_mesh,
             )
+            pairs = [
+                (online, frozen)
+                for source, target in (
+                    (module.critic, module.target_critic),
+                    (module.actor_slow, module.target_actor_slow),
+                )
+                for online, frozen in zip(
+                    source.parameters(), target.parameters(), strict=True
+                )
+            ]
+            self._target_ema = _TargetEMA(pairs, self._device_mesh, self.device)
         else:
             self.model = module
         self.optimizer = torch.optim.Adam(
@@ -130,32 +219,7 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
         return self._strategy.clip_grad_norm_(self.model)
 
     def _fsdp_update_targets(self):
-        state_dict = self.get_model_state_dict(
-            cpu_offload=False,
-            full_state_dict=True,
-        )
-        tau = float(self._qam_module().cfg.tau)
-        for target_prefix, source_prefix in (
-            ("target_critic.", "critic."),
-            ("target_actor_slow.", "actor_slow."),
-        ):
-            for target_name in tuple(state_dict):
-                if not target_name.startswith(target_prefix):
-                    continue
-                source_name = source_prefix + target_name[len(target_prefix) :]
-                source_value = state_dict.get(source_name)
-                target_value = state_dict[target_name]
-                if isinstance(source_value, torch.Tensor) and isinstance(
-                    target_value, torch.Tensor
-                ):
-                    state_dict[target_name] = (
-                        target_value * (1 - tau) + source_value * tau
-                    )
-        self.load_model_with_state_dict(
-            state_dict,
-            cpu_offload=False,
-            full_state_dict=True,
-        )
+        self._target_ema.update(float(self._qam_module().cfg.tau))
 
     def _update(self):
         module = self._qam_module()

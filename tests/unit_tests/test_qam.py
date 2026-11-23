@@ -113,3 +113,41 @@ def test_detached_targets_old_parameter_ema_and_resume():
     qam_update(model, optimizer, batch, generator)
     for k, v in model.state_dict().items():
         torch.testing.assert_close(v, expected[k], rtol=0, atol=0)
+
+
+def _check_target_ema_shards(rank, rendezvous):
+    from torch.distributed import destroy_process_group, init_process_group
+    from torch.distributed.device_mesh import DeviceMesh
+
+    from rlinf.workers.actor.qam_policy_worker import _TargetEMA
+
+    init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=2)
+    try:
+        mesh = DeviceMesh("cpu", [0, 1])
+        pairs = []
+        expected = []
+        # Different split points, an empty source shard, and matching shards.
+        for i, (source_split, target_split) in enumerate(((2, 5), (0, 7), (4, 4))):
+            online = torch.arange(8, dtype=torch.float32) + 10 * i
+            frozen = -online - 1
+            source_slice = (
+                slice(None, source_split) if rank == 0 else slice(source_split, None)
+            )
+            target_slice = (
+                slice(None, target_split) if rank == 0 else slice(target_split, None)
+            )
+            pairs.append((online[source_slice].clone(), frozen[target_slice].clone()))
+            expected.append((0.75 * frozen + 0.25 * online)[target_slice])
+        _TargetEMA(pairs, mesh, "cpu").update(0.25)
+        for (_, target), reference in zip(pairs, expected, strict=True):
+            torch.testing.assert_close(target, reference, rtol=0, atol=0)
+    finally:
+        destroy_process_group()
+
+
+def test_target_ema_with_different_source_and_target_shards(tmp_path):
+    torch.multiprocessing.spawn(
+        _check_target_ema_shards,
+        args=((tmp_path / "rendezvous").as_uri(),),
+        nprocs=2,
+    )
