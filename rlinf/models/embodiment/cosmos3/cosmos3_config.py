@@ -36,7 +36,7 @@ import json
 import os
 from pathlib import Path
 
-from omegaconf import DictConfig, open_dict
+from omegaconf import DictConfig
 
 from rlinf.utils.logging import get_logger
 
@@ -46,9 +46,8 @@ logger = get_logger()
 def validate_cosmos3_sft_model_cfg(model_cfg: DictConfig) -> DictConfig:
     """Validate a Cosmos3 SFT cfg."""
 
-    with open_dict(model_cfg):
-        model_path = model_cfg.get("model_path", None)
-        assert model_path, "Cosmos3 SFT requires actor.model.model_path"
+    model_path = model_cfg.get("model_path")
+    assert model_path, "Cosmos3 SFT requires actor.model.model_path"
 
     logger.info(
         "Cosmos3 SFT model cfg validated: model_path=%s "

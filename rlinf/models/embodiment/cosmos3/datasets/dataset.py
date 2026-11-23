@@ -114,12 +114,9 @@ class Cosmos3RollingLeRobotDataset(RollingLeRobotDataset):
 
             self._cumulative_lengths[-1] += added_frames
             self._total_episodes += 1
-            if self._valid_physical_indices is not None:
-                ep_ds = prepared_episode["dataset"]
-                for offset in self._valid_episode_offsets(ep_ds, added_frames):
-                    gidx = physical_base + old_len + int(offset)
-                    self._valid_physical_indices.append(gidx)
-                    self._valid_physical_set.add(gidx)
+            self._append_valid_episode_indices(
+                prepared_episode["dataset"], physical_base + old_len, added_frames
+            )
 
             self._update_window_sampling_bounds()
             self._evict_stale_shards()
@@ -180,6 +177,17 @@ class Cosmos3RollingLeRobotDataset(RollingLeRobotDataset):
         step_ok[in_episode] = flags[raw[in_episode]]
         return offsets[step_ok.all(axis=1)]
 
+    def _append_valid_episode_indices(
+        self, episode: Any, physical_base: int, num_frames: int
+    ) -> None:
+        """Index eligible starts for one episode, both live and on resume."""
+        if self._valid_physical_indices is None:
+            return
+        for offset in self._valid_episode_offsets(episode, num_frames):
+            index = physical_base + int(offset)
+            self._valid_physical_indices.append(index)
+            self._valid_physical_set.add(index)
+
     def _append_valid_indices_for_store(
         self, store: Cosmos3InMemoryArrowStore, physical_base: int
     ) -> None:
@@ -197,10 +205,9 @@ class Cosmos3RollingLeRobotDataset(RollingLeRobotDataset):
             store._ep_to,
             strict=True,
         ):
-            for offset in self._valid_episode_offsets(ep_ds, int(ep_to) - int(ep_from)):
-                gidx = int(physical_base) + int(ep_from) + int(offset)
-                self._valid_physical_indices.append(gidx)
-                self._valid_physical_set.add(gidx)
+            self._append_valid_episode_indices(
+                ep_ds, int(physical_base) + int(ep_from), int(ep_to) - int(ep_from)
+            )
 
     def get_stats(self) -> dict[str, Any]:
         return {**super().get_stats(), "require_full_window": self.require_full_window}

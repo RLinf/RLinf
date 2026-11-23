@@ -24,7 +24,7 @@ import torch.nn as nn
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.cosmos3.env_io import Cosmos3EnvIO
-from rlinf.models.embodiment.cosmos3.tasks.dagger import Cosmos3DAggerInputs
+from rlinf.models.embodiment.cosmos3.transforms.lerobot import Cosmos3DAggerInputs
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()

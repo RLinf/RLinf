@@ -23,9 +23,15 @@ from typing import Any, Literal
 import torch
 import torch.nn.functional as F
 
+from rlinf.models.embodiment.cosmos3.transforms import (
+    CONCAT_VIEW_DESCRIPTION,
+    as_uint8_bhwc,
+    resize_camera_frames,
+)
+
 
 class Cosmos3EnvIO:
-    """Share camera transforms, action normalization and rollout I/O on the policy."""
+    """Handle native rollout I/O and provide the policy's LIBERO action normalizer."""
 
     def _get_action_normalizer(self):
         """Resolve the shared, unclamped LIBERO rot6d training/inference stats."""
@@ -46,34 +52,6 @@ class Cosmos3EnvIO:
             )
         return self._action_normalizer
 
-    @staticmethod
-    def _rollout_images(
-        images: Any, *, device: torch.device | str = "cpu"
-    ) -> torch.Tensor:
-        """Convert one batched RGB camera stream to uint8 BHWC."""
-        if isinstance(images, (list, tuple)):
-            images = torch.stack([torch.as_tensor(image) for image in images])
-        images = torch.as_tensor(images).detach().to(device)
-        if images.ndim == 5 and images.shape[1] == 1:
-            images = images[:, 0]
-        if images.shape[-1] != 3 and images.shape[1] == 3:
-            images = images.permute(0, 2, 3, 1)
-        if images.is_floating_point() and images.amax() <= 1:
-            images = images * 255
-        return images.to(torch.uint8).contiguous()
-
-    @staticmethod
-    def _resize_camera_frames(frames: torch.Tensor, image_size: int) -> torch.Tensor:
-        frames = frames.permute(0, 3, 1, 2)
-        if frames.shape[-2:] == (image_size, image_size):
-            return frames
-        return F.interpolate(
-            frames.float(),
-            size=(image_size, image_size),
-            mode="bilinear",
-            align_corners=False,
-        ).to(torch.uint8)
-
     def _prepare_rollout_batch(
         self, env_obs: dict[str, Any]
     ) -> tuple[dict[str, Any], dict[str, torch.Tensor]]:
@@ -89,9 +67,9 @@ class Cosmos3EnvIO:
         main = env_obs.get("main_images")
         if main is None:
             main = env_obs.get("images")
-        cameras = [self._rollout_images(main)]
+        cameras = [as_uint8_bhwc(main)]
         if env_obs.get("wrist_images") is not None:
-            cameras.append(self._rollout_images(env_obs["wrist_images"]))
+            cameras.append(as_uint8_bhwc(env_obs["wrist_images"]))
         batch_size = cameras[0].shape[0]
         tasks = env_obs.get("task_descriptions")
         if tasks is None:
@@ -106,7 +84,7 @@ class Cosmos3EnvIO:
         fps = int(cfg.get("fps", 20))
         action_dim = int(self.omni.config.max_action_dim)
         images = torch.cat(
-            [self._resize_camera_frames(camera, image_size) for camera in cameras],
+            [resize_camera_frames(camera, image_size) for camera in cameras],
             dim=-1,
         )
         viewpoint = "concat_view" if len(cameras) == 2 else "third_person_view"
@@ -138,10 +116,7 @@ class Cosmos3EnvIO:
                 "mode": action_model_mode,
             }
             if len(cameras) == 2:
-                caption_data["additional_view_description"] = (
-                    "The left half shows the third-person view; the right half "
-                    "shows the wrist-mounted camera."
-                )
+                caption_data["additional_view_description"] = CONCAT_VIEW_DESCRIPTION
             caption = json.dumps(formatter(caption_data)["ai_caption"])
             item[self.omni.input_caption_key] = [caption]
             item["prompt"] = [caption]

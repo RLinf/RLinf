@@ -12,22 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""FSDP DAgger training for a Cosmos3 student."""
+
 from __future__ import annotations
 
-import json
-import math
-import random
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Iterable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import torch
 from omegaconf import DictConfig
 
+from rlinf.models import get_model
+from rlinf.models.embodiment.cosmos3.checkpoint import load_inference_checkpoint
+from rlinf.models.embodiment.cosmos3.datasets.dataset import (
+    Cosmos3RollingLeRobotDataset,
+)
+from rlinf.scheduler import Worker
+from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.nested_dict_process import put_tensor_device
 
+if TYPE_CHECKING:
+    from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
 
-class Cosmos3DAggerAdapter:
-    """Cosmos input and training-step conventions for the DAgger actor."""
+
+class Cosmos3DAggerTraining:
+    """Cosmos SFT operations shared by synchronous and asynchronous DAgger actors."""
+
+    dataset_type = Cosmos3RollingLeRobotDataset
 
     @staticmethod
     def lerobot_window_options(
@@ -84,197 +97,84 @@ class Cosmos3DAggerAdapter:
         }
         return output["loss"], metrics
 
+    @staticmethod
+    def load_student(model_cfg: DictConfig, checkpoint: str) -> torch.nn.Module:
+        model = get_model(model_cfg)
+        load_inference_checkpoint(model, checkpoint)
+        return model
 
-class Cosmos3DAggerInputs:
-    """Prepare LeRobot training windows for the native Cosmos SFT loss."""
-
-    def prepare_lerobot_sft_batch(self, batch: Mapping[str, Any]) -> dict[str, Any]:
-        """Prepare expert actions and optional observed video for online SFT."""
-        from rlinf.models.embodiment.cosmos3.transforms.lerobot import (
-            prepare_lerobot_batch,
-        )
-
-        return prepare_lerobot_batch(
-            batch,
-            max_action_dim=int(self.omni.config.max_action_dim),
-            normalizer=self._get_action_normalizer(),
-            prepare_observation_batch=self._prepare_sft_observation_batch,
-            include_vision=self._rollout_config.get("sft_objective") == "joint",
-        )
-
-    def _prepare_sft_observation_batch(
-        self,
-        observations: dict[str, Any],
-        *,
-        vision_images: torch.Tensor | None = None,
-        vision_wrist_images: torch.Tensor | None = None,
-        vision_valid: torch.Tensor | None = None,
-    ) -> tuple[dict[str, Any], dict[str, torch.Tensor]]:
-        """Build only the native training inputs, batching image transforms by mode."""
-        from cosmos_framework.data.generator.action.utils.domain_utils import (
-            get_domain_id,
-        )
-        from cosmos_framework.data.generator.action.utils.json_formatter import (
-            ActionPromptJsonFormatter,
-        )
-        from cosmos_framework.data.generator.action.utils.transforms import (
-            build_sequence_plan_from_mode,
-            find_closest_target_size,
-            reflection_pad_to_target,
-        )
-        from cosmos_framework.data.generator.augmentors.text_tokenizer import (
-            _MAX_NUM_TOKENS,
-        )
-        from cosmos_framework.utils.generator.data_utils import (
-            get_vision_data_resolution,
-        )
-
-        cfg = self._rollout_config
-        horizon = int(cfg.get("num_frames", 17)) - 1
-        image_size = int(cfg.get("image_size", 256))
-        fps = int(cfg.get("fps", 20))
-
-        cameras = [(observations["main_images"], vision_images)]
-        wrist_images = observations.get("wrist_images")
-        if wrist_images is not None:
-            cameras.append((wrist_images, vision_wrist_images))
-        batch_size = len(cameras[0][0])
-        tasks = observations["task_descriptions"]
-        if isinstance(tasks, str):
-            tasks = [tasks] * batch_size
-
-        valid = (
-            vision_valid.tolist() if vision_valid is not None else [False] * batch_size
-        )
-        modes = ["wam" if has_clip else "policy" for has_clip in valid]
-        viewpoint = "concat_view" if len(cameras) == 2 else "third_person_view"
-        formatter = ActionPromptJsonFormatter()
-        fps_tensor = torch.tensor(fps, dtype=torch.long)
-        domain_id = torch.tensor(get_domain_id("libero"), dtype=torch.long)
-        raw_actions = observations.get("raw_actions")
-        action_padding = observations.get("actions_is_pad")
-        idle_frames = [0] * batch_size
-        if raw_actions is not None:
-            from cosmos_framework.data.generator.action.utils.action_spec import (
-                Gripper,
-                Pos,
-                Rot,
-                build_action_spec,
-            )
-            from cosmos_framework.data.generator.action.utils.pose_utils import (
-                compute_idle_frames,
-            )
-
-            raw_actions = torch.as_tensor(raw_actions).detach().cpu()
-            spec = build_action_spec(Pos(), Rot("rot6d"), Gripper())
-            # Match LIBEROLeRobotDataset._compute_idle_frames on physical actions.
-            for index, action in enumerate(raw_actions):
-                if action_padding is not None:
-                    action = action[~action_padding[index]]
-                idle_frames[index] = compute_idle_frames(
-                    action,
-                    spec,
-                    eps_t=5e-3 / fps,
-                    eps_r=math.radians(1.5) / fps,
-                    eps_g=1e-2,
-                    joint_threshold=5e-3 / fps,
-                    min_streak=3,
-                )
-        dropout_rate = float(cfg.get("sft_cfg_dropout_rate", 0.1))
-        prepared = {}
-        for mode in ("wam", "policy"):
-            indices = [
-                index for index, item_mode in enumerate(modes) if item_mode == mode
-            ]
-            if not indices:
+    @staticmethod
+    def next_archive_id(rank_dir: Path, next_id: int) -> int:
+        # Reserve incomplete shard IDs before inspecting any archived episodes.
+        for child in rank_dir.glob("id_*"):
+            if not child.is_dir():
                 continue
-            frame_count = horizon + 1 if mode == "wam" else 1
-            views = []
-            for current, clip in cameras:
-                if mode == "wam":
-                    frames = torch.as_tensor(clip).to(self.device, non_blocking=True)
-                    if len(indices) != batch_size:
-                        frames = frames[indices]
-                    frames = frames.flatten(0, 1)
-                    # Cached camera frames already have the target uint8 NCHW layout.
-                    if (
-                        frames.dtype == torch.uint8
-                        and frames.shape[1:] == (3, image_size, image_size)
-                        and frames.shape[-1] != 3
-                        and frames.is_contiguous()
-                    ):
-                        views.append(frames)
-                        continue
-                    frames = self._rollout_images(frames, device=self.device)
-                else:
-                    frames = self._rollout_images(current, device=self.device)[indices]
-                views.append(self._resize_camera_frames(frames, image_size))
+            try:
+                shard_id = int(child.name.removeprefix("id_"))
+            except ValueError:
+                continue
+            next_id = max(next_id, shard_id + 1)
+        return next_id
 
-            video = torch.cat(views, dim=-1) if len(views) > 1 else views[0]
-            del views, frames
-            height, width = video.shape[-2:]
-            resolution = cfg.get("resolution")
-            if resolution is None:
-                resolution = get_vision_data_resolution((height, width))
-            target_w, target_h = find_closest_target_size(height, width, resolution)
-            resized = reflection_pad_to_target(
-                {"video": video}, ["video"], True, target_w, target_h
+    @staticmethod
+    @Worker.timer("prepare_sft_inputs")
+    def prepare_sft_batch(actor: EmbodiedDAGGERFSDPPolicy, batch: dict):
+        return actor._prepare_model_inputs(batch)
+
+    @staticmethod
+    def update_sft_batches(
+        actor: EmbodiedDAGGERFSDPPolicy, batches: Iterable[dict], num_batches: int
+    ) -> dict:
+        actor.optimizer.zero_grad()
+        logged_batches = []
+        for idx, batch in enumerate(batches):
+            backward_ctx = actor.before_micro_batch(
+                actor.model, is_last_micro_batch=(idx + 1) == num_batches
             )
-            video = (
-                resized["video"]
-                .unflatten(0, (len(indices), frame_count))
-                .transpose(1, 2)
-                .contiguous()
-            )
-            for index, sample in zip(indices, video, strict=True):
-                caption_data = {
-                    "ai_caption": random.choice(
-                        [
-                            part.strip()
-                            for part in tasks[index].split(" | ")
-                            if part.strip()
-                        ]
-                        or [tasks[index]]
-                    ),
-                    "viewpoint": viewpoint,
-                    "video": sample,
-                    "video_num_frames": horizon + 1,
-                    "image_size": resized["image_size"],
-                    "conditioning_fps": fps_tensor,
-                    "idle_frames": idle_frames[index],
-                    "idle_frames_total": horizon,
-                    "mode": mode,
-                }
-                if len(cameras) == 2:
-                    caption_data["additional_view_description"] = (
-                        "The left half shows the third-person view; the right half "
-                        "shows the wrist-mounted camera."
+            with backward_ctx:
+                with actor.amp_context:
+                    loss, step_metrics = Cosmos3DAggerTraining.loss_and_metrics(
+                        actor.forward_actor(batch)
                     )
-                caption = json.dumps(formatter(caption_data)["ai_caption"])
-                if dropout_rate > 0 and random.random() < dropout_rate:
-                    caption = ""
-                plan = build_sequence_plan_from_mode(
-                    mode=mode, video_length=frame_count, action_length=horizon
-                )
-                prepared[index] = (sample, resized["image_size"], plan, caption)
+                loss = loss / num_batches
+                actor.grad_scaler.scale(loss).backward()
+            logged_batches.append((loss.detach().reshape(()), step_metrics))
 
-        videos, sizes, plans, captions = zip(
-            *(prepared[i] for i in range(batch_size)), strict=True
+        grad_norm, _ = actor.optimizer_step()
+        successful = bool(torch.isfinite(torch.as_tensor(grad_norm)).all())
+        if successful:
+            actor.lr_scheduler.step()
+            actor.update_step += 1
+            actor.model.set_global_step(actor.update_step)
+        actor.optimizer.zero_grad(set_to_none=True)
+        # Defer host reads until the optimizer has finished with the gradients.
+        actor_losses = []
+        metrics = {}
+        for scaled_loss, step_metrics in logged_batches:
+            scalars = [scaled_loss, *step_metrics.values()]
+            if all(
+                type(value) is torch.Tensor and value.device == scaled_loss.device
+                for value in scalars
+            ):
+                loss_value, *metric_values = torch.stack(scalars).tolist()
+            else:
+                loss_value, *metric_values = [value.item() for value in scalars]
+            actor_losses.append(loss_value * num_batches)
+            append_to_dict(metrics, dict(zip(step_metrics, metric_values, strict=True)))
+        result = {key: float(np.mean(values)) for key, values in metrics.items()}
+        result.update(
+            {
+                "dagger/update_skipped": float(not successful),
+                "dagger/actor_loss": np.mean(actor_losses),
+                "actor/lr": actor.optimizer.param_groups[0]["lr"],
+                "actor/grad_norm": grad_norm,
+            }
         )
-        tokens = self.omni.tokenize_text(
-            list(captions),
-            pad_token_id=-1,
-            device="cpu",
-            is_video=False,
-            use_system_prompt=False,
-        )
-        tokens = tokens[:, :_MAX_NUM_TOKENS]
-        return {
-            self.omni.input_video_key: [[video] for video in videos],
-            "image_size": torch.stack(sizes),
-            "sequence_plan": list(plans),
-            "mode": modes,
-            "raw_action_dim": [torch.tensor(10, dtype=torch.long)] * batch_size,
-            "conditioning_fps": [fps_tensor] * batch_size,
-            "domain_id": [domain_id] * batch_size,
-        }, {"tokenized_prompt": tokens, "tokenized_prompt_mask": tokens != -1}
+        return result
+
+    @staticmethod
+    def restore_update_step(actor: EmbodiedDAGGERFSDPPolicy) -> None:
+        # The scheduler advances only when the native optimizer update succeeds.
+        actor.update_step = max(0, int(actor.lr_scheduler.last_epoch))
+        actor.optimizer_steps = actor.update_step
+        actor.model.set_global_step(actor.update_step, update_ema=False)

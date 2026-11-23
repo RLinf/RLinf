@@ -18,12 +18,15 @@ from __future__ import annotations
 
 import os
 import re
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
 
-from rlinf.models.embodiment.cosmos3.cosmos3_policy import Cosmos3Policy
 from rlinf.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from rlinf.models.embodiment.cosmos3.cosmos3_policy import Cosmos3Policy
 
 logger = get_logger()
 

@@ -43,7 +43,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         super().__init__(cfg)
         self._cosmos_training = None
         if cfg.actor.model.model_type == "cosmos3":
-            from rlinf.models.embodiment.cosmos3.tasks.dagger_actor import (
+            from rlinf.models.embodiment.cosmos3.tasks.dagger import (
                 Cosmos3DAggerTraining,
             )
 
