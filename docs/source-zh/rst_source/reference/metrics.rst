@@ -77,11 +77,13 @@ rollout 阶段收集的优势与奖励统计量。
    * - ``env/success_once``
      - **推荐。** 未归一化的回合成功率——最能反映真实任务表现。
    * - ``env/episode_len``
-     - 回合中实际经历的环境步数。
+     - 本次 rollout 中已完成回合的平均环境步数。
    * - ``env/return``
-     - 回合总回报。稀疏奖励下在成功结束前几乎为 0，训练过程中参考价值有限。
+     - 这些已完成回合各自未经折扣的 step 奖励总和的均值，不是平均每步奖励。稀疏奖励下，该值在成功结束前几乎为 0，训练过程中参考价值有限。
    * - ``env/reward``
      - step 级奖励（中间步为 ``0``，成功时为 ``1``）。日志值按回合步数归一化，难以直接反映真实表现。
+
+评估阶段把同样的量记为 ``eval/return`` 和 ``eval/episode_len``\ 。``env/num_trajectories`` 和 ``eval/num_trajectories`` 是参与均值计算的已完成回合数。提前终止的回合在一次 rollout 中重置并再次结束后，这个数会超过配置的 world 数。因此，回报为 1000 表示已完成回合的奖励总和平均为 1000，并不表示每步奖励为 1000。
 
 如何选择日志后端（TensorBoard、Weights & Biases、SwanLab）以及配置 ``runner.logger``，参见
 :doc:`日志 <../guides/logger>` 教程。

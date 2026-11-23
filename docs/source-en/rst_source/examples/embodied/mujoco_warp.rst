@@ -37,7 +37,7 @@ Choose a task and train a low-dimensional policy through RLinf's actor, rollout,
 
       1 node · 1 NVIDIA GPU
 
-| **You'll do:** install → pick a task → launch training → watch ``eval/env/return``.
+| **You'll do:** install → pick a task → launch training → watch ``eval/return``.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · an NVIDIA GPU for training; CPU is supported for environment development.
 
 Tasks
@@ -151,11 +151,17 @@ What this command does:
 2. Starts actor, rollout, and env workers on one GPU, with 512 training worlds and 16 evaluation worlds.
 3. Collects PPO rollouts and updates the MLP policy and value head.
 
-To select another task, override both env task names and the actor dimensions. For example:
+To select another task, use the Python entrypoint to pass both env task names and the actor dimensions as Hydra overrides. Set the paths and rendering backend before calling Python directly from the repository root:
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp \
+   export EMBODIED_PATH="$PWD/examples/embodiment"
+   export PYTHONPATH="$PWD"
+   export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl
+
+   python examples/embodiment/train_embodied_agent.py \
+       --config-path examples/embodiment/config \
+       --config-name mujoco_warp_ppo_mlp \
        env.train.task_name=humanoid env.eval.task_name=humanoid \
        actor.model.obs_dim=45 actor.model.action_dim=17
 
@@ -170,7 +176,127 @@ Launch TensorBoard from the repository root:
 
    tensorboard --logdir ../results --port 6006
 
-Watch ``eval/env/return`` for the mean evaluation episode return and ``env/return`` for training episode returns. See :doc:`Training metrics <../../reference/metrics>` for the shared metric definitions. For standalone checkpoint evaluation, run ``run_embodiment.sh`` with ``runner.only_eval=true`` and ``runner.ckpt_path=<path>``.
+With the default logging path, the TensorBoard event file is under ``../results/tensorboard``. If you override ``runner.logger.log_path``, point ``--logdir`` at that directory instead. Open ``http://localhost:6006`` and select the ``env``, ``eval``, and ``time`` metric groups.
+
+Watch ``eval/return`` for evaluation performance, ``env/return`` for training performance, and the corresponding ``episode_len`` metrics for survival time. :doc:`Training metrics <../../reference/metrics>` defines these quantities and their trajectory counts. They are means over completed episodes, not per-step rewards. Humanoid, hopper, walker2d, and ant also receive alive bonuses, so higher returns or longer survival alone do not show faster or more natural locomotion; check the evaluation video.
+
+The training entrypoint runs evaluation and saves checkpoints every 10 iterations by default. To evaluate a saved humanoid checkpoint without further training, use the evaluation entrypoint and provide the policy dimensions under ``rollout.model``:
+
+.. code:: bash
+
+   python evaluations/eval_embodied_agent.py \
+       --config-path examples/embodiment/config \
+       --config-name mujoco_warp_ppo_mlp \
+       env.eval.task_name=humanoid \
+       runner.ckpt_path=<checkpoint>/actor/model_state_dict/full_weights.pt \
+       +rollout.model.model_type=mlp_policy \
+       +rollout.model.policy_setup=locomotion \
+       +rollout.model.obs_dim=45 +rollout.model.action_dim=17 \
+       +rollout.model.num_action_chunks=1 +rollout.model.hidden_dim=256 \
+       +rollout.model.add_value_head=true +rollout.model.is_lora=false
+
+Here, ``<checkpoint>`` is the ``global_step_<N>`` directory saved during training. Evaluation samples reset-state IDs in order and advances the sequence across resets, so separate evaluations need not start from identical states. Set ``env.eval.use_fixed_reset_state_ids=true`` to reuse the same initial state for each world when comparing checkpoints.
+
+Reference Experiments
+~~~~~~~~~~~~~~~~~~~~~
+
+The following runs exercise all five tasks with the same PPO + MLP recipe. Each run uses one A800-SXM4-80GB GPU, 512 training worlds, and 16 evaluation worlds. One training iteration collects 1000 control steps per training world, then applies the default PPO updates. Evaluation and video recording run every 10 iterations, and ``max_episode_steps=1000``. The source commit is `461104f <https://github.com/RLinf/RLinf/commit/461104f2e5a106f38add2c794c19b7aa269e31a3>`__, with Python 3.11.18, PyTorch 2.11.0+cu128, MuJoCo 3.17.0, MuJoCo Warp 3.17.0, and Warp 1.16.0.
+
+The table reports the first and last training iterations, and the first and last evaluations at iterations 10 and 50. Return is the mean undiscounted reward sum of completed episodes. The environment seed controls reset noise; actor seed 1234 and the other PPO settings stay at their defaults.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 19 19 19 23
+
+   * - Task (env seed)
+     - Train return (1 -> 50)
+     - Eval return (10 -> 50)
+     - Eval length (10 -> 50)
+     - Media
+   * - ``half_cheetah`` (42)
+     - -276.82 -> 2650.85
+     - 602.72 -> 3496.31
+     - 1000.00 -> 1000.00
+     - `Curves <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/half_cheetah_seed42_curves.png>`__ · `MP4 <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/half_cheetah_seed42_iterations_10_50.mp4>`__
+   * - ``hopper`` (42)
+     - 19.04 -> 357.37
+     - 267.06 -> 374.66
+     - 107.47 -> 132.96
+     - `Curves <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/hopper_seed42_curves.png>`__ · `MP4 <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/hopper_seed42_iterations_10_50.mp4>`__
+   * - ``walker2d`` (42)
+     - 3.17 -> 386.73
+     - 263.73 -> 454.09
+     - 144.54 -> 144.41
+     - `Curves <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/walker2d_seed42_curves.png>`__ · `MP4 <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/walker2d_seed42_iterations_10_50.mp4>`__
+   * - ``ant`` (42)
+     - 98.99 -> 593.47
+     - 1002.27 -> 1191.58
+     - 1000.00 -> 1000.00
+     - `Curves <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/ant_seed42_curves.png>`__ · `MP4 <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/ant_seed42_iterations_10_50.mp4>`__
+   * - ``humanoid`` (42)
+     - 22.01 -> 155.71
+     - 114.55 -> 235.88
+     - 62.14 -> 110.19
+     - `Curves <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/humanoid_seed42_curves.png>`__ · `MP4 <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/humanoid_seed42_iterations_10_50.mp4>`__
+   * - ``humanoid`` (43)
+     - 21.95 -> 145.55
+     - 156.77 -> 215.50
+     - 97.52 -> 111.93
+     - `Curves <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/humanoid_seed43_curves.png>`__ · `MP4 <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/humanoid_seed43_iterations_10_50.mp4>`__
+
+Humanoid, hopper, walker2d, and ant include an alive bonus. Higher returns or longer episodes do not necessarily indicate useful locomotion. Use the linked per-task videos to distinguish actual movement from survival behavior.
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/humanoid_seed42_curves.png
+   :width: 100%
+   :alt: Humanoid training return and episode length over 50 PPO iterations
+
+   Humanoid with environment seed 42: training return, evaluation return, and episode length. Episode length is capped at 1000.
+
+The following video compares iteration 10 on the left with iteration 50 on the right. `Download the humanoid comparison (MP4) <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/humanoid_seed42_iterations_10_50.mp4>`__.
+
+.. raw:: html
+
+   <video controls muted playsinline preload="metadata" style="width: 100%; max-width: 960px;">
+     <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/humanoid_seed42_iterations_10_50.mp4" type="video/mp4">
+   </video>
+
+The video shows evaluation world 0 on both sides. It illustrates the learned motion, not the mean over the 16 evaluation worlds. Later motion includes more stepping, but the humanoid still falls and resets; these runs do not demonstrate stable walking or convergence.
+
+The second humanoid run changes only the environment seed from 42 to 43. It is a reset-condition comparison, not an independent multi-seed statistical benchmark.
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/humanoid_two_seeds.png
+   :width: 100%
+   :alt: Humanoid evaluation return and length for environment seeds 42 and 43
+
+   Humanoid evaluation with two environment reset seeds. The actor seed and training hyperparameters are unchanged.
+
+These are 50-iteration learning curves, not converged results or comparisons with Gymnasium's MuJoCo CPU backend. The task definitions and solver differences described above also prevent direct return comparisons with Gymnasium Humanoid-v4. Some humanoid states emitted MJWarp solver iteration-limit warnings during these runs. The recipe retains the task solver settings rather than hiding these warnings.
+
+Reproduce the Experiments
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Set the task, its dimensions, and the environment seed from the result table. This example reproduces humanoid with environment seed 42 on one GPU:
+
+.. code:: bash
+
+   export EMBODIED_PATH="$PWD/examples/embodiment"
+   export PYTHONPATH="$PWD"
+   export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl
+   export CUDA_VISIBLE_DEVICES=0
+
+   export TASK=humanoid ENV_SEED=42 OBS_DIM=45 ACTION_DIM=17
+   python examples/embodiment/train_embodied_agent.py \
+       --config-path examples/embodiment/config \
+       --config-name mujoco_warp_ppo_mlp \
+       env.train.task_name=$TASK env.eval.task_name=$TASK \
+       actor.model.obs_dim=$OBS_DIM actor.model.action_dim=$ACTION_DIM \
+       env.train.seed=$ENV_SEED env.eval.seed=$ENV_SEED \
+       runner.logger.log_path=../results/mujoco_warp_${TASK}_seed${ENV_SEED} \
+       runner.max_steps=50 \
+       runner.val_check_interval=10 runner.save_interval=10 \
+       env.eval.video_cfg.save_video=true
+
+For humanoid with environment seed 43, change only ``ENV_SEED`` to 43. Each run creates its TensorBoard events, checkpoints, and evaluation videos under the selected ``runner.logger.log_path``. Video recording adds rendering time; disable it for throughput measurements. The `combined metrics CSV <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/mujoco_warp_metrics.csv>`__ and `run metadata <https://raw.githubusercontent.com/RLinf/misc/main/pic/mujoco_warp/mujoco_warp_results.json>`__ contain the plotted values and software versions.
 
 .. list-table::
    :header-rows: 1
@@ -180,16 +306,18 @@ Watch ``eval/env/return`` for the mean evaluation episode return and ``env/retur
      - Result
    * - One-epoch CI recipe
      - Two parallel worlds complete rollout, advantage computation, and one PPO update on one NVIDIA GPU.
-   * - 20-step PPO recipe
-     - On one A800, ``env/return`` increased from -268.66 at step 1 to 867.35 at step 20. ``eval/env/return`` was 726.50 at step 10 and 1246.81 at step 20.
 
 Video recording is disabled by default. Enable it for evaluation with:
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp \
+   python examples/embodiment/train_embodied_agent.py \
+       --config-path examples/embodiment/config \
+       --config-name mujoco_warp_ppo_mlp \
        env.eval.video_cfg.save_video=true
 
-Evaluation videos are written under ``<log_path>/video/eval``. MJWarp still runs the physics. The environment copies each world's ``qpos``, ``qvel``, and ``ctrl`` into native MuJoCo and renders RGB frames; the video wrapper writes those frames to MP4. Recording adds device-to-host synchronization and per-world rendering, so leave it off for throughput runs. Use ``render_width`` and ``render_height`` for the per-world resolution, and ``video_cfg.fps`` to override the default control frequency.
+Evaluation videos are written under ``<log_path>/video/eval/seed_<seed>``. The zero-based file counter follows the evaluation order: with ``runner.val_check_interval=10``, ``0.mp4`` records iteration 10, ``1.mp4`` records iteration 20, and so on. Each video contains a grid of the 16 evaluation worlds. A world that terminates early resets within the same video, so one video can contain several episodes.
+
+MJWarp still runs the physics. The environment copies each world's ``qpos``, ``qvel``, and ``ctrl`` into native MuJoCo and renders RGB frames; the video wrapper writes those frames to MP4. Recording adds device-to-host synchronization and per-world rendering, so leave it off for throughput runs. Use ``render_width`` and ``render_height`` for the per-world resolution, and ``video_cfg.fps`` to override the default control frequency.
 
 The first simulation step JIT-compiles MJWarp kernels and can take longer than later steps.

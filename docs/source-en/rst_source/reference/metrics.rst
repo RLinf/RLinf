@@ -79,11 +79,13 @@ Task-level signals from the simulator.
    * - ``env/success_once``
      - **Recommended.** Unnormalized episodic success rate — the truest measure of task performance.
    * - ``env/episode_len``
-     - Number of environment steps elapsed in the episode.
+     - Mean length in environment steps of the completed episodes reported in this rollout.
    * - ``env/return``
-     - Episode return. Under sparse rewards this is near-zero until the terminal success step, so it is not very informative during training.
+     - Mean undiscounted sum of step rewards over those completed episodes. It is not an average per step. Under sparse rewards this is near-zero until the terminal success step, so it is not very informative during training.
    * - ``env/reward``
      - Step-level reward (``0`` on intermediate steps, ``1`` on success). The logged value is normalized by episode length, which makes it hard to read as real performance.
+
+Evaluation records the same quantities under ``eval/return`` and ``eval/episode_len``. ``env/num_trajectories`` and ``eval/num_trajectories`` count the completed episodes included in each mean. If early-terminated episodes reset during a rollout, this count can exceed the number of configured worlds. A return of 1000 therefore means an average total of 1000 over completed episodes, not a reward of 1000 at every step.
 
 See also the :doc:`Logger <../guides/logger>` tutorial for choosing backends (TensorBoard,
 Weights & Biases, SwanLab) and configuring ``runner.logger``.
