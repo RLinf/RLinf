@@ -151,8 +151,7 @@ algorithm
 ``algorithm.group_size`` (responses per prompt; always > 1 for GRPO) is shared and
 documented in :doc:`basic_config`.
 
-Stop Actor Updates at a KL Target
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+**Stop Actor Updates at a KL Target**
 
 KL early stopping skips the remaining actor updates for a rollout batch once the mean conditional KL reaches the target. Before the first optimizer step, the actor records the denoising transition distributions for a fixed set of action chunks. After each step, it compares the updated distributions with those recorded for the same transitions. The step that reaches the target still takes effect.
 
@@ -227,6 +226,12 @@ env
    * - ``env.train.max_steps_per_rollout_epoch`` / ``env.eval.max_steps_per_rollout_epoch``
      - Maximum environment steps collected per rollout epoch. Must be divisible by
        ``actor.model.num_action_chunks``.
+   * - ``env.train.envs`` / ``env.eval.envs``
+     - Env configurations keyed by name, which make ``env.train`` or ``env.eval`` heterogeneous. Each runs on its own block of env workers. See :doc:`hetero_envs`.
+   * - ``env.train.policy_obs`` / ``env.eval.policy_obs``
+     - Observation keys and image size sent to the policy, putting envs with different cameras in one format so they can share an actor training pool and become eligible to share a rollout forward pass when they also reach the same rollout rank with the same policy fields (such as ``unnorm_key``). See :doc:`hetero_envs`.
+   * - ``env.train.envs.<name>.unnorm_key`` / ``env.eval.envs.<name>.unnorm_key``
+     - Action statistics OpenVLA-OFT unnormalizes this env configuration's actions with, instead of ``actor.model.unnorm_key``. See :doc:`hetero_envs`.
 
 rollout
 ~~~~~~~~~~~~~~~
@@ -416,6 +421,8 @@ actor
      - LoRA rank for low-rank adaptation.
    * - ``actor.model.lora_path``
      - Path to LoRA weights.
+   * - ``actor.model.merged_loras``
+     - LoRA adapters folded into the base weights at load, each ``{path, scale}``; ``scale`` is the fraction of the adapter's update to merge. A trainable LoRA (``is_lora``) is added on top of the merged weights.
    * - ``actor.model.num_images_in_input``
      - Number of images in the model input.
    * - ``actor.model.attn_implementation``

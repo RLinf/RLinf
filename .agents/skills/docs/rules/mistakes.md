@@ -10,6 +10,7 @@ Agents that write docs repeat the same mistakes, and the reader pays for each on
 | Explaining RLinf's internals on a recipe or guide page | Link to the concept page once and stay on the task |
 | Documenting every config key, option, default, caveat, and alternative | Show only the keys the reader changes for the main path; leave defaults in YAML and link to Reference for the rest |
 | Repeating the same detail across sections, or burying config lists in dense prose paragraphs | State each fact once in the shortest scannable form (1–3 sentence paragraphs on recipes and guides) |
+| Explaining the same point from negative and positive sides ("this is not A, not B, but C" / "这不是 A，不是 B，而是 C") or stacking defensive caveats | State directly what it is or does, once; keep a negation only when clearing up a real misconception |
 | Equations and tensor-shape tables on recipe or guide pages | Move them to Reference |
 | Telling the history of a change ("previously", "no longer", "after the refactor") | Describe what exists now; history goes in the PR description |
 | Sentences that only say what is not needed ("ROS is not required") | State the requirement positively |
@@ -48,18 +49,18 @@ Rules: [base.md](base.md), [index.md](index.md), [concept.md](concept.md).
 
 ## English
 
-Filler (simply, note that, in order to), sales words (seamlessly, robust, leverage), "not just X but Y", trailing "-ing" benefit clauses, lists padded to three, hedging ("you may want to consider"), synonyms that rotate for one thing, and calques from Chinese ("video memory", "carry out training"). Rules and replacements: [english.md](english.md).
+Stiff jargon or hard-to-parse phrasing, filler (simply, note that, in order to), sales words (seamlessly, robust, leverage), "not just X but Y", trailing "-ing" benefit clauses, lists padded to three, hedging ("you may want to consider"), synonyms that rotate for one thing, and calques from Chinese ("video memory", "carry out training"). Write plain, readable English a peer understands on the first read. Rules and replacements: [english.md](english.md).
 
 ## Chinese
 
 | Mistake | Fix |
 |---|---|
-| Translating the English draft sentence by sentence | Write from the page plan in Chinese order; split and merge sentences freely |
+| Direct machine translation or literal sentence-by-sentence translation of the English page | Write from the page plan in natural Chinese; split, merge, and reorder sentences freely |
 | 被 sentences, 进行 + noun, 当……时, 对于……来说, 通过……的方式, 允许你…… | Make the actor the subject and use the verb directly |
 | 值得注意的是, 首先/其次/最后 on every sentence, 不是……而是…… | State the fact; let the order of events connect the sentences |
 | 您, 「」, half-width punctuation in Chinese sentences, missing spaces next to English or digits | 你 or no subject, “”, full-width punctuation, a space between Chinese and English or digits |
 | Hard-wrapped Chinese paragraphs, and markup glued to Chinese characters | One source line per paragraph; escaped spaces around markup |
-| Chatty phrasing (看看长什么样) or bureaucratic phrasing (本文旨在, 进行相关操作) | Restrained written technical Chinese |
+| Chatty phrasing (看看长什么样), bureaucratic phrasing (本文旨在, 进行相关操作), or stiff jargon-heavy sentences that do not read naturally | 说人话：用平实、顺口、一眼看懂的书面技术中文写清楚 |
 | Translating code names or rendering policy as 策略 | Keep identifiers and the terms in [glossary.md](glossary.md) |
 
 Rules and examples: [chinese.md](chinese.md).

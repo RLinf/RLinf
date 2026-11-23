@@ -444,6 +444,7 @@ def test_ignore_terminations_still_truncates(simulator, batched):
 
 
 def _worker_for_env(env, cfg):
+    from rlinf.envs.layout import EnvAssignment
     from rlinf.workers.env.env_worker import EnvWorker
 
     worker = object.__new__(EnvWorker)
@@ -452,6 +453,8 @@ def _worker_for_env(env, cfg):
     cfg.env_type = "geniesim"
     cfg.ignore_terminations = False
     worker.cfg = OmegaConf.create({"env": {"train": cfg, "eval": cfg}})
+    worker.train_assignment = EnvAssignment(None, worker.cfg.env.train, 0, 1)
+    worker.eval_assignment = EnvAssignment(None, worker.cfg.env.eval, 0, 1)
     worker.model_cfg = OmegaConf.create(
         {
             "model_type": "openpi",

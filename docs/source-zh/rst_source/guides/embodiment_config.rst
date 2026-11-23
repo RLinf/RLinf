@@ -144,8 +144,7 @@ algorithm
 ``algorithm.group_size``\ （每个 prompt 的回复数；GRPO 始终 > 1）为共享键，在
 :doc:`basic_config` 中说明。
 
-用 KL 早停控制 actor 的更新幅度
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+**用 KL 早停控制 actor 的更新幅度**
 
 同一批 rollout 数据反复用于更新时，policy 可能在一轮内变化过大。Actor 在第一次 optimizer step 前记录一组固定动作块的去噪转移分布。之后每一步都在同一组转移上比较当前分布和最初记录的分布，计算平均条件 KL。KL 达到目标后结束本轮更新，触发早停的这一步仍然生效。
 
@@ -217,6 +216,12 @@ env
    * - ``env.train.max_steps_per_rollout_epoch`` / ``env.eval.max_steps_per_rollout_epoch``
      - 每个 rollout 轮采集的最大环境步数。必须能被 ``actor.model.num_action_chunks``
        整除。
+   * - ``env.train.envs`` / ``env.eval.envs``
+     - 以名字为 key 的多份环境配置，设置后 ``env.train`` 或 ``env.eval`` 成为异构的，每份环境配置运行在自己的一段 env worker 上。见 :doc:`hetero_envs` 。
+   * - ``env.train.policy_obs`` / ``env.eval.policy_obs``
+     - 发送给 policy 的观测 key 和图像尺寸，用来统一相机配置不同的环境格式，使它们在 actor 训练阶段共用同一个训练池，并在路由到同一 rollout worker 且 ``unnorm_key`` 等 policy 参数也相同时能够共享 rollout 前向计算。见 :doc:`hetero_envs` 。
+   * - ``env.train.envs.<name>.unnorm_key`` / ``env.eval.envs.<name>.unnorm_key``
+     - OpenVLA-OFT 还原这份环境配置的动作时使用的统计量，用来代替 ``actor.model.unnorm_key`` 。见 :doc:`hetero_envs` 。
 
 rollout
 ~~~~~~~~~~~~~~~
@@ -400,6 +405,8 @@ actor
      - LoRA 低秩适配的秩。
    * - ``actor.model.lora_path``
      - LoRA 权重路径。
+   * - ``actor.model.merged_loras``
+     - 加载时合并进基础权重的 LoRA adapter 列表，每项为 ``{path, scale}`` ， ``scale`` 是合并的 adapter 更新量所占的比例。可训练的 LoRA（ ``is_lora`` ）加在合并后的权重之上。
    * - ``actor.model.num_images_in_input``
      - 模型输入中的图像数量。
    * - ``actor.model.attn_implementation``

@@ -960,7 +960,7 @@ class PhyAIRolloutWorker(Worker):
 
         for stage_id in range(self.num_pipeline_stages):
             policy_input = await self._receive_policy_input(
-                input_channel, "policy_final", stage_id
+                input_channel, "policy", stage_id
             )
             if not policy_input.is_last:
                 raise ValueError("Expected a final policy input at epoch end.")

@@ -1031,6 +1031,63 @@ def test_custom_model_registration_smoke():
     assert received["torch_dtype"] == torch.float32
 
 
+class _TinyProjModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.embed = torch.nn.Embedding(5, 4)
+        self.proj = torch.nn.Linear(4, 3)
+
+
+def test_get_model_folds_scaled_lora_adapters_into_the_base_weights(tmp_path):
+    peft = pytest.importorskip("peft")
+    torch.manual_seed(0)
+    base = _TinyProjModel()
+    adapted = peft.get_peft_model(
+        _clone_module(base),
+        peft.LoraConfig(
+            r=2,
+            lora_alpha=4,
+            target_modules=["embed", "proj"],
+            init_lora_weights=False,
+        ),
+    )
+    adapted.save_pretrained(tmp_path)
+    proj = adapted.base_model.model.proj
+    update = (proj.lora_B["default"].weight @ proj.lora_A["default"].weight) * (4 / 2)
+    embed = adapted.base_model.model.embed
+    embed_update = (
+        embed.lora_embedding_B["default"] @ embed.lora_embedding_A["default"]
+    ).T * (4 / 2)
+    model_type = f"custom_model_merged_lora_{int(time.time() * 1000)}"
+    register_model(model_type, lambda cfg, torch_dtype: _clone_module(base))
+
+    model = get_model(
+        OmegaConf.create(
+            {
+                "model_type": model_type,
+                "precision": "fp32",
+                "is_lora": False,
+                "load_to_device": False,
+                "merged_loras": [{"path": str(tmp_path), "scale": 0.5}],
+            }
+        )
+    )
+
+    assert torch.allclose(model.proj.weight, base.proj.weight + 0.5 * update, atol=1e-6)
+    assert torch.allclose(
+        model.embed.weight, base.embed.weight + 0.5 * embed_update, atol=1e-6
+    )
+    assert not any("lora" in name for name, _ in model.named_parameters())
+    # Without a trainable LoRA on top, the merged weights are fully fine-tuned.
+    assert all(param.requires_grad for param in model.parameters())
+
+
+def _clone_module(module: torch.nn.Module) -> torch.nn.Module:
+    clone = type(module)()
+    clone.load_state_dict(module.state_dict())
+    return clone
+
+
 def test_custom_model_registration_with_fsdp_wrap_policy():
     model_type = f"custom_model_fsdp_{int(time.time() * 1000)}"
 
@@ -1925,8 +1982,10 @@ def test_starvla_autocast_targets_the_worker_accelerator(monkeypatch):
     monkeypatch.setattr(Worker, "torch_device_type", "cpu")
 
     with accelerator.accelerator_autocast(torch.bfloat16):
-        assert torch.is_autocast_enabled("cpu")
-        assert torch.get_autocast_dtype("cpu") == torch.bfloat16
+        # Use the CPU-specific queries because torch_musa's patch on
+        # torch.is_autocast_enabled ignores the "cpu" device argument.
+        assert torch.is_autocast_cpu_enabled()
+        assert torch.get_autocast_cpu_dtype() == torch.bfloat16
 
 
 def test_starvla_autocast_is_a_noop_without_an_accelerator(monkeypatch):
@@ -1934,7 +1993,7 @@ def test_starvla_autocast_is_a_noop_without_an_accelerator(monkeypatch):
     monkeypatch.setattr(Worker, "torch_device_type", None)
 
     with accelerator.accelerator_autocast(torch.bfloat16):
-        assert not torch.is_autocast_enabled("cpu")
+        assert not torch.is_autocast_cpu_enabled()
         assert not torch.is_autocast_enabled("cuda")
 
 
@@ -4542,6 +4601,31 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     assert cfg.runner.max_steps == 1 and cfg.env.train.total_num_envs == 4
 
 
+def test_entropy_temperatures_are_tuned_per_env_and_keep_scalar_checkpoints():
+    from rlinf.models.embodiment.modules.entropy_tunning import EntropyTemperature
+
+    temperature = EntropyTemperature(initial_alpha=0.1, num_temperatures=2)
+    with torch.no_grad():
+        temperature.base_alpha[1] += 1.0
+
+    # Index -1 marks a demo sample, which belongs to no env.
+    alpha = temperature.sample_alpha(torch.tensor([1, 0, -1]))
+
+    assert alpha.shape == (3, 1)
+    assert alpha[0, 0] > alpha[1, 0]
+    assert torch.isclose(alpha[2, 0], temperature.temperatures().mean())
+    assert temperature.sample_alpha(None) == temperature.temperatures().mean()
+
+    # One temperature keeps the 0-dim parameter that checkpoints already hold.
+    single = EntropyTemperature(initial_alpha=0.1)
+    assert single.state_dict()["base_alpha"].shape == torch.Size([])
+    single.load_state_dict({"base_alpha": torch.tensor(0.5)})
+    expected = torch.nn.functional.softplus(torch.tensor(0.5))
+    assert torch.allclose(
+        single.sample_alpha(torch.tensor([0, -1])), expected.expand(2, 1)
+    )
+
+
 @pytest.mark.parametrize(
     ("detach_critic_input", "use_vlm_value", "expect_vl_grad", "expect_state_grad"),
     [
@@ -5011,11 +5095,13 @@ def test_starvla_predict_action_batch_gates_device_images_by_vlm_and_head(
     monkeypatch.setattr(
         starvla_mod,
         "get_rollout_handler",
-        lambda _: lambda model, **kw: {
-            "output": {"normalized_actions": np.zeros((1, 2, 7), dtype=np.float32)},
-            "model_inputs": {},
-            "forward_inputs": {},
-        },
+        lambda _: (
+            lambda model, **kw: {
+                "output": {"normalized_actions": np.zeros((1, 2, 7), dtype=np.float32)},
+                "model_inputs": {},
+                "forward_inputs": {},
+            }
+        ),
     )
     monkeypatch.setattr(
         starvla_mod.action_space_utils,
@@ -5049,6 +5135,50 @@ def test_starvla_predict_action_batch_gates_device_images_by_vlm_and_head(
         )
 
     assert seen_devices == [torch.device("cpu"), None, None]
+
+
+def test_mlp_policy_cuda_graph_falls_back_to_eager_for_uncaptured_batch_size(
+    monkeypatch,
+):
+    from rlinf.models.embodiment.mlp_policy.mlp_policy import MLPPolicy
+
+    policy = MLPPolicy(
+        obs_dim=4,
+        action_dim=2,
+        num_action_chunks=1,
+        add_value_head=True,
+        add_q_head=False,
+    )
+    replayed = []
+
+    class FakeManager:
+        def replay(self, graph_name, inputs):
+            replayed.append((graph_name, inputs["states"].shape[0]))
+            action, chunk_actions, chunk_logprobs, chunk_values = (
+                policy._eager_generate_actions(inputs["states"], "train", True)
+            )
+            return {
+                "action": action,
+                "chunk_actions": chunk_actions,
+                "chunk_logprobs": chunk_logprobs,
+                "chunk_values": chunk_values,
+            }
+
+    policy.cuda_graph_manager = FakeManager()
+    monkeypatch.setattr(policy, "capture_action_generation", lambda **kwargs: None)
+    policy.capture_cuda_graph(train_batch_size=4, eval_batch_size=2)
+
+    actions, _, _, _ = policy._generate_actions(
+        torch.zeros(4, 4), mode="train", calculate_values=True
+    )
+    assert actions.shape == (4, 2)
+    assert len(replayed) == 1
+
+    smaller_actions, _, _, _ = policy._generate_actions(
+        torch.zeros(2, 4), mode="train", calculate_values=True
+    )
+    assert smaller_actions.shape == (2, 2)
+    assert len(replayed) == 1
 
 
 @pytest.mark.parametrize("pre_weight", [0.0, 0.1, 0.01])
