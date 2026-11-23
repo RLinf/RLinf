@@ -33,6 +33,8 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/11] RLinf 支持对话和非对话两种工具调用训练环境，详见 [EnvScaler](docs/source-zh/rst_source/examples/agentic/envscaler.rst).
+
 - [2026/11] RLinf 支持同步 LLM on-policy 蒸馏，可使用冻结 Teacher、FSDP 或 Megatron Actor，并结合任务奖励训练。文档：[LLM OPD](docs/source-zh/rst_source/examples/agentic/math_reasoning/opd.rst)。
 
 - [2026/11] 🔥 RLinf 支持在 [GenieSim](https://github.com/AgibotTech/genie_sim) 上用 PPO 和 GRPO 对 π₀.₅ 进行强化学习。文档：[基于 GenieSim 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/geniesim.html)。

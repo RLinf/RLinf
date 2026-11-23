@@ -22,12 +22,14 @@ from transformers import AutoTokenizer
 
 from rlinf.data.datasets.reasoning.collate_fn import collate_fn
 from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
+from rlinf.data.datasets.reasoning.envscaler import EnvScalerDataset
 from rlinf.data.datasets.reasoning.rstar2 import Rstar2Dataset
 from rlinf.data.datasets.reasoning.wideseek_r1 import WideSeekR1Dataset
 
 TEXT_DATASET_TYPE_MAP = {
     "reasoning": ReasoningDataset,
     "math": ReasoningDataset,
+    "envscaler": EnvScalerDataset,
     "wideseek_r1": WideSeekR1Dataset,
     "rstar2": Rstar2Dataset,
 }
@@ -39,7 +41,7 @@ def create_reasoning_datasets(
     """Create train/val text reasoning datasets via ``config.data.type``.
 
     Supported ``config.data.type`` values: ``reasoning``, ``math``,
-    ``wideseek_r1``, ``rstar2``.
+    ``wideseek_r1``, ``rstar2``, ``envscaler``.
 
     For VLM datasets (``vlm``), use
     ``rlinf.data.datasets.vlm.create_vlm_datasets`` instead.

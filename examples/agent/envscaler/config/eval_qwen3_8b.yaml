@@ -1,0 +1,90 @@
+# From the RLinf root, set ENVSCALER_ROOT to the EnvScaler checkout and add
+# "$PWD:$ENVSCALER_ROOT/interact_with_env" to PYTHONPATH. Then run:
+# python examples/agent/envscaler/eval.py --config-name eval_qwen3_8b
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    rollout,reward: 5-6
+
+runner:
+  task_type: reasoning_eval
+  output_dir: ./logs
+  experiment_name: envscaler-qwen3-8b-eval-${now:%Y%m%d-%H%M%S}
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"]
+  max_epochs: 1
+  max_steps: -1
+  resume_dir: null
+  seq_length: 32768
+
+evaluation:
+  tasks_per_environment: 1
+  sample_seed: 1234
+  # A trajectory passes when the episode terminates with a full checklist score.
+  pass_at_k: [1, 4]
+
+algorithm:
+  group_size: 4
+  sampling_params:
+    do_sample: true
+    temperature: 0.6
+    top_p: 0.95
+    top_k: 20
+    repetition_penalty: 1.0
+    max_new_tokens: 8192
+
+data:
+  type: envscaler
+  environment_path: ${oc.env:ENVSCALER_ROOT}/interact_with_env/envscaler_env/data/191_env_metadata.json
+  val_data_paths:
+    - ${oc.env:ENVSCALER_ROOT}/interact_with_env/envscaler_env/data/rl_scenario_metadata.json
+  val_rollout_batch_size: 17
+  validation_shuffle: false
+  num_workers: 0
+  prompt_key: prompt
+  answer_key: solutions
+  max_prompt_length: 4096
+  filter_prompt_by_length: false
+  apply_chat_template: false
+
+agentloop:
+  group_name: AgentLoopGroup
+  # Set mode to conversational and user_model to the simulator's served model name.
+  # The simulator reads USER_OPENAI_BASE_URL and USER_OPENAI_API_KEY on each worker.
+  mode: non_conversational
+  user_model: null
+  max_turns: 40
+  is_dynamic_rollout_batch: true
+  print_outputs: false
+
+rollout:
+  group_name: RolloutGroup
+  rollout_backend: sglang
+  model:
+    model_path: /mnt/public2/suheng/models/Qwen3-8B
+    model_type: qwen3
+    precision: bf16
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  max_model_len: 32768
+  gpu_memory_utilization: 0.65
+  enforce_eager: false
+  max_running_requests: 64
+  cuda_graph_max_bs: 64
+  detokenize: true
+  return_logprobs: false
+  validate_weight: false
+  sglang:
+    attention_backend: triton
+  vllm: {}

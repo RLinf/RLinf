@@ -34,6 +34,8 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
+- [2026/11] Train tool-calling policies in conversational and non-conversational environments with [EnvScaler](docs/source-en/rst_source/examples/agentic/envscaler.rst).
+
 - [2026/11] RLinf supports synchronous LLM on-policy distillation with a frozen Teacher, FSDP or Megatron Actors, and optional task rewards. Doc: [LLM OPD](docs/source-en/rst_source/examples/agentic/math_reasoning/opd.rst).
 
 - [2026/11] 🔥 RLinf supports RL on π₀.₅ in [GenieSim](https://github.com/AgibotTech/genie_sim) with PPO and GRPO. Doc: [RL with GenieSim](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html).

@@ -12,139 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-
 import hydra
 import torch.multiprocessing as mp
-from omegaconf.omegaconf import OmegaConf
 
+from examples.agent.train_agent import run_agent_training
 from rlinf.agents.searchr1.search_tool_worker import SearchToolWorker
 from rlinf.agents.searchr1.searchr1_agent_loop import Searchr1AgentLoopWorker
-from rlinf.algorithms.distillation.config import build_distillation_plan
-from rlinf.config import validate_cfg
-from rlinf.data.datasets.reasoning import create_reasoning_datasets
-from rlinf.models.tokenization.hf import hf_tokenizer
-from rlinf.runners.agent_runner import AgentRunner
-from rlinf.scheduler import Cluster, NodePlacementStrategy
-from rlinf.utils.placement import (
-    ModelParallelComponentPlacement,
-    PlacementMode,
-    TeacherComponentPlacement,
-)
+from rlinf.scheduler import NodePlacementStrategy
 from rlinf.utils.utils import output_redirector
-from rlinf.workers.actor import get_ma_actor_worker
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
-from rlinf.workers.inference.utils import get_inference_backend_worker
-from rlinf.workers.rollout.utils import get_rollout_backend_worker
-from rlinf.workers.teacher.runtime import launch_teacher_workers
 
-"""Script to start Search-R1 training"""
-mp.set_start_method("spawn", force=True)
+
+def _launch_tools(cfg, cluster):
+    return {
+        SearchToolWorker.create_group(cfg).launch(
+            cluster, name="search", placement_strategy=NodePlacementStrategy([0])
+        ): ToolWorkerInfo(tool_names=["search"], has_session=False),
+    }
 
 
 @hydra.main(version_base="1.1")
 @output_redirector
 def main(cfg) -> None:
-    cfg = validate_cfg(cfg)
-    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
-
-    cluster = Cluster(cluster_cfg=cfg.cluster)
-    component_placement = ModelParallelComponentPlacement(cfg, cluster)
-
-    # Generator group
-    rollout_worker_cls = get_rollout_backend_worker(cfg)
-    rollout_placement_strategy = component_placement.get_strategy("rollout")
-    rollout_group = rollout_worker_cls.create_group(cfg, component_placement).launch(
-        cluster,
-        name=cfg.rollout.group_name,
-        placement_strategy=rollout_placement_strategy,
-    )
-
-    # AgentLoop group.
-    agentloop_placement_strategy = NodePlacementStrategy(
-        [
-            placement.cluster_node_rank
-            for placement in rollout_placement_strategy.get_placement(cluster)
-        ]
-    )
-    assert (
-        len(agentloop_placement_strategy._node_ranks)
-        == component_placement.rollout_num_worker_processes
-    ), "agentloop worker num now should be equal to rollout worker process num"
-    agentloop_group = Searchr1AgentLoopWorker.create_group(
-        cfg, component_placement
-    ).launch(
-        cluster,
-        name=cfg.agentloop.group_name,
-        placement_strategy=agentloop_placement_strategy,
-    )
-
-    # Inference group
-    inference_group = None
-    if (
-        component_placement.placement_mode == PlacementMode.DISAGGREGATED
-        and cfg.algorithm.recompute_logprobs
-    ):
-        inference_placement_strategy = component_placement.get_strategy("inference")
-        inference_worker_cls = get_inference_backend_worker(cfg, "actor")
-        inference_group = inference_worker_cls.create_group(
-            cfg, component_placement
-        ).launch(
-            cluster,
-            name=cfg.inference.group_name,
-            placement_strategy=inference_placement_strategy,
-        )
-
-    # GRPO Actor group
-    actor_placement_strategy = component_placement.get_strategy("actor")
-    actor_worker_cls = get_ma_actor_worker(cfg)
-    actor_group = actor_worker_cls.create_group(cfg, component_placement).launch(
-        cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
-    )
-
-    # Dataset
-    tokenizer = hf_tokenizer(cfg.actor.tokenizer.tokenizer_model)
-    train_ds, val_ds = create_reasoning_datasets(cfg, tokenizer)
-
-    # Tool workers group
-    singleton_tool_placement = NodePlacementStrategy([0])
-    tool_workers = {
-        SearchToolWorker.create_group(cfg).launch(
-            cluster, name="search", placement_strategy=singleton_tool_placement
-        ): ToolWorkerInfo(tool_names=["search"], has_session=False),
-    }
-
-    teacher_runtime = None
-    if build_distillation_plan(cfg).enabled:
-        teacher_placement = TeacherComponentPlacement(cfg, cluster)
-        teacher_placement.validate_disjoint(component_placement)
-        teacher_runtime = launch_teacher_workers(cfg, cluster, teacher_placement)
-
-    runner = None
-    try:
-        runner = AgentRunner(
-            cfg=cfg,
-            teacher_runtime=teacher_runtime,
-            placement=component_placement,
-            train_dataset=train_ds,
-            val_dataset=val_ds,
-            rollout=rollout_group,
-            inference=inference_group,
-            actor=actor_group,
-            reward=None,
-            agent_loop=agentloop_group,
-            tool_workers=tool_workers,
-        )
-        runner.init_workers()
-        runner.run()
-    finally:
-        if teacher_runtime is not None:
-            try:
-                if runner is not None:
-                    runner.close_teacher_clients()
-            finally:
-                teacher_runtime.close()
+    run_agent_training(cfg, Searchr1AgentLoopWorker, _launch_tools)
 
 
 if __name__ == "__main__":
+    mp.set_start_method("spawn", force=True)
     main()

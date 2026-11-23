@@ -1,0 +1,13 @@
+defaults:
+  - eval_qwen3.5-2b
+  - _self_
+
+data:
+  dataset_name: DAPO-17K
+  val_data_paths:
+    - /mnt/public2/suheng/data/trainset/DAPO-Math-17k/data/DAPO-17K.jsonl
+  prompt_key: prompt
+  answer_key: reward_model # ground_truth contains the reference integer.
+  prompt_suffix: "" # The dataset already requests a final "Answer: ..." line.
+  data_size: 200
+  val_rollout_batch_size: 100

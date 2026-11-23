@@ -106,3 +106,4 @@ The following examples include math reasoning RL and agentic AI workflows, such 
    rStar2 <rstar2>
    Math Reasoning <math_reasoning/index>
    Qwen3 VL GRPO <qwen3_vl_geo3k>
+   EnvScaler <envscaler>

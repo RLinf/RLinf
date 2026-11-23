@@ -12,17 +12,17 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    rollout: 0-1 # Visible GPU ranks; one model replica per TP × PP GPUs.
+    rollout: 6-7 # Visible GPU ranks; one model replica per TP × PP GPUs.
 
 runner:
   task_type: reasoning_eval
   experiment_name: null # Defaults to the HF model directory name.
-  output_dir: ./logs/math-eval # Per-question JSONL and summary.csv
+  output_dir: ./logs/math-eval # Per-question JSONL, summary.csv and summary.json
   logger:
     log_path: ${runner.output_dir}/${runner.experiment_name}/${data.dataset_name}
     project_name: rlinf
     experiment_name: ${runner.experiment_name}
-    logger_backends: [tensorboard] # [] disables metric logging; JSONL and CSV are still written.
+    logger_backends: [tensorboard] # [] disables TensorBoard; result files are always written.
   seq_length: 10240 # Prompt and completion combined
   max_steps: -1 # Validation batches; -1 evaluates the whole selected dataset.
 
@@ -58,7 +58,8 @@ data:
 rollout:
   rollout_backend: sglang
   model:
-    model_path: /mnt/public2/suheng/models/Qwen3.5-2B # HF model with tokenizer
+    model_path: /mnt/public2/suheng/models/Qwen3-8B # HF model with tokenizer
+    model_type: qwen3
     precision: bf16
   tensor_parallel_size: 1
   pipeline_parallel_size: 1

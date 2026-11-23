@@ -16,19 +16,31 @@
 
 import asyncio
 import csv
+import fcntl
 import json
 import math
 import random
 import re
+from decimal import Decimal
 from pathlib import Path
 
 import hydra
+import regex
 from omegaconf import DictConfig, OmegaConf
 
 from rlinf.scheduler import Worker
 from rlinf.scheduler.cluster import parse_rank_config
 from rlinf.utils.logging import get_logger
 from rlinf.utils.precision import torch_dtype_from_precision
+
+
+def _has_boxed_answer(final: str) -> bool:
+    """Check the last boxed answer for nonempty, balanced LaTeX content."""
+    _, marker, tail = final.rpartition(r"\boxed")
+    if not marker:
+        return False
+    box = regex.match(r"\s*(?P<box>\{(?:\\.|[^{}\\]++|(?&box))*\})", tail)
+    return bool(box and box["box"][1:-1].strip())
 
 
 def _rollout_layout(cfg: DictConfig, device_count: int) -> tuple[int, int]:
@@ -82,6 +94,13 @@ def _load_questions(data: DictConfig) -> list[dict]:
         rows = rows[: data.data_size]
     if data.validation_shuffle:
         random.Random(data.seed).shuffle(rows)
+    if data.dataset_name == "DAPO-17K":
+        for row in rows:
+            messages = row[data.prompt_key]
+            if len(messages) != 1 or messages[0]["role"] != "user":
+                raise ValueError("Expected a single user message in a DAPO prompt")
+            row[data.prompt_key] = messages[0]["content"]
+            row[data.answer_key] = row[data.answer_key]["ground_truth"]
     return rows
 
 
@@ -99,6 +118,25 @@ def _score(final: str, reference: str, benchmark: str) -> bool:
 
     match = re.match(r"\s*\{\s*([0-9]{1,3})\s*\}", content)
     return bool(match and int(match[1]) == int(reference))
+
+
+def _grade(final: str, reference: str, benchmark: str) -> tuple[bool, bool]:
+    """Return correctness and compliance with the benchmark's final-answer format."""
+    if benchmark == "DAPO-17K":
+        last_line = final.rstrip().rpartition("\n")[2].strip()
+        match = re.fullmatch(r"Answer:\s*(.+)", last_line, re.IGNORECASE)
+        if not match:
+            return False, False
+        answer = match[1].strip()
+        if answer.startswith("$") and answer.endswith("$"):
+            answer = answer[1:-1].strip()
+        boxed = re.fullmatch(r"\\boxed\{\s*([+-]?\d+)\s*\}", answer)
+        if boxed:
+            answer = boxed[1]
+        if not re.fullmatch(r"[+-]?\d+", answer):
+            return False, False
+        return Decimal(answer) == Decimal(reference), True
+    return _score(final, reference, benchmark), _has_boxed_answer(final)
 
 
 def _prepare_prompts(rows, tokenizer, data):
@@ -163,6 +201,11 @@ async def _evaluate(engine, tokenizer, cfg, rows, sampling, output, dp_size):
     )
     group_size = cfg.algorithm.group_size
     hits = []
+    first_sample_hits = 0
+    prompt_tokens = 0
+    response_tokens = 0
+    formatted = 0
+    length_limited = 0
     with output.open("x", encoding="utf-8") as stream:
         for start in range(0, len(questions), batch_size):
             batch = questions[start : start + batch_size]
@@ -187,7 +230,7 @@ async def _evaluate(engine, tokenizer, cfg, rows, sampling, output, dp_size):
                 raise RuntimeError(
                     f"Expected {len(requests)} responses, received {len(outputs)}"
                 )
-            for i, (row, _) in enumerate(batch):
+            for i, (row, prompt_ids) in enumerate(batch):
                 samples = []
                 for result in outputs[i * group_size : (i + 1) * group_size]:
                     reason = result["meta_info"]["finish_reason"]
@@ -202,21 +245,31 @@ async def _evaluate(engine, tokenizer, cfg, rows, sampling, output, dp_size):
                         get_logger().info(
                             f"{benchmark}[{start + i}] sample {len(samples) + 1}: {response}"
                         )
+                    response_length = result["meta_info"]["completion_tokens"]
+                    correct, valid_format = _grade(
+                        final, str(row[cfg.data.answer_key]), benchmark
+                    )
+                    response_tokens += response_length
+                    formatted += valid_format
+                    length_limited += reason["type"] == "length"
                     samples.append(
                         {
                             "response": response,
-                            "correct": _score(
-                                final, str(row[cfg.data.answer_key]), benchmark
-                            ),
+                            "response_tokens": response_length,
+                            "final_answer_format": valid_format,
+                            "correct": correct,
                             "finish_reason": reason["type"],
                         }
                     )
                 hits.append(sum(sample["correct"] for sample in samples))
+                first_sample_hits += samples[0]["correct"]
+                prompt_tokens += len(prompt_ids) * len(samples)
                 stream.write(
                     json.dumps(
                         {
                             "index": start + i,
                             "problem": row[cfg.data.prompt_key],
+                            "prompt_tokens": len(prompt_ids),
                             "gold": row[cfg.data.answer_key],
                             "samples": samples,
                         },
@@ -226,13 +279,44 @@ async def _evaluate(engine, tokenizer, cfg, rows, sampling, output, dp_size):
                 )
             stream.flush()
     pass1, pass4 = _pass_rates(hits, group_size)
+    trajectories = len(hits) * group_size
     return {
         "benchmark": benchmark,
         "questions": len(questions),
         "group_size": group_size,
         "pass@1": pass1,
         "pass@4": pass4,
+        "first_sample_accuracy": first_sample_hits / len(hits),
+        "total_num_trajectories": trajectories,
+        "avg_prompt_length": prompt_tokens / trajectories,
+        "avg_response_length": response_tokens / trajectories,
+        "avg_total_length": (prompt_tokens + response_tokens) / trajectories,
+        "total_response_tokens": response_tokens,
+        "final_answer_format": formatted / trajectories,
+        "length_limit_rate": length_limited / trajectories,
     }
+
+
+def _write_summary(run_dir: Path, metrics: dict) -> None:
+    """Publish one model/benchmark result and retain the existing CSV schema."""
+    columns = ("model", "benchmark", "questions", "group_size", "pass@1", "pass@4")
+    with (run_dir / "summary.csv").open("a", newline="", encoding="utf-8") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        summary = run_dir / "summary.json"
+        records = (
+            json.loads(summary.read_text(encoding="utf-8")) if summary.exists() else []
+        )
+        records.append(metrics)
+        pending = summary.with_suffix(".json.tmp")
+        pending.write_text(
+            json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        pending.replace(summary)
+        writer = csv.DictWriter(stream, fieldnames=columns, extrasaction="ignore")
+        stream.seek(0, 2)
+        if stream.tell() == 0:
+            writer.writeheader()
+        writer.writerow(metrics)
 
 
 @hydra.main(
@@ -277,7 +361,7 @@ def main(cfg: DictConfig) -> None:
         raise ValueError(
             f"Expected a positive val_rollout_batch_size, got {cfg.data.val_rollout_batch_size}"
         )
-    if cfg.data.dataset_name not in {"AIME2025", "AIME2026", "MATH-500"}:
+    if cfg.data.dataset_name not in {"AIME2025", "AIME2026", "MATH-500", "DAPO-17K"}:
         raise ValueError(f"Unknown math benchmark: {cfg.data.dataset_name}")
     rows = _load_questions(cfg.data)
     sampling = SGLangWorker.get_sampling_param_from_config(
@@ -336,11 +420,7 @@ def main(cfg: DictConfig) -> None:
             )
         )
     metrics = {"model": model_name, **metrics}
-    with (run_dir / "summary.csv").open("a", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(metrics))
-        if stream.tell() == 0:
-            writer.writeheader()
-        writer.writerow(metrics)
+    _write_summary(run_dir, metrics)
     scores = {
         key: metrics[key] for key in ("pass@1", "pass@4") if metrics[key] is not None
     }

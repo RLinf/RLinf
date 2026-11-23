@@ -471,6 +471,24 @@ jobs:
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           bash requirements/install.sh agentic
 
+      - name: Check out EnvScaler training environments
+        uses: actions/checkout@v5
+        with:
+          repository: RUC-NLPIR/EnvScaler
+          ref: 7ab81e557c5992d62d4533e81bfec3d2ca0ae24b
+          path: .envscaler
+          sparse-checkout: interact_with_env
+          persist-credentials: false
+
+      - name: Check conversational and non-conversational EnvScaler rollouts
+        run: |
+          source .venv/bin/activate
+          uv pip install pytest python-dotenv
+          export ENVSCALER_ROOT="$PWD/.envscaler"
+          export ENVSCALER_TEST_MODEL=/workspace/dataset/Qwen3-4B
+          export PYTHONPATH="$PWD:$ENVSCALER_ROOT/interact_with_env:${PYTHONPATH:-}"
+          python -m pytest -q tests/e2e_tests/agent/test_envscaler.py
+
       - name: Train with SGLang Megatron Collocated mode
         timeout-minutes: 20
         run: |

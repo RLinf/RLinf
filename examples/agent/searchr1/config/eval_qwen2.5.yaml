@@ -11,7 +11,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    rollout,reward: all
+    rollout,reward: 2-3
 
 
 runner:
@@ -28,15 +28,15 @@ runner:
   val_check_interval: 30
   save_interval: 30
 
-  seq_length: 7096
+  seq_length: 8192
 
   resume_dir: null
-  experiment_name: searchr1-grpo-qwen2.5-3b-ins-eval
-  output_dir: ../results
+  experiment_name: searchr1-grpo-qwen3-14b-eval
+  output_dir: ./logs
 
 
 algorithm:
-  group_size: 1
+  group_size: 4
   rollout_batch_size_per_gpu: null # If set to null, rollout_batch_size will be evenly divided across all inference instances. You can reduce this parameter if inference consumes too much GPU memory.
 
   # mbs to do log prob inference, can be set to

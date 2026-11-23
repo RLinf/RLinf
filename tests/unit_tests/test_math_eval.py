@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import csv
 import json
 from pathlib import Path
 
@@ -20,9 +21,12 @@ import pytest
 
 from examples.reasoning.eval_math import (
     _evaluate,
+    _grade,
+    _has_boxed_answer,
     _load_questions,
     _rollout_layout,
     _score,
+    _write_summary,
 )
 
 
@@ -44,6 +48,19 @@ def test_math500_scores_equivalent_latex():
     pytest.importorskip("math_verify")
     assert _score(r"\boxed{\frac{3}{6}}", r"\frac{1}{2}", "MATH-500")
     assert not _score(r"\boxed{9}", "7", "MATH-500")
+
+
+def test_dapo_uses_final_answer_line_and_signed_integers():
+    assert _grade("Answer: 4\nAnswer: $-12345$", "-12345", "DAPO-17K") == (True, True)
+    assert _grade(r"Answer: \boxed{42}", "41", "DAPO-17K") == (False, True)
+    assert _grade("Answer: 3.5", "3", "DAPO-17K") == (False, False)
+
+
+def test_math_final_answer_format():
+    assert _has_boxed_answer(r"\boxed{\frac{3}{6}}")
+    assert _has_boxed_answer(r"\boxed{\{1,2\}}")
+    assert not _has_boxed_answer(r"\boxed{ }")
+    assert not _has_boxed_answer(r"\boxed{2} then \boxed{3")
 
 
 def test_grouped_eval_keeps_tail_and_scores_per_question(tmp_path):
@@ -79,10 +96,13 @@ def test_grouped_eval_keeps_tail_and_scores_per_question(tmp_path):
             assert len(input_ids) == len(answers)
             return [
                 {
-                    "output_ids": [answer],
-                    "meta_info": {"finish_reason": {"type": "stop"}},
+                    "output_ids": [0] * i + [answer],
+                    "meta_info": {
+                        "completion_tokens": i + 1,
+                        "finish_reason": {"type": "length" if i == 3 else "stop"},
+                    },
                 }
-                for answer in answers
+                for i, answer in enumerate(answers)
             ]
 
     cfg = OmegaConf.create(
@@ -120,6 +140,23 @@ def test_grouped_eval_keeps_tail_and_scores_per_question(tmp_path):
     ]
     assert metrics["pass@1"] == pytest.approx(5 / 12)
     assert metrics["pass@4"] == pytest.approx(2 / 3)
+    assert metrics["first_sample_accuracy"] == pytest.approx(2 / 3)
+    assert metrics["total_num_trajectories"] == 12
+    assert metrics["avg_prompt_length"] == 1
+    assert metrics["avg_response_length"] == 2.5
+    assert metrics["avg_total_length"] == 3.5
+    assert metrics["total_response_tokens"] == 30
+    assert metrics["final_answer_format"] == 1
+    assert metrics["length_limit_rate"] == 0.25
+    assert records[-1]["prompt_tokens"] == 1
+    assert [s["response_tokens"] for s in records[-1]["samples"]] == [1, 2, 3, 4]
+
+    summaries = [{"model": model, **metrics} for model in ("base", "step160")]
+    for row in summaries:
+        _write_summary(tmp_path, row)
+    assert json.loads((tmp_path / "summary.json").read_text()) == summaries
+    with (tmp_path / "summary.csv").open() as stream:
+        assert [row["model"] for row in csv.DictReader(stream)] == ["base", "step160"]
 
 
 def test_math_eval_presets_match_opd_rollout():
