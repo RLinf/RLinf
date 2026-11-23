@@ -162,7 +162,6 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
             )
 
         module = get_model(model_cfg).to(self.device)
-        module.discount = float(self.cfg.algorithm.gamma)
         self.param_names_need_sync = collect_param_names_need_sync(module)
         if self._use_fsdp_wrap:
             self.model = self._strategy.wrap_model(
@@ -207,12 +206,13 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
     def _qam_module(self):
         return getattr(self.model, "module", self.model)
 
-    def _fsdp_loss(self, batch, generator, noise):
+    def _fsdp_loss(self, batch, generator, noise, *, gamma):
         return self.model(
             batch=batch,
             compute_loss=True,
             generator=generator,
             noise=noise,
+            gamma=gamma,
         )
 
     def _fsdp_clip_grad(self):
@@ -223,10 +223,11 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
 
     def _update(self):
         module = self._qam_module()
+        gamma = float(self.cfg.algorithm.gamma)
         batch = self.dataset.sample(
             self.batch_size,
-            module.horizon,
-            module.discount,
+            module.num_action_chunks,
+            gamma,
         )
         batch = {
             key: torch.as_tensor(value, device=self.device)
@@ -238,6 +239,7 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
                 self.optimizer,
                 batch,
                 self.generator,
+                gamma=gamma,
                 loss_fn=self._fsdp_loss,
                 target_update=self._fsdp_update_targets,
                 clip_grad=self._fsdp_clip_grad,
@@ -247,6 +249,7 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
             self.optimizer,
             batch,
             self.generator,
+            gamma=gamma,
             max_grad_norm=self.cfg.actor.optim.clip_grad,
         )
 
@@ -316,7 +319,7 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
                 save_full_model_weights=False,
                 checkpoint_format="local_shard",
             )
-            torch.save(state_payload, path / f"state_rank_{self._rank}.pt")
+            target = path / f"state_rank_{self._rank}.pt"
         else:
             state_payload.update(
                 {
@@ -327,10 +330,10 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
                     "optimizer": self.optimizer.state_dict(),
                 }
             )
-            temp = path / f"seed_{self.seed}.tmp"
             target = path / f"seed_{self.seed}.pt"
-            torch.save(state_payload, temp)
-            temp.replace(target)
+        temp = target.with_suffix(".tmp")
+        torch.save(state_payload, temp)
+        temp.replace(target)
         return str(path)
 
     def load_checkpoint(self, path):

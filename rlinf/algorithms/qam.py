@@ -59,7 +59,7 @@ def adjoint_targets(model, observations, initial_noise, step_noises):
     )
 
 
-def qam_loss(model, batch, generator=None, noise=None):
+def qam_loss(model, batch, generator=None, noise=None, *, gamma: float):
     """Compute all losses against the same pre-update parameters.
 
     Explicit noise injection is for cross-framework parity tests. Targets never
@@ -87,7 +87,7 @@ def qam_loss(model, batch, generator=None, noise=None):
         pessimistic_q = qs.mean(0) - model.cfg.rho * qs.std(0, correction=0)
         target = (
             batch["rewards"][:, -1]
-            + model.discount**model.horizon * batch["masks"][:, -1] * pessimistic_q
+            + gamma**model.num_action_chunks * batch["masks"][:, -1] * pessimistic_q
         )
     q = model.critic(obs, actions)
     valid = batch["valid"][:, -1]
@@ -123,6 +123,7 @@ def qam_update(
     generator: torch.Generator | None = None,
     noise: dict[str, torch.Tensor] | None = None,
     *,
+    gamma: float,
     loss_fn: Callable[..., tuple[torch.Tensor, dict[str, torch.Tensor]]] | None = None,
     target_update: Callable[[], None] | None = None,
     max_grad_norm: float = 1.0,
@@ -131,9 +132,9 @@ def qam_update(
     """One Adam update with global clipping and pre-update-parameter EMA."""
     optimizer.zero_grad(set_to_none=True)
     if loss_fn is None:
-        loss, info = qam_loss(model, batch, generator, noise)
+        loss, info = qam_loss(model, batch, generator, noise, gamma=gamma)
     else:
-        loss, info = loss_fn(batch, generator, noise)
+        loss, info = loss_fn(batch, generator, noise, gamma=gamma)
     loss.backward()
     if clip_grad is None:
         grad_norm = torch.nn.utils.clip_grad_norm_(

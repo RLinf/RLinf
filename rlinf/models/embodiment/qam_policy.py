@@ -98,12 +98,11 @@ class QAMPolicy(nn.Module, BasePolicy):
         super().__init__()
         self.cfg = cfg
         self.action_dim = int(cfg.action_dim)
-        self.horizon = int(cfg.get("num_action_chunks", cfg.get("horizon_length", 1)))
-        self.full_action_dim = self.action_dim * self.horizon
+        self.num_action_chunks = int(cfg.num_action_chunks)
+        self.full_action_dim = self.action_dim * self.num_action_chunks
         self.flow_steps = int(cfg.flow_steps)
-        self.discount = float(cfg.get("discount", 0.99))
-        if self.flow_steps < 1 or self.horizon < 1:
-            raise ValueError("QAM requires positive horizon_length and flow_steps")
+        if self.flow_steps < 1 or self.num_action_chunks < 1:
+            raise ValueError("QAM requires positive num_action_chunks and flow_steps")
         field_args = (
             cfg.obs_dim + self.full_action_dim + 1,
             cfg.actor_hidden_dims,
@@ -135,6 +134,7 @@ class QAMPolicy(nn.Module, BasePolicy):
                 kwargs["batch"],
                 kwargs.get("generator"),
                 kwargs.get("noise"),
+                gamma=kwargs["gamma"],
             )
         return BasePolicy.forward(self, forward_type=forward_type, **kwargs)
 
@@ -174,7 +174,7 @@ class QAMPolicy(nn.Module, BasePolicy):
             observations, dtype=torch.float32, device=next(self.parameters()).device
         )
         actions = self.sample_actions(observations)
-        chunks = actions.reshape(-1, self.horizon, self.action_dim)
+        chunks = actions.reshape(-1, self.num_action_chunks, self.action_dim)
         return chunks.cpu().numpy(), {"forward_inputs": {"observations": observations}}
 
 

@@ -32,7 +32,7 @@ def small_config():
             "load_to_device": False,
             "obs_dim": 3,
             "action_dim": 2,
-            "horizon_length": 1,
+            "num_action_chunks": 1,
             "flow_steps": 3,
             "actor_hidden_dims": [8, 8],
             "value_hidden_dims": [8, 8],
@@ -42,9 +42,7 @@ def small_config():
             "inv_temp": 10.0,
             "best_of_n": 1,
             "rho": 0.5,
-            "discount": 0.99,
             "tau": 0.005,
-            "action_chunking": True,
         }
     )
 
@@ -73,7 +71,9 @@ def test_detached_targets_old_parameter_ema_and_resume():
         model, batch["observations"], torch.randn(4, 2), torch.randn(3, 4, 2)
     )
     assert all(not x.requires_grad for x in targets)
-    info = qam_update(model, optimizer, batch, generator, max_grad_norm=0.25)
+    info = qam_update(
+        model, optimizer, batch, generator, gamma=0.95, max_grad_norm=0.25
+    )
     grad_norm = torch.linalg.vector_norm(
         torch.stack([p.grad.norm() for p in model.parameters() if p.grad is not None])
     )
@@ -103,14 +103,14 @@ def test_detached_targets_old_parameter_ema_and_resume():
         },
         stream,
     )
-    qam_update(model, optimizer, batch, generator)
+    qam_update(model, optimizer, batch, generator, gamma=0.95)
     expected = copy.deepcopy(model.state_dict())
     stream.seek(0)
     state = torch.load(stream, weights_only=False)
     model.load_state_dict(state["model"])
     optimizer.load_state_dict(state["optimizer"])
     generator.set_state(state["rng"])
-    qam_update(model, optimizer, batch, generator)
+    qam_update(model, optimizer, batch, generator, gamma=0.95)
     for k, v in model.state_dict().items():
         torch.testing.assert_close(v, expected[k], rtol=0, atol=0)
 

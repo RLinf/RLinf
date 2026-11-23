@@ -4846,7 +4846,7 @@ def _qam_config():
             "load_to_device": False,
             "obs_dim": 3,
             "action_dim": 2,
-            "horizon_length": 1,
+            "num_action_chunks": 1,
             "flow_steps": 3,
             "actor_hidden_dims": [8, 8],
             "value_hidden_dims": [8, 8],
@@ -4856,9 +4856,7 @@ def _qam_config():
             "inv_temp": 10.0,
             "best_of_n": 1,
             "rho": 0.5,
-            "discount": 0.99,
             "tau": 0.005,
-            "action_chunking": True,
         }
     )
 

@@ -60,6 +60,8 @@ def test_reference_losses_gradients_update(horizon):
     torch.set_num_threads(1)
     torch.manual_seed(42)
     c = get_config()
+    gamma = 0.95
+    c.discount = gamma
     c.horizon_length = horizon
     c.action_chunking = True
     c.actor_hidden_dims = (8, 8)
@@ -76,7 +78,7 @@ def test_reference_losses_gradients_update(horizon):
             "load_to_device": False,
             "obs_dim": 3,
             "action_dim": 2,
-            "horizon_length": horizon,
+            "num_action_chunks": horizon,
             "flow_steps": 3,
             "actor_hidden_dims": [8, 8],
             "value_hidden_dims": [8, 8],
@@ -86,9 +88,7 @@ def test_reference_losses_gradients_update(horizon):
             "inv_temp": 10.0,
             "best_of_n": 1,
             "rho": 0.5,
-            "discount": 0.99,
             "tau": 0.005,
-            "action_chunking": True,
         }
     )
     model = get_model(cfg)
@@ -168,7 +168,7 @@ def test_reference_losses_gradients_update(horizon):
     (ref_loss, ref_info), grads = jax.value_and_grad(
         ref.total_loss, argnums=1, has_aux=True
     )({k: jnp.asarray(v) for k, v in batch.items()}, ref.network.params, rng)
-    loss, info = qam_loss(model, tb, noise=tn)
+    loss, info = qam_loss(model, tb, noise=tn, gamma=gamma)
     np.testing.assert_allclose(float(loss), float(ref_loss), rtol=2e-4, atol=2e-4)
     for native, reference in (
         ("critic_loss", "critic/critic_loss"),
@@ -194,7 +194,7 @@ def test_reference_losses_gradients_update(horizon):
     optimizer = torch.optim.Adam(
         [p for p in model.parameters() if p.requires_grad], lr=3e-4
     )
-    qam_update(model, optimizer, tb, noise=tn)
+    qam_update(model, optimizer, tb, noise=tn, gamma=gamma)
     for param, path, transpose in pairs:
         np.testing.assert_allclose(
             param.detach().numpy(),
