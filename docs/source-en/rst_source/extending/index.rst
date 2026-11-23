@@ -73,22 +73,28 @@ Choose an Extension Area
       :link: models/index
       :link-type: doc
 
-      Add an embodied FSDP policy, SFT model, SGLang embodied rollout model, or Megatron LLM (Bridge or manual).
+      Add an embodied FSDP policy, SFT model, SGLang embodied rollout model, Megatron LLM, or custom weight synchronization.
 
-   .. grid-item-card:: 2. Add an Environment or Robot
+   .. grid-item-card:: 2. Add an Env or Robot
       :link: envs-robots/index
       :link-type: doc
 
       Integrate a new physics simulator, bring up new robot hardware, or add a task on a supported robot.
 
-   .. grid-item-card:: 3. Add Algorithms, Rewards & Agents
+   .. grid-item-card:: 3. Add an Algorithm
       :link: algorithms-agents/index
       :link-type: doc
 
-      Register custom advantages, policy losses, learned or rule rewards, and multi-turn agent tools.
+      Register custom advantages, policy losses, and rule-based or learned reward models.
 
-   .. grid-item-card:: 4. Add Hardware & System Backends
-      :link: backends/index
+   .. grid-item-card:: 4. Add an Agent
+      :link: new_agent
       :link-type: doc
 
-      Port RLinf to a new GPU / NPU accelerator or customize actor-to-rollout weight synchronization.
+      Implement custom multi-turn agent loops, tool workers, and tool-call parsers.
+
+   .. grid-item-card:: 5. Add a Hardware Backend
+      :link: new_accelerator
+      :link-type: doc
+
+      Port RLinf to a new GPU or NPU accelerator backend and installer platform.

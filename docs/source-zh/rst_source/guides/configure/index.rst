@@ -30,11 +30,11 @@
 
       通过 LoRA 适配器显著降低大模型与 VLA 训练显存。
 
-   .. grid-item-card:: 多环境混合训练
+   .. grid-item-card:: 多 Env 混合训练
       :link: ../hetero_envs
       :link-type: doc
 
-      在单次运行中同时使用多个不同的仿真或真机环境配置。
+      在单次运行中同时使用多个不同的仿真或真机 Env 配置。
 
 .. toctree::
    :hidden:
@@ -43,4 +43,4 @@
    断点续训 <../resume>
    Checkpoint 转换 <../convertor>
    LoRA 微调 <../lora>
-   多环境混合训练 <../hetero_envs>
+   多 Env 混合训练 <../hetero_envs>

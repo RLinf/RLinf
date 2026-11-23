@@ -14,13 +14,13 @@
      - 常见需求
      - 入口
    * - 把任务配好并稳定运行
-     - 日志曲线、断点续训、Checkpoint 转换、LoRA 省显存、多环境混训
+     - 日志曲线、断点续训、Checkpoint 转换、LoRA 省显存、多 Env 混训
      - :doc:`配置与运行 <configure/index>`
    * - 单卡 / 单机不够，要上集群
      - 多节点训练、异构集群、云边协同、自动 Placement、5D 并行、动态调度
      - :doc:`扩展到多机集群 <launch-scale/index>`
    * - 训练太慢或 GPU 空等
-     - 先做 Profiling 查瓶颈，再按需开 Pipeline、环境解耦、观测压缩、异步 Agent RL、RTC、FUSCO
+     - 先做 Profiling 查瓶颈，再按需开 Pipeline、Env 解耦、观测压缩、异步 Agent RL、RTC、FUSCO
      - :doc:`性能诊断与提速 <performance/index>`
    * - 切换或部署独立推理引擎
      - SGLang / vLLM 版本、SGLang 服务与路由、HTTP 推理客户端、PhyAI、ApxInf
@@ -33,7 +33,7 @@
       :link: configure/index
       :link-type: doc
 
-      配置日志与可视化、断点续训、Checkpoint 转换、LoRA 微调与多环境混合训练。
+      配置日志与可视化、断点续训、Checkpoint 转换、LoRA 微调与多 Env 混合训练。
 
    .. grid-item-card:: 2. 扩展到多机集群
       :link: launch-scale/index
@@ -45,7 +45,7 @@
       :link: performance/index
       :link-type: doc
 
-      先用 Profiling 定位瓶颈，再开启 Pipeline、环境解耦、观测压缩、异步 Agent RL、RTC 或 FUSCO。
+      先用 Profiling 定位瓶颈，再开启 Pipeline、Env 解耦、观测压缩、异步 Agent RL、RTC 或 FUSCO。
 
    .. grid-item-card:: 4. Rollout 后端与服务
       :link: rollout-engines/index

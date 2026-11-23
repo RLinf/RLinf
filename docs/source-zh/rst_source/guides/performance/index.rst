@@ -18,11 +18,11 @@
 
       让具身 Rollout 与 FSDP Actor 更新流水线重叠，减少 GPU 空等。
 
-   .. grid-item-card:: 环境解耦执行
+   .. grid-item-card:: Env 解耦执行
       :link: ../env_decoupled_mode
       :link-type: doc
 
-      仿真步进较慢时，将环境 Worker 与策略 Rollout / 训练解耦运行。
+      仿真步进较慢时，将 Env Worker 与策略 Rollout / 训练解耦运行。
 
    .. grid-item-card:: 观测数据压缩
       :link: ../obs_compression
@@ -53,7 +53,7 @@
 
    Profiling 性能剖析 <../profile>
    训练 Pipeline 模式 <../training_pipeline>
-   环境解耦执行 <../env_decoupled_mode>
+   Env 解耦执行 <../env_decoupled_mode>
    观测数据压缩 <../obs_compression>
    异步 Agent RL <../async_agentic>
    实时控制（RTC） <../rtc>

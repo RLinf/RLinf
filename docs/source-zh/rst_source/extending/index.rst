@@ -34,9 +34,9 @@
    * - 手动编写 Megatron LLM 适配与权重切分
      - 手动 Megatron Actor 适配
      - :doc:`LLM 模型（手动 Megatron） <new_model_megatron>`
-   * - 接入新的物理仿真环境
+   * - 接入新的物理仿真 Env
      - ``SupportedEnvType`` 与 ``get_env_cls()``
-     - :doc:`新增仿真环境 <new_env>`
+     - :doc:`新增仿真 Env <new_env>`
    * - 接入新的传感器、机械臂或真机硬件
      - 单部件本地验证 → 组合整机 → 远程 Placement
      - :doc:`接入新真机硬件 <new_robot>`
@@ -73,22 +73,28 @@
       :link: models/index
       :link-type: doc
 
-      集中覆盖全部 5 类模型接入：FSDP 具身模型、SFT 模型、SGLang 具身 Rollout 模型、Megatron-Bridge LLM 与手动 Megatron LLM。
+      集中覆盖全部模型接入与同步：FSDP 具身模型、SFT 模型、SGLang 具身 Rollout 模型、Megatron-Bridge / 手动 Megatron LLM 与权重同步。
 
-   .. grid-item-card:: 2. 新增环境与机器人
+   .. grid-item-card:: 2. 新增 Env 与真机
       :link: envs-robots/index
       :link-type: doc
 
       接入新物理仿真器、接入新真机硬件，或在已支持真机上定义新任务。
 
-   .. grid-item-card:: 3. 新增算法、Reward 与 Agent
+   .. grid-item-card:: 3. 新增算法
       :link: algorithms-agents/index
       :link-type: doc
 
-      注册自定义优势估计、策略损失、规则 / 学习型 Reward，以及多轮 Agent 循环与工具。
+      注册自定义优势估计、策略损失，以及规则 Reward 或学习型 Reward 模型。
 
-   .. grid-item-card:: 4. 新增硬件与系统后端
-      :link: backends/index
+   .. grid-item-card:: 4. 新增 Agent
+      :link: new_agent
       :link-type: doc
 
-      扩展新的 GPU / NPU 加速卡后端，或定制 Actor 到 Rollout 权重同步。
+      实现自定义多轮 Agent 循环、工具 Worker 与工具调用解析器。
+
+   .. grid-item-card:: 5. 新增硬件后端
+      :link: new_accelerator
+      :link-type: doc
+
+      为 RLinf 的硬件调度层与安装脚本适配新的 GPU / NPU 加速卡。

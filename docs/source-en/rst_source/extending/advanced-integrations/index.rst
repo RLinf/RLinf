@@ -12,10 +12,10 @@ These guides have been moved into goal-oriented extension categories:
       :link: ../models/index
       :link-type: doc
 
-      Manual Megatron model integration alongside Megatron-Bridge and embodied models.
+      Manual Megatron model integration and actor-to-rollout weight synchronization.
 
-   .. grid-item-card:: Add Hardware & System Backends
-      :link: ../backends/index
+   .. grid-item-card:: Add a Hardware Backend
+      :link: ../new_accelerator
       :link-type: doc
 
-      Actor-to-rollout weight synchronization and new accelerator backends.
+      Port RLinf to a new GPU or NPU accelerator backend.

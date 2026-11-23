@@ -25,6 +25,9 @@
    * - :doc:`LLM 模型（手动 Megatron） <../new_model_megatron>`
      - Megatron-Bridge 暂未覆盖的自定义架构
      - 手动 Megatron + SGLang 权重重切分
+   * - :doc:`自定义权重同步 <../weight_syncer>`
+     - 定制或优化 Actor 到 Rollout 的模型权重传输
+     - ``WeightSyncer``\ （FSDP + HF Rollout）
 
 .. toctree::
    :hidden:
@@ -34,3 +37,4 @@
    SGLang 具身 Rollout 模型 <../sglang_embodied_model>
    LLM 模型（Megatron-Bridge） <../mbridge>
    LLM 模型（手动 Megatron） <../new_model_megatron>
+   自定义权重同步 <../weight_syncer>

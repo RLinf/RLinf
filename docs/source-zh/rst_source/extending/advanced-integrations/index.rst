@@ -12,10 +12,10 @@
       :link: ../models/index
       :link-type: doc
 
-      手动 Megatron 模型接入与 Megatron-Bridge、具身模型统一归档。
+      手动 Megatron 模型接入与 Actor 到 Rollout 权重同步。
 
-   .. grid-item-card:: 新增硬件与系统后端
-      :link: ../backends/index
+   .. grid-item-card:: 新增硬件后端
+      :link: ../new_accelerator
       :link-type: doc
 
-      Actor 到 Rollout 权重同步与新加速卡后端接入。
+      接入新的 GPU / NPU 加速卡后端。

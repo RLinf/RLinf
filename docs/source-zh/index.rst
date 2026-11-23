@@ -59,7 +59,7 @@
 
       在 Franka、SO-101、ARX X5、R2 等真机上运行硬件测试、遥操作与数据采集、SFT 与在线 RL。
 
-   .. grid-item-card:: Agent / 推理 RL
+   .. grid-item-card:: Agent 与 LLM
       :link: rst_source/examples/agentic/index
       :link-type: doc
 
@@ -143,7 +143,7 @@
   LeKiwi <rst_source/examples/embodied/lekiwi>
 
 .. toctree::
-  :caption: Agent 与生成
+  :caption: Agent 与 LLM
   :maxdepth: 2
   :includehidden:
   :titlesonly:
@@ -181,9 +181,10 @@
 
   总览 <rst_source/extending/index>
   新增模型 <rst_source/extending/models/index>
-  新增环境与机器人 <rst_source/extending/envs-robots/index>
-  新增算法、Reward 与 Agent <rst_source/extending/algorithms-agents/index>
-  新增硬件与系统后端 <rst_source/extending/backends/index>
+  新增 Env 与真机 <rst_source/extending/envs-robots/index>
+  新增算法 <rst_source/extending/algorithms-agents/index>
+  新增 Agent <rst_source/extending/new_agent>
+  新增硬件后端 <rst_source/extending/new_accelerator>
 
 .. toctree::
   :caption: 原理与参考

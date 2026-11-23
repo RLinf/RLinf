@@ -59,7 +59,7 @@ Start with the entry point closest to your goal:
      - :doc:`Real-World Robots <../examples/real_world_index>`
    * - Agentic, reasoning, or diffusion RL
      - 1 GPU to multi-node
-     - :doc:`Agentic & Generative <../examples/agentic/index>`
+     - :doc:`Agent & LLM <../examples/agentic/index>`
 
 What's Next
 -----------

@@ -1,4 +1,4 @@
-智能体与生成
+Agent 与 LLM
 ============
 
 基于 RLinf 的分布式 worker 运行时、Megatron/FSDP 训练后端与 SGLang/vLLM 推理引擎，训练数学推理 LLM、多轮工具调用智能体、多智能体系统以及图像/视频扩散模型。

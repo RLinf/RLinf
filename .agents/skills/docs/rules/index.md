@@ -4,16 +4,16 @@ An index page routes readers to other pages; it does not explain anything itself
 
 ## Where a page goes
 
-The docs have eight top-level chapters in the sidebar, in this order: **Get Started · Embodied AI · Real-World Robots · Agentic & Generative · Guides · Extending · Concepts & Reference · Resources**. Every page belongs to exactly one, chosen by the reader's starting question rather than by the team that owns the feature.
+The docs have eight top-level chapters in the sidebar, in this order: **Get Started · Embodied AI · Real-World Robots · Agent & LLM · Guides · Extending · Concepts & Reference · Resources**. Every page belongs to exactly one, chosen by the reader's starting question rather than by the team that owns the feature.
 
 | Chapter | Owns |
 |---|---|
 | Get Started | overview, installation & requirements, quickstart, walkthrough, cheat sheet, FAQ |
 | Embodied AI | overview, simulators, embodied models, SFT & imitation, RL recipes, world models, embodied evaluation (quick tour, benchmark guides, eval reference) |
 | Real-World Robots | overview, shared real-world workflows (multi-node robot launch, teleoperation, data collection), and per-robot bring-up / SFT / RL pages |
-| Agentic & Generative | math reasoning, Search-R1, WideSeek-R1, rStar2, AgentLightning, Coding RL, VLM, image & video generation |
+| Agent & LLM | math reasoning, Search-R1, WideSeek-R1, rStar2, AgentLightning, Coding RL, VLM, image & video generation |
 | Guides | workflow-ordered operational how-tos: Configure & Run, Scale to a Cluster, Profile & Speed Up, Rollout Backends |
-| Extending | goal-grouped contributor how-tos: Add a Model (all 5 model paths), Add an Environment or Robot, Add Algorithms, Rewards & Agents, Add Hardware & System Backends |
+| Extending | goal-grouped contributor how-tos: Add a Model (all model paths & weight sync), Add an Env or Robot, Add an Algorithm, Add an Agent, Add a Hardware Backend |
 | Concepts & Reference | concepts (overview, execution, scheduling, robotics), algorithm specs, config & metrics, Python API |
 | Resources | why RLinf, release notes, blog, publications, contributor policy |
 
@@ -26,7 +26,7 @@ The docs have eight top-level chapters in the sidebar, in this order: **Get Star
   - **Embodied AI → Evaluation**: `Quick Tour · Benchmarks · Eval Reference` (`start/installation.rst` is the single installation hub).
   - **Real-World Robots → Workflows**: `Multi-Node Robot Launch · Teleoperation · Data Collection`.
   - **Guides**: `Overview · Configure & Run · Scale to a Cluster · Profile & Speed Up · Rollout Backends`.
-  - **Extending**: `Overview · Add a Model · Add an Environment or Robot · Add Algorithms, Rewards & Agents · Add Hardware & System Backends`.
+  - **Extending**: `Overview · Add a Model · Add an Env or Robot · Add an Algorithm · Add an Agent · Add a Hardware Backend`.
   - **Concepts & Reference**: `Concepts` (`Overview · Execution · Scheduling · Robotics`), `Algorithms`, `Config & Metrics` (owns `Training Configuration`, `Training Metrics`, and the 3 full schema reference pages: `basic_config`, `embodiment_config`, `agentic_config`), and `Python API`.
 
 ## Landing and index pages

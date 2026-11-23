@@ -1,12 +1,12 @@
-Add an Environment or Robot
-===========================
+Add an Env or Robot
+===================
 
 Start at the smallest layer that fits: if RLinf already supports your physical robot, add a real-world task without writing robotics drivers; for a new simulator or new hardware, follow the corresponding integration guide below.
 
 .. grid:: 1 3 3 3
    :gutter: 2
 
-   .. grid-item-card:: Simulator Environment
+   .. grid-item-card:: Simulator Env
       :link: ../new_env
       :link-type: doc
 
@@ -27,6 +27,6 @@ Start at the smallest layer that fits: if RLinf already supports your physical r
 .. toctree::
    :hidden:
 
-   Simulator Environment <../new_env>
+   Simulator Env <../new_env>
    Real-World Robot Hardware <../new_robot>
    Real-World Task <../new_task>

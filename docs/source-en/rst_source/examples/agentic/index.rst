@@ -1,5 +1,5 @@
-Agentic & Generative
-====================
+Agent & LLM
+===========
 
 Train reasoning LLMs, multi-turn tool-using agents, multi-agent systems, and diffusion models with RLinf's distributed worker runtime, Megatron/FSDP training backends, and SGLang/vLLM rollout engines.
 

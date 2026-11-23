@@ -59,7 +59,7 @@ Choose Your Path
 
       Run hardware checks, teleoperation, data collection, SFT, and online RL on Franka, SO-101, ARX X5, R2, and more.
 
-   .. grid-item-card:: Agentic / Reasoning RL
+   .. grid-item-card:: Agent & LLM
       :link: rst_source/examples/agentic/index
       :link-type: doc
 
@@ -143,7 +143,7 @@ Why RLinf
   LeKiwi <rst_source/examples/embodied/lekiwi>
 
 .. toctree::
-  :caption: Agentic & Generative
+  :caption: Agent & LLM
   :maxdepth: 2
   :includehidden:
   :titlesonly:
@@ -181,9 +181,10 @@ Why RLinf
 
   Overview <rst_source/extending/index>
   Add a Model <rst_source/extending/models/index>
-  Add an Environment or Robot <rst_source/extending/envs-robots/index>
-  Add Algorithms, Rewards & Agents <rst_source/extending/algorithms-agents/index>
-  Add Hardware & System Backends <rst_source/extending/backends/index>
+  Add an Env or Robot <rst_source/extending/envs-robots/index>
+  Add an Algorithm <rst_source/extending/algorithms-agents/index>
+  Add an Agent <rst_source/extending/new_agent>
+  Add a Hardware Backend <rst_source/extending/new_accelerator>
 
 .. toctree::
   :caption: Concepts & Reference

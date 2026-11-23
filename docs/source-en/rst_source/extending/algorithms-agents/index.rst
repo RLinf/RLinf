@@ -1,9 +1,9 @@
-Add Algorithms, Rewards & Agents
-================================
+Add an Algorithm
+================
 
-Pick these guides to customize RL training objectives, rule-based or learned rewards, and multi-turn agent loops with tool calling.
+Pick these guides to register custom RL training objectives (advantage estimators and policy losses) or rule-based and learned reward models.
 
-.. grid:: 1 3 3 3
+.. grid:: 1 2 2 2
    :gutter: 2
 
    .. grid-item-card:: Advantage, Loss & Rule Reward
@@ -18,15 +18,8 @@ Pick these guides to customize RL training objectives, rule-based or learned rew
 
       Extend ``BaseRewardModel`` or train built-in ResNet / VLM reward models for embodied RL.
 
-   .. grid-item-card:: Agent Loop & Tool Calling
-      :link: ../new_agent
-      :link-type: doc
-
-      Implement custom multi-turn agent loops, tool workers, and tool-call parsers.
-
 .. toctree::
    :hidden:
 
    Advantage, Loss & Rule Reward <../new_algorithm>
    Learned Reward Model <../reward_model>
-   Agent Loop & Tool Calling <../new_agent>

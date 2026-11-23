@@ -59,7 +59,7 @@
      - :doc:`真实机器人强化学习 <../examples/real_world_index>`
    * - 智能体、推理与扩散模型 RL
      - 单卡至多节点
-     - :doc:`智能体与生成 <../examples/agentic/index>`
+     - :doc:`Agent 与 LLM <../examples/agentic/index>`
 
 接下来
 ------

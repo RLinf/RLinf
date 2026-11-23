@@ -25,6 +25,9 @@ Pick the guide that matches your model family and training or rollout backend.
    * - :doc:`LLM via Manual Megatron <../new_model_megatron>`
      - Custom architectures unsupported by Megatron-Bridge
      - Manual Megatron + SGLang Resharding
+   * - :doc:`Weight Synchronization <../weight_syncer>`
+     - Optimize or customize actor-to-rollout model weight transfer
+     - ``WeightSyncer`` (FSDP + HF Rollout)
 
 .. toctree::
    :hidden:
@@ -34,3 +37,4 @@ Pick the guide that matches your model family and training or rollout backend.
    Embodied Rollout (SGLang) <../sglang_embodied_model>
    LLM via Megatron-Bridge <../mbridge>
    LLM via Manual Megatron <../new_model_megatron>
+   Weight Synchronization <../weight_syncer>
