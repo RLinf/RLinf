@@ -14,6 +14,9 @@
 
 """Heterogeneous env modes, and the observations env workers send the policy."""
 
+import sys
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import torch
@@ -54,25 +57,39 @@ def _hetero_mode(**envs: dict):
     return OmegaConf.create({"envs": envs})
 
 
-def test_rmbench_policy_samples_control_ticks_and_resets_history():
-    class PolicyConnection:
-        def __init__(self):
-            self.requests = []
-
-        def send(self, request):
-            self.requests.append(request)
-
-        def recv(self):
-            return np.zeros((3, 14), dtype=np.float32)
-
+@pytest.mark.parametrize(
+    "use_history, record_video, success",
+    [(False, False, False), (True, False, False), (False, True, True)],
+)
+def test_rmbench_screens_seeds_and_steps_episode(
+    monkeypatch, use_history, record_video, success
+):
     class Task:
-        take_action_cnt = 0
         step_lim = 5
         eval_success = False
+        max_reward = 0.0
         observation_calls = 0
 
-        def get_instruction(self):
-            return "Pick up the block."
+        def __init__(self):
+            self.setup_seeds = []
+
+        def setup_demo(self, *, seed, **kwargs):
+            self.setup_seeds.append(seed)
+            self.take_action_cnt = 0
+            self.eval_success = False
+            self.plan_success = seed != 100000
+
+        def play_once(self):
+            return {"info": {"seed": self.setup_seeds[-1]}}
+
+        def check_success(self):
+            return self.plan_success
+
+        def close_env(self, clear_cache=False):
+            pass
+
+        def set_instruction(self, instruction):
+            self.instruction = instruction
 
         def get_obs(self):
             self.observation_calls += 1
@@ -91,51 +108,79 @@ def test_rmbench_policy_samples_control_ticks_and_resets_history():
 
         def take_action(self, action, action_type):
             assert action_type == "qpos"
-            np.testing.assert_array_equal(action, np.zeros(14))
             self.take_action_cnt += 1
+            self.eval_success = success and self.take_action_cnt == 5
 
-    connection = PolicyConnection()
-    memory = rmbench.PolicyClient(
-        connection, {"num_frames": 3, "stride": 2, "fps": 2.0}
-    )
     task = Task()
-    with torch.random.fork_rng(devices=[]):
-        torch.random.default_generator.manual_seed(100000)
-        rmbench.reset_model(memory)
-        rmbench.eval(task, memory, task.get_obs())
-        rmbench.eval(task, memory, task.get_obs())
-        torch.random.default_generator.manual_seed(100001)
-        rmbench.reset_model(memory)
-        second_task = Task()
-        rmbench.eval(second_task, memory, second_task.get_obs())
-
-    assert task.take_action_cnt == task.step_lim
-    seed, query = connection.requests[1]
-    assert seed == 100000
-    assert query["task_descriptions"] == ["Pick up the block."]
-    np.testing.assert_array_equal(query["states"], np.full((1, 14), 3))
-    history = query["history"]
-    np.testing.assert_array_equal(history["main_images"][0, :, 0, 0, 0], [0, 2, 4])
-    np.testing.assert_array_equal(
-        history["wrist_images"][0, :, :, 0, 0, 0], [[0, 0], [22, 42], [24, 44]]
+    monkeypatch.setitem(
+        sys.modules,
+        "scripts.eval_policy_xpolicylab",
+        SimpleNamespace(
+            UnStableError=RuntimeError,
+            class_decorator=lambda name: task,
+            load_task_args=lambda args: (
+                {"data_type": {}, "clear_cache_freq": 5},
+                None,
+            ),
+            generate_episode_descriptions=lambda name, info, episodes: [
+                {"seen": [f"seed {info[0]['seed']}"]}
+            ],
+        ),
     )
-    np.testing.assert_array_equal(history["frame_mask"], [[False, True, True]])
-    np.testing.assert_array_equal(history["time_offsets"], [[-2.0, -1.0, 0.0]])
-    new_seed, first_query_after_reset = connection.requests[2]
-    assert new_seed == 100001
-    np.testing.assert_array_equal(
-        first_query_after_reset["history"]["frame_mask"], [[False, False, True]]
-    )
+    with monkeypatch.context() as patch:
+        patch.setattr(rmbench.random, "seed", lambda seed: None)
+        simulator = rmbench.RMBenchSimulator(
+            {
+                "task_name": "observe_and_pickup",
+                "instruction_type": "seen",
+                "seed": 0,
+                "episodes": 2,
+                "max_episode_steps": 5,
+                "record_video": record_video,
+                "short_memory": {"num_frames": 3, "stride": 2, "fps": 2}
+                if use_history
+                else None,
+            }
+        )
+    assert simulator.reset()["task_descriptions"] == ["seed 100001"]
+    assert task.setup_seeds == [100000, 100001, 100001]
 
-    client = rmbench.PolicyClient(connection)
-    task = Task()
-    rmbench.eval(task, client, task.get_obs())
-    _, query = connection.requests[-1]
-    assert task.take_action_cnt == 3
-    assert task.observation_calls == 1
-    assert "history" not in query
-    np.testing.assert_array_equal(query["main_images"], np.full((1, 2, 2, 3), 1))
-    np.testing.assert_array_equal(query["wrist_images"][0, :, 0, 0, 0], [21, 41])
+    observations, _, terminated, truncated, info = simulator.chunk_step(
+        np.zeros((3, 14))
+    )
+    obs = observations[-1]
+    assert not (terminated.any() or truncated.any() or info)
+    np.testing.assert_array_equal(obs["states"], np.full((1, 14), 3))
+    np.testing.assert_array_equal(obs["wrist_images"][0, :, 0, 0, 0], [24, 44])
+    if record_video:
+        assert [frame["main_images"].item(0) for frame in observations] == [2, 3, 4]
+    else:
+        assert len(observations) == 1
+    if use_history:
+        history = obs["history"]
+        np.testing.assert_array_equal(history["main_images"][0, :, 0, 0, 0], [0, 2, 4])
+        np.testing.assert_array_equal(history["frame_mask"], [[False, True, True]])
+        np.testing.assert_allclose(history["time_offsets"][0, 1:], [-1.0, 0.0])
+    else:
+        assert "history" not in obs
+    assert task.observation_calls == (4 if use_history or record_video else 2)
+
+    observations, _, terminated, truncated, info = simulator.chunk_step(
+        np.zeros((3, 14))
+    )
+    assert len(observations) == (2 if record_video else 1)
+    np.testing.assert_array_equal(terminated, [[False, success, False]])
+    np.testing.assert_array_equal(truncated, [[False, not success, False]])
+    assert info["episode"]["episode_len"].item() == 5
+    assert info["episode"]["success_once"].item() == success
+    assert task.take_action_cnt == 5
+    obs = simulator.reset()
+    assert obs["task_descriptions"] == ["seed 100002"]
+    if use_history:
+        np.testing.assert_array_equal(
+            obs["history"]["frame_mask"], [[False, False, True]]
+        )
+    simulator.close()
 
 
 def test_homogeneous_mode_is_hosted_unchanged_by_every_worker():

@@ -27,6 +27,7 @@ class SupportedEnvType(Enum):
     MANISKILL_RLT = "maniskill_rlt"
     LIBERO = "libero"
     ROBOTWIN = "robotwin"
+    RMBENCH = "rmbench"
     ROBODOJO = "robodojo"
     ISAACLAB = "isaaclab"
     METAWORLD = "metaworld"
@@ -202,6 +203,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.sim.polaris.polaris_env import PolarisEnv
 
         return PolarisEnv
+    elif env_type == SupportedEnvType.RMBENCH:
+        from rlinf.envs.sim.rmbench.rmbench_env import RMBenchEnv
+
+        return RMBenchEnv
     elif env_type == SupportedEnvType.ROBOLAB:
         from rlinf.envs.sim.robolab.robolab_env import RoboLabEnv
 

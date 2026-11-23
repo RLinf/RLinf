@@ -162,10 +162,6 @@ if [ "${BENCHMARK}" = "robocasa365" ]; then
     export NUMBA_DISABLE_JIT="${NUMBA_DISABLE_JIT:-1}"
 fi
 
-if [ "${BENCHMARK}" = "rmbench" ]; then
-    SRC_FILE="${EVALUATIONS_PATH}/rmbench/evaluate.py"
-fi
-
 if [ "${BENCHMARK}" = "libero" ]; then
     export ROBOT_PLATFORM="${ROBOT_PLATFORM:-LIBERO}"
     export LIBERO_TYPE="${LIBERO_TYPE:-standard}"

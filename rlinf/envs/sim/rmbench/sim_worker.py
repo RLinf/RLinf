@@ -18,160 +18,194 @@ import random
 import sys
 from collections import deque
 from multiprocessing.connection import Connection
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from rlinf.utils.logging import get_logger
 
-class PolicyClient:
-    """Send RMBench camera observations to the RLinf policy."""
 
-    def __init__(
-        self,
-        connection: Connection,
-        short_memory: dict[str, Any] | None = None,
-    ) -> None:
-        self.connection = connection
-        self.seed = 0
-        self.stride = 1
-        self.time_offsets = None
-        capacity = 1
-        if short_memory is not None:
-            gaps = short_memory["num_frames"] - 1
-            self.stride = short_memory["stride"]
-            self.time_offsets = np.arange(-gaps, 1, dtype=np.float32) * (
-                self.stride / short_memory["fps"]
-            )
-            capacity += gaps * self.stride
-        self.frames = deque(maxlen=capacity)
+class RMBenchSimulator:
+    """Own an RMBench task in the simulator's Python environment."""
 
-    def reset(self, seed: int) -> None:
-        """Start a new episode with the benchmark's accepted seed."""
-        self.frames.clear()
-        self.seed = seed
-
-    def observe(self, observation: dict[str, Any]) -> None:
-        """Save the head and both wrist images at one control tick."""
-        cameras = observation["observation"]
-        self.frames.append(
-            (
-                cameras["head_camera"]["rgb"],
-                cameras["left_camera"]["rgb"],
-                cameras["right_camera"]["rgb"],
-            )
+    def __init__(self, cfg: dict[str, Any]) -> None:
+        from scripts.eval_policy_xpolicylab import (
+            UnStableError,
+            class_decorator,
+            generate_episode_descriptions,
+            load_task_args,
         )
 
-    def predict(self, state: np.ndarray, instruction: str) -> np.ndarray:
-        """Query with the current state, instruction and camera observations."""
-        main, left, right = self.frames[-1]
+        self.task_name = cfg["task_name"]
+        self.instruction_type = cfg["instruction_type"]
+        self.episodes = cfg["episodes"]
+        self.max_episode_steps = cfg["max_episode_steps"]
+        self.record_video = cfg["record_video"]
+        self.seed = 100_000 * (1 + cfg["seed"])
+        self.episode = 0
+        self.active = False
+        self._unstable_error = UnStableError
+        self._generate_descriptions = generate_episode_descriptions
+        random.seed(self.seed)
+        self.args, _ = load_task_args(
+            {"task_name": self.task_name, "policy_name": "RLinf"}
+        )
+        self.args.update(eval_mode=True, render_freq=0)
+        self.args["data_type"].update(endpose=False, third_view=False)
+        self.task = class_decorator(self.task_name)
+        self.history = None
+        if (short_memory := cfg["short_memory"]) is not None:
+            gaps = short_memory["num_frames"] - 1
+            self.stride = short_memory["stride"]
+            self.offsets = np.arange(-gaps, 1, dtype=np.float32) * (
+                self.stride / short_memory["fps"]
+            )
+            self.history = deque(maxlen=gaps * self.stride + 1)
+
+    def reset(self) -> dict[str, Any]:
+        """Screen seeds with the expert and recreate the accepted scene."""
+        self.close()
+        while True:
+            seed = self.seed
+            self.seed += 1
+            try:
+                self.task.setup_demo(
+                    now_ep_num=self.episode, seed=seed, is_test=True, **self.args
+                )
+                expert_info = self.task.play_once()
+            except self._unstable_error:
+                continue
+            finally:
+                self.task.close_env()
+            if self.task.plan_success and self.task.check_success():
+                break
+
+        self.active = True
+        self.task.setup_demo(
+            now_ep_num=self.episode, seed=seed, is_test=True, **self.args
+        )
+        descriptions = self._generate_descriptions(
+            self.task_name, [expert_info["info"]], self.episodes
+        )
+        self.instruction = str(np.random.choice(descriptions[0][self.instruction_type]))
+        self.task.set_instruction(instruction=self.instruction)
+        self.episode += 1
+        get_logger().info("RMBench episode %d, seed %d", self.episode, seed)
+        if self.history is not None:
+            self.history.clear()
+        self.observation = self._observe()
+        return self.observation
+
+    def chunk_step(
+        self, actions: np.ndarray
+    ) -> tuple[
+        list[dict[str, Any]], np.ndarray, np.ndarray, np.ndarray, dict[str, Any]
+    ]:
+        """Execute native joint targets through the episode boundary."""
+        shape = (1, len(actions))
+        rewards = np.zeros(shape, dtype=np.float32)
+        terminations = np.zeros(shape, dtype=np.bool_)
+        truncations = np.zeros(shape, dtype=np.bool_)
+        if not self.active:
+            return [self.observation], rewards, terminations, truncations, {}
+
+        limit = min(self.task.step_lim, self.max_episode_steps)
+        infos = {}
+        observations = []
+        for i, action in enumerate(actions):
+            previous_reward = self.task.max_reward
+            self.task.take_action(action, action_type="qpos")
+            rewards[0, i] = self.task.max_reward - previous_reward
+            success = self.task.eval_success
+            at_limit = self.task.take_action_cnt >= limit
+            if success or at_limit:
+                terminations[0, i] = success
+                truncations[0, i] = not success and at_limit
+                infos["episode"] = {
+                    "success_once": np.array([success], dtype=np.bool_),
+                    "max_reward": np.array([self.task.max_reward], dtype=np.float32),
+                    "episode_len": np.array(
+                        [self.task.take_action_cnt], dtype=np.int64
+                    ),
+                }
+                break
+            if (self.history is not None or self.record_video) and i + 1 < len(actions):
+                main, _, _, _ = self._capture()
+                if self.record_video:
+                    observations.append({"main_images": main[None]})
+
+        self.observation = self._observe()
+        if infos:
+            self.close()
+        observations.append(self.observation)
+        return observations, rewards, terminations, truncations, infos
+
+    def _capture(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        raw = self.task.get_obs()
+        cameras = raw["observation"]
+        main = cameras["head_camera"]["rgb"]
+        left = cameras["left_camera"]["rgb"]
+        right = cameras["right_camera"]["rgb"]
+        if self.history is not None:
+            self.history.append((main, left, right))
+        return main, left, right, raw["joint_action"]["vector"]
+
+    def _observe(self) -> dict[str, Any]:
+        main, left, right, state = self._capture()
         observation = {
+            "main_images": main[None],
+            "wrist_images": np.stack((left, right))[None],
             "states": np.asarray(state, dtype=np.float32)[None],
-            "task_descriptions": [instruction],
+            "task_descriptions": [self.instruction],
         }
-        if self.time_offsets is None:
-            observation["main_images"] = main[None]
-            observation["wrist_images"] = np.stack((left, right))[None]
-        else:
-            observation["history"] = self._history(main, left)
-        self.connection.send((self.seed, observation))
-        return self.connection.recv()
+        if self.history is not None:
+            n = len(self.offsets)
+            frames = list(self.history)[:: -self.stride][::-1]
+            missing = n - len(frames)
+            main_history = np.zeros((1, n, *main.shape), dtype=main.dtype)
+            wrist_history = np.zeros((1, n, 2, *left.shape), dtype=left.dtype)
+            for i, (head, left_wrist, right_wrist) in enumerate(frames, start=missing):
+                main_history[0, i] = head
+                wrist_history[0, i, 0] = left_wrist
+                wrist_history[0, i, 1] = right_wrist
+            observation["history"] = {
+                "main_images": main_history,
+                "wrist_images": wrist_history,
+                "frame_mask": (np.arange(n) >= missing)[None],
+                "time_offsets": self.offsets[None],
+            }
+        return observation
 
-    def _history(self, main: np.ndarray, wrist: np.ndarray) -> dict[str, np.ndarray]:
-        frames = list(self.frames)[:: -self.stride][::-1]
-        num_frames = len(self.time_offsets)
-        missing = num_frames - len(frames)
-        history_main = np.zeros((1, num_frames, *main.shape), dtype=main.dtype)
-        history_wrists = np.zeros((1, num_frames, 2, *wrist.shape), dtype=wrist.dtype)
-        for index, (main_frame, left, right) in enumerate(frames, start=missing):
-            history_main[0, index] = main_frame
-            history_wrists[0, index, 0] = left
-            history_wrists[0, index, 1] = right
-        return {
-            "main_images": history_main,
-            "wrist_images": history_wrists,
-            "frame_mask": (np.arange(num_frames) >= missing)[None],
-            "time_offsets": self.time_offsets[None],
-        }
-
-
-def reset_model(model: PolicyClient) -> None:
-    """Start an episode with an empty history."""
-    import torch
-
-    # RMBench calls torch.manual_seed() during setup with its accepted seed.
-    model.reset(torch.initial_seed())
-
-
-def eval(task_env: Any, model: PolicyClient, observation: dict[str, Any]) -> None:
-    """Execute one policy chunk and capture the observations between actions."""
-    model.observe(observation)
-    actions = model.predict(
-        observation["joint_action"]["vector"], task_env.get_instruction()
-    )
-    for index, action in enumerate(actions):
-        task_env.take_action(action, action_type="qpos")
-        if task_env.eval_success or task_env.take_action_cnt >= task_env.step_lim:
-            break
-        # The benchmark reads the last observation of a chunk before the next query.
-        if model.time_offsets is not None and index + 1 < len(actions):
-            model.observe(task_env.get_obs())
+    def close(self) -> None:
+        """Release the current scene."""
+        if self.active:
+            self.active = False
+            self.task.close_env(
+                clear_cache=(self.episode + 1) % self.args["clear_cache_freq"] == 0
+            )
 
 
 def run(connection: Connection, cfg: dict[str, Any]) -> None:
-    """Evaluate one task using RMBench's expert screening and scoring."""
-    from scripts.eval_policy import eval_policy
-    from scripts.eval_policy_xpolicylab import class_decorator, load_task_args
-
-    from rlinf.utils.logging import get_logger
-
-    task_name = cfg["task_name"]
-    episodes = cfg["episodes"]
-    start_seed = 100_000 * (1 + cfg["seed"])
-    if episodes < 1:
-        raise ValueError(f"Expected at least one episode, got {episodes}.")
-    random.seed(start_seed)
-    log_dir = Path(cfg["log_dir"])
-    log_dir.mkdir(parents=True, exist_ok=True)
-    args, _ = load_task_args(
-        {"task_name": task_name, "policy_name": "rlinf.envs.sim.rmbench.sim_worker"}
-    )
-    args["ckpt_setting"] = "RLinf"
-    args["data_type"]["endpose"] = False
-    args["data_type"]["third_view"] = cfg["save_video"]
-    video_size = None
-    if cfg["save_video"]:
-        video_dir = log_dir / "videos"
-        video_dir.mkdir(exist_ok=True)
-        args["eval_video_save_dir"] = video_dir
-        video_size = "320x240"
-
-    _, successes, total_reward = eval_policy(
-        task_name,
-        class_decorator(task_name),
-        args,
-        PolicyClient(connection, cfg["short_memory"]),
-        start_seed,
-        test_num=episodes,
-        video_size=video_size,
-        instruction_type=cfg["instruction_type"],
-    )
-
-    get_logger().info(
-        "RMBench %s (%s instructions, start seed %d): "
-        "%d/%d successes (%.1f%%), mean_max_reward=%.6g",
-        task_name,
-        cfg["instruction_type"],
-        start_seed,
-        successes,
-        episodes,
-        100 * successes / episodes,
-        total_reward / episodes,
-    )
+    """Serve the owning RMBench environment adapter."""
+    simulator = RMBenchSimulator(cfg)
+    try:
+        while True:
+            try:
+                command, payload = connection.recv()
+            except EOFError:
+                break
+            if command == "reset":
+                connection.send(simulator.reset())
+            elif command == "chunk_step":
+                connection.send(simulator.chunk_step(payload))
+            else:
+                raise ValueError(f"Unknown RMBench simulator command {command!r}.")
+    finally:
+        simulator.close()
 
 
 def main() -> None:
-    """Run the benchmark in its simulator Python environment."""
+    """Run the simulator command loop in the benchmark's Python environment."""
     with Connection(int(sys.argv[1])) as connection:
         run(connection, json.loads(sys.argv[2]))
 

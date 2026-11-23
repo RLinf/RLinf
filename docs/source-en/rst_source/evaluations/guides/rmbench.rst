@@ -33,9 +33,9 @@ In ``evaluations/rmbench/rmbench_openpi_pi05_eval.yaml``, set these paths.
 
    * - Setting
      - Value
-   * - ``rmbench_path``
+   * - ``env.eval.init_params.rmbench_path``
      - The RMBench checkout with the downloaded assets.
-   * - ``sim_python``
+   * - ``env.eval.init_params.sim_python``
      - ``.rmbench-venv/bin/python``.
    * - ``rollout.model.model_path``
      - The SFT checkpoint directory ``global_step_<N>``.
@@ -44,25 +44,30 @@ In ``evaluations/rmbench/rmbench_openpi_pi05_eval.yaml``, set these paths.
 
 The configuration uses the ``seen`` instruction split for ``observe_and_pickup``.
 RMBench screens the seeds with its expert and runs the policy on 100 accepted
-episodes. Set ``episodes: 1`` to check your setup, then restore 100 for evaluation.
+episodes. Set ``env.eval.rollout_epoch: 1`` to check your setup.
+The OpenPI policy uses ``rollout.model.openpi.eval_seed`` for action sampling.
 Start evaluation from the RLinf root.
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh rmbench rmbench_openpi_pi05_eval
 
-During rollout the policy receives the same eight-frame history used in
-training. The simulator records each control step, including those within a
-32-action chunk, and samples every 53 steps. The model encodes the offsets
-using the demonstrations' nominal 15 Hz rate.
+With Short Memory enabled, the simulator records observations at every control
+step, including steps within an action chunk. The policy receives eight frames,
+spaced 53 steps apart, with time offsets based on the demonstrations' nominal
+15 Hz rate.
 
-To evaluate with current camera frames only, set
-``rollout.model.openpi.short_memory: false`` and use a matching checkpoint.
+To switch tasks, set ``env.eval.init_params.task_name``. Use the task's limit
+from ``env_cfg/task_config/_eval_step_limit.yml`` in the RMBench checkout for
+``env.eval.max_episode_steps``. Round that limit up to a multiple of 32 for
+``env.eval.max_steps_per_rollout_epoch`` so the rollout covers the final chunk.
+
+To use a current-frame checkpoint, set ``rollout.model.openpi.short_memory: false``
+and ``env.eval.short_memory: null``.
 
 Results
 -------
 
-RMBench prints ``Success rate`` in the terminal. The launcher saves the same
-output to ``logs/<run>/eval_embodiment.log``. For the one-episode check, look for
-a completed episode and its result. Set ``save_video: true`` to save videos in
-the run directory. Video recording requires ``ffmpeg`` on the executable search path.
+Find the success rate (``eval/success_once``) in
+``logs/<run>/eval_embodiment.log`` or TensorBoard.
+Set ``env.eval.video_cfg.save_video: true`` to record videos in the run directory.
