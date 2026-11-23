@@ -28,6 +28,7 @@ from omegaconf.dictconfig import DictConfig
 # Register built-in physical robots before parsing cluster hardware configs.
 import rlinf.robotics.robots  # noqa: F401
 from rlinf.envs import SupportedEnvType
+from rlinf.envs.layout import EnvLayout, EnvSpec
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
 from rlinf.utils.placement import (
@@ -170,6 +171,11 @@ EMBODIED_MODEL = set(
         SupportedModel.EVO1,
     }
 )
+
+# The models whose predict_action_batch reads each of EnvSpec.POLICY_FIELDS.
+POLICY_FIELD_MODELS: dict[str, frozenset] = {
+    "unnorm_key": frozenset({SupportedModel.OPENVLA_OFT}),
+}
 
 
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
@@ -1025,10 +1031,10 @@ def _validate_psi0_eval_cfg(cfg, model_cfg, only_eval: bool) -> None:
         "Psi0 SIMPLE Eval requires psi0.rtc.enabled=true."
     )
 
-    eval_cfg = cfg.env.get("eval", None)
-    assert eval_cfg is not None and eval_cfg.env_type == "simple", (
-        "Psi0 Eval requires env.eval.env_type='simple'."
-    )
+    eval_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("eval", None), "env.eval")
+    assert eval_env_cfgs and all(
+        env_cfg.get("env_type") == "simple" for env_cfg in eval_env_cfgs.values()
+    ), "Psi0 Eval requires env_type='simple' on every eval env."
 
 
 def _validate_psi0_train_cfg(cfg, model_cfg, only_eval: bool) -> None:
@@ -1078,9 +1084,10 @@ def _validate_psi0_train_cfg(cfg, model_cfg, only_eval: bool) -> None:
     assert psi0_cfg.get("rtc", {}).get("enabled", False), (
         "Psi0 SIMPLE training requires psi0.rtc.enabled=true."
     )
-    assert cfg.env.train.env_type == "simple", (
-        "Psi0 training requires env.train.env_type='simple'."
-    )
+    train_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("train", None), "env.train")
+    assert train_env_cfgs and all(
+        env_cfg.get("env_type") == "simple" for env_cfg in train_env_cfgs.values()
+    ), "Psi0 training requires env_type='simple' on every train env."
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == (
         "actor_critic"
     ), "Psi0 supports PPO with GAE and actor_critic loss only."
@@ -1145,8 +1152,9 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
     """Require per-step observations when online LeRobot collection is enabled.
 
     The collector stores one observation/action pair per environment step.
-    RoboTwin, LIBERO, and Behavior share ``env.train.skip_intermediate_renders``;
-    online LeRobot requires it to be false. Eval does not write the dataset.
+    RoboTwin, LIBERO, and Behavior envs share the field
+    ``skip_intermediate_renders``; online LeRobot requires it to be false on
+    every train env. Eval does not write the dataset.
     """
     enabled = bool(
         OmegaConf.select(cfg, "algorithm.dagger.online_lerobot.enabled", default=False)
@@ -1157,8 +1165,7 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
         cfg.runner.get("only_eval", False)
         or cfg.runner.get("task_type") == "embodied_eval"
     )
-    train_env = cfg.env.get("train", None)
-    if only_eval or train_env is None:
+    if only_eval:
         return
 
     # RoboTwin skips intermediate renders unless the config turns them back on.
@@ -1168,20 +1175,237 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
         SupportedEnvType.LIBERO: False,
         SupportedEnvType.BEHAVIOR: False,
     }
-    env_type = SupportedEnvType(train_env.env_type)
-    if env_type not in skip_intermediate_renders_default:
-        return
-    skip_intermediate_renders = bool(
-        train_env.get(
-            "skip_intermediate_renders",
-            skip_intermediate_renders_default[env_type],
+    train_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("train", None), "env.train")
+    for path, train_env in train_env_cfgs.items():
+        env_type = SupportedEnvType(train_env.env_type)
+        if env_type not in skip_intermediate_renders_default:
+            continue
+        skip_intermediate_renders = bool(
+            train_env.get(
+                "skip_intermediate_renders",
+                skip_intermediate_renders_default[env_type],
+            )
         )
+        assert not skip_intermediate_renders, (
+            "algorithm.dagger.online_lerobot.enabled requires "
+            f"{path}.skip_intermediate_renders=False for env_type "
+            f"{env_type.value!r}. Skipped intermediate renders drop the "
+            "observation for each action."
+        )
+
+
+def resolve_env_mode_cfg(mode_cfg: DictConfig, path: str, env_world_size: int) -> None:
+    """Lay a mode's envs out on the env workers and fill in its loop fields.
+
+    A heterogeneous mode takes ``total_num_envs`` and the fields its envs share
+    from them (``EnvLayout.mode_fields``), so rollout, actor, and runner read
+    one value from the mode config as they do for a homogeneous mode.
+    """
+    layout = EnvLayout(mode_cfg, env_world_size, path)
+    if not EnvLayout.is_heterogeneous(mode_cfg):
+        return
+    with open_dict(mode_cfg):
+        for key, value in layout.mode_fields().items():
+            if mode_cfg.get(key) is None:
+                mode_cfg[key] = value
+    for env_path, env_cfg in EnvLayout.env_cfgs(mode_cfg, path).items():
+        assert not env_cfg.get("smooth_intervene", False), (
+            f"{env_path}.smooth_intervene requires a homogeneous {path}: "
+            "smoothed actions bypass the policy and cannot share a rollout "
+            "batch with the policy actions of other envs."
+        )
+
+
+def validate_env_policy_fields(cfg: DictConfig, model_cfg: DictConfig) -> None:
+    """Check that the policy reads every ``EnvSpec.POLICY_FIELDS`` an env config sets."""
+    model_type = SupportedModel(model_cfg.model_type)
+    for mode in ("train", "eval"):
+        for path, env_cfg in EnvLayout.env_cfgs(
+            OmegaConf.select(cfg, f"env.{mode}", default=None), f"env.{mode}"
+        ).items():
+            for field in EnvSpec.POLICY_FIELDS:
+                readers = POLICY_FIELD_MODELS[field]
+                assert env_cfg.get(field) is None or model_type in readers, (
+                    f"{path}.{field} is read by model_type "
+                    f"{sorted(model.value for model in readers)}, got "
+                    f"{model_type.value!r}."
+                )
+
+
+def validate_env_training_cfg(
+    cfg: DictConfig, layout: EnvLayout, *, stage_num: int, actor_world_size: int
+) -> None:
+    """Check the per-env training settings against the env layout.
+
+    Args:
+        cfg: The run configuration.
+        layout: Layout of ``env.train``.
+        stage_num: ``rollout.pipeline_stage_num``.
+        actor_world_size: Number of actor workers.
+    """
+    algorithm_cfg = cfg.algorithm
+    env_names = [spec.name for spec in layout.specs]
+    for name, overrides in (algorithm_cfg.get("envs", None) or {}).items():
+        assert name in env_names, (
+            f"algorithm.envs.{name} must name an env under env.train.envs "
+            f"{[n for n in env_names if n is not None]}, got {name!r}."
+        )
+        unknown = set(overrides) - set(EnvSpec.ALGORITHM_FIELDS)
+        assert not unknown, (
+            f"algorithm.envs.{name} may set {list(EnvSpec.ALGORITHM_FIELDS)}, "
+            f"got {sorted(unknown)}."
+        )
+    for spec in layout.specs:
+        loss_weight = spec.algorithm_cfg(algorithm_cfg).get("loss_weight", 1.0)
+        assert loss_weight > 0, (
+            f"Expected a positive loss_weight for {layout.spec_path(spec)}, "
+            f"got {loss_weight!r}."
+        )
+    adv_type = algorithm_cfg.get("adv_type")
+    adv_norm_scope = algorithm_cfg.get("adv_norm_scope", "env")
+    assert adv_norm_scope in ("env", "all"), (
+        f"algorithm.adv_norm_scope must be 'env' or 'all', got {adv_norm_scope!r}."
     )
-    assert not skip_intermediate_renders, (
-        "algorithm.dagger.online_lerobot.enabled requires "
-        f"env.train.skip_intermediate_renders=False for env_type {env_type.value!r}. "
-        "Skipped intermediate renders drop the observation for each action."
+    normalize_advantages = algorithm_cfg.get("normalize_advantages", adv_type != "raw")
+    assert adv_norm_scope == "env" or (
+        adv_normalizes_over_batch(adv_type) and normalize_advantages
+    ), (
+        "algorithm.adv_norm_scope='all' sets the scope of the batch normalization "
+        "of algorithm.adv_type 'gae' or 'raw' with "
+        f"normalize_advantages=True, got adv_type={adv_type!r} and "
+        f"normalize_advantages={normalize_advantages}."
     )
+    layout.reference_lengths(algorithm_cfg.get("env_weighting", "trajectory"))
+    if adv_requires_group_baseline(
+        adv_type, algorithm_cfg.get("use_reinpp_baseline", False)
+    ):
+        for spec in layout.specs:
+            group_size = spec.algorithm_cfg(algorithm_cfg).group_size
+            assert group_size > 1, (
+                f"algorithm.adv_type={adv_type!r} compares each reward with its "
+                f"group, so {layout.spec_path(spec)} needs group_size > 1, got "
+                f"{group_size}."
+            )
+    if adv_type == "grpo":
+        for spec in layout.specs:
+            assert spec.has_loss_mask, (
+                "GRPO scores each trajectory up to its first done, so "
+                f"{layout.spec_path(spec)} needs auto_reset=False and "
+                "ignore_terminations=False, got "
+                f"auto_reset={spec.cfg.auto_reset} and "
+                f"ignore_terminations={spec.cfg.ignore_terminations}."
+            )
+
+    if not EnvLayout.is_heterogeneous(cfg.env.train):
+        return
+    # These paths still take one value per mode for the loop fields.
+    single_env_paths = {
+        "runner.use_training_pipeline": cfg.runner.get("use_training_pipeline", False),
+        "algorithm.dagger.online_lerobot.enabled": OmegaConf.select(
+            cfg, "algorithm.dagger.online_lerobot.enabled", default=False
+        ),
+        "reward.use_reward_model": OmegaConf.select(
+            cfg, "reward.use_reward_model", default=False
+        ),
+    }
+    unsupported = [path for path, enabled in single_env_paths.items() if enabled]
+    assert not unsupported, (
+        "Heterogeneous env.train configs need each env's loop read per env, which "
+        f"{unsupported} does not do; use one env configuration."
+    )
+    if algorithm_cfg.get("loss_type") == "embodied_nft":
+        # The NFT loss averages its valid steps without per-env loss weights.
+        weighted = [
+            f"algorithm.envs.{name}.loss_weight"
+            for name, overrides in (algorithm_cfg.get("envs", None) or {}).items()
+            if "loss_weight" in overrides
+        ]
+        env_weighting = algorithm_cfg.get("env_weighting", "trajectory")
+        assert env_weighting == "sample" and not weighted, (
+            "NFT weights every valid step the same, so heterogeneous NFT needs "
+            "algorithm.env_weighting='sample' and no per-env loss_weight, got "
+            f"env_weighting={env_weighting!r} and {weighted}."
+        )
+    for spec in layout.specs:
+        sources = len(spec.ranks) * stage_num
+        shards_per_source = math.lcm(sources, actor_world_size) // sources
+        envs_per_source = spec.cfg.total_num_envs // sources
+        group_size = spec.cfg.get("group_size", 1)
+        assert (
+            envs_per_source % shards_per_source == 0
+            and (envs_per_source // shards_per_source) % group_size == 0
+        ), (
+            f"Each actor takes an equal share of env.train.envs.{spec.name}, so its "
+            f"{envs_per_source} envs per env worker and stage must split into "
+            f"{shards_per_source} shards of whole groups of {group_size}."
+        )
+
+
+def validate_eval_env_cfg(
+    cfg: DictConfig, env_world_size: int, stage_num: int, num_action_chunks: int
+) -> int:
+    """Resolve ``env.eval`` and check its env counts and horizons.
+
+    Args:
+        cfg: The run configuration.
+        env_world_size: Number of env workers.
+        stage_num: ``rollout.pipeline_stage_num``.
+        num_action_chunks: Action chunks the policy emits per step.
+
+    Returns:
+        The number of eval envs each env worker runs per pipeline stage.
+    """
+    resolve_env_mode_cfg(cfg.env.eval, "env.eval", env_world_size)
+    assert cfg.env.eval.total_num_envs > 0, (
+        "Total number of parallel environments for evaluation must be greater than 0"
+    )
+    assert cfg.env.eval.total_num_envs % env_world_size == 0, (
+        "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
+    )
+    assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
+        "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
+    )
+    assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
+        "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
+    )
+    eval_envs_per_stage = cfg.env.eval.total_num_envs // env_world_size // stage_num
+    for env_path, eval_env_cfg in EnvLayout.env_cfgs(cfg.env.eval, "env.eval").items():
+        group_size = eval_env_cfg.get("group_size", 1)
+        assert eval_envs_per_stage % group_size == 0, (
+            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num "
+            f"must be divisible by {env_path}.group_size"
+        )
+        assert eval_env_cfg.max_steps_per_rollout_epoch % num_action_chunks == 0, (
+            f"{env_path}.max_steps_per_rollout_epoch must be divisible by "
+            f"actor.model.num_action_chunks ({num_action_chunks}), got "
+            f"{eval_env_cfg.max_steps_per_rollout_epoch}."
+        )
+    return eval_envs_per_stage
+
+
+def validate_refl_cfg(cfg: DictConfig) -> None:
+    """Validate ReFL sampling and the sample budget of each runner step."""
+    if cfg.env.get("train") is not None:
+        raise ValueError("ReFL reads actor.refl_data; expected env.train=null.")
+    if cfg.actor.refl_data.type != "visual.prompt_dataset":
+        raise ValueError("ReFL requires actor.refl_data.type=visual.prompt_dataset.")
+    if cfg.algorithm.update_epoch != 1 or cfg.algorithm.group_size != 1:
+        raise ValueError("ReFL requires update_epoch=1 and group_size=1.")
+    if cfg.runner.get("use_training_pipeline", False) or cfg.runner.get(
+        "overlap_env_bootstrap", False
+    ):
+        raise ValueError(
+            "ReFL does not use the embodied training pipeline or env bootstrap."
+        )
+    if (cfg.get("reward") or {}).get("use_reward_model", False):
+        raise ValueError("ReFL uses actor.refl_reward_model, not a reward worker.")
+    sample_count = cfg.actor.refl_samples_per_step
+    batch_size = cfg.actor.global_batch_size
+    if batch_size <= 0 or sample_count <= 0 or sample_count % batch_size:
+        raise ValueError(
+            f"ReFL samples per step ({sample_count}) must be a positive "
+            f"multiple of actor.global_batch_size ({batch_size})."
+        )
 
 
 def validate_embodied_cfg(cfg):
@@ -1193,33 +1417,45 @@ def validate_embodied_cfg(cfg):
         validate_only_eval_rollout_model(cfg.rollout.model)
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
+    if not only_eval and algorithm_cfg.get("loss_type") == "embodied_refl":
+        validate_refl_cfg(cfg)
     model_type = SupportedModel(model_cfg.model_type)
     assert model_type in EMBODIED_MODEL or model_type in DIFFUSION_MODELS, (
         f"Model type: '{model_cfg.model_type}' is not supported by the embodied runner. "
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    validate_env_policy_fields(cfg, model_cfg)
+    for index, adapter in enumerate(model_cfg.get("merged_loras", None) or []):
+        assert adapter.get("path"), (
+            f"Expected merged_loras[{index}] of the model config to set path, "
+            f"got {adapter!r}."
+        )
     if model_type == SupportedModel.OPENPI:
         if only_eval and model_cfg.openpi.get("short_memory", False):
-            assert cfg.env.eval.get("short_memory") is not None, (
-                "rollout.model.openpi.short_memory=True requires env.eval.short_memory; "
-                "got no environment history configuration."
-            )
-    for split in ("train", "eval"):
-        env_cfg = cfg.get("env", {}).get(split)
-        if env_cfg is None or env_cfg.get("env_type") != "world_model":
-            continue
-        for env_key, model_key in (
-            ("chunk", "num_action_chunks"),
-            ("action_dim", "action_dim"),
-        ):
-            env_value = env_cfg.get(env_key)
-            model_value = model_cfg.get(model_key)
-            if env_value is not None and env_value != model_value:
-                raise ValueError(
-                    f"Expected env.{split}.{env_key} to equal the policy's "
-                    f"{model_key} ({model_value}), got {env_value}."
+            eval_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("eval", None), "env.eval")
+            for env_path, env_cfg in eval_env_cfgs.items():
+                assert env_cfg.get("short_memory") is not None, (
+                    "rollout.model.openpi.short_memory=True requires "
+                    f"{env_path}.short_memory; got no environment history configuration."
                 )
+    for split in ("train", "eval"):
+        for env_path, env_cfg in EnvLayout.env_cfgs(
+            cfg.get("env", {}).get(split), f"env.{split}"
+        ).items():
+            if env_cfg.get("env_type") != "world_model":
+                continue
+            for env_key, model_key in (
+                ("chunk", "num_action_chunks"),
+                ("action_dim", "action_dim"),
+            ):
+                env_value = env_cfg.get(env_key)
+                model_value = model_cfg.get(model_key)
+                if env_value is not None and env_value != model_value:
+                    raise ValueError(
+                        f"Expected {env_path}.{env_key} to equal the policy's "
+                        f"{model_key} ({model_value}), got {env_value}."
+                    )
     if model_type == SupportedModel.PSI0:
         assert cfg.rollout.pipeline_stage_num == 1, (
             "Psi0 SIMPLE requires rollout.pipeline_stage_num=1: "
@@ -1300,7 +1536,21 @@ def validate_embodied_cfg(cfg):
             "rollout.batch_bootstrap_inference and rollout.value_only_bootstrap "
             "require rollout.rollout_backend='huggingface'."
         )
-    if cfg.rollout.get("rollout_backend", "huggingface") == "phyai":
+    # Only the HF rollout worker serves each env configuration on its own loop.
+    rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+    listed = [
+        f"env.{mode}.envs"
+        for mode in ("train", "eval")
+        if EnvLayout.is_heterogeneous(
+            OmegaConf.select(cfg, f"env.{mode}", default=None) or {}
+        )
+    ]
+    assert rollout_backend == "huggingface" or not listed, (
+        "Expected one env configuration per mode for "
+        f"rollout.rollout_backend={rollout_backend!r}, got envs listed under "
+        f"{listed}; only rollout_backend='huggingface' runs listed envs."
+    )
+    if rollout_backend == "phyai":
         assert model_type == SupportedModel.OPENPI, (
             "Expected model_type='openpi' for rollout_backend='phyai', "
             f"got {model_cfg.model_type!r}."
@@ -1386,30 +1636,27 @@ def validate_embodied_cfg(cfg):
                 "env.eval config is required when runner.val_check_interval > 0, "
                 "runner.only_eval=True, or runner.task_type=embodied_eval."
             )
-            cfg.env.eval.group_size = cfg.env.eval.get("group_size", 1)
-            cfg.env.eval.early_stop_on_done = bool(
-                cfg.env.eval.get("early_stop_on_done", False)
-            )
-        if algorithm_cfg.get("rollout_epoch", None) is not None:
-            logging.warning(
-                "algorithm.rollout_epoch is deprecated; use env.train.rollout_epoch instead."
-            )
-            if cfg.env.get("train", None) is not None:
-                cfg.env.train.rollout_epoch = cfg.env.train.get(
-                    "rollout_epoch", algorithm_cfg.rollout_epoch
+            for eval_env_cfg in EnvLayout.env_cfgs(cfg.env.eval, "env.eval").values():
+                eval_env_cfg.group_size = eval_env_cfg.get("group_size", 1)
+                eval_env_cfg.early_stop_on_done = bool(
+                    eval_env_cfg.get("early_stop_on_done", False)
                 )
-        if algorithm_cfg.get("eval_rollout_epoch", None) is not None:
-            logging.warning(
-                "algorithm.eval_rollout_epoch is deprecated; use env.eval.rollout_epoch instead."
-            )
-            if cfg.env.get("eval", None) is not None:
-                cfg.env.eval.rollout_epoch = cfg.env.eval.get(
-                    "rollout_epoch", algorithm_cfg.eval_rollout_epoch
+        for mode, legacy_key in (
+            ("train", "rollout_epoch"),
+            ("eval", "eval_rollout_epoch"),
+        ):
+            legacy_value = algorithm_cfg.get(legacy_key, None)
+            if legacy_value is not None:
+                logging.warning(
+                    f"algorithm.{legacy_key} is deprecated; use "
+                    f"env.{mode}.rollout_epoch instead."
                 )
-        if cfg.env.get("train", None) is not None:
-            cfg.env.train.rollout_epoch = cfg.env.train.get("rollout_epoch", 1)
-        if cfg.env.get("eval", None) is not None:
-            cfg.env.eval.rollout_epoch = cfg.env.eval.get("rollout_epoch", 1)
+            for env_cfg in EnvLayout.env_cfgs(
+                cfg.env.get(mode, None), f"env.{mode}"
+            ).values():
+                env_cfg.rollout_epoch = env_cfg.get(
+                    "rollout_epoch", 1 if legacy_value is None else legacy_value
+                )
         if cfg.rollout.get("sampling_params", None) is None:
             if algorithm_cfg.get("sampling_params", None) is not None:
                 logging.warning(
@@ -1525,14 +1772,33 @@ def validate_embodied_cfg(cfg):
             "Psi0 SIMPLE requires equal env and rollout worker counts: "
             "each rollout worker maintains RTC state for one environment."
         )
-        psi0_env_cfg = cfg.env.eval if only_eval else cfg.env.train
-        assert psi0_env_cfg.total_num_envs == env_world_size, (
+        psi0_mode = "eval" if only_eval else "train"
+        psi0_total_num_envs = sum(
+            env_cfg.total_num_envs
+            for env_cfg in EnvLayout.env_cfgs(
+                cfg.env[psi0_mode], f"env.{psi0_mode}"
+            ).values()
+        )
+        assert psi0_total_num_envs == env_world_size, (
             "Psi0 SIMPLE requires exactly one environment per EnvWorker: "
             f"total_num_envs must equal the environment worker count ({env_world_size}), "
-            f"got {psi0_env_cfg.total_num_envs}."
+            f"got {psi0_total_num_envs}."
+        )
+
+    if not only_eval:
+        # Every embodied step carries its trajectory's and env's loss weight,
+        # which the losses average over all steps, as token-mean does.
+        loss_agg_func = algorithm_cfg.get("loss_agg_func", "token-mean")
+        assert loss_agg_func == "token-mean", (
+            "Embodied losses average every step with its loss_mask_ratio weight, "
+            f"so algorithm.loss_agg_func must be 'token-mean', got {loss_agg_func!r}."
         )
 
     if not only_eval and algorithm_cfg.get("loss_type") == "embodied_art":
+        assert not EnvLayout.is_heterogeneous(cfg.env.train), (
+            "DiffusionART expects one env configuration, got envs "
+            f"{list(cfg.env.train.envs)} under env.train.envs."
+        )
         assert not algorithm_cfg.get("filter_rewards", False), (
             "DiffusionART requires algorithm.filter_rewards=False; got True."
         )
@@ -1697,56 +1963,35 @@ def validate_embodied_cfg(cfg):
             "env.eval config is required when runner.val_check_interval > 0, "
             "runner.only_eval=True, or runner.task_type=embodied_eval."
         )
-        assert cfg.env.eval.total_num_envs > 0, (
-            "Total number of parallel environments for evaluation must be greater than 0"
+        eval_envs_per_stage = validate_eval_env_cfg(
+            cfg, env_world_size, stage_num, model_cfg.num_action_chunks
         )
-        assert cfg.env.eval.total_num_envs % env_world_size == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
-        )
-        assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
-        )
-        assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
-            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
-        )
-        assert (
-            cfg.env.eval.total_num_envs
-            // env_world_size
-            // stage_num
-            % cfg.env.eval.group_size
-            == 0
-        ), (
-            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
-        )
-        assert (
-            cfg.env.eval.max_steps_per_rollout_epoch % model_cfg.num_action_chunks == 0
-        ), (
-            "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
-        )
-        if cfg.env.eval.get("early_stop_on_done", False):
-            eval_num_envs_per_stage = (
-                cfg.env.eval.total_num_envs // env_world_size // stage_num
-            )
-            assert not cfg.env.eval.auto_reset, (
-                "env.eval.early_stop_on_done requires env.eval.auto_reset=false: "
+        for env_path, eval_env_cfg in EnvLayout.env_cfgs(
+            cfg.env.eval, "env.eval"
+        ).items():
+            if not eval_env_cfg.early_stop_on_done:
+                continue
+            assert not eval_env_cfg.auto_reset, (
+                f"{env_path}.early_stop_on_done requires {env_path}.auto_reset=false: "
                 "each eval rollout epoch is one episode."
             )
             assert stage_num == 1, (
-                "env.eval.early_stop_on_done requires rollout.pipeline_stage_num=1."
+                f"{env_path}.early_stop_on_done requires rollout.pipeline_stage_num=1."
             )
-            assert eval_num_envs_per_stage == 1, (
-                "env.eval.early_stop_on_done requires one eval env per worker "
-                f"(got {eval_num_envs_per_stage})."
+            assert eval_envs_per_stage == 1, (
+                f"{env_path}.early_stop_on_done requires one eval env per worker "
+                f"(got {eval_envs_per_stage})."
             )
             assert component_placement.get_world_size("rollout") == env_world_size, (
-                "env.eval.early_stop_on_done requires equal env and rollout "
+                f"{env_path}.early_stop_on_done requires equal env and rollout "
                 "worker counts."
             )
             assert not cfg.runner.get("enable_decoupled_mode", False), (
-                "env.eval.early_stop_on_done does not support decoupled mode."
+                f"{env_path}.early_stop_on_done does not support decoupled mode."
             )
 
-    if not only_eval:
+    if not only_eval and algorithm_cfg.get("loss_type") != "embodied_refl":
+        resolve_env_mode_cfg(cfg.env.train, "env.train", env_world_size)
         assert cfg.env.train.total_num_envs > 0, (
             "Total number of parallel environments for training must be greater than 0"
         )
@@ -1759,19 +2004,29 @@ def validate_embodied_cfg(cfg):
         assert cfg.env.train.total_num_envs // env_world_size // stage_num > 0, (
             "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
         )
-        assert (
-            cfg.env.train.total_num_envs
-            // env_world_size
-            // stage_num
-            % cfg.env.train.group_size
-            == 0
-        ), (
-            "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
+        train_envs_per_stage = (
+            cfg.env.train.total_num_envs // env_world_size // stage_num
         )
-        assert (
-            cfg.env.train.max_steps_per_rollout_epoch % model_cfg.num_action_chunks == 0
-        ), (
-            "env.train.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+        for env_path, train_env_cfg in EnvLayout.env_cfgs(
+            cfg.env.train, "env.train"
+        ).items():
+            assert train_envs_per_stage % train_env_cfg.group_size == 0, (
+                "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num "
+                f"must be divisible by {env_path}.group_size"
+            )
+            assert (
+                train_env_cfg.max_steps_per_rollout_epoch % model_cfg.num_action_chunks
+                == 0
+            ), (
+                f"{env_path}.max_steps_per_rollout_epoch must be divisible by "
+                f"actor.model.num_action_chunks ({model_cfg.num_action_chunks}), got "
+                f"{train_env_cfg.max_steps_per_rollout_epoch}."
+            )
+        validate_env_training_cfg(
+            cfg,
+            EnvLayout(cfg.env.train, env_world_size, "env.train"),
+            stage_num=stage_num,
+            actor_world_size=component_placement.get_world_size("actor"),
         )
     with open_dict(cfg):
         weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
@@ -1781,60 +2036,47 @@ def validate_embodied_cfg(cfg):
         # This is enabled only when offload is disabled to avoid resource contention.
         # Note: If EnvWorker and Actor share the same accelerator, this may increase GPU memory
         # pressure during the overlap period.
+        train_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("train", None), "env.train")
         cfg.runner.overlap_env_bootstrap = bool(
             cfg.runner.get("overlap_env_bootstrap", False)
-        ) and not cfg.env.get("train", {}).get("enable_offload", False)
-        train_env_type = (
-            SupportedEnvType(cfg.env.train.env_type)
-            if cfg.env.get("train", None) is not None
-            else None
+        ) and not any(
+            env_cfg.get("enable_offload", False) for env_cfg in train_env_cfgs.values()
         )
-        eval_env_type = (
-            SupportedEnvType(cfg.env.eval.env_type)
-            if cfg.env.get("eval", None) is not None
-            else None
-        )
-        if eval_env_type == SupportedEnvType.MANISKILL:
-            with open_dict(cfg.env.eval):
-                cfg.env.eval._reconfigure_on_full_reset = (
-                    cfg.env.eval.use_fixed_reset_state_ids
-                )
-        if (
-            train_env_type == SupportedEnvType.MANISKILL
-            or eval_env_type == SupportedEnvType.MANISKILL
-        ):
+        eval_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("eval", None), "env.eval")
+        for env_cfg in eval_env_cfgs.values():
+            if SupportedEnvType(env_cfg.env_type) == SupportedEnvType.MANISKILL:
+                with open_dict(env_cfg):
+                    env_cfg._reconfigure_on_full_reset = (
+                        env_cfg.use_fixed_reset_state_ids
+                    )
 
-            def get_robot_control_mode(robot: str):
-                if robot == "panda-qpos":
-                    return "pd_joint_delta_pos"
-                elif robot == "panda-ee-dpos":
-                    return "pd_ee_delta_pos"
-                elif robot == "panda-ee-target-dpos":  # for GSEnv
-                    return "pd_ee_target_delta_pose"
-                elif "google_robot_static" in robot:
-                    return "arm_pd_ee_delta_pose_align_interpolate_by_planner_gripper_pd_joint_target_delta_pos_interpolate_by_planner"
-                elif "widowx" in robot:
-                    return "arm_pd_ee_target_delta_pose_align2_gripper_pd_joint_pos"
-                elif "panda" in robot:
-                    return "pd_ee_body_target_delta_pose_real_root_frame"
-                else:
-                    raise NotImplementedError(f"Robot {robot} not supported")
+        def get_robot_control_mode(robot: str):
+            if robot == "panda-qpos":
+                return "pd_joint_delta_pos"
+            elif robot == "panda-ee-dpos":
+                return "pd_ee_delta_pos"
+            elif robot == "panda-ee-target-dpos":  # for GSEnv
+                return "pd_ee_target_delta_pose"
+            elif "google_robot_static" in robot:
+                return "arm_pd_ee_delta_pose_align_interpolate_by_planner_gripper_pd_joint_target_delta_pos_interpolate_by_planner"
+            elif "widowx" in robot:
+                return "arm_pd_ee_target_delta_pose_align2_gripper_pd_joint_pos"
+            elif "panda" in robot:
+                return "pd_ee_body_target_delta_pose_real_root_frame"
+            else:
+                raise NotImplementedError(f"Robot {robot} not supported")
 
-            if cfg.env.get("train", None) is not None:
-                cfg.env.train.init_params.control_mode = get_robot_control_mode(
+        env_cfgs = {**train_env_cfgs, **eval_env_cfgs}
+        for env_path, env_cfg in env_cfgs.items():
+            env_type = SupportedEnvType(env_cfg.env_type)
+            if env_type == SupportedEnvType.MANISKILL:
+                env_cfg.init_params.control_mode = get_robot_control_mode(
                     model_cfg.policy_setup
                 )
-            if cfg.env.get("eval", None) is not None:
-                cfg.env.eval.init_params.control_mode = get_robot_control_mode(
-                    model_cfg.policy_setup
-                )
-        elif (
-            train_env_type == SupportedEnvType.BEHAVIOR
-            or eval_env_type == SupportedEnvType.BEHAVIOR
-        ):
-            if cfg.env.get("train", None) is not None:
-                assert cfg.env.train.base_config_name == "r1pro_behavior", (
-                    f"Only r1pro_behavior is supported for omnigibson, got {cfg.env.train.base_config_name}"
+            elif env_type == SupportedEnvType.BEHAVIOR:
+                assert env_cfg.base_config_name == "r1pro_behavior", (
+                    f"Only r1pro_behavior is supported for omnigibson, got "
+                    f"{env_path}.base_config_name={env_cfg.base_config_name!r}"
                 )
 
     validate_online_lerobot_env_cfg(cfg)
@@ -1909,32 +2151,8 @@ def validate_offline_cfg(cfg: DictConfig) -> DictConfig:
         component_placement = HybridComponentPlacement(cfg, Cluster())
         stage_num = cfg.rollout.pipeline_stage_num
         env_world_size = component_placement.get_world_size("env")
-        assert cfg.env.eval.total_num_envs > 0, (
-            "Total number of parallel environments for evaluation must be greater than 0"
-        )
-        assert cfg.env.eval.total_num_envs % env_world_size == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
-        )
-        assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
-        )
-        assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
-            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
-        )
-        assert (
-            cfg.env.eval.total_num_envs
-            // env_world_size
-            // stage_num
-            % cfg.env.eval.group_size
-            == 0
-        ), (
-            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
-        )
-        assert (
-            cfg.env.eval.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
-            == 0
-        ), (
-            "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+        validate_eval_env_cfg(
+            cfg, env_world_size, stage_num, cfg.actor.model.num_action_chunks
         )
     return cfg
 
@@ -2453,6 +2671,16 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
             cfg.rollout, cfg.algorithm, cfg.get("actor", None)
         )
     return cfg
+
+
+def adv_normalizes_over_batch(adv_type: Optional[str]) -> bool:
+    """Whether an advantage estimator normalizes over the batch it is given.
+
+    These estimators honor ``algorithm.normalize_advantages``, so
+    ``algorithm.adv_norm_scope`` can widen their batch to every env. Group
+    estimators normalize within each group instead.
+    """
+    return bool(adv_type) and adv_type.lower() in ("gae", "raw")
 
 
 def adv_requires_group_baseline(

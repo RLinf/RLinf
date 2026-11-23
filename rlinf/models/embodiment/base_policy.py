@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from enum import Enum
+from typing import Any
 
 
 class ForwardType(Enum):
@@ -27,6 +30,7 @@ class ForwardType(Enum):
     IQL_CRITIC = "iql_critic"
     IQL_VALUE = "iql_value"
     NFT = "nft"
+    REFL = "refl"
 
 
 class BasePolicy(ABC):
@@ -40,6 +44,7 @@ class BasePolicy(ABC):
 
     Optional overrides:
         - sft_forward
+        - refl_forward
         - sac_forward
         - sac_q_forward
         - crossq_forward
@@ -53,8 +58,35 @@ class BasePolicy(ABC):
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
+        elif forward_type == ForwardType.REFL:
+            return self.refl_forward(**kwargs)
         else:
             raise NotImplementedError
+
+    def refl_forward(
+        self,
+        forward_inputs: dict[str, Any],
+        xt_source: str = "rollout",
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Return differentiable ``samples`` for a ReFL scorer.
+
+        The model owns time units, state selection, noising, and sample decoding.
+
+        Args:
+            forward_inputs: Model-specific sampling conditions or explicit training inputs.
+            xt_source: Select a trajectory state or a model-specific resample.
+            **kwargs: Additional model-specific generation inputs.
+
+        Returns:
+            A dict containing ``samples``, with gradients to trainable policy
+            parameters and the layout expected by the configured scorer. Models
+            may also return ``forward_inputs`` with prepared scorer context;
+            otherwise the scorer receives the original inputs.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support ReFL sample generation."
+        )
 
     def sac_forward(self, **kwargs):
         raise NotImplementedError
