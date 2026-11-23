@@ -21,6 +21,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     from rlinf.models.embodiment.mlp_policy.mlp_policy import MLPPolicy
     from rlinf.models.embodiment.mlp_policy.rlt_mlp_policy import RLTMLPPolicy
     from rlinf.models.embodiment.mlp_policy.rlt_td3_mlp_policy import RLTTD3MLPPolicy
+    from rlinf.models.embodiment.mlp_policy.sapg_mlp_policy import SAPGMLPPolicy
 
     iql_config = cfg.get("iql_config", None)
     if cfg.model_type == "rlt_mlp_policy":
@@ -51,6 +52,16 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
             mlp_num_hidden_layers=cfg.get("mlp_num_hidden_layers", 2),
             actor_noise_sigma=cfg.get("actor_noise_sigma", 0.1),
             ref_action_dropout=cfg.get("ref_action_dropout", 0.0),
+        )
+    elif cfg.model_type == "sapg_mlp_policy":
+        model = SAPGMLPPolicy(
+            obs_dim=cfg.obs_dim,
+            action_dim=cfg.action_dim,
+            num_action_chunks=cfg.num_action_chunks,
+            add_value_head=cfg.add_value_head,
+            sapg_cfg=cfg.sapg,
+            add_q_head=cfg.get("add_q_head", False),
+            q_head_type=cfg.get("q_head_type", "default"),
         )
     elif iql_config is not None:
         model = IQLMLPPolicy(

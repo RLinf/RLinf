@@ -415,7 +415,7 @@ def compute_ppo_critic_loss(
     returns: torch.Tensor,
     prev_values: torch.Tensor,
     value_clip: float,
-    huber_delta: float,
+    huber_delta: Optional[float],
     loss_mask: Optional[torch.Tensor] = None,
     loss_mask_ratio: Optional[torch.Tensor] = None,
     **kwargs,
@@ -441,12 +441,12 @@ def compute_ppo_critic_loss(
         -value_clip, value_clip
     )  # [bsz, ] | [bsz, chunk-step]
 
-    value_loss_original = huber_loss(
-        returns - values, huber_delta
-    )  # [bsz, ] | [bsz, chunk-step]
-    value_loss_clipped = huber_loss(
-        returns - value_pred_clipped, huber_delta
-    )  # [bsz, ] | [bsz, chunk-step]
+    if huber_delta is None:
+        value_loss_original = 0.5 * (returns - values).square()
+        value_loss_clipped = 0.5 * (returns - value_pred_clipped).square()
+    else:
+        value_loss_original = huber_loss(returns - values, huber_delta)
+        value_loss_clipped = huber_loss(returns - value_pred_clipped, huber_delta)
     value_loss = torch.max(value_loss_original, value_loss_clipped)
     value_loss = loss_agg_func(value_loss, loss_mask, loss_mask_ratio)
 
@@ -522,6 +522,68 @@ def compute_ppo_actor_critic_loss(**kwargs) -> tuple[torch.Tensor, dict]:
     metrics_data.update(critic_metrics_data)
 
     return loss, metrics_data
+
+
+@register_policy_loss("sapg")
+def compute_sapg_actor_critic_loss(
+    entropy: Optional[torch.Tensor] = None,
+    sapg_entropy_coef: Optional[torch.Tensor] = None,
+    action_means: Optional[torch.Tensor] = None,
+    critic_coef: float = 4.0,
+    bounds_loss_coef: float = 0.0001,
+    loss_mask: Optional[torch.Tensor] = None,
+    loss_mask_ratio: Optional[torch.Tensor] = None,
+    critic_warmup: bool = False,
+    **kwargs,
+) -> tuple[torch.Tensor, dict]:
+    """Compute the released SAPG objective using behaviour-policy log probabilities.
+
+    Args:
+        entropy (torch.Tensor): Per-action entropy from the policy forward
+        sapg_entropy_coef (torch.Tensor): Per-environment intrinsic entropy coefficient
+        action_means (torch.Tensor): Policy action means, used by the bounds loss
+        critic_coef (float): Weight of the critic loss
+        bounds_loss_coef (float): Weight of the action-mean bounds penalty
+        loss_mask (torch.Tensor): Mask for valid loss positions
+        loss_mask_ratio (torch.Tensor): Reciprocal weight for each valid step
+        critic_warmup (bool): Skip SAPG extras during critic warmup
+        **kwargs: Forwarded to the PPO actor and critic losses
+
+    Returns:
+        Tuple[torch.Tensor, Dict]: Loss and metrics dictionary
+    """
+    common = dict(
+        loss_mask=loss_mask,
+        loss_mask_ratio=loss_mask_ratio,
+        critic_warmup=critic_warmup,
+        **kwargs,
+    )
+    actor_loss, metrics = compute_ppo_actor_loss(**common)
+    critic_loss, critic_metrics = compute_ppo_critic_loss(**common)
+    metrics.update(critic_metrics)
+    loss = actor_loss + critic_coef * critic_loss
+    if critic_warmup:
+        return loss, metrics
+
+    loss_agg_func = masked_mean if loss_mask_ratio is None else masked_mean_ratio
+    keepdim = loss_mask is None or loss_mask.ndim > 1
+
+    if entropy is not None and sapg_entropy_coef is not None:
+        entropy_bonus = entropy.sum(dim=-1) * sapg_entropy_coef
+        if keepdim:
+            entropy_bonus = entropy_bonus.unsqueeze(-1)
+        entropy_term = loss_agg_func(entropy_bonus, loss_mask, loss_mask_ratio)
+        loss = loss - entropy_term
+        metrics["actor/sapg_entropy_term"] = entropy_term.detach()
+
+    if action_means is not None and bounds_loss_coef:
+        excess = (action_means.abs() - 1.1).clamp_min(0)
+        bounds_loss = loss_agg_func(
+            excess.square().sum(dim=-1, keepdim=keepdim), loss_mask, loss_mask_ratio
+        )
+        loss = loss + bounds_loss_coef * bounds_loss
+        metrics["actor/sapg_bounds_loss"] = bounds_loss.detach()
+    return loss, metrics
 
 
 @register_policy_loss("opd")

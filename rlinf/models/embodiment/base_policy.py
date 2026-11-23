@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 
 class ForwardType(Enum):
@@ -126,6 +126,12 @@ class BasePolicy(ABC):
             f"{self.__class__.__name__} does not support value-only bootstrap; "
             "set rollout.value_only_bootstrap=False."
         )
+
+    def rollout_action_kwargs(
+        self, mode: Literal["train", "eval"], sampling_kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Adapt the rollout worker's sampling arguments to this policy."""
+        return sampling_kwargs
 
     def enable_torch_compile(
         self,

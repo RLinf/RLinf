@@ -412,11 +412,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             ) is not None:
                 kwargs["normalize_advantages"] = normalize_advantages
 
-            batch.update(calculate_adv_and_returns(**kwargs))
-            if kwargs["loss_mask"] is not None:
-                batch.update({"loss_mask": kwargs["loss_mask"]})
-            if kwargs["loss_mask_sum"] is not None:
-                batch.update({"loss_mask_sum": kwargs["loss_mask_sum"]})
+            self._compute_rollout_advantages(batch, **kwargs)
 
         if normalize_jointly:
             self._normalize_advantages_jointly()
@@ -435,6 +431,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )
         )
         return rollout_metrics
+
+    def _compute_rollout_advantages(self, batch: dict[str, Any], **kwargs) -> None:
+        batch.update(calculate_adv_and_returns(**kwargs))
+        if kwargs["loss_mask"] is not None:
+            batch["loss_mask"] = kwargs["loss_mask"]
+        if kwargs["loss_mask_sum"] is not None:
+            batch["loss_mask_sum"] = kwargs["loss_mask_sum"]
 
     def _normalize_advantages_jointly(self) -> None:
         """Normalize advantages over the valid steps of every env together.
@@ -970,6 +973,22 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return mean_metric_dict
 
+    def needs_entropy_for_loss(self) -> bool:
+        """Whether the policy loss consumes per-sample entropy.
+
+        Subclasses whose loss uses entropy beyond the global entropy bonus
+        override this to force the forward to compute it.
+        """
+        return False
+
+    def extra_loss_kwargs(
+        self,
+        micro_batch: dict[str, torch.Tensor],
+        output_dict: dict[str, torch.Tensor],
+    ) -> dict:
+        """Extra keyword arguments forwarded to the policy loss."""
+        return {}
+
     def train_micro_batch(
         self,
         micro_batch: dict[str, torch.Tensor],
@@ -1027,6 +1046,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         compute_entropy = (
             self.cfg.algorithm.entropy_bonus > 0
             or self.cfg.algorithm.get("log_entropy_metrics", False)
+            or self.needs_entropy_for_loss()
         )
         with self.amp_context:
             output_dict = self.model(
@@ -1075,6 +1095,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             loss_kwargs["importance_sampling_clip"] = (
                 self.cfg.algorithm.importance_sampling_clip
             )
+
+        loss_kwargs.update(self.extra_loss_kwargs(micro_batch, output_dict))
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T_N1D6,

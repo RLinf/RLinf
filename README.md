@@ -41,6 +41,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/11] 🔥 RLinf adds a hardware fault-tolerance interface for real-world robots, available first on the Robbyant R2: non-blocking health diagnosis, severity-based automatic recovery with emergency-stop latching, jump-free motion resumption, and episode truncation for interrupted RL rollouts. Doc: [Robotics Interface](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/robotics.html).
 - [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) adopts RLinf as a distributed rollout and training runtime and integrates [demonstration co-training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/co_training.html) for VLA RL post-training.
 - [2026/11] 🎉 The [RLinf website](https://rlinf.org/) is live. Read our [blog posts](https://rlinf.org/en/blog/) and browse [community events](https://rlinf.org/en/events/).
+- [2026/11] 🔥 RLinf supports SAPG training with an MLP on Allegro Hand in IsaacLab. Doc: [SAPG with IsaacLab](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/isaaclab.html).
 - [2026/11] 🔥 RLinf supports MuJoCo Warp for batched GPU simulation on five classic locomotion tasks with an MLP + PPO recipe. Doc: [MuJoCo Warp](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/mujoco_warp.html).
 - [2026/11] 🔥 RLinf supports LeKiwi, a three-wheel omnidirectional mobile base, with per-part bring-up tools and a registered real-world drive environment. Doc: [LeKiwi](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lekiwi.html).
 - [2026/11] 🔥 RLinf supports dual-arm ARX X5 data collection with Pico teleoperation. Doc: [ARX X5](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/arx5.html).
@@ -284,6 +285,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/dapo.html">DAPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/reinforce.html">Reinforce++</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/sac.html">SAC</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/isaaclab.html">SAPG (MLP)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/crossq.html">CrossQ</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/rlpd.html">RLPD</a> ✅</li>
             <li><a href="https://arxiv.org/abs/2509.25756">SAC-Flow</a> ✅</li>

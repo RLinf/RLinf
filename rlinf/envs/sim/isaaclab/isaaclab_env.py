@@ -131,9 +131,7 @@ class IsaaclabBaseEnv(gym.Env):
 
         dones = terminations | truncations
 
-        infos = self._record_metrics(
-            step_reward, terminations, {}
-        )  # return infos is useless
+        infos = self._record_metrics(step_reward, terminations, infos)
         if self.ignore_terminations:
             infos["episode"]["success_at_end"] = terminations
             terminations[:] = False

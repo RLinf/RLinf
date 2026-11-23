@@ -277,6 +277,68 @@ Enable W&B or SwanLab by adding logger backends:
    * - OpenPI π₀.₅ RL-tuned model (SFT + RL)
      - 0.953
 
+
+Train an MLP with SAPG
+----------------------
+
+Train a state-based MLP on Allegro Hand cube reorientation with
+`SAPG <https://arxiv.org/abs/2407.20230>`__. This synchronous recipe uses six
+exploration blocks, evaluates the final block, and runs simulation on NVIDIA GPUs.
+
+Install the simulator dependencies and initialize Isaac Sim 5.1.0. Replace
+`<isaac_sim>` with its installation directory.
+
+.. code:: bash
+
+   bash requirements/install.sh embodied --env isaaclab
+   source .venv/bin/activate
+   export ISAAC_PATH=<isaac_sim>
+   source "$ISAAC_PATH/setup_conda_env.sh"
+   export EMBODIED_PATH=$PWD/examples/embodiment
+
+Start the single-GPU recipe from the repository root:
+
+.. code:: bash
+
+   python examples/embodiment/train_embodied_agent.py \
+      --config-dir "$EMBODIED_PATH/config" \
+      --config-name isaaclab_allegro_sapg_mlp
+
+The model starts from random weights. The default configuration uses 384
+environments and eight steps per rollout. Observations contain 124 state values; actions contain 16 joint commands.
+Set ``cluster.component_placement`` to select GPUs. Environment counts must
+divide evenly across exploration blocks and rollout partitions.
+
+Run the two-GPU test to exercise episode boundaries and evaluation:
+
+.. code:: bash
+
+   export REPO_PATH=$PWD
+   bash tests/e2e_tests/embodied/run.sh isaaclab_sapg_mlp
+
+This test runs three iterations with 48 training environments, 12 evaluation
+environments and a maximum episode length of 16 steps. It checks the training path; use the training
+recipe for learning experiments.
+
+Watch ``env/success_once`` and ``eval/success_once`` for episodes that reach a
+target orientation. Positive shaped reward alone does not count as success.
+Episode returns are unscaled; ``env.train.reward_coef`` scales training rewards.
+
+If the remote USD availability check times out, use a local mirror containing
+the ``Isaac/`` subtree with Allegro Hand, DexCube and Grid assets and all their
+dependencies. Add these overrides to the training command:
+
+.. code:: bash
+
+   env.train.init_params.asset_root=<asset_root> \
+   env.eval.init_params.asset_root=<asset_root>
+
+Numerical checks compare aggregation, GAE, leader value targets, loss and
+gradients with the official SAPG release. This recipe differs from the published
+experiment in network structure, observation and value normalization, reward
+scaling, learning-rate schedule, simulator and environment count. Equivalent
+convergence or success rates require separate learning experiments.
+
 Acknowledgements
 ----------------
 

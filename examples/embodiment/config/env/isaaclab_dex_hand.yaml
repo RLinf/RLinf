@@ -1,0 +1,30 @@
+env_type: isaaclab
+total_num_envs: null
+auto_reset: True
+ignore_terminations: False
+# Dexterous-hand tasks use dense shaped rewards from IsaacLab directly.
+use_rel_reward: False
+seed: 0
+group_size: 1
+
+reward_coef: 1.0
+use_fixed_reset_state_ids: False
+# SAPG uses a short rollout horizon (8 in the reference ShadowHand/AllegroHand recipes).
+max_steps_per_rollout_epoch: 8
+max_episode_steps: 300 # max episode steps for truncation
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  fps: 20
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  asset_root: null # Optional local mirror containing the Isaac/ asset subtree.
+  # Maintained IsaacLab equivalents of the IsaacGym SAPG tasks:
+  #   Isaac-Allegro-Hand-v0  (Allegro in-hand reorientation)
+  #   Isaac-Shadow-Hand-v0   (Shadow Hand in-hand reorientation)
+  id: "Isaac-Allegro-Hand-v0"
+  num_envs: null
+  max_episode_steps: ${..max_episode_steps} # max episode steps for truncation
+  task_description: "Reorient the object in hand to the target orientation."

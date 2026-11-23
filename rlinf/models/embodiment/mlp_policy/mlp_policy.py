@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, Literal
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -205,46 +207,44 @@ class MLPPolicy(nn.Module, BasePolicy):
         compute_logprobs=True,
         compute_entropy=True,
         compute_values=True,
+        compute_action_means=False,
         **kwargs,
     ):
         states = forward_inputs["states"]
-        action = forward_inputs["action"]
-
-        feat = self.backbone(states)
-        action_mean = self.actor_mean(feat)
-
-        if self.independent_std:
-            action_logstd = self.actor_logstd.expand_as(action_mean)
-        else:
-            action_logstd = self.actor_logstd(feat)
-        action_std = torch.exp(action_logstd)
-        probs = Normal(action_mean, action_std)
-
         output_dict = {}
-        if compute_logprobs:
-            logprobs = probs.log_prob(action)
-            output_dict.update(logprobs=logprobs)
-        if compute_entropy:
-            entropy = probs.entropy()
-            output_dict.update(entropy=entropy)
+        if compute_logprobs or compute_entropy or compute_action_means:
+            action_mean, action_logstd = self._action_parameters(states)
+            probs = Normal(action_mean, torch.exp(action_logstd))
+            if compute_logprobs:
+                output_dict["logprobs"] = probs.log_prob(forward_inputs["action"])
+            if compute_entropy:
+                output_dict["entropy"] = probs.entropy()
+            if compute_action_means:
+                output_dict["action_means"] = action_mean
         if compute_values:
-            if getattr(self, "value_head", None):
-                values = self.value_head(states)
-                output_dict.update(values=values)
-            else:
-                raise NotImplementedError
+            output_dict["values"] = self._predict_values(states)
         return output_dict
 
-    def _sample_actions(
+    def _predict_values(self, states: torch.Tensor) -> torch.Tensor:
+        if not hasattr(self, "value_head"):
+            raise NotImplementedError
+        return self.value_head(states)
+
+    def _action_parameters(
         self, states: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         feat = self.backbone(states)
         action_mean = self.actor_mean(feat)
-
         if self.independent_std:
             action_logstd = self.actor_logstd.expand_as(action_mean)
         else:
             action_logstd = self.actor_logstd(feat)
+        return action_mean, action_logstd
+
+    def _sample_actions(
+        self, states: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        action_mean, action_logstd = self._action_parameters(states)
         if self.final_tanh:
             action_logstd = torch.tanh(action_logstd)
             action_logstd = self.logstd_range[0] + 0.5 * (
@@ -286,11 +286,19 @@ class MLPPolicy(nn.Module, BasePolicy):
 
         chunk_actions = action.reshape(-1, self.num_action_chunks, self.action_dim)
         if hasattr(self, "value_head") and calculate_values:
-            chunk_values = self.value_head(states)
+            chunk_values = self._predict_values(states)
         else:
             chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
 
         return action, chunk_actions, chunk_logprobs, chunk_values
+
+    def rollout_action_kwargs(
+        self, mode: Literal["train", "eval"], sampling_kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {"mode": mode, "return_obs": not hasattr(self, "q_head")}
+
+    def _preprocess_action_obs(self, env_obs, mode):
+        return self.preprocess_env_obs(env_obs=env_obs)
 
     @torch.inference_mode()
     def predict_action_batch(
@@ -302,7 +310,7 @@ class MLPPolicy(nn.Module, BasePolicy):
         mode="train",
         **kwargs,
     ):
-        env_obs = self.preprocess_env_obs(env_obs=env_obs)
+        env_obs = self._preprocess_action_obs(env_obs, mode)
 
         action, chunk_actions, chunk_logprobs, chunk_values = self._generate_actions(
             env_obs["states"], mode=mode, calculate_values=calculate_values

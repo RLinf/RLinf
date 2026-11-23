@@ -1,0 +1,27 @@
+model_type: "sapg_mlp_policy"
+
+model_path: ""
+
+policy_setup: "allegro-qpos"
+# Raw proprioceptive observation dim (before the SAPG exploration embedding).
+obs_dim: 124
+action_dim: 16
+num_action_chunks: 1
+
+precision: "32"
+add_value_head: True
+
+is_lora: False
+lora_rank: 32
+
+sapg:
+  num_blocks: 6
+  embd_size: 16
+  leader_aggregate: true
+  off_policy_ratio: 1
+  intrinsic_reward_type: none # Official Allegro Hand recipe.
+  intrinsic_coef_scale: 1.0
+  intrinsic_coef_start: 0.5
+  intrinsic_coef_end: 0.0
+  embedding_start: 50.0
+  embedding_end: 0.0
