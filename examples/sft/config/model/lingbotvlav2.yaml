@@ -1,5 +1,5 @@
 model_type: lingbotvlav2
-model_path: ${oc.env:LINGBOT_VLA_V2_CHECKPOINT}
+model_path: ${oc.env:LINGBOT_VLA_V2_MODEL_ROOT}
 tokenizer_path: ${oc.env:QWEN3VL_PATH}
 precision: fp32
 num_action_chunks: 50
@@ -16,7 +16,7 @@ enable_expert_lr_multiplier: true
 
 lingbotvlav2:
   config_path: ${oc.env:LINGBOT_VLA_V2_PATH}
-  training_config_path: ${oc.env:LINGBOT_VLA_V2_MODEL_ROOT}/lingbotvla_cli.yaml
+  training_config_path: ${oc.env:LINGBOT_VLA_V2_PATH}/configs/vla/robotwin/robotwin.yaml
   robot_config_path: ${oc.env:LINGBOT_VLA_V2_PATH}/configs/robot_configs/robotwin.yaml
   robot_config_root: ${oc.env:LINGBOT_VLA_V2_PATH}/configs/robot_configs
   stats_path: ${oc.env:LINGBOT_VLA_V2_PATH}/assets/norm_stats/robotwin.json

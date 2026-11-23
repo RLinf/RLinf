@@ -19,6 +19,7 @@ import copy
 import importlib.util
 import inspect
 import json
+import os
 import pickle
 import random
 import shutil
@@ -3098,6 +3099,77 @@ def test_robotwin_converter_writes_rgb_frames(monkeypatch):
     image = module.decode_frame(encoded.tobytes())
 
     assert tuple(image[0, 0]) == (255, 0, 0)
+
+
+def test_robotwin_converter_cli_writes_hwc_lerobot_dataset(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    h5py = pytest.importorskip("h5py")
+    pytest.importorskip("lerobot")
+
+    root = Path(__file__).resolve().parents[2]
+    script = root / "toolkits/lerobot/convert_robotwin_to_lerobot.py"
+    raw_root = tmp_path / "raw"
+    (raw_root / "data").mkdir(parents=True)
+    (raw_root / "instructions").mkdir()
+    (raw_root / "instructions/episode0.json").write_text(
+        json.dumps({"seen": ["pick up the object"]}), encoding="utf-8"
+    )
+
+    red_bgr = np.zeros((8, 8, 3), dtype=np.uint8)
+    red_bgr[..., 2] = 255
+    encoded_ok, encoded = cv2.imencode(".png", red_bgr)
+    assert encoded_ok, "OpenCV failed to encode the HDF5 fixture frame"
+    encoded_frame = np.frombuffer(encoded.tobytes(), dtype=np.uint8)
+
+    with h5py.File(raw_root / "data/episode0.hdf5", "w") as handle:
+        joints = handle.create_group("joint_action")
+        joints.create_dataset("left_arm", data=np.zeros((2, 6), dtype=np.float32))
+        joints.create_dataset("left_gripper", data=np.zeros(2, dtype=np.float32))
+        joints.create_dataset("right_arm", data=np.zeros((2, 6), dtype=np.float32))
+        joints.create_dataset("right_gripper", data=np.zeros(2, dtype=np.float32))
+        observations = handle.create_group("observation")
+        for camera in ("head_camera", "left_camera", "right_camera"):
+            rgb = observations.create_group(camera).create_dataset(
+                "rgb", shape=(2,), dtype=h5py.vlen_dtype(np.dtype("uint8"))
+            )
+            rgb[0] = encoded_frame
+            rgb[1] = encoded_frame
+
+    output_root = tmp_path / "lerobot"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, [str(root), env.get("PYTHONPATH")])
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--raw-root",
+            str(raw_root),
+            "--output-root",
+            str(output_root),
+        ],
+        cwd=root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    info = json.loads((output_root / "meta/info.json").read_text(encoding="utf-8"))
+    feature = info["features"]["observation.images.cam_high"]
+    assert feature["shape"] == [480, 640, 3]
+    assert feature["names"] == ["height", "width", "channels"]
+    image_paths = [
+        *output_root.rglob("*.png"),
+        *output_root.rglob("*.jpg"),
+        *output_root.rglob("*.jpeg"),
+    ]
+    assert image_paths, "LeRobot add_frame did not write any image files"
+    with Image.open(image_paths[0]) as image:
+        assert image.size == (640, 480)
+        assert image.convert("RGB").getpixel((320, 240))[0] > 240
 
 
 def test_offline_lerobot_export_reuses_canonical_frame_conversion():

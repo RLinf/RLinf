@@ -5383,7 +5383,7 @@ def test_lingbotvlav2_rl_trains_the_action_expert_but_not_its_routers():
     )
 
 
-def test_lingbotvlav2_sft_preserves_upstream_mask_and_forwards_noise_time(monkeypatch):
+def test_lingbotvlav2_sft_masks_padded_actions_and_forwards_noise_time(monkeypatch):
     # Upstream kernel registration queries hardware even for this CPU contract test.
     pytest.importorskip("lingbotvla")
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device=None: (8, 0))
@@ -5429,22 +5429,34 @@ def test_lingbotvlav2_sft_preserves_upstream_mask_and_forwards_noise_time(monkey
 
     adapter.sft_forward(data)
 
-    assert torch.equal(policy.received["joint_mask"], original_joint_mask)
+    expected_joint_mask = original_joint_mask & ~action_is_pad.unsqueeze(-1)
+    assert torch.equal(policy.received["joint_mask"], expected_joint_mask)
     assert torch.equal(policy.received["action_is_pad"], action_is_pad)
     assert torch.equal(policy.received["noise"], original_noise)
     assert torch.equal(policy.received["time"], original_time)
     assert torch.equal(data["joint_mask"], original_joint_mask)
 
 
-def test_lingbotvlav2_reads_incomplete_foundation_metadata_from_release_config(
-    monkeypatch, tmp_path
-):
-    pytest.importorskip("lingbotvla")
-    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device=None: (8, 0))
-    monkeypatch.setattr(torch.cuda, "get_device_name", lambda device=None: "CPU test")
-    from rlinf.models.embodiment.lingbotvlav2.lingbotvlav2_action_model import (
-        _read_checkpoint_values,
+def test_lingbotvlav2_masks_padded_action_steps():
+    from rlinf.models.embodiment.lingbotvlav2.utils import mask_padded_actions
+
+    joint_mask = torch.ones(2, 4, 3, dtype=torch.bool)
+    action_is_pad = torch.tensor(
+        [[False, False, True, True], [False, True, False, True]]
     )
+    masked = mask_padded_actions(joint_mask, action_is_pad)
+
+    assert masked is not None
+    assert masked.shape == joint_mask.shape
+    assert masked[0, :2].all() and not masked[0, 2:].any()
+    assert masked[1, 0].all() and not masked[1, 1].any()
+    assert masked[1, 2].all() and not masked[1, 3].any()
+
+
+def test_lingbotvlav2_reads_incomplete_foundation_metadata_from_release_config(
+    tmp_path,
+):
+    from rlinf.models.embodiment.lingbotvlav2.utils import read_checkpoint_values
 
     checkpoint = tmp_path / "foundation"
     checkpoint.mkdir()
@@ -5463,7 +5475,7 @@ def test_lingbotvlav2_reads_incomplete_foundation_metadata_from_release_config(
         )
     )
 
-    values = _read_checkpoint_values(checkpoint, release_config)
+    values = read_checkpoint_values(checkpoint, release_config, action_chunk_size=50)
 
     assert values == {
         "max_action_dim": 55,
@@ -5472,13 +5484,8 @@ def test_lingbotvlav2_reads_incomplete_foundation_metadata_from_release_config(
     }
 
 
-def test_lingbotvlav2_prefers_complete_checkpoint_metadata(monkeypatch, tmp_path):
-    pytest.importorskip("lingbotvla")
-    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device=None: (8, 0))
-    monkeypatch.setattr(torch.cuda, "get_device_name", lambda device=None: "CPU test")
-    from rlinf.models.embodiment.lingbotvlav2.lingbotvlav2_action_model import (
-        _read_checkpoint_values,
-    )
+def test_lingbotvlav2_prefers_complete_checkpoint_metadata(tmp_path):
+    from rlinf.models.embodiment.lingbotvlav2.utils import read_checkpoint_values
 
     checkpoint = tmp_path / "checkpoint"
     checkpoint.mkdir()
@@ -5487,16 +5494,17 @@ def test_lingbotvlav2_prefers_complete_checkpoint_metadata(monkeypatch, tmp_path
     release_config = tmp_path / "lingbotvla_cli.yaml"
     release_config.write_text("invalid: [")
 
-    assert _read_checkpoint_values(checkpoint, release_config) == expected
+    assert (
+        read_checkpoint_values(checkpoint, release_config, action_chunk_size=32)
+        == expected
+    )
 
 
 def test_lingbotvlav2_prefers_checkpoint_release_config(monkeypatch, tmp_path):
     pytest.importorskip("lingbotvla")
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device=None: (8, 0))
     monkeypatch.setattr(torch.cuda, "get_device_name", lambda device=None: "CPU test")
-    from rlinf.models.embodiment.lingbotvlav2.lingbotvlav2_action_model import (
-        _read_checkpoint_values,
-    )
+    from rlinf.models.embodiment.lingbotvlav2.utils import read_checkpoint_values
 
     checkpoint = tmp_path / "run" / "checkpoints" / "global_step_0" / "hf_ckpt"
     checkpoint.mkdir(parents=True)
@@ -5513,9 +5521,61 @@ def test_lingbotvlav2_prefers_checkpoint_release_config(monkeypatch, tmp_path):
     fallback_config = tmp_path / "fallback.yaml"
     fallback_config.write_text("invalid: [")
 
-    values = _read_checkpoint_values(checkpoint, fallback_config)
+    values = read_checkpoint_values(checkpoint, fallback_config, action_chunk_size=50)
 
     assert values == {"max_action_dim": 55, "max_state_dim": 55, "chunk_size": 50}
+
+
+def test_lingbotvlav2_uses_action_chunk_size_when_release_config_omits_it(
+    tmp_path,
+):
+    from rlinf.models.embodiment.lingbotvlav2.utils import read_checkpoint_values
+
+    checkpoint = tmp_path / "run" / "checkpoints" / "global_step_0" / "hf_ckpt"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "config.json").write_text(json.dumps({"model_type": "qwen3_vl"}))
+    release_config = tmp_path / "robotwin.yaml"
+    release_config.write_text(
+        json.dumps(
+            {
+                "model": {"config_key": "LingbotVLAV2Config"},
+                "train": {"max_action_dim": 55, "max_state_dim": 55},
+            }
+        )
+    )
+
+    values = read_checkpoint_values(checkpoint, release_config, action_chunk_size=50)
+
+    assert values["max_action_dim"] == 55
+    assert values["max_state_dim"] == 55
+    assert values["chunk_size"] == 50
+
+
+def test_lingbotvlav2_still_requires_release_parameter_dimensions(tmp_path):
+    from rlinf.models.embodiment.lingbotvlav2.utils import read_checkpoint_values
+
+    checkpoint = tmp_path / "run" / "checkpoints" / "global_step_0" / "hf_ckpt"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "config.json").write_text(json.dumps({"model_type": "qwen3_vl"}))
+    release_config = tmp_path / "robotwin.yaml"
+    release_config.write_text(
+        json.dumps(
+            {
+                "model": {},
+                "train": {"max_action_dim": 55},
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="max_state_dim"):
+        read_checkpoint_values(checkpoint, release_config, action_chunk_size=50)
+
+
+def test_lingbotvlav2_release_data_config_uses_shared_image_size_default():
+    from rlinf.models.embodiment.lingbotvlav2.utils import resolve_image_size
+
+    assert resolve_image_size({"cameras": ["camera_top"]}) == 256
+    assert resolve_image_size({"img_size": 224}) == 224
 
 
 def test_lingbotvlav2_sft_config_resolves_module_precision(monkeypatch, tmp_path):
@@ -5525,10 +5585,9 @@ def test_lingbotvlav2_sft_config_resolves_module_precision(monkeypatch, tmp_path
     monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/sft"))
     monkeypatch.setenv("LINGBOT_VLA_SFT_OUTPUT", str(tmp_path / "output"))
     monkeypatch.setenv("LINGBOT_VLA_SFT_DATASET", str(tmp_path / "manifest.txt"))
-    monkeypatch.setenv("LINGBOT_VLA_V2_CHECKPOINT", str(tmp_path / "foundation"))
     monkeypatch.setenv("QWEN3VL_PATH", str(tmp_path / "tokenizer"))
     monkeypatch.setenv("LINGBOT_VLA_V2_PATH", str(tmp_path / "lingbot-vla-v2"))
-    monkeypatch.setenv("LINGBOT_VLA_V2_MODEL_ROOT", str(tmp_path / "model-root"))
+    monkeypatch.setenv("LINGBOT_VLA_V2_MODEL_ROOT", str(tmp_path / "foundation"))
 
     with initialize_config_dir(
         config_dir=str(root / "examples/sft/config"), version_base="1.1"
@@ -5543,6 +5602,13 @@ def test_lingbotvlav2_sft_config_resolves_module_precision(monkeypatch, tmp_path
         "Qwen3VLVisionBlock",
     ]
     assert cfg.actor.model.lingbotvlav2.data_name == "multi"
+    assert cfg.actor.model.num_action_chunks == 50
+    assert cfg.actor.model.model_path == str(tmp_path / "foundation")
+    assert cfg.actor.model.lingbotvlav2.training_config_path == str(
+        tmp_path / "lingbot-vla-v2/configs/vla/robotwin/robotwin.yaml"
+    )
+    assert cfg.actor.model.lingbotvlav2.attention_implementation == "flex_cached"
+    assert cfg.actor.model.sft_constructor_alignment_fix is True
     assert cfg.actor.fsdp_config.mixed_precision.param_dtype == "bf16"
     assert cfg.actor.fsdp_config.mixed_precision.reduce_dtype == "fp32"
     assert cfg.actor.fsdp_config.mixed_precision.cast_forward_inputs is True
@@ -5652,6 +5718,8 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     monkeypatch.setenv("REPO_PATH", str(root))
     monkeypatch.setenv("ROBOTWIN_ASSETS_PATH", "/explicit/asset")
     monkeypatch.setenv("LINGBOT_VLA_V2_PATH", "/explicit/lingbot-vla-v2")
+    monkeypatch.setenv("LINGBOT_VLA_V2_ROBOTWIN_ROOT", "/explicit/robotwin")
+    monkeypatch.setenv("QWEN3VL_PATH", "/explicit/qwen3-vl")
     with initialize_config_dir(
         config_dir=str(root / "tests/e2e_tests/embodied"), version_base="1.1"
     ):
@@ -5659,6 +5727,10 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     OmegaConf.resolve(cfg)
     assert dict(cfg.cluster.component_placement) == {"actor, env, rollout": "0-1"}
     assert cfg.actor.model.model_type == "lingbotvlav2"
+    assert cfg.actor.model.lingbotvlav2.attention_implementation == "flex_cached"
+    assert cfg.actor.model.sft_constructor_alignment_fix is False
+    rollout_model_cfg = OmegaConf.merge(cfg.actor.model, cfg.rollout.model)
+    assert rollout_model_cfg.lingbotvlav2.attention_implementation == "flex_cached"
     assert cfg.actor.model.action_dim == 14
     assert cfg.actor.model.num_action_chunks == 50
     assert cfg.actor.model.precision == "fp32" and cfg.rollout.model.precision == "bf16"
@@ -6012,6 +6084,90 @@ def test_steam_gate_uses_head_metadata_and_warns_on_overrides(tmp_path, caplog):
         gate = SteamRoutingGate(_FakeSteamCritic(), cfg)
     assert gate.enter_threshold == 0.1
     assert "actor_switch.enter_threshold" in caplog.text
+
+
+def test_lingbotvlav2_ppo_config_uses_shared_attention_and_robotwin_root(
+    monkeypatch, tmp_path
+):
+    from hydra import compose, initialize_config_dir
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(root))
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    monkeypatch.setenv("ROBOTWIN_ASSETS_PATH", str(tmp_path / "assets"))
+    monkeypatch.setenv("LINGBOT_VLA_V2_PATH", str(tmp_path / "lingbot-vla-v2"))
+    monkeypatch.setenv("LINGBOT_VLA_V2_ROBOTWIN_ROOT", str(tmp_path / "robotwin"))
+    monkeypatch.setenv("QWEN3VL_PATH", str(tmp_path / "tokenizer"))
+
+    with initialize_config_dir(
+        config_dir=str(root / "examples/embodiment/config"), version_base="1.1"
+    ):
+        cfg = compose(config_name="robotwin_click_bell_ppo_lingbotvlav2")
+    OmegaConf.resolve(cfg)
+
+    assert cfg.actor.model.lingbotvlav2.attention_implementation == "flex_cached"
+    assert cfg.actor.model.model_path == str(
+        tmp_path / "robotwin/checkpoints/global_step_50000/hf_ckpt"
+    )
+    rollout_model_cfg = OmegaConf.merge(cfg.actor.model, cfg.rollout.model)
+    assert rollout_model_cfg.lingbotvlav2.attention_implementation == "flex_cached"
+
+
+def test_lingbotvlav2_standalone_eval_uses_shared_attention(monkeypatch, tmp_path):
+    from hydra import compose, initialize_config_dir
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    monkeypatch.setenv("REPO_PATH", str(root))
+    monkeypatch.setenv("ROBOTWIN_ASSETS_PATH", str(tmp_path / "assets"))
+    monkeypatch.setenv("LINGBOT_VLA_V2_PATH", str(tmp_path / "lingbot-vla-v2"))
+    monkeypatch.setenv("LINGBOT_VLA_V2_ROBOTWIN_ROOT", str(tmp_path / "robotwin"))
+    monkeypatch.setenv("QWEN3VL_PATH", str(tmp_path / "tokenizer"))
+
+    with initialize_config_dir(
+        config_dir=str(root / "evaluations/robotwin"), version_base="1.1"
+    ):
+        cfg = compose(config_name="robotwin_click_bell_lingbotvlav2_eval")
+    OmegaConf.resolve(cfg)
+
+    assert cfg.rollout.model.lingbotvlav2.attention_implementation == "flex_cached"
+    assert cfg.rollout.model.sft_constructor_alignment_fix is False
+
+
+def test_lingbotvlav2_sft_checkpoint_eval_uses_sft_model_structure(
+    monkeypatch, tmp_path
+):
+    from hydra import compose, initialize_config_dir
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    monkeypatch.setenv("REPO_PATH", str(root))
+    monkeypatch.setenv("ROBOTWIN_ASSETS_PATH", str(tmp_path / "assets"))
+    monkeypatch.setenv("LINGBOT_VLA_V2_PATH", str(tmp_path / "lingbot-vla-v2"))
+    monkeypatch.delenv("LINGBOT_VLA_V2_ROBOTWIN_ROOT", raising=False)
+    monkeypatch.setenv("QWEN3VL_PATH", str(tmp_path / "tokenizer"))
+
+    with initialize_config_dir(
+        config_dir=str(root / "evaluations/robotwin"), version_base="1.1"
+    ):
+        cfg = compose(
+            config_name="robotwin_click_bell_lingbotvlav2_eval",
+            overrides=[
+                f"rollout.model.model_path={tmp_path / 'foundation'}",
+                "rollout.model.lingbotvlav2.training_config_path="
+                f"{tmp_path / 'lingbot-vla-v2/configs/vla/robotwin/robotwin.yaml'}",
+                "rollout.model.add_value_head=false",
+                "rollout.model.sft_constructor_alignment_fix=true",
+            ],
+        )
+
+    OmegaConf.resolve(cfg)
+    assert cfg.rollout.model.model_path == str(tmp_path / "foundation")
+    assert cfg.rollout.model.lingbotvlav2.training_config_path == str(
+        tmp_path / "lingbot-vla-v2/configs/vla/robotwin/robotwin.yaml"
+    )
+    assert cfg.rollout.model.add_value_head is False
+    assert cfg.rollout.model.sft_constructor_alignment_fix is True
 
 
 def test_entropy_temperatures_are_tuned_per_env_and_keep_scalar_checkpoints():

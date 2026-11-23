@@ -24,7 +24,13 @@ from pathlib import Path
 import cv2
 import h5py
 import numpy as np
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+try:
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+except ModuleNotFoundError as error:
+    if error.name is None or not error.name.startswith("lerobot.datasets"):
+        raise
+    from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
 from rlinf.data.storage.lerobot import add_frame_to_dataset
 from rlinf.utils.logging import get_logger
@@ -98,8 +104,8 @@ def create_dataset(output_root: Path) -> LeRobotDataset:
     for target_key in CAMERA_MAP.values():
         features[target_key] = {
             "dtype": "image",
-            "shape": (3, *IMAGE_HW),
-            "names": ["channels", "height", "width"],
+            "shape": (*IMAGE_HW, 3),
+            "names": ["height", "width", "channels"],
         }
     return LeRobotDataset.create(
         repo_id=output_root.name,
@@ -130,7 +136,7 @@ def convert_episode(dataset: LeRobotDataset, raw_root: Path, episode_index: int)
                 encoded = handle[f"observation/{source_key}/rgb"][frame_index]
                 frame[target_key] = decode_frame(encoded)
             add_frame_to_dataset(dataset, frame)
-    dataset.save_episode(parallel_encoding=False)
+    dataset.save_episode()
     return num_raw_frames - 1
 
 
@@ -147,7 +153,6 @@ def main() -> None:
             total_frames += convert_episode(dataset, raw_root, episode_index)
         total_episodes += num_episodes
         logger.info("Converted %d episodes from %s", num_episodes, raw_root)
-    dataset.finalize()
     logger.info(
         "Wrote %d episodes / %d frames to %s",
         total_episodes,

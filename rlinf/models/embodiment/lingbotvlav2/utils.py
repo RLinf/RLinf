@@ -12,16 +12,59 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LingBot-VLA 2.0 RL helpers that do not need the V2 package.
+"""LingBot-VLA V2 checkpoint and RL helpers.
 
 A training rollout follows the flow ODE except at one random denoising step per
 sample, where it draws from the flow-SDE transition. PPO scores only that step,
 as RLinf's LingBot-VLA and OpenPI policies do.
 """
 
-from typing import Callable, Optional
+import json
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 import torch
+import yaml
+
+_DEFAULT_IMAGE_SIZE = 256
+
+
+def read_checkpoint_values(
+    checkpoint: str | Path,
+    training_config_path: str | Path,
+    action_chunk_size: int,
+) -> dict[str, Any]:
+    """Read checkpoint metadata, completing it from the release config."""
+    checkpoint = Path(checkpoint)
+    with (checkpoint / "config.json").open() as source:
+        values = json.load(source)
+    if "max_action_dim" in values and "chunk_size" in values:
+        return values
+
+    checkpoint_release_config = checkpoint.parent.parent.parent / "lingbotvla_cli.yaml"
+    if checkpoint_release_config.is_file():
+        from lingbotvla.checkpoint_metadata import read_checkpoint_config
+
+        return read_checkpoint_config(checkpoint)
+
+    release_config_path = Path(training_config_path).expanduser()
+    with release_config_path.open() as source:
+        release_config = yaml.safe_load(source)
+    values = {**release_config["model"], **release_config["train"]}
+    values.setdefault("chunk_size", action_chunk_size)
+    for field in ("max_action_dim", "max_state_dim", "chunk_size"):
+        if not isinstance(values.get(field), int) or values[field] <= 0:
+            raise ValueError(
+                f"Expected positive {field} in {release_config_path}, "
+                f"got {values.get(field)!r}."
+            )
+    return values
+
+
+def resolve_image_size(data_config: dict[str, Any]) -> int:
+    """Return the configured image size or the V2 data default."""
+    return int(data_config.get("img_size", _DEFAULT_IMAGE_SIZE))
+
 
 _TRAINABLE_PARTS = (
     ".qwen_expert.",
@@ -41,6 +84,32 @@ def is_rl_trainable(name: str) -> bool:
     return any(part in name for part in _TRAINABLE_PARTS) and not any(
         part in name for part in _FROZEN_PARTS
     )
+
+
+def mask_padded_actions(
+    joint_mask: torch.Tensor | None, action_is_pad: torch.Tensor | None
+) -> torch.Tensor | None:
+    """Clear padded action steps from the V2 loss mask."""
+    if joint_mask is None or action_is_pad is None:
+        return joint_mask
+
+    joint_mask = joint_mask.bool()
+    pad_mask = action_is_pad.bool()
+    if pad_mask.ndim == joint_mask.ndim - 1:
+        pad_mask = pad_mask.unsqueeze(-1)
+    if pad_mask.ndim != joint_mask.ndim or pad_mask.shape[:-1] != joint_mask.shape[:-1]:
+        raise ValueError(
+            "LingBot-VLA V2 action padding mask shape mismatch: "
+            f"joint_mask={tuple(joint_mask.shape)}, "
+            f"action_is_pad={tuple(action_is_pad.shape)}."
+        )
+    if pad_mask.shape[-1] not in (1, joint_mask.shape[-1]):
+        raise ValueError(
+            "LingBot-VLA V2 action padding mask action dimension mismatch: "
+            f"joint_mask={tuple(joint_mask.shape)}, "
+            f"action_is_pad={tuple(action_is_pad.shape)}."
+        )
+    return joint_mask & ~pad_mask
 
 
 # Maps a latent [batch, horizon, dim] and per-sample times [batch] to a velocity.

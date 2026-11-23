@@ -139,25 +139,20 @@ RoboTwin Assets 是 RoboTwin 环境运行所需的资源文件，需要从 Huggi
 下载模型
 ----------------------------------------
 
-从 HuggingFace 下载 LingbotVLA 2.0 的 RoboTwin checkpoint 与 Qwen3-VL 底座模型：
+从 Hugging Face 下载 RoboTwin 后训练 checkpoint 和 Qwen3-VL tokenizer：
 
 .. code-block:: bash
 
     hf download robbyant/lingbot-vla-v2-6b-robotwin --local-dir lingbot-vla-v2-6b-robotwin
     hf download Qwen/Qwen3-VL-4B-Instruct --local-dir Qwen3-VL-4B-Instruct
 
-然后在 ``examples/embodiment/config/model/lingbotvlav2.yaml`` 中填写空白的路径字段。训练与独立评测都读取这个文件，任何路径留空时，模型都会在启动时报错并指出对应字段：
+设置 RoboTwin 发布目录和 tokenizer 路径。PPO 与评测共用的配置会从该目录读取后训练权重和 ``lingbotvla_cli.yaml``：
 
-.. code-block:: yaml
+.. code-block:: bash
 
-    model_path: /path/to/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
-    tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
-    lingbotvlav2:
-      training_config_path: /path/to/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml
-      robot_config_path: /path/to/RLinf/.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
-      stats_path: /path/to/RLinf/.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
-
-在 Docker 镜像中，``robot_config_path`` 与 ``stats_path`` 改以 ``/opt/venv/lingbotvlav2/lingbot-vla-v2`` 开头。
+    export LINGBOT_VLA_V2_ROBOTWIN_ROOT=/path/to/lingbot-vla-v2-6b-robotwin
+    export LINGBOT_VLA_V2_PATH=/path/to/.venv/lingbot-vla-v2
+    export QWEN3VL_PATH=/path/to/Qwen3-VL-4B-Instruct
 
 运行
 ----------------------------------------
@@ -234,26 +229,27 @@ actor 以 fp32 保存可训练的动作专家权重，因为在当前学习率�
 监督微调
 ----------------------------------------
 
-从 Foundation Base 微调 RoboTwin 动作。SFT 更新动作专家和投影层，冻结 Qwen-VL 主干与 MoE 路由器，并与推理共用上游模型配置。FSDP2 对主干使用 BF16，动作专家与梯度规约使用 FP32。
+从 Foundation Base 微调 RoboTwin 动作。SFT 更新动作专家和投影层，冻结 Qwen-VL 主干与 MoE 路由器。SFT 与推理使用同一份上游模型源码，并在单机 8 卡上运行。FSDP2 对主干使用 BF16，动作专家与梯度规约使用 FP32。
 
-安装 ModelScope CLI 后，从 `ModelScope <https://modelscope.cn/models/Robbyant/lingbot-vla-v2-6b>`__ 下载 Foundation Base 权重：
+从 `Hugging Face <https://huggingface.co/robbyant/lingbot-vla-v2-6b>`__ 下载 Foundation Base：
+
+这里下载的是 Foundation Base。上面的 PPO 示例使用单独的 RoboTwin 后训练 checkpoint。
 
 .. code-block:: bash
 
-    python -m pip install modelscope
-    modelscope download --model Robbyant/lingbot-vla-v2-6b --local_dir lingbot-vla-v2-6b-foundation-modelscope
+    hf download robbyant/lingbot-vla-v2-6b \
+      --local-dir /path/to/lingbot-vla-v2-6b
 
-转换数据前先设置模型、源码和数据路径：
+设置 Foundation Base、LingBot-VLA V2 源码、tokenizer 和数据清单路径：
 
 .. code-block:: bash
 
     export LINGBOT_VLA_V2_PATH=/path/to/.venv/lingbot-vla-v2
-    export LINGBOT_VLA_V2_MODEL_ROOT=/path/to/lingbot-vla-v2-6b-robotwin
-    export LINGBOT_VLA_V2_CHECKPOINT=/path/to/lingbot-vla-v2-6b-foundation-modelscope
+    export LINGBOT_VLA_V2_MODEL_ROOT=/path/to/lingbot-vla-v2-6b
     export QWEN3VL_PATH=/path/to/Qwen3-VL-4B-Instruct
     export LINGBOT_VLA_SFT_DATASET=/path/to/robotwin_train.txt
 
-``LINGBOT_VLA_V2_MODEL_ROOT`` 指向包含共享 ``lingbotvla_cli.yaml`` 的目录。Foundation checkpoint 缺少模型字段时，SFT 会从这份 YAML 读取。``LINGBOT_VLA_V2_PATH`` 指向包含机器人配置和归一化统计的源码目录。``LINGBOT_VLA_V2_CHECKPOINT`` 指向下载后的 Foundation Base 目录。
+``LINGBOT_VLA_V2_MODEL_ROOT`` 指向下载后的 Foundation Base。SFT 从源码目录读取 RoboTwin 模型配置、机器人配置和归一化统计。PPO 使用独立的 ``LINGBOT_VLA_V2_ROBOTWIN_ROOT`` 指向后训练 checkpoint。
 
 转换解压后的 RoboTwin 数据集。每个输入目录需要包含 ``data/episode<i>.hdf5`` 和 ``instructions/episode<i>.json``：
 
@@ -270,13 +266,42 @@ actor 以 fp32 保存可训练的动作专家权重，因为在当前学习率�
 
     bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvlav2
 
-SFT 训练记录 ``train/l1_loss``。评测保存的完整权重时，使用与 SFT 相同的 attention 设置：
+SFT 配置把 actor rank 分配到单机 GPU 0–7，global batch size 设为 8。训练过程记录 ``train/l1_loss``。独立评测会从共享 V2 model 配置读取同一个 ``flex_cached`` attention 设置。加载 SFT 权重时，关闭 PPO value head 并启用 SFT 构造对齐修复，确保评测模型的参数集合与 SFT 一致：
 
 .. code-block:: bash
 
     bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
       runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt \
-      rollout.model.lingbotvlav2.attention_implementation=flex_cached
+      rollout.model.model_path="${LINGBOT_VLA_V2_MODEL_ROOT}" \
+      rollout.model.lingbotvlav2.training_config_path="${LINGBOT_VLA_V2_PATH}/configs/vla/robotwin/robotwin.yaml" \
+      rollout.model.add_value_head=false \
+      rollout.model.sft_constructor_alignment_fix=true
+
+Foundation Base 对照实验
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+图中的训练从 ModelScope Foundation 快照 ``Robbyant/lingbot-vla-v2-6b`` 初始化，ModelScope revision 为 ``edfff7638a31a5dbfaae87016477191735bd754e``。上方 Hugging Face 命令是当前文档的下载流程；本图不声称 Hugging Face 快照与该 ModelScope revision 的元数据或文件哈希相同。Official 和 RLinf 都在同一份 3,384 条 occurrence 清单上完成了 423 次 optimizer update，global batch size 为 8。
+
+.. figure:: /_static/images/lingbotvlav2_foundation_action_loss_ma25.png
+   :width: 90%
+
+   Foundation Base 对照实验的逐步 Action Loss 及其 25 步移动平均曲线。
+
+.. list-table:: Action Loss 统计
+   :header-rows: 1
+   :widths: 40 30 30
+
+   * - 指标
+     - Official
+     - RLinf
+   * - 平均值
+     - 0.102265
+     - 0.101771
+   * - 最后 50 步平均值
+     - 0.065720
+     - 0.065274
+
+逐步 Action Loss 的 MAE 为 0.002404，Pearson 相关系数为 0.9984，最大绝对差为 0.014081。曲线比较 Official ``VLA_Loss`` 与 RLinf ``train/l1_loss``。Total Loss 单独记录，因为两套实现可能包含不同的辅助项。这是受控对照实验，不能据此宣称严格 parity 或任务成功率提升。
 
 可视化与结果
 ----------------------------------------

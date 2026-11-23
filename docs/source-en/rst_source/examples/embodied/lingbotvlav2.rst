@@ -152,28 +152,21 @@ RoboTwin Assets are asset files required by the RoboTwin environment and need to
 Download the Model
 ------------------
 
-Download the LingbotVLA 2.0 RoboTwin checkpoint and the Qwen3-VL backbone from HuggingFace:
+Download the RoboTwin post-training checkpoint and the Qwen3-VL tokenizer from Hugging Face:
 
 .. code-block:: bash
 
     hf download robbyant/lingbot-vla-v2-6b-robotwin --local-dir lingbot-vla-v2-6b-robotwin
     hf download Qwen/Qwen3-VL-4B-Instruct --local-dir Qwen3-VL-4B-Instruct
 
-Then fill in the empty paths in ``examples/embodiment/config/model/lingbotvlav2.yaml``.
-Training and standalone evaluation both read this file, and the model stops at
-startup with the name of any path left empty:
+Set the RoboTwin release root and tokenizer path. The shared PPO and evaluation
+config uses this root for the post-training weights and ``lingbotvla_cli.yaml``:
 
-.. code-block:: yaml
+.. code-block:: bash
 
-    model_path: /path/to/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
-    tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
-    lingbotvlav2:
-      training_config_path: /path/to/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml
-      robot_config_path: /path/to/RLinf/.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
-      stats_path: /path/to/RLinf/.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
-
-In the Docker image, ``robot_config_path`` and ``stats_path`` start with
-``/opt/venv/lingbotvlav2/lingbot-vla-v2`` instead.
+    export LINGBOT_VLA_V2_ROBOTWIN_ROOT=/path/to/lingbot-vla-v2-6b-robotwin
+    export LINGBOT_VLA_V2_PATH=/path/to/.venv/lingbot-vla-v2
+    export QWEN3VL_PATH=/path/to/Qwen3-VL-4B-Instruct
 
 Run It
 ------
@@ -269,32 +262,33 @@ Supervised Fine-Tuning
 ----------------------
 
 Fine-tune the Foundation Base on RoboTwin actions. SFT trains the action expert
-and projection layers while freezing Qwen-VL and MoE routers. It shares the
-upstream model configuration with inference. The SFT FSDP2 policy uses BF16 for
-the backbone, FP32 for the action expert, and FP32 gradient reduction.
+and projection layers while freezing Qwen-VL and MoE routers. It uses the same
+upstream model source as inference and runs on one node with 8 GPUs. The SFT
+FSDP2 policy uses BF16 for the backbone, FP32 for the action expert, and FP32
+gradient reduction.
 
-Install the ModelScope CLI and download the Foundation Base snapshot from `ModelScope <https://modelscope.cn/models/Robbyant/lingbot-vla-v2-6b>`__:
+Download the Foundation Base from `Hugging Face <https://huggingface.co/robbyant/lingbot-vla-v2-6b>`__:
+
+This Foundation Base is separate from the RoboTwin post-training checkpoint used by PPO above.
 
 .. code-block:: bash
 
-    python -m pip install modelscope
-    modelscope download --model Robbyant/lingbot-vla-v2-6b --local_dir lingbot-vla-v2-6b-foundation-modelscope
+    hf download robbyant/lingbot-vla-v2-6b \
+      --local-dir /path/to/lingbot-vla-v2-6b
 
-Set the model, source checkout, and dataset paths before converting data:
+Set the Foundation path, the LingBot-VLA V2 source checkout, the tokenizer, and the dataset manifest:
 
 .. code-block:: bash
 
     export LINGBOT_VLA_V2_PATH=/path/to/.venv/lingbot-vla-v2
-    export LINGBOT_VLA_V2_MODEL_ROOT=/path/to/lingbot-vla-v2-6b-robotwin
-    export LINGBOT_VLA_V2_CHECKPOINT=/path/to/lingbot-vla-v2-6b-foundation-modelscope
+    export LINGBOT_VLA_V2_MODEL_ROOT=/path/to/lingbot-vla-v2-6b
     export QWEN3VL_PATH=/path/to/Qwen3-VL-4B-Instruct
     export LINGBOT_VLA_SFT_DATASET=/path/to/robotwin_train.txt
 
-``LINGBOT_VLA_V2_MODEL_ROOT`` points to the directory containing the shared
-``lingbotvla_cli.yaml``. If the Foundation checkpoint omits model fields, SFT
-reads them from this YAML. ``LINGBOT_VLA_V2_PATH`` points to the source checkout
-that contains the robot config and normalization statistics. Set
-``LINGBOT_VLA_V2_CHECKPOINT`` to the downloaded Foundation Base directory.
+``LINGBOT_VLA_V2_MODEL_ROOT`` points to the Foundation Base. SFT reads its
+RoboTwin model settings, robot config, and normalization statistics from the
+installed source checkout. PPO uses the separate
+``LINGBOT_VLA_V2_ROBOTWIN_ROOT`` variable for post-training weights.
 
 Convert an extracted RoboTwin dataset. Each input directory must
 contain ``data/episode<i>.hdf5`` and ``instructions/episode<i>.json``:
@@ -312,14 +306,57 @@ The manifest contains one ``robot_name dataset_path`` entry per line. Start SFT:
 
     bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvlav2
 
-Track ``train/l1_loss`` during SFT. Evaluate the saved full weights with the
-same attention setting used for SFT:
+The SFT config places actor ranks on local GPUs 0–7 and uses a global batch size
+of 8. Track ``train/l1_loss`` during training. Standalone evaluation reads the
+same ``flex_cached`` attention setting from the shared V2 model config. When
+loading SFT weights, disable the PPO value head and enable the SFT constructor
+alignment fix so evaluation builds the same parameter set:
 
 .. code-block:: bash
 
     bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
       runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt \
-      rollout.model.lingbotvlav2.attention_implementation=flex_cached
+      rollout.model.model_path="${LINGBOT_VLA_V2_MODEL_ROOT}" \
+      rollout.model.lingbotvlav2.training_config_path="${LINGBOT_VLA_V2_PATH}/configs/vla/robotwin/robotwin.yaml" \
+      rollout.model.add_value_head=false \
+      rollout.model.sft_constructor_alignment_fix=true
+
+Foundation Base Comparison
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The plotted runs initialized from the ModelScope Foundation snapshot
+``Robbyant/lingbot-vla-v2-6b`` at ModelScope revision
+``edfff7638a31a5dbfaae87016477191735bd754e``. The Hugging Face command above
+documents the current download workflow; the chart does not claim that the
+Hugging Face snapshot has identical revision metadata or file hashes. Official
+and RLinf each completed 423 optimizer updates on the same 3,384-occurrence
+manifest with global batch size 8.
+
+.. figure:: /_static/images/lingbotvlav2_foundation_action_loss_ma25.png
+   :width: 90%
+
+   Raw Action Loss and its 25-update moving average for the Foundation Base comparison.
+
+.. list-table:: Action Loss Statistics
+   :header-rows: 1
+   :widths: 40 30 30
+
+   * - Metric
+     - Official
+     - RLinf
+   * - Mean
+     - 0.102265
+     - 0.101771
+   * - Last 50 updates mean
+     - 0.065720
+     - 0.065274
+
+The paired per-update Action Loss has an MAE of 0.002404, Pearson correlation
+of 0.9984, and maximum absolute difference of 0.014081. The chart compares
+Official ``VLA_Loss`` with RLinf ``train/l1_loss``. Total Loss is tracked
+separately because the frameworks may include different auxiliary terms. This
+is a controlled comparison; it does not establish strict parity or task success
+improvement.
 
 Visualization and Results
 -------------------------

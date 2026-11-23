@@ -22,10 +22,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 import yaml
-from lingbotvla.checkpoint_metadata import (
-    build_checkpoint_config,
-    read_checkpoint_config,
-)
+from lingbotvla.checkpoint_metadata import build_checkpoint_config
 from lingbotvla.data.vla_data.utils import FeatureTransform
 from lingbotvla.distributed.parallel_state import (
     get_parallel_state,
@@ -50,6 +47,9 @@ from transformers.modeling_utils import load_sharded_checkpoint
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.lingbotvlav2.utils import (
     is_rl_trainable,
+    mask_padded_actions,
+    read_checkpoint_values,
+    resolve_image_size,
     sample_with_one_sde_step,
     score_sde_step,
 )
@@ -74,30 +74,6 @@ _REQUIRED_PATHS = (
     "lingbotvlav2.robot_config_path",
     "lingbotvlav2.stats_path",
 )
-
-
-def _read_checkpoint_values(
-    checkpoint: Path, training_config_path: str | Path
-) -> dict[str, Any]:
-    """Read model metadata from the checkpoint or its shared release config."""
-    with (checkpoint / "config.json").open() as source:
-        values = json.load(source)
-    if "max_action_dim" in values and "chunk_size" in values:
-        return values
-    if (checkpoint.parent.parent.parent / "lingbotvla_cli.yaml").is_file():
-        return read_checkpoint_config(checkpoint)
-
-    release_config_path = Path(training_config_path).expanduser()
-    with release_config_path.open() as source:
-        release_config = yaml.safe_load(source)
-    values = {**release_config["model"], **release_config["train"]}
-    for field in ("max_action_dim", "max_state_dim", "chunk_size"):
-        if not isinstance(values.get(field), int) or values[field] <= 0:
-            raise ValueError(
-                f"Expected positive {field} in {release_config_path}, "
-                f"got {values.get(field)!r}."
-            )
-    return values
 
 
 class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
@@ -171,7 +147,11 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
 
         weights = Path(config.model_path).expanduser()
         model_config = build_checkpoint_config(
-            _read_checkpoint_values(weights, config.lingbotvlav2.training_config_path),
+            read_checkpoint_values(
+                weights,
+                config.lingbotvlav2.training_config_path,
+                int(config.num_action_chunks),
+            ),
             config.tokenizer_path,
         )
         self.sft_constructor_alignment_fix = bool(
@@ -279,7 +259,8 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
                 str(item) if isinstance(item, dict) else item
                 for item in data_config[key]
             ]
-        self.image_size = int(data_config["img_size"])
+        data_config["img_size"] = resolve_image_size(data_config)
+        self.image_size = data_config["img_size"]
         self.processor = build_processor(config.tokenizer_path)
         self.transform = FeatureTransform(
             config.lingbotvlav2.robot_config_path,
@@ -500,7 +481,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
         return self.default_forward(**kwargs)
 
     def sft_forward(self, data: dict, **kwargs: Any) -> dict:
-        """Compute the upstream action loss without changing its mask."""
+        """Compute the upstream action loss, excluding padded action steps."""
         device = next(iter(self.vla_model.model.parameters())).device
         data = tree_map(
             lambda x: (
@@ -516,7 +497,9 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             lang_tokens=data["lang_tokens"],
             lang_masks=data["lang_masks"],
             actions=data["actions"].to(dtype),
-            joint_mask=data.get("joint_mask"),
+            joint_mask=mask_padded_actions(
+                data.get("joint_mask"), data.get("action_is_pad")
+            ),
             action_is_pad=data.get("action_is_pad"),
             image_grid_thw=data.get("image_grid_thw"),
             noise=data.get("noise"),
