@@ -103,6 +103,27 @@ For OpenVLA-OFT, set per-env ``unnorm_key`` under both ``env.train.envs`` and ``
          maniskill:
            unnorm_key: bridge_orig
 
+When environments differ in camera layout, state width, normalization statistics, or action width, configure per-env model I/O under ``actor.model.envs.<name>`` (matching the environment names under ``env.train.envs`` and ``env.eval.envs``). Rollout and actor workers isolate batches per configured environment and route each batch to its own transform profile on the shared policy network. For example, OpenPI configures each environment's transform preset and action width:
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       model_type: openpi
+       action_dim: 14
+       envs:
+         libero:
+           config_name: pi05_libero
+           action_dim: 7
+           norm_stats_path: /path/to/libero/norm_stats.json
+         robodojo:
+           config_name: pi05_aloha_robotwin
+           action_dim: 14
+           adapt_to_pi: false
+         robolab:
+           config_name: pi05_droid_robolab
+           action_dim: 8
+
 Balance Training
 ----------------
 

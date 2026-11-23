@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Sequence
 
 import numpy as np
@@ -32,6 +33,14 @@ from rlinf.models.embodiment.openpi.transforms.pipeline import (
 )
 
 
+@dataclass(frozen=True)
+class EnvIOSpec:
+    """Per-env OpenPI transform profile registered under ``model.envs``."""
+
+    config_name: str
+    action_env_dim: int
+
+
 class EnvIO:
     """Shared env I/O for task subclasses that inherit :class:`Pi0`.
 
@@ -41,39 +50,39 @@ class EnvIO:
 
     _input_transform_fn = None
     _output_transform_fn = None
+    _io_pipelines: dict[str, tuple[Any, Any]] | None = None
+    _env_io_specs: dict[str, EnvIOSpec] | None = None
 
     def setup_transforms(
         self,
         transforms: Sequence,
         output_transforms: Sequence,
         *,
-        name: str | None = None,
+        env_name: str | None = None,
     ) -> None:
         """Install one openpi.transforms input/output pipeline.
 
-        ``name`` is an env I/O key (``actor.model.openpi.envs``). The unnamed
-        call installs the pipeline of ``config_name`` and is the one used when
-        a batch does not name an env.
+        ``env_name`` selects a per-env profile from ``model.envs``. The unnamed
+        call installs the default pipeline of ``config_name`` used when a batch
+        does not name a per-env profile.
         """
         from openpi.transforms import compose
 
         pipeline = (compose(transforms), compose(output_transforms))
-        pipelines = getattr(self, "_io_pipelines", None)
-        if pipelines is None:
-            pipelines = {}
-            self._io_pipelines = pipelines
-        key = self.config_name if name is None else name
-        pipelines[key] = pipeline
-        if self._input_transform_fn is None or name is None:
+        if self._io_pipelines is None:
+            self._io_pipelines = {}
+        key = self.config_name if env_name is None else env_name
+        self._io_pipelines[key] = pipeline
+        if self._input_transform_fn is None or env_name is None:
             self._input_transform_fn, self._output_transform_fn = pipeline
-        if name is None and self._config.short_memory:
+        if env_name is None and self._config.short_memory:
             self._frame_transform, self._sample_transform = (
                 split_short_memory_transforms(transforms)
             )
 
     def register_env_io(
         self,
-        name: str,
+        env_name: str,
         *,
         config_name: str,
         action_env_dim: int,
@@ -81,83 +90,38 @@ class EnvIO:
         output_transforms: Sequence,
     ) -> None:
         """Install the transforms one env uses on this shared network."""
-        self.setup_transforms(transforms, output_transforms, name=name)
-        specs = getattr(self, "_env_io_specs", None)
-        if specs is None:
-            specs = {}
-            self._env_io_specs = specs
-        specs[name] = {
-            "config_name": config_name,
-            "action_env_dim": int(action_env_dim),
-        }
-        self._env_io_order = list(specs)
-
-    def _io_pipeline(self, name: str | None):
-        """Return the input and output transforms for ``name`` or the default."""
-        self._ensure_transforms()
-        if not name:
-            return self._input_transform_fn, self._output_transform_fn
-        pipelines = getattr(self, "_io_pipelines", {})
-        try:
-            return pipelines[name]
-        except KeyError as exc:
-            raise KeyError(
-                f"OpenPI I/O {name!r} is not installed. Known pipelines: "
-                f"{sorted(pipelines)}."
-            ) from exc
-
-    def _env_io(self, name: str | None) -> dict[str, Any] | None:
-        """Return the registered spec of ``name``, or None for the default I/O."""
-        if not name:
-            return None
-        specs = getattr(self, "_env_io_specs", {})
-        try:
-            return specs[name]
-        except KeyError as exc:
-            raise KeyError(
-                f"OpenPI I/O {name!r} is not registered. Known envs: "
-                f"{list(getattr(self, '_env_io_order', []))}."
-            ) from exc
-
-    def _resolve_stored_io(
-        self, forward_inputs: dict[str, Any]
-    ) -> tuple[str | None, int | None]:
-        """Read the env I/O stamped on a training batch.
-
-        Returns the env name and its action dim, or ``(None, None)`` when the
-        batch used the default pipeline.
-        """
-        io_ids = forward_inputs.get("openpi_io_id")
-        if io_ids is None:
-            return None, None
-        if not torch.is_tensor(io_ids):
-            raise TypeError(
-                f"openpi_io_id must be a tensor, got {type(io_ids).__name__}."
-            )
-        unique = torch.unique(io_ids.detach().reshape(-1))
-        if unique.numel() != 1:
-            raise ValueError(
-                f"One OpenPI forward must use one env I/O, got ids {unique.tolist()}."
-            )
-        order = getattr(self, "_env_io_order", [])
-        index = int(unique.item())
-        if index < 0 or index >= len(order):
-            raise ValueError(
-                f"openpi_io_id {index} is outside the registered envs {order}."
-            )
-        name = order[index]
-        return name, int(self._env_io(name)["action_env_dim"])
-
-    def _stamp_openpi_io(
-        self, forward_inputs: dict[str, Any], io_name: str | None, batch_size: int
-    ) -> None:
-        """Record which env I/O produced ``forward_inputs`` so training matches."""
-        if not io_name:
-            return
-        order = getattr(self, "_env_io_order", [])
-        forward_inputs["openpi_io_id"] = torch.full(
-            (batch_size,), order.index(io_name), dtype=torch.long
+        self.setup_transforms(transforms, output_transforms, env_name=env_name)
+        if self._env_io_specs is None:
+            self._env_io_specs = {}
+        self._env_io_specs[env_name] = EnvIOSpec(
+            config_name=config_name,
+            action_env_dim=int(action_env_dim),
         )
+
+    def _io_pipeline(self, env_name: str | None):
+        """Return the input and output transforms for ``env_name`` or the default."""
+        self._ensure_transforms()
+        if not env_name:
+            return self._input_transform_fn, self._output_transform_fn
+        pipelines = self._io_pipelines or {}
+        if env_name not in pipelines:
+            raise KeyError(
+                f"OpenPI env I/O {env_name!r} is not installed. Known pipelines: "
+                f"{sorted(pipelines)}."
+            )
+        return pipelines[env_name]
+
+    def _env_io(self, env_name: str | None) -> EnvIOSpec | None:
+        """Return the registered spec of ``env_name``, or None for the default I/O."""
+        if not env_name:
+            return None
+        specs = self._env_io_specs or {}
+        if env_name not in specs:
+            raise KeyError(
+                f"OpenPI env I/O {env_name!r} is not registered. Known envs: "
+                f"{sorted(specs)}."
+            )
+        return specs[env_name]
 
     def _ensure_transforms(self) -> None:
         if self._input_transform_fn is None or self._output_transform_fn is None:
@@ -190,15 +154,15 @@ class EnvIO:
         return np.asarray(states)[..., indices]
 
     def input_transform(
-        self, obs: dict, transpose: bool = False, *, io_name: str | None = None
+        self, obs: dict, transpose: bool = False, *, env_name: str | None = None
     ) -> dict:
         self._ensure_transforms()
-        transform, _ = self._io_pipeline(io_name)
+        transform, _ = self._io_pipeline(env_name)
         return apply_input_transform(transform, obs, transpose=transpose)
 
-    def output_transform(self, outputs: dict, *, io_name: str | None = None) -> dict:
+    def output_transform(self, outputs: dict, *, env_name: str | None = None) -> dict:
         self._ensure_transforms()
-        _, transform = self._io_pipeline(io_name)
+        _, transform = self._io_pipeline(env_name)
         return apply_output_transform(
             transform,
             outputs,
@@ -210,11 +174,11 @@ class EnvIO:
         model_actions: torch.Tensor,
         state: torch.Tensor,
         *,
-        io_name: str | None = None,
+        env_name: str | None = None,
     ) -> torch.Tensor:
         """Run the output transform and return env-space actions on this device."""
         env_outputs = self.output_transform(
-            {"actions": model_actions, "state": state}, io_name=io_name
+            {"actions": model_actions, "state": state}, env_name=env_name
         )
         return env_outputs["actions"].to(device=self.device, dtype=torch.float32)
 
@@ -251,17 +215,21 @@ class EnvIO:
             history_time_offsets=_move(obs.history_time_offsets),
         )
 
-    def env_obs_to_observation(self, env_obs: dict[str, Any]) -> Observation:
+    def env_obs_to_observation(
+        self, env_obs: dict[str, Any], *, env_name: str | None = None
+    ) -> Observation:
         """Repack env obs through the transform pipeline onto this device."""
         self._ensure_transforms()
         if self._config.short_memory:
             return self._history_to_observation(env_obs)
+        io_spec = self._env_io(env_name)
+        repack_name = self.config_name if io_spec is None else io_spec.config_name
         repacked = repack_env_obs(
-            self.config_name,
+            repack_name,
             env_obs,
             select_state=self._select_configured_state,
         )
-        processed = self.input_transform(repacked, transpose=False)
+        processed = self.input_transform(repacked, transpose=False, env_name=env_name)
         return self._observation_dict_to_device(processed)
 
     def _history_to_observation(self, env_obs: dict[str, Any]) -> Observation:
@@ -309,13 +277,15 @@ class EnvIO:
         *,
         noise: torch.Tensor | None = None,
         rng: torch.Generator | None = None,
-        io_name: str | None = None,
+        env_name: str | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         """Deterministic Euler ODE sampler shared by eval / RL eval / DAgger."""
         model_actions = self.sample_actions(
             observation, num_steps=self.num_steps, noise=noise, rng=rng
         )
-        actions = self.decode_actions(model_actions, observation.state, io_name=io_name)
+        actions = self.decode_actions(
+            model_actions, observation.state, env_name=env_name
+        )
         B = actions.shape[0]
         result = {
             "prev_logprobs": None,

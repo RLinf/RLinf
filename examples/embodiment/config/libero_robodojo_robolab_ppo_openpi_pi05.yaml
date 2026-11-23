@@ -89,12 +89,11 @@ env:
       libero:
         total_num_envs: 2
         num_workers: 1
-        python_interpreter_path: /mnt/public/guozhen/test_hetero_env/RLinf/.venv-libero/bin/python
+        python_interpreter_path: /path/to/.venv-libero/bin/python
         rollout_epoch: 1
         max_episode_steps: 80
         max_steps_per_rollout_epoch: 80
         group_size: 1
-        openpi_io: libero
         video_cfg:
           save_video: true
           info_on_video: true
@@ -103,16 +102,15 @@ env:
       robodojo:
         total_num_envs: 2
         num_workers: 1
-        python_interpreter_path: /mnt/public/guozhen/test_hetero_env/RLinf/.venv-robodojo/bin/python
+        python_interpreter_path: /path/to/.venv-robodojo/bin/python
         rollout_epoch: 1
         auto_reset: true
         ignore_terminations: false
         max_episode_steps: 80
         max_steps_per_rollout_epoch: 80
         group_size: 1
-        openpi_io: robodojo
         state_action_order: aloha
-        assets_path: /mnt/public/guozhen/test_hetero_env/robodojo
+        assets_path: /path/to/robodojo
         seeds_path: null
         task_config:
           random: true
@@ -124,14 +122,13 @@ env:
       robolab:
         total_num_envs: 2
         num_workers: 1
-        python_interpreter_path: /mnt/public/guozhen/test_hetero_env/RLinf/.venv-robolab/bin/python
+        python_interpreter_path: /path/to/.venv-robolab/bin/python
         rollout_epoch: 1
         auto_reset: true
         ignore_terminations: false
         max_episode_steps: 40
         max_steps_per_rollout_epoch: 40
         group_size: 1
-        openpi_io: robolab
         init_params:
           task: BananaInBowlTask
           output_dir: ${runner.logger.log_path}/robolab_train/BananaInBowlTask
@@ -145,29 +142,27 @@ env:
       libero:
         total_num_envs: 2
         num_workers: 1
-        python_interpreter_path: /mnt/public/guozhen/test_hetero_env/RLinf/.venv-libero/bin/python
+        python_interpreter_path: /path/to/.venv-libero/bin/python
         auto_reset: true
         ignore_terminations: true
         max_episode_steps: 20
         max_steps_per_rollout_epoch: 20
         group_size: 1
         is_eval: true
-        openpi_io: libero
         video_cfg:
           save_video: false
       robodojo:
         total_num_envs: 2
         num_workers: 1
-        python_interpreter_path: /mnt/public/guozhen/test_hetero_env/RLinf/.venv-robodojo/bin/python
+        python_interpreter_path: /path/to/.venv-robodojo/bin/python
         auto_reset: true
         ignore_terminations: false
         is_eval: true
         max_episode_steps: 20
         max_steps_per_rollout_epoch: 20
         group_size: 1
-        openpi_io: robodojo
         state_action_order: aloha
-        assets_path: /mnt/public/guozhen/test_hetero_env/robodojo
+        assets_path: /path/to/robodojo
         task_config:
           random: false
         video_cfg:
@@ -175,14 +170,13 @@ env:
       robolab:
         total_num_envs: 2
         num_workers: 1
-        python_interpreter_path: /mnt/public/guozhen/test_hetero_env/RLinf/.venv-robolab/bin/python
+        python_interpreter_path: /path/to/.venv-robolab/bin/python
         auto_reset: false
         ignore_terminations: false
         is_eval: true
         max_episode_steps: 10
         max_steps_per_rollout_epoch: 10
         group_size: 1
-        openpi_io: robolab
         init_params:
           task: BananaInBowlTask
           output_dir: ${runner.logger.log_path}/robolab_eval/BananaInBowlTask
@@ -191,7 +185,7 @@ env:
 
 rollout:
   group_name: RolloutGroup
-  generation_backend: huggingface
+  rollout_backend: huggingface
   recompute_logprobs: false
   enable_offload: false
   pipeline_stage_num: 1
@@ -210,9 +204,9 @@ actor:
   mix_envs: true
   model:
     # One Pi0.5 checkpoint for all three envs.
-    model_path: /mnt/public/hao/models/RLinf-Pi05-LIBERO-SFT
+    model_path: /path/to/model/RLinf-Pi05-LIBERO-SFT
     model_type: openpi
-    # Widest env action. Each env's openpi.envs entry slices its own prefix.
+    # Widest env action. Each env's actor.model.envs entry slices its own prefix.
     action_dim: 14
     num_action_chunks: 10
     num_steps: 3
@@ -229,30 +223,30 @@ actor:
       value_after_vlm: true
       train_expert_only: true
       torch_compile: false
-      envs:
-        libero:
-          config_name: pi05_libero
-          action_env_dim: 7
-          # Same stats the LIBERO SFT checkpoint was trained with. Per-env
-          # pipelines do not inherit the checkpoint assets on their own, so
-          # leaving this unset feeds raw state in and sends normalized
-          # actions to the controller.
-          norm_stats_path: ${actor.model.model_path}/physical-intelligence/libero/norm_stats.json
-        robodojo:
-          config_name: pi05_aloha_robotwin
-          action_env_dim: 14
-          adapt_to_pi: false
-          # This checkpoint only ships LIBERO stats. Point this at the
-          # RoboDojo SFT norm_stats.json before expecting that policy to act
-          # on the right scale.
-          norm_stats_path: null
-        robolab:
-          config_name: pi05_droid_robolab
-          action_env_dim: 8
-          # This checkpoint only ships LIBERO stats. Point this at the
-          # RoboLab SFT norm_stats.json before expecting that policy to act
-          # on the right scale.
-          norm_stats_path: null
+    envs:
+      libero:
+        config_name: pi05_libero
+        action_dim: 7
+        # Same stats the LIBERO SFT checkpoint was trained with. Per-env
+        # pipelines do not inherit the checkpoint assets on their own, so
+        # leaving this unset feeds raw state in and sends normalized
+        # actions to the controller.
+        norm_stats_path: ${actor.model.model_path}/physical-intelligence/libero/norm_stats.json
+      robodojo:
+        config_name: pi05_aloha_robotwin
+        action_dim: 14
+        adapt_to_pi: false
+        # This checkpoint only ships LIBERO stats. Point this at the
+        # RoboDojo SFT norm_stats.json before expecting that policy to act
+        # on the right scale.
+        norm_stats_path: null
+      robolab:
+        config_name: pi05_droid_robolab
+        action_dim: 8
+        # This checkpoint only ships LIBERO stats. Point this at the
+        # RoboLab SFT norm_stats.json before expecting that policy to act
+        # on the right scale.
+        norm_stats_path: null
   optim:
     lr: 5.0e-6
     value_lr: 1.0e-4

@@ -81,6 +81,7 @@ class Pi0Eval(EnvIO, Pi0):
         noise: torch.Tensor | None = None,
         rng: torch.Generator | None = None,
         rtc_context=None,
+        env_name: str | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         del compute_values, kwargs
@@ -89,14 +90,18 @@ class Pi0Eval(EnvIO, Pi0):
                 f"{type(self).__name__} only supports predict_action_batch(mode='eval'); "
                 "use a training task wrapper (rl / dagger / dsrl) for train rollouts."
             )
-        observation = self.env_obs_to_observation(env_obs)
+        observation = self.env_obs_to_observation(env_obs, env_name=env_name)
         if rtc_context is not None and self.rtc_enabled:
             if self.rtc_guidance_mode != "approx":
                 raise NotImplementedError(
                     f"Unsupported RTC guidance mode: {self.rtc_guidance_mode!r}"
                 )
             return self._predict_eval_with_rtc(
-                observation, rtc_context=rtc_context, noise=noise, rng=rng
+                observation,
+                rtc_context=rtc_context,
+                noise=noise,
+                rng=rng,
+                env_name=env_name,
             )
         if rng is None and self.eval_seed is not None:
             if self._eval_rng is None or self._eval_rng.device != self.device:
@@ -106,12 +111,16 @@ class Pi0Eval(EnvIO, Pi0):
             rng = self._eval_rng
         active_mask = env_obs.get("active_mask")
         if self.eval_batch_size is None and active_mask is None:
-            return self._predict_eval(observation, noise=noise, rng=rng)
+            return self._predict_eval(
+                observation, noise=noise, rng=rng, env_name=env_name
+            )
         return self._predict_active_batches(
-            observation, active_mask, noise=noise, rng=rng
+            observation, active_mask, noise=noise, rng=rng, env_name=env_name
         )
 
-    def _predict_active_batches(self, observation, active_mask, *, noise, rng):
+    def _predict_active_batches(
+        self, observation, active_mask, *, noise, rng, env_name: str | None = None
+    ):
         """Preserve environment order while sampling only unfinished episodes."""
         from torch.utils._pytree import tree_map
 
@@ -148,7 +157,9 @@ class Pi0Eval(EnvIO, Pi0):
                 noise=None if noise is None else noise[indices],
                 rng=rng,
             )
-        actions = self.decode_actions(model_actions, observation.state)
+        actions = self.decode_actions(
+            model_actions, observation.state, env_name=env_name
+        )
         if active_mask is not None:
             actions[~active_mask] = 0
         return actions, {
@@ -168,6 +179,7 @@ class Pi0Eval(EnvIO, Pi0):
         rtc_context,
         noise: torch.Tensor | None,
         rng: torch.Generator | None,
+        env_name: str | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         from rlinf.models.embodiment.openpi.sampling.rtc_guidance import (
             sample_actions_with_rtc_guidance,
@@ -182,7 +194,9 @@ class Pi0Eval(EnvIO, Pi0):
             rng=rng,
             guidance_clip=self.rtc_guidance_clip,
         )
-        actions = self.decode_actions(model_actions, observation.state)
+        actions = self.decode_actions(
+            model_actions, observation.state, env_name=env_name
+        )
         B = actions.shape[0]
         return actions, {
             "prev_logprobs": None,

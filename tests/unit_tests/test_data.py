@@ -4351,6 +4351,8 @@ def test_rollout_sends_different_action_widths_separately():
     rollout.train_layout = EnvLayout(OmegaConf.create({}), 2, "env.train")
     rollout.collect_transitions = False
     rollout.enable_rlt = False
+    rollout.expert_model = None
+    rollout.enable_dagger = False
     rollout._send_actions = Mock()
     rollout._publish_env_parts = Mock()
     rollout._build_policy_output = Mock(return_value=PolicyOutput(forward_inputs={}))
@@ -4379,6 +4381,52 @@ def test_rollout_sends_different_action_widths_separately():
     peers = [call.args[4] for call in rollout._send_actions.call_args_list]
     assert sent == [7, 14]
     assert peers == [[0], [1]]
+
+
+def test_rollout_passes_env_name_for_model_envs_and_isolates_passes():
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.train_layout = EnvLayout(
+        OmegaConf.create(
+            {
+                "envs": {
+                    "libero": {"env_type": "libero", "total_num_envs": 1},
+                    "robolab": {"env_type": "robolab", "total_num_envs": 1},
+                }
+            }
+        ),
+        2,
+        "env.train",
+    )
+    rollout._model_env_names = frozenset({"libero", "robolab"})
+    rollout.collect_transitions = False
+    rollout.enable_rlt = False
+    rollout.expert_model = None
+    rollout.enable_dagger = False
+    rollout._send_actions = Mock()
+    rollout._publish_env_parts = Mock()
+    rollout._build_policy_output = Mock(return_value=PolicyOutput(forward_inputs={}))
+    calls = []
+    rollout._predict_rollout_actions = _record_predictions(calls)
+    # Identical obs shapes across both envs must still run separate passes
+    # because each env has its own model.envs entry.
+    requests = [
+        PolicyInput(
+            obs={"states": torch.full((1, 8), float(rank))},
+            sources=[TrajectorySource(TrajectoryKey(0, 0, rank, 0, 0), 1)],
+            env_parts=[None],
+            request_sizes=[1],
+        )
+        for rank in (0, 1)
+    ]
+
+    rollout._serve_policy_inputs(
+        requests, Mock(), Mock(), stage_id=0, peer_ranks=[0, 1]
+    )
+
+    assert calls == [
+        (1, {"env_name": "libero"}),
+        (1, {"env_name": "robolab"}),
+    ]
 
 
 def _policy_field_layout(path: str) -> EnvLayout:

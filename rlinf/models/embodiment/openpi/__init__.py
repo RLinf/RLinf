@@ -447,6 +447,30 @@ def _resolve_data_kwargs(cfg):
     return data_kwargs
 
 
+def validate_env_cfg(model_cfg: Any, env_name: str, env_model_cfg: Any) -> None:
+    """Validate one ``model.envs.<env_name>`` entry for OpenPI."""
+    from omegaconf import OmegaConf
+
+    config_name = env_model_cfg.get("config_name")
+    assert isinstance(config_name, str) and config_name.strip(), (
+        f"model.envs.{env_name}.config_name must be a non-empty string, "
+        f"got {config_name!r}."
+    )
+    action_dim = env_model_cfg.get("action_dim")
+    assert (
+        isinstance(action_dim, int)
+        and not isinstance(action_dim, bool)
+        and action_dim > 0
+    ), f"model.envs.{env_name}.action_dim must be a positive int, got {action_dim!r}."
+    model_action_dim = int(
+        OmegaConf.select(model_cfg, "openpi.model_action_dim", default=32)
+    )
+    assert action_dim <= model_action_dim, (
+        f"model.envs.{env_name}.action_dim ({action_dim}) exceeds "
+        f"openpi.model_action_dim ({model_action_dim})."
+    )
+
+
 def _shared_openpi_model_config(model):
     """Official OpenPI model config matching the network this process loaded."""
     import openpi.models.pi0_config as pi0_config
@@ -464,39 +488,34 @@ def _shared_openpi_model_config(model):
 
 
 def _install_env_ios(model, cfg) -> None:
-    """Install one transform pipeline per ``openpi.envs`` entry.
+    """Install one transform pipeline per ``model.envs`` entry.
 
     The network stays the one built above. Each entry only changes how that
     env's observations and actions are packed, normalized, and sliced.
     """
     from omegaconf import OmegaConf
 
+    from rlinf.models.embodiment.openpi.env_io import EnvIO
     from rlinf.models.embodiment.openpi.transforms.pipeline import (
         build_openpi_transforms,
     )
 
-    if not hasattr(model, "register_env_io"):
+    if not isinstance(model, EnvIO):
         return
-    envs = OmegaConf.select(cfg, "openpi.envs", default=None)
+    envs = OmegaConf.select(cfg, "envs", default=None)
     if not envs:
         return
     shared = _shared_openpi_model_config(model)
     data_fields = ("adapt_to_pi", "extra_delta_transform")
     for name, spec in envs.items():
-        config_name = str(spec.get("config_name") or "")
-        if not config_name:
-            raise ValueError(f"actor.model.openpi.envs.{name}.config_name is required.")
-        action_env_dim = spec.get("action_env_dim")
-        if not isinstance(action_env_dim, int) or action_env_dim <= 0:
-            raise ValueError(
-                f"actor.model.openpi.envs.{name}.action_env_dim must be a "
-                f"positive int, got {action_env_dim!r}."
-            )
+        env_name = str(name)
+        validate_env_cfg(cfg, env_name, spec)
+        config_name = str(spec["config_name"])
+        action_env_dim = int(spec["action_dim"])
         if action_env_dim > int(model.action_dim):
             raise ValueError(
-                f"actor.model.openpi.envs.{name}.action_env_dim "
-                f"({action_env_dim}) exceeds the network action dim "
-                f"{int(model.action_dim)}."
+                f"model.envs.{env_name}.action_dim ({action_env_dim}) exceeds "
+                f"the network action dim {int(model.action_dim)}."
             )
         data_kwargs = {}
         norm_stats_path = spec.get("norm_stats_path")
@@ -513,9 +532,9 @@ def _install_env_ios(model, cfg) -> None:
             use_model_path_assets=False,
         )
         model.register_env_io(
-            str(name),
+            env_name,
             config_name=config_name,
-            action_env_dim=int(action_env_dim),
+            action_env_dim=action_env_dim,
             transforms=input_transforms,
             output_transforms=output_transforms,
         )

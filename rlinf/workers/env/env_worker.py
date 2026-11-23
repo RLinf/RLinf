@@ -421,6 +421,14 @@ class EnvWorker(Worker):
             return
         await env.wait_delay()
 
+    def _env_action_dim(self, env_name: str | None) -> int:
+        model_envs = self.model_cfg.get("envs", None)
+        if env_name is not None and model_envs and env_name in model_envs:
+            env_action_dim = model_envs[env_name].get("action_dim")
+            if env_action_dim is not None:
+                return int(env_action_dim)
+        return int(self.model_cfg.action_dim)
+
     @Worker.timer("env_interact_step")
     def env_interact_step(
         self, chunk_actions: torch.Tensor, stage_id: int
@@ -437,7 +445,7 @@ class EnvWorker(Worker):
             env_type=self.train_assignment.cfg.env_type,
             model_type=self.model_cfg.model_type,
             num_action_chunks=self.model_cfg.num_action_chunks,
-            action_dim=self.model_cfg.action_dim,
+            action_dim=self._env_action_dim(self.train_assignment.name),
             policy=self.model_cfg.get("policy_setup", None),
             wm_env_type=self.train_assignment.cfg.get("wm_env_type", None),
             env_cfg=self.train_assignment.cfg,
@@ -518,8 +526,7 @@ class EnvWorker(Worker):
                 rlt_switch_flags=rlt_switch_flags,
                 executed_mask=(
                     infos["executed_mask"]
-                    if SupportedEnvType(self.train_assignment.cfg.env_type)
-                    is SupportedEnvType.SIMPLE
+                    if infos.get("executed_mask") is not None
                     else valid_action_mask
                 ),
             ),
@@ -545,7 +552,7 @@ class EnvWorker(Worker):
             env_type=self.eval_assignment.cfg.env_type,
             model_type=self.model_cfg.model_type,
             num_action_chunks=self.model_cfg.num_action_chunks,
-            action_dim=self.model_cfg.action_dim,
+            action_dim=self._env_action_dim(self.eval_assignment.name),
             policy=self.model_cfg.get("policy_setup", None),
             wm_env_type=self.eval_assignment.cfg.get("wm_env_type", None),
             env_cfg=self.eval_assignment.cfg,

@@ -55,6 +55,9 @@ from rlinf.utils.placement import HybridComponentPlacement
 
 
 class MultiStepRolloutWorker(Worker):
+    # Class-level default for unit tests built with ``object.__new__``.
+    _model_env_names: frozenset[str] = frozenset()
+
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
 
@@ -64,6 +67,7 @@ class MultiStepRolloutWorker(Worker):
         self.only_eval = cfg.runner.get("only_eval", False)
         self.algorithm_cfg = cfg.get("algorithm", {})
         self.model_cfg = cfg.rollout.model if self.only_eval else cfg.actor.model
+        self._model_env_names = frozenset(self.model_cfg.get("envs") or ())
         self.actor_group_name = (
             cfg.actor.get("group_name", None)
             if cfg.get("actor", None) is not None
@@ -1015,6 +1019,51 @@ class MultiStepRolloutWorker(Worker):
             peer_ranks=peer_ranks,
         )
 
+    def _send_grouped_actions(
+        self,
+        output_channel: Channel,
+        actions_list: list[torch.Tensor],
+        stage_id: int,
+        split_sizes: list[int] | None,
+        peer_ranks: list[int] | None,
+    ) -> None:
+        """Send per-request actions back, bucketing by trailing shape when they differ."""
+        shapes = [
+            tuple(int(dim) for dim in actions.shape[1:]) for actions in actions_list
+        ]
+        per_request_peers = peer_ranks is not None and len(peer_ranks) == len(
+            actions_list
+        )
+        if len(set(shapes)) == 1:
+            self._send_actions(
+                output_channel,
+                torch.cat(actions_list).contiguous(),
+                stage_id,
+                split_sizes,
+                peer_ranks,
+            )
+            return
+        if not per_request_peers:
+            raise RuntimeError(
+                "Policy replies have different action widths "
+                f"{sorted(set(shapes))}, so each reply needs its own destination rank."
+            )
+        buckets: dict[tuple[int, ...], list[int]] = {}
+        for position, shape in enumerate(shapes):
+            buckets.setdefault(shape, []).append(position)
+        for positions in buckets.values():
+            self._send_actions(
+                output_channel,
+                torch.cat(
+                    [actions_list[position] for position in positions]
+                ).contiguous(),
+                stage_id,
+                None
+                if split_sizes is None
+                else [split_sizes[position] for position in positions],
+                [peer_ranks[position] for position in positions],
+            )
+
     def _serve_policy_inputs(
         self,
         requests: list[PolicyInput],
@@ -1114,48 +1163,13 @@ class MultiStepRolloutWorker(Worker):
                     peer_ranks,
                 )
             else:
-                shapes = [
-                    tuple(int(dim) for dim in request_actions[index].shape[1:])
-                    for index in replied
-                ]
-                # One concatenation when every reply has the same action width.
-                # Different widths each go back to their own env ranks.
-                per_request_peers = (
-                    peer_ranks is not None and len(peer_ranks) == len(replied)
+                self._send_grouped_actions(
+                    output_channel,
+                    [request_actions[index] for index in replied],
+                    stage_id,
+                    split_sizes,
+                    peer_ranks,
                 )
-                if len(set(shapes)) == 1 or not per_request_peers:
-                    if len(set(shapes)) != 1:
-                        raise RuntimeError(
-                            "Policy replies have different action widths "
-                            f"{sorted(set(shapes))}, so each reply needs its own "
-                            "destination rank."
-                        )
-                    self._send_actions(
-                        output_channel,
-                        torch.cat(
-                            [request_actions[index] for index in replied]
-                        ).contiguous(),
-                        stage_id,
-                        split_sizes,
-                        peer_ranks,
-                    )
-                else:
-                    buckets: dict[tuple[int, ...], list[int]] = {}
-                    for position, shape in enumerate(shapes):
-                        buckets.setdefault(shape, []).append(position)
-                    for positions in buckets.values():
-                        indices = [replied[position] for position in positions]
-                        self._send_actions(
-                            output_channel,
-                            torch.cat(
-                                [request_actions[index] for index in indices]
-                            ).contiguous(),
-                            stage_id,
-                            None
-                            if split_sizes is None
-                            else [split_sizes[position] for position in positions],
-                            [peer_ranks[position] for position in positions],
-                        )
         for (
             policy_input,
             actions,
@@ -1288,9 +1302,8 @@ class MultiStepRolloutWorker(Worker):
             for stage_id in range(self.num_pipeline_stages)
         }
 
-    @staticmethod
     def _env_policy_fields(
-        layout: EnvLayout, env_ranks: Iterable[int]
+        self, layout: EnvLayout, env_ranks: Iterable[int]
     ) -> tuple[tuple[str, Any], ...]:
         """Return the policy fields shared by the envs of ``env_ranks``.
 
@@ -1299,16 +1312,20 @@ class MultiStepRolloutWorker(Worker):
             env_ranks: Env worker ranks whose observations form one batch.
 
         Returns:
-            The envs' :attr:`EnvSpec.policy_kwargs` as sorted items, which a
+            The envs' :attr:`EnvSpec.policy_kwargs` (plus ``env_name`` when
+            that env has an entry in ``model.envs``) as sorted items, which a
             batch can be grouped by.
 
         Raises:
             ValueError: If the envs set different policy fields.
         """
-        fields = {
-            tuple(sorted(layout.spec_of_rank(rank).policy_kwargs.items()))
-            for rank in env_ranks
-        }
+        fields = set()
+        for rank in env_ranks:
+            spec = layout.spec_of_rank(rank)
+            kwargs = dict(spec.policy_kwargs)
+            if spec.name is not None and spec.name in self._model_env_names:
+                kwargs["env_name"] = spec.name
+            fields.add(tuple(sorted(kwargs.items())))
         if len(fields) > 1:
             raise ValueError(
                 "Expected the envs of one batch to set the same policy fields, "
@@ -1316,9 +1333,8 @@ class MultiStepRolloutWorker(Worker):
             )
         return next(iter(fields), ())
 
-    @classmethod
     def _forward_key(
-        cls, layout: EnvLayout, env_ranks: Iterable[int], obs: Any
+        self, layout: EnvLayout, env_ranks: Iterable[int], obs: Any
     ) -> tuple[Any, tuple[tuple[str, Any], ...]]:
         """Return what observations must share to run in one forward pass.
 
@@ -1333,7 +1349,7 @@ class MultiStepRolloutWorker(Worker):
         Returns:
             ``(observation format, policy fields)``.
         """
-        return batch_format(obs), cls._env_policy_fields(layout, env_ranks)
+        return batch_format(obs), self._env_policy_fields(layout, env_ranks)
 
     @staticmethod
     def _decoupled_share(requests: int, world_size: int, rank: int) -> int:

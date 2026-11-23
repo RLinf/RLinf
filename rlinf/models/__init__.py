@@ -25,7 +25,9 @@ from rlinf.config import (
 from rlinf.scheduler import Worker
 
 ModelBuilder = Callable[[DictConfig, Optional[object]], object]
+ModelEnvCfgValidator = Callable[[DictConfig, str, DictConfig], None]
 _MODEL_REGISTRY: dict[str, ModelBuilder] = {}
+_MODEL_ENV_CFG_VALIDATORS: dict[str, ModelEnvCfgValidator] = {}
 
 
 def register_model(
@@ -33,24 +35,46 @@ def register_model(
     model_builder: ModelBuilder,
     category: str = "embodied",
     force: bool = False,
+    validate_env_cfg: Optional[ModelEnvCfgValidator] = None,
 ):
-    """Register a model builder for cfg.model_type."""
+    """Register a model builder (and optional per-env config validator) for cfg.model_type."""
     if not model_type:
         raise ValueError("model_type must be a non-empty string.")
     if not callable(model_builder):
         raise TypeError("model_builder must be callable.")
+    if validate_env_cfg is not None and not callable(validate_env_cfg):
+        raise TypeError("validate_env_cfg must be callable.")
     if not force and model_type in _MODEL_REGISTRY:
         raise ValueError(
             f"Model type `{model_type}` is already registered. "
             "Set force=True to override it."
         )
     _MODEL_REGISTRY[model_type] = model_builder
+    if validate_env_cfg is not None:
+        _MODEL_ENV_CFG_VALIDATORS[model_type] = validate_env_cfg
+    elif force:
+        _MODEL_ENV_CFG_VALIDATORS.pop(model_type, None)
     SupportedModel.register(model_type, force=force)
     model_kind = SupportedModel(model_type)
     if category == "embodied":
         EMBODIED_MODEL.add(model_kind)
     elif category == "diffusion":
         DIFFUSION_MODELS.add(model_kind)
+
+
+def validate_model_env_cfg(
+    model_cfg: DictConfig, env_name: str, env_model_cfg: DictConfig
+) -> None:
+    """Validate one ``model.envs.<env_name>`` entry through the model's registered hook."""
+    model_type = str(model_cfg.model_type)
+    validator = _MODEL_ENV_CFG_VALIDATORS.get(model_type)
+    if validator is None:
+        supported = sorted(_MODEL_ENV_CFG_VALIDATORS)
+        raise ValueError(
+            f"model.envs is not supported by model_type={model_type!r}; "
+            f"models supporting model.envs: {supported}."
+        )
+    validator(model_cfg, env_name, env_model_cfg)
 
 
 def _register_builtin_models():
@@ -73,6 +97,13 @@ def _register_builtin_models():
         from rlinf.models.embodiment.openpi import get_model
 
         return get_model(cfg, torch_dtype)
+
+    def _validate_openpi_env_cfg(
+        model_cfg: DictConfig, env_name: str, env_model_cfg: DictConfig
+    ) -> None:
+        from rlinf.models.embodiment.openpi import validate_env_cfg
+
+        validate_env_cfg(model_cfg, env_name, env_model_cfg)
 
     def _build_psi0(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.psi0 import get_model
@@ -222,6 +253,7 @@ def _register_builtin_models():
         _build_openpi,
         category="embodied",
         force=True,
+        validate_env_cfg=_validate_openpi_env_cfg,
     )
     register_model(
         SupportedModel.PSI0.value,

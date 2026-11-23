@@ -53,6 +53,13 @@ class BasePolicy(ABC):
         - predict_value_batch
         - prepare_dagger_sft_batch
         - prepare_nft_reference_model
+
+    Per-env I/O for heterogeneous runs:
+        Models that configure per-env I/O under ``model.envs.<name>`` register a
+        ``validate_env_cfg`` hook in :func:`rlinf.models.register_model` and
+        accept ``env_name: str | None = None`` in ``predict_action_batch`` and
+        their forward methods. Rollout and actor workers isolate batches per
+        configured env and pass ``env_name`` automatically.
     """
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):

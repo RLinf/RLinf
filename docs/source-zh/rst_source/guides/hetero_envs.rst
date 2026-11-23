@@ -93,6 +93,27 @@ env worker 按列出顺序根据 ``total_num_envs`` 的比例分配：
          maniskill:
            unnorm_key: bridge_orig
 
+不同环境的相机配置、状态维度、归一化统计量或动作维度不同时，在 ``actor.model.envs.<name>`` 下按环境名配置各自的模型 I/O（名称与 ``env.train.envs`` 和 ``env.eval.envs`` 一致）。rollout 和 actor worker 会按环境隔离批次，并将每个批次路由到共享网络上对应的预处理与后处理流水线。以 OpenPI 为例：
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       model_type: openpi
+       action_dim: 14
+       envs:
+         libero:
+           config_name: pi05_libero
+           action_dim: 7
+           norm_stats_path: /path/to/libero/norm_stats.json
+         robodojo:
+           config_name: pi05_aloha_robotwin
+           action_dim: 14
+           adapt_to_pi: false
+         robolab:
+           config_name: pi05_droid_robolab
+           action_dim: 8
+
 调整各环境训练权重
 ------------------
 

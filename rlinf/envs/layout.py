@@ -61,7 +61,7 @@ class EnvSpec:
     # Policy fields an env config may set for the policy acting in it. Rollout
     # passes them to the policy with that env's observations, so envs that set
     # different values never share a forward pass.
-    POLICY_FIELDS: ClassVar[tuple[str, ...]] = ("unnorm_key", "openpi_io")
+    POLICY_FIELDS: ClassVar[tuple[str, ...]] = ("unnorm_key",)
 
     @property
     def policy_kwargs(self) -> dict[str, Any]:

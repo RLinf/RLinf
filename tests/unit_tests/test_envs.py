@@ -806,3 +806,198 @@ def test_config_needs_grpo_envs_to_stop_trajectories_at_their_first_done():
 
     with pytest.raises(AssertionError, match=r"env.train.envs.maniskill needs"):
         validate_env_training_cfg(cfg, layout, stage_num=1, actor_world_size=2)
+
+
+@pytest.mark.parametrize(
+    ("recipe", "env_type", "chunk_size"),
+    [
+        ("robodojo_put_bottles_into_dustbin_ppo_openpi_pi05", "robodojo", 50),
+        ("robolab_banana_in_bowl_ppo_openpi_pi05", "robolab", 15),
+    ],
+)
+def test_robodojo_and_robolab_training_recipes_compose(
+    recipe, env_type, chunk_size, monkeypatch
+):
+    from pathlib import Path
+
+    from hydra import compose, initialize_config_dir
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(root))
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    config_dir = root / "examples/embodiment/config"
+    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        cfg = compose(config_name=recipe)
+    OmegaConf.resolve(cfg)
+
+    assert cfg.env.train.env_type == env_type
+    assert cfg.env.train.auto_reset
+    assert not cfg.env.train.enable_offload
+    assert cfg.actor.model.num_action_chunks == chunk_size
+    samples = (
+        cfg.env.train.total_num_envs
+        * cfg.env.train.rollout_epoch
+        * (cfg.env.train.max_steps_per_rollout_epoch // chunk_size)
+    )
+    assert samples % cfg.actor.global_batch_size == 0
+
+
+def test_robolab_chunk_exposes_terminal_data_and_execution_mask(monkeypatch):
+    from types import SimpleNamespace
+
+    from rlinf.envs.sim.robolab.robolab_env import RoboLabEnv
+
+    def _robolab_obs(num_envs: int) -> dict:
+        return {
+            "main_images": np.zeros((num_envs, 8, 8, 3), dtype=np.uint8),
+            "wrist_images": np.zeros((num_envs, 8, 8, 3), dtype=np.uint8),
+            "states": np.zeros((num_envs, 8), dtype=np.float32),
+            "task_descriptions": ["put the banana in the bowl"] * num_envs,
+            "active_mask": np.ones(num_envs, dtype=bool),
+        }
+
+    env = object.__new__(RoboLabEnv)
+    env.num_envs = 2
+    env._closed = True
+    env.cfg = OmegaConf.create({"video_cfg": {"save_video": False}})
+    terminal_obs = _robolab_obs(2)
+    reset_obs = _robolab_obs(2)
+    reset_obs["states"][0, 0] = 1
+
+    result = {
+        "observation": reset_obs,
+        "final_observation": terminal_obs,
+        "final_mask": np.array([True, False]),
+        "executed_steps": np.array([2, 3]),
+        "rewards": np.array([[0, 1, 0], [0, 0, 0]], dtype=np.float32),
+        "terminations": np.array(
+            [[False, True, True], [False, False, False]], dtype=bool
+        ),
+        "truncations": np.zeros((2, 3), dtype=bool),
+        "episode": {
+            "success_once": np.array([1, 0], dtype=np.float32),
+            "return": np.array([1, 0], dtype=np.float32),
+            "episode_len": np.array([2, 3], dtype=np.float32),
+            "reward": np.array([0.5, 0], dtype=np.float32),
+        },
+    }
+
+    class RemoteChunkStep:
+        def remote(self, actions, collect_frames=False):
+            del actions, collect_frames
+            return result
+
+    env._process = SimpleNamespace(chunk_step=RemoteChunkStep())
+    monkeypatch.setattr(
+        "rlinf.envs.sim.robolab.robolab_env.ray.get", lambda value: value
+    )
+
+    observations, rewards, terminations, truncations, infos = env.chunk_step(
+        np.zeros((2, 3, 8), dtype=np.float32)
+    )
+
+    assert len(observations) == len(infos) == 1
+    assert rewards.shape == terminations.shape == truncations.shape == (2, 3)
+    assert infos[0]["valid_action_mask"].tolist() == [
+        [True, True, False],
+        [True, True, True],
+    ]
+    assert infos[0]["_final_observation"].tolist() == [True, False]
+    assert infos[0]["final_info"]["episode"]["return"].tolist() == [1, 0]
+    assert observations[0]["states"][0, 0].item() == 1
+    assert infos[0]["final_observation"]["states"][0, 0].item() == 0
+
+
+def test_robodojo_chunk_exposes_execution_mask_and_auto_reset():
+    from types import MethodType
+
+    from rlinf.envs.sim.robodojo.robodojo_env import RoboDojoEnv
+
+    env = object.__new__(RoboDojoEnv)
+    env.num_envs = 2
+    env.auto_reset = True
+    env.cfg = OmegaConf.create({"video_cfg": {"save_video": False}, "is_eval": False})
+    obs = {"states": torch.zeros(2, 14)}
+    info = {"executed_steps": np.array([2, 3])}
+
+    env.step = MethodType(
+        lambda self, actions, auto_reset=False: (
+            obs,
+            torch.tensor([1.0, 0.0]),
+            torch.tensor([True, False]),
+            torch.tensor([False, False]),
+            info,
+        ),
+        env,
+    )
+
+    def auto_reset(self, dones, final_obs, final_info):
+        return {"states": torch.ones(2, 14)}, {
+            "final_observation": final_obs,
+            "final_info": final_info,
+            "_final_observation": dones,
+            "_final_info": dones,
+        }
+
+    env._auto_reset = MethodType(auto_reset, env)
+    observations, rewards, terminations, truncations, infos = env.chunk_step(
+        np.zeros((2, 3, 14), dtype=np.float32)
+    )
+
+    assert rewards.tolist() == [[0, 0, 1], [0, 0, 0]]
+    assert terminations.tolist() == [
+        [False, False, True],
+        [False, False, False],
+    ]
+    assert not truncations.any()
+    assert observations[0]["states"].eq(1).all()
+    assert infos[0]["valid_action_mask"].tolist() == [
+        [True, True, False],
+        [True, True, True],
+    ]
+
+
+def test_hetero_model_envs_config_validation(monkeypatch):
+    from pathlib import Path
+
+    from hydra import compose, initialize_config_dir
+    from omegaconf import open_dict
+
+    from rlinf.config import validate_model_envs
+
+    root = Path(__file__).resolve().parents[2]
+    config_dir = root / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    monkeypatch.setenv("REPO_PATH", str(root))
+    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        cfg = compose(config_name="libero_robodojo_robolab_ppo_openpi_pi05")
+
+    validate_embodied_cfg(cfg)
+    assert cfg.actor.model.model_path == cfg.rollout.model.model_path
+    assert list(cfg.env.train.envs) == ["libero", "robodojo", "robolab"]
+    assert list(cfg.actor.model.envs) == ["libero", "robodojo", "robolab"]
+
+    # Unknown env key under model.envs is rejected.
+    unknown_cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+    with open_dict(unknown_cfg):
+        unknown_cfg.actor.model.envs.missing = {
+            "config_name": "pi05_libero",
+            "action_dim": 7,
+        }
+    with pytest.raises(AssertionError, match=r"model\.envs\.missing must name"):
+        validate_model_envs(unknown_cfg, unknown_cfg.actor.model)
+
+    # Models that have not registered per-env validation fail fast.
+    unsupported_cfg = OmegaConf.create(
+        {
+            "env": {"train": _hetero_mode(libero=_env("libero", 2))},
+            "actor": {
+                "model": {
+                    "model_type": "openvla",
+                    "envs": {"libero": {"action_dim": 7}},
+                }
+            },
+        }
+    )
+    with pytest.raises(ValueError, match="not supported by model_type='openvla'"):
+        validate_model_envs(unsupported_cfg, unsupported_cfg.actor.model)

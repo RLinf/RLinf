@@ -91,6 +91,9 @@ def _reshape_recompute_logprob_gap(
 
 
 class EmbodiedFSDPActor(FSDPModelManager, Worker):
+    # Class-level default for unit tests built with ``object.__new__``.
+    _pool_env_names: list[str | None] = []
+
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
         super().__init__(cfg.actor, self._world_size, self._rank)
@@ -462,23 +465,32 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         ):
             batch["advantages"] = part.view_as(values)
 
+    def _model_env_name(self, env_name: str | None) -> str | None:
+        """Return ``env_name`` when ``actor.model.envs`` defines a profile for it."""
+        if env_name is None:
+            return None
+        model_envs = self.cfg.actor.model.get("envs", None)
+        if model_envs and env_name in model_envs:
+            return env_name
+        return None
+
     def _merge_env_batches(self) -> list[dict[str, Any]]:
         """Weight each env's steps, flatten them to transitions, and pool them.
 
         Every step gets a ``loss_mask`` and a ``loss_mask_ratio`` (see
         :func:`add_loss_weights`), so the loss treats all envs with one rule.
-        Envs whose transitions share a format, the same keys and trailing
-        shapes, are concatenated into one pool; envs whose policy inputs differ
-        get separate pools. Rows keep env order; :meth:`_order_training_batch`
+        Envs whose transitions share a format (keys and trailing shapes) and
+        model I/O profile are concatenated into one pool; envs that differ get
+        separate pools. Rows keep env order; :meth:`_order_training_batch`
         shuffles them.
 
         Returns:
-            One ``[N, ...]`` batch per format, usually a single one.
+            One ``[N, ...]`` batch per pool, usually a single one.
         """
         reference_lengths = self._rollout_geometry.layout.reference_lengths(
             self.cfg.algorithm.get("env_weighting", "trajectory")
         )
-        pools: dict[Any, list[dict[str, Any]]] = {}
+        pools: dict[tuple[Any, str | None], list[dict[str, Any]]] = {}
         # Env name -> (pool index, first row in the pool, rows).
         self._env_rows: dict[str | None, tuple[int, int, int]] = {}
         for spec in self._rollout_geometry.layout.specs:
@@ -504,14 +516,16 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )
             rows = batch["prev_logprobs"].shape[0] * batch["prev_logprobs"].shape[1]
             flat = process_nested_dict_for_train(batch)
-            pool = pools.setdefault(batch_format(flat), [])
+            pool_key = (batch_format(flat), self._model_env_name(spec.name))
+            pool = pools.setdefault(pool_key, [])
             self._env_rows[spec.name] = (
-                list(pools).index(batch_format(flat)),
+                list(pools).index(pool_key),
                 sum(entry["prev_logprobs"].shape[0] for entry in pool),
                 rows,
             )
             pool.append(flat)
         self.env_batches = {}
+        self._pool_env_names = [pool_env_name for _, pool_env_name in pools]
         return [
             entries[0] if len(entries) == 1 else cat_list_of_dict_tensor(entries)
             for entries in pools.values()
@@ -583,16 +597,23 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             ]
         self._global_batch_plan = plan
 
-    def _global_batches(self) -> Iterator[list[dict[str, Any]]]:
-        """Yield each planned global batch as its micro-batches.
+    def _global_batch_entries(
+        self,
+    ) -> Iterator[list[tuple[str | None, dict[str, Any]]]]:
+        """Yield each planned global batch as ``(env_name, micro_batch)`` pairs.
 
-        A micro-batch holds rows of one pool, so it never mixes observation
-        formats.
+        Each micro-batch holds rows of one pool, so it never mixes observation
+        formats or per-env model I/O profiles.
         """
         micro_batch_size = self.cfg.actor.micro_batch_size
         offsets = [0] * len(self.rollout_batches)
+        pool_env_names = (
+            self._pool_env_names
+            if len(self._pool_env_names) == len(self.rollout_batches)
+            else [None] * len(self.rollout_batches)
+        )
         for takes in self._global_batch_plan:
-            micro_batches = []
+            entries: list[tuple[str | None, dict[str, Any]]] = []
             for pool_index, rows in enumerate(takes):
                 if rows == 0:
                     continue
@@ -601,10 +622,23 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     self.rollout_batches[pool_index], slice(start, start + rows)
                 )
                 offsets[pool_index] += rows
-                micro_batches.extend(
-                    split_dict_to_chunk(part, math.ceil(rows / micro_batch_size))
+                env_name = pool_env_names[pool_index]
+                entries.extend(
+                    (env_name, chunk)
+                    for chunk in split_dict_to_chunk(
+                        part, math.ceil(rows / micro_batch_size)
+                    )
                 )
-            yield micro_batches
+            yield entries
+
+    def _global_batches(self) -> Iterator[list[dict[str, Any]]]:
+        """Yield each planned global batch as its micro-batches.
+
+        A micro-batch holds rows of one pool, so it never mixes observation
+        formats or per-env model I/O profiles.
+        """
+        for entries in self._global_batch_entries():
+            yield [batch for _, batch in entries]
 
     def _build_env_replay_buffer(
         self,
@@ -712,7 +746,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         clear_memory()
 
     @Worker.timer("actor/recompute_logprobs")
-    def recompute_prev_logprobs(self, batch: dict[str, Any]) -> dict[str, float]:
+    def recompute_prev_logprobs(
+        self, batch: dict[str, Any], *, env_name: str | None = None
+    ) -> dict[str, float]:
         """
         Recompute ``prev_logprobs`` with the actor's own forward, so both ends of
         the PPO ratio come from the same path. Runs after the shuffle and scores
@@ -723,6 +759,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         Args:
             batch: One ordered pool of training transitions; its
                 ``prev_logprobs`` are replaced.
+            env_name: Optional ``actor.model.envs`` key for this pool.
 
         Returns:
             Dict with ``actor/rollout_train_logprob_gap`` (mean absolute logprob
@@ -739,7 +776,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         rollout_logprobs = batch["prev_logprobs"]
         rollout_size = rollout_logprobs.shape[0]
-        kwargs = {}
+        kwargs: dict[str, Any] = {}
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.OPENVLA,
             SupportedModel.OPENVLA_OFT,
@@ -748,6 +785,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 "temperature": self.cfg.rollout.sampling_params.temperature_train,
                 "top_k": self.cfg.rollout.sampling_params.top_k,
             }
+        if env_name is not None:
+            kwargs["env_name"] = env_name
 
         recomputed_logprobs = []
         with torch.no_grad():
@@ -919,26 +958,34 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self._order_training_batch()
 
         metrics = {}
+        pool_env_names = (
+            self._pool_env_names
+            if len(self._pool_env_names) == len(self.rollout_batches)
+            else [None] * len(self.rollout_batches)
+        )
         if self.cfg.algorithm.get("recompute_logprobs", False):
-            for pool in self.rollout_batches:
-                append_to_dict(metrics, self.recompute_prev_logprobs(pool))
+            for pool, env_name in zip(self.rollout_batches, pool_env_names):
+                append_to_dict(
+                    metrics, self.recompute_prev_logprobs(pool, env_name=env_name)
+                )
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
             # See PPO paper for details. https://arxiv.org/abs/1707.06347
-            for micro_batches in self._global_batches():
+            for micro_batch_entries in self._global_batch_entries():
                 global_batch_rows = sum(
-                    batch["prev_logprobs"].shape[0] for batch in micro_batches
+                    batch["prev_logprobs"].shape[0] for _, batch in micro_batch_entries
                 )
                 self.optimizer.zero_grad()
-                for idx, batch in enumerate(micro_batches):
+                for idx, (env_name, batch) in enumerate(micro_batch_entries):
                     self.train_micro_batch(
                         micro_batch=batch,
                         metrics=metrics,
-                        is_last=(idx + 1) == len(micro_batches),
+                        is_last=(idx + 1) == len(micro_batch_entries),
                         global_batch_rows=global_batch_rows,
+                        env_name=env_name,
                     )
                     # avoid gpu memory leak
-                    micro_batches[idx] = None
+                    micro_batch_entries[idx] = None
                     del batch
 
                 self.torch_platform.empty_cache()
@@ -977,15 +1024,17 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         *,
         is_last: bool,
         global_batch_rows: int | None = None,
+        env_name: str | None = None,
     ) -> None:
         """Accumulate the gradient of one micro-batch.
 
         Args:
-            micro_batch: Transitions of one observation format.
+            micro_batch: Transitions of one observation format and model I/O profile.
             metrics: Metrics to append to.
             is_last: Whether this micro-batch ends its global batch.
             global_batch_rows: Rows in the global batch; defaults to
                 ``gradient_accumulation`` micro-batches of this size.
+            env_name: Optional ``actor.model.envs`` key for this micro-batch.
         """
         micro_batch_rows = micro_batch["prev_logprobs"].shape[0]
         if global_batch_rows is None:
@@ -1000,7 +1049,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         loss_mask_ratio = micro_batch.get("loss_mask_ratio", None)
         forward_inputs = micro_batch.get("forward_inputs", None)
 
-        kwargs = {}
+        kwargs: dict[str, Any] = {}
+        if env_name is not None:
+            kwargs["env_name"] = env_name
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.OPENVLA,
             SupportedModel.OPENVLA_OFT,
@@ -1046,21 +1097,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         ]:
             prev_logprobs = output_dict["prev_logprobs"]
 
-        logprobs = output_dict["logprobs"]
-        single_action_dim = self.cfg.actor.model.get("action_dim", 7)
-        # OpenPI slices logprobs to the env's action dim, so a shared network
-        # trained on several robots carries a different last dimension per batch.
-        if (
-            SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI
-            and logprobs.ndim == 3
-        ):
-            single_action_dim = int(logprobs.shape[-1])
         loss_kwargs = {
             "loss_type": self.cfg.algorithm.loss_type,
             "logprob_type": self.cfg.algorithm.logprob_type,
             "reward_type": self.cfg.algorithm.reward_type,
-            "single_action_dim": single_action_dim,
-            "logprobs": logprobs,
+            "single_action_dim": self.cfg.actor.model.get("action_dim", 7),
+            "logprobs": output_dict["logprobs"],
             "values": output_dict.get("values", None),
             "old_logprobs": prev_logprobs,
             "advantages": advantages,

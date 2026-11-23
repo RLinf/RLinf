@@ -550,7 +550,9 @@ class RoboDojoEnv(gym.Env):
             executed_action_count = infos.pop("executed_steps", None)
         dones = terminated | truncated
         if self.auto_reset and dones.any():
-            obs, infos = self._auto_reset(dones, obs if obs_list is None else obs_list[-1], infos)
+            obs, infos = self._auto_reset(
+                dones, obs if obs_list is None else obs_list[-1], infos
+            )
             if obs_list is not None:
                 obs_list[-1] = obs
         shape = (self.num_envs, chunk_actions.shape[1])

@@ -1,5 +1,5 @@
 RoboLab 训练与评估
-=================
+==================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png
    :align: center
@@ -8,7 +8,7 @@ RoboLab 训练与评估
 
    RoboLab (`NVlabs/RoboLab <https://github.com/NVlabs/RoboLab>`__).
 
-RoboLab 是基于 Isaac Sim 的机器人操作 benchmark，包含 120 个任务，覆盖程序性、关系性和视觉能力，以及三个难度等级。RLinf 支持使用 OpenPI π₀.₅ policy 对其中的 DROID joint-position 任务进行 PPO 训练和评估。
+RoboLab 是基于 Isaac Sim 的机器人操作 benchmark，包含 120 个任务，覆盖程序性、关系性和视觉能力，以及三个难度等级。RLinf 支持使用 OpenPI π₀.₅ policy 在 DROID joint-position 任务上开展 PPO 训练和评估。
 
 概览
 ----
@@ -79,9 +79,7 @@ RoboLab 是基于 Isaac Sim 的机器人操作 benchmark，包含 120 个任务�
 
 按照 :doc:`评估指南 <../../evaluations/guides/robolab>` 安装环境、下载 checkpoint、配置任务并运行评估。
 
-进行 PPO 训练时，先在
-``examples/embodiment/config/robolab_banana_in_bowl_ppo_openpi_pi05.yaml``
-中设置 checkpoint 路径，然后运行：
+启动 PPO 训练时，先在 ``examples/embodiment/config/robolab_banana_in_bowl_ppo_openpi_pi05.yaml`` 中设置 checkpoint 路径，然后运行：
 
 .. code-block:: bash
 
@@ -89,9 +87,7 @@ RoboLab 是基于 Isaac Sim 的机器人操作 benchmark，包含 120 个任务�
    python examples/embodiment/train_embodied_agent.py \
      --config-name robolab_banana_in_bowl_ppo_openpi_pi05
 
-训练模式支持逐环境自动重置；如果某个环境在 15 步动作块结束前完成，
-未执行动作会被 mask。请保持环境 offload 关闭，因为每个环境 worker
-都持有一个运行中的 Isaac Sim Ray actor。
+训练模式支持逐环境自动重置；如果某个环境在 15 步动作块结束前完成，未执行动作会被 mask。请保持环境 offload 关闭，因为每个环境 worker 都持有一个运行中的 Isaac Sim Ray actor。
 
 可视化与结果
 ------------

@@ -198,9 +198,7 @@ class RoboLabProcess:
             self.run_index += 1
             self.episode_indices[:] = np.arange(self.num_envs)
             if self.env.recorder_manager is not None:
-                self.env.recorder_manager.set_hdf5_file(
-                    f"run_{self.run_index}.hdf5"
-                )
+                self.env.recorder_manager.set_hdf5_file(f"run_{self.run_index}.hdf5")
                 for env_id in range(self.num_envs):
                     self.env.recorder_manager.set_episode_index(
                         env_id, env_ids=[env_id]
@@ -212,7 +210,9 @@ class RoboLabProcess:
             self.score[:] = 0
         else:
             if self.last_obs is None:
-                raise RuntimeError("Reset the full RoboLab batch before a partial reset")
+                raise RuntimeError(
+                    "Reset the full RoboLab batch before a partial reset"
+                )
             self._reset_selected(env_ids)
         return self._pack_obs(self.last_obs)
 
@@ -247,8 +247,7 @@ class RoboLabProcess:
                     continue
                 native_success = result["success"]
                 if native_success is None and (
-                    self.max_steps is None
-                    or self.steps[env_id] < self.max_steps
+                    self.max_steps is None or self.steps[env_id] < self.max_steps
                 ):
                     continue
                 self.finished[env_id] = True
@@ -264,9 +263,7 @@ class RoboLabProcess:
                             f"{env_id}, but received {subtask_info}"
                         )
                     self.score[env_id] = (
-                        1.0
-                        if native_success is True
-                        else float(subtask_info["score"])
+                        1.0 if native_success is True else float(subtask_info["score"])
                     )
                 rewards[env_id, index] = self.success[env_id]
                 terminations[env_id, index] = bool(native_success is True)
@@ -282,12 +279,12 @@ class RoboLabProcess:
         if self.enable_subtask:
             episode["score"] = self.score.copy()
         if newly_finished.any():
-            terminations[newly_finished, -1] |= self.success[
-                newly_finished
-            ].astype(bool)
-            truncations[newly_finished, -1] |= ~self.success[
-                newly_finished
-            ].astype(bool)
+            terminations[newly_finished, -1] |= self.success[newly_finished].astype(
+                bool
+            )
+            truncations[newly_finished, -1] |= ~self.success[newly_finished].astype(
+                bool
+            )
         if self.auto_reset and newly_finished.any():
             self._reset_selected(np.flatnonzero(newly_finished).tolist())
         elif self.finished.all():
@@ -315,12 +312,7 @@ class RoboLabProcess:
         """Return one native camera frame without stepping."""
         if self.last_obs is None:
             raise RuntimeError("Reset RoboLab before reading a camera")
-        return (
-            self.last_obs["image_obs"][camera_name][env_id]
-            .detach()
-            .cpu()
-            .numpy()
-        )
+        return self.last_obs["image_obs"][camera_name][env_id].detach().cpu().numpy()
 
     def get_status(self) -> list[dict[str, Any]]:
         """Return native and RLinf termination status for every slot."""
@@ -334,9 +326,7 @@ class RoboLabProcess:
                     else int(self.env.episode_length_buf[env_id].item()),
                     "step_limit": int(self.env.max_episode_length),
                     "success": native_success,
-                    "terminated": bool(
-                        self.finished[env_id] and self.success[env_id]
-                    ),
+                    "terminated": bool(self.finished[env_id] and self.success[env_id]),
                     "truncated": bool(
                         self.finished[env_id] and not self.success[env_id]
                     ),
