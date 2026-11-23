@@ -1225,6 +1225,432 @@ def test_fp32_trainable_weights_beside_frozen_bf16_keep_small_updates(
     assert (after != before).all()
 
 
+def _embodied_actor(mode_cfg, *, mix_envs=True, rank=0, world_size=1, actor_cls=None):
+    """An embodied FSDP actor holding only the state its batch planning reads."""
+    from rlinf.data.schema.embodied_trajectory import RolloutGeometry
+    from rlinf.envs.layout import EnvLayout
+    from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "seed": 3,
+                "global_batch_size": 4 * world_size,
+                "micro_batch_size": 2,
+            },
+            "algorithm": {"loss_type": "actor_critic", "reward_type": "action_level"},
+            "env": {"train": mode_cfg},
+        }
+    )
+    cfg.actor.mix_envs = mix_envs
+    layout = EnvLayout(cfg.env.train, len(mode_cfg.get("envs", {})) or 1, "p")
+    actor = object.__new__(actor_cls or EmbodiedFSDPActor)
+    actor.cfg = cfg
+    actor._rank, actor._world_size = rank, world_size
+    actor._training_round = 0
+    actor._rollout_geometry = RolloutGeometry(
+        layout=layout, stage_num=1, num_action_chunks=1, actor_world_size=world_size
+    )
+    actor._env_algorithm_cfgs = {
+        spec.name: spec.algorithm_cfg(cfg.algorithm) for spec in layout.specs
+    }
+    return actor
+
+
+def _embodied_env(steps, **fields):
+    return {
+        "env_type": "maniskill",
+        "total_num_envs": 2,
+        "rollout_epoch": 1,
+        "max_steps_per_rollout_epoch": steps,
+        "max_episode_steps": steps,
+        "auto_reset": False,
+        "ignore_terminations": False,
+        **fields,
+    }
+
+
+def _embodied_batch(steps, trajectories, marker=0.0, done_at=None):
+    dones = torch.zeros(steps + 1, trajectories, 1, dtype=torch.bool)
+    if done_at is not None:
+        dones[done_at, 0] = True
+    return {
+        "prev_logprobs": torch.randn(steps, trajectories, 1),
+        "advantages": torch.full((steps, trajectories, 1), marker),
+        "rewards": torch.ones(steps, trajectories, 1),
+        "dones": dones,
+    }
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="masked_normalization runs on CUDA"
+)
+@pytest.mark.parametrize("scope", ["env", "all"])
+def test_async_ppo_normalizes_advantages_over_the_configured_scope(scope):
+    from rlinf.workers.actor.async_ppo_fsdp_worker import AsyncPPOEmbodiedFSDPActor
+
+    # Both envs send one observation format, so their rows share a pool.
+    actor = _embodied_actor(
+        OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}}),
+        actor_cls=AsyncPPOEmbodiedFSDPActor,
+    )
+    actor.cfg.algorithm.adv_norm_scope = scope
+    actor.env_batches = {"a": _embodied_batch(2, 2), "b": _embodied_batch(2, 2)}
+    actor.env_batches["a"]["advantages"] = torch.arange(4.0).reshape(2, 2, 1)
+    actor.env_batches["b"]["advantages"] = 10 * torch.arange(1.0, 5.0).reshape(2, 2, 1)
+    actor.rollout_batches = actor._merge_env_batches()
+
+    actor._normalize_advantages_across_ranks()
+
+    [pool] = actor.rollout_batches
+    # The PPO loss takes float32 advantages.
+    assert pool["advantages"].dtype == torch.float32
+    # Rows keep env order until the training batch is shuffled.
+    a, b = pool["advantages"][:4], pool["advantages"][4:]
+    groups = [a, b] if scope == "env" else [torch.cat([a, b])]
+    for values in groups:
+        assert abs(values.mean().item()) < 1e-4
+        assert abs(values.std(unbiased=False).item() - 1) < 1e-4
+    if scope == "all":
+        assert a.mean() < 0 < b.mean()
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="masked_normalization runs on CUDA"
+)
+def test_async_ppo_returns_zero_advantages_for_fully_masked_env_group():
+    from rlinf.workers.actor.async_ppo_fsdp_worker import AsyncPPOEmbodiedFSDPActor
+
+    actor = _embodied_actor(
+        OmegaConf.create(
+            {"envs": {"empty": _embodied_env(2), "valid": _embodied_env(2)}}
+        ),
+        actor_cls=AsyncPPOEmbodiedFSDPActor,
+    )
+    actor.cfg.algorithm.adv_norm_scope = "env"
+    actor.env_batches = {
+        "empty": _embodied_batch(2, 2),
+        "valid": _embodied_batch(2, 2),
+    }
+    actor.env_batches["empty"]["loss_mask"] = torch.zeros(2, 2, 1, dtype=torch.bool)
+    actor.env_batches["valid"]["loss_mask"] = torch.ones(2, 2, 1, dtype=torch.bool)
+    actor.env_batches["empty"]["advantages"] = torch.tensor(
+        [[[1.0], [2.0]], [[3.0], [4.0]]]
+    )
+    actor.env_batches["valid"]["advantages"] = torch.tensor(
+        [[[10.0], [20.0]], [[30.0], [40.0]]]
+    )
+    actor.rollout_batches = actor._merge_env_batches()
+
+    actor._normalize_advantages_across_ranks()
+
+    [pool] = actor.rollout_batches
+    empty_adv, valid_adv = pool["advantages"][:4], pool["advantages"][4:]
+    assert torch.isfinite(empty_adv).all()
+    assert torch.allclose(empty_adv, torch.zeros_like(empty_adv))
+    assert abs(valid_adv.mean().item()) < 1e-4
+    assert abs(valid_adv.std(unbiased=False).item() - 1.0) < 1e-4
+
+
+def test_multi_format_global_batch_plan_distributes_uneven_remainders():
+    actor = _embodied_actor(
+        OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}})
+    )
+    actor.cfg.actor.global_batch_size = 4
+    actor.cfg.actor.mix_envs = True
+    actor.rollout_batches = [
+        {"prev_logprobs": torch.zeros(6, 1)},
+        {"prev_logprobs": torch.zeros(10, 1)},
+    ]
+
+    actor._order_training_batch()
+
+    assert len(actor._global_batch_plan) == 4
+    assert all(sum(takes) == 4 for takes in actor._global_batch_plan)
+    assert [sum(col) for col in zip(*actor._global_batch_plan)] == [6, 10]
+
+
+@pytest.mark.parametrize(
+    ("normalize_cfg", "expect_normalized"),
+    [(True, True), (False, False), (None, False)],
+)
+def test_raw_advantages_honor_normalize_advantages_under_env_scope(
+    monkeypatch, normalize_cfg, expect_normalized
+):
+    from rlinf.workers.actor import embodied_fsdp_actor_worker as actor_mod
+
+    metrics_calls = []
+    monkeypatch.setattr(
+        actor_mod,
+        "compute_rollout_metric_stats",
+        lambda batch: metrics_calls.append(batch) or {},
+    )
+    actor = _embodied_actor(OmegaConf.create(_embodied_env(2)))
+    actor.cfg.runner = {"task_type": "embodied"}
+    actor.cfg.actor.model = {"num_action_chunks": 1}
+    actor.cfg.algorithm.adv_type = "raw"
+    actor.cfg.algorithm.reward_type = "chunk_level"
+    actor.cfg.algorithm.group_size = 1
+    actor.cfg.algorithm.adv_norm_scope = "env"
+    if normalize_cfg is not None:
+        actor.cfg.algorithm.normalize_advantages = normalize_cfg
+    actor._env_algorithm_cfgs = {
+        spec.name: spec.algorithm_cfg(actor.cfg.algorithm)
+        for spec in actor._rollout_geometry.layout.specs
+    }
+    batch = _embodied_batch(2, 2)
+    batch["rewards"] = torch.tensor([[[1.0], [3.0]], [[0.0], [0.0]]])
+    batch["loss_mask"] = torch.ones(2, 2, 1, dtype=torch.bool)
+    actor.env_batches = {None: batch}
+    actor._group_success_metrics = {}
+    actor._timer_metrics = {}
+    actor._accelerator_type = None
+
+    actor.compute_advantages_and_returns()
+
+    assert len(metrics_calls) == 1
+    [pool] = actor.rollout_batches
+    advantages = pool["advantages"]
+    if expect_normalized:
+        assert abs(advantages.mean().item()) < 1e-4
+        assert abs(advantages.std().item() - 1.0) < 1e-3
+    else:
+        assert torch.allclose(
+            advantages.reshape(-1), torch.tensor([1.0, 3.0, 1.0, 3.0])
+        )
+
+
+def test_off_policy_targets_discount_each_sample_with_its_envs_gamma():
+    actor = _embodied_actor(
+        OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}})
+    )
+    actor.cfg.algorithm.gamma = 0.99
+    layout = actor._rollout_geometry.layout
+
+    def env_values(env_index):
+        actor._env_algorithm_cfgs = {
+            spec.name: spec.algorithm_cfg(actor.cfg.algorithm) for spec in layout.specs
+        }
+        return actor._env_values("gamma", env_index, torch.float32)
+
+    # Envs that share algorithm.gamma keep the float SAC and RLT used before.
+    assert env_values(torch.tensor([1, 0])) == 0.99
+    actor.cfg.algorithm.envs = {"b": {"gamma": 0.9}}
+    # Index -1 is a demo sample, which takes algorithm.gamma.
+    assert torch.allclose(
+        env_values(torch.tensor([1, 0, -1])), torch.tensor([[0.9], [0.99], [0.99]])
+    )
+
+
+def test_off_policy_bf16_gamma_exponentiates_in_fp32_before_casting():
+    from rlinf.workers.actor.fsdp_rlt_ac_policy_worker import RLTACLossMixin
+
+    actor = _embodied_actor(
+        OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}})
+    )
+    actor.cfg.algorithm.gamma = 0.999
+    actor.cfg.algorithm.envs = {"b": {"gamma": 0.99}}
+    actor.torch_dtype = torch.bfloat16
+    actor._env_algorithm_cfgs = {
+        spec.name: spec.algorithm_cfg(actor.cfg.algorithm)
+        for spec in actor._rollout_geometry.layout.specs
+    }
+
+    gamma = actor._env_values("gamma", torch.tensor([0, 1]), torch.float32)
+    assert gamma.dtype == torch.float32
+    discount = (gamma**8).to(torch.bfloat16)
+    expected_a = (torch.tensor(0.999, dtype=torch.float32) ** 8).to(torch.bfloat16)
+    assert discount[0].item() == pytest.approx(expected_a.item())
+    assert discount[0].item() < 1.0
+
+    rlt = object.__new__(RLTACLossMixin)
+    rlt.torch_dtype = torch.bfloat16
+    rewards = torch.ones((2, 8), dtype=torch.bfloat16)
+    discounted = rlt._discounted_chunk_rewards(rewards, gamma)
+    expected_r0 = sum(0.999**k for k in range(8))
+    assert discounted.dtype == torch.bfloat16
+    assert abs(discounted[0].item() - expected_r0) < 0.05
+    assert discounted[0].item() < 8.0
+
+
+def test_multi_env_pooled_rollout_metrics_merge_per_env_stats_without_extra_reduction(
+    tmp_path, monkeypatch
+):
+    from rlinf.utils.metric_utils import (
+        compute_rollout_metric_stats,
+        compute_rollout_metrics,
+    )
+    from rlinf.workers.actor import embodied_fsdp_actor_worker as actor_mod
+
+    monkeypatch.setattr(Worker, "torch_platform", torch.cpu)
+    calls = []
+
+    def _spy(batch):
+        calls.append(batch)
+        return compute_rollout_metric_stats(batch)
+
+    monkeypatch.setattr(actor_mod, "compute_rollout_metric_stats", _spy)
+    dist.init_process_group(
+        "gloo", init_method=f"file://{tmp_path / 'init'}", rank=0, world_size=1
+    )
+    try:
+        actor = _embodied_actor(
+            OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}})
+        )
+        actor.cfg.runner = {"task_type": "embodied"}
+        actor.cfg.actor.model = {"num_action_chunks": 1}
+        actor.cfg.algorithm.adv_type = "raw"
+        actor.cfg.algorithm.reward_type = "chunk_level"
+        actor.cfg.algorithm.group_size = 1
+        actor.cfg.algorithm.adv_norm_scope = "env"
+        actor.cfg.algorithm.normalize_advantages = False
+        actor._env_algorithm_cfgs = {
+            spec.name: spec.algorithm_cfg(actor.cfg.algorithm)
+            for spec in actor._rollout_geometry.layout.specs
+        }
+        batch_a = _embodied_batch(2, 2)
+        batch_a["rewards"] = torch.tensor([[[1.0], [5.0]], [[3.0], [7.0]]])
+        batch_a["loss_mask"] = torch.tensor([[[True], [False]], [[True], [True]]])
+        batch_b = _embodied_batch(2, 2)
+        batch_b["rewards"] = torch.tensor([[[10.0], [20.0]], [[30.0], [40.0]]])
+        batch_b["loss_mask"] = torch.zeros(2, 2, 1, dtype=torch.bool)
+        actor.env_batches = {"a": batch_a, "b": batch_b}
+        actor._group_success_metrics = {}
+        actor._timer_metrics = {}
+        actor._accelerator_type = None
+
+        metrics = actor.compute_advantages_and_returns()
+
+        assert len(calls) == 2
+        expected_pooled = compute_rollout_metrics(
+            {
+                "rewards": torch.cat(
+                    [batch_a["rewards"].reshape(-1), batch_b["rewards"].reshape(-1)]
+                ),
+                "advantages": torch.cat(
+                    [
+                        batch_a["advantages"].reshape(-1),
+                        batch_b["advantages"].reshape(-1),
+                    ]
+                ),
+                "loss_mask": torch.cat(
+                    [batch_a["loss_mask"].reshape(-1), batch_b["loss_mask"].reshape(-1)]
+                ),
+            }
+        )
+        for key, value in expected_pooled.items():
+            assert metrics[key] == pytest.approx(value), key
+    finally:
+        dist.destroy_process_group()
+
+
+def test_one_env_trains_on_the_same_batch_and_loss_weights_as_before():
+    from rlinf.utils.nested_dict_process import process_nested_dict_for_train
+    from rlinf.utils.utils import compute_trajectory_loss_mask
+
+    actor = _embodied_actor(OmegaConf.create(_embodied_env(4)), rank=1)
+    batch = _embodied_batch(4, 2, done_at=2)
+    batch["loss_mask"], batch["loss_mask_sum"] = compute_trajectory_loss_mask(
+        batch["dones"], "action_level"
+    )
+    expected = dict(batch)
+    expected["loss_mask_ratio"] = batch["loss_mask_sum"] * 1.0 / 4
+    shuffle_id = torch.randperm(8, generator=torch.Generator().manual_seed(3 + 1))
+    expected = process_nested_dict_for_train(expected, shuffle_id)
+
+    actor.env_batches = {None: dict(batch)}
+    actor.rollout_batches = actor._merge_env_batches()
+    actor._order_training_batch()
+
+    [pool] = actor.rollout_batches
+    assert pool.keys() == expected.keys()
+    for key, value in expected.items():
+        assert torch.equal(pool[key], value), key
+    assert actor._global_batch_plan == [[4], [4]]
+
+
+def test_every_trajectory_weighs_the_same_whatever_its_env_horizon():
+    actor = _embodied_actor(
+        OmegaConf.create(
+            {
+                "envs": {
+                    "short": _embodied_env(2, ignore_terminations=True),
+                    "long": _embodied_env(4, ignore_terminations=True),
+                }
+            }
+        )
+    )
+    actor.env_batches = {
+        "short": _embodied_batch(2, 2, marker=1.0),
+        "long": _embodied_batch(4, 2, marker=2.0),
+    }
+
+    [merged] = actor._merge_env_batches()
+
+    weights = 1.0 / merged["loss_mask_ratio"].squeeze(-1)
+    short = weights[merged["advantages"].squeeze(-1) == 1.0]
+    long = weights[merged["advantages"].squeeze(-1) == 2.0]
+    # Each env holds 2 trajectories, so one trajectory's steps sum to half.
+    assert torch.allclose(short.sum() / 2, long.sum() / 2)
+    assert merged["loss_mask"].all()
+
+
+def test_unmixed_global_batches_hold_one_env_in_an_order_all_ranks_share():
+    mode_cfg = OmegaConf.create(
+        {"envs": {"short": _embodied_env(2), "long": _embodied_env(4)}}
+    )
+    env_orders = []
+    for rank in (0, 1):
+        actor = _embodied_actor(mode_cfg, mix_envs=False, rank=rank, world_size=2)
+        actor.env_batches = {
+            "short": _embodied_batch(2, 2, marker=1.0),
+            "long": _embodied_batch(4, 2, marker=2.0),
+        }
+        actor.rollout_batches = actor._merge_env_batches()
+        actor._order_training_batch()
+
+        markers = [
+            torch.cat([batch["advantages"] for batch in micro_batches]).unique()
+            for micro_batches in actor._global_batches()
+        ]
+        assert all(len(marker) == 1 for marker in markers)
+        env_orders.append([marker.item() for marker in markers])
+
+    assert env_orders[0] == env_orders[1]
+    assert sorted(env_orders[0]) == [1.0, 2.0, 2.0]
+
+
+def test_envs_with_different_policy_inputs_train_in_separate_micro_batches():
+    actor = _embodied_actor(
+        OmegaConf.create(
+            {"envs": {"one_view": _embodied_env(2), "two_views": _embodied_env(2)}}
+        )
+    )
+    one_view = _embodied_batch(2, 2, marker=1.0)
+    one_view["forward_inputs"] = {"pixel_values": torch.zeros(2, 2, 1, 8)}
+    two_views = _embodied_batch(2, 2, marker=2.0)
+    two_views["forward_inputs"] = {"pixel_values": torch.zeros(2, 2, 2, 8)}
+    actor.env_batches = {"one_view": one_view, "two_views": two_views}
+
+    actor.rollout_batches = actor._merge_env_batches()
+    actor._order_training_batch()
+    global_batches = list(actor._global_batches())
+
+    assert len(actor.rollout_batches) == 2
+    # 8 samples make 2 global batches of 4, each taking 2 samples of each format.
+    assert actor._global_batch_plan == [[2, 2], [2, 2]]
+    for micro_batches in global_batches:
+        assert sorted(
+            batch["advantages"].unique().item() for batch in micro_batches
+        ) == [
+            1.0,
+            2.0,
+        ]
+        for batch in micro_batches:
+            views = batch["forward_inputs"]["pixel_values"].shape[1]
+            assert views == batch["advantages"].unique().item()
+
+
 @pytest.mark.parametrize("all_inactive", [False, True])
 def test_art_metrics_weight_active_samples_across_microbatches(
     tmp_path, monkeypatch, all_inactive

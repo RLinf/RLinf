@@ -597,10 +597,17 @@ class CNNPolicy(nn.Module, BasePolicy):
             mode="eval",
         )
 
+        if not hasattr(self, "_eager_generate_actions"):
+            self._eager_generate_actions = self._generate_actions
+
         def _generate_func(
             states, main_images, extra_view_images, calculate_values, mode
         ):
             batch_size = train_batch_size if mode == "train" else eval_batch_size
+            if states.shape[0] != batch_size:
+                return self._eager_generate_actions(
+                    states, main_images, extra_view_images, calculate_values, mode
+                )
             graph_name = (
                 f"action_generation_{batch_size}_{False}_{calculate_values}_{mode}"
             )

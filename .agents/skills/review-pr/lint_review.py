@@ -57,22 +57,24 @@ STATUSES = ("confirmed", "unresolved")
 POSTED = ("inline", "here")
 REPRODUCTION, FINDINGS = "### Reproduction", "### Findings"
 SECTIONS = (REPRODUCTION, FINDINGS)
-REPRO_LABELS = ("- Settings:", "- Result:")
+REPRO_LABELS = ("- Result:", "- Setup:")
+REPRO_STATUSES = ("**Passed**", "**Failed**", "**Partial**", "**Not run**")
 NO_FINDINGS = "No findings."
 TABLE_COLUMNS = 7  # ID, Severity, Category, Location, Summary, Status, Posted
 MAX_BODY = 65536  # GitHub rejects a longer review body
 EVENTS = ("COMMENT", "REQUEST_CHANGES", "APPROVE")
 FIX_LEAD = "Suggested fix:"
 EVIDENCE_LEAD = "Evidence:"
+WALKTHROUGH_LEAD = "Code walkthrough:"
 TEMPLATE = """\
 **<Recommendation>** · <n critical, n major, n minor, or no findings> · head `<sha7>` · base `main@<sha7>`
 
-<One or two sentences: what the PR does, what blocks it, and any decision a maintainer must make.>
+<One short sentence: what blocks merge, or why it is ready.>
 
 ### Reproduction
 
-- Settings: <PR revision, hardware and nodes, environment, model and dataset, config, commands, who ran it; or: not run, why, and what a run needs>
-- Result: <claimed vs. observed, functional and metric results separately, first failure and every intervention, what was not reproduced>
+- Result: **<Passed | Failed | Partial | Not run>** — <one short sentence: functional status and key metric vs. baseline, or first blocker / what is missing>
+- Setup: <hardware count/type and config or command run; or what a run needs if not run>
 
 ### Findings
 
@@ -81,31 +83,19 @@ TEMPLATE = """\
 | F1 | critical | correctness | `rlinf/x.py:42` | <one line> | confirmed | inline |
 | F2 | major | docs | `docs/source-zh/...` | <one line> | confirmed | here |
 
-#### F1 · critical · correctness: <plain title>
-
-Inline at `rlinf/x.py:42`: <one sentence: what goes wrong and when; the fix lives in the inline comment>
-
-Code walkthrough:
-
-<quoted snippets from the PR, and from main when compared, each under a `path:line` line; then the steps from the input to the bug>
-
-Evidence: <the command and its result, or the trace; for an unresolved finding, what would settle it>
-
 #### F2 · major · docs: <plain title>
 
-<what it tries to do, what happens instead, and why it matters, written like an inline comment>
+<what it tries to do, what happens instead, and why it matters, in 1-3 plain sentences>
 
 Suggested fix: <one sentence, then a code block when code changes>
 
-Code walkthrough:
-
-<as for F1>
-
-Evidence: <as for F1>
+Evidence: <one line: command and result, or trace; for unresolved, what settles it>
 """
 PAYLOAD_KEYS = {"commit_id", "event", "body", "comments"}
 COMMENT_KEYS = {"path", "line", "side", "start_line", "start_side", "body"}
 MAX_COMMENT_PROSE = 1000
+MAX_MINOR_FINDINGS = 5
+MAX_REPRO_BULLET = 300
 
 
 @dataclass(frozen=True)
@@ -128,6 +118,30 @@ class Markdown:
     # A tag, an HTML comment, or a <placeholder> left from the template.
     HTML = re.compile(r"<!--|</?[A-Za-z][\w-]*(\s[^<>]*)?/?>")
     CODE_SPAN = re.compile(r"(`+).+?\1")
+    HEDGING = re.compile(
+        r"\b(you might want to|you may want to|perhaps consider|"
+        r"consider (?:using|adding|changing|updating|removing)|"
+        r"it might be worth|it is worth noting|just a small)\b",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def unclosed_fence(cls, text: str) -> int | None:
+        """Returns the 1-based opening line of an unclosed code fence, if any."""
+        fence, opened_at = "", None
+        for n, line in enumerate(text.splitlines(), 1):
+            m = cls.FENCE.match(line)
+            if not fence:
+                if m:
+                    fence, opened_at = m[1], n
+            elif (
+                m
+                and m[1][0] == fence[0]
+                and len(m[1]) >= len(fence)
+                and not m[2].strip()
+            ):
+                fence, opened_at = "", None
+        return opened_at
 
     @classmethod
     def unfenced(cls, text: str) -> list[tuple[int, str]]:
@@ -312,6 +326,7 @@ class ReviewLinter:
     )
     ROW = re.compile(r"^\|\s*F\d+\s*\|")
     FINDING = re.compile(r"^#### (F\d+) · ([\w-]+) · ([\w-]+): \S")
+    INLINE_HEADING = re.compile(r"^\*\*(F\d+) · ([\w-]+) · ([\w-]+): \S.*\*\*$")
     LOCATION = re.compile(r"`([^`:\s]+):(\d+)(?:-(\d+))?`")
 
     def __init__(self, payload: dict, pr: PullRequest | None) -> None:
@@ -350,17 +365,30 @@ class ReviewLinter:
         return self.findings
 
     def check_prose(self, where: str, text: str) -> None:
+        opened_at = Markdown.unclosed_fence(text)
+        if opened_at is not None:
+            self.error(
+                where,
+                f"line {opened_at} opens a code fence that is never closed",
+            )
         for n in Markdown.wrapped(text):
             self.error(
                 where,
                 f"line {n} is hard-wrapped; GitHub renders it as a line break, so keep each paragraph on one line",
             )
         for n, line in Markdown.unfenced(text):
-            m = Markdown.HTML.search(Markdown.CODE_SPAN.sub("", line))
+            stripped = Markdown.CODE_SPAN.sub("", line)
+            m = Markdown.HTML.search(stripped)
             if m:
                 self.error(
                     where,
                     f"line {n} holds HTML or an unfilled template placeholder ({m[0][:40]!r}); write plain Markdown",
+                )
+            h = Markdown.HEDGING.search(stripped)
+            if h:
+                self.warn(
+                    where,
+                    f"line {n} uses hedging or filler ({h[0]!r}); state the issue and fix directly",
                 )
 
     def check_body(self, body: str) -> None:
@@ -386,7 +414,7 @@ class ReviewLinter:
                 f"sections must be {list(SECTIONS)} in this order, found {found}; use #### inside a section",
             )
         content = dict(reversed(sections))
-        rows = self.check_findings(content.get(FINDINGS, []))
+        rows = self.check_findings(content.get(FINDINGS, []), body.splitlines())
         self.check_inline_rows(rows)
         if REPRODUCTION in content:
             self.check_reproduction(content[REPRODUCTION])
@@ -404,7 +432,9 @@ class ReviewLinter:
                 "body", "the verdict line names several recommendations; state one"
             )
 
-    def check_findings(self, lines: list[tuple[int, str]]) -> list[Row]:
+    def check_findings(
+        self, lines: list[tuple[int, str]], raw_lines: list[str]
+    ) -> list[Row]:
         """Checks the findings table against the finding sections below it."""
         rows: list[Row] = []
         sections: dict[str, Section] = {}
@@ -436,16 +466,34 @@ class ReviewLinter:
         ranks = [SEVERITIES.index(r.severity) for r in rows if r.severity in SEVERITIES]
         if ranks != sorted(ranks):
             self.warn("body", "list the findings by severity, most severe first")
+        minor_count = sum(1 for r in rows if r.severity == "minor")
+        if minor_count > MAX_MINOR_FINDINGS:
+            self.warn(
+                "body",
+                f"review lists {minor_count} minor findings; merge or drop low-value nitpicks so major issues stay in focus",
+            )
+        starts = sorted(s.n for s in sections.values())
+        next_start = {
+            start: starts[i + 1] - 1 if i + 1 < len(starts) else len(raw_lines)
+            for i, start in enumerate(starts)
+        }
         seen: set[str] = set()
         for row in rows:
             if row.id in seen:
                 self.error("body", f"line {row.n}: {row.id} has a second table row")
             seen.add(row.id)
             section = sections.get(row.id)
+            if row.posted == "inline":
+                if section is not None:
+                    self.error(
+                        "body",
+                        f"line {section.n}: {row.id} is posted inline; do not repeat it as a section in the main comment",
+                    )
+                continue
             if section is None:
                 self.error(
                     "body",
-                    f"{row.id} is in the table but has no '#### {row.id} · ...' section",
+                    f"{row.id} is posted here but has no '#### {row.id} · ...' section",
                 )
                 continue
             if (section.severity, section.category) != (row.severity, row.category):
@@ -454,7 +502,9 @@ class ReviewLinter:
                     f"line {section.n}: the {row.id} heading says {section.severity} {section.category}, "
                     f"the table says {row.severity} {row.category}",
                 )
-            self.check_section(row, section)
+            self.check_section(
+                row, section, raw_lines[section.n : next_start[section.n]]
+            )
         for fid, section in sections.items():
             if fid not in seen:
                 self.error(
@@ -486,7 +536,7 @@ class ReviewLinter:
                 )
         return Row(n, fid, severity, category, location, posted)
 
-    def check_section(self, row: Row, section: Section) -> None:
+    def check_section(self, row: Row, section: Section, raw_slice: list[str]) -> None:
         text = "\n".join(line.strip() for line in section.lines)
         where = f"body {row.id}"
         if not any(
@@ -494,12 +544,14 @@ class ReviewLinter:
             for line in text.splitlines()
         ):
             self.error(where, f"the section needs an '{EVIDENCE_LEAD}' paragraph")
-        if row.posted == "here" and FIX_LEAD not in text:
+        if FIX_LEAD not in text:
             self.error(where, f"a finding posted here needs a '{FIX_LEAD}' paragraph")
-        if row.posted == "inline" and FIX_LEAD in text:
-            self.error(
+        if any(line.strip() == WALKTHROUGH_LEAD for line in section.lines) and not any(
+            Markdown.FENCE.match(line) for line in raw_slice
+        ):
+            self.warn(
                 where,
-                "the suggested fix of an inline finding lives only in its inline comment",
+                f"'{WALKTHROUGH_LEAD}' has no fenced code block; quote the relevant lines under path:line",
             )
 
     def check_inline_rows(self, rows: list[Row]) -> None:
@@ -529,19 +581,56 @@ class ReviewLinter:
                     f"body {row.id}",
                     f"posted inline at {m[0]}, but no inline comment sits there",
                 )
+            for i in hits:
+                first = next(
+                    (
+                        line.strip()
+                        for line in (comments[i].get("body") or "").splitlines()
+                        if line.strip()
+                    ),
+                    "",
+                )
+                hm = self.INLINE_HEADING.match(first)
+                if hm and (hm[1], hm[2], hm[3]) != (
+                    row.id,
+                    row.severity,
+                    row.category,
+                ):
+                    self.error(
+                        f"comment {i + 1} ({path}:{end})",
+                        f"heading says {hm[1]} {hm[2]} {hm[3]}, "
+                        f"the table says {row.id} {row.severity} {row.category}",
+                    )
             matched.update(hits)
         for i, c in enumerate(comments):
             if i not in matched:
                 self.error(
                     f"comment {i + 1} ({c.get('path')}:{c.get('line')})",
-                    "has no inline row in the findings table; every inline comment is a finding with a row and a section",
+                    "has no inline row in the findings table; every inline comment needs an inline row in the findings table",
                 )
 
     def check_reproduction(self, lines: list[tuple[int, str]]) -> None:
         text = [line.strip() for _, line in lines]
         for label in REPRO_LABELS:
-            if not any(t.startswith(label) and t[len(label) :].strip() for t in text):
+            matches = [
+                t for t in text if t.startswith(label) and t[len(label) :].strip()
+            ]
+            if not matches:
                 self.error("body", f"Reproduction needs a '{label}' bullet")
+                continue
+            bullet = matches[0]
+            content = bullet[len(label) :].strip()
+            if label == "- Result:" and not content.startswith(REPRO_STATUSES):
+                self.warn(
+                    "body",
+                    f"start '- Result:' with one of {', '.join(REPRO_STATUSES)} so the outcome is clear at a glance",
+                )
+            if len(bullet) > MAX_REPRO_BULLET:
+                self.warn(
+                    "body",
+                    f"Reproduction '{label}' bullet is {len(bullet)} characters (limit {MAX_REPRO_BULLET}); "
+                    "keep only outcome, key metrics, and essential hardware/command",
+                )
 
     def check_comment(self, i: int, c: dict, seen: set) -> None:
         path, line, body = c.get("path"), c.get("line"), c.get("body") or ""
@@ -567,8 +656,20 @@ class ReviewLinter:
                 where,
                 f"start_line must be an integer below line {line}, found {start!r}",
             )
+        first = next((line.strip() for line in body.splitlines() if line.strip()), "")
+        if not self.INLINE_HEADING.match(first):
+            self.error(
+                where,
+                "start the inline comment with '**F<n> · <severity> · <category>: <title>**' matching its table row",
+            )
         if FIX_LEAD not in body:
             self.error(where, f"every inline comment needs a '{FIX_LEAD}' paragraph")
+        if not any(
+            line.strip().startswith(EVIDENCE_LEAD)
+            and line.strip()[len(EVIDENCE_LEAD) :].strip()
+            for _, line in Markdown.unfenced(body)
+        ):
+            self.error(where, f"every inline comment needs an '{EVIDENCE_LEAD}' line")
         if "```suggestion" in body and side == "LEFT":
             self.error(
                 where, "a suggestion block only applies to RIGHT-side (new) lines"
@@ -577,7 +678,7 @@ class ReviewLinter:
         if Markdown.prose_length(body) > MAX_COMMENT_PROSE:
             self.warn(
                 where,
-                f"prose is over {MAX_COMMENT_PROSE} characters; move the walkthrough to the finding's section in the main comment",
+                f"prose is over {MAX_COMMENT_PROSE} characters; keep the explanation to 1-3 sentences, a short fix, and a one-line Evidence",
             )
         key = (path, side, line)
         if key in seen:
