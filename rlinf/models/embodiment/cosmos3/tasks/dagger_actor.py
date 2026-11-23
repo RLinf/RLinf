@@ -14,8 +14,11 @@
 
 """FSDP DAgger training for a Cosmos3 student."""
 
+from __future__ import annotations
+
 from collections.abc import Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -29,7 +32,9 @@ from rlinf.models.embodiment.cosmos3.datasets.dataset import (
 from rlinf.models.embodiment.cosmos3.tasks.dagger import Cosmos3DAggerAdapter
 from rlinf.scheduler import Worker
 from rlinf.utils.metric_utils import append_to_dict
-from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
+
+if TYPE_CHECKING:
+    from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
 
 
 class Cosmos3DAggerTraining(Cosmos3DAggerAdapter):
@@ -118,9 +123,3 @@ class Cosmos3DAggerTraining(Cosmos3DAggerAdapter):
         actor.update_step = max(0, int(actor.lr_scheduler.last_epoch))
         actor.optimizer_steps = actor.update_step
         actor.model.set_global_step(actor.update_step, update_ema=False)
-
-
-class Cosmos3DAggerActor(EmbodiedDAGGERFSDPPolicy):
-    """Synchronous DAgger actor with the native Cosmos SFT loss."""
-
-    _cosmos_training = Cosmos3DAggerTraining()

@@ -39,10 +39,15 @@ from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
 class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
-    _cosmos_training = None
-
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
+        self._cosmos_training = None
+        if cfg.actor.model.model_type == "cosmos3":
+            from rlinf.models.embodiment.cosmos3.tasks.dagger_actor import (
+                Cosmos3DAggerTraining,
+            )
+
+            self._cosmos_training = Cosmos3DAggerTraining()
         self.replay_buffer = None
         self.update_step = 0
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))

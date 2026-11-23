@@ -27,12 +27,7 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
 
     def __init__(self, cfg):
         super().__init__(cfg)
-        if cfg.actor.model.model_type == "cosmos3":
-            from rlinf.models.embodiment.cosmos3.tasks.dagger_actor import (
-                Cosmos3DAggerTraining,
-            )
-
-            self._cosmos_training = Cosmos3DAggerTraining()
+        if self._cosmos_training is not None:
             self.should_stop = False
             self._lerobot_ingest_lock = threading.RLock()
             self._lerobot_receiver_drained = threading.Event()
