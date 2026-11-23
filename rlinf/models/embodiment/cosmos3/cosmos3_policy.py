@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from functools import partial
 from typing import Any
 
 import torch
@@ -24,13 +25,16 @@ import torch.nn as nn
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.cosmos3.env_io import Cosmos3EnvIO
-from rlinf.models.embodiment.cosmos3.transforms.lerobot import Cosmos3DAggerInputs
+from rlinf.models.embodiment.cosmos3.transforms.lerobot import (
+    prepare_lerobot_batch,
+    prepare_sft_observation_batch,
+)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
 
 
-class Cosmos3Policy(Cosmos3DAggerInputs, Cosmos3EnvIO, nn.Module, BasePolicy):
+class Cosmos3Policy(Cosmos3EnvIO, nn.Module, BasePolicy):
     """RLinf adapter around a cosmos ``OmniMoTModel``."""
 
     _no_split_modules: list[str] = [
@@ -134,6 +138,22 @@ class Cosmos3Policy(Cosmos3DAggerInputs, Cosmos3EnvIO, nn.Module, BasePolicy):
         beta = model.ema_beta(iteration)
         worker.update_average(net, net_ema, beta=beta)
 
+    def prepare_lerobot_sft_batch(self, batch: Mapping[str, Any]) -> dict[str, Any]:
+        """Prepare expert actions and optional observed video for online SFT."""
+        return prepare_lerobot_batch(
+            batch,
+            max_action_dim=int(self.omni.config.max_action_dim),
+            normalizer=self._get_action_normalizer(),
+            prepare_observation_batch=partial(
+                prepare_sft_observation_batch,
+                cfg=self._rollout_config,
+                device=self.device,
+                tokenize_text=self.omni.tokenize_text,
+                input_video_key=self.omni.input_video_key,
+            ),
+            include_vision=self._rollout_config.get("sft_objective") == "joint",
+        )
+
     def forward(self, forward_type: ForwardType = ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.SFT:
             return self.sft_forward(**kwargs)
@@ -171,9 +191,7 @@ class Cosmos3Policy(Cosmos3DAggerInputs, Cosmos3EnvIO, nn.Module, BasePolicy):
                     state = state.to(self.device)
                 return _orig_fn(omni_self, state, *args, **kwargs)
 
-            import functools
-
-            self.omni._encode_vision_item = functools.partial(_patched, self.omni)
+            self.omni._encode_vision_item = partial(_patched, self.omni)
         output_batch, loss = self.omni.training_step(data, self._global_step)
 
         result: dict[str, Any] = {"loss": loss}
