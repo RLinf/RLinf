@@ -355,7 +355,6 @@ def test_chunked_actor_scores_ragged_rows_without_crossing_boundaries(monkeypatc
         algorithm=SimpleNamespace(sampling_params=SimpleNamespace(temperature=1.0))
     )
     actor.response_only_logits = True
-    actor._scoring_reference = False
     actor._score_packed_tokens = score
     actor.return_loss = False
     model = torch.nn.Module()
@@ -608,7 +607,6 @@ def scoring_actor(tmp_path, monkeypatch):
     actor.clip_ratio_c, actor.clip_ratio_low, actor.clip_ratio_high = 3.0, 0.2, 0.2
     actor.response_only_logits = False
     actor.lm_head_chunk_size = 0
-    actor._scoring_reference = False
     actor.kl_beta = 0.0
     actor.loss_agg_func = masked_mean
     actor.torch_platform = SimpleNamespace(current_device=lambda: "cpu")
@@ -673,6 +671,97 @@ def test_actor_entropy_uses_response_predictors(
         torch.autograd.grad(loss, weight)[0],
         torch.autograd.grad(expected_loss, weight)[0],
     )
+
+
+def test_pipeline_output_projection(tmp_path):
+    pytest.importorskip("megatron.core")
+    torch.multiprocessing.spawn(
+        _pipeline_output_projection, args=((tmp_path / "pg").as_uri(),), nprocs=2
+    )
+
+
+def _pipeline_output_projection(rank, rendezvous):
+    import torch.distributed as dist
+    from megatron.core import ModelParallelConfig, parallel_state
+    from megatron.core.tensor_parallel.layers import ColumnParallelLinear
+
+    from rlinf.hybrid_engines.megatron.output_projection import (
+        chunked_scoring,
+        install_chunked_projection,
+    )
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+    from rlinf.workers.actor.megatron_actor_worker import MegatronActor
+
+    dist.init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=2)
+    try:
+        groups = [dist.new_group([i], backend="gloo") for i in range(2)]
+        with pytest.MonkeyPatch.context() as mp:
+            for name in ("_TENSOR_MODEL_PARALLEL_GROUP", "_DATA_PARALLEL_GROUP"):
+                mp.setattr(parallel_state, name, groups[rank])
+            model = torch.nn.Module()
+            model.post_process = rank == 1
+            if rank == 0:
+                install_chunked_projection(model)
+                hidden = torch.randn(5, 1, 4)
+                dist.send(hidden, 1)
+                grad = torch.empty_like(hidden)
+                dist.recv(grad, 1)
+                assert torch.isfinite(grad).all() and grad.abs().sum() > 0
+                return
+            model.output_layer = ColumnParallelLinear(
+                4,
+                8,
+                config=ModelParallelConfig(use_cpu_initialization=True),
+                init_method=torch.nn.init.xavier_uniform_,
+                bias=True,
+                skip_bias_add=True,
+            )
+            with pytest.raises(ValueError, match="separate bias"):
+                install_chunked_projection(model)
+            model.output_layer.skip_bias_add = False
+            with torch.no_grad():
+                model.output_layer.bias.copy_(torch.arange(8))
+            hidden = torch.empty(5, 1, 4)
+            dist.recv(hidden, 0)
+            hidden.requires_grad_()
+            labels = torch.arange(5).unsqueeze(0)
+            dense, _ = model.output_layer(hidden)
+            keys = list(model.state_dict())
+            params = {k: id(v) for k, v in model.named_parameters()}
+            layer = model.output_layer
+            hooks = (dict(layer._forward_pre_hooks), dict(layer._forward_hooks))
+            actor = MAMegatronActor.__new__(MAMegatronActor)
+            mp.setattr(MegatronActor, "model_provider_func", lambda *args: model)
+            for size in (0, 2):
+                actor.lm_head_chunk_size = size
+                assert actor.model_provider_func(False, True) is model
+                assert (type(layer) is ColumnParallelLinear) == (size == 0)
+                assert hooks == (layer._forward_pre_hooks, layer._forward_hooks)
+                assert list(model.state_dict()) == keys
+                assert {k: id(v) for k, v in model.named_parameters()} == params
+
+            with chunked_scoring(
+                model,
+                labels=labels,
+                label_mask=torch.ones_like(labels, dtype=torch.bool),
+                chunk_size=2,
+            ):
+                scores, _ = model.output_layer(hidden)
+            expected = (
+                dense.transpose(0, 1).log_softmax(-1).gather(-1, labels[..., None])
+            )
+            torch.testing.assert_close(scores.transpose(0, 1), expected)
+            grads = torch.autograd.grad(
+                scores.sum(), (hidden, model.output_layer.weight)
+            )
+            reference = torch.autograd.grad(
+                expected.sum(), (hidden, model.output_layer.weight)
+            )
+            torch.testing.assert_close(grads, reference)
+            dist.send(grads[0].contiguous(), 0)
+            assert torch.equal(model.output_layer(hidden)[0], dense)
+    finally:
+        dist.destroy_process_group()
 
 
 def _check_tp_entropy_gradient(rank, init_file):

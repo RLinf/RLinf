@@ -94,7 +94,6 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         self.lm_head_chunk_size = (
             cfg.actor.model.get("lm_head_chunk_size", 0) if role == "actor" else 0
         )
-        self._scoring_reference = False
         self._init_auto_scheduler(role)
         # Set by run_training for the duration of a training call and read
         # by _assemble_delivery.
@@ -208,12 +207,10 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         self, model, input_ids, position_ids, packed_params, label, label_mask
     ):
         module = None
-        if (
-            self.lm_head_chunk_size or self.response_only_logits
-        ) and not self._scoring_reference:
+        if self.lm_head_chunk_size or self.response_only_logits:
             module = unwrap_model(model)
         temperature = self.cfg.algorithm.sampling_params.temperature
-        if self.lm_head_chunk_size and module is not None and module.post_process:
+        if self.lm_head_chunk_size and module.post_process:
             from rlinf.hybrid_engines.megatron.output_projection import chunked_scoring
 
             with chunked_scoring(
@@ -238,7 +235,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
 
         positions = None
         projection = nullcontext()
-        if self.response_only_logits and module is not None and module.post_process:
+        if self.response_only_logits and module.post_process:
             positions = label_mask[0].nonzero(as_tuple=True)[0]
             if positions.numel() == 0:
                 positions = positions.new_zeros(1)
@@ -300,7 +297,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             )
             labels = [torch.cat((row[1:], row.new_zeros(1))) for row in rows]
             label, _ = preprocess_ragged_seqs(labels)
-            if self.response_only_logits and not self._scoring_reference:
+            if self.response_only_logits:
                 # Shift in each trajectory before the packing step inserts TP padding.
                 masks = [
                     torch.cat((mask[1:], mask.new_zeros(1))).to(input_ids.device)
@@ -786,11 +783,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     "ref_policy_state_dict must be set to compute ref_logprobs"
                 )
                 with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
-                    self._scoring_reference = True
-                    try:
-                        reference = self.inference_step(batch)
-                    finally:
-                        self._scoring_reference = False
+                    reference = self.inference_step(batch)
         offset = 0
         for result in results:
             end = offset + result.num_sequence

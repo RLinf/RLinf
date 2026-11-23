@@ -62,7 +62,7 @@ class _ChunkedProjection:
         scores = chunked_vocab_parallel_log_probs(
             hidden.transpose(0, 1),
             weight,
-            bias=None if self.skip_bias_add else self.bias,
+            bias=self.bias,
             tp_group=group,
             gradient_accumulation_fusion=self.gradient_accumulation_fusion,
             **scoring[1],
@@ -89,6 +89,8 @@ def install_chunked_projection(model, *, bridge=False):
         )
     if layer.is_expert:
         raise ValueError("Chunked LM head requires a vocabulary-parallel output layer")
+    if layer.skip_bias_add and layer.bias is not None:
+        raise ValueError("Chunked LM head does not support returning a separate bias")
     config = layer.config
     for name in (
         "mtp_num_layers",

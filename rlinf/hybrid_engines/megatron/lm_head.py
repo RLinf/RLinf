@@ -140,7 +140,7 @@ class _ChunkedLogProbs(torch.autograd.Function):
                     for tile in weight.chunk(_WEIGHT_GRAD_TILES)
                 ]
         grad_bias = (
-            torch.zeros_like(bias)
+            torch.zeros_like(bias, dtype=accumulation_dtype)
             if bias is not None and ctx.needs_input_grad[2]
             else None
         )
@@ -169,7 +169,7 @@ class _ChunkedLogProbs(torch.autograd.Function):
             elif weight_tiles:
                 _accumulate_weight_tiles(weight_tiles, hidden[start:end], dlogits)
             if grad_bias is not None:
-                grad_bias.add_(dlogits.sum(dim=0))
+                grad_bias.add_(dlogits.sum(dim=0, dtype=accumulation_dtype))
             del probabilities, dlogits
         # Megatron DDP must run its ready hook without adding the gradient twice.
         if ctx.main_grad is not None:
@@ -183,6 +183,8 @@ class _ChunkedLogProbs(torch.autograd.Function):
             for i in range(len(weight_tiles)):
                 weight_tiles[i] = weight_tiles[i].to(weight.dtype)
             grad_weight = torch.cat(weight_tiles)
+        if grad_bias is not None:
+            grad_bias = grad_bias.to(bias.dtype)
         return grad_hidden, grad_weight, grad_bias, None, None, None, None, None, None
 
 

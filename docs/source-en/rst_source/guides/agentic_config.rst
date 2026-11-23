@@ -387,7 +387,7 @@ actor
       grad_scaler:
         enabled: False
 
-**Actor parameters**
+**Top-level**
 
 .. list-table::
    :header-rows: 1
@@ -414,9 +414,7 @@ actor
    * - ``actor.seed``
      - Global seed for reproducibility.
    * - ``actor.response_only_logits``
-     - Project only positions that predict response tokens (dynamic Megatron batches, CP=1).
-   * - ``actor.model.lm_head_chunk_size``
-     - Tokens per output projection chunk for a dynamic Megatron Actor (CP=1). Zero disables chunking. Combine with response-only projection to skip prompt positions. Chunking requires a standard column-parallel output layer and supports entropy for logging.
+     - Compute logits only at positions that predict response tokens. Applies to Actor and reference logprobs with Megatron dynamic batching and context parallel size 1.
 
 **Model sub-section**
 
@@ -426,6 +424,8 @@ actor
 
    * - Parameter
      - Description
+   * - ``actor.model.lm_head_chunk_size``
+     - Number of tokens per LM head chunk. Set to 0 to disable. Requires Megatron dynamic batching (CP=1) and a standard column-parallel output layer. Chunked entropy is for logging only.
    * - ``actor.model.precision``
      - Numerical precision for training (e.g., ``fp16``).
    * - ``actor.model.add_bias_linear``

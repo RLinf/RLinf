@@ -378,7 +378,7 @@ actor
       grad_scaler:
         enabled: False
 
-**Actor 参数**
+**顶层**
 
 .. list-table::
    :header-rows: 1
@@ -405,9 +405,7 @@ actor
    * - ``actor.seed``
      - 用于可复现性的全局随机种子。
    * - ``actor.response_only_logits``
-     - 只在预测回复 token 的位置计算词表分数（Megatron 动态批次，CP=1）。
-   * - ``actor.model.lm_head_chunk_size``
-     - Megatron 动态批次 Actor 每次投影的 token 数，设为 0 时关闭。与回复位置开关一起用，可以跳过提示词。要求 CP=1，输出层使用标准列并行线性层，熵仅用于记录。
+     - 只在预测回复 token 的位置计算 logits。使用 Megatron 动态批且上下文并行度为 1 时，Actor 和参考模型都按这个设置计算 logprob。
 
 **模型子节**
 
@@ -417,6 +415,8 @@ actor
 
    * - 参数
      - 说明
+   * - ``actor.model.lm_head_chunk_size``
+     - LM head 每块处理的 token 数，设为 0 时关闭分块。要求使用 Megatron 动态批（CP=1）和标准列并行输出层。分块时计算的熵仅用于日志。
    * - ``actor.model.precision``
      - 训练的数值精度（例如 ``fp16``）。
    * - ``actor.model.add_bias_linear``
