@@ -2702,15 +2702,20 @@ def test_collective_group_prepares_compressed_cpu_tensors():
 @pytest.mark.parametrize("compressed", [False, True])
 def test_dataclass_cpu_payload_is_coalesced_and_restored(compressed):
     """Nested mixed-dtype tensors use one CPU payload and preserve shared leaves."""
+
     @dataclass
     class Payload:
         values: dict
 
     shared = torch.arange(12, dtype=torch.float32).reshape(3, 4)
     payload = Payload(
-        {"frames": [torch.zeros(32, 32, 3, dtype=torch.uint8) for _ in range(20)],
-         "state": shared, "alias": shared, "done": torch.tensor(True),
-         "empty": torch.empty(0, dtype=torch.int64)}
+        {
+            "frames": [torch.zeros(32, 32, 3, dtype=torch.uint8) for _ in range(20)],
+            "state": shared,
+            "alias": shared,
+            "done": torch.tensor(True),
+            "empty": torch.empty(0, dtype=torch.int64),
+        }
     )
     group = object.__new__(CollectiveGroup)
     group._peer_rank = 0
@@ -2741,9 +2746,10 @@ def test_dataclass_cpu_payload_is_coalesced_and_restored(compressed):
     assert restored.values["alias"] is restored.values["state"]
     assert restored.values["done"].item() is True
     assert restored.values["empty"].shape == (0,)
-    assert all(torch.equal(x, y) for x, y in zip(
-        restored.values["frames"], payload.values["frames"]
-    ))
+    assert all(
+        torch.equal(x, y)
+        for x, y in zip(restored.values["frames"], payload.values["frames"])
+    )
 
 
 def test_collective_group_restores_a_compressed_cpu_tensor():

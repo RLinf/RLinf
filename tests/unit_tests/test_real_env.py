@@ -1614,7 +1614,11 @@ def test_keyboard_reopens_its_stable_path_after_a_connection_reset(monkeypatch):
     listener = object.__new__(keyboard.KeyboardListener)
     listener._device_path = "/dev/input/by-id/test-keyboard"
     listener._ecodes = SimpleNamespace(
-        EV_KEY=1, KEY_A=30, KEY_B=48, KEY_C=46, KEY_Q=16,
+        EV_KEY=1,
+        KEY_A=30,
+        KEY_B=48,
+        KEY_C=46,
+        KEY_Q=16,
         bytype={1: {30: "KEY_A"}},
     )
     listener.state_lock = threading.Lock()

@@ -96,6 +96,7 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
             self._countdown("Keep hands clear; reset starts in", seconds)
 
     def _countdown_before_manual(self) -> None:
+        """Wait for the configured preparation interval before manual control."""
         seconds = self._teleop_attr("manual_start_hold_seconds")
         if seconds is None:
             return
@@ -208,7 +209,6 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
         success = "c" in pressed and self._recording and not aborted
         if success:
             # Stop accepting leader actions before the terminal transition.
-            # The terminal frame is still marked as recordable below.
             self.before_recording_success()
 
         if self._recording and not started and not aborted and not success:
@@ -347,7 +347,7 @@ class SO101HGDAggerWrapper(SO101StartEndWrapper):
         self._set_control_mode("policy")
 
     def presses(self) -> Iterator[str]:
-        """Queue Space for the next action chunk and pass episode keys through."""
+        """Queue Space for the next action step and pass episode keys through."""
         self._poll_control_keys()
         pending, self._deferred_keys = self._deferred_keys, []
         yield from pending
