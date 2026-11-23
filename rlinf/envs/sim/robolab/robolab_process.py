@@ -33,6 +33,13 @@ class RoboLabProcess:
     """Own one RoboLab Isaac application in a synchronous Ray actor."""
 
     def __init__(self, robolab_dir: str, settings: dict):
+        # Isaac's async engine patches asyncio.BaseEventLoop. A Ray worker that
+        # has uvloop installed hands Isaac that loop, which has neither
+        # _check_closed nor _ready, and the Kit extension then fails to start.
+        import asyncio
+
+        asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+        asyncio.set_event_loop(asyncio.new_event_loop())
         # RoboLab resolves assets relative to its source checkout. Change the
         # actor's private working directory before importing RoboLab or Isaac.
         os.chdir(robolab_dir)
@@ -209,14 +216,19 @@ class RoboLabProcess:
             self._reset_selected(env_ids)
         return self._pack_obs(self.last_obs)
 
-    def chunk_step(self, actions: np.ndarray) -> dict:
-        """Execute one action chunk and return RLinf-compatible arrays."""
+    def chunk_step(self, actions: np.ndarray, collect_frames: bool = False) -> dict:
+        """Execute one action chunk and return RLinf-compatible arrays.
+
+        ``collect_frames`` keeps the main camera after every sim step so the
+        video wrapper can show the motion, not only the chunk's last image.
+        """
         horizon = actions.shape[1]
         rewards = np.zeros((self.num_envs, horizon), dtype=np.float32)
         terminations = np.zeros((self.num_envs, horizon), dtype=bool)
         truncations = np.zeros((self.num_envs, horizon), dtype=bool)
         executed_steps = np.zeros(self.num_envs, dtype=np.int32)
         newly_finished = np.zeros(self.num_envs, dtype=bool)
+        frames: list[np.ndarray] = []
         for index in range(horizon):
             if self.finished.all():
                 break
@@ -226,6 +238,8 @@ class RoboLabProcess:
             action = torch.as_tensor(actions[:, index], device=self.env.device)
             action[~torch.as_tensor(active, device=self.env.device)] = 0
             self.last_obs, _, _, _, _ = self.env.step(action)
+            if collect_frames:
+                frames.append(self._main_frame(self.last_obs))
             self.steps[active] += 1
             executed_steps[active] += 1
             for env_id, result in enumerate(self.env.get_env_results()):
@@ -287,7 +301,15 @@ class RoboLabProcess:
             "terminations": terminations,
             "truncations": truncations,
             "episode": episode,
+            "frames": np.stack(frames) if frames else None,
         }
+
+    def _main_frame(self, raw) -> np.ndarray:
+        """Resize the third-person camera to the video frame size."""
+        images = raw["image_obs"]["over_shoulder_left_camera"].detach().cpu().numpy()
+        return np.stack(
+            [self._image_tools.resize_with_pad(image, 224, 224) for image in images]
+        )
 
     def render_camera(self, camera_name: str, env_id: int) -> np.ndarray:
         """Return one native camera frame without stepping."""

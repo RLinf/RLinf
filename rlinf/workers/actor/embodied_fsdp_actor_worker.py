@@ -1046,12 +1046,21 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         ]:
             prev_logprobs = output_dict["prev_logprobs"]
 
+        logprobs = output_dict["logprobs"]
+        single_action_dim = self.cfg.actor.model.get("action_dim", 7)
+        # OpenPI slices logprobs to the env's action dim, so a shared network
+        # trained on several robots carries a different last dimension per batch.
+        if (
+            SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI
+            and logprobs.ndim == 3
+        ):
+            single_action_dim = int(logprobs.shape[-1])
         loss_kwargs = {
             "loss_type": self.cfg.algorithm.loss_type,
             "logprob_type": self.cfg.algorithm.logprob_type,
             "reward_type": self.cfg.algorithm.reward_type,
-            "single_action_dim": self.cfg.actor.model.get("action_dim", 7),
-            "logprobs": output_dict["logprobs"],
+            "single_action_dim": single_action_dim,
+            "logprobs": logprobs,
             "values": output_dict.get("values", None),
             "old_logprobs": prev_logprobs,
             "advantages": advantages,

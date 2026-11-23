@@ -470,7 +470,13 @@ def safe_normalize(array, loss_mask):
     valid_array = array[loss_mask]
     if len(valid_array) > 0:
         mean = valid_array.mean()
-        std = valid_array.std()
+        # Sample std is NaN for a single element, which happens when one env
+        # contributes only one chunk. That sample is already at the mean.
+        std = (
+            valid_array.std()
+            if valid_array.numel() > 1
+            else torch.zeros((), device=valid_array.device, dtype=valid_array.dtype)
+        )
         array = (array - mean) / (std + 1e-5)
 
     return array

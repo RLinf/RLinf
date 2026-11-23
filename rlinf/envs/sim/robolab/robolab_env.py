@@ -94,10 +94,13 @@ def _actor_environment(settings: dict) -> dict[str, str]:
                 raise ValueError(
                     f"Device {device} is outside CUDA_VISIBLE_DEVICES={visible}"
                 )
-            # Vulkan device indices are not remapped by CUDA_VISIBLE_DEVICES.
+            # Vulkan indices follow the physical GPU list. CUDA, including
+            # Isaac's Warp runtime, follows CUDA_VISIBLE_DEVICES. A child Ray
+            # actor keeps the parent's mask when the variable is omitted, so
+            # the simulator device stays the visible ordinal and only the
+            # renderer is given the physical index.
             physical = int(devices[ordinal])
-            env_vars.pop("CUDA_VISIBLE_DEVICES")
-    settings["device"] = f"cuda:{physical}"
+    settings["device"] = f"cuda:{ordinal}"
     settings["kit_args"] = (
         settings.get("kit_args", "") + f" --/renderer/activeGpu={physical}"
     )
@@ -151,7 +154,7 @@ class RoboLabEnv:
             runtime_env={"env_vars": env_vars},
         ).remote(str(robolab_dir), settings)
         try:
-            metadata = ray.get(self._process.ready.remote(), timeout=300)
+            metadata = ray.get(self._process.ready.remote(), timeout=1800)
             self.task_descriptions = metadata["task_descriptions"]
             self.max_episode_length = metadata["max_episode_length"]
             self.action_bounds = metadata["action_bounds"]
@@ -195,7 +198,11 @@ class RoboLabEnv:
             raise ValueError(
                 f"RoboLab expects actions [num_envs, horizon, 8], found {actions.shape}"
             )
-        result = ray.get(self._process.chunk_step.remote(actions))
+        result = ray.get(
+            self._process.chunk_step.remote(
+                actions, bool(self.cfg.video_cfg.save_video)
+            )
+        )
         observation = self._observation(result["observation"])
         episode = {
             key: torch.from_numpy(value) for key, value in result["episode"].items()
@@ -216,8 +223,17 @@ class RoboLabEnv:
                 _final_info=final_mask,
                 _elapsed_steps=final_mask,
             )
+        frames = result.get("frames")
+        if frames is None:
+            observations = [observation]
+        else:
+            observations = [
+                {"main_images": torch.from_numpy(np.array(frame, copy=True))}
+                for frame in frames
+            ]
+            observations[-1] = observation
         return (
-            [observation],
+            observations,
             torch.from_numpy(result["rewards"]),
             torch.from_numpy(result["terminations"]),
             torch.from_numpy(result["truncations"]),

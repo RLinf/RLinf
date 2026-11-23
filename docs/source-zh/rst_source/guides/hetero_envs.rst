@@ -51,6 +51,19 @@ env worker 按列出顺序根据 ``total_num_envs`` 的比例分配：
 
 每份配置需占满整数个 env worker，其 GRPO group 数需能被 actor worker 数整除。可通过 ``cluster.component_placement.env`` 将 worker 放到指定 GPU 或真机节点（见 :doc:`hetero` ）。调整 ``envs`` 顺序或环境数会改变 worker 分配，修改后请重新核对 placement。
 
+同一节点上的 worker 可以属于不同的仿真器，也可以各用各的 Python。在每份环境配置上写 ``num_workers``，三个环境各要 2 个 worker 时，placement 写成 6 个 rank（例如 ``env: 1-6``），并且每份配置：
+
+.. code-block:: yaml
+
+   libero:
+     total_num_envs: 2
+     num_workers: 2
+     python_interpreter_path: /opt/venv/libero/bin/python
+
+``num_workers`` 要么每份环境都写，要么都不写。都写时，它们的和必须等于 ``env`` placement 的 worker 数，``total_num_envs`` 必须能被 ``num_workers`` 整除，而且每个 worker 承载的环境个数要相同。``python_interpreter_path`` 是这些 worker 启动时的解释器，写进该 Ray actor 的 ``py_executable``；不写则用节点的 Python。一个进程只有一个解释器，所以同一 rank 的 train 和 eval 要写成同一个路径。每个解释器都要能 import ``rlinf``、Ray 和它自己的仿真器。
+
+在分给自己的 worker 上，一份环境配置的行为与它单独运行时相同：随机种子和重置状态只在它自己的 worker 之间划分， ``override_cfgs`` 列表也是每个 worker 对应一项。
+
 对齐观测与动作统计量
 --------------------
 

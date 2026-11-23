@@ -760,6 +760,7 @@ class Cluster:
         disable_distributed_log: bool,
         cls_args: tuple,
         cls_kwargs: dict,
+        python_interpreter_path: str | None = None,
     ) -> ActorHandle:
         """Allocate a ray remote class instance on a specific node and local rank.
 
@@ -774,6 +775,7 @@ class Cluster:
             disable_distributed_log (bool): Whether to disable distributed log for the worker.
             cls_args (tuple): Positional arguments to pass to the class constructor.
             cls_kwargs (dict): Keyword arguments to pass to the class constructor.
+            python_interpreter_path (str | None): Interpreter for this worker. ``None`` uses the node interpreter.
 
         Returns:
             ray.ObjectRef: A reference to the allocated remote class instance.
@@ -804,11 +806,19 @@ class Cluster:
             path_env_merge_mode,
         )
 
-        # Update Python interpreter path
+        # A worker may name its own interpreter. Otherwise use the node's.
+        interpreter_override = python_interpreter_path
         python_interpreter_path = node.python_interpreter_path
         cfg_python_path = node_group.get_node_python_interpreter_path(node_rank)
         if cfg_python_path is not None:
             python_interpreter_path = cfg_python_path
+        if interpreter_override is not None:
+            if self._num_nodes == 1 and not os.path.isfile(interpreter_override):
+                raise FileNotFoundError(
+                    f"python_interpreter_path {interpreter_override} for worker "
+                    f"{worker_name} does not exist."
+                )
+            python_interpreter_path = interpreter_override
 
         _profiling_cfg = (
             self._cluster_cfg.profiling if self._cluster_cfg is not None else None

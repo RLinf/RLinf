@@ -175,6 +175,9 @@ EMBODIED_MODEL = set(
 # The models whose predict_action_batch reads each of EnvSpec.POLICY_FIELDS.
 POLICY_FIELD_MODELS: dict[str, frozenset] = {
     "unnorm_key": frozenset({SupportedModel.OPENVLA_OFT}),
+    # OpenPI selects that env's input/output transforms. The network weights
+    # stay the one model named by actor.model.model_path.
+    "openpi_io": frozenset({SupportedModel.OPENPI}),
 }
 
 
@@ -1216,6 +1219,51 @@ def resolve_env_mode_cfg(mode_cfg: DictConfig, path: str, env_world_size: int) -
         )
 
 
+def validate_openpi_env_io(cfg: DictConfig, model_cfg: DictConfig) -> None:
+    """Require each env's ``openpi_io`` to name an entry of ``model.openpi.envs``.
+
+    Those entries are the per-env input and output transforms of one shared
+    OpenPI network. A run that does not set ``openpi.envs`` keeps the single
+    transform pipeline of ``openpi.config_name``.
+    """
+    if SupportedModel(model_cfg.model_type) != SupportedModel.OPENPI:
+        return
+    specs = OmegaConf.select(model_cfg, "openpi.envs", default=None)
+    names = list(specs) if specs is not None else []
+    for mode in ("train", "eval"):
+        for path, env_cfg in EnvLayout.env_cfgs(
+            OmegaConf.select(cfg, f"env.{mode}", default=None), f"env.{mode}"
+        ).items():
+            io_name = env_cfg.get("openpi_io")
+            if specs is None:
+                assert io_name is None, (
+                    f"{path}.openpi_io={io_name!r} needs actor.model.openpi.envs "
+                    "to define that env's transforms."
+                )
+                continue
+            assert io_name in names, (
+                f"{path}.openpi_io must name one of actor.model.openpi.envs "
+                f"{names}, got {io_name!r}."
+            )
+            spec = specs[io_name]
+            assert spec.get("config_name"), (
+                f"actor.model.openpi.envs.{io_name}.config_name is required."
+            )
+            action_env_dim = spec.get("action_env_dim")
+            assert isinstance(action_env_dim, int) and action_env_dim > 0, (
+                f"actor.model.openpi.envs.{io_name}.action_env_dim must be a "
+                f"positive int, got {action_env_dim!r}."
+            )
+            model_action_dim = int(
+                OmegaConf.select(model_cfg, "openpi.model_action_dim", default=32)
+            )
+            assert action_env_dim <= model_action_dim, (
+                f"actor.model.openpi.envs.{io_name}.action_env_dim "
+                f"({action_env_dim}) exceeds openpi.model_action_dim "
+                f"({model_action_dim})."
+            )
+
+
 def validate_env_policy_fields(cfg: DictConfig, model_cfg: DictConfig) -> None:
     """Check that the policy reads every ``EnvSpec.POLICY_FIELDS`` an env config sets."""
     model_type = SupportedModel(model_cfg.model_type)
@@ -1426,6 +1474,7 @@ def validate_embodied_cfg(cfg):
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
     validate_env_policy_fields(cfg, model_cfg)
+    validate_openpi_env_io(cfg, model_cfg)
     for index, adapter in enumerate(model_cfg.get("merged_loras", None) or []):
         assert adapter.get("path"), (
             f"Expected merged_loras[{index}] of the model config to set path, "

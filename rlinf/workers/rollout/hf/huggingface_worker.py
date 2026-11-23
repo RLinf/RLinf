@@ -1105,18 +1105,57 @@ class MultiStepRolloutWorker(Worker):
             if peer_ranks is not None:
                 peer_ranks = [peer_ranks[index] for index in replied]
         if replied:
-            actions_to_send = (
-                direct_actions
-                if single_reply_group
-                else torch.cat([request_actions[index] for index in replied])
-            )
-            self._send_actions(
-                output_channel,
-                actions_to_send,
-                stage_id,
-                split_sizes,
-                peer_ranks,
-            )
+            if single_reply_group:
+                self._send_actions(
+                    output_channel,
+                    direct_actions,
+                    stage_id,
+                    split_sizes,
+                    peer_ranks,
+                )
+            else:
+                shapes = [
+                    tuple(int(dim) for dim in request_actions[index].shape[1:])
+                    for index in replied
+                ]
+                # One concatenation when every reply has the same action width.
+                # Different widths each go back to their own env ranks.
+                per_request_peers = (
+                    peer_ranks is not None and len(peer_ranks) == len(replied)
+                )
+                if len(set(shapes)) == 1 or not per_request_peers:
+                    if len(set(shapes)) != 1:
+                        raise RuntimeError(
+                            "Policy replies have different action widths "
+                            f"{sorted(set(shapes))}, so each reply needs its own "
+                            "destination rank."
+                        )
+                    self._send_actions(
+                        output_channel,
+                        torch.cat(
+                            [request_actions[index] for index in replied]
+                        ).contiguous(),
+                        stage_id,
+                        split_sizes,
+                        peer_ranks,
+                    )
+                else:
+                    buckets: dict[tuple[int, ...], list[int]] = {}
+                    for position, shape in enumerate(shapes):
+                        buckets.setdefault(shape, []).append(position)
+                    for positions in buckets.values():
+                        indices = [replied[position] for position in positions]
+                        self._send_actions(
+                            output_channel,
+                            torch.cat(
+                                [request_actions[index] for index in indices]
+                            ).contiguous(),
+                            stage_id,
+                            None
+                            if split_sizes is None
+                            else [split_sizes[position] for position in positions],
+                            [peer_ranks[position] for position in positions],
+                        )
         for (
             policy_input,
             actions,

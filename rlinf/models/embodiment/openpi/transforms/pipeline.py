@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Callable, Sequence
 
 from rlinf.utils.logging import get_logger
@@ -85,6 +86,9 @@ def build_openpi_transforms(
     model_path: str,
     config_name: str,
     data_kwargs: dict[str, Any] | None = None,
+    *,
+    model_config: Any | None = None,
+    use_model_path_assets: bool = True,
 ) -> tuple[Sequence, Sequence]:
     """Build ``(input_transforms, output_transforms)`` for ``config_name``.
 
@@ -97,14 +101,24 @@ def build_openpi_transforms(
     to pin the stats file. When it is empty, OpenPI loads
     ``{assets_dir}/{asset_id}/norm_stats.json`` from the TrainConfig (after
     ``model_path`` is applied) and missing files skip normalization.
+
+    ``model_config`` replaces the TrainConfig's model config so several env
+    data pipelines tokenize for one shared network. ``use_model_path_assets``
+    is false for those extra pipelines, so they do not inherit the shared
+    checkpoint's norm stats.
     """
     import openpi.transforms as transforms
 
     from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
-    train_config = get_openpi_config(
-        config_name, model_path=str(model_path), data_kwargs=data_kwargs
+    resolved_model_path = (
+        str(model_path) if use_model_path_assets and model_path else None
     )
+    train_config = get_openpi_config(
+        config_name, model_path=resolved_model_path, data_kwargs=data_kwargs
+    )
+    if model_config is not None:
+        train_config = dataclasses.replace(train_config, model=model_config)
     upstream_model_config = train_config.model
     data_config = train_config.data.create(
         train_config.assets_dirs, upstream_model_config

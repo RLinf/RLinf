@@ -31,7 +31,7 @@ from rlinf.data.schema.embodied_types import (
 )
 from rlinf.envs import SupportedEnvType, get_env_cls
 from rlinf.envs.action_utils import prepare_actions
-from rlinf.envs.layout import EnvAssignment, EnvLayout
+from rlinf.envs.layout import EnvAssignment, EnvLayout, resolve_env_worker_interpreter
 from rlinf.envs.policy_obs import PolicyObsSpec
 from rlinf.envs.utils import get_env_attr
 from rlinf.envs.wrappers import InsertDelay, RecordVideo
@@ -46,6 +46,14 @@ from rlinf.utils.placement import HybridComponentPlacement
 
 
 class EnvWorker(Worker):
+    @classmethod
+    def python_interpreter_for_rank(
+        cls, rank: int, world_size: int, cfg: DictConfig, *args, **kwargs
+    ) -> str | None:
+        """Start this rank in the interpreter of the simulator it hosts."""
+        del args, kwargs
+        return resolve_env_worker_interpreter(cfg, rank, world_size)
+
     # Class-level default so the observation send path is safe even when the
     # instance is built without running ``__init__`` (e.g. ``object.__new__`` in
     # unit tests). ``None`` means "use the scheduler's default split"; when

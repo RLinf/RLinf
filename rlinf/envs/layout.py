@@ -61,7 +61,7 @@ class EnvSpec:
     # Policy fields an env config may set for the policy acting in it. Rollout
     # passes them to the policy with that env's observations, so envs that set
     # different values never share a forward pass.
-    POLICY_FIELDS: ClassVar[tuple[str, ...]] = ("unnorm_key",)
+    POLICY_FIELDS: ClassVar[tuple[str, ...]] = ("unnorm_key", "openpi_io")
 
     @property
     def policy_kwargs(self) -> dict[str, Any]:
@@ -144,9 +144,13 @@ class EnvAssignment:
 class EnvLayout:
     """Splits the env worker ranks of one mode among the envs it lists.
 
-    Each listed env gets a contiguous block of ranks, in listing order, sized by
-    its share of the mode's envs. Every rank hosts the same number of envs
-    because the env-rollout channel splits batches evenly across ranks.
+    Each listed env gets a contiguous block of ranks, in listing order. Without
+    ``num_workers`` the block is sized by that env's share of ``total_num_envs``.
+    With ``num_workers`` on every env, the block is that many workers and the
+    placement list is consumed in the same order. Every rank still hosts the
+    same number of envs, because the env-rollout channel splits batches evenly
+    across ranks. ``python_interpreter_path`` on an env config is the interpreter
+    those workers start with; unset means the node interpreter.
     """
 
     ENVS_KEY: ClassVar[str] = "envs"
@@ -187,30 +191,8 @@ class EnvLayout:
             return
 
         envs = self._check_envs(mode_cfg)
+        self._specs = tuple(self._assign_rank_blocks(envs))
         total_num_envs = sum(env_cfg.total_num_envs for env_cfg in envs.values())
-        if total_num_envs % world_size != 0:
-            raise ValueError(
-                f"{path}.envs hold {total_num_envs} envs in total, which must be "
-                f"divisible by the {world_size} env workers."
-            )
-        envs_per_rank = total_num_envs // world_size
-        specs = []
-        first_rank = 0
-        for name, env_cfg in envs.items():
-            if env_cfg.total_num_envs % envs_per_rank != 0:
-                raise ValueError(
-                    f"{path}.envs.{name}.total_num_envs must be a multiple of "
-                    f"{envs_per_rank}, the number of envs each of the {world_size} "
-                    f"env workers hosts, got {env_cfg.total_num_envs}. Each worker "
-                    "hosts one env, so give every env a whole number of workers "
-                    "(several workers can share a GPU, e.g. 'env: 0:0-1')."
-                )
-            num_ranks = env_cfg.total_num_envs // envs_per_rank
-            specs.append(
-                EnvSpec(name, env_cfg, range(first_rank, first_rank + num_ranks))
-            )
-            first_rank += num_ranks
-        self._specs = tuple(specs)
 
         self._mode_fields["total_num_envs"] = total_num_envs
         for field in self.LOOP_FIELDS:
@@ -318,6 +300,17 @@ class EnvLayout:
             return self._path
         return f"{self._path}.{self.ENVS_KEY}.{spec.name}"
 
+    def python_interpreter_path(self, rank: int) -> str | None:
+        """Return the interpreter for the env that ``rank`` hosts.
+
+        ``None`` means the worker starts with the node interpreter.
+        """
+        raw = self.spec_of_rank(rank).cfg.get("python_interpreter_path")
+        if raw is None:
+            return None
+        text = str(raw).strip()
+        return text or None
+
     def spec_of_rank(self, rank: int) -> EnvSpec:
         """Return the spec of the env that env worker ``rank`` hosts."""
         for spec in self._specs:
@@ -337,6 +330,78 @@ class EnvLayout:
             rank=rank - spec.ranks.start,
             world_size=len(spec.ranks),
         )
+
+    def _assign_rank_blocks(self, envs: dict[str, DictConfig]) -> list[EnvSpec]:
+        """Return one spec per env, covering ``world_size`` ranks in order."""
+        counts = [env_cfg.get("num_workers") for env_cfg in envs.values()]
+        if any(count is not None for count in counts):
+            widths = self._explicit_worker_counts(envs)
+        else:
+            widths = self._shared_worker_counts(envs)
+        specs = []
+        first_rank = 0
+        for (name, env_cfg), width in zip(envs.items(), widths, strict=True):
+            specs.append(EnvSpec(name, env_cfg, range(first_rank, first_rank + width)))
+            first_rank += width
+        return specs
+
+    def _explicit_worker_counts(self, envs: dict[str, DictConfig]) -> list[int]:
+        """Read ``num_workers`` from every env and check the blocks tile the ranks."""
+        path = self._path
+        counts: list[int] = []
+        hosted: dict[str, int] = {}
+        for name, env_cfg in envs.items():
+            count = env_cfg.get("num_workers")
+            if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+                raise ValueError(
+                    f"{path}.envs.{name}.num_workers must be a positive int on "
+                    f"every env once one env sets it, got {count!r}."
+                )
+            if env_cfg.total_num_envs % count != 0:
+                raise ValueError(
+                    f"{path}.envs.{name}.total_num_envs ({env_cfg.total_num_envs}) "
+                    f"must be divisible by num_workers ({count})."
+                )
+            counts.append(count)
+            hosted[name] = env_cfg.total_num_envs // count
+        if sum(counts) != self._world_size:
+            requested = {name: env_cfg.num_workers for name, env_cfg in envs.items()}
+            raise ValueError(
+                f"{path}.envs request {sum(counts)} workers via num_workers "
+                f"({requested}), but env placement has {self._world_size}. "
+                "The two must match."
+            )
+        if len(set(hosted.values())) != 1:
+            raise ValueError(
+                f"Each env worker hosts the same number of envs, but {path}.envs "
+                f"give {hosted}. Scale total_num_envs with num_workers so the "
+                "quotient is the same for every env."
+            )
+        return counts
+
+    def _shared_worker_counts(self, envs: dict[str, DictConfig]) -> list[int]:
+        """Size each env's block by its share of ``total_num_envs``."""
+        path = self._path
+        world_size = self._world_size
+        total_num_envs = sum(env_cfg.total_num_envs for env_cfg in envs.values())
+        if total_num_envs % world_size != 0:
+            raise ValueError(
+                f"{path}.envs hold {total_num_envs} envs in total, which must be "
+                f"divisible by the {world_size} env workers."
+            )
+        envs_per_rank = total_num_envs // world_size
+        counts = []
+        for name, env_cfg in envs.items():
+            if env_cfg.total_num_envs % envs_per_rank != 0:
+                raise ValueError(
+                    f"{path}.envs.{name}.total_num_envs must be a multiple of "
+                    f"{envs_per_rank}, the number of envs each of the {world_size} "
+                    f"env workers hosts, got {env_cfg.total_num_envs}. Each worker "
+                    "hosts one env, so give every env a whole number of workers "
+                    "(several workers can share a GPU, e.g. 'env: 0:0-1')."
+                )
+            counts.append(env_cfg.total_num_envs // envs_per_rank)
+        return counts
 
     def _check_envs(self, mode_cfg: DictConfig) -> dict[str, DictConfig]:
         path = self._path
@@ -365,3 +430,62 @@ class EnvLayout:
                     f"got {total_num_envs!r}."
                 )
         return dict(envs.items())
+
+
+def _interpreter_coverage(layout: EnvLayout, path: str) -> None:
+    """Require every env to set ``python_interpreter_path`` once one of them does."""
+    if layout.specs[0].name is None:
+        return
+    missing = [
+        spec.name
+        for spec in layout.specs
+        if layout.python_interpreter_path(spec.ranks.start) is None
+    ]
+    present = [
+        spec.name
+        for spec in layout.specs
+        if layout.python_interpreter_path(spec.ranks.start) is not None
+    ]
+    if present and missing:
+        raise ValueError(
+            f"{path} sets python_interpreter_path on {present} but not on "
+            f"{missing}. Set it on every env, or on none of them."
+        )
+
+
+def resolve_env_worker_interpreter(
+    cfg: DictConfig, rank: int, world_size: int
+) -> str | None:
+    """Return the interpreter that env worker ``rank`` starts with.
+
+    Train and eval share the process, so a rank that runs both must name the
+    same interpreter. ``None`` keeps the interpreter of the node.
+    """
+    runner = cfg.get("runner") or {}
+    only_eval = bool(runner.get("only_eval", False))
+    eval_on = only_eval or int(runner.get("val_check_interval", -1) or -1) > 0
+    chosen: list[str | None] = []
+    if not only_eval and (cfg.get("env") or {}).get("train") is not None:
+        layout = EnvLayout(cfg.env.train, world_size, "env.train")
+        _interpreter_coverage(layout, "env.train")
+        chosen.append(layout.python_interpreter_path(rank))
+    if eval_on and (cfg.get("env") or {}).get("eval") is not None:
+        layout = EnvLayout(cfg.env.eval, world_size, "env.eval")
+        _interpreter_coverage(layout, "env.eval")
+        chosen.append(layout.python_interpreter_path(rank))
+    if any(path is not None for path in chosen) and any(
+        path is None for path in chosen
+    ):
+        raise ValueError(
+            f"Env worker {rank} runs train and eval, and only one of them sets "
+            f"python_interpreter_path ({chosen}). Set the same path on both, "
+            "or on neither."
+        )
+    distinct = {path for path in chosen if path is not None}
+    if len(distinct) > 1:
+        raise ValueError(
+            f"Env worker {rank} would start with two interpreters {sorted(distinct)}. "
+            "Train and eval on the same rank share one process, so set the same "
+            "python_interpreter_path on both."
+        )
+    return next(iter(distinct), None)

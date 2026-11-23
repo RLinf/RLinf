@@ -51,6 +51,29 @@ Env workers are assigned in listing order in proportion to ``total_num_envs``:
 
 Each env configuration must fill whole env workers, and its GRPO groups must divide evenly across actor workers. Use ``cluster.component_placement.env`` to place workers on specific GPUs or robot nodes (see :doc:`hetero`). Reordering ``envs`` or changing env counts shifts worker assignments, so recheck placement after either change.
 
+Workers on one node can host different simulators and start in different
+Pythons. Set ``num_workers`` on every env config. For two workers per env, give
+``env`` six ranks (for example ``env: 1-6``) and write:
+
+.. code-block:: yaml
+
+   libero:
+     total_num_envs: 2
+     num_workers: 2
+     python_interpreter_path: /opt/venv/libero/bin/python
+
+Either every env sets ``num_workers`` or none do. When they do, the sum equals
+the ``env`` placement, ``total_num_envs`` is divisible by ``num_workers``, and
+every worker hosts the same number of envs. ``python_interpreter_path`` is that
+actor's ``py_executable``; omit it to use the node interpreter. One process has
+one interpreter, so the train and eval config on the same rank name the same
+path. Each interpreter must be able to import ``rlinf``, Ray, and its own
+simulator.
+
+On its workers, an env configuration behaves as if it ran alone: seeds and reset
+states are split among its own workers, and an ``override_cfgs`` list has one
+item per worker of that env configuration.
+
 Align Observations and Action Statistics
 ----------------------------------------
 

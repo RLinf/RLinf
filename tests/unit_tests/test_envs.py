@@ -28,7 +28,7 @@ from rlinf.config import (
     validate_eval_env_cfg,
 )
 from rlinf.data.schema.embodied_types import PolicyInput
-from rlinf.envs.layout import EnvLayout
+from rlinf.envs.layout import EnvLayout, resolve_env_worker_interpreter
 from rlinf.envs.policy_obs import PolicyObsSpec
 from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.workers.env.env_worker import EnvWorker
@@ -64,6 +64,90 @@ def test_homogeneous_mode_is_hosted_unchanged_by_every_worker():
     assert layout.mode_fields() == {}
     metrics = {"success_once": torch.ones(2)}
     assert assignment.scoped(metrics) == metrics
+
+
+def test_num_workers_assigns_a_block_and_its_interpreter():
+    mode_cfg = _hetero_mode(
+        libero=_env(
+            "libero",
+            4,
+            num_workers=2,
+            python_interpreter_path="/opt/venv/libero/bin/python",
+        ),
+        robodojo=_env(
+            "robodojo",
+            2,
+            num_workers=1,
+            python_interpreter_path="/opt/venv/robodojo/bin/python",
+        ),
+    )
+    layout = EnvLayout(mode_cfg, world_size=3, path="env.train")
+
+    hosted = [(a.name, a.rank, a.world_size) for a in map(layout.assign, range(3))]
+
+    assert hosted == [
+        ("libero", 0, 2),
+        ("libero", 1, 2),
+        ("robodojo", 0, 1),
+    ]
+    assert layout.python_interpreter_path(0) == "/opt/venv/libero/bin/python"
+    assert layout.python_interpreter_path(2) == "/opt/venv/robodojo/bin/python"
+    assert layout.python_interpreter_path(1) == layout.python_interpreter_path(0)
+
+
+def test_num_workers_must_cover_the_placement_and_share_the_env_count():
+    with pytest.raises(ValueError, match="request 3 workers"):
+        EnvLayout(
+            _hetero_mode(
+                libero=_env("libero", 2, num_workers=2),
+                robodojo=_env("robodojo", 2, num_workers=1),
+            ),
+            world_size=2,
+            path="env.train",
+        )
+    with pytest.raises(ValueError, match="same number of envs"):
+        EnvLayout(
+            _hetero_mode(
+                libero=_env("libero", 4, num_workers=2),
+                robodojo=_env("robodojo", 2, num_workers=2),
+            ),
+            world_size=4,
+            path="env.train",
+        )
+
+
+def test_one_rank_keeps_a_single_interpreter_across_train_and_eval():
+    env = {
+        "envs": {
+            "libero": _env(
+                "libero",
+                1,
+                num_workers=1,
+                python_interpreter_path="/opt/venv/libero/bin/python",
+            ),
+            "robodojo": _env(
+                "robodojo",
+                1,
+                num_workers=1,
+                python_interpreter_path="/opt/venv/robodojo/bin/python",
+            ),
+        }
+    }
+    cfg = OmegaConf.create(
+        {
+            "runner": {"only_eval": False, "val_check_interval": 1},
+            "env": {"train": env, "eval": env},
+        }
+    )
+
+    assert resolve_env_worker_interpreter(cfg, 1, 2) == "/opt/venv/robodojo/bin/python"
+    assert EnvWorker.python_interpreter_for_rank(0, 2, cfg) == (
+        "/opt/venv/libero/bin/python"
+    )
+
+    cfg.env.eval.envs.robodojo.python_interpreter_path = "/opt/venv/other/bin/python"
+    with pytest.raises(ValueError, match="two interpreters"):
+        resolve_env_worker_interpreter(cfg, 1, 2)
 
 
 def test_listed_envs_get_contiguous_worker_blocks_sized_by_their_share():

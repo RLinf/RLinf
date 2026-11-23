@@ -508,16 +508,51 @@ class RoboDojoEnv(gym.Env):
     def chunk_step(
         self, chunk_actions: torch.Tensor | np.ndarray
     ) -> tuple[list[dict], torch.Tensor, torch.Tensor, torch.Tensor, list[dict]]:
-        """Return one final observation and place aggregate results at chunk end."""
+        """Return observations and place aggregate results at chunk end.
+
+        Video runs step one action at a time so the recording has a frame per
+        sim step. The reward and done flags stay the chunk totals.
+        """
         if chunk_actions.ndim != 3 or chunk_actions.shape[1] == 0:
             raise ValueError("Chunk actions must have shape (N, positive horizon, A).")
-        obs, reward, terminated, truncated, infos = self.step(
-            chunk_actions, auto_reset=False
-        )
-        executed_action_count = infos.pop("executed_steps", None)
+        if self.cfg.video_cfg.save_video:
+            obs_list = []
+            reward = None
+            terminated = None
+            truncated = None
+            executed_action_count = None
+            infos = {}
+            for index in range(chunk_actions.shape[1]):
+                obs, reward_t, terminated_t, truncated_t, infos = self.step(
+                    chunk_actions[:, index : index + 1], auto_reset=False
+                )
+                obs_list.append(obs)
+                reward = reward_t if reward is None else reward + reward_t
+                terminated = (
+                    terminated_t if terminated is None else terminated | terminated_t
+                )
+                truncated = (
+                    truncated_t if truncated is None else truncated | truncated_t
+                )
+                executed_t = infos.pop("executed_steps", None)
+                if executed_t is not None:
+                    executed_t = torch.as_tensor(executed_t).reshape(self.num_envs)
+                    executed_action_count = (
+                        executed_t
+                        if executed_action_count is None
+                        else executed_action_count + executed_t
+                    )
+        else:
+            obs_list = None
+            obs, reward, terminated, truncated, infos = self.step(
+                chunk_actions, auto_reset=False
+            )
+            executed_action_count = infos.pop("executed_steps", None)
         dones = terminated | truncated
         if self.auto_reset and dones.any():
-            obs, infos = self._auto_reset(dones, obs, infos)
+            obs, infos = self._auto_reset(dones, obs if obs_list is None else obs_list[-1], infos)
+            if obs_list is not None:
+                obs_list[-1] = obs
         shape = (self.num_envs, chunk_actions.shape[1])
         rewards = torch.zeros(shape, dtype=torch.float32)
         terminations = torch.zeros(shape, dtype=torch.bool)
@@ -529,7 +564,9 @@ class RoboDojoEnv(gym.Env):
             infos["valid_action_mask"] = valid_action_mask_from_counts(
                 executed_action_count, chunk_actions.shape[1]
             )
-        return [obs], rewards, terminations, truncations, [infos]
+        if obs_list is None:
+            obs_list = [obs]
+        return obs_list, rewards, terminations, truncations, [infos]
 
     def update_reset_state_ids(self, env_idx: list[int] | None = None) -> None:
         """Select grouped seeds, preserving unselected slots and fixed reset IDs."""

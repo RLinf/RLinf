@@ -4346,6 +4346,41 @@ def test_rollout_runs_one_forward_pass_per_observation_format():
     assert actions.squeeze(-1).tolist() == [2.0, 3.0, 3.0, 2.0, 2.0, 2.0]
 
 
+def test_rollout_sends_different_action_widths_separately():
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.train_layout = EnvLayout(OmegaConf.create({}), 2, "env.train")
+    rollout.collect_transitions = False
+    rollout.enable_rlt = False
+    rollout._send_actions = Mock()
+    rollout._publish_env_parts = Mock()
+    rollout._build_policy_output = Mock(return_value=PolicyOutput(forward_inputs={}))
+
+    def predict(obs, **kwargs):
+        del kwargs
+        states = obs["states"]
+        return torch.zeros(states.shape[0], states.shape[-1]), {}
+
+    rollout._predict_rollout_actions = Mock(side_effect=predict)
+    requests = [
+        PolicyInput(
+            obs={"states": torch.zeros(1, width)},
+            sources=[TrajectorySource(TrajectoryKey(0, 0, rank, 0, 0), 1)],
+            env_parts=[None],
+            request_sizes=[1],
+        )
+        for rank, width in [(0, 7), (1, 14)]
+    ]
+
+    rollout._serve_policy_inputs(
+        requests, Mock(), Mock(), stage_id=0, peer_ranks=[0, 1]
+    )
+
+    sent = [call.args[1].shape[-1] for call in rollout._send_actions.call_args_list]
+    peers = [call.args[4] for call in rollout._send_actions.call_args_list]
+    assert sent == [7, 14]
+    assert peers == [[0], [1]]
+
+
 def _policy_field_layout(path: str) -> EnvLayout:
     """Env rank 0 hosts LIBERO with the model's action statistics, rank 1 ManiSkill with its own."""
     return EnvLayout(

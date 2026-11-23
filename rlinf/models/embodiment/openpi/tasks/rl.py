@@ -165,22 +165,37 @@ class Pi0RL(EnvIO, Pi0):
         rng: torch.Generator | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
+        io_name = kwargs.pop("openpi_io", None)
         del kwargs
+        io_spec = self._env_io(io_name)
+        repack_name = (
+            self.config_name if io_spec is None else str(io_spec["config_name"])
+        )
+        action_env_dim = None if io_spec is None else int(io_spec["action_env_dim"])
         repacked = repack_env_obs(
-            self.config_name,
+            repack_name,
             env_obs,
             select_state=self._select_configured_state,
         )
         observation = self._observation_dict_to_device(
-            self.input_transform(repacked, transpose=False)
+            self.input_transform(repacked, transpose=False, io_name=io_name)
         )
         if mode == "eval":
-            return self._predict_eval(observation, noise=noise, rng=rng)
-        actions, result = self._predict_train(
-            observation, noise=noise, rng=rng, compute_values=compute_values
-        )
-        # Match OpenPI: stash raw env obs so the actor can re-transform.
-        result["forward_inputs"].update(_clone_replay_obs(repacked))
+            actions, result = self._predict_eval(
+                observation, noise=noise, rng=rng, io_name=io_name
+            )
+        else:
+            actions, result = self._predict_train(
+                observation,
+                noise=noise,
+                rng=rng,
+                compute_values=compute_values,
+                io_name=io_name,
+                action_env_dim=action_env_dim,
+            )
+            # Match OpenPI: stash raw env obs so the actor can re-transform.
+            result["forward_inputs"].update(_clone_replay_obs(repacked))
+        self._stamp_openpi_io(result["forward_inputs"], io_name, actions.shape[0])
         return actions, result
 
     def _predict_train(
@@ -190,9 +205,12 @@ class Pi0RL(EnvIO, Pi0):
         noise: torch.Tensor | None,
         rng: torch.Generator | None,
         compute_values: bool,
+        io_name: str | None = None,
+        action_env_dim: int | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         rl_cfg = self.rl_cfg
         device = self.device
+        env_dim = self.action_env_dim if action_env_dim is None else action_env_dim
         observation = preprocess_observation(observation, train=False)
         B = observation.state.shape[0]
         num_steps = self.num_steps
@@ -287,9 +305,7 @@ class Pi0RL(EnvIO, Pi0):
         x_0 = x_t
         chains_tensor = torch.stack(chains, dim=1).contiguous()
         log_probs_stacked = torch.stack(log_probs, dim=1)
-        log_probs_stacked = log_probs_stacked[
-            :, :, : self.action_chunk, : self.action_env_dim
-        ]
+        log_probs_stacked = log_probs_stacked[:, :, : self.action_chunk, :env_dim]
         if rl_cfg.joint_logprob:
             log_probs_picked = log_probs_stacked.mean(dim=1)
         else:
@@ -305,7 +321,7 @@ class Pi0RL(EnvIO, Pi0):
         else:
             prev_values = torch.zeros((B, 1), device=device, dtype=torch.float32)
 
-        actions = self.decode_actions(x_0, observation.state)
+        actions = self.decode_actions(x_0, observation.state, io_name=io_name)
 
         forward_inputs: dict[str, torch.Tensor] = {
             "chains": chains_tensor,
@@ -377,7 +393,10 @@ class Pi0RL(EnvIO, Pi0):
         )
 
     def _observation_from_forward_inputs(
-        self, forward_inputs: dict[str, torch.Tensor]
+        self,
+        forward_inputs: dict[str, torch.Tensor],
+        *,
+        io_name: str | None = None,
     ) -> Observation:
         """Rebuild the rollout observation so actor logprobs match sampling.
 
@@ -388,7 +407,9 @@ class Pi0RL(EnvIO, Pi0):
         """
         has_raw_obs = any(key.startswith("observation/") for key in forward_inputs)
         if has_raw_obs:
-            processed = self.input_transform(forward_inputs, transpose=False)
+            processed = self.input_transform(
+                forward_inputs, transpose=False, io_name=io_name
+            )
             observation = self._observation_dict_to_device(processed)
         else:
             images: dict[str, torch.Tensor] = {}
@@ -435,7 +456,11 @@ class Pi0RL(EnvIO, Pi0):
         denoise_inds = forward_inputs["denoise_inds"]
         B = chains.shape[0]
         device = chains.device
-        observation = self._observation_from_forward_inputs(forward_inputs)
+        io_name, action_env_dim = self._resolve_stored_io(forward_inputs)
+        env_dim = self.action_env_dim if action_env_dim is None else action_env_dim
+        observation = self._observation_from_forward_inputs(
+            forward_inputs, io_name=io_name
+        )
 
         prefix_out, prefix_mask, kv_cache = self._build_prefix_cache_for_actor(
             observation
@@ -501,7 +526,7 @@ class Pi0RL(EnvIO, Pi0):
                 )
 
         log_probs = torch.stack(step_logprobs, dim=1)
-        log_probs = log_probs[:, :, : self.action_chunk, : self.action_env_dim].float()
+        log_probs = log_probs[:, :, : self.action_chunk, :env_dim].float()
         if rl_cfg.joint_logprob:
             log_probs = log_probs.mean(dim=1)
         else:
@@ -517,7 +542,7 @@ class Pi0RL(EnvIO, Pi0):
             values = torch.zeros(B, device=device, dtype=torch.float32)
 
         entropy = torch.stack(step_entropy, dim=1)
-        entropy = entropy[:, :, : self.action_chunk, : self.action_env_dim]
+        entropy = entropy[:, :, : self.action_chunk, :env_dim]
         executed_mask = forward_inputs.get("executed_mask")
         if executed_mask is not None:
             executed_mask = executed_mask.to(device=device, dtype=torch.bool)
