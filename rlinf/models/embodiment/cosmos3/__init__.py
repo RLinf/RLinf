@@ -33,7 +33,6 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
-from rlinf.models.embodiment.cosmos3.checkpoint import load_inference_checkpoint
 from rlinf.models.embodiment.cosmos3.cosmos3_config import (
     _apply_checkpoint_model_config,
     _configure_sft_objective,
@@ -148,6 +147,15 @@ def _load_base_weights(
         credential_path=None,
         keys_to_skip_loading=keys_to_skip or None,
     )
+
+
+def load_inference_checkpoint(model: Cosmos3Policy, checkpoint_path: str) -> None:
+    """Load RLinf weights from a memory-mapped CPU checkpoint."""
+    state_dict = torch.load(
+        checkpoint_path, map_location="cpu", weights_only=True, mmap=True
+    )
+    model.load_state_dict(state_dict, strict=True)
+    logger.info("Cosmos3: loaded inference checkpoint %s", checkpoint_path)
 
 
 def get_model(cfg: DictConfig, torch_dtype=None):

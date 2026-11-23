@@ -25,7 +25,7 @@ import torch
 from omegaconf import DictConfig
 
 from rlinf.models import get_model
-from rlinf.models.embodiment.cosmos3.checkpoint import load_inference_checkpoint
+from rlinf.models.embodiment.cosmos3 import load_inference_checkpoint
 from rlinf.scheduler import Worker
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.nested_dict_process import put_tensor_device
