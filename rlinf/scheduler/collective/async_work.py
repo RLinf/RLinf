@@ -49,6 +49,18 @@ async def _await_torch_future(future: Future) -> None:
     await waiter
 
 
+class PeerCommunicationError(RuntimeError):
+    """A collective direction failed earlier, so its later operations do not run.
+
+    One direction of a collective group (send or recv) has one failure state,
+    shared by every pool queue of that direction: the exception of the first
+    operation that failed there. Every later operation of that direction
+    raises this error, chained to that first exception, instead of running.
+    The data stream of a failed direction may have lost messages, so later
+    receives on it cannot be trusted either.
+    """
+
+
 class AsyncWork:
     """Base class for asynchronous work."""
 
@@ -150,7 +162,7 @@ class AsyncFuncWork(AsyncWork):
             # work on.
             try:
                 future.wait()
-            except BaseException as exc:
+            except Exception as exc:
                 self._exec_time = time.perf_counter() - start
                 self._done.set_exception(exc)
                 return
@@ -159,7 +171,7 @@ class AsyncFuncWork(AsyncWork):
                 self._result = self._func(self, *self._args, **self._kwargs)
             else:
                 self._result = self._func(*self._args, **self._kwargs)
-        except BaseException as exc:
+        except Exception as exc:
             self._exec_time = time.perf_counter() - start
             self._done.set_exception(exc)
             return
@@ -189,7 +201,7 @@ class AsyncFuncWork(AsyncWork):
         """
         try:
             last_work.wait()
-        except BaseException as exc:
+        except Exception as exc:
             self._done.set_exception(exc)
         else:
             self._done.set_result(True)
@@ -383,11 +395,14 @@ class AsyncChannelWork(AsyncWork):
         # Enqueue the operation
         with AsyncChannelWork.lock:
             last_fut = AsyncChannelWork.last_future_per_key.get(self._channel_key)
+            # Recorded before the call is issued: a call that has already
+            # finished runs _complete right here, and _complete removes the
+            # entry only if it finds its own future.
+            AsyncChannelWork.last_future_per_key[self._channel_key] = self._future
             if last_fut is None:
                 self._execute()
             else:
                 last_fut.then(lambda _: self._execute())
-            AsyncChannelWork.last_future_per_key[self._channel_key] = self._future
 
     def _execute(self):
         method = getattr(self._channel_actor, self._method)
@@ -396,18 +411,38 @@ class AsyncChannelWork(AsyncWork):
 
     def _complete(self, future: ConcurrentFuture) -> None:
         """Complete the work's future with the remote call's outcome."""
-        try:
-            result = future.result()
-        except BaseException as exc:
-            # An exception raised in a concurrent.futures callback is only
-            # logged, leaving this future forever pending; every waiter on it
-            # and every later operation chained on the same channel key hangs.
-            self._future.set_exception(exc)
-        else:
-            self._future.set_result(result)
         with AsyncChannelWork.lock:
+            if not self._future.done():
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    # An exception raised in a concurrent.futures callback is
+                    # only logged, leaving this future forever pending; every
+                    # waiter on it and every later operation chained on the
+                    # same channel key hangs.
+                    self._future.set_exception(exc)
+                else:
+                    self._future.set_result(result)
             # Keys are per group on the payload channels: keeping the entry of
             # a completed key grows this table for the whole run.
+            if (
+                AsyncChannelWork.last_future_per_key.get(self._channel_key)
+                is self._future
+            ):
+                del AsyncChannelWork.last_future_per_key[self._channel_key]
+
+    def fail(self, exc: Exception) -> None:
+        """Fail this work with ``exc`` while its future is still pending.
+
+        The remote call this work issued may still be in flight, and may
+        complete later; the first outcome to arrive wins, so a settled future
+        is left alone. The key's table entry goes the way _complete removes
+        it, so a later operation on the key does not queue behind a work that
+        never returns.
+        """
+        with AsyncChannelWork.lock:
+            if not self._future.done():
+                self._future.set_exception(exc)
             if (
                 AsyncChannelWork.last_future_per_key.get(self._channel_key)
                 is self._future
@@ -446,6 +481,9 @@ class AsyncChannelCommWork(AsyncWork):
     # Futures of pending gets, by (channel name, channel rank) and then by
     # query ID.
     channel_data_store: dict[tuple[str, int], dict[int, Future]] = {}
+    # Channel ranks whose recv failed: later data from them is dropped, since
+    # the message stream may have lost whatever the failed recv was reading.
+    failed_peers: set[tuple[str, int]] = set()
     store_lock = threading.Lock()  # Protect store access
 
     def __init__(
@@ -488,7 +526,7 @@ class AsyncChannelCommWork(AsyncWork):
         """Store channel data in the channel data store."""
         try:
             data, query_id = self._async_comm_work.wait()
-        except BaseException as exc:
+        except Exception as exc:
             # Recvs from one channel rank are not matched to gets: each takes
             # the next message, and the query ID sent with the data names its
             # get. After a failed recv, the data of a get still waiting on
@@ -502,8 +540,16 @@ class AsyncChannelCommWork(AsyncWork):
                         future.set_exception(exc)
                 if not self._data_future.done():
                     self._data_future.set_exception(exc)
+                # Recvs of this channel rank that were already running when
+                # this one failed still deliver, and their data belongs to a
+                # stream nobody can match to a get any more.
+                AsyncChannelCommWork.failed_peers.add(self._peer)
             return
         with AsyncChannelCommWork.store_lock:
+            if self._peer in AsyncChannelCommWork.failed_peers:
+                # The rank failed earlier: this data cannot be trusted, and
+                # storing it would leave an entry no get ever takes.
+                return
             data_future = AsyncChannelCommWork.channel_data_store.setdefault(
                 self._peer, {}
             ).setdefault(query_id, Future())

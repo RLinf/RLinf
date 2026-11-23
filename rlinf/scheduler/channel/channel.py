@@ -30,6 +30,7 @@ from ..collective import (
     AsyncChannelWork,
     AsyncRayWork,
     AsyncWork,
+    PeerCommunicationError,
 )
 from ..placement import NodePlacementStrategy
 from ..worker import Worker, WorkerGroup
@@ -436,6 +437,33 @@ class Channel:
         target_actor = self._get_channel_actor(target_rank)
         return ray.get(target_actor.full.remote(key))
 
+    def _fail_put_on_send_error(
+        self, work: AsyncChannelWork, send_work: AsyncWork
+    ) -> None:
+        """Fail a put whose send failed.
+
+        The item never reached the channel, and the send that failed lost its
+        place in the stream to the channel worker, so the put cannot report
+        success: the caller has to see the failure. A send that was itself
+        refused because its channel had already failed carries that error.
+        """
+
+        def _record(future) -> None:
+            try:
+                future.wait()
+            except Exception as exc:
+                if isinstance(exc, PeerCommunicationError):
+                    work.fail(exc)
+                    return
+                error = PeerCommunicationError(
+                    f"the send of a put to channel {self._channel_name} failed "
+                    f"({exc!r})"
+                )
+                error.__cause__ = exc
+                work.fail(error)
+
+        send_work.add_done_callback(_record)
+
     def put(
         self,
         item: Any,
@@ -475,13 +503,14 @@ class Channel:
                 method="put",
                 **put_kwargs,
             )
-            self._current_worker.send(
+            send_work = self._current_worker.send(
                 item,
                 self._channel_name,
                 target_rank,
                 async_op=True,
                 piggyback_payload=(key, weight),
             )
+            self._fail_put_on_send_error(async_channel_work, send_work)
 
             if async_op:
                 return async_channel_work
@@ -531,13 +560,14 @@ class Channel:
                 method="put",
                 **put_kwargs,
             )
-            self._current_worker.send(
+            send_work = self._current_worker.send(
                 item,
                 self._channel_name,
                 target_rank,
                 async_op=True,
                 piggyback_payload=(key, weight),
             )
+            self._fail_put_on_send_error(async_channel_work, send_work)
             try:
                 async_channel_work.wait()
             except asyncio.QueueFull:
