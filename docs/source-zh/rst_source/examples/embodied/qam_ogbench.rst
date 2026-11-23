@@ -70,7 +70,7 @@ QAM 的工作方式
 
 首次训练会将 ``antmaze-large-navigate-v0.npz`` 及其验证集下载到 ``~/.ogbench/data``\ ，共约 255 MiB（267 MB）。已有数据放在其他磁盘上时，在各条启动命令后追加 ``data.dataset_dir=/path/to/ogbench-data`` 即可复用。评估产生的交互数据不会加入训练集。
 
-默认模型的每个 checkpoint 约占 146 MiB，每个 seed 保存四份，共约 583 MiB。除 Python 环境和包缓存外，建议为每个 seed 至少预留 1 GiB，用于数据、checkpoint 和日志。下方实验在共享 A800 上，每个 seed 完成训练约需 8–11 小时，包含中途评估，不含最终评估。实际耗时取决于硬件和 GPU 负载。
+默认模型的每个 checkpoint 约占 146 MiB，每个 seed 保存四份，共约 583 MiB。除 Python 环境和包缓存外，建议为每个 seed 至少预留 1 GiB，用于数据、checkpoint 和日志。
 
 运行
 ----

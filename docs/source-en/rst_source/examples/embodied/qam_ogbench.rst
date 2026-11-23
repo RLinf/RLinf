@@ -70,7 +70,7 @@ The installer pins OGBench 1.2.1 and MuJoCo 3.3.4. The launch script configures 
 
 The first training run downloads ``antmaze-large-navigate-v0.npz`` and its validation split into ``~/.ogbench/data``. Together they occupy about 255 MiB (267 MB). To reuse a cache on another disk, add ``data.dataset_dir=/path/to/ogbench-data`` to each launch command. Evaluation uses the task environment; its experience is not added to the training dataset.
 
-With the default model, a checkpoint is about 146 MiB. Four checkpoints per seed occupy about 583 MiB. Reserve at least 1 GiB per seed for data, checkpoints, and logs, in addition to the Python environment and package cache. The runs reported below took about 8–11 hours per seed on shared A800 GPUs, including intermediate evaluations but excluding the final evaluation. Runtime depends on hardware and GPU load.
+With the default model, a checkpoint is about 146 MiB. Four checkpoints per seed occupy about 583 MiB. Reserve at least 1 GiB per seed for data, checkpoints, and logs, in addition to the Python environment and package cache.
 
 Run It
 ------
