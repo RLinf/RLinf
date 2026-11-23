@@ -5635,3 +5635,167 @@ def test_sd3_pretraining_auxiliary_placement_and_gradients(sd3_policy, offload):
     finally:
         hook.remove()
         model.to("cpu")
+
+
+def test_empirical_normalization_matches_batch_moments_and_syncs_buffers():
+    from rlinf.models.embodiment.modules.obs_norm import EmpiricalNormalization
+    from rlinf.utils.utils import collect_param_names_need_sync
+
+    norm = EmpiricalNormalization(shape=4, eps=1e-6)
+    x1 = torch.tensor([[1.0, 2.0, 3.0, 4.0], [3.0, 6.0, 9.0, 12.0]])
+    x2 = torch.tensor([[5.0, 10.0, 15.0, 20.0], [7.0, 14.0, 21.0, 28.0]])
+    norm.update(x1)
+    norm.update(x2)
+
+    all_x = torch.cat([x1, x2], dim=0)
+    expected_mean = all_x.mean(dim=0, keepdim=True)
+    expected_std = all_x.var(dim=0, unbiased=False, keepdim=True).sqrt()
+    torch.testing.assert_close(norm._mean, expected_mean, rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(norm._std, expected_std, rtol=1e-5, atol=1e-5)
+
+    out = norm(all_x)
+    torch.testing.assert_close(out.mean(dim=0), torch.zeros(4), atol=1e-5, rtol=0)
+    sync_names = set(collect_param_names_need_sync(norm))
+    assert {"_mean", "_var", "_std", "count"}.issubset(sync_names)
+
+    # Casting parent module to bf16 must keep running stats in float32 so Welford
+    # updates do not stall on small increments.
+    bf16_norm = EmpiricalNormalization(4, eps=1e-2).to(torch.bfloat16)
+    assert bf16_norm._mean.dtype == torch.float32
+    bf16_norm.update(torch.zeros(4, 4, dtype=torch.bfloat16))
+    for _ in range(500):
+        bf16_norm.update(torch.ones(4, 4, dtype=torch.bfloat16))
+    assert bf16_norm._mean.mean().item() > 0.995
+
+
+def test_mlp_policy_asymmetric_critic_elu_and_obs_normalization():
+    cfg = OmegaConf.create(
+        {
+            "model_type": "mlp_policy",
+            "precision": "32",
+            "obs_dim": 61,
+            "critic_obs_dim": 76,
+            "action_dim": 14,
+            "num_action_chunks": 1,
+            "hidden_sizes": [512, 256, 128],
+            "critic_hidden_sizes": [512, 256, 128],
+            "activation": "elu",
+            "init_logstd": 0.0,
+            "obs_normalization": True,
+            "add_value_head": True,
+            "is_lora": False,
+            "load_to_device": False,
+        }
+    )
+    policy = get_model(cfg)
+    assert policy.actor_logstd.shape == (1, 14)
+    torch.testing.assert_close(policy.actor_logstd, torch.zeros(1, 14))
+    assert policy.supports_value_only_bootstrap()
+
+    q_policy = get_model(
+        OmegaConf.merge(cfg, {"add_value_head": False, "add_q_head": True})
+    )
+    assert not q_policy.supports_value_only_bootstrap()
+    q_obs = {"states": torch.randn(4, 61), "critic_states": torch.randn(4, 76)}
+    q_vals = q_policy.sac_q_forward(q_obs, torch.randn(4, 14))
+    assert q_vals.shape[0] == 4
+
+    env_obs = {
+        "states": torch.randn(8, 61) * 3.0 + 1.0,
+        "critic_states": torch.randn(8, 76) * 5.0 - 2.0,
+    }
+    actions, result = policy.predict_action_batch(env_obs, mode="train")
+    assert actions.shape == (8, 1, 14)
+    assert result["prev_values"].shape == (8, 1)
+    assert "critic_states" in result["forward_inputs"]
+
+    bootstrap_values = policy.predict_value_batch(env_obs)
+    torch.testing.assert_close(bootstrap_values, result["prev_values"])
+
+    policy.update_obs_normalizer(result["forward_inputs"])
+    assert int(policy.actor_obs_normalizer.count.item()) == 8
+    assert int(policy.critic_obs_normalizer.count.item()) == 8
+
+    out = policy(forward_inputs=result["forward_inputs"])
+    assert out["logprobs"].shape == (8, 14)
+    assert out["entropy"].shape == (8, 14)
+    assert out["values"].shape == (8, 1)
+
+
+def test_ppo_mse_critic_loss_and_adaptive_kl_scheduler():
+    from rlinf.algorithms.losses import compute_ppo_actor_critic_loss
+    from rlinf.hybrid_engines.fsdp.utils import AdaptiveKLLRScheduler, get_lr_scheduler
+
+    logprobs = torch.zeros(4, 1, requires_grad=True)
+    old_logprobs = torch.zeros(4, 1)
+    advantages = torch.ones(4, 1)
+    values = torch.tensor([[1.0], [2.0], [3.0], [4.0]], requires_grad=True)
+    returns = torch.tensor([[2.0], [2.0], [2.0], [2.0]])
+    prev_values = torch.tensor([[1.0], [2.0], [3.0], [4.0]])
+
+    loss, metrics = compute_ppo_actor_critic_loss(
+        logprobs=logprobs,
+        old_logprobs=old_logprobs,
+        advantages=advantages,
+        values=values,
+        returns=returns,
+        prev_values=prev_values,
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        value_clip=0.2,
+        huber_delta=10.0,
+        value_loss_type="mse",
+        value_loss_coef=0.5,
+    )
+    # MSE over errors [1, 0, 1, 2] is (1 + 0 + 1 + 4) / 4 = 1.5; actor_loss = -1.0.
+    torch.testing.assert_close(metrics["critic/value_loss"], torch.tensor(1.5))
+    torch.testing.assert_close(loss.detach(), torch.tensor(-1.0 + 0.5 * 1.5))
+    assert "actor/kl" in metrics
+
+    param = torch.nn.Parameter(torch.ones(1))
+    opt = torch.optim.Adam([param], lr=1e-3)
+    sched = get_lr_scheduler(
+        "adaptive_kl",
+        optimizer=opt,
+        num_warmup_steps=0,
+        num_training_steps=100,
+        desired_kl=0.01,
+        min_lr=1e-5,
+        max_lr=1e-2,
+        kl_factor=2.0,
+    )
+    assert isinstance(sched, AdaptiveKLLRScheduler)
+    sched.step_kl(0.03)
+    assert math.isclose(opt.param_groups[0]["lr"], 5e-4)
+    # Standard epoch-end step() must preserve the KL-adapted LR.
+    sched.step()
+    assert math.isclose(opt.param_groups[0]["lr"], 5e-4)
+    sched.step_kl(0.001)
+    assert math.isclose(opt.param_groups[0]["lr"], 1e-3)
+
+    # min_lr_rate overrides min_lr cleanly without TypeError.
+    opt_rate = torch.optim.Adam([torch.nn.Parameter(torch.ones(1))], lr=1e-3)
+    sched_rate = get_lr_scheduler(
+        "adaptive_kl",
+        optimizer=opt_rate,
+        num_warmup_steps=0,
+        num_training_steps=100,
+        desired_kl=0.01,
+        min_lr=1e-5,
+        min_lr_rate=0.1,
+        max_lr=1e-2,
+        kl_factor=2.0,
+    )
+    assert math.isclose(sched_rate.min_lr, 1e-4)
+
+    from rlinf.algorithms.losses import compute_decoupled_ppo_actor_loss
+
+    _, dec_metrics = compute_decoupled_ppo_actor_loss(
+        logprobs=torch.zeros(4, 1),
+        old_logprobs=torch.zeros(4, 1),
+        proximal_logprobs=torch.zeros(4, 1),
+        advantages=torch.ones(4, 1),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+    )
+    assert "actor/kl" in dec_metrics

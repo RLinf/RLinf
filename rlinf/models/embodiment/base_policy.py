@@ -111,6 +111,9 @@ class BasePolicy(ABC):
     def prepare_nft_reference_model(self) -> None:
         """Release state unused by NFT forward on a cached reference model."""
 
+    def update_obs_normalizer(self, forward_inputs: dict[str, Any]) -> None:
+        """Update any running observation normalizers from a rollout batch."""
+
     @abstractmethod
     def default_forward(self, **kwargs): ...
 

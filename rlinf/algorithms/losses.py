@@ -137,7 +137,12 @@ def compute_decoupled_ppo_actor_loss(
     with torch.no_grad():
         clip_fraction = masked_mean((pg_loss1 < pg_loss2).float(), metric_mask)
         dual_clip_fraction = masked_mean(dual_clip_mask.float(), metric_mask)
-        proximal_approx_kl = -masked_mean(logprobs - proximal_logprobs, metric_mask)
+        proximal_logratio = logprobs - proximal_logprobs
+        proximal_approx_kl = -masked_mean(proximal_logratio, metric_mask)
+        actor_kl = masked_mean(
+            (proximal_ratio.detach() - 1.0) - proximal_logratio,
+            metric_mask,
+        )
         behav_approx_kl = -masked_mean(
             proximal_logprobs - old_logprobs, metric_behav_mask
         )
@@ -153,6 +158,7 @@ def compute_decoupled_ppo_actor_loss(
         "actor/dual_clip_fraction": dual_clip_fraction,
         "actor/behav_clip_fraction": behav_clip_fraction,
         "actor/proximal_approx_kl": proximal_approx_kl,
+        "actor/kl": actor_kl,
         "actor/behav_approx_kl": behav_approx_kl,
     }
     if (
@@ -227,6 +233,7 @@ def compute_ppo_actor_loss(
             "actor/clipped_ratio": torch.tensor(0.0, device=logprobs.device),
             "actor/dual_cliped_ratio": torch.tensor(0.0, device=logprobs.device),
             "actor/approx_kl": torch.tensor(0.0, device=logprobs.device),
+            "actor/kl": torch.tensor(0.0, device=logprobs.device),
             "actor/clip_fraction": torch.tensor(0.0, device=logprobs.device),
         }
 
@@ -338,6 +345,7 @@ def compute_ppo_actor_loss(
 
     clip_fraction = masked_mean(clip_mask.float(), loss_mask_for_metrics)
     approx_kl = -masked_mean(log_ratio.detach(), loss_mask_for_metrics)
+    kl = masked_mean((ratio.detach() - 1.0) - log_ratio.detach(), loss_mask_for_metrics)
 
     # Compile metrics for logging
     ratio_for_metrics = ratio.detach()
@@ -357,6 +365,7 @@ def compute_ppo_actor_loss(
             dual_cliped_ratio_for_metrics, loss_mask_for_metrics
         ),
         "actor/approx_kl": approx_kl.detach(),
+        "actor/kl": kl.detach(),
         "actor/clip_fraction": clip_fraction.detach(),
     }
     if log_logprob_diagnostics:
@@ -418,6 +427,7 @@ def compute_ppo_critic_loss(
     huber_delta: float,
     loss_mask: Optional[torch.Tensor] = None,
     loss_mask_ratio: Optional[torch.Tensor] = None,
+    value_loss_type: str = "huber",
     **kwargs,
 ) -> tuple[torch.Tensor, dict]:
     """
@@ -429,6 +439,7 @@ def compute_ppo_critic_loss(
         prev_values (torch.Tensor): Previous value predictions.
         value_clip (float): Value clipping threshold.
         huber_delta (float): Huber loss delta parameter.
+        value_loss_type (str): Error penalty type, ``"huber"`` or ``"mse"``.
 
     Returns:
         Tuple[torch.Tensor, Dict]: (critic_loss, metrics_dict)
@@ -441,12 +452,20 @@ def compute_ppo_critic_loss(
         -value_clip, value_clip
     )  # [bsz, ] | [bsz, chunk-step]
 
-    value_loss_original = huber_loss(
-        returns - values, huber_delta
-    )  # [bsz, ] | [bsz, chunk-step]
-    value_loss_clipped = huber_loss(
-        returns - value_pred_clipped, huber_delta
-    )  # [bsz, ] | [bsz, chunk-step]
+    if value_loss_type == "huber":
+        value_loss_original = huber_loss(
+            returns - values, huber_delta
+        )  # [bsz, ] | [bsz, chunk-step]
+        value_loss_clipped = huber_loss(
+            returns - value_pred_clipped, huber_delta
+        )  # [bsz, ] | [bsz, chunk-step]
+    elif value_loss_type == "mse":
+        value_loss_original = (returns - values).pow(2)
+        value_loss_clipped = (returns - value_pred_clipped).pow(2)
+    else:
+        raise ValueError(
+            f"Expected value_loss_type in ('huber', 'mse'), got {value_loss_type!r}."
+        )
     value_loss = torch.max(value_loss_original, value_loss_clipped)
     value_loss = loss_agg_func(value_loss, loss_mask, loss_mask_ratio)
 
@@ -481,20 +500,24 @@ def compute_ppo_critic_loss(
 
 
 @register_policy_loss("decoupled_actor_critic")
-def compute_decoupled_ppo_actor_critic_loss(**kwargs) -> tuple[torch.Tensor, dict]:
+def compute_decoupled_ppo_actor_critic_loss(
+    value_loss_coef: float = 1.0, **kwargs
+) -> tuple[torch.Tensor, dict]:
     """Compute decoupled PPO actor+critic loss."""
     metrics_data = {}
     actor_loss, actor_metrics_data = compute_decoupled_ppo_actor_loss(**kwargs)
     critic_loss, critic_metrics_data = compute_ppo_critic_loss(**kwargs)
 
-    loss = actor_loss + critic_loss
+    loss = actor_loss + value_loss_coef * critic_loss
     metrics_data.update(actor_metrics_data)
     metrics_data.update(critic_metrics_data)
     return loss, metrics_data
 
 
 @register_policy_loss("actor_critic")
-def compute_ppo_actor_critic_loss(**kwargs) -> tuple[torch.Tensor, dict]:
+def compute_ppo_actor_critic_loss(
+    value_loss_coef: float = 1.0, **kwargs
+) -> tuple[torch.Tensor, dict]:
     """
     Compute PPO actor loss function.
 
@@ -509,6 +532,7 @@ def compute_ppo_actor_critic_loss(**kwargs) -> tuple[torch.Tensor, dict]:
         clip_ratio_high (float): Upper clipping ratio for PPO
         value_clip (float): Value clipping threshold
         huber_delta (float): Huber loss delta parameter
+        value_loss_coef (float): Multiplier applied to the critic loss.
 
     Returns:
         Tuple[torch.Tensor, Dict]: Loss and metrics dictionary
@@ -517,7 +541,7 @@ def compute_ppo_actor_critic_loss(**kwargs) -> tuple[torch.Tensor, dict]:
     actor_loss, actor_metrics_data = compute_ppo_actor_loss(**kwargs)
     critic_loss, critic_metrics_data = compute_ppo_critic_loss(**kwargs)
 
-    loss = actor_loss + critic_loss
+    loss = actor_loss + value_loss_coef * critic_loss
     metrics_data.update(actor_metrics_data)
     metrics_data.update(critic_metrics_data)
 

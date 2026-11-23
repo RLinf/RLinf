@@ -722,3 +722,217 @@ def test_config_needs_grpo_envs_to_stop_trajectories_at_their_first_done():
 
     with pytest.raises(AssertionError, match=r"env.train.envs.maniskill needs"):
         validate_env_training_cfg(cfg, layout, stage_num=1, actor_world_size=2)
+
+
+def test_policy_obs_spec_preserves_critic_states():
+    from rlinf.data.schema.embodied_types import EnvOutput, EnvTransition
+
+    obs = {
+        "states": torch.ones(2, 61),
+        "critic_states": torch.full((2, 76), 2.0),
+    }
+    env_output = EnvOutput(obs=obs, transition=EnvTransition())
+    prepared = env_output.prepare_observations(obs)
+    assert torch.equal(prepared["states"], obs["states"])
+    assert torch.equal(prepared["critic_states"], obs["critic_states"])
+
+    spec = PolicyObsSpec(keys=["states", "critic_states"])
+    conformed = spec.apply(prepared)
+    assert torch.equal(conformed["states"], obs["states"])
+    assert torch.equal(conformed["critic_states"], obs["critic_states"])
+    assert conformed["main_images"] is None
+
+
+def test_mjlab_env_registration_and_prepare_actions():
+    from rlinf.envs import get_env_cls
+    from rlinf.envs.action_utils import prepare_actions
+    from rlinf.envs.sim.mjlab.mjlab_env import MjlabEnv
+
+    assert get_env_cls("mjlab") is MjlabEnv
+    raw = torch.randn(4, 1, 14)
+    out = prepare_actions(
+        raw_chunk_actions=raw,
+        env_type="mjlab",
+        model_type="mlp_policy",
+        num_action_chunks=1,
+        action_dim=14,
+    )
+    np.testing.assert_allclose(out, raw.numpy())
+
+
+def test_mjlab_env_preserves_terminal_obs_and_logs_with_auto_reset(monkeypatch):
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    from rlinf.envs.sim.mjlab.mjlab_env import MjlabEnv
+
+    class _FakeManagerBasedRlEnv:
+        def __init__(self, cfg, device, render_mode=None):
+            self.cfg = cfg
+            self.device = device
+            self.render_mode = render_mode
+            self.num_envs = cfg.scene.num_envs
+            self.step_dt = 0.02
+            self.common_step_counter = 0
+            self.action_manager = SimpleNamespace(total_action_dim=14)
+            self.step_count = torch.zeros(self.num_envs, dtype=torch.int64)
+            self.last_action = None
+            self._pending_reset = torch.zeros(self.num_envs, dtype=torch.bool)
+            self.closed = False
+
+        def seed(self, seed):
+            return seed
+
+        def _obs(self):
+            val = self.step_count.float().unsqueeze(1)
+            return {
+                "actor": val.expand(self.num_envs, 61).clone(),
+                "critic": (val + 100.0).expand(self.num_envs, 76).clone(),
+            }
+
+        def reset(self, env_ids=None):
+            if env_ids is None:
+                self.step_count.zero_()
+                self._pending_reset.zero_()
+            else:
+                self.step_count[env_ids] = 0
+                self._pending_reset[env_ids] = False
+            return self._obs(), {"log": {"Episode_Reward/track_vel": torch.tensor(1.5)}}
+
+        def step(self, action):
+            assert not self._pending_reset.any()
+            self.last_action = action.clone()
+            self.step_count += 1
+            self.common_step_counter += 1
+            rewards = torch.tensor([1.0, float("nan")], dtype=torch.float32)
+            terminated = torch.tensor([False, False], dtype=torch.bool)
+            truncated = self.step_count >= 2
+            self._pending_reset = terminated | truncated
+            return self._obs(), rewards, terminated, truncated, {}
+
+        def close(self):
+            self.closed = True
+
+    mjlab_mod = ModuleType("mjlab")
+    mjlab_envs_mod = ModuleType("mjlab.envs")
+    mjlab_envs_mod.ManagerBasedRlEnv = _FakeManagerBasedRlEnv
+    mjlab_tasks_mod = ModuleType("mjlab.tasks")
+    mjlab_registry_mod = ModuleType("mjlab.tasks.registry")
+    play_calls: list[bool] = []
+
+    def _fake_load_env_cfg(task_id, play=False):
+        del task_id
+        play_calls.append(play)
+        return SimpleNamespace(
+            scene=SimpleNamespace(num_envs=1),
+            viewer=SimpleNamespace(width=640, height=480),
+            auto_reset=True,
+            terminations={
+                "time_out": SimpleNamespace(time_out=True),
+                "fell_over": SimpleNamespace(time_out=False),
+            },
+        )
+
+    mjlab_registry_mod.load_env_cfg = _fake_load_env_cfg
+    monkeypatch.setitem(sys.modules, "mjlab", mjlab_mod)
+    monkeypatch.setitem(sys.modules, "mjlab.envs", mjlab_envs_mod)
+    monkeypatch.setitem(sys.modules, "mjlab.tasks", mjlab_tasks_mod)
+    monkeypatch.setitem(sys.modules, "mjlab.tasks.registry", mjlab_registry_mod)
+
+    cfg = OmegaConf.create(
+        {
+            "env_type": "mjlab",
+            "task_id": "Mjlab-Velocity-Flat-MicroDuck",
+            "device": "cpu",
+            "seed": 7,
+            "is_eval": True,
+            "auto_reset": True,
+            "clip_actions": 1.0,
+            "initial_step_counter": 48,
+            "video_cfg": {"save_video": False},
+        }
+    )
+    env = MjlabEnv(cfg=cfg, num_envs=2)
+    assert play_calls == [False]
+    assert env.env.common_step_counter == 48
+    assert env.env.cfg.auto_reset is False
+
+    play_cfg = OmegaConf.merge(cfg, {"play_mode": True})
+    MjlabEnv(cfg=play_cfg, num_envs=1)
+    assert play_calls == [False, True]
+
+    obs, _ = env.reset()
+    assert obs["states"].shape == (2, 61)
+    assert obs["critic_states"].shape == (2, 76)
+
+    actions = torch.full((2, 1, 14), 5.0)
+    obs_list, rew, term, trunc, infos_list = env.chunk_step(actions)
+    assert torch.allclose(env.env.last_action, torch.ones(2, 14))
+    assert torch.allclose(rew, torch.tensor([[1.0], [0.0]]))
+    assert not trunc.any()
+    assert torch.allclose(obs_list[-1]["states"], torch.ones(2, 61))
+
+    # Second step truncates both worlds: returned obs is reset (0), while
+    # final_observation keeps pre-reset terminal state (2) and mjlab logs.
+    obs_list, rew, term, trunc, infos_list = env.chunk_step(actions)
+    assert trunc.all()
+    assert torch.allclose(obs_list[-1]["states"], torch.zeros(2, 61))
+    assert torch.allclose(
+        infos_list[-1]["final_observation"]["states"], torch.full((2, 61), 2.0)
+    )
+    assert torch.allclose(
+        infos_list[-1]["final_observation"]["critic_states"],
+        torch.full((2, 76), 102.0),
+    )
+    assert torch.allclose(
+        infos_list[-1]["final_info"]["episode"]["Episode_Reward/track_vel"],
+        torch.full((2,), 1.5),
+    )
+
+    # Multi-step chunk with staggered completions across substeps: world 0 finishes
+    # on substep 0, world 1 on substep 1. Counters, obs_list[-1], and per-world
+    # mjlab episode logs must remain accurate for both worlds.
+    env.env.step_count = torch.tensor([1, 0], dtype=torch.long)
+    env.env.pending_reset = False
+    log_calls = [10.0, 20.0]
+    reset_id_batches: list[list[int]] = []
+    orig_reset = env.env.reset
+
+    def _staggered_reset(env_ids=None):
+        obs_out, extras = orig_reset(env_ids=env_ids)
+        if env_ids is not None:
+            reset_id_batches.append(env_ids.tolist())
+            if log_calls:
+                extras["log"] = {
+                    "Episode_Reward/track_vel": torch.tensor(log_calls.pop(0))
+                }
+        return obs_out, extras
+
+    env.env.reset = _staggered_reset
+    obs_list2, rew2, _, trunc2, infos_list2 = env.chunk_step(torch.zeros(2, 2, 14))
+    assert len(obs_list2) == 2
+    assert rew2.shape == (2, 2)
+    assert trunc2[:, -1].all()
+    assert reset_id_batches == [[0], [1], [0]]
+    assert env.elapsed_steps.tolist() == [0, 0]
+    assert torch.allclose(obs_list2[-1]["states"], torch.zeros(2, 61))
+    assert torch.allclose(
+        infos_list2[-1]["final_observation"]["states"], torch.full((2, 61), 2.0)
+    )
+    assert torch.allclose(
+        infos_list2[-1]["final_info"]["episode"]["Episode_Reward/track_vel"],
+        torch.tensor([10.0, 20.0]),
+    )
+    env.close()
+    assert env.env.closed
+
+    ignore_term_env = MjlabEnv(
+        cfg=OmegaConf.merge(cfg, {"ignore_terminations": True}), num_envs=2
+    )
+    assert list(ignore_term_env.env.cfg.terminations.keys()) == ["time_out"]
+    ignore_term_env.close()
+
+    no_reset_env = MjlabEnv(cfg=OmegaConf.merge(cfg, {"auto_reset": False}), num_envs=2)
+    with pytest.raises(ValueError, match="auto_reset=True"):
+        no_reset_env.chunk_step(torch.zeros(2, 2, 14))
+    no_reset_env.close()

@@ -44,6 +44,7 @@ class SupportedEnvType(Enum):
     GENIESIM = "geniesim"
     D4RL = "d4rl"
     MUJOCO_WARP = "mujoco_warp"
+    MJLAB = "mjlab"
     DIFFUSION = "diffusion"
     POLARIS = "polaris"
     ROBOLAB = "robolab"
@@ -194,6 +195,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.sim.mujoco_warp.mujoco_warp_env import MujocoWarpEnv
 
         return MujocoWarpEnv
+    elif env_type == SupportedEnvType.MJLAB:
+        from rlinf.envs.sim.mjlab.mjlab_env import MjlabEnv
+
+        return MjlabEnv
     elif env_type == SupportedEnvType.DIFFUSION:
         from rlinf.envs.sim.diffusion.generation_env import GenerationEnv
 

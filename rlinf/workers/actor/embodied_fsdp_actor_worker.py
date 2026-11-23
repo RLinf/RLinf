@@ -33,9 +33,10 @@ from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
 from rlinf.data.storage.replay import EnvReplayBuffer, TrajectoryReplayBuffer
 from rlinf.envs.layout import EnvSpec
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+from rlinf.hybrid_engines.fsdp.utils import AdaptiveKLLRScheduler
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
-from rlinf.models.embodiment.base_policy import ForwardType
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.distributed import (
     all_reduce_dict,
@@ -905,6 +906,16 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )
         return loss
 
+    def _update_obs_normalizers(self) -> None:
+        """Update running observation normalizers once per rollout batch."""
+        policy = getattr(self.model, "module", self.model)
+        if not isinstance(policy, BasePolicy):
+            return
+        for pool in self.rollout_batches:
+            forward_inputs = pool.get("forward_inputs")
+            if forward_inputs is not None:
+                policy.update_obs_normalizer(forward_inputs)
+
     @Worker.timer("run_training")
     def run_training(self) -> None:
         """
@@ -917,18 +928,21 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         self.model.train()
         self._order_training_batch()
+        self._update_obs_normalizers()
 
         metrics = {}
         if self.cfg.algorithm.get("recompute_logprobs", False):
             for pool in self.rollout_batches:
                 append_to_dict(metrics, self.recompute_prev_logprobs(pool))
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
+        is_adaptive_kl = isinstance(self.lr_scheduler, AdaptiveKLLRScheduler)
         for _ in range(update_epoch):
             # See PPO paper for details. https://arxiv.org/abs/1707.06347
             for micro_batches in self._global_batches():
                 global_batch_rows = sum(
                     batch["prev_logprobs"].shape[0] for batch in micro_batches
                 )
+                kl_start_idx = len(metrics.get("actor/kl", []))
                 self.optimizer.zero_grad()
                 for idx, batch in enumerate(micro_batches):
                     self.train_micro_batch(
@@ -942,6 +956,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     del batch
 
                 self.torch_platform.empty_cache()
+
+                if is_adaptive_kl:
+                    batch_kls = metrics.get("actor/kl", [])[kl_start_idx:]
+                    if batch_kls:
+                        reduced_kl = all_reduce_dict(
+                            {"actor/kl": float(np.mean(batch_kls))},
+                            op=torch.distributed.ReduceOp.AVG,
+                        )["actor/kl"]
+                        self.lr_scheduler.step_kl(reduced_kl)
 
                 grad_norm, lr_list = self.optimizer_step()
                 data = {
@@ -1061,6 +1084,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "clip_ratio_low": self.cfg.algorithm.clip_ratio_low,
             "value_clip": self.cfg.algorithm.get("value_clip", None),
             "huber_delta": self.cfg.algorithm.get("huber_delta", None),
+            "value_loss_coef": self.cfg.algorithm.get("value_loss_coef", 1.0),
+            "value_loss_type": self.cfg.algorithm.get("value_loss_type", "huber"),
             "loss_mask": loss_mask,
             "loss_mask_ratio": loss_mask_ratio,
             "task_type": self.cfg.runner.task_type,

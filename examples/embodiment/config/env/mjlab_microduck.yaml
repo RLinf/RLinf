@@ -1,0 +1,28 @@
+env_type: mjlab
+task_id: Mjlab-Velocity-Flat-MicroDuck
+task_modules:
+  - mjlab_microduck.tasks
+actor_obs_key: actor
+critic_obs_key: critic
+device: auto
+
+total_num_envs: null
+group_size: 1
+max_steps_per_rollout_epoch: 24
+max_episode_steps: 1000
+
+seed: 42
+auto_reset: true
+ignore_terminations: false
+use_rel_reward: false
+reward_scale: 1.0
+clip_actions: null
+initial_step_counter: 0
+is_eval: false
+play_mode: false
+render_width: 640
+render_height: 480
+
+video_cfg:
+  save_video: false
+  video_base_dir: ${runner.logger.log_path}/video/train

@@ -41,6 +41,9 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
    * - SIMPLE
      - ``G1WholebodyOpenOvenTeleop-v0``
      - ``simple/simple_psi0_eval.yaml``
+   * - mjlab（Microduck）
+     - ``Mjlab-Velocity-Flat-MicroDuck`` 及 Microduck 系列任务
+     - ``mjlab/mjlab_microduck_ppo_mlp_eval.yaml``
 
 **LIBERO 变体：** 标准 LIBERO、LIBERO-PRO、LIBERO-PLUS 均支持，通过环境变量切换（见 :doc:`guides/libero`）。
 

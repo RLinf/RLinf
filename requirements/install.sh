@@ -130,7 +130,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple" "robolab")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "mjlab" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple" "robolab")
 
 #=======================Utility Functions=======================
 
@@ -3541,6 +3541,8 @@ install_franka_ros_realworld_env() {
 install_env_only() {
     if [ "$ENV_NAME" = "d4rl" ] || [ "$ENV_NAME" = "simple" ]; then
         PYTHON_VERSION="3.10"
+    elif [ "$ENV_NAME" = "mjlab" ] && [ "$USER_SET_PYTHON" -eq 0 ]; then
+        PYTHON_VERSION="3.12"
     fi
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
@@ -3558,6 +3560,10 @@ install_env_only() {
         mujoco_warp)
             install_common_embodied_deps
             install_mujoco_warp_env
+            ;;
+        mjlab)
+            install_common_embodied_deps
+            install_mjlab_env
             ;;
         dummy)
             install_dummy_env
@@ -3781,6 +3787,25 @@ install_mujoco_warp_env() {
     # Pin the verified CUDA 12-compatible stack so driverless Docker builds do
     # not resolve warp-lang>=1.17, whose wheels require a CUDA 13 driver.
     uv pip install "mujoco-warp==3.17.0" "warp-lang==1.16.0"
+}
+
+install_mjlab_env() {
+    local bam_dir
+    local microduck_dir
+    uv pip install "mjlab==1.3.0" "warp-lang==1.12.0" "colorama"
+    bam_dir=$(clone_or_reuse_repo BAM_PATH "$VENV_DIR/bam" "${GITHUB_PREFIX}https://github.com/Rhoban/bam.git" -b mjlab_frictionloss)
+    if [ -z "${BAM_PATH:-}" ]; then
+        git -C "$bam_dir" checkout 62bd8ce12154340be97e06f7f41a0ca8f116d967 >&2
+    fi
+    # Install BAM and microduck_rl with --no-deps so bam's protobuf<4 / zmq stub
+    # and microduck_rl's torch pin do not clash with RLinf's Ray and PyTorch stack.
+    uv pip install --no-deps -e "$bam_dir"
+    microduck_dir=$(clone_or_reuse_repo MICRODUCK_RL_PATH "$VENV_DIR/microduck_rl" "${GITHUB_PREFIX}https://github.com/pollen-robotics/microduck_rl.git" -b main)
+    if [ -z "${MICRODUCK_RL_PATH:-}" ]; then
+        git -C "$microduck_dir" checkout 0daab160d3fb1c2cbaba16a4a19052f36709dd9e >&2
+    fi
+    uv pip install --no-deps -e "$microduck_dir"
+    uv pip install "${RAY_COMPAT_DEPS[@]}"
 }
 
 install_d4rl_env() {

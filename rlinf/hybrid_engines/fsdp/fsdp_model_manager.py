@@ -525,6 +525,9 @@ class FSDPModelManager:
             num_cycles=num_cycles,
             min_lr=min_lr,
             min_lr_rate=min_lr_rate,
+            desired_kl=optim_config.get("desired_kl", 0.01),
+            max_lr=optim_config.get("max_lr", 1e-2),
+            kl_factor=optim_config.get("kl_factor", 1.5),
             last_epoch=last_epoch,
         )
 

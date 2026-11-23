@@ -227,6 +227,19 @@
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/mjlab_microduck.html" style="display: block;"><video controls autoplay loop muted playsinline preload="metadata" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
+         <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/mjlab_microduck/microduck_walk_eval.mp4" type="video/mp4">
+         你的浏览器不支持视频播放。
+       </video></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/mjlab_microduck.html" style="text-decoration: underline; color: blue;">
+           <b>mjlab（Microduck）强化学习</b>
+         </a><br>
+         用非对称 MLP + PPO 训练 Microduck 双足行走与动作任务
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -252,4 +265,5 @@
    Genesis <embodied/genesis>
    GenieSim <embodied/geniesim>
    MuJoCo Warp <embodied/mujoco_warp>
+   mjlab（Microduck） <embodied/mjlab_microduck>
    真机仿真器 <embodied/real_simulator>
