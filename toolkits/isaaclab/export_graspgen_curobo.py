@@ -137,7 +137,11 @@ def verify_selection(selection: dict[str, Any]) -> None:
 def audit_dataset(selection: dict[str, Any], root: Path, repo_id: str) -> int:
     """Read every official-loader row and compare it with its raw source."""
     import torch
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    try:
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    except ModuleNotFoundError:
+        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
     data = LeRobotDataset(repo_id, root=root)
     offset = 0
