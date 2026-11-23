@@ -1964,8 +1964,8 @@ def test_realworld_chunk_retains_the_actual_terminal_step():
     assert [frame["state"].item() for frame in episode] == [-1.0, 0.0]
 
 
-def test_so101_hg_dagger_switches_control_only_at_chunk_boundaries(monkeypatch):
-    """Defer leader handovers until chunks finish and mark expert actions."""
+def test_so101_hg_dagger_switches_control_at_next_action_step(monkeypatch):
+    """Apply leader handovers before the next environment step."""
     from rlinf.envs.real.so101.wrappers import SO101HGDAggerWrapper
     from rlinf.envs.real.wrappers.episode import session as session_module
 
@@ -2074,25 +2074,24 @@ def test_so101_hg_dagger_switches_control_only_at_chunk_boundaries(monkeypatch):
     assert wrapper._pending_space
     assert leader.mode == "policy"
 
-    wrapper.on_action_chunk_begin()
-    assert leader.mode == "manual"
-    assert [event[0] for event in leader.events[-3:]] == ["align", "release", "mode"]
-
     _, _, _, _, manual = wrapper.step(np.array([3.0]))
     assert leader.mode == "manual"
+    assert [event[0] for event in leader.events[-3:]] == ["align", "release", "mode"]
     assert manual["intervene_flag"].tolist() == [True]
     np.testing.assert_array_equal(inner.actions[-1], [7.0])
 
     wrapper.listener.batches = [["Key.space"]]
-    wrapper.step(np.array([4.0]))
-    wrapper.on_action_chunk_begin()
+    _, _, _, _, returned = wrapper.step(np.array([4.0]))
     assert leader.mode == "policy"
     assert leader.events[-2][0] == "hold"
-
-    _, _, _, _, stale = wrapper.step(np.array([5.0]))
     np.testing.assert_array_equal(inner.actions[-1], [-1.0])
-    assert "intervene_action" not in stale
-    assert "intervene_flag" not in stale
+    assert "intervene_action" not in returned
+    assert "intervene_flag" not in returned
+
+    _, _, _, _, next_policy = wrapper.step(np.array([5.0]))
+    np.testing.assert_array_equal(inner.actions[-1], [-1.0])
+    assert "intervene_action" not in next_policy
+    assert "intervene_flag" not in next_policy
     assert not wrapper.smooth_intervention_active()
 
     wrapper.on_action_chunk_begin()

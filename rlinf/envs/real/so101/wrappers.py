@@ -179,6 +179,10 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
         except AttributeError:
             return action
 
+    def _before_action_step(self, action: ActType) -> ActType:
+        """Handle per-step control changes before the wrapped environment steps."""
+        return action
+
     def step(
         self, action: ActType
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
@@ -207,6 +211,8 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
             # The terminal frame is still marked as recordable below.
             self.before_recording_success()
 
+        if self._recording and not started and not aborted and not success:
+            action = self._before_action_step(action)
         hold = not self._recording or started or aborted or success
         if hold:
             action = self._hold_action(action)
@@ -288,7 +294,7 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
 
 
 class SO101HGDAggerWrapper(SO101StartEndWrapper):
-    """Switch SO-101 control between policy and leader at chunk boundaries."""
+    """Switch SO-101 control between policy and leader at action-step boundaries."""
 
     def __init__(self, env: Env) -> None:
         """Initialize policy-owned control and clear pending handovers."""
@@ -362,19 +368,10 @@ class SO101HGDAggerWrapper(SO101StartEndWrapper):
             self._control_mode == "manual" or self._pending_space
         )
 
-    def on_action_chunk_begin(self) -> None:
-        """Apply a pending handover after the previous action chunk completes."""
-        self._poll_control_keys()
-        try:
-            on_begin = self.env.get_wrapper_attr("on_action_chunk_begin")
-        except AttributeError:
-            on_begin = None
-        if callable(on_begin):
-            on_begin()
-
-        self._hold_action_chunk = False
+    def _apply_pending_space(self) -> bool:
+        """Apply one queued handover and report whether this step must hold."""
         if not self._pending_space or not self._recording:
-            return
+            return False
         self._pending_space = False
         context = self._teleop_context()
         if self._control_mode == "policy":
@@ -386,13 +383,33 @@ class SO101HGDAggerWrapper(SO101StartEndWrapper):
             self._countdown_before_manual()
             release(context)
             self._set_control_mode("manual")
-        else:
-            hold = self._teleop_attr("hold_for_reset")
-            if hold is None:
-                raise RuntimeError("SO-101 leader cannot hold during policy handover")
-            hold(context)
-            self._set_control_mode("policy")
-            self._hold_action_chunk = True
+            return False
+
+        hold = self._teleop_attr("hold_for_reset")
+        if hold is None:
+            raise RuntimeError("SO-101 leader cannot hold during policy handover")
+        hold(context)
+        self._set_control_mode("policy")
+        self._hold_action_chunk = True
+        return True
+
+    def _before_action_step(self, action: ActType) -> ActType:
+        """Apply Space before this environment step reaches the teleop device."""
+        hold = self._apply_pending_space() or self._hold_action_chunk
+        return self._hold_action(action) if hold else action
+
+    def on_action_chunk_begin(self) -> None:
+        """Apply a pending handover after the previous action chunk completes."""
+        self._poll_control_keys()
+        try:
+            on_begin = self.env.get_wrapper_attr("on_action_chunk_begin")
+        except AttributeError:
+            on_begin = None
+        if callable(on_begin):
+            on_begin()
+
+        self._hold_action_chunk = False
+        self._apply_pending_space()
 
     def step(
         self, action: ActType
