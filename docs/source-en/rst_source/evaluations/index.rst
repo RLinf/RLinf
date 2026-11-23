@@ -41,6 +41,9 @@ The table below lists benchmarks that have example configs under ``evaluations/`
    * - SIMPLE
      - ``G1WholebodyOpenOvenTeleop-v0``
      - ``simple/simple_psi0_eval.yaml``
+   * - mjlab (Microduck)
+     - ``Mjlab-Velocity-Flat-MicroDuck`` and Microduck tasks
+     - ``mjlab/mjlab_microduck_ppo_mlp_eval.yaml``
 
 **LIBERO variants:** Standard LIBERO, LIBERO-PRO, and LIBERO-PLUS are supported via environment variables (see :doc:`guides/libero`).
 

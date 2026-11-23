@@ -131,6 +131,7 @@ jobs:
               - 'toolkits/lerobot/**'
               - 'toolkits/dual_franka/**'
               - 'toolkits/cosmos3/**'
+              - 'toolkits/mjlab/**'
               - 'toolkits/__init__.py'
             agent_reason_filter: &agent
               - *shared

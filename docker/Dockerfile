@@ -86,6 +86,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robolab
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-mujoco_warp
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-mjlab
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-geniesim
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-simple
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
@@ -556,6 +557,17 @@ RUN test "${RLINF_PLATFORM}" = nvidia && \
         embodied --venv mujoco_warp --env mujoco_warp
 
 RUN echo "source ${UV_PATH}/mujoco_warp/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: mjlab (Microduck)
+##################################################################################################
+FROM embodied-common-image AS embodied-mjlab-image
+
+RUN test "${RLINF_PLATFORM}" = nvidia && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} \
+        --no-flash-attn embodied --venv mjlab --env mjlab
+
+RUN echo "source ${UV_PATH}/mjlab/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Embodied: GenieSim client (simulator server runs separately)

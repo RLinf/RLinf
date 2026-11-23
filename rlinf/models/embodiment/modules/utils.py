@@ -30,6 +30,8 @@ def get_act_func(activation):
         act = nn.GELU
     elif activation.lower() == "tanh":
         act = nn.Tanh
+    elif activation.lower() == "elu":
+        act = nn.ELU
     else:
         raise ValueError(f"Unsupported activation: {activation}")
     return act

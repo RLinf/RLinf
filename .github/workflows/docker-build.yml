@@ -1162,6 +1162,54 @@ jobs:
           outputs: type=cacheonly
           tags: rlinf:embodied-mujoco_warp
 
+  build-embodied-mjlab:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Maximize storage space
+        run: |
+          sudo rm -rf /usr/lib/jvm
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/hostedtoolcache
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /usr/local/lib/node_modules
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/chromium
+          sudo rm -rf /usr/local/lib/heroku
+          sudo rm -rf /usr/share/miniconda
+          sudo rm -rf /opt/az
+          sudo rm -rf /usr/lib/google-cloud-sdk
+          sudo rm -rf /usr/local/aws-cli
+          sudo rm -rf /usr/local/aws-sam-cli
+          sudo rm -rf /usr/local/julia*
+          sudo rm -rf /usr/share/sbt
+          sudo rm -rf /usr/share/gradle*
+          sudo rm -rf /usr/share/apache-maven*
+          sudo apt-get clean
+          sudo docker system prune -af --volumes
+          df -h
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build embodied-mjlab
+        uses: docker/build-push-action@v6
+        with:
+          file: ./docker/Dockerfile
+          push: false
+          build-args: |
+            BUILD_TARGET=embodied-mjlab
+            NO_MIRROR=1
+          outputs: type=cacheonly
+          tags: rlinf:embodied-mjlab
+
   build-embodied-maniskill_libero-ascend-amd64:
     runs-on: ubuntu-latest
     steps:

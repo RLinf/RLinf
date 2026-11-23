@@ -63,6 +63,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         )
         model.configure_iql(iql_config)
     else:
+        hidden_sizes = cfg.get("hidden_sizes", None)
         model = MLPPolicy(
             cfg.obs_dim,
             cfg.action_dim,
@@ -70,6 +71,15 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
             add_value_head=cfg.add_value_head,
             add_q_head=cfg.get("add_q_head", False),
             q_head_type=cfg.get("q_head_type", "default"),
+            critic_obs_dim=cfg.get("critic_obs_dim", None),
+            hidden_sizes=(
+                tuple(hidden_sizes) if hidden_sizes is not None else (256, 256, 256)
+            ),
+            critic_hidden_sizes=cfg.get("critic_hidden_sizes", None),
+            activation=cfg.get("activation", "tanh"),
+            init_logstd=cfg.get("init_logstd", -0.5),
+            obs_normalization=cfg.get("obs_normalization", False),
+            obs_norm_eps=cfg.get("obs_norm_eps", 1e-2),
         )
 
     return model

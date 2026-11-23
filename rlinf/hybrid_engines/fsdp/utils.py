@@ -613,6 +613,63 @@ def get_fsdp2_full_state_dict_all_ranks(
         return clean_state_dict
 
 
+class AdaptiveKLLRScheduler(torch.optim.lr_scheduler.LRScheduler):
+    """Adjust optimizer learning rates toward a target PPO KL divergence.
+
+    Calling ``step()`` preserves the current adapted learning rates so standard
+    epoch-end scheduler stepping does not overwrite them. Call ``step_kl(kl)``
+    after each optimization step to adapt the learning rate.
+
+    Args:
+        optimizer: Optimizer whose parameter groups are updated.
+        desired_kl: Target KL divergence per update step.
+        min_lr: Lower bound for adapted learning rates.
+        max_lr: Upper bound for adapted learning rates.
+        kl_factor: Multiplicative step factor applied when KL leaves the target band.
+        last_epoch: Standard PyTorch scheduler epoch index.
+    """
+
+    def __init__(
+        self,
+        optimizer: Optimizer,
+        desired_kl: float = 0.01,
+        min_lr: float = 1e-5,
+        max_lr: float = 1e-2,
+        kl_factor: float = 1.5,
+        last_epoch: int = -1,
+    ) -> None:
+        if desired_kl <= 0.0:
+            raise ValueError(f"desired_kl must be positive, got {desired_kl}.")
+        if min_lr <= 0.0 or max_lr < min_lr:
+            raise ValueError(
+                f"Expected 0 < min_lr <= max_lr, got min_lr={min_lr}, max_lr={max_lr}."
+            )
+        if kl_factor <= 1.0:
+            raise ValueError(f"kl_factor must be > 1.0, got {kl_factor}.")
+        self.desired_kl = float(desired_kl)
+        self.min_lr = float(min_lr)
+        self.max_lr = float(max_lr)
+        self.kl_factor = float(kl_factor)
+        super().__init__(optimizer, last_epoch=last_epoch)
+
+    def get_lr(self) -> list[float]:
+        return [float(group["lr"]) for group in self.optimizer.param_groups]
+
+    def step_kl(self, kl: float) -> None:
+        """Scale every parameter group's learning rate based on observed ``kl``."""
+        if not math.isfinite(kl):
+            return
+        if kl > self.desired_kl * 2.0:
+            scale = 1.0 / self.kl_factor
+        elif 0.0 < kl < self.desired_kl / 2.0:
+            scale = self.kl_factor
+        else:
+            return
+        for group in self.optimizer.param_groups:
+            group["lr"] = max(self.min_lr, min(self.max_lr, group["lr"] * scale))
+        self._last_lr = self.get_lr()
+
+
 def get_lr_scheduler(
     lr_scheduler: str,
     optimizer: Optimizer,
@@ -622,6 +679,9 @@ def get_lr_scheduler(
     last_epoch: int = -1,
     min_lr: float = 0.0,
     min_lr_rate: float | None = None,
+    desired_kl: float = 0.01,
+    max_lr: float = 1e-2,
+    kl_factor: float = 1.5,
 ):
     # only one of min_lr and min_lr_rate should be set. If min_lr_rate is set, min_lr will be ignored.
     if min_lr_rate is not None:
@@ -749,6 +809,21 @@ def get_lr_scheduler(
             return f_min + (f_max - f_min) * (1.0 - progress)
 
         return LambdaLR(optimizer, lr_lambda, last_epoch=last_epoch)
+    elif lr_scheduler == "adaptive_kl":
+        if min_lr_rate is not None:
+            effective_min_lr = optimizer.param_groups[0]["lr"] * min_lr_rate
+        elif min_lr is not None and min_lr > 0.0:
+            effective_min_lr = min_lr
+        else:
+            effective_min_lr = 1e-5
+        return AdaptiveKLLRScheduler(
+            optimizer=optimizer,
+            desired_kl=desired_kl,
+            min_lr=effective_min_lr,
+            max_lr=max_lr,
+            kl_factor=kl_factor,
+            last_epoch=last_epoch,
+        )
     else:
         raise NotImplementedError(f"Scheduler type {lr_scheduler} is not supported")
 

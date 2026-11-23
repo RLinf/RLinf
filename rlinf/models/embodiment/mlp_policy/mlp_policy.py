@@ -19,6 +19,7 @@ import torch.nn.functional as F
 from torch.distributions.normal import Normal
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
+from rlinf.models.embodiment.modules.obs_norm import EmpiricalNormalization
 from rlinf.models.embodiment.modules.q_head import MultiCrossQHead, MultiQHead
 from rlinf.models.embodiment.modules.utils import get_act_func, layer_init
 from rlinf.models.embodiment.modules.value_head import ValueHead
@@ -35,6 +36,12 @@ class MLPPolicy(nn.Module, BasePolicy):
         q_head_type="default",
         value_granularity="action_level",
         critic_obs_dim=None,
+        hidden_sizes=(256, 256, 256),
+        critic_hidden_sizes=None,
+        activation="tanh",
+        init_logstd=-0.5,
+        obs_normalization=False,
+        obs_norm_eps=1e-2,
     ):
         super().__init__()
         self.obs_dim = obs_dim
@@ -45,20 +52,37 @@ class MLPPolicy(nn.Module, BasePolicy):
         # default setting
         self.independent_std = True
         self.final_tanh = False
-        activation = "tanh"
         action_scale = None
+        hidden_sizes = tuple(hidden_sizes)
+        critic_hidden_sizes = (
+            tuple(critic_hidden_sizes)
+            if critic_hidden_sizes is not None
+            else hidden_sizes
+        )
 
         self.value_granularity = value_granularity
+        self.obs_normalization = bool(obs_normalization)
 
         assert add_value_head + add_q_head <= 1
         output_dim = (
             1 if self.value_granularity == "chunk_level" else self.num_action_chunks
         )
 
+        self.actor_obs_normalizer = (
+            EmpiricalNormalization(obs_dim, eps=obs_norm_eps)
+            if self.obs_normalization
+            else nn.Identity()
+        )
+        self.critic_obs_normalizer = (
+            EmpiricalNormalization(self.critic_obs_dim, eps=obs_norm_eps)
+            if self.obs_normalization
+            else nn.Identity()
+        )
+
         if add_value_head:
             self.value_head = ValueHead(
-                obs_dim,
-                hidden_sizes=(256, 256, 256),
+                self.critic_obs_dim,
+                hidden_sizes=critic_hidden_sizes,
                 activation=activation,
                 output_dim=output_dim,
             )
@@ -70,7 +94,7 @@ class MLPPolicy(nn.Module, BasePolicy):
             if q_head_type == "default":
                 self.q_head = MultiQHead(
                     hidden_size=self.critic_obs_dim,
-                    hidden_dims=[256, 256, 256],
+                    hidden_dims=list(critic_hidden_sizes),
                     num_q_heads=2,
                     output_dim=output_dim,
                     action_feature_dim=action_dim * self.num_action_chunks,
@@ -78,7 +102,7 @@ class MLPPolicy(nn.Module, BasePolicy):
             elif q_head_type == "crossq":
                 self.q_head = MultiCrossQHead(
                     hidden_size=self.critic_obs_dim,
-                    hidden_dims=[256, 256, 256],
+                    hidden_dims=list(critic_hidden_sizes),
                     num_q_heads=2,
                     output_dim=output_dim,
                     action_feature_dim=action_dim * self.num_action_chunks,
@@ -88,23 +112,23 @@ class MLPPolicy(nn.Module, BasePolicy):
 
         act = get_act_func(activation)
 
-        self.backbone = nn.Sequential(
-            layer_init(nn.Linear(obs_dim, 256)),
-            act(),
-            layer_init(nn.Linear(256, 256)),
-            act(),
-            layer_init(nn.Linear(256, 256)),
-            act(),
-        )
+        backbone_layers = []
+        in_dim = obs_dim
+        for h in hidden_sizes:
+            backbone_layers.append(layer_init(nn.Linear(in_dim, h)))
+            backbone_layers.append(act())
+            in_dim = h
+        self.backbone = nn.Sequential(*backbone_layers)
         self.actor_mean = layer_init(
-            nn.Linear(256, self.num_action_chunks * action_dim), std=0.01 * np.sqrt(2)
+            nn.Linear(in_dim, self.num_action_chunks * action_dim),
+            std=0.01 * np.sqrt(2),
         )
         if self.independent_std:
             self.actor_logstd = nn.Parameter(
-                torch.ones(1, self.num_action_chunks * action_dim) * -0.5
+                torch.ones(1, self.num_action_chunks * action_dim) * float(init_logstd)
             )
         else:
-            self.actor_logstd = nn.Linear(256, self.num_action_chunks * action_dim)
+            self.actor_logstd = nn.Linear(in_dim, self.num_action_chunks * action_dim)
 
         if action_scale is not None:
             l, h = action_scale
@@ -121,7 +145,33 @@ class MLPPolicy(nn.Module, BasePolicy):
 
     def preprocess_env_obs(self, env_obs):
         device = next(self.parameters()).device
-        return {"states": env_obs["states"].to(device)}
+        obs = {"states": env_obs["states"].to(device)}
+        critic_states = env_obs.get("critic_states")
+        if critic_states is not None:
+            obs["critic_states"] = critic_states.to(device)
+        return obs
+
+    def update_obs_normalizer(self, forward_inputs):
+        """Update running actor and critic observation normalizers once per batch."""
+        if not self.obs_normalization:
+            return
+        states = forward_inputs.get("states")
+        if states is not None:
+            self.actor_obs_normalizer.update(states)
+        critic_states = forward_inputs.get("critic_states")
+        if critic_states is None:
+            critic_states = states
+        if critic_states is not None:
+            self.critic_obs_normalizer.update(critic_states)
+
+    def _encode_actor_obs(self, states: torch.Tensor) -> torch.Tensor:
+        return self.actor_obs_normalizer(states)
+
+    def _encode_critic_obs(
+        self, states: torch.Tensor, critic_states: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        raw = states if critic_states is None else critic_states
+        return self.critic_obs_normalizer(raw)
 
     def prepare_dagger_sft_batch(self, batch):
         """Prepare replay-buffer samples for DAgger SFT updates."""
@@ -160,7 +210,7 @@ class MLPPolicy(nn.Module, BasePolicy):
             raise NotImplementedError
 
     def sft_forward(self, data, **kwargs):
-        states = data["states"]
+        states = self._encode_actor_obs(data["states"])
         target_actions = data["action"]
 
         feat = self.backbone(states)
@@ -177,7 +227,7 @@ class MLPPolicy(nn.Module, BasePolicy):
         return F.mse_loss(pred_actions, target_actions, reduction="none")
 
     def sac_forward(self, obs, **kwargs):
-        feat = self.backbone(obs["states"])
+        feat = self.backbone(self._encode_actor_obs(obs["states"]))
         action_mean = self.actor_mean(feat)
         action_logstd = self.actor_logstd(feat)
         action_logstd = torch.tanh(action_logstd)
@@ -208,9 +258,10 @@ class MLPPolicy(nn.Module, BasePolicy):
         **kwargs,
     ):
         states = forward_inputs["states"]
+        critic_states = forward_inputs.get("critic_states")
         action = forward_inputs["action"]
 
-        feat = self.backbone(states)
+        feat = self.backbone(self._encode_actor_obs(states))
         action_mean = self.actor_mean(feat)
 
         if self.independent_std:
@@ -229,7 +280,7 @@ class MLPPolicy(nn.Module, BasePolicy):
             output_dict.update(entropy=entropy)
         if compute_values:
             if getattr(self, "value_head", None):
-                values = self.value_head(states)
+                values = self.value_head(self._encode_critic_obs(states, critic_states))
                 output_dict.update(values=values)
             else:
                 raise NotImplementedError
@@ -238,7 +289,7 @@ class MLPPolicy(nn.Module, BasePolicy):
     def _sample_actions(
         self, states: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        feat = self.backbone(states)
+        feat = self.backbone(self._encode_actor_obs(states))
         action_mean = self.actor_mean(feat)
 
         if self.independent_std:
@@ -259,6 +310,7 @@ class MLPPolicy(nn.Module, BasePolicy):
         mode: str = "train",
         calculate_values: bool = True,
         use_rsample: bool = False,
+        critic_states: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         action_mean, action_logstd = self._sample_actions(states)
 
@@ -286,11 +338,29 @@ class MLPPolicy(nn.Module, BasePolicy):
 
         chunk_actions = action.reshape(-1, self.num_action_chunks, self.action_dim)
         if hasattr(self, "value_head") and calculate_values:
-            chunk_values = self.value_head(states)
+            chunk_values = self.value_head(
+                self._encode_critic_obs(states, critic_states)
+            )
         else:
             chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
 
         return action, chunk_actions, chunk_logprobs, chunk_values
+
+    def supports_value_only_bootstrap(self) -> bool:
+        """Return whether this policy instance has a value head for bootstrap."""
+        return hasattr(self, "value_head")
+
+    @torch.inference_mode()
+    def predict_value_batch(self, env_obs):
+        """Compute value estimates without sampling actions."""
+        if not hasattr(self, "value_head"):
+            raise NotImplementedError(
+                "MLPPolicy.predict_value_batch requires add_value_head=True."
+            )
+        env_obs = self.preprocess_env_obs(env_obs=env_obs)
+        return self.value_head(
+            self._encode_critic_obs(env_obs["states"], env_obs.get("critic_states"))
+        )
 
     @torch.inference_mode()
     def predict_action_batch(
@@ -303,14 +373,20 @@ class MLPPolicy(nn.Module, BasePolicy):
         **kwargs,
     ):
         env_obs = self.preprocess_env_obs(env_obs=env_obs)
+        critic_states = env_obs.get("critic_states")
 
         action, chunk_actions, chunk_logprobs, chunk_values = self._generate_actions(
-            env_obs["states"], mode=mode, calculate_values=calculate_values
+            env_obs["states"],
+            mode=mode,
+            calculate_values=calculate_values,
+            critic_states=critic_states,
         )
 
         forward_inputs = {"action": action, "model_action": action}
         if return_obs:
             forward_inputs["states"] = env_obs["states"]
+            if critic_states is not None:
+                forward_inputs["critic_states"] = critic_states
 
         result = {
             "prev_logprobs": chunk_logprobs,
@@ -320,7 +396,8 @@ class MLPPolicy(nn.Module, BasePolicy):
         return chunk_actions, result
 
     def sac_q_forward(self, obs, actions, shared_feature=None, detach_encoder=False):
-        return self.q_head(obs["states"], actions)
+        critic_obs = self._encode_critic_obs(obs["states"], obs.get("critic_states"))
+        return self.q_head(critic_obs, actions)
 
     def crossq_q_forward(
         self,
@@ -331,10 +408,16 @@ class MLPPolicy(nn.Module, BasePolicy):
         shared_feature=None,
         detach_encoder=False,
     ):
+        critic_obs = self._encode_critic_obs(obs["states"], obs.get("critic_states"))
+        next_critic_obs = (
+            self._encode_critic_obs(next_obs["states"], next_obs.get("critic_states"))
+            if next_obs is not None
+            else None
+        )
         return self.q_head(
-            obs["states"],
+            critic_obs,
             actions,
-            next_state_features=next_obs["states"] if next_obs is not None else None,
+            next_state_features=next_critic_obs,
             next_action_features=next_actions,
         )
 
@@ -359,6 +442,11 @@ class MLPPolicy(nn.Module, BasePolicy):
             ),
         }
         external_inputs = {"states"}
+        if calculate_values and hasattr(self, "value_head"):
+            inputs["critic_states"] = torch.zeros(
+                (batch_size, self.critic_obs_dim), device=device, dtype=dtype
+            )
+            external_inputs.add("critic_states")
 
         def action_generation_func(
             inputs: dict[str, torch.Tensor],
@@ -369,6 +457,7 @@ class MLPPolicy(nn.Module, BasePolicy):
                     mode=mode,
                     calculate_values=calculate_values,
                     use_rsample=True,
+                    critic_states=inputs.get("critic_states"),
                 )
             )
             outputs = {
@@ -428,15 +517,27 @@ class MLPPolicy(nn.Module, BasePolicy):
             self._eager_generate_actions = self._generate_actions
 
         def generate_actions_func(
-            states: torch.Tensor, mode: str, calculate_values: bool
+            states: torch.Tensor,
+            mode: str,
+            calculate_values: bool,
+            critic_states: torch.Tensor | None = None,
         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
             expected_batch_size = (
                 train_batch_size if mode == "train" else eval_batch_size
             )
             if states.shape[0] != expected_batch_size:
-                return self._eager_generate_actions(states, mode, calculate_values)
+                return self._eager_generate_actions(
+                    states,
+                    mode,
+                    calculate_values,
+                    critic_states=critic_states,
+                )
             graph_name = f"action_generation_{self.independent_std}_{self.final_tanh}_{mode}_{calculate_values}"
             inputs = {"states": states}
+            if calculate_values and hasattr(self, "value_head"):
+                inputs["critic_states"] = (
+                    states if critic_states is None else critic_states
+                )
             outputs = self.cuda_graph_manager.replay(graph_name, inputs=inputs)
             return (
                 outputs["action"],

@@ -35,6 +35,8 @@ class ValueHead(nn.Module):
             act = nn.GELU
         elif activation.lower() == "tanh":
             act = nn.Tanh
+        elif activation.lower() == "elu":
+            act = nn.ELU
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 
@@ -47,7 +49,10 @@ class ValueHead(nn.Module):
 
         self.mlp = nn.Sequential(*layers)
 
-        self._init_weights(activation.lower())
+        init_nonlinearity = (
+            "relu" if activation.lower() in ("elu", "gelu") else activation.lower()
+        )
+        self._init_weights(init_nonlinearity)
 
     def _init_weights(self, nonlinearity="relu"):
         for m in self.mlp:
