@@ -247,7 +247,7 @@ def install_shell_hook(
             status="unsupported",
             detail=(
                 "Could not detect shell from $SHELL. Specify one explicitly: "
-                f"rlinf shell-init --install <{'|'.join(SUPPORTED_SHELLS)}>"
+                f"rlinf shell-init <{'|'.join(SUPPORTED_SHELLS)}>"
             ),
         )
 
@@ -402,43 +402,27 @@ def discover_venvs(repo_root: Path | None = None) -> list[Path]:
 def handle_shell_init(
     *,
     shell: str | None = None,
-    install: bool = False,
+    print_only: bool = False,
     uninstall: bool = False,
     stream: TextIO | None = None,
     err_stream: TextIO | None = None,
     home: Path | None = None,
     env: Mapping[str, str] | None = None,
 ) -> int:
-    """Execute ``rlinf shell-init`` (print snippet, ``--install``, or ``--uninstall``)."""
+    """Execute ``rlinf shell-init`` (install by default, ``--print``, or ``--uninstall``)."""
     out = sys.stdout if stream is None else stream
     err = sys.stderr if err_stream is None else err_stream
 
-    if install and uninstall:
-        err.write("error: Cannot pass both '--install' and '--uninstall'.\n")
+    if print_only and uninstall:
+        err.write("error: Cannot pass both '--print' and '--uninstall'.\n")
         err.flush()
         return 2
 
-    if install:
-        result = install_shell_hook(shell, home=home, env=env)
-        if result.status in ("installed", "updated", "already_installed"):
-            assert result.rc_path is not None and result.shell is not None
-            reload_cmd = manual_reload_command(result.rc_path, result.shell)
-            if result.status == "already_installed":
-                out.write(
-                    f"[rlinf] Shell hook ({result.shell}) is already installed in {result.rc_path}.\n"
-                )
-            else:
-                verb = "Installed" if result.status == "installed" else "Updated"
-                out.write(
-                    f"[rlinf] {verb} {result.shell} shell hook in {result.rc_path}.\n"
-                )
-            if not is_shell_hook_active(env):
-                out.write(f"[rlinf] Activate in this shell now with:\n  {reload_cmd}\n")
-            out.flush()
-            return 0
-        err.write(f"error: Could not install shell hook: {result.detail}\n")
-        err.flush()
-        return 2
+    if print_only:
+        target_shell = shell or detect_shell(env) or "bash"
+        out.write(render_shell_hook(target_shell))
+        out.flush()
+        return 0
 
     if uninstall:
         result = uninstall_shell_hook(shell, home=home, env=env)
@@ -456,10 +440,26 @@ def handle_shell_init(
         err.flush()
         return 2
 
-    target_shell = shell or detect_shell(env) or "bash"
-    out.write(render_shell_hook(target_shell))
-    out.flush()
-    return 0
+    result = install_shell_hook(shell, home=home, env=env)
+    if result.status in ("installed", "updated", "already_installed"):
+        assert result.rc_path is not None and result.shell is not None
+        reload_cmd = manual_reload_command(result.rc_path, result.shell)
+        if result.status == "already_installed":
+            out.write(
+                f"[rlinf] Shell hook ({result.shell}) is already installed in {result.rc_path}.\n"
+            )
+        else:
+            verb = "Installed" if result.status == "installed" else "Updated"
+            out.write(
+                f"[rlinf] {verb} {result.shell} shell hook in {result.rc_path}.\n"
+            )
+        if not is_shell_hook_active(env):
+            out.write(f"[rlinf] Activate in this shell now with:\n  {reload_cmd}\n")
+        out.flush()
+        return 0
+    err.write(f"error: Could not install shell hook: {result.detail}\n")
+    err.flush()
+    return 2
 
 
 def handle_use(
@@ -537,6 +537,6 @@ def handle_use(
     if reload_hint is not None:
         out.write(f"Reload shell hook in this shell:\n  {reload_hint}\n")
     else:
-        out.write("Enable automatic switching once:\n  rlinf shell-init --install\n")
+        out.write("Enable automatic switching once:\n  rlinf shell-init\n")
     out.flush()
     return 0

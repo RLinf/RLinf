@@ -44,7 +44,12 @@ from .installer import (
     format_install_options,
     load_install_options,
 )
-from .launcher import build_launch_plan, execute_launch_plan, resolve_venv_python
+from .launcher import (
+    build_launch_plan,
+    execute_launch_plan,
+    load_venv_activate_env,
+    resolve_venv_python,
+)
 from .shell import SUPPORTED_SHELLS, handle_shell_init, handle_use
 
 _KNOWN_LAUNCH_FLAGS: tuple[str, ...] = (
@@ -250,7 +255,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # rlinf shell-init
     shell_init_parser = subparsers.add_parser(
         "shell-init",
-        help="Print or install the rlinf shell hook (bash, zsh, fish, pwsh) for automatic venv switching.",
+        help="Install (default), print, or remove the rlinf shell hook (bash, zsh, fish, pwsh).",
     )
     shell_init_parser.add_argument(
         "shell",
@@ -259,9 +264,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Target shell (defaults to detecting $SHELL).",
     )
     shell_init_parser.add_argument(
-        "--install",
+        "--print",
+        dest="print_only",
         action="store_true",
-        help="Install or update the shell hook in your shell startup file.",
+        help="Print the shell hook snippet to stdout without modifying startup files.",
     )
     shell_init_parser.add_argument(
         "--uninstall",
@@ -684,24 +690,17 @@ def _handle_doctor(
         if root is not None:
             target_py, resolved_venv = resolve_venv_python(root, venv=args.venv)
             if os.path.abspath(target_py) != os.path.abspath(sys.executable):
-                child_env = dict(os.environ)
+                child_env = (
+                    load_venv_activate_env(resolved_venv, os.environ)
+                    if resolved_venv is not None
+                    else dict(os.environ)
+                )
                 child_env["_RLINF_DOCTOR_DELEGATED"] = "1"
                 child_env["REPO_PATH"] = str(root)
                 existing_pp = child_env.get("PYTHONPATH", "")
                 child_env["PYTHONPATH"] = (
                     f"{root}{os.pathsep}{existing_pp}" if existing_pp else str(root)
                 )
-                if resolved_venv is not None:
-                    child_env["VIRTUAL_ENV"] = str(resolved_venv)
-                    bin_dir = str(
-                        resolved_venv / ("Scripts" if os.name == "nt" else "bin")
-                    )
-                    existing_path = child_env.get("PATH", "")
-                    child_env["PATH"] = (
-                        f"{bin_dir}{os.pathsep}{existing_path}"
-                        if existing_path
-                        else bin_dir
-                    )
                 cmd = [target_py, "-m", "rlinf.cli", "doctor"]
                 if args.network:
                     cmd.append("--network")
@@ -839,7 +838,7 @@ def main(
         if args.command == "shell-init":
             return handle_shell_init(
                 shell=args.shell,
-                install=args.install,
+                print_only=args.print_only,
                 uninstall=args.uninstall,
                 stream=out,
                 err_stream=err,

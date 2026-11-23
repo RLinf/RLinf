@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -256,6 +257,71 @@ def resolve_venv_python(
     return sys.executable, None
 
 
+_BASH_INTERNAL_ENV_KEYS: frozenset[str] = frozenset(
+    {"_", "SHLVL", "PWD", "OLDPWD", "PS1"}
+)
+
+
+def load_venv_activate_env(
+    venv_dir: Path,
+    base_env: Mapping[str, str],
+) -> dict[str, str]:
+    """Return a copy of ``base_env`` with ``<venv_dir>/bin/activate`` applied.
+
+    Captures custom ``export`` and ``source`` hooks that ``requirements/install.sh``
+    appends to ``bin/activate`` (e.g. ``LD_LIBRARY_PATH``, ``PYTHONPATH``,
+    ``OMNI_KIT_ACCEPT_EULA``, vendor toolkits) so ``rlinf train`` / ``doctor``
+    work directly right after ``rlinf install`` without manual ``source``.
+    """
+    env = dict(base_env)
+    resolved_venv = venv_dir.resolve()
+    bin_dir = str(resolved_venv / ("Scripts" if os.name == "nt" else "bin"))
+
+    active_raw = env.get("VIRTUAL_ENV")
+    if active_raw and Path(active_raw).expanduser().resolve() == resolved_venv:
+        return env
+
+    activate_script = resolved_venv / "bin" / "activate"
+    bash_bin = shutil.which("bash")
+    if activate_script.is_file() and bash_bin is not None:
+        probe_env = dict(env)
+        probe_env.setdefault("PATH", os.environ.get("PATH", "/usr/bin:/bin"))
+        try:
+            proc = subprocess.run(
+                [
+                    bash_bin,
+                    "-c",
+                    'source "$1" >/dev/null 2>&1 && env -0',
+                    "_",
+                    str(activate_script),
+                ],
+                env=probe_env,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            if proc.returncode == 0 and proc.stdout:
+                parsed: dict[str, str] = {}
+                for entry in proc.stdout.decode(
+                    "utf-8", errors="surrogateescape"
+                ).split("\x00"):
+                    if "=" not in entry:
+                        continue
+                    key, val = entry.split("=", 1)
+                    if key in _BASH_INTERNAL_ENV_KEYS:
+                        continue
+                    parsed[key] = val
+                for key, val in parsed.items():
+                    if base_env.get(key) != val:
+                        env[key] = val
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    env["VIRTUAL_ENV"] = str(resolved_venv)
+    _prepend_path_env(env, bin_dir)
+    return env
+
+
 def build_launch_plan(
     recipe: RecipeSpec,
     repo_root: Path,
@@ -280,17 +346,17 @@ def build_launch_plan(
     Returns:
         A :class:`LaunchPlan` ready for execution or dry-run inspection.
     """
-    env = _build_env(recipe, repo_root, os.environ if base_env is None else base_env)
+    raw_env: Mapping[str, str] = os.environ if base_env is None else base_env
     if python_executable is not None:
         py = python_executable
-        resolved_venv: Path | None = None
+        effective_base: Mapping[str, str] = raw_env
     else:
-        py, resolved_venv = resolve_venv_python(repo_root, venv=venv, base_env=env)
+        py, resolved_venv = resolve_venv_python(repo_root, venv=venv, base_env=raw_env)
         if resolved_venv is not None:
-            env["VIRTUAL_ENV"] = str(resolved_venv)
-            _prepend_path_env(
-                env, str(resolved_venv / ("Scripts" if os.name == "nt" else "bin"))
-            )
+            effective_base = load_venv_activate_env(resolved_venv, raw_env)
+        else:
+            effective_base = raw_env
+    env = _build_env(recipe, repo_root, effective_base)
 
     command: list[str] = [
         py,

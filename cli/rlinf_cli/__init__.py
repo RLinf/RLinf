@@ -85,7 +85,7 @@ def _try_find_checkout_root() -> Path | None:
 def _run_standalone_shell_init(args: Sequence[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="rlinf shell-init",
-        description="Print or install the rlinf shell hook for automatic venv activation.",
+        description="Install (default), print, or remove the rlinf shell hook for automatic venv activation.",
     )
     parser.add_argument(
         "shell",
@@ -94,9 +94,10 @@ def _run_standalone_shell_init(args: Sequence[str]) -> int:
         help="Target shell (defaults to detecting $SHELL).",
     )
     parser.add_argument(
-        "--install",
+        "--print",
+        dest="print_only",
         action="store_true",
-        help="Install or update the shell hook in your shell startup file.",
+        help="Print the shell hook snippet to stdout without modifying startup files.",
     )
     parser.add_argument(
         "--uninstall",
@@ -106,7 +107,7 @@ def _run_standalone_shell_init(args: Sequence[str]) -> int:
     parsed = parser.parse_args(list(args))
     return handle_shell_init(
         shell=parsed.shell,
-        install=parsed.install,
+        print_only=parsed.print_only,
         uninstall=parsed.uninstall,
     )
 

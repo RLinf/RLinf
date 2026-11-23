@@ -304,7 +304,7 @@ def execute_install_plan(
         elif hook_res.status in ("unsupported", "error"):
             out.write(
                 "[rlinf] Shell hook could not be installed automatically "
-                f"({hook_res.detail}). Run 'rlinf shell-init --install <shell>' to set it up.\n"
+                f"({hook_res.detail}). Run 'rlinf shell-init <shell>' to set it up.\n"
             )
     out.flush()
 
@@ -345,12 +345,19 @@ def execute_install_plan(
             )
         else:
             activate_cmd = manual_activate_command(plan.venv_dir)
-            out.write(
-                f"[rlinf] Install complete in {elapsed:.1f}s.\n"
-                "[rlinf] Shell hook is not active in this shell. Activate manually:\n"
-                f"  {activate_cmd}\n"
-                "  rlinf doctor\n"
-            )
+            default_venv = (plan.repo_root / ".venv").resolve()
+            if venv_path == default_venv:
+                out.write(
+                    f"[rlinf] Install complete in {elapsed:.1f}s. "
+                    "You can run 'rlinf doctor' or 'rlinf train <recipe>' directly.\n"
+                    f"[rlinf] To also use python/pytest in this shell, run: {activate_cmd}\n"
+                )
+            else:
+                out.write(
+                    f"[rlinf] Install complete in {elapsed:.1f}s.\n"
+                    f"[rlinf] Run with '--venv {plan.venv_dir}' (e.g. 'rlinf doctor --venv {plan.venv_dir}'), "
+                    f"or activate in this shell:\n  {activate_cmd}\n"
+                )
     else:
         out.write(f"[rlinf] Install failed (exit {rc}) after {elapsed:.1f}s.\n")
     out.flush()

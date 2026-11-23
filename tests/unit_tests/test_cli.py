@@ -1351,6 +1351,22 @@ def test_venv_flag_and_auto_venv_resolution(tmp_path):
     assert rc_missing == 2
     assert "Virtual environment not found" in err_missing.getvalue()
 
+    # Custom exports appended to <venv>/bin/activate (e.g. NCCL / Megatron / IsaacLab)
+    # are loaded automatically when launching without manual `source`.
+    activate_file = custom_venv / "bin" / "activate"
+    activate_file.write_text(
+        'export RLINF_TEST_ACTIVATE_EXPORT="from_activate_script"\n'
+        'export PYTHONPATH="/opt/fake-megatron:${PYTHONPATH:-}"\n',
+        encoding="utf-8",
+    )
+    spec = resolve_recipe("maniskill_ppo_mlp", RecipeMode.TRAIN, REPO_ROOT)
+    plan_with_act = build_launch_plan(
+        spec, REPO_ROOT, venv=custom_venv, base_env={"PATH": os.environ.get("PATH", "")}
+    )
+    assert plan_with_act.env["RLINF_TEST_ACTIVATE_EXPORT"] == "from_activate_script"
+    assert "/opt/fake-megatron" in plan_with_act.env["PYTHONPATH"]
+    assert plan_with_act.env["VIRTUAL_ENV"] == str(custom_venv.resolve())
+
     # Active VIRTUAL_ENV overrides sys.executable when pointing to another venv.
     py_active, active_dir = resolve_venv_python(
         REPO_ROOT, base_env={"VIRTUAL_ENV": str(custom_venv)}
@@ -1502,9 +1518,9 @@ def test_lightweight_global_cli_package_end_to_end(tmp_path):
     assert lst.returncode == 0, lst.stderr
     assert "maniskill_ppo_mlp" in lst.stdout
 
-    # shell-init works even outside any RLinf checkout.
+    # shell-init works even outside any RLinf checkout (installs by default, --print emits snippet).
     hook_out = subprocess.run(
-        [str(rlinf_bin), "shell-init", "bash"],
+        [str(rlinf_bin), "shell-init", "--print", "bash"],
         cwd=tmp_path,
         env=clean_env,
         capture_output=True,
@@ -1519,7 +1535,7 @@ def test_lightweight_global_cli_package_end_to_end(tmp_path):
     venv.create(target_venv, with_pip=False, symlinks=True)
     bash_script = (
         f'export PATH="{tool_venv / "bin"}:$PATH"\n'
-        'eval "$(rlinf shell-init bash)"\n'
+        'eval "$(rlinf shell-init --print bash)"\n'
         f'rlinf use "{target_venv}"\n'
         'printf "VIRTUAL_ENV=%s\\n" "${VIRTUAL_ENV:-}"\n'
     )
@@ -1561,12 +1577,11 @@ def test_shell_init_install_update_and_uninstall_all_shells(tmp_path):
         assert res3.status == "removed"
         assert HOOK_START not in res1.rc_path.read_text(encoding="utf-8")
 
-    # handle_shell_init --install prints reload guidance when hook is not active yet.
+    # handle_shell_init installs by default and prints reload guidance when hook is not active yet.
     out = io.StringIO()
     err = io.StringIO()
     rc = handle_shell_init(
         shell="zsh",
-        install=True,
         stream=out,
         err_stream=err,
         home=tmp_path,
@@ -1629,7 +1644,7 @@ def test_use_without_hook_prints_manual_source_and_lists_venvs(tmp_path):
         env={"SHELL": "/bin/bash", "CI": "true"},
     )
     assert rc_ci == 0
-    assert "rlinf shell-init --install" in out_ci.getvalue()
+    assert "rlinf shell-init" in out_ci.getvalue()
     assert not (tmp_path / "ci-home" / ".bashrc").exists()
 
     # With active shell hook, writes target venv to RLINF_ACTIVATE_FILE.
