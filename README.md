@@ -187,25 +187,140 @@ RLinf updates models with a training engine and runs rollout and evaluation with
 
 ## Examples
 
-### Embodied AI
+### Models
 
-RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WAM) and Vision-Language-Action Models (VLA). The current support list is as follows:
+RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. The table below groups models and training recipes into System 0, System 1, System 2, and other model components.
 
 <table style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
     <tr>
-      <th style="min-width: 120px; text-align: left;">Simulators</th>
-      <th style="min-width: 120px;">Models</th>
+      <th style="min-width: 120px;">System 0<br>Motion Control</th>
+      <th style="min-width: 120px;">System 1<br>VLA / WAM</th>
+      <th style="min-width: 120px;">System 2<br>Reasoning and Agents</th>
+      <th style="min-width: 120px;">Others</th>
+    </tr>
+  </thead>
+  <tbody valign="top">
+    <tr>
+      <td>
+        <ul style="margin-left: 0; padding-left: 16px;">
+          <li>SuperMimic (coming soon)</li>
+        </ul>
+      </td>
+      <td>
+        <ul style="margin-left: 0; padding-left: 16px;">
+          <li><b>VLA</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html">π₀ / π₀.₅ (OpenPI)</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0_fast.html">π₀-FAST (LeRobot)</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/maniskill.html">OpenVLA</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/openvla_oft.html">OpenVLA-OFT</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html">GR00T (N1.5, N1.6, N1.7)</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexbotic.html">Dexbotic</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/starvla.html">StarVLA</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvla.html">LingbotVLA 1.0</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvlav2.html">LingbotVLA 2.0</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/abot_m0.html">ABot-M0</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/evo1.html">Evo-1</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/molmoact2.html">MolmoAct2</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/psi0.html">Psi0</a> ✅</li>
+            </ul>
+          </li>
+          <li><b>WAM</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_fastwam.html">FastWAM</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_cosmos3.html">Cosmos3</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_dreamzero.html">DreamZero</a> ✅</li>
+            </ul>
+          </li>
+        </ul>
+      </td>
+      <td>
+        <ul style="margin-left: 0; padding-left: 16px;">
+          <li><b>1. Robot-Use-Agent RL</b></li>
+          <li><b>2. Math Reasoning RL</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">Qwen2.5-1.5B</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">Qwen2.5-7B</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/moonlight.html">Moonlight-16B</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/agentlightning_calc_x.html">Qwen2.5-1.5B (AgentLightning Calc-X)</a> ✅</li>
+            </ul>
+          </li>
+          <li><b>3. Search RL</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><b>Search-R1 / rStar2</b>
+                <ul style="margin-left: 0; padding-left: 16px;">
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/qwen2.5.html">Qwen2.5-3B</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/rstar2.html">Qwen2.5-7B (rStar2)</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/glm4.7_flash.html">GLM-4.7-Flash</a> ✅</li>
+                </ul>
+              </li>
+              <li><b>WideSeek-R1</b>
+                <ul style="margin-left: 0; padding-left: 16px;">
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/wideseek_r1/train.html">Qwen3-4B</a> ✅</li>
+                </ul>
+              </li>
+            </ul>
+          </li>
+          <li><b>4. Geometric Reasoning RL</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/qwen3_vl_geo3k.html">Qwen3-VL</a> ✅</li>
+            </ul>
+          </li>
+          <li><b>VLM SFT</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen2.5-VL</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL-MoE</a> ✅</li>
+            </ul>
+          </li>
+        </ul>
+      </td>
+      <td>
+        <ul style="margin-left: 0; padding-left: 16px;">
+          <li><b>World Models</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opensora.html">OpenSora</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/wan.html">Wan</a> ✅</li>
+            </ul>
+          </li>
+          <li><b>Reward Models</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_reward_model.html">ResNet</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/extending/reward_model.html">Qwen3-VL</a> ✅</li>
+            </ul>
+          </li>
+          <li><b>Custom Models</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/mlp.html">MLP-Policy</a> ✅</li>
+              <li>CNN-Policy ✅</li>
+            </ul>
+          </li>
+        </ul>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+### Components
+
+The components below cover simulators, real-world environments, and training algorithms. For real-world deployment, see [RPent](https://github.com/RLinf/RPent).
+
+<table style="width: 100%; table-layout: auto; border-collapse: collapse;">
+  <thead align="center" valign="bottom">
+    <tr>
+      <th style="min-width: 120px;">Simulators</th>
+      <th style="min-width: 120px;">Real-world Env</th>
       <th style="min-width: 120px;">Algorithms</th>
     </tr>
   </thead>
   <tbody valign="top">
     <tr>
-      <td style="text-align: left; padding-left: 8px;">
+      <td>
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/maniskill.html">ManiSkill</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html">LIBERO</a> ✅</li>
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#liberopro-plus-benchmark">LIBERO-Pro & LIBERO-Plus</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#liberopro-plus-benchmark">LIBERO-Pro &amp; LIBERO-Plus</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#libero-mem-benchmark">LIBERO-Mem</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robotwin.html">RoboTwin</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/roboverse.html">RoboVerse</a> ✅</li>
@@ -230,147 +345,81 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
       </td>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li><b>VLA</b></li>
-          <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html">π₀ / π₀.₅ (OpenPI)</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0_fast.html">π₀-FAST (LeRobot)</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/maniskill.html">OpenVLA</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/openvla_oft.html">OpenVLA-OFT</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html">GR00T (N1.5, N1.6, N1.7)</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexbotic.html">Dexbotic</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/starvla.html">StarVLA</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvla.html">LingbotVLA 1.0</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvlav2.html">LingbotVLA 2.0</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/abot_m0.html">ABot-M0</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/evo1.html">Evo-1</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/molmoact2.html">MolmoAct2</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/psi0.html">Psi0</a> ✅</li>
-          </ul>
-          <li><b>VLM</b></li>
-          <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen2.5-VL</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL-MoE</a> ✅</li>
-          </ul>
-          <li><b>World Model</b></li>
-          <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opensora.html">OpenSora</a> ✅</li>
-          </ul>
-          <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/wan.html">Wan</a> ✅</li>
-          </ul>
-          <li><b>Custom Models</b></li>
-          <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/mlp.html">MLP-Policy</a> ✅</li>
-            <li>CNN-Policy ✅</li>
-          </ul>
-          <li><b>Reward Model</b></li>
-          <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_reward_model.html">ResNet</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/extending/reward_model.html">Qwen3-VL</a> ✅</li>
-          </ul>
-          <li><b>World Action Model</b></li>
-          <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_fastwam.html">FastWAM</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_cosmos3.html">Cosmos3</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_dreamzero.html">DreamZero</a> ✅</li>
-          </ul>
+          <li><b>Robotics</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_index.html">Single-Arm Franka</a>
+                <ul>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">Intel RealSense</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Stereolabs ZED</a> ✅</li>
+                  <li>Lumos Camera ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_orbbec.html">Orbbec RGB-D Camera</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">Franka Hand</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_dexhand.html">Ruiyan Hand</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Robotiq 2F-85 / 2F-140</a> ✅</li>
+                </ul>
+              </li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dual_franka_index.html">Dual-Arm Franka</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/arx5.html">ARX X5</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/xsquare_turtle2.html">XSquare Turtle2</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dosw1.html">DOS-W1</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gim_arm.html">GimArm</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/piper.html">AgileX Piper</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/so101.html">SO101</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/r2.html">Robbyant R2</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lekiwi.html">LeKiwi</a> ✅</li>
+              <li>More...</li>
+            </ul>
+          </li>
+          <li><b>Data Collection</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_gello.html">GELLO</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">SpaceMouse</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_vr.html">PICO VR</a> ✅</li>
+            </ul>
+          </li>
         </ul>
       </td>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li><b>RL Algos</b></li>
-          <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html">FlexRLT (AC / TD3)</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/grpo.html">GRPO</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/ppo.html">PPO</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/async_ppo.html">Async PPO</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/dapo.html">DAPO</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/reinforce.html">Reinforce++</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/sac.html">SAC</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/crossq.html">CrossQ</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/rlpd.html">RLPD</a> ✅</li>
-            <li><a href="https://arxiv.org/abs/2509.25756">SAC-Flow</a> ✅</li>
-            <li><a href="https://arxiv.org/abs/2506.15799">DSRL</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/iql.html">IQL</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/recap.html">RECAP (CFG)</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/steam.html">STEAM</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rlt.html">RLT</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opd.html">OPD</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/diffusion_art.html">DiffusionART</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html">ReFL</a> ✅</li>
-          </ul>
-          <li><b>SFT</b></li>
-          <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html">Full-parameter SFT</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html">LoRA SFT</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">VLM SFT</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dagger.html">DAgger</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/hg-dagger.html">HG-DAgger</a> ✅</li>
-          </ul>
+          <li><b>RL Algos</b>
+            <ul>
+              <li>SuperMimic (coming soon)</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html">FlexRLT (AC / TD3)</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/grpo.html">GRPO</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/ppo.html">PPO</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/async_ppo.html">Async PPO</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/dapo.html">DAPO</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/reinforce.html">Reinforce++</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/sac.html">SAC</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/crossq.html">CrossQ</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/rlpd.html">RLPD</a> ✅</li>
+              <li><a href="https://arxiv.org/abs/2509.25756">SAC-Flow</a> ✅</li>
+              <li><a href="https://arxiv.org/abs/2506.15799">DSRL</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/iql.html">IQL</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/recap.html">RECAP (CFG)</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/steam.html">STEAM</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rlt.html">RLT</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opd.html">OPD</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/diffusion_art.html">DiffusionART</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html">ReFL</a> ✅</li>
+            </ul>
+          </li>
+          <li><b>SFT</b>
+            <ul>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html">Full-parameter SFT</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html">LoRA SFT</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">VLM SFT</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dagger.html">DAgger</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/hg-dagger.html">HG-DAgger</a> ✅</li>
+            </ul>
+          </li>
         </ul>
       </td>
     </tr>
   </tbody>
 </table>
 
-<table style="width: 100%; table-layout: auto; border-collapse: collapse;">
-  <thead align="center" valign="bottom">
-    <tr>
-      <th style="min-width: 120px;">Real-world Robotics</th>
-      <th style="min-width: 120px;">Data Collection</th>
-    </tr>
-  </thead>
-  <tbody valign="top">
-    <tr>
-      <td>
-        <ul style="margin-left: 0; padding-left: 16px;">
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_index.html">Single-Arm Franka</a></li>
-          <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">Intel RealSense</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Stereolabs ZED</a> ✅</li>
-            <li>Lumos Camera ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_orbbec.html">Orbbec RGB-D Camera</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">Franka Hand</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_dexhand.html">Ruiyan Hand</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Robotiq 2F-85 / 2F-140</a> ✅</li>
-          </ul>
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dual_franka_index.html">Dual-Arm Franka</a> ✅</li>
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/arx5.html">ARX X5</a> ✅</li>
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/xsquare_turtle2.html">XSquare Turtle2</a> ✅</li>
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dosw1.html">DOS-W1</a> ✅</li>
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gim_arm.html">GimArm</a> ✅</li>
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/piper.html">AgileX Piper</a> ✅</li>
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/so101.html">SO101</a> ✅</li>
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/r2.html">Robbyant R2</a> ✅</li>
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lekiwi.html">LeKiwi</a> ✅</li>
-          <li>More...</li>
-        </ul>
-      </td>
-      <td>
-        <ul style="margin-left: 0; padding-left: 16px;">
-          <li>
-            <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_gello.html">
-              GELLO
-            </a> ✅
-          </li>
-          <li>
-            <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">
-              SpaceMouse
-            </a> ✅
-          </li>
-          <li>
-            <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_vr.html">
-              PICO VR
-            </a> ✅
-          </li>          
-        </ul>
-      </td>
-    </tr>
-  </tbody>
-</table>
-
-#### Hardware Support
+### Hardware Support
 
 RLinf hides hardware differences behind one low-level accelerator interface, so the same training stack runs on NVIDIA, AMD, and Intel GPUs as well as Huawei Ascend, Moore Threads, Kunlunxin, MetaX, and Biren accelerators. You can move a training job across accelerators without changing models or algorithms, and hardware vendors adapt a small device and collective interface without maintaining a fork.
 
@@ -389,60 +438,6 @@ Follow a model or environment link for its training recipe and available backend
 | [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html) | SFT (LeRobot datasets) | ✅ | — | — | — | — | — | — | ✅ |
 | [StarVLA (QwenOFT)](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/starvla.html#starvla-hardware) | LIBERO | ✅ | ✅ | — | — | — | — | — | — |
 | [DreamZero](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_dreamzero.html#sft-dreamzero-hardware) | SFT (LeRobot datasets) | ✅ | ✅ | — | — | — | — | — | — |
-
-### Agentic AI
-
-<table style="width: 100%; table-layout: auto; border-collapse: collapse;">
-  <thead align="center" valign="bottom">
-    <tr>
-      <th style="min-width: 200px;">Single-Agent</th>
-      <th style="min-width: 200px;">Multi-Agent</th>
-    </tr>
-  </thead>
-  <tbody valign="top">
-    <tr>
-      <td>
-        <ul style="margin-left: 0; padding-left: 16px;">
-          <li>
-            <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/index.html">
-              SearchR1
-            </a> ✅
-          </li>
-          <li>
-            <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/rstar2.html">
-              rStar2
-            </a> ✅
-          </li>
-          <li>
-            <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/agentlightning_calc_x.html">
-              AgentLightning Calc-X
-            </a> ✅
-          </li>
-          <li>
-            <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/coding_online_rl.html">
-              Online Coder
-            </a> ✅
-          </li>
-          <li>
-            <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">
-              Math Reasoning RL
-            </a> ✅
-          </li>
-        </ul>
-      </td>
-      <td>
-        <ul style="margin-left: 0; padding-left: 16px;">
-          <li>
-            <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/wideseek_r1/index.html">
-              WideSeek-R1
-            </a> ✅
-          </li>
-        </ul>
-      </td>
-    </tr>
-  </tbody>
-</table>
-
 
 ## Quick Start
 **Installation:** Users can refer to our [installation guide](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html) to install RLinf. We recommend users to use our provided docker image (i.e., [Installation Method 1](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html#installation-method-1-docker-image)), as the environment and dependencies of embodied RL are complex.
