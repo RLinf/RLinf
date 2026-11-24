@@ -33,6 +33,7 @@ class VLNCEServerEnv:
         from transformers import AutoTokenizer
         from vlnce_server.client import BatchEnvClient
         from vlnce_server.env_config import VLNCEEnvConfig
+        from vlnce_server.prompt import SYSTEM_PROMPT_NO_THINK
 
         self.worker_info = worker_info
         self.cfg = cfg
@@ -49,6 +50,7 @@ class VLNCEServerEnv:
             cfg.tokenizer_path, trust_remote_code=False
         )
         self._config_type = VLNCEEnvConfig
+        self._system_prompt = SYSTEM_PROMPT_NO_THINK[cfg.action_space]
         self._ids = [str(uuid4()) for _ in range(num_envs)]
         self._created = False
         self._created_configs = None
@@ -142,9 +144,10 @@ class VLNCEServerEnv:
             observations = self.client.reset_batch(
                 dict.fromkeys(self._ids, self.cfg.seed)
             )
-            prompts = self.client.get_system_prompts_batch(self._ids)
             for index, env_id in enumerate(self._ids):
-                self._messages[index] = [{"role": "system", "content": prompts[env_id]}]
+                self._messages[index] = [
+                    {"role": "system", "content": self._system_prompt}
+                ]
                 self._images[index] = []
                 history, _ = observations[env_id]
                 self._task_descriptions[index] = history[0]["obs_str"]
