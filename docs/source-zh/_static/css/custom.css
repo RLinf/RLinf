@@ -113,13 +113,36 @@ body {
 
 .bd-article {
   font-size: 0.955rem;
-  line-height: 1.7;
+  line-height: 1.72;
   color: var(--pst-color-text-base);
 }
 
 .bd-article p,
 .bd-article li {
-  line-height: 1.7;
+  line-height: 1.72;
+}
+
+.bd-article p {
+  margin-top: 0;
+  margin-bottom: 0.68rem;
+}
+
+.bd-article ul,
+.bd-article ol {
+  margin-top: 0.35rem;
+  margin-bottom: 0.85rem;
+}
+
+.bd-article li {
+  margin-bottom: 0.28rem;
+}
+
+.bd-article li > p {
+  margin-bottom: 0.35rem;
+}
+
+.bd-article li > p:last-child {
+  margin-bottom: 0;
 }
 
 .bd-article h1,
@@ -134,30 +157,44 @@ body {
   font-size: 2.05rem;
   font-weight: 750;
   line-height: 1.22;
-  margin-bottom: 1.2rem;
+  margin-bottom: 1.35rem;
 }
 
 .bd-article h2 {
-  border-bottom: 1px solid var(--rlinf-border);
+  border-bottom: 1.5px solid var(--rlinf-border);
   font-size: 1.38rem;
   font-weight: 680;
-  margin-top: 2.4rem;
-  margin-bottom: 0.95rem;
-  padding-bottom: 0.45rem;
+  margin-top: 2.85rem;
+  margin-bottom: 1.1rem;
+  padding-bottom: 0.5rem;
 }
 
 .bd-article h3 {
   font-size: 1.12rem;
-  font-weight: 640;
-  margin-top: 1.7rem;
-  margin-bottom: 0.6rem;
+  font-weight: 650;
+  margin-top: 2.15rem;
+  margin-bottom: 0.85rem;
+}
+
+.bd-article h2 + section > h3:first-child {
+  margin-top: 1.25rem;
+}
+
+.bd-article > section > section > section + section {
+  border-top: 1px solid var(--rlinf-border);
+  margin-top: 1.9rem;
+  padding-top: 1.45rem;
+}
+
+.bd-article > section > section > section + section > h3:first-child {
+  margin-top: 0;
 }
 
 .bd-article h4 {
-  font-size: 0.97rem;
-  font-weight: 620;
-  margin-top: 1.25rem;
-  margin-bottom: 0.45rem;
+  font-size: 0.98rem;
+  font-weight: 630;
+  margin-top: 1.65rem;
+  margin-bottom: 0.72rem;
 }
 
 /* Subtle hover-revealed heading permalinks */
@@ -1072,7 +1109,7 @@ div[class*="highlight-"] {
 }
 
 .bd-article div[class*="highlight-"] {
-  margin: 1rem 0;
+  margin: 0.7rem 0 0.95rem;
 }
 
 .bd-article div.literal-block-wrapper div[class*="highlight-"] {
