@@ -1,10 +1,6 @@
 配置参考
 ========
 
-.. note::
-
-   ``evaluations/supermimic/`` 下的 SuperMimic 配置同样使用 ``eval_embodied_agent.py``、``runner.task_type: embodied_eval`` 和 ``env.eval``，但它们继承完整的训练配方，而不是删掉训练段：``rollout.model`` 指向 ``actor.model``，``algorithm`` 段保留。``actor.model.representation`` 必须和检查点一致，MaxCoord 要设成 ``maxcoord``。权重来自 ``runner.ckpt_path``\ （一个 ``full_weights.pt``），而不是 ``rollout.model.model_path``；``env.eval.eval_tasks`` 选择评测任务，``runner.eval_export`` 控制结果文件。见 :doc:`../../examples/embodied/supermimic_eval`。
-
 评测配置为 Hydra YAML，默认放在 ``evaluations/<benchmark>/`` 下。以 ``libero_spatial_openpi_pi05_eval.yaml`` 为例，核心结构如下：
 
 .. code-block:: yaml
@@ -92,6 +88,10 @@ env.eval 字段说明
 
 - ``runner.task_type: embodied_eval``
 - ``runner.only_eval: True``
+
+.. note::
+
+   ``evaluations/supermimic/`` 下的 SuperMimic 评测配置通过 ``defaults`` 继承完整训练配方（保留 ``algorithm`` 并将 ``rollout.model`` 指向 ``${actor.model}``），通过 ``runner.ckpt_path`` 加载 ``full_weights.pt``，以 ``env.eval.eval_tasks`` 选择任务，并用 ``runner.eval_export`` 控制结果导出。详见 :doc:`../guides/supermimic`。
 
 配置回退
 --------

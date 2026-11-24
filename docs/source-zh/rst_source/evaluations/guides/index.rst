@@ -34,6 +34,9 @@ Benchmark 指南
    * - SIMPLE
      - 使用 Psi0 的人形机器人全身评测
      - :doc:`simple`
+   * - SuperMimic
+     - Unitree G1 动作跟踪与站立推力恢复评测
+     - :doc:`supermimic`
 
 .. note::
 
@@ -51,3 +54,4 @@ Benchmark 指南
    robolab
    robotwin
    simple
+   supermimic

@@ -34,6 +34,9 @@ This section provides end-to-end evaluation workflows organized by benchmark. Ea
    * - SIMPLE
      - Whole-body humanoid evaluation with Psi0
      - :doc:`simple`
+   * - SuperMimic
+     - Unitree G1 motion tracking and standing push recovery
+     - :doc:`supermimic`
 
 .. note::
 
@@ -51,3 +54,4 @@ This section provides end-to-end evaluation workflows organized by benchmark. Ea
    robolab
    robotwin
    simple
+   supermimic

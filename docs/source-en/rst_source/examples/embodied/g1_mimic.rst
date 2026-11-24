@@ -1,15 +1,15 @@
-G1 Motion Tracking
-==================
+G1 Motion Tracking Environment
+==============================
 
-This page describes the Unitree G1 motion-tracking environment in MuJoCo
-Warp: how a task runs, what the policy reads and commands, what goes into
-the reward for one step, and when an episode ends. Train this environment
-with SuperMimic on the :doc:`SuperMimic page <supermimic>`.
+Train and evaluate whole-body motion-tracking policies for the 29-DoF Unitree G1 humanoid in MuJoCo Warp (via mjlab, ``env_type: g1_mimic``). The environment runs batched GPU physics for LAFAN1 or custom clip tracking and standing push recovery, and pairs with the :doc:`SuperMimic <supermimic>` recipe.
+
+.. toctree::
+   :hidden:
+
+   Motion Data <supermimic_motion>
 
 Overview
 --------
-
-The G1 follows a reference motion clip in simulation.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -17,7 +17,7 @@ The G1 follows a reference motion clip in simulation.
    .. grid-item-card:: Models
       :text-align: center
 
-      Unitree G1
+      SuperMimic Policy (Unitree G1)
 
    .. grid-item-card:: Algorithms
       :text-align: center
@@ -27,38 +27,37 @@ The G1 follows a reference motion clip in simulation.
    .. grid-item-card:: Tasks
       :text-align: center
 
-      LAFAN1 tracking; standing push recovery
+      LAFAN1 motion tracking · Standing push recovery
 
    .. grid-item-card:: Hardware
       :text-align: center
 
-      NVIDIA GPU
+      1–4 NVIDIA GPUs · :ref:`AMD ROCm (experimental) <supermimic-hardware>`
 
-| **You'll learn:** the task → observations and actions → the reward →
-  when an episode ends.
-| **Prerequisites:** installation, the clips, and the training commands are
-  on the :doc:`SuperMimic page <supermimic>`.
+| **You'll do:** install → prepare LAFAN1 clips → launch training or evaluation.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · one or more NVIDIA GPUs (or AMD ROCm) · network access to Hugging Face for LAFAN1 clips.
 
-The Task
-~~~~~~~~
+Tasks
+~~~~~
 
-The environment steps at 50 Hz. Each control step runs four physics steps of
-5 ms. The policy commands a target angle for each of the 29 joints, and a
-PD controller tracks those targets through the four physics steps.
+The environment supports two task modes selected by the training or evaluation config:
 
-Motion tracking starts at one frame of the reference clip. The environment
-places the robot in that pose and has it follow the motion from there. An
-episode lasts at most 10 seconds, and it also ends when the clip ends. The
-episode ends as a fall when the pelvis height error exceeds 0.25 m or the
-tilt error exceeds 0.8. The tilt error is the difference between the z
-components of gravity in the robot's pelvis frame and in the reference
-pelvis frame. Reaching the end of the clip, or the 10-second limit, ends the
-episode and is not a fall.
+.. list-table::
+   :header-rows: 1
+   :widths: 20 26 24 30
 
-Standing push recovery is an evaluation task in this environment. The robot
-holds mjlab's knees-bent standing pose, takes one horizontal push, and tries
-to settle. The push speeds, the number of trials, and the settle test are
-on the :doc:`evaluation page <supermimic_eval>`.
+   * - Task
+     - Reference Input
+     - Episode Limit & Failure
+     - Default Config
+   * - Motion tracking (``tracking``)
+     - 40 LAFAN1 clips (or custom / BONES-SEED clips)
+     - 10 s in training (full clip in eval); ends on clip end or fall
+     - ``supermimic_lafan1_gencoord`` / ``supermimic_lafan1_eval``
+   * - Standing push recovery (``push_recovery``)
+     - Built-in mjlab knees-bent standing pose (no clips required)
+     - 1 s settle + up to 5 s after horizontal velocity push (0.5–4.0 m/s)
+     - ``supermimic_push_recovery``
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -68,56 +67,165 @@ Observation and Action
    :widths: 18 82
 
    * - Field
-     - Description
+     - Specification
    * - Observation
-     - The robot's current state, plus ten reference frames starting at the
-       current frame and taken every five control steps. Past the end of the
-       clip, the window stays on the last frame. Training can read this state
-       as generalized coordinates or as the poses and velocities of the 14
-       tracked bodies. The two readings are on the
-       :doc:`algorithm page <../../reference/algorithms/supermimic>`.
+     - Current robot state paired with a 10-frame reference motion window starting from the current frame and sampled every 5 control steps (0.1 s spacing; clamped at the clip's last frame). State encoding uses generalized coordinates (``gencoord``, 68-dim) or tracked-body poses and velocities in the pelvis frame (``maxcoord``, 214-dim).
    * - Action
-     - Target angles for the 29 joints at 50 Hz, tracked by a PD controller.
-       Training adds noise with standard deviation 0.1. Evaluation applies
-       the policy output as commanded.
+     - 29-dim target joint angles at 50 Hz, tracked by a PD controller over four 5 ms physics substeps (200 Hz physics). Training adds Gaussian noise (``action_noise_std: 0.1``); evaluation runs the policy deterministically.
    * - Reward
-     - How closely the robot matches the reference clip on this control step.
-       A perfect match with no penalty scores 0.1. The next section gives
-       the composition.
+     - Per-step tracking reward over the pelvis and 14 bodies minus action-rate and soft joint-limit penalties (ceiling ``0.1`` per step; see `Reward and Termination`_ below).
    * - Prompt
-     - None. This is low-dimensional whole-body control.
+     - Not used (proprioceptive control only).
 
-Reward Design
--------------
+Environment Details
+-------------------
 
-The reward on a control step compares the robot with the reference clip. It
-has six tracking terms, plus penalties for a changing action and for joints
-past their soft limits.
+Tracked Bodies and Randomization
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The tracking terms score the pelvis position and orientation, and the
-position, orientation, linear velocity, and angular velocity of 14 tracked
-bodies on the pelvis, the legs, the torso, and the arms. For the body
-positions and orientations, the reference pose is moved to the robot
-pelvis's current horizontal position and yaw before the comparison, so those
-terms score the shape of the motion. The pelvis position and orientation are
-compared with the reference pelvis directly.
+Tracking scores 14 bodies across the humanoid:
 
-The six weights are 0.5, 0.5, 1, 1, 1, and 1. A smaller error brings a term
-closer to its weight. A perfect match sums to 5, and multiplying by the
-0.02 s control step gives 0.1. A large change from the previous action, or a
-joint past its soft limit, brings the reward below that. The formula and
-the way the world model uses this reward are on the
-:doc:`algorithm page <../../reference/algorithms/supermimic>`.
+* **Root & torso:** ``pelvis``, ``torso_link``
+* **Legs:** ``left/right_hip_roll_link``, ``left/right_knee_link``, ``left/right_ankle_roll_link``
+* **Arms:** ``left/right_shoulder_roll_link``, ``left/right_elbow_link``, ``left/right_wrist_yaw_link``
+
+During training, each environment draws domain randomization at initialization (foot friction in ``[0.3, 1.2]``, torso center-of-mass offsets, and 29 joint encoder biases in ``[-0.01, 0.01]`` rad) and adds reset noise to the sampled reference pose and velocities. Evaluation disables domain randomization, reset noise, and action noise.
+
+Reward and Termination
+~~~~~~~~~~~~~~~~~~~~~~
+
+Before scoring body position and orientation, the environment aligns the reference pose to the robot pelvis's horizontal position (xy) and yaw so those terms measure local posture; root terms compare directly against the reference pelvis.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 14 58
+
+   * - Term
+     - Weight
+     - What It Measures
+   * - Root position & orientation
+     - 0.5, 0.5
+     - World pelvis position and geodesic orientation error against the reference
+   * - Body position & orientation
+     - 1.0, 1.0
+     - Mean position and orientation error across the 14 tracked bodies (pelvis-anchored)
+   * - Body linear & angular velocity
+     - 1.0, 1.0
+     - Mean world linear and angular velocity error across the 14 tracked bodies
+   * - Action-rate penalty
+     - -0.1
+     - Squared change between consecutive raw policy actions
+   * - Joint-limit penalty
+     - -2.0
+     - Sum of joint-angle violations outside soft limits
+
+The sum of these terms is multiplied by ``0.02 s``, giving a tracking ceiling of ``0.1`` per step. An episode terminates as a **fall** when the pelvis height error exceeds ``0.25 m`` or the pelvis tilt error (difference in projected gravity z-component between robot and reference pelvis frames) exceeds ``0.8``. Reaching the 10-second training limit or the end of the clip ends the episode without counting as a fall.
+
+Environment Configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The default preset lives in ``examples/embodiment/config/env/g1_mimic.yaml``. Commonly adjusted keys:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 18 52
+
+   * - Key
+     - Default
+     - Meaning
+   * - ``motion_path``
+     - ``${oc.env:SUPERMIMIC_MOTION_PATH,""}``
+     - Directory containing converted ``clip_*.pt`` files
+   * - ``motion_format``
+     - ``lafan1``
+     - Dataset loader format: ``lafan1`` or ``bones_seed``
+   * - ``num_clips``
+     - ``null`` (``40`` in recipe)
+     - Number of clips to load; ``null`` loads every clip in ``motion_path``
+   * - ``motion_on_cpu``
+     - ``False``
+     - Keep the motion library in host RAM and transfer only queried frames to GPU
+   * - ``max_episode_seconds``
+     - ``10.0``
+     - Maximum training episode duration before truncation
+   * - ``action_noise_std``
+     - ``0.1``
+     - Standard deviation of Gaussian action noise during training
 
 Installation
 ------------
 
-Use the virtual environment from the :doc:`SuperMimic page <supermimic>`.
-The install command and the LAFAN1 preparation are on that page.
+.. include:: _setup_common.rst
+
+**Docker image**
+
+Build the SuperMimic target and start a container with GPU access:
+
+.. code-block:: bash
+
+   docker build -f docker/Dockerfile \
+       --build-arg BUILD_TARGET=embodied-supermimic \
+       -t rlinf:embodied-supermimic .
+   docker run -it --rm --gpus all \
+       --shm-size 32g --network host --name rlinf \
+       -v .:/workspace/RLinf rlinf:embodied-supermimic
+
+**Custom environment**
+
+Create a dedicated virtual environment from the repository root. This environment pins specific PyTorch, MuJoCo Warp, and ``warp-lang`` versions, so keep it separate from other RLinf virtual environments:
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --env supermimic --venv .venv-supermimic
+   source .venv-supermimic/bin/activate
+
+For AMD ROCm setup, see :ref:`Run on Different Hardware Backends <supermimic-hardware>`.
+
+Prepare Motion Data
+-------------------
+
+Training and motion-tracking evaluation use the 40 Unitree G1 clips from the ``g1/`` folder of `lvhaidong/LAFAN1_Retargeting_Dataset <https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset>`_ on Hugging Face. The retargeted clips originate from Ubisoft La Forge `LAFAN1 <https://github.com/ubisoft/ubisoft-laforge-animation-dataset>`_ (CC BY-NC-ND 4.0: non-commercial, no derivatives); review those terms before passing ``--accept-license``.
+
+Download, verify, and convert the 40 clips into ``/data/lafan1_g1``:
+
+.. code-block:: bash
+
+   python toolkits/supermimic/prepare_lafan1.py --out /data/lafan1_g1 --accept-license
+
+A successful conversion ends with:
+
+.. code-block:: text
+
+   [lafan1] wrote 40 clips, 2.45 h, manifest /data/lafan1_g1/manifest.json
+
+Keep the generated ``manifest.json`` and clip files unmodified; the loader verifies file checksums on startup. For offline conversion on a separate machine, experimental BONES-SEED support, or building your own ``clip_*.pt`` files, see :doc:`supermimic_motion`.
 
 Run It
 ------
 
-The training, resume, and evaluation commands are on the
-:doc:`SuperMimic page <supermimic>`. The evaluation metrics are on the
-:doc:`evaluation page <supermimic_eval>`.
+Export the clip directory and disable MuJoCo's OpenGL renderer (unused by training and evaluation), then launch the single-GPU GenCoord SuperMimic recipe on ``g1_mimic``:
+
+.. code-block:: bash
+
+   export PYTHONPATH=$PWD:$PYTHONPATH
+   export MUJOCO_GL=disabled
+   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
+
+   python examples/embodiment/train_embodied_agent.py \
+       --config-name supermimic_lafan1_gencoord \
+       runner.logger.log_path=/data/runs/supermimic_gencoord \
+       actor.cuda_graph=True
+
+What this command does:
+
+1. Loads ``examples/embodiment/config/supermimic_lafan1_gencoord.yaml`` and ``examples/embodiment/config/env/g1_mimic.yaml``.
+2. Starts 4096 parallel G1 environments on GPU 0 and trains for 6000 updates, saving checkpoints every 2000 updates.
+3. Prints a metrics table every 100 updates starting with ``Global Step: <step>/6000``.
+
+Next Steps
+----------
+
+* **Algorithm guide, multi-GPU scaling, MaxCoord, and results:** :doc:`supermimic`
+* **Standalone evaluation (motion tracking & standing push recovery):** :doc:`../../evaluations/guides/supermimic`
+* **Custom motion clips and offline conversion:** :doc:`supermimic_motion`
+* **Algorithm equations and implementation details:** :doc:`../../reference/algorithms/supermimic`

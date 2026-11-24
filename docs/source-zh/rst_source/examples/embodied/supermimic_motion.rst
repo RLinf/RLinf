@@ -1,24 +1,47 @@
-SuperMimic 动作数据
-===================
+G1 动作数据准备
+===============
 
-主指南 :doc:`supermimic` 用论文的 40 条 LAFAN1 片段训练。本页介绍如何用其他动作数据训练：实验性的 BONES-SEED 转换，以及自备片段要遵守的文件格式。
+为 :doc:`G1 动作跟踪环境 <g1_mimic>` 和 :doc:`SuperMimic <supermimic>` 准备参考动作片段，包括 LAFAN1 离线转换、实验性 BONES-SEED 流程以及自定义 ``clip_*.pt`` 文件格式。
 
 安装
 ----
 
-沿用 :doc:`supermimic` 里的环境。所有命令都在 RLinf 仓库根目录执行，并且已经激活这个环境。
+先激活 :doc:`g1_mimic` 中创建的 SuperMimic 虚拟环境，以下所有命令均在 RLinf 仓库根目录执行。
+
+离线转换 LAFAN1
+---------------
+
+训练机器无法访问 Hugging Face 时，可在另一台联网机器上完成下载和转换。转换机器需要 RLinf 代码以及装有 ``torch``、``numpy`` 和 ``omegaconf`` 的 Python 环境。由于转换会校验 mjlab G1 的默认关节姿态，需要先在训练机器上导出默认关节姿态：
+
+1. 在训练机器上导出默认关节姿态到 ``g1_q0.pt``：
+
+   .. code-block:: bash
+
+      python toolkits/supermimic/prepare_lafan1.py --export-q0 g1_q0.pt
+
+2. 将 ``g1_q0.pt`` 复制到转换机器。
+3. 在转换机器上使用这个姿态文件，下载并转换 40 条片段：
+
+   .. code-block:: bash
+
+      python toolkits/supermimic/prepare_lafan1.py --out /data/lafan1_g1 \
+          --q0-file /path/to/g1_q0.pt --accept-license
+
+4. 将整个 ``/data/lafan1_g1`` 目录（含 ``manifest.json``）复制到训练机器，并将 ``SUPERMIMIC_MOTION_PATH`` 指向这个目录。
 
 运行
 ----
 
-一个片段目录里放若干 ``clip_*.pt``\ （按文件名排序加载）。先在终端里执行主指南的设置代码，再把 ``SUPERMIMIC_MOTION_PATH`` 改成这个目录，然后用主指南里的训练和评测命令，加上下面各节的覆盖项。
-
-动作跟踪评测时每条片段占一个环境，默认规模按 40 条 LAFAN1 片段设定。加载的片段超过 40 条时，只设 ``env.eval.num_clips=null`` 会在启动时的容量校验里报错，还要增大 ``env.eval.total_num_envs``，或增大 ``env.eval.rollout_epoch`` 分几轮播放，让两者的乘积不少于片段数。如果有片段超过 ``env.eval.max_steps_per_rollout_epoch`` 个控制步（默认 13656），也要相应调大。
+动作目录下存放若干 ``clip_*.pt`` 文件，加载器按文件名排序读取。将 ``SUPERMIMIC_MOTION_PATH`` 指向你的动作目录后，在 :doc:`supermimic` 的训练命令或 :doc:`../../evaluations/guides/supermimic` 的评测命令后追加下面的覆盖参数即可。评测超过 40 条片段时的容量配置见 :doc:`../../evaluations/guides/supermimic`。
 
 BONES-SEED（实验性）
 ~~~~~~~~~~~~~~~~~~~~
 
-官方数据在 Hugging Face 的 `bones-studio/seed <https://huggingface.co/datasets/bones-studio/seed>`_，G1 轨迹位于 ``g1/csv/{日期}/{动作名}.csv``。先读数据包里的 ``LICENSE.md``；脚本不下载数据。表头约定沿用 NVIDIA ProtoMotions 的 `SEED G1 CSV 说明 <https://github.com/NVlabs/ProtoMotions/blob/main/docs/source/getting_started/seed_g1_csv_preparation.rst>`_：120 Hz；``root_translateX/Y/Z`` 单位厘米；``root_rotateX/Y/Z`` 是外旋 XYZ 欧拉角、单位度；29 个 ``<关节名>_dof`` 列单位度，名字对应 mjlab 的 G1 关节。这个约定还没有拿官方 CSV 核对过。
+官方数据集托管在 Hugging Face 的 `bones-studio/seed <https://huggingface.co/datasets/bones-studio/seed>`_，G1 轨迹位于 ``g1/csv/{date}/{motion}.csv``。使用前请先阅读数据包内的 ``LICENSE.md``，转换脚本不自动下载数据。
+
+转换脚本沿用 NVIDIA ProtoMotions 的 `SEED G1 CSV 说明 <https://github.com/NVlabs/ProtoMotions/blob/main/docs/source/getting_started/seed_g1_csv_preparation.rst>`_\ （120 Hz、根节点平移单位厘米、外旋 XYZ 欧拉角单位度、29 个 ``<joint>_dof`` 列单位度且与 mjlab G1 关节名一致）。转换器只在合成 CSV 上测试过，尚未对照官方 CSV 核验。
+
+将 CSV 重采样为 50 Hz 片段并生成几何可行性标注：
 
 .. code-block:: bash
 
@@ -29,28 +52,26 @@ BONES-SEED（实验性）
        --out /data/bones_g1_annotated
    export SUPERMIMIC_MOTION_PATH=/data/bones_g1_annotated
 
-``--input`` 可以是单个 CSV 或递归扫描的目录。片段重采样到 50 Hz，已有输出默认不覆盖（``--overwrite`` 除外），单个损坏的 CSV 会报告原因而不影响其他文件。转换器只在合成 CSV 上测试过。
+``--input`` 支持单个 CSV 文件或递归扫描目录；默认跳过已有输出（加 ``--overwrite`` 可覆盖），遇到损坏 CSV 会报错提示并继续处理其余文件。``bones_feasibility.py`` 为所有片段附加几何标注但不删除文件。启动训练或评测时，加载器按动作名和标注过滤不合格片段，并将动作库留在 CPU 内存中，只把查询帧传到 GPU。
 
-``bones_feasibility.py`` 把每条片段连同几何标注写进 ``--out`` 目录，不删除任何片段。训练和动作跟踪评测加载时，按动作名和这些标注筛掉不合格的片段。用这些片段训练或评测时，在启动命令后追加：
+在 BONES-SEED 片段上训练或评测时，在启动命令后追加：
 
 .. code-block:: bash
 
    env.train.motion_format=bones_seed env.train.num_clips=null \
        env.eval.motion_format=bones_seed env.eval.num_clips=null
 
-BONES-SEED 的加载器把动作库放在主机内存，只把查询到的行传到 GPU。
+自定义片段
+~~~~~~~~~~
 
-自备片段
-~~~~~~~~
+按下方格式写出每个 ``clip_*.pt`` 并放入同一目录，将 ``SUPERMIMIC_MOTION_PATH`` 指向这个目录，训练时加 ``env.train.num_clips=null``\ （评测加 ``env.eval.num_clips=null``）即可加载目录下全部片段。
 
-按下面的格式写出每条片段，放进同一个目录，训练时加 ``env.train.num_clips=null``\ （评测加 ``env.eval.num_clips=null``），加载目录里的全部片段。
-
-目录里可以再放一个 ``manifest.json``。有清单时，加载器会拒绝 SHA-256 对不上或清单里没有的片段；没有清单时只检查格式。BONES-SEED 格式不读清单。
+如果目录包含 ``manifest.json``，``lafan1`` 加载器会校验每条片段的 SHA-256 并拒绝未登记文件；不含 ``manifest.json`` 时仅检查张量形状与数值合法性。``bones_seed`` 加载器不读取 ``manifest.json``。
 
 片段文件格式
 ------------
 
-每个 ``clip_*.pt`` 是用 ``torch.save`` 保存的字典：
+每个 ``clip_*.pt`` 都是用 ``torch.save`` 保存的 Python 字典：
 
 .. list-table::
    :header-rows: 1
@@ -59,43 +80,45 @@ BONES-SEED 的加载器把动作库放在主机内存，只把查询到的行传
    * - 键
      - 内容
    * - ``fps``
-     - 50，或 30。30 Hz 的片段会重采样到 50 Hz 控制网格，速度用中心差分重新计算；50 Hz 的片段按原样使用，**速度列必须自己填对**。不支持其他帧率。
+     - ``50`` 或 ``30``。30 Hz 片段会自动重采样到 50 Hz 控制网格并用中心差分重算速度；50 Hz 片段按原样读取，**速度列必须填写准确**。不支持其他帧率。
    * - ``joint_names``
-     - 29 个关节名，必须与 ``rlinf.envs.sim.g1_mimic.constants.G1_JOINT_NAMES`` 的顺序完全相同（它就是 mjlab G1 的关节顺序）。
+     - 29 个关节名列表，顺序必须与 mjlab Unitree G1 一致（左腿、右腿、腰部、左臂、右臂）。
    * - ``q0``
-     - 29 维默认关节姿态（rad），必须等于 mjlab 的默认关节姿态，即 ``asset_default_state()[7:36]``。
+     - 29 维默认关节姿态（rad），必须与 mjlab 站立默认姿态一致。
    * - ``state``
-     - ``[T, 71]`` 的浮点张量，列布局见下表，不能有 NaN 或 Inf，根四元数要归一化。
+     - 形状为 ``[T, 71]`` 的浮点张量，列布局见下表；不能包含 NaN/Inf，根四元数必须已归一化。
    * - ``name``
-     - 可选，BONES-SEED 转换会写入。
+     - 可选片段名称字符串（BONES-SEED 转换器自动写入）。
+
+``state``\ （``[T, 71]``）列布局如下：
 
 .. list-table::
    :header-rows: 1
    :widths: 18 52 30
 
-   * - 列
+   * - 列区间
      - 内容
      - 单位
    * - ``0:3``
-     - 根（pelvis）位置，世界系
+     - 根节点（骨盆）位置，世界坐标系
      - m
    * - ``3:7``
-     - 根四元数，顺序 wxyz
+     - 根节点四元数（``wxyz``）
      - —
    * - ``7:36``
-     - 关节角，顺序同 ``joint_names``
+     - 关节角度，顺序同 ``joint_names``
      - rad
    * - ``36:39``
-     - 根线速度，世界系
+     - 根节点线速度，世界坐标系
      - m/s
    * - ``39:42``
-     - 根角速度，根坐标系
+     - 根节点角速度，根节点坐标系
      - rad/s
    * - ``42:71``
-     - 关节速度
+     - 关节角速度
      - rad/s
 
-下面的最小示例写出一条原地站立 5 s 的片段，并用加载器自带的检查验证这条片段：
+下面的示例生成一条 5 秒原地站立片段，并在保存前用加载器校验：
 
 .. code-block:: python
 
@@ -108,9 +131,9 @@ BONES-SEED 的加载器把动作库放在主机内存，只把查询到的行传
    from rlinf.envs.sim.g1_mimic.motion import decode_motion_payload
 
    default = asset_default_state().float()  # mjlab 站立关键帧，[71]
-   T = 250                                  # 50 Hz 下 5 s
+   T = 250                                  # 50 Hz 下 5 秒
    state = torch.zeros(T, 71)
-   state[:, :36] = default[:36]             # 根位置、根四元数、关节角；速度保持 0
+   state[:, :36] = default[:36]             # 根位姿与关节角，速度保持 0
    payload = {
        "fps": 50,
        "joint_names": list(G1_JOINT_NAMES),

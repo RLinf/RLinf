@@ -1,19 +1,6 @@
 Configuration Reference
 =======================
 
-.. note::
-
-   SuperMimic's configs under ``evaluations/supermimic/`` also use
-   ``eval_embodied_agent.py``, ``runner.task_type: embodied_eval`` and
-   ``env.eval``, but they inherit the complete training recipe instead of
-   stripping it: ``rollout.model`` points at ``actor.model`` and the
-   ``algorithm`` section stays. ``actor.model.representation`` must match the
-   checkpoint; a MaxCoord checkpoint needs ``maxcoord``. The weights come
-   from ``runner.ckpt_path`` (a ``full_weights.pt``) rather than
-   ``rollout.model.model_path``, ``env.eval.eval_tasks`` selects the tasks,
-   and ``runner.eval_export`` controls the result files. See
-   :doc:`../../examples/embodied/supermimic_eval`.
-
 Eval configs are Hydra YAML files under ``evaluations/<benchmark>/``. The core structure (using ``libero_spatial_openpi_pi05_eval.yaml`` as an example):
 
 .. code-block:: yaml
@@ -101,6 +88,10 @@ Copy the matching YAML from ``examples/embodiment/config/`` or ``tests/e2e_tests
 
 - ``runner.task_type: embodied_eval``
 - ``runner.only_eval: True``
+
+.. note::
+
+   SuperMimic configs under ``evaluations/supermimic/`` inherit the full training recipe via ``defaults`` (keeping ``algorithm`` and pointing ``rollout.model`` to ``${actor.model}``), load ``full_weights.pt`` through ``runner.ckpt_path``, select tasks via ``env.eval.eval_tasks``, and configure exports via ``runner.eval_export``. See :doc:`../guides/supermimic`.
 
 Config Fallback
 ---------------
