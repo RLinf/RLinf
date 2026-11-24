@@ -35,6 +35,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
 - [2026/11] 🔥 RLinf supports Reward Feedback Learning (ReFL) for fine-tuning SD3.5 Medium with ImageReward. Doc: [ReFL](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html).
 - [2026/11] 🔥 RLinf supports Intel GPUs. See the [hardware support matrix](#hardware-support) and PR: [Intel GPU support (#1832)](https://github.com/RLinf/RLinf/pull/1832).
 - [2026/11] 🔥 RLinf supports the Robbyant R2 wheeled humanoid robot for real-world RL, whole-body PICO VR teleoperation, and coordinated control across dual arms, grippers or dexterous hands, torso, and omnidirectional base. Doc: [Robbyant R2](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/r2.html).
@@ -221,6 +222,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html">GenieSim</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robodojo.html">RoboDojo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robolab.html">RoboLab (evaluation only)</a> ✅</li>
           <li>More...</li>
         </ul>
