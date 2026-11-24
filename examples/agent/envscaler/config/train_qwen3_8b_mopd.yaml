@@ -1,0 +1,88 @@
+defaults:
+  - train
+  - _self_
+
+cluster:
+  component_placement:
+    actor: 0-5
+    rollout: 0-5
+    reward: 0-5
+    teacher_tooluse: '6'
+    teacher_math: '7'
+
+runner:
+  execution_mode: sync
+  experiment_name: qwen3-8b-envscaler-dapo-mopd
+  max_epochs: 1
+  max_steps: 100
+  seq_length: 32768
+  max_tokens_per_mbs: 32768
+  output_dir: ./logs/MOPD
+
+algorithm:
+  group_size: 1
+  n_minibatches: 1
+  kl_beta: 0.0
+  recompute_logprobs: false
+  sampling_params:
+    top_k: -1
+    max_new_tokens: 8192
+
+data:
+  environment_path: /mnt/public2/suheng/repos/EnvScaler/interact_with_env/envscaler_env/data/191_env_metadata.json
+  train_data_paths:
+    - /mnt/public2/suheng/repos/EnvScaler/interact_with_env/envscaler_env/data/rl_scenario_metadata.json
+  math_data_path: /mnt/public2/suheng/data/trainset/DAPO-Math-17k/data/DAPO-17K.jsonl
+  rollout_batch_size: 64
+  shuffle: false
+
+agentloop:
+  math_seq_length: 10240
+
+rollout:
+  model:
+    model_path: /mnt/public2/suheng/models/Qwen3-8B
+  tensor_parallel_size: 1
+  return_logprobs: false
+
+actor:
+  distillation_chunk_size: 256
+  model:
+    precision: bf16
+  optim:
+    total_training_steps: 100
+  fsdp_config:
+    enable_gradient_accumulation: false
+
+distillation:
+  enabled: true
+  teacher_key: data_source
+  teacher_models:
+    tooluse:
+      model_path: /mnt/public2/suheng/models/mopd-qwen3-tokenizer/Agent-Reflex-8B
+      inference:
+        backend: sglang
+        tensor_parallel_size: 1
+        max_model_len: 32769
+        max_payload_bytes: 629145600
+        engine_kwargs:
+          chunked_prefill_size: 2048
+          max_prefill_tokens: 2048
+          mem_fraction_static: 0.75
+    math:
+      model_path: /mnt/public2/suheng/models/mopd-qwen3-tokenizer/Composition-RL-8B
+      inference:
+        backend: sglang
+        tensor_parallel_size: 1
+        max_model_len: 10241
+        max_payload_bytes: 629145600
+        engine_kwargs:
+          chunked_prefill_size: 2048
+          max_prefill_tokens: 2048
+          mem_fraction_static: 0.75
+  distillation_loss:
+    loss_mode: forward_kl_topk
+    topk_source: teacher
+    topk: 32
+    use_policy_gradient: false
+    use_task_rewards: false

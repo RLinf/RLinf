@@ -30,11 +30,13 @@ distillation:
       inference:
         backend: sglang
         tensor_parallel_size: 2
+        max_payload_bytes: 629145600  # 600 MiB
     code:
       model_path: /path/to/code-teacher
       inference:
         backend: vllm
         tensor_parallel_size: 2
+        max_payload_bytes: 629145600  # 600 MiB
   distillation_loss:
     loss_mode: forward_kl_topk
     use_policy_gradient: false

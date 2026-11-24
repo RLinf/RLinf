@@ -58,7 +58,7 @@ from rlinf.utils.utils import (
     cpu_dict,
     cpu_weight_swap,
 )
-from rlinf.workers.actor.distillation import fsdp_distillation_forward
+from rlinf.workers.actor.distillation import distillation_model_forward
 from rlinf.workers.actor.fsdp_actor_worker import (
     FSDPActor,
 )
@@ -167,41 +167,33 @@ class MAFSDPActor(FSDPActor):
                 eos_token_id=self.tokenizer.eos_token_id,
             )
 
-        with self.amp_context:
-            outputs = self.model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                use_cache=False,
-                **multi_modal_inputs,
-            )
-
-        logits: torch.Tensor = outputs.logits
-        logits.div_(self.cfg.algorithm.sampling_params.temperature)
-
+        model_inputs = dict(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            use_cache=False,
+            **multi_modal_inputs,
+        )
         if distillation:
             packed = self.enable_dynamic_batch_size
             if packed:
                 starts, ends = idx_starts, idx_ends
             else:
-                lengths = m_batch["attention_mask"].sum(-1).tolist()
-                starts = (
-                    [0] * len(lengths)
-                    if True
-                    else (
-                        self.cfg.data.max_prompt_length - m_batch["prompt_lengths"]
-                    ).tolist()
-                )
-                ends = [int(a) + int(n) for a, n in zip(starts, lengths)]
-            return fsdp_distillation_forward(
+                ends = m_batch["attention_mask"].sum(-1)
+                starts = torch.zeros_like(ends)
+            return distillation_model_forward(
                 self,
-                logits,
+                model_inputs,
                 m_batch,
                 packed=packed,
                 starts=starts,
                 ends=ends,
                 response_only=False,
             )
+        with self.amp_context:
+            outputs = self.model(**model_inputs)
+        logits: torch.Tensor = outputs.logits
+        logits.div_(self.cfg.algorithm.sampling_params.temperature)
 
         if self.enable_dynamic_batch_size:
             # unpack_fsdp_logprobs is expected to return logprobs unpacked to

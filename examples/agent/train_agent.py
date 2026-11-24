@@ -15,6 +15,8 @@
 from collections.abc import Callable
 
 from omegaconf import DictConfig, OmegaConf
+from torch.utils.data import Dataset
+from transformers import PreTrainedTokenizerBase
 
 from rlinf.algorithms.distillation.config import build_distillation_plan
 from rlinf.config import validate_cfg
@@ -42,6 +44,10 @@ def run_agent_training(
     agent_loop_cls: type[MultiAgentLoopWorker],
     launch_tools: Callable[[DictConfig, Cluster], dict[WorkerGroup, ToolWorkerInfo]]
     | None = None,
+    *,
+    create_datasets: Callable[
+        [DictConfig, PreTrainedTokenizerBase], tuple[Dataset | None, Dataset | None]
+    ] = create_reasoning_datasets,
 ) -> None:
     """Launch a multi-turn policy, its rollout backend and optional tool workers."""
     cfg = validate_cfg(cfg)
@@ -102,7 +108,7 @@ def run_agent_training(
 
     # Dataset
     tokenizer = hf_tokenizer(cfg.actor.tokenizer.tokenizer_model)
-    train_ds, val_ds = create_reasoning_datasets(cfg, tokenizer)
+    train_ds, val_ds = create_datasets(cfg, tokenizer)
 
     tool_workers = launch_tools(cfg, cluster) if launch_tools else {}
 

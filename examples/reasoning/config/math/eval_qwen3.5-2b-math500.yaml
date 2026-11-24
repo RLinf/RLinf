@@ -5,6 +5,5 @@ defaults:
 data:
   dataset_name: MATH-500
   val_data_paths:
-    - /mnt/public2/suheng/data/trainset/DAPO-Math-17k/data/DAPO-17K.jsonl
+    - /mnt/public2/suheng/data/benchmark/MATH-500/test.jsonl
   val_rollout_batch_size: 100
-  data_size: 200

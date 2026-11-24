@@ -1,0 +1,14 @@
+defaults:
+  - train_qwen3_8b_mopd
+  - _self_
+
+runner:
+  experiment_name: qwen3-8b-envscaler-dapo-mopd-k1-pg
+
+rollout:
+  return_logprobs: true
+
+distillation:
+  distillation_loss:
+    loss_mode: k1
+    use_policy_gradient: true

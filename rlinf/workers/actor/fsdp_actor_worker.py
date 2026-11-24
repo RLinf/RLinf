@@ -80,8 +80,9 @@ from rlinf.utils.utils import (
     retrieve_model_state_dict_in_cpu,
 )
 from rlinf.workers.actor.distillation import (
-    fsdp_distillation_forward,
+    distillation_model_forward,
     has_empty_distillation_rank,
+    install_distillation_head,
 )
 from rlinf.workers.rollout.utils import (
     RankMapper,
@@ -191,6 +192,24 @@ class FSDPActor(FSDPModelManager, Worker):
         self.variable_seq_lengths = self.cfg.actor.model.get(
             "variable_seq_lengths", False
         )
+
+    def model_provider_func(self) -> torch.nn.Module:
+        """Install the distillation head before FSDP takes ownership of its parameters."""
+        model = super().model_provider_func()
+        self.distillation_head = None
+        if self.distillation_plan.enabled:
+            self.distillation_chunk_size = self.cfg.actor.get(
+                "distillation_chunk_size", 256
+            )
+            if (
+                type(self.distillation_chunk_size) is not int
+                or self.distillation_chunk_size < 1
+            ):
+                raise ValueError(
+                    f"Expected a positive actor.distillation_chunk_size, got {self.distillation_chunk_size!r}"
+                )
+            self.distillation_head = install_distillation_head(model)
+        return model
 
     def init_worker(self) -> None:
         """
@@ -503,42 +522,33 @@ class FSDPActor(FSDPModelManager, Worker):
                 pad_to_fixed_len=not self.variable_seq_lengths,
             )
 
-        with self.amp_context:
-            outputs = self.model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                use_cache=False,
-                **multi_modal_inputs,
-            )
-
-        logits: torch.Tensor = outputs.logits
-
-        logits.div_(self.cfg.algorithm.sampling_params.temperature)
-
+        model_inputs = dict(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            use_cache=False,
+            **multi_modal_inputs,
+        )
         if distillation:
             packed = self.enable_dynamic_batch_size or self.variable_seq_lengths
             if packed:
                 starts, ends = idx_starts, idx_ends
             else:
-                lengths = m_batch["attention_mask"].sum(-1).tolist()
-                starts = (
-                    [0] * len(lengths)
-                    if False
-                    else (
-                        self.cfg.data.max_prompt_length - m_batch["prompt_lengths"]
-                    ).tolist()
-                )
-                ends = [int(a) + int(n) for a, n in zip(starts, lengths)]
-            return fsdp_distillation_forward(
+                starts = self.cfg.data.max_prompt_length - m_batch["prompt_lengths"]
+                ends = starts + m_batch["attention_mask"].sum(-1)
+            return distillation_model_forward(
                 self,
-                logits,
+                model_inputs,
                 m_batch,
                 packed=packed,
                 starts=starts,
                 ends=ends,
                 response_only=True,
             )
+        with self.amp_context:
+            outputs = self.model(**model_inputs)
+        logits: torch.Tensor = outputs.logits
+        logits.div_(self.cfg.algorithm.sampling_params.temperature)
 
         if self.enable_dynamic_batch_size or self.variable_seq_lengths:
             logprobs = unpack_fsdp_logprobs(

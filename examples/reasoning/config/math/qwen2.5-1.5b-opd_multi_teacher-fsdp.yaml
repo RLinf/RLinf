@@ -44,6 +44,7 @@ distillation:
         tensor_parallel_size: 2
         pipeline_parallel_size: 1
         max_model_len: 32768
+        max_payload_bytes: 629145600  # 600 MiB
     code:
       model_path: /path/to/code-teacher
       num_replicas: 1
@@ -52,6 +53,7 @@ distillation:
         tensor_parallel_size: 2
         pipeline_parallel_size: 1
         max_model_len: 32768
+        max_payload_bytes: 629145600  # 600 MiB
   distillation_loss:
     loss_mode: forward_kl_topk
     topk_source: teacher

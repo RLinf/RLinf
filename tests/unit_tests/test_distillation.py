@@ -531,6 +531,176 @@ class TestDistillation(unittest.TestCase):
         for actual_value, expected_value in zip(actual_grad, expected_grad):
             torch.testing.assert_close(actual_value, expected_value)
 
+    def test_chunked_qwen_head_matches_dense_gradients(self):
+        from contextlib import nullcontext
+        from copy import deepcopy
+        from types import SimpleNamespace
+
+        from torch.overrides import TorchFunctionMode
+        from transformers import Qwen3Config, Qwen3ForCausalLM
+
+        from rlinf.workers.actor.distillation import install_distillation_head
+        from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
+
+        class RecordProjections(TorchFunctionMode):
+            def __init__(self):
+                self.rows = []
+
+            def __torch_function__(self, func, types, args=(), kwargs=None):
+                if func is torch.nn.functional.linear and args[1].shape == (71, 16):
+                    self.rows.append(args[0].numel() // 16)
+                return func(*args, **(kwargs or {}))
+
+        torch.manual_seed(17)
+        cfg = Qwen3Config(
+            vocab_size=71,
+            hidden_size=16,
+            intermediate_size=32,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=8,
+            tie_word_embeddings=True,
+            attn_implementation="eager",
+        )
+        dense = Qwen3ForCausalLM(cfg)
+        actor = object.__new__(MAFSDPActor)
+        actor.model = deepcopy(dense)
+        actor.distillation_head = install_distillation_head(actor.model)
+        self.assertIs(
+            actor.model.get_output_embeddings().weight,
+            actor.model.get_input_embeddings().weight,
+        )
+        self.assertEqual(actor.model.state_dict().keys(), dense.state_dict().keys())
+        actor.distillation_chunk_size = 2
+        actor.amp_context = nullcontext()
+        actor.cfg = SimpleNamespace(
+            algorithm=SimpleNamespace(sampling_params=SimpleNamespace(temperature=0.8))
+        )
+        actor.enable_dynamic_batch_size = True
+        actor.max_tokens_per_mbs = 16
+        actor.tokenizer = SimpleNamespace(eos_token_id=0)
+        actor.kl_beta = 0.0
+        actor.entropy_op_type = "torch"
+        tokens = torch.tensor([[1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 0]])
+        positions = torch.arange(6).expand(2, -1)
+        batch = {
+            "input_ids": tokens,
+            "position_ids": positions,
+            "attention_mask": tokens.ne(0),
+            "prompt_lengths": torch.tensor([2, 1]),
+            "response_lengths": torch.tensor([4, 4]),
+            "response_mask": torch.tensor(
+                [[0, 0, 1, 0, 1, 1], [0, 1, 1, 0, 1, 0]], dtype=torch.bool
+            ),
+            "teacher_valid_mask": torch.tensor(
+                [[0, 0, 0, 0, 1, 1], [0, 1, 1, 0, 1, 0]], dtype=torch.bool
+            ),
+        }
+        teacher = torch.randn(2, 6, 71).log_softmax(-1)
+        packed_ids = torch.cat([tokens[0], tokens[1, :5]]).unsqueeze(0)
+        packed_pos = torch.cat([positions[0], positions[1, :5]]).unsqueeze(0)
+        for mode, support in [
+            ("k1", "sampled"),
+            ("forward_kl_topk", "teacher"),
+            ("forward_kl_topk", "student"),
+        ]:
+            with self.subTest(mode=mode, support=support):
+                actor.model.zero_grad()
+                dense.zero_grad()
+                dense_z = (
+                    dense(
+                        input_ids=packed_ids, position_ids=packed_pos, use_cache=False
+                    ).logits[0]
+                    / 0.8
+                )
+                task = support == "student"
+                mask = batch["response_mask"] & batch["teacher_valid_mask"]
+                rows, cols = (batch["response_mask"] if task else mask).nonzero(
+                    as_tuple=True
+                )
+                # The second packed sequence begins at index six.
+                z = dense_z[rows * 6 + cols - 1]
+                logp = z.log_softmax(-1).gather(1, tokens[rows, cols, None]).squeeze(1)
+                actor.distillation_plan = DistillationPlan(
+                    canonical_loss_mode=mode,
+                    need_task_rewards=task,
+                    need_entropy=task,
+                    need_current_logprobs=mode == "k1" or task,
+                )
+                config = DistillationLossConfig(
+                    loss_mode=mode,
+                    topk=64,
+                    topk_source="teacher" if support == "sampled" else support,
+                    use_policy_gradient=mode == "k1",
+                )
+                actor.distillation_loss_config = config
+                if mode == "k1":
+                    batch["teacher_logprobs"] = teacher.gather(-1, tokens.unsqueeze(-1))
+                    reference = logp
+                else:
+                    ids = teacher.topk(64).indices
+                    if support == "student":
+                        ids[rows, cols] = z.detach().topk(64).indices
+                    batch["teacher_token_ids"] = ids
+                    batch["teacher_logprobs"] = teacher.gather(-1, ids)
+                    output = compute_distribution_loss(
+                        z,
+                        ids[rows, cols],
+                        batch["teacher_logprobs"][rows, cols],
+                        config,
+                        valid_mask=mask[rows, cols],
+                    )
+                    reference = output.distribution_losses
+                    if task:
+                        reference = (
+                            reference
+                            + logp
+                            - (z.softmax(-1) * z.log_softmax(-1)).sum(-1)
+                        )
+                saved_shapes = []
+
+                def record_saved(tensor):
+                    saved_shapes.append(tensor.shape)
+                    return tensor
+
+                with (
+                    RecordProjections() as calls,
+                    torch.autograd.graph.saved_tensors_hooks(
+                        record_saved, lambda tensor: tensor
+                    ),
+                ):
+                    actual = actor.forward_training_batch(batch)
+                    self.assertEqual(
+                        calls.rows,
+                        [2] * (len(rows) // 2) + ([1] if len(rows) % 2 else []),
+                    )
+                    values = (
+                        actual.logprobs if mode == "k1" else actual.distribution_losses
+                    )
+                    if task:
+                        values = values + actual.logprobs + actual.entropy
+                    torch.testing.assert_close(values[rows, cols], reference)
+                self.assertFalse(
+                    any(shape and shape[-1] == cfg.vocab_size for shape in saved_shapes)
+                )
+                values.sum().backward()
+                reference.sum().backward()
+                for (name, parameter), (_, expected) in zip(
+                    actor.model.named_parameters(),
+                    dense.named_parameters(),
+                    strict=True,
+                ):
+                    torch.testing.assert_close(
+                        parameter.grad, expected.grad, atol=2e-5, rtol=2e-4, msg=name
+                    )
+        batch["response_mask"].zero_()
+        actor.model.zero_grad()
+        actor.forward_training_batch(batch).distribution_losses.sum().backward()
+        for parameter in actor.model.parameters():
+            self.assertIsNotNone(parameter.grad)
+            self.assertEqual(parameter.grad.count_nonzero().item(), 0)
+
     def test_fsdp_sampled_logprobs_keep_model_vocabulary(self):
         from rlinf.workers.actor.distillation import fsdp_distillation_forward
         from rlinf.workers.actor.fsdp_actor_worker import FSDPActor

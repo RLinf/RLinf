@@ -15,6 +15,7 @@
 """CPU rollout checks using the upstream scenarios and a local Qwen3 tokenizer."""
 
 import asyncio
+import json
 import os
 from pathlib import Path
 
@@ -24,6 +25,103 @@ from transformers import AutoTokenizer
 
 from rlinf.agents.envscaler.agent_loop import EnvScalerRollout
 from rlinf.data.datasets.reasoning import create_reasoning_datasets
+
+
+@pytest.mark.parametrize(
+    ("variant", "mode", "source"),
+    [("k1_pg", "k1", "sampled"), ("student_top64_bp", "forward_kl_topk", "student")],
+)
+def test_mopd_math_generation_budget(variant, mode, source):
+    from unittest.mock import AsyncMock
+
+    from hydra import compose, initialize_config_dir
+
+    from examples.agent.envscaler.train_mopd import EnvScalerDAPOAgentLoopWorker
+    from rlinf.algorithms.distillation.config import build_distillation_plan
+
+    config = Path(__file__).resolve().parents[3] / "examples/agent/envscaler/config"
+    with initialize_config_dir(version_base="1.1", config_dir=str(config)):
+        cfg = compose(config_name=f"train_qwen3_8b_mopd_{variant}")
+    plan = build_distillation_plan(cfg)
+    assert (plan.canonical_loss_mode, plan.support_source) == (mode, source)
+    assert plan.need_old_logprobs == cfg.rollout.return_logprobs == (mode == "k1")
+    assert plan.topk == (64 if source == "student" else None)
+    assert cfg.runner.seq_length == cfg.runner.max_tokens_per_mbs == 32768
+    teachers = cfg.distillation.teacher_models
+    assert teachers.tooluse.inference.max_model_len == 32769
+    assert teachers.math.inference.max_model_len == 10241
+
+    worker = object.__new__(EnvScalerDAPOAgentLoopWorker)
+    worker.cfg = cfg
+    worker.return_logprobs = plan.need_old_logprobs
+    generation = {"output_ids": [1]}
+    if plan.need_old_logprobs:
+        generation["logprobs"] = [-0.5]
+    if plan.need_rollout_topk:
+        generation["topk_token_ids"] = [list(range(64))]
+    worker.generate = AsyncMock(return_value=generation)
+    for prompt_length, budget in [(100, 8192), (4096, 6144), (10239, 1)]:
+        prompt = [1] * prompt_length
+        result = asyncio.run(worker.run_one_query(prompt, ["2"]))
+        worker.generate.assert_awaited_with(
+            prompt, sampling_params={"max_new_tokens": budget}
+        )
+        (turn,) = result.single_turn_outputs
+        assert turn.response_logprobs == generation.get("logprobs")
+        assert turn.response_topk_token_ids == generation.get("topk_token_ids")
+    with pytest.raises(ValueError, match="fewer than 10240"):
+        asyncio.run(worker.run_one_query([1] * 10240, ["2"]))
+
+
+def test_envscaler_dapo_mopd_batches(tmp_path):
+    from hydra import compose, initialize_config_dir
+
+    from examples.agent.envscaler.train_mopd import create_mopd_datasets
+    from rlinf.data.datasets.reasoning.collate_fn import collate_fn
+    from rlinf.data.schema.reasoning_requests import build_rollout_requests_from_batch
+
+    config = Path(__file__).resolve().parents[3] / "examples/agent/envscaler/config"
+    with initialize_config_dir(version_base="1.1", config_dir=str(config)):
+        cfg = compose(config_name="train_qwen3_8b_mopd")
+    root = Path(os.environ["ENVSCALER_ROOT"]) / "interact_with_env/envscaler_env/data"
+    scenarios = json.loads((root / "rl_scenario_metadata.json").read_text())[:1]
+    scenario_path = tmp_path / "scenarios.json"
+    scenario_path.write_text(json.dumps(scenarios))
+    math_path = tmp_path / "math.jsonl"
+    questions = [
+        {
+            "prompt": [{"role": "user", "content": f"What is {i}+1?"}],
+            "reward_model": {"ground_truth": str(i + 1)},
+        }
+        for i in range(3)
+    ]
+    math_path.write_text("\n".join(map(json.dumps, questions)))
+    cfg.data.train_data_paths = [str(scenario_path)]
+    cfg.data.environment_path = str(root / "191_env_metadata.json")
+    cfg.data.math_data_path = str(math_path)
+    cfg.data.rollout_batch_size = 2
+    cfg.runner.max_steps = 3
+    tokenizer = AutoTokenizer.from_pretrained(os.environ["ENVSCALER_TEST_MODEL"])
+    dataset, _ = create_mopd_datasets(cfg, tokenizer)
+
+    seen_math = set()
+    assert len(dataset) == 6
+    for start in range(0, len(dataset), 2):
+        batch = collate_fn([dataset[start], dataset[start + 1]])
+        (request,) = build_rollout_requests_from_batch(
+            batch, group_size=1, split_size=1, teacher_keys=("math", "tooluse")
+        )
+        assert {group[0].teacher_key for group in request.sample_contexts} == {
+            "math",
+            "tooluse",
+        }
+        for answer, group in zip(batch["answer"], request.sample_contexts, strict=True):
+            if group[0].teacher_key == "tooluse":
+                assert answer["task_id"] == scenarios[0]["task_id"]
+                assert answer["path"] == str(scenario_path)
+            else:
+                seen_math.add(answer[0])
+    assert seen_math == {"1", "2", "3"}
 
 
 @pytest.mark.parametrize("conversational", [False, True])

@@ -36,7 +36,7 @@ runner:
 
 
 algorithm:
-  group_size: 4
+  group_size: 1
   rollout_batch_size_per_gpu: null # If set to null, rollout_batch_size will be evenly divided across all inference instances. You can reduce this parameter if inference consumes too much GPU memory.
 
   # mbs to do log prob inference, can be set to

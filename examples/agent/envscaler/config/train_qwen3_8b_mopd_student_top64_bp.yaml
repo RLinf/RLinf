@@ -1,0 +1,10 @@
+defaults:
+  - train_qwen3_8b_mopd
+  - _self_
+
+runner:
+  experiment_name: qwen3-8b-envscaler-dapo-mopd-student-top64-bp
+
+distillation:
+  distillation_loss:
+    topk_source: student
