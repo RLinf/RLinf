@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rlinf"
-version = "0.4.0"
+version = "0.5.0.dev0"
 authors = [{ name = "RLinf Contributors" }]
 description = "Reinforcement Learning Infrastructure for Embodied and Agentic AI"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -75,6 +75,9 @@ Homepage = "https://github.com/RLinf/RLinf"
 Repository = "https://github.com/RLinf/RLinf"
 Documentation = "https://rlinf.readthedocs.io/"
 "Bug Report" = "https://github.com/RLinf/RLinf/issues"
+
+[project.scripts]
+rlinf = "rlinf.cli:main"
 
 [project.optional-dependencies]
 agentic = [

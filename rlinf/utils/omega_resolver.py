@@ -14,10 +14,15 @@
 
 import inspect
 
-import torch
 from omegaconf import OmegaConf
 
 _REGISTERED = False
+
+
+def _resolve_torch_dtype(dtype_name: str):
+    import torch
+
+    return getattr(torch, dtype_name)
 
 
 def _register_resolver(name, resolver):
@@ -38,7 +43,7 @@ def omegaconf_register():
     _register_resolver("int_div", lambda x, y: x // y)
     _register_resolver("subtract", lambda x, y: x - y)
     _register_resolver("not", lambda x: not bool(x))
-    _register_resolver("torch.dtype", lambda dtype_name: getattr(torch, dtype_name))
+    _register_resolver("torch.dtype", _resolve_torch_dtype)
     _REGISTERED = True
 
 

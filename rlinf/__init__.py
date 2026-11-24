@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .utils.omega_resolver import omegaconf_register
+import importlib.util
 
-omegaconf_register()
+if importlib.util.find_spec("omegaconf") is not None:
+    from .utils.omega_resolver import omegaconf_register
+
+    omegaconf_register()

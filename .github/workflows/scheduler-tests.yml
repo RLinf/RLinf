@@ -19,7 +19,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
+          python3 -m rlinf.cli install agentic
 
       - name: auto-placement
         timeout-minutes: 20
@@ -52,8 +52,8 @@ jobs:
           # One venv per engine: sglang and vllm pin the same kernel libraries to
           # different versions, so a shared venv breaks whichever is installed first.
           # params_resharding_release only supports Python <= 3.11.
-          bash requirements/install.sh agentic --python 3.11.14 --engine sglang
-          bash requirements/install.sh agentic --python 3.11.14 --venv .venv-vllm --engine vllm
+          python3 -m rlinf.cli install agentic --python 3.11.14 --engine sglang
+          python3 -m rlinf.cli install agentic --python 3.11.14 --venv .venv-vllm --engine vllm
 
       - name: Clone Megatron-011
         uses: actions/checkout@v5

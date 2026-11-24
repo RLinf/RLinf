@@ -17,7 +17,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openvla --env maniskill_libero
+          python3 -m rlinf.cli install embodied --model openvla --env maniskill_libero
 
       - name: ManiSkill SAC test
         timeout-minutes: 20
@@ -92,7 +92,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --env d4rl
+          python3 -m rlinf.cli install embodied --env d4rl
 
       - name: D4RL Offline IQL test (no FSDP wrap)
         timeout-minutes: 15
@@ -127,7 +127,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openvla --env maniskill_libero
+          python3 -m rlinf.cli install embodied --model openvla --env maniskill_libero
 
       - name: Franka SAC dummy test
         timeout-minutes: 20
@@ -186,7 +186,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --env dosw1
+          python3 -m rlinf.cli install embodied --env dosw1
 
       - name: DOSW1 Pick SAC dummy test
         timeout-minutes: 20
@@ -221,7 +221,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --env franka
+          python3 -m rlinf.cli install embodied --env franka
 
       - name: Franka SAC mock-robot test
         timeout-minutes: 20
@@ -265,7 +265,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --env so101
+          python3 -m rlinf.cli install embodied --env so101
 
       - name: SO-101 Reach SAC mock-robot test
         timeout-minutes: 20
@@ -292,7 +292,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openpi --env yam
+          python3 -m rlinf.cli install embodied --model openpi --env yam
 
       - name: Dual-YAM data collection mock-robot test
         timeout-minutes: 20
@@ -332,7 +332,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --env piper
+          python3 -m rlinf.cli install embodied --env piper
 
       - name: Piper Reach SAC mock-robot test
         timeout-minutes: 20
@@ -360,7 +360,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export SERL_PATH=/workspace/dataset/serl
-          bash requirements/install.sh embodied --model openvla --env frankasim
+          python3 -m rlinf.cli install embodied --model openvla --env frankasim
 
       - name: MLP PPO test
         timeout-minutes: 20
@@ -395,7 +395,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --env genesis
+          python3 -m rlinf.cli install embodied --env genesis
 
       - name: Run Genesis CubePick PPO MLP e2e test
         timeout-minutes: 20
@@ -422,7 +422,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --env mujoco_warp
+          python3 -m rlinf.cli install embodied --env mujoco_warp
 
       - name: Run MuJoCo Warp PPO MLP e2e test
         timeout-minutes: 20
@@ -506,7 +506,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
+          python3 -m rlinf.cli install embodied --model openvla-oft --env maniskill_libero
 
       - name: ManiSkill + Libero-Goal heterogeneous env GRPO test
         timeout-minutes: 20
@@ -535,7 +535,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh --platform amd embodied --model openpi --env libero
+          python3 -m rlinf.cli install --platform amd embodied --model openpi --env libero
 
       - name: LIBERO-10 PPO OpenPI Pi05 test
         timeout-minutes: 30
@@ -565,7 +565,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
-          bash requirements/install.sh --platform amd embodied --model gr00t --env libero
+          python3 -m rlinf.cli install --platform amd embodied --model gr00t --env libero
 
       - name: Libero-Spatial PPO test
         timeout-minutes: 30
@@ -592,7 +592,7 @@ jobs:
           export UV_PATH=/workspace/dataset/.uv
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh --platform musa embodied --model openpi --env maniskill_libero
+          python3 -m rlinf.cli install --platform musa embodied --model openpi --env maniskill_libero
 
       - name: LIBERO-10 PPO OpenPI Pi05 test
         timeout-minutes: 60
@@ -632,7 +632,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
-          bash requirements/install.sh --platform musa embodied --model gr00t --env libero
+          python3 -m rlinf.cli install --platform musa embodied --model gr00t --env libero
 
       - name: Libero-Spatial PPO test
         timeout-minutes: 60
@@ -660,7 +660,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
+          python3 -m rlinf.cli install embodied --env maniskill_libero --model qwen3_vl --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
       - name: ManiSkill VLM Trend Reward PPO test (managed SGLang)
         timeout-minutes: 20
@@ -695,7 +695,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openvla-oft --env robotwin
+          python3 -m rlinf.cli install embodied --model openvla-oft --env robotwin
 
       - name: RoboTwin-OpenVLA-OFT test
         timeout-minutes: 30
@@ -738,7 +738,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export BEHAVIOR_PATH=/workspace/dataset/BEHAVIOR-1K
           export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
-          bash requirements/install.sh embodied --model openpi --env behavior
+          python3 -m rlinf.cli install embodied --model openpi --env behavior
 
       - name: BEHAVIOR OpenPI PPO test
         timeout-minutes: 30
@@ -779,7 +779,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
-          bash requirements/install.sh embodied --model gr00t --env maniskill_libero
+          python3 -m rlinf.cli install embodied --model gr00t --env maniskill_libero
 
       - name: Libero-Spatial PPO test
         timeout-minutes: 20
@@ -804,7 +804,7 @@ jobs:
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
           export DECORD_PATH=/workspace/dataset/decord
           source .github/scripts/ascend_ci_workspace.sh setup
-          bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
+          python3 -m rlinf.cli install --platform ascend embodied --model gr00t --env libero
 
       - name: Libero-Spatial PPO test
         timeout-minutes: 20
@@ -830,7 +830,7 @@ jobs:
       - name: Create Ascend embodied environment
         run: |
           source .github/scripts/ascend_ci_workspace.sh setup
-          bash requirements/install.sh --platform ascend embodied --model openpi --env libero
+          python3 -m rlinf.cli install --platform ascend embodied --model openpi --env libero
 
       - name: LIBERO-10 PPO OpenPI Pi05 test
         timeout-minutes: 30
@@ -863,7 +863,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ISAAC_LAB_PATH=/workspace/dataset/IsaacLab
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
-          bash requirements/install.sh embodied --model gr00t --env isaaclab
+          python3 -m rlinf.cli install embodied --model gr00t --env isaaclab
 
       - name: ISAACLAB PPO test
         timeout-minutes: 20
@@ -893,7 +893,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ISAAC_LAB_PATH=/workspace/dataset/IsaacLab
-          bash requirements/install.sh embodied --model openpi --env isaaclab
+          python3 -m rlinf.cli install embodied --model openpi --env isaaclab
 
       - name: ISAACLAB OpenPI PPO Pi05 test
         timeout-minutes: 20
@@ -922,7 +922,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openpi --env maniskill_libero
+          python3 -m rlinf.cli install embodied --model openpi --env maniskill_libero
 
       - name: ManiSkill PPO OpenPI Pi05 training pipeline test
         timeout-minutes: 20
@@ -1013,7 +1013,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           rm -rf "$GITHUB_WORKSPACE/.venv"
-          bash requirements/install.sh \
+          python3 -m rlinf.cli install \
             --python 3.12 \
             --venv .venv \
             --install-rlinf \
@@ -1057,7 +1057,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openpi --env maniskill_libero
+          python3 -m rlinf.cli install embodied --model openpi --env maniskill_libero
 
           source .venv/bin/activate
           cd /workspace/dataset/ManiSkill-GS
@@ -1094,7 +1094,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openpi --env metaworld
+          python3 -m rlinf.cli install embodied --model openpi --env metaworld
 
       - name: Metaworld PPO OpenPI test
         timeout-minutes: 20
@@ -1122,7 +1122,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export CALVIN_PATH=/workspace/dataset/calvin
-          bash requirements/install.sh embodied --model openpi --env calvin
+          python3 -m rlinf.cli install embodied --model openpi --env calvin
 
       - name: Calvin PPO OpenPI test
         timeout-minutes: 20
@@ -1150,7 +1150,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ROBOCASA_PATH=/workspace/dataset/robocasa
-          bash requirements/install.sh embodied --model openpi --env robocasa
+          python3 -m rlinf.cli install embodied --model openpi --env robocasa
 
       - name: RoboCasa PPO OpenPI test
         timeout-minutes: 20
@@ -1177,7 +1177,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openpi --env roboverse
+          python3 -m rlinf.cli install embodied --model openpi --env roboverse
 
       - name: RoboVerse PPO OpenPI test
         timeout-minutes: 20
@@ -1208,7 +1208,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ROBOCASA_PATH=/workspace/dataset/robocasa365
           export ROBOCASA_ASSETS_PATH=/workspace/dataset/robocasa365_assets
-          bash requirements/install.sh embodied --model openpi --env robocasa365
+          python3 -m rlinf.cli install embodied --model openpi --env robocasa365
 
       - name: RoboCasa365 PPO OpenPI test
         timeout-minutes: 20
@@ -1239,7 +1239,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ROBODOJO_ASSETS_ROOT=/workspace/dataset/robodojo
-          bash requirements/install.sh embodied --model openpi --env robodojo
+          python3 -m rlinf.cli install embodied --model openpi --env robodojo
 
       - name: RoboDojo OpenPI Pi05 eval test
         timeout-minutes: 30
@@ -1269,7 +1269,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export DEXBOTIC_PATH=/workspace/dataset/dexbotic
-          bash requirements/install.sh embodied --model dexbotic --env maniskill_libero
+          python3 -m rlinf.cli install embodied --model dexbotic --env maniskill_libero
 
       - name: Libero-Spatial PPO Dexbotic test
         timeout-minutes: 20
@@ -1297,7 +1297,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export STARVLA_PATH=/workspace/dataset/starVLA-v1.6
-          bash requirements/install.sh embodied --model starvla --env maniskill_libero
+          python3 -m rlinf.cli install embodied --model starvla --env maniskill_libero
 
       - name: Libero-10 GRPO test
         timeout-minutes: 20
@@ -1322,7 +1322,7 @@ jobs:
           export STARVLA_PATH=/workspace/dataset/starVLA-v1.6
           export DECORD_PATH=/workspace/dataset/decord
           source .github/scripts/ascend_ci_workspace.sh setup
-          bash requirements/install.sh --platform ascend embodied --model starvla --env libero
+          python3 -m rlinf.cli install --platform ascend embodied --model starvla --env libero
 
       - name: Libero-10 GRPO test
         timeout-minutes: 20
@@ -1353,7 +1353,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export OPENSORA_PATH=/workspace/dataset/opensora
-          bash requirements/install.sh embodied --model openvla-oft --env opensora
+          python3 -m rlinf.cli install embodied --model openvla-oft --env opensora
 
       - name: OpenSora GRPO test
         timeout-minutes: 20
@@ -1381,7 +1381,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export WAN_PATH=/workspace/dataset/wan
-          bash requirements/install.sh embodied --model openvla-oft --env wan
+          python3 -m rlinf.cli install embodied --model openvla-oft --env wan
 
       - name: Wan GRPO test
         timeout-minutes: 20
@@ -1410,7 +1410,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ROBOTWIN_PATH=/workspace/dataset/RoboTwin
           export LINGBOT_PATH=/workspace/dataset/lingbot-vla
-          bash requirements/install.sh embodied --model lingbotvla --env robotwin
+          python3 -m rlinf.cli install embodied --model lingbotvla --env robotwin
 
       - name: RoboTwin-LingBotVLA GRPO test
         timeout-minutes: 30
@@ -1442,7 +1442,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export LIBERO_PRO_PATH=/workspace/dataset/LIBERO-PRO
-          bash requirements/install.sh embodied --model openvla-oft --env liberopro
+          python3 -m rlinf.cli install embodied --model openvla-oft --env liberopro
 
       - name: LIBERO-Pro GRPO test
         timeout-minutes: 20
@@ -1471,7 +1471,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export LIBERO_PLUS_PATH=/workspace/dataset/LIBERO-PLUS
-          bash requirements/install.sh embodied --model openvla-oft --env liberoplus
+          python3 -m rlinf.cli install embodied --model openvla-oft --env liberoplus
 
       - name: LIBERO-Plus GRPO test
         timeout-minutes: 20
@@ -1500,7 +1500,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export EVO1_PATH=/workspace/dataset/Evo-1
-          bash requirements/install.sh embodied --model evo1 --env libero
+          python3 -m rlinf.cli install embodied --model evo1 --env libero
 
       - name: LIBERO Evo-1 GRPO test
         timeout-minutes: 30
@@ -1529,7 +1529,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero
+          python3 -m rlinf.cli install embodied --model abot_m0 --env maniskill_libero
 
       - name: Patch ABot-M0 VGGT path
         run: |
@@ -1565,7 +1565,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export LIBERO_PLUS_PATH=/workspace/dataset/LIBERO-PLUS
-          bash requirements/install.sh embodied --model abot_m0 --env liberoplus
+          python3 -m rlinf.cli install embodied --model abot_m0 --env liberoplus
 
       - name: Patch ABot-M0 VGGT path
         run: |
@@ -1600,7 +1600,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --env embodichain
+          python3 -m rlinf.cli install embodied --env embodichain
 
       - name: EmbodiChain CartPole PPO test
         timeout-minutes: 20
@@ -1632,7 +1632,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T-1.6/
-          bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero
+          python3 -m rlinf.cli install embodied --model gr00t_n1d6 --env maniskill_libero
 
       - name: Libero-Spatial PPO test
         timeout-minutes: 20
@@ -1660,7 +1660,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T-1.7/
-          bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
+          python3 -m rlinf.cli install embodied --model gr00t_n1d7 --env maniskill_libero
 
       - name: Libero-Spatial PPO test
         timeout-minutes: 20
@@ -1688,7 +1688,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export POLARIS_PATH=/workspace/dataset/polaris
-          bash requirements/install.sh embodied --model openpi --env polaris
+          python3 -m rlinf.cli install embodied --model openpi --env polaris
 
       - name: PolaRiS PPO OpenPI Pi05 test
         timeout-minutes: 30
@@ -1724,7 +1724,7 @@ jobs:
           # from sibling wheels are missing. Keep uv's default link mode.
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openpi --env robolab
+          python3 -m rlinf.cli install embodied --model openpi --env robolab
 
       - name: RoboLab OpenPI Pi05 evaluation
         timeout-minutes: 30
@@ -1763,7 +1763,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MOLMOACT2_LEROBOT_PATH=/workspace/dataset/lerobot-molmoact2
-          bash requirements/install.sh embodied --model molmoact2 --env libero
+          python3 -m rlinf.cli install embodied --model molmoact2 --env libero
 
       - name: LIBERO MolmoAct2 evaluation test
         timeout-minutes: 30
@@ -1793,7 +1793,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export UV_TORCH_BACKEND=cu128
-          bash requirements/install.sh embodied --model pi0_fast --env libero \
+          python3 -m rlinf.cli install embodied --model pi0_fast --env libero \
             --python 3.12.12 --torch 2.11.0 --no-flash-attn
 
       - name: PI0-Fast LIBERO GRPO test
@@ -1827,7 +1827,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ROBOTWIN_PATH=/workspace/dataset/RoboTwin
           export LINGBOT_VLA_V2_PATH=/workspace/dataset/lingbot-vla-v2
-          bash requirements/install.sh embodied --model lingbotvlav2 --env robotwin
+          python3 -m rlinf.cli install embodied --model lingbotvlav2 --env robotwin
 
       - name: RoboTwin-LingBotVLA V2 PPO test
         timeout-minutes: 30
@@ -1861,7 +1861,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export SIMPLE_PATH=/workspace/dataset/psi0_simple/SIMPLE
-          bash requirements/install.sh embodied --model psi0 --env simple
+          python3 -m rlinf.cli install embodied --model psi0 --env simple
 
       - name: SIMPLE OpenOven Psi0 PPO test
         timeout-minutes: 60

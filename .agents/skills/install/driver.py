@@ -105,7 +105,11 @@ def load_jobs():
         job = Job(name)
         for step in spec.get("steps", []):
             run = step.get("run") or ""
-            if "requirements/install.sh" in run:
+            if (
+                "requirements/install.sh" in run
+                or "rlinf.cli install" in run
+                or "rlinf install" in run
+            ):
                 job.install_run = run
                 m = re.search(r"--model\s+(\S+)", run)
                 e = re.search(r"--env\s+(\S+)", run)
@@ -273,7 +277,12 @@ def _install_script(job, venv, mirror=True):
             extra += " --use-mirror"
         return line + extra
 
-    return re.sub(r"(bash\s+requirements/install\.sh[^\n]*)", add_flags, run, count=1)
+    return re.sub(
+        r"((?:bash\s+requirements/install\.sh|python3?\s+-m\s+rlinf\.cli\s+install|rlinf\s+install)(?:[^\\\n]|\\[^\n])*(?:\\\n(?:[^\\\n]|\\[^\n])*)*)",
+        add_flags,
+        run,
+        count=1,
+    )
 
 
 def cmd_install(args):

@@ -3,22 +3,29 @@ set -x
 
 tabs 4
 
-CONFIG=$1
-BACKEND=${2:-"egl"}
+REPO_PATH="${REPO_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+export REPO_PATH
+
+CONFIG="${1%.yaml}"
+if [[ -n "${2:-}" && "${2:-}" != +* && "${2:-}" != *=* && "${2:-}" != -* && "${2:-}" != ~* ]]; then
+    BACKEND=$2
+    shift 2
+else
+    BACKEND="egl"
+    shift 1
+fi
 
 export MUJOCO_GL=${BACKEND}
 export PYOPENGL_PLATFORM=${BACKEND}
-export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+export PYTHONPATH="${REPO_PATH}${PYTHONPATH:+:${PYTHONPATH}}"
 
 if [[ "${CONFIG}" == *mock* ]]; then
     export RLINF_ROBOT_MOCKS=1
-    export PYTHONPATH=${REPO_PATH}/tests:${REPO_PATH}/tests/robot_mocks:$PYTHONPATH
+    export PYTHONPATH="${REPO_PATH}/tests:${REPO_PATH}/tests/robot_mocks:${PYTHONPATH}"
     echo "[mock] faking the vendor SDKs; no robot is required"
 fi
 
 export HYDRA_FULL_ERROR=1
-export EMBODIED_PATH=${REPO_PATH}/examples/embodiment
-export EVALUATIONS_PATH=${REPO_PATH}/evaluations
 
 export LIBERO_TYPE=${LIBERO_TYPE:-"standard"}
 if [ "$LIBERO_TYPE" == "pro" ]; then
@@ -31,6 +38,4 @@ else
     echo "Evaluation Mode: Standard LIBERO"
 fi
 
-python ${EVALUATIONS_PATH}/eval_embodied_agent.py \
-    --config-path ${REPO_PATH}/tests/e2e_tests/evaluations \
-    --config-name ${CONFIG}
+rlinf eval "${REPO_PATH}/tests/e2e_tests/evaluations/${CONFIG}.yaml" "$@"

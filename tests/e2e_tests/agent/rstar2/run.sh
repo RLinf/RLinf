@@ -2,12 +2,20 @@
 set -x
 
 tabs 4
+
+REPO_PATH="${REPO_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)}"
+export REPO_PATH
+
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export TOKENIZERS_PARALLELISM=false
 export RAY_DEDUP_LOGS=0
+export PYTHONPATH="${REPO_PATH}${PYTHONPATH:+:${PYTHONPATH}}"
 
-export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+if [ -z "$1" ] || [[ "$1" == *=* ]] || [[ "$1" == +* ]] || [[ "$1" == ~* ]] || [[ "$1" == -* ]]; then
+    CONFIG_NAME="qwen2.5-1.5b-megatron"
+else
+    CONFIG_NAME="${1%.yaml}"
+    shift
+fi
 
-CONFIG_NAME=qwen2.5-1.5b-megatron
-
-python ${REPO_PATH}/examples/agent/rstar2/main_rstar2.py --config-path ${REPO_PATH}/tests/e2e_tests/agent/rstar2  --config-name $CONFIG_NAME
+rlinf train --family agent --subgroup rstar2 "${REPO_PATH}/tests/e2e_tests/agent/rstar2/${CONFIG_NAME}.yaml" "$@"

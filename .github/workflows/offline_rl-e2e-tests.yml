@@ -17,7 +17,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openpi --env maniskill_libero
+          python3 -m rlinf.cli install embodied --model openpi --env maniskill_libero
 
       - name: STEAM value model SFT test
         timeout-minutes: 30

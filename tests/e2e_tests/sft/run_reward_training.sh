@@ -3,9 +3,12 @@ set -x
 
 tabs 4
 
-CONFIG=$1
+REPO_PATH="${REPO_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+export REPO_PATH
 
-export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+CONFIG="${1%.yaml}"
+shift 1 2>/dev/null || true
 
-python ${REPO_PATH}/examples/reward/train_reward_model.py --config-path ${REPO_PATH}/tests/e2e_tests/sft --config-name ${CONFIG}
+export PYTHONPATH="${REPO_PATH}${PYTHONPATH:+:${PYTHONPATH}}"
 
+rlinf train --family reward "${REPO_PATH}/tests/e2e_tests/sft/${CONFIG}.yaml" "$@"

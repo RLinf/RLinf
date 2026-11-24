@@ -1,0 +1,71 @@
+name: Publish rlinf to PyPI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "pyproject.toml"
+  workflow_dispatch:
+
+concurrency:
+  group: publish-rlinf
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish rlinf
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Check whether version is already published on PyPI
+        id: check_version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          status="$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/rlinf/${version}/json")"
+          if [ "$status" = "200" ]; then
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### rlinf ${version} already published"
+              echo "Skipped upload because \`rlinf==${version}\` already exists on PyPI. Bump \`version\` in root \`pyproject.toml\` to publish a new release."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "rlinf ${version} is already on PyPI; skipping publish."
+          elif [ "$status" = "404" ]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            echo "rlinf ${version} not found on PyPI; proceeding with build and publish."
+          else
+            echo "Unexpected HTTP status ${status} querying PyPI for rlinf ${version}." >&2
+            exit 1
+          fi
+
+      - name: Build rlinf distributions
+        if: steps.check_version.outputs.should_publish == 'true'
+        run: uv build . --out-dir dist
+
+      - name: Publish to PyPI
+        if: steps.check_version.outputs.should_publish == 'true'
+        env:
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${PYPI_API_TOKEN:-}" ]; then
+            uv publish --token "$PYPI_API_TOKEN" dist/rlinf-*.tar.gz dist/rlinf-*.whl
+          else
+            uv publish --trusted-publishing always dist/rlinf-*.tar.gz dist/rlinf-*.whl
+          fi
+          {
+            echo "### Published rlinf ${{ steps.check_version.outputs.version }}"
+            echo "Uploaded to https://pypi.org/project/rlinf/${{ steps.check_version.outputs.version }}/"
+          } >> "$GITHUB_STEP_SUMMARY"
