@@ -1,13 +1,11 @@
 Agent 与 LLM
 ============
 
-基于 RLinf 的分布式 worker 运行时、Megatron/FSDP 训练后端与 SGLang/vLLM 推理引擎，训练数学推理 LLM、多轮工具调用智能体、多智能体系统以及图像/视频扩散模型。
+基于 RLinf 的分布式 worker 运行时、Megatron / FSDP 训练后端与 SGLang / vLLM 推理引擎，覆盖 **推理训练**\ （文本与多模态）、**Agent 训练**\ （多轮工具调用、多 Agent 与在线代码补全）以及 **图像与视频生成**。
 
-运行智能体或推理示例前，先通过 ``bash requirements/install.sh agentic`` 安装环境（见 :doc:`安装指南 <../../start/installation>`\ ）；图像与视频生成示例使用 ``bash requirements/install.sh embodied --model diffusion``。
+运行推理或 Agent 示例前，先按 :doc:`安装 <../../start/installation>` 执行 ``bash requirements/install.sh agentic``；图像与视频生成示例使用 ``bash requirements/install.sh embodied --model diffusion``。
 
-如果只有单机或单卡，可以先从 :doc:`Qwen3-VL GRPO <qwen3_vl_geo3k>`\ （单机 FSDP2）、带单机快速启动覆盖参数的 :doc:`Qwen2.5 数学推理 GRPO <math_reasoning/reasoning>` 或 :doc:`SD3.5 Medium 图像生成 <../video_models>` 入手。
-
-按场景选择
+按方向选择
 ----------
 
 .. list-table::
@@ -18,59 +16,51 @@ Agent 与 LLM
      - 模型与后端
      - 算法 / 模式
      - 包含示例
-   * - :doc:`数学推理 <math_reasoning/index>`
-     - Qwen2.5、Moonlight-16B（Megatron + SGLang/vLLM）
-     - GRPO、PPO
-     - :doc:`Qwen2.5 GRPO <math_reasoning/reasoning>`、:doc:`Qwen2.5 PPO <math_reasoning/reasoning_ppo>`、:doc:`Moonlight-16B <math_reasoning/moonlight>`
-   * - :doc:`Search-R1 <searchr1/index>`
-     - Qwen2.5-3B、GLM-4.7-Flash（本地 Wiki / Qdrant）
-     - 多轮检索 RL（同步与异步）
-     - :doc:`Qwen2.5-3B <searchr1/qwen2.5>`、:doc:`GLM-4.7-Flash <searchr1/glm4.7_flash>`、:doc:`异步训练 <searchr1/async>`
-   * - :doc:`WideSeek-R1 <wideseek_r1/index>`
-     - Qwen3-4B 主智能体 + 并行子智能体
-     - 多智能体强化学习（MARL）
-     - :doc:`环境与工具 <wideseek_r1/tools>`、:doc:`训练 <wideseek_r1/train>`、:doc:`评测 <wideseek_r1/eval>`
-   * - :doc:`rStar2 <rstar2>`
-     - Qwen2.5-7B + Python 执行服务
-     - 多轮反思推理 RL
-     - :doc:`rStar2-Agent <rstar2>`
-   * - :doc:`AgentLightning <agentlightning_calc_x>`
-     - Agent Lightning 编排 + RLinf 训练后端
-     - 工具调用 RL（Calc-X）
-     - :doc:`AgentLightning Calc-X <agentlightning_calc_x>`
-   * - :doc:`Coding Online RL <coding_online_rl>`
-     - Qwen2.5-Coder-1.5B + Continue 插件
-     - 在线 PPO / GRPO
-     - :doc:`代码补全在线 RL <coding_online_rl>`
-   * - :doc:`Qwen3-VL GRPO <qwen3_vl_geo3k>`
-     - Qwen3-VL（FSDP + SGLang）
-     - 多模态 GRPO（Geo3K）
-     - :doc:`Qwen3-VL Geo3K <qwen3_vl_geo3k>`
+   * - :doc:`推理训练 <math_reasoning/index>`
+     - Qwen2.5、Moonlight-16B、Qwen3-VL（Megatron / FSDP + SGLang / vLLM）
+     - GRPO、PPO（文本与视觉推理）
+     - :doc:`Qwen2.5 GRPO <math_reasoning/reasoning>`、:doc:`Qwen2.5 PPO <math_reasoning/reasoning_ppo>`、:doc:`Moonlight-16B <math_reasoning/moonlight>`、:doc:`Qwen3-VL Geo3K <qwen3_vl_geo3k>`
+   * - :doc:`Agent 训练 <agents/index>`
+     - Qwen2.5、Qwen3-4B、GLM-4.7-Flash、Agent Lightning
+     - 多轮工具调用、MARL、在线 RL
+     - :doc:`Search-R1 <searchr1/index>`、:doc:`WideSeek-R1 <wideseek_r1/index>`、:doc:`rStar2 <rstar2>`、:doc:`AgentLightning <agentlightning_calc_x>`、:doc:`Coding Online RL <coding_online_rl>`
    * - :doc:`图像与视频生成 <../video_models>`
      - SD3.5 Medium、Wan2.2 TI2V 5B（Diffusers）
      - Diffusion-NFT、DiffusionART、ReFL
      - :doc:`Diffusion-NFT <../diffusion_nft>`、:doc:`DiffusionART <../diffusion_art>`、:doc:`ReFL <../embodied/refl>`
 
-推理与多模态强化学习
---------------------
+推理训练
+--------
 
-.. grid:: 1 2 2 2
+.. grid:: 1 2 2 4
    :gutter: 3
 
-   .. grid-item-card:: 数学推理
-      :link: math_reasoning/index
+   .. grid-item-card:: Qwen2.5 数学推理（GRPO）
+      :link: math_reasoning/reasoning
       :link-type: doc
 
-      基于 Qwen2.5（1.5B/7B）与 Moonlight-16B-A3B（DeepSeek-V3 MLA + MoE）的 GRPO/PPO 训练，覆盖 AIME24、AIME25 与 GPQA-diamond。
+      在 AReaL-boba 上用 GRPO 训练 DeepSeek-R1-Distill-Qwen（1.5B / 7B），覆盖 AIME24、AIME25 与 GPQA-diamond。
 
-   .. grid-item-card:: Qwen3-VL GRPO
+   .. grid-item-card:: Qwen2.5 数学推理（PPO）
+      :link: math_reasoning/reasoning_ppo
+      :link-type: doc
+
+      基于 Qwen2.5-1.5B 的 PPO 数学推理训练，同时更新 actor 与 critic。
+
+   .. grid-item-card:: Moonlight-16B（MoE GRPO）
+      :link: math_reasoning/moonlight
+      :link-type: doc
+
+      通过 Megatron-Bridge 训练 DeepSeek-V3 MLA + MoE 架构模型。
+
+   .. grid-item-card:: Qwen3-VL 视觉推理（Geo3K）
       :link: qwen3_vl_geo3k
       :link-type: doc
 
       基于 FSDP 与 SGLang 的视觉语言模型 GRPO 训练，面向 Geo3K 几何推理任务。
 
-工具调用与多智能体强化学习
---------------------------
+Agent 训练
+----------
 
 .. grid:: 1 2 3 3
    :gutter: 3
@@ -85,7 +75,7 @@ Agent 与 LLM
       :link: wideseek_r1/index
       :link-type: doc
 
-      面向广泛信息检索的主从多智能体强化学习框架，4B 模型在 WideSearch 上达到 40.0% item F1。
+      面向广泛信息检索的主从多 Agent 强化学习，4B 模型在 WideSearch 上达到 40.0% item F1。
 
    .. grid-item-card:: rStar2
       :link: rstar2
@@ -97,7 +87,7 @@ Agent 与 LLM
       :link: agentlightning_calc_x
       :link-type: doc
 
-      使用 Agent Lightning 编排智能体工作流，并将分布式 RL 训练交给 RLinf 后端（Calc-X 示例）。
+      使用 Agent Lightning 编排 Agent 工作流，并将分布式 RL 训练交给 RLinf 后端（Calc-X 示例）。
 
    .. grid-item-card:: Coding Online RL
       :link: coding_online_rl
@@ -121,7 +111,7 @@ Agent 与 LLM
       :link: ../diffusion_nft
       :link-type: doc
 
-      使用正负速度候选与 OCR 奖励微调 SD3.5 Medium 和 Wan2.2。
+      使用正负速度候选与 OCR Reward 微调 SD3.5 Medium 和 Wan2.2。
 
    .. grid-item-card:: DiffusionART
       :link: ../diffusion_art

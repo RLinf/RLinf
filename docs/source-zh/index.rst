@@ -131,19 +131,14 @@
 
 .. toctree::
   :caption: Agent 与 LLM
-  :maxdepth: 2
+  :maxdepth: 3
   :includehidden:
   :titlesonly:
   :hidden:
 
   总览 <rst_source/examples/agentic/index>
-  数学推理 <rst_source/examples/agentic/math_reasoning/index>
-  Search-R1 <rst_source/examples/agentic/searchr1/index>
-  WideSeek-R1 <rst_source/examples/agentic/wideseek_r1/index>
-  rStar2 <rst_source/examples/agentic/rstar2>
-  AgentLightning <rst_source/examples/agentic/agentlightning_calc_x>
-  Coding Online RL <rst_source/examples/agentic/coding_online_rl>
-  Qwen3-VL GRPO <rst_source/examples/agentic/qwen3_vl_geo3k>
+  推理训练 <rst_source/examples/agentic/math_reasoning/index>
+  Agent 训练 <rst_source/examples/agentic/agents/index>
   图像与视频生成 <rst_source/examples/video_models>
 
 .. toctree::

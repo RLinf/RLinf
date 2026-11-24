@@ -5,8 +5,8 @@ Install RLinf into a local ``uv`` virtual environment with ``requirements/instal
 
 Each virtual environment holds one model-and-environment stack; pass ``--venv <dir>`` when keeping multiple stacks side by side. Every recipe page includes its exact setup command, and this page serves as the global installer and hardware reference.
 
-Setup and Verify
-----------------
+Setup
+-----
 
 Clone the repository first:
 
@@ -27,14 +27,6 @@ Then pick your target stack below:
 
          bash requirements/install.sh embodied --model openpi --env maniskill_libero
          source .venv/bin/activate
-         python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
-
-      Expected output:
-
-      .. code-block:: text
-
-         /path/to/RLinf/rlinf/__init__.py CUDA: True
-         ray, version 2.x.x
 
    .. tab-item:: Real-World Robot
       :sync: realworld
@@ -58,14 +50,6 @@ Then pick your target stack below:
 
          bash requirements/install.sh agentic --engine sglang
          source .venv/bin/activate
-         python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
-
-      Expected output:
-
-      .. code-block:: text
-
-         /path/to/RLinf/rlinf/__init__.py CUDA: True
-         ray, version 2.x.x
 
    .. tab-item:: Prebuilt Docker
       :sync: docker

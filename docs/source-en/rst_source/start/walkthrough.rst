@@ -195,7 +195,7 @@ Set ``actor.model.model_path`` once and rollout inherits it automatically. Deep 
 3. Core Abstractions: Hardware, Robotics & Registries
 -----------------------------------------------------
 
-The same color-coded workers map onto any hardware topology through ``cluster.component_placement``—from one shared GPU to eight accelerator vendors and physical robot hosts. On real robots, modular parts snap into one Robot object with a single read/write API shared across self-check, data collection, SFT, and online RL.
+The same color-coded workers map onto any hardware topology through ``cluster.component_placement``—from one shared GPU to eight accelerator vendors and physical robot hosts. On real robots, modular parts snap into one Robot object with a single read/write API shared across self-check, data collection, online RL, and real-world evaluation.
 
 .. raw:: html
 
@@ -328,11 +328,11 @@ The same color-coded workers map onto any hardware topology through ``cluster.co
 
        <circle cx="754" cy="268" r="14" fill="var(--rlinf-surface, #ffffff)" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="2"/>
        <text x="754" y="272" text-anchor="middle" font-size="11" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">3</text>
-       <text x="754" y="298" text-anchor="middle" font-size="11" font-weight="600" fill="var(--pst-color-text-base, #0f172a)">SFT</text>
+       <text x="754" y="298" text-anchor="middle" font-size="11" font-weight="600" fill="var(--pst-color-text-base, #0f172a)">Online RL</text>
 
        <circle cx="862" cy="268" r="14" fill="var(--pst-color-primary, #6d28d9)"/>
        <text x="862" y="272" text-anchor="middle" font-size="11" font-weight="700" fill="#ffffff">4</text>
-       <text x="862" y="298" text-anchor="middle" font-size="11" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">Online RL</text>
+       <text x="862" y="298" text-anchor="middle" font-size="11" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">Eval &amp; Deploy</text>
      </svg>
    </div>
 

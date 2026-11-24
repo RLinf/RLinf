@@ -553,13 +553,13 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
 .bd-sidebar-primary .bd-docs-nav p.caption {
   border-top: 0;
   color: var(--pst-color-text-base);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.055em;
-  margin: 1.25rem 0 0.3rem !important;
-  opacity: 0.86;
+  font-size: 0.9rem;
+  font-weight: 680;
+  letter-spacing: 0.01em;
+  margin: 1.2rem 0 0.32rem !important;
+  opacity: 1;
   padding: 0 0.65rem !important;
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 .bd-sidebar-primary .bd-docs-nav p.caption:first-of-type {
@@ -588,7 +588,7 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
   border-radius: 6px;
   color: var(--pst-color-text-muted);
   display: block;
-  font-size: 0.85rem;
+  font-size: 0.84rem;
   font-weight: 450;
   line-height: 1.42;
   margin-right: 0 !important;
@@ -632,7 +632,7 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
 }
 
 .bd-sidebar-primary .bd-docs-nav .bd-sidenav ul li > a {
-  font-size: 0.825rem;
+  font-size: 0.815rem;
   padding: 0.28rem 0.58rem !important;
 }
 
@@ -704,13 +704,13 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
 
 .bd-sidebar-secondary .onthispage {
   color: var(--pst-color-text-base);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.055em;
+  font-size: 0.82rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
   margin-bottom: 0.65rem;
-  opacity: 0.85;
+  opacity: 0.9;
   padding-left: 0;
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 .bd-sidebar-secondary .onthispage i.fa-list {

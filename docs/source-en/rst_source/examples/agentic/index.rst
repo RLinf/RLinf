@@ -1,76 +1,66 @@
 Agent & LLM
 ===========
 
-Train reasoning LLMs, multi-turn tool-using agents, multi-agent systems, and diffusion models with RLinf's distributed worker runtime, Megatron/FSDP training backends, and SGLang/vLLM rollout engines.
+Train text and multimodal reasoning models, multi-turn tool-using agents, multi-agent systems, and diffusion models with RLinf's distributed worker runtime, Megatron / FSDP training backends, and SGLang / vLLM rollout engines.
 
-Before starting an agentic or reasoning recipe, install the agentic stack with ``bash requirements/install.sh agentic`` (see :doc:`Installation <../../start/installation>`). Image and video generation recipes use ``bash requirements/install.sh embodied --model diffusion``.
-
-Starting on a single node or a single GPU? Begin with :doc:`Qwen3-VL GRPO <qwen3_vl_geo3k>` (single-node FSDP2), :doc:`Qwen2.5 Math GRPO <math_reasoning/reasoning>` using its single-node quick-start override, or :doc:`SD3.5 Medium <../video_models>` for image generation.
+Before starting a reasoning or agent recipe, install the agentic stack with ``bash requirements/install.sh agentic`` (see :doc:`Installation <../../start/installation>`). Image and video generation recipes use ``bash requirements/install.sh embodied --model diffusion``.
 
 Choose a Track
 --------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 24 24 30
+   :widths: 20 26 22 32
 
    * - Track
      - Models & Backends
      - Algorithm / Mode
      - Recipes
-   * - :doc:`Math Reasoning <math_reasoning/index>`
-     - Qwen2.5, Moonlight-16B (Megatron + SGLang/vLLM)
-     - GRPO, PPO
-     - :doc:`Qwen2.5 GRPO <math_reasoning/reasoning>`, :doc:`Qwen2.5 PPO <math_reasoning/reasoning_ppo>`, :doc:`Moonlight-16B <math_reasoning/moonlight>`
-   * - :doc:`Search-R1 <searchr1/index>`
-     - Qwen2.5-3B, GLM-4.7-Flash (local Wiki / Qdrant)
-     - Multi-turn search RL (sync & async)
-     - :doc:`Qwen2.5-3B <searchr1/qwen2.5>`, :doc:`GLM-4.7-Flash <searchr1/glm4.7_flash>`, :doc:`Async Training <searchr1/async>`
-   * - :doc:`WideSeek-R1 <wideseek_r1/index>`
-     - Qwen3-4B lead-agent + parallel subagents
-     - Multi-agent RL (MARL)
-     - :doc:`Setup <wideseek_r1/tools>`, :doc:`Training <wideseek_r1/train>`, :doc:`Evaluation <wideseek_r1/eval>`
-   * - :doc:`rStar2 <rstar2>`
-     - Qwen2.5-7B + Python tool server
-     - Multi-turn reflection RL
-     - :doc:`rStar2-Agent <rstar2>`
-   * - :doc:`AgentLightning <agentlightning_calc_x>`
-     - Agent Lightning orchestration + RLinf backend
-     - Tool-use RL (Calc-X)
-     - :doc:`AgentLightning Calc-X <agentlightning_calc_x>`
-   * - :doc:`Coding Online RL <coding_online_rl>`
-     - Qwen2.5-Coder-1.5B + Continue IDE
-     - Online PPO / GRPO
-     - :doc:`Coding Online RL <coding_online_rl>`
-   * - :doc:`Qwen3-VL GRPO <qwen3_vl_geo3k>`
-     - Qwen3-VL (FSDP + SGLang)
-     - Multimodal GRPO (Geo3K)
-     - :doc:`Qwen3-VL Geo3K <qwen3_vl_geo3k>`
+   * - :doc:`Reasoning <math_reasoning/index>`
+     - Qwen2.5, Moonlight-16B, Qwen3-VL (Megatron / FSDP + SGLang / vLLM)
+     - GRPO, PPO (text & visual reasoning)
+     - :doc:`Qwen2.5 GRPO <math_reasoning/reasoning>`, :doc:`Qwen2.5 PPO <math_reasoning/reasoning_ppo>`, :doc:`Moonlight-16B <math_reasoning/moonlight>`, :doc:`Qwen3-VL Geo3K <qwen3_vl_geo3k>`
+   * - :doc:`Agentic RL <agents/index>`
+     - Qwen2.5, Qwen3-4B, GLM-4.7-Flash, Agent Lightning
+     - Multi-turn tools, MARL, online RL
+     - :doc:`Search-R1 <searchr1/index>`, :doc:`WideSeek-R1 <wideseek_r1/index>`, :doc:`rStar2 <rstar2>`, :doc:`AgentLightning <agentlightning_calc_x>`, :doc:`Coding Online RL <coding_online_rl>`
    * - :doc:`Image & Video Generation <../video_models>`
      - SD3.5 Medium, Wan2.2 TI2V 5B (Diffusers)
      - Diffusion-NFT, DiffusionART, ReFL
      - :doc:`Diffusion-NFT <../diffusion_nft>`, :doc:`DiffusionART <../diffusion_art>`, :doc:`ReFL <../embodied/refl>`
 
-Reasoning & Multimodal RL
--------------------------
+Reasoning
+---------
 
-.. grid:: 1 2 2 2
+.. grid:: 1 2 2 4
    :gutter: 3
 
-   .. grid-item-card:: Math Reasoning
-      :link: math_reasoning/index
+   .. grid-item-card:: Qwen2.5 Math (GRPO)
+      :link: math_reasoning/reasoning
       :link-type: doc
 
-      GRPO and PPO recipes on Qwen2.5 (1.5B/7B) and Moonlight-16B-A3B (DeepSeek-V3 MLA + MoE) for AIME24, AIME25, and GPQA-diamond.
+      GRPO training for DeepSeek-R1-Distill-Qwen (1.5B / 7B) on AReaL-boba, evaluated on AIME24, AIME25, and GPQA-diamond.
 
-   .. grid-item-card:: Qwen3-VL GRPO
+   .. grid-item-card:: Qwen2.5 Math (PPO)
+      :link: math_reasoning/reasoning_ppo
+      :link-type: doc
+
+      PPO math reasoning on Qwen2.5-1.5B updating both actor and critic.
+
+   .. grid-item-card:: Moonlight-16B (MoE GRPO)
+      :link: math_reasoning/moonlight
+      :link-type: doc
+
+      GRPO training for DeepSeek-V3 MLA + MoE architecture via Megatron-Bridge.
+
+   .. grid-item-card:: Qwen3-VL Visual Reasoning (Geo3K)
       :link: qwen3_vl_geo3k
       :link-type: doc
 
       Vision-language GRPO training on geometric reasoning (Geo3K) with FSDP and SGLang.
 
-Tool-Using & Multi-Agent RL
----------------------------
+Agentic RL
+----------
 
 .. grid:: 1 2 3 3
    :gutter: 3

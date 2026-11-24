@@ -195,7 +195,7 @@ RLinf 的日常使用统一遵循同一种模式：用启动脚本指定一份 H
 3. 核心设计：硬件抽象、真机积木与可插拔生态
 ---------------------------------------------
 
-通过调整 ``cluster.component_placement``，可将同一组 Worker 部署到单卡、多机集群、各类加速卡后端或真机主机；真机侧由模块化零部件组合出统一 Robot 接口，复用于自检、数据采集、SFT 与在线 RL。
+通过调整 ``cluster.component_placement``，可将同一组 Worker 部署到单卡、多机集群、各类加速卡后端或真机主机；真机侧由模块化零部件组合出统一 Robot 接口，复用于自检、数据采集、在线 RL 与评测部署。
 
 .. raw:: html
 
@@ -328,11 +328,11 @@ RLinf 的日常使用统一遵循同一种模式：用启动脚本指定一份 H
 
        <circle cx="754" cy="268" r="14" fill="var(--rlinf-surface, #ffffff)" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="2"/>
        <text x="754" y="272" text-anchor="middle" font-size="11" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">3</text>
-       <text x="754" y="298" text-anchor="middle" font-size="11" font-weight="600" fill="var(--pst-color-text-base, #0f172a)">SFT 部署</text>
+       <text x="754" y="298" text-anchor="middle" font-size="11" font-weight="600" fill="var(--pst-color-text-base, #0f172a)">在线 RL</text>
 
        <circle cx="862" cy="268" r="14" fill="var(--pst-color-primary, #6d28d9)"/>
        <text x="862" y="272" text-anchor="middle" font-size="11" font-weight="700" fill="#ffffff">4</text>
-       <text x="862" y="298" text-anchor="middle" font-size="11" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">在线 RL</text>
+       <text x="862" y="298" text-anchor="middle" font-size="11" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">评测部署</text>
      </svg>
    </div>
 

@@ -1,42 +1,40 @@
-Math Reasoning
-==============
+Reasoning
+=========
 
-Train large language models on math reasoning benchmarks (AIME24, AIME25, GPQA-diamond) with GRPO and PPO using the Megatron actor and SGLang or vLLM rollout. Pick a model family and algorithm below.
+Train language and vision-language models on single-turn math and multimodal reasoning benchmarks with GRPO or PPO using Megatron or FSDP actors and SGLang or vLLM rollout. Pick a model family and algorithm below.
 
-.. grid:: 1 2 3 3
+.. grid:: 1 2 2 2
    :gutter: 3
 
-   .. grid-item-card:: Qwen2.5 GRPO
+   .. grid-item-card:: Qwen2.5 Math (GRPO)
       :link: reasoning
       :link-type: doc
 
-      .. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/math_numbers_small.jpg
-         :alt: Qwen2.5 Math GRPO
+      GRPO training for DeepSeek-R1-Distill-Qwen (1.5B and 7B) on AReaL-boba math data, evaluated on AIME24, AIME25, and GPQA-diamond.
 
-      GRPO training for DeepSeek-R1-Distill-Qwen (1.5B and 7B) on AReaL-boba math data.
-
-   .. grid-item-card:: Qwen2.5 PPO
+   .. grid-item-card:: Qwen2.5 Math (PPO)
       :link: reasoning_ppo
       :link-type: doc
 
-      .. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/ppo_vs_grpo.png
-         :alt: Qwen2.5 Math PPO
-
       PPO training with an actor and critic on Qwen2.5-1.5B math reasoning tasks.
 
-   .. grid-item-card:: Moonlight-16B GRPO
+   .. grid-item-card:: Moonlight-16B (MoE GRPO)
       :link: moonlight
       :link-type: doc
 
-      .. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/moonlight/moonlight_grpo_reward.jpeg
-         :alt: Moonlight-16B GRPO
-
       GRPO training for Moonlight-16B-A3B-Instruct (DeepSeek-V3 MLA + MoE) via Megatron-Bridge.
+
+   .. grid-item-card:: Qwen3-VL Visual Reasoning (Geo3K)
+      :link: ../qwen3_vl_geo3k
+      :link-type: doc
+
+      Vision-language GRPO training on geometric reasoning (Geo3K) with FSDP and SGLang.
 
 .. toctree::
    :hidden:
    :maxdepth: 1
 
-   Qwen2.5 GRPO <reasoning>
-   Qwen2.5 PPO <reasoning_ppo>
-   Moonlight-16B GRPO <moonlight>
+   Qwen2.5 Math (GRPO) <reasoning>
+   Qwen2.5 Math (PPO) <reasoning_ppo>
+   Moonlight-16B (MoE GRPO) <moonlight>
+   Qwen3-VL Visual Reasoning (Geo3K) <../qwen3_vl_geo3k>

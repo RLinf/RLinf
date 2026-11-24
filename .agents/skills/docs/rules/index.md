@@ -11,7 +11,7 @@ The docs have eight top-level chapters in the sidebar, in this order: **Get Star
 | Get Started | installation & hardware requirements, first training run, tour of RLinf, FAQ |
 | Embodied AI | overview, simulators, embodied models, SFT & imitation, RL recipes, world models, embodied evaluation (quick tour, benchmark guides, eval reference) |
 | Real-World Robots | overview, shared real-world workflows (multi-node robot launch, teleoperation, data collection), and per-robot bring-up / SFT / RL pages |
-| Agent & LLM | math reasoning, Search-R1, WideSeek-R1, rStar2, AgentLightning, Coding RL, VLM, image & video generation |
+| Agent & LLM | overview, Reasoning (math GRPO/PPO, Moonlight MoE, Qwen3-VL Geo3K), Agentic RL (Search-R1, WideSeek-R1, rStar2, AgentLightning, Coding Online RL), Image & Video Generation |
 | Guides | workflow-ordered operational how-tos: Configure & Run, Scale to a Cluster, Profile & Speed Up, Rollout Backends |
 | Extending | goal-grouped contributor how-tos: Add a Model (all model paths & weight sync), Add an Env or Robot, Add an Algorithm, Add a Reward, Add an Agent, Add a Hardware Backend |
 | Concepts & Reference | concepts (overview, execution, scheduling, robotics), algorithm specs, config & metrics, Python API |

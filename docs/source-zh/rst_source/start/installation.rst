@@ -5,8 +5,8 @@
 
 每个虚拟环境对应一套模型与环境组合，共存多套环境时传入 ``--venv <dir>`` 即可避免覆盖默认环境。各教程页面都附带对应命令，本页作为全局安装参数与硬件参考。
 
-安装与验证
-----------
+安装步骤
+--------
 
 先克隆仓库并进入根目录：
 
@@ -27,14 +27,6 @@
 
          bash requirements/install.sh embodied --model openpi --env maniskill_libero
          source .venv/bin/activate
-         python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
-
-      预期输出：
-
-      .. code-block:: text
-
-         /path/to/RLinf/rlinf/__init__.py CUDA: True
-         ray, version 2.x.x
 
    .. tab-item:: 真机机器人
       :sync: realworld
@@ -58,14 +50,6 @@
 
          bash requirements/install.sh agentic --engine sglang
          source .venv/bin/activate
-         python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
-
-      预期输出：
-
-      .. code-block:: text
-
-         /path/to/RLinf/rlinf/__init__.py CUDA: True
-         ray, version 2.x.x
 
    .. tab-item:: 预构建 Docker 镜像
       :sync: docker
