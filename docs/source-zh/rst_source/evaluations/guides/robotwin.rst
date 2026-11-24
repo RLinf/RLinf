@@ -286,6 +286,8 @@ LingbotVLA 2.0
 - ``task_config.embodiment: [aloha-agilex]`` 且 ``task_config.camera.collect_wrist_camera: true``；模型需要左右两个腕部相机
 - ``rollout.model.num_action_chunks: 50``；``max_episode_steps: 400``
 
+:ref:`robotwin-dream-eval`
+
 覆盖完整测试集
 ~~~~~~~~~~~~~~
 

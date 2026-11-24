@@ -4007,6 +4007,7 @@ def test_async_env_worker_stop_cancels_pending_action_receive():
 
 def test_env_evaluate_uses_async_channel_receive():
     env = object.__new__(EnvWorker)
+    env.only_eval = True
     env._accelerator_type = AcceleratorType.NO_ACCEL
     env._timer_metrics = {}
     env.cfg = SimpleNamespace(rollout=SimpleNamespace(group_name="RolloutGroup"))
@@ -4028,6 +4029,7 @@ def test_env_evaluate_uses_async_channel_receive():
     env.eval_env_list = [
         SimpleNamespace(
             is_start=False,
+            close=Mock(),
             reset=Mock(return_value=({"states": torch.zeros(1, 4)}, {})),
         )
     ]
@@ -4047,6 +4049,7 @@ def test_env_evaluate_uses_async_channel_receive():
     assert env.recv_from.call_args.kwargs["async_op"] is True
     recv_work.wait.assert_called_once_with()
     assert torch.equal(metrics["return"], torch.tensor([1.0]))
+    env.eval_env_list[0].close.assert_called_once_with()
 
 
 def test_smooth_intervention_builds_external_input_without_policy_history():
@@ -4461,6 +4464,8 @@ class _StopServing(Exception):
 
 def _eval_rollout(decoupled: bool) -> MultiStepRolloutWorker:
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.only_eval = False
+    rollout.hf_model = None
     rollout.eval_layout = _policy_field_layout("env.eval")
     rollout.env_decoupled_mode = decoupled
     rollout.enable_offload = False

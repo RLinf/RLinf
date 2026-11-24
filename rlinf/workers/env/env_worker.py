@@ -1273,9 +1273,7 @@ class EnvWorker(Worker):
         try:
             return self._evaluate(input_channel, rollout_channel)
         finally:
-            if self.only_eval and self.cfg.env.eval.get(
-                "capture_dream_observations", False
-            ):
+            if self.only_eval:
                 for env in self.eval_env_list:
                     env.close()
 

@@ -285,6 +285,8 @@ LingbotVLA 2.0
 - ``task_config.embodiment: [aloha-agilex]`` and ``task_config.camera.collect_wrist_camera: true``; the model reads both wrist cameras
 - ``rollout.model.num_action_chunks: 50``; ``max_episode_steps: 400``
 
+:ref:`robotwin-dream-eval`
+
 Covering the full test set
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
