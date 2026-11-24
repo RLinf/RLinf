@@ -18,6 +18,7 @@ import logging
 import math
 import os
 from dataclasses import asdict
+from enum import Enum
 from typing import TYPE_CHECKING, Callable, ClassVar, Optional
 
 import torch
@@ -45,6 +46,13 @@ if TYPE_CHECKING:
     from megatron.core.transformer.transformer_config import TransformerConfig
 
 logging.getLogger().setLevel(logging.INFO)
+
+
+class ObsContract(Enum):
+    """Observation shape a policy consumes at its training entry point."""
+
+    STATE = "state"
+    PREFIX = "prefix"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -103,6 +111,7 @@ SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=
 SupportedModel.RLT_TD3_MLP_POLICY = SupportedModel.register(
     "rlt_td3_mlp_policy", force=True
 )
+SupportedModel.PREFIX_POLICY = SupportedModel.register("prefix_policy", force=True)
 SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
 SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
@@ -138,6 +147,18 @@ SupportedModel.GLM4_MOE_LITE = SupportedModel.register("glm4_moe_lite", force=Tr
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
 
+# Policies whose training entry point reads a contract other than ``obs["states"]``.
+# ``register_model`` fills this for out-of-tree models through ``obs_contract``.
+MODEL_OBS_CONTRACT: dict[SupportedModel, ObsContract] = {
+    SupportedModel.PREFIX_POLICY: ObsContract.PREFIX,
+}
+
+
+def get_model_obs_contract(model_type: SupportedModel) -> ObsContract:
+    """Return the observation contract a registered model declares."""
+    return MODEL_OBS_CONTRACT.get(model_type, ObsContract.STATE)
+
+
 DIFFUSION_MODELS = {SupportedModel.SD3, SupportedModel.WAN22_TI2V_5B}
 
 EMBODIED_MODEL = set(
@@ -151,6 +172,7 @@ EMBODIED_MODEL = set(
         SupportedModel.MLP_POLICY,
         SupportedModel.RLT_MLP_POLICY,
         SupportedModel.RLT_TD3_MLP_POLICY,
+        SupportedModel.PREFIX_POLICY,
         SupportedModel.GR00T,
         SupportedModel.DEXBOTIC_PI,
         SupportedModel.DEXBOTIC_DM0,
@@ -1505,6 +1527,24 @@ def validate_embodied_cfg(cfg):
             f"Expected merged_loras[{index}] of the model config to set path, "
             f"got {adapter!r}."
         )
+    if algorithm_cfg.get("loss_type") == "prefix_off_policy":
+        observed = get_model_obs_contract(model_type)
+        assert observed == ObsContract.PREFIX, (
+            "algorithm.loss_type=prefix_off_policy requires a policy with "
+            f"obs_contract={ObsContract.PREFIX.value}, but "
+            f"model_type={model_type.value!r} declares "
+            f"obs_contract={observed.value}."
+        )
+        for path in ("actor_head.name", "critic_head.name"):
+            assert OmegaConf.select(model_cfg, path, default=None), (
+                "prefix_policy requires actor.model." + path
+            )
+        from rlinf.algorithms.prefix_off_policy import (
+            build_prefix_off_policy_algorithm,
+        )
+
+        if not only_eval:
+            build_prefix_off_policy_algorithm(cfg)
     if model_type == SupportedModel.OPENPI:
         if only_eval and model_cfg.openpi.get("short_memory", False):
             eval_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("eval", None), "env.eval")
@@ -1655,9 +1695,15 @@ def validate_embodied_cfg(cfg):
         )
         if not only_eval:
             loss_type = algorithm_cfg.get("loss_type")
-            assert loss_type not in {"embodied_dagger", "rlt_ac", "rlt_td3"}, (
-                "Expected an algorithm.loss_type other than embodied_dagger, "
-                f"rlt_ac, or rlt_td3 for rollout_backend='phyai', got {loss_type!r}."
+            assert loss_type not in {
+                "embodied_dagger",
+                "rlt_ac",
+                "rlt_td3",
+                "prefix_off_policy",
+            }, (
+                "Expected an algorithm.loss_type other than embodied_dagger, rlt_ac, "
+                "rlt_td3, or "
+                f"prefix_off_policy for rollout_backend='phyai', got {loss_type!r}."
             )
             adv_type = algorithm_cfg.get("adv_type")
             assert adv_type != "opd", (
