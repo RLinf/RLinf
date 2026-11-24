@@ -1,9 +1,11 @@
-安装
-====
+安装与硬件参考
+==============
 
-使用 ``requirements/install.sh`` 在本地 ``uv`` 虚拟环境中安装 RLinf，或直接拉取 Docker Hub 预构建镜像。
+.. note::
 
-每个虚拟环境对应一套模型与环境组合，共存多套环境时传入 ``--venv <dir>`` 即可避免覆盖默认环境。各教程页面都附带对应命令，本页作为全局安装参数与硬件参考。
+   **首次使用 RLinf？** 直接从 :doc:`快速开始 <vla>` 起步，照着单卡步骤一次完成安装并跑通第一个训练任务。各模型、仿真器与真机教程页也都自带精确的安装命令；本页作为 ``install.sh`` 全局参数、预构建 Docker 镜像、国内加速与硬件档位的参考手册使用。
+
+使用 ``requirements/install.sh`` 在本地 ``uv`` 虚拟环境中安装 RLinf，或直接拉取 Docker Hub 预构建镜像。每个虚拟环境对应一套模型与环境组合，共存多套环境时传入 ``--venv <dir>`` 即可避免覆盖默认环境。
 
 安装步骤
 --------
@@ -151,10 +153,10 @@
      - 推荐入口
    * - 单卡（4–24 GB）
      - MLP / CNN 仿真 RL（~4 GB）、VLA 评测（24 GB 起）、LoRA SFT、真机数据采集与部署
-     - :doc:`第一个训练任务（具身智能） <vla>`、:doc:`评测快速体验 <../evaluations/get_started/quick_tour>`
+     - :doc:`快速开始（具身智能） <vla>`、:doc:`评测快速体验 <../evaluations/get_started/quick_tour>`
    * - 1–2 卡（40–80 GB）
      - 单机 OpenVLA / OpenPI 训练、共置 PPO / GRPO、1.5B Agent / LLM GRPO
-     - :doc:`第一个训练任务（Agent 与 LLM） <vla>`、:doc:`具身智能 <../examples/index>`
+     - :doc:`快速开始（Agent 与 LLM） <vla>`、:doc:`具身智能 <../examples/index>`
    * - 4–8 卡（80 GB）
      - VLA 全参 SFT 与基准复现（LIBERO、ManiSkill、RoboTwin）、7B–14B 推理 RL
      - :doc:`具身训练 <../examples/index>`

@@ -30,17 +30,17 @@ Choose Your Path
 .. grid:: 1 2 2 2
    :gutter: 3
 
-   .. grid-item-card:: Installation
-      :link: rst_source/start/installation
-      :link-type: doc
-
-      Set up a local ``uv`` environment or pull a Docker Hub image, and check hardware requirements.
-
-   .. grid-item-card:: First Training Run
+   .. grid-item-card:: Quickstart
       :link: rst_source/start/vla
       :link-type: doc
 
-      Run a single-GPU Embodied AI (ManiSkill3) or Agent & LLM (GRPO) training example.
+      Clone RLinf, install one environment, and run your first single-GPU Embodied AI or Agent & LLM training job.
+
+   .. grid-item-card:: Tour of RLinf
+      :link: rst_source/start/walkthrough
+      :link-type: doc
+
+      See how training runs end to end, how jobs scale across GPUs, and where configs, models, and tools live.
 
    .. grid-item-card:: VLA Evaluation
       :link: rst_source/evaluations/get_started/quick_tour
@@ -88,9 +88,9 @@ Why RLinf
   :titlesonly:
   :hidden:
 
-  Installation <rst_source/start/installation>
-  First Training Run <rst_source/start/vla>
+  Quickstart <rst_source/start/vla>
   Tour of RLinf <rst_source/start/walkthrough>
+  Installation & Hardware <rst_source/start/installation>
   FAQ <rst_source/resources/faq>
 
 .. toctree::

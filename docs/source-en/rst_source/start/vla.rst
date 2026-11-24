@@ -1,19 +1,27 @@
-First Training Run
-==================
+Quickstart
+==========
 
-Pick either the **Embodied AI** or **Agent & LLM** single-GPU track to complete your first RLinf training run and inspect metrics.
+Pick either the **Embodied AI** or **Agent & LLM** single-GPU track to install RLinf, run your first training job, and inspect the output metrics.
 
-Launch Training
----------------
-
-Prepare and activate the matching virtual environment from :doc:`installation` first (``--env maniskill_libero`` for Embodied AI, ``agentic --engine sglang`` for Agent & LLM).
+Setup and Run
+-------------
 
 .. tab-set::
 
    .. tab-item:: Embodied AI (ManiSkill3)
       :sync: embodied
 
-      Runs PPO training on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__'s built-in ``PickCube-v1`` task (~4 GB VRAM on 1 GPU, no extra asset or checkpoint downloads):
+      Runs PPO training on `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__'s built-in ``PickCube-v1`` task (~4 GB VRAM on 1 GPU, no extra checkpoint or dataset downloads).
+
+      1. Clone RLinf and set up the ManiSkill3 virtual environment:
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env maniskill_libero
+         source .venv/bin/activate
+
+      2. Launch training:
 
       .. code-block:: bash
 
@@ -22,7 +30,17 @@ Prepare and activate the matching virtual environment from :doc:`installation` f
    .. tab-item:: Agent & LLM (GRPO)
       :sync: agentic
 
-      Runs single-GPU GRPO math reasoning training on ``DeepSeek-R1-Distill-Qwen-1.5B`` with SGLang and Megatron (config ``examples/reasoning/config/math/qwen2.5-1.5b-single-gpu.yaml``):
+      Runs single-GPU GRPO math reasoning training on ``DeepSeek-R1-Distill-Qwen-1.5B`` with SGLang and Megatron (config ``examples/reasoning/config/math/qwen2.5-1.5b-single-gpu.yaml``).
+
+      1. Clone RLinf and set up the Agent & LLM virtual environment:
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic --engine sglang
+         source .venv/bin/activate
+
+      2. Download the model and dataset, then launch training:
 
       .. code-block:: bash
 
@@ -34,7 +52,7 @@ Prepare and activate the matching virtual environment from :doc:`installation` f
            data.train_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
            data.val_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]'
 
-Each config name matches a YAML file in the repository (``examples/embodiment/config/`` for embodied, ``examples/reasoning/config/math/`` for reasoning) — see :doc:`../reference/configuration` for all config directories and tuning presets.
+Need prebuilt Docker images, mainland China mirrors (``--use-mirror`` / ``HF_ENDPOINT``), other model or simulator stacks, or multi-GPU hardware specs? See :doc:`Installation & Hardware <installation>`. Each config name matches a YAML file in ``examples/embodiment/config/`` or ``examples/reasoning/config/math/`` — see :doc:`../reference/configuration` for all config directories.
 
 .. dropdown:: Common Overrides and Operations (Optional)
 

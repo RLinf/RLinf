@@ -30,17 +30,17 @@
 .. grid:: 1 2 2 2
    :gutter: 3
 
-   .. grid-item-card:: 安装与第一个任务
-      :link: rst_source/start/installation
-      :link-type: doc
-
-      配置本地 ``uv`` 环境或 Docker 镜像，并了解硬件要求。
-
-   .. grid-item-card:: 第一个训练任务
+   .. grid-item-card:: 快速开始
       :link: rst_source/start/vla
       :link-type: doc
 
-      在单卡上运行具身智能（ManiSkill3）或 Agent / LLM（GRPO）训练示例。
+      克隆仓库、装好单套环境，在单卡上跑通第一个具身智能（ManiSkill3）或 Agent / LLM（GRPO）训练任务。
+
+   .. grid-item-card:: 框架导览
+      :link: rst_source/start/walkthrough
+      :link-type: doc
+
+      通过图示了解训练闭环、单卡到多卡的扩展方式，以及配置、模型与工具的目录位置。
 
    .. grid-item-card:: VLA 评测
       :link: rst_source/evaluations/get_started/quick_tour
@@ -88,9 +88,9 @@
   :titlesonly:
   :hidden:
 
-  安装 <rst_source/start/installation>
-  第一个训练任务 <rst_source/start/vla>
+  快速开始 <rst_source/start/vla>
   框架导览 <rst_source/start/walkthrough>
+  安装与硬件参考 <rst_source/start/installation>
   常见问题 <rst_source/resources/faq>
 
 .. toctree::

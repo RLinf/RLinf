@@ -1,19 +1,27 @@
-第一个训练任务
-==============
+快速开始
+========
 
-选择 **具身智能** 或 **Agent 与 LLM** 两条单卡路径之一，完成第一次 RLinf 训练并查看指标输出。
+选择 **具身智能** 或 **Agent 与 LLM** 两条单卡路径之一，从安装环境到跑通第一次 RLinf 训练并查看指标输出。
 
-启动训练
---------
-
-开始前请先按 :doc:`安装 <installation>` 准备并激活对应的虚拟环境（具身需 ``--env maniskill_libero``，Agent 与 LLM 需 ``agentic --engine sglang``）。
+安装与运行
+----------
 
 .. tab-set::
 
    .. tab-item:: 具身智能（ManiSkill3）
       :sync: embodied
 
-      在单卡上基于 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ 内置 ``PickCube-v1`` 任务运行 PPO 训练（约需 4 GB 显存，无需额外下载权重或资产）：
+      在单卡上基于 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ 内置 ``PickCube-v1`` 任务运行 PPO 训练（约需 4 GB 显存，无需额外下载权重或资产）。
+
+      1. 克隆仓库并安装 ManiSkill3 虚拟环境：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env maniskill_libero
+         source .venv/bin/activate
+
+      2. 启动训练：
 
       .. code-block:: bash
 
@@ -22,7 +30,17 @@
    .. tab-item:: Agent 与 LLM（GRPO）
       :sync: agentic
 
-      在单卡上使用 SGLang + Megatron 对 ``DeepSeek-R1-Distill-Qwen-1.5B`` 运行数学推理 GRPO 训练（配置 ``examples/reasoning/config/math/qwen2.5-1.5b-single-gpu.yaml``）：
+      在单卡上使用 SGLang + Megatron 对 ``DeepSeek-R1-Distill-Qwen-1.5B`` 运行数学推理 GRPO 训练（配置 ``examples/reasoning/config/math/qwen2.5-1.5b-single-gpu.yaml``）。
+
+      1. 克隆仓库并安装 Agent 与 LLM 虚拟环境：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic --engine sglang
+         source .venv/bin/activate
+
+      2. 下载模型与数据集，然后启动训练：
 
       .. code-block:: bash
 
@@ -34,7 +52,7 @@
            data.train_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
            data.val_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]'
 
-命令行中的配置名对应仓库中的同名 YAML 文件（具身示例位于 ``examples/embodiment/config/``，推理示例位于 ``examples/reasoning/config/math/``），完整配置目录与常用参数见 :doc:`../reference/configuration`。
+如需使用预构建 Docker 镜像、国内镜像加速（``--use-mirror`` 与 ``HF_ENDPOINT``）、其他模型/仿真器组合或查看多卡硬件要求，见 :doc:`安装与硬件参考 <installation>`。命令行中的配置名对应 ``examples/embodiment/config/`` 或 ``examples/reasoning/config/math/`` 下的同名 YAML 文件，完整配置目录见 :doc:`../reference/configuration`。
 
 .. dropdown:: 常用操作与参数覆盖（可选）
 

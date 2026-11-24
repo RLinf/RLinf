@@ -1,9 +1,11 @@
-Installation
-============
+Installation & Hardware
+=======================
 
-Install RLinf into a local ``uv`` virtual environment with ``requirements/install.sh``, or pull a prebuilt image from Docker Hub.
+.. note::
 
-Each virtual environment holds one model-and-environment stack; pass ``--venv <dir>`` when keeping multiple stacks side by side. Every recipe page includes its exact setup command, and this page serves as the global installer and hardware reference.
+   **New to RLinf?** Start with :doc:`Quickstart <vla>` to install one environment and finish your first single-GPU run end to end. Every model, simulator, and robot recipe also includes its own exact install command. Use this page as a reference for ``install.sh`` options, prebuilt Docker images, regional mirrors, and GPU/cluster requirements.
+
+Install RLinf into a local ``uv`` virtual environment with ``requirements/install.sh``, or pull a prebuilt image from Docker Hub. Each virtual environment holds one model-and-environment stack; pass ``--venv <dir>`` to keep multiple stacks side by side.
 
 Setup
 -----
@@ -151,10 +153,10 @@ Match your hardware to the workload you want to run; the same recipes scale from
      - Example Starting Point
    * - 1 GPU (4–24 GB)
      - MLP / CNN simulation RL (~4 GB), VLA evaluation (24 GB+), LoRA SFT, real-robot data collection, and deployment
-     - :doc:`First Training Run (Embodied AI) <vla>`, :doc:`Evaluation Quick Tour <../evaluations/get_started/quick_tour>`
+     - :doc:`Quickstart (Embodied AI) <vla>`, :doc:`Evaluation Quick Tour <../evaluations/get_started/quick_tour>`
    * - 1–2 GPUs (40–80 GB)
      - Single-workstation OpenVLA / OpenPI RL, collocated PPO / GRPO, 1.5B Agent & LLM GRPO
-     - :doc:`First Training Run (Agent & LLM) <vla>`, :doc:`Embodied AI <../examples/index>`
+     - :doc:`Quickstart (Agent & LLM) <vla>`, :doc:`Embodied AI <../examples/index>`
    * - 4–8 GPUs (80 GB)
      - Full-parameter VLA SFT and RL benchmarks (LIBERO, ManiSkill, RoboTwin), 7B–14B reasoning RL
      - :doc:`Embodied Training <../examples/index>`
