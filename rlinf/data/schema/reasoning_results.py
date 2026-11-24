@@ -824,6 +824,21 @@ class RolloutResult:
 
 
 @dataclass(kw_only=True)
+class PayloadRef:
+    """Where the training data of one finished group lives.
+
+    The session server writes each group's payload parts to a channel and
+    reports this locator with the group's completion metadata; the consumer
+    (actor) gets the payload back with a keyed get on the channel. ``key``
+    is the payload channel key, equal to the group id.
+    """
+
+    # Channel location, "channel://<channel-name>".
+    locator: str
+    key: int
+
+
+@dataclass(kw_only=True)
 class GroupMetadata:
     """Decision-relevant view of one finished query group.
 
@@ -848,6 +863,10 @@ class GroupMetadata:
     # Number of generate calls the group took; one call per sequence,
     # since each turn of a multi-turn rollout is its own sequence.
     num_generate_calls: int
+    # Where the group's training payload is stored, when the producer
+    # keeps the result itself out-of-band (with the session server); None when
+    # the result travels with this metadata.
+    payload_ref: Optional[PayloadRef] = None
 
 
 @dataclass(kw_only=True)
@@ -857,6 +876,21 @@ class DiscardedGroup:
 
     group_id: int
     reason: str
+
+
+@dataclass(kw_only=True)
+class GroupDelivery:
+    """Message the rollout buffer puts on the actor's channel when the
+    session server is enabled.
+
+    The training data itself stays in the payload channel named by
+    ``payload_ref``; the actor fetches it with a keyed get on the group's
+    key before training.
+    """
+
+    group_id: int
+    task_name: Optional[str]
+    payload_ref: PayloadRef
 
 
 @dataclass(kw_only=True)

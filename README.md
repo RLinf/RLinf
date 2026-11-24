@@ -36,6 +36,8 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 ## What's NEW!
 
 - [2026/11] 🔥 RLinf supports PPO training on RoboDojo and RoboLab with OpenPI π₀.₅. Docs: [RoboDojo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robodojo.html), [RoboLab](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robolab.html).
+- [2026/11] 🔥 RLinf supports FlexRLT: train a compact actor-critic from frozen VLA features, with configurable heads, AC/TD3 updates, and STEAM routing. Doc: [FlexRLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html).
+- [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
 - [2026/11] 🔥 RLinf supports Reward Feedback Learning (ReFL) for fine-tuning SD3.5 Medium with ImageReward. Doc: [ReFL](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html).
 - [2026/11] 🔥 RLinf supports Intel GPUs. See the [hardware support matrix](#hardware-support) and PR: [Intel GPU support (#1832)](https://github.com/RLinf/RLinf/pull/1832).
 - [2026/11] 🔥 RLinf supports the Robbyant R2 wheeled humanoid robot for real-world RL, whole-body PICO VR teleoperation, and coordinated control across dual arms, grippers or dexterous hands, torso, and omnidirectional base. Doc: [Robbyant R2](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/r2.html).
@@ -45,6 +47,8 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/11] 🔥 RLinf supports MuJoCo Warp for batched GPU simulation on five classic locomotion tasks with an MLP + PPO recipe. Doc: [MuJoCo Warp](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/mujoco_warp.html).
 - [2026/11] 🔥 RLinf supports LeKiwi, a three-wheel omnidirectional mobile base, with per-part bring-up tools and a registered real-world drive environment. Doc: [LeKiwi](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lekiwi.html).
 - [2026/11] 🔥 RLinf supports dual-arm ARX X5 data collection with Pico teleoperation. Doc: [ARX X5](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/arx5.html).
+- [2026/11] 🔥 RLinf supports a session server for asynchronous agentic RL: trajectories stay on the rollout nodes instead of node 0, requests are routed by an SGLang router, and agents can use the OpenAI chat completions API. Doc: [Session Server](https://rlinf.readthedocs.io/en/latest/rst_source/guides/session_server.html).
+- [2026/11] 🔥 RLinf supports asynchronous agentic RL: the rollout keeps generating while the actor trains on data from an earlier weight version, with bounded staleness. On Search-R1 with GLM-4.7-Flash, the step time drops from 278.6 s to 139.0 s with a comparable reward. Docs: [Asynchronous Agentic RL](https://rlinf.readthedocs.io/en/latest/rst_source/guides/async_agentic.html), [Asynchronous Search-R1 Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/async.html).
 - [2026/11] 🔥 RLinf supports DiffusionART fine-tuning for SD3 image generation and Wan2.2 video generation with OCR rewards, reaching the same reward threshold in about 30% less wall-clock time and a third fewer trajectories than NFT on Wan2.2. Doc: [DiffusionART](https://rlinf.readthedocs.io/en/latest/rst_source/examples/diffusion_art.html).
 - [2026/11] 🔥 RLinf supports LIBERO-Mem and MEM-inspired visual short memory for OpenPI SFT and evaluation, raising strict LIBERO-Mem success from 20.0% to 35.5% over the current-frame baseline. Docs: [LIBERO-Mem](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#libero-mem-benchmark), [OpenPI Short Memory](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0/short_memory.html).
 - [2026/11] 🔥 RLinf supports evaluating OpenPI π₀.₅ on the RoboLab manipulation benchmark. Doc: [RoboLab evaluation](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/robolab.html).
@@ -222,6 +226,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html">GenieSim</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robodojo.html">RoboDojo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robolab.html">RoboLab</a> ✅</li>
           <li>More...</li>
         </ul>
@@ -279,6 +284,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><b>RL Algos</b></li>
           <ul>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html">FlexRLT (AC / TD3)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/grpo.html">GRPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/ppo.html">PPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/async_ppo.html">Async PPO</a> ✅</li>
