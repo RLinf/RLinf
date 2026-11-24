@@ -4,7 +4,7 @@
 如需带注释的最小具身 YAML 与 Hydra 预设地图，请先阅读 :doc:`../reference/configuration`。本页给出具身智能 RL 训练专用参数的完整说明，扩展自 :doc:`basic_config`。
 
 defaults
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -19,7 +19,7 @@ defaults
 ``defaults``：Hydra 配置继承。``base/embodied_rl`` 默认引入 ``cluster/collocated``、``runner``、``hybrid_engines/fsdp`` 与 ``weight_syncer/patch_syncer`` 预设；``<group>@<target>`` 语法把预设挂载到对应配置节点（例如 ``model/openvla_oft@actor.model`` 填充 ``actor.model``）。
 
 hydra
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -30,7 +30,7 @@ hydra
 ``hydra.searchpath``：配置文件的额外搜索路径。``EMBODIED_PATH`` 指向具身示例的配置目录。
 
 runner
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -61,7 +61,7 @@ runner
 等共享键在 :doc:`basic_config` 中说明。
 
 algorithm
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -141,7 +141,7 @@ algorithm
 :doc:`basic_config` 中说明。
 
 env
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -201,7 +201,7 @@ env
      - OpenVLA-OFT 还原这份环境配置的动作时使用的统计量，用来代替 ``actor.model.unnorm_key`` 。见 :doc:`hetero_envs` 。
 
 rollout
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -260,7 +260,7 @@ rollout
      - rollout 的推理精度。
 
 actor
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 

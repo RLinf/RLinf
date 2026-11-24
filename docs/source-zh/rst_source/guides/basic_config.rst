@@ -8,7 +8,7 @@
    **配置文件位置：** 训练 YAML 位于 ``examples/<任务>/config/``\ （例如 ``examples/embodiment/config/``、``examples/sft/config/`` 与 ``examples/reasoning/config/``），独立评测 YAML 位于 ``evaluations/<benchmark>/``。完整目录速查见 :doc:`../reference/configuration`。
 
 hydra
-~~~~~~
+------
 
 .. code:: yaml
 
@@ -29,7 +29,7 @@ hydra
      - 输出子目录（设为 ``null`` 则不创建子目录）。
 
 cluster
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -73,7 +73,7 @@ Rank 取值支持以下形式：
 而对于更高级的组件放置用法（例如，异构集群中使用不同型号的 GPU、机器人硬件或仅 CPU 节点）以及代码中的自定义，请参见 :doc:`../concepts/placement`。
 
 runner
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -125,7 +125,7 @@ runner
      - 输入到模型的总序列长度（提示 + 生成）。
 
 algorithm
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -208,7 +208,7 @@ algorithm
      - 重复惩罚系数。
 
 rollout
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -237,7 +237,7 @@ rollout
      - 后端内部使用的模型架构标记（如 ``qwen2.5``）。
 
 actor
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -263,7 +263,7 @@ actor
      - 全局随机种子，便于复现。
 
 reward
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -280,7 +280,7 @@ reward
      - 是否使用奖励模型。
 
 critic
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 

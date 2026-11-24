@@ -4,7 +4,7 @@ Embodied Configuration
 For an annotated minimal embodied YAML and Hydra preset overview, see :doc:`../reference/configuration`. This page documents embodied-specific RL keys (robot manipulation, simulators, and VLA models) extending :doc:`basic_config`.
 
 defaults
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -19,7 +19,7 @@ defaults
 ``defaults``: Hydra configuration inheritance. ``base/embodied_rl`` brings in the default ``cluster/collocated``, ``runner``, ``hybrid_engines/fsdp``, and ``weight_syncer/patch_syncer`` presets; ``<group>@<target>`` mounts a preset onto a config node (e.g. ``model/openvla_oft@actor.model`` fills ``actor.model``).
 
 hydra
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -31,7 +31,7 @@ hydra
 points at the embodiment example config directory.
 
 runner
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -67,7 +67,7 @@ Shared keys such as ``runner.task_type`` (set to ``embodied``),
 and ``runner.resume_dir`` are documented in :doc:`basic_config`.
 
 algorithm
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -148,7 +148,7 @@ algorithm
 documented in :doc:`basic_config`.
 
 env
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -211,7 +211,7 @@ env
      - Action statistics OpenVLA-OFT unnormalizes this env configuration's actions with, instead of ``actor.model.unnorm_key``. See :doc:`hetero_envs`.
 
 rollout
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -271,7 +271,7 @@ OpenPI, GR00T, etc.) do not use ``rollout.sampling_params``.
      - Inference precision for rollout.
 
 actor
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 

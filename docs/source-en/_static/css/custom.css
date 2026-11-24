@@ -148,9 +148,16 @@ body {
 .bd-article h1,
 .bd-article h2,
 .bd-article h3,
-.bd-article h4 {
+.bd-article h4,
+.bd-article h5 {
   color: var(--pst-color-text-base);
   letter-spacing: -0.024em;
+}
+
+.bd-article a.toc-backref,
+.bd-article a.toc-backref:hover {
+  color: inherit;
+  text-decoration: none;
 }
 
 .bd-article h1 {
@@ -197,6 +204,13 @@ body {
   margin-bottom: 0.72rem;
 }
 
+.bd-article h5 {
+  font-size: 0.93rem;
+  font-weight: 620;
+  margin-top: 1.35rem;
+  margin-bottom: 0.55rem;
+}
+
 /* Subtle hover-revealed heading permalinks */
 .bd-article a.headerlink {
   color: var(--pst-color-text-muted) !important;
@@ -211,6 +225,7 @@ body {
 .bd-article h2:hover a.headerlink,
 .bd-article h3:hover a.headerlink,
 .bd-article h4:hover a.headerlink,
+.bd-article h5:hover a.headerlink,
 .bd-article a.headerlink:focus {
   opacity: 0.72;
 }
@@ -605,6 +620,103 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
   margin-top: 0.1rem !important;
 }
 
+/* LeRobot-style clickable & collapsible Level-1 chapter captions */
+.bd-docs-nav p.caption.rlinf-caption-collapsible {
+  align-items: center;
+  display: flex;
+  padding: 0 !important;
+  position: relative;
+}
+
+.bd-docs-nav p.caption > a.rlinf-caption-link,
+.bd-docs-nav p.caption > button.rlinf-caption-btn {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--pst-color-text-base);
+  cursor: pointer;
+  display: flex;
+  flex: 1 1 auto;
+  font: inherit;
+  justify-content: space-between;
+  letter-spacing: inherit;
+  line-height: 1.4;
+  padding: 0.28rem 0.65rem;
+  text-align: left;
+  text-decoration: none !important;
+  transition: background-color 90ms ease, color 90ms ease;
+  width: 100%;
+}
+
+.bd-docs-nav p.caption > a.rlinf-caption-link {
+  padding-right: 1.9rem;
+}
+
+.bd-docs-nav p.caption > a.rlinf-caption-link:hover,
+.bd-docs-nav p.caption > button.rlinf-caption-btn:hover {
+  background-color: var(--rlinf-nav-hover-bg);
+  color: var(--pst-color-text-base);
+}
+
+.bd-docs-nav p.caption > a.rlinf-caption-link.current,
+.bd-docs-nav p.caption > a.rlinf-caption-link.current:hover {
+  background-color: var(--rlinf-nav-active-bg);
+  color: var(--pst-color-primary);
+}
+
+.bd-docs-nav p.caption > button.rlinf-caption-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--pst-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  height: 1.75rem;
+  justify-content: center;
+  opacity: 0.72;
+  padding: 0;
+  position: absolute;
+  right: 0.12rem;
+  top: 50%;
+  transform: translateY(-50%);
+  transition: opacity 90ms ease, color 90ms ease, background-color 90ms ease;
+  width: 1.75rem;
+}
+
+.bd-docs-nav p.caption > button.rlinf-caption-toggle:hover {
+  background-color: var(--rlinf-nav-hover-bg);
+  color: var(--pst-color-text-base);
+  opacity: 1;
+}
+
+.bd-docs-nav p.caption .rlinf-caption-chevron {
+  align-items: center;
+  color: var(--pst-color-text-muted);
+  display: inline-flex;
+  height: 1.4rem;
+  justify-content: center;
+  margin-right: -0.35rem;
+  opacity: 0.72;
+  width: 1.4rem;
+}
+
+.bd-docs-nav p.caption .fa-chevron-down {
+  font-size: 0.66rem;
+  transform: rotate(0deg);
+  transition: transform 120ms ease;
+}
+
+.bd-docs-nav p.caption.is-collapsed .fa-chevron-down {
+  transform: rotate(-90deg);
+}
+
+.bd-docs-nav ul.rlinf-section-collapsed,
+.bd-docs-nav li.rlinf-overview-merged {
+  display: none !important;
+}
+
 .bd-sidebar-primary .bd-sidenav {
   padding: 0 !important;
   margin: 0 !important;
@@ -996,7 +1108,7 @@ html[data-theme="dark"] .rlinf-ask-ai-fab {
   transition: border-color 120ms ease, background-color 120ms ease;
 }
 
-.sd-card:hover {
+.sd-card.sd-card-hover:hover {
   background: var(--rlinf-surface-subtle) !important;
   border-color: var(--pst-color-primary) !important;
   box-shadow: none !important;
@@ -1298,6 +1410,7 @@ html[data-theme="dark"] .highlight .nv { color: #93c5fd; }
   border-radius: 8px !important;
   box-shadow: var(--rlinf-tab-active-shadow) !important;
   color: var(--rlinf-tab-active-fg) !important;
+  cursor: default;
   font-weight: 620;
   text-decoration: none !important;
   transform: none !important;

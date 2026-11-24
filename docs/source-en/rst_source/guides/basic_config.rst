@@ -8,7 +8,7 @@ For an annotated minimal YAML, Hydra preset overview, and the five keys most com
    **Where config files live:** runnable training YAMLs live under ``examples/<task>/config/`` (such as ``examples/embodiment/config/``, ``examples/sft/config/``, and ``examples/reasoning/config/``), and evaluation YAMLs live under ``evaluations/<benchmark>/``. See :doc:`../reference/configuration` for the full directory map.
 
 hydra
-~~~~~~
+------
 
 .. code:: yaml
 
@@ -29,7 +29,7 @@ hydra
      - Output subdirectory (``null`` disables subdirectory creation).
 
 cluster
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -75,7 +75,7 @@ The ranks value accepts the following forms:
 For more advanced usage of component placement (e.g., heterogeneous cluster with different GPU models, robotic hardware, or CPU-only nodes) and customization in code, see :doc:`../concepts/placement`.
 
 runner
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -130,7 +130,7 @@ runner
      - Total sequence length (prompt + generated response) fed into models.
 
 algorithm
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -213,7 +213,7 @@ algorithm
      - Penalize repeated tokens.
 
 rollout
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -242,7 +242,7 @@ rollout
      - Internal architecture tag used by the backend (e.g., ``qwen2.5``).
 
 actor
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -268,7 +268,7 @@ actor
      - Global seed for reproducibility.
 
 reward
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -285,7 +285,7 @@ reward
      - Whether to use a reward model.
 
 critic
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 

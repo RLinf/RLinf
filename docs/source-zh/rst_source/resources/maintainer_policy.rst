@@ -8,13 +8,10 @@
 | **最后更新：**\ 2026 年 10 月 15 日。
 | **生效时间：**\ 自发布之日起生效。
 
-.. tip:: **首次贡献？从这里开始**
+.. admonition:: 首次贡献？从这里开始
+   :class: tip
 
    提交第一个 PR 前，请先阅读 `CONTRIBUTING.md <https://github.com/RLinf/RLinf/blob/main/CONTRIBUTING.md>`__\ （包含 ``git commit -s`` DCO 签署、Conventional Commits 规范、测试与中英文文档要求）；若要接入新模型、环境、机器人或算法，可先查看 :doc:`../extending/index`。下文说明持续贡献如何成长为评审者与领域负责人。
-
-.. contents::
-   :local:
-   :depth: 2
 
 .. _maintainer-policy-section-1:
 

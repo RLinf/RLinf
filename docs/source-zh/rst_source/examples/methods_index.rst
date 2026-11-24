@@ -6,13 +6,13 @@ RL 算法示例
 .. grid:: 1 2 3 3
    :gutter: 3
 
-   .. grid-item-card:: SAC-Flow
-      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-overview.png
-      :img-alt: SAC-Flow 概览
-      :link: embodied/sac_flow
+   .. grid-item-card:: 仿真-真机协同训练
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png
+      :img-alt: 仿真-真机协同训练概览
+      :link: embodied/co_training
       :link-type: doc
 
-      在 ManiSkill 仿真或真实 Franka 机械臂上用 SAC 训练 Flow Matching policy。
+      结合仿真 PPO 与真机 SFT，提升 Sim-to-Real 迁移表现。
 
    .. grid-item-card:: DSRL
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/dsrl.png
@@ -22,21 +22,13 @@ RL 算法示例
 
       用轻量级 SAC 在噪声空间调控冻结的 π₀ 扩散 policy。
 
-   .. grid-item-card:: RL Token
-      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/RLT.png
-      :img-alt: RL Token
-      :link: embodied/rlt
+   .. grid-item-card:: IQL（D4RL）
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png
+      :img-alt: D4RL 上的 IQL
+      :link: embodied/iql_d4rl
       :link-type: doc
 
-      借助冻结的 VLA prefix 特征启动在线 RL，并训练轻量级 actor-critic。
-
-   .. grid-item-card:: 仿真-真机协同训练
-      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png
-      :img-alt: 仿真-真机协同训练概览
-      :link: embodied/co_training
-      :link-type: doc
-
-      结合仿真 PPO 与真机 SFT，提升 Sim-to-Real 迁移表现。
+      在 D4RL 基准上训练离线 Implicit Q-Learning policy。
 
    .. grid-item-card:: OPD
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/opd.png
@@ -54,6 +46,22 @@ RL 算法示例
 
       用优势条件引导做离线 policy 优化。
 
+   .. grid-item-card:: RL Token
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/RLT.png
+      :img-alt: RL Token
+      :link: embodied/rlt
+      :link-type: doc
+
+      借助冻结的 VLA prefix 特征启动在线 RL，并训练轻量级 actor-critic。
+
+   .. grid-item-card:: SAC-Flow
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-overview.png
+      :img-alt: SAC-Flow 概览
+      :link: embodied/sac_flow
+      :link-type: doc
+
+      在 ManiSkill 仿真或真实 Franka 机械臂上用 SAC 训练 Flow Matching policy。
+
    .. grid-item-card:: STEAM
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/steam.png
       :img-alt: STEAM 集成优势建模
@@ -62,23 +70,15 @@ RL 算法示例
 
       用集成优势预测器对离线样本做保守评估。
 
-   .. grid-item-card:: IQL（D4RL）
-      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png
-      :img-alt: D4RL 上的 IQL
-      :link: embodied/iql_d4rl
-      :link-type: doc
-
-      在 D4RL 基准上训练离线 Implicit Q-Learning policy。
-
 .. toctree::
    :hidden:
    :maxdepth: 2
 
-   SAC-Flow <embodied/sac_flow>
-   DSRL <embodied/dsrl>
-   RL Token <embodied/rlt>
    Co-Training <embodied/co_training>
+   DSRL <embodied/dsrl>
+   IQL (D4RL) <embodied/iql_d4rl>
    OPD <embodied/opd>
    RECAP <embodied/recap>
+   RL Token <embodied/rlt>
+   SAC-Flow <embodied/sac_flow>
    STEAM <embodied/steam>
-   IQL (D4RL) <embodied/iql_d4rl>

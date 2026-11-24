@@ -51,6 +51,9 @@ enforced automatically during PR review:
   recipes) open with an Overview ``.. grid::`` + ``**Prerequisites:**`` /
   ``**前置条件：**`` header, link to ``start/installation``, use ``.. tab-set::``,
   and close with ``Visualization and Results`` / ``可视化与结果``.
+- ``docs/heading-consistency``: forbid redundant ``.. contents::`` directives
+  (which wrap headings in underlined ``a.toc-backref`` links) and catch EN/ZH
+  heading-level sequence mismatches.
 """
 
 from __future__ import annotations
@@ -657,9 +660,10 @@ def _check_root_sidebar_grouping(rel: str, lines: list[str]) -> list[route.Findi
 
 
 ALPHA_SORTED_INDEX_RE = re.compile(
-    r"^docs/source-(?:en|zh)/rst_source/examples/"
-    r"(?:simulators_index|vla_wam_index|sft_index|world_model_index|video_models|"
-    r"agentic/(?:math_reasoning|agents)/index)\.rst$"
+    r"^docs/source-(?:en|zh)/rst_source/"
+    r"(?:examples/(?:simulators_index|vla_wam_index|sft_index|world_model_index|"
+    r"video_models|methods_index|agentic/(?:math_reasoning|agents)/index)|"
+    r"reference/algorithms/index|resources/publications/index)\.rst$"
 )
 ALPHA_PREFIX_SKIP = {"Overview", "Workflows", "总览", "通用流程"}
 
@@ -862,6 +866,95 @@ def _check_recipe_sibling_alignment(
     return findings
 
 
+CONTENTS_DIRECTIVE_RE = re.compile(r"^\s*\.\.\s+contents::")
+HEADING_ADORN_CHARS = frozenset("=-~^\"'`#*+:._")
+
+
+def _extract_heading_levels(lines: list[str]) -> list[int]:
+    """Return 1-based heading nesting levels in document order."""
+    levels: list[int] = []
+    order: list[str] = []
+    i = 0
+    in_code = False
+    code_indent = 0
+    while i < len(lines):
+        line = lines[i]
+        if re.match(
+            r"^\s*\.\.\s+(?:code-block|code|literalinclude|parsed-literal|raw)::",
+            line,
+        ):
+            in_code = True
+            code_indent = len(line) - len(line.lstrip())
+            i += 1
+            continue
+        if in_code:
+            if not line.strip():
+                i += 1
+                continue
+            if len(line) - len(line.lstrip()) > code_indent:
+                i += 1
+                continue
+            in_code = False
+        if (
+            i + 1 < len(lines)
+            and line.strip()
+            and not line.startswith((" ", ".."))
+            and not _is_adorn_line(line)
+            and _is_adorn_line(lines[i + 1])
+        ):
+            ch = lines[i + 1].strip()[0]
+            if ch not in order:
+                order.append(ch)
+            levels.append(order.index(ch) + 1)
+            i += 2
+            continue
+        i += 1
+    return levels
+
+
+def _is_adorn_line(line: str) -> bool:
+    s = line.strip()
+    return len(s) >= 3 and len(set(s)) == 1 and s[0] in HEADING_ADORN_CHARS
+
+
+def _check_heading_consistency(
+    path: Path, rel: str, lines: list[str], root: Path
+) -> list[route.Finding]:
+    """Forbid ``.. contents::`` (adds ``a.toc-backref`` to headings) and verify EN/ZH heading levels."""
+    findings: list[route.Finding] = []
+    for idx, line in enumerate(lines, 1):
+        if CONTENTS_DIRECTIVE_RE.match(line):
+            findings.append(
+                route.Finding(
+                    "major",
+                    rel,
+                    idx,
+                    "docs/heading-consistency",
+                    "remove redundant ``.. contents::`` (the right sidebar already renders page TOC, "
+                    "and docutils wraps headings in ``a.toc-backref`` links)",
+                )
+            )
+    if rel.startswith("docs/source-en/"):
+        counterpart = root / rel.replace("docs/source-en/", "docs/source-zh/", 1)
+        if counterpart.exists():
+            en_levels = _extract_heading_levels(lines)
+            zh_levels = _extract_heading_levels(
+                counterpart.read_text(encoding="utf-8").splitlines()
+            )
+            if en_levels != zh_levels:
+                findings.append(
+                    route.Finding(
+                        "major",
+                        rel,
+                        None,
+                        "docs/heading-consistency",
+                        f"EN/ZH heading levels differ ({en_levels} vs {zh_levels} in "
+                        f"{counterpart.relative_to(root)})",
+                    )
+                )
+    return findings
+
+
 def check_page(
     path: Path, rel: str, root: Path, *, is_new: bool = False
 ) -> list[route.Finding]:
@@ -880,6 +973,7 @@ def check_page(
     findings += _check_root_sidebar_grouping(rel, lines)
     findings += _check_alpha_order(rel, lines)
     findings += _check_agentic_flat_hierarchy(path, rel, source, lines)
+    findings += _check_heading_consistency(path, rel, lines, root)
 
     is_agentic_leaf_index = bool(
         AGENTIC_PROJECT_INDEX_RE.match(rel) and ".. toctree::" not in source

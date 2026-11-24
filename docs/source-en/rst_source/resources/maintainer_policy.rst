@@ -10,13 +10,10 @@ control.
 | **Last updated:** 15 October 2026.
 | **Effective date:** Upon publication.
 
-.. tip:: **New Contributor? Start Here**
+.. admonition:: New Contributor? Start Here
+   :class: tip
 
    To open your first pull request, read the `CONTRIBUTING.md <https://github.com/RLinf/RLinf/blob/main/CONTRIBUTING.md>`__ workflow (DCO sign-off with ``git commit -s``, Conventional Commits, tests, and EN/ZH docs) and browse :doc:`../extending/index` if you are adding a model, environment, robot, or algorithm. Use the policy below to see how sustained contributions grow into Reviewer and Area Owner roles.
-
-.. contents::
-   :local:
-   :depth: 2
 
 .. _maintainer-policy-section-1:
 

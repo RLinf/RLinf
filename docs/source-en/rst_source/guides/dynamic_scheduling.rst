@@ -10,10 +10,6 @@ to reallocate GPU resources without stopping training.
 
    **Legacy environment prerequisite:** Dynamic scheduling requires a dedicated **Megatron-LM 0.11** checkout plus the external prebuilt resharding package (``params_resharding_release``), which is incompatible with the default ``bash requirements/install.sh agentic`` environment (Megatron-LM 0.18). For a runnable reference config, see ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron-dynamic.yaml`` (launch with ``bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron-dynamic`` after preparing the prerequisites below).
 
-.. contents::
-   :depth: 2
-   :local:
-
 Online Scaling Mechanism
 ------------------------
 
@@ -23,7 +19,7 @@ You can scale the number of GPUs and nodes used for training in real time
 based on cluster availability, workload demands, or resource optimization goals.
 
 What is Online Scaling?
-^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~
 
 Online scaling refers to the ability to **scale up** (add more resources) or **scale down** (remove resources)
 during training while maintaining training continuity and model state consistency.
@@ -42,7 +38,7 @@ The system automatically handles:
 - Training state synchronization
 
 Why is Online Scaling Important?
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 When using RLinf's disaggregated mode with fine-grained pipelining,
 the rollout and inference stages are completed before the actor stage finishes.
@@ -50,7 +46,7 @@ At this point, the resources used for rollout and inference can be reallocated t
 accelerating actor training and improving overall system performance.
 
 Benefits
-^^^^^^^^
+~~~~~~~~
 
 **Performance benefits:**
 
@@ -73,10 +69,10 @@ bottlenecks and workload changes:
 - Scaling down: reclaim GPUs when a component is temporarily idle
 
 How to Use Dynamic Scheduling
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Prerequisites
-"""""""""""""
+^^^^^^^^^^^^^
 
 .. warning::
 
@@ -111,7 +107,7 @@ This repository provides the compiled artifacts for Megatron-LM online scaling. 
         git clone -b core_v0.11.0_rlinf https://github.com/RLinf/Megatron-LM.git
 
 Configuration Example
-"""""""""""""""""""""
+^^^^^^^^^^^^^^^^^^^^^
 
 Disaggregated Pipeline configuration:
 
@@ -140,7 +136,7 @@ Make sure the component order is ``actor -> rollout -> inference``, otherwise th
         inference: 6-7
 
 Scheduling Logic
-^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~
 
 When dynamic scheduling is enabled, the runtime scheduler monitors component progress and queues
 and decides whether to adjust resources. Typical actions include:
@@ -149,7 +145,7 @@ and decides whether to adjust resources. Typical actions include:
 - When rollout or inference finishes: release resources to expand the actor
 
 Optional Policies
-^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~
 
 - ``use_pre_process_policy``
 

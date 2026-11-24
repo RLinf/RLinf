@@ -5,6 +5,7 @@
   "use strict";
 
   var STORAGE_KEY = "rlinf-sidebar-open-v1";
+  var COLLAPSED_KEY = "rlinf-sidebar-collapsed-v1";
   var TAB_STORAGE_PREFIX = "sphinx-design-tab-id-";
   var MAX_CACHE_ENTRIES = 30;
   var PREFETCH_DELAY_MS = 50;
@@ -28,6 +29,7 @@
   var codeCellCounter = 0;
   var docRootPath = null;
   var openSet = null;
+  var collapsedSet = null;
   var lastLoadedKey = null;
 
   function canonicalPath(href, base) {
@@ -68,9 +70,9 @@
     return canonicalPath(link.getAttribute("href"));
   }
 
-  function loadOpenSet() {
+  function loadStoredSet(key) {
     try {
-      var raw = sessionStorage.getItem(STORAGE_KEY);
+      var raw = sessionStorage.getItem(key);
       if (!raw) return new Set();
       var parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? new Set(parsed) : new Set();
@@ -79,11 +81,134 @@
     }
   }
 
-  function saveOpenSet(set) {
+  function saveStoredSet(key, set) {
     try {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(set)));
+      sessionStorage.setItem(key, JSON.stringify(Array.from(set)));
     } catch (_err) {
       // Ignore storage quota or private-mode restrictions.
+    }
+  }
+
+  function loadOpenSet() {
+    return loadStoredSet(STORAGE_KEY);
+  }
+
+  function saveOpenSet(set) {
+    saveStoredSet(STORAGE_KEY, set);
+  }
+
+  function setSectionCollapsed(cap, ul, collapsed, persist) {
+    if (!cap || !ul) return;
+    var winY = window.scrollY;
+    var box = scrollableAncestor(cap);
+    var boxY = box ? box.scrollTop : 0;
+
+    cap.classList.toggle("is-collapsed", collapsed);
+    ul.classList.toggle("rlinf-section-collapsed", collapsed);
+
+    var ctrl = cap.querySelector(".rlinf-caption-toggle, .rlinf-caption-btn");
+    if (ctrl) {
+      ctrl.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    }
+
+    if (persist && collapsedSet) {
+      var key = cap.getAttribute("data-rlinf-section-key");
+      if (key) {
+        if (collapsed) {
+          collapsedSet.add(key);
+        } else {
+          collapsedSet.delete(key);
+        }
+        saveStoredSet(COLLAPSED_KEY, collapsedSet);
+      }
+    }
+
+    if (window.scrollY !== winY) {
+      window.scrollTo(window.scrollX, winY);
+    }
+    if (box && box.scrollTop !== boxY) {
+      box.scrollTop = boxY;
+    }
+  }
+
+  // Turn Level-1 sidebar captions (<p class="caption">) into LeRobot-style
+  // collapsible chapter headers (default expanded). Chapters whose first child
+  // is "Overview" / "总览" merge that link directly into the clickable heading
+  // and hide the redundant child row.
+  function enhanceSectionCaptions(container) {
+    if (!container) return;
+    var currentKey = canonicalPath(window.location.href);
+    var captions = container.querySelectorAll(".bd-docs-nav p.caption");
+    for (var i = 0; i < captions.length; i++) {
+      var cap = captions[i];
+      if (cap.classList.contains("rlinf-caption-collapsible")) continue;
+      var ul = cap.nextElementSibling;
+      if (!ul || ul.tagName !== "UL") continue;
+
+      var titleText = (cap.textContent || "").trim();
+      var firstLi = ul.querySelector(":scope > li:first-child");
+      var firstLink = firstLi ? firstLi.querySelector(":scope > a[href]") : null;
+      var firstText = firstLink ? (firstLink.textContent || "").trim() : "";
+      var isOverview = Boolean(
+        firstLink &&
+          !firstLi.classList.contains("has-children") &&
+          (firstText === "Overview" || firstText === "总览")
+      );
+
+      var secKey = firstLink
+        ? canonicalPath(firstLink.getAttribute("href"))
+        : "cap:" + titleText;
+      cap.classList.add("rlinf-caption-collapsible");
+      cap.setAttribute("data-rlinf-section-key", secKey);
+
+      var hasActiveInside = Boolean(ul.querySelector("a.current"));
+
+      if (isOverview) {
+        var overviewHref = firstLink.getAttribute("href");
+        var isCurrentOverview = canonicalPath(overviewHref) === currentKey;
+        firstLi.classList.add("rlinf-overview-merged");
+        firstLi.classList.remove("current", "active");
+        firstLink.classList.remove("current");
+
+        var a = document.createElement("a");
+        a.className = "rlinf-caption-link";
+        a.setAttribute("href", overviewHref);
+        if (isCurrentOverview) {
+          a.classList.add("current");
+          hasActiveInside = true;
+        }
+        while (cap.firstChild) {
+          a.appendChild(cap.firstChild);
+        }
+
+        var toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "rlinf-caption-toggle";
+        toggle.setAttribute("aria-expanded", "true");
+        toggle.setAttribute("aria-label", "Toggle " + titleText);
+        toggle.innerHTML = '<i class="fa-solid fa-chevron-down" aria-hidden="true"></i>';
+
+        cap.appendChild(a);
+        cap.appendChild(toggle);
+      } else {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "rlinf-caption-btn";
+        btn.setAttribute("aria-expanded", "true");
+        while (cap.firstChild) {
+          btn.appendChild(cap.firstChild);
+        }
+        var chev = document.createElement("span");
+        chev.className = "rlinf-caption-chevron";
+        chev.setAttribute("aria-hidden", "true");
+        chev.innerHTML = '<i class="fa-solid fa-chevron-down"></i>';
+        btn.appendChild(chev);
+        cap.appendChild(btn);
+      }
+
+      if (collapsedSet && collapsedSet.has(secKey) && !hasActiveInside) {
+        setSectionCollapsed(cap, ul, true, false);
+      }
     }
   }
 
@@ -347,12 +472,34 @@
       prevActive[i].classList.remove("current", "active");
     }
 
+    var captionLinks = nav.querySelectorAll("p.caption > a.rlinf-caption-link");
+    for (var c = 0; c < captionLinks.length; c++) {
+      var chref = captionLinks[c].getAttribute("href");
+      if (chref && canonicalPath(chref) === targetKey) {
+        captionLinks[c].classList.add("current");
+        var capEl = captionLinks[c].closest("p.caption");
+        var capUl = capEl ? capEl.nextElementSibling : null;
+        if (capEl && capUl && capEl.classList.contains("is-collapsed")) {
+          setSectionCollapsed(capEl, capUl, false, true);
+        }
+        if (!opts || !opts.fromSidebar) {
+          requestAnimationFrame(function () {
+            ensureCurrentVisible(nav);
+          });
+        }
+        return;
+      }
+    }
+
     var matched =
-      opts && opts.clickedLink && nav.contains(opts.clickedLink)
+      opts &&
+      opts.clickedLink &&
+      !opts.clickedLink.classList.contains("rlinf-caption-link") &&
+      nav.contains(opts.clickedLink)
         ? opts.clickedLink
         : null;
     if (!matched) {
-      var links = nav.querySelectorAll("a[href]");
+      var links = nav.querySelectorAll("li:not(.rlinf-overview-merged) a[href]");
       for (var j = 0; j < links.length; j++) {
         var href = links[j].getAttribute("href");
         if (!href || href.charAt(0) === "#") continue;
@@ -384,6 +531,14 @@
         if (dk && openSet) openSet.add(dk);
       } else if (parent.tagName === "LI") {
         parent.classList.add("current", "active");
+      } else if (
+        parent.tagName === "UL" &&
+        parent.classList.contains("rlinf-section-collapsed")
+      ) {
+        var secCap = parent.previousElementSibling;
+        if (secCap && secCap.tagName === "P") {
+          setSectionCollapsed(secCap, parent, false, true);
+        }
       }
       parent = parent.parentElement;
     }
@@ -667,17 +822,13 @@
 
     // Normalize relative URLs (and Sphinx's `href="#"` self-link) in persistent
     // chrome once before any pushState.
-    rebaseUrls(
-      document.getElementById("pst-primary-sidebar"),
-      window.location.href,
-      true
-    );
-    rebaseUrls(
-      document.getElementById("pst-primary-sidebar-modal"),
-      window.location.href,
-      true
-    );
+    var primarySidebar = document.getElementById("pst-primary-sidebar");
+    var primarySidebarModal = document.getElementById("pst-primary-sidebar-modal");
+    rebaseUrls(primarySidebar, window.location.href, true);
+    rebaseUrls(primarySidebarModal, window.location.href, true);
     rebaseUrls(document.querySelector(".bd-header"), window.location.href, true);
+    enhanceSectionCaptions(primarySidebar);
+    enhanceSectionCaptions(primarySidebarModal);
 
     // Warm the cache with the initial page HTML snapshot on Back navigation.
     try {
@@ -733,6 +884,31 @@
       if (!link || !isPjaxEligibleLink(link)) return;
 
       var fromSidebar = Boolean(link.closest && link.closest(".bd-docs-nav"));
+      var isCaptionLink = link.classList.contains("rlinf-caption-link");
+      var url = new URL(link.getAttribute("href"), window.location.href);
+
+      if (isCaptionLink) {
+        var cap = link.closest("p.caption");
+        var capUl = cap ? cap.nextElementSibling : null;
+        if (isSamePage(url)) {
+          e.preventDefault();
+          if (cap && capUl) {
+            setSectionCollapsed(cap, capUl, !cap.classList.contains("is-collapsed"), true);
+          }
+          return;
+        }
+        if (cap && capUl && cap.classList.contains("is-collapsed")) {
+          setSectionCollapsed(cap, capUl, false, true);
+        }
+        e.preventDefault();
+        navigateTo(url.href, {
+          fromPopstate: false,
+          fromSidebar: true,
+          clickedLink: null,
+        });
+        return;
+      }
+
       // Clicking anywhere on a collapsible sidebar folder row toggles its
       // children: expanding also opens its overview page via instant PJAX,
       // while clicking an already-open folder row collapses it in place.
@@ -775,7 +951,6 @@
         }
       }
 
-      var url = new URL(link.getAttribute("href"), window.location.href);
       if (isSamePage(url)) {
         if (!url.hash) {
           e.preventDefault();
@@ -804,9 +979,10 @@
   }
 
   function init() {
+    openSet = loadOpenSet();
+    collapsedSet = loadStoredSet(COLLAPSED_KEY);
     var nav = document.querySelector(".bd-sidebar-primary .bd-docs-nav");
     if (nav) {
-      openSet = loadOpenSet();
       var allDetails = nav.querySelectorAll("li.has-children > details");
       for (var i = 0; i < allDetails.length; i++) {
         var d = allDetails[i];
@@ -820,16 +996,33 @@
       }
       saveOpenSet(openSet);
 
-      // Prevent Safari from focusing 0px-height <summary> elements inside the
-      // sticky sidebar on mouse click, which otherwise yanks window.scrollY to 0.
-      nav.addEventListener("mousedown", function (event) {
+      // Prevent Safari from focusing 0px-height <summary> elements or sidebar
+      // toggle buttons inside the sticky sidebar on mouse click.
+      document.addEventListener("mousedown", function (event) {
         if (
           event.target &&
           event.target.closest &&
-          event.target.closest("li.has-children > details > summary")
+          event.target.closest(
+            ".bd-docs-nav li.has-children > details > summary, .bd-docs-nav .rlinf-caption-toggle, .bd-docs-nav .rlinf-caption-btn"
+          )
         ) {
           event.preventDefault();
         }
+      });
+
+      document.addEventListener("click", function (event) {
+        var capCtrl =
+          event.target && event.target.closest
+            ? event.target.closest(
+                ".bd-docs-nav .rlinf-caption-toggle, .bd-docs-nav .rlinf-caption-btn"
+              )
+            : null;
+        if (!capCtrl) return;
+        var cap = capCtrl.closest("p.caption");
+        var ul = cap ? cap.nextElementSibling : null;
+        if (!cap || !ul || ul.tagName !== "UL") return;
+        event.preventDefault();
+        setSectionCollapsed(cap, ul, !cap.classList.contains("is-collapsed"), true);
       });
 
       nav.addEventListener("click", function (event) {
