@@ -13,7 +13,7 @@ num_steps: 10
 forward_micro_batch_size: 1
 noise_level: 0.3
 add_value_head: true
-sft_constructor_alignment_fix: false
+enable_alignment_heads: true
 value_type: chunk_level
 value_head:
   hidden_sizes: [512, 128]
@@ -22,4 +22,4 @@ lingbotvlav2:
   training_config_path: ${oc.env:LINGBOT_VLA_V2_ROBOTWIN_ROOT}/lingbotvla_cli.yaml
   robot_config_path: ${oc.env:LINGBOT_VLA_V2_PATH}/configs/robot_configs/robotwin.yaml
   stats_path: ${oc.env:LINGBOT_VLA_V2_PATH}/assets/norm_stats/robotwin.json
-  attention_implementation: flex_cached
+  attention_implementation: eager

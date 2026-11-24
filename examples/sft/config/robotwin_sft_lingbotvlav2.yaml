@@ -19,7 +19,7 @@ cluster:
 runner:
   task_type: sft
   logger:
-    log_path: ${oc.env:LINGBOT_VLA_SFT_OUTPUT,../results}
+    log_path: ../results
     project_name: rlinf
     experiment_name: robotwin_sft_lingbotvlav2
     logger_backends: [tensorboard]
@@ -30,12 +30,21 @@ runner:
   resume_dir: null
 
 data:
-  train_data_paths: ${oc.env:LINGBOT_VLA_SFT_DATASET}
+  train_data_paths: /path/to/robotwin_train.txt
   num_workers: 0
 
 actor:
   group_name: ActorGroup
   training_backend: fsdp
+  model:
+    model_path: /path/to/lingbot-vla-v2-6b
+    tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
+    lingbotvlav2:
+      config_path: /path/to/lingbot-vla-v2
+      training_config_path: /path/to/lingbot-vla-v2/configs/vla/robotwin/robotwin.yaml
+      robot_config_path: /path/to/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
+      robot_config_root: /path/to/lingbot-vla-v2/configs/robot_configs
+      stats_path: /path/to/lingbot-vla-v2/assets/norm_stats/robotwin.json
   micro_batch_size: 1
   global_batch_size: 8
   seed: 1234

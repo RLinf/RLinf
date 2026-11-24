@@ -3161,15 +3161,17 @@ def test_robotwin_converter_cli_writes_hwc_lerobot_dataset(tmp_path):
     feature = info["features"]["observation.images.cam_high"]
     assert feature["shape"] == [480, 640, 3]
     assert feature["names"] == ["height", "width", "channels"]
-    image_paths = [
-        *output_root.rglob("*.png"),
-        *output_root.rglob("*.jpg"),
-        *output_root.rglob("*.jpeg"),
-    ]
-    assert image_paths, "LeRobot add_frame did not write any image files"
-    with Image.open(image_paths[0]) as image:
-        assert image.size == (640, 480)
-        assert image.convert("RGB").getpixel((320, 240))[0] > 240
+    try:
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    except ModuleNotFoundError:
+        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
+    dataset = LeRobotDataset(repo_id=output_root.name, root=output_root)
+    assert len(dataset) == 1
+    image = dataset[0]["observation.images.cam_high"]
+    assert tuple(image.shape) == (3, 480, 640)
+    assert image[0, 240, 320] > 0.8
+    assert image[1:, 240, 320].max() < 0.2
 
 
 def test_offline_lerobot_export_reuses_canonical_frame_conversion():

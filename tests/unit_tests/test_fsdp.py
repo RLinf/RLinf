@@ -46,6 +46,10 @@ from rlinf.hybrid_engines.fsdp.utils import (
 )
 from rlinf.scheduler import Worker
 from rlinf.scheduler.cluster import Cluster
+from rlinf.utils.fsdp_config import (
+    validate_fsdp2_mixed_precision_config,
+    validate_fsdp2_rule_matches,
+)
 
 
 @pytest.mark.parametrize(
@@ -82,6 +86,54 @@ def test_fsdp2_module_precision_rule(module_name, expected_dtype):
     else:
         assert policy is default
     assert _resolve_fsdp2_module_precision_policy(module_name, {}, default) is default
+
+
+def test_fsdp2_policy_defaults_optional_output_dtype_and_empty_rules():
+    config = OmegaConf.create(
+        {
+            "strategy": "fsdp2",
+            "fsdp2_mixed_precision_policies": {
+                "expert": {"param_dtype": "fp32", "reduce_dtype": "fp32"}
+            },
+            "fsdp2_mixed_precision_rules": {
+                "expert": {
+                    "policy": "expert",
+                    "module_names": ["*expert*"],
+                }
+            },
+        }
+    )
+    validate_fsdp2_mixed_precision_config(config)
+    default = MixedPrecisionPolicy(
+        param_dtype=torch.bfloat16, reduce_dtype=torch.float32
+    )
+    policy = _resolve_fsdp2_module_precision_policy(
+        "model.expert.layers.0", config, default
+    )
+    assert policy.output_dtype is None
+    config.fsdp2_mixed_precision_rules = None
+    validate_fsdp2_mixed_precision_config(config)
+    assert (
+        _resolve_fsdp2_module_precision_policy("model.expert.layers.0", config, default)
+        is default
+    )
+
+
+def test_fsdp2_rules_require_policy_fields_and_sharded_module_matches():
+    invalid = OmegaConf.create(
+        {
+            "strategy": "fsdp2",
+            "fsdp2_mixed_precision_policies": {"expert": {"param_dtype": "fp32"}},
+            "fsdp2_mixed_precision_rules": {},
+        }
+    )
+    with pytest.raises(ValueError, match="missing dtype fields"):
+        validate_fsdp2_mixed_precision_config(invalid)
+
+    rules = {"expert": {"module_names": ["*qwen_expert.layers.*"]}}
+    validate_fsdp2_rule_matches(rules, ["model.qwen_expert.layers.0"])
+    with pytest.raises(ValueError, match="matched no sharded module"):
+        validate_fsdp2_rule_matches(rules, ["model.visual.blocks.0"])
 
 
 # The timeout a bare init_process_group() installs is backend-specific -- 30

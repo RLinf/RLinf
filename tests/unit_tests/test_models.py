@@ -5585,9 +5585,6 @@ def test_lingbotvlav2_sft_config_resolves_module_precision(monkeypatch, tmp_path
     monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/sft"))
     monkeypatch.setenv("LINGBOT_VLA_SFT_OUTPUT", str(tmp_path / "output"))
     monkeypatch.setenv("LINGBOT_VLA_SFT_DATASET", str(tmp_path / "manifest.txt"))
-    monkeypatch.setenv("QWEN3VL_PATH", str(tmp_path / "tokenizer"))
-    monkeypatch.setenv("LINGBOT_VLA_V2_PATH", str(tmp_path / "lingbot-vla-v2"))
-    monkeypatch.setenv("LINGBOT_VLA_V2_MODEL_ROOT", str(tmp_path / "foundation"))
 
     with initialize_config_dir(
         config_dir=str(root / "examples/sft/config"), version_base="1.1"
@@ -5603,12 +5600,13 @@ def test_lingbotvlav2_sft_config_resolves_module_precision(monkeypatch, tmp_path
     ]
     assert cfg.actor.model.lingbotvlav2.data_name == "multi"
     assert cfg.actor.model.num_action_chunks == 50
-    assert cfg.actor.model.model_path == str(tmp_path / "foundation")
-    assert cfg.actor.model.lingbotvlav2.training_config_path == str(
-        tmp_path / "lingbot-vla-v2/configs/vla/robotwin/robotwin.yaml"
+    assert cfg.actor.model.model_path == "/path/to/lingbot-vla-v2-6b"
+    assert cfg.actor.model.tokenizer_path == "/path/to/Qwen3-VL-4B-Instruct"
+    assert cfg.actor.model.lingbotvlav2.training_config_path == (
+        "/path/to/lingbot-vla-v2/configs/vla/robotwin/robotwin.yaml"
     )
     assert cfg.actor.model.lingbotvlav2.attention_implementation == "flex_cached"
-    assert cfg.actor.model.sft_constructor_alignment_fix is True
+    assert cfg.actor.model.enable_alignment_heads is False
     assert cfg.actor.fsdp_config.mixed_precision.param_dtype == "bf16"
     assert cfg.actor.fsdp_config.mixed_precision.reduce_dtype == "fp32"
     assert cfg.actor.fsdp_config.mixed_precision.cast_forward_inputs is True
@@ -5625,8 +5623,7 @@ def test_lingbotvlav2_sft_config_resolves_module_precision(monkeypatch, tmp_path
         cfg.actor.fsdp_config.fsdp2_mixed_precision_policies.action_expert_fp32.output_dtype
         == "fp32"
     )
-    assert cfg.actor.model.sft_constructor_alignment_fix is True
-    assert cfg.actor.model.enable_expert_lr_multiplier is True
+    assert cfg.actor.model.enable_expert_lr_multiplier is False
     assert cfg.actor.fsdp_config.amp_autocast.enabled is False
 
 
@@ -5635,6 +5632,146 @@ def test_lingbotvlav2_sft_preserves_manifest_path(path):
     from rlinf.models.embodiment.lingbotvlav2.sft_builder import _resolve_data_path
 
     assert _resolve_data_path(path) == "click_alarmclock.txt"
+
+
+def test_lingbotvlav2_sft_resolves_data_paths_before_source_chdir(tmp_path):
+    from rlinf.models.embodiment.lingbotvlav2.sft_builder import _resolve_path
+
+    assert _resolve_path("manifest.txt", tmp_path) == str(tmp_path / "manifest.txt")
+    assert _resolve_path("configs/robots", tmp_path / "source") == str(
+        tmp_path / "source/configs/robots"
+    )
+
+
+@pytest.mark.parametrize("sharded", [False, True])
+def test_lingbotvlav2_checkpoint_loader_accepts_only_model_derived_alignment_keys(
+    tmp_path, sharded
+):
+    from types import SimpleNamespace
+
+    from safetensors.torch import save_file
+    from torch import nn
+
+    from rlinf.models.embodiment.lingbotvlav2.checkpoint_allowlist import (
+        load_vla_checkpoint,
+    )
+
+    class FakePolicy(nn.Module):
+        def __init__(self, config, eval=True):
+            super().__init__()
+            self.model = nn.Module()
+            self.model.proj = nn.Linear(2, 2, bias=False)
+            if config.align_params:
+                self.model.depth_align_embs = nn.Parameter(torch.empty(3, 2))
+
+    tensors = {
+        "model.proj.weight": torch.ones(2, 2),
+        "model.depth_align_embs": torch.ones(3, 2),
+    }
+    if sharded:
+        shard_name = "model-00001-of-00001.safetensors"
+        save_file(tensors, str(tmp_path / shard_name))
+        (tmp_path / "model.safetensors.index.json").write_text(
+            json.dumps(
+                {
+                    "metadata": {
+                        "total_size": sum(t.numel() * 4 for t in tensors.values())
+                    },
+                    "weight_map": dict.fromkeys(tensors, shard_name),
+                }
+            ),
+            encoding="utf-8",
+        )
+    else:
+        save_file(tensors, str(tmp_path / "model.safetensors"))
+    model = FakePolicy(SimpleNamespace(align_params={}), eval=True)
+    alignment_config = SimpleNamespace(align_params={"depth": True})
+
+    load_vla_checkpoint(
+        model,
+        tmp_path,
+        False,
+        alignment_config,
+        lambda config: FakePolicy(config, eval=True),
+    )
+    assert torch.equal(model.model.proj.weight, torch.ones(2, 2))
+
+    if sharded:
+        return
+    save_file(
+        {
+            "model.proj.weight": torch.ones(2, 2),
+            "model.depth_align_embs": torch.ones(2, 2),
+        },
+        str(tmp_path / "model.safetensors"),
+    )
+    with pytest.raises(RuntimeError, match="alignment checkpoint shape mismatch"):
+        load_vla_checkpoint(
+            model,
+            tmp_path,
+            False,
+            alignment_config,
+            lambda config: FakePolicy(config, eval=True),
+        )
+
+    save_file(
+        {
+            "model.proj.weight": torch.ones(2, 2),
+            "model.unexpected.weight": torch.ones(1),
+        },
+        str(tmp_path / "model.safetensors"),
+    )
+    with pytest.raises(RuntimeError, match="constructed alignment modules"):
+        load_vla_checkpoint(
+            model,
+            tmp_path,
+            False,
+            alignment_config,
+            lambda config: FakePolicy(config, eval=True),
+        )
+
+
+def test_lingbotvlav2_checkpoint_loader_rejects_unindexed_shard_tensor(tmp_path):
+    from types import SimpleNamespace
+
+    from safetensors.torch import save_file
+    from torch import nn
+
+    from rlinf.models.embodiment.lingbotvlav2.checkpoint_allowlist import (
+        load_vla_checkpoint,
+    )
+
+    class FakePolicy(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.ones(2, 2))
+
+    shard_name = "model-00001-of-00001.safetensors"
+    save_file(
+        {
+            "weight": torch.ones(2, 2),
+            "unindexed.weight": torch.ones(1),
+        },
+        str(tmp_path / shard_name),
+    )
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "metadata": {"total_size": 16},
+                "weight_map": {"weight": shard_name},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="index does not match shard"):
+        load_vla_checkpoint(
+            FakePolicy(),
+            tmp_path,
+            True,
+            SimpleNamespace(),
+            lambda config: pytest.fail("alignment model should not be constructed"),
+        )
 
 
 def _lingbotvlav2_ppo_cfg(overrides: dict):
@@ -5727,10 +5864,10 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     OmegaConf.resolve(cfg)
     assert dict(cfg.cluster.component_placement) == {"actor, env, rollout": "0-1"}
     assert cfg.actor.model.model_type == "lingbotvlav2"
-    assert cfg.actor.model.lingbotvlav2.attention_implementation == "flex_cached"
-    assert cfg.actor.model.sft_constructor_alignment_fix is False
+    assert cfg.actor.model.lingbotvlav2.attention_implementation == "eager"
+    assert cfg.actor.model.enable_alignment_heads is True
     rollout_model_cfg = OmegaConf.merge(cfg.actor.model, cfg.rollout.model)
-    assert rollout_model_cfg.lingbotvlav2.attention_implementation == "flex_cached"
+    assert rollout_model_cfg.lingbotvlav2.attention_implementation == "eager"
     assert cfg.actor.model.action_dim == 14
     assert cfg.actor.model.num_action_chunks == 50
     assert cfg.actor.model.precision == "fp32" and cfg.rollout.model.precision == "bf16"
@@ -6105,12 +6242,12 @@ def test_lingbotvlav2_ppo_config_uses_shared_attention_and_robotwin_root(
         cfg = compose(config_name="robotwin_click_bell_ppo_lingbotvlav2")
     OmegaConf.resolve(cfg)
 
-    assert cfg.actor.model.lingbotvlav2.attention_implementation == "flex_cached"
+    assert cfg.actor.model.lingbotvlav2.attention_implementation == "eager"
     assert cfg.actor.model.model_path == str(
         tmp_path / "robotwin/checkpoints/global_step_50000/hf_ckpt"
     )
     rollout_model_cfg = OmegaConf.merge(cfg.actor.model, cfg.rollout.model)
-    assert rollout_model_cfg.lingbotvlav2.attention_implementation == "flex_cached"
+    assert rollout_model_cfg.lingbotvlav2.attention_implementation == "eager"
 
 
 def test_lingbotvlav2_standalone_eval_uses_shared_attention(monkeypatch, tmp_path):
@@ -6130,8 +6267,8 @@ def test_lingbotvlav2_standalone_eval_uses_shared_attention(monkeypatch, tmp_pat
         cfg = compose(config_name="robotwin_click_bell_lingbotvlav2_eval")
     OmegaConf.resolve(cfg)
 
-    assert cfg.rollout.model.lingbotvlav2.attention_implementation == "flex_cached"
-    assert cfg.rollout.model.sft_constructor_alignment_fix is False
+    assert cfg.rollout.model.lingbotvlav2.attention_implementation == "eager"
+    assert cfg.rollout.model.enable_alignment_heads is True
 
 
 def test_lingbotvlav2_sft_checkpoint_eval_uses_sft_model_structure(
@@ -6157,7 +6294,7 @@ def test_lingbotvlav2_sft_checkpoint_eval_uses_sft_model_structure(
                 "rollout.model.lingbotvlav2.training_config_path="
                 f"{tmp_path / 'lingbot-vla-v2/configs/vla/robotwin/robotwin.yaml'}",
                 "rollout.model.add_value_head=false",
-                "rollout.model.sft_constructor_alignment_fix=true",
+                "rollout.model.enable_alignment_heads=false",
             ],
         )
 
@@ -6167,7 +6304,38 @@ def test_lingbotvlav2_sft_checkpoint_eval_uses_sft_model_structure(
         tmp_path / "lingbot-vla-v2/configs/vla/robotwin/robotwin.yaml"
     )
     assert cfg.rollout.model.add_value_head is False
-    assert cfg.rollout.model.sft_constructor_alignment_fix is True
+    assert cfg.rollout.model.enable_alignment_heads is False
+
+
+def test_lingbotvlav2_sft_eval_config_disables_ppo_heads(monkeypatch, tmp_path):
+    from hydra import compose, initialize_config_dir
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    monkeypatch.setenv("REPO_PATH", str(root))
+    monkeypatch.setenv("ROBOTWIN_ASSETS_PATH", str(tmp_path / "assets"))
+    for name in (
+        "LINGBOT_VLA_V2_PATH",
+        "LINGBOT_VLA_V2_ROBOTWIN_ROOT",
+        "QWEN3VL_PATH",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    with initialize_config_dir(
+        config_dir=str(root / "evaluations/robotwin"), version_base="1.1"
+    ):
+        cfg = compose(config_name="robotwin_click_bell_lingbotvlav2_sft_eval")
+    OmegaConf.resolve(cfg)
+
+    assert cfg.rollout.model.model_path == "/path/to/lingbot-vla-v2-6b"
+    assert cfg.rollout.model.tokenizer_path == "/path/to/Qwen3-VL-4B-Instruct"
+    assert cfg.rollout.model.lingbotvlav2.config_path == "/path/to/lingbot-vla-v2"
+    assert cfg.rollout.model.lingbotvlav2.training_config_path.endswith(
+        "configs/vla/robotwin/robotwin.yaml"
+    )
+    assert cfg.rollout.model.add_value_head is False
+    assert cfg.rollout.model.enable_alignment_heads is False
+    assert cfg.rollout.model.lingbotvlav2.attention_implementation == "eager"
 
 
 def test_entropy_temperatures_are_tuned_per_env_and_keep_scalar_checkpoints():

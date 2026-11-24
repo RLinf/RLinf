@@ -153,6 +153,8 @@ def main() -> None:
             total_frames += convert_episode(dataset, raw_root, episode_index)
         total_episodes += num_episodes
         logger.info("Converted %d episodes from %s", num_episodes, raw_root)
+    if hasattr(dataset, "finalize"):
+        dataset.finalize()
     logger.info(
         "Wrote %d episodes / %d frames to %s",
         total_episodes,

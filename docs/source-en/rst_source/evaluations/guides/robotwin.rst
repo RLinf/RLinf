@@ -212,10 +212,12 @@ LingbotVLA 1.0
 
 LingbotVLA 2.0
 
-- Fill in the paths in ``examples/embodiment/config/model/lingbotvlav2.yaml``, which the eval config shares with training
+- Fill in the Foundation or RoboTwin checkpoint paths in ``examples/embodiment/config/model/lingbotvlav2.yaml``; PPO and evaluation share its ``eager`` attention backend
 - ``rollout.model.precision: bf16``; fp32 weights belong only to the PPO actor
 - ``task_config.embodiment: [aloha-agilex]`` and ``task_config.camera.collect_wrist_camera: true``; the model reads both wrist cameras
 - ``rollout.model.num_action_chunks: 50``; ``max_episode_steps: 400``
+
+For an SFT checkpoint, use ``robotwin_click_bell_lingbotvlav2_sft_eval`` and follow the path setup in :doc:`LingbotVLA 2.0 SFT <../../examples/embodied/sft_lingbotvlav2>`.
 
 Covering the full test set
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

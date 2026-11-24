@@ -58,6 +58,10 @@ from rlinf.hybrid_engines.fsdp import (
 )
 from rlinf.scheduler import Worker
 from rlinf.scheduler.cluster import Cluster, ClusterEnvVar
+from rlinf.utils.fsdp_config import (
+    validate_fsdp2_mixed_precision_config,
+    validate_fsdp2_rule_matches,
+)
 from rlinf.utils.logging import get_logger
 
 
@@ -487,6 +491,7 @@ def apply_fsdp2_to_model(
     """
     if config is None:
         config = {}
+    validate_fsdp2_mixed_precision_config(config)
     wrap_policy_config = config.get("wrap_policy", {}) or {}
     use_custom_wrap_policy = any(
         key in wrap_policy_config
@@ -555,6 +560,9 @@ def apply_fsdp2_to_model(
         ):
             modules_to_shard.append((name, submodule, "transformer_or_embedding"))
 
+    rules = config.get("fsdp2_mixed_precision_rules") or {}
+    validate_fsdp2_rule_matches(rules, [name for name, _, _ in modules_to_shard])
+
     # named_modules() returns submodules outermost-first, but fully_shard should
     # be applied inside-out. Reversing ensures child modules are wrapped first,
     # so the parent only shards the remaining (non-wrapped) parameters.
@@ -601,10 +609,12 @@ def apply_fsdp2_to_model(
 
 
 def _resolve_fsdp2_module_precision_policy(
-    module_name: str, config: dict, default_policy: MixedPrecisionPolicy
+    module_name: str,
+    config: dict,
+    default_policy: MixedPrecisionPolicy,
 ) -> MixedPrecisionPolicy:
     """Select a per-module FSDP2 policy, preserving the default for other units."""
-    for rule in config.get("fsdp2_mixed_precision_rules", {}).values():
+    for rule in (config.get("fsdp2_mixed_precision_rules") or {}).values():
         if any(
             fnmatch.fnmatchcase(module_name, pattern)
             for pattern in rule["module_names"]
@@ -613,7 +623,11 @@ def _resolve_fsdp2_module_precision_policy(
             return MixedPrecisionPolicy(
                 param_dtype=torch_dtype_from_precision(policy["param_dtype"]),
                 reduce_dtype=torch_dtype_from_precision(policy["reduce_dtype"]),
-                output_dtype=torch_dtype_from_precision(policy["output_dtype"]),
+                output_dtype=(
+                    torch_dtype_from_precision(policy["output_dtype"])
+                    if policy.get("output_dtype") is not None
+                    else None
+                ),
                 cast_forward_inputs=policy.get("cast_forward_inputs", True),
             )
     return default_policy

@@ -14,6 +14,7 @@
 
 """FSDP1 wrapper configuration and precision policy schema."""
 
+import fnmatch
 from dataclasses import dataclass, fields
 from enum import Enum
 from typing import Any, Mapping
@@ -24,6 +25,9 @@ from torch.distributed.fsdp import MixedPrecision
 from rlinf.utils.precision import torch_dtype_from_precision
 
 _DTYPE_FIELDS = frozenset({"param_dtype", "reduce_dtype", "buffer_dtype"})
+_FSDP2_POLICY_FIELDS = frozenset(
+    {"param_dtype", "reduce_dtype", "output_dtype", "cast_forward_inputs"}
+)
 _SELECTORS = frozenset({"module_names", "module_classes", "wrap_names"})
 
 
@@ -149,3 +153,84 @@ def _parse_wrapper_config(config: DictConfig) -> tuple[_WrapperSpec, ...]:
 def validate_fsdp_wrapper_config(config: DictConfig) -> None:
     """Validate wrapper definitions and policy references before loading a model."""
     _parse_wrapper_config(config)
+
+
+def validate_fsdp2_mixed_precision_config(config: Mapping[str, Any]) -> None:
+    """Validate FSDP2 module precision rules before model construction."""
+    policies = _require_mapping(
+        config.get("fsdp2_mixed_precision_policies") or {},
+        "fsdp2_mixed_precision_policies",
+    )
+    rules = _require_mapping(
+        config.get("fsdp2_mixed_precision_rules") or {},
+        "fsdp2_mixed_precision_rules",
+    )
+    if not policies and not rules:
+        return
+    if config.get("strategy", "fsdp") != "fsdp2":
+        raise ValueError("FSDP2 mixed precision rules require strategy='fsdp2'")
+
+    for name, policy in policies.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("FSDP2 policy names must be non-empty strings")
+        policy = _require_mapping(policy, f"FSDP2 policy {name!r}")
+        unknown = set(policy) - _FSDP2_POLICY_FIELDS
+        if unknown:
+            raise ValueError(
+                f"FSDP2 policy {name!r}: unsupported options {sorted(unknown)}"
+            )
+        missing = {"param_dtype", "reduce_dtype"} - policy.keys()
+        if missing:
+            raise ValueError(
+                f"FSDP2 policy {name!r} is missing dtype fields: {sorted(missing)}"
+            )
+        for field in ("param_dtype", "reduce_dtype", "output_dtype"):
+            if field in policy and policy[field] is not None:
+                torch_dtype_from_precision(policy[field])
+        if "cast_forward_inputs" in policy and not isinstance(
+            policy["cast_forward_inputs"], bool
+        ):
+            raise ValueError(
+                f"FSDP2 policy {name!r}.cast_forward_inputs must be a boolean"
+            )
+
+    for name, rule in rules.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("FSDP2 rule names must be non-empty strings")
+        rule = _require_mapping(rule, f"FSDP2 rule {name!r}")
+        unknown = set(rule) - {"policy", "module_names"}
+        if unknown:
+            raise ValueError(
+                f"FSDP2 rule {name!r}: unsupported options {sorted(unknown)}"
+            )
+        policy_name = rule.get("policy")
+        if not isinstance(policy_name, str) or policy_name not in policies:
+            raise ValueError(f"FSDP2 rule {name!r}: unknown policy {policy_name!r}")
+        module_names = rule.get("module_names")
+        if (
+            not isinstance(module_names, (list, ListConfig))
+            or not module_names
+            or any(not isinstance(item, str) or not item for item in module_names)
+        ):
+            raise ValueError(
+                f"FSDP2 rule {name!r}.module_names must be a non-empty string list"
+            )
+
+
+def validate_fsdp2_rule_matches(
+    rules: Mapping[str, Any], module_names: list[str]
+) -> None:
+    """Require every FSDP2 precision rule to select a sharded module."""
+    unmatched = {
+        name
+        for name, rule in rules.items()
+        if not any(
+            fnmatch.fnmatchcase(module_name, pattern)
+            for module_name in module_names
+            for pattern in rule["module_names"]
+        )
+    }
+    if unmatched:
+        raise ValueError(
+            f"FSDP2 precision rules matched no sharded module: {sorted(unmatched)}"
+        )

@@ -21,7 +21,11 @@ from typing import Any, Iterator
 import yaml
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from transformers import AutoConfig
+
+from rlinf.models.embodiment.lingbotvlav2.utils import (
+    read_checkpoint_values,
+    resolve_image_size,
+)
 
 
 def _namespace(value: Any) -> Any:
@@ -42,33 +46,6 @@ def _working_directory(path: str) -> Iterator[None]:
         os.chdir(previous)
 
 
-def _merge_qwen_config(policy_config: Any, qwen_config: Any) -> Any:
-    config_dict = (
-        qwen_config.to_dict() if hasattr(qwen_config, "to_dict") else qwen_config
-    )
-    text_config = config_dict.get("text_config", {})
-    for key in (
-        "hidden_size",
-        "intermediate_size",
-        "num_hidden_layers",
-        "num_attention_heads",
-        "num_key_value_heads",
-        "rms_norm_eps",
-        "rope_theta",
-        "vocab_size",
-        "max_position_embeddings",
-        "hidden_act",
-        "tie_word_embeddings",
-        "tokenizer_path",
-    ):
-        if key in text_config:
-            setattr(policy_config, key, text_config[key])
-        elif key in config_dict:
-            setattr(policy_config, key, config_dict[key])
-    policy_config.vision_config = qwen_config.vision_config
-    return policy_config
-
-
 def _resolve_data_path(data_paths: Any) -> str:
     if isinstance(data_paths, str):
         return data_paths
@@ -80,6 +57,13 @@ def _resolve_data_path(data_paths: Any) -> str:
     return str(data_paths[0])
 
 
+def _resolve_path(path: str | Path, base_dir: str | Path) -> str:
+    path = Path(path).expanduser()
+    if not path.is_absolute():
+        path = Path(base_dir) / path
+    return str(path.resolve())
+
+
 def build_lingbot_v2_sft_dataloader(
     cfg: Any,
     world_size: int,
@@ -88,11 +72,9 @@ def build_lingbot_v2_sft_dataloader(
 ) -> tuple[DataLoader, dict[str, int]]:
     """Build the upstream LingBot-VLA V2 dataset for RLinf SFT."""
 
+    from lingbotvla.checkpoint_metadata import build_checkpoint_config
     from lingbotvla.data import build_vla_dataset
     from lingbotvla.models import build_processor
-    from lingbotvla.models.vla.lingbot_vla.configuration_lingbot_vla import (
-        LingbotVLAV2Config,
-    )
     from lingbotvla.models.vla.lingbot_vla.qwen3vl_in_vla import (
         apply_lingbot_qwen3_vl_patch,
     )
@@ -102,7 +84,10 @@ def build_lingbot_v2_sft_dataloader(
     model_cfg = cfg.actor.model
     lingbotvla_cfg = model_cfg.lingbotvlav2
     config_path = str(Path(lingbotvla_cfg.config_path).expanduser().resolve())
-    with Path(lingbotvla_cfg.training_config_path).expanduser().open() as source:
+    training_config_path = (
+        Path(lingbotvla_cfg.training_config_path).expanduser().resolve()
+    )
+    with training_config_path.open() as source:
         training_config = yaml.safe_load(source)
 
     training_model_config = dict(training_config["model"])
@@ -116,50 +101,48 @@ def build_lingbot_v2_sft_dataloader(
         if key in training_model_config:
             training_model_config[key] = float(training_model_config[key])
     training_model_config["align_params"] = {}
-    training_model_config["_moe_implementation"] = getattr(
-        model_cfg,
-        "moe_implementation",
-        training_model_config.get("moe_implementation", "fused"),
-    )
-    training_model_config["moe_implementation"] = training_model_config[
-        "_moe_implementation"
-    ]
-    training_model_config["attn_implementation"] = getattr(
-        model_cfg, "attn_implementation", "flash_attention_2"
-    )
     training_model_config["attention_implementation"] = (
         lingbotvla_cfg.attention_implementation
     )
     training_model_config["tokenizer_path"] = str(model_cfg.tokenizer_path)
     training_model_config["return_image_grid_thw"] = True
 
-    policy_config = LingbotVLAV2Config(**training_model_config)
+    policy_config = build_checkpoint_config(
+        read_checkpoint_values(
+            model_cfg.model_path,
+            training_config_path,
+            int(model_cfg.num_action_chunks),
+        ),
+        model_cfg.tokenizer_path,
+    )
     policy_config.n_action_steps = int(model_cfg.num_action_chunks)
     policy_config.num_steps = int(
         getattr(model_cfg, "num_steps", policy_config.num_steps)
     )
-    policy_config = _merge_qwen_config(
-        policy_config,
-        AutoConfig.from_pretrained(training_model_config["tokenizer_path"]),
-    )
+    policy_config.attention_implementation = lingbotvla_cfg.attention_implementation
 
     processor = build_processor(training_model_config["tokenizer_path"])
     data_config = dict(training_config["data"])
-    data_config["train_path"] = _resolve_data_path(data_paths)
-    data_config["robot_config_root"] = getattr(
-        lingbotvla_cfg,
-        "robot_config_root",
-        os.path.join(config_path, "configs/robot_configs"),
+    data_config["train_path"] = _resolve_path(
+        _resolve_data_path(data_paths), os.getcwd()
+    )
+    data_config["robot_config_root"] = _resolve_path(
+        getattr(
+            lingbotvla_cfg,
+            "robot_config_root",
+            os.path.join(config_path, "configs/robot_configs"),
+        ),
+        config_path,
     )
     data_config["data_name"] = getattr(
         lingbotvla_cfg, "data_name", data_config.get("data_name", "robotwin")
     )
     data_config["chunk_size"] = int(model_cfg.num_action_chunks)
     data_config["prompt_type"] = data_config.get("prompt_type", "global")
-    data_config["img_size"] = int(data_config.get("img_size", 256))
+    data_config["img_size"] = resolve_image_size(data_config)
     for key in ("joints", "norm_type"):
         data_config[key] = [
-            repr(item) if isinstance(item, dict) else item for item in data_config[key]
+            str(item) if isinstance(item, dict) else item for item in data_config[key]
         ]
     data_config["use_future_image"] = False
     dataset_config = _namespace(data_config)

@@ -14,7 +14,7 @@
 
 """LingBot-VLA 2.0 flow-SDE PPO with an explicit latent trajectory likelihood."""
 
-import json
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -22,6 +22,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 import yaml
+from accelerate import init_empty_weights
 from lingbotvla.checkpoint_metadata import build_checkpoint_config
 from lingbotvla.data.vla_data.utils import FeatureTransform
 from lingbotvla.distributed.parallel_state import (
@@ -39,10 +40,7 @@ from lingbotvla.models.vla.lingbot_vla.qwen3vl_in_vla import (
     apply_lingbot_qwen3_vl_patch,
 )
 from omegaconf import DictConfig, OmegaConf
-from safetensors import safe_open
-from safetensors.torch import load_model
 from torch.utils._pytree import tree_map
-from transformers.modeling_utils import load_sharded_checkpoint
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.lingbotvlav2.utils import (
@@ -57,10 +55,7 @@ from rlinf.models.embodiment.modules.value_head import ValueHead
 from rlinf.scheduler import Worker
 from rlinf.utils.logging import get_logger
 
-from .checkpoint_allowlist import (
-    DORMANT_ALIGNMENT_CHECKPOINT_KEYS,
-    DORMANT_ALIGNMENT_CHECKPOINT_SHAPES,
-)
+from .checkpoint_allowlist import load_vla_checkpoint
 
 # Rollout and actor both compute in bf16. ``torch_dtype`` only sets how the
 # trainable weights are stored: fp32 in the FSDP actor, so small optimizer steps
@@ -74,6 +69,11 @@ _REQUIRED_PATHS = (
     "lingbotvlav2.robot_config_path",
     "lingbotvlav2.stats_path",
 )
+
+
+def _build_alignment_policy(config: Any) -> nn.Module:
+    with init_empty_weights():
+        return LingbotVlaV2Policy(config, eval=True)
 
 
 class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
@@ -154,11 +154,11 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             ),
             config.tokenizer_path,
         )
-        self.sft_constructor_alignment_fix = bool(
-            OmegaConf.select(config, "sft_constructor_alignment_fix", default=False)
+        self.enable_alignment_heads = bool(
+            OmegaConf.select(config, "enable_alignment_heads", default=True)
         )
-        if self.sft_constructor_alignment_fix:
-            # Alignment flags also determine modules created by the constructor.
+        alignment_model_config = deepcopy(model_config)
+        if not self.enable_alignment_heads:
             model_config.align_params = {}
         model_config.attention_implementation = (
             config.lingbotvlav2.attention_implementation
@@ -190,45 +190,18 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             top_k = int(model_config.token_top_k)
             self.lr_multipliers = {".mlp.experts.": (num_experts / top_k) ** 0.5}
         self.vla_model = LingbotVlaV2Policy(model_config, eval=True)
-        if (weights / "model.safetensors.index.json").is_file():
-            index = json.loads((weights / "model.safetensors.index.json").read_text())
-            expected = set(self.vla_model.state_dict().keys())
-            indexed = set(index["weight_map"].keys())
-            extra = indexed - expected
-            if extra and (
-                not self.sft_constructor_alignment_fix
-                or extra != DORMANT_ALIGNMENT_CHECKPOINT_KEYS
-            ):
-                raise RuntimeError(
-                    "Unexpected checkpoint keys outside the exact dormant alignment allowlist: "
-                    f"{sorted(extra)}"
-                )
-            for key in sorted(extra):
-                shard = index["weight_map"][key]
-                with safe_open(
-                    str(weights / shard), framework="pt", device="cpu"
-                ) as handle:
-                    actual_shape = tuple(handle.get_slice(key).get_shape())
-                expected_shape = tuple(DORMANT_ALIGNMENT_CHECKPOINT_SHAPES[key])
-                if actual_shape != expected_shape:
-                    raise RuntimeError(
-                        f"Dormant alignment shape mismatch for {key}: "
-                        f"expected {expected_shape}, found {actual_shape}"
-                    )
-            result = load_sharded_checkpoint(
-                self.vla_model, str(weights), strict=not bool(extra), prefer_safe=True
-            )
-            missing = set(result.missing_keys)
-            unexpected = set(result.unexpected_keys)
-            if missing or unexpected != extra:
-                raise RuntimeError(
-                    "Checkpoint load integrity failure: "
-                    f"missing={sorted(missing)} unexpected={sorted(unexpected)} expected_extra={sorted(extra)}"
-                )
-        elif (weights / "model.safetensors").is_file():
-            load_model(self.vla_model, str(weights / "model.safetensors"), strict=True)
-        else:
+        if (
+            not (weights / "model.safetensors.index.json").is_file()
+            and not (weights / "model.safetensors").is_file()
+        ):
             raise FileNotFoundError(f"No safetensors checkpoint in {weights}")
+        load_vla_checkpoint(
+            self.vla_model,
+            weights,
+            self.enable_alignment_heads,
+            alignment_model_config,
+            _build_alignment_policy,
+        )
         self.vla_model.to(dtype=_COMPUTE_DTYPE)
         # No-grad inference kernels can have different numerical reductions.
         # The source package exposes a common differentiable MoE backend.

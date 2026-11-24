@@ -213,10 +213,12 @@ LingbotVLA 1.0
 
 LingbotVLA 2.0
 
-- 填写 ``examples/embodiment/config/model/lingbotvlav2.yaml`` 中的路径，评测配置与训练共用该文件
+- 在 ``examples/embodiment/config/model/lingbotvlav2.yaml`` 中填写 Foundation 或 RoboTwin checkpoint 路径；PPO 与评测共用其中的 ``eager`` attention 后端
 - ``rollout.model.precision: bf16``；fp32 权重仅用于 PPO actor
 - ``task_config.embodiment: [aloha-agilex]`` 且 ``task_config.camera.collect_wrist_camera: true``；模型需要左右两个腕部相机
 - ``rollout.model.num_action_chunks: 50``；``max_episode_steps: 400``
+
+评测 SFT checkpoint 时，使用 ``robotwin_click_bell_lingbotvlav2_sft_eval``，路径设置见 :doc:`LingbotVLA 2.0 SFT <../../examples/embodied/sft_lingbotvlav2>`。
 
 覆盖完整测试集
 ~~~~~~~~~~~~~~
