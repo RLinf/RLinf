@@ -1970,6 +1970,7 @@ def test_realworld_chunk_retains_the_actual_terminal_step():
 
 def test_so101_hg_dagger_switches_control_at_next_action_step(monkeypatch):
     """Apply leader handovers before the next environment step."""
+    from rlinf.data.schema.embodied_trajectory import LeRobotEpisodeAccumulator
     from rlinf.envs.real.so101.wrappers import SO101HGDAggerWrapper
     from rlinf.envs.real.wrappers.episode import session as session_module
 
@@ -2099,8 +2100,36 @@ def test_so101_hg_dagger_switches_control_at_next_action_step(monkeypatch):
     assert not wrapper.smooth_intervention_active()
 
     wrapper.on_action_chunk_begin()
-    wrapper.step(np.array([6.0]))
+    _, _, _, _, resumed = wrapper.step(np.array([6.0]))
     np.testing.assert_array_equal(inner.actions[-1], [6.0])
+
+    wrapper.listener.batches = [["c"]]
+    _, _, terminated, truncated, closed = wrapper.step(np.array([7.0]))
+    infos = [started, queued, manual, returned, next_policy, resumed, closed]
+    accumulator = LeRobotEpisodeAccumulator(
+        num_envs=1, num_action_chunks=len(infos), action_dim=1, only_success=True
+    )
+    accumulator.append_chunk_episode_data(
+        policy_output=None,
+        chunk_actions=np.arange(1, 8, dtype=np.float32).reshape(1, -1, 1),
+        initial_observation={"states": np.array([[0.0]])},
+        obs_list=[{"states": np.array([[i + 1.0]])} for i in range(len(infos))],
+        terminations=np.array([[False] * 6 + [terminated]]),
+        truncations=np.array([[False] * 6 + [truncated]]),
+        infos_list=infos,
+    )
+    [episode] = accumulator.drain_episodes()
+    np.testing.assert_array_equal(
+        [frame["actions"] for frame in episode], inner.actions[1:-1]
+    )
+    assert [frame["intervene_flag"].item() for frame in episode] == [
+        False,
+        True,
+        False,
+        False,
+        False,
+    ]
+    assert [frame["state"].item() for frame in episode] == [1, 2, 3, 4, 5]
 
 
 def test_so101_hg_dagger_success_hold_is_not_labeled_as_intervention(monkeypatch):

@@ -1584,11 +1584,12 @@ class LeRobotFrame:
     def _executed_action(
         action: np.ndarray, info: Any, action_dim: int
     ) -> tuple[np.ndarray, bool]:
-        """Apply an environment-recorded expert action when intervention is active."""
-        if not isinstance(info, dict) or not {
-            "intervene_action",
-            "intervene_flag",
-        }.issubset(info):
+        """Resolve the executed action and whether it came from an expert."""
+        if not isinstance(info, dict):
+            return action, False
+        if "executed_action" in info:
+            action = LeRobotChunk._to_numpy(info["executed_action"]).reshape(-1)
+        if not {"intervene_action", "intervene_flag"}.issubset(info):
             return action, False
 
         intervention_action = LeRobotChunk._to_numpy(info["intervene_action"])

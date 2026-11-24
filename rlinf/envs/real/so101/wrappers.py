@@ -180,10 +180,6 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
         except AttributeError:
             return action
 
-    def _before_action_step(self, action: ActType) -> ActType:
-        """Handle per-step control changes before the wrapped environment steps."""
-        return action
-
     def step(
         self, action: ActType
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
@@ -211,8 +207,6 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
             # Stop accepting leader actions before the terminal transition.
             self.before_recording_success()
 
-        if self._recording and not started and not aborted and not success:
-            action = self._before_action_step(action)
         hold = not self._recording or started or aborted or success
         if hold:
             action = self._hold_action(action)
@@ -368,10 +362,10 @@ class SO101HGDAggerWrapper(SO101StartEndWrapper):
             self._control_mode == "manual" or self._pending_space
         )
 
-    def _apply_pending_space(self) -> bool:
-        """Apply one queued handover and report whether this step must hold."""
+    def _apply_pending_space(self) -> None:
+        """Apply a queued handover before the next action."""
         if not self._pending_space or not self._recording:
-            return False
+            return
         self._pending_space = False
         context = self._teleop_context()
         if self._control_mode == "policy":
@@ -383,7 +377,7 @@ class SO101HGDAggerWrapper(SO101StartEndWrapper):
             self._countdown_before_manual()
             release(context)
             self._set_control_mode("manual")
-            return False
+            return
 
         hold = self._teleop_attr("hold_for_reset")
         if hold is None:
@@ -391,12 +385,22 @@ class SO101HGDAggerWrapper(SO101StartEndWrapper):
         hold(context)
         self._set_control_mode("policy")
         self._hold_action_chunk = True
-        return True
 
-    def _before_action_step(self, action: ActType) -> ActType:
-        """Apply Space before this environment step reaches the teleop device."""
-        hold = self._apply_pending_space() or self._hold_action_chunk
-        return self._hold_action(action) if hold else action
+    def _step_with_hold(
+        self, action: ActType, *, hold: bool
+    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+        """Report handback holds as executed actions until the next policy chunk."""
+        if hold:
+            return super()._step_with_hold(action, hold=True)
+        self._apply_pending_space()
+        if not self._hold_action_chunk:
+            return self.env.step(action)
+
+        action = self._hold_action(action)
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        if "intervene_action" not in info:
+            info["executed_action"] = action
+        return obs, reward, terminated, truncated, info
 
     def on_action_chunk_begin(self) -> None:
         """Apply a pending handover after the previous action chunk completes."""
@@ -415,9 +419,6 @@ class SO101HGDAggerWrapper(SO101StartEndWrapper):
         self, action: ActType
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
         """Apply explicit control ownership and report executed expert actions."""
-        stale_policy_chunk = self._hold_action_chunk
-        if stale_policy_chunk:
-            action = self._hold_action(action)
         obs, reward, terminated, truncated, info = super().step(action)
 
         if self._control_mode == "manual" and "intervene_action" in info:

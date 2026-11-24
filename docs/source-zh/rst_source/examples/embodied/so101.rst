@@ -213,9 +213,15 @@ RLinf 提供 SO-101 关节空间 SFT 配置和本地 fixed-checkpoint 推理配�
 使用在线 HG-DAgger 训练
 ------------------------------
 
-部署 policy 后若要继续收集 SO-101 示范，可以使用在线 HG-DAgger。模板将训练 actor 放在 rank 0，并把 policy rollout 和 SO-101 环境放在 rank 1；它启用仅训练 action expert，并将成功 episode 保存为在线 LeRobot dataset。
+从 SO-101 的 SFT checkpoint 启动，用主臂纠正 policy 的动作。与 :doc:`Franka 的 HG-DAgger <hg-dagger>` 流程一样，操作者采集新回合时，actor 可以继续训练。SO-101 模板冻结视觉语言主干，只更新动作专家（action expert）。原始示范用于训练起始权重。使用新的日志目录启动时，在线训练只读取这次运行采集的回合。每个成功回合都会完整归档。训练只抽取人工接管的动作窗口，窗口内所有非填充步都必须由操作者控制。
 
-从 ``examples/embodiment/config/realworld_so101_hg_dagger_openpi.yaml`` 开始，复制出本机专用配置。填写两台节点都能读取的 checkpoint 和 norm stats 路径，再替换 follower 与 leader 串口、calibration ID、相机设备、键盘设备以及两台主机的网卡占位值。连接硬件前先检查 reset 姿态。模板默认使用 SO-101 环境的关节 reset 姿态和夹爪位置；若该默认姿态不适合当前本体，请换成已验证的姿态。
+.. note::
+
+   接管片段上的训练损失下降，并不能保证整项任务的成功率提高。评估时，在相同的任务和初始摆放条件下，分别用起始 SFT 模型和更新后的模型独立完成任务，比较两者的成功率。如果接管主要集中在某个环节，例如只在夹爪快抓偏时纠正，训练样本就很少覆盖其他环节。此时可以将原始的完整示范与新采集的人工纠正片段合并成一个数据集，再按上文的离线 SFT 流程微调。
+
+   本 PR 参照 RLinf 已有的 Franka HG-DAgger 示例，为 SO-101 接入了人工接管、成功回合归档和基于接管片段的在线训练。若要在配置中指定已有 SFT 数据集，让系统自动将新采集的接管数据写入训练集，再混合新旧数据训练，则需要单独设计数据策略和数据管线，超出本 PR 的范围。
+
+从 ``examples/embodiment/config/realworld_so101_hg_dagger_openpi.yaml`` 开始，在同一目录保存为 ``so101_site.yaml``。将 ``env.train.override_cfg.task_description`` 设为 SFT 使用的任务指令。填写两台节点都能读取的 checkpoint 和 norm stats 路径，再替换 follower 与 leader 串口、calibration ID、相机设备、键盘设备以及两台主机的网卡占位值。连接硬件前先检查 reset 姿态。模板默认使用 SO-101 环境的关节 reset 姿态和夹爪位置；若该默认姿态不适合当前本体，请换成已验证的姿态。
 
 配置将 actor 放在 rank 0 的 ``train`` 组，并将 ``rollout`` 与 ``so101`` 放在 rank 1。启动 Ray 前，在每台节点分别导出 ``RLINF_NODE_RANK`` 和 ``RLINF_COMM_NET_DEVICES``；集群需要显式指定接口时，再设置 ``GLOO_SOCKET_IFNAME`` 与 ``NCCL_SOCKET_IFNAME``。配置中的 ``env_configs`` 用于设置 RLinf worker 环境；Ray 进程也必须在启动时继承对应节点的网卡值，默认通信 worker 才能选择正确接口。Ray 启动方法参考 :doc:`多机配置 </rst_source/guides/multi_node>`。
 
@@ -223,12 +229,11 @@ RLinf 提供 SO-101 关节空间 SFT 配置和本地 fixed-checkpoint 推理配�
 
 .. code-block:: bash
 
-   python examples/embodiment/train_embodied_agent.py \
-     --config-name realworld_so101_hg_dagger_openpi
+   bash examples/embodiment/run_realworld_async.sh so101_site
 
-每次机械臂复位完成后，等待 HG-DAgger 就绪提示。按 ``a`` 开始 policy 控制，按 ``Space`` 由主臂接管，再按一次 ``Space`` 将控制权交回 policy；按 ``c`` 保存成功 episode，按 ``a`` 放弃当前 episode。切换请求会在下一个环境动作 step 执行前处理。每次接管时，RLinf 先让主臂与从臂对齐，再执行配置中的 3 秒倒计时。主臂控制期间，RLinf 发送 SO-101 保持动作并跳过 policy 推理。再次按 ``Space`` 后，RLinf 在当前 action chunk 的剩余 step 中保持位置，再恢复 policy 推理。模板中的 ``env.train.smooth_intervene: true`` 会启用这些跳过推理的接管 chunk。成功 episode 会写入 ``runner.logger.log_path/online_lerobot``；``actor.model.openpi.train_expert_only`` 控制是否仅训练 action expert。
+每次机械臂复位完成后，等待 HG-DAgger 就绪提示。按 ``a`` 开始 policy 控制，按 ``Space`` 由主臂接管，再按一次 ``Space`` 将控制权交回 policy；按 ``c`` 保存成功 episode，按 ``a`` 放弃当前 episode。切换请求会在下一个环境动作 step 执行前处理。每次接管时，RLinf 先让主臂与从臂对齐，再执行配置中的 3 秒倒计时。主臂控制期间，RLinf 发送 SO-101 保持动作并跳过 policy 推理。再次按 ``Space`` 后，RLinf 在当前 action chunk 的剩余 step 中保持位置，再恢复 policy 推理。模板中的 ``env.train.smooth_intervene: true`` 会启用这些跳过推理的接管 chunk。成功 episode 会写入 ``runner.logger.log_path/online_lerobot``。
 
-``c`` 成功切换产生的保持动作只用于在 episode 收尾期间保持从臂安全，不会写入 expert frame。保存的 episode 在 ``c`` 之前的最后一个动作处结束。collector 在 rollout step 边界发送已完成的 episode。模板设置 1000 个环境 step、每个 action chunk 包含 20 个动作，因此边界是 50 个 chunk；成功 episode 可能在这里等待一段时间，之后 actor 才会收到数据并训练。
+``c`` 成功切换产生的保持动作只用于在 episode 收尾期间保持从臂安全，不会写入 expert frame。保存的 episode 在 ``c`` 之前的最后一个动作处结束。collector 在 rollout step 边界发送已完成的 episode。模板设置 1000 个环境 step、每个 action chunk 包含 20 个动作，因此边界是 50 个 chunk；成功 episode 可能在这里等待一段时间，之后 actor 才能收到数据。一旦有了合格窗口，actor 就可以在采集下一轮数据的同时，用现有样本继续训练。模板每更新 200 次保存一次模型 checkpoint。如果磁盘空间有限，可以在本机配置中设置 ``runner.save_interval: -1``，关闭模型自动存盘。成功回合仍会照常归档。
 
 collector 会在 worker log 中报告已接收的 chunk、接收或过滤的 episode，以及等待中的 frame 数。如果 launcher 终端没有显示这些消息，请在本机配置中启用 ``runner.per_worker_log``，日志会保存到 ``runner.logger.log_path/worker_logs``。
 
