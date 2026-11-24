@@ -7,7 +7,8 @@
 <a href="https://huggingface.co/RLinf"><img src="https://img.shields.io/badge/HuggingFace-yellow?logo=huggingface&logoColor=white" alt="Hugging Face"></a>
 <a href="https://rlinf.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/Documentation-Purple?color=8A2BE2&logo=readthedocs"></a>
 <a href="https://rlinf.readthedocs.io/zh-cn/latest/"><img src="https://img.shields.io/badge/中文文档-red?logo=readthedocs"></a>
-<a href="https://deepwiki.com/RLinf/RLinf"><img src="https://img.shields.io/badge/Ask%20DeepWiki-1DA1F2?logo=databricks&logoColor=white&color=00ADEF" alt="Ask DeepWiki"></a>
+<a href="https://rlinf.org/zh/"><img src="https://img.shields.io/badge/RLinf%20%E5%AE%98%E7%BD%91-00ADEF?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSI%2BPGNpcmNsZSBjeD0iOCIgY3k9IjgiIHI9IjYuNSIvPjxlbGxpcHNlIGN4PSI4IiBjeT0iOCIgcng9IjMiIHJ5PSI2LjUiLz48cGF0aCBkPSJNMS41IDhoMTMiLz48L3N2Zz4%3D" alt="RLinf 官网"></a>
+<a href="https://rlinf.github.io/misc/certificates/"><img src="https://img.shields.io/badge/%E8%B4%A1%E7%8C%AE%E8%80%85%E8%AF%81%E4%B9%A6-2E8B57?logo=readme&amp;logoColor=white" alt="证书"></a>
 <br>
 <a href="https://github.com/RLinf/misc/blob/main/pic/wechat.jpg?raw=true"><img src="https://img.shields.io/badge/微信交流群-green?logo=wechat&amp"></a>
 <a href="https://github.com/RLinf/misc/blob/main/pic/slack.jpg?raw=true"><img src="https://badgen.net/badge/icon/Slack%20%E9%A2%91%E9%81%93?icon=slack&amp;label&amp;color=4A154B&amp;labelColor=4A154B" alt="Slack 频道"></a>
@@ -33,10 +34,27 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/11] 🔥 RLinf 新增 FlexRLT，可直接用冻结 VLA 的特征训练小型 actor 和 critic，并分别选择特征表示、网络、AC/TD3 算法及 STEAM 门控。文档：[FlexRLT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/flexrlt.html)。
+- [2026/11] 🔥 RLinf 支持在 [DexJoCo](https://github.com/brave-eai/dexjoco) 灵巧操作基准上用 SFT 和 PPO 训练 CNN 和 π₀.₅ policy。PPO 将 π₀.₅ 在 `water_plant` 上的成功率从 SFT 后的 78.1% 提升至 98.4%。文档：[基于 DexJoCo 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html)。
+- [2026/11] 🔥 RLinf 支持奖励反馈学习（ReFL），使用 ImageReward 微调 SD3.5 Medium。文档：[ReFL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/refl.html)。
+- [2026/11] 🔥 RLinf 支持 Intel GPU。支持的模型与环境组合见[硬件支持矩阵](#硬件支持)，PR：[Intel GPU 支持（#1832）](https://github.com/RLinf/RLinf/pull/1832)。
+- [2026/11] 🔥 RLinf 支持 Robbyant R2 轮式双臂人形机器人的真机强化学习、全身 PICO VR 遥操作，以及双臂、夹爪或灵巧手、躯干与全向底盘的协同控制。文档：[Robbyant R2](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/r2.html)。
+- [2026/11] 🔥 RLinf 新增真机机器人容错接口与自动恢复机制，率先在 Robbyant R2 上支持零阻塞健康诊断、分级故障恢复与急停安全锁存、无跳变运动恢复，以及强化学习采样中断时的自动 episode 截断。文档：[机器人接口](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/concepts/robotics.html)。
+- [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) 接入 RLinf 作为分布式 rollout 与训练运行时，并集成了[示范协同训练（Co-Training）](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/co_training.html)用于 VLA 强化学习后训练。
+- [2026/11] 🎉 [RLinf 官网](https://rlinf.org/zh/)上线了！欢迎阅读[博客](https://rlinf.org/zh/blog/)并查看[社区活动](https://rlinf.org/zh/events/)。
+- [2026/11] 🔥 RLinf 接入 MuJoCo Warp，支持五个经典运动控制任务的 GPU 批量仿真及 MLP + PPO 示例。文档：[MuJoCo Warp](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/mujoco_warp.html)。
+- [2026/11] 🔥 RLinf 支持 LeKiwi 三轮全向移动底盘，提供分部件调试工具，并注册了真机驱动环境。文档：[LeKiwi](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lekiwi.html)。
+- [2026/11] 🔥 RLinf 支持双臂 ARX X5 搭配 Pico 遥操作的数据采集。文档：[ARX X5](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/arx5.html)。
+- [2026/11] 🔥 RLinf 为异步 agentic RL 提供 session server：轨迹留在 rollout 节点上，不再集中到 node 0；请求经 SGLang router 路由；agent 可以直接使用 OpenAI chat completions 接口。文档：[Session Server](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/session_server.html)。
+- [2026/11] 🔥 RLinf 支持异步 agentic RL：rollout 持续生成，actor 同时用更早权重版本的数据训练，staleness 有上限。在 Search-R1（GLM-4.7-Flash）上，每步耗时从 278.6 s 降到 139.0 s，reward 与同步训练相当。文档：[异步 agentic RL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/async_agentic.html)、[Search-R1 异步训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/searchr1/async.html)。
+- [2026/11] 🔥 RLinf 支持 DiffusionART，使用 OCR 奖励微调 SD3 图像生成模型和 Wan2.2 视频生成模型，达到同一奖励阈值所需时间比 NFT 减少约 30%、轨迹数减少约三分之一。文档：[DiffusionART](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/diffusion_art.html)。
+- [2026/11] 🔥 RLinf 支持 LIBERO-Mem，并为 OpenPI 提供受 MEM 启发的视觉短期记忆，用于监督微调和评测，在 LIBERO-Mem 上把严格成功率从 20.0% 提升到 35.5%。文档：[LIBERO-Mem](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html#zh-libero-mem-benchmark)、[OpenPI Short Memory](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0/short_memory.html)。
+- [2026/11] 🔥 RLinf 支持在 RoboLab 操作基准上评估 OpenPI π₀.₅。文档：[RoboLab 评估](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/robolab.html)。
 - [2026/11] 🔥 RLinf 支持在 [GenieSim](https://github.com/AgibotTech/genie_sim) 上用 PPO 和 GRPO 对 π₀.₅ 进行强化学习。文档：[基于 GenieSim 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/geniesim.html)。
-- [2026/11] 🔥 RLinf 支持 SO-101 关节空间示范数据采集、OpenPI π₀.₅ 监督微调和本地评测。文档：[SO-101](docs/source-zh/rst_source/examples/embodied/so101.rst)。
+- [2026/11] 🔥 RLinf 支持 RoboDojo——基于 Isaac Sim 的双臂操作类基准，覆盖 ARX-X5 等机器人，已作为 Gym 环境接入，可将官方 π₀.₅ 权重转换为 OpenPI 格式并在 55 个预设场景布局上逐场景评测。文档：[RoboDojo](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robodojo.html)。
+- [2026/11] 🔥 RLinf 支持 SO-101 关节空间示范数据采集、OpenPI π₀.₅ 监督微调和本地评测。文档：[SO-101](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/so101.html)。
 - [2026/11] 🔥 RLinf 支持 Psi0 VLA 模型与 SIMPLE 人形机器人仿真环境。文档：[Psi0](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/psi0.html)、[SIMPLE](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html)。
-- [2026/11] 🔥 RLinf 支持将 [PhyAI](https://github.com/mingti-org/phyai) 作为进程内 rollout 后端，在 LIBERO 上用 PPO 训练 π₀.₅，并支持热权重同步。文档：[PhyAI rollout 后端](docs/source-zh/rst_source/guides/rollout-engines/phyai.rst)。
+- [2026/11] 🔥 RLinf 支持将 [PhyAI](https://github.com/mingti-org/phyai) 作为进程内 rollout 后端，在 LIBERO 上用 PPO 训练 π₀.₅，并支持热权重同步，在四张 H800 上把 π₀.₅ 的预测耗时从 142.6 秒降到 68.7 秒。文档：[PhyAI rollout 后端](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/rollout-engines/phyai.html)。
 - [2026/10] 🎉 RLinf v0.4 发布，让强化学习真正走出仿真、敏捷操控物理世界。主要升级：乐高式真机工程体系（`rlinf.robotics`）、真机 SOTA 后训练算法（RLT、STEAM、OPD、RTC）、全模态模型（PyTorch 原生 OpenPI π₀ / π₀.₅、Cosmos3、FastWAM、π₀-FAST、Evo-1、MolmoAct2、SD3 / Wan2.2）以及八大异构算力支持。发布说明：[RLinf v0.4](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/release_v0.4.html)。
 - [2026/10] 🎉 RLinf 发布 **CEL**（Collective Experience Learning）：机器人集群从部署期自身经验中共同改进共享策略，无需额外专家示教或纠错动作；在最多 96 台真机、5 项真实任务上验证。项目主页：[CEL](https://cel-robot-learning.github.io/)，论文：[arXiv:2610.25736](https://arxiv.org/abs/2610.25736)。代码即将开源。
 - [2026/10] 🔥 RLinf 支持沐曦（MetaX MACA）GPU。PR：[沐曦 GPU 支持（#1656）](https://github.com/RLinf/RLinf/pull/1656)。
@@ -49,7 +67,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 - [2026/08] 🔥 RLinf 支持对英伟达全模态世界模型 Cosmos3 做 SFT 及基于 SGLang 的评测。文档：[Cosmos3 SFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_cosmos3.html)、[SGLang 评测](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/cosmos3_sglang.html)。
 - [2026/08] 🎉 RLinf 正式入选 **PyTorch 生态**！我们将继续把可扩展的具身与智能体强化学习带给 PyTorch 用户，推动模型智能走进真实世界。博客：[PyTorch Ecosystem Landscape Q3 Update](https://pytorch.org/blog/pytorch-ecosystem-landscape-q3-update/)。
 - [2026/08] 🎉 Isaac Lab v3.0.0 正式采用 RLinf 作为其强化学习（RL）训练基础设施。文档：[Isaac Lab 中的 RLinf](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/concepts/reinforcement_learning.html#rlinf-vla-post-training)。
-- [2026/08] 🔥 RLinf 集成 Diffusion-NFT，支持 SD3 和 Wan2.2 视频生成模型的强化学习。文档：[视频生成模型的强化学习](docs/source-zh/rst_source/examples/video_models.rst)。
+- [2026/08] 🔥 RLinf 集成 Diffusion-NFT，支持 SD3 和 Wan2.2 视频生成模型的强化学习。文档：[视频生成模型的强化学习](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/video_models.html)。
 - [2026/08] 🔥 RLinf 支持摩尔线程（MUSA）、华为昇腾（CANN）与 AMD（ROCm）。支持的模型与环境组合及运行步骤见[硬件支持矩阵](#硬件支持)。
 - [2026/08] 🔥 RLinf 支持 Moonlight-16B-A3B（DeepSeek-V3 MLA + MoE）的 GRPO 训练。文档：[Moonlight-16B GRPO](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/math_reasoning/moonlight.html)。
 - [2026/08] 🔥 RLinf 支持在 LIBERO 上评测 MolmoAct2。文档：[MolmoAct2](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/molmoact2.html)。
@@ -191,6 +209,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/maniskill.html">ManiSkill</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html">LIBERO</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html#zh-liberopro-plus-benchmark">LIBERO-Pro & LIBERO-Plus</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html#zh-libero-mem-benchmark">LIBERO-Mem</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robotwin.html">RoboTwin</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/roboverse.html">RoboVerse</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/behavior.html">BEHAVIOR</a> ✅</li>
@@ -202,9 +221,13 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/frankasim.html">Franka-Sim</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/embodichain.html">EmbodiChain</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/genesis.html">Genesis</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/mujoco_warp.html">MuJoCo Warp</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/polaris.html">Polaris</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/geniesim.html">GenieSim</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robodojo.html">RoboDojo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robolab.html">RoboLab（仅评估）</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -261,6 +284,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><b>RL 算法</b></li>
           <ul>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/flexrlt.html">FlexRLT (AC / TD3)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/reference/algorithms/grpo.html">GRPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/reference/algorithms/ppo.html">PPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/reference/algorithms/async_ppo.html">Async PPO</a> ✅</li>
@@ -276,6 +300,8 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/steam.html">STEAM</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/rlt.html">RLT</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/opd.html">OPD</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/diffusion_art.html">DiffusionART</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/refl.html">ReFL</a> ✅</li>
           </ul>
           <li><b>SFT</b></li>
           <ul>
@@ -313,11 +339,14 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Robotiq 2F-85 / 2F-140</a> ✅</li>
           </ul>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dual_franka_index.html">Dual-Arm Franka</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/arx5.html">ARX X5</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/xsquare_turtle2.html">XSquare Turtle2</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dosw1.html">DOS-W1</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gim_arm.html">GimArm</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/piper.html">AgileX Piper</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/so101.html">SO101</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/r2.html">Robbyant R2</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lekiwi.html">LeKiwi</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -346,19 +375,24 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
 
 #### 硬件支持
 
-RLinf 通过统一的底层抽象屏蔽了异构硬件之间的差异，使同一套训练栈能够无缝运行在 NVIDIA、AMD GPU，以及华为昇腾、摩尔线程、昆仑芯等国产加速卡上。用户在不同计算节点间迁移训练任务时，可实现模型与算法的“零改动”。同时，加速卡厂商只需完成极简的接口适配，便能将完整的具身智能与智能体 RL 训练生态平移至自家硬件，彻底免去了维护框架定制分支的繁琐工作。
+RLinf 用统一的底层接口屏蔽异构硬件差异，同一套训练栈可运行在 NVIDIA、AMD、Intel GPU 以及华为昇腾、摩尔线程、昆仑芯、沐曦、壁仞等加速卡上。跨节点迁移训练任务无需改动模型与算法代码；加速卡厂商只需适配精简的设备与通信接口，不必单独维护分支。
 
-请先选择所需的模型与环境组合，随后点击相应链接即可获取详细的硬件运行指南。每一款硬件后端均已完美适配其所在行列出的所有环境。
+点击模型或环境链接查看训练示例及已提供的硬件配置说明。✅ 表示已验证的组合（覆盖同行全部环境）；`—` 表示尚未测试，并非不支持。
 
-| 模型 | 环境 | NVIDIA CUDA | 华为昇腾 CANN | 摩尔线程 MUSA | AMD ROCm |
-|---|---|:---:|:---:|:---:|:---:|
-| [OpenVLA-OFT](docs/source-zh/rst_source/examples/embodied/openvla_oft.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
-| [OpenVLA-OFT](docs/source-zh/rst_source/examples/embodied/openvla_oft.rst) | [Wan 世界模型](docs/source-zh/rst_source/examples/embodied/wan.rst#wan-hardware) | ✅ | ✅ | — | — |
-| [GR00T N1.5](docs/source-zh/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
-| [π₀ / π₀.₅ (OpenPI)](docs/source-zh/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
-| [StarVLA (QwenOFT)](docs/source-zh/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
-| [DreamZero](docs/source-zh/rst_source/examples/embodied/sft_dreamzero.rst#sft-dreamzero-hardware) | SFT（LeRobot 数据集） | ✅ | ✅ | — | — |
-| [FastWAM](docs/source-zh/rst_source/examples/embodied/sft_fastwam.rst#sft-fastwam-hardware) | LIBERO（SFT · 评测） | ✅ | ✅ | — | — |
+| 模型 | 环境 | NVIDIA CUDA | 华为昇腾 CANN | 摩尔线程 MUSA | AMD ROCm | Intel XPU | 昆仑芯 XPU | 沐曦 MACA | 壁仞 SUPA |
+|---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| [OpenVLA](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/maniskill.html) | ManiSkill | ✅ | ✅ | ✅ | ✅ | — | — | ✅ | — |
+| [OpenVLA-OFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/openvla_oft.html#openvla-oft-hardware) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ | — | — | — | — |
+| [OpenVLA-OFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/openvla_oft.html) | [Wan 世界模型](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/wan.html#wan-hardware) | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | — |
+| [OpenVLA-OFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/openvla_oft.html) · [π₀ / π₀.₅](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0.html) · [LingbotVLA 1.0](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lingbotvla.html) | [RoboTwin](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robotwin.html#robotwin-hardware) | ✅ | — | — | ✅ | — | — | — | — |
+| [GR00T N1.5](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gr00t.html#gr00t-hardware) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | — |
+| [GR00T N1.7](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gr00t.html) | LIBERO · ManiSkill | ✅ | — | — | — | ✅ | — | — | — |
+| [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0.html#pi0-hardware) | LIBERO | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0.html#pi0-hardware) | ManiSkill | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | — |
+| [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html) | SFT（LeRobot 数据集） | ✅ | — | — | — | — | — | — | ✅ |
+| [StarVLA (QwenOFT)](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/starvla.html#starvla-hardware) | LIBERO | ✅ | ✅ | — | — | — | — | — | — |
+| [DreamZero](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_dreamzero.html#sft-dreamzero-hardware) | SFT（LeRobot 数据集） | ✅ | ✅ | — | — | — | — | — | — |
+| [FastWAM](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_fastwam.rst#sft-fastwam-hardware) | LIBERO（SFT · 评测） | ✅ | ✅ | — | — | — | — | — | — |
 
 ### 智能体强化学习
 
@@ -428,7 +462,9 @@ RLinf 通过统一的底层抽象屏蔽了异构硬件之间的差异，使同�
 - [pi-StepNFT](https://github.com/wangst0181/pi-StepNFT): 扩展RLinf以实现π系列视觉-语言-动作（VLA）模型的步级训练与优化。
 - [Dexbotic](https://github.com/dexmal/dexbotic): 融合机器人与强化学习的系统，通过RLinf支持具身智能体的可扩展训练与部署。
 - [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin): 数字孪生与机器人结合的平台，利用RLinf进行大规模具身强化学习训练。
+- [Genie Sim](https://github.com/AgibotTech/genie_sim): 智元机器人开源的仿真平台，支持场景生成、数据采集与基准评测，集成RLinf以 PPO 和 GRPO 对 VLA 模型进行后训练。
 - [IsaacLab](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/concepts/reinforcement_learning.html#rlinf-vla-post-training): 将RLinf正式整合进IsaacLab，可在基于NVIDIA Isaac Sim的机器人环境中实现无缝衔接的强化学习工作流程。
+- [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt): NVIDIA 面向机器人策略的仿真强化学习后训练库，将 RLinf 集成为分布式 rollout 与训练运行时，并接入示范协同训练（Co-Training）。
 - [RISE](https://github.com/OpenDriveLab/RISE): 基于组合式世界模型的机器人强化学习框架，使用 RLinf 进行在线强化学习。
 
 💡 希望在此展示您的项目吗？欢迎提交拉取请求（PR），我们非常乐意将其收录其中！

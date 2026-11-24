@@ -415,18 +415,20 @@ def masked_reduce(
     return torch.where(mask.any(), value, empty_value)
 
 
-def seq_mean_token_sum(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
-    seq_losses = torch.sum(values * mask, dim=-1)  # token-sum
-    loss = torch.mean(seq_losses)  # seq-mean
-    return loss
+def seq_mean_token_sum(
+    values: torch.Tensor, mask: torch.Tensor, dim: int = -1
+) -> torch.Tensor:
+    """Average token sums over sequences with at least one valid token."""
+    seq_losses = torch.sum(values * mask, dim=-1)
+    return masked_mean(seq_losses, mask.any(dim=-1))
 
 
-def seq_mean_token_mean(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
-    seq_losses = torch.sum(values * mask, dim=-1) / torch.sum(
-        mask, dim=-1
-    )  # token-mean
-    loss = torch.mean(seq_losses)  # seq-mean
-    return loss
+def seq_mean_token_mean(
+    values: torch.Tensor, mask: torch.Tensor, dim: int = -1
+) -> torch.Tensor:
+    """Average token means over sequences with at least one valid token."""
+    seq_losses = torch.sum(values * mask, dim=-1) / torch.sum(mask, dim=-1).clamp_min(1)
+    return masked_mean(seq_losses, mask.any(dim=-1))
 
 
 def masked_mean_ratio(
@@ -846,6 +848,62 @@ def merge_rollout_epochs(batch: dict[str, Any], rollout_epoch: int) -> dict[str,
     return ret_dict
 
 
+def compute_trajectory_loss_mask(
+    dones: torch.Tensor, reward_type: str
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return the loss mask that stops each trajectory at its first done.
+
+    Args:
+        dones: Dones of shape ``[n_chunk_steps + 1, B, num_action_chunks]``.
+        reward_type: ``"chunk_level"`` keeps one mask entry per chunk.
+
+    Returns:
+        The loss mask and each trajectory's valid length in env steps.
+    """
+    loss_mask, loss_mask_sum = compute_loss_mask(dones)
+    if reward_type == "chunk_level":
+        loss_mask = loss_mask.any(dim=-1, keepdim=True)
+        loss_mask_sum = loss_mask_sum[..., -1:]
+    return loss_mask, loss_mask_sum
+
+
+def add_loss_weights(
+    batch: dict[str, Any],
+    *,
+    reward_type: str,
+    reference_length: float,
+    loss_weight: float,
+) -> dict[str, Any]:
+    """Give every step of an embodied batch a loss mask and a loss weight.
+
+    The steps of a trajectory share its weight: a valid step is scaled by
+    ``reference_length * loss_weight`` over the trajectory's valid length, which
+    ``masked_mean_ratio`` reads as the reciprocal ``loss_mask_ratio``. A batch
+    without a done mask counts every step as valid, and a ``loss_mask`` it
+    already holds, such as a reward filter, is kept.
+
+    Args:
+        batch: One env's batch of shape ``[n_chunk_steps, B, ...]``.
+        reward_type: ``algorithm.reward_type`` of the env.
+        reference_length: Env steps a trajectory's loss is normalized to.
+        loss_weight: Multiplier of the env's weights.
+
+    Returns:
+        ``batch`` with ``loss_mask``, ``loss_mask_sum`` and ``loss_mask_ratio``.
+    """
+    if batch.get("loss_mask_sum") is None:
+        loss_mask, loss_mask_sum = compute_trajectory_loss_mask(
+            torch.zeros_like(batch["dones"]), reward_type
+        )
+        if batch.get("loss_mask") is None:
+            batch["loss_mask"] = loss_mask
+        batch["loss_mask_sum"] = loss_mask_sum
+    batch["loss_mask_ratio"] = (batch["loss_mask_sum"] * 1.0) / (
+        reference_length * loss_weight
+    )
+    return batch
+
+
 def preprocess_embodied_batch(
     batch: dict[str, Any],
     *,
@@ -861,13 +919,9 @@ def preprocess_embodied_batch(
     batch = merge_rollout_epochs(batch, rollout_epoch)
 
     if not auto_reset and not ignore_terminations:
-        dones = batch["dones"]
-        loss_mask, loss_mask_sum = compute_loss_mask(dones)
-
-        if reward_type == "chunk_level":
-            loss_mask = loss_mask.any(dim=-1, keepdim=True)
-            loss_mask_sum = loss_mask_sum[..., -1:]
-
+        loss_mask, loss_mask_sum = compute_trajectory_loss_mask(
+            batch["dones"], reward_type
+        )
         batch["loss_mask"] = loss_mask
         batch["loss_mask_sum"] = loss_mask_sum
 

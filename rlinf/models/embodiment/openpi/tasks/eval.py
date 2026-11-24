@@ -14,19 +14,19 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Literal, Sequence
 
-import numpy as np
 import torch
 
 from rlinf.models.embodiment.openpi.env_io import EnvIO
-from rlinf.models.embodiment.openpi.modules.model import preprocess_observation
 from rlinf.models.embodiment.openpi.pi0 import Pi0
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+from rlinf.models.embodiment.openpi.prefix import OpenPiPrefixMixin
 from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
 
 
-class Pi0Eval(EnvIO, Pi0):
+class Pi0Eval(OpenPiPrefixMixin, EnvIO, Pi0):
     """Inference-only: deterministic Euler sampling, optional RTC guidance."""
 
     def __init__(
@@ -39,6 +39,9 @@ class Pi0Eval(EnvIO, Pi0):
         config_name: str = "",
         state_indices: Sequence[int] | None = None,
         rlt_cfg: OpenPiPytorchRLTConfig | None = None,
+        eval_batch_size: int | None = None,
+        eval_seed: int | None = None,
+        sample_compile: bool = False,
         rtc_enabled: bool = False,
         rtc_guidance_mode: str = "approx",
         rtc_guidance_clip: float = 5.0,
@@ -52,6 +55,17 @@ class Pi0Eval(EnvIO, Pi0):
             state_indices=state_indices,
             rlt_cfg=rlt_cfg,
         )
+        if eval_batch_size is not None and eval_batch_size < 1:
+            raise ValueError(f"eval_batch_size must be positive, got {eval_batch_size}")
+        if rtc_enabled and (eval_batch_size is not None or eval_seed is not None):
+            raise ValueError("eval_batch_size/eval_seed require RTC to be disabled")
+        self.eval_batch_size = eval_batch_size
+        self.eval_seed = eval_seed
+        self._eval_rng = None
+        if sample_compile:
+            self.sample_actions = torch.compile(
+                self.sample_actions, mode="max-autotune"
+            )
         self.rtc_enabled = rtc_enabled
         self.rtc_guidance_mode = rtc_guidance_mode
         self.rtc_guidance_clip = rtc_guidance_clip
@@ -83,7 +97,68 @@ class Pi0Eval(EnvIO, Pi0):
             return self._predict_eval_with_rtc(
                 observation, rtc_context=rtc_context, noise=noise, rng=rng
             )
-        return self._predict_eval(observation, noise=noise, rng=rng)
+        if rng is None and self.eval_seed is not None:
+            if self._eval_rng is None or self._eval_rng.device != self.device:
+                self._eval_rng = torch.Generator(device=self.device).manual_seed(
+                    self.eval_seed
+                )
+            rng = self._eval_rng
+        active_mask = env_obs.get("active_mask")
+        if self.eval_batch_size is None and active_mask is None:
+            return self._predict_eval(observation, noise=noise, rng=rng)
+        return self._predict_active_batches(
+            observation, active_mask, noise=noise, rng=rng
+        )
+
+    def _predict_active_batches(self, observation, active_mask, *, noise, rng):
+        """Preserve environment order while sampling only unfinished episodes."""
+        from torch.utils._pytree import tree_map
+
+        batch = observation.state.shape[0]
+        if active_mask is None:
+            active = torch.arange(batch, device=self.device)
+        else:
+            active_mask = torch.as_tensor(
+                active_mask, device=self.device, dtype=torch.bool
+            )
+            if active_mask.shape != (batch,):
+                raise ValueError(
+                    f"Expected active_mask shape {(batch,)}, got {active_mask.shape}"
+                )
+            active = active_mask.nonzero(as_tuple=True)[0]
+        model_actions = torch.zeros(
+            (batch, self.action_horizon, self.action_dim), device=self.device
+        )
+        size = self.eval_batch_size or batch
+        for indices in active.split(size):
+            if indices.numel() == 0:
+                continue
+            fields = {
+                field.name: tree_map(
+                    lambda x: x[indices] if isinstance(x, torch.Tensor) else x,
+                    getattr(observation, field.name),
+                )
+                for field in dataclasses.fields(observation)
+            }
+            selected = dataclasses.replace(observation, **fields)
+            model_actions[indices] = self.sample_actions(
+                selected,
+                num_steps=self.num_steps,
+                noise=None if noise is None else noise[indices],
+                rng=rng,
+            )
+        actions = self.decode_actions(model_actions, observation.state)
+        if active_mask is not None:
+            actions[~active_mask] = 0
+        return actions, {
+            "prev_logprobs": None,
+            "prev_values": None,
+            "forward_inputs": {
+                "action": actions.reshape(batch, -1).contiguous(),
+                "model_action": model_actions.reshape(batch, -1).contiguous(),
+            },
+            "model_actions": model_actions,
+        }
 
     def _predict_eval_with_rtc(
         self,
@@ -116,51 +191,6 @@ class Pi0Eval(EnvIO, Pi0):
                 "model_action": model_actions.reshape(B, -1).contiguous(),
             },
             "model_actions": model_actions,
-        }
-
-    @torch.no_grad()
-    def extract_rlt_obs(self, env_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
-        """Extract the frozen Stage1 features consumed by the Stage2 RLT head."""
-        self._require_rlt()
-        observation = self.env_obs_to_observation(env_obs)
-
-        prepared_observation = preprocess_observation(observation, train=False)
-        prefix_output, prefix_mask, kv_cache = self.build_prefix_cache(
-            prepared_observation
-        )
-        rlt_prefix_output, rlt_prefix_mask = self._select_rlt_prefix_embeddings(
-            prefix_output, prefix_mask, prepared_observation.tokenized_prompt
-        )
-        z_rl = self._encode_rlt_flat(rlt_prefix_output, rlt_prefix_mask).to(
-            dtype=torch.float32
-        )
-
-        model_actions = self._sample_actions_from_prefix_cache(
-            prepared_observation,
-            prefix_mask,
-            kv_cache,
-        )
-        ref_chunk = self.output_transform(
-            {"actions": model_actions, "state": observation.state}
-        )["actions"]
-
-        raw_proprio = self._select_configured_state(env_obs["states"])
-        if "maniskill" in self.config_name.lower():
-            state_dim = (
-                raw_proprio.shape[-1]
-                if hasattr(raw_proprio, "shape")
-                else np.asarray(raw_proprio).shape[-1]
-            )
-            proprio = observation.state[..., :state_dim]
-        else:
-            proprio = raw_proprio
-        if not torch.is_tensor(proprio):
-            proprio = torch.as_tensor(proprio)
-
-        return {
-            "z_rl": z_rl,
-            "proprio": proprio.to(device=z_rl.device, dtype=torch.float32),
-            "ref_chunk": ref_chunk.to(device=z_rl.device, dtype=torch.float32),
         }
 
     def _sample_actions_from_prefix_cache(

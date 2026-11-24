@@ -181,7 +181,7 @@ class AgenticTokenizer:
         """
         if self.reasoning_end_token_id is None:
             return 0
-        if self._prompt_ends_in_reasoning(prompt_ids):
+        if self.prompt_ends_in_reasoning(prompt_ids):
             search_from = 0
         else:
             if self.reasoning_start_token_id is None:
@@ -200,8 +200,13 @@ class AgenticTokenizer:
         except ValueError:
             return 0
 
-    def _prompt_ends_in_reasoning(self, prompt_ids: list[int] | None) -> bool:
-        """True when the last reasoning marker in the prompt is an opener."""
+    def prompt_ends_in_reasoning(self, prompt_ids: list[int] | None) -> bool:
+        """True when the last reasoning marker in the prompt is an opener.
+
+        The prompt is a generation prompt, so this says whether the response
+        starts inside the reasoning block (GLM opens the block in the
+        template) rather than opening it itself (Qwen3).
+        """
         if not prompt_ids or self.reasoning_start_token_id is None:
             return False
         for tid in reversed(prompt_ids):
@@ -239,6 +244,22 @@ class QwenAgenticTokenizer(AgenticTokenizer):
 
     reasoning_parser = "qwen3"
     tool_call_parser = "qwen25"
+
+    def build_native_tool_response(
+        self, prefix_ids: list[int], tool_messages: list[dict]
+    ) -> list[int]:
+        incremental = self.render_incremental(tool_messages)
+        prefix = list(prefix_ids)
+        # The template closes an assistant turn with <|im_end|>\n before the
+        # next message's <|im_start|>. The engine output ends at <|im_end|>
+        # when the model stops, and without it when the turn was cut at
+        # max_new_tokens; supply what is missing.
+        end_of_turn_id = self.maybe_token_id("<|im_end|>")
+        if end_of_turn_id is not None and prefix:
+            if prefix[-1] != end_of_turn_id:
+                prefix = prefix + [end_of_turn_id]
+            prefix = prefix + self.tokenizer.encode("\n", add_special_tokens=False)
+        return prefix + incremental
 
 
 class GLMAgenticTokenizer(AgenticTokenizer):

@@ -7,7 +7,8 @@
 <a href="https://huggingface.co/RLinf"><img src="https://img.shields.io/badge/HuggingFace-yellow?logo=huggingface&logoColor=white" alt="Hugging Face"></a>
 <a href="https://rlinf.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/Documentation-Purple?color=8A2BE2&logo=readthedocs"></a>
 <a href="https://rlinf.readthedocs.io/zh-cn/latest/"><img src="https://img.shields.io/badge/中文文档-red?logo=readthedocs"></a>
-<a href="https://deepwiki.com/RLinf/RLinf"><img src="https://img.shields.io/badge/Ask%20DeepWiki-1DA1F2?logo=databricks&logoColor=white&color=00ADEF" alt="Ask DeepWiki"></a>
+<a href="https://rlinf.org/"><img src="https://img.shields.io/badge/Website-00ADEF?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSI%2BPGNpcmNsZSBjeD0iOCIgY3k9IjgiIHI9IjYuNSIvPjxlbGxpcHNlIGN4PSI4IiBjeT0iOCIgcng9IjMiIHJ5PSI2LjUiLz48cGF0aCBkPSJNMS41IDhoMTMiLz48L3N2Zz4%3D" alt="Website"></a>
+<a href="https://rlinf.github.io/misc/certificates/"><img src="https://img.shields.io/badge/Contributor%20Certificates-2E8B57?logo=readme&amp;logoColor=white" alt="Certificate"></a>
 <br>
 <a href="https://github.com/RLinf/misc/blob/main/pic/wechat.jpg?raw=true"><img src="https://img.shields.io/badge/WeChat%20Group-green?logo=wechat&amp"></a>
 <a href="https://github.com/RLinf/misc/blob/main/pic/slack.jpg?raw=true"><img src="https://badgen.net/badge/icon/Slack%20Channel?icon=slack&amp;label&amp;color=4A154B&amp;labelColor=4A154B" alt="Slack Channel"></a>
@@ -34,10 +35,27 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports FlexRLT: train a compact actor-critic from frozen VLA features, with configurable heads, AC/TD3 updates, and STEAM routing. Doc: [FlexRLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html).
+- [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
+- [2026/11] 🔥 RLinf supports Reward Feedback Learning (ReFL) for fine-tuning SD3.5 Medium with ImageReward. Doc: [ReFL](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html).
+- [2026/11] 🔥 RLinf supports Intel GPUs. See the [hardware support matrix](#hardware-support) and PR: [Intel GPU support (#1832)](https://github.com/RLinf/RLinf/pull/1832).
+- [2026/11] 🔥 RLinf supports the Robbyant R2 wheeled humanoid robot for real-world RL, whole-body PICO VR teleoperation, and coordinated control across dual arms, grippers or dexterous hands, torso, and omnidirectional base. Doc: [Robbyant R2](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/r2.html).
+- [2026/11] 🔥 RLinf adds a hardware fault-tolerance interface for real-world robots, available first on the Robbyant R2: non-blocking health diagnosis, severity-based automatic recovery with emergency-stop latching, jump-free motion resumption, and episode truncation for interrupted RL rollouts. Doc: [Robotics Interface](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/robotics.html).
+- [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) adopts RLinf as a distributed rollout and training runtime and integrates [demonstration co-training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/co_training.html) for VLA RL post-training.
+- [2026/11] 🎉 The [RLinf website](https://rlinf.org/) is live. Read our [blog posts](https://rlinf.org/en/blog/) and browse [community events](https://rlinf.org/en/events/).
+- [2026/11] 🔥 RLinf supports MuJoCo Warp for batched GPU simulation on five classic locomotion tasks with an MLP + PPO recipe. Doc: [MuJoCo Warp](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/mujoco_warp.html).
+- [2026/11] 🔥 RLinf supports LeKiwi, a three-wheel omnidirectional mobile base, with per-part bring-up tools and a registered real-world drive environment. Doc: [LeKiwi](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lekiwi.html).
+- [2026/11] 🔥 RLinf supports dual-arm ARX X5 data collection with Pico teleoperation. Doc: [ARX X5](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/arx5.html).
+- [2026/11] 🔥 RLinf supports a session server for asynchronous agentic RL: trajectories stay on the rollout nodes instead of node 0, requests are routed by an SGLang router, and agents can use the OpenAI chat completions API. Doc: [Session Server](https://rlinf.readthedocs.io/en/latest/rst_source/guides/session_server.html).
+- [2026/11] 🔥 RLinf supports asynchronous agentic RL: the rollout keeps generating while the actor trains on data from an earlier weight version, with bounded staleness. On Search-R1 with GLM-4.7-Flash, the step time drops from 278.6 s to 139.0 s with a comparable reward. Docs: [Asynchronous Agentic RL](https://rlinf.readthedocs.io/en/latest/rst_source/guides/async_agentic.html), [Asynchronous Search-R1 Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/async.html).
+- [2026/11] 🔥 RLinf supports DiffusionART fine-tuning for SD3 image generation and Wan2.2 video generation with OCR rewards, reaching the same reward threshold in about 30% less wall-clock time and a third fewer trajectories than NFT on Wan2.2. Doc: [DiffusionART](https://rlinf.readthedocs.io/en/latest/rst_source/examples/diffusion_art.html).
+- [2026/11] 🔥 RLinf supports LIBERO-Mem and MEM-inspired visual short memory for OpenPI SFT and evaluation, raising strict LIBERO-Mem success from 20.0% to 35.5% over the current-frame baseline. Docs: [LIBERO-Mem](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#libero-mem-benchmark), [OpenPI Short Memory](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0/short_memory.html).
+- [2026/11] 🔥 RLinf supports evaluating OpenPI π₀.₅ on the RoboLab manipulation benchmark. Doc: [RoboLab evaluation](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/robolab.html).
 - [2026/11] 🔥 RLinf supports RL on π₀.₅ in [GenieSim](https://github.com/AgibotTech/genie_sim) with PPO and GRPO. Doc: [RL with GenieSim](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html).
-- [2026/11] 🔥 RLinf supports SO-101 joint-space demonstration collection, OpenPI π₀.₅ supervised fine-tuning, and local evaluation. Doc: [SO-101](docs/source-en/rst_source/examples/embodied/so101.rst).
+- [2026/11] 🔥 RLinf supports RoboDojo, an Isaac Sim-based dual-arm manipulation benchmark for ARX-X5, exposed as a Gym environment for VLA policy evaluation: the official π₀.₅ checkpoint can be converted to OpenPI format and evaluated over 55 predefined scene layouts. Doc: [RoboDojo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robodojo.html).
+- [2026/11] 🔥 RLinf supports SO-101 joint-space demonstration collection, OpenPI π₀.₅ supervised fine-tuning, and local evaluation. Doc: [SO-101](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/so101.html).
 - [2026/11] 🔥 RLinf supports Psi0 VLA and the SIMPLE humanoid simulator. Docs: [Psi0](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/psi0.html), [SIMPLE](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html).
-- [2026/11] 🔥 RLinf supports [PhyAI](https://github.com/mingti-org/phyai) as an in-process rollout backend for π₀.₅ PPO training on LIBERO, including hot weight synchronization. Doc: [PhyAI rollout backend](docs/source-en/rst_source/guides/rollout-engines/phyai.rst).
+- [2026/11] 🔥 RLinf supports [PhyAI](https://github.com/mingti-org/phyai) as an in-process rollout backend for π₀.₅ PPO training on LIBERO, including hot weight synchronization, and cutting π₀.₅ prediction time on the rollout critical path from 142.6 s to 68.7 s on four H800 GPUs. Doc: [PhyAI rollout backend](https://rlinf.readthedocs.io/en/latest/rst_source/guides/rollout-engines/phyai.html).
 - [2026/10] 🎉 RLinf v0.4 is released, taking RL out of simulation and into agile control of the physical world. Highlights: a modular real-robot system (`rlinf.robotics`), real-robot SOTA post-training algorithms (RLT, STEAM, OPD, RTC), full-modality models (native PyTorch OpenPI π₀ / π₀.₅, Cosmos3, FastWAM, π₀-FAST, Evo-1, MolmoAct2, SD3 / Wan2.2), and eight accelerator backends. Release notes: [RLinf v0.4](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.4.html).
 - [2026/10] 🎉 RLinf introducing **CEL** (Collective Experience Learning): robot fleets improve a shared policy from their own deployment experience without additional expert demonstrations or corrective actions, validated on up to 96 real robots across 5 real-world tasks. Project page: [CEL](https://cel-robot-learning.github.io/), paper: [arXiv:2610.25736](https://arxiv.org/abs/2610.25736). Code will release soon.
 - [2026/10] 🔥 RLinf supports MetaX (MACA) GPUs. PR: [MetaX GPU support (#1656)](https://github.com/RLinf/RLinf/pull/1656).
@@ -50,7 +68,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/08] 🔥 RLinf supports SFT and SGLang-based evaluation of NVIDIA's omnimodal world model, Cosmos3. Docs: [Cosmos3 SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_cosmos3.html), [SGLang eval](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/cosmos3_sglang.html).
 - [2026/08] 🎉 RLinf is officially welcomed into the **PyTorch Ecosystem**! We will continue to bring scalable embodied and agentic RL to PyTorch users, pushing model intelligence into the real world. Blog: [PyTorch Ecosystem Landscape Q3 Update](https://pytorch.org/blog/pytorch-ecosystem-landscape-q3-update/).
 - [2026/08] 🎉 Isaac Lab v3.0.0 officially adopts RLinf as its reinforcement learning (RL) training infrastructure. Doc: [RLinf on Isaac Lab](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/concepts/reinforcement_learning.html#rlinf-vla-post-training).
-- [2026/08] 🔥 RLinf integrates Diffusion-NFT for SD3 and Wan2.2 video generation models. Doc: [RL for Video Generation Models](docs/source-en/rst_source/examples/video_models.rst).
+- [2026/08] 🔥 RLinf integrates Diffusion-NFT for SD3 and Wan2.2 video generation models. Doc: [RL for Video Generation Models](https://rlinf.readthedocs.io/en/latest/rst_source/examples/video_models.html).
 - [2026/08] 🔥 RLinf supports Moore Threads (MUSA), Huawei Ascend (CANN), and AMD (ROCm). See the [hardware support matrix](#hardware-support) for model/environment combinations and setup instructions.
 - [2026/08] 🔥 RLinf supports GRPO training for Moonlight-16B-A3B (DeepSeek-V3 MLA + MoE). Doc: [Moonlight-16B GRPO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/moonlight.html).
 - [2026/08] 🔥 RLinf supports MolmoAct2 evaluation on LIBERO. Doc: [MolmoAct2](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/molmoact2.html).
@@ -190,6 +208,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/maniskill.html">ManiSkill</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html">LIBERO</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#liberopro-plus-benchmark">LIBERO-Pro & LIBERO-Plus</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#libero-mem-benchmark">LIBERO-Mem</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robotwin.html">RoboTwin</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/roboverse.html">RoboVerse</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/behavior.html">BEHAVIOR</a> ✅</li>
@@ -201,9 +220,13 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/frankasim.html">Franka-Sim</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/embodichain.html">EmbodiChain</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/genesis.html">Genesis</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/mujoco_warp.html">MuJoCo Warp</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/polaris.html">Polaris</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html">GenieSim</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robodojo.html">RoboDojo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robolab.html">RoboLab (evaluation only)</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -260,6 +283,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><b>RL Algos</b></li>
           <ul>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html">FlexRLT (AC / TD3)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/grpo.html">GRPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/ppo.html">PPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/async_ppo.html">Async PPO</a> ✅</li>
@@ -275,6 +299,8 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/steam.html">STEAM</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rlt.html">RLT</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opd.html">OPD</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/diffusion_art.html">DiffusionART</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html">ReFL</a> ✅</li>
           </ul>
           <li><b>SFT</b></li>
           <ul>
@@ -312,11 +338,14 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Robotiq 2F-85 / 2F-140</a> ✅</li>
           </ul>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dual_franka_index.html">Dual-Arm Franka</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/arx5.html">ARX X5</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/xsquare_turtle2.html">XSquare Turtle2</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dosw1.html">DOS-W1</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gim_arm.html">GimArm</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/piper.html">AgileX Piper</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/so101.html">SO101</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/r2.html">Robbyant R2</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lekiwi.html">LeKiwi</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -345,19 +374,24 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
 
 #### Hardware Support
 
-RLinf hides the differences between heterogeneous hardware behind one unified low-level abstraction, so the same training stack runs seamlessly on NVIDIA and AMD GPUs and on domestic accelerators such as Huawei Ascend, Moore Threads, and Kunlunxin. Moving a training job between compute nodes takes zero changes to models and algorithms. Accelerator vendors, in turn, only have to adapt a minimal interface to bring the complete embodied and agentic RL training ecosystem onto their own hardware, with none of the burden of maintaining a customized fork of the framework.
+RLinf hides hardware differences behind one low-level accelerator interface, so the same training stack runs on NVIDIA, AMD, and Intel GPUs as well as Huawei Ascend, Moore Threads, Kunlunxin, MetaX, and Biren accelerators. You can move a training job across accelerators without changing models or algorithms, and hardware vendors adapt a small device and collective interface without maintaining a fork.
 
-Choose the model and environment combination you need, then follow the corresponding link for detailed hardware instructions. Every hardware backend fully supports all the environments listed in its row.
+Follow a model or environment link for its training recipe and available backend setup instructions. ✅ marks verified combinations across all environments in the row; `—` means untested, not necessarily unsupported.
 
-| Model | Environment | NVIDIA CUDA | Huawei Ascend CANN | Moore Threads MUSA | AMD ROCm |
-|---|---|:---:|:---:|:---:|:---:|
-| [OpenVLA-OFT](docs/source-en/rst_source/examples/embodied/openvla_oft.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
-| [OpenVLA-OFT](docs/source-en/rst_source/examples/embodied/openvla_oft.rst) | [Wan world model](docs/source-en/rst_source/examples/embodied/wan.rst#wan-hardware) | ✅ | ✅ | — | — |
-| [GR00T N1.5](docs/source-en/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
-| [π₀ / π₀.₅ (OpenPI)](docs/source-en/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
-| [StarVLA (QwenOFT)](docs/source-en/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
-| [DreamZero](docs/source-en/rst_source/examples/embodied/sft_dreamzero.rst#sft-dreamzero-hardware) | SFT (LeRobot datasets) | ✅ | ✅ | — | — |
-| [FastWAM](docs/source-en/rst_source/examples/embodied/sft_fastwam.rst#sft-fastwam-hardware) | LIBERO (SFT · evaluation) | ✅ | ✅ | — | — |
+| Model | Environment | NVIDIA CUDA | Huawei Ascend CANN | Moore Threads MUSA | AMD ROCm | Intel XPU | Kunlunxin XPU | MetaX MACA | Biren SUPA |
+|---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| [OpenVLA](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/maniskill.html) | ManiSkill | ✅ | ✅ | ✅ | ✅ | — | — | ✅ | — |
+| [OpenVLA-OFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/openvla_oft.html#openvla-oft-hardware) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ | — | — | — | — |
+| [OpenVLA-OFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/openvla_oft.html) | [Wan world model](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/wan.html#wan-hardware) | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | — |
+| [OpenVLA-OFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/openvla_oft.html) · [π₀ / π₀.₅](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0.html) · [LingbotVLA 1.0](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvla.html) | [RoboTwin](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robotwin.html#robotwin-hardware) | ✅ | — | — | ✅ | — | — | — | — |
+| [GR00T N1.5](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html#gr00t-hardware) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | — |
+| [GR00T N1.7](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html) | LIBERO · ManiSkill | ✅ | — | — | — | ✅ | — | — | — |
+| [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0.html#pi0-hardware) | LIBERO | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0.html#pi0-hardware) | ManiSkill | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | — |
+| [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html) | SFT (LeRobot datasets) | ✅ | — | — | — | — | — | — | ✅ |
+| [StarVLA (QwenOFT)](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/starvla.html#starvla-hardware) | LIBERO | ✅ | ✅ | — | — | — | — | — | — |
+| [DreamZero](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_dreamzero.html#sft-dreamzero-hardware) | SFT (LeRobot datasets) | ✅ | ✅ | — | — | — | — | — | — |
+| [FastWAM](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_fastwam.rst#sft-fastwam-hardware) | LIBERO (SFT · evaluation) | ✅ | ✅ | — | — | — | — | — | — |
 
 ### Agentic AI
 
@@ -428,7 +462,9 @@ We are excited to see a growing ecosystem of projects building on top of or inte
 - [pi-StepNFT](https://github.com/wangst0181/pi-StepNFT): Extends RLinf for step-level training and optimization of π-series VLA models.
 - [Dexbotic](https://github.com/dexmal/dexbotic): A robotics + RL system integrating RLinf for scalable training and deployment of embodied agents.
 - [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin): A digital twin + robotics platform leveraging RLinf for large-scale embodied RL training.
+- [Genie Sim](https://github.com/AgibotTech/genie_sim): AgiBot's open-source simulation platform for scene generation, data collection, and benchmark evaluation, integrated with RLinf for VLA post-training with PPO and GRPO.
 - [IsaacLab](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/concepts/reinforcement_learning.html#rlinf-vla-post-training): Official integration of RLinf within IsaacLab, enabling seamless reinforcement learning workflows on top of NVIDIA Isaac Sim based robotics environments.
+- [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt): NVIDIA's simulation RL post-training library for robot policies, integrating RLinf as a distributed rollout and training runtime alongside demonstration co-training.
 - [RISE](https://github.com/OpenDriveLab/RISE): A robot reinforcement learning framework based on a compositional world model, using RLinf for online reinforcement learning.
 
 💡 Want to feature your project here? Open a PR and we’ll be happy to include it!

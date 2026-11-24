@@ -11,8 +11,8 @@ cluster:
     actor, env, rollout: 0-1
 
 runner:
-  max_epochs: 2
-  max_steps: 2
+  max_epochs: 1
+  max_steps: 1
   val_check_interval: -1
   save_interval: 2
   logger:
@@ -21,12 +21,12 @@ runner:
 env:
   train:
     total_num_envs: 4
-    max_episode_steps: 100
-    max_steps_per_rollout_epoch: 100
+    max_episode_steps: 50
+    max_steps_per_rollout_epoch: 50
     video_cfg:
       save_video: false
     task_config:
-      step_lim: 100
+      step_lim: 50
   eval:
     total_num_envs: 4
     video_cfg:

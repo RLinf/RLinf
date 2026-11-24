@@ -28,9 +28,10 @@ if TYPE_CHECKING:
 
 
 def get_batch_size(
-    batch: dict[str, torch.Tensor], batch_tensor_key: str = "input_ids"
+    batch: dict[str, torch.Tensor | list], batch_tensor_key: str = "input_ids"
 ) -> int:
-    return batch[batch_tensor_key].size(0)
+    """Return the row count of a dense or real-length batch field."""
+    return len(batch[batch_tensor_key])
 
 
 def get_seq_length(
@@ -55,6 +56,13 @@ class RolloutRequest:
     image_data: Union[list[list[bytes]], list[list[str]]]
     answers: list[Union[list[str], dict]]
     multi_modal_inputs: list[Optional[dict]]
+    # One id per entry of input_ids, assigned by whoever issues the request
+    # when rollout runs asynchronously; None in synchronous training.
+    group_ids: Optional[list[int]] = None
+    # Agent task name per entry of input_ids, aligned with group_ids; the
+    # rollout buffer keys its per-task state by it. None in synchronous
+    # training.
+    task_names: Optional[list[str]] = None
 
     def to_seq_group_infos(self) -> list["SeqGroupInfo"]:
         return [

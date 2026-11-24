@@ -159,6 +159,18 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/robolab.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png"
+            alt="RoboLab manipulation benchmark"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/robolab.html" style="text-decoration: underline; color: blue;">
+           <b>RoboLab 评估</b>
+         </a><br>
+         120 个 DROID 操作任务 · π₀.₅ 评估
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/polaris.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/polaris.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -192,6 +204,17 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/dexjoco.html" style="display: block;"><img src="https://raw.githubusercontent.com/brave-eai/dexjoco/main/docs/pics/water_plant_4.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/dexjoco.html" style="text-decoration: underline; color: blue;">
+           <b>基于 DexJoCo 的强化学习</b>
+         </a><br>
+         WaterPlant 任务的 CNN / π₀.₅ SFT 与 PPO 训练
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/geniesim.html" style="display: block;"><video controls autoplay loop muted playsinline preload="metadata" style="width: 100%; height: 200px; object-fit: contain; background: #000; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
          <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/geniesim_post_train.mp4" type="video/mp4">
          您的浏览器不支持视频播放。
@@ -201,6 +224,17 @@
            <b>基于 GenieSim 的强化学习</b>
          </a><br>
          支持 GenieSim+π₀.₅+PPO/GRPO 训练
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/mujoco_warp.html" style="display: block;"><img src="https://raw.githubusercontent.com/google-deepmind/mujoco_warp/main/benchmarks/humanoid/rollout_three_humanoids.webp"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/mujoco_warp.html" style="text-decoration: underline; color: blue;">
+           <b>基于 MuJoCo Warp 的强化学习</b>
+         </a><br>
+         在五个经典运动控制任务上用 PPO 训练 MLP policy
        </p>
      </div>
 
@@ -224,7 +258,10 @@
    Franka-Sim <embodied/frankasim>
    EmbodiChain <embodied/embodichain>
    PolaRiS <embodied/polaris>
+   RoboLab <embodied/robolab>
    GSEnv <embodied/gsenv>
    Genesis <embodied/genesis>
+   DexJoCo <embodied/dexjoco>
    GenieSim <embodied/geniesim>
+   MuJoCo Warp <embodied/mujoco_warp>
    真机仿真器 <embodied/real_simulator>

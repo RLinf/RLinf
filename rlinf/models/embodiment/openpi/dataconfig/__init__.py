@@ -34,6 +34,9 @@ from rlinf.models.embodiment.openpi.dataconfig.behavior_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.calvin_dataconfig import (
     LeRobotCalvinDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.dexjoco_dataconfig import (
+    LeRobotDexJoCoDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.dual_franka_tcp_rot6d_dataconfig import (
     DualFrankaTcpRot6dDataConfig,
 )
@@ -136,6 +139,20 @@ _CONFIGS = [
             "checkpoints/jax/pi05_base"
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        name="pi05_libero_mem",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=False
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id="CollisionCode/libero_mem_lerobot_v2.1",
+            base_config=DataConfig(prompt_from_task=True),
+            image_key="observation.images.image",
+            wrist_image_key="observation.images.wrist_image",
+            state_key="observation.state",
+            action_key="action",
+        ),
     ),
     TrainConfig(
         name="pi05_geniesim_g2_ah10",
@@ -625,6 +642,20 @@ _CONFIGS = [
         pytorch_weight_path="checkpoints/torch/pi05_droid_polaris",
     ),
     TrainConfig(
+        name="pi05_droid_robolab",
+        model=pi0_config.Pi0Config(
+            action_horizon=15,
+            pi05=True,
+            max_token_len=200,
+        ),
+        data=LeRobotPolarisDroidDataConfig(
+            repo_id="physical-intelligence/droid",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(asset_id="assets/droid"),
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_droid_robolab",
+    ),
+    TrainConfig(
         name="pi05_yam_joint",
         model=pi0_config.Pi0Config(
             pi05=True, action_horizon=30, discrete_state_input=True
@@ -633,6 +664,21 @@ _CONFIGS = [
             repo_id="yam",
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(asset_id="yam"),
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        name="pi05_dexjoco",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=30,
+            max_token_len=250,
+            discrete_state_input=True,
+        ),
+        data=LeRobotDexJoCoDataConfig(
+            repo_id="dexjoco",
+            base_config=DataConfig(prompt_from_task=False),
+            assets=AssetsConfig(asset_id="dexjoco"),
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
     ),

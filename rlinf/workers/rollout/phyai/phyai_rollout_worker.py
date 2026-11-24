@@ -29,6 +29,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
+from rlinf.algorithms.prefix_off_policy.config import is_prefix_off_policy_loss
 from rlinf.config import torch_dtype_from_precision
 from rlinf.data.schema.embodied_types import (
     EnvPart,
@@ -201,7 +202,9 @@ class PhyAIRolloutWorker(Worker):
         )
         self.collect_transitions = bool(cfg.rollout.get("collect_transitions", False))
         self.algorithm_cfg = cfg.get("algorithm", {})
-        self.enable_rlt = self.algorithm_cfg.get("loss_type") in {"rlt_ac", "rlt_td3"}
+        self.enable_prefix = is_prefix_off_policy_loss(
+            self.algorithm_cfg.get("loss_type")
+        )
         self.collect_prev_infos = bool(cfg.rollout.get("collect_prev_infos", True))
         self.version = 0
         self.weight_syncer = None
@@ -242,7 +245,7 @@ class PhyAIRolloutWorker(Worker):
     @property
     def collect_raw_transition_obs(self) -> bool:
         """Whether trajectory parts carry raw observations for the actor."""
-        return self.collect_transitions and not self.enable_rlt
+        return self.collect_transitions and not self.enable_prefix
 
     def init_worker(self) -> None:
         """Build the PhyAI engine and the OpenPI transforms on this worker's GPU.
@@ -936,34 +939,31 @@ class PhyAIRolloutWorker(Worker):
                 )
                 if policy_input.is_last:
                     raise ValueError("Received a final input in the policy stream.")
-                if not policy_input.requires_inference:
-                    actions = policy_input.external_actions
-                    policy_output = None
-                else:
-                    actions, result = self.predict(policy_input.obs, mode="train")
-                    policy_output = self._build_policy_output(result)
-                self._send_actions(output_channel, actions.contiguous(), stage_id)
                 transition_obs = (
                     policy_input.obs if self.collect_raw_transition_obs else {}
                 )
                 if policy_input.requires_inference:
+                    actions, result = self.predict(policy_input.obs, mode="train")
+                    policy_output = self._build_policy_output(result)
+                    self._send_actions(output_channel, actions.contiguous(), stage_id)
                     trajectory_part = PolicyPart(
                         sources=policy_input.sources,
                         obs=transition_obs,
                         output=policy_output,
                     )
                 else:
+                    # The env runs the actions it supplied, so nothing goes back.
                     trajectory_part = PolicyPart(
                         sources=policy_input.sources,
                         obs=transition_obs,
-                        external_actions=actions,
+                        external_actions=policy_input.external_actions,
                     )
                 actor_channel.put(trajectory_part, async_op=True)
                 self._publish_env_parts(policy_input, actor_channel)
 
         for stage_id in range(self.num_pipeline_stages):
             policy_input = await self._receive_policy_input(
-                input_channel, "policy_final", stage_id
+                input_channel, "policy", stage_id
             )
             if not policy_input.is_last:
                 raise ValueError("Expected a final policy input at epoch end.")

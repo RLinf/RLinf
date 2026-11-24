@@ -14,6 +14,7 @@
 
 """Schema-layer entrypoints for data module."""
 
+from rlinf.data.schema.actor_batch import DynamicActorBatch, TokenRows
 from rlinf.data.schema.embodied_trajectory import (
     TrajectoryCollector,
     TrajectoryMode,
@@ -46,16 +47,26 @@ from rlinf.data.schema.reasoning_requests import (
     get_seq_length,
 )
 from rlinf.data.schema.reasoning_results import (
+    DiscardedGroup,
     DynamicRolloutResult,
+    GroupDelivery,
+    GroupMetadata,
+    PayloadRef,
     RolloutResult,
 )
 
 __all__ = [
+    "DiscardedGroup",
+    "DynamicActorBatch",
     "DynamicRolloutResult",
+    "GroupDelivery",
+    "GroupMetadata",
+    "PayloadRef",
     "FinishReasonEnum",
     "RolloutRequest",
     "RolloutResult",
     "SeqGroupInfo",
+    "TokenRows",
     "get_batch_size",
     "get_seq_length",
     "EnvOutput",

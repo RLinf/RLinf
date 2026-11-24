@@ -183,6 +183,41 @@ Furthermore, in LLM reasoning tasks, we use an independent critic model rather t
       ...
 
 
+3.3. Multi-Turn Agent Tasks
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+See :doc:`Search-R1 training </rst_source/examples/agentic/searchr1/qwen2.5>` for model and data
+setup. Use ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``
+with these key settings:
+
+.. code-block:: yaml
+
+   runner:
+     synchronous: true
+
+   algorithm:
+     group_size: 1
+     adv_type: gae_dynamic
+     gamma: 1.0
+     gae_lambda: 1.0
+     normalize_advantages: true
+     use_valid_token_scale: true
+     kl_beta: 0.0
+     loss_scales: []
+     recompute_logprobs: false
+
+   critic:
+     use_critic_model: true
+
+   rollout:
+     return_logprobs: true
+
+Launch PPO with the Search-R1 training script:
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
+
 4. Notes
 ---------
 

@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import asyncio
+import contextvars
 import copy
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 from uuid import uuid4
@@ -29,10 +31,20 @@ from rlinf.agents.tool_call.schema import (
 )
 from rlinf.algorithms.registry import get_toolcall_parser
 from rlinf.data.schema.reasoning_requests import RolloutRequest
-from rlinf.data.schema.reasoning_results import DynamicRolloutResult, RolloutResult
+from rlinf.data.schema.reasoning_results import (
+    DiscardedGroup,
+    DynamicRolloutResult,
+    RolloutResult,
+)
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Channel, Worker
+from rlinf.utils.metric_utils import aggregate_agent_metrics
 from rlinf.utils.placement import ModelParallelComponentPlacement
+from rlinf.workers.agent.session_server_client import (
+    SessionBinding,
+    SessionDiscardedError,
+    SessionServerClient,
+)
 from rlinf.workers.agent.tool_worker import ToolChannelInfo
 from rlinf.workers.rollout.utils import green
 
@@ -65,6 +77,12 @@ class AgentLoopOutput:
     extra_fields: dict[str, Any] = field(default_factory=dict)
     """Tool call information for this turn."""
     tool_call_info: Optional[dict[str, int]] = None
+    """Weight version the rollout instance had loaded when the generate
+    call producing this turn's response started, and when it ended.
+    None when the rollout did not stamp versions (synchronous training).
+    """
+    version_start: Optional[int] = None
+    version_end: Optional[int] = None
 
 
 @dataclass
@@ -77,6 +95,20 @@ class MultiAgentLoopOutput:
     trace_prints: list[Any] = field(default_factory=list)
     """Extra fields for dynamic addition."""
     extra_fields: dict[str, Any] = field(default_factory=dict)
+
+
+class GroupDiscarded(RuntimeError):
+    """A group's data is unusable, affecting only that group.
+
+    Raise this only when the task code is certain the failure spoils this
+    one group and nothing else; the continuous loop turns it into a
+    discard record and moves on. Every other exception terminates
+    training.
+    """
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
 
 
 class AgentLoopWorker(Worker):
@@ -114,6 +146,27 @@ class AgentLoopWorker(Worker):
         if cfg.agentloop.get("toolcall_parser", None) is not None:
             self.toolcall_parser = get_toolcall_parser(cfg.agentloop.toolcall_parser)
 
+        # Task running run_agentloop_rollout_continuously, None while idle.
+        self._agentloop_task = None
+        self._agent_metric_channel = None
+        self._producer_error = None
+        self._inflight_groups = set()
+        # Session server transport, set by init_worker when the runner passes
+        # the session server URLs instead of a generate channel pair.
+        self.session_server_client: Optional[SessionServerClient] = None
+        # The session of the trajectory whose task is currently running;
+        # set per trajectory by the session-path group runner, read by
+        # generate.
+        self._session_binding = contextvars.ContextVar(
+            "rlinf_agent_session_binding", default=None
+        )
+        # Idle-time accounting for the continuous loop: seconds with no
+        # in-flight group, accumulated over the window since the last
+        # pop_idle_stats call.
+        self._idle_seconds = 0.0
+        self._idle_window_start = None
+        self._idle_since = None
+
     def init_worker(
         self,
         generate_input_channel: Channel,
@@ -122,6 +175,9 @@ class AgentLoopWorker(Worker):
         tool_name_map: dict[str, str],
         tool_worker_output_channel: Channel,
         solid_generate_input_channels: dict[str, Channel] = {},
+        session_server_urls: Optional[list[str]] = None,
+        session_server_generate_timeout_s: Optional[float] = None,
+        session_server_keepalive_timeout_s: Optional[float] = None,
     ):
         self.generate_input_channel = generate_input_channel
         self.generate_output_channel = generate_output_channel
@@ -132,6 +188,30 @@ class AgentLoopWorker(Worker):
         self.tool_worker_output_channel = tool_worker_output_channel
         # for calling another llm without training.
         self.solid_generate_input_channels = solid_generate_input_channels
+        # With URLs, generate goes over HTTP to the session servers. The
+        # runner computes the timeout (it must outlast the session
+        # server's own forward and payload-put timeouts).
+        self.session_server_client = None
+        if session_server_urls:
+            assert session_server_generate_timeout_s is not None, (
+                "session_server_urls requires the runner-computed "
+                "session_server_generate_timeout_s."
+            )
+            assert session_server_keepalive_timeout_s is not None, (
+                "session_server_urls requires the runner-computed "
+                "session_server_keepalive_timeout_s."
+            )
+            self.session_server_client = SessionServerClient(
+                session_server_urls,
+                generate_timeout_s=session_server_generate_timeout_s,
+                keepalive_timeout_s=session_server_keepalive_timeout_s,
+            )
+            # The block is complete here (validate_session_server_cfg
+            # filled it); runs without session servers never read this value.
+            self._verify_assembly = bool(self.cfg.session_server.verify_assembly)
+            # The session server returns logprobs only for the assembly
+            # check; training reads them from the payload.
+            self.return_logprobs = self.return_logprobs and self._verify_assembly
 
     async def generate(
         self,
@@ -139,12 +219,27 @@ class AgentLoopWorker(Worker):
         sampling_params: Optional[dict] = None,
         rollout_name: Optional[str] = None,
     ):
+        if rollout_name is not None:
+            # Solid targets are frozen models outside the training loop;
+            # they never enter a session and produce no payload.
+            return await self._generate_on_solid_channel(
+                prompt_ids, sampling_params, rollout_name
+            )
+        if self.session_server_client is not None:
+            binding = self._session_binding.get()
+            assert binding is not None, (
+                "the session server transport is active but no session is "
+                "bound to this task; the group runner binds one per "
+                "trajectory"
+            )
+            return await self._generate_on_session(binding, prompt_ids, sampling_params)
+        return await self._generate_on_channel(prompt_ids, sampling_params)
+
+    async def _generate_on_channel(
+        self, prompt_ids: list[int], sampling_params: Optional[dict]
+    ):
         channel_key = uuid4().hex
-        if rollout_name is None:
-            input_channel = self.generate_input_channel
-        else:
-            input_channel = self.solid_generate_input_channels[rollout_name]
-        await input_channel.put(
+        await self.generate_input_channel.put(
             {
                 "channel_key": channel_key,
                 "prompt_ids": prompt_ids,
@@ -159,6 +254,46 @@ class AgentLoopWorker(Worker):
             # The rollout side failed to generate and reported back via the
             # channel; fail loudly instead of continuing.
             raise RuntimeError(f"Rollout generate request failed: {result['error']}")
+        return result
+
+    async def _generate_on_solid_channel(
+        self,
+        prompt_ids: list[int],
+        sampling_params: Optional[dict],
+        rollout_name: str,
+    ):
+        channel_key = uuid4().hex
+        input_channel = self.solid_generate_input_channels[rollout_name]
+        await input_channel.put(
+            {
+                "channel_key": channel_key,
+                "prompt_ids": prompt_ids,
+                "sampling_params": sampling_params,
+            },
+            async_op=True,
+        ).async_wait()
+        result = await self.generate_output_channel.get(
+            channel_key, async_op=True
+        ).async_wait()
+        if isinstance(result, dict) and "error" in result:
+            raise RuntimeError(f"Rollout generate request failed: {result['error']}")
+        return result
+
+    async def _generate_on_session(
+        self,
+        binding: SessionBinding,
+        prompt_ids: list[int],
+        sampling_params: Optional[dict],
+    ):
+        try:
+            result = await self.session_server_client.generate(
+                binding.group_id, binding.session_id, prompt_ids, sampling_params
+            )
+        except SessionDiscardedError as exc:
+            # Same meaning as the channel path's error report: the group
+            # is unusable and the discard is already reported server-side.
+            raise GroupDiscarded(exc.reason) from exc
+        binding.record_turn(prompt_ids, result["output_ids"], sampling_params)
         return result
 
     async def state_less_tool_call_with_channel(
@@ -237,6 +372,8 @@ class AgentLoopWorker(Worker):
         answer: str,
         group_size: int,
         output_channel: Channel,
+        group_id: Optional[int] = None,
+        task_name: Optional[str] = None,
     ):
         """
         Run the agent loop for a group of queries.
@@ -247,9 +384,27 @@ class AgentLoopWorker(Worker):
             task = asyncio.create_task(self.run_one_query(copy.deepcopy(input_ids)))
             rollout_tasks.append(task)
 
-        task_results = await asyncio.gather(*rollout_tasks)
-        rollout_result = self.get_rollout_result(task_results, answer)
-        await output_channel.put(rollout_result, async_op=True).async_wait()
+        try:
+            task_results = await asyncio.gather(*rollout_tasks)
+            rollout_result = self.get_rollout_result(task_results, answer)
+            if group_id is not None:
+                rollout_result.group_id = group_id
+                rollout_result.task_name = task_name
+            await output_channel.put(rollout_result, async_op=True).async_wait()
+        except GroupDiscarded as e:
+            # Only this failure mode is per-group: record the discard and
+            # let the group end normally. The remaining trajectories of
+            # this group are pointless now; cancel them instead of
+            # letting them finish generating and throwing the data away.
+            if group_id is None:
+                raise
+            for task in rollout_tasks:
+                task.cancel()
+            await asyncio.gather(*rollout_tasks, return_exceptions=True)
+            await output_channel.put(
+                DiscardedGroup(group_id=group_id, reason=e.reason),
+                async_op=True,
+            ).async_wait()
 
     async def run_agentloop_rollout(
         self, input_channel: Channel, output_channel: Channel
@@ -274,6 +429,135 @@ class AgentLoopWorker(Worker):
 
             await asyncio.gather(*send_output_tasks)
             return {}
+
+    async def run_agentloop_rollout_continuously(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        agent_metric_channel: Channel,
+    ):
+        """Serve rollout requests until stopped; used by the async runner.
+
+        Each request spawns one task per (input_ids, answer) group; finished
+        groups put `{"bucket": ..., "metrics": ...}` on
+        `agent_metric_channel`. Stops via `stop()` or a group failure, both
+        by cancelling this method's task; a clean stop returns normally, a
+        group failure re-raises here.
+        """
+        assert self._agentloop_task is None, (
+            "agent loop task is not None but the continuous loop is called."
+        )
+        self._agentloop_task = asyncio.current_task()
+        self._producer_error = None
+        self._agent_metric_channel = agent_metric_channel
+        self._inflight_groups: set[asyncio.Task] = set()
+        self._idle_seconds = 0.0
+        self._idle_window_start = time.monotonic()
+        self._idle_since = self._idle_window_start
+        try:
+            while True:
+                request = await input_channel.get(async_op=True).async_wait()
+                group_ids = request.group_ids
+                task_names = request.task_names
+                for index, (input_ids, answer) in enumerate(
+                    zip(request.input_ids, request.answers)
+                ):
+                    group_id = group_ids[index] if group_ids is not None else None
+                    task_name = task_names[index] if task_names is not None else None
+                    task = asyncio.create_task(
+                        self.run_agentloop_rollout_group(
+                            input_ids,
+                            answer,
+                            request.n,
+                            output_channel,
+                            group_id,
+                            task_name,
+                        )
+                    )
+                    task.add_done_callback(self._on_group_done)
+                    self._mark_inflight_transition(False)
+                    self._inflight_groups.add(task)
+        except asyncio.CancelledError:
+            # Cancelled either by stop() or, via _on_group_done, by a group
+            # failure; in the latter case re-raise the recorded error.
+            if self._producer_error is not None:
+                raise self._producer_error
+            return
+        finally:
+            # In-flight groups are dropped on any exit: the loop only stops
+            # when training ended or a group failed. Keep the loop task
+            # reference until they are awaited: a group ending with a
+            # non-cancel exception after the reference is cleared would make
+            # _on_group_done cancel None and lose the original error.
+            for task in self._inflight_groups:
+                task.cancel()
+            if self._inflight_groups:
+                await asyncio.gather(*self._inflight_groups, return_exceptions=True)
+            self._agentloop_task = None
+
+    def _on_group_done(self, task: asyncio.Task):
+        self._inflight_groups.discard(task)
+        if not self._inflight_groups:
+            self._mark_inflight_transition(True)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is None:
+            agent_metrics = task.result()
+            if agent_metrics is not None and agent_metrics:
+                # `bucket` is reserved for grouping agent metrics by the weight
+                # version that generated the group; it is always None here, and the
+                # runner aggregates only None-keyed records.
+                self._agent_metric_channel.put(
+                    {"bucket": None, "metrics": agent_metrics}, async_op=True
+                )
+        elif self._producer_error is None:
+            # Done callbacks cannot raise: record the error, cancel the
+            # loop task, and let it re-raise the error on unwind.
+            self.log_error(f"Agent loop group failed:\n{type(exc).__name__}: {exc}")
+            self._producer_error = exc
+            self._agentloop_task.cancel()
+
+    def stop(self):
+        """Stop the continuous agent loop; in-flight groups are cancelled."""
+        if self._agentloop_task is not None and not self._agentloop_task.done():
+            self._agentloop_task.cancel()
+
+    def num_inflight_groups(self) -> int:
+        """In-flight group count."""
+        return len(self._inflight_groups)
+
+    def _mark_inflight_transition(self, now_idle: bool):
+        """Update idle accounting at an empty <-> non-empty transition.
+
+        A transition to non-empty closes the idle segment that started at
+        `_idle_since`; a transition to idle opens a new one. Transitions to
+        the state we are already in are ignored, so callers need not check.
+        """
+        if now_idle:
+            if self._idle_since is None:
+                self._idle_since = time.monotonic()
+        else:
+            if self._idle_since is not None:
+                self._idle_seconds += time.monotonic() - self._idle_since
+                self._idle_since = None
+
+    def pop_idle_stats(self) -> tuple[float, float]:
+        """Idle seconds and window seconds since the last call; resets both.
+
+        An ongoing idle segment counts up to the call time and continues
+        from there in the next window. Called between training steps, so
+        the window covers one full step.
+        """
+        now = time.monotonic()
+        window = now - self._idle_window_start if self._idle_window_start else 0.0
+        idle = self._idle_seconds
+        if self._idle_since is not None:
+            idle += now - self._idle_since
+            self._idle_since = now
+        self._idle_seconds = 0.0
+        self._idle_window_start = now
+        return idle, window
 
     def get_rollout_result(
         self, task_results: list[AgentLoopOutput], answer: str
@@ -451,37 +735,335 @@ class MultiAgentLoopWorker(AgentLoopWorker):
 
     async def run_agentloop_rollout_group(
         self,
-        input_dict: dict,
+        input_ids: list[int],
         answer: str,
         group_size: int,
         output_channel: Channel,
+        group_id: Optional[int] = None,
+        task_name: Optional[str] = None,
     ):
         """
         Run the agent loop for a group of queries.
 
         Args:
-            input_dict: Input dictionary containing 'input_ids' and 'answer'
+            input_ids: The prompt's token ids, with the chat template applied.
             answer: Ground truth answer
             group_size: Number of rollouts per query (k samples for pass@k)
-            output_channel: Channel to output results
+            output_channel: Channel receiving each result
+            group_id: Id of the query group, carried on the result so the
+                receiver can route it; None in synchronous training.
+            task_name: Agent task name of the group, carried on the result
+                like group_id.
         """
+        if self.session_server_client is not None:
+            return await self._run_session_server_group(
+                input_ids, answer, group_size, group_id, task_name
+            )
         rollout_tasks: list[asyncio.Task[MultiAgentLoopOutput]] = []
         # grpo group_size
         for _ in range(group_size):
             task = asyncio.create_task(
-                self.run_one_query(copy.deepcopy(input_dict), answer=answer)
+                self.run_one_query(copy.deepcopy(input_ids), answer=answer)
             )
             rollout_tasks.append(task)
 
-        task_results = await asyncio.gather(*rollout_tasks)
+        try:
+            task_results = await asyncio.gather(*rollout_tasks)
 
-        # For eval mode, allow multiple samples (group_size=k) to compute pass@k and avg@k
-        extra_fields = self.gen_extra_fields(task_results, answer)
-        rollout_result = self.get_rollout_result(task_results, *extra_fields)
-        agent_metrics = self.get_rollout_metrics(rollout_result)
+            # For eval mode, allow multiple samples (group_size=k) to compute pass@k and avg@k
+            extra_fields = self.gen_extra_fields(task_results, answer)
+            rollout_result = self.get_rollout_result(task_results, *extra_fields)
+            if group_id is not None:
+                rollout_result.group_id = group_id
+                rollout_result.task_name = task_name
+            agent_metrics = self.get_rollout_metrics(rollout_result)
 
-        await output_channel.put(rollout_result, async_op=True).async_wait()
+            await output_channel.put(rollout_result, async_op=True).async_wait()
+        except GroupDiscarded as e:
+            # Only this failure mode is per-group: record the discard and
+            # let the group end normally. The remaining trajectories of
+            # this group are pointless now; cancel them instead of
+            # letting them finish generating and throwing the data away.
+            if group_id is None:
+                raise
+            for task in rollout_tasks:
+                task.cancel()
+            await asyncio.gather(*rollout_tasks, return_exceptions=True)
+            agent_metrics = {}
+            await output_channel.put(
+                DiscardedGroup(group_id=group_id, reason=e.reason),
+                async_op=True,
+            ).async_wait()
         return agent_metrics
+
+    async def _run_session_server_group(
+        self,
+        input_ids: list[int],
+        answer: str,
+        group_size: int,
+        group_id: Optional[int],
+        task_name: Optional[str],
+    ) -> dict:
+        """Run one query group over the session server transport.
+
+        This side owns the lifecycle — one session per trajectory, close
+        with the kept lengths and extra fields, reward, abort on failure —
+        while the session server writes the training payload and reports
+        the group itself.
+        """
+        assert group_id is not None and task_name is not None, (
+            "the session server needs the group and task identity the "
+            f"buffer worker stamps on its requests; got group_id={group_id!r}, "
+            f"task_name={task_name!r}"
+        )
+        rollout_tasks = [
+            asyncio.create_task(
+                self._run_session_query(
+                    input_ids, answer, group_id, traj_index, task_name, group_size
+                )
+            )
+            for traj_index in range(group_size)
+        ]
+        try:
+            trajectories = await asyncio.gather(*rollout_tasks)
+        except (GroupDiscarded, SessionDiscardedError) as exc:
+            # The discard is reported by the session server — it discarded
+            # the group already, or does so on this abort. The remaining
+            # trajectories of the group are pointless now; cancel them.
+            for task in rollout_tasks:
+                task.cancel()
+            await asyncio.gather(*rollout_tasks, return_exceptions=True)
+            await self.session_server_client.abort(group_id, exc.reason)
+            return {}
+        outputs = [output for _, output, _, _ in trajectories]
+        agent_side = [output is not None for output in outputs]
+        assert all(agent_side) or not any(agent_side), (
+            "the trajectories of one group must all produce agent-side "
+            f"outputs or none; got {agent_side}"
+        )
+        if any(agent_side):
+            task_results = outputs
+            extra_turn, extra_traj, extra_group, extra_train = self.gen_extra_fields(
+                task_results, answer
+            )
+            assert extra_turn is None and extra_traj is None and extra_group is None, (
+                "the session server does not support turn / traj / group "
+                f"extra fields; got turn={extra_turn!r}, traj={extra_traj!r}, "
+                f"group={extra_group!r}"
+            )
+            verify_result = (
+                self._verify_reference(
+                    [(binding, output) for binding, output, _, _ in trajectories],
+                    (extra_turn, extra_traj, extra_group, extra_train),
+                )
+                if self._verify_assembly
+                else None
+            )
+            # extra_train values run trajectory-major then turn order; each
+            # trajectory's close carries its own slice of every field.
+            traj_fields_slices: list[dict] = []
+            start = 0
+            for output in task_results:
+                end = start + len(output.single_turn_outputs)
+                traj_fields_slices.append(
+                    {
+                        name: values[start:end]
+                        for name, values in (extra_train or {}).items()
+                    }
+                )
+                start = end
+        else:
+            # An agent loop that runs its trajectories itself (over the
+            # chat completions endpoint, for example) produces no agent-side
+            # training data, so each trajectory declares its own training
+            # extra fields with its close fields instead.
+            assert not self._verify_assembly, (
+                "the assembly check needs agent-side outputs; an agent loop "
+                "that runs its own trajectories cannot provide the reference"
+            )
+            traj_fields_slices = [
+                dict(close_fields.get("extra_fields_train", {}))
+                for _, _, close_fields, _ in trajectories
+            ]
+            verify_result = None
+        try:
+            last_index = group_size - 1
+            for index, (binding, _, close_fields, reward) in enumerate(trajectories):
+                verify = verify_result if index == last_index else None
+                await self.session_server_client.close(
+                    group_id,
+                    binding.session_id,
+                    close_fields.get("kept_lens", {}),
+                    traj_fields_slices[index],
+                    verify,
+                    is_end=close_fields.get("is_end", {}),
+                )
+                await self.session_server_client.reward(
+                    group_id, binding.session_id, reward
+                )
+        except SessionDiscardedError as exc:
+            # The group was voided server-side (a payload write failed
+            # after the last generate); its discard record is already with
+            # the buffer worker, so this side drops the group quietly.
+            self.log_warning(
+                f"Dropping group {group_id} at close/reward: the session "
+                f"server discarded it ({exc.reason})."
+            )
+            return {}
+        return {}
+
+    async def _run_session_query(
+        self,
+        input_ids: list[int],
+        answer: str,
+        group_id: int,
+        traj_index: int,
+        task_name: str,
+        group_size: int,
+    ) -> tuple[SessionBinding, MultiAgentLoopOutput]:
+        """Run one trajectory with its session bound to this task."""
+        session_id = await self.session_server_client.create_session(
+            group_id, traj_index, group_size, task_name
+        )
+        binding = SessionBinding(
+            group_id=group_id, traj_index=traj_index, session_id=session_id
+        )
+        token = self._session_binding.set(binding)
+        try:
+            output, close_fields, reward = await self.run_session_trajectory(
+                binding, input_ids, answer
+            )
+        finally:
+            self._session_binding.reset(token)
+        return binding, output, close_fields, reward
+
+    async def run_session_trajectory(
+        self, binding: SessionBinding, input_ids: list[int], answer: str
+    ) -> tuple[Optional[MultiAgentLoopOutput], dict, float]:
+        """Run one trajectory on its bound session (override this hook).
+
+        The group runner has already opened ``binding``'s session; an agent
+        loop that sends its own requests to the session server (to the chat
+        completions endpoint, for example) overrides this method to run the
+        task with its own client, and the runner keeps doing everything
+        else: opening sessions, closing them with these fields, reporting
+        rewards, and dropping failed groups.
+
+        Args:
+            binding: The trajectory's session: its group, index, and id.
+            input_ids: The prompt's token ids, with the chat template
+                applied; decode them with ``self.tokenizer`` to get the text.
+            answer: The reference answer, for scoring.
+
+        Returns:
+            The trajectory's output, the fields its close request carries,
+            and the trajectory reward. An override returns ``None`` as the
+            output — it holds no agent-side training data — and puts what
+            the close needs in the fields: ``kept_lens`` when the override
+            truncates turns, and ``extra_fields_train``, whose every field
+            carries one value per trained turn (a repeated request rolls
+            back the turn before it, and that turn is not trained), when
+            ``algorithm.loss_scales`` includes ``agent_level``.
+        """
+        output = await self.run_one_query(copy.deepcopy(input_ids), answer=answer)
+        close_fields = {
+            "kept_lens": self._declared_kept_lens(binding, output),
+            "is_end": {
+                turn_index: turn_output.is_end
+                for turn_index, turn_output in enumerate(output.single_turn_outputs)
+            },
+        }
+        return output, close_fields, self._trajectory_reward(output)
+
+    def _declared_kept_lens(
+        self, binding: SessionBinding, output: MultiAgentLoopOutput
+    ) -> dict[int, int]:
+        """The kept length per turn, asserted against the call records.
+
+        A task whose reported outputs disagree with the calls it made —
+        a turn missing, a prompt rewritten, a response that is not a
+        prefix of the engine's output — fails here, before the server
+        slices the payload, instead of assembling wrong training data.
+        """
+        outputs = output.single_turn_outputs
+        assert len(outputs) == len(binding.turns), (
+            f"a trajectory closed with {len(outputs)} turn outputs after "
+            f"{len(binding.turns)} generate calls; the session server "
+            "requires them to correspond one to one"
+        )
+        kept_lens: dict[int, int] = {}
+        for turn_index, (turn_output, record) in enumerate(zip(outputs, binding.turns)):
+            if turn_output.extra_fields.get("not_training", False):
+                raise RuntimeError(
+                    "the session server does not support not_training turns"
+                )
+            assert turn_output.prompt_ids == record["input_ids"], (
+                f"turn {turn_index} of trajectory {binding.traj_index} "
+                f"reported prompt ids {turn_output.prompt_ids!r} but sent "
+                f"{record['input_ids']!r} to generate"
+            )
+            kept = len(turn_output.response_ids)
+            assert record["output_ids"][:kept] == turn_output.response_ids, (
+                f"turn {turn_index} of trajectory {binding.traj_index} "
+                f"reported a response that is not a prefix of the engine's "
+                f"output; reported {kept} tokens, engine output starts "
+                f"{record['output_ids'][:kept]!r}"
+            )
+            kept_lens[turn_index] = kept
+        return kept_lens
+
+    def _trajectory_reward(self, output: MultiAgentLoopOutput) -> float:
+        """The trajectory-level score, asserted uniform across its turns.
+
+        The reward route takes one scalar per trajectory; a task scoring
+        turns differently needs per-turn verdict rewards, which the
+        session server does not support.
+        """
+        scores = [turn.reward_score for turn in output.single_turn_outputs]
+        assert scores and all(score is not None for score in scores), (
+            "every turn must carry a reward_score before the session path "
+            f"closes its trajectory; got {scores!r}"
+        )
+        assert all(score == scores[0] for score in scores), (
+            "turn reward scores must agree within a trajectory to report "
+            f"one scalar; got {scores!r}"
+        )
+        return scores[0]
+
+    def _verify_reference(
+        self,
+        bindings_outputs: list[tuple[SessionBinding, MultiAgentLoopOutput]],
+        extra_fields: tuple,
+    ) -> dict:
+        """The reference for the assembly verification, group-level.
+
+        Rides with the last close. ``result`` is what the payload-assembled
+        result is compared against field by field; the actor checks the
+        server's forwarded sampling params by merging
+        ``caller_sampling_params`` over the config defaults.
+        """
+        task_results = [output for _, output in bindings_outputs]
+        reference = self.get_rollout_result(task_results, *extra_fields)
+        return {
+            "result": {
+                "num_sequence": reference.num_sequence,
+                "group_size": reference.group_size,
+                "idx_to_traj": reference.idx_to_traj,
+                "input_ids": reference.input_ids,
+                "prompt_lengths": reference.prompt_lengths,
+                "response_lengths": reference.response_lengths,
+                "rollout_logprobs": reference.rollout_logprobs,
+                "rewards": reference.rewards,
+                "is_end": reference.is_end,
+                "extra_fields_train": reference.extra_fields_train,
+            },
+            "caller_sampling_params": {
+                binding.traj_index: [
+                    record["sampling_params"] for record in binding.turns
+                ]
+                for binding, _ in bindings_outputs
+            },
+        }
 
     async def run_agentloop_rollout(
         self,
@@ -493,7 +1075,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
 
         Args:
             input_channel: Channel to receive rollout requests
-            output_channel: Channel to output results
+            output_channel: Channel receiving each result
         """
         with self.worker_timer():
             rollout_request: RolloutRequest = input_channel.get()
@@ -567,32 +1149,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             else:
                 self.send(agent_metrics_list, self._group_name, 0)
                 return
-        if len(agent_metrics_list) == 0:
-            return {}
-
-        all_keys: set[str] = set()
-        for metric_dict in agent_metrics_list:
-            all_keys.update(metric_dict.keys())
-
-        whole_metrics = {}
-        stat_methods = {
-            "__sum__/": sum,
-            "__max__/": max,
-            "__min__/": min,
-            "__mean__/": lambda x: sum(i[0] for i in x) / sum(i[1] for i in x),
-        }
-        for key in all_keys:
-            for stat_key in stat_methods:
-                if key.startswith(stat_key):
-                    real_key = key[len(stat_key) :]
-                    break
-            else:
-                stat_key, real_key = None, None
-            if stat_key is not None:
-                values = [metric_dict[key] for metric_dict in agent_metrics_list]
-                whole_metrics[real_key] = stat_methods[stat_key](values)
-
-        return whole_metrics
+        return aggregate_agent_metrics(agent_metrics_list)
 
     def get_rollout_metrics(
         self,
@@ -635,6 +1192,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             rollout_logprobs = []
         is_end = []
         rewards = []
+        version_start = []
+        version_end = []
 
         # Flatten all retained turns while keeping trajectory mapping.
         for idx, task_result in enumerate(task_results):
@@ -655,6 +1214,21 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                     rollout_logprobs.append(single_turn_output.response_logprobs)
                 is_end.append(single_turn_output.is_end)
                 rewards.append(single_turn_output.reward_score)
+                version_start.append(single_turn_output.version_start)
+                version_end.append(single_turn_output.version_end)
+
+        # Weight versions are either stamped on every turn or on none: mixing
+        # would silently drop the version-less turns from staleness statistics.
+        if any(v is not None for v in version_start + version_end):
+            assert all(v is not None for v in version_start) and all(
+                v is not None for v in version_end
+            ), (
+                "agent loop outputs mix turns with weight versions and turns "
+                "without (version_start/version_end)"
+            )
+        else:
+            version_start = None
+            version_end = None
 
         return DynamicRolloutResult(
             num_sequence=len(idx_to_traj),
@@ -666,6 +1240,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             rollout_logprobs=rollout_logprobs,
             is_end=is_end,
             rewards=rewards,
+            version_start=version_start,
+            version_end=version_end,
             extra_fields_turn=extra_fields_turn,
             extra_fields_traj=extra_fields_traj,
             extra_fields_group=extra_fields_group,
