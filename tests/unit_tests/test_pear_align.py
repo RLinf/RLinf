@@ -476,31 +476,91 @@ def test_runner_treats_zero_batch_cap_as_unlimited():
     assert calls["n"] == 2
 
 
-def test_sglang_reuses_prefix_until_weights_change():
-    calls = []
-    opened = {"count": 0}
+class _FakeSGLangSessionServer:
+    """In-process fake matching SGLang's SessionController / Session.create_req contract."""
 
-    def transport(path, payload):
-        calls.append((path, payload))
+    def __init__(self, reply_text: str = "ANS", reply_ids: list[int] | None = None):
+        self.calls: list[tuple[str, dict]] = []
+        self._sessions: dict[str, dict] = {}
+        self._next_id = 0
+        self._reply_text = reply_text
+        self._reply_ids = list(reply_ids) if reply_ids is not None else [7, 8]
+
+    def post(self, path: str, payload: dict, **kwargs) -> dict | str:
+        del kwargs
+        self.calls.append((path, payload))
         if path == "/open_session":
-            opened["count"] += 1
-            return {"session_id": f"s{opened['count']}"}
+            self._next_id += 1
+            sid = f"s{self._next_id}"
+            self._sessions[sid] = {
+                "streaming": bool(payload.get("streaming", False)),
+                "req_nodes": {},
+            }
+            return {"session_id": sid}
+        if path == "/close_session":
+            self._sessions.pop(payload["session_id"], None)
+            return {}
         if path == "/generate":
-            return {"text": "ANS", "output_ids": [7, 8]}
+            session_params = payload.get("session_params") or {}
+            sid = session_params.get("id")
+            session = self._sessions[sid]
+            last_req = None
+            if session["streaming"]:
+                if session["req_nodes"]:
+                    last_req = next(iter(session["req_nodes"].values()))
+            elif session_params.get("rid") is not None:
+                last_req = session["req_nodes"].get(session_params["rid"])
+
+            rid = payload["rid"]
+            if not session["streaming"] and rid in session["req_nodes"]:
+                raise AssertionError(f"Duplicate non-streaming rid: {rid}")
+
+            delta_tokens = len(str(payload["text"])) + 4 * len(
+                payload.get("image_data") or []
+            )
+            cached_tokens = (
+                last_req["prompt_tokens"] + len(last_req["output_ids"])
+                if last_req is not None
+                else 0
+            )
+            prompt_tokens = cached_tokens + delta_tokens
+            record = {
+                "rid": rid,
+                "prompt_tokens": prompt_tokens,
+                "output_ids": list(self._reply_ids),
+            }
+            if session["streaming"]:
+                session["req_nodes"] = {rid: record}
+            else:
+                session["req_nodes"][rid] = record
+            return {
+                "text": self._reply_text,
+                "output_ids": list(self._reply_ids),
+                "meta_info": {
+                    "prompt_tokens": prompt_tokens,
+                    "cached_tokens": cached_tokens,
+                    "completion_tokens": len(self._reply_ids),
+                },
+            }
         return {}
 
-    client = QwenVLMSGLangClient(reasoning_effort="xhigh", transport=transport)
-    client.generate(0, full_text="PROMPT", max_new_tokens=8, images=["first"])
-    assert calls[0][0] == "/open_session"
-    assert calls[0][1]["capacity_of_str_len"] == 1_000_000
-    assert calls[0][0] == "/open_session"
-    assert calls[0][1]["capacity_of_str_len"] == 1_000_000
-    client.generate(0, full_text="PROMPTANS+USER", max_new_tokens=8, images=["second"])
-    generated = [payload for path, payload in calls if path == "/generate"]
+
+def test_sglang_reuses_prefix_until_weights_change():
+    server = _FakeSGLangSessionServer(reply_text="ANS", reply_ids=[7, 8])
+    client = QwenVLMSGLangClient(reasoning_effort="xhigh", transport=server.post)
+    first = client.generate(0, full_text="PROMPT", max_new_tokens=8, images=["first"])
+    assert server.calls[0][0] == "/open_session"
+    assert server.calls[0][1] == {"capacity_of_str_len": 1_000_000, "streaming": True}
+    second = client.generate(
+        0, full_text="PROMPTANS+USER", max_new_tokens=8, images=["second"]
+    )
+    generated = [payload for path, payload in server.calls if path == "/generate"]
     assert generated[0]["text"] == "PROMPT"
     assert generated[1]["text"] == "+USER"
     assert generated[0]["session_params"]["id"] == "s1"
     assert generated[1]["session_params"]["id"] == "s1"
+    assert generated[0]["rid"] == "qwen-env-0-v0-t1"
+    assert generated[1]["rid"] == "qwen-env-0-v0-t2"
     assert generated[1]["image_data"] == ["second"]
     assert generated[1]["sampling_params"] == {
         "temperature": 1.0,
@@ -508,6 +568,11 @@ def test_sglang_reuses_prefix_until_weights_change():
         "top_k": -1,
         "max_new_tokens": 8,
     }
+    assert first["meta_info"]["cached_tokens"] == 0
+    assert second["meta_info"]["cached_tokens"] == first["meta_info"][
+        "prompt_tokens"
+    ] + len(first["output_ids"])
+    assert second["meta_info"]["prompt_tokens"] > first["meta_info"]["prompt_tokens"]
 
     class Engine:
         def __init__(self):
@@ -519,23 +584,128 @@ def test_sglang_reuses_prefix_until_weights_change():
     engine = Engine()
     client.engine = engine
     client.sync_weights(2, [("weight", torch.ones(1))])
-    assert any(path == "/close_session" for path, _ in calls)
-    assert any(path == "/flush_cache" for path, _ in calls)
+    assert any(path == "/close_session" for path, _ in server.calls)
+    assert any(path == "/flush_cache" for path, _ in server.calls)
     assert engine.parameters[0][0] == "weight"
-    client.generate(0, full_text="PROMPTANS+USER", max_new_tokens=8)
-    follow = [payload for path, payload in calls if path == "/generate"][-1]
+    after_sync = client.generate(0, full_text="PROMPTANS+USER", max_new_tokens=8)
+    follow = [payload for path, payload in server.calls if path == "/generate"][-1]
     assert follow["text"] == "PROMPTANS+USER"
     assert follow["session_params"]["id"] == "s2"
-    assert follow["rid"] == "qwen-env-0-v2"
+    assert follow["rid"] == "qwen-env-0-v2-t3"
+    assert after_sync["meta_info"]["cached_tokens"] == 0
     client.release_gpu_memory()
-    assert any(path == "/release_memory_occupation" for path, _ in calls)
+    assert any(path == "/release_memory_occupation" for path, _ in server.calls)
     with pytest.raises(RuntimeError, match="memory is released"):
         client.generate(0, full_text="AFTER", max_new_tokens=4)
     client.resume_gpu_memory()
-    assert any(path == "/resume_memory_occupation" for path, _ in calls)
+    assert any(path == "/resume_memory_occupation" for path, _ in server.calls)
     client.generate(0, full_text="AFTER", max_new_tokens=4)
-    restored = [payload for path, payload in calls if path == "/generate"][-1]
+    restored = [payload for path, payload in server.calls if path == "/generate"][-1]
     assert restored["text"] == "AFTER"
+    assert restored["rid"] == "qwen-env-0-v2-t4"
+
+
+def test_qwen_vlm_adapter_streaming_session_accumulates_prompt_and_cached_tokens():
+    from rlinf.models.embodiment.qwen_vlm.sglang_adapter import QwenVLMSGLangAdapter
+
+    action_reply = (
+        "reason</think>\n```json\n"
+        '{"arm": {"x": 0.1, "y": 0.0, "z": 0.0, '
+        '"roll": 0.0, "pitch": 0.0, "yaw": 0.0}, '
+        '"gripper": {"width": 1.0}}\n```'
+    )
+    server = _FakeSGLangSessionServer(reply_text=action_reply, reply_ids=[101, 102])
+
+    class _FakeProcessor:
+        eos_token = "<|im_end|>"
+        eos_token_id = 999
+
+        def apply_chat_template(
+            self, messages, tokenize=False, add_generation_prompt=False, **kwargs
+        ):
+            del tokenize, kwargs
+            parts = []
+            for msg in messages:
+                content = msg["content"]
+                if isinstance(content, list):
+                    rendered = "".join(
+                        b["text"] if b["type"] == "text" else "<image>" for b in content
+                    )
+                else:
+                    rendered = str(content)
+                parts.append(f"<|im_start|>{msg['role']}\n{rendered}<|im_end|>\n")
+            if add_generation_prompt:
+                parts.append("<|im_start|>assistant\n")
+            return "".join(parts)
+
+        def __call__(self, text, images, return_tensors="pt", padding=True, **kwargs):
+            del return_tensors, padding, kwargs
+            n_tokens = max(len(text[0]) // 8, 2)
+            return {
+                "input_ids": torch.arange(1, n_tokens + 1, dtype=torch.long).unsqueeze(
+                    0
+                ),
+                "pixel_values": torch.ones((len(images), 4), dtype=torch.float32),
+                "image_grid_thw": torch.ones((len(images), 3), dtype=torch.long),
+            }
+
+    cfg = _Map(
+        rollout=_Map(
+            model=_Map(model_path="dummy", embodiment="libero"),
+            sampling_params=_Map(max_new_tokens=512),
+            sglang=_Map(response_budget=512, reasoning_effort="xhigh"),
+        ),
+        algorithm=_Map(pear=_Map(score_centering=False)),
+        env=_Map(train=_Map(vlm_action_mode=True)),
+    )
+    adapter = QwenVLMSGLangAdapter(cfg, rank=0)
+    adapter._processor = _FakeProcessor()
+    adapter.bind_http_client(server)
+
+    def _obs(step: int, *, reset: bool = False) -> dict:
+        return {
+            "_env_index": 0,
+            "reset_mask": torch.tensor([reset]),
+            "task_descriptions": ["pick up the mug"],
+            "main_images": torch.full((1, 4, 4, 3), step, dtype=torch.uint8),
+            "wrist_images": torch.full((1, 4, 4, 3), step + 10, dtype=torch.uint8),
+            "vlm_state": torch.tensor([[float(step), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]]),
+        }
+
+    meta_by_turn = []
+    payloads = []
+    for step in range(3):
+        payload, state = adapter.build_request(_obs(step))
+        response = server.post("/generate", payload)
+        adapter.parse_response(response, state)
+        payloads.append(payload)
+        meta_by_turn.append(response["meta_info"])
+
+    open_calls = [body for path, body in server.calls if path == "/open_session"]
+    assert open_calls == [{"capacity_of_str_len": 1_000_000, "streaming": True}]
+    assert [p["rid"] for p in payloads] == [
+        "qwen-r0-env-0-v0-t1",
+        "qwen-r0-env-0-v0-t2",
+        "qwen-r0-env-0-v0-t3",
+    ]
+    assert {p["session_params"]["id"] for p in payloads} == {"s1"}
+    assert [len(p["image_data"]) for p in payloads] == [2, 2, 2]
+    assert meta_by_turn[0]["cached_tokens"] == 0
+    assert meta_by_turn[1]["cached_tokens"] > 0
+    assert meta_by_turn[2]["cached_tokens"] > meta_by_turn[1]["cached_tokens"]
+    assert (
+        meta_by_turn[0]["prompt_tokens"]
+        < meta_by_turn[1]["prompt_tokens"]
+        < meta_by_turn[2]["prompt_tokens"]
+    )
+
+    # Resetting the episode closes the old session and opens a fresh streaming one.
+    reset_payload, reset_state = adapter.build_request(_obs(0, reset=True))
+    reset_resp = server.post("/generate", reset_payload)
+    adapter.parse_response(reset_resp, reset_state)
+    assert reset_payload["session_params"]["id"] == "s2"
+    assert reset_payload["rid"] == "qwen-r0-env-0-v0-t4"
+    assert reset_resp["meta_info"]["cached_tokens"] == 0
 
 
 def test_session_turn_sends_suffix_until_the_prefix_changes():
@@ -1083,10 +1253,13 @@ def test_fsdp2_fp32_module_matching_and_ulysses_window():
 
 def test_gso_sglang_configs_sample_all_tasks_and_skip_recompute():
     from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
 
     config_dir = (
         Path(__file__).resolve().parents[2] / "examples" / "embodiment" / "config"
     )
+    shared = OmegaConf.load(config_dir / "hybrid_engines" / "sglang_router_server.yaml")
+    assert shared.server.attention_backend == "triton"
     for name in (
         "libero_gso_grpo_pear_sglang",
         "libero_gso_grpo_pear_sglang_paper",
@@ -1096,3 +1269,5 @@ def test_gso_sglang_configs_sample_all_tasks_and_skip_recompute():
         assert cfg.env.train.use_fixed_reset_state_ids is False
         assert cfg.env.train.specific_reset_id is None
         assert cfg.algorithm.recompute_logprobs is False
+        assert cfg.rollout.sglang.server.attention_backend is None
+        assert cfg.rollout.sglang.server.max_mamba_cache_size == 256

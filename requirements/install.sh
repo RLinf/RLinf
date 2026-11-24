@@ -165,7 +165,7 @@ Common options:
     --sglang <version>     Override sglang version (e.g., 0.5.4). Must be one of the
                            versions in requirements/agentic/; torch is derived from it.
                            Applies to target agentic and to --model sglang / qwen3_vl / qwen3_8.
-                           Qwen3.8-27B requires sglang 0.5.19 (torch 2.13.0, transformers 5.12.1).
+                           Qwen3.8-27B requires sglang 0.5.22 (torch 2.14.1, transformers 5.19.0, CUDA 13).
     --vllm <version>       Override vllm version (e.g., 0.23.0). Must be one of the
                            versions in requirements/agentic/.
     --transformers <version> Override transformers version (e.g., 4.57.1). Patches
@@ -1552,6 +1552,7 @@ sglang_torch_version() {
         0.4.6.post5) echo "2.6.0" ;;
         0.5.2|0.5.4) echo "2.8.0" ;;
         0.5.19)      echo "2.13.0" ;;
+        0.5.22)      echo "2.14.1" ;;
         *)           echo "-" ;;
     esac
 }
@@ -1668,7 +1669,7 @@ apply_agentic_torch_default() {
     [ "$TARGET" = "agentic" ] || return 0
     local torch_ver
     torch_ver=$(agentic_torch_for_engine)
-    if [ "$torch_ver" = "2.13.0" ]; then
+    if [ "$torch_ver" = "2.13.0" ] || [ "$torch_ver" = "2.14.1" ]; then
         echo "[install.sh] $(effective_engine) $(effective_engine_version) runs on torch ${torch_ver}, which the agentic Megatron stack is not built for; it is installed by 'embodied --model sglang'." >&2
         exit 1
     fi
@@ -1694,7 +1695,7 @@ apply_model_default_torch() {
             ;;
         sglang) model_torch=$(sglang_torch_version "${SGLANG_VERSION:-$EMBODIED_SGLANG_VERSION}") ;;
         qwen3_8)
-            SGLANG_VERSION="${SGLANG_VERSION:-0.5.19}"
+            SGLANG_VERSION="${SGLANG_VERSION:-0.5.22}"
             model_torch=$(sglang_torch_version "$SGLANG_VERSION")
             ;;
     esac
@@ -3509,9 +3510,9 @@ install_qwen3_8_model() {
             ;;
     esac
 
-    local expected_torch="2.13.0"
-    local expected_sglang="0.5.19"
-    local expected_transformers="5.12.1"
+    local expected_torch="2.14.1"
+    local expected_sglang="0.5.22"
+    local expected_transformers="5.19.0"
     SGLANG_VERSION="${SGLANG_VERSION:-$expected_sglang}"
     TRANSFORMERS_VERSION="${TRANSFORMERS_VERSION:-$expected_transformers}"
     if [ "${TORCH_VERSION:-$expected_torch}" != "$expected_torch" ] \

@@ -576,7 +576,7 @@ ENV OPENPI_DATA_HOME=/root/.cache/openpi
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
-# Embodied: LIBERO + Qwen3.8-27B (torch 2.13.0, sglang 0.5.19, transformers 5.12.1)
+# Embodied: LIBERO + Qwen3.8-27B (torch 2.14.1, sglang 0.5.22, transformers 5.19.0)
 ##################################################################################################
 FROM embodied-common-image AS embodied-libero-qwen3_8-image
 
@@ -585,10 +585,12 @@ FROM embodied-common-image AS embodied-libero-qwen3_8-image
 # keep FA4 for Hopper or newer.
 ARG UNINSTALL_FA4
 ENV UNINSTALL_FA4=${UNINSTALL_FA4}
+# sglang 0.5.22 and torch 2.14.1 ship CUDA 13 wheels only.
+ENV UV_TORCH_BACKEND=cu130
 
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} \
     embodied --venv qwen3_8 --model qwen3_8 --env libero \
-    --torch 2.13.0 --sglang 0.5.19 --transformers 5.12.1
+    --torch 2.14.1 --sglang 0.5.22 --transformers 5.19.0
 
 RUN echo "source ${UV_PATH}/qwen3_8/bin/activate" >> ~/.bashrc
 

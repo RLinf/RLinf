@@ -166,11 +166,18 @@ rollout:
     server:
       model_path: "/mnt/public/guozhen/models/Qwen/Qwen3.8-27B"
       tp_size: 8
+      # Let SGLang pick the hardware-optimal backend (flashinfer on Ampere,
+      # fa3 on Hopper) instead of inheriting triton from sglang_router_server.
+      attention_backend: null
       # Leave room for the FSDP parameters during the CUDA-IPC copy.
       mem_fraction_static: 0.45
       # One PEAR replica keeps 64 sessions. This engine's captured decode
       # batch stays 16; the other requests wait.
       max_running_requests: 16
+      # Bound GDN recurrent-state slots (~4-5 per running request under
+      # extra_buffer plus 64 sticky sessions) so default mamba_full_memory_ratio
+      # does not squeeze the KV cache pool.
+      max_mamba_cache_size: 256
       cuda_graph_max_bs_decode: 16
       enable_memory_saver: True
       disable_cuda_graph: False

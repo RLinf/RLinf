@@ -51,6 +51,7 @@ class QwenVLMSGLangClient:
         self.engine = engine
         self._sessions: dict[int, str] = {}
         self._committed: dict[int, str] = {}
+        self._turn_counts: dict[int, int] = {}
         self.weight_version = 0
         self.synced_versions: list[int] = []
         self.memory_released = False
@@ -81,6 +82,8 @@ class QwenVLMSGLangClient:
                 self.close_session(env_index)
             self._sessions[env_index] = self._open_session(env_index)
             text = full_text
+        turn = self._turn_counts.get(env_index, 0) + 1
+        self._turn_counts[env_index] = turn
         payload = {
             "text": text,
             "session_params": {"id": self._sessions[env_index]},
@@ -90,7 +93,7 @@ class QwenVLMSGLangClient:
                 "top_k": -1,
                 "max_new_tokens": int(max_new_tokens),
             },
-            "rid": f"qwen-env-{env_index}-v{self.weight_version}",
+            "rid": f"qwen-env-{env_index}-v{self.weight_version}-t{turn}",
             "image_data": list(images or []),
             "return_logprob": False,
         }
@@ -136,8 +139,12 @@ class QwenVLMSGLangClient:
             updater(parameters)
 
     def _open_session(self, env_index: int) -> str:
-        # capacity_of_str_len is required by SGLang 0.5.19 and is not enforced.
-        response = self._post("/open_session", {"capacity_of_str_len": 1_000_000})
+        # capacity_of_str_len is required by OpenSessionReqInput and is not enforced.
+        # streaming=True chains subsequent turns from last_req without session_params.rid.
+        response = self._post(
+            "/open_session",
+            {"capacity_of_str_len": 1_000_000, "streaming": True},
+        )
         if isinstance(response, str) and response:
             return response
         session_id = None

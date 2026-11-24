@@ -33,12 +33,12 @@ sglang_version = None
 
 if package_version is None:
     raise ValueError("sglang is not installed.")
-elif package_version >= parse("0.4.4") and package_version <= parse("0.5.19"):
+elif package_version >= parse("0.4.4") and package_version <= parse("0.5.22"):
     sglang_version = package_version
 else:
     raise ValueError(
         f"sglang version {package_version} is not supported "
-        "(supported range: >=0.4.4, <=0.5.19)."
+        "(supported range: >=0.4.4, <=0.5.22)."
     )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only

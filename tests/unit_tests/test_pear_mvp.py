@@ -306,13 +306,21 @@ def test_qwen3_8_install_target_pins_the_supported_stack():
     requirements = (
         root / "requirements" / "embodied" / "models" / "qwen3_8.txt"
     ).read_text()
+    sglang_cu13 = (
+        root / "requirements" / "agentic" / "sglang_0.5.22_cu13.txt"
+    ).read_text()
+    sglang_common = (
+        root / "requirements" / "agentic" / "sglang_0.5.22_common.txt"
+    ).read_text()
     assert "qwen3_8" in script
     assert "install_qwen3_8_model" in script
-    assert "torch==2.13.0" in script or 'expected_torch="2.13.0"' in script
-    assert "sglang==0.5.19" in script or 'expected_sglang="0.5.19"' in script
+    assert "torch==2.14.1" in script or 'expected_torch="2.14.1"' in script
+    assert "sglang==0.5.22" in script or 'expected_sglang="0.5.22"' in script
     assert (
-        "transformers==5.12.1" in script or 'expected_transformers="5.12.1"' in script
+        "transformers==5.19.0" in script or 'expected_transformers="5.19.0"' in script
     )
+    assert "sglang==0.5.22" in sglang_cu13
+    assert "transformers==5.19.0" in sglang_common
     assert "qwen-vl-utils==0.0.14" in requirements
     assert "flash-linear-attention==0.5.2" in requirements
     assert math.isfinite(1.0)
@@ -338,5 +346,7 @@ def test_vlm_policy_stage_configs_compose():
             cfg.actor.model.embodiment,
         ) == values
         assert cfg.rollout.rollout_backend == "sglang"
+        assert cfg.rollout.sglang.server.attention_backend is None
+        assert cfg.rollout.sglang.server.max_mamba_cache_size == 256
         assert cfg.algorithm.loss_type == "pear_reinforce"
         assert cfg.actor.global_batch_size == 64

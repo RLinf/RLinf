@@ -129,7 +129,7 @@ def session_turn(committed: str, full_text: str, has_session: bool) -> tuple[str
 
 
 def _session_id_from_open(opened: Any) -> str:
-    """SGLang 0.5.19 returns the id as a JSON string. Older builds return an object."""
+    """SGLang 0.5.19+ returns the id as a JSON string. Older builds return an object."""
     if isinstance(opened, str) and opened:
         return opened
     if isinstance(opened, dict):
@@ -163,7 +163,7 @@ class QwenVLMSGLangAdapter:
     """One LIBERO environment, one SGLang session, one JSON macro action."""
 
     action_path = "/generate"
-    # Required by SGLang 0.5.19 OpenSessionReqInput. The scheduler stores it
+    # Required by SGLang OpenSessionReqInput. The scheduler stores it
     # and does not enforce it; the value only has to cover one episode's text.
     _session_str_capacity = 1_000_000
     use_msgpack = False
@@ -240,6 +240,7 @@ class QwenVLMSGLangAdapter:
         self._episodes: dict[int, IncrementalEpisodeTokens] = {}
         self._all_images: dict[int, list[Image.Image]] = {}
         self._idle_samples: dict[int, dict[str, torch.Tensor]] = {}
+        self._turn_counts: dict[int, int] = {}
         self._weight_version = 0
 
     def _remaining_response_tokens(self, env_index: int) -> int:
@@ -296,8 +297,14 @@ class QwenVLMSGLangAdapter:
             self._post("/close_session", {"session_id": session_id})
 
     def _open_session(self) -> str:
+        # streaming=True makes Session.create_req() chain each turn from
+        # last_req without requiring session_params.rid.
         opened = self._post(
-            "/open_session", {"capacity_of_str_len": self._session_str_capacity}
+            "/open_session",
+            {
+                "capacity_of_str_len": self._session_str_capacity,
+                "streaming": True,
+            },
         )
         return _session_id_from_open(opened)
 
@@ -557,11 +564,15 @@ class QwenVLMSGLangAdapter:
         else:
             image_payload = turn_images
 
+        turn_counts = self.__dict__.setdefault("_turn_counts", {})
+        turn = turn_counts.get(env_index, 0) + 1
+        turn_counts[env_index] = turn
+
         topk = int(getattr(self, "_topk_log_probs", 0))
         return_logprob = bool(getattr(self, "_return_logprob", False)) or topk > 0
         payload: dict[str, Any] = {
             "text": text,
-            # 0.5.19 SessionParams.id. The prompt is already rendered locally,
+            # SessionParams.id. The prompt is already rendered locally,
             # and GenerateReqInput has no chat_template_kwargs field.
             "session_params": {"id": self._sessions[env_index]},
             "sampling_params": {
@@ -570,7 +581,9 @@ class QwenVLMSGLangAdapter:
                 "top_k": -1,
                 "max_new_tokens": remaining,
             },
-            "rid": f"qwen-r{self._rank}-env-{env_index}-v{self._weight_version}",
+            "rid": (
+                f"qwen-r{self._rank}-env-{env_index}-v{self._weight_version}-t{turn}"
+            ),
             "image_data": [_png_b64(image) for image in image_payload],
             "return_logprob": return_logprob,
         }
