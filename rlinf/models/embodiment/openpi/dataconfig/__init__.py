@@ -548,6 +548,41 @@ _CONFIGS = [
         pytorch_weight_path="checkpoints/torch/tianji_stage1_joint",
     ),
     TrainConfig(
+        name="tianji_stage1_h60",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=60,
+            discrete_state_input=True,
+        ),
+        data=TianjiDataConfig(
+            repo_id="tianji_stage1_h60",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/tianji_stage1_h60/assets",
+                asset_id="tianji_stage1_h60",
+            ),
+        ),
+        pytorch_weight_path="checkpoints/torch/tianji_stage1_h60",
+    ),
+    TrainConfig(
+        # 60-step (2.0 s @ 30 Hz) 16D joint Stage1 config for LeRobot SFT & 30 Hz deploy.
+        name="tianji_stage1_joint_h60",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=60,
+            discrete_state_input=True,
+        ),
+        data=TianjiJointDataConfig(
+            repo_id="tianji_stage1_joint_h60",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/tianji_stage1_joint_h60/assets",
+                asset_id="tianji_stage1_joint_h60",
+            ),
+        ),
+        pytorch_weight_path="checkpoints/torch/tianji_stage1_joint_h60",
+    ),
+    TrainConfig(
         name="pi0_behavior",
         model=pi0_config.Pi0Config(),
         data=LeRobotBehaviorDataConfig(

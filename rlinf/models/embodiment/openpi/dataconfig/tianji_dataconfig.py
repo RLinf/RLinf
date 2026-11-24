@@ -36,6 +36,120 @@ def _parse_image(image) -> np.ndarray:
     return image
 
 
+def _extract_wrist_images(data: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Return (left_wrist, right_wrist) RGB HWC uint8 images.
+
+    Supports both:
+    - Split 3D ``observation/extra_view_image-0`` & ``observation/extra_view_image-1``
+      ([H, W, C] or [C, H, W]) from standard LeRobot SFT datasets.
+    - Stacked 4D ``observation/extra_view_image`` ([2, H, W, C] or [2, C, H, W])
+      from online/eval TianjiEnv & OpenPiPytorchEvalActionModel.
+    """
+    split_0 = data.get("observation/extra_view_image-0")
+    split_1 = data.get("observation/extra_view_image-1")
+    if split_0 is not None or split_1 is not None:
+        if split_0 is None or split_1 is None:
+            missing = (
+                "observation/extra_view_image-1"
+                if split_0 is not None
+                else "observation/extra_view_image-0"
+            )
+            raise KeyError(
+                f"Tianji split wrist images require both '-0' and '-1'; missing {missing!r}"
+            )
+        wrist_left = _parse_image(split_0)
+        wrist_right = _parse_image(split_1)
+        for name, img in (
+            ("observation/extra_view_image-0", wrist_left),
+            ("observation/extra_view_image-1", wrist_right),
+        ):
+            if img.ndim != 3 or img.shape[-1] != 3:
+                raise ValueError(
+                    f"Tianji expects 3D RGB image for {name}, got {tuple(img.shape)}"
+                )
+        return wrist_left, wrist_right
+
+    stacked = data.get("observation/extra_view_image")
+    if stacked is not None:
+        extra = _parse_image(stacked)
+        if extra.ndim != 4 or extra.shape[0] != 2:
+            raise ValueError(
+                "Tianji expects two wrist images with shape [2,H,W,C] or "
+                f"[2,C,H,W], got {tuple(extra.shape)}"
+            )
+        return _parse_image(extra[0]), _parse_image(extra[1])
+
+    raise KeyError(
+        "Tianji inputs require either 'observation/extra_view_image' or "
+        "both 'observation/extra_view_image-0' and 'observation/extra_view_image-1'"
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class TianjiRepackTransform(transforms.DataTransformFn):
+    """Repack Tianji dataset or observation dicts into ``observation/*`` keys.
+
+    Unlike ``openpi.transforms.RepackTransform``, handles both split 3D wrist
+    columns (``extra_view_image-0``, ``extra_view_image-1``) and stacked 4D
+    ``extra_view_image`` without raising ``KeyError`` for the absent format,
+    and treats ``actions`` / ``prompt`` (or ``task``) as optional.
+    """
+
+    def __call__(self, data: dict) -> dict:
+        if "image" in data:
+            image = data["image"]
+        elif "observation/image" in data:
+            image = data["observation/image"]
+        else:
+            raise KeyError("image")
+
+        if "state" in data:
+            state = data["state"]
+        elif "observation/state" in data:
+            state = data["observation/state"]
+        else:
+            raise KeyError("state")
+
+        repacked: dict = {
+            "observation/image": image,
+            "observation/state": state,
+        }
+
+        split_0 = data.get(
+            "extra_view_image-0", data.get("observation/extra_view_image-0")
+        )
+        split_1 = data.get(
+            "extra_view_image-1", data.get("observation/extra_view_image-1")
+        )
+        stacked = data.get(
+            "extra_view_image", data.get("observation/extra_view_image")
+        )
+        if split_0 is not None or split_1 is not None:
+            if split_0 is None or split_1 is None:
+                missing = (
+                    "extra_view_image-1"
+                    if split_0 is not None
+                    else "extra_view_image-0"
+                )
+                raise KeyError(missing)
+            repacked["observation/extra_view_image-0"] = split_0
+            repacked["observation/extra_view_image-1"] = split_1
+        elif stacked is not None:
+            repacked["observation/extra_view_image"] = stacked
+        else:
+            raise KeyError(
+                "extra_view_image (or extra_view_image-0 and extra_view_image-1)"
+            )
+
+        if "actions" in data:
+            repacked["actions"] = data["actions"]
+        if "prompt" in data:
+            repacked["prompt"] = data["prompt"]
+        elif "task" in data:
+            repacked["prompt"] = data["task"]
+        return repacked
+
+
 @dataclasses.dataclass(frozen=True)
 class TianjiInputs(transforms.DataTransformFn):
     """Map standardized Tianji observations to Pi0/Pi05 inputs."""
@@ -49,14 +163,7 @@ class TianjiInputs(transforms.DataTransformFn):
             raise ValueError(f"Tianji expects a 20D state, got {tuple(state.shape)}")
 
         base_image = _parse_image(data["observation/image"])
-        extra = _parse_image(data["observation/extra_view_image"])
-        if extra.ndim != 4 or extra.shape[0] != 2:
-            raise ValueError(
-                "Tianji expects two wrist images with shape [2,H,W,C] or "
-                f"[2,C,H,W], got {tuple(extra.shape)}"
-            )
-        wrist_left = _parse_image(extra[0])
-        wrist_right = _parse_image(extra[1])
+        wrist_left, wrist_right = _extract_wrist_images(data)
 
         inputs = {
             "state": state,
@@ -120,19 +227,7 @@ class TianjiDataConfig(DataConfigFactory):
     def create(
         self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig
     ) -> DataConfig:
-        repack_transform = transforms.Group(
-            inputs=[
-                transforms.RepackTransform(
-                    {
-                        "observation/image": "image",
-                        "observation/extra_view_image": "extra_view_image",
-                        "observation/state": "state",
-                        "actions": "actions",
-                        "prompt": "prompt",
-                    }
-                )
-            ]
-        )
+        repack_transform = transforms.Group(inputs=[TianjiRepackTransform()])
         data_transforms = transforms.Group(
             inputs=[
                 TianjiInputs(
@@ -175,18 +270,13 @@ class TianjiJointInputs(transforms.DataTransformFn):
         if state.shape[-1] != 16:
             raise ValueError(f"Tianji joint expects a 16D state, got {tuple(state.shape)}")
         base_image = _parse_image(data["observation/image"])
-        extra = _parse_image(data["observation/extra_view_image"])
-        if extra.ndim != 4 or extra.shape[0] != 2:
-            raise ValueError(
-                "Tianji expects two wrist images with shape [2,H,W,C] or "
-                f"[2,C,H,W], got {tuple(extra.shape)}"
-            )
+        wrist_left, wrist_right = _extract_wrist_images(data)
         inputs = {
             "state": state,
             "image": {
                 "base_0_rgb": base_image,
-                "left_wrist_0_rgb": _parse_image(extra[0]),
-                "right_wrist_0_rgb": _parse_image(extra[1]),
+                "left_wrist_0_rgb": wrist_left,
+                "right_wrist_0_rgb": wrist_right,
             },
             "image_mask": {
                 "base_0_rgb": np.True_,
@@ -235,19 +325,7 @@ class TianjiJointDataConfig(DataConfigFactory):
     def create(
         self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig
     ) -> DataConfig:
-        repack_transform = transforms.Group(
-            inputs=[
-                transforms.RepackTransform(
-                    {
-                        "observation/image": "image",
-                        "observation/extra_view_image": "extra_view_image",
-                        "observation/state": "state",
-                        "actions": "actions",
-                        "prompt": "prompt",
-                    }
-                )
-            ]
-        )
+        repack_transform = transforms.Group(inputs=[TianjiRepackTransform()])
         data_transforms = transforms.Group(
             inputs=[
                 TianjiJointInputs(
