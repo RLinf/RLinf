@@ -22,6 +22,7 @@ from omegaconf.omegaconf import OmegaConf
 from rlinf.config import validate_cfg
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Cluster
+from rlinf.utils.logging import get_logger
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.reward import EmbodiedAPIRewardWorker, EmbodiedRewardWorker
@@ -175,8 +176,14 @@ def main(cfg) -> None:
         reward=reward_group,
     )
 
-    runner.init_workers()
-    runner.run()
+    try:
+        runner.init_workers()
+        runner.run()
+    finally:
+        try:
+            env_group.close().wait()
+        except Exception:
+            get_logger().exception("Failed to close environment workers")
 
     if reward_group is not None:
         reward_group.stop().wait()

@@ -127,8 +127,14 @@ def main(cfg) -> None:
         env=env_group,
     )
 
-    runner.init_workers()
-    runner.run()
+    try:
+        runner.init_workers()
+        runner.run()
+    finally:
+        try:
+            env_group.close().wait()
+        except Exception:
+            get_logger().exception("Failed to close environment workers")
 
 
 if __name__ == "__main__":

@@ -206,6 +206,26 @@ class EnvWorker(Worker):
         """Set the trajectory step used to correlate distributed events."""
         self._trajectory_step = global_step
 
+    def close(self, mode: str | None = None) -> None:
+        """Close train, eval, or all owned environments, attempting every close."""
+        if mode not in (None, "train", "eval"):
+            raise ValueError(f"Expected train, eval, or None; got {mode!r}")
+        for env_mode, envs in (
+            ("train", self.env_list),
+            ("eval", self.eval_env_list),
+        ):
+            if mode is not None and mode != env_mode:
+                continue
+            for env in envs:
+                close = get_env_attr(env, "close")
+                if callable(close):
+                    try:
+                        close()
+                    except Exception as exc:
+                        self.log_warning(
+                            f"Failed to close {env_mode} environment: {exc}"
+                        )
+
     def init_worker(self):
         # This is a barrier to ensure all envs' initial setup upon import is done
         # Essential for RealWorld env to ensure initial ROS node setup is done
@@ -1229,12 +1249,17 @@ class EnvWorker(Worker):
         rollout_channel: Channel,
         reward_channel: Channel | None,
     ):
-        env_metrics = await self._run_interact_once(
-            input_channel,
-            rollout_channel,
-            reward_channel,
-            cooperative_yield=False,
-        )
+        try:
+            env_metrics = await self._run_interact_once(
+                input_channel,
+                rollout_channel,
+                reward_channel,
+                cooperative_yield=False,
+            )
+        except BaseException:
+            if self.cfg.env.train.env_type == SupportedEnvType.VLNCE_SERVER.value:
+                self.close(mode="train")
+            raise
 
         for env in self.env_list:
             if self.train_enable_offload:
@@ -1244,6 +1269,19 @@ class EnvWorker(Worker):
 
     @Worker.timer("evaluate")
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
+        if (
+            self.enable_train
+            and self.cfg.env.train.env_type == SupportedEnvType.VLNCE_SERVER.value
+            and self._prefetched_train_bootstrap is None
+        ):
+            self.close(mode="train")
+        try:
+            return self._evaluate(input_channel, rollout_channel)
+        finally:
+            if self.cfg.env.eval.env_type == SupportedEnvType.VLNCE_SERVER.value:
+                self.close(mode="eval")
+
+    def _evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
             if not self.cfg.env.eval.auto_reset or eval_rollout_epoch == 0:
