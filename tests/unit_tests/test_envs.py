@@ -722,3 +722,83 @@ def test_config_needs_grpo_envs_to_stop_trajectories_at_their_first_done():
 
     with pytest.raises(AssertionError, match=r"env.train.envs.maniskill needs"):
         validate_env_training_cfg(cfg, layout, stage_num=1, actor_world_size=2)
+
+
+def test_ogbench_parallel_episodes_finish_independently(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    import gymnasium as gym
+
+    from rlinf.envs import get_env_cls
+
+    class StaggeredEnv(gym.Env):
+        def __init__(self, finish_after, success):
+            self.finish_after = finish_after
+            self.success = success
+            self.steps = 0
+            self.closed = False
+            self.observation_space = gym.spaces.Box(-1, 1, shape=(29,))
+            self.action_space = gym.spaces.Box(-1, 1, shape=(8,))
+
+        def reset(self, *, seed=None, options=None):
+            self.steps = 0
+            self.seed = seed
+            return np.full(29, seed, dtype=np.float32), {}
+
+        def step(self, action):
+            assert not self.closed and self.steps < self.finish_after
+            assert np.asarray(action).shape == (8,)
+            self.steps += 1
+            reward = float(self.finish_after if self.steps == 1 else 1)
+            return (
+                np.full(29, self.steps, dtype=np.float32),
+                reward,
+                self.steps == self.finish_after,
+                False,
+                {"success": self.success if self.steps == self.finish_after else 0},
+            )
+
+        def close(self):
+            self.closed = True
+
+    environments = [StaggeredEnv(1, 1), StaggeredEnv(3, 0)]
+    monkeypatch.setitem(
+        sys.modules,
+        "ogbench",
+        SimpleNamespace(
+            make_env_and_datasets=lambda *args, **kwargs: environments.pop(0)
+        ),
+    )
+    cfg = OmegaConf.create(
+        {
+            "task_name": "antmaze-large-navigate-singletask-task1-v0",
+            "is_eval": True,
+            "auto_reset": False,
+            "early_stop_on_done": False,
+            "seed": 10001,
+            "evaluation_seed_offset": 1000000,
+            "max_steps_per_rollout_epoch": 4,
+            "video_cfg": {"save_video": False},
+        }
+    )
+    env = get_env_cls("ogbench", cfg)(cfg, num_envs=2)
+    first, _ = env.reset()
+    assert first["states"].shape == (2, 29)
+    assert [item.seed for item in env.envs] == [1010001, 1010002]
+    states, rewards, terminated, truncated, infos = env.chunk_step(torch.zeros(2, 4, 8))
+    assert rewards.tolist() == [[1.0, 0.0, 0.0, 0.0], [3.0, 1.0, 1.0, 0.0]]
+    assert terminated.tolist() == [
+        [True, True, True, True],
+        [False, False, True, True],
+    ]
+    assert not truncated.any()
+    assert [item.steps for item in env.envs] == [1, 3]
+    torch.testing.assert_close(states[0]["states"][0], states[3]["states"][0])
+    episode = infos[-1]["episode"]
+    assert episode["success"].tolist() == [1.0, 0.0]
+    assert episode["return"].tolist() == [1.0, 5.0]
+    assert episode["episode_len"].tolist() == [1.0, 3.0]
+    env.close()
+    env.close()
+    assert all(item.closed for item in env.envs)

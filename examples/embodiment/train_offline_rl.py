@@ -53,10 +53,14 @@ def main(cfg) -> None:
         from rlinf.workers.actor.fsdp_iql_policy_worker import EmbodiedIQLFSDPPolicy
 
         actor_worker_cls = EmbodiedIQLFSDPPolicy
+    elif cfg.algorithm.loss_type == "qam":
+        from rlinf.workers.actor.qam_policy_worker import QAMPolicyWorker
+
+        actor_worker_cls = QAMPolicyWorker
     else:
         raise NotImplementedError(
             f"Unsupported offline algorithm.loss_type={cfg.algorithm.loss_type!r}. "
-            "Current train_offline_rl entry only supports 'offline_iql'."
+            "Expected 'offline_iql' or 'qam'."
         )
     actor_group = actor_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
@@ -74,7 +78,9 @@ def main(cfg) -> None:
 
         # Create rollout worker group
         rollout_placement = component_placement.get_strategy("rollout")
-        rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
+        rollout_group = MultiStepRolloutWorker.create_group(
+            cfg, sync_weights_for_eval=True
+        ).launch(
             cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
         )
 

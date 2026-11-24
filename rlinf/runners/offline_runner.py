@@ -253,6 +253,12 @@ class OfflineRunner:
     def run(self):
         start_step = self.global_step
         start_time = time.time()
+        if self.cfg.runner.only_eval:
+            self.update_rollout_weights()
+            metrics = {f"eval/{k}": v for k, v in self.evaluate().items()}
+            self.metric_logger.log(data=metrics, step=self.global_step)
+            self._finish_run()
+            return
         log_interval = int(self.cfg.runner.log_interval)
         if log_interval < 1:
             raise ValueError(f"runner.log_interval must be >= 1, got {log_interval}.")
