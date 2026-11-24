@@ -128,6 +128,12 @@ buffer, it bounds how much data piles up between the two sides. And because it
 hands off the oldest groups first, the data the actor sees ages at a rate the
 limits determine.
 
+.. note::
+
+   With the :doc:`session server <session_server>`, the buffer worker
+   receives only each group's metadata. The trajectories stay on the rollout
+   nodes. The limits and staleness rules below apply unchanged.
+
 The Two Limits
 --------------
 

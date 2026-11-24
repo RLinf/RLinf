@@ -187,9 +187,31 @@ def test_dapo_drops_constant_groups_and_fills_to_target():
     assert torch.all(filled.std(dim=-1, unbiased=False) > 0)
 
 
+def _rollout_geometry(env_world_size: int, actor_world_size: int):
+    from omegaconf import OmegaConf
+
+    from rlinf.data.schema.embodied_trajectory import RolloutGeometry
+    from rlinf.envs.layout import EnvLayout
+
+    env_cfg = OmegaConf.create(
+        {
+            "rollout_epoch": 1,
+            "max_steps_per_rollout_epoch": 1,
+            "max_episode_steps": 1,
+            "auto_reset": False,
+        }
+    )
+    return RolloutGeometry(
+        layout=EnvLayout(env_cfg, env_world_size, "env.train"),
+        stage_num=1,
+        num_action_chunks=1,
+        actor_world_size=actor_world_size,
+    )
+
+
 def test_trajectory_pool_moves_groups_across_sources():
     from rlinf.algorithms.pear_objective import DapoPending
-    from rlinf.data.schema.embodied_trajectory import RolloutGeometry, RolloutOutput
+    from rlinf.data.schema.embodied_trajectory import RolloutOutput
     from rlinf.data.schema.embodied_types import Trajectory
 
     def trajectory(rewards: list[float], width: int) -> Trajectory:
@@ -218,12 +240,7 @@ def test_trajectory_pool_moves_groups_across_sources():
             ),
             env=_Map(train=_Map(rollout_epoch=1)),
         ),
-        RolloutGeometry(
-            source_count=2,
-            chunk_count=1,
-            shards_per_source=1,
-            actor_world_size=2,
-        ),
+        _rollout_geometry(env_world_size=2, actor_world_size=2),
     )
     assert output._expected_accumulator_count == 2
     assert output._scope(SimpleNamespace(step_id=3, env_rank=1, stage_id=0)) == (3,)
@@ -261,7 +278,7 @@ def test_trajectory_pool_moves_groups_across_sources():
 
 def test_stream_sends_a_wave_before_the_slow_source_finishes():
     from rlinf.algorithms.pear_objective import TrajectoryDrain
-    from rlinf.data.schema.embodied_trajectory import RolloutGeometry, RolloutOutput
+    from rlinf.data.schema.embodied_trajectory import RolloutOutput
     from rlinf.data.schema.embodied_types import Trajectory
 
     def trajectory(rewards: list[float]) -> Trajectory:
@@ -291,12 +308,7 @@ def test_stream_sends_a_wave_before_the_slow_source_finishes():
             ),
             env=_Map(train=_Map(rollout_epoch=1)),
         ),
-        RolloutGeometry(
-            source_count=2,
-            chunk_count=1,
-            shards_per_source=1,
-            actor_world_size=2,
-        ),
+        _rollout_geometry(env_world_size=2, actor_world_size=2),
     )
     early = list(
         output._flush({(0, 0): Accumulator(trajectory([0.0, 1.0, 1.0, 0.0, 0.0, 0.0]))})
@@ -1178,7 +1190,7 @@ def test_incremental_episode_tokens_budget_and_topk_extraction():
 
 def test_dapo_staleness_and_clear_surplus():
     from rlinf.algorithms.pear_objective import is_trajectory_stale
-    from rlinf.data.schema.embodied_trajectory import RolloutGeometry, RolloutOutput
+    from rlinf.data.schema.embodied_trajectory import RolloutOutput
     from rlinf.data.schema.embodied_types import Trajectory
 
     stale_traj = Trajectory(
@@ -1217,9 +1229,7 @@ def test_dapo_staleness_and_clear_surplus():
             ),
             env=_Map(train=_Map(rollout_epoch=1)),
         ),
-        RolloutGeometry(
-            source_count=1, chunk_count=1, shards_per_source=1, actor_world_size=1
-        ),
+        _rollout_geometry(env_world_size=1, actor_world_size=1),
     )
     two_var_groups = Trajectory(
         rewards=torch.tensor([[[0.0], [1.0], [1.0], [0.0]]]),

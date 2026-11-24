@@ -683,6 +683,7 @@ class MegatronModelManager:
     ):
         """Default forward pass for GPT models with optional sequence packing."""
         pre_process = unwrap_model(model).pre_process
+        # Earlier pipeline stages return hidden states for the next stage.
         post_process = unwrap_model(model).post_process
         if packed_seq_params is not None:
             output = model(
@@ -692,7 +693,8 @@ class MegatronModelManager:
                 packed_seq_params=packed_seq_params,
                 **model_forward_kwargs,
             )
-            output /= temperature
+            if post_process:
+                output /= temperature
             if post_process and logits_processor is not None:
                 return logits_processor(output, **logits_processor_args)
             return output
@@ -712,7 +714,8 @@ class MegatronModelManager:
                 packed_seq_params=packed_seq_params,
                 **model_forward_kwargs,
             )
-            output_orig /= temperature
+            if post_process:
+                output_orig /= temperature
             if post_process and logits_processor is not None:
                 args = {
                     k: preprocess_packed_seqs(
@@ -760,7 +763,8 @@ class MegatronModelManager:
                 position_ids=new_position_ids,
                 **model_forward_kwargs,
             )
-            output_orig /= temperature
+            if post_process:
+                output_orig /= temperature
             if post_process and logits_processor is not None:
                 args = {
                     k: tensor_rm_left_padding(v, attention_mask, sequence_parallel)

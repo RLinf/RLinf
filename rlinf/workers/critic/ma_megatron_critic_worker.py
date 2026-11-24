@@ -176,7 +176,7 @@ class MAMegatronCritic(DynamicMegatronBatchMixin, MegatronCritic):
         compute_rollout_metrics: bool = True,
     ):
         """Pack and balance the rollout batch, then update fixed value targets."""
-        batch, results = self.get_batch(input_channel)
+        batch, results = self.get_step_batch(input_channel)
         assert "values" in batch, (
             "Multi-agent critic training requires fixed old values."
         )
@@ -249,7 +249,7 @@ class MAMegatronCritic(DynamicMegatronBatchMixin, MegatronCritic):
     ) -> None:
         """Compute token values and return each episode group through the channel."""
         assert not compute_ref_logprobs, "Critic inference does not compute logprobs."
-        batch, results = self.get_batch(input_channel)
+        batch, results = self.get_step_batch(input_channel)
         self._load_weight_and_optimizer()
         with self.worker_timer():
             values = self.inference_step(batch)

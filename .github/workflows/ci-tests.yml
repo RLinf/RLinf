@@ -98,6 +98,8 @@ jobs:
               - 'rlinf/workers/actor/fsdp_dagger_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_nft_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_prefix_off_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_refl_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_rlt_ac_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_rlt_td3_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'
@@ -108,6 +110,7 @@ jobs:
               - 'rlinf/models/diffusion/**'
               - 'rlinf/models/worldmodel/**'
               - 'rlinf/runners/*embodied*.py'
+              - 'rlinf/runners/refl_runner.py'
               - 'rlinf/runners/async_weight_sync_mixin.py'
               - 'rlinf/runners/*reward*.py'
               - 'examples/embodiment/*'
@@ -129,6 +132,7 @@ jobs:
               - 'toolkits/lerobot/**'
               - 'toolkits/dual_franka/**'
               - 'toolkits/cosmos3/**'
+              - 'toolkits/rlt/**'
               - 'toolkits/__init__.py'
             agent_reason_filter: &agent
               - *shared
@@ -158,6 +162,9 @@ jobs:
               - 'tests/e2e_tests/agent/**'
               - 'tests/e2e_tests/agentlightning/**'
               - 'tests/e2e_tests/reasoning/**'
+              - 'tests/unit_tests/test_session_server.py'
+              - 'tests/unit_tests/test_agentic_tokenizer.py'
+              - 'tests/unit_tests/mock_sglang_server.py'
               - '.github/workflows/agent-e2e-tests.yml'
             sft_filter: &sft
               - *shared
@@ -190,6 +197,11 @@ jobs:
               - '.github/workflows/offline_rl-e2e-tests.yml'
             unit_test_filter: &unit
               - *shared
+              - 'rlinf/workers/actor/fsdp_prefix_off_policy_worker.py'
+              - 'rlinf/workers/sft/fsdp_steam_sft_worker.py'
+              - 'rlinf/models/embodiment/mlp_policy/**'
+              - 'rlinf/models/embodiment/prefix_features.py'
+              - 'toolkits/rlt/**'
               - 'rlinf/robotics/**'
               - 'rlinf/models/embodiment/openpi/**'
               # Unit tests import env modules directly (robot task envs, the
