@@ -128,3 +128,45 @@ class ManiSkillOutputs(transforms.DataTransformFn):
         # For Libero, we only return the first 7 actions (since the rest is padding).
         # For your own dataset, replace `7` with the action dimension of your dataset.
         return {"actions": np.asarray(data["actions"][:, : self.output_action_dim])}
+
+
+@dataclasses.dataclass(frozen=True)
+class ManiSkillEEFInputs(ManiSkillInputs):
+    """Canonicalize raw EEF state/action rotations before pi05 normalization."""
+
+    def __call__(self, data: dict) -> dict:
+        import torch
+
+        from rlinf.utils.torch_rot6d import canonicalize_rot6d
+
+        inputs = super().__call__(data)
+        for key in ("state", "actions"):
+            if key not in inputs:
+                continue
+            value = np.asarray(inputs[key], dtype=np.float32).copy()
+            if value.shape[-1] != 10 or not np.isfinite(value).all():
+                raise ValueError(
+                    f"Expected finite 10-D EEF rot6d {key}, got {value.shape}."
+                )
+            value[..., 3:9] = canonicalize_rot6d(
+                torch.from_numpy(value[..., 3:9])
+            ).numpy()
+            inputs[key] = value
+        return inputs
+
+
+@dataclasses.dataclass(frozen=True)
+class ManiSkillEEFRot6dOutputs(transforms.DataTransformFn):
+    """Decode delta-rotation columns to normalized pd_ee_delta_pose commands.
+
+    Translation and gripper already use controller coordinates. The installed
+    ManiSkill controller scales root-aligned XYZ Euler angles by rot_lower.
+    """
+
+    def __call__(self, data: dict) -> dict:
+        import torch
+
+        from rlinf.utils.eef_rot6d import decode_eef_actions
+
+        action = np.asarray(data["actions"], dtype=np.float32)[..., :10]
+        return {"actions": decode_eef_actions(torch.from_numpy(action.copy())).numpy()}

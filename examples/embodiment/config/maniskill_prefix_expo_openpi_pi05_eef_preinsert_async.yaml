@@ -1,0 +1,250 @@
+defaults:
+- env/maniskill_peg_preinsert@env.train
+- env/maniskill_peg_preinsert@env.eval
+- hybrid_engines/fsdp@actor.fsdp_config
+- weight_syncer/patch_syncer@weight_syncer
+- override hydra/job_logging: stdout
+- _self_
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+  - file://${oc.env:EMBODIED_PATH}/config/
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-0
+    env: 1-1
+    rollout: 1-1
+runner:
+  task_type: embodied
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: maniskill_prefix_expo_openpi_pi05_eef_preinsert_async
+    logger_backends:
+    - tensorboard
+  max_epochs: 5000
+  max_steps: -1
+  only_eval: false
+  weight_sync_interval: 1
+  val_check_interval: 25
+  save_interval: 50
+  resume_dir: null
+  ckpt_path: null
+algorithm:
+  update_epoch: 20
+  rlt_schedule:
+    enable: true
+    max_updates_per_train_step: 400
+    warmup_min_size: 4000
+    warmup_post_collect_updates: 20000
+    train_every_episodes: 0
+    train_every_transitions: 1
+  group_size: 1
+  adv_type: embodied_sac
+  loss_type: prefix_off_policy
+  name: expo
+  loss_agg_func: token-mean
+  num_candidates: 8
+  num_edits: 8
+  rlt_transition_replay: false
+  actor_agg_q: mean
+  enable_drq: false
+  bootstrap_type: standard
+  bootstrap_time_limits: true
+  gamma: 0.99
+  tau: 0.005
+  backup_entropy: false
+  entropy_tuning:
+    alpha_type: exp
+    initial_alpha: 1.0e-05
+    target_entropy: null
+    optim:
+      lr: 0.0003
+      lr_scheduler: torch_constant
+      clip_grad: 1.0
+  replay_buffer:
+    enable_cache: true
+    cache_size: 50000
+    sample_window_size: 50000
+    max_num_samples: 50000
+    min_buffer_size: 4000
+    auto_save: false
+  target_update_freq: 1
+  target_update_type: q_head_only
+  train_actor_steps: 1000
+  critic_actor_ratio: 20
+  critic_subsample_size: 0
+env:
+  group_name: EnvGroup
+  train:
+    rollout_epoch: 1
+    total_num_envs: 8
+    seed: 2026
+    auto_reset: false
+    ignore_terminations: false
+    use_fixed_reset_state_ids: false
+    reward_mode: only_success
+    rlt_policy_switch:
+      enable: false
+    action_dim: 10
+    num_action_chunks: 10
+    ref_num_action_chunks: 10
+    video_cfg:
+      save_video: false
+      fps: 10
+      record_every: 1
+      video_base_dir: ./results/peg_preinsert/video/train
+    normalized_actions_stats_path: /path/to/eef_sft/norm_stats.json
+  eval:
+    rollout_epoch: 5
+    total_num_envs: 10
+    seed: 2026
+    group_size: 1
+    auto_reset: false
+    ignore_terminations: false
+    use_fixed_reset_state_ids: true
+    reward_mode: only_success
+    rlt_policy_switch:
+      enable: false
+    policy_mode: eval
+    action_dim: 10
+    num_action_chunks: 10
+    ref_num_action_chunks: 10
+    video_cfg:
+      save_video: true
+      fps: 10
+      record_every: 1
+      video_base_dir: ./results/peg_preinsert/video/eval
+    normalized_actions_stats_path: /path/to/eef_sft/norm_stats.json
+rollout:
+  group_name: RolloutGroup
+  enable_offload: false
+  pipeline_stage_num: 1
+  collect_transitions: true
+  collect_prev_infos: false
+  model:
+    model_type: prefix_policy
+    model_path: ''
+    precision: fp32
+    policy_setup: panda-eef-rot6d
+    action_dim: 10
+    num_action_chunks: 10
+    ref_num_action_chunks: 10
+    z_dim: 2048
+    proprio_dim: 10
+    actor_head:
+      name: eef_rot6d_residual_mlp
+      hidden_dims:
+      - 256
+      - 256
+      - 256
+      edit_scale: 0.02
+      initial_log_std: -1.5
+      norm_stats_path: /path/to/eef_sft/norm_stats.json
+    critic_head:
+      name: eef_rot6d_multi_q_mlp
+      hidden_dims:
+      - 256
+      - 256
+      - 256
+      num_q_heads: 10
+      norm_stats_path: /path/to/eef_sft/norm_stats.json
+    is_lora: false
+    lora_rank: 32
+  prefix_feature_model:
+    model_type: openpi
+    model_path: /path/to/eef_sft/actor
+    precision: bf16
+    num_action_chunks: 10
+    action_dim: 10
+    num_steps: 5
+    add_value_head: false
+    is_lora: false
+    lora_rank: 32
+    openpi_data:
+      repo_id: maniskill_peginsertionside_eef_rot6d
+      default_prompt: insert the peg in the hole
+      norm_stats_path: /path/to/eef_sft/norm_stats.json
+    prefix:
+      pool: masked_mean
+      image_only: false
+      action_space: normalized_model
+    openpi:
+      task: eval
+      config_name: pi05_maniskill_eef_rot6d
+      num_images_in_input: 2
+      action_chunk: 10
+      action_horizon: 10
+      action_env_dim: 10
+      num_steps: 5
+      model_action_dim: 32
+      paligemma_variant: gemma_2b
+      action_expert_variant: gemma_300m
+      max_token_len: 200
+      discrete_state_input: true
+      train_expert_only: false
+      add_value_head: false
+      detach_critic_input: true
+      use_rlt: false
+  enable_torch_compile: false
+  enable_cuda_graph: false
+  policy_routing: full_task
+  collect_final_values: true
+  generation_backend: huggingface
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 256
+  global_batch_size: 256
+  seed: 1234
+  enable_offload: false
+  model:
+    model_type: prefix_policy
+    precision: fp32
+    policy_setup: panda-eef-rot6d
+    action_dim: 10
+    num_action_chunks: 10
+    ref_num_action_chunks: 10
+    z_dim: 2048
+    proprio_dim: 10
+    actor_head:
+      name: eef_rot6d_residual_mlp
+      hidden_dims:
+      - 256
+      - 256
+      - 256
+      edit_scale: 0.02
+      initial_log_std: -1.5
+      norm_stats_path: /path/to/eef_sft/norm_stats.json
+    critic_head:
+      name: eef_rot6d_multi_q_mlp
+      hidden_dims:
+      - 256
+      - 256
+      - 256
+      num_q_heads: 10
+      norm_stats_path: /path/to/eef_sft/norm_stats.json
+    is_lora: false
+    lora_rank: 32
+  optim:
+    clip_grad: 1.0
+    lr: 0.0003
+    lr_scheduler: torch_constant
+  critic_optim:
+    clip_grad: 1.0
+    lr: 0.0003
+    lr_scheduler: torch_constant
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: no_shard
+    mixed_precision:
+      param_dtype: fp32
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+reward:
+  use_reward_model: false
+critic:
+  use_critic_model: false

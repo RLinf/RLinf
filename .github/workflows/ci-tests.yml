@@ -133,6 +133,8 @@ jobs:
               - 'toolkits/dual_franka/**'
               - 'toolkits/cosmos3/**'
               - 'toolkits/rlt/**'
+              - 'toolkits/lerobot/collect_maniskill_peg_preinsert.py'
+              - 'examples/embodiment/config/env/maniskill_peg_preinsert.yaml'
               - 'toolkits/__init__.py'
             agent_reason_filter: &agent
               - *shared
@@ -200,6 +202,8 @@ jobs:
               - 'rlinf/models/embodiment/prefix_features.py'
               - 'examples/embodiment/config/maniskill_prefix_expo*.yaml'
               - 'toolkits/rlt/**'
+              - 'toolkits/lerobot/collect_maniskill_peg_preinsert.py'
+              - 'examples/embodiment/config/env/maniskill_peg_preinsert.yaml'
               - 'rlinf/robotics/**'
               - 'rlinf/models/embodiment/openpi/**'
               # Unit tests import env modules directly (robot task envs, the

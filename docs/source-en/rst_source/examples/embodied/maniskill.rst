@@ -325,3 +325,69 @@ The animation below shows OpenVLA trained on ManiSkill3's multi-task benchmark w
      <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embody.mp4" type="video/mp4">
      Your browser does not support the video tag.
    </video>
+
+
+.. _maniskill-eef-preinsert:
+
+Train EEF Insertion From a Held Peg
+-----------------------------------
+
+Use the held-peg variant to study insertion without collecting a grasp on every episode. The task, expert collector, and EEF action adapters can run independently of EXPO. The online example composes them with the shared :doc:`Prefix framework <../../extending/flexrlt>` and a frozen pi05 SFT checkpoint.
+
+The environment preset is ``examples/embodiment/config/env/maniskill_peg_preinsert.yaml``. It uses NVIDIA GPU physics and GPU IK for initialization and execution. Its initial distribution differs from the full pick-and-insert task used by the STEAM example:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Field
+     - Preset
+   * - Geometry
+     - Fixed 210 × 40 × 40 mm peg; 42 × 42 mm hole, with 1 mm clearance on each side.
+   * - Initial pose
+     - Peg held by the closed gripper; tip 50 mm in front of the hole mouth, lateral and height offsets within ±30 mm, and XYZ orientation perturbations within ±3 degrees.
+   * - Cabinet
+     - Random planar position and yaw; GPU IK rejects unreachable placements. The hole remains centered in the cabinet.
+   * - Observation
+     - Third-person and wrist RGB images; world TCP xyz, column-based rot6d, and total finger opening (10 values); task prompt.
+   * - Dataset action
+     - Controller-normalized root-frame translation, rot6d of the delta rotation, and gripper command (10 values).
+   * - Reward and horizon
+     - 0/1 success reward, termination on success, and a 100-step limit at 10 Hz. Time-limit transitions retain bootstrap in EXPO.
+
+Collect and Replay Demonstrations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Activate the OpenPI/ManiSkill environment from :doc:`pi0` and download the Panda assets before collecting. From the repository root, run:
+
+.. code:: bash
+
+   PYTHONPATH="$PWD" python -m toolkits.lerobot.collect_maniskill_peg_preinsert \
+     --output /path/to/preinsert --num-episodes 400 --max-attempts 2000
+
+The collector aligns the held peg and advances it into the hole. Each successful trajectory is replayed from the same seed using its saved action labels. A demonstration is retained only when replay succeeds and the maximum state difference is at most 0.002. The output contains a LeRobot ``dataset/``, replay ``videos/``, per-episode ``traces/``, and a ``manifest.json`` recording accepted seeds and attempts. Set ``--render-backend pci:<GPU-PCI-address>`` when the renderer needs an explicit device.
+
+Recompute normalization from the new dataset before SFT:
+
+.. code:: bash
+
+   PYTHONPATH="$PWD" python toolkits/lerobot/calculate_norm_stats.py \
+     --config-name pi05_maniskill_eef_rot6d \
+     --repo-id /path/to/preinsert/dataset
+
+For an absolute dataset path, this writes ``norm_stats.json`` into that dataset directory. The ``pi05_maniskill_eef_rot6d`` transforms canonicalize state and action rotations before computing statistics or training. In ``examples/sft/config/maniskill_peg_preinsert_eef_sft_openpi_pi05.yaml``, set the base weights, dataset, and statistics paths, then follow :doc:`sft_openpi` to launch SFT. Measure the trained checkpoint's success rate before RL.
+
+Run EXPO With the EEF Checkpoint
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Set the model and statistics paths in ``examples/embodiment/config/maniskill_prefix_expo_openpi_pi05_eef_preinsert_async.yaml``. Use the same SFT statistics for the frozen model, both train/eval environment adapters, and both rollout/learner actor and critic heads. Then run:
+
+.. code:: bash
+
+   bash examples/embodiment/run_async.sh maniskill_prefix_expo_openpi_pi05_eef_preinsert_async
+
+The example executes the reference during warmup and then applies EXPO throughout the preinsert episode. Evaluation runs 50 episodes per evaluation cycle and saves videos. ``runner.val_check_interval`` and ``runner.save_interval`` count runner epochs, while ``prefix/update_step`` records critic minibatch updates at scheduling time; these counts are not interchangeable.
+
+Keep ``prefix.action_space: normalized_model`` paired with the environment's ``normalized_actions_stats_path``. For direct SFT evaluation and collection, leave ``normalized_actions_stats_path`` unset because those paths already decode the model's actions.
+
+This implementation uses Prefix MLP heads and requires new RL checkpoints. Its learning curves need validation before comparison with historical results from the standalone residual policy.

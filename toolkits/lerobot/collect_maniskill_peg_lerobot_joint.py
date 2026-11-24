@@ -402,6 +402,8 @@ def _create_dataset(
     fps: int,
     image_writer_threads: int,
     image_writer_processes: int,
+    state_dim: int = STATE_DIM,
+    action_dim: int = ACTION_DIM,
 ):
     try:
         try:  # lerobot >= 0.2 layout
@@ -428,12 +430,12 @@ def _create_dataset(
             },
             "state": {
                 "dtype": "float32",
-                "shape": (STATE_DIM,),
+                "shape": (state_dim,),
                 "names": ["state"],
             },
             "actions": {
                 "dtype": "float32",
-                "shape": (ACTION_DIM,),
+                "shape": (action_dim,),
                 "names": ["actions"],
             },
         },

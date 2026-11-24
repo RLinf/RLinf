@@ -410,7 +410,7 @@ actor objective、critic target 或下一动作的生成规则发生变化时，
 用冻结模型候选动作训练 EXPO
 ---------------------------
 
-如果希望策略从冻结 VLA 的候选动作及其小幅修正中选出执行动作，可以使用 EXPO。以 ``examples/embodiment/config/maniskill_prefix_expo_openpi_pi05_async.yaml`` 为起点：它使用现有 OpenPI Prefix 特征、随机 ``residual_mlp`` 编辑器和十个 ``multi_q_mlp`` critic，任务是 ManiSkill 关节动作控制的完整抓取插孔。
+EXPO 从冻结 VLA 生成的候选动作及其小幅修正中选择执行动作。以 ``examples/embodiment/config/maniskill_prefix_expo_openpi_pi05_async.yaml`` 为起点：它使用现有 OpenPI Prefix 特征、随机 ``residual_mlp`` 编辑器和十个 ``multi_q_mlp`` critic，任务是 ManiSkill 关节动作控制的完整抓取插孔。
 
 准备 OpenPI/ManiSkill 环境和两张 GPU，将 ``rollout.prefix_feature_model.model_path`` 与 ``rollout.prefix_feature_model.openpi_data.norm_stats_path`` 分别设为相互匹配的关节动作 SFT 检查点和归一化统计文件。在已激活的环境中运行：
 
@@ -418,25 +418,25 @@ actor objective、critic target 或下一动作的生成规则发生变化时，
 
    bash examples/embodiment/run_async.sh maniskill_prefix_expo_openpi_pi05_async
 
-命令会启动异步采集和训练，记录 TensorBoard 指标并保存评测视频。启动前可在示例中调整硬件放置、环境数量，以及按 epoch 设置的评测和保存间隔。这个示例演示通用 Prefix 接口；具体任务的编码器、动作表示和成功率需要单独验证。
+命令会启动异步采集和训练，记录 TensorBoard 指标并保存评测视频。启动前可在示例中调整硬件放置、环境数量，以及按 epoch 设置的评测和保存间隔。
 
 候选选择与参数更新
 ^^^^^^^^^^^^^^^^^^
 
-每个观测先由冻结模型采样 ``algorithm.num_candidates`` 个动作 chunk，再对前 ``algorithm.num_edits`` 个候选各做一次有界随机修正。示例将两个参数都设为八，因此共有十六个选项。选择器随机抽取两个 target critic，以二者的最小 Q 为每个选项打分，执行分数最高的 chunk。训练和评测都保留随机编辑和随机 critic 对选择。
+每个观测先由冻结模型采样 ``algorithm.num_candidates`` 个动作 chunk，再对前 ``algorithm.num_edits`` 个候选各做一次有界随机修正。示例将两个参数都设为八，因此共有十六个选项。选择器随机抽取两个 target critic，以二者的最小 Q 为每个选项打分，执行分数最高的 chunk。训练和评测都会随机修正候选动作，并随机抽取 critic 对。
 
-critic target 将一个执行 chunk 内的奖励相加，对下一状态价值只施加一次 ``gamma`` 折扣。下一动作由在线编辑器和 target critic 选出，再独立抽取另一对 target critic 计算该动作的 bootstrap 值。真正终止的 transition 停止 bootstrap；``algorithm.bootstrap_time_limits: true`` 时，超时继续 bootstrap。EXPO 要求 ``backup_entropy: false``，所有在线 critic 回归到同一个 target。
+critic target 将一个执行 chunk 内的奖励相加，下一状态价值只乘一次 ``gamma``。下一动作由在线编辑器和 target critic 选出，再独立抽取另一对 target critic 计算该动作的 bootstrap 值。真正终止的 transition 停止 bootstrap；``algorithm.bootstrap_time_limits: true`` 时，超时继续 bootstrap。EXPO 要求 ``backup_entropy: false``，所有在线 critic 回归到同一个 target。
 
-actor 对 replay 中实际执行的动作进行编辑，并最小化 ``alpha * log_prob - mean(Q)``，其中 Q 取全部在线 critic 的均值。温度训练使用相同的 replay 动作作为编辑条件。示例的 ``algorithm.entropy_tuning.initial_alpha`` 为 ``1e-5``。``target_entropy: null`` 时，对整个执行 chunk 的每个坐标累加 ``log(edit_scale_i) - 0.5`` 作为目标熵。十步、每步八维、尺度 ``0.02`` 对应约 ``-352.96``。编辑动作的概率密度同时计入 tanh 和尺度变换的 Jacobian。
+actor 修正 replay 中记录的实际执行动作，并最小化 ``alpha * log_prob - mean(Q)``，其中 Q 取全部在线 critic 的均值。温度训练使用相同的 replay 动作作为编辑条件。``target_entropy: null`` 时，对整个执行 chunk 的每个坐标累加 ``log(edit_scale_i) - 0.5`` 作为目标熵。编辑动作的概率密度同时计入 tanh 和尺度变换的 Jacobian。
 
 ``ref_chunk`` 和 ``candidates`` 使用环境适配器接受的动作坐标。OpenPI 沿用已有的 output transform 解码每个候选。``actor_head.edit_scale`` 使用同一坐标系，可配置为正标量或沿展平 chunk 重复的向量。``0.02`` 表示动作坐标上的修正上限，具体物理含义取决于环境控制器。
 
 采集、回放与检查点
 ^^^^^^^^^^^^^^^^^^
 
-设置 ``rollout.policy_routing: full_task`` 可采集完整任务，同时关闭 routing gate，并移除 ``expert_model`` 配置。示例在收集至少 4,000 个 chunk transition 并完成 20,000 次 learner 预热更新期间，执行冻结模型的参考动作。沿用 Prefix 原有调度，从预热开始，每二十次 critic 更新就执行一次 actor 和温度更新。预热后 rollout 启用 EXPO 选择，learner 每新增一个 transition 分配二十次 critic minibatch 更新。每次更新使用 256 个样本，Q head 数量不会乘进更新次数。每轮追赶更新的上限由 ``rlt_schedule.max_updates_per_train_step`` 控制。
+设置 ``rollout.policy_routing: full_task`` 可采集完整任务，同时关闭 routing gate，并移除 ``expert_model`` 配置。示例在收集至少 4,000 个 chunk transition 并完成 20,000 次 learner 预热更新期间，执行冻结模型的参考动作。沿用 Prefix 原有调度，从预热开始，每二十次 critic 更新就执行一次 actor 和温度更新。预热后 rollout 启用 EXPO 选择，replay 每新增一条 transition，learner 就增加二十次 critic 更新。更新次数与 Q head 数量无关。每轮追赶更新的上限由 ``rlt_schedule.max_updates_per_train_step`` 控制。
 
-EXPO 将特征调用扩展为 ``extract_prefix_obs(env_obs, num_candidates=K)``。适配器除原有字段外，还需返回形状为 ``[B, K, L, A]`` 的 ``candidates``，首个候选必须等于 ``ref_chunk``。OpenPI 在多次候选采样间复用当前观测的 Prefix cache。Rollout 保留实际执行长度，将当前与下一观测的候选都写入 replay，终止观测也走同一流程。其他算法继续使用原来的特征调用。EXPO 目标函数只依赖这些张量、奖励和终止标志；任务初始化、控制器解码和几何信息属于环境适配器。
+EXPO 将特征调用扩展为 ``extract_prefix_obs(env_obs, num_candidates=K)``。适配器除原有字段外，还需返回形状为 ``[B, K, L, A]`` 的 ``candidates``，首个候选必须等于 ``ref_chunk``。Rollout 保留实际执行长度，将当前与下一观测的候选都写入 replay，包括终止观测。EXPO 目标函数只依赖这些张量、奖励和终止标志；任务初始化、控制器解码和几何信息属于环境适配器。
 
 Rollout 权重同步会一起发布在线编辑器和 target critic。检查点沿用已有 SAC 保存流程；恢复训练使用 ``runner.resume_dir``。单独评测前，从同一个 actor 检查点目录中读取在线模型和 target 模型，合并所需权重：
 
@@ -463,7 +463,9 @@ Rollout 权重同步会一起发布在线编辑器和 target critic。检查点�
 
 运行 ``evaluations/eval_embodied_agent.py`` 时，设置 ``runner.only_eval: true``，并将 ``runner.ckpt_path`` 指向生成的 ``expo_eval.pt``。如果只加载在线模型权重，候选选择使用的 critic 就会与 rollout 不同。
 
-其他算法若需要这些行为，可在 requirements 中声明 ``trains_entropy_temperature`` 或 ``rollout_uses_target_critic``，覆盖 ``alpha_loss`` 实现温度训练，覆盖 ``predict_action_batch`` 实现 rollout 选择器。Replay、优化器、target 更新与权重同步仍由现有 Prefix worker 管理。
+其他算法若需要这些行为，可在 requirements 中声明 ``trains_entropy_temperature`` 或 ``rollout_uses_target_critic``，覆盖 ``alpha_loss`` 实现温度训练，覆盖 ``predict_action_batch`` 实现 rollout 选择器，覆盖 ``rollout_state_dict`` 组合所需权重。Replay、优化器、target 更新与权重同步仍由现有 Prefix worker 管理。
 
-实现位置与检查点
-----------------
+EEF 旋转输入
+^^^^^^^^^^^^
+
+使用归一化 EEF rot6d 动作时，注册的 head 应先撤销旋转归一化，再做施密特正交化后送入网络。内置的 ``eef_rot6d_residual_mlp`` 和 ``eef_rot6d_multi_q_mlp`` head 提供此转换，平移和夹爪输入保持归一化。编辑器将有界残差加到原始归一化参考动作上，熵在旋转投影前计算。``prefix.action_space: normalized_model`` 需与环境的 ``normalized_actions_stats_path`` 配套。任务和配置见 :ref:`maniskill-eef-preinsert`。

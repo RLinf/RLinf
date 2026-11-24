@@ -77,6 +77,12 @@ class ResidualMLPActor(PrefixActorHead):
             torch.tensor(expand_edit_scales(cfg.get("edit_scale", 0.02), action_dim)),
         )
 
+    def editor_inputs(
+        self, state: torch.Tensor, reference: torch.Tensor
+    ) -> torch.Tensor:
+        """Encode conditioning inputs while preserving the reference used for addition."""
+        return torch.cat((state.detach(), reference), -1)
+
     def forward(
         self,
         state: torch.Tensor,
@@ -90,9 +96,7 @@ class ResidualMLPActor(PrefixActorHead):
         """Return composed actions and per-coordinate log densities of the edits."""
         if apply_reference_dropout and reference_dropout_prob:
             raise ValueError("Residual edits require the unmodified reference action.")
-        mean, log_std = self.editor(torch.cat((state.detach(), reference), -1)).chunk(
-            2, -1
-        )
+        mean, log_std = self.editor(self.editor_inputs(state, reference)).chunk(2, -1)
         log_std = log_std.clamp(-5, 2)
         noise = torch.zeros_like(mean) if deterministic else torch.randn_like(mean)
         raw = mean + log_std.exp() * noise

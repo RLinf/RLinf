@@ -71,6 +71,14 @@ class OpenPiPrefixMixin:
         """Return the observations consumed by the existing RLT policies."""
         return self.extract_prefix_obs(env_obs)
 
+    def prefix_action_chunk(
+        self, actions: torch.Tensor, state: torch.Tensor
+    ) -> torch.Tensor:
+        """Return proposals in the coordinates accepted by the environment adapter."""
+        if self.rlt_cfg.prefix_action_space == "normalized_model":
+            return actions[..., : self.action_env_dim]
+        return self.output_transform({"actions": actions, "state": state})["actions"]
+
     @torch.no_grad()
     def extract_prefix_obs(
         self, env_obs: dict[str, Any], *, num_candidates: int | None = None
@@ -97,9 +105,7 @@ class OpenPiPrefixMixin:
             prefix_mask,
             kv_cache,
         )
-        ref_chunk = self.output_transform(
-            {"actions": model_actions, "state": observation.state}
-        )["actions"]
+        ref_chunk = self.prefix_action_chunk(model_actions, observation.state)
 
         raw_proprio = self._select_configured_state(env_obs["states"])
         if "maniskill" in self.config_name.lower():
@@ -125,9 +131,7 @@ class OpenPiPrefixMixin:
                 sampled = self._sample_actions_from_prefix_cache(
                     prepared_observation, prefix_mask, kv_cache
                 )
-                decoded = self.output_transform(
-                    {"actions": sampled, "state": observation.state}
-                )["actions"]
+                decoded = self.prefix_action_chunk(sampled, observation.state)
                 proposals.append(decoded.to(device=z_rl.device, dtype=torch.float32))
             result["candidates"] = torch.stack(proposals, dim=1)
         return result

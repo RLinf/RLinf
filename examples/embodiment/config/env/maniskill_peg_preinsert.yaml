@@ -1,0 +1,46 @@
+env_type: maniskill_rlt
+total_num_envs: 1
+wrap_obs_mode: openpi_eef_rot6d
+use_full_state: false
+auto_reset: false
+ignore_terminations: false
+use_rel_reward: false
+reward_mode: only_success
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: false
+max_steps_per_rollout_epoch: 100
+max_episode_steps: 100
+enable_offload: false
+rlt_policy_switch:
+  enable: false
+video_cfg:
+  save_video: true
+  info_on_video: true
+  fps: 10
+  record_every: 1
+  video_base_dir: ./results/peg_preinsert/video
+init_params:
+  id: PegInsertionSideHardClearance-v1
+  num_envs: 1
+  obs_mode: rgb
+  control_mode: pd_ee_delta_pose
+  sim_backend: gpu
+  reward_mode: sparse
+  max_episode_steps: 100
+  reconfiguration_freq: 0
+  fixed_peg_half_length: 0.105
+  fixed_peg_half_width: 0.02
+  preinsert:
+    gap_m: 0.05
+    lateral_jitter_m: 0.03
+    rotation_jitter_deg: 3.0
+  sim_config:
+    sim_freq: 100
+    control_freq: 10
+  sensor_configs:
+    shader_pack: default
+    width: 384
+    height: 384
+  render_mode: rgb_array
+  hole_clearance: 0.001
