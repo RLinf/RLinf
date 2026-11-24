@@ -18,7 +18,6 @@ import threading
 import time
 
 from rlinf.scheduler import Worker
-from rlinf.utils.metric_utils import compute_split_num
 from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
 
 
@@ -105,9 +104,7 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             return super()._archive_pending_lerobot_episodes()
 
     def _recv_rollout_thread_main(self, input_channel):
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
+        split_num = self._rollout_geometry.shards_per_actor()
         if self._cosmos_training is None:
             while not self.should_stop:
                 for _ in range(split_num):
