@@ -786,9 +786,19 @@ class MegatronModelManager:
         pre_process = unwrap_model(model).pre_process
         post_process = unwrap_model(model).post_process
         if packed_seq_params is not None:
+            if model_packs_inputs(model):
+                input_ids, attention_mask, packed_seq_params = (
+                    prepare_full_model_inputs(
+                        input_ids, attention_mask, pre_process=pre_process
+                    )
+                )
+            if post_process and mtp_labels is not None:
+                model_forward_kwargs["labels"] = mtp_labels
+                if mtp_loss_mask is not None:
+                    model_forward_kwargs["loss_mask"] = mtp_loss_mask.float()
             output = model(
                 input_ids=input_ids.contiguous(),
-                attention_mask=None,
+                attention_mask=attention_mask,
                 position_ids=position_ids,
                 packed_seq_params=packed_seq_params,
                 **model_forward_kwargs,

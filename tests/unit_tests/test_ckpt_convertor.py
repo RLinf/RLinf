@@ -2203,8 +2203,12 @@ def test_inference_config_preserves_explicit_layout_overrides():
 
 
 def test_qwen35_rejects_text_only_architecture(tmp_path):
+    import transformers
     from omegaconf import OmegaConf
-    from transformers import Qwen3_5TextConfig
+
+    Qwen3_5TextConfig = getattr(transformers, "Qwen3_5TextConfig", None)
+    if Qwen3_5TextConfig is None:
+        pytest.skip("transformers does not define Qwen3_5TextConfig")
 
     from rlinf.config import validate_model_cfg_by_hf_config
 

@@ -36,6 +36,7 @@ from rlinf.data.schema.actor_batch import (
 )
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.hybrid_engines.megatron.utils import (
+    model_packs_inputs,
     postprocess_ragged_seqs,
     preprocess_ragged_seqs,
 )
@@ -115,15 +116,25 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 for row in batch["input_ids"]
             ]
             lengths = [len(row) for row in rows]
-            input_ids, packed_params = preprocess_ragged_seqs(rows)
-            position_ids, _ = preprocess_ragged_seqs(
-                [torch.arange(n, device=input_ids.device) for n in lengths]
-            )
             labels = [torch.cat((row[1:], row.new_zeros(1))) for row in rows]
-            label, _ = preprocess_ragged_seqs(labels)
+            label, packed_params = preprocess_ragged_seqs(labels)
             label_mask, _ = preprocess_ragged_seqs(
-                [torch.arange(n, device=input_ids.device) < n - 1 for n in lengths]
+                [torch.arange(n, device=rows[0].device) < n - 1 for n in lengths]
             )
+            attention_mask = None
+            if model_packs_inputs(model):
+                input_ids = torch.nn.utils.rnn.pad_sequence(rows, batch_first=True)
+                position_ids = torch.arange(input_ids.shape[1], device=input_ids.device)
+                attention_mask = (
+                    position_ids[None, :]
+                    < torch.tensor(lengths, device=input_ids.device)[:, None]
+                )
+                position_ids = position_ids.expand_as(input_ids)
+            else:
+                input_ids, _ = preprocess_ragged_seqs(rows)
+                position_ids, _ = preprocess_ragged_seqs(
+                    [torch.arange(n, device=input_ids.device) for n in lengths]
+                )
 
             def logits_processor(logits, label, label_mask):
                 assert logits.shape[:2] == label.shape[:2]
@@ -149,12 +160,17 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             train_mtp = self.return_loss and self.trains_mtp
             mtp_mask = None
             if train_mtp:
-                mtp_mask = torch.zeros_like(attention_mask)
-                mtp_mask[:, :-1] = batch["response_mask"][:, 1:]
+                response_rows = [
+                    mask.to(device=rows[0].device, dtype=torch.float32)
+                    for mask in batch["response_mask"]
+                ]
+                mtp_mask, _ = preprocess_ragged_seqs(
+                    [torch.cat((mask[1:], mask.new_zeros(1))) for mask in response_rows]
+                )
             output = self.custom_forward(
                 model,
                 input_ids,
-                None,
+                attention_mask,
                 position_ids,
                 sequence_parallel=self.transformer_config.sequence_parallel,
                 logits_processor=logits_processor,

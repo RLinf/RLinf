@@ -167,7 +167,10 @@ def test_custom_forward_preserves_tokens_labels_and_gradients(
 
 @pytest.mark.parametrize("cp", [1, 2, 4])
 @pytest.mark.parametrize("padding", [None, 16, 32])
-def test_bridge_multimodal_forward_splits_once_on_cpu(monkeypatch, cp, padding):
+@pytest.mark.parametrize("prepacked", [False, True])
+def test_bridge_multimodal_forward_splits_once_on_cpu(
+    monkeypatch, cp, padding, prepacked
+):
     pytest.importorskip("megatron.bridge")
     from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 
@@ -204,9 +207,24 @@ def test_bridge_multimodal_forward_splits_once_on_cpu(monkeypatch, cp, padding):
         model.square_merge_size = 4
         model.language_model = LanguageBackend()
         tokens, model_mask, params = prepare_full_model_inputs(ids, mask, True, padding)
-        output = model(
-            input_ids=tokens, attention_mask=model_mask, packed_seq_params=params
-        )
+        if prepacked:
+            from rlinf.hybrid_engines.megatron.megatron_model_manager import (
+                MegatronModelManager,
+            )
+
+            model.post_process = True
+            output = MegatronModelManager.custom_forward(
+                model,
+                tokens,
+                model_mask,
+                torch.zeros_like(tokens),
+                sequence_parallel=False,
+                packed_seq_params=params,
+            )
+        else:
+            output = model(
+                input_ids=tokens, attention_mask=model_mask, packed_seq_params=params
+            )
         expected = _expected_shard(ids, mask, 2, cp, rank)
         if padding is not None:
             expected = torch.nn.functional.pad(
@@ -445,20 +463,24 @@ def test_mtp_postprocess_returns_logits_and_auxiliary_gradients(
         assert torch.allclose(backbone.grad, expected_backbone_grad)
 
 
+@pytest.mark.parametrize("internal", [False, True])
+@pytest.mark.parametrize("cp", [1, 2])
 @pytest.mark.parametrize("multi_turn", [False, True])
 @pytest.mark.parametrize("training,mtp_layers", [(False, 1), (True, 0), (True, 1)])
 def test_actor_passes_response_only_mtp_targets(
-    monkeypatch, multi_turn, training, mtp_layers
+    monkeypatch, internal, cp, multi_turn, training, mtp_layers
 ):
     pytest.importorskip("megatron.bridge")
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
     from omegaconf import OmegaConf
 
     from rlinf.hybrid_engines.megatron.utils import preprocess_packed_seqs
     from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
     from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 
-    _parallel_groups(monkeypatch, 1, 1, 0)
+    _parallel_groups(monkeypatch, 1, cp, cp - 1)
     monkeypatch.setattr(torch.Tensor, "cuda", lambda tensor, *args, **kwargs: tensor)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: torch.device("cpu"))
     ids, mask = _batch()
     response = torch.zeros_like(mask)
     response[0, 10:16] = True
@@ -486,14 +508,22 @@ def test_actor_passes_response_only_mtp_targets(
     class Checked(Exception):
         pass
 
-    class Backend(torch.nn.Module):
+    class Backend(Qwen3VLModel if internal else torch.nn.Module):
         pre_process = post_process = True
 
         def __init__(self):
-            super().__init__()
+            torch.nn.Module.__init__(self)
             self.weight = torch.nn.Parameter(torch.tensor(1.0))
 
         def forward(self, **kwargs):
+            if internal:
+                for i, (row, valid) in enumerate(zip(ids, mask)):
+                    assert torch.equal(
+                        kwargs["input_ids"][i, : valid.sum()], row[valid]
+                    )
+            else:
+                expected_ids, _ = preprocess_packed_seqs(ids, mask)
+                assert torch.equal(kwargs["input_ids"], expected_ids)
             if training and mtp_layers:
                 assert torch.equal(kwargs["loss_mask"], expected_mask.float())
                 valid = expected_mask.bool()
@@ -509,6 +539,13 @@ def test_actor_passes_response_only_mtp_targets(
         "response_mask": response,
         "position_ids": torch.zeros_like(ids),
     }
+    if multi_turn:
+        from rlinf.data.schema.actor_batch import DynamicActorBatch
+
+        batch = DynamicActorBatch(
+            input_ids=[row[valid] for row, valid in zip(ids, mask)],
+            response_mask=[row[valid] for row, valid in zip(response, mask)],
+        )
     with pytest.raises(Checked):
         actor.get_forward_step_func()(iter([batch]), Backend())
 
@@ -654,6 +691,7 @@ def test_actor_mtp_opt_in_is_independent_of_checkpoint_layers(
     actor = mtp_configured_actor
     _parallel_groups(monkeypatch, 1, 1, 0)
     monkeypatch.setattr(torch.Tensor, "cuda", lambda tensor, *args, **kwargs: tensor)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: torch.device("cpu"))
     actor.return_loss = True
     actor.variable_seq_lengths = True
     actor.response_len = 6
@@ -683,6 +721,13 @@ def test_actor_mtp_opt_in_is_independent_of_checkpoint_layers(
         "response_mask": mask,
         "position_ids": torch.zeros_like(ids),
     }
+    if multi_turn:
+        from rlinf.data.schema.actor_batch import DynamicActorBatch
+
+        batch = DynamicActorBatch(
+            input_ids=[row[valid] for row, valid in zip(ids, mask)],
+            response_mask=[row[valid] for row, valid in zip(mask, mask)],
+        )
     actor_cls = MAMegatronActor if multi_turn else MegatronActor
     with pytest.raises(Checked):
         actor_cls.get_forward_step_func(actor)(iter([batch]), Backend())
@@ -893,6 +938,7 @@ def test_bridge_shared_embeddings_across_virtual_stages(tmp_path):
 
 @pytest.mark.parametrize("tied,pp", [(False, 1), (False, 2), (True, 1)])
 def test_bridge_shared_embeddings_no_broadcast_when_unneeded(tied, pp):
+    pytest.importorskip("megatron.bridge")
     from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 
     from rlinf.hybrid_engines.megatron.megatron_model_manager import (
@@ -913,6 +959,7 @@ def test_bridge_shared_embeddings_no_broadcast_when_unneeded(tied, pp):
 
 
 def test_bridge_shared_embeddings_restores_loader_after_error():
+    pytest.importorskip("megatron.bridge")
     from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 
     from rlinf.hybrid_engines.megatron.megatron_model_manager import (
@@ -924,3 +971,86 @@ def test_bridge_shared_embeddings_restores_loader_after_error():
         with _bridge_shared_embeddings():
             raise RuntimeError("load failed")
     assert MegatronModelBridge._broadcast_shared_embeddings is original
+
+
+@pytest.mark.parametrize("internal", [False, True])
+@pytest.mark.parametrize("tp,cp", [(1, 1), (2, 1), (1, 2), (2, 2), (2, 4)])
+@pytest.mark.parametrize(
+    "pre_process,post_process",
+    [(True, True), (True, False), (False, True), (False, False)],
+)
+@pytest.mark.parametrize("mtp", [False, True])
+def test_ragged_forward_preserves_packing_and_mtp_contract(
+    monkeypatch, internal, tp, cp, pre_process, post_process, mtp
+):
+    pytest.importorskip("megatron.bridge")
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
+        preprocess_packed_seqs as bridge_pack,
+    )
+
+    from rlinf.hybrid_engines.megatron.megatron_model_manager import (
+        MegatronModelManager,
+    )
+    from rlinf.hybrid_engines.megatron.utils import preprocess_ragged_seqs
+
+    rows = [torch.tensor([11]), torch.arange(21, 28), torch.arange(31, 44)]
+    labels = [torch.cat((row[1:], row.new_zeros(1))) for row in rows]
+    masks = [
+        torch.zeros(1),
+        torch.tensor([0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0]),
+        torch.zeros(13),
+    ]
+    dense = torch.nn.utils.rnn.pad_sequence(rows, batch_first=True)
+    valid = (
+        torch.arange(dense.shape[1])[None, :]
+        < torch.tensor([len(r) for r in rows])[:, None]
+    )
+    for rank in range(cp):
+        groups = _parallel_groups(monkeypatch, tp, cp, rank)
+        local, params = preprocess_ragged_seqs(rows)
+        local_labels, _ = preprocess_ragged_seqs(labels)
+        local_mask, _ = preprocess_ragged_seqs(masks)
+
+        class Backend(Qwen3VLModel if internal else torch.nn.Module):
+            def __init__(self):
+                torch.nn.Module.__init__(self)
+                self.pre_process = pre_process
+                self.post_process = post_process
+                self.weight = torch.nn.Parameter(torch.tensor(2.0))
+
+            def forward(self, input_ids, attention_mask, packed_seq_params, **kwargs):
+                if internal:
+                    for i, row in enumerate(rows):
+                        assert torch.equal(input_ids[i, : len(row)], row)
+                    input_ids, _ = bridge_pack(
+                        input_ids, attention_mask, pg_collection=groups
+                    )
+                else:
+                    assert attention_mask is None
+                assert torch.equal(input_ids, local)
+                assert torch.equal(
+                    packed_seq_params.cu_seqlens_q_padded, params.cu_seqlens_q_padded
+                )
+                if post_process and mtp:
+                    assert torch.equal(kwargs["labels"], local_labels)
+                    assert torch.equal(kwargs["loss_mask"], local_mask)
+                    assert kwargs["loss_mask"].dtype == torch.float32
+                else:
+                    assert "labels" not in kwargs and "loss_mask" not in kwargs
+                return input_ids.float().unsqueeze(-1) * self.weight
+
+        model = Backend()
+        output = MegatronModelManager.custom_forward(
+            model,
+            dense if internal else local,
+            valid if internal else None,
+            torch.zeros_like(dense if internal else local),
+            sequence_parallel=False,
+            packed_seq_params=params,
+            mtp_labels=local_labels if mtp else None,
+            mtp_loss_mask=local_mask.to(torch.bfloat16) if mtp else None,
+        )
+        assert torch.equal(output[..., 0], local.float() * 2)
+        output.sum().backward()
+        assert model.weight.grad.item() == local.sum().item()
