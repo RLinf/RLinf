@@ -4311,6 +4311,7 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
 def test_rollout_runs_one_forward_pass_per_observation_format():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.train_layout = EnvLayout(OmegaConf.create({}), 3, "env.train")
+    rollout.env_decoupled_mode = False
     rollout.collect_transitions = False
     rollout.enable_rlt = False
     rollout.expert_model = None
@@ -4349,6 +4350,7 @@ def test_rollout_runs_one_forward_pass_per_observation_format():
 def test_rollout_sends_different_action_widths_separately():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.train_layout = EnvLayout(OmegaConf.create({}), 2, "env.train")
+    rollout.env_decoupled_mode = False
     rollout.collect_transitions = False
     rollout.enable_rlt = False
     rollout.expert_model = None
@@ -4398,6 +4400,7 @@ def test_rollout_passes_env_name_for_model_envs_and_isolates_passes():
         "env.train",
     )
     rollout._model_env_names = frozenset({"libero", "robolab"})
+    rollout.env_decoupled_mode = False
     rollout.collect_transitions = False
     rollout.enable_rlt = False
     rollout.expert_model = None
@@ -4462,6 +4465,7 @@ def _record_predictions(calls: list):
 def test_rollout_keeps_envs_with_different_policy_fields_in_separate_forward_passes():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.train_layout = _policy_field_layout("env.train")
+    rollout.env_decoupled_mode = False
     rollout.collect_transitions = False
     rollout.enable_rlt = False
     rollout.expert_model = None
@@ -4593,6 +4597,181 @@ def test_decoupled_eval_runs_one_forward_pass_per_env_policy_fields():
     # Actions go back in shard order, matching the recorded routes.
     assert sent["data"].squeeze(-1).tolist() == [1.0, 0.0, 0.0]
     assert sent["split_sizes"] == [1, 2]
+
+
+def test_decoupled_rollout_and_eval_bucket_different_action_widths():
+    rollout = _eval_rollout(decoupled=True)
+    rollout.train_layout = rollout.eval_layout
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
+    rollout._model_env_names = {"libero", "maniskill"}
+    rollout.expert_model = None
+    rollout.enable_dagger = False
+    rollout.collect_transitions = False
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
+    rollout._publish_env_parts = Mock()
+    rollout._build_policy_output = lambda actions, result: PolicyOutput(
+        forward_inputs={"action": actions}
+    )
+
+    def predict(obs, **kwargs):
+        batch = obs["states"].shape[0]
+        width = 7 if kwargs["policy_kwargs"].get("env_name") == "libero" else 14
+        return torch.full((batch, 2, width), float(width)), {}
+
+    rollout._predict_rollout_actions = predict
+    sent_calls: list[tuple[list[str], tuple[int, ...], list[int]]] = []
+
+    def record_send(**kwargs):
+        tag = kwargs["tag"]
+        sent_calls.append(
+            (
+                list(rollout.batch_router[tag]),
+                tuple(kwargs["data"].shape),
+                list(kwargs["split_sizes"]),
+            )
+        )
+        rollout.batch_router[tag] = []
+
+    rollout.send_to_recorded_batch_routes = Mock(side_effect=record_send)
+
+    # Decoupled training step (_serve_policy_inputs with peer_ranks=None)
+    rollout.batch_router = {
+        "policy": ["0_0_train_policy", "1_0_train_policy"],
+        "rollout_results": ["1_0_eval_rollout_results", "0_0_eval_rollout_results"],
+    }
+    requests = [
+        PolicyInput(
+            obs={"states": torch.zeros(2, 2)},
+            sources=[TrajectorySource(TrajectoryKey(0, 0, rank, 0, 0), 2)],
+            request_sizes=[2],
+        )
+        for rank in (0, 1)
+    ]
+    rollout._serve_policy_inputs(
+        requests, Mock(), Mock(), stage_id=0, split_sizes=[2, 2], peer_ranks=None
+    )
+    assert rollout.batch_router["policy"] == []
+    assert sent_calls == [
+        (["0_0_train_policy"], (2, 2, 7), [2]),
+        (["1_0_train_policy"], (2, 2, 14), [2]),
+    ]
+
+    # Decoupled evaluation with different action widths
+    sent_calls.clear()
+    shards = [
+        {"obs": {"states": torch.zeros(1, 2)}},
+        {"obs": {"states": torch.zeros(2, 2)}},
+    ]
+    rollout.recv_from_and_record_batch_routes_with_timeout = AsyncMock(
+        side_effect=[(shards, [1, 2]), _StopServing()]
+    )
+    with pytest.raises(_StopServing):
+        asyncio.run(_unwrapped_evaluate()(rollout, Mock(), Mock()))
+
+    assert rollout.batch_router["rollout_results"] == []
+    assert sent_calls == [
+        (["1_0_eval_rollout_results"], (1, 2, 14), [1]),
+        (["0_0_eval_rollout_results"], (2, 2, 7), [2]),
+    ]
+
+
+def test_env_interact_step_separates_valid_action_mask_from_executed_mask():
+    from rlinf.workers.env.env_worker import EnvWorker
+
+    def _run(
+        model_type: str,
+        info_payload: dict,
+        prev_logprobs: torch.Tensor,
+        *,
+        enable_online_lerobot: bool = False,
+    ):
+        worker = object.__new__(EnvWorker)
+        worker.train_assignment = SimpleNamespace(
+            name=None,
+            cfg=OmegaConf.create(
+                {
+                    "env_type": "libero",
+                    "auto_reset": False,
+                    "ignore_terminations": False,
+                }
+            ),
+        )
+        worker.model_cfg = OmegaConf.create(
+            {
+                "model_type": model_type,
+                "num_action_chunks": 4,
+                "action_dim": 7,
+            }
+        )
+        worker.enable_online_lerobot = enable_online_lerobot
+        worker.use_external_reward_model = False
+        worker._env_action_dim = lambda name: 7
+        worker.env_list = [
+            SimpleNamespace(
+                chunk_step=lambda actions: (
+                    [{"states": torch.zeros(2, 8)}],
+                    torch.zeros(2, 4),
+                    torch.zeros(2, 4, dtype=torch.bool),
+                    torch.zeros(2, 4, dtype=torch.bool),
+                    [dict(info_payload)],
+                )
+            )
+        ]
+        interact = EnvWorker.env_interact_step
+        while hasattr(interact, "__wrapped__"):
+            interact = interact.__wrapped__
+        env_output, _, payload = interact(worker, torch.zeros(2, 4, 7), stage_id=0)
+        step = TrajectoryStep.from_parts(
+            PolicyPart(
+                sources=[TrajectorySource(TrajectoryKey(0, 0, 0, 0, 0), 2)],
+                obs={},
+                output=PolicyOutput(
+                    prev_logprobs=prev_logprobs.clone(),
+                    forward_inputs={"action": torch.zeros(2, 28)},
+                ),
+            ),
+            EnvPart(
+                sources=[TrajectorySource(TrajectoryKey(0, 0, 0, 0, 0), 2)],
+                transition=env_output.transition,
+            ),
+            rewards=torch.zeros(2, 4),
+            collect_prev_infos=True,
+            collect_transitions=False,
+            enable_rlt=False,
+            include_final_value=False,
+        )
+        return env_output, payload, step
+
+    mask = torch.tensor(
+        [[True, True, False, False], [True, True, True, True]], dtype=torch.bool
+    )
+    # 1. valid_action_mask never promotes into executed_mask, so 2D logprobs do not crash
+    # and online LeRobot still receives valid_action_mask in chunk_step_payload.
+    out_oft, payload_oft, step_oft = _run(
+        "openvla_oft",
+        {"valid_action_mask": mask},
+        torch.full((2, 28), -1.0),
+        enable_online_lerobot=True,
+    )
+    assert out_oft.transition.executed_mask is None
+    assert torch.equal(payload_oft["valid_action_mask"], mask)
+    assert step_oft.prev_logprobs.sum().item() == -56.0
+
+    # 2. valid_action_mask also leaves 3D logprobs untouched.
+    out_3d, _, step_3d = _run(
+        "gr00t", {"valid_action_mask": mask}, torch.full((2, 4, 7), -1.0)
+    )
+    assert out_3d.transition.executed_mask is None
+    assert step_3d.prev_logprobs[0].sum().item() == -28.0
+
+    # 3. Explicit executed_mask (e.g., SimpleEnv + Psi0) still passes through unchanged.
+    out_psi0, _, step_psi0 = _run(
+        "psi0", {"executed_mask": mask}, torch.full((2, 4, 7), -1.0)
+    )
+    assert torch.equal(out_psi0.transition.executed_mask, mask)
+    assert step_psi0.prev_logprobs[0].sum().item() == -14.0
+    assert step_psi0.prev_logprobs[1].sum().item() == -28.0
 
 
 def test_eval_receives_envs_with_different_policy_fields_separately():

@@ -1256,6 +1256,28 @@ def validate_model_envs(cfg: DictConfig, model_cfg: DictConfig) -> None:
         )
         validate_model_env_cfg(model_cfg, name_str, env_model_cfg)
 
+    only_eval = bool(
+        OmegaConf.select(cfg, "runner.only_eval", default=False)
+        or OmegaConf.select(cfg, "runner.task_type", default=None) == "embodied_eval"
+    )
+    if (
+        not only_eval
+        and OmegaConf.select(cfg, "algorithm.loss_type", default=None) == "embodied_nft"
+    ):
+        train_cfg = OmegaConf.select(cfg, "env.train", default=None)
+        if train_cfg is not None and EnvLayout.is_heterogeneous(train_cfg):
+            model_env_names = {str(name) for name in model_envs}
+            pool_profiles = {
+                str(name) if str(name) in model_env_names else None
+                for name in train_cfg[EnvLayout.ENVS_KEY]
+            }
+            assert len(pool_profiles) == 1, (
+                "NFT training requires every training env to share one model "
+                "I/O pool, so heterogeneous NFT cannot split training envs "
+                f"across model.envs profiles; got {sorted(model_env_names)} "
+                f"for env.train.envs {list(train_cfg[EnvLayout.ENVS_KEY])}."
+            )
+
 
 def validate_env_policy_fields(cfg: DictConfig, model_cfg: DictConfig) -> None:
     """Check that the policy reads every ``EnvSpec.POLICY_FIELDS`` an env config sets."""

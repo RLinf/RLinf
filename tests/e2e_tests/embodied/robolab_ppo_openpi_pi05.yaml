@@ -109,7 +109,7 @@ actor:
     num_steps: 10
     add_value_head: true
     openpi_data:
-      norm_stats_path: ${..model_path}/assets/norm_stats.json
+      norm_stats_path: ${..model_path}/assets/droid/norm_stats.json
     openpi:
       task: rl
       config_name: pi05_droid_robolab

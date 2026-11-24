@@ -311,6 +311,7 @@ class RoboDojoEnv(gym.Env):
         }
         if self.cfg.get("assets_path") is not None:
             env_vars["ROBODOJO_ASSETS_ROOT"] = str(self.cfg.assets_path)
+        env_vars.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
         # RLinf assigns GPU visibility independently of Ray GPU resources.
         env_vars["RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES"] = "1"
         self._process = RoboDojoProcess.options(
@@ -365,7 +366,12 @@ class RoboDojoEnv(gym.Env):
             self.success_once[index] = False
             self.returns[index] = 0
 
-    def _record_metrics(self, reward: torch.Tensor, infos: dict) -> None:
+    def _record_metrics(
+        self,
+        reward: torch.Tensor,
+        infos: dict,
+        active_mask: torch.Tensor | None = None,
+    ) -> None:
         self.returns += reward
         episode = {
             "return": self.returns.clone(),
@@ -376,7 +382,12 @@ class RoboDojoEnv(gym.Env):
             infos["success"] = torch.as_tensor(
                 infos["success"], dtype=torch.bool
             ).reshape(-1)
-            self.success_once |= infos["success"]
+            success = (
+                infos["success"]
+                if active_mask is None
+                else infos["success"] & active_mask
+            )
+            self.success_once |= success
             episode["success_once"] = self.success_once.clone()
             if self.ignore_terminations:
                 episode["success_at_end"] = infos["success"].clone()
@@ -440,7 +451,10 @@ class RoboDojoEnv(gym.Env):
         return observations, {}
 
     def step(
-        self, actions: torch.Tensor | np.ndarray | dict, auto_reset: bool = True
+        self,
+        actions: torch.Tensor | np.ndarray | dict,
+        auto_reset: bool = True,
+        active_mask: torch.Tensor | None = None,
     ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         """Submit (N, A) or (N, H, A) actions and return aggregate chunk results."""
         if isinstance(actions, dict):
@@ -465,6 +479,11 @@ class RoboDojoEnv(gym.Env):
         )
         obs = self._extract_obs_image(raw_obs)
         infos = list_of_dict_to_dict_of_list(info_list)
+        active = (
+            None
+            if active_mask is None
+            else active_mask.to(dtype=torch.bool).reshape(self.num_envs)
+        )
         terminated = (
             torch.as_tensor(terminated, dtype=torch.bool).reshape(self.num_envs).clone()
         )
@@ -475,11 +494,32 @@ class RoboDojoEnv(gym.Env):
         if self.use_custom_reward:
             current = self.cfg.reward_coef * terminated.float()
             reward = current - self.prev_step_reward if self.use_rel_reward else current
-            self.prev_step_reward = current
-        self._elapsed_steps += actions.shape[1]
+            if active is not None:
+                reward = torch.where(active, reward, torch.zeros_like(reward))
+                self.prev_step_reward = torch.where(
+                    active, current, self.prev_step_reward
+                )
+            else:
+                self.prev_step_reward = current
+        elif active is not None:
+            reward = torch.where(active, reward, torch.zeros_like(reward))
+        if active is not None:
+            self._elapsed_steps[active] += actions.shape[1]
+        else:
+            self._elapsed_steps += actions.shape[1]
         truncated |= self.elapsed_steps >= self.cfg.max_episode_steps
+        if active is not None:
+            terminated = terminated & active
+            truncated = truncated & active
+            if "executed_steps" in infos:
+                executed = torch.as_tensor(infos["executed_steps"]).reshape(
+                    self.num_envs
+                )
+                infos["executed_steps"] = torch.where(
+                    active, executed, torch.zeros_like(executed)
+                )
         if self.record_metrics:
-            self._record_metrics(reward, infos)
+            self._record_metrics(reward, infos, active_mask=active)
         if self.ignore_terminations:
             terminated.zero_()
         dones = terminated | truncated
@@ -517,31 +557,39 @@ class RoboDojoEnv(gym.Env):
             raise ValueError("Chunk actions must have shape (N, positive horizon, A).")
         if self.cfg.video_cfg.save_video:
             obs_list = []
-            reward = None
-            terminated = None
-            truncated = None
+            reward = torch.zeros(self.num_envs, dtype=torch.float32)
+            terminated = torch.zeros(self.num_envs, dtype=torch.bool)
+            truncated = torch.zeros(self.num_envs, dtype=torch.bool)
+            already_done = torch.zeros(self.num_envs, dtype=torch.bool)
             executed_action_count = None
             infos = {}
             for index in range(chunk_actions.shape[1]):
+                if already_done.all():
+                    break
+                active = ~already_done
                 obs, reward_t, terminated_t, truncated_t, infos = self.step(
-                    chunk_actions[:, index : index + 1], auto_reset=False
+                    chunk_actions[:, index : index + 1],
+                    auto_reset=False,
+                    active_mask=active,
                 )
                 obs_list.append(obs)
-                reward = reward_t if reward is None else reward + reward_t
-                terminated = (
-                    terminated_t if terminated is None else terminated | terminated_t
+                reward = reward + torch.where(
+                    active, reward_t, torch.zeros_like(reward_t)
                 )
-                truncated = (
-                    truncated_t if truncated is None else truncated | truncated_t
-                )
+                terminated = terminated | (terminated_t & active)
+                truncated = truncated | (truncated_t & active)
                 executed_t = infos.pop("executed_steps", None)
                 if executed_t is not None:
                     executed_t = torch.as_tensor(executed_t).reshape(self.num_envs)
+                    executed_t = torch.where(
+                        active, executed_t, torch.zeros_like(executed_t)
+                    )
                     executed_action_count = (
                         executed_t
                         if executed_action_count is None
                         else executed_action_count + executed_t
                     )
+                already_done = terminated | truncated
         else:
             obs_list = None
             obs, reward, terminated, truncated, infos = self.step(

@@ -209,11 +209,11 @@ This check validates the Python package and CUDA without starting the simulator:
 Download the Model
 ------------------
 
-The evaluation configuration uses RoboDojo's official Pi_05 checkpoint, a
+The training and evaluation configurations use RoboDojo's official Pi_05 checkpoint, a
 π₀.₅ policy trained on the ``RoboDojo-sim-arx_x5`` simulation data. It ships
 in the same ``RoboDojo-Benchmark/RoboDojo`` repository as the scene assets,
 under ``ckpt/RoboDojo/Pi_05/``, with one directory per training run. Download
-the run the example configuration evaluates:
+the run the example configurations use:
 
 .. code-block:: bash
 
@@ -253,11 +253,11 @@ RLinf's OpenPI loader reads an OpenPI-format checkpoint
      --action-horizon 50
 
 The converted directory contains ``model.safetensors`` and
-``assets/norm_stats.json``. Point ``rollout.model.model_path`` at it; the
-evaluation configuration reads the norm stats from
-``${..model_path}/assets/norm_stats.json``. ``joint-1`` and ``joint-2`` are the
-other two runs of the same checkpoint, and ``ckpt/RoboDojo/Pi_0/`` holds the
-corresponding π₀ checkpoints.
+``assets/norm_stats.json``. Point ``actor.model.model_path`` (training) or
+``rollout.model.model_path`` (evaluation) at it; both configurations read the
+norm stats from ``${..model_path}/assets/norm_stats.json``. ``joint-1`` and
+``joint-2`` are the other two runs of the same checkpoint, and
+``ckpt/RoboDojo/Pi_0/`` holds the corresponding π₀ checkpoints.
 
 .. note::
 
@@ -315,20 +315,22 @@ uses ``[6, 6, 1, 1]``, which is a 14-dimensional action.
 
 **Train with PPO**
 
-The training recipe uses random training layouts, automatic per-slot reset, and
-fixed saved layouts for validation:
+The PPO training configuration (``examples/embodiment/config/robodojo_put_bottles_into_dustbin_ppo_openpi_pi05.yaml``) uses random training layouts with per-environment auto-reset and fixed saved layouts for validation. Run from the RLinf repository root with the converted checkpoint from the previous step:
 
 .. code-block:: bash
 
-   export REPO_PATH=/path/to/RLinf
    export ROBODOJO_ASSETS_ROOT=/path/to/robodojo
-   export EMBODIED_PATH=$REPO_PATH/examples/embodiment
-   python examples/embodiment/train_embodied_agent.py \
+   export REPO_PATH="$(pwd)"
+   export EMBODIED_PATH="$REPO_PATH/examples/embodiment"
+   PYTHONPATH="$REPO_PATH" python examples/embodiment/train_embodied_agent.py \
      --config-name robodojo_put_bottles_into_dustbin_ppo_openpi_pi05 \
-     actor.model.model_path=/path/to/converted/pi05_robodojo_arx_x5
+     actor.model.model_path="$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5"
 
-Keep ``env.train.enable_offload=false``. RoboDojo releases Isaac resources on
-``close``/``offload`` but does not suspend and resume a live simulator.
+Logs and TensorBoard events are written to ``runner.logger.log_path`` (``../results`` by default). Alternatively, set ``actor.model.model_path`` in ``examples/embodiment/config/robodojo_put_bottles_into_dustbin_ppo_openpi_pi05.yaml`` and launch with ``bash examples/embodiment/run_embodiment.sh robodojo_put_bottles_into_dustbin_ppo_openpi_pi05``, which writes logs to ``logs/<timestamp>-robodojo_put_bottles_into_dustbin_ppo_openpi_pi05/``.
+
+.. warning::
+
+   Keep ``env.train.enable_offload: false``. RoboDojo does not support suspending and resuming a live simulator between rollout and training.
 
 **Evaluate a Pi_05 checkpoint**
 
@@ -374,9 +376,7 @@ for the converted checkpoint directory. The default
 Visualization and Results
 -------------------------
 
-RoboDojo evaluation runs through the same embodied evaluation entrypoint as
-other RLinf environments. The primary metric is ``eval/success_once``; see
-:doc:`Training metrics <../../reference/metrics>` for the metric definitions.
+Watch ``env/success_once`` (PPO training) and ``eval/success_once`` (validation and evaluation) in the terminal table or TensorBoard (``tensorboard --logdir <log_path>``). See :doc:`Training metrics <../../reference/metrics>` for the full metric definitions.
 
 Enable rollout videos in the environment configuration when needed:
 

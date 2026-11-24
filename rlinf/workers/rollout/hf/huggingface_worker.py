@@ -1019,6 +1019,56 @@ class MultiStepRolloutWorker(Worker):
             peer_ranks=peer_ranks,
         )
 
+    def _send_decoupled_grouped_actions(
+        self,
+        output_channel: Channel,
+        actions_list: list[torch.Tensor],
+        *,
+        tag: str,
+        split_sizes: list[int],
+        split_fn: Callable[[Any, list[int]], list[Any]] | None = None,
+    ) -> None:
+        """Send decoupled replies, bucketing by trailing shape when widths differ."""
+        shapes = [
+            tuple(int(dim) for dim in actions.shape[1:]) for actions in actions_list
+        ]
+        if len(set(shapes)) == 1:
+            self.send_to_recorded_batch_routes(
+                group_name=self.cfg.env.group_name,
+                channel=output_channel,
+                data=torch.cat(actions_list, dim=0).detach().cpu().contiguous(),
+                tag=tag,
+                split_fn=split_fn,
+                split_sizes=split_sizes,
+            )
+            return
+        routes = list(self.batch_router[tag])
+        if len(routes) != len(actions_list) or len(split_sizes) != len(actions_list):
+            raise ValueError(
+                f"Expected {len(actions_list)} recorded routes and split sizes "
+                f"for tag={tag!r}, got {len(routes)} routes and "
+                f"{len(split_sizes)} split sizes."
+            )
+        self.batch_router[tag] = []
+        buckets: dict[tuple[int, ...], list[int]] = {}
+        for position, shape in enumerate(shapes):
+            buckets.setdefault(shape, []).append(position)
+        for positions in buckets.values():
+            self.batch_router[tag] = [routes[position] for position in positions]
+            self.send_to_recorded_batch_routes(
+                group_name=self.cfg.env.group_name,
+                channel=output_channel,
+                data=torch.cat(
+                    [actions_list[position] for position in positions], dim=0
+                )
+                .detach()
+                .cpu()
+                .contiguous(),
+                tag=tag,
+                split_fn=split_fn,
+                split_sizes=[split_sizes[position] for position in positions],
+            )
+
     def _send_grouped_actions(
         self,
         output_channel: Channel,
@@ -1028,6 +1078,17 @@ class MultiStepRolloutWorker(Worker):
         peer_ranks: list[int] | None,
     ) -> None:
         """Send per-request actions back, bucketing by trailing shape when they differ."""
+        if self.env_decoupled_mode:
+            if split_sizes is None:
+                raise ValueError("Decoupled policy output requires recorded routes.")
+            self._send_decoupled_grouped_actions(
+                output_channel,
+                actions_list,
+                tag="policy",
+                split_sizes=split_sizes,
+                split_fn=self._split_actions,
+            )
+            return
         shapes = [
             tuple(int(dim) for dim in actions.shape[1:]) for actions in actions_list
         ]
@@ -1153,6 +1214,14 @@ class MultiStepRolloutWorker(Worker):
                 split_sizes = [split_sizes[index] for index in replied]
             if peer_ranks is not None:
                 peer_ranks = [peer_ranks[index] for index in replied]
+            if (
+                self.env_decoupled_mode
+                and "policy" in self.batch_router
+                and len(self.batch_router["policy"]) == len(requests)
+            ):
+                self.batch_router["policy"] = [
+                    self.batch_router["policy"][index] for index in replied
+                ]
         if replied:
             if single_reply_group:
                 self._send_actions(
@@ -1506,10 +1575,9 @@ class MultiStepRolloutWorker(Worker):
                     sizes = [split_sizes[index] for index in indices]
                     for index, shard in zip(indices, torch.split(actions, sizes)):
                         shard_actions[index] = shard
-                self.send_to_recorded_batch_routes(
-                    group_name=self.cfg.env.group_name,
-                    channel=output_channel,
-                    data=torch.cat(shard_actions, dim=0),
+                self._send_decoupled_grouped_actions(
+                    output_channel,
+                    shard_actions,
                     tag="rollout_results",
                     split_sizes=split_sizes,
                 )

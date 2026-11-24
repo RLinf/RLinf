@@ -14,6 +14,8 @@
 
 """Heterogeneous env modes, and the observations env workers send the policy."""
 
+from typing import Any
+
 import numpy as np
 import pytest
 import torch
@@ -834,6 +836,10 @@ def test_robodojo_and_robolab_training_recipes_compose(
     assert cfg.env.train.auto_reset
     assert not cfg.env.train.enable_offload
     assert cfg.actor.model.num_action_chunks == chunk_size
+    if env_type == "robolab":
+        assert cfg.actor.model.openpi_data.norm_stats_path.endswith(
+            "assets/droid/norm_stats.json"
+        )
     samples = (
         cfg.env.train.total_num_envs
         * cfg.env.train.rollout_epoch
@@ -859,7 +865,7 @@ def test_robolab_chunk_exposes_terminal_data_and_execution_mask(monkeypatch):
     env = object.__new__(RoboLabEnv)
     env.num_envs = 2
     env._closed = True
-    env.cfg = OmegaConf.create({"video_cfg": {"save_video": False}})
+    env.cfg = OmegaConf.create({"video_cfg": {"save_video": False}, "is_eval": False})
     terminal_obs = _robolab_obs(2)
     reset_obs = _robolab_obs(2)
     reset_obs["states"][0, 0] = 1
@@ -871,7 +877,7 @@ def test_robolab_chunk_exposes_terminal_data_and_execution_mask(monkeypatch):
         "executed_steps": np.array([2, 3]),
         "rewards": np.array([[0, 1, 0], [0, 0, 0]], dtype=np.float32),
         "terminations": np.array(
-            [[False, True, True], [False, False, False]], dtype=bool
+            [[False, False, True], [False, False, False]], dtype=bool
         ),
         "truncations": np.zeros((2, 3), dtype=bool),
         "episode": {
@@ -898,6 +904,7 @@ def test_robolab_chunk_exposes_terminal_data_and_execution_mask(monkeypatch):
 
     assert len(observations) == len(infos) == 1
     assert rewards.shape == terminations.shape == truncations.shape == (2, 3)
+    assert "executed_mask" not in infos[0]
     assert infos[0]["valid_action_mask"].tolist() == [
         [True, True, False],
         [True, True, True],
@@ -906,6 +913,122 @@ def test_robolab_chunk_exposes_terminal_data_and_execution_mask(monkeypatch):
     assert infos[0]["final_info"]["episode"]["return"].tolist() == [1, 0]
     assert observations[0]["states"][0, 0].item() == 1
     assert infos[0]["final_observation"]["states"][0, 0].item() == 0
+
+
+def test_robolab_process_done_flags_and_partial_reset_contract():
+    from types import SimpleNamespace
+
+    from rlinf.envs.sim.robolab.robolab_process import RoboLabProcess
+
+    process_cls = RoboLabProcess.__ray_metadata__.modified_class
+
+    def _raw_obs(value: float) -> dict:
+        return {
+            "image_obs": {
+                "over_shoulder_left_camera": torch.full(
+                    (1, 4, 4, 3), int(value), dtype=torch.uint8
+                ),
+                "wrist_cam": torch.zeros((1, 4, 4, 3), dtype=torch.uint8),
+            },
+            "proprio_obs": {
+                "arm_joint_pos": torch.full((1, 7), value, dtype=torch.float32),
+                "gripper_pos": torch.zeros((1, 1), dtype=torch.float32),
+            },
+        }
+
+    def _make_process(
+        *, auto_reset: bool, max_steps: int | None, finish_on_step: int | None
+    ):
+        events: list[tuple[str, Any]] = []
+        step_counter = {"n": 0}
+
+        class FakeRecorder:
+            def export_episodes(self, env_ids=None):
+                events.append(("export_episodes", list(env_ids)))
+
+            def set_episode_index(self, episode_index, env_ids=None):
+                events.append(("set_episode_index", episode_index, list(env_ids)))
+
+        class FakeEnv:
+            device = torch.device("cpu")
+
+            def __init__(self):
+                self._frozen_envs = torch.zeros(1, dtype=torch.bool)
+                self._pre_step_frozen = torch.zeros(1, dtype=torch.bool)
+                self._env_results = {}
+                self._env_term_step = {}
+                self._has_stepped = True
+                self.recorder_manager = FakeRecorder()
+
+            @property
+            def active_env_ids(self):
+                return (~self._frozen_envs).nonzero(as_tuple=False).squeeze(-1).tolist()
+
+            def step(self, action):
+                del action
+                step_counter["n"] += 1
+                if finish_on_step is not None and step_counter["n"] == finish_on_step:
+                    self._frozen_envs[0] = True
+                    self._env_results[0] = True
+                return _raw_obs(float(step_counter["n"])), None, None, None, {}
+
+            def get_env_results(self):
+                return [
+                    {
+                        "env_id": 0,
+                        "success": self._env_results.get(0),
+                        "step": step_counter["n"],
+                    }
+                ]
+
+            def reset(self, seed=None, env_ids=None):
+                del seed
+                assert not self._has_stepped
+                events.append(("env.reset", env_ids.tolist()))
+                return _raw_obs(99.0), {}
+
+        proc = object.__new__(process_cls)
+        proc.env = FakeEnv()
+        proc._image_tools = SimpleNamespace(resize_with_pad=lambda img, h, w: img)
+        proc._end_episode = lambda env: events.append(("end_episode", None))
+        proc._get_current_subtask_info = lambda env, env_id=0: {"score": 0.5}
+        proc.enable_subtask = False
+        proc.prompt = "pick"
+        proc.timeline = SimpleNamespace(is_playing=lambda: True)
+        proc.kit_app = SimpleNamespace(update=lambda: None)
+        proc.num_envs = 1
+        proc.max_steps = max_steps
+        proc.auto_reset = auto_reset
+        proc.steps = np.zeros(1, dtype=np.int32)
+        proc.finished = np.zeros(1, dtype=bool)
+        proc.success = np.zeros(1, dtype=np.float32)
+        proc.score = np.zeros(1, dtype=np.float32)
+        proc.episode_indices = np.arange(1, dtype=np.int64)
+        proc.last_obs = _raw_obs(0.0)
+        proc.episode_open = True
+        return proc, events
+
+    # Eval (auto_reset=False): done appears once at finishing step, not duplicated at -1.
+    eval_proc, _ = _make_process(auto_reset=False, max_steps=10, finish_on_step=2)
+    eval_res = eval_proc.chunk_step(np.zeros((1, 4, 8), dtype=np.float32))
+    assert eval_res["terminations"].tolist() == [[False, True, False, False]]
+    assert not eval_res["truncations"].any()
+
+    # Training (auto_reset=True) timeout: done folds cleanly to -1, recorder exports before reset,
+    # public env.reset(env_ids=...) supplies fresh post-reset obs, and episode index advances after.
+    train_proc, events = _make_process(
+        auto_reset=True, max_steps=2, finish_on_step=None
+    )
+    train_res = train_proc.chunk_step(np.zeros((1, 4, 8), dtype=np.float32))
+    assert not train_res["terminations"].any()
+    assert train_res["truncations"].tolist() == [[False, False, False, True]]
+    assert train_res["observation"]["states"][0, 0].item() == 99.0
+    assert train_res["final_observation"]["states"][0, 0].item() == 2.0
+    assert events == [
+        ("export_episodes", [0]),
+        ("env.reset", [0]),
+        ("set_episode_index", 1, [0]),
+    ]
 
 
 def test_robodojo_chunk_exposes_execution_mask_and_auto_reset():
@@ -951,10 +1074,129 @@ def test_robodojo_chunk_exposes_execution_mask_and_auto_reset():
     ]
     assert not truncations.any()
     assert observations[0]["states"].eq(1).all()
+    assert "executed_mask" not in infos[0]
     assert infos[0]["valid_action_mask"].tolist() == [
         [True, True, False],
         [True, True, True],
     ]
+
+
+def test_robodojo_save_video_chunk_step_does_not_inflate_reward_or_overshoot(
+    monkeypatch,
+):
+    from rlinf.envs.sim.robodojo.robodojo_env import RoboDojoEnv
+
+    env = object.__new__(RoboDojoEnv)
+    env.num_envs = 2
+    env.auto_reset = False
+    env.ignore_terminations = False
+    env.use_custom_reward = True
+    env.use_rel_reward = False
+    env.record_metrics = True
+    env._action_perm = None
+    env._state_perm = None
+    env.center_crop = False
+    env.cfg = OmegaConf.create(
+        {
+            "reward_coef": 1.0,
+            "max_episode_steps": 3,
+            "video_cfg": {"save_video": True},
+            "is_eval": False,
+        }
+    )
+    env._elapsed_steps = torch.zeros(2, dtype=torch.long)
+    env.prev_step_reward = torch.zeros(2)
+    env._init_metrics()
+
+    calls = {"n": 0}
+    raw_obs = [
+        {
+            "full_image": np.zeros((4, 4, 3), dtype=np.uint8),
+            "state": np.zeros(14, dtype=np.float32),
+            "instruction": "task",
+        }
+        for _ in range(2)
+    ]
+
+    class FakeProcess:
+        class Step:
+            def remote(self, actions):
+                del actions
+                calls["n"] += 1
+                # Slot 0 latches terminated at step 2; slot 1 runs until RLinf max_episode_steps=3.
+                slot0_done = calls["n"] >= 2
+                return (
+                    raw_obs,
+                    [0.0, 0.0],
+                    [slot0_done, False],
+                    [False, False],
+                    [
+                        {
+                            "success": slot0_done,
+                            "executed_steps": 0 if calls["n"] > 2 else 1,
+                        },
+                        {"success": False, "executed_steps": 1},
+                    ],
+                )
+
+        step = Step()
+
+    env._process = FakeProcess()
+    monkeypatch.setattr(
+        "rlinf.envs.sim.robodojo.robodojo_env.ray.get", lambda value: value
+    )
+
+    obs_list, rewards, terminations, truncations, infos = env.chunk_step(
+        np.zeros((2, 5, 14), dtype=np.float32)
+    )
+
+    # Stopped stepping once both slots finished (slot 0 at step 2, slot 1 at step 3).
+    assert calls["n"] == 3
+    assert len(obs_list) == 3
+    assert rewards[:, -1].tolist() == [1.0, 0.0]
+    assert terminations[:, -1].tolist() == [True, False]
+    assert truncations[:, -1].tolist() == [False, True]
+    assert infos[0]["episode"]["return"].tolist() == [1.0, 0.0]
+    assert infos[0]["episode"]["episode_len"].tolist() == [2, 3]
+    assert "executed_mask" not in infos[0]
+    assert infos[0]["valid_action_mask"].tolist() == [
+        [True, True, False, False, False],
+        [True, True, True, False, False],
+    ]
+
+
+def test_robodojo_init_env_defaults_eula(monkeypatch):
+    from types import SimpleNamespace
+
+    from rlinf.envs.sim.robodojo import robodojo_env
+
+    captured = {}
+
+    class FakeOptions:
+        def remote(self, *args, **kwargs):
+            del args, kwargs
+            return SimpleNamespace(ready=SimpleNamespace(remote=lambda: None))
+
+    def fake_options(**kwargs):
+        captured.update(kwargs)
+        return FakeOptions()
+
+    monkeypatch.delenv("OMNI_KIT_ACCEPT_EULA", raising=False)
+    monkeypatch.setattr(robodojo_env.RoboDojoProcess, "options", fake_options)
+    monkeypatch.setattr(
+        robodojo_env.ray,
+        "get_runtime_context",
+        lambda: SimpleNamespace(get_node_id=lambda: "a" * 56),
+    )
+    monkeypatch.setattr(robodojo_env.ray, "get", lambda value: value)
+
+    env = object.__new__(robodojo_env.RoboDojoEnv)
+    env.cfg = OmegaConf.create({"task_config": {"task_name": "t"}})
+    env.num_envs = 1
+    env.reset_state_ids = torch.tensor([0])
+    env._init_env()
+
+    assert captured["runtime_env"]["env_vars"]["OMNI_KIT_ACCEPT_EULA"] == "YES"
 
 
 def test_hetero_model_envs_config_validation(monkeypatch):
@@ -986,6 +1228,13 @@ def test_hetero_model_envs_config_validation(monkeypatch):
         }
     with pytest.raises(AssertionError, match=r"model\.envs\.missing must name"):
         validate_model_envs(unknown_cfg, unknown_cfg.actor.model)
+
+    # Multi-env model.envs under NFT is rejected at config validation.
+    nft_cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+    with open_dict(nft_cfg):
+        nft_cfg.algorithm.loss_type = "embodied_nft"
+    with pytest.raises(AssertionError, match="NFT training requires"):
+        validate_model_envs(nft_cfg, nft_cfg.actor.model)
 
     # Models that have not registered per-env validation fail fast.
     unsupported_cfg = OmegaConf.create(

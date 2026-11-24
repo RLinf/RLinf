@@ -1,9 +1,7 @@
 RoboDojo 基准训练与评估
 ========================================
 
-`RoboDojo <https://robodojo-benchmark.github.io/>`__ 是基于 Isaac Sim 的双臂\
-操作基准，面向 ARX-X5 等机器人提供桌面整理、抓取、放置和工具使用任务。RLinf \
-将 RoboDojo 接入为 Gym 环境，可以直接用于 VLA 策略的 RL 训练、rollout 和评估。
+`RoboDojo <https://robodojo-benchmark.github.io/>`__ 是基于 Isaac Sim 的双臂操作基准，面向 ARX-X5 等机器人提供桌面整理、抓取、放置和工具使用任务。RLinf 将 RoboDojo 接入为 Gym 环境，用于 VLA policy 的 RL 训练、rollout 和评估。
 
 概览
 ----------------------------------------
@@ -199,7 +197,7 @@ RoboDojo 当前支持 Linux x86_64 和 NVIDIA CUDA GPU，暂不支持纯 CPU、m
 下载模型
 ----------------------------------------
 
-评估配置使用 RoboDojo 官方发布的 Pi_05 检查点，即基于 ``RoboDojo-sim-arx_x5`` 仿真数据训练的 π₀.₅ policy。它和场景资产放在同一个 ``RoboDojo-Benchmark/RoboDojo`` 仓库里，位于 ``ckpt/RoboDojo/Pi_05/``，每次训练 run 一个目录。示例配置使用其中的 ``joint-0``：
+训练和评估配置均使用 RoboDojo 官方发布的 Pi_05 checkpoint，即基于 ``RoboDojo-sim-arx_x5`` 仿真数据训练的 π₀.₅ policy。它和场景资产放在同一个 ``RoboDojo-Benchmark/RoboDojo`` 仓库里，位于 ``ckpt/RoboDojo/Pi_05/``，每次训练 run 一个目录。示例配置使用其中的 ``joint-0``：
 
 .. code-block:: bash
 
@@ -236,7 +234,7 @@ RLinf 的 OpenPI 加载器读取 OpenPI 格式的检查点（``model.safetensors
      --action-dim 32 \
      --action-horizon 50
 
-转换后的目录包含 ``model.safetensors`` 和 ``assets/norm_stats.json``。``rollout.model.model_path`` 应指向该目录，评估配置会从 ``${..model_path}/assets/norm_stats.json`` 读取 norm stats。同级的 ``joint-1``、``joint-2`` 是同一检查点的另外两次训练 run，``ckpt/RoboDojo/Pi_0/`` 下是对应的 π₀ 检查点。
+转换后的目录包含 ``model.safetensors`` 和 ``assets/norm_stats.json``。训练时将 ``actor.model.model_path`` 指向该目录，评估时将 ``rollout.model.model_path`` 指向该目录，两者均从 ``${..model_path}/assets/norm_stats.json`` 读取归一化统计量。同级的 ``joint-1``、``joint-2`` 是同一 checkpoint 的另外两次训练 run，``ckpt/RoboDojo/Pi_0/`` 下是对应的 π₀ checkpoint。
 
 .. note::
 
@@ -290,19 +288,22 @@ step 和 close 后，再提高 ``env.eval.total_num_envs``。
 
 **使用 PPO 训练**
 
-训练配置对训练环境启用随机布局和逐槽自动重置，并使用固定布局验证：
+PPO 训练配置（``examples/embodiment/config/robodojo_put_bottles_into_dustbin_ppo_openpi_pi05.yaml``）在训练环境启用随机布局与按环境自动重置，并用固定布局验证。在 RLinf 仓库根目录直接复用上一步转换后的 checkpoint 启动训练：
 
 .. code-block:: bash
 
-   export REPO_PATH=/path/to/RLinf
    export ROBODOJO_ASSETS_ROOT=/path/to/robodojo
-   export EMBODIED_PATH=$REPO_PATH/examples/embodiment
-   python examples/embodiment/train_embodied_agent.py \
+   export REPO_PATH="$(pwd)"
+   export EMBODIED_PATH="$REPO_PATH/examples/embodiment"
+   PYTHONPATH="$REPO_PATH" python examples/embodiment/train_embodied_agent.py \
      --config-name robodojo_put_bottles_into_dustbin_ppo_openpi_pi05 \
-     actor.model.model_path=/path/to/converted/pi05_robodojo_arx_x5
+     actor.model.model_path="$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5"
 
-请保持 ``env.train.enable_offload=false``。RoboDojo 的 ``close``/``offload``
-会释放 Isaac 资源，但不能挂起后再恢复同一个模拟器。
+日志与 TensorBoard 事件写入 ``runner.logger.log_path``\ （默认 ``../results``\ ）。也可以在 ``examples/embodiment/config/robodojo_put_bottles_into_dustbin_ppo_openpi_pi05.yaml`` 中填写 ``actor.model.model_path``，再运行 ``bash examples/embodiment/run_embodiment.sh robodojo_put_bottles_into_dustbin_ppo_openpi_pi05``，日志会写入 ``logs/<timestamp>-robodojo_put_bottles_into_dustbin_ppo_openpi_pi05/``。
+
+.. warning::
+
+   保持 ``env.train.enable_offload: false``。RoboDojo 不支持在 rollout 与训练之间挂起并恢复运行中的仿真器。
 
 **用 Pi_05 检查点做策略评估**
 
@@ -338,7 +339,7 @@ step 和 close 后，再提高 ``env.eval.total_num_envs``。
 可视化与结果
 ----------------------------------------
 
-评估流程与 RLinf 的其他 embodied 环境一致。关键指标为 ``eval/success_once``，完整指标定义见 :doc:`训练指标 <../../reference/metrics>`。
+在终端指标表或 TensorBoard（``tensorboard --logdir <log_path>``）中查看 ``env/success_once``\ （PPO 训练）和 ``eval/success_once``\ （验证与评估）。完整指标定义见 :doc:`训练指标 <../../reference/metrics>`。
 
 如需保存 rollout 视频，可在环境配置中启用：
 

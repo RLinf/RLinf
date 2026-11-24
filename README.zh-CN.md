@@ -34,7 +34,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
-- [2026/11] 🔥 RLinf 现已支持在 RoboDojo 与 RoboLab 上使用 OpenPI π₀.₅ 进行 PPO 训练。文档：[RoboDojo](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robodojo.html)、[RoboLab](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robolab.html)。
+- [2026/11] 🔥 RLinf 支持在 RoboDojo 和 RoboLab 上用 PPO 训练 OpenPI π₀.₅。文档：[RoboDojo](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robodojo.html)、[RoboLab](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robolab.html)。
 - [2026/11] 🔥 RLinf 支持奖励反馈学习（ReFL），使用 ImageReward 微调 SD3.5 Medium。文档：[ReFL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/refl.html)。
 - [2026/11] 🔥 RLinf 支持 Intel GPU。支持的模型与环境组合见[硬件支持矩阵](#硬件支持)，PR：[Intel GPU 支持（#1832）](https://github.com/RLinf/RLinf/pull/1832)。
 - [2026/11] 🔥 RLinf 支持 Robbyant R2 轮式双臂人形机器人的真机强化学习、全身 PICO VR 遥操作，以及双臂、夹爪或灵巧手、躯干与全向底盘的协同控制。文档：[Robbyant R2](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/r2.html)。
@@ -223,7 +223,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/geniesim.html">GenieSim</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robodojo.html">RoboDojo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
-          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robolab.html">RoboLab（仅评估）</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robolab.html">RoboLab</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>

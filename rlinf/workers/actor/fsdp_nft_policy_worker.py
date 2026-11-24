@@ -214,9 +214,10 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
         self.model.train()
         self._order_training_batch()
         assert len(self.rollout_batches) == 1, (
-            "NFT training expects every env to send the policy the same "
-            f"observation format, got {len(self.rollout_batches)} formats; set "
-            "env.train.policy_obs to match them."
+            "NFT training expects every env to share one observation format "
+            f"and model I/O pool, got {len(self.rollout_batches)} pools; align "
+            "observations with env.train.policy_obs and do not split training "
+            "envs across multiple actor.model.envs profiles."
         )
         self.rollout_batch = self.rollout_batches[0]
         self._nft_env_name = self._pool_env_names[0] if self._pool_env_names else None

@@ -13,7 +13,7 @@ RoboLab is a manipulation benchmark built on Isaac Sim, with 120 tasks covering 
 Overview
 --------
 
-Evaluate from two RGB views, robot state, and a natural-language instruction.
+Train or evaluate a policy from two RGB views, robot state, and a natural-language instruction.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -77,26 +77,30 @@ Observation and Action
 Run It
 ------
 
-Follow the :doc:`evaluation guide <../../evaluations/guides/robolab>` to install the environment, download the checkpoint, configure tasks, and run the evaluation.
+Follow the :doc:`evaluation guide <../../evaluations/guides/robolab>` to install the environment, download the ``RLinf-Pi05-RoboLab-droid-jointpos`` checkpoint, inspect tasks, and run evaluation.
 
-For PPO training, set the checkpoint path in
-``examples/embodiment/config/robolab_banana_in_bowl_ppo_openpi_pi05.yaml`` and
-run:
+For PPO training on ``BananaInBowlTask``, run from the RLinf repository root with your local checkpoint path:
 
 .. code-block:: bash
 
-   export EMBODIED_PATH=/path/to/RLinf/examples/embodiment
-   python examples/embodiment/train_embodied_agent.py \
-     --config-name robolab_banana_in_bowl_ppo_openpi_pi05
+   export REPO_PATH="$(pwd)"
+   export EMBODIED_PATH="$REPO_PATH/examples/embodiment"
+   PYTHONPATH="$REPO_PATH" python examples/embodiment/train_embodied_agent.py \
+     --config-name robolab_banana_in_bowl_ppo_openpi_pi05 \
+     actor.model.model_path=/path/to/model/RLinf-Pi05-RoboLab-droid-jointpos
 
-Training uses per-environment auto-reset and masks unexecuted actions when a
-slot completes before the end of a 15-action chunk. Keep environment offload
-disabled: every environment worker owns a live Isaac Sim Ray actor.
+Logs and TensorBoard events are written to ``runner.logger.log_path`` (``../results`` by default). Alternatively, set ``actor.model.model_path`` in ``examples/embodiment/config/robolab_banana_in_bowl_ppo_openpi_pi05.yaml`` and run ``bash examples/embodiment/run_embodiment.sh robolab_banana_in_bowl_ppo_openpi_pi05``, which writes logs to ``logs/<timestamp>-robolab_banana_in_bowl_ppo_openpi_pi05/``.
+
+Training uses per-environment auto-reset.
+
+.. warning::
+
+   Keep ``env.train.enable_offload: false``. RoboLab does not support suspending and resuming a live Isaac Sim environment between rollout and training.
 
 Visualization and Results
 -------------------------
 
-Watch ``eval/success_once`` and ``eval/score`` in the terminal and TensorBoard. The following runs use the same 120 tasks and ten episodes per task; see the :doc:`evaluation guide <../../evaluations/guides/robolab>` for metrics and logs.
+Watch ``env/success_once`` and ``env/return`` during PPO training, and ``eval/success_once`` and ``eval/score`` during validation and evaluation, in the terminal or TensorBoard (``tensorboard --logdir <log_path>``). The following benchmark runs use the same 120 tasks and ten episodes per task; see the :doc:`evaluation guide <../../evaluations/guides/robolab>` for evaluation metrics and logs.
 
 
 .. list-table::

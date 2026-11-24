@@ -466,13 +466,11 @@ class EnvWorker(Worker):
         if isinstance(infos_list, (list, tuple)):
             infos = infos_list[-1] if infos_list else None
         infos = infos or {}
-        valid_action_mask = (
-            infos.get("valid_action_mask") if isinstance(infos, dict) else None
-        )
+        valid_action_mask = None
         if self.enable_online_lerobot and isinstance(infos, dict):
             # The train env publishes this after auto-reset. Removing it keeps
             # the mask out of the stored step metadata.
-            infos.pop("valid_action_mask", None)
+            valid_action_mask = infos.pop("valid_action_mask", None)
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
@@ -524,11 +522,7 @@ class EnvWorker(Worker):
                 intervene_actions=intervene_actions,
                 intervene_flags=intervene_flags,
                 rlt_switch_flags=rlt_switch_flags,
-                executed_mask=(
-                    infos["executed_mask"]
-                    if infos.get("executed_mask") is not None
-                    else valid_action_mask
-                ),
+                executed_mask=infos.get("executed_mask"),
             ),
         )
         chunk_step_payload = {

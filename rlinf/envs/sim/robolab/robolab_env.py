@@ -209,7 +209,7 @@ class RoboLabEnv:
         }
         info = {"episode": episode}
         executed_steps = result.get("executed_steps")
-        if executed_steps is not None:
+        if executed_steps is not None and not self.cfg.get("is_eval", False):
             info["valid_action_mask"] = valid_action_mask_from_counts(
                 executed_steps, actions.shape[1]
             )

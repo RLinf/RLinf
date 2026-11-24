@@ -126,28 +126,30 @@ class RoboLabProcess:
             self.episode_open = False
 
     def _reset_selected(self, env_ids: list[int]):
-        """Reset selected slots through RoboLab's pinned IsaacLab internals."""
+        """Finalize open recordings and reset selected slots via ``env.reset``."""
         ids = torch.as_tensor(env_ids, device=self.env.device, dtype=torch.long)
         if not ids.numel():
             return self.last_obs
+        id_list = ids.tolist()
+        if self.env.recorder_manager is not None:
+            self.env.recorder_manager.export_episodes(env_ids=id_list)
         self.env._frozen_envs[ids] = False
         self.env._pre_step_frozen[ids] = False
-        for env_id in ids.tolist():
+        for env_id in id_list:
             self.env._env_results.pop(env_id, None)
             self.env._env_term_step.pop(env_id, None)
         has_stepped = self.env._has_stepped
         self.env._has_stepped = False
         try:
-            self.env._reset_idx(ids)
+            self.last_obs, _ = self.env.reset(env_ids=ids)
         finally:
             self.env._has_stepped = has_stepped
         if self.env.recorder_manager is not None:
-            for env_id in ids.tolist():
+            for env_id in id_list:
                 self.episode_indices[env_id] += self.num_envs
                 self.env.recorder_manager.set_episode_index(
                     int(self.episode_indices[env_id]), env_ids=[env_id]
                 )
-        self.last_obs = self.env.observation_manager.compute()
         indices = ids.cpu().numpy()
         self.steps[indices] = 0
         self.finished[indices] = False
@@ -278,14 +280,11 @@ class RoboLabProcess:
         }
         if self.enable_subtask:
             episode["score"] = self.score.copy()
-        if newly_finished.any():
-            terminations[newly_finished, -1] |= self.success[newly_finished].astype(
-                bool
-            )
-            truncations[newly_finished, -1] |= ~self.success[newly_finished].astype(
-                bool
-            )
         if self.auto_reset and newly_finished.any():
+            terminations[newly_finished, :] = False
+            truncations[newly_finished, :] = False
+            terminations[newly_finished, -1] = self.success[newly_finished].astype(bool)
+            truncations[newly_finished, -1] = ~self.success[newly_finished].astype(bool)
             self._reset_selected(np.flatnonzero(newly_finished).tolist())
         elif self.finished.all():
             self._finish_episode()

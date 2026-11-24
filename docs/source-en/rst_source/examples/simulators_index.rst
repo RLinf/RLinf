@@ -117,9 +117,9 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/robodojo.html" style="text-decoration: underline; color: blue;">
-           <b>RoboDojo Benchmark Evaluation</b>
+           <b>RL with RoboDojo Benchmark</b>
          </a><br>
-         Supports RoboDojo + π₀.₅ evaluation
+         Supports RoboDojo + π₀.₅ + PPO training and evaluation
        </p>
      </div>
 
@@ -164,9 +164,9 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/robolab.html" style="text-decoration: underline; color: blue;">
-           <b>Evaluate on RoboLab</b>
+           <b>RL with RoboLab Benchmark</b>
          </a><br>
-         120 DROID manipulation tasks · pi0.5 evaluation
+         120 DROID manipulation tasks · π₀.₅ PPO training and evaluation
        </p>
      </div>
 
