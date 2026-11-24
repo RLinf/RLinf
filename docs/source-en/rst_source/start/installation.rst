@@ -138,12 +138,6 @@ Hardware and Software Requirements
 
 Match your hardware to the workload you want to run; the same recipes scale from a single GPU to multi-node clusters.
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/hardware_tiers.svg
-   :align: center
-   :width: 100%
-
-   RLinf hardware tiers from a single GPU to multi-node clusters.
-
 .. list-table:: GPU Tiers by Workload
    :header-rows: 1
    :widths: 22 44 34

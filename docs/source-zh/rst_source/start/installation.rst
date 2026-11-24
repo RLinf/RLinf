@@ -138,12 +138,6 @@
 
 按任务规模选择对应硬件，从单张 GPU 到多机集群均可复用同一套配置。
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/hardware_tiers_zh.svg
-   :align: center
-   :width: 100%
-
-   RLinf 从单卡到多机集群的硬件档位。
-
 .. list-table:: 按场景划分的 GPU 档位
    :header-rows: 1
    :widths: 22 44 34
