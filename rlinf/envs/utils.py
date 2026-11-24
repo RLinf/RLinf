@@ -13,11 +13,27 @@
 # limitations under the License.
 
 import os
-from typing import Any, Optional, Union
+from collections.abc import Callable
+from typing import Any, Optional, Protocol, Union
 
 import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
+
+
+class RolloutInfoReceiver(Protocol):
+    """Optional environment capability for policy routing feedback."""
+
+    def set_rollout_infos(self, infos: dict[str, torch.Tensor]) -> None:
+        """Consume batched diagnostics before the associated actions execute."""
+
+
+class TrajectoryInfoProvider(Protocol):
+    """Optional environment capability for exporting trace-only step data."""
+
+    def trajectory_info_spec(self) -> dict[str, torch.dtype]:
+        """Declare info keys and dtypes; each value has leading axis num_envs."""
+
 
 _tf = None
 
@@ -66,6 +82,17 @@ def get_env_attr(env, name: str, default: Any = None) -> Any:
         except AttributeError:
             inner = getattr(inner, "env", None)
     return default
+
+
+def get_rollout_info_receiver(env: Any) -> Callable[[dict[str, torch.Tensor]], None]:
+    """Require a routing-feedback receiver on an environment or its wrappers."""
+    receiver = get_env_attr(env, "set_rollout_infos")
+    if not callable(receiver):
+        raise ValueError(
+            f"Routing feedback requires {type(env).__name__} to implement "
+            "set_rollout_infos(infos)."
+        )
+    return receiver
 
 
 def to_tensor(
