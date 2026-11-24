@@ -1,0 +1,75 @@
+defaults:
+  - env/libero_spatial@env.eval
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "logs/ci/phyai-gateway/rlinf"
+    project_name: rlinf
+    experiment_name: "libero_spatial_pi05_eval_phyai"
+    logger_backends: []
+
+  only_eval: True
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    init_params:
+      camera_heights: 360
+      camera_widths: 360
+    rollout_epoch: 1
+    # Keep the CI workload bounded while exercising the complete Gateway path.
+    total_num_envs: 8
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 240
+    group_size: 1
+    use_fixed_reset_state_ids: True
+    use_ordered_reset_state_ids: True
+    is_eval: True
+
+    video_cfg:
+      save_video: False
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+
+  group_name: "RolloutGroup"
+  rollout_backend: "phyai"
+  pipeline_stage_num: 1
+
+  phyai:
+    serving_mode: "gateway"
+    model_name: "pi05"
+    # Override these paths for automatic Gateway launch; gateway_url keeps
+    # compatibility with an externally managed Gateway.
+    server_config: ${oc.env:PHYAI_SERVER_CONFIG,tests/e2e_tests/evaluations/phyai_gateway_server.yaml}
+    checkpoint_dir: ${oc.env:PHYAI_HTTP_CHECKPOINT,/path/to/pi05_libero_finetuned_v044}
+    tokenizer_dir: ${oc.env:PHYAI_HTTP_TOKENIZER,/path/to/paligemma-3b-pt-224}
+    log_dir: ${oc.env:PHYAI_LOG_DIR,logs/ci/phyai-gateway}
+    http_timeout_s: 600
+    http_max_retries: 0
+    http_retry_backoff_s: 1.0
+
+  model:
+    model_type: "openpi"
+    num_action_chunks: 16
+    openpi:
+      task: eval

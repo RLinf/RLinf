@@ -87,9 +87,21 @@ def main(cfg) -> None:
             cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
         )
     elif rollout_backend == "phyai":
-        from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
+        phyai_serving_mode = cfg.rollout.get("phyai", {}).get("serving_mode", "engine")
+        if phyai_serving_mode == "engine":
+            from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
 
-        rollout_group = PhyAIRolloutWorker.create_group(cfg).launch(
+            rollout_group = PhyAIRolloutWorker.create_group(cfg)
+        elif phyai_serving_mode == "gateway":
+            from rlinf.workers.rollout.phyai import PhyAIGatewayRolloutWorker
+
+            rollout_group = PhyAIGatewayRolloutWorker.create_group(cfg)
+        else:
+            raise ValueError(
+                "Expected phyai.serving_mode in ['engine', 'gateway'], "
+                f"got {phyai_serving_mode!r}."
+            )
+        rollout_group = rollout_group.launch(
             cluster,
             name=cfg.rollout.group_name,
             placement_strategy=rollout_placement,
@@ -120,14 +132,60 @@ def main(cfg) -> None:
         )
         rollout_group.set_sglang_server_urls(_server_urls).wait()
 
-    runner = EmbodiedEvalRunner(
-        cfg=cfg,
-        rollout=rollout_group,
-        env=env_group,
-    )
+    service_group = None
+    try:
+        if rollout_backend == "phyai" and phyai_serving_mode == "gateway":
+            gateway_url = cfg.rollout.phyai.get("gateway_url")
+            if isinstance(gateway_url, str) and gateway_url.strip():
+                gateway_urls = [gateway_url.strip().rstrip("/")]
+                get_logger().info(
+                    f"[eval] using external PhyAI Gateway: {gateway_urls[0]}"
+                )
+            else:
+                from rlinf.workers.rollout.phyai.launcher import (
+                    launch_phyai_gateway_and_server,
+                )
 
-    runner.init_workers()
-    runner.run()
+                if "phyai_server" in component_placement.components:
+                    server_placement = component_placement.get_strategy("phyai_server")
+                else:
+                    # Synchronous evaluation needs a single Gateway/model-server
+                    # pair; rollout workers round-robin their HTTP requests onto
+                    # it. Launch one single-GPU service worker on the first
+                    # accelerator the rollout placement already uses, so the
+                    # service follows the configured placement instead of
+                    # hard-coding GPU 0.
+                    from rlinf.scheduler.placement import PackedPlacementStrategy
+
+                    rollout_ranks = sorted(
+                        int(rank)
+                        for rank in component_placement.get_hardware_ranks("rollout")
+                    )
+                    server_rank = rollout_ranks[0] if rollout_ranks else 0
+                    server_placement = PackedPlacementStrategy(
+                        start_hardware_rank=server_rank,
+                        end_hardware_rank=server_rank,
+                    )
+                gateway_urls, service_group = launch_phyai_gateway_and_server(
+                    cfg,
+                    cluster,
+                    placement_strategy=server_placement,
+                    phyai_cfg=cfg.rollout.phyai,
+                )
+                get_logger().info(f"[eval] launched PhyAI Gateways: {gateway_urls}")
+
+            rollout_group.set_phyai_server_urls(gateway_urls).wait()
+        runner = EmbodiedEvalRunner(
+            cfg=cfg,
+            rollout=rollout_group,
+            env=env_group,
+        )
+        runner.init_workers()
+        runner.run()
+    finally:
+        if service_group is not None:
+            service_group.stop().wait()
+            service_group._close()
 
 
 if __name__ == "__main__":

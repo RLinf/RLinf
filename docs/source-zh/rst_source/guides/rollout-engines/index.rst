@@ -1,8 +1,7 @@
 Rollout 引擎
 ============
 
-这些指南介绍如何配置 RLinf rollout 使用的推理引擎，包括进程内 GPU 后端，以及与
-RLinf 任务一起启动或独立运行的 HTTP 服务。
+这些指南介绍如何配置 RLinf rollout 使用的推理引擎，包括进程内 GPU 后端，以及与 RLinf 任务一起启动或独立运行的 HTTP 服务。
 
 .. list-table::
    :header-rows: 1
@@ -21,7 +20,7 @@ RLinf 任务一起启动或独立运行的 HTTP 服务。
    * - :doc:`SGLang 版本切换 <../version>`
      - 在不同 SGLang 版本之间切换 rollout 引擎。
    * - :doc:`PhyAI <phyai>`
-     - 使用 FSDP actor 和 PhyAI 的进程内 GPU rollout 后端，在 LIBERO 上训练 PI0.5。
+     - 在 LIBERO 上进程内训练 PI0.5，或通过 PhyAI Gateway 执行评估。
 
 .. toctree::
    :hidden:

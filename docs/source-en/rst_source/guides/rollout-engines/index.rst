@@ -23,7 +23,8 @@ independently of an RLinf task.
    * - :doc:`SGLang Version Switching <../version>`
      - Switch between SGLang versions for the rollout engine.
    * - :doc:`PhyAI <phyai>`
-     - Train PI0.5 on LIBERO with an FSDP actor and PhyAI's in-process GPU rollout backend.
+     - Train PI0.5 on LIBERO in process, or evaluate it through the PhyAI
+       Gateway.
 
 .. toctree::
    :hidden:
