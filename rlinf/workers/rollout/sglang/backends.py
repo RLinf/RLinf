@@ -171,8 +171,7 @@ class SGLangServerBackend(RolloutBackend):
         node_rank: int = 0,
         dist_init_addr: Optional[str] = None,
         server_type: str = "srt",
-        bind_host: str = "127.0.0.1",
-        advertise_host: Optional[str] = "127.0.0.1",
+        bind_to_node_ip: bool = False,
     ):
         super().__init__(server_args, rlinf_ctx)
         self._acquire_free_port = acquire_free_port
@@ -182,8 +181,7 @@ class SGLangServerBackend(RolloutBackend):
         self._node_rank = node_rank
         self._dist_init_addr = dist_init_addr
         self._server_type = server_type
-        self._bind_host = bind_host
-        self._advertise_host = advertise_host
+        self._bind_to_node_ip = bind_to_node_ip
         self._process: Optional[SGLangServerProcess] = None
         self._client: Optional[InferenceHTTPClient] = None
 
@@ -266,8 +264,9 @@ class SGLangServerBackend(RolloutBackend):
             nnodes=self._nnodes,
             node_rank=self._node_rank,
             dist_init_addr=self._dist_init_addr,
-            bind_host="0.0.0.0" if session_server_enabled else self._bind_host,
-            advertise_host=None if session_server_enabled else self._advertise_host,
+            bind_host="0.0.0.0" if session_server_enabled else "127.0.0.1",
+            advertise_host=None if session_server_enabled else "127.0.0.1",
+            bind_to_node_ip=self._bind_to_node_ip,
             apply_rlinf_patch=True,
             extra_env=extra_env,
             log_info=self._log_info,
@@ -292,12 +291,11 @@ class SGLangServerBackend(RolloutBackend):
         # keepalive_timeout must be shorter than the server's keep-alive
         # (uvicorn default 5s) so we never reuse a connection the server
         # is about to close (an ECONNRESET race).
-        # Loopback base URL: under session_server.enable the server
-        # advertises its node IP, and a client connecting to that IP
-        # presents it as the TCP peer, which the whitelist rejects on
-        # the /rlinf/* control routes.
+        # SRT control stays on loopback; Diffusion may bind only the node IP.
         self._client = InferenceHTTPClient(
-            self._process.get_control_url(), keepalive_timeout=4.0
+            self._process.get_control_url(),
+            keepalive_timeout=4.0,
+            control_token=self._process.control_token,
         )
         await self._client.async_run_task_method(
             io_struct.TaskMethodInput(
@@ -420,8 +418,7 @@ def make_backend(
     node_rank: int = 0,
     dist_init_addr: Optional[str] = None,
     server_type: str = "srt",
-    bind_host: str = "127.0.0.1",
-    advertise_host: Optional[str] = "127.0.0.1",
+    bind_to_node_ip: bool = False,
 ) -> RolloutBackend:
     """Select a rollout backend implementation by config value.
 
@@ -443,8 +440,8 @@ def make_backend(
             negotiated via `negotiate_model_instance_dist_addr` (server
             backend only, multi-node).
         server_type: Native server runtime, ``srt`` or ``embodied``.
-        bind_host: Server listen address.
-        advertise_host: Address advertised to clients; None uses the node IP.
+        bind_to_node_ip: Bind and advertise the Ray node IP for router access;
+            otherwise use loopback (server backend only).
 
     Returns:
         A backend instance (not yet initialized).
@@ -468,7 +465,6 @@ def make_backend(
             node_rank=node_rank,
             dist_init_addr=dist_init_addr,
             server_type=server_type,
-            bind_host=bind_host,
-            advertise_host=advertise_host,
+            bind_to_node_ip=bind_to_node_ip,
         )
     raise ValueError(f"Unsupported rollout.sglang.backend_type: {backend_type!r}")

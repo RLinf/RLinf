@@ -120,11 +120,14 @@ class InferenceHTTPClient:
         connect_timeout: float = 10.0,
         max_connections: int = 1024 * 16,
         keepalive_timeout: Optional[float] = None,
+        *,
+        control_token: Optional[str] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.connect_timeout = connect_timeout
         self.max_connections = max_connections
         self.keepalive_timeout = keepalive_timeout
+        self._control_token = control_token
         self._session: Optional[aiohttp.ClientSession] = None
 
     # ------------------------------------------------------------------
@@ -220,8 +223,8 @@ class InferenceHTTPClient:
 
         The result is unpickled from the response, so arbitrary Python
         objects (e.g. a scheduler state dict) come back intact. Callers
-        must only target servers they trust — the route unpickles the
-        body (loopback-bound in server-mode rollout).
+        must only target servers they trust. Control routes require the
+        per-server token and must run on a protected network.
         """
         resp = await self.async_post("/rlinf/run_task_method", _b64_payload(obj))
         return pickle.loads(base64.b64decode(resp["payload_b64"]))
@@ -441,6 +444,9 @@ class InferenceHTTPClient:
             The decoded response dict.
         """
         session = self._get_or_create_session()
+        headers = dict(headers or {})
+        if path.startswith("/rlinf/") and self._control_token is not None:
+            headers["X-RLinf-Control-Token"] = self._control_token
         async with session.post(
             f"{self.base_url}{path}",
             json=body,

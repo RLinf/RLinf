@@ -265,13 +265,13 @@ class _SchedulerManager:
         )
 
 
-def create_app(server_args):
+def create_app(server_args, *, control_token: str):
     from sglang.multimodal_gen.runtime.entrypoints.http_server import (
         create_app as native_create_app,
     )
 
     app = native_create_app(server_args)
-    add_rlinf_routes(app, manager=_SchedulerManager())
+    add_rlinf_routes(app, control_token=control_token, manager=_SchedulerManager())
     return app
 
 

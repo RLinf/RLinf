@@ -160,12 +160,7 @@ class SGLangEmbodiedWorker(Worker):
             log_info=self.log_info,
             log_error=self.log_error,
             server_type="embodied",
-            bind_host="0.0.0.0"
-            if sglang_cfg.get("launch_router", False)
-            else "127.0.0.1",
-            advertise_host=None
-            if sglang_cfg.get("launch_router", False)
-            else "127.0.0.1",
+            bind_to_node_ip=sglang_cfg.get("launch_router", False),
         )
         await self._backend.initialize()
         self.http_client = self._backend.http_client

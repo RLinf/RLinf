@@ -161,13 +161,14 @@ class TestPeerWhitelistMiddleware:
 
 
 class TestControlPlaneUrl:
-    def _unstarted_process(self, bind_host, advertise_host):
+    def _unstarted_process(self, bind_host, advertise_host, server_type="srt"):
         pytest.importorskip("sglang")
         from rlinf.workers.rollout.sglang.process import SGLangServerProcess
 
         process = SGLangServerProcess(
             server_args_kwargs={},
             acquire_free_port=lambda *_: 0,
+            server_type=server_type,
             bind_host=bind_host,
             advertise_host=advertise_host,
         )
@@ -191,6 +192,100 @@ class TestControlPlaneUrl:
         process = self._unstarted_process("127.0.0.1", "127.0.0.1")
         assert process.get_control_url() == "http://127.0.0.1:31234"
         assert process.get_server_url() == "http://127.0.0.1:31234"
+
+    @pytest.mark.parametrize("host", ["127.0.0.1", "10.208.10.188"])
+    def test_diffusion_control_url_uses_bound_interface(self, host):
+        process = self._unstarted_process(host, host, server_type="embodied")
+        assert process.get_control_url() == f"http://{host}:31234"
+
+
+@pytest.mark.parametrize("use_whitelist", [False, True])
+def test_control_authentication_and_remote_peer_policy(use_whitelist):
+    import base64
+    import pickle
+
+    import httpx
+    from fastapi import FastAPI
+
+    from rlinf.hybrid_engines.sglang.common.http_routes import add_rlinf_routes
+
+    class Manager:
+        async def sync_hf_weight(self, obj, request):
+            return {"version": obj}
+
+    app = FastAPI()
+    if use_whitelist:
+        app.add_middleware(PeerWhitelistMiddleware)
+    add_rlinf_routes(app, control_token="test-secret", manager=Manager())
+
+    async def run():
+        for host in ("127.0.0.1", "10.208.10.188"):
+            transport = httpx.ASGITransport(app=app, client=(host, 40000))
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                remote_blocked = use_whitelist and host != "127.0.0.1"
+                response = await client.post(
+                    "/rlinf/sync_hf_weight", json={"payload_b64": "invalid-pickle"}
+                )
+                assert response.status_code == (403 if remote_blocked else 401)
+                response = await client.post(
+                    "/rlinf/sync_hf_weight",
+                    json={"payload_b64": base64.b64encode(pickle.dumps(7)).decode()},
+                    headers={"X-RLinf-Control-Token": "test-secret"},
+                )
+                assert response.status_code == (403 if remote_blocked else 200)
+                if not remote_blocked:
+                    assert response.json()["version"] == 7
+
+    asyncio.run(run())
+
+
+def test_http_client_preserves_headers_and_scopes_control_token():
+    from aiohttp import web
+
+    from rlinf.utils.http_client import HTTPStatusError, InferenceHTTPClient
+
+    async def run():
+        async def handle(request):
+            if request.path == "/fail":
+                return web.Response(status=409, text="conflict")
+            return web.json_response(
+                {
+                    "token": request.headers.get("X-RLinf-Control-Token"),
+                    "routing": request.headers.get("X-Routing-Key"),
+                    "version": 7,
+                }
+            )
+
+        app = web.Application()
+        app.router.add_post("/{path:.*}", handle)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = runner.addresses[0][1]
+        client = InferenceHTTPClient(
+            f"http://127.0.0.1:{port}", control_token="test-secret"
+        )
+        headers = {"X-Routing-Key": "session-1"}
+        try:
+            for path in ("/rlinf/sync_hf_weight", "/generate"):
+                response = await client.async_post(path, {}, headers=headers)
+                assert response["routing"] == "session-1"
+                assert response["token"] == (
+                    "test-secret" if path.startswith("/rlinf/") else None
+                )
+                assert headers == {"X-Routing-Key": "session-1"}
+            assert (await client.async_sync_hf_weight())["version"] == 7
+            with pytest.raises(HTTPStatusError) as error:
+                await client.async_post("/fail", {})
+            assert error.value.status == 409
+        finally:
+            await client.aclose()
+            await runner.cleanup()
+
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

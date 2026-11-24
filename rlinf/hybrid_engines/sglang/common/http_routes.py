@@ -14,20 +14,20 @@
 
 """Private pickle-based control routes for SRT and SGLang Diffusion servers.
 
-Requests and responses contain pickled Python objects; untrusted pickle can
-execute arbitrary code. The peer-address whitelist blocks non-loopback access
-except for SRT router data-plane paths when the server binds a network address.
-Weight tensors travel through RLinf scheduler communication, not HTTP.
+Authenticate before unpickling: all control routes can execute untrusted pickle.
+SRT uses loopback, or 0.0.0.0 with a peer whitelist for session-server access.
+Diffusion uses token authentication on loopback or a trusted cluster interface.
+HTTP does not encrypt tokens or payloads; trust the server's pickled responses.
 """
 
 import base64
 import pickle
+import secrets
 from typing import Any
 
-from fastapi import Request
+from fastapi import Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from rlinf.hybrid_engines.sglang.common.peer_whitelist import PeerWhitelistMiddleware
 from rlinf.utils.logging import get_logger
 
 
@@ -72,23 +72,42 @@ async def rlinf_abort_generation(payload: RlinfPayload, request: Request) -> dic
     return {"status": "ok"}
 
 
-def add_rlinf_routes(app, *, manager=None) -> None:
+def add_rlinf_routes(app, *, control_token: str, manager=None) -> None:
     """Mount the three /rlinf/* control routes on a sglang FastAPI app.
 
-    Also installs the peer-address whitelist middleware guarding them. Both
-    must be called before uvicorn starts serving the app (i.e. before
-    ``launch_server``).
+    Must be called before uvicorn starts serving the app.
     """
-    app.add_middleware(PeerWhitelistMiddleware)
+    if not control_token:
+        raise ValueError("RLinf control routes require a nonempty authentication token")
+
+    async def authenticate(request: Request) -> None:
+        supplied = request.headers.get("X-RLinf-Control-Token", "")
+        if not secrets.compare_digest(supplied.encode(), control_token.encode()):
+            raise HTTPException(status_code=401, detail="Invalid RLinf control token")
+
+    dependencies = [Depends(authenticate)]
     if manager is not None:
         app.state.rlinf_manager = manager
-    app.add_api_route("/rlinf/run_task_method", rlinf_run_task_method, methods=["POST"])
-    app.add_api_route("/rlinf/sync_hf_weight", rlinf_sync_hf_weight, methods=["POST"])
     app.add_api_route(
-        "/rlinf/abort_generation", rlinf_abort_generation, methods=["POST"]
+        "/rlinf/run_task_method",
+        rlinf_run_task_method,
+        methods=["POST"],
+        dependencies=dependencies,
+    )
+    app.add_api_route(
+        "/rlinf/sync_hf_weight",
+        rlinf_sync_hf_weight,
+        methods=["POST"],
+        dependencies=dependencies,
+    )
+    app.add_api_route(
+        "/rlinf/abort_generation",
+        rlinf_abort_generation,
+        methods=["POST"],
+        dependencies=dependencies,
     )
     get_logger().info(
         "RLinf control routes mounted: /rlinf/run_task_method, "
         "/rlinf/sync_hf_weight, /rlinf/abort_generation "
-        "(peer-address whitelist enabled)"
+        "(token authentication enabled)"
     )
