@@ -182,6 +182,8 @@ Select the data format with ``actor.model.openpi.config_name``:
      - MetaWorld
    * - ``pi05_calvin``
      - CALVIN
+   * - ``pi05_dexjoco``
+     - DexJoCo WaterPlant
    * - ``pi0_custom``
      - Custom LeRobot
 
