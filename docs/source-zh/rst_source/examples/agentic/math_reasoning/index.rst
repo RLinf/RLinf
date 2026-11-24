@@ -6,6 +6,12 @@
 .. grid:: 1 2 2 2
    :gutter: 3
 
+   .. grid-item-card:: Moonlight-16B（MoE GRPO）
+      :link: moonlight
+      :link-type: doc
+
+      通过 Megatron-Bridge 使用 GRPO 训练 Moonlight-16B-A3B-Instruct（DeepSeek-V3 MLA + MoE）。
+
    .. grid-item-card:: Qwen2.5 数学推理（GRPO）
       :link: reasoning
       :link-type: doc
@@ -18,12 +24,6 @@
 
       基于 Qwen2.5-1.5B 的 PPO 数学推理训练，同时训练 actor 与 critic。
 
-   .. grid-item-card:: Moonlight-16B（MoE GRPO）
-      :link: moonlight
-      :link-type: doc
-
-      通过 Megatron-Bridge 使用 GRPO 训练 Moonlight-16B-A3B-Instruct（DeepSeek-V3 MLA + MoE）。
-
    .. grid-item-card:: Qwen3-VL 视觉推理（Geo3K）
       :link: ../qwen3_vl_geo3k
       :link-type: doc
@@ -34,7 +34,7 @@
    :hidden:
    :maxdepth: 1
 
+   Moonlight-16B（MoE GRPO） <moonlight>
    Qwen2.5 数学推理（GRPO） <reasoning>
    Qwen2.5 数学推理（PPO） <reasoning_ppo>
-   Moonlight-16B（MoE GRPO） <moonlight>
    Qwen3-VL 视觉推理（Geo3K） <../qwen3_vl_geo3k>

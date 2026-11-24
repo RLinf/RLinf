@@ -17,23 +17,29 @@ Agent 与 LLM
      - 算法 / 模式
      - 包含示例
    * - :doc:`推理训练 <math_reasoning/index>`
-     - Qwen2.5、Moonlight-16B、Qwen3-VL（Megatron / FSDP + SGLang / vLLM）
+     - Moonlight-16B、Qwen2.5、Qwen3-VL（Megatron / FSDP + SGLang / vLLM）
      - GRPO、PPO（文本与视觉推理）
-     - :doc:`Qwen2.5 GRPO <math_reasoning/reasoning>`、:doc:`Qwen2.5 PPO <math_reasoning/reasoning_ppo>`、:doc:`Moonlight-16B <math_reasoning/moonlight>`、:doc:`Qwen3-VL Geo3K <qwen3_vl_geo3k>`
+     - :doc:`Moonlight-16B <math_reasoning/moonlight>`、:doc:`Qwen2.5 GRPO <math_reasoning/reasoning>`、:doc:`Qwen2.5 PPO <math_reasoning/reasoning_ppo>`、:doc:`Qwen3-VL Geo3K <qwen3_vl_geo3k>`
    * - :doc:`Agent 训练 <agents/index>`
-     - Qwen2.5、Qwen3-4B、GLM-4.7-Flash、Agent Lightning
+     - Agent Lightning、GLM-4.7-Flash、Qwen2.5、Qwen3-4B
      - 多轮工具调用、MARL、在线 RL
-     - :doc:`Search-R1 <searchr1/index>`、:doc:`WideSeek-R1 <wideseek_r1/index>`、:doc:`rStar2 <rstar2>`、:doc:`AgentLightning <agentlightning_calc_x>`、:doc:`Coding Online RL <coding_online_rl>`
+     - :doc:`AgentLightning <agentlightning_calc_x>`、:doc:`Coding Online RL <coding_online_rl>`、:doc:`rStar2 <rstar2>`、:doc:`Search-R1 <searchr1/index>`、:doc:`WideSeek-R1 <wideseek_r1/index>`
    * - :doc:`图像与视频生成 <../video_models>`
      - SD3.5 Medium、Wan2.2 TI2V 5B（Diffusers）
-     - Diffusion-NFT、DiffusionART、ReFL
-     - :doc:`Diffusion-NFT <../diffusion_nft>`、:doc:`DiffusionART <../diffusion_art>`、:doc:`ReFL <../embodied/refl>`
+     - DiffusionART、Diffusion-NFT、ReFL
+     - :doc:`DiffusionART <../diffusion_art>`、:doc:`Diffusion-NFT <../diffusion_nft>`、:doc:`ReFL <../embodied/refl>`
 
 推理训练
 --------
 
 .. grid:: 1 2 2 4
    :gutter: 3
+
+   .. grid-item-card:: Moonlight-16B（MoE GRPO）
+      :link: math_reasoning/moonlight
+      :link-type: doc
+
+      通过 Megatron-Bridge 训练 DeepSeek-V3 MLA + MoE 架构模型。
 
    .. grid-item-card:: Qwen2.5 数学推理（GRPO）
       :link: math_reasoning/reasoning
@@ -47,12 +53,6 @@ Agent 与 LLM
 
       基于 Qwen2.5-1.5B 的 PPO 数学推理训练，同时更新 actor 与 critic。
 
-   .. grid-item-card:: Moonlight-16B（MoE GRPO）
-      :link: math_reasoning/moonlight
-      :link-type: doc
-
-      通过 Megatron-Bridge 训练 DeepSeek-V3 MLA + MoE 架构模型。
-
    .. grid-item-card:: Qwen3-VL 视觉推理（Geo3K）
       :link: qwen3_vl_geo3k
       :link-type: doc
@@ -64,24 +64,6 @@ Agent 训练
 
 .. grid:: 1 2 3 3
    :gutter: 3
-
-   .. grid-item-card:: Search-R1
-      :link: searchr1/index
-      :link-type: doc
-
-      基于 Qwen2.5-3B 与 GLM-4.7-Flash 的多轮搜索调用 RL（支持同步与异步训练），配套 FAISS 或 Qdrant 本地检索服务。
-
-   .. grid-item-card:: WideSeek-R1
-      :link: wideseek_r1/index
-      :link-type: doc
-
-      面向广泛信息检索的主从多 Agent 强化学习，4B 模型在 WideSearch 上达到 40.0% item F1。
-
-   .. grid-item-card:: rStar2
-      :link: rstar2
-      :link-type: doc
-
-      结合本地 Python 代码执行服务，训练模型完成多轮数学推理与自我反思。
 
    .. grid-item-card:: AgentLightning
       :link: agentlightning_calc_x
@@ -95,6 +77,24 @@ Agent 训练
 
       结合 RLinf 与 Continue IDE 插件的端到端代码补全在线强化学习流程。
 
+   .. grid-item-card:: rStar2
+      :link: rstar2
+      :link-type: doc
+
+      结合本地 Python 代码执行服务，训练模型完成多轮数学推理与自我反思。
+
+   .. grid-item-card:: Search-R1
+      :link: searchr1/index
+      :link-type: doc
+
+      基于 Qwen2.5-3B 与 GLM-4.7-Flash 的多轮搜索调用 RL（支持同步与异步训练），配套 FAISS 或 Qdrant 本地检索服务。
+
+   .. grid-item-card:: WideSeek-R1
+      :link: wideseek_r1/index
+      :link-type: doc
+
+      面向广泛信息检索的主从多 Agent 强化学习，4B 模型在 WideSearch 上达到 40.0% item F1。
+
 图像与视频生成
 --------------
 
@@ -107,17 +107,17 @@ Agent 训练
 
       SD3.5 Medium 与 Wan2.2 TI2V 5B 的公共扩散环境安装、OCR 提示数据集与权重下载。
 
-   .. grid-item-card:: Diffusion-NFT
-      :link: ../diffusion_nft
-      :link-type: doc
-
-      使用正负速度候选与 OCR Reward 微调 SD3.5 Medium 和 Wan2.2。
-
    .. grid-item-card:: DiffusionART
       :link: ../diffusion_art
       :link-type: doc
 
       在 prompt 组内构造共享奖励引导，面向 SD3.5 Medium 图像 OCR 与 Wan2.2 视频 OCR 训练。
+
+   .. grid-item-card:: Diffusion-NFT
+      :link: ../diffusion_nft
+      :link-type: doc
+
+      使用正负速度候选与 OCR Reward 微调 SD3.5 Medium 和 Wan2.2。
 
    .. grid-item-card:: ReFL
       :link: ../embodied/refl

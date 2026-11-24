@@ -658,7 +658,8 @@ def _check_root_sidebar_grouping(rel: str, lines: list[str]) -> list[route.Findi
 
 ALPHA_SORTED_INDEX_RE = re.compile(
     r"^docs/source-(?:en|zh)/rst_source/examples/"
-    r"(?:simulators_index|vla_wam_index|sft_index|world_model_index)\.rst$"
+    r"(?:simulators_index|vla_wam_index|sft_index|world_model_index|video_models|"
+    r"agentic/(?:math_reasoning|agents)/index)\.rst$"
 )
 ALPHA_PREFIX_SKIP = {"Overview", "Workflows", "总览", "通用流程"}
 
@@ -670,8 +671,11 @@ def _alpha_sort_key(label: str) -> str:
         ("真机仿真器", "real-world simulator"),
         ("Franka（双臂）", "franka (dual-arm)"),
         ("Franka（单臂）", "franka (single-arm)"),
+        ("π₀ / π₀.₅", "pi0"),
+        ("π₀-FAST", "pi0fast"),
         ("π₀", "pi0"),
         ("π", "pi"),
+        ("Diffusion-NFT", "diffusionnft"),
     )
     for src, dst in replacements:
         s = s.replace(src, dst)

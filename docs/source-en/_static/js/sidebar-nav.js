@@ -732,19 +732,44 @@
       var link = e.target && e.target.closest ? e.target.closest("a[href]") : null;
       if (!link || !isPjaxEligibleLink(link)) return;
 
-      var fromSidebar = Boolean(nav && nav.contains(link));
-      // Option A: clicking a collapsed sidebar folder opens its children while
-      // instantly swapping the right-hand overview page.
+      var fromSidebar = Boolean(link.closest && link.closest(".bd-docs-nav"));
+      // Clicking anywhere on a collapsible sidebar folder row toggles its
+      // children: expanding also opens its overview page via instant PJAX,
+      // while clicking an already-open folder row collapses it in place.
       if (fromSidebar) {
         var li = link.parentElement;
         if (li && li.classList.contains("has-children")) {
           var details = li.querySelector(":scope > details");
-          if (details && !details.open) {
-            details.open = true;
+          if (details) {
             var k = detailKey(details);
+            var winY = window.scrollY;
+            var box = scrollableAncestor(link);
+            var boxY = box ? box.scrollTop : 0;
+            if (details.open) {
+              e.preventDefault();
+              details.open = false;
+              if (k && openSet) {
+                openSet.delete(k);
+                saveOpenSet(openSet);
+              }
+              if (window.scrollY !== winY) {
+                window.scrollTo(window.scrollX, winY);
+              }
+              if (box && box.scrollTop !== boxY) {
+                box.scrollTop = boxY;
+              }
+              return;
+            }
+            details.open = true;
             if (k && openSet) {
               openSet.add(k);
               saveOpenSet(openSet);
+            }
+            if (window.scrollY !== winY) {
+              window.scrollTo(window.scrollX, winY);
+            }
+            if (box && box.scrollTop !== boxY) {
+              box.scrollTop = boxY;
             }
           }
         }
@@ -754,7 +779,9 @@
       if (isSamePage(url)) {
         if (!url.hash) {
           e.preventDefault();
-          scrollToTarget("", 0);
+          if (!fromSidebar) {
+            scrollToTarget("", 0);
+          }
         }
         return;
       }

@@ -43,7 +43,7 @@ Every RLinf run follows the same pattern: pick a launcher and a YAML config name
 
        <rect x="248" y="96" width="206" height="86" rx="12" fill="var(--rlinf-surface, #ffffff)" stroke="#3b82f6" stroke-width="1.6"/>
        <text x="264" y="124" font-size="13" font-weight="700" fill="#3b82f6">rlinf/</text>
-       <text x="264" y="146" font-size="11.5" fill="var(--pst-color-text-muted, #64748b)">Scheduler · Workers · Models</text>
+       <text x="264" y="146" font-size="11.5" fill="var(--pst-color-text-muted, #64748b)">Runners · Workers · Models</text>
        <text x="264" y="166" font-size="11" fill="var(--pst-color-text-muted, #64748b)">Envs · Robotics · Algorithms</text>
 
        <line x1="454" y1="139" x2="476" y2="139" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.8" marker-end="url(#w3-pur-en)"/>
@@ -81,15 +81,21 @@ Every RLinf run follows the same pattern: pick a launcher and a YAML config name
 
 Full config directory paths and an annotated minimal YAML live in :doc:`../reference/configuration`.
 
-2. Inside a Run: Workers and Channels
--------------------------------------
+2. Inside a Run: Runner, Workers, and Channels
+----------------------------------------------
 
-Once launched, RLinf separates **execution control** (Runner) from **data movement** (Channel queues and hot weight sync). Each role runs as an independent Worker group mapped to one YAML section, so switching between sync, pipelined, and async execution changes config instead of worker code.
+Once launched, the entry script starts the Ray cluster and each Worker group, then hands the training loop to a **Runner**:
+
+- **Runner (driver loop)**: runs on the driver process and defines each iteration—syncing weights, triggering rollout, computing rewards and advantages, updating the actor, and running periodic eval/checkpointing. **When adding a new training workflow to RLinf, the Runner is the main logic you edit or write.**
+
+- **Workers (execution roles)**: Env, Rollout, Reward, and Actor each run as an independent process group mapped to one YAML section.
+
+- **Channels (data queues)**: observations, actions, and trajectories stream directly between workers over async queues without routing through the driver; weights broadcast via hot weight sync.
 
 .. raw:: html
 
    <div style="margin: 1.25rem 0;">
-     <svg viewBox="0 0 920 254" width="100%" role="img" aria-label="RLinf Control Plane (Runner) and Data Plane (Workers connected by async Channel queues and hot weight sync)" style="display:block;max-width:920px;margin:0 auto;background:transparent;font-family:var(--pst-font-family-base,Inter,sans-serif);">
+     <svg viewBox="0 0 920 276" width="100%" role="img" aria-label="RLinf Control Plane (Runner driver loop: Sync Weights, Rollout, Reward and Advantage, Update Actor, Eval and Save) and Data Plane (Workers connected by async Channel queues and hot weight sync)" style="display:block;max-width:920px;margin:0 auto;background:transparent;font-family:var(--pst-font-family-base,Inter,sans-serif);">
        <defs>
          <marker id="w1-pur-en" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
            <path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="var(--pst-color-primary, #6d28d9)"/>
@@ -100,97 +106,98 @@ Once launched, RLinf separates **execution control** (Runner) from **data moveme
        </defs>
 
        <!-- Legend top right -->
-       <line x1="650" y1="22" x2="678" y2="22" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.6" stroke-dasharray="4 3"/>
-       <text x="686" y="26" font-size="11" font-weight="600" fill="var(--pst-color-text-muted, #64748b)">Control</text>
-       <line x1="752" y1="22" x2="780" y2="22" stroke="#10b981" stroke-width="2"/>
-       <text x="788" y="26" font-size="11" font-weight="600" fill="var(--pst-color-text-muted, #64748b)">Data (Channel)</text>
+       <line x1="654" y1="20" x2="682" y2="20" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.6" stroke-dasharray="4 3"/>
+       <text x="690" y="24" font-size="11" font-weight="600" fill="var(--pst-color-text-muted, #64748b)">Control</text>
+       <line x1="756" y1="20" x2="784" y2="20" stroke="#10b981" stroke-width="2"/>
+       <text x="792" y="24" font-size="11" font-weight="600" fill="var(--pst-color-text-muted, #64748b)">Data (Channel)</text>
 
-       <!-- Control Plane: Runner bar -->
-       <rect x="364" y="8" width="192" height="30" rx="15" fill="var(--rlinf-nav-active-bg, rgba(109,40,217,0.12))" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.5"/>
-       <text x="460" y="27" text-anchor="middle" font-size="12" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">Runner  (Control Plane)</text>
+       <!-- Control Plane: Runner loop bar -->
+       <rect x="24" y="8" width="606" height="48" rx="12" fill="var(--rlinf-nav-active-bg, rgba(109,40,217,0.10))" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.5"/>
+       <text x="42" y="27" font-size="12" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">Runner (Driver Loop · Custom Workflow Entry Point)</text>
+       <text x="42" y="45" font-size="10.8" font-weight="500" fill="var(--pst-color-text-base, #0f172a)">1. Sync Weights  →  2. Rollout  →  3. Reward &amp; Advantage  →  4. Update Actor  →  5. Eval &amp; Save</text>
 
        <!-- Dashed control bus -->
-       <path d="M 460 38 L 460 54 M 102 54 L 818 54" fill="none" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.4" stroke-dasharray="4 3"/>
-       <line x1="102" y1="54" x2="102" y2="80" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#w1-pur-en)"/>
-       <line x1="340" y1="54" x2="340" y2="80" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#w1-pur-en)"/>
-       <line x1="580" y1="54" x2="580" y2="80" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#w1-pur-en)"/>
-       <line x1="818" y1="54" x2="818" y2="80" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#w1-pur-en)"/>
+       <path d="M 327 56 L 327 76 M 102 76 L 818 76" fill="none" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.4" stroke-dasharray="4 3"/>
+       <line x1="102" y1="76" x2="102" y2="102" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#w1-pur-en)"/>
+       <line x1="340" y1="76" x2="340" y2="102" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#w1-pur-en)"/>
+       <line x1="580" y1="76" x2="580" y2="102" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#w1-pur-en)"/>
+       <line x1="818" y1="76" x2="818" y2="102" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#w1-pur-en)"/>
 
        <!-- Worker 1: Env (Blue) -->
-       <rect x="24" y="84" width="156" height="86" rx="14" fill="var(--rlinf-surface, #ffffff)" stroke="#3b82f6" stroke-width="2"/>
-       <circle cx="54" cy="116" r="14" fill="rgba(59,130,246,0.14)"/>
-       <rect x="47" y="109" width="14" height="14" rx="3" fill="none" stroke="#3b82f6" stroke-width="1.8"/>
-       <circle cx="51.5" cy="114.5" r="1.4" fill="#3b82f6"/>
-       <circle cx="56.5" cy="114.5" r="1.4" fill="#3b82f6"/>
-       <text x="78" y="114" font-size="14" font-weight="700" fill="var(--pst-color-text-base, #0f172a)">Env</text>
-       <text x="78" y="131" font-size="11" fill="var(--pst-color-text-muted, #64748b)">Sim · Robot</text>
-       <rect x="44" y="144" width="116" height="18" rx="9" fill="rgba(59,130,246,0.12)"/>
-       <text x="102" y="156.5" text-anchor="middle" font-size="10.5" font-weight="600" fill="#3b82f6">env.*</text>
+       <rect x="24" y="106" width="156" height="86" rx="14" fill="var(--rlinf-surface, #ffffff)" stroke="#3b82f6" stroke-width="2"/>
+       <circle cx="54" cy="138" r="14" fill="rgba(59,130,246,0.14)"/>
+       <rect x="47" y="131" width="14" height="14" rx="3" fill="none" stroke="#3b82f6" stroke-width="1.8"/>
+       <circle cx="51.5" cy="136.5" r="1.4" fill="#3b82f6"/>
+       <circle cx="56.5" cy="136.5" r="1.4" fill="#3b82f6"/>
+       <text x="78" y="136" font-size="14" font-weight="700" fill="var(--pst-color-text-base, #0f172a)">Env</text>
+       <text x="78" y="153" font-size="11" fill="var(--pst-color-text-muted, #64748b)">Sim · Robot</text>
+       <rect x="44" y="166" width="116" height="18" rx="9" fill="rgba(59,130,246,0.12)"/>
+       <text x="102" y="178.5" text-anchor="middle" font-size="10.5" font-weight="600" fill="#3b82f6">env.*</text>
 
        <!-- Channel pipe 1 -> 2 (FIFO slots) -->
-       <line x1="180" y1="127" x2="200" y2="127" stroke="#10b981" stroke-width="2"/>
-       <rect x="200" y="116" width="42" height="22" rx="6" fill="rgba(16,185,129,0.1)" stroke="#10b981" stroke-width="1.4"/>
-       <rect x="205" y="121" width="8" height="12" rx="2" fill="#10b981"/>
-       <rect x="217" y="121" width="8" height="12" rx="2" fill="#10b981" opacity="0.65"/>
-       <rect x="229" y="121" width="8" height="12" rx="2" fill="#10b981" opacity="0.28"/>
-       <line x1="242" y1="127" x2="258" y2="127" stroke="#10b981" stroke-width="2" marker-end="url(#w1-grn-en)"/>
-       <text x="221" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="#10b981">Channel</text>
+       <line x1="180" y1="149" x2="200" y2="149" stroke="#10b981" stroke-width="2"/>
+       <rect x="200" y="138" width="42" height="22" rx="6" fill="rgba(16,185,129,0.1)" stroke="#10b981" stroke-width="1.4"/>
+       <rect x="205" y="143" width="8" height="12" rx="2" fill="#10b981"/>
+       <rect x="217" y="143" width="8" height="12" rx="2" fill="#10b981" opacity="0.65"/>
+       <rect x="229" y="143" width="8" height="12" rx="2" fill="#10b981" opacity="0.28"/>
+       <line x1="242" y1="149" x2="258" y2="149" stroke="#10b981" stroke-width="2" marker-end="url(#w1-grn-en)"/>
+       <text x="221" y="174" text-anchor="middle" font-size="10" font-weight="600" fill="#10b981">Channel</text>
 
        <!-- Worker 2: Rollout (Purple) -->
-       <rect x="262" y="84" width="156" height="86" rx="14" fill="var(--rlinf-surface, #ffffff)" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="2"/>
-       <circle cx="292" cy="116" r="14" fill="var(--rlinf-nav-active-bg, rgba(109,40,217,0.14))"/>
-       <polygon points="294,106 286,118 292,118 290,126 298,114 292,114" fill="var(--pst-color-primary, #6d28d9)"/>
-       <text x="316" y="114" font-size="14" font-weight="700" fill="var(--pst-color-text-base, #0f172a)">Rollout</text>
-       <text x="316" y="131" font-size="11" fill="var(--pst-color-text-muted, #64748b)">HF · SGLang</text>
-       <rect x="282" y="144" width="116" height="18" rx="9" fill="var(--rlinf-nav-active-bg, rgba(109,40,217,0.12))"/>
-       <text x="340" y="156.5" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--pst-color-primary, #6d28d9)">rollout.*</text>
+       <rect x="262" y="106" width="156" height="86" rx="14" fill="var(--rlinf-surface, #ffffff)" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="2"/>
+       <circle cx="292" cy="138" r="14" fill="var(--rlinf-nav-active-bg, rgba(109,40,217,0.14))"/>
+       <polygon points="294,128 286,140 292,140 290,148 298,136 292,136" fill="var(--pst-color-primary, #6d28d9)"/>
+       <text x="316" y="136" font-size="14" font-weight="700" fill="var(--pst-color-text-base, #0f172a)">Rollout</text>
+       <text x="316" y="153" font-size="11" fill="var(--pst-color-text-muted, #64748b)">HF · SGLang</text>
+       <rect x="282" y="166" width="116" height="18" rx="9" fill="var(--rlinf-nav-active-bg, rgba(109,40,217,0.12))"/>
+       <text x="340" y="178.5" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--pst-color-primary, #6d28d9)">rollout.*</text>
 
        <!-- Channel pipe 2 -> 3 -->
-       <line x1="418" y1="127" x2="439" y2="127" stroke="#10b981" stroke-width="2"/>
-       <rect x="439" y="116" width="42" height="22" rx="6" fill="rgba(16,185,129,0.1)" stroke="#10b981" stroke-width="1.4"/>
-       <rect x="444" y="121" width="8" height="12" rx="2" fill="#10b981"/>
-       <rect x="456" y="121" width="8" height="12" rx="2" fill="#10b981" opacity="0.65"/>
-       <rect x="468" y="121" width="8" height="12" rx="2" fill="#10b981" opacity="0.28"/>
-       <line x1="481" y1="127" x2="498" y2="127" stroke="#10b981" stroke-width="2" marker-end="url(#w1-grn-en)"/>
-       <text x="460" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="#10b981">Channel</text>
+       <line x1="418" y1="149" x2="439" y2="149" stroke="#10b981" stroke-width="2"/>
+       <rect x="439" y="138" width="42" height="22" rx="6" fill="rgba(16,185,129,0.1)" stroke="#10b981" stroke-width="1.4"/>
+       <rect x="444" y="143" width="8" height="12" rx="2" fill="#10b981"/>
+       <rect x="456" y="143" width="8" height="12" rx="2" fill="#10b981" opacity="0.65"/>
+       <rect x="468" y="143" width="8" height="12" rx="2" fill="#10b981" opacity="0.28"/>
+       <line x1="481" y1="149" x2="498" y2="149" stroke="#10b981" stroke-width="2" marker-end="url(#w1-grn-en)"/>
+       <text x="460" y="174" text-anchor="middle" font-size="10" font-weight="600" fill="#10b981">Channel</text>
 
        <!-- Worker 3: Reward & Buffer (Amber) -->
-       <rect x="502" y="84" width="156" height="86" rx="14" fill="var(--rlinf-surface, #ffffff)" stroke="#d97706" stroke-width="2"/>
-       <circle cx="532" cy="116" r="14" fill="rgba(217,119,6,0.14)"/>
-       <circle cx="532" cy="116" r="7" fill="none" stroke="#d97706" stroke-width="1.8"/>
-       <circle cx="532" cy="116" r="2.5" fill="#d97706"/>
-       <text x="556" y="114" font-size="14" font-weight="700" fill="var(--pst-color-text-base, #0f172a)">Reward</text>
-       <text x="556" y="131" font-size="11" fill="var(--pst-color-text-muted, #64748b)">Adv · Buffer</text>
-       <rect x="522" y="144" width="116" height="18" rx="9" fill="rgba(217,119,6,0.12)"/>
-       <text x="580" y="156.5" text-anchor="middle" font-size="10.5" font-weight="600" fill="#d97706">algorithm.*</text>
+       <rect x="502" y="106" width="156" height="86" rx="14" fill="var(--rlinf-surface, #ffffff)" stroke="#d97706" stroke-width="2"/>
+       <circle cx="532" cy="138" r="14" fill="rgba(217,119,6,0.14)"/>
+       <circle cx="532" cy="138" r="7" fill="none" stroke="#d97706" stroke-width="1.8"/>
+       <circle cx="532" cy="138" r="2.5" fill="#d97706"/>
+       <text x="556" y="136" font-size="14" font-weight="700" fill="var(--pst-color-text-base, #0f172a)">Reward</text>
+       <text x="556" y="153" font-size="11" fill="var(--pst-color-text-muted, #64748b)">Adv · Buffer</text>
+       <rect x="522" y="166" width="116" height="18" rx="9" fill="rgba(217,119,6,0.12)"/>
+       <text x="580" y="178.5" text-anchor="middle" font-size="10.5" font-weight="600" fill="#d97706">algorithm.*</text>
 
        <!-- Channel pipe 3 -> 4 -->
-       <line x1="658" y1="127" x2="678" y2="127" stroke="#10b981" stroke-width="2"/>
-       <rect x="678" y="116" width="42" height="22" rx="6" fill="rgba(16,185,129,0.1)" stroke="#10b981" stroke-width="1.4"/>
-       <rect x="683" y="121" width="8" height="12" rx="2" fill="#10b981"/>
-       <rect x="695" y="121" width="8" height="12" rx="2" fill="#10b981" opacity="0.65"/>
-       <rect x="707" y="121" width="8" height="12" rx="2" fill="#10b981" opacity="0.28"/>
-       <line x1="720" y1="127" x2="736" y2="127" stroke="#10b981" stroke-width="2" marker-end="url(#w1-grn-en)"/>
-       <text x="699" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="#10b981">Channel</text>
+       <line x1="658" y1="149" x2="678" y2="149" stroke="#10b981" stroke-width="2"/>
+       <rect x="678" y="138" width="42" height="22" rx="6" fill="rgba(16,185,129,0.1)" stroke="#10b981" stroke-width="1.4"/>
+       <rect x="683" y="143" width="8" height="12" rx="2" fill="#10b981"/>
+       <rect x="695" y="143" width="8" height="12" rx="2" fill="#10b981" opacity="0.65"/>
+       <rect x="707" y="143" width="8" height="12" rx="2" fill="#10b981" opacity="0.28"/>
+       <line x1="720" y1="149" x2="736" y2="149" stroke="#10b981" stroke-width="2" marker-end="url(#w1-grn-en)"/>
+       <text x="699" y="174" text-anchor="middle" font-size="10" font-weight="600" fill="#10b981">Channel</text>
 
        <!-- Worker 4: Actor (Emerald) -->
-       <rect x="740" y="84" width="156" height="86" rx="14" fill="var(--rlinf-surface, #ffffff)" stroke="#10b981" stroke-width="2"/>
-       <circle cx="770" cy="116" r="14" fill="rgba(16,185,129,0.14)"/>
-       <polygon points="770,108 779,113 770,118 761,113" fill="none" stroke="#10b981" stroke-width="1.6"/>
-       <polyline points="761,118 770,123 779,118" fill="none" stroke="#10b981" stroke-width="1.6"/>
-       <text x="794" y="114" font-size="14" font-weight="700" fill="var(--pst-color-text-base, #0f172a)">Actor</text>
-       <text x="794" y="131" font-size="11" fill="var(--pst-color-text-muted, #64748b)">FSDP · Megatron</text>
-       <rect x="760" y="144" width="116" height="18" rx="9" fill="rgba(16,185,129,0.12)"/>
-       <text x="818" y="156.5" text-anchor="middle" font-size="10.5" font-weight="600" fill="#10b981">actor.*</text>
+       <rect x="740" y="106" width="156" height="86" rx="14" fill="var(--rlinf-surface, #ffffff)" stroke="#10b981" stroke-width="2"/>
+       <circle cx="770" cy="138" r="14" fill="rgba(16,185,129,0.14)"/>
+       <polygon points="770,130 779,135 770,140 761,135" fill="none" stroke="#10b981" stroke-width="1.6"/>
+       <polyline points="761,140 770,145 779,140" fill="none" stroke="#10b981" stroke-width="1.6"/>
+       <text x="794" y="136" font-size="14" font-weight="700" fill="var(--pst-color-text-base, #0f172a)">Actor</text>
+       <text x="794" y="153" font-size="11" fill="var(--pst-color-text-muted, #64748b)">FSDP · Megatron</text>
+       <rect x="760" y="166" width="116" height="18" rx="9" fill="rgba(16,185,129,0.12)"/>
+       <text x="818" y="178.5" text-anchor="middle" font-size="10.5" font-weight="600" fill="#10b981">actor.*</text>
 
        <!-- Bottom Return Loop: Weight Sync -->
-       <path d="M 818 170 L 818 214 Q 818 228 804 228 L 354 228 Q 340 228 340 214 L 340 174" fill="none" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="2.2" marker-end="url(#w1-pur-en)"/>
-       <rect x="498" y="214" width="164" height="28" rx="14" fill="var(--rlinf-surface, #ffffff)" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.6"/>
-       <text x="580" y="232" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">Hot Weight Sync</text>
+       <path d="M 818 192 L 818 236 Q 818 250 804 250 L 354 250 Q 340 250 340 236 L 340 196" fill="none" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="2.2" marker-end="url(#w1-pur-en)"/>
+       <rect x="498" y="236" width="164" height="28" rx="14" fill="var(--rlinf-surface, #ffffff)" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.6"/>
+       <text x="580" y="254" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">Hot Weight Sync</text>
      </svg>
    </div>
 
-Set ``actor.model.model_path`` once and rollout inherits it automatically. Deep dive: :doc:`../concepts/worker` and :doc:`../concepts/channel`.
+RLinf ships built-in runners for sync/async embodied RL, reasoning, agents, SFT, offline RL, and standalone evaluation; pipelined and async runners overlap the same workers over Channels without changing worker code. Set ``actor.model.model_path`` once and rollout inherits it automatically. Deep dive: :doc:`../concepts/execution_flow`, :doc:`../concepts/worker`, and :doc:`../concepts/channel`.
 
 3. Core Abstractions: Hardware, Robotics & Registries
 -----------------------------------------------------

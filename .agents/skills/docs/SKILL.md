@@ -89,7 +89,7 @@ Page findings count only on the lines the change adds, because many existing pag
 | `docs/latex-sanity` | major | broken LaTeX subscript omission (`\mathbb{E}{`, `\pi{\theta}`) or orphan paper equation tags (`\tag{8}`) in `reference/` |
 | `docs/sidebar-grouping` | major | raw leaf pages dumped into grouped top-level chapters (`Embodied AI`, `Agent & LLM`, `Guides`) or >5 entries in `Get Started` on root `index.rst` |
 | `docs/sidebar-depth` | major | nested `.. toctree::` sub-index folders inside `examples/agentic/` (each Agent & LLM project must be a single-page recipe with tabs like Embodied AI) |
-| `docs/alpha-order` | major | unsorted simulator, real-world robot, or model toctrees (`simulators_index`, `vla_wam_index`, `sft_index`, `world_model_index`, and root `Real-World Robots`) |
+| `docs/alpha-order` | major | unsorted simulator, real-world robot, model, or Agent & LLM sub-category toctrees (`simulators_index`, `vla_wam_index`, `sft_index`, `world_model_index`, `video_models`, `agentic/{math_reasoning,agents}/index`, and root `Real-World Robots`) |
 | `docs/sibling-alignment` | major | Agent & LLM recipe (or new embodied/eval recipe) missing Overview `.. grid::` + `Prerequisites` header, `start/installation` link, `.. tab-set::`, or `Visualization and Results` / `可视化与结果` |
 | `docs/box-table` | major | misaligned Unicode box-drawing table rows (e.g. `Metric Table`) whose display width differs from the top border |
 

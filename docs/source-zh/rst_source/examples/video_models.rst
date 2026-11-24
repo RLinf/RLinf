@@ -17,17 +17,17 @@
 .. grid:: 1 3 3 3
    :gutter: 3
 
-   .. grid-item-card:: Diffusion-NFT
-      :link: diffusion_nft
-      :link-type: doc
-
-      根据相对奖励构造正负速度候选，包含 SD3 图像 OCR 和 Wan2.2 图像/视频 OCR 配置。
-
    .. grid-item-card:: DiffusionART
       :link: diffusion_art
       :link-type: doc
 
       在 prompt 组内构造共享奖励引导，并向冻结的速度目标训练，包含 SD3 图像 OCR 和 Wan2.2 视频 OCR 配置。
+
+   .. grid-item-card:: Diffusion-NFT
+      :link: diffusion_nft
+      :link-type: doc
+
+      根据相对奖励构造正负速度候选，包含 SD3 图像 OCR 和 Wan2.2 图像/视频 OCR 配置。
 
    .. grid-item-card:: ReFL
       :link: embodied/refl
@@ -139,6 +139,6 @@ Prompt、生成结果与奖励
    :hidden:
    :maxdepth: 1
 
-   Diffusion-NFT <diffusion_nft>
    DiffusionART <diffusion_art>
+   Diffusion-NFT <diffusion_nft>
    ReFL <embodied/refl>

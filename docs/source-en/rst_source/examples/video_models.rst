@@ -18,19 +18,19 @@ update settings, and expected results.
 .. grid:: 1 3 3 3
    :gutter: 3
 
-   .. grid-item-card:: Diffusion-NFT
-      :link: diffusion_nft
-      :link-type: doc
-
-      Train from relative rewards with positive/negative velocity candidates.
-      Includes SD3 image OCR and Wan2.2 image/video OCR recipes.
-
    .. grid-item-card:: DiffusionART
       :link: diffusion_art
       :link-type: doc
 
       Build shared reward guidance over prompt groups and train against frozen
       velocity targets. Includes SD3 image OCR and Wan2.2 video OCR recipes.
+
+   .. grid-item-card:: Diffusion-NFT
+      :link: diffusion_nft
+      :link-type: doc
+
+      Train from relative rewards with positive/negative velocity candidates.
+      Includes SD3 image OCR and Wan2.2 image/video OCR recipes.
 
    .. grid-item-card:: ReFL
       :link: embodied/refl
@@ -164,6 +164,6 @@ place, continue with
    :hidden:
    :maxdepth: 1
 
-   Diffusion-NFT <diffusion_nft>
    DiffusionART <diffusion_art>
+   Diffusion-NFT <diffusion_nft>
    ReFL <embodied/refl>

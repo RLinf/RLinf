@@ -6,6 +6,12 @@ Train language and vision-language models on single-turn math and multimodal rea
 .. grid:: 1 2 2 2
    :gutter: 3
 
+   .. grid-item-card:: Moonlight-16B (MoE GRPO)
+      :link: moonlight
+      :link-type: doc
+
+      GRPO training for Moonlight-16B-A3B-Instruct (DeepSeek-V3 MLA + MoE) via Megatron-Bridge.
+
    .. grid-item-card:: Qwen2.5 Math (GRPO)
       :link: reasoning
       :link-type: doc
@@ -18,12 +24,6 @@ Train language and vision-language models on single-turn math and multimodal rea
 
       PPO training with an actor and critic on Qwen2.5-1.5B math reasoning tasks.
 
-   .. grid-item-card:: Moonlight-16B (MoE GRPO)
-      :link: moonlight
-      :link-type: doc
-
-      GRPO training for Moonlight-16B-A3B-Instruct (DeepSeek-V3 MLA + MoE) via Megatron-Bridge.
-
    .. grid-item-card:: Qwen3-VL Visual Reasoning (Geo3K)
       :link: ../qwen3_vl_geo3k
       :link-type: doc
@@ -34,7 +34,7 @@ Train language and vision-language models on single-turn math and multimodal rea
    :hidden:
    :maxdepth: 1
 
+   Moonlight-16B (MoE GRPO) <moonlight>
    Qwen2.5 Math (GRPO) <reasoning>
    Qwen2.5 Math (PPO) <reasoning_ppo>
-   Moonlight-16B (MoE GRPO) <moonlight>
    Qwen3-VL Visual Reasoning (Geo3K) <../qwen3_vl_geo3k>
