@@ -36,19 +36,19 @@ env:
   group_name: "EnvGroup"
 
   eval:
-    rollout_epoch: 1
-    total_num_envs: 128
+    rollout_epoch: 8
+    total_num_envs: 64
     auto_reset: True
     ignore_terminations: True
     max_episode_steps: 480
-    max_steps_per_rollout_epoch: 1920
+    max_steps_per_rollout_epoch: 480
     group_size: 1
     use_fixed_reset_state_ids: True
     use_ordered_reset_state_ids: True
     is_eval: True
 
     video_cfg:
-      save_video: True
+      save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
@@ -81,7 +81,7 @@ rollout:
     server:
       model_path: ${rollout.model.model_path}
       backend: sglang
-      pipeline_class_name: Cosmos3OmniPipeline
+      pipeline_class_name: Cosmos3OmniDiffusersPipeline
       tp_size: ${..tensor_parallel_size}
       attention_backend: FA  # FA or TORCH_SDPA
       dit_cpu_offload: false
@@ -90,6 +90,6 @@ rollout:
       batching_max_size: 8
 
   model:
-    # Export the non-EMA SFT net from the same full_weights.pt used by HF eval.
-    model_path: /mnt/public/new_fuxu/model/cosmos3-edge-policy-liberoall-10k/model_diffusers
-    action_stats_path: /mnt/public/new_fuxu/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
+    # Path to the exported Edge checkpoint in diffusers format.
+    model_path: /path/to/cosmos3-edge-policy/model_diffusers
+    action_stats_path: /path/to/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json

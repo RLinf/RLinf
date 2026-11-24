@@ -28,16 +28,7 @@ Each response carries one record per environment: ``data[i].action.values`` hold
 Installation
 ----------------------------------------
 
-Install the LIBERO environment and SGLang 0.5.19 with its ``diffusion`` extra. The ``sglang`` model pins torch 2.13.0 and picks the CUDA 12 or CUDA 13 build that the driver supports:
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model sglang --env libero
-   source .venv/bin/activate
-
-Install the modified SGLang 0.5.19 checkout into the serving environment as
-described in :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>`.
-Its native action API preserves explicitly configured Edge action guidance.
+Follow :ref:`Cosmos3 SGLang Installation <cosmos3-sglang-install>` in the SFT guide to install the dependencies and pinned source checkout.
 
 Prepare Checkpoint
 ----------------------------------------
@@ -94,7 +85,7 @@ Set ``rollout.model.model_path`` in the YAML to the exported ``model_diffusers``
 
 For a batch smoke test, append ``cluster.component_placement.env=0 cluster.component_placement.rollout=0 env.eval.total_num_envs=4 env.eval.specific_reset_id=0 env.eval.max_episode_steps=32 env.eval.max_steps_per_rollout_epoch=32``. This sends a four-environment batch for the same task on one GPU; 32 steps only check execution. Keep the YAML's episode length and task distribution for normal evaluation.
 
-RLinf uses SGLang's pipeline registration API to preserve explicit sampling parameters, preventing SGLang 0.5.19 from replacing an Edge action request's ``guidance_scale=1.5`` with the video default of ``5.0``. Model computation uses SGLang's native Cosmos3 pipeline; the installed package source requires no changes.
+The pinned SGLang checkout preserves explicit Edge action sampling parameters, including ``guidance_scale=1.5``, instead of replacing them with video defaults.
 
 Key Configuration
 ----------------------------------------

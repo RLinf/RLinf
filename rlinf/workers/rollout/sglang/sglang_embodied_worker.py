@@ -371,12 +371,12 @@ class SGLangEmbodiedWorker(Worker):
         return PolicyInput.merge(inputs)
 
     async def _receive_policy_input(
-        self, channel: Channel, stage_id: int, *, final: bool = False
+        self, channel: Channel, stage_id: int
     ) -> PolicyInput:
         return await self.recv_from(
             group_name=self.cfg.env.group_name,
             channel=channel,
-            tag="train_policy_final" if final else "train_policy",
+            tag="train_policy",
             route_key=stage_id,
             async_op=True,
             batch_size=self.train_batch_size,
@@ -477,9 +477,7 @@ class SGLangEmbodiedWorker(Worker):
                 self._publish_env_parts(policy_input, actor_channel)
 
         for stage_id in range(self.num_pipeline_stages):
-            policy_input = await self._receive_policy_input(
-                input_channel, stage_id, final=True
-            )
+            policy_input = await self._receive_policy_input(input_channel, stage_id)
             if not policy_input.is_last:
                 raise ValueError("Expected a final policy input at epoch end")
             self._publish_env_parts(policy_input, actor_channel)

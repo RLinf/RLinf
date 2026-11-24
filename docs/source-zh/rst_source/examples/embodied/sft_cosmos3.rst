@@ -326,6 +326,29 @@ Nano 和 Edge 都可以使用 ``--base-model-path``，在 SGLang 环境中用 to
 
 转换得到的 ``model_diffusers`` 即 :doc:`Cosmos3 SGLang 评测 <../../evaluations/guides/cosmos3_sglang>` 的 ``rollout.model.model_path``。
 
+.. _cosmos3-sglang-install:
+
+安装 RLinf 和 SGLang 环境
+----------------------------------------
+
+安装 LIBERO 环境和带 ``diffusion`` extra 的 SGLang 0.5.19。``sglang`` model 会固定 torch 2.13.0，并按驱动支持的版本选择 CUDA 12 或 CUDA 13 的 wheel：
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --model sglang --env libero
+   source .venv/bin/activate
+
+随后安装基于 SGLang 0.5.19 的 Cosmos3 扩展，源码来自 `<https://github.com/FxxxxU/sglang/commit/cf565fafbcb833d7f156f08ff29bd9e5e65c2b3a>`_。该版本提供 Cosmos3 Edge 动作推理和 rollout 支持，用于评测及 NFT 训练。在 RLinf 仓库根目录运行：
+
+.. code-block:: bash
+
+   git clone https://github.com/FxxxxU/sglang.git ../sglang-cosmos3
+   git -C ../sglang-cosmos3 checkout cf565fafbcb833d7f156f08ff29bd9e5e65c2b3a
+   uv pip install "setuptools>=61.0" "setuptools-scm>=8.0" wheel
+   SGLANG_BUILD_RUST_EXTS=none uv pip install --no-deps --no-build-isolation -e ../sglang-cosmos3/python
+
+安装后保留该源码目录，可编辑安装会直接从中导入代码。
+
 继续训练 Edge NFT
 ----------------------------------------
 
@@ -333,13 +356,7 @@ Nano 和 Edge 都可以使用 ``--base-model-path``，在 SGLang 环境中用 to
 
 启动前修改示例中的权重路径：``actor.model.model_path`` 指向导出的 Edge LIBERO ``model_diffusers`` 目录，``actor.model.wan_vae_path`` 指向对应的原生 VAE 权重，``actor.model.action_stats_path`` 指向 SFT 使用的 LIBERO 统计文件。
 
-按 :doc:`Cosmos3 SGLang 评测 <../../evaluations/guides/cosmos3_sglang>` 安装推理依赖。训练还需要支持 Cosmos3 action rollout 的修改版 SGLang 0.5.19 源码。激活 RLinf 训练环境后安装该源码目录：
-
-.. code-block:: bash
-
-   SGLANG_BUILD_RUST_EXTS=none uv pip install --no-deps --no-build-isolation -e /path/to/sglang-0.5.19/python
-
-构建环境需要 ``setuptools-scm>=8.0`` 和 ``wheel``\ 。训练和评测使用相同的 SGLang rollout worker。每个 rollout worker 在初始化时启动自己的 server，使用其所在 node group 分配给该 worker 的 GPU。运行结束后，入口脚本停止 rollout worker，由各 worker 关闭自己的 server。Hugging Face rollout 保留原有生命周期。
+训练和评测使用相同的 SGLang rollout worker。每个 rollout worker 在初始化时启动自己的 server，使用其所在 node group 分配给该 worker 的 GPU。运行结束后，入口脚本停止 rollout worker，由各 worker 关闭自己的 server。Hugging Face rollout 保留原有生命周期。
 
 在仓库根目录启动 NFT 训练：
 

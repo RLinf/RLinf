@@ -28,14 +28,7 @@ server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3
 安装
 ----------------------------------------
 
-安装 LIBERO 环境和带 ``diffusion`` extra 的 SGLang 0.5.19。``sglang`` model 会固定 torch 2.13.0，并按驱动支持的版本选择 CUDA 12 或 CUDA 13 的 wheel：
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model sglang --env libero
-   source .venv/bin/activate
-
-按 :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>` 中的步骤，将修改后的 SGLang 0.5.19 源码安装到 serving 环境。该源码的原生 action API 会保留显式设置的 Edge action guidance。
+按 SFT 文档中的 :ref:`Cosmos3 SGLang 安装步骤 <cosmos3-sglang-install>` 安装依赖和固定版本源码。
 
 准备 Checkpoint
 ----------------------------------------
@@ -92,7 +85,7 @@ Edge 使用 ``evaluations/libero/libero_spatial_cosmos3_edge_eval_sglang.yaml``�
 
 批量冒烟测试可追加 ``cluster.component_placement.env=0 cluster.component_placement.rollout=0 env.eval.total_num_envs=4 env.eval.specific_reset_id=0 env.eval.max_episode_steps=32 env.eval.max_steps_per_rollout_epoch=32``。这会在单卡上给同一任务发送四个环境的 batch；32 步仅验证运行流程。正常评测保留 YAML 中的 episode 长度和任务分布。
 
-RLinf 通过 SGLang 的 pipeline 注册接口保留显式采样参数，避免 SGLang 0.5.19 将 Edge action 请求的 ``guidance_scale=1.5`` 覆盖为视频默认值 ``5.0``。模型计算继续使用 SGLang 原生 Cosmos3 pipeline，安装包源码无需修改。
+上述固定版本会保留显式设置的 Edge 动作采样参数，包括 ``guidance_scale=1.5``\ ，避免被视频默认值覆盖。
 
 关键配置
 ----------------------------------------

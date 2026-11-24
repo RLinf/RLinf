@@ -326,6 +326,32 @@ The script runs all four steps in order (``--use-ema-weights`` keeps the EMA wei
 
 The resulting ``model_diffusers`` is the ``rollout.model.model_path`` for :doc:`Cosmos3 SGLang Evaluation <../../evaluations/guides/cosmos3_sglang>`.
 
+.. _cosmos3-sglang-install:
+
+Install RLinf and SGLang
+----------------------------------------
+
+Install the LIBERO environment and SGLang 0.5.19 with its ``diffusion`` extra. The ``sglang`` model pins torch 2.13.0 and picks the CUDA 12 or CUDA 13 build that the driver supports:
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --model sglang --env libero
+   source .venv/bin/activate
+
+Then install the Cosmos3 extension of SGLang 0.5.19 from
+`<https://github.com/FxxxxU/sglang/commit/cf565fafbcb833d7f156f08ff29bd9e5e65c2b3a>`_.
+This checkout supplies Cosmos3 Edge action inference and rollout support for
+evaluation and NFT training. From the RLinf repository root, run:
+
+.. code-block:: bash
+
+   git clone https://github.com/FxxxxU/sglang.git ../sglang-cosmos3
+   git -C ../sglang-cosmos3 checkout cf565fafbcb833d7f156f08ff29bd9e5e65c2b3a
+   uv pip install "setuptools>=61.0" "setuptools-scm>=8.0" wheel
+   SGLANG_BUILD_RUST_EXTS=none uv pip install --no-deps --no-build-isolation -e ../sglang-cosmos3/python
+
+Keep this checkout in place: the editable installation imports its source files.
+
 Continue With Edge NFT Training
 ----------------------------------------
 
@@ -342,17 +368,7 @@ points to the exported Edge LIBERO ``model_diffusers`` directory;
 ``actor.model.action_stats_path`` points to the LIBERO statistics used during
 SFT.
 
-Install the SGLang serving dependencies as described in
-:doc:`Cosmos3 SGLang Evaluation <../../evaluations/guides/cosmos3_sglang>`.
-Training also requires the modified SGLang 0.5.19 source with Cosmos3 action
-rollout support. Activate the RLinf training environment and install that checkout:
-
-.. code-block:: bash
-
-   SGLANG_BUILD_RUST_EXTS=none uv pip install --no-deps --no-build-isolation -e /path/to/sglang-0.5.19/python
-
-The build environment needs ``setuptools-scm>=8.0`` and ``wheel``. Training
-and evaluation use the same SGLang rollout worker. During initialization,
+Training and evaluation use the same SGLang rollout worker. During initialization,
 each rollout worker starts its own server on the GPUs assigned to that worker
 in its node group. When the run ends, the entry script stops the rollout
 workers, which shut down their servers. Hugging Face rollout retains its

@@ -9,6 +9,7 @@ hydra:
   output_subdir: null
   searchpath:
     - file://${oc.env:REPO_PATH}/examples/sft/config
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
 
 cluster:
   num_nodes: 1
