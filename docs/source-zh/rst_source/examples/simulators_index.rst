@@ -227,6 +227,16 @@
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/g1_mimic.html" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 200px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); background: #eef2f7; color: #333; text-decoration: none; font-size: 22px;"><b>G1</b></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/g1_mimic.html" style="text-decoration: underline; color: blue;">
+           <b>G1 动作跟踪</b>
+         </a><br>
+         MuJoCo Warp 中的 Unitree G1 全身动作跟踪环境
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -252,4 +262,5 @@
    Genesis <embodied/genesis>
    GenieSim <embodied/geniesim>
    MuJoCo Warp <embodied/mujoco_warp>
+   G1 动作跟踪 <embodied/g1_mimic>
    真机仿真器 <embodied/real_simulator>

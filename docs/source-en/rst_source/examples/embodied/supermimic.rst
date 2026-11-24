@@ -53,23 +53,8 @@ the same clips.
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
 
-.. list-table::
-   :header-rows: 1
-   :widths: 18 82
-
-   * - Field
-     - Description
-   * - Observation
-     - The robot's state and the next ten reference frames of the clip, five
-       control steps apart. GenCoord, used on this page, describes the state
-       in the simulator's generalized coordinates; MaxCoord describes it by
-       the poses and velocities of 14 tracked bodies.
-   * - Action
-     - Setpoints for the 29 joints at 50 Hz, tracked by a PD controller.
-       Training adds noise to the action; evaluation applies it as is.
-   * - Reward
-     - How closely the robot follows the clip, at most 0.1 per control step.
-       A fall ends the episode.
+The task, the observation, the action, and the reward are on the
+:doc:`G1 tracking page <g1_mimic>`.
 
 How SuperMimic Works
 --------------------
