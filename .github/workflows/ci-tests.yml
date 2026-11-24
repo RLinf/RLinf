@@ -103,6 +103,7 @@ jobs:
               - 'rlinf/workers/actor/fsdp_rlt_td3_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'
               - 'rlinf/workers/actor/embodied_fsdp_actor_worker.py'
+              - 'rlinf/workers/actor/fsdp_sapg_policy_worker.py'
               - 'rlinf/workers/env/**'
               - 'rlinf/workers/rollout/hf/**'
               - 'rlinf/models/embodiment/**'

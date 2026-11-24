@@ -254,6 +254,12 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
+        SupportedModel.SAPG_MLP_POLICY.value,
+        _build_mlp_policy,
+        category="embodied",
+        force=True,
+    )
+    register_model(
         SupportedModel.RLT_MLP_POLICY.value,
         _build_rlt_mlp_policy,
         category="embodied",

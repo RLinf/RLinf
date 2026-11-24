@@ -3562,6 +3562,10 @@ install_env_only() {
         d4rl)
             install_d4rl_env
             ;;
+        isaaclab)
+            install_common_embodied_deps
+            install_isaaclab_env
+            ;;
         mujoco_warp)
             install_common_embodied_deps
             install_mujoco_warp_env

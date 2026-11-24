@@ -591,7 +591,6 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.OPENPI,
             SupportedModel.PI0_FAST,
             SupportedModel.EVO1,
-            SupportedModel.MLP_POLICY,
             SupportedModel.GR00T,
             SupportedModel.GR00T_N1D6,
             SupportedModel.GR00T_N1D7,
@@ -616,9 +615,12 @@ class MultiStepRolloutWorker(Worker):
         if model_type in [
             SupportedModel.CNN_POLICY,
             SupportedModel.FLOW_POLICY,
-            SupportedModel.MLP_POLICY,
         ]:
             kwargs["return_obs"] = not hasattr(self.hf_model, "q_head")
+        if isinstance(self.hf_model, BasePolicy):
+            kwargs = self.hf_model.rollout_action_kwargs(
+                "eval" if self.enable_dagger else mode, kwargs
+            )
 
         only_save_expert = self.algorithm_cfg.get("dagger", {}).get(
             "only_save_expert", True

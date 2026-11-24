@@ -103,6 +103,7 @@ SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=
 SupportedModel.RLT_TD3_MLP_POLICY = SupportedModel.register(
     "rlt_td3_mlp_policy", force=True
 )
+SupportedModel.SAPG_MLP_POLICY = SupportedModel.register("sapg_mlp_policy", force=True)
 SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
 SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
@@ -150,6 +151,7 @@ EMBODIED_MODEL = set(
         SupportedModel.MLP_POLICY,
         SupportedModel.RLT_MLP_POLICY,
         SupportedModel.RLT_TD3_MLP_POLICY,
+        SupportedModel.SAPG_MLP_POLICY,
         SupportedModel.GR00T,
         SupportedModel.DEXBOTIC_PI,
         SupportedModel.DEXBOTIC_DM0,
@@ -1408,6 +1410,124 @@ def validate_refl_cfg(cfg: DictConfig) -> None:
         )
 
 
+def _validate_sapg_train_cfg(
+    cfg: DictConfig,
+    model_cfg: DictConfig,
+    component_placement: HybridComponentPlacement,
+) -> None:
+    """Validate the configuration and trajectory layout used by SAPG."""
+    from rlinf.data.schema.embodied_trajectory import RolloutGeometry
+
+    if SupportedModel(model_cfg.model_type) != SupportedModel.SAPG_MLP_POLICY:
+        raise ValueError(
+            "algorithm.loss_type='sapg' requires actor.model.model_type='sapg_mlp_policy', "
+            f"got {model_cfg.model_type!r}."
+        )
+    if cfg.actor.training_backend != "fsdp" or cfg.algorithm.adv_type != "gae":
+        raise ValueError(
+            "SAPG requires FSDP training and algorithm.adv_type='gae', got "
+            f"{cfg.actor.training_backend!r} and {cfg.algorithm.adv_type!r}."
+        )
+    if cfg.runner.get("use_training_pipeline", False) or cfg.runner.get(
+        "enable_decoupled_mode", False
+    ):
+        raise ValueError(
+            "SAPG requires synchronous rollouts with stable environment positions. "
+            "Set runner.use_training_pipeline and runner.enable_decoupled_mode to false."
+        )
+    if EnvLayout.is_heterogeneous(cfg.env.train):
+        raise ValueError("SAPG requires a single env.train configuration without envs.")
+    if not model_cfg.add_value_head or not (
+        cfg.rollout.get("collect_prev_infos", True)
+        and cfg.rollout.get("collect_final_values", True)
+    ):
+        raise ValueError(
+            "SAPG requires actor.model.add_value_head=true and collection of "
+            "previous policy statistics and final values."
+        )
+
+    if cfg.algorithm.get("recompute_logprobs", False):
+        raise ValueError(
+            "SAPG must retain behaviour-policy log probabilities for follower "
+            "samples; set algorithm.recompute_logprobs=false."
+        )
+    if cfg.algorithm.logprob_type != "action_level":
+        raise ValueError(
+            "SAPG requires algorithm.logprob_type='action_level' for the joint "
+            "action probability ratio."
+        )
+
+    sapg = model_cfg.sapg
+    if sapg.get("intrinsic_reward_type", "entropy") not in ("none", "entropy"):
+        raise ValueError(
+            "SAPG supports intrinsic_reward_type='none' or 'entropy', got "
+            f"{sapg.intrinsic_reward_type!r}."
+        )
+    num_blocks = int(sapg.get("num_blocks", 1))
+    embd_size = int(sapg.get("embd_size", 16))
+    ratio = int(sapg.get("off_policy_ratio", 1))
+    if num_blocks < 1 or embd_size < 2 or embd_size % 2 or ratio < 0:
+        raise ValueError(
+            "SAPG expects positive num_blocks, positive even embd_size and "
+            f"nonnegative off_policy_ratio, got {num_blocks}, {embd_size}, {ratio}."
+        )
+    if num_blocks > 1 and sapg.get("embedding_start", 50.0) == sapg.get(
+        "embedding_end", 0.0
+    ):
+        raise ValueError(
+            "SAPG requires distinct exploration codes: embedding_start and "
+            "embedding_end must differ when num_blocks > 1."
+        )
+    off_blocks = min(num_blocks - 1, ratio) if sapg.get("leader_aggregate", True) else 0
+    if off_blocks and (
+        not cfg.rollout.get("collect_transitions", False)
+        or model_cfg.num_action_chunks != 1
+    ):
+        raise ValueError(
+            "SAPG aggregation requires rollout.collect_transitions=true and "
+            f"one action per transition, got {model_cfg.num_action_chunks} actions."
+        )
+
+    geometry = RolloutGeometry(
+        layout=EnvLayout(
+            cfg.env.train, component_placement.get_world_size("env"), "env.train"
+        ),
+        stage_num=cfg.rollout.pipeline_stage_num,
+        num_action_chunks=model_cfg.num_action_chunks,
+        actor_world_size=component_placement.get_world_size("actor"),
+    )
+    rollout_partitions = (
+        cfg.rollout.pipeline_stage_num * component_placement.get_world_size("rollout")
+    )
+    partitions = (
+        math.lcm(
+            rollout_partitions, geometry.source_count * geometry.shards_per_source(0)
+        )
+        if off_blocks
+        else rollout_partitions
+    )
+    env_count = cfg.env.train.total_num_envs
+    if env_count % (num_blocks * partitions):
+        raise ValueError(
+            f"SAPG requires env.train.total_num_envs ({env_count}) to be divisible "
+            f"by the {num_blocks} blocks across {partitions} routing partitions."
+        )
+
+    samples = (
+        env_count
+        // num_blocks
+        * (num_blocks + off_blocks)
+        * cfg.env.train.rollout_epoch
+        * geometry.chunk_count(0)
+    )
+    global_batch = cfg.actor.global_batch_size
+    if global_batch < 1 or samples % global_batch:
+        raise ValueError(
+            f"SAPG rollout has {samples} training samples after aggregation, expected "
+            f"a positive actor.global_batch_size ({global_batch}) that divides it."
+        )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -2028,6 +2148,8 @@ def validate_embodied_cfg(cfg):
             stage_num=stage_num,
             actor_world_size=component_placement.get_world_size("actor"),
         )
+        if algorithm_cfg.get("loss_type") == "sapg":
+            _validate_sapg_train_cfg(cfg, model_cfg, component_placement)
     with open_dict(cfg):
         weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
         assert weight_sync_interval > 0, "weight_sync_interval must be greater than 0"

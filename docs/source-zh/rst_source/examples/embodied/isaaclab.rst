@@ -275,6 +275,52 @@
    * - OpenPI π₀.₅ RL 微调模型（SFT + RL）
      - 0.953
 
+
+用 SAPG 训练 MLP
+----------------
+
+这个示例用 SAPG 训练以状态向量为输入的 MLP，让 Allegro Hand 调整方块朝向。模型从随机权重开始学习。同步训练包含六个探索块，评估使用最后一个块；仿真运行在 NVIDIA GPU 上。算法背景见 `SAPG 论文 <https://arxiv.org/abs/2407.20230>`__。
+
+先安装仿真依赖，再准备 Isaac Sim 5.1.0。将 `<isaac_sim>` 换成实际安装目录。
+
+.. code:: bash
+
+   bash requirements/install.sh embodied --env isaaclab
+   source .venv/bin/activate
+   export ISAAC_PATH=<isaac_sim>
+   source "$ISAAC_PATH/setup_conda_env.sh"
+   export EMBODIED_PATH=$PWD/examples/embodiment
+
+在仓库根目录启动单卡训练：
+
+.. code:: bash
+
+   python examples/embodiment/train_embodied_agent.py \
+      --config-dir "$EMBODIED_PATH/config" \
+      --config-name isaaclab_allegro_sapg_mlp
+
+默认配置使用 384 个环境，每轮采样八步。观测包含 124 个状态值，动作包含 16 个关节控制量。通过 ``cluster.component_placement`` 选择 GPU。环境数量需满足探索块和 rollout 分片的整除要求。
+
+以下双卡测试覆盖回合结束后的重置、继续采样和评估：
+
+.. code:: bash
+
+   export REPO_PATH=$PWD
+   bash tests/e2e_tests/embodied/run.sh isaaclab_sapg_mlp
+
+测试运行三轮，使用 48 个训练环境和 12 个评估环境，回合长度限制为 16 步。短测试用于检查训练流程；学习效果实验应使用前面的训练配置。
+
+通过 ``env/success_once`` 和 ``eval/success_once`` 查看回合内是否达到目标朝向。成功统计依据任务的实际目标判定，稠密奖励为正不代表成功。日志中的回合回报保留原始尺度，训练奖励通过 ``env.train.reward_coef`` 缩放。
+
+若远端 USD 资产检查超时，可以使用本地资产镜像。镜像根目录下须有 ``Isaac/`` 子目录，包含 Allegro Hand、DexCube、Grid 资产及其依赖。在训练命令后添加以下参数：
+
+.. code:: bash
+
+   env.train.init_params.asset_root=<asset_root> \
+   env.eval.init_params.asset_root=<asset_root>
+
+数值测试对照官方 SAPG 发布代码，检查聚合、GAE、leader 价值目标、损失和梯度。这份配置的网络结构、观测与价值归一化、奖励尺度、学习率调度、仿真后端和环境数量均与论文实验有差异。能否达到论文实验的收敛表现和成功率，需要单独开展学习效果实验验证。
+
 致谢
 ----------------------------------------
 
