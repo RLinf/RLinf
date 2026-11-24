@@ -604,8 +604,8 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         all_critic_metrics = {
             f"critic/{key}": np.mean(value) for key, value in all_critic_metrics.items()
         }
-        qf_grad_norm = self.model.clip_grad_norm_(
-            max_norm=self.cfg.actor.critic_optim.clip_grad
+        qf_grad_norm = self.clip_optimizer_grad_norm(
+            self.qf_optimizer, self.cfg.actor.critic_optim.clip_grad
         )
 
         self.qf_optimizer.step()
@@ -618,8 +618,10 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             **all_critic_metrics,
         }
 
-        if self.update_step % self.critic_actor_ratio == 0 and train_actor:
+        update_actor, update_targets = self._get_update_flags(train_actor=train_actor)
+        if update_actor:
             self.optimizer.zero_grad()
+            self.before_actor_update()
             gbs_actor_loss = []
             gbs_entropy = []
             all_actor_metrics = {}
@@ -634,8 +636,8 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 f"actor/{key}": np.mean(value)
                 for key, value in all_actor_metrics.items()
             }
-            actor_grad_norm = self.model.clip_grad_norm_(
-                max_norm=self.cfg.actor.optim.clip_grad
+            actor_grad_norm = self.clip_optimizer_grad_norm(
+                self.optimizer, self.cfg.actor.optim.clip_grad
             )
             self.optimizer.step()
             self.lr_scheduler.step()
@@ -684,13 +686,24 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 }
             )
         # Soft update target network
-        if (
-            self.target_model_initialized
-            and self.update_step % self.cfg.algorithm.get("target_update_freq", 1) == 0
-        ):
+        if self.target_model_initialized and update_targets:
             self.soft_update_target_model()
 
         return metrics_data
+
+    def _get_update_flags(self, *, train_actor: bool) -> tuple[bool, bool]:
+        """Return whether this critic step also updates the actor and targets."""
+        return (
+            train_actor and self.update_step % self.critic_actor_ratio == 0,
+            self.update_step % self.cfg.algorithm.get("target_update_freq", 1) == 0,
+        )
+
+    def clip_optimizer_grad_norm(self, optimizer, max_norm):
+        """Clip training gradients using the wrapped model's distributed norm."""
+        return self.model.clip_grad_norm_(max_norm=max_norm)
+
+    def before_actor_update(self) -> None:
+        """Prepare optimizer-owned state before actor gradient accumulation."""
 
     def process_train_metrics(self, metrics):
         replay_buffer_stats = self.replay_buffer.get_stats()
