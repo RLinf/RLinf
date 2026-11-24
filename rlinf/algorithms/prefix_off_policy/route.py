@@ -1,0 +1,229 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any, Literal
+
+import torch
+
+from rlinf.algorithms.prefix_off_policy.transition import use_maniskill_rlt_env
+from rlinf.algorithms.rlt.expert import predict_expert_actions
+
+
+@dataclass(kw_only=True)
+class PrefixRouteContext:
+    env_obs: dict[str, Any]
+    rlt_obs: dict[str, torch.Tensor]
+    student_actions: torch.Tensor
+    result: dict[str, Any]
+    mode: Literal["train", "eval"]
+    rlt_switch_flags: torch.Tensor | None = None
+    intervene_requested: torch.Tensor | None = None
+    expert_model: Any | None = None
+    version: int = 0
+    default_actor_switch: bool = False
+
+
+@dataclass(kw_only=True)
+class PrefixRouteOutput:
+    actions: torch.Tensor
+    result: dict[str, Any]
+
+
+def _last_info_bool(
+    value: torch.Tensor | None,
+    *,
+    batch_size: int,
+    device: torch.device,
+    default: bool,
+) -> torch.Tensor:
+    if value is None:
+        return torch.full((batch_size,), bool(default), dtype=torch.bool, device=device)
+    value = torch.as_tensor(value, device=device)
+    if value.numel() == 1:
+        return torch.full(
+            (batch_size,),
+            bool(value.reshape(-1)[0].item()),
+            dtype=torch.bool,
+            device=device,
+        )
+    return value.reshape(batch_size, -1).to(torch.bool)[:, -1]
+
+
+def _flatten_action_chunk(actions: torch.Tensor) -> torch.Tensor:
+    if actions.dim() <= 2:
+        return actions
+    return actions.reshape(actions.shape[0], -1)
+
+
+def _base_ref_actions(
+    ref_chunk: torch.Tensor,
+    *,
+    chunk_len: int,
+    action_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    if ref_chunk.dim() == 2:
+        ref_chunk = ref_chunk.reshape(ref_chunk.shape[0], -1, action_dim)
+    return ref_chunk[:, :chunk_len, :action_dim].to(device=device, dtype=dtype)
+
+
+class PrefixRoute(ABC):
+    def actor_routing_enabled(self, version: int) -> bool:
+        """Return whether a learned actor switch can take effect now."""
+        del version
+        return True
+
+    def expert_routing_enabled(
+        self,
+        version: int,
+        *,
+        mode: Literal["train", "eval"],
+        expert_model: Any | None,
+    ) -> bool:
+        """Return whether a learned expert request can take effect now."""
+        del version, mode, expert_model
+        return False
+
+    @abstractmethod
+    def route(self, ctx: PrefixRouteContext) -> PrefixRouteOutput:
+        """Route student actions among actor, reference, and optional expert."""
+
+
+class SimulatorPrefixRoute(PrefixRoute):
+    """Actor/ref/expert routing for ManiSkill RLT with schedule warmup."""
+
+    def __init__(self, *, use_schedule: bool, warmup_updates: int):
+        self.use_schedule = use_schedule
+        self.warmup_updates = warmup_updates
+
+    def _ready_for_online(self, version: int) -> bool:
+        return not self.use_schedule or int(version) >= self.warmup_updates
+
+    def actor_routing_enabled(self, version: int) -> bool:
+        return self._ready_for_online(version)
+
+    def expert_routing_enabled(
+        self,
+        version: int,
+        *,
+        mode: Literal["train", "eval"],
+        expert_model: Any | None,
+    ) -> bool:
+        return (
+            self._ready_for_online(version)
+            and mode == "train"
+            and expert_model is not None
+        )
+
+    def route(self, ctx: PrefixRouteContext) -> PrefixRouteOutput:
+        actions = ctx.student_actions
+        result = ctx.result
+        batch_size, chunk_len, action_dim = actions.shape
+        ready_for_online = self._ready_for_online(ctx.version)
+
+        critical_phase = _last_info_bool(
+            ctx.rlt_switch_flags,
+            batch_size=batch_size,
+            device=actions.device,
+            default=False,
+        )
+        actor_switch = critical_phase
+        if self.use_schedule:
+            actor_switch = actor_switch & torch.full(
+                (batch_size,),
+                ready_for_online,
+                dtype=torch.bool,
+                device=actions.device,
+            )
+
+        requested_expert_takeover = _last_info_bool(
+            ctx.intervene_requested,
+            batch_size=batch_size,
+            device=actions.device,
+            default=False,
+        )
+        expert_takeover = (
+            requested_expert_takeover
+            & ready_for_online
+            & (ctx.mode == "train")
+            & (ctx.expert_model is not None)
+        )
+
+        base_actions = _base_ref_actions(
+            ctx.rlt_obs["ref_chunk"],
+            chunk_len=chunk_len,
+            action_dim=action_dim,
+            device=actions.device,
+            dtype=actions.dtype,
+        )
+        routed_actions = torch.where(
+            actor_switch[:, None, None],
+            actions,
+            base_actions,
+        ).contiguous()
+
+        intervene_flags = torch.zeros(
+            (batch_size, chunk_len),
+            dtype=torch.bool,
+            device=actions.device,
+        )
+        forward_inputs = result["forward_inputs"]
+        if expert_takeover.any():
+            expert_actions = predict_expert_actions(
+                ctx.expert_model,
+                ctx.env_obs,
+                chunk_len=chunk_len,
+                action_dim=action_dim,
+                device=actions.device,
+                dtype=actions.dtype,
+            )
+            routed_actions = torch.where(
+                expert_takeover[:, None, None],
+                expert_actions,
+                routed_actions,
+            ).contiguous()
+            intervene_flags[expert_takeover] = True
+            ref_chunk = forward_inputs["ref_chunk"]
+            ref_actions = ref_chunk.reshape(batch_size, -1, action_dim).clone()
+            ref_actions[:, :chunk_len] = torch.where(
+                expert_takeover[:, None, None],
+                expert_actions,
+                ref_actions[:, :chunk_len],
+            )
+            forward_inputs["ref_chunk"] = ref_actions.reshape_as(ref_chunk)
+
+        forward_inputs["action"] = _flatten_action_chunk(routed_actions).detach()
+        forward_inputs["record_transition"] = critical_phase[:, None]
+        forward_inputs["actor_switch"] = (actor_switch & ~expert_takeover)[:, None]
+        forward_inputs["intervention_requested"] = requested_expert_takeover[:, None]
+        result["intervene_flags"] = intervene_flags
+        return PrefixRouteOutput(actions=routed_actions, result=result)
+
+
+def build_prefix_route(cfg: Any) -> PrefixRoute:
+    schedule_cfg = cfg.algorithm.get("rlt_schedule", {}) or {}
+    use_schedule = bool(schedule_cfg.get("enable", False))
+    warmup_updates = int(schedule_cfg.get("warmup_post_collect_updates", 0))
+    if not use_maniskill_rlt_env(cfg):
+        raise ValueError(
+            "Prefix rollout routing currently requires env_type=maniskill_rlt; "
+            "real-world tasks retain the existing rlt_ac or rlt_td3 route."
+        )
+    return SimulatorPrefixRoute(
+        use_schedule=use_schedule,
+        warmup_updates=warmup_updates,
+    )
