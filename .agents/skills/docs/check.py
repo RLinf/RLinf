@@ -86,12 +86,18 @@ def counterpart(path: str) -> str | None:
     return None
 
 
+PARITY_EXTS = (".rst", ".md", ".css", ".js")
+SHARED_STATIC_PARITY = ("_static/css/custom.css", "_static/js/sidebar-nav.js")
+
+
 def check_parity(changes: list[route.Change]) -> list[route.Finding]:
     changed = {c.path for c in changes}
     findings = []
+    checked_shared: set[str] = set()
     for change in changes:
         other = counterpart(change.path)
-        if other is None or not change.path.endswith((".rst", ".md")):
+        is_conf = change.path in ("docs/source-en/conf.py", "docs/source-zh/conf.py")
+        if other is None or (not change.path.endswith(PARITY_EXTS) and not is_conf):
             continue
         exists = (route.REPO_ROOT / other).exists()
         if change.status == "D" and exists and other not in changed:
@@ -120,6 +126,22 @@ def check_parity(changes: list[route.Change]) -> list[route.Finding]:
                     f"changed while {other} did not; check whether it needs the same change",
                 )
             )
+        for suffix in SHARED_STATIC_PARITY:
+            if change.path.endswith(suffix) and suffix not in checked_shared:
+                checked_shared.add(suffix)
+                en_f = route.REPO_ROOT / "docs/source-en" / suffix
+                zh_f = route.REPO_ROOT / "docs/source-zh" / suffix
+                if en_f.exists() and zh_f.exists():
+                    if en_f.read_bytes() != zh_f.read_bytes():
+                        findings.append(
+                            route.Finding(
+                                "major",
+                                change.path,
+                                None,
+                                "docs/parity",
+                                f"EN and ZH copies of {suffix} differ; keep shared CSS/JS identical",
+                            )
+                        )
     return findings
 
 
@@ -367,7 +389,9 @@ def main() -> int:
         page_findings = check_page(path, page, known)
         page_findings += check_writing.check_page(path, page, names, page in added)
         page_findings += check_recipe.check_page(path, page)
-        page_findings += check_sections.check_page(path, page, route.REPO_ROOT)
+        page_findings += check_sections.check_page(
+            path, page, route.REPO_ROOT, is_new=page in added
+        )
         findings += selection.relevant(page_findings)
     if args.no_build:
         print("skipped: the Sphinx build (--no-build)")

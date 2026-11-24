@@ -14,8 +14,10 @@ html[data-theme="light"] {
     Roboto, "Helvetica Neue", Arial, sans-serif;
   --pst-font-family-heading: "Inter", -apple-system, BlinkMacSystemFont,
     "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --pst-font-family-monospace: "JetBrains Mono", ui-monospace, SFMono-Regular,
-    Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --pst-font-family-monospace: "JetBrains Mono", Menlo, "Cascadia Mono",
+    "DejaVu Sans Mono", Consolas, "Liberation Mono", ui-monospace,
+    SFMono-Regular, monospace;
+  --bs-font-monospace: var(--pst-font-family-monospace);
 
   --rlinf-surface: #ffffff;
   --rlinf-sidebar-bg: #fbfbfd;
@@ -1079,8 +1081,11 @@ div[class*="highlight-"] {
 
 .bd-article pre,
 .bd-article div.highlight pre {
+  font-feature-settings: normal;
+  font-variant-ligatures: none;
   overflow-x: auto;
   overflow-y: hidden;
+  text-rendering: auto;
 }
 
 .bd-article div.highlight pre {
@@ -1092,6 +1097,19 @@ div[class*="highlight-"] {
   line-height: 1.62;
   margin: 0;
   padding: 0.95rem 2.75rem 0.95rem 1.15rem;
+}
+
+/* Terminal output & Unicode box diagrams (e.g. Metric Table): Google Fonts'
+   subsetted "JetBrains Mono" strips U+2500-U+259F and macOS SFMono lacks them,
+   causing mixed-font widths that misalign vertical borders. Use a single native
+   monospace font with full box-drawing and block-element coverage. */
+.bd-article div.highlight-text pre,
+.bd-article div.highlight-console pre,
+.bd-article div.highlight-none pre,
+.bd-article div.highlight-default pre {
+  font-family: Menlo, "Cascadia Mono", "DejaVu Sans Mono", Consolas,
+    "Liberation Mono", monospace;
+  line-height: 1.4;
 }
 
 div.highlight button.copybtn {

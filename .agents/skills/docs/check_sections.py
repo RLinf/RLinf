@@ -39,12 +39,20 @@ enforced automatically during PR review:
   config or recipe.
 - ``docs/latex-sanity``: catch missing LaTeX subscripts and orphan paper
   equation tags in ``reference/``.
+- ``docs/box-table``: verify Unicode box-drawing tables (e.g. ``Metric Table``)
+  have uniform row display width.
+- ``docs/sidebar-grouping``: keep top-level grouped chapters on ``index.rst``
+  from accumulating raw leaf pages and cap ``Get Started`` / ``入门`` at 5 entries.
+- ``docs/sibling-alignment``: newly added recipe pages open with an Overview
+  ``.. grid::`` or ``**Prerequisites:**`` / ``**前置条件：**`` header and link to
+  ``start/installation``.
 """
 
 from __future__ import annotations
 
 import functools
 import re
+import unicodedata
 from pathlib import Path
 
 import route
@@ -501,7 +509,175 @@ def _check_reference(
     return findings
 
 
-def check_page(path: Path, rel: str, root: Path) -> list[route.Finding]:
+BOX_TOP = re.compile(r"^\s*[╭┌]─+.*─+[╮┐]\s*$")
+BOX_ROW = re.compile(r"^\s*[│├╰└].*[│┤╯┘]\s*$")
+ROOT_INDEX_RE = re.compile(r"^docs/source-(?:en|zh)/index\.rst$")
+RECIPE_SIBLING_RE = re.compile(
+    r"^docs/source-(?:en|zh)/rst_source/"
+    r"(?:examples/(?:embodied|agentic)/|evaluations/guides/)(?!_).+\.rst$"
+)
+RECIPE_NON_RUNNABLE_FILES = ("retriever.rst", "tools.rst", "video_models.rst")
+INSTALL_LINK_RE = re.compile(r"start/installation")
+RECIPE_HEADER_RE = re.compile(r"\.\.\s+grid::|\*\*(?:Prerequisites|前置条件)[:：]\*\*")
+
+
+def _display_width(text: str) -> int:
+    """Monospace terminal display width (East Asian Wide/Fullwidth = 2)."""
+    return sum(
+        2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in text
+    )
+
+
+def _check_box_tables(rel: str, lines: list[str]) -> list[route.Finding]:
+    """Verify Unicode box-drawing tables (e.g. Metric Table) have uniform row width."""
+    findings: list[route.Finding] = []
+    i = 0
+    while i < len(lines):
+        if BOX_TOP.match(lines[i]):
+            top_w = _display_width(lines[i].strip())
+            j = i + 1
+            while j < len(lines) and BOX_ROW.match(lines[j]):
+                w = _display_width(lines[j].strip())
+                if w != top_w:
+                    findings.append(
+                        route.Finding(
+                            "major",
+                            rel,
+                            j + 1,
+                            "docs/box-table",
+                            f"box-drawing table row width is {w} cols (expected {top_w} to match top border)",
+                        )
+                    )
+                if lines[j].strip().startswith(("╰", "└")):
+                    j += 1
+                    break
+                j += 1
+            i = j
+        else:
+            i += 1
+    return findings
+
+
+def _check_root_sidebar_grouping(rel: str, lines: list[str]) -> list[route.Finding]:
+    """Keep top-level grouped chapters on index.rst from accumulating raw leaf pages."""
+    if not ROOT_INDEX_RE.match(rel):
+        return []
+    findings: list[route.Finding] = []
+    i = 0
+    while i < len(lines):
+        if lines[i].strip() != ".. toctree::":
+            i += 1
+            continue
+        indent = len(lines[i]) - len(lines[i].lstrip())
+        caption = ""
+        entries: list[tuple[int, str]] = []
+        j = i + 1
+        while j < len(lines):
+            raw = lines[j]
+            stripped = raw.strip()
+            if stripped and len(raw) - len(raw.lstrip()) <= indent:
+                break
+            if stripped.startswith(":caption:"):
+                caption = stripped[len(":caption:") :].strip()
+            elif stripped and not stripped.startswith(":"):
+                m = re.search(r"<([^>]+)>$", stripped)
+                entries.append((j + 1, m.group(1) if m else stripped))
+            j += 1
+
+        if caption in ("Get Started", "入门") and len(entries) > 5:
+            findings.append(
+                route.Finding(
+                    "major",
+                    rel,
+                    i + 1,
+                    "docs/sidebar-grouping",
+                    f"'{caption}' should stay focused (<= 5 entries, found {len(entries)}); "
+                    "avoid duplicate overview/cheat-sheet pages",
+                )
+            )
+        elif caption in ("Agent & LLM", "Agent 与 LLM"):
+            for ln, target in entries:
+                ok = target == "rst_source/examples/video_models" or target.endswith(
+                    "/index"
+                )
+                if not ok:
+                    findings.append(
+                        route.Finding(
+                            "major",
+                            rel,
+                            ln,
+                            "docs/sidebar-grouping",
+                            f"'{target}' should be grouped under a sub-index "
+                            "(Reasoning / Agentic RL / Image & Video Generation) instead of top-level '{caption}'",
+                        )
+                    )
+        elif caption in ("Guides", "使用指南"):
+            for ln, target in entries:
+                if not target.endswith("/index"):
+                    findings.append(
+                        route.Finding(
+                            "major",
+                            rel,
+                            ln,
+                            "docs/sidebar-grouping",
+                            f"'{target}' should be placed under one of the workflow sub-indexes in '{caption}'",
+                        )
+                    )
+        elif caption in ("Embodied AI", "具身智能"):
+            for ln, target in entries:
+                if not (target.endswith("/index") or target.endswith("_index")):
+                    findings.append(
+                        route.Finding(
+                            "major",
+                            rel,
+                            ln,
+                            "docs/sidebar-grouping",
+                            f"'{target}' should live inside a gallery index under '{caption}'",
+                        )
+                    )
+        i = j
+    return findings
+
+
+def _check_new_recipe_sibling_alignment(
+    rel: str, source: str, lines: list[str]
+) -> list[route.Finding]:
+    """Ensure newly added recipe pages match sibling layout and link to start/installation."""
+    if (
+        not RECIPE_SIBLING_RE.match(rel)
+        or _is_index(rel)
+        or rel.endswith(RECIPE_NON_RUNNABLE_FILES)
+    ):
+        return []
+    findings: list[route.Finding] = []
+    head_block = "\n".join(lines[:90])
+    if not RECIPE_HEADER_RE.search(head_block):
+        findings.append(
+            route.Finding(
+                "major",
+                rel,
+                None,
+                "docs/sibling-alignment",
+                "new recipe page should open with an Overview ``.. grid::`` card strip "
+                "or ``**Prerequisites:**`` / ``**前置条件：**`` header matching sibling recipes",
+            )
+        )
+    if not INSTALL_LINK_RE.search(source):
+        findings.append(
+            route.Finding(
+                "major",
+                rel,
+                None,
+                "docs/sibling-alignment",
+                "new recipe page should link to ``start/installation`` instead of duplicating global installer docs",
+            )
+        )
+    return findings
+
+
+def check_page(
+    path: Path, rel: str, root: Path, *, is_new: bool = False
+) -> list[route.Finding]:
     """Run chapter-specific structural and accuracy checks on one RST page."""
     if any(skip in rel for skip in SKIP_HISTORICAL):
         return []
@@ -513,10 +689,15 @@ def check_page(path: Path, rel: str, root: Path) -> list[route.Finding]:
 
     findings += _check_raw_html(rel, lines)
     findings += _check_paths(rel, lines, root, repo_basenames(root))
+    findings += _check_box_tables(rel, lines)
+    findings += _check_root_sidebar_grouping(rel, lines)
 
     if _is_index(rel):
         findings += _check_index_page(rel, source, lines)
         return findings
+
+    if is_new:
+        findings += _check_new_recipe_sibling_alignment(rel, source, lines)
 
     if "/rst_source/extending/" in rel:
         findings += _check_extending(rel, source, lines)

@@ -42,12 +42,19 @@ TYPE_PREFIXES = (
     ("reference/", "reference"),
     ("resources/publications/", "publication"),
 )
-GALLERY_PAGE = re.compile(
-    r"docs/source-(en|zh)/rst_source/examples/embodied/(?!_)[^/]+\.rst"
+RECIPE_PAGE = re.compile(
+    r"docs/source-(en|zh)/rst_source/"
+    r"(?:examples/(?:embodied|agentic)/|evaluations/guides/)(?!_).+\.rst$"
 )
-RECIPE_SECTIONS = {"en": ("Installation", "Run It"), "zh": ("安装", "运行")}
-RECIPE_ALT_SECTIONS = {"en": ("Setup and Run",), "zh": ("安装与运行",)}
+RECIPE_NON_RUNNABLE = ("retriever.rst", "tools.rst", "video_models.rst")
+RECIPE_SECTIONS = {"en": ("Setup and Run",), "zh": ("安装与运行",)}
 GENERIC_SECTIONS = {"Algorithm", "Environment", "算法", "环境"}
+ZH_TERM_HEADING = (
+    (
+        re.compile(r"优势函数|策略损失|损失函数|规则奖励|奖励模型|新增环境"),
+        "keep Advantage / Policy Loss / Reward / Env in Chinese headings (rules/glossary.md)",
+    ),
+)
 
 #: Severity of an internal code name, by page type; other types are not checked.
 CODE_NAME_SEVERITY = {"recipe": "major", "guide": "major", "concept": "minor"}
@@ -223,18 +230,36 @@ def check_page(
                     "docs/heading",
                     "name the task or idea, not a code identifier",
                 )
-    if new and GALLERY_PAGE.match(rel):
+    if lang == "zh":
+        for number, title in headings(lines):
+            if title == "一键上手":
+                add(
+                    "major",
+                    number,
+                    "docs/structure",
+                    "use '安装与运行' instead of '一键上手' to align with English 'Setup and Run'",
+                )
+            for pattern, advice in ZH_TERM_HEADING:
+                if pattern.search(title):
+                    add("minor", number, "docs/zh-term", advice)
+
+    is_index = rel.endswith(("/index.rst", "_index.rst"))
+    if (
+        new
+        and not is_index
+        and ":orphan:" not in source[:240]
+        and RECIPE_PAGE.match(rel)
+        and not rel.endswith(RECIPE_NON_RUNNABLE)
+    ):
         titles = {title for _, title in headings(lines)}
-        has_unified = all(s in titles for s in RECIPE_ALT_SECTIONS[lang])
-        missing = (
-            [] if has_unified else [s for s in RECIPE_SECTIONS[lang] if s not in titles]
-        )
+        required = RECIPE_SECTIONS[lang]
+        missing = [s for s in required if s not in titles]
         if missing:
             add(
                 "major",
                 None,
                 "docs/structure",
-                f"a gallery recipe needs 'Setup and Run' (or {', '.join(missing)})",
+                f"a new recipe page needs the unified {required[0]!r} section (rules/recipe.md)",
             )
         for generic in sorted(titles & GENERIC_SECTIONS):
             add(

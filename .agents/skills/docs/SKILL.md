@@ -50,12 +50,13 @@ Page findings count only on the lines the change adds, because many existing pag
 | `docs/symbol` | major | a name in code font, on a Concepts, Extending, or Reference page, that nothing in the repository defines |
 | `docs/code-name` | major or minor | RLinf's internal classes, functions, or source paths in code font on a recipe or guide page (major) or a concept page (minor) |
 | `docs/math` | major | an equation on a recipe or guide page |
-| `docs/structure` | major | a new gallery recipe without Installation and Run It, or with a generic Algorithm or Environment section |
+| `docs/structure` | major | a new recipe under `examples/` or `evaluations/guides/` without unified `Setup and Run` / `安装与运行`, using legacy `一键上手`, or keeping a generic `Algorithm` / `Environment` section |
 | `docs/rtd-link` | major | a hardcoded Read the Docs link to an RLinf page instead of `:doc:` or `:ref:` |
-| `docs/parity` | major or minor | a page without its counterpart, or toctrees that differ (major); a page or README changed while its counterpart did not (minor) |
+| `docs/parity` | major or minor | a page, `conf.py`, or `_static` CSS/JS without its counterpart, differing toctrees, or diverged shared CSS/JS (`custom.css` / `sidebar-nav.js`) (major); a page or README changed while its counterpart did not (minor) |
 | `docs/heading` | minor | a code identifier in a heading outside Reference and Extending |
 | `docs/en-style` | minor | a word or phrase that [rules/english.md](rules/english.md) cuts |
 | `docs/zh-style` | minor | 您, 「」, 值得注意的是, 进行, 当……时, 不是/并非……而是……, half-width punctuation in a Chinese sentence, or no space between Chinese and English or digits ([rules/chinese.md](rules/chinese.md)) |
+| `docs/zh-term` | minor | translated RL/system terms (`优势函数`, `策略损失`, `损失函数`, `规则奖励`, `奖励模型`, `新增环境`) in Chinese headings ([rules/glossary.md](rules/glossary.md)) |
 | `docs/zh-hard-wrap` | minor | Chinese prose wrapped inside a paragraph or list item, which renders as a space |
 | `docs/command-placeholder` | major | an `install.sh` or `hf download` command containing unrunnable `<...>` placeholders on `examples/` or `evaluations/` pages |
 | `docs/command-legacy` | major | `huggingface-cli download`, `pip install huggingface-hub`, `git lfs`, `git clone https://huggingface.co/`, or `CUDA_VISIBLE_DEVICES` (on recipes, eval guides, and `guides/`) |
@@ -86,6 +87,9 @@ Page findings count only on the lines the change adds, because many existing pag
 | `docs/concept-purity` | major | `.. autoclass::` / `.. autofunction::`, ultra-thin stub (< 40 lines), or PR migration history in `concepts/` |
 | `docs/algo-keys` | major | YAML key on `reference/algorithms/` that does not exist in `rlinf/` / `examples/` / `evaluations/`, or missing runnable config/recipe link |
 | `docs/latex-sanity` | major | broken LaTeX subscript omission (`\mathbb{E}{`, `\pi{\theta}`) or orphan paper equation tags (`\tag{8}`) in `reference/` |
+| `docs/sidebar-grouping` | major | raw leaf pages dumped into grouped top-level chapters (`Embodied AI`, `Agent & LLM`, `Guides`) or >5 entries in `Get Started` on root `index.rst` |
+| `docs/sibling-alignment` | major | new recipe under `examples/` or `evaluations/guides/` missing an Overview `.. grid::` or `Prerequisites` header, or missing a link to `start/installation` |
+| `docs/box-table` | major | misaligned Unicode box-drawing table rows (e.g. `Metric Table`) whose display width differs from the top border |
 
 Then read every changed page in full, in both languages, as a reader new to RLinf who has not seen its code, and inspect every command block (the script above checks build, markup, and prose, not command quality or workflow design):
 
