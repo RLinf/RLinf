@@ -130,7 +130,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple" "robolab" "dexjoco")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple" "robolab" "dexjoco" "robouniverse")
 
 #=======================Utility Functions=======================
 
@@ -2775,6 +2775,13 @@ EOF
             uv pip uninstall transformers || true
             uv pip install "rlinf-openpi==0.1.1"
             ;;
+        robouniverse)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_robouniverse_env
+            uv pip install "rlinf-openpi==0.1.1"
+            install_flash_attn
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
@@ -3618,6 +3625,10 @@ install_env_only() {
             install_common_embodied_deps
             install_robolab_env
             ;;
+        robouniverse)
+            install_common_embodied_deps
+            install_robouniverse_env
+            ;;
         simple)
             install_common_embodied_deps
             install_simple_env
@@ -3967,6 +3978,13 @@ install_robolab_env() {
     materialize_package_files isaacsim-kernel
     materialize_package_files omniverse-kit
     uv pip install openpi-client
+}
+
+install_robouniverse_env() {
+    # The RLinf adapter runs Isaac Sim 5.1.0 in an isolated subprocess
+    # configured via init_params.sim_python, so this venv only needs the
+    # Hugging Face client for downloading RoboUniverse-10K task archives.
+    uv pip install huggingface_hub
 }
 
 install_simple_env() {

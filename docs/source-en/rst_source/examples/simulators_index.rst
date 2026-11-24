@@ -171,6 +171,18 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/robouniverse.html" style="display: block;"><img src="https://raw.githubusercontent.com/Einsia/RoboUniverse-10K/main/assets/task-taxonomy.png"
+            alt="RoboUniverse-10K manipulation benchmark"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/robouniverse.html" style="text-decoration: underline; color: blue;">
+           <b>RL with RoboUniverse-10K</b>
+         </a><br>
+         10,807 Franka and AgileX Isaac Sim manipulation tasks
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/polaris.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/polaris.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -259,6 +271,7 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
    EmbodiChain <embodied/embodichain>
    PolaRiS <embodied/polaris>
    RoboLab <embodied/robolab>
+   RoboUniverse-10K <embodied/robouniverse>
    GSEnv <embodied/gsenv>
    Genesis <embodied/genesis>
    DexJoCo <embodied/dexjoco>

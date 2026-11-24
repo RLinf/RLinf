@@ -722,3 +722,410 @@ def test_config_needs_grpo_envs_to_stop_trajectories_at_their_first_done():
 
     with pytest.raises(AssertionError, match=r"env.train.envs.maniskill needs"):
         validate_env_training_cfg(cfg, layout, stage_num=1, actor_world_size=2)
+
+
+def _write_robouniverse_task_zip(
+    archive_path,
+    *,
+    case: str,
+    robot: str,
+    action_dim: int,
+    instruction: str,
+    verdict_mode: str = "threshold",
+) -> str:
+    """Create a real operable-env/0.1 CPU fixture archive and return its SHA-256."""
+    import hashlib
+    import json
+    import zipfile
+
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    joint_names = [f"joint_{i}" for i in range(action_dim)]
+    spec = {
+        "delivery_api": "operable-env/0.1",
+        "status": "ready",
+        "task_id": case,
+        "revision": "1",
+        "instruction_path": "task_instruction.md",
+        "backend_entrypoint": "env_backend:create_backend",
+        "evaluator_entrypoint": "evaluator_adapter:evaluate",
+        "timing": {"physics_dt_s": 1.0 / 120.0, "control_dt_s": 0.05},
+        "action": {
+            "kind": "joint_position_target",
+            "names": joint_names,
+            "units": ["rad"] * action_dim,
+            "lower": [-1.0] * action_dim,
+            "upper": [1.0] * action_dim,
+            "gripper_mapping": "fixture",
+        },
+        "observation": {
+            "joint_names": joint_names,
+            "joint_units": ["rad"] * action_dim,
+            "cameras": [
+                {"id": "external", "role": "external", "width": 8, "height": 6},
+                {"id": "wrist", "role": "wrist", "width": 8, "height": 6},
+            ],
+        },
+        "reset": {"mode": "fixed", "supported_seeds": [0]},
+    }
+    env_backend_src = f"""
+import json
+from pathlib import Path
+import numpy as np
+
+class FixtureBackend:
+    def __init__(self, workspace, runtime_root, device):
+        self.workspace = Path(workspace)
+        self.dim = {action_dim}
+        self.step_index = 0
+        self.last_action = np.zeros(self.dim, dtype=np.float64)
+
+    def reset(self, *, seed=0):
+        if seed != 0:
+            raise ValueError(f"Expected seed 0, found {{seed}}")
+        self.step_index = 0
+        self.last_action = np.zeros(self.dim, dtype=np.float64)
+        return self._obs()
+
+    def _obs(self):
+        ext = np.full((6, 8, 3), self.step_index % 255, dtype=np.uint8)
+        wrist = np.full((6, 8, 3), (self.step_index + 10) % 255, dtype=np.uint8)
+        return {{
+            "episode_id": "{case}",
+            "step_index": self.step_index,
+            "sim_time_s": self.step_index * 0.05,
+            "rgb": {{"external": ext, "wrist": wrist}},
+            "proprio": {{
+                "joint_position": self.last_action.copy(),
+                "joint_velocity": np.ones(self.dim, dtype=np.float64) * 0.5,
+            }},
+        }}
+
+    def step(self, action):
+        self.last_action = np.asarray(action, dtype=np.float64).copy()
+        self.step_index += 1
+        return self._obs()
+
+    def export_evidence(self, destination):
+        dest = Path(destination)
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "trace.json").write_text(
+            json.dumps({{"case": "{case}", "last_sum": float(self.last_action.sum())}})
+        )
+        return {{"files": ["trace.json"]}}
+
+    def close(self):
+        pass
+
+def create_backend(*, workspace, runtime_root, device):
+    return FixtureBackend(workspace, runtime_root, device)
+"""
+    if verdict_mode == "error":
+        eval_src = """
+def evaluate(*, run_dir):
+    raise RuntimeError("simulated verifier crash")
+"""
+    elif verdict_mode == "always_fail":
+        eval_src = """
+def evaluate(*, run_dir):
+    return {"verdict": "failure", "details": {"mode": "always_fail"}}
+"""
+    else:
+        eval_src = """
+import json
+from pathlib import Path
+
+def evaluate(*, run_dir):
+    data = json.loads((Path(run_dir) / "trace.json").read_text())
+    verdict = "success" if data["last_sum"] > 0.5 else "failure"
+    return {"verdict": verdict, "details": data}
+"""
+    with zipfile.ZipFile(archive_path, "w") as zf:
+        zf.writestr("release.json", json.dumps({"case": case, "robot": robot}))
+        zf.writestr("upstream.json", json.dumps({}))
+        zf.writestr("environment/sim/workspace/env_spec.json", json.dumps(spec))
+        zf.writestr("environment/sim/workspace/task_instruction.md", instruction)
+        zf.writestr("environment/sim/workspace/env_backend.py", env_backend_src)
+        zf.writestr("environment/sim/workspace/evaluator_adapter.py", eval_src)
+    return hashlib.sha256(archive_path.read_bytes()).hexdigest()
+
+
+def _build_robouniverse_fixture_dataset(root):
+    import csv
+
+    entries = [
+        ("franka_01", "franka", 9, "Rotate the mug", "threshold", True),
+        ("franka_02", "franka", 9, "Press the button", "always_fail", True),
+        ("franka_err", "franka", 9, "Broken grader", "error", False),
+        ("agilex_01", "agilex", 16, "Place peach in basket", "threshold", True),
+    ]
+    rows = []
+    heldout = []
+    for case, robot, dim, instr, mode, in_heldout in entries:
+        rel = f"tasks/{robot}/{case}.zip"
+        sha = _write_robouniverse_task_zip(
+            root / rel,
+            case=case,
+            robot=robot,
+            action_dim=dim,
+            instruction=instr,
+            verdict_mode=mode,
+        )
+        rows.append(
+            {
+                "case": case,
+                "robot": robot,
+                "archive": rel,
+                "sha256": sha,
+                "bytes": str((root / rel).stat().st_size),
+            }
+        )
+        if in_heldout:
+            heldout.append({"case": case})
+
+    with (root / "catalog.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=["case", "robot", "archive", "sha256", "bytes"]
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+    (root / "splits").mkdir(parents=True, exist_ok=True)
+    with (root / "splits" / "heldout500.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=["case"])
+        writer.writeheader()
+        writer.writerows(heldout)
+    return root
+
+
+def test_robouniverse_catalog_filtering_and_sharding(tmp_path):
+    from rlinf.envs.sim.robouniverse.catalog import RoboUniverseCatalog
+
+    data_root = _build_robouniverse_fixture_dataset(tmp_path / "dataset")
+    catalog = RoboUniverseCatalog(data_root)
+
+    heldout_franka = catalog.select(split="heldout500", robot="franka")
+    assert [r.case for r in heldout_franka] == ["franka_01", "franka_02"]
+
+    train_tasks = catalog.select(split="train", robot="franka")
+    assert [r.case for r in train_tasks] == ["franka_err"]
+
+    explicit = catalog.select(cases=["agilex_01"])
+    assert [r.case for r in explicit] == ["agilex_01"]
+
+    assert [r.case for r in catalog.shard(heldout_franka, rank=0, world_size=2)] == [
+        "franka_01"
+    ]
+    assert [r.case for r in catalog.shard(heldout_franka, rank=1, world_size=2)] == [
+        "franka_02"
+    ]
+    assert [r.case for r in catalog.shard(explicit, rank=2, world_size=3)] == [
+        "agilex_01"
+    ]
+
+    with pytest.raises(ValueError, match="Unknown RoboUniverse cases"):
+        catalog.select(cases=["missing_case"])
+
+
+def test_robouniverse_materializer_checksum_traversal_and_lru(tmp_path):
+    import zipfile
+
+    from rlinf.envs.sim.robouniverse.catalog import RoboUniverseCatalog, TaskRecord
+    from rlinf.envs.sim.robouniverse.materializer import TaskMaterializer
+
+    data_root = _build_robouniverse_fixture_dataset(tmp_path / "dataset")
+    catalog = RoboUniverseCatalog(data_root)
+    franka_tasks = catalog.select(split="heldout500", robot="franka")
+
+    mat = TaskMaterializer(data_root, tmp_path / "work", max_cached_tasks=1)
+    first = mat.materialize(franka_tasks[0])
+    assert first.instruction == "Rotate the mug"
+    assert first.workspace_dir.is_dir()
+
+    second = mat.materialize(franka_tasks[1])
+    assert second.instruction == "Press the button"
+    assert not first.task_dir.exists()
+    assert second.task_dir.exists()
+
+    bad_record = TaskRecord(
+        case=franka_tasks[0].case,
+        robot=franka_tasks[0].robot,
+        archive=franka_tasks[0].archive,
+        sha256="0" * 64,
+        size_bytes=franka_tasks[0].size_bytes,
+    )
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        mat.materialize(bad_record)
+
+    evil_zip = data_root / "tasks" / "evil.zip"
+    with zipfile.ZipFile(evil_zip, "w") as zf:
+        zf.writestr("../escape.txt", "boom")
+    evil_record = TaskRecord(
+        case="evil",
+        robot="franka",
+        archive="tasks/evil.zip",
+        sha256="0" * 64,
+        size_bytes=evil_zip.stat().st_size,
+    )
+    unsafe_mat = TaskMaterializer(
+        data_root, tmp_path / "work_evil", verify_sha256=False
+    )
+    with pytest.raises(ValueError, match="safe relative path"):
+        unsafe_mat.materialize(evil_record)
+
+
+def test_robouniverse_env_end_to_end_cpu_fixture(tmp_path):
+    import sys
+
+    from rlinf.envs import SupportedEnvType, get_env_cls
+    from rlinf.envs.action_utils import prepare_actions
+
+    data_root = _build_robouniverse_fixture_dataset(tmp_path / "dataset")
+    assert SupportedEnvType("robouniverse") is SupportedEnvType.ROBOUNIVERSE
+    env_cls = get_env_cls("robouniverse")
+
+    prepared = prepare_actions(
+        raw_chunk_actions=np.ones((1, 2, 16), dtype=np.float32),
+        env_type="robouniverse",
+        model_type="openpi",
+        num_action_chunks=2,
+        action_dim=9,
+    )
+    assert prepared.shape == (1, 2, 9)
+    with pytest.raises(ValueError, match="finite values"):
+        prepare_actions(
+            raw_chunk_actions=np.full((1, 2, 9), np.nan, dtype=np.float32),
+            env_type="robouniverse",
+            model_type="openpi",
+            num_action_chunks=2,
+            action_dim=9,
+        )
+
+    base_cfg = OmegaConf.create(
+        {
+            "env_type": "robouniverse",
+            "seed": 7,
+            "group_size": 1,
+            "max_episode_steps": 3,
+            "auto_reset": False,
+            "ignore_terminations": False,
+            "init_params": {
+                "data_root": str(data_root),
+                "split": "heldout500",
+                "robot": "franka",
+                "work_dir": str(tmp_path / "work_eval"),
+                "sim_python": sys.executable,
+                "device": "cpu",
+                "clip_actions": True,
+                "allow_cpu_fixture": True,
+                "accept_isaac_eula": False,
+            },
+        }
+    )
+
+    # Without allow_cpu_fixture or accept_isaac_eula, construction fails fast.
+    eula_cfg = OmegaConf.create(OmegaConf.to_container(base_cfg, resolve=True))
+    eula_cfg.init_params.allow_cpu_fixture = False
+    with pytest.raises(ValueError, match="accept_isaac_eula"):
+        env_cls(cfg=eula_cfg, num_envs=1, seed_offset=0, total_num_processes=1)
+
+    # Mixed robot families in one env group must fail loudly.
+    mixed_cfg = OmegaConf.create(OmegaConf.to_container(base_cfg, resolve=True))
+    mixed_cfg.init_params.robot = None
+    with pytest.raises(ValueError, match="single robot family"):
+        env_cls(cfg=mixed_cfg, num_envs=1, seed_offset=0, total_num_processes=1)
+
+    env = env_cls(cfg=base_cfg, num_envs=1, seed_offset=0, total_num_processes=1)
+    try:
+        obs, info = env.reset()
+        assert info["cases"] == ["franka_01"]
+        assert obs["main_images"].shape == (1, 6, 8, 3)
+        assert obs["wrist_images"].shape == (1, 6, 8, 3)
+        assert obs["states"].shape == (1, 9)
+        assert obs["task_descriptions"] == ["Rotate the mug"]
+
+        # Compatible with PolicyObsSpec resizing.
+        spec = PolicyObsSpec(
+            keys=["main_images", "wrist_images", "states", "task_descriptions"],
+            image_size=[4, 4],
+        )
+        conformed = spec.apply(obs)
+        assert conformed["main_images"].shape == (1, 4, 4, 3)
+
+        # Exceeding bounds clips cleanly when clip_actions=True and grades success on step 3.
+        _, r1, term1, trunc1, _ = env.step(np.full((1, 9), 2.0, dtype=np.float32))
+        assert (r1.item(), term1.item(), trunc1.item()) == (0.0, False, False)
+
+        _, rewards, terms, truncs, infos = env.chunk_step(
+            np.full((1, 2, 9), 0.5, dtype=np.float32)
+        )
+        assert rewards.shape == (1, 2)
+        assert rewards[0, 1].item() == pytest.approx(1.0)
+        assert terms[0, 1].item() is True
+        assert truncs[0, 1].item() is False
+        assert infos[-1]["episode"]["success_once"].item() == pytest.approx(1.0)
+        assert infos[-1]["verdicts"] == ["success"]
+
+        # Second reset advances to franka_02 and evicts franka_01's workspace modules.
+        obs2, info2 = env.reset()
+        assert info2["cases"] == ["franka_02"]
+        assert obs2["task_descriptions"] == ["Press the button"]
+        _, rewards2, terms2, truncs2, infos2 = env.chunk_step(
+            np.full((1, 3, 9), 0.5, dtype=np.float32)
+        )
+        assert rewards2[0, -1].item() == pytest.approx(0.0)
+        assert terms2[0, -1].item() is False
+        assert truncs2[0, -1].item() is True
+        assert infos2[-1]["verdicts"] == ["failure"]
+    finally:
+        env.close()
+        env.close()  # idempotent
+
+
+def test_robouniverse_env_auto_reset_and_infra_error_isolation(tmp_path):
+    import sys
+
+    from rlinf.envs import get_env_cls
+
+    data_root = _build_robouniverse_fixture_dataset(tmp_path / "dataset")
+    env_cls = get_env_cls("robouniverse")
+    cfg = OmegaConf.create(
+        {
+            "env_type": "robouniverse",
+            "seed": 0,
+            "group_size": 1,
+            "max_episode_steps": 2,
+            "auto_reset": True,
+            "ignore_terminations": False,
+            "init_params": {
+                "data_root": str(data_root),
+                "cases": ["franka_err", "franka_01"],
+                "work_dir": str(tmp_path / "work_auto"),
+                "sim_python": sys.executable,
+                "device": "cpu",
+                "allow_cpu_fixture": True,
+            },
+        }
+    )
+
+    env = env_cls(cfg=cfg, num_envs=1, seed_offset=0, total_num_processes=1)
+    try:
+        obs, _ = env.reset()
+        assert obs["task_descriptions"] == ["Broken grader"]
+
+        obs_list, rewards, terms, truncs, infos = env.chunk_step(
+            np.zeros((1, 2, 9), dtype=np.float32)
+        )
+        assert rewards[0, -1].item() == pytest.approx(0.0)
+        assert terms[0, -1].item() is False
+        assert truncs[0, -1].item() is True
+        assert infos[-1]["final_info"]["episode"][
+            "infra_error"
+        ].item() == pytest.approx(1.0)
+        assert infos[-1]["final_info"]["verdicts"] == ["error"]
+        assert infos[-1]["_final_observation"].tolist() == [True]
+        # Auto-reset immediately moved the slot onto the next task.
+        assert obs_list[-1]["task_descriptions"] == ["Rotate the mug"]
+    finally:
+        env.close()

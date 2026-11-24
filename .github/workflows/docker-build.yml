@@ -1044,6 +1044,43 @@ jobs:
           outputs: type=cacheonly
           tags: rlinf:embodied-robolab
 
+  build-embodied-robouniverse:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Maximize storage space
+        run: |
+          sudo rm -rf /usr/lib/jvm
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /usr/local/julia*
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/local/share/chromium
+          sudo rm -rf /opt/microsoft /opt/google
+          sudo rm -rf /opt/az
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /opt/hostedtoolcache
+          docker system prune -af || true
+          docker builder prune -af || true
+          df -h
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build embodied-robouniverse
+        uses: docker/build-push-action@v6
+        with:
+          file: ./docker/Dockerfile
+          push: false
+          build-args: |
+            BUILD_TARGET=embodied-robouniverse
+            NO_MIRROR=1
+          outputs: type=cacheonly
+          tags: rlinf:embodied-robouniverse
+
   build-embodied-genesis:
     runs-on: ubuntu-latest
     steps:

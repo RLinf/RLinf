@@ -48,6 +48,7 @@ class SupportedEnvType(Enum):
     POLARIS = "polaris"
     DEXJOCO = "dexjoco"
     ROBOLAB = "robolab"
+    ROBOUNIVERSE = "robouniverse"
     SIMPLE = "simple"
 
     @classmethod
@@ -211,6 +212,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.sim.robolab.robolab_env import RoboLabEnv
 
         return RoboLabEnv
+    elif env_type == SupportedEnvType.ROBOUNIVERSE:
+        from rlinf.envs.sim.robouniverse.robouniverse_env import RoboUniverseEnv
+
+        return RoboUniverseEnv
     elif env_type == SupportedEnvType.SIMPLE:
         from rlinf.envs.sim.simple.simple_env import SimpleEnv
 
