@@ -33,7 +33,11 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-from rlinf.envs.sim.robolab.protocol import receive, send
+from rlinf.envs.sim.ipc import (
+    receive_message,
+    resolve_physical_cuda_device,
+    send_message,
+)
 
 
 class RoboLabEnv:
@@ -104,22 +108,7 @@ class RoboLabEnv:
         env["OMNI_KIT_ACCEPT_EULA"] = "Y"
         device = settings.get("device", "cuda:0")
         if device.startswith("cuda"):
-            ordinal = int(device.split(":")[1]) if ":" in device else 0
-            if ordinal < 0:
-                raise ValueError(f"Expected nonnegative CUDA ordinal, found {ordinal}")
-            visible = env.get("CUDA_VISIBLE_DEVICES")
-            physical = ordinal
-            if visible:
-                devices = [entry.strip() for entry in visible.split(",")]
-                if all(entry.isdigit() for entry in devices):
-                    if ordinal >= len(devices):
-                        raise ValueError(
-                            f"Device {device} is outside CUDA_VISIBLE_DEVICES={visible}"
-                        )
-                    # Kit's Vulkan device indices are not remapped by
-                    # CUDA_VISIBLE_DEVICES, so unmask and select the GPU directly.
-                    physical = int(devices[ordinal])
-                    env.pop("CUDA_VISIBLE_DEVICES")
+            physical, env = resolve_physical_cuda_device(device, env)
             settings["device"] = f"cuda:{physical}"
             settings["kit_args"] = (
                 settings.get("kit_args", "") + f" --/renderer/activeGpu={physical}"
@@ -163,8 +152,8 @@ class RoboLabEnv:
             listener.close()
 
     def _request(self, message):
-        send(self._socket, message)
-        result = receive(self._socket)
+        send_message(self._socket, message)
+        result = receive_message(self._socket, peer_name="RoboLab")
         if isinstance(result, dict) and "error" in result:
             raise RuntimeError(f"RoboLab simulator error:\n{result['error']}")
         return result
@@ -268,7 +257,7 @@ class RoboLabEnv:
         if self._socket is not None:
             try:
                 self._socket.settimeout(1)
-                send(self._socket, {"command": "close"})
+                send_message(self._socket, {"command": "close"})
             except OSError:
                 pass
             self._socket.close()

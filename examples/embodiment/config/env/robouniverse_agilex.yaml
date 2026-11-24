@@ -10,7 +10,7 @@ video_cfg:
   save_video: false
   video_base_dir: ./logs/robouniverse/video
 init_params:
-  data_root: /path/to/robouniverse-10k
+  data_root: /path/to/RoboUniverse-10K
   split: heldout500
   robot: agilex
   cases: null

@@ -20,7 +20,7 @@ import socket
 import sys
 import traceback
 
-from rlinf.envs.sim.robolab.protocol import receive, send
+from rlinf.envs.sim.ipc import receive_message, send_message
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -37,7 +37,7 @@ def main() -> None:
     app = None
     env = None
     try:
-        message = receive(sock)
+        message = receive_message(sock, peer_name="RoboLab")
         if message["command"] != "init":
             raise ValueError("Expected RoboLab simulator init command")
         settings = message["settings"]
@@ -129,7 +129,7 @@ def main() -> None:
                 "active_mask": active_mask,
             }
 
-        send(
+        send_message(
             sock,
             {
                 "task_descriptions": [prompt] * num_envs,
@@ -141,7 +141,7 @@ def main() -> None:
             },
         )
         while True:
-            message = receive(sock)
+            message = receive_message(sock, peer_name="RoboLab")
             command = message["command"]
             if command == "close":
                 finish_episode()
@@ -149,7 +149,7 @@ def main() -> None:
             if command == "render_camera":
                 if last_obs is None:
                     raise RuntimeError("Reset RoboLab before reading a camera")
-                send(
+                send_message(
                     sock,
                     last_obs["image_obs"][message["camera_name"]][message["env_id"]]
                     .detach()
@@ -172,7 +172,7 @@ def main() -> None:
                             "truncated": bool(finished[j] and not success[j]),
                         }
                     )
-                send(sock, statuses)
+                send_message(sock, statuses)
                 continue
             if command == "reset":
                 finish_episode()
@@ -190,7 +190,7 @@ def main() -> None:
                 finished[:] = False
                 success[:] = 0
                 score[:] = 0
-                send(sock, pack_obs(last_obs))
+                send_message(sock, pack_obs(last_obs))
                 continue
             if command != "chunk_step":
                 raise ValueError(f"Unknown RoboLab simulator command: {command}")
@@ -247,7 +247,7 @@ def main() -> None:
             }
             if enable_subtask:
                 episode["score"] = score.copy()
-            send(
+            send_message(
                 sock,
                 {
                     "observation": pack_obs(last_obs),
@@ -261,7 +261,7 @@ def main() -> None:
         pass
     except BaseException:
         try:
-            send(sock, {"error": traceback.format_exc()})
+            send_message(sock, {"error": traceback.format_exc()})
         except OSError:
             logger.exception("Failed to send RoboLab simulator error to the adapter")
     finally:

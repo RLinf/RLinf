@@ -43,7 +43,7 @@ env:
     is_eval: true
     seed: 0
     init_params:
-      data_root: /path/to/robouniverse-10k
+      data_root: /path/to/RoboUniverse-10K
       split: heldout500
       robot: franka
       sim_python: /isaac-sim/python.sh
@@ -55,20 +55,16 @@ rollout:
   enable_offload: false
   pipeline_stage_num: 1
   model:
-    model_path: /path/to/model
+    model_path: /path/to/openpi_robouniverse_franka_checkpoint
     model_type: openpi
     action_dim: 9
     num_action_chunks: 15
     num_steps: 10
     add_value_head: false
     openpi:
+      task: eval
+      config_name: pi05_robouniverse_franka
       num_images_in_input: 2
-      action_chunk: 15
-      action_env_dim: 9
-      num_steps: 10
-      model_action_dim: 32
-      paligemma_variant: gemma_2b
-      action_expert_variant: gemma_300m
-      max_token_len: 200
       eval_batch_size: 1
       eval_seed: 0
+      torch_compile: false

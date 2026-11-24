@@ -84,7 +84,6 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-embodichain
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robolab
-FROM base-image-platform-${PLATFORM} AS base-image-embodied-robouniverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-mujoco_warp
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-dexjoco
@@ -523,15 +522,6 @@ FROM embodied-common-image AS embodied-robolab-image
 ENV OMNI_KIT_ACCEPT_EULA=YES
 
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robolab
-
-RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
-
-##################################################################################################
-# Embodied: RoboUniverse-10K
-##################################################################################################
-FROM embodied-common-image AS embodied-robouniverse-image
-
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robouniverse
 
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 

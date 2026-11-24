@@ -732,6 +732,10 @@ def _write_robouniverse_task_zip(
     action_dim: int,
     instruction: str,
     verdict_mode: str = "threshold",
+    action_lower: list[float] | None = None,
+    action_upper: list[float] | None = None,
+    strict_bounds: bool = False,
+    init_sleep_s: float = 0.0,
 ) -> str:
     """Create a real operable-env/0.1 CPU fixture archive and return its SHA-256."""
     import hashlib
@@ -740,6 +744,8 @@ def _write_robouniverse_task_zip(
 
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     joint_names = [f"joint_{i}" for i in range(action_dim)]
+    lower = action_lower if action_lower is not None else [-1.0] * action_dim
+    upper = action_upper if action_upper is not None else [1.0] * action_dim
     spec = {
         "delivery_api": "operable-env/0.1",
         "status": "ready",
@@ -753,8 +759,8 @@ def _write_robouniverse_task_zip(
             "kind": "joint_position_target",
             "names": joint_names,
             "units": ["rad"] * action_dim,
-            "lower": [-1.0] * action_dim,
-            "upper": [1.0] * action_dim,
+            "lower": lower,
+            "upper": upper,
             "gripper_mapping": "fixture",
         },
         "observation": {
@@ -769,13 +775,19 @@ def _write_robouniverse_task_zip(
     }
     env_backend_src = f"""
 import json
+import time
 from pathlib import Path
 import numpy as np
 
 class FixtureBackend:
     def __init__(self, workspace, runtime_root, device):
+        if {init_sleep_s} > 0:
+            time.sleep({init_sleep_s})
         self.workspace = Path(workspace)
         self.dim = {action_dim}
+        self.lower = np.asarray({lower!r}, dtype=np.float64)
+        self.upper = np.asarray({upper!r}, dtype=np.float64)
+        self.strict_bounds = {strict_bounds!r}
         self.step_index = 0
         self.last_action = np.zeros(self.dim, dtype=np.float64)
 
@@ -801,7 +813,10 @@ class FixtureBackend:
         }}
 
     def step(self, action):
-        self.last_action = np.asarray(action, dtype=np.float64).copy()
+        arr = np.asarray(action, dtype=np.float64)
+        if self.strict_bounds and (np.any(arr < self.lower) or np.any(arr > self.upper)):
+            raise ValueError("action outside float64 joint limits")
+        self.last_action = arr.copy()
         self.step_index += 1
         return self._obs()
 
@@ -1129,3 +1144,272 @@ def test_robouniverse_env_auto_reset_and_infra_error_isolation(tmp_path):
         assert obs_list[-1]["task_descriptions"] == ["Rotate the mug"]
     finally:
         env.close()
+
+
+def test_robouniverse_float64_clipping_and_envworker_invariants(tmp_path):
+    import csv
+    import sys
+
+    from rlinf.envs import get_env_cls
+
+    # Non-power-of-2 float64 limits (e.g. +-2.89, +-0.05) overflow when clipped
+    # in float32 and widened to float64.
+    data_root = tmp_path / "dataset_bounds"
+    rel = "tasks/franka/franka_bounds.zip"
+    lower = [-2.89, -1.76, -2.89, -3.07, -2.89, -0.0175, -2.89, -0.05, -0.05]
+    upper = [2.89, 1.76, 2.89, -0.0698, 2.89, 3.75, 2.89, 0.05, 0.05]
+    sha = _write_robouniverse_task_zip(
+        data_root / rel,
+        case="franka_bounds",
+        robot="franka",
+        action_dim=9,
+        instruction="Clamp strictly in float64",
+        verdict_mode="threshold",
+        action_lower=lower,
+        action_upper=upper,
+        strict_bounds=True,
+    )
+    with (data_root / "catalog.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=["case", "robot", "archive", "sha256", "bytes"]
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "case": "franka_bounds",
+                "robot": "franka",
+                "archive": rel,
+                "sha256": sha,
+                "bytes": str((data_root / rel).stat().st_size),
+            }
+        )
+
+    env_cls = get_env_cls("robouniverse")
+    clip_cfg = OmegaConf.create(
+        {
+            "env_type": "robouniverse",
+            "seed": 0,
+            "group_size": 1,
+            "max_episode_steps": 2,
+            "auto_reset": True,
+            "ignore_terminations": False,
+            "init_params": {
+                "data_root": str(data_root),
+                "cases": ["franka_bounds"],
+                "work_dir": str(tmp_path / "work_bounds"),
+                "sim_python": sys.executable,
+                "device": "cpu",
+                "clip_actions": True,
+                "allow_cpu_fixture": True,
+            },
+        }
+    )
+    env = env_cls(cfg=clip_cfg, num_envs=1, seed_offset=0, total_num_processes=1)
+    try:
+        env.reset()
+        # Horizon 4 > max_episode_steps 2 exercises mid-chunk auto_reset alignment
+        # and out-of-range actions exercise float64 boundary clamping.
+        _, _, terms, truncs, infos = env.chunk_step(
+            np.full((1, 4, 9), 10.0, dtype=np.float32)
+        )
+        assert infos[-1]["final_info"]["episode"]["infra_error"].item() == 0.0
+        assert infos[-1]["final_info"]["verdicts"] == ["success"]
+        dones_last = (terms | truncs)[:, -1]
+        assert dones_last.tolist() == [True]
+        assert terms[:, :-1].any().item() is False
+        assert truncs[:, :-1].any().item() is False
+        assert infos[-1]["final_info"]["episode"]["success_once"][
+            dones_last
+        ].tolist() == [1.0]
+    finally:
+        env.close()
+
+    # ignore_terminations=True converts success terminations into truncations on
+    # the final chunk step so EnvWorker's chunk_truncations[:, -1].all() holds.
+    mixed_root = _build_robouniverse_fixture_dataset(tmp_path / "dataset_mixed")
+    ignore_cfg = OmegaConf.create(
+        {
+            "env_type": "robouniverse",
+            "seed": 0,
+            "group_size": 1,
+            "max_episode_steps": 2,
+            "auto_reset": False,
+            "ignore_terminations": True,
+            "init_params": {
+                "data_root": str(mixed_root),
+                "split": "heldout500",
+                "robot": "franka",
+                "work_dir": str(tmp_path / "work_ignore"),
+                "sim_python": sys.executable,
+                "device": "cpu",
+                "allow_cpu_fixture": True,
+            },
+        }
+    )
+    env_ignore = env_cls(
+        cfg=ignore_cfg, num_envs=2, seed_offset=0, total_num_processes=1
+    )
+    try:
+        env_ignore.reset()
+        _, _, terms, truncs, infos = env_ignore.chunk_step(
+            np.full((2, 3, 9), 0.5, dtype=np.float32)
+        )
+        assert terms.any().item() is False
+        assert truncs[:, -1].all().item() is True
+        assert truncs[:, :-1].any().item() is False
+        assert infos[-1]["verdicts"] == ["success", "failure"]
+    finally:
+        env_ignore.close()
+
+
+def test_robouniverse_timeout_isolation_ipc_and_eval_configs(tmp_path):
+    import csv
+    import socket
+    import sys
+    from pathlib import Path
+
+    from rlinf.envs import get_env_cls
+    from rlinf.envs.sim.ipc import (
+        receive_message,
+        resolve_physical_cuda_device,
+        send_message,
+    )
+    from rlinf.envs.sim.robouniverse.materializer import _quote_url
+
+    # Shared IPC framing and CUDA_VISIBLE_DEVICES unmasking.
+    s1, s2 = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        send_message(s1, {"ok": [1, 2, 3]}, protocol=4)
+        assert receive_message(s2, peer_name="Test") == {"ok": [1, 2, 3]}
+    finally:
+        s1.close()
+        s2.close()
+
+    physical, env_map = resolve_physical_cuda_device(
+        "cuda:1", {"CUDA_VISIBLE_DEVICES": "3, 5", "KEEP": "1"}
+    )
+    assert physical == 5
+    assert "CUDA_VISIBLE_DEVICES" not in env_map
+    assert env_map["KEEP"] == "1"
+
+    # URL quoting preserves query parameters and fragments.
+    quoted = _quote_url("https://example.com/dir name/a.usd?download=1&sig=a=b#top")
+    assert quoted == "https://example.com/dir%20name/a.usd?download=1&sig=a=b#top"
+
+    # startup_timeout_s guards slow cold backend initialization inside load_task.
+    slow_root = tmp_path / "dataset_slow"
+    rel = "tasks/franka/franka_slow.zip"
+    sha = _write_robouniverse_task_zip(
+        slow_root / rel,
+        case="franka_slow",
+        robot="franka",
+        action_dim=9,
+        instruction="Slow startup",
+        init_sleep_s=1.0,
+    )
+    with (slow_root / "catalog.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=["case", "robot", "archive", "sha256", "bytes"]
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "case": "franka_slow",
+                "robot": "franka",
+                "archive": rel,
+                "sha256": sha,
+                "bytes": str((slow_root / rel).stat().st_size),
+            }
+        )
+    env_cls = get_env_cls("robouniverse")
+    slow_cfg = OmegaConf.create(
+        {
+            "env_type": "robouniverse",
+            "seed": 0,
+            "group_size": 1,
+            "max_episode_steps": 1,
+            "auto_reset": False,
+            "ignore_terminations": False,
+            "init_params": {
+                "data_root": str(slow_root),
+                "cases": ["franka_slow"],
+                "work_dir": str(tmp_path / "work_slow"),
+                "sim_python": sys.executable,
+                "device": "cpu",
+                "startup_timeout_s": 0.2,
+                "allow_cpu_fixture": True,
+            },
+        }
+    )
+    slow_env = env_cls(cfg=slow_cfg, num_envs=1, seed_offset=0, total_num_processes=1)
+    try:
+        with pytest.raises(TimeoutError):
+            slow_env.reset()
+    finally:
+        slow_env.close()
+
+    # Two ranks sharing work_dir with max_cached_tasks=1 stay isolated on runs/,
+    # tasks/, and kit_cache/ without evicting each other's active task.
+    shared_root = _build_robouniverse_fixture_dataset(tmp_path / "dataset_shared")
+    shared_work = tmp_path / "shared_work"
+    shared_cfg = OmegaConf.create(
+        {
+            "env_type": "robouniverse",
+            "seed": 0,
+            "group_size": 1,
+            "max_episode_steps": 1,
+            "auto_reset": False,
+            "ignore_terminations": False,
+            "init_params": {
+                "data_root": str(shared_root),
+                "split": "heldout500",
+                "robot": "franka",
+                "work_dir": str(shared_work),
+                "max_cached_tasks": 1,
+                "sim_python": sys.executable,
+                "device": "cpu",
+                "allow_cpu_fixture": True,
+            },
+        }
+    )
+    env_r0 = env_cls(cfg=shared_cfg, num_envs=1, seed_offset=0, total_num_processes=2)
+    env_r1 = env_cls(cfg=shared_cfg, num_envs=1, seed_offset=1, total_num_processes=2)
+    try:
+        _, info0 = env_r0.reset()
+        _, info1 = env_r1.reset()
+        assert info0["cases"] == ["franka_01"]
+        assert info1["cases"] == ["franka_02"]
+        assert (shared_work / "tasks" / "rank_0" / "franka_01").is_dir()
+        assert (shared_work / "tasks" / "rank_1" / "franka_02").is_dir()
+        assert (shared_work / "runs" / "rank_0" / "slot_0").is_dir()
+        assert (shared_work / "runs" / "rank_1" / "slot_0").is_dir()
+        assert (shared_work / "kit_cache" / "rank_0" / "slot_0").is_dir()
+        assert (shared_work / "kit_cache" / "rank_1" / "slot_0").is_dir()
+    finally:
+        env_r0.close()
+        env_r1.close()
+
+    # Evaluation YAMLs configure OpenPI eval mode and keep model/pi0_5.yaml
+    # interpolations intact.
+    repo_root = Path(__file__).resolve().parents[2]
+    pi05_base = OmegaConf.load(
+        repo_root / "examples/embodiment/config/model/pi0_5.yaml"
+    )
+    for robot, expected_dim, expected_cfg in (
+        ("franka", 9, "pi05_robouniverse_franka"),
+        ("agilex", 16, "pi05_robouniverse_agilex"),
+    ):
+        eval_yaml = OmegaConf.load(
+            repo_root
+            / f"evaluations/robouniverse/robouniverse_{robot}_eval_openpi.yaml"
+        )
+        merged_model = OmegaConf.merge(pi05_base, eval_yaml.rollout.model)
+        assert merged_model.openpi.task == "eval"
+        assert merged_model.openpi.config_name == expected_cfg
+        assert merged_model.openpi.torch_compile is False
+        assert merged_model.openpi.action_env_dim == expected_dim
+        assert merged_model.openpi.action_chunk == 15
+        assert merged_model.openpi.num_steps == 10
+        # Overriding action_dim propagates via ${..action_dim} interpolation.
+        merged_model.action_dim = 24
+        assert merged_model.openpi.action_env_dim == 24

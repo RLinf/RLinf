@@ -32,13 +32,16 @@ from typing import Any
 
 import numpy as np
 
-# Ensure sibling protocol module can be imported even when launched under an
+# Ensure shared sim IPC module can be imported even when launched under an
 # external simulator interpreter whose PYTHONPATH does not include RLinf.
-_THIS_DIR = str(Path(__file__).resolve().parent)
-if _THIS_DIR not in sys.path:
-    sys.path.insert(0, _THIS_DIR)
+_SIM_DIR = str(Path(__file__).resolve().parents[1])
+if _SIM_DIR not in sys.path:
+    sys.path.insert(0, _SIM_DIR)
 
-from protocol import receive, send  # noqa: E402
+from ipc import receive_message, send_message  # noqa: E402
+
+_PICKLE_PROTOCOL = 4
+_PEER_NAME = "RoboUniverse simulator"
 
 
 def _load_entrypoint(entrypoint: str) -> Any:
@@ -160,10 +163,10 @@ class _TaskSession:
             self.spec = env_spec
             self.main_cam, self.wrist_cam = _select_camera_ids(env_spec)
             self.action_lower = np.asarray(
-                env_spec["action"]["lower"], dtype=np.float32
+                env_spec["action"]["lower"], dtype=np.float64
             )
             self.action_upper = np.asarray(
-                env_spec["action"]["upper"], dtype=np.float32
+                env_spec["action"]["upper"], dtype=np.float64
             )
             factory = _load_entrypoint(env_spec["backend_entrypoint"])
             self.backend = factory(
@@ -249,7 +252,7 @@ class _TaskSession:
         if self.backend is None or self.last_obs is None:
             raise RuntimeError("Call load_task/reset before stepping RoboUniverse")
 
-        actions = np.asarray(actions, dtype=np.float32)
+        actions = np.asarray(actions, dtype=np.float64)
         expected_dim = int(self.action_lower.shape[0])
         if actions.ndim != 2 or actions.shape[1] != expected_dim:
             raise ValueError(
@@ -278,7 +281,7 @@ class _TaskSession:
                 observations.append(self.last_obs)
                 continue
             try:
-                raw_obs = self.backend.step(actions[idx].astype(np.float64))
+                raw_obs = self.backend.step(actions[idx])
                 self.last_obs = self._pack_obs(raw_obs)
                 self.steps += 1
             except Exception as exc:
@@ -328,31 +331,37 @@ def main() -> None:
     sock = socket.socket(fileno=int(sys.argv[1]))
     session: _TaskSession | None = None
     try:
-        init_msg = receive(sock)
+        init_msg = receive_message(sock, peer_name=_PEER_NAME)
         if init_msg.get("command") != "init":
             raise ValueError(
                 f"Expected initial command 'init', found {init_msg.get('command')!r}."
             )
         session = _TaskSession(init_msg["settings"])
-        send(sock, {"status": "ready"})
+        send_message(sock, {"status": "ready"}, protocol=_PICKLE_PROTOCOL)
 
         while True:
-            msg = receive(sock)
+            msg = receive_message(sock, peer_name=_PEER_NAME)
             command = msg.get("command")
             if command == "close":
                 session.close_backend()
                 break
             if command == "load_task":
-                send(sock, session.load_task(**msg["task"]))
+                send_message(
+                    sock, session.load_task(**msg["task"]), protocol=_PICKLE_PROTOCOL
+                )
             elif command == "chunk_step":
-                send(sock, session.chunk_step(msg["actions"]))
+                send_message(
+                    sock, session.chunk_step(msg["actions"]), protocol=_PICKLE_PROTOCOL
+                )
             else:
                 raise ValueError(f"Unknown RoboUniverse worker command: {command!r}.")
     except EOFError:
         pass
     except BaseException:
         try:
-            send(sock, {"error": traceback.format_exc()})
+            send_message(
+                sock, {"error": traceback.format_exc()}, protocol=_PICKLE_PROTOCOL
+            )
         except OSError:
             pass
     finally:

@@ -3981,10 +3981,9 @@ install_robolab_env() {
 }
 
 install_robouniverse_env() {
-    # The RLinf adapter runs Isaac Sim 5.1.0 in an isolated subprocess
-    # configured via init_params.sim_python, so this venv only needs the
-    # Hugging Face client for downloading RoboUniverse-10K task archives.
-    uv pip install huggingface_hub
+    # RLinf's core dependencies already provide huggingface_hub, and the
+    # adapter launches Isaac Sim 5.1.0 externally via init_params.sim_python.
+    :
 }
 
 install_simple_env() {

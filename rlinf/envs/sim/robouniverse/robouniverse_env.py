@@ -31,40 +31,30 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.envs.sim.ipc import (
+    receive_message,
+    resolve_physical_cuda_device,
+    send_message,
+)
 from rlinf.envs.sim.robouniverse.catalog import RoboUniverseCatalog
 from rlinf.envs.sim.robouniverse.materializer import (
     MaterializedTask,
     TaskMaterializer,
 )
-from rlinf.envs.sim.robouniverse.protocol import receive, send
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
+
+# Protocol 4 works across Python 3.9 through 3.14 so RLinf's parent venv and an
+# external Isaac Sim 5.1.0 Python 3.11 interpreter interoperate cleanly.
+_PICKLE_PROTOCOL = 4
 
 
 def _resolve_gpu_env(
     device: str, base_env: dict[str, str]
 ) -> tuple[int, dict[str, str]]:
     """Map a logical CUDA device string to a physical GPU index for Isaac Sim."""
-    env = dict(base_env)
-    if not device.startswith("cuda"):
-        return 0, env
-    ordinal = int(device.split(":")[1]) if ":" in device else 0
-    if ordinal < 0:
-        raise ValueError(f"Expected nonnegative CUDA ordinal, found {ordinal}.")
-    physical = ordinal
-    visible = env.get("CUDA_VISIBLE_DEVICES")
-    if visible:
-        entries = [item.strip() for item in visible.split(",") if item.strip()]
-        if entries and all(item.isdigit() for item in entries):
-            if ordinal >= len(entries):
-                raise ValueError(
-                    f"Device {device!r} is outside CUDA_VISIBLE_DEVICES={visible!r}."
-                )
-            # Omniverse Kit's Vulkan device indices are not remapped by
-            # CUDA_VISIBLE_DEVICES, so unmask and pass the physical index.
-            physical = int(entries[ordinal])
-            env.pop("CUDA_VISIBLE_DEVICES", None)
+    physical, env = resolve_physical_cuda_device(device, base_env)
     env["EMBODY_SIM_GPU"] = str(physical)
     return physical, env
 
@@ -99,15 +89,16 @@ class _SimWorkerProcess:
             )
             child_sock.close()
             self._socket = parent_sock
-            self._socket.settimeout(startup_timeout_s)
             try:
-                self.request({"command": "init", "settings": settings})
+                self.request(
+                    {"command": "init", "settings": settings},
+                    timeout=startup_timeout_s,
+                )
             except EOFError as exc:
                 code = self._process.wait(timeout=5.0)
                 raise RuntimeError(
                     f"RoboUniverse simulator worker exited during init (code={code})."
                 ) from exc
-            self._socket.settimeout(None)
         except BaseException:
             child_sock.close()
             if self._socket is None:
@@ -115,12 +106,21 @@ class _SimWorkerProcess:
             self.close()
             raise
 
-    def request(self, message: dict[str, Any]) -> dict[str, Any]:
+    def request(
+        self, message: dict[str, Any], *, timeout: float | None = None
+    ) -> dict[str, Any]:
         """Send one synchronous request and return the worker's response."""
         if self._closed or self._socket is None:
             raise RuntimeError("RoboUniverse simulator worker is closed.")
-        send(self._socket, message)
-        reply = receive(self._socket)
+        previous_timeout = self._socket.gettimeout()
+        if timeout is not None:
+            self._socket.settimeout(timeout)
+        try:
+            send_message(self._socket, message, protocol=_PICKLE_PROTOCOL)
+            reply = receive_message(self._socket, peer_name="RoboUniverse simulator")
+        finally:
+            if timeout is not None and self._socket is not None:
+                self._socket.settimeout(previous_timeout)
         if isinstance(reply, dict) and "error" in reply:
             raise RuntimeError(f"RoboUniverse simulator error:\n{reply['error']}")
         return reply
@@ -133,7 +133,9 @@ class _SimWorkerProcess:
         if self._socket is not None:
             try:
                 self._socket.settimeout(1.0)
-                send(self._socket, {"command": "close"})
+                send_message(
+                    self._socket, {"command": "close"}, protocol=_PICKLE_PROTOCOL
+                )
             except OSError:
                 pass
             self._socket.close()
@@ -264,6 +266,7 @@ class RoboUniverseEnv:
         self._materializer = TaskMaterializer(
             data_root=data_root,
             work_dir=self._work_dir,
+            tasks_dir=self._work_dir / "tasks" / f"rank_{self._seed_offset}",
             asset_cache_dir=init_params.get("asset_cache_dir"),
             max_cached_tasks=init_params.get("max_cached_tasks", 32),
             verify_sha256=bool(init_params.get("verify_sha256", True)),
@@ -275,9 +278,6 @@ class RoboUniverseEnv:
         device_index, worker_env = _resolve_gpu_env(device, os.environ)
         if accept_isaac_eula:
             worker_env["OMNI_KIT_ACCEPT_EULA"] = "YES"
-        kit_cache_dir = self._work_dir / "kit_cache"
-        kit_cache_dir.mkdir(parents=True, exist_ok=True)
-        worker_env.setdefault("OMNI_KIT_USER_CACHE", str(kit_cache_dir))
 
         worker_settings = {
             "device_index": device_index,
@@ -289,7 +289,7 @@ class RoboUniverseEnv:
             "grade_on_done": bool(init_params.get("grade_on_done", True)),
             "keep_evidence": bool(init_params.get("keep_evidence", False)),
         }
-        startup_timeout_s = float(init_params.get("startup_timeout_s", 300.0))
+        self._startup_timeout_s = float(init_params.get("startup_timeout_s", 300.0))
 
         self._slot_cases: list[str] = [""] * self._num_envs
         self._slot_obs: list[dict[str, Any] | None] = [None] * self._num_envs
@@ -303,13 +303,22 @@ class RoboUniverseEnv:
         )
 
         try:
-            for _ in range(self._num_envs):
+            for slot in range(self._num_envs):
+                slot_env = dict(worker_env)
+                kit_cache_dir = (
+                    self._work_dir
+                    / "kit_cache"
+                    / f"rank_{self._seed_offset}"
+                    / f"slot_{slot}"
+                )
+                kit_cache_dir.mkdir(parents=True, exist_ok=True)
+                slot_env.setdefault("OMNI_KIT_USER_CACHE", str(kit_cache_dir))
                 self._workers.append(
                     _SimWorkerProcess(
                         sim_python=sim_python,
                         settings=worker_settings,
-                        env=worker_env,
-                        startup_timeout_s=startup_timeout_s,
+                        env=slot_env,
+                        startup_timeout_s=self._startup_timeout_s,
                     )
                 )
         except BaseException:
@@ -361,6 +370,7 @@ class RoboUniverseEnv:
         run_dir = (
             self._work_dir
             / "runs"
+            / f"rank_{self._seed_offset}"
             / f"slot_{slot}"
             / f"ep_{self._episode_counters[slot]:06d}_{materialized.record.case}"
         )
@@ -375,7 +385,8 @@ class RoboUniverseEnv:
                     "env_spec": materialized.env_spec,
                     "run_dir": str(run_dir),
                 },
-            }
+            },
+            timeout=self._startup_timeout_s,
         )
 
     @staticmethod
@@ -532,7 +543,16 @@ class RoboUniverseEnv:
         )
 
         if self._ignore_terminations:
+            truncations = truncations | terminations
             terminations = torch.zeros_like(terminations)
+
+        past_terminations = terminations.any(dim=1)
+        past_truncations = truncations.any(dim=1)
+        if self._auto_reset or self._ignore_terminations:
+            terminations = torch.zeros_like(terminations)
+            terminations[:, -1] = past_terminations
+            truncations = torch.zeros_like(truncations)
+            truncations[:, -1] = past_truncations
 
         episode_metrics = {
             key: torch.tensor(
@@ -549,7 +569,7 @@ class RoboUniverseEnv:
             last_info
         ]
 
-        dones = (terminations | truncations).any(dim=1)
+        dones = past_terminations | past_truncations
         if dones.any() and self._auto_reset:
             done_indices = torch.nonzero(dones, as_tuple=False).flatten().tolist()
             final_obs = copy.deepcopy(obs_list[-1])

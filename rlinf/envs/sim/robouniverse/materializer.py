@@ -28,7 +28,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import urlopen
 
 from rlinf.envs.sim.robouniverse.catalog import TaskRecord
@@ -69,6 +69,20 @@ def _safe_join(root: Path, rel_path: str) -> Path:
     return resolved
 
 
+def _quote_url(url: str) -> str:
+    """Percent-encode only the path segment of ``url``, preserving query parameters."""
+    parts = urlsplit(url)
+    return urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            quote(parts.path, safe="/%"),
+            parts.query,
+            parts.fragment,
+        )
+    )
+
+
 @dataclass(frozen=True)
 class MaterializedTask:
     """Unpacked task workspace ready for the RoboUniverse simulator worker."""
@@ -89,6 +103,7 @@ class TaskMaterializer:
         data_root: str | Path,
         work_dir: str | Path,
         *,
+        tasks_dir: str | Path | None = None,
         asset_cache_dir: str | Path | None = None,
         max_cached_tasks: int | None = 32,
         verify_sha256: bool = True,
@@ -101,7 +116,11 @@ class TaskMaterializer:
             )
         self.data_root = Path(data_root).expanduser().resolve()
         self.work_dir = Path(work_dir).expanduser().resolve()
-        self.tasks_dir = self.work_dir / "tasks"
+        self.tasks_dir = (
+            Path(tasks_dir).expanduser().resolve()
+            if tasks_dir is not None
+            else self.work_dir / "tasks"
+        )
         self.tasks_dir.mkdir(parents=True, exist_ok=True)
         self.asset_cache_dir = (
             Path(asset_cache_dir).expanduser().resolve()
@@ -113,7 +132,7 @@ class TaskMaterializer:
         self.verify_sha256 = verify_sha256
         self.offline = offline
         self.download_timeout_s = download_timeout_s
-        self._lock_path = self.work_dir / ".materialize.lock"
+        self._lock_path = self.tasks_dir / ".materialize.lock"
 
     def materialize(
         self,
@@ -236,7 +255,7 @@ class TaskMaterializer:
                     with (
                         os.fdopen(fd, "wb") as tmp_file,
                         urlopen(
-                            quote(url, safe=":/%"), timeout=self.download_timeout_s
+                            _quote_url(url), timeout=self.download_timeout_s
                         ) as response,
                     ):
                         shutil.copyfileobj(response, tmp_file)
