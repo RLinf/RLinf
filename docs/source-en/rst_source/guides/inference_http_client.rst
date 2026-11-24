@@ -30,8 +30,8 @@ Endpoints
      - ``GET /health``
      - Returns ``bool``; never raises.
 
-Sync — Short Scripts and Tests
-------------------------------
+Synchronous Calls
+-----------------
 
 .. code-block:: python
 
@@ -52,8 +52,8 @@ Sync — Short Scripts and Tests
        max_tokens=32,
    )
 
-Async — Fan Out Many Requests in Parallel
------------------------------------------
+Asynchronous Calls
+------------------
 
 Use ``async with`` so the aiohttp session is closed on exit:
 

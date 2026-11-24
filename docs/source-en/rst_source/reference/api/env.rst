@@ -1,5 +1,5 @@
-Environment Interface
-=====================
+Env Interface
+=============
 
 Use these environment APIs when launching simulator or real-world environment workers, resolving an environment class from ``env_type``, or implementing custom embodied tasks. To integrate a new simulator, see :doc:`../../extending/new_env`.
 

@@ -7,8 +7,8 @@ RLinf 通过 :doc:`MetricLogger <../guides/logger>` 在五个核心命名空间�
 
    具身任务优先关注 **``env/success_once``**\ （训练）与 **``eval/success_once``**\ （验证）。稀疏奖励下，步级 ``env/reward`` 会被回合长度稀释，不如回合成功率直观。
 
-训练指标 —— ``train/``
-----------------------
+``train/``
+----------
 
 每次 actor 更新时记录的 policy 与价值函数优化统计量（on-policy PPO / GRPO）。
 
@@ -53,8 +53,8 @@ RLinf 通过 :doc:`MetricLogger <../guides/logger>` 在五个核心命名空间�
      - 总损失（actor + critic + 熵正则）。
      - 重点监控是否出现 ``NaN`` / ``Inf``，细节看上方分项。
 
-Rollout 指标 —— ``rollout/``
-----------------------------
+``rollout/``
+------------
 
 优化前在 rollout 阶段收集的奖励与优势统计量。
 
@@ -81,8 +81,8 @@ Rollout 指标 —— ``rollout/``
      - 批次中有效（未 mask）token 或步数的比例。
      - 接近 ``0`` 提示轨迹被提前截断或格式异常。
 
-环境指标 —— ``env/``
---------------------
+``env/``
+--------
 
 训练环境 worker 上报的任务级指标。
 
@@ -106,8 +106,8 @@ Rollout 指标 —— ``rollout/``
      - 按回合长度平均后的步级奖励。
      - 稀疏奖励任务受回合长度稀释，建议以 ``env/success_once`` 为准。
 
-评估指标 —— ``eval/``
----------------------
+``eval/``
+---------
 
 ``runner.val_check_interval`` 触发验证（或独立评测）时记录的指标。
 
@@ -131,8 +131,8 @@ Rollout 指标 —— ``rollout/``
      - 跨评估 worker 汇总的轨迹总数。
      - 核对是否与配置的 ``eval`` worker 与回合数一致。
 
-耗时指标 —— ``time/``
----------------------
+``time/``
+---------
 
 Runner 与 worker 计时器上报的阶段耗时（单位：秒），用于定位系统瓶颈。
 
@@ -165,8 +165,8 @@ Runner 与 worker 计时器上报的阶段耗时（单位：秒），用于定�
      - 按组件汇总的 worker 细粒度耗时（开启 ``runner.per_worker_log: True`` 时同时记录各 rank 耗时）。
      - 用于排查慢节点或 GPU 分配不均。
 
-Off-Policy 与 SAC 指标
-----------------------
+Off-Policy 与 SAC
+-----------------
 
 由 ``EmbodiedSACFSDPPolicy`` 与 ``AsyncEmbodiedSACFSDPPolicy`` 记录（涵盖 SAC、CrossQ 与 RLPD）：
 
@@ -196,8 +196,8 @@ Off-Policy 与 SAC 指标
      - 异步 actor channel 中等待消费的轨迹队列长度。
      - 队列持续堆积说明 actor 训练速度慢于采样速度。
 
-Async PPO 样本陈旧度指标
-------------------------
+Async PPO 样本陈旧度
+--------------------
 
 在 :doc:`Async PPO <algorithms/async_ppo>` 运行时由 ``compute_decoupled_ppo_actor_loss`` 记录：
 
@@ -224,8 +224,8 @@ Async PPO 样本陈旧度指标
      - 训练批次的平均行为 policy 版本与当前 actor 版本。
      - 差值 ``current_version - average_version`` 直接量化样本滞后步数。
 
-推理与智能体指标
-----------------
+推理与智能体
+------------
 
 由推理与智能体 runner（``reasoning_runner.py``、``agent_runner.py``、``async_agent_runner.py``）记录：
 

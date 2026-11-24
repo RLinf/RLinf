@@ -1,5 +1,5 @@
-算法与注册表接口
-================
+Algorithm 接口
+==============
 
 查阅 ``rlinf.algorithms.registry`` 中的注册装饰器与统一调度入口。算法目标函数与配置见 :doc:`../algorithms/index`，新增 Advantage 或 Loss 函数的步骤见 :doc:`../../extending/new_algorithm`。
 

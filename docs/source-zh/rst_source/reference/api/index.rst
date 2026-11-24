@@ -36,15 +36,15 @@ RL 组件、模型、机器人与数据
      - 基于 SGLang、vLLM 与 Hugging Face 的 rollout worker。
    * - :doc:`Env <env>`
      - 环境 worker、环境工厂（``get_env_cls``、``SupportedEnvType``）与 ``RealWorldEnv``。
-   * - :doc:`Runners <runners>`
+   * - :doc:`Runner <runners>`
      - 面向具身、推理、智能体与 SFT 任务的顶层训练循环 runner。
-   * - :doc:`模型与 Policy <models>`
+   * - :doc:`Model <models>`
      - 模型注册表（``register_model``、``get_model``）与具身 ``BasePolicy`` 接口。
    * - :doc:`Robotics <robotics>`
      - 真机 ``Connection``、``RobotPart``、``Robot`` 与硬件发现 API。
-   * - :doc:`算法与注册表 <algorithms>`
+   * - :doc:`Algorithm <algorithms>`
      - 优势函数、policy 损失、损失缩放与工具调用解析器注册表。
-   * - :doc:`Agentic 数据 <data>`
+   * - :doc:`Agentic Data <data>`
      - Agentic rollout 请求与结果数据结构。
    * - :doc:`Embodied Data <embodied_data>`
      - 具身环境与 rollout 数据结构。
@@ -61,11 +61,11 @@ RL 组件、模型、机器人与数据
    Channel <channel>
    Actor <actor>
    Rollout <rollout>
-   Environment <env>
-   Runners <runners>
-   模型与 Policy <models>
+   Env <env>
+   Runner <runners>
+   Model <models>
    Robotics <robotics>
-   算法与注册表 <algorithms>
-   Data <data>
+   Algorithm <algorithms>
+   Agentic Data <data>
    Embodied Data <embodied_data>
    Replay Buffer <replay_buffer>

@@ -1,5 +1,5 @@
-Algorithms and Registries
-=========================
+Algorithm Interface
+===================
 
 Look up the registry decorators and dispatch entrypoints in ``rlinf.algorithms.registry``. For mathematical objectives and configs, see :doc:`../algorithms/index`; to add a new advantage or loss function, see :doc:`../../extending/new_algorithm`.
 

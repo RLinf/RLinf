@@ -1,5 +1,5 @@
-Models and Policies
-===================
+Model Interface
+===============
 
 Look up RLinf's model registry functions and the ``BasePolicy`` contract shared by embodied policies. To register a new model, see :doc:`../../extending/new_model_fsdp`.
 

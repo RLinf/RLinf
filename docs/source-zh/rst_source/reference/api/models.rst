@@ -1,5 +1,5 @@
-模型与 Policy 接口
-==================
+Model 接口
+==========
 
 查阅 RLinf 的模型注册函数与具身 policy 共用的 ``BasePolicy`` 接口。接入新模型的完整步骤见 :doc:`../../extending/new_model_fsdp`。
 

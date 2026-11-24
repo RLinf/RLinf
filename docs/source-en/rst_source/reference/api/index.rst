@@ -36,13 +36,13 @@ RL Components, Models, Robotics, and Data
      - SGLang, vLLM, and Hugging Face rollout workers.
    * - :doc:`Env <env>`
      - Environment worker, factory (``get_env_cls``, ``SupportedEnvType``), and ``RealWorldEnv``.
-   * - :doc:`Runners <runners>`
+   * - :doc:`Runner <runners>`
      - Top-level training loops for embodied, reasoning, agentic, and SFT workloads.
-   * - :doc:`Models & Policies <models>`
+   * - :doc:`Model <models>`
      - Model registry (``register_model``, ``get_model``) and embodied ``BasePolicy`` contract.
    * - :doc:`Robotics <robotics>`
      - Hardware ``Connection``, ``RobotPart``, ``Robot``, and discovery APIs.
-   * - :doc:`Algorithms & Registries <algorithms>`
+   * - :doc:`Algorithm <algorithms>`
      - Advantage, policy-loss, loss-scale, and tool-call parser registries.
    * - :doc:`Agentic Data <data>`
      - Agentic rollout requests and result structures.
@@ -61,11 +61,11 @@ RL Components, Models, Robotics, and Data
    Channel <channel>
    Actor <actor>
    Rollout <rollout>
-   Environment <env>
-   Runners <runners>
-   Models & Policies <models>
+   Env <env>
+   Runner <runners>
+   Model <models>
    Robotics <robotics>
-   Algorithms & Registries <algorithms>
-   Data <data>
+   Algorithm <algorithms>
+   Agentic Data <data>
    Embodied Data <embodied_data>
    Replay Buffer <replay_buffer>

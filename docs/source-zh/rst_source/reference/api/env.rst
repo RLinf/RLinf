@@ -1,5 +1,5 @@
-Environment 接口
-================
+Env 接口
+========
 
 查阅分布式环境 worker、通过 ``env_type`` 解析环境类的工厂接口，以及真机环境封装类。接入新仿真器的步骤见 :doc:`../../extending/new_env`。
 

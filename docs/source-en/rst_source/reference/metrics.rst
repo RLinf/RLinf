@@ -7,8 +7,8 @@ RLinf logs scalar metrics through :doc:`MetricLogger <../guides/logger>` under f
 
    For embodied tasks, track **``env/success_once``** (training) and **``eval/success_once``** (validation). Under sparse rewards, per-step ``env/reward`` is normalized by episode length and is less direct than episodic success rate.
 
-Training Metrics — ``train/``
------------------------------
+``train/``
+----------
 
 Policy and value optimization statistics logged every actor update (on-policy PPO / GRPO).
 
@@ -53,8 +53,8 @@ Policy and value optimization statistics logged every actor update (on-policy PP
      - Total combined loss (actor + critic + entropy regularization).
      - Watch for ``NaN`` / ``Inf``; interpret individual components above.
 
-Rollout Metrics — ``rollout/``
-------------------------------
+``rollout/``
+------------
 
 Batch-level reward and advantage statistics collected from rollout before optimization.
 
@@ -81,8 +81,8 @@ Batch-level reward and advantage statistics collected from rollout before optimi
      - Fraction of active (unmasked) tokens or steps in the batch.
      - Near ``0`` indicates truncated or degenerate rollouts.
 
-Environment Metrics — ``env/``
-------------------------------
+``env/``
+--------
 
 Task-level signals reported by training environment workers.
 
@@ -106,8 +106,8 @@ Task-level signals reported by training environment workers.
      - Step-level reward averaged over episode length.
      - Diluted by episode length; use ``env/success_once`` for sparse-reward tasks.
 
-Evaluation Metrics — ``eval/``
-------------------------------
+``eval/``
+---------
 
 Periodic validation metrics logged whenever ``runner.val_check_interval`` triggers evaluation (or during standalone evaluation).
 
@@ -131,8 +131,8 @@ Periodic validation metrics logged whenever ``runner.val_check_interval`` trigge
      - Total trajectories aggregated across evaluation workers.
      - Confirm it matches expected ``eval`` worker and episode counts.
 
-Timing Metrics — ``time/``
---------------------------
+``time/``
+---------
 
 Wall-clock durations (in seconds) collected by runner and worker timers to diagnose system bottlenecks.
 
@@ -165,8 +165,8 @@ Wall-clock durations (in seconds) collected by runner and worker timers to diagn
      - Per-component worker breakdown aggregated across ranks (and per rank when ``runner.per_worker_log: True``).
      - Pinpoint straggler ranks or imbalanced GPU placement.
 
-Off-Policy and SAC Metrics
---------------------------
+Off-Policy and SAC
+------------------
 
 Logged by ``EmbodiedSACFSDPPolicy`` and ``AsyncEmbodiedSACFSDPPolicy`` (including CrossQ and RLPD):
 
@@ -196,8 +196,8 @@ Logged by ``EmbodiedSACFSDPPolicy`` and ``AsyncEmbodiedSACFSDPPolicy`` (includin
      - Queued trajectories waiting on the async actor channel.
      - Growing queue means actor updates lag behind rollout collection.
 
-Async PPO Staleness Metrics
----------------------------
+Async PPO Staleness
+-------------------
 
 Logged by ``compute_decoupled_ppo_actor_loss`` during :doc:`Async PPO <algorithms/async_ppo>` runs:
 
@@ -224,8 +224,8 @@ Logged by ``compute_decoupled_ppo_actor_loss`` during :doc:`Async PPO <algorithm
      - Mean behavior-policy version of the training batch vs. current actor version.
      - Gap ``current_version - average_version`` directly measures policy staleness in steps.
 
-Reasoning and Agentic Metrics
------------------------------
+Reasoning and Agentic
+---------------------
 
 Logged by reasoning and agentic runners (``reasoning_runner.py``, ``agent_runner.py``, ``async_agent_runner.py``):
 

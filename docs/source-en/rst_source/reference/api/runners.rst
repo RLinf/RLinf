@@ -1,5 +1,5 @@
-Runners
-=======
+Runner Interface
+================
 
 Use these runner APIs when composing or customizing the top-level training loop across actor, rollout, environment, reward, and agent worker groups.
 
