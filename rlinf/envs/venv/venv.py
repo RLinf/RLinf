@@ -746,15 +746,26 @@ class BaseVectorEnv(object):
         If id is None, reset the state of all the environments and return
         initial observations, otherwise reset the specific environments with
         the given id, either an int or a list.
+
+        A ``seed`` list in kwargs supplies one seed per selected environment,
+        in the order of id. Other kwargs are shared across the environments.
         """
         self._assert_is_not_closed()
         id = self._wrap_id(id)
         if self.is_async:
             self._assert_id(id)
 
+        seed = kwargs.get("seed")
+        if isinstance(seed, list):
+            if len(seed) != len(id):
+                raise ValueError(f"Expected {len(id)} reset seeds, got {len(seed)}.")
+            reset_kwargs = [{**kwargs, "seed": s} for s in seed]
+        else:
+            reset_kwargs = [kwargs] * len(id)
+
         # send(None) == reset() in worker
-        for i in id:
-            self.workers[i].send(None, **kwargs)
+        for i, env_kwargs in zip(id, reset_kwargs):
+            self.workers[i].send(None, **env_kwargs)
         ret_list = [self.workers[i].recv() for i in id]
 
         reset_returns_info = (

@@ -9,6 +9,8 @@
 
 使用 Diffusion-NFT 或 DiffusionART，以 OCR 奖励微调 SD3 和 Wan2.2。两种方法共用模型、prompt 数据集和 diffusion 环境。先按本页准备依赖、模型与数据，再进入对应的训练指南。
 
+使用 ImageReward 微调 SD3 的流程见 :doc:`embodied/refl`。
+
 选择训练方法
 ------------
 

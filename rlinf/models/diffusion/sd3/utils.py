@@ -101,7 +101,14 @@ def denoise_with_logprob(
     return_trajectory: bool = True,
     generator=None,
     latents=None,
+    sample_steps: torch.Tensor | None = None,
 ):
+    """Sample images or latents, optionally retaining a denoising trajectory.
+
+    ``sample_steps`` selects one pre-step latent per sample using integer indices
+    of shape [B]. It requires ``output_type="latent"`` and no trajectory.
+    """
+    cfg_enabled = cfg_enabled and guidance_scale != 1.0
     pipeline._guidance_scale = guidance_scale
     pipeline._interrupt = False
 
@@ -138,10 +145,33 @@ def denoise_with_logprob(
     solver, dpm_state = init_solver_state(solver)
     use_dpm = dpm_state is not None
 
+    selected_latents = None
+    if sample_steps is not None:
+        if return_trajectory or output_type != "latent":
+            raise ValueError(
+                "sample_steps requires latent output without a trajectory."
+            )
+        if (
+            sample_steps.dtype not in {torch.int32, torch.int64}
+            or sample_steps.shape != (latents.shape[0],)
+            or not ((sample_steps >= 0) & (sample_steps < len(timesteps))).all()
+        ):
+            raise ValueError(
+                f"Expected one sampling step in [0, {len(timesteps)}) per sample, "
+                f"got {sample_steps}."
+            )
+        selected_latents = torch.empty_like(latents)
+
     latent_chain = [latents] if return_trajectory else None
     log_probs = [] if return_trajectory else None
     with pipeline.progress_bar(total=num_steps) as progress_bar:
         for step_index, t in enumerate(timesteps):
+            if selected_latents is not None:
+                rows = sample_steps == step_index
+                selected_latents[rows] = latents[rows]
+                # FSDP ranks must execute the same number of collective forwards.
+                if step_index == len(timesteps) - 1:
+                    return selected_latents, None, None
             model_latents = latents.to(dtype=model_dtype)
             model_input = (
                 torch.cat([model_latents] * 2) if cfg_enabled else model_latents
@@ -182,6 +212,9 @@ def denoise_with_logprob(
                 latent_chain.append(latents)
                 log_probs.append(log_prob)
             progress_bar.update()
+
+    if output_type == "latent":
+        return latents, latent_chain, log_probs
 
     pipeline.vae.to(device=latents.device)
     latents = (

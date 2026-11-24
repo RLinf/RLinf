@@ -1006,16 +1006,26 @@ def test_art_rollout_shares_reference_and_keeps_eval_unchanged():
     worker.algorithm_cfg = OmegaConf.create({})
     worker.enable_dagger = False
     worker.expert_model = None
+    worker.rlt_feature_model = None
     worker._train_sampling_params = {}
     worker._eval_sampling_params = {}
     worker._timer_metrics = {}
     worker._accelerator_type = AcceleratorType.NO_ACCEL
     policy_inputs = {"art_cluster_features": torch.ones(1, 26)}
-    _, result = worker.predict({"policy_inputs": policy_inputs}, mode="train")
+    _, result = worker._predict_rollout_actions(
+        {"policy_inputs": policy_inputs},
+        mode="train",
+        policy_kwargs={"unnorm_key": "libero_10"},
+        dagger_beta=0.5,
+    )
     torch.testing.assert_close(result["forward_inputs"], policy_inputs)
     assert torch.equal(calls[0]["art_anchor_noise"], worker._art_anchor_noise())
-    _, result = worker.predict({}, mode="eval")
+    assert calls[0]["unnorm_key"] == "libero_10"
+    _, result = worker._predict_rollout_actions(
+        {}, mode="eval", policy_kwargs={"unnorm_key": "libero_10"}
+    )
     assert "art_anchor_noise" not in calls[1]
+    assert calls[1]["unnorm_key"] == "libero_10"
     assert not result["forward_inputs"]
 
 

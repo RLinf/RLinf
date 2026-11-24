@@ -36,14 +36,22 @@ class ARTMultiStepRolloutWorker(MultiStepRolloutWorker):
         self,
         env_obs: dict[str, Any],
         mode: Literal["train", "eval"] = "train",
+        policy_kwargs: dict[str, Any] | None = None,
+        dagger_beta: float | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         if mode == "eval":
-            return super().predict(env_obs, mode=mode)
+            return super().predict(
+                env_obs,
+                mode=mode,
+                policy_kwargs=policy_kwargs,
+                dagger_beta=dagger_beta,
+            )
         with self.worker_timer("predict"), torch.no_grad():
             actions, result = self.hf_model.predict_action_batch(
                 env_obs=env_obs,
                 mode=mode,
                 art_anchor_noise=self._art_anchor_noise(),
+                **(policy_kwargs or {}),
             )
         result["forward_inputs"].update(env_obs.get("policy_inputs", {}))
         result["expert_label_flag"] = False
