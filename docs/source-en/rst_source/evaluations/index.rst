@@ -41,6 +41,9 @@ The table below lists benchmarks that have example configs under ``evaluations/`
    * - SuperMimic (G1 motion tracking)
      - LAFAN1 reference motion; BONES-SEED is experimental; GenCoord and MaxCoord
      - ``supermimic/supermimic_lafan1_eval.yaml``, ``supermimic/supermimic_push_recovery.yaml``
+   * - DexJoCo
+     - ``dexjoco_water_plant``
+     - ``dexjoco/dexjoco_openpi_pi05_eval.yaml``, ``dexjoco/dexjoco_cnn_eval.yaml``
    * - SIMPLE
      - ``G1WholebodyOpenOvenTeleop-v0``
      - ``simple/simple_psi0_eval.yaml``
