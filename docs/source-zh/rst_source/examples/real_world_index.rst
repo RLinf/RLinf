@@ -44,41 +44,6 @@
      - SFT / 部署
      - 在线 RL
      - 指南
-   * - 单臂 Franka
-     - ✓
-     - ✓
-     - ✓
-     - ✓
-     - ✓
-     - :doc:`单臂 Franka（9 篇） <embodied/franka_index>`
-   * - 双臂 Franka
-     - ✓
-     - ✓
-     - ✓
-     - ✓
-     - ✓
-     - :doc:`双臂 Franka（3 篇） <embodied/dual_franka_index>`
-   * - YAM
-     - ✓
-     - ✓
-     - ✓
-     - ✓
-     - —
-     - :doc:`YAM（2 篇） <embodied/yam_index>`
-   * - ARX X5
-     - ✓
-     - ✓
-     - ✓
-     - —
-     - —
-     - :doc:`ARX X5 指南 <embodied/arx5>`
-   * - GimArm
-     - ✓
-     - ✓
-     - ✓
-     - —
-     - 仅环境（需自定义配置）
-     - :doc:`GimArm 指南 <embodied/gim_arm>`
    * - AgileX Piper
      - ✓
      - —
@@ -86,13 +51,13 @@
      - —
      - —
      - :doc:`AgileX Piper 指南 <embodied/piper>`
-   * - Robbyant R2
+   * - ARX X5
      - ✓
      - ✓
      - ✓
      - —
-     - 仅环境（需自定义配置）
-     - :doc:`Robbyant R2 指南 <embodied/r2>`
+     - —
+     - :doc:`ARX X5 指南 <embodied/arx5>`
    * - Dexmal DOS-W1
      - ✓
      - ✓
@@ -100,20 +65,27 @@
      - —
      - ✓
      - :doc:`Dexmal DOS-W1 指南 <embodied/dosw1>`
-   * - XSquare Turtle2
+   * - Franka（双臂）
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - :doc:`Franka（双臂，3 篇） <embodied/dual_franka_index>`
+   * - Franka（单臂）
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - :doc:`Franka（单臂，9 篇） <embodied/franka_index>`
+   * - GimArm
+     - ✓
+     - ✓
      - ✓
      - —
-     - —
-     - —
-     - ✓
-     - :doc:`XSquare Turtle2 指南 <embodied/xsquare_turtle2>`
-   * - SO-101
-     - ✓
-     - ✓
-     - ✓
-     - ✓
-     - —
-     - :doc:`SO-101 指南 <embodied/so101>`
+     - 仅环境（需自定义配置）
+     - :doc:`GimArm 指南 <embodied/gim_arm>`
    * - LeKiwi
      - ✓
      - ✓
@@ -121,6 +93,34 @@
      - —
      - —
      - :doc:`LeKiwi 指南 <embodied/lekiwi>`
+   * - Robbyant R2
+     - ✓
+     - ✓
+     - ✓
+     - —
+     - 仅环境（需自定义配置）
+     - :doc:`Robbyant R2 指南 <embodied/r2>`
+   * - SO-101
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - —
+     - :doc:`SO-101 指南 <embodied/so101>`
+   * - XSquare Turtle2
+     - ✓
+     - —
+     - —
+     - —
+     - ✓
+     - :doc:`XSquare Turtle2 指南 <embodied/xsquare_turtle2>`
+   * - YAM
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - —
+     - :doc:`YAM（2 篇） <embodied/yam_index>`
 
 工业与科研机械臂
 ----------------
@@ -130,27 +130,13 @@
 .. grid:: 1 2 3 3
    :gutter: 3
 
-   .. grid-item-card:: 单臂 Franka
-      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
-      :img-alt: 单臂 Franka
-      :link: embodied/franka_index
+   .. grid-item-card:: AgileX Piper
+      :img-top: https://raw.githubusercontent.com/agilexrobotics/piper_ros/noetic/asserts/pictures/piper_urdf_zero.png
+      :img-alt: AgileX Piper 机械臂
+      :link: embodied/piper
       :link-type: doc
 
-      真机强化学习、遥操作与数据采集、奖励模型、SFT、部署与硬件扩展。
-
-   .. grid-item-card:: 双臂 Franka
-      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka.jpg
-      :img-alt: 双臂 Franka
-      :link: embodied/dual_franka_index
-      :link-type: doc
-
-      GELLO 与 PICO 数据采集、OpenPI π₀.₅ SFT、policy 部署与在线 HG-DAgger。
-
-   .. grid-item-card:: YAM
-      :link: embodied/yam_index
-      :link-type: doc
-
-      用 PICO 采集双臂示教数据，微调 OpenPI π₀.₅ 并在双臂上评估 checkpoint。
+      配置 SocketCAN 并检查 Piper 关节反馈、小幅运动与夹爪控制。
 
    .. grid-item-card:: ARX X5
       :img-top: https://arx-global.us/assets/img/x5.webp
@@ -160,6 +146,22 @@
 
       用 PICO 双手柄和三路 RGB 相机采集 LeRobot 格式双臂示教数据。
 
+   .. grid-item-card:: Franka（双臂）
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka.jpg
+      :img-alt: Franka（双臂）
+      :link: embodied/dual_franka_index
+      :link-type: doc
+
+      GELLO 与 PICO 数据采集、OpenPI π₀.₅ SFT、policy 部署与在线 HG-DAgger。
+
+   .. grid-item-card:: Franka（单臂）
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
+      :img-alt: Franka（单臂）
+      :link: embodied/franka_index
+      :link-type: doc
+
+      真机强化学习、遥操作与数据采集、奖励模型、SFT、部署与硬件扩展。
+
    .. grid-item-card:: GimArm
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/gim-arm.png
       :img-alt: GimArm 六自由度机械臂
@@ -168,13 +170,11 @@
 
       在 SocketCAN 6-DoF 机械臂上结合 VR 遥操作与 SAC / RLPD 训练插孔任务。
 
-   .. grid-item-card:: AgileX Piper
-      :img-top: https://raw.githubusercontent.com/agilexrobotics/piper_ros/noetic/asserts/pictures/piper_urdf_zero.png
-      :img-alt: AgileX Piper 机械臂
-      :link: embodied/piper
+   .. grid-item-card:: YAM
+      :link: embodied/yam_index
       :link-type: doc
 
-      配置 SocketCAN 并检查 Piper 关节反馈、小幅运动与夹爪控制。
+      用 PICO 采集双臂示教数据，微调 OpenPI π₀.₅ 并在双臂上评估 checkpoint。
 
 双臂与人形平台
 --------------
@@ -184,12 +184,6 @@
 .. grid:: 1 2 3 3
    :gutter: 3
 
-   .. grid-item-card:: Robbyant R2
-      :link: embodied/r2
-      :link-type: doc
-
-      在 Robbyant R2 轮式人形机器人上运行硬件检查、全身 PICO VR 遥操作与关节到达 RL。
-
    .. grid-item-card:: Dexmal DOS-W1
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/dos-w1.png
       :img-alt: Dexmal DOS-W1 双臂机器人
@@ -197,6 +191,12 @@
       :link-type: doc
 
       用主臂采集示教数据，并在 DOS-W1 上训练 Flow Matching + SAC 抓取 policy。
+
+   .. grid-item-card:: Robbyant R2
+      :link: embodied/r2
+      :link-type: doc
+
+      在 Robbyant R2 轮式人形机器人上运行硬件检查、全身 PICO VR 遥操作与关节到达 RL。
 
    .. grid-item-card:: XSquare Turtle2
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/xsquare_turtle2_arm_small.jpg
@@ -214,6 +214,12 @@
 .. grid:: 1 2 3 3
    :gutter: 3
 
+   .. grid-item-card:: LeKiwi
+      :link: embodied/lekiwi
+      :link-type: doc
+
+      配置轮电机、检查前置摄像头，并用键盘本地或远程驱动全向移动底盘。
+
    .. grid-item-card:: SO-101
       :img-top: https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp
       :img-alt: SO-101 从动机械臂
@@ -221,9 +227,3 @@
       :link-type: doc
 
       配置并标定 SO-101，采集 leader 示教数据，完成 OpenPI SFT 与本地评估。
-
-   .. grid-item-card:: LeKiwi
-      :link: embodied/lekiwi
-      :link-type: doc
-
-      配置轮电机、检查前置摄像头，并用键盘本地或远程驱动全向移动底盘。

@@ -96,15 +96,15 @@
    * - 参数
      - 支持的值
    * - ``--model``\ （:doc:`VLA <../examples/vla_wam_index>`）
-     - ``openvla``、``openvla-oft``、``openpi``、``psi0``、``pi0_fast``、``gr00t``、``gr00t_n1d6``、``gr00t_n1d7``、``dexbotic``、``starvla``、``lingbotvla``、``lingbotvlav2``、``abot_m0``、``molmoact2``、``evo1``
+     - ``abot_m0``、``dexbotic``、``evo1``、``gr00t``、``gr00t_n1d6``、``gr00t_n1d7``、``lingbotvla``、``lingbotvlav2``、``molmoact2``、``openpi``、``openvla``、``openvla-oft``、``pi0_fast``、``psi0``、``starvla``
    * - ``--model``\ （:doc:`WAM / VLM / 生成 <../examples/vla_wam_index>`）
-     - ``dreamzero``、``fastwam``、``cosmos3``、``qwen3_vl``、``diffusion``、``sglang``
+     - ``cosmos3``、``diffusion``、``dreamzero``、``fastwam``、``qwen3_vl``、``sglang``
    * - ``--env``\ （:doc:`仿真器 <../examples/simulators_index>`）
-     - ``maniskill_libero``、``libero``、``liberopro``、``liberoplus``、``behavior``、``metaworld``、``calvin``、``isaaclab``、``robocasa``、``robocasa365``、``frankasim``、``robotwin``、``robodojo``、``roboverse``、``habitat``、``genesis``、``geniesim``、``embodichain``、``d4rl``、``mujoco_warp``、``polaris``、``simple``、``robolab``
+     - ``behavior``、``calvin``、``d4rl``、``embodichain``、``frankasim``、``genesis``、``geniesim``、``habitat``、``isaaclab``、``libero``、``liberoplus``、``liberopro``、``maniskill_libero``、``metaworld``、``mujoco_warp``、``polaris``、``robocasa``、``robocasa365``、``robodojo``、``robolab``、``robotwin``、``roboverse``、``simple``
    * - ``--env``\ （:doc:`世界模型 <../examples/world_model_index>`）
      - ``opensora``、``wan``
    * - ``--env``\ （:doc:`真机 <../examples/real_world_index>`）
-     - ``franka``、``franka-ros``、``xsquare_turtle2``、``dosw1``、``gim_arm``、``so101``、``lekiwi``、``piper``、``arx5``、``yam``、``dummy``\ （Robbyant R2 使用 RFrame 与 ROS 2，见 :doc:`../examples/embodied/r2`）
+     - ``arx5``、``dosw1``、``dummy``、``franka``、``franka-ros``、``gim_arm``、``lekiwi``、``piper``、``so101``、``xsquare_turtle2``、``yam``\ （Robbyant R2 使用 RFrame 与 ROS 2，见 :doc:`../examples/embodied/r2`）
    * - ``--engine``
      - ``sglang``\ （``agentic`` 默认）、``vllm``\ （``agentic``）、``phyai``\ （``embodied`` 搭配 ``--model openpi --env libero``）
    * - ``--platform``

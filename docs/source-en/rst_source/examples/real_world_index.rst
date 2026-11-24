@@ -44,41 +44,6 @@ Compare what each robot guide covers before choosing a platform.
      - SFT / Deploy
      - Online RL
      - Guide
-   * - Single-Arm Franka
-     - ✓
-     - ✓
-     - ✓
-     - ✓
-     - ✓
-     - :doc:`Single-Arm Franka (9 guides) <embodied/franka_index>`
-   * - Dual-Arm Franka
-     - ✓
-     - ✓
-     - ✓
-     - ✓
-     - ✓
-     - :doc:`Dual-Arm Franka (3 guides) <embodied/dual_franka_index>`
-   * - YAM
-     - ✓
-     - ✓
-     - ✓
-     - ✓
-     - —
-     - :doc:`YAM (2 guides) <embodied/yam_index>`
-   * - ARX X5
-     - ✓
-     - ✓
-     - ✓
-     - —
-     - —
-     - :doc:`ARX X5 Guide <embodied/arx5>`
-   * - GimArm
-     - ✓
-     - ✓
-     - ✓
-     - —
-     - Env only (custom config)
-     - :doc:`GimArm Guide <embodied/gim_arm>`
    * - AgileX Piper
      - ✓
      - —
@@ -86,13 +51,13 @@ Compare what each robot guide covers before choosing a platform.
      - —
      - —
      - :doc:`AgileX Piper Guide <embodied/piper>`
-   * - Robbyant R2
+   * - ARX X5
      - ✓
      - ✓
      - ✓
      - —
-     - Env only (custom config)
-     - :doc:`Robbyant R2 Guide <embodied/r2>`
+     - —
+     - :doc:`ARX X5 Guide <embodied/arx5>`
    * - Dexmal DOS-W1
      - ✓
      - ✓
@@ -100,20 +65,27 @@ Compare what each robot guide covers before choosing a platform.
      - —
      - ✓
      - :doc:`Dexmal DOS-W1 Guide <embodied/dosw1>`
-   * - XSquare Turtle2
+   * - Franka (Dual-Arm)
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - :doc:`Franka (Dual-Arm, 3 guides) <embodied/dual_franka_index>`
+   * - Franka (Single-Arm)
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - :doc:`Franka (Single-Arm, 9 guides) <embodied/franka_index>`
+   * - GimArm
+     - ✓
+     - ✓
      - ✓
      - —
-     - —
-     - —
-     - ✓
-     - :doc:`XSquare Turtle2 Guide <embodied/xsquare_turtle2>`
-   * - SO-101
-     - ✓
-     - ✓
-     - ✓
-     - ✓
-     - —
-     - :doc:`SO-101 Guide <embodied/so101>`
+     - Env only (custom config)
+     - :doc:`GimArm Guide <embodied/gim_arm>`
    * - LeKiwi
      - ✓
      - ✓
@@ -121,6 +93,34 @@ Compare what each robot guide covers before choosing a platform.
      - —
      - —
      - :doc:`LeKiwi Guide <embodied/lekiwi>`
+   * - Robbyant R2
+     - ✓
+     - ✓
+     - ✓
+     - —
+     - Env only (custom config)
+     - :doc:`Robbyant R2 Guide <embodied/r2>`
+   * - SO-101
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - —
+     - :doc:`SO-101 Guide <embodied/so101>`
+   * - XSquare Turtle2
+     - ✓
+     - —
+     - —
+     - —
+     - ✓
+     - :doc:`XSquare Turtle2 Guide <embodied/xsquare_turtle2>`
+   * - YAM
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - —
+     - :doc:`YAM (2 guides) <embodied/yam_index>`
 
 Industrial & Research Arms
 --------------------------
@@ -130,27 +130,13 @@ Single-arm and dual-arm manipulators for hardware setup, teleoperation, data col
 .. grid:: 1 2 3 3
    :gutter: 3
 
-   .. grid-item-card:: Single-Arm Franka
-      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
-      :img-alt: Single-Arm Franka
-      :link: embodied/franka_index
+   .. grid-item-card:: AgileX Piper
+      :img-top: https://raw.githubusercontent.com/agilexrobotics/piper_ros/noetic/asserts/pictures/piper_urdf_zero.png
+      :img-alt: AgileX Piper arm
+      :link: embodied/piper
       :link-type: doc
 
-      Real-world RL, teleoperation, data collection, reward models, SFT, deployment, and hardware extensions.
-
-   .. grid-item-card:: Dual-Arm Franka
-      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka.jpg
-      :img-alt: Dual-Arm Franka
-      :link: embodied/dual_franka_index
-      :link-type: doc
-
-      GELLO and PICO data collection, OpenPI π₀.₅ SFT, policy deployment, and online HG-DAgger.
-
-   .. grid-item-card:: YAM
-      :link: embodied/yam_index
-      :link-type: doc
-
-      Collect dual-arm PICO demonstrations, fine-tune OpenPI π₀.₅, and evaluate checkpoints on both arms.
+      Configure SocketCAN and verify Piper joint feedback, motion, and gripper control.
 
    .. grid-item-card:: ARX X5
       :img-top: https://arx-global.us/assets/img/x5.webp
@@ -160,6 +146,22 @@ Single-arm and dual-arm manipulators for hardware setup, teleoperation, data col
 
       Collect dual-arm demonstrations with PICO controllers and three RGB cameras in LeRobot format.
 
+   .. grid-item-card:: Franka (Dual-Arm)
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka.jpg
+      :img-alt: Franka (Dual-Arm)
+      :link: embodied/dual_franka_index
+      :link-type: doc
+
+      GELLO and PICO data collection, OpenPI π₀.₅ SFT, policy deployment, and online HG-DAgger.
+
+   .. grid-item-card:: Franka (Single-Arm)
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
+      :img-alt: Franka (Single-Arm)
+      :link: embodied/franka_index
+      :link-type: doc
+
+      Real-world RL, teleoperation, data collection, reward models, SFT, deployment, and hardware extensions.
+
    .. grid-item-card:: GimArm
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/gim-arm.png
       :img-alt: GimArm 6-DoF arm
@@ -168,13 +170,11 @@ Single-arm and dual-arm manipulators for hardware setup, teleoperation, data col
 
       Train a 6-DoF GimArm peg-insertion policy over SocketCAN with VR teleoperation and SAC / RLPD.
 
-   .. grid-item-card:: AgileX Piper
-      :img-top: https://raw.githubusercontent.com/agilexrobotics/piper_ros/noetic/asserts/pictures/piper_urdf_zero.png
-      :img-alt: AgileX Piper arm
-      :link: embodied/piper
+   .. grid-item-card:: YAM
+      :link: embodied/yam_index
       :link-type: doc
 
-      Configure SocketCAN and verify Piper joint feedback, motion, and gripper control.
+      Collect dual-arm PICO demonstrations, fine-tune OpenPI π₀.₅, and evaluate checkpoints on both arms.
 
 Dual-Arm & Humanoid Platforms
 -----------------------------
@@ -184,12 +184,6 @@ Integrated bimanual and wheeled humanoid systems for whole-body teleoperation an
 .. grid:: 1 2 3 3
    :gutter: 3
 
-   .. grid-item-card:: Robbyant R2
-      :link: embodied/r2
-      :link-type: doc
-
-      Run hardware checks, whole-body PICO VR teleoperation, and joint-reach RL on the Robbyant R2 wheeled humanoid.
-
    .. grid-item-card:: Dexmal DOS-W1
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/dos-w1.png
       :img-alt: Dexmal DOS-W1 dual-arm robot
@@ -197,6 +191,12 @@ Integrated bimanual and wheeled humanoid systems for whole-body teleoperation an
       :link-type: doc
 
       Collect leader-arm demonstrations and train a Flow Matching + SAC pick policy on DOS-W1.
+
+   .. grid-item-card:: Robbyant R2
+      :link: embodied/r2
+      :link-type: doc
+
+      Run hardware checks, whole-body PICO VR teleoperation, and joint-reach RL on the Robbyant R2 wheeled humanoid.
 
    .. grid-item-card:: XSquare Turtle2
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/xsquare_turtle2_arm_small.jpg
@@ -214,6 +214,12 @@ Desktop manipulators and mobile bases built on LeRobot-compatible servo hardware
 .. grid:: 1 2 3 3
    :gutter: 3
 
+   .. grid-item-card:: LeKiwi
+      :link: embodied/lekiwi
+      :link-type: doc
+
+      Configure wheel motors, check the front webcam, and drive the omnidirectional mobile base by keyboard.
+
    .. grid-item-card:: SO-101
       :img-top: https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp
       :img-alt: SO-101 follower arm
@@ -221,9 +227,3 @@ Desktop manipulators and mobile bases built on LeRobot-compatible servo hardware
       :link-type: doc
 
       Set up and calibrate an SO-101 arm, collect leader demonstrations, run OpenPI SFT, and evaluate locally.
-
-   .. grid-item-card:: LeKiwi
-      :link: embodied/lekiwi
-      :link-type: doc
-
-      Configure wheel motors, check the front webcam, and drive the omnidirectional mobile base by keyboard.

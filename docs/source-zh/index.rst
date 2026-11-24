@@ -117,17 +117,17 @@
 
   总览 <rst_source/examples/real_world_index>
   通用流程 <rst_source/examples/real_world_workflows_index>
-  单臂 Franka <rst_source/examples/embodied/franka_index>
-  双臂 Franka <rst_source/examples/embodied/dual_franka_index>
-  YAM <rst_source/examples/embodied/yam_index>
-  ARX X5 <rst_source/examples/embodied/arx5>
-  GimArm <rst_source/examples/embodied/gim_arm>
   AgileX Piper <rst_source/examples/embodied/piper>
-  Robbyant R2 <rst_source/examples/embodied/r2>
+  ARX X5 <rst_source/examples/embodied/arx5>
   Dexmal DOS-W1 <rst_source/examples/embodied/dosw1>
-  XSquare Turtle2 <rst_source/examples/embodied/xsquare_turtle2>
-  SO-101 <rst_source/examples/embodied/so101>
+  Franka（双臂） <rst_source/examples/embodied/dual_franka_index>
+  Franka（单臂） <rst_source/examples/embodied/franka_index>
+  GimArm <rst_source/examples/embodied/gim_arm>
   LeKiwi <rst_source/examples/embodied/lekiwi>
+  Robbyant R2 <rst_source/examples/embodied/r2>
+  SO-101 <rst_source/examples/embodied/so101>
+  XSquare Turtle2 <rst_source/examples/embodied/xsquare_turtle2>
+  YAM <rst_source/examples/embodied/yam_index>
 
 .. toctree::
   :caption: Agent 与 LLM

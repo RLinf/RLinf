@@ -45,6 +45,8 @@ enforced automatically during PR review:
   from accumulating raw leaf pages and cap ``Get Started`` / ``入门`` at 5 entries.
 - ``docs/sidebar-depth``: forbid nested sub-index folders under ``examples/agentic/``
   so Agent & LLM recipes stay 2-level flat like Embodied AI.
+- ``docs/alpha-order``: keep simulator, real-world robot, and model gallery
+  toctrees sorted alphabetically (A–Z).
 - ``docs/sibling-alignment``: Agent & LLM recipes (and newly added embodied/eval
   recipes) open with an Overview ``.. grid::`` + ``**Prerequisites:**`` /
   ``**前置条件：**`` header, link to ``start/installation``, use ``.. tab-set::``,
@@ -654,6 +656,77 @@ def _check_root_sidebar_grouping(rel: str, lines: list[str]) -> list[route.Findi
     return findings
 
 
+ALPHA_SORTED_INDEX_RE = re.compile(
+    r"^docs/source-(?:en|zh)/rst_source/examples/"
+    r"(?:simulators_index|vla_wam_index|sft_index|world_model_index)\.rst$"
+)
+ALPHA_PREFIX_SKIP = {"Overview", "Workflows", "总览", "通用流程"}
+
+
+def _alpha_sort_key(label: str) -> str:
+    """Normalize display labels so EN and ZH share the same A-Z sort key."""
+    s = label.strip()
+    replacements = (
+        ("真机仿真器", "real-world simulator"),
+        ("Franka（双臂）", "franka (dual-arm)"),
+        ("Franka（单臂）", "franka (single-arm)"),
+        ("π₀", "pi0"),
+        ("π", "pi"),
+    )
+    for src, dst in replacements:
+        s = s.replace(src, dst)
+    return s.lower()
+
+
+def _check_alpha_order(rel: str, lines: list[str]) -> list[route.Finding]:
+    """Ensure simulator, robot, and model toctrees stay sorted alphabetically."""
+    is_root = bool(ROOT_INDEX_RE.match(rel))
+    is_gallery = bool(ALPHA_SORTED_INDEX_RE.match(rel))
+    if not is_root and not is_gallery:
+        return []
+    findings: list[route.Finding] = []
+    i = 0
+    while i < len(lines):
+        if lines[i].strip() != ".. toctree::":
+            i += 1
+            continue
+        indent = len(lines[i]) - len(lines[i].lstrip())
+        caption = ""
+        labels: list[tuple[int, str]] = []
+        j = i + 1
+        while j < len(lines):
+            raw = lines[j]
+            stripped = raw.strip()
+            if stripped and len(raw) - len(raw.lstrip()) <= indent:
+                break
+            if stripped.startswith(":caption:"):
+                caption = stripped[len(":caption:") :].strip()
+            elif stripped and not stripped.startswith(":"):
+                m = re.match(r"^(.*?)\s*<[^>]+>$", stripped)
+                label = m.group(1).strip() if m else stripped
+                if label not in ALPHA_PREFIX_SKIP:
+                    labels.append((j + 1, label))
+            j += 1
+        if is_gallery or caption in ("Real-World Robots", "真机机器人"):
+            keys = [_alpha_sort_key(lbl) for _, lbl in labels]
+            if keys != sorted(keys):
+                expected = ", ".join(
+                    lbl
+                    for _, lbl in sorted(labels, key=lambda x: _alpha_sort_key(x[1]))
+                )
+                findings.append(
+                    route.Finding(
+                        "major",
+                        rel,
+                        i + 1,
+                        "docs/alpha-order",
+                        f"entries must be sorted alphabetically (A–Z); expected order: {expected}",
+                    )
+                )
+        i = j
+    return findings
+
+
 def _check_agentic_flat_hierarchy(
     path: Path, rel: str, source: str, lines: list[str]
 ) -> list[route.Finding]:
@@ -801,6 +874,7 @@ def check_page(
     findings += _check_paths(rel, lines, root, repo_basenames(root))
     findings += _check_box_tables(rel, lines)
     findings += _check_root_sidebar_grouping(rel, lines)
+    findings += _check_alpha_order(rel, lines)
     findings += _check_agentic_flat_hierarchy(path, rel, source, lines)
 
     is_agentic_leaf_index = bool(

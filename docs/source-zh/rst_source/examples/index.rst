@@ -46,32 +46,41 @@
    :widths: 20 10 10 10 10 10 10 10 10
 
    * - 模型
-     - :doc:`ManiSkill3 <embodied/maniskill>`
-     - :doc:`LIBERO <embodied/libero>`
-     - :doc:`RoboTwin <embodied/robotwin>`
+     - :doc:`BEHAVIOR-1K <embodied/behavior>`
      - :doc:`CALVIN <embodied/calvin>`
+     - :doc:`LIBERO <embodied/libero>`
+     - :doc:`ManiSkill3 <embodied/maniskill>`
      - :doc:`MetaWorld <embodied/metaworld>`
      - :doc:`RoboCasa <embodied/robocasa>`
-     - :doc:`BEHAVIOR-1K <embodied/behavior>`
+     - :doc:`RoboTwin <embodied/robotwin>`
      - :doc:`真机 <real_world_index>`
-   * - :doc:`OpenVLA <embodied/maniskill>`
+   * - :doc:`Dexbotic <embodied/dexbotic>`
+     - —
+     - —
+     - ✓
+     - —
+     - —
+     - —
+     - —
+     - —
+   * - :doc:`GR00T <embodied/gr00t>`
+     - —
+     - —
      - ✓
      - ✓
      - —
      - —
      - —
      - —
+   * - :doc:`MLP <embodied/mlp>` / :doc:`SAC <embodied/sac_flow>`
      - —
      - —
-   * - :doc:`OpenVLA-OFT <embodied/openvla_oft>`
-     - ✓
      - ✓
      - ✓
      - —
-     - ✓
+     - —
      - —
      - ✓
-     - —
    * - :doc:`OpenPI π₀ / π₀.₅ <embodied/pi0>`
      - ✓
      - ✓
@@ -81,41 +90,32 @@
      - ✓
      - ✓
      - ✓
-   * - :doc:`GR00T <embodied/gr00t>`
+   * - :doc:`OpenVLA <embodied/maniskill>`
+     - —
+     - —
      - ✓
      - ✓
      - —
      - —
      - —
      - —
-     - —
-     - —
-   * - :doc:`Dexbotic <embodied/dexbotic>`
-     - —
+   * - :doc:`OpenVLA-OFT <embodied/openvla_oft>`
      - ✓
      - —
+     - ✓
+     - ✓
+     - ✓
      - —
-     - —
-     - —
-     - —
+     - ✓
      - —
    * - :doc:`StarVLA <embodied/starvla>`
      - —
-     - ✓
-     - —
-     - —
-     - —
-     - —
-     - —
-     - —
-   * - :doc:`MLP <embodied/mlp>` / :doc:`SAC <embodied/sac_flow>`
-     - ✓
-     - ✓
-     - —
-     - —
-     - —
-     - —
      - —
      - ✓
+     - —
+     - —
+     - —
+     - —
+     - —
 
 其他方向请见 :doc:`真机机器人 <real_world_index>`、:doc:`评测 <../evaluations/index>`、:doc:`智能体与推理 <agentic/index>` 与 :doc:`图像与视频生成 <video_models>`。

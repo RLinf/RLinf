@@ -46,32 +46,41 @@ Find the right recipe from either a model family or a benchmark.
    :widths: 20 10 10 10 10 10 10 10 10
 
    * - Model
-     - :doc:`ManiSkill3 <embodied/maniskill>`
-     - :doc:`LIBERO <embodied/libero>`
-     - :doc:`RoboTwin <embodied/robotwin>`
+     - :doc:`BEHAVIOR-1K <embodied/behavior>`
      - :doc:`CALVIN <embodied/calvin>`
+     - :doc:`LIBERO <embodied/libero>`
+     - :doc:`ManiSkill3 <embodied/maniskill>`
      - :doc:`MetaWorld <embodied/metaworld>`
      - :doc:`RoboCasa <embodied/robocasa>`
-     - :doc:`BEHAVIOR-1K <embodied/behavior>`
+     - :doc:`RoboTwin <embodied/robotwin>`
      - :doc:`Real-World <real_world_index>`
-   * - :doc:`OpenVLA <embodied/maniskill>`
+   * - :doc:`Dexbotic <embodied/dexbotic>`
+     - —
+     - —
+     - ✓
+     - —
+     - —
+     - —
+     - —
+     - —
+   * - :doc:`GR00T <embodied/gr00t>`
+     - —
+     - —
      - ✓
      - ✓
      - —
      - —
      - —
      - —
+   * - :doc:`MLP <embodied/mlp>` / :doc:`SAC <embodied/sac_flow>`
      - —
      - —
-   * - :doc:`OpenVLA-OFT <embodied/openvla_oft>`
-     - ✓
      - ✓
      - ✓
      - —
-     - ✓
+     - —
      - —
      - ✓
-     - —
    * - :doc:`OpenPI π₀ / π₀.₅ <embodied/pi0>`
      - ✓
      - ✓
@@ -81,41 +90,32 @@ Find the right recipe from either a model family or a benchmark.
      - ✓
      - ✓
      - ✓
-   * - :doc:`GR00T <embodied/gr00t>`
+   * - :doc:`OpenVLA <embodied/maniskill>`
+     - —
+     - —
      - ✓
      - ✓
      - —
      - —
      - —
      - —
-     - —
-     - —
-   * - :doc:`Dexbotic <embodied/dexbotic>`
-     - —
+   * - :doc:`OpenVLA-OFT <embodied/openvla_oft>`
      - ✓
      - —
+     - ✓
+     - ✓
+     - ✓
      - —
-     - —
-     - —
-     - —
+     - ✓
      - —
    * - :doc:`StarVLA <embodied/starvla>`
      - —
-     - ✓
-     - —
-     - —
-     - —
-     - —
-     - —
-     - —
-   * - :doc:`MLP <embodied/mlp>` / :doc:`SAC <embodied/sac_flow>`
-     - ✓
-     - ✓
-     - —
-     - —
-     - —
-     - —
      - —
      - ✓
+     - —
+     - —
+     - —
+     - —
+     - —
 
 Looking for other tracks? See :doc:`Real-World Robots <real_world_index>`, :doc:`Evaluation <../evaluations/index>`, :doc:`Agentic & Reasoning <agentic/index>`, and :doc:`Image & Video Generation <video_models>`.
