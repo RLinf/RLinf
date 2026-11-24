@@ -104,10 +104,15 @@ class MAFSDPActor(FSDPActor):
         """Return the process group used to aggregate rollout metrics."""
         return torch.distributed.group.WORLD
 
-    def get_batch(
+    def get_step_batch(
         self, channel: Channel
     ) -> tuple[DynamicActorBatch, list[DynamicRolloutResult]]:
-        """Receive complete groups, balance once, and retain real-length rows."""
+        """Receive this data-parallel rank's groups for one step, balance them
+        once, and keep real-length rows.
+
+        Unlike get_batch, which receives one rollout result, this receives
+        all of the step's groups and returns them as a list.
+        """
         results = [channel.get() for _ in range(self._get_num_rollout_results_per_dp())]
         if not channel.is_local:
             for result in results:
@@ -273,7 +278,7 @@ class MAFSDPActor(FSDPActor):
     ):
         """Compute real-length probabilities and retain the balanced group order."""
         assert not self.is_pipeline, "MAFSDPActor supports collocated inference."
-        batch, results = self.get_batch(input_channel)
+        batch, results = self.get_step_batch(input_channel)
         self._load_weight_and_optimizer()
         self.model.eval()
         with self.worker_timer(), torch.no_grad():
@@ -440,7 +445,7 @@ class MAFSDPActor(FSDPActor):
             "MAFSDPActor currently only supports collocated training"
         )
 
-        global_batch, _ = self.get_batch(input_channel)
+        global_batch, _ = self.get_step_batch(input_channel)
         assert (
             "recomputed_logprobs" in global_batch or "rollout_logprobs" in global_batch
         )

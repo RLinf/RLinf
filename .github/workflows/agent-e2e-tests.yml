@@ -23,6 +23,23 @@ jobs:
           bash requirements/install.sh agentic --engine sglang
           bash requirements/install.sh agentic --venv .venv-vllm --engine vllm
 
+      - name: Session server integration test
+        # These files skip their cases that need fastapi or SGLang in the
+        # unit-test environment; run them for real here, in the agentic env.
+        timeout-minutes: 20
+        run: |
+          source .venv/bin/activate
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          # The chat completions and agentic tokenizer tests render with a real
+          # tokenizer and skip without one; these are the model directories this
+          # runner has.
+          export RLINF_TEST_QWEN25_MODEL_DIR=/workspace/dataset/Qwen2.5-1.5B-Instruct
+          export RLINF_TEST_GLM47_MODEL_DIR=/workspace/dataset/GLM-4.7-Flash-8L
+          status=0
+          pytest tests/unit_tests/test_session_server.py tests/unit_tests/test_agentic_tokenizer.py tests/unit_tests/test_peer_whitelist.py || status=$?
+          ray stop
+          exit $status
+
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
         run: |
