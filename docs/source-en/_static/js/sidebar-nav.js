@@ -40,11 +40,15 @@
   }
 
   function computeDocRootPath() {
-    var rootRel =
-      window.DOCUMENTATION_OPTIONS &&
-      typeof window.DOCUMENTATION_OPTIONS.URL_ROOT === "string"
-        ? window.DOCUMENTATION_OPTIONS.URL_ROOT
-        : "./";
+    var rootRel = document.documentElement.getAttribute("data-content_root");
+    if (typeof rootRel !== "string" || !rootRel) {
+      var docOpts =
+        typeof DOCUMENTATION_OPTIONS !== "undefined"
+          ? DOCUMENTATION_OPTIONS
+          : window.DOCUMENTATION_OPTIONS;
+      rootRel =
+        docOpts && typeof docOpts.URL_ROOT === "string" ? docOpts.URL_ROOT : "./";
+    }
     if (rootRel === "") rootRel = "./";
     try {
       var u = new URL(rootRel, window.location.href);
@@ -404,16 +408,23 @@
   }
 
   function updateDocumentationOptions(targetUrl) {
-    if (!window.DOCUMENTATION_OPTIONS || !docRootPath) return;
+    if (!docRootPath) return;
     try {
       var u = new URL(targetUrl, window.location.href);
       var rel = u.pathname.slice(docRootPath.length);
       var pagename = rel.replace(/\.html$/, "").replace(/\/$/, "/index");
       if (!pagename || pagename === "/index") pagename = "index";
-      window.DOCUMENTATION_OPTIONS.pagename = pagename;
       var depth = (rel.match(/\//g) || []).length;
-      window.DOCUMENTATION_OPTIONS.URL_ROOT =
-        depth > 0 ? new Array(depth + 1).join("../") : "";
+      var relRoot = depth > 0 ? new Array(depth + 1).join("../") : "./";
+      document.documentElement.setAttribute("data-content_root", relRoot);
+      var docOpts =
+        typeof DOCUMENTATION_OPTIONS !== "undefined"
+          ? DOCUMENTATION_OPTIONS
+          : window.DOCUMENTATION_OPTIONS;
+      if (docOpts) {
+        docOpts.pagename = pagename;
+        docOpts.URL_ROOT = depth > 0 ? relRoot : "";
+      }
     } catch (_err) {
       // Non-fatal.
     }
