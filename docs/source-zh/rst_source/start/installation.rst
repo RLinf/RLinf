@@ -25,7 +25,8 @@
 
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero
+         source .venv/bin/activate
          python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
 
       预期输出：
@@ -43,17 +44,20 @@
       .. code-block:: bash
 
          # 机器人控制节点（驱动与传感器）
-         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+         bash requirements/install.sh embodied --env franka
+         source .venv/bin/activate
 
          # GPU 训练 / 推理节点（或单机同配 GPU 与机器人）
-         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env franka
+         source .venv/bin/activate
 
    .. tab-item:: Agent 与 LLM
       :sync: agentic
 
       .. code-block:: bash
 
-         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
+         bash requirements/install.sh agentic --engine sglang
+         source .venv/bin/activate
          python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
 
       预期输出：

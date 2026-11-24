@@ -25,7 +25,8 @@ Then pick your target stack below:
 
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero
+         source .venv/bin/activate
          python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
 
       Expected output:
@@ -43,17 +44,20 @@ Then pick your target stack below:
       .. code-block:: bash
 
          # Robot controller node (driver + sensors)
-         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+         bash requirements/install.sh embodied --env franka
+         source .venv/bin/activate
 
          # GPU / training node (or single workstation with both GPU and robot)
-         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
+         bash requirements/install.sh embodied --model openpi --env franka
+         source .venv/bin/activate
 
    .. tab-item:: Agent & LLM
       :sync: agentic
 
       .. code-block:: bash
 
-         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
+         bash requirements/install.sh agentic --engine sglang
+         source .venv/bin/activate
          python -c "import torch, rlinf; print(rlinf.__file__, 'CUDA:', torch.cuda.is_available())" && ray --version
 
       Expected output:
