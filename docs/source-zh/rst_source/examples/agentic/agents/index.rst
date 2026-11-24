@@ -38,7 +38,7 @@ Agent 训练
 
 .. toctree::
    :hidden:
-   :maxdepth: 2
+   :maxdepth: 1
 
    Search-R1 <../searchr1/index>
    WideSeek-R1 <../wideseek_r1/index>

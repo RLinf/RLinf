@@ -43,9 +43,12 @@ enforced automatically during PR review:
   have uniform row display width.
 - ``docs/sidebar-grouping``: keep top-level grouped chapters on ``index.rst``
   from accumulating raw leaf pages and cap ``Get Started`` / ``入门`` at 5 entries.
-- ``docs/sibling-alignment``: newly added recipe pages open with an Overview
-  ``.. grid::`` or ``**Prerequisites:**`` / ``**前置条件：**`` header and link to
-  ``start/installation``.
+- ``docs/sidebar-depth``: forbid nested sub-index folders under ``examples/agentic/``
+  so Agent & LLM recipes stay 2-level flat like Embodied AI.
+- ``docs/sibling-alignment``: Agent & LLM recipes (and newly added embodied/eval
+  recipes) open with an Overview ``.. grid::`` + ``**Prerequisites:**`` /
+  ``**前置条件：**`` header, link to ``start/installation``, use ``.. tab-set::``,
+  and close with ``Visualization and Results`` / ``可视化与结果``.
 """
 
 from __future__ import annotations
@@ -516,9 +519,21 @@ RECIPE_SIBLING_RE = re.compile(
     r"^docs/source-(?:en|zh)/rst_source/"
     r"(?:examples/(?:embodied|agentic)/|evaluations/guides/)(?!_).+\.rst$"
 )
+AGENTIC_PROJECT_INDEX_RE = re.compile(
+    r"^docs/source-(?:en|zh)/rst_source/examples/agentic/"
+    r"(?!agents/|math_reasoning/)[^/]+/index\.rst$"
+)
+AGENTIC_CATEGORY_INDEX_RE = re.compile(
+    r"^docs/source-(?:en|zh)/rst_source/examples/agentic/"
+    r"(?:agents|math_reasoning)/index\.rst$"
+)
 RECIPE_NON_RUNNABLE_FILES = ("retriever.rst", "tools.rst", "video_models.rst")
 INSTALL_LINK_RE = re.compile(r"start/installation")
 RECIPE_HEADER_RE = re.compile(r"\.\.\s+grid::|\*\*(?:Prerequisites|前置条件)[:：]\*\*")
+PREREQ_LINE_RE = re.compile(r"\*\*(?:Prerequisites|前置条件)[:：]\*\*")
+RESULTS_HEADING_RE = re.compile(
+    r"^(?:Visualization and Results|可视化与结果)\s*$", re.MULTILINE
+)
 
 
 def _display_width(text: str) -> int:
@@ -639,19 +654,114 @@ def _check_root_sidebar_grouping(rel: str, lines: list[str]) -> list[route.Findi
     return findings
 
 
-def _check_new_recipe_sibling_alignment(
-    rel: str, source: str, lines: list[str]
+def _check_agentic_flat_hierarchy(
+    path: Path, rel: str, source: str, lines: list[str]
 ) -> list[route.Finding]:
-    """Ensure newly added recipe pages match sibling layout and link to start/installation."""
+    """Keep Agent & LLM recipes 2-level flat (no nested sub-index folders)."""
+    findings: list[route.Finding] = []
+    if AGENTIC_PROJECT_INDEX_RE.match(rel) and ".. toctree::" in source:
+        findings.append(
+            route.Finding(
+                "major",
+                rel,
+                None,
+                "docs/sidebar-depth",
+                "keep each Agent & LLM project as a single-page recipe with tabs "
+                "instead of a nested ``.. toctree::`` sub-index folder",
+            )
+        )
+    if AGENTIC_CATEGORY_INDEX_RE.match(rel):
+        for i, line in enumerate(lines):
+            if line.strip() != ".. toctree::":
+                continue
+            indent = len(line) - len(line.lstrip())
+            for j, body in enumerate(lines[i + 1 :], i + 2):
+                stripped = body.strip()
+                if stripped and len(body) - len(body.lstrip()) <= indent:
+                    break
+                if stripped and not stripped.startswith(":"):
+                    m = re.search(r"<([^>]+)>$", stripped)
+                    target = m.group(1) if m else stripped
+                    cand = (path.parent / f"{target}.rst").resolve()
+                    if cand.exists() and ".. toctree::" in cand.read_text(
+                        encoding="utf-8", errors="ignore"
+                    ):
+                        findings.append(
+                            route.Finding(
+                                "major",
+                                rel,
+                                j,
+                                "docs/sidebar-depth",
+                                f"'{target}' is itself a nested toctree sub-index; "
+                                "consolidate it into a single-page recipe like Embodied AI",
+                            )
+                        )
+    return findings
+
+
+def _check_recipe_sibling_alignment(
+    rel: str, source: str, lines: list[str], *, is_new: bool
+) -> list[route.Finding]:
+    """Ensure Agent & LLM recipes (and newly added recipes) match embodied layout."""
+    is_agentic = "/rst_source/examples/agentic/" in rel
+    is_agentic_leaf_index = bool(
+        AGENTIC_PROJECT_INDEX_RE.match(rel) and ".. toctree::" not in source
+    )
     if (
         not RECIPE_SIBLING_RE.match(rel)
-        or _is_index(rel)
+        or (_is_index(rel) and not is_agentic_leaf_index)
         or rel.endswith(RECIPE_NON_RUNNABLE_FILES)
     ):
         return []
+    if not is_new and not is_agentic:
+        return []
+
     findings: list[route.Finding] = []
     head_block = "\n".join(lines[:90])
-    if not RECIPE_HEADER_RE.search(head_block):
+    if is_agentic:
+        if ".. grid::" not in head_block:
+            findings.append(
+                route.Finding(
+                    "major",
+                    rel,
+                    None,
+                    "docs/sibling-alignment",
+                    "Agent & LLM recipe should open with an Overview 4-card ``.. grid::`` "
+                    "matching Embodied AI recipes",
+                )
+            )
+        if not PREREQ_LINE_RE.search(head_block):
+            findings.append(
+                route.Finding(
+                    "major",
+                    rel,
+                    None,
+                    "docs/sibling-alignment",
+                    "Agent & LLM recipe should include ``**Prerequisites:**`` / "
+                    "``**前置条件：**`` under Overview matching Embodied AI recipes",
+                )
+            )
+        if ".. tab-set::" not in source:
+            findings.append(
+                route.Finding(
+                    "major",
+                    rel,
+                    None,
+                    "docs/sibling-alignment",
+                    "Agent & LLM recipe should wrap Setup and Run commands in a single-level ``.. tab-set::``",
+                )
+            )
+        if not RESULTS_HEADING_RE.search(source):
+            findings.append(
+                route.Finding(
+                    "major",
+                    rel,
+                    None,
+                    "docs/sibling-alignment",
+                    "Agent & LLM recipe needs a ``Visualization and Results`` / ``可视化与结果`` section",
+                )
+            )
+    elif not RECIPE_HEADER_RE.search(head_block):
         findings.append(
             route.Finding(
                 "major",
@@ -669,7 +779,7 @@ def _check_new_recipe_sibling_alignment(
                 rel,
                 None,
                 "docs/sibling-alignment",
-                "new recipe page should link to ``start/installation`` instead of duplicating global installer docs",
+                "recipe page should link to ``start/installation`` instead of duplicating global installer docs",
             )
         )
     return findings
@@ -691,13 +801,16 @@ def check_page(
     findings += _check_paths(rel, lines, root, repo_basenames(root))
     findings += _check_box_tables(rel, lines)
     findings += _check_root_sidebar_grouping(rel, lines)
+    findings += _check_agentic_flat_hierarchy(path, rel, source, lines)
 
-    if _is_index(rel):
+    is_agentic_leaf_index = bool(
+        AGENTIC_PROJECT_INDEX_RE.match(rel) and ".. toctree::" not in source
+    )
+    if _is_index(rel) and not is_agentic_leaf_index:
         findings += _check_index_page(rel, source, lines)
         return findings
 
-    if is_new:
-        findings += _check_new_recipe_sibling_alignment(rel, source, lines)
+    findings += _check_recipe_sibling_alignment(rel, source, lines, is_new=is_new)
 
     if "/rst_source/extending/" in rel:
         findings += _check_extending(rel, source, lines)

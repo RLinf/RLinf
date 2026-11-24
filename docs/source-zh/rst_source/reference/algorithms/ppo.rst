@@ -169,7 +169,7 @@ LLM 推理任务的配置与具身任务的配置有相似之处。
 3.3. 多轮 Agent 任务
 ~~~~~~~~~~~~~~~~~~~~
 
-模型和数据准备参见 :doc:`Search-R1 训练 </rst_source/examples/agentic/searchr1/qwen2.5>`。使用 ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``，关键配置如下：
+模型和数据准备参见 :doc:`Search-R1 训练 </rst_source/examples/agentic/searchr1/index>`。使用 ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``，关键配置如下：
 
 .. code-block:: yaml
 

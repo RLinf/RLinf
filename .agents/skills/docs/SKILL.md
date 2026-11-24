@@ -50,7 +50,7 @@ Page findings count only on the lines the change adds, because many existing pag
 | `docs/symbol` | major | a name in code font, on a Concepts, Extending, or Reference page, that nothing in the repository defines |
 | `docs/code-name` | major or minor | RLinf's internal classes, functions, or source paths in code font on a recipe or guide page (major) or a concept page (minor) |
 | `docs/math` | major | an equation on a recipe or guide page |
-| `docs/structure` | major | a new recipe under `examples/` or `evaluations/guides/` without unified `Setup and Run` / `安装与运行`, using legacy `一键上手`, or keeping a generic `Algorithm` / `Environment` section |
+| `docs/structure` | major | an Agent & LLM recipe (or new embodied/eval recipe) missing `Overview`/`概览` or `Setup and Run`/`安装与运行`, using legacy `一键上手`, or keeping generic theory sections (`Algorithm`, `Model Architecture`, `GRPO 原理`, `技术细节`, etc.) |
 | `docs/rtd-link` | major | a hardcoded Read the Docs link to an RLinf page instead of `:doc:` or `:ref:` |
 | `docs/parity` | major or minor | a page, `conf.py`, or `_static` CSS/JS without its counterpart, differing toctrees, or diverged shared CSS/JS (`custom.css` / `sidebar-nav.js`) (major); a page or README changed while its counterpart did not (minor) |
 | `docs/heading` | minor | a code identifier in a heading outside Reference and Extending |
@@ -88,7 +88,8 @@ Page findings count only on the lines the change adds, because many existing pag
 | `docs/algo-keys` | major | YAML key on `reference/algorithms/` that does not exist in `rlinf/` / `examples/` / `evaluations/`, or missing runnable config/recipe link |
 | `docs/latex-sanity` | major | broken LaTeX subscript omission (`\mathbb{E}{`, `\pi{\theta}`) or orphan paper equation tags (`\tag{8}`) in `reference/` |
 | `docs/sidebar-grouping` | major | raw leaf pages dumped into grouped top-level chapters (`Embodied AI`, `Agent & LLM`, `Guides`) or >5 entries in `Get Started` on root `index.rst` |
-| `docs/sibling-alignment` | major | new recipe under `examples/` or `evaluations/guides/` missing an Overview `.. grid::` or `Prerequisites` header, or missing a link to `start/installation` |
+| `docs/sidebar-depth` | major | nested `.. toctree::` sub-index folders inside `examples/agentic/` (each Agent & LLM project must be a single-page recipe with tabs like Embodied AI) |
+| `docs/sibling-alignment` | major | Agent & LLM recipe (or new embodied/eval recipe) missing Overview `.. grid::` + `Prerequisites` header, `start/installation` link, `.. tab-set::`, or `Visualization and Results` / `可视化与结果` |
 | `docs/box-table` | major | misaligned Unicode box-drawing table rows (e.g. `Metric Table`) whose display width differs from the top border |
 
 Then read every changed page in full, in both languages, as a reader new to RLinf who has not seen its code, and inspect every command block (the script above checks build, markup, and prose, not command quality or workflow design):

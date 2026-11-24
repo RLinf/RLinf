@@ -204,7 +204,7 @@ sharded in that dimension.
 6. Expert Parallelism (EP) for MoE Models
 -----------------------------------------
 
-*Expert Parallelism* shards Mixture-of-Experts (MoE) experts across GPUs so each rank stores only a subset of experts and exchanges tokens via All-to-All communication. RLinf uses EP for MoE recipes such as :doc:`Moonlight-16B GRPO <../examples/agentic/math_reasoning/moonlight>` and :doc:`GLM-4.7-Flash Search-R1 <../examples/agentic/searchr1/glm4.7_flash>`.
+*Expert Parallelism* shards Mixture-of-Experts (MoE) experts across GPUs so each rank stores only a subset of experts and exchanges tokens via All-to-All communication. RLinf uses EP for MoE recipes such as :doc:`Moonlight-16B GRPO <../examples/agentic/math_reasoning/moonlight>` and :doc:`GLM-4.7-Flash Search-R1 <../examples/agentic/searchr1/index>`.
 
 .. code-block:: yaml
 
@@ -250,4 +250,4 @@ Start from the shipped RLinf parallelism presets below and scale DP with your cl
      - MoE
      - 8 (1–2 nodes)
      - TP 4 / PP 1 / CP 1 / EP 8
-     - :doc:`GLM-4.7-Flash <../examples/agentic/searchr1/glm4.7_flash>`
+     - :doc:`GLM-4.7-Flash <../examples/agentic/searchr1/index>`

@@ -1,9 +1,9 @@
 Installation & Hardware
 =======================
 
-.. note::
+.. important::
 
-   **New to RLinf?** Start with :doc:`Quickstart <vla>` to install one environment and finish your first single-GPU run end to end. Every model, simulator, and robot recipe also includes its own exact install command. Use this page as a reference for ``install.sh`` options, prebuilt Docker images, regional mirrors, and GPU/cluster requirements.
+   **Want to run a specific task? You do not need to read this page.** Every model, simulator, real-robot, and Agent & LLM recipe includes its own complete install and launch commands — go straight to that recipe, or start with :doc:`Quickstart <vla>` for your first single-GPU run. Use this page only as a reference for ``install.sh`` options, prebuilt Docker images, regional mirrors, and GPU/cluster requirements.
 
 Install RLinf into a local ``uv`` virtual environment with ``requirements/install.sh``, or pull a prebuilt image from Docker Hub. Each virtual environment holds one model-and-environment stack; pass ``--venv <dir>`` to keep multiple stacks side by side.
 

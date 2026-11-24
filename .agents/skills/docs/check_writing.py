@@ -46,9 +46,29 @@ RECIPE_PAGE = re.compile(
     r"docs/source-(en|zh)/rst_source/"
     r"(?:examples/(?:embodied|agentic)/|evaluations/guides/)(?!_).+\.rst$"
 )
+AGENTIC_PROJECT_INDEX = re.compile(
+    r"docs/source-(?:en|zh)/rst_source/examples/agentic/"
+    r"(?!agents/|math_reasoning/)[^/]+/index\.rst$"
+)
 RECIPE_NON_RUNNABLE = ("retriever.rst", "tools.rst", "video_models.rst")
 RECIPE_SECTIONS = {"en": ("Setup and Run",), "zh": ("安装与运行",)}
-GENERIC_SECTIONS = {"Algorithm", "Environment", "算法", "环境"}
+AGENTIC_OVERVIEW_SECTIONS = {"en": "Overview", "zh": "概览"}
+GENERIC_SECTIONS = {
+    "Algorithm",
+    "Environment",
+    "Model Architecture",
+    "Technical Details",
+    "GRPO Principle",
+    "How GRPO Works",
+    "How PPO Works",
+    "算法",
+    "环境",
+    "模型架构",
+    "技术细节",
+    "GRPO 原理",
+    "GRPO 工作方式",
+    "PPO 工作方式",
+}
 ZH_TERM_HEADING = (
     (
         re.compile(r"优势函数|策略损失|损失函数|规则奖励|奖励模型|新增环境"),
@@ -185,9 +205,12 @@ def check_page(
     path: Path, rel: str, names: frozenset[str], new: bool
 ) -> list[route.Finding]:
     """The writing rules for one page, given its type and whether it is new."""
-    kind = page_type(rel)
-    lang = "zh" if rel.startswith("docs/source-zh/") else "en"
     source = path.read_text(encoding="utf-8")
+    is_agentic_leaf_index = bool(
+        AGENTIC_PROJECT_INDEX.match(rel) and ".. toctree::" not in source
+    )
+    kind = "recipe" if is_agentic_leaf_index else page_type(rel)
+    lang = "zh" if rel.startswith("docs/source-zh/") else "en"
     lines = source.splitlines()
     rows = prose_rows(source)
     findings: list[route.Finding] = []
@@ -243,9 +266,10 @@ def check_page(
                 if pattern.search(title):
                     add("minor", number, "docs/zh-term", advice)
 
-    is_index = rel.endswith(("/index.rst", "_index.rst"))
+    is_index = rel.endswith(("/index.rst", "_index.rst")) and not is_agentic_leaf_index
+    is_agentic = "/rst_source/examples/agentic/" in rel
     if (
-        new
+        (new or is_agentic)
         and not is_index
         and ":orphan:" not in source[:240]
         and RECIPE_PAGE.match(rel)
@@ -259,14 +283,23 @@ def check_page(
                 "major",
                 None,
                 "docs/structure",
-                f"a new recipe page needs the unified {required[0]!r} section (rules/recipe.md)",
+                f"recipe page needs the unified {required[0]!r} section (rules/recipe.md)",
             )
+        if is_agentic:
+            ov = AGENTIC_OVERVIEW_SECTIONS[lang]
+            if ov not in titles:
+                add(
+                    "major",
+                    None,
+                    "docs/structure",
+                    f"Agent & LLM recipe needs the unified {ov!r} section matching Embodied AI recipes",
+                )
         for generic in sorted(titles & GENERIC_SECTIONS):
             add(
                 "major",
                 None,
                 "docs/structure",
-                f"remove the generic {generic!r} section; link to Reference",
+                f"remove the generic theory section {generic!r}; link to Reference instead",
             )
 
     if not any(skip in rel for skip in SKIP_TODO_PATHS):

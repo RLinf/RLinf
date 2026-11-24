@@ -189,7 +189,7 @@ Megatron 的 *序列并行* 在 TP 的基础上扩展，用于减少 **长上下
 6. 专家并行（EP，适用于 MoE 模型）
 ----------------------------------
 
-*专家并行* 将混合专家模型（MoE）的各专家切分到不同 GPU 上，每张卡仅保存部分专家，并通过 All-to-All 通信路由 token。:doc:`Moonlight-16B GRPO <../examples/agentic/math_reasoning/moonlight>` 与 :doc:`GLM-4.7-Flash Search-R1 <../examples/agentic/searchr1/glm4.7_flash>` 等 MoE 配方都使用 EP：
+*专家并行* 将混合专家模型（MoE）的各专家切分到不同 GPU 上，每张卡仅保存部分专家，并通过 All-to-All 通信路由 token。:doc:`Moonlight-16B GRPO <../examples/agentic/math_reasoning/moonlight>` 与 :doc:`GLM-4.7-Flash Search-R1 <../examples/agentic/searchr1/index>` 等 MoE 配方都使用 EP：
 
 .. code-block:: yaml
 
@@ -235,4 +235,4 @@ GPU 规模速查表
      - MoE
      - 8（1–2 节点）
      - TP 4 / PP 1 / CP 1 / EP 8
-     - :doc:`GLM-4.7-Flash <../examples/agentic/searchr1/glm4.7_flash>`
+     - :doc:`GLM-4.7-Flash <../examples/agentic/searchr1/index>`

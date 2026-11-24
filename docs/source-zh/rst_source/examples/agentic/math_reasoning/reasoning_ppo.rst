@@ -1,10 +1,10 @@
 Qwen2.5 数学推理 PPO
 ====================
 
-需要在 :doc:`reasoning` 中的同一数学推理任务上使用 actor-critic PPO 时，使用本配方。PPO 与 GRPO 共享大部分启动和数据设置，因此本页只列出 PPO 差异。
+使用带 critic 和 GAE Advantage 的 :doc:`PPO </rst_source/reference/algorithms/ppo>` 在 AReaL-boba 数学数据上训练 Qwen2.5-1.5B-Instruct。本配方与 :doc:`Qwen2.5 数学推理 GRPO <reasoning>` 共用启动脚本和数据集格式。
 
-概述
-----------------------------------------
+概览
+----
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -12,36 +12,34 @@ Qwen2.5 数学推理 PPO
    .. grid-item-card:: 模型
       :text-align: center
 
-      Qwen2.5-1.5B
+      Qwen2.5-1.5B-Instruct
 
    .. grid-item-card:: 算法
       :text-align: center
 
-      PPO，使用 GAE 优势估计与 critic
+      PPO（GAE + critic，Megatron + SGLang）
 
-   .. grid-item-card:: 数据
+   .. grid-item-card:: 任务
       :text-align: center
 
-      AReaL-boba 数学推理数据
+      数学推理（AReaL-boba）
 
    .. grid-item-card:: 硬件
       :text-align: center
 
-      多 GPU Megatron 训练
+      单机（1–8 张 GPU）
 
-PPO 工作方式
-----------------------------------------
-
-使用带 GAE advantage 和 critic 的标准 PPO（Proximal Policy Optimization）。算法细节见 :doc:`PPO <../../../reference/algorithms/ppo>`。
+| **你将完成：** 安装 ``agentic`` 依赖 → 下载模型与 AReaL-boba 数据集 → 使用 PPO 配置运行 ``run_main_grpo_math.sh`` → 观察 Reward 曲线。
+| **前置条件：** :doc:`安装与硬件参考 </rst_source/start/installation>` · 支持 SGLang 与 Megatron 的 NVIDIA GPU 节点。
 
 安装与运行
 ----------
 
-中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。通用路径、集群和 runner 字段见 :doc:`训练配置 <../../../reference/configuration>`。
+中国大陆用户可在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。
 
 .. tab-set::
 
-   .. tab-item:: Qwen2.5-1.5B-Instruct（Megatron PPO）
+   .. tab-item:: Qwen2.5-1.5B-Instruct
 
       **1. 安装环境**
 
@@ -52,7 +50,7 @@ PPO 工作方式
 
       **2. 下载模型与数据**
 
-      下载基础模型和 boba 数据集（数据格式细节见 :doc:`reasoning`）：
+      下载基础模型和 `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`__：
 
       .. code-block:: bash
 
@@ -61,19 +59,27 @@ PPO 工作方式
 
       **3. 启动训练**
 
-      在 ``examples/reasoning/config/math/qwen2.5-1.5b-ppo-megatron.yaml`` 中填写模型与数据路径。PPO 与 GRPO 共用入口脚本 ``run_main_grpo_math.sh``，RLinf 根据 YAML 中的 critic 配置及 ``adv_type`` 取值（通常为 ``gae``）自动启用 PPO 训练：
+      PPO 复用 ``run_main_grpo_math.sh``，由 ``examples/reasoning/config/math/qwen2.5-1.5b-ppo-megatron.yaml`` 中的 ``critic.use_critic_model: true`` 与 ``algorithm.adv_type: gae`` 开启 critic 与 GAE。通过 Hydra 参数指定本地模型、数据与输出目录：
 
       .. code-block:: bash
 
-         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-ppo-megatron
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-ppo-megatron \
+           rollout.model.model_path=./Qwen2.5-1.5B-Instruct \
+           data.train_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
+           data.val_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
+           runner.output_dir=./results
 
+.. dropdown:: 进阶配置与多节点扩展（可选）
+
+   - **数据集字段**：自定义 ``data.prompt_key``、``data.answer_key`` 与 ``data.apply_chat_template`` 见 :doc:`Qwen2.5 数学推理 GRPO <reasoning>`。
+   - **多节点扩展**：按 :doc:`/rst_source/guides/multi_node` 启动 Ray 集群并调大 ``cluster.num_nodes``，在 head 节点运行启动命令。通用集群与 runner 字段见 :doc:`训练配置 </rst_source/reference/configuration>`。
 
 可视化与结果
-----------------------------------------
+------------
 
-我们基于 Qwen2.5-1.5B-Instruct 模型使用 PPO 训练。橙色为 RLinf，蓝色为 VeRL；两者使用相同算法配置。通用指标含义见 :doc:`训练指标 <../../../reference/metrics>`。
+运行 ``tensorboard --logdir ./results --port 6006`` 查看训练曲线；指标含义及 W&B / SwanLab 配置见 :doc:`训练指标 </rst_source/reference/metrics>`。
 
-由于 Qwen2.5-1.5B-Instruct 模型基础能力较弱，整体 reward 数值较低，但随着训练推进，reward 数值明显上升。
+下图对比了 RLinf（橙线）与 VeRL（蓝线）在相同 PPO 配置下微调 Qwen2.5-1.5B-Instruct 的曲线。该基座模型初始能力较弱，但 Reward 随训练推进稳步上升。
 
 .. raw:: html
 

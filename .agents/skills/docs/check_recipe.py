@@ -350,8 +350,15 @@ def check_page(path: Path, rel: str) -> list[route.Finding]:
     findings += _check_eval_commands(rel, lines)
     findings += _check_multinode_trap(rel, source, lines)
 
-    is_recipe = bool(RECIPE_OR_EVAL_PAGE.match(rel) and not SKIP_NAME.search(rel))
-    is_cmd_page = bool(COMMAND_CHECK_PAGE.match(rel) and not SKIP_NAME.search(rel))
+    is_single_page_recipe_index = bool(
+        re.search(
+            r"/examples/agentic/(?!agents/|math_reasoning/)[^/]+/index\.rst$", rel
+        )
+        and ".. toctree::" not in source
+    )
+    skip = bool(SKIP_NAME.search(rel)) and not is_single_page_recipe_index
+    is_recipe = bool(RECIPE_OR_EVAL_PAGE.match(rel) and not skip)
+    is_cmd_page = bool(COMMAND_CHECK_PAGE.match(rel) and not skip)
     if not is_recipe and not is_cmd_page:
         return findings
 

@@ -181,7 +181,7 @@ Furthermore, in LLM reasoning tasks, we use an independent critic model rather t
 3.3. Multi-Turn Agent Tasks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-See :doc:`Search-R1 training </rst_source/examples/agentic/searchr1/qwen2.5>` for model and data
+See :doc:`Search-R1 training </rst_source/examples/agentic/searchr1/index>` for model and data
 setup. Use ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``
 with these key settings:
 
