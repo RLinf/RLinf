@@ -88,6 +88,7 @@ from rlinf.scheduler import (  # noqa: E402
 )
 from rlinf.scheduler.channel.channel import DEFAULT_KEY  # noqa: E402
 from rlinf.scheduler.collective import PeerCommunicationError  # noqa: E402
+from rlinf.utils.http_client import no_proxy_env  # noqa: E402
 from rlinf.workers.agent.agent_loop import (  # noqa: E402
     AgentLoopOutput,
     GroupDiscarded,
@@ -174,6 +175,13 @@ def fake_dataset():
         )
         for sample in range(NUM_DATASET_SAMPLES)
     ]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _no_proxy():
+    """Keep loopback HTTP calls off any ambient HTTP proxy."""
+    with no_proxy_env():
+        yield
 
 
 @pytest.fixture(scope="module")
