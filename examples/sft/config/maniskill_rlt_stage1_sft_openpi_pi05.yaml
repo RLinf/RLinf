@@ -52,6 +52,9 @@ actor:
     action_dim: 8
     add_value_head: False
     num_steps: 5
+    prefix:
+      pool: rlt_token
+      image_only: false
     openpi:
       embed_dtype: bf16
       task: sft
@@ -77,7 +80,6 @@ actor:
       rlt_num_heads: 8
       rlt_mlp_ratio: 4.0
       rlt_encoder_type: "append_self_attention"
-      rlt_image_only: False
       rlt_use_mask: True
 
     openpi_data:

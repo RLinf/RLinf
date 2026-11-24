@@ -99,6 +99,7 @@ jobs:
               - 'rlinf/workers/actor/fsdp_dagger_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_nft_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_prefix_off_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_refl_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_rlt_ac_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_rlt_td3_policy_worker.py'
@@ -133,6 +134,7 @@ jobs:
               - 'toolkits/lerobot/**'
               - 'toolkits/dual_franka/**'
               - 'toolkits/cosmos3/**'
+              - 'toolkits/rlt/**'
               - 'toolkits/__init__.py'
             agent_reason_filter: &agent
               - *shared
@@ -195,6 +197,11 @@ jobs:
             unit_test_filter: &unit
               - *shared
               - 'rlinf/models/embodiment/qam_policy.py'
+              - 'rlinf/workers/actor/fsdp_prefix_off_policy_worker.py'
+              - 'rlinf/workers/sft/fsdp_steam_sft_worker.py'
+              - 'rlinf/models/embodiment/mlp_policy/**'
+              - 'rlinf/models/embodiment/prefix_features.py'
+              - 'toolkits/rlt/**'
               - 'rlinf/robotics/**'
               - 'rlinf/models/embodiment/openpi/**'
               # Unit tests import env modules directly (robot task envs, the
