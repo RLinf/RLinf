@@ -198,6 +198,7 @@ jobs:
               - 'rlinf/workers/sft/fsdp_steam_sft_worker.py'
               - 'rlinf/models/embodiment/mlp_policy/**'
               - 'rlinf/models/embodiment/prefix_features.py'
+              - 'examples/embodiment/config/maniskill_prefix_expo*.yaml'
               - 'toolkits/rlt/**'
               - 'rlinf/robotics/**'
               - 'rlinf/models/embodiment/openpi/**'

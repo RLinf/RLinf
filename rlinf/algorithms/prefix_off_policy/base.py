@@ -42,6 +42,8 @@ class PrefixOffPolicyContext(Protocol):
     target_model: Any
     torch_dtype: torch.dtype
     update_step: int
+    entropy_temp: Any
+    critic_sample_generator: torch.Generator
 
     def _env_values(
         self, field: str, env_index: torch.Tensor | None, dtype: torch.dtype
@@ -53,12 +55,31 @@ class PrefixOffPolicyAlgorithm(ABC):
 
     def __init__(self, cfg: Any) -> None:
         self.cfg = cfg
-        actor_cfg = cfg.actor.model.actor_head
-        critic_cfg = cfg.actor.model.critic_head
+        self.model_cfg = (
+            cfg.rollout.model
+            if cfg.get("runner", {}).get("only_eval", False)
+            else cfg.actor.model
+        )
+        actor_cfg = self.model_cfg.actor_head
+        critic_cfg = self.model_cfg.critic_head
         self.actor_capabilities = get_prefix_actor_spec(actor_cfg.name).capabilities
         self.critic_capabilities = get_prefix_critic_spec(critic_cfg.name).capabilities
         self.num_q_heads = self.critic_capabilities.num_q_heads(critic_cfg)
         self.validate_configuration()
+
+    num_candidates: int | None = None
+
+    def predict_action_batch(self, model: Any, obs: dict, *, mode: str) -> tuple:
+        """Select rollout actions using the algorithm's inference contract."""
+        return model.predict_action_batch(env_obs=obs, mode=mode, return_obs=True)
+
+    def rollout_state_dict(self, online: dict, target: dict | None) -> dict:
+        """Return weights used by this algorithm during action selection."""
+        return online
+
+    def alpha_loss(self, context: PrefixOffPolicyContext, batch: dict) -> torch.Tensor:
+        """Return a temperature objective only for algorithms that train alpha."""
+        raise NotImplementedError("This Prefix algorithm requires fixed_alpha.")
 
     def validate_configuration(self) -> None:
         """Reject actor, critic, and algorithm combinations that cannot run."""
@@ -67,7 +88,7 @@ class PrefixOffPolicyAlgorithm(ABC):
             raise ValueError(
                 f"algorithm.name={self.cfg.algorithm.name!r} requires a "
                 f"{requirements.actor_distribution} actor, but "
-                f"actor_head.name={self.cfg.actor.model.actor_head.name!r} is "
+                f"actor_head.name={self.model_cfg.actor_head.name!r} is "
                 f"{self.actor_capabilities.distribution}."
             )
         if (
@@ -93,9 +114,9 @@ class PrefixOffPolicyAlgorithm(ABC):
         # whenever alpha_type is not fixed_alpha.
         entropy_cfg = self.cfg.algorithm.get("entropy_tuning", None) or {}
         alpha_type = entropy_cfg.get("alpha_type", "softplus")
-        if alpha_type != "fixed_alpha":
+        if not requirements.trains_entropy_temperature and alpha_type != "fixed_alpha":
             raise ValueError(
-                "Prefix off-policy algorithms do not train an entropy "
+                "The selected Prefix algorithm does not train an entropy "
                 "temperature; expected algorithm.entropy_tuning.alpha_type="
                 f"'fixed_alpha', got {alpha_type!r}."
             )
@@ -122,8 +143,8 @@ class PrefixOffPolicyAlgorithm(ABC):
         return tensor.reshape(tensor.shape[0], -1)
 
     def _chunk_shape(self) -> tuple[int, int]:
-        chunk_len = int(self.cfg.actor.model.num_action_chunks)
-        action_dim = int(self.cfg.actor.model.action_dim)
+        chunk_len = int(self.model_cfg.num_action_chunks)
+        action_dim = int(self.model_cfg.action_dim)
         return chunk_len, action_dim
 
     def _ref_chunk(self, obs: dict[str, torch.Tensor]) -> torch.Tensor:
@@ -486,3 +507,16 @@ class PrefixOffPolicyAlgorithm(ABC):
         )
         metrics["reference_dropout_prob"] = reference_dropout_prob
         return actor_loss, -log_pi.mean(), metrics
+
+
+def rollout_actor_target_critic(online: dict, target: dict) -> dict:
+    """Publish online editor weights and target critic weights under the same model schema."""
+    critic_keys = {key for key in online if key.startswith("q_head.")}
+    if not critic_keys or not critic_keys.issubset(target):
+        raise ValueError(
+            "Expected matching q_head state keys in online and target models."
+        )
+    return {
+        key: target[key] if key in critic_keys else value
+        for key, value in online.items()
+    }
