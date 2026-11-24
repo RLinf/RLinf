@@ -1,3 +1,3 @@
 # Install in a dedicated ActiveVLN training environment.
-embodiinfer @ git+https://github.com/BUAA-CI-LAB/EmbodiInfer.git@2c6b06835ac41bba80501dbf2bbbb4e1281aa2c5
+embodiinfer @ git+https://github.com/BUAA-CI-LAB/EmbodiInfer.git@a0aee77ba6489abb64223267a64879931a7a7897
 transformers==4.51.3

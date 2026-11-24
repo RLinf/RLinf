@@ -26,7 +26,7 @@
    uv pip install -e "$ACTIVEVLN_ROOT/vlnce_server" httpx
    python -c 'from vlnce_server.client import BatchEnvClient; from vlnce_server.env_config import VLNCEEnvConfig'
 
-``requirements/embodiinfer.txt`` 将 EmbodiInfer 固定到 ``2c6b06835ac41bba80501dbf2bbbb4e1281aa2c5``，Transformers 固定为 ``4.51.3``。
+``requirements/embodiinfer.txt`` 将 EmbodiInfer 固定到 ``a0aee77ba6489abb64223267a64879931a7a7897``，Transformers 固定为 ``4.51.3``。
 
 准备数据并启动服务
 ------------------

@@ -70,6 +70,8 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
         """Invalidate episode state after in-place actor weight synchronization."""
         # Evaluation can synchronize new weights with the same step number.
         self._episodes.clear()
+        if self._runtime is not None:
+            self._runtime.reset_resident_kv()
         self.history_stats["weight_invalidations"] += 1
 
     def _prepare_image_batches(self, image_batches):
@@ -206,6 +208,7 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
             self._sampling_states[str(self._runtime.device)] = (
                 self._runtime.sampling_generator.get_state()
             )
+            self._runtime.reset_resident_kv()
         self._runtime = None
         self._episodes.clear()
         self.core.clear_cuda_graphs()
@@ -354,12 +357,15 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
             raise ValueError("ActiveVLN requires a nonempty observation batch")
         prepared = PreparedActiveVLNBatch(tuple(turns))
         try:
-            # Capturing graphs overwrites the runtime's cached KV workspace.
-            if all(turn.memory is None for turn in turns):
+            fresh_history = all(turn.memory is None for turn in turns)
+            if fresh_history:
+                self._runtime.reset_resident_kv()
+            if fresh_history or self._runtime.resident_kv:
                 self._runtime.prewarm_prepared(prepared)
             generations = self._runtime.generate(self._runtime.prefill(prepared))
         except Exception:
             self._episodes.clear()
+            self._runtime.reset_resident_kv()
             raise
         responses = [item.token_ids[0].cpu() for item in generations]
         output = self.pack_rollout(

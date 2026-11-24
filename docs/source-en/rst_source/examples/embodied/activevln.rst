@@ -32,7 +32,7 @@ because the upstream client uses a namespace package.
    python -c 'from vlnce_server.client import BatchEnvClient; from vlnce_server.env_config import VLNCEEnvConfig'
 
 ``requirements/embodiinfer.txt`` pins EmbodiInfer to
-``2c6b06835ac41bba80501dbf2bbbb4e1281aa2c5`` and Transformers to ``4.51.3``.
+``a0aee77ba6489abb64223267a64879931a7a7897`` and Transformers to ``4.51.3``.
 
 Prepare and Start the Server
 ----------------------------
