@@ -1364,17 +1364,13 @@ def validate_embodied_cfg(cfg):
             )
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
-    enable_eval = (
-        cfg.runner.val_check_interval > 0
-        or only_eval
-        or cfg.runner.get("eval_at_start", False)
-    )
+    enable_eval = cfg.runner.val_check_interval > 0 or only_eval
 
     with open_dict(cfg):
         if enable_eval:
             assert cfg.env.get("eval", None) is not None, (
                 "env.eval config is required when runner.val_check_interval > 0, "
-                "runner.eval_at_start=True, runner.only_eval=True, or "
+                "runner.only_eval=True, or "
                 "runner.task_type=embodied_eval."
             )
             cfg.env.eval.group_size = cfg.env.eval.get("group_size", 1)
@@ -1554,32 +1550,19 @@ def validate_embodied_cfg(cfg):
             "DiffusionART requires env.train.group_size to match algorithm.group_size."
         )
         decisions = 1
-        branch_index = algorithm_cfg.get("art_branch_chunk_index", None)
-        state_sampling = algorithm_cfg.get("art_state_sampling", False)
-        assert not state_sampling or action_art, (
-            "algorithm.art_state_sampling requires OpenPi ART."
-        )
-        assert branch_index is None or action_art, (
-            "algorithm.art_branch_chunk_index requires OpenPi ART."
-        )
         if action_art:
-            if (
-                not algorithm_cfg.get("art_first_chunk_only", False)
-                and branch_index is None
-                and not state_sampling
-            ):
-                decisions = (
-                    cfg.env.train.max_steps_per_rollout_epoch
-                    // model_cfg.num_action_chunks
-                )
+            decisions = (
+                cfg.env.train.max_steps_per_rollout_epoch // model_cfg.num_action_chunks
+            )
         else:
             assert (
                 cfg.env.train.max_steps_per_rollout_epoch == model_cfg.num_action_chunks
             ), (
                 "Image/video DiffusionART requires one generated sample per rollout epoch."
             )
-            assert not algorithm_cfg.get("art_first_chunk_only", False), (
-                "algorithm.art_first_chunk_only requires OpenPi."
+            assert algorithm_cfg.get("art_grouping", "index") == "index", (
+                "algorithm.art_grouping='cluster' requires OpenPi; got "
+                f"{algorithm_cfg.get('art_grouping')!r} for {model_type.value}."
             )
         expected_global_batch_size = (
             cfg.env.train.total_num_envs
@@ -1593,7 +1576,7 @@ def validate_embodied_cfg(cfg):
         )
         actor_world_size = component_placement.get_world_size("actor")
         shard_count = math.lcm(env_world_size, actor_world_size)
-        if branch_index is not None or state_sampling:
+        if action_art:
             shard_count = math.lcm(
                 shard_count, component_placement.get_world_size("rollout")
             )
@@ -1645,13 +1628,9 @@ def validate_embodied_cfg(cfg):
             "art_timestep_fraction",
             "art_reward_reduction",
             "art_eps",
-            "art_first_chunk_only",
-            "art_state_sampling",
-            "art_branch_chunk_index",
-            "art_branch_state_atol",
-            "art_branch_image_atol",
-            "art_replay_diagnostics",
-            "art_reference_source",
+            "art_grouping",
+            "art_cluster_radius",
+            "art_cluster_min_size",
         }
         unsupported_art_options = sorted(
             option
@@ -1728,7 +1707,7 @@ def validate_embodied_cfg(cfg):
     if enable_eval:
         assert cfg.env.get("eval", None) is not None, (
             "env.eval config is required when runner.val_check_interval > 0, "
-            "runner.eval_at_start=True, runner.only_eval=True, or "
+            "runner.only_eval=True, or "
             "runner.task_type=embodied_eval."
         )
         assert cfg.env.eval.total_num_envs > 0, (
@@ -1898,57 +1877,25 @@ def validate_openpi_art_cfg(cfg: DictConfig) -> None:
     assert cfg.algorithm.get("art_reward_reduction", "sum") == "sum", (
         "OpenPi ART uses episode returns and requires art_reward_reduction='sum'."
     )
-    for key in (
-        "art_first_chunk_only",
-        "art_replay_diagnostics",
-    ):
-        value = cfg.algorithm.get(key, False)
-        assert type(value) is bool, f"algorithm.{key} must be boolean, got {value!r}."
-    branch_index = cfg.algorithm.get("art_branch_chunk_index", None)
-    state_sampling = cfg.algorithm.get("art_state_sampling", False)
-    assert cfg.algorithm.get("art_reference_source", "rollout") in {
-        "rollout",
-        "actor",
-    }, "algorithm.art_reference_source must be rollout or actor."
-    if state_sampling:
-        assert branch_index is None and not cfg.algorithm.get(
-            "art_first_chunk_only", False
-        ), "ART state sampling replaces fixed-branch and first-chunk sampling."
-        assert train.rollout_epoch == 1, (
-            "ART state sampling requires one state bank per rollout: rollout_epoch=1."
-        )
-        assert not cfg.runner.get("enable_decoupled_mode", False), (
-            "ART state sampling requires synchronous environment batches."
-        )
-        assert not cfg.runner.get("overlap_env_bootstrap", False), (
-            "ART state sampling requires collection after the policy weight sync."
-        )
-        assert not cfg.env.get("delay_sampler", None), (
-            "ART state sampling requires environment actions without delay sampling."
-        )
-    if branch_index is not None:
-        assert type(branch_index) is int and (
-            0 <= branch_index * model.num_action_chunks < train.max_episode_steps
-        ), (
-            "algorithm.art_branch_chunk_index must index a chunk before the episode limit."
-        )
-        assert not cfg.algorithm.get("art_first_chunk_only", False), (
-            "art_branch_chunk_index and art_first_chunk_only are mutually exclusive."
-        )
-        assert not cfg.runner.get("enable_decoupled_mode", False), (
-            "OpenPi ART branching requires synchronous environment batches."
-        )
-        assert not cfg.env.get("delay_sampler", None), (
-            "OpenPi ART branching requires environment actions without delay sampling."
-        )
-        for key in ("art_branch_state_atol", "art_branch_image_atol"):
-            tolerance = float(cfg.algorithm.get(key, 1e-5 if "state" in key else 1.0))
-            assert math.isfinite(tolerance) and tolerance >= 0, (
-                f"algorithm.{key} must be finite and nonnegative."
-            )
-    assert model.num_action_chunks > 0 and model.num_steps > 0, (
-        "OpenPi ART requires positive num_action_chunks and num_steps."
+    grouping = cfg.algorithm.get("art_grouping", "index")
+    assert grouping in {"index", "cluster"}, (
+        "algorithm.art_grouping must be 'index' (natural_anchor) or 'cluster'."
     )
+    assert train.rollout_epoch == 1, (
+        "OpenPi ART treats each episode column as one trajectory; rollout_epoch must be 1."
+    )
+    if grouping == "cluster":
+        radius = cfg.algorithm.get("art_cluster_radius", None)
+        assert (
+            isinstance(radius, (int, float))
+            and not isinstance(radius, bool)
+            and math.isfinite(radius)
+            and radius > 0
+        ), "algorithm.art_cluster_radius must be a positive finite number."
+        minimum = cfg.algorithm.get("art_cluster_min_size", None)
+        assert type(minimum) is int and 2 <= minimum <= cfg.algorithm.group_size, (
+            "algorithm.art_cluster_min_size must be an integer between 2 and group_size."
+        )
     action_chunk = options.get("action_chunk", model.num_action_chunks)
     assert action_chunk is None or int(action_chunk) == model.num_action_chunks, (
         "OpenPi ART requires openpi.action_chunk to match num_action_chunks."
@@ -1969,17 +1916,10 @@ def validate_openpi_art_cfg(cfg: DictConfig) -> None:
     assert not cfg.actor.get("enable_sft_co_train", False), (
         "OpenPi ART currently requires actor.enable_sft_co_train=False."
     )
-    # LiberoEnv only sees env.train, so it receives the sampling mode from here.
+    # Training starts from aligned reset groups; only cluster needs state features.
     with open_dict(cfg):
-        for key, value in (
-            ("art_branch_chunk_index", branch_index),
-            ("art_state_sampling", state_sampling),
-        ):
-            assert train.get(key, value) == value, (
-                f"env.train.{key} is derived from algorithm.{key}; expected "
-                f"{value!r}, got {train.get(key)!r}."
-            )
-            train[key] = value
+        train.art_grouping = grouping
+        train.art_grouped_reset = True
 
 
 def validate_offline_cfg(cfg: DictConfig) -> DictConfig:

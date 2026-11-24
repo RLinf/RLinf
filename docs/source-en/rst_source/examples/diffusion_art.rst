@@ -13,6 +13,10 @@ group into a shared direction, then trains against frozen velocity targets at
 states visited during generation. Complete the :doc:`shared setup <video_models>`,
 choose an image or video recipe, and inspect the training results below.
 
+For Pi0 robot policies, the :ref:`LIBERO Object and Spatial recipes <diffusion-art-libero>`
+train complete trajectories with anchor-centered actions and index or
+state-cluster grouping instead of image/video latents.
+
 Overview
 --------
 
@@ -270,199 +274,192 @@ runs and record the revision, dependencies, and RNG seeds when comparing results
 
 .. _diffusion-art-libero:
 
-LIBERO Object Task 0
---------------------
+LIBERO Object and Spatial
+-------------------------
 
-Use Pi0 to compare candidate action chunks from the same robot state on LIBERO
-Object task 0. The two recipes differ only in how they choose that state:
-``libero_object_0_art_openpi`` shares a fixed prefix and branches at zero-based decision index 8;
-``libero_object_0_art_states_openpi`` restores snapshots sampled along collected
-trajectories. Neither recipe groups later, independently reached states merely
-because they have the same decision index.
+Train Pi0 on complete LIBERO trajectories with natural-anchor or state-cluster grouping. Both subtract a state-dependent anchor before computing action–return covariance. The anchor averages two deterministic denoising runs from shared reference noise and its negation; it leaves the sampled actions unchanged.
 
-Both load ``RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT``. Rollout uses
-the Hugging Face backend; training uses FSDP1 NO_SHARD. The vision-language backbone stays
-frozen, while the action expert and its associated trainable layers are updated
-without LoRA. Each observation supplies two camera images, robot state, and the
-task instruction. Pi0 generates a full action tensor; the environment executes
-five 7-dimensional actions per decision.
-
-Fixed Prefix and Snapshot Sampling
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-ART needs candidates with the same conditioning state. A shared task ID alone
-is insufficient: object poses, robot state, observations, and instruction must
-agree before the trained chunk. The two collection paths establish this
-condition in different ways:
-
-.. list-table:: Object Task 0 Collection Modes
+.. list-table:: LIBERO ART Recipes
    :header-rows: 1
-   :widths: 18 41 41
 
-   * - Mode
-     - State construction
-     - Trained decision
-   * - branch8
-     - Start each group from the same reset state. Execute its leader's action
-       chunks for decisions 0 through 7.
-     - Decision 8, after 40 environment steps. Candidates and their subsequent
-       continuations sample independently.
-   * - ``states``
-     - First collect trajectories with the frozen current policy. Save live
-       group-leader snapshots at decision boundaries; sample task-matched
-       temporal strata and restore each selected snapshot into all K members.
-     - The first decision after restoration, not necessarily the task's initial
-       decision. Subsequent continuation is independent.
+   * - Suite
+     - Natural Anchor
+     - State Clusters
+   * - Object
+     - ``libero_object_0_art_openpi``
+     - ``libero_object_0_art_cluster_openpi``
+   * - Spatial
+     - ``libero_spatial_0_art_openpi``
+     - ``libero_spatial_0_art_cluster_openpi``
 
-branch8 sets ``algorithm.art_branch_chunk_index=8`` and
-``art_state_sampling=False``. The rollout checks simulator state, robot
-observations, task instructions, and both images throughout the prefix and at
-the branch. If a group fails those checks or terminates before branching, its
-training contribution is masked rather than compared across different states.
+The recipes default to task 0, 128 training environments, four denoising steps, learning rate 5e-7, FP32 master parameters, and 50 training rounds. Episodes last up to 240 environment steps, with five actions per decision. Two updates use disjoint trajectory batches of 3,072 decision rows each; rows after termination are masked. Guidance, restoration, and the trust-region mask use only executed action coordinates.
 
-``states`` sets ``algorithm.art_state_sampling=True`` and
-``art_branch_chunk_index=null``. Snapshots include physics, controller and
-gripper state, observation caches, and simulator-process RNG state. Restoration
-also preserves elapsed steps and the previous reward, so it does not grant a
-fresh episode budget. The state bank is collected again after each policy
-synchronization and cleared after restoration. This mode adds a collection
-rollout and snapshot storage; it is not a free replacement for a fixed branch.
+Choose a Grouping Method
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-In both modes, K=8 candidates use different policy sampling noise to generate
-different chunks. They share the state before that chunk, not the entire future
-trajectory. The return sums environment rewards from the branch/restoration
-through termination or the original 240-step deadline. A group with identical
-returns supplies zero guidance. Only the selected chunk is trained; the
-continuation supplies its Monte Carlo evaluation.
+**Natural anchor** (``algorithm.art_grouping=index``) compares eight trajectories with the same reset group and decision index. They start from matching simulator initializations and sample independent actions. Later decisions train on diverged states; subtracting the anchor reduces differences in the states' mean actions.
 
-Action Guidance and Updates
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**State clusters** (``algorithm.art_grouping=cluster``) group nearby live states across actor ranks. Each cluster shares a task and contact phase, contains four to eight members, and includes at most one decision per trajectory. The first decision keeps the exact reset groups; unclustered later rows are masked. Features cover relative gripper/object/goal positions, full orientations, finger opening, and remaining time. ``algorithm.art_cluster_radius=1.0`` specifies a normalized feature-space radius.
 
-With the state fixed, compute the reward-action covariance over the group's
-valid executed coordinates, then RMS-normalize it to obtain guidance H. Pi0
-uses the same velocity sign as the SD3/Wan implementation: the frozen target is
-``v_old - H`` at cached reverse-denoising states, not a forward-noised resample.
-The model still processes its complete action tensor, but guidance, restoration,
-and the trust-region mask cover valid executed coordinates only.
+Run Training
+~~~~~~~~~~~~
 
-The recipes set ``algorithm.art_reference_source=actor``: recompute v_old once
-on the actor before either update and freeze it through both. This avoids using
-cross-backend replay differences as the reference displacement. The
-``rollout`` option retains cached rollout velocities for comparisons. FP32
-master parameters accumulate small optimizer updates before copying back to
-low-precision model weights. Neither setting establishes a success-rate result;
-validate the recipes with the actual checkpoint and simulator.
-
-Compute guidance from all K candidates before splitting each group's candidates
-between two disjoint update windows. No trajectory occurs in both windows.
-With 128 environments, K=8, one trained chunk per environment, and two updates,
-there are 16 groups and ``actor.global_batch_size=64`` per update. All four
-cached denoising steps are trained with ``art_timestep_fraction=1.0``. The common
-learning rate is 5e-7; both modes run 100 rounds by default.
-
-Run Branch8 and States
-~~~~~~~~~~~~~~~~~~~~~~
-
-Install the OpenPi/LIBERO environment as described in :doc:`Pi0 <embodied/pi0>`.
-Skip installation if that environment already exists:
+Install the OpenPi/LIBERO environment with :doc:`../start/installation` and use four visible GPUs. Download the SFT checkpoint, including its normalization statistics:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openpi --env libero \
-     --venv .venv-openpi-libero
-   source .venv-openpi-libero/bin/activate
+   hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT \
+     --local-dir /path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
-Run from the repository root. Set MODEL_PATH to your existing SFT checkpoint;
-the commands do not download model weights. Both recipes select Object task 0
-for training and evaluation:
+In ``examples/embodiment/config/libero_object_0_art_openpi.yaml``, set ``actor.model.model_path`` to the downloaded directory. All four recipes inherit this path, and rollout uses the actor's checkpoint. Set the runtime environment:
 
 .. code-block:: bash
 
-   set -o pipefail
-   export CUDA_VISIBLE_DEVICES=0,1,2,3
-   export ROBOT_PLATFORM=LIBERO LIBERO_TYPE=standard
-   export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl
-   export OMP_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
-   export HYDRA_FULL_ERROR=1 XLA_PYTHON_CLIENT_PREALLOCATE=false
-   export MODEL_PATH=/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+   export PYTHONUNBUFFERED=1 XLA_PYTHON_CLIENT_PREALLOCATE=false
 
-First run the fixed-prefix recipe on four visible GPUs. Log directories,
-experiment names, and console log filenames start with the timestamp. The bash
-entry point accepts the config name, robot platform, and Hydra overrides;
-LOG_DIR and MEGA_LOG_FILE select the output paths:
+Train Object task 0 with natural-anchor grouping:
 
 .. code-block:: bash
 
-   RUN_NAME="$(date +%Y%m%d_%H%M%S)_object0_branch8_T4_lr5e7_seed42"
-   LOG_DIR="$PWD/logs/$RUN_NAME"
-   LOG_DIR="$LOG_DIR" MEGA_LOG_FILE="$LOG_DIR/$RUN_NAME.log" \
-     bash examples/embodiment/run_embodiment.sh libero_object_0_art_openpi LIBERO \
-     actor.model.model_path="$MODEL_PATH" \
-     rollout.model.model_path="$MODEL_PATH" \
-     env.train.total_num_envs=128 env.eval.total_num_envs=48 \
-     actor.global_batch_size=64 actor.micro_batch_size=2 \
-     actor.seed=42 actor.optim.lr=5e-7 \
-     actor.optim.use_fp32_master_params=true \
-     algorithm.art_reference_source=actor \
-     actor.model.num_steps=4 algorithm.art_timestep_fraction=1.0 \
-     runner.max_steps=100 runner.max_epochs=100 \
-     runner.eval_at_start=true runner.val_check_interval=10 \
-     runner.save_interval=-1 \
-     runner.logger.experiment_name="$RUN_NAME"
+   bash examples/embodiment/run_embodiment.sh libero_object_0_art_openpi LIBERO
 
-For snapshot sampling, start a separate run from the same SFT checkpoint and
-use the states recipe. Execute the two commands sequentially on the same GPUs:
+To reproduce the Spatial task 6 cluster run, add the following overrides to ``examples/embodiment/config/libero_spatial_0_art_cluster_openpi.yaml``:
+
+.. code-block:: yaml
+
+   env:
+     train:
+       task_id_filter: [6]
+     eval:
+       task_id_filter: [6]
+
+Launch the selected recipe:
 
 .. code-block:: bash
 
-   RUN_NAME="$(date +%Y%m%d_%H%M%S)_object0_states_T4_lr5e7_seed42"
-   LOG_DIR="$PWD/logs/$RUN_NAME"
-   LOG_DIR="$LOG_DIR" MEGA_LOG_FILE="$LOG_DIR/$RUN_NAME.log" \
-     bash examples/embodiment/run_embodiment.sh libero_object_0_art_states_openpi LIBERO \
-     actor.model.model_path="$MODEL_PATH" \
-     rollout.model.model_path="$MODEL_PATH" \
-     env.train.total_num_envs=128 env.eval.total_num_envs=48 \
-     actor.global_batch_size=64 actor.micro_batch_size=2 \
-     actor.seed=42 actor.optim.lr=5e-7 \
-     actor.optim.use_fp32_master_params=true \
-     algorithm.art_reference_source=actor \
-     actor.model.num_steps=4 algorithm.art_timestep_fraction=1.0 \
-     runner.max_steps=100 runner.max_epochs=100 \
-     runner.eval_at_start=true runner.val_check_interval=10 \
-     runner.save_interval=-1 \
-     runner.logger.experiment_name="$RUN_NAME"
+   bash examples/embodiment/run_embodiment.sh libero_spatial_0_art_cluster_openpi LIBERO
 
-Both runs evaluate the original full task before training and every 10 rounds.
-Evaluation does not branch or restore training snapshots. Check
-``eval/num_trajectories`` for the actual evaluation budget; 48 parallel slots do
-not imply 48 unique reset states. Checkpoint saving is disabled in these
-commands; set a positive ``runner.save_interval`` if you need saved models.
+Change both task filters to run another task, or choose the natural-anchor recipe from the table. To reproduce the joint ten-task results, set both filters to ``null`` in the selected Spatial recipe and merge these settings into its existing YAML sections:
 
-Read Results and Validate
-~~~~~~~~~~~~~~~~~~~~~~~~~
+.. code-block:: yaml
 
-Use full-task evaluation success to compare the modes. Training continuation
-success is conditional on the sampled branch state and is not the same metric.
-Monitor ``actor/active_group_frac``, ``actor/branch_valid_group_frac``,
-``actor/branch_state_error_max``, and ``actor/branch_image_error_max`` to check
-signal availability and same-state grouping. ``actor/mask_frac_global`` and
-``actor/outward_frac_global`` pool active-item counts before forming ratios;
-the ``actor/u1/`` and ``actor/u2/`` versions separate the two updates.
-``actor/mask_frac`` and ``actor/outward_frac`` also weight micro-batches and
-actor ranks by active-item count, rather than averaging local ratios.
+   runner:
+     max_steps: 200
+     max_epochs: 200
+   env:
+     train:
+       task_id_filter: null
+     eval:
+       task_id_filter: null
+       max_steps_per_rollout_epoch: 2640
 
-The optional ``algorithm.art_replay_diagnostics=true`` adds replay forwards.
-``actor/replay_mse`` compares the pre-update actor with rollout velocities;
-``actor/update_u1_exec_rms`` and ``actor/update_u2_exec_rms`` compare against the
-frozen actor reference. These are distinct from success metrics. Diagnostics
-are disabled in the default recipes.
+Launch natural-anchor training with ``bash examples/embodiment/run_embodiment.sh libero_spatial_0_art_openpi LIBERO``, or use ``libero_spatial_0_art_cluster_openpi`` for clusters. Evaluation runs every ten rounds. Logs are written under ``logs/``.
 
-Run the CPU regressions for candidate grouping, return slicing, frozen targets,
-and snapshot restoration with:
+Results
+~~~~~~~
 
-.. code-block:: bash
+The runs use four GPUs, actor seed 42, and seed 0 for both training and evaluation environments. Success is measured by ``eval/success_once``. Single-task runs evaluate 50 trajectories per checkpoint; joint Spatial runs evaluate 500. SFT is the step-0 evaluation of the initial policy in the selected run.
 
-   python -m pytest tests/unit_tests/test_diffusion_art.py \
-     tests/unit_tests/test_libero_snapshot.py
+All single-task runs train for 50 rounds. For each task and grouping method, the tables report the completed run with the highest round-50 success rate and that run’s SFT baseline.
 
-These tests do not replace GPU training or real MuJoCo/checkpoint validation.
+.. list-table:: Natural-Anchor Single-Task Success Rates
+   :header-rows: 1
+
+   * - Task
+     - SFT
+     - ART, Round 50
+     - Gain (pp)
+   * - Object 0
+     - 32%
+     - 100%
+     - +68
+   * - Spatial 0
+     - 90%
+     - 94%
+     - +4
+   * - Spatial 1
+     - 84%
+     - 100%
+     - +16
+   * - Spatial 2
+     - 100%
+     - 100%
+     - +0
+   * - Spatial 3
+     - 74%
+     - 94%
+     - +20
+   * - Spatial 4
+     - 66%
+     - 88%
+     - +22
+   * - Spatial 5
+     - 2%
+     - 0%
+     - -2
+   * - Spatial 6
+     - 62%
+     - 100%
+     - +38
+   * - Spatial 7
+     - 50%
+     - 86%
+     - +36
+   * - Spatial 8
+     - 68%
+     - 88%
+     - +20
+   * - Spatial 9
+     - 20%
+     - 68%
+     - +48
+
+.. list-table:: State-Cluster Single-Task Success Rates
+   :header-rows: 1
+
+   * - Task
+     - SFT
+     - ART, Round 50
+     - Gain (pp)
+   * - Spatial 6
+     - 56%
+     - 96%
+     - +40
+   * - Spatial 7
+     - 50%
+     - 78%
+     - +28
+   * - Spatial 8
+     - 68%
+     - 86%
+     - +18
+   * - Spatial 9
+     - 18%
+     - 38%
+     - +20
+
+Each joint run trains one policy on all ten Spatial tasks for 200 rounds. The table shows the final success rate, the highest success rate during training, and the round at which it occurs.
+
+.. list-table:: Joint Ten-Task Spatial Success Rates
+   :header-rows: 1
+
+   * - Grouping
+     - SFT
+     - ART, Round 200
+     - Gain (pp)
+     - Best ART
+     - Best Round
+   * - Natural anchor
+     - 61.4%
+     - 74.0%
+     - +12.6
+     - 75.0%
+     - 190
+   * - State clusters
+     - 61.4%
+     - 72.6%
+     - +11.2
+     - 77.6%
+     - 170
+
+Watch ``eval/success_once`` in TensorBoard. For clusters, ``actor/cluster_row_frac`` reports coverage and ``actor/cluster_active_frac`` reports the fraction of clusters with nonzero guidance. See :doc:`../reference/metrics` for training metrics and :doc:`../evaluations/index` for standalone evaluation.

@@ -1,0 +1,13 @@
+defaults:
+  - libero_object_0_art_openpi
+  - _self_
+
+env:
+  train:
+    task_suite_name: libero_spatial
+  eval:
+    task_suite_name: libero_spatial
+
+runner:
+  logger:
+    experiment_name: libero_spatial_0_art_openpi

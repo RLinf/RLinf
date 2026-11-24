@@ -37,34 +37,34 @@ class Wan22TI2VModel(Wan22Model):
         main_images = [Image.fromarray(image.astype(np.uint8)) for image in main_images]
         return prompts, {"image_condition": main_images}
 
-    def nft_forward(
+    def _velocity_forward(
         self,
         forward_inputs: dict[str, torch.Tensor],
-        nft_inputs: dict[str, torch.Tensor],
+        state_inputs: dict[str, torch.Tensor],
         **kwargs,
     ) -> dict[str, Any]:
         del kwargs
-        nft_batch = self._prepare_nft_forward_inputs(
+        state_batch = self._prepare_velocity_forward_inputs(
             forward_inputs,
-            nft_inputs,
+            state_inputs,
         )
         latent_condition = forward_inputs["latent_condition"].to(
-            device=nft_batch["device"],
-            dtype=nft_batch["model_dtype"],
+            device=state_batch["device"],
+            dtype=state_batch["model_dtype"],
         )
         first_frame_mask = forward_inputs["first_frame_mask"].to(
-            device=nft_batch["device"],
-            dtype=nft_batch["model_dtype"],
+            device=state_batch["device"],
+            dtype=state_batch["model_dtype"],
         )
         model_x_t = (
             1 - first_frame_mask
-        ) * latent_condition + first_frame_mask * nft_batch["model_x_t"]
+        ) * latent_condition + first_frame_mask * state_batch["model_x_t"]
         timestep_mask = first_frame_mask[0, 0, :, ::2, ::2].flatten().unsqueeze(0)
         v_theta = self._transformer_forward_i2v(
             model_x_t,
-            nft_batch["timesteps"] * timestep_mask,
-            nft_batch["prompt_embeds"],
-            nft_batch["negative_prompt_embeds"],
+            state_batch["timesteps"] * timestep_mask,
+            state_batch["prompt_embeds"],
+            state_batch["negative_prompt_embeds"],
             self.config.guidance_scale,
         )
         v_theta = v_theta.movedim(2, 1)

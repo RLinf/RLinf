@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
-
 import numpy as np
 import torch
 
 from rlinf.algorithms.diffusion.art import (
     art_guidance_metrics,
+    art_state_clusters,
     art_trajectory_guidance,
     compute_art_loss,
     prepare_art_training_inputs,
@@ -40,13 +39,6 @@ from rlinf.utils.nested_dict_process import (
 )
 from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
-
-_ART_OUTPUT_GRADIENT_STATS = (
-    "output_guidance_grad_sq",
-    "output_restoration_grad_sq",
-    "output_grad_inner",
-)
-_ART_DRIFT_REGIONS = ("full", "exec", "unexec", "future", "padding")
 
 
 class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
@@ -83,24 +75,12 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                 config=self.cfg.algorithm,
                 generator=generator,
             )
-        error_keys = ("actor/branch_state_error_max", "actor/branch_image_error_max")
-        if error_keys[0] in preparation_metrics:
-            errors = torch.tensor(
-                [preparation_metrics[key] for key in error_keys], device=self.device
-            )
-            torch.distributed.all_reduce(errors, op=torch.distributed.ReduceOp.MAX)
-            preparation_metrics.update(zip(error_keys, errors.tolist()))
         active = torch.tensor(float(has_guidance), device=self.device)
         torch.distributed.all_reduce(active, op=torch.distributed.ReduceOp.MAX)
         has_guidance = bool(active.item())
         preparation_metrics["actor/skipped_zero_guidance"] = float(not has_guidance)
-        replay_diagnostics = action_trajectories and self.cfg.algorithm.get(
-            "art_replay_diagnostics", False
-        )
-        if self.is_weight_offloaded and (has_guidance or replay_diagnostics):
+        if self.is_weight_offloaded and has_guidance:
             self.load_param_and_grad(self.device)
-        if replay_diagnostics:
-            preparation_metrics.update(self._art_replay_metrics())
         if not has_guidance:
             clear_memory()
             return all_reduce_dict(
@@ -109,14 +89,8 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             )
         if self.is_optimizer_offloaded:
             self.load_optimizer(self.device)
-        actor_reference = (
-            self.cfg.algorithm.get("art_reference_source", "rollout") == "actor"
-        )
-        rollout_reference = self.rollout_batch["forward_inputs"].get("art_old_velocity")
-        if not action_trajectories or actor_reference or rollout_reference is None:
-            self._precompute_old_velocities()
-        if replay_diagnostics:
-            preparation_metrics.update(self._art_replay_metrics("actor/reference_pre"))
+        # Replay on the actor so the frozen reference uses the same numerics.
+        self._precompute_old_velocities()
 
         if not action_trajectories:
             row_windows = prompt_disjoint_windows(
@@ -215,11 +189,6 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                     if action_trajectories:
                         step_metrics["actor/art_loss"] *= loss_scale
                         step_metrics["actor/total_loss"] *= loss_scale
-                    if replay_diagnostics:
-                        for key in _ART_OUTPUT_GRADIENT_STATS:
-                            step_metrics[f"actor/art_{key}"] *= (
-                                loss_scale / self.gradient_accumulation
-                            ) ** 2
                     with backward_ctx:
                         self.grad_scaler.scale(scaled_loss).backward()
                     append_to_dict(metrics, step_metrics)
@@ -227,26 +196,12 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
 
             self.torch_platform.empty_cache()
             grad_norm, lr_list = self.optimizer_step()
-            if action_trajectories:
-                self.lr_scheduler.step()
             mask_counts += update_mask_counts
             counts = update_mask_counts.clone()
             torch.distributed.all_reduce(counts)
             append_to_dict(
                 metrics, _art_mask_count_metrics(counts, f"actor/u{update_index}")
             )
-            if replay_diagnostics:
-                append_to_dict(
-                    metrics,
-                    self._art_replay_metrics(
-                        f"actor/drift_u{update_index}", reference=rollout_reference
-                    ),
-                )
-                if actor_reference:
-                    append_to_dict(
-                        metrics,
-                        self._art_replay_metrics(f"actor/update_u{update_index}"),
-                    )
             append_to_dict(
                 metrics,
                 {
@@ -255,24 +210,12 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                 },
             )
 
-        if not action_trajectories:
-            self.lr_scheduler.step()
+        self.lr_scheduler.step()
         self.optimizer.zero_grad()
         clear_memory()
         torch.distributed.all_reduce(mask_counts)
         mean_metrics = self._reduce_training_metrics(metrics)
         mean_metrics.update(_art_mask_count_metrics(mask_counts, "actor"))
-        if replay_diagnostics:
-            guidance_sq, restoration_sq, inner = (
-                mean_metrics.pop(f"actor/art_{key}")
-                for key in _ART_OUTPUT_GRADIENT_STATS
-            )
-            mean_metrics["actor/art_output_restore_ratio"] = math.sqrt(
-                restoration_sq / max(guidance_sq, 1e-30)
-            )
-            mean_metrics["actor/art_output_restore_cosine"] = inner / math.sqrt(
-                max(guidance_sq * restoration_sq, 1e-30)
-            )
         return mean_metrics
 
     @staticmethod
@@ -345,66 +288,30 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         episode_returns = torch.where(action_mask, batch["rewards"], 0.0).sum((0, 2))
         if batch.get("loss_mask") is not None:
             action_mask = action_mask & batch["loss_mask"]
-        state_sampling = self.cfg.algorithm.get("art_state_sampling", False)
-        branch_index = (
-            0
-            if state_sampling
-            else self.cfg.algorithm.get("art_branch_chunk_index", None)
-        )
+        decisions, episodes = endpoints.shape[:2]
+        anchors = forward_inputs.pop("art_anchor")
         preparation_metrics = {}
-        if branch_index is not None:
-            first_decision, decisions = branch_index, 1
-            episode_returns = torch.where(
-                action_mask[branch_index:], batch["rewards"][branch_index:], 0.0
-            ).sum((0, 2))
-            group_valid = (
-                (
-                    forward_inputs["art_branch_valid"][branch_index]
-                    & action_mask[branch_index, :, 0]
-                )
-                .reshape(-1, group_size)
-                .all(1)
+        if self.cfg.algorithm.get("art_grouping", "index") == "cluster":
+            returns_to_go = (
+                torch.where(action_mask, batch["rewards"], 0.0)
+                .sum(-1)
+                .flip(0)
+                .cumsum(0)
+                .flip(0)
             )
-            selected_mask = (
-                action_mask[branch_index : branch_index + 1]
-                & (group_valid.repeat_interleave(group_size)[None, :, None])
+            guidance, preparation_metrics = self._art_cluster_guidance(
+                endpoints, anchors, returns_to_go, action_mask, forward_inputs
             )
-            preparation_metrics = {
-                "actor/branch_chunk_index": float(branch_index),
-                "actor/branch_valid_group_frac": group_valid.float().mean().item(),
-                "actor/branch_state_error_max": forward_inputs[
-                    "art_branch_state_error"
-                ][branch_index]
-                .max()
-                .item(),
-                "actor/branch_image_error_max": forward_inputs[
-                    "art_branch_image_error"
-                ][branch_index]
-                .max()
-                .item(),
-            }
         else:
-            first_decision = 0
-            decisions = (
-                1
-                if self.cfg.algorithm.get("art_first_chunk_only", False)
-                else endpoints.shape[0]
+            guidance = art_trajectory_guidance(
+                endpoints - anchors.to(endpoints),
+                episode_returns,
+                action_mask,
+                group_size,
+                **self._art_covariance_options(),
             )
-            selected_mask = action_mask[:decisions]
-        condition_ids = forward_inputs["art_state_id"][0] if state_sampling else None
-        guidance = art_trajectory_guidance(
-            endpoints[first_decision : first_decision + decisions],
-            episode_returns,
-            selected_mask,
-            group_size,
-            condition_ids=condition_ids,
-            **self._art_covariance_options(),
-        )
-        episodes = endpoints.shape[1]
         episode_windows = prompt_disjoint_windows(
-            torch.arange(episodes) // group_size
-            if condition_ids is None
-            else condition_ids.cpu(),
+            torch.arange(episodes) // group_size,
             updates=int(self.cfg.algorithm.get("art_updates_per_rollout", 2)),
             order=torch.randperm(episodes, generator=generator).tolist(),
         )
@@ -416,7 +323,7 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             windows.append(indices[torch.randperm(len(indices), generator=generator)])
 
         self.rollout_batch = process_nested_dict_for_train(
-            batch, first_decision * episodes + torch.arange(decisions * episodes)
+            batch, torch.arange(decisions * episodes)
         )
         self.rollout_batch["forward_inputs"].update(
             art_guidance_direction=guidance["directions"].flatten(0, 1),
@@ -433,12 +340,106 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                     episode_returns,
                     guidance["coordinate_mask"].flatten(0, 1),
                 ),
-                "actor/valid_chunk_frac": selected_mask.any(-1).float().mean().item(),
-                "actor/valid_action_frac": selected_mask.float().mean().item(),
+                "actor/valid_chunk_frac": action_mask.any(-1).float().mean().item(),
+                "actor/valid_action_frac": action_mask.float().mean().item(),
             },
             bool(guidance["stats"]["group_active"].any()),
             tuple(windows),
         )
+
+    @torch.no_grad()
+    def _art_cluster_guidance(
+        self,
+        endpoints: torch.Tensor,
+        anchors: torch.Tensor,
+        returns_to_go: torch.Tensor,
+        action_mask: torch.Tensor,
+        forward_inputs: dict,
+    ) -> tuple[dict, dict[str, float]]:
+        """Group each live chunk with nearby states from every rank's episodes.
+
+        Decision 0 keeps its exact reset groups. Later chunks join
+        ``art_state_clusters`` balls over the episodes of all ranks, so every
+        rank derives identical groups and guidance; each keeps its own
+        episodes. Chunks outside a cluster receive no guidance.
+
+        Returns:
+            Local guidance in the ``art_trajectory_guidance`` layout, with
+            statistics of the reset groups and clusters only, and global
+            cluster metrics.
+        """
+        algorithm = self.cfg.algorithm
+        group_size = int(algorithm.group_size)
+        local_episodes = endpoints.shape[1]
+        endpoints = self._gather_episodes(endpoints)
+        returns_to_go = self._gather_episodes(returns_to_go)
+        action_mask = self._gather_episodes(action_mask)
+        features = self._gather_episodes(forward_inputs["art_cluster_features"])
+        buckets = self._gather_episodes(forward_inputs["art_cluster_bucket"])
+        anchors = self._gather_episodes(anchors.to(endpoints))
+        decisions, episodes = returns_to_go.shape
+        eligible = action_mask[..., 0].clone()
+        eligible[0] = False
+        trajectories = torch.arange(episodes).expand(decisions, -1)
+        labels, seeds = art_state_clusters(
+            features.flatten(0, 1),
+            buckets.flatten(0, 1),
+            trajectories.flatten(),
+            eligible.flatten(),
+            radius=float(algorithm.art_cluster_radius),
+            min_size=int(algorithm.art_cluster_min_size),
+            max_size=group_size,
+        )
+        reset_groups = episodes // group_size
+        kept_groups = reset_groups + len(seeds)
+        groups = labels.reshape(decisions, episodes) + reset_groups
+        groups[0] = torch.arange(episodes) // group_size
+        unclustered = labels.reshape(decisions, episodes) < 0
+        unclustered[0] = False
+        # A single masked group excludes discarded rows without allocating a
+        # covariance group for every unused chunk.
+        groups[unclustered] = kept_groups
+        action_mask = action_mask & ~unclustered[..., None]
+        guidance = art_trajectory_guidance(
+            endpoints - anchors,
+            returns_to_go,
+            action_mask,
+            group_size,
+            groups=groups,
+            **self._art_covariance_options(),
+        )
+        metrics = _art_cluster_metrics(
+            labels,
+            seeds,
+            features.flatten(0, 1),
+            trajectories.flatten(),
+            torch.arange(decisions).repeat_interleave(episodes),
+            eligible.flatten(),
+            group_size,
+            guidance["stats"]["group_active"][reset_groups:kept_groups],
+        )
+        local = slice(self._rank * local_episodes, (self._rank + 1) * local_episodes)
+        return (
+            {
+                "directions": guidance["directions"][:, local],
+                "magnitudes": guidance["magnitudes"][:, local],
+                "coordinate_mask": guidance["coordinate_mask"][:, local],
+                "stats": {
+                    key: value[:kept_groups] for key, value in guidance["stats"].items()
+                },
+            },
+            metrics,
+        )
+
+    def _gather_episodes(self, value: torch.Tensor) -> torch.Tensor:
+        """Concatenate every actor rank's episodes along dimension 1 in rank order."""
+        if self._world_size == 1:
+            return value.detach().cpu()
+        wire_dtype = torch.uint8 if value.dtype == torch.bool else value.dtype
+        local = value.to(device=self.device, dtype=wire_dtype).contiguous()
+        parts = [torch.empty_like(local) for _ in range(self._world_size)]
+        torch.distributed.all_gather(parts, local)
+        return torch.cat(parts, dim=1).to(device=value.device, dtype=value.dtype)
 
     @torch.no_grad()
     def _select_art_training_timesteps(self, generator: torch.Generator) -> None:
@@ -465,76 +466,17 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                 for _ in range(row_count)
             ]
         )
-        for key in ("art_states", "art_old_velocity"):
-            if key not in forward_inputs:
-                continue
-            value = forward_inputs[key]
-            if value.shape[:2] != states.shape[:2]:
-                raise ValueError(
-                    f"ART {key} must have matching sample and timestep axes"
-                )
-            indices = (
-                selected.to(value.device)
-                .view(row_count, train_timestep_count, *([1] * (value.ndim - 2)))
-                .expand(-1, -1, *value.shape[2:])
-            )
-            forward_inputs[key] = value.gather(1, indices)
+        indices = (
+            selected.to(states.device)
+            .view(row_count, train_timestep_count, *([1] * (states.ndim - 2)))
+            .expand(-1, -1, *states.shape[2:])
+        )
+        forward_inputs["art_states"] = states.gather(1, indices)
         forward_inputs["art_sigmas"] = sigmas.gather(1, selected.to(sigmas.device))
         forward_inputs["art_sigmas_next"] = sigmas_next.gather(
             1, selected.to(sigmas_next.device)
         )
         del forward_inputs["art_endpoint"]
-
-    @torch.no_grad()
-    def _art_replay_metrics(
-        self,
-        prefix: str = "actor/replay",
-        *,
-        reference: torch.Tensor | None = None,
-    ) -> dict[str, float]:
-        """Measure full-output drift on fixed rollout states, pooled across ranks.
-
-        The default prefix reports pre-update replay error. Post-update probes
-        reuse the same rows and denoising timesteps, including zero-guidance and
-        corrective-masked samples. Rows without valid executed actions are omitted.
-        """
-        forward_inputs = self.rollout_batch["forward_inputs"]
-        if "art_old_velocity" not in forward_inputs and reference is None:
-            raise ValueError(
-                "ART replay diagnostics require cached rollout velocities."
-            )
-        old_velocities = (
-            forward_inputs["art_old_velocity"] if reference is None else reference
-        )
-        action_chunk = int(self.cfg.actor.model.num_action_chunks)
-        action_dim = int(self.cfg.actor.model.action_dim)
-        coordinate_mask = forward_inputs.get("art_coordinate_mask")
-        stats = torch.zeros(len(_ART_DRIFT_REGIONS), 2, device=self.device)
-        max_error = torch.zeros((), device=self.device)
-        for rows, timestep_index, velocity in self._replay_velocities(forward_inputs):
-            batch_stats, batch_max = _art_velocity_drift_stats(
-                velocity,
-                old_velocities[rows, timestep_index].to(self.device),
-                action_chunk,
-                action_dim,
-                None
-                if coordinate_mask is None
-                else coordinate_mask[rows].to(self.device),
-            )
-            stats += batch_stats
-            max_error = torch.maximum(max_error, batch_max)
-        if torch.distributed.is_initialized():
-            torch.distributed.all_reduce(stats)
-            torch.distributed.all_reduce(max_error, op=torch.distributed.ReduceOp.MAX)
-        mean_square = stats[:, 0] / stats[:, 1].clamp_min(1)
-        return {
-            f"{prefix}_mse": mean_square[1].item(),
-            f"{prefix}_max_abs": max_error.item(),
-            **{
-                f"{prefix}_{region}_rms": rms
-                for region, rms in zip(_ART_DRIFT_REGIONS, mean_square.sqrt().tolist())
-            },
-        }
 
     @torch.no_grad()
     def _precompute_old_velocities(self) -> None:
@@ -570,9 +512,9 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                 for timestep_index in range(timestep_count):
                     with self.amp_context:
                         output = self.model(
-                            forward_type=ForwardType.NFT,
+                            forward_type=ForwardType.ART,
                             forward_inputs=model_inputs,
-                            nft_inputs={
+                            art_inputs={
                                 "x_t": states[rows, timestep_index].to(self.device),
                                 "timesteps": sigmas[rows, timestep_index].to(
                                     self.device
@@ -603,9 +545,9 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
 
         with self.amp_context:
             output = self.model(
-                forward_type=ForwardType.NFT,
+                forward_type=ForwardType.ART,
                 forward_inputs=model_inputs,
-                nft_inputs={"x_t": states, "timesteps": sigmas},
+                art_inputs={"x_t": states, "timesteps": sigmas},
                 compute_values=False,
             )
         coordinate_mask = forward_inputs.get("art_coordinate_mask")
@@ -615,9 +557,6 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             chunk, dims = guidance_direction.shape[1:]
             velocity = velocity[:, :chunk, :dims]
             old_velocity = old_velocity[:, :chunk, :dims]
-        output_gradient_stats = coordinate_mask is not None and bool(
-            self.cfg.algorithm.get("art_replay_diagnostics", False)
-        )
         return compute_art_loss(
             velocity,
             old_velocity,
@@ -627,7 +566,6 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             guidance_magnitude,
             config=self.cfg.algorithm,
             coordinate_mask=coordinate_mask,
-            output_gradient_stats=output_gradient_stats,
         )
 
     @classmethod
@@ -667,49 +605,6 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         return inputs if indices is None else cls._index_nested(inputs, indices)
 
 
-@torch.no_grad()
-def _art_velocity_drift_stats(
-    velocity: torch.Tensor,
-    old_velocity: torch.Tensor,
-    action_chunk: int,
-    action_dim: int,
-    coordinate_mask: torch.Tensor | None = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return squared-error sums/counts per output region and executed max error.
-
-    Unexecuted coordinates include future action tokens, padding dimensions and
-    any unexecuted tail of a terminated chunk. Entirely invalid rows are omitted.
-    """
-    if old_velocity.shape != velocity.shape:
-        raise ValueError(f"old_velocity must have shape {tuple(velocity.shape)}")
-    error = velocity.detach().float() - old_velocity.detach().float()
-    executed = torch.zeros_like(error, dtype=torch.bool)
-    executed[:, :action_chunk, :action_dim] = (
-        True if coordinate_mask is None else coordinate_mask
-    )
-    valid_rows = executed.flatten(1).any(1)[:, None, None]
-    full = valid_rows.expand_as(error)
-    future = torch.zeros_like(executed)
-    future[:, action_chunk:, :action_dim] = True
-    padding = torch.zeros_like(executed)
-    padding[:, :, action_dim:] = True
-    masks = (full, executed, full & ~executed, future & full, padding & full)
-    squared_error = error.square()
-    stats = torch.stack(
-        [
-            torch.stack(
-                (
-                    torch.where(mask, squared_error, 0.0).sum(),
-                    mask.sum().to(error.dtype),
-                )
-            )
-            for mask in masks
-        ]
-    )
-    max_error = torch.where(executed, error.abs(), 0.0).amax()
-    return stats, max_error
-
-
 def _art_mask_count_metrics(counts: torch.Tensor, prefix: str) -> dict[str, float]:
     """Reduce ratios after pooling active, masked, and outward item counts."""
     active, masked, outward, movement_score = counts.tolist()
@@ -719,3 +614,74 @@ def _art_mask_count_metrics(counts: torch.Tensor, prefix: str) -> dict[str, floa
         f"{prefix}/outward_frac_global": outward / max(active, 1),
         f"{prefix}/movement_score_active": movement_score / max(active, 1),
     }
+
+
+@torch.no_grad()
+def _art_cluster_metrics(
+    labels: torch.Tensor,
+    seeds: torch.Tensor,
+    features: torch.Tensor,
+    episodes: torch.Tensor,
+    decisions: torch.Tensor,
+    eligible: torch.Tensor,
+    group_size: int,
+    active: torch.Tensor,
+) -> dict[str, float]:
+    """Describe clusters from one global clustering; every rank reports the same values.
+
+    Args:
+        labels: ``[rows]`` cluster of each row or -1.
+        seeds: ``[clusters]`` seed row of each cluster.
+        features: ``[rows, features]`` cluster coordinates.
+        episodes: ``[rows]`` global episode of each row.
+        decisions: ``[rows]`` decision of each row.
+        eligible: ``[rows]`` rows that could join a cluster.
+        group_size: Episodes per reset group.
+        active: ``[clusters]`` whether each cluster produced guidance.
+    """
+    clustered = labels >= 0
+    count = len(seeds)
+    metrics = {
+        "actor/cluster_count": float(count),
+        "actor/cluster_row_frac": clustered.sum().item()
+        / max(eligible.sum().item(), 1),
+    }
+    if not count:
+        return metrics
+    members = labels[clustered]
+
+    def extremes(values: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        values = values[clustered]
+        low = values.new_full((count,), torch.iinfo(values.dtype).max)
+        high = values.new_full((count,), torch.iinfo(values.dtype).min)
+        return (
+            low.scatter_reduce_(0, members, values, reduce="amin"),
+            high.scatter_reduce_(0, members, values, reduce="amax"),
+        )
+
+    first_decision, last_decision = extremes(decisions)
+    first_reset, last_reset = extremes(episodes // group_size)
+    metrics.update(
+        {
+            "actor/cluster_size_mean": torch.bincount(members, minlength=count)
+            .float()
+            .mean()
+            .item(),
+            "actor/cluster_seed_distance_mean": (
+                features[clustered] - features[seeds[members]]
+            )
+            .norm(dim=1)
+            .mean()
+            .item(),
+            "actor/cluster_decision_span_mean": (last_decision - first_decision)
+            .float()
+            .mean()
+            .item(),
+            "actor/cluster_cross_reset_frac": (last_reset != first_reset)
+            .float()
+            .mean()
+            .item(),
+            "actor/cluster_active_frac": active.float().mean().item(),
+        }
+    )
+    return metrics

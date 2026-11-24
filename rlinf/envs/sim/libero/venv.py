@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional, Union
 import gym
 import numpy as np
 
-from rlinf.envs.sim.libero.snapshot import capture_snapshot, restore_snapshot
+from rlinf.envs.sim.libero.art_state import object_state
 from rlinf.envs.sim.libero.utils import import_libero_module
 from rlinf.envs.venv import (
     BaseVectorEnv,
@@ -156,10 +156,8 @@ def _worker(
                 p.send(env.get_segmentation_of_interest(data))
             elif cmd == "get_sim_state":
                 p.send(env.get_sim_state())
-            elif cmd == "capture_snapshot":
-                p.send(capture_snapshot(env))
-            elif cmd == "restore_snapshot":
-                p.send(restore_snapshot(env, data))
+            elif cmd == "object_state":
+                p.send(object_state(env))
             elif cmd == "set_init_state":
                 obs = env.set_init_state(data)
                 p.send(obs)
@@ -317,14 +315,8 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
         for i in id:
             self.workers[i].parent_remote.recv()
 
-    def capture_snapshots(self, id) -> list[dict]:
-        """Capture selected subprocesses at an action boundary."""
-        for i in id:
-            self.workers[i].parent_remote.send(["capture_snapshot", None])
-        return [self.workers[i].parent_remote.recv() for i in id]
-
-    def restore_snapshots(self, snapshots: list[dict]) -> list[dict]:
-        """Restore one same-task snapshot per subprocess."""
-        for worker, snapshot in zip(self.workers, snapshots):
-            worker.parent_remote.send(["restore_snapshot", snapshot])
+    def object_states(self) -> list[dict]:
+        """Read the task-object state of every subprocess."""
+        for worker in self.workers:
+            worker.parent_remote.send(["object_state", None])
         return [worker.parent_remote.recv() for worker in self.workers]

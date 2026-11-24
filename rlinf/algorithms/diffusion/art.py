@@ -144,7 +144,6 @@ def compute_art_loss(
     *,
     config: DictConfig,
     coordinate_mask: torch.Tensor | None = None,
-    output_gradient_stats: bool = False,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Reduce the frozen-target ART objective and report local actor metrics.
 
@@ -157,7 +156,6 @@ def compute_art_loss(
         guidance_magnitude: Nonnegative guidance strength per item.
         config: Algorithm settings for loss weighting and the corrective mask.
         coordinate_mask: Optional executed-action coordinates for robot chunks.
-        output_gradient_stats: Report guidance/restoration output gradients.
 
     Returns:
         The differentiable scalar loss and detached actor metrics. Weight
@@ -176,7 +174,6 @@ def compute_art_loss(
         reference_noise_level=float(config.get("art_reference_noise_level", 0.8)),
         corrective_mask_enabled=bool(config.get("art_corrective_mask_enabled", True)),
         coordinate_mask=coordinate_mask,
-        output_gradient_stats=output_gradient_stats,
     )
     loss = terms["per_item_loss"].mean()
     active = terms["active"]
@@ -200,17 +197,6 @@ def compute_art_loss(
         "actor/old_deviate": terms["movement_energy"].mean().item(),
         "actor/movement_score": terms["movement_score"].mean().item(),
     }
-    if output_gradient_stats:
-        metrics.update(
-            {
-                f"actor/art_{key}": terms[key].item()
-                for key in (
-                    "output_guidance_grad_sq",
-                    "output_restoration_grad_sq",
-                    "output_grad_inner",
-                )
-            }
-        )
     return loss, metrics
 
 
@@ -278,13 +264,8 @@ def art_loss(
     reference_noise_level: float = 0.8,
     corrective_mask_enabled: bool = True,
     coordinate_mask: torch.Tensor | None = None,
-    output_gradient_stats: bool = False,
 ) -> dict[str, torch.Tensor]:
-    """Return the paper's masked, frozen-target velocity loss per item.
-
-    ``output_gradient_stats`` requires ``coordinate_mask`` and adds the
-    guidance/restoration split of the mean loss's output gradient.
-    """
+    """Return the paper's masked, frozen-target velocity loss per item."""
     _validate_art_batch(current_velocity, "current_velocity")
     _validate_art_same_shape(
         current_velocity,
@@ -372,20 +353,6 @@ def art_loss(
         "movement_score": movement_score.detach(),
         "outward_alignment": outward_alignment.detach(),
     }
-    if output_gradient_stats:
-        # These are gradients of the mean loss with respect to velocity outputs.
-        with torch.no_grad():
-            coordinate_count = coordinate_mask.flatten(1).sum(1).clamp_min(1)
-            scale = _expand_art_vector(
-                2 * weight * keep / (velocity.shape[0] * coordinate_count), velocity
-            )
-            guidance_gradient = scale * displacement
-            restoration_gradient = scale * movement
-            terms.update(
-                output_guidance_grad_sq=guidance_gradient.square().sum(),
-                output_restoration_grad_sq=restoration_gradient.square().sum(),
-                output_grad_inner=(guidance_gradient * restoration_gradient).sum(),
-            )
     return terms
 
 
@@ -664,14 +631,27 @@ def _art_coordinate_mean(
 @torch.no_grad()
 def art_trajectory_guidance(
     endpoints: torch.Tensor,
-    episode_returns: torch.Tensor,
+    returns: torch.Tensor,
     action_mask: torch.Tensor,
     group_size: int,
     *,
-    condition_ids: torch.Tensor | None = None,
+    groups: torch.Tensor | None = None,
     **covariance_options,
 ) -> dict:
-    """Aggregate same-reset trajectories at each decision, before flattening."""
+    """Aggregate candidate chunks into covariance groups, before flattening.
+
+    By default a group is the same-condition episodes at one decision.
+
+    Args:
+        endpoints: ``[decisions, episodes, actions, dims]`` executed chunks.
+        returns: ``[episodes]`` episode returns shared by every decision, or
+            ``[decisions, episodes]`` returns from each decision.
+        action_mask: ``[decisions, episodes, actions]`` executed action slots.
+        group_size: Episodes per reset group.
+        groups: Optional ``[decisions, episodes]`` group indices that replace
+            the per-decision condition groups; a group holding one executed
+            chunk receives no guidance.
+    """
     if endpoints.ndim != 4 or action_mask.shape != endpoints.shape[:3]:
         raise ValueError(
             "ART actions must be [decisions, episodes, actions, dims] with a matching action mask"
@@ -681,24 +661,32 @@ def art_trajectory_guidance(
         raise ValueError(
             f"ART needs complete groups of at least two trajectories, got {episodes=} and {group_size=}"
         )
-    if episode_returns.shape != (episodes,):
+    if returns.shape == (episodes,):
+        returns = returns[None].expand(decisions, -1)
+    elif returns.shape != (decisions, episodes):
         raise ValueError(
-            f"ART episode returns must have shape {(episodes,)}, got {tuple(episode_returns.shape)}"
+            f"ART returns must have shape {(episodes,)} or {(decisions, episodes)}, "
+            f"got {tuple(returns.shape)}"
         )
     device = endpoints.device
-    if condition_ids is None:
+    if groups is None:
         condition_groups = torch.arange(episodes, device=device) // group_size
-    else:
-        _, condition_groups = torch.unique(
-            condition_ids.to(device), sorted=True, return_inverse=True
+        decision_ids = torch.arange(decisions, device=device)[:, None]
+        groups = decision_ids * (episodes // group_size) + condition_groups[None]
+        group_count = decisions * (episodes // group_size)
+    elif groups.shape != (decisions, episodes):
+        raise ValueError(
+            f"Explicit ART groups must have shape {(decisions, episodes)} and "
+            f"replace reset groups; got {tuple(groups.shape)}."
         )
-    decision_ids = torch.arange(decisions, device=device)[:, None]
-    groups = decision_ids * (episodes // group_size) + condition_groups[None]
+    else:
+        groups = groups.to(device=device, dtype=torch.long)
+        group_count = int(groups.max()) + 1
     stats = art_scalar_covariance(
         endpoints.flatten(0, 1),
-        episode_returns[None].expand(decisions, -1).reshape(-1),
+        returns.reshape(-1),
         groups.reshape(-1),
-        decisions * (episodes // group_size),
+        group_count,
         coordinate_mask=action_mask.flatten(0, 1)[..., None],
         **covariance_options,
     )
@@ -712,6 +700,81 @@ def art_trajectory_guidance(
         "coordinate_mask": coordinate_mask,
         "stats": stats,
     }
+
+
+@torch.no_grad()
+def art_state_clusters(
+    features: torch.Tensor,
+    buckets: torch.Tensor,
+    trajectories: torch.Tensor,
+    eligible: torch.Tensor,
+    *,
+    radius: float,
+    min_size: int,
+    max_size: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Cover eligible rows with balls of nearby states from distinct trajectories.
+
+    Rows of one bucket are taken as seeds in decreasing order of neighbors
+    within ``radius``. A cluster holds its seed and the seed's nearest free
+    neighbors within ``radius``, at most one row per trajectory and at most
+    ``max_size`` rows. A ball smaller than ``min_size`` is discarded and its
+    rows stay free for later seeds. The result is deterministic, so every rank
+    that clusters the same rows builds the same groups.
+
+    Args:
+        features: ``[rows, features]`` coordinates of each row's state.
+        buckets: ``[rows]`` integer buckets; clusters never span two buckets.
+        trajectories: ``[rows]`` trajectory of each row.
+        eligible: ``[rows]`` rows that may join a cluster.
+        radius: Largest feature distance from a member to its seed.
+        min_size: Smallest kept cluster.
+        max_size: Largest cluster.
+
+    Returns:
+        ``labels``, the cluster of each row or -1, and ``seeds``, the seed row
+        of each cluster in creation order.
+    """
+    if not 2 <= min_size <= max_size or not radius > 0:
+        raise ValueError(
+            "ART clusters need 2 <= min_size <= max_size and a positive radius; "
+            f"got {min_size=}, {max_size=}, {radius=}."
+        )
+    features = features.detach().cpu().float()
+    buckets = buckets.detach().cpu().long()
+    trajectories = trajectories.detach().cpu().long()
+    eligible = eligible.detach().cpu().bool()
+    labels = torch.full((len(features),), -1, dtype=torch.long)
+    seeds = []
+    for bucket in torch.unique(buckets[eligible]).tolist():
+        rows = torch.nonzero(eligible & (buckets == bucket)).flatten()
+        if len(rows) < min_size:
+            continue
+        distances = torch.cdist(features[rows], features[rows])
+        near = distances <= radius
+        owners = trajectories[rows].tolist()
+        free = torch.ones(len(rows), dtype=torch.bool)
+        order = torch.sort(near.sum(1), descending=True, stable=True).indices
+        for seed in order.tolist():
+            if not free[seed]:
+                continue
+            candidates = torch.nonzero(free & near[seed]).flatten()
+            candidates = candidates[
+                torch.sort(distances[seed, candidates], stable=True).indices
+            ]
+            members, seen = [seed], {owners[seed]}
+            for candidate in candidates.tolist():
+                if len(members) == max_size:
+                    break
+                if owners[candidate] not in seen:
+                    members.append(candidate)
+                    seen.add(owners[candidate])
+            if len(members) < min_size:
+                continue
+            free[members] = False
+            labels[rows[members]] = len(seeds)
+            seeds.append(int(rows[seed]))
+    return labels, torch.tensor(seeds, dtype=torch.long)
 
 
 def art_guidance_metrics(

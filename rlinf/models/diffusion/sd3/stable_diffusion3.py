@@ -115,6 +115,8 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
             return self.default_forward(**kwargs)
         if forward_type == ForwardType.NFT:
             return self.nft_forward(**kwargs)
+        if forward_type == ForwardType.ART:
+            return self.art_forward(**kwargs)
         raise NotImplementedError
 
     def default_forward(
@@ -181,11 +183,29 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
         nft_inputs: dict[str, torch.Tensor],
         **kwargs,
     ) -> dict[str, Any]:
-        """Predict velocity for explicitly provided NFT noisy latents."""
+        """Predict velocities at NFT's explicit noisy states."""
+        return self._velocity_forward(forward_inputs, nft_inputs, **kwargs)
+
+    def art_forward(
+        self,
+        forward_inputs: dict[str, torch.Tensor],
+        art_inputs: dict[str, torch.Tensor],
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Predict velocities at ART's cached reverse-rollout states."""
+        return self._velocity_forward(forward_inputs, art_inputs, **kwargs)
+
+    def _velocity_forward(
+        self,
+        forward_inputs: dict[str, torch.Tensor],
+        state_inputs: dict[str, torch.Tensor],
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Predict velocity for explicitly provided noisy latents."""
         device = next(self.transformer.parameters()).device
         model_dtype = next(self.transformer.parameters()).dtype
-        x_t = nft_inputs["x_t"].to(device)
-        timesteps = nft_inputs["timesteps"].to(device)
+        x_t = state_inputs["x_t"].to(device)
+        timesteps = state_inputs["timesteps"].to(device)
 
         prompt_embeds = forward_inputs["prompt_embeds"].to(device)
         pooled_prompt_embeds = forward_inputs["pooled_prompt_embeds"].to(device)

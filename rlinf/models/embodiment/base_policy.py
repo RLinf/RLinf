@@ -27,6 +27,7 @@ class ForwardType(Enum):
     IQL_CRITIC = "iql_critic"
     IQL_VALUE = "iql_value"
     NFT = "nft"
+    ART = "art"
 
 
 class BasePolicy(ABC):

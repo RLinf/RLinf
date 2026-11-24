@@ -24,10 +24,9 @@ runner:
     project_name: rlinf
     experiment_name: "libero_object_0_art_openpi"
     logger_backends: ["tensorboard"]
-  max_epochs: 100
-  max_steps: 100
+  max_epochs: 50
+  max_steps: 50
   only_eval: False
-  eval_at_start: True
   val_check_interval: 10
   save_interval: -1
   resume_dir: null
@@ -44,13 +43,9 @@ algorithm:
   filter_rewards: False
   log_group_success_metrics: True
   art_updates_per_rollout: 2
-  art_first_chunk_only: False
-  art_state_sampling: False
-  art_branch_chunk_index: 8
-  art_branch_state_atol: 1.0e-5
-  art_branch_image_atol: 1.0
-  art_replay_diagnostics: False
-  art_reference_source: actor
+  art_grouping: index
+  art_cluster_radius: 1.0
+  art_cluster_min_size: 4
   art_reward_reduction: sum
   art_timestep_fraction: 1.0
   art_exclude_final_step: False
@@ -107,24 +102,26 @@ rollout:
   enable_offload: False
   pipeline_stage_num: 1
   model:
-    model_path: "/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT"
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 2
-  # One branch chunk per episode, split across two disjoint ART updates.
-  global_batch_size: 64
+  micro_batch_size: 8
+  # 128 episodes x 48 decisions, split across two disjoint ART updates.
+  global_batch_size: 3072
   seed: 42
   enable_offload: False
   model:
     model_path: "/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT"
     precision: null
     num_action_chunks: 5
+    num_steps: 4
     add_value_head: False
     openpi:
       task: rl
+      torch_compile: False
       rl_mode: art
       is_nft: False
       noise_level: 0.0

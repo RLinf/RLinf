@@ -136,6 +136,13 @@ class Pi0RL(EnvIO, Pi0):
 
         self._mark_fsdp_wrap_names()
 
+    def train(self, mode: bool = True) -> Pi0RL:
+        """Keep the frozen vision encoder identical in rollout and actor replay."""
+        super().train(mode)
+        if self.rl_cfg.train_expert_only:
+            self.img.eval()
+        return self
+
     @property
     def _no_split_modules(self) -> list[str] | None:
         names = list(super()._no_split_modules or [])
@@ -172,8 +179,10 @@ class Pi0RL(EnvIO, Pi0):
         *,
         noise: torch.Tensor | None = None,
         rng: torch.Generator | None = None,
+        art_anchor_noise: torch.Tensor | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Sample action chunks; ``art_anchor_noise`` adds ``art_anchor`` in ART train mode."""
         del kwargs
         repacked = repack_env_obs(
             self.config_name,
@@ -186,7 +195,11 @@ class Pi0RL(EnvIO, Pi0):
         if mode == "eval":
             return self._predict_eval(observation, noise=noise, rng=rng)
         actions, result = self._predict_train(
-            observation, noise=noise, rng=rng, compute_values=compute_values
+            observation,
+            noise=noise,
+            rng=rng,
+            compute_values=compute_values,
+            art_anchor_noise=art_anchor_noise,
         )
         # Match OpenPI: stash raw env obs so the actor can re-transform.
         result["forward_inputs"].update(_clone_replay_obs(repacked))
@@ -199,6 +212,7 @@ class Pi0RL(EnvIO, Pi0):
         noise: torch.Tensor | None,
         rng: torch.Generator | None,
         compute_values: bool,
+        art_anchor_noise: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         rl_cfg = self.rl_cfg
         device = self.device
@@ -225,6 +239,11 @@ class Pi0RL(EnvIO, Pi0):
 
         collect_nft = rl_cfg.is_nft
         collect_art = rl_cfg.rl_mode == "art"
+        if art_anchor_noise is not None and not collect_art:
+            raise ValueError(
+                "art_anchor_noise requires openpi.rl_mode='art', "
+                f"got {rl_cfg.rl_mode!r}."
+            )
         if rl_cfg.joint_logprob or collect_nft or collect_art:
             chosen_per_step = torch.arange(num_steps, device=device)
             denoise_inds = chosen_per_step[None].expand(B, -1).contiguous()
@@ -239,7 +258,6 @@ class Pi0RL(EnvIO, Pi0):
         timesteps = rl_sampler.get_timesteps(num_steps, device)
         idx_step = torch.empty(B, device=device, dtype=torch.long)
         chains = [noise]
-        art_velocities: list[torch.Tensor] = []
         log_probs: list[torch.Tensor] = []
         suffix_values: list[torch.Tensor] = []
         x_t = noise
@@ -263,8 +281,6 @@ class Pi0RL(EnvIO, Pi0):
                 observation, x_t, t_tensor, kv_cache, prefix_mask
             )
             v_t = self.velocity_from_suffix(suffix_act).to(torch.float32)
-            if collect_art:
-                art_velocities.append(v_t.detach())
             noise_std = None
             if method == "flow_noise":
                 noise_std = self.noise_head(suffix_act).to(torch.float32)
@@ -339,8 +355,11 @@ class Pi0RL(EnvIO, Pi0):
                 art_states=chains_tensor[:, :-1].detach().contiguous(),
                 art_sigmas=timesteps[:-1][None].expand(B, -1).contiguous(),
                 art_sigmas_next=timesteps[1:][None].expand(B, -1).contiguous(),
-                art_old_velocity=torch.stack(art_velocities, dim=1).contiguous(),
             )
+            if art_anchor_noise is not None:
+                forward_inputs["art_anchor"] = self._art_anchor(
+                    observation, art_anchor_noise, kv_cache, prefix_mask
+                )
 
         return actions, {
             "prev_logprobs": log_probs_picked,
@@ -348,6 +367,76 @@ class Pi0RL(EnvIO, Pi0):
             "forward_inputs": forward_inputs,
             "model_actions": x_0,
         }
+
+    def _art_anchor(
+        self,
+        observation: Observation,
+        reference_noise: torch.Tensor,
+        kv_cache: tuple,
+        prefix_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Average the ODE endpoints of ``+reference_noise`` and ``-reference_noise``.
+
+        Every row shares the reference noise, so the anchor depends on the
+        observation and estimates its mean executed chunk; two endpoints need
+        not equal the true mean. It draws no random numbers, so enabling it
+        leaves sampled actions unchanged.
+        """
+        shape = (
+            observation.state.shape[0],
+            self.action_horizon,
+            self.model_action_dim,
+        )
+        try:
+            reference = torch.broadcast_to(
+                reference_noise.to(device=self.device, dtype=torch.float32), shape
+            )
+        except RuntimeError as error:
+            raise ValueError(
+                f"art_anchor_noise must broadcast to {shape}, "
+                f"got {tuple(reference_noise.shape)}."
+            ) from error
+        endpoint_sum = sum(
+            self._flow_ode_endpoint(
+                observation, sign * reference, kv_cache, prefix_mask
+            )
+            for sign in (1.0, -1.0)
+        )
+        anchor = 0.5 * endpoint_sum
+        return anchor[:, : self.action_chunk, : self.action_env_dim].contiguous()
+
+    def _flow_ode_endpoint(
+        self,
+        observation: Observation,
+        x_t: torch.Tensor,
+        kv_cache: tuple,
+        prefix_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Integrate the deterministic flow ODE from ``x_t`` with a cached prefix."""
+        batch_size = x_t.shape[0]
+        timesteps = rl_sampler.get_timesteps(self.num_steps, x_t.device)
+        idx_step = torch.empty(batch_size, device=x_t.device, dtype=torch.long)
+        for idx in range(self.num_steps):
+            t_tensor = torch.full(
+                (batch_size,),
+                float(timesteps[idx].item()),
+                device=x_t.device,
+                dtype=torch.float32,
+            )
+            suffix_act = self.run_suffix(
+                observation, x_t, t_tensor, kv_cache, prefix_mask
+            )
+            v_t = self.velocity_from_suffix(suffix_act).to(torch.float32)
+            idx_step.fill_(idx)
+            x_t, _ = rl_sampler.sample_mean_var(
+                x_t.to(torch.float32),
+                v_t,
+                idx_step,
+                noise_method="flow_ode",
+                noise_level=0.0,
+                num_steps=self.num_steps,
+            )
+        return x_t
 
     def _init_nft_state(
         self,
@@ -444,6 +533,8 @@ class Pi0RL(EnvIO, Pi0):
             return self.default_forward(**kwargs)
         if forward_type == ForwardType.NFT:
             return self.nft_forward(**kwargs)
+        if forward_type == ForwardType.ART:
+            return self.art_forward(**kwargs)
         if forward_type == ForwardType.SFT:
             return super().sft_forward(**kwargs)
         raise NotImplementedError(
@@ -551,13 +642,32 @@ class Pi0RL(EnvIO, Pi0):
             "entropy": entropy.float(),
         }
 
-    def nft_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
-        """Compute explicit-state velocity; ART retains the full output horizon."""
-        nft_inputs = kwargs["nft_inputs"]
+    def nft_forward(
+        self, forward_inputs: dict[str, torch.Tensor], **kwargs
+    ) -> dict[str, Any]:
+        """Predict NFT velocities on the configured action chunk."""
+        result = self._velocity_forward(
+            forward_inputs, kwargs["nft_inputs"], kwargs.get("compute_values", False)
+        )
+        result["v_theta"] = result["v_theta"][:, : self.action_chunk, :]
+        return result
+
+    def art_forward(
+        self, forward_inputs: dict[str, torch.Tensor], **kwargs
+    ) -> dict[str, Any]:
+        """Predict ART velocities over the full cached denoising state."""
+        return self._velocity_forward(forward_inputs, kwargs["art_inputs"], False)
+
+    def _velocity_forward(
+        self,
+        forward_inputs: dict[str, torch.Tensor],
+        state_inputs: dict[str, torch.Tensor],
+        compute_values: bool,
+    ) -> dict[str, Any]:
         observation = self._observation_from_forward_inputs(forward_inputs)
         device = self.device
-        x_t = nft_inputs["x_t"].to(device)
-        t = nft_inputs["timesteps"].to(device)
+        x_t = state_inputs["x_t"].to(device)
+        t = state_inputs["timesteps"].to(device)
         if t.dim() > 1:
             t = t.reshape(t.shape[0], -1)[:, 0]
         prefix_out, prefix_mask, kv_cache = self._build_prefix_cache_for_actor(
@@ -565,10 +675,8 @@ class Pi0RL(EnvIO, Pi0):
         )
         suffix_act = self.run_suffix(observation, x_t, t, kv_cache, prefix_mask)
         v_theta = self.velocity_from_suffix(suffix_act)
-        if self.rl_cfg.rl_mode != "art":
-            v_theta = v_theta[:, : self.action_chunk, :]
         result: dict[str, Any] = {"v_theta": v_theta, "x_t": x_t, "timesteps": t}
-        if kwargs.get("compute_values") and self.rl_cfg.add_value_head:
+        if compute_values and self.rl_cfg.add_value_head:
             if self.rl_cfg.value_after_vlm:
                 result["values"] = rl_sampler.value_from_prefix(
                     self.value_head,
