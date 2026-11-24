@@ -91,7 +91,7 @@ env.eval 字段说明
 
 .. note::
 
-   ``evaluations/supermimic/`` 下的 SuperMimic 评测配置通过 ``defaults`` 继承完整训练配方（保留 ``algorithm`` 并将 ``rollout.model`` 指向 ``${actor.model}``），通过 ``runner.ckpt_path`` 加载 ``full_weights.pt``，以 ``env.eval.eval_tasks`` 选择任务，并用 ``runner.eval_export`` 控制结果导出。详见 :doc:`../guides/supermimic`。
+   ``evaluations/supermimic/`` 下的 SuperMimic 配置同样是独立评测配置，通过 ``runner.ckpt_path`` 加载 ``full_weights.pt``，以 ``env.eval.eval_tasks`` 选择任务，并用 ``runner.eval_export`` 控制结果导出。详见 :doc:`../guides/supermimic`。
 
 配置回退
 --------

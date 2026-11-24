@@ -91,7 +91,7 @@ Copy the matching YAML from ``examples/embodiment/config/`` or ``tests/e2e_tests
 
 .. note::
 
-   SuperMimic configs under ``evaluations/supermimic/`` inherit the full training recipe via ``defaults`` (keeping ``algorithm`` and pointing ``rollout.model`` to ``${actor.model}``), load ``full_weights.pt`` through ``runner.ckpt_path``, select tasks via ``env.eval.eval_tasks``, and configure exports via ``runner.eval_export``. See :doc:`../guides/supermimic`.
+   SuperMimic configs under ``evaluations/supermimic/`` are standalone evaluation configs that load ``full_weights.pt`` through ``runner.ckpt_path``, select tasks via ``env.eval.eval_tasks``, and configure exports via ``runner.eval_export``. See :doc:`../guides/supermimic`.
 
 Config Fallback
 ---------------

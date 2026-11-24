@@ -139,7 +139,7 @@ A successful run ends with:
 
    [lafan1] wrote 40 clips, 2.45 h, manifest /data/lafan1_g1/manifest.json
 
-For offline conversion on a separate internet-connected machine, experimental BONES-SEED conversion, or custom ``clip_*.pt`` files, see :doc:`supermimic_motion`.
+For offline conversion on a separate internet-connected machine or custom ``clip_*.pt`` files, see :doc:`supermimic_motion`.
 
 Run It
 ------
@@ -260,7 +260,7 @@ Run motion-tracking evaluation on all 40 LAFAN1 clips with the step-6000 weights
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
        runner.eval_export.output_dir=$RUN_DIR/eval_6000
 
-For MaxCoord checkpoints, add ``actor.model.representation=maxcoord``. For standing push recovery, full output formats, and metric definitions, see :doc:`../../evaluations/guides/supermimic`.
+For MaxCoord checkpoints, add ``rollout.model.representation=maxcoord``. For standing push recovery, full output formats, and metric definitions, see :doc:`../../evaluations/guides/supermimic`.
 
 Visualization and Results
 -------------------------

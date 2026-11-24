@@ -844,6 +844,8 @@ def get_grad_norm(
     """
     if isinstance(parameters, (torch.Tensor, DTensor)):
         parameters = [parameters]
+    else:
+        parameters = list(parameters)
 
     # Grads.
     grads_for_norm = [
@@ -856,9 +858,14 @@ def get_grad_norm(
     norm_type = float(norm_type)
 
     # If there are no gradients to norm (e.g., no trainable params or all grads are None),
-    # directly return 0.0 to avoid constructing tensors or calling .cuda() on a float.
+    # directly return 0.0 (on the parameters' device when as_tensor=True).
     if len(grads_for_norm) == 0:
-        return torch.tensor(0.0) if as_tensor else 0.0
+        if as_tensor:
+            device = (
+                parameters[0].device if len(parameters) > 0 else torch.device("cpu")
+            )
+            return torch.tensor(0.0, dtype=torch.float, device=device)
+        return 0.0
 
     total_norm = 0.0
     device = grads_for_norm[0].device

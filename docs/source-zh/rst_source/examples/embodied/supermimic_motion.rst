@@ -1,7 +1,7 @@
 G1 动作数据准备
 ===============
 
-为 :doc:`G1 动作跟踪环境 <g1_mimic>` 和 :doc:`SuperMimic <supermimic>` 准备参考动作片段，包括 LAFAN1 离线转换、实验性 BONES-SEED 流程以及自定义 ``clip_*.pt`` 文件格式。
+为 :doc:`G1 动作跟踪环境 <g1_mimic>` 和 :doc:`SuperMimic <supermimic>` 准备参考动作片段，包括 LAFAN1 离线转换以及自定义 ``clip_*.pt`` 文件格式。
 
 安装
 ----
@@ -34,39 +34,12 @@ G1 动作数据准备
 
 动作目录下存放若干 ``clip_*.pt`` 文件，加载器按文件名排序读取。将 ``SUPERMIMIC_MOTION_PATH`` 指向你的动作目录后，在 :doc:`supermimic` 的训练命令或 :doc:`../../evaluations/guides/supermimic` 的评测命令后追加下面的覆盖参数即可。评测超过 40 条片段时的容量配置见 :doc:`../../evaluations/guides/supermimic`。
 
-BONES-SEED（实验性）
-~~~~~~~~~~~~~~~~~~~~
-
-官方数据集托管在 Hugging Face 的 `bones-studio/seed <https://huggingface.co/datasets/bones-studio/seed>`_，G1 轨迹位于 ``g1/csv/{date}/{motion}.csv``。使用前请先阅读数据包内的 ``LICENSE.md``，转换脚本不自动下载数据。
-
-转换脚本沿用 NVIDIA ProtoMotions 的 `SEED G1 CSV 说明 <https://github.com/NVlabs/ProtoMotions/blob/main/docs/source/getting_started/seed_g1_csv_preparation.rst>`_\ （120 Hz、根节点平移单位厘米、外旋 XYZ 欧拉角单位度、29 个 ``<joint>_dof`` 列单位度且与 mjlab G1 关节名一致）。转换器只在合成 CSV 上测试过，尚未对照官方 CSV 核验。
-
-将 CSV 重采样为 50 Hz 片段并生成几何可行性标注：
-
-.. code-block:: bash
-
-   python toolkits/supermimic/convert_bones_seed.py \
-       --input /data/bones-seed/g1/csv \
-       --output /data/bones_g1
-   python toolkits/supermimic/bones_feasibility.py --clips /data/bones_g1 \
-       --out /data/bones_g1_annotated
-   export SUPERMIMIC_MOTION_PATH=/data/bones_g1_annotated
-
-``--input`` 支持单个 CSV 文件或递归扫描目录；默认跳过已有输出（加 ``--overwrite`` 可覆盖），遇到损坏 CSV 会报错提示并继续处理其余文件。``bones_feasibility.py`` 为所有片段附加几何标注但不删除文件。启动训练或评测时，加载器按动作名和标注过滤不合格片段，并将动作库留在 CPU 内存中，只把查询帧传到 GPU。
-
-在 BONES-SEED 片段上训练或评测时，在启动命令后追加：
-
-.. code-block:: bash
-
-   env.train.motion_format=bones_seed env.train.num_clips=null \
-       env.eval.motion_format=bones_seed env.eval.num_clips=null
-
 自定义片段
 ~~~~~~~~~~
 
 按下方格式写出每个 ``clip_*.pt`` 并放入同一目录，将 ``SUPERMIMIC_MOTION_PATH`` 指向这个目录，训练时加 ``env.train.num_clips=null``\ （评测加 ``env.eval.num_clips=null``）即可加载目录下全部片段。
 
-如果目录包含 ``manifest.json``，``lafan1`` 加载器会校验每条片段的 SHA-256 并拒绝未登记文件；不含 ``manifest.json`` 时仅检查张量形状与数值合法性。``bones_seed`` 加载器不读取 ``manifest.json``。
+如果目录包含 ``manifest.json``，加载器会校验每条片段的 SHA-256 并拒绝未登记文件；不含 ``manifest.json`` 时仅检查张量形状与数值合法性。
 
 片段文件格式
 ------------
@@ -87,8 +60,6 @@ BONES-SEED（实验性）
      - 29 维默认关节姿态（rad），必须与 mjlab 站立默认姿态一致。
    * - ``state``
      - 形状为 ``[T, 71]`` 的浮点张量，列布局见下表；不能包含 NaN/Inf，根四元数必须已归一化。
-   * - ``name``
-     - 可选片段名称字符串（BONES-SEED 转换器自动写入）。
 
 ``state``\ （``[T, 71]``）列布局如下：
 

@@ -33,7 +33,7 @@ SuperMimic 评测
      - 否（内置姿态）
      - ``per_trial.csv``
 
-两份配置默认在 0 号 GPU 上以 ``actor.model.representation: gencoord`` 运行，并关闭域随机化、重置噪声与动作噪声。
+两份配置默认在 0 号 GPU 上以 ``rollout.model.representation: gencoord`` 运行，并关闭域随机化、重置噪声与动作噪声。
 
 环境准备
 --------
@@ -68,9 +68,9 @@ SuperMimic 评测
        runner.ckpt_path=/path/to/global_step_6000/actor/model_state_dict/full_weights.pt \
        runner.eval_export.output_dir=/path/to/eval_6000
 
-* **MaxCoord checkpoint：** 必须追加 ``actor.model.representation=maxcoord``，checkpoint 只能加载到训练时对应的状态表示中。
+* **MaxCoord checkpoint：** 必须追加 ``rollout.model.representation=maxcoord``，checkpoint 只能加载到训练时对应的状态表示中。
 * **自定义或超过 40 条片段：** 设置 ``env.eval.num_clips=null``，同时保证 ``env.eval.total_num_envs * env.eval.rollout_epoch`` 不少于片段总数；如果有片段超过 ``13656`` 个控制步（50 Hz 下 273.12 秒），需同步调大 ``env.eval.max_steps_per_rollout_epoch``。
-* **切换 GPU：** 用 ``cluster.component_placement`` 指定卡号，例如 ``'~cluster.component_placement' '+cluster.component_placement={actor:1,env:1,rollout:1}'``。
+* **切换 GPU：** 用 ``cluster.component_placement`` 指定卡号，例如 ``'~cluster.component_placement' '+cluster.component_placement={env:1,rollout:1}'``。
 
 评测站立推力恢复
 ----------------
@@ -89,7 +89,7 @@ SuperMimic 评测
        runner.ckpt_path=/path/to/global_step_6000/actor/model_state_dict/full_weights.pt \
        runner.eval_export.output_dir=/path/to/push_6000
 
-评测 MaxCoord checkpoint 时同样追加 ``actor.model.representation=maxcoord``。
+评测 MaxCoord checkpoint 时同样追加 ``rollout.model.representation=maxcoord``。
 
 自定义推力协议
 ~~~~~~~~~~~~~~

@@ -39,7 +39,7 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
      - ``robocasa365`` pretrain 任务切片
      - ``robocasa365/robocasa365_eval_openpi.yaml``
    * - SuperMimic（G1 动作跟踪）
-     - LAFAN1 参考动作；BONES-SEED 为实验性；GenCoord 与 MaxCoord
+     - LAFAN1 参考动作；GenCoord 与 MaxCoord
      - ``supermimic/supermimic_lafan1_eval.yaml``、``supermimic/supermimic_push_recovery.yaml``
    * - DexJoCo
      - ``dexjoco_water_plant``

@@ -105,8 +105,9 @@ def _fetch(url: str, dest: Path, use_curl: bool, timeout: float) -> None:
             timeout=timeout,
         )
     else:
+        request = urllib.request.Request(url, headers={"User-Agent": "RLinf/1.0"})
         with (
-            urllib.request.urlopen(url, timeout=timeout) as response,
+            urllib.request.urlopen(request, timeout=timeout) as response,
             open(tmp, "wb") as out,
         ):
             shutil.copyfileobj(response, out)

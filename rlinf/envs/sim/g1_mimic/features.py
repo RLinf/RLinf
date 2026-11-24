@@ -132,10 +132,20 @@ def quat_from_euler_xyz(
     )
 
 
+def heading_yaw_of_matrix(rot: torch.Tensor) -> torch.Tensor:
+    """Yaw of a rotation matrix's x axis projected on the ground plane."""
+    return torch.atan2(rot[..., 1, 0], rot[..., 0, 0])
+
+
 def heading_yaw(quat: torch.Tensor) -> torch.Tensor:
     """Yaw of the body x axis projected on the ground plane."""
-    rot = quat_to_rotmat(quat)
-    return torch.atan2(rot[..., 1, 0], rot[..., 0, 0])
+    return heading_yaw_of_matrix(quat_to_rotmat(quat))
+
+
+def rotation_angle(rot: torch.Tensor, ref_rot: torch.Tensor) -> torch.Tensor:
+    """Geodesic angle between ``[..., 3, 3]`` rotations."""
+    cos = ((rot * ref_rot).sum(dim=(-2, -1)) - 1.0) * 0.5
+    return torch.acos(cos.clamp(-1.0 + 1e-7, 1.0 - 1e-7))
 
 
 def yaw_rotation(yaw: torch.Tensor) -> torch.Tensor:

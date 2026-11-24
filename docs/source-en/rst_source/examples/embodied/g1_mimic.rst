@@ -51,7 +51,7 @@ The environment supports two task modes selected by the training or evaluation c
      - Episode Limit & Failure
      - Default Config
    * - Motion tracking (``tracking``)
-     - 40 LAFAN1 clips (or custom / BONES-SEED clips)
+     - 40 LAFAN1 clips (or custom ``clip_*.pt`` clips)
      - 10 s in training (full clip in eval); ends on clip end or fall
      - ``supermimic_lafan1_gencoord`` / ``supermimic_lafan1_eval``
    * - Standing push recovery (``push_recovery``)
@@ -138,7 +138,7 @@ The default preset lives in ``examples/embodiment/config/env/g1_mimic.yaml``. Co
      - Directory containing converted ``clip_*.pt`` files
    * - ``motion_format``
      - ``lafan1``
-     - Dataset loader format: ``lafan1`` or ``bones_seed``
+     - Dataset loader format (``lafan1``)
    * - ``num_clips``
      - ``null`` (``40`` in recipe)
      - Number of clips to load; ``null`` loads every clip in ``motion_path``
@@ -198,7 +198,7 @@ A successful conversion ends with:
 
    [lafan1] wrote 40 clips, 2.45 h, manifest /data/lafan1_g1/manifest.json
 
-Keep the generated ``manifest.json`` and clip files unmodified; the loader verifies file checksums on startup. For offline conversion on a separate machine, experimental BONES-SEED support, or building your own ``clip_*.pt`` files, see :doc:`supermimic_motion`.
+Keep the generated ``manifest.json`` and clip files unmodified; the loader verifies file checksums on startup. For offline conversion on a separate machine or building your own ``clip_*.pt`` files, see :doc:`supermimic_motion`.
 
 Run It
 ------

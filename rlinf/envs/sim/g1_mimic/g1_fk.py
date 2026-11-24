@@ -425,27 +425,27 @@ class G1BodyKinematics:
         if cache is None:
             out = walk(state)
         else:
-            name = f"kinematics on {state.device} {state.dtype}"
+            name = f"kinematics-{id(self)} on {state.device} {state.dtype}"
             out = run_compiled(name, walk, state, cache=cache)
         if squeezed:
             return tuple(item.squeeze(0) for item in out)
         return out
 
     def forward(
-        self, state: torch.Tensor
+        self, state: torch.Tensor, *, compile: bool = True
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Return tracked body position, rotation, linear and angular velocity.
 
         Shapes are ``[B, 14, ...]``. ``state`` is the 71-d simulator state.
         Root linear velocity is world-frame. Root angular velocity is body-frame,
         which is how the free joint stores it. Large CUDA batches compile the
-        depth walk; the body-by-body loop remains for an irregular tree.
-        A scan that is already being compiled inlines the eager walk so the
-        two compiles do not nest.
+        depth walk when ``compile=True``; the body-by-body loop remains for an
+        irregular tree. A scan that is already being compiled inlines the eager
+        walk so the two compiles do not nest.
         """
         if self._level_specs is None:
             return self._forward_serial(state)
-        if torch.compiler.is_compiling():
+        if not compile or torch.compiler.is_compiling():
             return self._forward_levels(state)
         return self._forward_levels(state, _COMPILE)
 

@@ -73,6 +73,8 @@ ACTOR_GOAL_DIM = GOAL_CONTENT_DIM + GOAL_FRAMES * 6
 WORLD_MODEL_GOAL_DIM = ACTOR_GOAL_DIM + GOAL_FRAMES * 3
 
 DT = 0.02
+PHYSICS_DT = 0.005
+DECIMATION = 4
 # A fall: the pelvis leaves the reference by more than this height or tilt
 # (difference in gravity z).
 FAILURE_HEIGHT_M = 0.25

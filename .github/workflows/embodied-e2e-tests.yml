@@ -436,6 +436,7 @@ jobs:
 
       - name: Write a standing G1 clip
         run: |
+          rm -rf /workspace/results/g1_mimic_supermimic*
           export PYTHONPATH=$(pwd)
           export MUJOCO_GL=egl
           source .venv/bin/activate
@@ -525,8 +526,9 @@ jobs:
           bash tests/e2e_tests/evaluations/run.sh g1_mimic_supermimic_eval
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv /workspace/results/g1_mimic_supermimic*
 
   embodied-mlp-ppo-mujoco-warp-test:
     runs-on: embodied

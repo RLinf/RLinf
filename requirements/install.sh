@@ -3673,6 +3673,7 @@ install_env_only() {
             install_polaris_env
             ;;
         supermimic)
+            install_common_embodied_deps
             install_supermimic_env
             ;;
         robolab)
@@ -4261,11 +4262,12 @@ install_supermimic_amd_env() {
         echo "[install.sh] SuperMimic AMD needs a ROCm SDK with hipcc; set ROCM_PATH (found ${rocm_path})." >&2
         exit 1
     fi
-    install_common_embodied_deps
     local warp_path
-    warp_path=$(clone_or_reuse_repo SUPERMIMIC_WARP_PATH ../warp-rocm \
+    warp_path=$(clone_or_reuse_repo SUPERMIMIC_WARP_PATH "$VENV_DIR/warp-rocm" \
         "${GITHUB_PREFIX}https://github.com/ROCm/warp.git")
-    git -C "$warp_path" checkout 36ed75aa65f837a78b20d1a3a1ac08cfe1fc7b71
+    if [ -z "${SUPERMIMIC_WARP_PATH:-}" ]; then
+        git -C "$warp_path" checkout 36ed75aa65f837a78b20d1a3a1ac08cfe1fc7b71
+    fi
     pushd "$warp_path"
     # Follow ROCm/warp's gfx942 Docker recipe, including its HIP compiler flags.
     python build_lib.py --rocm-path "$rocm_path" \
@@ -4290,7 +4292,6 @@ install_supermimic_env() {
             exit 1
             ;;
     esac
-    install_common_embodied_deps
     local cuda_mm cuda_major
     cuda_mm=$(detect_cuda_major_minor) || {
         echo "Could not detect the CUDA version of the installed torch." >&2

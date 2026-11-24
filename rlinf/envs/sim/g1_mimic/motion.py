@@ -20,8 +20,12 @@ import hashlib
 import json
 import math
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import torch
+
+if TYPE_CHECKING:
+    from omegaconf import DictConfig
 
 from rlinf.envs.sim.g1_mimic.constants import (
     ACTION_DIM,
@@ -66,6 +70,18 @@ def assemble_goals(
     world_model_goal = torch.cat((content, rel_pos.flatten(-2), rel_rot), dim=-1)
     actor_goal = torch.cat((content, rel_rot), dim=-1)
     return world_model_goal, actor_goal
+
+
+def root_goals(
+    root: torch.Tensor,
+    content: torch.Tensor,
+    target_pos: torch.Tensor,
+    target_rot: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """World-model and actor goals of the goal window seen from ``root``."""
+    return assemble_goals(
+        content, root[..., :3], quat_to_rotmat(root[..., 3:7]), target_pos, target_rot
+    )
 
 
 class MotionLibrary:
@@ -164,18 +180,15 @@ class MotionLibrary:
             from rlinf.envs.sim.g1_mimic.g1_fk import g1_kinematics
 
             kin = g1_kinematics()
-            # The eager depth walk, not ``forward``: a 4096-row ``forward`` on
-            # CUDA would compile a tree walk that nothing else reuses.
-            walk = (
-                kin._forward_levels
-                if kin._level_specs is not None
-                else kin._forward_serial
-            )
             parts: list[tuple[torch.Tensor, ...]] = []
             with torch.no_grad():
                 for start in range(0, self.num_frames, 4096):
                     batch = self.frames[start : start + 4096]
-                    parts.append(tuple(item.detach() for item in walk(batch)))
+                    parts.append(
+                        tuple(
+                            item.detach() for item in kin.forward(batch, compile=False)
+                        )
+                    )
             self._kin_cache = tuple(
                 torch.cat([part[i] for part in parts], dim=0) for i in range(4)
             )
@@ -452,3 +465,16 @@ def load_motion_library(
         "contain fps, the 29 G1 joint names, the default pose q0, and state "
         "[T, 71]."
     )
+
+
+def build_motion_library(env_cfg: DictConfig, device: torch.device) -> MotionLibrary:
+    """Load the LAFAN1 motion library configured by ``env_cfg``."""
+    motion_format = str(env_cfg.get("motion_format", "lafan1"))
+    num_clips = env_cfg.get("num_clips", None)
+    num_clips = None if num_clips is None else int(num_clips)
+    if motion_format == "lafan1":
+        # motion_on_cpu keeps the frames in host memory; queries gather rows
+        # there and copy only those rows to the simulator device.
+        store = "cpu" if bool(env_cfg.get("motion_on_cpu", False)) else device
+        return load_motion_library(env_cfg.get("motion_path", None), num_clips, store)
+    raise ValueError(f"unknown env motion_format {motion_format!r}")

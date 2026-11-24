@@ -31,13 +31,15 @@ from rlinf.envs.sim.g1_mimic.constants import (
 )
 from rlinf.envs.sim.g1_mimic.features import (
     heading_yaw,
+    heading_yaw_of_matrix,
     projected_gravity,
     rot_apply,
     rot_mul,
     rot_mul_nt,
+    rotation_angle,
     yaw_rotation,
 )
-from rlinf.envs.sim.g1_mimic.g1_fk import PELVIS_BODY, TORSO_BODY, g1_kinematics
+from rlinf.envs.sim.g1_mimic.g1_fk import PELVIS_BODY, TORSO_BODY
 
 TORSO = TORSO_BODY
 PELVIS = PELVIS_BODY
@@ -53,19 +55,6 @@ ACTION_RATE_WEIGHT = -0.1
 JOINT_LIMIT_WEIGHT = -2.0
 # Width of the soft failure threshold, relative to the hard one.
 TERMINATION_SOFTNESS = 0.05
-
-
-def differentiable_fk(
-    state: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """14 tracked bodies of a 71-d state on the G1 kinematic tree."""
-    return g1_kinematics().forward(state)
-
-
-def rotation_angle(rot: torch.Tensor, ref_rot: torch.Tensor) -> torch.Tensor:
-    """Geodesic angle between ``[..., 3, 3]`` rotations."""
-    cos = ((rot * ref_rot).sum(dim=(-2, -1)) - 1.0) * 0.5
-    return torch.acos(cos.clamp(-1.0 + 1e-7, 1.0 - 1e-7))
 
 
 def _kernel(error: torch.Tensor, kernel: tuple[float, float]) -> torch.Tensor:
@@ -138,11 +127,6 @@ def tracking_reward(
         + ACTION_RATE_WEIGHT * rate
         + JOINT_LIMIT_WEIGHT * over.sum(-1)
     )
-
-
-def heading_yaw_of_matrix(rot: torch.Tensor) -> torch.Tensor:
-    """Yaw of a rotation matrix's x axis on the ground plane."""
-    return torch.atan2(rot[..., 1, 0], rot[..., 0, 0])
 
 
 def termination_probability(

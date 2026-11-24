@@ -139,7 +139,7 @@ Docker 构建方式见 :doc:`g1_mimic`，AMD ROCm 平台见 :ref:`在其他硬�
 
    [lafan1] wrote 40 clips, 2.45 h, manifest /data/lafan1_g1/manifest.json
 
-如需在另一台联网机器离线转换、使用实验性 BONES-SEED 数据集或制作自定义 ``clip_*.pt`` 片段，见 :doc:`supermimic_motion`。
+如需在另一台联网机器离线转换或制作自定义 ``clip_*.pt`` 片段，见 :doc:`supermimic_motion`。
 
 运行
 ----
@@ -260,7 +260,7 @@ Docker 构建方式见 :doc:`g1_mimic`，AMD ROCm 平台见 :ref:`在其他硬�
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
        runner.eval_export.output_dir=$RUN_DIR/eval_6000
 
-评测 MaxCoord checkpoint 时需追加 ``actor.model.representation=maxcoord``。完整的评测流程、站立推力恢复测试、输出文件和指标定义见 :doc:`../../evaluations/guides/supermimic`。
+评测 MaxCoord checkpoint 时需追加 ``rollout.model.representation=maxcoord``。完整的评测流程、站立推力恢复测试、输出文件和指标定义见 :doc:`../../evaluations/guides/supermimic`。
 
 可视化与结果
 ------------

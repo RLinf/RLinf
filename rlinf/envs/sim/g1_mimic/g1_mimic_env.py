@@ -12,74 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 motion-tracking training vector for SuperMimic.
+"""G1 motion-tracking training vector for MuJoCo Warp.
 
-The SuperMimic env worker drives this env one control step at a time and
-streams every transition to the actor's replay. A gym ``chunk_step`` cannot
-carry the per-step normalizer statistics, so the env exposes the step as
-:meth:`G1MimicEnv.observe` and :meth:`G1MimicEnv.step`.
+Exposes both the standard RLinf embodied env contract (:meth:`reset` and
+:meth:`chunk_step`) and the fine-grained transition interface (:meth:`observe`
+and :meth:`step`) used by :class:`SuperMimicEnvWorker`. Reset sampling defaults
+to uniform clip frames and may be replaced via :meth:`set_reset_sampler`.
 """
 
 from __future__ import annotations
 
 import torch
-import torch.distributed as dist
 from omegaconf import DictConfig
 
-from rlinf.algorithms.supermimic.representations import make_representation
-from rlinf.algorithms.supermimic.reset_sampler import ReturnResetSampler
-from rlinf.algorithms.supermimic.scan import root_goals
 from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache, run_compiled
 from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM
 from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat
 from rlinf.envs.sim.g1_mimic.g1_fk import set_kinematics_compile
-from rlinf.envs.sim.g1_mimic.mjlab_env import MjlabG1Env
-from rlinf.envs.sim.g1_mimic.motion import MotionLibrary, load_motion_library
+from rlinf.envs.sim.g1_mimic.mjlab_env import MjlabG1Env, env_device
+from rlinf.envs.sim.g1_mimic.motion import build_motion_library, root_goals
+from rlinf.envs.sim.g1_mimic.representations import make_representation
 from rlinf.envs.sim.g1_mimic.reward import tracking_reward
-from rlinf.models.embodiment.supermimic.normalization import merged_moments
-from rlinf.scheduler import Worker
 from rlinf.utils.utils import seed_everything
 
 
-def env_device() -> torch.device:
-    """The accelerator this worker process uses, or the CPU.
-
-    Float32 matmuls in the kinematics and rewards use TF32 tensor cores, as in
-    the policy workers; the switch is process-wide.
-    """
-    device_type = Worker.torch_device_type
-    platform = Worker.torch_platform
-    if device_type is None or platform is None or not platform.is_available():
-        return torch.device("cpu")
-    if device_type == "cuda":
-        torch.backends.cuda.matmul.allow_tf32 = True
-    return torch.device(device_type, platform.current_device())
-
-
-def build_motion_library(env_cfg: DictConfig, device: torch.device) -> MotionLibrary:
-    """Load the LAFAN1 or BONES-SEED library ``env_cfg`` names."""
-    motion_format = str(env_cfg.get("motion_format", "lafan1"))
-    # null loads every clip in the directory (after filtering, for BONES).
-    num_clips = env_cfg.get("num_clips", None)
-    num_clips = None if num_clips is None else int(num_clips)
-    if motion_format == "bones_seed":
-        from rlinf.envs.sim.g1_mimic.bones import load_bones_library
-
-        return load_bones_library(str(env_cfg.get("motion_path", "")), num_clips)
-    if motion_format == "lafan1":
-        # motion_on_cpu keeps the frames in host memory; queries gather rows
-        # there and copy only those rows to the simulator device.
-        store = "cpu" if bool(env_cfg.get("motion_on_cpu", False)) else device
-        return load_motion_library(env_cfg.get("motion_path", None), num_clips, store)
-    raise ValueError(f"unknown env motion_format {motion_format!r}")
-
-
 class G1MimicEnv:
-    """One rank's training envs.
+    """One rank's G1 motion-tracking training envs.
 
-    Resets draw a library frame from the return-based sampler, write that
-    frame (with mjlab's reset noise) and point the reference clock at the
-    next frame, the target of the first step.
+    Resets draw a library frame (uniformly by default, or from an injected
+    reset sampler), write that frame with mjlab's reset noise, and point the
+    reference clock at the next frame, the target of the first step.
     """
 
     def __init__(
@@ -109,23 +71,32 @@ class G1MimicEnv:
             max_episode_seconds=float(cfg.max_episode_seconds),
         )
         self._compile_cache = CompileCache(enabled=bool(cfg.torch_compile))
-        self.group: dist.ProcessGroup | None = None
-        self.reset_sampler = ReturnResetSampler(
-            self.motion.ends, self.num_envs, self.device
-        )
+        self.reset_sampler = None
         self.prev_action = torch.zeros(self.num_envs, ACTION_DIM, device=self.device)
         self._observed: dict[str, torch.Tensor] = {}
         self._clear_metrics()
         self._reset(torch.arange(self.num_envs, device=self.device))
 
-    def set_process_group(self, group: dist.ProcessGroup | None) -> None:
-        """Group of every training env rank; statistics are merged over it."""
-        self.group = group
-        self.reset_sampler.group = group
+    def set_reset_sampler(self, reset_sampler) -> None:
+        """Attach an algorithm-owned reset sampler (``sample``/``record``)."""
+        self.reset_sampler = reset_sampler
+
+    def _sample_reset_frames(self, count: int) -> torch.Tensor:
+        if self.reset_sampler is not None:
+            return self.reset_sampler.sample(count)
+        frame_count = self.motion.num_frames
+        if frame_count <= 1:
+            return torch.zeros(count, dtype=torch.long, device=self.device)
+        frames = torch.randint(0, frame_count - 1, (count,), device=self.device)
+        ends = self.motion.ends.to(self.device)
+        offsets = self.motion.offsets.to(self.device)
+        clip = torch.searchsorted(ends, frames, right=True)
+        on_last = (frames == ends[clip] - 1) & (frames > offsets[clip])
+        return torch.where(on_last, frames - 1, frames)
 
     def _reset(self, env_ids: torch.Tensor) -> None:
         motion_id, time = self.motion.locate(
-            self.reset_sampler.sample(int(env_ids.numel()))
+            self._sample_reset_frames(int(env_ids.numel()))
         )
         self.sim.reset(env_ids, motion_id, time)
         self.sim.motion_time[env_ids] += 1
@@ -151,17 +122,12 @@ class G1MimicEnv:
         self._observed = {"state": full, "frame": frame}
         return {"enc": enc, "goal": goal}
 
-    def policy_input_stats(
-        self, obs: dict[str, torch.Tensor]
-    ) -> dict[str, torch.Tensor]:
-        """Moments of the encodings and goals of :meth:`observe`, over every env rank.
-
-        A collective: every env rank calls it once per step.
-        """
-        return {
-            "enc": merged_moments(obs["enc"], self.group),
-            "goal": merged_moments(obs["goal"], self.group),
-        }
+    def reset(self, *args, **kwargs) -> tuple[dict[str, torch.Tensor], dict]:
+        """Reset all envs and return packed ``{"states": cat(enc, goal)}``."""
+        del args, kwargs
+        self._reset(torch.arange(self.num_envs, device=self.device))
+        obs = self.observe()
+        return {"states": torch.cat((obs["enc"], obs["goal"]), dim=-1)}, {}
 
     def _score(
         self,
@@ -193,9 +159,9 @@ class G1MimicEnv:
 
         The transition holds the state and frame of :meth:`observe`, the
         executed action, the action executed one step earlier, the episode
-        end flags and the sim context, plus the merged moments of the
-        executed PD targets under ``target_stats``. Envs that finished are
-        reset before this returns. The caller owns every returned tensor.
+        end flags, the sim context, the scalar reward, and the executed PD
+        targets under ``pd_target``. Envs that finished are reset before this
+        returns. The caller owns every returned tensor.
         """
         sim = self.sim
         executed = action + self.action_noise_std * torch.randn_like(action)
@@ -227,9 +193,8 @@ class G1MimicEnv:
             "terminated": failed,
             "truncated": truncated,
             "sim_context": context,
-            "target_stats": merged_moments(
-                sim.pd_offset + sim.action_scale * executed, self.group
-            ),
+            "reward": reward,
+            "pd_target": sim.pd_offset + sim.action_scale * executed,
         }
         # The transition keeps ``executed``; resetting envs zeroes prev_action.
         self.prev_action.copy_(executed)
@@ -238,18 +203,37 @@ class G1MimicEnv:
             self._reset(done)
         # Episodes that ended on this step draw their start before this step
         # can refresh the reset distribution.
-        self.reset_sampler.record(
-            result["frame"],
-            reward,
-            failed,
-            result["clip_end"],
-            result["timeout"] & ~result["clip_end"],
-        )
+        if self.reset_sampler is not None:
+            self.reset_sampler.record(
+                result["frame"],
+                reward,
+                failed,
+                result["clip_end"],
+                result["timeout"] & ~result["clip_end"],
+            )
         self._reward_total += reward.sum()
         self._failures += failed.sum()
         self._episodes += failed.sum() + truncated.sum()
         self._steps += 1
         return transition
+
+    def chunk_step(self, chunk_actions):
+        """Standard RLinf single-action chunk step over all envs."""
+        actions = torch.as_tensor(chunk_actions, dtype=torch.float32)
+        actions = actions.reshape(self.num_envs, -1, ACTION_DIM)
+        if actions.shape[1] != 1:
+            raise ValueError(
+                f"G1MimicEnv steps one action per call, got chunks of {actions.shape[1]}"
+            )
+        if not self._observed:
+            self.observe()
+        transition = self.step(actions[:, 0].to(self.device))
+        obs = self.observe()
+        packed = {"states": torch.cat((obs["enc"], obs["goal"]), dim=-1)}
+        rewards = transition["reward"].detach().cpu().unsqueeze(1)
+        terminations = transition["terminated"].detach().cpu().unsqueeze(1)
+        truncations = transition["truncated"].detach().cpu().unsqueeze(1)
+        return [packed], rewards, terminations, truncations, [{}]
 
     def _clear_metrics(self) -> None:
         self._reward_total = torch.zeros((), device=self.device)
@@ -262,23 +246,34 @@ class G1MimicEnv:
         totals = torch.stack(
             (self._reward_total, self._failures.float(), self._episodes.float())
         )
-        value = self.reset_sampler.value
-        reward, failures, episodes, value_mean, value_min = torch.cat(
-            (totals, value.mean().reshape(1), value.min().reshape(1))
-        ).tolist()
         transitions = max(self._steps * self.num_envs, 1)
+        if self.reset_sampler is not None:
+            value = self.reset_sampler.value
+            reward, failures, episodes, value_mean, value_min = torch.cat(
+                (totals, value.mean().reshape(1), value.min().reshape(1))
+            ).tolist()
+            self._clear_metrics()
+            return {
+                "sim/reward_mean": reward / transitions,
+                "sim/terminal_rate": failures / transitions,
+                "sim/episodes_finished": episodes,
+                "reset/bin_value_mean": value_mean,
+                "reset/bin_value_min": value_min,
+            }
+        reward, failures, episodes = totals.tolist()
         self._clear_metrics()
         return {
             "sim/reward_mean": reward / transitions,
             "sim/terminal_rate": failures / transitions,
             "sim/episodes_finished": episodes,
-            "reset/bin_value_mean": value_mean,
-            "reset/bin_value_min": value_min,
         }
 
     def state_dict(self) -> dict:
-        """Reset-sampler statistics. Simulator state is not saved."""
+        """Reset-sampler statistics when attached. Simulator state is not saved."""
+        if self.reset_sampler is None:
+            return {}
         return {"reset_sampler": self.reset_sampler.state_dict()}
 
     def load_state_dict(self, state: dict) -> None:
-        self.reset_sampler.load_state_dict(state["reset_sampler"])
+        if self.reset_sampler is not None and "reset_sampler" in state:
+            self.reset_sampler.load_state_dict(state["reset_sampler"])

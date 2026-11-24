@@ -57,6 +57,9 @@ class ReturnResetSampler:
         self.device = device
         self.group = group
         self.clip_ends = clip_ends.to(device=device, dtype=torch.long)
+        self.clip_starts = torch.cat(
+            (torch.zeros(1, dtype=torch.long, device=device), self.clip_ends[:-1])
+        )
         self.frame_count = int(self.clip_ends[-1])
         self.bin_count = self.frame_count // BIN_FRAMES + 1
         self.value_max = value_ceiling(RETURN_GAMMA)
@@ -77,13 +80,18 @@ class ReturnResetSampler:
 
     def sample(self, n: int) -> torch.Tensor:
         """``n`` library frames; a clip's last frame moves one frame back."""
+        if self.frame_count <= 1:
+            return torch.zeros(n, dtype=torch.long, device=self.device)
         bins = torch.multinomial(self.probs, n, replacement=True)
         last = self.frame_count - 2
         low = bins * last // self.bin_count
         span = ((bins + 1) * last // self.bin_count - low).clamp(min=1)
         jitter = (torch.rand(n, device=self.device) * span).long()
         frames = (low + jitter).clamp(max=last)
-        on_last = torch.isin(frames, self.clip_ends - 1)
+        clip = torch.searchsorted(self.clip_ends, frames, right=True)
+        on_last = (frames == self.clip_ends[clip] - 1) & (
+            frames > self.clip_starts[clip]
+        )
         return torch.where(on_last, frames - 1, frames)
 
     def record(

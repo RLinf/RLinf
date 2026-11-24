@@ -89,7 +89,7 @@ actor:
   group_name: ActorGroup
   training_backend: fsdp
   micro_batch_size: 1
-  global_batch_size: ${algorithm.wm_window_batch}
+  global_batch_size: 2048
   seed: 0
   enable_offload: False
   # Record each global update as one CUDA graph after a few eager updates.
@@ -125,7 +125,7 @@ actor:
     clip_grad_value: 0.1
     lr_scheduler: constant
   world_model_optim:
-    lr: ${actor.optim.lr}
+    lr: 2.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-8
@@ -133,11 +133,19 @@ actor:
     capturable: ${actor.cuda_graph}
     clip_grad: 1.0
     lr_scheduler: constant
-  critic_optim: ${actor.world_model_optim}
+  critic_optim:
+    lr: 2.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-8
+    fused: True
+    capturable: ${actor.cuda_graph}
+    clip_grad: 1.0
+    lr_scheduler: constant
   # Muon on the hidden matrices of every network.
   muon_optim:
     optimizer: muon
-    lr: ${actor.optim.lr}
+    lr: 2.0e-4
     weight_decay: 0.1
     momentum: 0.95
     nesterov: True

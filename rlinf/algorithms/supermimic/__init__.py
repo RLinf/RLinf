@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SuperMimic state representations, objectives, scans, replay and reset sampling.
+"""SuperMimic objectives, scans, replay, reset sampling and config validation.
 
 Networks live in ``rlinf.models.embodiment.supermimic``. The G1 simulator,
-reference motion and reward live in ``rlinf.envs.sim.g1_mimic``; the
-training phases in
+state representations, reference motion and reward live in
+``rlinf.envs.sim.g1_mimic``; the training phases in
 :class:`~rlinf.workers.actor.fsdp_supermimic_policy_worker.EmbodiedSuperMimicFSDPPolicy`.
 """

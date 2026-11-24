@@ -30,6 +30,8 @@ import torch
 import torch.distributed as dist
 from omegaconf import DictConfig
 
+from rlinf.algorithms.supermimic.reset_sampler import ReturnResetSampler
+from rlinf.models.embodiment.supermimic.normalization import merged_moments
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.utils import get_rng_state, set_rng_state
 from rlinf.workers.env.env_worker import EnvWorker
@@ -43,18 +45,33 @@ class SuperMimicEnvWorker(EnvWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
         self._actor_group_name = cfg.actor.group_name if not self.only_eval else None
+        self._env_group: dist.ProcessGroup | None = None
 
     def init_worker(self) -> None:
         # The reset statistics and the input moments are merged over every
         # training env rank, so those ranks share one process group.
         distributed = self.enable_train and self._world_size > 1
         if distributed and not dist.is_initialized():
+            local_rank = os.environ.get("LOCAL_RANK")
+            if (
+                local_rank is not None
+                and self.torch_platform is not None
+                and self.torch_platform.is_available()
+            ):
+                self.torch_platform.set_device(int(local_rank))
             dist.init_process_group(timeout=Cluster.get_collective_timeout())
         super().init_worker()
+        self._env_group = dist.group.WORLD if distributed else None
         if self.enable_train:
-            group = dist.group.WORLD if distributed else None
             for env in self.env_list:
-                env.set_process_group(group)
+                env.set_reset_sampler(
+                    ReturnResetSampler(
+                        env.motion.ends,
+                        env.num_envs,
+                        env.device,
+                        group=self._env_group,
+                    )
+                )
 
     @property
     def train_env(self):
@@ -71,15 +88,19 @@ class SuperMimicEnvWorker(EnvWorker):
         )
         for _ in range(num_steps):
             obs = env.observe()
-            stats = env.policy_input_stats(obs)
+            enc_stats = merged_moments(obs["enc"], self._env_group)
+            goal_stats = merged_moments(obs["goal"], self._env_group)
             self.send(
-                {**obs, "enc_stats": stats["enc"], "goal_stats": stats["goal"]},
+                {**obs, "enc_stats": enc_stats, "goal_stats": goal_stats},
                 rollout,
                 rank,
             )
             transition = env.step(self.recv(rollout, rank))
-            transition["enc_stats"] = stats["enc"]
-            transition["goal_stats"] = stats["goal"]
+            pd_target = transition.pop("pd_target")
+            transition.pop("reward", None)
+            transition["target_stats"] = merged_moments(pd_target, self._env_group)
+            transition["enc_stats"] = enc_stats
+            transition["goal_stats"] = goal_stats
             self.send(transition, actor, rank)
 
     def consume_metrics(self) -> dict[str, float]:
@@ -106,7 +127,3 @@ class SuperMimicEnvWorker(EnvWorker):
         self.train_env.load_state_dict(state["env"])
         if own:
             set_rng_state(state["rng"])
-
-    def eval_metadata(self) -> dict:
-        """Task names and settings of the evaluation env, for the result tables."""
-        return self.eval_env_list[0].metadata()

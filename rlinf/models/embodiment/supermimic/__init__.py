@@ -11,3 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from omegaconf import DictConfig
+
+    from rlinf.models.embodiment.supermimic.supermimic_policy import SuperMimicPolicy
+
+
+def get_model(cfg: DictConfig, torch_dtype=None) -> SuperMimicPolicy:
+    """Build :class:`SuperMimicPolicy` from a model config."""
+    del torch_dtype
+    from rlinf.models.embodiment.supermimic.supermimic_policy import SuperMimicPolicy
+
+    return SuperMimicPolicy.from_config(cfg)

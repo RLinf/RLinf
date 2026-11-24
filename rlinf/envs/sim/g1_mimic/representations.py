@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""State layouts the world model predicts in.
-
-The replay stores a layout's full state; the world model reads its
-root-relative encoding, predicts velocity increments and integrates them
-into the next root pose and encoding.
+"""G1 state layouts for motion imitation and world-model prediction.
 
 * ``gencoord``: the 71-d simulator state. Encoding ``[z, gravity_b, v_b,
   w_b, q, qd]`` (68), prediction ``[dv_b, dw_b, dqd]`` (35).
@@ -39,6 +35,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from rlinf.envs.sim.g1_mimic.constants import (
+    DECIMATION,
     DT,
     JOINT_POS,
     JOINT_VEL,
@@ -57,9 +54,8 @@ from rlinf.envs.sim.g1_mimic.features import (
     rot_mul_t,
     rotmat_to_6d,
 )
+from rlinf.envs.sim.g1_mimic.g1_fk import g1_kinematics
 from rlinf.envs.sim.g1_mimic.g1_ik import ChainInverseKinematics
-from rlinf.envs.sim.g1_mimic.mjlab_env import DECIMATION
-from rlinf.envs.sim.g1_mimic.reward import differentiable_fk
 
 POSE_WEIGHT = (DECIMATION + 1) / (2 * DECIMATION)
 
@@ -203,7 +199,7 @@ class GeneralizedCoordinates(nn.Module):
         rot = quat_to_rotmat(root[..., 3:7])
         state = torch.cat((root, q, rot_apply(rot, lin), ang, qd), dim=-1)
         lead = state.shape[:-1]
-        out = differentiable_fk(state.reshape(-1, STATE_DIM))
+        out = g1_kinematics().forward(state.reshape(-1, STATE_DIM))
         return tuple(part.reshape(*lead, *part.shape[1:]) for part in out)
 
 
