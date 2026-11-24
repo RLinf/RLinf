@@ -663,7 +663,7 @@ ALPHA_SORTED_INDEX_RE = re.compile(
     r"^docs/source-(?:en|zh)/rst_source/"
     r"(?:examples/(?:simulators_index|vla_wam_index|sft_index|world_model_index|"
     r"video_models|methods_index|agentic/(?:math_reasoning|agents)/index)|"
-    r"reference/algorithms/index|resources/publications/index)\.rst$"
+    r"reference/(?:algorithms|api)/index|resources/publications/index)\.rst$"
 )
 ALPHA_PREFIX_SKIP = {"Overview", "Workflows", "总览", "通用流程"}
 
