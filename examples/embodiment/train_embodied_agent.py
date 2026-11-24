@@ -71,6 +71,17 @@ def main(cfg) -> None:
         from rlinf.workers.actor.fsdp_rlt_td3_policy_worker import RLTTD3FSDPPolicy
 
         actor_worker_cls = RLTTD3FSDPPolicy
+    elif cfg.algorithm.loss_type == "prefix_off_policy":
+        if use_training_pipeline:
+            raise ValueError(
+                "runner.use_training_pipeline=True is not supported for "
+                "prefix_off_policy."
+            )
+        from rlinf.workers.actor.fsdp_prefix_off_policy_worker import (
+            PrefixOffPolicyFSDPPolicy,
+        )
+
+        actor_worker_cls = PrefixOffPolicyFSDPPolicy
     elif cfg.algorithm.loss_type == "embodied_dagger":
         if use_training_pipeline:
             raise ValueError(
