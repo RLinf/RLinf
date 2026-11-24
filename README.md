@@ -35,7 +35,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
-- [2026/11] 🔥 RLinf supports evaluating OpenPI π₀.₅ on [RoboUniverse-10K](https://github.com/Einsia/RoboUniverse-10K), covering 10,807 Franka Panda and AgileX dual-Piper Isaac Sim manipulation tasks. Doc: [Evaluation on RoboUniverse-10K](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robouniverse.html).
+- [2026/11] 🔥 RLinf supports evaluating OpenPI π₀.₅ on [RoboUniverse-10K](https://github.com/Einsia/RoboUniverse-10K), covering 10,807 Isaac Sim manipulation tasks for Franka Panda and AgileX dual-Piper. Doc: [Evaluation on RoboUniverse-10K](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robouniverse.html).
 - [2026/11] 🔥 RLinf supports FlexRLT: train a compact actor-critic from frozen VLA features, with configurable heads, AC/TD3 updates, and STEAM routing. Doc: [FlexRLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html).
 - [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
 - [2026/11] 🔥 RLinf supports Reward Feedback Learning (ReFL) for fine-tuning SD3.5 Medium with ImageReward. Doc: [ReFL](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html).

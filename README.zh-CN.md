@@ -34,7 +34,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
-- [2026/11] 🔥 RLinf 支持在 [RoboUniverse-10K](https://github.com/Einsia/RoboUniverse-10K) 上评估 OpenPI π₀.₅，覆盖 10,807 个 Franka Panda 与 AgileX 双臂 Piper Isaac Sim 操作任务。文档：[RoboUniverse-10K 评估](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robouniverse.html)。
+- [2026/11] 🔥 RLinf 支持在 [RoboUniverse-10K](https://github.com/Einsia/RoboUniverse-10K) 上评估 OpenPI π₀.₅，覆盖 Isaac Sim 中 Franka Panda 与 AgileX 双臂 Piper 的 10,807 个操作任务。文档：[RoboUniverse-10K 评估](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robouniverse.html)。
 - [2026/11] 🔥 RLinf 新增 FlexRLT，可直接用冻结 VLA 的特征训练小型 actor 和 critic，并分别选择特征表示、网络、AC/TD3 算法及 STEAM 门控。文档：[FlexRLT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/flexrlt.html)。
 - [2026/11] 🔥 RLinf 支持在 [DexJoCo](https://github.com/brave-eai/dexjoco) 灵巧操作基准上用 SFT 和 PPO 训练 CNN 和 π₀.₅ policy。PPO 将 π₀.₅ 在 `water_plant` 上的成功率从 SFT 后的 78.1% 提升至 98.4%。文档：[基于 DexJoCo 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html)。
 - [2026/11] 🔥 RLinf 支持奖励反馈学习（ReFL），使用 ImageReward 微调 SD3.5 Medium。文档：[ReFL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/refl.html)。

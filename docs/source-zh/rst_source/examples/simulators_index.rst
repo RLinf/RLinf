@@ -172,13 +172,13 @@
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/robouniverse.html" style="display: block;"><img src="https://raw.githubusercontent.com/Einsia/RoboUniverse-10K/main/assets/task-taxonomy.png"
-            alt="RoboUniverse-10K 操作基准"
+            alt="RoboUniverse-10K 任务分类"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/robouniverse.html" style="text-decoration: underline; color: blue;">
            <b>RoboUniverse-10K 评估</b>
          </a><br>
-         10,807 个 Franka 与 AgileX 任务 · π₀.₅ 评估
+         10,807 个 Franka 与 AgileX Isaac Sim 任务 · π₀.₅ 评估
        </p>
      </div>
 

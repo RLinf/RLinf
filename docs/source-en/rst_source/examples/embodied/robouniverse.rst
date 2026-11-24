@@ -31,7 +31,7 @@ Evaluate embodied policies from two RGB views, joint states, and a natural-langu
    .. grid-item-card:: Tasks
       :text-align: center
 
-      10,307 training tasks · 500 ``heldout500`` tasks
+      10,807 tasks (500 in ``heldout500``)
 
    .. grid-item-card:: Hardware
       :text-align: center
@@ -73,14 +73,14 @@ Observation and Action
    * - Action
      - Joint-position targets at 20 Hz on Franka (0.05 s step) and 10 Hz on AgileX (0.1 s step, per each task's ``env_spec.json``), clamped to each task's joint limits.
    * - Reward
-     - Sparse terminal reward of 1 on verified task success and 0 on failure; simulator or verifier infrastructure errors are logged separately in ``eval/infra_error``.
+     - Sparse terminal reward of 1 on verified task success and 0 on failure.
    * - Prompt
      - Natural-language task instruction packaged with each task.
 
 Installation
 ------------
 
-Run RLinf on a Linux x86_64 host or inside NVIDIA's ``nvcr.io/nvidia/isaac-sim:5.1.0`` container so the simulator subprocess can invoke ``/isaac-sim/python.sh`` directly.
+Run RLinf on a Linux x86_64 host with Isaac Sim 5.1.0 installed, or inside NVIDIA's ``nvcr.io/nvidia/isaac-sim:5.1.0`` container, so the simulator subprocess can invoke Isaac Sim's Python interpreter directly (``/isaac-sim/python.sh`` inside the container; set ``init_params.sim_python`` to your host path if installed elsewhere).
 
 .. include:: _setup_common.rst
    :end-before: Then set up the dependencies
@@ -108,7 +108,7 @@ Download either a single smoke-test task archive or the full ``tasks/`` tree int
 .. code-block:: bash
 
    # Single Franka smoke-test task
-   hf download Einsia/RoboUniverse-10K tasks/franka/000247_rotate_twist.zip \
+   hf download Einsia/RoboUniverse-10K tasks/franka/000/000247_rotate_twist.zip \
      --repo-type dataset --revision ae170e8093dd6061765c14f2fb6a209432517d85 \
      --local-dir /path/to/RoboUniverse-10K
 
@@ -120,12 +120,12 @@ Download either a single smoke-test task archive or the full ``tasks/`` tree int
 Download the Model
 ------------------
 
-Prepare a PyTorch OpenPI π₀.₅ checkpoint fine-tuned for the target robot's joint space along with its ``norm_stats.json`` assets:
+Prepare a PyTorch OpenPI π₀.₅ checkpoint fine-tuned for the target robot's joint space along with its normalization statistics:
 
-- **Franka Panda (9-DoF):** place the checkpoint at ``/path/to/openpi_robouniverse_franka_checkpoint`` (loaded with ``openpi.config_name: pi05_robouniverse_franka``).
-- **AgileX dual-Piper (16-DoF):** place the checkpoint at ``/path/to/openpi_robouniverse_agilex_checkpoint`` (loaded with ``openpi.config_name: pi05_robouniverse_agilex``).
+- **Franka Panda (9-DoF):** place the checkpoint at ``/path/to/openpi_robouniverse_franka_checkpoint`` with ``norm_stats.json`` at ``<model_path>/robouniverse_franka/norm_stats.json`` (loaded by ``openpi.config_name: pi05_robouniverse_franka``).
+- **AgileX dual-Piper (16-DoF):** place the checkpoint at ``/path/to/openpi_robouniverse_agilex_checkpoint`` with ``norm_stats.json`` at ``<model_path>/robouniverse_agilex/norm_stats.json`` (loaded by ``openpi.config_name: pi05_robouniverse_agilex``).
 
-See :doc:`OpenPI SFT </rst_source/examples/embodied/sft_openpi>` for training or converting OpenPI checkpoints.
+If ``norm_stats.json`` lives elsewhere, pass ``rollout.model.openpi_data.norm_stats_path=/path/to/norm_stats_dir``. For the general OpenPI SFT and checkpoint-conversion workflow, see :doc:`OpenPI SFT </rst_source/examples/embodied/sft_openpi>`.
 
 Run It
 ------
@@ -151,7 +151,9 @@ Launch Franka evaluation:
 
    bash evaluations/run_eval.sh robouniverse robouniverse_franka_eval_openpi
 
-To run a single smoke-test task, pass ``env.eval.init_params.cases='["000247_rotate_twist"]'`` as an override. To evaluate AgileX dual-Piper tasks, update ``evaluations/robouniverse/robouniverse_agilex_eval_openpi.yaml`` with your dataset and checkpoint paths and run:
+By default, each config runs 1 episode from ``heldout500`` (``rollout_epoch: 1``, ``total_num_envs: 1``) and writes logs and TensorBoard events to ``logs/<timestamp>-<config_name>/``. Override ``env.eval.rollout_epoch``, ``env.eval.total_num_envs``, or ``env.eval.init_params.cases='["000247_rotate_twist"]'`` to select specific tasks or evaluate more episodes.
+
+To evaluate AgileX dual-Piper tasks, update ``data_root``, ``sim_python``, ``accept_isaac_eula: true``, and ``model_path`` in ``evaluations/robouniverse/robouniverse_agilex_eval_openpi.yaml`` and run:
 
 .. code-block:: bash
 
@@ -164,10 +166,9 @@ To run a single smoke-test task, pass ``env.eval.init_params.cases='["000247_rot
 Visualization and Results
 -------------------------
 
-Inspect evaluation metrics in the terminal and TensorBoard:
+Inspect evaluation logs in ``logs/<timestamp>-<config_name>/`` and TensorBoard:
 
-- ``eval/success_once``: fraction of evaluated episodes whose task verifier returned ``success``.
-- ``eval/return``: mean episodic return (1.0 on verified success, 0.0 otherwise).
-- ``eval/infra_error``: fraction of episodes that terminated early because the simulator or task verifier raised an error rather than failing the task.
+- ``eval/success_once`` and ``eval/return`` follow RLinf's standard evaluation metric definitions in :doc:`Training Metrics </rst_source/reference/metrics>`.
+- ``eval/infra_error`` reports the fraction of episodes aborted by a simulator or task-verifier error rather than policy failure.
 
-See :doc:`Logger </rst_source/guides/logger>` for logging backends and output configuration.
+See :doc:`Training Visualisation </rst_source/guides/logger>` for logging backends and output configuration.

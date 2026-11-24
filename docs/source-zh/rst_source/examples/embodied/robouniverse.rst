@@ -8,7 +8,7 @@ RoboUniverse-10K 评估
 
    RoboUniverse-10K 在 Franka Panda 和 AgileX 双臂 Piper 上的任务分类（来源：`Einsia/RoboUniverse-10K <https://github.com/Einsia/RoboUniverse-10K>`__）。
 
-使用 π₀.₅ / OpenPI 在 RoboUniverse-10K 的 10,807 个 Isaac Sim 操作任务上运行具身评估。
+在 RoboUniverse-10K 的 10,807 个 Isaac Sim 操作任务上评估 π₀.₅ / OpenPI policy。
 
 概览
 ----
@@ -31,14 +31,14 @@ RoboUniverse-10K 评估
    .. grid-item-card:: 任务
       :text-align: center
 
-      10,307 个训练任务 · 500 个 ``heldout500`` 任务
+      10,807 个任务（``heldout500`` 含 500 个）
 
    .. grid-item-card:: 硬件
       :text-align: center
 
       Linux x86_64 · NVIDIA RTX GPU（Isaac Sim 5.1.0）
 
-| **你将完成：** 安装 → 下载数据集和模型 → 配置 EULA 与路径 → 启动评估 → 查看 ``eval/success_once``。
+| **你将完成：** 安装 → 下载数据集和模型 → 配置 EULA 与路径 → 启动评估 → 查看 ``eval/success_once``\ 。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 阅读 `NVIDIA Isaac Sim 许可协议 <https://docs.isaacsim.omniverse.nvidia.com/5.1.0/common/NVIDIA_Omniverse_License_Agreement.html>`_。
 
 任务
@@ -71,16 +71,16 @@ RoboUniverse-10K 评估
    * - Observation
      - 外部相机与腕部相机两路 640×480 RGB 图像、实测关节位置（Franka 为 9 维，AgileX 为 16 维）以及可选关节速度。
    * - Action
-     - Franka 为 20 Hz（0.05 s/步）、AgileX 为 10 Hz（0.1 s/步，以各任务 ``env_spec.json`` 为准）的关节位置目标，自动裁剪到各任务的关节限位内。
+     - 关节位置目标，按各任务 ``env_spec.json`` 运行（Franka 为 20 Hz / 0.05 s，AgileX 为 10 Hz / 0.1 s），并自动裁剪到关节限位内。
    * - Reward
-     - 回合结束给出稀疏奖励（成功为 1，失败为 0）；模拟器或评测器异常单独记入 ``eval/infra_error``。
+     - 回合结束给出稀疏奖励（成功为 1，失败为 0）。
    * - Prompt
      - 每个任务自带的自然语言指令。
 
 安装
 ----
 
-在装有 Isaac Sim 5.1.0 的 Linux x86_64 主机或 NVIDIA ``nvcr.io/nvidia/isaac-sim:5.1.0`` 容器中运行 RLinf，以便模拟器子进程直接调用 ``/isaac-sim/python.sh``。
+在装有 Isaac Sim 5.1.0 的 Linux x86_64 主机或 NVIDIA ``nvcr.io/nvidia/isaac-sim:5.1.0`` 容器中运行 RLinf，以便模拟器子进程直接调用 Isaac Sim 的 Python 解释器（容器内默认为 ``/isaac-sim/python.sh``\ ，主机安装需通过 ``init_params.sim_python`` 指定路径）。
 
 .. include:: _setup_common.rst
    :end-before: 然后，使用下列两种方式之一准备依赖
@@ -95,7 +95,7 @@ RoboUniverse-10K 评估
 下载数据集
 ----------
 
-从 Hugging Face 下载任务索引和 ``heldout500`` 划分文件到 ``/path/to/RoboUniverse-10K``：
+从 Hugging Face 下载任务索引和 ``heldout500`` 划分文件到 ``/path/to/RoboUniverse-10K``\ ：
 
 .. code-block:: bash
 
@@ -108,7 +108,7 @@ RoboUniverse-10K 评估
 .. code-block:: bash
 
    # 下载单个 Franka 冒烟测试任务
-   hf download Einsia/RoboUniverse-10K tasks/franka/000247_rotate_twist.zip \
+   hf download Einsia/RoboUniverse-10K tasks/franka/000/000247_rotate_twist.zip \
      --repo-type dataset --revision ae170e8093dd6061765c14f2fb6a209432517d85 \
      --local-dir /path/to/RoboUniverse-10K
 
@@ -120,17 +120,17 @@ RoboUniverse-10K 评估
 下载模型
 --------
 
-准备针对目标机器人关节空间微调好的 PyTorch OpenPI π₀.₅ checkpoint 及其 ``norm_stats.json`` 文件：
+准备针对目标机器人关节空间微调好的 PyTorch OpenPI π₀.₅ checkpoint 及其归一化统计文件：
 
-- **Franka Panda（9 维动作）：** 将权重放到 ``/path/to/openpi_robouniverse_franka_checkpoint``\ （对应 ``openpi.config_name: pi05_robouniverse_franka``\ ）。
-- **AgileX 双臂 Piper（16 维动作）：** 将权重放到 ``/path/to/openpi_robouniverse_agilex_checkpoint``\ （对应 ``openpi.config_name: pi05_robouniverse_agilex``\ ）。
+- **Franka Panda（9 维动作）：** 将权重放到 ``/path/to/openpi_robouniverse_franka_checkpoint``\ ，``norm_stats.json`` 放在 ``<model_path>/robouniverse_franka/norm_stats.json``\ （对应 ``openpi.config_name: pi05_robouniverse_franka``\ ）。
+- **AgileX 双臂 Piper（16 维动作）：** 将权重放到 ``/path/to/openpi_robouniverse_agilex_checkpoint``\ ，``norm_stats.json`` 放在 ``<model_path>/robouniverse_agilex/norm_stats.json``\ （对应 ``openpi.config_name: pi05_robouniverse_agilex``\ ）。
 
-训练或转换 OpenPI checkpoint 的方法见 :doc:`OpenPI 监督微调 </rst_source/examples/embodied/sft_openpi>`。
+如果 ``norm_stats.json`` 位于其他目录，可通过 ``rollout.model.openpi_data.norm_stats_path=/path/to/norm_stats_dir`` 覆盖。通用的 OpenPI SFT 训练与权重转换流程见 :doc:`OpenPI 监督微调 </rst_source/examples/embodied/sft_openpi>`。
 
 运行
 ----
 
-编辑 ``evaluations/robouniverse/robouniverse_franka_eval_openpi.yaml``，填写数据集目录、checkpoint 路径、模拟器 Python 路径并同意 NVIDIA 许可协议：
+编辑 ``evaluations/robouniverse/robouniverse_franka_eval_openpi.yaml``\ ，填写数据集目录、checkpoint 路径、Isaac Sim Python 路径并同意 NVIDIA 许可协议：
 
 .. code-block:: yaml
 
@@ -151,7 +151,9 @@ RoboUniverse-10K 评估
 
    bash evaluations/run_eval.sh robouniverse robouniverse_franka_eval_openpi
 
-单任务冒烟测试可追加覆盖参数 ``env.eval.init_params.cases='["000247_rotate_twist"]'``。评估 AgileX 双臂任务时，在 ``evaluations/robouniverse/robouniverse_agilex_eval_openpi.yaml`` 中填写对应数据集和权重路径后运行：
+默认配置会从 ``heldout500`` 评估 1 个回合（``rollout_epoch: 1``\ 、``total_num_envs: 1``\ ），并将日志与 TensorBoard 文件写入 ``logs/<timestamp>-<config_name>/``\ 。可通过覆盖 ``env.eval.rollout_epoch``\ 、``env.eval.total_num_envs`` 或 ``env.eval.init_params.cases='["000247_rotate_twist"]'`` 选择指定任务或扩展评估回合数。
+
+评估 AgileX 双臂任务时，在 ``evaluations/robouniverse/robouniverse_agilex_eval_openpi.yaml`` 中填写 ``data_root``\ 、``sim_python``\ 、``accept_isaac_eula: true`` 和 ``model_path`` 后运行：
 
 .. code-block:: bash
 
@@ -164,10 +166,9 @@ RoboUniverse-10K 评估
 可视化与结果
 ------------
 
-在终端和 TensorBoard 中查看以下评估指标：
+在 ``logs/<timestamp>-<config_name>/`` 和 TensorBoard 中查看评估结果：
 
-- ``eval/success_once``：任务评测器判定为 ``success`` 的回合占比。
-- ``eval/return``：回合平均回报（验证成功为 1.0，否则为 0.0）。
-- ``eval/infra_error``：因模拟器或评测器报错而提前中止的回合占比，与 policy 自身任务失败区分统计。
+- ``eval/success_once`` 和 ``eval/return`` 沿用 RLinf 标准评估指标定义，详见 :doc:`训练指标 </rst_source/reference/metrics>`。
+- ``eval/infra_error`` 统计因模拟器或任务评测器报错而提前中止的回合占比，与 policy 任务失败分开统计。
 
-日志后端与输出配置见 :doc:`日志记录器 </rst_source/guides/logger>`。
+日志后端与输出配置见 :doc:`训练可视化 </rst_source/guides/logger>`。
