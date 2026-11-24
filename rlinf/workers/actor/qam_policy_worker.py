@@ -130,11 +130,6 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
             )
 
         global_batch_size = int(self.cfg.actor.global_batch_size)
-        if global_batch_size % self._world_size != 0:
-            raise ValueError(
-                "actor.global_batch_size must be divisible by actor world size, "
-                f"got global_batch_size={global_batch_size}, world_size={self._world_size}."
-            )
         self.batch_size = global_batch_size // self._world_size
         if int(self.cfg.actor.micro_batch_size) != self.batch_size:
             raise ValueError(
