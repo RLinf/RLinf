@@ -12,27 +12,375 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared helpers: metrics, entropy aggregation, checkpoint paths, and resume."""
+"""Shared helpers: metrics, padding, rollout redistribution, and checkpointing."""
 
 from __future__ import annotations
 
+import copy
 import importlib.util
+import inspect
 import math
 import os
 import subprocess
 import sys
 import textwrap
+from contextlib import nullcontext
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 
-from rlinf.algorithms.registry import calculate_adv_and_returns
-from rlinf.algorithms.utils import compute_entropy_loss
+from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
+from rlinf.algorithms.utils import (
+    apply_importance_sampling_correction,
+    compute_entropy_loss,
+)
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.runners.reasoning_runner import ReasoningRunner
-from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_metrics
+from rlinf.utils.distributed import balance_rollout_groups
+from rlinf.utils.metric_utils import (
+    VersionedTrajectoryRecord,
+    aggregate_agent_metrics,
+    compute_evaluate_metrics,
+    compute_rollout_metrics,
+    compute_staleness_metrics,
+)
+from rlinf.utils.torch_functionals import batch_pad_to_fixed_len
+from rlinf.utils.utils import masked_mean
+from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
+
+
+@pytest.mark.parametrize("left_pad", [False, True])
+@pytest.mark.parametrize(
+    "dtype", [torch.bool, torch.int64, torch.float32, torch.float64]
+)
+def test_batch_padding_preserves_values_and_dtype(left_pad, dtype):
+    rows = [torch.tensor(values, dtype=dtype) for values in ([], [1], [2, 3, 4])]
+    padded = batch_pad_to_fixed_len(rows, 3, -1, left_pad=left_pad)
+    expected = torch.tensor(
+        [[-1, -1, -1], [-1, -1, 1] if left_pad else [1, -1, -1], [2, 3, 4]],
+        dtype=dtype,
+    )
+    torch.testing.assert_close(padded, expected)
+    assert [len(row) for row in rows] == [0, 1, 3]
+
+
+@pytest.mark.parametrize("left_pad", [False, True])
+@pytest.mark.parametrize("device", ["cpu", "meta"])
+def test_batch_padding_preserves_input_device(device, left_pad):
+    rows = [torch.ones(n, device=device) for n in (1, 3)]
+    padded = batch_pad_to_fixed_len(rows, 5, 0, left_pad=left_pad)
+    assert padded.device == rows[0].device
+    assert padded.dtype == rows[0].dtype and padded.shape == (2, 5)
+
+
+@pytest.mark.parametrize("left_pad", [False, True])
+def test_batch_padding_preserves_gradients(left_pad):
+    rows = [
+        torch.arange(1, n + 1, dtype=torch.float32).requires_grad_() for n in (1, 3, 5)
+    ]
+    padded = batch_pad_to_fixed_len(rows, 8, 0, left_pad=left_pad)
+    padded.square().sum().backward()
+    for row in rows:
+        torch.testing.assert_close(row.grad, 2 * row.detach())
+
+
+@pytest.mark.parametrize("left_pad", [False, True])
+def test_batch_padding_does_not_truncate_overlength_rows(left_pad):
+    with pytest.raises(RuntimeError, match="negative"):
+        batch_pad_to_fixed_len([torch.arange(5)], 4, 0, left_pad=left_pad)
+
+
+@pytest.mark.parametrize("valid_tokens", [0, 5])
+@pytest.mark.parametrize("aggregation", ["seq-mean-token-mean", "seq-mean-token-sum"])
+def test_sequence_loss_aggregation_handles_empty_rows(valid_tokens, aggregation):
+    from rlinf.utils.utils import get_loss_agg_func
+
+    values = torch.ones(2, 8, requires_grad=True)
+    mask = torch.zeros(2, 8, dtype=torch.bool)
+    mask[1, :valid_tokens] = True
+    loss = get_loss_agg_func(aggregation)(values, mask)
+    expected_loss = 1.0 if aggregation == "seq-mean-token-mean" else valid_tokens
+    assert loss.item() == (expected_loss if valid_tokens else 0.0)
+    loss.backward()
+    expected = torch.zeros_like(values)
+    if valid_tokens:
+        expected[1, :valid_tokens] = expected_loss / valid_tokens
+    torch.testing.assert_close(values.grad, expected)
+
+
+@pytest.mark.parametrize("aggregation", ["seq-mean-token-mean", "seq-mean-token-sum"])
+@pytest.mark.parametrize(
+    "row_order",
+    [
+        pytest.param((0, 1, 2), id="no-padding"),
+        pytest.param((None, 0, 1, 2), id="leading-padding"),
+        pytest.param((0, 1, 2, None), id="trailing-padding"),
+        pytest.param((None, None, 0, 1, 2), id="two-leading-padding-rows"),
+        pytest.param((0, None, 1, None, 2), id="interleaved-padding"),
+    ],
+)
+def test_sequence_loss_and_gradients_ignore_padding_rows(aggregation, row_order):
+    from rlinf.utils.utils import get_loss_agg_func
+
+    real_values = torch.arange(1, 13, dtype=torch.float32).reshape(3, 4)
+    real_values.requires_grad_()
+    real_mask = torch.arange(4).unsqueeze(0) < torch.tensor([1, 2, 3]).unsqueeze(1)
+    values = torch.full((len(row_order), 4), 99.0)
+    mask = torch.zeros_like(values, dtype=torch.bool)
+    for index, source in enumerate(row_order):
+        if source is not None:
+            values[index] = real_values[source].detach()
+            mask[index] = real_mask[source]
+    values.requires_grad_()
+
+    expected_rows = []
+    for row, row_mask in zip(real_values, real_mask, strict=True):
+        tokens = row[row_mask]
+        expected_rows.append(
+            tokens.mean() if aggregation == "seq-mean-token-mean" else tokens.sum()
+        )
+    expected = torch.stack(expected_rows).mean()
+    actual = get_loss_agg_func(aggregation)(values, mask)
+    torch.testing.assert_close(actual, expected)
+    actual.backward()
+    expected.backward()
+    for index, source in enumerate(row_order):
+        expected_grad = torch.zeros(4) if source is None else real_values.grad[source]
+        torch.testing.assert_close(values.grad[index], expected_grad)
+
+
+@pytest.mark.parametrize("diagnostics", [False, True])
+@pytest.mark.parametrize("importance_sampling", [False, True])
+@pytest.mark.parametrize("broadcast_mask", [False, True])
+def test_ppo_empty_batch_preserves_metric_contract(
+    diagnostics, importance_sampling, broadcast_mask
+):
+    logprobs = -torch.ones(2, 4)
+    common = {
+        "task_type": "reasoning",
+        "loss_type": "actor",
+        "logprobs": logprobs,
+        "old_logprobs": logprobs - 0.1,
+        "advantages": torch.ones_like(logprobs),
+        "clip_ratio_low": 0.2,
+        "clip_ratio_high": 0.2,
+        "log_logprob_diagnostics": diagnostics,
+        "rollout_logprobs": logprobs - 0.2 if importance_sampling else None,
+        "importance_sampling_clip": 2.0 if importance_sampling else None,
+    }
+    mask = torch.zeros(2, 1 if broadcast_mask else 4, dtype=torch.bool)
+    empty_loss, empty_metrics = policy_loss(
+        **common, loss_mask=mask, fast_path_zero_loss_mask=True
+    )
+    expected_loss, expected_metrics = policy_loss(
+        **common, loss_mask=mask, fast_path_zero_loss_mask=False
+    )
+    _, nonempty_metrics = policy_loss(
+        **common, loss_mask=torch.ones_like(mask), fast_path_zero_loss_mask=True
+    )
+    torch.testing.assert_close(empty_loss, expected_loss)
+    assert list(empty_metrics) == list(expected_metrics) == list(nonempty_metrics)
+    for key, value in empty_metrics.items():
+        torch.testing.assert_close(value, expected_metrics[key])
+
+
+def _ppo_empty_rank_process(rank, counts, aggregation, init_file):
+    from torch.nn.parallel import DistributedDataParallel
+
+    from rlinf.utils.utils import get_loss_agg_func
+
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=45),
+    )
+    try:
+        torch.manual_seed(42)
+        model = DistributedDataParallel(torch.nn.Linear(2, 1, bias=False))
+        reference = copy.deepcopy(model.module)
+        inputs = [torch.arange(24).reshape(3, 4, 2).float() / 24 + i for i in range(2)]
+        masks = [torch.zeros(3, 4, dtype=torch.bool) for _ in counts]
+        for mask, count in zip(masks, counts, strict=True):
+            if count:
+                mask[-count:, 1:] = True
+                mask[-1, -1] = False
+
+        logprobs = model(inputs[rank]).squeeze(-1)
+        loss, metrics = policy_loss(
+            task_type="reasoning",
+            loss_type="actor",
+            logprobs=logprobs,
+            old_logprobs=logprobs.detach(),
+            advantages=torch.ones_like(logprobs),
+            loss_mask=masks[rank],
+            loss_agg_func=get_loss_agg_func(aggregation),
+            clip_ratio_low=0.2,
+            clip_ratio_high=0.2,
+            fast_path_zero_loss_mask=True,
+        )
+        keys = [None, None]
+        dist.all_gather_object(keys, list(metrics))
+        assert keys[0] == keys[1]
+        for key, value in metrics.items():
+            value = value.detach().clone()
+            dist.all_reduce(value)
+            metrics[key] = value / 2
+            assert torch.isfinite(value)
+        loss.backward()
+
+        expected = reference.weight.sum() * 0.0
+        for values, mask in zip(inputs, masks, strict=True):
+            if not mask.any():
+                continue
+            probabilities = reference(values).squeeze(-1)
+            token_losses = -(probabilities - probabilities.detach()).exp()
+            if aggregation == "token-mean":
+                source_loss = token_losses[mask].mean()
+            else:
+                rows = [
+                    row[row_mask]
+                    for row, row_mask in zip(token_losses, mask, strict=True)
+                    if row_mask.any()
+                ]
+                source_loss = torch.stack(
+                    [
+                        row.mean()
+                        if aggregation == "seq-mean-token-mean"
+                        else row.sum()
+                        for row in rows
+                    ]
+                ).mean()
+            expected = expected + source_loss / 2
+        expected.backward()
+        torch.testing.assert_close(model.module.weight.grad, reference.weight.grad)
+        torch.testing.assert_close(metrics["actor/policy_loss"], expected.detach())
+        assert bool(model.module.weight.grad.any()) == bool(sum(counts))
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize(
+    "aggregation", ["token-mean", "seq-mean-token-mean", "seq-mean-token-sum"]
+)
+@pytest.mark.parametrize("counts", [(0, 2), (1, 2), (0, 0)])
+def test_ppo_empty_rank_preserves_distributed_gradients_and_metrics(
+    tmp_path, counts, aggregation
+):
+    mp.spawn(
+        _ppo_empty_rank_process,
+        args=(counts, aggregation, str(tmp_path / "rendezvous")),
+        nprocs=2,
+        join=True,
+    )
+
+
+@pytest.mark.parametrize("scalar", [None, True, 1, 1.0])
+def test_graph_signatures_distinguish_static_metadata_types(scalar):
+    from rlinf.utils.cuda_graph import graph_signature
+
+    inputs = {"pixels": torch.zeros(2, 3), "mode": scalar}
+    assert graph_signature(inputs) != graph_signature({**inputs, "mode": str(scalar)})
+    assert graph_signature(inputs) == graph_signature(
+        dict(reversed(list(inputs.items())))
+    )
+    assert graph_signature({1: torch.zeros(2)}) is None
+    assert graph_signature([torch.zeros(2)]) != graph_signature((torch.zeros(2),))
+
+
+def test_graph_buffer_updates_preserve_structure_and_validate_static_inputs():
+    from rlinf.utils.cuda_graph import clone_tensor_tree, copy_tensor_tree
+
+    source = {"x": [torch.ones(2, 3), {"mode": "train"}], "unused": None}
+    buffers = clone_tensor_tree(source)
+    source["x"][0].mul_(2)
+    copy_tensor_tree(buffers, source)
+    torch.testing.assert_close(buffers["x"][0], source["x"][0])
+    source["x"][0].zero_()
+    assert torch.count_nonzero(buffers["x"][0]) == 6
+    with pytest.raises(ValueError, match="shape mismatch"):
+        copy_tensor_tree(buffers, {"x": [torch.ones(3), {"mode": "train"}]})
+    with pytest.raises(ValueError, match="dtype mismatch"):
+        copy_tensor_tree(
+            buffers, {"x": [torch.ones(2, 3, dtype=torch.float64), {"mode": "train"}]}
+        )
+    with pytest.raises(ValueError, match="static metadata changed"):
+        copy_tensor_tree(buffers, {"x": [torch.ones(2, 3), {"mode": "eval"}]})
+
+
+def test_graph_manager_rejects_unsupported_devices_before_initialization():
+    from rlinf.utils.cuda_graph import CUDAGraphManager
+
+    with pytest.raises(ValueError, match="requires CUDA or NPU"):
+        CUDAGraphManager(device=torch.device("cpu"))
+
+
+def test_graph_manager_destroy_named_graph_keeps_shared_pool_until_empty():
+    from rlinf.utils.cuda_graph import CUDAGraphManager
+
+    pool = object()
+    manager = object.__new__(CUDAGraphManager)
+    manager.backend = SimpleNamespace(
+        synchronize=lambda: None,
+        empty_cache=lambda: None,
+    )
+    manager.graphs = {"g1": object(), "g2": object()}
+    manager.graph_pool = pool
+
+    manager.destroy("g1")
+    assert "g1" not in manager.graphs
+    assert "g2" in manager.graphs
+    assert manager.graph_pool is pool
+
+    manager.destroy("g2")
+    assert not manager.graphs
+    assert manager.graph_pool is None
+
+
+def test_graph_manager_restores_generators_after_failed_capture():
+    from rlinf.utils.cuda_graph import CUDAGraphManager, GraphCaptureSpec
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA required for intragraph generator state capture")
+    device = torch.device("cuda", torch.cuda.current_device())
+    manager = CUDAGraphManager(device=device, create_graph_pool=False)
+    x = torch.ones(4, device=device)
+    torch.cuda.manual_seed(1234)
+    _ = torch.randn(4, device=device)
+    expected = torch.randn(4, device=device)
+
+    torch.cuda.manual_seed(1234)
+    calls = 0
+
+    def fail_on_capture(inputs):
+        nonlocal calls
+        calls += 1
+        noise = torch.randn_like(inputs["x"])
+        if calls > 1:
+            # Boolean mask indexing invalidates CUDA stream capture after the
+            # RNG kernel has already incremented offset_intragraph_.
+            _ = noise[noise > -10]
+        return {"y": noise}
+
+    spec = GraphCaptureSpec(
+        name="failing_capture",
+        func=fail_on_capture,
+        inputs={"x": x},
+        warmup_iters=1,
+        register_default_cuda_generator=True,
+    )
+    with pytest.raises(RuntimeError):
+        manager.capture(spec, use_shared_pool=False)
+
+    actual = torch.randn(4, device=device)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():
@@ -294,6 +642,222 @@ def test_reinpp_baseline_leaves_the_caller_rewards_unchanged():
     _reinpp_advantages(rewards, use_reinpp_baseline=True)
 
     assert rewards.tolist() == [1.0, 0.0, 1.0, 1.0]
+
+
+# Importance-sampling correction: the actor rescores rollout actions, and
+# each advantage is scaled by the clipped actor/rollout probability ratio.
+
+
+class _ReplayModel:
+    def __init__(self, offset: float = 0.25) -> None:
+        self.batch_sizes = []
+        self.kwargs = []
+        self.offset = offset
+
+    def __call__(self, *, forward_inputs, **kwargs):
+        expected = forward_inputs["expected_logprobs"]
+        self.batch_sizes.append(expected.shape[0])
+        self.kwargs.append(kwargs)
+        return {"logprobs": expected + self.offset}
+
+
+def test_importance_sampling_correction_scales_advantages_by_clipped_weight():
+    advantages = torch.tensor([1.0, 2.0], dtype=torch.float32)
+    rollout_logprobs = torch.zeros(2, dtype=torch.float32)
+    recomputed_logprobs = torch.tensor(
+        [math.log(2.0), math.log(4.0)], dtype=torch.float32
+    )
+
+    corrected, weights, log_ratios = apply_importance_sampling_correction(
+        advantages,
+        recomputed_logprobs,
+        rollout_logprobs,
+        clip=3.0,
+    )
+
+    torch.testing.assert_close(corrected, torch.tensor([2.0, 6.0]))
+    torch.testing.assert_close(weights, torch.tensor([2.0, 4.0]))
+    torch.testing.assert_close(log_ratios, recomputed_logprobs)
+
+
+@pytest.mark.parametrize("importance_sampling_fix", [False, True])
+def test_embodied_actor_recompute_preserves_behavior_logprobs_when_enabled(
+    monkeypatch, importance_sampling_fix
+):
+    monkeypatch.setattr(
+        "rlinf.workers.actor.embodied_fsdp_actor_worker.clear_memory", lambda: None
+    )
+    worker = object.__new__(EmbodiedFSDPActor)
+    worker.cfg = OmegaConf.create(
+        {
+            "actor": {
+                "micro_batch_size": 3,
+                "model": {"model_type": "openpi"},
+            },
+            "algorithm": {"importance_sampling_fix": importance_sampling_fix},
+            "rollout": {},
+        }
+    )
+    worker.device = torch.device("cpu")
+    worker.amp_context = nullcontext()
+    worker.is_weight_offloaded = False
+    worker.model = _ReplayModel()
+    expected = torch.arange(24, dtype=torch.float32).reshape(6, 2, 2)
+    behavior = torch.zeros_like(expected)
+    batch = {
+        "prev_logprobs": behavior,
+        "forward_inputs": {"expected_logprobs": expected},
+    }
+
+    metrics = inspect.unwrap(EmbodiedFSDPActor.recompute_prev_logprobs)(worker, batch)
+
+    assert worker.model.batch_sizes == [3, 3]
+    assert all("temperature" not in kwargs for kwargs in worker.model.kwargs)
+    assert all("top_k" not in kwargs for kwargs in worker.model.kwargs)
+    if importance_sampling_fix:
+        assert batch["rollout_logprobs"] is behavior
+    else:
+        assert "rollout_logprobs" not in batch
+    assert torch.equal(batch["prev_logprobs"], expected + 0.25)
+    assert metrics["actor/rollout_train_logprob_gap"] == pytest.approx(11.75)
+    assert metrics["actor/rollout_train_joint_logprob_gap_max"] == pytest.approx(87.0)
+
+
+def test_lingbot_recompute_restores_action_layout_before_masking(monkeypatch):
+    monkeypatch.setattr(
+        "rlinf.workers.actor.embodied_fsdp_actor_worker.clear_memory", lambda: None
+    )
+    worker = object.__new__(EmbodiedFSDPActor)
+    worker.cfg = OmegaConf.create(
+        {
+            "actor": {
+                "micro_batch_size": 3,
+                "model": {"model_type": "lingbotvlav2", "action_dim": 2},
+            },
+            "algorithm": {"max_recompute_logprob_gap": 1.0e-3},
+            "rollout": {},
+        }
+    )
+    worker.device = torch.device("cpu")
+    worker.amp_context = nullcontext()
+    worker.is_weight_offloaded = False
+    worker.model = _ReplayModel(offset=0.0)
+
+    recomputed = torch.zeros(6, 4, dtype=torch.float32)
+    per_action_gap = torch.linspace(5.0e-5, 2.0e-4, 6).unsqueeze(-1)
+    rollout = recomputed - per_action_gap
+    batch = {
+        "prev_logprobs": rollout,
+        "forward_inputs": {"expected_logprobs": recomputed},
+        "loss_mask": torch.ones(6, 1, dtype=torch.bool),
+    }
+
+    metrics = inspect.unwrap(EmbodiedFSDPActor.recompute_prev_logprobs)(worker, batch)
+
+    assert metrics["actor/rollout_train_joint_logprob_gap_max"] == pytest.approx(8.0e-4)
+
+
+@pytest.mark.parametrize(
+    (
+        "logprob_type",
+        "expected_loss",
+        "mean_weight",
+        "max_weight",
+        "clip_fraction",
+        "log_gap",
+    ),
+    [
+        ("token_level", -2.5, 2.5, 3.0, 0.0, math.log(6.0) / 2),
+        ("action_level", -4.5, 6.5, 9.0, 0.5, math.log(6.0)),
+        ("chunk_level", -5.0, 36.0, 36.0, 1.0, math.log(36.0)),
+    ],
+)
+def test_embodied_importance_sampling_uses_loss_logprob_granularity(
+    logprob_type, expected_loss, mean_weight, max_weight, clip_fraction, log_gap
+):
+    rollout_logprobs = torch.zeros(2, 2, 2, dtype=torch.float32)
+    recomputed_logprobs = torch.tensor(
+        [[[math.log(2.0)] * 2, [math.log(3.0)] * 2]] * 2,
+        dtype=torch.float32,
+    )
+
+    loss, metrics = policy_loss(
+        task_type="embodied",
+        loss_type="actor",
+        logprob_type=logprob_type,
+        reward_type="chunk_level",
+        single_action_dim=2,
+        logprobs=recomputed_logprobs.clone(),
+        old_logprobs=recomputed_logprobs,
+        rollout_logprobs=rollout_logprobs,
+        advantages=torch.ones(2, dtype=torch.float32),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        importance_sampling_clip=5.0,
+    )
+
+    assert loss.item() == pytest.approx(expected_loss)
+    assert metrics["actor/ratio"] == pytest.approx(1.0)
+    assert metrics["actor/importance_sampling_weight"] == pytest.approx(mean_weight)
+    assert metrics["actor/importance_sampling_weight_max"] == pytest.approx(max_weight)
+    assert metrics["actor/importance_sampling_clip_fraction"] == pytest.approx(
+        clip_fraction
+    )
+    assert metrics["actor/recomputed_logprob_abs_diff"] == pytest.approx(log_gap)
+
+
+def test_embodied_importance_sampling_metrics_broadcast_loss_mask():
+    rollout_logprobs = torch.zeros(1, 2, 2, dtype=torch.float32)
+    recomputed_logprobs = torch.tensor(
+        [[[math.log(2.0), math.log(4.0)], [math.log(128.0), math.log(256.0)]]],
+        dtype=torch.float32,
+    )
+
+    _, metrics = policy_loss(
+        task_type="embodied",
+        loss_type="actor",
+        logprob_type="token_level",
+        reward_type="action_level",
+        single_action_dim=2,
+        logprobs=recomputed_logprobs.clone(),
+        old_logprobs=recomputed_logprobs,
+        rollout_logprobs=rollout_logprobs,
+        advantages=torch.ones(1, 2, dtype=torch.float32),
+        loss_mask=torch.tensor([[True, False]]),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        importance_sampling_clip=3.0,
+    )
+
+    assert metrics["actor/importance_sampling_weight"] == pytest.approx(3.0)
+    assert metrics["actor/importance_sampling_weight_max"] == pytest.approx(4.0)
+    assert metrics["actor/importance_sampling_clip_fraction"] == pytest.approx(0.5)
+    assert metrics["actor/recomputed_logprob_abs_diff"] == pytest.approx(
+        math.log(8.0) / 2
+    )
+
+
+def test_embodied_loss_is_unchanged_without_importance_sampling():
+    logprobs = torch.tensor([[[0.2, -0.1]]], dtype=torch.float32)
+    old_logprobs = torch.tensor([[[0.1, -0.2]]], dtype=torch.float32)
+
+    loss, metrics = policy_loss(
+        task_type="embodied",
+        loss_type="actor",
+        logprob_type="token_level",
+        reward_type="chunk_level",
+        single_action_dim=2,
+        logprobs=logprobs,
+        old_logprobs=old_logprobs,
+        advantages=torch.ones(1, 1, dtype=torch.float32),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+    )
+
+    expected_ratio = torch.exp(logprobs - old_logprobs)
+    assert loss.item() == pytest.approx(-expected_ratio.mean().item())
+    assert metrics["actor/ratio"] == pytest.approx(expected_ratio.mean().item())
+    assert "actor/importance_sampling_weight" not in metrics
 
 
 def _load_checkpoint_utils():
@@ -594,3 +1158,999 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
 
     _flash_availability(monkeypatch)
     assert resolve_attn_implementation("eager") == "eager"
+
+
+def test_loss_weights_count_every_step_of_an_unmasked_trajectory_and_keep_filters():
+    from rlinf.utils.utils import add_loss_weights
+
+    dones = torch.zeros(4, 2, 1, dtype=torch.bool)
+    reward_filter = torch.tensor([True, False]).reshape(1, 2, 1).expand(3, 2, 1)
+    batch = add_loss_weights(
+        {"dones": dones, "loss_mask": reward_filter},
+        reward_type="action_level",
+        reference_length=6.0,
+        loss_weight=2.0,
+    )
+
+    assert batch["loss_mask"] is reward_filter
+    assert batch["loss_mask_sum"].unique().tolist() == [3]
+    assert torch.allclose(batch["loss_mask_ratio"], torch.full((3, 2, 1), 0.25))
+
+
+def test_decoupled_loss_counts_dropped_steps_as_zero_and_logs_versions():
+    from rlinf.algorithms.losses import compute_decoupled_ppo_actor_loss
+
+    # An unmasked batch weighted by add_loss_weights: every step is valid.
+    old_logprobs = torch.zeros(4, 2, 3)
+    old_logprobs[0] = -1.0  # behaviour weight e > 2, so these steps are dropped
+    loss, metrics = compute_decoupled_ppo_actor_loss(
+        logprobs=torch.zeros(4, 2, 3),
+        old_logprobs=old_logprobs,
+        proximal_logprobs=torch.zeros(4, 2, 3),
+        advantages=torch.ones(4, 2, 3),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        loss_mask=torch.ones(4, 2, 1, dtype=torch.bool),
+        loss_mask_ratio=torch.ones(4, 2, 1),
+        behave_weight_threshold=2.0,
+        versions=torch.full((4, 2, 3), 3.0),
+        current_version=4,
+    )
+
+    # Every step weighs the same, so a dropped step adds zero to the mean
+    # instead of leaving it; a quarter of the steps are dropped.
+    assert loss.item() == pytest.approx(-0.75)
+    assert metrics["actor/behav_clip_fraction"] == pytest.approx(0.25)
+    assert metrics["actor/average_version"].item() == pytest.approx(3.0)
+
+
+def test_boolean_attention_mask_casts_only_binary_float_masks():
+    # The NPU keeps its fused SDPA kernel for boolean masks; the cast must
+    # accept exactly the {0, dtype-min} masks HF models build and refuse any
+    # mask that encodes a real bias.
+    import torch
+
+    from rlinf.scheduler.hardware.accelerators.ascend_npu import (
+        boolean_attention_mask,
+    )
+
+    causal = torch.zeros(2, 1, 4, 4, dtype=torch.bfloat16)
+    causal[:, :, :, 2:] = torch.finfo(torch.bfloat16).min
+    out = boolean_attention_mask(causal)
+    assert out is not None and out.dtype == torch.bool
+    assert torch.equal(out, causal >= 0)
+
+    assert boolean_attention_mask(None) is None
+    assert boolean_attention_mask(causal.bool()) is None
+    biased = causal.clone()
+    biased[0, 0, 0, 0] = -1.5
+    assert boolean_attention_mask(biased) is None
+
+
+def test_boolean_attention_mask_caches_per_live_tensor():
+    # One mask tensor flows through every layer of a forward; the verdict is
+    # cached so only the first layer pays the device sync, and an in-place
+    # edit or a new tensor gets a fresh verdict.
+    import gc
+    import weakref
+
+    import torch
+
+    from rlinf.scheduler.hardware.accelerators.ascend_npu import (
+        boolean_attention_mask,
+    )
+
+    mask = torch.zeros(1, 1, 3, 3, dtype=torch.float32)
+    first = boolean_attention_mask(mask)
+    assert boolean_attention_mask(mask) is first
+
+    mask[0, 0, 0, 0] = -2.0  # bias now; version bump must invalidate
+    assert boolean_attention_mask(mask) is None
+
+    ephemeral = torch.zeros(1, 1, 2, 2, dtype=torch.float32)
+    cached_ref = weakref.ref(boolean_attention_mask(ephemeral))
+    assert cached_ref() is not None
+    del ephemeral
+    gc.collect()
+    assert cached_ref() is None
+
+
+@pytest.mark.parametrize("capturing", [False, True])
+def test_npu_sdpa_mask_cast_preserves_updates_and_biases(monkeypatch, capturing):
+    from rlinf.scheduler.hardware.accelerators.ascend_npu import (
+        install_npu_sdpa_mask_cast,
+    )
+
+    monkeypatch.setattr(
+        torch,
+        "npu",
+        SimpleNamespace(
+            is_available=lambda: True,
+            is_current_stream_capturing=lambda: capturing,
+        ),
+        raising=False,
+    )
+    original = torch.nn.functional.scaled_dot_product_attention
+    # Restore the public entry point when this test ends.
+    monkeypatch.setattr(torch.nn.functional, "scaled_dot_product_attention", original)
+    assert install_npu_sdpa_mask_cast()
+    query = torch.randn(2, 4, 5, 8)
+    key, value = torch.randn_like(query), torch.randn_like(query)
+    mask = torch.zeros(2, 1, 5, 5)
+    mask[..., 3:] = torch.finfo(mask.dtype).min
+    expected = original(query, key, value, mask)
+    scalar_reads = []
+    original_bool = torch.Tensor.__bool__
+
+    def record_scalar_read(tensor):
+        scalar_reads.append(tensor.shape)
+        return original_bool(tensor)
+
+    with monkeypatch.context() as guard:
+        guard.setattr(torch.Tensor, "__bool__", record_scalar_read)
+        for _ in range(6):
+            actual = torch.nn.functional.scaled_dot_product_attention(
+                query, key, value, mask
+            )
+    assert len(scalar_reads) == (0 if capturing else 1)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+    # Reusing the same mask object must not retain an old conversion.
+    for changed in (0.0, -0.5, 0.5):
+        mask[..., 3:] = changed
+        actual = torch.nn.functional.scaled_dot_product_attention(
+            query, key, value, mask
+        )
+        torch.testing.assert_close(
+            actual, original(query, key, value, mask), rtol=0, atol=0
+        )
+
+    # Inference tensors have no version counter and cannot enter the cache.
+    with torch.inference_mode():
+        inference_mask = torch.zeros_like(mask)
+    actual = torch.nn.functional.scaled_dot_product_attention(
+        query, key, value, inference_mask
+    )
+    torch.testing.assert_close(
+        actual, original(query, key, value, inference_mask), rtol=0, atol=0
+    )
+
+    # Finite additive masks retain a softmax distribution for an entirely
+    # masked row; boolean masks instead produce zero for that row.
+    for blocked_value in (torch.finfo(mask.dtype).min, -torch.inf):
+        blocked_mask = torch.full_like(mask, blocked_value)
+        torch.testing.assert_close(
+            torch.nn.functional.scaled_dot_product_attention(
+                query, key, value, blocked_mask
+            ),
+            original(query, key, value, blocked_mask),
+            rtol=0,
+            atol=0,
+        )
+
+    additive_mask = torch.zeros_like(mask, requires_grad=True)
+    expected = original(query, key, value, additive_mask)
+    actual = torch.nn.functional.scaled_dot_product_attention(
+        query, key, value, additive_mask
+    )
+    torch.testing.assert_close(
+        torch.autograd.grad(actual.sum(), additive_mask)[0],
+        torch.autograd.grad(expected.sum(), additive_mask)[0],
+        rtol=0,
+        atol=0,
+    )
+
+
+class TestComputeStalenessMetrics:
+    """The pure metric function over per-trajectory records."""
+
+    @staticmethod
+    def _record(
+        group_index: int,
+        earliest_version: int,
+        completion_version: int,
+        generated_tokens: int,
+        call_count: int = 1,
+        cross_version_calls: int = 0,
+        reward: float = 0.0,
+        token_weighted: int | None = None,
+    ):
+        if token_weighted is None:
+            token_weighted = earliest_version * generated_tokens
+        return VersionedTrajectoryRecord(
+            group_index=group_index,
+            earliest_version=earliest_version,
+            completion_version=completion_version,
+            generated_tokens=generated_tokens,
+            call_count=call_count,
+            cross_version_calls=cross_version_calls,
+            reward=reward,
+            token_weighted_version_start_sum=token_weighted,
+        )
+
+    def test_metric_values_on_a_known_step(self):
+        # Two groups of two trajectories each. Group 0 started on version 8
+        # and finished on version 9; group 1 started and finished on 9.
+        records = [
+            self._record(0, 8, 9, 100, 2, 1, reward=1.0, token_weighted=800),
+            self._record(0, 8, 8, 100, 1, 0, reward=1.0, token_weighted=800),
+            self._record(1, 9, 9, 200, 1, 0, reward=0.0, token_weighted=1800),
+            self._record(1, 9, 9, 300, 1, 0, reward=0.0, token_weighted=2700),
+        ]
+        metrics = compute_staleness_metrics(records, version=10)
+
+        assert metrics["data_staleness_2/ratio"] == 0.5
+        assert metrics["data_staleness_1/ratio"] == 0.5
+        # Tokens: staleness 2 carries group 0's 200 tokens, staleness 1 the
+        # remaining 500 of the 700 total.
+        assert metrics["data_staleness_2/token_ratio"] == 200 / 700
+        assert metrics["data_staleness_1/token_ratio"] == 500 / 700
+        assert metrics["data_staleness/mean"] == 1.5
+        assert metrics["data_staleness/max"] == 2
+        assert metrics["data_staleness/token_mean"] == pytest.approx(10 - 6100 / 700)
+        # Group 0 spans versions 8..9, group 1 spans nothing.
+        assert metrics["version_span/mean"] == 0.5
+        assert metrics["version_span/max"] == 1
+        assert metrics["queue_steps/mean"] == 1.0
+        assert metrics["queue_steps/max"] == 1
+        # 1 cross-version call out of 5 total.
+        assert metrics["cross_version_call_ratio"] == 1 / 5
+        # Trajectory staleness by length quartile (all lengths distinct).
+        assert metrics["data_staleness/length_q1"] == 2
+        assert metrics["data_staleness/length_q2"] == 2
+        assert metrics["data_staleness/length_q3"] == 1
+        assert metrics["data_staleness/length_q4"] == 1
+        # Group rewards: [1.0, 1.0] and [0.0, 0.0].
+        assert metrics["equal_reward_group_ratio"] == 1.0
+        assert metrics["zero_reward_group_ratio"] == 0.5
+
+    def test_self_consistency(self):
+        # staleness = version_span + queue_steps per group; ratio sets sum
+        # to 1; token_ratio sets sum to 1.
+        records = [
+            self._record(0, 7, 8, 40),
+            self._record(1, 8, 10, 60),
+            self._record(1, 9, 9, 10),
+            self._record(2, 6, 7, 25),
+            self._record(3, 7, 7, 75),
+        ]
+        metrics = compute_staleness_metrics(records, version=11)
+
+        assert (
+            metrics["data_staleness/mean"]
+            == metrics["version_span/mean"] + metrics["queue_steps/mean"]
+        )
+        assert sum(
+            v
+            for k, v in metrics.items()
+            if k.startswith("data_staleness_") and k.endswith("/ratio")
+        ) == pytest.approx(1.0)
+        assert sum(
+            v
+            for k, v in metrics.items()
+            if k.startswith("data_staleness_") and k.endswith("/token_ratio")
+        ) == pytest.approx(1.0)
+        # queue_steps is version - completion, never negative.
+        assert metrics["queue_steps/mean"] >= 0
+        assert metrics["queue_steps/max"] >= 0
+
+    def test_length_quartiles(self):
+        # Four trajectories with increasing token counts and decreasing
+        # staleness: each quartile holds exactly one trajectory.
+        records = [
+            self._record(0, 10, 10, 10),
+            self._record(1, 11, 11, 20),
+            self._record(2, 12, 12, 30),
+            self._record(3, 13, 13, 40),
+        ]
+        metrics = compute_staleness_metrics(records, version=15)
+        assert metrics["data_staleness/length_q1"] == 5
+        assert metrics["data_staleness/length_q2"] == 4
+        assert metrics["data_staleness/length_q3"] == 3
+        assert metrics["data_staleness/length_q4"] == 2
+
+    def test_length_quartiles_skipped_below_four_trajectories(self):
+        records = [self._record(0, 10, 10, 10) for _ in range(3)]
+        metrics = compute_staleness_metrics(records, version=12)
+        assert not any(k.startswith("data_staleness/length_q") for k in metrics)
+
+    def test_empty_records_return_empty_dict(self):
+        assert compute_staleness_metrics([], version=5) == {}
+
+    def test_zero_generated_tokens_do_not_divide_by_zero(self):
+        records = [self._record(0, 10, 10, 0), self._record(0, 10, 10, 0)]
+        metrics = compute_staleness_metrics(records, version=12)
+        assert metrics["data_staleness_2/ratio"] == 1.0
+        # No tokens anywhere: no token-weighted metric is defined.
+        assert "data_staleness/token_mean" not in metrics
+        assert not any(k.endswith("token_ratio") for k in metrics)
+
+
+class TestAggregateAgentMetrics:
+    """aggregate_agent_metrics over per-group agent metric dicts."""
+
+    def test_aggregates_each_stat_kind(self):
+        aggregated = aggregate_agent_metrics(
+            [
+                {"__sum__/a": 1, "__max__/b": 3, "__min__/c": 2, "__mean__/d": (1, 4)},
+                {"__sum__/a": 2, "__max__/b": 5, "__min__/c": 1, "__mean__/d": (2, 4)},
+            ]
+        )
+        assert aggregated == {"a": 3, "b": 5, "c": 1, "d": 3 / 8}
+
+    def test_drops_keys_without_a_stat_prefix(self):
+        assert aggregate_agent_metrics([{"stray": 1}]) == {}
+
+    def test_empty_list_returns_empty(self):
+        assert aggregate_agent_metrics([]) == {}
+
+
+class TestRewardsAllEqual:
+    """rewards_all_equal over per-trajectory reward views."""
+
+    def test_equal_rewards_are_detected(self):
+        from rlinf.utils.down_sampling import rewards_all_equal
+
+        assert rewards_all_equal([1.0, 1.0, 1.0])
+        assert rewards_all_equal([0.5, 0.5])
+
+    def test_unequal_rewards_are_kept(self):
+        from rlinf.utils.down_sampling import rewards_all_equal
+
+        assert not rewards_all_equal([1.0, 0.0])
+        assert not rewards_all_equal([0.0, 0.0, 0.1])
+
+    def test_none_or_empty_rewards_are_kept(self):
+        """A None reward cannot be judged; the group is kept, not crashed."""
+        from rlinf.utils.down_sampling import rewards_all_equal
+
+        assert not rewards_all_equal(None)
+        assert not rewards_all_equal([])
+        assert not rewards_all_equal([1.0, None])
+        assert not rewards_all_equal([None, None])
+
+
+def test_pinned_offload_context_restores_after_overlapping_exits():
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    original_to = torch.Tensor.to
+    first = pinned_offload_context()
+    second = pinned_offload_context()
+    first_active = True
+    first.__enter__()
+    second.__enter__()
+    try:
+        patched_to = torch.Tensor.to
+        assert patched_to is not original_to
+
+        tensor = torch.ones(2)
+        assert tensor.to(torch.float64).dtype == torch.float64
+        torch.testing.assert_close(tensor.to(torch.zeros(2)), tensor)
+
+        first.__exit__(None, None, None)
+        first_active = False
+        assert torch.Tensor.to is patched_to
+    finally:
+        if first_active:
+            first.__exit__(None, None, None)
+        second.__exit__(None, None, None)
+
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize(
+    "source_format", [torch.contiguous_format, torch.channels_last]
+)
+@pytest.mark.parametrize(
+    "memory_format",
+    [torch.preserve_format, torch.contiguous_format, torch.channels_last],
+)
+def test_pinned_offload_preserves_cuda_tensor_values_and_layout(
+    dtype, source_format, memory_format
+):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.randn(2, 3, 8, 8, device="cuda", dtype=dtype).contiguous(
+        memory_format=source_format
+    )
+    expected = source.to("cpu", memory_format=memory_format)
+    original_to = torch.Tensor.to
+    with pinned_offload_context():
+        result = source.to("cpu", None, False, memory_format=memory_format)
+        assert result.is_pinned()
+        assert result.device.type == "cpu"
+        assert result.dtype == source.dtype
+        assert result.stride() == expected.stride()
+        torch.testing.assert_close(result, expected)
+        torch.testing.assert_close(result.to(source.device), source)
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+def test_pinned_offload_restores_after_cuda_copy_and_exception():
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.ones(2, device="cuda")
+    original_to = torch.Tensor.to
+    with pytest.raises(RuntimeError, match="abort offload"):
+        with pinned_offload_context():
+            assert source.to(device=torch.device("cpu")).is_pinned()
+            raise RuntimeError("abort offload")
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+def test_pinned_offload_reports_allocation_failure_and_restores_patch(monkeypatch):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.ones(2, device="cuda", dtype=torch.float32)
+    original_to = torch.Tensor.to
+    allocator_error = RuntimeError("pinned allocator exhausted")
+
+    def fail_allocation(*args, **kwargs):
+        assert kwargs["pin_memory"] is True
+        raise allocator_error
+
+    monkeypatch.setattr(torch, "empty_like", fail_allocation)
+    with pytest.raises(
+        RuntimeError, match="Failed to allocate pinned CPU memory"
+    ) as info:
+        with pinned_offload_context():
+            source.to("cpu")
+    assert info.value.__cause__ is allocator_error
+    assert "shape=(2,)" in str(info.value)
+    assert "dtype=torch.float32" in str(info.value)
+    assert f"source_device={source.device}" in str(info.value)
+    assert "requested_bytes=8" in str(info.value)
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.parametrize("normalize", [False, True])
+def test_multiturn_gae_matches_discounted_targets_in_shuffled_turn_order(normalize):
+    values = torch.full((4, 6), 99.0)
+    mask = torch.zeros_like(values, dtype=torch.bool)
+    mask[0, 4] = mask[3, 1] = True
+    mask[1, 3:5] = mask[2, 1:3] = True
+    values[mask] = torch.tensor([0.4, 0.5, 0.6, 0.2, 0.3, 0.1])
+    advantages, returns = calculate_adv_and_returns(
+        task_type="reasoning",
+        adv_type="gae_dynamic",
+        rewards=torch.tensor([1.0, -0.5, 1.0, -0.5]),
+        values=[row[:n] for row, n in zip(values, [5, 5, 3, 2])],
+        loss_mask=[row[:n] for row, n in zip(mask, [5, 5, 3, 2])],
+        idx_to_traj=[0, 1, 0, 1],
+        prompt_lengths=torch.tensor([4, 3, 1, 1]),
+        gamma=0.9,
+        gae_lambda=0.95,
+        normalize_advantages=normalize,
+    )
+    advantages = torch.nn.utils.rnn.pad_sequence(advantages, batch_first=True)
+    returns = torch.nn.utils.rnn.pad_sequence(returns, batch_first=True)
+    advantages = torch.nn.functional.pad(advantages, (0, 1))
+    returns = torch.nn.functional.pad(returns, (0, 1))
+    expected_advantages = torch.zeros_like(values)
+    expected_returns = torch.zeros_like(values)
+    episodes = [([(2, 1), (2, 2), (0, 4)], 1.0), ([(3, 1), (1, 3), (1, 4)], -0.5)]
+    for actions, reward in episodes:
+        gae, next_value = 0.0, 0.0
+        for step in reversed(range(len(actions))):
+            row, token = actions[step]
+            value = values[row, token]
+            terminal_reward = reward if step == len(actions) - 1 else 0.0
+            delta = terminal_reward + 0.9 * next_value - value
+            gae = delta + 0.9 * 0.95 * gae
+            expected_advantages[row, token] = gae
+            expected_returns[row, token] = gae + value
+            next_value = value
+    if normalize:
+        valid = expected_advantages[mask]
+        expected_advantages[mask] = (valid - valid.mean()) / valid.std(unbiased=False)
+        torch.testing.assert_close(
+            advantages[mask].mean(), torch.tensor(0.0), atol=1e-6, rtol=0
+        )
+        torch.testing.assert_close(
+            advantages[mask].var(unbiased=False), torch.tensor(1.0)
+        )
+    torch.testing.assert_close(advantages, expected_advantages)
+    torch.testing.assert_close(returns, expected_returns)
+
+
+def test_multiturn_gae_rejects_duplicate_prompt_lengths_in_one_episode():
+    with pytest.raises(ValueError, match="distinct prompt lengths"):
+        calculate_adv_and_returns(
+            task_type="reasoning",
+            adv_type="gae_dynamic",
+            rewards=torch.ones(2),
+            values=list(torch.zeros(2, 3)),
+            loss_mask=list(torch.tensor([[False, True, False], [False, True, False]])),
+            idx_to_traj=[0, 0],
+            prompt_lengths=torch.tensor([1, 1]),
+            gamma=0.9,
+            gae_lambda=0.95,
+        )
+
+
+# Multi-agent Megatron actor and critic losses on a single CPU rank.
+
+
+class _TokenModel(torch.nn.Module):
+    pre_process = True
+    post_process = True
+
+    def __init__(self, role="critic"):
+        super().__init__()
+        self.role = role
+        self.weight = torch.nn.Parameter(torch.tensor(0.01))
+
+    def forward(self, input_ids, attention_mask, position_ids, packed_seq_params):
+        output = (input_ids.float() * self.weight).unsqueeze(-1)
+        if self.role == "actor":
+            output = output * torch.arange(8, dtype=torch.float32)
+        return output
+
+
+@pytest.fixture
+def megatron_cpu(monkeypatch, tmp_path):
+    pytest.importorskip("megatron.training")
+    from megatron.core import parallel_state
+
+    from rlinf.scheduler import Worker
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+    from rlinf.workers.critic.ma_megatron_critic_worker import MAMegatronCritic
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    monkeypatch.setattr(torch.Tensor, "cuda", lambda self, *args, **kwargs: self)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+    torch.distributed.init_process_group(
+        "gloo", init_method=(tmp_path / "megatron-group").as_uri(), rank=0, world_size=1
+    )
+    for name in (
+        "_TENSOR_MODEL_PARALLEL_GROUP",
+        "_CONTEXT_PARALLEL_GROUP",
+        "_DATA_PARALLEL_GROUP",
+    ):
+        monkeypatch.setattr(parallel_state, name, torch.distributed.group.WORLD)
+    monkeypatch.setattr(parallel_state, "get_context_parallel_rank", lambda: 0)
+
+    def make_worker(role, valid_token_scale=False):
+        worker = object.__new__(
+            MAMegatronActor if role == "actor" else MAMegatronCritic
+        )
+        worker.cfg = OmegaConf.create(
+            {
+                "runner": {"task_type": "reasoning"},
+                "algorithm": {
+                    "loss_type": "actor",
+                    "use_valid_token_scale": valid_token_scale,
+                    "sampling_params": {"temperature": 1.0},
+                    "early_stop_imp_ratio": None,
+                },
+            }
+        )
+        worker.cfg.actor = {"model": {"encoder_seq_length": 6}}
+        worker.role_cfg = OmegaConf.create({"model": {"encoder_seq_length": 6}})
+        worker.tokenizer = SimpleNamespace(eos_token_id=0)
+        worker.transformer_config = SimpleNamespace(sequence_parallel=False)
+        worker.return_loss = True
+        worker.loss_agg_func = masked_mean
+        worker.calculate_entropy = False
+        worker.kl_beta = 0
+        worker.clip_ratio_c = None
+        worker.clip_ratio_low = worker.clip_ratio_high = 0.2
+        worker.value_clip = 0.5
+        worker.num_microbatches = 1
+        return worker
+
+    try:
+        yield make_worker, parallel_state
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+@pytest.mark.parametrize("role", ["actor", "critic"])
+def test_valid_token_scaling_preserves_unsplit_gradient(
+    megatron_cpu, monkeypatch, role
+):
+    make_worker, parallel_state = megatron_cpu
+    worker = make_worker(role)
+    input_ids = torch.arange(64).reshape(16, 4) % 7 + 1
+    positions = torch.arange(4).expand_as(input_ids).clone()
+    mask = (positions > 0) & (positions <= (torch.arange(16) % 3 + 1)[:, None])
+    mask[[0, 2, 3, 15]] = False
+    batch = {
+        "input_ids": input_ids,
+        "attention_mask": torch.ones_like(mask),
+        "position_ids": positions,
+        "response_mask": mask,
+        "loss_scales": mask.float(),
+        "advantages": input_ids.float() / 7 - 0.5,
+        "recomputed_logprobs": torch.zeros_like(mask, dtype=torch.float32),
+        "values": torch.zeros_like(mask, dtype=torch.float32),
+        "returns": torch.full_like(mask, 0.7, dtype=torch.float32),
+    }
+    worker.cfg.actor.model.encoder_seq_length = 4
+    worker.role_cfg.model.encoder_seq_length = 4
+    batch = {key: list(value) for key, value in batch.items()}
+    forward = worker.get_forward_step_func()
+    expected_model = _TokenModel(role)
+    output, loss_func = forward(iter([copy.deepcopy(batch)]), expected_model)
+    expected_loss, _ = loss_func(output)
+    expected_loss.backward()
+    assert expected_model.weight.grad.abs() > 0
+
+    worker.cfg.algorithm.use_valid_token_scale = True
+    worker._setup_valid_token_scale(batch)
+    dp_size, micro_batch_size = 4, 2
+    worker.num_microbatches = len(input_ids) // dp_size // micro_batch_size
+    monkeypatch.setattr(parallel_state, "get_data_parallel_world_size", lambda: dp_size)
+    model = _TokenModel(role)
+    for rank_rows in torch.chunk(torch.arange(len(input_ids)), dp_size):
+        for rows in rank_rows.split(micro_batch_size):
+            microbatch = {
+                key: [value[i] for i in rows.tolist()] for key, value in batch.items()
+            }
+            output, loss_func = forward(iter([microbatch]), model)
+            loss, _ = loss_func(output)
+            assert loss.requires_grad and torch.isfinite(loss)
+            # Megatron averages microbatch losses and then DP gradients.
+            (loss / worker.num_microbatches / dp_size).backward()
+    torch.testing.assert_close(
+        model.weight.grad, expected_model.weight.grad, rtol=1e-5, atol=1e-7
+    )
+
+
+def test_critic_packing_preserves_values_loss_and_optimizer_update(megatron_cpu):
+    make_worker, _ = megatron_cpu
+    worker = make_worker("critic", valid_token_scale=True)
+    result = DynamicRolloutResult(
+        num_sequence=3,
+        group_size=2,
+        idx_to_traj=[0, 0, 1],
+        input_ids=[[10, 11, 12], [10, 11, 12, 50, 51, 13], [20, 21, 22]],
+        prompt_lengths=[1, 5, 1],
+        response_lengths=[2, 1, 2],
+        is_end=[False, True, True],
+        rewards=[1.0, 1.0, 0.0],
+        values=torch.tensor(
+            [[0, 0.2, 0.3, 0, 0, 0], [0, 0, 0, 0, 0, 0.4], [0, 0.1, 0.2, 0, 0, 0]]
+        ),
+        returns=torch.tensor(
+            [[0, 1, 1, 0, 0, 0], [0, 0, 0, 0, 0, 1], [0, 0, 0, 0, 0, 0]],
+            dtype=torch.float32,
+        ),
+    )
+    result.values = [
+        row[: len(ids)] for row, ids in zip(result.values, result.input_ids)
+    ]
+    result.returns = [
+        row[: len(ids)] for row, ids in zip(result.returns, result.input_ids)
+    ]
+    batch = result.to_actor_batch()
+    frozen = copy.deepcopy(batch)
+    outcomes = []
+    for pack in (False, True):
+        minibatch = copy.deepcopy(batch)
+        if pack:
+            minibatch = DynamicRolloutResult.pack_traj_batch({}, minibatch)
+        assert len(minibatch["input_ids"]) == (2 if pack else 3)
+        mask = minibatch["response_mask"]
+        model = _TokenModel()
+        worker._setup_valid_token_scale(minibatch)
+        forward = worker.get_forward_step_func()
+        worker.return_loss = False
+        output, collect = forward(iter([minibatch]), model)
+        values = collect(output)
+        expected_values = [
+            torch.nn.functional.pad(row.float()[:-1] * model.weight, (1, 0)) * m
+            for row, m in zip(minibatch["input_ids"], mask)
+        ]
+        torch.testing.assert_close(values, expected_values)
+
+        worker.return_loss = True
+        output, loss_func = forward(iter([minibatch]), model)
+        loss, _ = loss_func(output)
+        loss.backward()
+        assert torch.isfinite(model.weight.grad) and model.weight.grad.abs() > 0
+        torch.optim.SGD(model.parameters(), lr=0.01).step()
+        outcomes.append(
+            (
+                torch.cat([row[m] for row, m in zip(values, mask)]).detach(),
+                loss.detach(),
+                model.weight.detach(),
+            )
+        )
+    for unpacked, packed in zip(*outcomes, strict=True):
+        torch.testing.assert_close(unpacked, packed)
+    for key in ("values", "returns"):
+        torch.testing.assert_close(batch[key], frozen[key])
+
+
+def test_pinned_offload_skips_pinning_for_musa_tensors(monkeypatch):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    class _MusaDeviceTensor(torch.Tensor):
+        @property
+        def device(self):
+            return SimpleNamespace(type="musa")
+
+    def forbid_pinned_alloc(*args, **kwargs):
+        raise AssertionError("MUSA offload must not allocate pinned host memory")
+
+    monkeypatch.setattr(torch, "empty_like", forbid_pinned_alloc)
+    source = torch.ones(2, dtype=torch.float32).as_subclass(_MusaDeviceTensor)
+    with pinned_offload_context():
+        result = source.to("cpu")
+    assert not result.is_pinned()
+    torch.testing.assert_close(result.as_subclass(torch.Tensor), torch.ones(2))
+
+
+def _balance_groups_process(rank, counts, num_groups, init_file):
+    world_size = len(counts) * num_groups
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=world_size,
+        timeout=timedelta(seconds=45),
+    )
+    try:
+        dp_group = dist.group.WORLD
+        if num_groups > 1:
+            groups = [
+                dist.new_group(list(range(i, world_size, num_groups)))
+                for i in range(num_groups)
+            ]
+            dp_group = groups[rank % num_groups]
+        dp_rank = dist.get_rank(dp_group)
+        total = sum(counts)
+        first_identity = (rank % num_groups) * total
+        start = first_identity + sum(counts[:dp_rank])
+        results = []
+        for i in range(counts[dp_rank]):
+            identity = start + i
+            length = 11 + identity * 7
+            results.append(
+                DynamicRolloutResult(
+                    num_sequence=2,
+                    group_size=2,
+                    idx_to_traj=[0, 1],
+                    input_ids=[[identity] * length, [identity] * (length + 1)],
+                    prompt_lengths=[3, 3],
+                    response_lengths=[length - 3, length - 2],
+                    is_end=[True, True],
+                    rewards=[float(identity), -float(identity)],
+                    rollout_logprobs=[[-0.5] * (length - 3), [-0.25] * (length - 2)],
+                    group_id=identity,
+                    task_name="searchr1",
+                    version_start=[identity + 1, identity + 2],
+                    version_end=[identity + 2, identity + 2],
+                    extra_fields_group={"identity": identity},
+                    extra_fields_train={"idx_to_sub_traj": [0, 0]},
+                )
+            )
+        snapshots = copy.deepcopy(results)
+        output = balance_rollout_groups(results, dp_group)
+        assert len(output) == total // len(counts)
+        local = {res.extra_fields_group["identity"]: res for res in results}
+        for result in output:
+            identity = result.extra_fields_group["identity"]
+            if identity in local:
+                assert result is local[identity]
+            length = 11 + identity * 7
+            assert result.group_id == identity
+            assert result.task_name == "searchr1"
+            assert result.version_start == [identity + 1, identity + 2]
+            assert result.version_end == [identity + 2, identity + 2]
+            metadata = result.group_metadata()
+            assert metadata.earliest_version == identity + 1
+            assert metadata.completion_version == identity + 2
+            assert result.idx_to_traj == [0, 1]
+            assert result.input_ids == [[identity] * length, [identity] * (length + 1)]
+            assert result.rewards == [float(identity), -float(identity)]
+            assert result.rollout_logprobs == [
+                [-0.5] * (length - 3),
+                [-0.25] * (length - 2),
+            ]
+            assert result.extra_fields_train == {"idx_to_sub_traj": [0, 0]}
+        assert results == snapshots
+        identities = [None] * len(counts)
+        dist.all_gather_object(
+            identities,
+            [res.extra_fields_group["identity"] for res in output],
+            group=dp_group,
+        )
+        assert sorted(sum(identities, [])) == list(
+            range(first_identity, first_identity + total)
+        )
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize(
+    ("counts", "num_groups"),
+    [
+        pytest.param((2,), 1, id="dp1"),
+        pytest.param((2, 2), 1, id="dp2"),
+        pytest.param((2, 2, 2, 2), 1, id="dp4"),
+        pytest.param((1, 3), 1, id="dp2-uneven-increasing"),
+        pytest.param((3, 1), 1, id="dp2-uneven-decreasing"),
+        pytest.param((0, 4), 1, id="dp2-empty-first"),
+        pytest.param((4, 0), 1, id="dp2-empty-last"),
+        pytest.param((1, 2, 0, 5), 1, id="dp4-uneven-empty-middle"),
+        pytest.param((0, 0, 0, 8), 1, id="dp4-single-source"),
+        pytest.param((5, 0, 2, 1), 1, id="dp4-uneven-decreasing"),
+        pytest.param((1, 3), 2, id="dp2-interleaved-subgroups"),
+    ],
+)
+def test_balance_complete_rollout_groups(tmp_path, counts, num_groups):
+    mp.spawn(
+        _balance_groups_process,
+        args=(counts, num_groups, str(tmp_path / "rendezvous")),
+        nprocs=len(counts) * num_groups,
+        join=True,
+    )
+
+
+def _source_weights_process(rank, redistribute, init_file):
+    import torch
+
+    from rlinf.algorithms.loss_scales import restore_source_dp_normalization
+
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=45),
+    )
+    try:
+        sources = (
+            ([0, 0, 1] if rank == 0 else [0]) if redistribute else [rank] * (3, 1)[rank]
+        )
+        batch = {
+            "extra:source_dp": torch.tensor(sources),
+            "advantages": [torch.ones(i + 1) for i in range(len(sources))],
+        }
+        restore_source_dp_normalization(
+            batch, {"folding_scale": ["group_level"]}, dist.group.WORLD, "cpu"
+        )
+        expected = (
+            ([1.0, 1.0, 1.0 / 3] if rank == 0 else [3.0])
+            if redistribute
+            else [1.0] * len(sources)
+        )
+        for row, value in zip(batch["advantages"], expected, strict=True):
+            torch.testing.assert_close(row, torch.full_like(row, value))
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("redistribute", [False, True])
+def test_source_dp_loss_weights_survive_uneven_redistribution(tmp_path, redistribute):
+    mp.spawn(
+        _source_weights_process,
+        args=(redistribute, str(tmp_path / "rendezvous")),
+        nprocs=2,
+        join=True,
+    )
+
+
+@pytest.mark.parametrize("normalize", [False, True])
+def test_critic_targets_are_fixed_real_length_rows(megatron_cpu, normalize):
+    make_worker, _ = megatron_cpu
+    worker = make_worker("critic")
+    worker.cfg.algorithm.update(
+        {
+            "adv_type": "gae_dynamic",
+            "group_size": 1,
+            "gamma": 0.9,
+            "gae_lambda": 0.95,
+            "normalize_advantages": normalize,
+        }
+    )
+    batch = {
+        "values": [
+            torch.tensor([0.0, 0.2, 0.3]),
+            torch.tensor([0.0, 0.0, 0.0, 0.0, 0.4]),
+        ],
+        "response_mask": [
+            torch.tensor([False, True, True]),
+            torch.tensor([False, False, False, False, True]),
+        ],
+        "rewards": torch.ones(2),
+        "idx_to_traj": [0, 0],
+        "prompt_lengths": torch.tensor([1, 4]),
+    }
+    worker.compute_advantages_and_returns(batch)
+    frozen = copy.deepcopy(batch)
+    assert list(map(len, batch["advantages"])) == [3, 5]
+    for target in ("advantages", "returns"):
+        for row, mask in zip(batch[target], batch["response_mask"]):
+            assert torch.count_nonzero(row[~mask]) == 0
+    for row in batch["values"]:
+        row.add_(10)
+    worker.compute_advantages_and_returns(batch)
+    for target in ("advantages", "returns"):
+        torch.testing.assert_close(batch[target], frozen[target])
+
+
+@pytest.mark.parametrize(
+    "folding_scale,with_sources",
+    [
+        (["group_level"], False),
+        ([], False),
+        ([], True),
+    ],
+)
+def test_source_dp_normalization_preserves_unredistributed_weights(
+    folding_scale, with_sources
+):
+    from rlinf.algorithms.loss_scales import restore_source_dp_normalization
+
+    rows = [
+        torch.tensor([0.0, 2.0], requires_grad=True),
+        torch.tensor([0.0, -3.0, 4.0], requires_grad=True),
+    ]
+    batch = {"advantages": rows}
+    if with_sources:
+        batch["extra:source_dp"] = torch.tensor([0, 0])
+    expected = [row.detach().clone() for row in rows]
+    # A local batch needs no process group or collective to retain its weights.
+    restore_source_dp_normalization(
+        batch, {"folding_scale": folding_scale}, None, "cpu"
+    )
+    assert batch["advantages"] is rows
+    torch.testing.assert_close(batch["advantages"], expected)
+    sum(row.sum() for row in batch["advantages"]).backward()
+    for row in rows:
+        torch.testing.assert_close(row.grad, torch.ones_like(row))
+
+
+def _empty_rollout_metrics_process(rank, empty_rank, init_file):
+    from rlinf.scheduler import Worker
+    from rlinf.utils.distributed import compute_rollout_metrics_dynamic
+
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=45),
+    )
+    Worker.torch_platform = torch.cpu
+    try:
+        empty = rank == empty_rank
+        batch = {
+            "advantages": [] if empty else [torch.tensor([0.0, 2.0, 4.0])],
+            "response_mask": [] if empty else [torch.tensor([False, True, True])],
+            "prompt_lengths": torch.tensor([] if empty else [1], dtype=torch.int32),
+            "response_lengths": torch.tensor([] if empty else [2], dtype=torch.int32),
+            "rewards": torch.tensor([] if empty else [1.0]),
+            "is_end": torch.tensor([] if empty else [True], dtype=torch.bool),
+            "idx_to_traj": [] if empty else [0],
+        }
+        metrics, prompts, responses = compute_rollout_metrics_dynamic(
+            batch, 8, 8, dist.group.WORLD
+        )
+        assert metrics["total_num_sequence"] == 1
+        assert metrics["reward_scores_traj"] == 1.0
+        assert metrics["advantages_mean"] == 3.0
+        assert metrics["advantages_min"] == 2.0
+        assert metrics["advantages_max"] == 4.0
+        assert metrics["max_total_length"] == 3
+        assert prompts.tolist() == [1]
+        assert responses.tolist() == [2]
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("empty_rank", [0, 1])
+def test_dynamic_rollout_metrics_allow_empty_dp_rank(tmp_path, empty_rank):
+    mp.spawn(
+        _empty_rollout_metrics_process,
+        args=(empty_rank, str(tmp_path / "empty-metrics")),
+        nprocs=2,
+        join=True,
+    )

@@ -13,11 +13,27 @@
 # limitations under the License.
 
 import os
-from typing import Any, Optional, Union
+from collections.abc import Callable
+from typing import Any, Optional, Protocol, Union
 
 import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
+
+
+class RolloutInfoReceiver(Protocol):
+    """Optional environment capability for policy routing feedback."""
+
+    def set_rollout_infos(self, infos: dict[str, torch.Tensor]) -> None:
+        """Consume batched diagnostics before the associated actions execute."""
+
+
+class TrajectoryInfoProvider(Protocol):
+    """Optional environment capability for exporting trace-only step data."""
+
+    def trajectory_info_spec(self) -> dict[str, torch.dtype]:
+        """Declare info keys and dtypes; each value has leading axis num_envs."""
+
 
 _tf = None
 
@@ -66,6 +82,17 @@ def get_env_attr(env, name: str, default: Any = None) -> Any:
         except AttributeError:
             inner = getattr(inner, "env", None)
     return default
+
+
+def get_rollout_info_receiver(env: Any) -> Callable[[dict[str, torch.Tensor]], None]:
+    """Require a routing-feedback receiver on an environment or its wrappers."""
+    receiver = get_env_attr(env, "set_rollout_infos")
+    if not callable(receiver):
+        raise ValueError(
+            f"Routing feedback requires {type(env).__name__} to implement "
+            "set_rollout_infos(infos)."
+        )
+    return receiver
 
 
 def to_tensor(
@@ -391,3 +418,26 @@ def center_crop_image(image):
     image = Image.fromarray(image.numpy())
     image = image.convert("RGB")
     return image
+
+
+def partition_success_seeds(
+    success_seeds: torch.Tensor,
+    *,
+    base_seed: int,
+    seed_offset: int,
+    total_num_processes: int,
+    num_group: int,
+) -> torch.Tensor:
+    """Shuffle success seeds globally and return the non-overlapping worker slice."""
+    global_generator = torch.Generator()
+    global_generator.manual_seed(base_seed)
+    shuffled_indices = torch.randperm(success_seeds.numel(), generator=global_generator)
+    shuffled_seeds = success_seeds[shuffled_indices]
+
+    seeds_per_worker = shuffled_seeds.numel() // total_num_processes
+    start = seed_offset * seeds_per_worker
+    end = start + seeds_per_worker
+    worker_seeds = shuffled_seeds[start:end]
+
+    keep_count = (worker_seeds.numel() // num_group) * num_group
+    return worker_seeds[:keep_count]

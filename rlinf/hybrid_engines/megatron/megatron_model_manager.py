@@ -56,6 +56,7 @@ try:
         get_gpt_layer_with_transformer_engine_spec,
     )
     from megatron.core.optimizer import ChainedOptimizer
+    from megatron.core.packed_seq_params import PackedSeqParams
     from megatron.core.transformer.module import Float16Module as MCoreFloat16Module
 
     HAVE_MEGATRON_CORE = True
@@ -143,11 +144,24 @@ class LinearForLastLayer(torch.nn.Linear):
         *,
         sequence_parallel,
         bias=False,  # TODO changed bias to False for temporary convenience
+        weight_init: str = "normal",
+        init_std: float = 0.02,
     ):
+        """Initialize a critic projection with normal or zero weights."""
+        if weight_init not in ("normal", "zero"):
+            raise ValueError(
+                f"Expected value head initialization to be 'normal' or 'zero', got {weight_init!r}."
+            )
         super().__init__(in_features=input_size, out_features=output_size, bias=bias)
         self.sequence_parallel = sequence_parallel
         if self.sequence_parallel:
             self.weight.sequence_parallel = True
+        if weight_init == "normal":
+            torch.nn.init.normal_(self.weight, mean=0.0, std=init_std)
+        else:
+            torch.nn.init.zeros_(self.weight)
+        if self.bias is not None:
+            torch.nn.init.zeros_(self.bias)
 
     def forward(
         self,
@@ -449,6 +463,8 @@ class MegatronModelManager:
                 input_size=self._cfg.model.hidden_size,
                 output_size=1,
                 sequence_parallel=self._cfg.model.sequence_parallel,
+                weight_init=self._cfg.get("value_head_init", "normal"),
+                init_std=self._cfg.model.get("init_method_std", 0.02),
             )
 
         return model
@@ -662,11 +678,26 @@ class MegatronModelManager:
         max_batch_seqlen: int = 4096,
         padding_seqlen: Optional[int] = None,
         keep_left_padding: bool = False,
+        packed_seq_params: Optional[PackedSeqParams] = None,
         **model_forward_kwargs,
     ):
         """Default forward pass for GPT models with optional sequence packing."""
         pre_process = unwrap_model(model).pre_process
+        # Earlier pipeline stages return hidden states for the next stage.
         post_process = unwrap_model(model).post_process
+        if packed_seq_params is not None:
+            output = model(
+                input_ids=input_ids.contiguous(),
+                attention_mask=None,
+                position_ids=position_ids,
+                packed_seq_params=packed_seq_params,
+                **model_forward_kwargs,
+            )
+            if post_process:
+                output /= temperature
+            if post_process and logits_processor is not None:
+                return logits_processor(output, **logits_processor_args)
+            return output
         if pack_seqs:
             batch_size, seq_len = attention_mask.shape[:2]
             input_ids_rmpad, packed_seq_params = preprocess_packed_seqs(
@@ -683,7 +714,8 @@ class MegatronModelManager:
                 packed_seq_params=packed_seq_params,
                 **model_forward_kwargs,
             )
-            output_orig /= temperature
+            if post_process:
+                output_orig /= temperature
             if post_process and logits_processor is not None:
                 args = {
                     k: preprocess_packed_seqs(
@@ -731,7 +763,8 @@ class MegatronModelManager:
                 position_ids=new_position_ids,
                 **model_forward_kwargs,
             )
-            output_orig /= temperature
+            if post_process:
+                output_orig /= temperature
             if post_process and logits_processor is not None:
                 args = {
                     k: tensor_rm_left_padding(v, attention_mask, sequence_parallel)

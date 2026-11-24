@@ -8,28 +8,36 @@ Choose a model or policy class to find its installation, checkpoint, and RL trai
 Hardware Support
 ----------------
 
-NVIDIA is the default backend in the model recipes. AMD ROCm, Huawei Ascend
-CANN, and Moore Threads MUSA also support the three model families below on
-LIBERO and ManiSkill. Follow a model link for installation and launch
-instructions. On non-CUDA backends, ManiSkill runs PhysX on CPU and selects the
-renderer independently.
+Model recipes default to NVIDIA CUDA. AMD ROCm, Huawei Ascend CANN, Moore Threads MUSA, Intel XPU, Kunlunxin XPU, MetaX MACA, and Biren SUPA also support the model and environment combinations below. Follow a model or hardware link for the training recipe and available backend setup instructions. On non-CUDA backends, ManiSkill runs PhysX on CPU and selects the renderer independently.
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 38 38
+   :widths: 22 38 40
 
    * - Model
      - Hardware
      - Environment and Scope
+   * - :doc:`OpenVLA <embodied/maniskill>`
+     - AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA · MetaX MACA
+     - ManiSkill
    * - :doc:`OpenVLA-OFT <embodied/openvla_oft>`
-     - :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <openvla-oft-hardware>`
-     - LIBERO · ManiSkill
-   * - :doc:`GR00T N1.5 <embodied/gr00t>`
-     - :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <gr00t-hardware>`
-     - LIBERO · ManiSkill with a ``maniskill_widowx`` checkpoint
+     - :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <openvla-oft-hardware>` · Kunlunxin XPU
+     - LIBERO · ManiSkill (AMD, Ascend, MUSA) · :ref:`RoboTwin on ROCm <robotwin-hardware>` · :ref:`Wan world model <wan-hardware>` (Ascend, MUSA, ROCm, Kunlunxin)
+   * - :doc:`GR00T N1.5 / N1.7 <embodied/gr00t>`
+     - :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <gr00t-hardware>` · Intel XPU
+     - N1.5 on LIBERO · ManiSkill (all four) · N1.7 on LIBERO · ManiSkill (Intel XPU); ManiSkill requires a ``maniskill_widowx`` checkpoint
    * - :doc:`π₀ / π₀.₅ (OpenPI) <embodied/pi0>`
-     - :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <pi0-hardware>`
-     - LIBERO · ManiSkill · :ref:`RoboTwin on ROCm <robotwin-hardware>`
+     - :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <pi0-hardware>` · Intel XPU · Kunlunxin XPU · MetaX MACA · Biren SUPA
+     - LIBERO (AMD, Ascend, MUSA, Intel, Kunlunxin, MetaX) · ManiSkill (AMD, Ascend, MUSA, Intel) · :ref:`RoboTwin on ROCm <robotwin-hardware>` · :doc:`SFT <embodied/sft_openpi>` (Biren SUPA)
+   * - :doc:`LingbotVLA 1.0 <embodied/lingbotvla>`
+     - :ref:`AMD ROCm <robotwin-hardware>`
+     - :ref:`RoboTwin <robotwin-hardware>`
+   * - :doc:`StarVLA (QwenOFT) <embodied/starvla>`
+     - :ref:`Huawei Ascend CANN <starvla-hardware>`
+     - LIBERO
+   * - :doc:`DreamZero <embodied/sft_dreamzero>`
+     - :ref:`Huawei Ascend CANN <sft-dreamzero-hardware>`
+     - SFT (LeRobot datasets)
 
 Model Recipes
 -------------
@@ -162,6 +170,26 @@ Open a model page for the full workflow and its supported environments.
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/activevln.html" style="text-decoration: underline; color: blue;">
+           <b>ActiveVLN</b>
+         </a><br>
+         Train ActiveVLN navigation with VLN-CE and GRPO
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/psi0.html" style="display: block;"><img src="https://raw.githubusercontent.com/physical-superintelligence-lab/Psi0/a32e57a3fabb8590c80677f9cd3d1fc3db60eb06/assets/media/arch.png" alt="Psi0 model architecture"
+            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/psi0.html" style="text-decoration: underline; color: blue;">
+           <b>RL on Psi0 Model</b>
+         </a><br>
+         Psi0 + SIMPLE + PPO humanoid RL training
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -180,3 +208,4 @@ Open a model page for the full workflow and its supported environments.
    Evo-1 <embodied/evo1>
    ABot-M0 <embodied/abot_m0>
    ActiveVLN <embodied/activevln>
+   Psi0 <embodied/psi0>

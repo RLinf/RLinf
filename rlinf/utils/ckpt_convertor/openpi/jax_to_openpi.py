@@ -43,6 +43,19 @@ _PALIGEMMA_WIDTH = 2048
 _ACTION_WIDTH = 1024
 
 
+def _unwrap_value_leaves(tree):
+    """Strip the ``{'value': array}`` wrappers an nnx state stores around leaves.
+
+    RoboDojo checkpoints are saved from a Flax nnx state, so every parameter is
+    keyed as ``name/value``. The converters expect the bare arrays.
+    """
+    if isinstance(tree, dict):
+        if len(tree) == 1 and isinstance(tree.get("value"), np.ndarray):
+            return tree["value"]
+        return {key: _unwrap_value_leaves(value) for key, value in tree.items()}
+    return tree
+
+
 def _load_jax_params(checkpoint_dir: str | pathlib.Path) -> dict:
     """Restore the JAX parameter pytree from ``{checkpoint_dir}/params`` as float32 numpy.
 
@@ -75,7 +88,7 @@ def _load_jax_params(checkpoint_dir: str | pathlib.Path) -> dict:
     # peel a single ``params`` wrapper when present.
     if "PaliGemma" not in restored and isinstance(restored.get("params"), dict):
         restored = restored["params"]
-    return restored
+    return _unwrap_value_leaves(restored)
 
 
 def convert_siglip(params: dict) -> dict:

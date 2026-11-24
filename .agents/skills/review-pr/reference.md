@@ -1,54 +1,45 @@
-# PR Review Checklist
+# PR review checklist
 
-Use alongside the PR diff. **Always cross-reference against `origin/main`** (`git fetch origin main` first; read with `git show origin/main:<path>` or the GitHub `main` URL), not the local working tree. Categories are in priority order — most of the review should be on (a) and (b).
+Checklist for step 5 of [SKILL.md](SKILL.md), ordered by finding category. Design rules live in [code/patterns.md](../code/patterns.md); area checks live in `code`, `install`, and `docs`. Cross-reference `main` via `git show "$BASE:<path>"` and `git grep <pattern> "$BASE"`, citing `path:line` on `$PR_HEAD` (plus `main:path:line` for cross-checks).
 
-## (a) Correctness & bugs — primary
-- [ ] Logic: off-by-one, inverted conditions, wrong default, mutated shared state, missing await/sync
-- [ ] Edge cases: empty/None/NaN, single rank, world-size=1, first/last iter, resume-from-checkpoint, eval-only paths
-- [ ] Distributed: collectives called on every rank, device placement, deterministic ordering, no races on Ray actors/channels
-- [ ] Lifecycle & resources: GPU/file/actor cleanup, no leaks, no double-init/double-free
-- [ ] Numerical: dtype, in-place on grad-required tensors, unsafe casts, loss-mask correctness
-- [ ] Error handling: meaningful messages, validate at boundaries, no silent except
-- [ ] Behavior parity vs `origin/main` on refactored code paths (read both side-by-side)
+## correctness
 
-## (b) Design, code reuse & unnecessary changes vs `origin/main` — primary
-- [ ] Closest *recent* sibling identified in `origin/main` (`git log`); new code matches its structure/naming rather than legacy boilerplate
-- [ ] Clean, single-responsibility abstractions (`AGENTS.md`): no pass-through wrappers, parallel vocabularies, or dynamic machinery where a direct method/constructor or registry (`register_model` / `register_advantage` / `register_policy_loss` / `register_reward` / `get_env_cls()`) works
-- [ ] `SupportedModel` / `SupportedEnvType` / `get_env_cls()` / `validate_cfg` updated where needed
-- [ ] Worker subclasses `Worker`, uses `self.log_*`, launched via `create_group(...).launch(...)`; embodied policy extends `BasePolicy`
-- [ ] No duplication of helpers/transforms already in `rlinf/utils/`, `rlinf/models/embodiment/`, `rlinf/envs/`, `rlinf/data/`, or `requirements/install.sh` (cite `origin/main:file:line`)
-- [ ] No dead/unreferenced functions, classes, dataclass fields, or defensive branches for impossible inputs
-- [ ] YAML config copied from a current sibling; static values only; fields read-only in code; no redundant re-declaration of keys already set by Hydra `defaults`
-- [ ] No unnecessary install/Docker/CI bloat: no inline `pyproject.toml` patching or per-env Torch pins in `install.sh`, no Docker stages for real-world envs that don't ship images, no redundant per-file rules in `ci-tests.yml`, no duplicated e2e steps across workflows
-- [ ] Unit tests placed in the component's existing `tests/unit_tests/test_<component>.py` file (not a new per-model/env/fix file) and test real contracts rather than mock setup
-- [ ] No hardcoded machine paths, sleep-based sync, or monkey-patches
+- [ ] **Logic**: off-by-one, inverted conditions, wrong defaults, swapped args, mutated shared state, missing `await`/sync.
+- [ ] **Edge cases**: empty/`None`/NaN inputs, batch size 1, zero-size tensors, world size 1, first/last step, eval-only, checkpoint resume, single-node vs. multi-node.
+- [ ] **Concurrency & distributed**: rank-asymmetric collectives, device placement, worker ordering races, blocking calls in async paths, Ray actor/channel races.
+- [ ] **Resources & lifecycle**: GPU memory leaks (missing offload/free), leaked handles/actors, exception-path cleanup, double init/free.
+- [ ] **Numerics**: dtype mismatches (fp16/bf16/fp32), in-place ops breaking autograd, unsafe casts, accumulator precision, loss masks.
+- [ ] **Error handling**: silent `except`, hot-path exceptions, missing boundary validation, or over-validating internal state ([patterns.md](../code/patterns.md#no-unnecessary-protection-code)).
+- [ ] **Refactor regressions**: compare every changed function against `main` across all affected backends, envs, models, and tasks.
+- [ ] **Caller & consumer sweep**: when a signature, return shape, base-class contract, shared helper, or config key changes, grep all callers, subclasses, YAMLs, tests, and docs at `$PR_HEAD` for broken untouched consumers.
+- [ ] **Claims vs. diff**: verify PR description claims (no behavior change, test coverage, metrics/baselines) against the actual diff and tests.
 
-## (c) Code ↔ docs consistency
-- [ ] If docs changed, follow the [docs-check skill](../docs-check/SKILL.md) (code↔docs cross-check + EN↔ZH parity)
-- [ ] Every config key / CLI flag / env var / path / supported name mentioned in changed docs exists in `origin/main` + PR
-- [ ] Public-facing additions/renames/removals in code are reflected in BOTH `docs/source-en/` AND `docs/source-zh/`
-- [ ] Changed `examples/embodiment/config/*.yaml` model-weight paths (`model_path`/`lora_path`/`backbone_model_path`/`wan_wm_hf_ckpt_path`): basename == repo in the `# https://huggingface.co/...` comment; repo resolves on HF (`/api/models/<org>/<repo>` → 200, non-redirecting `id`); and matches the model the env recipe doc prescribes for that env+suite+model family (e.g. LIBERO spatial/object/goal + π₀ → `RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT`); no base-vs-LoRA mixup or casing drift
-- [ ] EN/ZH paired pages agree: commands, paths, keys, claims, numbers, structure
-- [ ] No duplicated/missing/conflicting paragraphs between EN and ZH (or justified)
-- [ ] Style aligned with sibling docs (section titles/order, code blocks, table/link style)
-- [ ] Each docs finding gives concrete wording/structure fix and file references
+## design
 
-## (d) Tests & CI
-- [ ] If the install script changed (`requirements/install.sh`, `requirements/embodied/`, `docker/Dockerfile`), follow the [install-check skill](../install-check/SKILL.md)
-- [ ] User-facing changes have unit or e2e tests
-- [ ] New env/model has install-script + Docker stage + CI/e2e coverage (use add-install-docker-ci-e2e)
-- [ ] New CI-relevant YAML referenced in the e2e test matrix
-- [ ] Large deps (docker/models/datasets) → maintainer ping noted
+A mismatch with RLinf conventions, bloated workaround, or dead boilerplate is a design defect, not a style nit.
 
-## (e) Style & metadata — only flag real issues
-- [ ] Google Python Style; pre-commit clean
-- [ ] Public classes/methods have Google-style docstrings; param type hints; return type when needed
-- [ ] Assertions/exceptions have meaningful messages
-- [ ] Logging used (no `print`)
-- [ ] Newly-added files (`git diff --name-status origin/main...<pr-head>`, status `A`) carry the `# Copyright <YEAR> The RLinf Authors.` header with `<YEAR>` = current year (`date +%Y`); third-party-vendored files keep their upstream copyright line
-- [ ] Every commit `Signed-off-by`; Conventional Commits subject
-- [ ] PR title in Conventional Commits format; PR Description + Checklist sections filled
+- [ ] **Sibling**: matches the newest idiomatic sibling on `main` (`git log "$BASE" -- <dir>`), not legacy boilerplate.
+- [ ] **Patterns**: follows [patterns.md § Design](../code/patterns.md#design) (no component branches in shared code, contained component files, single-owner abstractions, fix at owning layer, direct common path, preserved behavior).
+- [ ] **Test-driven guards**: no product code weakened for incomplete test mocks/stubs (replacing `obj.attr` with `getattr`/`hasattr` or adding fallback branches); fix the test instead.
+- [ ] **Extension points & interfaces**: plugs into existing registries/enums (`register_*`, `SupportedModel`, `SupportedEnvType`, `validate_cfg`) and sibling contracts (`Worker`, `BasePolicy`).
+- [ ] **Dead code & scope creep**: every new function, field, and config key has a consumer; no unrelated reformatting, renames, or extra install/Docker/CI edits.
+- [ ] **YAML & hacks**: static YAML copied from a current sibling, overriding only non-default keys; user fields stay read-only; no hardcoded paths/GPUs, sleep sync, or monkey-patches.
 
-## Output clarity
-- [ ] Each finding includes **both** a plain-language explanation for a reviewer with little background in that module (what it tries to do, what happens instead, and why it matters) **and** a step-by-step code walkthrough that directly shows the key offending code snippet(s) inline rather than only pointing to line numbers
+## reuse
 
+- [ ] **Duplication**: reuses existing `main` helpers (`rlinf/utils/`, `rlinf/models/embodiment/`, `rlinf/envs/`, `rlinf/data/`, `requirements/install.sh` helpers, and shared doc setup pages/partials like `video_models.rst`, `_setup_common.rst`, `_model_path.rst`).
+- [ ] **Citation**: cite the existing helper as `main:<path>:<line>` when flagging reuse; name the closest comparison when nothing applies.
+
+## tests, docs, and docs-style
+
+Area scripts and checklists run in step 6 ([code § Check](../code/SKILL.md#check), [install § Check](../install/SKILL.md#check), [docs § Check](../docs/SKILL.md#check)). Review these PR-wide checks alongside them:
+
+- [ ] **Coverage & completeness**: user-facing changes include a test that fails without the change; new models/envs ship install, Docker (where comparable targets have it), e2e config, CI filter, EN/ZH docs, and README highlight (ping maintainers for large new assets/images).
+- [ ] **Docs readability (fresh agent)**: run a fresh-agent pass (no `rlinf/` context) following [docs § Check](../docs/SKILL.md#check) for plain human prose, native Chinese (no direct machine translation), concise explanations, no internal code citations, clean commands, and no negative-contrast restatement ("not A, not B, but C"). Ask to fix YAML defaults/scripts or link Reference rather than adding prose workarounds.
+- [ ] **Sibling alignment**: compare recipes side by side with closest model/domain-family siblings on `main`; flag duplicated shared setup or non-standard commands even when reproduction passes.
+
+## style
+
+Flag only real problems; lint, formatting, `__init__.py`, and license headers come from `code/check.py`, and code conventions from [patterns.md § Code](../code/patterns.md#code).
+
+- [ ] **Commits & PR metadata**: `Signed-off-by:` and Conventional Commits on commits; valid PR title, filled Description/Checklist, and performance/training curves when applicable (`lint_pr.py lint --pr <N>`).

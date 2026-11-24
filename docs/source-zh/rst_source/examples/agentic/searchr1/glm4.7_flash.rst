@@ -134,6 +134,8 @@ HuggingFace 上发布的 `RLinf/Search-R1-Data` 是按 Qwen 的 chat template �
 如果 NCCL 跨机传输（RoCE/IB）卡住，请确认两台机器上的 GPU 使用同一子网的网卡，
 例如限定 `NCCL_IB_HCA`。两台机器都用满 8 卡、本地卡号一致时无需此设置。
 
+如果想让同样的配方以 rollout 与训练重叠的方式运行（actor 与 rollout 分占两台机器），见 :doc:`Search-R1 异步训练 <async>`。
+
 可视化与结果
 ----------------------------------------
 

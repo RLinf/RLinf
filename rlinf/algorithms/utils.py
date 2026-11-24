@@ -19,6 +19,52 @@ import torch
 from rlinf.utils.utils import masked_mean
 
 
+def apply_importance_sampling_correction(
+    advantages: torch.Tensor,
+    recomputed_logprobs: torch.Tensor,
+    rollout_logprobs: torch.Tensor,
+    clip: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Reweight advantages when rollout and actor score actions differently.
+
+    Rollout samples with one implementation and the actor recomputes the same
+    actions with another, so the two log-probabilities can differ. Each
+    advantage is scaled by the detached weight ``min(exp(recomputed -
+    rollout), clip)``.
+
+    Args:
+        advantages: Advantages to correct.
+        recomputed_logprobs: Actor log-probabilities of the sampled actions.
+        rollout_logprobs: Rollout log-probabilities of the same actions, with
+            the same shape as ``recomputed_logprobs``.
+        clip: Positive upper bound on the importance weight.
+
+    Returns:
+        The corrected advantages, the unclipped importance weights, and the log
+        ratios ``recomputed - rollout``. Callers report metrics from the last
+        two.
+
+    Raises:
+        ValueError: If the log-probability shapes differ or ``clip`` is not
+            positive.
+    """
+    if recomputed_logprobs.shape != rollout_logprobs.shape:
+        raise ValueError(
+            "Expected recomputed_logprobs and rollout_logprobs to have the same "
+            f"shape, got {tuple(recomputed_logprobs.shape)} and "
+            f"{tuple(rollout_logprobs.shape)}."
+        )
+    if clip <= 0:
+        raise ValueError(f"Expected a positive importance_sampling_clip, got {clip}.")
+
+    log_ratio = recomputed_logprobs - rollout_logprobs
+    importance_weight = log_ratio.exp()
+    corrected_advantages = (
+        advantages * torch.clamp(importance_weight, max=clip).detach()
+    )
+    return corrected_advantages, importance_weight, log_ratio
+
+
 def huber_loss(error: torch.Tensor, delta: float) -> torch.Tensor:
     return torch.where(
         error.abs() < delta, 0.5 * error**2, delta * (error.abs() - 0.5 * delta)
@@ -206,16 +252,6 @@ def preprocess_reasoning_advantages_inputs(
             }
         )
 
-    elif kwargs["adv_type"] == "grpo_dynamic":
-        grouped_rewards = (
-            rewards.reshape(-1, kwargs["num_sequence"]).transpose(0, 1).contiguous()
-        )
-        kwargs.update(
-            {
-                "rewards": grouped_rewards,
-            }
-        )
-
     elif kwargs["adv_type"] == "reinpp":
         kwargs.update({"rewards": rewards.unsqueeze(0)})
 
@@ -228,7 +264,7 @@ def preprocess_reasoning_advantages_inputs(
     if values is not None:  # [bsz, seq_len]
         assert values.ndim == 2, f"Unsupported values shape {values.shape}"
         values = values.transpose(0, 1)  # [seq_len, bsz]
-        # pad values with zeros at the end for bootstrapping
+        # Pad values with zeros at the end for bootstrapping.
         values = torch.cat(
             [
                 values,
@@ -286,7 +322,7 @@ def preprocess_loss_inputs(
     logprob_type: Optional[str] = None,
     single_action_dim: Optional[int] = None,
     loss_mask: Optional[torch.Tensor] = None,
-    loss_mask_sum: Optional[torch.Tensor] = None,
+    loss_mask_ratio: Optional[torch.Tensor] = None,
     values: Optional[torch.Tensor] = None,
     prev_values: Optional[torch.Tensor] = None,
     returns: Optional[torch.Tensor] = None,
@@ -299,8 +335,8 @@ def preprocess_loss_inputs(
         advantages = advantages.flatten()
         if loss_mask is not None:
             loss_mask = loss_mask.flatten()
-        if loss_mask_sum is not None:
-            loss_mask_sum = loss_mask_sum.flatten()
+        if loss_mask_ratio is not None:
+            loss_mask_ratio = loss_mask_ratio.flatten()
         if values is not None:
             values = values.flatten()
         if prev_values is not None:
@@ -310,6 +346,7 @@ def preprocess_loss_inputs(
 
     bsz = logprobs.shape[0]
     proximal_logprobs = kwargs.get("proximal_logprobs", None)
+    rollout_logprobs = kwargs.get("rollout_logprobs", None)
     if logprob_type == "sequence_token_level":
         if logprobs.ndim != 2 or old_logprobs.shape != logprobs.shape:
             raise ValueError(
@@ -328,8 +365,8 @@ def preprocess_loss_inputs(
             loss_mask = loss_mask.unsqueeze(-1).to(dtype=torch.bool) & token_mask
         else:
             loss_mask = token_mask
-        if loss_mask_sum is not None:
-            loss_mask_sum = loss_mask_sum.unsqueeze(-1)
+        if loss_mask_ratio is not None:
+            loss_mask_ratio = loss_mask_ratio.unsqueeze(-1)
 
     elif logprob_type == "token_level":
         # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz, num_action_chunks, action_dim]
@@ -337,6 +374,8 @@ def preprocess_loss_inputs(
         old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim)
         if proximal_logprobs is not None:
             proximal_logprobs = proximal_logprobs.reshape(bsz, -1, single_action_dim)
+        if rollout_logprobs is not None:
+            rollout_logprobs = rollout_logprobs.reshape(bsz, -1, single_action_dim)
         if versions is not None:
             versions = versions.reshape(bsz, -1, single_action_dim)
         if kwargs.get("loss_type") == "opd":
@@ -348,8 +387,8 @@ def preprocess_loss_inputs(
             advantages = advantages.unsqueeze(-1)
         if loss_mask is not None:
             loss_mask = loss_mask.unsqueeze(-1)
-        if loss_mask_sum is not None:
-            loss_mask_sum = loss_mask_sum.unsqueeze(-1)
+        if loss_mask_ratio is not None:
+            loss_mask_ratio = loss_mask_ratio.unsqueeze(-1)
 
     elif logprob_type == "action_level":
         # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz, num_action_chunks]
@@ -359,6 +398,10 @@ def preprocess_loss_inputs(
             proximal_logprobs = proximal_logprobs.reshape(
                 bsz, -1, single_action_dim
             ).sum(dim=-1)
+        if rollout_logprobs is not None:
+            rollout_logprobs = rollout_logprobs.reshape(bsz, -1, single_action_dim).sum(
+                dim=-1
+            )
         if versions is not None:
             versions = versions.reshape(bsz, -1, single_action_dim)[..., 0]
 
@@ -370,13 +413,17 @@ def preprocess_loss_inputs(
             proximal_logprobs = proximal_logprobs.reshape(
                 bsz, -1, single_action_dim
             ).sum(dim=[1, 2])
+        if rollout_logprobs is not None:
+            rollout_logprobs = rollout_logprobs.reshape(bsz, -1, single_action_dim).sum(
+                dim=[1, 2]
+            )
         if versions is not None:
             versions = versions.reshape(bsz, -1, single_action_dim)[:, 0, 0]
 
     target_shape = logprobs.shape
     advantages = expand_to_target_dim(advantages, target_shape)
     loss_mask = expand_to_target_dim(loss_mask, target_shape)
-    loss_mask_sum = expand_to_target_dim(loss_mask_sum, target_shape)
+    loss_mask_ratio = expand_to_target_dim(loss_mask_ratio, target_shape)
     values = expand_to_target_dim(values, target_shape)
     prev_values = expand_to_target_dim(prev_values, target_shape)
     returns = expand_to_target_dim(returns, target_shape)
@@ -387,10 +434,11 @@ def preprocess_loss_inputs(
             "logprobs": logprobs,
             "old_logprobs": old_logprobs,
             "proximal_logprobs": proximal_logprobs,
+            "rollout_logprobs": rollout_logprobs,
             "versions": versions,
             "advantages": advantages,
             "loss_mask": loss_mask,
-            "loss_mask_sum": loss_mask_sum,
+            "loss_mask_ratio": loss_mask_ratio,
             "values": values,
             "prev_values": prev_values,
             "returns": returns,

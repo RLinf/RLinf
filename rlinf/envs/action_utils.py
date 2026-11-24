@@ -14,6 +14,7 @@
 
 import numpy as np
 import torch
+from scipy.spatial.transform import Rotation as R
 
 from rlinf.config import SupportedModel
 from rlinf.envs import SupportedEnvType
@@ -326,6 +327,43 @@ def prepare_actions_for_roboverse(
     return chunk_actions
 
 
+def prepare_actions_for_dexjoco(
+    raw_chunk_actions,
+) -> np.ndarray:
+    # the policy outputs [pos3, rotvec3, hand16] per arm, right arm first
+    # DexJoCo takes all arm poses [pos3, quat_wxyz] first, then all hands
+    action_dim = raw_chunk_actions.shape[-1]
+    if action_dim not in (22, 44):
+        raise ValueError(f"DexJoCo expects 22-dim or 44-dim actions, got {action_dim}.")
+    num_arms = action_dim // 22
+    poses = []
+    hands = []
+    for arm_actions in np.split(raw_chunk_actions, num_arms, axis=-1):
+        rotvec = arm_actions[..., 3:6].reshape(-1, 3)
+        quat = R.from_rotvec(rotvec).as_quat(scalar_first=True)
+        quat = quat.reshape(*arm_actions.shape[:-1], 4)
+        poses.append(np.concatenate([arm_actions[..., :3], quat], axis=-1))
+        hands.append(arm_actions[..., 6:])
+    chunk_actions = np.concatenate(poses + hands, axis=-1)
+    return chunk_actions
+
+
+def prepare_actions_for_simple(raw_chunk_actions) -> np.ndarray:
+    """Validate the fixed SIMPLE high-level action chunk without changing it."""
+    from rlinf.envs.sim.simple.utils import SIMPLE_ACTION_CHUNK_SHAPE
+
+    chunk_actions = np.asarray(raw_chunk_actions, dtype=np.float32)
+    if chunk_actions.ndim != 3 or chunk_actions.shape[1:] != SIMPLE_ACTION_CHUNK_SHAPE:
+        raise ValueError(
+            "SIMPLE expects actions shaped "
+            f"[B, {SIMPLE_ACTION_CHUNK_SHAPE[0]}, {SIMPLE_ACTION_CHUNK_SHAPE[1]}], "
+            f"got {chunk_actions.shape}."
+        )
+    if not np.isfinite(chunk_actions).all():
+        raise ValueError("SIMPLE actions must contain only finite values.")
+    return np.ascontiguousarray(chunk_actions)
+
+
 def prepare_actions(
     raw_chunk_actions,
     env_type: str,
@@ -356,6 +394,10 @@ def prepare_actions(
                 raw_chunk_actions=raw_chunk_actions,
                 model_type=model_type,
             )
+        elif wm_env_type == "robotwin":
+            # Joint angles, as the simulator takes them; a backend trained on another
+            # action space converts them itself.
+            chunk_actions = raw_chunk_actions
         else:
             raise NotImplementedError(f"Env type {wm_env_type} not implemented")
     elif (
@@ -369,9 +411,11 @@ def prepare_actions(
             action_scale=action_scale,
             policy=policy,
         )
-    elif env_type == SupportedEnvType.ROBOTWIN:
-        chunk_actions = raw_chunk_actions
-    elif env_type == SupportedEnvType.EMBODICHAIN:
+    elif env_type in (
+        SupportedEnvType.ROBOTWIN,
+        SupportedEnvType.ROBODOJO,
+        SupportedEnvType.EMBODICHAIN,
+    ):
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.METAWORLD:
         chunk_actions = prepare_actions_for_metaworld(
@@ -421,11 +465,20 @@ def prepare_actions(
             action_dim=action_dim,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.MUJOCO_WARP:
+        # Continuous locomotion actions; the env clamps them to the actuator
+        # control range.
+        chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.ROBOVERSE:
         chunk_actions = prepare_actions_for_roboverse(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.GENIESIM:
+        # GenieSim consumes the policy's chunk unchanged: the model-side
+        # transforms live in its OpenPI policy and the joint-layout mapping
+        # happens on the simulator server.
+        chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.DIFFUSION:
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.POLARIS:
@@ -433,6 +486,16 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.DEXJOCO:
+        chunk_actions = prepare_actions_for_dexjoco(
+            raw_chunk_actions=raw_chunk_actions,
+        )
+    elif env_type == SupportedEnvType.ROBOLAB:
+        chunk_actions = np.asarray(raw_chunk_actions, dtype=np.float32).copy()
+        if _is_openpi_family(model_type):
+            chunk_actions[..., -1] = (chunk_actions[..., -1] > 0.5).astype(np.float32)
+    elif env_type == SupportedEnvType.SIMPLE:
+        chunk_actions = prepare_actions_for_simple(raw_chunk_actions)
     else:
         chunk_actions = raw_chunk_actions
 

@@ -1,133 +1,169 @@
 ---
 name: review-pr
-description: Reviews a pull request from a PR URL by directly fetching the URL content (no `gh` dependency) and verifies compliance with CONTRIBUTING.md. Use when the user asks for a PR review, to review changes before merge, or to check contribution guidelines.
+description: Reviews an RLinf pull request for correctness, design, and code reuse against RLinf's design patterns, runs the check of every area the PR touches (code, docs, install) through those skills and the reproduction when the host can, reports concise, deduplicated findings with evidence, and, when the user asks, posts them as one GitHub review. Use when the user asks to review a PR, check a PR before merge, or post review comments.
 ---
 
-# Review PR (From PR URL)
+# Review a PR
 
-Reviews the changes in a specific GitHub pull request. **The primary focus is code correctness, clean abstractions and code reuse, and eliminating unnecessary changes that deviate from the existing codebase.** PR formatting, commit conventions, and user-facing documentation are checked but should not dominate the review. See [AGENTS.md](../../../AGENTS.md) and [CONTRIBUTING.md](../../../CONTRIBUTING.md) for the design and contribution rules referenced below.
+Produce one concise, deduplicated review in the step 8 format: a verdict, a two-bullet reproduction summary, the findings table, detail sections only for non-inline (`here`) findings, inline comments printed once, and a two-bullet check summary (not posted). Post to GitHub only when the user asks ([posting.md](posting.md)).
 
-## 1. Input: PR URL
+Focus on correctness, design, reuse, and unnecessary divergence from `main`. Area checks live in [code](../code/SKILL.md), [docs](../docs/SKILL.md), and [install](../install/SKILL.md). Read [code/patterns.md](../code/patterns.md) and [reference.md](reference.md) before step 5.
 
-Require a PR URL (for example: `https://github.com/RLinf/RLinf/pull/123`).
+## 1. Set up
 
-## 2. Fetch PR data and the main branch
+Cross-reference against `main` of `github.com/RLinf/RLinf`, never the local working tree:
 
-Fetch PR details directly from the URL:
+```bash
+N=<PR number>
+REMOTE=$(git remote -v | awk '/github\.com[:\/]RLinf\/RLinf(\.git)? \(fetch\)/ {print $1; exit}')
+git fetch "$REMOTE" main "pull/$N/head:pr-$N"
+BASE="$REMOTE/main"; PR_HEAD="pr-$N"
+SKILLS="$(git rev-parse --show-toplevel)/.agents/skills"
 
-- Open/fetch the PR page itself for title, description, and metadata.
-- Fetch unified diff via URL forms:
-  - `<PR_URL>.diff` (preferred)
-  - `<PR_URL>.patch` (fallback)
-- If needed, fetch related pages directly from URL for comments/checks.
+gh pr view "$N" --repo RLinf/RLinf --json title,body,author,headRefOid,commits,files
+gh pr checks "$N" --repo RLinf/RLinf
+git log --oneline "$BASE..$PR_HEAD"
+git diff --stat "$BASE...$PR_HEAD"
+git show "$BASE:<path>"
+git grep <pattern> "$BASE"
+gh api "repos/RLinf/RLinf/pulls/$N/comments" --paginate
+```
 
-**All cross-references must be against `origin/main`, not the local working tree.** The current checkout may be on an unrelated branch or contain WIP changes; Glob/Grep over the working tree does not show the upstream state. Before any cross-reference lookup:
+Check out `$PR_HEAD` in a separate git worktree for steps 3, 6, and verification; never edit or push the PR branch. Without `gh`, read `<PR URL>.diff` and files on `github.com/RLinf/RLinf/blob/main/<path>` (or ask the user if private).
 
-- Run `git fetch origin main` to refresh.
-- Read files via `git show origin/main:<path>` (or browse `https://github.com/RLinf/RLinf/blob/main/<path>`).
-- Use `git log origin/main..<pr-head>` to scope what the PR actually adds.
-- Never treat Glob/Grep results over the working tree as "current state of the project" — they reflect whatever branch is checked out, not main.
+On a second round, inspect every earlier thread and main-comment finding first. Verify each fix in the current code (never trust commit messages alone) and check for regressions or shifted bugs. Carry open findings forward (reply on open inline threads; keep earlier IDs on open main-comment findings), name fixed earlier findings in the verdict, and do not reopen minor preferences the author already answered reasonably.
 
-If the PR page is private and URL fetch is blocked, report that access is unavailable and ask the user to provide exported diff/details.
+## 2. Understand the PR
 
-## 3. Review priorities
+Read the PR description, linked issue, commits, and diff, and note:
 
-Findings are ordered by severity. Categories are listed in priority order — most of the review should be on (a) and (b); (c)–(e) are checked but should not pad the output.
+- the problem and core idea;
+- touched areas and what could regress (backends, envs, models, tasks);
+- closest current siblings on `main` for code/config (`git log "$BASE" -- <dir>`) and docs (match model/domain family and shared setup pages, not just the gallery);
+- every claim in the PR description ("behavior-preserving", test coverage, metrics, hardware runs) as a hypothesis to verify against the diff and tests.
 
-### (a) Correctness, bugs, and edge cases — primary
+## 3. Route the change
 
-For every changed function, branch, and config path, look for:
+In the PR worktree:
 
-- **Logic bugs**: off-by-one, inverted conditions, wrong operator/default, swapped args, mutated shared state, missing await/sync.
-- **Edge cases**: empty/None/NaN, single-element batches, zero-size tensors, world-size=1, first/last iter, eval-only paths, resume-from-checkpoint, multi-node vs single-node paths.
-- **Concurrency / distributed**: collectives that must run on every rank, device placement, non-deterministic ordering across workers, blocking calls in async paths, races on Ray actors / channels.
-- **Resource & lifecycle**: GPU memory leaks (uncleared tensors, missing `enable_offload`), file handles, Ray actor lifetime, missed cleanup on exceptions, double-init.
-- **Numerical**: dtype mismatches (fp16/bf16/fp32), in-place ops on grad-required tensors, unsafe casts, accumulator precision, loss-mask correctness.
-- **Error handling**: silent `except`, exceptions on hot paths, missing input validation at boundaries; conversely, *over*-validation of internally-trusted state.
-- **Refactor regressions**: read both the `origin/main` version and the new version side-by-side; partial refactors often change semantics by accident.
+```bash
+python3 "$SKILLS/route.py" list --base "$BASE"
+```
 
-Cite file:line in the diff and the matching `origin/main:file:line` when relevant.
+Check every listed area in step 6; review unrouted files yourself in step 5.
 
-### (b) Design, code reuse, and unnecessary changes vs `origin/main` — primary
+## 4. Run the reproduction
 
-The PR must match how RLinf already does things and follow the [Design and review principles in `AGENTS.md`](../../../AGENTS.md#design-and-review-principles). Mismatches, bloated workarounds, and dead boilerplate are design defects, not style nits.
+When a PR adds/changes a user-facing workflow or claims metrics, run a reproduction whenever this host has the hardware and assets:
 
-- **Compare against the *newest* idiomatic sibling in `origin/main`** — comparable model under `rlinf/models/embodiment/`, env under `rlinf/envs/`, runner under `rlinf/runners/`, worker under `rlinf/workers/`, advantage/loss/reward under `rlinf/algorithms/`. Check `git log` on siblings so you compare against current conventions rather than legacy boilerplate.
-- **Clean, explicit abstractions**:
-  - Prefer small abstractions with one responsibility and one stable name (`AGENTS.md`). Flag parallel vocabularies, pass-through wrapper classes/functions that hide ownership, and dynamic machinery where a direct constructor, method, or existing registry (`register_model`, `register_advantage`, `register_policy_loss`, `register_reward`, `get_env_cls()`) suffices.
-  - Design invalid states out of the API: explicit ownership, lifecycle order, and idempotent cleanup; keep the common local path direct and use the same API in local and remote configurations.
-  - Embodied policies must inherit `BasePolicy` and implement the documented forwards (`default_forward`, `predict_action_batch`, plus algorithm-specific); workers must subclass `Worker`, implement `initialize`, use `self.log_info` / `log_warning` / `log_error`, and launch via `create_group(...).launch(...)`.
-- **Code reuse over duplication**:
-  - Check whether new logic duplicates helpers or abstractions that already exist anywhere in the stack — `rlinf/utils/` (placement, checkpoint, distributed, data-iter, logging), `rlinf/models/embodiment/` (shared transforms, image parsing, action packing), `rlinf/envs/` (`prepare_actions`, wrappers), `rlinf/data/` (dataset writers/loaders), or `requirements/install.sh` helpers (`clone_or_reuse_repo`, `install_lerobot`, `install_flash_attn`). Always cite the existing helper with `origin/main:file:line` and propose reusing or extending it.
-- **Unnecessary changes, dead code, and bloat**:
-  - **Dead / unreferenced code**: grep `origin/main` + the PR diff for every newly added function, method, class, dataclass field, and config key. Flag anything with zero callers or consumers (e.g. copy-pasted legacy helpers like `make_*_example()`, `generate_observations()`, unused dataclass fields, or defensive branches for shapes/types that the caller pipeline never produces).
-  - **Redundant YAML config keys**: new YAML must start from a current sibling in `examples/`, keep all values static, and treat user-settable fields as read-only in code. When a YAML file inherits a base config via Hydra `defaults` (e.g. `model/pi0_5@actor.model`), flag blocks that re-declare unchanged default keys instead of overriding only task-specific fields.
-  - **Over-engineered install / Docker / CI changes**:
-    - In `requirements/install.sh`, flag bespoke subshells, inline `pyproject.toml` patching, or per-env `TORCH_VERSION` overrides when a small `case` branch calling shared helpers (`install_<env>_env`) or a pinned fork under `github.com/RLinf/<repo>` can express it cleanly (see [install-check](../install-check/SKILL.md)).
-    - In `docker/Dockerfile` and `.github/workflows/docker-build.yml`, check whether comparable targets on `origin/main` actually build Docker images (e.g. real-world hardware envs like `yam`, `so101`, `piper`, `dosw1`, `gim_arm`, `xsquare_turtle2` intentionally do not).
-    - In `.github/workflows/ci-tests.yml` and e2e workflows, flag single-file path filter entries that are already covered by existing directory globs (`rlinf/models/embodiment/**`, `evaluations/**`, `examples/sft/**`, etc.) and flag e2e steps that duplicate coverage already running in another workflow.
-  - **Test layout bloat**: `tests/unit_tests/` has one file per component (`test_models.py`, `test_worker.py`, `test_robotics.py`, etc.). Flag standalone test files named after a single model, env, symptom, or function, and flag mock-heavy tests that only prove mocks were called (`AGENTS.md` § *Tests*).
-  - **No hardcoded paths/hacks**: machine-specific paths, sleep-based sync, monkey-patches → propose a config/env-driven version.
+1. **Check prerequisites** from the PR's docs against the host (`nvidia-smi -L` or accelerator tool, install envs, weights/datasets, or `python3 "$SKILLS/install/driver.py" check-paths <config>`). Follow host mirrors and shared-venv rules; verify accelerators are free (`nvidia-smi`, `ray status`) and never stop others' jobs.
+2. **Launch a fresh agent (never a fork)** in the background while you review, working in its own worktree at `$PR_HEAD`. Give it only the PR URL, head SHA, doc pages to follow, allowed hardware, and host install rules. It must follow only user docs, never open `rlinf/` or `tests/`, fix nothing, and report the minimal setup, first failure, every intervention, and functional vs. metric results separately (for long metric claims, run the shortest documented config such as e2e and state what it does and does not prove).
+3. **If blocked**, state what hardware, assets, or accounts are missing (or report the user's run if provided).
 
-### (c) Code ↔ docs consistency — required when code OR docs change
+Never reproduce the PR yourself after reading the implementation. An undocumented step or failure is a `docs` finding; a passing run still requires step 6 checks on command simplicity and workflow standardness. Unit tests and area scripts are not reproductions—put them in Check summary.
 
-Both directions matter, and EN/ZH parity must be checked explicitly:
+## 5. Review the code
 
-- **If this PR changes documentation**, follow the [docs-check skill](../docs-check/SKILL.md) to drive this review: it cross-checks docs against code and against each other (commands, config keys, paths, model/env names) and enforces EN↔ZH parity.
-- **Docs → code**: every config key, CLI flag, env var, file path, function/class name, and supported model/env name mentioned in changed docs must exist in `origin/main` + this PR. Verify with `git show origin/main:rlinf/...`. Stale references = finding.
-- **Code → docs**: when this PR adds, removes, or renames a public-facing config key, model, env, runner, script, env var, or supported feature, the corresponding doc page **must be updated in the same PR**. If missing, list the exact doc files (EN and ZH) that need edits.
-- **Example-config model paths ↔ docs**: for changed example configs under `examples/embodiment/config/*.yaml`, every model-weight path field (`model_path`, `lora_path`, `backbone_model_path`, `wan_wm_hf_ckpt_path`) must satisfy all three:
-  1. **Form**: it is `/path/to/<repo-name>` where the trailing path component equals the repo in its `# https://huggingface.co/<org>/<repo>` comment (the docs convention is `hf download <org>/<repo> --local-dir <repo>`, so basename == repo name). Flag stale/placeholder basenames (`RLinf-Pi0-SFT`, `model`, `openpi`, …) and a missing leading slash.
-  2. **Exists**: each distinct referenced repo resolves on Hugging Face — `curl -sL -o /dev/null -w '%{http_code}' https://huggingface.co/api/models/<org>/<repo>` returns `200` (use `/api/datasets/` for datasets). Flag 401/404. Also flag *redirecting* names: if the API's returned `id` differs from the requested name, the repo was renamed — point at the canonical `id` (a `200` via redirect is still a stale reference).
-  3. **Matches the docs' per-variant model**: the repo equals the one the corresponding env recipe page prescribes for that exact environment + task suite + model family — not just any existing repo. Cross-check the recipe doc's model table/download block (e.g. LIBERO spatial/object/goal + π₀ → `RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT`, LIBERO-10/Long + π₀ → `RLinf-Pi0-LIBERO-Long-SFT`, any LIBERO suite + π₀.₅ → `RLinf-Pi05-LIBERO-SFT`, GR00T N1.5 per-suite `RLinf-Gr00t-SFT-{Spatial,Object,Goal,10}`). Watch for base-vs-adapter mixups (`model_path` = full base model, `lora_path` = LoRA adapter) and casing drift vs the doc/canonical name. Intentional user-supplied placeholders (e.g. DAgger `student_model`/`expert_model`, "any pi05 checkpoint") are not findings — confirm against the recipe page before flagging.
-- **EN ↔ ZH parity** (do this explicitly, even when only one language was touched): paired pages under `docs/source-en/` and `docs/source-zh/` must agree on setup commands, paths, env vars, config keys, supported models/envs/algorithms, capability claims, reported numbers (metrics, table values, dataset sizes, trial counts), and section structure/order. If only one side is updated, name the matching file that also needs the change.
-- **Sibling style**: cross-check with sibling pages in the same area (e.g. `opensora.rst`) for section naming/order, code-block conventions, table/link style.
-- Each docs finding must include a concrete suggested wording / structure fix and exact file references.
+Work through [reference.md](reference.md) against [code/patterns.md](../code/patterns.md). File each finding under one category, ordered within each severity as:
 
-### (d) Tests and CI integration
+| Category | Covers |
+|---|---|
+| `correctness` | bugs, edge cases, distributed/lifecycle errors, refactor regressions |
+| `design` | extension points, containment, abstractions, test-driven guards, config, scope creep |
+| `reuse` | duplicated logic and the existing helper to reuse |
+| `tests` | test coverage/layout, mocks, install, Docker, CI |
+| `docs` | docs-to-code accuracy, EN/ZH parity, README highlights, assets, workflow/command usability |
+| `docs-style` | readability, conciseness, build/markup, prose/structure rules for page type and language |
+| `style` | code conventions, headers, commits, PR title/description |
 
-- **User-facing changes** must have **tests** (unit or e2e). Reviewer must be able to validate reproducibility.
-- **If this PR changes the install script** (`requirements/install.sh`, `requirements/embodied/`, or `docker/Dockerfile`), follow the [install-check skill](../install-check/SKILL.md) to review the changes: reuse of common utilities, system deps kept in `sys_deps.sh`, pinned/forked git deps, no ad-hoc `pyproject.toml`/core-dep hacks, and a matching Dockerfile build stage for every new model/env.
-- **Dependencies / CI**: new env/model needs install-script update, Docker stage, and CI/e2e coverage — cross-check with the [add-install-docker-ci-e2e skill](../add-install-docker-ci-e2e/SKILL.md).
-- New CI-relevant YAML must be referenced in the e2e test matrix.
-- Large/new dependencies (docker, models, datasets) → maintainer ping noted.
+- **Large PRs** (> ~15 files or ~1,000 changed lines): partition by concern (core logic, tests/CI, install/config, docs) and review each group explicitly—using parallel focused agents when helpful—so late files (tests, YAMLs, Chinese docs) are not skimmed.
+- **Side-by-side & caller sweep**: compare every changed function against `main` (label `main`-derived findings as main-branch cross-checks). Whenever a signature, return shape, base-class contract, shared helper, or config key changes, `git grep` all callers, subclasses, YAMLs, tests, and docs at `$PR_HEAD` to catch broken untouched consumers.
 
-### (e) Style, commit & PR metadata — secondary
+## 6. Check each area
 
-Mention only if there are real issues; do not pad the review.
+In the PR worktree, run the automated checks and follow each routed area's `SKILL.md § Check` judgment list:
 
-- Google Python Style; passes `pre-commit run --all-files`.
-- Public classes/methods have Google-style docstrings; type hints on parameters; return type when not deducible.
-- Assertions/exceptions have meaningful messages (no empty or `xxx != yyy` restatements).
-- `logging` / `self.log_*` not `print`.
-- **License header (newly-added files)**: every file *added* by this PR must carry the standard RLinf header (`# Copyright <YEAR> The RLinf Authors.`), and `<YEAR>` must equal the current calendar year. Determine the current year (e.g. `date +%Y`), list added files with `git diff --name-status origin/main...<pr-head>` (status `A`), and flag any new file whose header is missing or whose copyright year is not the current year. Files vendored from third parties keep their upstream copyright line — apply this only to the RLinf Authors header.
-- Every commit `Signed-off-by`; messages follow Conventional Commits `<type>(<scope>): <description>`.
-- PR title in Conventional Commits format; PR Description and Checklist sections filled; testing results if performance/stability is affected.
+```bash
+python3 "$SKILLS/route.py" check --base "$BASE"
+python3 "$SKILLS/create-pr/lint_pr.py" lint --pr "$N"
+```
 
-## 4. Explain the PR first
+- **Docs readability pass (fresh agent)**: `check.py` only inspects build, markup, and mechanical prose. Delegate the full EN/ZH reading to a **fresh agent (never a fork)** that sees only the changed doc pages, closest `main` sibling pages (and linked shared setup pages), and [docs/SKILL.md](../docs/SKILL.md) + `docs/rules/`—with no `rlinf/` source context. Prioritize readability and conciseness: flag (1) unreadable/stiff prose or machine-translated/literal Chinese, (2) long-winded detail explanations, (3) internal code citations, (4) complex commands, and (5) repeated negative-and-positive framing ("not A, not B, but C" / "不是……而是……"). Prefer fixing YAML defaults, scripts, or Reference links over adding prose workarounds.
+- **Script-to-category mapping**:
+  - `tests`: `code/ci-filter`, `code/test-layout`, `install/*`
+  - `docs`: `docs/symbol`, `docs/rtd-link`, `docs/parity`, docs-to-code, sibling alignment, setup reuse, command usability
+  - `docs-style`: `docs/build`, `docs/markup`, `docs/code-name`, `docs/math`, `docs/structure`, `docs/heading`, `docs/en-style`, `docs/zh-style`, `docs/zh-hard-wrap`, readability/conciseness
+  - `style`: `code/pre-commit`, `code/init`, `code/license`, PR lint
+- Report any area script that could not run (and what it needs) in Check summary.
 
-Before listing issues, start with a brief explanation of the PR:
+## 7. Verify every finding
 
-- What problem it tries to solve.
-- Main change categories (e.g., packaging, docs, CI, refactor).
-- Potential impact/risk areas.
+Try to falsify each candidate before reporting it. Run cheap CPU checks in the PR worktree whenever possible (`hydra.compose`, `validate_cfg`, shape/dtype/mask checks, imports, focused tests) instead of relying on static traces. For third-party libraries (`torch`, `transformers`, `omegaconf`, `ray`, `sglang`, `vllm`), inspect the installed version or source instead of guessing from memory.
 
-Keep this concise (3-6 bullets), then move to findings.
+- **confirmed**: proven by a run or a complete line-cited trace on `$PR_HEAD`.
+- **unresolved**: plausible, but needs hardware, assets, or author intent; state what settles it.
+- **dismissed**: cannot happen or matches `main`; drop silently (never list in the output).
 
-## 5. Output format
+Merge findings with the same root cause into one finding listing affected locations. Assign severity strictly per [README.md § Findings](../README.md#findings): `critical` requires a concrete failure path (wrong result, crash, deadlock, data loss, broken backend, failed docs build, or uncompletable workflow); downgrade or drop speculative edge cases and low-value nits. If nothing survives, write `No findings.` and one line on what was checked.
 
-- Open with the PR URL and the brief explanation from section 4.
-- List **findings**, ordered by severity (highest first). Present every finding with **both** a plain-language explanation and a step-by-step code walkthrough with inline code snippets so reviewers can immediately understand the issue without having to look up line numbers in another tab:
-  - **Plain-language explanation (for context)**: start by explaining the problem in everyday engineering terms for a reviewer unfamiliar with the module's internals — what the code or test is *trying* to do, what actually happens instead, and why that causes a bug or regression in practice, without burying the core idea in variable names.
-  - **Step-by-step code trace with inline snippets (for verification)**: directly show the key code snippet(s) from the PR (and from `origin/main` when cross-checking) inline, and walk through how the execution flows through that snippet to produce the bug. Do not force reviewers to chase line numbers (`at line 639... then at line 654...`) without showing the code itself.
-  - Structure each finding as:
-    - `Severity` + `Area/File`: short, plain-English title of the problem.
-    - `Why this is a problem`: plain-language explanation of expected vs. actual behavior and real-world impact, accessible to a reader with little background in that module.
-    - `Code walkthrough`: quote the key code snippet(s) directly in fenced code blocks (with file/line header for reference) and trace step by step how inputs/values flow through those lines to cause the issue.
-    - `Suggested fix`: concrete code change to resolve it.
-- The bulk of findings should be from categories (a) and (b). If you find none in those categories, say so explicitly — do not fabricate.
-- Group docs (c) findings together; tests/CI (d) together; style/PR-metadata (e) at the end.
-- Explicitly label findings discovered via **main-branch cross-check** (not only direct diff lines).
-- Do not include findings that simply restate that the PR description is well-formed; only flag *problems*.
+## 8. Report
 
-For a concise checklist, see [reference.md](reference.md).
+Keep the output tight and free of repetition: print the main comment, then each inline comment once, then a two-bullet check summary (not posted).
+
+- **Verdict**: bold recommendation (`Ready for senior review`, `Changes requested`, or `Blocked`) + severity counts + head/base SHA, then one short sentence on what blocks merge or needs a maintainer decision.
+- **Reproduction**: two short bullets (under ~300 chars each). `Result:` starts with `**Passed**`, `**Failed**`, `**Partial**`, or `**Not run**` + one-sentence functional/metric conclusion (use a tiny table only for multiple metrics). `Setup:` names only hardware count/type and config/command (omit host, OS, driver, venv/Python paths, and SHA).
+- **No duplicate findings**: the table indexes every finding (`F1`, `F2`, ...), sorted by severity then category. Write a `#### F<n>` section in the main comment **only for `Posted = here` findings**. `inline` findings live once in `### Inline comments` (each carrying problem, `Suggested fix:`, and one-line `Evidence:`).
+- **No trailing noise**: no `Dismissed:` list, no restated Goal/Idea/Changes/Risk bullets, and no tables of passing doc pages.
+
+````markdown
+**<Recommendation>** · <n critical, n major, n minor, or no findings> · head `<sha7>` · base `main@<sha7>`
+
+<One short sentence: what blocks merge, or why it is ready.>
+
+### Reproduction
+
+- Result: **<Passed | Failed | Partial | Not run>** — <one short sentence: functional status and key metric vs. baseline, or first blocker / what is missing>
+- Setup: <hardware count/type and config or command run; or what a run needs if not run>
+
+### Findings
+
+| ID | Severity | Category | Location | Summary | Status | Posted |
+|---|---|---|---|---|---|---|
+| F1 | critical | correctness | `rlinf/x.py:42` | <one line> | confirmed | inline |
+| F2 | major | docs | `docs/source-zh/...` | <one line> | confirmed | here |
+
+#### F2 · major · docs: <plain title>
+
+`docs/source-zh/...`, compared with `main:...` (main-branch cross-check)
+
+<Problem and impact in 1–3 plain sentences.>
+
+Suggested fix: <one sentence, plus code block if code changes.>
+
+Code walkthrough:
+
+<Quoted snippets under `path:line` lines, then input-to-failure steps. Omit when not about code.>
+
+Evidence: <one line: command and result, or trace; for unresolved, what settles it.>
+````
+
+````markdown
+### Inline comments (posted on diff lines)
+
+`rlinf/x.py:42`
+
+**F1 · critical · correctness: <plain title>**
+
+<Problem (1–3 sentences), `Suggested fix:` + verified `suggestion`/code block, and one-line `Evidence:`.>
+````
+
+````markdown
+## Check summary (not posted)
+
+- Checks: `route.py check` (<result>) · `lint_pr` (<result>) · tests (<command, hardware, result; or skipped + why>)
+- Context: compared with <closest sibling on main>; <any area check that could not run and why>
+````
+
+## 9. Post only when asked
+
+Stop after step 8; never post by default. When the user asks to post, update, or reply on GitHub, read [posting.md](posting.md) and run `lint_review.py lint` before posting. Approve only when explicitly asked.

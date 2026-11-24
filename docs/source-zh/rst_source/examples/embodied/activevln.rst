@@ -1,10 +1,10 @@
 使用 EmbodiInfer 训练 ActiveVLN
 ===============================
 
-本例使用 Hugging Face actor、EmbodiInfer rollout 和 VLN-CE 环境服务进行 ActiveVLN GRPO 训练。下面的配置将训练和推理放在 GPU 0，Habitat 渲染放在 GPU 1，batch 为 2，权重采用 BF16。
+本例用 Hugging Face actor、EmbodiInfer rollout 和 VLN-CE 环境服务运行 ActiveVLN GRPO 训练。下面的配置将训练和推理放在 GPU 0，Habitat 渲染放在 GPU 1，batch 为 2，权重采用 BF16。
 
-安装依赖
---------
+安装
+----
 
 为 RLinf 和 Habitat 服务分别准备 Python 环境。先固定提供 HTTP client 和 server 的 ActiveVLN 源码版本：
 
@@ -59,8 +59,8 @@
      --revision 160987313e3e869705f42400d1b8f28177044518 \
      --local-dir "$ACTIVEVLN_MODEL"
 
-运行训练
---------
+运行
+----
 
 回到 RLinf 源码目录，保留 client 的 ``PYTHONPATH`` 设置，然后运行：
 
@@ -76,6 +76,6 @@
 
 配置默认开启 CUDA graphs、融合算子、split attention、GPU 图像预处理和 episode 历史复用，运行两个训练步并重复使用 R2R episode 1。通过 ``env.train.episode_ids`` 和 ``env.eval.episode_ids`` 选择更多 episode，通过 ``runner.max_steps`` 和 ``runner.max_epochs`` 调整训练长度。服务部署在远端时，设置 ``env.train.server_url`` 和 ``env.eval.server_url``。
 
-通过 ``rollout.generation_backend=embodiinfer`` 选择推理后端，在 ``rollout.embodiinfer`` 下设置运行时选项。Actor 通过 ``actor.model.model_backend=huggingface`` 独立选择。将 ``rollout.generation_backend`` 改为 ``huggingface``，即可使用相同的 actor 和环境进行 HF 生成。
+通过 ``rollout.generation_backend=embodiinfer`` 选择推理后端，在 ``rollout.embodiinfer`` 下设置运行时选项。Actor 通过 ``actor.model.model_backend=huggingface`` 独立选择。将 ``rollout.generation_backend`` 改为 ``huggingface``，即可在相同的 actor 和环境配置下使用 HF 推理。
 
 重复惩罚作用于 prompt 和已生成的 response。Rollout 返回的 logprob 与 actor 重算均使用 top-p 截断后的分布。

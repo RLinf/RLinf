@@ -74,8 +74,8 @@ fixed revision:
      --revision 160987313e3e869705f42400d1b8f28177044518 \
      --local-dir "$ACTIVEVLN_MODEL"
 
-Run Training
-------------
+Run It
+------
 
 From the RLinf checkout, with the client ``PYTHONPATH`` exported, run:
 

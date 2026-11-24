@@ -8,24 +8,36 @@
 硬件支持
 ------------
 
-模型示例默认使用 NVIDIA。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 也支持下列三个模型系列在 LIBERO 与 ManiSkill 上运行。选择模型链接可查看安装与启动步骤；在非 CUDA 后端上，ManiSkill 使用 CPU 运行 PhysX，并独立选择 renderer。
+模型示例默认使用 NVIDIA CUDA。AMD ROCm、华为昇腾 CANN、摩尔线程 MUSA、Intel XPU、昆仑芯 XPU、沐曦 MACA 和壁仞 SUPA 也支持下列模型与环境组合。点击模型或硬件链接查看训练示例及已提供的硬件配置说明。非 CUDA 后端上，ManiSkill 用 CPU 运行 PhysX，渲染后端单独配置。
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 38 38
+   :widths: 22 38 40
 
    * - 模型
      - 硬件
      - 环境与范围
+   * - :doc:`OpenVLA <embodied/maniskill>`
+     - AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA · 沐曦 MACA
+     - ManiSkill
    * - :doc:`OpenVLA-OFT <embodied/openvla_oft>`
-     - :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <openvla-oft-hardware>`
-     - LIBERO · ManiSkill
-   * - :doc:`GR00T N1.5 <embodied/gr00t>`
-     - :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <gr00t-hardware>`
-     - LIBERO · ManiSkill（需要带有 ``maniskill_widowx`` head 的 checkpoint）
+     - :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <openvla-oft-hardware>` · 昆仑芯 XPU
+     - LIBERO · ManiSkill（AMD、昇腾、MUSA）· :ref:`RoboTwin（ROCm） <robotwin-hardware>` · :ref:`Wan 世界模型 <wan-hardware>`\ （昇腾、MUSA、ROCm、昆仑芯）
+   * - :doc:`GR00T N1.5 / N1.7 <embodied/gr00t>`
+     - :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <gr00t-hardware>` · Intel XPU
+     - N1.5：LIBERO · ManiSkill（全部四种后端）· N1.7：LIBERO · ManiSkill（Intel XPU）；ManiSkill 需要带有 ``maniskill_widowx`` head 的 checkpoint
    * - :doc:`π₀ / π₀.₅ (OpenPI) <embodied/pi0>`
-     - :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <pi0-hardware>`
-     - LIBERO · ManiSkill · :ref:`ROCm 上的 RoboTwin <robotwin-hardware>`
+     - :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <pi0-hardware>` · Intel XPU · 昆仑芯 XPU · 沐曦 MACA · 壁仞 SUPA
+     - LIBERO（AMD、昇腾、MUSA、Intel、昆仑芯、沐曦）· ManiSkill（AMD、昇腾、MUSA、Intel）· :ref:`RoboTwin（ROCm） <robotwin-hardware>` · :doc:`SFT <embodied/sft_openpi>`\ （壁仞 SUPA）
+   * - :doc:`LingbotVLA 1.0 <embodied/lingbotvla>`
+     - :ref:`AMD ROCm <robotwin-hardware>`
+     - :ref:`RoboTwin <robotwin-hardware>`
+   * - :doc:`StarVLA (QwenOFT) <embodied/starvla>`
+     - :ref:`华为昇腾 CANN <starvla-hardware>`
+     - LIBERO
+   * - :doc:`DreamZero <embodied/sft_dreamzero>`
+     - :ref:`华为昇腾 CANN <sft-dreamzero-hardware>`
+     - SFT（LeRobot 数据集）
 
 模型示例
 --------
@@ -158,6 +170,26 @@
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/activevln.html" style="text-decoration: underline; color: blue;">
+           <b>ActiveVLN</b>
+         </a><br>
+         在 VLN-CE 中用 GRPO 训练 ActiveVLN 导航模型
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/psi0.html" style="display: block;"><img src="https://raw.githubusercontent.com/physical-superintelligence-lab/Psi0/a32e57a3fabb8590c80677f9cd3d1fc3db60eb06/assets/media/arch.png" alt="Psi0 model architecture"
+            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/psi0.html" style="text-decoration: underline; color: blue;">
+           <b>Psi0 模型强化学习训练</b>
+         </a><br>
+         Psi0 + SIMPLE + PPO 人形机器人强化学习训练
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -176,3 +208,4 @@
    Evo-1 <embodied/evo1>
    ABot-M0 <embodied/abot_m0>
    ActiveVLN <embodied/activevln>
+   Psi0 <embodied/psi0>

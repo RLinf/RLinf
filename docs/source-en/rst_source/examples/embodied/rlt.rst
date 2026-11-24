@@ -19,6 +19,8 @@ dataconfig stay aligned.
 
 Official project page: `Precise Manipulation with Efficient Online RL <https://www.pi.website/research/rlt>`_.
 
+For pooled prefix features and STEAM routing in ManiSkill, see :doc:`FlexRLT <flexrlt>`.
+
 Overview
 --------
 

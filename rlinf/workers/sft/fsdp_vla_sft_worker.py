@@ -19,6 +19,7 @@ from omegaconf import DictConfig
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
+from rlinf.data.datasets.common.epoch import forward_set_epoch
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.utils import get_rng_state, seed_everything, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
@@ -80,6 +81,14 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_fastwam_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths, eval_dataset
             )
+        elif model_type == SupportedModel.CNN_POLICY:
+            from rlinf.data.datasets.image_action_chunks import (
+                build_cnn_sft_dataloader,
+            )
+
+            return build_cnn_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
+            )
         else:
             raise KeyError(
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
@@ -112,9 +121,13 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         super().save_checkpoint(save_path, step)
+        self._save_data_checkpoint(save_path)
 
+    def _save_data_checkpoint(self, save_path: str) -> None:
+        """Save per-rank data order and RNG state alongside the model checkpoint."""
         if isinstance(self.data_loader, StatefulDataLoader):
             state = self.data_loader.state_dict()
+            state["_rlinf_data_epoch"] = self._data_epoch
 
             all_states = [None] * self._world_size
             torch.distributed.all_gather_object(all_states, state)
@@ -134,12 +147,17 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def load_checkpoint(self, load_path: str) -> None:
         super().load_checkpoint(load_path)
+        self._load_data_checkpoint(load_path)
 
+    def _load_data_checkpoint(self, load_path: str) -> None:
+        """Restore data order before the RNG state used by the next model forward."""
         if isinstance(self.data_loader, StatefulDataLoader):
             all_states = torch.load(
                 os.path.join(load_path, "data.pt"), weights_only=False
             )
             state = all_states[self._rank]
+            self._data_epoch = state.pop("_rlinf_data_epoch", 0)
+            forward_set_epoch(self.data_loader, self._data_epoch)
             self.data_loader.load_state_dict(state)
             self.data_iter = iter(self.data_loader)
 
