@@ -20,7 +20,7 @@ from typing import Any
 
 import torch
 
-from rlinf.models.embodiment.activevln.policy import ActiveVLNPolicy
+from rlinf.models.embodiment.activevln.policy import ActiveVLNPolicy, SamplingBackend
 
 
 @dataclass
@@ -37,6 +37,8 @@ class _EpisodeState:
 
 class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
     """Generate responses with EmbodiInfer and export them for the HF actor."""
+
+    _sampling_backend = SamplingBackend.EMBODIINFER
 
     def __init__(self, core, processor, *, runtime_options=None, **kwargs):
         super().__init__(

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from enum import IntEnum
 from typing import Any
 
 import torch
@@ -24,6 +25,13 @@ from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
+
+
+class SamplingBackend(IntEnum):
+    """Rollout sampling semantics encoded in tensor replay batches."""
+
+    HUGGINGFACE = 0
+    EMBODIINFER = 1
 
 
 class HuggingFaceActiveVLNModel(nn.Module):
@@ -70,6 +78,8 @@ class HuggingFaceActiveVLNModel(nn.Module):
 
 class ActiveVLNPolicy(nn.Module, BasePolicy):
     """Generate token actions and replay their saved images and sampling settings."""
+
+    _sampling_backend = SamplingBackend.HUGGINGFACE
 
     def __init__(
         self,
@@ -334,6 +344,9 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
                         [start, length, pixels.shape[0], grids.shape[0]]
                     ),
                     "sampling": torch.tensor(sampling, dtype=torch.float64),
+                    "sampling_backend": torch.tensor(
+                        self._sampling_backend, dtype=torch.long
+                    ),
                 }
             )
             actions.append(
@@ -361,6 +374,8 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
         **kwargs,
     ) -> dict:
         """Re-score saved response tokens using the selected actor backend."""
+        from transformers import TopPLogitsWarper
+
         if compute_values:
             raise ValueError("ActiveVLN uses GRPO without a value head")
         probs, entropies, masks = [], [], []
@@ -392,6 +407,14 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
             temperature, top_p, penalty, do_sample = forward_inputs["sampling"][
                 index
             ].tolist()
+            sampling_backend = SamplingBackend(
+                forward_inputs["sampling_backend"][index].item()
+            )
+            top_p_warper = (
+                TopPLogitsWarper(top_p)
+                if top_p < 1.0 and sampling_backend == SamplingBackend.HUGGINGFACE
+                else None
+            )
             scores, entropy = [], []
             for offset, position in enumerate(range(start, length)):
                 effective = logits[:, offset]
@@ -405,7 +428,10 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
                 effective = (
                     effective.float() / temperature if do_sample else effective.float()
                 )
-                if top_p < 1.0:
+                if top_p_warper is not None:
+                    effective = top_p_warper(ids[:, :position], effective)
+                elif top_p < 1.0:
+                    # EmbodiInfer uses descending top-p; HF resolves ties differently.
                     ordered, order = effective.sort(descending=True, dim=-1)
                     remove = ordered.softmax(-1).cumsum(-1) > top_p
                     remove[:, 1:] = remove[:, :-1].clone()
