@@ -1137,12 +1137,14 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
         softmax = exp_logits.div_(sum_exp_logits)
         sum_exp_logits_log = sum_exp_logits.log()
 
-        mean_norm_logits = (softmax * norm_logits).sum(dim=-1, keepdim=True)
+        sum_softmax_times_norm_logits = (softmax * norm_logits).sum(
+            dim=-1, keepdim=True
+        )
         torch.distributed.all_reduce(
-            mean_norm_logits,
+            sum_softmax_times_norm_logits,
             group=parallel_state.get_tensor_model_parallel_group(),
         )
-        entropy = (sum_exp_logits_log - mean_norm_logits).squeeze(-1)
+        entropy = (sum_exp_logits_log - sum_softmax_times_norm_logits).squeeze(-1)
 
         partition_vocab_size = norm_logits.size(-1)
         rank = parallel_state.get_tensor_model_parallel_rank()
@@ -1188,7 +1190,7 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
             ctx.save_for_backward(
                 softmax,
                 norm_logits,
-                mean_norm_logits,
+                sum_softmax_times_norm_logits,
                 target_mask,
                 masked_target_1d,
                 calculate_entropy_tensor,
@@ -1211,7 +1213,7 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
         (
             softmax,
             norm_logits,
-            mean_norm_logits,
+            sum_softmax_times_norm_logits,
             target_mask,
             masked_target_1d,
             calculate_entropy_tensor,
@@ -1257,7 +1259,7 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
             calculate_entropy_loss
             and grad_entropy is not None
             and norm_logits is not None
-            and mean_norm_logits is not None
+            and sum_softmax_times_norm_logits is not None
         ):
             batch_size, seq_len, vocab_size = softmax.shape
             chunk_size = min(128, seq_len)
@@ -1267,11 +1269,13 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
 
                 softmax_chunk = softmax[:, start_idx:end_idx, :]
                 norm_logits_chunk = norm_logits[:, start_idx:end_idx, :]
-                mean_norm_logits_chunk = mean_norm_logits[:, start_idx:end_idx, :]
+                sum_softmax_times_norm_logits_chunk = sum_softmax_times_norm_logits[
+                    :, start_idx:end_idx, :
+                ]
                 grad_entropy_chunk = grad_entropy[:, start_idx:end_idx]
 
                 grad_entropy_expanded = grad_entropy_chunk.unsqueeze(dim=-1)
-                sum_expanded = mean_norm_logits_chunk
+                sum_expanded = sum_softmax_times_norm_logits_chunk
                 grad_entropy_input_chunk = (
                     grad_entropy_expanded
                     * softmax_chunk
