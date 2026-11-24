@@ -151,7 +151,7 @@ buffer worker 丢弃一个组时，payload channel 会删除这个组的数据�
 - 只有连不上 router 时，session server 才会重发请求。这种请求没有到达引擎，同一轮不会重复采样。
 - generate 请求超时或被引擎中止，训练失败。
 
-唯一可以恢复的错误是单次 payload 写入失败或超时：session server 作废这个组，buffer worker 丢弃它。如果 payload channel 进程退出或通信方向失败，后续写入都无法成功，session server 会停止服务并让训练失败。
+唯一可以恢复的错误是单次 payload 写入失败或超时：session server 作废这个组，buffer worker 丢弃它。如果 payload channel 进程退出或通信失败，后续写入都无法成功，session server 会停止服务并让训练失败。
 
 选择路由策略
 ------------
@@ -309,7 +309,7 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
 
 ``input_ids`` 是数据集 prompt 的 token id，已经应用过 chat 模板。去掉特殊 token 解码后，文字里仍有模板的角色行（如 ``system``、``user``），所以 ``build_messages`` 要先从中取出任务，再构造消息。
 
-在入口脚本里启动这个类，替换原来发送 token id 的 agent loop，写法参照 ``examples/agent/searchr1/train.py`` 启动 Search-R1 agent loop 的方式。``algorithm.loss_scales`` 里包含 ``agent_level`` 时需要 ``idx_to_sub_traj``。
+在入口脚本里启动这个类，替换原来发送 token id 的 agent loop，写法参照 ``examples/agent/searchr1/train.py`` 启动 Search-R1 agent loop 的方式。即使由自己的 agent loop 打分，配置里也必须保留 ``reward.reward_type: searchr1``，否则启动校验会拒绝该配置。``algorithm.loss_scales`` 里包含 ``agent_level`` 时需要 ``idx_to_sub_traj``。
 
 返回 410 说明 session server 已经丢弃了这个组，比如 payload 写入失败之后。示例随即丢弃整个组，和 agent loop 处理其他无法完成的组一样。
 

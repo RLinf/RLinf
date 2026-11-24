@@ -112,8 +112,15 @@ runner 侧的代码，每条编号注释对应下面一步：
    ...
    return session_urls, client_timeout_s, keepalive_timeout_s
 
-   # 每一步
-   # 4. agent loop 和 buffer worker 在整个训练期间一直运行。
+   # 进入训练循环前（首次权重同步之后）
+   # 4. 下发初始权重版本、展平全部 payload channel，并启动整个训练期间运行的循环。
+   for server in self._session_servers or []:
+       server.set_loaded_versions(self._rollout_loaded_versions).wait()
+   payload_channels = [
+       channel
+       for server_channels in self._session_payload_channels
+       for channel in server_channels
+   ]
    agent_handle = self.agent_loop.run_agentloop_rollout_continuously(
        input_channel=self.dataloader_channel,
        output_channel=self.agent_output_channel,
@@ -125,6 +132,8 @@ runner 侧的代码，每条编号注释对应下面一步：
        rollout_channel=self.rollout_channel,
        payload_channels=payload_channels,
    )
+
+   # 每一步
    # 7. 每一步用交付的组训练，并监视 serve handle。
    actor_handle: Handle = self.actor.run_training(
        input_channel=self.rollout_channel,
@@ -226,12 +235,12 @@ buffer worker 下发组，再交付或释放每个组：
    - 调用 ``wait_until_serving``，它在 server 开始监听时返回，启动失败时抛出启动错误；
    - 用 ``get_server_address`` 读取 server 的地址。
 
-   这个方法最后返回 session server 的地址、客户端的 generate 超时和 keep-alive，``AgentRunner`` 会把它们交给 agent loop。
-4. **启动 agent loop 和 buffer worker。** runner 用 ``run_agentloop_rollout_continuously`` 启动 agent loop，用 ``run_continuously`` 启动 buffer worker，两者在整个训练期间一直运行。
+   这个方法最后返回 session server 的地址、客户端的 generate 超时和 keep-alive，``AgentRunner`` 会把它们作为 ``session_server_urls``、``session_server_generate_timeout_s`` 和 ``session_server_keepalive_timeout_s`` 传给 ``agent_loop.init_worker``。如果 runner 不继承 ``AgentRunner``，需要自行把这三个参数传给 ``agent_loop.init_worker``。
+4. **下发初始权重版本并启动循环。** 首次权重同步后，runner 先对每个 session server 调用 ``set_loaded_versions``\ （首次调用前所有请求都会返回 HTTP 500），再把所有 server 的 ``self._session_payload_channels`` 展平为一个列表，然后用 ``run_agentloop_rollout_continuously`` 启动 agent loop，用 ``run_continuously`` 启动 buffer worker，两者在整个训练期间一直运行。
 5. **下发组。** buffer worker 用 ``issue_group`` 为每个 prompt 分配组 id，再把 prompt 包成带组 id 和 task name 的 ``RolloutRequest``，放到 agent loop 的输入 channel 上。
 6. **交付或释放每个完成的组。** 一个组完成时，session server 往 agent output channel 放一个 ``GroupMetadata``；丢弃一个组时，放的是 ``DiscardedGroup``，这种组不用清理。已完成但被过滤掉的组，要删掉它的 payload：用 ``payload_channel_for`` 找到 ``payload_ref`` 所在的 channel，调用 ``remove_key``，否则数据会一直留在 channel 里。每丢掉一个组，就腾出一个名额，buffer worker 会补发新的 prompt。一批凑满后，每个组以带着 ``payload_ref`` 的 ``GroupDelivery`` 交给 actor。
 7. **训练并监视 session server。** ``run_training`` 接收全部 payload channel，actor 据此取出每个交付组的数据。actor 训练时，runner 把 ``serve`` 的 handle 和其他 handle 一起轮询。这样 session server 停止时，训练会随之结束。
-8. **发送已加载的权重版本。** 每次权重同步后，runner 对每个 session server 调用 ``set_loaded_versions``，传入各引擎加载的版本。session server 用其中最旧的版本作为每一轮权重版本的下界。
+8. **更新已加载的权重版本。** 之后每次权重同步后，runner 再次对每个 session server 调用 ``set_loaded_versions``，传入各引擎加载的版本。session server 用其中最旧的版本作为每一轮权重版本的下界。
 9. **收集指标。** 每一步，runner 对每个 session server 调用 ``get_metrics``，把各 server 的值相加。这次调用还会删除过期的丢弃组记录。
 10. **停止。** 结束时，runner 先停掉每个 session server 并等它的 ``serve`` handle 返回，再停 router。这样停 router 时，已经没有请求在处理。
 

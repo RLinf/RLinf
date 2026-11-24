@@ -131,8 +131,16 @@ The runner's part, with each numbered comment matching a step below:
    ...
    return session_urls, client_timeout_s, keepalive_timeout_s
 
-   # Every step
-   # 4. The agent loop and the buffer worker run for the whole training.
+   # Before the training loop (after the initial weight sync)
+   # 4. Push the initial loaded versions, flatten all payload channels,
+   # and start the agent loop and buffer worker for the whole training.
+   for server in self._session_servers or []:
+       server.set_loaded_versions(self._rollout_loaded_versions).wait()
+   payload_channels = [
+       channel
+       for server_channels in self._session_payload_channels
+       for channel in server_channels
+   ]
    agent_handle = self.agent_loop.run_agentloop_rollout_continuously(
        input_channel=self.dataloader_channel,
        output_channel=self.agent_output_channel,
@@ -144,6 +152,8 @@ The runner's part, with each numbered comment matching a step below:
        rollout_channel=self.rollout_channel,
        payload_channels=payload_channels,
    )
+
+   # Every step
    # 7. Each step trains on the delivered groups and watches the serve handles.
    actor_handle: Handle = self.actor.run_training(
        input_channel=self.rollout_channel,
@@ -258,11 +268,19 @@ The Calls in Order
    - reads the server's address with ``get_server_address``.
 
    The method returns the session server URLs, the client's generate
-   timeout, and its keep-alive, and ``AgentRunner`` passes them to the
-   agent loop.
-4. **Start the agent loop and the buffer worker.** The runner starts the
-   agent loop with ``run_agentloop_rollout_continuously`` and the buffer
-   worker with ``run_continuously``. Both run for the whole training.
+   timeout, and its keep-alive, and ``AgentRunner`` passes them to
+   ``agent_loop.init_worker`` as ``session_server_urls``,
+   ``session_server_generate_timeout_s``, and
+   ``session_server_keepalive_timeout_s``. A runner that does not subclass
+   ``AgentRunner`` must pass these three arguments to
+   ``agent_loop.init_worker`` itself.
+4. **Push initial weight versions and start the loops.** After the initial
+   weight sync, the runner calls ``set_loaded_versions`` on every session
+   server (requests fail with HTTP 500 before this first call). It then
+   flattens ``self._session_payload_channels`` across all servers into one
+   list and starts the agent loop with ``run_agentloop_rollout_continuously``
+   and the buffer worker with ``run_continuously``. Both run for the whole
+   training.
 5. **Issue the groups.** The buffer worker reserves an id for each prompt
    with ``issue_group`` and puts the prompt on the agent loop's input channel
    as a ``RolloutRequest`` that carries the id and the task name.
@@ -279,10 +297,10 @@ The Calls in Order
    payload channels, so the actor can fetch each delivered group's data.
    While the actor trains, the runner polls the ``serve`` handles with the
    others, so a session server that stops ends the run.
-8. **Send the loaded weight versions.** After each weight sync, the runner
-   calls ``set_loaded_versions`` on every session server with the version
-   each engine loaded. The session server uses the oldest one as the lower
-   bound of each turn's weight version.
+8. **Update the loaded weight versions.** After each later weight sync, the
+   runner calls ``set_loaded_versions`` on every session server with the
+   version each engine loaded. The session server uses the oldest one as the
+   lower bound of each turn's weight version.
 9. **Collect the metrics.** Every step, the runner calls ``get_metrics`` on
    every session server and sums the values. The call also removes expired
    records of discarded groups.

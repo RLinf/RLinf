@@ -415,7 +415,9 @@ holds the template's role lines, such as ``system`` and ``user``, so
 
 Launch this class in your entry script instead of the agent loop that sends
 token ids, the way ``examples/agent/searchr1/train.py`` launches the Search-R1
-agent loop.
+agent loop. Keep ``reward.reward_type: searchr1`` in the config: startup
+validation still requires it even when your agent loop scores trajectories
+itself.
 ``idx_to_sub_traj`` is needed when ``algorithm.loss_scales`` includes
 ``agent_level``.
 
