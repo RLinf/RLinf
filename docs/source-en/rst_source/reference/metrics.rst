@@ -8,8 +8,6 @@ deviations use the population definition. Configure logging backends with
 Training Metrics
 ----------------
 
-The ``train/`` namespace reports policy and value optimization statistics.
-
 .. list-table::
    :header-rows: 1
    :widths: 34 66
@@ -21,7 +19,7 @@ The ``train/`` namespace reports policy and value optimization statistics.
    * - ``train/actor/clip_fraction``
      - Fraction of valid elements affected by PPO clipping.
    * - ``train/actor/dual_clip_fraction``
-     - Fraction of valid elements affected by Dual-Clip; zero when disabled.
+     - Fraction of valid elements affected by Dual-Clip.
    * - ``train/actor/clipped_ratio``
      - Mean clipped probability ratio.
    * - ``train/actor/grad_norm``
@@ -44,8 +42,8 @@ The ``train/`` namespace reports policy and value optimization statistics.
 Rollout Metrics
 ---------------
 
-The ``rollout/`` namespace summarizes valid training samples. GAE returns are
-value-function training targets; episode returns are listed under ``env/`` below.
+Rollout metrics summarize valid training samples. GAE returns are
+value-function training targets.
 
 .. list-table::
    :header-rows: 1
@@ -76,11 +74,14 @@ value-function training targets; episode returns are listed under ``env/`` below
    * - ``rollout/loss_mask_fraction``
      - Fraction of rollout elements included in training.
 
+Set ``env.train.log_rollout_moments`` to ``true`` to log the standard deviation of
+rollout metrics and the mean and standard deviation of value predictions.
+
 Episode Metrics
 ---------------
 
-Environments report completed-episode statistics under ``env/``. Independent
-evaluation reports the same keys under ``eval/``.
+Training logs completed-episode statistics under ``env/``. Evaluation logs use
+``eval/``.
 
 .. list-table::
    :header-rows: 1
@@ -102,8 +103,6 @@ evaluation reports the same keys under ``eval/``.
 Dual-Clip Configuration
 -----------------------
 
-These options control Dual-Clip in embodied PPO.
-
 .. list-table::
    :header-rows: 1
    :widths: 30 15 55
@@ -116,4 +115,4 @@ These options control Dual-Clip in embodied PPO.
      - Uses the actor's default when omitted. ``false`` disables Dual-Clip.
    * - ``algorithm.clip_ratio_c``
      - Float or null
-     - Defaults to 3.0 when enabled. Accepts a finite value greater than 1; null disables the bound.
+     - Defaults to 3.0 when enabled. Accepts finite values greater than 1. Use ``null`` to disable the bound.

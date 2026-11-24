@@ -84,8 +84,10 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-liberoplus
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-embodichain
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-robolab
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-mujoco_warp
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-dexjoco
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-geniesim
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-simple
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
@@ -525,6 +527,17 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
+# Embodied: RoboLab
+##################################################################################################
+FROM embodied-common-image AS embodied-robolab-image
+
+ENV OMNI_KIT_ACCEPT_EULA=YES
+
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robolab
+
+RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+##################################################################################################
 # Embodied: Psi0 + SIMPLE
 ##################################################################################################
 FROM embodied-common-image AS embodied-simple-image
@@ -572,6 +585,21 @@ RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /
 RUN link_assets
 
 ENV OPENPI_DATA_HOME=/root/.cache/openpi
+RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: DexJoCo
+##################################################################################################
+FROM embodied-common-image AS embodied-dexjoco-image
+
+# Install dexjoco (CNN policy) and openpi envs
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dexjoco --env dexjoco && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env dexjoco
+
+RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
+RUN link_assets
+
+# Set default env
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 ##################################################################################################

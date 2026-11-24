@@ -26,6 +26,8 @@ from rlinf.models.embodiment.openpi.modules import gemma, model, pointnet
 @dataclasses.dataclass
 class Pi0Config:
     dtype: str = "bfloat16"
+    # Match native OpenPI Torch rounding and attention kernels when enabled.
+    pytorch_numerics: bool = False
     paligemma_variant: gemma.Variant = "gemma_2b"
     action_expert_variant: gemma.Variant = "gemma_300m"
     pointnet_variant: pointnet.Variant = "pcd"
@@ -33,7 +35,6 @@ class Pi0Config:
     action_dim: int = 32
     action_horizon: int = 50
     max_token_len: int = 48
-    image_keys: tuple[str, ...] = model.IMAGE_KEYS
 
     pi05: bool = False
     discrete_state_input: bool | None = None
@@ -43,6 +44,7 @@ class Pi0Config:
     # the current frame.
     short_memory_temporal_layers: tuple[int, ...] = (3, 7, 11, 15)
     short_memory_drop_history_layer: int = 15
+    image_keys: tuple[str, ...] = model.IMAGE_KEYS
 
     def __post_init__(self):
         if not self.image_keys or len(set(self.image_keys)) != len(self.image_keys):

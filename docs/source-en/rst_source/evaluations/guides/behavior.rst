@@ -223,7 +223,7 @@ FAQ
 ---
 
 - **Data download:** BEHAVIOR assets are large; complete Isaac Sim, OmniGibson asset, and license setup per :doc:`../../examples/embodied/behavior` before evaluation.
-- **ISAAC_PATH not set:** ``run_eval.sh`` defaults to ``/path/to/isaac-sim``; Isaac Sim will fail to start without a valid path.
+- **ISAAC_PATH not set:**  Export it to the Isaac Sim install, or Isaac Sim will fail to start.
 - **Headless mode:** ``run_eval.sh`` sets ``OMNIGIBSON_HEADLESS=1`` by default.
 - **Out of memory:** Lower ``total_num_envs`` or ``num_env_subprocess``; each env uses about 10 GiB VRAM.
 - **Blurry or blocky rendering:** The GPU lacks Ray Tracing; use RTX 30/40 series or newer.

@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 import yaml
+from omegaconf import DictConfig, OmegaConf
 
 from rlinf.data.schema.embodied_types import JointPositionTargets
 
@@ -56,7 +57,9 @@ class Bench2DexSpec:
         return (self.main_camera, *self.extra_cameras, *self.wrist_cameras)
 
     @classmethod
-    def from_config(cls, config: dict) -> Bench2DexSpec:
+    def from_config(
+        cls, config: dict, *, fallback_control_steps: int | None = None
+    ) -> Bench2DexSpec:
         """Resolve a task and read DOF metadata from the selected checkout."""
         source = Path(config["source_path"]).expanduser().resolve()
         assets = Path(config["assets_path"]).expanduser().resolve()
@@ -89,9 +92,17 @@ class Bench2DexSpec:
             raise ValueError("physics_dt and control_decimation must be positive")
         budget = config.get("max_control_steps")
         if budget is None:
-            budget = math.ceil(
-                1.5 * task_data["metrics"]["expert_time_step"] / decimation
+            expert_steps = task_data["metrics"].get("expert_time_step")
+            budget = (
+                math.ceil(1.5 * expert_steps / decimation)
+                if expert_steps is not None
+                else fallback_control_steps
             )
+            if budget is None:
+                raise ValueError(
+                    f"Set max_episode_steps or init_params.max_control_steps for "
+                    f"{task.stem}, which has no expert time-step budget."
+                )
         if int(budget) <= 0:
             raise ValueError(f"Expected a positive control-step budget, got {budget}")
         cameras = config["cameras"]
@@ -222,3 +233,161 @@ def load_episodes(config: dict) -> list[Bench2DexEpisode]:
             raise FileNotFoundError(f"Bench2Dex anchor not found: {anchor}")
         episodes.append(Bench2DexEpisode(anchor.resolve(), seed))
     return episodes
+
+
+def validate_bench2dex_env_cfg(
+    cfg: DictConfig,
+    env_cfg: DictConfig,
+    model_cfg: DictConfig,
+    env_world_size: int,
+    split: str,
+    *,
+    actor_world_size: int | None,
+) -> None:
+    """Validate model and simulator geometry before workers start."""
+    spec = Bench2DexSpec.from_config(
+        OmegaConf.to_container(env_cfg.init_params, resolve=True),
+        fallback_control_steps=env_cfg.get("max_episode_steps"),
+    )
+    if cfg.rollout.pipeline_stage_num != 1:
+        raise ValueError("Bench2Dex requires pipeline_stage_num=1")
+    if (
+        env_world_size < 1
+        or env_cfg.total_num_envs < 1
+        or env_cfg.total_num_envs % env_world_size
+    ):
+        raise ValueError(
+            "Bench2Dex total_num_envs must be positive and divisible by "
+            f"env worker count {env_world_size}, got {env_cfg.total_num_envs}"
+        )
+    if cfg.env.get("enable_offload", False):
+        raise ValueError(
+            "Set Bench2Dex offload per split with env.train.enable_offload "
+            "or env.eval.enable_offload, not env.enable_offload"
+        )
+    if env_cfg.get("enable_offload", False):
+        if env_cfg.auto_reset or (
+            env_cfg.max_steps_per_rollout_epoch < spec.max_control_steps
+        ):
+            raise ValueError(
+                "Bench2Dex offload requires auto_reset=false and a rollout "
+                "budget covering the full episode"
+            )
+        if split == "train" and (
+            cfg.runner.get("use_training_pipeline", False)
+            or cfg.runner.get("enable_decoupled_mode", False)
+            or cfg.runner.get("overlap_env_bootstrap", False)
+            or cfg.algorithm.get("loss_type") == "decoupled_actor_critic"
+        ):
+            raise ValueError(
+                "Bench2Dex environment offload requires synchronous, "
+                "non-pipelined training without bootstrap prefetch"
+            )
+    if env_cfg.get("ignore_terminations", False):
+        raise ValueError(
+            "Bench2Dex uses ignore_terminations=false; select early_stop in init_params"
+        )
+    if env_cfg.get("skip_intermediate_renders", False):
+        needs_per_action_observations = (
+            OmegaConf.select(env_cfg, "video_cfg.save_video", default=False)
+            or OmegaConf.select(env_cfg, "data_collection.enabled", default=False)
+            or OmegaConf.select(env_cfg, "init_params.tactile.enabled", default=False)
+            or (
+                cfg.get("reward", {}).get("use_reward_model", False)
+                and not cfg.get("reward", {}).get("standalone_realworld", False)
+            )
+        )
+        if needs_per_action_observations:
+            raise ValueError(
+                "Bench2Dex video, data collection, tactile sensors and external "
+                "reward models require skip_intermediate_renders=false"
+            )
+    if split == "train":
+        group_size = int(env_cfg.get("group_size", 1))
+        if group_size != int(cfg.algorithm.group_size) or group_size < 1:
+            raise ValueError(
+                "Expected positive matching Bench2Dex env/algorithm "
+                f"group_size, got {group_size}/{cfg.algorithm.group_size}"
+            )
+        if group_size > 1:
+            if not env_cfg.use_fixed_reset_state_ids or env_cfg.auto_reset:
+                raise ValueError(
+                    "Grouped Bench2Dex training requires "
+                    "use_fixed_reset_state_ids=true and auto_reset=false"
+                )
+            for name, world_size in (
+                ("env", env_world_size),
+                ("actor", actor_world_size),
+            ):
+                if (
+                    world_size is None
+                    or world_size < 1
+                    or env_cfg.total_num_envs % (world_size * group_size)
+                ):
+                    raise ValueError(
+                        "Expected complete Bench2Dex groups per "
+                        f"{name} worker, got total_num_envs="
+                        f"{env_cfg.total_num_envs}, {name}_world_size="
+                        f"{world_size}, group_size={group_size}"
+                    )
+        if (
+            cfg.algorithm.adv_type == "grpo"
+            and env_cfg.max_steps_per_rollout_epoch < spec.max_control_steps
+        ):
+            raise ValueError(
+                "Bench2Dex GRPO rollout must cover the task control-step budget"
+            )
+    if int(model_cfg.action_dim) != spec.action_dim:
+        raise ValueError(
+            f"{spec.robot_key} needs {spec.action_dim} active joint coordinates, model declares {model_cfg.action_dim}"
+        )
+    if int(env_cfg.max_episode_steps) != spec.max_control_steps:
+        raise ValueError(
+            "env.max_episode_steps must match the Bench2Dex task control-step budget"
+        )
+    if env_cfg.max_steps_per_rollout_epoch < spec.max_control_steps and split == "eval":
+        raise ValueError(
+            "Bench2Dex evaluation rollout must cover the task control-step budget"
+        )
+    chunk_length = int(model_cfg.num_action_chunks)
+    if chunk_length < 1:
+        raise ValueError(
+            f"Expected positive Bench2Dex action chunk length, got {chunk_length}"
+        )
+    if split == "train" and chunk_length > 1:
+        if env_cfg.auto_reset:
+            raise ValueError(
+                "Bench2Dex chunk training requires auto_reset=false so "
+                "the actor masks transitions after episode termination"
+            )
+        if (
+            cfg.algorithm.reward_type != "chunk_level"
+            or cfg.algorithm.logprob_type != "chunk_level"
+        ):
+            raise ValueError(
+                "Bench2Dex chunk training requires chunk_level reward_type "
+                "and logprob_type"
+            )
+    if model_cfg.model_type == "openpi":
+        horizon = model_cfg.openpi.get("action_horizon")
+        if horizon is not None and chunk_length > int(horizon):
+            raise ValueError(
+                f"Expected Bench2Dex execution chunk <= action_horizon "
+                f"{horizon}, got {chunk_length}"
+            )
+        if model_cfg.openpi.config_name != "pi05_bench2dex":
+            raise ValueError("Bench2Dex OpenPI requires config_name=pi05_bench2dex")
+        if int(model_cfg.openpi.model_action_dim) < spec.action_dim:
+            raise ValueError(
+                "openpi.model_action_dim must cover the robot's active DOFs"
+            )
+        expected_keys = (
+            "base_0_rgb",
+            "base_1_rgb",
+            "left_wrist_0_rgb",
+            "right_wrist_0_rgb",
+        )
+        if tuple(model_cfg.openpi.get("image_keys", ())) != expected_keys:
+            raise ValueError(f"Bench2Dex pi05 requires image_keys={expected_keys}")
+        if len(spec.extra_cameras) != 1 or len(spec.wrist_cameras) != 2:
+            raise ValueError("Bench2Dex pi05 uses two stereo and two wrist images")

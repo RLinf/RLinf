@@ -1,7 +1,7 @@
 Bench2Dex
 =========
 
-在 Bench2Dex Task22、Task64 上训练 π₀.₅ policy，并在四个泛化通道上评测成功率。
+Bench2Dex 支持在并行环境中训练和评测 π₀.₅ policy。本文以 Task22 和 Task64 为例，涵盖四个评测通道。
 
 概览
 ----
@@ -32,8 +32,6 @@ Bench2Dex
 任务
 ~~~~
 
-选择要运行的任务，准备对应的模型和资产。
-
 .. list-table::
    :header-rows: 1
 
@@ -49,8 +47,6 @@ Bench2Dex
 
 观测与动作
 ~~~~~~~~~~
-
-policy 根据图像、关节位置和任务描述预测动作。
 
 .. list-table::
    :header-rows: 1
@@ -113,18 +109,16 @@ policy 根据图像、关节位置和任务描述预测动作。
 训练 policy
 ~~~~~~~~~~~
 
-Task22 从 critic 单独预热 10 轮后保存的完整模型权重开始训练。将 ``BENCH2DEX_WARMUP10_PATH`` 指向该模型的 ``full_weights.pt`` 文件。训练重新初始化优化器和 scheduler 状态，继续训练 190 轮，不重复 critic 预热。
-
-准备好 Task22 模型和资产路径后，启动 PPO 训练：
+Task22 的 PPO 配方需要预先完成 10 轮 critic 预热后保存的 ``full_weights.pt``。设置文件路径后启动训练。
 
 .. code-block:: bash
 
    export BENCH2DEX_WARMUP10_PATH="<warmup10_full_weights.pt>"
    bash examples/embodiment/run_embodiment.sh bench2dex_task22_ppo_openpi_pi05
 
-Task22 使用 8 张 GPU，在一个固定的白底场景上训练，每轮采样 128 条轨迹。每 10 轮评测一次，每 2 轮保存一次 checkpoint。Task64 默认关闭周期性评测。
+该配方在固定白底场景中训练 190 轮，每 10 轮评测一次，每 2 轮保存一次 checkpoint。
 
-Task22 从前 5 个去噪步骤中选取一个随机步骤，冻结的视觉编码器保持 eval 模式。这两项由 ``actor.model.openpi`` 下的 ``stochastic_step_range`` 和 ``frozen_vision_mode`` 控制，其他训练参数见对应 YAML。
+采样时，从前 5 个去噪步骤中随机选取一步执行 Flow-SDE 更新。
 
 其他训练配置见下表，将命令最后的配置名替换为对应项。异步 PPO 使用 ``examples/embodiment/run_async.sh`` 启动。
 
@@ -147,7 +141,9 @@ Task22 从前 5 个去噪步骤中选取一个随机步骤，冻结的视觉编�
      - GRPO
      - ``bench2dex_task64_grpo_openpi_pi05``
 
-Task64 配置需要对应任务的模型和锚点。在 ``examples/embodiment/config/`` 下对应的 YAML 文件中修改训练参数。GPU 分配见 :doc:`Placement <../../concepts/placement>`，恢复训练见 :doc:`检查点恢复 <../../guides/resume>`\ 。
+运行其他 Bench2Dex 任务时，在环境配置中选择场景和机器人，并使用对应的 checkpoint、归一化统计量和场景锚点。动作维度取 policy 控制的关节数，``max_episode_steps`` 取任务的控制步数上限。
+
+在 ``examples/embodiment/config/`` 下对应的 YAML 文件中修改训练参数。GPU 分配见 :doc:`Placement <../../concepts/placement>`，恢复训练见 :doc:`检查点恢复 <../../guides/resume>`\ 。
 
 .. note::
 
@@ -166,7 +162,7 @@ Task64 配置需要对应任务的模型和锚点。在 ``examples/embodiment/co
      "rollout.model.model_path=<model_path>" \
      "+rollout.model.openpi_data.norm_stats_path=$BENCH2DEX_PI05_PATH/assets/dex2bench/norm_stats.json"
 
-将 ``<evaluation_output>`` 替换为结果目录。``<model_path>`` 可以是转换后的模型目录，也可以是训练保存的 ``global_step_N/actor/model_state_dict/full_weights.pt`` 文件。Task64 使用 ``bench2dex_task64_openpi_pi05_eval`` 配置及对应任务的模型和锚点。
+``<model_path>`` 可以是转换后的模型目录，也可以是训练保存的 ``global_step_N/actor/model_state_dict/full_weights.pt`` 文件。Task64 使用 ``bench2dex_task64_openpi_pi05_eval`` 配置及对应任务的模型和锚点。
 
 .. list-table:: 评测通道
    :header-rows: 1
@@ -181,8 +177,6 @@ Task64 配置需要对应任务的模型和锚点。在 ``examples/embodiment/co
      - 外观、杂物和相机设置。
    * - ``inv_cov``
      - 组合变化，并使用未见过的资产。
-
-用 ``--gpu-id`` 指定以逗号分隔的 GPU 编号，``--num-envs`` 设置并行环境数。
 
 可视化与结果
 ------------

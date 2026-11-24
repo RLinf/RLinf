@@ -1225,6 +1225,432 @@ def test_fp32_trainable_weights_beside_frozen_bf16_keep_small_updates(
     assert (after != before).all()
 
 
+def _embodied_actor(mode_cfg, *, mix_envs=True, rank=0, world_size=1, actor_cls=None):
+    """An embodied FSDP actor holding only the state its batch planning reads."""
+    from rlinf.data.schema.embodied_trajectory import RolloutGeometry
+    from rlinf.envs.layout import EnvLayout
+    from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "seed": 3,
+                "global_batch_size": 4 * world_size,
+                "micro_batch_size": 2,
+            },
+            "algorithm": {"loss_type": "actor_critic", "reward_type": "action_level"},
+            "env": {"train": mode_cfg},
+        }
+    )
+    cfg.actor.mix_envs = mix_envs
+    layout = EnvLayout(cfg.env.train, len(mode_cfg.get("envs", {})) or 1, "p")
+    actor = object.__new__(actor_cls or EmbodiedFSDPActor)
+    actor.cfg = cfg
+    actor._rank, actor._world_size = rank, world_size
+    actor._training_round = 0
+    actor._rollout_geometry = RolloutGeometry(
+        layout=layout, stage_num=1, num_action_chunks=1, actor_world_size=world_size
+    )
+    actor._env_algorithm_cfgs = {
+        spec.name: spec.algorithm_cfg(cfg.algorithm) for spec in layout.specs
+    }
+    return actor
+
+
+def _embodied_env(steps, **fields):
+    return {
+        "env_type": "maniskill",
+        "total_num_envs": 2,
+        "rollout_epoch": 1,
+        "max_steps_per_rollout_epoch": steps,
+        "max_episode_steps": steps,
+        "auto_reset": False,
+        "ignore_terminations": False,
+        **fields,
+    }
+
+
+def _embodied_batch(steps, trajectories, marker=0.0, done_at=None):
+    dones = torch.zeros(steps + 1, trajectories, 1, dtype=torch.bool)
+    if done_at is not None:
+        dones[done_at, 0] = True
+    return {
+        "prev_logprobs": torch.randn(steps, trajectories, 1),
+        "advantages": torch.full((steps, trajectories, 1), marker),
+        "rewards": torch.ones(steps, trajectories, 1),
+        "dones": dones,
+    }
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="masked_normalization runs on CUDA"
+)
+@pytest.mark.parametrize("scope", ["env", "all"])
+def test_async_ppo_normalizes_advantages_over_the_configured_scope(scope):
+    from rlinf.workers.actor.async_ppo_fsdp_worker import AsyncPPOEmbodiedFSDPActor
+
+    # Both envs send one observation format, so their rows share a pool.
+    actor = _embodied_actor(
+        OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}}),
+        actor_cls=AsyncPPOEmbodiedFSDPActor,
+    )
+    actor.cfg.algorithm.adv_norm_scope = scope
+    actor.env_batches = {"a": _embodied_batch(2, 2), "b": _embodied_batch(2, 2)}
+    actor.env_batches["a"]["advantages"] = torch.arange(4.0).reshape(2, 2, 1)
+    actor.env_batches["b"]["advantages"] = 10 * torch.arange(1.0, 5.0).reshape(2, 2, 1)
+    actor.rollout_batches = actor._merge_env_batches()
+
+    actor._normalize_advantages_across_ranks()
+
+    [pool] = actor.rollout_batches
+    # The PPO loss takes float32 advantages.
+    assert pool["advantages"].dtype == torch.float32
+    # Rows keep env order until the training batch is shuffled.
+    a, b = pool["advantages"][:4], pool["advantages"][4:]
+    groups = [a, b] if scope == "env" else [torch.cat([a, b])]
+    for values in groups:
+        assert abs(values.mean().item()) < 1e-4
+        assert abs(values.std(unbiased=False).item() - 1) < 1e-4
+    if scope == "all":
+        assert a.mean() < 0 < b.mean()
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="masked_normalization runs on CUDA"
+)
+def test_async_ppo_returns_zero_advantages_for_fully_masked_env_group():
+    from rlinf.workers.actor.async_ppo_fsdp_worker import AsyncPPOEmbodiedFSDPActor
+
+    actor = _embodied_actor(
+        OmegaConf.create(
+            {"envs": {"empty": _embodied_env(2), "valid": _embodied_env(2)}}
+        ),
+        actor_cls=AsyncPPOEmbodiedFSDPActor,
+    )
+    actor.cfg.algorithm.adv_norm_scope = "env"
+    actor.env_batches = {
+        "empty": _embodied_batch(2, 2),
+        "valid": _embodied_batch(2, 2),
+    }
+    actor.env_batches["empty"]["loss_mask"] = torch.zeros(2, 2, 1, dtype=torch.bool)
+    actor.env_batches["valid"]["loss_mask"] = torch.ones(2, 2, 1, dtype=torch.bool)
+    actor.env_batches["empty"]["advantages"] = torch.tensor(
+        [[[1.0], [2.0]], [[3.0], [4.0]]]
+    )
+    actor.env_batches["valid"]["advantages"] = torch.tensor(
+        [[[10.0], [20.0]], [[30.0], [40.0]]]
+    )
+    actor.rollout_batches = actor._merge_env_batches()
+
+    actor._normalize_advantages_across_ranks()
+
+    [pool] = actor.rollout_batches
+    empty_adv, valid_adv = pool["advantages"][:4], pool["advantages"][4:]
+    assert torch.isfinite(empty_adv).all()
+    assert torch.allclose(empty_adv, torch.zeros_like(empty_adv))
+    assert abs(valid_adv.mean().item()) < 1e-4
+    assert abs(valid_adv.std(unbiased=False).item() - 1.0) < 1e-4
+
+
+def test_multi_format_global_batch_plan_distributes_uneven_remainders():
+    actor = _embodied_actor(
+        OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}})
+    )
+    actor.cfg.actor.global_batch_size = 4
+    actor.cfg.actor.mix_envs = True
+    actor.rollout_batches = [
+        {"prev_logprobs": torch.zeros(6, 1)},
+        {"prev_logprobs": torch.zeros(10, 1)},
+    ]
+
+    actor._order_training_batch()
+
+    assert len(actor._global_batch_plan) == 4
+    assert all(sum(takes) == 4 for takes in actor._global_batch_plan)
+    assert [sum(col) for col in zip(*actor._global_batch_plan)] == [6, 10]
+
+
+@pytest.mark.parametrize(
+    ("normalize_cfg", "expect_normalized"),
+    [(True, True), (False, False), (None, False)],
+)
+def test_raw_advantages_honor_normalize_advantages_under_env_scope(
+    monkeypatch, normalize_cfg, expect_normalized
+):
+    from rlinf.workers.actor import embodied_fsdp_actor_worker as actor_mod
+
+    metrics_calls = []
+    monkeypatch.setattr(
+        actor_mod,
+        "compute_rollout_metric_stats",
+        lambda batch: metrics_calls.append(batch) or {},
+    )
+    actor = _embodied_actor(OmegaConf.create(_embodied_env(2)))
+    actor.cfg.runner = {"task_type": "embodied"}
+    actor.cfg.actor.model = {"num_action_chunks": 1}
+    actor.cfg.algorithm.adv_type = "raw"
+    actor.cfg.algorithm.reward_type = "chunk_level"
+    actor.cfg.algorithm.group_size = 1
+    actor.cfg.algorithm.adv_norm_scope = "env"
+    if normalize_cfg is not None:
+        actor.cfg.algorithm.normalize_advantages = normalize_cfg
+    actor._env_algorithm_cfgs = {
+        spec.name: spec.algorithm_cfg(actor.cfg.algorithm)
+        for spec in actor._rollout_geometry.layout.specs
+    }
+    batch = _embodied_batch(2, 2)
+    batch["rewards"] = torch.tensor([[[1.0], [3.0]], [[0.0], [0.0]]])
+    batch["loss_mask"] = torch.ones(2, 2, 1, dtype=torch.bool)
+    actor.env_batches = {None: batch}
+    actor._group_success_metrics = {}
+    actor._timer_metrics = {}
+    actor._accelerator_type = None
+
+    actor.compute_advantages_and_returns()
+
+    assert len(metrics_calls) == 1
+    [pool] = actor.rollout_batches
+    advantages = pool["advantages"]
+    if expect_normalized:
+        assert abs(advantages.mean().item()) < 1e-4
+        assert abs(advantages.std().item() - 1.0) < 1e-3
+    else:
+        assert torch.allclose(
+            advantages.reshape(-1), torch.tensor([1.0, 3.0, 1.0, 3.0])
+        )
+
+
+def test_off_policy_targets_discount_each_sample_with_its_envs_gamma():
+    actor = _embodied_actor(
+        OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}})
+    )
+    actor.cfg.algorithm.gamma = 0.99
+    layout = actor._rollout_geometry.layout
+
+    def env_values(env_index):
+        actor._env_algorithm_cfgs = {
+            spec.name: spec.algorithm_cfg(actor.cfg.algorithm) for spec in layout.specs
+        }
+        return actor._env_values("gamma", env_index, torch.float32)
+
+    # Envs that share algorithm.gamma keep the float SAC and RLT used before.
+    assert env_values(torch.tensor([1, 0])) == 0.99
+    actor.cfg.algorithm.envs = {"b": {"gamma": 0.9}}
+    # Index -1 is a demo sample, which takes algorithm.gamma.
+    assert torch.allclose(
+        env_values(torch.tensor([1, 0, -1])), torch.tensor([[0.9], [0.99], [0.99]])
+    )
+
+
+def test_off_policy_bf16_gamma_exponentiates_in_fp32_before_casting():
+    from rlinf.workers.actor.fsdp_rlt_ac_policy_worker import RLTACLossMixin
+
+    actor = _embodied_actor(
+        OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}})
+    )
+    actor.cfg.algorithm.gamma = 0.999
+    actor.cfg.algorithm.envs = {"b": {"gamma": 0.99}}
+    actor.torch_dtype = torch.bfloat16
+    actor._env_algorithm_cfgs = {
+        spec.name: spec.algorithm_cfg(actor.cfg.algorithm)
+        for spec in actor._rollout_geometry.layout.specs
+    }
+
+    gamma = actor._env_values("gamma", torch.tensor([0, 1]), torch.float32)
+    assert gamma.dtype == torch.float32
+    discount = (gamma**8).to(torch.bfloat16)
+    expected_a = (torch.tensor(0.999, dtype=torch.float32) ** 8).to(torch.bfloat16)
+    assert discount[0].item() == pytest.approx(expected_a.item())
+    assert discount[0].item() < 1.0
+
+    rlt = object.__new__(RLTACLossMixin)
+    rlt.torch_dtype = torch.bfloat16
+    rewards = torch.ones((2, 8), dtype=torch.bfloat16)
+    discounted = rlt._discounted_chunk_rewards(rewards, gamma)
+    expected_r0 = sum(0.999**k for k in range(8))
+    assert discounted.dtype == torch.bfloat16
+    assert abs(discounted[0].item() - expected_r0) < 0.05
+    assert discounted[0].item() < 8.0
+
+
+def test_multi_env_pooled_rollout_metrics_merge_per_env_stats_without_extra_reduction(
+    tmp_path, monkeypatch
+):
+    from rlinf.utils.metric_utils import (
+        compute_rollout_metric_stats,
+        compute_rollout_metrics,
+    )
+    from rlinf.workers.actor import embodied_fsdp_actor_worker as actor_mod
+
+    monkeypatch.setattr(Worker, "torch_platform", torch.cpu)
+    calls = []
+
+    def _spy(batch):
+        calls.append(batch)
+        return compute_rollout_metric_stats(batch)
+
+    monkeypatch.setattr(actor_mod, "compute_rollout_metric_stats", _spy)
+    dist.init_process_group(
+        "gloo", init_method=f"file://{tmp_path / 'init'}", rank=0, world_size=1
+    )
+    try:
+        actor = _embodied_actor(
+            OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}})
+        )
+        actor.cfg.runner = {"task_type": "embodied"}
+        actor.cfg.actor.model = {"num_action_chunks": 1}
+        actor.cfg.algorithm.adv_type = "raw"
+        actor.cfg.algorithm.reward_type = "chunk_level"
+        actor.cfg.algorithm.group_size = 1
+        actor.cfg.algorithm.adv_norm_scope = "env"
+        actor.cfg.algorithm.normalize_advantages = False
+        actor._env_algorithm_cfgs = {
+            spec.name: spec.algorithm_cfg(actor.cfg.algorithm)
+            for spec in actor._rollout_geometry.layout.specs
+        }
+        batch_a = _embodied_batch(2, 2)
+        batch_a["rewards"] = torch.tensor([[[1.0], [5.0]], [[3.0], [7.0]]])
+        batch_a["loss_mask"] = torch.tensor([[[True], [False]], [[True], [True]]])
+        batch_b = _embodied_batch(2, 2)
+        batch_b["rewards"] = torch.tensor([[[10.0], [20.0]], [[30.0], [40.0]]])
+        batch_b["loss_mask"] = torch.zeros(2, 2, 1, dtype=torch.bool)
+        actor.env_batches = {"a": batch_a, "b": batch_b}
+        actor._group_success_metrics = {}
+        actor._timer_metrics = {}
+        actor._accelerator_type = None
+
+        metrics = actor.compute_advantages_and_returns()
+
+        assert len(calls) == 2
+        expected_pooled = compute_rollout_metrics(
+            {
+                "rewards": torch.cat(
+                    [batch_a["rewards"].reshape(-1), batch_b["rewards"].reshape(-1)]
+                ),
+                "advantages": torch.cat(
+                    [
+                        batch_a["advantages"].reshape(-1),
+                        batch_b["advantages"].reshape(-1),
+                    ]
+                ),
+                "loss_mask": torch.cat(
+                    [batch_a["loss_mask"].reshape(-1), batch_b["loss_mask"].reshape(-1)]
+                ),
+            }
+        )
+        for key, value in expected_pooled.items():
+            assert metrics[key] == pytest.approx(value), key
+    finally:
+        dist.destroy_process_group()
+
+
+def test_one_env_trains_on_the_same_batch_and_loss_weights_as_before():
+    from rlinf.utils.nested_dict_process import process_nested_dict_for_train
+    from rlinf.utils.utils import compute_trajectory_loss_mask
+
+    actor = _embodied_actor(OmegaConf.create(_embodied_env(4)), rank=1)
+    batch = _embodied_batch(4, 2, done_at=2)
+    batch["loss_mask"], batch["loss_mask_sum"] = compute_trajectory_loss_mask(
+        batch["dones"], "action_level"
+    )
+    expected = dict(batch)
+    expected["loss_mask_ratio"] = batch["loss_mask_sum"] * 1.0 / 4
+    shuffle_id = torch.randperm(8, generator=torch.Generator().manual_seed(3 + 1))
+    expected = process_nested_dict_for_train(expected, shuffle_id)
+
+    actor.env_batches = {None: dict(batch)}
+    actor.rollout_batches = actor._merge_env_batches()
+    actor._order_training_batch()
+
+    [pool] = actor.rollout_batches
+    assert pool.keys() == expected.keys()
+    for key, value in expected.items():
+        assert torch.equal(pool[key], value), key
+    assert actor._global_batch_plan == [[4], [4]]
+
+
+def test_every_trajectory_weighs_the_same_whatever_its_env_horizon():
+    actor = _embodied_actor(
+        OmegaConf.create(
+            {
+                "envs": {
+                    "short": _embodied_env(2, ignore_terminations=True),
+                    "long": _embodied_env(4, ignore_terminations=True),
+                }
+            }
+        )
+    )
+    actor.env_batches = {
+        "short": _embodied_batch(2, 2, marker=1.0),
+        "long": _embodied_batch(4, 2, marker=2.0),
+    }
+
+    [merged] = actor._merge_env_batches()
+
+    weights = 1.0 / merged["loss_mask_ratio"].squeeze(-1)
+    short = weights[merged["advantages"].squeeze(-1) == 1.0]
+    long = weights[merged["advantages"].squeeze(-1) == 2.0]
+    # Each env holds 2 trajectories, so one trajectory's steps sum to half.
+    assert torch.allclose(short.sum() / 2, long.sum() / 2)
+    assert merged["loss_mask"].all()
+
+
+def test_unmixed_global_batches_hold_one_env_in_an_order_all_ranks_share():
+    mode_cfg = OmegaConf.create(
+        {"envs": {"short": _embodied_env(2), "long": _embodied_env(4)}}
+    )
+    env_orders = []
+    for rank in (0, 1):
+        actor = _embodied_actor(mode_cfg, mix_envs=False, rank=rank, world_size=2)
+        actor.env_batches = {
+            "short": _embodied_batch(2, 2, marker=1.0),
+            "long": _embodied_batch(4, 2, marker=2.0),
+        }
+        actor.rollout_batches = actor._merge_env_batches()
+        actor._order_training_batch()
+
+        markers = [
+            torch.cat([batch["advantages"] for batch in micro_batches]).unique()
+            for micro_batches in actor._global_batches()
+        ]
+        assert all(len(marker) == 1 for marker in markers)
+        env_orders.append([marker.item() for marker in markers])
+
+    assert env_orders[0] == env_orders[1]
+    assert sorted(env_orders[0]) == [1.0, 2.0, 2.0]
+
+
+def test_envs_with_different_policy_inputs_train_in_separate_micro_batches():
+    actor = _embodied_actor(
+        OmegaConf.create(
+            {"envs": {"one_view": _embodied_env(2), "two_views": _embodied_env(2)}}
+        )
+    )
+    one_view = _embodied_batch(2, 2, marker=1.0)
+    one_view["forward_inputs"] = {"pixel_values": torch.zeros(2, 2, 1, 8)}
+    two_views = _embodied_batch(2, 2, marker=2.0)
+    two_views["forward_inputs"] = {"pixel_values": torch.zeros(2, 2, 2, 8)}
+    actor.env_batches = {"one_view": one_view, "two_views": two_views}
+
+    actor.rollout_batches = actor._merge_env_batches()
+    actor._order_training_batch()
+    global_batches = list(actor._global_batches())
+
+    assert len(actor.rollout_batches) == 2
+    # 8 samples make 2 global batches of 4, each taking 2 samples of each format.
+    assert actor._global_batch_plan == [[2, 2], [2, 2]]
+    for micro_batches in global_batches:
+        assert sorted(
+            batch["advantages"].unique().item() for batch in micro_batches
+        ) == [
+            1.0,
+            2.0,
+        ]
+        for batch in micro_batches:
+            views = batch["forward_inputs"]["pixel_values"].shape[1]
+            assert views == batch["advantages"].unique().item()
+
+
 @pytest.mark.parametrize("all_inactive", [False, True])
 def test_art_metrics_weight_active_samples_across_microbatches(
     tmp_path, monkeypatch, all_inactive
@@ -1272,3 +1698,474 @@ def test_art_metrics_weight_active_samples_across_microbatches(
         assert "actor/active_count" not in results[0]
     finally:
         dist.destroy_process_group()
+
+
+class _CausalLanguageModel(nn.Module):
+    """Small causal model with sequence boundaries supplied by position IDs."""
+
+    def __init__(self):
+        super().__init__()
+        self.embedding = nn.Embedding(32, 8)
+        self.projection = nn.Linear(8, 32)
+
+    def forward(self, input_ids, position_ids, attention_mask=None, **kwargs):
+        from types import SimpleNamespace
+
+        hidden = self.embedding(input_ids)
+        segments = (position_ids == 0).cumsum(dim=-1)
+        allowed = (segments.unsqueeze(2) == segments.unsqueeze(1)) & (
+            position_ids.unsqueeze(2) >= position_ids.unsqueeze(1)
+        )
+        if attention_mask is not None:
+            allowed = allowed & attention_mask.unsqueeze(1)
+        attended = torch.nn.functional.scaled_dot_product_attention(
+            hidden.unsqueeze(1),
+            hidden.unsqueeze(1),
+            hidden.unsqueeze(1),
+            attn_mask=allowed.unsqueeze(1),
+        ).squeeze(1)
+        return SimpleNamespace(logits=self.projection(attended))
+
+
+def _multi_turn_actor(dynamic):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
+
+    actor = object.__new__(MAFSDPActor)
+    actor.torch_platform = torch.cpu
+    actor.enable_dynamic_batch_size = dynamic
+    actor.max_tokens_per_mbs = 20
+    actor.tokenizer = SimpleNamespace(eos_token_id=0)
+    actor.amp_context = nullcontext()
+    actor.entropy_op_type = "torch"
+    actor.cfg = OmegaConf.create(
+        {
+            "algorithm": {
+                "sampling_params": {"temperature": 0.8},
+                "logprob_forward_micro_batch_size": 3,
+            },
+            "actor": {"model": {"encoder_seq_length": 32}},
+        }
+    )
+    torch.manual_seed(42)
+    actor.model = _CausalLanguageModel()
+    return actor
+
+
+def _multi_turn_batch():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    lengths = (1, 5, 9, 14)
+    return DynamicRolloutResult(
+        num_sequence=4,
+        group_size=2,
+        idx_to_traj=[0, 0, 1, 1],
+        input_ids=[(torch.arange(n) % 29 + 1).tolist() for n in lengths],
+        prompt_lengths=[1, 3, 4, 5],
+        response_lengths=[0, 2, 5, 9],
+        is_end=[False, False, True, True],
+        rewards=[1.0, 1.0, 0.0, 0.0],
+    ).to_actor_batch()
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_multi_turn_fsdp_forward_matches_individual_sequences_and_gradients(dynamic):
+    import copy
+
+    from rlinf.utils.utils import compute_entropy_from_logits
+
+    actor = _multi_turn_actor(dynamic)
+    batch = _multi_turn_batch()
+    baseline = copy.deepcopy(actor.model)
+    actual_probs, actual_entropy = actor.forward_batch(batch, True)
+    expected_probs, expected_entropy = [], []
+    for row, positions in zip(batch["input_ids"], batch["position_ids"]):
+        logits = baseline(row.unsqueeze(0), positions.unsqueeze(0)).logits / 0.8
+        values = actor.compute_logprobs(logits[:, :-1], row[1:].unsqueeze(0))[0]
+        expected_probs.append(torch.cat((values.new_zeros(1), values)))
+        values = compute_entropy_from_logits(logits[:, :-1])[0]
+        expected_entropy.append(torch.cat((values.new_zeros(1), values)))
+    for actual, expected in zip(
+        actual_probs + actual_entropy, expected_probs + expected_entropy, strict=True
+    ):
+        torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-6)
+    actual_loss = sum(
+        (prob[mask] - 0.03 * entropy[mask]).sum()
+        for prob, entropy, mask in zip(
+            actual_probs, actual_entropy, batch["response_mask"]
+        )
+    )
+    expected_loss = sum(
+        (prob[mask] - 0.03 * entropy[mask]).sum()
+        for prob, entropy, mask in zip(
+            expected_probs, expected_entropy, batch["response_mask"]
+        )
+    )
+    actual_loss.backward()
+    expected_loss.backward()
+    for actual, expected in zip(
+        actor.model.parameters(), baseline.parameters(), strict=True
+    ):
+        torch.testing.assert_close(actual.grad, expected.grad, atol=2e-6, rtol=2e-6)
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+@pytest.mark.parametrize(
+    ("lengths", "micro_batch_size", "expected_batch_sizes"),
+    [((1, 5, 9, 14), 3, [2, 2]), ((7, 3, 9, 5, 11), 2, [2, 2, 1])],
+)
+def test_multi_turn_fsdp_inference_keeps_order_and_tail(
+    tmp_path, dynamic, lengths, micro_batch_size, expected_batch_sizes
+):
+    actor = _multi_turn_actor(dynamic)
+    actor.cfg.algorithm.logprob_forward_micro_batch_size = micro_batch_size
+    batch = {
+        "input_ids": [torch.arange(n) % 29 + 1 for n in lengths],
+        "position_ids": [torch.arange(n) for n in lengths],
+    }
+    dist.init_process_group(
+        "gloo", init_method=f"file://{tmp_path / 'rendezvous'}", rank=0, world_size=1
+    )
+    try:
+        with torch.no_grad():
+            expected = actor.forward_batch(batch)
+            batch_sizes = []
+            hook = actor.model.register_forward_pre_hook(
+                lambda module, args, kwargs: batch_sizes.append(
+                    kwargs["input_ids"].size(0)
+                ),
+                with_kwargs=True,
+            )
+            try:
+                actual, reference = actor.inference_step(batch, False)
+            finally:
+                hook.remove()
+        assert reference is None
+        assert [len(row) for row in actual] == list(lengths)
+        if not dynamic:
+            assert batch_sizes == expected_batch_sizes
+        for row, expected_row in zip(actual, expected, strict=True):
+            assert row.device.type == "cpu" and not row.requires_grad
+            torch.testing.assert_close(row, expected_row)
+    finally:
+        dist.destroy_process_group()
+
+
+def _multi_turn_fsdp_uneven_inference(rank, dynamic, rendezvous):
+    from torch.nn.parallel import DistributedDataParallel
+
+    actor = _multi_turn_actor(dynamic)
+    count = (1, 7)[rank]
+    batch = {
+        "input_ids": [torch.arange(n + 2) % 29 + 1 for n in range(count)],
+        "position_ids": [torch.arange(n + 2) for n in range(count)],
+    }
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{rendezvous}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=30),
+    )
+    try:
+        actor.model.register_buffer("inference_calls", torch.zeros(1))
+        actor.model = DistributedDataParallel(actor.model)
+        calls = []
+        actor.model.register_forward_hook(lambda *_: calls.append(1))
+        with torch.no_grad():
+            expected = actor.forward_batch(batch)
+            calls.clear()
+            actual, reference = actor.inference_step(batch, False)
+        assert reference is None
+        assert len(calls) == (2 if dynamic else 3)
+        assert len(batch["input_ids"]) == len(actual) == count
+        for row, expected_row in zip(actual, expected, strict=True):
+            torch.testing.assert_close(row, expected_row)
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_multi_turn_fsdp_inference_aligns_uneven_dp_forwards(tmp_path, dynamic):
+    torch.multiprocessing.spawn(
+        _multi_turn_fsdp_uneven_inference,
+        args=(dynamic, str(tmp_path / "rendezvous")),
+        nprocs=2,
+        join=True,
+    )
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+@pytest.mark.parametrize(
+    "aggregation", ["token-mean", "seq-mean-token-mean", "seq-mean-token-sum"]
+)
+@pytest.mark.parametrize("auxiliary_losses", [False, True])
+def test_multi_turn_fsdp_actor_backward_matches_real_rows(
+    dynamic, aggregation, auxiliary_losses
+):
+    import copy
+
+    from rlinf.algorithms.losses import compute_ppo_actor_loss
+    from rlinf.algorithms.utils import kl_penalty
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.hybrid_engines.fsdp.strategy.fsdp import FSDPStrategy
+    from rlinf.utils.utils import get_loss_agg_func
+
+    actor = _multi_turn_actor(dynamic)
+    actor.task_type = "reasoning"
+    actor.gradient_accumulation = 1
+    actor.calculate_entropy = actor.calculate_entropy_loss = auxiliary_losses
+    actor.kl_beta = 0.1 if auxiliary_losses else 0.0
+    actor.kl_penalty_type = "low_var_kl"
+    actor.loss_agg_func = get_loss_agg_func(aggregation)
+    actor.grad_scaler = torch.amp.GradScaler("cpu", enabled=False)
+    actor._strategy = FSDPStrategy(
+        OmegaConf.create({"fsdp_config": {"enable_gradient_accumulation": False}}), 1
+    )
+    actor.cfg.algorithm.ratio_clip_eps = 0.2
+    actor.cfg.algorithm.loss_type = "actor"
+    actor.cfg.algorithm.entropy_bonus = 0.03 if auxiliary_losses else 0.0
+    batch = _multi_turn_batch()
+    with torch.no_grad():
+        old = actor.forward_batch(batch)
+    batch["recomputed_logprobs"] = old
+    batch["ref_logprobs"] = [row - 0.1 for row in old]
+    batch["advantages"] = [mask.float() for mask in batch["response_mask"]]
+    batch["loss_scales"] = [mask.float() * 0.5 for mask in batch["response_mask"]]
+    baseline_model = copy.deepcopy(actor.model)
+    actor.model = baseline_model
+    probabilities, entropy = actor.forward_batch(batch, True)
+    expected = DynamicRolloutResult.materialize_actor_batch(
+        {
+            **batch,
+            "logprobs": probabilities,
+            "entropy": entropy,
+        },
+        32,
+        0,
+    )
+    real_rows = expected["response_mask"].any(dim=-1)
+    expected = {
+        key: expected[key][real_rows]
+        for key in (
+            "logprobs",
+            "recomputed_logprobs",
+            "ref_logprobs",
+            "advantages",
+            "loss_scales",
+            "entropy",
+            "response_mask",
+        )
+    }
+    mask = expected["response_mask"]
+    loss, _ = compute_ppo_actor_loss(
+        logprobs=expected["logprobs"],
+        old_logprobs=expected["recomputed_logprobs"],
+        advantages=expected["advantages"] * expected["loss_scales"],
+        loss_mask=mask,
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        loss_agg_func=actor.loss_agg_func,
+        fast_path_zero_loss_mask=False,
+    )
+    if auxiliary_losses:
+        loss = loss - 0.03 * actor.loss_agg_func(expected["entropy"], mask)
+        loss = loss + 0.1 * actor.loss_agg_func(
+            kl_penalty(expected["logprobs"], expected["ref_logprobs"], "low_var_kl")
+            * expected["loss_scales"],
+            mask,
+        )
+    loss.backward()
+    expected_grads = [
+        parameter.grad.clone() for parameter in baseline_model.parameters()
+    ]
+    assert any(gradient.count_nonzero() for gradient in expected_grads)
+    baseline_model.zero_grad()
+    actual_metrics = actor.forward_backward_batch(0, batch, 1)
+    torch.testing.assert_close(actual_metrics["actor/final_loss"], loss.detach())
+    for parameter, gradient in zip(
+        actor.model.parameters(), expected_grads, strict=True
+    ):
+        torch.testing.assert_close(parameter.grad, gradient)
+    assert all(
+        isinstance(row, torch.Tensor) and row.ndim == 1 for row in batch["input_ids"]
+    )
+
+
+def test_multi_turn_fsdp_dense_splitter_keeps_existing_layout(tmp_path):
+    from rlinf.utils.torch_functionals import batch_pad_to_fixed_len
+    from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
+
+    rows = _multi_turn_batch()
+    dense = {
+        key: batch_pad_to_fixed_len(value, 32, 0)
+        if isinstance(value, list) and key != "idx_to_traj"
+        else value
+        for key, value in rows.items()
+    }
+    dist.init_process_group(
+        "gloo", init_method=f"file://{tmp_path / 'rendezvous'}", rank=0, world_size=1
+    )
+    try:
+        row_iter, row_count, row_indices = _multi_turn_actor(
+            True
+        )._split_to_micro_batch(rows, True, max_tokens_per_mbs=20, split_num=2)
+        dense_iter, dense_count, dense_indices = FSDPActor._split_to_micro_batch(
+            dense, True, max_tokens_per_mbs=20, split_num=2
+        )
+        assert row_count == dense_count and row_indices == dense_indices
+        for row_batch, dense_batch in zip(row_iter, dense_iter, strict=True):
+            assert dense_batch["input_ids"].ndim == 2
+            for row, padded in zip(
+                row_batch["input_ids"], dense_batch["input_ids"], strict=True
+            ):
+                torch.testing.assert_close(row, padded[: len(row)])
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize(
+    ("local", "load_balance"), [(True, False), (False, False), (False, True)]
+)
+def test_multi_turn_fsdp_receive_and_advantages_use_shared_rows(
+    tmp_path, local, load_balance
+):
+    from queue import Queue
+
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.scheduler import Channel
+    from rlinf.scheduler.channel.channel_worker import LocalChannel
+
+    actor = _multi_turn_actor(False)
+    actor.enable_dp_load_balance = load_balance
+    actor.cfg.data = {"rollout_batch_size": 2}
+    actor.cfg.algorithm.group_size = 2
+    actor.cfg.algorithm.adv_type = "grpo_dynamic"
+    actor.cfg.algorithm.advantage_mode = "trajectory"
+    actor.task_type, actor.reinpp_kl_beta, actor.kl_penalty_type = (
+        "reasoning",
+        0.0,
+        "low_var_kl",
+    )
+    actor._timer_metrics = {}
+    if local:
+        channel = Channel()
+        channel._initialize(
+            "actor-batch", None, None, None, local_channel=LocalChannel()
+        )
+    else:
+        # An in-memory receive endpoint exercises the nonlocal actor boundary.
+        channel = Queue()
+        channel.is_local = False
+    results = []
+    for offset in (0, 3):
+        result = DynamicRolloutResult(
+            num_sequence=2,
+            group_size=2,
+            idx_to_traj=[0, 1],
+            input_ids=[list(range(3 + offset)), list(range(5 + offset))],
+            prompt_lengths=[1, 1],
+            response_lengths=[2 + offset, 4 + offset],
+            rewards=[1.0, 0.0],
+            is_end=[True, True],
+            rollout_logprobs=[[-0.5] * (2 + offset), [-0.25] * (4 + offset)],
+        )
+        results.append(result)
+        channel.put(result)
+    dist.init_process_group(
+        "gloo", init_method=f"file://{tmp_path / 'rendezvous'}", rank=0, world_size=1
+    )
+    try:
+        batch, received = actor.get_batch(channel)
+        assert received == results and channel.empty()
+        if not local:
+            assert batch["extra:source_dp"].tolist() == [0, 0, 0, 0]
+        assert batch["idx_to_traj"] == [0, 1, 2, 3]
+        assert [len(row) for row in batch["input_ids"]] == [3, 5, 6, 8]
+        batch = actor.compute_advantages_and_returns(batch)
+        for row, mask, sign in zip(
+            batch["advantages"], batch["response_mask"], (1, -1, 1, -1), strict=True
+        ):
+            assert row.device.type == "cpu" and row.shape == mask.shape
+            torch.testing.assert_close(row, mask.float() * sign / (2**0.5))
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("dense", [False, True])
+def test_multi_turn_fsdp_logprob_gap_uses_only_response_tokens(dense):
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.workers.actor.fsdp_actor_worker import compute_rollout_train_kl
+
+    batch = _multi_turn_batch()
+    batch["rollout_logprobs"] = [
+        torch.full_like(row, -1, dtype=torch.float32) for row in batch["input_ids"]
+    ]
+    batch["recomputed_logprobs"] = [
+        row + 0.1 * (i + 1) for i, row in enumerate(batch["rollout_logprobs"])
+    ]
+    if dense:
+        batch = DynamicRolloutResult.materialize_actor_batch(batch, 32, 0)
+    gap = compute_rollout_train_kl(batch, batch["response_mask"])
+    torch.testing.assert_close(gap, torch.tensor((2 * 0.2 + 5 * 0.3 + 9 * 0.4) / 16))
+
+
+def _prefix_async_uneven_replay(rank, rendezvous):
+    import queue
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from rlinf.algorithms.prefix_off_policy.replay import PrefixReplayService
+    from rlinf.algorithms.prefix_off_policy.schedule import PrefixUpdateSchedule
+    from rlinf.data.schema.embodied_types import Trajectory
+    from rlinf.data.storage.replay import TrajectoryReplayBuffer
+    from rlinf.workers.actor.fsdp_prefix_off_policy_worker import (
+        AsyncPrefixOffPolicyFSDPPolicy,
+    )
+
+    cfg = OmegaConf.create({"algorithm": {}, "env": {"train": {}}})
+    worker = object.__new__(AsyncPrefixOffPolicyFSDPPolicy)
+    worker.replay_service = PrefixReplayService(cfg)
+    worker.replay_service.bind_buffers(TrajectoryReplayBuffer(), None)
+    worker.update_schedule = PrefixUpdateSchedule(cfg)
+    worker._recv_queue = queue.Queue()
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{rendezvous}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=15),
+    )
+    try:
+        with patch.object(
+            Worker, "torch_platform", SimpleNamespace(current_device=lambda: "cpu")
+        ):
+            for source_rank in (0, 1):
+                if rank == source_rank:
+                    worker._recv_queue.put(
+                        Trajectory(
+                            actions=torch.zeros(1, 1, 2),
+                            rewards=torch.ones(1, 1, 1),
+                            forward_inputs={
+                                "actor_switch": torch.ones(1, 1, 1, dtype=torch.bool)
+                            },
+                        )
+                    )
+                worker._drain_received_trajectories()
+                dist.barrier()
+                metrics = worker.replay_service.collect_metrics()
+                assert metrics["replay/actor_switch_rate"] == 1.0
+    finally:
+        dist.destroy_process_group()
+        worker.replay_service.replay_buffer.close()
+
+
+def test_prefix_async_replay_drains_without_rank_collectives(tmp_path):
+    torch.multiprocessing.spawn(
+        _prefix_async_uneven_replay,
+        args=(str(tmp_path / "prefix-replay"),),
+        nprocs=2,
+        join=True,
+    )

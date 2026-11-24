@@ -27,6 +27,7 @@ runner:
   max_epochs: 190
   max_steps: -1
   only_eval: false
+  independent_eval_and_save_intervals: true
   val_check_interval: 10
   save_interval: 2
   resume_dir: null
@@ -64,6 +65,7 @@ env:
   enable_offload: false
   train:
     enable_offload: true
+    wait_for_offload_before_training: true
     rollout_epoch: 4
     total_num_envs: 32
     auto_reset: false

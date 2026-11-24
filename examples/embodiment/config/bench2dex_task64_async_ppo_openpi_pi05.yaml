@@ -14,3 +14,4 @@ algorithm:
 env:
   train:
     enable_offload: false
+    wait_for_offload_before_training: false

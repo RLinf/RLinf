@@ -63,6 +63,7 @@ env:
   enable_offload: false
   train:
     enable_offload: true
+    wait_for_offload_before_training: true
     skip_intermediate_renders: true
     rollout_epoch: 1
     total_num_envs: 16

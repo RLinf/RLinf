@@ -38,19 +38,26 @@ def build_official_openpi_sft_dataloader(
     """Build the SFT loader provided by OpenPI for a LeRobot dataset."""
     del rank
     import openpi.training.data_loader as openpi_data_loader
-    import openpi.transforms as transforms
+
+    from rlinf.models.embodiment.openpi.dataconfig.bench2dex_dataconfig import (
+        Bench2DexDataConfig,
+    )
 
     config = build_official_openpi_sft_config(cfg, world_size, data_paths, eval_dataset)
-    data_config = config.data.create(config.assets_dirs, config.model)
-    data_owns_normalization = any(
-        isinstance(transform, transforms.Normalize)
-        for transform in data_config.data_transforms.inputs
-    )
+    loader_kwargs = {}
+    if isinstance(config.data, Bench2DexDataConfig):
+        import openpi.transforms as transforms
+
+        data_config = config.data.create(config.assets_dirs, config.model)
+        loader_kwargs["skip_norm_stats"] = any(
+            isinstance(transform, transforms.Normalize)
+            for transform in data_config.data_transforms.inputs
+        )
     data_loader = openpi_data_loader.create_data_loader(
         config,
         framework="pytorch",
         shuffle=not eval_dataset,
-        skip_norm_stats=data_owns_normalization,
+        **loader_kwargs,
     )
     return data_loader, data_loader.data_config()
 

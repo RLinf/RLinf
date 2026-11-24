@@ -19,6 +19,8 @@ from omegaconf import DictConfig
 from rlinf.config import (
     DIFFUSION_MODELS,
     EMBODIED_MODEL,
+    MODEL_OBS_CONTRACT,
+    ObsContract,
     SupportedModel,
     torch_dtype_from_precision,
 )
@@ -33,8 +35,14 @@ def register_model(
     model_builder: ModelBuilder,
     category: str = "embodied",
     force: bool = False,
+    obs_contract: ObsContract = ObsContract.STATE,
 ):
-    """Register a model builder for cfg.model_type."""
+    """Register a model builder for cfg.model_type.
+
+    ``obs_contract`` declares the observation shape the policy consumes at its
+    training entry point, so config validation can match a policy to an
+    algorithm without instantiating the model.
+    """
     if not model_type:
         raise ValueError("model_type must be a non-empty string.")
     if not callable(model_builder):
@@ -51,6 +59,7 @@ def register_model(
         EMBODIED_MODEL.add(model_kind)
     elif category == "diffusion":
         DIFFUSION_MODELS.add(model_kind)
+    MODEL_OBS_CONTRACT[model_kind] = obs_contract
 
 
 def _register_builtin_models():
@@ -106,6 +115,11 @@ def _register_builtin_models():
 
     def _build_rlt_td3_mlp_policy(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.mlp_policy import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_prefix_policy(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.mlp_policy.prefix_mlp_policy import get_model
 
         return get_model(cfg, torch_dtype)
 
@@ -266,6 +280,13 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
+        SupportedModel.PREFIX_POLICY.value,
+        _build_prefix_policy,
+        category="embodied",
+        force=True,
+        obs_contract=ObsContract.PREFIX,
+    )
+    register_model(
         SupportedModel.GR00T.value,
         _build_gr00t,
         category="embodied",
@@ -378,6 +399,39 @@ def _register_builtin_models():
 _register_builtin_models()
 
 
+def merge_lora(model, path: str, scale: float):
+    """Fold a saved LoRA adapter, scaled by ``scale``, into ``model``'s weights.
+
+    Each adapted weight becomes ``W + scale * (lora_alpha / r) * B @ A``. The
+    returned model has no adapter modules, so a trainable LoRA can be added on
+    top as for any base model.
+
+    Args:
+        model: The base model the adapter was trained on.
+        path: Directory of the adapter, as written by ``save_pretrained``.
+        scale: Fraction of the adapter's update to merge.
+
+    Returns:
+        ``model`` with the scaled update merged into its weights, each
+        parameter as trainable as it was before.
+    """
+    from peft import PeftModel
+    from peft.tuners.lora import LoraLayer
+
+    # Loading an adapter for inference freezes every parameter of the model.
+    trainable = {name: param.requires_grad for name, param in model.named_parameters()}
+    peft_model = PeftModel.from_pretrained(model, path)
+    # Every LoRA layer type, embeddings included, merges through its scaling.
+    for module in peft_model.modules():
+        if isinstance(module, LoraLayer):
+            for adapter in module.scaling:
+                module.scaling[adapter] *= scale
+    merged = peft_model.merge_and_unload()
+    for name, param in merged.named_parameters():
+        param.requires_grad_(trainable[name])
+    return merged
+
+
 def get_model(cfg: DictConfig):
     model_type = str(cfg.model_type)
     model_builder = _MODEL_REGISTRY.get(model_type)
@@ -393,6 +447,9 @@ def get_model(cfg: DictConfig):
         and cfg.get("load_to_device", True)
     ):
         model = model.to(Worker.torch_device_type)
+
+    for adapter in cfg.get("merged_loras", None) or []:
+        model = merge_lora(model, adapter.path, adapter.get("scale", 1.0))
 
     if cfg.is_lora:
         from peft import (

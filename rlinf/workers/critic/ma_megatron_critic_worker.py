@@ -18,14 +18,17 @@ from megatron.training.training import unwrap_model
 from omegaconf import DictConfig
 
 from rlinf.algorithms.registry import calculate_adv_and_returns
+from rlinf.data.schema.actor_batch import DynamicActorBatch
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+from rlinf.hybrid_engines.megatron.utils import (
+    postprocess_ragged_seqs,
+    preprocess_ragged_seqs,
+)
 from rlinf.scheduler import Channel
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
-    get_seqlen_balanced_partitions,
 )
 from rlinf.utils.distributed import (
-    RolloutDataBalance,
     compute_rollout_metrics_dynamic,
     masked_stats,
     normalize_from_stats,
@@ -33,9 +36,10 @@ from rlinf.utils.distributed import (
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.utils import clear_memory, configure_batch_sizes, cpu_dict
 from rlinf.workers.critic.megatron_critic_worker import MegatronCritic
+from rlinf.workers.megatron_worker import DynamicMegatronBatchMixin
 
 
-class MAMegatronCritic(MegatronCritic):
+class MAMegatronCritic(DynamicMegatronBatchMixin, MegatronCritic):
     """Megatron value inference and updates for complete multi-turn agent episodes."""
 
     def __init__(
@@ -57,22 +61,41 @@ class MAMegatronCritic(MegatronCritic):
         """Align full-sequence state values with generated action tokens."""
 
         def forward_output_and_loss_func(dataloader_iter, model):
-            batch = {
-                key: val.to(self.torch_device_type) if torch.is_tensor(val) else val
-                for key, val in next(dataloader_iter).items()
-            }
+            batch = next(dataloader_iter)
+            rows = [row.to(self.torch_device_type) for row in batch["input_ids"]]
+            lengths = list(map(len, rows))
+            input_ids, packed_params = preprocess_ragged_seqs(rows)
+            position_ids, _ = preprocess_ragged_seqs(
+                [torch.arange(n, device=input_ids.device) for n in lengths]
+            )
             output = self.custom_forward(
                 model,
-                batch["input_ids"],
-                batch["attention_mask"],
-                batch["position_ids"],
+                input_ids,
+                None,
+                position_ids,
                 sequence_parallel=self.transformer_config.sequence_parallel,
+                packed_seq_params=packed_params,
             )
-
-            def action_values(output):
-                # Token t uses the state before that token, including tool observations.
-                return torch.nn.functional.pad(
-                    output.squeeze(-1).float()[:, :-1], (1, 0)
+            if unwrap_model(model).post_process:
+                value_rows = [
+                    torch.nn.functional.pad(row.squeeze(-1).float()[:-1], (1, 0))
+                    for row in postprocess_ragged_seqs(output, packed_params, lengths)
+                ]
+                if not self.return_loss:
+                    values = [
+                        (row * mask.to(row.device)).detach().cpu()
+                        for row, mask in zip(value_rows, batch["response_mask"])
+                    ]
+                    return output, lambda output, non_loss_data=True: values
+                width = self.role_cfg.model.encoder_seq_length
+                output = DynamicRolloutResult.materialize_actor_batch(
+                    {"values": value_rows}, width, 0, input_ids.device
+                )["values"]
+                batch = DynamicRolloutResult.materialize_actor_batch(
+                    {key: batch[key] for key in ("values", "returns", "response_mask")},
+                    width,
+                    0,
+                    input_ids.device,
                 )
 
             if not self.return_loss:
@@ -80,43 +103,26 @@ class MAMegatronCritic(MegatronCritic):
                 def id_func(output, non_loss_data=True):
                     return output
 
-                if unwrap_model(model).post_process:
-                    output = action_values(output) * batch["response_mask"]
                 return output, id_func
 
             def loss_func(output):
-                return self._compute_value_loss(
-                    action_values(output), batch, batch["response_mask"]
-                )
+                return self._compute_value_loss(output, batch, batch["response_mask"])
 
             return output, loss_func
 
         return forward_output_and_loss_func
 
-    def _setup_valid_token_scale(self, batch: dict[str, torch.Tensor]) -> None:
-        self.global_valid_token = (
-            batch["response_mask"]
-            .to(device=self.torch_device_type, dtype=torch.float32)
-            .sum()
+    def _setup_valid_token_scale(self, batch: DynamicActorBatch) -> None:
+        self.global_valid_token = torch.tensor(
+            sum(int(row.sum()) for row in batch["response_mask"]),
+            device=self.torch_device_type,
+            dtype=torch.float32,
         )
         torch.distributed.all_reduce(
             self.global_valid_token, group=parallel_state.get_data_parallel_group()
         )
 
-    def _dp_load_balance(self, batch: dict[str, torch.Tensor]):
-        return RolloutDataBalance.from_rollout_batches_dynamic(
-            rollout_batches=batch,
-            dp_world_size=parallel_state.get_data_parallel_world_size(),
-            dp_rank=parallel_state.get_data_parallel_rank(),
-            dp_group=parallel_state.get_data_parallel_group(),
-            rollout_batch_pad=DynamicRolloutResult.get_batch_pad(
-                self.role_cfg.model.encoder_seq_length, batch.keys()
-            ),
-            split_fix_chunk=self.num_train_steps * self.role_cfg.micro_batch_size,
-            partitioning_tool=get_seqlen_balanced_partitions,
-        )
-
-    def _compute_rollout_metrics(self, batch: dict[str, torch.Tensor]):
+    def _compute_rollout_metrics(self, batch: DynamicActorBatch):
         group = self.get_rollout_metrics_group(batch)
         if group is None:
             return None
@@ -127,8 +133,8 @@ class MAMegatronCritic(MegatronCritic):
 
     @torch.no_grad()
     def compute_advantages_and_returns(
-        self, batch: dict[str, torch.Tensor]
-    ) -> dict[str, torch.Tensor]:
+        self, batch: DynamicActorBatch
+    ) -> DynamicActorBatch:
         """Compute fixed episode targets before packing or updating the critic."""
         if batch.get("advantages") is not None:
             return batch
@@ -146,14 +152,18 @@ class MAMegatronCritic(MegatronCritic):
             normalize_advantages=False,
         )
         if self.cfg.algorithm.normalize_advantages:
-            stats = masked_stats(advantages, batch["response_mask"])
+            stats = masked_stats(
+                torch.cat(advantages).to(self.torch_device_type),
+                torch.cat(batch["response_mask"]).to(self.torch_device_type),
+            )
             if torch.distributed.is_initialized():
                 torch.distributed.all_reduce(
                     stats, group=parallel_state.get_data_parallel_group()
                 )
-            advantages = normalize_from_stats(advantages, stats).masked_fill(
-                ~batch["response_mask"], 0.0
-            )
+            advantages = [
+                normalize_from_stats(row, stats.cpu()).masked_fill(~mask, 0.0)
+                for row, mask in zip(advantages, batch["response_mask"])
+            ]
         batch["advantages"] = advantages
         batch["returns"] = returns
         return batch
@@ -166,31 +176,20 @@ class MAMegatronCritic(MegatronCritic):
         compute_rollout_metrics: bool = True,
     ):
         """Pack and balance the rollout batch, then update fixed value targets."""
-        batches = []
-        results = []
-        total_result_size_per_dp: int = (
-            self.cfg.data.rollout_batch_size
-            // parallel_state.get_data_parallel_world_size()
-        )
-        for _ in range(total_result_size_per_dp):
-            batch, result = self.get_batch(input_channel)
-            batches.append(batch)
-            results.append(result)
-        batch = DynamicRolloutResult.merge_batches(
-            batches, self.cfg.algorithm.group_size
-        )
+        batch, results = self.get_batch(input_channel)
         assert "values" in batch, (
             "Multi-agent critic training requires fixed old values."
         )
         batch = self.compute_advantages_and_returns(batch)
         if output_channel is not None:
-            sizes = [result.num_sequence for result in results]
-            for result, advantages in zip(
-                results, batch["advantages"].cpu().split(sizes), strict=True
-            ):
-                result.advantages = advantages.clone()
-                # Values and returns belong to the critic's training batch.
+            offset = 0
+            for result in results:
+                end = offset + result.num_sequence
+                result.advantages = [
+                    row.clone() for row in batch["advantages"][offset:end]
+                ]
                 result.values = result.returns = None
+                offset = end
         rollout_metrics = (
             self._compute_rollout_metrics(batch) if compute_rollout_metrics else None
         )
@@ -203,8 +202,7 @@ class MAMegatronCritic(MegatronCritic):
         self._load_weight_and_optimizer()
         self._training_setup()
 
-        if self.enable_dp_load_balance:
-            batch = self._dp_load_balance(batch)
+        batch = self._pad_ragged_rows(batch)
         if self.use_profiler:
             self.profiler.init_fwd_bwd_schedule(self.cfg.algorithm.n_minibatches)
 
@@ -219,14 +217,14 @@ class MAMegatronCritic(MegatronCritic):
             for global_batch in global_batches:
                 if self.cfg.algorithm.use_valid_token_scale:
                     self._setup_valid_token_scale(global_batch)
-                assert global_batch["input_ids"].shape[0] > 0, (
+                assert len(global_batch["input_ids"]) > 0, (
                     "Dynamic DP load balancing must produce nonempty critic minibatches."
                 )
                 dp_size = parallel_state.get_data_parallel_world_size()
                 configure_batch_sizes(
                     rank=torch.distributed.get_rank(),
                     mbs=self.role_cfg.micro_batch_size,
-                    gbs=global_batch["input_ids"].shape[0] * dp_size,
+                    gbs=len(global_batch["input_ids"]) * dp_size,
                     dp=dp_size,
                 )
                 training_metrics = self.training_step(global_batch)
@@ -251,34 +249,16 @@ class MAMegatronCritic(MegatronCritic):
     ) -> None:
         """Compute token values and return each episode group through the channel."""
         assert not compute_ref_logprobs, "Critic inference does not compute logprobs."
-        batches = []
-        rollout_results = []
-        total_batch_size_per_dp: int = (
-            self.cfg.data.rollout_batch_size
-            // parallel_state.get_data_parallel_world_size()
-        )
-        for _ in range(total_batch_size_per_dp):
-            batch, rollout_result = self.get_batch(input_channel)
-            batches.append(batch)
-            rollout_results.append(rollout_result)
-        merged_batch, num_sequence_per_group = DynamicRolloutResult.merge_batches(
-            batches, adjust_traj_indices=False, return_num_sequence_per_group=True
-        )
-        merged_batch.pop("idx_to_traj")
-
-        rollout_result = DynamicRolloutResult.merge_result_list(rollout_results)
-
+        batch, results = self.get_batch(input_channel)
         self._load_weight_and_optimizer()
         with self.worker_timer():
-            self.process_inference_output(
-                rollout_result, self.inference_step(merged_batch).cpu()
-            )
-        for rollout_result in DynamicRolloutResult.split_results(
-            rollout_result, num_sequence_per_group
-        ):
-            # Each channel payload owns its storage instead of the whole DP batch.
-            rollout_result.values = rollout_result.values.clone()
-            self.put_result(rollout_result, output_channel)
+            values = self.inference_step(batch)
+        offset = 0
+        for result in results:
+            end = offset + result.num_sequence
+            result.values = [row.clone() for row in values[offset:end]]
+            self.put_result(result, output_channel)
+            offset = end
         self.scheduler_offload_sync()
         if do_offload:
             self._offload_weight_and_optimizer()

@@ -96,7 +96,10 @@ class Bench2DexEnv(gym.Env):
         self._reset_state_stride = total_num_processes * num_groups
         self.reset_state_ids = None
         self.update_reset_state_ids()
-        spec = Bench2DexSpec.from_config(params)
+        spec = Bench2DexSpec.from_config(
+            params, fallback_control_steps=cfg.get("max_episode_steps")
+        )
+        params["max_control_steps"] = spec.max_control_steps
         self.spec = {
             name: getattr(spec, name)
             for name in (
@@ -234,6 +237,8 @@ class Bench2DexEnv(gym.Env):
         episode = {
             "success_once": torch.tensor([item["success_once"] for item in raw]),
             "return": totals,
+            "return_mean": totals,
+            "return_std": totals,
             "episode_len": counts,
             "reward": totals / counts.clamp_min(1),
         }

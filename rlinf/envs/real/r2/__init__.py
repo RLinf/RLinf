@@ -1,4 +1,3 @@
-#!/usr/bin/env bash
 # Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,8 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if [ -n "${ISAAC_PATH:-}" ]; then
-    export ISAAC_PATH
-    export EXP_PATH="${EXP_PATH:-${ISAAC_PATH}/apps}"
-    export CARB_APP_PATH="${CARB_APP_PATH:-${ISAAC_PATH}/kit}"
-fi
+"""Robbyant R2 tasks, and the env they are built on."""
+
+from __future__ import annotations
+
+from rlinf.envs.real.registry import register_tasks
+from rlinf.robotics.parts.arms.r2 import R2RobotState
+
+from .base import R2Env, R2EnvConfig
+from .reach import R2ReachConfig, R2ReachEnv
+
+TASKS = {"R2ReachEnv-v1": R2ReachEnv}
+
+_ENTRY_POINTS = register_tasks(__name__, globals(), TASKS)
+
+__all__ = [
+    "TASKS",
+    "R2Env",
+    "R2EnvConfig",
+    "R2ReachConfig",
+    "R2ReachEnv",
+    "R2RobotState",
+    *_ENTRY_POINTS,
+]

@@ -9,6 +9,7 @@ runner:
 env:
   train:
     enable_offload: false
+    wait_for_offload_before_training: false
 
 algorithm:
   loss_type: decoupled_actor_critic

@@ -1,8 +1,8 @@
 Bench2Dex
 =========
 
-Train π₀.₅ policies on Bench2Dex Task22 and Task64, then evaluate their success
-rates on the benchmark's four generalization channels.
+Train and evaluate π₀.₅ policies in parallel Bench2Dex environments. The
+examples use Task22 and Task64 and cover all four evaluation channels.
 
 Overview
 --------
@@ -33,8 +33,6 @@ Overview
 Tasks
 ~~~~~
 
-Select the checkpoint and assets for the task you want to run.
-
 .. list-table::
    :header-rows: 1
 
@@ -51,8 +49,6 @@ Select the checkpoint and assets for the task you want to run.
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
 
-The policy uses images, joint positions and a task description to predict actions.
-
 .. list-table::
    :header-rows: 1
 
@@ -63,7 +59,7 @@ The policy uses images, joint positions and a task description to predict action
    * - Action
      - Absolute joint position targets.
    * - Reward
-     - 1 for success; 0 otherwise.
+     - 1 for success and 0 otherwise.
    * - Prompt
      - Task description from the scene.
 
@@ -122,26 +118,19 @@ Run It
 Train a Policy
 ~~~~~~~~~~~~~~
 
-Task22 training starts from the full model weights saved after ten critic-only
-warmup epochs. Set ``BENCH2DEX_WARMUP10_PATH`` to that ``full_weights.pt`` file.
-The run initializes fresh optimizer and scheduler states and trains for 190
-additional epochs without repeating critic warmup.
-
-With the Task22 model and asset paths set, start PPO training:
+The Task22 PPO recipe requires a ``full_weights.pt`` checkpoint prepared by
+ten epochs of critic warmup. Set its path and launch training.
 
 .. code-block:: bash
 
    export BENCH2DEX_WARMUP10_PATH="<warmup10_full_weights.pt>"
    bash examples/embodiment/run_embodiment.sh bench2dex_task22_ppo_openpi_pi05
 
-Task22 trains on one fixed white-background scene using eight GPUs and 128
-trajectories per epoch. It evaluates every ten epochs and saves a checkpoint every two
-epochs. Task64 disables periodic evaluation by default.
+The recipe trains for 190 epochs in a fixed white-background scene. It
+evaluates every ten epochs and saves a checkpoint every two.
 
-The Task22 recipe selects one stochastic step from the first five denoising
-steps and keeps the frozen vision encoder in evaluation mode. These settings
-are controlled by ``stochastic_step_range`` and ``frozen_vision_mode`` under
-``actor.model.openpi``. Other training parameters are in the selected YAML.
+During rollout, the policy applies Flow-SDE at one randomly selected step
+among the first five denoising steps.
 
 For another training configuration, replace the final argument with a name
 from this table. Asynchronous PPO uses ``examples/embodiment/run_async.sh``.
@@ -165,8 +154,13 @@ from this table. Asynchronous PPO uses ``examples/embodiment/run_async.sh``.
      - GRPO
      - ``bench2dex_task64_grpo_openpi_pi05``
 
-For Task64, use its model and anchors. Edit training
-settings in the selected YAML under ``examples/embodiment/config/``. See
+To run another Bench2Dex task, choose its scene and robot in the environment
+config. Use the matching checkpoint, normalization statistics, and scene
+anchors. Set the action dimension to the number of joints the policy controls
+and ``max_episode_steps`` to the task's control-step budget.
+
+Edit training settings in the selected YAML under
+``examples/embodiment/config/``. See
 :doc:`Placement <../../concepts/placement>` to change GPU allocation and
 :doc:`Checkpoint resume <../../guides/resume>` to continue a saved run.
 
@@ -188,8 +182,7 @@ Evaluate Task22 on all four channels, with 32 episodes per channel on eight GPUs
      "rollout.model.model_path=<model_path>" \
      "+rollout.model.openpi_data.norm_stats_path=$BENCH2DEX_PI05_PATH/assets/dex2bench/norm_stats.json"
 
-Replace ``<evaluation_output>`` with the results directory. Set ``<model_path>``
-to the converted model directory or a trained checkpoint's
+Set ``<model_path>`` to the converted model directory or a trained checkpoint's
 ``global_step_N/actor/model_state_dict/full_weights.pt`` file. For Task64, use
 ``bench2dex_task64_openpi_pi05_eval`` with its model and anchors.
 
@@ -206,8 +199,6 @@ to the converted model directory or a trained checkpoint's
      - Appearance, clutter and camera settings.
    * - ``inv_cov``
      - Combined variations with unseen assets.
-
-Use ``--gpu-id`` to select comma-separated GPU IDs and ``--num-envs`` to set parallel environments.
 
 Visualization and Results
 -------------------------

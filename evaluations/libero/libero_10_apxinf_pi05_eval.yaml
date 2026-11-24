@@ -51,7 +51,6 @@ env:
 rollout:
   group_name: "RolloutGroup"
   rollout_backend: "apxinf"
-  generation_backend: "apxinf"
   recompute_logprobs: false
   unnorm_key: libero_10
   enable_offload: false

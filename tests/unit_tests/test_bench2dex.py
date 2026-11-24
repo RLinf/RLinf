@@ -274,6 +274,24 @@ def bench2dex_params(tmp_path):
     }
 
 
+def test_scene_without_expert_duration_uses_configured_episode_limit(bench2dex_params):
+    from rlinf.envs.sim.bench2dex.spec import Bench2DexSpec
+
+    path = Path(bench2dex_params["source_path"]) / "scenes/test.yaml"
+    scene = json.loads(path.read_text())
+    scene["metrics"]["expert_time_step"] = None
+    path.write_text(json.dumps(scene))
+
+    with pytest.raises(ValueError, match="Set max_episode_steps"):
+        Bench2DexSpec.from_config(bench2dex_params)
+    spec = Bench2DexSpec.from_config(bench2dex_params, fallback_control_steps=7)
+    assert spec.max_control_steps == 7
+    explicit = Bench2DexSpec.from_config(
+        dict(bench2dex_params, max_control_steps=9), fallback_control_steps=7
+    )
+    assert explicit.max_control_steps == 9
+
+
 @pytest.fixture
 def cpu_env_factory(monkeypatch, bench2dex_params):
     from omegaconf import OmegaConf
@@ -417,7 +435,15 @@ def test_runner_waits_for_environment_release(cpu_env_factory):
 
     runner = object.__new__(EmbodiedRunner)
     runner.cfg = OmegaConf.create(
-        {"runner": {}, "env": {"train": {"enable_offload": True}}}
+        {
+            "runner": {},
+            "env": {
+                "train": {
+                    "enable_offload": True,
+                    "wait_for_offload_before_training": True,
+                }
+            },
+        }
     )
     runner.actor = SimpleNamespace(
         set_global_step=ready,
@@ -464,7 +490,7 @@ def test_runner_waits_for_environment_release(cpu_env_factory):
 def test_environment_offload_config_contract(bench2dex_params, key, value):
     from omegaconf import OmegaConf
 
-    from rlinf.config import validate_bench2dex_cfg
+    from rlinf.envs.sim.bench2dex.spec import validate_bench2dex_env_cfg
 
     cfg = OmegaConf.create(
         {
@@ -491,10 +517,14 @@ def test_environment_offload_config_contract(bench2dex_params, key, value):
     model = OmegaConf.create(
         {"action_dim": 1, "num_action_chunks": 1, "model_type": "mlp"}
     )
-    validate_bench2dex_cfg(cfg, model, 1, False)
+    validate_bench2dex_env_cfg(
+        cfg, cfg.env.train, model, 1, "train", actor_world_size=1
+    )
     OmegaConf.update(cfg, key, value)
     with pytest.raises(ValueError, match="offload"):
-        validate_bench2dex_cfg(cfg, model, 1, False)
+        validate_bench2dex_env_cfg(
+            cfg, cfg.env.train, model, 1, "train", actor_world_size=1
+        )
 
 
 @pytest.fixture

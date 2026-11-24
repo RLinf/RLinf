@@ -26,6 +26,7 @@ from rlinf.data.schema.embodied_trajectory import (
     select_trajectory_collector,
     select_trajectory_dispatcher,
 )
+from rlinf.envs.layout import EnvLayout
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.checkpoint import parse_global_step_from_checkpoint_path
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
     from rlinf.workers.actor.fsdp_art_policy_worker import EmbodiedARTFSDPPolicy
     from rlinf.workers.actor.fsdp_nft_policy_worker import EmbodiedNFTFSDPPolicy
+    from rlinf.workers.actor.fsdp_refl_policy_worker import EmbodiedReFLFSDPPolicy
     from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
     from rlinf.workers.env.env_worker import EnvWorker
@@ -63,6 +65,7 @@ class EmbodiedRunner:
             "EmbodiedFSDPActor",
             "EmbodiedARTFSDPPolicy",
             "EmbodiedNFTFSDPPolicy",
+            "EmbodiedReFLFSDPPolicy",
             "EmbodiedSACFSDPPolicy",
             "AsyncEmbodiedSACFSDPPolicy",
         ],
@@ -102,14 +105,16 @@ class EmbodiedRunner:
         self.rollout_channel = Channel.create("Rollout")
         # Trajectory assembly runs on the channel worker, so neither the env
         # nor the rollout worker has to hold partial trajectory state.
-        self.actor_channel = Channel.create(
-            "Actor",
-            collector=select_trajectory_collector(self.cfg),
-            dispatcher=select_trajectory_dispatcher(self.cfg),
-            cfg=self.cfg,
-            producers=[self.rollout],
-            consumers=[self.actor],
-        )
+        self.actor_channel = None
+        if self.cfg.env.get("train") is not None:
+            self.actor_channel = Channel.create(
+                "Actor",
+                collector=select_trajectory_collector(self.cfg),
+                dispatcher=select_trajectory_dispatcher(self.cfg),
+                cfg=self.cfg,
+                producers=[self.rollout],
+                consumers=[self.actor],
+            )
         if self.reward is not None:
             self.reward_channel = Channel.create("Reward")
         else:
@@ -321,7 +326,16 @@ class EmbodiedRunner:
         return rollout_metrics, training_metrics
 
     def _check_progress(self) -> tuple[bool, bool, bool]:
-        """Schedule evaluation and checkpointing independently."""
+        """Apply the configured evaluation and checkpoint cadence."""
+        if not self.cfg.runner.get("independent_eval_and_save_intervals", False):
+            return check_progress(
+                self.global_step,
+                self.max_steps,
+                self.cfg.runner.val_check_interval,
+                self.cfg.runner.save_interval,
+                1.0,
+                run_time_exceeded=False,
+            )
         run_val, _, is_train_end = check_progress(
             self.global_step,
             self.max_steps,
@@ -506,6 +520,12 @@ class EmbodiedRunner:
         if self.cfg.runner.get("use_training_pipeline", False):
             return self.run_pipeline()
 
+        wait_for_offload = any(
+            env_cfg.get("wait_for_offload_before_training", False)
+            for env_cfg in EnvLayout.env_cfgs(
+                self.cfg.env.get("train"), "env.train"
+            ).values()
+        )
         start_step = self.global_step
         start_time = time.time()
         for _step in range(start_step, self.max_steps):
@@ -549,7 +569,7 @@ class EmbodiedRunner:
                     rollout_handle.wait()
                     if self.reward is not None:
                         reward_handle.wait()
-                    if self.cfg.env.train.get("enable_offload", False):
+                    if wait_for_offload:
                         # Environment resources must be released before actor onload.
                         env_handle.wait()
 

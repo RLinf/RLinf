@@ -14,8 +14,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from dataclasses import dataclass, replace
+from typing import Any, Callable, Collection, Sequence
 
 import numpy as np
 import torch
@@ -226,6 +226,31 @@ class RoutePlan:
     tag: str
     route_key: Any
     entries: list[RouteEntry]
+
+    def with_peers(self, peer_ranks: Collection[int]) -> RoutePlan:
+        """Return this plan restricted to the entries whose peer is in ``peer_ranks``.
+
+        Entries keep their planned order, so a payload split or merged over the
+        restricted plan lines up with the remaining peers.
+
+        Args:
+            peer_ranks: Ranks of the other group to exchange with.
+
+        Returns:
+            A plan with the selected entries.
+
+        Raises:
+            ValueError: If a rank in ``peer_ranks`` is not a peer of this plan.
+        """
+        planned = {entry.peer_rank for entry in self.entries}
+        unknown = set(peer_ranks) - planned
+        if unknown:
+            raise ValueError(
+                f"Expected peer ranks among the planned peers {sorted(planned)}, "
+                f"got {sorted(unknown)}."
+            )
+        entries = [entry for entry in self.entries if entry.peer_rank in peer_ranks]
+        return replace(self, entries=entries)
 
 
 def normalize_route_tag(tag: str | None) -> str:

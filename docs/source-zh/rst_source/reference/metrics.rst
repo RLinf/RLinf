@@ -6,8 +6,6 @@
 训练指标
 --------
 
-``train/`` 命名空间记录 policy 和价值函数的训练指标。
-
 .. list-table::
    :header-rows: 1
    :widths: 34 66
@@ -19,7 +17,7 @@
    * - ``train/actor/clip_fraction``
      - 有效元素中受 PPO 裁剪影响的比例。
    * - ``train/actor/dual_clip_fraction``
-     - 有效元素中受 Dual-Clip 限制的比例；关闭时为 0。
+     - 有效元素中受 Dual-Clip 限制的比例。
    * - ``train/actor/clipped_ratio``
      - 裁剪后的概率比均值。
    * - ``train/actor/grad_norm``
@@ -42,7 +40,7 @@
 Rollout 指标
 ------------
 
-``rollout/`` 命名空间统计有效训练样本。GAE return 用作价值函数训练目标，回合总回报见下方的环境指标。
+Rollout 指标基于有效训练样本统计。GAE return 是价值函数的训练目标。
 
 .. list-table::
    :header-rows: 1
@@ -73,10 +71,12 @@ Rollout 指标
    * - ``rollout/loss_mask_fraction``
      - 参与训练的 rollout 元素比例。
 
+将 ``env.train.log_rollout_moments`` 设为 ``true``\ ，可记录 rollout 指标的标准差，以及采样状态的价值预测均值和标准差。
+
 回合指标
 --------
 
-环境通过 ``env/`` 命名空间记录已结束回合的统计量。独立评测在 ``eval/`` 命名空间下记录同样的指标。
+训练日志在 ``env/`` 下记录已结束回合的统计量。评测日志使用 ``eval/`` 前缀。
 
 .. list-table::
    :header-rows: 1
@@ -98,8 +98,6 @@ Rollout 指标
 Dual-Clip 配置
 --------------
 
-以下选项控制具身 PPO 的 Dual-Clip。
-
 .. list-table::
    :header-rows: 1
    :widths: 30 15 55
@@ -112,4 +110,4 @@ Dual-Clip 配置
      - 未设置时使用 actor 的默认值。``false`` 表示关闭 Dual-Clip。
    * - ``algorithm.clip_ratio_c``
      - 浮点数或 null
-     - 启用时默认为 3.0，接受大于 1 的有限值；null 表示关闭此限制。
+     - 启用时默认为 3.0，接受大于 1 的有限值。设为 ``null`` 可关闭此限制。
