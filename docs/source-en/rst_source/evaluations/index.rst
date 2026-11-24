@@ -93,10 +93,8 @@ End-to-end evaluation workflows per benchmark (setup → config → launch → r
      - RoboLab evaluation through RLinf environment workers and the evaluation runner.
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin bimanual manipulation.
-   * - :doc:`SuperMimic <../examples/embodied/supermimic_eval>`
-     - G1 motion tracking (GenCoord and MaxCoord) and knees-bent
-       standing push recovery: the checkpoint to load, the representation
-       override, commands, and the metrics.
+   * - :doc:`SuperMimic <guides/supermimic>`
+     - Unitree G1 motion tracking (GenCoord / MaxCoord) and standing push recovery.
    * - :doc:`SIMPLE <guides/simple>`
      - Psi0 whole-body humanoid evaluation.
 

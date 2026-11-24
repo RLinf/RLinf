@@ -1,255 +1,256 @@
 SuperMimic
 ==========
 
-SuperMimic trains a humanoid whole-body tracking policy by backpropagating
-an imagined return through a differentiable world model. RLinf implements the
-method of *SuperMimic: Scaling Humanoid Whole-Body Control with One
-Differentiable World Model* (Liao et al., arXiv:2610.28480, `project page
-<https://supermimic.github.io>`_) for the Unitree G1 in MuJoCo Warp. The
-state layouts and the optimizers follow `HybridRobotics/supermimic
-<https://github.com/HybridRobotics/supermimic>`_ (Apache-2.0). This page
-describes the algorithm and where it differs from the paper. Installation, data, and
-commands are in :doc:`../../examples/embodied/supermimic`.
+SuperMimic trains a humanoid whole-body motion-tracking policy by backpropagating an imagined return through a differentiable world model. RLinf implements *SuperMimic: Scaling Humanoid Whole-Body Control with One Differentiable World Model* (Liao et al., `arXiv:2610.28480 <https://arxiv.org/abs/2610.28480>`__, `project page <https://supermimic.github.io>`__) for the 29-DoF Unitree G1 in MuJoCo Warp, following the state layouts and optimizers of `HybridRobotics/supermimic <https://github.com/HybridRobotics/supermimic>`__ (Apache-2.0).
+
+For installation and training steps, see :doc:`../../examples/embodied/supermimic`; for the simulation environment, see :doc:`../../examples/embodied/g1_mimic`; for standalone evaluation, see :doc:`../../evaluations/guides/supermimic`.
 
 Training Loop
 -------------
 
-One update has three steps:
+One global update consists of three phases executed in lockstep across all GPU ranks:
 
-1. **Collect.** The policy acts in simulation. Training noise is
-   :math:`\mathcal{N}(0, 0.1^2)`, and the replay stores the noisy action that
-   was executed. Episodes start at a reference frame drawn from the return
-   sampler.
-2. **Fit the world model** on ``k = 8`` step windows from the replay. One
-   update has 10 batches of 2048 windows, summed over all GPUs.
-3. **Improve the policy.** Imagine ``H = 32`` steps in the world model and
-   backpropagate, then fit the critic to GAE targets on those rollouts for
-   5 epochs of 4 minibatches.
+1. **Collect.** The policy acts in MuJoCo Warp with exploration noise :math:`\epsilon \sim \mathcal{N}(0, 0.1^2)` and stores the executed noisy action in each rank's replay buffer. Reset episodes sample start frames from the return-based reset sampler.
+2. **Fit the world model.** Unroll ``k = 8`` consecutive steps from replay states under recorded actions over 10 batches of 2048 global windows.
+3. **Optimize policy and critic.** Imagine ``H = 32`` steps from replay start states inside the frozen world model, backpropagate the imagined return to the policy, and fit the critic to GAE targets on those rollouts for 5 epochs of 4 minibatches.
 
-``algorithm.replay_ratio = 16`` is how many times each transition is drawn
-by the world model on average. With the batches above and 4096 environments,
-the run performs 0.4 global updates per control step, so the 6000-update run
-in the user guide collects about 15,000 control steps.
+With ``algorithm.replay_ratio = 16``, 4096 global environments, and ``10 × 2048`` windows per update, each control step drives 0.4 global updates (a 6000-update run collects ~15000 control steps). Because the replay buffer is static during an update, all 10 world-model batches and imagination start states are sampled up front from one shared table of legal ``k``-step window starts (a window never crosses an episode boundary before its final step).
 
-The replay does not change during an update. Each update therefore draws all
-10 world-model batches and the imagination start states before it trains,
-and the table of legal ``k``-step window starts is built once and shared by
-the 10 batches. A window never crosses an episode end before its last step.
-Each env is drawn uniformly among those with a legal window, then a start
-uniformly within that env.
+State Representations and Dynamics Integration
+----------------------------------------------
 
-World Model
------------
-
-``actor.model.representation`` selects the layout. A checkpoint loads only
-into the layout it was trained with.
-
-* ``gencoord`` stores the 71-d simulator state. The encoding is the 68-d
-  vector ``[z, gravity_b, v_b, w_b, q, qd]``. The network predicts a 35-d
-  velocity increment ``[dv_b, dw_b, dqd]``. Body poses are computed from the
-  predicted state by the G1 kinematic tree.
-* ``maxcoord`` stores the world pose and twist of the 14 tracked bodies
-  (182-d). The encoding is each body's position, 6-d rotation, and twist in
-  the pelvis frame, plus the pelvis height and gravity (214-d). The network
-  predicts ``[dv, dw]`` per body (84-d). Joint angles come back through
-  inverse kinematics.
-
-Positions integrate :math:`(D+1)/(2D)` of the increment, where :math:`D = 4`
-is the number of physics substeps in one control step. Velocities integrate
-the whole increment. A window starts from the recorded state and rolls
-forward under the recorded actions. The state loss is grouped by channel and
-weighted with Bryson's rule: each group's mean squared error is divided by
-that group's nominal error squared, then combined by channel count. The
-nominal errors are ``NOMINAL_ERRORS`` in
-``rlinf/algorithms/supermimic/objectives.py``. This is not the paper's
-unweighted :math:`\|\hat s - s\|^2`.
-
-The reward is the tracking reward of the predicted state after differentiable
-forward kinematics. The anchor is the pelvis: the root terms compare the
-pelvis, and the body-pose terms re-anchor the reference at the pelvis xy and
-yaw. The six tracking kernels are root position, root orientation, body
-position, body orientation, body linear velocity, and body angular velocity.
-Their weights sum to 5 and are multiplied by :math:`\Delta t = 0.02`, so the
-per-step reward ceiling is 0.1. An action-rate penalty and a joint-limit
-penalty are added.
-
-The failure test uses the pelvis. The episode fails when the absolute height error
-exceeds 0.25 m or the absolute tilt error exceeds 0.8. Tilt is the
-difference of the gravity direction's z component in the robot and reference
-pelvis frames. The 10 s training time limit and the end of the reference
-clip also end the episode, and neither counts as a failure.
-
-Actor and Critic
-----------------
-
-The policy reads the current state encoding and the 640-d actor goal, not a
-stack of proprioceptive history. The goal is ten reference frames, five
-control steps apart, held at the clip's last frame. Its content is each
-frame's joint positions and joint velocities, plus a 6-d rotation of each
-frame's root relative to the current root. The world-model goal also appends
-the relative root position and is 670-d. The encoding and the goal are
-normalized by running moments.
-
-The imagined return uses a soft survival weight :math:`c_0 = 1`,
-:math:`c_{t+1} = c_t (1 - \hat d_{t+1})`. The gradient passes through the
-reward, the termination probability, and the bootstrap value. The world
-model and the critic are frozen for this step. Each network is a stack of
-``Linear -> LayerNorm -> GELU`` blocks and a final linear layer. The policy
-encoder and decoder use hidden widths 2048, 1024, 512, 256. The dynamics
-network uses 2048, 2048, 2048. The critic uses 256, 128. The latent size is
-32.
-
-The critic fits GAE returns computed backwards on the same imagined
-rollout, with :math:`\gamma = 0.99` and :math:`\lambda = 0.95`. Targets are
-held fixed while the critic fits, and values are clamped to the largest
-discounted return the tracking reward can produce.
-
-Optimizers
-----------
-
-Each phase has two optimizers. Hidden matrices use Muon with
-``adjust_lr_fn`` ``match_rms_adamw``, weight decay 0.1, and momentum 0.95.
-The remaining parameters (first and last layers, norms, and biases) use
-fused Adam. The actor's Adam uses :math:`\beta = (0.9, 0.95)`; the world
-model and the critic use :math:`(0.9, 0.999)`. The learning rate is
-:math:`2\times 10^{-4}` with a constant schedule.
-
-Gradients are clipped to a global norm of 1.0. The actor then clamps each
-element to 0.1. The norm stays on the GPU, so this step does not read it on
-the host. A non-finite gradient is not skipped. When a batch of updates
-finishes and the metrics are copied to the host, a non-finite value stops
-training. ``actor.cuda_graph`` is off by default. When it is on, the first
-three updates run eagerly, the fourth is recorded as one CUDA graph, and
-every later update replays it. The official code captures the world-model
-update and the actor-and-critic update as two graphs; RLinf captures the
-three phases in one. Replay changes speed, not the update written above.
-``actor.fsdp_config.amp_autocast.enabled`` is also off by default; turning it
-on runs network matmuls in bf16 while weights, losses, and optimizer state
-stay float32.
-
-Parallel Training
------------------
-
-Every GPU runs one env, one rollout, and one actor worker, and env rank
-:math:`r` exchanges data only with rollout and actor rank :math:`r`. The
-environment count and both batches are global and split evenly across ranks.
-Each actor rank keeps a replay of its own envs and draws its share of every
-batch from it.
-
-The actor workers form one FSDP2 group, and the dynamics network, the
-policy, and the critic are three FSDP units
-(``module_classes_to_wrap: [Dynamics, MotionPolicy, Critic]``). Before each
-phase every unit is resharded and the phase's parameters are made trainable.
-Each forward of a phase all-gathers the networks it reads once, so an 8-step
-world-model window or a 32-step imagination runs on gathered weights rather
-than gathering at every step:
-
-* the world-model phase gathers the dynamics network;
-* the actor phase gathers all three, with the dynamics network and the critic
-  frozen;
-* the critic phase gathers only the critic.
-
-Gradients are reduce-scattered by FSDP. The pre-clip norm is RLinf's
-``get_grad_norm`` over the phase's sharded parameters. Reset-bin statistics
-and the input-normalization moments are reduced across env ranks.
-
-Return-Based Reset
-------------------
-
-The motion timeline is cut into 0.2 s bins (10 frames at 50 Hz). Each bin
-keeps an estimate of the discounted return earned from that bin. A reset
-mixes three terms: 50% uniform over bins, 40%
-:math:`\mathrm{softmax}(-25\, G_b / G_{max})`, and 10% on the distribution
-accumulated from the square of that softmax. :math:`G_{max} = 0.1 / (1 -
-\gamma) = 10`. The paper uses 1 s bins. The distribution is refreshed every
-20 control steps; an episode that ends on a refresh step draws its start
-from the distribution before that refresh, as in the official code. Returns
-are binned over all frames of the timeline, but a start is drawn within the
-chosen bin's share of the first ``frames - 2`` frames, so a draw can land in
-the neighboring bin. The official sampler maps frames the same way.
-
-Differences from the Paper and the Official Code
--------------------------------------------------
+``actor.model.representation`` selects the state layout shared by replay storage, the world model, and the policy. Checkpoints load only into the layout they were trained with.
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 38 38
+   :widths: 15 24 25 20 16
+
+   * - Layout
+     - Stored State
+     - Encoded State
+     - Predicted Delta
+     - Body / Joint Recovery
+   * - ``gencoord``
+     - 71-dim simulator state
+     - 68-dim ``[z, gravity_b, v_b, w_b, q, qd]``
+     - 35-dim ``[dv_b, dw_b, dqd]``
+     - Differentiable G1 forward kinematics
+   * - ``maxcoord``
+     - 182-dim world pose & twist of 14 tracked bodies
+     - 214-dim per-body pelvis-frame pos, 6-dim rot, twist + pelvis height & gravity
+     - 84-dim ``[dv, dw]`` per body
+     - Chain inverse kinematics
+
+Given predicted velocity increments :math:`\Delta v` over one control step :math:`\Delta t = 0.02\text{ s}` containing :math:`D = 4` physics substeps, velocities integrate the full increment and positions/orientations integrate the semi-implicit substep-averaged fraction:
+
+.. math::
+
+   v_{t+1} = v_t + \Delta v, \qquad
+   p_{t+1} = p_t + \Delta t \left(v_t + \frac{D + 1}{2D} \Delta v\right).
+
+Objectives
+----------
+
+World-Model Loss (Bryson Weighting)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Over an autoregressive ``k``-step window, the loss compares predicted state channels :math:`\hat{x}_c` against recorded states :math:`x_c` by channel group :math:`c` with dimension :math:`d_c` and nominal error :math:`\sigma_c`:
+
+.. math::
+
+   \mathcal{L}_{\text{wm}} = \frac{\sum_c d_c \, \sigma_c^{-2} \, \text{MSE}(\hat{x}_c, x_c)}{\sum_c d_c}.
+
+.. list-table:: Nominal Errors
+   :header-rows: 1
+   :widths: 22 14 22 14 28
+
+   * - Channel Group
+     - :math:`\sigma_c`
+     - Channel Group
+     - :math:`\sigma_c`
+     - Unit
+   * - ``root_pos``
+     - ``0.01``
+     - ``body_pos``
+     - ``0.05``
+     - m
+   * - ``root_ori``
+     - ``0.02``
+     - ``body_rot``
+     - ``0.1``
+     - rad
+   * - ``joint_pos``
+     - ``0.1``
+     - ``body_vel``
+     - ``1.0``
+     - rad / (m/s)
+   * - ``joint_vel``
+     - ``3.14``
+     - ``body_avel``
+     - ``3.14``
+     - rad/s
+
+Tracking Reward and Soft Termination
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Both the simulator and imagined rollouts evaluate the same per-step tracking reward over the pelvis root and 14 tracked bodies (with body position and orientation references re-anchored to the robot pelvis's horizontal xy and yaw):
+
+.. math::
+
+   r_t = \Delta t \left( \sum_{i=1}^{6} w_i \exp\!\left(-\frac{e_i}{\sigma_i^2}\right) - 0.1 \|a_t - a_{t-1}\|_2^2 - 2.0 \sum_{j=1}^{29} \delta_{\text{lim}, j} \right),
+
+where :math:`\Delta t = 0.02`, :math:`\delta_{\text{lim}, j}` is the joint-angle violation beyond soft limits, and the six kernels have ``(weight, std)`` parameters: root position ``(0.5, 0.3)``, root orientation ``(0.5, 0.4)``, body position ``(1.0, 0.3)``, body orientation ``(1.0, 0.4)``, body linear velocity ``(1.0, 1.0)``, and body angular velocity ``(1.0, 3.14)``. Because :math:`\sum w_i = 5`, the per-step reward ceiling is :math:`r_{\max} = 0.1`.
+
+Hard failure in simulation triggers when :math:`|z_{\text{pelvis}} - z_{\text{ref}}| > 0.25\text{ m}` or :math:`|g_z - g_{z,\text{ref}}| > 0.8`. During imagination, failure is replaced by a differentiable soft termination probability with softness :math:`\tau = 0.05`:
+
+.. math::
+
+   \hat{d}_t = \sigma\!\left(\frac{\max\!\left(\frac{|z_{\text{pelvis}} - z_{\text{ref}}|}{0.25},\; \frac{|g_z - g_{z,\text{ref}}|}{0.8}\right) - 1}{\tau}\right).
+
+Imagined Return and Critic Targets
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+With the world model and critic frozen, the policy maximizes the soft-survival discounted imagined return over horizon :math:`H = 32` (:math:`\gamma = 0.99`):
+
+.. math::
+
+   c_0 = 1, \quad c_{t+1} = c_t (1 - \hat{d}_t), \qquad
+   J(\theta) = \mathbb{E}\!\left[ \sum_{t=0}^{H-1} \gamma^t c_t r_t + \gamma^H c_H V_\psi(s_H) \right].
+
+Gradients flow through :math:`r_t`, :math:`\hat{d}_t`, and :math:`V_\psi(s_H)`. The critic then fits fixed GAE targets (:math:`\gamma = 0.99`, :math:`\lambda = 0.95`) computed backward over the same imagined rollout, with predicted values clamped to :math:`r_{\max} / (1 - \gamma) = 10.0`:
+
+.. math::
+
+   \delta_t = r_t + \gamma (1 - \hat{d}_t) V(s_{t+1}) - V(s_t), \qquad
+   A_t = \delta_t + \gamma \lambda (1 - \hat{d}_t) A_{t+1}, \qquad
+   \hat{G}_t = A_t + V(s_t).
+
+Network Architectures and Inputs
+--------------------------------
+
+Each network is a stack of ``Linear -> LayerNorm -> GELU`` blocks followed by a final ``Linear`` layer, with running empirical normalization on state and goal inputs.
+
+* **Goal inputs:** 10 reference frames starting at the current frame, spaced 5 control steps apart (clamped at the clip end). Each frame holds joint positions, joint velocities, and root 6-dim rotation relative to the current root (640-dim actor goal); the world-model and critic goal appends relative root positions (670-dim).
+* **Simulator context (33-dim):** Normalized foot friction (1), torso CoM offset (3), and joint encoder biases (29).
+* **Dynamics (world model):** Input ``encoding_dim`` + 29 (PD joint target) + 33 (context); hidden widths ``[2048, 2048, 2048]``.
+* **MotionPolicy (actor):** Goal encoder ``640 -> [2048, 1024, 512, 256] -> 32`` (with ``tanh`` latent); decoder ``32 + encoding_dim -> [2048, 1024, 512, 256] -> 29``.
+* **Critic:** Input ``encoding_dim`` + 670 + 33; hidden widths ``[256, 128] -> 1``.
+
+Optimizers and Execution
+------------------------
+
+* **Dual optimizers:** Hidden linear matrices in every stack use Muon (``adjust_lr_fn: match_rms_adamw``, weight decay ``0.1``, momentum ``0.95``, Nesterov ``True``). Remaining parameters (first/last layers, norms, biases) use fused Adam with :math:`\beta = (0.9, 0.95)` for the actor and :math:`\beta = (0.9, 0.999)` for the world model and critic. All optimizers use a constant learning rate of :math:`2\times 10^{-4}`.
+* **Gradient clipping and health check:** Training clips the global gradient norm to ``1.0`` on GPU without host synchronization and clamps actor gradients element-wise to ``0.1``. Non-finite gradients stop the run when metrics copy to the host.
+* **CUDA graph and bf16:** ``actor.cuda_graph`` (default ``False``) runs 3 eager warm-up updates, captures update 4 (all three phases together) as one CUDA graph, and replays it thereafter. ``actor.fsdp_config.amp_autocast.enabled`` (default ``False``) executes network matmuls in bf16 while weights, losses, and optimizer state stay float32.
+
+Parallel Training (FSDP2)
+-------------------------
+
+Every GPU runs one env, one rollout, and one actor worker; env rank :math:`r` communicates only with rollout and actor rank :math:`r`. Global env counts and batch sizes split evenly across ranks, and each actor rank samples its share from its local replay buffer.
+
+Actor workers form one FSDP2 group with three separate FSDP units (``module_classes_to_wrap: [Dynamics, MotionPolicy, Critic]``). Before each phase, all units reshard and only the active phase's parameters become trainable. Each phase all-gathers the networks it reads once so multi-step unrolls run on gathered weights:
+
+* **World-model phase:** all-gathers ``Dynamics``.
+* **Actor phase:** all-gathers all three networks with ``Dynamics`` and ``Critic`` frozen.
+* **Critic phase:** all-gathers ``Critic`` only.
+
+Gradients reduce-scatter through FSDP, global gradient norms are computed across sharded parameters, and reset-bin statistics plus input-normalization moments reduce across env ranks.
+
+Return-Based Reset Sampler
+--------------------------
+
+The motion library timeline is partitioned into 0.2 s bins (10 frames at 50 Hz). Each bin :math:`b` tracks an estimate :math:`G_b` of the discounted return earned when starting from that bin (capped by :math:`G_{\max} = 0.1 / (1 - \gamma) = 10`). Every 20 control steps, the reset distribution refreshes as a three-way mixture:
+
+.. math::
+
+   p(b) = 0.5 \, \mathcal{U}(b) + 0.4 \, \text{softmax}\!\left(-25 \frac{G_b}{G_{\max}}\right)_b + 0.1 \, p_{\text{keep}}(b),
+
+where :math:`p_{\text{keep}}` accumulates the squared softmax distribution over time so previously difficult segments retain sampling mass. Episodes ending on a refresh step sample from the distribution prior to that refresh, matching the official sampler. Return tracking covers all frames in a clip, while episode starts sample only from the first ``frames - 2`` frames (weighted by each bin's share).
+
+Configuration Reference
+-----------------------
+
+Core algorithm and actor sections from ``examples/embodiment/config/supermimic_lafan1_gencoord.yaml``:
+
+.. code-block:: yaml
+
+   algorithm:
+     adv_type: null
+     loss_type: supermimic
+     k: 8                       # world-model training window
+     H: 32                      # policy imagination horizon
+     gamma: 0.99
+     lam: 0.95
+     replay_ratio: 16           # average world-model draws per transition
+     wm_batches: 10
+     wm_window_batch: 2048      # global windows per batch
+     imagine_batch: 4096        # global imagined rollouts per update
+     critic_epochs: 5
+     critic_minibatches: 4
+     replay_length: 1000
+
+   actor:
+     cuda_graph: False
+     model:
+       representation: gencoord  # gencoord or maxcoord
+     fsdp_config:
+       strategy: fsdp2
+       wrap_policy:
+         module_classes_to_wrap: [Dynamics, MotionPolicy, Critic]
+       amp_autocast:
+         enabled: False
+         precision: bf16
+
+Differences from the Paper and Official Code
+--------------------------------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 39 39
 
    * - Item
-     - Paper or official code
-     - This implementation
-   * - State
-     - The official code has GenCoord and MaxCoord
-     - The same. The two YAMLs differ only in this choice
+     - Paper or Official Code
+     - RLinf Implementation
+   * - State layout
+     - Official code provides GenCoord and MaxCoord
+     - Same; ``supermimic_lafan1_gencoord`` and ``supermimic_lafan1_maxcoord`` differ only here
    * - World-model loss
-     - The paper uses an unweighted square
-     - Bryson weighting by a nominal error
-   * - Goal
-     - The paper says 10 future frames
-     - 10 frames, five control steps apart
+     - Paper writes unweighted squared error
+     - Bryson channel-group weighting (see Nominal Errors above)
+   * - Goal window
+     - Paper states 10 future frames
+     - 10 frames spaced 5 control steps apart
    * - Reset bins
-     - The paper uses 1 s
-     - 0.2 s, with shares 50% / 40% / 10%
+     - Paper states 1 s bins
+     - 0.2 s bins with 50% / 40% / 10% mixture
    * - Precision
-     - Figure 5 of the paper is TF32
-     - Float32 weights and TF32 matmuls. bf16 is used for network matmuls
-       only when ``amp_autocast`` is enabled
-   * - Optimizer
-     - The official code uses Muon plus fused Adam, and captures the
-       world-model update and the actor-and-critic update as two CUDA graphs
-     - Muon plus fused Adam, with the norm left on the GPU. Off by default;
-       with ``actor.cuda_graph=True`` each update replays one CUDA graph
+     - Paper Figure 5 uses TF32
+     - Float32 weights with TF32 matmuls; optional bf16 matmuls via ``amp_autocast``
+   * - CUDA graphs
+     - Official code captures 2 graphs (world model; actor + critic)
+     - Off by default; ``actor.cuda_graph=True`` captures all 3 phases in 1 graph
    * - Simulator scoring
-     - The official environment scores reward and failure on body poses
-       from before the last physics substep
-     - Body poses are refreshed after the last substep, before reward and
-       failure are scored
+     - Official env scores body poses from before the last physics substep
+     - Body poses refresh after the last substep before reward and failure scoring
    * - Critic minibatches
-     - The official code trims the imagined rows to a multiple of 4 before
-       shuffling, so the last rows are never fitted
-     - All rows are shuffled first, then trimmed. Only a row count that is
-       not a multiple of ``critic_minibatches`` differs
+     - Official code trims rows to a multiple of 4 before shuffling
+     - Shuffles all rows first, then trims
    * - Parallelism
-     - The official training entry is one process on one GPU
-     - One env, rollout, and FSDP2 actor worker per GPU, with the three
-       networks as separate FSDP units. Batches are global, so the GPU count
-       does not change the update
-   * - Reported data
-     - The paper's main result is filtered BONES-SEED. The official default
-       downloads one Weights & Biases clip
-     - The local 40 LAFAN1 clips
-
-Entry Points
-------------
-
-Training starts at ``examples/embodiment/train_embodied_agent.py`` and
-evaluation at ``evaluations/eval_embodied_agent.py``. Both select the
-SuperMimic runner when ``algorithm.loss_type`` is ``supermimic``.
-
-* Runners: ``rlinf/runners/supermimic_runner.py`` and
-  ``rlinf/runners/supermimic_eval_runner.py``.
-* Env worker: ``rlinf/workers/env/supermimic_env_worker.py``.
-* Rollout worker: ``rlinf/workers/rollout/hf/supermimic_rollout_worker.py``.
-* Actor worker: ``rlinf/workers/actor/fsdp_supermimic_policy_worker.py``.
-* Networks: ``rlinf/models/embodiment/supermimic/``.
-* Loss, replay, and the reset sampler: ``rlinf/algorithms/supermimic/``.
-* Simulation, reference motion, reward, and evaluation:
-  ``rlinf/envs/sim/g1_mimic/``.
+     - Official entry is single-process, single-GPU
+     - Multi-GPU FSDP2 with one env, rollout, and actor worker per GPU and global batching
+   * - Default dataset
+     - Paper main result uses filtered BONES-SEED; official default pulls one W&B clip
+     - Local 40 LAFAN1 clips (BONES-SEED supported experimentally)
 
 Limitations
 -----------
 
-Velocity tracking is not implemented. Standing push recovery holds mjlab's
-knees-bent keyframe, not the T-pose in Section 4.3 of the paper. The
-BONES-SEED converter has not been checked against an official CSV.
-Multi-node training and resuming on a different GPU count are unvalidated.
+* Velocity tracking is not implemented.
+* Standing push recovery uses mjlab's knees-bent keyframe rather than the Section 4.3 T-pose.
+* The BONES-SEED converter has not been verified against an official CSV.
+* Multi-node training and resuming across different GPU counts are unvalidated.
 
 Acknowledgments
 ---------------
 
-Thanks to `CuboiLeo <https://github.com/CuboiLeo>`__
-(`SuperMimic-Reproduced <https://github.com/CuboiLeo/SuperMimic-Reproduced>`__)
-and `zita-ch <https://github.com/zita-ch>`__
-(`supermimic_vibed <https://github.com/zita-ch/supermimic_vibed>`__) for
-publishing their community reproductions, which this integration consulted.
-The settings follow the official code and the paper as described above.
+Thanks to `CuboiLeo <https://github.com/CuboiLeo>`__ (`SuperMimic-Reproduced <https://github.com/CuboiLeo/SuperMimic-Reproduced>`__) and `zita-ch <https://github.com/zita-ch>`__ (`supermimic_vibed <https://github.com/zita-ch/supermimic_vibed>`__) for publishing their community reproductions, which this integration consulted.

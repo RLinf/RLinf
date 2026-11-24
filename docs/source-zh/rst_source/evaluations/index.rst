@@ -93,8 +93,8 @@ Benchmark 指南
      - 通过 RLinf 环境 worker 和统一评估 runner 运行 RoboLab。
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin 双臂操作。
-   * - :doc:`SuperMimic <../examples/embodied/supermimic_eval>`
-     - G1 动作跟踪（GenCoord 与 MaxCoord）和屈膝站立推力恢复：要加载的检查点、表示覆盖项、命令和指标含义。
+   * - :doc:`SuperMimic <guides/supermimic>`
+     - Unitree G1 动作跟踪（GenCoord / MaxCoord）与站立推力恢复评测。
    * - :doc:`SIMPLE <guides/simple>`
      - Psi0 人形机器人全身评测。
 
