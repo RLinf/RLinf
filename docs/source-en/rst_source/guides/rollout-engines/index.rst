@@ -24,6 +24,12 @@ Pick these guides when selecting or tuning a rollout engine: switching SGLang an
 
       Send asynchronous rollout requests to external or remote inference servers.
 
+   .. grid-item-card:: Session Server
+      :link: ../session_server
+      :link-type: doc
+
+      Collect agent trajectories on rollout nodes with SGLang routing and an OpenAI chat completions endpoint.
+
    .. grid-item-card:: PhyAI Rollout Backend
       :link: phyai
       :link-type: doc
@@ -42,5 +48,6 @@ Pick these guides when selecting or tuning a rollout engine: switching SGLang an
    SGLang & vLLM Versions <../version>
    SGLang Server & Routing <../sglang_server>
    Inference HTTP Client <../inference_http_client>
+   Session Server <../session_server>
    PhyAI Rollout Backend <phyai>
    ApxInf Rollout Backend <../apxinf>

@@ -10,6 +10,10 @@ SGLang 服务与路由
 
 配置分为两部分：``cluster.component_placement`` 决定引擎 **在哪里** 运行，参数块决定每个引擎与 router **如何** 配置：
 
+.. note::
+
+   :doc:`session server <session_server>` 按 ``rollout.router`` 配置块启动自己的 router。这个 router 与本页 ``router_server_args`` 配置的 router 相互独立。
+
 .. code-block:: yaml
 
    cluster:

@@ -61,6 +61,12 @@ Which Guide Should I Read?
    * - Custom actor-to-rollout weight synchronization
      - ``WeightSyncer`` transport layer
      - :doc:`Weight Synchronization <weight_syncer>`
+   * - Pluggable VLA prefix feature model, head, or off-policy update rule
+     - ``PrefixFeatureModel`` / ``register_prefix_*``
+     - :doc:`FlexRLT Pluggable Components <flexrlt>`
+   * - Connect the agent session server to a custom runner
+     - ``SessionServerWorker`` / ``create_payload_channels``
+     - :doc:`Connect the Session Server to a Runner <session_server_runner>`
 
 .. tip::
 

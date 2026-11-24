@@ -61,6 +61,12 @@
    * - 定制 Actor 到 Rollout 的权重同步链路
      - ``WeightSyncer`` 传输层
      - :doc:`自定义权重同步 <weight_syncer>`
+   * - 扩展 FlexRLT 的 VLA 特征模型、网络头或更新规则
+     - ``PrefixFeatureModel`` / ``register_prefix_*``
+     - :doc:`FlexRLT 可插拔组件 <flexrlt>`
+   * - 将 Agent Session Server 接入自定义 Runner
+     - ``SessionServerWorker`` / ``create_payload_channels``
+     - :doc:`将 Session Server 接入 Runner <session_server_runner>`
 
 .. tip::
 

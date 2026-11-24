@@ -68,6 +68,10 @@ The matrix below covers benchmarks with ready-to-run configs under ``evaluations
      - ``robocasa365`` pretrain task slices
      - ``robocasa365/robocasa365_eval_openpi.yaml``
      - :doc:`RoboCasa365 <../examples/embodied/robocasa365>`
+   * - DexJoCo
+     - ``dexjoco_water_plant``
+     - ``dexjoco/dexjoco_openpi_pi05_eval.yaml``, ``dexjoco/dexjoco_cnn_eval.yaml``
+     - :doc:`DexJoCo <../examples/embodied/dexjoco>`
    * - RoboDojo
      - Isaac Sim manipulation tasks
      - ``robodojo/robodojo_put_bottles_into_dustbin_pi05_eval.yaml``

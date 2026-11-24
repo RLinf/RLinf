@@ -24,6 +24,12 @@ Rollout 后端与服务
 
       以异步 HTTP 方式对接外部或远程推理服务。
 
+   .. grid-item-card:: Session Server
+      :link: ../session_server
+      :link-type: doc
+
+      在 rollout 节点上收集 Agent 轨迹，提供 SGLang 路由与 OpenAI chat completions 接口。
+
    .. grid-item-card:: PhyAI 具身推理后端
       :link: phyai
       :link-type: doc
@@ -42,5 +48,6 @@ Rollout 后端与服务
    SGLang 与 vLLM 版本选择 <../version>
    SGLang 服务与路由 <../sglang_server>
    异步 HTTP 推理客户端 <../inference_http_client>
+   Session Server <../session_server>
    PhyAI 具身推理后端 <phyai>
    ApxInf 具身评测后端 <../apxinf>

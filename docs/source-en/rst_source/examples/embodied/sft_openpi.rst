@@ -388,6 +388,8 @@ Setup and Run
         - MetaWorld
       * - ``pi05_calvin``
         - CALVIN
+      * - ``pi05_dexjoco``
+        - DexJoCo WaterPlant
       * - ``pi0_custom``
         - Custom LeRobot
 

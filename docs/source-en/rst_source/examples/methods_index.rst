@@ -22,6 +22,14 @@ Pick this section when choosing a training method rather than a benchmark or mod
 
       Steer a frozen π₀ diffusion policy with lightweight SAC in noise space.
 
+   .. grid-item-card:: FlexRLT
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/flexrlt.png
+      :img-alt: FlexRLT frozen VLA and trainable actor-critic
+      :link: embodied/flexrlt
+      :link-type: doc
+
+      Train a compact actor-critic online from frozen VLA prefix features with STEAM routing.
+
    .. grid-item-card:: IQL (D4RL)
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png
       :img-alt: IQL on D4RL
@@ -76,6 +84,7 @@ Pick this section when choosing a training method rather than a benchmark or mod
 
    Co-Training <embodied/co_training>
    DSRL <embodied/dsrl>
+   FlexRLT <embodied/flexrlt>
    IQL (D4RL) <embodied/iql_d4rl>
    OPD <embodied/opd>
    RECAP <embodied/recap>

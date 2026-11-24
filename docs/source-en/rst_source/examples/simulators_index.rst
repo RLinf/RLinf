@@ -24,6 +24,14 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
 
       Train π₀ and π₀.₅ with PPO on long-horizon CALVIN scene-transfer suites.
 
+   .. grid-item-card:: DexJoCo
+      :img-top: https://raw.githubusercontent.com/brave-eai/dexjoco/main/docs/pics/water_plant_4.png
+      :img-alt: DexJoCo benchmark
+      :link: embodied/dexjoco
+      :link-type: doc
+
+      Train CNN and π₀.₅ policies with SFT and PPO on dexterous WaterPlant manipulation.
+
    .. grid-item-card:: EmbodiChain
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/embodichain.gif
       :img-alt: EmbodiChain simulator
@@ -170,6 +178,7 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
 
    BEHAVIOR-1K <embodied/behavior>
    CALVIN <embodied/calvin>
+   DexJoCo <embodied/dexjoco>
    EmbodiChain <embodied/embodichain>
    Franka-Sim <embodied/frankasim>
    Genesis <embodied/genesis>

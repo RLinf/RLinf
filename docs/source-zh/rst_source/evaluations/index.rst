@@ -68,6 +68,10 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
      - ``robocasa365`` 预训练任务切片
      - ``robocasa365/robocasa365_eval_openpi.yaml``
      - :doc:`RoboCasa365 <../examples/embodied/robocasa365>`
+   * - DexJoCo
+     - ``dexjoco_water_plant``
+     - ``dexjoco/dexjoco_openpi_pi05_eval.yaml``、``dexjoco/dexjoco_cnn_eval.yaml``
+     - :doc:`DexJoCo <../examples/embodied/dexjoco>`
    * - RoboDojo
      - Isaac Sim 机械臂操作任务
      - ``robodojo/robodojo_put_bottles_into_dustbin_pi05_eval.yaml``

@@ -207,7 +207,7 @@ Search-R1 强化学习训练
            'data.train_data_paths=["./Search-R1-Data/searchr1_train_glm.jsonl"]' \
            tools.search.server_addr=localhost:8000
 
-      ``max_inflight_groups``、``max_buffered_groups``、``max_actor_accept_staleness`` 与 ``rollout.pause_mode``\ （retract、in_place、drain）的调优原理见 :doc:`异步 agentic RL </rst_source/guides/async_agentic>`。
+      ``max_inflight_groups``、``max_buffered_groups``、``max_actor_accept_staleness`` 与 ``rollout.pause_mode``\ （retract、in_place、drain）的调优原理见 :doc:`异步 Agent RL </rst_source/guides/async_agentic>`。如需启用 Session Server，追加 ``session_server.enable=true``\ （要求见 :doc:`Session Server </rst_source/guides/session_server>`\ ）。
 
       .. dropdown:: 异步指标、断点续训与限制
 

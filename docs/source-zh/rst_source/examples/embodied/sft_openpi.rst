@@ -388,6 +388,8 @@ OpenPI 监督微调
         - MetaWorld
       * - ``pi05_calvin``
         - CALVIN
+      * - ``pi05_dexjoco``
+        - DexJoCo WaterPlant
       * - ``pi0_custom``
         - 自定义 LeRobot
 

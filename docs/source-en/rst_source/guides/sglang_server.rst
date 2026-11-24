@@ -17,6 +17,12 @@ The config has two parts: ``cluster.component_placement`` defines **where** the
 engines run, and the args block defines **how** each engine and the router are
 configured:
 
+.. note::
+
+   The :doc:`session server <session_server>` starts its own router from
+   the ``rollout.router`` block. That block is separate from the
+   ``router_server_args`` described here.
+
 .. code-block:: yaml
 
    cluster:

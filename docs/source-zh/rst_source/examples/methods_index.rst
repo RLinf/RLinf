@@ -22,6 +22,14 @@ RL 算法示例
 
       用轻量级 SAC 在噪声空间调控冻结的 π₀ 扩散 policy。
 
+   .. grid-item-card:: FlexRLT
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/flexrlt_zh.png
+      :img-alt: FlexRLT 冻结 VLA 与可训练 actor-critic
+      :link: embodied/flexrlt
+      :link-type: doc
+
+      基于冻结 VLA prefix 特征在线训练轻量 actor-critic，并用 STEAM 做阶段路由。
+
    .. grid-item-card:: IQL（D4RL）
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png
       :img-alt: D4RL 上的 IQL
@@ -76,6 +84,7 @@ RL 算法示例
 
    Co-Training <embodied/co_training>
    DSRL <embodied/dsrl>
+   FlexRLT <embodied/flexrlt>
    IQL (D4RL) <embodied/iql_d4rl>
    OPD <embodied/opd>
    RECAP <embodied/recap>

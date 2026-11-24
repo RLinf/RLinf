@@ -10,6 +10,8 @@ RL Token
 
 官方项目页：`Precise Manipulation with Efficient Online RL <https://www.pi.website/research/rlt>`_。
 
+ManiSkill 的 pooled prefix 特征和 STEAM 路由训练见 :doc:`FlexRLT <flexrlt>`。
+
 概览
 ----
 

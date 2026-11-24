@@ -24,6 +24,14 @@
 
       在 CALVIN 长程场景迁移套件上用 PPO 训练 π₀ 和 π₀.₅。
 
+   .. grid-item-card:: DexJoCo
+      :img-top: https://raw.githubusercontent.com/brave-eai/dexjoco/main/docs/pics/water_plant_4.png
+      :img-alt: DexJoCo 基准
+      :link: embodied/dexjoco
+      :link-type: doc
+
+      在灵巧手 WaterPlant 任务上用 SFT 与 PPO 训练 CNN 和 π₀.₅。
+
    .. grid-item-card:: EmbodiChain
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/embodichain.gif
       :img-alt: EmbodiChain 仿真平台
@@ -170,6 +178,7 @@
 
    BEHAVIOR-1K <embodied/behavior>
    CALVIN <embodied/calvin>
+   DexJoCo <embodied/dexjoco>
    EmbodiChain <embodied/embodichain>
    Franka-Sim <embodied/frankasim>
    Genesis <embodied/genesis>
