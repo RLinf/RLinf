@@ -1,5 +1,5 @@
-APIs
-====
+Python API
+==========
 
 Look up RLinf's public Python interfaces, listed alphabetically across scheduling primitives, workers, models, robotics, algorithms, and data containers.
 

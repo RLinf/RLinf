@@ -1,5 +1,5 @@
-CLI Reference
-=============
+CLI
+===
 
 Activate your virtual environment from the repository root, then launch evaluations with ``evaluations/run_eval.sh``. Supported call forms:
 

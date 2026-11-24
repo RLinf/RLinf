@@ -1,5 +1,5 @@
-Worker 放置策略
-========================================
+Placement
+=========
 
 Placement 模块用于定义 Worker 在集群的硬件资源（节点、GPU、NPU、机器人等）上的分布方式。RLinf 的核心接口是 ``ComponentPlacement``，它通过 YAML 配置中的 ``cluster.component_placement`` 字段进行配置。接下来会详细介绍配置的语法。
 

@@ -1,5 +1,5 @@
-Moonlight-16B Math GRPO
-=======================
+Moonlight-16B (MoE GRPO)
+========================
 
 Train Moonlight-16B-A3B-Instruct (DeepSeek-V3 MLA + 64-expert MoE, ~3B active) with :doc:`GRPO </rst_source/reference/algorithms/grpo>` on AReaL-boba math data, running on a single 8-GPU node with Megatron-Bridge (TP=8, EP=8) and SGLang.
 

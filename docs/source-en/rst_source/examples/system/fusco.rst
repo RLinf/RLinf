@@ -1,5 +1,5 @@
-FUSCO MoE Communication
-=======================
+FUSCO Communication
+===================
 
 FUSCO is a high-performance distributed All-to-All communication library designed specifically for MoE (Mixture of Experts) training and inference scenarios.
 By fusing data transformation and communication, FUSCO significantly improves communication efficiency for large-scale MoE models. Use it to accelerate MoE communication in RLinf.

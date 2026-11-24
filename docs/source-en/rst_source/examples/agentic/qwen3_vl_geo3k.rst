@@ -1,5 +1,5 @@
-Qwen3-VL GRPO
-=============
+Qwen3-VL Visual Reasoning (Geo3K)
+=================================
 
 Train Qwen3-VL-2B-Instruct on the Geo3K geometric reasoning dataset with :doc:`GRPO </rst_source/reference/algorithms/grpo>` and Truncated Importance Sampling (TIS) using FSDP2 and SGLang.
 

@@ -1,5 +1,5 @@
-Ray-Based Cluster Launching
-===========================
+Cluster
+=======
 
 The ``Cluster`` singleton manages the connection to Ray, discovers cluster hardware topology, and launches both global management actors and training workers. By centralizing Ray initialization, node metadata, and actor placement, it keeps distributed setup consistent across single-node and multi-node runs.
 

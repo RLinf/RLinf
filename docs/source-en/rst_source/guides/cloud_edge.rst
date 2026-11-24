@@ -1,5 +1,5 @@
-Cloud-Edge Training Setup
-=========================
+Cloud-Edge Training
+===================
 
 Cloud-edge training lets you keep the training driver and large models in the cloud
 while placing simulators, robots, or data-producing services on edge machines.

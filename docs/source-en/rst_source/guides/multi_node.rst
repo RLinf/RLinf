@@ -1,5 +1,5 @@
-Multi-Node Ray Cluster Setup
-============================
+Multi-Node Training
+===================
 
 Start a Ray cluster across multiple machines and run RLinf workloads on top of
 it. This guide applies to all Ray-based RLinf jobs, including embodied RL,

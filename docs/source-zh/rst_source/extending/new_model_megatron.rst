@@ -1,5 +1,5 @@
-接入 Megatron 模型
-==================
+LLM 模型（手动 Megatron）
+=========================
 
 使用 Megatron+SGLang 后端为 RLinf 添加新的 HuggingFace 模型，本指南介绍手动适配 Megatron 模型的完整步骤。
 

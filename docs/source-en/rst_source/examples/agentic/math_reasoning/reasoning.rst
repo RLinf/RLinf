@@ -1,5 +1,5 @@
-Qwen2.5 Math GRPO
-=================
+Qwen2.5 Math (GRPO)
+===================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

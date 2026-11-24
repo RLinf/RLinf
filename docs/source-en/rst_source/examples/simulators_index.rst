@@ -1,5 +1,5 @@
-RL with Embodied Simulators
-===========================
+Simulators
+==========
 
 Pick this section when starting from a benchmark or simulator. Each page covers environment installation, asset paths, observation and action spaces, and a reference RL recipe.
 

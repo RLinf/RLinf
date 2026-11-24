@@ -1,5 +1,5 @@
-单臂 Franka
-===========
+Franka（单臂）
+==============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
    :align: center

@@ -1,5 +1,5 @@
-Calling SGLang with InferenceHTTPClient
-=======================================
+Inference HTTP Client
+=====================
 
 :class:`rlinf.utils.http_client.InferenceHTTPClient` is a thin wrapper around
 ``requests`` and ``aiohttp`` that targets a single sglang **router or server**

@@ -1,5 +1,5 @@
-Qwen2.5 数学推理 PPO
-====================
+Qwen2.5 数学推理（PPO）
+=======================
 
 使用带 critic 和 GAE Advantage 的 :doc:`PPO </rst_source/reference/algorithms/ppo>` 在 AReaL-boba 数学数据上训练 Qwen2.5-1.5B-Instruct。本配方与 :doc:`Qwen2.5 数学推理 GRPO <reasoning>` 共用启动脚本和数据集格式。
 

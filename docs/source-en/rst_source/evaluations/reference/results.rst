@@ -1,5 +1,5 @@
-Logs and Results
-================
+Logs & Results
+==============
 
 Evaluation writes terminal logs, rollout videos, and optional experiment-tracker events under the run directory created by ``evaluations/run_eval.sh``.
 

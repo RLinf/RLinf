@@ -1,5 +1,5 @@
-SGLang Server 与 Router
-=======================
+SGLang 服务与路由
+=================
 
 通过一份 Hydra 配置启动一组 SGLang HTTP server 与单个 SGLang router，让 rollout 或外部客户端只需访问一个 URL，由 router 将请求分发到各个推理引擎。
 

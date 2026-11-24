@@ -1,5 +1,5 @@
-Configuration Reference
-=======================
+Configuration
+=============
 
 Evaluation configs are Hydra YAML files under ``evaluations/<benchmark>/``. Minimal core fields every eval config sets:
 

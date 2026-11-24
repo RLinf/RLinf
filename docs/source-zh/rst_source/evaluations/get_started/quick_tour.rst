@@ -1,5 +1,5 @@
-评测快速体验
-============
+快速体验
+========
 
 以 **LIBERO Spatial + OpenPI π₀.₅** 为例（``evaluations/libero/libero_spatial_openpi_pi05_eval.yaml``），演示一次完整的具身评测流程。
 

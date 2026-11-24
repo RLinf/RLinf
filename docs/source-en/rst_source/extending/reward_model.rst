@@ -1,4 +1,4 @@
-Build a Reward Model
+Learned Reward Model
 ====================
 
 Train and deploy learned reward models for embodied RL in RLinf, or plug in a custom reward model class. Choose the path that fits your task:

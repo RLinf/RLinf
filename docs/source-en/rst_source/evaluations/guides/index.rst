@@ -1,5 +1,5 @@
-Benchmark Guides
-================
+Benchmarks
+==========
 
 Pick a benchmark below for its end-to-end installation, checkpoint download, launch command, and troubleshooting guide.
 

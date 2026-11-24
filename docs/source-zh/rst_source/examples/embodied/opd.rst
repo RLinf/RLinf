@@ -1,5 +1,5 @@
-OPD 在线策略蒸馏
-================
+OPD
+===
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

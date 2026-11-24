@@ -1,5 +1,5 @@
-Add a Simulator Environment
-===========================
+Simulator Env
+=============
 
 Wrap a vectorized simulator as a ``gym.Env``, register its environment type, map policy actions to its action space, and verify the interface locally on CPU. Once registered, any embodied RL config can select the environment through ``env.train.env_type`` or ``env.eval.env_type``.
 

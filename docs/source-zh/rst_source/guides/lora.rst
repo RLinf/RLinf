@@ -1,4 +1,4 @@
-LoRA 集成
+LoRA 微调
 =========
 
 在 RLinf 中使用 LoRA（Low-Rank Adaptation，低秩适配），可以冻结基础模型权重、仅训练低秩适配矩阵，以更低显存微调大型具身 policy 和扩散模型。

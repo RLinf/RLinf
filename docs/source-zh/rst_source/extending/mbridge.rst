@@ -1,5 +1,5 @@
-Megatron-Bridge
-===============
+LLM 模型（Megatron-Bridge）
+===========================
 
 RLinf 通过 Megatron-LM 训练后端支持 `Megatron-Bridge <https://github.com/NVIDIA/Megatron-Bridge>`__，可以直接从 HuggingFace 格式的 checkpoint 启动 Megatron-LM 训练，使用 Megatron-Bridge 支持的模型结构，同时保持 RLinf 的训练循环、数据管线、日志记录和 checkpoint 工作流不变。
 

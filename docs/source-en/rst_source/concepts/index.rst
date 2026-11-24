@@ -27,7 +27,7 @@ Choose a Concept Area
 
       Placement strategies, execution modes, and replay buffers.
 
-   .. grid-item-card:: Robotics
+   .. grid-item-card:: Robotics Architecture
       :link: robotics-model/index
       :link-type: doc
 
@@ -36,7 +36,7 @@ Choose a Concept Area
 .. toctree::
    :hidden:
 
-   Overview <overview>
+   Architecture Overview <overview>
    Execution <execution-model/index>
    Scheduling <scheduling-model/index>
-   Robotics <robotics-model/index>
+   Robotics Architecture <robotics-model/index>

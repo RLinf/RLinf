@@ -1,5 +1,5 @@
-仿真-真机协同训练
-=================
+Co-Training
+===========
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png
    :align: center

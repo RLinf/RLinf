@@ -1,5 +1,5 @@
-Worker Placement Strategy
-========================================
+Placement
+=========
 
 The placement module defines how workers are distributed across the hardware resources (nodes, GPUs, NPUs, robots and more) of the cluster.
 The core interface of RLinf for this purpose is called ``ComponentPlacement``, which is configured via the ``cluster.component_placement`` field in the YAML configuration.

@@ -1,5 +1,5 @@
-PhyAI Embodied Rollout Backend
-==============================
+PhyAI Rollout Backend
+=====================
 
 This guide trains a PI0.5 policy on LIBERO with PPO while
 `PhyAI <https://github.com/mingti-org/phyai>`_ generates the rollouts. PhyAI is

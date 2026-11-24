@@ -1,5 +1,5 @@
-双臂 Franka
-===========
+Franka（双臂）
+==============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka.jpg
    :align: center

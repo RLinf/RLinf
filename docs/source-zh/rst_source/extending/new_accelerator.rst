@@ -1,5 +1,5 @@
-加速卡后端
-==========
+新增硬件后端
+============
 
 无需修改训练或推理 worker，即可把新的 GPU 或 NPU 后端接入 RLinf 的硬件调度层与安装脚本。完成本指南后，RLinf 会自动在每个节点发现该加速卡，按 worker 隔离可见设备，通过 ``self.torch_platform`` 暴露对应的 PyTorch 后端模块，配置集合通信，并支持使用 ``requirements/install.sh --platform`` 安装依赖。
 

@@ -1,5 +1,5 @@
-Evaluation Quick Tour
-=====================
+Quick Tour
+==========
 
 Run an embodied evaluation with **OpenPI π₀.₅ on LIBERO Spatial** (``evaluations/libero/libero_spatial_openpi_pi05_eval.yaml``).
 

@@ -1,5 +1,5 @@
-PhyAI 具身 Rollout 后端
-=======================
+PhyAI 具身推理后端
+==================
 
 本页介绍如何在 LIBERO 上用 PPO 训练 PI0.5 policy，并由 `PhyAI <https://github.com/mingti-org/phyai>`_ 生成 rollout。PhyAI 是面向 VLA 等物理 AI 模型的推理框架。每个 RLinf rollout worker 在自己的 GPU 上运行一个 PhyAI engine，用 CUDA graph 和 FlashInfer kernel 采样动作，替代 Hugging Face 模型代码。其余部分仍由 RLinf 负责，包括 LIBERO 环境、观测与动作变换、FSDP actor 和权重同步。
 

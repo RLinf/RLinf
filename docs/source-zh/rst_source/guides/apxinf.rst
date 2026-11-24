@@ -1,5 +1,5 @@
-ApxInf Rollout 后端
-======================
+ApxInf 具身评测后端
+===================
 
 使用 `ApxInf <https://github.com/infinigence/ApxInf>`_ 作为进程内 Rust/CUDA rollout 后端，在 LIBERO 上评测 π₀.₅ 策略。RLinf 通过提供稳定 L1 bare-model 接口的 `APXinf-robo <https://github.com/RLinf/APXinf-robo>`_ 接入引擎。RLinf 负责环境交互、batch、OpenPI 预处理与后处理以及动作执行，ApxInf 负责 GPU 模型推理。
 

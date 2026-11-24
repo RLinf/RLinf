@@ -1,5 +1,5 @@
-接入 SFT 模型
-=============
+SFT 模型与数据集
+================
 
 将 PyTorch 或 Hugging Face Transformers 模型与数据集接入 RLinf 的 FSDP 监督微调（SFT）流水线。接入完成后，``SFTRunner`` 统一负责训练、评估和断点续训。
 

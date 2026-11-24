@@ -1,5 +1,5 @@
-Extending RLinf
-===============
+Extending
+=========
 
 Plug your own model, simulator, physical robot, reward, algorithm, agent tool, or hardware backend into RLinf without modifying the distributed runtime. Pick the group that matches what you want to add.
 

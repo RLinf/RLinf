@@ -1,5 +1,5 @@
-RL Algorithm Recipes
-====================
+RL Recipes
+==========
 
 Pick this section when choosing a training method rather than a benchmark or model family. Recipes cover off-policy and offline RL, online distillation, sim-real co-training, and noise-space policy steering.
 

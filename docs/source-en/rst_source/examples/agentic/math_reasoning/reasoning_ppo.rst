@@ -1,5 +1,5 @@
-Qwen2.5 Math PPO
-================
+Qwen2.5 Math (PPO)
+==================
 
 Train Qwen2.5-1.5B-Instruct on AReaL-boba math problems with actor-critic :doc:`PPO </rst_source/reference/algorithms/ppo>` (GAE advantages and a Megatron critic). This recipe shares the launch script and dataset setup with :doc:`Qwen2.5 Math GRPO <reasoning>`.
 

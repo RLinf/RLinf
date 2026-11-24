@@ -1,5 +1,5 @@
-代码补全在线强化学习
-====================
+Coding Online RL
+================
 
 将 Continue VS Code 扩展接入 RLinf，实时收集代码补全的接受/拒绝反馈并用 PPO 在线更新 Qwen2.5-Coder-1.5B，或使用 LLM 评判完成离线 GRPO 验证。相关实践见 :doc:`智能体落地“最后一公里”初探之Cursor在线强化学习 <../../resources/blog/build_a_coding_online_rl_case>`。
 

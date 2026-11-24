@@ -1,5 +1,5 @@
-Moonlight-16B 数学推理 GRPO
-===========================
+Moonlight-16B（MoE GRPO）
+=========================
 
 使用 :doc:`GRPO </rst_source/reference/algorithms/grpo>` 在 AReaL-boba 数学数据上训练 Moonlight-16B-A3B-Instruct（DeepSeek-V3 MLA + 64 专家 MoE，约 3B 激活参数），通过 Megatron-Bridge（TP=8、EP=8）与 SGLang 在单机 8 卡上运行。
 

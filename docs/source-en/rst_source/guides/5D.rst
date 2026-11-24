@@ -1,5 +1,5 @@
-5D Parallelism Configuration
-================================
+5D Parallelism
+==============
 
 RLinf employs **NVIDIA Megatron-LM** as its large-scale Transformer training
 backend and exposes five orthogonal parallelism modes:

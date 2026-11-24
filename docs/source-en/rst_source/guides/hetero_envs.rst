@@ -1,4 +1,4 @@
-Heterogeneous Envs
+Multi-Env Training
 ==================
 
 Train or evaluate one policy on multiple environment configurations in a single run, such as ManiSkill and LIBERO together, two LIBERO suites, or a simulator alongside a real robot.

@@ -1,5 +1,5 @@
-Flexible Execution Modes
-========================
+Execution Modes
+===============
 
 RLinf runs the same worker code in three placement patterns—collocated, disaggregated, and hybrid—depending on how components share GPUs and overlap in time. Read this page to compare their memory, utilization, and pipelining trade-offs; see :doc:`overview` for a quick visual summary and :doc:`placement` for full ``cluster.component_placement`` syntax and node-group rules.
 

@@ -1,5 +1,5 @@
-训练流水线模式
-==============
+训练 Pipeline 模式
+==================
 
 在具身 FSDP 训练中，通过流水线并行让环境交互、rollout 与 actor 更新重叠，减少 GPU 空等。本指南介绍两个互补开关：按阶段切分 rollout（``rollout.pipeline_stage_num > 1``）以及在 rollout 期间流式发送 micro-batch 给 actor（``runner.use_training_pipeline: True``）。
 

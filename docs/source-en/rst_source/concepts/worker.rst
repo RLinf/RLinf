@@ -1,5 +1,5 @@
-Worker-Based Programming Interface
-==================================
+Worker and WorkerGroup
+======================
 
 ``Worker`` and ``WorkerGroup`` are RLinf's core execution abstractions. Every RL role—actor, rollout, environment, reward, critic, or agent—subclasses ``Worker`` so it can be placed onto any node or accelerator and orchestrated uniformly as a group. For full API signatures, see :doc:`../reference/api/worker`.
 

@@ -1,5 +1,5 @@
-使用 InferenceHTTPClient 调用 SGLang
-====================================
+异步 HTTP 推理客户端
+====================
 
 :class:`rlinf.utils.http_client.InferenceHTTPClient` 是对 ``requests`` 与
 ``aiohttp`` 的轻薄封装，面向单个 sglang **router 或 server** 的 base URL。同步和异步接口都有；异步接口共享一个懒加载的 ``aiohttp.ClientSession``，请使用 ``async with``\ （或主动调用 ``aclose()``\ ）来释放 socket。

@@ -1,5 +1,5 @@
-Profiling
-==============================
+Performance Profiling
+=====================
 
 RLinf offers two complementary tools for understanding performance, aimed at
 different levels:

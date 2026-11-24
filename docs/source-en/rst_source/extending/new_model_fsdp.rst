@@ -1,5 +1,5 @@
-Add an FSDP Model
-=================
+Embodied Policy (FSDP)
+======================
 
 Integrate a PyTorch or Hugging Face Transformers policy into RLinf's FSDP (Fully Sharded Data Parallel) backend for RL rollout and training. By the end, you have a ``BasePolicy`` subclass, a registered model builder, and Hydra and FSDP wrapping configuration.
 

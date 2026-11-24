@@ -1,5 +1,5 @@
-Asynchronous Agentic RL
-=======================
+Async Agentic RL
+================
 
 This page shows how to turn on asynchronous agentic RL in RLinf and which
 settings you may need to change, then explains what happens underneath: how

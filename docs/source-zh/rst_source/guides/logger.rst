@@ -1,5 +1,5 @@
-日志与训练可视化
-================
+日志与可视化
+============
 
 使用 TensorBoard、Weights & Biases（W&B）或 SwanLab 实时追踪训练损失、奖励、评测分数与步耗时。所有日志指标命名空间（``train/``、``rollout/``、``env/``、``eval/`` 与 ``time/``）的定义见 :doc:`训练指标 <../reference/metrics>`。
 

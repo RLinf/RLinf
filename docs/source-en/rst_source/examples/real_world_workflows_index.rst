@@ -1,5 +1,5 @@
-Real-World Workflows
-====================
+Workflows
+=========
 
 Pick these guides when setting up hardware workflows shared across every supported robot: connecting robot control and GPU nodes, configuring teleoperation devices, and recording demonstration datasets.
 

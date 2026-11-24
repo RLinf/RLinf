@@ -1,5 +1,5 @@
-基于 Worker 的编程接口
-======================
+Worker 与 WorkerGroup
+=====================
 
 ``Worker`` 与 ``WorkerGroup`` 是 RLinf 的核心执行抽象。Actor、rollout、env、reward、critic 和 agent 等角色都继承自 ``Worker``，从而可以灵活部署到任意节点或加速器，并按组统一调度。完整 API 签名见 :doc:`../reference/api/worker`。
 

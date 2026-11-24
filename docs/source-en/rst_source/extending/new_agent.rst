@@ -1,5 +1,5 @@
-Agent & Tool Calling
-====================
+Add an Agent
+============
 
 Add a tool-call parser, a tool worker, and a multi-turn agent loop without changing RLinf's rollout engines or runners. By the end of this guide, a calculator agent parses ``<calc>...</calc>`` tags from model completions, evaluates arithmetic expressions inside a ``ToolWorker``, feeds results back into the conversation with tool tokens masked out of policy loss, and runs inside ``AgentRunner``.
 

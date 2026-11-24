@@ -1,5 +1,5 @@
-RL with Real-World Robots
-=========================
+Real-World Robots
+=================
 
 Use this section when your starting point is physical robot hardware. Each robot page covers the steps supported for that platform, from hardware checks and teleoperation to SFT, deployment, and online RL.
 

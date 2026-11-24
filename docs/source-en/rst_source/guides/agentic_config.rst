@@ -1,5 +1,5 @@
-Agentic RL Configuration
-=========================
+Agentic Configuration
+=====================
 
 This section covers configuration parameters specific to agentic and reasoning RL training
 (math reasoning, coding agents, multi-agent systems). These extend the shared

@@ -1,5 +1,5 @@
-Single-Arm Franka
-=================
+Franka (Single-Arm)
+===================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
    :align: center

@@ -1,5 +1,5 @@
-Embodied Training
-=================
+Embodied AI
+===========
 
 Choose an entry point by benchmark, model family, or training paradigm:
 

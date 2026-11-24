@@ -1,5 +1,5 @@
-Qwen3-VL GRPO 视觉推理
-======================
+Qwen3-VL 视觉推理（Geo3K）
+==========================
 
 使用带截断重要性采样（TIS）的 :doc:`GRPO </rst_source/reference/algorithms/grpo>`，基于 FSDP2 与 SGLang 在 Geo3K 几何推理数据集上训练 Qwen3-VL-2B-Instruct。
 

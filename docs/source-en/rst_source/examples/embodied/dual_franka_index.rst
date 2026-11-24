@@ -1,5 +1,5 @@
-Dual-Arm Franka
-===============
+Franka (Dual-Arm)
+=================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka.jpg
    :align: center

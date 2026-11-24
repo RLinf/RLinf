@@ -1,5 +1,5 @@
-新增算法（Advantage 与 Policy Loss）
-====================================
+新增算法
+========
 
 无需修改 RLinf 的 runner 或 worker，即可注册自定义 Advantage 函数或 Policy Loss 函数。注册完成后，任意现有 YAML 配置都能通过 ``algorithm.adv_type`` 或 ``algorithm.loss_type`` 直接选用。
 

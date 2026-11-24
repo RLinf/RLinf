@@ -1,5 +1,5 @@
-Real-World Robot Training Launch
-=================================
+Multi-Node Robot Launch
+=======================
 
 This page explains how to connect **any real-world robot control node** (Franka, Dual Franka, YAM, DOS-W1, SO-101, and others) and a **GPU training node** to one Ray cluster, configure YAML placement, and start real-world training or evaluation. The YAML examples below use Franka as the concrete worked example.
 

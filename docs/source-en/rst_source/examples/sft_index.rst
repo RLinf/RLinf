@@ -1,5 +1,5 @@
-SFT & Imitation Learning
-========================
+SFT & Imitation
+===============
 
 Pick this section to cold-start a VLA, WAM, or VLM checkpoint with supervised fine-tuning or online imitation learning. After SFT, continue to :doc:`vla_wam_index` or :doc:`simulators_index` for RL fine-tuning.
 

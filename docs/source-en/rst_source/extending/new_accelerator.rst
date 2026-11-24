@@ -1,5 +1,5 @@
-Accelerator Backend
-===================
+Add a Hardware Backend
+======================
 
 Add a GPU or NPU backend to RLinf's hardware scheduler and installer without changing training or rollout workers. By the end of this guide, RLinf enumerates your devices on every node, isolates visible devices per worker, exposes the vendor PyTorch module through ``self.torch_platform``, configures collective communication, and installs dependencies through ``requirements/install.sh --platform``.
 

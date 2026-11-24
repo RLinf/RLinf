@@ -1,5 +1,5 @@
-Real-World Tasks and Environments
-=================================
+Real-World Tasks
+================
 
 This page explains how a real-world environment combines one robot with one task
 and adds rollout behavior such as operator intervention, manual outcome labels,

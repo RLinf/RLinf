@@ -1,4 +1,4 @@
-LoRA Integration
+LoRA Fine-Tuning
 ================
 
 Use LoRA (Low-Rank Adaptation) in RLinf to fine-tune large policies and diffusion backbones with lower GPU memory by training low-rank adapter matrices while keeping base weights frozen.

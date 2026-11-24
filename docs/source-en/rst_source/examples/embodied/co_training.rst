@@ -1,5 +1,5 @@
-Sim-Real Co-Training
-====================
+Co-Training
+===========
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png
    :align: center

@@ -1,5 +1,5 @@
-Image and Video Generation
-==========================
+Image & Video Generation
+========================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
    :align: center

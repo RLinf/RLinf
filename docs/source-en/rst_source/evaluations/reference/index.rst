@@ -1,5 +1,5 @@
-Reference
-=========
+Eval Reference
+==============
 
 Pick this section to look up evaluation YAML fields, CLI usage, supported models, and output paths.
 

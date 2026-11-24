@@ -1,5 +1,5 @@
-Add an Algorithm (Advantage & Policy Loss)
-==========================================
+Add an Algorithm
+================
 
 Register a custom advantage estimator or policy loss without touching RLinf's runners or workers. After registration, any existing YAML config can select your component through ``algorithm.adv_type`` or ``algorithm.loss_type``.
 
