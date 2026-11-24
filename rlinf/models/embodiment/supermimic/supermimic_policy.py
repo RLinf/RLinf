@@ -29,14 +29,15 @@ from omegaconf import DictConfig
 from torch import nn
 
 from rlinf.algorithms.supermimic.objectives import value_ceiling
-from rlinf.algorithms.supermimic.representations import make_representation
 from rlinf.algorithms.supermimic.scan import make_imagination, make_world_model_rollout
 from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache
 from rlinf.envs.sim.g1_mimic.constants import ACTOR_GOAL_DIM
 from rlinf.envs.sim.g1_mimic.g1_fk import set_kinematics_compile, soft_joint_limits
-from rlinf.hybrid_engines.fsdp import FSDPModule
+from rlinf.envs.sim.g1_mimic.representations import make_representation
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.supermimic.networks import Critic, Dynamics, MotionPolicy
+from rlinf.scheduler import Worker
+from rlinf.utils.precision import torch_dtype_from_precision
 
 # Submodules each training phase updates; every other parameter is frozen.
 PHASE_MODULES = {
@@ -78,9 +79,10 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
         """Autocast every linear stack to ``dtype``; ``None`` keeps float32.
 
         Weights, optimizer state, kinematics and losses stay float32. Float32
-        matmuls use TF32 tensor cores either way; that switch is process-wide.
+        matmuls use TF32 tensor cores on CUDA; that switch is process-wide.
         """
-        torch.backends.cuda.matmul.allow_tf32 = True
+        if Worker.torch_device_type == "cuda":
+            torch.backends.cuda.matmul.allow_tf32 = True
         for module in (self.dynamics, self.actor, self.critic):
             module.autocast_dtype = dtype
 
@@ -174,24 +176,7 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
         handler = handlers.get(forward_type)
         if handler is None:
             return super().forward(forward_type, **kwargs)
-        self._gather(PHASE_INPUTS[forward_type])
         return handler(**kwargs)
-
-    def _gather(self, names: tuple[str, ...]) -> None:
-        """All-gather the FSDP units of ``names`` together.
-
-        The phases call the networks through ``forward``, so FSDP's per-call
-        hooks never run inside the compiled scans; each unit stays gathered
-        until its backward or the worker reshards it. FSDP initializes its
-        root state in the first root forward, so this runs there.
-        """
-        handles = [
-            network.unshard(async_op=True)
-            for network in (getattr(self, name) for name in names)
-            if isinstance(network, FSDPModule)
-        ]
-        for handle in handles:
-            handle.wait()
 
     def _world_model_forward(
         self, states: torch.Tensor, actions: torch.Tensor, context: torch.Tensor
@@ -244,7 +229,11 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
     @classmethod
     def from_config(cls, cfg: DictConfig) -> SuperMimicPolicy:
         """Build from an ``actor.model`` / ``rollout.model`` node."""
-        return cls(
+        policy = cls(
             representation=str(cfg.representation),
             torch_compile=bool(cfg.torch_compile),
         )
+        amp = cfg.get("amp_autocast", None)
+        if amp is not None and amp.get("enabled", False):
+            policy.set_autocast(torch_dtype_from_precision(amp.precision))
+        return policy

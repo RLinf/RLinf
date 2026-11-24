@@ -407,13 +407,13 @@ def initialization_reason(
 
 def torso_orientation_error(state: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
     """Geodesic angle between the robot torso and the reference torso."""
-    from rlinf.envs.sim.g1_mimic.reward import TORSO, differentiable_fk
+    from rlinf.envs.sim.g1_mimic.features import rotation_angle
+    from rlinf.envs.sim.g1_mimic.g1_fk import TORSO_BODY, g1_kinematics
 
-    _pos, rot, _lin, _ang = differentiable_fk(state)
-    _ref_pos, ref_rot, _ref_lin, _ref_ang = differentiable_fk(ref)
-    trace = (ref_rot[:, TORSO] * rot[:, TORSO]).sum(dim=(-2, -1))
-    cosine = ((trace - 1.0) * 0.5).clamp(-1.0, 1.0)
-    return torch.acos(cosine)
+    kin = g1_kinematics()
+    _pos, rot, _lin, _ang = kin.forward(state)
+    _ref_pos, ref_rot, _ref_lin, _ref_ang = kin.forward(ref)
+    return rotation_angle(rot[:, TORSO_BODY], ref_rot[:, TORSO_BODY])
 
 
 def _rate(count: int, total: int) -> float | None:

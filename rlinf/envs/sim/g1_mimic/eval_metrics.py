@@ -21,15 +21,28 @@ turn the rows every env rank returned into scalar metrics and plain tables.
 
 from __future__ import annotations
 
+import csv
+import json
 import math
+import os
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import torch
+from omegaconf import OmegaConf
 
 from rlinf.envs.sim.g1_mimic.push_recovery import (
     OUTCOMES,
+    PAPER_PROTOCOL,
+    PROTOCOL_NAME,
     REASONS,
+    REFERENCE_POSE,
     summarize_trials,
 )
+from rlinf.utils.nested_dict_process import cat_list_of_dict_tensor
+
+if TYPE_CHECKING:
+    from omegaconf import DictConfig
 
 TRACKING = "tracking"
 PUSH_RECOVERY = "push_recovery"
@@ -214,3 +227,80 @@ def summarize_rows(
         if "trajectory" in part:
             tables["trajectory"] = trajectory_records(part)
     return metrics, tables, nested
+
+
+def merge_rank_rows(results: list[dict | None]) -> dict[str, torch.Tensor]:
+    """Concatenate the result rows every env rank returned."""
+    parts = [rows for rows in results if rows]
+    if not parts:
+        raise RuntimeError("no env rank returned evaluation rows")
+    return cat_list_of_dict_tensor(parts)
+
+
+def _json_ready(metrics: dict[str, float]) -> dict[str, float | None]:
+    """Strict-JSON metrics: an undefined value (NaN) becomes ``null``."""
+    return {
+        key: None if isinstance(value, float) and not math.isfinite(value) else value
+        for key, value in metrics.items()
+    }
+
+
+def export_eval_results(
+    out_dir: str | os.PathLike,
+    cfg: DictConfig,
+    meta: dict,
+    metrics: dict[str, float],
+    tables: dict[str, list[dict]],
+    nested: dict,
+) -> Path:
+    """Write ``summary.json``, one CSV per table and the resolved config."""
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    info = {
+        "checkpoint": cfg.runner.get("ckpt_path", None),
+        "experiment": cfg.runner.logger.experiment_name,
+        **{key: value for key, value in meta.items() if key != "clip_names"},
+    }
+    if PUSH_RECOVERY in meta["tasks"]:
+        info.update(
+            protocol=PROTOCOL_NAME, reference_pose=REFERENCE_POSE, paper=PAPER_PROTOCOL
+        )
+    summary = {"meta": info, "metrics": _json_ready(metrics), **nested}
+    (out / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True, allow_nan=False)
+    )
+    for name, rows in tables.items():
+        if not rows:
+            continue
+        with open(out / f"{name}.csv", "w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
+    OmegaConf.save(cfg, out / "config.yaml", resolve=True)
+    return out
+
+
+def eval_export_dir(cfg: DictConfig, step: int | None = None) -> str | None:
+    """Export directory of ``runner.eval_export``; ``None`` when export is off."""
+    export = cfg.runner.get("eval_export", None)
+    if export is None or not export.get("enabled", False):
+        return None
+    base = export.get("output_dir", None) or os.path.join(
+        cfg.runner.logger.log_path, cfg.runner.logger.experiment_name, "eval_results"
+    )
+    return base if step is None else os.path.join(base, f"global_step_{step}")
+
+
+def finalize_eval_results(
+    cfg: DictConfig,
+    env_results: list[dict | None],
+    meta: dict,
+    step: int | None = None,
+) -> tuple[dict[str, float], str | None]:
+    """Merge per-rank rows, compute metrics, and optionally export tables."""
+    rows = merge_rank_rows(env_results)
+    metrics, tables, nested = summarize_rows(rows, meta)
+    out_dir = eval_export_dir(cfg, step=step)
+    if out_dir is not None:
+        export_eval_results(out_dir, cfg, meta, metrics, tables, nested)
+    return metrics, out_dir

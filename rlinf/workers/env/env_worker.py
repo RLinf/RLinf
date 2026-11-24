@@ -1478,3 +1478,10 @@ class EnvWorker(Worker):
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
         return {**eval_metrics, **self.eval_assignment.scoped(eval_metrics)}
+
+    def eval_metadata(self) -> dict | None:
+        """Return optional structured metadata exposed by the evaluation env."""
+        if not getattr(self, "eval_env_list", None):
+            return None
+        env = self.eval_env_list[0]
+        return env.metadata() if hasattr(env, "metadata") else None

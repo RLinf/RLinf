@@ -240,14 +240,13 @@ Differences from the Paper and Official Code
      - Multi-GPU FSDP2 with one env, rollout, and actor worker per GPU and global batching
    * - Default dataset
      - Paper main result uses filtered BONES-SEED; official default pulls one W&B clip
-     - Local 40 LAFAN1 clips (BONES-SEED supported experimentally)
+     - Local 40 LAFAN1 clips
 
 Limitations
 -----------
 
 * Velocity tracking is not implemented.
 * Standing push recovery uses mjlab's knees-bent keyframe rather than the Section 4.3 T-pose.
-* The BONES-SEED converter has not been verified against an official CSV.
 * Multi-node training and resuming across different GPU counts are unvalidated.
 
 Acknowledgments

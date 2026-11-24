@@ -586,6 +586,8 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 
 # Set default env
 RUN echo "source ${UV_PATH}/supermimic/bin/activate" >> ~/.bashrc
+
+##################################################################################################
 # Embodied: DexJoCo
 ##################################################################################################
 FROM embodied-common-image AS embodied-dexjoco-image

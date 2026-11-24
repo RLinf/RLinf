@@ -33,7 +33,7 @@ Two preset configs live under ``evaluations/supermimic/``:
      - No (built-in pose)
      - ``per_trial.csv``
 
-Both configs default to ``actor.model.representation: gencoord`` on GPU 0 and disable domain randomization, reset noise, and action noise.
+Both configs default to ``rollout.model.representation: gencoord`` on GPU 0 and disable domain randomization, reset noise, and action noise.
 
 Environment Setup
 -----------------
@@ -68,9 +68,9 @@ Run motion-tracking evaluation on the 40 LAFAN1 clips:
        runner.ckpt_path=/path/to/global_step_6000/actor/model_state_dict/full_weights.pt \
        runner.eval_export.output_dir=/path/to/eval_6000
 
-* **MaxCoord checkpoints:** Append ``actor.model.representation=maxcoord``; a checkpoint loads only into the representation it was trained with.
+* **MaxCoord checkpoints:** Append ``rollout.model.representation=maxcoord``; a checkpoint loads only into the representation it was trained with.
 * **Custom or >40 clips:** Set ``env.eval.num_clips=null`` and ensure ``env.eval.total_num_envs * env.eval.rollout_epoch`` is at least the total clip count. If any clip exceeds ``13656`` control steps (273.12 s at 50 Hz), raise ``env.eval.max_steps_per_rollout_epoch`` as well.
-* **Select another GPU:** Override ``cluster.component_placement``, for example ``'~cluster.component_placement' '+cluster.component_placement={actor:1,env:1,rollout:1}'``.
+* **Select another GPU:** Override ``cluster.component_placement``, for example ``'~cluster.component_placement' '+cluster.component_placement={env:1,rollout:1}'``.
 
 Evaluate Standing Push Recovery
 -------------------------------
@@ -89,7 +89,7 @@ Run standing push recovery:
        runner.ckpt_path=/path/to/global_step_6000/actor/model_state_dict/full_weights.pt \
        runner.eval_export.output_dir=/path/to/push_6000
 
-For a MaxCoord checkpoint, append ``actor.model.representation=maxcoord``.
+For a MaxCoord checkpoint, append ``rollout.model.representation=maxcoord``.
 
 Customize Push Protocol
 ~~~~~~~~~~~~~~~~~~~~~~~

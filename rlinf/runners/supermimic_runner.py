@@ -32,13 +32,8 @@ from typing import TYPE_CHECKING
 
 from omegaconf import DictConfig
 
-from rlinf.envs.sim.g1_mimic.eval_metrics import summarize_rows
 from rlinf.runners.embodied_runner import EmbodiedRunner
-from rlinf.runners.supermimic_eval_runner import (
-    eval_export_dir,
-    export_eval_results,
-    merge_rank_rows,
-)
+from rlinf.runners.supermimic_eval_runner import evaluate_g1_mimic
 from rlinf.scheduler import Tracer
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.checkpoint import parse_global_step_from_checkpoint_path
@@ -242,8 +237,11 @@ class SuperMimicRunner(EmbodiedRunner):
         actor_handle.wait()
         env_handle.wait()
         state = {"anchor": self.anchor, "env_steps": self.env_steps}
-        with open(os.path.join(base, _RUNNER_STATE), "w") as file:
+        state_path = os.path.join(base, _RUNNER_STATE)
+        tmp_path = f"{state_path}.tmp"
+        with open(tmp_path, "w") as file:
             json.dump(state, file, indent=2)
+        os.replace(tmp_path, state_path)
 
     # -------------------------------------------------------------- training
 
@@ -297,20 +295,14 @@ class SuperMimicRunner(EmbodiedRunner):
             waited += 1
 
     def evaluate(self) -> dict[str, float]:
-        meta = self.env.eval_metadata().wait()[0]
-        env_handle = self.env.evaluate(
-            input_channel=self.env_channel, rollout_channel=self.rollout_channel
+        return evaluate_g1_mimic(
+            self.cfg,
+            self.env,
+            self.rollout,
+            self.env_channel,
+            self.rollout_channel,
+            step=self.global_step,
         )
-        rollout_handle = self.rollout.evaluate(
-            input_channel=self.rollout_channel, output_channel=self.env_channel
-        )
-        rows = merge_rank_rows(env_handle.wait())
-        rollout_handle.wait()
-        metrics, tables, nested = summarize_rows(rows, meta)
-        out_dir = eval_export_dir(self.cfg, self.global_step)
-        if out_dir is not None:
-            export_eval_results(out_dir, self.cfg, meta, metrics, tables, nested)
-        return metrics
 
     def _set_global_step(self) -> None:
         """Pass the finished update count to every worker group.

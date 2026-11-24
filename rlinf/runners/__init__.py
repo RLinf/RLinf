@@ -14,15 +14,15 @@
 
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.envs import SupportedEnvType
+
 
 def get_embodied_eval_runner(cfg: DictConfig) -> type:
-    """Runner of an embodied evaluation config.
-
-    Most evaluation configs have no ``algorithm`` section.
-    """
+    """Runner for an embodied evaluation config."""
     if (
         cfg.rollout.get("rollout_backend", "huggingface") == "huggingface"
-        and OmegaConf.select(cfg, "algorithm.loss_type") == "supermimic"
+        and OmegaConf.select(cfg, "env.eval.env_type")
+        == SupportedEnvType.G1_MIMIC.value
     ):
         from .supermimic_eval_runner import SuperMimicEvalRunner
 

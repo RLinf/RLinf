@@ -46,7 +46,7 @@ from rlinf.algorithms.supermimic.objectives import (
     value_ceiling,
 )
 from rlinf.algorithms.supermimic.replay import TransitionRing
-from rlinf.envs.sim.g1_mimic.g1_mimic_env import build_motion_library
+from rlinf.envs.sim.g1_mimic.motion import build_motion_library
 from rlinf.hybrid_engines.fsdp import FSDPModule
 from rlinf.hybrid_engines.fsdp.utils import (
     clip_grad_by_total_norm_,
@@ -55,6 +55,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
 )
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.supermimic.networks import hidden_matrix_names
+from rlinf.models.embodiment.supermimic.supermimic_policy import PHASE_INPUTS
 from rlinf.scheduler import Worker
 from rlinf.utils.cuda_graph import CUDAGraphManager, GraphCaptureSpec
 from rlinf.utils.precision import torch_dtype_from_precision
@@ -154,7 +155,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         self.critic_minibatches = int(alg.critic_minibatches)
         self.num_envs = int(cfg.env.train.total_num_envs) // world
 
-        self.optimizer_steps = dict.fromkeys(_PHASES, 0)
+        self.phase_optimizer_steps = dict.fromkeys(_PHASES, 0)
         self.steps_per_update = {
             "world_model": self.wm_batches,
             "actor": 1,
@@ -218,6 +219,9 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         self.model: FSDPModule = self._strategy.wrap_model(
             model=module, device_mesh=self._device_mesh
         )
+        # Registered after FSDP2 wrapping so the root pre-forward initializes
+        # FSDP2 state before each phase gathers the submodules its scan reads.
+        self.model.register_forward_pre_hook(self._gather_phase_units, with_kwargs=True)
 
         # Substring filters, matched in order: the exact hidden-matrix names
         # come before the module prefixes. The motion policy's remaining
@@ -294,7 +298,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             if self.profiler is not None:
                 self.profiler.stop()
             for phase, steps in self.steps_per_update.items():
-                self.optimizer_steps[phase] += steps
+                self.phase_optimizer_steps[phase] += steps
             for scheduler in self.all_schedulers:
                 scheduler.step()
         self._reshard()
@@ -320,12 +324,12 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         if poisoned:
             raise RuntimeError(
                 f"non-finite training metrics {poisoned} after global update "
-                f"{self.optimizer_steps['actor']}; stopping instead of training on NaN"
+                f"{self.phase_optimizer_steps['actor']}; stopping instead of training on NaN"
             )
         out.update(
             {
                 f"{phase}_optimizer_steps": float(n)
-                for phase, n in self.optimizer_steps.items()
+                for phase, n in self.phase_optimizer_steps.items()
             }
         )
         return out
@@ -346,12 +350,11 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         return self.update_graphs.replay("update", inputs)
 
     def _draw_update_inputs(self) -> dict:
-        """Replay draws of one update: every world-model batch and the
-        imagination inputs.
+        """Replay draws and minibatch permutation of one update.
 
-        The replay is fixed during an update, so drawing all batches first
-        draws them from the same distribution as drawing each before its step,
-        and one set of legal window starts serves every batch.
+        The replay is fixed during an update, so drawing all batches and the
+        critic shuffle here keeps ``_update_from`` RNG-free for CUDA-graph
+        capture, and one set of legal window starts serves every batch.
         """
         legal = self.replay.windows(self.k)
         windows = [
@@ -366,6 +369,11 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
                 [window["sim_context"][:, 0] for window in windows]
             ),
             "imagination": self._imagination_inputs(starts),
+            "critic_order": critic_minibatch_rows(
+                self.imagine_batch * self.horizon,
+                self.critic_minibatches,
+                starts["state"].device,
+            ),
         }
 
     def _update_from(self, inputs: dict) -> dict[str, torch.Tensor]:
@@ -376,7 +384,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         with self._phase("actor"):
             actor_metrics, rollout = self._train_actor(inputs["imagination"])
         with self._phase("critic"):
-            metrics.update(self._fit_critic(*rollout))
+            metrics.update(self._fit_critic(*rollout, inputs["critic_order"]))
         metrics.update(actor_metrics)
         return metrics
 
@@ -405,7 +413,6 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
                 inputs=inputs,
                 external_inputs=set(inputs),
                 warmup_iters=0,
-                register_default_cuda_generator=True,
             )
         )
         self.log_info("Recorded the SuperMimic update as a CUDA graph.")
@@ -433,6 +440,21 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         self._reshard()
         self.model.zero_grad(set_to_none=True)
         self.model.set_trainable(forward_type)
+
+    @staticmethod
+    def _gather_phase_units(module, _args, kwargs) -> None:
+        """All-gather the FSDP units read by the current training phase."""
+        forward_type = kwargs.get("forward_type")
+        names = PHASE_INPUTS.get(forward_type)
+        if not names:
+            return
+        handles = [
+            network.unshard(async_op=True)
+            for network in (getattr(module, name) for name in names)
+            if isinstance(network, FSDPModule)
+        ]
+        for handle in handles:
+            handle.wait()
 
     def _reshard(self) -> None:
         """Free every gathered network; ``FSDPModule.reshard`` is per unit."""
@@ -529,14 +551,14 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         terminal: torch.Tensor,
         rewards: torch.Tensor,
         term_prob: torch.Tensor,
+        order: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
         """Regress the critic onto the lambda-returns of the imagined trajectory.
 
         ``steps`` holds the critic features of the ``H`` states the policy
         acted in, ``[B, H, F]``, and ``terminal`` those of the last state.
-        The rows are shuffled once into ``critic_minibatches`` equal
-        minibatches (:func:`critic_minibatch_rows`), gathered once, and
-        fitted ``critic_epochs`` times.
+        ``order`` partitions the flattened rows into ``critic_minibatches``
+        equal minibatches, fitted ``critic_epochs`` times.
         """
         self._enter_phase(CRITIC)
         batch, horizon, width = steps.shape
@@ -555,9 +577,6 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             self.lam,
         ).clamp(max=self.value_max)
         targets = targets.reshape(-1)
-        order = critic_minibatch_rows(
-            features.shape[0], self.critic_minibatches, features.device
-        )
         minibatches = list(zip(features[order], targets[order]))
         losses = []
         for _ in range(self.critic_epochs):
@@ -588,22 +607,29 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         The replay is not saved; a resumed run refills it before training.
         """
         self._reshard()
+        self.model.requires_grad_(True)
         self._strategy.save_checkpoint(
             model=self.model,
             optimizers=self.all_optimizers,
             lr_schedulers=self.all_schedulers,
             save_path=save_base_path,
-            save_full_model_weights=True,
+            save_full_model_weights=self.cfg.actor.fsdp_config.get(
+                "save_full_model_weights", True
+            ),
         )
         if self._rank == 0:
-            counters = {"optimizer_steps": self.optimizer_steps}
-            with open(os.path.join(save_base_path, _COUNTERS_FILE), "w") as file:
+            counters = {"optimizer_steps": self.phase_optimizer_steps}
+            path = os.path.join(save_base_path, _COUNTERS_FILE)
+            tmp_path = f"{path}.tmp"
+            with open(tmp_path, "w") as file:
                 json.dump(counters, file, indent=2)
+            os.replace(tmp_path, path)
         dist.barrier()
 
     def load_checkpoint(self, load_base_path: str) -> None:
         # Loading replaces optimizer state tensors a recorded update reads.
         self._drop_update_graph()
+        self.model.requires_grad_(True)
         self._strategy.load_checkpoint(
             model=self.model,
             optimizers=self.all_optimizers,
@@ -612,6 +638,6 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         )
         with open(os.path.join(load_base_path, _COUNTERS_FILE)) as file:
             counters = json.load(file)
-        self.optimizer_steps = {
+        self.phase_optimizer_steps = {
             phase: int(counters["optimizer_steps"][phase]) for phase in _PHASES
         }

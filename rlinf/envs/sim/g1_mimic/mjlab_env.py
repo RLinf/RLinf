@@ -35,10 +35,12 @@ import re
 import torch
 
 from rlinf.envs.sim.g1_mimic.constants import (
+    DECIMATION,
     DT,
     G1_JOINT_NAMES,
     JOINT_POS,
     JOINT_VEL,
+    PHYSICS_DT,
     ROOT_ANG_VEL,
     ROOT_LIN_VEL,
     ROOT_POS,
@@ -59,10 +61,25 @@ from rlinf.envs.sim.g1_mimic.g1_fk import (
 )
 from rlinf.envs.sim.g1_mimic.motion import MotionLibrary
 from rlinf.envs.sim.g1_mimic.reward import failure_signals
+from rlinf.scheduler import Worker
 
-PHYSICS_DT = 0.005
-DECIMATION = 4
 FOOT_GEOM = re.compile(r"^(left|right)_foot[1-7]_collision$")
+
+
+def env_device() -> torch.device:
+    """The accelerator this worker process uses, or the CPU.
+
+    Float32 matmuls in the kinematics and rewards use TF32 tensor cores on
+    CUDA, as in the policy workers; the switch is process-wide.
+    """
+    device_type = Worker.torch_device_type
+    platform = Worker.torch_platform
+    if device_type is None or platform is None or not platform.is_available():
+        return torch.device("cpu")
+    if device_type == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = True
+    return torch.device(device_type, platform.current_device())
+
 
 FOOT_FRICTION_RANGE = (0.3, 1.2)
 TORSO_COM_RANGE = ((-0.025, 0.025), (-0.05, 0.05), (-0.05, 0.05))

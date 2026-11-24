@@ -23,8 +23,8 @@ import torch
 from omegaconf import open_dict
 from omegaconf.dictconfig import DictConfig
 
-from rlinf.algorithms.supermimic.representations import REPRESENTATIONS
 from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM, DT
+from rlinf.envs.sim.g1_mimic.representations import REPRESENTATIONS
 from rlinf.utils.precision import torch_dtype_from_precision
 
 if TYPE_CHECKING:
@@ -36,7 +36,7 @@ ENV_MODEL_KEYS = ("representation", "torch_compile")
 
 _CHOICES = {
     "representation": tuple(REPRESENTATIONS),
-    "motion_format": ("lafan1", "bones_seed"),
+    "motion_format": ("lafan1",),
 }
 
 
@@ -191,6 +191,10 @@ def _check_env(env: DictConfig, prefix: str, needs_motion: bool) -> None:
         _check_number(env, "num_clips", prefix, int, low=1)
     if env.get("auto_reset", False):
         raise ValueError(f"{prefix}.auto_reset must be false; the env resets rows")
+    if (env.get("video_cfg", None) or {}).get("save_video", False):
+        raise ValueError(
+            f"{prefix}.video_cfg.save_video must be false for g1_mimic envs"
+        )
 
 
 def _check_training(cfg: DictConfig) -> None:
@@ -242,6 +246,11 @@ def check_supermimic_placement(
             f"their world sizes must match, got {sizes}"
         )
     world = sizes["actor"]
+    if int(cfg.env.train.total_num_envs) % world:
+        raise ValueError(
+            f"env.train.total_num_envs={cfg.env.train.total_num_envs} must be "
+            f"divisible by the {world} env ranks"
+        )
     for name in ("wm_window_batch", "imagine_batch"):
         if int(alg[name]) % world:
             raise ValueError(
@@ -280,6 +289,12 @@ def validate_supermimic_cfg(cfg: DictConfig, only_eval: bool = False) -> DictCon
             "SuperMimic evaluation needs runner.ckpt_path, the policy's "
             "full_weights.pt; without it the policy keeps its random weights"
         )
+    rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+    if rollout_backend != "huggingface":
+        raise ValueError(
+            "SuperMimic needs rollout.rollout_backend='huggingface', "
+            f"got {rollout_backend!r}"
+        )
     if cfg.rollout.pipeline_stage_num != 1:
         raise ValueError("SuperMimic needs rollout.pipeline_stage_num=1")
     if cfg.runner.get("enable_decoupled_mode", False):
@@ -288,6 +303,12 @@ def validate_supermimic_cfg(cfg: DictConfig, only_eval: bool = False) -> DictCon
             "drive every env step and never stop a free-running rollout loop"
         )
     if not only_eval:
+        weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
+        if int(weight_sync_interval) != 1:
+            raise ValueError(
+                "SuperMimic syncs policy weights after every update batch; "
+                f"runner.weight_sync_interval must be 1, got {weight_sync_interval!r}"
+            )
         # serve, ingest and run_updates assume the networks stay on the device.
         for group in ("actor", "rollout"):
             if cfg[group].get("enable_offload", False):

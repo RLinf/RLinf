@@ -66,7 +66,7 @@ def hidden_matrix_names(module: nn.Module) -> list[str]:
 
 def _run(owner: nn.Module, net: nn.Module, features: torch.Tensor) -> torch.Tensor:
     """``net(features)``, autocast to ``owner.autocast_dtype`` when it is set."""
-    dtype = getattr(owner, "autocast_dtype", None)
+    dtype = owner.autocast_dtype
     if dtype is None:
         return net(features)
     # A recorded update must not keep cast weights from the graph memory pool.
@@ -86,6 +86,7 @@ class Dynamics(nn.Module):
 
     def __init__(self, encoding_dim: int, prediction_dim: int):
         super().__init__()
+        self.autocast_dtype: torch.dtype | None = None
         self.state_norm = EmpiricalNorm(encoding_dim)
         self.action_norm = EmpiricalNorm(ACTION_DIM)
         self.register_buffer("action_scale", g1_action_scale(), persistent=False)
@@ -118,6 +119,7 @@ class MotionPolicy(nn.Module):
 
     def __init__(self, encoding_dim: int):
         super().__init__()
+        self.autocast_dtype: torch.dtype | None = None
         self.obs_norm = EmpiricalNorm(encoding_dim)
         self.goal_norm = EmpiricalNorm(ACTOR_GOAL_DIM)
         self.encoder = _stack(ACTOR_GOAL_DIM, POLICY_HIDDEN, LATENT_DIM)
@@ -133,6 +135,7 @@ class Critic(nn.Module):
 
     def __init__(self, encoding_dim: int):
         super().__init__()
+        self.autocast_dtype: torch.dtype | None = None
         self.mlp = _stack(
             encoding_dim + WORLD_MODEL_GOAL_DIM + SIM_CONTEXT_DIM, CRITIC_HIDDEN, 1
         )

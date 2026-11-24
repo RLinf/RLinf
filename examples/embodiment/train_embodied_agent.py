@@ -149,6 +149,10 @@ def main(cfg) -> None:
         from rlinf.runners.refl_runner import ReFLRunner
 
         runner_cls = ReFLRunner
+    elif cfg.algorithm.loss_type == "supermimic":
+        from rlinf.runners.supermimic_runner import SuperMimicRunner
+
+        runner_cls = SuperMimicRunner
 
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
@@ -183,13 +187,10 @@ def main(cfg) -> None:
     # Create env worker group
     env_placement = component_placement.get_strategy("env")
     env_worker_cls = EnvWorker
-    runner_cls = EmbodiedRunner
     if cfg.algorithm.loss_type == "supermimic":
-        from rlinf.runners.supermimic_runner import SuperMimicRunner
         from rlinf.workers.env.supermimic_env_worker import SuperMimicEnvWorker
 
         env_worker_cls = SuperMimicEnvWorker
-        runner_cls = SuperMimicRunner
     env_group = env_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )

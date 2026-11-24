@@ -39,7 +39,7 @@ The table below lists benchmarks that have example configs under ``evaluations/`
      - ``robocasa365`` pretrain task slices
      - ``robocasa365/robocasa365_eval_openpi.yaml``
    * - SuperMimic (G1 motion tracking)
-     - LAFAN1 reference motion; BONES-SEED is experimental; GenCoord and MaxCoord
+     - LAFAN1 reference motion; GenCoord and MaxCoord
      - ``supermimic/supermimic_lafan1_eval.yaml``, ``supermimic/supermimic_push_recovery.yaml``
    * - DexJoCo
      - ``dexjoco_water_plant``

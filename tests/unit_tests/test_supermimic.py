@@ -82,6 +82,7 @@ from rlinf.runners.supermimic_runner import (
     boundary_update_spans,
     due_updates,
 )
+from rlinf.scheduler import Worker
 from rlinf.workers.actor.fsdp_supermimic_policy_worker import (
     clip_step,
     critic_minibatch_rows,
@@ -91,6 +92,10 @@ from rlinf.workers.actor.fsdp_supermimic_policy_worker import (
 CPU = torch.device("cpu")
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "examples" / "embodiment" / "config"
 EVAL_CONFIG_DIR = Path(__file__).resolve().parents[2] / "evaluations" / "supermimic"
+_ACCEL_AVAILABLE = (
+    Worker.torch_platform is not None and Worker.torch_platform.is_available()
+)
+_CUDA_AVAILABLE = _ACCEL_AVAILABLE and Worker.torch_device_type == "cuda"
 needs_mjlab = pytest.mark.skipif(
     importlib.util.find_spec("mjlab") is None, reason="mjlab is not installed"
 )
@@ -99,7 +104,7 @@ needs_gloo = pytest.mark.skipif(
     reason="torch.distributed with Gloo is not available",
 )
 needs_warp = pytest.mark.skipif(
-    not torch.cuda.is_available() or importlib.util.find_spec("mjlab") is None,
+    not _CUDA_AVAILABLE or importlib.util.find_spec("mjlab") is None,
     reason="MuJoCo Warp needs mjlab and a CUDA device",
 )
 
@@ -183,6 +188,14 @@ def test_reset_frames_skip_the_last_frame_of_every_clip():
     frames = sampler.sample(4000)
     assert int(frames.min()) >= 0 and int(frames.max()) <= 28
     assert not torch.isin(frames, torch.tensor([4, 11, 29])).any()
+
+    # Single-frame clips must never underflow to -1 or jump into a prior clip.
+    single = ReturnResetSampler(torch.tensor([1]), 1, CPU)
+    assert torch.equal(single.sample(16), torch.zeros(16, dtype=torch.long))
+    mixed = ReturnResetSampler(torch.tensor([1, 5, 6, 10]), 1, CPU)
+    mixed_frames = mixed.sample(2000)
+    assert int(mixed_frames.min()) >= 0 and int(mixed_frames.max()) <= 8
+    assert not torch.isin(mixed_frames, torch.tensor([4, 9])).any()
 
 
 def test_reset_values_fold_the_mean_return_of_each_episode_visit():
@@ -319,6 +332,9 @@ def test_push_summary_groups_trials_by_configured_speed():
         ),
         (["actor.cuda_graph=True"], None),
         (["+runner.enable_decoupled_mode=True"], "enable_decoupled_mode=False"),
+        (["rollout.rollout_backend=phyai"], "rollout_backend='huggingface'"),
+        (["env.train.video_cfg.save_video=True"], "save_video must be false"),
+        (["+runner.weight_sync_interval=2"], "weight_sync_interval must be 1"),
     ],
 )
 def test_training_config_rejects_unsupported_values(overrides, error):
@@ -362,6 +378,7 @@ def test_evaluation_config_needs_the_policy_weights(monkeypatch, ckpt_path):
                 f"runner.ckpt_path={ckpt_path}",
             ],
         )
+    assert "actor" not in cfg and "algorithm" not in cfg
     if ckpt_path != "null":
         validate_supermimic_cfg(cfg, only_eval=True)
         return
@@ -369,9 +386,24 @@ def test_evaluation_config_needs_the_policy_weights(monkeypatch, ckpt_path):
         validate_supermimic_cfg(cfg, only_eval=True)
 
 
+def test_push_recovery_eval_config_is_standalone_and_accepts_maxcoord(monkeypatch):
+    monkeypatch.setenv("EMBODIED_PATH", str(CONFIG_DIR.parent))
+    with initialize_config_dir(config_dir=str(EVAL_CONFIG_DIR), version_base="1.1"):
+        cfg = compose(
+            config_name="supermimic_push_recovery",
+            overrides=[
+                "runner.ckpt_path=/data/full_weights.pt",
+                "rollout.model.representation=maxcoord",
+            ],
+        )
+    assert "actor" not in cfg and "algorithm" not in cfg
+    validated = validate_supermimic_cfg(cfg, only_eval=True)
+    assert validated.env.eval.representation == "maxcoord"
+
+
 def test_exported_config_records_the_motion_path(tmp_path, monkeypatch):
     monkeypatch.setenv("SUPERMIMIC_MOTION_PATH", "/data/lafan1_g1")
-    from rlinf.runners.supermimic_eval_runner import export_eval_results
+    from rlinf.envs.sim.g1_mimic.eval_metrics import export_eval_results
 
     cfg = OmegaConf.create(
         {
@@ -407,6 +439,30 @@ def test_lafan1_q0_export_needs_no_license_or_output(tmp_path, monkeypatch):
     assert prepare.main() == 0
     assert torch.equal(torch.load(out, weights_only=True), pose)
 
+    seen_headers = {}
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, size=-1):
+            return b""
+
+    def fake_urlopen(req, timeout):
+        seen_headers.update(dict(req.header_items()))
+        return _FakeResponse()
+
+    monkeypatch.setattr(prepare.urllib.request, "urlopen", fake_urlopen)
+    dest = tmp_path / "sample.csv"
+    prepare._fetch(
+        "https://example.invalid/sample.csv", dest, use_curl=False, timeout=5
+    )
+    assert seen_headers.get("User-agent") == "RLinf/1.0"
+    assert dest.is_file()
+
 
 def test_evaluation_entry_picks_workers_without_an_algorithm_section():
     from rlinf.runners import get_embodied_eval_runner
@@ -426,14 +482,16 @@ def test_evaluation_entry_picks_workers_without_an_algorithm_section():
         )
 
     assert picked({}) == ("EmbodiedEvalRunner", "EnvWorker", "MultiStepRolloutWorker")
-    assert picked({"algorithm": {"loss_type": "supermimic"}}) == (
+    assert picked({"env": {"eval": {"env_type": "g1_mimic"}}}) == (
         "SuperMimicEvalRunner",
-        "SuperMimicEnvWorker",
-        "SuperMimicRolloutWorker",
+        "EnvWorker",
+        "MultiStepRolloutWorker",
     )
 
 
 def test_maxcoord_config_shares_its_representation_with_the_envs():
+    from rlinf.envs.layout import EnvLayout
+
     cfg = validate_supermimic_cfg(
         _compose(
             "supermimic_lafan1_maxcoord",
@@ -445,6 +503,8 @@ def test_maxcoord_config_shares_its_representation_with_the_envs():
         )
     )
     assert cfg.env.train.representation == cfg.env.eval.representation == "maxcoord"
+    lengths = EnvLayout(cfg.env.train, 1, "env.train").reference_lengths("trajectory")
+    assert lengths == {None: float(cfg.env.train.max_episode_steps)}
 
 
 def test_norm_folds_batches_like_their_union():
@@ -622,7 +682,7 @@ def test_reset_draws_before_the_step_is_recorded_and_keeps_the_action(monkeypatc
     order = []
     never = torch.zeros(rows, dtype=torch.bool)
     env = object.__new__(G1MimicEnv)
-    env.num_envs, env.device, env.group, env.action_noise_std = rows, CPU, None, 0.0
+    env.num_envs, env.device, env.action_noise_std = rows, CPU, 0.0
     env._compile_cache = None
     env.prev_action = torch.zeros(rows, ACTION_DIM)
     env._observed = {
@@ -755,6 +815,12 @@ def test_clip_step_with_a_device_norm_matches_the_host_norm(grads):
         params[as_tensor] = torch.cat([first.detach(), second.detach()])
     torch.testing.assert_close(params[True], params[False])
 
+    # Empty gradients with as_tensor=True must stay on the parameters' device.
+    empty = torch.nn.Parameter(torch.zeros(2))
+    zero_norm = get_grad_norm([empty], None, as_tensor=True)
+    assert torch.is_tensor(zero_norm) and zero_norm.device == empty.device
+    assert float(zero_norm) == 0.0
+
 
 def test_pelvis_falls_on_height_or_tilt():
     reference = _standing_state(3)
@@ -770,11 +836,15 @@ def test_pelvis_falls_on_height_or_tilt():
 
 @needs_mjlab
 def test_perfect_tracking_earns_the_reward_ceiling():
-    from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state, soft_joint_limits
-    from rlinf.envs.sim.g1_mimic.reward import differentiable_fk, tracking_reward
+    from rlinf.envs.sim.g1_mimic.g1_fk import (
+        asset_default_state,
+        g1_kinematics,
+        soft_joint_limits,
+    )
+    from rlinf.envs.sim.g1_mimic.reward import tracking_reward
 
     state = asset_default_state().repeat(2, 1)
-    bodies = differentiable_fk(state)
+    bodies = g1_kinematics().forward(state)
     action = torch.zeros(2, ACTION_DIM)
     action[1] = 1.0
     reward = tracking_reward(
@@ -809,10 +879,10 @@ def _random_states(rows: int, seed: int) -> torch.Tensor:
 
 
 def _stored(representation, states: torch.Tensor) -> torch.Tensor:
-    from rlinf.envs.sim.g1_mimic.reward import differentiable_fk
+    from rlinf.envs.sim.g1_mimic.g1_fk import g1_kinematics
 
     flat = states.reshape(-1, STATE_DIM)
-    pos, rot, lin, ang = differentiable_fk(flat)
+    pos, rot, lin, ang = g1_kinematics().forward(flat)
     full = representation.stored_state(flat, (pos, _rotmat_to_quat(rot), lin, ang))
     return full.reshape(*states.shape[:-1], -1)
 
@@ -820,8 +890,8 @@ def _stored(representation, states: torch.Tensor) -> torch.Tensor:
 @needs_mjlab
 @pytest.mark.parametrize("name", ["gencoord", "maxcoord"])
 def test_representation_reproduces_the_tracked_bodies(name):
-    from rlinf.algorithms.supermimic.representations import make_representation
-    from rlinf.envs.sim.g1_mimic.reward import differentiable_fk
+    from rlinf.envs.sim.g1_mimic.g1_fk import g1_kinematics
+    from rlinf.envs.sim.g1_mimic.representations import make_representation
 
     representation = make_representation(name)
     state = _random_states(32, seed=0)
@@ -831,7 +901,7 @@ def test_representation_reproduces_the_tracked_bodies(name):
     assert enc.shape[-1] == representation.encoding_dim
     root = representation.root(full)
     for actual, expected in zip(
-        representation.bodies(root, enc), differentiable_fk(state), strict=True
+        representation.bodies(root, enc), g1_kinematics().forward(state), strict=True
     ):
         torch.testing.assert_close(actual, expected, atol=1e-4, rtol=1e-4)
     q, qd = representation.joints(enc)
@@ -940,8 +1010,12 @@ def _small_actor(cfg, mesh, motion):
         self.cfg = cfg
         self._rank, self._world_size = 0, 1
 
+    orig_init = module.EmbodiedFSDPActor.__init__
     module.EmbodiedFSDPActor.__init__ = base_init
-    actor = module.EmbodiedSuperMimicFSDPPolicy(cfg)
+    try:
+        actor = module.EmbodiedSuperMimicFSDPPolicy(cfg)
+    finally:
+        module.EmbodiedFSDPActor.__init__ = orig_init
     actor._timer_metrics, actor._accelerator_type = {}, None
     actor.log_info = lambda msg: None
     actor.device = "cuda:0"
@@ -991,7 +1065,7 @@ def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) ->
     dist.init_process_group(
         "nccl", init_method=f"tcp://127.0.0.1:{port}", rank=rank, world_size=1
     )
-    torch.cuda.set_device(0)
+    Worker.torch_platform.set_device(0)
     try:
         mesh = init_device_mesh("cuda", (1,), mesh_dim_names=("fsdp",))
         pose = asset_default_state()
@@ -1001,7 +1075,7 @@ def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) ->
             clip[:, 0] = torch.linspace(0.0, 1.0, length)
             wave = torch.sin(torch.linspace(0, 3, length))[:, None]
             clip[:, JOINT_POS] += 0.05 * wave
-            clips.append(clip.cuda())
+            clips.append(clip.to("cuda:0"))
         motion = MotionLibrary(clips, q0=pose[JOINT_POS])
         results = {}
         for graph in (False, True):
@@ -1038,7 +1112,7 @@ def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) ->
             results[graph] = (
                 metrics,
                 params,
-                dict(actor.optimizer_steps),
+                dict(actor.phase_optimizer_steps),
                 recorded,
                 units,
             )
@@ -1049,7 +1123,7 @@ def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) ->
 
 @needs_mjlab
 @pytest.mark.skipif(
-    not torch.cuda.is_available() or not dist.is_nccl_available(),
+    not _CUDA_AVAILABLE or not dist.is_nccl_available(),
     reason="the update graph needs a CUDA device and NCCL",
 )
 @pytest.mark.parametrize("amp", [False, True])
@@ -1076,10 +1150,9 @@ def test_recorded_update_replays_the_eager_update(tmp_path, amp):
     [("cpu", "cpu"), ("cpu", "cuda:0"), ("cuda:0", "cuda:0"), ("cuda:0", "cpu")],
 )
 def test_reference_fk_matches_online_fk(storage, query):
-    from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
-    from rlinf.envs.sim.g1_mimic.reward import differentiable_fk
+    from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state, g1_kinematics
 
-    if "cuda" in storage + query and not torch.cuda.is_available():
+    if "cuda" in storage + query and not _CUDA_AVAILABLE:
         pytest.skip("a CUDA/HIP device is required for cross-device queries")
     clips = [asset_default_state().repeat(n, 1).to(storage) for n in (3, 4)]
     for index, clip in enumerate(clips):
@@ -1091,7 +1164,7 @@ def test_reference_fk_matches_online_fk(storage, query):
         torch.tensor([100, -1, 2], device=query),
     )
     result = motion.body_state(motion.global_frame(ids, times))
-    expected = differentiable_fk(motion.state_at(ids, times))
+    expected = g1_kinematics().forward(motion.state_at(ids, times))
     assert all(part.device == motion.frames.device for part in motion._kin_cache)
     for actual, wanted in zip(result, expected, strict=True):
         assert actual.device == ids.device

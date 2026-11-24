@@ -639,6 +639,40 @@ class FSDPModelManager:
         warmup_optimizer_state(optimizer)
         return optimizer
 
+    @staticmethod
+    def _build_single_optimizer(
+        params: list[torch.nn.Parameter], config: DictConfig
+    ) -> torch.optim.Optimizer:
+        if config.get("optimizer", "adam") == "muon":
+            return torch.optim.Muon(
+                params,
+                lr=config.lr,
+                weight_decay=config.get("weight_decay", 0.1),
+                momentum=config.get("momentum", 0.95),
+                nesterov=config.get("nesterov", True),
+                adjust_lr_fn=config.get("adjust_lr_fn", None),
+            )
+        fused = config.get("fused", None)
+        if fused is True and not (
+            Worker.torch_device_type == "cuda" and Worker.torch_platform.is_available()
+        ):
+            fused = None
+        return torch.optim.Adam(
+            [
+                {
+                    "params": params,
+                    "lr": config.lr,
+                    "betas": (
+                        config.get("adam_beta1", 0.9),
+                        config.get("adam_beta2", 0.999),
+                    ),
+                    "eps": config.get("adam_eps", 1e-8),
+                },
+            ],
+            fused=fused,
+            capturable=bool(config.get("capturable", False)),
+        )
+
     def build_optimizers(
         self,
         model: Union[nn.Module, FSDPModule, FSDP],
@@ -646,39 +680,18 @@ class FSDPModelManager:
         param_filters: dict[str, list[str]],
         filtered_optim_config: dict[str, DictConfig],
     ):
-        """Build the main Adam and one optimizer per entry of ``param_filters``.
+        """Build the main optimizer and one optimizer per entry of ``param_filters``.
 
-        A filtered config with ``optimizer: muon`` builds ``torch.optim.Muon``
-        for its parameters, which must all be matrices; any other filtered
-        config builds Adam. An Adam config may set ``fused`` to choose
-        PyTorch's fused Adam kernel; unset, PyTorch picks the implementation.
-        ``capturable: True`` keeps Adam's step count on the device, so a CUDA
-        graph can record the step.
+        A config with ``optimizer: muon`` builds ``torch.optim.Muon`` for its
+        parameters, which must all be matrices; any other config builds Adam.
+        An Adam config may set ``fused`` on CUDA devices; ``capturable: True``
+        keeps Adam's step count on the device, so a CUDA graph can record the
+        step.
         """
         validate_adam_mixed_precision(model, optimizer_name="Adam")
-        main_betas = (
-            main_optim_config.get("adam_beta1", 0.9),
-            main_optim_config.get("adam_beta2", 0.999),
-        )
-        main_adam_eps = main_optim_config.get("adam_eps", 1e-8)
-        main_lr = main_optim_config.lr
-
-        filtered_optim_batas_map = {}
-        filtered_optim_adam_eps_map = {}
-        filtered_optim_lr_map = {}
-        for key, config in filtered_optim_config.items():
-            filtered_optim_batas_map[key] = (
-                config.get("adam_beta1", 0.9),
-                config.get("adam_beta2", 0.999),
-            )
-            filtered_optim_adam_eps_map[key] = config.get("adam_eps", 1e-8)
-            filtered_optim_lr_map[key] = config.lr
 
         main_optim_params = []
-
-        filtered_params_dict = {}
-        for key in param_filters.keys():
-            filtered_params_dict[key] = []
+        filtered_params_dict = {key: [] for key in param_filters.keys()}
 
         # ISSUE: currently the net weight still bind with the actor.
         for name, param in model.named_parameters():
@@ -701,51 +714,17 @@ class FSDPModelManager:
             main_optim_params.append(param)
 
         assert len(main_optim_params) > 0
-        main_optimizer = torch.optim.Adam(
-            [
-                {
-                    "params": main_optim_params,
-                    "lr": main_lr,
-                    "betas": main_betas,
-                    "eps": main_adam_eps,
-                },
-            ],
-            fused=main_optim_config.get("fused", None),
-            capturable=bool(main_optim_config.get("capturable", False)),
-        )
-        optimizers = [main_optimizer]
+        optimizers = [
+            self._build_single_optimizer(main_optim_params, main_optim_config)
+        ]
 
         for key, params in filtered_params_dict.items():
             assert len(params) > 0, (
                 f"optimer {key=} is not match any params, with {param_filters[key]=}"
             )
         for key, params in filtered_params_dict.items():
-            config = filtered_optim_config[key]
-            if config.get("optimizer", "adam") == "muon":
-                optimizers.append(
-                    torch.optim.Muon(
-                        params,
-                        lr=filtered_optim_lr_map[key],
-                        weight_decay=config.get("weight_decay", 0.1),
-                        momentum=config.get("momentum", 0.95),
-                        nesterov=config.get("nesterov", True),
-                        adjust_lr_fn=config.get("adjust_lr_fn", None),
-                    )
-                )
-                continue
             optimizers.append(
-                torch.optim.Adam(
-                    [
-                        {
-                            "params": params,
-                            "lr": filtered_optim_lr_map[key],
-                            "betas": filtered_optim_batas_map[key],
-                            "eps": filtered_optim_adam_eps_map[key],
-                        },
-                    ],
-                    fused=config.get("fused", None),
-                    capturable=bool(config.get("capturable", False)),
-                )
+                self._build_single_optimizer(params, filtered_optim_config[key])
             )
         return optimizers
 

@@ -98,4 +98,4 @@ class EmpiricalNorm(nn.Module):
         self.var.copy_(var)
 
     def forward(self, values: torch.Tensor) -> torch.Tensor:
-        return (values - self.mean) / (self.var.sqrt() + self.eps)
+        return (values - self.mean) / (self.var.clamp_min(0.0).sqrt() + self.eps)

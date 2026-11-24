@@ -36,7 +36,7 @@ from rlinf.algorithms.supermimic.objectives import imagined_return, world_model_
 from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache, run_compiled
 from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat
 from rlinf.envs.sim.g1_mimic.g1_fk import PELVIS_BODY
-from rlinf.envs.sim.g1_mimic.motion import assemble_goals
+from rlinf.envs.sim.g1_mimic.motion import root_goals
 from rlinf.envs.sim.g1_mimic.reward import termination_probability, tracking_reward
 
 
@@ -48,18 +48,6 @@ def _caller(compile_name: str | None, cache: CompileCache | None):
         cache = CompileCache()
     return lambda piece, fn, *args: run_compiled(
         f"{compile_name}-{piece}", fn, *args, cache=cache
-    )
-
-
-def root_goals(
-    root: torch.Tensor,
-    content: torch.Tensor,
-    target_pos: torch.Tensor,
-    target_rot: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """World-model and actor goals of the goal window seen from ``root``."""
-    return assemble_goals(
-        content, root[..., :3], quat_to_rotmat(root[..., 3:7]), target_pos, target_rot
     )
 
 

@@ -33,8 +33,6 @@ from __future__ import annotations
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from rlinf.algorithms.supermimic.representations import make_representation
-from rlinf.algorithms.supermimic.scan import root_goals
 from rlinf.envs.sim.g1_mimic.constants import (
     ACTION_DIM,
     DT,
@@ -44,15 +42,15 @@ from rlinf.envs.sim.g1_mimic.constants import (
     ROOT_QUAT,
 )
 from rlinf.envs.sim.g1_mimic.eval_metrics import EVAL_TASKS, PUSH_RECOVERY, TRACKING
-from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat
+from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat, rotation_angle
 from rlinf.envs.sim.g1_mimic.g1_fk import (
     PELVIS_BODY,
     TORSO_BODY,
     asset_joint_limits,
     set_kinematics_compile,
 )
-from rlinf.envs.sim.g1_mimic.g1_mimic_env import build_motion_library, env_device
-from rlinf.envs.sim.g1_mimic.mjlab_env import MjlabG1Env
+from rlinf.envs.sim.g1_mimic.mjlab_env import MjlabG1Env, env_device
+from rlinf.envs.sim.g1_mimic.motion import build_motion_library, root_goals
 from rlinf.envs.sim.g1_mimic.push_recovery import (
     OUTCOMES,
     REASONS,
@@ -71,9 +69,9 @@ from rlinf.envs.sim.g1_mimic.push_recovery import (
     trial_plan,
     world_push_xy,
 )
+from rlinf.envs.sim.g1_mimic.representations import make_representation
 from rlinf.envs.sim.g1_mimic.reward import (
     failure_signals,
-    rotation_angle,
     tracking_reward,
     xy_yaw_drift,
 )

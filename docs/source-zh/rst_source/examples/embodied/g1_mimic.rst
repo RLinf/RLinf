@@ -51,7 +51,7 @@ G1 动作跟踪环境
      - 回合上限与失败条件
      - 默认配置
    * - 动作跟踪（``tracking``）
-     - 40 条 LAFAN1 片段（或自定义 / BONES-SEED 片段）
+     - 40 条 LAFAN1 片段（或自定义 ``clip_*.pt`` 片段）
      - 训练上限 10 秒（评测播完全片）；片段结束或摔倒时终止
      - ``supermimic_lafan1_gencoord`` / ``supermimic_lafan1_eval``
    * - 站立推力恢复（``push_recovery``）
@@ -138,7 +138,7 @@ G1 动作跟踪环境
      - 存放转换后 ``clip_*.pt`` 文件的目录
    * - ``motion_format``
      - ``lafan1``
-     - 动作库加载格式：``lafan1`` 或 ``bones_seed``
+     - 动作库加载格式（``lafan1``）
    * - ``num_clips``
      - ``null``\ （默认训练配置为 ``40``）
      - 加载片段数量；``null`` 加载目录下全部片段
@@ -198,7 +198,7 @@ AMD ROCm 环境安装见 :ref:`在其他硬件后端上运行 <supermimic-hardwa
 
    [lafan1] wrote 40 clips, 2.45 h, manifest /data/lafan1_g1/manifest.json
 
-保持生成的 ``manifest.json`` 和片段文件原样，加载器启动时会校验文件哈希。如需在另一台机器离线转换、使用实验性 BONES-SEED 数据集，或制作自定义 ``clip_*.pt`` 片段，见 :doc:`supermimic_motion`。
+保持生成的 ``manifest.json`` 和片段文件原样，加载器启动时会校验文件哈希。如需在另一台机器离线转换或制作自定义 ``clip_*.pt`` 片段，见 :doc:`supermimic_motion`。
 
 运行
 ----

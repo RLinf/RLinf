@@ -6,6 +6,7 @@ group_size: 1
 rollout_epoch: 1
 # Training collects one control step per runner request; evaluation must
 # cover the longest job (a full clip or a push trial).
+max_episode_steps: 500
 max_steps_per_rollout_epoch: 1
 auto_reset: False
 ignore_terminations: False
@@ -13,7 +14,7 @@ is_eval: False
 
 # Reference motions.
 motion_path: ${oc.env:SUPERMIMIC_MOTION_PATH,""}
-motion_format: lafan1       # lafan1 or bones_seed
+motion_format: lafan1
 num_clips: null             # null loads every clip
 motion_on_cpu: False        # keep the library and its FK cache in host memory
 

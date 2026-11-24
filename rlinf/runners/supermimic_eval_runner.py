@@ -12,111 +12,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Evaluation of SuperMimic G1 policies and export of the result tables."""
+"""Evaluation of G1 motion-imitation policies and export of result tables."""
 
 from __future__ import annotations
 
-import csv
-import json
-import math
-import os
-from pathlib import Path
+from omegaconf import DictConfig
 
-import torch
-from omegaconf import DictConfig, OmegaConf
-
-from rlinf.envs.sim.g1_mimic.eval_metrics import PUSH_RECOVERY, summarize_rows
-from rlinf.envs.sim.g1_mimic.push_recovery import (
-    PAPER_PROTOCOL,
-    PROTOCOL_NAME,
-    REFERENCE_POSE,
-)
+from rlinf.envs.sim.g1_mimic.eval_metrics import finalize_eval_results
 from rlinf.runners.embodied_eval_runner import EmbodiedEvalRunner
-from rlinf.utils.nested_dict_process import cat_list_of_dict_tensor
 
 
-def merge_rank_rows(results: list[dict | None]) -> dict[str, torch.Tensor]:
-    """Concatenate the result rows every env rank returned."""
-    parts = [rows for rows in results if rows]
-    if not parts:
-        raise RuntimeError("no env rank returned evaluation rows")
-    return cat_list_of_dict_tensor(parts)
-
-
-def _json_ready(metrics: dict[str, float]) -> dict[str, float | None]:
-    """Strict-JSON metrics: an undefined value (NaN) becomes ``null``."""
-    return {
-        key: None if isinstance(value, float) and not math.isfinite(value) else value
-        for key, value in metrics.items()
-    }
-
-
-def export_eval_results(
-    out_dir: str | os.PathLike,
+def evaluate_g1_mimic(
     cfg: DictConfig,
-    meta: dict,
-    metrics: dict[str, float],
-    tables: dict[str, list[dict]],
-    nested: dict,
-) -> Path:
-    """Write ``summary.json``, one CSV per table and the resolved config."""
-    out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    info = {
-        "checkpoint": cfg.runner.get("ckpt_path", None),
-        "experiment": cfg.runner.logger.experiment_name,
-        **{key: value for key, value in meta.items() if key != "clip_names"},
-    }
-    if PUSH_RECOVERY in meta["tasks"]:
-        info.update(
-            protocol=PROTOCOL_NAME, reference_pose=REFERENCE_POSE, paper=PAPER_PROTOCOL
-        )
-    summary = {"meta": info, "metrics": _json_ready(metrics), **nested}
-    (out / "summary.json").write_text(
-        json.dumps(summary, indent=2, sort_keys=True, allow_nan=False)
+    env,
+    rollout,
+    env_channel,
+    rollout_channel,
+    step: int | None = None,
+    logger=None,
+) -> dict[str, float]:
+    """Run G1 evaluation across env and rollout workers and summarize results."""
+    meta = env.eval_metadata().wait()[0]
+    env_handle = env.evaluate(
+        input_channel=env_channel, rollout_channel=rollout_channel
     )
-    for name, rows in tables.items():
-        if not rows:
-            continue
-        with open(out / f"{name}.csv", "w", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
-            writer.writeheader()
-            writer.writerows(rows)
-    OmegaConf.save(cfg, out / "config.yaml", resolve=True)
-    return out
-
-
-def eval_export_dir(cfg: DictConfig, step: int | None = None) -> str | None:
-    """Export directory of ``runner.eval_export``; ``None`` when export is off."""
-    export = cfg.runner.get("eval_export", None)
-    if export is None or not export.get("enabled", False):
-        return None
-    base = export.get("output_dir", None) or os.path.join(
-        cfg.runner.logger.log_path, cfg.runner.logger.experiment_name, "eval_results"
+    rollout_handle = rollout.evaluate(
+        input_channel=rollout_channel, output_channel=env_channel
     )
-    return base if step is None else os.path.join(base, f"global_step_{step}")
+    env_results = env_handle.wait()
+    rollout_handle.wait()
+    metrics, out_dir = finalize_eval_results(cfg, env_results, meta, step=step)
+    if out_dir is not None and logger is not None:
+        logger.info(f"Wrote SuperMimic evaluation results to {out_dir}")
+    return metrics
 
 
 class SuperMimicEvalRunner(EmbodiedEvalRunner):
-    """Run the G1 evaluation tasks and summarize the rows of every env rank.
-
-    The env workers return one row per job; this runner computes the logged
-    metrics and, with ``runner.eval_export.enabled``, writes the tables.
-    """
+    """Run G1 evaluation tasks and summarize the per-job rows across env ranks."""
 
     def evaluate(self) -> dict[str, float]:
-        meta = self.env.eval_metadata().wait()[0]
-        env_handle = self.env.evaluate(
-            input_channel=self.env_channel, rollout_channel=self.rollout_channel
+        return evaluate_g1_mimic(
+            self.cfg,
+            self.env,
+            self.rollout,
+            self.env_channel,
+            self.rollout_channel,
+            logger=self.logger,
         )
-        rollout_handle = self.rollout.evaluate(
-            input_channel=self.rollout_channel, output_channel=self.env_channel
-        )
-        rows = merge_rank_rows(env_handle.wait())
-        rollout_handle.wait()
-        metrics, tables, nested = summarize_rows(rows, meta)
-        out_dir = eval_export_dir(self.cfg)
-        if out_dir is not None:
-            export_eval_results(out_dir, self.cfg, meta, metrics, tables, nested)
-            self.logger.info(f"Wrote SuperMimic evaluation results to {out_dir}")
-        return metrics
