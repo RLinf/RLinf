@@ -9,27 +9,28 @@ Overview
 .. grid:: 2 4 4 4
    :gutter: 2
 
+   .. grid-item-card:: Algorithm
+      :text-align: center
+
+      TD3 · AC + STEAM
+
    .. grid-item-card:: Models
       :text-align: center
 
       Frozen π₀.₅ + MLP
 
-   .. grid-item-card:: Algorithms
-      :text-align: center
-
-      TD3 · AC + STEAM
-
-   .. grid-item-card:: Task
+   .. grid-item-card:: Environments / Data
       :text-align: center
 
       ManiSkill Peg Insertion
 
-   .. grid-item-card:: Hardware
+   .. grid-item-card:: Training
       :text-align: center
 
-      4 × NVIDIA GPUs
+      Online Off-Policy RL (4 GPUs)
 
-| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · 4 GPUs (80 GB recommended) · OpenPI + ManiSkill environment.
+| **You'll do:** install OpenPI + ManiSkill → download checkpoints & backbones → launch ``maniskill_prefix_stage2_td3_mlp_steam`` → watch ``env/success_once``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · 4 × NVIDIA GPUs (80 GB recommended).
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/flexrlt_flow.png
    :alt: FlexRLT rollout, optional STEAM routing, replay, and actor-critic updates
@@ -37,10 +38,10 @@ Overview
 
    The VLA stays frozen while the actor and critic learn from replay. This preset uses STEAM to decide when the actor takes control; other presets can use the environment gate.
 
-Task, Observation, and Comparison with RL Token
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Comparison with RL Token
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-The preset ``maniskill_prefix_stage2_td3_mlp_steam`` runs ``PegInsertionSideWideClearance-v1`` in ManiSkill with main/wrist images, language instruction, and joint state, outputting 10-step × 8-dim joint-delta chunks under sparse insertion reward.
+The preset ``maniskill_prefix_stage2_td3_mlp_steam`` runs ``PegInsertionSideWideClearance-v1`` in ManiSkill with main/wrist RGB images, language instruction, and joint state, outputting 10-step × 8-dim joint-delta chunks under sparse insertion reward.
 
 .. list-table::
    :header-rows: 1
@@ -59,99 +60,73 @@ The preset ``maniskill_prefix_stage2_td3_mlp_steam`` runs ``PegInsertionSideWide
      - The RLT recipe's actor-critic combination
      - Choose the feature model, actor, critic, and algorithm separately
 
-This recipe uses pooled image-prefix features and TD3. For swapping the feature model, policy heads, or update rule, see :doc:`../../extending/flexrlt`.
+This recipe uses pooled image-prefix features and TD3. To swap the feature model, policy heads, or update rule, see :doc:`../../extending/flexrlt`.
 
 Setup and Run
 -------------
 
 .. include:: _setup_common.rst
 
-You can either use the prebuilt embodied image on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ (``source switch_env openpi``) or install locally below.
-
 .. tab-set::
 
-   .. tab-item:: ManiSkill Peg Insertion (TD3 + STEAM)
+   .. tab-item:: ManiSkill (TD3 + STEAM)
       :sync: flexrlt-maniskill
 
       **1. Install**
 
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --model openpi --env maniskill_libero
-         source .venv/bin/activate
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
       **2. Download Checkpoints & Backbones**
 
-      Download the feature VLA (`maniskill_rlt_1000_new <https://huggingface.co/ChikaYokoyama/maniskill_rlt_1000_new>`__), expert VLA (`maniskill_rlt_3000_new <https://huggingface.co/ChikaYokoyama/maniskill_rlt_3000_new>`__), STEAM value model (`rlt_steam_value_model_sft_step_5000 <https://huggingface.co/ChikaYokoyama/rlt_steam_value_model_sft_step_5000>`__), and calibrated phase head (`rlt_steam_phase_head <https://huggingface.co/ChikaYokoyama/rlt_steam_phase_head>`__) into ``./data/steam_peg``:
+      Download the feature VLA, expert VLA, STEAM value model, calibrated phase head, and SigLIP/Gemma backbones into ``./data/steam_peg``, then point the STEAM value model's ``config.json`` at the local backbones:
 
       .. code-block:: bash
 
-         CHECKPOINT_ROOT="$(pwd)/data/steam_peg"
+         CKPT_ROOT="$(pwd)/data/steam_peg"
          hf download ChikaYokoyama/maniskill_rlt_1000_new \
-           --local-dir "$CHECKPOINT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
+           --local-dir "$CKPT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
            --exclude '*/dcp_checkpoint/*'
          hf download ChikaYokoyama/maniskill_rlt_3000_new \
-           --local-dir "$CHECKPOINT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
+           --local-dir "$CKPT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
            --exclude '*/dcp_checkpoint/*'
          hf download ChikaYokoyama/rlt_steam_value_model_sft_step_5000 \
-           --local-dir "$CHECKPOINT_ROOT/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor" \
+           --local-dir "$CKPT_ROOT/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor" \
            --exclude 'dcp_checkpoint/*'
-         hf download ChikaYokoyama/rlt_steam_phase_head --local-dir "$CHECKPOINT_ROOT"
+         hf download ChikaYokoyama/rlt_steam_phase_head --local-dir "$CKPT_ROOT"
+         hf download google/siglip-so400m-patch14-384 --local-dir "$CKPT_ROOT/siglip-so400m-patch14-384"
+         hf download google/gemma-3-270m --local-dir "$CKPT_ROOT/gemma-3-270m"
 
-      Download the SigLIP and Gemma backbones used by STEAM:
+         python -c "import json, pathlib; r = pathlib.Path('$CKPT_ROOT'); p = r / 'rlt_steam_value_model_sft/checkpoints/global_step_5000/actor/config.json'; d = json.loads(p.read_text()); d['vision_repo_id'], d['language_repo_id'] = str(r / 'siglip-so400m-patch14-384'), str(r / 'gemma-3-270m'); p.write_text(json.dumps(d, indent=2))"
 
-      .. code-block:: bash
-
-         hf download google/siglip-so400m-patch14-384 \
-           --local-dir "$CHECKPOINT_ROOT/siglip-so400m-patch14-384"
-         hf download google/gemma-3-270m \
-           --local-dir "$CHECKPOINT_ROOT/gemma-3-270m"
-
-      **3. Configure Paths & Launch**
-
-      Update the four absolute paths in ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` (keep ``openpi_data.repo_id: maniskill_peginsertionside_joint`` and ``norm_stats_path: null``):
-
-      .. list-table::
-         :header-rows: 1
-         :widths: 48 52
-
-         * - Field
-           - Local path
-         * - ``rollout.prefix_feature_model.model_path``
-           - ``<CHECKPOINT_ROOT>/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_1000/actor``
-         * - ``rollout.expert_model.model_path``
-           - ``<CHECKPOINT_ROOT>/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_3000/actor``
-         * - ``rollout.routing_gate.model.model_path``
-           - ``<CHECKPOINT_ROOT>/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor``
-         * - ``rollout.routing_gate.actor_switch.phase_head_path``
-           - ``<CHECKPOINT_ROOT>/steam_phase_head.pt``
-
-      In ``rlt_steam_value_model_sft/checkpoints/global_step_5000/actor/config.json`` under ``<CHECKPOINT_ROOT>``, point ``vision_repo_id`` and ``language_repo_id`` to the downloaded SigLIP and Gemma directories (keep the tokenizer and image-processor files in that actor directory). Then launch training from the repository root:
+      **3. Launch**
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
+         CKPT_ROOT="$(pwd)/data/steam_peg"
+         bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam \
+           rollout.prefix_feature_model.model_path="$CKPT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_1000/actor" \
+           rollout.expert_model.model_path="$CKPT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_3000/actor" \
+           rollout.routing_gate.model.model_path="$CKPT_ROOT/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor" \
+           rollout.routing_gate.actor_switch.phase_head_path="$CKPT_ROOT/steam_phase_head.pt"
 
-      Logs and TensorBoard events are written under ``logs/<timestamp>-maniskill_prefix_stage2_td3_mlp_steam/``. After data collection and warmup updates, STEAM enables actor control in critical phases while the expert gate logs takeover recommendations in ``shadow`` mode.
+      Logs and TensorBoard events are written under ``logs/<timestamp>-maniskill_prefix_stage2_td3_mlp_steam/``. After warmup updates, STEAM activates actor control in critical phases while the expert gate logs takeover recommendations in ``shadow`` mode.
 
       .. dropdown:: Calibrate STEAM for another task (optional)
 
-         Collect 20 steps of phase features whenever the task, cameras, or controlling policy changes:
+         Whenever the task, cameras, or controlling policy changes, collect 20 steps of phase features and fit the phase head offline:
 
          .. code-block:: bash
 
             bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam_calibration
-
-         Traces appear under ``<run_log_dir>/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration/rank_<rank>/trace_*.pt``. Fit the phase head offline:
-
-         .. code-block:: bash
-
-            TRACE_DIR=/path/to/run_log_dir/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration
+            TRACE_DIR=$(ls -d "$(pwd)"/logs/*-maniskill_prefix_stage2_td3_mlp_steam_calibration/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration | tail -n 1)
             python toolkits/rlt/calibrate_steam_gates.py "$TRACE_DIR" \
-              --phase-head-output "$CHECKPOINT_ROOT/steam_phase_head.pt" \
-              --yaml-output "$CHECKPOINT_ROOT/steam_gate_recommendation.yaml" --device cpu
+              --phase-head-output "$(pwd)/data/steam_peg/steam_phase_head.pt" \
+              --yaml-output "$(pwd)/data/steam_peg/steam_gate_recommendation.yaml" --device cpu
 
-         Point ``phase_head_path`` at the new ``.pt`` file, leave gate thresholds ``null`` to load the saved recommendations, and disable both calibration collection switches for normal training.
+         Pass the new ``steam_phase_head.pt`` to ``phase_head_path`` and keep gate thresholds ``null`` to load the calibrated recommendations.
 
 Visualization and Results
 -------------------------

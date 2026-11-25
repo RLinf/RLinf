@@ -28,9 +28,6 @@ Pick the guide that matches your model family and training or rollout backend.
    * - :doc:`Weight Synchronization <../weight_syncer>`
      - Optimize or customize actor-to-rollout model weight transfer
      - ``WeightSyncer`` (FSDP + HF Rollout)
-   * - :doc:`FlexRLT Pluggable Components <../flexrlt>`
-     - Register a frozen VLA prefix feature model, policy head, or off-policy update rule
-     - ``PrefixFeatureModel`` + ``prefix_off_policy``
 
 .. toctree::
    :hidden:
@@ -41,4 +38,3 @@ Pick the guide that matches your model family and training or rollout backend.
    LLM via Megatron-Bridge <../mbridge>
    LLM via Manual Megatron <../new_model_megatron>
    Weight Synchronization <../weight_syncer>
-   FlexRLT Pluggable Components <../flexrlt>

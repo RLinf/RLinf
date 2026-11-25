@@ -52,18 +52,18 @@ Which Guide Should I Read?
    * - New learned embodied reward model
      - ``BaseRewardModel`` + ``reward.use_reward_model``
      - :doc:`Learned Reward Model <reward_model>`
-   * - New multi-turn agent loop, tool, or parser
+   * - Build a multi-turn agent inside RLinf (for example Search-R1 or custom tool tags)
      - ``AgentLoopWorker`` / ``ToolWorker`` / ``@register_toolcall_parser``
-     - :doc:`Agent Loop & Tool Calling <new_agent>`
+     - :doc:`White-Box Agent <new_agent>`
+   * - Connect an existing external agent (for example OpenAI SDK or AutoGen)
+     - ``MultiAgentLoopWorker.run_session_trajectory`` + Session Server
+     - :doc:`Black-Box Agent <openai_agent>`
    * - New GPU or NPU accelerator backend
      - ``AcceleratorManager`` + ``install.sh --platform``
      - :doc:`Accelerator Backend <new_accelerator>`
    * - Custom actor-to-rollout weight synchronization
      - ``WeightSyncer`` transport layer
      - :doc:`Weight Synchronization <weight_syncer>`
-   * - Pluggable VLA prefix feature model, head, or off-policy update rule
-     - ``PrefixFeatureModel`` / ``register_prefix_*``
-     - :doc:`FlexRLT Pluggable Components <flexrlt>`
    * - Connect the agent session server to a custom runner
      - ``SessionServerWorker`` / ``create_payload_channels``
      - :doc:`Connect the Session Server to a Runner <session_server_runner>`
@@ -103,10 +103,10 @@ Choose an Extension Area
       Register rule-based text scorers or train and plug in learned embodied reward models.
 
    .. grid-item-card:: 5. Add an Agent
-      :link: new_agent
+      :link: agents/index
       :link-type: doc
 
-      Implement custom multi-turn agent loops, tool workers, and tool-call parsers.
+      Build a token-level white-box agent inside RLinf (for example Search-R1), or plug in an existing black-box OpenAI API agent.
 
    .. grid-item-card:: 6. Add a Hardware Backend
       :link: new_accelerator

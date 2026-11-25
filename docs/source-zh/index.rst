@@ -166,8 +166,7 @@
   新增 Env 与真机 <rst_source/extending/envs-robots/index>
   新增算法 <rst_source/extending/new_algorithm>
   新增 Reward <rst_source/extending/rewards/index>
-  新增 Agent <rst_source/extending/new_agent>
-  将 Session Server 接入 Runner <rst_source/extending/session_server_runner>
+  新增 Agent <rst_source/extending/agents/index>
   新增硬件后端 <rst_source/extending/new_accelerator>
 
 .. toctree::

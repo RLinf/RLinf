@@ -1,5 +1,5 @@
-Add an Agent
-============
+White-Box Agent
+===============
 
 Add a tool-call parser, a tool worker, and a multi-turn agent loop without changing RLinf's rollout engines or runners. By the end of this guide, a calculator agent parses ``<calc>...</calc>`` tags from model completions, evaluates arithmetic expressions inside a ``ToolWorker``, feeds results back into the conversation with tool tokens masked out of policy loss, and runs inside ``AgentRunner``.
 
@@ -313,3 +313,9 @@ If your parser lives outside the RLinf tree, register it inside your package's `
 .. code-block:: bash
 
    export RLINF_EXT_MODULE=my_pkg.rlinf_ext
+
+Next Steps
+----------
+
+- **Already have an OpenAI API or external agent?** Follow :doc:`Black-Box Agent <openai_agent>` to connect without rewriting parsers or ``ToolWorker``.
+- **Scale asynchronously across nodes:** Enable ``runner.async_mode: True`` (:doc:`Async Agentic RL <../guides/async_agentic>`) and offload rollout payloads with :doc:`Session Server <../guides/session_server>`.

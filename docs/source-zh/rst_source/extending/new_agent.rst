@@ -1,4 +1,4 @@
-新增 Agent
+白盒 Agent
 ==========
 
 无需改动 RLinf 的推理引擎或 runner，即可接入自定义工具调用解析器、工具 worker 与多轮智能体循环。完成本指南后，示例计算器智能体会从模型输出中解析 ``<calc>...</calc>`` 标签，在独立的 ``ToolWorker`` 中求值算术表达式，将工具结果按 ``response_mask`` 屏蔽策略损失后拼回对话，并在 ``AgentRunner`` 中完整运行。
@@ -313,3 +313,9 @@ HTTP 工具实现可参考 ``rlinf/agents/searchr1/search_tool_worker.py``，带
 .. code-block:: bash
 
    export RLINF_EXT_MODULE=my_pkg.rlinf_ext
+
+下一步
+------
+
+- **已有 OpenAI API 或外部黑盒 Agent？** 参见 :doc:`黑盒 Agent <openai_agent>`，无需重写解析器与 ``ToolWorker``。
+- **扩展到多机异步训练：** 开启 ``runner.async_mode: True``\ （见 :doc:`异步 Agent RL <../guides/async_agentic>`），并按需通过 :doc:`Session Server <../guides/session_server>` 将轨迹存储下沉到 rollout 节点。

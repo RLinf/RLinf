@@ -52,21 +52,21 @@
    * - 训练或自定义学习型具身 Reward 模型
      - ``BaseRewardModel`` 与 ``reward.use_reward_model``
      - :doc:`学习型 Reward 模型 <reward_model>`
-   * - 接入自定义多轮 Agent 循环、工具或解析器
+   * - 在 RLinf 内编写多轮 Agent（例如 Search-R1 或自定义工具标签）
      - ``AgentLoopWorker`` / ``ToolWorker`` / ``@register_toolcall_parser``
-     - :doc:`Agent 循环与工具调用 <new_agent>`
+     - :doc:`白盒 Agent <new_agent>`
+   * - 免重写接入已有外部 Agent（例如 OpenAI SDK 或 AutoGen）
+     - ``MultiAgentLoopWorker.run_session_trajectory`` 与 Session Server
+     - :doc:`黑盒 Agent <openai_agent>`
    * - 适配新的 GPU / NPU 加速卡后端
      - ``AcceleratorManager`` 与 ``install.sh --platform``
      - :doc:`新增加速卡后端 <new_accelerator>`
    * - 定制 Actor 到 Rollout 的权重同步链路
      - ``WeightSyncer`` 传输层
      - :doc:`自定义权重同步 <weight_syncer>`
-   * - 扩展 FlexRLT 的 VLA 特征模型、网络头或更新规则
-     - ``PrefixFeatureModel`` / ``register_prefix_*``
-     - :doc:`FlexRLT 可插拔组件 <flexrlt>`
    * - 将 Agent Session Server 接入自定义 Runner
      - ``SessionServerWorker`` / ``create_payload_channels``
-     - :doc:`将 Session Server 接入 Runner <session_server_runner>`
+     - :doc:`将 Session Server 接入自定义 Runner <session_server_runner>`
 
 .. tip::
 
@@ -103,10 +103,10 @@
       注册规则文本 Reward，或训练并接入学习型具身 Reward 模型。
 
    .. grid-item-card:: 5. 新增 Agent
-      :link: new_agent
+      :link: agents/index
       :link-type: doc
 
-      实现自定义多轮 Agent 循环、工具 Worker 与工具调用解析器。
+      在 RLinf 内编写 token 级白盒 Agent（如 Search-R1），或经 Session Server 免重写接入外部黑盒 Agent。
 
    .. grid-item-card:: 6. 新增硬件后端
       :link: new_accelerator

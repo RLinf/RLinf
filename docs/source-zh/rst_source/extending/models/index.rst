@@ -28,9 +28,6 @@
    * - :doc:`自定义权重同步 <../weight_syncer>`
      - 定制或优化 Actor 到 Rollout 的模型权重传输
      - ``WeightSyncer``\ （FSDP + HF Rollout）
-   * - :doc:`FlexRLT 可插拔组件 <../flexrlt>`
-     - 注册冻结 VLA 特征模型、Actor / Critic 网络头或更新规则
-     - ``PrefixFeatureModel`` 与 ``prefix_off_policy``
 
 .. toctree::
    :hidden:
@@ -41,4 +38,3 @@
    LLM 模型（Megatron-Bridge） <../mbridge>
    LLM 模型（手动 Megatron） <../new_model_megatron>
    自定义权重同步 <../weight_syncer>
-   FlexRLT 可插拔组件 <../flexrlt>

@@ -166,8 +166,7 @@ Why RLinf
   Add an Env or Robot <rst_source/extending/envs-robots/index>
   Add an Algorithm <rst_source/extending/new_algorithm>
   Add a Reward <rst_source/extending/rewards/index>
-  Add an Agent <rst_source/extending/new_agent>
-  Connect the Session Server to a Runner <rst_source/extending/session_server_runner>
+  Add an Agent <rst_source/extending/agents/index>
   Add a Hardware Backend <rst_source/extending/new_accelerator>
 
 .. toctree::

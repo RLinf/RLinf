@@ -1,18 +1,9 @@
+:orphan:
+
 Connect the Session Server to a Runner
 ======================================
 
-This page shows how to connect the session server (see
-:doc:`/rst_source/guides/session_server`) to a runner other than
-``AsyncAgentRunner``: the calls the entry script, the runner, and the buffer
-worker make, and the two things the session server needs from a runner. The
-asynchronous runner, which already uses the session server, is the worked
-example.
-
-Before You Start
-----------------
-
-- The asynchronous Search-R1 example with the session server runs on your
-  cluster. See :doc:`/rst_source/guides/session_server`.
+Wire the agent :doc:`Session Server </rst_source/guides/session_server>` into a runner other than ``AsyncAgentRunner``. Read this guide only if you are writing a custom runner; for standard asynchronous agent training, enable ``session_server.enable: true`` directly on ``AsyncAgentRunner``.
 
 At a Glance
 -----------
@@ -26,319 +17,170 @@ At a Glance
    * - Entry script (``examples/agent/searchr1/train.py``)
      - Launch ``SessionServerWorker`` groups and one ``SGLangRouterWorker``, then pass them to the runner.
    * - Runner (``rlinf/runners/async_agent_runner.py``)
-     - Create payload channels, start router and session servers, push loaded weight versions, poll handles, and stop cleanly.
+     - Create payload channels, start router and session servers, sync loaded weight versions, poll serve handles, and stop cleanly.
    * - Buffer worker (``rlinf/workers/rollout_buffer/rollout_buffer_worker.py``)
-     - Issue unique group IDs, drop filtered/aborted groups, release payloads, and deliver full batches to the actor.
+     - Issue unique group IDs, drop aborted/filtered groups, delete stale payloads, and deliver full batches to the actor.
    * - Config check (``rlinf/config.py``)
      - Allow your custom runner mode in ``validate_session_server_cfg``.
 
-What the Session Server Needs from a Runner
--------------------------------------------
+What a Runner Must Guarantee
+----------------------------
 
-1. **A group id and a task name for every group.** The session server keys a
-   group's sessions and payload by its id, so the id must be unique for the
-   whole run. Each ``RolloutRequest`` carries them in ``group_ids`` and
-   ``task_names``, and the agent loop passes them on only when it runs with
-   ``run_agentloop_rollout_continuously``.
-2. **A full batch for the actor.** The actor takes ``rollout_batch_size``
-   groups each step. A group can end without data for the actor: the agent
-   aborts it, or a filter drops it. Each such group needs a replacement.
+1. **Unique group ID and task name per group.** Session servers key every session and payload by ``group_id``. Attach unique ``group_ids`` and ``task_names`` on each ``RolloutRequest`` and run the agent loop via ``run_agentloop_rollout_continuously``.
+2. **Full actor batches with payload cleanup.** When a group is aborted or filtered out (for example by ``reject_equal_reward``), delete its payload via ``remove_key`` and admit a replacement prompt so the actor still receives ``rollout_batch_size`` groups.
 
-In the asynchronous runner, the buffer worker (``RolloutBufferWorker``)
-provides both; another runner has to provide them itself.
+Lifecycle in Four Phases
+------------------------
 
-The Files
----------
+``AsyncAgentRunner`` coordinates the session server in this order:
 
-1. ``examples/agent/searchr1/train.py`` launches the session servers and the
-   router, and passes them to the runner.
-2. ``rlinf/runners/async_agent_runner.py`` creates the payload channels,
-   starts the router and session servers, and polls them each step.
-3. ``rlinf/workers/rollout_buffer/rollout_buffer_worker.py`` issues the group
-   ids, and delivers or releases each finished group.
-4. ``validate_session_server_cfg`` in ``rlinf/config.py`` accepts the session
-   server only with ``runner.async_mode``. To use another runner, allow it in
-   this check.
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
 
-Example
--------
+   * - Phase
+     - Required Calls
+   * - **1. Launch**
+     - Entry script launches ``session_server.num_servers`` ``SessionServerWorker`` groups round-robin across rollout nodes plus one ``SGLangRouterWorker`` on the first rollout node, passing ``session_servers`` and ``session_router`` to the runner. Runner creates ``payload_shards`` payload channels per server via ``create_payload_channels`` inside ``__init__``.
+   * - **2. Startup**
+     - After rollout engines come up, call ``init_router()``, register each engine URL from ``rollout.get_server_url()``, start each session server with ``serve(router_url, agent_output_channel, payload_channels)`` (keep the handles), call ``wait_until_serving()``, and pass ``session_server_urls`` plus client timeouts to ``agent_loop.init_worker()``. After the initial weight sync, call ``set_loaded_versions()`` on every server (requests return HTTP 500 until then) and start the agent loop and buffer worker.
+   * - **3. Per-step loop**
+     - Pass the flattened ``payload_channels`` into ``actor.run_training()`` while polling ``_session_serve_handles`` so a crashed server stops the run. After every weight sync, call ``set_loaded_versions()``. Each step, call ``get_metrics()`` on every server and sum the counts.
+   * - **4. Shutdown**
+     - Stop all session servers and await their ``serve`` handles **before** calling ``_session_router.stop()``, ensuring no request is in flight when the router exits.
 
-Each block below is trimmed from the file named in its first line. The
-numbered comments match the steps in the next section.
+Reference Wiring
+----------------
 
-The entry script launches the session servers and the router:
+The trimmed excerpts below show how ``AsyncAgentRunner`` implements each phase:
 
-.. code-block:: python
+.. tab-set::
 
-   # examples/agent/searchr1/train.py
-   if OmegaConf.select(cfg, "session_server.enable", default=False):
-       from rlinf.workers.rollout.session_server.server_worker import (
-           SessionServerWorker,
-       )
-       from rlinf.workers.rollout.sglang.router_worker import SGLangRouterWorker
+   .. tab-item:: 1. Entry Script
+      :sync: ss-runner-entry
 
-       rollout_node_ranks = list(
-           dict.fromkeys(
-               placement.cluster_node_rank for placement in rollout_placements
-           )
-       )
-       # 1. One group per session server, round-robin over the rollout nodes,
-       # and one router group on the first rollout node.
-       num_servers = cfg.session_server.num_servers
-       session_servers = [
-           SessionServerWorker.create_group(cfg, server_index).launch(
-               cluster,
-               name=(
-                   cfg.session_server.group_name
-                   if num_servers == 1
-                   else f"{cfg.session_server.group_name}_{server_index}"
-               ),
-               placement_strategy=NodePlacementStrategy(
-                   [rollout_node_ranks[server_index % len(rollout_node_ranks)]]
-               ),
-           )
-           for server_index in range(num_servers)
-       ]
-       session_router = SGLangRouterWorker.create_group(
-           cfg, cfg.rollout.router
-       ).launch(
-           cluster,
-           name="SessionServerRouter",
-           placement_strategy=NodePlacementStrategy([rollout_node_ranks[0]]),
-       )
-   ...
-   if session_servers is not None:
-       runner_kwargs["session_servers"] = session_servers
-       runner_kwargs["session_router"] = session_router
+      .. code-block:: python
 
-The runner's part, with each numbered comment matching a step below:
+         # examples/agent/searchr1/train.py
+         if OmegaConf.select(cfg, "session_server.enable", default=False):
+             from rlinf.workers.rollout.session_server.server_worker import SessionServerWorker
+             from rlinf.workers.rollout.sglang.router_worker import SGLangRouterWorker
 
-.. code-block:: python
+             rollout_node_ranks = list(
+                 dict.fromkeys(p.cluster_node_rank for p in rollout_placements)
+             )
+             num_servers = cfg.session_server.num_servers
+             session_servers = [
+                 SessionServerWorker.create_group(cfg, idx).launch(
+                     cluster,
+                     name=(
+                         cfg.session_server.group_name
+                         if num_servers == 1
+                         else f"{cfg.session_server.group_name}_{idx}"
+                     ),
+                     placement_strategy=NodePlacementStrategy(
+                         [rollout_node_ranks[idx % len(rollout_node_ranks)]]
+                     ),
+                 )
+                 for idx in range(num_servers)
+             ]
+             session_router = SGLangRouterWorker.create_group(
+                 cfg, cfg.rollout.router
+             ).launch(
+                 cluster,
+                 name="SessionServerRouter",
+                 placement_strategy=NodePlacementStrategy([rollout_node_ranks[0]]),
+             )
+             runner_kwargs["session_servers"] = session_servers
+             runner_kwargs["session_router"] = session_router
 
-   # rlinf/runners/async_agent_runner.py
-   # At startup
-   # 2. Payload channels on each session server's node, one per shard.
-   if session_servers is not None:
-       for server_index, server in enumerate(session_servers):
-           self._session_payload_channels.append(
-               create_payload_channels(
-                   f"SessionPayload-{server_index}",
-                   num_shards=cfg.session_server.payload_shards,
-                   producer=server,
-               )
-           )
+   .. tab-item:: 2. Runner
+      :sync: ss-runner-runner
 
-   # In _start_session_servers, which AgentRunner calls once the engines are up
-   # 3. The router first, then each session server behind it.
-   self._session_router.init_router().wait()
-   instance_urls = [
-       url for url in self.rollout.get_server_url().wait() if url is not None
-   ]
-   for url in instance_urls:
-       self._session_router.register_server(url).wait()
-   router_url = self._session_router.get_router_url().wait()[0]
-   session_urls = []
-   for server, payload_channels in zip(
-       self._session_servers, self._session_payload_channels
-   ):
-       self._session_serve_handles.append(
-           server.serve(router_url, self.agent_output_channel, payload_channels)
-       )
-       server.wait_until_serving().wait()
-       session_urls.append(f"http://{server.get_server_address().wait()[0]}")
-   ...
-   return session_urls, client_timeout_s, keepalive_timeout_s
+      .. code-block:: python
 
-   # Before the training loop (after the initial weight sync)
-   # 4. Push the initial loaded versions, flatten all payload channels,
-   # and start the agent loop and buffer worker for the whole training.
-   for server in self._session_servers or []:
-       server.set_loaded_versions(self._rollout_loaded_versions).wait()
-   payload_channels = [
-       channel
-       for server_channels in self._session_payload_channels
-       for channel in server_channels
-   ]
-   agent_handle = self.agent_loop.run_agentloop_rollout_continuously(
-       input_channel=self.dataloader_channel,
-       output_channel=self.agent_output_channel,
-       agent_metric_channel=self.agent_metric_channel,
-   )
-   buffer_handle = self.rollout_buffer.run_continuously(
-       agent_output_channel=self.agent_output_channel,
-       dataloader_channel=self.dataloader_channel,
-       rollout_channel=self.rollout_channel,
-       payload_channels=payload_channels,
-   )
+         # rlinf/runners/async_agent_runner.py
+         # 1) Create payload channels in __init__
+         for idx, server in enumerate(session_servers):
+             self._session_payload_channels.append(
+                 create_payload_channels(
+                     f"SessionPayload-{idx}",
+                     num_shards=cfg.session_server.payload_shards,
+                     producer=server,
+                 )
+             )
 
-   # Every step
-   # 7. Each step trains on the delivered groups and watches the serve handles.
-   actor_handle: Handle = self.actor.run_training(
-       input_channel=self.rollout_channel,
-       version=self.global_steps,
-       payload_channels=payload_channels,
-   )
-   watched_handles = [
-       agent_handle,
-       buffer_handle,
-       *self._session_serve_handles,
-   ]
-   metrics = self._wait_actor(actor_handle, watched_handles)
-   # 8. After each weight sync.
-   for server in self._session_servers or []:
-       server.set_loaded_versions(self._rollout_loaded_versions).wait()
+         # 2) Start router, then session servers (_start_session_servers)
+         self._session_router.init_router().wait()
+         for url in [u for u in self.rollout.get_server_url().wait() if u is not None]:
+             self._session_router.register_server(url).wait()
+         router_url = self._session_router.get_router_url().wait()[0]
+         for server, channels in zip(self._session_servers, self._session_payload_channels):
+             self._session_serve_handles.append(
+                 server.serve(router_url, self.agent_output_channel, channels)
+             )
+             server.wait_until_serving().wait()
 
-   # 9. Every step, summed over the servers.
-   per_server_metrics = [
-       server.get_metrics().wait()[0]
-       for server in self._session_servers
-   ]
-   session_server_metrics = {
-       key: sum(metrics[key] for metrics in per_server_metrics)
-       for key in per_server_metrics[0]
-   }
+         # 3) Push weight versions, train, and poll handles each step
+         for server in self._session_servers:
+             server.set_loaded_versions(self._rollout_loaded_versions).wait()
+         payload_channels = [ch for group in self._session_payload_channels for ch in group]
+         actor_handle = self.actor.run_training(
+             input_channel=self.rollout_channel,
+             version=self.global_steps,
+             payload_channels=payload_channels,
+         )
+         self._wait_actor(actor_handle, [agent_handle, buffer_handle, *self._session_serve_handles])
 
-   # At shutdown
-   # 10. The session servers stop before the router.
-   for server in self._session_servers:
-       server.stop().wait()
-   for serve_handle in self._session_serve_handles:
-       serve_handle.wait()
-   self._session_router.stop().wait()
+         # 4) Shutdown: stop servers before router
+         for server in self._session_servers:
+             server.stop().wait()
+         for handle in self._session_serve_handles:
+             handle.wait()
+         self._session_router.stop().wait()
 
-The buffer worker issues the groups, then delivers or releases each one:
+   .. tab-item:: 3. Buffer Worker
+      :sync: ss-runner-buffer
 
-.. code-block:: python
+      .. code-block:: python
 
-   # rlinf/workers/rollout_buffer/rollout_buffer_worker.py
-   # For each prompt
-   # 5. Every prompt gets a group id and a task name.
-   await self.buffer.wait_for_admission_slot()
-   group_id, _ = self.buffer.issue_group(sample_idx, self.task_name)
-   request.group_ids = [group_id]
-   request.task_names = [self.task_name]
-   await dataloader_channel.put(request, async_op=True).async_wait()
+         # rlinf/workers/rollout_buffer/rollout_buffer_worker.py
+         # Issue unique group_id + task_name
+         await self.buffer.wait_for_admission_slot()
+         group_id, _ = self.buffer.issue_group(sample_idx, self.task_name)
+         request.group_ids = [group_id]
+         request.task_names = [self.task_name]
+         await dataloader_channel.put(request, async_op=True).async_wait()
 
-   # For each finished or dropped group
-   # 6. Each finished or dropped group.
-   result = await agent_output_channel.get(async_op=True).async_wait()
-   if isinstance(result, DiscardedGroup):
-       self.buffer.drop_group(
-           result.group_id,
-           result.reason,
-           self.max_dropped_groups_per_step,
-           already_buffered=False,
-       )
-       continue
-   if isinstance(result, GroupMetadata):
-       metadata = result
-       result = None
-   if self.reject_equal_reward and rewards_all_equal(metadata.rewards):
-       await self._release_payload(metadata)
-       self.buffer.drop_group(
-           metadata.group_id,
-           "equal_reward",
-           self.max_dropped_groups_per_step,
-           already_buffered=False,
-       )
-       continue
-   self.buffer.record_result(result, metadata)
+         # Handle finished or discarded groups
+         result = await agent_output_channel.get(async_op=True).async_wait()
+         if isinstance(result, DiscardedGroup):
+             self.buffer.drop_group(
+                 result.group_id, result.reason,
+                 self.max_dropped_groups_per_step, already_buffered=False,
+             )
+         elif isinstance(result, GroupMetadata):
+             if self.reject_equal_reward and rewards_all_equal(result.rewards):
+                 channel = payload_channel_for(result.payload_ref.locator, self._payload_channels)
+                 await channel.remove_key(key=result.payload_ref.key, async_op=True).async_wait()
+                 self.buffer.drop_group(
+                     result.group_id, "equal_reward",
+                     self.max_dropped_groups_per_step, already_buffered=False,
+                 )
+             else:
+                 self.buffer.record_result(None, result)
 
-   # When a batch is full
-   for metadata, result in self.buffer.release_groups():
-       if result is None:
-           delivery = GroupDelivery(
-               group_id=metadata.group_id,
-               task_name=metadata.task_name,
-               payload_ref=metadata.payload_ref,
-           )
-           await rollout_channel.put(delivery, async_op=True).async_wait()
+Run and Verify
+--------------
 
-   # To release a group's payload
-   ref = metadata.payload_ref
-   channel = payload_channel_for(ref.locator, self._payload_channels)
-   await channel.remove_key(key=ref.key, async_op=True).async_wait()
-
-The Calls in Order
-------------------
-
-1. **Launch the session servers and the router.** The entry script launches
-   ``session_server.num_servers`` ``SessionServerWorker`` groups, spread over
-   the rollout nodes, and one ``SGLangRouterWorker`` group, and passes them to
-   the runner as ``session_servers`` and ``session_router``.
-2. **Create the payload channels.** ``create_payload_channels`` takes a base
-   name, the number of shards, and the session server's worker group, and
-   returns one channel per shard, placed on that server's node. The runner
-   creates them in ``__init__``, before any session server starts, because
-   ``serve`` needs them.
-3. **Start the router and the session servers.** ``AgentRunner`` calls
-   ``_start_session_servers`` once the rollout engines are up. In it, the
-   runner:
-
-   - starts an empty router with ``init_router``;
-   - registers each engine URL from ``rollout.get_server_url`` with
-     ``register_server``;
-   - reads the router's address with ``get_router_url``;
-   - calls ``serve`` on each session server and keeps the handle, since
-     ``serve`` runs until the server stops;
-   - calls ``wait_until_serving``, which returns once the server listens
-     or raises its startup error;
-   - reads the server's address with ``get_server_address``.
-
-   The method returns the session server URLs, the client's generate
-   timeout, and its keep-alive, and ``AgentRunner`` passes them to
-   ``agent_loop.init_worker`` as ``session_server_urls``,
-   ``session_server_generate_timeout_s``, and
-   ``session_server_keepalive_timeout_s``. A runner that does not subclass
-   ``AgentRunner`` must pass these three arguments to
-   ``agent_loop.init_worker`` itself.
-4. **Push initial weight versions and start the loops.** After the initial
-   weight sync, the runner calls ``set_loaded_versions`` on every session
-   server (requests fail with HTTP 500 before this first call). It then
-   flattens ``self._session_payload_channels`` across all servers into one
-   list and starts the agent loop with ``run_agentloop_rollout_continuously``
-   and the buffer worker with ``run_continuously``. Both run for the whole
-   training.
-5. **Issue the groups.** The buffer worker reserves an id for each prompt
-   with ``issue_group`` and puts the prompt on the agent loop's input channel
-   as a ``RolloutRequest`` that carries the id and the task name.
-6. **Deliver or release each finished group.** A session server puts a
-   ``GroupMetadata`` on the agent output channel when a group finishes, and a
-   ``DiscardedGroup`` when it drops one. A ``DiscardedGroup`` needs no
-   cleanup. A finished group that is filtered out has its payload removed
-   with ``remove_key``, on the channel that ``payload_channel_for`` finds for
-   its ``payload_ref``; otherwise the data stays there for the rest of the
-   run. Each dropped group frees its admission slot, so the buffer worker
-   issues another prompt. Once a batch is full, each group goes to the actor
-   as a ``GroupDelivery`` with its ``payload_ref``.
-7. **Train and watch the session servers.** ``run_training`` takes all
-   payload channels, so the actor can fetch each delivered group's data.
-   While the actor trains, the runner polls the ``serve`` handles with the
-   others, so a session server that stops ends the run.
-8. **Update the loaded weight versions.** After each later weight sync, the
-   runner calls ``set_loaded_versions`` on every session server with the
-   version each engine loaded. The session server uses the oldest one as the
-   lower bound of each turn's weight version.
-9. **Collect the metrics.** Every step, the runner calls ``get_metrics`` on
-   every session server and sums the values. The call also removes expired
-   records of discarded groups.
-10. **Stop.** At shutdown, the runner stops every session server and waits
-    for its ``serve`` handle before it stops the router, so no request is in
-    flight when the router goes away.
-
-Run It
-------
-
-``examples/agent/searchr1/config/train_qwen2.5_async_session_server.yaml``
-selects this wiring with ``session_server.enable: true``. Run it as described
-in :doc:`/rst_source/guides/session_server`:
+Launch the reference Search-R1 session server config (see :doc:`/rst_source/guides/session_server` for cluster setup):
 
 .. code-block:: bash
 
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5_async_session_server
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_async_session_server \
+     session_server.verify_assembly=true
 
-Verify It
----------
+Confirm two checks before turning ``verify_assembly`` off for full training:
 
-1. Run a few training steps with ``session_server.verify_assembly=true`` appended to your launch command. The actor compares every assembled group field-by-field against the non-session-server agent loop output and fails immediately on any mismatch.
-2. Confirm ``rollout/session_server/payload_write_failed`` stays at ``0`` and ``rollout/session_server/payload_queued_groups`` tracks ``rollout/buffer/size`` without growing unboundedly.
+1. No assembly mismatch occurs (the actor compares every group field-by-field against the non-session-server path and aborts on the first difference).
+2. ``rollout/session_server/payload_write_failed`` stays at ``0`` and ``rollout/session_server/payload_queued_groups`` tracks ``rollout/buffer/size`` without unbounded growth.
