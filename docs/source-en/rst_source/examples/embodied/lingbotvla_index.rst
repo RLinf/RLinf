@@ -24,8 +24,8 @@ generations use different backbones and install into separate environments.
       :link: lingbotvlav2
       :link-type: doc
 
-      Qwen3-VL-based model with a mixture-of-experts action expert: SFT, PPO,
-      and GRPO on RoboTwin ``click_bell``.
+      Qwen3-VL-based model with a mixture-of-experts action expert: PPO and
+      GRPO on RoboTwin ``click_bell``.
 
 .. toctree::
    :hidden:

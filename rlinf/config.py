@@ -1452,64 +1452,6 @@ def validate_refl_cfg(cfg: DictConfig) -> None:
         )
 
 
-def _validate_lingbotvlav2_actor_fsdp(cfg: DictConfig) -> None:
-    """Check the FSDP2 fp32-storage, bf16-compute actor that V2 SFT and RL use."""
-    fsdp_cfg = cfg.actor.fsdp_config
-    if fsdp_cfg.strategy != "fsdp2":
-        raise ValueError(
-            "Expected actor.fsdp_config.strategy=fsdp2 for LingBot-VLA V2, "
-            f"got {fsdp_cfg.strategy!r}."
-        )
-    precision = cfg.actor.model.precision
-    param_dtype = fsdp_cfg.mixed_precision.get("param_dtype", None)
-    if (
-        torch_dtype_from_precision(precision) != torch.float32
-        or torch_dtype_from_precision(param_dtype) != torch.bfloat16
-    ):
-        raise ValueError(
-            "LingBot-VLA V2 keeps trainable weights in fp32 and computes in "
-            "bf16; expected actor.model.precision=fp32 and "
-            "actor.fsdp_config.mixed_precision.param_dtype=bf16, got "
-            f"{precision!r} and {param_dtype!r}."
-        )
-    if fsdp_cfg.mixed_precision.get("cast_forward_inputs", True):
-        raise ValueError(
-            "Expected actor.fsdp_config.mixed_precision.cast_forward_inputs="
-            "false for LingBot-VLA V2, which keeps its SDE samples in fp32."
-        )
-
-
-def _validate_lingbotvlav2_batch_shape(
-    cfg: DictConfig, rollout_world_size: int, stage_num: int
-) -> None:
-    """Keep rollout scoring and actor replay at one MoE/GEMM batch shape.
-
-    A bf16 grouped GEMM gives a different result at a different batch size, so
-    both passes must split their batches into chunks of the same size.
-    """
-    fmb = cfg.actor.model.forward_micro_batch_size
-    rollout_fmb = cfg.rollout.model.get("forward_micro_batch_size", fmb)
-    if rollout_fmb != fmb:
-        raise ValueError(
-            "Expected rollout.model.forward_micro_batch_size to equal "
-            f"actor.model.forward_micro_batch_size ({fmb}), got {rollout_fmb}."
-        )
-    if cfg.actor.micro_batch_size % fmb != 0:
-        raise ValueError(
-            f"Expected actor.micro_batch_size to be a multiple of "
-            f"actor.model.forward_micro_batch_size ({fmb}), got "
-            f"{cfg.actor.micro_batch_size}."
-        )
-    envs_per_stage = cfg.env.train.total_num_envs // rollout_world_size // stage_num
-    if envs_per_stage % fmb != 0:
-        raise ValueError(
-            "Expected the envs per rollout worker and pipeline stage "
-            "(env.train.total_num_envs / rollout workers / "
-            "rollout.pipeline_stage_num) to be a multiple of "
-            f"actor.model.forward_micro_batch_size ({fmb}), got {envs_per_stage}."
-        )
-
-
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1604,7 +1546,11 @@ def validate_embodied_cfg(cfg):
                 "algorithm.reward_type=chunk_level, got "
                 f"{algorithm_cfg.reward_type!r}."
             )
-        _validate_lingbotvlav2_actor_fsdp(cfg)
+        from rlinf.models.embodiment.lingbotvlav2.lingbotvlav2_config import (
+            validate_actor_fsdp,
+        )
+
+        validate_actor_fsdp(cfg.actor)
 
     if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
         # The actor-side recompute reshapes flat logprobs by ``action_dim`` for
@@ -1879,7 +1825,11 @@ def validate_embodied_cfg(cfg):
         and not only_eval
         and algorithm_cfg.get("recompute_logprobs", False)
     ):
-        _validate_lingbotvlav2_batch_shape(
+        from rlinf.models.embodiment.lingbotvlav2.lingbotvlav2_config import (
+            validate_batch_shape,
+        )
+
+        validate_batch_shape(
             cfg, component_placement.get_world_size("rollout"), stage_num
         )
     if model_type == SupportedModel.PSI0:
@@ -2331,9 +2281,6 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
             )
 
             cfg.actor.model = validate_cosmos3_sft_model_cfg(cfg.actor.model)
-
-        elif SupportedModel(model_type) == SupportedModel.LINGBOTVLAV2:
-            _validate_lingbotvlav2_actor_fsdp(cfg)
 
         _validate_steam_ensemble_cfg(cfg.actor)
 

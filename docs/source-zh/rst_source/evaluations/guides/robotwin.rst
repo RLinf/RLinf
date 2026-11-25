@@ -176,7 +176,7 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
            rollout.model.lingbotvlav2.robot_config_path=./.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml \
            rollout.model.lingbotvlav2.stats_path=./.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
 
-      默认使用 2 张 GPU（``rollout: 0``、``env: 1``）。LingbotVLA 1.0 与 2.0 均安装 ``lingbotvla`` 包，须分别使用独立的虚拟环境（详见 :doc:`../../examples/embodied/lingbotvlav2`）。
+      默认情况下，rollout 与 64 个评测环境共用一张 GPU。LingbotVLA 1.0 与 2.0 均安装 ``lingbotvla`` 包，须分别使用独立的虚拟环境（详见 :doc:`../../examples/embodied/lingbotvlav2`）。
 
 .. note::
 
@@ -261,7 +261,7 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
    - **OpenVLA-OFT（``demo_randomized``）：** ``task_config.embodiment: [piper, piper, 0.6]``、``center_crop: True``\ （及 ``rollout.model.center_crop: True``）、保持域随机化开启、``num_action_chunks: 25``、匹配 SFT 的 ``unnorm_key``\ （如 ``place_empty_cup_1k``）、``implement_version: "official"``。
    - **OpenPI π₀ / π₀.₅（``demo_clean``）：** ``task_config.embodiment: [aloha-agilex]``、``center_crop: False``、``collect_wrist_camera: true``、关闭全部 ``task_config.domain_randomization``、``num_action_chunks: 50``、``openpi.config_name: pi0_aloha_robotwin`` 或 ``pi05_aloha_robotwin``；建议开启 ``env.enable_offload: True`` 与 ``rollout.enable_offload: True`` 降低显存。
    - **LingbotVLA 1.0：** 配置 ``model_path``、``tokenizer_path`` 与 ``rollout.model.lingbotvla.config_path``；``num_action_chunks: 50``、``max_episode_steps: 400``、``use_custom_reward: False``。
-   - **LingbotVLA 2.0：** 在 ``examples/embodiment/config/model/lingbotvlav2.yaml`` 或 Hydra 参数中填写路径；``precision: bf16``、``embodiment: [aloha-agilex]``、``collect_wrist_camera: true``、``num_action_chunks: 50``、``max_episode_steps: 400``。
+   - **LingbotVLA 2.0：** 在评测配置的 ``rollout.model`` 或 Hydra 参数中填写路径；``precision: bf16``、``embodiment: [aloha-agilex]``、``collect_wrist_camera: true``、``num_action_chunks: 50``、``max_episode_steps: 400``。
 
    **覆盖完整测试集**
 

@@ -95,45 +95,6 @@ class EvalNoiseSampler:
         )
 
 
-def sample_flow_matching_inputs(
-    actions: torch.Tensor,
-    sample_time: Callable[[int, torch.device], torch.Tensor],
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Draw the SFT noise and time for ``actions``, noise first.
-
-    Both draws consume the global RNG, so this order is what a seeded SFT run
-    reproduces; swapping it trains on a different noise stream at the same loss.
-    """
-    noise = torch.randn_like(actions)
-    time = sample_time(len(actions), actions.device).float()
-    return noise, time
-
-
-def flow_matching_loss(
-    actions: torch.Tensor,
-    mask: torch.Tensor,
-    velocity_fn: VelocityFn,
-    time: torch.Tensor,
-    noise: torch.Tensor,
-) -> torch.Tensor:
-    """Return the flow-matching MSE averaged over the coordinates ``mask`` keeps.
-
-    The latent at ``time`` interpolates from ``actions`` at 0 to ``noise`` at 1,
-    the path :func:`sample_with_one_sde_step` integrates from 1 to 0, so the
-    target velocity is ``noise - actions``. ``actions``, ``mask``, and ``noise``
-    are shaped ``[batch, horizon, dim]`` and ``time`` is shaped ``[batch]``.
-    """
-    if mask.shape != actions.shape or noise.shape != actions.shape:
-        raise ValueError(
-            f"Expected actions, mask, and noise with one shape, got "
-            f"{tuple(actions.shape)}, {tuple(mask.shape)}, {tuple(noise.shape)}"
-        )
-    weight = time.view(-1, 1, 1)
-    x_t = weight * noise + (1 - weight) * actions
-    errors = velocity_fn(x_t, time).float() - (noise - actions)
-    return (errors.square() * mask).sum() / mask.sum().clamp_min(1)
-
-
 def flow_sde_transition(
     x: torch.Tensor,
     velocity: torch.Tensor,

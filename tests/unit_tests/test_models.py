@@ -5369,56 +5369,6 @@ def test_lingbotvlav2_replay_reproduces_the_sampled_sde_step():
     assert weight.grad is not None and torch.isfinite(weight.grad)
 
 
-def test_lingbotvlav2_sft_loss_averages_masked_coordinates_on_the_rollout_path():
-    from rlinf.models.embodiment.lingbotvlav2.utils import (
-        flow_matching_loss,
-        sample_with_one_sde_step,
-    )
-
-    torch.manual_seed(0)
-    actions, noise = torch.randn(2, 50, 55), torch.randn(2, 50, 55)
-    mask = torch.zeros(2, 50, 55)
-    mask[..., :14] = 1
-    time = torch.tensor([0.3, 0.8])
-    target = noise - actions
-    # Velocity error 2 on kept coordinates and 100 on masked ones.
-    offset = torch.where(mask.bool(), 2.0, 100.0)
-
-    loss = flow_matching_loss(actions, mask, lambda x, t: target + offset, time, noise)
-    torch.testing.assert_close(loss, torch.tensor(4.0))
-
-    # The target velocity carries the rollout from noise to the actions.
-    final, _, _ = sample_with_one_sde_step(
-        noise, lambda x, t: target, torch.linspace(1, 0, 11), 0.3, None
-    )
-    torch.testing.assert_close(final, actions)
-
-    with pytest.raises(ValueError, match="one shape"):
-        flow_matching_loss(actions, mask[:, 0], lambda x, t: target, time, noise)
-
-
-def test_lingbotvlav2_sft_draws_the_flow_matching_noise_before_the_time():
-    from rlinf.models.embodiment.lingbotvlav2.utils import (
-        sample_flow_matching_inputs,
-    )
-
-    actions = torch.zeros(2, 50, 55)
-
-    # The V2 package samples the time from two torch.rand calls, so it shares
-    # the global RNG with the noise and the draw order decides both values.
-    def sample_time(bsize, device):
-        return torch.rand((bsize,), device=device)
-
-    torch.manual_seed(0)
-    noise, time = sample_flow_matching_inputs(actions, sample_time)
-    torch.manual_seed(0)
-    expected_noise = torch.randn_like(actions)
-    expected_time = torch.rand(2)
-
-    torch.testing.assert_close(noise, expected_noise, rtol=0, atol=0)
-    torch.testing.assert_close(time, expected_time, rtol=0, atol=0)
-
-
 def test_lingbotvlav2_eval_noise_is_independent_of_global_rng_and_advances():
     from rlinf.models.embodiment.lingbotvlav2.utils import EvalNoiseSampler
 
@@ -7447,7 +7397,6 @@ def test_prefix_eval_config_validates_without_actor(monkeypatch, config_name):
     assert isinstance(get_model(cfg.rollout.model), PrefixPolicy)
 
 
-
 def test_lingbotvlav2_grpo_smoke_config_composes(monkeypatch):
     from hydra import compose, initialize_config_dir
 
@@ -7511,44 +7460,6 @@ def test_lingbotvlav2_rejects_rollout_and_replay_batch_shapes_that_differ(
     OmegaConf.resolve(cfg)
     with pytest.raises(ValueError, match=message):
         validate_embodied_cfg(cfg)
-
-
-def test_lingbotvlav2_sft_config_composes_and_requires_fp32_storage(monkeypatch):
-    from hydra import compose, initialize_config_dir
-
-    from rlinf.config import validate_sft_cfg
-
-    root = Path(__file__).resolve().parents[2]
-    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/sft"))
-    with initialize_config_dir(
-        config_dir=str(root / "examples/sft/config"), version_base="1.1"
-    ):
-        cfg = compose(config_name="robotwin_sft_lingbotvlav2")
-    OmegaConf.resolve(cfg)
-    assert cfg.actor.model.model_type == "lingbotvlav2"
-    assert cfg.runner.max_steps % cfg.runner.save_interval == 0
-    validate_sft_cfg(cfg)
-
-    cfg.actor.model.precision = "bf16"
-    with pytest.raises(ValueError, match="actor.model.precision=fp32"):
-        validate_sft_cfg(cfg)
-
-
-def test_lingbotvlav2_sft_resolves_one_local_lerobot_root(tmp_path, monkeypatch):
-    from rlinf.models.embodiment.lingbotvlav2.sft_builder import _resolve_data_path
-
-    dataset = tmp_path / "click_bell"
-    (dataset / "meta").mkdir(parents=True)
-    (dataset / "meta" / "info.json").write_text("{}")
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.chdir(tmp_path)
-
-    assert _resolve_data_path("~/click_bell") == str(dataset)
-    assert _resolve_data_path(["click_bell"]) == str(dataset)
-    with pytest.raises(FileNotFoundError, match="meta/info.json"):
-        _resolve_data_path(str(tmp_path / "missing"))
-    with pytest.raises(ValueError, match="one LeRobot dataset"):
-        _resolve_data_path([str(dataset), str(dataset)])
 
 
 def test_lingbotvlav2_names_the_placeholder_path_it_cannot_find(tmp_path):

@@ -176,7 +176,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
            rollout.model.lingbotvlav2.robot_config_path=./.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml \
            rollout.model.lingbotvlav2.stats_path=./.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
 
-      Default placement uses 2 GPUs (``rollout: 0``, ``env: 1``). Keep LingbotVLA 1.0 and 2.0 in separate virtual environments because both install a ``lingbotvla`` package (see :doc:`../../examples/embodied/lingbotvlav2`).
+      By default, rollout and all 64 evaluation environments share one GPU. Keep LingbotVLA 1.0 and 2.0 in separate virtual environments because both install a ``lingbotvla`` package (see :doc:`../../examples/embodied/lingbotvlav2`).
 
 .. note::
 
@@ -261,7 +261,7 @@ On AMD ROCm, install with ``--platform amd`` and set ``planner_backend: mplib`` 
    - **OpenVLA-OFT (``demo_randomized``):** ``task_config.embodiment: [piper, piper, 0.6]``, ``center_crop: True`` (and ``rollout.model.center_crop: True``), domain randomization enabled, ``num_action_chunks: 25``, matching ``unnorm_key`` (such as ``place_empty_cup_1k``), ``implement_version: "official"``.
    - **OpenPI π₀ / π₀.₅ (``demo_clean``):** ``task_config.embodiment: [aloha-agilex]``, ``center_crop: False``, ``collect_wrist_camera: true``, all ``task_config.domain_randomization`` fields ``false``, ``num_action_chunks: 50``, ``openpi.config_name: pi0_aloha_robotwin`` or ``pi05_aloha_robotwin``; set ``env.enable_offload: True`` and ``rollout.enable_offload: True`` to save GPU memory.
    - **LingbotVLA 1.0:** set ``model_path``, ``tokenizer_path``, and ``rollout.model.lingbotvla.config_path``; ``num_action_chunks: 50``, ``max_episode_steps: 400``, ``use_custom_reward: False``.
-   - **LingbotVLA 2.0:** set paths in ``examples/embodiment/config/model/lingbotvlav2.yaml`` or via Hydra overrides; ``precision: bf16``, ``embodiment: [aloha-agilex]``, ``collect_wrist_camera: true``, ``num_action_chunks: 50``, ``max_episode_steps: 400``.
+   - **LingbotVLA 2.0:** set paths under ``rollout.model`` in the evaluation config or via Hydra overrides; ``precision: bf16``, ``embodiment: [aloha-agilex]``, ``collect_wrist_camera: true``, ``num_action_chunks: 50``, ``max_episode_steps: 400``.
 
    **Covering the full test set**
 

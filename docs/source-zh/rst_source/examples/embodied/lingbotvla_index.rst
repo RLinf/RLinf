@@ -23,7 +23,7 @@ LingbotVLA
       :link: lingbotvlav2
       :link-type: doc
 
-      基于 Qwen3-VL、带混合专家（MoE）动作专家的模型：在 RoboTwin ``click_bell`` 上用 SFT、PPO 与 GRPO 训练。
+      基于 Qwen3-VL、带混合专家（MoE）动作专家的模型：在 RoboTwin ``click_bell`` 上用 PPO 与 GRPO 训练。
 
 .. toctree::
    :hidden:

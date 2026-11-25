@@ -48,9 +48,7 @@ from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.lingbotvlav2.utils import (
     EvalNoiseSampler,
     check_required_paths,
-    flow_matching_loss,
     is_rl_trainable,
-    sample_flow_matching_inputs,
     sample_with_one_sde_step,
     score_sde_step,
 )
@@ -63,49 +61,6 @@ from rlinf.utils.logging import get_logger
 # are not rounded away, and bf16 in the rollout. FSDP2 casts the actor's fp32
 # weights to bf16 for compute, which matches the rollout's bf16 copy.
 _COMPUTE_DTYPE = torch.bfloat16
-# Observation inputs that build the frozen VLM prefix.
-_PREFIX_KEYS = ("images", "img_masks", "lang_tokens", "lang_masks", "image_grid_thw")
-
-
-def build_model_config(config: DictConfig):
-    """Rebuild the release model config with the flags RLinf trains under."""
-    check_required_paths(config)
-    model_config = build_checkpoint_config(
-        read_checkpoint_config(Path(config.model_path).expanduser()),
-        config.tokenizer_path,
-    )
-    model_config.attention_implementation = config.lingbotvlav2.attention_implementation
-    model_config.use_cache = True
-    # Fixed-grid caches are batch-size dependent; actor micro-batches and
-    # rollout batches need not have the same size.
-    model_config.precompute_grid_thw = False
-    model_config.use_qwen3_fixed_grid_cache = False
-    model_config.bias_update_speed = 0.0
-    model_config.train_expert_only = True
-    model_config.freeze_vision_encoder = True
-    return model_config
-
-
-def build_feature_transform(config: DictConfig, model_config, processor):
-    """Build the release FeatureTransform shared by rollout and SFT data.
-
-    Returns the transform and the square image size it expects.
-    """
-    with Path(config.lingbotvlav2.training_config_path).expanduser().open() as source:
-        data_config = dict(yaml.safe_load(source)["data"])
-    for key in ("joints", "norm_type"):
-        data_config[key] = [
-            str(item) if isinstance(item, dict) else item for item in data_config[key]
-        ]
-    transform = FeatureTransform(
-        config.lingbotvlav2.robot_config_path,
-        SimpleNamespace(**data_config),
-        model_config,
-        processor,
-        chunk_size=int(model_config.n_action_steps),
-        norm_stats_path=config.lingbotvlav2.stats_path,
-    )
-    return transform, int(data_config["img_size"])
 
 
 class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
@@ -177,7 +132,20 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
                 raise ValueError("V2 parallel state must match RLinf data parallelism")
 
         weights = Path(config.model_path).expanduser()
-        model_config = build_model_config(config)
+        model_config = build_checkpoint_config(
+            read_checkpoint_config(weights), config.tokenizer_path
+        )
+        model_config.attention_implementation = (
+            config.lingbotvlav2.attention_implementation
+        )
+        model_config.use_cache = True
+        # Fixed-grid caches are batch-size dependent; actor micro-batches and
+        # rollout batches need not have the same size.
+        model_config.precompute_grid_thw = False
+        model_config.use_qwen3_fixed_grid_cache = False
+        model_config.bias_update_speed = 0.0
+        model_config.train_expert_only = True
+        model_config.freeze_vision_encoder = True
         self.horizon = int(model_config.n_action_steps)
         self.latent_dim = int(model_config.max_action_dim)
         if config.num_action_chunks != self.horizon:
@@ -219,9 +187,24 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
                 bias_last=True,
             ).to(dtype=torch_dtype)
 
+        with (
+            Path(config.lingbotvlav2.training_config_path).expanduser().open() as source
+        ):
+            data_config = dict(yaml.safe_load(source)["data"])
+        for key in ("joints", "norm_type"):
+            data_config[key] = [
+                str(item) if isinstance(item, dict) else item
+                for item in data_config[key]
+            ]
+        self.image_size = int(data_config["img_size"])
         self.processor = build_processor(config.tokenizer_path)
-        self.transform, self.image_size = build_feature_transform(
-            config, model_config, self.processor
+        self.transform = FeatureTransform(
+            config.lingbotvlav2.robot_config_path,
+            SimpleNamespace(**data_config),
+            model_config,
+            self.processor,
+            chunk_size=self.horizon,
+            norm_stats_path=config.lingbotvlav2.stats_path,
         )
         if self.transform.actions_convert_from_state:
             raise ValueError("RoboTwin V2 needs direct qpos action commands")
@@ -431,43 +414,11 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
         return latent[..., mask]
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs: Any):
-        if forward_type == ForwardType.SFT:
-            return self.sft_forward(**kwargs)
         if forward_type != ForwardType.DEFAULT:
             raise NotImplementedError(
-                f"The V2 adapter implements SFT and PPO/GRPO, got {forward_type}"
+                "The V2 adapter currently implements PPO/GRPO only"
             )
         return self.default_forward(**kwargs)
-
-    def sft_forward(self, data: dict, **kwargs: Any) -> dict[str, torch.Tensor]:
-        """Flow-matching loss on the velocity path the rollout integrates.
-
-        The release training forward also adds depth/video alignment losses;
-        their heads lie outside the trainable scope, so only the action flow
-        loss is kept, masked by the dataset's chunk joint mask.
-        """
-        inputs = self._device_inputs(
-            {key: data[key] for key in (*_PREFIX_KEYS, "state")}
-        )
-        actions = data["actions"].to(inputs["state"].device, torch.float32)
-        mask = data["joint_mask"].to(actions.device, torch.float32)
-        if actions.shape[1:] != (self.horizon, self.latent_dim):
-            raise ValueError(
-                f"Expected SFT actions [batch, {self.horizon}, {self.latent_dim}], "
-                f"got {tuple(actions.shape)}"
-            )
-        context = self._prefix(inputs)
-        noise, time = sample_flow_matching_inputs(
-            actions, self.vla_model.model.sample_time
-        )
-        loss = flow_matching_loss(
-            actions,
-            mask,
-            lambda x, t: self._velocity(x, t, inputs, context),
-            time,
-            noise,
-        )
-        return {"loss": loss, "flow_mse": loss.detach()}
 
     def default_forward(
         self, forward_inputs: dict, compute_values: bool = True, **kwargs: Any
