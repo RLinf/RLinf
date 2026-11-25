@@ -1,8 +1,5 @@
-SO101 Setup and Control
-=======================
-
-This doc walks you through setting up an SO101 arm and running the RLinf
-hardware test script to read feedback and check joint and gripper movement.
+SO-101 Setup & SFT
+==================
 
 .. figure:: https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp
    :align: center
@@ -10,320 +7,237 @@ hardware test script to read feedback and check joint and gripper movement.
 
    SO-101 follower with its gripper. Image: Hugging Face LeRobot.
 
+Set up an SO-101 follower arm on Linux and run the complete workflow from calibration and hardware checks through leader teleoperation, LeRobot demonstration collection, OpenPI SFT, and local fixed-checkpoint evaluation.
+
 Overview
 --------
 
-The workflow runs on the Linux machine connected to the arm and covers the
-SO-101 path from hardware checks and leader demonstrations through SFT and
-local fixed-checkpoint evaluation.
+Every stage runs on the Linux machine wired to the arm and shares the ``SO101ReachEnv-v1`` joint-space representation across collection, SFT, and local evaluation.
 
-Hardware Setup
---------------
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-Prepare the arm and controller machine before installing the software.
+   .. grid-item-card:: Robot
+      :text-align: center
+
+      SO-101 follower · gripper · optional leader
+
+   .. grid-item-card:: Sensors & Teleop
+      :text-align: center
+
+      USB camera · SO-101 leader · keyboard
+
+   .. grid-item-card:: Workflow
+      :text-align: center
+
+      Calibrate · Teleop & collect · OpenPI SFT · Eval
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      Linux PC · USB Feetech servos · GPU for SFT
+
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 70
+   :widths: 24 76
+
+   * - Field
+     - Description
+   * - Observation
+     - Configured RGB camera frames plus canonical 6-D state (five absolute joint positions in radians and gripper opening in ``[0, 1]``).
+   * - Action
+     - Canonical 6-D target (five absolute joint angles in radians plus gripper opening ``0=closed, 1=open``), padded to 32-D for ``pi05_so101_joint``.
+   * - Reward
+     - Operator-labeled via keyboard during collection and evaluation (``a`` start/discard, ``b`` segment/failure, ``c`` success).
+   * - Prompt
+     - ``task_description`` in the collection and evaluation YAML configs (must match SFT).
+
+Hardware and Safety
+-------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
 
    * - Component
      - Requirement
    * - Follower
-     - SO-101 arm with its gripper, servo controller, and the power supply specified for the kit.
+     - SO-101 arm with gripper, servo controller, and kit power supply.
+   * - Leader (optional)
+     - SO-101 leader arm on a second USB serial port for teleoperation and data collection.
    * - Controller machine
-     - Linux computer with a USB connection to the follower's servo controller.
+     - Linux computer with USB connection(s) to the Feetech servo controller(s) and camera; GPU for OpenPI SFT and evaluation.
 
-For an unassembled arm, follow the parts and assembly instructions in the
-`LeRobot SO-101 guide <https://huggingface.co/docs/lerobot/so101>`_. Configure new
-motors individually before completing the wiring; the installation steps below
-include the required commands.
+For an unassembled arm, follow the `LeRobot SO-101 guide <https://huggingface.co/docs/lerobot/so101>`__ and assign motor IDs individually before completing the daisy chain.
 
-Installation
-------------
+.. warning::
 
-Install the robot dependencies on the controller machine using the custom-environment
-workflow below. Run the checks from the same checkout and activated environment.
+   On hardware, startup moves the follower to the folded rest pose ``[0, -99, 95, 65, 0]`` degrees along a paced trajectory (30 deg/s default; use ``--reset-speed 10`` for slower motion or ``--no-reset`` to skip startup movement). Clear that motion path before launching. RLinf workers do not run interactive calibration—calibrate the follower under the runtime account beforehand and never reuse the leader's calibration file for the follower.
 
-Robot Controller Node
-~~~~~~~~~~~~~~~~~~~~~
+.. dropdown:: Motor ID assignment for new or replaced servos
 
-Clone RLinf on the machine connected to the robot, then install its environment.
+   For new or replaced Feetech motors, assign IDs and baud rates one motor at a time following the upstream wiring sequence (skip for an already configured arm):
+
+   .. code-block:: bash
+
+      lerobot-setup-motors \
+        --robot.type=so101_follower \
+        --robot.port=/dev/ttyACM0
+
+   Connect only the motor named at each prompt. After all six motors are configured, finish assembly and reconnect the daisy chain.
+
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
-   :end-before: Then set up the dependencies
 
-Install the robot dependencies from the repository root:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: 1. Setup & Calibration
 
-   # Mainland China users can add --use-mirror for faster downloads.
-   bash requirements/install.sh embodied --model openpi --env so101
-   source .venv/bin/activate
-   export REPO_PATH="$PWD"
+      **1. Install RLinf**
 
-The installer includes OpenPI, LeRobot, and the Feetech motor dependencies.
-Run subsequent commands from this checkout with the environment activated. See
-:doc:`Installation </rst_source/start/installation>` for platform prerequisites.
+      Install the SO-101 environment (includes OpenPI, LeRobot, and Feetech motor dependencies):
 
-Find the Port and Configure the Motors
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      .. code-block:: bash
 
-Connect the servo controller's USB cable and the power supply specified for
-your kit. Find which serial device belongs to the follower:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env so101 && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. Find the serial port and check permissions**
 
-   lerobot-find-port
+      Plug in the follower servo controller and power supply, then identify the device path (examples assume ``/dev/ttyACM0``):
 
-Unplug the USB cable when prompted, then reconnect it. The reported device path
-is the port to use below; these examples assume ``/dev/ttyACM0``. Check access:
+      .. code-block:: bash
 
-.. code-block:: bash
+         lerobot-find-port
+         ls -l /dev/ttyACM0
+         id -nG
 
-   ls -l /dev/ttyACM0
-   id -nG
+      If the port belongs to ``dialout`` and your user is not in that group, run ``sudo usermod -aG dialout "$USER"``, log out and back in, reactivate ``.venv``, and recheck the port path.
 
-On Ubuntu, a port owned by the ``dialout`` group requires your account to belong
-to that group. If it does not, run ``sudo usermod -aG dialout "$USER"``, log out
-and back in, then return to the checkout and reactivate ``.venv``. Recheck the
-port path after reconnecting USB.
+      **3. Calibrate the follower**
 
-For new or replaced motors, assign IDs and baud rates once, following the
-upstream guide's wiring sequence:
+      Calibrate the follower from a terminal before RLinf opens the serial bus (keep the calibration under the same user account and reuse ``--id rlinf_follower``):
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   lerobot-setup-motors \
-     --robot.type=so101_follower \
-     --robot.port=/dev/ttyACM0
+         lerobot-calibrate \
+           --robot.type=so101_follower \
+           --robot.port=/dev/ttyACM0 \
+           --robot.id=rlinf_follower
 
-Connect only the motor named by each prompt to the controller. The tool assigns
-its ID and baud rate before requesting the next motor. After all six motors
-are configured, complete the assembly and reconnect the daisy chain as shown
-in the guide. Skip motor setup for an already configured arm; calibration is
-still needed under the ID you will use with RLinf.
+      **4. Run the hardware check**
 
-Calibrate the Follower
-^^^^^^^^^^^^^^^^^^^^^^
+      Clear the fold path and test joints and gripper without cameras (``CAMERA_SERIALS=''`` skips camera discovery):
 
-With the motors configured and the arm assembled, calibrate the follower from
-a terminal before RLinf opens the serial bus:
+      .. code-block:: bash
 
-.. code-block:: bash
+         CAMERA_SERIALS='' python -m toolkits.realworld_check.test_so101_env \
+           --port /dev/ttyACM0 --id rlinf_follower --step 2
 
-   lerobot-calibrate \
-     --robot.type=so101_follower \
-     --robot.port=/dev/ttyACM0 \
-     --robot.id=rlinf_follower
+      Enter commands one at a time, letting each move settle (``up``/``down`` step the shoulder by 2 degrees; use ``help`` for other joints; in env configs, ``reset_joint_speed`` is rad/s and ``reset_duration`` defaults to 3 s):
 
-Replace the port with your device. Move the joints to the middle positions
-shown in the guide, confirm the prompt, then move each joint through its travel
-as instructed. The tool reports the saved calibration file. Keep it under the
-account used for RLinf and reuse the ID as
-``--id rlinf_follower``; do not substitute the leader's calibration.
+      .. code-block:: text
 
-.. warning::
+         where
+         up
+         down
+         open
+         close
+         quit
 
-   RLinf workers do not run interactive follower calibration. Missing or
-   inconsistent calibration causes connection to fail. Calibrate under the
-   account that will run the arm before starting workers.
+   .. tab-item:: 2. Teleop & Collect
 
-Run It
-------
+      **1. Calibrate the leader arm and verify teleoperation**
 
-With the follower calibrated, use the interactive test to check its joints and
-gripper. The script may start a local Ray instance to communicate with the arm.
+      Calibrate the SO-101 leader on its own port and ID, then launch teleoperation with camera discovery enabled (add ``--enable-camera-player`` to preview frames):
 
-.. warning::
+      .. code-block:: bash
 
-   On hardware, startup moves the arm to the folded rest pose
-   ``[0, -99, 95, 65, 0]`` degrees along a paced joint trajectory. Clear that
-   motion path before launching the toolkit. Pass ``--no-reset`` to connect
-   without commanding startup movement.
+         lerobot-calibrate \
+           --teleop.type=so101_leader \
+           --teleop.port=/dev/ttyACM1 \
+           --teleop.id=rlinf_leader
 
-With the follower calibrated and room for the initial fold, run:
+         python -m toolkits.realworld_check.test_so101_env \
+           --port /dev/ttyACM0 --id rlinf_follower \
+           --leader /dev/ttyACM1 --leader-id rlinf_leader \
+           --fps 30 --enable-camera-player
 
-.. code-block:: bash
+      After the follower folds, match its pose with the leader and type ``teleop``. Press Ctrl-C once to return to the prompt, then ``quit``. Camera capture runs independently (reusing frames up to ``camera_max_age`` = 0.5 s), and stalled gripper jaws hold at the measured opening to relieve pressure until the leader backs off (explicit open and close commands still wait for travel or stall relief).
 
-   CAMERA_SERIALS='' python -m toolkits.realworld_check.test_so101_env \
-     --port /dev/ttyACM0 --id rlinf_follower --step 2
+      **2. Collect demonstrations**
 
-Replace the port with your device and use the ID from calibration.
-``CAMERA_SERIALS=''`` disables camera discovery so the check uses only the arm.
+      Set the follower/leader ports, calibration IDs, camera device, verified reset pose, and ``task_description`` in ``examples/embodiment/config/realworld_so101_collect_data_joint.yaml``, then launch from the repo root:
 
-Startup reset and the ``home`` command use a smooth trajectory from the measured
-joint positions, with a default commanded speed limit of 30 degrees per second.
-Use ``--reset-speed 10`` for a slower reset. The driver extends the trajectory
-for large moves and does not issue catch-up commands after a delayed write.
-In an environment config, ``reset_joint_speed`` uses radians per second and
-``reset_duration`` sets the minimum trajectory duration (default 3 seconds).
-
-Enter these commands one at a time, allowing each move to finish:
-
-.. code-block:: text
-
-   where
-   up
-   down
-   open
-   close
-   quit
-
-``up`` and ``down`` change the shoulder angle by two degrees, rather than moving
-the tool vertically. Joint feedback is printed after each move; ``open`` and
-``close`` test the gripper. ``quit`` closes the environment and its arm worker.
-Use ``help`` for the other joint directions.
-
-To use the arm in your own program or attach cameras, see
-:doc:`Robotics Interface </rst_source/concepts/robotics>`.
-
-Follow a Leader Arm
--------------------
-
-To control the follower by hand, connect and calibrate an SO101 leader using
-its own port and calibration ID:
-
-.. code-block:: bash
-
-   lerobot-calibrate \
-     --teleop.type=so101_leader \
-     --teleop.port=/dev/ttyACM1 \
-     --teleop.id=rlinf_leader
-
-Start the check with both arms configured. Camera discovery is enabled when
-``CAMERA_SERIALS`` is unset; add ``--enable-camera-player`` to display images:
-
-.. code-block:: bash
-
-   python -m toolkits.realworld_check.test_so101_env \
-     --port /dev/ttyACM0 --id rlinf_follower \
-     --leader /dev/ttyACM1 --leader-id rlinf_leader \
-     --fps 30 --enable-camera-player
-
-After the follower folds, place the leader in a matching pose and enter
-``teleop``. The follower tracks both the joints and gripper continuously.
-Press Ctrl-C once to return to the prompt, then enter ``quit`` to disconnect.
-
-``--fps`` sets the requested control rate and defaults to 30 Hz. Camera capture
-runs independently; the environment reuses frames up to ``camera_max_age``
-seconds old (default 0.5) instead of waiting for a new image at every step.
-Continuous gripper commands return without waiting for travel. The driver
-monitors stalled jaws and holds them at the measured opening to relieve
-pressure. Each measured advance toward the target restarts stall detection,
-so slow or sustained movement can continue while it makes progress.
-Move the leader's gripper away from that opening before retrying
-motion into the obstruction. The driver's ``open_gripper()`` and
-``close_gripper()`` methods still wait for travel or stall relief.
-
-Collect Demonstrations
------------------------
-
-After both arms pass the hardware checks, configure the follower and leader
-ports, calibration IDs, camera device, reset pose, and
-``task_description`` in
-``examples/embodiment/config/realworld_so101_collect_data_joint.yaml``. Replace
-the device placeholders and verify the configured reset pose before operating
-the hardware. Replace the placeholder ``<task description>`` with the
-instruction used for your demonstrations. The collector resets both arms to the configured start pose,
-records the leader demonstration, and writes a LeRobot dataset that the SO-101
-SFT loader can consume.
-
-Launch collection from the repository root:
-
-.. code-block:: bash
-
-   bash examples/embodiment/collect_data.sh \
-     realworld_so101_collect_data_joint
-
-The keyboard wrapper uses ``a`` to start or discard a recording, ``b`` to
-advance a segment, ``c`` to save a successful episode, and ``q`` to stop the
-collector cleanly. The runtime user must be able to read the selected Linux
-input device. Set ``RLINF_KEYBOARD_DEVICE`` to a stable
-``/dev/input/by-id/...`` path when the machine exposes more than one keyboard.
-
-The dataset is written below the run's ``collected_data`` directory. One
-dataset root can contain multiple episodes; collecting more episodes into that
-root does not require an extra preparation step. Separate runs can produce
-separate LeRobot dataset roots. To train on episodes from several roots, first
-combine them into one LeRobot dataset, preserving each episode's frames and
-task description. Then set ``data.train_data_paths`` in the SFT YAML to the
-combined dataset root (the directory containing ``meta/info.json``). SFT reads
-one prepared dataset and does not merge collection runs automatically. Compute
-normalization statistics from that same
-combined dataset, not from one of its source runs.
-
-SO-101 state and action vectors use one canonical six-value format throughout
-collection, storage, SFT, and evaluation: the first five values are absolute
-joint positions in radians, and the sixth value is gripper opening in the
-range ``0`` (closed) to ``1`` (open). Norm statistics must be computed from
-this same representation.
-
-Compute the padded OpenPI statistics from the same dataset before SFT. The
-generator reads each LeRobot sample's ``task`` string and uses it as the
-``prompt`` before applying the SO-101 OpenPI transforms. Run it from the RLinf
-repository with the embodied environment activated:
-
-.. code-block:: bash
-
-   export HF_LEROBOT_HOME=/absolute/path/to/datasets
-   python toolkits/lerobot/calculate_norm_stats.py \
-     --config-name pi05_so101_joint \
-     --repo-id so101_dataset
-
-Set ``HF_LEROBOT_HOME`` to the parent directory containing the direct dataset
-root before running the command. The command prints the output directory in a
-``Writing stats to:`` line; use the ``norm_stats.json`` written there as
-``actor.model.openpi_data.norm_stats_path`` in the SFT YAML and use the same
-file in the evaluation model config. This output directory comes from the
-selected OpenPI training config and may differ from ``assets_dir`` in the SFT
-YAML. The file must contain both ``state`` and ``actions`` statistics, each
-with 32 values for this Pi0.5 model. The SO-101 transform pads the canonical
-six-value vectors to that model dimension before calculating the statistics.
-
-Both collection and evaluation reuse ``SO101ReachEnv-v1`` for the SO-101
-joint-space observations, actions, and reset lifecycle. Set the same
-``task_description`` in the evaluation config so the fixed checkpoint receives
-the instruction it was trained on. The operator's ``b`` or ``c`` key records
-the evaluation outcome.
-
-Train and Evaluate a Local Policy
-----------------------------------
-
-RLinf provides an SO-101 joint-space SFT configuration and a local
-fixed-checkpoint evaluation configuration. Copy the direct LeRobot dataset
-root, base checkpoint, and normalization-statistics paths into
-``examples/sft/config/realworld_sft_openpi_so101.yaml``, then launch SFT through
-the shared entrypoint:
-
-.. code-block:: bash
-
-   bash examples/sft/run_vla_sft.sh realworld_sft_openpi_so101
-
-For local evaluation, set the checkpoint and normalization-statistics paths in
-``examples/embodiment/config/model/so101_pi05.yaml``. Set the follower port,
-calibration ID, camera device, and reset pose in
-``examples/embodiment/config/realworld_so101_eval_openpi.yaml``. Replace its
-device placeholders and verify its configured reset pose before connecting
-hardware. Replace its ``task_description`` placeholder
-``<task description>`` with the same instruction used during SFT, then launch
-the shared evaluation entrypoint:
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh realworld_so101_eval_openpi
-
-The evaluation config runs the standard action-chunk evaluation path. Press
-``a`` on the selected keyboard to start an episode, ``c`` to end it as
-success, or ``b`` to end it as failure. The checkpoint must contain weights
-compatible with ``pi05_so101_joint`` and normalization statistics for the
-configured asset ID.
-
-New Real-World Tasks
---------------------
-
-To build a different RLinf environment around the arm, follow
-:doc:`New Real-World Tasks </rst_source/extending/new_task>` to define its
-reset procedure, observations, actions, reward, and success condition. The
-collection, SFT, and fixed-checkpoint evaluation workflow above already uses
-the provided ``SO101ReachEnv-v1`` task; use this extension guide when you add a
-different task or environment.
+      .. code-block:: bash
+
+         bash examples/embodiment/collect_data.sh realworld_so101_collect_data_joint
+
+      Use ``a`` to start or discard a recording, ``b`` to advance a segment, ``c`` to save a successful episode, and ``q`` to stop cleanly. Set ``RLINF_KEYBOARD_DEVICE`` to a stable ``/dev/input/by-id/...`` path if multiple keyboards are attached. Episodes are written under the run's ``collected_data`` directory; to combine multiple runs or inspect recorded frames as MP4 previews, run ``toolkits/lerobot/merge_lerobot_datasets.py`` and ``toolkits/lerobot/visualize_lerobot_dataset.py`` before computing stats or starting SFT.
+
+      **3. Compute OpenPI normalization statistics**
+
+      Point ``HF_LEROBOT_HOME`` at the parent directory of your final dataset root and generate padded 32-D ``state`` and ``actions`` statistics:
+
+      .. code-block:: bash
+
+         export HF_LEROBOT_HOME=/absolute/path/to/datasets
+         python -m toolkits.lerobot.calculate_norm_stats \
+           --config-name pi05_so101_joint \
+           --repo-id so101_dataset
+
+      Copy the ``norm_stats.json`` path printed after ``Writing stats to:`` into ``openpi_data.norm_stats_path`` (``actor.model.openpi_data.norm_stats_path`` for SFT and ``rollout.model.openpi_data.norm_stats_path`` for evaluation; training and evaluation do not auto-discover this file beside ``full_weights.pt``).
+
+   .. tab-item:: 3. SFT & Evaluate
+
+      **1. Train OpenPI SFT**
+
+      Edit ``examples/sft/config/realworld_sft_openpi_so101.yaml`` or pass the dataset root (containing ``meta/info.json``), base checkpoint, and ``norm_stats.json`` directly as Hydra CLI overrides:
+
+      .. code-block:: bash
+
+         bash examples/sft/run_vla_sft.sh realworld_sft_openpi_so101 \
+           data.train_data_paths=./so101_dataset \
+           actor.model.model_path=./pi05_base_pytorch \
+           actor.model.openpi_data.norm_stats_path=./assets/pi05_so101_joint/so101_dataset/norm_stats.json
+
+      **2. Evaluate locally with a fixed checkpoint**
+
+      Update the follower port, calibration ID, camera device, verified reset pose, and identical ``task_description`` in ``examples/embodiment/config/realworld_so101_eval_openpi.yaml``. Set the trained checkpoint (compatible with ``pi05_so101_joint``) and matching ``norm_stats.json`` in ``examples/embodiment/config/model/so101_pi05.yaml``, or pass them via Hydra CLI overrides:
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh realworld_so101_eval_openpi \
+           rollout.model.model_path=./logs/checkpoints/global_step_10000 \
+           rollout.model.openpi_data.norm_stats_path=./assets/pi05_so101_joint/so101_dataset/norm_stats.json
+
+      Press ``a`` to start an evaluation episode, ``c`` to record success, or ``b`` to record failure.
+
+Results and Troubleshooting
+---------------------------
+
+Monitor SFT loss on the host with ``tensorboard --logdir ./logs --port 6006`` and confirm ``norm_stats.json`` contains 32-D ``state`` and ``actions`` arrays before launching SFT or evaluation; see :doc:`Training metrics <../../reference/metrics>` for metric names.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Symptom
+     - Fix
+   * - Permission denied opening ``/dev/ttyACM0``
+     - Run ``sudo usermod -aG dialout "$USER"``, log out and back in, reactivate ``.venv``, and re-verify the port with ``lerobot-find-port``.
+   * - Worker fails to connect to follower
+     - Run ``lerobot-calibrate`` under the same Linux account used for RLinf and pass the matching ``--id``; never reuse the leader's calibration file.
+   * - Gripper stops advancing against an object
+     - Stall protection holds the measured opening to relieve pressure; move the leader gripper slightly away from the obstruction before retrying.
+   * - Multiple collection runs need joint SFT
+     - SFT reads one dataset root and does not auto-merge runs; combine them into one LeRobot dataset first, then compute ``norm_stats.json`` on that combined dataset.
+   * - Keyboard shortcuts do not register
+     - Ensure the runtime user can read ``/dev/input`` and set ``RLINF_KEYBOARD_DEVICE`` to a ``/dev/input/by-id/...`` path.
+
+For programmatic control or camera attachment, see :doc:`Robotics Interface <../../concepts/robotics>`; to build a custom task beyond ``SO101ReachEnv-v1``, see :doc:`New Real-World Tasks <../../extending/new_task>`.

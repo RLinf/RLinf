@@ -1,5 +1,5 @@
-MLP Policy Reinforcement Learning Training
-==========================================
+MLP Policy RL
+=============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/3_layer_mlp.jpg
    :align: center
@@ -87,75 +87,83 @@ Observation and Action
    * - Prompt
      - Not used by the MLP policy; tasks are selected through Hydra configs.
 
-Installation
-------------
+Setup and Run
+-------------
 
-For running in simulation environments, please refer to :doc:`../../start/installation` for installation instructions.
+.. include:: _setup_common.rst
 
-This configuration series uses Hydra's ``searchpath`` to load external configuration directories via environment variables:
+No pretrained checkpoint is needed; the MLP policy trains from scratch.
 
--   ``hydra.searchpath: file://${oc.env:EMBODIED_PATH}/config/``
+.. tab-set::
 
-Please ensure that ``EMBODIED_PATH`` is correctly set and that dependencies/resources for ManiSkill3 / FrankaSim are installed.
+   .. tab-item:: ManiSkill / LIBERO
 
-Run It
-------
+      **1. Install**
 
-**1. Configuration Files**
+      .. code-block:: bash
 
-RLinf provides several default MLP configurations covering different environments and algorithm settings:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
 
--   **ManiSkill + PPO + MLP**: ``maniskill_ppo_mlp``
--   **ManiSkill + SAC + MLP**: ``maniskill_sac_mlp``
--   **FrankaSim + PPO + MLP**: ``frankasim_ppo_mlp``
+      **2. Launch**
 
-**2. Key Parameter Configuration**
+      Default configs under ``examples/embodiment/config/``:
 
-**2.1 Model Parameters (Model)**
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 34 36
 
-The MLP model is introduced via ``model/mlp_policy@actor.model`` and can be overridden in different configurations. Key fields include:
+         * - Recipe
+           - Config
+           - Launch command suffix
+         * - ManiSkill + PPO + MLP
+           - ``maniskill_ppo_mlp.yaml``
+           - ``maniskill_ppo_mlp``
+         * - ManiSkill + SAC + MLP
+           - ``maniskill_sac_mlp.yaml``
+           - ``maniskill_sac_mlp``
+         * - LIBERO-Spatial + GRPO + MLP
+           - ``libero_spatial_0_grpo_mlp.yaml``
+           - ``libero_spatial_0_grpo_mlp``
 
-.. code:: yaml
+      .. code-block:: bash
 
-   model_type: "mlp_policy"                # Use MLP policy network as actor (Multi-Layer Perceptron; fits low-dim state inputs)
+         # ManiSkill (PPO-MLP)
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
-   model_path: ""
+         # ManiSkill (SAC-MLP)
+         bash examples/embodiment/run_embodiment.sh maniskill_sac_mlp
 
-   policy_setup: "panda-qpos"              # Select action semantics and control mode; 'panda-qpos' usually implies joint space control (e.g., qpos/joint targets or deltas)
+         # LIBERO-Spatial (GRPO-MLP)
+         bash examples/embodiment/run_embodiment.sh libero_spatial_0_grpo_mlp
 
-   obs_dim: 42                             # Input dimension of the state vector (must match environment state output)
+   .. tab-item:: Franka-Sim
 
-   action_dim: 8                           # Output dimension of the action vector (must match environment action space)
+      **1. Install**
 
-   num_action_chunks: 1                    # Number of action chunks generated per forward pass
+      .. code-block:: bash
 
-   hidden_dim: 256                         # Width/Channel size of MLP hidden layers
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env frankasim && source .venv/bin/activate
 
-   precision: "32"                         # Model parameter and computation precision
+      **2. Launch**
 
-   add_value_head: True                    # Whether to attach an additional value head to the policy network
+      Default config under ``examples/embodiment/config/``:
 
-   is_lora: False                          # Whether to enable LoRA
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 34 36
 
-   lora_rank: 32                           # LoRA rank dimension 'r'; only effective when is_lora=True
+         * - Recipe
+           - Config
+           - Launch command suffix
+         * - Franka-Sim + PPO + MLP
+           - ``frankasim_ppo_mlp.yaml``
+           - ``frankasim_ppo_mlp``
 
-**2.2 Cluster & Hardware Configuration (Cluster)**
+      .. code-block:: bash
 
-For real-robot training, a multi-node configuration is used, deploying the Actor/Policy on GPU servers and the Env/Robot on control machines (NUC/Industrial PC). For specific configurations, please refer to :doc:`franka`.
-
-**3. Launch Commands**
-
-**ManiSkill (PPO-MLP)**
-
-::
-
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
-
-**ManiSkill (SAC-MLP)**
-
-::
-
-   bash examples/embodiment/run_embodiment.sh maniskill_sac_mlp
+         bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
 
 .. note::
 
@@ -165,29 +173,27 @@ For real-robot training, a multi-node configuration is used, deploying the Actor
    ``entropy_tuning`` (e.g. ``alpha_type: softplus``) to balance exploration and
    exploitation.
 
-**Libero-Spatial (GRPO-MLP)**
+.. dropdown:: Advanced configuration (optional)
 
-::
+   The MLP model is introduced via ``model/mlp_policy@actor.model`` and can be overridden per recipe. Key default fields:
 
-   bash examples/embodiment/run_embodiment.sh libero_spatial_0_grpo_mlp
+   .. code-block:: yaml
 
-**FrankaSim (PPO-MLP)**
+      model_type: "mlp_policy"
+      model_path: ""
+      policy_setup: "panda-qpos"
+      obs_dim: 42
+      action_dim: 8
+      num_action_chunks: 1
+      hidden_dim: 256
+      precision: "32"
+      add_value_head: True
+      is_lora: False
+      lora_rank: 32
 
-::
-
-   bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
+   For real-robot multi-node deployment (Actor/Policy on GPU servers, Env/Robot on a control PC), see :doc:`franka`.
 
 Visualization and Results
 -------------------------
 
-**1. TensorBoard Logs**
-
-.. code-block:: bash
-
-   # Launch TensorBoard
-   tensorboard --logdir ../results
-
-**2. Key metrics**
-
-The key signal to watch is **``env/success_once``** — the task success rate. For every
-logged metric, see :doc:`Training metrics <../../reference/metrics>`.
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.

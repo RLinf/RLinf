@@ -1,5 +1,5 @@
-基于 Genesis 的强化学习训练
-========================================
+Genesis 强化学习
+================
 
 .. figure:: https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/HeroShot_Final.png
    :align: center
@@ -7,8 +7,7 @@
 
    Genesis（图片来源：`Genesis <https://genesis-world.readthedocs.io/>`__）。
 
-`Genesis <https://genesis-world.readthedocs.io/>`__ 是面向机器人任务的 GPU 加速多物理场
-仿真器。你将使用 RLinf 在 Franka cube-pick 任务上，通过 PPO 训练 MLP 或 CNN policy。
+`Genesis <https://genesis-world.readthedocs.io/>`__ 是面向机器人任务的 GPU 加速多物理场仿真器。你将使用 RLinf 在 Franka cube-pick 任务上，通过 PPO 训练 MLP 或 CNN policy。
 
 概览
 ----------------------------------------
@@ -71,120 +70,68 @@
    * - 提示词
      - 不使用；这是低维/CNN policy 控制配方。
 
-安装
-----------------------------------------
+安装与运行
+----------
 
 .. include:: _setup_common.rst
 
-**Docker 镜像**
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: MLP / CNN
 
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-genesis
+      **1. 安装环境**
 
-   # 国内用户可使用：
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-genesis
+      .. code-block:: bash
 
-**自定义环境**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env genesis && source .venv/bin/activate
 
-安装 Genesis 依赖：
+      **2. 下载模型**
 
-.. code:: bash
+      MLP + PPO 配方可跳过此步。CNN + PPO 配方需要下载预训练 ResNet-10 检查点：
 
-   # 国内用户可添加 --use-mirror。
-   bash requirements/install.sh embodied --env genesis
-   source .venv/bin/activate
+      .. code-block:: bash
 
-下载模型
-----------------------------------------
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
 
-MLP + PPO 配方可跳过本节。CNN + PPO 配方需要下载 ResNet 检查点：
+      **3. 启动训练**
 
-.. code-block:: bash
+      可用训练配置：
 
-   cd /path/to/save/model
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 48 26
 
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+         * - 配方
+           - 配置
+           - 命令后缀
+         * - MLP + PPO
+           - ``examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``
+           - ``genesis_cubepick_ppo_mlp``
+         * - CNN + PPO
+           - ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``
+           - ``genesis_cubepick_ppo_cnn``
 
-   # 或使用 huggingface-hub：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+      .. include:: _model_path.rst
 
-然后在 ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml`` 中为 rollout 和 actor
-设置相同的检查点路径：
+      使用 ``run_embodiment.sh`` 启动训练：
 
-.. code-block:: yaml
+      .. code-block:: bash
 
-   rollout:
-      model:
-         model_path: /path/to/RLinf-ResNet10-pretrained
-   actor:
-      model:
-         model_path: /path/to/RLinf-ResNet10-pretrained
+         # 状态观测 MLP + PPO
+         bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_mlp
 
-运行
-----------------------------------------
+         # 视觉 CNN + PPO
+         bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_cnn actor.model.model_path=$PWD/RLinf-ResNet10-pretrained
 
-选择一个配方并启动训练：
+      .. dropdown:: 进阶配置（可选）
 
-.. list-table::
-   :header-rows: 1
-   :widths: 26 48 26
-
-   * - 配方
-     - 配置
-     - 命令后缀
-   * - MLP + PPO
-     - ``examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``
-     - ``genesis_cubepick_ppo_mlp``
-   * - CNN + PPO
-     - ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``
-     - ``genesis_cubepick_ppo_cnn``
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_mlp
-   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_cnn
-
-这条命令会：
-
-1. 使用选定的 Hydra 配置启动 embodied 训练入口。
-2. 为 actor、rollout 和 Genesis env 组件创建 Ray worker。
-3. 运行 PPO rollout，计算 cube-pick 奖励，并更新选定策略。
-
-.. note::
-
-   两个配置默认都运行在 GPU ``0``。请根据硬件调整
-   ``cluster.component_placement``、``env.train.total_num_envs`` 和 batch size。
+         两个配置默认都运行在 GPU ``0``。按硬件情况调整 ``cluster.component_placement``、``env.train.total_num_envs`` 和 batch size。
 
 可视化与结果
 ----------------------------------------
 
-在 RLinf 仓库根目录启动 TensorBoard：
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-关键指标是 ``env/success_once``。完整指标说明见
-:doc:`训练指标 <../../reference/metrics>`。
-
-如需视频，请在环境配置中启用 video：
-
-.. code:: yaml
-
-   env:
-     eval:
-       video_cfg:
-         save_video: True
-         video_base_dir: ${runner.logger.log_path}/video/eval
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``env/success_once`` 曲线，通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制，完整指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
 .. list-table::
    :header-rows: 1

@@ -132,8 +132,8 @@ rollout:
   collect_prev_infos: False
 
   model:
+    model_path: ${actor.model.model_path}
     action_dim: 7
-    model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
     num_q_heads: 10
 

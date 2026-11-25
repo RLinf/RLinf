@@ -12,7 +12,7 @@ Overview
     <table border="0">
       <tr>
         <td align="center">
-          <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/rlinf_arch.jpg" alt="mani_openvla" width="450"/>
+          <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/rlinf_arch.jpg" alt="mani_openvla" width="450"/>
         </td>
       </tr>
     </table>
@@ -41,11 +41,11 @@ Dense models
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_verl_all.jpg" alt="mani_openvla" width="350"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/rlinf_vs_verl_all.jpg" alt="mani_openvla" width="350"/>
          <br/><strong>Throughput (GRPO)</strong>
        </td>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/latency_breakdown_7B.jpg" alt="mani_openvlaoft" width="350"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/latency_breakdown_7B.jpg" alt="mani_openvlaoft" width="350"/>
          <br/><strong>Latency breakdown (GRPO on 7B)</strong>
        </td>
      </tr>
@@ -61,11 +61,11 @@ The following figures show the performance on PPO algorithm.
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_verl_ppo.jpg" alt="mani_openvla" width="350"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/rlinf_vs_verl_ppo.jpg" alt="mani_openvla" width="350"/>
          <br/><strong>Throughput (PPO)</strong>
        </td>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_verl_breakdown.jpg" alt="mani_openvlaoft" width="350"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/rlinf_vs_verl_breakdown.jpg" alt="mani_openvlaoft" width="350"/>
          <br/><strong>Latency breakdown (PPO on 7B, 32 GPUs)</strong>
        </td>
      </tr>
@@ -85,12 +85,12 @@ For MoE models, we evaluate the Qwen3-30B-A3B on 32, 64, and 128 GPUs with a rol
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_slime_all.jpg" alt="mani_openvla" width="250"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/rlinf_vs_slime_all.jpg" alt="mani_openvla" width="250"/>
 
          <br/><strong>Throughput</strong>
        </td>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_slime_breakdown.jpg" alt="mani_openvlaoft" width="350"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/rlinf_vs_slime_breakdown.jpg" alt="mani_openvlaoft" width="350"/>
          <br/><strong>Latency breakdown (32 GPUs)</strong>
        </td>
      </tr>
@@ -112,7 +112,7 @@ We evaluate on OpenVLA and OpenVLA-OFT on ManiSkill and LIBERO, respectively. On
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/eval_embody_all.jpg" alt="mani_openvla" width="450"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/eval_embody_all.jpg" alt="mani_openvla" width="450"/>
 
          <br/><strong>Throughput</strong>
        </td>
@@ -124,7 +124,7 @@ We evaluate on OpenVLA and OpenVLA-OFT on ManiSkill and LIBERO, respectively. On
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/latency_breakdown_libero_maniskill.jpg" alt="mani_openvla" width="500"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/latency_breakdown_libero_maniskill.jpg" alt="mani_openvla" width="500"/>
 
          <br/><strong>Latency breakdown</strong>
        </td>

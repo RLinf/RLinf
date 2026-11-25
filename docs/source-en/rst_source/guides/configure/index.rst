@@ -1,31 +1,46 @@
-Configure
-=========
+Configure & Run
+===============
 
-Use these guides when you need to edit YAML, logging, or workload-specific
-settings before launching a run.
+Start here once your first run works: monitor training curves, resume interrupted jobs, export checkpoints, reduce GPU memory with LoRA, or train on multiple environments together.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
+.. grid:: 1 2 3 3
+   :gutter: 2
 
-   * - Guide
-     - What you get
-   * - :doc:`Basic Configuration <../basic_config>`
-     - How RLinf config files are structured and overridden.
-   * - :doc:`Embodied Configuration <../embodiment_config>`
-     - Config keys specific to embodied training.
-   * - :doc:`Heterogeneous Envs <../hetero_envs>`
-     - Run different env configurations, such as ManiSkill and LIBERO, for one policy in one run.
-   * - :doc:`Agentic Configuration <../agentic_config>`
-     - Config keys specific to agentic and reasoning training.
-   * - :doc:`Logging <../logger>`
-     - TensorBoard, wandb, and swanlab logger setup.
+   .. grid-item-card:: Logging & Visualization
+      :link: ../logger
+      :link-type: doc
+
+      Stream metrics and videos to TensorBoard, Weights & Biases, or SwanLab.
+
+   .. grid-item-card:: Resume Training
+      :link: ../resume
+      :link-type: doc
+
+      Save periodic checkpoints and resume interrupted training cleanly.
+
+   .. grid-item-card:: Checkpoint Conversion
+      :link: ../convertor
+      :link-type: doc
+
+      Convert FSDP or Megatron training checkpoints into Hugging Face or evaluation formats.
+
+   .. grid-item-card:: LoRA Fine-Tuning
+      :link: ../lora
+      :link-type: doc
+
+      Train large policies with lower GPU memory using LoRA adapters.
+
+   .. grid-item-card:: Multi-Env Training
+      :link: ../hetero_envs
+      :link-type: doc
+
+      Train or evaluate one policy across multiple environment configurations in a single run.
 
 .. toctree::
    :hidden:
 
-   Basic Configuration <../basic_config>
-   Embodied Configuration <../embodiment_config>
-   Heterogeneous Envs <../hetero_envs>
-   Agentic Configuration <../agentic_config>
-   Logging <../logger>
+   Logging & Visualization <../logger>
+   Resume Training <../resume>
+   Checkpoint Conversion <../convertor>
+   LoRA Fine-Tuning <../lora>
+   Multi-Env Training <../hetero_envs>

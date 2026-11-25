@@ -4,7 +4,6 @@
 
    export MUJOCO_GL=osmesa
    export PYOPENGL_PLATFORM=osmesa
-   export ROBOT_PLATFORM=LIBERO
 
 ``run_embodiment.sh`` 会保留这些变量。安装脚本通过 ``requirements/sys_deps.sh`` 安装所需的 ``libosmesa6`` 系统库。
 

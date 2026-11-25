@@ -1,27 +1,40 @@
-Reference
-=========
+Eval Reference
+==============
 
-This section documents the evaluation reference material: config structure, CLI usage, supported models, and how to read outputs.
+Pick this section to look up evaluation YAML fields, CLI usage, supported models, and output paths.
 
-.. list-table::
-   :header-rows: 1
+.. grid:: 1 2 2 2
+   :gutter: 2
 
-   * - Page
-     - What you get
-   * - :doc:`Configuration <configuration>`
-     - Hydra YAML layout under ``evaluations/<benchmark>/``, including ``runner``, ``env``, and ``rollout`` fields required for ``embodied_eval``.
-   * - :doc:`CLI <cli>`
-     - How to launch evaluations with ``run_eval.sh``, pass Hydra overrides, and auto-infer the benchmark from config names.
-   * - :doc:`Models <models>`
-     - VLA models with example configs in ``evaluations/`` today (OpenPI, OpenVLA-OFT, StarVLA, DreamZero, MolmoAct2, LingBotVLA) and how to set ``model_path``.
-   * - :doc:`Results <results>`
-     - Where logs and rollout videos are written, terminal metrics such as ``eval/success_once``, and TensorBoard usage.
+   .. grid-item-card:: CLI
+      :link: cli
+      :link-type: doc
+
+      ``evaluations/run_eval.sh`` syntax, benchmark prefix inference, config fallback, and Hydra overrides.
+
+   .. grid-item-card:: Configuration
+      :link: configuration
+      :link-type: doc
+
+      Hydra YAML structure, ``env.eval`` fields, and how to derive eval configs from training YAMLs.
+
+   .. grid-item-card:: Supported Models
+      :link: models
+      :link-type: doc
+
+      Models and inference backends with ready-to-run configs under ``evaluations/``.
+
+   .. grid-item-card:: Logs & Results
+      :link: results
+      :link-type: doc
+
+      Log directories, key terminal metrics, rollout video paths, and TensorBoard output.
 
 .. toctree::
    :hidden:
    :maxdepth: 1
 
-   configuration
-   cli
-   models
-   results
+   CLI <cli>
+   Configuration <configuration>
+   Supported Models <models>
+   Logs & Results <results>

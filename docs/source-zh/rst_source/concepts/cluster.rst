@@ -1,89 +1,71 @@
-基于 Ray 的集群启动
-===============================
+Cluster
+=======
 
-**Cluster** 类负责连接 Ray 集群，并启动管理 actor 与 worker actor。  
-它作为整个集群资源的单例入口，提供了在特定节点和 GPU 上分配 worker 的方法。  
-通过封装 Ray 的初始化与节点信息，它简化了整个框架的分布式部署流程。
+``Cluster`` 单例负责连接 Ray 集群、探测节点与硬件拓扑，并启动全局管理 actor 与各类训练 worker。它将 Ray 初始化、节点元信息与 actor 分配集中在一处，使单机和多机运行保持一致的分布式视图。
 
 .. note::
 
-   **Ray 版本要求**：RLinf 需要 ``ray>=2.47.0`` （在导入时强制检查）。  
-   请 **不要** 在创建 :class:`Cluster` 之前调用 ``ray.init`` ，  
-   否则可能会破坏命名空间和日志配置。
+   **Ray 版本要求**：RLinf 要求 ``ray>=2.47.0``\ （导入时自动检查）。创建 :class:`Cluster` 前请 **不要** 手动调用 ``ray.init``，以免干扰命名空间与日志配置。
 
 初始化与 Ray 设置
-----------------------------
+-----------------
 
-当创建一个 `Cluster` 实例时，其初始化过程包括以下步骤：
+主控进程首次创建 ``Cluster`` 时，按以下五个步骤完成初始化：
 
-- **Ray 初始化**：如果 Ray 尚未启动，将使用命名空间 `Cluster.NAMESPACE` 调用 `ray.init()`。
+- **Ray 初始化**：若当前进程尚未连接 Ray，``Cluster`` 会在共享命名空间 ``Cluster.NAMESPACE`` 下连接或启动 Ray。
+- **等待节点就绪**：等待配置中的 ``num_nodes`` 个节点全部注册到 Ray 集群。
+- **收集节点信息**：为每个节点构造 ``NodeInfo`` 记录（Ray 节点 ID、IP、CPU 数量、加速器信息与节点组配置），节点 rank ``0`` 作为主节点。
+- **主地址与端口**：记录主节点 IP，并分配一个空闲 TCP 端口用于集合通信握手。
+- **全局管理器 actor**：在集群上启动三个单例管理 actor：
 
-- **等待节点就绪**：Ray 初始化后，`Cluster` 会等待 `num_nodes` 个节点在 Ray 中注册完成。
+  - ``WorkerManager``：记录每个已启动 worker 的元信息与状态。
+  - ``CollectiveManager``：协调集合通信组的地址与端口信息。
+  - ``NodeManager``：向各 worker 提供节点拓扑、加速器数量与主端口信息。
 
-- **收集节点信息**：节点就绪后，`Cluster` 会构造一个 `NodeInfo` 列表（包含 Ray ID、IP、CPU 和 GPU 数量）。  
-  “主节点”排在列表首位，其余节点按 IP 排序。
+节点组与异构硬件
+----------------
 
-- **主地址与端口**：记录主节点的 IP，并选择一个空闲的 TCP 端口用于集体通信。
+除同构 GPU 集群外，``Cluster`` 还通过 ``cluster.node_groups`` 按角色或所连硬件对节点分组。每个节点组指定一个或多个 ``node_ranks``，并支持：
 
-- **全局管理器 actor**：初始化阶段还会启动三个全局管理器 actor：
+- **区分加速卡与纯 CPU 节点**：将 GPU 训练节点与 CPU 仿真或真机控制节点分开管理。
+- **声明真机硬件**：把 Franka 机械臂、SO-101 机械臂或相机等 ``hardware`` 条目绑定到实际接线的节点 rank；集群启动时，节点探针自动枚举设备并将类型化的 ``RobotInfo`` 交给真机环境。
+- **按节点组调度**：placement 策略可直接面向具名节点组分配 worker，无需在各处硬编码节点编号。
 
-  * `WorkerManager`：追踪每个 worker 的元信息  
-  * `CollectiveManager`：存储集体组信息，包括通信端口等  
-  * `NodeManager`：为 workers 提供节点布局（IP、GPU 数、主端口）
+在节点与加速器上分配 Worker
+---------------------------
 
-使用 Cluster 分配 Worker
------------------------------------
+``WorkerGroup`` 不直接手动创建底层 Ray actor，而是统一通过 ``Cluster.allocate()`` 分配计算单元。收到 worker 类、worker 名称、目标 ``node_rank``、环境变量和资源需求后，``Cluster`` 会完成以下工作：
 
-``Cluster.allocate()`` 会在 **指定节点** 上以受控环境启动一个 Ray actor：
+- 对照已发现的集群拓扑校验目标节点与加速器分配；
+- 组装该 worker 的 Ray ``runtime_env``\ （注入 ``RANK``、``WORLD_SIZE``、设备隔离变量以及可选的 profiling 上下文）；
+- 使用 Ray 的 ``NodeAffinitySchedulingStrategy`` 将 actor 绑定到指定的物理节点；
+- 异步启动 Ray actor，并将句柄返回给对应的 ``WorkerGroup``。
+
+``Cluster`` 的完整类方法与参数参见 :doc:`../reference/api/cluster`。
+
+多节点启动与连接已有集群
+------------------------
+
+多节点运行时，需先在每个节点导出唯一的 ``RLINF_NODE_RANK``，再执行 ``ray start``，确保 Ray 在启动时捕获节点编号；随后仅在头节点运行训练入口脚本。
+
+Worker 或辅助进程在不传初始化参数的情况下创建 ``Cluster()`` 时，会自动附着到正在运行的集群，而不会重新初始化：
+
+- 通过 ``address="auto"`` 与共享命名空间连接到现有 Ray 集群；
+- 获取 ``NodeManager`` 代理并读取共享的节点列表、主节点 IP 与通信端口。
 
 .. code-block:: python
 
-   handle = Cluster.allocate(
-       cls,            # 要启动的 actor 类
-       worker_name,    # 该 actor 的唯一可读名称
-       node_id,        # 节点在 Cluster 列表中的索引（0 表示主节点）
-       gpu_id,         # 节点内的本地 GPU 编号（用于隔离）
-       env_vars,       # 该 actor 的环境变量（如 CUDA_VISIBLE_DEVICES）
-       cls_args=[],    # 传给构造函数的位置参数
-       cls_kwargs={},  # 传给构造函数的关键字参数
-   )
+   from rlinf.scheduler import Cluster
 
-该方法执行以下操作：
+   # 主控进程初始化一次；其余进程通过无参 Cluster() 附着到集群。
+   cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+   node_info = cluster.get_node_info(node_rank=0)
 
-- 验证 ``node_id`` 与 ``gpu_id`` 是否存在于已发现的集群拓扑中。
-- 使用 ``ray.remote(cls)`` 包装传入的类。
-- 应用如下运行配置：
+同一作业中的所有进程因此共享一致的集群视图与全局管理器。
 
-  - ``runtime_env={"env_vars": env_vars}`` （传递变量如 ``CUDA_VISIBLE_DEVICES``、``rank`` 等）
-  - ``name=worker_name`` （使 actor 可通过名称发现）
-  - ``scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=<Ray NodeID>, soft=False)``  
-    （将 actor 固定调度到指定的 **物理节点**）
+延伸阅读
+--------
 
-最后，调用 ``.remote(*cls_args, **cls_kwargs)`` 异步启动 actor，并返回该 actor 的句柄。
-
-连接已有集群
-----------------------------
-
-当不带参数创建 ``Cluster`` 时，它会自动附着到当前运行的集群：
-
-- 确保 Ray 以 ``address="auto"`` 和指定命名空间初始化；
-- 从 ``NodeManager`` 获取现有管理器与共享状态：
-
-  .. code-block:: python
-
-     self._node_manager     = NodeManager.get_proxy()
-     self._nodes            = self._node_manager.get_nodes()
-     self._num_nodes        = len(self._nodes)
-     self._master_ip        = self._node_manager.get_master_ip()
-     self._master_port      = self._node_manager.get_master_port()
-
-这可以确保所有使用相同命名空间的进程观察到相同的集群视图。
-
-总结
--------
-
-`Cluster` 单例统一管理 Ray 初始化、节点发现、以及管理器 actor 生命周期，并维持在一个稳定命名空间下。  
-主驱动程序只需初始化一次（启动管理器、选定主节点），  
-后续所有进程只需附着连接，并共享该集群视图。  
-通过 ``allocate()`` 方法，用户可以可靠地将 actor 安置在指定节点，并设置其环境变量，  
-从而在整个框架中保持分布式调度的稳定性与一致性。
+- :doc:`../reference/api/cluster`：``Cluster`` 完整 API 文档。
+- :doc:`placement`：placement 策略如何将 worker 组映射到节点与加速器。
+- :doc:`worker`：``WorkerGroup`` 如何通过 ``Cluster`` 启动远程 actor。

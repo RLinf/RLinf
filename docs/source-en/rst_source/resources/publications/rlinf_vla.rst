@@ -11,7 +11,7 @@ RLinf-VLA: A Unified and Efficient Framework for VLA+RL Training
 Overview
 --------
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/rlinf-vla/rlinf_vla_overview.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/rlinf_vla_overview.png
    :alt: RLinf-VLA overview
    :align: center
 
@@ -29,11 +29,11 @@ Training curves (ManiSkill)
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-vla/mani_openvla.png" alt="mani_openvla" width="350"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/mani_openvla.png" alt="mani_openvla" width="350"/>
          <br/><strong>OpenVLA</strong>
        </td>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-vla/mani_openvlaoft.png" alt="mani_openvlaoft" width="350"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/mani_openvlaoft.png" alt="mani_openvlaoft" width="350"/>
          <br/><strong>OpenVLA-OFT</strong>
        </td>
      </tr>
