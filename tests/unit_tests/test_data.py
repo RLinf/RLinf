@@ -403,14 +403,23 @@ def test_prefix_schedule_waits_for_every_env_buffer_before_training(
 ):
     from rlinf.algorithms.prefix_off_policy.schedule import PrefixUpdateSchedule
     from rlinf.scheduler import Worker
-    from rlinf.workers.actor.fsdp_prefix_off_policy_worker import PrefixOffPolicyRuntime
+    from rlinf.workers.actor.fsdp_prefix_off_policy_worker import (
+        AsyncPrefixOffPolicyFSDPPolicy,
+    )
 
     monkeypatch.setattr(
-        Worker, "torch_platform", SimpleNamespace(current_device=lambda: "cpu")
+        Worker,
+        "torch_platform",
+        SimpleNamespace(
+            current_device=lambda: "cpu",
+            synchronize=lambda: None,
+            empty_cache=lambda: None,
+        ),
     )
-    worker = object.__new__(PrefixOffPolicyRuntime)
+    worker = object.__new__(AsyncPrefixOffPolicyFSDPPolicy)
     worker.cfg = OmegaConf.create(
         {
+            "actor": {},
             "algorithm": {
                 "update_epoch": 2,
                 "replay_buffer": {"min_buffer_size": 1},
@@ -420,7 +429,7 @@ def test_prefix_schedule_waits_for_every_env_buffer_before_training(
                     "warmup_post_collect_updates": 2,
                     "train_every_transitions": 1,
                 },
-            }
+            },
         }
     )
     worker.update_schedule = PrefixUpdateSchedule(worker.cfg)
@@ -449,6 +458,7 @@ def test_prefix_schedule_waits_for_every_env_buffer_before_training(
         plan = worker._plan_updates()
         assert plan.updates == 0
         assert plan.metrics["prefix/skip_reason"] == 1.0
+        assert asyncio.run(worker.run_training()) == {}
 
         worker.update_schedule.schedule_cfg["warmup_min_size"] = 0
         assert worker._plan_updates().updates == 0

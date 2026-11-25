@@ -263,7 +263,9 @@ class AsyncPrefixOffPolicyFSDPPolicy(
         self._drain_received_trajectories(max_trajectories=max_trajectories)
         plan = self._plan_updates()
         if plan.updates <= 0:
-            return self._finish_idle_training(plan)
+            self._finish_idle_training(plan)
+            # An empty result keeps the async runner at the current training step.
+            return {}
 
         self._prepare_scheduled_training()
         metrics: dict[str, Any] = {}

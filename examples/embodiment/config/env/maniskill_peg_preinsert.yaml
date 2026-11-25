@@ -28,7 +28,7 @@ init_params:
   sim_backend: gpu
   reward_mode: sparse
   max_episode_steps: 100
-  reconfiguration_freq: 0
+  reconfiguration_freq: 1
   fixed_peg_half_length: 0.105
   fixed_peg_half_width: 0.02
   preinsert:
