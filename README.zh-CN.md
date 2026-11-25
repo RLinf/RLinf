@@ -82,7 +82,7 @@ bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 - [2026/09] 🔥 RLinf 支持 [FastWAM](https://github.com/yuantianyuan01/FastWAM) 的 FSDP 监督微调与 LIBERO 批量评测。文档：[FastWAM 评测与监督微调](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_fastwam.html)。
 - [2026/08] 🔥 RLinf 支持对英伟达全模态世界模型 Cosmos3 做 SFT 及基于 SGLang 的评测。文档：[Cosmos3 SFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_cosmos3.html)、[SGLang 评测](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/cosmos3_sglang.html)。
 - [2026/08] 🎉 RLinf 正式入选 **PyTorch 生态**！我们将继续把可扩展的具身与智能体强化学习带给 PyTorch 用户，推动模型智能走进真实世界。博客：[PyTorch Ecosystem Landscape Q3 Update](https://pytorch.org/blog/pytorch-ecosystem-landscape-q3-update/)。
-- [2026/08] 🎉 Isaac Lab v3.0.0 正式采用 RLinf 作为其强化学习（RL）训练基础设施。文档：[Isaac Lab 中的 RLinf](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/concepts/reinforcement_learning.html#rlinf-vla-post-training)。
+- [2026/08] 🎉 Isaac Lab v3.0.0 正式采用 RLinf 作为其强化学习（RL）训练基础设施。文档：[Isaac Lab 中的 RLinf](https://isaac-sim.github.io/IsaacLab/main/source/concepts/reinforcement_learning.html#rlinf-vla-post-training)。
 - [2026/08] 🔥 RLinf 集成 Diffusion-NFT，支持 SD3 和 Wan2.2 视频生成模型的强化学习。文档：[视频生成模型的强化学习](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/video_models.html)。
 - [2026/08] 🔥 RLinf 支持摩尔线程（MUSA）、华为昇腾（CANN）与 AMD（ROCm）。支持的模型与环境组合及运行步骤见[硬件支持矩阵](#硬件支持)。
 - [2026/08] 🔥 RLinf 支持 Moonlight-16B-A3B（DeepSeek-V3 MLA + MoE）的 GRPO 训练。文档：[Moonlight-16B GRPO](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/math_reasoning/moonlight.html)。
@@ -461,7 +461,7 @@ RLinf 用统一的底层接口屏蔽异构硬件差异，同一套训练栈可�
 - [Dexbotic](https://github.com/dexmal/dexbotic)：融合机器人与强化学习的系统，通过 RLinf 支持具身智能体的可扩展训练与部署。
 - [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin)：数字孪生与机器人结合的平台，使用 RLinf 做大规模具身强化学习训练。
 - [Genie Sim](https://github.com/AgibotTech/genie_sim)：智元机器人开源的仿真平台，支持场景生成、数据采集与基准评测，集成 RLinf 以 PPO 和 GRPO 对 VLA 模型做后训练。
-- [IsaacLab](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/concepts/reinforcement_learning.html#rlinf-vla-post-training)：将 RLinf 正式整合进 IsaacLab，在基于 NVIDIA Isaac Sim 的机器人环境中运行强化学习工作流。
+- [IsaacLab](https://isaac-sim.github.io/IsaacLab/main/source/concepts/reinforcement_learning.html#rlinf-vla-post-training)：将 RLinf 正式整合进 IsaacLab，在基于 NVIDIA Isaac Sim 的机器人环境中运行强化学习工作流。
 - [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt)：NVIDIA 面向机器人策略的仿真强化学习后训练库，将 RLinf 集成为分布式 rollout 与训练运行时，并接入示范协同训练（Co-Training）。
 - [RISE](https://github.com/OpenDriveLab/RISE)：基于组合式世界模型的机器人强化学习框架，使用 RLinf 做在线强化学习。
 
