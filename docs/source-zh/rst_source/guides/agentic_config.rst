@@ -266,7 +266,6 @@ actor
     response_only_logits: False
 
     model:
-      lm_head_chunk_size: 0
       precision: fp16
       add_bias_linear: False
 
@@ -296,6 +295,7 @@ actor
       gradient_accumulation_fusion: False
       moe_token_dispatcher_type: alltoall
       use_cpu_initialization: False
+      lm_head_chunk_size: 0
 
     optim:
       optimizer: adam
@@ -405,7 +405,7 @@ actor
    * - ``actor.seed``
      - 用于可复现性的全局随机种子。
    * - ``actor.response_only_logits``
-     - 只在预测回复 token 的位置计算 logits 以降低显存（仅支持 Megatron 动态 agent batch 且 CP=1）。
+     - 仅在预测回复 token 的位置计算 logits 以降低显存。
 
 **模型子节**
 
@@ -415,8 +415,6 @@ actor
 
    * - 参数
      - 说明
-   * - ``actor.model.lm_head_chunk_size``
-     - actor 训练与 logprob 计算时 LM head 每块处理的 token 数，``0`` 表示关闭分块（如 ``256``；要求 Megatron 动态 agent batch、CP=1 且 ``algorithm.entropy_bonus: 0``）。
    * - ``actor.model.precision``
      - 训练的数值精度（例如 ``fp16``）。
    * - ``actor.model.add_bias_linear``
@@ -463,6 +461,8 @@ actor
      - MoE token 分发器（例如 ``alltoall``）。
    * - ``actor.model.use_cpu_initialization``
      - 在 CPU 上初始化权重以降低显存峰值。
+   * - ``actor.model.lm_head_chunk_size``
+     - LM head 分块大小（例如 ``256``，``0`` 表示关闭）。
 
 **优化器**
 

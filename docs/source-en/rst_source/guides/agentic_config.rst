@@ -275,7 +275,6 @@ actor
     response_only_logits: False
 
     model:
-      lm_head_chunk_size: 0
       precision: fp16
       add_bias_linear: False
 
@@ -305,6 +304,7 @@ actor
       gradient_accumulation_fusion: False
       moe_token_dispatcher_type: alltoall
       use_cpu_initialization: False
+      lm_head_chunk_size: 0
 
     optim:
       optimizer: adam
@@ -414,7 +414,7 @@ actor
    * - ``actor.seed``
      - Global seed for reproducibility.
    * - ``actor.response_only_logits``
-     - Compute logits only at response-predicting positions to save GPU memory (Megatron dynamic agent batch, CP=1).
+     - Compute logits only at response-predicting positions to reduce GPU memory.
 
 **Model sub-section**
 
@@ -424,8 +424,6 @@ actor
 
    * - Parameter
      - Description
-   * - ``actor.model.lm_head_chunk_size``
-     - Tokens per LM-head chunk during actor training and log-prob passes; ``0`` disables chunking (e.g., ``256``; requires Megatron dynamic agent batch, CP=1, and ``algorithm.entropy_bonus: 0``).
    * - ``actor.model.precision``
      - Numerical precision for training (e.g., ``fp16``).
    * - ``actor.model.add_bias_linear``
@@ -472,6 +470,8 @@ actor
      - MoE token dispatcher (e.g., ``alltoall``).
    * - ``actor.model.use_cpu_initialization``
      - Initialize weights on CPU to reduce GPU spikes.
+   * - ``actor.model.lm_head_chunk_size``
+     - LM-head chunk size in tokens (e.g., ``256``; ``0`` disables chunking).
 
 **Optimizer**
 
