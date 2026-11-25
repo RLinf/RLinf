@@ -22,4 +22,4 @@ lingbotvlav2:
   training_config_path: ${oc.env:LINGBOT_VLA_V2_ROBOTWIN_ROOT}/lingbotvla_cli.yaml
   robot_config_path: ${oc.env:LINGBOT_VLA_V2_PATH}/configs/robot_configs/robotwin.yaml
   stats_path: ${oc.env:LINGBOT_VLA_V2_PATH}/assets/norm_stats/robotwin.json
-  attention_implementation: eager
+  attention_implementation: flex_cached

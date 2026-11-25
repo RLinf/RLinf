@@ -1,5 +1,5 @@
-基于 PolaRiS 仿真平台的强化学习训练
-========================================
+PolaRiS 强化学习
+================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/polaris.png
    :align: center
@@ -7,9 +7,7 @@
 
    PolaRiS（图片来源：`PolaRiS <https://github.com/arhanjain/polaris>`__）。
 
-`PolaRiS <https://github.com/arhanjain/polaris>`__ 是基于 Isaac Sim 的机器人基准，
-使用 Gaussian Splatting 渲染桌面操作任务。你将使用 RLinf 在 DROID 风格的 PolaRiS
-任务上，通过 PPO 微调 OpenPI π₀ 或 π₀.₅ 策略。
+`PolaRiS <https://github.com/arhanjain/polaris>`__ 是基于 Isaac Sim 的机器人基准，使用 Gaussian Splatting 渲染桌面操作任务。你将使用 RLinf 在 DROID 风格的 PolaRiS 任务上，通过 PPO 微调 OpenPI π₀ 或 π₀.₅ 策略。
 
 概览
 ----------------------------------------
@@ -89,191 +87,137 @@
    * - 提示词
      - ``init_params.task_description`` 中的任务描述。
 
-安装
-----------------------------------------
+安装与运行
+----------
 
 .. include:: _setup_common.rst
 
-**Docker 镜像**
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenPI π₀.₅
+      :sync: pi05
 
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-polaris
+      **1. 安装环境**
 
-   # 国内用户可使用：
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-polaris
+      安装 RLinf（OpenPI + PolaRiS）：
 
-在镜像中切换到 OpenPI 虚拟环境：
+      .. code-block:: bash
 
-.. code:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env polaris && source .venv/bin/activate
 
-   source switch_env openpi
+      下载 Isaac Sim 5.1.0 并初始化其 shell 环境：
 
-**自定义环境**
+      .. code-block:: bash
 
-安装 PolaRiS 与 OpenPI 依赖：
+         mkdir -p isaac_sim && cd isaac_sim
+         wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         source ./setup_conda_env.sh
 
-.. code:: bash
+      .. warning::
 
-   # 国内用户可添加 --use-mirror。
-   bash requirements/install.sh embodied --model openpi --env polaris
-   source .venv/bin/activate
+         每次在新终端中启动 PolaRiS 前，都需要运行 ``source ./setup_conda_env.sh``。
 
-下载 Isaac Sim
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      **2. 下载数据集与模型**
 
-下载 Isaac Sim 5.1.0 并初始化其 shell 环境：
+      下载 PolaRiS 评估场景（``owhan/PolaRiS-Hub``）与 OpenPI π₀.₅ checkpoint：
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   mkdir -p isaac_sim
-   cd isaac_sim
-   wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   source ./setup_conda_env.sh
+         hf download owhan/PolaRiS-Hub --repo-type dataset --local-dir ./PolaRiS-Hub
+         hf download RLinf/RLinf-Pi05-Polaris-droid_jointpos --local-dir ./RLinf-Pi05-Polaris-droid_jointpos
 
-.. warning::
+      如需 co-training 演示数据，可额外执行 ``hf download owhan/PolaRiS-datasets --repo-type dataset --local-dir ./PolaRiS-datasets``。
 
-   每次在新终端中启动 PolaRiS 前，都需要运行 ``source ./setup_conda_env.sh``。
+      .. include:: _model_path.rst
 
-下载数据集
-----------------------------------------
+      **3. 启动训练**
 
-下载评估场景和初始条件：
+      修改 ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi_pi05.yaml`` 中的模型路径，初始化 Isaac Sim 并导出 ``POLARIS_DATA_PATH`` 后启动 PPO：
 
-.. code:: bash
+      .. code-block:: bash
 
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download owhan/PolaRiS-Hub --repo-type=dataset --local-dir ./PolaRiS-Hub
-   export POLARIS_DATA_PATH=/path/to/PolaRiS-Hub
+         source ./isaac_sim/setup_conda_env.sh
+         export POLARIS_DATA_PATH="$PWD/PolaRiS-Hub"
+         bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi_pi05
 
-可选下载 co-training 演示数据：
+      独立评估请走 :doc:`PolaRiS 评测指南 <../../evaluations/guides/polaris>`\ （``polaris_tapeintocontainer_openpi_pi05_eval``）。
 
-.. code:: bash
+   .. tab-item:: OpenPI π₀
+      :sync: pi0
 
-   hf download owhan/PolaRiS-datasets --repo-type=dataset --local-dir ./PolaRiS-datasets
+      **1. 安装环境**
 
-下载模型
-----------------------------------------
+      安装 RLinf（OpenPI + PolaRiS）：
 
-下载你要微调的 OpenPI 模型检查点。
+      .. code-block:: bash
 
-**OpenPI π₀.₅**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env polaris && source .venv/bin/activate
 
-.. code-block:: bash
+      下载 Isaac Sim 5.1.0 并初始化其 shell 环境：
 
-   cd /path/to/save/model
+      .. code-block:: bash
 
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-Polaris-droid_jointpos
+         mkdir -p isaac_sim && cd isaac_sim
+         wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         source ./setup_conda_env.sh
 
-   # 或使用 huggingface-hub：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Pi05-Polaris-droid_jointpos --local-dir RLinf-Pi05-Polaris-droid_jointpos
+      .. warning::
 
-**OpenPI π₀**
+         每次在新终端中启动 PolaRiS 前，都需要运行 ``source ./setup_conda_env.sh``。
 
-.. code-block:: bash
+      **2. 下载数据集与模型**
 
-   cd /path/to/save/model
+      下载 PolaRiS 评估场景（``owhan/PolaRiS-Hub``）与 OpenPI π₀ checkpoint：
 
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-Polaris-droid_jointpos
+      .. code-block:: bash
 
-   # 或使用 huggingface-hub：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-Polaris-droid_jointpos --local-dir RLinf-Pi0-Polaris-droid_jointpos
+         hf download owhan/PolaRiS-Hub --repo-type dataset --local-dir ./PolaRiS-Hub
+         hf download RLinf/RLinf-Pi0-Polaris-droid_jointpos --local-dir ./RLinf-Pi0-Polaris-droid_jointpos
 
-.. include:: _model_path.rst
+      如需 co-training 演示数据，可额外执行 ``hf download owhan/PolaRiS-datasets --repo-type dataset --local-dir ./PolaRiS-datasets``。
 
-运行
-----------------------------------------
+      .. include:: _model_path.rst
 
-选择一个训练配置，并在已初始化 Isaac Sim 的终端中启动：
+      **3. 启动训练**
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 48 28
+      修改 ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi.yaml`` 中的模型路径，初始化 Isaac Sim 并导出 ``POLARIS_DATA_PATH`` 后启动 PPO：
 
-   * - 配方
-     - 配置
-     - 命令后缀
-   * - π₀.₅ + PPO
-     - ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi_pi05.yaml``
-     - ``polaris_tapeintocontainer_ppo_openpi_pi05``
-   * - π₀ + PPO
-     - ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi.yaml``
-     - ``polaris_tapeintocontainer_ppo_openpi``
+      .. code-block:: bash
 
-.. code:: bash
+         source ./isaac_sim/setup_conda_env.sh
+         export POLARIS_DATA_PATH="$PWD/PolaRiS-Hub"
+         bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi
 
-   source /path/to/isaac_sim/setup_conda_env.sh
-   export POLARIS_DATA_PATH=/path/to/PolaRiS-Hub
-
-   bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi_pi05
-   bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi
-
-这条命令会：
-
-1. 使用选定的 Hydra 配置启动 embodied 训练入口。
-2. 为 actor、rollout 和 PolaRiS env 组件创建 Ray worker。
-3. 使用 chunked OpenPI 动作和 Gaussian Splatting 渲染观测运行 PPO。
-
-独立评估请走 :doc:`PolaRiS 评测指南 <../../evaluations/guides/polaris>`。
-该指南负责 ``POLARIS_DATA_PATH``、可用评测配置
-（``polaris_tapeintocontainer_openpi_pi05_eval`` 与 ``polaris_movelattecup_openpi_eval``）
-和结果解读。
+      独立评估请走 :doc:`PolaRiS 评测指南 <../../evaluations/guides/polaris>`\ （``polaris_movelattecup_openpi_eval``）。
 
 .. note::
 
-   训练配置默认使用 ``polaris_droid_tapeintocontainer``。如需切换任务，请将 Hydra
-   env defaults 改为其他 ``polaris_droid_*`` 环境配置，并保持 ``POLARIS_DATA_PATH``
-   指向 ``PolaRiS-Hub``。
+   训练配置默认使用 ``polaris_droid_tapeintocontainer``。如需切换任务，将 Hydra env defaults 改为其他 ``polaris_droid_*`` 环境配置，并保持 ``POLARIS_DATA_PATH`` 指向 ``PolaRiS-Hub``。
 
-在调优动作 / 渲染流水线时，以下 PolaRiS 专有字段值得了解：
+.. dropdown:: 进阶配置（可选）
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 70
 
-   * - 配置项
-     - 含义
-   * - ``open_loop_horizon``
-     - **高质量** Gaussian Splatting 渲染的频率。在一个动作 chunk 内，每 ``open_loop_horizon``
-       步执行一次高质量渲染，中间步则使用低质量渲染以加速仿真。
-   * - ``num_action_chunks``
-     - 模型一次生成的动作步数（如 ``15``）。
-   * - ``num_images_in_input``
-     - 输入给策略的相机图像数量（如 ``2``：外部相机 + 腕部相机）。
-   * - ``config_name``
-     - OpenPI 配置 / 数据格式选择（如 ``pi05_droid_polaris`` 对应 DROID 数据格式）。
+      * - 配置项
+        - 含义
+      * - ``open_loop_horizon``
+        - **高质量** Gaussian Splatting 渲染频率。在一个动作 chunk 内，每 ``open_loop_horizon`` 步执行一次高质量渲染，中间步使用低质量渲染以加速仿真。
+      * - ``num_action_chunks``
+        - 模型一次生成的动作步数（如 ``15``）。
+      * - ``num_images_in_input``
+        - 输入给策略的相机图像数量（如 ``2``：外部相机 + 腕部相机）。
+      * - ``config_name``
+        - OpenPI 配置 / 数据格式选择（如 ``pi05_droid_polaris`` 对应 DROID 数据格式）。
 
 可视化与结果
 ----------------------------------------
 
-在 RLinf 仓库根目录启动 TensorBoard：
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-关键指标是 ``env/success_once``。完整指标说明见
-:doc:`训练指标 <../../reference/metrics>`。
-
-如需评估视频，请在环境配置中启用 video：
-
-.. code:: yaml
-
-   env:
-     eval:
-       video_cfg:
-         save_video: True
-         video_base_dir: ${runner.logger.log_path}/video/eval
+执行 ``tensorboard --logdir ./logs --port 6006`` 启动 TensorBoard，关注任务成功率指标 ``env/success_once``。传入 ``env.eval.video_cfg.save_video=True`` 可保存评估视频，完整指标与日志后端说明见 :doc:`训练指标 <../../reference/metrics>`。

@@ -45,84 +45,91 @@ Tasks
      - ``robotwin_sft_lingbotvlav2``
      - Train the action expert and projection layers from the Foundation Base.
 
-Prepare the Data
-----------------
+Setup and Run
+-------------
 
-Download and extract the raw Click Bell demonstrations from the `RoboTwin dataset release <https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/tree/main/dataset/click_bell>`__. This converter requires the legacy layout: ``data/episode<i>.hdf5`` and ``instructions/episode<i>.json`` in each dataset directory.
+.. include:: _setup_common.rst
 
-Download the Model
-------------------
+.. tab-set::
 
-Download the Foundation Base and tokenizer:
+   .. tab-item:: RoboTwin
 
-.. code-block:: bash
+      **1. Install**
 
-   hf download robbyant/lingbot-vla-v2-6b --local-dir lingbot-vla-v2-6b
-   hf download Qwen/Qwen3-VL-4B-Instruct --local-dir Qwen3-VL-4B-Instruct
+      Follow :doc:`installation </rst_source/start/installation>` and the installation step in :doc:`LingbotVLA 2.0 <lingbotvlav2>` to prepare and activate its environment. Run the following commands from the RLinf repository root.
 
-Use ``robbyant/lingbot-vla-v2-6b`` as the SFT starting checkpoint. The :doc:`PPO recipe <lingbotvlav2>` uses the separate ``robbyant/lingbot-vla-v2-6b-robotwin`` post-training checkpoint.
+      **2. Download**
 
-Installation
-------------
+      Download the Foundation Base and tokenizer:
 
-Follow the installation steps on :doc:`LingbotVLA 2.0 <lingbotvlav2>` to install and activate the LingbotVLA environment and obtain its source checkout. Run the following commands from the RLinf repository root.
+      .. code-block:: bash
 
-Run It
-------
+         hf download robbyant/lingbot-vla-v2-6b --local-dir ./lingbot-vla-v2-6b
+         hf download Qwen/Qwen3-VL-4B-Instruct --local-dir ./Qwen3-VL-4B-Instruct
 
-Convert each extracted RoboTwin dataset:
+      Use ``robbyant/lingbot-vla-v2-6b`` as the SFT starting checkpoint. The :doc:`PPO recipe <lingbotvlav2>` uses the separate ``robbyant/lingbot-vla-v2-6b-robotwin`` post-training checkpoint.
 
-.. code-block:: bash
+      **3. Prepare the Data**
 
-   python toolkits/lerobot/convert_robotwin_to_lerobot.py \
-     --raw-root /path/to/click_bell/aloha-agilex_clean_50 \
-     --output-root /path/to/robotwin_lerobot/click_bell_clean_50
+      Download and extract the raw Click Bell demonstrations from the `RoboTwin dataset release <https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/tree/main/dataset/click_bell>`__. This converter requires the legacy layout: ``data/episode<i>.hdf5`` and ``instructions/episode<i>.json`` in each dataset directory.
 
-The converter reports the number of episodes and frames written. Create ``robotwin_train.txt`` with one ``robot_name dataset_path`` entry per dataset:
+      Convert each extracted RoboTwin dataset:
 
-.. code-block:: text
+      .. code-block:: bash
 
-   robotwin /path/to/robotwin_lerobot/click_bell_clean_50
+         python toolkits/lerobot/convert_robotwin_to_lerobot.py \
+           --raw-root /path/to/click_bell/aloha-agilex_clean_50 \
+           --output-root /path/to/robotwin_lerobot/click_bell_clean_50
 
-Edit these paths in ``examples/sft/config/robotwin_sft_lingbotvlav2.yaml``:
+      The converter reports the number of episodes and frames written. Create ``robotwin_train.txt`` with one ``robot_name dataset_path`` entry per dataset:
 
-.. code-block:: yaml
+      .. code-block:: text
 
-   actor:
-     model:
-       model_path: /path/to/lingbot-vla-v2-6b
-       tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
-       lingbotvlav2:
-         config_path: /path/to/lingbot-vla-v2
-         training_config_path: /path/to/lingbot-vla-v2/configs/vla/robotwin/robotwin.yaml
-         robot_config_path: /path/to/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
-         robot_config_root: /path/to/lingbot-vla-v2/configs/robot_configs
-         stats_path: /path/to/lingbot-vla-v2/assets/norm_stats/robotwin.json
-   data:
-     train_data_paths: /path/to/robotwin_train.txt
+         robotwin /path/to/robotwin_lerobot/click_bell_clean_50
 
-Run SFT on one node with 8 GPUs. The task config uses global batch size 8, FSDP2, a BF16 Qwen-VL backbone, and an FP32 action expert. SFT uses ``flex_cached`` attention; PPO and standalone evaluation keep the shared ``eager`` backend for cached-key/value decoding.
+      **4. Train**
 
-.. code-block:: bash
+      Edit these paths in ``examples/sft/config/robotwin_sft_lingbotvlav2.yaml``:
 
-   bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvlav2
+      .. code-block:: yaml
 
-The launcher writes logs and checkpoints under ``logs/<timestamp>-robotwin_sft_lingbotvlav2/``. Track ``train/l1_loss`` in TensorBoard; see :doc:`Training metrics <../../reference/metrics>` for the metric list.
+         actor:
+           model:
+             model_path: /path/to/lingbot-vla-v2-6b
+             tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
+             lingbotvlav2:
+               config_path: /path/to/lingbot-vla-v2
+               training_config_path: /path/to/lingbot-vla-v2/configs/vla/robotwin/robotwin.yaml
+               robot_config_path: /path/to/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
+               robot_config_root: /path/to/lingbot-vla-v2/configs/robot_configs
+               stats_path: /path/to/lingbot-vla-v2/assets/norm_stats/robotwin.json
+         data:
+           train_data_paths: /path/to/robotwin_train.txt
 
-Before evaluation, prepare the simulator and assets using the :doc:`RoboTwin evaluation guide <../../evaluations/guides/robotwin>`, then export the environment paths:
+      Run SFT on one node with 8 GPUs. The task config uses global batch size 8, FSDP2, a BF16 Qwen-VL backbone, and an FP32 action expert. V2 SFT, PPO, rollout, and evaluation use ``flex_cached`` attention.
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   export ROBOTWIN_PATH=/path/to/RoboTwin
-   export ROBOTWIN_ASSETS_PATH=$ROBOTWIN_PATH
-   export ROBOT_PLATFORM=ALOHA
+         bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvlav2
 
-Set the Foundation, tokenizer, and upstream LingbotVLA paths in ``evaluations/robotwin/robotwin_click_bell_lingbotvlav2_sft_eval.yaml``, then evaluate a saved SFT checkpoint:
+      The launcher writes logs and checkpoints under ``logs/<timestamp>-robotwin_sft_lingbotvlav2/``. Track ``train/l1_loss`` in TensorBoard; see :doc:`Training metrics <../../reference/metrics>` for the metric list.
 
-.. code-block:: bash
+      **5. Evaluate**
 
-   bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_sft_eval \
-     runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
+      Before evaluation, prepare the simulator and assets using the :doc:`RoboTwin evaluation guide <../../evaluations/guides/robotwin>`, then export the environment paths:
+
+      .. code-block:: bash
+
+         export ROBOTWIN_PATH=/path/to/RoboTwin
+         export ROBOTWIN_ASSETS_PATH=$ROBOTWIN_PATH
+         export ROBOT_PLATFORM=ALOHA
+
+      Set the Foundation, tokenizer, and upstream LingbotVLA paths in ``evaluations/robotwin/robotwin_click_bell_lingbotvlav2_sft_eval.yaml``, then evaluate a saved SFT checkpoint:
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvlav2_sft_eval \
+           runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
 
 Visualization and Results
 -------------------------

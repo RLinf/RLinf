@@ -45,89 +45,96 @@ LingbotVLA 2.0 监督微调
      - ``robotwin_sft_lingbotvlav2``
      - 从 Foundation Base 更新动作专家和投影层。
 
-准备数据
---------
+安装与运行
+---------------
 
-从 `RoboTwin 数据集发布页 <https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/tree/main/dataset/click_bell>`__ 下载并解压 Click Bell 原始演示数据。转换脚本要求使用旧版目录格式：每个数据集目录包含 ``data/episode<i>.hdf5`` 和 ``instructions/episode<i>.json``。
+.. include:: _setup_common.rst
 
-下载模型
---------
+.. tab-set::
 
-下载 Foundation Base 和 tokenizer：
+   .. tab-item:: RoboTwin
 
-.. code-block:: bash
+      **1. 安装环境**
 
-   hf download robbyant/lingbot-vla-v2-6b --local-dir lingbot-vla-v2-6b
-   hf download Qwen/Qwen3-VL-4B-Instruct --local-dir Qwen3-VL-4B-Instruct
+      按 :doc:`安装说明 </rst_source/start/installation>` 和 :doc:`LingbotVLA 2.0 <lingbotvlav2>` 的安装步骤准备并激活虚拟环境。以下命令都在 RLinf 仓库根目录运行。
 
-SFT 从 ``robbyant/lingbot-vla-v2-6b`` 开始训练。:doc:`PPO 示例 <lingbotvlav2>` 使用独立的 RoboTwin 后训练 checkpoint ``robbyant/lingbot-vla-v2-6b-robotwin``。
+      **2. 下载模型**
 
-安装
-----
+      下载 Foundation Base 和 tokenizer：
 
-按照 :doc:`LingbotVLA 2.0 <lingbotvlav2>` 的安装步骤准备并激活虚拟环境，同时获取 LingbotVLA 源码。以下命令都在 RLinf 仓库根目录运行。
+      .. code-block:: bash
 
-运行
-----
+         hf download robbyant/lingbot-vla-v2-6b --local-dir ./lingbot-vla-v2-6b
+         hf download Qwen/Qwen3-VL-4B-Instruct --local-dir ./Qwen3-VL-4B-Instruct
 
-转换解压后的 RoboTwin 数据集：
+      SFT 从 ``robbyant/lingbot-vla-v2-6b`` 开始训练。:doc:`PPO 示例 <lingbotvlav2>` 使用独立的 RoboTwin 后训练 checkpoint ``robbyant/lingbot-vla-v2-6b-robotwin``。
 
-.. code-block:: bash
+      **3. 准备数据**
 
-   python toolkits/lerobot/convert_robotwin_to_lerobot.py \
-     --raw-root /path/to/click_bell/aloha-agilex_clean_50 \
-     --output-root /path/to/robotwin_lerobot/click_bell_clean_50
+      从 `RoboTwin 数据集发布页 <https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/tree/main/dataset/click_bell>`__ 下载并解压 Click Bell 原始演示数据。转换脚本要求使用旧版目录格式：每个数据集目录包含 ``data/episode<i>.hdf5`` 和 ``instructions/episode<i>.json``。
 
-转换完成后，日志会显示写入的 episode 数和帧数。创建 ``robotwin_train.txt``，每行写一个 ``robot_name dataset_path``：
+      转换解压后的 RoboTwin 数据集：
 
-.. code-block:: text
+      .. code-block:: bash
 
-   robotwin /path/to/robotwin_lerobot/click_bell_clean_50
+         python toolkits/lerobot/convert_robotwin_to_lerobot.py \
+           --raw-root /path/to/click_bell/aloha-agilex_clean_50 \
+           --output-root /path/to/robotwin_lerobot/click_bell_clean_50
 
-在 ``examples/sft/config/robotwin_sft_lingbotvlav2.yaml`` 中填写以下路径：
+      转换完成后，日志会显示写入的 episode 数和帧数。创建 ``robotwin_train.txt``，每行写一个 ``robot_name dataset_path``：
 
-.. code-block:: yaml
+      .. code-block:: text
 
-   actor:
-     model:
-       model_path: /path/to/lingbot-vla-v2-6b
-       tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
-       lingbotvlav2:
-         config_path: /path/to/lingbot-vla-v2
-         training_config_path: /path/to/lingbot-vla-v2/configs/vla/robotwin/robotwin.yaml
-         robot_config_path: /path/to/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
-         robot_config_root: /path/to/lingbot-vla-v2/configs/robot_configs
-         stats_path: /path/to/lingbot-vla-v2/assets/norm_stats/robotwin.json
-   data:
-     train_data_paths: /path/to/robotwin_train.txt
+         robotwin /path/to/robotwin_lerobot/click_bell_clean_50
 
-训练配置使用单机 8 卡、global batch size 8 和 FSDP2。Qwen-VL 主干使用 BF16，动作专家使用 FP32。SFT 使用 ``flex_cached`` attention；PPO 和独立评测通过共享配置使用 ``eager``，以支持 cached key/value 解码。
+      **4. 训练**
 
-运行 SFT：
+      在 ``examples/sft/config/robotwin_sft_lingbotvlav2.yaml``\ 中填写以下路径：
 
-.. code-block:: bash
+      .. code-block:: yaml
 
-   bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvlav2
+         actor:
+           model:
+             model_path: /path/to/lingbot-vla-v2-6b
+             tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
+             lingbotvlav2:
+               config_path: /path/to/lingbot-vla-v2
+               training_config_path: /path/to/lingbot-vla-v2/configs/vla/robotwin/robotwin.yaml
+               robot_config_path: /path/to/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
+               robot_config_root: /path/to/lingbot-vla-v2/configs/robot_configs
+               stats_path: /path/to/lingbot-vla-v2/assets/norm_stats/robotwin.json
+         data:
+           train_data_paths: /path/to/robotwin_train.txt
 
-日志和 checkpoint 保存在 ``logs/<timestamp>-robotwin_sft_lingbotvlav2/``。训练时可在 TensorBoard 中查看 ``train/l1_loss``，完整指标见 :doc:`训练指标 <../../reference/metrics>`。
+      训练配置使用单机 8 卡、global batch size 8 和 FSDP2。Qwen-VL 主干使用 BF16，动作专家使用 FP32。V2 的 SFT、PPO、rollout 与评测统一使用 ``flex_cached`` attention。
 
-评测前，按照 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 准备仿真环境和资产，再设置环境路径：
+      运行 SFT：
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   export ROBOTWIN_PATH=/path/to/RoboTwin
-   export ROBOTWIN_ASSETS_PATH=$ROBOTWIN_PATH
-   export ROBOT_PLATFORM=ALOHA
+         bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvlav2
 
-在 ``evaluations/robotwin/robotwin_click_bell_lingbotvlav2_sft_eval.yaml`` 中填写 Foundation、tokenizer 和 LingbotVLA 源码路径，再评测保存的 SFT checkpoint：
+      日志和 checkpoint 保存在 ``logs/<timestamp>-robotwin_sft_lingbotvlav2/``。训练时可在 TensorBoard 中查看 ``train/l1_loss``，完整指标见 :doc:`训练指标 <../../reference/metrics>`。
 
-.. code-block:: bash
+      **5. 评测**
 
-   bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_sft_eval \
-     runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
+      评测前，按照 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 准备仿真环境和资产，再设置环境路径：
+
+      .. code-block:: bash
+
+         export ROBOTWIN_PATH=/path/to/RoboTwin
+         export ROBOTWIN_ASSETS_PATH=$ROBOTWIN_PATH
+         export ROBOT_PLATFORM=ALOHA
+
+      在 ``evaluations/robotwin/robotwin_click_bell_lingbotvlav2_sft_eval.yaml`` 中填写 Foundation、tokenizer 和 LingbotVLA 源码路径，再评测保存的 SFT checkpoint：
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvlav2_sft_eval \
+           runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
 
 可视化与结果
-------------
+------------------
 
 图中的对照实验使用 Click Alarmclock 数据和 ModelScope 上的 Foundation 权重快照 ``Robbyant/lingbot-vla-v2-6b``，版本号为 ``edfff7638a31a5dbfaae87016477191735bd754e``。两组训练使用同一份含 3,384 条样本记录的数据清单，全局批量大小为 8，共完成 423 次优化器更新。这个 ModelScope 版本号标识实验所用权重；前面的 Hugging Face 下载命令不固定到这一版本。
 

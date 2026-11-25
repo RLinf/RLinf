@@ -73,33 +73,28 @@ Our framework supports the use of PPO in both LLM inference tasks and embodied t
 3.1. Embodied Tasks
 ~~~~~~~~~~~~~~~~~~~
 
-The following first provides an example configuration for an embodied task:
+Embodied PPO presets live in ``examples/embodiment/config/algorithm/ppo.yaml``. See :doc:`ManiSkill <../../examples/embodied/maniskill>` and ``examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml`` for a runnable recipe:
 
 .. code-block:: yaml
 
    algorithm:
-
-      # Core PPO settings (recommended not to change)
+      # Core PPO settings
       normalize_advantages: True
       group_size: 1
       adv_type: gae
       loss_type: actor_critic
       loss_agg_func: "token-mean"
 
-      # Algorithm parameters (typically require tuning)
-
-      rollout_micro_batch_size: 256
-      logprob_forward_micro_batch_size: 16  # Larger batch_size improves stability.
-                                            # Adjust according to compute resources and model size.
-
+      # Algorithm parameters
+      kl_beta: 0.0
       entropy_bonus: 0          # Optional: encourage exploration
       clip_ratio_high: 0.2      # PPO clipping parameter (epsilon)
       clip_ratio_low: 0.2       # Should match clip_ratio_high
+      clip_ratio_c: 3.0         # Dual-clip bound
       value_clip: 0.2           # Stabilizes value function updates
 
       gamma: 0.99               # Discount factor for GAE
       gae_lambda: 0.95          # Lambda parameter for GAE
-
       huber_delta: 10.0         # Delta parameter for Huber loss in value training
 
 Rollout and Actor Importance Sampling
@@ -186,7 +181,7 @@ Furthermore, in LLM reasoning tasks, we use an independent critic model rather t
 3.3. Multi-Turn Agent Tasks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-See :doc:`Search-R1 training </rst_source/examples/agentic/searchr1/qwen2.5>` for model and data
+See :doc:`Search-R1 training </rst_source/examples/agentic/searchr1/index>` for model and data
 setup. Use ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``
 with these key settings:
 

@@ -1,102 +1,75 @@
-VLA / WAM 模型监督微调
-========================================
+SFT 与模仿学习
+==============
 
-监督微调（SFT）是具身强化学习的标准冷启动步骤：一个良好的 SFT 检查点能显著缩短 RL 探索时间并提升最终策略效果。本类示例汇总了 RLinf 在 VLA / WAM 模型上的全量与 LoRA SFT 配方，以及面向多模态后训练的 VLM SFT。
+需要用监督微调或在线模仿学习为 VLA、WAM 或 VLM 冷启动时，从本节进入。完成 SFT 后，可继续查阅 :doc:`vla_wam_index` 或 :doc:`simulators_index` 用强化学习微调得到的 checkpoint。
 
-完成本节的 SFT 后，可继续阅读 :doc:`vla_wam_index`\ （以模型为主线的 RL 微调）或 :doc:`simulators_index`\ （以基准为主线的 RL 微调）以进一步用 RL 提升所得检查点。
+.. grid:: 1 2 3 3
+   :gutter: 3
 
-.. raw:: html
+   .. grid-item-card:: Cosmos3 监督微调
+      :img-top: https://raw.githubusercontent.com/NVIDIA/cosmos/main/cookbooks/cosmos3/cosmos3-model-architecture.png
+      :img-alt: Cosmos3 架构
+      :link: embodied/sft_cosmos3
+      :link-type: doc
 
-   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
+      在 NVIDIA Cosmos3-Nano（OmniMoT）上训练 LIBERO 动作 policy SFT。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <!-- TODO(thumbnail): replace placeholder cover image URL for sft_openpi -->
-       <a href="embodied/sft_openpi.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/sft_openpi.html" style="text-decoration: underline; color: blue;">
-           <b>OpenPI 监督微调</b>
-         </a><br>
-         支持 OpenPI 全量 SFT 与 LoRA 微调，作为强化学习前置阶段
-       </p>
-     </div>
+   .. grid-item-card:: DAgger
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/dagger.jpg
+      :img-alt: DAgger 模仿学习
+      :link: embodied/dagger
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/sft_lingbotvlav2.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/9f22f0d7c6ed5e4b27c0212b3da848831d1a3c2a/pic/lingbotvlav2_foundation_action_loss_ma25.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/sft_lingbotvlav2.html" style="text-decoration: underline; color: blue;">
-           <b>LingbotVLA 2.0 SFT</b>
-         </a><br>
-         从 Foundation Base 开始，在 RoboTwin 上训练动作专家
-       </p>
-     </div>
+      结合专家重标注与 replay buffer 更新完成在线模仿学习。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/sft_dreamzero.html" style="display: block;"><img src="https://dreamzero0.github.io/images/project_overview.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/sft_dreamzero.html" style="text-decoration: underline; color: blue;">
-           <b>DreamZero 监督微调</b>
-         </a><br>
-         面向 DreamZero 的全量与 mixture SFT（WAN2.1 / WAN2.2 主干）
-       </p>
-     </div>
+   .. grid-item-card:: DreamZero 监督微调
+      :img-top: https://dreamzero0.github.io/images/project_overview.png
+      :img-alt: DreamZero 概览
+      :link: embodied/sft_dreamzero
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/sft_fastwam.html" style="display: block;"><img src="https://yuantianyuan01.github.io/FastWAM/static/images/teaser_main.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/sft_fastwam.html" style="text-decoration: underline; color: blue;">
-           <b>FastWAM 评测与监督微调</b>
-         </a><br>
-         在 LIBERO 上评测 FastWAM 并进行全参数 FSDP 监督微调
-       </p>
-     </div>
+      基于 WAN2.1 和 WAN2.2 主干的 DreamZero 全量与混合数据集 SFT。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/sft_cosmos3.html" style="display: block;"><img src="https://raw.githubusercontent.com/NVIDIA/cosmos/main/cookbooks/cosmos3/cosmos3-model-architecture.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/sft_cosmos3.html" style="text-decoration: underline; color: blue;">
-           <b>Cosmos3 监督微调</b>
-         </a><br>
-         基于 NVIDIA Cosmos3-Nano（OmniMoT）的 LIBERO 动作策略 SFT
-       </p>
-     </div>
+   .. grid-item-card:: FastWAM
+      :img-top: https://yuantianyuan01.github.io/FastWAM/static/images/teaser_main.png
+      :img-alt: FastWAM 示意
+      :link: embodied/sft_fastwam
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/sft_vlm.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/release_0.2/qwen2_5_sft_vlm.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/sft_vlm.html" style="text-decoration: underline; color: blue;">
-           <b>Qwen-VL</b>
-         </a><br>
-         支持 Qwen 系列等 VLM 的全量监督微调与结果评估
-       </p>
-     </div>
+      在 LIBERO 上评测 FastWAM 并运行全参数 FSDP SFT。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/dagger.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dagger.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/dagger.html" style="text-decoration: underline; color: blue;">
-           <b>具身策略的 DAgger 训练</b>
-         </a><br>
-         通过专家重标注与回放缓冲区训练推进在线模仿学习
-       </p>
-     </div>
+   .. grid-item-card:: LingbotVLA 2.0 监督微调
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/9f22f0d7c6ed5e4b27c0212b3da848831d1a3c2a/pic/lingbotvlav2_foundation_action_loss_ma25.png
+      :img-alt: LingbotVLA 2.0 SFT
+      :link: embodied/sft_lingbotvlav2
+      :link-type: doc
 
-   </div>
+      从 Foundation Base 出发，在 RoboTwin 上训练动作专家。
+
+   .. grid-item-card:: OpenPI 监督微调
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg
+      :img-alt: OpenPI 监督微调
+      :link: embodied/sft_openpi
+      :link-type: doc
+
+      在 LIBERO、Franka、BEHAVIOR-1K、RoboTwin 和自定义 LeRobot 数据集上对 π₀ 与 π₀.₅ 做全量或 LoRA SFT。
+
+   .. grid-item-card:: Qwen-VL 监督微调
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/release_0.2/qwen2_5_sft_vlm.png
+      :img-alt: Qwen-VL 监督微调
+      :link: embodied/sft_vlm
+      :link-type: doc
+
+      对 Qwen2.5-VL、Qwen3-VL 和 Qwen3-VL-MoE 做全量 SFT 与评估。
 
 .. toctree::
    :hidden:
    :maxdepth: 2
 
-   OpenPI <embodied/sft_openpi>
+   Cosmos3 <embodied/sft_cosmos3>
+   DAgger <embodied/dagger>
    DreamZero <embodied/sft_dreamzero>
    FastWAM <embodied/sft_fastwam>
-   Cosmos3 <embodied/sft_cosmos3>
    LingbotVLA 2.0 <embodied/sft_lingbotvlav2>
+   OpenPI <embodied/sft_openpi>
    Qwen-VL <embodied/sft_vlm>
-   DAgger <embodied/dagger>

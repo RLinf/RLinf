@@ -1,110 +1,65 @@
-LoRA 集成
-===================
+LoRA 微调
+=========
 
-LoRA（Low-Rank Adaptation，低秩适配）是一种参数高效的微调方法，  
-它通过在现有层中注入小的低秩矩阵，实现对大模型的高效适配，  
-同时减少内存和训练成本，而不改变原始权重。  
-本指南将介绍如何在 RLinf 中使用 LoRA。
+在 RLinf 中使用 LoRA（Low-Rank Adaptation，低秩适配），可以冻结基础模型权重、仅训练低秩适配矩阵，以更低显存微调大型具身 policy 和扩散模型。
 
-配置
--------------
+支持的后端
+----------
 
-可以在 YAML 配置文件的 actor 模型部分启用 LoRA：
+不同模型系列的 LoRA 配置项有所不同：
 
-.. code:: yaml
+.. list-table::
+   :header-rows: 1
+   :widths: 28 32 40
 
-  actor:
-    model:
-      is_lora: True
-      lora_rank: 32
-      lora_path: null  # 或已有 LoRA 权重的路径
+   * - 模型系列
+     - 配置项
+     - 说明
+   * - 具身 FSDP VLA（OpenVLA、OpenVLA-OFT 等）
+     - ``actor.model.is_lora: True``
+     - 支持 ``lora_rank``、``lora_path``、``lora_target_scope``，以及通过 ``merged_loras`` 预合并已有 adapter。
+   * - 扩散模型（SD3.5 Medium、Wan2.2 TI2V 5B）
+     - ``actor.model.<model>.use_lora: True``
+     - 在 :doc:`Diffusion-NFT <../examples/diffusion_nft>` 与 :doc:`DiffusionART <../examples/diffusion_art>` 的 YAML 模型块下配置（例如 ``actor.model.wan22_ti2v_5b.use_lora: True``）。
 
-**参数说明：**
+配置具身 FSDP LoRA
+------------------
 
-- ``is_lora``：是否启用 LoRA 微调（True/False）  
-- ``lora_rank``：LoRA 矩阵的秩（通常为 8–64），LoRA 会为每一层训练两个矩阵 A 和 B，  
-  其形状分别为 [input-dim, lora-rank] 和 [lora-rank, output-dim]  
-- ``lora_path``：预训练 LoRA 权重的路径（为 null 表示新训练）  
+在具身 FSDP 训练 YAML 的 ``actor.model`` 下开启 LoRA：
 
-目标模块
----------------
+.. code-block:: yaml
 
-RLinf 会自动将 LoRA 应用于以下模块：
+   actor:
+     model:
+       is_lora: True
+       lora_rank: 32
+       lora_path: null            # 填写已有 adapter 路径即可继续训练
+       lora_target_scope: null    # 可选：设为 "all_linear" 适配全部线性层
 
-.. code:: python
+- ``is_lora``：是否启用 LoRA 微调；设为 ``False`` 时转为全参数微调。
+- ``lora_rank``：低秩矩阵的秩（常用 ``8``–``64``）；``is_lora: False`` 时忽略。
+- ``lora_path``：已有 LoRA 权重路径，留空（``null``）表示从头初始化新 adapter。
+- ``lora_target_scope``：未设置时，RLinf 默认注入视觉、投影及 LLM 注意力与 MLP 层（``proj``、``qkv``、``fc1``–``fc3``、``out_proj``、``q_proj``/``k_proj``/``v_proj``/``o_proj``、``gate_proj``/``up_proj``/``down_proj``、``lm_head``）；设为 ``"all_linear"`` 可适配全部线性层。
 
-  target_modules = [
-      "proj",      # 通用投影层
-      "qkv",       # Query-Key-Value 投影
-      "fc1",       # 前馈层
-      "fc2",       # 视觉相关层
-      "q",         # Query 投影
-      "kv",        # Key-Value 投影
-      "fc3",       # 额外投影层
-      "q_proj",    # Query 投影
-      "k_proj",    # Key 投影
-      "v_proj",    # Value 投影
-      "o_proj",    # 输出投影
-      "gate_proj", # 门控投影（用于 SwiGLU）
-      "up_proj",   # 上投影
-      "down_proj", # 下投影
-      "lm_head",   # 语言模型输出头
-  ]
+预合并已有 LoRA Adapter
+-----------------------
 
-新建 LoRA 训练
-~~~~~~~~~~~~~~~~~
+需要在加载基础模型时先合并一个或多个已有 LoRA、再在其上训练新 adapter 时，在 ``actor.model.merged_loras`` 中列出待合并项。每项包含 ``path`` 和可选的缩放系数 ``scale``\ （默认为 ``1.0``）：
 
-若要从头开始使用 LoRA 训练：
+.. code-block:: yaml
 
-.. code:: yaml
+   actor:
+     model:
+       model_path: /path/to/base_model
+       merged_loras:
+         - path: /path/to/pretrained_lora
+           scale: 0.5
+       is_lora: True
+       lora_rank: 32
 
-  actor:
-    model:
-      is_lora: True
-      lora_rank: 32
-      lora_path: null
+RLinf 会在模型加载阶段按顺序将 ``merged_loras`` 合并进基础权重，再按 ``is_lora`` 注入新的可训练 adapter。完整用法可参考 ``examples/embodiment/config/maniskill_libero_grpo_openvlaoft.yaml`` 与 :doc:`异构环境训练 <hetero_envs>`。
 
-**流程：**
+合并与导出 LoRA Checkpoint
+--------------------------
 
-1. 加载基础模型  
-2. 应用指定秩的 LoRA 配置  
-3. 使用高斯分布初始化 LoRA 权重  
-4. 仅训练 LoRA 参数  
-
-加载预训练的 LoRA
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-若要在已有 LoRA 权重基础上继续训练：
-
-.. code:: yaml
-
-  actor:
-    model:
-      is_lora: True
-      lora_rank: 32
-      lora_path: "/path/to/pretrained/lora/weights"
-
-**流程：**
-
-1. 加载基础模型  
-2. 从指定路径加载预训练 LoRA 权重  
-3. 将 LoRA 参数设为可训练  
-4. 继续训练  
-
-全模型微调
-~~~~~~~~~~~~~~~~~~~~~~
-
-若要关闭 LoRA，使用全模型微调：
-
-.. code:: yaml
-
-  actor:
-    model:
-      is_lora: False
-      lora_rank: 32  # 当 is_lora=False 时会被忽略
-
-**流程：**
-
-1. 加载基础模型  
-2. 将所有参数设为可训练  
-3. 训练整个模型  
+FSDP 训练结束后，按 :doc:`Checkpoint 转换 <convertor>` 将 ``full_weights.pt`` 导出为 Hugging Face ``.safetensors`` 格式。将 ``convertor.merge_lora_weighs`` 设为 ``True``\ （默认）可把 LoRA 权重合并进完整模型导出，设为 ``False`` 则只导出 adapter 权重。

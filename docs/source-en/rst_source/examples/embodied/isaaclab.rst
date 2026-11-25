@@ -1,5 +1,5 @@
-RL with IsaacLab
-================
+IsaacLab RL
+===========
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -77,188 +77,113 @@ Observation and Action
    * - Prompt
      - ``Stack the red block on the blue block, then stack the green block on the red block.``
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-**Docker image**
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: GR00T N1.5
+      :sync: gr00t
 
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-isaaclab
+      **1. Install**
 
-   # For mainland China users:
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-isaaclab
+      Install RLinf with GR00T N1.5 and IsaacLab:
 
-Switch to the matching virtual environment inside the image:
+      .. code-block:: bash
 
-.. code:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model gr00t --env isaaclab && source .venv/bin/activate
 
-   # GR00T N1.5
-   source switch_env gr00t
+      Download Isaac Sim 5.1.0 and initialize its shell environment:
 
-   # OpenPI π₀.₅
-   # source switch_env openpi
+      .. code-block:: bash
 
-**Custom environment**
+         mkdir -p isaac_sim && cd isaac_sim
+         wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         source ./setup_conda_env.sh
 
-Install the environment for the model you want to run:
+      .. warning::
 
-.. code:: bash
+         Run ``source ./setup_conda_env.sh`` in every new terminal before launching IsaacLab.
 
-   # Mainland China users can add --use-mirror.
+      **2. Download**
 
-   # GR00T N1.5
-   bash requirements/install.sh embodied --model gr00t --env isaaclab
-   source .venv/bin/activate
+      Download the GR00T N1.5 SFT checkpoint (trained on human demonstrations from |huggingface| `IsaacLab-Stack-Cube-Data <https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data>`__):
 
-   # OpenPI π₀.₅
-   # bash requirements/install.sh embodied --model openpi --env isaaclab
-   # source .venv/bin/activate
+      .. code-block:: bash
 
-Download Isaac Sim
-~~~~~~~~~~~~~~~~~~
+         hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir ./RLinf-Gr00t-SFT-Stack-cube
 
-Download Isaac Sim 5.1.0 and initialize its shell environment:
+      .. include:: _model_path.rst
 
-.. code-block:: bash
+      **3. Launch**
 
-   mkdir -p isaac_sim
-   cd isaac_sim
-   wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   source ./setup_conda_env.sh
+      Update ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t.yaml`` and launch PPO training:
 
-.. warning::
+      .. code-block:: bash
 
-   Run ``source ./setup_conda_env.sh`` in every new terminal before launching IsaacLab.
+         bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t
 
-Download the Model
-------------------
+      The default config separates env, rollout, and actor placement; tune ``cluster.component_placement``, ``rollout.pipeline_stage_num``, and ``actor.enable_offload`` for your GPU memory budget. For standalone evaluation, pass ``isaaclab_franka_stack_cube_ppo_gr00t`` to the unified :doc:`Evaluation CLI <../../evaluations/reference/cli>`.
 
-Download the checkpoint for the model you plan to fine-tune.
+   .. tab-item:: OpenPI π₀.₅
+      :sync: openpi
 
-**GR00T N1.5**
+      **1. Install**
 
-.. code-block:: bash
+      Install RLinf with OpenPI and IsaacLab:
 
-   cd /path/to/save/model
+      .. code-block:: bash
 
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Stack-cube
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env isaaclab && source .venv/bin/activate
 
-   # Or use huggingface-hub:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir RLinf-Gr00t-SFT-Stack-cube
+      Download Isaac Sim 5.1.0 and initialize its shell environment:
 
-**OpenPI π₀.₅**
+      .. code-block:: bash
 
-.. code-block:: bash
+         mkdir -p isaac_sim && cd isaac_sim
+         wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
+         source ./setup_conda_env.sh
 
-   cd /path/to/save/model
+      .. warning::
 
-   git lfs install
-   git clone https://huggingface.co/YifWRobotics/RLinf-pi05-SFT-Stack-cube
+         Run ``source ./setup_conda_env.sh`` in every new terminal before launching IsaacLab.
 
-   # Or use huggingface-hub:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download YifWRobotics/RLinf-pi05-SFT-Stack-cube --local-dir RLinf-pi05-SFT-Stack-cube
+      **2. Download**
 
-.. include:: _model_path.rst
+      Download the OpenPI π₀.₅ SFT checkpoint (trained on human demonstrations from |huggingface| `IsaacLab-Stack-Cube-Data <https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data>`__):
 
-The SFT checkpoints come from human demonstrations collected on the IsaacLab stack-cube
-task. The dataset is available on |huggingface|
-`IsaacLab-Stack-Cube-Data <https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data>`__.
+      .. code-block:: bash
 
-Run It
-------
+         hf download YifWRobotics/RLinf-pi05-SFT-Stack-cube --local-dir ./RLinf-pi05-SFT-Stack-cube
 
-Pick one config and launch training:
+      .. include:: _model_path.rst
 
-.. list-table::
-   :header-rows: 1
-   :widths: 26 46 28
+      **3. Launch**
 
-   * - Model
-     - Config
-     - Command suffix
-   * - GR00T N1.5
-     - ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t.yaml``
-     - ``isaaclab_franka_stack_cube_ppo_gr00t``
-   * - OpenPI π₀.₅
-     - ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_openpi_pi05.yaml``
-     - ``isaaclab_franka_stack_cube_ppo_openpi_pi05``
+      Update ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_openpi_pi05.yaml`` and launch PPO training:
 
-.. code:: bash
+      .. code-block:: bash
 
-   # GR00T N1.5
-   bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t
+         bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
 
-   # OpenPI π₀.₅
-   bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
-
-What this does:
-
-1. Starts the embodied training entrypoint with the selected Hydra config.
-2. Creates Ray workers for the actor, rollout, and IsaacLab env components.
-3. Runs PPO rollouts, computes sparse task rewards, and updates the VLA policy.
-
-For standalone evaluation, use the unified :doc:`Evaluation CLI
-<../../evaluations/reference/cli>` with config fallback and the same suffixes:
-``isaaclab_franka_stack_cube_ppo_gr00t`` and
-``isaaclab_franka_stack_cube_ppo_openpi_pi05``.
+      The default config collocates ``actor,env,rollout: all``; tune ``cluster.component_placement``, ``rollout.pipeline_stage_num``, and ``actor.enable_offload`` for your GPU memory budget. For standalone evaluation, pass ``isaaclab_franka_stack_cube_ppo_openpi_pi05`` to the unified :doc:`Evaluation CLI <../../evaluations/reference/cli>`.
 
 .. note::
 
-   For GR00T, the default config separates env, rollout, and actor placement. For OpenPI,
-   the default config collocates ``actor,env,rollout: all``. Tune
-   ``cluster.component_placement``, ``rollout.pipeline_stage_num``, and
-   ``actor.enable_offload`` for your GPU memory budget.
-
-.. note::
-
-   To add a custom IsaacLab task, implement it under
-   ``rlinf/envs/sim/isaaclab/tasks/``, register it in ``rlinf/envs/sim/isaaclab/__init__.py``,
-   then point ``init_params.id`` in an env config such as
-   ``examples/embodiment/config/env/isaaclab_stack_cube.yaml`` at the new task id.
+   To add a custom IsaacLab task, register the task following :doc:`../../extending/new_env`, then point ``init_params.id`` in an env config such as ``examples/embodiment/config/env/isaaclab_stack_cube.yaml`` at the new task id.
 
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable video in the env config when you want rollout videos:
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
-
-Enable W&B or SwanLab by adding logger backends:
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 .. list-table::
    :header-rows: 1
@@ -277,9 +202,6 @@ Enable W&B or SwanLab by adding logger backends:
    * - OpenPI π₀.₅ RL-tuned model (SFT + RL)
      - 0.953
 
-Acknowledgements
-----------------
+.. note::
 
-Credit to `Minghui Xu <https://github.com/smallcracker>`__ and
-`Nan Yang <https://github.com/AquaSage18>`__ for the GR00T N1.5 example, and
-`Yifan Wu <https://github.com/YifWRobotics>`__ for the OpenPI π₀.₅ example.
+   **Acknowledgements:** Credit to `Minghui Xu <https://github.com/smallcracker>`__ and `Nan Yang <https://github.com/AquaSage18>`__ for the GR00T N1.5 example, and `Yifan Wu <https://github.com/YifWRobotics>`__ for the OpenPI π₀.₅ example.
