@@ -90,6 +90,11 @@ def postprocess_ragged_seqs(
     return rows
 
 
+def align_next_token_scores(scores: torch.Tensor) -> torch.Tensor:
+    """Move each prediction to the token it scores, after unpacking trajectory rows."""
+    return torch.nn.functional.pad(scores[..., :-1], (1, 0))
+
+
 def preprocess_packed_seqs(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
