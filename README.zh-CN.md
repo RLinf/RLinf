@@ -238,8 +238,8 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习。�
       </td>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li><b>1. 机器人智能体强化学习</b></li>
-          <li><b>2. 数学推理强化学习</b>
+          <li><b>机器人智能体强化学习</b></li>
+          <li><b>数学推理强化学习</b>
             <ul style="margin-left: 0; padding-left: 16px;">
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">Qwen2.5-1.5B</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">Qwen2.5-7B</a> ✅</li>
@@ -247,7 +247,7 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习。�
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/agentlightning_calc_x.html">Qwen2.5-1.5B（AgentLightning Calc-X）</a> ✅</li>
             </ul>
           </li>
-          <li><b>3. 搜索强化学习</b>
+          <li><b>搜索强化学习</b>
             <ul style="margin-left: 0; padding-left: 16px;">
               <li><b>Search-R1 / rStar2</b>
                 <ul style="margin-left: 0; padding-left: 16px;">
@@ -263,7 +263,7 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习。�
               </li>
             </ul>
           </li>
-          <li><b>4. 几何推理强化学习</b>
+          <li><b>几何推理强化学习</b>
             <ul style="margin-left: 0; padding-left: 16px;">
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/qwen3_vl_geo3k.html">Qwen3-VL</a> ✅</li>
             </ul>

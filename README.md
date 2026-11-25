@@ -237,8 +237,8 @@ RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. T
       </td>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li><b>1. Robot-Use-Agent RL</b></li>
-          <li><b>2. Math Reasoning RL</b>
+          <li><b>Robot-Use-Agent RL</b></li>
+          <li><b>Math Reasoning RL</b>
             <ul style="margin-left: 0; padding-left: 16px;">
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">Qwen2.5-1.5B</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">Qwen2.5-7B</a> ✅</li>
@@ -246,7 +246,7 @@ RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. T
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/agentlightning_calc_x.html">Qwen2.5-1.5B (AgentLightning Calc-X)</a> ✅</li>
             </ul>
           </li>
-          <li><b>3. Search RL</b>
+          <li><b>Search RL</b>
             <ul style="margin-left: 0; padding-left: 16px;">
               <li><b>Search-R1 / rStar2</b>
                 <ul style="margin-left: 0; padding-left: 16px;">
@@ -262,7 +262,7 @@ RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. T
               </li>
             </ul>
           </li>
-          <li><b>4. Geometric Reasoning RL</b>
+          <li><b>Geometric Reasoning RL</b>
             <ul style="margin-left: 0; padding-left: 16px;">
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/qwen3_vl_geo3k.html">Qwen3-VL</a> ✅</li>
             </ul>
