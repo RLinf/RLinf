@@ -47,6 +47,7 @@ def main(cfg) -> None:
     # wired into embodied evaluation.
     rollout_placement = component_placement.get_strategy("rollout")
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+    phyai_serving_mode = cfg.rollout.get("phyai", {}).get("serving_mode", "engine")
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
     if rollout_backend == "apxinf":
@@ -87,7 +88,6 @@ def main(cfg) -> None:
             cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
         )
     elif rollout_backend == "phyai":
-        phyai_serving_mode = cfg.rollout.get("phyai", {}).get("serving_mode", "engine")
         if phyai_serving_mode == "engine":
             from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
 
@@ -185,7 +185,6 @@ def main(cfg) -> None:
     finally:
         if service_group is not None:
             service_group.stop().wait()
-            service_group._close()
 
 
 if __name__ == "__main__":

@@ -1556,13 +1556,11 @@ def validate_embodied_cfg(cfg):
             gateway_url = phyai_cfg.get("gateway_url")
             auto_launch_fields = ("server_config", "checkpoint_dir", "tokenizer_dir")
             has_auto_launch_config = all(
-                isinstance(phyai_cfg.get(field), str)
-                and phyai_cfg.get(field).strip()
+                isinstance(phyai_cfg.get(field), str) and phyai_cfg.get(field).strip()
                 for field in auto_launch_fields
             )
             assert (
-                isinstance(gateway_url, str)
-                and gateway_url.strip()
+                isinstance(gateway_url, str) and gateway_url.strip()
             ) or has_auto_launch_config, (
                 "Expected a nonempty rollout.phyai.gateway_url or the automatic "
                 "Gateway launch fields (server_config, checkpoint_dir, "

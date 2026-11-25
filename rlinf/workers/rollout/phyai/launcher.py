@@ -107,9 +107,7 @@ class PhyAIServiceWorker(Worker):
             "server",
             str(self._server_config),
         ]
-        self.log_info(
-            "Launching PhyAI model server: " + " ".join(server_cmd)
-        )
+        self.log_info("Launching PhyAI model server: " + " ".join(server_cmd))
         self._server_proc = subprocess.Popen(
             server_cmd,
             start_new_session=True,
@@ -142,9 +140,7 @@ class PhyAIServiceWorker(Worker):
                 model_name,
                 server_endpoint,
             ]
-            self.log_info(
-                "Launching PhyAI Gateway: " + " ".join(gateway_cmd)
-            )
+            self.log_info("Launching PhyAI Gateway: " + " ".join(gateway_cmd))
             self._gateway_proc = subprocess.Popen(
                 gateway_cmd,
                 start_new_session=True,
@@ -193,11 +189,10 @@ class PhyAIServiceWorker(Worker):
             if response.status_code != 200:
                 return False
             endpoint = f"127.0.0.1:{self._server_port}"
-            return any(
-                backend.get("model_name") == self._cfg.get("model_name", "pi05")
-                and backend.get("endpoint") == endpoint
-                and backend.get("healthy") is True
-                for backend in response.json().get("backends", [])
+            return _backend_is_healthy(
+                response.json().get("backends", []),
+                self._cfg.get("model_name", "pi05"),
+                endpoint,
             )
         except (requests.RequestException, ValueError):
             return False
@@ -223,9 +218,7 @@ class PhyAIServiceWorker(Worker):
         checkpoint = _resolve_directory(
             self._cfg.get("checkpoint_dir"), "checkpoint_dir"
         )
-        tokenizer = _resolve_directory(
-            self._cfg.get("tokenizer_dir"), "tokenizer_dir"
-        )
+        tokenizer = _resolve_directory(self._cfg.get("tokenizer_dir"), "tokenizer_dir")
         config = yaml.safe_load(source.read_text())
         if not isinstance(config, dict):
             raise ValueError(f"PhyAI server config must contain a mapping: {source}")
@@ -285,7 +278,6 @@ def launch_phyai_gateway_and_server(
         return gateway_urls, service_group
     except BaseException:
         service_group.stop().wait()
-        service_group._close()
         raise
 
 
@@ -296,16 +288,20 @@ def _to_dict(config: DictConfig) -> dict:
     return value
 
 
+def _repo_root() -> Path:
+    # rlinf/workers/rollout/phyai/launcher.py -> repo root is 4 levels up.
+    return Path(__file__).resolve().parents[4]
+
+
 def _resolve_path(value, field: str) -> Path:
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"rollout.phyai.{field} is required for automatic Gateway launch.")
+        raise ValueError(
+            f"rollout.phyai.{field} is required for automatic Gateway launch."
+        )
     path = Path(value).expanduser()
     if not path.is_absolute():
-        repo_path = Path(os.environ.get("REPO_PATH", os.getcwd()))
-        path = repo_path / path
-        if not path.exists():
-            source_root = Path(__file__).resolve().parents[4]
-            path = source_root / value
+        base = os.environ.get("REPO_PATH")
+        path = (Path(base) if base else _repo_root()) / path
     if not path.is_file():
         raise FileNotFoundError(f"PhyAI {field} does not exist: {path}")
     return path.resolve()
@@ -313,13 +309,17 @@ def _resolve_path(value, field: str) -> Path:
 
 def _resolve_directory(value, field: str) -> Path:
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"rollout.phyai.{field} is required for automatic Gateway launch.")
+        raise ValueError(
+            f"rollout.phyai.{field} is required for automatic Gateway launch."
+        )
     path = Path(value).expanduser()
     if not path.is_absolute():
-        repo_path = Path(os.environ.get("REPO_PATH", os.getcwd()))
-        path = repo_path / path
+        base = os.environ.get("REPO_PATH")
+        path = (Path(base) if base else _repo_root()) / path
     if not path.is_dir():
-        raise NotADirectoryError(f"PhyAI {field} does not exist or is not a directory: {path}")
+        raise NotADirectoryError(
+            f"PhyAI {field} does not exist or is not a directory: {path}"
+        )
     return path.resolve()
 
 
@@ -345,6 +345,15 @@ def _wait_for_tcp(
     raise RuntimeError(f"Timed out waiting for {service_name} on {host}:{port}.")
 
 
+def _backend_is_healthy(backends: list, model_name: str, endpoint: str) -> bool:
+    return any(
+        backend.get("model_name") == model_name
+        and backend.get("endpoint") == endpoint
+        and backend.get("healthy") is True
+        for backend in backends
+    )
+
+
 def _wait_for_gateway(
     proc: subprocess.Popen,
     gateway_url: str,
@@ -367,12 +376,8 @@ def _wait_for_gateway(
                 proxies={"http": None, "https": None},
             )
             if response.status_code == 200:
-                backends = response.json().get("backends", [])
-                if any(
-                    backend.get("model_name") == model_name
-                    and backend.get("endpoint") == endpoint
-                    and backend.get("healthy") is True
-                    for backend in backends
+                if _backend_is_healthy(
+                    response.json().get("backends", []), model_name, endpoint
                 ):
                     return
         except (requests.RequestException, ValueError) as error:

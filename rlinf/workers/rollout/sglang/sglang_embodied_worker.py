@@ -59,14 +59,6 @@ class SGLangEmbodiedWorker(EmbodiedRolloutRouterWorker):
         ).lower()
         self.sglang_adapter = None
 
-    def _validate_eval_config(self, config: DictConfig) -> None:
-        assert config.runner.get("only_eval", True), (
-            "SGLangEmbodiedWorker is eval-only; set runner.only_eval: true"
-        )
-        assert not config.runner.get("enable_decoupled_mode", False), (
-            "SGLangEmbodiedWorker does not support runner.enable_decoupled_mode"
-        )
-
     async def init_worker(self):
         adapter_cls = None
         if self.model_type:

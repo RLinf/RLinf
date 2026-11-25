@@ -22,7 +22,7 @@ runner:
     log_path: "logs/ci/phyai-gateway/rlinf"
     project_name: rlinf
     experiment_name: "libero_spatial_pi05_eval_phyai"
-    logger_backends: []
+    logger_backends: ["tensorboard"]
 
   only_eval: True
 
@@ -34,26 +34,25 @@ env:
       camera_heights: 360
       camera_widths: 360
     rollout_epoch: 1
-    # Keep the CI workload bounded while exercising the complete Gateway path.
-    total_num_envs: 8
+    total_num_envs: 128
     auto_reset: True
     ignore_terminations: True
-    max_episode_steps: 240
-    max_steps_per_rollout_epoch: 240
+    max_episode_steps: 480
+    max_steps_per_rollout_epoch: 1920
     group_size: 1
     use_fixed_reset_state_ids: True
     use_ordered_reset_state_ids: True
     is_eval: True
 
     video_cfg:
-      save_video: False
+      save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
 
   group_name: "RolloutGroup"
   rollout_backend: "phyai"
-  pipeline_stage_num: 1
+  pipeline_stage_num: 2
 
   phyai:
     serving_mode: "gateway"

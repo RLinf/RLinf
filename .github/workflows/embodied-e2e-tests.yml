@@ -989,7 +989,7 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/.venv"
 
   embodied-libero-phyai-http-test:
-    # Maintainers stage compatible LeRobot checkpoint/tokenizer assets on the runner.
+    # Maintainers stage compatible pi05 checkpoint/tokenizer assets on the runner.
     if: ${{ vars.PHYAI_HTTP_CHECKPOINT != '' && vars.PHYAI_HTTP_TOKENIZER != '' }}
     runs-on: embodied
     timeout-minutes: 90
@@ -1000,13 +1000,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Create isolated PhyAI environment
+      - name: Create PhyAI environment
         timeout-minutes: 45
         run: |
           set -euo pipefail
-          environment_root=$(mktemp -d "$RUNNER_TEMP/phyai-http-envs.XXXXXX")
-          echo "PHYAI_HTTP_ENV_ROOT=$environment_root" >> "$GITHUB_ENV"
-          echo "RLINF_VENV=$environment_root/phyai" >> "$GITHUB_ENV"
           export UV_PATH=/workspace/dataset/.uv
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
@@ -1016,7 +1013,7 @@ jobs:
           test -d "$PHYAI_HTTP_TOKENIZER"
           bash requirements/install.sh \
             --python 3.12 \
-            --venv "$environment_root/phyai" \
+            --venv .venv-phyai \
             --install-rlinf embodied \
             --model openpi \
             --env libero \
@@ -1031,12 +1028,10 @@ jobs:
           PHYAI_SERVER_CONFIG: ${{ github.workspace }}/tests/e2e_tests/evaluations/phyai_gateway_server.yaml
         run: |
           unset CUDA_VISIBLE_DEVICES RAY_ADDRESS
-          export REPO_PATH="$GITHUB_WORKSPACE"
-          source "$RLINF_VENV/bin/activate"
+          export REPO_PATH=$(pwd)
+          source .venv-phyai/bin/activate
           timeout --kill-after=30s 1740s \
-            bash evaluations/run_eval.sh libero libero_spatial_pi05_eval_phyai \
-            "rollout.phyai.checkpoint_dir=$PHYAI_HTTP_CHECKPOINT" \
-            "rollout.phyai.tokenizer_dir=$PHYAI_HTTP_TOKENIZER"
+            bash tests/e2e_tests/evaluations/run.sh libero_spatial_pi05_eval_phyai
 
       - name: Upload PhyAI HTTP evaluation logs
         if: always()
@@ -1046,13 +1041,11 @@ jobs:
           path: logs/**
           if-no-files-found: warn
 
-      - name: Clean up isolated PhyAI environment
+      - name: Clean up PhyAI environment
         if: always()
         run: |
           set +e
-          if [[ -n "${PHYAI_HTTP_ENV_ROOT:-}" && "$PHYAI_HTTP_ENV_ROOT" == "$RUNNER_TEMP/phyai-http-envs."* ]]; then
-            rm -rf -- "$PHYAI_HTTP_ENV_ROOT"
-          fi
+          rm -rf "$GITHUB_WORKSPACE/.venv-phyai"
 
   embodied-openpi-maniskill-gsenv-test:
     runs-on: embodied
