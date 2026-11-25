@@ -19,8 +19,11 @@ from __future__ import annotations
 import torch
 
 from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache, run_compiled
+from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM
 from rlinf.models.embodiment.supermimic.supermimic_policy import (
+    FlatDictBuffer,
     FlatTensorPacker,
+    obs_packet_schema,
     sync_param_names,
     use_direct_weight_sync,
 )
@@ -55,6 +58,20 @@ class SuperMimicRolloutWorker(MultiStepRolloutWorker):
             if self._use_direct_weight_sync
             else None
         )
+        if self.enable_train:
+            model_device = next(self.hf_model.parameters()).device
+            self._obs_buf = FlatDictBuffer(
+                obs_packet_schema(
+                    self.per_node_train_batch_size,
+                    self.hf_model.representation.encoding_dim,
+                ),
+                model_device,
+            )
+            self._action_buf = torch.empty(
+                (self.per_node_train_batch_size, ACTION_DIM),
+                dtype=torch.float32,
+                device=model_device,
+            )
 
     @Worker.timer("sync_model_from_actor")
     async def sync_model_from_actor(self):
@@ -77,15 +94,19 @@ class SuperMimicRolloutWorker(MultiStepRolloutWorker):
         """
         env, rank = self.cfg.env.group_name, self._rank
         model = self.hf_model
+        views = self._obs_buf.views
         for _ in range(num_steps):
-            obs = self.recv(env, rank)
+            self.recv_tensor(self._obs_buf.buffer, env, rank)
             with torch.no_grad():
                 action = run_compiled(
                     "rollout-act",
                     model.act,
-                    obs["enc"],
-                    obs["goal"],
+                    views["enc"],
+                    views["goal"],
                     cache=self._compile_cache,
                 )
-            self.send(action, env, rank)
-            model.fold_policy_stats(obs["enc_stats"], obs["goal_stats"])
+            self._action_buf.copy_(action)
+            if self.torch_platform is not None and self.torch_platform.is_available():
+                self.torch_platform.current_stream().synchronize()
+            self.send_tensor(self._action_buf, env, rank)
+            model.fold_policy_stats(views["enc_stats"], views["goal_stats"])

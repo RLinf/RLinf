@@ -46,6 +46,7 @@ from rlinf.algorithms.supermimic.objectives import (
     value_ceiling,
 )
 from rlinf.algorithms.supermimic.replay import TransitionRing
+from rlinf.envs.sim.g1_mimic.compile_cache import run_compiled
 from rlinf.envs.sim.g1_mimic.motion import build_motion_library
 from rlinf.hybrid_engines.fsdp import FSDPModule
 from rlinf.hybrid_engines.fsdp.utils import (
@@ -57,8 +58,10 @@ from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.supermimic.networks import hidden_matrix_names
 from rlinf.models.embodiment.supermimic.supermimic_policy import (
     PHASE_INPUTS,
+    FlatDictBuffer,
     FlatTensorPacker,
     sync_param_names,
+    transition_packet_schema,
     use_direct_weight_sync,
 )
 from rlinf.scheduler import Worker
@@ -112,6 +115,18 @@ def clip_step(
     for optimizer in optimizers:
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
+
+
+def _lambda_returns_from_last(
+    last_value: torch.Tensor,
+    values: torch.Tensor,
+    rewards: torch.Tensor,
+    term_prob: torch.Tensor,
+    gamma: float,
+    lam: float,
+) -> torch.Tensor:
+    """Wrapper with batch-first ``last_value`` so ``run_compiled`` sees the batch size."""
+    return lambda_returns(values, last_value, rewards, term_prob, gamma, lam)
 
 
 def critic_minibatch_rows(
@@ -207,6 +222,14 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             self.model.representation.state_dim,
             device,
         )
+        self._trans_buf = FlatDictBuffer(
+            transition_packet_schema(
+                self.num_envs,
+                self.model.representation.state_dim,
+                self.model.representation.encoding_dim,
+            ),
+            device,
+        )
 
     def setup_model_and_optimizer(self) -> None:
         """Wrap the policy with FSDP and build two optimizers per phase.
@@ -283,11 +306,16 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         """
         model = self.model
         fields = set(self.replay.storage)
+        views = self._trans_buf.views
         for _ in range(num_steps):
-            step = self.recv(self._env_group_name, src_rank=self._rank)
-            model.fold_policy_stats(step["enc_stats"], step["goal_stats"])
-            model.fold_world_model_stats(step["enc_stats"], step["target_stats"])
-            self.replay.add({name: step[name] for name in fields})
+            self.recv_tensor(
+                self._trans_buf.buffer,
+                src_group_name=self._env_group_name,
+                src_rank=self._rank,
+            )
+            model.fold_policy_stats(views["enc_stats"], views["goal_stats"])
+            model.fold_world_model_stats(views["enc_stats"], views["target_stats"])
+            self.replay.add({name: views[name] for name in fields})
         return self.replay.has_window(self.k)
 
     def replay_ready(self) -> bool:
@@ -598,13 +626,16 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
                 forward_type=CRITIC, features=torch.cat((features, terminal))
             )["values"]
         values, last_value = values[:-batch].view(horizon, batch), values[-batch:]
-        targets = lambda_returns(
-            values,
+        targets = run_compiled(
+            "critic-gae",
+            _lambda_returns_from_last,
             last_value,
+            values,
             rewards.transpose(0, 1),
             term_prob.transpose(0, 1),
             self.gamma,
             self.lam,
+            cache=self.model._compile_cache,
         ).clamp(max=self.value_max)
         targets = targets.reshape(-1)
         minibatches = list(zip(features[order], targets[order]))

@@ -30,8 +30,12 @@ from torch import nn
 
 from rlinf.algorithms.supermimic.objectives import value_ceiling
 from rlinf.algorithms.supermimic.scan import make_imagination, make_world_model_rollout
-from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache
-from rlinf.envs.sim.g1_mimic.constants import ACTOR_GOAL_DIM
+from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache, run_compiled
+from rlinf.envs.sim.g1_mimic.constants import (
+    ACTION_DIM,
+    ACTOR_GOAL_DIM,
+    SIM_CONTEXT_DIM,
+)
 from rlinf.envs.sim.g1_mimic.g1_fk import set_kinematics_compile, soft_joint_limits
 from rlinf.envs.sim.g1_mimic.representations import make_representation
 from rlinf.hybrid_engines.fsdp.utils import to_local_if_dtensor
@@ -128,6 +132,82 @@ class FlatTensorPacker:
                 for parent, attr in refs
             ]
             torch._foreach_copy_(dsts, views)
+
+
+def obs_packet_schema(
+    num_envs: int, enc_dim: int
+) -> list[tuple[str, tuple[int, ...], torch.dtype]]:
+    """Fixed tensor layout exchanged from env to rollout each control step."""
+    return [
+        ("enc", (num_envs, enc_dim), torch.float32),
+        ("goal", (num_envs, ACTOR_GOAL_DIM), torch.float32),
+        ("enc_stats", (1 + 2 * enc_dim,), torch.float64),
+        ("goal_stats", (1 + 2 * ACTOR_GOAL_DIM,), torch.float64),
+    ]
+
+
+def transition_packet_schema(
+    num_envs: int, state_dim: int, enc_dim: int
+) -> list[tuple[str, tuple[int, ...], torch.dtype]]:
+    """Fixed tensor layout exchanged from env to actor each control step."""
+    return [
+        ("state", (num_envs, state_dim), torch.float32),
+        ("action", (num_envs, ACTION_DIM), torch.float32),
+        ("prev_action", (num_envs, ACTION_DIM), torch.float32),
+        ("motion_time", (num_envs,), torch.long),
+        ("terminated", (num_envs,), torch.bool),
+        ("truncated", (num_envs,), torch.bool),
+        ("sim_context", (num_envs, SIM_CONTEXT_DIM), torch.float32),
+        ("enc_stats", (1 + 2 * enc_dim,), torch.float64),
+        ("goal_stats", (1 + 2 * ACTOR_GOAL_DIM,), torch.float64),
+        ("target_stats", (1 + 2 * ACTION_DIM,), torch.float64),
+    ]
+
+
+class FlatDictBuffer:
+    """Pack a fixed-schema tensor dict into one 16-byte-aligned flat ``uint8`` buffer."""
+
+    def __init__(
+        self,
+        schema: list[tuple[str, tuple[int, ...], torch.dtype]],
+        device: torch.device | str | int,
+    ):
+        slots: list[tuple[str, tuple[int, ...], torch.dtype, int, int]] = []
+        offset = 0
+        for name, shape, dtype in schema:
+            offset = (offset + 15) // 16 * 16
+            elem_size = torch.empty((), dtype=dtype).element_size()
+            numel = 1
+            for dim in shape:
+                numel *= int(dim)
+            nbytes = numel * elem_size
+            slots.append((name, shape, dtype, offset, nbytes))
+            offset += nbytes
+        self.buffer = torch.empty(offset, dtype=torch.uint8, device=device)
+        self.views: dict[str, torch.Tensor] = {}
+        grouped: dict[torch.dtype, tuple[list[str], list[torch.Tensor]]] = {}
+        for name, shape, dtype, start, nbytes in slots:
+            view = self.buffer[start : start + nbytes].view(dtype).view(shape)
+            self.views[name] = view
+            names, views = grouped.setdefault(dtype, ([], []))
+            names.append(name)
+            views.append(view)
+        self._groups = list(grouped.values())
+
+    @torch.no_grad()
+    def pack(self, data: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Copy tensors from ``data`` into ``self.buffer``."""
+        for names, views in self._groups:
+            srcs = [data[name] for name in names]
+            torch._foreach_copy_(views, srcs)
+        return self.buffer
+
+
+def _critic_step(
+    critic: nn.Module, features: torch.Tensor, targets: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    values = critic.forward(features)
+    return values, (targets - values).square().mean()
 
 
 # Submodules each training phase updates; every other parameter is frozen.
@@ -314,11 +394,23 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
         self, features: torch.Tensor, targets: torch.Tensor | None = None
     ) -> dict[str, torch.Tensor]:
         """Values of critic features, and the squared error to ``targets``."""
-        values = self.critic.forward(features)
-        out = {"values": values}
-        if targets is not None:
-            out["loss"] = (targets - values).square().mean()
-        return out
+        if targets is None:
+            values = run_compiled(
+                "critic-values",
+                self.critic.forward,
+                features,
+                cache=self._compile_cache,
+            )
+            return {"values": values}
+        values, loss = run_compiled(
+            "critic-step",
+            _critic_step,
+            self.critic,
+            features,
+            targets,
+            cache=self._compile_cache,
+        )
+        return {"values": values, "loss": loss}
 
     @classmethod
     def from_config(cls, cfg: DictConfig) -> SuperMimicPolicy:

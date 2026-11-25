@@ -311,8 +311,23 @@ def test_push_summary_groups_trials_by_configured_speed():
         (["actor.fsdp_config.strategy=fsdp"], "strategy=fsdp2"),
         (["actor.model.precision=bf16"], "actor.model.precision must be 32"),
         (
-            ["actor.fsdp_config.mixed_precision.param_dtype=bf16"],
-            "param_dtype must be null or fp32",
+            ["actor.fsdp_config.mixed_precision.cast_forward_inputs=True"],
+            "cast_forward_inputs must be False",
+        ),
+        (
+            ["actor.fsdp_config.mixed_precision.reduce_dtype=bf16"],
+            "reduce_dtype must be null or fp32",
+        ),
+        (
+            ["actor.fsdp_config.amp_autocast.enabled=True"],
+            "amp_autocast.enabled must be False",
+        ),
+        (
+            [
+                "actor.fsdp_config.mixed_precision.param_dtype=null",
+                "actor.fsdp_config.amp_autocast.enabled=True",
+            ],
+            None,
         ),
         (
             ["actor.fsdp_config.grad_scaler.enabled=True"],
@@ -709,6 +724,48 @@ def test_flat_tensor_packer_round_trips_actor_weights_and_norm_buffers():
         assert torch.equal(src_sd[name], dst_sd[name]), name
 
 
+def test_flat_dict_buffer_round_trips_obs_and_transition_packets():
+    from rlinf.models.embodiment.supermimic.supermimic_policy import (
+        FlatDictBuffer,
+        obs_packet_schema,
+        transition_packet_schema,
+    )
+
+    torch.manual_seed(0)
+    num_envs, state_dim, enc_dim = 4, STATE_DIM, 68
+    obs_schema = obs_packet_schema(num_envs, enc_dim)
+    obs_src = FlatDictBuffer(obs_schema, CPU)
+    obs_dst = FlatDictBuffer(obs_schema, CPU)
+    obs_data = {
+        "enc": torch.randn(num_envs, enc_dim),
+        "goal": torch.randn(num_envs, ACTOR_GOAL_DIM),
+        "enc_stats": pack_moments(torch.randn(num_envs, enc_dim)),
+        "goal_stats": pack_moments(torch.randn(num_envs, ACTOR_GOAL_DIM)),
+    }
+    obs_dst.buffer.copy_(obs_src.pack(obs_data))
+    for name, value in obs_data.items():
+        assert torch.equal(obs_dst.views[name], value), name
+
+    tr_schema = transition_packet_schema(num_envs, state_dim, enc_dim)
+    tr_src = FlatDictBuffer(tr_schema, CPU)
+    tr_dst = FlatDictBuffer(tr_schema, CPU)
+    tr_data = {
+        "state": torch.randn(num_envs, state_dim),
+        "action": torch.randn(num_envs, ACTION_DIM),
+        "prev_action": torch.randn(num_envs, ACTION_DIM),
+        "motion_time": torch.randint(0, 100, (num_envs,), dtype=torch.long),
+        "terminated": torch.tensor([True, False, False, True]),
+        "truncated": torch.tensor([False, True, False, False]),
+        "sim_context": torch.randn(num_envs, SIM_CONTEXT_DIM),
+        "enc_stats": obs_data["enc_stats"],
+        "goal_stats": obs_data["goal_stats"],
+        "target_stats": pack_moments(torch.randn(num_envs, ACTION_DIM)),
+    }
+    tr_dst.buffer.copy_(tr_src.pack(tr_data))
+    for name, value in tr_data.items():
+        assert torch.equal(tr_dst.views[name], value), name
+
+
 def test_replay_has_window_fast_path_and_older_fallback():
     ring = TransitionRing(num_envs=2, capacity=32, state_dim=STATE_DIM, device=CPU)
 
@@ -1084,12 +1141,20 @@ def _small_actor(cfg, mesh, motion):
     actor.log_info = lambda msg: None
     actor.device = "cuda:0"
     actor._device_mesh, actor._dp_group = mesh, mesh["fsdp"].get_group()
+    from rlinf.utils.precision import torch_dtype_from_precision
+
+    mp_cfg = cfg.actor.fsdp_config.mixed_precision
+    mp_policy = MixedPrecisionPolicy(
+        param_dtype=torch_dtype_from_precision(mp_cfg.param_dtype),
+        reduce_dtype=torch_dtype_from_precision(mp_cfg.reduce_dtype),
+        cast_forward_inputs=mp_cfg.get("cast_forward_inputs", True),
+    )
     actor._strategy = SimpleNamespace(
         wrap_model=lambda model, device_mesh: apply_fsdp2_to_model(
             model,
             cfg.actor.fsdp_config,
             device_mesh,
-            MixedPrecisionPolicy(),
+            mp_policy,
             OffloadPolicy(),
             reshard_after_forward=True,
         )
@@ -1120,7 +1185,9 @@ def _small_actor(cfg, mesh, motion):
     return actor
 
 
-def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) -> None:
+def _update_with_and_without_graph(
+    rank: int, port: int, out: str, precision_mode: str
+) -> None:
     from torch.distributed.device_mesh import init_device_mesh
 
     from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
@@ -1141,6 +1208,22 @@ def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) ->
             clip[:, JOINT_POS] += 0.05 * wave
             clips.append(clip.to("cuda:0"))
         motion = MotionLibrary(clips, q0=pose[JOINT_POS])
+        mode_overrides = {
+            "fp32": [
+                "actor.fsdp_config.mixed_precision.param_dtype=null",
+                "actor.fsdp_config.amp_autocast.enabled=False",
+            ],
+            "amp_bf16": [
+                "actor.fsdp_config.mixed_precision.param_dtype=null",
+                "actor.fsdp_config.amp_autocast.enabled=True",
+            ],
+            "fsdp_bf16": [
+                "actor.fsdp_config.amp_autocast.enabled=False",
+                "actor.fsdp_config.mixed_precision.param_dtype=bf16",
+                "actor.fsdp_config.mixed_precision.reduce_dtype=fp32",
+                "actor.fsdp_config.mixed_precision.cast_forward_inputs=False",
+            ],
+        }[precision_mode]
         results = {}
         for graph in (False, True):
             cfg = _compose(
@@ -1157,7 +1240,7 @@ def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) ->
                     "algorithm.replay_length=64",
                     "actor.model.torch_compile=False",
                     f"actor.cuda_graph={graph}",
-                    f"actor.fsdp_config.amp_autocast.enabled={amp}",
+                    *mode_overrides,
                 ],
             )
             torch.manual_seed(0)
@@ -1190,13 +1273,15 @@ def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) ->
     not _CUDA_AVAILABLE or not dist.is_nccl_available(),
     reason="the update graph needs a CUDA device and NCCL",
 )
-@pytest.mark.parametrize("amp", [False, True])
-def test_recorded_update_replays_the_eager_update(tmp_path, amp):
+@pytest.mark.parametrize("precision_mode", ["fp32", "amp_bf16", "fsdp_bf16"])
+def test_recorded_update_replays_the_eager_update(tmp_path, precision_mode):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     torch.multiprocessing.spawn(
-        _update_with_and_without_graph, args=(port, str(tmp_path), amp), nprocs=1
+        _update_with_and_without_graph,
+        args=(port, str(tmp_path), precision_mode),
+        nprocs=1,
     )
     results = torch.load(tmp_path / "updates.pt")
     eager, replayed = results[False], results[True]
