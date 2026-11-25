@@ -79,6 +79,9 @@ from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.robotwin_aloha_dataconfig import (
     LeRobotAlohaDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.robouniverse_dataconfig import (
+    LeRobotRoboUniverseDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
     SO101JointDataConfig,
 )
@@ -681,6 +684,36 @@ _CONFIGS = [
             assets=AssetsConfig(asset_id="dexjoco"),
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        name="pi05_robouniverse_franka",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=15,
+            max_token_len=200,
+        ),
+        data=LeRobotRoboUniverseDataConfig(
+            repo_id="robouniverse_franka",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(asset_id="robouniverse_franka"),
+            action_dim=9,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_robouniverse_franka",
+    ),
+    TrainConfig(
+        name="pi05_robouniverse_agilex",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=15,
+            max_token_len=200,
+        ),
+        data=LeRobotRoboUniverseDataConfig(
+            repo_id="robouniverse_agilex",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(asset_id="robouniverse_agilex"),
+            action_dim=16,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_robouniverse_agilex",
     ),
 ]
 

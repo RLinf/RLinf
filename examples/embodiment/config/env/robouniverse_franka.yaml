@@ -1,0 +1,30 @@
+env_type: robouniverse
+total_num_envs: 1
+auto_reset: false
+ignore_terminations: false
+seed: 0
+group_size: 1
+max_steps_per_rollout_epoch: 600
+max_episode_steps: 600
+video_cfg:
+  save_video: false
+  video_base_dir: ./logs/robouniverse/video
+init_params:
+  data_root: /path/to/RoboUniverse-10K
+  split: heldout500
+  robot: franka
+  cases: null
+  work_dir: null
+  asset_cache_dir: null
+  max_cached_tasks: 32
+  verify_sha256: true
+  offline: false
+  cycle_tasks: true
+  sim_python: /isaac-sim/python.sh
+  device: cuda:0
+  clip_actions: true
+  include_joint_velocity: false
+  grade_on_done: true
+  keep_evidence: false
+  accept_isaac_eula: false
+  startup_timeout_s: 300.0

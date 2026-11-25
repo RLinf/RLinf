@@ -348,6 +348,19 @@ def prepare_actions_for_dexjoco(
     return chunk_actions
 
 
+def prepare_actions_for_robouniverse(
+    raw_chunk_actions,
+    action_dim: int | None = None,
+) -> np.ndarray:
+    """Validate and slice joint-position target chunks for RoboUniverse-10K."""
+    chunk_actions = np.asarray(raw_chunk_actions, dtype=np.float32)
+    if action_dim is not None and chunk_actions.shape[-1] > action_dim:
+        chunk_actions = chunk_actions[..., :action_dim]
+    if not np.isfinite(chunk_actions).all():
+        raise ValueError("RoboUniverse actions must contain only finite values.")
+    return np.ascontiguousarray(chunk_actions)
+
+
 def prepare_actions_for_simple(raw_chunk_actions) -> np.ndarray:
     """Validate the fixed SIMPLE high-level action chunk without changing it."""
     from rlinf.envs.sim.simple.utils import SIMPLE_ACTION_CHUNK_SHAPE
@@ -494,6 +507,11 @@ def prepare_actions(
         chunk_actions = np.asarray(raw_chunk_actions, dtype=np.float32).copy()
         if _is_openpi_family(model_type):
             chunk_actions[..., -1] = (chunk_actions[..., -1] > 0.5).astype(np.float32)
+    elif env_type == SupportedEnvType.ROBOUNIVERSE:
+        chunk_actions = prepare_actions_for_robouniverse(
+            raw_chunk_actions=raw_chunk_actions,
+            action_dim=action_dim,
+        )
     elif env_type == SupportedEnvType.SIMPLE:
         chunk_actions = prepare_actions_for_simple(raw_chunk_actions)
     else:
