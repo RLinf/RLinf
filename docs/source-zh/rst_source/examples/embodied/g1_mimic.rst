@@ -157,27 +157,29 @@ G1 动作跟踪环境
 
 .. include:: _setup_common.rst
 
-**Docker 镜像**
+.. tab-set::
 
-构建 SuperMimic 镜像目标并启动容器：
+   .. tab-item:: Docker 镜像
 
-.. code-block:: bash
+      构建 SuperMimic 镜像目标并启动容器：
 
-   docker build -f docker/Dockerfile \
-       --build-arg BUILD_TARGET=embodied-supermimic \
-       -t rlinf:embodied-supermimic .
-   docker run -it --rm --gpus all \
-       --shm-size 32g --network host --name rlinf \
-       -v .:/workspace/RLinf rlinf:embodied-supermimic
+      .. code-block:: bash
 
-**自定义环境**
+         docker build -f docker/Dockerfile \
+             --build-arg BUILD_TARGET=embodied-supermimic \
+             -t rlinf:embodied-supermimic .
+         docker run -it --rm --gpus all \
+             --shm-size 32g --network host --name rlinf \
+             -v .:/workspace/RLinf rlinf:embodied-supermimic
 
-在仓库根目录创建独立虚拟环境。这个环境固定了特定版本的 PyTorch、MuJoCo Warp 和 ``warp-lang``，不要与其他 RLinf 虚拟环境混用：
+   .. tab-item:: 自定义环境
 
-.. code-block:: bash
+      在仓库根目录创建独立虚拟环境。这个环境固定了特定版本的 PyTorch、MuJoCo Warp 和 ``warp-lang``，不要与其他 RLinf 虚拟环境混用：
 
-   bash requirements/install.sh embodied --env supermimic --venv .venv-supermimic
-   source .venv-supermimic/bin/activate
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --env supermimic --venv .venv-supermimic
+         source .venv-supermimic/bin/activate
 
 AMD ROCm 环境安装见 :ref:`在其他硬件后端上运行 <supermimic-hardware>`。
 
@@ -213,8 +215,7 @@ AMD ROCm 环境安装见 :ref:`在其他硬件后端上运行 <supermimic-hardwa
 
    python examples/embodiment/train_embodied_agent.py \
        --config-name supermimic_lafan1_gencoord \
-       runner.logger.log_path=/data/runs/supermimic_gencoord \
-       actor.cuda_graph=True
+       runner.logger.log_path=/data/runs/supermimic_gencoord
 
 这条命令依次完成以下操作：
 

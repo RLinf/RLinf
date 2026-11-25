@@ -32,14 +32,17 @@ G1 动作数据准备
 运行
 ----
 
-动作目录下存放若干 ``clip_*.pt`` 文件，加载器按文件名排序读取。将 ``SUPERMIMIC_MOTION_PATH`` 指向你的动作目录后，在 :doc:`supermimic` 的训练命令或 :doc:`../../evaluations/guides/supermimic` 的评测命令后追加下面的覆盖参数即可。评测超过 40 条片段时的容量配置见 :doc:`../../evaluations/guides/supermimic`。
+按下方格式写出每条自定义 ``clip_*.pt`` 并放入同一目录（加载器按文件名排序读取），将 ``SUPERMIMIC_MOTION_PATH`` 指向该目录，训练时加 ``env.train.num_clips=null``\ （评测加 ``env.eval.num_clips=null``）即可加载目录下全部片段：
 
-自定义片段
-~~~~~~~~~~
+.. code-block:: bash
 
-按下方格式写出每个 ``clip_*.pt`` 并放入同一目录，将 ``SUPERMIMIC_MOTION_PATH`` 指向这个目录，训练时加 ``env.train.num_clips=null``\ （评测加 ``env.eval.num_clips=null``）即可加载目录下全部片段。
+   export SUPERMIMIC_MOTION_PATH=/data/my_clips
+   python examples/embodiment/train_embodied_agent.py \
+       --config-name supermimic_lafan1_gencoord \
+       env.train.num_clips=null \
+       runner.logger.log_path=/data/runs/supermimic_custom
 
-如果目录包含 ``manifest.json``，加载器会校验每条片段的 SHA-256 并拒绝未登记文件；不含 ``manifest.json`` 时仅检查张量形状与数值合法性。
+评测超过 40 条片段时的容量配置见 :doc:`../../evaluations/guides/supermimic`。如果目录包含 ``manifest.json``，加载器会校验每条片段的 SHA-256 并拒绝未登记文件；不含 ``manifest.json`` 时仅检查张量形状与数值合法性。
 
 片段文件格式
 ------------
@@ -89,29 +92,4 @@ G1 动作数据准备
      - 关节角速度
      - rad/s
 
-下面的示例生成一条 5 秒原地站立片段，并在保存前用加载器校验：
-
-.. code-block:: python
-
-   from pathlib import Path
-
-   import torch
-
-   from rlinf.envs.sim.g1_mimic.constants import G1_JOINT_NAMES
-   from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
-   from rlinf.envs.sim.g1_mimic.motion import decode_motion_payload
-
-   default = asset_default_state().float()  # mjlab 站立关键帧，[71]
-   T = 250                                  # 50 Hz 下 5 秒
-   state = torch.zeros(T, 71)
-   state[:, :36] = default[:36]             # 根位姿与关节角，速度保持 0
-   payload = {
-       "fps": 50,
-       "joint_names": list(G1_JOINT_NAMES),
-       "q0": default[7:36],
-       "state": state,
-   }
-   decode_motion_payload(payload, "clip_000.pt")  # 不合格时抛出 ValueError
-   out = Path("/data/my_clips")
-   out.mkdir(parents=True, exist_ok=True)
-   torch.save(payload, out / "clip_000.pt")
+先用 ``python toolkits/supermimic/prepare_lafan1.py --export-q0 g1_q0.pt`` 导出默认关节姿态 ``g1_q0.pt``，再用 ``torch.save`` 将每条自定义片段字典保存为 ``clip_000.pt`` 等文件。训练与评测启动时，加载器会自动校验字段、关节顺序、``q0`` 一致性、四元数模长和数值有限性。

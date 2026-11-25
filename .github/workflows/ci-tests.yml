@@ -215,15 +215,18 @@ jobs:
               - 'rlinf/envs/**'
               # test_supermimic.py imports SuperMimic models, workers, runners,
               # toolkit prep, and configs directly.
+              - 'rlinf/models/embodiment/base_policy.py'
               - 'rlinf/models/embodiment/supermimic/**'
               - 'rlinf/workers/actor/fsdp_supermimic_policy_worker.py'
               - 'rlinf/workers/env/supermimic_env_worker.py'
-              - 'rlinf/workers/rollout/hf/supermimic_rollout_worker.py'
-              - 'rlinf/runners/supermimic*.py'
+              - 'rlinf/runners/supermimic_runner.py'
+              - 'rlinf/runners/embodied_eval_runner.py'
+              - 'rlinf/runners/embodied_runner.py'
               - 'toolkits/supermimic/**'
+              - 'examples/embodiment/config/env/g1_mimic.yaml'
+              - 'examples/embodiment/config/model/supermimic.yaml'
               - 'examples/embodiment/config/supermimic*.yaml'
               - 'evaluations/supermimic/*.yaml'
-              - 'tests/e2e_tests/evaluations/g1_mimic_supermimic_eval.yaml'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
               # The agent loop, rollout buffer, agentic tokenizer, Megatron MA actor

@@ -41,17 +41,15 @@ from rlinf.envs.sim.g1_mimic.constants import (
     ROOT_POS,
     ROOT_QUAT,
 )
-from rlinf.envs.sim.g1_mimic.eval_metrics import EVAL_TASKS, PUSH_RECOVERY, TRACKING
-from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat, rotation_angle
-from rlinf.envs.sim.g1_mimic.g1_fk import (
-    PELVIS_BODY,
-    TORSO_BODY,
-    asset_joint_limits,
-    set_kinematics_compile,
+from rlinf.envs.sim.g1_mimic.eval.eval_metrics import (
+    EVAL_TASKS,
+    PUSH_RECOVERY,
+    TRACKING,
 )
-from rlinf.envs.sim.g1_mimic.mjlab_env import MjlabG1Env, env_device
-from rlinf.envs.sim.g1_mimic.motion import build_motion_library, root_goals
-from rlinf.envs.sim.g1_mimic.push_recovery import (
+from rlinf.envs.sim.g1_mimic.eval.eval_metrics import (
+    finalize_eval_results as summarize_eval_results,
+)
+from rlinf.envs.sim.g1_mimic.eval.push_recovery import (
     OUTCOMES,
     REASONS,
     RecoveryCriteria,
@@ -69,8 +67,17 @@ from rlinf.envs.sim.g1_mimic.push_recovery import (
     trial_plan,
     world_push_xy,
 )
-from rlinf.envs.sim.g1_mimic.representations import make_representation
-from rlinf.envs.sim.g1_mimic.reward import (
+from rlinf.envs.sim.g1_mimic.kinematics.features import quat_to_rotmat, rotation_angle
+from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import (
+    PELVIS_BODY,
+    TORSO_BODY,
+    asset_joint_limits,
+    set_kinematics_compile,
+)
+from rlinf.envs.sim.g1_mimic.kinematics.representations import make_representation
+from rlinf.envs.sim.g1_mimic.mjlab_env import MjlabG1Env, env_device
+from rlinf.envs.sim.g1_mimic.tasks.motion import build_motion_library, root_goals
+from rlinf.envs.sim.g1_mimic.tasks.reward import (
     failure_signals,
     tracking_reward,
     xy_yaw_drift,
@@ -639,3 +646,12 @@ class G1MimicEvalEnv:
             if self.save_trajectory:
                 rows["push_recovery.trajectory"] = self.trajectory
         return {key: value.detach().clone() for key, value in rows.items()}
+
+    def finalize_eval_results(
+        self,
+        cfg: DictConfig,
+        env_results: list[dict | None],
+        step: int | None = None,
+    ) -> tuple[dict[str, float], str | None]:
+        """Merge per-rank evaluation rows, summarize metrics, and export tables."""
+        return summarize_eval_results(cfg, env_results, self.metadata(), step=step)

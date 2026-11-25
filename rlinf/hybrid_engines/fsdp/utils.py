@@ -99,7 +99,8 @@ def create_device_mesh(
         # No backend is passed, so torch still resolves the per-device backend
         # it would have picked on its own; only the timeout changes.
         torch.distributed.init_process_group(timeout=Cluster.get_collective_timeout())
-    if sharding_strategy == "no_shard":
+    normalized = str(sharding_strategy).strip().lower().replace("-", "_")
+    if normalized == "no_shard":
         return init_device_mesh(
             Worker.torch_device_type,
             mesh_shape=(world_size, 1),
@@ -820,19 +821,30 @@ def clip_grad_by_total_norm_(
     # Scale.
     clip_coeff = max_grad_norm / (total_norm + 1.0e-6)
 
+    from torch.utils._foreach_utils import _has_foreach_support
+
     if isinstance(clip_coeff, torch.Tensor):
         clip_coeff = clip_coeff.clamp(max=1.0)
         by_key: dict[tuple[torch.device, torch.dtype], list[torch.Tensor]] = {}
         for g in grads:
             by_key.setdefault((g.device, g.dtype), []).append(g)
         for (dev, dt), group in by_key.items():
-            torch._foreach_mul_(group, clip_coeff.to(device=dev, dtype=dt))
+            coeff = clip_coeff.to(device=dev, dtype=dt)
+            if _has_foreach_support(group, dev):
+                torch._foreach_mul_(group, coeff)
+            else:
+                for g in group:
+                    g.mul_(coeff)
     elif clip_coeff < 1.0:
         by_key = {}
         for g in grads:
             by_key.setdefault((g.device, g.dtype), []).append(g)
-        for group in by_key.values():
-            torch._foreach_mul_(group, clip_coeff)
+        for (dev, _), group in by_key.items():
+            if _has_foreach_support(group, dev):
+                torch._foreach_mul_(group, clip_coeff)
+            else:
+                for g in group:
+                    g.mul_(clip_coeff)
 
 
 @torch.no_grad()
@@ -855,8 +867,8 @@ def get_grad_norm(
         norm_type (Union[int, float]): Type of the used p-norm. Can be ``'inf'`` for
             infinity norm.
         as_tensor (bool): Return the norm as a 0-d tensor on the gradients'
-            device. A p-norm then never waits for the host; the infinity norm
-            still reads each gradient's maximum.
+            device. A p-norm (and colocated foreach infinity norm) then avoids
+            synchronizing with the host.
 
     Returns:
         Union[float, torch.Tensor]: Total norm of the gradients (viewed as a
@@ -887,11 +899,15 @@ def get_grad_norm(
             return torch.tensor(0.0, dtype=torch.float, device=device)
         return 0.0
 
+    from torch.utils._foreach_utils import _has_foreach_support
+
     device = grads_for_norm[0].device
-    same_device = all(grad.device == device for grad in grads_for_norm)
+    use_foreach = all(
+        grad.device == device for grad in grads_for_norm
+    ) and _has_foreach_support(grads_for_norm, device)
     # Calculate norm.
     if norm_type == torch.inf:
-        if same_device:
+        if use_foreach:
             total_norm_cuda = (
                 torch.stack(torch._foreach_norm(grads_for_norm, torch.inf))
                 .max()
@@ -913,10 +929,10 @@ def get_grad_norm(
         return float(total_norm_cuda[0].item())
 
     else:
-        # Accumulate p-norm over all gradients with multi-tensor kernel when colocated.
-        if same_device:
+        # Accumulate p-norm over all gradients with multi-tensor kernel when supported.
+        if use_foreach:
             norms = torch._foreach_norm(grads_for_norm, norm_type)
-            total_norm = torch.stack(norms).pow(norm_type).sum().to(dtype=torch.float)
+            total_norm = torch.stack(norms).to(dtype=torch.float).pow(norm_type).sum()
         else:
             total_norm = torch.tensor(0.0, dtype=torch.float, device=device)
             for grad in grads_for_norm:

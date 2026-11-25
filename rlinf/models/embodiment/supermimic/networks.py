@@ -29,7 +29,10 @@ from rlinf.envs.sim.g1_mimic.constants import (
     SIM_CONTEXT_DIM,
     WORLD_MODEL_GOAL_DIM,
 )
-from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state, g1_action_scale
+from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import (
+    asset_default_state,
+    g1_action_scale,
+)
 from rlinf.models.embodiment.modules.utils import make_mlp
 from rlinf.models.embodiment.supermimic.normalization import EmpiricalNorm
 

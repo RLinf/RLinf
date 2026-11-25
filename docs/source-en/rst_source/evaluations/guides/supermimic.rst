@@ -75,7 +75,7 @@ Run motion-tracking evaluation on the 40 LAFAN1 clips:
 Evaluate Standing Push Recovery
 -------------------------------
 
-Standing push recovery tests disturbance rejection from mjlab's built-in knees-bent standing pose (no motion clips required). The robot holds the pose for 1 second, receives a horizontal root velocity impulse at one of four speeds (``0.5``, ``1.0``, ``2.0``, or ``4.0`` m/s, 4 trials per speed = 16 trials), and runs for up to 5 seconds post-push.
+Standing push recovery tests disturbance rejection from mjlab's built-in knees-bent standing pose (no motion clips required). The robot holds the pose for 1 second, receives a root velocity impulse in a random horizontal direction at one of four speeds (``0.5``, ``1.0``, ``2.0``, or ``4.0`` m/s, 4 trials per speed = 16 trials), and runs for up to 5 seconds post-push.
 
 .. note::
 

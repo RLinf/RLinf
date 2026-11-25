@@ -30,9 +30,9 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache, run_compiled
+from rlinf.utils.compile_cache import CompileCache, run_compiled
 from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM, G1_JOINT_NAMES
-from rlinf.envs.sim.g1_mimic.features import quat_normalize, quat_to_rotmat
+from rlinf.envs.sim.g1_mimic.kinematics.features import quat_normalize, quat_to_rotmat
 
 if TYPE_CHECKING:
     import mujoco

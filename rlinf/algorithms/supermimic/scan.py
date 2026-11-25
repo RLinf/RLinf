@@ -33,11 +33,14 @@ from __future__ import annotations
 import torch
 
 from rlinf.algorithms.supermimic.objectives import imagined_return, world_model_loss
-from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache, run_compiled
-from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat
-from rlinf.envs.sim.g1_mimic.g1_fk import PELVIS_BODY
-from rlinf.envs.sim.g1_mimic.motion import root_goals
-from rlinf.envs.sim.g1_mimic.reward import termination_probability, tracking_reward
+from rlinf.utils.compile_cache import CompileCache, run_compiled
+from rlinf.envs.sim.g1_mimic.kinematics.features import quat_to_rotmat
+from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import PELVIS_BODY
+from rlinf.envs.sim.g1_mimic.tasks.motion import root_goals
+from rlinf.envs.sim.g1_mimic.tasks.reward import (
+    termination_probability,
+    tracking_reward,
+)
 
 
 def _caller(compile_name: str | None, cache: CompileCache | None):

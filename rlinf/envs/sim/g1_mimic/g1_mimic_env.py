@@ -25,14 +25,14 @@ from __future__ import annotations
 import torch
 from omegaconf import DictConfig
 
-from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache, run_compiled
+from rlinf.utils.compile_cache import CompileCache, run_compiled
 from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM
-from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat
-from rlinf.envs.sim.g1_mimic.g1_fk import set_kinematics_compile
+from rlinf.envs.sim.g1_mimic.kinematics.features import quat_to_rotmat
+from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import set_kinematics_compile
+from rlinf.envs.sim.g1_mimic.kinematics.representations import make_representation
 from rlinf.envs.sim.g1_mimic.mjlab_env import MjlabG1Env, env_device
-from rlinf.envs.sim.g1_mimic.motion import build_motion_library, root_goals
-from rlinf.envs.sim.g1_mimic.representations import make_representation
-from rlinf.envs.sim.g1_mimic.reward import tracking_reward
+from rlinf.envs.sim.g1_mimic.tasks.motion import build_motion_library, root_goals
+from rlinf.envs.sim.g1_mimic.tasks.reward import tracking_reward
 from rlinf.utils.utils import seed_everything
 
 
@@ -82,6 +82,9 @@ class G1MimicEnv:
     def set_reset_sampler(self, reset_sampler) -> None:
         """Attach an algorithm-owned reset sampler (``sample``/``record``)."""
         self.reset_sampler = reset_sampler
+
+    def update_reset_state_ids(self) -> None:
+        """No-op hook for compatibility with generic :class:`EnvWorker` rollouts."""
 
     def _sample_reset_frames(self, count: int) -> torch.Tensor:
         if self.reset_sampler is not None:

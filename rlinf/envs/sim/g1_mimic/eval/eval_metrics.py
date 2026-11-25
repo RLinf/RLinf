@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 import torch
 from omegaconf import OmegaConf
 
-from rlinf.envs.sim.g1_mimic.push_recovery import (
+from rlinf.envs.sim.g1_mimic.eval.push_recovery import (
     OUTCOMES,
     PAPER_PROTOCOL,
     PROTOCOL_NAME,

@@ -46,8 +46,8 @@ from rlinf.algorithms.supermimic.objectives import (
     value_ceiling,
 )
 from rlinf.algorithms.supermimic.replay import TransitionRing
-from rlinf.envs.sim.g1_mimic.compile_cache import run_compiled
-from rlinf.envs.sim.g1_mimic.motion import build_motion_library
+from rlinf.utils.compile_cache import run_compiled
+from rlinf.envs.sim.g1_mimic.tasks.motion import build_motion_library
 from rlinf.hybrid_engines.fsdp import FSDPModule
 from rlinf.hybrid_engines.fsdp.utils import (
     clip_grad_by_total_norm_,
@@ -55,14 +55,16 @@ from rlinf.hybrid_engines.fsdp.utils import (
     to_local_if_dtensor,
 )
 from rlinf.models.embodiment.base_policy import ForwardType
+from rlinf.models.embodiment.supermimic.ipc import (
+    FlatDictBuffer,
+    FlatTensorPacker,
+    transition_packet_schema,
+    use_direct_weight_sync,
+)
 from rlinf.models.embodiment.supermimic.networks import hidden_matrix_names
 from rlinf.models.embodiment.supermimic.supermimic_policy import (
     PHASE_INPUTS,
-    FlatDictBuffer,
-    FlatTensorPacker,
     sync_param_names,
-    transition_packet_schema,
-    use_direct_weight_sync,
 )
 from rlinf.scheduler import Worker
 from rlinf.utils.cuda_graph import CUDAGraphManager, GraphCaptureSpec
@@ -158,6 +160,17 @@ def keep_step_placement(optimizer: torch.optim.Optimizer, state_dict: dict) -> d
         {**group, **flags} for group in state_dict["param_groups"]
     ]
     return state_dict
+
+
+def _record_stream_tree(tree, stream) -> None:
+    if torch.is_tensor(tree):
+        tree.record_stream(stream)
+    elif isinstance(tree, dict):
+        for value in tree.values():
+            _record_stream_tree(value, stream)
+    elif isinstance(tree, (list, tuple)):
+        for value in tree:
+            _record_stream_tree(value, stream)
 
 
 class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
@@ -318,10 +331,6 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             self.replay.add({name: views[name] for name in fields})
         return self.replay.has_window(self.k)
 
-    def replay_ready(self) -> bool:
-        """Whether this rank's replay holds a legal world-model window."""
-        return self.replay.has_window(self.k)
-
     # --------------------------------------------------------------- training
 
     @Worker.timer("run_updates")
@@ -334,21 +343,29 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
                 self.profiler.start()
             inputs = prefetched
             prefetched = None
+            current_stream = (
+                self.torch_platform.current_stream()
+                if self.torch_platform is not None
+                and self.torch_platform.is_available()
+                else None
+            )
             if (
                 inputs is not None
                 and self._prefetch_stream is not None
-                and self.torch_platform is not None
+                and current_stream is not None
             ):
-                self.torch_platform.current_stream().wait_stream(self._prefetch_stream)
+                current_stream.wait_stream(self._prefetch_stream)
+                _record_stream_tree(inputs, current_stream)
             metrics = self._run_update(inputs)
             if (
                 idx + 1 < num_updates
                 and self.use_cuda_graph
                 and self.update_graphs is not None
-                and self.torch_platform is not None
+                and current_stream is not None
             ):
                 if self._prefetch_stream is None:
                     self._prefetch_stream = self.torch_platform.Stream()
+                self._prefetch_stream.wait_stream(current_stream)
                 with self.torch_platform.stream(self._prefetch_stream):
                     prefetched = self._draw_update_inputs()
             if self.profiler is not None:
@@ -635,7 +652,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             term_prob.transpose(0, 1),
             self.gamma,
             self.lam,
-            cache=self.model._compile_cache,
+            cache=self.model.compile_cache,
         ).clamp(max=self.value_max)
         targets = targets.reshape(-1)
         minibatches = list(zip(features[order], targets[order]))
@@ -668,6 +685,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             self.cfg, self._actor_world_size, len(self._rollout_all_ranks)
         ):
             return await super().sync_model_to_rollout()
+        self._reshard()
         if self._sync_packer is None:
             self._sync_packer = FlatTensorPacker(self.model, self.param_names_need_sync)
         self._sync_packer.pack()

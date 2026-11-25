@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING
 from omegaconf import DictConfig
 
 from rlinf.runners.embodied_runner import EmbodiedRunner
-from rlinf.runners.supermimic_eval_runner import evaluate_g1_mimic
 from rlinf.scheduler import Tracer
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.checkpoint import parse_global_step_from_checkpoint_path
@@ -291,16 +290,6 @@ class SuperMimicRunner(EmbodiedRunner):
             env_handle, rollout_handle, ready = self._collect(1)
             waited += 1
         return env_handle, rollout_handle, due
-
-    def evaluate(self) -> dict[str, float]:
-        return evaluate_g1_mimic(
-            self.cfg,
-            self.env,
-            self.rollout,
-            self.env_channel,
-            self.rollout_channel,
-            step=self.global_step,
-        )
 
     def _set_global_step(self) -> None:
         """Pass the finished update count to every worker group.

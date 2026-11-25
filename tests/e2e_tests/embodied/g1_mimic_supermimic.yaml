@@ -1,6 +1,7 @@
-# Three updates of the GenCoord recipe on the standing clip in
-# SUPERMIMIC_MOTION_PATH. Updates 2 and 3 evaluate, so the eval env runs twice
-# in one process; the last update saves a checkpoint.
+# Five updates of the GenCoord recipe on the standing clip in
+# SUPERMIMIC_MOTION_PATH (update 4 records the CUDA graph, update 5 replays it).
+# Every update evaluates so the eval env runs repeatedly in one process; update
+# 5 saves a checkpoint for the resume test.
 defaults:
   - supermimic_lafan1_gencoord
   - _self_
@@ -20,8 +21,8 @@ runner:
   logger:
     log_path: /workspace/results/g1_mimic_supermimic
     experiment_name: ci-test
-  max_epochs: 3
-  save_interval: 3
+  max_epochs: 5
+  save_interval: 5
   val_check_interval: 1
   eval_export:
     enabled: True

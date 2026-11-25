@@ -32,14 +32,14 @@ from omegaconf import DictConfig
 
 from rlinf.algorithms.supermimic.reset_sampler import ReturnResetSampler
 from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM
-from rlinf.models.embodiment.supermimic.normalization import (
-    merged_moments,
-    split_moments,
-)
-from rlinf.models.embodiment.supermimic.supermimic_policy import (
+from rlinf.models.embodiment.supermimic.ipc import (
     FlatDictBuffer,
     obs_packet_schema,
     transition_packet_schema,
+)
+from rlinf.models.embodiment.supermimic.normalization import (
+    merged_moments,
+    split_moments,
 )
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.utils import get_rng_state, set_rng_state

@@ -5,7 +5,7 @@ SuperMimic 评测
 
 相关文档：:doc:`SuperMimic 训练示例 <../../examples/embodied/supermimic>` · :doc:`G1 动作跟踪环境 <../../examples/embodied/g1_mimic>` · :doc:`动作数据准备 <../../examples/embodied/supermimic_motion>`。
 
-示例配置
+评测配置
 --------
 
 ``evaluations/supermimic/`` 目录下提供两份预置配置：

@@ -45,7 +45,7 @@ from rlinf.envs.sim.g1_mimic.constants import (
     ROOT_QUAT,
     STATE_DIM,
 )
-from rlinf.envs.sim.g1_mimic.features import (
+from rlinf.envs.sim.g1_mimic.kinematics.features import (
     quat_mul,
     quat_to_rotmat,
     rot_apply,
@@ -54,8 +54,8 @@ from rlinf.envs.sim.g1_mimic.features import (
     rot_mul_t,
     rotmat_to_6d,
 )
-from rlinf.envs.sim.g1_mimic.g1_fk import g1_kinematics
-from rlinf.envs.sim.g1_mimic.g1_ik import ChainInverseKinematics
+from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import g1_kinematics
+from rlinf.envs.sim.g1_mimic.kinematics.g1_ik import ChainInverseKinematics
 
 POSE_WEIGHT = (DECIMATION + 1) / (2 * DECIMATION)
 

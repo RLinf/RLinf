@@ -109,7 +109,10 @@ class FSDPModelManager:
 
         fsdp_strategy = self._cfg.fsdp_config.get("strategy", "fsdp")
         mesh_sharding = (
-            self._cfg.fsdp_config.get("sharding_strategy", "full_shard")
+            str(self._cfg.fsdp_config.get("sharding_strategy", "full_shard"))
+            .strip()
+            .lower()
+            .replace("-", "_")
             if fsdp_strategy == "fsdp2"
             else "full_shard"
         )

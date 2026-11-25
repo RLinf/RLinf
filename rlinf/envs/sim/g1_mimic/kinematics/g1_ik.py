@@ -31,8 +31,12 @@ import math
 import torch
 from torch import nn
 
-from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat, rot_apply, rot_mul
-from rlinf.envs.sim.g1_mimic.g1_fk import (
+from rlinf.envs.sim.g1_mimic.kinematics.features import (
+    quat_to_rotmat,
+    rot_apply,
+    rot_mul,
+)
+from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import (
     g1_model,
     joint_qpos_addresses,
     tracked_body_ids,

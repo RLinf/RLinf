@@ -47,20 +47,20 @@ from rlinf.envs.sim.g1_mimic.constants import (
     ROOT_QUAT,
     STATE_DIM,
 )
-from rlinf.envs.sim.g1_mimic.features import (
+from rlinf.envs.sim.g1_mimic.kinematics.features import (
     quat_from_euler_xyz,
     quat_mul,
     quat_to_rotmat,
     rot_apply,
     rot_apply_t,
 )
-from rlinf.envs.sim.g1_mimic.g1_fk import (
+from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import (
     TRACKED_BODY_NAMES,
     g1_action_scale,
     soft_joint_limits,
 )
-from rlinf.envs.sim.g1_mimic.motion import MotionLibrary
-from rlinf.envs.sim.g1_mimic.reward import failure_signals
+from rlinf.envs.sim.g1_mimic.tasks.motion import MotionLibrary
+from rlinf.envs.sim.g1_mimic.tasks.reward import failure_signals
 from rlinf.scheduler import Worker
 
 FOOT_GEOM = re.compile(r"^(left|right)_foot[1-7]_collision$")

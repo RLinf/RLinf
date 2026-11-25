@@ -27,7 +27,7 @@ Overview
    .. grid-item-card:: Training
       :text-align: center
 
-      1–4 NVIDIA GPUs (FSDP2) · :ref:`AMD ROCm <supermimic-hardware>`
+      1–4 NVIDIA GPUs (FSDP2) · :ref:`AMD ROCm (experimental) <supermimic-hardware>`
 
 | **You'll do:** learn the algorithm → install & prepare LAFAN1 → launch training → watch TensorBoard → evaluate checkpoints.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · one or more NVIDIA GPUs (or AMD ROCm) · network access to Hugging Face for LAFAN1 clips.
@@ -178,8 +178,8 @@ The default training config is ``examples/embodiment/config/supermimic_lafan1_ge
      - ``bf16``
      - Cast network weights to bf16 once per phase while keeping master weights, optimizer state, gradient reductions, kinematics, and losses in float32 (set ``null`` for TF32)
 
-Train on One GPU
-~~~~~~~~~~~~~~~~
+Train and Resume on One GPU
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Set the motion clip directory and disable MuJoCo's OpenGL renderer, then launch the 6000-update GenCoord run on GPU 0 (CUDA graph replay and bf16 mixed precision are enabled by default):
 

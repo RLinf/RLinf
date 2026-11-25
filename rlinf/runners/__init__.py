@@ -11,22 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from omegaconf import DictConfig, OmegaConf
-
-from rlinf.envs import SupportedEnvType
-
-
-def get_embodied_eval_runner(cfg: DictConfig) -> type:
-    """Runner for an embodied evaluation config."""
-    if (
-        cfg.rollout.get("rollout_backend", "huggingface") == "huggingface"
-        and OmegaConf.select(cfg, "env.eval.env_type")
-        == SupportedEnvType.G1_MIMIC.value
-    ):
-        from .supermimic_eval_runner import SuperMimicEvalRunner
-
-        return SuperMimicEvalRunner
-    from .embodied_eval_runner import EmbodiedEvalRunner
-
-    return EmbodiedEvalRunner

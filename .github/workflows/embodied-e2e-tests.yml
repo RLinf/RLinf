@@ -474,8 +474,8 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh g1_mimic_supermimic \
-            runner.max_epochs=5 \
-            runner.resume_dir=/workspace/results/g1_mimic_supermimic/ci-test/checkpoints/global_step_3
+            runner.max_epochs=7 \
+            runner.resume_dir=/workspace/results/g1_mimic_supermimic/ci-test/checkpoints/global_step_5
 
       - name: Check the resumed training state
         run: |
@@ -492,21 +492,17 @@ jobs:
               with open(os.path.join(root, f"global_step_{step}", *parts)) as file:
                   return json.load(file)
 
-          before = read(3, "actor", "supermimic_counters.json")["optimizer_steps"]
-          after = read(5, "actor", "supermimic_counters.json")["optimizer_steps"]
-          # The 3-to-5 ratio also holds for a fresh run to step 5, because that
-          # run saves at both steps. The metrics log is what shows the resume:
-          # one table per iteration, and a fresh run would print a step of 5
-          # at or below 3 before reaching 5.
+          before = read(5, "actor", "supermimic_counters.json")["optimizer_steps"]
+          after = read(7, "actor", "supermimic_counters.json")["optimizer_steps"]
           for phase, steps in before.items():
-              assert steps > 0 and steps % 3 == 0, (phase, before)
-              assert after[phase] == steps // 3 * 5, (phase, before, after)
-          env_steps = [read(step, "runner_state.json")["env_steps"] for step in (3, 5)]
+              assert steps > 0 and steps % 5 == 0, (phase, before)
+              assert after[phase] == steps // 5 * 7, (phase, before, after)
+          env_steps = [read(step, "runner_state.json")["env_steps"] for step in (5, 7)]
           assert env_steps[1] > env_steps[0] > 0, env_steps
           with open(os.path.join(log_root, "metrics.log")) as file:
               metrics = file.read()
-          logged = [int(n) for n in re.findall(r"Global Step:\s+(\d+)/5\b", metrics)]
-          assert logged and min(logged) > 3 and max(logged) == 5, logged
+          logged = [int(n) for n in re.findall(r"Global Step:\s+(\d+)/7\b", metrics)]
+          assert logged and min(logged) > 5 and max(logged) == 7, logged
           EOF
 
       - name: SuperMimic MaxCoord test on two GPUs

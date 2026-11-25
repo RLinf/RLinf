@@ -40,7 +40,7 @@ from rlinf.envs.sim.g1_mimic.constants import (
     ROOT_QUAT,
     STATE_DIM,
 )
-from rlinf.envs.sim.g1_mimic.features import (
+from rlinf.envs.sim.g1_mimic.kinematics.features import (
     quat_mul,
     quat_to_rotmat,
     rot_apply_t,
@@ -129,11 +129,6 @@ class MotionLibrary:
         """Total frames over all clips."""
         return int(self.frames.shape[0])
 
-    def clip(self, motion_id: int) -> torch.Tensor:
-        """One clip as a view into the block."""
-        start = int(self.offsets[motion_id])
-        return self.frames[start : start + int(self.lengths[motion_id])]
-
     def _index(
         self, device: torch.device
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -177,7 +172,7 @@ class MotionLibrary:
 
     def _kinematics(self) -> tuple[torch.Tensor, ...]:
         if self._kin_cache is None:
-            from rlinf.envs.sim.g1_mimic.g1_fk import g1_kinematics
+            from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import g1_kinematics
 
             kin = g1_kinematics()
             parts: list[tuple[torch.Tensor, ...]] = []
@@ -285,19 +280,6 @@ def _interp_weights(
     t1 = src_t[idx]
     u = (dst_t - t0) / (t1 - t0).clamp_min(1e-12)
     return idx, u
-
-
-def resample_series(
-    values: torch.Tensor, src_fps: float, dst_fps: float = CONTROL_FPS
-) -> torch.Tensor:
-    """Linear resample of a per-frame array onto the control-time grid."""
-    values = torch.as_tensor(values, dtype=torch.float32)
-    count = int(values.shape[0])
-    src_t, dst_t, _dt = control_time_grid(count, src_fps, dst_fps)
-    idx, u = _interp_weights(src_t, dst_t, count)
-    shape = [u.shape[0]] + [1] * (values.ndim - 1)
-    u = u.to(dtype=values.dtype).reshape(shape)
-    return (1.0 - u) * values[idx - 1] + u * values[idx]
 
 
 def _central_difference(values: torch.Tensor, dt: float) -> torch.Tensor:
