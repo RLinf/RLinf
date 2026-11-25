@@ -141,20 +141,20 @@ SuperMimic 将想象轨迹上的回报沿着可微世界模型反向传播，用
 
 * **双优化器：** 各网络隐藏层线性矩阵使用 Muon（``adjust_lr_fn: match_rms_adamw``、权重衰减 ``0.1``、动量 ``0.95``、Nesterov ``True``）；其余参数（首尾层、归一化层与偏置）使用 fused Adam，actor 的 :math:`\beta = (0.9, 0.95)`，世界模型与 critic 的 :math:`\beta = (0.9, 0.999)`。学习率恒定 :math:`2\times 10^{-4}`。
 * **梯度裁剪与异常检查：** 在 GPU 上按全局范数 ``1.0`` 裁剪（不触发主机同步），actor 额外对每个元素裁剪到 ``0.1``。一旦出现非有限梯度，指标拷回主机时训练直接终止。
-* **CUDA 图与 bf16：** ``actor.cuda_graph``\ （默认 ``False``）开启后，前 3 次更新普通执行，第 4 次将三个阶段录成单张 CUDA 图并持续回放。``actor.fsdp_config.amp_autocast.enabled``\ （默认 ``False``）开启后网络矩阵乘使用 bf16，权重、损失与优化器状态仍保持 float32。
+* **CUDA 图与 bf16：** 开启 ``actor.cuda_graph``\ （默认 ``True``）后，前 3 次更新按常规方式执行，第 4 次将三个阶段录成单张 CUDA 图并持续回放。默认使用 FSDP2 ``mixed_precision.param_dtype: bf16``\ （配合 ``reduce_dtype: fp32`` 与 ``cast_forward_inputs: False``），在每阶段 unshard 时将网络权重转为 bf16，主权重、优化器状态、梯度归约、运动学、奖励与损失仍保持 float32；rollout 推理则由 ``rollout.amp_autocast`` 启用 bf16。
 
 并行训练（FSDP2）
 -----------------
 
 每张 GPU 上运行一个 env、一个 rollout 和一个 actor worker，env rank :math:`r` 仅与同号 rollout、actor rank :math:`r` 通信。全局环境数与两种批大小均分到各 rank，每个 actor rank 从本地 replay 抽样各自份额。
 
-所有 actor worker 组成一个 FSDP2 组，动力学网络、policy 与 critic 作为三个独立 FSDP 单元（``module_classes_to_wrap: [Dynamics, MotionPolicy, Critic]``）。每个阶段开始前先 reshard 全部单元并将本阶段参数设为可训练，前向时只对本阶段读取的网络做一次 all-gather，避免多步展开时反复通信：
+所有 actor worker 组成一个 FSDP2 组，动力学网络、policy 与 critic 作为三个独立 FSDP 单元（``module_classes_to_wrap: [Dynamics, MotionPolicy, Critic]``）。由于完整模型在 float32 下约 64 MB，默认配置使用 ``sharding_strategy: no_shard`` 和 ``reshard_after_forward: False``，各卡保留完整权重并用 all-reduce 同步梯度；切换到分片策略（如 ``full_shard``）时，unshard 执行 all-gather，反向则用 reduce-scatter 归约梯度。每个阶段开始前只将本阶段参数设为可训练，并仅 unshard 本阶段读取的网络：
 
-* **世界模型阶段：** all-gather ``Dynamics``。
-* **Actor 阶段：** all-gather 全部三个网络，其中 ``Dynamics`` 与 ``Critic`` 冻结。
-* **Critic 阶段：** 仅 all-gather ``Critic``。
+* **世界模型阶段：** unshard ``Dynamics``。
+* **Actor 阶段：** unshard 全部三个网络，其中 ``Dynamics`` 与 ``Critic`` 冻结。
+* **Critic 阶段：** 仅 unshard ``Critic``。
 
-梯度由 FSDP 自动 reduce-scatter，在分片参数上计算全局梯度范数，重置分箱统计与输入归一化矩在 env rank 间归约同步。
+全局梯度范数在 FSDP 参数上计算，重置分箱统计与输入归一化矩在 env rank 间归约同步。
 
 按回报重置采样器
 ----------------
@@ -190,13 +190,19 @@ SuperMimic 将想象轨迹上的回报沿着可微世界模型反向传播，用
      replay_length: 1000
 
    actor:
-     cuda_graph: False
+     cuda_graph: True
      model:
        representation: gencoord  # gencoord 或 maxcoord
      fsdp_config:
        strategy: fsdp2
+       sharding_strategy: no_shard
+       reshard_after_forward: False
        wrap_policy:
          module_classes_to_wrap: [Dynamics, MotionPolicy, Critic]
+       mixed_precision:
+         param_dtype: bf16
+         reduce_dtype: fp32
+         cast_forward_inputs: False
        amp_autocast:
          enabled: False
          precision: bf16
@@ -225,10 +231,10 @@ SuperMimic 将想象轨迹上的回报沿着可微世界模型反向传播，用
      - 0.2 秒分箱，50% / 40% / 10% 混合分布
    * - 数值精度
      - 论文图 5 为 TF32
-     - float32 权重 + TF32 矩阵乘；可通过 ``amp_autocast`` 开启 bf16 矩阵乘
+     - 默认用 FSDP2 ``mixed_precision.param_dtype`` 开启训练 bf16 矩阵乘（rollout 推理用 ``rollout.amp_autocast``），主权重、优化器状态、运动学与损失保持 float32；设为 ``null`` 并关闭 ``rollout.amp_autocast`` 即回退全 TF32
    * - CUDA 图
      - 官方分别录为 2 张图（世界模型；actor + critic）
-     - 默认关闭；``actor.cuda_graph=True`` 将 3 个阶段录为 1 张图
+     - 默认开启（``actor.cuda_graph: True``），将 3 个阶段录为 1 张图
    * - 仿真评分时机
      - 官方环境用最后一个物理子步前的身体位姿计算奖励与失败
      - 最后一个物理子步后先刷新身体位姿，再计算奖励与失败

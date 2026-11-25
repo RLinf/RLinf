@@ -1,7 +1,7 @@
 SuperMimic：基于可微世界模型的人形全身动作跟踪
 ==============================================
 
-使用 **SuperMimic**\ （`arXiv:2610.28480 <https://arxiv.org/abs/2610.28480>`__，`项目主页 <https://supermimic.github.io>`__）在 MuJoCo Warp 中训练 29 自由度 Unitree G1 的全身动作跟踪 policy。SuperMimic 从仿真轨迹中学习可微动力学世界模型，在 32 步想象轨迹上将跟踪回报梯度直接反向传播给 policy，并配合 critic 做末端价值估计与按回报重采样。在 40 条 LAFAN1 片段上，单卡 GenCoord 配置训练 6000 次更新后归一化回报达到 ``0.836``，摔倒率为 ``0.025``。
+使用 **SuperMimic**\ （`arXiv:2610.28480 <https://arxiv.org/abs/2610.28480>`__，`项目主页 <https://supermimic.github.io>`__）在 MuJoCo Warp 中训练 29 自由度 Unitree G1 的全身动作跟踪 policy。SuperMimic 从仿真轨迹中学习可微动力学世界模型，在 32 步想象轨迹上将跟踪回报梯度直接反向传播给 policy，并配合 critic 做末端价值估计与按回报重采样。在 40 条 LAFAN1 片段上，4 卡 NVIDIA A800 按默认 GenCoord 配置训练 6000 次更新耗时约 23 分钟，归一化回报达到 ``0.856``，全部零摔倒。
 
 概览
 ----
@@ -172,16 +172,16 @@ Docker 构建方式见 :doc:`g1_mimic`，AMD ROCm 平台见 :ref:`在其他硬�
      - ``4096``
      - 每次 policy 更新的全局想象 rollout 条数
    * - ``actor.cuda_graph``
-     - ``False``
-     - 将每次全局更新录成单张 CUDA 图（NVIDIA GPU 推荐设为 ``True``）
-   * - ``actor.fsdp_config.amp_autocast.enabled``
-     - ``False``
-     - 网络矩阵乘开启 bf16，权重与优化器状态仍保持 float32
+     - ``True``
+     - 将每次全局更新录成单张 CUDA 图（设为 ``False`` 可关闭图回放）
+   * - ``actor.fsdp_config.mixed_precision.param_dtype``
+     - ``bf16``
+     - 每阶段开始时将网络权重转为 bf16，主权重、优化器状态、梯度归约、运动学与损失保持 float32（设为 ``null`` 即回退 TF32）
 
 单卡训练与续训
 ~~~~~~~~~~~~~~
 
-设置动作数据目录并关闭 MuJoCo 的 OpenGL 渲染器，在 0 号 GPU 上开启 CUDA 图回放启动 6000 次更新的 GenCoord 训练：
+设置动作数据目录并关闭 MuJoCo 的 OpenGL 渲染器，在 0 号 GPU 上启动 6000 次更新的 GenCoord 训练（默认开启 CUDA 图回放与 bf16 混合精度）：
 
 .. code-block:: bash
 
@@ -192,7 +192,7 @@ Docker 构建方式见 :doc:`g1_mimic`，AMD ROCm 平台见 :ref:`在其他硬�
 
    python examples/embodiment/train_embodied_agent.py \
        --config-name supermimic_lafan1_gencoord \
-       runner.logger.log_path=$RUN_DIR actor.cuda_graph=True
+       runner.logger.log_path=$RUN_DIR
 
 前 3 次预热更新结束后日志输出 ``Recorded the SuperMimic update as a CUDA graph.``。每 100 次更新打印一次以 ``Global Step: <N>/6000`` 开头的指标表；每 2000 次更新及第 6000 次更新后在 ``$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_<N>/`` 保存 checkpoint。
 
@@ -202,7 +202,7 @@ Docker 构建方式见 :doc:`g1_mimic`，AMD ROCm 平台见 :ref:`在其他硬�
 
    python examples/embodiment/train_embodied_agent.py \
        --config-name supermimic_lafan1_gencoord \
-       runner.logger.log_path=$RUN_DIR actor.cuda_graph=True \
+       runner.logger.log_path=$RUN_DIR \
        runner.resume_dir=auto
 
 成功加载时日志会打印 ``Resuming from <path>``。
@@ -240,7 +240,7 @@ Docker 构建方式见 :doc:`g1_mimic`，AMD ROCm 平台见 :ref:`在其他硬�
    export RUN_DIR=/data/runs/supermimic_gencoord_2gpu
    python examples/embodiment/train_embodied_agent.py \
        --config-name supermimic_lafan1_gencoord \
-       runner.logger.log_path=$RUN_DIR actor.cuda_graph=True \
+       runner.logger.log_path=$RUN_DIR \
        '~cluster.component_placement' \
        '+cluster.component_placement={actor:0-1,env:0-1,rollout:0-1}'
 
@@ -280,7 +280,7 @@ Docker 构建方式见 :doc:`g1_mimic`，AMD ROCm 平台见 :ref:`在其他硬�
 动作跟踪结果（LAFAN1 40 片段）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-在单张 NVIDIA A800 上运行 GenCoord 配置（seed 0）的评测结果：
+在 4 张 NVIDIA A800 上按默认 GenCoord 配置（bf16、seed 0）训练 6000 次更新，总耗时约 23 分钟，评测结果如下：
 
 .. list-table::
    :header-rows: 1
@@ -291,22 +291,22 @@ Docker 构建方式见 :doc:`g1_mimic`，AMD ROCm 平台见 :ref:`在其他硬�
      - ``fail_rate``
      - ``body_pos_err``\ （m）
    * - 6000
-     - 0.836
-     - 0.025
-     - 0.024
+     - 0.856
+     - 0.000
+     - 0.023
 
-40 条片段中有 1 条摔倒（论文在这 40 条片段上报告的归一化回报为 ``0.82``）。
+40 条片段全部无摔倒完成（论文在这 40 条片段上报告的归一化回报为 ``0.82``）。
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/supermimic_gencoord_curves.png
    :alt: SuperMimic GenCoord 训练曲线
    :width: 100%
 
-   单卡 NVIDIA A800 上 6000 次更新的 GenCoord 训练曲线。仿真奖励上限为每秒 5.0（50 Hz 下每步 0.1）；右上角想象回报包含末端 critic 估值，因此会高于 5。
+   NVIDIA A800 上 6000 次更新的 GenCoord 训练曲线。仿真奖励上限为每秒 5.0（50 Hz 下每步 0.1）；右上角想象回报包含末端 critic 估值，因此会高于 5。
 
 吞吐对比
 ~~~~~~~~
 
-下表对比独占 NVIDIA A800 上 GenCoord 每次全局更新的耗时与官方单卡实现（预热 200 次后取 1000 次更新的 ``time/step`` 均值）。RLinf 各项均开启 ``actor.cuda_graph=True``，bf16 行额外开启 ``actor.fsdp_config.amp_autocast.enabled=True``：
+下表对比 RLinf 与官方单卡实现在独占 NVIDIA A800 上运行 GenCoord 每次全局更新的耗时（预热 200 次后取 400 次更新的实际耗时均值；4 卡 bf16 在 1000 次更新窗口下同样为 0.227 秒）。RLinf 的 bf16 行使用默认配置（开启 CUDA 图，采用 ``no_shard``）；TF32 行将 ``actor.fsdp_config.mixed_precision.param_dtype`` 设为 ``null`` 并将 ``rollout.amp_autocast.enabled`` 设为 ``False``：
 
 .. list-table::
    :header-rows: 1
@@ -323,29 +323,29 @@ Docker 构建方式见 :doc:`g1_mimic`，AMD ROCm 平台见 :ref:`在其他硬�
    * - RLinf
      - 1
      - TF32
-     - 0.702
+     - 0.490
    * - RLinf
      - 1
      - bf16
-     - 0.627
+     - 0.383
    * - RLinf
      - 2
      - TF32
-     - 0.534
+     - 0.341
    * - RLinf
      - 2
      - bf16
-     - 0.528
+     - 0.285
    * - RLinf
      - 4
      - TF32
-     - 0.411
+     - 0.263
    * - RLinf
      - 4
      - bf16
-     - 0.385
+     - 0.227
 
-单卡 TF32 下 RLinf 比单进程官方代码慢约 36%（来自 worker 间观测和动作交换及每步更新后的权重同步）；开启 bf16 后单卡为 0.627 秒，2–4 卡可进一步加速。
+单卡 TF32 下 RLinf 每次更新比单进程官方代码快约 5%（0.490 秒对比 0.515 秒）。使用默认 bf16 混合精度时，单卡为 0.383 秒（速度提升至 1.34 倍），扩展到 4 卡为 0.227 秒（速度提升至 2.27 倍，完整 6000 次更新耗时约 23 分钟）。
 
 .. _supermimic-hardware:
 

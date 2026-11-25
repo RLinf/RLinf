@@ -141,20 +141,20 @@ Optimizers and Execution
 
 * **Dual optimizers:** Hidden linear matrices in every stack use Muon (``adjust_lr_fn: match_rms_adamw``, weight decay ``0.1``, momentum ``0.95``, Nesterov ``True``). Remaining parameters (first/last layers, norms, biases) use fused Adam with :math:`\beta = (0.9, 0.95)` for the actor and :math:`\beta = (0.9, 0.999)` for the world model and critic. All optimizers use a constant learning rate of :math:`2\times 10^{-4}`.
 * **Gradient clipping and health check:** Training clips the global gradient norm to ``1.0`` on GPU without host synchronization and clamps actor gradients element-wise to ``0.1``. Non-finite gradients stop the run when metrics copy to the host.
-* **CUDA graph and bf16:** ``actor.cuda_graph`` (default ``False``) runs 3 eager warm-up updates, captures update 4 (all three phases together) as one CUDA graph, and replays it thereafter. ``actor.fsdp_config.amp_autocast.enabled`` (default ``False``) executes network matmuls in bf16 while weights, losses, and optimizer state stay float32.
+* **CUDA graph and bf16:** ``actor.cuda_graph`` (default ``True``) runs 3 eager warm-up updates, captures update 4 (all three phases together) as one CUDA graph, and replays it thereafter. By default, FSDP2 ``mixed_precision.param_dtype: bf16`` (with ``reduce_dtype: fp32`` and ``cast_forward_inputs: False``) casts network weights to bf16 once per phase at unshard while master weights, optimizer state, gradient reductions, kinematics, rewards, and losses stay float32; rollout inference uses ``rollout.amp_autocast`` in bf16.
 
 Parallel Training (FSDP2)
 -------------------------
 
 Every GPU runs one env, one rollout, and one actor worker; env rank :math:`r` communicates only with rollout and actor rank :math:`r`. Global env counts and batch sizes split evenly across ranks, and each actor rank samples its share from its local replay buffer.
 
-Actor workers form one FSDP2 group with three separate FSDP units (``module_classes_to_wrap: [Dynamics, MotionPolicy, Critic]``). Before each phase, all units reshard and only the active phase's parameters become trainable. Each phase all-gathers the networks it reads once so multi-step unrolls run on gathered weights:
+Actor workers form one FSDP2 group with three separate FSDP units (``module_classes_to_wrap: [Dynamics, MotionPolicy, Critic]``). Because the full model is ~64 MB in float32, the default config sets ``sharding_strategy: no_shard`` and ``reshard_after_forward: False``, so each rank keeps full weights and synchronizes gradients with all-reduce. With a sharded strategy such as ``full_shard``, unshard all-gathers weights and backward passes reduce-scatter gradients. Before each phase, only the active phase's parameters become trainable and the phase unshards only the networks it reads:
 
-* **World-model phase:** all-gathers ``Dynamics``.
-* **Actor phase:** all-gathers all three networks with ``Dynamics`` and ``Critic`` frozen.
-* **Critic phase:** all-gathers ``Critic`` only.
+* **World-model phase:** unshards ``Dynamics``.
+* **Actor phase:** unshards all three networks with ``Dynamics`` and ``Critic`` frozen.
+* **Critic phase:** unshards ``Critic`` only.
 
-Gradients reduce-scatter through FSDP, global gradient norms are computed across sharded parameters, and reset-bin statistics plus input-normalization moments reduce across env ranks.
+Each update computes global gradient norms across FSDP parameters, and reset-bin statistics plus input-normalization moments reduce across env ranks.
 
 Return-Based Reset Sampler
 --------------------------
@@ -190,13 +190,19 @@ Core algorithm and actor sections from ``examples/embodiment/config/supermimic_l
      replay_length: 1000
 
    actor:
-     cuda_graph: False
+     cuda_graph: True
      model:
        representation: gencoord  # gencoord or maxcoord
      fsdp_config:
        strategy: fsdp2
+       sharding_strategy: no_shard
+       reshard_after_forward: False
        wrap_policy:
          module_classes_to_wrap: [Dynamics, MotionPolicy, Critic]
+       mixed_precision:
+         param_dtype: bf16
+         reduce_dtype: fp32
+         cast_forward_inputs: False
        amp_autocast:
          enabled: False
          precision: bf16
@@ -225,10 +231,10 @@ Differences from the Paper and Official Code
      - 0.2 s bins with 50% / 40% / 10% mixture
    * - Precision
      - Paper Figure 5 uses TF32
-     - Float32 weights with TF32 matmuls; optional bf16 matmuls via ``amp_autocast``
+     - Float32 master weights, optimizer state, kinematics, and losses with bf16 network matmuls by default via FSDP2 ``mixed_precision.param_dtype`` (and ``rollout.amp_autocast`` for rollout); set ``param_dtype: null`` and ``rollout.amp_autocast.enabled: False`` for full TF32
    * - CUDA graphs
      - Official code captures 2 graphs (world model; actor + critic)
-     - Off by default; ``actor.cuda_graph=True`` captures all 3 phases in 1 graph
+     - Enabled by default (``actor.cuda_graph: True``); captures all 3 phases in 1 graph
    * - Simulator scoring
      - Official env scores body poses from before the last physics substep
      - Body poses refresh after the last substep before reward and failure scoring

@@ -1,7 +1,7 @@
 SuperMimic: Whole-Body Motion Tracking with a Differentiable World Model
 ========================================================================
 
-Train a 29-DoF Unitree G1 whole-body motion-tracking policy with **SuperMimic** (`arXiv:2610.28480 <https://arxiv.org/abs/2610.28480>`__, `project page <https://supermimic.github.io>`__) in MuJoCo Warp. SuperMimic learns a differentiable dynamics world model from simulation rollouts, backpropagates exact tracking returns through 32-step imagined rollouts with a critic for value bootstrapping, and focuses resets on low-return clip segments. On 40 LAFAN1 clips, the 6000-update single-GPU GenCoord recipe reaches a normalized return of ``0.836`` with a fail rate of ``0.025``.
+Train a 29-DoF Unitree G1 whole-body motion-tracking policy with **SuperMimic** (`arXiv:2610.28480 <https://arxiv.org/abs/2610.28480>`__, `project page <https://supermimic.github.io>`__) in MuJoCo Warp. SuperMimic learns a differentiable dynamics world model from simulation rollouts, backpropagates exact tracking returns through 32-step imagined rollouts with a critic for value bootstrapping, and focuses resets on low-return clip segments. On 40 LAFAN1 clips, a 6000-update 4-GPU GenCoord run finishes in ~23 minutes on NVIDIA A800 and reaches a normalized return of ``0.856`` with ``0`` falls.
 
 Overview
 --------
@@ -172,16 +172,16 @@ The default training config is ``examples/embodiment/config/supermimic_lafan1_ge
      - ``4096``
      - Global number of imagined rollouts per policy update
    * - ``actor.cuda_graph``
-     - ``False``
-     - Capture each global update as one CUDA graph (recommended ``True`` on NVIDIA GPUs)
-   * - ``actor.fsdp_config.amp_autocast.enabled``
-     - ``False``
-     - Run network matmuls in bf16 while keeping weights and optimizer state in float32
+     - ``True``
+     - Capture each global update as one CUDA graph (set ``False`` to disable graph replay)
+   * - ``actor.fsdp_config.mixed_precision.param_dtype``
+     - ``bf16``
+     - Cast network weights to bf16 once per phase while keeping master weights, optimizer state, gradient reductions, kinematics, and losses in float32 (set ``null`` for TF32)
 
 Train on One GPU
 ~~~~~~~~~~~~~~~~
 
-Set the motion clip directory and disable MuJoCo's OpenGL renderer, then launch the 6000-update GenCoord run on GPU 0 with CUDA graph replay:
+Set the motion clip directory and disable MuJoCo's OpenGL renderer, then launch the 6000-update GenCoord run on GPU 0 (CUDA graph replay and bf16 mixed precision are enabled by default):
 
 .. code-block:: bash
 
@@ -192,7 +192,7 @@ Set the motion clip directory and disable MuJoCo's OpenGL renderer, then launch 
 
    python examples/embodiment/train_embodied_agent.py \
        --config-name supermimic_lafan1_gencoord \
-       runner.logger.log_path=$RUN_DIR actor.cuda_graph=True
+       runner.logger.log_path=$RUN_DIR
 
 After 3 warm-up updates, the log prints ``Recorded the SuperMimic update as a CUDA graph.``. Every 100 updates it prints a metrics table starting with ``Global Step: <N>/6000``. Checkpoints are written under ``$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_<N>/`` every 2000 updates and at step 6000.
 
@@ -202,7 +202,7 @@ To resume an interrupted run from the latest complete checkpoint on the same GPU
 
    python examples/embodiment/train_embodied_agent.py \
        --config-name supermimic_lafan1_gencoord \
-       runner.logger.log_path=$RUN_DIR actor.cuda_graph=True \
+       runner.logger.log_path=$RUN_DIR \
        runner.resume_dir=auto
 
 The log prints ``Resuming from <path>`` when a checkpoint is loaded.
@@ -240,7 +240,7 @@ To run on two GPUs (use ``0-3`` for four GPUs), override ``cluster.component_pla
    export RUN_DIR=/data/runs/supermimic_gencoord_2gpu
    python examples/embodiment/train_embodied_agent.py \
        --config-name supermimic_lafan1_gencoord \
-       runner.logger.log_path=$RUN_DIR actor.cuda_graph=True \
+       runner.logger.log_path=$RUN_DIR \
        '~cluster.component_placement' \
        '+cluster.component_placement={actor:0-1,env:0-1,rollout:0-1}'
 
@@ -280,7 +280,7 @@ Key metrics (x-axis is the update count; see :doc:`../../reference/metrics` for 
 Tracking Quality (LAFAN1, 40 Clips)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Single-GPU GenCoord run on one NVIDIA A800 (seed 0):
+4-GPU GenCoord run on NVIDIA A800 (seed 0, default bf16; ~23 min wall time):
 
 .. list-table::
    :header-rows: 1
@@ -291,22 +291,22 @@ Single-GPU GenCoord run on one NVIDIA A800 (seed 0):
      - ``fail_rate``
      - ``body_pos_err`` (m)
    * - 6000
-     - 0.836
-     - 0.025
-     - 0.024
+     - 0.856
+     - 0.000
+     - 0.023
 
-One of the 40 clips falls (the paper reports ``0.82`` normalized return on these clips).
+All 40 clips complete without falling (the paper reports ``0.82`` normalized return on these clips).
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/supermimic_gencoord_curves.png
    :alt: SuperMimic GenCoord training curves
    :width: 100%
 
-   Training curves of the 6000-update GenCoord run on NVIDIA A800. Simulated reward reaches up to 5.0/s (0.1 per 50 Hz control step); the imagined return (top right) includes the terminal critic bootstrap value and therefore exceeds 5.
+   Training curves of a 6000-update GenCoord run on NVIDIA A800. Simulated reward reaches up to 5.0/s (0.1 per 50 Hz control step); the imagined return (top right) includes the terminal critic bootstrap value and therefore exceeds 5.
 
 Throughput Comparison
 ~~~~~~~~~~~~~~~~~~~~~
 
-Seconds per global update of the GenCoord recipe on dedicated NVIDIA A800 GPUs compared with the official single-GPU implementation (mean ``time/step`` over 1000 updates after 200 warm-up updates). RLinf runs enable ``actor.cuda_graph=True``, and bf16 rows also set ``actor.fsdp_config.amp_autocast.enabled=True``:
+The table below compares seconds per global update for the GenCoord recipe on dedicated NVIDIA A800 GPUs against the official single-GPU implementation (wall-clock mean over 400 updates after 200 warm-up updates; over 1000 updates, 4-GPU bf16 gives the same 0.227 s). RLinf bf16 rows use the default config (CUDA graphs and ``no_shard``); TF32 rows disable bf16 with ``actor.fsdp_config.mixed_precision.param_dtype=null`` and ``rollout.amp_autocast.enabled=False``:
 
 .. list-table::
    :header-rows: 1
@@ -323,29 +323,29 @@ Seconds per global update of the GenCoord recipe on dedicated NVIDIA A800 GPUs c
    * - RLinf
      - 1
      - TF32
-     - 0.702
+     - 0.490
    * - RLinf
      - 1
      - bf16
-     - 0.627
+     - 0.383
    * - RLinf
      - 2
      - TF32
-     - 0.534
+     - 0.341
    * - RLinf
      - 2
      - bf16
-     - 0.528
+     - 0.285
    * - RLinf
      - 4
      - TF32
-     - 0.411
+     - 0.263
    * - RLinf
      - 4
      - bf16
-     - 0.385
+     - 0.227
 
-On 1 GPU with TF32, RLinf is ~36% slower per update than the single-process official code due to worker observation/action exchange and per-update weight sync; with bf16, one GPU takes 0.627 s, and 2–4 GPUs scale further.
+On 1 GPU with TF32, RLinf is ~5% faster per update than the single-process official code (0.490 s vs. 0.515 s). With the default bf16 mixed precision, 1 GPU reaches 0.383 s (1.34× faster) and 4 GPUs reach 0.227 s (2.27× faster, finishing 6000 updates in ~23 minutes).
 
 .. _supermimic-hardware:
 
