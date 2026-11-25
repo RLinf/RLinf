@@ -2078,7 +2078,7 @@ def test_multi_turn_fsdp_receive_and_advantages_use_shared_rows(
         "gloo", init_method=f"file://{tmp_path / 'rendezvous'}", rank=0, world_size=1
     )
     try:
-        batch, received = actor.get_batch(channel)
+        batch, received = actor.get_step_batch(channel)
         assert received == results and channel.empty()
         if not local:
             assert batch["extra:source_dp"].tolist() == [0, 0, 0, 0]

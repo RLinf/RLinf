@@ -305,6 +305,25 @@ def activation_to_func(
     return activation_func
 
 
+def _inherit_rollout_model_path(
+    rollout_cfg: Optional[DictConfig], actor_cfg: Optional[DictConfig]
+) -> None:
+    """Default ``rollout.model.model_path`` to ``actor.model.model_path`` when unset."""
+    if rollout_cfg is None or actor_cfg is None:
+        return
+    actor_model_path = OmegaConf.select(actor_cfg, "model.model_path", default=None)
+    if actor_model_path is None:
+        return
+    with open_dict(rollout_cfg):
+        rollout_model = rollout_cfg.get("model", None)
+        if rollout_model is None:
+            rollout_cfg.model = OmegaConf.create({"model_path": actor_model_path})
+            return
+        with open_dict(rollout_model):
+            if rollout_model.get("model_path", None) is None:
+                rollout_model.model_path = actor_model_path
+
+
 def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
     SupportedModel(cfg.model.model_type)  # To validate model_type is supported
 
@@ -345,6 +364,7 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         return cfg
 
     with open_dict(cfg):
+        _inherit_rollout_model_path(cfg, actor_cfg)
         cfg.gpu_memory_utilization = cfg.get("gpu_memory_utilization", 0.65)
         assert cfg.model.model_path is not None, (
             "rollout.model.model_path must be specified for rollout."
@@ -1439,6 +1459,8 @@ def validate_embodied_cfg(cfg):
     )
     if only_eval:
         validate_only_eval_rollout_model(cfg.rollout.model)
+    else:
+        _inherit_rollout_model_path(cfg.get("rollout", None), cfg.get("actor", None))
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
     if not only_eval and algorithm_cfg.get("loss_type") == "embodied_refl":
@@ -2203,6 +2225,7 @@ def validate_offline_cfg(cfg: DictConfig) -> DictConfig:
 
     with open_dict(cfg):
         cfg.runner.only_eval = bool(runner_only_eval)
+    _inherit_rollout_model_path(cfg.get("rollout", None), cfg.get("actor", None))
 
     if cfg.runner.val_check_interval > 0 or cfg.runner.only_eval:
         component_placement = HybridComponentPlacement(cfg, Cluster())
@@ -2661,7 +2684,237 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
+    """Fill the session_server defaults and check the enabled path.
+
+    Configs without a `session_server` block return unchanged: every
+    default below and every check is conditioned on the block (the
+    enabled path additionally on `enable`), so existing yamls never see
+    new keys or new failures.
+    """
+    if cfg.get("session_server", None) is None:
+        return cfg
+    with open_dict(cfg):
+        session_cfg = cfg.session_server
+        session_cfg.enable = bool(session_cfg.get("enable", False))
+        if session_cfg.get("group_name", None) is None:
+            session_cfg.group_name = "SessionServer"
+        session_cfg.host = session_cfg.get("host", "0.0.0.0")
+        session_cfg.port = int(session_cfg.get("port", 8030))
+        session_cfg.num_servers = int(session_cfg.get("num_servers", 1))
+        session_cfg.payload_shards = int(session_cfg.get("payload_shards", 1))
+        session_cfg.payload_put_timeout_s = float(
+            session_cfg.get("payload_put_timeout_s", 300.0)
+        )
+        session_cfg.max_pending_payload_bytes = int(
+            session_cfg.get("max_pending_payload_bytes", 512 * 1024 * 1024)
+        )
+        session_cfg.generate_timeout_s = float(
+            session_cfg.get("generate_timeout_s", 600.0)
+        )
+        # Whole seconds: uvicorn's timeout_keep_alive and sglang's EnvInt
+        # SGLANG_TIMEOUT_KEEP_ALIVE both take ints, and str() of a float
+        # fails EnvInt's parse (it warns and falls back to its default).
+        # Integer-valued floats normalize here; the enabled-path check
+        # below rejects fractional values.
+        for name, default in (("keep_alive_s", 5), ("engine_keep_alive_s", 120)):
+            value = session_cfg.get(name, default)
+            if isinstance(value, float) and value.is_integer():
+                value = int(value)
+            session_cfg[name] = value
+        if session_cfg.get("per_task", None) is None:
+            session_cfg.per_task = {}
+        for task_settings in session_cfg.per_task.values():
+            # A per-task entry without its own timeout falls back to the
+            # default one, so the worker can read it unconditionally.
+            if task_settings.get("generate_timeout_s", None) is None:
+                task_settings.generate_timeout_s = session_cfg.generate_timeout_s
+        session_cfg.verify_assembly = bool(session_cfg.get("verify_assembly", False))
+        # Checked before the conversion: dict() of anything else raises a
+        # TypeError naming the call, not the config key.
+        chat_template_kwargs = session_cfg.get("chat_template_kwargs", None)
+        if chat_template_kwargs is not None and not isinstance(
+            chat_template_kwargs, (dict, DictConfig)
+        ):
+            raise ValueError(
+                f"session_server.chat_template_kwargs must be a mapping of chat "
+                f"template arguments, found {chat_template_kwargs!r}."
+            )
+        session_cfg.chat_template_kwargs = dict(chat_template_kwargs or {})
+    if not cfg.session_server.enable:
+        return cfg
+
+    reward_cfg = cfg.get("reward", None)
+    reward_type = (
+        reward_cfg.get("reward_type", None) if reward_cfg is not None else None
+    )
+    if reward_type != "searchr1":
+        raise ValueError(
+            f"session_server.enable requires reward.reward_type 'searchr1', "
+            f"found {reward_type!r}."
+        )
+    if not cfg.runner.get("async_mode", False):
+        raise ValueError(
+            "session_server.enable requires runner.async_mode: only the "
+            "async runner drives the session servers (the synchronous and "
+            "eval runners keep the generate channels)."
+        )
+    if cfg.actor.training_backend != "megatron":
+        raise ValueError(
+            f"session_server.enable requires actor.training_backend "
+            f"'megatron' (the session payload is assembled by "
+            f"MAMegatronActor), found {cfg.actor.training_backend!r}."
+        )
+    backend_type = OmegaConf.select(
+        cfg, "rollout.sglang.backend_type", default="engine"
+    )
+    if backend_type != "server":
+        raise ValueError(
+            f"session_server.enable requires rollout.sglang.backend_type "
+            f"'server', found {backend_type!r}: the session servers forward "
+            "generates to the engines' HTTP frontends."
+        )
+    if cfg.rollout.get("pause_mode", None) == "drain":
+        raise ValueError(
+            "session_server.enable does not support rollout.pause_mode "
+            "'drain': drain is implemented by the rollout_serverless "
+            "dispatch gate, which is not on the data plane of the session "
+            "path. Use 'retract' (default) or 'in_place'."
+        )
+
+    # Router defaults: the values validated below are also the ones the
+    # session path runs with when the user sets nothing.
+    with open_dict(cfg):
+        if cfg.rollout.get("router", None) is None:
+            cfg.rollout.router = {}
+        router_cfg = cfg.rollout.router
+        router_cfg.type = router_cfg.get("type", "sglang")
+        router_cfg.policy = router_cfg.get("policy", "manual")
+        router_cfg.assignment_mode = router_cfg.get("assignment_mode", "min_load")
+        router_cfg.disable_retries = bool(router_cfg.get("disable_retries", True))
+        router_cfg.request_timeout_secs = int(
+            router_cfg.get("request_timeout_secs", 1800)
+        )
+        # int, not float: the router CLI's argparse declares type=int for
+        # max-idle-secs, and str(600.0) would make the process exit at
+        # startup.
+        router_cfg.max_idle_secs = int(router_cfg.get("max_idle_secs", 600))
+        router_cfg.disable_health_check = bool(
+            router_cfg.get("disable_health_check", True)
+        )
+        router_cfg.max_concurrent_requests = int(
+            router_cfg.get("max_concurrent_requests", -1)
+        )
+        router_cfg.log_level = router_cfg.get("log_level", "warn")
+
+    if cfg.rollout.router.type != "sglang":
+        raise ValueError(
+            f"session_server.enable requires rollout.router.type 'sglang': "
+            f"the session servers forward generates through a router so a "
+            f"group's requests stay on one engine; found "
+            f"{cfg.rollout.router.type!r}."
+        )
+    if cfg.rollout.router.policy not in ("manual", "cache_aware"):
+        raise ValueError(
+            f"rollout.router.policy must be 'manual' or 'cache_aware' when the "
+            f"session server is enabled, found {cfg.rollout.router.policy!r}: the "
+            "engines' peer-address whitelist covers only the endpoints "
+            "these two policies call."
+        )
+    if not cfg.rollout.router.disable_health_check:
+        raise ValueError(
+            "rollout.router.disable_health_check must be true when the "
+            "session server is enabled: the router's /health probes generate "
+            "tokens, and engine liveness is already watched by the rollout "
+            "worker."
+        )
+    generate_timeouts = [
+        float(cfg.session_server.generate_timeout_s),
+        *(
+            float(settings.generate_timeout_s)
+            for settings in cfg.session_server.per_task.values()
+        ),
+    ]
+    if max(generate_timeouts) > float(cfg.rollout.router.request_timeout_secs):
+        raise ValueError(
+            f"rollout.router.request_timeout_secs "
+            f"({cfg.rollout.router.request_timeout_secs}) must be >= "
+            f"session_server.generate_timeout_s and every "
+            f"session_server.per_task.*.generate_timeout_s (largest found: "
+            f"{max(generate_timeouts)}): the router drops a request at its "
+            "own timeout before the session server's generate timeout "
+            "fires."
+        )
+    if cfg.cluster.get("auto_scheduler", False):
+        raise ValueError(
+            "rollout.router 'sglang' cannot run with cluster.auto_scheduler: "
+            "auto-scheduler migration moves requests between rollout "
+            "instances, which breaks the router's per-group worker pinning."
+        )
+    for name in ("keep_alive_s", "engine_keep_alive_s"):
+        if not isinstance(cfg.session_server[name], int) or isinstance(
+            cfg.session_server[name], bool
+        ):
+            raise ValueError(
+                f"session_server.{name} must be a whole number of seconds "
+                f"(uvicorn's timeout_keep_alive and sglang's "
+                f"SGLANG_TIMEOUT_KEEP_ALIVE both take ints), found "
+                f"{cfg.session_server[name]!r}."
+            )
+    if cfg.session_server.keep_alive_s <= 1:
+        raise ValueError(
+            f"session_server.keep_alive_s must be > 1, found "
+            f"{cfg.session_server.keep_alive_s}: the session server's HTTP "
+            "clients hold idle connections one second shorter than this, "
+            "and a value of 1 or less leaves them no keepalive window."
+        )
+    # The router's forwarding client holds idle connections for
+    # pool_idle_timeout_secs. sglang-router 0.3.x has no such key and
+    # hardcodes 50 s (sgl-model-gateway
+    # app_context.rs, `.pool_idle_timeout(Duration::from_secs(50))`), so
+    # fall back to that hardcoded value; newer routers expose it as a CLI
+    # flag with the same default.
+    router_pool_idle = float(cfg.rollout.router.get("pool_idle_timeout_secs", 50))
+    if cfg.session_server.engine_keep_alive_s <= router_pool_idle:
+        raise ValueError(
+            f"session_server.engine_keep_alive_s "
+            f"({cfg.session_server.engine_keep_alive_s}) must be greater "
+            f"than rollout.router.pool_idle_timeout_secs "
+            f"({router_pool_idle}): the router's forwarding client would "
+            "reuse an idle connection the engine's uvicorn has already "
+            "closed (an ECONNRESET race)."
+        )
+    try:
+        import sglang_router  # noqa: F401
+    except ImportError:
+        raise ValueError(
+            "rollout.router.type 'sglang' requires the sglang_router "
+            "package; install it in the training environment."
+        )
+    if cfg.session_server.num_servers < 1 or cfg.session_server.payload_shards < 1:
+        raise ValueError(
+            f"session_server.num_servers and session_server.payload_shards "
+            f"must both be >= 1, found {cfg.session_server.num_servers} and "
+            f"{cfg.session_server.payload_shards}."
+        )
+    component_placement = ModelParallelComponentPlacement(cfg, Cluster())
+    if component_placement.rollout_num_model_instances == 1:
+        logging.warning(
+            "session_server.enable with a single rollout instance: the "
+            "router adds a forwarding hop but no routing; it stays "
+            "supported so single-node runs need no separate config."
+        )
+    return cfg
+
+
 def validate_reasoning_eval_cfg(cfg: DictConfig) -> DictConfig:
+    session_cfg = cfg.get("session_server", None)
+    if session_cfg is not None and session_cfg.get("enable", False):
+        raise ValueError(
+            "session_server.enable is not supported for runner.task_type "
+            "'reasoning_eval': only the asynchronous training runner drives "
+            "the session servers."
+        )
     with open_dict(cfg):
         assert cfg.runner.seq_length > cfg.data.max_prompt_length, (
             f"runner.seq_length ({cfg.runner.seq_length}) must be greater than data.max_prompt_length ({cfg.data.max_prompt_length})"
@@ -2887,6 +3140,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     if cfg.runner.task_type == "reasoning":
         cfg = validate_searchr1_cfg(cfg)
 
+    cfg = validate_session_server_cfg(cfg)
     return cfg
 
 

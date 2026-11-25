@@ -1,3 +1,5 @@
+:orphan:
+
 Reward Model
 ============
 
@@ -18,9 +20,3 @@ This section covers reward model data collection, training, and inference.
       :link-type: doc
 
       Build RLinf rewards with image-classification models or VLMs.
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
-   Reward Model Workflow <../../extending/reward_model>

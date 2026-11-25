@@ -1,23 +1,30 @@
-Environment 接口
-======================
+Env 接口
+========
 
-本节介绍 RLinf 框架中 **环境（environment）** 的关键 API，  
-这些接口是专门为 **具身智能** 场景设计的。  
-作为示例，我们展示了基于 LIBERO 的环境配置方法。  
-对于其他模拟器，设置过程也是类似的。  
+查阅分布式环境 worker、通过 ``env_type`` 解析环境类的工厂接口，以及真机环境封装类。接入新仿真器的步骤见 :doc:`../../extending/new_env`。
 
 EnvWorker
----------------
+---------
 
 .. autoclass:: rlinf.workers.env.env_worker.EnvWorker
-   :members: 
+   :show-inheritance:
+   :members:
    :member-order: bysource
 
-Environment
------------------------
+环境工厂
+--------
 
-.. autoclass:: rlinf.envs.sim.libero.libero_env.LiberoEnv
-   :members: 
+.. autoclass:: rlinf.envs.SupportedEnvType
+   :members:
+   :undoc-members:
    :member-order: bysource
 
+.. autofunction:: rlinf.envs.get_env_cls
 
+RealWorldEnv
+------------
+
+.. autoclass:: rlinf.envs.real.env.RealWorldEnv
+   :show-inheritance:
+   :members:
+   :member-order: bysource

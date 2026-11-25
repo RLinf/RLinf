@@ -34,7 +34,11 @@ from rlinf.algorithms.utils import kl_penalty
 from rlinf.data.schema.actor_batch import (
     DynamicActorBatch,
 )
-from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+from rlinf.data.schema.reasoning_results import (
+    DynamicRolloutResult,
+    GroupDelivery,
+    RolloutResult,
+)
 from rlinf.hybrid_engines.megatron.utils import (
     postprocess_ragged_seqs,
     preprocess_ragged_seqs,
@@ -68,6 +72,11 @@ from rlinf.workers.actor.megatron_actor_worker import (
     MegatronActor,
 )
 from rlinf.workers.megatron_worker import DynamicMegatronBatchMixin
+from rlinf.workers.rollout.session_server.assembly import (
+    assemble_group_payload,
+    verify_group_assembly,
+)
+from rlinf.workers.rollout.session_server.payload import payload_channel_for
 
 
 class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
@@ -78,6 +87,9 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
     ):
         super().__init__(cfg, placement)
         self._init_auto_scheduler(role)
+        # Set by run_training for the duration of a training call and read
+        # by _assemble_delivery.
+        self._payload_channels: Optional[list[Channel]] = None
         self.is_dynamic_rollout_batch = self.cfg.agentloop.is_dynamic_rollout_batch
         assert self.is_dynamic_rollout_batch
         self.placement = placement
@@ -92,6 +104,61 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
+
+    def _receive_rollout_result(
+        self, channel: Channel
+    ) -> RolloutResult | DynamicRolloutResult:
+        """Fetch one rollout result, assembling delivered groups.
+
+        Overrides DynamicMegatronBatchMixin._receive_rollout_result, which
+        is a plain channel.get(). When the session server is enabled, the
+        rollout buffer puts a GroupDelivery on the channel instead of the
+        group's data; it is assembled here, before get_step_batch balances
+        the groups across data-parallel ranks and broadcasts them to the
+        model-parallel ranks.
+        """
+        result = channel.get()
+        if isinstance(result, GroupDelivery):
+            result = self._assemble_delivery(result)
+        return result
+
+    def _assemble_delivery(self, delivery: GroupDelivery) -> DynamicRolloutResult:
+        """Fetch and assemble the data of one delivered group.
+
+        Args:
+            delivery: The GroupDelivery the rollout buffer put on the
+                channel. The group's data is in the payload channel named
+                by its payload ref.
+
+        Returns:
+            The assembled result, with the group id and task name of the
+            delivery. With ``session_server.verify_assembly`` on, it is
+            checked against the reference data in the last payload part.
+        """
+        assert self._payload_channels is not None, (
+            "a group arrived as a GroupDelivery but this actor has no "
+            "payload channels: run_training must receive them when the "
+            "session server is enabled."
+        )
+        channel = payload_channel_for(
+            delivery.payload_ref.locator, self._payload_channels
+        )
+        payload = channel.get(key=delivery.payload_ref.key)
+        # A keyed get leaves an empty queue under the key; without this
+        # removal the payload channel keeps one empty queue per trained
+        # group. The get above has already returned the data, so the removal
+        # cannot overtake it, and a group is delivered once, so no other get
+        # waits on this key.
+        channel.remove_key(key=delivery.payload_ref.key, async_op=True)
+        result = assemble_group_payload(
+            payload, not self.cfg.algorithm.recompute_logprobs
+        )
+        result.group_id = delivery.group_id
+        result.task_name = delivery.task_name
+        verify = next(part.verify for part in payload.parts if part.last)
+        if verify is not None:
+            verify_group_assembly(result, verify, self.cfg)
+        return result
 
     def _restore_source_normalization(
         self, batch: DynamicActorBatch, scale_context: dict
@@ -342,7 +409,12 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             self.global_valid_token = global_valid_token
             return batch
 
-    def run_training(self, input_channel: Channel, version: Optional[int] = None):
+    def run_training(
+        self,
+        input_channel: Channel,
+        version: Optional[int] = None,
+        payload_channels: Optional[list[Channel]] = None,
+    ):
         """Run the training loop for the actor.
 
         Args:
@@ -350,9 +422,13 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             version: Weight version the actor had loaded at step start, used
                 for staleness statistics; None skips them (synchronous
                 training passes no version).
+            payload_channels: The payload channels for groups delivered as
+                payload refs instead of inline results; held for the
+                duration of this call, where _assemble_delivery reads them.
         """
+        self._payload_channels = payload_channels
 
-        batch, rollout_results = self.get_batch(input_channel)
+        batch, rollout_results = self.get_step_batch(input_channel)
         fixed_ppo_targets = self.cfg.critic.get("use_critic_model", False)
         assert "recomputed_logprobs" in batch or "rollout_logprobs" in batch
         batch = self.compute_advantages_and_returns(batch)
@@ -613,7 +689,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             output_channel: The output channel to send results to.
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
-        batch, results = self.get_batch(input_channel)
+        batch, results = self.get_step_batch(input_channel)
         self._load_weight_and_optimizer()
         with self.worker_timer():
             probabilities = self.inference_step(batch)

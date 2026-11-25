@@ -13,10 +13,16 @@ if [ -z "$1" ]; then
     CONFIG_NAME=${CONFIG_NAME:-"maniskill_ppo_openvlaoft"}
 else
     CONFIG_NAME=$1
+    shift
 fi
 
 # NOTE: Set the active robot platform (required for correct action dimension and normalization), supported platforms are LIBERO, ALOHA, BRIDGE, default is LIBERO
-ROBOT_PLATFORM=${2:-${ROBOT_PLATFORM:-"LIBERO"}}
+if [ "$#" -gt 0 ] && [[ "$1" != *=* && "$1" != +* && "$1" != ~* && "$1" != -* ]]; then
+    ROBOT_PLATFORM="$1"
+    shift
+else
+    ROBOT_PLATFORM=${ROBOT_PLATFORM:-"LIBERO"}
+fi
 
 export ROBOT_PLATFORM
 
@@ -37,11 +43,18 @@ mkdir -p "${LOG_DIR}"
 # Forward optional overrides exported by callers (e.g. tests/parity_tests/run_all.sh).
 # Sentinel: "-2" means "do not override, use YAML default". -1 is a legitimate value
 # (e.g. runner.max_steps=-1 means unlimited) and is forwarded as-is.
-EXTRA_OVERRIDES=""
-[ -n "${STEPS:-}" ]      && [ "$STEPS"      != "-2" ] && EXTRA_OVERRIDES+=" runner.max_steps=${STEPS}"
-[ -n "${SAVE_INTER:-}" ] && [ "$SAVE_INTER" != "-2" ] && EXTRA_OVERRIDES+=" runner.save_interval=${SAVE_INTER}"
-[ -n "${NODES:-}" ]      && [ "$NODES"      != "-2" ] && EXTRA_OVERRIDES+=" cluster.num_nodes=${NODES}"
+EXTRA_OVERRIDES=()
+[ -n "${STEPS:-}" ]      && [ "$STEPS"      != "-2" ] && EXTRA_OVERRIDES+=("runner.max_steps=${STEPS}")
+[ -n "${SAVE_INTER:-}" ] && [ "$SAVE_INTER" != "-2" ] && EXTRA_OVERRIDES+=("runner.save_interval=${SAVE_INTER}")
+[ -n "${NODES:-}" ]      && [ "$NODES"      != "-2" ] && EXTRA_OVERRIDES+=("cluster.num_nodes=${NODES}")
 
-CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} runner.logger.log_path=${LOG_DIR}${EXTRA_OVERRIDES}"
-echo ${CMD} > ${MEGA_LOG_FILE}
-${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
+CMD=(
+    python "${SRC_FILE}"
+    --config-path "${EMBODIED_PATH}/config/"
+    --config-name "${CONFIG_NAME}"
+    "runner.logger.log_path=${LOG_DIR}"
+    "${EXTRA_OVERRIDES[@]}"
+    "$@"
+)
+echo "${CMD[*]}" > "${MEGA_LOG_FILE}"
+"${CMD[@]}" 2>&1 | tee -a "${MEGA_LOG_FILE}"

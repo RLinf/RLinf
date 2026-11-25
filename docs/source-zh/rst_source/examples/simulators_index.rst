@@ -1,278 +1,206 @@
-基于模拟器的具身强化学习
-========================================
+模拟器
+======
 
-本类示例以 **模拟器（基准）** 为主线，展示如何在某个仿真平台上运行 RLinf —— 包括环境安装、资产路径、观测/动作空间，以及一个参考 RL 训练配方（通常为 PPO 或 GRPO + VLA 策略）。
+从评测基准或仿真平台切入时，使用本节示例。每篇文档涵盖环境安装、资产路径、观测与动作空间，以及可直接运行的 RL 参考配置。
 
-如果你的出发点是 "我想在基准 *X* 上训练"，那这里就是合适的入口。若以模型为主线（pi₀、GR00T 等）请参考 :doc:`vla_wam_index`\ ；包括 Franka 在内的真机部署请参考 :doc:`real_world_index`\ 。如需使用 AMD、华为昇腾或摩尔线程，请在 :ref:`硬件支持表 <model-hardware-support>` 中选择模型与环境组合。
+按模型系列切入（π₀ / π₀.₅、GR00T 等）见 :doc:`vla_wam_index`，真机机器人部署见 :doc:`real_world_index`。使用 AMD ROCm、华为昇腾 CANN 或摩尔线程 MUSA 时，在 :ref:`硬件支持表 <model-hardware-support>` 中选择对应的模型与环境组合。
 
-.. raw:: html
+.. grid:: 1 2 3 3
+   :gutter: 3
 
-   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
+   .. grid-item-card:: BEHAVIOR-1K
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior.jpg
+      :img-alt: BEHAVIOR-1K 基准
+      :link: embodied/behavior
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/maniskill.html" style="display: block;"><video controls autoplay loop muted playsinline preload="metadata" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
-         <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embody.mp4" type="video/mp4">
-         Your browser does not support the video tag.
-       </video></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/maniskill.html" style="text-decoration: underline; color: blue;">
-           <b>基于ManiSkill的强化学习</b>
-         </a><br>
-         ManiSkill+OpenVLA+PPO/GRPO达到SOTA训练效果
-       </p>
-     </div>
+      在 OmniGibson 50 个家居任务上用 PPO 微调 OpenVLA-OFT、π₀ 和 π₀.₅。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/libero.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/libero_numbers.jpeg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/libero.html" style="text-decoration: underline; color: blue;">
-           <b>基于 LIBERO 的强化学习</b>
-         </a><br>
-         OpenVLA-OFT + PPO/GRPO 在 LIBERO 上成功率 99%，并支持更具挑战的 LIBERO-Pro / LIBERO-Plus 套件
-       </p>
-     </div>
+   .. grid-item-card:: CALVIN
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/calvin.png
+      :img-alt: CALVIN 基准
+      :link: embodied/calvin
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/behavior.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/behavior.html" style="text-decoration: underline; color: blue;">
-           <b>基于Behavior的强化学习</b>
-         </a><br>
-         支持 BEHAVIOR + OpenVLA-OFT / π₀ / π₀.₅ + PPO 训练
-       </p>
-     </div>
+      在 CALVIN 长程场景迁移套件上用 PPO 训练 π₀ 和 π₀.₅。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/metaworld.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/metaworld.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/metaworld.html" style="text-decoration: underline; color: blue;">
-           <b>基于MetaWorld的强化学习</b>
-         </a><br>
-         支持MetaWorld+π₀/π₀.₅+PPO/GRPO训练
-       </p>
-     </div>
+   .. grid-item-card:: DexJoCo
+      :img-top: https://raw.githubusercontent.com/brave-eai/dexjoco/main/docs/pics/water_plant_4.png
+      :img-alt: DexJoCo 基准
+      :link: embodied/dexjoco
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/isaaclab.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/IsaacLab.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/isaaclab.html" style="text-decoration: underline; color: blue;">
-           <b>基于IsaacLab的强化学习</b>
-         </a><br>
-         支持IsaacLab+gr00t+PPO训练
-       </p>
-     </div>
+      在灵巧手 WaterPlant 任务上用 SFT 与 PPO 训练 CNN 和 π₀.₅。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/calvin.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/calvin.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-            data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/calvin.html" style="text-decoration: underline; color: blue;">
-           <b>基于CALVIN的强化学习</b>
-         </a><br>
-         支持CALVIN+π₀/π₀.₅+PPO/GRPO训练
-       </p>
-     </div>
+   .. grid-item-card:: EmbodiChain
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/embodichain.gif
+      :img-alt: EmbodiChain 仿真平台
+      :link: embodied/embodichain
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/robocasa.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/robocasa.jpeg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/robocasa.html" style="text-decoration: underline; color: blue;">
-           <b>基于RoboCasa的强化学习</b>
-         </a><br>
-         支持RoboCasa+π₀+GRPO训练
-       </p>
-     </div>
+      在 EmbodiChain gym 环境中用 PPO 训练 MLP policy。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/robocasa365.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/robocasa.jpeg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/robocasa365.html" style="text-decoration: underline; color: blue;">
-           <b>基于RoboCasa365的强化学习</b>
-         </a><br>
-         支持RoboCasa365 + π₀ + PPO训练
-       </p>
-     </div>
+   .. grid-item-card:: Franka-Sim
+      :img-top: https://raw.githubusercontent.com/RLinf/serl/refs/heads/RLinf/franka-sim/franka_sim/franka_sim/envs/xmls/robotiq_2f85/2f85.png
+      :img-alt: Franka-Sim 基准
+      :link: embodied/frankasim
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/robotwin.html" style="display: block;"><img src="https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-            data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/robotwin.html" style="text-decoration: underline; color: blue;">
-           <b>基于RoboTwin的强化学习</b>
-         </a><br>
-         支持RoboTwin + OpenVLA-OFT/π₀/π₀.₅ + PPO/GRPO训练
-       </p>
-     </div>
+      在 MuJoCo Franka-Sim 任务上用 PPO 或 SAC 训练 MLP 和 CNN policy。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/robodojo.html" style="display: block;"><img src="https://media.luminis-sim.com/media/home/teaser.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/robodojo.html" style="text-decoration: underline; color: blue;">
-           <b>RoboDojo 基准评估</b>
-         </a><br>
-         支持RoboDojo + π₀.₅评估
-       </p>
-     </div>
+   .. grid-item-card:: G1 动作跟踪
+      :link: embodied/g1_mimic
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/roboverse.html" style="display: block;"><img src="https://roboverseorg.github.io/static/images/teaser.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-            data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/roboverse.html" style="text-decoration: underline; color: blue;">
-           <b>基于RoboVerse的强化学习</b>
-         </a><br>
-         支持RoboVerse + π₀.₅ + PPO训练
-       </p>
-     </div>
+      MuJoCo Warp 中的 Unitree G1 全身动作跟踪环境。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/frankasim.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/serl/refs/heads/RLinf/franka-sim/franka_sim/franka_sim/envs/xmls/robotiq_2f85/2f85.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-            data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/frankasim.html" style="text-decoration: underline; color: blue;">
-           <b>基于Franka-Sim的强化学习</b>
-         </a><br>
-         支持Franka-Sim+MLP/CNN+PPO/SAC训练
-       </p>
-     </div>
+   .. grid-item-card:: Genesis
+      :img-top: https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/HeroShot_Final.png
+      :img-alt: Genesis 仿真平台
+      :link: embodied/genesis
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/embodichain.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embodichain.gif"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/embodichain.html" style="text-decoration: underline; color: blue;">
-           <b>基于 EmbodiChain 的强化学习</b>
-         </a><br>
-         使用 EmbodiChain gym 任务进行 MLP + PPO 训练
-       </p>
-     </div>
+      在 Genesis 物理仿真平台上训练 MLP policy。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/robolab.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png"
-            alt="RoboLab manipulation benchmark"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/robolab.html" style="text-decoration: underline; color: blue;">
-           <b>RoboLab 评估</b>
-         </a><br>
-         120 个 DROID 操作任务 · π₀.₅ 评估
-       </p>
-     </div>
+   .. grid-item-card:: GenieSim
+      :link: embodied/geniesim
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/polaris.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/polaris.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/polaris.html" style="text-decoration: underline; color: blue;">
-           <b>基于 PolaRiS 仿真平台的强化学习</b>
-         </a><br>
-         PolaRiS + OpenPI + PPO 训练桌面操作任务
-       </p>
-     </div>
+      在 GenieSim 双臂操作基准上用 PPO 或 GRPO 训练 π₀.₅。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/gsenv.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/gsenv.gif"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/gsenv.html" style="text-decoration: underline; color: blue;">
-           <b>基于 GSEnv 的 Real2Sim2Real 强化学习</b>
-         </a><br>
-         支持 GSEnv + π₀.₅ + PPO 训练
-       </p>
-     </div>
+   .. grid-item-card:: GSEnv
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/gsenv.gif
+      :img-alt: GSEnv Real2Sim2Real
+      :link: embodied/gsenv
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/genesis.html" style="display: block;"><img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/HeroShot_Final.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/genesis.html" style="text-decoration: underline; color: blue;">
-           <b>基于 Genesis 的强化学习</b>
-         </a><br>
-         在 Genesis 仿真平台上进行 MLP 策略训练
-       </p>
-     </div>
+      在高斯泼溅场景中用 PPO 训练 π₀.₅，用于 Real2Sim2Real 迁移。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/dexjoco.html" style="display: block;"><img src="https://raw.githubusercontent.com/brave-eai/dexjoco/main/docs/pics/water_plant_4.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/dexjoco.html" style="text-decoration: underline; color: blue;">
-           <b>基于 DexJoCo 的强化学习</b>
-         </a><br>
-         WaterPlant 任务的 CNN / π₀.₅ SFT 与 PPO 训练
-       </p>
-     </div>
+   .. grid-item-card:: IsaacLab
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/IsaacLab.png
+      :img-alt: IsaacLab 基准
+      :link: embodied/isaaclab
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/geniesim.html" style="display: block;"><video controls autoplay loop muted playsinline preload="metadata" style="width: 100%; height: 200px; object-fit: contain; background: #000; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
-         <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/geniesim_post_train.mp4" type="video/mp4">
-         您的浏览器不支持视频播放。
-       </video></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/geniesim.html" style="text-decoration: underline; color: blue;">
-           <b>基于 GenieSim 的强化学习</b>
-         </a><br>
-         支持 GenieSim+π₀.₅+PPO/GRPO 训练
-       </p>
-     </div>
+      在 NVIDIA IsaacLab 仿真环境中用 PPO 训练 GR00T 和 OpenPI policy。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/mujoco_warp.html" style="display: block;"><img src="https://raw.githubusercontent.com/google-deepmind/mujoco_warp/main/benchmarks/humanoid/rollout_three_humanoids.webp"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/mujoco_warp.html" style="text-decoration: underline; color: blue;">
-           <b>基于 MuJoCo Warp 的强化学习</b>
-         </a><br>
-         在五个经典运动控制任务上用 PPO 训练 MLP policy
-       </p>
-     </div>
+   .. grid-item-card:: LIBERO
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/libero_numbers.jpeg
+      :img-alt: LIBERO 基准
+      :link: embodied/libero
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/g1_mimic.html" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 200px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); background: #eef2f7; color: #333; text-decoration: none; font-size: 22px;"><b>G1</b></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/g1_mimic.html" style="text-decoration: underline; color: blue;">
-           <b>G1 动作跟踪</b>
-         </a><br>
-         MuJoCo Warp 中的 Unitree G1 全身动作跟踪环境
-       </p>
-     </div>
+      在标准 LIBERO（99% 成功率）、LIBERO-Pro、LIBERO-Plus 和 LIBERO-Mem 上训练或评测 OpenVLA-OFT 等 VLA。
 
-   </div>
+   .. grid-item-card:: ManiSkill
+      :img-top: https://raw.githubusercontent.com/mani-skill/ManiSkill/main/figures/teaser.jpg
+      :img-alt: ManiSkill 基准
+      :link: embodied/maniskill
+      :link-type: doc
+
+      在 ManiSkill3 桌面操作与 OOD 基准上用 PPO 或 GRPO 训练 OpenVLA 和 OpenVLA-OFT。
+
+   .. grid-item-card:: MetaWorld
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/metaworld.png
+      :img-alt: MetaWorld 基准
+      :link: embodied/metaworld
+      :link-type: doc
+
+      在 MT50 和 ML45 任务上用 PPO 或 GRPO 微调 π₀、π₀.₅ 和 OpenVLA-OFT。
+
+   .. grid-item-card:: MuJoCo Warp
+      :img-top: https://raw.githubusercontent.com/google-deepmind/mujoco_warp/main/benchmarks/humanoid/rollout_three_humanoids.webp
+      :img-alt: MuJoCo Warp 运动控制
+      :link: embodied/mujoco_warp
+      :link-type: doc
+
+      在五个 GPU 加速运动控制任务上用 PPO 训练 MLP policy。
+
+   .. grid-item-card:: PolaRiS
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/polaris.png
+      :img-alt: PolaRiS 基准
+      :link: embodied/polaris
+      :link-type: doc
+
+      在 PolaRiS 桌面操作任务上用 PPO 训练 OpenPI policy。
+
+   .. grid-item-card:: 真机仿真器
+      :link: embodied/real_simulator
+      :link-type: doc
+
+      在仿真训练中注入观测延迟与网络仿真，验证真机部署鲁棒性。
+
+   .. grid-item-card:: RoboCasa
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/robocasa.jpeg
+      :img-alt: RoboCasa 基准
+      :link: embodied/robocasa
+      :link-type: doc
+
+      在 RoboCasa 厨房操作任务上用 GRPO 微调 π₀。
+
+   .. grid-item-card:: RoboCasa365
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/robocasa.jpeg
+      :img-alt: RoboCasa365 基准
+      :link: embodied/robocasa365
+      :link-type: doc
+
+      在 RoboCasa365 基准套件上用 PPO 训练 π₀。
+
+   .. grid-item-card:: RoboDojo（仅评测）
+      :img-top: https://media.luminis-sim.com/media/home/teaser.png
+      :img-alt: RoboDojo 基准
+      :link: embodied/robodojo
+      :link-type: doc
+
+      在 RoboDojo 操作基准上评测 π₀.₅ checkpoint。
+
+   .. grid-item-card:: RoboLab（仅评测）
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png
+      :img-alt: RoboLab 操作基准
+      :link: embodied/robolab
+      :link-type: doc
+
+      在 RoboLab 的 120 个 DROID 操作任务上评测 π₀.₅。
+
+   .. grid-item-card:: RoboTwin
+      :img-top: https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif
+      :img-alt: RoboTwin 基准
+      :link: embodied/robotwin
+      :link-type: doc
+
+      在 RoboTwin 双臂操作任务上用 PPO 或 GRPO 训练 OpenVLA-OFT、π₀ 和 π₀.₅。
+
+   .. grid-item-card:: RoboVerse
+      :img-top: https://roboverseorg.github.io/static/images/teaser.jpg
+      :img-alt: RoboVerse 基准
+      :link: embodied/roboverse
+      :link-type: doc
+
+      在 RoboVerse 操作环境中用 PPO 训练 π₀.₅。
 
 .. toctree::
    :hidden:
    :maxdepth: 2
 
-   ManiSkill <embodied/maniskill>
-   LIBERO <embodied/libero>
-   Behavior <embodied/behavior>
-   MetaWorld <embodied/metaworld>
-   IsaacLab <embodied/isaaclab>
+   BEHAVIOR-1K <embodied/behavior>
    CALVIN <embodied/calvin>
+   DexJoCo <embodied/dexjoco>
+   EmbodiChain <embodied/embodichain>
+   Franka-Sim <embodied/frankasim>
+   G1 动作跟踪 <embodied/g1_mimic>
+   Genesis <embodied/genesis>
+   GenieSim <embodied/geniesim>
+   GSEnv <embodied/gsenv>
+   IsaacLab <embodied/isaaclab>
+   LIBERO <embodied/libero>
+   ManiSkill <embodied/maniskill>
+   MetaWorld <embodied/metaworld>
+   MuJoCo Warp <embodied/mujoco_warp>
+   PolaRiS <embodied/polaris>
+   真机仿真器 <embodied/real_simulator>
    RoboCasa <embodied/robocasa>
    RoboCasa365 <embodied/robocasa365>
+   RoboDojo（仅评测） <embodied/robodojo>
+   RoboLab（仅评测） <embodied/robolab>
    RoboTwin <embodied/robotwin>
-   RoboDojo <embodied/robodojo>
    RoboVerse <embodied/roboverse>
-   Franka-Sim <embodied/frankasim>
-   EmbodiChain <embodied/embodichain>
-   PolaRiS <embodied/polaris>
-   RoboLab <embodied/robolab>
-   GSEnv <embodied/gsenv>
-   Genesis <embodied/genesis>
-   DexJoCo <embodied/dexjoco>
-   GenieSim <embodied/geniesim>
-   MuJoCo Warp <embodied/mujoco_warp>
-   G1 动作跟踪 <embodied/g1_mimic>
-   真机仿真器 <embodied/real_simulator>

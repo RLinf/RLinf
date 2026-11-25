@@ -1,278 +1,206 @@
-RL with Embodied Simulators
-===========================
+Simulators
+==========
 
-This category groups examples in which the **simulator (or benchmark)** is the headline. They show how to bring up RLinf on a specific simulation platform — environment installation, asset paths, observation/action spaces, and a reference RL recipe (typically PPO or GRPO with a VLA policy).
+Pick this section when starting from a benchmark or simulator. Each page covers environment installation, asset paths, observation and action spaces, and a reference RL recipe.
 
-If you are starting from "I want to train on benchmark *X*", this is the right entry point. For model-centric examples (pi₀, GR00T, …) see :doc:`vla_wam_index`. For real-robot setups, including Franka, see :doc:`real_world_index`. For AMD, Huawei Ascend, and Moore Threads, choose a model/environment combination in :ref:`the hardware support table <model-hardware-support>`.
+For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_index`. For real-robot setups, see :doc:`real_world_index`. For AMD ROCm, Huawei Ascend CANN, and Moore Threads MUSA, choose a supported combination in :ref:`the hardware support table <model-hardware-support>`.
 
-.. raw:: html
+.. grid:: 1 2 3 3
+   :gutter: 3
 
-   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
+   .. grid-item-card:: BEHAVIOR-1K
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior.jpg
+      :img-alt: BEHAVIOR-1K benchmark
+      :link: embodied/behavior
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/maniskill.html" style="display: block;"><video controls autoplay loop muted playsinline preload="metadata" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
-         <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embody.mp4" type="video/mp4">
-         Your browser does not support the video tag.
-       </video></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/maniskill.html" style="text-decoration: underline; color: blue;">
-           <b>RL with ManiSkill Benchmark</b>
-         </a><br>
-         ManiSkill + OpenVLA + PPO/GRPO achieves SOTA performance
-       </p>
-     </div>
+      Fine-tune OpenVLA-OFT, π₀, and π₀.₅ with PPO on 50 OmniGibson household tasks.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/libero.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/libero_numbers.jpeg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/libero.html" style="text-decoration: underline; color: blue;">
-           <b>RL with LIBERO Benchmarks</b>
-         </a><br>
-         OpenVLA-OFT + PPO/GRPO on LIBERO (99% success) and on the harder LIBERO-Pro / LIBERO-Plus suites
-       </p>
-     </div>
+   .. grid-item-card:: CALVIN
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/calvin.png
+      :img-alt: CALVIN benchmark
+      :link: embodied/calvin
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/behavior.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/behavior.html" style="text-decoration: underline; color: blue;">
-           <b>RL with Behavior Benchmark</b>
-         </a><br>
-         Support BEHAVIOR + OpenVLA-OFT / π₀ / π₀.₅ + PPO training
-       </p>
-     </div>
+      Train π₀ and π₀.₅ with PPO on long-horizon CALVIN scene-transfer suites.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/metaworld.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/metaworld.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/metaworld.html" style="text-decoration: underline; color: blue;">
-           <b>RL with MetaWorld Benchmark</b>
-         </a><br>
-         Support MetaWorld+π₀/π₀.₅+PPO/GRPO training
-       </p>
-     </div>
+   .. grid-item-card:: DexJoCo
+      :img-top: https://raw.githubusercontent.com/brave-eai/dexjoco/main/docs/pics/water_plant_4.png
+      :img-alt: DexJoCo benchmark
+      :link: embodied/dexjoco
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/isaaclab.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/IsaacLab.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/isaaclab.html" style="text-decoration: underline; color: blue;">
-           <b>RL with IsaacLab Benchmark</b>
-         </a><br>
-         Support IsaacLab+gr00t+PPO training
-       </p>
-     </div>
+      Train CNN and π₀.₅ policies with SFT and PPO on dexterous WaterPlant manipulation.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/calvin.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/calvin.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-            data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/calvin.html" style="text-decoration: underline; color: blue;">
-           <b>RL with CALVIN Benchmark</b>
-         </a><br>
-         Support CALVIN+π₀/π₀.₅+PPO/GRPO training
-       </p>
-     </div>
+   .. grid-item-card:: EmbodiChain
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/embodichain.gif
+      :img-alt: EmbodiChain simulator
+      :link: embodied/embodichain
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/robocasa.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/robocasa.jpeg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/robocasa.html" style="text-decoration: underline; color: blue;">
-           <b>RL with RoboCasa Benchmark</b>
-         </a><br>
-         Support RoboCasa+π₀+GRPO training
-       </p>
-     </div>
+      Train MLP policies with PPO on EmbodiChain gym environments.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/robocasa365.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/robocasa.jpeg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/robocasa365.html" style="text-decoration: underline; color: blue;">
-           <b>RL with RoboCasa365 Benchmark</b>
-         </a><br>
-         Support RoboCasa365 + π₀ + PPO training
-       </p>
-     </div>
+   .. grid-item-card:: Franka-Sim
+      :img-top: https://raw.githubusercontent.com/RLinf/serl/refs/heads/RLinf/franka-sim/franka_sim/franka_sim/envs/xmls/robotiq_2f85/2f85.png
+      :img-alt: Franka-Sim benchmark
+      :link: embodied/frankasim
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/robotwin.html" style="display: block;"><img src="https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-            data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/robotwin.html" style="text-decoration: underline; color: blue;">
-           <b>RL with RoboTwin Benchmark</b>
-         </a><br>
-         Supports RoboTwin + OpenVLA-OFT / π₀ / π₀.₅ + PPO / GRPO training
-       </p>
-     </div>
+      Train MLP and CNN policies with PPO or SAC on MuJoCo Franka-Sim tasks.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/robodojo.html" style="display: block;"><img src="https://media.luminis-sim.com/media/home/teaser.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/robodojo.html" style="text-decoration: underline; color: blue;">
-           <b>RoboDojo Benchmark Evaluation</b>
-         </a><br>
-         Supports RoboDojo + π₀.₅ evaluation
-       </p>
-     </div>
+   .. grid-item-card:: G1 Motion Tracking
+      :link: embodied/g1_mimic
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/roboverse.html" style="display: block;"><img src="https://roboverseorg.github.io/static/images/teaser.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-            data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/roboverse.html" style="text-decoration: underline; color: blue;">
-           <b>RL with RoboVerse Benchmark</b>
-         </a><br>
-         Support RoboVerse + π₀.₅ + PPO training
-       </p>
-     </div>
+      The Unitree G1 whole-body tracking environment in MuJoCo Warp.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/frankasim.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/serl/refs/heads/RLinf/franka-sim/franka_sim/franka_sim/envs/xmls/robotiq_2f85/2f85.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-            data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/frankasim.html" style="text-decoration: underline; color: blue;">
-           <b>RL with Franka-Sim Benchmark</b>
-         </a><br>
-         Supports Franka-Sim + MLP/CNN + PPO/SAC training
-       </p>
-     </div>
+   .. grid-item-card:: Genesis
+      :img-top: https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/HeroShot_Final.png
+      :img-alt: Genesis simulator
+      :link: embodied/genesis
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/embodichain.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embodichain.gif"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/embodichain.html" style="text-decoration: underline; color: blue;">
-           <b>RL with EmbodiChain</b>
-         </a><br>
-         MLP + PPO on EmbodiChain gym tasks
-       </p>
-     </div>
+      Train MLP policies on the Genesis physics simulation platform.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/robolab.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png"
-            alt="RoboLab manipulation benchmark"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/robolab.html" style="text-decoration: underline; color: blue;">
-           <b>Evaluate on RoboLab</b>
-         </a><br>
-         120 DROID manipulation tasks · pi0.5 evaluation
-       </p>
-     </div>
+   .. grid-item-card:: GenieSim
+      :link: embodied/geniesim
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/polaris.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/polaris.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/polaris.html" style="text-decoration: underline; color: blue;">
-           <b>RL with PolaRiS Benchmark</b>
-         </a><br>
-         PolaRiS + OpenPI + PPO training
-       </p>
-     </div>
+      Train π₀.₅ with PPO or GRPO on dual-arm GenieSim manipulation benchmarks.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/gsenv.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/gsenv.gif"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/gsenv.html" style="text-decoration: underline; color: blue;">
-           <b>RL with GSEnv for Real2Sim2Real</b>
-         </a><br>
-         Support GSEnv + π₀.₅ + PPO training
-       </p>
-     </div>
+   .. grid-item-card:: GSEnv
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/gsenv.gif
+      :img-alt: GSEnv Real2Sim2Real
+      :link: embodied/gsenv
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/genesis.html" style="display: block;"><img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/HeroShot_Final.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/genesis.html" style="text-decoration: underline; color: blue;">
-           <b>RL with Genesis Benchmark</b>
-         </a><br>
-         MLP policy training on the Genesis simulation platform
-       </p>
-     </div>
+      Train π₀.₅ with PPO in Gaussian-splatting scenes for Real2Sim2Real transfer.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/dexjoco.html" style="display: block;"><img src="https://raw.githubusercontent.com/brave-eai/dexjoco/main/docs/pics/water_plant_4.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/dexjoco.html" style="text-decoration: underline; color: blue;">
-           <b>RL with DexJoCo Benchmark</b>
-         </a><br>
-         CNN / π₀.₅ SFT and PPO on WaterPlant
-       </p>
-     </div>
+   .. grid-item-card:: IsaacLab
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/IsaacLab.png
+      :img-alt: IsaacLab benchmark
+      :link: embodied/isaaclab
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/geniesim.html" style="display: block;"><video controls autoplay loop muted playsinline preload="metadata" style="width: 100%; height: 200px; object-fit: contain; background: #000; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
-         <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/geniesim_post_train.mp4" type="video/mp4">
-         Your browser does not support the video tag.
-       </video></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/geniesim.html" style="text-decoration: underline; color: blue;">
-           <b>RL with GenieSim Benchmark</b>
-         </a><br>
-         Support GenieSim+π₀.₅+PPO/GRPO training
-       </p>
-     </div>
+      Train GR00T and OpenPI policies with PPO on NVIDIA IsaacLab environments.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/mujoco_warp.html" style="display: block;"><img src="https://raw.githubusercontent.com/google-deepmind/mujoco_warp/main/benchmarks/humanoid/rollout_three_humanoids.webp"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/mujoco_warp.html" style="text-decoration: underline; color: blue;">
-           <b>RL with MuJoCo Warp</b>
-         </a><br>
-         MLP + PPO on five classic locomotion tasks
-       </p>
-     </div>
+   .. grid-item-card:: LIBERO
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/libero_numbers.jpeg
+      :img-alt: LIBERO benchmark
+      :link: embodied/libero
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/g1_mimic.html" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 200px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); background: #eef2f7; color: #333; text-decoration: none; font-size: 22px;"><b>G1</b></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/g1_mimic.html" style="text-decoration: underline; color: blue;">
-           <b>G1 Motion Tracking</b>
-         </a><br>
-         The Unitree G1 whole-body tracking environment in MuJoCo Warp
-       </p>
-     </div>
+      Run OpenVLA-OFT and other VLAs on standard LIBERO (99% success), LIBERO-Pro, LIBERO-Plus, and LIBERO-Mem.
 
-   </div>
+   .. grid-item-card:: ManiSkill
+      :img-top: https://raw.githubusercontent.com/mani-skill/ManiSkill/main/figures/teaser.jpg
+      :img-alt: ManiSkill benchmark
+      :link: embodied/maniskill
+      :link-type: doc
+
+      Train OpenVLA and OpenVLA-OFT with PPO or GRPO on ManiSkill3 tabletop manipulation and OOD benchmarks.
+
+   .. grid-item-card:: MetaWorld
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/metaworld.png
+      :img-alt: MetaWorld benchmark
+      :link: embodied/metaworld
+      :link-type: doc
+
+      Fine-tune π₀, π₀.₅, and OpenVLA-OFT with PPO or GRPO across MT50 and ML45 tasks.
+
+   .. grid-item-card:: MuJoCo Warp
+      :img-top: https://raw.githubusercontent.com/google-deepmind/mujoco_warp/main/benchmarks/humanoid/rollout_three_humanoids.webp
+      :img-alt: MuJoCo Warp locomotion
+      :link: embodied/mujoco_warp
+      :link-type: doc
+
+      Train MLP policies with PPO on five GPU-accelerated locomotion tasks.
+
+   .. grid-item-card:: PolaRiS
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/polaris.png
+      :img-alt: PolaRiS benchmark
+      :link: embodied/polaris
+      :link-type: doc
+
+      Train OpenPI policies with PPO on PolaRiS tabletop manipulation tasks.
+
+   .. grid-item-card:: Real-World Simulator
+      :link: embodied/real_simulator
+      :link-type: doc
+
+      Inject observation delay and network emulation into simulated training to test deployment robustness.
+
+   .. grid-item-card:: RoboCasa
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/robocasa.jpeg
+      :img-alt: RoboCasa benchmark
+      :link: embodied/robocasa
+      :link-type: doc
+
+      Fine-tune π₀ with GRPO on RoboCasa kitchen manipulation tasks.
+
+   .. grid-item-card:: RoboCasa365
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/robocasa.jpeg
+      :img-alt: RoboCasa365 benchmark
+      :link: embodied/robocasa365
+      :link-type: doc
+
+      Train π₀ with PPO on the RoboCasa365 benchmark suite.
+
+   .. grid-item-card:: RoboDojo (Eval Only)
+      :img-top: https://media.luminis-sim.com/media/home/teaser.png
+      :img-alt: RoboDojo benchmark
+      :link: embodied/robodojo
+      :link-type: doc
+
+      Evaluate π₀.₅ checkpoints on the RoboDojo manipulation benchmark.
+
+   .. grid-item-card:: RoboLab (Eval Only)
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png
+      :img-alt: RoboLab manipulation benchmark
+      :link: embodied/robolab
+      :link-type: doc
+
+      Evaluate π₀.₅ across 120 DROID manipulation tasks on RoboLab.
+
+   .. grid-item-card:: RoboTwin
+      :img-top: https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif
+      :img-alt: RoboTwin benchmark
+      :link: embodied/robotwin
+      :link-type: doc
+
+      Train OpenVLA-OFT, π₀, and π₀.₅ with PPO or GRPO on bimanual RoboTwin manipulation tasks.
+
+   .. grid-item-card:: RoboVerse
+      :img-top: https://roboverseorg.github.io/static/images/teaser.jpg
+      :img-alt: RoboVerse benchmark
+      :link: embodied/roboverse
+      :link-type: doc
+
+      Train π₀.₅ with PPO on RoboVerse manipulation environments.
 
 .. toctree::
    :hidden:
    :maxdepth: 2
 
-   ManiSkill <embodied/maniskill>
-   LIBERO <embodied/libero>
-   Behavior <embodied/behavior>
-   MetaWorld <embodied/metaworld>
-   IsaacLab <embodied/isaaclab>
+   BEHAVIOR-1K <embodied/behavior>
    CALVIN <embodied/calvin>
+   DexJoCo <embodied/dexjoco>
+   EmbodiChain <embodied/embodichain>
+   Franka-Sim <embodied/frankasim>
+   G1 Motion Tracking <embodied/g1_mimic>
+   Genesis <embodied/genesis>
+   GenieSim <embodied/geniesim>
+   GSEnv <embodied/gsenv>
+   IsaacLab <embodied/isaaclab>
+   LIBERO <embodied/libero>
+   ManiSkill <embodied/maniskill>
+   MetaWorld <embodied/metaworld>
+   MuJoCo Warp <embodied/mujoco_warp>
+   PolaRiS <embodied/polaris>
+   Real-World Simulator <embodied/real_simulator>
    RoboCasa <embodied/robocasa>
    RoboCasa365 <embodied/robocasa365>
+   RoboDojo (Eval Only) <embodied/robodojo>
+   RoboLab (Eval Only) <embodied/robolab>
    RoboTwin <embodied/robotwin>
-   RoboDojo <embodied/robodojo>
    RoboVerse <embodied/roboverse>
-   Franka-Sim <embodied/frankasim>
-   EmbodiChain <embodied/embodichain>
-   PolaRiS <embodied/polaris>
-   RoboLab <embodied/robolab>
-   GSEnv <embodied/gsenv>
-   Genesis <embodied/genesis>
-   DexJoCo <embodied/dexjoco>
-   GenieSim <embodied/geniesim>
-   MuJoCo Warp <embodied/mujoco_warp>
-   G1 Tracking <embodied/g1_mimic>
-   Real-World Simulator <embodied/real_simulator>
