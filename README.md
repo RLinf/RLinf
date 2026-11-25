@@ -57,10 +57,6 @@ That launches ManiSkill3 PPO MLP training on one GPU. Next, follow the [Quick St
 - [2026/11] 🎉 The [RLinf website](https://rlinf.org/) is live. Read our [blog posts](https://rlinf.org/en/blog/) and browse [community events](https://rlinf.org/en/events/).
 - [2026/11] 🔥 RLinf supports MuJoCo Warp for batched GPU simulation on five classic locomotion tasks with an MLP + PPO recipe. Doc: [MuJoCo Warp](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/mujoco_warp.html).
 - [2026/11] 🔥 RLinf supports LeKiwi, a three-wheel omnidirectional mobile base, with per-part bring-up tools and a registered real-world drive environment. Doc: [LeKiwi](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lekiwi.html).
-
-<details>
-<summary><b>More updates</b></summary>
-
 - [2026/11] 🔥 RLinf supports dual-arm ARX X5 data collection with Pico teleoperation. Doc: [ARX X5](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/arx5.html).
 - [2026/11] 🔥 RLinf supports a session server for asynchronous agentic RL: trajectories stay on the rollout nodes instead of node 0, requests are routed by an SGLang router, and agents can use the OpenAI chat completions API. Doc: [Session Server](https://rlinf.readthedocs.io/en/latest/rst_source/guides/session_server.html).
 - [2026/11] 🔥 RLinf supports asynchronous agentic RL: the rollout keeps generating while the actor trains on data from an earlier weight version, with bounded staleness. On Search-R1 with GLM-4.7-Flash, the step time drops from 278.6 s to 139.0 s with a comparable reward. Docs: [Asynchronous Agentic RL](https://rlinf.readthedocs.io/en/latest/rst_source/guides/async_agentic.html), [Asynchronous Search-R1 Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/async.html).
@@ -71,6 +67,10 @@ That launches ManiSkill3 PPO MLP training on one GPU. Next, follow the [Quick St
 - [2026/11] 🔥 RLinf supports RoboDojo, an Isaac Sim-based dual-arm manipulation benchmark for ARX-X5, exposed as a Gym environment for VLA policy evaluation: the official π₀.₅ checkpoint can be converted to OpenPI format and evaluated over 55 predefined scene layouts. Doc: [RoboDojo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robodojo.html).
 - [2026/11] 🔥 RLinf supports SO-101 joint-space demonstration collection, OpenPI π₀.₅ supervised fine-tuning, and local evaluation. Doc: [SO-101](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/so101.html).
 - [2026/11] 🔥 RLinf supports Psi0 VLA and the SIMPLE humanoid simulator. Docs: [Psi0](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/psi0.html), [SIMPLE](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html).
+
+<details>
+<summary><b>More updates</b></summary>
+
 - [2026/11] 🔥 RLinf supports [PhyAI](https://github.com/mingti-org/phyai) as an in-process rollout backend for π₀.₅ PPO training on LIBERO, including hot weight synchronization, and cutting π₀.₅ prediction time on the rollout critical path from 142.6 s to 68.7 s on four H800 GPUs. Doc: [PhyAI rollout backend](https://rlinf.readthedocs.io/en/latest/rst_source/guides/rollout-engines/phyai.html).
 - [2026/10] 🎉 RLinf v0.4 is released, taking RL out of simulation and into agile control of the physical world. Highlights: a modular real-robot system (`rlinf.robotics`), real-robot SOTA post-training algorithms (RLT, STEAM, OPD, RTC), full-modality models (native PyTorch OpenPI π₀ / π₀.₅, Cosmos3, FastWAM, π₀-FAST, Evo-1, MolmoAct2, SD3 / Wan2.2), and eight accelerator backends. Release notes: [RLinf v0.4](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.4.html).
 - [2026/10] 🎉 RLinf introducing **CEL** (Collective Experience Learning): robot fleets improve a shared policy from their own deployment experience without additional expert demonstrations or corrective actions, validated on up to 96 real robots across 5 real-world tasks. Project page: [CEL](https://cel-robot-learning.github.io/), paper: [arXiv:2610.25736](https://arxiv.org/abs/2610.25736). Code will release soon.
