@@ -83,9 +83,14 @@ def device(request, encoder_module):
     return "cpu"
 
 
+@pytest.mark.parametrize("device_form", ["indexed", "unindexed", "torch_device"])
 def test_embeddings_preserve_query_and_passage_contract(
-    encoder_module, model_path, device
+    encoder_module, model_path, device, device_form
 ):
+    if device_form != "indexed":
+        device = device.split(":")[0]
+    if device_form == "torch_device":
+        device = torch.device(device)
     encoder = encoder_module.Encoder("e5", model_path, "mean", 32, False, device)
     queries = ["mars", "mars planet"]
     query_embeddings = encoder.encode(queries)

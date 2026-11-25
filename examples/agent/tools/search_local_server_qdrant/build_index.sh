@@ -12,8 +12,7 @@ retriever_name=e5 # this is for indexing naming
 retriever_path=/path/to/e5-base-v2
 
 # Qdrant configuration
-# Build step 3: Install qdrant and set qdrant_path to qdrant dir
-qdrant_path=/your/qdrant/path
+# Build step 3: set the running Qdrant server URL and collection
 qdrant_url=http://localhost:6333
 qdrant_collection_name=wiki_collection
 hnsw_config='{"m":32,"ef_construct":512}'

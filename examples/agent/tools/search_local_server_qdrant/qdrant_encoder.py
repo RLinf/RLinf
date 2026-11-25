@@ -78,7 +78,7 @@ class Encoder:
         # Register the backend before constructing an NPU device in each child.
         self.torch_platform = get_device_module(str(device).split(":")[0])
         self.device = torch.device(device)
-        if self.device.type != "cpu":
+        if self.device.type != "cpu" and self.device.index is not None:
             self.torch_platform.set_device(self.device)
 
         self.model, self.tokenizer = load_model(
