@@ -1,7 +1,7 @@
 Go2 High-Level Control
 ======================
 
-Read Go2 EDU state and check six directions through the Unitree controller. The Gymnasium task ``Go2DriveEnv-v1`` reads state by default. A direction check enables ``SportClient`` velocity commands for one run, and the operator confirms the motion and stop.
+The Gymnasium task ``Go2DriveEnv-v1`` reads joint and IMU data from ``rt/lowstate`` by default. For a direction check, RLinf sends a body velocity command through Unitree's ``SportClient``. The Go2's onboard controller handles gait and joint control.
 
 Overview
 --------
@@ -31,11 +31,15 @@ Tasks
    :header-rows: 1
 
    * - Check
-     - Result
+     - Requested action
    * - Read-only
      - State samples without motion commands.
-   * - One direction
-     - Forward, backward, left, right, turn-left, or turn-right, followed by a stop request.
+   * - ``forward`` / ``backward``
+     - Move forward or backward at 0.3 m/s.
+   * - ``left`` / ``right``
+     - Move sideways at 0.3 m/s.
+   * - ``turn_left`` / ``turn_right``
+     - Turn left or right at 0.5 rad/s.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -48,7 +52,7 @@ Observation and Action
    * - Observation
      - Orientation, angular velocity, twelve joint positions and velocities, battery voltage, and four raw foot-force readings.
    * - Action
-     - Body velocity in m/s, m/s, rad/s, bounded by absolute values of 0.3, 0.3, and 0.5.
+     - Forward speed, leftward speed, and left turn rate, in that order. The respective limits are ±0.3 m/s, ±0.3 m/s, and ±0.5 rad/s.
    * - Reward
      - Zero. This check does not train a policy.
 
@@ -98,13 +102,7 @@ Setup and Run
 
          python -m toolkits.realworld_check.check_go2_sport --interface <interface> --direction forward
 
-      Enter ``GO`` only after the on-site checks.
-
-      For translation, choose ``forward``, ``backward``, ``left``, or ``right``.
-
-      For rotation, choose ``turn_left`` or ``turn_right``.
-
-      Each invocation checks one direction for one second at 10 Hz. ``--seconds 2`` selects two seconds. ``--output <path>`` selects a fresh report path and refuses to overwrite a file.
+      Choose one of the six direction names above and enter ``GO`` after the on-site checks. The check sends the command at 10 Hz for one second, then requests a stop. Use ``--seconds 2`` for two seconds or ``--output <path>`` to choose a new report file.
 
       .. warning::
 

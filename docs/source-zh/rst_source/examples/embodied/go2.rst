@@ -1,7 +1,7 @@
 Go2 高层运动控制
 ================
 
-Gymnasium 环境 ``Go2DriveEnv-v1`` 默认只读取 Go2 EDU 状态。选择一个运动方向后，本次检查会通过原厂 ``SportClient`` 发送速度指令，由现场操作者观察机器人是否按指令运动并停稳。
+Gymnasium 环境 ``Go2DriveEnv-v1`` 默认从 ``rt/lowstate`` 读取 Go2 EDU 的关节和 IMU 数据。检查运动方向时，RLinf 通过宇树 ``SportClient`` 发送机身速度指令，机载控制器负责步态和关节控制。
 
 概览
 ----
@@ -31,11 +31,15 @@ Gymnasium 环境 ``Go2DriveEnv-v1`` 默认只读取 Go2 EDU 状态。选择一�
    :header-rows: 1
 
    * - 检查项
-     - 结果
+     - 请求的动作
    * - 只读
      - 接收状态，不发送运动指令。
-   * - 单方向
-     - 前进、后退、左移、右移、左转或右转，随后请求停止。
+   * - ``forward`` / ``backward``
+     - 以 0.3 m/s 前进或后退。
+   * - ``left`` / ``right``
+     - 以 0.3 m/s 向左或向右平移。
+   * - ``turn_left`` / ``turn_right``
+     - 以 0.5 rad/s 向左或向右转动。
 
 观测与动作
 ~~~~~~~~~~
@@ -48,7 +52,7 @@ Gymnasium 环境 ``Go2DriveEnv-v1`` 默认只读取 Go2 EDU 状态。选择一�
    * - 观测
      - 姿态、角速度、12 关节位置与速度、电池电压、四个原始足力值。
    * - 动作
-     - 机身速度，单位依次为 m/s、m/s、rad/s，绝对值上限依次为 0.3、0.3、0.5。
+     - 依次为前向速度、左向速度和左转角速度，范围分别为 ±0.3 m/s、±0.3 m/s 和 ±0.5 rad/s。
    * - 奖励
      - 固定为零，此检查不训练 policy。
 
@@ -98,13 +102,7 @@ Gymnasium 环境 ``Go2DriveEnv-v1`` 默认只读取 Go2 EDU 状态。选择一�
 
          python -m toolkits.realworld_check.check_go2_sport --interface <interface> --direction forward
 
-      完成现场检查后输入 ``GO``。
-
-      平移方向可选 ``forward``、``backward``、``left`` 或 ``right``。
-
-      转向可选 ``turn_left`` 或 ``turn_right``。
-
-      每次只测一个方向，默认以 10 Hz 运行 1 秒。``--seconds 2`` 改为 2 秒。``--output <path>`` 可指定日志位置，已有文件不会被覆盖。
+      每次选上表中的一个方向，完成现场检查后输入 ``GO``。程序默认以 10 Hz 发送 1 秒速度指令，随后请求停止。用 ``--seconds 2`` 可延长至 2 秒，用 ``--output <path>`` 可指定新的报告文件。
 
       .. warning::
 
