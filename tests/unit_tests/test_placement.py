@@ -2263,34 +2263,6 @@ if __name__ == "__main__":
     pytest.main(["-v", __file__])
 
 
-def test_rpent_two_model_nodes_share_all_sixteen_gpus():
-    from pathlib import Path
-
-    from hydra import compose, initialize_config_dir
-
-    config_dir = Path(__file__).parents[2] / "examples/agent/rpent/config"
-    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
-        cfg = compose(config_name="train_qwen3.5_4b_libero_rl_sao_3node")
-    cluster = create_fake_cluster(3, 8)
-    placement = ModelParallelComponentPlacement(cfg, cluster)
-    assert placement.is_collocated
-    assert placement.actor_world_size == placement.critic_world_size == 16
-    assert placement.actor_dp_size == placement.critic_dp_size == 8
-    assert (
-        placement.rollout_num_model_instances == 16 and placement.rollout_tp_size == 1
-    )
-    for role in ["actor", "critic", "rollout", "reward"]:
-        assert placement.get_hardware_ranks(role) == list(range(16))
-        workers = placement.get_strategy(role).get_placement(cluster)
-        assert {item.cluster_node_rank for item in workers} == {0, 1}
-    workers = placement.get_strategy("agentloop").get_placement(cluster)
-    assert len(workers) == 8
-    assert {item.cluster_node_rank for item in workers} == {2}
-    assert all(
-        item.visible_accelerators == [str(i) for i in range(8)] for item in workers
-    )
-
-
 @pytest.mark.parametrize("evaluation", [False, True])
 def test_model_parallel_components_keep_selected_node_environment(evaluation):
     from pathlib import Path

@@ -15,7 +15,7 @@
 
 """Configuration contracts for RPent planner workflows."""
 
-from omegaconf import DictConfig, OmegaConf, open_dict
+from omegaconf import DictConfig, OmegaConf
 
 from rlinf.agents.rpent.simulators import mixed_simulators
 
@@ -26,15 +26,22 @@ def validate_rpent_cfg(cfg: DictConfig) -> DictConfig:
     if rpent is None:
         return cfg
     simulators = mixed_simulators(cfg)
-    _validate_resources(rpent, mixed=bool(simulators))
+    _validate_resources(
+        rpent, mixed=bool(simulators), group_size=cfg.algorithm.get("group_size", 1)
+    )
     _validate_multimodal(cfg, rpent)
     _validate_planner(cfg, rpent, mixed=bool(simulators))
     _validate_training(cfg, rpent)
     return cfg
 
 
-def _validate_resources(rpent: DictConfig, *, mixed: bool = False) -> None:
-    if (not mixed and not rpent.get("env_gpus")) or rpent.episodes_per_worker < 1:
+def _validate_resources(
+    rpent: DictConfig, *, mixed: bool = False, group_size: int = 1
+) -> None:
+    group_size = group_size if mixed else 1
+    if (
+        not mixed and not rpent.get("env_gpus")
+    ) or rpent.episodes_per_worker < group_size:
         raise ValueError(
             "tools.rpent needs at least one env GPU and one episode per worker, got "
             f"env_gpus={list(rpent.get('env_gpus', []))} and "
@@ -80,7 +87,7 @@ def _validate_multimodal(cfg: DictConfig, rpent: DictConfig) -> None:
                 raise ValueError(
                     "Release image replay requires thinking_token_budget=null"
                 )
-        elif cfg.rollout.get("env_vars", {}).get(
+        elif (cfg.rollout.get("env_vars") or {}).get(
             "SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE"
         ):
             raise ValueError(
@@ -108,21 +115,6 @@ def _validate_multimodal(cfg: DictConfig, rpent: DictConfig) -> None:
                 raise ValueError(
                     "Shared multimodal position verification currently requires PP=1 and CP=1"
                 )
-    # Resolve legacy RPent budgets before the generic learner config is validated.
-    for role in ("actor", "critic"):
-        if cfg.get(role) is None:
-            continue
-        for field in ("cache_bytes", "prefetch_batches", "prefetch_bytes"):
-            legacy = f"training_image_{field}"
-            if legacy not in rpent:
-                continue
-            target = f"{role}.multimodal.{field}"
-            multimodal = cfg[role].get("multimodal") or {}
-            if field in multimodal and multimodal[field] != rpent[legacy]:
-                raise ValueError(f"{target} conflicts with tools.rpent.{legacy}.")
-            if field not in multimodal:
-                with open_dict(cfg):
-                    OmegaConf.update(cfg, target, rpent[legacy], force_add=True)
 
 
 def _validate_planner(
@@ -160,13 +152,6 @@ def _validate_planner(
             "qwen3.5 and agentloop.agentic_tokenizer=qwen3_5, got "
             f"{agentloop.toolcall_parser} and {agentloop.agentic_tokenizer}."
         )
-    max_new_tokens = cfg.algorithm.sampling_params.max_new_tokens
-    if not 0 < agentloop.minimum_output_tokens <= max_new_tokens:
-        raise ValueError(
-            "agentloop.minimum_output_tokens must be between 1 and "
-            f"sampling_params.max_new_tokens={max_new_tokens}, "
-            f"got {agentloop.minimum_output_tokens}."
-        )
     if agentloop.max_infra_retries < 0 or not 0 <= agentloop.max_infra_retry_rate <= 1:
         raise ValueError(
             "agentloop.max_infra_retries must be nonnegative and "
@@ -174,7 +159,7 @@ def _validate_planner(
             f"{agentloop.max_infra_retries} and {agentloop.max_infra_retry_rate}."
         )
 
-    template = agentloop.get("chat_template_kwargs", {})
+    template = agentloop.get("chat_template_kwargs") or {}
     if not isinstance(template.get("enable_thinking", True), bool):
         raise ValueError(
             "agentloop.chat_template_kwargs.enable_thinking must be a boolean"
@@ -200,8 +185,6 @@ def _validate_planner(
     for option in ("reasoning_history", "image_history"):
         if type(rpent[option]) is not int or rpent[option] < -1:
             raise ValueError(f"tools.rpent.{option} must be an integer >= -1")
-    if agentloop.minimum_output_tokens != max_new_tokens:
-        raise ValueError("RPent reserves the full configured max_new_tokens")
 
 
 def _validate_training(cfg: DictConfig, rpent: DictConfig) -> None:

@@ -116,24 +116,6 @@ class TokenizerManager(_TokenizerManager):
                 "Not all rollout schedulers acknowledged the published weight version."
             )
 
-    async def pause_for_weight_update(self):
-        """Gate new generation calls until scheduler retraction is acknowledged."""
-        async with self.is_pause_cond:
-            self.is_pause = True
-            return await self.run_task_method(
-                TaskMethodInput(method_name="pause_for_weight_update")
-            )
-
-    async def resume_after_weight_update(self):
-        """Acknowledge scheduler resumption before admitting further generation calls."""
-        async with self.is_pause_cond:
-            result = await self.run_task_method(
-                TaskMethodInput(method_name="resume_after_weight_update")
-            )
-            self.is_pause = False
-            self.is_pause_cond.notify_all()
-            return result
-
     async def abort_generation(
         self,
         obj: AbortGenerationInput,

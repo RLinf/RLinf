@@ -96,6 +96,8 @@ class ReshardConfig:
     vision_config: Optional[object] = None
     """Vision configuration of a multimodal Megatron provider."""
 
+    freeze_vision: bool = False
+
     mm_enable_dp_encoder: bool = False
     """Whether each rollout vision encoder holds a full copy of its weights."""
 
@@ -115,6 +117,8 @@ class ReshardConfig:
         return self.reshard_weights_format != "mcore"
 
     def __post_init__(self):
+        if self.model_type == "qwen3_5" and not self.split_fc1:
+            raise ValueError("Qwen3.5 weight resharding requires an HF-format receiver")
         # No TP-ratio assertion: the gather/narrow pair handles any ratio
         # (actor < rollout via all_gather full + slice; actor > rollout via
         # subgroup all_gather or slice; actor == rollout via no-op slice).

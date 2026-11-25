@@ -25,6 +25,7 @@ from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
 from rlinf.config import (
+    release_image_replay_enabled,
     shared_multi_modal_processor_enabled,
     torch_dtype_from_precision,
 )
@@ -39,7 +40,7 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.backend import RlinfContext
-from rlinf.workers.rollout.sglang import require_supported_sglang, sglang_version
+from rlinf.workers.rollout.sglang import require_supported_sglang
 from rlinf.workers.rollout.sglang.backends import make_backend
 from rlinf.workers.rollout.sglang.rendezvous import (
     broadcast_instance_readiness,
@@ -115,6 +116,12 @@ class SGLangWorker(Worker):
         self._dispatch_gate.set()
         # In-flight generate_and_send tasks of rollout_serverless.
         self._inflight_generates: set[asyncio.Task] = set()
+        self._closed_generation_cohorts = set()
+        self._generation_cohorts = {}
+        self._generation_outputs = {}
+        self._cohort_fences = {}
+        self._serverless_input_channel = None
+        self._serverless_stopping = False
         # The session-server data plane reads the weight version the
         # engines advertise in their responses, so every sync must also
         # write it to the engine.
@@ -304,7 +311,7 @@ class SGLangWorker(Worker):
         shared_processor = shared_multi_modal_processor_enabled(
             self._cfg_rollout.sglang
         )
-        if shared_processor and str(sglang_version) == "0.5.12.post1":
+        if release_image_replay_enabled(self._cfg_rollout):
             if os.environ.get("SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE") != (
                 "rlinf.hybrid_engines.sglang.multimodal"
             ):
@@ -545,10 +552,9 @@ class SGLangWorker(Worker):
                     "node_rank": node_rank,
                 }
         server_args = self._build_server_args()
-        if (
-            shared_multi_modal_processor_enabled(self._cfg_rollout.sglang)
-            and str(sglang_version) != "0.5.12.post1"
-        ):
+        if shared_multi_modal_processor_enabled(
+            self._cfg_rollout.sglang
+        ) and not release_image_replay_enabled(self._cfg_rollout):
             from rlinf.hybrid_engines.sglang.multimodal.token_space import (
                 SGLangTokenSpace,
                 processor_settings,
@@ -738,7 +744,6 @@ class SGLangWorker(Worker):
         """
         if not self._is_model_instance_entry:
             return
-        self._pause_mode = mode
         if mode in ("in_place", "retract"):
             await self._backend.pause_generation(mode)
         elif mode == "drain":
@@ -747,6 +752,7 @@ class SGLangWorker(Worker):
                 await asyncio.wait(self._inflight_generates)
         else:
             raise ValueError(f"Unsupported pause mode: {mode!r}")
+        self._pause_mode = mode
 
     async def continue_generation(self):
         """Resume generation after a pause (see `pause_generation`)."""
@@ -763,14 +769,6 @@ class SGLangWorker(Worker):
                 f"(current pause mode: {mode!r})"
             )
         self._pause_mode = None
-
-    async def get_async_rollout_state(
-        self, include_requests: bool = False
-    ) -> dict[str, Any]:
-        """Report token publication counters from this model instance."""
-        if not self._is_model_instance_entry:
-            return {}
-        return await self._backend.get_async_rollout_state(include_requests)
 
     async def check_running_state(self):
         if not self._is_model_instance_entry:
@@ -958,17 +956,21 @@ class SGLangWorker(Worker):
         mm_token_expansion_start_len: Optional[int] = None,
         capture_images: Optional[dict] = None,
         cohort_id: Optional[str] = None,
+        reply_started: Optional[asyncio.Event] = None,
     ):
         # Backstop for rollout_serverless's entry-rank gate; return instead
         # of raising because nobody awaits this task.
         if not self._is_model_instance_entry:
             return
+
+        async def send(result):
+            operation = output_channel.put(result, key=channel_key, async_op=True)
+            if reply_started is not None:
+                reply_started.set()
+            await operation.async_wait()
+
         if cohort_id is not None and cohort_id in self._closed_generation_cohorts:
-            await output_channel.put(
-                {"error": "synchronous_oversample_drop"},
-                key=channel_key,
-                async_op=True,
-            ).async_wait()
+            await send({"error": "synchronous_oversample_drop"})
             return
         final_sampling_params = self._sampling_params
         if sampling_params is not None and len(sampling_params) > 0:
@@ -983,9 +985,7 @@ class SGLangWorker(Worker):
                 prepared = await self._token_space.prepare(
                     prompt_ids, image_data, prepare_multimodal
                 )
-                await output_channel.put(
-                    prepared, key=channel_key, async_op=True
-                ).async_wait()
+                await send(prepared)
                 return
             extra = {}
             if return_prompt_token_ids and capture_images is None:
@@ -999,11 +999,7 @@ class SGLangWorker(Worker):
                     generate_with_capture,
                 )
 
-                if (
-                    not shared_multi_modal_processor_enabled(self._cfg_rollout.sglang)
-                    or str(sglang_version) != "0.5.12.post1"
-                    or extra
-                ):
+                if not release_image_replay_enabled(self._cfg_rollout) or extra:
                     raise ValueError(
                         "Release capture requires shared preprocessing and explicit image spans"
                     )
@@ -1024,11 +1020,7 @@ class SGLangWorker(Worker):
                     **extra,
                 )
             if cohort_id is not None and cohort_id in self._closed_generation_cohorts:
-                await output_channel.put(
-                    {"error": "synchronous_oversample_drop"},
-                    key=channel_key,
-                    async_op=True,
-                ).async_wait()
+                await send({"error": "synchronous_oversample_drop"})
                 return
             result_dict = decode_generation_result(
                 result, return_logprobs=self._return_logprobs
@@ -1047,13 +1039,13 @@ class SGLangWorker(Worker):
                     "prompt_token_ids"
                 ]
         except asyncio.CancelledError:
-            if cohort_id is None or cohort_id not in self._closed_generation_cohorts:
+            if (
+                cohort_id is None
+                or cohort_id not in self._closed_generation_cohorts
+                or (reply_started is not None and reply_started.is_set())
+            ):
                 raise
-            await output_channel.put(
-                {"error": "synchronous_oversample_drop"},
-                key=channel_key,
-                async_op=True,
-            ).async_wait()
+            await send({"error": "synchronous_oversample_drop"})
             return
         except Exception as error:
             # The requester waits on this key; report the failure instead of hanging it.
@@ -1064,23 +1056,15 @@ class SGLangWorker(Worker):
                     f"generation failed for request {channel_key}: {error!r}"
                 )
                 result_dict = {"error": f"{type(error).__name__}: {error}"}
-            await output_channel.put(
-                result_dict, key=channel_key, async_op=True
-            ).async_wait()
+            await send(result_dict)
             return
-        await output_channel.put(
-            result_dict, key=channel_key, async_op=True
-        ).async_wait()
+        await send(result_dict)
 
     async def rollout_serverless(self, input_channel: Channel, output_channel: Channel):
         """Serve one model instance and retain request affinity across turns."""
         if not self._is_model_instance_entry:
             return
         self._serverless_stopping = False
-        self._closed_generation_cohorts = set()
-        self._generation_cohorts = {}
-        self._generation_outputs = {}
-        self._cohort_fences = {}
         self._serverless_input_channel = input_channel
         self._serverless_request_key = (
             self._placement.rollout_model_instance_id(self._rank)
@@ -1094,11 +1078,14 @@ class SGLangWorker(Worker):
             if request is None:
                 break
             if "cohort_fence" in request:
-                self._cohort_fences[request["cohort_fence"]].set()
+                fence = self._cohort_fences.get(request["cohort_fence"])
+                if fence is not None:
+                    fence.set()
                 continue
             await self._dispatch_gate.wait()
             if self._serverless_stopping:
                 break
+            reply_started = asyncio.Event()
             task = asyncio.create_task(
                 self.generate_and_send(
                     output_channel=output_channel,
@@ -1115,11 +1102,16 @@ class SGLangWorker(Worker):
                         "mm_token_expansion_start_len"
                     ),
                     cohort_id=request.get("cohort_id"),
+                    reply_started=reply_started,
                 )
             )
             self._inflight_generates.add(task)
             self._generation_cohorts[task] = request.get("cohort_id")
-            self._generation_outputs[task] = (output_channel, request["channel_key"])
+            self._generation_outputs[task] = (
+                output_channel,
+                request["channel_key"],
+                reply_started,
+            )
             task.add_done_callback(self._inflight_generates.discard)
             task.add_done_callback(lambda done: self._generation_cohorts.pop(done))
             task.add_done_callback(lambda done: self._generation_outputs.pop(done))
@@ -1128,6 +1120,10 @@ class SGLangWorker(Worker):
         """Abort a synchronous cohort, reject late work and fence its input queue."""
         if not self._is_model_instance_entry:
             return {}
+        if self._serverless_input_channel is None:
+            raise RuntimeError(
+                "Cannot fence a rollout queue before the serverless worker starts"
+            )
         foreign = {
             version
             for task, version in self._generation_cohorts.items()
@@ -1138,6 +1134,7 @@ class SGLangWorker(Worker):
                 f"Cannot abort cohort {cohort_id}: unrelated generation is active "
                 f"({foreign})."
             )
+        self._closed_generation_cohorts.clear()
         self._closed_generation_cohorts.add(cohort_id)
         await self._backend.abort_generation()
         tasks = list(self._inflight_generates)
@@ -1146,15 +1143,14 @@ class SGLangWorker(Worker):
             task.cancel()
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            for result, (output, key) in zip(results, outputs, strict=True):
+            for result, (output, key, replied) in zip(results, outputs, strict=True):
                 if isinstance(result, asyncio.CancelledError):
-                    # Cancellation before a coroutine's first instruction
-                    # bypasses generate_and_send's cancellation handler.
-                    await output.put(
-                        {"error": "synchronous_oversample_drop"},
-                        key=key,
-                        async_op=True,
-                    ).async_wait()
+                    if not replied.is_set():
+                        await output.put(
+                            {"error": "synchronous_oversample_drop"},
+                            key=key,
+                            async_op=True,
+                        ).async_wait()
                 elif isinstance(result, BaseException):
                     raise result
         fence_id = uuid4().hex
@@ -1165,7 +1161,7 @@ class SGLangWorker(Worker):
                 key=self._serverless_request_key,
                 async_op=True,
             ).async_wait()
-            await fence.wait()
+            await asyncio.wait_for(fence.wait(), timeout=_COHORT_CLEANUP_TIMEOUT_S)
         finally:
             del self._cohort_fences[fence_id]
         tasks = list(self._inflight_generates)
@@ -1194,7 +1190,7 @@ class SGLangWorker(Worker):
 
     async def stop_serverless(self) -> None:
         """Cancel owned requests and release the channel consumer."""
-        if not self._is_model_instance_entry:
+        if not self._is_model_instance_entry or self._serverless_input_channel is None:
             return
         self._serverless_stopping = True
         self._dispatch_gate.set()

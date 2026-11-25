@@ -239,7 +239,7 @@ class MegatronCoreWeightReshard:
         def is_synced(key):
             # A frozen vision tower keeps the weights the rollout already
             # serves, and its layers do not follow the language TP layout.
-            return not key.startswith("vision_model.")
+            return not (self.config.freeze_vision and key.startswith("vision_model."))
 
         if vp_size > 1:  # consolidate params across model chunks
             for key, (val, idx) in bucket_weight.items():

@@ -36,10 +36,11 @@ _EPISODE_FIELDS = (
 
 
 def summarize_episodes(episodes: list[dict]) -> dict:
-    """Return the success rate overall and per LIBERO suite."""
+    """Return the success rate overall and per simulator or LIBERO suite."""
     by_suite = defaultdict(list)
     for episode in episodes:
-        by_suite[episode["task"]["suite"]].append(episode["success"])
+        task = episode["task"]
+        by_suite[task.get("suite") or task["environment"]].append(episode["success"])
     return {
         "episodes": len(episodes),
         "success_rate": sum(e["success"] for e in episodes) / max(len(episodes), 1),

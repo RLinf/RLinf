@@ -669,32 +669,18 @@ Qwen3.5 MBridge Actor 还可以在词表投影时节省显存。将 ``actor.mode
 
 长提示词的打包批次还可以设置 ``actor.response_only_logits: true``，只对预测回复 token 的位置做投影。此选项要求 CP1，默认关闭。启用分块词表投影时，如果关闭熵计算，输出层会自动选择回复位置；记录熵则需要对所有位置做投影。
 
-下表是 Qwen3.5-4B BF16 Actor 在 80 GiB A100 上完成一次更新时的单卡峰值显存，取各卡 PyTorch 已分配显存的最高值。各组均使用 PyTorch 2.11.0+cu128 和 Megatron Core 0.18.0，只对回复 token 打分。两组文本样本均使用单卡，开启分块时每块 32 个 token。长样本来自一条含 6 张图的 RPent 轨迹，使用两张卡、TP2 和序列并行，开启分块时每块 256 个 token。启用 ``actor.model.gradient_accumulation_fusion`` 后，Apex CUDA 算子将梯度累加到 Megatron 已分配的 FP32 缓冲区。
-
-.. list-table:: 不同词表投影方式的单卡峰值显存（GiB）
+.. list-table:: Megatron 打分选项
    :header-rows: 1
 
-   * - 总 token 数 / 打分 token 数
-     - 常规投影
-     - 常规投影＋融合
-     - 分块投影
-     - 分块投影＋融合
-   * - 512 / 256
-     - 43.57
-     - 44.66
-     - 44.93
-     - 43.73
-   * - 2,048 / 1,024
-     - 51.42
-     - 52.86
-     - 52.19
-     - 51.03
-   * - 23,095 / 12,303
-     - 33.33
-     - 34.06
-     - 24.60
-     - 24.74
-
-关闭融合时，分块使 512 和 2,048 个 token 的文本样本分别多用 1.36 和 0.77 GiB 显存，长样本的单卡峰值则下降了 8.73 GiB。短序列建议先用实际训练批次测量，再决定是否开启。
-
-另一组双卡实验回放了 RPent 一条 100 轮轨迹的最后一条 Actor 输入，共 141,294 个 token、6 张图，其中 30,155 个回复 token 参与打分。两组都开启 TP2、序列并行和 Apex 梯度融合；将投影分块设为 256 后，单次 Actor 更新的每卡峰值从 60.36 GiB 降至 45.49 GiB。
+   * - 设置
+     - 默认值
+     - 用途
+   * - ``actor.logprob_chunk_size``
+     - ``0``
+     - 每个词表 softmax 分块处理的 token 位置数。
+   * - ``actor.response_only_logits``
+     - ``false``
+     - 打包批次中只投影用于预测回复 token 的位置。
+   * - ``actor.model.lm_head_chunk_size``
+     - ``0``
+     - 每个输出层投影分块处理的 token 位置数。

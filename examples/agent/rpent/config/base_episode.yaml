@@ -94,7 +94,6 @@ agentloop:
   max_turns: 80
   model_request_timeout_s: 3600
   episode_timeout_s: 7200
-  minimum_output_tokens: 32768
   merge_prefix_turns: true
   history_compaction:
     max_messages: 80
@@ -108,7 +107,7 @@ agentloop:
   thinking_token_budget: null
 tools:
   rpent:
-    python: /opt/venv/reason/bin/python
+    python: ${oc.env:RPENT_PYTHON,python}
     libero_type: pro
     max_episode_steps: 10000
     env_gpus:

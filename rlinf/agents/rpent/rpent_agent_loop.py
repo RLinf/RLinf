@@ -93,7 +93,12 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
     def __init__(self, cfg: DictConfig, placement: ModelParallelComponentPlacement):
         super().__init__(cfg, placement)
         # Training compares these logprobs with its own recomputation (TIS).
-        self.return_logprobs = cfg.rollout.return_logprobs
+        self.return_logprobs = (
+            cfg.runner.task_type != "reasoning_eval" and cfg.rollout.return_logprobs
+        )
+        self._thinking_enabled = (cfg.agentloop.get("chat_template_kwargs") or {}).get(
+            "enable_thinking", True
+        )
         self._thinking_limit = cfg.agentloop.get("thinking_token_budget")
         if self.tokenizer.eos_token_id is None:
             raise ValueError("RPent chat tokenizer must define an EOS token")
@@ -146,13 +151,6 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
         await self._model_server.start()
         return await super().run_agentloop_rollout(input_channel, output_channel)
 
-    async def run_async_rollout(
-        self, input_channel: Channel, output_channel: Channel
-    ) -> None:
-        """Serve episodes continuously; the endpoint must run before any starts."""
-        await self._model_server.start()
-        return await super().run_async_rollout(input_channel, output_channel)
-
     async def run_one_query(self, prompt_ids: list[int], answer: list[str]):
         """Run one episode, retrying service failures with fresh episode IDs."""
         task = episode_task(answer)
@@ -198,10 +196,14 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
                 startup=_GROUP_STARTUP.get(),
             )
             base_url = self._model_server.open(episode.episode_id, episode)
+            cancel_request = True
             try:
                 outcome = await self._run_rpent(episode, base_url, gpu)
+                cancel_request = False
             finally:
-                error = await self._model_server.close(episode.episode_id)
+                error = await self._model_server.close(
+                    episode.episode_id, cancel_request=cancel_request
+                )
             if error is not None:
                 # The planner only saw this sampling failure as HTTP 500.
                 raise error
@@ -317,7 +319,7 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
                     audit.append({"seed": seed, "error": str(error)})
                     for member in candidate_ids:
                         state["records"][member]["group_seed_attempts"] = audit
-                    await self._release_failed_group(state, candidate_ids, index, seed)
+                    await self._release_failed_group(state, candidate_ids, seed)
                     if index == len(seeds) - 1:
                         raise
                     continue
@@ -368,7 +370,7 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
             _GROUP_STARTUP.reset(token)
 
     async def _release_failed_group(
-        self, state: dict, members: range, attempt: int, seed: int
+        self, state: dict, members: range, seed: int
     ) -> None:
         cohort_id = state["id"]
         paths = []
@@ -382,7 +384,6 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
         if paths:
             endpoint = paths[0][0]
             await self._release_remote_candidates(
-                f"{cohort_id}-group-{members.start}-attempt-{attempt}",
                 endpoint,
                 [path.name for _, path in paths],
             )
@@ -400,16 +401,8 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
 
         receipts = await asyncio.gather(
             *(
-                self._release_remote_candidates(
-                    cohort_id
-                    if len(owners_by_endpoint) == 1
-                    else f"{cohort_id}-backend-{index}",
-                    endpoint,
-                    owner_ids,
-                )
-                for index, (endpoint, owner_ids) in enumerate(
-                    owners_by_endpoint.items()
-                )
+                self._release_remote_candidates(endpoint, owner_ids)
+                for endpoint, owner_ids in owners_by_endpoint.items()
             ),
             return_exceptions=True,
         )
@@ -437,46 +430,12 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
                 raise receipt
 
     async def _release_remote_candidates(
-        self, cohort_id: str, endpoint: str, owner_ids: list[str]
+        self, endpoint: str, owner_ids: list[str]
     ) -> dict:
-        """Use the configured RPent runtime to tombstone and release exact attempts."""
-        output = Path(self.cfg.tools.rpent.output_dir) / "sampling"
-        output.mkdir(parents=True, exist_ok=True)
-        request = output / f"{cohort_id}-worker-{self._rank}-owners.json"
-        receipt = request.with_name(request.stem + "-receipt.json")
-        log = request.with_suffix(".log")
-        request.write_text(json.dumps(owner_ids) + "\n")
-        code = (
-            "import json,sys; from pathlib import Path; "
-            "from robots.rl.remote import cancel_remote_owners; "
-            "result=cancel_remote_owners(sys.argv[1],"
-            "json.loads(Path(sys.argv[2]).read_text())); "
-            "Path(sys.argv[3]).write_text(json.dumps(result))"
-        )
-        with log.open("wb") as log_file:
-            process = await asyncio.create_subprocess_exec(
-                self.cfg.tools.rpent.python,
-                "-c",
-                code,
-                endpoint,
-                str(request),
-                str(receipt),
-                stdout=log_file,
-                stderr=asyncio.subprocess.STDOUT,
-                env=self._launcher.environment(),
-            )
-            try:
-                await asyncio.wait_for(process.wait(), timeout=240)
-            finally:
-                await self._launcher.stop(process)
-        if process.returncode != 0:
-            raise RuntimeError(
-                f"Remote candidate cleanup failed with {process.returncode}; see {log}."
-            )
-        result = json.loads(receipt.read_text())
-        if result["owner_ids"] != owner_ids or not result["cleanup_complete"]:
-            raise RuntimeError(f"Remote candidate cleanup was not verified: {receipt}.")
-        return result
+        """Release the worker's recorded attempts through the toolkit RPC."""
+        from robots.rl.remote import cancel_remote_owners
+
+        return await asyncio.to_thread(cancel_remote_owners, endpoint, owner_ids)
 
     def _planner_options(self, base_url: str) -> dict:
         """Planner options of an episode whose policy is served at ``base_url``."""
@@ -607,6 +566,10 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
             await episode.startup.wait()
         if self._active_environment_ready is not None and not episode.turns:
             await self._active_environment_ready.wait()
+        with episode.history.request():
+            return await self._complete_turn(episode, request)
+
+    async def _complete_turn(self, episode: Episode, request: dict) -> dict:
         turn_idx = len(episode.turns)
         started = time.perf_counter()
         started_at = time.time()
@@ -649,7 +612,7 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
                     image_history=episode.history.image_history,
                     image_token_budget=(
                         self.cfg.runner.seq_length,
-                        self.cfg.agentloop.minimum_output_tokens,
+                        self.cfg.algorithm.sampling_params.max_new_tokens,
                     ),
                 )
                 if self.cfg.tools.rpent.get("store_images_on_disk", False):
@@ -663,9 +626,16 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
         ):
             extra["return_prompt_token_ids"] = True
             extra["mm_token_expansion_start_len"] = len(prompt_ids)
-        generated = await self.generate(
-            prompt_ids, sampling_params=sampling_params, **extra
-        )
+        try:
+            generated = await self.generate(
+                prompt_ids, sampling_params=sampling_params, **extra
+            )
+        except (ValueError, RuntimeError) as error:
+            if "context_length_exceeded: expanded image prompt" not in str(error):
+                raise
+            raise SessionRequestError(
+                400, "context_length_exceeded", str(error)
+            ) from error
         if release_capture:
             if images:
                 multimodal = generated["multimodal_input"]
@@ -753,7 +723,7 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
             self.cfg.algorithm.sampling_params.max_new_tokens,
             seq_length - prompt_tokens,
         )
-        reserved = self.cfg.agentloop.minimum_output_tokens
+        reserved = self.cfg.algorithm.sampling_params.max_new_tokens
         if max_new_tokens < reserved:
             raise SessionRequestError(
                 400,
@@ -816,6 +786,8 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
         response_text = self.tokenizer.decode(response_ids, skip_special_tokens=False)
         answer = response_text.removesuffix(self.tokenizer.eos_token or "")
         reasoning, found, after = answer.partition(_THINK_END)
+        if not getattr(self, "_thinking_enabled", True):
+            found = ""
         if found:
             answer = after
         else:

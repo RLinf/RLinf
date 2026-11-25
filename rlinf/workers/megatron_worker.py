@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from functools import cached_property, partial
 from typing import Callable, ContextManager, Iterator, Optional
 
@@ -1425,6 +1425,16 @@ class DynamicMegatronBatchMixin:
             prefetch_bytes=settings.get("prefetch_bytes", 0),
         )
 
+    @contextmanager
+    def data_iterator_context(self, iterator):
+        settings = self.role_cfg.get("multimodal") or {}
+        if not settings.get("prefetch_batches", 0):
+            with super().data_iterator_context(iterator) as data:
+                yield data
+            return
+        with self.multimodal_preparer.iterator_context(iterator) as prepared:
+            yield self.make_data_iterator_list(prepared)
+
     def ragged_model_inputs(self, batch, model, input_ids, position_ids, packed_params):
         if "multi_modal_inputs" in batch:
             from rlinf.hybrid_engines.megatron.qwen_vl_inputs import (
@@ -1462,10 +1472,13 @@ class DynamicMegatronBatchMixin:
         Unlike get_batch, which receives one rollout result, this receives
         all of the step's groups and returns them as a list.
         """
-        count = (
-            self.cfg.data.rollout_batch_size
-            // parallel_state.get_data_parallel_world_size()
-        )
+        groups = self.cfg.data.rollout_batch_size
+        dp_size = parallel_state.get_data_parallel_world_size()
+        count, remainder = divmod(groups, dp_size)
+        if not count or remainder:
+            raise ValueError(
+                f"rollout_batch_size={groups} must divide evenly across {dp_size} data-parallel ranks"
+            )
         results = None
         if channel.is_local or self.is_data_io_rank:
             results = [self._receive_rollout_result(channel) for _ in range(count)]
@@ -1589,16 +1602,17 @@ class DynamicMegatronBatchMixin:
                 else self.megatron_forward_backward_record
             )
             forward_backward_record.start()
-        forward_outputs = fwd_bwd_function(
-            forward_step_func=self.get_forward_step_func(),
-            data_iterator=self.make_data_iterator_list(batch_iter),
-            model=self.model,
-            num_microbatches=num_microbatches,
-            forward_only=forward_only,
-            seq_length=total_seqlen,
-            micro_batch_size=1,
-            collect_non_loss_data=forward_only,
-        )
+        with self.data_iterator_context(batch_iter) as data_iterator:
+            forward_outputs = fwd_bwd_function(
+                forward_step_func=self.get_forward_step_func(),
+                data_iterator=data_iterator,
+                model=self.model,
+                num_microbatches=num_microbatches,
+                forward_only=forward_only,
+                seq_length=total_seqlen,
+                micro_batch_size=1,
+                collect_non_loss_data=forward_only,
+            )
         if self.use_profiler:
             forward_backward_record.stop()
             self.profiler.stop(forward_only=forward_only)

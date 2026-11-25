@@ -58,6 +58,7 @@ jobs:
               - 'pyproject.toml'
               - 'requirements/*.sh'
               - 'requirements/**/*.txt'
+              - 'requirements/**/*.patch'
               - '.github/workflows/install.yml'
             docker_filter: &docker
               - *install
@@ -138,6 +139,8 @@ jobs:
               - *shared
               - 'rlinf/agents/**'
               - 'rlinf/workers/actor/ma_megatron_actor_worker.py'
+              - 'rlinf/workers/critic/**'
+              - 'rlinf/runners/agent_ppo_runner.py'
               - 'rlinf/workers/actor/megatron_actor_worker.py'
               - 'rlinf/workers/actor/fsdp_actor_worker.py'
               - 'rlinf/workers/actor/ma_fsdp_actor_worker.py'
@@ -159,7 +162,6 @@ jobs:
               - 'rlinf/runners/async_agent_runner.py'
               - 'rlinf/runners/agentlightning_runner.py'
               - 'rlinf/runners/reasoning_runner.py'
-              - 'rlinf/runners/agent_ppo_runner.py'
               - 'rlinf/runners/coding_online_rl_runner.py'
               - 'rlinf/runners/agent_eval_runner.py'
               - 'rlinf/runners/reasoning_eval_runner.py'

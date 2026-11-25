@@ -160,11 +160,8 @@ class Scheduler(_Scheduler):
     """
 
     def __init__(self, server_args, *args, **kwargs):
-        # An empty dict is paused; None permits requests to enter the scheduler.
-        self._rlinf_parked = None
         self._rlinf_weight_version = None
         self._rlinf_generated_tokens = 0
-        self._rlinf_retractions = 0
         # Must run before super().__init__, which builds the model.
         patch_glm4_moe_lite_shared_expert_tp1()
         if server_args.device in ("cuda", "hip"):
@@ -254,12 +251,12 @@ class Scheduler(_Scheduler):
             )
 
             self._draft_static_state = _export_static_state(self._sync_draft_model)
-        for tag in requested_tags:
-            self.offloaded_tags[tag] = True
-        self.is_weight_offloaded = self.offloaded_tags.get("weights", False)
         result = getattr(self, "weight_updater", super()).release_memory_occupation(
             recv_req
         )
+        for tag in requested_tags:
+            self.offloaded_tags[tag] = True
+        self.is_weight_offloaded = self.offloaded_tags.get("weights", False)
         return result
 
     def resume_memory_occupation(self, recv_req: ResumeMemoryOccupationReqInput):
@@ -272,12 +269,12 @@ class Scheduler(_Scheduler):
             f"{sorted(not_offloaded)} are not offloaded (already onloaded). "
             f"offload_state={self.offloaded_tags}"
         )
-        for tag in requested_tags:
-            self.offloaded_tags[tag] = False
-        self.is_weight_offloaded = self.offloaded_tags.get("weights", False)
         result = getattr(self, "weight_updater", super()).resume_memory_occupation(
             recv_req
         )
+        for tag in requested_tags:
+            self.offloaded_tags[tag] = False
+        self.is_weight_offloaded = self.offloaded_tags.get("weights", False)
         if self._sync_draft_model is not None and "weights" in requested_tags:
             from sglang.srt.managers.scheduler_update_weights_mixin import (
                 _import_static_state,
@@ -353,13 +350,13 @@ class Scheduler(_Scheduler):
 
         model.load_weights(batch_weight)
         if self._sync_draft_model is not None:
-            self._sync_draft_model.load_weights(
-                [
-                    (name, weight)
-                    for name, weight in batch_weight
-                    if name.startswith("mtp.")
-                ]
-            )
+            mtp_weights = [
+                (name, weight)
+                for name, weight in batch_weight
+                if name.startswith("mtp.")
+            ]
+            if mtp_weights:
+                self._sync_draft_model.load_weights(mtp_weights)
 
         for name, weight in batch_weight:
             del weight
@@ -460,14 +457,6 @@ class Scheduler(_Scheduler):
             self._rlinf_weight_version = recv_req.weight_version
         return SyncHFWeightOutput(weight_version=self._rlinf_weight_version)
 
-    def _add_request_to_queue(self, req, is_retracted=False):
-        if self._rlinf_parked is not None:
-            self._rlinf_parked[req.rid] = req
-        elif is_retracted:
-            super()._add_request_to_queue(req, is_retracted=True)
-        else:
-            super()._add_request_to_queue(req)
-
     def maybe_collect_customized_info(self, i, req, logits_output):
         super().maybe_collect_customized_info(i, req, logits_output)
         self._stamp_generated_weight_versions(req)
@@ -487,6 +476,7 @@ class Scheduler(_Scheduler):
             **{
                 field.name: getattr(processor, field.name)
                 for field in fields(processor)
+                if field.init
             }
         )
 
@@ -500,116 +490,6 @@ class Scheduler(_Scheduler):
                 raise RuntimeError("Generated token prefixes must survive retraction.")
             versions.extend([self._rlinf_weight_version] * count)
             self._rlinf_generated_tokens += count
-
-    def _active_rollout_requests(self):
-        requests = {req.rid: req for req in self.waiting_queue}
-        # Component schedulers expose running and last batches at request dispatch.
-        for batch in (
-            self.running_batch,
-            self.last_batch,
-            getattr(self, "cur_batch", None),
-        ):
-            if batch is not None:
-                requests.update((req.rid, req) for req in batch.reqs)
-        if self.chunked_req is not None:
-            requests[self.chunked_req.rid] = self.chunked_req
-        return requests
-
-    def pause_for_weight_update(self) -> dict[str, Any]:
-        """Acknowledge drained GPU work and park requests outside cache ownership."""
-        from sglang.srt.managers.io_struct import PauseGenerationReqInput
-
-        if self._rlinf_parked is not None:
-            return self.get_async_rollout_state()
-        requests = self._active_rollout_requests()
-        self._rlinf_parked = {}
-        super().pause_generation(PauseGenerationReqInput(mode="retract"))
-        if self.enable_overlap:
-            while self.result_queue:
-                batch, result = self.result_queue.popleft()
-                self.process_batch_result(batch, result)
-        for req in requests.values():
-            if not req.finished():
-                self._rlinf_parked[req.rid] = req
-        for req in self._rlinf_parked.values():
-            if hasattr(req, "kv"):
-                # SGLang owns request pool rows and releases them during retraction.
-                if req.kv.holds_kv or req.kv.holds_mamba:
-                    raise RuntimeError(
-                        f"Retracted request {req.rid} still owns a GPU cache row."
-                    )
-            else:
-                if not req.is_retracted or req.kv_allocated_len:
-                    req.reset_for_retract()
-                req.req_pool_idx = None
-            if req.logprob_start_len >= len(req.origin_input_ids):
-                # Output-only logprobs already cover the retained generated prefix.
-                req.logprob_start_len = -1
-        self._rlinf_retractions += len(self._rlinf_parked)
-        self.waiting_queue.clear()
-        self.running_batch.filter_batch(keep_indices=[])
-        self.last_batch = self.chunked_req = None
-        if hasattr(self, "cur_batch"):
-            self.cur_batch = None
-            self._chunked_req_scheduled_last_iter = False
-        self._rlinf_worker.torch_platform.synchronize()
-        if not self.flush_cache():
-            raise RuntimeError(
-                "Retraction left active GPU state; refusing weight publication."
-            )
-        return self.get_async_rollout_state()
-
-    def resume_after_weight_update(self) -> dict[str, Any]:
-        """Restore parked requests for prefill under the fully installed weights."""
-        from sglang.srt.managers.io_struct import ContinueGenerationReqInput
-
-        if self._rlinf_parked is not None:
-            requests = list(self._rlinf_parked.values())
-            self._rlinf_parked = None
-            for req in requests:
-                self._add_request_to_queue(req, is_retracted=True)
-        super().continue_generation(ContinueGenerationReqInput())
-        return self.get_async_rollout_state()
-
-    def get_async_rollout_state(
-        self, include_requests: bool = False, include_live_requests: bool = False
-    ) -> dict[str, Any]:
-        """Return publication and generation counters, with optional paused prefixes."""
-        parked = self._rlinf_parked or {}
-        state = {
-            "weight_version": self._rlinf_weight_version,
-            "paused": self._rlinf_parked is not None,
-            "parked_requests": len(parked),
-            "generated_tokens": self._rlinf_generated_tokens,
-            "retracted_requests": self._rlinf_retractions,
-        }
-        if include_requests:
-            state["requests"] = {
-                rid: {
-                    "output_ids": list(req.output_ids),
-                    "logprobs": list(
-                        getattr(req, "logprob", req).output_token_logprobs_val or []
-                    ),
-                    "weight_versions": (req.customized_info or {}).get(
-                        "rollout_weight_versions", []
-                    ),
-                }
-                for rid, req in parked.items()
-            }
-        if include_live_requests:
-            requests = self._active_rollout_requests()
-            queued = {req.rid for req in self.waiting_queue}
-            state["live_requests"] = {
-                rid: {
-                    "output_tokens": len(req.output_ids),
-                    "prompt_tokens": len(req.origin_input_ids),
-                    "cached_tokens": req.cached_tokens,
-                    "queued": rid in queued,
-                }
-                for rid, req in requests.items()
-                if not req.finished()
-            }
-        return state
 
     def _handle_cache_after_sync(self, pause_mode: Optional[str]):
         """Handle prefix tree / KV caches at the end of `sync_hf_weight`.
@@ -684,7 +564,9 @@ class Scheduler(_Scheduler):
     def abort_generation(self, recv_req: AbortGenerationInput):
         """Cancel through the native scheduler and acknowledge only request IDs."""
         waiting_ids = [req.rid for req in self.waiting_queue]
-        running = list(self.running_batch.reqs)
+        running = (
+            list(self.running_batch.reqs) if self.running_batch is not None else []
+        )
         current = getattr(self, "cur_batch", None)
         if current is not None and current is not self.running_batch:
             running.extend(current.reqs)

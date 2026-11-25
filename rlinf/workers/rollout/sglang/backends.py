@@ -90,7 +90,9 @@ class SGLangEngineBackend(RolloutBackend):
         return_prompt_token_ids: bool = False,
         mm_token_expansion_start_len: Optional[int] = None,
     ) -> dict:
-        if isinstance(sampling_params, dict):
+        if sampling_params is None:
+            processor = None
+        elif isinstance(sampling_params, dict):
             sampling_params = dict(sampling_params)
             processor = sampling_params.pop("custom_logit_processor", None)
         else:
@@ -153,20 +155,10 @@ class SGLangEngineBackend(RolloutBackend):
         )
 
     async def pause_generation(self, mode: str) -> None:
-        if mode != "retract":
-            raise ValueError("The engine backend supports retract pauses only")
-        await self.engine.tokenizer_manager.pause_for_weight_update()
+        raise NotImplementedError("SGLang pause requires the HTTP server backend")
 
     async def continue_generation(self) -> None:
-        await self.engine.tokenizer_manager.resume_after_weight_update()
-
-    async def get_async_rollout_state(self, include_requests: bool = False) -> dict:
-        return await self.engine.tokenizer_manager.run_task_method(
-            io_struct.TaskMethodInput(
-                method_name="get_async_rollout_state",
-                kwargs={"include_requests": include_requests},
-            )
-        )
+        raise NotImplementedError("SGLang resume requires the HTTP server backend")
 
     async def get_running_state(self) -> RolloutEngineStats:
         state = await self.engine.tokenizer_manager.run_task_method(
@@ -217,7 +209,6 @@ class SGLangServerBackend(RolloutBackend):
         self._log_error = log_error or (lambda msg: None)
         self._nnodes = nnodes
         self._node_rank = node_rank
-        self._pause_mode = None
         self._dist_init_addr = dist_init_addr
         self._process: Optional[SGLangServerProcess] = None
         self._client: Optional[InferenceHTTPClient] = None
@@ -434,30 +425,10 @@ class SGLangServerBackend(RolloutBackend):
         )
 
     async def pause_generation(self, mode: str) -> None:
-        if mode == "retract":
-            await self.http_client.async_run_task_method(
-                io_struct.TaskMethodInput(method_name="pause_for_weight_update")
-            )
-        else:
-            await self.http_client.async_pause_generation(mode)
-        self._pause_mode = mode
+        await self.http_client.async_pause_generation(mode)
 
     async def continue_generation(self) -> None:
-        if self._pause_mode == "retract":
-            await self.http_client.async_run_task_method(
-                io_struct.TaskMethodInput(method_name="resume_after_weight_update")
-            )
-        else:
-            await self.http_client.async_continue_generation()
-        self._pause_mode = None
-
-    async def get_async_rollout_state(self, include_requests: bool = False) -> dict:
-        return await self.http_client.async_run_task_method(
-            io_struct.TaskMethodInput(
-                method_name="get_async_rollout_state",
-                kwargs={"include_requests": include_requests},
-            )
-        )
+        await self.http_client.async_continue_generation()
 
     async def get_running_state(self) -> RolloutEngineStats:
         state = await self.http_client.async_run_task_method(

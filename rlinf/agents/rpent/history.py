@@ -22,6 +22,7 @@ import copy
 import hashlib
 import io
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -297,6 +298,16 @@ class AppendOnlyHistory:
         """Id of the current prefix chain; a rewrite starts a new one."""
         return self._chain_id
 
+    @contextmanager
+    def request(self):
+        """Keep the last recorded image chain if a model request fails."""
+        previous = (self._image_prompt, self.image_history, self._chain_id)
+        try:
+            yield
+        except BaseException:
+            self._image_prompt, self.image_history, self._chain_id = previous
+            raise
+
     def _begin_chain(self) -> None:
         """Start a fresh prefix chain: new id, no inherited images."""
         self._chain_id += 1
@@ -333,8 +344,6 @@ class AppendOnlyHistory:
         full and starts a new chain. The returned ``image_grid_thw`` and
         ``pixel_values`` cover every image the prompt expands, in order.
 
-        Called once per turn before ``record``; a turn that fails before
-        ``record`` abandons the episode, so the chain never reuses stale images.
         """
         if not self._continues(request):
             self._begin_chain()

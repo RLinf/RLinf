@@ -1289,6 +1289,7 @@ class DynamicRolloutResult:
             for key in (
                 "response_mask",
                 "recomputed_logprobs",
+                "ref_logprobs",
                 "rollout_logprobs",
                 "advantages",
                 "values",
@@ -1307,6 +1308,7 @@ class DynamicRolloutResult:
             # Copy fixed token targets at each turn's disjoint action positions.
             for key in [
                 "recomputed_logprobs",
+                "ref_logprobs",
                 "rollout_logprobs",
                 "advantages",
                 "values",
@@ -1332,7 +1334,7 @@ class DynamicRolloutResult:
                     split_params["loss_scales"][idx].masked_fill(
                         ~split_params["response_mask"][idx], 0
                     )
-                    * (masked_count_all / masked_counts[i])
+                    * (masked_count_all / max(1, masked_counts[i]))
                     for i, idx in enumerate(idxes)
                 ]
                 split_params["loss_scales"][suffix] = torch.stack(value).sum(dim=0)

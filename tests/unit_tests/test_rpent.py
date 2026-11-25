@@ -250,7 +250,6 @@ def make_agent(tmp_path, monkeypatch):
                     "max_turns": 4,
                     "model_request_timeout_s": 5,
                     "episode_timeout_s": 5,
-                    "minimum_output_tokens": 1,
                     "max_infra_retries": 1,
                     "max_infra_retry_rate": 0.05,
                     "merge_prefix_turns": True,
@@ -409,12 +408,9 @@ def test_token_space_history_preserves_sampled_ids_and_expands_only_new_images(q
         )
 
 
-@pytest.mark.parametrize(
-    "key", ["enable_shared_multi_modal_processor", "enable_token_space_processor"]
-)
-def test_token_space_checks_exact_served_prompt_ids(make_agent, key):
+def test_token_space_checks_exact_served_prompt_ids(make_agent):
     worker = make_agent(FakeRPent(turns=1))
-    worker.cfg.rollout.sglang = {key: True}
+    worker.cfg.rollout.sglang = {"enable_shared_multi_modal_processor": True}
     generated = {
         "output_ids": [9],
         "prompt_tokens": 2,
@@ -476,6 +472,7 @@ def test_episode_recipes_distinguish_static_weights_from_actor_sync(
     cfg = compose(config_name=recipe)
     worker = make_agent(FakeRPent(turns=1))
     worker.cfg.runner.synchronous = cfg.runner.synchronous
+    worker.cfg.runner.seq_length = cfg.runner.seq_length
     worker.cfg.tools.rpent.update(
         {
             key: cfg.tools.rpent[key]
@@ -631,39 +628,6 @@ def test_token_space_validation_scopes_learner_checks(mode, invalid, value, erro
         validate_rpent_cfg(cfg)
         if mode == "eval":
             assert cfg.runner.task_type == "reasoning_eval"
-
-
-@pytest.mark.parametrize("field", ["cache_bytes", "prefetch_batches", "prefetch_bytes"])
-def test_legacy_image_budgets_normalize_and_reject_conflicts(field):
-    from rlinf.config import validate_multimodal_learner_cfg, validate_rpent_cfg
-
-    cfg = compose(
-        [
-            "rollout.sglang.enable_shared_multi_modal_processor=true",
-            "rollout.env_vars.SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE=null",
-            "tools.rpent.store_images_on_disk=true",
-        ]
-    )
-    budgets = {"cache_bytes": 1024, "prefetch_batches": 2, "prefetch_bytes": 4096}
-    for key, value in budgets.items():
-        OmegaConf.update(
-            cfg, f"tools.rpent.training_image_{key}", value, force_add=True
-        )
-    OmegaConf.set_struct(cfg, True)
-    validate_rpent_cfg(cfg)
-    validate_multimodal_learner_cfg(cfg)
-    assert dict(cfg.actor.multimodal) == dict(cfg.critic.multimodal) == budgets
-    snapshot = OmegaConf.to_container(cfg)
-    validate_rpent_cfg(cfg)
-    assert OmegaConf.to_container(cfg) == snapshot
-    OmegaConf.update(cfg, f"critic.multimodal.{field}", budgets[field] + 1)
-    with pytest.raises(ValueError, match=f"critic.multimodal.{field} conflicts"):
-        validate_rpent_cfg(cfg)
-    del cfg.tools.rpent
-    # Generic consumers can choose independent actor and critic budgets.
-    validate_multimodal_learner_cfg(cfg)
-    assert cfg.actor.multimodal[field] == budgets[field]
-    assert cfg.critic.multimodal[field] == budgets[field] + 1
 
 
 @pytest.fixture(params=[False, True], ids=["uncached", "disk-cache"])
@@ -944,7 +908,7 @@ def test_image_prefetch_propagates_failure_and_joins_threads(failure):
         prefetch_bytes=1 if failure == "budget" else 4096,
     )
     error = {
-        "prepare": "captured image row",
+        "prepare": "Legacy media",
         "budget": "exceeding",
         "consumer": "model forward",
     }[failure]
