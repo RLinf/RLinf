@@ -1,3 +1,5 @@
+:orphan:
+
 奖励模型
 ========
 
@@ -18,9 +20,3 @@
       :link-type: doc
 
       使用图像分类模型或 VLM 构建 RLinf 奖励模型。
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
-   奖励模型工作流 <../../extending/reward_model>

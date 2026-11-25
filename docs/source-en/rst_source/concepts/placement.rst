@@ -1,5 +1,5 @@
-Worker Placement Strategy
-========================================
+Placement
+=========
 
 The placement module defines how workers are distributed across the hardware resources (nodes, GPUs, NPUs, robots and more) of the cluster.
 The core interface of RLinf for this purpose is called ``ComponentPlacement``, which is configured via the ``cluster.component_placement`` field in the YAML configuration.
@@ -102,7 +102,7 @@ All process ranks for a component must be **continuous** from ``0`` to ``N-1`` (
 Additionally, for each ``resource_ranks:process_ranks`` pair, the number of resources and the number of processes must be compatible: one must be an integer multiple of the other. This ensures that either one process uses multiple resources, or multiple processes share one resource.
 
 Referencing the placement in code
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+---------------------------------
 
 After defining the cluster and component placement in the config file, you can access the placement information in your RLinf code using the `rlinf.scheduler.ComponentPlacement` class as follows:
 

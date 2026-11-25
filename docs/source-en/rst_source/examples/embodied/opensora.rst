@@ -1,5 +1,5 @@
-RL with OpenSora World Model
-======================================
+OpenSora RL
+===========
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -51,7 +51,7 @@ Train OpenVLA-OFT with GRPO on LIBERO suites simulated by the OpenSora world mod
 Tasks
 ~~~~~
 
-As a world model, OpenSora can in principle fit any task behind a consistent interface. RLinf currently ships weights and init data for two LIBERO suites:
+As a world model, OpenSora can fit any task behind a consistent interface. RLinf ships weights and init data for two LIBERO suites:
 
 .. list-table::
    :header-rows: 1
@@ -90,179 +90,102 @@ Observation and Action
 
 Unlike a traditional simulator, OpenSora has no ``reset()``: it requires initialization frames and a task description, so you download an initialization dataset and point the config at it.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-opensora``:
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: LIBERO-Spatial
+      :sync: spatial
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-opensora
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-opensora
+      **1. Install**
 
-   # Inside the container, switch to the OpenVLA-OFT virtual environment:
-   source switch_env openvla-oft
+      .. code-block:: bash
 
-**Option 2: Custom environment** — install bundle ``--env opensora``:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env opensora && source .venv/bin/activate
 
-.. code:: bash
+      **2. Download**
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model openvla-oft --env opensora
-   source .venv/bin/activate
+      Download the OpenVLA-OFT SFT checkpoint together with the OpenSora world-model weights and initialization dataset:
 
-Download the VLA Model
-----------------------
+      .. code-block:: bash
 
-Download the OpenVLA-OFT SFT checkpoints:
+         hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir ./Openvla-oft-SFT-libero-spatial-traj1
+         hf download RLinf/RLinf-OpenSora-LIBERO-Spatial --local-dir ./RLinf-OpenSora-LIBERO-Spatial
 
-.. code:: bash
+      **3. Launch**
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-traj1
+      Set the two downloaded checkpoint paths in ``examples/embodiment/config/opensora_libero_spatial_grpo_openvlaoft.yaml`` (rollout inherits ``actor.model.model_path`` automatically):
 
-   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
-   pip install huggingface-hub
-   hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir Openvla-oft-SFT-libero-spatial-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir Openvla-oft-SFT-libero-object-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir Openvla-oft-SFT-libero-goal-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero10-traj1 --local-dir Openvla-oft-SFT-libero10-traj1
+      .. code-block:: yaml
 
-After downloading, set the model path and ``unnorm_key`` in the config:
+         actor:
+           model:
+             model_path: ./Openvla-oft-SFT-libero-spatial-traj1
+         env:
+           train:
+             opensora_wm_hf_ckpt_path: ./RLinf-OpenSora-LIBERO-Spatial
 
-.. code:: yaml
+      Launch training with ``run_embodiment.sh``:
 
-   rollout:
-      model:
-         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   actor:
-      model:
-         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-         unnorm_key: libero_90_no_noops_trajall # or libero_130_no_noops_trajall for the RLinf-OpenVLAOFT-LIBERO-130-Base-Lora model
+      .. code-block:: bash
 
-Download the World Model
-------------------------
+         bash examples/embodiment/run_embodiment.sh opensora_libero_spatial_grpo_openvlaoft
 
-Download the OpenSora weights and the simulation-initialization dataset. RLinf currently
-provides weights and data for libero-spatial and libero-object:
+   .. tab-item:: LIBERO-Object
+      :sync: object
 
-.. code:: bash
+      **1. Install**
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-OpenSora-LIBERO-Spatial
-   git clone https://huggingface.co/RLinf/RLinf-OpenSora-LIBERO-Object
+      .. code-block:: bash
 
-   # Method 2: huggingface-hub
-   pip install huggingface-hub
-   hf download RLinf/RLinf-OpenSora-LIBERO-Spatial --local-dir RLinf-OpenSora-LIBERO-Spatial
-   hf download RLinf/RLinf-OpenSora-LIBERO-Object --local-dir RLinf-OpenSora-LIBERO-Object
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env opensora && source .venv/bin/activate
 
-The directory structure of ``RLinf-OpenSora-LIBERO-Spatial`` is:
+      **2. Download**
 
-.. code-block:: text
+      Download the OpenVLA-OFT SFT checkpoint together with the OpenSora world-model weights and initialization dataset:
 
-    RLinf-OpenSora-LIBERO-Spatial/
-        ├── dataset_statistics.json             # Dataset normalization statistics
-        ├── dataset/                            # Simulation initialization dataset
-        │   ├── traj0.npy
-        │   ├── traj1.npy
-        │   ├── ...
-        │   └── trajN.npy
-        ├── model-00001.safetensors              # World model weight files
-        ├── model.safetensors.index.json
-        ├── config.json
-        ├── resnet_rm.pth                        # Reward model weight file
-        └── vae/                                 # VAE model weight files
+      .. code-block:: bash
 
-After downloading, set the world-model path in the config:
+         hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir ./Openvla-oft-SFT-libero-object-traj1
+         hf download RLinf/RLinf-OpenSora-LIBERO-Object --local-dir ./RLinf-OpenSora-LIBERO-Object
 
-.. code:: yaml
+      **3. Launch**
 
-    env:
-        train:
-            opensora_wm_hf_ckpt_path: /Pathto/model/RLinf-OpenSora-LIBERO-Spatial/
+      Starting from ``examples/embodiment/config/opensora_libero_spatial_grpo_openvlaoft.yaml``, point ``actor.model.model_path`` and ``env.train.opensora_wm_hf_ckpt_path`` to the LIBERO-Object checkpoints and match ``actor.model.unnorm_key``:
 
-Run It
-------
+      .. code-block:: yaml
 
-**1. Model parameters**
+         actor:
+           model:
+             model_path: ./Openvla-oft-SFT-libero-object-traj1
+             unnorm_key: libero_object_no_noops
+         env:
+           train:
+             opensora_wm_hf_ckpt_path: ./RLinf-OpenSora-LIBERO-Object
 
-Configure ``actor.model`` (OpenVLA-OFT example):
+      Launch training with ``run_embodiment.sh``:
 
-.. code-block:: yaml
+      .. code-block:: bash
 
-   actor:
-     model:
-       model_path: "/path/to/model/Openvla-oft-SFT-libero-spatial-traj1/"    # SFT model path
-       model_type: "openvla_oft"                                             # Model type set to openvla_oft
-       use_proprio: False                                                    # Whether to use proprioceptive inputs
-       num_images_in_input: 1                                                # Number of input images
-       num_action_chunks: 8                                                  # Number of action chunks
-       unnorm_key: "libero_spatial_no_noops"                                 # Action normalization key (match SFT)
+         bash examples/embodiment/run_embodiment.sh opensora_libero_spatial_grpo_openvlaoft
 
-Because the world model does not provide proprioception, does not generate a wrist view,
-and uses a fixed chunk length, ``use_proprio`` defaults to ``False``, ``num_images_in_input``
-to ``1``, and ``num_action_chunks`` to ``8``.
+.. dropdown:: Other LIBERO VLA SFT checkpoints (Goal / Long)
 
-**2. Environment configuration**
+   For custom world models on other suites, the matching OpenVLA-OFT SFT repos are ``Haozhan72/Openvla-oft-SFT-libero-goal-traj1`` (LIBERO-Goal) and ``Haozhan72/Openvla-oft-SFT-libero10-traj1`` (LIBERO-Long).
 
-.. code-block:: yaml
+.. dropdown:: Advanced configuration (optional)
 
-   # Recommend opensora_libero_spatial for training and libero_spatial for evaluation
-   env/train: opensora_libero_spatial
-   env/eval: libero_spatial
-   env:
-      train:
-         opensora_wm_hf_ckpt_path: /Pathto/model/RLinf-OpenSora-LIBERO-Spatial/
-
-   # In env/train/opensora_libero_spatial.yaml:
-   env_type: world_model
-   backend: opensora
-   wm_env_type: libero
-   # Initial image path for world model initialization
-   initial_image_path: ${env.train.opensora_wm_hf_ckpt_path}/dataset_for_rlinf_world_model_init/base_policy_rollout_buffer
-   # It is not recommended to modify any parameters in world_model_cfg
-   world_model_cfg:
-      stats_path: /Pathto/model/RLinf-OpenSora-LIBERO-Spatial/best_wm_ckpt/base_policy/dataset_statistics.json
-      chunk: 8                     # Align with training and VLA inference length; default 8
-      condition_frame_length: 4    # Context memory length; default 4
-      model:
-         from_pretrained: /Pathto/model/RLinf-OpenSora-LIBERO-Spatial/best_wm_ckpt/base_policy/model
-
-**3. Launch**
-
-OpenVLA-OFT + GRPO uses ``examples/embodiment/config/opensora_libero_spatial_grpo_openvlaoft.yaml``:
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh opensora_libero_spatial_grpo_openvlaoft
+   Because the world model does not provide proprioception or wrist views and uses a fixed chunk length, ``actor.model`` defaults to ``use_proprio: False``, ``num_images_in_input: 1``, and ``num_action_chunks: 8``. If you switch to another LIBERO suite, update ``actor.model.unnorm_key`` to match the SFT checkpoint.
 
 Visualization and Results
 -------------------------
 
-Watch **``env/success_once``** for the unnormalized episodic success rate. For every logged
-metric, see :doc:`Training metrics <../../reference/metrics>`. Enable
-generated-rollout videos with:
-
-.. code-block:: yaml
-
-   env:
-      eval:
-         video_cfg:
-            save_video: True
-            video_base_dir: ${runner.logger.log_path}/video/eval
+Watch ``env/success_once`` in TensorBoard (``tensorboard --logdir ./logs``); set ``env.eval.video_cfg.save_video=True`` to record videos, or see :doc:`Training metrics <../../reference/metrics>` for W&B/SwanLab and all metrics.
 
 We evaluate every ``task_id`` × ``trial_id`` combination — 500 environments (10 tasks × 50
 trials) per suite. SFT (LoRA-base) models use ``do_sample = False``; RL-trained models use
@@ -280,14 +203,14 @@ trials) per suite. SFT (LoRA-base) models use ``do_sample = False``; RL-trained 
     :widths: 50 25 25
 
     * - Model
-      - Object
       - Spatial
-    * - |huggingface| `OpenVLA-OFT (LoRA-base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_
-      - 50.20%
-      - 51.61%
+      - Object
+    * - OpenVLA-OFT (LoRA-base)
+      - 61.2%
+      - 36.7%
     * - OpenVLA-OFT (RLinf-GRPO with OpenSora as world model simulator)
       - 75.5%
       - 64.5%
     * - **Improvement**
-      - **+25.3%**
-      - **+12.9%**
+      - **+14.3%**
+      - **+27.8%**

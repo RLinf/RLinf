@@ -1,13 +1,13 @@
-Switch SGLang Versions
+SGLang & vLLM Versions
 ======================
 
 RLinf can plug different *generation backends* into its
-reinforcement-learning pipeline. For the current release **SGLang and vLLM** is supported;
+reinforcement-learning pipeline. Both **SGLang and vLLM** are supported;
 
 .. note::
 
-   RLinf is compatible with **SGLang 0.4.4 -> 0.5.13** and **vLLM 0.8.5 ->
-   0.23.x**.  No manual patching is required - the framework detects the
+   RLinf is compatible with **SGLang 0.4.4 -> 0.5.13** (and **SGLang 0.5.19** for embodied ``--model sglang``) and **vLLM 0.8.5 ->
+   0.23.x**. No manual patching is required - the framework detects the
    installed version and loads the matching shim automatically.
 
 Supported engine builds
@@ -76,52 +76,11 @@ rather than resolving into a broken environment.
 .. note::
 
    Avoid ``pip install sglang`` / ``pip install vllm`` into an existing
-   environment.  Both pin the whole torch family, and their CUDA 13 releases
+   environment. Both pin the whole torch family, and their CUDA 13 releases
    pin CUDA 13 runtime wheels that overwrite their CUDA 12 counterparts in
    place -- the requirements files exist precisely to keep that from happening.
 
+Rollout engine configuration
 ----------------------------
 
-.. code-block:: yaml
-
-    ....
-    rollout:
-        group_name: "RolloutGroup" # SGLang Generation Group Name, used for communication
-
-        gpu_memory_utilization: 0.55 # SGLang's parameter, which decides how much vram is used for static memory pool
-
-        model:
-           model_path: /model/path # model path
-           model_type: qwen2.5 # model type
-        enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
-        distributed_executor_backend: mp   # ray or mp
-        disable_log_stats: False     # if true will log sglang's output
-        detokenize: False            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
-        padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
-        eos: null                   # will be tokenizer.eos_token_id if null.
-
-        rollout_backend: sglang     # [sglang, vllm] here to choose which rollout backend to use.
-
-        sglang: # used when rollout_backend is sglang
-            attention_backend: triton # [flashinfer, triton] for more, see sglang's doc
-            decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
-            use_torch_compile: False # enable torch_compile in SGLang for rollout.
-            torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
-
-        vllm: # used when rollout_backend is vllm
-            attention_backend: FLASH_ATTN # [FLASH_ATTN,XFORMERS] attention backend used by vLLM, for more info,see vLLM's doc
-            enable_chunked_prefill: True  # enable vllm to use chunked_prefill.
-            enable_prefix_caching: True  # enable vllm to use prefix_caching.
-            enable_flash_infer_sampler: True #  # if True, vllm will use flashinfer to do sampling.
-
-        tensor_parallel_size: 1 # tp_size
-        pipeline_parallel_size: 1 # pp_size
-        
-        validate_weight: False # whether to send all weights at first for weight comparison.
-        validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
-        print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
-
-        max_running_requests: 64 # the maximum number of running requests in the rollout engine.
-        cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
-
-    ...
+To select ``rollout.rollout_backend`` (``sglang`` or ``vllm``) and configure backend-specific options, see :doc:`agentic_config`.

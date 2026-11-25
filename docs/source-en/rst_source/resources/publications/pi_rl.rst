@@ -6,7 +6,7 @@
 Overview
 --------
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/pi_rl_teaser.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi_rl_teaser.png
    :alt: πRL teaser
    :align: center
 

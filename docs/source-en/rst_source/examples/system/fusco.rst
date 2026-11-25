@@ -1,5 +1,5 @@
-FUSCO High-Performance MoE Communication Library
-==================================================
+FUSCO Communication
+===================
 
 FUSCO is a high-performance distributed All-to-All communication library designed specifically for MoE (Mixture of Experts) training and inference scenarios.
 By fusing data transformation and communication, FUSCO significantly improves communication efficiency for large-scale MoE models. Use it to accelerate MoE communication in RLinf.
@@ -30,60 +30,55 @@ Use this page to enable FUSCO acceleration for Megatron-backed MoE training in R
    .. grid-item-card:: Test
       :text-align: center
 
-      Reasoning e2e FUSCO smoke test
+      Reasoning e2e FUSCO verification
 
-Installation
-------------
+Setup and Run
+-------------
 
-Refer to the installation guide provided in the official FUSCO repository (https://github.com/infinigence/FUSCO.git).
+RLinf integrates FUSCO through patching, supporting MoE training with Megatron-LM as the backend. In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
 
-.. code-block:: bash
+.. tab-set::
 
-   # clone and install
-   git clone https://github.com/infinigence/FUSCO.git
-   cd FUSCO/
-   python setup.py install
+   .. tab-item:: Megatron MoE
 
-   # download the shared library
-   mkdir -p lib
-   curl -L -o lib/libfusco.so https://gh-proxy.com/https://github.com/infinigence/FUSCO/releases/download/v0.1/libfusco.so
+      **1. Install**
 
+      Install RLinf and FUSCO (see the `FUSCO repository <https://github.com/infinigence/FUSCO>`__), then download ``libfusco.so``:
 
-Run It
-------
+      .. code-block:: bash
 
-RLinf currently integrates FUSCO through patching, supporting MoE training with Megatron-LM as the backend. When the training configuration meets the requirements, the system will automatically replace the MoEAlltoAllTokenDispatcher class in Megatron and use FUSCO's implementation for acceleration.
-The configuration example for enabling FUSCO is as follows:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-.. code-block:: yaml
+         git clone https://github.com/infinigence/FUSCO.git
+         cd FUSCO && python setup.py install && cd ..
+         mkdir -p lib
+         curl -L -o lib/libfusco.so https://github.com/infinigence/FUSCO/releases/download/v0.1/libfusco.so
 
-  actor:
-    model:
-      moe_token_dispatcher_type: alltoall
-      expert_model_parallel_size: 2
-      expert_tensor_parallel_size: 1
-      variable_seq_lengths: false
+      **2. Configure**
 
-Configuration Description:
+      When ``moe_token_dispatcher_type`` is ``alltoall``, ``expert_model_parallel_size > 1``, ``expert_tensor_parallel_size == 1``, and ``variable_seq_lengths`` is ``false``, RLinf automatically replaces Megatron's MoE all-to-all token dispatcher with FUSCO:
 
-- ``moe_token_dispatcher_type``: Set to ``alltoall``
-- ``expert_model_parallel_size``: Set to greater than 1
-- ``expert_tensor_parallel_size``: Set to equal to 1
-- ``variable_seq_lengths``: Set to ``false``
+      .. code-block:: yaml
 
-After meeting the above conditions and installing FUSCO correctly, RLinf will automatically enable FUSCO.
+         actor:
+           model:
+             moe_token_dispatcher_type: alltoall
+             expert_model_parallel_size: 2
+             expert_tensor_parallel_size: 1
+             variable_seq_lengths: false
 
-You can test with the following command:
+      **3. Launch**
 
-.. code-block:: bash
+      Verify FUSCO with the reasoning MoE end-to-end test:
 
-  FUSCO_SO_PATH=/path/to/libfusco.so \
-  REPO_PATH=/path/to/RLinf/ \
-  bash tests/e2e_tests/reasoning/run.sh \
-  qwen3-moe-2.5b-collocated-mg-sgl-ep-fusco-test
+      .. code-block:: bash
 
+         FUSCO_SO_PATH=$PWD/lib/libfusco.so \
+         REPO_PATH=$PWD \
+         bash tests/e2e_tests/reasoning/run.sh \
+           qwen3-moe-2.5b-collocated-mg-sgl-ep-fusco-test
 
-References
-----------
-- **FUSCO Repository**: `High-performance distributed data shuffling (all-to-all) library for MoE training and inference <https://github.com/infinigence/FUSCO>`_.
-- **FUSCO Paper**: `FUSCO: High-Performance Distributed Data Shuffling via Transformation-Communication Fusion <https://arxiv.org/pdf/2512.22036>`_.
+.. note::
+
+   **References:** `FUSCO repository <https://github.com/infinigence/FUSCO>`__ · `FUSCO paper <https://arxiv.org/pdf/2512.22036>`__.

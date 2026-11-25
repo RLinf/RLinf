@@ -1,5 +1,5 @@
-RL with RoboCasa Benchmark
-==========================
+RoboCasa RL
+===========
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -79,137 +79,55 @@ Observation and Action
 
 .. note::
 
-   RoboCasa includes more atomic tasks, but the public RLinf recipe currently
-   targets ``CloseDrawer`` with ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml``.
+   RoboCasa includes more atomic tasks; the public RLinf recipe targets
+   ``CloseDrawer`` with ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml``.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-**Docker image**
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenPI π₀
 
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-robocasa
+      **1. Install**
 
-   # For mainland China users:
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-robocasa
+      .. code-block:: bash
 
-Switch to the OpenPI virtual environment inside the image:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robocasa && source .venv/bin/activate
 
-.. code:: bash
+      **2. Download**
 
-   source switch_env openpi
+      Download the RoboCasa kitchen assets (~5 GB, required once) and the OpenPI π₀ checkpoint:
 
-**Custom environment**
+      .. code-block:: bash
 
-Install RoboCasa with the OpenPI dependencies:
+         python -m robocasa.scripts.download_kitchen_assets
+         hf download RLinf/RLinf-Pi0-RoboCasa --local-dir ./RLinf-Pi0-RoboCasa
 
-.. code:: bash
+      **3. Launch**
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --model openpi --env robocasa
-   source .venv/bin/activate
+      The shipped config is ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml``.
 
-Download the kitchen assets after installing RoboCasa:
+      .. include:: _model_path.rst
 
-.. code:: bash
+      Launch PPO training with ``run_embodiment.sh``:
 
-   python -m robocasa.scripts.download_kitchen_assets
+      .. code-block:: bash
 
-.. warning::
+         bash examples/embodiment/run_embodiment.sh robocasa_closedrawer_ppo_openpi actor.model.model_path=$PWD/RLinf-Pi0-RoboCasa
 
-   The RoboCasa kitchen assets are about 5 GB. Download them once before launching training.
+      .. dropdown:: Advanced configuration (optional)
 
-Download the Model
-------------------
-
-Download the OpenPI π₀ checkpoint:
-
-.. code-block:: bash
-
-   cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-RoboCasa
-
-   # Or use huggingface-hub:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-RoboCasa --local-dir RLinf-Pi0-RoboCasa
-
-.. include:: _model_path.rst
-
-Run It
-------
-
-Launch the CloseDrawer recipe:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 46 26
-
-   * - Recipe
-     - Config
-     - Command suffix
-   * - OpenPI π₀ + PPO
-     - ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml``
-     - ``robocasa_closedrawer_ppo_openpi``
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh robocasa_closedrawer_ppo_openpi
-
-What this does:
-
-1. Starts the embodied training entrypoint with the RoboCasa Hydra config.
-2. Creates Ray workers for the actor, rollout, and RoboCasa env components.
-3. Runs PPO rollouts, computes sparse task rewards, and updates the OpenPI policy.
-
-For standalone evaluation, use the unified :doc:`Evaluation CLI
-<../../evaluations/reference/cli>` with config fallback and the same suffix,
-``robocasa_closedrawer_ppo_openpi``.
-
-.. note::
-
-   The default config uses ``actor,env,rollout: all``. Tune
-   ``env.train.total_num_envs``, ``env.eval.total_num_envs``, and
-   ``actor.global_batch_size`` for your GPU memory budget.
+         - **Memory tuning**: the default config colocates ``actor,env,rollout: all``. Tune ``env.train.total_num_envs``, ``env.eval.total_num_envs``, and ``actor.global_batch_size`` for your GPU memory budget.
+         - **Standalone evaluation**: use the unified :doc:`Evaluation CLI <../../evaluations/reference/cli>` with config fallback and the same suffix, ``robocasa_closedrawer_ppo_openpi``.
 
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable video in the env config when you want rollout videos:
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
-
-Enable W&B or SwanLab by adding logger backends:
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 .. note::
 

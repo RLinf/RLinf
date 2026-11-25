@@ -1,12 +1,33 @@
-Flexible Execution Modes
-========================
+Execution Modes
+===============
 
-RLinf supports three execution modes that determine how workers are placed across GPUs
-and how they coordinate during training. This page covers all three modes and their trade-offs.
+RLinf runs the same worker code in three placement patterns—collocated, disaggregated, and hybrid—depending on how components share GPUs and overlap in time. Read this page to compare their memory, utilization, and pipelining trade-offs; see :doc:`overview` for a quick visual summary and :doc:`placement` for full ``cluster.component_placement`` syntax and node-group rules.
 
-.. contents::
-   :depth: 1
-   :local:
+Choosing a Mode
+---------------
+
+Each mode trades GPU memory headroom against pipeline utilization:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 24 28 30
+
+   * - Mode
+     - Device sharing
+     - Main strength
+     - Main trade-off
+   * - Collocated
+     - All roles share the same GPUs
+     - Simplest layout on 1–8 GPUs; every stage uses full cluster compute
+     - Requires CPU offloading between stages; long-tail rollout latency stalls training
+   * - Disaggregated
+     - Each role owns dedicated GPUs
+     - No offloading overhead; supports overlapped pipelining and async RL
+     - Unbalanced stage rates leave GPUs idle unless pipelining is tuned
+   * - Hybrid
+     - Some roles split GPUs while others share all GPUs
+     - Pipelines rollout and env while giving actor full-cluster capacity
+     - Needs offloading at the rollout-to-actor boundary and balanced GPU splits
 
 Collocated Mode
 ---------------
@@ -16,61 +37,24 @@ Collocated Mode
    :align: center
    :class: col-img
 
-All workers are scheduled on the *same* set of GPUs.  During any stage
-only one type of worker runs and occupies the entire devices' computation capability until that
-stage finishes. There are two execution modes: residing in GPU memory simultaneously or switching residence in GPU memory with offloading/reloading.
+In collocated mode, all worker groups run on the same set of GPUs and execute one stage at a time, giving each active stage the full compute of the cluster.
 
-**Pros**
+Because multiple components share the same devices, collocated runs either keep lightweight workers resident together or offload weights, gradients, and optimizer states to CPU memory between stages. Without offloading, large actor and rollout engines compete for GPU memory and can trigger OOM errors.
 
-* Simple design; no complex data-dependency management.
+This minimal snippet assigns both ``actor`` and ``rollout`` to all 16 GPUs across two 8-GPU nodes and offloads the actor between stages:
 
-**Cons**
-
-* Often requiring offloading/reloading implementation for each component.
-* Long-tail latency in the rollout stage extends end2end RL training time.
-
-**Example configuration**
-
-The following is an example of placing workers. There are two nodes for this training job, each node has 8 GPUs. `actor` uses all the 16 GPUs and `rollout` also uses all the 16 GPUs:
-
-.. code:: yaml
+.. code-block:: yaml
 
    cluster:
      num_nodes: 2
      component_placement:
-       actor,rollout: all # or 0-15
-
-Additonally, some workers support offloading to release GPUs to other workers during some time period. For example, math RL actor support some offloading options:
-
-.. code:: yaml
-
+       actor,rollout: all
    actor:
-     offload_optimizer: True
-     offload_weight: True
-     offload_grad: True
+     offload_optimizer: true
+     offload_weight: true
+     offload_grad: true
 
-If offloading is enabled for actor, the actor is loaded into GPU memory before it runs, then it is offloaded into CPU memory after it finishes its execution. If offloading is not enabled, the collocated workers (assuming workers run on GPUs) will compete for GPU memory, which may lead to OOM error.
-Refer to :doc:`../guides/basic_config` for the complete configuration.
-
-**ComponentPlacement programming**
-
-Given the above placement configuration, users can use proper `ComponentPlacement` class to parse the configuration and enforce the placement to the workers as below.
-
-.. code:: python
-
-   from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
-
-   component_placement = ModelParallelComponentPlacement(cfg, cluster)
-   rollout_placement_strategy = component_placement.get_strategy("rollout")
-   rollout_group = SGLangWorker.create_group(cfg, component_placement).launch(
-        cluster,
-        name=cfg.rollout.group_name,
-        placement_strategy=rollout_placement_strategy,
-    )
-
-`ModelParallelComponentPlacement` supports two types of placement: collocated and disaggregated. More importantly, it deals with rank arrangement that allows efficient model weight update from training to rollout. It parses the configuration and generates placements for different components. The generated placement is then enforced during worker launching.
-Refer to `Math RL training python script <https://github.com/RLinf/RLinf/blob/main/examples/reasoning/main_grpo.py>`_ for the complete code.
-
+Choose collocated mode when GPU count is small (1–8 GPUs), when you want the simplest setup for single-node runs, or when rollout sequences have uniform length so stragglers do not dominate step time.
 
 Disaggregated Mode
 ------------------
@@ -80,23 +64,13 @@ Disaggregated Mode
    :align: center
    :class: dis-img
 
-Different RL tasks are mapped to different GPU groups according to their computation needs. There also two execution modes: the workers run sequentially one after another or the workers run concurrently with fine-grained pipelining.
+In disaggregated mode, each role receives its own non-overlapping set of GPUs sized to its compute cost. Because actor, inference, and rollout never share a device, components stay resident in GPU memory without CPU offload stalls.
 
-**Pros**
+Disaggregated workers can run sequentially, or they can run concurrently with fine-grained pipelining so rollout chunks stream into inference and training as soon as they finish. Tuning ``pipeline_stage_num`` and matching GPU ratios across stages keeps every group busy and minimizes pipeline bubbles.
 
-* Flexible worker assignment.
-* No requirement for offloading implementation.
+The example below dedicates separate global GPU slices across two 8-GPU nodes to rollout, inference, and actor workers:
 
-**Cons**
-
-* Data-flow dependencies lead to GPUs idle.
-* Pipelining should be implemented to reduce GPU idle time.
-
-**Example configuration**
-
-The workers are assigned to separate GPUs. The set of GPUs is specified using global GPU indices.
-
-.. code:: yaml
+.. code-block:: yaml
 
    cluster:
      num_nodes: 2
@@ -105,15 +79,7 @@ The workers are assigned to separate GPUs. The set of GPUs is specified using gl
        inference: 10-11
        actor: 12-15
 
-.. note::
-   The ``pipeline_stage_num`` configuration should be adjusted to achieve the desired pipelining effect.
-
-Refer to :doc:`../guides/basic_config` for complete configuration.
-
-**ComponentPlacement programming**
-
-As described in Collocated Mode, the placement configuration in the yaml file can be parsed by `ComponentPlacement` and enforced on workers. Refer to `Math RL training with pipelining <https://github.com/RLinf/RLinf/blob/main/examples/reasoning/main_grpo.py>`_ for the complete code.
-
+Choose disaggregated mode on larger GPU pools (8+ GPUs) when offload latency is costly, when rollout generation has heavy long-tail variance, or when running asynchronous training loops.
 
 Hybrid Mode
 -----------
@@ -123,54 +89,37 @@ Hybrid Mode
    :align: center
    :class: hyb-img
 
-RLinf further augments the collocated mode and disaggregated mode, by introducing hybrid mode: some tasks share the same set of GPUs and some tasks use separate GPUs.
+Hybrid mode combines both patterns within a single run: components that execute together split the GPUs, while components that run in a separate phase share the full pool.
 
-The above figure shows a concrete placement and execution example for an embodied RL training.
-Simulation workers are placed on GPU 0-1, generation workers are placed on GPU 2-3. Two *data queues* decouple producer and consumer rates,
-helping to smooth the pipeline, balance the load, and virtually eliminate performance bottlenecks.After the rollout stage (i.e., simulation+generation), Inference workers are placed and executed on GPU 0-3, and training workers are also on GPU 0-3 afterward. You can see that hybrid mode combines collocated mode and disaggregated mode. The communication utilities in RLinf facilitate such flexible placement and execution mode.
+Embodied RL is the canonical example. During rollout collection, simulation workers (``env``) and policy inference workers (``rollout``) occupy disjoint GPU subsets and overlap through producer-consumer channels. Once the rollout batch completes, both offload to CPU memory and ``actor`` loads onto all GPUs for high-throughput policy updates.
 
-**Example configuration**
+On a single 8-GPU node, hybrid placement splits GPUs 0–3 for ``env`` and 4–7 for ``rollout`` while giving ``actor`` all 8 GPUs:
 
-The configuration style of hybrid mode is consistent to collocated/disaggregated mode as shown below. `env` (i.e., simulator workers) is placed on GPU 0-3, `rollout` (i.e., generation workers) is placed on GPU 4-7. They run with pipelining. `actor` (i.e., training workers) are placed on GPU 0-7. When the rollout stage is finished, `env` and `rollout` are offloaded to CPU memory, `actor` is loaded into GPU memory.
+.. code-block:: yaml
 
-.. code:: yaml
-
-  cluster:
-    num_nodes: 1
-    component_placement:
-      actor: 0-7
-      env: 0-3
-      rollout: 4-7
-
-In most cases, `env`, `rollout`, and `actor` should enable offloading as below to avoid OOM error.
-
-.. code:: yaml
-
+   cluster:
+     num_nodes: 1
+     component_placement:
+       actor: 0-7
+       env: 0-3
+       rollout: 4-7
    env:
-     enable_offload: True
+     enable_offload: true
    rollout:
-     enable_offload: True
+     enable_offload: true
    actor:
-     enable_offload: True
+     enable_offload: true
 
 .. note::
-   The ``pipeline_stage_num`` configuration should be adjusted to achieve the desired pipelining effect. For embodied RL training, it is recommended to set ``pipeline_stage_num`` to ``2`` for Hybrid Mode to enable pipeline overlap between rollout and env.
 
-Refer to :doc:`../guides/basic_config` for complete configuration.
+   Set ``rollout.pipeline_stage_num`` to ``2`` or higher in hybrid embodied training so environment stepping and rollout inference overlap on their separate GPU subsets.
 
-**ComponentPlacement programming**
+Hybrid mode also covers heterogeneous clusters—for example, placing ``env`` on CPU or physical robot hosts while ``rollout`` and ``actor`` share GPU nodes.
 
-Different from collocated and disaggregated modes, hybrid mode uses `HybridComponentPlacement`, which has less constraints on worker placement.
+Next Steps
+----------
 
-.. code:: python
-
-   from rlinf.utils.placement import HybridComponentPlacement
-
-   component_placement = HybridComponentPlacement(cfg, cluster)
-   # Create actor worker group
-   actor_placement = component_placement.get_strategy("actor")
-   actor_group = FSDPActor.create_group(cfg).launch(
-        cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
-    )
-
-Refer to `training embodied agent <https://github.com/RLinf/RLinf/blob/main/examples/embodiment/train_embodied_agent.py>`_ for complete code.
+- :doc:`placement`: full placement string syntax, process-to-resource ratios, and named node groups.
+- :doc:`flow`: how the same runner Python code drives all three modes unchanged.
+- :doc:`../guides/multi_node` and :doc:`../guides/hetero`: multi-node setup and heterogeneous GPU/robot clusters.
+- :doc:`../reference/configuration`: complete Hydra configuration reference.

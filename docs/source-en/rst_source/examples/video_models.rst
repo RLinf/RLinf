@@ -1,5 +1,5 @@
-Image and Video Generation
-==========================
+Image & Video Generation
+========================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
    :align: center
@@ -7,11 +7,7 @@ Image and Video Generation
 
    SD3 and Wan2.2 image/video generation models.
 
-Fine-tune SD3 and Wan2.2 with OCR rewards using Diffusion-NFT or DiffusionART.
-Both methods use the same models, prompt dataset, and diffusion environment.
-Prepare these shared dependencies below, then follow a training guide.
-
-For ImageReward-based preference tuning of SD3, see :doc:`embodied/refl`.
+Fine-tune SD3 and Wan2.2 with OCR rewards using **Diffusion-NFT** or **DiffusionART**, or tune SD3.5 Medium with ImageReward using **ReFL**. Diffusion-NFT and DiffusionART share the models, OCR prompt dataset, and diffusion environment setup below; ReFL has its own self-contained setup on its recipe page.
 
 Choose a Training Method
 ------------------------
@@ -19,8 +15,15 @@ Choose a Training Method
 Choose the method before launching training; the guides contain its configs,
 update settings, and expected results.
 
-.. grid:: 1 2 2 2
+.. grid:: 1 3 3 3
    :gutter: 3
+
+   .. grid-item-card:: DiffusionART
+      :link: diffusion_art
+      :link-type: doc
+
+      Build shared reward guidance over prompt groups and train against frozen
+      velocity targets. Includes SD3 image OCR and Wan2.2 video OCR recipes.
 
    .. grid-item-card:: Diffusion-NFT
       :link: diffusion_nft
@@ -29,12 +32,12 @@ update settings, and expected results.
       Train from relative rewards with positive/negative velocity candidates.
       Includes SD3 image OCR and Wan2.2 image/video OCR recipes.
 
-   .. grid-item-card:: DiffusionART
-      :link: diffusion_art
+   .. grid-item-card:: ReFL
+      :link: embodied/refl
       :link-type: doc
 
-      Build shared reward guidance over prompt groups and train against frozen
-      velocity targets. Includes SD3 image OCR and Wan2.2 video OCR recipes.
+      Fine-tune SD3.5 Medium with differentiable ImageReward feedback and
+      optional supervised image-text updates.
 
 Prompts, Outputs, and Rewards
 -----------------------------
@@ -70,27 +73,27 @@ Installation
 ------------
 
 Start from the :doc:`RLinf installation prerequisites
-</rst_source/start/installation>` and run the following commands from the
-repository root on your GPU training host:
+</rst_source/start/installation>` (in mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``):
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model diffusion
-   source .venv/bin/activate
+   .. tab-item:: CPU OCR (SD3 / ART)
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
+
+   .. tab-item:: GPU OCR (Wan NFT)
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion --paddle-gpu && source .venv/bin/activate
 
 The installer creates a Python 3.10 environment with Diffusers, PEFT,
-Transformers, PaddleOCR, and CPU PaddlePaddle. Both ART recipes and the SD3 NFT
-recipe use CPU OCR. Pass ``--venv /path/to/venv`` to install in another directory
-and activate that environment instead.
-
-The Wan NFT recipes set ``env.*.reward.use_gpu: True``. For GPU OCR, install GPU
-PaddlePaddle with ``--paddle-gpu`` (CUDA 11.x or 12.x), then activate the resulting
-environment:
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --model diffusion --paddle-gpu
-   source .venv/bin/activate
+Transformers, and PaddleOCR (``--paddle-gpu`` supports CUDA 11.x/12.x for Wan
+NFT recipes). Pass ``--venv /path/to/venv`` to install into another directory.
 
 .. note::
 
@@ -103,20 +106,31 @@ environment:
 Download the Model
 ------------------
 
-Download the checkpoint for the recipe you plan to run. Accept the SD3.5 Medium
-access terms on Hugging Face before downloading that model.
+Download the checkpoint for the recipe you plan to run (accept the SD3.5 Medium
+access terms on Hugging Face first if using SD3.5):
 
-.. code:: bash
+.. tab-set::
 
-   huggingface-cli download stabilityai/stable-diffusion-3.5-medium \
-      --local-dir /path/to/stable-diffusion-3.5-medium
+   .. tab-item:: SD3.5 Medium
 
-   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B-Diffusers \
-      --local-dir /path/to/Wan2.2-TI2V-5B-Diffusers
+      .. code-block:: bash
 
-These commands save Diffusers checkpoints locally. Set
-``actor.model.model_path`` in your selected training YAML to the corresponding
-directory.
+         hf download stabilityai/stable-diffusion-3.5-medium --local-dir ./stable-diffusion-3.5-medium
+
+   .. tab-item:: Wan2.2 TI2V 5B
+
+      .. code-block:: bash
+
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --local-dir ./Wan2.2-TI2V-5B-Diffusers
+
+Pass the downloaded checkpoint and dataset paths directly via Hydra CLI overrides when launching ``run_diffusion.sh`` (or update ``actor.model.model_path``, ``env.train.dataset.path``, and ``env.eval.dataset.path`` in the YAML):
+
+.. code-block:: bash
+
+   bash examples/diffusion/run_diffusion.sh sd3_nft_ocr \
+       actor.model.model_path=./stable-diffusion-3.5-medium \
+       env.train.dataset.path=./ocr_data \
+       env.eval.dataset.path=./ocr_data
 
 .. _diffusion-ocr-dataset:
 
@@ -127,7 +141,7 @@ Both methods use the OCR prompts from
 `NVlabs/DiffusionNFT <https://github.com/NVlabs/DiffusionNFT/tree/main/dataset/ocr>`__.
 Download the training and test splits into one directory:
 
-.. code:: bash
+.. code-block:: bash
 
    mkdir -p /path/to/dataset/ocr
    curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/train.txt \
@@ -150,5 +164,6 @@ place, continue with
    :hidden:
    :maxdepth: 1
 
-   Diffusion-NFT <diffusion_nft>
    DiffusionART <diffusion_art>
+   Diffusion-NFT <diffusion_nft>
+   ReFL <embodied/refl>

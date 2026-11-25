@@ -1,5 +1,5 @@
-组相对策略优化 (GRPO)
-=========================================
+组相对策略优化（GRPO）
+======================
 
 1. 引言
 ---------------
@@ -64,10 +64,14 @@
 
 
 3. 配置
------------------
+-------
 
-我们的框架支持在 LLM 数学任务和具身任务中使用 GRPO。  
-下面给出一个 LLM 数学任务的示例配置：  
+RLinf 在具身操作、数学推理、VQA 与智能体任务中均支持 GRPO。可直接运行的配方与配置：
+
+- **具身（VLA）**：:doc:`LIBERO <../../examples/embodied/libero>` 与 :doc:`π₀ / π₀.₅ <../../examples/embodied/pi0>`\ （``examples/embodiment/config/libero_10_grpo_openpi.yaml``、``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml``，算法预设位于 ``examples/embodiment/config/algorithm/grpo.yaml``）。
+- **数学推理**：:doc:`数学推理 <../../examples/agentic/math_reasoning/reasoning>`\ （``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``、``examples/reasoning/config/math/qwen2.5-1.5b-grpo-fsdp.yaml``）。
+
+下面给出 LLM 数学推理任务的核心配置片段：  
 
 .. code-block:: yaml
 

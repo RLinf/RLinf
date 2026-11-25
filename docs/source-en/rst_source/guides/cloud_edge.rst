@@ -1,5 +1,5 @@
-Cloud-Edge Training Setup
-=========================
+Cloud-Edge Training
+===================
 
 Cloud-edge training lets you keep the training driver and large models in the cloud
 while placing simulators, robots, or data-producing services on edge machines.
@@ -206,7 +206,7 @@ the cloud head node. For example:
 
 .. code-block:: bash
 
-   python examples/embodiment/train_embodied_agent.py --config-name <config_name>
+   bash examples/embodiment/run_embodiment.sh <config_name>
 
 or:
 

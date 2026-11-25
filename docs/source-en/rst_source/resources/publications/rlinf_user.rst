@@ -6,7 +6,7 @@ USER: A Unified and Extensible System for Online Real-World Policy Learning in E
 Overview
 --------
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/USER/USER-HEAD.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/USER/USER-HEAD.png
    :alt: USER overview
    :width: 800px
    :align: center
@@ -59,7 +59,7 @@ Robust real-world performance
 
 USER supports diverse learning paradigms. Below are training curves for RL algorithms (RLPD, SAC, SAC-Flow) on several tasks, and the gain for VLA (π₀) after online fine-tuning.
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/USER/USER-main_rl.jpg
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/USER/USER-main_rl.jpg
    :alt: RL training curves
    :width: 800px
    :align: center
@@ -136,11 +136,11 @@ With the unified hardware abstraction, USER treats robots as first-class resourc
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/USER/USER-multi.jpg" alt="Multi-Robot" width="370"/><br/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/USER/USER-multi.jpg" alt="Multi-Robot" width="370"/><br/>
          <strong>Parallel Training (2× Franka)</strong>
        </td>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/USER/USER-hetero.jpg" alt="Heterogeneous" width="300"/><br/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/USER/USER-hetero.jpg" alt="Heterogeneous" width="300"/><br/>
          <strong>Heterogeneous (Franka + ARX)</strong>
        </td>
      </tr>
