@@ -137,6 +137,14 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh realworld_dummy_sac_cnn
 
+      - name: Go2 drive dummy evaluation
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh go2_drive_dummy_mlp_eval
+
       - name: Xsquare-turtle2 SAC dummy test
         timeout-minutes: 20
         run: |

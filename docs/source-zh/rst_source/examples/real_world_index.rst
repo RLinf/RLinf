@@ -209,10 +209,16 @@
 低成本与移动机器人
 ------------------
 
-兼容 LeRobot 舵机生态的桌面机械臂与移动底盘。
+桌面机械臂、轮式底盘与四足机器人。
 
 .. grid:: 1 2 3 3
    :gutter: 3
+
+   .. grid-item-card:: Go2 EDU
+      :link: embodied/go2
+      :link-type: doc
+
+      读取状态，通过宇树原厂控制器检查六个运动方向。
 
    .. grid-item-card:: LeKiwi
       :link: embodied/lekiwi

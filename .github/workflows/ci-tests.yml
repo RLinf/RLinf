@@ -220,6 +220,8 @@ jobs:
               - 'rlinf/runners/async_agent_runner.py'
               # test_data.py loads this script to test reward split preprocessing.
               - 'examples/reward/preprocess_reward_dataset.py'
+              - 'toolkits/realworld_check/check_go2_*.py'
+              - 'tests/robot_mocks/unitree_go2.py'
               - 'tests/unit_tests/**'
               - 'tests/conftest.py'
               - '.github/workflows/unit-tests.yml'

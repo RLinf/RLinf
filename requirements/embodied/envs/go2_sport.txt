@@ -1,0 +1,2 @@
+# Optional SDK for manual Go2 high-level checks; RLinf base dependencies are separate.
+unitree-sdk2py @ git+https://github.com/unitreerobotics/unitree_sdk2_python.git@814556d15970dd2ecf1c9984e845ca02ab07e206
