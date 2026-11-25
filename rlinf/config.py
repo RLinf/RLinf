@@ -303,6 +303,25 @@ def activation_to_func(
     return activation_func
 
 
+def _inherit_rollout_model_path(
+    rollout_cfg: Optional[DictConfig], actor_cfg: Optional[DictConfig]
+) -> None:
+    """Default ``rollout.model.model_path`` to ``actor.model.model_path`` when unset."""
+    if rollout_cfg is None or actor_cfg is None:
+        return
+    actor_model_path = OmegaConf.select(actor_cfg, "model.model_path", default=None)
+    if actor_model_path is None:
+        return
+    with open_dict(rollout_cfg):
+        rollout_model = rollout_cfg.get("model", None)
+        if rollout_model is None:
+            rollout_cfg.model = OmegaConf.create({"model_path": actor_model_path})
+            return
+        with open_dict(rollout_model):
+            if rollout_model.get("model_path", None) is None:
+                rollout_model.model_path = actor_model_path
+
+
 def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
     SupportedModel(cfg.model.model_type)  # To validate model_type is supported
 
@@ -343,6 +362,7 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         return cfg
 
     with open_dict(cfg):
+        _inherit_rollout_model_path(cfg, actor_cfg)
         cfg.gpu_memory_utilization = cfg.get("gpu_memory_utilization", 0.65)
         assert cfg.model.model_path is not None, (
             "rollout.model.model_path must be specified for rollout."
@@ -1437,6 +1457,8 @@ def validate_embodied_cfg(cfg):
     )
     if only_eval:
         validate_only_eval_rollout_model(cfg.rollout.model)
+    else:
+        _inherit_rollout_model_path(cfg.get("rollout", None), cfg.get("actor", None))
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
     if not only_eval and algorithm_cfg.get("loss_type") == "embodied_refl":
@@ -2192,6 +2214,7 @@ def validate_offline_cfg(cfg: DictConfig) -> DictConfig:
 
     with open_dict(cfg):
         cfg.runner.only_eval = bool(runner_only_eval)
+    _inherit_rollout_model_path(cfg.get("rollout", None), cfg.get("actor", None))
 
     if cfg.runner.val_check_interval > 0 or cfg.runner.only_eval:
         component_placement = HybridComponentPlacement(cfg, Cluster())

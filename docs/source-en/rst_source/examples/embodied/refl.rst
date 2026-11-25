@@ -1,5 +1,5 @@
-Fine-Tune SD3 with ImageReward
-==============================
+ReFL
+====
 
 .. figure:: https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/figures/ImageReward.jpg
    :align: center
@@ -85,61 +85,67 @@ each reward update follows a supervised update on image-caption pairs.
 This recipe applies the method from the
 `ImageReward paper <https://arxiv.org/abs/2304.05977>`_ to SD3 flow matching.
 
-Installation
-------------
+Setup and Run
+-------------
 
-Follow the shared :ref:`installation <diffusion-model-setup>` and
-:ref:`model download <diffusion-model-checkpoints>` instructions for SD3.5 Medium.
+.. include:: _setup_common.rst
 
-Download ImageReward and Prompts
---------------------------------
+.. tab-set::
 
-Download the ImageReward checkpoint, tokenizer, and official prompt files:
+   .. tab-item:: SD3.5 Medium
 
-.. code-block:: bash
+      **1. Install**
 
-   export IR_MODEL="$PWD/models/ImageReward"
-   export IR_DATA="$PWD/data/ImageReward"
-   mkdir -p "$IR_MODEL" "$IR_DATA"
+      Follow the shared :ref:`installation <diffusion-model-setup>` and
+      :ref:`model download <diffusion-model-checkpoints>` instructions for SD3.5 Medium.
 
-   hf download zai-org/ImageReward ImageReward.pt med_config.json --local-dir "$IR_MODEL"
-   python -c 'from transformers import BertTokenizer; BertTokenizer.from_pretrained("bert-base-uncased")'
+      **2. Download**
 
-   for file in refl_data.json test.json; do
-     curl --fail --location \
-       "https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/data/$file" \
-       --output "$IR_DATA/$file"
-   done
+      Download the ImageReward checkpoint, tokenizer, and official prompt files:
 
-Training uses ``refl_data.json``; evaluation uses ``test.json``.
-``actor.refl_data.exclude_path`` points to the evaluation file to exclude
-those prompts from training.
+      .. code-block:: bash
 
-Run It
-------
+         export IR_MODEL="$PWD/models/ImageReward"
+         export IR_DATA="$PWD/data/ImageReward"
+         mkdir -p "$IR_MODEL" "$IR_DATA"
 
-Edit ``examples/diffusion/config/sd3_refl_imagereward.yaml``. Set
-``actor.model.model_path`` to the SD3.5 Medium directory. Set
-``actor.refl_reward_model.model_path`` and ``actor.refl_reward_model.med_config``
-to the downloaded ``ImageReward.pt`` and ``med_config.json`` files.
+         hf download zai-org/ImageReward ImageReward.pt med_config.json --local-dir "$IR_MODEL"
+         python -c 'from transformers import BertTokenizer; BertTokenizer.from_pretrained("bert-base-uncased")'
 
-Set ``actor.refl_data.path`` to ``refl_data.json``. Point both
-``actor.refl_data.exclude_path`` and ``env.eval.dataset.path`` to ``test.json``.
-To use GPUs 0–3, set the placement in the same YAML:
+         for file in refl_data.json test.json; do
+           curl --fail --location \
+             "https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/data/$file" \
+             --output "$IR_DATA/$file"
+         done
 
-.. code-block:: yaml
+      Training uses ``refl_data.json``; evaluation uses ``test.json``.
+      ``actor.refl_data.exclude_path`` points to the evaluation file to exclude
+      those prompts from training.
 
-   cluster:
-     component_placement:
-       actor,env,rollout: 0-3
+      **3. Launch**
 
-The default config trains for 50 steps with 512 samples per step. A global
-batch size of 64 gives eight reward updates per step. Launch from the repository
-root:
+      Edit ``examples/diffusion/config/sd3_refl_imagereward.yaml``. Set
+      ``actor.model.model_path`` to the SD3.5 Medium directory. Set
+      ``actor.refl_reward_model.model_path`` and ``actor.refl_reward_model.med_config``
+      to the downloaded ``ImageReward.pt`` and ``med_config.json`` files.
 
-.. code-block:: bash
+      Set ``actor.refl_data.path`` to ``refl_data.json``. Point both
+      ``actor.refl_data.exclude_path`` and ``env.eval.dataset.path`` to ``test.json``.
+      To use GPUs 0–3, set the placement in the same YAML:
 
-   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward
+      .. code-block:: yaml
+
+         cluster:
+           component_placement:
+             actor,env,rollout: 0-3
+
+      The default config trains for 50 steps with 512 samples per step. A global
+      batch size of 64 gives eight reward updates per step. Launch from the repository
+      root:
+
+      .. code-block:: bash
+
+         bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward
 
 The default ``algorithm.refl_pre_loss_weight=0.0`` trains with the reward loss
 alone. The run evaluates and saves a checkpoint every 10 steps, and reports
@@ -189,67 +195,72 @@ subdirectories:
 
 The results below use 20,000 image-caption pairs from
 `PD3M <https://huggingface.co/datasets/Spawning/PD3M>`_. Prepare them in a
-separate environment. The script samples image-caption pairs from the first two
-metadata shards using seed ``42``. It keeps images with license information, a
-width and height of at least 512 pixels, and an aspect ratio of at most 2:1. It
-excludes iNaturalist images and captions that describe monochrome images or
-documents:
+separate environment with the steps below, or use your own image-caption
+directory.
 
-.. code-block:: bash
+.. dropdown:: Optional: Prepare 20,000 PD3M image-caption pairs
 
-   export PD3M_DIR="$PWD/data/PD3M"
-   uv venv --python 3.10 "$PD3M_DIR/.venv"
-   uv pip install --python "$PD3M_DIR/.venv/bin/python" \
-     huggingface_hub pyarrow img2dataset==1.47.0
+   The script samples 20,000 image-caption pairs from the first two PD3M
+   metadata shards using seed ``42``. It keeps images with license information,
+   width and height of at least 512 pixels, and an aspect ratio of at most 2:1,
+   while excluding iNaturalist images and captions that describe monochrome
+   images or documents.
 
-   "$PD3M_DIR/.venv/bin/hf" download Spawning/PD3M \
-     metadata/pd3m.00.parquet metadata/pd3m.01.parquet \
-     --repo-type dataset --local-dir "$PD3M_DIR"
+   .. code-block:: bash
 
-   "$PD3M_DIR/.venv/bin/python" - "$PD3M_DIR" <<'PYTHON'
-   import random
-   import re
-   import sys
+      export PD3M_DIR="$PWD/data/PD3M"
+      uv venv --python 3.10 "$PD3M_DIR/.venv"
+      uv pip install --python "$PD3M_DIR/.venv/bin/python" \
+        huggingface_hub pyarrow img2dataset==1.47.0
 
-   import pyarrow as pa
-   import pyarrow.parquet as pq
+      "$PD3M_DIR/.venv/bin/hf" download Spawning/PD3M \
+        metadata/pd3m.00.parquet metadata/pd3m.01.parquet \
+        --repo-type dataset --local-dir "$PD3M_DIR"
 
-   root = sys.argv[1]
-   columns = ["id", "url", "caption", "width", "height", "license", "source"]
-   rows = []
-   for shard in ("00", "01"):
-       rows += pq.read_table(
-           f"{root}/metadata/pd3m.{shard}.parquet", columns=columns
-       ).to_pylist()
+      "$PD3M_DIR/.venv/bin/python" - "$PD3M_DIR" <<'PYTHON'
+      import random
+      import re
+      import sys
 
-   mono = re.compile(r"black[- ]and[- ]white|grayscale|sepia|monochrome", re.I)
-   document = re.compile(
-       r"\b(book|page|newspaper|document|letter|map|poster|stamp|coin|text (on|at|in))\b",
-       re.I,
-   )
-   selected = [
-       row for row in rows
-       if row["license"]
-       and row["source"] != "iNaturalist"
-       and min(row["width"], row["height"]) >= 512
-       and max(row["width"], row["height"]) <= 2 * min(row["width"], row["height"])
-       and not mono.search(row["caption"])
-       and not document.search(row["caption"])
-   ]
-   random.Random(42).shuffle(selected)
-   pairs = [{key: row[key] for key in ("id", "url", "caption")}
-            for row in selected[:20000]]
-   pq.write_table(pa.Table.from_pylist(pairs), f"{root}/pd3m_refl.parquet")
-   PYTHON
+      import pyarrow as pa
+      import pyarrow.parquet as pq
 
-   export PRE_DATA="$PD3M_DIR/images_512"
-   "$PD3M_DIR/.venv/bin/img2dataset" \
-     --url_list="$PD3M_DIR/pd3m_refl.parquet" \
-     --input_format=parquet --url_col=url --caption_col=caption \
-     --output_format=files --output_folder="$PRE_DATA" \
-     --image_size=512 --resize_mode=keep_ratio --resize_only_if_bigger=True \
-     --number_sample_per_shard=1000 --processes_count=16 --thread_count=32 \
-     --timeout=60 --retries=2 --enable_wandb=False
+      root = sys.argv[1]
+      columns = ["id", "url", "caption", "width", "height", "license", "source"]
+      rows = []
+      for shard in ("00", "01"):
+          rows += pq.read_table(
+              f"{root}/metadata/pd3m.{shard}.parquet", columns=columns
+          ).to_pylist()
+
+      mono = re.compile(r"black[- ]and[- ]white|grayscale|sepia|monochrome", re.I)
+      document = re.compile(
+          r"\b(book|page|newspaper|document|letter|map|poster|stamp|coin|text (on|at|in))\b",
+          re.I,
+      )
+      selected = [
+          row for row in rows
+          if row["license"]
+          and row["source"] != "iNaturalist"
+          and min(row["width"], row["height"]) >= 512
+          and max(row["width"], row["height"]) <= 2 * min(row["width"], row["height"])
+          and not mono.search(row["caption"])
+          and not document.search(row["caption"])
+      ]
+      random.Random(42).shuffle(selected)
+      pairs = [{key: row[key] for key in ("id", "url", "caption")}
+               for row in selected[:20000]]
+      pq.write_table(pa.Table.from_pylist(pairs), f"{root}/pd3m_refl.parquet")
+      PYTHON
+
+      export PRE_DATA="$PD3M_DIR/images_512"
+      "$PD3M_DIR/.venv/bin/img2dataset" \
+        --url_list="$PD3M_DIR/pd3m_refl.parquet" \
+        --input_format=parquet --url_col=url --caption_col=caption \
+        --output_format=files --output_folder="$PRE_DATA" \
+        --image_size=512 --resize_mode=keep_ratio --resize_only_if_bigger=True \
+        --number_sample_per_shard=1000 --processes_count=16 --thread_count=32 \
+        --timeout=60 --retries=2 --enable_wandb=False
 
 The downloader writes image-caption pairs under ``$PRE_DATA``. The loader
 resizes and center-crops the images to 512 × 512. The config sets
@@ -268,8 +279,8 @@ Each step has eight supervised updates and eight reward updates. Start with an
 Lpre weight of ``0.01``. In the results below, this run scores higher than the
 ``0.1`` run.
 
-Expected Results
-----------------
+Visualization and Results
+-------------------------
 
 The experiments use four NVIDIA A800 80 GB GPUs, SD3.5 Medium, LoRA (rank ``32``,
 alpha ``64``), FSDP2, and BF16, with learning rate ``1e-4``, seed ``42``, and

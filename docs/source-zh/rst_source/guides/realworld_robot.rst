@@ -1,22 +1,25 @@
-真机机器人训练启动
-====================
+真机多机启动
+============
 
-本页说明如何将 **多台 Franka 真机** 与 **GPU 训练节点** 接入同一 Ray 集群，完成 YAML 配置并启动真机强化学习训练。
+本页说明如何将 **任意真机机器人控制节点**\ （如 Franka、双臂 Franka、YAM、DOS-W1、SO-101 等）与 **GPU 训练节点** 接入同一 Ray 集群，完成 YAML 资源放置配置并启动真机训练或评测。下文 YAML 配置以 Franka 作为具体示例。
 
-更完整的硬件安装、依赖、数据采集与任务说明，请参阅：
+.. note::
+
+   单机部署会自动启动 Ray，无需设置 ``RLINF_NODE_RANK`` 或手动执行 ``ray start``；仅在连接多台节点时按本指南操作。
+
+各机器人平台的硬件安装、依赖、数据采集与任务说明见 :doc:`../examples/real_world_index`，Franka 具体示例见：
 
 - :doc:`../examples/embodied/franka` — RealSense + Franka 夹爪的标准真机流程
 - :doc:`../examples/embodied/franka_zed_robotiq` — ZED 相机 + Robotiq 夹爪的异构双节点部署
 - :doc:`../examples/embodied/franka_orbbec` — Orbbec 相机及对齐深度
 
-Ray 集群的基础启动步骤（``RLINF_NODE_RANK``、``ray start``、代码同步等）见 :doc:`multi_node`；
-``node_groups`` / ``component_placement`` 的通用语义见 :doc:`hetero`。
+Ray 集群的基础启动步骤（``RLINF_NODE_RANK``、``ray start``、代码同步等）见 :doc:`multi_node`；``node_groups`` / ``component_placement`` 的通用语义见 :doc:`hetero`。
 
 
 典型拓扑
 --------
 
-真机训练一般采用 **「1 个 GPU 训练节点 + N 个机器人控制节点」** 的异构布局：
+真机训练一般采用 **“1 个 GPU 训练节点 + N 个机器人控制节点”** 的异构布局：
 
 .. list-table::
    :header-rows: 1
@@ -30,13 +33,13 @@ Ray 集群的基础启动步骤（``RLINF_NODE_RANK``、``ray start``、代码�
      - 运行 ``actor`` 、``rollout`` （及可选 ``reward``）；仅在此节点提交训练入口脚本
    * - rank 1 至 N
      - 机器人控制
-     - 运行 ``env`` worker 和 Franka 机械臂；每台机械臂对应一个控制节点 rank（多台机械臂共用一个控制节点时，需参照示例文档单独配置）
+     - 运行 ``env`` worker 与机器人硬件控制；通常每台机器人对应一个控制节点 rank（多台机器人共用一个控制节点时，参照对应平台指南配置）
 
-所有节点须处于 **同一局域网** （或 overlay 网络，见 :doc:`cloud_edge`），且 ``cluster.num_nodes`` 等于实际加入 Ray 的节点总数。
+所有节点须处于 **同一局域网**\ （或 overlay 网络，见 :doc:`cloud_edge`），且 ``cluster.num_nodes`` 等于实际加入 Ray 的节点总数。
 
 .. important::
 
-   - 控制节点需预先安装 Franka 控制环境（默认为内置 libfranka 的 Franky），详见 :doc:`../examples/embodied/franka`。
+   - 控制节点需预先安装对应机器人的驱动与运行环境（Franka 默认使用内置 libfranka 的 Franky，各平台说明见 :doc:`../examples/real_world_index`）。
    - Ray 在 ``ray start`` 时冻结 Python 与环境变量；请在 **每个节点** 安装好依赖后再启动 Ray。
    - 可使用 ``ray_utils/realworld/setup_before_ray.sh`` 统一设置各节点环境，再执行 ``ray start``。
 
@@ -47,22 +50,14 @@ Ray 集群的基础启动步骤（``RLINF_NODE_RANK``、``ray start``、代码�
 步骤 1：在各节点准备环境
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-在 **每个节点**、执行 ``ray start`` **之前**：
-
-.. code-block:: bash
-
-   # 建议在各节点 source 仓库脚本并按本机修改
-   source ray_utils/realworld/setup_before_ray.sh
-
-   export RLINF_NODE_RANK=<0..N-1>          # 集群内唯一；GPU 节点通常为 0
-   # 多网卡时指定对外可达的网卡，例如：
-   # export RLINF_COMM_NET_DEVICES=eth0
-
-若 ``setup_before_ray.sh`` 未激活 Franka 环境，控制节点还需手动激活：
+在 **每个节点** 执行 ``ray start`` 之前，激活虚拟环境并导出节点编号（也可以编辑并执行 ``source ray_utils/realworld/setup_before_ray.sh`` 一次性完成设置与激活）：
 
 .. code-block:: bash
 
    source .venv/bin/activate
+   export RLINF_NODE_RANK=<0..N-1>          # 集群内唯一；GPU 节点通常为 0
+   # 多网卡时指定对外可达的网卡，例如：
+   # export RLINF_COMM_NET_DEVICES=eth0
 
 步骤 2：启动 Ray
 ~~~~~~~~~~~~~~~~
@@ -265,15 +260,13 @@ YAML 配置
    export ROBOT_IP=<ip_arm0>,<ip_arm1>     # 两台机器人
    export DISABLE_VALIDATE=true,true       # 每台机器人一个取值
 
-此模式下，所设置的每个变量都必须提供与 ``ROBOT_IP`` 相同数量的逗号分隔取值；数量不一致会使枚举报错并中止。
-其他机器人类型使用各自的标识字段（``GimArm`` → ``CAN_INTERFACE`` 、``DOSW1`` → ``ROBOT_URL``）。
+此模式下，所设置的每个变量都必须提供与 ``ROBOT_IP`` 相同数量的逗号分隔取值；数量不一致会使枚举报错并中止。其他机器人类型使用各自的标识字段（GimArm → ``CAN_INTERFACE``、DOS-W1 → ``ROBOT_URL``）。
 
 
 启动真机训练
 ------------
 
-完成 Ray 集群搭建、YAML 修改与（若使用 RLPD）demo 数据准备后，在 **head 节点（通常为 rank 0 的 GPU 机器）** 进入 RLinf 仓库目录执行。
-若 GPU 节点与机器人控制节点 **未共享同一 RLinf 代码目录**，可在运行下方训练命令 **之前** 于同一终端执行 ``export RLINF_CODE_WORKING_DIR=auto`` 开启代码同步（详见 :doc:`multi_node` 中「步骤 3：开启代码同步」）。
+完成 Ray 集群搭建、YAML 修改与（若使用 RLPD）demo 数据准备后，在 **head 节点（通常为 rank 0 的 GPU 机器）** 进入 RLinf 仓库目录执行。若 GPU 节点与机器人控制节点 **未共享同一 RLinf 代码目录**，可在运行下方训练命令 **之前** 于同一终端执行 ``export RLINF_CODE_WORKING_DIR=auto`` 开启代码同步（详见 :doc:`multi_node` 中“步骤 3：开启代码同步”）。
 
 **标准单臂训练（插块插入，RLPD + 异步 SAC）：**
 
