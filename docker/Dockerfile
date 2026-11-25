@@ -526,6 +526,16 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
+# Embodied: ActiveVLN + VLN-CE server client
+##################################################################################################
+FROM embodied-common-image AS embodied-vlnce_server-image
+
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} \
+    embodied --venv activevln --model activevln --env vlnce_server
+
+RUN echo "source ${UV_PATH}/activevln/bin/activate" >> ~/.bashrc
+
+##################################################################################################
 # Embodied: Psi0 + SIMPLE
 ##################################################################################################
 FROM embodied-common-image AS embodied-simple-image

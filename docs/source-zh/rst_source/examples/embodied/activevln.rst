@@ -1,81 +1,142 @@
 使用 EmbodiInfer 训练 ActiveVLN
 ===============================
 
-本例用 Hugging Face actor、EmbodiInfer rollout 和 VLN-CE 环境服务运行 ActiveVLN GRPO 训练。下面的配置将训练和推理放在 GPU 0，Habitat 渲染放在 GPU 1，batch 为 2，权重采用 BF16。
+本例用 Hugging Face actor、EmbodiInfer rollout 和 VLN-CE 环境服务运行两步 ActiveVLN GRPO 冒烟测试。配置重复使用 R2R episode 1，batch size 为 2，权重采用 BF16。
+
+概览
+----
+
+.. list-table::
+   :header-rows: 1
+
+   * - 模型
+     - 环境
+     - 算法
+     - 硬件布局
+   * - ActiveVLN（Qwen2.5-VL-3B）
+     - VLN-CE / Habitat
+     - GRPO
+     - GPU 0：训练与推理；GPU 1：渲染
+
+任务
+~~~~
+
+预设在 Matterport3D 场景中执行 R2R 导航指令。
+
+观测与动作
+~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+
+   * - 观测
+     - 动作
+     - 奖励
+   * - RGB 图像、导航指令和 episode 历史
+     - 文本导航指令
+     - 导航成功奖励
 
 安装
 ----
 
-为 RLinf 和 Habitat 服务分别准备 Python 环境。先固定提供 HTTP client 和 server 的 ActiveVLN 源码版本：
+.. include:: _setup_common.rst
+   :start-after: 首先，克隆 RLinf 仓库：
+   :end-before: 然后，使用下列两种方式
+
+安装训练环境和 VLN-CE 客户端：
 
 .. code-block:: bash
 
-   export ACTIVEVLN_ROOT="$HOME/ActiveVLN"
-   git clone https://github.com/arvillion/ActiveVLN.git "$ACTIVEVLN_ROOT"
-   git -C "$ACTIVEVLN_ROOT" checkout 3a0c63b00e4f42c828cc74c3554afce17641da60
-   export PYTHONPATH="$ACTIVEVLN_ROOT:$ACTIVEVLN_ROOT/vlnce_server${PYTHONPATH:+:$PYTHONPATH}"
-
-安装 RLinf 训练环境，再安装固定版本的 EmbodiInfer 和 ActiveVLN client。上游 client 使用 namespace package，因此每个终端都需要将源码目录加入 ``PYTHONPATH``。
-
-.. code-block:: bash
-
-   # Run from the RLinf checkout.
-   bash requirements/install.sh --no-flash-attn embodied --env dummy --venv .venv-activevln
+   bash requirements/install.sh embodied --model activevln --env vlnce_server --venv .venv-activevln
    source .venv-activevln/bin/activate
-   uv pip install -r requirements/embodiinfer.txt
-   uv pip install -e "$ACTIVEVLN_ROOT/vlnce_server" httpx
-   python -c 'from vlnce_server.client import BatchEnvClient; from vlnce_server.env_config import VLNCEEnvConfig'
 
-``requirements/embodiinfer.txt`` 将 EmbodiInfer 固定到 ``a0aee77ba6489abb64223267a64879931a7a7897``，Transformers 固定为 ``4.51.3``。
+安装脚本将 ActiveVLN 源码下载到 ``.venv-activevln/ActiveVLN``\ 。Habitat 需要单独配置 Python 环境。
 
 准备数据并启动服务
-------------------
+~~~~~~~~~~~~~~~~~~
 
-在独立的 ``server`` 环境中，按固定版本的 `ActiveVLN 服务端安装说明 <https://github.com/arvillion/ActiveVLN/blob/3a0c63b00e4f42c828cc74c3554afce17641da60/README.md#setup-the-vln-ce-environemnt>`_ 安装 Python 3.10、Habitat-Sim v0.1.7 和 Habitat-Lab v0.1.7。按其 `数据准备说明 <https://github.com/arvillion/ActiveVLN/blob/3a0c63b00e4f42c828cc74c3554afce17641da60/README.md#data-preparation>`_ 将 Matterport3D 场景放到 ``$ACTIVEVLN_ROOT/data/scene_datasets/mp3d``，将 R2R/RxR 标注放到 ``$ACTIVEVLN_ROOT/data/datasets``。两个数据集的训练标注和 NDTW ground-truth 文件都需要准备；这个服务端版本在 RxR worker 数量为零时也会加载 RxR 数据。
+在 RLinf 仓库目录设置源码路径：
 
-从 ActiveVLN 源码目录启动服务，在物理 GPU 1 上创建两个 R2R simulator：
+.. code-block:: bash
+
+   export ACTIVEVLN_ROOT="$PWD/.venv-activevln/ActiveVLN"
+
+按固定版本的 `ActiveVLN 服务端安装说明 <https://github.com/arvillion/ActiveVLN/blob/3a0c63b00e4f42c828cc74c3554afce17641da60/README.md#setup-the-vln-ce-environemnt>`_ 创建 ``server`` 环境，安装 Python 3.10、Habitat-Sim v0.1.7 和 Habitat-Lab v0.1.7。
+
+按其 `数据准备说明 <https://github.com/arvillion/ActiveVLN/blob/3a0c63b00e4f42c828cc74c3554afce17641da60/README.md#data-preparation>`_ 将 Matterport3D 场景放到 ``$ACTIVEVLN_ROOT/data/scene_datasets/mp3d``\ ，将 R2R/RxR 标注放到 ``$ACTIVEVLN_ROOT/data/datasets``\ 。
+
+准备 R2R 和 RxR 的训练标注及 NDTW 真实路径文件。即使 RxR worker 数量为零，服务端也会加载 RxR 数据。
+
+补充安装服务端依赖，只需执行一次：
 
 .. code-block:: bash
 
    conda activate server
    python -m pip install ray flask hydra-core av
+
+在物理 GPU 1 上启动两个 R2R 模拟器：
+
+.. code-block:: bash
+
    cd "$ACTIVEVLN_ROOT"
    export PYTHONPATH="$ACTIVEVLN_ROOT:$ACTIVEVLN_ROOT/vlnce_server${PYTHONPATH:+:$PYTHONPATH}"
    python -m vlnce_server.server --config-path "$ACTIVEVLN_ROOT/vlnce_server/config" \
      server.host=127.0.0.1 server.port=5001 \
      'vlnce.gpus=[1]' 'vlnce.r2r_gpu_plan=[2]' 'vlnce.rxr_gpu_plan=[0]'
 
-保持服务运行。``vlnce.r2r_gpu_plan`` 控制 simulator 数量；增大 ``env.train.total_num_envs`` 或 ``env.eval.total_num_envs`` 时，相应提高服务端容量。
-
-下载模型
---------
-
-在 RLinf 训练环境中，下载固定版本的权重和 tokenizer：
+保持服务运行。在另一个终端确认以下请求返回 ``200`` 后，再启动训练：
 
 .. code-block:: bash
 
-   export ACTIVEVLN_MODEL="$HOME/models/activevln-r2r"
+   curl -sS -X OPTIONS http://127.0.0.1:5001/batch/reset -o /dev/null -w '%{http_code}\n'
+
+``vlnce.r2r_gpu_plan`` 控制模拟器数量。增大训练或评估环境数量时，需要相应提高服务端容量。
+
+下载模型
+~~~~~~~~
+
+另开终端，回到 RLinf 仓库目录，下载模型权重：
+
+.. code-block:: bash
+
+   source .venv-activevln/bin/activate
    hf download Arvil/Qwen2.5-VL-3B_rl_r2r_4000 \
      --revision 160987313e3e869705f42400d1b8f28177044518 \
-     --local-dir "$ACTIVEVLN_MODEL"
+     --local-dir "$HOME/models/activevln-r2r"
 
 运行
 ----
 
-回到 RLinf 源码目录，保留 client 的 ``PYTHONPATH`` 设置，然后运行：
+将以下 YAML 字段设为下载模型的绝对路径：
+
+.. list-table::
+   :header-rows: 1
+
+   * - 文件
+     - 字段
+   * - ``examples/embodiment/config/model/activevln.yaml``
+     - ``model_path``
+   * - ``examples/embodiment/config/env/vlnce_server_r2r.yaml``
+     - ``tokenizer_path``
+
+从 RLinf 仓库目录启动训练。\ ``RAY_ADDRESS=local`` 让 RLinf 使用独立的 Ray 集群，避免连接到服务端集群。
 
 .. code-block:: bash
 
-   export EMBODIED_PATH="$PWD/examples/embodiment"
-   export PYTHONPATH="$PWD:$PYTHONPATH"
-   CUDA_VISIBLE_DEVICES=0 python examples/embodiment/train_embodied_agent.py \
-     --config-name activevln_r2r_grpo_embodiinfer \
-     actor.model.model_path="$ACTIVEVLN_MODEL" \
-     env.train.tokenizer_path="$ACTIVEVLN_MODEL" \
-     env.eval.tokenizer_path="$ACTIVEVLN_MODEL"
+   RAY_ADDRESS=local CUDA_VISIBLE_DEVICES=0 \
+     bash examples/embodiment/run_embodiment.sh activevln_r2r_grpo_embodiinfer
 
-配置默认开启 CUDA graphs、融合算子、split attention、GPU 图像预处理和 episode 历史复用，运行两个训练步并重复使用 R2R episode 1。通过 ``env.train.episode_ids`` 和 ``env.eval.episode_ids`` 选择更多 episode，通过 ``runner.max_steps`` 和 ``runner.max_epochs`` 调整训练长度。服务部署在远端时，设置 ``env.train.server_url`` 和 ``env.eval.server_url``。
+通过 ``rollout.rollout_backend`` 选择 ``embodiinfer`` 或 ``huggingface`` 推理，在 ``rollout.embodiinfer`` 下配置 EmbodiInfer 选项。
 
-通过 ``rollout.generation_backend=embodiinfer`` 选择推理后端，在 ``rollout.embodiinfer`` 下设置运行时选项。Actor 通过 ``actor.model.model_backend=huggingface`` 独立选择。将 ``rollout.generation_backend`` 改为 ``huggingface``，即可在相同的 actor 和环境配置下使用 HF 推理。
+扩展训练时，在预设中修改 ``env.train.episode_ids``\ 、``runner.max_steps`` 和 ``runner.max_epochs``\ 。服务部署在远端时，设置 ``env.train.server_url`` 和 ``env.eval.server_url``\ 。
 
-重复惩罚作用于 prompt 和已生成的 response。Rollout 返回的 logprob 与 actor 重算均使用 top-p 截断后的分布。
+结果与可视化
+------------
+
+训练日志和 TensorBoard 事件保存在 ``logs/<timestamp>-activevln_r2r_grpo_embodiinfer`` 下。启动 TensorBoard 查看训练指标：
+
+.. code-block:: bash
+
+   tensorboard --logdir logs
+
+训练指标见 :doc:`/rst_source/reference/metrics`，评估流程见 :doc:`/rst_source/evaluations/get_started/index`。

@@ -171,6 +171,8 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/activevln.html" style="display: block;"><img src="https://raw.githubusercontent.com/arvillion/ActiveVLN/3a0c63b00e4f42c828cc74c3554afce17641da60/docs/overview.png" alt="ActiveVLN 导航流程，图片来自 ActiveVLN 作者"
+            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/activevln.html" style="text-decoration: underline; color: blue;">
            <b>ActiveVLN</b>

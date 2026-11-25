@@ -14,6 +14,13 @@
 
 """Heterogeneous env modes, and the observations env workers send the policy."""
 
+import asyncio
+import logging
+import sys
+from dataclasses import make_dataclass
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+
 import numpy as np
 import pytest
 import torch
@@ -30,8 +37,217 @@ from rlinf.config import (
 from rlinf.data.schema.embodied_types import PolicyInput
 from rlinf.envs.layout import EnvLayout
 from rlinf.envs.policy_obs import PolicyObsSpec
+from rlinf.scheduler import WorkerAddress
 from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.workers.env.env_worker import EnvWorker
+
+
+@pytest.fixture
+def vlnce_env_factory(monkeypatch):
+    from transformers import AutoTokenizer
+
+    from rlinf.envs.sim.vlnce_server.vlnce_server_env import VLNCEServerEnv
+
+    slots = set()
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            self.failure = None
+            self.close_calls = 0
+
+        def create_environments_batch(self, configs):
+            if self.failure == "create":
+                raise ConnectionError("create failed")
+            if len(slots | set(configs)) > 2:
+                raise RuntimeError("simulator slots exhausted")
+            slots.update(configs)
+
+        def reset_batch(self, seeds):
+            if self.failure in ("reset", "close"):
+                raise RuntimeError("reset failed")
+            return {
+                key: (
+                    [
+                        {
+                            "obs_str": "Go to the door.",
+                            "multi_modal_data": {"<image>": []},
+                        }
+                    ],
+                    {},
+                )
+                for key in seeds
+            }
+
+        def close_batch(self, ids):
+            self.close_calls += 1
+            if self.failure == "close":
+                raise OSError("close failed")
+            if not set(ids) <= slots:
+                raise KeyError("uncreated environment")
+            slots.difference_update(ids)
+
+    fields = "episode_id data_source action_space prompt_format max_actions_per_step step_budget turn_budget reward_type success_reward_base save_as_video".split()
+    config_type = make_dataclass("VLNCEEnvConfig", [(name, object) for name in fields])
+    for name, symbols in {
+        "vlnce_server.client": {"BatchEnvClient": Client},
+        "vlnce_server.env_config": {"VLNCEEnvConfig": config_type},
+        "vlnce_server.prompt": {"SYSTEM_PROMPT_NO_THINK": {"r2r": "Navigate."}},
+    }.items():
+        module = ModuleType(name)
+        module.__dict__.update(symbols)
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(
+        AutoTokenizer, "from_pretrained", lambda *a, **kw: SimpleNamespace()
+    )
+    root = Path(__file__).resolve().parents[2]
+
+    def create():
+        cfg = OmegaConf.load(
+            root / "examples/embodiment/config/env/vlnce_server_r2r.yaml"
+        )
+        cfg.reuse_environments = True
+        return VLNCEServerEnv(cfg, 2, 0, 1)
+
+    return create, slots
+
+
+@pytest.mark.parametrize("failure", ["create", "reset", "close"])
+def test_vlnce_reset_preserves_original_failure_and_cleanup_ownership(
+    vlnce_env_factory, failure
+):
+    create, slots = vlnce_env_factory
+    env = create()
+    env.client.failure = failure
+    error = ConnectionError if failure == "create" else RuntimeError
+    with pytest.raises(
+        error, match="create failed" if failure == "create" else "reset failed"
+    ):
+        env.reset()
+    assert env.client.close_calls == (0 if failure == "create" else 1)
+    assert bool(slots) == (failure == "close")
+    if failure != "close":
+        assert not env._created
+        assert env._created_configs is None
+    env.client.failure = None
+    env.close()
+    assert not slots
+
+
+def test_vlnce_release_returns_reused_slots_and_reset_recreates_them(vlnce_env_factory):
+    create, slots = vlnce_env_factory
+    env = create()
+    observation, _ = env.reset()
+    assert observation["messages"][0][0]["content"] == "Navigate."
+    assert len(slots) == 2
+    env.release()
+    env.release()
+    assert not slots and env.client.close_calls == 1
+    env.reset()
+    assert len(slots) == 2
+    env.close()
+
+
+def test_pooled_envs_skip_prefetch_and_share_slots_with_evaluation(vlnce_env_factory):
+    create, slots = vlnce_env_factory
+
+    class PhaseWorker(EnvWorker):
+        async def _evaluate(self, *args):
+            self.eval_env_list[0].reset()
+            assert len(slots) == 2
+            return {"ran_eval": True}
+
+    worker = object.__new__(PhaseWorker)
+    worker._timer_metrics = {}
+    worker._accelerator_type = None
+    worker.env_list, worker.eval_env_list = [create()], [create()]
+    worker.enable_train = worker.enable_eval = True
+    worker._prefetched_train_bootstrap = None
+    worker.env_list[0].reset()
+    worker.prefetch_train_bootstrap(None)
+    assert worker._prefetched_train_bootstrap is None
+    result = asyncio.run(worker.evaluate(None, None))
+    assert result == {"ran_eval": True}
+    assert not slots
+    worker.env_list[0].reset()
+    worker._close()
+    assert not slots
+
+
+def test_env_teardown_can_run_while_evaluation_waits_for_rollout(vlnce_env_factory):
+    create, slots = vlnce_env_factory
+
+    async def run():
+        waiting = asyncio.Event()
+
+        class MissingRollout:
+            async def async_wait(self):
+                waiting.set()
+                await asyncio.Future()
+
+            def wait(self):
+                raise AssertionError("Synchronous receive blocks worker teardown")
+
+        class Channel:
+            def put(self, **kwargs):
+                pass
+
+            def get(self, **kwargs):
+                assert kwargs["async_op"]
+                return MissingRollout()
+
+        worker = object.__new__(EnvWorker)
+        worker._timer_metrics = {}
+        worker._accelerator_type = None
+        worker._world_size = 1
+        worker._rank = 0
+        worker._worker_address = WorkerAddress("env", ranks=0)
+        worker._manager_proxy = SimpleNamespace(
+            get_worker_info=lambda address: SimpleNamespace(group_world_size=1)
+        )
+        worker.cfg = OmegaConf.create({"rollout": {"group_name": "rollout"}})
+        worker.enable_train = worker.enable_prefix = worker.env_decoupled_mode = False
+        worker.env_list, worker.eval_env_list = [], [create()]
+        worker.eval_rollout_epoch = worker.stage_num = worker.n_eval_chunk_steps = 1
+        worker.eval_num_envs_per_stage = worker.eval_batch_size = 2
+        worker.eval_prev_done = [None]
+        worker.eval_assignment = SimpleNamespace(
+            cfg=OmegaConf.create({"auto_reset": False})
+        )
+        worker._eval_policy_obs_spec = PolicyObsSpec()
+        channel = Channel()
+        evaluation = asyncio.create_task(worker.evaluate(channel, channel))
+        try:
+            await asyncio.wait_for(waiting.wait(), timeout=5)
+            assert len(slots) == 2
+            assert not evaluation.done()
+            worker._close()
+            assert not slots
+            assert not evaluation.done()
+        finally:
+            evaluation.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await evaluation
+        assert not slots
+
+    asyncio.run(run())
+
+
+def test_env_close_attempts_remaining_environments_after_failure(vlnce_env_factory):
+    create, slots = vlnce_env_factory
+    env = create()
+    env.reset()
+
+    class BrokenSimulator:
+        def close(self):
+            raise OSError("simulator disconnected")
+
+    worker = object.__new__(EnvWorker)
+    worker._logger = logging.getLogger("test_env_close")
+    worker._stacklevel = 1
+    worker.env_list = [BrokenSimulator(), env]
+    worker.eval_env_list = []
+    worker.close()
+    assert not slots
 
 
 def _env(env_type: str, total_num_envs: int, **fields) -> dict:

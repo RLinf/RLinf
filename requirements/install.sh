@@ -129,8 +129,8 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple" "robolab" "dexjoco")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang" "activevln")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple" "robolab" "dexjoco" "vlnce_server")
 
 #=======================Utility Functions=======================
 
@@ -2890,6 +2890,42 @@ print(
 PYEOF
 }
 
+install_vlnce_server_env() {
+    local source="https://github.com/arvillion/ActiveVLN.git@3a0c63b00e4f42c828cc74c3554afce17641da60"
+    local activevln_dir
+    activevln_dir=$(clone_or_reuse_repo ACTIVEVLN_PATH "$VENV_DIR/ActiveVLN" "${source%@*}")
+    if [ -z "${ACTIVEVLN_PATH:-}" ]; then
+        git -C "$activevln_dir" checkout "${source##*@}" >&2
+    fi
+    uv pip install httpx
+    # The upstream client is a namespace package outside setup.py's package list.
+    python - "$activevln_dir" <<'PYEOF'
+from pathlib import Path
+import sys
+import sysconfig
+
+root = Path(sys.argv[1]).resolve()
+path_file = Path(sysconfig.get_path("purelib")) / "activevln_client.pth"
+path_file.write_text(f"{root}\n{root / 'vlnce_server'}\n")
+PYEOF
+    python -c 'from vlnce_server.client import BatchEnvClient; from vlnce_server.env_config import VLNCEEnvConfig'
+}
+
+install_activevln_model() {
+    case "$ENV_NAME" in
+        vlnce_server)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_vlnce_server_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for ActiveVLN model." >&2
+            exit 1
+            ;;
+    esac
+    uv pip install -r "$SCRIPT_DIR/embodied/models/activevln.txt"
+}
+
 install_psi0_model() {
     case "$ENV_NAME" in
         simple)
@@ -3559,6 +3595,10 @@ install_env_only() {
             ;;
     esac
     case "$ENV_NAME" in
+        vlnce_server)
+            install_common_embodied_deps
+            install_vlnce_server_env
+            ;;
         d4rl)
             install_d4rl_env
             ;;
@@ -4862,6 +4902,9 @@ main() {
             fi
 
             case "$MODEL" in
+                activevln)
+                    install_activevln_model
+                    ;;
                 openvla)
                     install_openvla_model
                     ;;

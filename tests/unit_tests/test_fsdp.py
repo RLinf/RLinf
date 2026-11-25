@@ -17,7 +17,9 @@
 import logging
 import os
 import socket
+from contextlib import nullcontext
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -54,6 +56,73 @@ from rlinf.scheduler.cluster import Cluster
 # them.
 CONFIGURED_TIMEOUT = timedelta(minutes=97)
 RLINF_DEFAULT_TIMEOUT = timedelta(minutes=180)
+
+
+@pytest.mark.parametrize("layout", ["tokens", "chunks"])
+@pytest.mark.parametrize("threshold", [None, 1.0])
+def test_recompute_gap_preserves_samples_and_valid_tokens(
+    monkeypatch, layout, threshold
+):
+    from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
+
+    scores = torch.zeros(4, 64)
+    scores[0, :4], scores[1, :4] = 0.5, -0.5
+    scores[3, :4] = 100  # This transition is excluded by the step mask.
+    valid = torch.arange(64).expand(4, -1) < 4
+    scores[:, 4:] = float("nan")  # Padding must not enter either metric.
+    if layout == "chunks":
+        scores, valid = scores[:, None], valid[:, None]
+
+    class ReplayModel(nn.Module):
+        def forward(self, forward_inputs, **kwargs):
+            return {
+                "logprobs": forward_inputs["scores"],
+                "logprob_mask": forward_inputs["valid"],
+            }
+
+    actor = object.__new__(EmbodiedFSDPActor)
+    actor._timer_metrics = {}
+    actor._accelerator_type = None
+    actor.cfg = OmegaConf.create(
+        {
+            "actor": {
+                "model": {
+                    "model_type": "activevln" if layout == "tokens" else "openpi"
+                },
+                "micro_batch_size": 1,
+            },
+            "algorithm": {
+                "max_recompute_logprob_gap": threshold,
+                "importance_sampling_fix": True,
+            },
+        }
+    )
+    actor.model, actor.device, actor.amp_context = ReplayModel(), "cpu", nullcontext()
+    monkeypatch.setattr(
+        Worker,
+        "torch_platform",
+        SimpleNamespace(
+            synchronize=lambda: None,
+            ipc_collect=lambda: None,
+            empty_cache=lambda: None,
+        ),
+    )
+    old = torch.zeros_like(scores)
+    batch = {
+        "prev_logprobs": old,
+        "forward_inputs": {"scores": scores, "valid": valid},
+        "loss_mask": torch.tensor([True, True, True, False]),
+    }
+    if threshold is not None:
+        with pytest.raises(ValueError, match="found 2.0"):
+            actor.recompute_prev_logprobs(batch)
+        assert batch["prev_logprobs"] is old
+    else:
+        metrics = actor.recompute_prev_logprobs(batch)
+        assert metrics["actor/rollout_train_joint_logprob_gap_max"] == 2
+        assert metrics["actor/rollout_train_logprob_gap"] == pytest.approx(1 / 3)
+        torch.testing.assert_close(batch["prev_logprobs"], scores, equal_nan=True)
+        assert batch["rollout_logprobs"] is old
 
 
 def free_port() -> str:
@@ -358,8 +427,9 @@ def test_a_model_can_keep_its_embeddings_in_the_enclosing_unit(single_rank_env):
 @pytest.mark.parametrize("model_type", ["qwen2.5", "openpi"])
 @pytest.mark.parametrize("root_cast", [True, False])
 @pytest.mark.parametrize("sharding", ["no_shard", "shard_grad_op", "full_shard"])
+@pytest.mark.parametrize("ignored", [False, True])
 def test_strategy_passes_wrapper_overrides_and_root_cast_options(
-    monkeypatch, root_cast, model_type, sharding
+    monkeypatch, root_cast, model_type, sharding, ignored
 ):
     from rlinf.hybrid_engines.fsdp.strategy import fsdp as strategy_module
 
@@ -391,7 +461,12 @@ def test_strategy_passes_wrapper_overrides_and_root_cast_options(
         compatibility_targets.append,
     )
     model = nn.Sequential(nn.Linear(2, 2), nn.Linear(2, 2))
+    frozen = [model[0].weight]
+    if ignored:
+        model[0].weight.requires_grad_(False)
+        model.get_fsdp_ignored_states = lambda: frozen
     kwargs = strategy_module.FSDPStrategy(actor, 1).wrap_model(model, object())
+    assert kwargs["ignored_states"] is (frozen if ignored else None)
     assert compatibility_targets == [kwargs]
     assert kwargs["sharding_strategy"].name.lower() == sharding
     assert kwargs["mixed_precision"].cast_root_forward_inputs is root_cast

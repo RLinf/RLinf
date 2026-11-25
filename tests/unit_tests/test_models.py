@@ -81,6 +81,127 @@ from rlinf.workers.rollout.phyai import phyai_rollout_worker
 from rlinf.workers.rollout.phyai.phyai_rollout_worker import PhyAIRolloutWorker
 
 
+class _ActiveVLNTestVisual(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.anchor = torch.nn.Parameter(torch.zeros(1), requires_grad=False)
+
+    def forward(self, pixels, grid_thw):
+        return self.anchor.new_empty((0, 2))
+
+
+class _ActiveVLNTestCore(torch.nn.Module):
+    def __init__(self, logits):
+        super().__init__()
+        self.logits = torch.nn.Parameter(torch.tensor(logits, dtype=torch.float32))
+        self.qwen = torch.nn.Module()
+        self.qwen.visual = _ActiveVLNTestVisual()
+        self.qwen.config = SimpleNamespace(
+            image_token_id=99, vision_config=SimpleNamespace(spatial_merge_size=1)
+        )
+        self.max_context, self.max_new_tokens = 16, 4
+
+    def forward(self, ids, positions, **kwargs):
+        return self.logits[None, None].expand(1, ids.shape[1], -1)
+
+    def project(self, hidden):
+        return hidden
+
+
+def _activevln_replay_inputs(ids, start, *, top_p=1.0, penalty=1.0, backend=0):
+    return {
+        "input_ids": torch.tensor([ids]),
+        "position_ids": torch.zeros(1, 3, len(ids), dtype=torch.long),
+        "pixel_values": torch.empty(1, 0, 1),
+        "image_grid_thw": torch.empty(1, 0, 3, dtype=torch.long),
+        "lengths": torch.tensor([[start, len(ids), 0, 0]]),
+        "sampling": torch.tensor([[1.0, top_p, penalty, 1.0]], dtype=torch.float64),
+        "sampling_backend": torch.tensor([backend]),
+    }
+
+
+@pytest.mark.parametrize("backend", [0, 1])
+def test_activevln_replays_tied_top_p_with_saved_sampling_backend(backend):
+    from transformers import TopPLogitsWarper
+
+    from rlinf.models.embodiment.activevln.policy import ActiveVLNPolicy
+
+    core = _ActiveVLNTestCore([0, 0])
+    policy = ActiveVLNPolicy(
+        core, None, max_context=16, max_new_tokens=4, max_image_tokens=1
+    )
+    if backend == 0:
+        scores = TopPLogitsWarper(0.4)(torch.tensor([[0]]), core.logits[None])
+        token = scores.argmax(-1).item()
+    else:
+        token = core.logits.sort(descending=True).indices[0].item()
+    output = policy.default_forward(
+        _activevln_replay_inputs([0, token], 1, top_p=0.4, backend=backend),
+        compute_entropy=True,
+    )
+    assert output["logprobs"][0, 0] == 0
+    assert output["logprob_mask"].tolist() == [[True, False, False, False]]
+    assert torch.isfinite(output["entropy"]).all()
+    output["logprobs"].sum().backward()
+    assert torch.isfinite(core.logits.grad).all()
+
+
+def test_activevln_repeated_prompt_tokens_apply_one_penalty_and_keep_gradients():
+    from transformers import RepetitionPenaltyLogitsProcessor
+
+    from rlinf.models.embodiment.activevln.policy import ActiveVLNPolicy
+
+    core = _ActiveVLNTestCore([2, -1, 0.5])
+    policy = ActiveVLNPolicy(
+        core, None, max_context=16, max_new_tokens=4, max_image_tokens=1
+    )
+    ids = [0, 0, 1, 0, 2]
+    actual = policy.default_forward(_activevln_replay_inputs(ids, 3, penalty=1.2))[
+        "logprobs"
+    ][0, :2]
+    reference_logits = core.logits.detach().clone().requires_grad_()
+    processor = RepetitionPenaltyLogitsProcessor(1.2)
+    # Duplicate history tokens must not multiply the penalty's gradient.
+    expected = torch.stack(
+        [
+            processor(
+                torch.tensor(sorted(set(ids[:position])))[None],
+                reference_logits[None].clone(),
+            ).log_softmax(-1)[0, ids[position]]
+            for position in (3, 4)
+        ]
+    )
+    torch.testing.assert_close(actual, expected)
+    actual.sum().backward()
+    expected.sum().backward()
+    torch.testing.assert_close(core.logits.grad, reference_logits.grad)
+    assert policy.get_fsdp_ignored_states() == [core.qwen.visual.anchor]
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "error"),
+    [
+        ("rollout.rollout_backend", "sglang", "rollout.rollout_backend"),
+        ("actor.model.model_backend", "huggingface", "model.model_backend"),
+    ],
+)
+def test_activevln_rejects_conflicting_backend_configuration(
+    monkeypatch, key, value, error
+):
+    from hydra import compose, initialize_config_dir
+
+    root = Path(__file__).resolve().parents[2] / "examples/embodiment"
+    monkeypatch.setenv("EMBODIED_PATH", str(root))
+    with initialize_config_dir(config_dir=str(root / "config"), version_base=None):
+        cfg = compose(config_name="activevln_r2r_grpo_embodiinfer")
+    assert cfg.rollout.rollout_backend == "embodiinfer"
+    assert "generation_backend" not in cfg.rollout
+    assert "model_backend" not in cfg.actor.model
+    OmegaConf.update(cfg, key, value, force_add=True)
+    with pytest.raises(ValueError, match=error):
+        validate_embodied_cfg(cfg)
+
+
 @pytest.mark.parametrize("layout", ["hwc", "chw"])
 def test_evo_device_preprocessing_preserves_per_frame_ranges_and_clipping(layout):
     from rlinf.models.embodiment.evo1.utils.data_pipeline import build_evo1_inputs

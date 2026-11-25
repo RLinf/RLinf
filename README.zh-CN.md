@@ -34,6 +34,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/11] 🔥 RLinf 支持 ActiveVLN GRPO 训练，使用 EmbodiInfer 推理和 VLN-CE 环境服务。文档：[ActiveVLN](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/activevln.html)。
 - [2026/11] 🔥 RLinf 新增 FlexRLT，可直接用冻结 VLA 的特征训练小型 actor 和 critic，并分别选择特征表示、网络、AC/TD3 算法及 STEAM 门控。文档：[FlexRLT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/flexrlt.html)。
 - [2026/11] 🔥 RLinf 支持在 [DexJoCo](https://github.com/brave-eai/dexjoco) 灵巧操作基准上用 SFT 和 PPO 训练 CNN 和 π₀.₅ policy。PPO 将 π₀.₅ 在 `water_plant` 上的成功率从 SFT 后的 78.1% 提升至 98.4%。文档：[基于 DexJoCo 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html)。
 - [2026/11] 🔥 RLinf 支持奖励反馈学习（ReFL），使用 ImageReward 微调 SD3.5 Medium。文档：[ReFL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/refl.html)。
@@ -151,14 +152,14 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
 
 ### 训练与 Rollout 引擎
 
-RLinf 用训练引擎更新模型，用 Rollout 引擎执行 rollout 和评测。FSDP 能快速适配新模型和新算法，Megatron-LM 和 Megatron-Bridge 面向大规模训练。智能体一栏也涵盖数学、VQA 等推理任务。PhyAI 和 ApxInf 目前仅支持 π₀.₅。
+RLinf 用训练引擎更新模型，用 Rollout 引擎执行 rollout 和评测。FSDP 能快速适配新模型和新算法，Megatron-LM 和 Megatron-Bridge 面向大规模训练。智能体一栏也涵盖数学、VQA 等推理任务。PhyAI 和 ApxInf 目前仅支持 π₀.₅。EmbodiInfer 支持 ActiveVLN。
 
 <table>
   <thead align="center">
     <tr>
       <th rowspan="2"></th>
       <th colspan="3">训练</th>
-      <th colspan="5">Rollout</th>
+      <th colspan="6">Rollout</th>
     </tr>
     <tr>
       <th>FSDP</th>
@@ -167,6 +168,7 @@ RLinf 用训练引擎更新模型，用 Rollout 引擎执行 rollout 和评测�
       <th>HuggingFace</th>
       <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/sglang_server.html">SGLang</a></th>
       <th>vLLM</th>
+      <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/activevln.html">EmbodiInfer</a></th>
       <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/rollout-engines/phyai.html">PhyAI</a></th>
       <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/apxinf.html">ApxInf</a></th>
     </tr>
@@ -175,12 +177,12 @@ RLinf 用训练引擎更新模型，用 Rollout 引擎执行 rollout 和评测�
     <tr>
       <td align="left"><b>具身智能</b></td>
       <td>✅</td><td>—</td><td>✅</td>
-      <td>✅</td><td>✅</td><td>—</td><td>✅</td><td>✅</td>
+      <td>✅</td><td>✅</td><td>—</td><td>✅</td><td>✅</td><td>✅</td>
     </tr>
     <tr>
       <td align="left"><b>智能体</b></td>
       <td>✅</td><td>✅</td><td>✅</td>
-      <td>—</td><td>✅</td><td>✅</td><td>—</td><td>—</td>
+      <td>—</td><td>✅</td><td>✅</td><td>—</td><td>—</td><td>—</td>
     </tr>
   </tbody>
 </table>
@@ -226,6 +228,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robolab.html">RoboLab（仅评估）</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/activevln.html">VLN-CE</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -246,6 +249,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/evo1.html">Evo-1</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/molmoact2.html">MolmoAct2</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/psi0.html">Psi0</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/activevln.html">ActiveVLN</a> ✅</li>
           </ul>
           <li><b>VLM 模型</b></li>
           <ul>
