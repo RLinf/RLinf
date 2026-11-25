@@ -173,7 +173,7 @@ else
 fi
 
 CONFIG_PATH="${EVALUATIONS_PATH}/${BENCHMARK}"
-if [ "${CONFIG_NAME}" = "behavior2026_openpi_pi05_eval" ]; then
+if [ "${BENCHMARK}" = "behavior" ]; then
     SRC_FILE="${EVALUATIONS_PATH}/behavior/eval_2026.py"
 fi
 if [ ! -f "${CONFIG_PATH}/${CONFIG_NAME}.yaml" ]; then

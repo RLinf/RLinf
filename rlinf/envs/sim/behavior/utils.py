@@ -13,12 +13,16 @@
 # limitations under the License.
 
 import inspect
+import json
 import os
+from importlib.util import find_spec
+from pathlib import Path
 
 import torch
 import yaml
 from omegaconf import DictConfig, OmegaConf, open_dict
 
+from rlinf.utils.data_iter_utils import ceildiv
 from rlinf.utils.logging import get_logger
 
 SUPPORTED_ENV_WRAPPERS = ("rgb", "default", "rgb_lowres", "rich_obs")
@@ -372,3 +376,45 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     )
 
     return omni_cfg
+
+
+def resolve_step_limits(env_cfg: DictConfig, chunk_size: int) -> None:
+    """Apply the challenge timeout after Hydra has composed this job's overrides."""
+    if env_cfg.max_episode_steps is None:
+        root = Path(
+            os.environ.get("OMNIGIBSON_DATA_PATH", "../../datasets")
+        ).expanduser()
+        if not root.is_absolute():
+            package = find_spec("omnigibson")
+            if package is None or package.origin is None:
+                raise ValueError("Set OMNIGIBSON_DATA_PATH to the BEHAVIOR dataset.")
+            root = Path(package.origin).parent / root
+        stats = root / "2026-challenge-task-instances/metadata/task.jsonl"
+        task = env_cfg.omni_config.task.activity_name
+        with stats.open() as file:
+            for line in file:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if row["task_name"] == task:
+                    # The official timeout checks a zero-based step counter.
+                    env_cfg.max_episode_steps = int(row["length"] * 1.5) + 1
+                    break
+            else:
+                raise ValueError(f"No demonstration length for {task!r} in {stats}")
+    if env_cfg.max_episode_steps < 1 or chunk_size < 1:
+        raise ValueError("The episode length and action chunk size must be positive.")
+    budget = ceildiv(env_cfg.max_episode_steps, chunk_size) * chunk_size
+    if env_cfg.max_steps_per_rollout_epoch is None:
+        env_cfg.max_steps_per_rollout_epoch = budget
+    elif env_cfg.max_steps_per_rollout_epoch < 1:
+        raise ValueError("max_steps_per_rollout_epoch must be positive.")
+    elif (
+        not env_cfg.auto_reset
+        and not env_cfg.get("early_stop_on_done", False)
+        and env_cfg.max_steps_per_rollout_epoch > budget
+    ):
+        raise ValueError(
+            f"The episode fits in {budget} rollout steps. Reduce "
+            "max_steps_per_rollout_epoch or enable early_stop_on_done."
+        )
