@@ -65,8 +65,10 @@ class FSDPVersion(str, Enum):
     FSDP2 = "fsdp2"
 
 
-def create_device_mesh(world_size: int) -> DeviceMesh:
-    """Build the 1-D device mesh that FSDP shards over.
+def create_device_mesh(
+    world_size: int, sharding_strategy: str = "full_shard"
+) -> DeviceMesh:
+    """Build the device mesh that FSDP shards or replicates over.
 
     The default process group is created here rather than left to
     ``init_device_mesh``. When no default group exists, ``init_device_mesh``
@@ -79,9 +81,13 @@ def create_device_mesh(world_size: int) -> DeviceMesh:
 
     Args:
         world_size (int): Number of ranks participating in FSDP.
+        sharding_strategy (str): When ``"no_shard"``, builds a 2-D
+            ``(world_size, 1)`` mesh named ``("ddp", "fsdp")`` so FSDP2
+            replicates parameters across ranks (DDP) without parameter sharding.
 
     Returns:
-        DeviceMesh: A 1-D mesh over ``world_size`` ranks named ``fsdp``.
+        DeviceMesh: A 1-D ``("fsdp",)`` mesh, or a 2-D ``("ddp", "fsdp")`` mesh
+        for ``no_shard``.
     """
     if torch.distributed.is_initialized():
         get_logger().warning(
@@ -93,6 +99,12 @@ def create_device_mesh(world_size: int) -> DeviceMesh:
         # No backend is passed, so torch still resolves the per-device backend
         # it would have picked on its own; only the timeout changes.
         torch.distributed.init_process_group(timeout=Cluster.get_collective_timeout())
+    if sharding_strategy == "no_shard":
+        return init_device_mesh(
+            Worker.torch_device_type,
+            mesh_shape=(world_size, 1),
+            mesh_dim_names=("ddp", "fsdp"),
+        )
     return init_device_mesh(
         Worker.torch_device_type, mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
     )

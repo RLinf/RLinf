@@ -31,8 +31,10 @@ from rlinf.data.schema.embodied_types import EnvOutput, EnvTransition
 from rlinf.envs.layout import EnvAssignment
 from rlinf.hybrid_engines.weight_syncer import (
     BucketWeightSyncer,
+    FlatBucketWeightSyncer,
     PatchWeightSyncer,
     WeightSyncer,
+    can_use_p2p_weight_sync,
 )
 from rlinf.hybrid_engines.weight_syncer.bucket_syncer import (
     iter_named_tensor_buckets,
@@ -1658,6 +1660,418 @@ def test_weight_syncer_factory_rejects_unknown_type():
     cfg = OmegaConf.create({"type": "unknown"})
     with pytest.raises(ValueError, match="Unsupported weight syncer type"):
         WeightSyncer.create(cfg)
+
+
+class _CloningTransport:
+    """In-memory wire transport that clones tensors like a real copy/IPC link."""
+
+    def __init__(self):
+        self._queue: list[object] = []
+        self.payload_sizes: list[int] = []
+
+    async def send(self, data):
+        if torch.is_tensor(data):
+            self.payload_sizes.append(int(data.numel()))
+            self._queue.append(data.clone())
+        else:
+            self._queue.append(copy.deepcopy(data))
+
+    async def recv(self):
+        assert self._queue, "Transport queue is empty"
+        return self._queue.pop(0)
+
+    async def recv_into(self, dst: torch.Tensor) -> None:
+        item = await self.recv()
+        assert torch.is_tensor(item)
+        assert dst.shape == item.shape and dst.dtype == item.dtype
+        dst.copy_(item)
+
+
+def test_flat_bucket_weight_syncer_small_model_single_bucket_and_p2p_roundtrip():
+    sender_model = _TiedParamWeightSyncModel()
+    sender_model.register_buffer("count_f64", torch.tensor(12.0, dtype=torch.float64))
+    receiver_model = copy.deepcopy(sender_model)
+    transport = _CloningTransport()
+
+    sender = FlatBucketWeightSyncer(
+        bucket_size=1024 * 1024,
+        bucket_dtype=None,
+        bucket_device="cpu",
+        load_instant=True,
+        enable_p2p=True,
+    )
+    receiver = FlatBucketWeightSyncer(
+        bucket_size=1024 * 1024,
+        bucket_dtype=None,
+        bucket_device="cpu",
+        load_instant=True,
+        enable_p2p=True,
+    )
+    names = collect_param_names_need_sync(sender_model)
+
+    async def _run():
+        await sender.init_sender_from_module(
+            sender_model, names, transport.send, is_sender=True
+        )
+        await receiver.init_receiver(None, transport.recv)
+        assert len(sender._sender_buckets) == 1
+        assert sender._sender_buffer is not None
+        assert sender._sender_buffer.numel() < 1024
+
+        with torch.no_grad():
+            sender_model.embed.copy_(torch.tensor([9.0, 8.0, 7.0, 6.0]))
+            sender_model.frozen.fill_(99.0)
+            sender_model.persistent_buf.fill_(42.0)
+            sender_model.count_f64.fill_(1024.5)
+
+        await sender.sync_module(sender_model, transport.send, version=7)
+        v1 = await receiver.apply(
+            receiver_model, transport.recv, recv_into=transport.recv_into
+        )
+        assert v1 == 7
+        assert torch.equal(receiver_model.embed, sender_model.embed)
+        assert torch.equal(receiver_model.lm_head, sender_model.lm_head)
+        assert torch.equal(receiver_model.persistent_buf, sender_model.persistent_buf)
+        assert torch.equal(receiver_model.count_f64, sender_model.count_f64)
+        # Frozen parameter was not in param_names_need_sync.
+        assert not torch.equal(receiver_model.frozen, sender_model.frozen)
+
+        # Second sync reuses the exact same flat buffers with updated values.
+        buf_ptr = sender._sender_buffer.data_ptr()
+        recv_ptr = receiver._receiver_buffer.data_ptr()
+        with torch.no_grad():
+            sender_model.embed.mul_(-2.0)
+            sender_model.count_f64.add_(3.25)
+        await sender.sync_module(sender_model, transport.send, version=8)
+        v2 = await receiver.apply(
+            receiver_model, transport.recv, recv_into=transport.recv_into
+        )
+        assert v2 == 8
+        assert sender._sender_buffer.data_ptr() == buf_ptr
+        assert receiver._receiver_buffer.data_ptr() == recv_ptr
+        assert torch.equal(receiver_model.embed, sender_model.embed)
+        assert torch.equal(receiver_model.count_f64, sender_model.count_f64)
+
+    asyncio.run(_run())
+    assert len(transport.payload_sizes) == 2
+
+
+@pytest.mark.parametrize("load_instant", [True, False])
+def test_flat_bucket_weight_syncer_multi_bucket_reuses_buffer_and_oversized_tensor(
+    load_instant: bool,
+):
+    sender_model = _TinyWeightSyncModel()
+    receiver_model = copy.deepcopy(sender_model)
+    transport = _CloningTransport()
+
+    # linear.weight is 48 bytes, tensor3d is 96 bytes -> bucket_size=64 forces
+    # multiple buckets plus one oversized bucket for tensor3d (never split).
+    sender = FlatBucketWeightSyncer(
+        bucket_size=64,
+        bucket_dtype=None,
+        bucket_device="cpu",
+        load_instant=load_instant,
+    )
+    receiver = FlatBucketWeightSyncer(
+        bucket_size=64,
+        bucket_dtype=None,
+        bucket_device="cpu",
+        load_instant=load_instant,
+    )
+    names = collect_param_names_need_sync(sender_model)
+
+    with torch.no_grad():
+        sender_model.linear.weight.fill_(13.5)
+        sender_model.linear.bias.copy_(torch.tensor([-1.0, 2.5, 4.0]))
+        sender_model.tensor3d.mul_(3.0).add_(1.0)
+        sender_model.scalar_buf.fill_(7.25)
+        sender_model.vector_buf.copy_(torch.tensor([10.0, 20.0, 30.0]))
+
+    async def _run() -> int:
+        await sender.init_sender(
+            sender_model.state_dict(), names, transport.send, is_sender=True
+        )
+        await receiver.init_receiver(receiver_model.state_dict(), transport.recv)
+        assert len(sender._sender_buckets) >= 3
+        assert sender._sender_buffer is not None
+        assert sender._sender_buffer.numel() == max(
+            b.total_bytes for b in sender._sender_buckets
+        )
+        # Broadcast mode leaves receiver's persistent P2P buffer unallocated.
+        assert receiver._receiver_buffer is None
+
+        await sender.sync(sender_model.state_dict(), transport.send, version=19)
+        return await receiver.apply(receiver_model, transport.recv)
+
+    applied_version = asyncio.run(_run())
+    assert applied_version == 19
+    assert len(transport.payload_sizes) == len(sender._sender_buckets)
+    _assert_state_dict_equal(
+        _clone_state_dict(sender_model), _clone_state_dict(receiver_model)
+    )
+
+
+def test_flat_bucket_weight_syncer_bucket_dtype_and_nonfloating_preservation():
+    sender_model = _make_bucket_dtype_model()
+    receiver_model = copy.deepcopy(sender_model)
+    transport = _CloningTransport()
+
+    sender = FlatBucketWeightSyncer(
+        bucket_size=32,
+        bucket_dtype=torch.bfloat16,
+        bucket_device="cpu",
+        load_instant=True,
+    )
+    receiver = FlatBucketWeightSyncer(
+        bucket_size=32,
+        bucket_dtype=torch.bfloat16,
+        bucket_device="cpu",
+        load_instant=True,
+    )
+    names = collect_param_names_need_sync(sender_model)
+
+    with torch.no_grad():
+        sender_model.fp32_param[0, 1] = 12.5
+        sender_model.bf16_param[1, 2] = torch.tensor(5.0, dtype=torch.bfloat16)
+        sender_model.int64_buf[0] = 2**42 + 777
+        sender_model.bool_buf.logical_not_()
+
+    async def _run() -> int:
+        await sender.init_sender(
+            sender_model.state_dict(), names, transport.send, is_sender=True
+        )
+        await receiver.init_receiver(receiver_model.state_dict(), transport.recv)
+        slot_dtypes = {
+            slot.dst_key: slot.dtype
+            for bucket in sender._sender_buckets
+            for slot in bucket.slots
+        }
+        assert slot_dtypes["fp32_param"] == torch.bfloat16
+        assert slot_dtypes["bf16_param"] == torch.bfloat16
+        assert slot_dtypes["int64_buf"] == torch.int64
+        assert slot_dtypes["bool_buf"] == torch.bool
+
+        await sender.sync(
+            sender_model.state_dict(),
+            transport.send,
+            version=torch.tensor(23, dtype=torch.int32),
+        )
+        return await receiver.apply(receiver_model, transport.recv)
+
+    applied_version = asyncio.run(_run())
+    assert applied_version == 23
+    torch.testing.assert_close(
+        receiver_model.fp32_param, sender_model.fp32_param.to(torch.bfloat16).float()
+    )
+    assert torch.equal(receiver_model.bf16_param, sender_model.bf16_param)
+    assert torch.equal(receiver_model.int64_buf, sender_model.int64_buf)
+    assert torch.equal(receiver_model.bool_buf, sender_model.bool_buf)
+
+
+def test_flat_bucket_weight_syncer_is_agent_key_rewrite_and_strict_false():
+    class _ActorVLM(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.visual = torch.nn.Linear(2, 2)
+            self.model = torch.nn.Module()
+            self.model.language_model = torch.nn.Linear(3, 2)
+            self.actor_only = torch.nn.Linear(2, 1)
+
+    class _RolloutVLM(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.visual = torch.nn.Linear(2, 2)
+            self.model = torch.nn.Linear(3, 2)
+
+    actor_model = _ActorVLM()
+    rollout_model = _RolloutVLM()
+    with torch.no_grad():
+        actor_model.visual.weight.fill_(3.0)
+        actor_model.model.language_model.weight.fill_(5.5)
+        actor_model.model.language_model.bias.fill_(-1.25)
+
+    transport = _CloningTransport()
+    sender = FlatBucketWeightSyncer(
+        bucket_size=4096, bucket_device="cpu", is_agent=True
+    )
+    receiver = FlatBucketWeightSyncer(
+        bucket_size=4096, bucket_device="cpu", is_agent=True
+    )
+    state_dict = dict(actor_model.state_dict())
+    state_dict["model._extra_state"] = torch.tensor([1])
+    names = list(state_dict.keys())
+
+    async def _run() -> int:
+        await sender.init_sender(state_dict, names, transport.send, is_sender=True)
+        await receiver.init_receiver(rollout_model.state_dict(), transport.recv)
+        await sender.sync(state_dict, transport.send, version=4)
+        return await receiver.apply(rollout_model, transport.recv)
+
+    assert asyncio.run(_run()) == 4
+    assert torch.equal(rollout_model.visual.weight, actor_model.visual.weight)
+    assert torch.equal(
+        rollout_model.model.weight, actor_model.model.language_model.weight
+    )
+    assert torch.equal(rollout_model.model.bias, actor_model.model.language_model.bias)
+
+
+def test_flat_bucket_weight_syncer_dtensor_lockstep_and_replicated_fast_path(
+    monkeypatch,
+):
+    import rlinf.hybrid_engines.weight_syncer.flat_bucket_syncer as fbs
+
+    class _FakeDTensor:
+        def __init__(self, tensor: torch.Tensor, placements: tuple):
+            self._tensor = tensor
+            self.placements = placements
+            self.shape = tensor.shape
+            self.dtype = tensor.dtype
+            self.full_calls = 0
+            self.local_calls = 0
+
+        def full_tensor(self) -> torch.Tensor:
+            self.full_calls += 1
+            return self._tensor
+
+        def to_local(self) -> torch.Tensor:
+            self.local_calls += 1
+            return self._tensor
+
+    monkeypatch.setattr(fbs, "DTensor", _FakeDTensor)
+
+    sharded = _FakeDTensor(torch.ones(2, 3), (Shard(0),))
+    replicated = _FakeDTensor(torch.full((2, 3), 2.0), (Replicate(), Replicate()))
+    state_dict = {"sharded": sharded, "replicated": replicated}
+    send_calls = 0
+
+    async def _never_send(_data):
+        nonlocal send_calls
+        send_calls += 1
+
+    non_sender = FlatBucketWeightSyncer(bucket_size=64, bucket_device="cpu")
+
+    async def _run():
+        await non_sender.init_sender(
+            state_dict, ["sharded", "replicated"], _never_send, is_sender=False
+        )
+        assert non_sender._sender_buffer is None
+        await non_sender.sync(state_dict, _never_send, version=1)
+
+    asyncio.run(_run())
+    assert send_calls == 0
+    assert sharded.full_calls == 1
+    assert sharded.local_calls == 0
+    assert replicated.full_calls == 0
+    assert replicated.local_calls == 1
+
+
+def test_flat_bucket_weight_syncer_loads_across_model_and_bucket_devices():
+    device = _get_cuda_device()
+
+    async def _run_case(
+        model_device: torch.device | str,
+        bucket_device: torch.device | str,
+        use_p2p: bool,
+        version: int,
+    ) -> tuple[int, torch.nn.Module, torch.nn.Module]:
+        sender_model = _make_bucket_dtype_model(model_device)
+        receiver_model = copy.deepcopy(sender_model)
+        transport = _CloningTransport()
+        sender = FlatBucketWeightSyncer(
+            bucket_size=32,
+            bucket_dtype=None,
+            bucket_device=bucket_device,
+            load_instant=True,
+        )
+        receiver = FlatBucketWeightSyncer(
+            bucket_size=32,
+            bucket_dtype=None,
+            bucket_device=bucket_device,
+            load_instant=True,
+        )
+        names = collect_param_names_need_sync(sender_model)
+
+        with torch.no_grad():
+            sender_model.fp32_param[0, 1] = 88.5
+            sender_model.bf16_param[0, 2] += torch.tensor(
+                3.0, dtype=torch.bfloat16, device=model_device
+            )
+            sender_model.int64_buf[1] = -(2**41 + 9)
+            sender_model.bool_buf[1] = True
+
+        await sender.init_sender(
+            sender_model.state_dict(), names, transport.send, is_sender=True
+        )
+        await receiver.init_receiver(receiver_model.state_dict(), transport.recv)
+        await sender.sync(sender_model.state_dict(), transport.send, version=version)
+        applied_version = await receiver.apply(
+            receiver_model,
+            transport.recv,
+            recv_into=transport.recv_into if use_p2p else None,
+        )
+        return applied_version, sender_model, receiver_model
+
+    for m_dev, b_dev, use_p2p, ver in (
+        (device, "cpu", False, 31),
+        ("cpu", device, False, 32),
+        (device, device, True, 33),
+    ):
+        applied_version, s_model, r_model = asyncio.run(
+            _run_case(m_dev, b_dev, use_p2p, ver)
+        )
+        assert applied_version == ver
+        _assert_state_dict_equal_on_cpu(
+            _clone_state_dict(s_model), _clone_state_dict(r_model)
+        )
+
+
+def test_weight_syncer_factory_builds_flat_bucket_and_p2p_eligibility():
+    flat_cfg = OmegaConf.create(
+        {
+            "type": "flat_bucket",
+            "use_ring_sync": True,
+            "nccl_max_ctas": 4,
+            "flat_bucket": {
+                "bucket_size": 256,
+                "bucket_dtype": "bf16",
+                "bucket_device": "cpu",
+                "is_agent": True,
+                "load_instant": False,
+                "enable_p2p": True,
+            },
+        }
+    )
+    syncer = WeightSyncer.create(flat_cfg)
+    assert isinstance(syncer, FlatBucketWeightSyncer)
+    assert syncer.bucket_size == 256
+    assert syncer.bucket_dtype == torch.bfloat16
+    assert syncer.is_agent is True
+    assert syncer.load_instant is False
+    assert syncer.enable_p2p is True
+    assert syncer.comm_options is not None
+    assert syncer.comm_options.use_ring_broadcast is True
+    assert syncer.comm_options.accel_max_ctas == 4
+
+    no_shard_cfg = OmegaConf.create(
+        {"actor": {"fsdp_config": {"sharding_strategy": "no_shard"}}}
+    )
+    full_shard_cfg = OmegaConf.create(
+        {"actor": {"fsdp_config": {"sharding_strategy": "full_shard"}}}
+    )
+    assert can_use_p2p_weight_sync(syncer, full_shard_cfg, 1, 1) is True
+    assert can_use_p2p_weight_sync(syncer, no_shard_cfg, 4, 4) is True
+    assert can_use_p2p_weight_sync(syncer, full_shard_cfg, 4, 4) is False
+    assert can_use_p2p_weight_sync(syncer, no_shard_cfg, 4, 2) is False
+
+    disabled_syncer = FlatBucketWeightSyncer(
+        bucket_size=256, bucket_device="cpu", enable_p2p=False
+    )
+    assert can_use_p2p_weight_sync(disabled_syncer, no_shard_cfg, 4, 4) is False
+
+    bucket_syncer = BucketWeightSyncer(
+        bucket_size=256, bucket_dtype=None, bucket_device="cpu"
+    )
+    assert can_use_p2p_weight_sync(bucket_syncer, no_shard_cfg, 1, 1) is False
 
 
 # Both async runners must pick the overlap up from the mixin, not from their own

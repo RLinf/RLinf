@@ -15,6 +15,7 @@
 from .base import WeightSyncer
 from .bucket_syncer import BucketWeightSyncer
 from .compressor import IdentityCompressor, NVCompCompressor, PatchCompressor
+from .flat_bucket_syncer import FlatBucketWeightSyncer, can_use_p2p_weight_sync
 from .patch_syncer import (
     CompressedWeightPatch,
     PatchWeightSyncer,
@@ -25,6 +26,7 @@ from .patch_syncer import (
 __all__ = [
     "BucketWeightSyncer",
     "CompressedWeightPatch",
+    "FlatBucketWeightSyncer",
     "IdentityCompressor",
     "NVCompCompressor",
     "PatchCompressor",
@@ -32,4 +34,5 @@ __all__ = [
     "WeightPatch",
     "WeightPatchTransport",
     "WeightSyncer",
+    "can_use_p2p_weight_sync",
 ]

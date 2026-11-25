@@ -95,6 +95,29 @@ class WeightSyncer(ABC):
                     bucket_config, "load_instant", default=True
                 ),
             )
+        elif syncer_type == "flat_bucket":
+            from .flat_bucket_syncer import FlatBucketWeightSyncer
+
+            flat_config = OmegaConf.select(config, "flat_bucket")
+            assert flat_config is not None, (
+                "flat_bucket config must be provided for flat_bucket weight syncer"
+            )
+            syncer = FlatBucketWeightSyncer(
+                bucket_size=OmegaConf.select(
+                    flat_config, "bucket_size", default=512 * 1024 * 1024
+                ),
+                bucket_dtype=OmegaConf.select(
+                    flat_config, "bucket_dtype", default=None
+                ),
+                bucket_device=OmegaConf.select(
+                    flat_config, "bucket_device", default=Worker.torch_device_type
+                ),
+                is_agent=OmegaConf.select(flat_config, "is_agent", default=False),
+                load_instant=OmegaConf.select(
+                    flat_config, "load_instant", default=True
+                ),
+                enable_p2p=OmegaConf.select(flat_config, "enable_p2p", default=True),
+            )
         elif syncer_type == "patch":
             from .patch_syncer import PatchWeightSyncer
 

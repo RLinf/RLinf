@@ -45,7 +45,11 @@ from rlinf.data.schema.embodied_types import (
     split_batch_value,
 )
 from rlinf.envs.layout import EnvLayout, EnvSpec
-from rlinf.hybrid_engines.weight_syncer import WeightSyncer
+from rlinf.hybrid_engines.weight_syncer import (
+    FlatBucketWeightSyncer,
+    WeightSyncer,
+    can_use_p2p_weight_sync,
+)
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import (
@@ -158,6 +162,7 @@ class MultiStepRolloutWorker(Worker):
 
         self.weight_syncer = None
         self._sync_weight_comm_options = None
+        self._use_p2p_weight_sync = False
         if not self.only_eval:
             weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer", default=None)
             assert weight_syncer_cfg is not None, (
@@ -165,6 +170,12 @@ class MultiStepRolloutWorker(Worker):
             )
             self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
             self._sync_weight_comm_options = self.weight_syncer.comm_options
+            self._use_p2p_weight_sync = can_use_p2p_weight_sync(
+                self.weight_syncer,
+                cfg,
+                self.placement.get_world_size("actor"),
+                rollout_world_size,
+            )
 
         self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
         if self.env_decoupled_mode and self.enable_train:
@@ -782,40 +793,72 @@ class MultiStepRolloutWorker(Worker):
     @Worker.timer("sync_model_from_actor")
     async def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
+        if self._use_p2p_weight_sync:
+            assert isinstance(self.weight_syncer, FlatBucketWeightSyncer)
 
-        async def recv_func() -> Any:
-            return await self.broadcast(
-                None,
-                groups=[
-                    (self.actor_group_name, self.actor_weight_src_rank),
-                    (self._group_name, self._weight_sync_rollout_ranks),
-                ],
-                src=(self.actor_group_name, self.actor_weight_src_rank),
-                async_op=True,
-                options=self._sync_weight_comm_options,
-            ).async_wait()
-
-        async def send_func(data: Any) -> None:
-            if not self._weight_sync_is_sender:
-                return
-            actor_world_size = self.placement.get_world_size("actor")
-            for actor_rank in range(actor_world_size):
-                await self.send(
-                    data,
-                    dst_group_name=self.actor_group_name,
-                    dst_rank=actor_rank,
+            async def recv_meta() -> Any:
+                return await self.recv(
+                    src_group_name=self.actor_group_name,
+                    src_rank=self._rank,
                     async_op=True,
                     options=self._sync_weight_comm_options,
                 ).async_wait()
 
-        if not self.weight_syncer.receiver_initialized():
-            await self.weight_syncer.init_receiver(
-                state_dict=self.hf_model.state_dict(),
-                recv=recv_func,
-                send=send_func,
-            )
+            async def recv_into(buf: torch.Tensor) -> None:
+                await self.recv_tensor(
+                    buf,
+                    src_group_name=self.actor_group_name,
+                    src_rank=self._rank,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
 
-        applied_version = await self.weight_syncer.apply(self.hf_model, recv_func)
+            if not self.weight_syncer.receiver_initialized():
+                await self.weight_syncer.init_receiver(
+                    state_dict=None,
+                    recv=recv_meta,
+                    send=None,
+                )
+
+            applied_version = await self.weight_syncer.apply(
+                self.hf_model, recv_meta, recv_into=recv_into
+            )
+        else:
+
+            async def recv_func() -> Any:
+                return await self.broadcast(
+                    None,
+                    groups=[
+                        (self.actor_group_name, self.actor_weight_src_rank),
+                        (self._group_name, self._weight_sync_rollout_ranks),
+                    ],
+                    src=(self.actor_group_name, self.actor_weight_src_rank),
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
+
+            async def send_func(data: Any) -> None:
+                if not self._weight_sync_is_sender:
+                    return
+                actor_world_size = self.placement.get_world_size("actor")
+                for actor_rank in range(actor_world_size):
+                    await self.send(
+                        data,
+                        dst_group_name=self.actor_group_name,
+                        dst_rank=actor_rank,
+                        async_op=True,
+                        options=self._sync_weight_comm_options,
+                    ).async_wait()
+
+            if not self.weight_syncer.receiver_initialized():
+                await self.weight_syncer.init_receiver(
+                    state_dict=self.hf_model.state_dict(),
+                    recv=recv_func,
+                    send=send_func,
+                )
+
+            applied_version = await self.weight_syncer.apply(self.hf_model, recv_func)
+
         self.version = applied_version
         if self.finished_episodes is None:
             self.finished_episodes = self.version * self.train_trajectories_per_step

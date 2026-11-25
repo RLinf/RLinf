@@ -22,6 +22,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
+from rlinf.hybrid_engines.fsdp import FSDP
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.mlp_policy.iql_mlp_policy import (
     IQLMLPPolicy,
@@ -759,44 +760,21 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
                 self.load_param_and_grad(self.device, False)
 
         if self._use_fsdp_wrap:
-            state_dict = self.get_model_state_dict(
-                cpu_offload=False, full_state_dict=False
-            )
+            direct_module = self.model if not isinstance(self.model, FSDP) else None
+
+            def state_dict_fn():
+                return self.get_model_state_dict(
+                    cpu_offload=False, full_state_dict=False
+                )
         else:
-            state_dict = self.get_policy_state_dict()
+            direct_module = self.model
+            state_dict_fn = self.get_policy_state_dict
 
-        async def send_func(data):
-            if not self._is_weight_sender:
-                return
-            await self.broadcast(
-                data,
-                groups=[
-                    (self._group_name, 0),
-                    (self._rollout_group_name, self._rollout_all_ranks),
-                ],
-                src=(self._group_name, 0),
-                async_op=True,
-                options=self._sync_weight_comm_options,
-            ).async_wait()
-
-        async def recv_func():
-            return await self.recv(
-                src_group_name=self._rollout_group_name,
-                src_rank=0,
-                async_op=True,
-                options=self._sync_weight_comm_options,
-            ).async_wait()
-
-        if not self.weight_syncer.sender_initialized():
-            await self.weight_syncer.init_sender(
-                state_dict=state_dict,
-                send=send_func,
-                recv=recv_func,
-                param_names_need_sync=self.param_names_need_sync,
-                is_sender=self._is_weight_sender,
-            )
-
-        await self.weight_syncer.sync(state_dict, send_func, version=self.version)
+        await self._sync_weights_with_syncer(
+            version=self.version,
+            direct_module=direct_module,
+            state_dict_fn=state_dict_fn,
+        )
 
         if self.enable_offload:
             assert not self.is_weight_offloaded, (
