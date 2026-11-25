@@ -68,6 +68,7 @@ class _Session:
     error: Exception | None = None
     # Set while no request of the session is being answered.
     idle: asyncio.Event = field(default_factory=asyncio.Event)
+    request_task: asyncio.Task | None = None
 
 
 class OpenAISessionServer:
@@ -125,13 +126,17 @@ class OpenAISessionServer:
         self._sessions[session_id] = session
         return f"http://{self._advertise_host}:{self._port}/sessions/{session_id}/v1"
 
-    async def close(self, session_id: str) -> Exception | None:
+    async def close(
+        self, session_id: str, *, cancel_request: bool = False
+    ) -> Exception | None:
         """Stop serving a session and return the first error its handler raised.
 
         A request already being answered runs to completion first, so the
         session's state is final once this returns.
         """
         session = self._sessions.pop(session_id)
+        if cancel_request and session.request_task is not None:
+            session.request_task.cancel()
         await session.idle.wait()
         return session.error
 
@@ -144,6 +149,7 @@ class OpenAISessionServer:
                 409, "concurrent_request", "the session is answering a request"
             )
         session.idle.clear()
+        session.request_task = asyncio.current_task()
         try:
             body = await request.json()
             completion = await self._handler(session.state, body)
@@ -154,6 +160,7 @@ class OpenAISessionServer:
             session.error = session.error or error
             return self._error(500, "internal_error", repr(error))
         finally:
+            session.request_task = None
             session.idle.set()
         if not body.get("stream"):
             return web.json_response(completion)

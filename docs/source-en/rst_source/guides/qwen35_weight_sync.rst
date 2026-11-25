@@ -71,17 +71,7 @@ For example, with rollout engine TP 4 and attention DP 2, attention TP is 2. Wit
 
 Use ``rollout.tensor_parallel_size: 4``, ``rollout.sglang.enable_dp_attention: true``, and ``rollout.sglang.dp_size: 2`` for this language layout. Set ``rollout.pipeline_parallel_size: 1``: the RLinf SGLang launch integration does not yet forward rollout PP to the engine. This restriction does not apply to actor pipeline or virtual pipeline parallelism; both have passed full-model weight synchronization checks.
 
-Verify Weight Loading
-------------------------------------------
+Check Weight Loading
+--------------------
 
-Run the component tests in the agentic environment from the repository root:
-
-.. code-block:: bash
-
-   PYTHONPATH=.:tests/unit_tests python -m pytest tests/unit_tests/test_ckpt_convertor.py -q
-
-With the tested dependencies installed, all 123 tests should pass. Inspect skipped tests if you use a different environment: if SGLang or Megatron dependencies are missing, passing tests do not verify loading weights with those libraries.
-
-Full-model checks compare every destination parameter's shape, dtype, and raw bytes with an independent reference loaded through SGLang's full-checkpoint loader. They cover initial weights and deliberately changed weights, colocated and disaggregated placement, unequal actor/rollout TP, actor PP/VP, attention DP, and vision DP. The 4B checks also cover shared output embeddings and MTP disabled. These checks establish weight loading correctness, not generated-output equality, training convergence, or speculative decoding speedup.
-
-Asynchronous weight updates while inference requests are running, context parallelism, and multi-node synchronization still require integration tests. Use the existing task's pause and resume lifecycle when integrating asynchronous training.
+Set ``rollout.validate_weight: true`` to validate model weights after synchronization.

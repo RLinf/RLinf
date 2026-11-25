@@ -293,7 +293,7 @@ def compute_rollout_metrics_dynamic(
         "reward_scores_turn": sum_turn_rewards / num_seq,
         "avg_turns_per_traj": num_seq / num_trajectories,
         "fraction_of_samples_properly_ended": sum_end / num_seq,
-        "advantages_mean": sum_adv / n_valid_token,
+        "advantages_mean": sum_adv / max(n_valid_token, 1),
         "advantages_max": adv_max,
         "advantages_min": adv_min,
     }
@@ -413,7 +413,7 @@ def compute_rollout_metrics(
         "total_length": (sum_plen + sum_rlen) / num_seq,
         "reward_scores": sum_rewards / num_seq,
         "fraction_of_samples_properly_ended": sum_end / num_seq,
-        "advantages_mean": sum_adv / n_valid_token,
+        "advantages_mean": sum_adv / max(n_valid_token, 1),
         "advantages_max": adv_max,
         "advantages_min": -adv_min,
     }

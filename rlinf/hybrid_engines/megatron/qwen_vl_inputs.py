@@ -119,6 +119,9 @@ def qwen_vl_replay_inputs(
                 )
             kwargs["input_ids"] = token_ids
 
+        if not model.pre_process:
+            yield geometry_inputs
+            return
         language_model = model.language_model
         with (
             language_model.embedding.register_forward_pre_hook(

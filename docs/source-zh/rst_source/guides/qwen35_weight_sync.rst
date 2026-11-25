@@ -69,19 +69,7 @@ Megatron actor 可以向 SGLang rollout 同步稠密 Qwen3.5 的视觉编码器�
    * - 开启视觉 DP 的视觉编码器
      - 1
 
-上述语言布局对应 ``rollout.tensor_parallel_size: 4``\ 、``rollout.sglang.enable_dp_attention: true`` 和 ``rollout.sglang.dp_size: 2``\ 。请设置 ``rollout.pipeline_parallel_size: 1``\ ：RLinf 的 SGLang 启动逻辑尚未将 rollout PP 传给引擎。Actor 的流水线并行与虚拟流水线并行不受这一启动问题影响，已有全量模型权重同步验证。
-
-验证权重加载
+检查权重加载
 ------------
 
-在 agentic 环境中，从仓库根目录运行组件测试：
-
-.. code-block:: bash
-
-   PYTHONPATH=.:tests/unit_tests python -m pytest tests/unit_tests/test_ckpt_convertor.py -q
-
-安装测试所用的依赖后，123 个用例应全部通过。使用其他环境时应检查跳过的用例；缺少 SGLang 或 Megatron 依赖时，即使其余测试通过，也没有验证这些库的权重加载流程。
-
-全量模型验证会用 SGLang 的完整 checkpoint 加载流程生成独立参考值，再逐一比较目标参数的形状、数据类型和原始字节。测试覆盖初始权重、主动修改后的权重、同卡与分离部署、Actor/Rollout 不同 TP、Actor PP/VP、attention DP 和视觉 DP。4B 测试还覆盖共享输出 embedding 和关闭 MTP。这些检查证明权重加载的一致性，不代表生成输出一致、训练收敛或投机解码加速。
-
-仍需单独开展集成测试，验证推理请求运行期间的异步权重更新、上下文并行和多节点同步。接入异步训练时，应沿用任务已有的暂停与恢复流程。
+设置 ``rollout.validate_weight: true``，在权重同步后核对模型权重。

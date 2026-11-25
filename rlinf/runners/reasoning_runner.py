@@ -305,7 +305,7 @@ class ReasoningRunner:
         self, state: dict, completed_epochs: Optional[int] = None
     ) -> None:
         """Restore the sampler's epoch and the saved within-epoch position."""
-        if self.cfg.data.shuffle:
+        if isinstance(self.train_dataloader.sampler, RandomSampler):
             # The loader tracks RandomSampler's cursor, not its generator.
             # Checkpoints precede exhaustion of the current epoch's iterator.
             if completed_epochs is None:

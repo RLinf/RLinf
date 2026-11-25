@@ -9,7 +9,7 @@ cluster:
     agentloop: 2-3
 
 runner:
-  output_dir: /work/runs/mixed-smoke
+  output_dir: ${oc.env:RPENT_RUN_DIR}
   experiment_name: grpo
   max_steps: 1
   save_interval: 1
@@ -24,20 +24,20 @@ algorithm:
 
 rollout:
   model:
-    model_path: /work/models/checkpoint-216
+    model_path: ${oc.env:RPENT_MODEL_PATH}
 
 tools:
   rpent:
-    repo_path: /work/RPent
-    python: /opt/venv/reason/bin/python
-    output_dir: /work/runs/mixed-smoke/episodes
+    repo_path: ${oc.env:RPENT_ROOT}
+    python: ${oc.env:RPENT_PYTHON,python}
+    output_dir: ${runner.output_dir}/episodes
     remote_toolkit_endpoint: null
 
 env:
   rpent:
     libero:
       endpoint: http://127.0.0.1:28561
-      train_data_paths: [/work/data/tasks/libero.jsonl]
+      train_data_paths: ["${oc.env:RPENT_LIBERO_TASKS}"]
     robotwin:
       endpoint: http://127.0.0.1:28562
-      train_data_paths: [/work/data/tasks/robotwin.jsonl]
+      train_data_paths: ["${oc.env:RPENT_ROBOTWIN_TASKS}"]

@@ -20,7 +20,7 @@ from megatron.training.training import unwrap_model
 from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
 
-from rlinf.algorithms.losses import compute_critic_loss
+from rlinf.algorithms.losses import compute_ppo_critic_loss
 from rlinf.utils.metric_utils import CRITIC_EXPLAINED_VARIANCE_STAT_KEYS
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.megatron_worker import MegatronWorker
@@ -96,7 +96,7 @@ class MegatronCritic(MegatronWorker):
         mask: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Compute the configured value loss and reduce metrics across DP ranks."""
-        loss, metrics_data = compute_critic_loss(
+        loss, metrics_data = compute_ppo_critic_loss(
             values=values,
             returns=batch["returns"],
             prev_values=batch.get("values"),
@@ -104,12 +104,11 @@ class MegatronCritic(MegatronWorker):
             huber_delta=10000,
             loss_agg_func=self.loss_agg_func,
             loss_mask=mask,
-            loss_type=self.cfg.critic.get("loss_type", "ppo"),
         )
         if self.cfg.algorithm.get("use_valid_token_scale", False):
             loss_scale = (
                 mask.sum()
-                / self.global_valid_token
+                / self.global_valid_token.clamp_min(1)
                 * parallel_state.get_data_parallel_world_size()
                 * self.num_microbatches
             )

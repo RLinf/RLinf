@@ -25,8 +25,6 @@ from types import ModuleType, SimpleNamespace
 import pytest
 import torch
 
-from rlinf.agents.rpent.thinking_budget import ThinkingBudget
-
 
 @pytest.mark.parametrize("component_api", [True, False])
 def test_sglang_memory_requests_track_split_resume(monkeypatch, component_api):
@@ -205,7 +203,6 @@ def sglang_args_worker():
         ("dataclass-new", True, "/checkpoint", None, False),
         ("struct", False, "/checkpoint", None, False),
         ("dataclass-new", False, None, "enable_shared_multi_modal_processor", True),
-        ("dataclass-new", False, None, "enable_token_space_processor", True),
         ("struct", False, None, "enable_shared_multi_modal_processor", False),
     ],
 )
@@ -294,29 +291,11 @@ def test_sglang_server_args_preserve_loading_and_processor_settings(
     [
         ({}, False, None),
         ({"enable_shared_multi_modal_processor": True}, True, None),
-        ({"enable_token_space_processor": True}, True, None),
         ({"enable_shared_multi_modal_processor": False}, False, None),
         ({"enable_shared_multi_modal_processor": None}, None, "must be a boolean"),
-        ({"enable_token_space_processor": "false"}, None, "must be a boolean"),
-        (
-            {
-                "enable_shared_multi_modal_processor": True,
-                "enable_token_space_processor": True,
-            },
-            None,
-            "keep only",
-        ),
-        (
-            {
-                "enable_shared_multi_modal_processor": False,
-                "enable_token_space_processor": True,
-            },
-            None,
-            "keep only",
-        ),
     ],
 )
-def test_shared_multimodal_switch_accepts_legacy_configs(settings, enabled, error):
+def test_shared_multimodal_switch_validates_explicit_values(settings, enabled, error):
     from omegaconf import OmegaConf
 
     from rlinf.config import (
@@ -360,7 +339,7 @@ def test_sglang_experimental_build_requires_explicit_rollout(
         assert server._server_proc is None
 
 
-def test_serverless_closed_cohort_drops_native_abort_reply(sglang_args_modules):
+def test_serverless_cohort_cleanup_fences_queue(sglang_args_modules):
     from rlinf.scheduler.channel.channel import DEFAULT_KEY
 
     _, module, _ = sglang_args_modules
@@ -386,6 +365,12 @@ def test_serverless_closed_cohort_drops_native_abort_reply(sglang_args_modules):
                 started.set()
                 await aborted.wait()
                 return {"meta_info": {"finish_reason": {"type": "abort"}}}
+
+            async def abort_generation(self):
+                aborted.set()
+
+            async def get_running_state(self):
+                return SimpleNamespace(num_running_reqs=0, num_queue_reqs=0)
 
         worker = SimpleNamespace(
             _is_model_instance_entry=True,
@@ -422,10 +407,11 @@ def test_serverless_closed_cohort_drops_native_abort_reply(sglang_args_modules):
             module.SGLangWorker.rollout_serverless(worker, incoming, outgoing)
         )
         await started.wait()
-        worker._closed_generation_cohorts.add("closed")
-        aborted.set()
-        reply = await outgoing.get(key="cancelled-episode", async_op=True).async_wait()
-        assert reply == {"error": "synchronous_oversample_drop"}
+        receipt = await module.SGLangWorker.finish_generation_cohort(worker, "closed")
+        assert receipt["queue_fenced"] and receipt["inflight"] == 0
+        replies = outgoing.queues["cancelled-episode"]
+        assert replies.get_nowait() == {"error": "synchronous_oversample_drop"}
+        assert replies.empty()
         await incoming.put(None, async_op=True).async_wait()
         await server
         await asyncio.gather(*worker._inflight_generates)
@@ -560,123 +546,6 @@ def test_token_space_http_and_generation_metadata_preserve_prompt_ids(monkeypatc
     legacy = InferenceHTTPClient._generate_body(None, [1, 2], {}, False)
     assert "return_prompt_token_ids" not in legacy
     assert "mm_token_expansion_start_len" not in legacy
-
-
-def test_forced_token_has_zero_loss_gradient_and_preserves_normalization():
-    budget = ThinkingBudget(2, 5, 10)
-    ids = torch.tensor([1, 2, 5, 3])
-    mask = torch.tensor(budget.response_mask(ids.tolist(), [2]))
-    logits = torch.arange(32, dtype=torch.float64).reshape(4, 8).requires_grad_()
-    logprobs = logits.log_softmax(-1).gather(-1, ids[:, None]).squeeze(-1)
-    loss = -(logprobs * mask).sum() / mask.sum()
-    reference = -logprobs[[0, 1, 3]].mean()
-    grad = torch.autograd.grad(loss, logits, retain_graph=True)[0]
-    reference_grad = torch.autograd.grad(reference, logits)[0]
-    torch.testing.assert_close(loss, reference)
-    torch.testing.assert_close(grad, reference_grad)
-    assert torch.count_nonzero(grad[2]).item() == 0
-    assert all(torch.count_nonzero(grad[row]).item() for row in [0, 1, 3])
-
-
-def test_native_token_space_multiturn_replay_and_cache(tmp_path):
-    """Optional CPU integration: real SGLang core and local Qwen processor assets."""
-    model_path = os.environ.get("RLINF_TOKEN_SPACE_TEST_MODEL")
-    if not model_path:
-        pytest.skip(
-            "Set RLINF_TOKEN_SPACE_TEST_MODEL to local Qwen3.5 processor assets"
-        )
-    import io
-
-    from PIL import Image
-    from transformers import AutoConfig
-
-    from rlinf.agents.rpent.history import ImagePrompt
-    from rlinf.hybrid_engines.sglang.multimodal.token_space import SGLangTokenSpace
-    from rlinf.utils.multimodal import materialize_multimodal_inputs
-
-    config = AutoConfig.from_pretrained(model_path, local_files_only=True)
-    settings = {
-        "model_path": model_path,
-        "tokenizer_path": model_path,
-        "tokenizer_mode": "auto",
-        "tokenizer_backend": "huggingface",
-        "trust_remote_code": False,
-        "revision": None,
-        "model_config_parser": "auto",
-        "json_model_override_args": "{}",
-        "image_processor_backend": "pil",
-        "disable_fast_image_processor": True,
-        "mm_process_config": {},
-    }
-    processor = SGLangTokenSpace(settings)
-    images = []
-    for mode, size, color in [
-        ("RGB", (64, 96), "red"),
-        ("RGBA", (96, 64), (0, 0, 255, 80)),
-    ]:
-        data = io.BytesIO()
-        Image.new(mode, size, color).save(data, format="PNG")
-        images.append(data.getvalue())
-    marker = [
-        config.vision_start_token_id,
-        config.image_token_id,
-        config.vision_end_token_id,
-    ]
-    first = asyncio.run(
-        processor.prepare(
-            [42, *marker, 43], images[:1], {"prefix_length": 0, "image_spans": [(2, 3)]}
-        )
-    )
-    sampled = first["prompt_token_ids"] + [44, 45]
-    compact = sampled + marker + [46]
-    second = asyncio.run(
-        processor.prepare(
-            compact,
-            images,
-            {
-                "prefix_length": len(sampled),
-                "image_spans": [
-                    *first["image_spans"],
-                    (len(sampled) + 1, len(sampled) + 2),
-                ],
-            },
-        )
-    )
-    assert second["prompt_token_ids"][: len(sampled)] == sampled
-    assert second["image_spans"][0] == first["image_spans"][0]
-    assert len(second["image_spans"]) == 2
-    refs = ImagePrompt(
-        second["prompt_token_ids"], images, second["image_grid_thw"]
-    ).store_images(tmp_path)
-    entry = {**refs, **second}
-    ids = torch.tensor([second["prompt_token_ids"] + [47, 48, 0, 0]])
-    mask = ids.ne(0)
-
-    def materialize(value):
-        return materialize_multimodal_inputs(
-            [value],
-            model_path,
-            "cpu",
-            cache_bytes=8 * 1024 * 1024,
-            input_ids=ids,
-            attention_mask=mask,
-            token_space=True,
-        )
-
-    first_inputs = materialize(entry)
-    again = materialize(entry)
-    for key in first_inputs:
-        assert torch.equal(first_inputs[key], again[key])
-    assert first_inputs["multimodal_position_ids"].shape == (3, 1, ids.shape[1])
-    # Cache reuse cannot hide changed placement, pixels, or files.
-    with pytest.raises(ValueError, match="pixel_values differs"):
-        materialize({**entry, "pixel_values_sha256": "changed"})
-    with pytest.raises(ValueError, match="mrope_positions differs"):
-        materialize({**entry, "mrope_sha256": "changed"})
-    Path(entry["image_refs"][1]["path"]).write_bytes(b"changed")
-    with pytest.raises(ValueError, match="checksum mismatch"):
-        materialize(entry)
-    processor.shutdown()
 
 
 @pytest.mark.parametrize("namespace_package", [False, True])

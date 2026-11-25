@@ -15,7 +15,9 @@
 """Check per-simulator admission, native readiness and cleanup for RPent cohorts."""
 
 import time
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 
 def rpc(endpoint: str, method: str, *args, timeout_s: float = 10):
@@ -101,3 +103,83 @@ def verify_released(
             raise RuntimeError(f"{name} still owns simulator slots: {status}")
         snapshots[name] = status
     return snapshots
+
+
+class SimulatorCohort:
+    """Own simulator quotas and RPC checks for the runner's current batch."""
+
+    def __init__(self, cfg, simulators):
+        self.cfg = cfg
+        self.simulators = simulators
+        self.group_size = cfg.algorithm.group_size
+        self.ready_timeout = cfg.tools.rpent.get("full_cohort_ready_timeout_s")
+        self.groups = []
+        self.selected = Counter()
+
+    def validate(self):
+        validate_routers(
+            self.simulators, self.group_size, strict=self.ready_timeout is not None
+        )
+
+    def sampler(self, dataset):
+        from rlinf.agents.rpent.simulators import SimulatorBatchSampler
+
+        return SimulatorBatchSampler(
+            [len(pool) for pool in dataset.datasets],
+            [entry.sampling_groups for entry in self.simulators.values()],
+            shuffle=self.cfg.data.shuffle,
+            seed=self.cfg.data.get("seed", 1),
+        )
+
+    def prepare(self, batch, requests):
+        from rlinf.agents.rpent.simulators import simulator_for_answer
+
+        self.groups = [simulator_for_answer(answer) for answer in batch["answer"]]
+        self.selected.clear()
+        expected = {
+            name: domain.sampling_groups for name, domain in self.simulators.items()
+        }
+        actual = Counter(self.groups)
+        if actual != expected:
+            raise ValueError(
+                f"Mixed rollout expected task groups {expected}, got {dict(actual)}"
+            )
+        if self.ready_timeout is not None:
+            capacity = self.cfg.tools.rpent.episodes_per_worker
+            needed = max(len(request.input_ids) * request.n for request in requests)
+            if capacity < needed:
+                raise ValueError(
+                    f"Full cohort requires {needed} planner slots per worker, got {capacity}"
+                )
+
+    def wait(self, cohort_id, agent_loop):
+        if self.ready_timeout is None:
+            return None
+        ready = wait_until_ready(
+            cohort_id, self.simulators, self.group_size, self.ready_timeout
+        )
+        agent_loop.release_rpent_rollout(cohort_id).wait()
+        return ready
+
+    def select(self, group_id):
+        domain = self.groups[group_id]
+        if self.selected[domain] == self.simulators[domain].rollout_groups:
+            return False
+        self.selected[domain] += 1
+        return True
+
+    def verify_release(self, cohort_id, cleanup):
+        owners = defaultdict(list)
+        for worker in cleanup:
+            for candidate in worker["candidates"]:
+                name = self.groups[candidate["candidate_id"] // self.group_size]
+                owners[name].extend(
+                    Path(path).name for path in candidate.get("episode_paths", ())
+                )
+        return verify_released(cohort_id, self.simulators, owners)
+
+    def record_selection(self, audit):
+        audit.update(
+            group_simulators=self.groups,
+            selected_groups_by_simulator=dict(self.selected),
+        )

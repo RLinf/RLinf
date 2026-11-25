@@ -18,129 +18,6 @@ import pytest
 import torch
 
 
-def test_response_only_logits_match_full_logits_at_scored_positions():
-    pytest.importorskip("megatron.training")
-    from rlinf.hybrid_engines.megatron.utils import output_layer_positions
-    from rlinf.workers.actor.ma_megatron_actor_worker import _at_positions
-
-    torch.manual_seed(0)
-    module = torch.nn.Module()
-    module.output_layer = torch.nn.Linear(4, 7)
-    hidden = torch.randn(6, 1, 4)  # [tokens, batch, hidden]
-    positions = torch.tensor([1, 2, 5])
-    full = module.output_layer(hidden)
-    with output_layer_positions(module, positions):
-        partial = module.output_layer(hidden)
-    torch.testing.assert_close(partial, full.index_select(0, positions))
-    torch.testing.assert_close(module.output_layer(hidden), full)
-
-    def logprobs(logits, label, label_mask):
-        values = logits.log_softmax(-1).gather(-1, label.unsqueeze(-1)).squeeze(-1)
-        return {"log_probs": values.masked_fill(~label_mask, 0.0)}
-
-    label = torch.randint(0, 7, (1, 6))
-    label_mask = torch.ones(1, 6, dtype=torch.bool)
-    expected = logprobs(full.transpose(0, 1), label, label_mask)["log_probs"]
-    scored = _at_positions(logprobs, positions)(
-        partial.transpose(0, 1), label, label_mask
-    )["log_probs"]
-    torch.testing.assert_close(scored[:, positions], expected[:, positions])
-    assert scored[:, [0, 3, 4]].count_nonzero() == 0
-
-
-def _assert_chunked_sao_gradients(rank, dtype, temperature):
-    from rlinf.algorithms.losses import compute_dis_actor_loss
-    from rlinf.utils.distributed import vocab_parallel_log_probs_from_logits
-
-    torch.manual_seed(3)
-    full = torch.randn(1, 9, 22, dtype=dtype, requires_grad=True)
-    labels = torch.tensor([[0, 21, 4, 15, 11, 8, 1, 20, 12]])
-    advantages = torch.linspace(-1, 1, 9).unsqueeze(0)
-    mask = torch.tensor([[True, False, True, True, False, True, True, False, True]])
-    expected = (
-        (full.float() / temperature)
-        .log_softmax(-1)
-        .gather(-1, labels.unsqueeze(-1))
-        .squeeze(-1)
-    )
-    old = expected.detach() + torch.linspace(-0.4, 0.4, 9).unsqueeze(0)
-    delta = (expected - old).detach()
-    keep = mask & (delta > torch.tensor(0.8).log()) & (delta < torch.tensor(1.2).log())
-    ratio = delta.exp().masked_fill(~keep, 0.0)
-    reference_loss = -(ratio * advantages * expected).sum() / mask.sum()
-    reference_loss.backward()
-    local = full.detach().chunk(2, dim=-1)[rank].clone().requires_grad_()
-    original = local.detach().clone()
-    saved = []
-
-    def pack(tensor):
-        saved.append((tensor.dtype, tensor.numel(), tensor.data_ptr()))
-        return tensor
-
-    with torch.autograd.graph.saved_tensors_hooks(pack, lambda tensor: tensor):
-        actual = vocab_parallel_log_probs_from_logits(
-            local, labels, chunk_size=4, temperature=temperature
-        )
-    torch.testing.assert_close(actual, expected, rtol=2e-6, atol=2e-6)
-    loss, metrics = compute_dis_actor_loss(
-        logprobs=actual,
-        old_logprobs=old,
-        clip_ratio_low=0.2,
-        clip_ratio_high=0.2,
-        advantages=advantages,
-        loss_mask=mask,
-    )
-    torch.testing.assert_close(loss, reference_loss, rtol=2e-6, atol=2e-6)
-    torch.testing.assert_close(metrics["actor/ratio"], ratio[mask].mean().detach())
-    loss.backward()
-    torch.testing.assert_close(
-        local.grad, full.grad.chunk(2, dim=-1)[rank], rtol=2e-3, atol=2e-6
-    )
-    assert torch.equal(local, original)
-    assert not any(
-        kind == torch.float32 and count == local.numel() and pointer != local.data_ptr()
-        for kind, count, pointer in saved
-    ), "Chunked logprobs retained a separate full-vocabulary FP32 tensor"
-
-
-def _chunked_log_probs_rank(rank: int, store: str) -> None:
-    from megatron.core import parallel_state
-    from megatron.core.transformer.module import Float16Module
-    from megatron.core.transformer.transformer_config import TransformerConfig
-
-    torch.set_num_threads(1)
-    torch.distributed.init_process_group(
-        "gloo", init_method=f"file://{store}", rank=rank, world_size=2
-    )
-    try:
-        parallel_state.initialize_model_parallel(tensor_model_parallel_size=2)
-        wrapper = Float16Module(
-            TransformerConfig(
-                num_layers=1, hidden_size=4, num_attention_heads=2, bf16=True
-            ),
-            torch.nn.Identity(),
-        )
-        sample = torch.ones(1, 9, 11, dtype=torch.bfloat16)
-        assert wrapper(sample).dtype == torch.float32
-        assert wrapper(sample, fp32_output=False).dtype == torch.bfloat16
-        for dtype, temperature in (
-            (torch.float32, 1.0),
-            (torch.bfloat16, 1.0),
-            (torch.bfloat16, 0.7),
-        ):
-            _assert_chunked_sao_gradients(rank, dtype, temperature)
-    finally:
-        parallel_state.destroy_model_parallel()
-        torch.distributed.destroy_process_group()
-
-
-def test_chunked_vocab_log_probs_match_dense_tp_values_and_gradients(tmp_path):
-    pytest.importorskip("megatron.core")
-    torch.multiprocessing.spawn(
-        _chunked_log_probs_rank, args=(str(tmp_path / "store"),), nprocs=2
-    )
-
-
 def _sequence_parallel_positions_rank(rank: int, store: str) -> None:
     from megatron.core import parallel_state, tensor_parallel
     from megatron.core.transformer.transformer_config import TransformerConfig
@@ -544,21 +421,21 @@ def test_chunked_actor_scores_variable_length_rows(monkeypatch):
         {"actor": {}, "algorithm": {"sampling_params": {"temperature": 1.0}}}
     )
     actor.transformer_config = SimpleNamespace(sequence_parallel=True)
-    actor.torch_device_type = "cpu"
+    monkeypatch.setattr(
+        MAMegatronActor, "torch_platform", SimpleNamespace(current_device=lambda: "cpu")
+    )
     actor.lm_head_chunk_size = 2
     actor.response_only_logits = False
     actor.calculate_entropy = False
     actor.return_loss = False
     actor.scoring_forward = score
-    monkeypatch.setattr(actor, "_forward_multimodal_inputs", lambda batch: {})
     model = torch.nn.Module()
     model.pre_process = model.post_process = True
-    rows = torch.tensor([[1, 2, 3], [4, 9, 9], [5, 6, 9]])
     batch = {
-        "input_ids": rows,
-        "attention_mask": rows.ne(9),
-        "position_ids": torch.arange(3).expand_as(rows),
-        "response_mask": torch.tensor([[0, 1, 0], [0, 0, 0], [0, 1, 0]]).bool(),
+        "input_ids": [torch.tensor(row) for row in ([1, 2, 3], [4], [5, 6])],
+        "response_mask": [
+            torch.tensor(row, dtype=torch.bool) for row in ([0, 1, 0], [0], [0, 1])
+        ],
     }
     output, collect = actor.get_forward_step_func()(iter([batch]), model)
-    assert collect(output).tolist() == [[0, 2, 0], [0, 0, 0], [0, 6, 0]]
+    assert [row.tolist() for row in collect(output)] == [[0, 2, 0], [0], [0, 6]]

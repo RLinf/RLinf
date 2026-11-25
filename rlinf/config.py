@@ -324,19 +324,12 @@ def _inherit_rollout_model_path(
 
 
 def shared_multi_modal_processor_enabled(cfg: DictConfig | dict | None) -> bool:
-    """Read the SGLang config switch, accepting legacy saved configurations."""
-    if cfg is None:
-        return False
-    current = "enable_shared_multi_modal_processor"
-    legacy = "enable_token_space_processor"
-    if current in cfg and legacy in cfg:
-        raise ValueError(
-            f"rollout.sglang contains both {current} and {legacy}; keep only {current}."
-        )
-    key = legacy if legacy in cfg else current
-    enabled = cfg.get(key, False)
+    """Read the shared SGLang preprocessing switch."""
+    enabled = (cfg or {}).get("enable_shared_multi_modal_processor", False)
     if type(enabled) is not bool:
-        raise ValueError(f"rollout.sglang.{key} must be a boolean, got {enabled!r}.")
+        raise ValueError(
+            "rollout.sglang.enable_shared_multi_modal_processor must be a boolean"
+        )
     return enabled
 
 
@@ -345,7 +338,7 @@ def release_image_replay_enabled(rollout: DictConfig | dict | None) -> bool:
     return (
         rollout is not None
         and shared_multi_modal_processor_enabled(rollout.get("sglang"))
-        and rollout.get("env_vars", {}).get("SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE")
+        and (rollout.get("env_vars") or {}).get("SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE")
         == "rlinf.hybrid_engines.sglang.multimodal"
     )
 
@@ -792,8 +785,6 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
 
 def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
-    if "data" in cfg and "sampling_batch_size" in cfg.data:
-        sampling_batch_size(cfg)
 
     with open_dict(cfg):
         cfg.mcore_gpt = cfg.get("mcore_gpt", True)
@@ -2489,7 +2480,7 @@ def validate_qwen_vl_chunked_cfg(cfg) -> int:
         raise ValueError(
             "Qwen-VL chunked scoring supports entropy metrics only; entropy_bonus must be zero"
         )
-    if cfg.actor.model.get("load_mtp", False):
+    if cfg.actor.model.get("load_mtp", True):
         raise ValueError("Qwen-VL chunked scoring requires actor.model.load_mtp=False")
     for option in (
         "fp8",
@@ -2519,7 +2510,7 @@ def sampling_batch_size(cfg: DictConfig) -> int:
             "data.sampling_batch_size must be an integer >= "
             f"data.rollout_batch_size={effective}, got {candidates!r}."
         )
-    if candidates == effective:
+    if candidates == effective and not OmegaConf.select(cfg, "env.rpent"):
         return candidates
     if cfg.runner.task_type != "reasoning" or not cfg.runner.get("synchronous", False):
         raise ValueError(
@@ -2530,10 +2521,11 @@ def sampling_batch_size(cfg: DictConfig) -> int:
         cfg.algorithm.get("max_num_gen_batches", 1) != 1
         or not cfg.agentloop.get("is_dynamic_rollout_batch", False)
         or cfg.rollout.rollout_backend != "sglang"
+        or not cfg.rollout.get("replica_affinity", False)
     ):
         raise ValueError(
             "Synchronous oversampling requires "
-            "max_num_gen_batches=1, a multi-turn agent loop and SGLang rollout."
+            "max_num_gen_batches=1, a multi-turn agent loop, and SGLang with replica_affinity=True."
         )
     return candidates
 
@@ -2586,9 +2578,12 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
         if OmegaConf.select(cfg, "critic.use_critic_model", default=False)
         else "grpo_dynamic"
     )
+    valid_advantages = {expected_adv_type}
+    if expected_adv_type == "gae_dynamic":
+        valid_advantages.add("actor_gae")
     if (
         OmegaConf.select(cfg, "agentloop.is_dynamic_rollout_batch", default=False)
-        and cfg.algorithm.adv_type != expected_adv_type
+        and cfg.algorithm.adv_type not in valid_advantages
     ):
         raise ValueError(
             f"Multi-turn training requires algorithm.adv_type={expected_adv_type!r}, "
@@ -3392,7 +3387,17 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         elif cfg.critic.use_critic_model and cfg.critic.training_backend == "fsdp":
             cfg.critic = validate_fsdp_cfg(cfg.critic)
 
+    if (
+        cfg.runner.task_type in {"reasoning", "reasoning_eval"}
+        and "sampling_batch_size" in cfg.data
+    ):
+        sampling_batch_size(cfg)
     if cfg.runner.task_type == "reasoning":
+        if (
+            cfg.actor.get("response_only_logits", False)
+            and cfg.actor.model.get("context_parallel_size", 1) > 1
+        ):
+            raise ValueError("response_only_logits requires context_parallel_size=1")
         validate_qwen_vl_chunked_cfg(cfg)
         cfg = validate_searchr1_cfg(cfg)
         cfg = validate_rpent_cfg(cfg)

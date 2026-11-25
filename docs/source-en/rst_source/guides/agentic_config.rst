@@ -704,45 +704,18 @@ context parallel size 1 and defaults to false.
 A chunked LM head already selects response positions when entropy is disabled.
 Logging entropy requires scoring every position.
 
-Each value is the highest peak memory allocation that PyTorch recorded on
-any GPU during one Qwen3.5-4B BF16 Actor update. The runs used 80 GiB A100s,
-PyTorch 2.11.0+cu128 and Megatron Core 0.18.0, and scored only response tokens.
-The two text samples ran on one GPU with 32-token projection chunks when enabled.
-The six-image RPent sample ran on two GPUs with TP2, sequence parallelism and
-256-token chunks when enabled. Fusion uses
-``actor.model.gradient_accumulation_fusion`` and the Apex CUDA extension to
-accumulate gradients into Megatron's existing FP32 buffer.
-
-.. list-table:: LM head projection and peak memory per GPU (GiB)
+.. list-table:: Megatron scoring options
    :header-rows: 1
 
-   * - Total / scored tokens
-     - Dense
-     - Dense + fusion
-     - Chunked
-     - Chunked + fusion
-   * - 512 / 256
-     - 43.57
-     - 44.66
-     - 44.93
-     - 43.73
-   * - 2,048 / 1,024
-     - 51.42
-     - 52.86
-     - 52.19
-     - 51.03
-   * - 23,095 / 12,303
-     - 33.33
-     - 34.06
-     - 24.60
-     - 24.74
-
-With fusion disabled, chunking used 1.36 GiB more at 512 tokens and 0.77 GiB
-more at 2,048 tokens. On the long sample it saved 8.73 GiB per GPU.
-Measure the peak on a representative batch before enabling chunking for short
-sequences.
-
-A separate two-GPU replay used the last Actor input from a 100-turn RPent
-episode (141,294 tokens, 30,155 scored, six images). With TP2, sequence
-parallelism and Apex fusion enabled in both runs, 256-token projection chunks
-reduced peak memory from 60.36 to 45.49 GiB per GPU during the Actor update.
+   * - Setting
+     - Default
+     - Effect
+   * - ``actor.logprob_chunk_size``
+     - ``0``
+     - Token positions per vocabulary softmax chunk.
+   * - ``actor.response_only_logits``
+     - ``false``
+     - Project positions that predict response tokens in packed batches.
+   * - ``actor.model.lm_head_chunk_size``
+     - ``0``
+     - Token positions per output projection chunk.

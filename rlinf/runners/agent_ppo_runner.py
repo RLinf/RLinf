@@ -17,7 +17,6 @@
 import asyncio
 import json
 import time
-from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
@@ -36,16 +35,9 @@ logger = get_logger()
 class AgentPPORunner(AgentRunner):
     """Install each synchronous PPO or GRPO update before the next rollout."""
 
-    def __init__(self, **kwargs: Any) -> None:
-        self.simulators = {}
-        if (kwargs["cfg"].get("env") or {}).get("rpent") is not None:
-            from rlinf.agents.rpent.simulators import mixed_simulators
-
-            self.simulators = mixed_simulators(kwargs["cfg"])
+    def __init__(self, *, environment_cohort=None, **kwargs: Any) -> None:
+        self.environment_cohort = environment_cohort
         super().__init__(**kwargs)
-        self._environment_ready_timeout = (
-            (self.cfg.get("tools") or {}).get("rpent") or {}
-        ).get("full_cohort_ready_timeout_s")
         placement = self.component_placement
         actor_gpus = set(placement.get_hardware_ranks("actor"))
         critic_gpus = (
@@ -72,23 +64,18 @@ class AgentPPORunner(AgentRunner):
                 self.candidate_result_channel = Channel.create("SelectedEpisodes")
 
     def _build_dataloader(self, train_dataset, val_dataset, collate_fn=None):
-        sampler = None
-        if self.simulators:
-            from rlinf.agents.rpent.simulators import SimulatorBatchSampler
-
-            sampler = SimulatorBatchSampler(
-                [len(pool) for pool in train_dataset.datasets],
-                [entry.sampling_groups for entry in self.simulators.values()],
-                shuffle=self.cfg.data.shuffle,
-                seed=self.cfg.data.get("seed", 1),
-            )
+        sampler = (
+            self.environment_cohort.sampler(train_dataset)
+            if self.environment_cohort is not None
+            else None
+        )
         super()._build_dataloader(
             train_dataset, val_dataset, collate_fn, batch_sampler=sampler
         )
 
     def _uses_sampling_cohort(self) -> bool:
         return (
-            bool(self.simulators)
+            self.environment_cohort is not None
             or self._sampling_batch_size() > self.cfg.data.rollout_batch_size
         )
 
@@ -104,21 +91,9 @@ class AgentPPORunner(AgentRunner):
             raise ValueError(
                 "Synchronous oversampling requires one policy rollout group."
             )
-        if self.simulators:
-            from rlinf.agents.rpent.simulators import simulator_for_answer
-
-            self._cohort_simulators = [
-                simulator_for_answer(answer) for answer in batch["answer"]
-            ]
-            actual = Counter(self._cohort_simulators)
-            expected = {
-                name: entry.sampling_groups for name, entry in self.simulators.items()
-            }
-            if actual != expected:
-                raise ValueError(
-                    f"Mixed rollout expected task groups {expected}, got {dict(actual)}"
-                )
-        grouped = bool(self.simulators) and self.cfg.algorithm.group_size > 1
+        grouped = (
+            self.environment_cohort is not None and self.cfg.algorithm.group_size > 1
+        )
         requests = build_rollout_requests_from_batch(
             batch,
             group_size=self.cfg.algorithm.group_size,
@@ -126,13 +101,8 @@ class AgentPPORunner(AgentRunner):
             enforce_divisible_batch=False,
             split_trajectories=not grouped,
         )
-        if self._environment_ready_timeout is not None:
-            capacity = self.cfg.tools.rpent.episodes_per_worker
-            needed = max(len(request.input_ids) * request.n for request in requests)
-            if capacity < needed:
-                raise ValueError(
-                    f"Full cohort requires {needed} planner slots per worker, got {capacity}"
-                )
+        if self.environment_cohort is not None:
+            self.environment_cohort.prepare(batch, requests)
         cohort_id = f"step-{self.global_steps}-{uuid4().hex}"
         candidate_id = 0
         for request in requests:
@@ -160,7 +130,6 @@ class AgentPPORunner(AgentRunner):
         )
         selected = []
         selected_groups = []
-        selected_by_simulator = Counter()
         complete = {}
         group_size = self.cfg.algorithm.group_size
         expected_candidates = self._sampling_batch_size() * group_size
@@ -173,21 +142,16 @@ class AgentPPORunner(AgentRunner):
         environment_ready = None
         environment_release = None
         try:
-            if self._environment_ready_timeout is not None:
-                from rlinf.agents.rpent.cohort import wait_until_ready
-
-                environment_ready = wait_until_ready(
-                    cohort_id,
-                    self.simulators,
-                    group_size,
-                    self._environment_ready_timeout,
+            if self.environment_cohort is not None:
+                environment_ready = self.environment_cohort.wait(
+                    cohort_id, self.agent_loop
                 )
-                self.agent_loop.release_rpent_rollout(cohort_id).wait()
-                logger.info(
-                    "Native environments ready for %s: %s",
-                    cohort_id,
-                    {name: row["ready"] for name, row in environment_ready.items()},
-                )
+                if environment_ready is not None:
+                    logger.info(
+                        "Native environments ready for %s: %s",
+                        cohort_id,
+                        {name: row["ready"] for name, row in environment_ready.items()},
+                    )
             while len(selected) < expected_selected:
                 event = candidate_channel.get()
                 if event["cohort_id"] != cohort_id:
@@ -212,14 +176,11 @@ class AgentPPORunner(AgentRunner):
                 member_ids = range(group_id * group_size, (group_id + 1) * group_size)
                 if not all(member_id in complete for member_id in member_ids):
                     continue
-                if self.simulators:
-                    simulator = self._cohort_simulators[group_id]
-                    if (
-                        selected_by_simulator[simulator]
-                        == self.simulators[simulator].rollout_groups
-                    ):
-                        continue
-                    selected_by_simulator[simulator] += 1
+                if (
+                    self.environment_cohort is not None
+                    and not self.environment_cohort.select(group_id)
+                ):
+                    continue
                 selected_groups.append(group_id)
                 selected.extend(complete[member_id] for member_id in member_ids)
         except BaseException as error:
@@ -247,21 +208,9 @@ class AgentPPORunner(AgentRunner):
                 generation_cleanup.extend(
                     self.rollout.finish_generation_cohort(cohort_id).wait()
                 )
-                if self.simulators:
-                    from rlinf.agents.rpent.cohort import verify_released
-
-                    direct_owners = defaultdict(list)
-                    for worker in cleanup:
-                        for record in worker["candidates"]:
-                            name = self._cohort_simulators[
-                                record["candidate_id"] // group_size
-                            ]
-                            direct_owners[name].extend(
-                                Path(path).name
-                                for path in record.get("episode_paths", ())
-                            )
-                    environment_release = verify_released(
-                        cohort_id, self.simulators, direct_owners
+                if self.environment_cohort is not None:
+                    environment_release = self.environment_cohort.verify_release(
+                        cohort_id, cleanup
                     )
                 while True:
                     try:
@@ -318,9 +267,8 @@ class AgentPPORunner(AgentRunner):
                 "environment_ready": environment_ready,
                 "environment_release": environment_release,
             }
-            if self.simulators:
-                audit["group_simulators"] = self._cohort_simulators
-                audit["selected_groups_by_simulator"] = dict(selected_by_simulator)
+            if self.environment_cohort is not None:
+                self.environment_cohort.record_selection(audit)
             self._write_sampling_audit(audit)
         if selection_error is not None:
             self.agent_loop.admit_rollout_candidates(cohort_id, None).wait()
@@ -405,14 +353,8 @@ class AgentPPORunner(AgentRunner):
 
     def init_rollout_workers(self) -> None:
         """Reuse agent initialization and convert the independent critic checkpoint."""
-        if self.simulators:
-            from rlinf.agents.rpent.cohort import validate_routers
-
-            validate_routers(
-                self.simulators,
-                self.cfg.algorithm.group_size,
-                strict=self._environment_ready_timeout is not None,
-            )
+        if self.environment_cohort is not None:
+            self.environment_cohort.validate()
         super().init_rollout_workers()
         if (
             self.critic is not None
@@ -432,9 +374,15 @@ class AgentPPORunner(AgentRunner):
     def _sync_weights(
         self, do_offload: bool = True, weight_version: Optional[int] = None
     ) -> None:
-        if weight_version is None:
+        if self.cfg.rollout.rollout_backend != "sglang":
+            weight_version = None
+        elif weight_version is None:
             weight_version = self.global_steps
-        if self.component_placement.is_collocated:
+        if (
+            self.component_placement.is_collocated
+            or self.component_placement.is_auto
+            or self.solid_rollouts
+        ):
             super()._sync_weights(do_offload=do_offload, weight_version=weight_version)
             return
 
@@ -508,6 +456,7 @@ class AgentPPORunner(AgentRunner):
                     if self.shared_training or not self.recompute_logprobs
                     else self.actor_inference_channel
                 ),
+                adv_type=self.cfg.algorithm.adv_type,
                 expected_weight_version=self.global_steps,
             )
 

@@ -49,7 +49,7 @@ Pick these guides when selecting or tuning a rollout engine: switching SGLang an
       Synchronize the learner’s Qwen3.5 weights with SGLang.
 
    .. grid-item-card:: RPent Multimodal Training
-      :link: ../agent-workflows/rpent-multimodal
+      :link: ../rpent_multimodal
       :link-type: doc
 
       Replay the image inputs used during rollout in the learner.
@@ -64,4 +64,4 @@ Pick these guides when selecting or tuning a rollout engine: switching SGLang an
    PhyAI Rollout Backend <phyai>
    ApxInf Rollout Backend <../apxinf>
    ../qwen35_weight_sync
-   ../agent-workflows/rpent-multimodal
+   ../rpent_multimodal

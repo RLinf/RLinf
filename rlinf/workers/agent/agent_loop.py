@@ -1423,10 +1423,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         """Cancel only this finite cohort and wait for its process/session cleanup."""
         await self._candidate_started.setdefault(cohort_id, asyncio.Event()).wait()
         state = self._candidate_cohort
-        if state["id"] != cohort_id:
-            raise RuntimeError(
-                f"Cannot cancel cohort {cohort_id}; active cohort is {state['id']}."
-            )
+        if state is None or state["id"] != cohort_id:
+            raise RuntimeError(f"Cannot cancel inactive cohort {cohort_id}.")
         state["selected"] = set(selected_ids)
         state["closed"].set()
         try:
@@ -1462,6 +1460,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             return {"cohort_id": cohort_id, "candidates": records}
         finally:
             state["cleaned"].set()
+            self._candidate_started.pop(cohort_id, None)
 
     async def admit_rollout_candidates(
         self, cohort_id: str, output_channels: Optional[list[Channel]]

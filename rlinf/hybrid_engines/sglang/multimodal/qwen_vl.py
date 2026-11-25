@@ -89,10 +89,15 @@ class TokenizedQwenVLProcessor(QwenVLImageProcessor):
         if capture.get("token_budget") is not None:
             context_length, reserve = capture["token_budget"]
             remaining = context_length - len(output.input_ids)
-            output_limit = min(params["max_new_tokens"], remaining)
+            max_new_tokens = params.get("max_new_tokens")
+            output_limit = (
+                min(max_new_tokens, remaining)
+                if max_new_tokens is not None
+                else remaining
+            )
             if output_limit < reserve:
                 raise ValueError(
-                    f"Expanded image prompt leaves {output_limit} output tokens; "
+                    f"context_length_exceeded: expanded image prompt leaves {output_limit} output tokens; "
                     f"at least {reserve} are required"
                 )
             params["max_new_tokens"] = output_limit

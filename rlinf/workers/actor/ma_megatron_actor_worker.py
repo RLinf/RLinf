@@ -118,8 +118,9 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         assert self.placement_mode in [
             PlacementMode.COLLOCATED,
             PlacementMode.DISAGGREGATED,
+            PlacementMode.HYBRID,
         ], (
-            "Multi-agent actor supports only collocated or disaggregated "
+            "Multi-agent actor supports collocated, disaggregated, and hybrid "
             f"placement, got {self.placement_mode}"
         )
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
@@ -404,7 +405,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     if self.calculate_entropy_loss:
                         loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
 
-                kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                kl_loss = torch.tensor(0.0, device=self.torch_platform.current_device())
                 if self.kl_beta > 0 and ref_logprobs is not None:
                     kld = kl_penalty(curr_logprobs, ref_logprobs, self.kl_penalty_type)
                     kl_loss = self.loss_agg_func(kld * batch["loss_scales"], mask)
@@ -432,7 +433,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 if self.cfg.algorithm.use_valid_token_scale:
                     loss_scale = (
                         mask.sum()
-                        / self.global_valid_token
+                        / self.global_valid_token.clamp_min(1)
                         * parallel_state.get_data_parallel_world_size()
                         * self.num_microbatches
                     )
@@ -683,6 +684,19 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     turn_tokens = sum(rollout_result.response_mask[turn_index])
                 if sampled_sums is not None:
                     sampled = versions[turn_index]
+                    if (
+                        rollout_result.response_mask is not None
+                        and len(sampled) == rollout_result.response_lengths[turn_index]
+                    ):
+                        sampled = [
+                            version
+                            for version, valid in zip(
+                                sampled,
+                                rollout_result.response_mask[turn_index],
+                                strict=True,
+                            )
+                            if valid
+                        ]
                     if len(sampled) != turn_tokens:
                         raise ValueError(
                             "One sampled policy version is required per response token"

@@ -1,7 +1,7 @@
 混合仿真器上的 RPent 训练
 =========================
 
-用同步 GRPO 从 LIBERO 和 RoboTwin 收集完整组，再更新 Qwen3.5-4B 规划器。RLinf 在模型 GPU 上启动推理和训练 worker。各仿真器使用独立 Python 环境。RPent toolkit 根据请求启动环境子进程，奖励来自仿真器判定的任务结果。
+用同步 GRPO 在 LIBERO 和 RoboTwin 上训练 Qwen3.5-4B 规划器。RLinf 在模型 GPU 上启动推理和训练 worker。各仿真器使用独立 Python 环境。RPent toolkit 根据请求启动环境子进程，奖励来自仿真器判定的任务结果。
 
 概览
 ----
@@ -15,7 +15,7 @@
 
    .. grid-item-card:: 算法
 
-      同步 GRPO，各仿真器分别选满完整组。
+      同步 GRPO，为每种仿真器单独设置组数配额。
 
    .. grid-item-card:: 任务
 
@@ -36,31 +36,35 @@
 
       1. 安装
 
-      在共享路径 ``/work`` 下准备配套的候选 checkout。以下分支用于本次集成验收，两个仓库需要成对更新。
+      将 RLinf 和 RPent 克隆到各模型节点可访问的共享目录。
 
       .. code-block:: bash
 
-         cd /work
-         git clone -b codex/rpent-mixed-grpo https://github.com/zhexuanxu/RLinf.git
-         git clone -b codex/rpent-simulator-deployment https://github.com/zhexuanxu/RPent.git
+         export PROJECT_DIR="$PWD"
+         git clone https://github.com/RLinf/RLinf.git
+         git clone https://github.com/RLinf/RPent.git
 
-      在每台模型节点上使用兼容的 Linux NVIDIA ``reason`` 镜像。需要构建镜像时，在 RLinf 根目录运行 ``docker build --target reason-image --build-arg BUILD_TARGET=reason -f docker/Dockerfile -t rlinf-rpent-reason .``。参见 :doc:`安装指南 <../../start/installation>` 和 `预构建镜像 <https://hub.docker.com/r/rlinf/rlinf>`_。主栈需要 Python 3.12、Torch、SGLang、Megatron-Core、Bridge、TE 和 FlashAttention 2。使用支持 Qwen3.5 多模态重放的 SGLang 构建，见 :doc:`../../guides/agent-workflows/rpent-multimodal`。在镜像环境中补齐 planner 依赖。
+      模型节点使用 ``reason`` 镜像，或在 RLinf 根目录用 ``bash requirements/install.sh agentic --engine sglang`` 安装 NVIDIA agentic 环境。详见 :doc:`安装指南 <../../start/installation>`。各模型节点使用相同版本。384 环境配方使用 SGLang 原生 TokenSpace，运行环境见 :doc:`../../guides/rpent_multimodal`。
 
       .. code-block:: bash
 
          source /opt/venv/reason/bin/activate
-         export RLINF_ROOT=/work/RLinf
-         export RPENT_ROOT=/work/RPent
-         export MEGATRON_PATH=/opt/venv/reason/Megatron-LM
+         export RLINF_ROOT="$PROJECT_DIR/RLinf"
+         export RPENT_ROOT="$PROJECT_DIR/RPent"
+         export RPENT_PYTHON="$(command -v python)"
+         export RPENT_MODEL_PATH="$PROJECT_DIR/models/Qwen3.5-4B"
+         export RPENT_LIBERO_TASKS="$PROJECT_DIR/data/tasks/libero.jsonl"
+         export RPENT_ROBOTWIN_TASKS="$PROJECT_DIR/data/tasks/robotwin.jsonl"
+         export RPENT_RUN_DIR="$PROJECT_DIR/runs/rpent"
          uv pip install --python "$VIRTUAL_ENV/bin/python" \
            -r "$RPENT_ROOT/requirements/episode-planner.txt"
          uv pip install --python "$VIRTUAL_ENV/bin/python" --no-deps -e "$RPENT_ROOT"
 
-      将完整 SFT 模型及其 tokenizer、图像预处理器放在 ``/work/models/checkpoint-216``，确保模型节点看到同一路径。仿真和 SAM3 节点按 `RPent 安装与部署指南 <https://github.com/zhexuanxu/RPent/blob/codex/rpent-simulator-deployment/docs/source-zh/rst_source/simulators/rl.rst>`_ 安装独立环境、配置资产和 SAM3 权重。
+      将完整 SFT 模型及其 tokenizer、图像预处理器放在 ``$RPENT_MODEL_PATH``，确保模型节点看到同一路径。仿真和 SAM3 节点按 `RPent 安装与部署指南 <https://github.com/RLinf/RPent/blob/main/docs/source-zh/rst_source/guides/robot_episodes.rst>`_ 安装独立环境、配置资产和 SAM3 权重。
 
       2. 准备模型和任务池
 
-      每域一份 JSONL，记录中包含 ``prompt`` 和 JSON 编码的 ``answer``。以下各行分别保存到 ``/work/data/tasks/libero.jsonl`` 和 ``/work/data/tasks/robotwin.jsonl``。每个文件至少提供两条任务记录才能运行下文最小示例。将示例中的 RoboTwin seed 换成当前资产上验证过的初态。
+      每域一份 JSONL，记录中包含 ``prompt`` 和 JSON 编码的 ``answer``。以下各行分别保存到 ``$RPENT_LIBERO_TASKS`` 和 ``$RPENT_ROBOTWIN_TASKS``。每个文件至少提供两条任务记录才能运行下文最小示例。将示例中的 RoboTwin seed 换成当前资产上验证过的初态。
 
       .. code-block:: json
 
@@ -71,11 +75,11 @@
 
       .. code-block:: bash
 
-         /work/envs/libero/bin/python /work/RLinf/examples/agent/rpent/prepare_tasks.py \
-           --libero-config-path /work/data/libero-config --output-dir /work/data/tasks/libero-native
-         cp /work/data/tasks/libero-native/train.jsonl /work/data/tasks/libero.jsonl
+         "$LIBERO_PYTHON" "$RLINF_ROOT/examples/agent/rpent/prepare_tasks.py" \
+           --libero-config-path "$LIBERO_CONFIG_PATH" --output-dir "$PROJECT_DIR/data/tasks/libero-native"
+         cp "$PROJECT_DIR/data/tasks/libero-native/train.jsonl" "$RPENT_LIBERO_TASKS"
 
-      正式训练使用事先准备好的完整任务池，384 示例每域至少需要 24 条任务记录。为同组 RoboTwin 启动失败准备候选初态时，可在 ``answer`` 加入 ``fallback_seeds``。替换仅发生在全组首个模型请求前，组内成员一起切换。
+      正式训练使用事先准备好的完整任务池，384 示例每域至少需要 24 条任务记录。在 ``answer`` 中加入 ``fallback_seeds``，可在 RoboTwin 初始化失败时换用备用初态。整组在首次请求模型前一起切换。
 
       3. 启动最小双域示例
 
@@ -83,19 +87,15 @@
 
       .. code-block:: bash
 
-         cd /work/RPent
+         cd "$RPENT_ROOT"
          python -m robots.rl.services --config tools/rl/deployment-local.yaml --node local
 
-      另开终端，进入模型环境，启动 Ray 和训练。先解析 YAML，确认路径和配额。训练会创建 SGLang 模型副本，独立采集用的模型服务可以在这里省略。
+      另开终端，进入模型环境并启动训练。先解析 YAML，确认路径和配额。训练会创建 SGLang 模型副本，独立采集用的模型服务可以在这里省略。
 
       .. code-block:: bash
 
-         cd /work/RLinf
+         cd "$RLINF_ROOT"
          source /opt/venv/reason/bin/activate
-         export MEGATRON_PATH=/opt/venv/reason/Megatron-LM
-         export RLINF_NODE_RANK=0
-         ray start --head --port=29710
-         export RAY_ADDRESS=127.0.0.1:29710
          bash examples/agent/rpent/run_train.sh train_qwen3.5_4b_episode_sync_grpo \
            +deployment@_global_=mixed_local cluster.num_nodes=1 --cfg job --resolve
          bash examples/agent/rpent/run_train.sh train_qwen3.5_4b_episode_sync_grpo \
@@ -108,29 +108,31 @@
 
 .. code-block:: bash
 
-   cd /work/RPent
+   cd "$RPENT_ROOT"
    python -m robots.rl.services --config tools/rl/deployment-384.yaml --node <node>
 
-在 ``model0`` 启动 Ray head，在另三个模型节点运行 ``ray start --address=10.23.0.11:29710``。启动前各自设定不同的 ``RLINF_NODE_RANK``，并激活相同训练环境、设置 ``MEGATRON_PATH``。替换示例 IP，核对各节点的通信接口并确保模型、轨迹目录在四台模型节点上分别可读、可写。用路由的实际可达地址填写 ``mixed_384.yaml``。跨网段用部署侧的受限转发。
+在 ``model0`` 启动 Ray head，在另三个模型节点运行 ``ray start --address=<head-ip>:29710``。启动前各自设定不同的 ``RLINF_NODE_RANK``，并激活相同训练环境、设置 ``MEGATRON_PATH``。替换示例 IP，核对各节点的通信接口并确保模型、轨迹目录在四台模型节点上分别可读、可写。用路由的实际可达地址填写 ``mixed_384.yaml``。跨网段用部署侧的受限转发。
 
 在 head 启动训练。
 
 .. code-block:: bash
 
-   export RAY_ADDRESS=10.23.0.11:29710
+   export RAY_ADDRESS="<head-ip>:29710"
+   export RPENT_LIBERO_ENDPOINT="http://<libero-router>:29840"
+   export RPENT_ROBOTWIN_ENDPOINT="http://<robotwin-router>:29841"
    bash examples/agent/rpent/run_train.sh train_qwen3.5_4b_episode_sync_grpo \
      +deployment@_global_=mixed_384
 
 ``data.rollout_batch_size`` 与 ``data.sampling_batch_size`` 按组填写。384 示例为 32 个有效组、48 个候选组，每组 8 条。``env.rpent`` 中每域填轨迹个数，默认按整组平分。可为各域指定不同配额，合计须匹配全局设置。384 示例每域候选 192 条、入训 128 条，最多 40 轮，每 5 步保存。
 
-使用 ``group_router: true`` 接入组路由。设定 ``full_cohort_ready_timeout_s`` 后，runner 在首个生成前等待本批全部仿真已就绪。检查日志中的两域就绪计数，以及 ``sampling/`` 中的就绪与释放记录。组选择、仿真释放和生成队列清理完成后才开始更新。
+使用 ``group_router: true`` 接入组路由。设置 ``full_cohort_ready_timeout_s`` 后，runner 等本批所有仿真轨迹就绪，再开始生成。检查日志中的两域就绪计数，以及 ``sampling/`` 中的就绪与释放记录。组选择、仿真释放和生成队列清理完成后才开始更新。
 
 可视化与结果
 ------------
 
-在 TensorBoard 中查看 :doc:`训练指标 <../../reference/metrics>`。单机示例从每域的两个候选组中各选一组，每组两条轨迹，执行一次更新。轨迹存到配置的输出目录。``sampling/`` 保存每批选组与清理记录。
+运行 ``tensorboard --logdir "$RPENT_RUN_DIR"``，查看 :doc:`训练指标 <../../reference/metrics>`。单机示例从每域的两个候选组中各选一组，每组两条轨迹，执行一次更新。轨迹存到配置的输出目录。``sampling/`` 保存每批选组与清理记录。
 
 恢复训练
 --------
 
-保留模型、任务池、域配额及原有轨迹目录。重启所需的节点服务，然后在同一训练命令后添加 ``runner.resume_dir=/work/runs/mixed384/grpo/checkpoints/global_step_5``，使用确实完整的保存目录。恢复从保存的采样游标开始。单域可继续使用基础配方，在 ``data.train_data_paths`` 和 ``tools.rpent.remote_toolkit_endpoint`` 分别设置任务与 toolkit。
+保留模型、任务池、域配额及原有轨迹目录。重启所需的节点服务，然后在同一训练命令后添加 ``runner.resume_dir=$RPENT_RUN_DIR/grpo/checkpoints/global_step_5``，选择已完整保存的 checkpoint 目录。恢复后从保存的采样位置继续。单域可继续使用基础配方，在 ``data.train_data_paths`` 和 ``tools.rpent.remote_toolkit_endpoint`` 分别设置任务与 toolkit。

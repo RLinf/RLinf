@@ -42,7 +42,6 @@ critic:
 
 agentloop:
   max_turns: 50
-  minimum_output_tokens: 16384
 
 tools:
   rpent:

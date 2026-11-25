@@ -11,6 +11,7 @@ runner:
   max_steps: -1
 
 data:
+  sampling_batch_size: ${data.rollout_batch_size}
   train_data_paths: null
   val_data_paths: ???
   val_rollout_batch_size: 60
@@ -18,3 +19,6 @@ data:
 rollout:
   return_logprobs: false
   validate_weight_first_sync: false
+
+algorithm:
+  importance_sampling_fix: false

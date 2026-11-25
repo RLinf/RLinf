@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import asyncio
-import importlib.util
 import logging
 import multiprocessing as mp
 import os
@@ -139,9 +138,4 @@ Patcher.add_patch(
     "sglang.srt.managers.scheduler.run_scheduler_process",
     "rlinf.hybrid_engines.sglang.common.sgl_scheduler.run_scheduler_process",
 )
-if importlib.util.find_spec("sglang.srt.models.qwen3_5") is not None:
-    Patcher.add_patch(
-        "sglang.srt.models.qwen3_5.RMSNormGated",
-        "rlinf.hybrid_engines.sglang.common.qwen3_5.Qwen35RMSNormGated",
-    )
 Patcher.apply()

@@ -130,66 +130,13 @@ def compute_actor_gae_advantages_and_returns(
     gae = torch.zeros_like(next_value)  # shape = [batch]
     for step in reversed(range(rewards.shape[0])):
         delta = rewards[step] + gamma * next_value - values[step]
-        step_lambda = (
-            gae_lambda[None] if isinstance(gae_lambda, torch.Tensor) else gae_lambda
-        )
-        candidate = delta + gamma * step_lambda * gae
+        candidate = delta + gamma * gae_lambda * gae
         gae = torch.where(step_mask[step], candidate, gae)
         next_value = torch.where(step_mask[step], values[step], next_value)
         advantages[step] = torch.where(step_mask[step], gae, 0.0)
     returns = torch.where(step_mask, advantages + values, 0.0)
     if normalize_advantages:
         advantages = safe_normalize(advantages, loss_mask=step_mask)
-    return advantages, returns
-
-
-@register_advantage("sao_gae")
-def compute_sao_advantages_and_returns(
-    rewards: torch.Tensor,
-    values: torch.Tensor,
-    step_mask: torch.Tensor,
-    gamma: float = 1.0,
-    gae_lambda_alpha: float = 1.5,
-    normalize_advantages: bool = True,
-    **kwargs,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Use an action-length-adaptive policy lambda and independent critic returns.
-
-    SAO shortens the GAE horizon on long episodes so a final episode reward moves
-    every action it should, while the critic regresses undiscounted Monte Carlo
-    returns so its target does not depend on the decaying lambda.
-
-    Args:
-        rewards: Token rewards, shaped [time, batch].
-        values: Fixed old values with the same shape as rewards.
-        step_mask: Action positions with the same shape as rewards.
-        gamma: Discount per generated action.
-        gae_lambda_alpha: Strength of the length adaptation; must be at least 1.
-        normalize_advantages: Normalize over all valid actions in this batch.
-
-    Returns:
-        Fixed advantages and returns, with zero at masked positions.
-    """
-    lengths = step_mask.sum(dim=0)
-    if gae_lambda_alpha < 1 or torch.any(lengths == 0):
-        raise ValueError("SAO requires alpha >= 1 and at least one action per episode.")
-    policy_lambda = 1.0 - 1.0 / (gae_lambda_alpha * lengths.float())
-    advantages, _ = compute_actor_gae_advantages_and_returns(
-        rewards,
-        values,
-        step_mask,
-        gamma=gamma,
-        gae_lambda=policy_lambda,
-        normalize_advantages=normalize_advantages,
-    )
-    _, returns = compute_actor_gae_advantages_and_returns(
-        rewards,
-        torch.zeros_like(values),
-        step_mask,
-        gamma=gamma,
-        gae_lambda=1.0,
-        normalize_advantages=False,
-    )
     return advantages, returns
 
 

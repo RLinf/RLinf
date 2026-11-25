@@ -184,8 +184,10 @@ def patch_load_checkpoint_to_be_non_strict(enable: bool):
         load_checkpoint_orig = megatron.training.training.load_checkpoint
         load_checkpoint_patched = partial(load_checkpoint_orig, strict=False)
         megatron.training.training.load_checkpoint = load_checkpoint_patched
-        yield
-        megatron.training.training.load_checkpoint = load_checkpoint_orig
+        try:
+            yield
+        finally:
+            megatron.training.training.load_checkpoint = load_checkpoint_orig
 
     if enable:
         return context()
@@ -343,7 +345,7 @@ class MegatronModelManager:
             provider.vision_config._attn_implementation = resolve_attn_implementation()
         if _model_type == "qwen3_5":
             text_config = provider.hf_text_config
-            if self._cfg.model.get("load_mtp", True):
+            if self._cfg.model.get("load_mtp", not self.is_dedicated_critic_model):
                 mtp_layers = text_config.mtp_num_hidden_layers
                 assert (
                     mtp_layers == 1 and not text_config.mtp_use_dedicated_embeddings
@@ -635,7 +637,7 @@ class MegatronModelManager:
             return
 
         with self.ensure_onloaded_and_then_offload():
-            if self.mbridge:
+            if self.mbridge and not self.is_dedicated_critic_model:
                 # save mbridge checkpoint to hf checkpoint
                 hf_save_path = os.path.join(save_path, "hf_checkpoint")
                 self.bridge.save_hf_pretrained(

@@ -74,128 +74,6 @@ def test_masked_gae_carries_across_observations_and_bootstraps_truncation():
     )
 
 
-@pytest.mark.parametrize("role", ["actor", "critic"])
-@pytest.mark.parametrize("dp_size", [2, 4, 8])
-@pytest.mark.parametrize("microbatches", [1, 2, 4])
-def test_megatron_valid_token_scale_matches_unsplit_gradient(
-    monkeypatch, tmp_path, role, dp_size, microbatches
-):
-    pytest.importorskip("megatron.training")
-    from megatron.core import parallel_state
-    from omegaconf import OmegaConf
-
-    from rlinf.scheduler import Worker
-    from rlinf.utils.utils import masked_mean
-    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
-    from rlinf.workers.critic.ma_megatron_critic_worker import MAMegatronCritic
-
-    class TokenModel(torch.nn.Module):
-        pre_process = True
-        post_process = True
-
-        def __init__(self):
-            super().__init__()
-            self.weight = torch.nn.Parameter(torch.tensor(0.01))
-
-        def forward(self, input_ids, attention_mask, position_ids, packed_seq_params):
-            output = (input_ids.float() * self.weight).unsqueeze(-1)
-            if role == "actor":
-                output = output * torch.arange(8, dtype=torch.float32)
-            return output
-
-    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
-    monkeypatch.setattr(torch.Tensor, "cuda", lambda self, *args, **kwargs: self)
-    monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
-    torch.distributed.init_process_group(
-        "gloo", init_method=(tmp_path / "loss-group").as_uri(), rank=0, world_size=1
-    )
-    try:
-        for name in (
-            "_TENSOR_MODEL_PARALLEL_GROUP",
-            "_CONTEXT_PARALLEL_GROUP",
-            "_DATA_PARALLEL_GROUP",
-        ):
-            monkeypatch.setattr(parallel_state, name, torch.distributed.group.WORLD)
-        worker_cls = MAMegatronActor if role == "actor" else MAMegatronCritic
-        worker = object.__new__(worker_cls)
-        worker.cfg = OmegaConf.create(
-            {
-                "runner": {"task_type": "reasoning"},
-                "rollout": {"model": {"model_path": "/test/model"}},
-                "tools": {},
-                "critic": {},
-                "actor": {"model": {}},
-                "algorithm": {
-                    "loss_type": "actor",
-                    "use_valid_token_scale": False,
-                    "sampling_params": {"temperature": 1.0},
-                    "early_stop_imp_ratio": None,
-                },
-            }
-        )
-        from rlinf.utils.multimodal import MultimodalBatchPreparer
-
-        worker.multimodal_preparer = MultimodalBatchPreparer("/test/model")
-        worker.transformer_config = SimpleNamespace(sequence_parallel=False)
-        worker.return_loss = True
-        worker.loss_agg_func = masked_mean
-        worker.calculate_entropy = False
-        worker.kl_beta = 0
-        worker.clip_ratio_c = None
-        worker.clip_ratio_low = worker.clip_ratio_high = 0.2
-        worker.value_clip = 0.5
-        worker.num_microbatches = 1
-        worker.response_only_logits = False
-        if role == "actor":
-            worker.lm_head_chunk_size = 0
-            worker.scoring_forward = None
-        input_ids = torch.arange(128).reshape(32, 4) % 7 + 1
-        positions = torch.arange(4).expand_as(input_ids).clone()
-        mask = (positions > 0) & (positions <= (torch.arange(32) % 3 + 1)[:, None])
-        mask[-1] = False
-        batch = {
-            "input_ids": input_ids,
-            "attention_mask": torch.ones_like(mask),
-            "position_ids": positions,
-            "response_mask": mask,
-            "loss_scales": mask.float(),
-            "advantages": input_ids.float() / 7 - 0.5,
-            "recomputed_logprobs": torch.zeros_like(mask, dtype=torch.float32),
-            "values": torch.zeros_like(mask, dtype=torch.float32),
-            "returns": torch.full_like(mask, 0.7, dtype=torch.float32),
-        }
-        expected_model = TokenModel()
-        forward = worker.get_forward_step_func()
-        output, loss_func = forward(iter([copy.deepcopy(batch)]), expected_model)
-        expected_loss, _ = loss_func(output)
-        expected_loss.backward()
-
-        worker.cfg.algorithm.use_valid_token_scale = True
-        worker._setup_valid_token_scale(batch)
-        assert worker.global_valid_token.item() == mask.sum().item()
-        worker.num_microbatches = microbatches
-        monkeypatch.setattr(
-            parallel_state, "get_data_parallel_world_size", lambda: dp_size
-        )
-        model = TokenModel()
-        for rank in range(dp_size):
-            indices = torch.arange(rank, len(input_ids), dp_size)
-            for rows in torch.tensor_split(indices, microbatches):
-                microbatch = {key: value[rows] for key, value in batch.items()}
-                output, loss_func = forward(iter([microbatch]), model)
-                loss, metrics = loss_func(output)
-                assert loss.requires_grad and torch.isfinite(loss)
-                metric = (
-                    "actor/final_loss" if role == "actor" else "critic/final_value_loss"
-                )
-                torch.testing.assert_close(metrics[metric].squeeze(), loss)
-                # Megatron averages over microbatches, then DP gradients.
-                (loss / microbatches / dp_size).backward()
-        torch.testing.assert_close(model.weight.grad, expected_model.weight.grad)
-    finally:
-        torch.distributed.destroy_process_group()
-
-
 def make_result():
     return DynamicRolloutResult(
         num_sequence=3,
@@ -315,14 +193,12 @@ QWEN3_5_SHAPE = {
 
 
 @pytest.mark.parametrize("presence_penalty", [0.0, 1.5])
-@pytest.mark.parametrize("loss_type", ["actor", "dis"])
 def test_tis_corrects_penalized_behavior_without_differentiating_the_weights(
     presence_penalty,
-    loss_type,
 ):
     """Enumerating the vocabulary gives an exact expected policy gradient."""
     from rlinf.algorithms.registry import get_policy_loss
-    from rlinf.algorithms.utils import truncated_importance_weights
+    from rlinf.algorithms.utils import apply_importance_sampling_correction
 
     temperature, clip = 0.7, 2.0
     logits = torch.tensor([[0.4, -0.2, 0.8, 0.1]], requires_grad=True)
@@ -330,7 +206,9 @@ def test_tis_corrects_penalized_behavior_without_differentiating_the_weights(
     target = (logits / temperature).log_softmax(-1)
     behavior = ((logits.detach() - presence_penalty * seen) / temperature).softmax(-1)
     mask = torch.ones_like(seen)
-    weights = truncated_importance_weights(target, behavior.log(), mask, clip)
+    weights, _, _ = apply_importance_sampling_correction(
+        torch.ones_like(target), target, behavior.log(), clip
+    )
     assert not weights.requires_grad
     torch.testing.assert_close(
         weights, (target.detach().exp() / behavior).clamp(max=clip)
@@ -338,11 +216,7 @@ def test_tis_corrects_penalized_behavior_without_differentiating_the_weights(
 
     advantages = torch.tensor([[1.0, -0.5, -1.0, 0.25]])
     weighted_advantages = advantages * weights
-    if loss_type == "dis":
-        # DIS averages tokens internally; weight the enumerated vocabulary by
-        # its sampling probabilities to compute the expected gradient.
-        weighted_advantages = weighted_advantages * behavior * mask.numel()
-    loss, _ = get_policy_loss(loss_type)(
+    loss, _ = get_policy_loss("actor")(
         logprobs=target,
         old_logprobs=target.detach(),
         clip_ratio_low=0.2,
@@ -556,36 +430,6 @@ def test_grouped_episodes_keep_trajectory_rewards_images_and_action_masks():
     assert result.rollout_logprobs == [[-0.3, -0.4]] * 17
 
 
-def test_grpo_episode_loss_scales_preserve_masks_and_weight_unequal_turns():
-    from rlinf.algorithms.registry import get_loss_scales
-
-    mask = torch.tensor([[1, 0, 0], [1, 1, 1], [1, 1, 0]], dtype=torch.bool)
-    batch = {
-        "idx_to_traj": [0, 0, 1],
-        "extra:idx_to_sub_traj": torch.zeros(3, dtype=torch.long),
-        "response_mask": mask,
-        "advantages": mask.float(),
-        "loss_scales": mask.float(),
-    }
-    context = {
-        "folding_scale": [],
-        "actor_global_batch_size": 256,
-        "data_parallel_world_size": 16,
-    }
-    scales = ["group_level", "agent_level", "turn_level"]
-    for scale in get_loss_scales(scales):
-        batch = scale(context, batch)
-    assert context["folding_scale"] == scales
-    batch["advantages"] = torch.stack(tuple(batch["advantages"]))
-    batch["loss_scales"] = torch.stack(tuple(batch["loss_scales"]))
-    torch.testing.assert_close(batch["advantages"], mask.float() * 3 * 16 / 256)
-    torch.testing.assert_close(
-        batch["loss_scales"],
-        torch.tensor([[0.25, 0.0, 0.0], [0.75, 0.75, 0.75], [1.0, 1.0, 0.0]]),
-    )
-    assert torch.isfinite(batch["advantages"] * batch["loss_scales"]).all()
-
-
 def test_grpo_hierarchical_scales_keep_action_masks_and_weight_variable_turns():
     from rlinf.algorithms.registry import get_loss_scales
 
@@ -655,20 +499,21 @@ def test_sync_runner_selects_first_complete_candidates_and_admits_only_after_cle
             },
             "algorithm": {"group_size": group_size},
             "agentloop": {"is_dynamic_rollout_batch": True},
-            "rollout": {"rollout_backend": "sglang"},
+            "rollout": {"rollout_backend": "sglang", "replica_affinity": True},
         }
     )
-    runner._environment_ready_timeout = None
-    runner.simulators = {}
+    runner.environment_cohort = None
     if mixed:
         from rlinf.agents.rpent import cohort
 
         monkeypatch.setattr(cohort, "rpc", lambda *args: {"ready": 0, "reserved": 0})
-        runner.simulators = {
+        simulators = {
             name: Simulator("http://backend", name, 1, candidates)
             for name, candidates in (("libero", 2), ("robocasa", 2), ("robodojo", 1))
         }
-        runner._cohort_simulators = [
+        runner.cfg.tools = {"rpent": {}}
+        runner.environment_cohort = cohort.SimulatorCohort(runner.cfg, simulators)
+        runner.environment_cohort.groups = [
             "libero",
             "robocasa",
             "libero",

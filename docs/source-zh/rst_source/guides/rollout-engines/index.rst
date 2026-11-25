@@ -49,7 +49,7 @@ Rollout 后端与服务
       将 Qwen3.5 训练权重同步到 SGLang。
 
    .. grid-item-card:: RPent 多模态训练
-      :link: ../agent-workflows/rpent-multimodal
+      :link: ../rpent_multimodal
       :link-type: doc
 
       在 learner 中重放 rollout 使用的图像输入。
@@ -64,4 +64,4 @@ Rollout 后端与服务
    PhyAI 具身推理后端 <phyai>
    ApxInf 具身评测后端 <../apxinf>
    ../qwen35_weight_sync
-   ../agent-workflows/rpent-multimodal
+   ../rpent_multimodal

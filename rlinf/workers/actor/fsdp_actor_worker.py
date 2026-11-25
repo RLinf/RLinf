@@ -467,13 +467,13 @@ class FSDPActor(FSDPModelManager, Worker):
         attention_mask = m_batch["attention_mask"]
         position_ids = m_batch["position_ids"]
 
-        multi_modal_inputs = {}
-        if "multi_modal_inputs" in m_batch.keys():
-            for key in m_batch["multi_modal_inputs"][0].keys():
-                multi_modal_inputs[key] = torch.cat(
-                    [inputs[key] for inputs in m_batch["multi_modal_inputs"]],
-                    dim=0,
-                ).to(Worker.torch_device_type)
+        media = [row for row in (m_batch.get("multi_modal_inputs") or ()) if row]
+        multi_modal_inputs = {
+            key: torch.cat([row[key] for row in media], dim=0).to(
+                Worker.torch_device_type
+            )
+            for key in (media[0] if media else ())
+        }
 
         if self.enable_dynamic_batch_size or self.variable_seq_lengths:
             max_seq_len_pack = self.max_tokens_per_mbs

@@ -185,21 +185,16 @@ class MAMegatronCritic(DynamicMegatronBatchMixin, MegatronCritic):
     ):
         """Pack and balance the rollout batch, then update fixed value targets."""
         batch, results = self.get_step_batch(input_channel)
-        infer_after_update = self.role_cfg.get("compute_advantages_after_update", False)
-        if not infer_after_update:
-            assert "values" in batch, (
-                "Multi-agent critic training requires fixed old values."
-            )
+        if "values" not in batch:
+            raise ValueError("Multi-agent critic training requires fixed old values")
         batch = self.compute_advantages_and_returns(batch)
         if output_channel is not None:
             offset = 0
             for result in results:
                 end = offset + result.num_sequence
-                result.advantages = (
-                    None
-                    if infer_after_update
-                    else [row.clone() for row in batch["advantages"][offset:end]]
-                )
+                result.advantages = [
+                    row.clone() for row in batch["advantages"][offset:end]
+                ]
                 result.values = result.returns = None
                 offset = end
         rollout_metrics = (

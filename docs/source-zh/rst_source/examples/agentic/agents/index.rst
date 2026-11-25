@@ -18,6 +18,12 @@ Agent 训练
 
       结合 RLinf 与 Continue IDE 插件的端到端代码补全在线强化学习流程。
 
+   .. grid-item-card:: RPent 混合仿真训练
+      :link: ../rpent_episode_sync
+      :link-type: doc
+
+      从 LIBERO 和 RoboTwin 同步采样，训练 Qwen3.5 规划器。
+
    .. grid-item-card:: rStar2
       :link: ../rstar2
       :link-type: doc
@@ -36,12 +42,6 @@ Agent 训练
 
       面向广泛信息检索的主从多 Agent 强化学习（MARL），4B 模型在 WideSearch 上达到 40.0% item F1。
 
-   .. grid-item-card:: RPent 混合仿真训练
-      :link: ../rpent_episode_sync
-      :link-type: doc
-
-      从 LIBERO 和 RoboTwin 同步采样，训练 Qwen3.5 规划器。
-
 .. tip::
 
    **接入自己的 Agent？** 参见 :doc:`新增 Agent </rst_source/extending/agents/index>`，按需选择在 RLinf 内编写白盒 Agent 或通过 OpenAI API 接入外部黑盒 Agent。
@@ -52,7 +52,7 @@ Agent 训练
 
    AgentLightning <../agentlightning_calc_x>
    Coding Online RL <../coding_online_rl>
+   RPent <../rpent_episode_sync>
    rStar2 <../rstar2>
    Search-R1 <../searchr1/index>
    WideSeek-R1 <../wideseek_r1/index>
-   ../rpent_episode_sync

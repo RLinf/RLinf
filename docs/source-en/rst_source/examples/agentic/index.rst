@@ -23,7 +23,7 @@ Choose a Track
    * - :doc:`Agentic RL <agents/index>`
      - Agent Lightning, GLM-4.7-Flash, Qwen2.5, Qwen3-4B
      - Multi-turn tools, MARL, online RL
-     - :doc:`AgentLightning <agentlightning_calc_x>`, :doc:`Coding Online RL <coding_online_rl>`, :doc:`rStar2 <rstar2>`, :doc:`Search-R1 <searchr1/index>`, :doc:`WideSeek-R1 <wideseek_r1/index>`
+     - :doc:`AgentLightning <agentlightning_calc_x>`, :doc:`Coding Online RL <coding_online_rl>`, :doc:`RPent <rpent_episode_sync>`, :doc:`rStar2 <rstar2>`, :doc:`Search-R1 <searchr1/index>`, :doc:`WideSeek-R1 <wideseek_r1/index>`
    * - :doc:`Image & Video Generation <../video_models>`
      - SD3.5 Medium, Wan2.2 TI2V 5B (Diffusers)
      - DiffusionART, Diffusion-NFT, ReFL
@@ -76,6 +76,12 @@ Agentic RL
       :link-type: doc
 
       End-to-end online RL for IDE code completion combining RLinf with the Continue extension.
+
+   .. grid-item-card:: RPent Mixed-Simulator GRPO
+      :link: rpent_episode_sync
+      :link-type: doc
+
+      Train a Qwen3.5 planner with groups from LIBERO and RoboTwin.
 
    .. grid-item-card:: rStar2
       :link: rstar2

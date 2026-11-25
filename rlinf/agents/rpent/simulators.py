@@ -192,20 +192,21 @@ class SimulatorBatchSampler:
             )
             pools.append([offset + index for index in indices])
             offset += size
-        while self.batch < len(self):
+        for batch in range(self.batch, len(self)):
             draws = [
-                pool[self.batch * quota : (self.batch + 1) * quota]
+                pool[batch * quota : (batch + 1) * quota]
                 for pool, quota in zip(pools, self.quotas, strict=True)
             ]
-            self.batch += 1
+            if batch + 1 == len(self):
+                self.epoch, self.batch = self.epoch + 1, 0
+            else:
+                self.batch = batch + 1
             yield [
                 draw[index]
                 for index in range(max(self.quotas))
                 for draw in draws
                 if index < len(draw)
             ]
-        self.batch = 0
-        self.epoch += 1
 
     def state_dict(self) -> dict[str, int]:
         """Store the cursor; the shuffle order is derived from seed and epoch."""
@@ -214,3 +215,5 @@ class SimulatorBatchSampler:
     def load_state_dict(self, state: dict[str, int]) -> None:
         self.epoch = state["epoch"]
         self.batch = state["batch"]
+        if self.batch == len(self):
+            self.epoch, self.batch = self.epoch + 1, 0

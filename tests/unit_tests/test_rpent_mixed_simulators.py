@@ -121,6 +121,19 @@ def test_mixed_sampler_restores_next_batch_and_epoch(num_workers):
     assert [batch.tolist() for batch in restored] == next_epoch
 
 
+def test_mixed_sampler_restores_a_checkpoint_at_the_epoch_boundary():
+    def sampler():
+        return SimulatorBatchSampler([10, 12], [5, 6], shuffle=True, seed=13)
+
+    source = sampler()
+    iterator = iter(source)
+    for _ in range(len(source)):
+        next(iterator)
+    restored = sampler()
+    restored.load_state_dict(source.state_dict())
+    assert list(restored) == list(source)
+
+
 def test_candidate_cleanup_routes_owners_to_their_backends(tmp_path):
     from rlinf.agents.rpent.rpent_agent_loop import RPentAgentLoopWorker
 
@@ -136,8 +149,7 @@ def test_candidate_cleanup_routes_owners_to_their_backends(tmp_path):
     }
     calls = {}
 
-    async def release(request_id, endpoint, owners):
-        assert request_id.startswith("cohort-")
+    async def release(endpoint, owners):
         calls[endpoint] = owners
         return {"owner_ids": owners, "cleanup_complete": True}
 

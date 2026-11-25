@@ -4801,6 +4801,7 @@ install_agentic() {
         # Preserve CPU-offloaded master weights and Adam counters on resume.
         # Explicit MEGATRON_PATH checkouts remain under the caller's control.
         local resume_patch="$SCRIPT_DIR/agentic/megatron-core-r0.18.0-cpu-offload.patch"
+        git -C "$megatron_dir" checkout --detach dc0ee41ada177d4c74ba46bb501bba5967264815 >&2 || return $?
         if ! git -C "$megatron_dir" apply --reverse --check "$resume_patch" 2>/dev/null; then
             git -C "$megatron_dir" apply "$resume_patch" || return $?
         fi

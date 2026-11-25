@@ -100,9 +100,18 @@ class RPentEpisodeLauncher:
             except BaseException:
                 self._env_initializations.release()
                 raise
+            held = True
+
+            def release_once(_task=None):
+                nonlocal held
+                if held:
+                    self._env_initializations.release()
+                    held = False
+
             startup = asyncio.create_task(
                 self._watch_environment_startup(process, output)
             )
+            startup.add_done_callback(release_once)
             try:
                 returncode = await asyncio.wait_for(
                     process.wait(), rpent.process_timeout_s
@@ -119,6 +128,7 @@ class RPentEpisodeLauncher:
                 finally:
                     startup.cancel()
                     await asyncio.gather(startup, return_exceptions=True)
+                    release_once()
         if returncode == _EXIT_SETUP_FAILED:
             raise RPentEpisodeError(
                 f"RPent episode {episode.episode_id} did not start; see {log}",
@@ -145,12 +155,9 @@ class RPentEpisodeLauncher:
         return outcome
 
     async def _watch_environment_startup(self, process, output: Path) -> None:
-        """Release a cold-start permit after reset, process exit, or cancellation."""
-        try:
-            while process.returncode is None and not (output / "states.json").is_file():
-                await asyncio.sleep(0.5)
-        finally:
-            self._env_initializations.release()
+        """Wait until reset or process exit."""
+        while process.returncode is None and not (output / "states.json").is_file():
+            await asyncio.sleep(0.5)
 
     def environment(self) -> dict[str, str]:
         """Environment shared by the episode and cleanup processes.

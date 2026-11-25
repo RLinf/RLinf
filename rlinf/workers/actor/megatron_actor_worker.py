@@ -124,6 +124,10 @@ class MegatronActor(MegatronWorker):
             model_type=self.cfg.rollout.model.model_type,
             model_config=model_config,
             vision_config=getattr(model_config, "vision_config", None),
+            freeze_vision=(
+                self.role_cfg.model.get("freeze_vision_model", False)
+                and self.role_cfg.model.get("freeze_vision_projection", False)
+            ),
             mm_enable_dp_encoder=_sglang.get("mm_enable_dp_encoder", False),
             reshard_tp_size=_rollout_attn_tp,
             reshard_pp_size=self.cfg.rollout.pipeline_parallel_size,
@@ -272,7 +276,7 @@ class MegatronActor(MegatronWorker):
                     if self.calculate_entropy_loss:
                         loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
 
-                kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                kl_loss = torch.tensor(0.0, device=self.torch_platform.current_device())
                 if self.kl_beta > 0 and ref_logprobs is not None:
                     kld = kl_penalty(curr_logprobs, ref_logprobs, self.kl_penalty_type)
                     kl_loss = self.loss_agg_func(kld, mask)
@@ -300,7 +304,7 @@ class MegatronActor(MegatronWorker):
                 if self.cfg.algorithm.use_valid_token_scale:
                     loss_scale = (
                         mask.sum()
-                        / self.global_valid_token
+                        / self.global_valid_token.clamp_min(1)
                         * parallel_state.get_data_parallel_world_size()
                         * self.num_microbatches
                     )
@@ -421,7 +425,7 @@ class MegatronActor(MegatronWorker):
             and dst_tp_rank_scalar == parallel_state.get_tensor_model_parallel_rank()
         )
         tp_gather_is_identity = torch.tensor(
-            [1 if local_ok else 0], device=torch.cuda.current_device()
+            [1 if local_ok else 0], device=self.torch_platform.current_device()
         )
         torch.distributed.all_reduce(
             tp_gather_is_identity,
@@ -502,7 +506,7 @@ class MegatronActor(MegatronWorker):
                     if bucket_idx == 0:
                         buffer["bucket_length"] = torch.tensor(
                             [len(model_bucket_list)],
-                            device=torch.cuda.current_device(),
+                            device=self.torch_platform.current_device(),
                         )
                     send_handle = self.send(
                         buffer,
@@ -525,7 +529,7 @@ class MegatronActor(MegatronWorker):
                         if bucket_idx == 0:
                             buffer["bucket_length"] = torch.tensor(
                                 [len(model_bucket_list)],
-                                device=torch.cuda.current_device(),
+                                device=self.torch_platform.current_device(),
                             )
                         send_handle = self.send(
                             buffer,

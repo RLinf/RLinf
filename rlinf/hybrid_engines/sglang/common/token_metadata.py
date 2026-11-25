@@ -28,7 +28,8 @@ def accumulate_token_metadata(recv_obj, request_states: dict) -> None:
                 continue
             state_key = f"rlinf_{name}"
             accumulated = getattr(state, state_key, [])
-            accumulated.extend(values[index])
+            if values[index] is not None:
+                accumulated.extend(values[index])
             setattr(state, state_key, accumulated)
             values[index] = list(accumulated)
 

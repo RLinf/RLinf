@@ -57,8 +57,13 @@ def require_token_space_support() -> None:
         if dataclasses.is_dataclass(ServerArgs)
         else msgspec.structs.fields(ServerArgs)
     )
+    request_fields = (
+        dataclasses.fields(GenerateReqInput)
+        if dataclasses.is_dataclass(GenerateReqInput)
+        else msgspec.structs.fields(GenerateReqInput)
+    )
     required = {"mm_token_expansion_start_len", "return_prompt_token_ids"}
-    if not required.issubset(GenerateReqInput.__dataclass_fields__) or (
+    if not required.issubset(field.name for field in request_fields) or (
         "enable_token_space_processor" not in {field.name for field in fields}
     ):
         raise RuntimeError(

@@ -19,6 +19,7 @@ from pathlib import Path
 import hydra
 from omegaconf import OmegaConf
 
+from rlinf.agents.rpent.cohort import SimulatorCohort
 from rlinf.agents.rpent.rpent_agent_loop import RPentAgentLoopWorker
 from rlinf.agents.rpent.simulators import mixed_simulators, mixed_training_dataset
 from rlinf.config import validate_cfg
@@ -97,6 +98,7 @@ def main(cfg) -> None:
         )
 
     runner = AgentPPORunner(
+        environment_cohort=SimulatorCohort(cfg, simulators) if simulators else None,
         cfg=cfg,
         placement=placement,
         train_dataset=train_ds,
