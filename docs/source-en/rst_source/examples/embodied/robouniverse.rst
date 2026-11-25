@@ -38,7 +38,7 @@ Evaluate embodied policies from two RGB views, joint states, and a natural-langu
 
       Linux x86_64 · NVIDIA RTX GPU (Isaac Sim 5.1.0)
 
-| **You'll do:** install → download the dataset and checkpoint → configure EULA and paths → launch → check ``eval/success_once``.
+| **You'll do:** install → download the dataset → prepare a checkpoint → configure EULA and paths → launch → check ``eval/success_once``.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Review the `NVIDIA Isaac Sim License <https://docs.isaacsim.omniverse.nvidia.com/5.1.0/common/NVIDIA_Omniverse_License_Agreement.html>`_.
 
 Tasks
@@ -80,7 +80,7 @@ Observation and Action
 Installation
 ------------
 
-Run RLinf on a Linux x86_64 host with Isaac Sim 5.1.0 installed, or inside NVIDIA's ``nvcr.io/nvidia/isaac-sim:5.1.0`` container, so the simulator subprocess can invoke Isaac Sim's Python interpreter directly (``/isaac-sim/python.sh`` inside the container; set ``init_params.sim_python`` to your host path if installed elsewhere).
+Run RLinf on a Linux x86_64 host with Isaac Sim 5.1.0 installed, or inside NVIDIA's ``nvcr.io/nvidia/isaac-sim:5.1.0`` container.
 
 .. include:: _setup_common.rst
    :end-before: Then set up the dependencies
@@ -103,12 +103,12 @@ Download the catalog and ``heldout500`` split index from Hugging Face into ``/pa
      --repo-type dataset --revision ae170e8093dd6061765c14f2fb6a209432517d85 \
      --local-dir /path/to/RoboUniverse-10K
 
-Download either a single smoke-test task archive or the full ``tasks/`` tree into the same directory:
+Download either the first Franka ``heldout500`` task archive for a smoke test or the full ``tasks/`` tree into the same directory:
 
 .. code-block:: bash
 
-   # Single Franka smoke-test task
-   hf download Einsia/RoboUniverse-10K tasks/franka/000/000247_rotate_twist.zip \
+   # First Franka heldout500 task (smoke test)
+   hf download Einsia/RoboUniverse-10K tasks/franka/000/000095_rotate_twist.zip \
      --repo-type dataset --revision ae170e8093dd6061765c14f2fb6a209432517d85 \
      --local-dir /path/to/RoboUniverse-10K
 
@@ -117,20 +117,20 @@ Download either a single smoke-test task archive or the full ``tasks/`` tree int
      --repo-type dataset --revision ae170e8093dd6061765c14f2fb6a209432517d85 \
      --local-dir /path/to/RoboUniverse-10K
 
-Download the Model
-------------------
+Prepare the Model
+-----------------
 
-Prepare a PyTorch OpenPI π₀.₅ checkpoint fine-tuned for the target robot's joint space along with its normalization statistics:
+Supply a PyTorch OpenPI π₀.₅ checkpoint fine-tuned for the target robot's joint space along with its normalization statistics:
 
 - **Franka Panda (9-DoF):** place the checkpoint at ``/path/to/openpi_robouniverse_franka_checkpoint`` with ``norm_stats.json`` at ``<model_path>/robouniverse_franka/norm_stats.json`` (loaded by ``openpi.config_name: pi05_robouniverse_franka``).
 - **AgileX dual-Piper (16-DoF):** place the checkpoint at ``/path/to/openpi_robouniverse_agilex_checkpoint`` with ``norm_stats.json`` at ``<model_path>/robouniverse_agilex/norm_stats.json`` (loaded by ``openpi.config_name: pi05_robouniverse_agilex``).
 
-If ``norm_stats.json`` lives elsewhere, pass ``rollout.model.openpi_data.norm_stats_path=/path/to/norm_stats_dir``. For the general OpenPI SFT and checkpoint-conversion workflow, see :doc:`OpenPI SFT </rst_source/examples/embodied/sft_openpi>`.
+If ``norm_stats.json`` lives elsewhere, pass ``rollout.model.openpi_data.norm_stats_path=/path/to/norm_stats.json``. For the general OpenPI SFT and checkpoint-conversion workflow, see :doc:`OpenPI SFT </rst_source/examples/embodied/sft_openpi>`.
 
 Run It
 ------
 
-Edit ``evaluations/robouniverse/robouniverse_franka_eval_openpi.yaml`` to set your dataset path, checkpoint directory, Isaac Sim Python path, and NVIDIA EULA acceptance:
+Edit ``evaluations/robouniverse/robouniverse_franka_eval_openpi.yaml`` to set your dataset path, checkpoint directory, Isaac Sim Python path (``/isaac-sim/python.sh`` inside the container, or your host Isaac Sim ``python.sh``), and NVIDIA EULA acceptance:
 
 .. code-block:: yaml
 
@@ -151,7 +151,12 @@ Launch Franka evaluation:
 
    bash evaluations/run_eval.sh robouniverse robouniverse_franka_eval_openpi
 
-By default, each config runs 1 episode from ``heldout500`` (``rollout_epoch: 1``, ``total_num_envs: 1``) and writes logs and TensorBoard events to ``logs/<timestamp>-<config_name>/``. Override ``env.eval.rollout_epoch``, ``env.eval.total_num_envs``, or ``env.eval.init_params.cases='["000247_rotate_twist"]'`` to select specific tasks or evaluate more episodes.
+By default, each config evaluates 1 episode from ``heldout500`` (``rollout_epoch: 1``, ``total_num_envs: 1``). Override ``env.eval.rollout_epoch`` or ``env.eval.total_num_envs`` to run more episodes, or pass an explicit case list:
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh robouniverse robouniverse_franka_eval_openpi \
+     'env.eval.init_params.cases=["000095_rotate_twist"]'
 
 To evaluate AgileX dual-Piper tasks, update ``data_root``, ``sim_python``, ``accept_isaac_eula: true``, and ``model_path`` in ``evaluations/robouniverse/robouniverse_agilex_eval_openpi.yaml`` and run:
 
@@ -168,7 +173,7 @@ Visualization and Results
 
 Inspect evaluation logs in ``logs/<timestamp>-<config_name>/`` and TensorBoard:
 
-- ``eval/success_once`` and ``eval/return`` follow RLinf's standard evaluation metric definitions in :doc:`Training Metrics </rst_source/reference/metrics>`.
+- ``eval/success_once`` and ``eval/return`` correspond to ``env/success_once`` and ``env/return`` in :doc:`Training Metrics </rst_source/reference/metrics>`.
 - ``eval/infra_error`` reports the fraction of episodes aborted by a simulator or task-verifier error rather than policy failure.
 
 See :doc:`Training Visualisation </rst_source/guides/logger>` for logging backends and output configuration.

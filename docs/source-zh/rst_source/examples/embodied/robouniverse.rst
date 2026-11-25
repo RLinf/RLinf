@@ -38,7 +38,7 @@ RoboUniverse-10K 评估
 
       Linux x86_64 · NVIDIA RTX GPU（Isaac Sim 5.1.0）
 
-| **你将完成：** 安装 → 下载数据集和模型 → 配置 EULA 与路径 → 启动评估 → 查看 ``eval/success_once``\ 。
+| **你将完成：** 安装 → 下载数据集 → 准备模型 → 配置 EULA 与路径 → 启动评估 → 查看 ``eval/success_once``\ 。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 阅读 `NVIDIA Isaac Sim 许可协议 <https://docs.isaacsim.omniverse.nvidia.com/5.1.0/common/NVIDIA_Omniverse_License_Agreement.html>`_。
 
 任务
@@ -80,7 +80,7 @@ RoboUniverse-10K 评估
 安装
 ----
 
-在装有 Isaac Sim 5.1.0 的 Linux x86_64 主机或 NVIDIA ``nvcr.io/nvidia/isaac-sim:5.1.0`` 容器中运行 RLinf，以便模拟器子进程直接调用 Isaac Sim 的 Python 解释器（容器内默认为 ``/isaac-sim/python.sh``\ ，主机安装需通过 ``init_params.sim_python`` 指定路径）。
+在已安装 Isaac Sim 5.1.0 的 Linux x86_64 主机或 ``nvcr.io/nvidia/isaac-sim:5.1.0`` 容器中运行 RLinf。
 
 .. include:: _setup_common.rst
    :end-before: 然后，使用下列两种方式之一准备依赖
@@ -103,12 +103,12 @@ RoboUniverse-10K 评估
      --repo-type dataset --revision ae170e8093dd6061765c14f2fb6a209432517d85 \
      --local-dir /path/to/RoboUniverse-10K
 
-将单个冒烟测试任务或全部 ``tasks/`` 目录下的任务压缩包下载到同一目录：
+将首个 Franka ``heldout500`` 冒烟测试任务或全部 ``tasks/`` 目录下的任务压缩包下载到同一目录：
 
 .. code-block:: bash
 
-   # 下载单个 Franka 冒烟测试任务
-   hf download Einsia/RoboUniverse-10K tasks/franka/000/000247_rotate_twist.zip \
+   # 下载首个 Franka heldout500 任务（冒烟测试）
+   hf download Einsia/RoboUniverse-10K tasks/franka/000/000095_rotate_twist.zip \
      --repo-type dataset --revision ae170e8093dd6061765c14f2fb6a209432517d85 \
      --local-dir /path/to/RoboUniverse-10K
 
@@ -117,20 +117,20 @@ RoboUniverse-10K 评估
      --repo-type dataset --revision ae170e8093dd6061765c14f2fb6a209432517d85 \
      --local-dir /path/to/RoboUniverse-10K
 
-下载模型
+准备模型
 --------
 
-准备针对目标机器人关节空间微调好的 PyTorch OpenPI π₀.₅ checkpoint 及其归一化统计文件：
+提供针对目标机器人关节空间微调好的 PyTorch OpenPI π₀.₅ checkpoint 及其归一化统计文件：
 
 - **Franka Panda（9 维动作）：** 将权重放到 ``/path/to/openpi_robouniverse_franka_checkpoint``\ ，``norm_stats.json`` 放在 ``<model_path>/robouniverse_franka/norm_stats.json``\ （对应 ``openpi.config_name: pi05_robouniverse_franka``\ ）。
 - **AgileX 双臂 Piper（16 维动作）：** 将权重放到 ``/path/to/openpi_robouniverse_agilex_checkpoint``\ ，``norm_stats.json`` 放在 ``<model_path>/robouniverse_agilex/norm_stats.json``\ （对应 ``openpi.config_name: pi05_robouniverse_agilex``\ ）。
 
-如果 ``norm_stats.json`` 位于其他目录，可通过 ``rollout.model.openpi_data.norm_stats_path=/path/to/norm_stats_dir`` 覆盖。通用的 OpenPI SFT 训练与权重转换流程见 :doc:`OpenPI 监督微调 </rst_source/examples/embodied/sft_openpi>`。
+如果 ``norm_stats.json`` 位于其他位置，可通过 ``rollout.model.openpi_data.norm_stats_path=/path/to/norm_stats.json`` 覆盖。通用的 OpenPI SFT 训练与权重转换流程见 :doc:`OpenPI 监督微调 </rst_source/examples/embodied/sft_openpi>`。
 
 运行
 ----
 
-编辑 ``evaluations/robouniverse/robouniverse_franka_eval_openpi.yaml``\ ，填写数据集目录、checkpoint 路径、Isaac Sim Python 路径并同意 NVIDIA 许可协议：
+编辑 ``evaluations/robouniverse/robouniverse_franka_eval_openpi.yaml``\ ，填写数据集目录、checkpoint 路径、Isaac Sim Python 路径（容器内为 ``/isaac-sim/python.sh``\ ，主机安装填写对应 ``python.sh`` 路径）并同意 NVIDIA 许可协议：
 
 .. code-block:: yaml
 
@@ -151,7 +151,12 @@ RoboUniverse-10K 评估
 
    bash evaluations/run_eval.sh robouniverse robouniverse_franka_eval_openpi
 
-默认配置会从 ``heldout500`` 评估 1 个回合（``rollout_epoch: 1``\ 、``total_num_envs: 1``\ ），并将日志与 TensorBoard 文件写入 ``logs/<timestamp>-<config_name>/``\ 。可通过覆盖 ``env.eval.rollout_epoch``\ 、``env.eval.total_num_envs`` 或 ``env.eval.init_params.cases='["000247_rotate_twist"]'`` 选择指定任务或扩展评估回合数。
+默认配置会从 ``heldout500`` 评估 1 个回合（``rollout_epoch: 1``\ 、``total_num_envs: 1``\ ）。可通过覆盖 ``env.eval.rollout_epoch`` 或 ``env.eval.total_num_envs`` 扩展评估回合数，或指定具体任务列表：
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh robouniverse robouniverse_franka_eval_openpi \
+     'env.eval.init_params.cases=["000095_rotate_twist"]'
 
 评估 AgileX 双臂任务时，在 ``evaluations/robouniverse/robouniverse_agilex_eval_openpi.yaml`` 中填写 ``data_root``\ 、``sim_python``\ 、``accept_isaac_eula: true`` 和 ``model_path`` 后运行：
 
@@ -168,7 +173,7 @@ RoboUniverse-10K 评估
 
 在 ``logs/<timestamp>-<config_name>/`` 和 TensorBoard 中查看评估结果：
 
-- ``eval/success_once`` 和 ``eval/return`` 沿用 RLinf 标准评估指标定义，详见 :doc:`训练指标 </rst_source/reference/metrics>`。
+- ``eval/success_once`` 和 ``eval/return`` 对应 :doc:`训练指标 </rst_source/reference/metrics>` 中的 ``env/success_once`` 与 ``env/return``\ 。
 - ``eval/infra_error`` 统计因模拟器或任务评测器报错而提前中止的回合占比，与 policy 任务失败分开统计。
 
 日志后端与输出配置见 :doc:`训练可视化 </rst_source/guides/logger>`。

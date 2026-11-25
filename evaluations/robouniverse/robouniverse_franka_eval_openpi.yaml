@@ -68,3 +68,5 @@ rollout:
       eval_batch_size: 1
       eval_seed: 0
       torch_compile: false
+    openpi_data:
+      norm_stats_path: null

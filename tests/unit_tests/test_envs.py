@@ -1407,6 +1407,7 @@ def test_robouniverse_timeout_isolation_ipc_and_eval_configs(tmp_path):
         assert merged_model.openpi.task == "eval"
         assert merged_model.openpi.config_name == expected_cfg
         assert merged_model.openpi.torch_compile is False
+        assert merged_model.openpi_data.norm_stats_path is None
         assert merged_model.openpi.action_env_dim == expected_dim
         assert merged_model.openpi.action_chunk == 15
         assert merged_model.openpi.num_steps == 10
