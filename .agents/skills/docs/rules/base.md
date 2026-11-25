@@ -53,7 +53,7 @@ When completeness and readability pull in opposite directions, cut from the main
 
 ## Structure
 
-- One H1 per page. Headings are Title Case (lowercase only a, an, the, and, or, of, to, in, on, with, vs), never skip a level, and use the standard section names of the page type.
+- One H1 per page. Headings are Title Case (lowercase only a, an, the, and, or, of, to, in, on, with, vs), never skip a level, and use the standard section names of the page type. Keep headings short and direct (<= 48 chars in English, <= 20 CJK-equivalent chars in Chinese; `docs/heading-length`)—avoid appending extra clauses like `& Channels` or `与 Channel 交互` when the body or diagram already shows it.
 - A heading names a task or an idea the reader already understands, not an unexplained code identifier. Reference pages may use identifiers as headings.
 - Explain in prose; use lists for steps and enumerations, and tables for specs, comparisons, and results (`list-table`). Avoid bullet walls with bold labels.
 - Put footguns in a `warning` (out-of-memory settings, `MUJOCO_GL`, the `RLINF_NODE_RANK` ordering, multi-node pitfalls) and side information in a `note`.

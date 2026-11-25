@@ -23,8 +23,8 @@ At a Glance
      - Subclass ``AgentLoopWorker``
      - Orchestrates multi-turn generation, tool calls, length limits, and token loss masks.
 
-AgentRunner Call Flow & Channels
---------------------------------
+Overall Call Flow
+-----------------
 
 ``AgentRunner`` creates all channels and drives the training loop. You only implement the highlighted ``AgentLoopWorker`` and ``ToolWorker``; Rollout / Session Server and Reward / Actor stay built-in.
 

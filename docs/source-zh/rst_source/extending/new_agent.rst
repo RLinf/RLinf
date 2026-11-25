@@ -23,8 +23,8 @@
      - 继承 ``AgentLoopWorker``
      - 控制单条轨迹的多轮生成、工具调用、长度预算与 token 损失掩码。
 
-AgentRunner 调用流程与 Channel 交互
------------------------------------
+整体调用流程
+------------
 
 ``AgentRunner`` 负责创建 Channel 并驱动完整训练循环；开发者只需实现图中高亮的 ``AgentLoopWorker`` 与 ``ToolWorker``，其余组件（Rollout / Session Server、Reward / Actor）均由框架内置接管。
 

@@ -244,6 +244,39 @@ def check_page(
                     "docs/math",
                     "equations belong in Reference; link to it",
                 )
+    skip_heading_len = any(
+        s in rel
+        for s in (
+            "/faq.rst",
+            "/publications/",
+            "/blog/",
+            "/releases",
+            "/reference/algorithms/",
+        )
+    )
+    if not skip_heading_len:
+        for number, title in headings(lines):
+            clean_title = MARKUP.sub("", title).strip()
+            if lang == "zh":
+                # Count CJK as 1 and ASCII as 0.5 so mixed ZH/EN titles are judged fairly.
+                eff_len = sum(0.5 if ord(ch) < 128 else 1.0 for ch in clean_title)
+                if eff_len > 20:
+                    add(
+                        "minor",
+                        number,
+                        "docs/heading-length",
+                        f"heading is too long ({int(eff_len)} CJK-equiv chars); "
+                        "keep titles concise and move secondary details into the body",
+                    )
+            elif len(clean_title) > 48:
+                add(
+                    "minor",
+                    number,
+                    "docs/heading-length",
+                    f"heading is too long ({len(clean_title)} chars); "
+                    "keep titles concise (<= 48 chars) and move details into the body",
+                )
+
     if kind not in ("reference", "extending"):
         for number, title in headings(lines):
             if "``" in title:
@@ -317,45 +350,59 @@ def check_page(
 
     # Apply code-density guard across ALL doc pages so prose never turns into
     # a wall of backticked variables, functions, classes, or paths.
+    list_item_re = re.compile(r"^\s*(?:[-*+]|\d+\.)\s+")
     for block in check_rst_markup.prose_blocks(source):
         if any(
             row.lstrip().startswith(("* -", "| ", "+-", "=="))
             for row in block.text.splitlines()
         ):
             continue
-        plain = MARKUP.sub(" X ", block.text)
-        inline_literals = LITERAL.findall(block.text)
-        if len(inline_literals) >= 6:
-            severity = "major" if len(inline_literals) >= 8 else "minor"
-            add(
-                severity,
-                block.lines[0],
-                "docs/inline-code-density",
-                f"paragraph packs {len(inline_literals)} inline code literals; "
-                "avoid stacking variables, functions, classes, or paths in prose—"
-                "move structured specs into a table or simplify",
-            )
-        if kind != "publication":
-            if lang == "zh":
-                char_count = len(re.sub(r"\s+", "", plain))
-                if char_count > 260:
-                    add(
-                        "minor",
-                        block.lines[0],
-                        "docs/long-paragraph",
-                        f"paragraph has {char_count} Chinese characters on a {kind} page; "
-                        "split into short scannable paragraphs or a table",
-                    )
+        chunks: list[tuple[int, str]] = []
+        cur_lines: list[str] = []
+        cur_start = block.lines[0]
+        for line_no, raw_ln in zip(block.lines, block.text.splitlines()):
+            if list_item_re.match(raw_ln) and cur_lines:
+                chunks.append((cur_start, "\n".join(cur_lines)))
+                cur_lines = [raw_ln]
+                cur_start = line_no
             else:
-                word_count = len(plain.split())
-                if word_count > 120:
-                    add(
-                        "minor",
-                        block.lines[0],
-                        "docs/long-paragraph",
-                        f"paragraph has {word_count} words on a {kind} page; "
-                        "split into short scannable paragraphs or a table",
-                    )
+                cur_lines.append(raw_ln)
+        if cur_lines:
+            chunks.append((cur_start, "\n".join(cur_lines)))
+
+        for start_line, chunk in chunks:
+            plain = MARKUP.sub(" X ", chunk)
+            inline_literals = LITERAL.findall(chunk)
+            if len(inline_literals) >= 6:
+                add(
+                    "minor",
+                    start_line,
+                    "docs/inline-code-density",
+                    f"paragraph packs {len(inline_literals)} inline code literals; "
+                    "avoid stacking variables, functions, classes, or paths in prose—"
+                    "move structured specs into a table or simplify",
+                )
+            if kind != "publication":
+                if lang == "zh":
+                    char_count = len(re.sub(r"\s+", "", plain))
+                    if char_count > 260:
+                        add(
+                            "minor",
+                            start_line,
+                            "docs/long-paragraph",
+                            f"paragraph has {char_count} Chinese characters on a {kind} page; "
+                            "split into short scannable paragraphs or a table",
+                        )
+                else:
+                    word_count = len(plain.split())
+                    if word_count > 120:
+                        add(
+                            "minor",
+                            start_line,
+                            "docs/long-paragraph",
+                            f"paragraph has {word_count} words on a {kind} page; "
+                            "split into short scannable paragraphs or a table",
+                        )
 
     for number, text in rows:
         if lang == "en":
