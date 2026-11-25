@@ -28,6 +28,9 @@ Add this fragment to your task configuration. Replace ``<checkpoint>`` with the 
      model:
        model_type: qwen3_5
        precision: bf16
+     optim:
+       bf16: true
+       fp16: false
      tokenizer:
        tokenizer_model: <checkpoint>
      megatron:
@@ -54,7 +57,7 @@ For a fresh run, enable comparison against the checkpoint:
 
 Launch your task with its usual command. SGLang loads the checkpoint and compares it with the weights received from the actor on the first synchronization. Look for ``sglang: validate_weight success`` in each rollout rank's log. A mismatch raises an error that lists the affected parameters.
 
-This check compares position-aware weight norms with a tolerance; it is not a bitwise comparison. It is disabled when resuming from a training checkpoint, whose weights can differ from the initial model. After checking a fresh run, remove the setting to avoid loading rollout weights from disk before synchronization.
+This check compares weight norms within a tolerance. RLinf skips it when resuming from a training checkpoint, whose weights can differ from the initial model. After checking a fresh run, remove the setting to avoid loading rollout weights from disk before synchronization.
 
 Enable MTP Training and Decoding
 ------------------------------------------------------
@@ -69,7 +72,7 @@ To train and synchronize MTP, add:
 
 This also enables NEXTN speculative decoding using the MTP branch from the same checkpoint. External draft checkpoints are not supported.
 
-Training adds an auxiliary multi-token prediction loss on response tokens. Its gradients also update the language model backbone. Monitor ``actor/mtp_loss`` for the unscaled loss; adjust its contribution with ``actor.model.mtp_loss_scaling_factor`` if needed. The first-sync check above also validates the enabled draft.
+Training adds an auxiliary multi-token prediction loss on response tokens. Its gradients also update the language model backbone. Monitor ``actor/mtp_loss`` for the unscaled loss; adjust its contribution with ``actor.model.mtp_loss_scaling_factor`` if needed. Enabling ``rollout.validate_weight_first_sync`` also validates the enabled draft.
 
 Choose the Vision Layout
 ------------------------------------------------
@@ -85,4 +88,4 @@ Set ``rollout.sglang.mm_enable_dp_encoder: true`` to replicate the vision encode
        dp_size: 2
        mm_enable_dp_encoder: true
 
-Keep ``rollout.pipeline_parallel_size: 1`` for SGLang. Actor TP, pipeline parallelism, and virtual pipeline parallelism can differ from rollout placement. See :doc:`../concepts/placement` for placement configuration.
+Keep ``rollout.pipeline_parallel_size: 1`` for SGLang. Actor tensor, pipeline, and virtual pipeline parallelism can differ from rollout parallelism. See :doc:`5D` for Megatron parallelism settings and :doc:`../concepts/placement` for GPU placement.
