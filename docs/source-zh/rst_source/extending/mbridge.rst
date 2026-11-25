@@ -117,52 +117,6 @@ RLinf 会读取 ``ckpt_convertor.hf_model_path`` 设定的模型路径，并交�
 当 ``actor.megatron.mbridge`` 为 ``True`` 时，
 RLinf 会读取 ``actor.model.model_path`` 设定的模型路径，并交由 MBridge 构建 Megatron model provider。
 
-配置 Qwen3.5 RL 任务
---------------------
-
-Qwen3.5 Dense 模型使用上述 agentic 环境中的 SGLang 0.5.12.post1，安装时会一并安装 FLA。引擎版本选择见 :doc:`../guides/version`。checkpoint 的配置应声明 ``Qwen3_5ForConditionalGeneration``\ 。actor 和 rollout 都需要读取完整的 checkpoint，包括 tokenizer 和 processor 文件。
-
-将以下片段合入已有的 Megatron/SGLang RL 任务，把三处 ``<checkpoint>`` 都替换为同一个本地目录。从 FP16 任务配置修改时，也要显式设置优化器精度。
-
-.. code-block:: yaml
-
-   actor:
-     training_backend: megatron
-     model:
-       model_type: qwen3_5
-       precision: bf16
-     optim:
-       bf16: true
-       fp16: false
-     tokenizer:
-       tokenizer_model: <checkpoint>
-     megatron:
-       mbridge: true
-       use_hf_ckpt: true
-       ckpt_convertor:
-         hf_model_path: <checkpoint>
-   rollout:
-     rollout_backend: sglang
-     model:
-       model_type: qwen3_5
-       model_path: <checkpoint>
-       precision: bf16
-
-设置 ``actor.model.load_mtp: true``\ ，可以训练 MTP 并开启 NEXTN 投机解码。draft 使用同一 checkpoint 中的 MTP 分支，不支持外部 draft checkpoint。MTP 会对 response token 计算预测损失，梯度也会更新语言模型主干。``actor/mtp_loss`` 记录缩放前的损失值，``actor.model.mtp_loss_scaling_factor`` 控制它在训练中的权重。
-
-设置 ``rollout.sglang.mm_enable_dp_encoder: true``\ ，可以在 rollout 各 rank 上保留完整的视觉编码器副本；否则使用张量并行。以下配置对应 attention TP 2、前馈层 TP 4、视觉分支 TP 1：
-
-.. code-block:: yaml
-
-   rollout:
-     tensor_parallel_size: 4
-     sglang:
-       enable_dp_attention: true
-       dp_size: 2
-       mm_enable_dp_encoder: true
-
-SGLang rollout 需要保持 ``rollout.pipeline_parallel_size: 1``\ 。actor 的张量并行、流水线并行和虚拟流水线并行可以与 rollout 的并行配置不同。Megatron 并行设置见 :doc:`../guides/5D`，GPU 部署设置见 :doc:`../concepts/placement`。
-
 快速开始
 --------
 
@@ -320,6 +274,3 @@ Qwen3-VL 报 ``deepstack_visual_indexes`` 相关断言
   需要确保第一段 language pipeline stage 的层数能够容纳所有
   ``deepstack_visual_indexes``。如果使用的是裁剪层数后的 checkpoint，还需要确认
   visual deepstack 配置与语言模型层数一致。
-
-检查 Qwen3.5 初始权重加载
-  从初始模型启动任务时，可设置 ``rollout.validate_weight_first_sync: true``\ ，将收到的权重范数与 checkpoint 比较，允许一定的数值误差。启用 MTP 后也会检查 draft，各 rollout rank 的日志中应出现 ``sglang: validate_weight success``\ 。从训练 checkpoint 恢复时，RLinf 会跳过检查。校验通过后可移除这个设置，省去同步前从磁盘加载 rollout 权重的开销。
