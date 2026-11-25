@@ -101,6 +101,42 @@ def set_camera_resolution(camera_cfg: dict | None) -> None:
         eval_utils.WRIST_RESOLUTION = tuple(wrist_resolution)
 
 
+def _set_batched_camera_resolution(
+    camera_cfg: DictConfig | None,
+    robot_cfg: DictConfig,
+    r1pro: DictConfig,
+    wrapper_name: str | None,
+) -> None:
+    """Configure the robot cameras before the simulator creates their sensors."""
+    use_yaml = wrapper_name in (None, "rgb")
+    cameras = r1pro.eval.camera_sensor_names
+    if use_yaml:
+        camera_cfg = camera_cfg or {}
+        head = camera_cfg.get("head_resolution")
+        wrist = camera_cfg.get("wrist_resolution")
+        resolutions = {role: head if role == "head" else wrist for role in cameras}
+    else:
+        spec = get_env_wrapper(wrapper_name, batched=True).camera_spec()
+        resolutions = spec["resolution"]
+        robot_cfg.obs_modalities = ["proprio", *spec["modalities"]]
+
+    sensors = robot_cfg.get("sensor_config") or {}
+    for role, name in cameras.items():
+        sensor_kwargs = {}
+        resolution = resolutions.get(role)
+        if resolution is not None:
+            sensor_kwargs["image_height"], sensor_kwargs["image_width"] = resolution
+        if wrapper_name is not None and role == "head":
+            sensor_kwargs["horizontal_aperture"] = 40.0
+        if not sensor_kwargs:
+            continue
+        link = name.split(":", 1)[1]
+        # A per-link entry takes precedence over the shared VisionSensor settings.
+        current = sensors.get(link, sensors.get("VisionSensor", {}))
+        sensor = OmegaConf.merge(current, {"sensor_kwargs": sensor_kwargs})
+        OmegaConf.update(robot_cfg, f"sensor_config.{link}", sensor)
+
+
 def apply_runtime_renderer_settings() -> None:
     """
     RLinf-specific renderer overrides after OmniGibson has launched.
@@ -114,11 +150,19 @@ def apply_runtime_renderer_settings() -> None:
     )
 
 
-def get_env_wrapper(wrapper_name: str):
+def get_env_wrapper(wrapper_name: str, *, batched: bool = False):
     if wrapper_name == "rgb":
         from .rgb_wrapper import RGBWrapper
 
         return RGBWrapper
+    if batched:
+        from omnigibson.eval.wrappers import DefaultWrapper, RGBDFullResWrapper
+
+        if wrapper_name in ("default", "rgb_lowres"):
+            return DefaultWrapper
+        if wrapper_name == "rgbd_full_res":
+            return RGBDFullResWrapper
+        raise ValueError(f"Unknown 2026 BEHAVIOR observation wrapper: {wrapper_name}")
     if wrapper_name == "default":
         from omnigibson.learning.wrappers.default_wrapper import DefaultWrapper
 
@@ -175,9 +219,12 @@ def patch_omnigibson_wrapper_reset_signature() -> None:
     EnvironmentWrapper.reset = _reset_with_kwargs
 
 
-def apply_env_wrapper(vec_env, wrapper_name: str | None):
-    if wrapper_name is None:
+def apply_env_wrapper(vec_env, wrapper_name: str | None, *, batched: bool = False):
+    # Batched RGB sensors already have their resolution and aperture at creation.
+    if wrapper_name is None or (batched and wrapper_name == "rgb"):
         return vec_env
+    if batched:
+        return get_env_wrapper(wrapper_name, batched=True)(vec_env)
     patch_omnigibson_wrapper_reset_signature()
     wrapper_cls = get_env_wrapper(wrapper_name)
     for i in range(vec_env.num_envs):
@@ -234,11 +281,15 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     )
     OmegaConf.update(omni_cfg, "robots[0]", robot_override, merge=True)
 
-    override_proprio_obs = OmegaConf.select(
-        override_cfg, "robots[0].proprio_obs", default=None
+    batched = cfg.env_type == "behavior2026"
+    r1pro = (
+        OmegaConf.load(os.path.join(og.root_path, "eval", "r1pro.yaml"))
+        if batched
+        else None
     )
+    override_proprio_obs = robot_override.get("proprio_obs")
     if override_proprio_obs is None:
-        override_proprio_obs = R1PRO_PROPRIO_KEYS
+        override_proprio_obs = r1pro.proprio_obs if batched else R1PRO_PROPRIO_KEYS
     OmegaConf.update(
         omni_cfg, "robots[0].proprio_obs", override_proprio_obs, merge=True
     )
@@ -249,11 +300,13 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     if partial_scene_load is not None:
         with open_dict(omni_cfg.scene):
             omni_cfg.scene.pop("partial_scene_load", None)
-        if partial_scene_load:
-            from gello.robots.sim_robot.og_teleop_utils import (
-                augment_rooms,
-                get_task_relevant_room_types,
-            )
+        if partial_scene_load and (
+            not batched or omni_cfg.scene.get("load_room_instances") is None
+        ):
+            if batched:
+                from gello.utils import og_teleop_utils
+            else:
+                from gello.robots.sim_robot import og_teleop_utils
 
             activity_name = OmegaConf.select(omni_cfg, "task.activity_name")
             scene_model = OmegaConf.select(omni_cfg, "scene.scene_model")
@@ -263,15 +316,26 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
                     f"in omni_config; got activity_name={activity_name!r}, "
                     f"scene_model={scene_model!r}."
                 )
-            relevant_rooms = get_task_relevant_room_types(activity_name=activity_name)
-            relevant_rooms = augment_rooms(relevant_rooms, scene_model, activity_name)
-            relevant_rooms.sort()
-            OmegaConf.update(
-                omni_cfg,
-                "scene.load_room_types",
-                relevant_rooms,
-                merge=False,
-            )
+            relevant_rooms = None
+            if batched:
+                # Challenge room instances are specific to the official task scene.
+                tasks = og_teleop_utils.load_available_tasks().get(activity_name, {})
+                definition_id = omni_cfg.task.get("activity_definition_id", 0)
+                if tasks.get(definition_id, {}).get("scene_model") == scene_model:
+                    from omnigibson.eval.utils.eval_utils import TASK_NAMES_TO_ROOMS
+
+                    relevant_rooms = TASK_NAMES_TO_ROOMS.get(activity_name)
+            if relevant_rooms is None:
+                relevant_rooms = og_teleop_utils.get_task_relevant_room_types(
+                    activity_name=activity_name
+                )
+                relevant_rooms = og_teleop_utils.augment_rooms(
+                    relevant_rooms, scene_model, activity_name
+                )
+                relevant_rooms.sort()
+                omni_cfg.scene.load_room_types = relevant_rooms
+            else:
+                omni_cfg.scene.load_room_instances = relevant_rooms
             get_logger().info(
                 f"Auto-detected relevant rooms for task {activity_name}: {relevant_rooms}"
             )
@@ -279,7 +343,8 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     # setup omnigibson macros, according to configuration yaml
     macro_cfg = OmegaConf.select(omni_cfg, "macro")
     gm.HEADLESS = macro_cfg.headless
-    gm.ENABLE_FLATCACHE = macro_cfg.enable_flatcache
+    if not batched:
+        gm.ENABLE_FLATCACHE = macro_cfg.enable_flatcache
     gm.ENABLE_OBJECT_STATES = macro_cfg.enable_object_states
     gm.USE_GPU_DYNAMICS = macro_cfg.use_gpu_dynamics
     gm.ENABLE_TRANSITION_RULES = macro_cfg.enable_transition_rules
@@ -288,7 +353,12 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
 
     # setup head/wrist camera resolutions
     camera_cfg = OmegaConf.select(omni_cfg, "camera")
-    set_camera_resolution(camera_cfg)
+    if batched:
+        _set_batched_camera_resolution(
+            camera_cfg, omni_cfg.robots[0], r1pro, omni_cfg.env.get("env_wrapper")
+        )
+    else:
+        set_camera_resolution(camera_cfg)
 
     # override behavior's termination config `max_steps` field
     max_episode_steps = (

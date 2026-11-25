@@ -310,6 +310,114 @@ if __name__ == "__main__":
     pytest.main(["-v", __file__])
 
 
+@pytest.mark.parametrize("batched", [False, True], ids=["3.7.2", "3.9.4"])
+def test_behavior_stage_routes_only_selected_actions(batched):
+    import torch
+
+    from rlinf.envs.sim.behavior.behavior_env import BehaviorProcess
+
+    cls = BehaviorProcess.__ray_metadata__.modified_class
+    worker = cls.__new__(cls)
+    worker.env = mock.Mock()
+    worker.batched = batched
+    worker.use_legacy_proprio = False
+    worker.skip_intermediate_renders = True
+    worker.step_supports_get_obs = True
+    worker.step_supports_render = True
+    worker.step_supports_env_indices = True
+    worker.env.step.return_value = (["obs"], [1.0], [False], [False], [{}])
+    actions = torch.arange(4).reshape(2, 2, 1)
+
+    obs, rewards, *_ = worker.chunk_step(actions, [1])
+    assert obs == (None, ["obs"])
+    assert [reward.tolist() for reward in rewards] == [[1.0], [1.0]]
+    for timestep, call in enumerate(worker.env.step.call_args_list):
+        active_actions = call.args[0]
+        assert isinstance(active_actions, torch.Tensor if batched else list)
+        assert active_actions[0].tolist() == [2 + timestep]
+        assert call.kwargs == {
+            "env_indices": [1],
+            "get_obs": timestep == 1,
+            "render": timestep == 1,
+        }
+
+
+def test_behavior_2026_resets_missing_pose_to_selected_scene_template(
+    monkeypatch, tmp_path
+):
+    from rlinf.envs.sim.behavior import instance_loader as il
+
+    monkeypatch.setitem(
+        sys.modules,
+        "omnigibson.utils.python_utils",
+        SimpleNamespace(recursively_convert_to_torch=lambda value: value),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "omnigibson.tasks.behavior_task",
+        SimpleNamespace(
+            get_presampled_robot_poses=lambda poses, model, key: poses[model]
+        ),
+    )
+    settle = mock.Mock()
+    monkeypatch.setattr(il, "_settle_instance_scenes", settle)
+    pose = {"position": [1, 2, 3], "orientation": [0, 0, 0, 1]}
+    path = tmp_path / "instance.json"
+    instance = il.ActivityInstanceFile(301, str(path), "tro_state")
+    loader = il.BatchedActivityInstanceLoader(
+        {}, "turning_on_radio", 301, "disabled", (instance,)
+    )
+    scenes = [mock.Mock(), mock.Mock()]
+    robots = [mock.Mock(), mock.Mock(model="R1Pro", n_joints=0)]
+    template = ([4, 5, 0], [0, 0, 1, 0])
+    robots[1].get_position_orientation.side_effect = [template]
+    task = mock.Mock(object_scopes=[{}, {}])
+    task.get_agent.side_effect = lambda env, idx: robots[idx]
+    env = SimpleNamespace(scenes=scenes, task=task, num_envs=2)
+
+    for state in ({"robot_poses": {"R1Pro": [pose]}}, {}, {}):
+        path.write_text(json.dumps(state))
+        loader.prepare_reset(env, [1])
+    assert robots[1].set_position_orientation.call_args_list == [
+        mock.call(pose["position"], pose["orientation"], frame="scene"),
+        mock.call(*template, frame="scene"),
+        mock.call(*template, frame="scene"),
+    ]
+    robots[0].reset.assert_not_called()
+    scenes[0].write_task_metadata.assert_not_called()
+    scenes[1].write_task_metadata.assert_called_with(key="robot_poses", data=None)
+    assert settle.call_args_list == [mock.call(env, [1])] * 3
+
+
+@pytest.mark.parametrize(
+    "width,expected",
+    [
+        (61, [*range(3), *range(53, 57), *range(3, 10), *range(28, 35), 49, 99]),
+        (
+            256,
+            [
+                *range(253, 256),
+                *range(236, 240),
+                *range(158, 165),
+                *range(197, 204),
+                387,
+                465,
+            ],
+        ),
+    ],
+)
+def test_behavior_openpi_state_features(width, expected):
+    import numpy as np
+
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.policies.behavior_policy import (
+        extract_state_from_proprio,
+    )
+
+    np.testing.assert_array_equal(
+        extract_state_from_proprio(np.arange(width)), expected
+    )
+
 class LocalRayLogCollector(DistributedRayLogCollector):
     """Collector variant using local temp directories for testing."""
 

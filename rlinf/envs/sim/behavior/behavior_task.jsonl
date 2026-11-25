@@ -48,3 +48,53 @@
 {"task_index": 47, "task_name": "freeze_pies", "task": "In the kitchen, take the two apple pies from the plates on the countertop, put each pie into a separate tupperware container taken from the cabinet, place both tupperwares inside the refrigerator, close the refrigerator, and leave them until the pies are frozen."}
 {"task_index": 48, "task_name": "canning_food", "task": "In the kitchen, open the refrigerator and the cabinet. Take the steak and the pineapple out of the refrigerator and take two bowls from the cabinet. On the chopping board on the countertop, use the carving knife to dice the steak and to dice the pineapple. Put only the diced steak into one bowl and only the diced pineapple into the other bowl - do not mix them. Place both bowls back inside the cabinet, then close the refrigerator and close the cabinet."}
 {"task_index": 49, "task_name": "make_pizza", "task": "Make a pizza on the cookie sheet in the kitchen: take the grated cheese, the four pieces of pepperoni, and the two mushrooms from their tupperware containers in the refrigerator; chop the Vidalia onion on the chopping board with the knife, and also chop the two whole mushrooms in half; top the pizza dough that's already on the cookie sheet with the cheese, pepperoni, halved mushrooms, and chopped onion; bake it in the oven until it becomes a pizza, and leave the finished pizza on the cookie sheet."}
+{"task_index": 50, "task_name": "freeze_fruit", "task": "In the kitchen, take the two tupperware containers from the cabinet, put one apple and one strawberry into each container, place both containers in the refrigerator, and leave the fruit frozen."}
+{"task_index": 51, "task_name": "cook_a_brisket", "task": "Take the brisket from the refrigerator, cook it in a frying pan on the burner, and place the cooked brisket on the chopping board."}
+{"task_index": 52, "task_name": "sorting_bottles_cans_and_paper", "task": "Sort the recyclables into separate containers: put the bottles together in one bucket, the cans together in another bucket, and the newspaper and magazine together in a third bucket."}
+{"task_index": 53, "task_name": "tidying_living_room", "task": "In the living room, place the potted plant on the coffee table and put the books and papers into the bookcase."}
+{"task_index": 54, "task_name": "putting_away_toys", "task": "Pick up all the toy figures from the floor and put them inside the toy boxes."}
+{"task_index": 55, "task_name": "re_shelving_library_books", "task": "Put the library books and notebooks from the desk into the bookcase."}
+{"task_index": 56, "task_name": "make_rose_centerpieces", "task": "Place all four roses into the vase and leave the vase on the coffee table."}
+{"task_index": 57, "task_name": "sweeping_garage", "task": "Use the broom to sweep the dirt from the garage floor until the floor is clean."}
+{"task_index": 58, "task_name": "stacking_wood", "task": "Stack all of the logs together on the driveway."}
+{"task_index": 59, "task_name": "organizing_art_supplies", "task": "Put the marker, paintbrush, glue stick, and rubber eraser into the tote, then place the tote on the desk."}
+{"task_index": 60, "task_name": "scrubbing_bathroom_floor", "task": "Use the scrub brush to scrub the bathroom floor until the floor is clean."}
+{"task_index": 61, "task_name": "bringing_paper_to_recycling", "task": "Put the paper and newspaper into the recycling bin, then close the recycling bin."}
+{"task_index": 62, "task_name": "halve_an_egg", "task": "Take the hard-boiled egg from the refrigerator, cut it in half on the cutting board, and leave the egg halves on the plate."}
+{"task_index": 63, "task_name": "installing_smoke_detectors", "task": "Attach the two smoke detectors to the wall nails."}
+{"task_index": 64, "task_name": "setting_the_table", "task": "Set the breakfast table with both plates, put one cupcake on each plate, and place a fork and a knife next to each plate."}
+{"task_index": 65, "task_name": "unloading_the_car", "task": "Open the car, take out the briefcase and satchel, and place them on the floor outside the car."}
+{"task_index": 66, "task_name": "turning_out_all_lights_before_sleep", "task": "Turn off all of the lights and light switches before sleep."}
+{"task_index": 67, "task_name": "boxing_food_after_dinner", "task": "Pack the food from the plates into the tupperware container, put the container in the refrigerator, and close the refrigerator."}
+{"task_index": 68, "task_name": "cleaning_up_branches_and_twigs", "task": "Collect all of the branches and twigs from the garden and put them into the recycling bin."}
+{"task_index": 69, "task_name": "vacuuming_floors", "task": "Use the vacuum to clean the dirty floor until the floor is no longer covered in dirt."}
+{"task_index": 70, "task_name": "thawing_frozen_food", "task": "Take the frozen food from the refrigerator, put it in the microwave, and heat it until it is thawed."}
+{"task_index": 71, "task_name": "clean_your_rusty_garden_tools", "task": "Use the steel wool to clean the rust off the garden tools, then put the tools into the toolbox."}
+{"task_index": 72, "task_name": "cook_a_frozen_pie", "task": "Take the frozen apple pie from the refrigerator, put it in the oven, and heat it until it is hot and no longer frozen."}
+{"task_index": 73, "task_name": "organizing_school_stuff", "task": "Put the school supplies into the tote, place the tote on the bed, and keep the folder and notebook next to it."}
+{"task_index": 74, "task_name": "carrying_out_garden_furniture", "task": "Carry the garden chairs and wheelbarrow out to the lawn."}
+{"task_index": 75, "task_name": "put_together_a_basic_pruning_kit", "task": "Put the pruner and shears into the toolbox, then close the toolbox."}
+{"task_index": 76, "task_name": "dispose_of_glass", "task": "Pick up the water glasses and put them into the trash can."}
+{"task_index": 77, "task_name": "installing_a_modem", "task": "Install the modem by placing it on the cabinet and turning it on."}
+{"task_index": 78, "task_name": "make_cabinet_doors", "task": "Attach the cabinet door to the cabinet base."}
+{"task_index": 79, "task_name": "polishing_shoes", "task": "Use the scrub brush to polish both shoes until the stains are removed."}
+{"task_index": 80, "task_name": "clean_up_broken_glass", "task": "Pick up all of the broken glass pieces and put them into the trash can."}
+{"task_index": 81, "task_name": "packing_meal_for_delivery", "task": "Pack each wrapped hamburger into a paper bag, then put the paper bags into the storage box."}
+{"task_index": 82, "task_name": "store_batteries", "task": "Put all of the batteries into the bottom-cabinet drawer, then close the drawer."}
+{"task_index": 83, "task_name": "store_honey", "task": "Put the jar of honey into the cabinet drawer, then close the drawer."}
+{"task_index": 84, "task_name": "tidying_bathroom", "task": "Tidy the bathroom by putting the toilet tissue on the toilet, placing the tissue dispenser and soap dish on the countertop, putting the soap in the soap dish, and throwing the cork into the trash can."}
+{"task_index": 85, "task_name": "putting_dirty_dishes_in_sink", "task": "Put all of the dirty bowls and plates into the kitchen sink."}
+{"task_index": 86, "task_name": "make_gift_bags_for_baby_showers", "task": "Make baby-shower gift bags by putting a toy die and a wafer into each paper bag."}
+{"task_index": 87, "task_name": "collecting_aluminum_cans", "task": "Collect all of the soda cans and put them into the ice bucket."}
+{"task_index": 88, "task_name": "rearrange_your_room", "task": "Rearrange the room by putting the pillows on the bed, moving the chair next to the desk, and placing the tissue dispenser on the nightstand."}
+{"task_index": 89, "task_name": "installing_a_fax_machine", "task": "Install the fax machine by placing it on the cubicle desk and turning it on."}
+{"task_index": 90, "task_name": "composting_waste", "task": "Put the food waste into the compost bin."}
+{"task_index": 91, "task_name": "store_produce", "task": "Take the mangoes and pomegranates from the basket and put them into the refrigerator."}
+{"task_index": 92, "task_name": "installing_a_scanner", "task": "Install the scanner by turning it on and leaving it on the desk near the laptop."}
+{"task_index": 93, "task_name": "clean_a_keyboard", "task": "Use the pipe cleaner to clean the keyboard until the stain is removed."}
+{"task_index": 94, "task_name": "dispose_of_batteries", "task": "Pick up all of the batteries and put them into the trash can."}
+{"task_index": 95, "task_name": "cook_brussels_sprouts", "task": "Take the brussels sprouts from the refrigerator, cut them on the cutting board, put the pieces onto the baking sheet, and cook them in the oven."}
+{"task_index": 96, "task_name": "cook_broccolini", "task": "Cook the broccolini in the frying pan on the stove."}
+{"task_index": 97, "task_name": "setup_a_bar_for_a_cocktail_party", "task": "Set up the bar for a cocktail party by placing the wineglasses, wine bottle, corkscrew, soda cans, and ice bucket on the bar."}
+{"task_index": 98, "task_name": "laying_tile_floors", "task": "Lay the ceramic tiles on the floor next to each other."}
+{"task_index": 99, "task_name": "sorting_books_on_shelf", "task": "Sort the comic books, notebooks, and hardbacks on the bookcase shelves so the books of each type are grouped together."}

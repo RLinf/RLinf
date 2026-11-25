@@ -6,7 +6,8 @@ TARGET=""
 
 MODEL=""
 ENV_NAME=""
-VENV_DIR=".venv"
+BEHAVIOR_YEAR=2025
+VENV_DIR=""
 PYTHON_VERSION="3.11.14"
 # Set by --python; MUSA only defaults PYTHON_VERSION when it is unset.
 USER_SET_PYTHON=0
@@ -146,11 +147,14 @@ Targets:
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
+                           behavior and behavior2025 use OmniGibson 3.7.2.
+                           behavior2026 installs the 3.9.4 OpenPI evaluation environment.
     --paddle-gpu           Install CUDA-enabled PaddlePaddle for diffusion OCR rewards.
 
 Common options:
     -h, --help             Show this help message and exit.
-    --venv <dir>           Virtual environment directory name (default: .venv).
+    --venv <dir>           Virtual environment directory (default: .venv;
+                           behavior2026 defaults to .venv-behavior2026).
     --torch <version>      Override torch version (e.g., 2.7.0). torchvision/torchaudio are derived
                            automatically (torchvision=0.<minor+15>.<patch>, torchaudio=<torch>).
                            torchcodec is left untouched. Patches pyproject.toml in place for the
@@ -354,6 +358,24 @@ parse_args() {
     if [ -z "$TARGET" ]; then
         TARGET="embodied"
     fi
+    case "$ENV_NAME" in
+        behavior2025|behavior2026)
+            BEHAVIOR_YEAR="${ENV_NAME#behavior}"
+            ENV_NAME="behavior"
+            ;;
+    esac
+    if [[ "$BEHAVIOR_YEAR" == 2026 ]]; then
+        if [[ "$TARGET" != embodied || "$MODEL" != openpi || "$PLATFORM" != nvidia ]]; then
+            echo "behavior2026 requires embodied --model openpi on the NVIDIA platform." >&2
+            return 1
+        fi
+        if [[ -n "$TORCH_VERSION" && "$TORCH_VERSION" != 2.7.0 ]]; then
+            echo "behavior2026 requires Torch 2.7.0." >&2
+            return 1
+        fi
+        VENV_DIR="${VENV_DIR:-.venv-behavior2026}"
+    fi
+    VENV_DIR="${VENV_DIR:-.venv}"
 }
 
 validate_python_version() {
@@ -1163,7 +1185,10 @@ apply_env_default_torch() {
     [ -n "$TORCH_VERSION" ] && return 0
     local env_torch=""
     case "$ENV_NAME" in
-        behavior) env_torch="2.5.1" ;;
+        behavior)
+            env_torch="2.5.1"
+            if [[ "$BEHAVIOR_YEAR" == 2026 ]]; then env_torch="2.7.0"; fi
+            ;;
         robolab) env_torch="2.7.1" ;;
         simple) env_torch="2.7.0" ;;
         robodojo) env_torch="2.7.0" ;;
@@ -2661,11 +2686,16 @@ EOF
             ;;
         behavior)
             PYTHON_VERSION="3.10"
+            if [[ "$BEHAVIOR_YEAR" == 2026 ]]; then PYTHON_VERSION="3.11.14"; fi
             create_and_sync_venv
             install_common_embodied_deps
             uv pip install "rlinf-openpi==0.1.1"
-            install_behavior_env
-            uv pip install "${RAY_COMPAT_DEPS[@]}"
+            if [[ "$BEHAVIOR_YEAR" == 2026 ]]; then
+                install_behavior2026_env
+            else
+                install_behavior_env
+                uv pip install "${RAY_COMPAT_DEPS[@]}"
+            fi
             pushd ~ >/dev/null
             install_flash_attn
             popd >/dev/null
@@ -3896,6 +3926,47 @@ install_behavior_env() {
     # Re-assert the pin after OmniGibson's setup, which otherwise leaves a torch
     # tree mixing two versions (inductor then fails in _pad_mm_init).
     uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
+}
+
+install_behavior2026_env() {
+    local source_pin="https://github.com/Forging-ahead/BEHAVIOR-1K.git@5acd19864a3ec51b9ed1dade6d0b1a04b9d63c24"
+    local repo="${GITHUB_PREFIX}${source_pin%@*}" ref="${source_pin##*@}" behavior_dir
+    local shared_checkout="${BEHAVIOR_PATH:-$VENV_DIR/BEHAVIOR-1K}"
+    local reuse=0
+    if [[ -L "$shared_checkout" || ( -n "${BEHAVIOR_PATH:-}" && -d "$shared_checkout" ) ]]; then
+        reuse=1
+    fi
+    behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" "$repo" -b migration/rlinf-v3.9.4 --depth 1)
+    if [[ "$(git -C "$behavior_dir" rev-parse HEAD)" != "$ref" ]]; then
+        if [[ "$reuse" == 1 ]]; then
+            echo "behavior2026 requires BEHAVIOR-1K at $ref. Select this revision in $behavior_dir or use a separate checkout." >&2
+            return 1
+        fi
+        git -C "$behavior_dir" fetch --depth 1 "$repo" "$ref"
+        git -C "$behavior_dir" checkout --detach "$ref"
+    fi
+
+    local cuda_tag="${UV_TORCH_BACKEND:-auto}" cuda_limit cuda_version
+    if [[ "$cuda_tag" == auto ]]; then
+        cuda_limit=$(detect_nvidia_driver_max_cuda) || cuda_limit=$(python -c 'import torch; print((torch.version.cuda or "12.8").replace(".", ""))')
+        cuda_tag=$(detect_nvidia_torch_cuda_tag 2.7.0 https://download.pytorch.org/whl "$cuda_limit") || return 1
+    fi
+    case "$cuda_tag" in
+        cu118) cuda_version=11.8 ;;
+        cu126) cuda_version=12.6 ;;
+        cu128) cuda_version=12.8 ;;
+        *) echo "behavior2026 requires a Torch 2.7.0 CUDA wheel (cu118, cu126 or cu128); got $cuda_tag." >&2; return 1 ;;
+    esac
+    export UV_TORCH_BACKEND="$cuda_tag"
+    pushd "$behavior_dir" >/dev/null
+    # The SDK checks public Torch versions only. Select matching CUDA builds before setup.
+    python -m pip install --index-url "https://download.pytorch.org/whl/$cuda_tag" \
+        "torch==2.7.0+$cuda_tag" "torchvision==0.22.0+$cuda_tag" "torchaudio==2.7.0+$cuda_tag"
+    ./setup.sh --cuda-version "$cuda_version" --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula
+    uv pip install "warp-lang==1.12.0" "dm_tree>=0.1.9" "hydra-core>=1.3.2" "msgpack>=1.1.0" "gspread>=6.2.1" "open3d>=0.19.0" av "numpy<2"
+    popd >/dev/null
+    uv pip uninstall flash-attn || true
+    uv pip install ml_dtypes==0.5.3 "huggingface-hub>=0.34.4,<1"
 }
 
 install_geniesim_env() {

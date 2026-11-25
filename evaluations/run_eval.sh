@@ -16,7 +16,7 @@ source "${EMBODIED_PATH}/sim_env.sh"
 infer_benchmark() {
     local config_name="$1"
     case "${config_name}" in
-        behavior_*|behavior-* ) echo "behavior" ;;
+        behavior_*|behavior-*|behavior2026_* ) echo "behavior" ;;
         libero_*|libero-* ) echo "libero" ;;
         robotwin_*|robotwin-* ) echo "robotwin" ;;
         robodojo_*|robodojo-* ) echo "robodojo" ;;
@@ -44,18 +44,31 @@ run_eval_cmd() {
     local log_dir="$3"
     local log_file="$4"
     shift 4
-    local extra_args=("$@")
 
     mkdir -p "${log_dir}"
     local cmd=(
         python "${SRC_FILE}"
         --config-path "${config_path}/"
         --config-name "${config_name}"
-        "runner.logger.log_path=${log_dir}"
     )
-    if [ ${#extra_args[@]} -gt 0 ]; then
-        cmd+=("${extra_args[@]}")
+    local log_override="runner.logger.log_path=${log_dir}"
+    local extra_args=()
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            -m|--multirun)
+                cmd+=("$arg")
+                continue
+                ;;
+            runner.logger.log_path=*|+runner.logger.log_path=*|++runner.logger.log_path=*|'~runner.logger.log_path'|'~runner.logger.log_path='*)
+                log_override="" ;;
+        esac
+        extra_args+=("$arg")
+    done
+    if [[ -n "$log_override" ]]; then
+        extra_args+=("$log_override")
     fi
+    cmd+=("${extra_args[@]}")
 
     echo "${cmd[*]}" | tee "${log_file}"
     "${cmd[@]}" 2>&1 | tee -a "${log_file}"
@@ -132,6 +145,15 @@ if [ "$1" = "mani-ood" ]; then
     exit 0
 fi
 
+# Year shortcuts use the OpenPI preset and forward all Hydra overrides.
+case "$1" in
+    behavior|behavior2025)
+        if [[ "$1" == behavior2025 || $# == 1 || "$2" == -* || "$2" == *=* || "$2" == '~'* ]]; then
+            shift; set -- behavior behavior_openpi_pi05_eval "$@"
+        fi ;;
+    behavior2026) shift; set -- behavior behavior2026_openpi_pi05_eval "$@" ;;
+esac
+
 if [ $# -ge 2 ] && [ -f "${EVALUATIONS_PATH}/$1/$2.yaml" ]; then
     BENCHMARK="$1"
     CONFIG_NAME="$2"
@@ -150,8 +172,10 @@ else
     fi
 fi
 
-EXTRA_ARGS=("$@")
 CONFIG_PATH="${EVALUATIONS_PATH}/${BENCHMARK}"
+if [ "${CONFIG_NAME}" = "behavior2026_openpi_pi05_eval" ]; then
+    SRC_FILE="${EVALUATIONS_PATH}/behavior/eval_2026.py"
+fi
 if [ ! -f "${CONFIG_PATH}/${CONFIG_NAME}.yaml" ]; then
     CONFIG_PATH="${EMBODIED_PATH}/config"
     echo "Config not found under evaluations/${BENCHMARK}, fallback to ${CONFIG_PATH}"
@@ -188,4 +212,4 @@ LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')-${CONFIG_NAME}"
 
 MEGA_LOG_FILE="${LOG_DIR}/eval_embodiment.log"
 
-run_eval_cmd "${CONFIG_PATH}" "${CONFIG_NAME}" "${LOG_DIR}" "${MEGA_LOG_FILE}" "${EXTRA_ARGS[@]}"
+run_eval_cmd "${CONFIG_PATH}" "${CONFIG_NAME}" "${LOG_DIR}" "${MEGA_LOG_FILE}" "$@"

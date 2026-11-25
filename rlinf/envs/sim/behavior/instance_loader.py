@@ -153,6 +153,39 @@ def discover_activity_instance_files(
     return [instance_files[k] for k in sorted(instance_files)]
 
 
+def _restore_instance_objects(scene, object_scope, robot, tro_file_path):
+    """Apply the cached scene-relative object states and return any saved robot poses."""
+    from omnigibson.utils.python_utils import recursively_convert_to_torch
+
+    with open(tro_file_path, "r", encoding="utf-8") as f:
+        tro_state = recursively_convert_to_torch(json.load(f))
+
+    robot_poses = tro_state.pop("robot_poses", None)
+    for tro_key, state in tro_state.items():
+        entity = object_scope.get(tro_key)
+        assert entity is not None, (
+            f"Cached task-relevant object {tro_key!r} is not present in the current "
+            f"object_scope while loading {tro_file_path}."
+        )
+        if entity is robot or getattr(entity, "synset", None) == "agent":
+            continue
+        root_link = state.get("root_link") if isinstance(state, dict) else None
+        if (
+            getattr(scene, "idx", 0) != 0
+            and isinstance(root_link, dict)
+            and "pos" in root_link
+            and "ori" in root_link
+        ):
+            root_link["pos"], root_link["ori"] = (
+                scene.convert_scene_relative_pose_to_world(
+                    root_link["pos"], root_link["ori"]
+                )
+            )
+        entity.load_state(state, serialized=False)
+
+    return robot_poses
+
+
 def load_activity_instance_tro_state(
     env,
     instance_id: int,
@@ -169,45 +202,17 @@ def load_activity_instance_tro_state(
             cached state.
     """
     import omnigibson as og
-    from omnigibson.utils.python_utils import recursively_convert_to_torch
 
     env.task.activity_instance_id = instance_id
-    with open(tro_file_path, "r", encoding="utf-8") as f:
-        tro_state = recursively_convert_to_torch(json.load(f))
 
     robot = env.task.get_agent(env)
     robot_name = getattr(robot, "model_name", getattr(robot, "model", None))
     assert robot_name is not None, (
         "Robot model name is required to load task instances."
     )
-    robot_poses = tro_state.pop("robot_poses", None)
-
-    for tro_key, state in tro_state.items():
-        entity = env.task.object_scope.get(tro_key)
-        assert entity is not None, (
-            f"Cached task-relevant object {tro_key!r} is not present in the current "
-            f"object_scope while loading {tro_file_path}."
-        )
-        if getattr(entity, "synset", None) == "agent":
-            continue
-        if (
-            getattr(env.scene, "idx", 0) != 0
-            and isinstance(state, dict)
-            and isinstance(state.get("root_link"), dict)
-            and "pos" in state["root_link"]
-            and "ori" in state["root_link"]
-        ):
-            rebased_state = dict(state)
-            rebased_root_link = dict(state["root_link"])
-            rebased_pos, rebased_ori = env.scene.convert_scene_relative_pose_to_world(
-                rebased_root_link["pos"],
-                rebased_root_link["ori"],
-            )
-            rebased_root_link["pos"] = rebased_pos
-            rebased_root_link["ori"] = rebased_ori
-            rebased_state["root_link"] = rebased_root_link
-            state = rebased_state
-        entity.load_state(state, serialized=False)
+    robot_poses = _restore_instance_objects(
+        env.scene, env.task.object_scope, robot, tro_file_path
+    )
 
     if robot_poses is not None:
         assert robot_name in robot_poses, (
@@ -233,6 +238,22 @@ def load_activity_instance_tro_state(
     env.scene.update_initial_file()
     if reset_scene:
         env.scene.reset()
+
+
+def _settle_instance_scenes(env, env_indices):
+    # Physics is shared. Settle once after placing the whole batch, then save each starting layout.
+    import omnigibson as og
+    from omnigibson.prims.entity_prim import EntityPrim
+
+    og.sim.update_handles()
+    for _ in range(25):
+        og.sim.step_physics()
+        for idx in env_indices:
+            for entity in env.task.object_scopes[idx].values():
+                if isinstance(entity, EntityPrim):
+                    entity.keep_still()
+    for idx in env_indices:
+        env.scenes[idx].update_initial_file()
 
 
 class ActivityInstanceLoader:
@@ -378,31 +399,34 @@ class ActivityInstanceLoader:
             activity_instances=activity_instances,
         )
 
-    def prepare_reset(self, vec_env) -> None:
+    def prepare_reset(self, vec_env, reset_indices=None) -> None:
         """Apply any reset-time task-instance mutation required by the config.
 
         Args:
             vec_env: Vectorized OmniGibson environment whose child envs should be
                 updated before ``vec_env.reset()``.
         """
+        indices = range(vec_env.num_envs) if reset_indices is None else reset_indices
+        if len(indices) == 0:
+            return
         if self.instance_resample_mode == "online":
-            task_cfg = OmegaConf.select(self.omni_cfg, "task")
-            for env in vec_env.envs:
-                env.update_task(task_config=task_cfg)
+            self._resample_online(vec_env, indices)
             return
 
         if not self.activity_instances:
             return
 
         if self.instance_resample_mode == "offline":
-            instance_files = [
-                random.choice(self.activity_instances) for _ in range(len(vec_env.envs))
-            ]
+            instance_files = [random.choice(self.activity_instances) for _ in indices]
         else:
             instance_file = self._get_activity_instance(self.activity_instance_id)
-            instance_files = [instance_file] * len(vec_env.envs)
+            instance_files = [instance_file] * len(indices)
 
-        self._apply_instance_files(vec_env, instance_files)
+        self._apply_instance_files(vec_env, instance_files, indices)
+
+    def _resample_online(self, vec_env, indices):
+        for idx in indices:
+            vec_env.envs[idx].update_task(task_config=self.omni_cfg.task)
 
     def _get_activity_instance(self, instance_id: int) -> ActivityInstanceFile:
         for instance_file in self.activity_instances:
@@ -414,11 +438,12 @@ class ActivityInstanceLoader:
         self,
         vec_env,
         instance_files: list[ActivityInstanceFile],
+        env_indices,
     ) -> None:
-        if len(instance_files) != len(vec_env.envs):
+        if len(instance_files) != len(env_indices):
             raise ValueError(
                 "Number of cached activity instance files must match the number of "
-                f"vectorized environments, got {len(instance_files)} and {len(vec_env.envs)}."
+                f"selected environments, got {len(instance_files)} and {len(env_indices)}."
             )
 
         file_format = instance_files[0].file_format
@@ -429,10 +454,10 @@ class ActivityInstanceLoader:
                 "Mixed cached instance formats in a single reset are not supported."
             )
         if file_format == "template":
-            self._load_template_instances(vec_env, instance_files)
+            self._load_template_instances(vec_env, instance_files, env_indices)
             return
         if file_format == "tro_state":
-            self._load_tro_state_instances(vec_env, instance_files)
+            self._load_tro_state_instances(vec_env, instance_files, env_indices)
             return
         raise ValueError(f"Unsupported cached instance format: {file_format}")
 
@@ -440,14 +465,15 @@ class ActivityInstanceLoader:
         self,
         vec_env,
         instance_files: list[ActivityInstanceFile],
+        env_indices,
     ) -> None:
         import omnigibson as og
 
         if not og.sim.is_stopped():
             og.sim.stop()
 
-        for env, instance_file in zip(vec_env.envs, instance_files, strict=True):
-            env.reload(self._build_reload_config(instance_file))
+        for idx, instance_file in zip(env_indices, instance_files, strict=True):
+            vec_env.envs[idx].reload(self._build_reload_config(instance_file))
 
         og.sim.play()
         for env in vec_env.envs:
@@ -457,10 +483,11 @@ class ActivityInstanceLoader:
         self,
         vec_env,
         instance_files: list[ActivityInstanceFile],
+        env_indices,
     ) -> None:
-        for env, instance_file in zip(vec_env.envs, instance_files, strict=True):
+        for idx, instance_file in zip(env_indices, instance_files, strict=True):
             load_activity_instance_tro_state(
-                env,
+                vec_env.envs[idx],
                 instance_id=instance_file.instance_id,
                 tro_file_path=instance_file.path,
                 reset_scene=False,
@@ -477,3 +504,107 @@ class ActivityInstanceLoader:
             resolve=True,
             throw_on_missing=True,
         )
+
+
+class BatchedActivityInstanceLoader(ActivityInstanceLoader):
+    """Restore selected scenes on the 2026 batched Environment."""
+
+    _template_robot_poses: list | None = None
+
+    def _resample_online(self, vec_env, indices):
+        import omnigibson as og
+
+        (scene_idx,) = indices
+        vec_env.scenes[scene_idx].reset()
+        try:
+            success, feedback = vec_env.task.sampler.sample_states(
+                vec_env.task.compiled_task
+            )
+        finally:
+            if og.sim.is_stopped():
+                og.sim.play()
+        if not success:
+            raise RuntimeError(f"Could not resample {self.activity_name}: {feedback}")
+
+    def _load_template_instances(
+        self,
+        vec_env,
+        instance_files: list[ActivityInstanceFile],
+        env_indices,
+    ) -> None:
+        # SDK reload() recreates the whole batch. Restore the template in its own scene.
+        for idx, instance_file in zip(env_indices, instance_files, strict=True):
+            scene = vec_env.scenes[idx]
+            with open(instance_file.path, encoding="utf-8") as file:
+                template = json.load(file)
+            # Full-house templates can omit the robot and include rooms excluded by the config.
+            # Apply the same object selection used when OmniGibson constructs the scene.
+            task_metadata = template["metadata"]["task"]
+            init_info = template["objects_info"]["init_info"]
+            objects = {
+                name: info
+                for name, info in init_info.items()
+                if scene._should_load_object(info, task_metadata)
+            }
+            registry = template["state"]["registry"]
+            registry["object_registry"] = {
+                name: state
+                for name, state in registry["object_registry"].items()
+                if name in objects
+            }
+            robot = vec_env.task.get_agent(vec_env, idx)
+            robot.reset()
+            objects.setdefault(robot.name, robot.get_init_info())
+            template["objects_info"]["init_info"] = objects
+            scene.restore(template)
+            vec_env.task.assign_object_scope_with_cache(vec_env, idx)
+            scene.update_initial_file()
+            if vec_env.num_envs == 1:
+                vec_env.task.activity_instance_id = instance_file.instance_id
+
+    def _load_tro_state_instances(
+        self,
+        vec_env,
+        instance_files: list[ActivityInstanceFile],
+        env_indices,
+    ) -> None:
+        from omnigibson.tasks.behavior_task import get_presampled_robot_poses
+
+        # update_initial_file() replaces each reset snapshot. Save every template pose
+        # before the first instance changes any of the scenes in this simulator.
+        if self._template_robot_poses is None:
+            self._template_robot_poses = [
+                vec_env.task.get_agent(vec_env, idx).get_position_orientation(
+                    frame="scene"
+                )
+                for idx in range(vec_env.num_envs)
+            ]
+
+        for idx, instance_file in zip(env_indices, instance_files, strict=True):
+            scene = vec_env.scenes[idx]
+            robot = vec_env.task.get_agent(vec_env, idx)
+            object_scope = vec_env.task.object_scopes[idx]
+            robot_poses = _restore_instance_objects(
+                scene, object_scope, robot, instance_file.path
+            )
+
+            available_poses = (
+                get_presampled_robot_poses(
+                    robot_poses, robot.model, vec_env.task.presampled_pose_key
+                )
+                if robot_poses
+                else []
+            )
+            if len(available_poses):
+                position = available_poses[0]["position"]
+                orientation = available_poses[0]["orientation"]
+            else:
+                position, orientation = self._template_robot_poses[idx]
+                robot_poses = None
+            robot.reset()
+            robot.set_position_orientation(position, orientation, frame="scene")
+            sync_robot_after_pose_override(robot)
+            scene.write_task_metadata(key="robot_poses", data=robot_poses)
+            if vec_env.num_envs == 1:
+                vec_env.task.activity_instance_id = instance_file.instance_id
+        _settle_instance_scenes(vec_env, env_indices)

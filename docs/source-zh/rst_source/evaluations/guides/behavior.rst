@@ -4,7 +4,7 @@ BEHAVIOR-1K 评测
 概览
 ----
 
-BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿真基准，控制双臂 R1 Pro 机器人在 50 个任务中完成抓取、放置与整理等操作。RLinf 支持在 BEHAVIOR 环境中并行评测 OpenPI 等 VLA policy，并输出 ``eval/success_once`` 等任务指标。
+RLinf 使用 R1 Pro 双臂机器人，在 BEHAVIOR-1K 家居任务中评测 OpenPI 等策略。选择挑战年份后，按对应步骤安装仿真器、准备资产并运行评测。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -12,7 +12,7 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
    .. grid-item-card:: 评测基准
       :text-align: center
 
-      BEHAVIOR-1K（50 个家居任务，``behavior_r1pro``）
+      2025 年 50 个任务，2026 年 100 个任务
 
    .. grid-item-card:: 支持模型
       :text-align: center
@@ -36,7 +36,9 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
 
 .. tab-set::
 
-   .. tab-item:: OpenPI π₀.₅
+   .. tab-item:: 2025 · OpenPI π₀.₅
+
+      OmniGibson 3.7.2 使用独立安装的 Isaac Sim 4.5。安装时，原有的 ``--env behavior`` 和 ``--env behavior2025`` 都选择此版本。
 
       **1. 安装**
 
@@ -63,14 +65,41 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
 
       .. code-block:: bash
 
-         bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+         bash evaluations/run_eval.sh behavior2025 \
            rollout.model.model_path=./RLinf-Pi0-Behavior
 
-``run_eval.sh`` 会根据 ``ISAAC_PATH`` 与 ``OMNIGIBSON_DATA_PATH`` 自动补全 ``OMNIGIBSON_DATASET_PATH``、``OMNIGIBSON_KEY_PATH``、``OMNIGIBSON_ASSET_PATH``、``EXP_PATH`` 与 ``CARB_APP_PATH``。使用第三方 OpenPI 权重（如 OpenPI-Comet）前须转换为 PyTorch 格式；OpenVLA-OFT 可从 ``examples/embodiment/config/`` 中的训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
+      启动脚本根据前面导出的两个目录补全 OmniGibson 和 Isaac Sim 的其他路径。
+
+   .. tab-item:: 2026 · OpenPI π₀.₅
+
+      在仓库根目录打开新终端。安装脚本会将基于 OmniGibson 3.9.4 的仿真库和 Isaac Sim 5.1 装入单独的 Python 3.11 环境。
+
+      .. code-block:: bash
+
+         unset ISAAC_PATH EXP_PATH CARB_APP_PATH
+         bash requirements/install.sh embodied --model openpi --env behavior2026
+         source .venv-behavior2026/bin/activate
+
+      为 2026 资产选择独立目录。首次运行以下命令时，按提示接受资产许可，再下载公开实例和 PT50 权重。
+
+      .. code-block:: bash
+
+         export OMNIGIBSON_DATA_PATH="$PWD/behavior-2026-data"
+         mkdir -p "$OMNIGIBSON_DATA_PATH"
+         python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
+         python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets()"
+         python -c "from omnigibson.utils.asset_utils import download_2026_challenge_task_instances; download_2026_challenge_task_instances()"
+         hf download RLinf/RLinf-Pi05-BEHAVIOR-1K-PT50-CS32 --local-dir ./PT50
+
+         bash evaluations/run_eval.sh behavior2026 rollout.model.model_path="$PWD/PT50"
+
+      默认命令评测“打开收音机”的基础布局。要评测固定公开实例，在评测 YAML 的 ``env.eval.omni_config`` 下，用 ``scene.scene_instance`` 指定该任务的完整模板，用 ``task.activity_instance_dir`` 指向存放该任务布局 JSON 的目录，再用 ``task.activity_instance_id`` 选择实例编号。
+
+2025 版支持从训练配置派生 OpenVLA-OFT 评测配置，见 :doc:`../reference/configuration`。使用第三方 OpenPI 权重前，须将其转换为 PyTorch 格式。
 
 .. dropdown:: 硬件要求、Isaac Sim 与示例配置
 
-   BEHAVIOR 依赖 Isaac Sim 4.5（`依赖说明 <https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html>`_）：
+   2025 版依赖 Isaac Sim 4.5（`依赖说明 <https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html>`_）：
 
    - 使用支持 Ray Tracing 的 GPU（RTX 30/40 系列或更新）；A100、H100 等无 RT 能力的卡渲染画面会出现马赛克或模糊。
    - Hopper 及以上架构 GPU 须使用 570 及以上版本 NVIDIA 驱动。
@@ -86,6 +115,9 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
       * - ``behavior_openpi_pi05_eval.yaml``
         - ``behavior_r1pro``
         - π₀.₅（``openpi``）
+      * - ``behavior2026_openpi_pi05_eval.yaml``
+        - ``behavior_r1pro``
+        - π₀.₅（``openpi``）
 
    若 ``evaluations/behavior/<config>.yaml`` 不存在，``run_eval.sh`` 仅对 ``examples/embodiment/config/`` 中已定义 ``rollout.model``\ （含 ``model_type`` 与 ``num_action_chunks``）的评测就绪配置生效；纯训练配置须按 :doc:`../reference/configuration` 将 ``@actor.model`` 重绑定到 ``@rollout.model``。保持 ``action_dim: 23``、``num_action_chunks: 32`` 与 ``openpi.config_name: pi05_behavior`` 与训练一致。通用 ``env.eval`` 字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`。
 
@@ -99,7 +131,7 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
 
    - ``disabled``\ （默认）：每次 reset 加载 ``activity_instance_id`` 对应的固定实例（若设置了 ``activity_instance_dir`` 则从中读取）。
    - ``offline``：每次 reset 从 ``activity_instance_dir`` 随机选取缓存实例。
-   - ``online``：reset 时在线重采样物体布局（需 ``online_object_sampling: True`` 与 ``use_presampled_robot_pose: False``，启动较慢）。
+   - ``online``：reset 时在线重采样物体布局（需 ``online_object_sampling: True`` 与 ``use_presampled_robot_pose: False``，启动较慢）。2026 版在线采样要求每个仿真进程只运行一个环境。
 
    **核心评测字段**
 
@@ -114,7 +146,7 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
       * - ``rollout_epoch``
         - 评测轮次，多轮指标取平均；``behavior_openpi_pi05_eval.yaml`` 默认为 ``4``。
       * - ``max_episode_steps``
-        - 单条轨迹步数上限（π₀.₅ 示例为 ``4096``，预设默认 ``2000`` 对长程任务偏短）。
+        - 单条轨迹的步数上限。2025 配置使用 ``4096``。2026 配置留空时，按官方任务统计计算该任务的步数上限。
       * - ``max_steps_per_rollout_epoch``
         - 每轮 rollout 的总交互步数，**必须能被** ``rollout.model.num_action_chunks`` **整除**。
       * - ``num_env_subprocess``
@@ -143,7 +175,7 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
               scene_model: house_double_floor_lower
               partial_scene_load: true             # 仅加载任务相关房间
 
-   缓存实例生成与多卡布局详情见 :doc:`../../examples/embodied/behavior`。
+   2025 版的缓存实例生成与多卡布局详情见 :doc:`../../examples/embodied/behavior`。
 
 .. dropdown:: 进阶用法
 
@@ -160,7 +192,7 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
         env.eval.total_num_envs=4 \
         env.eval.num_env_subprocess=2
 
-   **使用离线 instance 随机采样**
+   **使用离线 instance 随机采样（2025）**
 
    .. code-block:: yaml
 
@@ -168,7 +200,7 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
         eval:
           omni_config:
             task:
-              activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2025-challenge-task-instances
+              activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2025-challenge-task-instances/scenes/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances
               instance_file_format: tro_state
               instance_resample_mode: offline
           rollout_epoch: 5
@@ -185,8 +217,8 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
    * - 现象
      - 处理
    * - 缺少 BEHAVIOR 资源或 license 报错
-     - 按 :doc:`../../examples/embodied/behavior` 完成 Isaac Sim、OmniGibson 资产与 license 配置后再评测。
-   * - ``ISAAC_PATH`` 未设置
+     - 确认已完成对应年份的资产下载，并在运行评测的终端中设置了 ``OMNIGIBSON_DATA_PATH``。
+   * - 2025 版未设置 ``ISAAC_PATH``
      - 将 ``ISAAC_PATH`` 导出为 Isaac Sim 安装目录；``run_eval.sh`` 默认设置 ``OMNIGIBSON_HEADLESS=1``。
    * - 显存不足
      - 降低 ``total_num_envs`` 或 ``num_env_subprocess``；单个环境约占 10 GiB 显存。
