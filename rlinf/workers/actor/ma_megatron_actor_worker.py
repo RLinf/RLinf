@@ -40,6 +40,7 @@ from rlinf.data.schema.reasoning_results import (
     RolloutResult,
 )
 from rlinf.hybrid_engines.megatron.utils import (
+    align_next_token_scores,
     postprocess_ragged_seqs,
     preprocess_ragged_seqs,
 )
@@ -232,7 +233,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 }
                 if not self.return_loss:
                     logprob_rows = [
-                        torch.cat((row.new_zeros(1), row[:-1])).detach().cpu()
+                        align_next_token_scores(row).detach().cpu()
                         for row in output_rows["log_probs"]
                     ]
                     # Megatron inspects the tensor device before collecting non-loss data.
@@ -270,10 +271,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 return output, id_func
 
             def loss_func(output):
-                curr_logprobs_ori = output["log_probs"]
-                curr_logprobs = curr_logprobs_ori.clone()
-                curr_logprobs[:, 1:] = curr_logprobs_ori[:, :-1].clone()
-                curr_logprobs[:, 0] = 0.0  # first token has no previous token
+                curr_logprobs = align_next_token_scores(output["log_probs"])
 
                 advantages = batch["advantages"]
                 advantages *= batch["loss_scales"]
@@ -320,7 +318,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
 
                 entropy_loss = torch.zeros(1, device=loss.device)
                 if self.calculate_entropy:
-                    entropy = output["entropy"]
+                    entropy = align_next_token_scores(output["entropy"])
                     entropy_loss = self.loss_agg_func(entropy, mask=mask)
                     if self.calculate_entropy_loss:
                         loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
