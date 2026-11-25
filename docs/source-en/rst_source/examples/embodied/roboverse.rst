@@ -1,5 +1,5 @@
-RL with RoboVerse Benchmark
-===========================
+RoboVerse RL
+============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -77,93 +77,53 @@ Observation and Action
    * - Prompt
      - Natural-language instruction for the RoboVerse task.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-**Docker image**
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenPI π₀.₅
+      :sync: openpi-roboverse
 
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-roboverse
+      **1. Install**
 
-   # For mainland China users:
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-roboverse
+      .. code-block:: bash
 
-Switch to the OpenPI virtual environment inside the image:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env roboverse && source .venv/bin/activate
 
-.. code:: bash
+      **2. Download**
 
-   source switch_env openpi
+      Download the default RoboVerse resources into the RLinf repo root and the OpenPI π₀.₅ SFT checkpoint:
 
-**Custom environment**
+      .. code-block:: bash
 
-Install RoboVerse with the OpenPI dependencies:
+         # Download RoboVerse resources
+         hf download manity/roboverse_data --repo-type dataset --local-dir ./roboverse_data
 
-.. code:: bash
+         # Download the OpenPI π₀.₅ checkpoint
+         hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --model openpi --env roboverse
-   source .venv/bin/activate
+      **3. Launch**
 
-Download the default RoboVerse resources:
+      .. list-table::
+         :header-rows: 1
+         :widths: 28 46 26
 
-.. code:: bash
+         * - Recipe
+           - Config
+           - Command suffix
+         * - OpenPI π₀.₅ + PPO
+           - ``examples/embodiment/config/roboverse_ppo_openpi_pi05.yaml``
+           - ``roboverse_ppo_openpi_pi05``
 
-   cd /path/to/RLinf
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download --repo-type dataset manity/roboverse_data --local-dir .
+      .. include:: _model_path.rst
 
-Download the Model
-------------------
+      .. code-block:: bash
 
-Download the OpenPI π₀.₅ checkpoint used by the reference config:
-
-.. code-block:: bash
-
-   cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
-
-   # Or use huggingface-hub:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir RLinf-Pi05-LIBERO-SFT
-
-.. include:: _model_path.rst
-
-Run It
-------
-
-Launch the RoboVerse recipe:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 46 26
-
-   * - Recipe
-     - Config
-     - Command suffix
-   * - OpenPI π₀.₅ + PPO
-     - ``examples/embodiment/config/roboverse_ppo_openpi_pi05.yaml``
-     - ``roboverse_ppo_openpi_pi05``
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh roboverse_ppo_openpi_pi05
-
-What this does:
-
-1. Starts the embodied training entrypoint with the RoboVerse Hydra config.
-2. Creates Ray workers for the actor, rollout, and RoboVerse env components.
-3. Runs PPO rollouts, computes sparse task rewards, and updates the OpenPI policy.
+         bash examples/embodiment/run_embodiment.sh roboverse_ppo_openpi_pi05
 
 For standalone evaluation, use the unified :doc:`Evaluation CLI
 <../../evaluations/reference/cli>` with config fallback and the same suffix,
@@ -178,32 +138,7 @@ For standalone evaluation, use the unified :doc:`Evaluation CLI
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable video in the env config when you want rollout videos:
-
-.. code:: yaml
-
-   env:
-     eval:
-       video_cfg:
-         save_video: True
-         video_base_dir: ${runner.logger.log_path}/video/eval
-
-Enable W&B or SwanLab by adding logger backends:
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 .. note::
 

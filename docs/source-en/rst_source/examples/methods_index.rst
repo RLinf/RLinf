@@ -1,138 +1,93 @@
-RL
-==
+RL Recipes
+==========
 
-This category groups examples in which the **training algorithm or recipe** is the headline — independent of any single benchmark or model. They cover offline RL, imitation learning, hybrid sim-real co-training, and residual / noise-space policy steering.
+Pick this section when choosing a training method rather than a benchmark or model family. Recipes cover off-policy and offline RL, online distillation, sim-real co-training, and noise-space policy steering.
 
-Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgger vs RECAP …) rather than *what* to train on or *what model* to fine-tune.
+.. grid:: 1 2 3 3
+   :gutter: 3
 
-.. raw:: html
+   .. grid-item-card:: Sim-Real Co-Training
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png
+      :img-alt: Sim-Real Co-Training overview
+      :link: embodied/co_training
+      :link-type: doc
 
-   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
+      Combine PPO in simulation with SFT on real-world data for sim-to-real transfer.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/sac_flow.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-overview.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/sac_flow.html" style="text-decoration: underline; color: blue;">
-           <b>SAC-Flow Policy Training</b>
-         </a><br>
-         Train a Flow Matching policy with SAC (Sim &amp; Real)
-       </p>
-     </div>
+   .. grid-item-card:: DSRL
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/dsrl.png
+      :img-alt: DSRL for Pi0
+      :link: embodied/dsrl
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/dsrl.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dsrl.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/dsrl.html" style="text-decoration: underline; color: blue;">
-           <b>DSRL for Pi0</b>
-         </a><br>
-         Steer a frozen Pi0 diffusion policy with lightweight SAC in noise space
-       </p>
-     </div>
+      Steer a frozen π₀ diffusion policy with lightweight SAC in noise space.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/recap.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/recap.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/recap.html" style="text-decoration: underline; color: blue;">
-           <b>RECAP: Offline Advantage-Based Policy Optimization</b>
-         </a><br>
-         Offline policy optimization via advantage-guided classifier-free guidance
-       </p>
-     </div>
+   .. grid-item-card:: FlexRLT
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/flexrlt.png
+      :img-alt: FlexRLT frozen VLA and trainable actor-critic
+      :link: embodied/flexrlt
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/steam.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/steam.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/steam.html" style="text-decoration: underline; color: blue;">
-           <b>STEAM: Ensemble Advantage Modeling</b>
-         </a><br>
-         Conservative sample evaluation with an ensemble advantage predictor
-       </p>
-     </div>
+      Train a compact actor-critic online from frozen VLA prefix features with STEAM routing.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/co_training.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/co_training.html" style="text-decoration: underline; color: blue;">
-           <b>Sim-Real Co-Training</b>
-         </a><br>
-         PPO in sim + SFT on real data for better sim-to-real transfer
-       </p>
-     </div>
+   .. grid-item-card:: IQL (D4RL)
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png
+      :img-alt: IQL on D4RL
+      :link: embodied/iql_d4rl
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/iql_d4rl.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/iql_d4rl.html" style="text-decoration: underline; color: blue;">
-           <b>Offline RL with D4RL Benchmark</b>
-         </a><br>
-         Support IQL offline training for D4RL scenarios
-       </p>
-     </div>
+      Train offline Implicit Q-Learning policies on D4RL benchmarks.
 
+   .. grid-item-card:: OPD
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/opd.png
+      :img-alt: Online policy distillation
+      :link: embodied/opd
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/opd.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/opd.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/opd.html" style="text-decoration: underline; color: blue;">
-           <b>OPD for OpenVLA-OFT</b>
-         </a><br>
-         Distill on LIBERO with teacher logprobs over student on-policy action tokens
-       </p>
-     </div>
+      Distill OpenVLA-OFT on LIBERO using teacher log-probabilities over on-policy student action tokens.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/rlt.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/RLT.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/rlt.html" style="text-decoration: underline; color: blue;">
-           <b>RL Token</b>
-         </a><br>
-         Bootstrap online RL with VLA prefix features and a compact actor-critic
-       </p>
-     </div>
+   .. grid-item-card:: RECAP
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/recap.png
+      :img-alt: RECAP overview
+      :link: embodied/recap
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/flexrlt.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/flexrlt.png" alt="FlexRLT: frozen VLA and trainable actor-critic"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/flexrlt.html" style="text-decoration: underline; color: blue;">
-           <b>FlexRLT</b>
-         </a><br>
-         Train a compact policy online from a frozen VLA, with STEAM stage routing
-       </p>
-     </div>
+      Run offline policy optimization with advantage-guided classifier-free guidance.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/refl.html" style="display: block;"><img src="https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/figures/ImageReward.jpg"
-            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/refl.html" style="text-decoration: underline; color: blue;">
-           <b>ReFL</b>
-         </a><br>
-         Fine-tune SD3 with ImageReward and optional supervised image-text updates
-       </p>
-     </div>
+   .. grid-item-card:: RL Token
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/RLT.png
+      :img-alt: RL Token
+      :link: embodied/rlt
+      :link-type: doc
 
-   </div>
+      Bootstrap online RL with frozen VLA prefix features and a compact actor-critic.
+
+   .. grid-item-card:: SAC-Flow
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-overview.png
+      :img-alt: SAC-Flow overview
+      :link: embodied/sac_flow
+      :link-type: doc
+
+      Train a Flow Matching policy with SAC in ManiSkill simulation or on a real Franka arm.
+
+   .. grid-item-card:: STEAM
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/steam.png
+      :img-alt: STEAM ensemble advantage modeling
+      :link: embodied/steam
+      :link-type: doc
+
+      Evaluate offline samples conservatively with an ensemble advantage predictor.
 
 .. toctree::
    :hidden:
    :maxdepth: 2
 
-   SAC-Flow <embodied/sac_flow>
-   DSRL <embodied/dsrl>
-   RECAP <embodied/recap>
-   STEAM <embodied/steam>
    Co-Training <embodied/co_training>
+   DSRL <embodied/dsrl>
+   FlexRLT <embodied/flexrlt>
    IQL (D4RL) <embodied/iql_d4rl>
    OPD <embodied/opd>
+   RECAP <embodied/recap>
    RL Token <embodied/rlt>
-   FlexRLT <embodied/flexrlt>
-   ReFL <embodied/refl>
+   SAC-Flow <embodied/sac_flow>
+   STEAM <embodied/steam>
