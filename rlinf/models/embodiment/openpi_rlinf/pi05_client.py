@@ -40,7 +40,7 @@ import numpy as np
 import torch
 
 from rlinf.models.embodiment.openpi_rlinf.eval_action_model import (
-    TIANJI_JOINT_CONFIG,
+    TIANJI_JOINT_CONFIGS,
     OpenPiPytorchEvalActionModel,
 )
 from rlinf.models.embodiment.openpi_rlinf.pi05_service import (
@@ -73,9 +73,9 @@ class Pi05ServiceFeatureModel(torch.nn.Module):
         self.feature_cfg = feature_cfg
         self.rollout_device = torch.device(device)
         self.config_name = str(OmegaConf.select(feature_cfg, "openpi.config_name", default=""))
-        if self.config_name != TIANJI_JOINT_CONFIG:
+        if self.config_name not in TIANJI_JOINT_CONFIGS:
             raise ValueError(
-                f"TIANJI_PI05_SERVICE supports openpi.config_name={TIANJI_JOINT_CONFIG!r} only, got {self.config_name!r}"
+                f"TIANJI_PI05_SERVICE supports openpi.config_name in {TIANJI_JOINT_CONFIGS!r}, got {self.config_name!r}"
             )
         self.action_horizon = int(feature_cfg.num_action_chunks)
         self.action_dim = int(feature_cfg.openpi.model_action_dim)

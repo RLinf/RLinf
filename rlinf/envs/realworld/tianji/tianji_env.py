@@ -36,7 +36,15 @@ from .tianji_backend import (
     retryable_admission,
     unreachable_target,
 )
+from .tianji_chunk_monitor import (
+    ChunkExecutionMonitor,
+    blend_new_chunk,
+    clamp_chunk_step_velocity,
+    compute_elapsed_skip_steps,
+)
 from .tianji_kinematics import (
+    JOINT_ACTION_BIAS,
+    JOINT_ACTION_SCALE,
     JOINT_CONTRACT,
     JOINT_DIM,
     JOINT_DIMS,
@@ -226,7 +234,9 @@ class TianjiConfig:
     tactile_raw_archive: bool = True
     step_frequency: float = DEFAULT_CONTRACT.control_hz
     max_num_steps: int = 600
-    task_description: str = TASK_PROMPT
+    task_description: str = field(
+        default_factory=lambda: os.environ.get("TIANJI_TASK_PROMPT") or TASK_PROMPT
+    )
     # Ordered subtask prompts (JSON, see tianji_subtasks). The current
     # subtask's prompt replaces task_description and its number is the stage.
     subtask_prompts_file: str | None = None
@@ -265,6 +275,26 @@ class TianjiConfig:
     # the next request's RTC prefix is the plan's own rows, so a longer ramp left
     # a step at the next chunk (2x, 16-row chunks: 10.5 deg). 0 disables.
     resume_chunk_ramp_steps: int = 40
+    # Control-side chunk-boundary Smoothstep blending (deviation decay on 14 arm
+    # joints), per-step joint velocity hard clamp, and online ChunkExecutionMonitor
+    # (LoopSim docs/inference.md §2-3). Default 0/None keeps Stage2 RL untouched.
+    chunk_blend_steps: int = field(
+        default_factory=lambda: int(os.environ.get("TIANJI_CHUNK_BLEND_STEPS", "0") or 0)
+    )
+    max_step_vel_rad_s: float | None = field(
+        default_factory=lambda: (
+            float(os.environ["TIANJI_MAX_STEP_VEL_RAD_S"])
+            if os.environ.get("TIANJI_MAX_STEP_VEL_RAD_S", "").strip()
+            else None
+        )
+    )
+    chunk_diagnostics: bool = field(
+        default_factory=lambda: os.environ.get("TIANJI_CHUNK_DIAGNOSTICS", "").strip().lower()
+        in ("1", "true", "yes")
+    )
+    chunk_lag_warn_deg: float = field(
+        default_factory=lambda: float(os.environ.get("TIANJI_CHUNK_LAG_WARN_DEG", "2.0") or 2.0)
+    )
     hil_control: bool = False
     hil_port: int = 8879
     hil_mode: str = "training"
@@ -299,6 +329,11 @@ class TianjiEnv(gym.Env):
             config = TianjiConfig()
         if isinstance(config, Mapping):
             config = TianjiConfig(**dict(config))
+        env_task_prompt = os.environ.get("TIANJI_TASK_PROMPT", "").strip()
+        if not str(config.task_description or "").strip():
+            config.task_description = env_task_prompt or TASK_PROMPT
+        elif env_task_prompt and config.task_description == TASK_PROMPT:
+            config.task_description = env_task_prompt
         self.config = config
         self.contract = config.contract
         if config.action_space not in ("tcp", "joint"):
@@ -317,11 +352,22 @@ class TianjiEnv(gym.Env):
             if config.car_expected_subtasks is not None
             else (int(raw_car_subtasks) if raw_car_subtasks else (15 if self._car_deployment else None))
         )
-        prompt_limit = (
-            max(4, self._car_expected_subtasks)
-            if self._car_deployment and self._car_expected_subtasks
-            else (15 if self._car_deployment else 4)
-        )
+        raw_max_subtasks = os.environ.get("TIANJI_MAX_SUBTASKS", "").strip()
+        if self._car_deployment:
+            prompt_limit = (
+                max(4, self._car_expected_subtasks)
+                if self._car_expected_subtasks
+                else 15
+            )
+        elif raw_max_subtasks:
+            prompt_limit = int(raw_max_subtasks)
+        elif (
+            config.hil_mode in ("stage1", "inference")
+            or os.environ.get("TIANJI_STAGE1_VLA_ONLY") == "1"
+        ):
+            prompt_limit = 32
+        else:
+            prompt_limit = 4
         self.subtask_prompts = (
             load_subtask_prompts(config.subtask_prompts_file, limit=prompt_limit)
             if config.subtask_prompts_file
@@ -460,6 +506,33 @@ class TianjiEnv(gym.Env):
         self._prefetch_reader = None
         self._prefetch_pool = None
         self._prefetch_revision = None
+        self._last_commanded_joint_rl = None
+        self._chunk_prev_cmd_rl = None
+        self._chunk_preclamp_rl = None
+        self._last_prefetch_obs_monotonic = None
+        self._chunk_obs_monotonic = None
+        self._chunk_q0_phys = None
+        self._chunk_preclamp_targets_phys = []
+        self._chunk_meas_states_phys = []
+        diag_log = (
+            Path(config.recorder_dir) / "chunk_diagnostics.jsonl"
+            if config.chunk_diagnostics and config.recorder_dir
+            else None
+        )
+        self._chunk_monitor = (
+            ChunkExecutionMonitor(
+                dt=1.0 / float(config.step_frequency),
+                v_max_rad_s=float(
+                    config.max_step_vel_rad_s
+                    if config.max_step_vel_rad_s is not None and config.max_step_vel_rad_s > 0
+                    else 2.0
+                ),
+                lag_warn_deg=float(config.chunk_lag_warn_deg),
+                log_path=diag_log,
+            )
+            if self.joint_actions and config.chunk_diagnostics
+            else None
+        )
         self.hil = (
             TianjiHILControl(
                 mode=config.hil_mode, subtask_prompts=self.subtask_prompts,
@@ -1128,6 +1201,14 @@ class TianjiEnv(gym.Env):
         self._episode_done = False
         self._streaming_step = False
         self._unreachable_times = []
+        self._last_commanded_joint_rl = None
+        self._chunk_prev_cmd_rl = None
+        self._chunk_preclamp_rl = None
+        self._last_prefetch_obs_monotonic = None
+        self._chunk_obs_monotonic = None
+        self._chunk_q0_phys = None
+        self._chunk_preclamp_targets_phys = []
+        self._chunk_meas_states_phys = []
         if not self.hil and self.subtask_prompts:
             self._subtask, self._milestones = 1, 0
             self._subtask_reached = 1
@@ -1199,6 +1280,24 @@ class TianjiEnv(gym.Env):
         streaming = getattr(self.backend, "streaming", None)
         return bool(streaming is not None and streaming())
 
+    def _flush_chunk_diagnostics(self):
+        """Analyze completed chunk trajectories via ChunkExecutionMonitor and append JSONL."""
+        if (
+            self._chunk_monitor is not None
+            and self._chunk_q0_phys is not None
+            and self._chunk_preclamp_targets_phys
+            and len(self._chunk_preclamp_targets_phys) == len(self._chunk_meas_states_phys)
+        ):
+            record = self._chunk_monitor.analyze_chunk(
+                self._chunk_q0_phys,
+                np.stack(self._chunk_preclamp_targets_phys),
+                np.stack(self._chunk_meas_states_phys),
+            )
+            print(record["summary"], flush=True)
+        self._chunk_q0_phys = None
+        self._chunk_preclamp_targets_phys = []
+        self._chunk_meas_states_phys = []
+
     def on_action_chunk_begin(self, *, continue_window: bool | None = None):
         """Discard a whole remaining chunk after a takeover or operator pause.
 
@@ -1208,6 +1307,14 @@ class TianjiEnv(gym.Env):
         segment of a stream-capable owner; a late chunk is still safe because
         the owner then closes the window and the next target restarts it.
         """
+        self._flush_chunk_diagnostics()
+        self._chunk_prev_cmd_rl = (
+            self._last_commanded_joint_rl.copy()
+            if self._last_commanded_joint_rl is not None
+            else None
+        )
+        self._chunk_obs_monotonic = self._last_prefetch_obs_monotonic
+        self._last_prefetch_obs_monotonic = None
         if continue_window is None:
             continue_window = bool(
                 self.config.stream_chunks
@@ -1222,6 +1329,7 @@ class TianjiEnv(gym.Env):
         self._next_window_steps = None
         self._skip_chunk = False
         self._chunk_actions = None
+        self._chunk_preclamp_rl = None
         self._chunk_row = 0
         self._offered_next = None
         self._next_appended = False
@@ -1242,28 +1350,116 @@ class TianjiEnv(gym.Env):
         self._ramp_resume_chunk = bool(self.config.stream_chunks and self._prefetch_policy is False)
         self._prefetch_policy = None
 
+    def _prepare_joint_chunk(
+        self,
+        validated: np.ndarray,
+        *,
+        prev_cmd_rl: np.ndarray | None,
+        apply_ramp_mode: str | None,
+        obs_monotonic: float | None,
+    ) -> tuple[np.ndarray, np.ndarray, bool]:
+        """Apply elapsed-time stale skip, Smoothstep ramp/blend, and step velocity clamp."""
+        prepared = validated.copy()
+        stale_shifted = False
+
+        if (
+            self.joint_actions
+            and apply_ramp_mode is None
+            and obs_monotonic is not None
+            and len(prepared) > 0
+        ):
+            dt = 1.0 / float(self.config.step_frequency)
+            default_skip = int(os.environ.get("RLT_REF_OFFSET", "18") or 18)
+            skip_m, exceeded = compute_elapsed_skip_steps(
+                time.monotonic(),
+                obs_monotonic,
+                dt,
+                default_skip=default_skip,
+            )
+            extra_skip = max(0, skip_m - default_skip)
+            if exceeded and extra_skip > 0:
+                shift = min(extra_skip, len(prepared) - 1)
+                if shift > 0:
+                    tail = np.repeat(prepared[-1:], shift, axis=0)
+                    prepared = np.concatenate([prepared[shift:], tail], axis=0)
+                    stale_shifted = True
+
+        if apply_ramp_mode in ("first", "resume"):
+            steps = (
+                self.config.first_chunk_ramp_steps
+                if apply_ramp_mode == "first"
+                else self.config.resume_chunk_ramp_steps
+            )
+            ramp = self._measured_ramp(steps, chunk_len=len(prepared))
+            self._ramp = ramp
+            if ramp is not None:
+                prepared = np.stack([self._ramped(row, a) for row, a in enumerate(prepared)])
+            elif (
+                self.joint_actions
+                and int(self.config.chunk_blend_steps or 0) > 0
+                and self._last_observation is not None
+            ):
+                measured_rl, _ = self._joint_label(self._last_observation)
+                if measured_rl is not None:
+                    prepared = blend_new_chunk(
+                        measured_rl, prepared, skip_m=0, blend_steps=int(self.config.chunk_blend_steps)
+                    )
+        elif (
+            self.joint_actions
+            and int(self.config.chunk_blend_steps or 0) > 0
+            and prev_cmd_rl is not None
+        ):
+            prepared = blend_new_chunk(
+                prev_cmd_rl, prepared, skip_m=0, blend_steps=int(self.config.chunk_blend_steps)
+            )
+
+        prepared = np.stack(
+            [self.action_contract.validate_action(row) for row in prepared]
+        )
+        pre_clamp_rl = prepared.copy()
+
+        v_max = self.config.max_step_vel_rad_s
+        if self.joint_actions and v_max is not None and float(v_max) > 0.0:
+            v_prev = prev_cmd_rl
+            if v_prev is None and self._last_observation is not None:
+                v_prev, _ = self._joint_label(self._last_observation)
+            if v_prev is not None:
+                clamped, _, _ = clamp_chunk_step_velocity(
+                    v_prev,
+                    prepared,
+                    dt=1.0 / float(self.config.step_frequency),
+                    v_max_rad_s=float(v_max),
+                    joint_scale=JOINT_ACTION_SCALE,
+                )
+                prepared = np.stack(
+                    [self.action_contract.validate_action(row) for row in clamped]
+                )
+        return pre_clamp_rl, prepared, stale_shifted
+
     def set_chunk_actions(self, actions):
         """rt fork: the whole chunk, so the server can run its rows on a fixed grid
         (rtj joint Stage2: 16D joint rows, each sent to the owner as joint targets)."""
-        self._chunk_actions = np.stack(
+        validated = np.stack(
             [
                 self.action_contract.validate_action(np.asarray(a, dtype=np.float32).reshape(-1))
                 for a in np.asarray(actions, dtype=np.float32)
             ]
         )
         self._chunk_row = 0
+        ramp_mode = None
         if self._ramp_next_chunk or self._ramp_resume_chunk:
-            first = self._ramp_next_chunk
+            ramp_mode = "first" if self._ramp_next_chunk else "resume"
             self._ramp_next_chunk = self._ramp_resume_chunk = False
-            self._ramp = (
-                self._first_chunk_ramp()
-                if first
-                else self._measured_ramp(self.config.resume_chunk_ramp_steps)
-            )
-            if self._ramp is not None:
-                self._chunk_actions = np.stack(
-                    [self._ramped(row, a) for row, a in enumerate(self._chunk_actions)]
-                )
+        pre_clamp_rl, prepared, stale_shifted = self._prepare_joint_chunk(
+            validated,
+            prev_cmd_rl=self._chunk_prev_cmd_rl,
+            apply_ramp_mode=ramp_mode,
+            obs_monotonic=self._chunk_obs_monotonic,
+        )
+        self._chunk_preclamp_rl = pre_clamp_rl
+        self._chunk_actions = prepared
+        if stale_shifted:
+            self._cancel_schedule()
         forget = getattr(self.backend, "forget_schedule", None)
         if forget is not None:
             forget()
@@ -1272,15 +1468,17 @@ class TianjiEnv(gym.Env):
         """(measured joints in the RL frame, rows) for the episode's first chunk, or None."""
         return self._measured_ramp(self.config.first_chunk_ramp_steps)
 
-    def _measured_ramp(self, steps):
+    def _measured_ramp(self, steps, chunk_len: int | None = None):
         """(measured joints in the RL frame, rows) for a chunk that starts from a held arm, or None.
 
         At most the chunk's rows: the next request's RTC prefix is the plan's own
         rows, so the ramp has to reach the plan by this chunk's last row.
         """
         steps = int(steps or 0)
-        if self._chunk_actions is not None:
-            steps = min(steps, len(self._chunk_actions))
+        if chunk_len is None and self._chunk_actions is not None:
+            chunk_len = len(self._chunk_actions)
+        if chunk_len is not None:
+            steps = min(steps, int(chunk_len))
         if steps <= 0 or not self.joint_actions or self._last_observation is None:
             return None
         start, _ = self._joint_label(self._last_observation)
@@ -1308,12 +1506,22 @@ class TianjiEnv(gym.Env):
         """
         if self.hil is not None and self.hil.monitor_owns_boundaries():
             return
-        self._offered_next = np.stack(
+        validated = np.stack(
             [
                 self.action_contract.validate_action(np.asarray(a, dtype=np.float32).reshape(-1))
                 for a in np.asarray(actions, dtype=np.float32)
             ]
         )
+        if self.joint_actions and self._chunk_actions is not None and len(self._chunk_actions) > 0:
+            _, prepared, _ = self._prepare_joint_chunk(
+                validated,
+                prev_cmd_rl=self._chunk_actions[-1],
+                apply_ramp_mode=None,
+                obs_monotonic=None,
+            )
+            self._offered_next = prepared
+        else:
+            self._offered_next = validated
 
     def offer_dense_rows(self, actions, dense):
         """rtj dense rows (11-05): every model row of a chunk, k per env row, beside the env rows
@@ -1420,6 +1628,10 @@ class TianjiEnv(gym.Env):
 
         def read():
             observation = reader.observe()
+            obs_t = observation.captured_monotonic
+            self._last_prefetch_obs_monotonic = (
+                float(obs_t) if obs_t is not None else time.monotonic()
+            )
             if self.episode_archive is not None:
                 self.episode_archive.policy_input(observation, "prefetch")
             raw = self._raw_obs(observation, shadow_panel=panel)
@@ -1440,8 +1652,35 @@ class TianjiEnv(gym.Env):
             np.asarray(action, dtype=np.float32).reshape(-1)
         )
         row, self._chunk_row = self._chunk_row, self._chunk_row + 1
-        # The first chunk's ramp (set_chunk_actions applied it to the server's copy).
-        normalized = self._ramped(row, normalized)
+        pre_target_rl = normalized
+        if self.joint_actions and self._chunk_actions is not None and row < len(self._chunk_actions):
+            normalized = self._chunk_actions[row]
+            if self._chunk_preclamp_rl is not None and row < len(self._chunk_preclamp_rl):
+                pre_target_rl = self._chunk_preclamp_rl[row]
+        else:
+            # Direct step() or non-joint ramp fallback.
+            normalized = self._ramped(row, normalized)
+            pre_target_rl = normalized
+            v_max = self.config.max_step_vel_rad_s
+            if (
+                self.joint_actions
+                and v_max is not None
+                and float(v_max) > 0.0
+                and not self._skip_chunk
+                and not self._episode_done
+            ):
+                v_prev = self._last_commanded_joint_rl
+                if v_prev is None and self._last_observation is not None:
+                    v_prev, _ = self._joint_label(self._last_observation)
+                if v_prev is not None:
+                    clamped_step, _, _ = clamp_chunk_step_velocity(
+                        v_prev,
+                        normalized[None],
+                        dt=1.0 / float(self.config.step_frequency),
+                        v_max_rad_s=float(v_max),
+                        joint_scale=JOINT_ACTION_SCALE,
+                    )
+                    normalized = self.action_contract.validate_action(clamped_step[0])
         if self._episode_done:
             # Virtual trailing steps preserve the terminal observation. Scene
             # preparation after a result must not enter this transition.
@@ -1691,6 +1930,25 @@ class TianjiEnv(gym.Env):
             self._skip_chunk = True
         if self._control_context(observation) != self._chunk_context:
             self._skip_chunk = True
+        if self.joint_actions:
+            if policy_executed and not self._skip_chunk:
+                self._last_commanded_joint_rl = normalized.copy()
+                if self._chunk_monitor is not None:
+                    prev_phys, _ = self._joint_physical(previous)
+                    meas_phys, _ = self._joint_physical(observation)
+                    if prev_phys is not None and meas_phys is not None:
+                        if self._chunk_q0_phys is None:
+                            self._chunk_q0_phys = prev_phys.copy()
+                        target_phys = (
+                            np.asarray(pre_target_rl, dtype=np.float32) * JOINT_ACTION_SCALE
+                            + JOINT_ACTION_BIAS
+                        ).astype(np.float32)
+                        self._chunk_preclamp_targets_phys.append(target_phys)
+                        self._chunk_meas_states_phys.append(
+                            np.asarray(meas_phys, dtype=np.float32)
+                        )
+            elif human_latched or manual or self._skip_chunk:
+                self._last_commanded_joint_rl = None
         # 2 marks H-mode steps without a Pico sample, distinct from pause or
         # terminal holds (1), so a takeover penalty never counts a pause.
         iv_kind = (
@@ -1872,6 +2130,8 @@ class TianjiEnv(gym.Env):
             )
         self._last_observation = observation
         self._last_raw_obs = raw_obs
+        if last_of_chunk or terminated or truncated:
+            self._flush_chunk_diagnostics()
         # Preserve terminal state/reward and the recorder row BEFORE the return
         # motion. Padding in a Stage2 chunk must retain this terminal snapshot.
         if return_after_end:
@@ -1919,6 +2179,7 @@ class TianjiEnv(gym.Env):
     def close(self):
         if not self._closed:
             self._closed = True
+            self._flush_chunk_diagnostics()
             if self.hil is not None:
                 self.hil.close()
             if self._prefetch_pool is not None:

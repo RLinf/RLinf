@@ -131,16 +131,28 @@ def compose_configs(rlinf_root: Path) -> dict:
     return result
 
 
-def subtask_status() -> dict:
+def subtask_status(mode: str | None = None) -> dict:
     """The run's subtask prompts, or the single global prompt."""
     path = os.environ.get("TIANJI_SUBTASK_PROMPTS", "")
     if not path:
-        return {"subtasks": 0, "prompt": "global task_description"}
+        return {
+            "subtasks": 0,
+            "prompt": os.environ.get("TIANJI_TASK_PROMPT") or "global task_description",
+        }
     from rlinf.envs.realworld.tianji.tianji_subtasks import load_subtask_prompts
 
     car = os.environ.get("TIANJI_CAR_1118") == "1"
     car_subtasks = int(os.environ.get("TIANJI_CAR_NUM_SUBTASKS", "15"))
-    prompts = load_subtask_prompts(path, limit=car_subtasks if car else 4)
+    raw_max = os.environ.get("TIANJI_MAX_SUBTASKS", "").strip()
+    if raw_max:
+        limit = int(raw_max)
+    elif car:
+        limit = car_subtasks
+    elif mode == "stage1" or os.environ.get("TIANJI_STAGE1_VLA_ONLY") == "1":
+        limit = 32
+    else:
+        limit = 4
+    prompts = load_subtask_prompts(path, limit=limit)
     if car and len(prompts) != car_subtasks:
         raise ValueError(f"1118v1 requires all {car_subtasks} car prompts")
     return {"file": path, "subtasks": len(prompts), "prompts": list(prompts)}
@@ -469,7 +481,7 @@ def main() -> int:
             report["errors"].append(name + ": " + str(exc))
 
     check("hydra_configs", lambda: compose_configs(rlinf_root))
-    check("subtasks", subtask_status)
+    check("subtasks", lambda: subtask_status(args.mode))
     check("pi05_service", lambda: pi05_service_status(rlinf_root))
     check(
         "timetable",

@@ -398,12 +398,21 @@ def _forward(wrapper, obs, noise, rtc_target, rtc_mask, *, guided, opts):
     prefix_attn = make_attn_mask(prefix_mask, prefix_ar)
     positions = torch.cumsum(prefix_mask.int(), dim=1) - 1
     outputs, kv_cache = _llm(pi0.llm, [prefix_tokens, None], positions, prefix_attn, fused=fused)
-    rlt_out, rlt_mask = wrapper._select_rlt_prefix_embeddings(
-        outputs[0], prefix_mask, obs.tokenized_prompt
+    has_rlt = bool(
+        getattr(wrapper, "rlt_cfg", None)
+        and wrapper.rlt_cfg.use_rlt
+        and hasattr(wrapper, "rlt_module")
     )
-    z_rl = _rlt_encode_flat(wrapper, rlt_out, rlt_mask, last_row_only="rlt" in opts).to(
-        dtype=torch.float32
-    )
+    if has_rlt:
+        rlt_out, rlt_mask = wrapper._select_rlt_prefix_embeddings(
+            outputs[0], prefix_mask, obs.tokenized_prompt
+        )
+        z_rl = _rlt_encode_flat(wrapper, rlt_out, rlt_mask, last_row_only="rlt" in opts).to(
+            dtype=torch.float32
+        )
+    else:
+        rlt_dim = int(wrapper.rlt_cfg.rlt_embed_dim) if getattr(wrapper, "rlt_cfg", None) else 2048
+        z_rl = torch.zeros((obs.state.shape[0], rlt_dim), device=obs.state.device, dtype=torch.float32)
 
     batch_size = obs.state.shape[0]
     device = obs.state.device
@@ -581,7 +590,7 @@ def warmup(wrapper) -> None:
     """Capture the graphs before the first request (rollout worker init), so
     the first chunks do not pay for warm-up and capture. Synthetic inputs of
     the deploy shapes; no RNG is drawn."""
-    if fast_infer_mode() == 0 or not getattr(wrapper, "rlt_cfg", None) or not wrapper.rlt_cfg.use_rlt:
+    if fast_infer_mode() == 0 or not getattr(wrapper, "rlt_cfg", None):
         return
     from rlinf.models.embodiment.openpi_rlinf.pi0_model import model as pi0_model_module
     from rlinf.models.embodiment.openpi_rlinf.pi0_model.model import Observation

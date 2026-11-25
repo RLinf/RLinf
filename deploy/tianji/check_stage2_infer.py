@@ -19,7 +19,10 @@ def main():
     m = OmegaConf.to_container(cfg.actor.model, resolve=True)
     assert m["action_dim"] == 16 and cfg.env.eval.override_cfg.action_space == "joint"
     assert cfg.rollout.joint_actor_eval and cfg.rollout.default_actor_switch
-    assert cfg.rollout.rlt_feature_model.openpi.config_name == "tianji_stage1_joint"
+    assert cfg.rollout.rlt_feature_model.openpi.config_name in (
+        "tianji_stage1_joint",
+        "tianji_stage1_joint_h60",
+    )
     params = inspect.signature(RLTMLPPolicy).parameters
     torch.set_num_threads(1)
     model = RLTMLPPolicy(**{k: v for k, v in m.items() if k in params})

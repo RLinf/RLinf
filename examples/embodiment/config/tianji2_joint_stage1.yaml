@@ -187,11 +187,11 @@ rollout:
     num_steps: 4
     model_path: ${oc.env:TIANJI_RLT_STAGE1_MODEL_PATH,null}
     openpi_data:
-      repo_id: tianji_stage1_joint
+      repo_id: ${oc.env:TIANJI_OPENPI_CONFIG,tianji_stage1_joint}
       norm_stats_path: ${oc.env:TIANJI_RLT_STAGE1_NORM_STATS_PATH,null}
     openpi:
       task: eval
-      config_name: tianji_stage1_joint
+      config_name: ${oc.env:TIANJI_OPENPI_CONFIG,tianji_stage1_joint}
       num_images_in_input: 3
       action_chunk: ${oc.decode:${oc.env:TIANJI_ACTION_HORIZON,30}}
       action_horizon: ${oc.decode:${oc.env:TIANJI_ACTION_HORIZON,30}}
@@ -209,7 +209,7 @@ rollout:
       - 0.12
       - 200
       joint_logprob: true
-      use_rlt: true
+      use_rlt: ${oc.decode:${oc.env:TIANJI_USE_RLT,true}}
       rlt_prefix_seq_len: 1024
       rlt_image_only: false
       rlt_use_mask: true

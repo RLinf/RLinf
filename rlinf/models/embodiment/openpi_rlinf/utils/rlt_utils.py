@@ -142,6 +142,90 @@ def _normalize_wrapper_state_dict(state_dict):
     return normalized
 
 
+def _write_ready_flag(weights_path: Any) -> None:
+    """Write RLT_READY_FLAG so the real-robot HIL panel opens Start after weights load."""
+    try:
+        import os as _os
+
+        flag = _os.environ.get("RLT_READY_FLAG", "/tmp/rlt_rollout_ready")
+        path = pathlib.Path(flag)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(weights_path), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _read_safetensors_keys(safetensors_path: pathlib.Path) -> list[str]:
+    """Read tensor keys from a safetensors file without loading tensor data."""
+    try:
+        from safetensors import safe_open
+    except ImportError:
+        import json
+        import struct
+
+        with open(safetensors_path, "rb") as f:
+            (header_len,) = struct.unpack("<Q", f.read(8))
+            header = json.loads(f.read(header_len))
+        return [key for key in header if key != "__metadata__"]
+
+    with safe_open(str(safetensors_path), framework="pt", device="cpu") as handle:
+        return list(handle.keys())
+
+
+def checkpoint_has_rlt(model_path: Any) -> bool | None:
+    """Inspect a Stage1 checkpoint to check whether it contains ``rlt_module.*`` weights.
+
+    Returns ``True``/``False`` when a checkpoint file is resolved, or ``None`` if
+    no checkpoint exists under ``model_path``.
+    """
+    if not model_path:
+        return None
+    full_weights_path = resolve_full_weights(model_path)
+    if full_weights_path is not None:
+        import torch
+
+        from rlinf.utils.ckpt_convertor.openpi._core import as_state_dict
+
+        try:
+            loaded = torch.load(
+                str(full_weights_path), map_location="cpu", weights_only=True, mmap=True
+            )
+        except TypeError:
+            loaded = torch.load(
+                str(full_weights_path), map_location="cpu", weights_only=True
+            )
+        state_dict = as_state_dict(loaded)
+        return any(
+            _normalize_wrapper_key(str(key)).startswith("rlt_module.")
+            for key in state_dict
+        )
+
+    safetensors_path = resolve_model_safetensors(model_path)
+    if safetensors_path is not None:
+        keys = _read_safetensors_keys(safetensors_path)
+        return any(
+            _normalize_wrapper_key(str(key)).startswith("rlt_module.") for key in keys
+        )
+    return None
+
+
+def resolve_stage1_use_rlt(model_path: Any, explicit: str | None = None) -> bool | None:
+    """Resolve Stage1 ``use_rlt`` from ``TIANJI_USE_RLT`` or checkpoint inspection."""
+    import os as _os
+
+    raw = (_os.environ.get("TIANJI_USE_RLT") if explicit is None else explicit) or ""
+    value = str(raw).strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    if value not in ("", "auto"):
+        raise ValueError(
+            f"Unsupported TIANJI_USE_RLT={raw!r}; expected auto, true/1, or false/0"
+        )
+    return checkpoint_has_rlt(model_path)
+
+
 def load_full_wrapper_weights(wrapper, weights_path, *, expect_rlt: bool) -> None:
     """Load an RLinf full-wrapper checkpoint into an OpenPI_RLinf wrapper."""
     import torch
@@ -193,13 +277,7 @@ def load_full_wrapper_weights(wrapper, weights_path, *, expect_rlt: bool) -> Non
     # 写就绪标志:真机环境的控制面板据此决定何时开放"按 1 开始"的门控。
     # 环境 worker 几秒就绪,而这份权重要三分钟,不等它就放行的话,
     # 人按了 1 却没有动作产出,机械臂不动,看起来像卡死。
-    try:
-        import os as _os
-        _flag = _os.environ.get("RLT_READY_FLAG", "/tmp/rlt_rollout_ready")
-        with open(_flag, "w") as _f:
-            _f.write(str(weights_path))
-    except Exception:
-        pass
+    _write_ready_flag(weights_path)
 
 
 def load_base_safetensors(model, safetensors_path) -> None:
@@ -218,3 +296,4 @@ def load_base_safetensors(model, safetensors_path) -> None:
             safetensors_path,
         )
     model.load_state_dict(state_dict, strict=True)
+    _write_ready_flag(safetensors_path)

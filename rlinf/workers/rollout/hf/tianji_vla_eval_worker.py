@@ -7,7 +7,12 @@ import os
 import torch
 
 from rlinf.models import get_model
+from rlinf.models.embodiment.openpi_rlinf.utils.rlt_utils import (
+    resolve_stage1_use_rlt,
+)
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+TIANJI_JOINT_CONFIGS = ("tianji_stage1_joint", "tianji_stage1_joint_h60")
 
 
 def joint_reference_actions(observation, chunk, offset):
@@ -31,9 +36,16 @@ class TianjiVLAEvalWorker(MultiStepRolloutWorker):
         if self.cfg.runner.get("ckpt_path"):
             raise ValueError("Stage1 loads the base VLA; an Actor checkpoint is not accepted")
         feature = copy.deepcopy(self.cfg.rollout.rlt_feature_model)
-        if feature.openpi.config_name != "tianji_stage1_joint" or feature.action_dim != 16:
+        if feature.openpi.config_name not in TIANJI_JOINT_CONFIGS or feature.action_dim != 16:
             raise ValueError("Stage1 direct-joint deployment requires the joint VLA")
+        detected_use_rlt = resolve_stage1_use_rlt(feature.get("model_path"))
+        if detected_use_rlt is not None:
+            feature.openpi.use_rlt = bool(detected_use_rlt)
         self.hf_model = get_model(feature).eval().requires_grad_(False)
+        if os.environ.get("TIANJI_FAST_INFER", "").strip() not in ("", "0"):
+            from rlinf.models.embodiment.openpi_rlinf.fast_infer import warmup
+
+            warmup(self.hf_model)
         self.rlt_feature_model = None
         self.car_monitor = None
         if os.environ.get("TIANJI_CAR_1118") == "1":

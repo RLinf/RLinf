@@ -90,6 +90,32 @@ bash deploy/tianji/stage2_30hz_1118v1.sh --run
 bash deploy/tianji/stage2_30hz_1118v1.sh --dagger
 ```
 
+### 5. Plug-and-Play Sim2Real Toy-Car Inference (`tianji_stage1_joint_h60`, SFT & RLT)
+
+Use [run_tianji_sim2real_car.sh](run_tianji_sim2real_car.sh) and [check_sim2real_car_model.py](check_sim2real_car_model.py) for 30 Hz, 16D joint-space Sim2Real toy-car checkpoints (`horizon=60`, `tianji_stage1_joint_h60`). Both pure-SFT checkpoints (`model.safetensors`, `use_rlt=False`) and RLT Stage1 checkpoints (`full_weights.pt`, `use_rlt=True`) are auto-detected, and both single global prompts and `prompts.json` (1, 4, 12, or 24 subtasks) are supported.
+
+Default control-loop alignment (`docs/inference.md`): `--no-rtc-guidance` + control-side 10-step deviation-decay Smoothstep chunk blend (`--blend-steps 10`), per-step velocity clamp (`--max-vel-rad-s 0.7854`, 45 deg/s), elapsed-time stale step tracking, and online `ChunkExecutionMonitor` writing `<recorder_dir>/chunk_diagnostics.jsonl`. Pass `--rtc-guidance` to enable RLinf RTC guidance or `--fast 1|2` for `TIANJI_FAST_INFER`.
+
+```bash
+# 1. Offline GPU smoke test & 20-iter latency benchmark (no hardware or LoopInfra needed)
+bash deploy/tianji/run_tianji_sim2real_car.sh --model /path/to/ckpt --check --iters 20 --fast 0
+
+# 2. Live LoopInfra cameras/joints + GPU inference, read-only (NO robot motion)
+bash deploy/tianji/run_tianji_sim2real_car.sh --model /path/to/ckpt --read-only
+
+# 3. Real 30 Hz 16D joint execution on Tianji (HIL panel on :8879)
+#    Uses <model>/prompts.json if present, or defaults to the single global toy-car prompt.
+bash deploy/tianji/run_tianji_sim2real_car.sh --model /path/to/ckpt --run
+
+# Override prompt(s) or tune blending / RTC explicitly:
+bash deploy/tianji/run_tianji_sim2real_car.sh --model /path/to/ckpt --prompt "Install four wheels and screws on a wheel-less toy vehicle using the toy drill." --run
+bash deploy/tianji/run_tianji_sim2real_car.sh --model /path/to/ckpt --prompts /path/to/prompts.json --blend-steps 10 --run
+bash deploy/tianji/run_tianji_sim2real_car.sh --model /path/to/ckpt --rtc-guidance --run
+
+# 4. Real 30 Hz execution + DAgger episode archive (hil_mode=dagger)
+bash deploy/tianji/run_tianji_sim2real_car.sh --model /path/to/ckpt --dagger
+```
+
 ### Episode Archive & Checkpoint Utilities
 
 ```bash

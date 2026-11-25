@@ -42,10 +42,22 @@ class GPUStage1Predictor:
         # Joint fork: the 16D joint checkpoint (pi05_tianji_joint_30hz).
         self.joint = tianji_joint.joint_mode()
         if self.joint:
+            joint_config = os.environ.get("TIANJI_OPENPI_CONFIG", "").strip()
+            if not joint_config:
+                joint_config = (
+                    "tianji_stage1_joint_h60"
+                    if int(self.contract.action_chunk_length) == 60
+                    else "tianji_stage1_joint"
+                )
+            if joint_config not in ("tianji_stage1_joint", "tianji_stage1_joint_h60"):
+                raise ValueError(
+                    f"Unsupported joint OpenPI config {joint_config!r}; "
+                    "expected 'tianji_stage1_joint' or 'tianji_stage1_joint_h60'"
+                )
             cfg.action_dim = tianji_joint.JOINT_STATE_DIM
             cfg.openpi.action_env_dim = tianji_joint.JOINT_STATE_DIM
-            cfg.openpi.config_name = "tianji_stage1_joint"
-            cfg.openpi_data.repo_id = "tianji_stage1_joint"
+            cfg.openpi.config_name = joint_config
+            cfg.openpi_data.repo_id = joint_config
             self.fk = tianji_joint.NativeTcpFK()
             self.cache = tianji_joint.CACHE
         if model_path is not None:

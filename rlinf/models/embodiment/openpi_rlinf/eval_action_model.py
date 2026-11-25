@@ -51,6 +51,7 @@ _TIANJI_POSE_DIMS = [d for d in range(20) if d not in (9, 19)]
 # rtj fork: the 16D joint Stage1 checkpoint (state = image-aligned measured
 # joints + commanded closures; output = absolute joints + closures).
 TIANJI_JOINT_CONFIG = "tianji_stage1_joint"
+TIANJI_JOINT_CONFIGS = ("tianji_stage1_joint", "tianji_stage1_joint_h60")
 _TIANJI_JOINT_DIMS = [d for a0 in (0, 8) for d in range(a0, a0 + 7)]
 
 
@@ -173,7 +174,7 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
         (BEHAVIOR, for instance, emits no ``extra_view_images`` key).
         """
         env_states = self._select_configured_state(
-            env_obs["joint_states"] if self.config_name == TIANJI_JOINT_CONFIG else env_obs["states"]
+            env_obs["joint_states"] if self.config_name in TIANJI_JOINT_CONFIGS else env_obs["states"]
         )
         if "aloha" in self.config_name:
             # AlohaInputs 约定:images 为 dict[name, CHW float32 0..1]
@@ -406,7 +407,7 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
             if not torch.isfinite(encoded).all() or (encoded.abs() > 1.00001).any():
                 raise ValueError("Stage1 target outside Stage2 absolute coordinate bounds")
             return encoded.clamp(-1, 1)
-        if self.config_name == TIANJI_JOINT_CONFIG:
+        if self.config_name in TIANJI_JOINT_CONFIGS:
             # rtj joint Stage2: the joint contract's frame (SDK joint limits);
             # a predicted joint beyond its limit is clipped to it.
             from rlinf.envs.realworld.tianji.tianji_kinematics import (
@@ -479,7 +480,7 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
         request's model space (state-relative, normalized) like Stage1's RTC.
         Returns (physical [B, H, 20], in-flight rows, continuation rows, valid).
         """
-        if self.config_name == TIANJI_JOINT_CONFIG:
+        if self.config_name in TIANJI_JOINT_CONFIGS:
             return self._rtc_previous_joints(env_obs)
         valid = env_obs.get("rtc_prev_valid")
         actions = env_obs.get("rtc_prev_actions")
@@ -533,7 +534,7 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
         the executed motion.
         """
         z_rl, ref_chunk = self.extract_vla_reference(env_obs)
-        if self.config_name == TIANJI_JOINT_CONFIG:
+        if self.config_name in TIANJI_JOINT_CONFIGS:
             return self._joint_rlt_obs(env_obs, z_rl, ref_chunk)
 
         raw_proprio = self._select_configured_state(env_obs["states"])
@@ -567,7 +568,9 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
         ``torch.randn`` draw (the resident pi05_service receives it from the
         rollout, which drew it there); ``None`` draws it here as before.
         """
-        self._require_rlt()
+        has_rlt = bool(self.rlt_cfg.use_rlt and hasattr(self, "rlt_module"))
+        if has_rlt:
+            self._require_rlt()
         repacked = self._repack_env_obs(env_obs)
         previous = self._rtc_previous_physical(env_obs)
         if previous is not None:
@@ -591,12 +594,19 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
             prefix_output, prefix_mask, kv_cache = self.model.build_prefix_cache(
                 prepared_observation
             )
-            rlt_prefix_output, rlt_prefix_mask = self._select_rlt_prefix_embeddings(
-                prefix_output, prefix_mask, prepared_observation.tokenized_prompt
-            )
-            z_rl = self._encode_rlt_flat(rlt_prefix_output, rlt_prefix_mask).to(
-                dtype=torch.float32
-            )
+            if has_rlt:
+                rlt_prefix_output, rlt_prefix_mask = self._select_rlt_prefix_embeddings(
+                    prefix_output, prefix_mask, prepared_observation.tokenized_prompt
+                )
+                z_rl = self._encode_rlt_flat(rlt_prefix_output, rlt_prefix_mask).to(
+                    dtype=torch.float32
+                )
+            else:
+                z_rl = torch.zeros(
+                    (observation.state.shape[0], int(self.rlt_cfg.rlt_embed_dim)),
+                    device=observation.state.device,
+                    dtype=torch.float32,
+                )
 
             rtc_target = rtc_mask = None
             if previous is not None:

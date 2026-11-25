@@ -64,11 +64,13 @@ def main():
         prompts_file = str(Path(prompts_file).expanduser().resolve())
         car = os.environ.get("TIANJI_CAR_1118") == "1"
         car_subtasks = int(os.environ.get("TIANJI_CAR_NUM_SUBTASKS", "15"))
-        limit = car_subtasks if car else subtasks.MAX_SUBTASKS
+        raw_max = os.environ.get("TIANJI_MAX_SUBTASKS", "").strip()
+        default_limit = car_subtasks if car else subtasks.MAX_SUBTASKS
+        limit = int(raw_max) if raw_max else default_limit
         prompt_count = len(subtasks.load_subtask_prompts(prompts_file, limit=limit))
         if car and prompt_count != car_subtasks:
             raise ValueError(f"1118v1 requires all {car_subtasks} car prompts")
-        if not car:
+        if not car and os.environ.get("TIANJI_STAGE1_VLA_ONLY") != "1":
             heads = prompt_count
     values = {
         "TIANJI_ACTION_HORIZON": model.action_chunk_length,

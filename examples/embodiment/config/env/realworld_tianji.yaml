@@ -45,4 +45,4 @@ override_cfg:
   human_action_max_interval_s: 0.25
   max_num_steps: 600
   # The global prompt; a subtask prompts JSON replaces it per subtask.
-  task_description: "Fold the flat cardboard blank into a box and place it on the right side of the table."
+  task_description: ${oc.env:TIANJI_TASK_PROMPT,Fold the flat cardboard blank into a box and place it on the right side of the table.}
