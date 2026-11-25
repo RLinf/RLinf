@@ -113,7 +113,7 @@ Search-R1 强化学习训练
 
       .. dropdown:: 分块 GRPO、PPO、FSDP GRPO 及 checkpoint 导出与评测
 
-         **分块 Megatron GRPO**\ （``examples/agent/searchr1/config/train_qwen2.5_chunked.yaml``）：继承 ``train_qwen2.5.yaml``，Actor 和参考模型都只计算回复位置的 logits，每块最多处理 256 个 token，以降低显存占用。
+         **分块 Megatron GRPO**\ （``examples/agent/searchr1/config/train_qwen2.5_chunked.yaml``）：在 ``train_qwen2.5.yaml`` 基础上开启 ``actor.response_only_logits: true`` 与 ``actor.model.lm_head_chunk_size: 256``，让 actor 和参考模型只对回复位置按每块最多 256 个 token 计算 logits，以降低显存占用。
 
          **Megatron PPO**\ （``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``）：在每个 ``global_step_xxx`` 下同时保存 ``actor`` 和 ``critic``，通过 ``runner.resume_dir`` 一并恢复。
 

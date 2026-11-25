@@ -564,17 +564,33 @@ def test_ragged_training_rows_match_schedule(
 class _DecoderStage(torch.nn.Module):
     pre_process = post_process = True
 
-    def __init__(self):
+    def __init__(self, chunked=False):
         super().__init__()
-        self.output_layer = torch.nn.Linear(3, 3, bias=False)
+        from megatron.core import ModelParallelConfig
+        from megatron.core.tensor_parallel.layers import ColumnParallelLinear
+
+        self.output_layer = ColumnParallelLinear(
+            3,
+            3,
+            config=ModelParallelConfig(use_cpu_initialization=True),
+            init_method=torch.nn.init.zeros_,
+            bias=False,
+        )
         with torch.no_grad():
             self.output_layer.weight.copy_(torch.diag(torch.tensor([1.0, 2.0, 3.0])))
+        if chunked:
+            from rlinf.hybrid_engines.megatron.output_projection import (
+                install_chunked_projection,
+            )
+
+            install_chunked_projection(self)
 
     def forward(self, input_ids, attention_mask, position_ids, packed_seq_params):
         hidden = torch.nn.functional.one_hot(input_ids.T, 3).to(
             self.output_layer.weight
         )
-        return self.output_layer(hidden).transpose(0, 1).contiguous()
+        output, _ = self.output_layer(hidden)
+        return output.transpose(0, 1).contiguous()
 
 
 @pytest.fixture
@@ -636,16 +652,19 @@ def scoring_actor(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("response_only", [False, True])
-@pytest.mark.parametrize("entropy_bonus", [0.0, 0.1])
+@pytest.mark.parametrize(
+    ("chunk_size", "entropy_bonus"), [(0, 0.0), (0, 0.1), (1, 0.0)]
+)
 def test_actor_entropy_uses_response_predictors(
-    scoring_actor, entropy_bonus, response_only
+    scoring_actor, chunk_size, entropy_bonus, response_only
 ):
     actor, batch = scoring_actor
     actor.response_only_logits = response_only
+    actor.lm_head_chunk_size = chunk_size
     actor.cfg.algorithm.entropy_bonus = entropy_bonus
     actor.calculate_entropy = actor.return_loss = True
     actor.calculate_entropy_loss = entropy_bonus > 0
-    model = _DecoderStage()
+    model = _DecoderStage(chunked=chunk_size > 0)
     # Responses at 1 and 3 are predicted from tokens 0 and 2.
     logits = (
         model.output_layer.weight.T[[0, 2]]
@@ -670,6 +689,98 @@ def test_actor_entropy_uses_response_predictors(
     torch.testing.assert_close(
         torch.autograd.grad(loss, weight)[0],
         torch.autograd.grad(expected_loss, weight)[0],
+    )
+
+
+def test_run_inference_uses_packed_scoring_for_ref_logprobs(scoring_actor, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from megatron.core.tensor_parallel.layers import ColumnParallelLinear
+
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(torch.Tensor, "pin_memory", lambda self, *args, **kwargs: self)
+    monkeypatch.setattr(
+        Worker, "torch_platform", SimpleNamespace(synchronize=lambda: None)
+    )
+
+    actor, _ = scoring_actor
+    actor.response_only_logits = True
+    actor.lm_head_chunk_size = 1
+    actor.calculate_entropy = False
+    actor.cfg.actor.model.encoder_seq_length = 6
+
+    model = _DecoderStage(chunked=True)
+    actor_weight = model.output_layer.weight.detach().clone()
+    ref_weight = torch.diag(torch.tensor([3.0, 1.0, 2.0]))
+    actor.model = [model]
+    actor.ref_policy_state_dict = {"output_layer.weight": ref_weight.clone()}
+
+    result = DynamicRolloutResult(
+        num_sequence=2,
+        group_size=1,
+        idx_to_traj=[0, 0],
+        input_ids=[[0, 1, 2, 1], [0, 1, 2, 1, 0, 2]],
+        prompt_lengths=[2, 4],
+        response_lengths=[2, 2],
+        is_end=[False, True],
+        rewards=[1.0, 1.0],
+    )
+    step_batch = result.to_actor_batch()
+    emitted = []
+
+    def run_single_inference(batch):
+        actor.return_loss = False
+        packed, collect = actor.get_forward_step_func()(iter([batch]), actor.model[0])
+        return collect(packed)
+
+    def forbid_dense(*args, **kwargs):
+        raise AssertionError("Dense ColumnParallelLinear.forward should not be called")
+
+    monkeypatch.setattr(ColumnParallelLinear, "forward", forbid_dense)
+    actor.get_step_batch = lambda _channel: (step_batch, [result])
+    actor._load_weight_and_optimizer = lambda: None
+    actor.worker_timer = nullcontext
+    actor.inference_step = run_single_inference
+    actor.put_result = lambda item, out: out.append(item)
+    actor.scheduler_offload_sync = lambda: None
+
+    actor.run_inference(None, emitted, compute_ref_logprobs=True)
+
+    assert len(emitted) == 1
+    torch.testing.assert_close(model.output_layer.weight, actor_weight)
+
+    temperature = actor.cfg.algorithm.sampling_params.temperature
+
+    def expected_row(weight, token_ids, response_mask):
+        ids = torch.tensor(token_ids)
+        logits = weight.T[ids[:-1]] / temperature
+        logp = logits.log_softmax(-1).gather(-1, ids[1:, None]).squeeze(-1)
+        aligned = torch.cat((logp.new_zeros(1), logp))
+        return aligned.masked_fill(~response_mask, 0.0)
+
+    for idx, (ids, mask) in enumerate(
+        zip(result.input_ids, step_batch["response_mask"], strict=True)
+    ):
+        torch.testing.assert_close(
+            emitted[0].recomputed_logprobs[idx], expected_row(actor_weight, ids, mask)
+        )
+        torch.testing.assert_close(
+            emitted[0].ref_logprobs[idx], expected_row(ref_weight, ids, mask)
+        )
+
+    packed_batch = DynamicRolloutResult.pack_traj_batch({}, emitted[0].to_actor_batch())
+    combined_mask = torch.tensor([False, False, True, True, True, True])
+    torch.testing.assert_close(packed_batch["response_mask"][0], combined_mask)
+    torch.testing.assert_close(
+        packed_batch["recomputed_logprobs"][0],
+        expected_row(actor_weight, result.input_ids[1], combined_mask),
+    )
+    torch.testing.assert_close(
+        packed_batch["ref_logprobs"][0],
+        expected_row(ref_weight, result.input_ids[1], combined_mask),
     )
 
 
@@ -806,23 +917,36 @@ def test_tp_entropy_and_log_probs_match_dense_gradient(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "backend,dynamic,cp,message",
+    "backend,dynamic,cp,response_only,chunk_size,entropy_bonus,message",
     [
-        ("fsdp", True, 1, "dynamic Megatron"),
-        ("megatron", False, 1, "dynamic Megatron"),
-        ("megatron", True, 2, "context_parallel_size=1"),
+        ("fsdp", True, 1, True, 0, 0.0, "dynamic Megatron"),
+        ("megatron", False, 1, True, 0, 0.0, "dynamic Megatron"),
+        ("megatron", True, 2, True, 0, 0.0, "context_parallel_size=1"),
+        ("fsdp", True, 1, False, 16, 0.0, "dynamic Megatron"),
+        ("megatron", False, 1, False, 16, 0.0, "dynamic Megatron"),
+        ("megatron", True, 2, False, 16, 0.0, "context_parallel_size=1"),
+        ("megatron", True, 1, False, -1, 0.0, "nonnegative integer"),
+        ("megatron", True, 1, False, True, 0.0, "nonnegative integer"),
+        ("megatron", True, 1, "yes", 0, 0.0, "boolean"),
+        ("megatron", True, 1, False, 16, 0.01, "logging only"),
     ],
 )
-def test_response_projection_rejects_unsupported_actor(backend, dynamic, cp, message):
+def test_response_projection_rejects_unsupported_actor(
+    backend, dynamic, cp, response_only, chunk_size, entropy_bonus, message
+):
     from rlinf.config import validate_reasoning_cfg
 
     cfg = OmegaConf.create(
         {
             "actor": {
                 "training_backend": backend,
-                "response_only_logits": True,
-                "model": {"context_parallel_size": cp},
+                "response_only_logits": response_only,
+                "model": {
+                    "context_parallel_size": cp,
+                    "lm_head_chunk_size": chunk_size,
+                },
             },
+            "algorithm": {"entropy_bonus": entropy_bonus},
             "agentloop": {"is_dynamic_rollout_batch": dynamic},
         }
     )

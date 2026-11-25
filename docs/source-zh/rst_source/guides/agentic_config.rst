@@ -405,7 +405,7 @@ actor
    * - ``actor.seed``
      - 用于可复现性的全局随机种子。
    * - ``actor.response_only_logits``
-     - 只在预测回复 token 的位置计算 logits。使用 Megatron 动态批且上下文并行度为 1 时，Actor 和参考模型都按这个设置计算 logprob。
+     - 只在预测回复 token 的位置计算 actor 和参考模型的 logits 以降低显存。要求设置 ``actor.training_backend: megatron``、``agentloop.is_dynamic_rollout_batch: True`` 且 ``actor.model.context_parallel_size: 1``。
 
 **模型子节**
 
@@ -416,7 +416,7 @@ actor
    * - 参数
      - 说明
    * - ``actor.model.lm_head_chunk_size``
-     - LM head 每块处理的 token 数，设为 0 时关闭分块。要求使用 Megatron 动态批（CP=1）和标准列并行输出层。分块时计算的熵仅用于日志。
+     - 计算 actor 和参考模型 logprob 时 LM head 每块处理的 token 数（``0`` 表示关闭分块）。要求设置 ``actor.training_backend: megatron``、``agentloop.is_dynamic_rollout_batch: True`` 且 ``actor.model.context_parallel_size: 1``，且不支持 FP8、MTP、muP、autocast、延迟词嵌入权重梯度或独立输出偏置；开启分块后 policy 熵不保留梯度，仅用于日志记录，需保持 ``algorithm.entropy_bonus: 0``。
    * - ``actor.model.precision``
      - 训练的数值精度（例如 ``fp16``）。
    * - ``actor.model.add_bias_linear``

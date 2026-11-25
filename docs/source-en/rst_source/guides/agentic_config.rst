@@ -414,7 +414,7 @@ actor
    * - ``actor.seed``
      - Global seed for reproducibility.
    * - ``actor.response_only_logits``
-     - Compute logits only at positions that predict response tokens. Applies to Actor and reference logprobs with Megatron dynamic batching and context parallel size 1.
+     - Compute actor and reference logits only at positions that predict response tokens to reduce GPU memory. Requires ``actor.training_backend: megatron``, ``agentloop.is_dynamic_rollout_batch: True``, and ``actor.model.context_parallel_size: 1``.
 
 **Model sub-section**
 
@@ -425,7 +425,7 @@ actor
    * - Parameter
      - Description
    * - ``actor.model.lm_head_chunk_size``
-     - Number of tokens per LM head chunk. Set to 0 to disable. Requires Megatron dynamic batching (CP=1) and a standard column-parallel output layer. Chunked entropy is for logging only.
+     - Tokens per LM-head chunk during actor and reference log-prob passes (``0`` disables chunking). Requires ``actor.training_backend: megatron``, ``agentloop.is_dynamic_rollout_batch: True``, and ``actor.model.context_parallel_size: 1``, without FP8, MTP, muP, autocast, deferred embedding wgrad, or separate output bias; policy entropy is detached for logging only and requires ``algorithm.entropy_bonus: 0``.
    * - ``actor.model.precision``
      - Numerical precision for training (e.g., ``fp16``).
    * - ``actor.model.add_bias_linear``

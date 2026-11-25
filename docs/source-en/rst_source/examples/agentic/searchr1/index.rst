@@ -113,7 +113,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       .. dropdown:: Chunked GRPO, PPO, FSDP GRPO, checkpoint export, and evaluation
 
-         **Chunked Megatron GRPO** (``examples/agent/searchr1/config/train_qwen2.5_chunked.yaml``): inherits ``train_qwen2.5.yaml``; both the Actor and the reference model compute logits for up to 256 response positions at a time to reduce GPU memory.
+         **Chunked Megatron GRPO** (``examples/agent/searchr1/config/train_qwen2.5_chunked.yaml``): sets ``actor.response_only_logits: true`` and ``actor.model.lm_head_chunk_size: 256`` on top of ``train_qwen2.5.yaml`` so both the actor and reference model skip prompt logits and score response tokens in 256-token chunks to reduce GPU memory.
 
          **Megatron PPO** (``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``): saves both ``actor`` and ``critic`` under each ``global_step_xxx``; set ``runner.resume_dir`` to resume both.
 
