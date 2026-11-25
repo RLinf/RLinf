@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Write a LIBERO episode task pool or fixed evaluation manifest."""
+"""Write episode tasks from native LIBERO states or a RoboTwin seed table."""
 
 import argparse
 import hashlib
@@ -44,7 +44,7 @@ def unique_states(states) -> list[dict]:
     return result
 
 
-def write_episode_tasks(args: argparse.Namespace) -> None:
+def write_libero_tasks(args: argparse.Namespace) -> None:
     """Write the complete native training pool or a fixed regression panel."""
     if args.libero_config_path is not None:
         os.environ["LIBERO_CONFIG_PATH"] = str(args.libero_config_path)
@@ -54,7 +54,7 @@ def write_episode_tasks(args: argparse.Namespace) -> None:
     else:
         from libero.libero import benchmark
     rows, tasks = [], []
-    for suite in EPISODE_SUITES:
+    for suite in args.suites:
         bench = benchmark.get_benchmark(suite)()
         for task in range(bench.n_tasks):
             states = bench.get_task_init_states(task)
@@ -93,24 +93,61 @@ def write_episode_tasks(args: argparse.Namespace) -> None:
                         "query_id": f"{suite}-t{task}-state{entry['init_state_id']}",
                     }
                 )
-    payload = "".join(json.dumps(row) + "\n" for row in rows).encode()
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    (args.output_dir / f"{args.split}.jsonl").write_bytes(payload)
-    manifest = {
-        "libero_type": args.libero_type,
-        "suites": EPISODE_SUITES,
-        "tasks": tasks,
-        "seeds": args.seeds,
-        "eval_is_training_pool_regression": True,
-        "files": {
-            args.split: {
-                "rows": len(rows),
-                "sha256": hashlib.sha256(payload).hexdigest(),
-            }
+    write_task_pool(
+        args.output_dir,
+        args.split,
+        rows,
+        {
+            "libero_type": args.libero_type,
+            "suites": args.suites,
+            "tasks": tasks,
+            "seeds": args.seeds,
+            "eval_is_training_pool_regression": True,
         },
+    )
+
+
+def write_robotwin_tasks(args: argparse.Namespace) -> None:
+    """Convert the RPent task/seed table to one episode task per scene."""
+    seed_table = json.loads(args.robotwin_seeds.read_text(encoding="utf-8"))
+    task_config = seed_table["task_config"]
+    rows = []
+    for task, entries in seed_table["tasks"].items():
+        for entry in entries:
+            seed = entry["seed"]
+            answer = {
+                "environment": "robotwin",
+                "task_name": task,
+                "task_config": task_config,
+                "seed": seed,
+            }
+            rows.append(
+                {
+                    "query_id": f"{task_config}-{task}-{seed}",
+                    "prompt": entry["task_language"],
+                    "answer": json.dumps(answer, sort_keys=True),
+                }
+            )
+    write_task_pool(
+        args.output_dir,
+        args.split,
+        rows,
+        {"task_config": task_config, "source": args.robotwin_seeds.name},
+    )
+
+
+def write_task_pool(
+    output_dir: Path, split: str, rows: list[dict], manifest: dict
+) -> None:
+    """Write the task pool and its content digest."""
+    payload = "".join(json.dumps(row) + "\n" for row in rows).encode()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / f"{split}.jsonl").write_bytes(payload)
+    manifest["files"] = {
+        split: {"rows": len(rows), "sha256": hashlib.sha256(payload).hexdigest()}
     }
-    (args.output_dir / f"{args.split}-manifest.json").write_text(
-        json.dumps(manifest, indent=2)
+    (output_dir / f"{split}-manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
     )
 
 
@@ -134,12 +171,22 @@ def main() -> None:
     parser.add_argument("--libero-type", choices=("standard", "pro"), default="pro")
     parser.add_argument("--libero-config-path", type=Path)
     parser.add_argument(
+        "--suites", nargs="+", default=EPISODE_SUITES, help="LIBERO suite names"
+    )
+    parser.add_argument(
+        "--robotwin-seeds", type=Path, help="RPent RoboTwin task/seed table"
+    )
+    parser.add_argument(
         "--seeds", default="all", help="Native seeds or ranges, e.g. 0-1"
     )
     parser.add_argument(
         "--split", choices=("train", "dev", "test", "eval"), default="train"
     )
-    write_episode_tasks(parser.parse_args())
+    args = parser.parse_args()
+    if args.robotwin_seeds is not None:
+        write_robotwin_tasks(args)
+    else:
+        write_libero_tasks(args)
 
 
 if __name__ == "__main__":
