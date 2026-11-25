@@ -114,12 +114,19 @@ class RecordVideo(gym.Wrapper):
         return np.array(value)
 
     def _get_image_from_dict(self, obs: dict) -> Optional[Any]:
-        """Pick the best image field from an observation dict."""
-        if hasattr(self.env, "capture_image"):
-            return self.env.capture_image()
+        """Pick the best image field from an observation dict.
+
+        The images carried by ``obs`` are preferred because they belong to the
+        step being recorded. ``env.capture_image()`` renders whatever the
+        simulator shows *now*, so inside a chunk every frame would show the
+        chunk-end scene, and a terminal observation would show the scene after
+        the automatic reset. It is only used when ``obs`` has no image.
+        """
         for key in ("main_images", "images", "rgb", "full_image", "main_image"):
             if key in obs and obs[key] is not None:
                 return obs[key]
+        if hasattr(self.env, "capture_image"):
+            return self.env.capture_image()
         return None
 
     def _extract_frame_batches(self, obs: Any) -> list[list[np.ndarray]]:
