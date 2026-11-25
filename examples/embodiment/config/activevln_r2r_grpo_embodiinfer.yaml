@@ -89,8 +89,6 @@ rollout:
     gpu_preprocess: True
     attention_kernel: gqa
     vision_kernel: fused
-    # Capacity for the default B=2 and max_context=4096.
-    kv_pool_tokens: 8192
     incremental_kv_commit: True
     skip_padded_queries: True
     packed_prefill: True
