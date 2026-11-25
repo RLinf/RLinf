@@ -61,15 +61,15 @@ from rlinf.envs.sim.g1_mimic.constants import (
     STATE_DIM,
     WORLD_MODEL_GOAL_DIM,
 )
-from rlinf.envs.sim.g1_mimic.eval_metrics import check_job_coverage
-from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat
+from rlinf.envs.sim.g1_mimic.eval.eval_metrics import check_job_coverage
 from rlinf.envs.sim.g1_mimic.g1_mimic_env import G1MimicEnv
 from rlinf.envs.sim.g1_mimic.g1_mimic_eval_env import (
     check_eval_states,
     checked_policy_action,
 )
-from rlinf.envs.sim.g1_mimic.motion import MotionLibrary
-from rlinf.envs.sim.g1_mimic.reward import failure_signals
+from rlinf.envs.sim.g1_mimic.kinematics.features import quat_to_rotmat
+from rlinf.envs.sim.g1_mimic.tasks.motion import MotionLibrary
+from rlinf.envs.sim.g1_mimic.tasks.reward import failure_signals
 from rlinf.hybrid_engines.fsdp.utils import get_grad_norm
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.supermimic.normalization import (
@@ -285,7 +285,7 @@ def test_evaluation_summary_requires_every_job_once(jobs, valid, complete):
 
 
 def test_push_summary_groups_trials_by_configured_speed():
-    from rlinf.envs.sim.g1_mimic.push_recovery import summarize_trials, trial_plan
+    from rlinf.envs.sim.g1_mimic.eval.push_recovery import summarize_trials, trial_plan
 
     speeds = [0.7, 1.0]
     rows = trial_plan(speeds, trials=2, direction=[1.0, 0.0], seed=0)
@@ -316,7 +316,11 @@ def test_push_summary_groups_trials_by_configured_speed():
         ),
         (
             ["actor.fsdp_config.mixed_precision.reduce_dtype=bf16"],
-            "reduce_dtype must be null or fp32",
+            "reduce_dtype must be fp32",
+        ),
+        (
+            ["actor.fsdp_config.mixed_precision.reduce_dtype=null"],
+            "reduce_dtype must be fp32",
         ),
         (
             ["actor.fsdp_config.amp_autocast.enabled=True"],
@@ -325,6 +329,14 @@ def test_push_summary_groups_trials_by_configured_speed():
         (
             [
                 "actor.fsdp_config.mixed_precision.param_dtype=null",
+                "actor.fsdp_config.amp_autocast.enabled=True",
+            ],
+            "amp_autocast.enabled cannot be combined",
+        ),
+        (
+            [
+                "actor.fsdp_config.mixed_precision.param_dtype=null",
+                "actor.fsdp_config.mixed_precision.reduce_dtype=null",
                 "actor.fsdp_config.amp_autocast.enabled=True",
             ],
             None,
@@ -343,6 +355,10 @@ def test_push_summary_groups_trials_by_configured_speed():
             "with 10 warmup steps",
         ),
         (
+            ["actor.cuda_graph=True", "+actor.muon_optim.lr_warmup_steps=null"],
+            None,
+        ),
+        (
             ["actor.cuda_graph=True", "actor.world_model_optim.capturable=False"],
             "actor.world_model_optim needs capturable=True",
         ),
@@ -350,14 +366,30 @@ def test_push_summary_groups_trials_by_configured_speed():
         (["+runner.enable_decoupled_mode=True"], "enable_decoupled_mode=False"),
         (["rollout.rollout_backend=phyai"], "rollout_backend='huggingface'"),
         (["env.train.video_cfg.save_video=True"], "save_video must be false"),
+        (
+            ["+env.train.data_collection.enabled=True"],
+            "data_collection.enabled must be false",
+        ),
+        (["+env.delay_sampler={type: fixed}"], "delay_sampler is not supported"),
+        (["+env.train.eval_tasks=[tracking]"], "env.train.eval_tasks must be unset"),
+        (
+            [
+                "runner.val_check_interval=1",
+                "env.eval.eval_tasks=[tracking,push_recovery]",
+            ],
+            "env.eval.eval_tasks must be",
+        ),
         (["+runner.weight_sync_interval=2"], "weight_sync_interval must be 1"),
     ],
 )
 def test_training_config_rejects_unsupported_values(overrides, error):
+    from rlinf.config import validate_fsdp_cfg
+
     cfg = _compose(
         "supermimic_lafan1_gencoord", ["env.train.motion_path=/data/clips", *overrides]
     )
     if error is None:
+        validate_fsdp_cfg(cfg.actor)
         validate_supermimic_cfg(cfg)
         return
     with pytest.raises(ValueError, match=error):
@@ -419,7 +451,7 @@ def test_push_recovery_eval_config_is_standalone_and_accepts_maxcoord(monkeypatc
 
 def test_exported_config_records_the_motion_path(tmp_path, monkeypatch):
     monkeypatch.setenv("SUPERMIMIC_MOTION_PATH", "/data/lafan1_g1")
-    from rlinf.envs.sim.g1_mimic.eval_metrics import export_eval_results
+    from rlinf.envs.sim.g1_mimic.eval.eval_metrics import export_eval_results
 
     cfg = OmegaConf.create(
         {
@@ -480,29 +512,70 @@ def test_lafan1_q0_export_needs_no_license_or_output(tmp_path, monkeypatch):
     assert dest.is_file()
 
 
-def test_evaluation_entry_picks_workers_without_an_algorithm_section():
-    from rlinf.runners import get_embodied_eval_runner
-    from rlinf.workers.env import get_env_worker
-    from rlinf.workers.rollout.hf import get_hf_rollout_worker
+def test_embodied_runners_delegate_eval_finalization_to_env_hook():
+    from types import SimpleNamespace
 
-    def picked(sections: dict) -> tuple[str, ...]:
-        cfg = OmegaConf.create({"rollout": {}, "runner": {}, **sections})
-        OmegaConf.set_struct(cfg, True)
-        return tuple(
-            pick(cfg).__name__
-            for pick in (
-                get_embodied_eval_runner,
-                get_env_worker,
-                get_hf_rollout_worker,
-            )
-        )
+    from rlinf.runners.embodied_eval_runner import EmbodiedEvalRunner
+    from rlinf.runners.embodied_runner import EmbodiedRunner
 
-    assert picked({}) == ("EmbodiedEvalRunner", "EnvWorker", "MultiStepRolloutWorker")
-    assert picked({"env": {"eval": {"env_type": "g1_mimic"}}}) == (
-        "SuperMimicEvalRunner",
-        "EnvWorker",
-        "MultiStepRolloutWorker",
-    )
+    class _Handle:
+        def __init__(self, value):
+            self._value = value
+
+        def wait(self):
+            return self._value
+
+    class _FakeEnv:
+        def __init__(self, finalized):
+            self._finalized = finalized
+            self.calls = []
+
+        def evaluate(self, **_kwargs):
+            return _Handle([{"success_once": torch.tensor([1.0, 0.0])}])
+
+        def execute_on(self, *ranks):
+            self._ranks = ranks
+            return self
+
+        def finalize_eval_results(self, env_results, step=None):
+            self.calls.append((self._ranks, len(env_results), step))
+            return _Handle([self._finalized])
+
+    class _FakeRollout:
+        def evaluate(self, **_kwargs):
+            return _Handle([None])
+
+    cfg = OmegaConf.create({"runner": {"enable_decoupled_mode": False}})
+    logged = []
+    fake_logger = SimpleNamespace(info=logged.append)
+
+    eval_runner = object.__new__(EmbodiedEvalRunner)
+    eval_runner.cfg = cfg
+    eval_runner.env = _FakeEnv(({"normalized_return": 0.85}, "/tmp/eval_out"))
+    eval_runner.rollout = _FakeRollout()
+    eval_runner.env_channel = eval_runner.rollout_channel = None
+    eval_runner.logger = fake_logger
+    assert eval_runner.evaluate() == {"normalized_return": 0.85}
+    assert eval_runner.env.calls == [((0,), 1, None)]
+    assert any("/tmp/eval_out" in msg for msg in logged)
+
+    train_runner = object.__new__(EmbodiedRunner)
+    train_runner.cfg = cfg
+    train_runner.global_step = 2000
+    train_runner.env = _FakeEnv(({"normalized_return": 0.80}, None))
+    train_runner.rollout = _FakeRollout()
+    train_runner.env_channel = train_runner.rollout_channel = None
+    train_runner.logger = fake_logger
+    assert train_runner.evaluate() == {"normalized_return": 0.80}
+    assert train_runner.env.calls == [((0,), 1, 2000)]
+
+    fallback_runner = object.__new__(EmbodiedEvalRunner)
+    fallback_runner.cfg = cfg
+    fallback_runner.env = _FakeEnv(None)
+    fallback_runner.rollout = _FakeRollout()
+    fallback_runner.env_channel = fallback_runner.rollout_channel = None
+    fallback_runner.logger = fake_logger
+    assert fallback_runner.evaluate()["success_once"] == pytest.approx(0.5)
 
 
 def test_maxcoord_config_shares_its_representation_with_the_envs():
@@ -697,9 +770,35 @@ def test_due_updates_wait_until_every_rank_can_draw_a_window():
     assert stuck.collected == [9, 1, 1]
 
 
+def test_flat_tensor_packer_round_trips_plain_module():
+    from torch import nn
+
+    from rlinf.models.embodiment.supermimic.ipc import FlatTensorPacker
+
+    class _Toy(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = nn.Linear(4, 3)
+            self.register_buffer("count", torch.tensor(0.0, dtype=torch.float64))
+
+    torch.manual_seed(0)
+    src, dst = _Toy(), _Toy()
+    src.count.fill_(42.0)
+    names = ["count", "linear.bias", "linear.weight"]
+
+    src_packer = FlatTensorPacker(src, names)
+    dst_packer = FlatTensorPacker(dst, names)
+    dst_packer.buffer.copy_(src_packer.pack())
+    dst_packer.unpack()
+
+    for name in names:
+        assert torch.equal(src.state_dict()[name], dst.state_dict()[name]), name
+
+
+@needs_mjlab
 def test_flat_tensor_packer_round_trips_actor_weights_and_norm_buffers():
+    from rlinf.models.embodiment.supermimic.ipc import FlatTensorPacker
     from rlinf.models.embodiment.supermimic.supermimic_policy import (
-        FlatTensorPacker,
         SuperMimicPolicy,
         sync_param_names,
     )
@@ -725,7 +824,7 @@ def test_flat_tensor_packer_round_trips_actor_weights_and_norm_buffers():
 
 
 def test_flat_dict_buffer_round_trips_obs_and_transition_packets():
-    from rlinf.models.embodiment.supermimic.supermimic_policy import (
+    from rlinf.models.embodiment.supermimic.ipc import (
         FlatDictBuffer,
         obs_packet_schema,
         transition_packet_schema,
@@ -956,12 +1055,12 @@ def test_pelvis_falls_on_height_or_tilt():
 
 @needs_mjlab
 def test_perfect_tracking_earns_the_reward_ceiling():
-    from rlinf.envs.sim.g1_mimic.g1_fk import (
+    from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import (
         asset_default_state,
         g1_kinematics,
         soft_joint_limits,
     )
-    from rlinf.envs.sim.g1_mimic.reward import tracking_reward
+    from rlinf.envs.sim.g1_mimic.tasks.reward import tracking_reward
 
     state = asset_default_state().repeat(2, 1)
     bodies = g1_kinematics().forward(state)
@@ -984,7 +1083,7 @@ def test_perfect_tracking_earns_the_reward_ceiling():
 
 
 def _random_states(rows: int, seed: int) -> torch.Tensor:
-    from rlinf.envs.sim.g1_mimic.g1_fk import asset_joint_limits
+    from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import asset_joint_limits
 
     gen = torch.Generator().manual_seed(seed)
     low, high = asset_joint_limits()
@@ -999,7 +1098,7 @@ def _random_states(rows: int, seed: int) -> torch.Tensor:
 
 
 def _stored(representation, states: torch.Tensor) -> torch.Tensor:
-    from rlinf.envs.sim.g1_mimic.g1_fk import g1_kinematics
+    from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import g1_kinematics
 
     flat = states.reshape(-1, STATE_DIM)
     pos, rot, lin, ang = g1_kinematics().forward(flat)
@@ -1010,8 +1109,8 @@ def _stored(representation, states: torch.Tensor) -> torch.Tensor:
 @needs_mjlab
 @pytest.mark.parametrize("name", ["gencoord", "maxcoord"])
 def test_representation_reproduces_the_tracked_bodies(name):
-    from rlinf.envs.sim.g1_mimic.g1_fk import g1_kinematics
-    from rlinf.envs.sim.g1_mimic.representations import make_representation
+    from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import g1_kinematics
+    from rlinf.envs.sim.g1_mimic.kinematics.representations import make_representation
 
     representation = make_representation(name)
     state = _random_states(32, seed=0)
@@ -1036,7 +1135,7 @@ def test_representation_reproduces_the_tracked_bodies(name):
 def test_each_training_phase_reaches_only_its_network(name):
     from omegaconf import OmegaConf
 
-    from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
+    from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import asset_default_state
     from rlinf.models.embodiment.supermimic.networks import hidden_matrix_names
     from rlinf.models.embodiment.supermimic.supermimic_policy import (
         SuperMimicPolicy,
@@ -1156,7 +1255,9 @@ def _small_actor(cfg, mesh, motion):
             device_mesh,
             mp_policy,
             OffloadPolicy(),
-            reshard_after_forward=True,
+            reshard_after_forward=bool(
+                cfg.actor.fsdp_config.get("reshard_after_forward", True)
+            ),
         )
     )
     actor.model_provider_func = lambda: SuperMimicPolicy.from_config(cfg.actor.model)
@@ -1188,17 +1289,15 @@ def _small_actor(cfg, mesh, motion):
 def _update_with_and_without_graph(
     rank: int, port: int, out: str, precision_mode: str
 ) -> None:
-    from torch.distributed.device_mesh import init_device_mesh
-
-    from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
+    from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import asset_default_state
     from rlinf.hybrid_engines.fsdp import FSDPModule
+    from rlinf.hybrid_engines.fsdp.utils import create_device_mesh
 
     dist.init_process_group(
         "nccl", init_method=f"tcp://127.0.0.1:{port}", rank=rank, world_size=1
     )
     Worker.torch_platform.set_device(0)
     try:
-        mesh = init_device_mesh("cuda", (1,), mesh_dim_names=("fsdp",))
         pose = asset_default_state()
         clips = []
         for length in (40, 30):
@@ -1211,10 +1310,12 @@ def _update_with_and_without_graph(
         mode_overrides = {
             "fp32": [
                 "actor.fsdp_config.mixed_precision.param_dtype=null",
+                "actor.fsdp_config.mixed_precision.reduce_dtype=null",
                 "actor.fsdp_config.amp_autocast.enabled=False",
             ],
             "amp_bf16": [
                 "actor.fsdp_config.mixed_precision.param_dtype=null",
+                "actor.fsdp_config.mixed_precision.reduce_dtype=null",
                 "actor.fsdp_config.amp_autocast.enabled=True",
             ],
             "fsdp_bf16": [
@@ -1243,9 +1344,18 @@ def _update_with_and_without_graph(
                     *mode_overrides,
                 ],
             )
+            mesh = create_device_mesh(
+                1,
+                sharding_strategy=cfg.actor.fsdp_config.get(
+                    "sharding_strategy", "full_shard"
+                ),
+            )
             torch.manual_seed(0)
             actor = _small_actor(validate_supermimic_cfg(cfg), mesh, motion)
-            metrics = [actor.run_updates(1) for _ in range(6)]
+            # First 4 single updates warm up + record the graph; the final
+            # multi-update call exercises side-stream replay prefetching too.
+            metrics = [actor.run_updates(1) for _ in range(4)]
+            metrics.append(actor.run_updates(3))
             params = {
                 name: param.full_tensor().cpu()
                 for name, param in actor.model.named_parameters()
@@ -1287,7 +1397,7 @@ def test_recorded_update_replays_the_eager_update(tmp_path, precision_mode):
     eager, replayed = results[False], results[True]
     assert not eager[3] and replayed[3]
     assert eager[4] == replayed[4] == {"dynamics", "actor", "critic"}
-    assert eager[2] == replayed[2] == {"world_model": 12, "actor": 6, "critic": 24}
+    assert eager[2] == replayed[2] == {"world_model": 14, "actor": 7, "critic": 28}
     assert eager[0] == replayed[0]
     for name, param in eager[1].items():
         torch.testing.assert_close(replayed[1][name], param, atol=0, rtol=0)
@@ -1299,7 +1409,10 @@ def test_recorded_update_replays_the_eager_update(tmp_path, precision_mode):
     [("cpu", "cpu"), ("cpu", "cuda:0"), ("cuda:0", "cuda:0"), ("cuda:0", "cpu")],
 )
 def test_reference_fk_matches_online_fk(storage, query):
-    from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state, g1_kinematics
+    from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import (
+        asset_default_state,
+        g1_kinematics,
+    )
 
     if "cuda" in storage + query and not _CUDA_AVAILABLE:
         pytest.skip("a CUDA/HIP device is required for cross-device queries")
@@ -1323,8 +1436,8 @@ def test_reference_fk_matches_online_fk(storage, query):
 @needs_warp
 @pytest.mark.parametrize("mode", ["add", "set"])
 def test_push_writes_only_the_horizontal_root_velocity(mode):
+    from rlinf.envs.sim.g1_mimic.eval.push_recovery import default_standing_state
     from rlinf.envs.sim.g1_mimic.mjlab_env import MjlabG1Env
-    from rlinf.envs.sim.g1_mimic.push_recovery import default_standing_state
 
     device = torch.device("cuda:0")
     pose = default_standing_state()
@@ -1348,8 +1461,8 @@ def test_push_writes_only_the_horizontal_root_velocity(mode):
 
 @needs_warp
 def test_reset_drops_the_previous_episode_from_the_solver():
+    from rlinf.envs.sim.g1_mimic.eval.push_recovery import default_standing_state
     from rlinf.envs.sim.g1_mimic.mjlab_env import MjlabG1Env
-    from rlinf.envs.sim.g1_mimic.push_recovery import default_standing_state
 
     device = torch.device("cuda:0")
     pose = default_standing_state()

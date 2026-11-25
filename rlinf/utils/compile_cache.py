@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``torch.compile`` of large CUDA batches, shared by the SuperMimic envs,
-training scans and kinematics.
+"""``torch.compile`` cache for large CUDA batches with eager fallback.
 
 Batches on the CPU or under 256 rows run eagerly. A piece that fails to
 compile warns once and stays eager for the rest of the process; the result is
@@ -37,6 +36,7 @@ class CompileCache:
     Args:
         enabled: Whether large CUDA batches are compiled at all.
         fullgraph: Passed to ``torch.compile`` for every piece of this owner.
+        dynamic: Passed to ``torch.compile`` to trace dynamic or static shapes.
     """
 
     def __init__(
@@ -44,12 +44,10 @@ class CompileCache:
         enabled: bool = True,
         fullgraph: bool = False,
         dynamic: bool = True,
-        mode: str | None = None,
     ):
         self.enabled = bool(enabled)
         self.fullgraph = bool(fullgraph)
         self.dynamic = bool(dynamic)
-        self.mode = mode
         self.compiled: dict[str, Callable] = {}
         self.failed: set[str] = set()
 
@@ -81,13 +79,10 @@ def run_compiled(name: str, fn: Callable, *args, cache: CompileCache):
     compiled = cache.compiled.get(name)
     if compiled is None:
         get_logger().info(
-            f"Compiling SuperMimic {name} for large CUDA batches. The first "
+            f"Compiling {name} for large CUDA batches. The first "
             "such batch waits; later batches reuse it."
         )
-        kwargs = {"dynamic": cache.dynamic, "fullgraph": cache.fullgraph}
-        if cache.mode is not None:
-            kwargs["mode"] = cache.mode
-        compiled = torch.compile(fn, **kwargs)
+        compiled = torch.compile(fn, dynamic=cache.dynamic, fullgraph=cache.fullgraph)
         cache.compiled[name] = compiled
     try:
         return compiled(*args)
@@ -97,7 +92,7 @@ def run_compiled(name: str, fn: Callable, *args, cache: CompileCache):
             cache.failed.add(name)
             cache.compiled.pop(name, None)
             get_logger().warning(
-                f"SuperMimic {name} stayed eager ({type(exc).__name__})."
+                f"Compilation of {name} stayed eager ({type(exc).__name__})."
             )
             return fn(*args)
         raise

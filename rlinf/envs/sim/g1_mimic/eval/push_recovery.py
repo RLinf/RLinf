@@ -52,13 +52,13 @@ from rlinf.envs.sim.g1_mimic.constants import (
     ROOT_QUAT,
     STATE_DIM,
 )
-from rlinf.envs.sim.g1_mimic.features import (
+from rlinf.envs.sim.g1_mimic.kinematics.features import (
     heading_yaw,
     projected_gravity,
     rot_apply,
     yaw_rotation,
 )
-from rlinf.envs.sim.g1_mimic.motion import MotionLibrary
+from rlinf.envs.sim.g1_mimic.tasks.motion import MotionLibrary
 
 REFERENCE_POSE = "mjlab_knees_bent_keyframe"
 PROTOCOL_NAME = "stationary_standing_pose"
@@ -122,7 +122,7 @@ def default_standing_state() -> torch.Tensor:
     It is not the paper's T-pose. Section 4.3 does not publish those joints,
     and this asset has no T-pose keyframe to reuse.
     """
-    from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
+    from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import asset_default_state
 
     state = asset_default_state().float().reshape(STATE_DIM).clone()
     state[ROOT_LIN_VEL] = 0
@@ -407,8 +407,8 @@ def initialization_reason(
 
 def torso_orientation_error(state: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
     """Geodesic angle between the robot torso and the reference torso."""
-    from rlinf.envs.sim.g1_mimic.features import rotation_angle
-    from rlinf.envs.sim.g1_mimic.g1_fk import TORSO_BODY, g1_kinematics
+    from rlinf.envs.sim.g1_mimic.kinematics.features import rotation_angle
+    from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import TORSO_BODY, g1_kinematics
 
     kin = g1_kinematics()
     _pos, rot, _lin, _ang = kin.forward(state)

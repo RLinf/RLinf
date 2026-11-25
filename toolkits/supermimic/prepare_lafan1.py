@@ -166,7 +166,7 @@ def download(
                 time.sleep(min(2 * (attempt + 1), 10))
 
 
-def check_sources(source_dir: Path, listing) -> list[dict]:
+def check_sources(source_dir: Path, listing, revision: str = REVISION) -> list[dict]:
     """Every expected CSV present with the pinned size and sum."""
     found = sorted(p.name for p in source_dir.glob("*.csv"))
     if listing is None:
@@ -191,16 +191,16 @@ def check_sources(source_dir: Path, listing) -> list[dict]:
         digest = sha256_file(path)
         if item["bytes"] >= 0 and size != item["bytes"]:
             raise SystemExit(
-                f"{path} has {size} bytes, revision {REVISION[:8]} has {item['bytes']}"
+                f"{path} has {size} bytes, revision {revision[:8]} has {item['bytes']}"
             )
         if item["sha256"] and digest != item["sha256"]:
-            raise SystemExit(f"{path} SHA-256 does not match revision {REVISION[:8]}")
+            raise SystemExit(f"{path} SHA-256 does not match revision {revision[:8]}")
         checked.append({"name": item["name"], "bytes": size, "sha256": digest})
     return checked
 
 
 def default_q0():
-    from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
+    from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import asset_default_state
 
     return asset_default_state()[7:36].clone().float()
 
@@ -210,12 +210,13 @@ def convert(
     sources: list[dict],
     out: Path,
     q0_file: Path | None = None,
+    revision: str = REVISION,
 ) -> list[dict]:
     import numpy as np
     import torch
 
     from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM, G1_JOINT_NAMES, STATE_DIM
-    from rlinf.envs.sim.g1_mimic.motion import decode_motion_payload
+    from rlinf.envs.sim.g1_mimic.tasks.motion import decode_motion_payload
 
     if q0_file is None:
         q0 = default_q0()
@@ -253,7 +254,7 @@ def convert(
             "joint_names": list(G1_JOINT_NAMES),
             "q0": q0,
             "state": torch.from_numpy(state),
-            "source": f"{REPO_ID}@{REVISION} {SUBDIR}/{item['name']}",
+            "source": f"{REPO_ID}@{revision} {SUBDIR}/{item['name']}",
         }
         name = f"clip_{index:03d}.pt"
         decoded, _ = decode_motion_payload(payload, name)
@@ -357,12 +358,14 @@ def main() -> int:
             args.curl,
             args.timeout,
         )
-    sources = check_sources(source_dir, listing)
+    sources = check_sources(source_dir, listing, revision=args.revision)
     if len(sources) != EXPECTED_CLIPS and not args.allow_partial:
         raise SystemExit(
             f"{source_dir} has {len(sources)} CSVs, expected {EXPECTED_CLIPS}"
         )
-    clips = convert(source_dir, sources, out, q0_file=args.q0_file)
+    clips = convert(
+        source_dir, sources, out, q0_file=args.q0_file, revision=args.revision
+    )
     manifest = {
         "dataset": REPO_ID,
         "revision": args.revision,

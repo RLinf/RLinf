@@ -1,5 +1,6 @@
-# Three updates of the MaxCoord recipe on two ranks, on the standing clip in
-# SUPERMIMIC_MOTION_PATH. The last update saves a checkpoint.
+# Five updates of the MaxCoord recipe on two ranks, on the standing clip in
+# SUPERMIMIC_MOTION_PATH (update 4 records the CUDA graph, update 5 replays it
+# and saves a checkpoint).
 defaults:
   - supermimic_lafan1_maxcoord
   - _self_
@@ -19,8 +20,8 @@ runner:
   logger:
     log_path: /workspace/results/g1_mimic_supermimic_maxcoord
     experiment_name: ci-test
-  max_epochs: 3
-  save_interval: 3
+  max_epochs: 5
+  save_interval: 5
 
 algorithm:
   replay_length: 32

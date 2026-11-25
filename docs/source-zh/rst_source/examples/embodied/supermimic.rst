@@ -27,7 +27,7 @@ SuperMimic：基于可微世界模型的人形全身动作跟踪
    .. grid-item-card:: 训练
       :text-align: center
 
-      1–4 张 NVIDIA GPU（FSDP2）· :ref:`AMD ROCm <supermimic-hardware>`
+      1–4 张 NVIDIA GPU（FSDP2）· :ref:`AMD ROCm（实验性） <supermimic-hardware>`
 
 | **你将完成：** 理解算法原理 → 安装并准备 LAFAN1 → 启动训练 → 查看 TensorBoard → 评测 checkpoint。
 | **前置条件：** :doc:`安装说明 </rst_source/start/installation>` · 一张或多张 NVIDIA GPU（或 AMD ROCm）· 可访问 Hugging Face 下载 LAFAN1 数据。

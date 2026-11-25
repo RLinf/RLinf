@@ -18,15 +18,15 @@ from __future__ import annotations
 
 import torch
 
-from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache, run_compiled
+from rlinf.utils.compile_cache import CompileCache, run_compiled
 from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM
-from rlinf.models.embodiment.supermimic.supermimic_policy import (
+from rlinf.models.embodiment.supermimic.ipc import (
     FlatDictBuffer,
     FlatTensorPacker,
     obs_packet_schema,
-    sync_param_names,
     use_direct_weight_sync,
 )
+from rlinf.models.embodiment.supermimic.supermimic_policy import sync_param_names
 from rlinf.scheduler import Worker
 from rlinf.utils.precision import torch_dtype_from_precision
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
@@ -48,7 +48,7 @@ class SuperMimicRolloutWorker(MultiStepRolloutWorker):
             dtype = torch_dtype_from_precision(amp.precision)
         self.hf_model.set_autocast(dtype)
         self._compile_cache = CompileCache(
-            enabled=bool(self.hf_model._compile_cache.enabled), dynamic=False
+            enabled=bool(self.hf_model.compile_cache.enabled), dynamic=False
         )
         self._use_direct_weight_sync = not self.only_eval and use_direct_weight_sync(
             self.cfg, self.placement.get_world_size("actor"), self._world_size

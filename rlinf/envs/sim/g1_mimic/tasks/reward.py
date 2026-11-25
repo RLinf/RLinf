@@ -29,7 +29,7 @@ from rlinf.envs.sim.g1_mimic.constants import (
     FAILURE_TILT,
     ROOT_QUAT,
 )
-from rlinf.envs.sim.g1_mimic.features import (
+from rlinf.envs.sim.g1_mimic.kinematics.features import (
     heading_yaw,
     heading_yaw_of_matrix,
     projected_gravity,
@@ -39,9 +39,8 @@ from rlinf.envs.sim.g1_mimic.features import (
     rotation_angle,
     yaw_rotation,
 )
-from rlinf.envs.sim.g1_mimic.g1_fk import PELVIS_BODY, TORSO_BODY
+from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import PELVIS_BODY
 
-TORSO = TORSO_BODY
 PELVIS = PELVIS_BODY
 
 # (weight, std) of the six tracking kernels.

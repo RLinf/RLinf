@@ -24,7 +24,7 @@ from omegaconf import open_dict
 from omegaconf.dictconfig import DictConfig
 
 from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM, DT
-from rlinf.envs.sim.g1_mimic.representations import REPRESENTATIONS
+from rlinf.envs.sim.g1_mimic.kinematics.representations import REPRESENTATIONS
 from rlinf.utils.precision import torch_dtype_from_precision
 
 if TYPE_CHECKING:
@@ -102,8 +102,8 @@ def _check_weight_precision(cfg: DictConfig, only_eval: bool) -> None:
         if not _is_float32(precision):
             raise ValueError(
                 f"{prefix}.precision must be 32, got {precision!r}; SuperMimic "
-                "keeps float32 weights and casts inside the networks with "
-                "amp_autocast"
+                "keeps float32 master weights and casts network matmuls via "
+                "mixed_precision or amp_autocast"
             )
 
 
@@ -119,11 +119,14 @@ def _check_actor_backend(actor: DictConfig) -> None:
         )
     mixed = fsdp.get("mixed_precision", None) or {}
     param_dtype = torch_dtype_from_precision(mixed.get("param_dtype", None))
+    reduce_dtype = torch_dtype_from_precision(mixed.get("reduce_dtype", None))
+    buffer_dtype = torch_dtype_from_precision(mixed.get("buffer_dtype", None))
     if param_dtype not in (None, torch.float32, torch.bfloat16):
         raise ValueError(
             "actor.fsdp_config.mixed_precision.param_dtype must be null, fp32, "
             f"or bf16, got {mixed.get('param_dtype')!r}"
         )
+    amp_enabled = bool((fsdp.get("amp_autocast", None) or {}).get("enabled", False))
     if param_dtype == torch.bfloat16:
         if mixed.get("cast_forward_inputs", True):
             raise ValueError(
@@ -131,13 +134,34 @@ def _check_actor_backend(actor: DictConfig) -> None:
                 "False when param_dtype is bf16 so kinematics, rewards, and "
                 "losses stay float32"
             )
-        if (fsdp.get("amp_autocast", None) or {}).get("enabled", False):
+        if reduce_dtype != torch.float32:
+            raise ValueError(
+                "actor.fsdp_config.mixed_precision.reduce_dtype must be fp32 "
+                f"when param_dtype is bf16, got {mixed.get('reduce_dtype')!r}"
+            )
+        if amp_enabled:
             raise ValueError(
                 "actor.fsdp_config.amp_autocast.enabled must be False when "
                 "mixed_precision.param_dtype is bf16"
             )
-    for name in ("reduce_dtype", "buffer_dtype"):
-        if not _is_float32(mixed.get(name, None)):
+    if amp_enabled:
+        raw_dtypes = tuple(
+            mixed.get(name, None)
+            for name in ("param_dtype", "reduce_dtype", "buffer_dtype")
+        )
+        all_none = all(val is None for val in raw_dtypes)
+        all_fp32 = all(val == "fp32" for val in raw_dtypes)
+        if not (all_none or all_fp32):
+            raise ValueError(
+                "actor.fsdp_config.amp_autocast.enabled cannot be combined with "
+                f"mixed_precision dtypes {raw_dtypes!r}; set param_dtype, "
+                "reduce_dtype, and buffer_dtype all to null (or all to fp32)"
+            )
+    for name, resolved in (
+        ("reduce_dtype", reduce_dtype),
+        ("buffer_dtype", buffer_dtype),
+    ):
+        if resolved not in (None, torch.float32):
             raise ValueError(
                 f"actor.fsdp_config.mixed_precision.{name} must be null or fp32, "
                 f"got {mixed.get(name)!r}; SuperMimic keeps float32 buffers and "
@@ -163,11 +187,14 @@ def _check_cuda_graph(actor: DictConfig) -> None:
         return
     for name in ("optim", "world_model_optim", "critic_optim", "muon_optim"):
         optim = actor[name]
-        warmup = int(optim.get("lr_warmup_steps", -1))
+        warmup_raw = optim.get("lr_warmup_steps", -1)
+        warmup = -1 if warmup_raw is None else int(warmup_raw)
         if warmup < 0:
+            ratio_raw = optim.get("lr_warmup_steps_ratio", 0.0)
+            total_raw = optim.get("total_training_steps", 0)
             warmup = int(
-                float(optim.get("lr_warmup_steps_ratio", 0.0))
-                * optim.get("total_training_steps", 0)
+                (0.0 if ratio_raw is None else float(ratio_raw))
+                * (0 if total_raw is None else int(total_raw))
             )
         schedule = optim.get("lr_scheduler", "constant")
         if schedule != "constant" or warmup > 0:
@@ -212,6 +239,10 @@ def _check_env(env: DictConfig, prefix: str, needs_motion: bool) -> None:
     if (env.get("video_cfg", None) or {}).get("save_video", False):
         raise ValueError(
             f"{prefix}.video_cfg.save_video must be false for g1_mimic envs"
+        )
+    if (env.get("data_collection", None) or {}).get("enabled", False):
+        raise ValueError(
+            f"{prefix}.data_collection.enabled must be false for g1_mimic envs"
         )
 
 
@@ -335,13 +366,20 @@ def validate_supermimic_cfg(cfg: DictConfig, only_eval: bool = False) -> DictCon
                 )
         _check_actor_backend(cfg.actor)
         _check_cuda_graph(cfg.actor)
+        if cfg.env.get("delay_sampler", None) is not None:
+            raise ValueError("env.delay_sampler is not supported for g1_mimic training")
+        if list(cfg.env.train.get("eval_tasks", None) or []):
+            raise ValueError("env.train.eval_tasks must be unset for g1_mimic training")
         _sync_env(cfg.env.train, model, "env.train")
         _check_env(cfg.env.train, "env.train", needs_motion=True)
         _check_training(cfg)
     if only_eval or cfg.runner.get("val_check_interval", -1) > 0:
         tasks = list(cfg.env.eval.get("eval_tasks", None) or [])
-        if not tasks:
-            raise ValueError("env.eval.eval_tasks must name the evaluation tasks")
+        if tasks not in (["tracking"], ["push_recovery"]):
+            raise ValueError(
+                "env.eval.eval_tasks must be ['tracking'] or ['push_recovery'], "
+                f"got {tasks!r}"
+            )
         _sync_env(cfg.env.eval, model, "env.eval")
         _check_env(cfg.env.eval, "env.eval", needs_motion=tasks != ["push_recovery"])
     return cfg

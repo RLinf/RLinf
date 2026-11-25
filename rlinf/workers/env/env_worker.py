@@ -1487,9 +1487,13 @@ class EnvWorker(Worker):
 
         return {**eval_metrics, **self.eval_assignment.scoped(eval_metrics)}
 
-    def eval_metadata(self) -> dict | None:
-        """Return optional structured metadata exposed by the evaluation env."""
+    def finalize_eval_results(
+        self, env_results: list[dict | None], step: int | None = None
+    ) -> tuple[dict[str, float], str | None] | None:
+        """Summarize and optionally export eval results when the env provides a hook."""
         if not getattr(self, "eval_env_list", None):
             return None
-        env = self.eval_env_list[0]
-        return env.metadata() if hasattr(env, "metadata") else None
+        finalize_fn = get_env_attr(self.eval_env_list[0], "finalize_eval_results")
+        if not callable(finalize_fn):
+            return None
+        return finalize_fn(self.cfg, env_results, step=step)

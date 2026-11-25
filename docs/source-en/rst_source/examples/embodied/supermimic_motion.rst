@@ -32,14 +32,17 @@ If the training machine cannot reach Hugging Face, convert LAFAN1 on another mac
 Run It
 ------
 
-A motion directory holds ``clip_*.pt`` files loaded in file-name order. Set ``SUPERMIMIC_MOTION_PATH`` to your clip directory and pass the overrides below to the training command in :doc:`supermimic` or the evaluation command in :doc:`../../evaluations/guides/supermimic`. To evaluate more than 40 clips, adjust the evaluation capacity settings described in :doc:`../../evaluations/guides/supermimic`.
+Save each custom clip in the ``clip_*.pt`` format below inside one directory (loaded in file-name order), point ``SUPERMIMIC_MOTION_PATH`` to that directory, and pass ``env.train.num_clips=null`` (or ``env.eval.num_clips=null`` for evaluation) to load every clip in the folder:
 
-Custom Clips
-~~~~~~~~~~~~
+.. code-block:: bash
 
-Save each clip in the ``clip_*.pt`` format below inside one folder, point ``SUPERMIMIC_MOTION_PATH`` to that folder, and pass ``env.train.num_clips=null`` (or ``env.eval.num_clips=null`` for evaluation) to load every clip in the folder.
+   export SUPERMIMIC_MOTION_PATH=/data/my_clips
+   python examples/embodiment/train_embodied_agent.py \
+       --config-name supermimic_lafan1_gencoord \
+       env.train.num_clips=null \
+       runner.logger.log_path=/data/runs/supermimic_custom
 
-If the directory includes a ``manifest.json``, the loader verifies every clip's SHA-256 and rejects unlisted files; without ``manifest.json``, it checks tensor shapes and values only.
+To evaluate more than 40 clips, adjust the evaluation capacity settings described in :doc:`../../evaluations/guides/supermimic`. If the directory includes a ``manifest.json``, the loader verifies every clip's SHA-256 and rejects unlisted files; without ``manifest.json``, it checks tensor shapes and values only.
 
 Clip File Format
 ----------------
@@ -89,29 +92,4 @@ Column layout of ``state`` (``[T, 71]``):
      - Joint velocities
      - rad/s
 
-The snippet below writes a 5-second standing clip and validates it with the loader before saving:
-
-.. code-block:: python
-
-   from pathlib import Path
-
-   import torch
-
-   from rlinf.envs.sim.g1_mimic.constants import G1_JOINT_NAMES
-   from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
-   from rlinf.envs.sim.g1_mimic.motion import decode_motion_payload
-
-   default = asset_default_state().float()  # mjlab standing keyframe, [71]
-   T = 250                                  # 5 s at 50 Hz
-   state = torch.zeros(T, 71)
-   state[:, :36] = default[:36]             # root pose and joint positions
-   payload = {
-       "fps": 50,
-       "joint_names": list(G1_JOINT_NAMES),
-       "q0": default[7:36],
-       "state": state,
-   }
-   decode_motion_payload(payload, "clip_000.pt")  # raises ValueError if invalid
-   out = Path("/data/my_clips")
-   out.mkdir(parents=True, exist_ok=True)
-   torch.save(payload, out / "clip_000.pt")
+Export ``g1_q0.pt`` once with ``python toolkits/supermimic/prepare_lafan1.py --export-q0 g1_q0.pt``, then save each custom clip dictionary with ``torch.save`` (for example ``clip_000.pt``). The training and evaluation loader validates every clip's keys, joint order, ``q0`` match, quaternion norms, and finite values on startup.

@@ -157,27 +157,29 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Docker image**
+.. tab-set::
 
-Build the SuperMimic target and start a container with GPU access:
+   .. tab-item:: Docker image
 
-.. code-block:: bash
+      Build the SuperMimic target and start a container with GPU access:
 
-   docker build -f docker/Dockerfile \
-       --build-arg BUILD_TARGET=embodied-supermimic \
-       -t rlinf:embodied-supermimic .
-   docker run -it --rm --gpus all \
-       --shm-size 32g --network host --name rlinf \
-       -v .:/workspace/RLinf rlinf:embodied-supermimic
+      .. code-block:: bash
 
-**Custom environment**
+         docker build -f docker/Dockerfile \
+             --build-arg BUILD_TARGET=embodied-supermimic \
+             -t rlinf:embodied-supermimic .
+         docker run -it --rm --gpus all \
+             --shm-size 32g --network host --name rlinf \
+             -v .:/workspace/RLinf rlinf:embodied-supermimic
 
-Create a dedicated virtual environment from the repository root. This environment pins specific PyTorch, MuJoCo Warp, and ``warp-lang`` versions, so keep it separate from other RLinf virtual environments:
+   .. tab-item:: Custom environment
 
-.. code-block:: bash
+      Create a dedicated virtual environment from the repository root. This environment pins specific PyTorch, MuJoCo Warp, and ``warp-lang`` versions, so keep it separate from other RLinf virtual environments:
 
-   bash requirements/install.sh embodied --env supermimic --venv .venv-supermimic
-   source .venv-supermimic/bin/activate
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --env supermimic --venv .venv-supermimic
+         source .venv-supermimic/bin/activate
 
 For AMD ROCm setup, see :ref:`Run on Different Hardware Backends <supermimic-hardware>`.
 
@@ -213,8 +215,7 @@ Export the clip directory and disable MuJoCo's OpenGL renderer (unused by traini
 
    python examples/embodiment/train_embodied_agent.py \
        --config-name supermimic_lafan1_gencoord \
-       runner.logger.log_path=/data/runs/supermimic_gencoord \
-       actor.cuda_graph=True
+       runner.logger.log_path=/data/runs/supermimic_gencoord
 
 What this command does:
 

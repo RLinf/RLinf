@@ -11,20 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from omegaconf import DictConfig
-
-from rlinf.scheduler.worker.worker import Worker
-
-
-def get_env_worker(cfg: DictConfig) -> type[Worker]:
-    """Env worker for an embodied evaluation config."""
-    if cfg.rollout.get(
-        "rollout_backend", "huggingface"
-    ) == "huggingface" and cfg.runner.get("rtc", {}).get("enabled", False):
-        from .rtc_env_worker import RTCEnvWorker
-
-        return RTCEnvWorker
-    from .env_worker import EnvWorker
-
-    return EnvWorker

@@ -4310,6 +4310,8 @@ install_supermimic_env() {
                 ;;
         esac
         uv pip install "warp-lang @ ${GITHUB_PREFIX}https://github.com/NVIDIA/warp/releases/download/v1.18.0/warp_lang-1.18.0%2Bcu12-py3-none-${wheel_tag}.whl"
+    else
+        uv pip install "warp-lang==1.18.0"
     fi
     uv pip install -r "$SCRIPT_DIR/embodied/envs/supermimic.txt"
 }
