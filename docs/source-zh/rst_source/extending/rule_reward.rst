@@ -1,5 +1,5 @@
-规则 Reward
-===========
+基于规则的 Reward
+=================
 
 无需修改 RLinf 的 runner 或 worker，即可为推理与 Agent 任务注册确定性的规则 Reward 打分类。配置中 ``reward.use_reward_model`` 为 ``False`` 时，``RewardWorker`` 会通过 ``reward_registry`` 按 ``reward.reward_type`` 加载对应类。
 

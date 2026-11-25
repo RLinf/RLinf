@@ -1,5 +1,5 @@
-Real-World Robot Hardware
-=========================
+Real-World Hardware
+===================
 
 This guide adds a mobile base, composes it with RLinf's existing Franka arm, and
 drives the resulting mobile manipulator through a real-world Gymnasium

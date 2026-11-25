@@ -21,25 +21,25 @@ Which Guide Should I Read?
      - Guide
    * - New VLA or embodied RL policy (FSDP)
      - ``register_model`` + ``BasePolicy``
-     - :doc:`Embodied Policy (FSDP) <new_model_fsdp>`
+     - :doc:`Embodied RL Model (FSDP) <new_model_fsdp>`
    * - New supervised fine-tuning model & dataset
      - ``register_model`` + ``FSDPSftWorker``
-     - :doc:`SFT Model & Dataset <new_model_sft>`
+     - :doc:`Embodied SFT Model (FSDP) <new_model_sft>`
    * - New embodied rollout model on SGLang
      - SGLang embodied adapter registry
-     - :doc:`Embodied Rollout (SGLang) <sglang_embodied_model>`
+     - :doc:`Embodied Rollout Model (SGLang) <sglang_embodied_model>`
    * - New Hugging Face LLM on Megatron + SGLang (recommended)
      - Megatron-Bridge actor backend
-     - :doc:`LLM via Megatron-Bridge <mbridge>`
+     - :doc:`LLM Model (Megatron-Bridge) <mbridge>`
    * - Custom Megatron LLM adapter (manual resharding)
      - Manual Megatron actor & weight mapping
-     - :doc:`LLM via Manual Megatron <new_model_megatron>`
+     - :doc:`LLM Model (Manual Megatron) <new_model_megatron>`
    * - New physics simulator
      - ``SupportedEnvType`` + ``get_env_cls()``
-     - :doc:`Simulator Environment <new_env>`
+     - :doc:`Simulator Env <new_env>`
    * - New sensor, arm, or physical robot
      - Local part → robot tree → remote placement
-     - :doc:`Real-World Robot Hardware <new_robot>`
+     - :doc:`Real-World Hardware <new_robot>`
    * - New task on an already-supported robot
      - Real-world task config overlay
      - :doc:`Real-World Task <new_task>`
@@ -49,14 +49,14 @@ Which Guide Should I Read?
    * - New rule-based text reward
      - ``register_reward``
      - :doc:`Rule-Based Reward <rule_reward>`
-   * - New learned embodied reward model
+   * - New model-based embodied reward
      - ``BaseRewardModel`` + ``reward.use_reward_model``
-     - :doc:`Learned Reward Model <reward_model>`
-   * - Build a multi-turn agent inside RLinf (for example Search-R1 or custom tool tags)
+     - :doc:`Model-Based Reward <reward_model>`
+   * - Build a white-box agent inside RLinf (token-level, e.g. Search-R1)
      - ``AgentLoopWorker`` / ``ToolWorker`` / ``@register_toolcall_parser``
      - :doc:`White-Box Agent <new_agent>`
-   * - Connect an existing external agent (for example OpenAI SDK or AutoGen)
-     - ``MultiAgentLoopWorker.run_session_trajectory`` + Session Server
+   * - Connect a black-box agent over OpenAI API (e.g. OpenAI SDK, AutoGen)
+     - Session Server ``/v1/chat/completions`` + ``run_session_trajectory``
      - :doc:`Black-Box Agent <openai_agent>`
    * - New GPU or NPU accelerator backend
      - ``AcceleratorManager`` + ``install.sh --platform``
@@ -70,7 +70,7 @@ Which Guide Should I Read?
 
 .. tip::
 
-   **No fork needed:** To register a custom model, advantage, policy loss, rule reward, or tool-call parser from your own repository, expose a ``register()`` hook and export ``RLINF_EXT_MODULE=<your_pkg.module>`` before launching (see :ref:`out-of-tree-extensions` in :doc:`Embodied Policy (FSDP) <new_model_fsdp>` and :doc:`Advantage & Policy Loss <new_algorithm>`).
+   **No fork needed:** To register a custom model, advantage, policy loss, rule reward, or tool-call parser from your own repository, expose a ``register()`` hook and export ``RLINF_EXT_MODULE=<your_pkg.module>`` before launching (see :ref:`out-of-tree-extensions` in :doc:`Embodied RL Model (FSDP) <new_model_fsdp>` and :doc:`Advantage & Policy Loss <new_algorithm>`).
 
 Choose an Extension Area
 ------------------------

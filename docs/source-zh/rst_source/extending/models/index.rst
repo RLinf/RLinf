@@ -10,13 +10,13 @@
    * - 指南
      - 适用场景
      - 对应后端
-   * - :doc:`具身与 VLA 模型（FSDP） <../new_model_fsdp>`
+   * - :doc:`具身 RL 模型（FSDP） <../new_model_fsdp>`
      - 接入新的 VLA 或具身 RL 策略
      - FSDP + Hugging Face
-   * - :doc:`SFT 模型与数据集 <../new_model_sft>`
+   * - :doc:`具身 SFT 模型（FSDP） <../new_model_sft>`
      - 接入自定义监督微调模型与数据格式
      - FSDP SFT Worker
-   * - :doc:`SGLang 具身 Rollout 模型 <../sglang_embodied_model>`
+   * - :doc:`具身 Rollout 模型（SGLang） <../sglang_embodied_model>`
      - 为具身或世界动作模型接入高速评测 Rollout
      - SGLang Embodied Worker
    * - :doc:`LLM 模型（Megatron-Bridge） <../mbridge>`
@@ -32,9 +32,9 @@
 .. toctree::
    :hidden:
 
-   具身与 VLA 模型（FSDP） <../new_model_fsdp>
-   SFT 模型与数据集 <../new_model_sft>
-   SGLang 具身 Rollout 模型 <../sglang_embodied_model>
+   具身 RL 模型（FSDP） <../new_model_fsdp>
+   具身 SFT 模型（FSDP） <../new_model_sft>
+   具身 Rollout 模型（SGLang） <../sglang_embodied_model>
    LLM 模型（Megatron-Bridge） <../mbridge>
    LLM 模型（手动 Megatron） <../new_model_megatron>
    自定义权重同步 <../weight_syncer>

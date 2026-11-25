@@ -1,7 +1,7 @@
 Add a Reward
 ============
 
-Pick the reward path that fits your task: deterministic rule-based scorers for reasoning and agent tasks, or learned reward models for embodied RL.
+Pick the reward path that fits your task: deterministic rule-based scorers for reasoning and agent tasks, or model-based reward predictors for embodied RL.
 
 .. grid:: 1 2 2 2
    :gutter: 2
@@ -12,7 +12,7 @@ Pick the reward path that fits your task: deterministic rule-based scorers for r
 
       Register a deterministic Python scorer for reasoning and agent completions via ``register_reward``.
 
-   .. grid-item-card:: Learned Reward Model
+   .. grid-item-card:: Model-Based Reward
       :link: ../reward_model
       :link-type: doc
 
@@ -22,4 +22,4 @@ Pick the reward path that fits your task: deterministic rule-based scorers for r
    :hidden:
 
    Rule-Based Reward <../rule_reward>
-   Learned Reward Model <../reward_model>
+   Model-Based Reward <../reward_model>

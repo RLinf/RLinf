@@ -1,18 +1,18 @@
 新增 Reward
 ===========
 
-按任务类型选择对应路径：推理与 Agent 任务用规则 Reward 打分，具身 RL 任务用学习型 Reward 模型。
+按任务类型选择对应路径：推理与 Agent 任务使用基于规则的 Reward，具身 RL 任务使用基于模型的 Reward。
 
 .. grid:: 1 2 2 2
    :gutter: 2
 
-   .. grid-item-card:: 规则 Reward
+   .. grid-item-card:: 基于规则的 Reward
       :link: ../rule_reward
       :link-type: doc
 
       通过 ``register_reward`` 为推理与 Agent 回复注册确定性 Python 打分类。
 
-   .. grid-item-card:: 学习型 Reward 模型
+   .. grid-item-card:: 基于模型的 Reward
       :link: ../reward_model
       :link-type: doc
 
@@ -21,5 +21,5 @@
 .. toctree::
    :hidden:
 
-   规则 Reward <../rule_reward>
-   学习型 Reward 模型 <../reward_model>
+   基于规则的 Reward <../rule_reward>
+   基于模型的 Reward <../reward_model>

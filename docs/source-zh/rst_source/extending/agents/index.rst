@@ -1,23 +1,23 @@
 新增 Agent
 ==========
 
-按现有 Agent 的形态选择接入路径：在 RLinf 内编写 **白盒 Agent** 获取 token 级精细控制，或将已有的外部 **黑盒 Agent** 通过 OpenAI API 免重写直接接入。
+RLinf 支持两种 Agent 接入方式：在框架内编写白盒 Agent，或直接通过 API 接入已有的黑盒 Agent。按现有代码的形态选择对应路径即可。
 
 选择接入路径
 ------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 26 48 26
+   :widths: 20 56 24
 
-   * - 起点
-     - 推荐接入方式与示例
-     - 对应文档
-   * - 在 RLinf 内从零编写 Agent（Token 级控制）
-     - 注册工具调用解析器、在 ``ToolWorker`` 中隔离执行工具，并继承 ``AgentLoopWorker``\ （例如 Search-R1 或自定义标签工具 Agent）。
+   * - Agent 类型
+     - 说明与示例
+     - 接入路径
+   * - **白盒 Agent**
+     - 在 RLinf 内部实现多轮交互与工具调用，直接控制每轮提示词、工具解析与 token 损失掩码（例如 Search-R1 或自定义 ``<calc>`` / ``<search>`` 标签工具 Agent）。
      - :doc:`白盒 Agent <../new_agent>`
-   * - 接入已有外部 Agent（消息级，免重写）
-     - 保留原有 Agent 代码（例如基于 OpenAI SDK、AutoGen 或自有框架的外部 Agent），开启 Session Server，将 ``AsyncOpenAI`` 指向 ``/sessions/<id>/v1/chat/completions``。
+   * - **黑盒 Agent**
+     - 独立在外部编排、仅通过 OpenAI 兼容 API（``/v1/chat/completions``）调用模型的 Agent，无需改写原有流程（例如基于 OpenAI SDK、AutoGen 或自有框架的已有 Agent）。
      - :doc:`黑盒 Agent <../openai_agent>`
 
 扩展指南
@@ -30,13 +30,13 @@
       :link: ../new_agent
       :link-type: doc
 
-      在 RLinf 内编写 token 级多轮 Agent（例如 Search-R1 或自定义标签解析器、``ToolWorker`` 与 ``AgentLoopWorker``）。
+      在 RLinf 内实现多轮推理与工具调用，获得 token 级精细控制（例如 Search-R1 或自定义标签工具）。
 
    .. grid-item-card:: 2. 黑盒 Agent
       :link: ../openai_agent
       :link-type: doc
 
-      将已有的 OpenAI SDK 或外部 Agent（例如 AutoGen 等自有工作流）经 Session Server 的 ``/v1/chat/completions`` 免重写接入。
+      通过 OpenAI 兼容 API 直接接入已有外部 Agent（例如 OpenAI SDK 或 AutoGen），免重写原有编排逻辑。
 
 .. toctree::
    :hidden:

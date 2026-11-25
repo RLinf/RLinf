@@ -1,9 +1,7 @@
 White-Box Agent
 ===============
 
-Add a tool-call parser, a tool worker, and a multi-turn agent loop without changing RLinf's rollout engines or runners. By the end of this guide, a calculator agent parses ``<calc>...</calc>`` tags from model completions, evaluates arithmetic expressions inside a ``ToolWorker``, feeds results back into the conversation with tool tokens masked out of policy loss, and runs inside ``AgentRunner``.
-
-The integration proceeds through four checkpoints. First, implement and verify the tool-call parser locally on CPU. Next, build a stateless ``ToolWorker`` that executes requests over RLinf channels. Then subclass ``AgentLoopWorker`` to orchestrate multi-turn LLM generation and tool calls. Finally, wire the YAML configuration and entry script. For an overview of how agentic runners schedule rollout and training, see :doc:`Execution Flow <../concepts/execution_flow>` and :doc:`Agentic RL Guide <../guides/agentic>`.
+A **white-box agent** implements its multi-turn interaction and tool execution directly inside RLinf, giving you full control over prompts, tool parsing, and token loss masks (for example Search-R1 or custom tag-based tool agents). Using a ``<calc>...</calc>`` calculator example, this guide walks through four steps—tool parser, ``ToolWorker``, ``AgentLoopWorker``, and YAML/script wiring. For runner scheduling details, see :doc:`Execution Flow <../concepts/execution_flow>`.
 
 At a Glance
 -----------

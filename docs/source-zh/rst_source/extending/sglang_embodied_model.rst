@@ -1,5 +1,5 @@
-SGLang 具身 Rollout 模型
-========================
+具身 Rollout 模型（SGLang）
+===========================
 
 本文介绍如何将一个已适配 SGLang Server 的具身 VLA 模型接入 RLinf 的评测 rollout，并使用 RLinf 支持的各类模拟器评测模型。
 

@@ -1,5 +1,5 @@
-LLM via Megatron-Bridge
-=======================
+LLM Model (Megatron-Bridge)
+===========================
 
 RLinf supports `Megatron-Bridge <https://github.com/NVIDIA/Megatron-Bridge>`__
 through the Megatron-LM training backend. Start Megatron-LM training directly

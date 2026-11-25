@@ -21,13 +21,13 @@
      - 指南入口
    * - 接入新的 VLA 或具身 RL 策略（FSDP）
      - ``register_model`` 与 ``BasePolicy``
-     - :doc:`具身与 VLA 模型（FSDP） <new_model_fsdp>`
+     - :doc:`具身 RL 模型（FSDP） <new_model_fsdp>`
    * - 接入新的 SFT 监督微调模型与数据集
      - ``register_model`` 与 ``FSDPSftWorker``
-     - :doc:`SFT 模型与数据集 <new_model_sft>`
+     - :doc:`具身 SFT 模型（FSDP） <new_model_sft>`
    * - 为具身模型接入 SGLang Rollout 加速
      - SGLang 具身适配注册表
-     - :doc:`SGLang 具身 Rollout 模型 <sglang_embodied_model>`
+     - :doc:`具身 Rollout 模型（SGLang） <sglang_embodied_model>`
    * - 在 Megatron + SGLang 上训练 Hugging Face LLM（推荐）
      - Megatron-Bridge Actor 后端
      - :doc:`LLM 模型（Megatron-Bridge） <mbridge>`
@@ -36,27 +36,27 @@
      - :doc:`LLM 模型（手动 Megatron） <new_model_megatron>`
    * - 接入新的物理仿真 Env
      - ``SupportedEnvType`` 与 ``get_env_cls()``
-     - :doc:`新增仿真 Env <new_env>`
+     - :doc:`仿真 Env <new_env>`
    * - 接入新的传感器、机械臂或真机硬件
      - 单部件本地验证 → 组合整机 → 远程 Placement
-     - :doc:`接入新真机硬件 <new_robot>`
+     - :doc:`真机硬件 <new_robot>`
    * - 在已有真机平台上新增任务
      - 真机任务配置叠加（无需改驱动）
-     - :doc:`新增真机任务 <new_task>`
+     - :doc:`真机任务 <new_task>`
    * - 新增 Advantage 或 Policy Loss
      - ``@register_advantage`` / ``@register_policy_loss``
      - :doc:`Advantage 与 Policy Loss <new_algorithm>`
-   * - 新增规则文本 Reward
+   * - 新增基于规则的文本 Reward
      - ``register_reward``
-     - :doc:`规则 Reward <rule_reward>`
-   * - 训练或自定义学习型具身 Reward 模型
+     - :doc:`基于规则的 Reward <rule_reward>`
+   * - 训练或自定义基于模型的具身 Reward
      - ``BaseRewardModel`` 与 ``reward.use_reward_model``
-     - :doc:`学习型 Reward 模型 <reward_model>`
-   * - 在 RLinf 内编写多轮 Agent（例如 Search-R1 或自定义工具标签）
+     - :doc:`基于模型的 Reward <reward_model>`
+   * - 在 RLinf 内编写白盒 Agent（Token 级，如 Search-R1）
      - ``AgentLoopWorker`` / ``ToolWorker`` / ``@register_toolcall_parser``
      - :doc:`白盒 Agent <new_agent>`
-   * - 免重写接入已有外部 Agent（例如 OpenAI SDK 或 AutoGen）
-     - ``MultiAgentLoopWorker.run_session_trajectory`` 与 Session Server
+   * - 通过 OpenAI API 接入黑盒 Agent（如 OpenAI SDK、AutoGen）
+     - Session Server ``/v1/chat/completions`` 与 ``run_session_trajectory``
      - :doc:`黑盒 Agent <openai_agent>`
    * - 适配新的 GPU / NPU 加速卡后端
      - ``AcceleratorManager`` 与 ``install.sh --platform``
@@ -70,7 +70,7 @@
 
 .. tip::
 
-   **无需 fork 主仓库：** 可以在自己的外部仓库里注册自定义模型、Advantage、Policy Loss、规则 Reward 或工具调用解析器——只需暴露 ``register()`` 函数并在启动前导出 ``RLINF_EXT_MODULE=<your_pkg.module>``\ （完整示例见 :doc:`具身与 VLA 模型（FSDP） <new_model_fsdp>` 中的 :ref:`out-of-tree-extensions` 与 :doc:`Advantage 与 Policy Loss <new_algorithm>`\ ）。
+   **无需 fork 主仓库：** 可以在自己的外部仓库里注册自定义模型、Advantage、Policy Loss、基于规则的 Reward 或工具调用解析器——只需暴露 ``register()`` 函数并在启动前导出 ``RLINF_EXT_MODULE=<your_pkg.module>``\ （完整示例见 :doc:`具身 RL 模型（FSDP） <new_model_fsdp>` 中的 :ref:`out-of-tree-extensions` 与 :doc:`Advantage 与 Policy Loss <new_algorithm>`\ ）。
 
 按组件类别进入
 --------------

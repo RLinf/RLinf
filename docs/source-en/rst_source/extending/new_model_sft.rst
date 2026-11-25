@@ -1,5 +1,5 @@
-SFT Model & Dataset
-===================
+Embodied SFT Model (FSDP)
+=========================
 
 Plug a PyTorch or Hugging Face Transformers model and dataset into RLinf's FSDP supervised fine-tuning (SFT) pipeline. Once integrated, ``SFTRunner`` handles training, evaluation, and checkpoint resume.
 

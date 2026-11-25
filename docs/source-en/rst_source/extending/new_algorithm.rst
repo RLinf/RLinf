@@ -23,7 +23,7 @@ Extension Points at a Glance
      - ``algorithm.loss_type``
      - ``rlinf/algorithms/losses.py``
 
-Both registries are per-process. In-tree additions register at module import; out-of-tree repositories register through ``RLINF_EXT_MODULE`` (see :ref:`out-of-tree-extensions`). For custom rewards, see :doc:`Rule-Based Reward <rule_reward>` and :doc:`Learned Reward Model <reward_model>`.
+Both registries are per-process. In-tree additions register at module import; out-of-tree repositories register through ``RLINF_EXT_MODULE`` (see :ref:`out-of-tree-extensions`). For custom rewards, see :doc:`Rule-Based Reward <rule_reward>` and :doc:`Model-Based Reward <reward_model>`.
 
 1. Custom Advantage
 -------------------

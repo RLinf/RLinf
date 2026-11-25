@@ -12,7 +12,7 @@ Start at the smallest layer that fits: if RLinf already supports your physical r
 
       Wrap a simulator backend, register its environment type, and map action formats.
 
-   .. grid-item-card:: Real-World Robot Hardware
+   .. grid-item-card:: Real-World Hardware
       :link: ../new_robot
       :link-type: doc
 
@@ -28,5 +28,5 @@ Start at the smallest layer that fits: if RLinf already supports your physical r
    :hidden:
 
    Simulator Env <../new_env>
-   Real-World Robot Hardware <../new_robot>
+   Real-World Hardware <../new_robot>
    Real-World Task <../new_task>

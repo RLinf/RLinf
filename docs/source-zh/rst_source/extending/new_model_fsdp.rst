@@ -1,5 +1,5 @@
-具身与 VLA 模型（FSDP）
-=======================
+具身 RL 模型（FSDP）
+====================
 
 将 PyTorch 或 Hugging Face Transformers 模型接入 RLinf 的 FSDP（Fully Sharded Data Parallel，全分片数据并行）后端，用于强化学习 rollout 与训练。完成后，你会得到一个 ``BasePolicy`` 子类、注册好的模型构建函数，以及 Hydra 与 FSDP 包装配置。
 

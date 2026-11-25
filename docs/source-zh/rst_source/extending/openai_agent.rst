@@ -3,7 +3,7 @@
 黑盒 Agent
 ==========
 
-无需重写工具解析器、``ToolWorker`` 或 token 拼接逻辑，即可把已有的外部 Agent（例如基于 OpenAI SDK、AutoGen 或自有框架的多轮 Agent）直接接入 RLinf。开启 :doc:`Session Server <../guides/session_server>` 后，每个服务都会暴露 ``/sessions/<session id>/v1/chat/completions``：自动按模型模板渲染消息、复用前几轮引擎 token 以命中前缀缓存、解析推理内容与工具调用，并直接记录训练轨迹。
+**黑盒 Agent** 指在 RLinf 之外独立编排、仅通过 OpenAI 兼容 API（``/v1/chat/completions``）调用模型的 Agent（例如基于 OpenAI SDK、AutoGen 或自有框架的已有 Agent）。开启 :doc:`Session Server <../guides/session_server>` 后，只需把客户端地址指向 RLinf 暴露的 OpenAI 接口，即可免重写接入并自动收集训练轨迹。
 
 接入速览
 --------

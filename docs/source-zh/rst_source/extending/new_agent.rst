@@ -1,9 +1,7 @@
 白盒 Agent
 ==========
 
-无需改动 RLinf 的推理引擎或 runner，即可接入自定义工具调用解析器、工具 worker 与多轮智能体循环。完成本指南后，示例计算器智能体会从模型输出中解析 ``<calc>...</calc>`` 标签，在独立的 ``ToolWorker`` 中求值算术表达式，将工具结果按 ``response_mask`` 屏蔽策略损失后拼回对话，并在 ``AgentRunner`` 中完整运行。
-
-接入流程分为四个检查点：先在本地 CPU 上编写并验证工具调用解析器，再实现基于通道通信的无状态 ``ToolWorker``，接着继承 ``AgentLoopWorker`` 编排多轮生成与工具调用，最后完成 YAML 配置与入口脚本接入。如需了解智能体 runner 的调度与训练数据流，请参阅 :doc:`执行流程 <../concepts/execution_flow>` 与 :doc:`Agentic RL 指南 <../guides/agentic>`。
+**白盒 Agent** 指把多轮交互与工具调用逻辑直接写在 RLinf 内，可精确控制每轮提示词、工具解析与 token 损失掩码（例如 Search-R1 或自定义标签工具 Agent）。本指南以计算器（``<calc>...</calc>``）为例，分四步完成工具解析器、``ToolWorker``、``AgentLoopWorker`` 与配置接入；底层调度流程见 :doc:`执行流程 <../concepts/execution_flow>`。
 
 接入速览
 --------

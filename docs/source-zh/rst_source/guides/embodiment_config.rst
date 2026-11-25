@@ -1,5 +1,5 @@
-具身智能配置
-=============
+具身配置
+========
 
 如需带注释的最小具身 YAML 与 Hydra 预设地图，请先阅读 :doc:`../reference/configuration`。本页给出具身智能 RL 训练专用参数的完整说明，扩展自 :doc:`basic_config`。
 

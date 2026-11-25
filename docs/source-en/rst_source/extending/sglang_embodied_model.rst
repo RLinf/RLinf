@@ -1,5 +1,5 @@
-Embodied Rollout (SGLang)
-=========================
+Embodied Rollout Model (SGLang)
+===============================
 
 This document describes how to integrate an embodied model already adapted to SGLang Server into
 RLinf's evaluation rollout and evaluate the model using the various simulators supported by RLinf.

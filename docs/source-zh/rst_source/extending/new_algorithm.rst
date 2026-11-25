@@ -23,7 +23,7 @@
      - ``algorithm.loss_type``
      - ``rlinf/algorithms/losses.py``
 
-两类注册表均按进程独立维护：主仓内新增组件在模块导入时自动注册；外部仓库通过 ``RLINF_EXT_MODULE`` 在每个 worker 中完成注册（见 :ref:`out-of-tree-extensions`\ ）。自定义 Reward 请见 :doc:`规则 Reward <rule_reward>` 与 :doc:`学习型 Reward 模型 <reward_model>`。
+两类注册表均按进程独立维护：主仓内新增组件在模块导入时自动注册；外部仓库通过 ``RLINF_EXT_MODULE`` 在每个 worker 中完成注册（见 :ref:`out-of-tree-extensions`\ ）。自定义 Reward 请见 :doc:`基于规则的 Reward <rule_reward>` 与 :doc:`基于模型的 Reward <reward_model>`。
 
 1. 自定义 Advantage 函数
 ------------------------

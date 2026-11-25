@@ -1,5 +1,5 @@
-LLM via Manual Megatron
-=======================
+LLM Model (Manual Megatron)
+===========================
 
 Add a HuggingFace model to RLinf with the Megatron+SGLang backend. This guide walks through the manual Megatron integration path end to end.
 

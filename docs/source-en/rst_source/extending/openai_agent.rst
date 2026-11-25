@@ -3,7 +3,7 @@
 Black-Box Agent
 ===============
 
-Connect an existing external agent (for example an OpenAI-SDK, AutoGen, or custom HTTP multi-turn agent) to RLinf without rewriting tool parsers, ``ToolWorker`` processes, or token assembly. With :doc:`Session Server <../guides/session_server>` enabled, each server exposes ``/sessions/<session id>/v1/chat/completions``: it renders messages with your model's chat template, reuses previous-turn engine tokens for prefix cache hits, parses reasoning and tool calls, and records trajectories directly for RL training.
+A **black-box agent** keeps its own orchestration outside RLinf and talks to the model only through the OpenAI Chat API (``/v1/chat/completions``)—for example an existing OpenAI SDK, AutoGen, or custom-framework agent. With :doc:`Session Server <../guides/session_server>` enabled, point your client at RLinf's OpenAI endpoint to collect training trajectories without rewriting tool or prompt logic.
 
 At a Glance
 -----------
