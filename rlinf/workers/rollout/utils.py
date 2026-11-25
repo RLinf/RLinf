@@ -20,7 +20,7 @@ import typing
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from rlinf.data.schema.reasoning_requests import SeqGroupInfo
 from rlinf.scheduler.worker.worker import Worker
@@ -31,6 +31,9 @@ from rlinf.utils.placement import (
 
 if typing.TYPE_CHECKING:
     from vllm.outputs import RequestOutput
+
+    from rlinf.scheduler import Cluster
+    from rlinf.scheduler.worker import WorkerGroup
 
 
 COLOR_END = "\033[0m"
@@ -187,12 +190,27 @@ class DisaggRankMapper(RankMapper):
         actor_world_size: int,
         rollout_tp_size: int,
         rollout_world_size: int,
+        rollout_sp_degree: int = 1,
+        rollout_dp_size: int = 1,
     ) -> dict[int, list[tuple[int, int]]]:
         """Map actor 1D rank to a list of rollout transmission 2D ranks
-        ``(engine_id, rank_in_engine)``. Each rollout rank is assigned to
-        exactly one actor rank; ``rank_in_engine`` (the rollout tp position)
-        drives the weight sharding coords, independent of actor_tp.
+        ``(engine_id, rank_in_engine)``. Each receiver has exactly one sender.
+        Each instance has ``rollout_dp_size * rollout_tp_size * rollout_sp_degree``
+        model ranks. DP counts full replicas, not SRT attention-DP groups.
         """
+        ranks_per_instance = rollout_dp_size * rollout_tp_size * rollout_sp_degree
+        if (
+            rollout_tp_size < 1
+            or rollout_sp_degree < 1
+            or rollout_dp_size < 1
+            or rollout_world_size % ranks_per_instance
+        ):
+            raise ValueError(
+                f"Expected positive rollout_tp_size={rollout_tp_size} and "
+                f"rollout_sp_degree={rollout_sp_degree}, rollout_dp_size={rollout_dp_size}, with "
+                f"rollout_world_size={rollout_world_size} divisible by "
+                f"DP*TP*SP={ranks_per_instance}"
+            )
         rank_map = {}
         for actor_rank in range(actor_world_size):
             targets = []
@@ -212,13 +230,13 @@ class DisaggRankMapper(RankMapper):
                     )
                 for i in range(num_targets):
                     rollout_rank = start + i
-                    engine_id = rollout_rank // rollout_tp_size
-                    rank_in_engine = rollout_rank % rollout_tp_size
+                    engine_id = rollout_rank // ranks_per_instance
+                    rank_in_engine = rollout_rank % ranks_per_instance
                     targets.append((engine_id, rank_in_engine))
             elif actor_rank < rollout_world_size:
                 # Each actor rank sends to one rollout rank.
-                engine_id = actor_rank // rollout_tp_size
-                rank_in_engine = actor_rank % rollout_tp_size
+                engine_id = actor_rank // ranks_per_instance
+                rank_in_engine = actor_rank % ranks_per_instance
                 targets.append((engine_id, rank_in_engine))
             # else: actor has more ranks than rollout, no target.
             rank_map[actor_rank] = targets
@@ -232,6 +250,8 @@ class DisaggRankMapper(RankMapper):
         actor_world_size: int,
         rollout_tp_size: int,
         rollout_world_size: int,
+        rollout_sp_degree: int = 1,
+        rollout_dp_size: int = 1,
     ) -> dict[tuple[int, int], int]:
         """Inverse of get_actor_rank_to_rollout_rank_map."""
         rank_map = cls.get_actor_rank_to_rollout_rank_map(
@@ -240,6 +260,8 @@ class DisaggRankMapper(RankMapper):
             actor_world_size,
             rollout_tp_size,
             rollout_world_size,
+            rollout_sp_degree=rollout_sp_degree,
+            rollout_dp_size=rollout_dp_size,
         )
         result_map = {}
         for actor_rank, rollout_2d_ranks in rank_map.items():
@@ -326,6 +348,111 @@ def get_rollout_backend_worker(cfg: DictConfig) -> Worker:
             return SGLangWorker
         else:
             raise ValueError(f"Unsupported sglang serving_mode: {serving_mode}.")
+
+
+def get_embodied_rollout_worker(cfg: DictConfig) -> type[Worker]:
+    """Select a synchronous embodied training or evaluation worker class.
+
+    Args:
+        cfg: Embodied config selecting rollout.rollout_backend explicitly.
+
+    Returns:
+        Worker class accepting cfg as its sole required constructor argument.
+        RTC evaluation requires the caller to also select RTCEnvWorker.
+
+    Raises:
+        ValueError: The task, backend, or execution mode is unsupported.
+    """
+    task_type = cfg.runner.get("task_type")
+    if task_type not in ("embodied", "embodied_eval"):
+        raise ValueError(
+            f"Expected an embodied task, got runner.task_type={task_type!r}"
+        )
+    only_eval = cfg.runner.get("only_eval", False) or task_type == "embodied_eval"
+    backend = cfg.rollout.get("rollout_backend", "huggingface")
+
+    if cfg.runner.get("rtc", {}).get("enabled", False):
+        if not only_eval or backend != "huggingface":
+            raise ValueError(
+                "RTC requires huggingface embodied evaluation, got "
+                f"backend={backend!r}, only_eval={only_eval}"
+            )
+        from rlinf.workers.rollout.hf.rtc_huggingface_worker import (
+            RTCMultiStepRolloutWorker,
+        )
+
+        return RTCMultiStepRolloutWorker
+
+    if backend == "huggingface":
+        from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+        return MultiStepRolloutWorker
+    if backend == "phyai":
+        from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
+
+        return PhyAIRolloutWorker
+    if backend == "sglang":
+        serving_mode = cfg.rollout.sglang.get("serving_mode")
+        if serving_mode not in (None, "embodied"):
+            raise ValueError(
+                "Expected sglang.serving_mode='embodied' or unset for embodied "
+                f"rollout, got {serving_mode!r}"
+            )
+        from rlinf.workers.rollout.sglang.sglang_embodied_worker import (
+            SGLangEmbodiedWorker,
+        )
+
+        return SGLangEmbodiedWorker
+    if backend == "apxinf":
+        if not only_eval:
+            raise ValueError("Embodied backend 'apxinf' requires evaluation mode")
+        from rlinf.workers.rollout.apxinf import ApxInfRolloutWorker
+
+        return ApxInfRolloutWorker
+    raise ValueError(
+        f"Unsupported embodied rollout backend {backend!r}; expected huggingface, "
+        "phyai, sglang, or apxinf (evaluation only)"
+    )
+
+
+def launch_embodied_sglang_router(
+    cfg: DictConfig,
+    cluster: "Cluster",
+    rollout_group: "WorkerGroup",
+) -> "WorkerGroup | None":
+    """Launch a router for initialized embodied servers and distribute its URL.
+
+    Returns None for other backends or when launch_router is disabled.
+    The caller owns the returned group and must stop it after the run.
+    """
+    if cfg.rollout.get("rollout_backend") != "sglang" or not cfg.rollout.sglang.get(
+        "launch_router", False
+    ):
+        return None
+
+    from rlinf.workers.rollout.sglang import launch_sglang_router_and_server
+
+    server_urls = rollout_group.get_server_url().wait()
+    router_server_args = OmegaConf.create(
+        OmegaConf.to_container(cfg.rollout.sglang, resolve=True)
+    )
+    router_server_args.launch_server = False
+    _, router_group = launch_sglang_router_and_server(
+        cfg,
+        cluster,
+        rollout_hardware_ranks=None,
+        router_server_args=router_server_args,
+    )
+    try:
+        for url in server_urls:
+            router_group.register_server(url).wait()
+        rollout_group.set_sglang_router_url(
+            router_group.get_router_url().wait()[0]
+        ).wait()
+    except BaseException:
+        router_group.stop().wait()
+        raise
+    return router_group
 
 
 class RunningStatusManager:

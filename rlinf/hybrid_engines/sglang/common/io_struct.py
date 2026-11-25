@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from __future__ import annotations
 
-from sglang.srt.managers.schedule_batch import Req
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from sglang.srt.managers.schedule_batch import Req
 
 
 @dataclass

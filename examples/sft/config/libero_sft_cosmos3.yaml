@@ -7,6 +7,8 @@ hydra:
   run:
     dir: .
   output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config/
 
 cluster:
   num_nodes: 1
@@ -29,7 +31,7 @@ runner:
   resume_dir: null
 
 data:
-  train_data_paths: path/to/LIBERO_LeRobot_v3
+  train_data_paths: /path/to/LIBERO_LeRobot_v3
   data_type: "libero_all"
   num_workers: 4
   prefetch_factor: 4
@@ -52,9 +54,11 @@ actor:
     load_to_device: false
     # Cosmos3 power-EMA (rate=0.1); RLinf updates net_ema each optimizer step.
     ema_enabled: true
-    model_path: path/to/Cosmos3-Nano-DCP
-    wan_vae_path: path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
-    max_samples_per_batch: 32
+    model_path: /path/to/Cosmos3-Nano-DCP-py311
+    # Qwen vocabulary only; model weights still come from model_path above.
+    tokenizer_path: /path/to/Qwen3-VL-8B-Instruct-tokenizer
+    wan_vae_path: /path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+    action_stats_path: /path/to/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
 
   optim:
     lr: 5.0e-05
@@ -80,7 +84,7 @@ actor:
       enabled: False
     mixed_precision:
       param_dtype: bf16
-      reduce_dtype: bf16
+      reduce_dtype: fp32
       buffer_dtype: bf16
       cast_forward_inputs: false
     amp_autocast:

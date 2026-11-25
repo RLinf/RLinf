@@ -13,9 +13,11 @@
 # limitations under the License.
 
 import asyncio
+import base64
 import copy
 import inspect
 import logging
+import pickle
 import unittest
 from collections import OrderedDict
 from types import MethodType
@@ -29,6 +31,11 @@ from torch.distributed.tensor.placement_types import Partial, Replicate, Shard
 from rlinf.config import validate_weight_sync_overlap_cfg
 from rlinf.data.schema.embodied_types import EnvOutput, EnvTransition
 from rlinf.envs.layout import EnvAssignment
+from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+from rlinf.hybrid_engines.sglang.common.weight_target import (
+    SGLangWeightTarget,
+    receive_hf_weights,
+)
 from rlinf.hybrid_engines.weight_syncer import (
     BucketWeightSyncer,
     PatchWeightSyncer,
@@ -2311,3 +2318,679 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _SGLangWeightLoader:
+    """SGLang loading callback backed by a tiny serving state."""
+
+    def __init__(self, target_module, state):
+        self.target_module = target_module
+        self.state = {name: torch.zeros_like(value) for name, value in state.items()}
+        self.requests = []
+        self.success = True
+
+    def load_weights(self, module, named_tensors):
+        assert module == self.target_module
+        self.requests.append(named_tensors)
+        if not self.success:
+            raise RuntimeError("serving weight load failed")
+        for name, value in named_tensors:
+            assert value.device.type == "cpu"
+            assert value.shape == self.state[name].shape
+            self.state[name] = value.clone()
+
+
+class _WeightBucketTransport(FSDPModelManager):
+    """Run the actor bucket protocol with an in-memory process transport."""
+
+    def __init__(self):
+        self.bucket_capacity = 32
+        self.buckets = []
+
+    def send(self, bucket, dst_group_name, dst_rank, *, async_op):
+        assert (dst_group_name, dst_rank, async_op) == ("RolloutGroup", [0, 0], True)
+        self.buckets.append(bucket)
+        return _PendingWeightBucket(None)
+
+    def recv(self, *, src_group_name, src_rank, async_op=False):
+        assert (src_group_name, src_rank) == ("ActorGroup", 0)
+        bucket = self.buckets.pop(0)
+        if async_op:
+            return _PendingWeightBucket(bucket)
+        return bucket
+
+
+class _PendingWeightBucket:
+    def __init__(self, bucket):
+        self.bucket = bucket
+
+    def wait(self):
+        return self.bucket
+
+
+def _receive_test_cuda_weight_buckets(connection):
+    """Rebuild IPC handles in a separate CUDA context and return CPU copies."""
+    from torch.multiprocessing.reductions import rebuild_cuda_tensor
+
+    Worker.torch_platform.set_device(0)
+    while (bucket := connection.recv()) is not None:
+        received = {}
+        for name, handle in bucket.items():
+            rebuild, args = handle
+            assert rebuild is rebuild_cuda_tensor
+            value = rebuild(*args)
+            assert value.is_cuda and value.dtype == torch.bfloat16
+            received[name] = value.cpu().tolist()
+            del value
+        connection.send(received)
+    connection.close()
+
+
+@pytest.mark.parametrize(
+    "num_nodes,rollout_tp,actor_rank,expected_dst",
+    [(1, 2, 0, (0, 0)), (1, 2, 3, (1, 1)), (4, 4, 7, (2, 3))],
+)
+def test_actor_weight_dst_mapping_is_a_tuple_sent_as_a_list(
+    num_nodes, rollout_tp, actor_rank, expected_dst
+):
+    from test_placement import create_fake_cluster
+
+    from rlinf.utils.placement import ModelParallelComponentPlacement
+    from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
+
+    cfg = OmegaConf.create(
+        {
+            "cluster": {
+                "num_nodes": num_nodes,
+                "component_placement": {"actor,rollout,reward": "0-7"},
+            },
+            "actor": {"model": {}, "sync_precision": "bf16"},
+            "rollout": {
+                "rollout_backend": "sglang",
+                "sglang": {"backend_type": "server"},
+                "tensor_parallel_size": rollout_tp,
+            },
+        }
+    )
+    placement = ModelParallelComponentPlacement(
+        cfg, create_fake_cluster(num_nodes, accelerators_per_node=8 // num_nodes)
+    )
+    assert not placement.is_disaggregated
+
+    class LocalActor(FSDPActor):
+        def __init__(self):
+            self._component_placement = placement
+            self._rank = actor_rank
+            self._logger = logging.getLogger(__name__)
+            self._stacklevel = 1
+
+    actor = LocalActor()
+    actor._setup_rollout_weight_dst_ranks()
+    assert actor._weight_dst_rank_in_rollout == expected_dst
+
+    sent = []
+
+    class Transport(FSDPModelManager):
+        def __init__(self):
+            self.bucket_capacity = 32
+
+        def send(self, bucket, dst_group_name, dst_rank, *, async_op):
+            sent.append(dst_rank)
+            return _PendingWeightBucket(None)
+
+    Transport().send_hf_weights(
+        _TinyWeightSyncModel().state_dict(),
+        "RolloutGroup",
+        [actor._weight_dst_rank_in_rollout],
+        cpu_offload=True,
+    )
+    assert sent and all(dst == list(expected_dst) for dst in sent)
+
+
+@pytest.mark.skipif(
+    Worker.accelerator_type != AcceleratorType.NV_GPU,
+    reason="Requires CUDA IPC tensor handles",
+)
+def test_fsdp_llm_actor_cuda_ipc_weight_sync():
+    from types import SimpleNamespace
+
+    from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
+
+    sent = []
+    events = []
+    received = {}
+    ctx = torch.multiprocessing.get_context("spawn")
+    sender, receiver = ctx.Pipe()
+    process = ctx.Process(target=_receive_test_cuda_weight_buckets, args=(receiver,))
+
+    class LocalActor(FSDPActor):
+        """Exercise actor synchronization with a pipe to the IPC receiver."""
+
+        def __init__(self):
+            self._cfg = OmegaConf.create({"model": {}, "sync_precision": "bf16"})
+            self._component_placement = None
+            self._rank = 0
+            self._rollout_group_name = "RolloutGroup"
+            self._logger = logging.getLogger(__name__)
+            self._stacklevel = 1
+            self.is_pipeline = False
+            self.enable_offload = False
+            self.device = Worker.torch_platform.current_device()
+            self.model = _TinyWeightSyncModel().to(self.device)
+            self.bucket_capacity = 32
+            self._weight_dst_rank_in_rollout = (0, 0)
+
+        def get_model_state_dict(self, cpu_offload, full_state_dict):
+            assert not cpu_offload and not full_state_dict
+            return self.model.state_dict()
+
+        def send(self, bucket, dst_group_name, dst_rank, *, async_op):
+            assert (dst_group_name, dst_rank, async_op) == (
+                "RolloutGroup",
+                [0, 0],
+                True,
+            )
+            sent.append(bucket)
+            sender.send({k: v for k, v in bucket.items() if k != "bucket_length"})
+            events.append("send")
+
+            def wait():
+                assert sender.poll(60), "IPC receiver did not return weights"
+                received.update(sender.recv())
+                events.append("wait")
+
+            return SimpleNamespace(wait=wait)
+
+    actor = LocalActor()
+    process.start()
+    receiver.close()
+    try:
+        inspect.unwrap(FSDPActor.sync_model_to_rollout)(actor)
+        sender.send(None)
+        process.join(timeout=30)
+        assert process.exitcode == 0
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=5)
+        sender.close()
+
+    # Each bucket handle is waited on before the next bucket is sent.
+    assert len(sent) > 1
+    assert sent[0]["bucket_length"].item() == len(sent)
+    assert events == ["send", "wait"] * len(sent)
+    assert received.keys() == actor.model.state_dict().keys()
+    for name, tensor in actor.model.state_dict().items():
+        torch.testing.assert_close(
+            torch.tensor(received[name], dtype=torch.bfloat16),
+            tensor.to(dtype=torch.bfloat16, device="cpu"),
+        )
+
+
+def _make_sglang_weight_target(tmp_path, prefix="policy.", target_module="transformer"):
+    from safetensors.torch import save_file
+
+    model = _TinyWeightSyncModel()
+    model.linear.weight.requires_grad_(False)
+    serving_state = {
+        "served_" + name: value for name, value in model.state_dict().items()
+    }
+    save_file(serving_state, str(tmp_path / "model.safetensors"))
+    loader = _SGLangWeightLoader(target_module, serving_state)
+
+    def map_name(name):
+        return (
+            "served_" + name.removeprefix(prefix) if name.startswith(prefix) else None
+        )
+
+    target = SGLangWeightTarget(
+        loader.load_weights,
+        checkpoint_dir=tmp_path,
+        target_module=target_module,
+        name_mapper=map_name,
+    )
+    state = {prefix + name: value.clone() for name, value in model.state_dict().items()}
+    return model, state, loader, target
+
+
+@pytest.mark.parametrize(
+    "prefix,target_module",
+    [("policy.", "transformer"), ("action_head.", "action_model")],
+)
+def test_sglang_weight_target_training_sync_loads_full_state_each_version(
+    tmp_path, prefix, target_module
+):
+    _, state, loader, target = _make_sglang_weight_target(
+        tmp_path, prefix, target_module
+    )
+    for version in (0, 1, 2):
+        loader.requests.clear()
+        state[prefix + "linear.weight"].add_(3)
+        state[prefix + "linear.bias"].add_(1)
+        state[prefix + "scalar_buf"].add_(2)
+        worker = _WeightBucketTransport()
+        worker.send_hf_weights(
+            state, "RolloutGroup", [(0, 0)], cpu_offload=True, version=version
+        )
+        assert len(worker.buckets) > 1
+        target.begin_sync(full=True)
+        assert (
+            receive_hf_weights(worker, "ActorGroup", 0, target.load_state_dict)
+            == version
+        )
+        target.finish_sync()
+        assert not worker.buckets
+        sent_names = [name for request in loader.requests for name, _ in request]
+        assert sorted(sent_names) == sorted(loader.state)
+        for name, tensor in state.items():
+            torch.testing.assert_close(loader.state[target.name_mapper(name)], tensor)
+
+
+@pytest.mark.parametrize("dp", [1, 2, 4])
+@pytest.mark.parametrize("request_type", ["init", "sync"])
+@pytest.mark.parametrize("failure", [None, "response", "transport"])
+def test_embodied_control_reaches_all_dp_replicas(
+    monkeypatch, dp, request_type, failure
+):
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    client_module = pytest.importorskip(
+        "sglang.multimodal_gen.runtime.scheduler_client"
+    )
+    from rlinf.hybrid_engines.sglang.common.embodied_scheduler import _SchedulerManager
+    from rlinf.hybrid_engines.sglang.common.io_struct import (
+        SyncHFWeightInput,
+        TaskMethodInput,
+    )
+
+    request = (
+        TaskMethodInput("init_rlinf_worker")
+        if request_type == "init"
+        else SyncHFWeightInput()
+    )
+
+    async def exercise():
+        endpoints = list(range(dp))
+        arrived, finished = set(), set()
+        all_arrived = asyncio.Event()
+
+        async def forward_one(endpoint, obj, timeout):
+            assert obj is request
+            arrived.add(endpoint)
+            if len(arrived) == dp:
+                all_arrived.set()
+            # Models the collective in initialization and weight reception.
+            await all_arrived.wait()
+            finished.add(endpoint)
+            if endpoint == dp - 1 and failure == "transport":
+                raise RuntimeError("replica disconnected")
+            return SimpleNamespace(
+                error="replica load failed"
+                if endpoint == dp - 1 and failure == "response"
+                else None,
+                output={"version": 3},
+            )
+
+        async def forward(obj):
+            assert dp == 1, "DP control must bypass native single-replica dispatch"
+            return await forward_one(0, obj, None)
+
+        monkeypatch.setattr(
+            client_module,
+            "async_scheduler_client",
+            SimpleNamespace(
+                server_args=SimpleNamespace(dp_size=dp, scheduler_endpoints=endpoints),
+                _forward_one=forward_one,
+                forward=forward,
+            ),
+        )
+        manager = _SchedulerManager()
+        call = (
+            manager.run_task_method
+            if request_type == "init"
+            else manager.sync_hf_weight
+        )
+        if failure:
+            with pytest.raises((HTTPException, RuntimeError)):
+                await asyncio.wait_for(call(request, None), timeout=2)
+        else:
+            assert await asyncio.wait_for(call(request, None), timeout=2) == {
+                "version": 3
+            }
+        assert arrived == finished == set(endpoints)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("peer_result", [(3, None), (2, None), (None, "load failed")])
+def test_embodied_weight_sync_checks_all_server_ranks(
+    tmp_path, monkeypatch, peer_result
+):
+    from types import SimpleNamespace
+
+    distributed = pytest.importorskip("sglang.multimodal_gen.runtime.distributed")
+    from rlinf.hybrid_engines.sglang.common.embodied_scheduler import Scheduler
+    from rlinf.hybrid_engines.sglang.common.io_struct import SyncHFWeightInput
+
+    _, state, loader, target = _make_sglang_weight_target(tmp_path)
+    transport = _WeightBucketTransport()
+    transport.send_hf_weights(
+        state, "RolloutGroup", [(0, 0)], cpu_offload=True, version=3
+    )
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler._rlinf_worker = transport
+    scheduler._actor_group_name = "ActorGroup"
+    scheduler.actor_weight_rank = 0
+    scheduler.worker = SimpleNamespace(rank=0)
+    scheduler.weight_target = target
+    scheduler.weight_syncer = None
+    scheduler._sync_failed = False
+    scheduler._weights_ready = True
+    world = SimpleNamespace(world_size=2, cpu_group=object())
+    monkeypatch.setattr(distributed, "get_world_group", lambda: world)
+
+    def gather(results, local, *, group):
+        assert group is world.cpu_group
+        assert local == (3, None)
+        assert len(results) == 2
+        results[:] = [local, peer_result]
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", gather)
+    if peer_result == (3, None):
+        assert scheduler.sync_hf_weight([SyncHFWeightInput()]).output == {"version": 3}
+        assert scheduler._weights_ready
+        for name, tensor in state.items():
+            torch.testing.assert_close(loader.state[target.name_mapper(name)], tensor)
+    else:
+        with pytest.raises(RuntimeError, match="server weight sync failed"):
+            scheduler.sync_hf_weight([SyncHFWeightInput()])
+        assert not scheduler._weights_ready
+        assert scheduler._sync_failed
+        with pytest.raises(RuntimeError, match="Serving weights are unavailable"):
+            scheduler._handle_generation([])
+
+
+def test_sglang_weight_target_load_checkpoint_includes_frozen_weights_and_buffers(
+    tmp_path,
+):
+    _, state, loader, target = _make_sglang_weight_target(tmp_path)
+    state["policy.linear.weight"].fill_(71)
+    state["vae.unserved"] = torch.ones(2)
+    checkpoint = tmp_path / "actor.pt"
+    torch.save(state, checkpoint)
+    target.load_checkpoint(str(checkpoint), bucket_size=32)
+    assert len(loader.requests) > 1
+    for name, tensor in state.items():
+        if name.startswith("policy."):
+            torch.testing.assert_close(loader.state[target.name_mapper(name)], tensor)
+
+
+def test_sglang_weight_target_rejects_incomplete_checkpoint_before_updates(tmp_path):
+    _, state, loader, target = _make_sglang_weight_target(tmp_path)
+    del state["policy.linear.weight"]
+    checkpoint = tmp_path / "actor.pt"
+    torch.save(state, checkpoint)
+    with pytest.raises(ValueError, match="complete transformer serving state"):
+        target.load_checkpoint(str(checkpoint))
+    assert not loader.requests
+
+
+@pytest.mark.parametrize(
+    "bucket,error",
+    [
+        ({"vae.unserved": torch.ones(2)}, "no serving counterpart"),
+        ({"policy.unknown": torch.ones(2)}, "no serving counterpart"),
+        ({"policy.linear.bias": torch.ones(99)}, "shape mismatch"),
+        ({}, "empty serving weight bucket"),
+    ],
+)
+def test_sglang_weight_target_rejects_invalid_buckets_before_updates(
+    tmp_path, bucket, error
+):
+    _, _, loader, target = _make_sglang_weight_target(tmp_path)
+    with pytest.raises(ValueError, match=error):
+        target.load_state_dict(bucket)
+    assert not loader.requests
+
+
+def test_sglang_weight_target_initial_sync_requires_complete_coverage(tmp_path):
+    _, state, _, target = _make_sglang_weight_target(tmp_path)
+    target.begin_sync(full=True)
+    target.load_state_dict({"policy.linear.bias": state["policy.linear.bias"]})
+    with pytest.raises(ValueError, match="missing .* weights"):
+        target.finish_sync()
+    with pytest.raises(ValueError, match="Duplicate serving tensor"):
+        target.load_state_dict({"policy.linear.bias": state["policy.linear.bias"]})
+
+
+def test_sglang_weight_target_propagates_serving_weight_update_failure(tmp_path):
+    _, state, loader, target = _make_sglang_weight_target(tmp_path)
+    loader.success = False
+    target.begin_sync(full=True)
+    with pytest.raises(RuntimeError, match="serving weight load failed"):
+        target.load_state_dict(state)
+    with pytest.raises(ValueError, match="missing .* weights"):
+        target.finish_sync()
+
+
+@pytest.mark.parametrize(
+    "method", ["run_task_method", "sync_hf_weight", "abort_generation"]
+)
+@pytest.mark.parametrize("token", [None, "wrong-server-token"])
+def test_sglang_control_routes_reject_before_unpickling(method, token):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from rlinf.hybrid_engines.sglang.common.http_routes import add_rlinf_routes
+
+    manager = AsyncMock()
+    app = FastAPI()
+    add_rlinf_routes(app, control_token="server-token", manager=manager)
+    headers = {} if token is None else {"X-RLinf-Control-Token": token}
+    # An unauthenticated decode would raise and produce HTTP 500, not 401.
+    body = {"payload_b64": base64.b64encode(b"not a pickle").decode()}
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(f"/rlinf/{method}", json=body, headers=headers)
+    assert response.status_code == 401
+    getattr(manager, method).assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "method", ["run_task_method", "sync_hf_weight", "abort_generation"]
+)
+def test_sglang_control_routes_accept_authenticated_requests(method):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from rlinf.hybrid_engines.sglang.common.http_routes import add_rlinf_routes
+
+    manager = AsyncMock()
+    getattr(manager, method).return_value = {"version": 7}
+    app = FastAPI()
+    add_rlinf_routes(app, control_token="server-token", manager=manager)
+    obj = {"actor_rank": 2}
+    body = {"payload_b64": base64.b64encode(pickle.dumps(obj)).decode()}
+    with TestClient(app) as client:
+        response = client.post(
+            f"/rlinf/{method}",
+            json=body,
+            headers={"X-RLinf-Control-Token": "server-token"},
+        )
+    assert response.status_code == 200
+    getattr(manager, method).assert_awaited_once()
+    assert getattr(manager, method).call_args.args[0] == obj
+    if method == "run_task_method":
+        assert pickle.loads(base64.b64decode(response.json()["payload_b64"])) == {
+            "version": 7
+        }
+    elif method == "sync_hf_weight":
+        assert response.json() == {"status": "ok", "version": 7}
+
+
+def test_sglang_control_routes_require_token_at_registration():
+    from fastapi import FastAPI
+
+    from rlinf.hybrid_engines.sglang.common.http_routes import add_rlinf_routes
+
+    with pytest.raises(ValueError, match="nonempty authentication token"):
+        add_rlinf_routes(FastAPI(), control_token="")
+
+
+def test_sglang_control_client_limits_token_to_direct_control_requests():
+    from aiohttp import web
+
+    from rlinf.utils.http_client import InferenceHTTPClient
+
+    async def run():
+        requests = []
+
+        async def handle(request):
+            requests.append(
+                (request.path, request.headers.get("X-RLinf-Control-Token"))
+            )
+            if request.path == "/rlinf/run_task_method":
+                return web.json_response(await request.json())
+            return web.json_response({"status": "ok"})
+
+        app = web.Application()
+        app.router.add_route("*", "/{path:.*}", handle)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        try:
+            site = web.TCPSite(runner, "127.0.0.1", 0)
+            await site.start()
+            url = f"http://127.0.0.1:{runner.addresses[0][1]}"
+            async with InferenceHTTPClient(url, control_token="server-token") as client:
+                assert await client.async_run_task_method({"version": 7}) == {
+                    "version": 7
+                }
+                assert await client.async_sync_hf_weight() == {"status": "ok"}
+                await client.async_abort_generation()
+                await client.async_generate(prompt="hello")
+                assert requests == [
+                    ("/rlinf/run_task_method", "server-token"),
+                    ("/rlinf/sync_hf_weight", "server-token"),
+                    ("/rlinf/abort_generation", "server-token"),
+                    ("/generate", None),
+                ]
+        finally:
+            await runner.cleanup()
+
+    asyncio.run(run())
+
+
+def test_sglang_server_sync_forwards_pause_mode():
+    from types import SimpleNamespace
+
+    pytest.importorskip("sglang.srt.managers.io_struct")
+    from rlinf.workers.rollout.sglang.backends import SGLangServerBackend
+
+    backend = SGLangServerBackend(
+        {}, None, acquire_free_port=None, log_info=None, log_error=None
+    )
+    client = SimpleNamespace(
+        async_sync_hf_weight=AsyncMock(return_value={"version": 7})
+    )
+    backend._client = client
+    assert asyncio.run(backend.sync_weights(pause_mode="retract")) == {"version": 7}
+    assert client.async_sync_hf_weight.call_args.kwargs["obj"].pause_mode == "retract"
+
+
+@pytest.mark.parametrize("pause_mode", [None, "in_place", "retract"])
+def test_sglang_srt_sync_waits_before_load_and_handles_cache(monkeypatch, pause_mode):
+    from types import SimpleNamespace
+
+    pytest.importorskip("sglang.srt.managers.scheduler")
+    from rlinf.hybrid_engines.sglang.common.io_struct import SyncHFWeightInput
+    from rlinf.hybrid_engines.sglang.common.sgl_scheduler import Scheduler
+    from rlinf.utils.placement import RolloutSyncMode
+
+    events = []
+    model = torch.nn.Linear(2, 2, bias=False)
+    weights = torch.full_like(model.weight, 3)
+
+    def load_weights(named_weights):
+        events.append("load")
+        model.load_state_dict(dict(named_weights))
+
+    def recv(**kwargs):
+        assert kwargs == {"src_group_name": "ActorGroup", "src_rank": 0}
+        events.append("receive")
+        return {"weight": weights}
+
+    def flush_cache():
+        assert scheduler.waiting_queue == []
+        events.append("flush")
+        return True
+
+    monkeypatch.setattr(
+        Worker.torch_platform, "synchronize", lambda: events.append("synchronize")
+    )
+    model.load_weights = load_weights
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler.weight_reload = "sync"
+    scheduler.cfg = OmegaConf.create({"rollout": {"enforce_eager": False}})
+    scheduler.is_weight_offloaded = False
+    scheduler.weight_norm_dict = None
+    scheduler.rollout_sync_mode = RolloutSyncMode.DISAGGREGATED
+    scheduler._rlinf_worker = SimpleNamespace(recv=recv)
+    scheduler._actor_group_name = "ActorGroup"
+    scheduler.actor_weight_rank = 0
+    scheduler.tp_worker = SimpleNamespace(
+        worker=SimpleNamespace(model_runner=SimpleNamespace(model=model))
+    )
+    scheduler.running_batch = SimpleNamespace(is_empty=lambda: True)
+    scheduler.chunked_req = None
+    scheduler.enable_overlap = True
+    scheduler.result_queue = []
+    waiting_queue = [object()] if pause_mode in ("retract", "in_place") else []
+    scheduler.waiting_queue = waiting_queue
+    scheduler.flush_cache = flush_cache
+
+    scheduler.sync_hf_weight(SyncHFWeightInput(pause_mode=pause_mode))
+
+    expected = ["synchronize", "receive", "load"]
+    if pause_mode != "in_place":
+        expected.append("flush")
+    assert events == expected
+    assert scheduler.waiting_queue is waiting_queue
+    torch.testing.assert_close(model.weight, weights)
+
+
+@pytest.mark.parametrize(
+    "installed_version,server_type,apply_rlinf_patch,error",
+    [
+        (None, "srt", True, "sglang is not installed"),
+        ("0.5.5", "srt", True, "requires sglang > 0.5.5"),
+        ("0.5.6", "srt", True, None),
+        ("0.5.5", "srt", False, None),
+        ("0.5.5", "embodied", True, None),
+    ],
+)
+def test_sglang_server_patch_version_checked_before_launch(
+    monkeypatch, installed_version, server_type, apply_rlinf_patch, error
+):
+    import importlib.metadata
+
+    from rlinf.workers.rollout.sglang.process import SGLangServerProcess
+
+    def version(package):
+        assert package == "sglang"
+        if installed_version is None:
+            raise importlib.metadata.PackageNotFoundError(package)
+        return installed_version
+
+    monkeypatch.setattr(importlib.metadata, "version", version)
+    kwargs = {
+        "server_args_kwargs": {},
+        "acquire_free_port": None,
+        "server_type": server_type,
+        "apply_rlinf_patch": apply_rlinf_patch,
+    }
+    if error is None:
+        SGLangServerProcess(**kwargs)
+    else:
+        with pytest.raises((RuntimeError, AssertionError), match=error):
+            SGLangServerProcess(**kwargs)

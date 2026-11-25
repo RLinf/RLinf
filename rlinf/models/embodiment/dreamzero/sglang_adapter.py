@@ -52,11 +52,12 @@ from rlinf.data.datasets.dreamzero.data_transforms import (
     normalize_instruction_text,
     rollout_obs_layout_for_embodiment,
 )
+from rlinf.models.embodiment.sglang_adapter import SGLangEmbodiedAdapter
 
 _RLINF_POLICY_CONTEXT_KEYS = ("_rlinf_stage_id", "_rlinf_reset")
 
 
-class DreamZeroSGLangAdapter:
+class DreamZeroSGLangAdapter(SGLangEmbodiedAdapter):
     """DreamZero env-obs <-> action-chunks adapter for the sglang serve path.
 
     Combines the DreamZero dataset transforms (reused without the HF model) with

@@ -223,13 +223,19 @@ class SGLangWorker(Worker):
                     f"the configured value {value!r} is ignored"
                 )
 
+        graph_batch_arg = (
+            "cuda_graph_max_bs"
+            if "cuda_graph_max_bs" in _SERVER_ARGS_FIELDS
+            else "cuda_graph_max_bs_decode"
+        )
+        version_dependent_args[graph_batch_arg] = min(
+            self._cfg_rollout.cuda_graph_max_bs,
+            self._cfg_rollout.max_running_requests,
+        )
+
         server_args = ServerArgs(
             model_path=self._cfg_rollout.model.model_path,
             disable_cuda_graph=not use_cudagraph,
-            cuda_graph_max_bs=min(
-                self._cfg_rollout.cuda_graph_max_bs,
-                self._cfg_rollout.max_running_requests,
-            ),
             tp_size=self._cfg_rollout.tensor_parallel_size,
             # Expert parallel: pass ep_size explicitly. sglang derives
             # moe_tp = tp // ep // moe_dp itself. ep_size defaults to

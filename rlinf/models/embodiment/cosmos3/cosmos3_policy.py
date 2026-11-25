@@ -12,138 +12,94 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cosmos3 (NVIDIA ``OmniMoTModel``) action-policy wrapper for RLinf SFT."""
+"""Environment input/output adapter for the Cosmos3 action model."""
 
 from __future__ import annotations
 
-from typing import Any
-
 import torch
-import torch.nn as nn
-
-from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
-from rlinf.utils.logging import get_logger
-
-logger = get_logger()
 
 
-class Cosmos3Policy(nn.Module, BasePolicy):
-    """RLinf SFT adapter around a cosmos ``OmniMoTModel``."""
+def encode_prompts(prompts: list[str], width: int) -> torch.Tensor:
+    """Pack environment instructions into fixed-width trajectory tensors."""
+    encoded = torch.zeros((len(prompts), width), dtype=torch.uint8)
+    for index, prompt in enumerate(prompts):
+        data = prompt.encode("utf-8")
+        if len(data) > width:
+            raise ValueError(
+                f"Cosmos3 prompt needs {len(data)} bytes; prompt_bytes={width}."
+            )
+        encoded[index, : len(data)] = torch.tensor(list(data), dtype=torch.uint8)
+    return encoded
 
-    _no_split_modules: list[str] = [
-        "MoTDecoderLayer",
-        "PackedAttentionMoT",
-        "Cosmos3VFMNetwork",
-    ]
-    # cosmos DomainAwareLinear reads its embedding weights directly (grouped_mm).
-    _fsdp_wrap_embeddings: bool = False
 
-    def __init__(
-        self,
-        model: nn.Module,
-        *,
-        lr_multipliers: dict[str, float] | None = None,
-        ema_enabled: bool = True,
-    ):
-        super().__init__()
-        self.omni = model
-        self.lr_multipliers: dict[str, float] = dict(lr_multipliers or {})
-        self._ema_enabled = bool(ema_enabled) and bool(
-            getattr(getattr(model, "config", None), "ema", None)
-            and model.config.ema.enabled
+def decode_prompts(encoded: torch.Tensor) -> list[str]:
+    """Decode instructions saved in an RLinf trajectory."""
+    return [bytes(row[row != 0].cpu().tolist()).decode("utf-8") for row in encoded]
+
+
+class Cosmos3Policy:
+    """Translate RLinf environment observations and native model actions."""
+
+    def _codec(self):
+        from omegaconf import OmegaConf
+
+        from rlinf.models.embodiment.cosmos3.sglang_adapter import Cosmos3SGLangAdapter
+
+        if not hasattr(self, "_action_codec"):
+            cfg = OmegaConf.create(
+                {
+                    "rollout": {
+                        "model": OmegaConf.to_container(self.model_cfg, resolve=True),
+                        "sglang": {},
+                    },
+                    "env": {
+                        "eval": {"env_type": self._option("domain_name", "libero")}
+                    },
+                }
+            )
+            self._action_codec = Cosmos3SGLangAdapter(cfg, rank=0)
+        return self._action_codec
+
+    def _observations(self, env_obs: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        codec = self._codec()
+        tasks = codec._extract_tasks(env_obs)
+        n_cam = 2 if env_obs.get("wrist_images") is not None else 1
+        prompts = [codec._augment_prompt(task, n_cam) for task in tasks]
+        images = codec.prepare_images(
+            env_obs, len(tasks), codec._target_w, codec._target_h
         )
-        self._global_step: int = 0
+        if images is None:
+            raise ValueError("Cosmos3 local inference requires camera images")
+        return torch.from_numpy(images.copy()), encode_prompts(
+            prompts, int(self._option("prompt_bytes", 512))
+        )
 
-    @property
-    def device(self) -> torch.device:
-        return next(self.omni.parameters()).device
+    def _env_actions(self, action_list: list[torch.Tensor]) -> torch.Tensor:
+        import numpy as np
 
-    def set_global_step(self, step: int) -> None:
-        """Called once per global (optimizer) step by ``FSDPSftWorker``."""
-        step = int(step)
-        if self._ema_enabled and step == self._global_step + 1:
-            self._update_ema(self._global_step)
-        self._global_step = step
+        codec = self._codec()
+        chunks = [
+            codec._action_to_env(a.detach().float().cpu().numpy()) for a in action_list
+        ]
+        return torch.from_numpy(np.stack(chunks)).float().contiguous()
 
     @torch.no_grad()
-    def _update_ema(self, iteration: int) -> None:
-        model = self.omni
-        if not getattr(model, "config", None) or not model.config.ema.enabled:
-            return
-        net = getattr(model, "net", None)
-        net_ema = getattr(model, "net_ema", None)
-        worker = getattr(model, "net_ema_worker", None)
-        if net is None or net_ema is None or worker is None:
-            return
-        if getattr(model, "_uses_aux_loss_free_load_balancing", False) or getattr(
-            model, "_uses_ema_router_bias", False
-        ):
-            for sync_fn in ("sync_expert_biases_to_ema", "sync_router_biases_to_ema"):
-                fn = getattr(model, sync_fn, None)
-                if callable(fn):
-                    try:
-                        fn()
-                    except Exception:  # noqa: BLE001 - best-effort buffer sync
-                        pass
-        beta = model.ema_beta(iteration)
-        worker.update_average(net, net_ema, beta=beta)
-
-    def forward(self, forward_type: ForwardType = ForwardType.DEFAULT, **kwargs):
-        if forward_type == ForwardType.SFT:
-            return self.sft_forward(**kwargs)
-        raise NotImplementedError(
-            f"Cosmos3Policy supports ForwardType.SFT only, got {forward_type}."
-        )
-
-    def sft_forward(self, data: Any = None, **kwargs) -> dict[str, torch.Tensor]:
-        """Compute the cosmos flow-matching SFT loss for one batch."""
-        torch.compiler.cudagraph_mark_step_begin()
-
-        if data is None:
-            data = kwargs.get("data")
-        if data is None:
-            raise ValueError(
-                "Cosmos3 sft_forward requires `data` from the SFT dataloader."
-            )
-
-        from cosmos_framework.utils.misc import to as _cosmos_to
-
-        data = _cosmos_to(data, "cuda")
-
-        if not getattr(self, "_vae_patch_applied", False):
-            self._vae_patch_applied = True
-            _orig_fn = type(self.omni)._encode_vision_item
-
-            def _patched(omni_self, state, *args, **kwargs):
-                if hasattr(state, "device") and state.device.type == "cpu":
-                    state = state.to("cuda")
-                return _orig_fn(omni_self, state, *args, **kwargs)
-
-            import functools
-
-            self.omni._encode_vision_item = functools.partial(_patched, self.omni)
-        output_batch, loss = self.omni.training_step(data, self._global_step)
-
-        result: dict[str, Any] = {"loss": loss}
-        if isinstance(output_batch, dict):
-            for key, value in output_batch.items():
-                if key == "loss":
-                    continue
-                if torch.is_tensor(value) and value.numel() == 1:
-                    result[key] = value.detach()
-        return result
-
-    def gradient_checkpointing_enable(self, **kwargs) -> None:
-        return None
-
-    def default_forward(self, **kwargs):
-        raise NotImplementedError(
-            "Cosmos3Policy.default_forward is not implemented; rollout/eval runs "
-            "through the sglang /v1/actions/generations adapter (Cosmos3SGLangAdapter)."
-        )
-
-    def predict_action_batch(self, **kwargs):
-        raise NotImplementedError(
-            "Cosmos3Policy.predict_action_batch is not implemented; rollout/eval runs "
-            "through the sglang /v1/actions/generations adapter (Cosmos3SGLangAdapter)."
-        )
+    def predict_action_batch(self, env_obs: dict, mode: str = "eval", **kwargs):
+        """Adapt observations, sample actions, and return environment chunks."""
+        del kwargs
+        images, prompts = self._observations(env_obs)
+        n = images.shape[0]
+        if mode == "eval":
+            action_list = self.generate_eval_actions(images, prompts)
+            actions = self._env_actions(action_list)
+            flat = actions.reshape(n, -1)
+            return actions, {
+                "prev_logprobs": torch.zeros_like(flat),
+                "prev_values": torch.zeros((n, 1), dtype=torch.float32),
+                "forward_inputs": {"action": flat},
+            }
+        elif mode == "train":
+            action_list, replay = self.sample_train_actions(images, prompts)
+            return self._env_actions(action_list), replay
+        else:
+            raise ValueError(f"Unsupported Cosmos3 rollout mode: {mode}")

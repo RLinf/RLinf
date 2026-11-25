@@ -28,17 +28,12 @@ server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3
 安装
 ----------------------------------------
 
-安装 LIBERO 环境和带 ``diffusion`` extra 的 SGLang 0.5.19。``sglang`` model 会固定 torch 2.13.0，并按驱动支持的版本选择 CUDA 12 或 CUDA 13 的 wheel：
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model sglang --env libero
-   source .venv/bin/activate
+按 SFT 文档中的 :ref:`Cosmos3 SGLang 安装步骤 <cosmos3-sglang-install>` 安装依赖和固定版本源码。
 
 准备 Checkpoint
 ----------------------------------------
 
-评测输入是 diffusers 组件目录 ``model_diffusers``，由 SFT checkpoint 经 cosmos-framework 转换得到，完整四步见 :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>` 的「转换 Checkpoint」一节。
+评测输入是 diffusers 组件目录 ``model_diffusers``。Nano 和 Edge 都可以用 ``--base-model-path`` 和匹配的完整模型目录直接导出 SFT 权重，也可使用 cosmos-framework 的四步转换；两种方式见 :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>` 的「转换 Checkpoint」一节。
 
 .. note::
 
@@ -67,6 +62,30 @@ server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3
    bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang
 
 每张 GPU 起一个 Cosmos3 SGLang server，逐 episode 打印成功与否，最后汇总成功率；日志写到 ``logs/<时间戳>-<config>/eval_embodiment.log``。
+
+Cosmos3-Edge 评测
+----------------------------------------
+
+Edge 使用 ``evaluations/libero/libero_spatial_cosmos3_edge_eval_sglang.yaml``。在安装好 RLinf 和 LIBERO 的 SGLang 环境中，将 RLinf SFT 权重导出到与其架构匹配的完整 Edge HF 快照：
+
+.. code-block:: bash
+
+   python -m toolkits.cosmos3.convert_checkpoint \
+     --src /path/to/model_path/actor/model_state_dict/full_weights.pt \
+     --base-model-path /path/to/Cosmos3-Edge \
+     --out /path/to/hf_model_path
+
+导出器逐项校验 transformer 参数的键名和形状，用 SFT 权重替换全部 transformer 参数，并保留快照中的 tokenizer、VAE 和配置。默认选择普通权重 ``omni.net``，与 Edge HF eval 配置一致；``--use-ema-weights`` 可选择 EMA。输出目录必须是新目录。
+
+将 YAML 中的 ``rollout.model.model_path`` 指向输出的 ``model_diffusers``，填写训练使用的 ``action_stats_path``，然后运行：
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero libero_spatial_cosmos3_edge_eval_sglang
+
+批量冒烟测试可追加 ``cluster.component_placement.env=0 cluster.component_placement.rollout=0 env.eval.total_num_envs=4 env.eval.specific_reset_id=0 env.eval.max_episode_steps=32 env.eval.max_steps_per_rollout_epoch=32``。这会在单卡上给同一任务发送四个环境的 batch；32 步仅验证运行流程。正常评测保留 YAML 中的 episode 长度和任务分布。
+
+上述固定版本会保留显式设置的 Edge 动作采样参数，包括 ``guidance_scale=1.5``\ ，避免被视频默认值覆盖。
 
 关键配置
 ----------------------------------------
@@ -105,7 +124,7 @@ server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3
 
 1. 起 server：``Launching sglang server (server_type=embodied) ...``
 2. 权重加载完成：``[RunAI Streamer] Overall time to stream 28.3 GiB ... to cpu: <秒数>`` （本地盘通常数十秒内；**缺这行** 说明加载卡住，见常见问题）
-3. server 就绪：``sglang server assigned: rank=i -> http://...``
+3. server 就绪：``sglang server ready at http://...``
 4. 逐 episode 结果：``[libero eval] task_id=.., trial_id=.., success=..``
 5. 汇总：``success_once`` / ``success_at_end`` / ``num_trajectories``
 

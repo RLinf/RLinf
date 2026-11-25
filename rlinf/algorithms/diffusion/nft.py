@@ -15,7 +15,7 @@
 """Tensor objectives, schedules, and EMA updates for NFT."""
 
 import math
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Any
 
 import torch
@@ -50,6 +50,36 @@ def nft_requires_ema(tau: float | list[float] | tuple[float, ...] | ListConfig) 
     if isinstance(tau, (list, tuple, ListConfig)):
         return min(float(tau[0]), float(tau[1])) < 1.0
     return float(tau) < 1.0
+
+
+@torch.no_grad()
+def init_nft_ema_state(
+    state: Mapping[str, Any],
+    update_names: Collection[str],
+    *,
+    use_fp32: bool = True,
+) -> dict[str, Any]:
+    """Clone state, optionally accumulating mutable FP16/BF16 weights in FP32.
+
+    Frozen weights keep their original dtype to limit replicated EMA memory.
+    ``update_names`` includes trainable parameters and persistent buffers.
+    ``use_fp32=False`` preserves the model dtype for EMA accumulation.
+    """
+    update_names = set(update_names)
+    result = {}
+    for name, value in state.items():
+        if torch.is_tensor(value):
+            dtype = value.dtype
+            if (
+                use_fp32
+                and name in update_names
+                and dtype in (torch.float16, torch.bfloat16)
+            ):
+                dtype = torch.float32
+            result[name] = value.detach().to(dtype=dtype, copy=True)
+        else:
+            result[name] = value
+    return result
 
 
 @torch.no_grad()

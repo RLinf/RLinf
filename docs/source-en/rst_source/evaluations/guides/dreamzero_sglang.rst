@@ -10,11 +10,21 @@ Install the Test Environment
 
 DreamZero SGLang evaluation requires CUDA 13.0 or later. Ensure this requirement is met before installing the dependencies below.
 
-Set up RLinf with the embodied, LIBERO, and DreamZero SGLang dependencies:
+Create a separate checkout pinned to RLinf v0.4:
 
 .. code-block:: bash
 
-   cd /path/to/RLinf
+   git clone --branch v0.4 --single-branch https://github.com/RLinf/RLinf.git /path/to/RLinf-dreamzero
+   cd /path/to/RLinf-dreamzero
+   git describe --tags --exact-match
+
+The last command should print ``v0.4``.
+
+Install the embodied, LIBERO, and DreamZero dependencies:
+
+.. code-block:: bash
+
+   cd /path/to/RLinf-dreamzero
    bash requirements/install.sh embodied --env libero --model dreamzero \
      --venv /path/to/dreamzero_test
 
@@ -56,7 +66,7 @@ The default SGLang eval config is ``evaluations/libero/libero_spatial_dreamzero_
 
 .. code-block:: bash
 
-   cd /path/to/RLinf
+   cd /path/to/RLinf-dreamzero
    bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
      rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 

@@ -100,8 +100,8 @@ def launch_sglang_router_and_server(
             ``placement: 0-1:0-3,3-5`` config). The caller is responsible
             for ensuring the strategy already encodes
             the server's accelerator width per process.
-        router_node_rank: Cluster-global node rank on which to place the
-            router. Defaults to node 0 (the head).
+        router_node_rank: Node rank within router_node_group when configured;
+            otherwise cluster-global. Defaults to 0.
 
     Returns:
         ``(server_group, router_group)`` — two ``WorkerGroup`` handles
@@ -152,7 +152,10 @@ def launch_sglang_router_and_server(
     # register each server as soon as its /health goes 200.
     router_group = None
     if launch_router:
-        router_ps = NodePlacementStrategy(node_ranks=[router_node_rank])
+        router_ps = NodePlacementStrategy(
+            node_ranks=[router_node_rank],
+            node_group_label=router_server_args.get("router_node_group"),
+        )
         router_group = SGLangRouterWorker.create_group(
             config=config,
             router_cfg=router_server_args.router,

@@ -54,16 +54,13 @@ class TokenizerManager(_TokenizerManager):
             port_args=port_args,
         )
 
+        # New FanOutCommunicator uses the manager's dispatch callback.
+        send = getattr(self, "_dispatch_to_scheduler", self.send_to_scheduler)
         self.run_task_method_communicator = _Communicator(
-            self.send_to_scheduler,
-            fan_out=server_args.dp_size,
+            send, fan_out=server_args.dp_size
         )
-        self.sync_hf_weight_communicator = _Communicator(
-            self.send_to_scheduler, server_args.dp_size
-        )
-        self.abort_generation_communicator = _Communicator(
-            self.send_to_scheduler, server_args.dp_size
-        )
+        self.sync_hf_weight_communicator = _Communicator(send, server_args.dp_size)
+        self.abort_generation_communicator = _Communicator(send, server_args.dp_size)
 
         _extra_mapping = [
             (TaskMethodOutput, self.run_task_method_communicator.handle_recv),

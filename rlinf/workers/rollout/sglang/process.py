@@ -18,10 +18,13 @@ from __future__ import annotations
 import inspect
 import multiprocessing as mp
 import os
+import secrets
 import signal
 import threading
 import time
+from functools import partial
 from typing import Callable, Optional
+from urllib.parse import urlsplit
 
 import requests
 
@@ -85,6 +88,7 @@ def _run_sglang_server(
     extra_env: Optional[dict[str, str]] = None,
     *,
     parent_pid: int,
+    control_token: str,
 ) -> None:
     """Child-process entrypoint: launches a single sglang HTTP server.
 
@@ -143,8 +147,18 @@ def _run_sglang_server(
 
             server_args_kwargs["master_port"] = dist_port
             server_args = ServerArgs.from_kwargs(**server_args_kwargs)
+            server_args.scheduler_ports = server_args_kwargs["scheduler_ports"]
+            server_args.scheduler_port = server_args.scheduler_ports[0]
             set_global_server_args(server_args)
-            dispatch_launch(server_args)
+            from rlinf.hybrid_engines.sglang.common import embodied_scheduler
+
+            dispatch_launch(
+                server_args,
+                run_scheduler_process_func=embodied_scheduler.run_scheduler_process,
+                app_factory=partial(
+                    embodied_scheduler.create_app, control_token=control_token
+                ),
+            )
         else:
             if apply_rlinf_patch:
                 # Must precede the launch_server import below: the Patcher
@@ -182,8 +196,15 @@ def _run_sglang_server(
                 from sglang.srt.entrypoints import http_server as sgl_http_server
 
                 from rlinf.hybrid_engines.sglang.common import http_routes
+                from rlinf.hybrid_engines.sglang.common.peer_whitelist import (
+                    PeerWhitelistMiddleware,
+                )
 
-                http_routes.add_rlinf_routes(sgl_http_server.app)
+                sgl_http_server.app.add_middleware(PeerWhitelistMiddleware)
+
+                http_routes.add_rlinf_routes(
+                    sgl_http_server.app, control_token=control_token
+                )
                 launch_kwargs["run_scheduler_process_func"] = (
                     sgl_scheduler.run_scheduler_process
                 )
@@ -241,6 +262,11 @@ class SGLangServerProcess:
     (``SGLangServerWorker``), the server backend layer uses it directly.
     ``acquire_free_port`` is injected so port allocation still goes
     through the caller's port lock.
+
+    ``server_type`` is an RLinf selector: ``srt`` launches SGLang's LLM
+    runtime, and ``embodied`` launches SGLang Diffusion for embodied policies.
+    ``bind_to_node_ip`` overrides both bind and advertised addresses with
+    the Ray node IP so a remote router can reach the server.
     """
 
     def __init__(
@@ -257,6 +283,8 @@ class SGLangServerProcess:
         extra_env: Optional[dict[str, str]] = None,
         log_info: Callable[[str], None] = lambda msg: None,
         log_error: Callable[[str], None] = lambda msg: None,
+        *,
+        bind_to_node_ip: bool = False,
     ):
         if server_type not in ("srt", "embodied"):
             raise ValueError(
@@ -274,7 +302,7 @@ class SGLangServerProcess:
                 "dist_init_addr (the entry node's rendezvous host:port) is "
                 "required when nnodes > 1."
             )
-        if apply_rlinf_patch:
+        if apply_rlinf_patch and server_type == "srt":
             _assert_sglang_supports_rlinf_patch()
         self._server_args_kwargs = dict(server_args_kwargs)
         self._acquire_free_port = acquire_free_port
@@ -284,14 +312,21 @@ class SGLangServerProcess:
         self._dist_init_addr = dist_init_addr
         self._bind_host = bind_host
         self._advertise_host = advertise_host
+        self._bind_to_node_ip = bind_to_node_ip
         self._apply_rlinf_patch = apply_rlinf_patch
         self._extra_env = dict(extra_env) if extra_env else None
+        self._control_token = secrets.token_urlsafe(32)
         self._log_info = log_info
         self._log_error = log_error
 
         self._server_proc: Optional[mp.Process] = None
         self._server_port: Optional[int] = None
         self._ready_pipe = None
+
+    @property
+    def control_token(self) -> str:
+        """Authentication token for the owning worker's direct control client."""
+        return self._control_token
 
     def start(self) -> None:
         """Spawn the sglang server subprocess and establish readiness.
@@ -308,6 +343,15 @@ class SGLangServerProcess:
         """
         assert self._server_proc is None, "sglang server already initialized."
 
+        from . import sglang_version
+
+        if self._bind_to_node_ip or self._advertise_host is None:
+            import ray.util
+
+            self._advertise_host = ray.util.get_node_ip_address()
+            if self._bind_to_node_ip:
+                self._bind_host = self._advertise_host
+
         # Every node needs an HTTP port (non-entry nodes bind a dummy
         # /health); a local dist port only on single node, cross-node uses
         # the negotiated dist_init_addr.
@@ -320,6 +364,12 @@ class SGLangServerProcess:
         server_kwargs = dict(self._server_args_kwargs)
         server_kwargs["host"] = self._bind_host
         server_kwargs["port"] = http_port
+        if self._server_type == "embodied":
+            server_kwargs["scheduler_ports"] = [
+                self._acquire_free_port()
+                for _ in range(server_kwargs.get("dp_size") or 1)
+            ]
+            server_kwargs["scheduler_port"] = server_kwargs["scheduler_ports"][0]
         if self._nnodes > 1:
             # Only multi-node injects these; nnodes=1 passes no
             # multi-node kwargs at all.
@@ -327,8 +377,10 @@ class SGLangServerProcess:
             server_kwargs["node_rank"] = self._node_rank
 
         self._log_info(
-            f"Launching sglang server (server_type={self._server_type}): "
+            f"Launching sglang server (version={sglang_version}, "
+            f"server_type={self._server_type}): "
             f"http=:{http_port}, dist_port={dist_port}, "
+            f"scheduler_ports={server_kwargs.get('scheduler_ports')}, "
             f"dist_init_addr={self._dist_init_addr}, "
             f"node_rank={self._node_rank}/{self._nnodes}, "
             f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '')}"
@@ -352,6 +404,7 @@ class SGLangServerProcess:
                 "dist_init_addr": self._dist_init_addr,
                 "extra_env": self._extra_env,
                 "parent_pid": os.getpid(),
+                "control_token": self._control_token,
             },
             daemon=False,
         )
@@ -362,17 +415,10 @@ class SGLangServerProcess:
 
         self._server_proc = proc
         self._server_port = http_port
-        if self._advertise_host is None:
-            import ray.util
-
-            self._advertise_host = ray.util.get_node_ip_address()
-
         if self._node_rank == 0:
             try:
-                # Readiness is probed from this process; loopback is
-                # reachable for both bind hosts (0.0.0.0 / 127.0.0.1).
                 _wait_for_http_health(
-                    host="127.0.0.1",
+                    host=urlsplit(self.get_control_url()).hostname,
                     port=http_port,
                     is_alive=lambda: self._server_proc.is_alive(),
                 )
@@ -441,7 +487,7 @@ class SGLangServerProcess:
 
         This is the address cross-node clients (the sglang router, other
         nodes) use. Same-process control-plane clients must use
-        :meth:`get_control_url` instead: the peer-address whitelist treats
+        :meth:`get_control_url` instead: SRT's peer-address whitelist treats
         only loopback peers as local, and connecting to this host from the
         same machine presents the node IP as the TCP peer.
         """
@@ -450,14 +496,16 @@ class SGLangServerProcess:
         return f"http://{host}:{self._server_port}"
 
     def get_control_url(self) -> str:
-        """The loopback ``http://127.0.0.1:port`` URL of this server.
+        """The local control URL: loopback for SRT, the bound IP for Diffusion.
 
-        Base URL for control-plane clients (/rlinf/* routes) running in
-        this process. bind_host is loopback or 0.0.0.0, so 127.0.0.1 is
-        always reachable.
+        SRT's peer whitelist requires loopback even when advertising the node IP.
+        Diffusion can bind only to the node IP and authenticates with a token.
         """
         assert self._server_port is not None, "start() has not been called."
-        return f"http://127.0.0.1:{self._server_port}"
+        host = self._bind_host if self._server_type == "embodied" else "127.0.0.1"
+        if host == "0.0.0.0":
+            host = "127.0.0.1"
+        return f"http://{host}:{self._server_port}"
 
     def is_healthy(self) -> bool:
         if self._server_proc is None or not self._server_proc.is_alive():

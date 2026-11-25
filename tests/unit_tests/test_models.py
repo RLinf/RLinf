@@ -3968,6 +3968,18 @@ def test_phyai_eval_requires_a_nonempty_openpi_config_name(phyai_example_cfg):
         validate_embodied_cfg(phyai_example_cfg)
 
 
+def test_cosmos3_weight_mapping_matches_wrapped_trainable_parameters():
+    from rlinf.models.embodiment.cosmos3.weight_mapping import actor_to_sglang_key
+
+    state_key = "omni.net.language_model.model.layers.0.self_attn.q_proj_moe_gen.weight"
+    wrapped_key = state_key.replace(
+        "layers.0.", "layers.0._checkpoint_wrapped_module._orig_mod."
+    )
+    assert actor_to_sglang_key(state_key) == "layers.0.self_attn.add_q_proj.weight"
+    assert actor_to_sglang_key(wrapped_key) == actor_to_sglang_key(state_key)
+    assert actor_to_sglang_key("omni.net_ema.language_model.weight") is None
+
+
 def _cosmos3_sglang_cfg(batching_max_size=None):
     server = (
         {} if batching_max_size is None else {"batching_max_size": batching_max_size}
@@ -5266,6 +5278,59 @@ def test_gr00t_n1d6_batched_eagle_processor_aligns_frames_to_patch_factor(monkey
     raw_224 = np.zeros((1, 3, 224, 224), dtype=np.uint8)
     out_224 = proc._apply_vlm_processing(raw_224, "pick up bowl")["vlm_content"]
     assert out_224["images"][0].shape == (3, 224, 224)
+
+
+def test_cosmos3_sglang_training_returns_nft_endpoints_without_logprobs():
+    from safetensors.torch import save
+
+    from rlinf.models.embodiment.cosmos3.cosmos3_action_model import shifted_timesteps
+    from rlinf.models.embodiment.cosmos3.sglang_adapter import Cosmos3SGLangAdapter
+
+    cfg = _cosmos3_sglang_cfg(batching_max_size=2)
+    cfg.rollout.model.update(
+        num_action_chunks=2, num_frames=3, num_inference_steps=4, size="32x32"
+    )
+    adapter = Cosmos3SGLangAdapter(cfg, rank=0)
+    obs = {
+        "main_images": torch.zeros(2, 32, 32, 3, dtype=torch.uint8),
+        "task_descriptions": ["pick the bowl", "pick the bowl"],
+    }
+    payload, state = adapter.build_request(obs, mode="train")
+    assert payload["rollout_return_step_indices"] == [4]
+
+    def tensor(value):
+        return {"__tensor__": True, "data": save({"t": value})}
+
+    times = shifted_timesteps(4, 10.0, torch.device("cpu"))
+    raw_actions = torch.zeros(2, 2, 10)
+    raw_actions[:, :, 3] = 1.0
+    raw_actions[:, :, 7] = 1.0
+    raw_actions[0, :, 9] = -0.5
+    raw_actions[1, :, 9] = 0.5
+    endpoints = torch.arange(56, dtype=torch.float32).reshape(2, 28)
+    response = [
+        {
+            "generated_output": tensor(raw_actions[i]),
+            "dit_trajectory": {
+                "timesteps": tensor(times[-1:] * 1000),
+                "sigmas": tensor(times),
+                "latents": tensor(endpoints[i : i + 1]),
+            },
+        }
+        for i in range(2)
+    ]
+
+    actions, info = adapter.parse_rollout_response(response, state)
+    assert actions.shape == (2, 2, 7)
+    torch.testing.assert_close(actions[:, :, 6], raw_actions[:, :, 9])
+    inputs = info["forward_inputs"]
+    torch.testing.assert_close(inputs["nft_x0"], raw_actions)
+    torch.testing.assert_close(inputs["nft_joint_x0"], endpoints)
+    assert inputs["nft_joint_noise"].shape == endpoints.shape
+    assert torch.isfinite(inputs["nft_joint_noise"]).all()
+    assert info["prev_logprobs"].shape == (2, 2, 7)
+    assert not info["prev_logprobs"].any()
+    assert not {"latent", "next_latent", "step"}.intersection(inputs)
 
 
 def test_psi0_rtc_prefix_survives_the_last_denoise_step():

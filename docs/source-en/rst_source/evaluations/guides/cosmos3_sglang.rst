@@ -28,17 +28,12 @@ Each response carries one record per environment: ``data[i].action.values`` hold
 Installation
 ----------------------------------------
 
-Install the LIBERO environment and SGLang 0.5.19 with its ``diffusion`` extra. The ``sglang`` model pins torch 2.13.0 and picks the CUDA 12 or CUDA 13 build that the driver supports:
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model sglang --env libero
-   source .venv/bin/activate
+Follow :ref:`Cosmos3 SGLang Installation <cosmos3-sglang-install>` in the SFT guide to install the dependencies and pinned source checkout.
 
 Prepare Checkpoint
 ----------------------------------------
 
-The eval input is a diffusers component directory ``model_diffusers``, produced by converting the SFT checkpoint via cosmos-framework. The full four-step conversion is described in the "Checkpoint Conversion" section of :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>`.
+The eval input is a diffusers component directory ``model_diffusers``. Both Nano and Edge can export SFT weights directly using ``--base-model-path`` and a matching complete model directory, or use the four-step cosmos-framework conversion. Both methods are described in the "Checkpoint Conversion" section of :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>`.
 
 .. note::
 
@@ -67,6 +62,30 @@ Then run:
    bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang
 
 **What this command does:** launches one Cosmos3 SGLang server per GPU, starts the LIBERO environment for evaluation, prints per-episode success/failure, and summarizes the success rate at the end. Logs are written to ``logs/<timestamp>-<config>/eval_embodiment.log``.
+
+Cosmos3-Edge Evaluation
+----------------------------------------
+
+Edge uses ``evaluations/libero/libero_spatial_cosmos3_edge_eval_sglang.yaml``. In a SGLang environment with RLinf and LIBERO installed, export the RLinf SFT weights using a complete Edge HF snapshot with a matching architecture:
+
+.. code-block:: bash
+
+   python -m toolkits.cosmos3.convert_checkpoint \
+     --src /path/to/model_path/actor/model_state_dict/full_weights.pt \
+     --base-model-path /path/to/Cosmos3-Edge \
+     --out /path/to/hf_model_path
+
+The exporter checks every transformer key and shape, replaces all transformer tensors with SFT weights, and retains the snapshot's tokenizer, VAE, and configuration. It selects the online weights (``omni.net``) by default, matching the Edge HF eval config; use ``--use-ema-weights`` to select EMA instead. The output directory must be new.
+
+Set ``rollout.model.model_path`` in the YAML to the exported ``model_diffusers`` directory and set ``action_stats_path`` to the statistics used for training, then run:
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero libero_spatial_cosmos3_edge_eval_sglang
+
+For a batch smoke test, append ``cluster.component_placement.env=0 cluster.component_placement.rollout=0 env.eval.total_num_envs=4 env.eval.specific_reset_id=0 env.eval.max_episode_steps=32 env.eval.max_steps_per_rollout_epoch=32``. This sends a four-environment batch for the same task on one GPU; 32 steps only check execution. Keep the YAML's episode length and task distribution for normal evaluation.
+
+The pinned SGLang checkout preserves explicit Edge action sampling parameters, including ``guidance_scale=1.5``, instead of replacing them with video defaults.
 
 Key Configuration
 ----------------------------------------
@@ -105,7 +124,7 @@ Check ``eval_embodiment.log`` and confirm these milestones appear in order:
 
 1. Server launch: ``Launching sglang server (server_type=embodied) ...``
 2. Weight loading complete: ``[RunAI Streamer] Overall time to stream 28.3 GiB ... to cpu: <seconds>`` (usually within tens of seconds on local disk; **missing this line** means loading is stuck — see FAQ)
-3. Server ready: ``sglang server assigned: rank=i -> http://...``
+3. Server ready: ``sglang server ready at http://...``
 4. Per-episode results: ``[libero eval] task_id=.., trial_id=.., success=..``
 5. Summary: ``success_once`` / ``success_at_end`` / ``num_trajectories``
 

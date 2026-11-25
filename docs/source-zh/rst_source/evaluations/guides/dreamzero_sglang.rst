@@ -3,18 +3,28 @@ DreamZero SGLang 评测
 
 本文档说明如何通过 RLinf 的 SGLang embodied backend 运行 DreamZero LIBERO 评测。该路径用于只做推理评测的场景，要求 DreamZero checkpoint 已转换为 SGLang-native 的组件化目录。
 
-与 :doc:`../../examples/embodied/sft_dreamzero` 中的原始 DreamZero eval 路径相比，SGLang backend 把庞大的 DreamZero 网络放在独立拉起的 ``sglang serve`` 进程里，而不是在 rollout worker 中加载。但 worker 仍然需要安装 DreamZero 的 transform 栈：``rlinf.models.embodiment.dreamzero.sglang_adapter`` 会 import ``rlinf.data.datasets.dreamzero.data_transforms``，后者依赖由 ``install_dreamzero_deps`` 安装的 ``groot`` 包。由 eval driver 拉起 SGLang server group 并把每个 server URL 下发给各 rollout worker；worker 只是一个瘦客户端，通过 VLA action API 向本 rank 分配到的 URL 发送 batched observation，并将返回的 action chunk 反归一化后送入 LIBERO 环境。
+与 :doc:`../../examples/embodied/sft_dreamzero` 中的原始 DreamZero eval 路径相比，SGLang backend 把庞大的 DreamZero 网络放在独立拉起的 ``sglang serve`` 进程里，而不是在 rollout worker 中加载。但 worker 仍然需要安装 DreamZero 的 transform 栈：``rlinf.models.embodiment.dreamzero.sglang_adapter`` 会 import ``rlinf.data.datasets.dreamzero.data_transforms``，后者依赖由 ``install_dreamzero_deps`` 安装的 ``groot`` 包。由 eval driver 拉起 SGLang server group 并把每个 server URL 下发给各 rollout worker；worker 只是一个薄客户端，通过 VLA action API 向本 rank 分配到的 URL 发送 batched observation，并将返回的 action chunk 反归一化后送入 LIBERO 环境。
 
 安装测试环境
 ------------
 
 DreamZero SGLang 评测需要 CUDA 13.0 及以上版本。安装以下依赖前，请确认环境满足此要求。
 
-安装 embodied、LIBERO 和 DreamZero SGLang 依赖：
+单独克隆 RLinf v0.4，作为 DreamZero 评测目录：
 
 .. code-block:: bash
 
-   cd /path/to/RLinf
+   git clone --branch v0.4 --single-branch https://github.com/RLinf/RLinf.git /path/to/RLinf-dreamzero
+   cd /path/to/RLinf-dreamzero
+   git describe --tags --exact-match
+
+最后一条命令应输出 ``v0.4``。
+
+新建评测环境，安装 embodied、LIBERO 和 DreamZero 依赖：
+
+.. code-block:: bash
+
+   cd /path/to/RLinf-dreamzero
    bash requirements/install.sh embodied --env libero --model dreamzero \
      --venv /path/to/dreamzero_test
 
@@ -56,7 +66,7 @@ checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果 checkpoi
 
 .. code-block:: bash
 
-   cd /path/to/RLinf
+   cd /path/to/RLinf-dreamzero
    bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
      rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 

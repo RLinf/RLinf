@@ -29,18 +29,6 @@ def get_version(pkg):
 package_name = "sglang"
 package_version = get_version(package_name)
 
-sglang_version = None
-
-if package_version is None:
-    raise ValueError("sglang is not installed.")
-elif package_version >= parse("0.4.4") and package_version <= parse("0.5.19"):
-    sglang_version = package_version
-else:
-    raise ValueError(
-        f"sglang version {package_version} is not supported "
-        "(supported range: >=0.4.4, <=0.5.19)."
-    )
-
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from rlinf.hybrid_engines.sglang.common import io_struct
     from rlinf.hybrid_engines.sglang.common.sgl_engine import Engine
@@ -92,7 +80,19 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
+    if name == "sglang_version":
+        if package_version is None:
+            raise ValueError("sglang is not installed.")
+        if not parse("0.4.4") <= package_version <= parse("0.5.19"):
+            raise ValueError(
+                f"sglang version {package_version} is not supported "
+                "(supported range: >=0.4.4, <=0.5.19)."
+            )
+        globals()[name] = package_version
+        return package_version
     if name in _LAZY_ATTRS:
+        if name == "Engine" and "sglang_version" not in globals():
+            __getattr__("sglang_version")
         module_name, attr = _LAZY_ATTRS[name]
         module = import_module(module_name)
         value = module if attr is None else getattr(module, attr)

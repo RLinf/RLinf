@@ -20,7 +20,7 @@ sglang HTTP server subprocess.
 """
 
 import asyncio
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import aiohttp
 from omegaconf import OmegaConf
@@ -34,7 +34,10 @@ from rlinf.workers.rollout.backend import RlinfContext, RolloutBackend
 from rlinf.workers.rollout.sglang.process import SGLangServerProcess
 from rlinf.workers.rollout.utils import RolloutEngineStats
 
-from . import Engine, io_struct
+from . import io_struct
+
+if TYPE_CHECKING:
+    from . import Engine
 
 
 class SGLangEngineBackend(RolloutBackend):
@@ -42,10 +45,10 @@ class SGLangEngineBackend(RolloutBackend):
 
     def __init__(self, server_args: dict, rlinf_ctx: RlinfContext):
         super().__init__(server_args, rlinf_ctx)
-        self._engine: Optional[Engine] = None
+        self._engine: Optional["Engine"] = None
 
     @property
-    def engine(self) -> Engine:
+    def engine(self) -> "Engine":
         """The wrapped sglang Engine (set by `initialize`)."""
         if self._engine is None:
             raise RuntimeError(
@@ -65,6 +68,8 @@ class SGLangEngineBackend(RolloutBackend):
         return self.engine.tokenizer_manager
 
     async def initialize(self) -> None:
+        from . import Engine
+
         self._engine = Engine(**self._server_args)
         await self.engine.tokenizer_manager.run_task_method(
             io_struct.TaskMethodInput(
@@ -143,24 +148,15 @@ class SGLangEngineBackend(RolloutBackend):
 
 
 class SGLangServerBackend(RolloutBackend):
-    """A spawned sglang HTTP server subprocess as a rollout backend.
+    """Own an SRT or SGLang Diffusion server and its direct HTTP client.
 
-    All rollout control flows over loopback HTTP: generation via the native
-    `/generate`, offload/onload via the native memory-occupation routes,
-    and `run_task_method` / `sync_hf_weight` / `abort_generation` via the
-    custom `/rlinf/*` routes mounted by
-    `rlinf.hybrid_engines.sglang.common.http_routes`. Weight sync itself
-    still goes over NCCL inside the scheduler subprocess (started with the
-    RLinf patch; see `SGLangServerProcess`).
+    Control requests use shared ``/rlinf/*`` routes; actor weights travel
+    directly to scheduler workers. Embodied adapters use ``http_client`` for
+    their model-specific generation endpoints.
 
-    The server binds to 127.0.0.1: the only client is this worker's own
-    process, and the /rlinf/* routes unpickle their request body, so the
-    server must not be reachable from other machines. When
-    ``session_server.enable`` is set the rollout data plane crosses nodes
-    (the sglang router forwards /generate between them), so the server
-    then binds 0.0.0.0 and advertises the node IP; the peer-address
-    whitelist installed with those routes keeps every other endpoint
-    loopback-only.
+    SRT uses loopback control HTTP. With ``session_server.enable`` it binds
+    0.0.0.0 and advertises the node IP for router access; the peer-address
+    whitelist keeps other endpoints loopback-only.
     """
 
     def __init__(
@@ -174,6 +170,8 @@ class SGLangServerBackend(RolloutBackend):
         nnodes: int = 1,
         node_rank: int = 0,
         dist_init_addr: Optional[str] = None,
+        server_type: str = "srt",
+        bind_to_node_ip: bool = False,
     ):
         super().__init__(server_args, rlinf_ctx)
         self._acquire_free_port = acquire_free_port
@@ -182,6 +180,8 @@ class SGLangServerBackend(RolloutBackend):
         self._nnodes = nnodes
         self._node_rank = node_rank
         self._dist_init_addr = dist_init_addr
+        self._server_type = server_type
+        self._bind_to_node_ip = bind_to_node_ip
         self._process: Optional[SGLangServerProcess] = None
         self._client: Optional[InferenceHTTPClient] = None
 
@@ -196,12 +196,9 @@ class SGLangServerBackend(RolloutBackend):
 
     @property
     def server_url(self) -> str:
-        """The advertised base URL of the server subprocess.
+        """The advertised URL for router registration.
 
-        For registering this server with the sglang router; the worker's
-        own control-plane client uses the loopback URL
-        (:meth:`SGLangServerProcess.get_control_url`) so its peer address
-        stays local under the peer-address whitelist.
+        The direct client uses ``SGLangServerProcess.get_control_url()``.
         """
         if self._process is None:
             raise RuntimeError(
@@ -263,12 +260,13 @@ class SGLangServerBackend(RolloutBackend):
         self._process = SGLangServerProcess(
             server_args_kwargs=server_args_kwargs,
             acquire_free_port=self._acquire_free_port,
-            server_type="srt",
+            server_type=self._server_type,
             nnodes=self._nnodes,
             node_rank=self._node_rank,
             dist_init_addr=self._dist_init_addr,
             bind_host="0.0.0.0" if session_server_enabled else "127.0.0.1",
             advertise_host=None if session_server_enabled else "127.0.0.1",
+            bind_to_node_ip=self._bind_to_node_ip,
             apply_rlinf_patch=True,
             extra_env=extra_env,
             log_info=self._log_info,
@@ -286,19 +284,18 @@ class SGLangServerBackend(RolloutBackend):
     async def _initialize_entry_frontend(self) -> None:
         if self._node_rank != 0:
             # Non-entry nodes have no HTTP frontend. The entry's
-            # init_rlinf_worker still reaches every scheduler: sglang
+            # init_rlinf_worker still reaches every SRT scheduler: sglang
             # delivers it to tp rank 0 (or each DP-group leader under DP
             # attention), which broadcasts to the whole TP group.
             return
         # keepalive_timeout must be shorter than the server's keep-alive
         # (uvicorn default 5s) so we never reuse a connection the server
         # is about to close (an ECONNRESET race).
-        # Loopback base URL: under session_server.enable the server
-        # advertises its node IP, and a client connecting to that IP
-        # presents it as the TCP peer, which the whitelist rejects on
-        # the /rlinf/* control routes.
+        # SRT control stays on loopback; Diffusion may bind only the node IP.
         self._client = InferenceHTTPClient(
-            self._process.get_control_url(), keepalive_timeout=4.0
+            self._process.get_control_url(),
+            keepalive_timeout=4.0,
+            control_token=self._process.control_token,
         )
         await self._client.async_run_task_method(
             io_struct.TaskMethodInput(
@@ -350,8 +347,8 @@ class SGLangServerBackend(RolloutBackend):
             image_data=image_data,
         )
 
-    async def sync_weights(self, pause_mode: Optional[str] = None) -> None:
-        await self.http_client.async_sync_hf_weight(
+    async def sync_weights(self, pause_mode: Optional[str] = None) -> dict:
+        return await self.http_client.async_sync_hf_weight(
             obj=io_struct.SyncHFWeightInput(pause_mode=pause_mode)
         )
 
@@ -420,6 +417,8 @@ def make_backend(
     nnodes: int = 1,
     node_rank: int = 0,
     dist_init_addr: Optional[str] = None,
+    server_type: str = "srt",
+    bind_to_node_ip: bool = False,
 ) -> RolloutBackend:
     """Select a rollout backend implementation by config value.
 
@@ -440,11 +439,16 @@ def make_backend(
         dist_init_addr: Rendezvous `host:port` on the entry node,
             negotiated via `negotiate_model_instance_dist_addr` (server
             backend only, multi-node).
+        server_type: Native server runtime, ``srt`` or ``embodied``.
+        bind_to_node_ip: Bind and advertise the Ray node IP for router access;
+            otherwise use loopback (server backend only).
 
     Returns:
         A backend instance (not yet initialized).
     """
     if backend_type == "engine":
+        if server_type != "srt":
+            raise ValueError("Embodied SGLang requires backend_type='server'")
         return SGLangEngineBackend(server_args, rlinf_ctx)
     if backend_type == "server":
         assert acquire_free_port is not None, (
@@ -460,5 +464,7 @@ def make_backend(
             nnodes=nnodes,
             node_rank=node_rank,
             dist_init_addr=dist_init_addr,
+            server_type=server_type,
+            bind_to_node_ip=bind_to_node_ip,
         )
     raise ValueError(f"Unsupported rollout.sglang.backend_type: {backend_type!r}")

@@ -220,6 +220,10 @@ class MultiStepRolloutWorker(Worker):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             self.hf_model.load_state_dict(model_dict)
 
+        prepare_for_inference = getattr(self.hf_model, "prepare_for_inference", None)
+        if callable(prepare_for_inference):
+            prepare_for_inference(self.device)
+
         self.prefix_runtime = PrefixRolloutRuntime.build(
             self.cfg, self.hf_model, device=f"{self.torch_device_type}:{self.device}"
         )
@@ -622,6 +626,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.CNN_POLICY,
             SupportedModel.CFG_MODEL,
             SupportedModel.MOLMOACT2,
+            SupportedModel.COSMOS3,
             SupportedModel.PSI0,
             SupportedModel.LINGBOTVLAV2,
         ]:

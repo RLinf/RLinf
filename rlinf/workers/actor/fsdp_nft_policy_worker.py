@@ -21,6 +21,7 @@ from rlinf.algorithms.diffusion.nft import (
     build_nft_schedule,
     compute_nft_loss,
     get_nft_tau,
+    init_nft_ema_state,
     nft_requires_ema,
     resample_nft_inputs,
     update_nft_ema,
@@ -56,7 +57,7 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
         The parent implementation only moves FSDP model parameters and
         gradients to CPU.  However, ``rollout_model_state_dict`` is a full
         (un-sharded) copy of the model weights that stays on GPU if not
-        explicitly moved — consuming sizeof(bf16) x number of params of GPU memory
+        explicitly moved — including FP32 copies of mutable weights in GPU memory
         even during ``recv_rollout_trajectories`` when the model itself is
         offloaded.  By piggybacking on the parent's offload, the rollout
         state dict follows the same lifecycle: on CPU when the model is
@@ -96,14 +97,18 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
     def init_rollout_model(self) -> None:
         """Initialize rollout model state for off-policy support."""
         self.rollout_model_state_dict = {}
+        self._rollout_state_dtypes = {}
         self._cached_ref_model = None  # lazy-init, reused across iterations
         if nft_requires_ema(self.cfg.algorithm.get("nft_tau", 1.0)):
             src = self.get_model_state_dict(cpu_offload=False, full_state_dict=True)
-            for key, value in src.items():
-                if torch.is_tensor(value):
-                    self.rollout_model_state_dict[key] = value.clone()
-                else:
-                    self.rollout_model_state_dict[key] = value
+            self._rollout_state_dtypes = {
+                key: value.dtype for key, value in src.items() if torch.is_tensor(value)
+            }
+            self.rollout_model_state_dict = init_nft_ema_state(
+                src,
+                self.param_names_need_sync,
+                use_fp32=self.cfg.algorithm.get("nft_ema_fp32", True),
+            )
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         """Save actor training state and the replicated NFT EMA weights."""
@@ -157,11 +162,12 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
             if torch.is_tensor(target) and (
                 not torch.is_tensor(value)
                 or value.shape != target.shape
-                or value.dtype != target.dtype
+                or value.dtype not in (target.dtype, self._rollout_state_dtypes[key])
             ):
                 raise ValueError(
                     f"NFT EMA checkpoint tensor '{key}' expected shape "
-                    f"{tuple(target.shape)} and dtype {target.dtype}, found "
+                    f"{tuple(target.shape)} and dtype {target.dtype} or "
+                    f"{self._rollout_state_dtypes[key]}, found "
                     f"shape {getattr(value, 'shape', None)} and dtype "
                     f"{getattr(value, 'dtype', None)}."
                 )

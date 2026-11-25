@@ -33,6 +33,7 @@ from rlinf.envs.layout import EnvLayout, EnvSpec
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
 from rlinf.utils.placement import (
+    EmbodiedComponentPlacement,
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
     PlacementMode,
@@ -517,10 +518,13 @@ def validate_fp32_master_adamw_config(
     """Validate the FSDP backend supported by FP32 master AdamW."""
     strategy = str(strategy).lower()
     sharding_strategy = str(sharding_strategy).lower()
-    if strategy != "fsdp" or sharding_strategy != "no_shard":
+    if (strategy, sharding_strategy) not in (
+        ("fsdp", "no_shard"),
+        ("fsdp2", "full_shard"),
+    ):
         raise ValueError(
-            "use_fp32_master_params requires FSDP1 "
-            "with fsdp_config.strategy=fsdp and sharding_strategy=no_shard."
+            "use_fp32_master_params requires FSDP1 no_shard or FSDP2 full_shard; "
+            f"got strategy={strategy}, sharding_strategy={sharding_strategy}."
         )
 
 
@@ -1430,11 +1434,53 @@ def validate_refl_cfg(cfg: DictConfig) -> None:
         )
 
 
+def validate_embodied_sglang_weight_sync_cfg(cfg: DictConfig) -> None:
+    """Validate incremental updates to resident, unsharded serving parameters."""
+    syncer = cfg.get("weight_syncer")
+    if syncer is None:
+        return
+    if syncer.get("type") != "patch":
+        raise ValueError("Embodied SGLang weight_syncer must have type='patch'")
+    patch = syncer.get("patch", {})
+    init = patch.get("init_sync", {})
+    if not init.get("enabled", False) or init.get("prefixes") is not None:
+        raise ValueError(
+            "SGLang patch sync requires init_sync.enabled=true and prefixes=null "
+            "to establish the complete serving weight baseline"
+        )
+    server = cfg.rollout.sglang.get("server", {})
+    if server.get("quantization") is not None:
+        raise ValueError("SGLang patch sync requires unquantized serving weights")
+    if server.get("tp_size", 1) != 1:
+        raise ValueError(
+            "SGLang patch sync requires tp_size=1; omit weight_syncer to use "
+            "full weight synchronization with tensor parallelism"
+        )
+    if server.get("dit_cpu_offload", False) or server.get(
+        "dit_layerwise_offload", False
+    ):
+        raise ValueError("SGLang patch sync requires resident serving weights")
+
+
 def validate_embodied_cfg(cfg):
+    with open_dict(cfg.rollout):
+        cfg.rollout.rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+    if cfg.rollout.rollout_backend == "sglang":
+        with open_dict(cfg.rollout.sglang):
+            cfg.rollout.sglang.backend_type = cfg.rollout.sglang.get(
+                "backend_type", "server"
+            )
+        if cfg.rollout.sglang.backend_type != "server":
+            raise ValueError(
+                "Embodied SGLang requires backend_type='server', got "
+                f"{cfg.rollout.sglang.backend_type!r}"
+            )
     only_eval = (
         cfg.runner.get("only_eval", False)
         or cfg.runner.get("task_type") == "embodied_eval"
     )
+    if cfg.rollout.rollout_backend == "sglang" and not only_eval:
+        validate_embodied_sglang_weight_sync_cfg(cfg)
     if only_eval:
         validate_only_eval_rollout_model(cfg.rollout.model)
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
@@ -1810,7 +1856,7 @@ def validate_embodied_cfg(cfg):
         )
 
     # process num-envs
-    component_placement = HybridComponentPlacement(cfg, Cluster())
+    component_placement = EmbodiedComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
     if model_type == SupportedModel.PSI0:

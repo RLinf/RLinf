@@ -3507,7 +3507,7 @@ install_qwen3_vl_model() {
     install_flash_attn
 }
 
-# SGLang server venv for embodied eval (Cosmos3 via sglang[diffusion]).
+# SGLang server venv for embodied evaluation and action RL.
 install_sglang_model() {
     create_and_sync_venv
     install_common_embodied_deps

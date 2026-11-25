@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cosmos3 embodied sglang adapter for the ``/v1/actions/generations`` endpoint.
+"""Cosmos3 embodied SGLang adapter for action evaluation and RL sampling.
 
-Cosmos3's action policy is served synchronously over sglang's action endpoint:
+Cosmos3's action policy is served synchronously over SGLang's action endpoint:
 a ``msgpack`` ``POST /v1/actions/generations`` carrying N envs in one body
 returns the N action chunks in one response
 (``data[0].action.values`` shape ``[N, horizon, raw_action_dim]``). The worker
-owns the HTTP round-trip; this adapter only builds the request and parses the
-response.
+supplies the HTTP client and delegates request handling to this adapter.
+
+Training uses JSON ``POST /rollout/generate`` and a msgpack response carrying
+joint endpoints for NFT resampling.
 
 The server only batches prompts of equal token length, up to
 ``--batching-max-size``; :meth:`Cosmos3SGLangAdapter.request_groups` groups
@@ -50,11 +52,14 @@ from typing import Any, Literal
 import numpy as np
 import torch
 
+from rlinf.models.embodiment.sglang_adapter import SGLangEmbodiedAdapter
 
-class Cosmos3SGLangAdapter:
-    """Cosmos3 env-obs <-> action-chunks adapter for the ``/v1/actions/generations`` path."""
+
+class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
+    """Adapt Cosmos3 observations, actions, and denoising replay for SGLang."""
 
     action_path = "/v1/actions/generations"
+    supports_training = True
 
     def __init__(self, cfg: Any, rank: int):
         self.cfg_rollout = cfg.rollout
@@ -72,6 +77,8 @@ class Cosmos3SGLangAdapter:
         self._fps = int(c.get("fps", 20))
         # num_inference_steps=35 -> OOD prompt caption + different denoise.
         self._num_inference_steps = int(c.get("num_inference_steps", 30))
+        self._guidance = float(c.get("guidance", 1.5))
+        self._shift = float(c.get("shift", 10.0))
 
         # Cosmos3 LIBERO recipe: rot6d 10-D, frame_wise_relative, quantile_rot.
         # raw_action_dim is the MODEL width 10, distinct from the env's 7.
@@ -82,8 +89,8 @@ class Cosmos3SGLangAdapter:
             self._action_stats_path, self._action_normalization
         )
 
-        eval_env_cfg = cfg.env.get("eval", None) or {}
-        env_type = eval_env_cfg.get("env_type", None)
+        env_cfg = cfg.env.get("train", None) or cfg.env.get("eval", None) or {}
+        env_type = c.get("domain_name", None) or env_cfg.get("env_type", None)
         self._domain_name = str(env_type) if env_type else None
         self._domain_id = c.get("domain_id", None)
         self._num_action_chunks = int(self.model_cfg.num_action_chunks)
@@ -91,6 +98,103 @@ class Cosmos3SGLangAdapter:
         server_cfg = cfg.rollout.get("sglang", {}).get("server", {}) or {}
         self._max_request_batch = max(
             1, int(server_cfg.get("batching_max_size", 1) or 1)
+        )
+
+    def validate_training(self, cfg) -> None:
+        if str(self.model_cfg.model_type) != "cosmos3":
+            raise ValueError("SGLang embodied RL currently requires model_type=cosmos3")
+        if (
+            cfg.algorithm.get("adv_type") != "grpo"
+            or cfg.algorithm.get("loss_type") != "embodied_nft"
+        ):
+            raise ValueError(
+                "Cosmos3 SGLang training requires GRPO advantages with embodied_nft loss"
+            )
+        for key, expected in (
+            ("nft_xcur_source", "resample"),
+            ("nft_target_space", "x0"),
+        ):
+            if cfg.algorithm.get(key) != expected:
+                raise ValueError(
+                    f"Cosmos3 NFT requires {key}={expected!r}, "
+                    f"got {cfg.algorithm.get(key)!r}"
+                )
+        if (
+            cfg.algorithm.get("entropy_bonus", 0) != 0
+            or cfg.algorithm.get("kl_beta", 0) != 0
+        ):
+            raise ValueError("Cosmos3 action RL requires entropy_bonus=0 and kl_beta=0")
+        replay_keys = (
+            "model_type",
+            "model_variant",
+            "num_action_chunks",
+            "action_dim",
+            "raw_action_dim",
+            "action_mode",
+            "domain_name",
+            "domain_id",
+            "action_view_point",
+            "action_normalization",
+            "action_stats_path",
+            "size",
+            "resolution",
+            "num_frames",
+            "fps",
+            "action_fps",
+            "num_inference_steps",
+            "shift",
+            "noise_level",
+            "prompt_bytes",
+            "tokenizer_path",
+        )
+        for key in replay_keys:
+            if cfg.actor.model.get(key) != cfg.rollout.model.get(key):
+                raise ValueError(
+                    f"Cosmos3 actor and rollout must use the same model.{key}"
+                )
+        if self.model_cfg.get("ema_enabled", False):
+            raise ValueError("Cosmos3 SGLang RL requires ema_enabled=false")
+        if self.model_cfg.get("domain_id") is not None:
+            raise ValueError(
+                "Cosmos3 native replay selects the action head by domain_name; leave domain_id unset"
+            )
+        if float(self.model_cfg.action_fps) != float(self.model_cfg.fps):
+            raise ValueError("Cosmos3 native replay requires action_fps=fps")
+        if (
+            int(self.model_cfg.action_dim) != 7
+            or int(self.model_cfg.raw_action_dim) != 10
+        ):
+            raise ValueError(
+                "Cosmos3 SGLang RL currently requires LIBERO rot6d actions (raw=10, env=7)"
+            )
+        from sglang.multimodal_gen.runtime.pipelines_core.stages.model_specific_stages.cosmos3 import (
+            Cosmos3DenoisingStage,
+        )
+
+        if not getattr(Cosmos3DenoisingStage, "supports_action_rollout", False):
+            raise RuntimeError(
+                "Cosmos3 training requires a SGLang checkout with action-rollout support. "
+                "Install the modified SGLang 0.5.19 source in the serving environment."
+            )
+
+    @staticmethod
+    def map_weight_name(name: str) -> str | None:
+        from rlinf.models.embodiment.cosmos3.weight_mapping import actor_to_sglang_key
+
+        return actor_to_sglang_key(name)
+
+    def create_weight_target(self, load_weights, model_path: str):
+        from pathlib import Path
+
+        from rlinf.hybrid_engines.sglang.common.weight_target import (
+            SGLangWeightTarget,
+        )
+
+        return SGLangWeightTarget(
+            load_weights,
+            checkpoint_dir=Path(model_path) / "transformer",
+            target_module="transformer",
+            name_mapper=self.map_weight_name,
         )
 
     def request_groups(self, env_obs: dict) -> list[list[int]]:
@@ -178,9 +282,11 @@ class Cosmos3SGLangAdapter:
     def build_request(
         self, env_obs: dict, mode: Literal["train", "eval"] = "eval"
     ) -> tuple[dict, dict]:
-        """env_obs -> (ONE batched /v1/actions/generations payload, state)."""
+        """Build an action evaluation or training rollout request and local state."""
+        if mode == "train":
+            return self.build_rollout_request(env_obs)
         if mode != "eval":
-            raise NotImplementedError("Cosmos3 sglang adapter supports eval only.")
+            raise ValueError(f"Unsupported Cosmos3 rollout mode: {mode}")
         tasks = self._extract_tasks(env_obs)
         image_uris = self._encode_images(
             env_obs, len(tasks), self._target_w, self._target_h
@@ -203,6 +309,8 @@ class Cosmos3SGLangAdapter:
             "action_view_point": self._action_view_point,
             "fps": self._fps,
             "num_inference_steps": self._num_inference_steps,
+            "guidance_scale": self._guidance,
+            "flow_shift": self._shift,
             "seed": seed,
             "height": self._target_h,
             "width": self._target_w,
@@ -221,6 +329,141 @@ class Cosmos3SGLangAdapter:
             "runtime": {"response_format": "envelope", "output_format": "numpy"},
         }
         return payload, {}
+
+    def build_rollout_request(self, env_obs: dict) -> tuple[dict, dict]:
+        """Build a JSON /rollout/generate request and retain actor observations."""
+        from rlinf.models.embodiment.cosmos3.cosmos3_policy import encode_prompts
+
+        tasks = self._extract_tasks(env_obs)
+        n_cam = 2 if env_obs.get("wrist_images") is not None else 1
+        prompts = [self._augment_prompt(task, n_cam) for task in tasks]
+        if not prompts or len(set(prompts)) != 1:
+            raise ValueError("Cosmos3 RL requests must group identical prompts")
+        if (
+            self._action_mode != "policy"
+            or self._num_frames != self._num_action_chunks + 1
+        ):
+            raise ValueError("Cosmos3 RL requires policy mode and num_frames=horizon+1")
+        images = self.prepare_images(
+            env_obs, len(tasks), self._target_w, self._target_h
+        )
+        if images is None:
+            raise ValueError("Cosmos3 RL requires camera observations")
+        noise_level = float(self.model_cfg.get("noise_level", 0.5))
+        if noise_level <= 0:
+            raise ValueError("Cosmos3 RL noise_level must be positive")
+        seed = int(torch.randint(2**31 - 1, (1,)).item())
+        payload = {
+            "prompt": prompts[0],
+            "image_path": self._encode_images(
+                env_obs, len(tasks), self._target_w, self._target_h
+            ),
+            "seed": seed,
+            "height": self._target_h,
+            "width": self._target_w,
+            "num_frames": self._num_frames,
+            "fps": self._fps,
+            "num_inference_steps": self._num_inference_steps,
+            # Native actor replay uses the conditional velocity, without CFG.
+            "guidance_scale": 1.0,
+            "rollout": True,
+            "rollout_sde_type": "sde",
+            "rollout_noise_level": noise_level,
+            "rollout_debug_mode": False,
+            "rollout_return_dit_trajectory": True,
+            "rollout_return_step_indices": [self._num_inference_steps],
+            "extra_sampling_params": {
+                "action_mode": "policy",
+                "domain_name": self._domain_name,
+                "domain_id": self._domain_id,
+                "raw_action_dim": self._raw_action_dim,
+                "action_fps": self._action_fps,
+                "action_view_point": self._action_view_point,
+                "flow_shift": self._shift,
+                "use_duration_template": False,
+                "use_system_prompt": False,
+                "use_guardrails": False,
+            },
+        }
+        return payload, {
+            "images": torch.from_numpy(images.copy()),
+            "prompts": encode_prompts(
+                prompts, int(self.model_cfg.get("prompt_bytes", 512))
+            ),
+            "nft_noise_seed": seed,
+        }
+
+    def parse_rollout_response(
+        self, response: list[dict], state: dict
+    ) -> tuple[torch.Tensor, dict]:
+        """Restore NFT actions and joint endpoints in environment order."""
+        from safetensors.torch import load
+
+        from rlinf.models.embodiment.cosmos3.cosmos3_action_model import (
+            shifted_timesteps,
+        )
+
+        def tensor(value):
+            if not isinstance(value, dict) or not value.get("__tensor__"):
+                raise ValueError(
+                    "Cosmos3 rollout response is missing a serialized tensor"
+                )
+            return load(value["data"])["t"]
+
+        if not isinstance(response, list) or len(response) != len(state["images"]):
+            raise ValueError("Cosmos3 rollout response batch size differs from request")
+        actions = []
+        nft_actions, nft_endpoints = [], []
+        times = shifted_timesteps(
+            self._num_inference_steps, self._shift, torch.device("cpu")
+        )
+        for item in response:
+            trajectory = item.get("dit_trajectory")
+            if not trajectory:
+                raise ValueError(
+                    "SGLang did not return Cosmos3 action replay data; install the modified SGLang 0.5.19 source in the serving environment"
+                )
+            endpoint_times = tensor(trajectory["timesteps"]).float()
+            expected_times = times[-1:] * 1000.0
+            if endpoint_times.shape != expected_times.shape or not torch.allclose(
+                endpoint_times, expected_times
+            ):
+                raise ValueError("Cosmos3 server did not return the final NFT endpoint")
+            sigmas = tensor(trajectory["sigmas"]).float()
+            if sigmas.shape != times.shape or not torch.allclose(sigmas, times):
+                raise ValueError(
+                    "Cosmos3 server and actor use different flow schedules"
+                )
+            endpoint_state = tensor(trajectory["latents"]).float()
+            if endpoint_state.ndim != 2 or endpoint_state.shape[0] != 1:
+                raise ValueError(
+                    f"Invalid Cosmos3 NFT endpoint shape: {endpoint_state.shape}"
+                )
+            action = tensor(item["generated_output"]).float()
+            if tuple(action.shape) != (self._num_action_chunks, self._raw_action_dim):
+                raise ValueError(f"Invalid Cosmos3 action shape: {action.shape}")
+            if not all(torch.isfinite(t).all() for t in (endpoint_state, action)):
+                raise ValueError(
+                    "Cosmos3 rollout contains nonfinite actions or replay tensors"
+                )
+            actions.append(self._action_to_env(action.numpy()))
+            nft_actions.append(action)
+            nft_endpoints.append(endpoint_state[0])
+        endpoint = torch.stack(nft_endpoints)
+        generator = torch.Generator().manual_seed(state["nft_noise_seed"])
+        return torch.from_numpy(np.stack(actions)).float(), {
+            "prev_logprobs": torch.zeros(len(actions), self._num_action_chunks, 7),
+            "prev_values": torch.zeros(len(actions), 1),
+            "forward_inputs": {
+                "images": state["images"],
+                "prompts": state["prompts"],
+                "nft_x0": torch.stack(nft_actions),
+                "nft_joint_x0": endpoint,
+                "nft_joint_noise": torch.randn(endpoint.shape, generator=generator),
+                # Resampled linear flow matching has no SDE drift correction.
+                "nft_noise_level": torch.zeros(len(actions)),
+            },
+        }
 
     @staticmethod
     def _augment_prompt(task: str, n_cam: int) -> str:
@@ -286,12 +529,30 @@ class Cosmos3SGLangAdapter:
         env_obs: dict, n: int, target_w: int = 832, target_h: int = 480
     ) -> list[str | None]:
         """Encode each env's camera views as a PNG base64 data URI."""
+        images = Cosmos3SGLangAdapter.prepare_images(env_obs, n, target_w, target_h)
+        if images is None:
+            return [None] * n
+        from PIL import Image
+
+        uris: list[str | None] = [None] * n
+        for i, img in enumerate(images):
+            buf = io.BytesIO()
+            Image.fromarray(img).save(buf, format="PNG")
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            uris[i] = f"data:image/png;base64,{b64}"
+        return uris
+
+    @staticmethod
+    def prepare_images(
+        env_obs: dict, n: int, target_w: int, target_h: int
+    ) -> np.ndarray | None:
+        """Prepare camera pixels shared by local and SGLang inference."""
         main = env_obs.get("main_images")
         if main is None:
             main = env_obs.get("images")
         wrist = env_obs.get("wrist_images")
         if main is None:
-            return [None] * n
+            return None
 
         def _to_uint8_hwc(x: Any) -> np.ndarray:
             arr = torch.as_tensor(
@@ -314,18 +575,14 @@ class Cosmos3SGLangAdapter:
         else:
             concat = main_arr  # single-view fallback
 
-        uris: list[str | None] = [None] * n
-        from PIL import Image  # lazy: keep import cost off non-eval paths
-
-        for i in range(min(n, concat.shape[0])):
-            img = Cosmos3SGLangAdapter._resize_reflect_pad(
-                concat[i], target_w, target_h
-            )
-            buf = io.BytesIO()
-            Image.fromarray(img).save(buf, format="PNG")
-            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-            uris[i] = f"data:image/png;base64,{b64}"
-        return uris
+        if concat.shape[0] != n:
+            raise ValueError(f"Expected {n} Cosmos3 images, got {concat.shape[0]}")
+        return np.stack(
+            [
+                Cosmos3SGLangAdapter._resize_reflect_pad(concat[i], target_w, target_h)
+                for i in range(n)
+            ]
+        )
 
     @staticmethod
     def _resize_reflect_pad(
@@ -389,7 +646,7 @@ class Cosmos3SGLangAdapter:
         if not rows:
             raise ValueError("Cosmos3 returned an empty action array")
         arr = np.asarray(rows, dtype=np.float32)  # [T, D] (D may be padded > raw)
-        raw_norm = arr[..., : self._raw_action_dim]  # server output (normalized?)
+        raw_norm = arr[..., : self._raw_action_dim]
 
         arr = self._denormalize(raw_norm)  # [T, 10]
         trans = arr[:, :3]
@@ -397,38 +654,6 @@ class Cosmos3SGLangAdapter:
         gripper = arr[:, 9:10]
         axisangle = self._rot6d_to_axisangle(rot6d)  # [T, 3]
         env = np.concatenate([trans, axisangle, gripper], axis=-1)  # [T, 7]
-
-        if not getattr(self, "_dbg_printed", False):
-            self._dbg_printed = True
-            import sys
-
-            print(
-                f"[C3DBG] raw_norm shape={raw_norm.shape} "
-                f"min={raw_norm.min():.4f} max={raw_norm.max():.4f} "
-                f"mean={raw_norm.mean():.4f}",
-                file=sys.stderr,
-                flush=True,
-            )
-            print(
-                f"[C3DBG] denorm shape={arr.shape} min={arr.min():.4f} "
-                f"max={arr.max():.4f} | trans[min/max]={trans.min():.4f}/"
-                f"{trans.max():.4f} rot6d[min/max]={rot6d.min():.4f}/"
-                f"{rot6d.max():.4f} gripper[min/max]={gripper.min():.4f}/"
-                f"{gripper.max():.4f}",
-                file=sys.stderr,
-                flush=True,
-            )
-            print(
-                f"[C3DBG] axisangle min/max={axisangle.min():.4f}/"
-                f"{axisangle.max():.4f}",
-                file=sys.stderr,
-                flush=True,
-            )
-            print(
-                f"[C3DBG] env chunk0={env[0].tolist()}",
-                file=sys.stderr,
-                flush=True,
-            )
 
         if env.shape[0] < self._num_action_chunks:
             pad = np.repeat(env[-1:], self._num_action_chunks - env.shape[0], axis=0)

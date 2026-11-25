@@ -29,6 +29,7 @@ from rlinf.scheduler.cluster.config import NodeGroupEnvConfig
 from rlinf.scheduler.cluster.node import NodeGroupInfo, NodeInfo
 from rlinf.scheduler.hardware import Accelerator, HardwareInfo, HardwareResource
 from rlinf.utils.placement import (
+    EmbodiedComponentPlacement,
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
     PlacementMode,
@@ -355,6 +356,97 @@ class TestNodePlacementStrategy:
         )
         with pytest.raises(IndexError):
             strategy.get_placement(cluster)
+
+
+class TestEmbodiedComponentPlacement:
+    @pytest.mark.parametrize(
+        "dp,tp,sp,cfg",
+        [
+            (1, 1, 1, 1),
+            (1, 2, 1, 1),
+            (1, 1, 1, 2),
+            (2, 1, 1, 1),
+            (2, 2, 1, 1),
+            (2, 1, 2, 1),
+            (2, 1, 1, 2),
+        ],
+    )
+    def test_server_groups_and_weight_receivers(self, dp, tp, sp, cfg):
+        from rlinf.workers.rollout.utils import DisaggRankMapper
+
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=4)
+        config = OmegaConf.create(
+            {
+                "cluster": {"component_placement": {"actor,env,rollout": "0-7"}},
+                "runner": {"only_eval": cfg > 1},
+                "rollout": {
+                    "rollout_backend": "sglang",
+                    "sglang": {
+                        "server": {
+                            "dp_size": dp,
+                            "tp_size": tp,
+                            "sp_degree": sp,
+                            "cfg_parallel_degree": cfg,
+                        }
+                    },
+                },
+            }
+        )
+        placement = EmbodiedComponentPlacement(config, cluster)
+        width = dp * tp * sp * cfg
+        workers = placement.get_strategy("rollout").get_placement(cluster)
+        assert len(workers) == placement.get_world_size("rollout") == 8 // width
+        assert [p.visible_accelerators for p in workers] == [
+            [str(gpu) for gpu in range(start, start + width)]
+            for _ in range(2)
+            for start in range(0, 4, width)
+        ]
+        assert placement.get_world_size("actor") == placement.get_world_size("env") == 8
+        if cfg > 1:
+            return  # CFG parallelism is evaluation-only; no actor synchronization.
+        args = {
+            "actor_tp_size": 1,
+            "actor_pp_size": 1,
+            "actor_world_size": 4,
+            "rollout_tp_size": tp,
+            "rollout_sp_degree": sp,
+            "rollout_dp_size": dp,
+            "rollout_world_size": placement.rollout_world_size,
+        }
+        send = DisaggRankMapper.get_actor_rank_to_rollout_rank_map(**args)
+        receive = DisaggRankMapper.get_rollout_rank_to_actor_rank_map(**args)
+        targets = [target for group in send.values() for target in group]
+        assert len(targets) == len(set(targets)) == 8
+        assert set(targets) == {
+            (server, rank) for server in range(len(workers)) for rank in range(width)
+        }
+        assert all(
+            receive[target] == actor
+            for actor, group in send.items()
+            for target in group
+        )
+
+    @pytest.mark.parametrize(
+        "server",
+        [
+            {"dp_size": 0},
+            {"dp_size": -1},
+            {"dp_size": 3},
+            {"dp_size": 2, "num_gpus": 1},
+            {"dp_size": 2, "cfg_parallel_degree": 2},
+            {"dp_size": 2, "nnodes": 2},
+        ],
+    )
+    def test_invalid_server_layout_rejected(self, server):
+        config = OmegaConf.create(
+            {
+                "cluster": {"component_placement": {"actor,env,rollout": "0-3"}},
+                "runner": {"only_eval": False},
+                "rollout": {"rollout_backend": "sglang", "sglang": {"server": server}},
+            }
+        )
+        with pytest.raises(ValueError):
+            EmbodiedComponentPlacement(config, create_fake_cluster(1, 4))
 
 
 class TestHybridComponentPlacement:

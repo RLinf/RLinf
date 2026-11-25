@@ -19,7 +19,6 @@ from typing import Optional
 import torch
 from omegaconf import DictConfig
 from torch.distributed.tensor import DTensor
-from torch.multiprocessing.reductions import reduce_tensor
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
@@ -283,51 +282,18 @@ class FSDPActor(FSDPModelManager, Worker):
         rollout_state_dict = self.get_model_state_dict(
             cpu_offload=False, full_state_dict=False
         )
-        has_visual = any("visual." in k for k in rollout_state_dict.keys())
-        model_bucket_list = self.divide_model_to_bucket(rollout_state_dict, has_visual)
-        del rollout_state_dict
-        send_handles = []
-        buffer = {}
-        for bucket_idx, model_bucket in enumerate(model_bucket_list):
-            for k, v in model_bucket.items():
-                if isinstance(v, DTensor):
-                    v = v.full_tensor()
-                if rollout_dtype is not None:
-                    v = v.to(rollout_dtype)
-                if not self.is_pipeline:
-                    v = reduce_tensor(v)
-                buffer[k] = v
-            if bucket_idx == 0:
-                buffer["bucket_length"] = torch.tensor(
-                    [len(model_bucket_list)],
-                    device=torch.cuda.current_device(),
-                )
-
-            for send_handle in send_handles:
-                send_handle.wait()
-            send_handles = []
-
-            if not self.is_pipeline:
-                send_handle = self.send(
-                    buffer,
-                    self._rollout_group_name,
-                    self._weight_dst_rank_in_rollout,
-                    async_op=True,
-                )
-                send_handles.append(send_handle)
-            else:
-                for rank in self._weight_dst_rank_in_rollout:
-                    send_handle = self.send(
-                        buffer,
-                        self._rollout_group_name,
-                        rank,
-                        async_op=True,
-                    )
-                    send_handles.append(send_handle)
-            buffer = {}
-
-        for send_handle in send_handles:
-            send_handle.wait()
+        targets = (
+            self._weight_dst_rank_in_rollout
+            if self.is_pipeline
+            else [self._weight_dst_rank_in_rollout]
+        )
+        self.send_hf_weights(
+            rollout_state_dict,
+            self._rollout_group_name,
+            targets,
+            use_cuda_ipc=not self.is_pipeline,
+            dtype=rollout_dtype,
+        )
 
         if self.enable_offload:
             assert not self.is_weight_offloaded, (
