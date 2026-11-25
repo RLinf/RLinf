@@ -103,6 +103,13 @@ def compute_rollout_train_kl(
 
 
 class FSDPActor(FSDPModelManager, Worker):
+    """FSDP-backed actor worker for reasoning and agentic RL training.
+
+    Owns the sharded policy model, optimizer, and optional CPU reference copy.
+    Receives rollout batches over channels, computes logprobs, advantages, and
+    policy updates, and syncs updated weights to rollout workers.
+    """
+
     def __init__(
         self,
         cfg: DictConfig,

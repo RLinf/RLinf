@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
+import os
 from typing import Callable, Optional
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, open_dict
 
 from rlinf.config import (
     DIFFUSION_MODELS,
@@ -25,9 +27,81 @@ from rlinf.config import (
     torch_dtype_from_precision,
 )
 from rlinf.scheduler import Worker
+from rlinf.utils.logging import get_logger
 
 ModelBuilder = Callable[[DictConfig, Optional[object]], object]
 _MODEL_REGISTRY: dict[str, ModelBuilder] = {}
+
+_LOCAL_FILE_SUFFIXES = (
+    ".pt",
+    ".pth",
+    ".ckpt",
+    ".safetensors",
+    ".bin",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".onnx",
+)
+
+
+def is_hf_repo_id(path: str) -> bool:
+    """Return whether ``path`` is a Hugging Face Hub ``owner/repo`` ID.
+
+    Validates syntax with ``huggingface_hub.utils.validate_repo_id`` while
+    excluding existing local paths, single-segment names, and checkpoint file
+    paths.
+
+    Args:
+        path: Candidate local path or Hugging Face repository identifier.
+
+    Returns:
+        ``True`` if ``path`` should be resolved from the Hugging Face Hub.
+    """
+    if not path or "/" not in path or os.path.exists(os.path.expanduser(path)):
+        return False
+    if path.lower().endswith(_LOCAL_FILE_SUFFIXES):
+        return False
+
+    from huggingface_hub.utils import HFValidationError, validate_repo_id
+
+    try:
+        validate_repo_id(path)
+    except HFValidationError:
+        return False
+    return True
+
+
+def resolve_model_path(path: str) -> str:
+    """Resolve a local path or Hugging Face Hub repo ID to a local directory.
+
+    Local paths are returned unchanged. A Hugging Face Hub ``owner/repo`` ID
+    that does not exist on disk is fetched into the local Hugging Face cache
+    via ``huggingface_hub.snapshot_download``.
+
+    Args:
+        path: Local checkpoint path or Hugging Face ``owner/repo`` identifier.
+
+    Returns:
+        Local path ready for model, adapter, and asset loaders.
+    """
+    if not is_hf_repo_id(path):
+        return path
+
+    from huggingface_hub import snapshot_download
+
+    get_logger().info(
+        f"Resolving Hugging Face model repo '{path}' via local cache / snapshot_download."
+    )
+    try:
+        return snapshot_download(repo_id=path)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to resolve Hugging Face repo '{path}': expected a reachable "
+            "Hugging Face repo ID or an existing local checkpoint path. "
+            "Check network access, set HF_ENDPOINT (for mirrors) or HF_TOKEN "
+            "(for gated repos), or pass a local directory."
+        ) from exc
 
 
 def register_model(
@@ -449,20 +523,31 @@ def get_model(cfg: DictConfig):
     if model_builder is None:
         return None
 
-    torch_dtype = torch_dtype_from_precision(cfg.precision)
-    model = model_builder(cfg, torch_dtype)
+    model_cfg = cfg
+    raw_model_path = cfg.get("model_path", None)
+    if isinstance(raw_model_path, str):
+        resolved_model_path = resolve_model_path(raw_model_path)
+        if resolved_model_path != raw_model_path:
+            model_cfg = copy.deepcopy(cfg)
+            with open_dict(model_cfg):
+                model_cfg.model_path = resolved_model_path
+
+    torch_dtype = torch_dtype_from_precision(model_cfg.precision)
+    model = model_builder(model_cfg, torch_dtype)
 
     if (
         Worker.torch_platform is not None
         and Worker.torch_platform.is_available()
-        and cfg.get("load_to_device", True)
+        and model_cfg.get("load_to_device", True)
     ):
         model = model.to(Worker.torch_device_type)
 
-    for adapter in cfg.get("merged_loras", None) or []:
-        model = merge_lora(model, adapter.path, adapter.get("scale", 1.0))
+    for adapter in model_cfg.get("merged_loras", None) or []:
+        model = merge_lora(
+            model, resolve_model_path(adapter.path), adapter.get("scale", 1.0)
+        )
 
-    if cfg.is_lora:
+    if model_cfg.is_lora:
         from peft import (
             LoraConfig,
             PeftModel,
@@ -470,8 +555,8 @@ def get_model(cfg: DictConfig):
             inject_adapter_in_model,
         )
 
-        if not hasattr(cfg, "lora_path") or cfg.lora_path is None:
-            target_scope = cfg.get("lora_target_scope")
+        if not hasattr(model_cfg, "lora_path") or model_cfg.lora_path is None:
+            target_scope = model_cfg.get("lora_target_scope")
             if target_scope is None:
                 target_modules = [
                     "proj",
@@ -496,8 +581,8 @@ def get_model(cfg: DictConfig):
             else:
                 raise ValueError(f"Unsupported lora_target_scope: {target_scope!r}")
             lora_config = LoraConfig(
-                r=cfg.lora_rank,
-                lora_alpha=cfg.lora_rank,
+                r=model_cfg.lora_rank,
+                lora_alpha=model_cfg.lora_rank,
                 lora_dropout=0.0,
                 target_modules=target_modules,
                 init_lora_weights="gaussian",
@@ -515,7 +600,8 @@ def get_model(cfg: DictConfig):
             else:
                 model = get_peft_model(model, lora_config)
         else:
-            model = PeftModel.from_pretrained(model, cfg.lora_path, is_trainable=True)
+            lora_path = resolve_model_path(model_cfg.lora_path)
+            model = PeftModel.from_pretrained(model, lora_path, is_trainable=True)
 
         if hasattr(model, "value_head"):
             for param in model.value_head.parameters():

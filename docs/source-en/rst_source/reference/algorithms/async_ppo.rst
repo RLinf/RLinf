@@ -18,7 +18,7 @@ Async PPO is most useful when system throughput is the main bottleneck. If your 
 2. Scope
 --------
 
-In the current RLinf implementation, Async PPO is only available for embodied tasks. The relevant entrypoints and core components are:
+In RLinf, Async PPO is available for embodied tasks. The relevant entrypoints and core components are:
 
 - Training entry: ``examples/embodiment/train_async.py``
 - Runner: ``rlinf/runners/async_ppo_embodied_runner.py``
@@ -26,14 +26,14 @@ In the current RLinf implementation, Async PPO is only available for embodied ta
 - Rollout worker: ``rlinf/workers/rollout/hf/async_huggingface_worker.py``
 - Environment worker: ``rlinf/workers/env/async_env_worker.py``
 
-The current implementation also has several explicit constraints:
+This implementation has several explicit constraints:
 
 - It only supports embodied tasks, not reasoning or agent tasks.
 - The Async PPO path requires ``algorithm.loss_type: decoupled_actor_critic``.
 - The actor model must include a value head, so ``actor.model.add_value_head: True`` is required.
 - ``AsyncEnvWorker`` and ``AsyncMultiStepRolloutWorker`` do not support offload.
 - When ``rollout.recompute_logprobs=True``, actor weight offload is not supported.
-- ``AsyncPPOEmbodiedRunner`` does not currently implement validation; if ``runner.val_check_interval > 0`` is set, RLinf warns and skips validation.
+- ``AsyncPPOEmbodiedRunner`` does not implement validation; if ``runner.val_check_interval > 0`` is set, RLinf warns and skips validation.
 
 
 3. Why Async PPO
@@ -95,7 +95,7 @@ Component responsibilities are:
 - ``AsyncPPOEmbodiedRunner`` controls training cadence, weight synchronization, and metrics aggregation,
 - ``AsyncPPOEmbodiedFSDPActor`` computes advantages, computes proximal logprobs, and performs PPO updates.
 
-The important idea is not just "async function calls". The important idea is that env and rollout are long-running services rather than per-step jobs.
+The important idea is not "async function calls"; env and rollout are long-running services rather than per-step jobs.
 
 
 5. Execution Flow
@@ -136,7 +136,7 @@ During rollout generation, RLinf writes the current rollout policy version into 
 During training, the actor also tracks its own current version. This means each sample is associated with:
 
 - a behavior policy version, which actually generated the sample,
-- a proximal policy version, which acts as the PPO anchor for the current update,
+- a proximal policy version, which is the PPO anchor for the current update,
 - a current training version, which is the policy being optimized now.
 
 This makes the age of the data explicit rather than implicit.
@@ -160,7 +160,7 @@ When the number of valid versioned trajectories accumulated by each actor rank r
 To understand Async PPO in RLinf, it is helpful to distinguish three policy views:
 
 - behavior policy :math:`\pi_b`, which generated the sample,
-- proximal policy :math:`\pi_p`, which acts as the PPO anchor for the current update,
+- proximal policy :math:`\pi_p`, which is the PPO anchor for the current update,
 - current policy :math:`\pi_\theta`, which is optimized by backpropagation.
 
 In synchronous PPO, these are often close enough that the algorithm can be explained using only "old policy" and "new policy". In the asynchronous setting, the behavior policy may lag behind significantly, so RLinf models this difference explicitly.
@@ -272,7 +272,7 @@ The following is a minimal Async PPO configuration skeleton aligned with ``examp
      gamma: 0.99
      gae_lambda: 0.95
      entropy_bonus: 0.0
-     rollout_store_size_per_rank: 2 
+     rollout_store_size_per_rank: 2
      on_policy_min_ratio: 0.1
 
    env:
@@ -323,9 +323,9 @@ If these conditions are violated, training will fail with assertions.
 
 
 10. Launching Async PPO
---------------------------
+-----------------------
 
-The recommended launch path is:
+Launch Async PPO with ``run_async.sh``:
 
 .. code-block:: bash
 
@@ -333,23 +333,43 @@ The recommended launch path is:
 
 Before running:
 
-- in multi-node mode, Ray must already be started and the training script should run only on the head node,
-- ``run_async.sh`` sets ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl``,
+- In multi-node mode, start Ray first and run the training script only on the head node.
+- ``run_async.sh`` sets ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl``.
 - ``ROBOT_PLATFORM`` must match the actual robot platform, otherwise action dimensions and normalization may not align.
 
-All Async PPO configs under ``examples/embodiment/config/`` have been tested and can be used directly for embodied tasks.
-Below are the model download links used by each yaml:
+Tested Async PPO configs under ``examples/embodiment/config/`` and their checkpoints:
 
-- ``libero_goal_async_ppo_gr00t.yaml``: https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal
-- ``libero_object_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
-- ``libero_spatial_async_ppo_openpi.yaml``: https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
-- ``libero_spatial_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
-- ``maniskill_async_ppo_openpi.yaml``: https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT
-- ``maniskill_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
-- ``maniskill_async_ppo_openvla.yaml``: https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
-- ``maniskill_async_ppo_openvlaoft.yaml``: https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-trajall
+.. list-table::
+   :header-rows: 1
+   :widths: 22 36 42
 
-The LoRA HF repository used by ``maniskill_async_ppo_openvlaoft.yaml`` is: https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+   * - Task / Model
+     - Config
+     - Checkpoint
+   * - LIBERO-Goal / GR00T
+     - ``libero_goal_async_ppo_gr00t.yaml``
+     - `RLinf/RLinf-Gr00t-SFT-Goal <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal>`__
+   * - LIBERO-Object / π₀.₅
+     - ``libero_object_async_ppo_openpi_pi05.yaml``
+     - `RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
+   * - LIBERO-Spatial / π₀
+     - ``libero_spatial_async_ppo_openpi.yaml``
+     - `RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT>`__
+   * - LIBERO-Spatial / π₀.₅
+     - ``libero_spatial_async_ppo_openpi_pi05.yaml``
+     - `RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
+   * - ManiSkill / π₀
+     - ``maniskill_async_ppo_openpi.yaml``
+     - `RLinf/RLinf-Pi0-ManiSkill-25Main-SFT <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT>`__
+   * - ManiSkill / π₀.₅
+     - ``maniskill_async_ppo_openpi_pi05.yaml``
+     - `RLinf/RLinf-Pi05-ManiSkill-25Main-SFT <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT>`__
+   * - ManiSkill / OpenVLA
+     - ``maniskill_async_ppo_openvla.yaml``
+     - `gen-robot/openvla-7b-rlvla-warmup <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`__
+   * - ManiSkill / OpenVLA-OFT
+     - ``maniskill_async_ppo_openvlaoft.yaml``
+     - `Haozhan72/Openvla-oft-SFT-libero10-trajall <https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-trajall>`__ (LoRA: `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`__)
 
 
 11. Monitoring
@@ -427,7 +447,7 @@ Recommended order of changes:
 13. Async PPO vs. Synchronous PPO
 ---------------------------------
 
-The main difference can be summarized simply:
+In short:
 
 - synchronous PPO prioritizes sample freshness,
 - Async PPO prioritizes system throughput while explicitly controlling stale-sample impact.

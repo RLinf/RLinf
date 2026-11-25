@@ -51,6 +51,14 @@ from rlinf.utils.placement import HybridComponentPlacement
 
 
 class EnvWorker(Worker):
+    """Distributed environment worker for embodied training and evaluation.
+
+    Owns one or more simulator or real-world environment instances per rank.
+    Steps environments with actions from rollout workers, applies optional
+    reward models or wrappers, and streams observations and transitions over
+    channels.
+    """
+
     # Class-level default so the observation send path is safe even when the
     # instance is built without running ``__init__`` (e.g. ``object.__new__`` in
     # unit tests). ``None`` means "use the scheduler's default split"; when

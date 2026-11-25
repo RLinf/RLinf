@@ -341,7 +341,7 @@ The command uses the driver's action width; the returned ``positions`` array
 uses its state width. ``disconnect()`` releases both parts, including when a
 command fails. To use this variant in a Franka task, import its module before
 environment construction and set the hardware entry's ``end_effector_type`` to
-``gentle_tool`` and ``end_effector_config.port`` to its serial port. The task's
+``"gentle_tool"`` and ``end_effector_config.port`` to its serial port. The task's
 hand reset and target arrays must match the driver's dimensions. Placing the
 part remotely keeps the same state and command interface.
 

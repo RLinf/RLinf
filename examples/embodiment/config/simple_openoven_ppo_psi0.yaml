@@ -91,7 +91,7 @@ rollout:
   enable_offload: false
   pipeline_stage_num: 1
   model:
-    model_path: "/path/to/Psi0-SIMPLE-OpenOven"
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 
 actor:
@@ -102,7 +102,7 @@ actor:
   seed: 42
   enable_offload: true
   model:
-    model_path: ${rollout.model.model_path}
+    model_path: "/path/to/Psi0-SIMPLE-OpenOven"
     precision: fp32
     add_value_head: true
     psi0:

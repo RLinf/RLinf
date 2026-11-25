@@ -1,5 +1,5 @@
-RL on OpenVLA-OFT
-=================
+OpenVLA-OFT RL
+==============
 
 .. figure:: https://openvla-oft.github.io/static/images/libero_task_performance_results.png
    :align: center
@@ -7,10 +7,10 @@ RL on OpenVLA-OFT
 
    LIBERO results from the original OFT fine-tuning study (image: `OpenVLA-OFT project <https://openvla-oft.github.io/>`__).
 
-Fine-tune OpenVLA-OFT with reinforcement learning in RLinf. This recipe starts
-with LIBERO and GRPO on NVIDIA, then shows how to install and launch the same
-model on LIBERO or ManiSkill with AMD ROCm, Huawei Ascend CANN, and Moore
-Threads MUSA. For the original OpenVLA model, see :doc:`maniskill`.
+Fine-tune OpenVLA-OFT with reinforcement learning in RLinf. This recipe trains
+OpenVLA-OFT on LIBERO with GRPO on NVIDIA CUDA, and covers LIBERO and ManiSkill
+on AMD ROCm, Huawei Ascend CANN, and Moore Threads MUSA. For the original
+OpenVLA model, see :doc:`maniskill`.
 
 Overview
 --------
@@ -102,206 +102,225 @@ The LIBERO recipe uses images and a task prompt to produce action chunks.
    * - Prompt
      - Natural-language instruction for the current task.
 
-Installation
-------------
+.. _openvla-oft-hardware:
 
-Use the NVIDIA setup below for the default recipe. For AMD, Ascend, or MUSA, use
-:ref:`the backend setup <openvla-oft-hardware>` before downloading the model.
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-Start the NVIDIA container from the repository root:
+NVIDIA CUDA supports all environments listed in the Overview. AMD ROCm, Huawei Ascend CANN, and Moore Threads MUSA support OpenVLA-OFT on LIBERO and ManiSkill through the shared platform installer and scheduler device API; other environments have separate hardware requirements.
 
-.. code-block:: bash
+.. tab-set::
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g --network host \
-      -v "$PWD":/workspace/RLinf -w /workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero bash
-   source switch_env openvla-oft
+   .. tab-item:: NVIDIA CUDA
+      :sync: cuda
 
-Alternatively, install only the OpenVLA-OFT and LIBERO dependencies locally:
+      **1. Install**
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openvla-oft --env libero
-   source .venv/bin/activate
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env libero && source .venv/bin/activate
 
-Download the Model
-------------------
+      **2. Download**
 
-Download the LIBERO-Goal SFT checkpoint used by this config:
+      Download the LIBERO-Goal SFT checkpoint:
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 \
-      --local-dir checkpoints/Openvla-oft-SFT-libero-goal-traj1
+         hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir ./Openvla-oft-SFT-libero-goal-traj1
 
-.. include:: _model_path.rst
+      .. include:: _model_path.rst
 
-Set these paths in ``examples/embodiment/config/libero_goal_grpo_openvlaoft.yaml``.
-Keep ``actor.model.unnorm_key: libero_goal_no_noops`` to match the checkpoint's
-action statistics. Other suites require their matching checkpoints and keys;
-see :doc:`libero`.
+      Set the path in ``examples/embodiment/config/libero_goal_grpo_openvlaoft.yaml``. Keep ``actor.model.unnorm_key: libero_goal_no_noops`` to match the checkpoint's action statistics. Other suites require their matching checkpoints and keys; see :doc:`libero`.
 
-Run It
-------
+      **3. Launch**
 
-With the model environment active and paths configured, launch LIBERO-Goal:
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
 
-   ROBOT_PLATFORM=LIBERO bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
+      The script loads the named YAML, creates actor, rollout, and environment workers according to ``cluster.component_placement``, and starts GRPO. Adjust placement and batch sizes for your devices; see :doc:`../../concepts/placement` and :doc:`../../resources/faq`.
 
-The script loads the named YAML, creates actor, rollout, and environment workers
-according to ``cluster.component_placement``, and starts GRPO. Adjust placement
-and batch sizes for your devices; see :doc:`../../concepts/placement` and
-:doc:`../../resources/faq`.
+   .. tab-item:: AMD ROCm
+      :sync: rocm
 
-.. _openvla-oft-hardware:
+      **1. Install (LIBERO)**
 
-Run on Different Hardware Backends
-----------------------------------
+      Start a ROCm container or install natively on a host with ROCm available.
 
-NVIDIA uses the installation and launch above. AMD ROCm, Huawei Ascend CANN,
-and Moore Threads MUSA support OpenVLA-OFT on LIBERO and ManiSkill through the
-shared platform installer, scheduler device API, and model path. The other
-environments in the Overview have separate hardware requirements.
+      .. include:: _amd_libero.rst
 
-.. _openvla-oft-amd:
+      The published image already contains this model environment:
 
-AMD ROCm
-~~~~~~~~
+      .. code-block:: bash
 
-Start a ROCm container or install on a host with ROCm available.
+         source switch_env openvla-oft
 
-.. include:: _amd_libero.rst
+      For a native installation on a host with ROCm installed (omit ``--rocm`` to detect the installed version):
 
-The published image already contains this model environment:
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env libero && source .venv/bin/activate
 
-   source switch_env openvla-oft
+      **2. Download**
 
-For a native installation on a host with ROCm already installed:
+      .. code-block:: bash
 
-.. code-block:: bash
+         hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir ./Openvla-oft-SFT-libero-goal-traj1
 
-   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env libero
-   source .venv/bin/activate
+      .. include:: _model_path.rst
 
-Omit ``--rocm`` to detect the installed version, or add ``--use-mirror`` for
-downloads from mainland China.
+      Set the path in ``examples/embodiment/config/libero_goal_grpo_openvlaoft.yaml`` and keep ``actor.model.unnorm_key: libero_goal_no_noops``.
 
-.. _openvla-oft-ascend:
+      **3. Launch LIBERO**
 
-Huawei Ascend CANN
-~~~~~~~~~~~~~~~~~~
+      Enable software rendering (or ``egl`` on supported Radeon GPUs) in the active shell:
 
-Choose a container or install on a host with CANN and its NPU driver available.
+      .. include:: _libero_osmesa.rst
 
-.. include:: _ascend_libero.rst
+      .. code-block:: bash
 
-Inside the published RLinf container, activate the model environment:
+         bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
 
-.. code-block:: bash
+      **ManiSkill on AMD ROCm**
 
-   source switch_env openvla-oft
+      Install the combined ManiSkill and LIBERO environment:
 
-For a native installation, install CPU PyTorch and its matching ``torch-npu``
-through the Ascend option:
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-   bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero
-   source .venv/bin/activate
+      Configure CPU simulation:
 
-Add ``--use-mirror`` for downloads from mainland China. The installer skips the
-CUDA flash-attention build on Ascend.
+      .. include:: _maniskill_non_cuda.rst
 
-.. include:: _ascend_torch.rst
+      Download ``RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main`` and its LoRA adapter, then set ``model_path`` and ``lora_path`` in ``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml``. Adjust placement and batch sizes for your devices, then launch PPO:
 
-.. _openvla-oft-musa:
+      .. code-block:: bash
 
-Moore Threads MUSA
-~~~~~~~~~~~~~~~~~~
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft
 
-Run inside a Moore Threads container. The installer reuses the image's MUSA
-builds of PyTorch and ``torch_musa`` instead of replacing them.
+   .. tab-item:: Huawei Ascend CANN
+      :sync: ascend
 
-.. include:: _musa_libero.rst
+      **1. Install (LIBERO)**
 
-Inside the container, install OpenVLA-OFT with the MUSA platform selected:
+      Start the Ascend container or install natively on a host with CANN and its NPU driver available.
 
-.. code-block:: bash
+      .. include:: _ascend_libero.rst
 
-   bash requirements/install.sh --platform musa embodied --model openvla-oft --env libero
-   source .venv/bin/activate
+      Inside the published RLinf container, activate the model environment:
 
-Add ``--use-mirror`` for downloads from mainland China. RLinf detects the MUSA
-devices and assigns them through the same placement configuration used on the
-other GPU backends.
+      .. code-block:: bash
 
-.. _openvla-oft-backend-launch:
+         source switch_env openvla-oft
 
-Launch LIBERO on AMD, Ascend, or MUSA
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      For a native installation, install CPU PyTorch and its matching ``torch-npu`` (skips the CUDA flash-attention build):
 
-After completing one of the backend setups, download the LIBERO-Goal checkpoint
-and set the model paths as described above. Enable software rendering in that
-same shell.
+      .. code-block:: bash
 
-.. include:: _libero_osmesa.rst
+         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero && source .venv/bin/activate
 
-Start the configured GRPO run:
+      .. include:: _ascend_torch.rst
 
-.. code-block:: bash
+      **2. Download**
 
-   bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
+      .. code-block:: bash
 
-ManiSkill on AMD, Ascend, or MUSA
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+         hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir ./Openvla-oft-SFT-libero-goal-traj1
 
-On AMD or Ascend, install the combined ManiSkill and LIBERO environment for
-OpenVLA-OFT. Use the command for the selected model accelerator:
+      .. include:: _model_path.rst
 
-.. code-block:: bash
+      Set the path in ``examples/embodiment/config/libero_goal_grpo_openvlaoft.yaml`` and keep ``actor.model.unnorm_key: libero_goal_no_noops``.
 
-   # AMD ROCm
-   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openvla-oft --env maniskill_libero
+      **3. Launch LIBERO**
 
-   # Huawei Ascend CANN
-   bash requirements/install.sh --platform ascend embodied --model openvla-oft --env maniskill_libero
+      Enable software rendering in the active shell:
 
-   source .venv/bin/activate
+      .. include:: _libero_osmesa.rst
 
-For MUSA, keep the vendor simulator packages and add the OpenVLA-OFT model
-environment inside the vendor image:
+      .. code-block:: bash
 
-.. include:: _musa_maniskill.rst
+         bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
 
-.. code-block:: bash
+      **ManiSkill on Huawei Ascend CANN**
 
-   bash requirements/install.sh --platform musa embodied --venv openvla-oft --model openvla-oft --env libero
-   source openvla-oft/bin/activate
+      Install the combined ManiSkill and LIBERO environment:
 
-Configure CPU simulation for all three non-CUDA backends:
+      .. code-block:: bash
 
-.. include:: _maniskill_non_cuda.rst
+         bash requirements/install.sh --platform ascend embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-Download ``RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main`` and its LoRA adapter,
-then set ``model_path`` and ``lora_path`` in
-``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml``. Launch the PPO
-recipe after adjusting placement and batch sizes for the available devices:
+      Configure CPU simulation:
 
-.. code-block:: bash
+      .. include:: _maniskill_non_cuda.rst
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft
+      Download ``RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main`` and its LoRA adapter, then set ``model_path`` and ``lora_path`` in ``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml``. Adjust placement and batch sizes for your devices, then launch PPO:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft
+
+   .. tab-item:: Moore Threads MUSA
+      :sync: musa
+
+      **1. Install (LIBERO)**
+
+      Run inside a Moore Threads container. The installer reuses the image's MUSA builds of PyTorch and ``torch_musa`` instead of replacing them.
+
+      .. include:: _musa_libero.rst
+
+      Inside the container, install OpenVLA-OFT with the MUSA platform selected:
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform musa embodied --model openvla-oft --env libero && source .venv/bin/activate
+
+      RLinf detects MUSA devices and assigns them through the same placement configuration used on other GPU backends.
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir ./Openvla-oft-SFT-libero-goal-traj1
+
+      .. include:: _model_path.rst
+
+      Set the path in ``examples/embodiment/config/libero_goal_grpo_openvlaoft.yaml`` and keep ``actor.model.unnorm_key: libero_goal_no_noops``.
+
+      **3. Launch LIBERO**
+
+      Enable software rendering in the active shell:
+
+      .. include:: _libero_osmesa.rst
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_goal_grpo_openvlaoft
+
+      **ManiSkill on Moore Threads MUSA**
+
+      Keep the vendor simulator packages and add the OpenVLA-OFT model environment inside the vendor image:
+
+      .. include:: _musa_maniskill.rst
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform musa embodied --venv openvla-oft --model openvla-oft --env libero && source openvla-oft/bin/activate
+
+      Configure CPU simulation:
+
+      .. include:: _maniskill_non_cuda.rst
+
+      Download ``RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main`` and its LoRA adapter, then set ``model_path`` and ``lora_path`` in ``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml``. Adjust placement and batch sizes for your devices, then launch PPO:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft
 
 Visualization and Results
 -------------------------
 
-Watch ``env/success_once`` in the training logs. Use
-:doc:`Training metrics <../../reference/metrics>` for metric definitions and
-:doc:`LIBERO results <libero>` for the published training results. Standalone
-evaluation follows :doc:`the LIBERO evaluation guide <../../evaluations/guides/libero>`.
+Watch ``env/success_once`` in TensorBoard (``tensorboard --logdir ./logs``); set ``env.eval.video_cfg.save_video=True`` to record videos. See :doc:`Training metrics <../../reference/metrics>` for metric definitions, :doc:`LIBERO results <libero>` for published training results, and :doc:`the LIBERO evaluation guide <../../evaluations/guides/libero>` for standalone evaluation.

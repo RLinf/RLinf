@@ -394,7 +394,8 @@ recompute            20 blocks
 .. step throughput         19850.13        total tokens/s
 .. ======================= =============== ====================
 
-.. **Note**: RLinf results below does not count ref logprob time. 
+.. note::
+   RLinf results below do not count ref logprob time.
 
 
 The following benchmark results compare **RLinf** with **VeRL**.  

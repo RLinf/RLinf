@@ -61,6 +61,13 @@ from rlinf.utils.placement import HybridComponentPlacement
 
 
 class MultiStepRolloutWorker(Worker):
+    """Hugging Face rollout worker for multi-step embodied interaction.
+
+    Owns the inference copy of an embodied policy and exchanges observations
+    and action chunks with env workers over pipelined channels. Synchronizes
+    updated weights from the actor and emits trajectory segments for training.
+    """
+
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
 
