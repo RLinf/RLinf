@@ -23,6 +23,8 @@ from uuid import uuid4
 import numpy as np
 import torch
 
+from rlinf.utils.logging import get_logger
+
 
 class VLNCEServerEnv:
     """One RLinf chunk is one server turn, containing up to three actions."""
@@ -158,8 +160,13 @@ class VLNCEServerEnv:
                         )
                     self._append_observation(index, observation)
         except Exception:
-            self.client.close_batch(self._ids)
-            self._created = False
+            if self._created:
+                try:
+                    self.close()
+                except Exception:
+                    get_logger().exception(
+                        "Failed to close VLN-CE environments after reset failure"
+                    )
             raise
         self._elapsed_steps.fill(0)
         self._episode_session_ids = [str(uuid4()) for _ in range(self.num_envs)]
