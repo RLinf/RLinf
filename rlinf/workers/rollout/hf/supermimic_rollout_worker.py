@@ -18,6 +18,15 @@ from __future__ import annotations
 
 import torch
 
+from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache, run_compiled
+from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM
+from rlinf.models.embodiment.supermimic.supermimic_policy import (
+    FlatDictBuffer,
+    FlatTensorPacker,
+    obs_packet_schema,
+    sync_param_names,
+    use_direct_weight_sync,
+)
 from rlinf.scheduler import Worker
 from rlinf.utils.precision import torch_dtype_from_precision
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
@@ -38,6 +47,43 @@ class SuperMimicRolloutWorker(MultiStepRolloutWorker):
         if amp is not None and amp.enabled:
             dtype = torch_dtype_from_precision(amp.precision)
         self.hf_model.set_autocast(dtype)
+        self._compile_cache = CompileCache(
+            enabled=bool(self.hf_model._compile_cache.enabled), dynamic=False
+        )
+        self._use_direct_weight_sync = not self.only_eval and use_direct_weight_sync(
+            self.cfg, self.placement.get_world_size("actor"), self._world_size
+        )
+        self._sync_packer = (
+            FlatTensorPacker(self.hf_model, sync_param_names(self.hf_model))
+            if self._use_direct_weight_sync
+            else None
+        )
+        if self.enable_train:
+            model_device = next(self.hf_model.parameters()).device
+            self._obs_buf = FlatDictBuffer(
+                obs_packet_schema(
+                    self.per_node_train_batch_size,
+                    self.hf_model.representation.encoding_dim,
+                ),
+                model_device,
+            )
+            self._action_buf = torch.empty(
+                (self.per_node_train_batch_size, ACTION_DIM),
+                dtype=torch.float32,
+                device=model_device,
+            )
+
+    @Worker.timer("sync_model_from_actor")
+    async def sync_model_from_actor(self):
+        if not self._use_direct_weight_sync:
+            return await super().sync_model_from_actor()
+        self.recv_tensor(
+            self._sync_packer.buffer,
+            src_group_name=self.actor_group_name,
+            src_rank=self._rank,
+        )
+        self._sync_packer.unpack()
+        self.version += 1
 
     @Worker.timer("serve")
     def serve(self, num_steps: int) -> None:
@@ -48,9 +94,19 @@ class SuperMimicRolloutWorker(MultiStepRolloutWorker):
         """
         env, rank = self.cfg.env.group_name, self._rank
         model = self.hf_model
+        views = self._obs_buf.views
         for _ in range(num_steps):
-            obs = self.recv(env, rank)
+            self.recv_tensor(self._obs_buf.buffer, env, rank)
             with torch.no_grad():
-                action = model.act(obs["enc"], obs["goal"])
-            self.send(action, env, rank)
-            model.fold_policy_stats(obs["enc_stats"], obs["goal_stats"])
+                action = run_compiled(
+                    "rollout-act",
+                    model.act,
+                    views["enc"],
+                    views["goal"],
+                    cache=self._compile_cache,
+                )
+            self._action_buf.copy_(action)
+            if self.torch_platform is not None and self.torch_platform.is_available():
+                self.torch_platform.current_stream().synchronize()
+            self.send_tensor(self._action_buf, env, rank)
+            model.fold_policy_stats(views["enc_stats"], views["goal_stats"])

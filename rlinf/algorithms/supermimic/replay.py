@@ -117,6 +117,26 @@ class TransitionRing:
 
     def has_window(self, length: int) -> bool:
         """Whether some env holds a legal ``length``-step window."""
+        if self.size < length:
+            return False
+        if length <= 1:
+            return True
+        # Fast path: check the newest ``2 * length`` steps before scanning the full ring.
+        tail = min(self.size, 2 * length)
+        if tail < self.capacity:
+            start = (self.column - tail) % self.capacity
+            cols = (start + torch.arange(tail, device=self.device)) % self.capacity
+            ended = (self.storage["terminated"] | self.storage["truncated"])[
+                :, cols
+            ].long()
+            running = torch.cat((ended.new_zeros(self.num_envs, 1), ended.cumsum(1)), 1)
+            # Steps i .. i+length-2 have no episode end iff running[:, i+length-1] == running[:, i].
+            if bool(
+                (running[:, length - 1 : tail] == running[:, : tail - length + 1]).any()
+            ):
+                return True
+            if tail == self.size:
+                return False
         return bool(self._legal_starts(length)[0].any())
 
     def windows(self, length: int) -> WindowStarts:
@@ -132,7 +152,12 @@ class TransitionRing:
             raise RuntimeError(f"no legal {length}-step window among {self.size} steps")
         return WindowStarts(length, oldest, cumulative, per_env)
 
-    def draw(self, starts: WindowStarts, batch: int) -> dict[str, torch.Tensor]:
+    def draw(
+        self,
+        starts: WindowStarts,
+        batch: int,
+        fields: tuple[str, ...] | None = None,
+    ) -> dict[str, torch.Tensor]:
         """``batch`` windows from ``starts``, ``[batch, length, ...]``.
 
         Envs with at least one legal window are drawn uniformly, then a
@@ -149,8 +174,28 @@ class TransitionRing:
             starts.oldest + start + torch.arange(starts.length, device=self.device)
         ) % self.capacity
         rows = env.unsqueeze(-1)
-        return {name: value[rows, cols] for name, value in self.storage.items()}
+        selected = (
+            self.storage if fields is None else {k: self.storage[k] for k in fields}
+        )
+        return {name: value[rows, cols] for name, value in selected.items()}
 
-    def sample(self, length: int, batch: int) -> dict[str, torch.Tensor]:
+    def sample(
+        self,
+        length: int,
+        batch: int,
+        fields: tuple[str, ...] | None = None,
+    ) -> dict[str, torch.Tensor]:
         """``batch`` windows of ``length`` consecutive steps; see :meth:`draw`."""
-        return self.draw(self.windows(length), batch)
+        if length == 1:
+            if self.size < 1:
+                raise RuntimeError(f"no legal 1-step window among {self.size} steps")
+            oldest = self.column if self.size == self.capacity else 0
+            rows = torch.randint(0, self.num_envs, (batch, 1), device=self.device)
+            cols = (
+                oldest + torch.randint(0, self.size, (batch, 1), device=self.device)
+            ) % self.capacity
+            selected = (
+                self.storage if fields is None else {k: self.storage[k] for k in fields}
+            )
+            return {name: value[rows, cols] for name, value in selected.items()}
+        return self.draw(self.windows(length), batch, fields=fields)

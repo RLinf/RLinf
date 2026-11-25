@@ -70,7 +70,9 @@ class G1MimicEnv:
             device=self.device,
             max_episode_seconds=float(cfg.max_episode_seconds),
         )
-        self._compile_cache = CompileCache(enabled=bool(cfg.torch_compile))
+        self._compile_cache = CompileCache(
+            enabled=bool(cfg.torch_compile), dynamic=False
+        )
         self.reset_sampler = None
         self.prev_action = torch.zeros(self.num_envs, ACTION_DIM, device=self.device)
         self._observed: dict[str, torch.Tensor] = {}

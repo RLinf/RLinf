@@ -118,12 +118,30 @@ def _check_actor_backend(actor: DictConfig) -> None:
             f"actor.fsdp_config.strategy=fsdp2, got {backend!r} and {strategy!r}"
         )
     mixed = fsdp.get("mixed_precision", None) or {}
-    for name in ("param_dtype", "reduce_dtype", "buffer_dtype"):
+    param_dtype = torch_dtype_from_precision(mixed.get("param_dtype", None))
+    if param_dtype not in (None, torch.float32, torch.bfloat16):
+        raise ValueError(
+            "actor.fsdp_config.mixed_precision.param_dtype must be null, fp32, "
+            f"or bf16, got {mixed.get('param_dtype')!r}"
+        )
+    if param_dtype == torch.bfloat16:
+        if mixed.get("cast_forward_inputs", True):
+            raise ValueError(
+                "actor.fsdp_config.mixed_precision.cast_forward_inputs must be "
+                "False when param_dtype is bf16 so kinematics, rewards, and "
+                "losses stay float32"
+            )
+        if (fsdp.get("amp_autocast", None) or {}).get("enabled", False):
+            raise ValueError(
+                "actor.fsdp_config.amp_autocast.enabled must be False when "
+                "mixed_precision.param_dtype is bf16"
+            )
+    for name in ("reduce_dtype", "buffer_dtype"):
         if not _is_float32(mixed.get(name, None)):
             raise ValueError(
                 f"actor.fsdp_config.mixed_precision.{name} must be null or fp32, "
-                f"got {mixed.get(name)!r}; SuperMimic keeps float32 weights and "
-                "casts inside the networks with fsdp_config.amp_autocast"
+                f"got {mixed.get(name)!r}; SuperMimic keeps float32 buffers and "
+                "gradient reductions"
             )
     if fsdp.get("cpu_offload", False):
         raise ValueError(

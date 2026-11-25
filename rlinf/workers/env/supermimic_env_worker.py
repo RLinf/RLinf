@@ -31,7 +31,16 @@ import torch.distributed as dist
 from omegaconf import DictConfig
 
 from rlinf.algorithms.supermimic.reset_sampler import ReturnResetSampler
-from rlinf.models.embodiment.supermimic.normalization import merged_moments
+from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM
+from rlinf.models.embodiment.supermimic.normalization import (
+    merged_moments,
+    split_moments,
+)
+from rlinf.models.embodiment.supermimic.supermimic_policy import (
+    FlatDictBuffer,
+    obs_packet_schema,
+    transition_packet_schema,
+)
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.utils import get_rng_state, set_rng_state
 from rlinf.workers.env.env_worker import EnvWorker
@@ -72,10 +81,30 @@ class SuperMimicEnvWorker(EnvWorker):
                         group=self._env_group,
                     )
                 )
+            env = self.train_env
+            self._obs_buf = FlatDictBuffer(
+                obs_packet_schema(env.num_envs, env.representation.encoding_dim),
+                env.device,
+            )
+            self._action_buf = torch.empty(
+                (env.num_envs, ACTION_DIM), dtype=torch.float32, device=env.device
+            )
+            self._trans_buf = FlatDictBuffer(
+                transition_packet_schema(
+                    env.num_envs,
+                    env.representation.state_dim,
+                    env.representation.encoding_dim,
+                ),
+                env.device,
+            )
 
     @property
     def train_env(self):
         return self.env_list[0]
+
+    def _sync_stream(self) -> None:
+        if self.torch_platform is not None and self.torch_platform.is_available():
+            self.torch_platform.current_stream().synchronize()
 
     @Worker.timer("collect")
     def collect(self, num_steps: int) -> None:
@@ -88,20 +117,26 @@ class SuperMimicEnvWorker(EnvWorker):
         )
         for _ in range(num_steps):
             obs = env.observe()
-            enc_stats = merged_moments(obs["enc"], self._env_group)
-            goal_stats = merged_moments(obs["goal"], self._env_group)
-            self.send(
-                {**obs, "enc_stats": enc_stats, "goal_stats": goal_stats},
-                rollout,
-                rank,
+            enc_width = int(obs["enc"].shape[-1])
+            combined = merged_moments(
+                torch.cat((obs["enc"], obs["goal"]), dim=-1), self._env_group
             )
-            transition = env.step(self.recv(rollout, rank))
+            enc_stats, goal_stats = split_moments(combined, enc_width)
+            self._obs_buf.pack(
+                {**obs, "enc_stats": enc_stats, "goal_stats": goal_stats}
+            )
+            self._sync_stream()
+            self.send_tensor(self._obs_buf.buffer, rollout, rank)
+            self.recv_tensor(self._action_buf, rollout, rank)
+            transition = env.step(self._action_buf)
             pd_target = transition.pop("pd_target")
             transition.pop("reward", None)
             transition["target_stats"] = merged_moments(pd_target, self._env_group)
             transition["enc_stats"] = enc_stats
             transition["goal_stats"] = goal_stats
-            self.send(transition, actor, rank)
+            self._trans_buf.pack(transition)
+            self._sync_stream()
+            self.send_tensor(self._trans_buf.buffer, actor, rank)
 
     def consume_metrics(self) -> dict[str, float]:
         """Simulator and reset statistics of this rank since the last call."""

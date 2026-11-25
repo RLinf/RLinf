@@ -79,7 +79,9 @@ rollout:
   rollout_backend: huggingface
   enable_offload: False
   pipeline_stage_num: 1
-  amp_autocast: ${actor.fsdp_config.amp_autocast}
+  amp_autocast:
+    enabled: True
+    precision: bf16
   gc_after_weight_sync: False  # weights sync after every update
   model:
     model_path: ""
@@ -93,7 +95,7 @@ actor:
   seed: 0
   enable_offload: False
   # Record each global update as one CUDA graph after a few eager updates.
-  cuda_graph: False
+  cuda_graph: True
   use_profiler: False # trace the first global updates of a launch with torch.profiler
   profiler:
     output_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/profiler
@@ -154,9 +156,18 @@ actor:
 
   fsdp_config:
     strategy: fsdp2
+    # SuperMimicPolicy is ~64 MB FP32; replicating weights avoids per-step AllGather.
+    sharding_strategy: no_shard
+    reshard_after_forward: False
     # One FSDP unit per network; each phase gathers only the networks it reads.
     wrap_policy:
       module_classes_to_wrap: [Dynamics, MotionPolicy, Critic]
+    # Cast network weights to bf16 once per phase at unshard; keep master weights,
+    # optimizer state, gradient reductions, kinematics, rewards and losses in fp32.
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      cast_forward_inputs: False
     amp_autocast:
       enabled: False
       precision: bf16

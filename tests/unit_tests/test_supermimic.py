@@ -76,6 +76,7 @@ from rlinf.models.embodiment.supermimic.normalization import (
     EmpiricalNorm,
     merged_moments,
     pack_moments,
+    split_moments,
 )
 from rlinf.runners.supermimic_runner import (
     SuperMimicRunner,
@@ -310,8 +311,23 @@ def test_push_summary_groups_trials_by_configured_speed():
         (["actor.fsdp_config.strategy=fsdp"], "strategy=fsdp2"),
         (["actor.model.precision=bf16"], "actor.model.precision must be 32"),
         (
-            ["actor.fsdp_config.mixed_precision.param_dtype=bf16"],
-            "param_dtype must be null or fp32",
+            ["actor.fsdp_config.mixed_precision.cast_forward_inputs=True"],
+            "cast_forward_inputs must be False",
+        ),
+        (
+            ["actor.fsdp_config.mixed_precision.reduce_dtype=bf16"],
+            "reduce_dtype must be null or fp32",
+        ),
+        (
+            ["actor.fsdp_config.amp_autocast.enabled=True"],
+            "amp_autocast.enabled must be False",
+        ),
+        (
+            [
+                "actor.fsdp_config.mixed_precision.param_dtype=null",
+                "actor.fsdp_config.amp_autocast.enabled=True",
+            ],
+            None,
         ),
         (
             ["actor.fsdp_config.grad_scaler.enabled=True"],
@@ -520,6 +536,13 @@ def test_norm_folds_batches_like_their_union():
     torch.testing.assert_close(norm.var, var)
     assert float(norm.count) == 14.0
 
+    left, right = torch.randn(6, 4, generator=gen), torch.randn(6, 5, generator=gen)
+    got_left, got_right = split_moments(
+        pack_moments(torch.cat((left, right), dim=-1)), 4
+    )
+    torch.testing.assert_close(got_left, pack_moments(left), atol=0, rtol=0)
+    torch.testing.assert_close(got_right, pack_moments(right), atol=0, rtol=0)
+
 
 _RANK_ROWS = (
     torch.tensor([[0.0, 1.0], [2.0, -1.0]]),
@@ -638,14 +661,13 @@ def _runner_with_replay_answers(answers: list[list[bool]], replay_length: int = 
     runner.ratio, runner.k, runner.replay_length = 0.4, 8, replay_length
     runner.anchor, runner.env_steps, runner.replay_steps = None, 0, 0
     replies = iter(answers)
-    runner.actor = SimpleNamespace(replay_ready=lambda: _Done(next(replies)))
     runner.collected = []
 
     def collect(steps):
         runner.collected.append(steps)
         runner.env_steps += steps
         runner.replay_steps += steps
-        return _Done(), _Done()
+        return _Done(), _Done(), next(replies)
 
     runner._collect = collect
     return runner
@@ -673,6 +695,104 @@ def test_due_updates_wait_until_every_rank_can_draw_a_window():
     with pytest.raises(RuntimeError, match=r"actor ranks \[1\]"):
         stuck._collect_until_update()
     assert stuck.collected == [9, 1, 1]
+
+
+def test_flat_tensor_packer_round_trips_actor_weights_and_norm_buffers():
+    from rlinf.models.embodiment.supermimic.supermimic_policy import (
+        FlatTensorPacker,
+        SuperMimicPolicy,
+        sync_param_names,
+    )
+
+    torch.manual_seed(0)
+    src = SuperMimicPolicy(representation="gencoord", torch_compile=False)
+    dst = SuperMimicPolicy(representation="gencoord", torch_compile=False)
+    src.fold_policy_stats(
+        pack_moments(torch.randn(8, src.representation.encoding_dim)),
+        pack_moments(torch.randn(8, ACTOR_GOAL_DIM)),
+    )
+    names = sync_param_names(src)
+    assert names and all(not n.startswith(("dynamics.", "critic.")) for n in names)
+
+    src_packer = FlatTensorPacker(src, names)
+    dst_packer = FlatTensorPacker(dst, names)
+    dst_packer.buffer.copy_(src_packer.pack())
+    dst_packer.unpack()
+
+    src_sd, dst_sd = src.state_dict(), dst.state_dict()
+    for name in names:
+        assert torch.equal(src_sd[name], dst_sd[name]), name
+
+
+def test_flat_dict_buffer_round_trips_obs_and_transition_packets():
+    from rlinf.models.embodiment.supermimic.supermimic_policy import (
+        FlatDictBuffer,
+        obs_packet_schema,
+        transition_packet_schema,
+    )
+
+    torch.manual_seed(0)
+    num_envs, state_dim, enc_dim = 4, STATE_DIM, 68
+    obs_schema = obs_packet_schema(num_envs, enc_dim)
+    obs_src = FlatDictBuffer(obs_schema, CPU)
+    obs_dst = FlatDictBuffer(obs_schema, CPU)
+    obs_data = {
+        "enc": torch.randn(num_envs, enc_dim),
+        "goal": torch.randn(num_envs, ACTOR_GOAL_DIM),
+        "enc_stats": pack_moments(torch.randn(num_envs, enc_dim)),
+        "goal_stats": pack_moments(torch.randn(num_envs, ACTOR_GOAL_DIM)),
+    }
+    obs_dst.buffer.copy_(obs_src.pack(obs_data))
+    for name, value in obs_data.items():
+        assert torch.equal(obs_dst.views[name], value), name
+
+    tr_schema = transition_packet_schema(num_envs, state_dim, enc_dim)
+    tr_src = FlatDictBuffer(tr_schema, CPU)
+    tr_dst = FlatDictBuffer(tr_schema, CPU)
+    tr_data = {
+        "state": torch.randn(num_envs, state_dim),
+        "action": torch.randn(num_envs, ACTION_DIM),
+        "prev_action": torch.randn(num_envs, ACTION_DIM),
+        "motion_time": torch.randint(0, 100, (num_envs,), dtype=torch.long),
+        "terminated": torch.tensor([True, False, False, True]),
+        "truncated": torch.tensor([False, True, False, False]),
+        "sim_context": torch.randn(num_envs, SIM_CONTEXT_DIM),
+        "enc_stats": obs_data["enc_stats"],
+        "goal_stats": obs_data["goal_stats"],
+        "target_stats": pack_moments(torch.randn(num_envs, ACTION_DIM)),
+    }
+    tr_dst.buffer.copy_(tr_src.pack(tr_data))
+    for name, value in tr_data.items():
+        assert torch.equal(tr_dst.views[name], value), name
+
+
+def test_replay_has_window_fast_path_and_older_fallback():
+    ring = TransitionRing(num_envs=2, capacity=32, state_dim=STATE_DIM, device=CPU)
+
+    def push(done: bool):
+        ring.add(
+            {
+                "state": torch.zeros(2, STATE_DIM),
+                "action": torch.zeros(2, ACTION_DIM),
+                "prev_action": torch.zeros(2, ACTION_DIM),
+                "motion_time": torch.zeros(2, dtype=torch.long),
+                "terminated": torch.full((2,), done, dtype=torch.bool),
+                "truncated": torch.zeros(2, dtype=torch.bool),
+                "sim_context": torch.zeros(2, SIM_CONTEXT_DIM),
+            }
+        )
+
+    for _ in range(4):
+        push(False)
+    assert ring.has_window(4)
+    # Push 10 steps where every step terminates: newest 8 steps have no legal
+    # 4-step window, so has_window must fall back and still find the older one.
+    for _ in range(10):
+        push(True)
+    assert ring.has_window(4)
+    sample = ring.sample(1, 16, fields=("state", "motion_time"))
+    assert set(sample) == {"state", "motion_time"}
+    assert sample["state"].shape == (16, 1, STATE_DIM)
 
 
 def test_reset_draws_before_the_step_is_recorded_and_keeps_the_action(monkeypatch):
@@ -1009,6 +1129,7 @@ def _small_actor(cfg, mesh, motion):
     def base_init(self, cfg):
         self.cfg = cfg
         self._rank, self._world_size = 0, 1
+        self.version = 0
 
     orig_init = module.EmbodiedFSDPActor.__init__
     module.EmbodiedFSDPActor.__init__ = base_init
@@ -1020,12 +1141,20 @@ def _small_actor(cfg, mesh, motion):
     actor.log_info = lambda msg: None
     actor.device = "cuda:0"
     actor._device_mesh, actor._dp_group = mesh, mesh["fsdp"].get_group()
+    from rlinf.utils.precision import torch_dtype_from_precision
+
+    mp_cfg = cfg.actor.fsdp_config.mixed_precision
+    mp_policy = MixedPrecisionPolicy(
+        param_dtype=torch_dtype_from_precision(mp_cfg.param_dtype),
+        reduce_dtype=torch_dtype_from_precision(mp_cfg.reduce_dtype),
+        cast_forward_inputs=mp_cfg.get("cast_forward_inputs", True),
+    )
     actor._strategy = SimpleNamespace(
         wrap_model=lambda model, device_mesh: apply_fsdp2_to_model(
             model,
             cfg.actor.fsdp_config,
             device_mesh,
-            MixedPrecisionPolicy(),
+            mp_policy,
             OffloadPolicy(),
             reshard_after_forward=True,
         )
@@ -1056,7 +1185,9 @@ def _small_actor(cfg, mesh, motion):
     return actor
 
 
-def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) -> None:
+def _update_with_and_without_graph(
+    rank: int, port: int, out: str, precision_mode: str
+) -> None:
     from torch.distributed.device_mesh import init_device_mesh
 
     from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
@@ -1077,6 +1208,22 @@ def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) ->
             clip[:, JOINT_POS] += 0.05 * wave
             clips.append(clip.to("cuda:0"))
         motion = MotionLibrary(clips, q0=pose[JOINT_POS])
+        mode_overrides = {
+            "fp32": [
+                "actor.fsdp_config.mixed_precision.param_dtype=null",
+                "actor.fsdp_config.amp_autocast.enabled=False",
+            ],
+            "amp_bf16": [
+                "actor.fsdp_config.mixed_precision.param_dtype=null",
+                "actor.fsdp_config.amp_autocast.enabled=True",
+            ],
+            "fsdp_bf16": [
+                "actor.fsdp_config.amp_autocast.enabled=False",
+                "actor.fsdp_config.mixed_precision.param_dtype=bf16",
+                "actor.fsdp_config.mixed_precision.reduce_dtype=fp32",
+                "actor.fsdp_config.mixed_precision.cast_forward_inputs=False",
+            ],
+        }[precision_mode]
         results = {}
         for graph in (False, True):
             cfg = _compose(
@@ -1093,7 +1240,7 @@ def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) ->
                     "algorithm.replay_length=64",
                     "actor.model.torch_compile=False",
                     f"actor.cuda_graph={graph}",
-                    f"actor.fsdp_config.amp_autocast.enabled={amp}",
+                    *mode_overrides,
                 ],
             )
             torch.manual_seed(0)
@@ -1126,13 +1273,15 @@ def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) ->
     not _CUDA_AVAILABLE or not dist.is_nccl_available(),
     reason="the update graph needs a CUDA device and NCCL",
 )
-@pytest.mark.parametrize("amp", [False, True])
-def test_recorded_update_replays_the_eager_update(tmp_path, amp):
+@pytest.mark.parametrize("precision_mode", ["fp32", "amp_bf16", "fsdp_bf16"])
+def test_recorded_update_replays_the_eager_update(tmp_path, precision_mode):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     torch.multiprocessing.spawn(
-        _update_with_and_without_graph, args=(port, str(tmp_path), amp), nprocs=1
+        _update_with_and_without_graph,
+        args=(port, str(tmp_path), precision_mode),
+        nprocs=1,
     )
     results = torch.load(tmp_path / "updates.pt")
     eager, replayed = results[False], results[True]

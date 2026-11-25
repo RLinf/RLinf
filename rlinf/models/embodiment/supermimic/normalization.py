@@ -55,6 +55,17 @@ def _unpack(packed: torch.Tensor):
     return packed[0], packed[1 : 1 + width], packed[1 + width :]
 
 
+def split_moments(
+    packed: torch.Tensor, left_width: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Split a packed moments record of ``cat(left, right, dim=-1)`` into two."""
+    count, mean, var = _unpack(packed)
+    count_col = count.reshape(1)
+    left = torch.cat((count_col, mean[:left_width], var[:left_width]))
+    right = torch.cat((count_col, mean[left_width:], var[left_width:]))
+    return left, right
+
+
 def merged_moments(
     values: torch.Tensor, group: dist.ProcessGroup | None = None
 ) -> torch.Tensor:

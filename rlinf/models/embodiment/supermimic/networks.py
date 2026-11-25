@@ -65,9 +65,12 @@ def hidden_matrix_names(module: nn.Module) -> list[str]:
 
 
 def _run(owner: nn.Module, net: nn.Module, features: torch.Tensor) -> torch.Tensor:
-    """``net(features)``, autocast to ``owner.autocast_dtype`` when it is set."""
+    """``net(features)``, matching FSDP2 ``param_dtype`` or ``owner.autocast_dtype``."""
     dtype = owner.autocast_dtype
     if dtype is None:
+        param_dtype = net[0].weight.dtype
+        if param_dtype != features.dtype:
+            return net(features.to(dtype=param_dtype)).to(dtype=features.dtype)
         return net(features)
     # A recorded update must not keep cast weights from the graph memory pool.
     with torch.autocast(

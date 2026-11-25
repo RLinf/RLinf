@@ -39,9 +39,17 @@ class CompileCache:
         fullgraph: Passed to ``torch.compile`` for every piece of this owner.
     """
 
-    def __init__(self, enabled: bool = True, fullgraph: bool = False):
+    def __init__(
+        self,
+        enabled: bool = True,
+        fullgraph: bool = False,
+        dynamic: bool = True,
+        mode: str | None = None,
+    ):
         self.enabled = bool(enabled)
         self.fullgraph = bool(fullgraph)
+        self.dynamic = bool(dynamic)
+        self.mode = mode
         self.compiled: dict[str, Callable] = {}
         self.failed: set[str] = set()
 
@@ -76,7 +84,10 @@ def run_compiled(name: str, fn: Callable, *args, cache: CompileCache):
             f"Compiling SuperMimic {name} for large CUDA batches. The first "
             "such batch waits; later batches reuse it."
         )
-        compiled = torch.compile(fn, dynamic=True, fullgraph=cache.fullgraph)
+        kwargs = {"dynamic": cache.dynamic, "fullgraph": cache.fullgraph}
+        if cache.mode is not None:
+            kwargs["mode"] = cache.mode
+        compiled = torch.compile(fn, **kwargs)
         cache.compiled[name] = compiled
     try:
         return compiled(*args)

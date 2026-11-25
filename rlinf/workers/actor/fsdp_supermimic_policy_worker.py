@@ -46,6 +46,7 @@ from rlinf.algorithms.supermimic.objectives import (
     value_ceiling,
 )
 from rlinf.algorithms.supermimic.replay import TransitionRing
+from rlinf.envs.sim.g1_mimic.compile_cache import run_compiled
 from rlinf.envs.sim.g1_mimic.motion import build_motion_library
 from rlinf.hybrid_engines.fsdp import FSDPModule
 from rlinf.hybrid_engines.fsdp.utils import (
@@ -55,13 +56,19 @@ from rlinf.hybrid_engines.fsdp.utils import (
 )
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.supermimic.networks import hidden_matrix_names
-from rlinf.models.embodiment.supermimic.supermimic_policy import PHASE_INPUTS
+from rlinf.models.embodiment.supermimic.supermimic_policy import (
+    PHASE_INPUTS,
+    FlatDictBuffer,
+    FlatTensorPacker,
+    sync_param_names,
+    transition_packet_schema,
+    use_direct_weight_sync,
+)
 from rlinf.scheduler import Worker
 from rlinf.utils.cuda_graph import CUDAGraphManager, GraphCaptureSpec
 from rlinf.utils.precision import torch_dtype_from_precision
 from rlinf.utils.profiler import PyTorchProfiler
 from rlinf.utils.utils import (
-    collect_param_names_need_sync,
     seed_everything,
     warmup_optimizer_state,
 )
@@ -71,9 +78,9 @@ WORLD_MODEL = ForwardType.SUPERMIMIC_WORLD_MODEL
 ACTOR = ForwardType.SUPERMIMIC_ACTOR
 CRITIC = ForwardType.SUPERMIMIC_CRITIC
 
-# The rollout worker only acts; it never reads these networks.
-_ACTOR_ONLY_PREFIXES = ("dynamics.", "critic.")
 _COUNTERS_FILE = "supermimic_counters.json"
+_WM_DRAW_FIELDS = ("state", "action", "sim_context")
+_IMAGINE_DRAW_FIELDS = ("state", "prev_action", "sim_context", "motion_time")
 # Phase -> (module prefix, Adam config under ``actor``). The motion policy's
 # Adam is the main optimizer of ``build_optimizers``.
 _PHASES = {
@@ -97,12 +104,29 @@ def clip_step(
     """Clip by the global gradient ``norm``, clamp each element, step every optimizer."""
     clip_grad_by_total_norm_(params, max_norm, norm)
     if value_clip is not None:
-        for param in params:
-            if param.grad is not None:
-                to_local_if_dtensor(param.grad).clamp_(-value_clip, value_clip)
+        grads = [
+            to_local_if_dtensor(param.grad)
+            for param in params
+            if param.grad is not None
+        ]
+        if grads:
+            torch._foreach_clamp_min_(grads, -value_clip)
+            torch._foreach_clamp_max_(grads, value_clip)
     for optimizer in optimizers:
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
+
+
+def _lambda_returns_from_last(
+    last_value: torch.Tensor,
+    values: torch.Tensor,
+    rewards: torch.Tensor,
+    term_prob: torch.Tensor,
+    gamma: float,
+    lam: float,
+) -> torch.Tensor:
+    """Wrapper with batch-first ``last_value`` so ``run_compiled`` sees the batch size."""
+    return lambda_returns(values, last_value, rewards, term_prob, gamma, lam)
 
 
 def critic_minibatch_rows(
@@ -164,6 +188,8 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         self.use_cuda_graph = bool(cfg.actor.get("cuda_graph", False))
         self.update_graphs: CUDAGraphManager | None = None
         self.eager_updates = 0
+        self._prefetch_stream = None
+        self._sync_packer: FlatTensorPacker | None = None
         self.profiler = None
         if cfg.actor.get("use_profiler", False):
             # One profiler step per global update, counted from this launch.
@@ -196,6 +222,14 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             self.model.representation.state_dim,
             device,
         )
+        self._trans_buf = FlatDictBuffer(
+            transition_packet_schema(
+                self.num_envs,
+                self.model.representation.state_dim,
+                self.model.representation.encoding_dim,
+            ),
+            device,
+        )
 
     def setup_model_and_optimizer(self) -> None:
         """Wrap the policy with FSDP and build two optimizers per phase.
@@ -210,11 +244,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         module.set_autocast(
             torch_dtype_from_precision(amp.precision) if amp.enabled else None
         )
-        self.param_names_need_sync = [
-            name
-            for name in collect_param_names_need_sync(module)
-            if not name.startswith(_ACTOR_ONLY_PREFIXES)
-        ]
+        self.param_names_need_sync = sync_param_names(module)
         hidden = hidden_matrix_names(module)
         self.model: FSDPModule = self._strategy.wrap_model(
             model=module, device_mesh=self._device_mesh
@@ -265,21 +295,28 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
     # ------------------------------------------------------------- collection
 
     @Worker.timer("ingest")
-    def ingest(self, num_steps: int) -> None:
+    def ingest(self, num_steps: int) -> bool:
         """Store ``num_steps`` vector steps from this rank's env worker.
 
         Each transition also carries the merged moments the rollout worker
         folded into its input norms; folding the same values keeps both
         copies equal. The world-model norms fold the step's encodings and
-        executed PD targets.
+        executed PD targets. Returns whether the replay holds a legal
+        ``k``-step window after ingestion.
         """
         model = self.model
         fields = set(self.replay.storage)
+        views = self._trans_buf.views
         for _ in range(num_steps):
-            step = self.recv(self._env_group_name, src_rank=self._rank)
-            model.fold_policy_stats(step["enc_stats"], step["goal_stats"])
-            model.fold_world_model_stats(step["enc_stats"], step["target_stats"])
-            self.replay.add({name: step[name] for name in fields})
+            self.recv_tensor(
+                self._trans_buf.buffer,
+                src_group_name=self._env_group_name,
+                src_rank=self._rank,
+            )
+            model.fold_policy_stats(views["enc_stats"], views["goal_stats"])
+            model.fold_world_model_stats(views["enc_stats"], views["target_stats"])
+            self.replay.add({name: views[name] for name in fields})
+        return self.replay.has_window(self.k)
 
     def replay_ready(self) -> bool:
         """Whether this rank's replay holds a legal world-model window."""
@@ -291,16 +328,36 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
     def run_updates(self, num_updates: int) -> dict[str, float]:
         """Run ``num_updates`` global updates; returns the last update's metrics."""
         metrics: dict[str, torch.Tensor] = {}
-        for _ in range(num_updates):
+        prefetched: dict | None = None
+        for idx in range(num_updates):
             if self.profiler is not None:
                 self.profiler.start()
-            metrics = self._run_update()
+            inputs = prefetched
+            prefetched = None
+            if (
+                inputs is not None
+                and self._prefetch_stream is not None
+                and self.torch_platform is not None
+            ):
+                self.torch_platform.current_stream().wait_stream(self._prefetch_stream)
+            metrics = self._run_update(inputs)
+            if (
+                idx + 1 < num_updates
+                and self.use_cuda_graph
+                and self.update_graphs is not None
+                and self.torch_platform is not None
+            ):
+                if self._prefetch_stream is None:
+                    self._prefetch_stream = self.torch_platform.Stream()
+                with self.torch_platform.stream(self._prefetch_stream):
+                    prefetched = self._draw_update_inputs()
             if self.profiler is not None:
                 self.profiler.stop()
             for phase, steps in self.steps_per_update.items():
                 self.phase_optimizer_steps[phase] += steps
             for scheduler in self.all_schedulers:
                 scheduler.step()
+        self.version += num_updates
         self._reshard()
         # Checkpoint loading drops the optimizer state of frozen parameters.
         self.model.requires_grad_(True)
@@ -334,12 +391,13 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         )
         return out
 
-    def _run_update(self) -> dict[str, torch.Tensor]:
+    def _run_update(self, inputs: dict | None = None) -> dict[str, torch.Tensor]:
         """One global update, eager or replayed; returns its metrics.
 
         A replay overwrites the metric tensors of the previous one.
         """
-        inputs = self._draw_update_inputs()
+        if inputs is None:
+            inputs = self._draw_update_inputs()
         if not self.use_cuda_graph:
             return self._update_from(inputs)
         if self.update_graphs is None:
@@ -358,10 +416,10 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         """
         legal = self.replay.windows(self.k)
         windows = [
-            self.replay.draw(legal, self.wm_window_batch)
+            self.replay.draw(legal, self.wm_window_batch, fields=_WM_DRAW_FIELDS)
             for _ in range(self.wm_batches)
         ]
-        starts = self.replay.sample(1, self.imagine_batch)
+        starts = self.replay.sample(1, self.imagine_batch, fields=_IMAGINE_DRAW_FIELDS)
         return {
             "wm_states": torch.stack([window["state"] for window in windows]),
             "wm_actions": torch.stack([window["action"] for window in windows]),
@@ -568,13 +626,16 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
                 forward_type=CRITIC, features=torch.cat((features, terminal))
             )["values"]
         values, last_value = values[:-batch].view(horizon, batch), values[-batch:]
-        targets = lambda_returns(
-            values,
+        targets = run_compiled(
+            "critic-gae",
+            _lambda_returns_from_last,
             last_value,
+            values,
             rewards.transpose(0, 1),
             term_prob.transpose(0, 1),
             self.gamma,
             self.lam,
+            cache=self.model._compile_cache,
         ).clamp(max=self.value_max)
         targets = targets.reshape(-1)
         minibatches = list(zip(features[order], targets[order]))
@@ -600,6 +661,23 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
     def get_rollout_state_dict(self) -> dict:
         self._reshard()
         return super().get_rollout_state_dict()
+
+    @Worker.timer("actor/sync_model_to_rollout")
+    async def sync_model_to_rollout(self) -> None:
+        if not use_direct_weight_sync(
+            self.cfg, self._actor_world_size, len(self._rollout_all_ranks)
+        ):
+            return await super().sync_model_to_rollout()
+        if self._sync_packer is None:
+            self._sync_packer = FlatTensorPacker(self.model, self.param_names_need_sync)
+        self._sync_packer.pack()
+        if self.torch_platform is not None and self.torch_platform.is_available():
+            self.torch_platform.current_stream().synchronize()
+        self.send_tensor(
+            self._sync_packer.buffer,
+            dst_group_name=self._rollout_group_name,
+            dst_rank=self._rank,
+        )
 
     def save_checkpoint(self, save_base_path: str, step: int = 0) -> None:
         """Networks, optimizers, schedulers and RNG of every rank, plus counters.
