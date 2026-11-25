@@ -315,23 +315,27 @@ def check_page(
                 if pattern.search(line):
                     add("major", number, "docs/jargon", advice)
 
-    if kind in ("recipe", "guide"):
-        for block in check_rst_markup.prose_blocks(source):
-            if any(
-                row.lstrip().startswith(("* -", "| ", "+-", "=="))
-                for row in block.text.splitlines()
-            ):
-                continue
-            plain = MARKUP.sub(" X ", block.text)
-            inline_literals = LITERAL.findall(block.text)
-            if len(inline_literals) >= 6:
-                add(
-                    "minor",
-                    block.lines[0],
-                    "docs/inline-code-density",
-                    f"paragraph packs {len(inline_literals)} inline code literals on a {kind} page; "
-                    "keep setup prose simple and move lists of paths or options into a table or dropdown",
-                )
+    # Apply code-density guard across ALL doc pages so prose never turns into
+    # a wall of backticked variables, functions, classes, or paths.
+    for block in check_rst_markup.prose_blocks(source):
+        if any(
+            row.lstrip().startswith(("* -", "| ", "+-", "=="))
+            for row in block.text.splitlines()
+        ):
+            continue
+        plain = MARKUP.sub(" X ", block.text)
+        inline_literals = LITERAL.findall(block.text)
+        if len(inline_literals) >= 6:
+            severity = "major" if len(inline_literals) >= 8 else "minor"
+            add(
+                severity,
+                block.lines[0],
+                "docs/inline-code-density",
+                f"paragraph packs {len(inline_literals)} inline code literals; "
+                "avoid stacking variables, functions, classes, or paths in prose—"
+                "move structured specs into a table or simplify",
+            )
+        if kind != "publication":
             if lang == "zh":
                 char_count = len(re.sub(r"\s+", "", plain))
                 if char_count > 260:

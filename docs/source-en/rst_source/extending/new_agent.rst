@@ -1,32 +1,166 @@
 White-Box Agent
 ===============
 
-A **white-box agent** implements its multi-turn interaction and tool execution directly inside RLinf, giving you full control over prompts, tool parsing, and token loss masks (for example Search-R1 or custom tag-based tool agents). Using a ``<calc>...</calc>`` calculator example, this guide walks through four steps—tool parser, ``ToolWorker``, ``AgentLoopWorker``, and YAML/script wiring. For runner scheduling details, see :doc:`Execution Flow <../concepts/execution_flow>`.
+A **white-box agent** implements its multi-turn interaction and tool execution directly inside RLinf, giving you full control over prompts, tool parsing, and token loss masks (for example Search-R1 or custom tag-based tool agents). Using a ``<calc>...</calc>`` calculator example, this guide walks through writing a tool parser, ``ToolWorker``, ``AgentLoopWorker``, and wiring them into training.
 
 At a Glance
 -----------
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 78
+   :widths: 22 30 48
 
-   * - Aspect
-     - Details
-   * - Files to create or edit
-     - ``rlinf/agents/tool_call/parsers.py`` (or an external module), ``rlinf/agents/<name>/`` for the tool worker and agent loop, plus your entry script and Hydra YAML config
-   * - Extension points
-     - ``@register_toolcall_parser``, ``ToolWorker``, ``ToolWorkerInfo``, and ``AgentLoopWorker`` (or ``MultiAgentLoopWorker`` when ``is_dynamic_rollout_batch`` is ``True``)
-   * - Required methods
-     - Parser ``async def __call__(response_text)``; tool worker ``start_server()`` and ``stop_server()``; agent loop ``generate_llm_response()`` and ``generate_tool_response()``
-   * - Local verification
-     - Direct CPU parser check before launching ``AgentRunner``
+   * - Component
+     - Extension Point
+     - Role
+   * - Tool parser
+     - ``@register_toolcall_parser``
+     - Extracts tool names and arguments from model text; returns an empty list to end the trajectory.
+   * - ``ToolWorker``
+     - Subclass ``ToolWorker``
+     - Executes tool requests in an isolated process so I/O or sandboxes never block rollout engines.
+   * - ``AgentLoopWorker``
+     - Subclass ``AgentLoopWorker``
+     - Orchestrates multi-turn generation, tool calls, length limits, and token loss masks.
+
+AgentRunner Call Flow & Channels
+--------------------------------
+
+``AgentRunner`` creates all channels and drives the training loop. You only implement the highlighted ``AgentLoopWorker`` and ``ToolWorker``; Rollout / Session Server and Reward / Actor stay built-in.
+
+.. raw:: html
+
+   <div style="margin: 1.25rem 0;">
+     <svg viewBox="0 0 940 426" width="100%" role="img" aria-label="AgentRunner full training call flow highlighting AgentLoopWorker and ToolWorker interfaces and channels" style="display:block;max-width:940px;margin:0 auto;background:transparent;font-family:var(--pst-font-family-base,Inter,sans-serif);">
+       <defs>
+         <marker id="ar-pur-en" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+           <path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="var(--pst-color-primary, #6d28d9)"/>
+         </marker>
+         <marker id="ar-grn-en" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+           <path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="#10b981"/>
+         </marker>
+         <marker id="ar-blu-en" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+           <path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="#3b82f6"/>
+         </marker>
+       </defs>
+
+       <!-- Top legend -->
+       <line x1="364" y1="14" x2="390" y2="14" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.6" stroke-dasharray="4 3"/>
+       <text x="396" y="18" font-size="11" font-weight="600" fill="var(--pst-color-text-muted, #64748b)">Runner control call</text>
+       <line x1="518" y1="14" x2="544" y2="14" stroke="#10b981" stroke-width="2"/>
+       <text x="550" y="18" font-size="11" font-weight="600" fill="var(--pst-color-text-muted, #64748b)">Data channel</text>
+       <rect x="638" y="7" width="14" height="14" rx="3" fill="var(--rlinf-surface, #ffffff)" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="2"/>
+       <text x="658" y="18" font-size="11" font-weight="600" fill="var(--pst-color-text-muted, #64748b)">Custom code</text>
+       <rect x="746" y="7" width="14" height="14" rx="3" fill="var(--rlinf-code-bg, #f8fafc)" stroke="var(--rlinf-border-strong, #cbd5e1)" stroke-width="1.5"/>
+       <text x="766" y="18" font-size="11" font-weight="600" fill="var(--pst-color-text-muted, #64748b)">Built-in (details omitted)</text>
+
+       <!-- AgentRunner Control Plane Bar -->
+       <rect x="16" y="30" width="908" height="56" rx="12" fill="var(--rlinf-nav-active-bg, rgba(109,40,217,0.10))" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.6"/>
+       <text x="34" y="51" font-size="13" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">AgentRunner (Training Orchestrator)</text>
+       <text x="34" y="72" font-size="10.8" font-weight="500" fill="var(--pst-color-text-base, #0f172a)">① init_workers() creates channels   →   ② start_server()   →   ③ Per step: _put_batch() → _sync_weights() → run_agentloop_rollout() → _run_training()   →   ④ stop_server()</text>
+
+       <!-- Dashed control arrows from AgentRunner -->
+       <line x1="84" y1="86" x2="84" y2="128" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar-pur-en)"/>
+       <text x="92" y="112" font-size="10.5" font-weight="600" fill="var(--pst-color-primary, #6d28d9)">_put_batch()</text>
+
+       <line x1="430" y1="86" x2="430" y2="122" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar-pur-en)"/>
+       <text x="438" y="109" font-size="10.5" font-weight="600" fill="var(--pst-color-primary, #6d28d9)">init_worker() · run_agentloop_rollout()</text>
+
+       <path d="M 914 86 L 914 268 L 812 268 L 812 288" fill="none" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar-pur-en)"/>
+       <text x="812" y="261" text-anchor="middle" font-size="10" font-weight="600" fill="var(--pst-color-primary, #6d28d9)">init_worker · start_server · stop_server</text>
+
+       <!-- Left Column: Built-in Dataset & Reward/Actor -->
+       <rect x="16" y="132" width="136" height="72" rx="12" fill="var(--rlinf-code-bg, #f8fafc)" stroke="var(--rlinf-border-strong, #cbd5e1)" stroke-width="1.5"/>
+       <text x="84" y="160" text-anchor="middle" font-size="13" font-weight="700" fill="var(--pst-color-text-base, #0f172a)">Dataloader</text>
+       <text x="84" y="180" text-anchor="middle" font-size="10.5" fill="var(--pst-color-text-muted, #64748b)">Feeds query batches</text>
+
+       <rect x="16" y="294" width="136" height="86" rx="12" fill="var(--rlinf-code-bg, #f8fafc)" stroke="var(--rlinf-border-strong, #cbd5e1)" stroke-width="1.5"/>
+       <text x="84" y="324" text-anchor="middle" font-size="13" font-weight="700" fill="var(--pst-color-text-base, #0f172a)">Reward / Actor</text>
+       <text x="84" y="344" text-anchor="middle" font-size="10.5" fill="var(--pst-color-text-muted, #64748b)">Scoring &amp; policy update</text>
+       <text x="84" y="362" text-anchor="middle" font-size="10" fill="var(--pst-color-text-muted, #64748b)">(details omitted)</text>
+
+       <!-- Channels: Left <-> Center -->
+       <line x1="152" y1="168" x2="270" y2="168" stroke="#10b981" stroke-width="2" marker-end="url(#ar-grn-en)"/>
+       <text x="212" y="159" text-anchor="middle" font-family="var(--pst-font-family-monospace,monospace)" font-size="10" font-weight="700" fill="#10b981">dataloader_channel</text>
+       <text x="212" y="184" text-anchor="middle" font-size="10" fill="var(--pst-color-text-muted, #64748b)">RolloutRequest</text>
+
+       <line x1="274" y1="337" x2="156" y2="337" stroke="#10b981" stroke-width="2" marker-end="url(#ar-grn-en)"/>
+       <text x="214" y="328" text-anchor="middle" font-family="var(--pst-font-family-monospace,monospace)" font-size="10" font-weight="700" fill="#10b981">rollout_channel</text>
+       <text x="214" y="353" text-anchor="middle" font-size="10" fill="var(--pst-color-text-muted, #64748b)">RolloutResult</text>
+
+       <!-- Center Column: AgentLoopWorker (Highlighted Purple) -->
+       <rect x="274" y="126" width="312" height="284" rx="14" fill="var(--rlinf-surface, #ffffff)" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="2.2"/>
+       <text x="292" y="150" font-size="14" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">AgentLoopWorker</text>
+       <rect x="508" y="135" width="64" height="20" rx="10" fill="rgba(124,58,237,0.14)"/>
+       <text x="540" y="149" text-anchor="middle" font-size="10" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">Custom</text>
+       <text x="292" y="167" font-size="10.5" fill="var(--pst-color-text-muted, #64748b)">Runs run_one_query() per trajectory</text>
+
+       <!-- Step 1: pre_process -->
+       <rect x="290" y="176" width="280" height="26" rx="7" fill="rgba(124,58,237,0.08)" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1"/>
+       <text x="430" y="193" text-anchor="middle" font-family="var(--pst-font-family-monospace,monospace)" font-size="11" font-weight="600" fill="var(--pst-color-text-base, #0f172a)">1. pre_process(prompt_ids)</text>
+
+       <!-- Turn Loop Frame -->
+       <rect x="290" y="210" width="280" height="150" rx="10" fill="none" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.2" stroke-dasharray="4 3"/>
+       <text x="302" y="226" font-size="10.5" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">2. Turn loop: run_one_query_turn()</text>
+
+       <!-- Turn 2a: generate_llm_response -->
+       <rect x="302" y="234" width="256" height="46" rx="8" fill="rgba(124,58,237,0.10)" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.3"/>
+       <text x="430" y="253" text-anchor="middle" font-family="var(--pst-font-family-monospace,monospace)" font-size="11" font-weight="700" fill="var(--pst-color-primary, #6d28d9)">generate_llm_response()</text>
+       <text x="430" y="271" text-anchor="middle" font-size="10.5" fill="var(--pst-color-text-muted, #64748b)">Calls self.generate() · mask = 1</text>
+
+       <!-- Vertical arrow 2a -> 2b -->
+       <line x1="430" y1="280" x2="430" y2="298" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1.5" marker-end="url(#ar-pur-en)"/>
+
+       <!-- Turn 2b: generate_tool_response -->
+       <rect x="302" y="302" width="256" height="48" rx="8" fill="rgba(59,130,246,0.10)" stroke="#3b82f6" stroke-width="1.3"/>
+       <text x="430" y="321" text-anchor="middle" font-family="var(--pst-font-family-monospace,monospace)" font-size="11" font-weight="700" fill="#2563eb">generate_tool_response()</text>
+       <text x="430" y="339" text-anchor="middle" font-size="10.5" fill="var(--pst-color-text-muted, #64748b)">toolcall_parser() + self.tool_call() · mask = 0</text>
+
+       <!-- Step 3: post_process -->
+       <rect x="290" y="368" width="280" height="28" rx="7" fill="rgba(124,58,237,0.08)" stroke="var(--pst-color-primary, #6d28d9)" stroke-width="1"/>
+       <text x="430" y="386" text-anchor="middle" font-family="var(--pst-font-family-monospace,monospace)" font-size="11" font-weight="600" fill="var(--pst-color-text-base, #0f172a)">3. post_process(ctx, output)</text>
+
+       <!-- Right-Top: Rollout / Session Server (Built-in, Muted) -->
+       <rect x="726" y="158" width="172" height="82" rx="12" fill="var(--rlinf-code-bg, #f8fafc)" stroke="var(--rlinf-border-strong, #cbd5e1)" stroke-width="1.5"/>
+       <text x="812" y="186" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--pst-color-text-base, #0f172a)">Rollout / Session Server</text>
+       <text x="812" y="206" text-anchor="middle" font-size="10.5" fill="var(--pst-color-text-muted, #64748b)">Generates tokens</text>
+       <text x="812" y="224" text-anchor="middle" font-size="10" fill="var(--pst-color-text-muted, #64748b)">(details omitted)</text>
+
+       <!-- Channels: AgentLoopWorker <-> Rollout -->
+       <line x1="586" y1="184" x2="722" y2="184" stroke="#10b981" stroke-width="1.8" marker-end="url(#ar-grn-en)"/>
+       <text x="656" y="176" text-anchor="middle" font-family="var(--pst-font-family-monospace,monospace)" font-size="9.5" font-weight="700" fill="#10b981">generate_input_channel</text>
+
+       <line x1="726" y1="218" x2="590" y2="218" stroke="#10b981" stroke-width="1.8" marker-end="url(#ar-grn-en)"/>
+       <text x="656" y="210" text-anchor="middle" font-family="var(--pst-font-family-monospace,monospace)" font-size="9.5" font-weight="700" fill="#10b981">generate_output_channel</text>
+       <text x="656" y="233" text-anchor="middle" font-size="9.5" fill="var(--pst-color-text-muted, #64748b)">or Session Server HTTP</text>
+
+       <!-- Right-Bottom: ToolWorker (Highlighted Blue) -->
+       <rect x="726" y="292" width="172" height="118" rx="14" fill="var(--rlinf-surface, #ffffff)" stroke="#3b82f6" stroke-width="2.2"/>
+       <text x="742" y="316" font-size="13.5" font-weight="700" fill="#2563eb">ToolWorker</text>
+       <rect x="826" y="302" width="60" height="18" rx="9" fill="rgba(59,130,246,0.14)"/>
+       <text x="856" y="314.5" text-anchor="middle" font-size="9.5" font-weight="700" fill="#2563eb">Custom</text>
+       <rect x="738" y="328" width="148" height="22" rx="6" fill="rgba(59,130,246,0.08)"/>
+       <text x="812" y="343" text-anchor="middle" font-family="var(--pst-font-family-monospace,monospace)" font-size="10" font-weight="600" fill="var(--pst-color-text-base, #0f172a)">start_server()</text>
+       <rect x="738" y="355" width="148" height="22" rx="6" fill="rgba(59,130,246,0.08)"/>
+       <text x="812" y="370" text-anchor="middle" font-family="var(--pst-font-family-monospace,monospace)" font-size="10" font-weight="600" fill="var(--pst-color-text-base, #0f172a)">_process_requests()</text>
+       <rect x="738" y="382" width="148" height="20" rx="6" fill="rgba(59,130,246,0.08)"/>
+       <text x="812" y="395.5" text-anchor="middle" font-family="var(--pst-font-family-monospace,monospace)" font-size="10" font-weight="600" fill="var(--pst-color-text-base, #0f172a)">stop_server()</text>
+
+       <!-- Channels: AgentLoopWorker <-> ToolWorker -->
+       <line x1="586" y1="322" x2="722" y2="322" stroke="#3b82f6" stroke-width="2" marker-end="url(#ar-blu-en)"/>
+       <text x="656" y="313" text-anchor="middle" font-family="var(--pst-font-family-monospace,monospace)" font-size="9.8" font-weight="700" fill="#2563eb">Tool-&lt;group&gt;</text>
+       <text x="656" y="336" text-anchor="middle" font-size="9.5" fill="var(--pst-color-text-muted, #64748b)">ToolChannelRequest</text>
+
+       <line x1="726" y1="368" x2="590" y2="368" stroke="#3b82f6" stroke-width="2" marker-end="url(#ar-blu-en)"/>
+       <text x="656" y="359" text-anchor="middle" font-family="var(--pst-font-family-monospace,monospace)" font-size="9.8" font-weight="700" fill="#2563eb">tool_output_channel</text>
+       <text x="656" y="383" text-anchor="middle" font-size="9.5" fill="var(--pst-color-text-muted, #64748b)">ToolChannelResponse (key=session_id)</text>
+     </svg>
+   </div>
 
 1. Parse Tool Calls
 -------------------
 
-During worker initialization, ``AgentLoopWorker`` reads ``cfg.agentloop.toolcall_parser`` and instantiates the matching parser through ``get_toolcall_parser()``. A parser is a class decorated with ``@register_toolcall_parser(name)`` whose async ``__call__`` method splits model output into plain content and a list of ``ToolRequest`` objects.
-
-Create a calculator parser in ``rlinf/agents/tool_call/parsers.py`` (or in your own extension package):
+Register a parser class with ``@register_toolcall_parser("calc")`` and implement async ``__call__(response_text)`` returning ``(plain_text, tool_requests)``. Add it to ``rlinf/agents/tool_call/parsers.py`` (or your external extension package):
 
 .. code-block:: python
 
@@ -52,48 +186,56 @@ Create a calculator parser in ``rlinf/agents/tool_call/parsers.py`` (or in your 
            content = self.pattern.sub("", response_text)
            return content, requests
 
-Each call follows this contract:
+.. dropdown:: Verify the parser locally on CPU
 
-- ``@register_toolcall_parser("calc")`` registers the class under its lowercase name in ``TOOLCALL_PARSER_REGISTRY``.
-- ``get_toolcall_parser("calc")`` imports ``rlinf.agents.tool_call.parsers`` on first lookup and returns an instance of the registered class.
-- ``__call__(response_text)`` returns ``(content, tool_requests)``. Return an empty list when the model produces no tool tag so the agent loop ends the trajectory. Each ``ToolRequest`` carries the tool ``name`` (matching a name declared in ``ToolWorkerInfo``) and an ``arguments`` dict.
+   .. code-block:: bash
 
-Verify the parser directly on CPU before writing a worker:
+      python -c '
+      import asyncio, re
+      from rlinf.agents.tool_call.schema import ToolRequest
+      from rlinf.algorithms.registry import get_toolcall_parser, register_toolcall_parser
 
-.. code-block:: bash
+      @register_toolcall_parser("calc")
+      class CalcToolCallParser:
+          async def __call__(self, response_text: str):
+              pat = re.compile(r"<calc>(.*?)</calc>", re.DOTALL)
+              matches = pat.findall(response_text)
+              return pat.sub("", response_text), [
+                  ToolRequest(name="calc", arguments={"expression": m.strip()}) for m in matches
+              ]
 
-   python -c '
-   import asyncio, re
-   from rlinf.agents.tool_call.schema import ToolRequest
-   from rlinf.algorithms.registry import get_toolcall_parser, register_toolcall_parser
+      print(asyncio.run(get_toolcall_parser("calc")("Compute <calc>6 * 7</calc> please.")))
+      '
 
-   @register_toolcall_parser("calc")
-   class CalcToolCallParser:
-       async def __call__(self, response_text: str):
-           pat = re.compile(r"<calc>(.*?)</calc>", re.DOTALL)
-           matches = pat.findall(response_text)
-           return pat.sub("", response_text), [
-               ToolRequest(name="calc", arguments={"expression": m.strip()}) for m in matches
-           ]
+2. Implement ToolWorker
+-----------------------
 
-   content, reqs = asyncio.run(get_toolcall_parser("calc")("Compute <calc>6 * 7</calc> please."))
-   print(content.strip(), reqs)
-   '
+Interfaces to Implement
+~~~~~~~~~~~~~~~~~~~~~~~
 
-Expected output:
+.. list-table::
+   :header-rows: 1
+   :widths: 26 12 62
 
-.. code-block:: text
+   * - Method
+     - Required
+     - Role
+   * - ``start_server()``
+     - Yes
+     - Launch a background async loop that reads requests from the input channel and writes replies to the output channel under the same session ID.
+   * - ``stop_server()``
+     - Yes
+     - Cancel the background task and clean up external connections or sandboxes at shutdown.
+   * - ``init_worker()``
+     - Optional
+     - The base class already saves both channels; override only if you open extra clients.
 
-   Compute  please. [ToolRequest(name='calc', arguments={'expression': '6 * 7'})]
+Catch execution errors into a failed response so malformed model output never crashes training. If your tool holds per-trajectory state (``has_session=True``), also handle session start and end requests.
 
-2. Implement a Tool Worker
---------------------------
+Implementation Example
+~~~~~~~~~~~~~~~~~~~~~~
 
-Tool execution runs in dedicated ``ToolWorker`` processes so blocking I/O or sandboxes stay isolated from rollout engines. When you pass ``tool_workers`` to ``AgentRunner`` as a mapping of ``{worker_group: ToolWorkerInfo(tool_names=[...], has_session=...)}``, the runner creates one input ``Channel`` per tool worker group (wrapped in ``ToolChannelInfo``) and one shared ``tool_output_channel``.
-
-``AgentRunner`` initializes each tool worker by calling ``init_worker(input_channel, output_channel)``, starts its background request loop with ``start_server()``, and cancels it with ``stop_server()`` when rollout finishes. Each request arrives as a ``ToolChannelRequest`` carrying ``session_id``, ``request_type`` (``"execute"`` for stateless tools, plus ``"session_start"`` and ``"session_end"`` when ``has_session`` is ``True``), ``tool_name``, and ``tool_args``. The worker replies with a ``ToolChannelResponse`` written to ``output_channel`` under ``key=request.session_id``.
-
-Implement the calculator tool worker (for example in ``rlinf/agents/calc/calc_tool_worker.py``):
+Implement the calculator tool (for example in ``rlinf/agents/calc/calc_tool_worker.py``):
 
 .. code-block:: python
 
@@ -152,25 +294,55 @@ Implement the calculator tool worker (for example in ``rlinf/agents/calc/calc_to
                    response, key=request.session_id, async_op=True
                ).async_wait()
 
-Read the lifecycle in call order:
+Call Flow
+~~~~~~~~~
 
-- ``ToolWorker.init_worker(input_channel, output_channel)`` stores ``self.input_channel`` and ``self.output_channel``; override it only if your worker opens extra clients.
-- ``start_server()`` schedules the async receive loop on the running event loop.
-- ``_process_requests()`` reads each ``ToolChannelRequest``, catches tool errors into ``ToolChannelResponse(success=False, result=...)`` so bad model input does not crash training, and puts the reply with ``key=request.session_id``.
-- ``stop_server()`` cancels the loop cleanly at shutdown.
+1. **Channel wiring:** Before training, the runner creates a dedicated input channel per tool group and one shared output channel, passing both via ``init_worker()``.
 
-For an HTTP-backed tool example, see ``rlinf/agents/searchr1/search_tool_worker.py``. For stateful sessions using ``has_session=True``, see ``rlinf/agents/rstar2/rstar2_agent_loop.py``.
+2. **Startup:** Right before the step loop, the runner calls ``start_server()`` to launch the background consumer.
 
-3. Build the Multi-Turn Agent Loop
-----------------------------------
+3. **Request & reply:** During rollout, the agent loop pushes requests onto the input channel; ``ToolWorker`` evaluates them and writes replies to the output channel with the matching ``session_id`` so the caller wakes up.
 
-``AgentLoopWorker`` coordinates multi-turn rollouts for each query group. Its ``run_one_query()`` method calls ``pre_process()``, repeats ``generate_llm_response()`` and ``generate_tool_response()`` until either returns ``is_continue=False``, concatenates all generated and tool tokens into one ``AgentLoopOutput`` with ``response_mask`` (``1`` for LLM tokens, ``0`` for tool tokens), and finishes with ``post_process()``.
+4. **Shutdown:** When training finishes, the runner calls ``stop_server()`` to cancel the loop cleanly.
+
+For HTTP and stateful-session examples, see ``rlinf/agents/searchr1/search_tool_worker.py`` and ``rlinf/agents/rstar2/rstar2_agent_loop.py``.
+
+3. Implement AgentLoopWorker
+----------------------------
 
 .. note::
 
-   When ``agentloop.is_dynamic_rollout_batch`` is ``True``, subclass ``MultiAgentLoopWorker`` instead of ``AgentLoopWorker``. Each turn then produces its own ``AgentLoopOutput`` inside a ``MultiAgentLoopOutput`` (see ``rlinf/agents/searchr1/searchr1_agent_loop.py``).
+   For dynamic batches (``is_dynamic_rollout_batch: True``) or async training, subclass ``MultiAgentLoopWorker`` instead (see ``rlinf/agents/searchr1/searchr1_agent_loop.py``).
 
-Implement the calculator agent loop (for example in ``rlinf/agents/calc/calc_agent_loop.py``):
+Interfaces to Implement
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 12 60
+
+   * - Method
+     - Required
+     - Role
+   * - ``generate_llm_response()``
+     - Yes
+     - Call ``self.generate()`` for one model turn and set model token masks to ``1``.
+   * - ``generate_tool_response()``
+     - Yes
+     - Parse tool tags, call ``self.tool_call()``, encode tool text, and set tool token masks to ``0``; return ``False`` when there are no tool calls.
+   * - ``pre_process()``
+     - Optional
+     - Initialize per-trajectory state shared across turns (such as turn counters or session IDs).
+   * - ``post_process()``
+     - Optional
+     - Finalize a completed trajectory (such as releasing sessions or attaching extra fields).
+
+Inside these methods, reuse three built-in helpers: ``self.generate()`` (model generation), ``self.tool_call()`` (tool dispatch), and ``self.get_tool_response_ids()`` (chat-template encoding of tool replies).
+
+Implementation Example
+~~~~~~~~~~~~~~~~~~~~~~
+
+Implement the calculator loop (for example in ``rlinf/agents/calc/calc_agent_loop.py``):
 
 .. code-block:: python
 
@@ -245,18 +417,21 @@ Implement the calculator agent loop (for example in ``rlinf/agents/calc/calc_age
            tool_logprobs = [0.0] * len(tool_ids) if self.return_logprobs else None
            return True, tool_ids, [0] * len(tool_ids), tool_logprobs
 
-Every call builds on helpers inherited from ``AgentLoopWorker``:
+Call Flow
+~~~~~~~~~
 
-- ``__init__`` sets ``self.max_prompt_len`` (read by ``run_one_query()``) and ``self.max_resp_len`` so the sequence stays within ``cfg.runner.seq_length``.
-- ``pre_process(prompt_ids)`` returns a per-query context dict shared across turns. Override ``post_process(generate_context, output)`` if you need to release stateful sessions or attach ``extra_fields``.
-- ``self.generate(turn_prompt_ids, sampling_params=...)`` sends a request to the rollout engine over ``generate_input_channel`` and returns ``output_ids`` (plus ``logprobs`` when ``self.return_logprobs`` is ``True``).
-- ``self.tool_call(tool_request)`` looks up the tool's channel via ``tool_name_map`` and ``tool_channel_info_map``, sends a stateless ``ToolChannelRequest``, and returns a ``ToolResponse``.
-- ``self.get_tool_response_ids(tool_messages)`` formats tool messages with the tokenizer's chat template and returns only the appended token IDs. Setting their ``response_mask`` entries to ``0`` excludes tool outputs from policy-gradient loss.
+1. **Batch dispatch:** On each step, the runner triggers rollout; the base worker pops a query batch from the input channel and spawns concurrent trajectory tasks per group.
 
-4. Configure, Register, and Test
+2. **Per-query init:** Each trajectory truncates its prompt to the configured limit and initializes state via ``pre_process()``.
+
+3. **Turn loop:** Each turn runs ``generate_llm_response()`` then ``generate_tool_response()``, appending LLM tokens (mask ``1``) and tool tokens (mask ``0``) until either hook returns ``False``.
+
+4. **Hand-off:** After ``post_process()``, the completed group is packed and written to the output channel for Reward and Actor workers.
+
+4. Configure, Launch, and Verify
 --------------------------------
 
-Select the registered parser and turn limit under ``agentloop`` in your Hydra YAML (starting from a working config such as ``examples/agent/searchr1/config/train_qwen2.5.yaml``):
+Select your registered parser under ``agentloop`` in YAML (starting from ``examples/agent/searchr1/config/train_qwen2.5.yaml``):
 
 .. code-block:: yaml
 
@@ -267,7 +442,7 @@ Select the registered parser and turn limit under ``agentloop`` in your Hydra YA
      print_outputs: False
      is_dynamic_rollout_batch: False
 
-Launch both worker groups in your entry script and pass them to ``AgentRunner`` (follow ``examples/agent/searchr1/train.py`` for dataset, actor, and rollout setup):
+Launch both worker groups in your entry script and pass them to ``AgentRunner`` (see ``examples/agent/searchr1/train.py`` for the full script):
 
 .. code-block:: python
 
@@ -306,11 +481,7 @@ Launch both worker groups in your entry script and pass them to ``AgentRunner`` 
    runner.init_workers()
    runner.run()
 
-If your parser lives outside the RLinf tree, register it inside your package's ``register()`` function and export ``RLINF_EXT_MODULE`` before launching training so every Ray worker imports it (see :ref:`out-of-tree-extensions`):
-
-.. code-block:: bash
-
-   export RLINF_EXT_MODULE=my_pkg.rlinf_ext
+If the parser lives outside RLinf, export ``RLINF_EXT_MODULE=my_pkg.rlinf_ext`` before launching so every Ray worker registers it automatically (see :ref:`out-of-tree-extensions`).
 
 Next Steps
 ----------

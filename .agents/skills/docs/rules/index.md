@@ -38,7 +38,13 @@ The docs have eight top-level chapters in the sidebar, in this order: **Get Star
 
 ## Navigation labels
 
-- **Toctree captions are bare names**, with no "Benchmark", "Models", "World Model", "Simulation Platform", "RL with …", "Training", 评测平台, 仿真平台, or 模型 around them: `LIBERO <embodied/libero>`, `MLP <embodied/mlp>`, `π₀ / π₀.₅ <embodied/pi0>`. The page's H1 may stay descriptive ("RL with LIBERO Benchmarks").
+- **Sidebar labels match target page H1s (`docs/sidebar-title-match`).** On Extending, Guides, Concepts, and Config & Metrics toctrees, every explicit `Label <target>` entry (except `Overview` / `总览`) matches the target page's H1 verbatim. On gallery and Reference (Algorithms / Python API) toctrees, sidebar labels use concise bare names (`LIBERO`, `PPO`, `Actor`) that appear inside the target page's H1 (`LIBERO Evaluation`, `Proximal Policy Optimization (PPO)`, `Actor Interface`).
+- **Keep sibling titles parallel.** Sibling entries under the same parent must follow the same grammatical pattern and naming symmetry—for example:
+  - **Add a Reward / 新增 Reward**: `Rule-Based Reward` · `Model-Based Reward` (`基于规则的 Reward` · `基于模型的 Reward`)
+  - **Add an Agent / 新增 Agent**: `White-Box Agent` · `Black-Box Agent` (`白盒 Agent` · `黑盒 Agent`)
+  - **Add an Env or Robot / 新增 Env 与真机**: `Simulator Env` · `Real-World Hardware` · `Real-World Task` (`仿真 Env` · `真机硬件` · `真机任务`)
+  - **Add a Model / 新增模型**: `<Domain> Model (<Backend>)` (`具身 RL 模型（FSDP）` · `具身 SFT 模型（FSDP）` · `具身 Rollout 模型（SGLang）` · `LLM 模型（Megatron-Bridge）` · `LLM 模型（手动 Megatron）`)
+- **Toctree captions on recipe galleries are bare names**, with no "Benchmark", "Models", "World Model", "Simulation Platform", "RL with …", "Training", 评测平台, 仿真平台, or 模型 around them: `LIBERO <embodied/libero>`, `MLP <embodied/mlp>`, `π₀ / π₀.₅ <embodied/pi0>`.
 - **Gallery category captions** in `examples/index.rst` are one word; the category pages keep descriptive H1s.
 
   | Index page | EN caption | ZH caption |

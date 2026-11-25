@@ -287,6 +287,23 @@ def _check_index_page(rel: str, source: str, lines: list[str]) -> list[route.Fin
                 f"toctree entry missing from page cards/table: {', '.join(missing)}",
             )
         )
+
+    if "/rst_source/extending/" in rel and not rel.endswith(
+        "/rst_source/extending/index.rst"
+    ):
+        for idx, line in enumerate(lines, 1):
+            if re.search(r"(?:\.\./guides/|/rst_source/guides/)", line):
+                findings.append(
+                    route.Finding(
+                        "major",
+                        rel,
+                        idx,
+                        "docs/index-style",
+                        "Extending sub-index should route within ``extending/`` instead of "
+                        "jumping directly into ``guides/``; move contributor integration guides "
+                        "into ``extending/``",
+                    )
+                )
     return findings
 
 
@@ -917,6 +934,88 @@ def _is_adorn_line(line: str) -> bool:
     return len(s) >= 3 and len(set(s)) == 1 and s[0] in HEADING_ADORN_CHARS
 
 
+def _extract_first_h1(path: Path) -> str | None:
+    """Return the first RST H1 title in ``path``, or ``None``."""
+    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    for i in range(len(lines) - 1):
+        title = lines[i].strip()
+        if (
+            title
+            and not title.startswith(("..", ":"))
+            and not _is_adorn_line(lines[i])
+            and _is_adorn_line(lines[i + 1])
+        ):
+            return title
+    return None
+
+
+SIDEBAR_EXACT_MATCH_RE = re.compile(
+    r"^docs/source-(?:en|zh)/rst_source/"
+    r"(?:extending|guides|concepts|reference/training)/.*\.rst$"
+)
+SIDEBAR_CONTAINS_MATCH_RE = re.compile(
+    r"^docs/source-(?:en|zh)/rst_source/reference/(?:algorithms|api)/index\.rst$"
+)
+
+
+def _check_sidebar_title_match(
+    path: Path, rel: str, lines: list[str], root: Path
+) -> list[route.Finding]:
+    """Ensure explicit toctree labels match their target page H1."""
+    exact_area = bool(SIDEBAR_EXACT_MATCH_RE.match(rel))
+    contains_area = bool(SIDEBAR_CONTAINS_MATCH_RE.match(rel))
+    if not exact_area and not contains_area:
+        return []
+    findings: list[route.Finding] = []
+    lang_root = root / (
+        "docs/source-zh" if rel.startswith("docs/source-zh/") else "docs/source-en"
+    )
+    i = 0
+    while i < len(lines):
+        if lines[i].strip() != ".. toctree::":
+            i += 1
+            continue
+        indent = len(lines[i]) - len(lines[i].lstrip())
+        j = i + 1
+        while j < len(lines):
+            raw = lines[j]
+            stripped = raw.strip()
+            if stripped and (len(raw) - len(raw.lstrip())) <= indent:
+                break
+            m = re.match(r"^(.+?)\s*<([^>]+)>$", stripped)
+            if m:
+                label, target = m.group(1).strip(), m.group(2).strip()
+                if label not in ("Overview", "总览") and not target.startswith("http"):
+                    base = lang_root if target.startswith("/") else path.parent
+                    cand = (base / f"{target.lstrip('/')}.rst").resolve()
+                    if cand.exists():
+                        h1 = _extract_first_h1(cand)
+                        if h1:
+                            if exact_area and h1 != label:
+                                findings.append(
+                                    route.Finding(
+                                        "major",
+                                        rel,
+                                        j + 1,
+                                        "docs/sidebar-title-match",
+                                        f"sidebar label {label!r} does not match target page H1 {h1!r}",
+                                    )
+                                )
+                            elif contains_area and label not in h1:
+                                findings.append(
+                                    route.Finding(
+                                        "major",
+                                        rel,
+                                        j + 1,
+                                        "docs/sidebar-title-match",
+                                        f"sidebar label {label!r} is missing from target page H1 {h1!r}",
+                                    )
+                                )
+            j += 1
+        i = j
+    return findings
+
+
 def _check_heading_consistency(
     path: Path, rel: str, lines: list[str], root: Path
 ) -> list[route.Finding]:
@@ -973,6 +1072,7 @@ def check_page(
     findings += _check_root_sidebar_grouping(rel, lines)
     findings += _check_alpha_order(rel, lines)
     findings += _check_agentic_flat_hierarchy(path, rel, source, lines)
+    findings += _check_sidebar_title_match(path, rel, lines, root)
     findings += _check_heading_consistency(path, rel, lines, root)
 
     is_agentic_leaf_index = bool(
