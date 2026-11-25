@@ -1,5 +1,5 @@
-FastWAM Supervised Fine-Tuning and Evaluation
-==============================================
+FastWAM SFT & Evaluation
+========================
 
 .. figure:: https://yuantianyuan01.github.io/FastWAM/static/images/teaser_main.png
    :align: center
@@ -13,230 +13,245 @@ main-camera and wrist-camera RGB images, the 8-dimensional robot state, and the
 language instruction. It predicts 32 action steps and executes 10 steps before
 replanning.
 
-Installation
-------------
+Overview
+--------
 
-.. include:: _setup_common.rst
+Fine-tune FastWAM on the four LIBERO suites with FSDP SFT and run closed-loop evaluation on LIBERO.
 
-For Huawei Ascend, follow :ref:`sft-fastwam-hardware`. The commands below
-install the NVIDIA environment.
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-Install FastWAM for SFT:
+   .. grid-item-card:: Models
+      :text-align: center
 
-.. code-block:: bash
+      FastWAM
 
-   bash requirements/install.sh embodied --model fastwam
-   source .venv/bin/activate
+   .. grid-item-card:: Methods
+      :text-align: center
 
-Install FastWAM with LIBERO for evaluation:
+      FSDP SFT · Evaluation
 
-.. code-block:: bash
+   .. grid-item-card:: Data
+      :text-align: center
 
-   bash requirements/install.sh embodied --model fastwam --env libero
-   source .venv/bin/activate
+      LIBERO (LeRobot)
 
-Supervised Fine-Tuning
-----------------------
+   .. grid-item-card:: Hardware
+      :text-align: center
 
-Download and extract the four LIBERO LeRobot suites:
+      NVIDIA CUDA · :ref:`Huawei Ascend CANN <sft-fastwam-hardware>`
 
-.. code-block:: bash
-
-   huggingface-cli download yuanty/LIBERO-fastwam \
-     --repo-type dataset \
-     --local-dir /your_path_to/LIBERO-fastwam
-
-   for archive in /your_path_to/LIBERO-fastwam/*.tar.gz; do
-     tar -xzf "$archive" -C /your_path_to/LIBERO-fastwam
-   done
-
-Download the normalization statistics:
-
-.. code-block:: bash
-
-   huggingface-cli download yuanty/fastwam \
-     libero_uncond_2cam224_dataset_stats.json \
-     --local-dir /your_path_to/fastwam
-
-Download the Wan components and generate the ActionDiT backbone:
-
-.. code-block:: bash
-
-   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B \
-     --local-dir /your_path_to/checkpoints/Wan-AI/Wan2.2-TI2V-5B
-   huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B \
-     --include "google/umt5-xxl/*" \
-     --local-dir /your_path_to/checkpoints/Wan-AI/Wan2.1-T2V-1.3B
-
-   export DIFFSYNTH_MODEL_BASE_PATH=/your_path_to/checkpoints
-   python .venv/FastWAM/scripts/preprocess_action_dit_backbone.py \
-     --model-config .venv/FastWAM/configs/model/fastwam.yaml \
-     --output /your_path_to/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt \
-     --device cuda \
-     --dtype bfloat16
-
-Precompute the T5 embeddings:
-
-.. code-block:: bash
-
-   python .venv/FastWAM/scripts/precompute_text_embeds.py \
-     task=libero_uncond_2cam224_1e-4 \
-     "data.train.dataset_dirs=[/your_path_to/LIBERO-fastwam/libero_spatial_no_noops_lerobot,/your_path_to/LIBERO-fastwam/libero_object_no_noops_lerobot,/your_path_to/LIBERO-fastwam/libero_goal_no_noops_lerobot,/your_path_to/LIBERO-fastwam/libero_10_no_noops_lerobot]" \
-     "data.train.text_embedding_cache_dir=/your_path_to/text_embeds_cache/libero" \
-     model.redirect_common_files=true
-
-Set the paths in ``examples/sft/config/libero_sft_fastwam.yaml`` and
-``examples/sft/config/model/fastwam.yaml``. The key fields are:
-
-.. code-block:: yaml
-
-   data:
-     # Four LIBERO suites in LeRobot format.
-     train_data_paths:
-       - /your_path_to/LIBERO-fastwam/libero_spatial_no_noops_lerobot
-       - /your_path_to/LIBERO-fastwam/libero_object_no_noops_lerobot
-       - /your_path_to/LIBERO-fastwam/libero_goal_no_noops_lerobot
-       - /your_path_to/LIBERO-fastwam/libero_10_no_noops_lerobot
-     text_embedding_cache_dir: /your_path_to/text_embeds_cache/libero  # Precomputed T5 embeddings
-
-   actor:
-     model:
-       model_path: null  # Initialize from the base model.
-       dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json
-       freeze_non_dit: true  # Train the MoT experts and proprio encoder.
-       fastwam:
-         overrides:
-           # Preprocessed ActionDiT backbone.
-           - model.action_dit_pretrained_path=/your_path_to/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt
-
-Launch SFT:
-
-.. code-block:: bash
-
-   bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+| **You'll do:** install → download LIBERO data & Wan backbones → preprocess embeddings → launch ``run_vla_sft.sh`` or ``run_eval.sh``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · LIBERO LeRobot datasets and Wan2.2 / Wan2.1 checkpoints (steps below).
 
 .. _sft-fastwam-hardware:
 
-Run on Different Hardware Backends
-----------------------------------
+Setup and Run
+-------------
 
-NVIDIA uses the installation and launch steps above. Huawei Ascend CANN supports
-FastWAM SFT and LIBERO evaluation with the same model weights, normalization
-statistics, datasets, and text embedding cache.
+.. include:: _setup_common.rst
 
-Huawei Ascend CANN
-~~~~~~~~~~~~~~~~~~
+The SFT and Evaluation tabs cover NVIDIA CUDA. Use the Huawei Ascend CANN tab for NPU setup and launch steps.
 
-Start with the Ascend LIBERO container or a host with CANN and the NPU driver
-installed:
+.. tab-set::
 
-.. include:: _ascend_libero.rst
+   .. tab-item:: SFT (LIBERO)
+      :sync: fastwam-sft
 
-Create a FastWAM environment from the RLinf checkout inside the container, or
-run the same commands directly on the Ascend host:
+      **1. Install**
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh --platform ascend embodied --model fastwam --env libero
-   source .venv/bin/activate
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model fastwam && source .venv/bin/activate
 
-For SFT only, omit ``--env libero``. Add ``--use-mirror`` for downloads from
-mainland China. The installer selects the Ascend PyTorch stack and skips CUDA
-flash-attention.
+      **2. Download Data and Wan Components**
 
-Prepare the Wan components, ActionDiT backbone, datasets, and T5 embedding cache
-as described above. For ActionDiT preprocessing on an Ascend host, replace
-``--device cuda`` with ``--device cpu``. The text embedding script also uses the
-CPU when CUDA is unavailable. Keep ``DIFFSYNTH_MODEL_BASE_PATH`` pointing to the
-directory containing ``Wan-AI``. When loading the original Wan ``.pth`` files,
-set ``model.redirect_common_files=false`` in the upstream model overrides and
-the text embedding command.
+      Download the LIBERO LeRobot datasets, normalization stats, and Wan2.2 / Wan2.1 components:
 
-Set the data and model paths in ``examples/sft/config/libero_sft_fastwam.yaml``
-and ``examples/sft/config/model/fastwam.yaml`` as described above. For an
-eight-NPU run, start with ``actor.micro_batch_size: 1`` and
-``actor.global_batch_size: 8``, and enable
-``actor.fsdp_config.gradient_checkpointing`` to reduce memory use. Adjust
-``cluster.component_placement.actor`` for your available devices, and keep the
-global batch size divisible by the micro batch size times the number of NPUs.
-Then launch SFT with the same configuration from the repository root:
+      .. code-block:: bash
 
-.. code-block:: bash
+         hf download yuanty/LIBERO-fastwam --repo-type dataset --local-dir ./LIBERO-fastwam
+         for archive in ./LIBERO-fastwam/*.tar.gz; do
+           tar -xzf "$archive" -C ./LIBERO-fastwam
+         done
+         hf download yuanty/fastwam libero_uncond_2cam224_dataset_stats.json --local-dir ./fastwam
+         hf download Wan-AI/Wan2.2-TI2V-5B --local-dir ./checkpoints/Wan-AI/Wan2.2-TI2V-5B
+         hf download Wan-AI/Wan2.1-T2V-1.3B --include "google/umt5-xxl/*" --local-dir ./checkpoints/Wan-AI/Wan2.1-T2V-1.3B
 
-   export DIFFSYNTH_MODEL_BASE_PATH=/your_path_to/checkpoints
-   bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+      **3. Preprocess ActionDiT Backbone and T5 Embeddings**
 
-For evaluation, configure the checkpoint and normalization statistics as
-described below. Set MuJoCo and PyOpenGL to use OSMesa for CPU rendering, then
-run the same LIBERO evaluation entrypoint:
+      .. code-block:: bash
 
-.. code-block:: bash
+         export DIFFSYNTH_MODEL_BASE_PATH=./checkpoints
+         python .venv/FastWAM/scripts/preprocess_action_dit_backbone.py \
+           --model-config .venv/FastWAM/configs/model/fastwam.yaml \
+           --output ./fastwam/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt \
+           --device cuda \
+           --dtype bfloat16
 
-   export MUJOCO_GL=osmesa
-   export PYOPENGL_PLATFORM=osmesa
-   bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+         python .venv/FastWAM/scripts/precompute_text_embeds.py \
+           task=libero_uncond_2cam224_1e-4 \
+           "data.train.dataset_dirs=[./LIBERO-fastwam/libero_spatial_no_noops_lerobot,./LIBERO-fastwam/libero_object_no_noops_lerobot,./LIBERO-fastwam/libero_goal_no_noops_lerobot,./LIBERO-fastwam/libero_10_no_noops_lerobot]" \
+           "data.train.text_embedding_cache_dir=./text_embeds_cache/libero" \
+           model.redirect_common_files=true
 
-Install the OSMesa runtime in the container or host used for evaluation. Replace
-``libero_spatial_fastwam_eval`` with any of the other suite configurations
-listed below. These configurations place rollout workers on four devices by
-default; adjust ``cluster.component_placement`` for your available NPUs.
+      **4. Set paths** in ``examples/sft/config/libero_sft_fastwam.yaml`` and ``examples/sft/config/model/fastwam.yaml``:
 
-RLinf selects the worker's device when constructing FastWAM. On NPU workers,
-it automatically applies the Ascend adaptations and enables fused RoPE and
-RMSNorm for the video and action DiT experts.
+      .. code-block:: yaml
 
-Evaluation
-----------
+         # examples/sft/config/libero_sft_fastwam.yaml
+         data:
+           train_data_paths:
+             - ./LIBERO-fastwam/libero_spatial_no_noops_lerobot
+             - ./LIBERO-fastwam/libero_object_no_noops_lerobot
+             - ./LIBERO-fastwam/libero_goal_no_noops_lerobot
+             - ./LIBERO-fastwam/libero_10_no_noops_lerobot
+           text_embedding_cache_dir: ./text_embeds_cache/libero
 
-Download the released checkpoint:
+      .. code-block:: yaml
 
-.. code-block:: bash
+         # examples/sft/config/model/fastwam.yaml
+         dataset_stats_path: ./fastwam/libero_uncond_2cam224_dataset_stats.json
+         fastwam:
+           overrides:
+             - model.action_dit_pretrained_path=./fastwam/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt
 
-   huggingface-cli download yuanty/fastwam \
-     libero_uncond_2cam224.pt \
-     --local-dir /your_path_to/fastwam
+      **5. Launch SFT:**
 
-Set the paths in ``examples/embodiment/config/model/fastwam.yaml``:
+      .. code-block:: bash
 
-.. code-block:: yaml
+         bash examples/sft/run_vla_sft.sh libero_sft_fastwam
 
-   model_path: /your_path_to/fastwam/libero_uncond_2cam224.pt  # FastWAM checkpoint
-   dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json  # Normalization statistics
+   .. tab-item:: Evaluation (LIBERO)
+      :sync: fastwam-evaluation
 
-Run one command for each suite:
+      **1. Install with LIBERO and download the released checkpoint and stats:**
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
-   bash evaluations/run_eval.sh libero libero_object_fastwam_eval
-   bash evaluations/run_eval.sh libero libero_goal_fastwam_eval
-   bash evaluations/run_eval.sh libero libero_10_fastwam_eval
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model fastwam --env libero && source .venv/bin/activate
+         hf download yuanty/fastwam libero_uncond_2cam224.pt libero_uncond_2cam224_dataset_stats.json --local-dir ./fastwam
 
-The configs use four GPUs because the 20 environment slots divide evenly across
-four workers. Each slot runs 25 episodes, covering all ``20 * 25 = 500`` initial
-states; the same 20 slots cannot be divided evenly across eight workers.
+      **2. Set paths** in ``examples/embodiment/config/model/fastwam.yaml``:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 18 42 20 20
+      .. code-block:: yaml
 
-   * - Suite
-     - Config
-     - ``max_episode_steps``
-     - ``max_steps_per_rollout_epoch``
-   * - Spatial
-     - ``libero_spatial_fastwam_eval``
-     - ``400``
-     - ``10000``
-   * - Object
-     - ``libero_object_fastwam_eval``
-     - ``400``
-     - ``10000``
-   * - Goal
-     - ``libero_goal_fastwam_eval``
-     - ``400``
-     - ``10000``
-   * - Long
-     - ``libero_10_fastwam_eval``
-     - ``700``
-     - ``17500``
+         model_path: ./fastwam/libero_uncond_2cam224.pt
+         dataset_stats_path: ./fastwam/libero_uncond_2cam224_dataset_stats.json
+
+      **3. Run one command per suite** (uses four GPUs so 20 environment slots × 25 episodes = 500 initial states divide evenly across four workers):
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+         bash evaluations/run_eval.sh libero libero_object_fastwam_eval
+         bash evaluations/run_eval.sh libero libero_goal_fastwam_eval
+         bash evaluations/run_eval.sh libero libero_10_fastwam_eval
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 18 42 20 20
+
+         * - Suite
+           - Config
+           - ``max_episode_steps``
+           - ``max_steps_per_rollout_epoch``
+         * - Spatial
+           - ``libero_spatial_fastwam_eval``
+           - ``400``
+           - ``10000``
+         * - Object
+           - ``libero_object_fastwam_eval``
+           - ``400``
+           - ``10000``
+         * - Goal
+           - ``libero_goal_fastwam_eval``
+           - ``400``
+           - ``10000``
+         * - Long
+           - ``libero_10_fastwam_eval``
+           - ``700``
+           - ``17500``
+
+   .. tab-item:: Huawei Ascend CANN
+      :sync: ascend
+
+      FastWAM supports SFT and LIBERO evaluation on Ascend with the same model weights, datasets, and text embedding cache.
+
+      **1. Install**
+
+      Use the Ascend LIBERO container or a host with CANN and the NPU driver installed.
+
+      .. include:: _ascend_libero.rst
+
+      Create the FastWAM environment from the RLinf checkout inside the container or on the Ascend host:
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform ascend embodied --model fastwam --env libero
+         source .venv/bin/activate
+
+      For SFT only, omit ``--env libero``.
+
+      **2. Prepare Model and Data**
+
+      For SFT, complete steps 2–4 in the SFT (LIBERO) tab to download the resources, preprocess them, and set the paths. For ActionDiT preprocessing, use ``--device cpu``. The text embedding script also uses the CPU when CUDA is unavailable.
+
+      Keep ``DIFFSYNTH_MODEL_BASE_PATH`` pointing to the directory containing ``Wan-AI``. When loading the original Wan ``.pth`` weights, set ``model.redirect_common_files=false`` in the text embedding command and in the model's ``fastwam.overrides`` list.
+
+      **3. Launch SFT**
+
+      After setting the data and model paths, update ``examples/sft/config/libero_sft_fastwam.yaml`` for eight NPUs:
+
+      .. code-block:: yaml
+
+         cluster:
+           component_placement:
+             actor: 0-7
+         actor:
+           micro_batch_size: 1
+           global_batch_size: 8
+           fsdp_config:
+             gradient_checkpointing: true
+
+      Adjust placement for your available NPUs. Keep the global batch size divisible by the micro batch size times the number of NPUs.
+
+      .. code-block:: bash
+
+         export DIFFSYNTH_MODEL_BASE_PATH=./checkpoints
+         bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+
+      **4. Evaluate on LIBERO**
+
+      Download the released checkpoint and normalization stats and set their paths as shown in the Evaluation (LIBERO) tab. The evaluation configs use four devices by default. Adjust ``cluster.component_placement`` for your available NPUs before launching.
+
+      Install the OSMesa runtime in the evaluation environment, then enable CPU rendering and launch:
+
+      .. code-block:: bash
+
+         export DIFFSYNTH_MODEL_BASE_PATH=./checkpoints
+         export MUJOCO_GL=osmesa
+         export PYOPENGL_PLATFORM=osmesa
+         bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+
+      Use the other suite configs listed in the Evaluation (LIBERO) tab to evaluate Object, Goal, or Long.
+
+      NPU runs automatically enable fused RoPE and RMSNorm.
+
+.. dropdown:: Advanced configuration (optional)
+
+   By default, ``examples/sft/config/model/fastwam.yaml`` initializes from the base model (``model_path: null``) and trains the MoT experts and proprio encoder (``freeze_non_dit: true``):
+
+   .. code-block:: yaml
+
+      actor:
+        model:
+          model_path: null
+          freeze_non_dit: true
+
+Visualization and Results
+-------------------------
+
+Launch TensorBoard with ``tensorboard --logdir ./logs --port 6006`` to track training loss during SFT and ``env/success_once`` during evaluation. Pass ``env.eval.video_cfg.save_video=True`` to record evaluation videos; see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and :doc:`LIBERO evaluation guide <../../evaluations/guides/libero>` for suite evaluation options.

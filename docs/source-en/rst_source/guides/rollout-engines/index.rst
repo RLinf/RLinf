@@ -1,35 +1,53 @@
-Rollout Engines
-===============
+Rollout Backends
+================
 
-Use these guides to configure the inference engines behind RLinf rollouts,
-including in-process GPU backends and HTTP services that run alongside or
-independently of an RLinf task.
+Pick these guides when selecting or tuning a rollout engine: switching SGLang and vLLM versions, running a standalone SGLang router/server, calling inference over HTTP, or accelerating embodied VLA rollouts with PhyAI and ApxInf.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
+.. grid:: 1 2 3 3
+   :gutter: 2
 
-   * - Guide
-     - What you get
-   * - :doc:`ApxInf <../apxinf>`
-     - Evaluate π₀.₅ on LIBERO with ApxInf's in-process Rust/CUDA inference
-       backend.
-   * - :doc:`SGLang Server & Router <../sglang_server>`
-     - Launch an sglang HTTP server group and an sglang router, with a single
-       OpenAI-compatible endpoint for ``/generate`` and ``/v1/chat/completions``.
-   * - :doc:`Calling SGLang with InferenceHTTPClient <../inference_http_client>`
-     - Send sync and async ``/generate`` / ``/v1/chat/completions`` requests to
-       a router (or a single server) from your own code.
-   * - :doc:`SGLang Version Switching <../version>`
-     - Switch between SGLang versions for the rollout engine.
-   * - :doc:`PhyAI <phyai>`
-     - Train PI0.5 on LIBERO with an FSDP actor and PhyAI's in-process GPU rollout backend.
+   .. grid-item-card:: SGLang & vLLM Versions
+      :link: ../version
+      :link-type: doc
+
+      Select compatible SGLang, vLLM, and PyTorch versions for your environment.
+
+   .. grid-item-card:: SGLang Server & Routing
+      :link: ../sglang_server
+      :link-type: doc
+
+      Serve LLMs and embodied policies through RLinf's SGLang server and router.
+
+   .. grid-item-card:: Inference HTTP Client
+      :link: ../inference_http_client
+      :link-type: doc
+
+      Send asynchronous rollout requests to external or remote inference servers.
+
+   .. grid-item-card:: Session Server
+      :link: ../session_server
+      :link-type: doc
+
+      Collect agent trajectories on rollout nodes with SGLang routing and an OpenAI chat completions endpoint.
+
+   .. grid-item-card:: PhyAI Rollout Backend
+      :link: phyai
+      :link-type: doc
+
+      Accelerate OpenPI π₀.₅ PPO rollouts on LIBERO with CUDA graphs and FlashInfer.
+
+   .. grid-item-card:: ApxInf Rollout Backend
+      :link: ../apxinf
+      :link-type: doc
+
+      Run in-process Rust/CUDA rollouts for OpenPI π₀.₅ evaluation on LIBERO.
 
 .. toctree::
    :hidden:
 
-   ApxInf <../apxinf>
-   SGLang Server & Router <../sglang_server>
-   InferenceHTTPClient <../inference_http_client>
-   SGLang Version Switching <../version>
-   PhyAI <phyai>
+   SGLang & vLLM Versions <../version>
+   SGLang Server & Routing <../sglang_server>
+   Inference HTTP Client <../inference_http_client>
+   Session Server <../session_server>
+   PhyAI Rollout Backend <phyai>
+   ApxInf Rollout Backend <../apxinf>

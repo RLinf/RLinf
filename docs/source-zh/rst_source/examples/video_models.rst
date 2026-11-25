@@ -7,17 +7,21 @@
 
    SD3 与 Wan2.2 图像/视频生成模型。
 
-使用 Diffusion-NFT 或 DiffusionART，以 OCR 奖励微调 SD3 和 Wan2.2。两种方法共用模型、prompt 数据集和 diffusion 环境。先按本页准备依赖、模型与数据，再进入对应的训练指南。
-
-使用 ImageReward 微调 SD3 的流程见 :doc:`embodied/refl`。
+使用 **Diffusion-NFT** 或 **DiffusionART** 以 OCR 奖励微调 SD3 和 Wan2.2，或使用 **ReFL** 以 ImageReward 微调 SD3.5 Medium。Diffusion-NFT 与 DiffusionART 共用下方的依赖、模型与 OCR prompt 数据集准备流程；ReFL 在独立页面内给出完整安装与运行步骤。
 
 选择训练方法
 ------------
 
 根据需要选择训练方法；各指南包含对应配置、更新参数和预期结果。
 
-.. grid:: 1 2 2 2
+.. grid:: 1 3 3 3
    :gutter: 3
+
+   .. grid-item-card:: DiffusionART
+      :link: diffusion_art
+      :link-type: doc
+
+      在 prompt 组内构造共享奖励引导，并向冻结的速度目标训练，包含 SD3 图像 OCR 和 Wan2.2 视频 OCR 配置。
 
    .. grid-item-card:: Diffusion-NFT
       :link: diffusion_nft
@@ -25,11 +29,11 @@
 
       根据相对奖励构造正负速度候选，包含 SD3 图像 OCR 和 Wan2.2 图像/视频 OCR 配置。
 
-   .. grid-item-card:: DiffusionART
-      :link: diffusion_art
+   .. grid-item-card:: ReFL
+      :link: embodied/refl
       :link-type: doc
 
-      在 prompt 组内构造共享奖励引导，并向冻结的速度目标训练，包含 SD3 图像 OCR 和 Wan2.2 视频 OCR 配置。
+      使用可微 ImageReward 反馈及可选图文监督更新微调 SD3.5 Medium。
 
 Prompt、生成结果与奖励
 ----------------------
@@ -56,21 +60,25 @@ Prompt、生成结果与奖励
 安装
 ----
 
-先满足 :doc:`RLinf 安装的前置条件 </rst_source/start/installation>`，再在 GPU 训练机器的仓库根目录执行：
+先满足 :doc:`RLinf 安装的前置条件 </rst_source/start/installation>`\ （中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``）：
 
-.. code:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model diffusion
-   source .venv/bin/activate
+   .. tab-item:: CPU OCR（SD3 / ART）
 
-安装器创建 Python 3.10 环境，安装 Diffusers、PEFT、Transformers、PaddleOCR 和 CPU PaddlePaddle。两个 ART 配置及 SD3 NFT 配置使用 CPU OCR。需要其他环境目录时，传入 ``--venv /path/to/venv``，并激活对应环境。
+      .. code-block:: bash
 
-Wan NFT 配置设置了 ``env.*.reward.use_gpu: True``。使用 GPU OCR 时，通过 ``--paddle-gpu`` 安装 GPU PaddlePaddle（CUDA 11.x 或 12.x），然后激活环境：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
 
-.. code:: bash
+   .. tab-item:: GPU OCR（Wan NFT）
 
-   bash requirements/install.sh embodied --model diffusion --paddle-gpu
-   source .venv/bin/activate
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion --paddle-gpu && source .venv/bin/activate
+
+安装器会创建 Python 3.10 环境，并安装 Diffusers、PEFT、Transformers 与 PaddleOCR（``--paddle-gpu`` 支持 CUDA 11.x / 12.x，供 Wan NFT 配置使用）。需要其他目录时可追加 ``--venv /path/to/venv``。
 
 .. note::
 
@@ -81,17 +89,30 @@ Wan NFT 配置设置了 ``env.*.reward.use_gpu: True``。使用 GPU OCR 时，�
 下载模型
 --------
 
-下载所选配置对应的 checkpoint。SD3.5 Medium 需要先在 Hugging Face 接受模型访问条款。
+下载所选配置对应的 checkpoint（使用 SD3.5 Medium 前需先在 Hugging Face 接受访问条款）：
 
-.. code:: bash
+.. tab-set::
 
-   huggingface-cli download stabilityai/stable-diffusion-3.5-medium \
-      --local-dir /path/to/stable-diffusion-3.5-medium
+   .. tab-item:: SD3.5 Medium
 
-   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B-Diffusers \
-      --local-dir /path/to/Wan2.2-TI2V-5B-Diffusers
+      .. code-block:: bash
 
-命令将 Diffusers checkpoint 保存到本地。在所选训练 YAML 中，将 ``actor.model.model_path`` 设为对应目录。
+         hf download stabilityai/stable-diffusion-3.5-medium --local-dir ./stable-diffusion-3.5-medium
+
+   .. tab-item:: Wan2.2 TI2V 5B
+
+      .. code-block:: bash
+
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --local-dir ./Wan2.2-TI2V-5B-Diffusers
+
+启动 ``run_diffusion.sh`` 时可直接通过 Hydra 命令行覆盖模型与数据路径（也可以修改所选 YAML 中的 ``actor.model.model_path``、``env.train.dataset.path`` 和 ``env.eval.dataset.path``）：
+
+.. code-block:: bash
+
+   bash examples/diffusion/run_diffusion.sh sd3_nft_ocr \
+       actor.model.model_path=./stable-diffusion-3.5-medium \
+       env.train.dataset.path=./ocr_data \
+       env.eval.dataset.path=./ocr_data
 
 .. _diffusion-ocr-dataset:
 
@@ -118,5 +139,6 @@ Wan NFT 配置设置了 ``env.*.reward.use_gpu: True``。使用 GPU OCR 时，�
    :hidden:
    :maxdepth: 1
 
-   Diffusion-NFT <diffusion_nft>
    DiffusionART <diffusion_art>
+   Diffusion-NFT <diffusion_nft>
+   ReFL <embodied/refl>

@@ -42,11 +42,39 @@ TYPE_PREFIXES = (
     ("reference/", "reference"),
     ("resources/publications/", "publication"),
 )
-GALLERY_PAGE = re.compile(
-    r"docs/source-(en|zh)/rst_source/examples/embodied/(?!_)[^/]+\.rst"
+RECIPE_PAGE = re.compile(
+    r"docs/source-(en|zh)/rst_source/"
+    r"(?:examples/(?:embodied|agentic)/|evaluations/guides/)(?!_).+\.rst$"
 )
-RECIPE_SECTIONS = {"en": ("Installation", "Run It"), "zh": ("安装", "运行")}
-GENERIC_SECTIONS = {"Algorithm", "Environment", "算法", "环境"}
+AGENTIC_PROJECT_INDEX = re.compile(
+    r"docs/source-(?:en|zh)/rst_source/examples/agentic/"
+    r"(?!agents/|math_reasoning/)[^/]+/index\.rst$"
+)
+RECIPE_NON_RUNNABLE = ("retriever.rst", "tools.rst", "video_models.rst")
+RECIPE_SECTIONS = {"en": ("Setup and Run",), "zh": ("安装与运行",)}
+AGENTIC_OVERVIEW_SECTIONS = {"en": "Overview", "zh": "概览"}
+GENERIC_SECTIONS = {
+    "Algorithm",
+    "Environment",
+    "Model Architecture",
+    "Technical Details",
+    "GRPO Principle",
+    "How GRPO Works",
+    "How PPO Works",
+    "算法",
+    "环境",
+    "模型架构",
+    "技术细节",
+    "GRPO 原理",
+    "GRPO 工作方式",
+    "PPO 工作方式",
+}
+ZH_TERM_HEADING = (
+    (
+        re.compile(r"优势函数|策略损失|损失函数|规则奖励|奖励模型|新增环境"),
+        "keep Advantage / Policy Loss / Reward / Env in Chinese headings (rules/glossary.md)",
+    ),
+)
 
 #: Severity of an internal code name, by page type; other types are not checked.
 CODE_NAME_SEVERITY = {"recipe": "major", "guide": "major", "concept": "minor"}
@@ -70,6 +98,29 @@ EN_PHRASES = re.compile(
     r"pivotal|delve|showcases?|empowers?|it is worth noting|please note|note that|"
     r"in order to|allows you to|enables you to|a wide range of|currently|not just)\b",
     re.IGNORECASE,
+)
+JARGON_PATTERNS = (
+    (
+        re.compile(
+            r"冒烟测试|冒烟验证|冒烟检查|\bsmoke[\s-]*(?:test(?:ed|ing)?|check|run)\b",
+            re.IGNORECASE,
+        ),
+        "avoid testing jargon (smoke test / 冒烟测试); say quick check / 快速验证 or 自检",
+    ),
+    (
+        re.compile(r"采数|数采"),
+        "use the formal term 数据采集 instead of 采数 / 数采",
+    ),
+    (
+        re.compile(r"遥操(?!作)"),
+        "use the formal term 遥操作 instead of 遥操",
+    ),
+)
+TODO_PATTERN = re.compile(r"\b(?:TODO|TBD|FIXME)\b")
+SKIP_TODO_PATHS = (
+    "/resources/release_v0",
+    "/resources/blog/",
+    "/resources/publications/",
 )
 HAN = r"一-鿿"
 ZH_PATTERNS = (
@@ -154,9 +205,12 @@ def check_page(
     path: Path, rel: str, names: frozenset[str], new: bool
 ) -> list[route.Finding]:
     """The writing rules for one page, given its type and whether it is new."""
-    kind = page_type(rel)
-    lang = "zh" if rel.startswith("docs/source-zh/") else "en"
     source = path.read_text(encoding="utf-8")
+    is_agentic_leaf_index = bool(
+        AGENTIC_PROJECT_INDEX.match(rel) and ".. toctree::" not in source
+    )
+    kind = "recipe" if is_agentic_leaf_index else page_type(rel)
+    lang = "zh" if rel.startswith("docs/source-zh/") else "en"
     lines = source.splitlines()
     rows = prose_rows(source)
     findings: list[route.Finding] = []
@@ -190,6 +244,39 @@ def check_page(
                     "docs/math",
                     "equations belong in Reference; link to it",
                 )
+    skip_heading_len = any(
+        s in rel
+        for s in (
+            "/faq.rst",
+            "/publications/",
+            "/blog/",
+            "/releases",
+            "/reference/algorithms/",
+        )
+    )
+    if not skip_heading_len:
+        for number, title in headings(lines):
+            clean_title = MARKUP.sub("", title).strip()
+            if lang == "zh":
+                # Count CJK as 1 and ASCII as 0.5 so mixed ZH/EN titles are judged fairly.
+                eff_len = sum(0.5 if ord(ch) < 128 else 1.0 for ch in clean_title)
+                if eff_len > 20:
+                    add(
+                        "minor",
+                        number,
+                        "docs/heading-length",
+                        f"heading is too long ({int(eff_len)} CJK-equiv chars); "
+                        "keep titles concise and move secondary details into the body",
+                    )
+            elif len(clean_title) > 48:
+                add(
+                    "minor",
+                    number,
+                    "docs/heading-length",
+                    f"heading is too long ({len(clean_title)} chars); "
+                    "keep titles concise (<= 48 chars) and move details into the body",
+                )
+
     if kind not in ("reference", "extending"):
         for number, title in headings(lines):
             if "``" in title:
@@ -199,23 +286,123 @@ def check_page(
                     "docs/heading",
                     "name the task or idea, not a code identifier",
                 )
-    if new and GALLERY_PAGE.match(rel):
+    if lang == "zh":
+        for number, title in headings(lines):
+            if title == "一键上手":
+                add(
+                    "major",
+                    number,
+                    "docs/structure",
+                    "use '安装与运行' instead of '一键上手' to align with English 'Setup and Run'",
+                )
+            for pattern, advice in ZH_TERM_HEADING:
+                if pattern.search(title):
+                    add("minor", number, "docs/zh-term", advice)
+
+    is_index = rel.endswith(("/index.rst", "_index.rst")) and not is_agentic_leaf_index
+    is_agentic = "/rst_source/examples/agentic/" in rel
+    if (
+        (new or is_agentic)
+        and not is_index
+        and ":orphan:" not in source[:240]
+        and RECIPE_PAGE.match(rel)
+        and not rel.endswith(RECIPE_NON_RUNNABLE)
+    ):
         titles = {title for _, title in headings(lines)}
-        missing = [s for s in RECIPE_SECTIONS[lang] if s not in titles]
+        required = RECIPE_SECTIONS[lang]
+        missing = [s for s in required if s not in titles]
         if missing:
             add(
                 "major",
                 None,
                 "docs/structure",
-                f"a gallery recipe needs the sections {', '.join(missing)}",
+                f"recipe page needs the unified {required[0]!r} section (rules/recipe.md)",
             )
+        if is_agentic:
+            ov = AGENTIC_OVERVIEW_SECTIONS[lang]
+            if ov not in titles:
+                add(
+                    "major",
+                    None,
+                    "docs/structure",
+                    f"Agent & LLM recipe needs the unified {ov!r} section matching Embodied AI recipes",
+                )
         for generic in sorted(titles & GENERIC_SECTIONS):
             add(
                 "major",
                 None,
                 "docs/structure",
-                f"remove the generic {generic!r} section; link to Reference",
+                f"remove the generic theory section {generic!r}; link to Reference instead",
             )
+
+    if not any(skip in rel for skip in SKIP_TODO_PATHS):
+        for number, line in enumerate(lines, 1):
+            if TODO_PATTERN.search(line):
+                add(
+                    "major",
+                    number,
+                    "docs/no-todo",
+                    "remove unfinished TODO / TBD / FIXME marker from published docs",
+                )
+            for pattern, advice in JARGON_PATTERNS:
+                if pattern.search(line):
+                    add("major", number, "docs/jargon", advice)
+
+    # Apply code-density guard across ALL doc pages so prose never turns into
+    # a wall of backticked variables, functions, classes, or paths.
+    list_item_re = re.compile(r"^\s*(?:[-*+]|\d+\.)\s+")
+    for block in check_rst_markup.prose_blocks(source):
+        if any(
+            row.lstrip().startswith(("* -", "| ", "+-", "=="))
+            for row in block.text.splitlines()
+        ):
+            continue
+        chunks: list[tuple[int, str]] = []
+        cur_lines: list[str] = []
+        cur_start = block.lines[0]
+        for line_no, raw_ln in zip(block.lines, block.text.splitlines()):
+            if list_item_re.match(raw_ln) and cur_lines:
+                chunks.append((cur_start, "\n".join(cur_lines)))
+                cur_lines = [raw_ln]
+                cur_start = line_no
+            else:
+                cur_lines.append(raw_ln)
+        if cur_lines:
+            chunks.append((cur_start, "\n".join(cur_lines)))
+
+        for start_line, chunk in chunks:
+            plain = MARKUP.sub(" X ", chunk)
+            inline_literals = LITERAL.findall(chunk)
+            if len(inline_literals) >= 6:
+                add(
+                    "minor",
+                    start_line,
+                    "docs/inline-code-density",
+                    f"paragraph packs {len(inline_literals)} inline code literals; "
+                    "avoid stacking variables, functions, classes, or paths in prose—"
+                    "move structured specs into a table or simplify",
+                )
+            if kind != "publication":
+                if lang == "zh":
+                    char_count = len(re.sub(r"\s+", "", plain))
+                    if char_count > 260:
+                        add(
+                            "minor",
+                            start_line,
+                            "docs/long-paragraph",
+                            f"paragraph has {char_count} Chinese characters on a {kind} page; "
+                            "split into short scannable paragraphs or a table",
+                        )
+                else:
+                    word_count = len(plain.split())
+                    if word_count > 120:
+                        add(
+                            "minor",
+                            start_line,
+                            "docs/long-paragraph",
+                            f"paragraph has {word_count} words on a {kind} page; "
+                            "split into short scannable paragraphs or a table",
+                        )
 
     for number, text in rows:
         if lang == "en":

@@ -7,207 +7,247 @@ FastWAM 监督微调与评测
 
    Fast-WAM 使用视频扩散世界-动作模型预测机器人动作。
 
-RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 进行 FSDP 监督微调，
-并在对应 suite 上完成评测。策略输入为主视角、腕部 RGB 图像、8 维机器人状态和
-语言指令，每次预测 32 步动作，执行 10 步后重新规划。
+RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 做 FSDP 监督微调，并在对应 suite 上完成评测。策略输入为主视角、腕部 RGB 图像、8 维机器人状态和语言指令，每次预测 32 步动作，执行 10 步后重新规划。
 
-安装
-----
-
-.. include:: _setup_common.rst
-
-华为昇腾请参阅 :ref:`sft-fastwam-hardware`；下面的命令用于安装 NVIDIA 环境。
-
-进行 SFT 时安装 FastWAM：
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model fastwam
-   source .venv/bin/activate
-
-进行评测时安装 FastWAM 和 LIBERO：
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model fastwam --env libero
-   source .venv/bin/activate
-
-监督微调
+概览
 --------
 
-下载并解压四套 LIBERO LeRobot 数据：
+在四个 LIBERO 套件上使用 FSDP 对 FastWAM 做监督微调，并运行闭环评测。
 
-.. code-block:: bash
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-   huggingface-cli download yuanty/LIBERO-fastwam \
-     --repo-type dataset \
-     --local-dir /your_path_to/LIBERO-fastwam
+   .. grid-item-card:: 模型
+      :text-align: center
 
-   for archive in /your_path_to/LIBERO-fastwam/*.tar.gz; do
-     tar -xzf "$archive" -C /your_path_to/LIBERO-fastwam
-   done
+      FastWAM
 
-下载归一化统计文件：
+   .. grid-item-card:: 方法
+      :text-align: center
 
-.. code-block:: bash
+      FSDP SFT · 评测
 
-   huggingface-cli download yuanty/fastwam \
-     libero_uncond_2cam224_dataset_stats.json \
-     --local-dir /your_path_to/fastwam
+   .. grid-item-card:: 数据
+      :text-align: center
 
-下载 Wan 组件并生成 ActionDiT backbone：
+      LIBERO（LeRobot）
 
-.. code-block:: bash
+   .. grid-item-card:: 硬件
+      :text-align: center
 
-   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B \
-     --local-dir /your_path_to/checkpoints/Wan-AI/Wan2.2-TI2V-5B
-   huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B \
-     --include "google/umt5-xxl/*" \
-     --local-dir /your_path_to/checkpoints/Wan-AI/Wan2.1-T2V-1.3B
+      NVIDIA CUDA · :ref:`Huawei Ascend CANN <sft-fastwam-hardware>`
 
-   export DIFFSYNTH_MODEL_BASE_PATH=/your_path_to/checkpoints
-   python .venv/FastWAM/scripts/preprocess_action_dit_backbone.py \
-     --model-config .venv/FastWAM/configs/model/fastwam.yaml \
-     --output /your_path_to/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt \
-     --device cuda \
-     --dtype bfloat16
-
-预计算 T5 embedding：
-
-.. code-block:: bash
-
-   python .venv/FastWAM/scripts/precompute_text_embeds.py \
-     task=libero_uncond_2cam224_1e-4 \
-     "data.train.dataset_dirs=[/your_path_to/LIBERO-fastwam/libero_spatial_no_noops_lerobot,/your_path_to/LIBERO-fastwam/libero_object_no_noops_lerobot,/your_path_to/LIBERO-fastwam/libero_goal_no_noops_lerobot,/your_path_to/LIBERO-fastwam/libero_10_no_noops_lerobot]" \
-     "data.train.text_embedding_cache_dir=/your_path_to/text_embeds_cache/libero" \
-     model.redirect_common_files=true
-
-在 ``examples/sft/config/libero_sft_fastwam.yaml`` 和
-``examples/sft/config/model/fastwam.yaml`` 中填写路径。关键字段如下：
-
-.. code-block:: yaml
-
-   data:
-     # 四个 LIBERO suite 的 LeRobot 数据。
-     train_data_paths:
-       - /your_path_to/LIBERO-fastwam/libero_spatial_no_noops_lerobot
-       - /your_path_to/LIBERO-fastwam/libero_object_no_noops_lerobot
-       - /your_path_to/LIBERO-fastwam/libero_goal_no_noops_lerobot
-       - /your_path_to/LIBERO-fastwam/libero_10_no_noops_lerobot
-     text_embedding_cache_dir: /your_path_to/text_embeds_cache/libero  # 预计算的 T5 embedding
-
-   actor:
-     model:
-       model_path: null  # 从 base model 初始化。
-       dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json
-       freeze_non_dit: true  # 仅训练 MoT expert 和 proprio encoder。
-       fastwam:
-         overrides:
-           # 预处理后的 ActionDiT backbone。
-           - model.action_dit_pretrained_path=/your_path_to/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt
-
-启动 SFT：
-
-.. code-block:: bash
-
-   bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+| **你将完成：** 安装环境 → 下载 LIBERO 数据与 Wan 组件 → 预处理 embedding → 启动 ``run_vla_sft.sh`` 或 ``run_eval.sh``。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · LIBERO LeRobot 数据集与 Wan2.2 / Wan2.1 权重（见下文）。
 
 .. _sft-fastwam-hardware:
 
-在不同硬件后端上运行
-----------------------------------------
+安装与运行
+----------
 
-NVIDIA 使用上面的安装与启动步骤。华为昇腾 CANN 支持 FastWAM SFT 和 LIBERO 评测，沿用相同的模型权重、归一化统计、数据集和文本 embedding 缓存。
+.. include:: _setup_common.rst
 
-华为昇腾 CANN
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+NVIDIA CUDA 用户可按 SFT 和评测标签页操作；NPU 用户请使用“华为昇腾 CANN”标签页。
 
-使用昇腾 LIBERO 容器，或已安装 CANN 与 NPU 驱动的宿主机：
+.. tab-set::
 
-.. include:: _ascend_libero.rst
+   .. tab-item:: SFT 训练（LIBERO）
+      :sync: fastwam-sft
 
-在容器内使用 RLinf 代码创建 FastWAM 环境，也可以直接在昇腾宿主机上运行相同命令：
+      **1. 安装环境**
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh --platform ascend embodied --model fastwam --env libero
-   source .venv/bin/activate
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model fastwam && source .venv/bin/activate
 
-仅运行 SFT 时可省略 ``--env libero``。国内下载可添加 ``--use-mirror``。安装器会选择昇腾 PyTorch 环境，并跳过 CUDA flash-attention。
+      **2. 下载数据与 Wan 组件**
 
-按上文准备 Wan 组件、ActionDiT backbone、数据集和 T5 embedding 缓存。在昇腾主机上预处理 ActionDiT 时，将 ``--device cuda`` 改为 ``--device cpu``。CUDA 不可用时，文本 embedding 脚本也会使用 CPU。保持 ``DIFFSYNTH_MODEL_BASE_PATH`` 指向包含 ``Wan-AI`` 的目录。使用原始 Wan ``.pth`` 文件时，在上游模型 overrides 和文本 embedding 命令中设置 ``model.redirect_common_files=false``。
+      下载 LIBERO LeRobot 数据集、归一化统计以及 Wan2.2 / Wan2.1 组件：
 
-按上文在 ``examples/sft/config/libero_sft_fastwam.yaml`` 和 ``examples/sft/config/model/fastwam.yaml`` 中填写数据与模型路径。使用八张 NPU 时，可先设置 ``actor.micro_batch_size: 1`` 和 ``actor.global_batch_size: 8``，并启用 ``actor.fsdp_config.gradient_checkpointing`` 以降低显存占用。根据可用设备调整 ``cluster.component_placement.actor``，同时保证 global batch size 能被 micro batch size 与 NPU 数量之积整除。然后在仓库根目录使用相同配置启动 SFT：
+      .. code-block:: bash
 
-.. code-block:: bash
+         hf download yuanty/LIBERO-fastwam --repo-type dataset --local-dir ./LIBERO-fastwam
+         for archive in ./LIBERO-fastwam/*.tar.gz; do
+           tar -xzf "$archive" -C ./LIBERO-fastwam
+         done
+         hf download yuanty/fastwam libero_uncond_2cam224_dataset_stats.json --local-dir ./fastwam
+         hf download Wan-AI/Wan2.2-TI2V-5B --local-dir ./checkpoints/Wan-AI/Wan2.2-TI2V-5B
+         hf download Wan-AI/Wan2.1-T2V-1.3B --include "google/umt5-xxl/*" --local-dir ./checkpoints/Wan-AI/Wan2.1-T2V-1.3B
 
-   export DIFFSYNTH_MODEL_BASE_PATH=/your_path_to/checkpoints
-   bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+      **3. 预处理 ActionDiT backbone 与 T5 embedding**
 
-评测时，按下文设置 checkpoint 和归一化统计路径，将 MuJoCo 与 PyOpenGL 设为通过 OSMesa 使用 CPU 渲染，再运行相同的 LIBERO 评测入口：
+      .. code-block:: bash
 
-.. code-block:: bash
+         export DIFFSYNTH_MODEL_BASE_PATH=./checkpoints
+         python .venv/FastWAM/scripts/preprocess_action_dit_backbone.py \
+           --model-config .venv/FastWAM/configs/model/fastwam.yaml \
+           --output ./fastwam/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt \
+           --device cuda \
+           --dtype bfloat16
 
-   export MUJOCO_GL=osmesa
-   export PYOPENGL_PLATFORM=osmesa
-   bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+         python .venv/FastWAM/scripts/precompute_text_embeds.py \
+           task=libero_uncond_2cam224_1e-4 \
+           "data.train.dataset_dirs=[./LIBERO-fastwam/libero_spatial_no_noops_lerobot,./LIBERO-fastwam/libero_object_no_noops_lerobot,./LIBERO-fastwam/libero_goal_no_noops_lerobot,./LIBERO-fastwam/libero_10_no_noops_lerobot]" \
+           "data.train.text_embedding_cache_dir=./text_embeds_cache/libero" \
+           model.redirect_common_files=true
 
-在运行评测的容器或宿主机中安装 OSMesa 运行库。将 ``libero_spatial_fastwam_eval`` 替换为下表中的其他 suite 配置即可评测对应任务。这些配置默认将 rollout worker 放在四张设备上，可通过 ``cluster.component_placement`` 调整使用的 NPU。
+      **4. 在** ``examples/sft/config/libero_sft_fastwam.yaml`` **和** ``examples/sft/config/model/fastwam.yaml`` **中填写路径：**
 
-RLinf 构建 FastWAM 时会选择 worker 所在的设备。在 NPU worker 上，昇腾适配自动生效，并为视频与动作 DiT expert 启用融合 RoPE 和 RMSNorm。
+      .. code-block:: yaml
 
-评测
-----
+         # examples/sft/config/libero_sft_fastwam.yaml
+         data:
+           train_data_paths:
+             - ./LIBERO-fastwam/libero_spatial_no_noops_lerobot
+             - ./LIBERO-fastwam/libero_object_no_noops_lerobot
+             - ./LIBERO-fastwam/libero_goal_no_noops_lerobot
+             - ./LIBERO-fastwam/libero_10_no_noops_lerobot
+           text_embedding_cache_dir: ./text_embeds_cache/libero
 
-下载发布的 checkpoint：
+      .. code-block:: yaml
 
-.. code-block:: bash
+         # examples/sft/config/model/fastwam.yaml
+         dataset_stats_path: ./fastwam/libero_uncond_2cam224_dataset_stats.json
+         fastwam:
+           overrides:
+             - model.action_dit_pretrained_path=./fastwam/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt
 
-   huggingface-cli download yuanty/fastwam \
-     libero_uncond_2cam224.pt \
-     --local-dir /your_path_to/fastwam
+      **5. 启动 SFT：**
 
-在 ``examples/embodiment/config/model/fastwam.yaml`` 中设置路径：
+      .. code-block:: bash
 
-.. code-block:: yaml
+         bash examples/sft/run_vla_sft.sh libero_sft_fastwam
 
-   model_path: /your_path_to/fastwam/libero_uncond_2cam224.pt  # FastWAM checkpoint
-   dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json  # 归一化统计文件
+   .. tab-item:: 评测（LIBERO）
+      :sync: fastwam-evaluation
 
-分别运行四个 suite：
+      **1. 安装含 LIBERO 的环境并下载发布权重与统计文件：**
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
-   bash evaluations/run_eval.sh libero libero_object_fastwam_eval
-   bash evaluations/run_eval.sh libero libero_goal_fastwam_eval
-   bash evaluations/run_eval.sh libero libero_10_fastwam_eval
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model fastwam --env libero && source .venv/bin/activate
+         hf download yuanty/fastwam libero_uncond_2cam224.pt libero_uncond_2cam224_dataset_stats.json --local-dir ./fastwam
 
-配置使用 4 张 GPU，因为 20 个环境槽位可以均匀分配给 4 个 worker。每个环境
-执行 25 个 episode，共覆盖 ``20 * 25 = 500`` 个初始状态；同样的 20 个环境
-槽位无法均匀分配给 8 个 worker。
+      **2. 在** ``examples/embodiment/config/model/fastwam.yaml`` **中设置路径：**
 
-.. list-table::
-   :header-rows: 1
-   :widths: 18 42 20 20
+      .. code-block:: yaml
 
-   * - Suite
-     - 配置
-     - ``max_episode_steps``
-     - ``max_steps_per_rollout_epoch``
-   * - Spatial
-     - ``libero_spatial_fastwam_eval``
-     - ``400``
-     - ``10000``
-   * - Object
-     - ``libero_object_fastwam_eval``
-     - ``400``
-     - ``10000``
-   * - Goal
-     - ``libero_goal_fastwam_eval``
-     - ``400``
-     - ``10000``
-   * - Long
-     - ``libero_10_fastwam_eval``
-     - ``700``
-     - ``17500``
+         model_path: ./fastwam/libero_uncond_2cam224.pt
+         dataset_stats_path: ./fastwam/libero_uncond_2cam224_dataset_stats.json
+
+      **3. 分别运行四个 suite**\ （使用 4 张 GPU，将 20 个环境槽位 × 25 个 episode = 500 个初始状态均匀分配给 4 个 worker）：
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+         bash evaluations/run_eval.sh libero libero_object_fastwam_eval
+         bash evaluations/run_eval.sh libero libero_goal_fastwam_eval
+         bash evaluations/run_eval.sh libero libero_10_fastwam_eval
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 18 42 20 20
+
+         * - Suite
+           - 配置
+           - ``max_episode_steps``
+           - ``max_steps_per_rollout_epoch``
+         * - Spatial
+           - ``libero_spatial_fastwam_eval``
+           - ``400``
+           - ``10000``
+         * - Object
+           - ``libero_object_fastwam_eval``
+           - ``400``
+           - ``10000``
+         * - Goal
+           - ``libero_goal_fastwam_eval``
+           - ``400``
+           - ``10000``
+         * - Long
+           - ``libero_10_fastwam_eval``
+           - ``700``
+           - ``17500``
+
+   .. tab-item:: 华为昇腾 CANN
+      :sync: ascend
+
+      昇腾支持 FastWAM SFT 和 LIBERO 评测，使用相同的模型权重、数据集和文本 embedding 缓存。
+
+      **1. 安装环境**
+
+      使用昇腾 LIBERO 容器，或已安装 CANN 和 NPU 驱动的主机。
+
+      .. include:: _ascend_libero.rst
+
+      在容器或昇腾主机的 RLinf 仓库目录中创建 FastWAM 环境：
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform ascend embodied --model fastwam --env libero
+         source .venv/bin/activate
+
+      只运行 SFT 时可省略 ``--env libero``\ 。
+
+      **2. 准备模型和数据**
+
+      运行 SFT 前，完成“SFT 训练（LIBERO）”标签页的第 2–4 步，下载资源、完成预处理并设置路径。预处理 ActionDiT 时使用 ``--device cpu``\ ；CUDA 不可用时，文本 embedding 脚本也会使用 CPU。
+
+      将 ``DIFFSYNTH_MODEL_BASE_PATH`` 指向包含 ``Wan-AI`` 的目录。加载原始 Wan ``.pth`` 权重时，在文本 embedding 命令和模型的 ``fastwam.overrides`` 列表中设置 ``model.redirect_common_files=false``\ 。
+
+      **3. 启动 SFT**
+
+      设置好数据和模型路径后，在 ``examples/sft/config/libero_sft_fastwam.yaml`` 中配置 8 张 NPU：
+
+      .. code-block:: yaml
+
+         cluster:
+           component_placement:
+             actor: 0-7
+         actor:
+           micro_batch_size: 1
+           global_batch_size: 8
+           fsdp_config:
+             gradient_checkpointing: true
+
+      根据可用 NPU 调整 placement。global batch size 需能被 micro batch size 与 NPU 数量的乘积整除。
+
+      .. code-block:: bash
+
+         export DIFFSYNTH_MODEL_BASE_PATH=./checkpoints
+         bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+
+      **4. 运行 LIBERO 评测**
+
+      按“评测（LIBERO）”标签页下载官方 checkpoint 和归一化统计文件，并设置路径。评测配置默认使用 4 个设备，启动前请根据可用 NPU 调整 ``cluster.component_placement``\ 。
+
+      在评测环境中安装 OSMesa 运行库，然后启用 CPU 渲染并启动评测：
+
+      .. code-block:: bash
+
+         export DIFFSYNTH_MODEL_BASE_PATH=./checkpoints
+         export MUJOCO_GL=osmesa
+         export PYOPENGL_PLATFORM=osmesa
+         bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+
+      评测 Object、Goal 或 Long 时，使用“评测（LIBERO）”标签页列出的对应配置。
+
+      NPU 运行时会自动启用融合 RoPE 和 RMSNorm。
+
+.. dropdown:: 进阶配置（可选）
+
+   ``examples/sft/config/model/fastwam.yaml`` 默认从基础模型初始化（``model_path: null``），仅训练 MoT expert 和 proprio encoder（``freeze_non_dit: true``）：
+
+   .. code-block:: yaml
+
+      actor:
+        model:
+          model_path: null
+          freeze_non_dit: true
+
+可视化与结果
+------------
+
+执行 ``tensorboard --logdir ./logs --port 6006`` 启动 TensorBoard，跟踪 SFT 阶段的训练损失及评测阶段的 ``env/success_once``。传入 ``env.eval.video_cfg.save_video=True`` 可录制评测视频；完整指标见 :doc:`训练指标 <../../reference/metrics>`，套件评测选项见 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`。

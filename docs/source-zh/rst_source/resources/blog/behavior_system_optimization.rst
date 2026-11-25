@@ -26,13 +26,13 @@
 BEHAVIOR 提供了更完整的物理仿真、更复杂真实的场景结构，以及覆盖上千种家庭任务的数据规模，因此长期被视为具身智能
 领域极具代表性的“具身 ImageNet”。
 
-.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-splash.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior/behavior-splash.png
    :alt: BEHAVIOR 仿真器环境
    :align: center
 
 *图 1：BEHAVIOR 仿真器环境。*
 
-.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-scenes.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior/behavior-scenes.png
    :alt: BEHAVIOR 仿真器场景
    :align: center
 
@@ -48,13 +48,13 @@ BEHAVIOR 仿真器，提供高保真长程任务环境。
 - 单环境大约需要 **10 个 CPU 核心** 和 **12 GiB 显存**；
 - 由于依赖完整图形渲染链路，BEHAVIOR 无法像纯计算任务那样轻松部署在 A100 这类计算卡上，通常需要 RTX 4090 这类图形卡。
 
-.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-render-4090.jpeg
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior/behavior-render-4090.jpeg
    :alt: RTX 4090 渲染效果示意图
    :align: center
 
 *图 3：RTX 4090 渲染效果示意图。*
 
-.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-render-a100.jpeg
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior/behavior-render-a100.jpeg
    :alt: A100 渲染效果示意图
    :align: center
 
@@ -83,7 +83,7 @@ GPU 渲染与 Omniverse 运行时；在上层，OmniGibson 封装了场景、机
 我们使用 **Tracy** 对单步执行过程做了细粒度性能分析，发现端到端 1028 ms 的延迟并不是由某一个物理内核单点造成的，
 而是来自多个系统环节共同叠加。
 
-.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-timeline-slow-zh.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior/behavior-timeline-slow-zh.png
    :alt: BEHAVIOR 单动作处理时间线
    :align: center
 
@@ -108,7 +108,7 @@ Isaac Sim 的设计初衷之一是支持交互式开发，因此会为机器人�
 性能分析和代码路径分析都表明，默认执行链路中仍然会为这条“显示路径”分配额外资源。它对训练几乎没有帮助，却会持续占用
 GPU 显存与渲染时间。
 
-.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-isaac-viewport.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior/behavior-isaac-viewport.png
    :alt: Isaac Sim GUI 与 viewport 示意图
    :align: center
 
@@ -168,7 +168,7 @@ BEHAVIOR 既可以通过多进程扩展吞吐，也可以在单进程内部通�
 
 但只在动作块末尾、也就是策略真正需要新输入时才生成观测。这让观测生成频率与策略消费频率对齐，直接把一大块额外开销移出了关键路径。
 
-.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-timeline-fast-zh.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior/behavior-timeline-fast-zh.png
    :alt: 按需观测后的动作块时间线
    :align: center
 
@@ -190,7 +190,7 @@ BEHAVIOR 既可以通过多进程扩展吞吐，也可以在单进程内部通�
 如果仅按进程切分，把若干环境进程分给阶段 A、另外一些分给阶段 B，表面上看很直接，但在 BEHAVIOR 中并不高效。原因在于：
 单个进程内部往往对应一个向量化环境，而向量化环境中的多个实例会共享同一次全局物理 / 渲染 step，因此关键路径依然存在明显的串行或半串行段。
 
-.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-parallelism-zh.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior/behavior-parallelism-zh.png
    :alt: BEHAVIOR 两层并行结构示意图
    :align: center
 
@@ -211,7 +211,7 @@ BEHAVIOR 的两层并行结构示意图：进程级与向量化环境级。
 - 模型 forward 与环境 step 的重叠更加充分；
 - 可以在不线性堆高资源成本的前提下，抬高系统吞吐上限。
 
-.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-pipeline-stage-zh.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior/behavior-pipeline-stage-zh.png
    :alt: 流水线切分方案对比图
    :align: center
 
@@ -257,13 +257,13 @@ RLinf 就会自动在环境侧完成切片、调度以及与 rollout 的协同�
 也直接决定了模型更新的节奏、实验迭代效率以及单位时间内可覆盖的任务规模。经过我们的优化，训练系统的瓶颈也随之发生了根本变化：
 原本完全由环境主导的端到端时延，被大幅拉回到了一个模型、环境和调度都更均衡的区间。
 
-.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-perf-rollout.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior/behavior-perf-rollout.png
    :alt: 各优化项消融结果 Rollout Epoch 总时间
    :align: center
 
 *图 10：各优化项消融结果（Rollout Epoch 总时间）。*
 
-.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-perf-env.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior/behavior-perf-env.png
    :alt: 各优化项消融结果 BEHAVIOR 平均 step 开销
    :align: center
 
