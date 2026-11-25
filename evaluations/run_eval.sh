@@ -174,7 +174,7 @@ fi
 
 CONFIG_PATH="${EVALUATIONS_PATH}/${BENCHMARK}"
 if [ "${BENCHMARK}" = "behavior" ]; then
-    SRC_FILE="${EVALUATIONS_PATH}/behavior/eval_2026.py"
+    SRC_FILE="${REPO_PATH}/rlinf/envs/sim/behavior/utils.py"
 fi
 if [ ! -f "${CONFIG_PATH}/${CONFIG_NAME}.yaml" ]; then
     CONFIG_PATH="${EMBODIED_PATH}/config"

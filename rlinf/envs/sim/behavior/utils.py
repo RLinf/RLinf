@@ -18,10 +18,12 @@ import os
 from importlib.util import find_spec
 from pathlib import Path
 
+import hydra
 import torch
 import yaml
 from omegaconf import DictConfig, OmegaConf, open_dict
 
+from rlinf.envs.layout import EnvLayout
 from rlinf.utils.data_iter_utils import ceildiv
 from rlinf.utils.logging import get_logger
 
@@ -418,3 +420,17 @@ def resolve_step_limits(env_cfg: DictConfig, chunk_size: int) -> None:
             f"The episode fits in {budget} rollout steps. Reduce "
             "max_steps_per_rollout_epoch or enable early_stop_on_done."
         )
+
+
+@hydra.main(version_base="1.1", config_path=None)
+def main(cfg: DictConfig) -> None:
+    from evaluations.eval_embodied_agent import main as run_eval
+
+    for env_cfg in EnvLayout.env_cfgs(cfg.env.eval, "env.eval").values():
+        if env_cfg.env_type == "behavior2026":
+            resolve_step_limits(env_cfg, cfg.rollout.model.num_action_chunks)
+    run_eval(cfg)
+
+
+if __name__ == "__main__":
+    main()
