@@ -647,3 +647,54 @@ reward
      - 训练使用的奖励类型（例如 ``math``）。
    * - ``reward.reward_scale``
      - 答案正确时获得 ``reward_scale``；错误时获得 ``-reward_scale``。
+
+降低 Logprob 计算的显存开销
+----------------------------------------
+
+Megatron 智能体训练使用动态批次时，将 ``actor.logprob_chunk_size`` 设为正数，可按 token 分块计算词表 softmax。反向传播时重新计算各块，无需保留完整的 FP32 softmax 结果。显式设置分块大小时需关闭熵计算。默认值为 0，通常一次算完 softmax；如果只对回复打分且关闭熵计算，默认按 256 个 token 分块。
+
+在智能体训练配置中添加：
+
+.. code-block:: yaml
+
+   actor:
+     logprob_chunk_size: 256
+   algorithm:
+     calculate_entropy: false
+     entropy_bonus: 0.0
+
+块大小为 256 时，每次 softmax 处理最多 256 个序列位置。此设置作用于词表投影后的 softmax。块越小，临时显存占用越低，但单步耗时可能变长。在实际任务上测量峰值显存和单步耗时，再选择块大小。
+
+Qwen3.5 MBridge Actor 还可以在词表投影时节省显存。将 ``actor.model.lm_head_chunk_size`` 设为每块的 token 数（如 256），Actor 会分块投影解码器的隐状态，反向传播时再逐块重算。此模式要求使用动态批次、PP1 和 CP1。Qwen3.5 训练时默认关闭多 token 预测。熵可以作为指标记录，熵奖励系数须为零。分块大小默认为 0，沿用模型原有的输出层。
+
+长提示词的打包批次还可以设置 ``actor.response_only_logits: true``，只对预测回复 token 的位置做投影。此选项要求 CP1，默认关闭。启用分块词表投影时，如果关闭熵计算，输出层会自动选择回复位置；记录熵则需要对所有位置做投影。
+
+下表是 Qwen3.5-4B BF16 Actor 在 80 GiB A100 上完成一次更新时的单卡峰值显存，取各卡 PyTorch 已分配显存的最高值。各组均使用 PyTorch 2.11.0+cu128 和 Megatron Core 0.18.0，只对回复 token 打分。两组文本样本均使用单卡，开启分块时每块 32 个 token。长样本来自一条含 6 张图的 RPent 轨迹，使用两张卡、TP2 和序列并行，开启分块时每块 256 个 token。启用 ``actor.model.gradient_accumulation_fusion`` 后，Apex CUDA 算子将梯度累加到 Megatron 已分配的 FP32 缓冲区。
+
+.. list-table:: 不同词表投影方式的单卡峰值显存（GiB）
+   :header-rows: 1
+
+   * - 总 token 数 / 打分 token 数
+     - 常规投影
+     - 常规投影＋融合
+     - 分块投影
+     - 分块投影＋融合
+   * - 512 / 256
+     - 43.57
+     - 44.66
+     - 44.93
+     - 43.73
+   * - 2,048 / 1,024
+     - 51.42
+     - 52.86
+     - 52.19
+     - 51.03
+   * - 23,095 / 12,303
+     - 33.33
+     - 34.06
+     - 24.60
+     - 24.74
+
+关闭融合时，分块使 512 和 2,048 个 token 的文本样本分别多用 1.36 和 0.77 GiB 显存，长样本的单卡峰值则下降了 8.73 GiB。短序列建议先用实际训练批次测量，再决定是否开启。
+
+另一组双卡实验回放了 RPent 一条 100 轮轨迹的最后一条 Actor 输入，共 141,294 个 token、6 张图，其中 30,155 个回复 token 参与打分。两组都开启 TP2、序列并行和 Apex 梯度融合；将投影分块设为 256 后，单次 Actor 更新的每卡峰值从 60.36 GiB 降至 45.49 GiB。

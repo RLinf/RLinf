@@ -1,0 +1,28 @@
+defaults:
+  - train_qwen3.5_4b_episode_sync_grpo
+  - _self_
+
+runner:
+  experiment_name: rpent-four-simulator-grpo
+
+data:
+  train_data_paths: null
+
+tools:
+  rpent:
+    remote_toolkit_endpoint: null
+
+env:
+  rpent:
+    libero:
+      endpoint: http://127.0.0.1:28561
+      train_data_paths: ???
+    robotwin:
+      endpoint: http://127.0.0.1:28562
+      train_data_paths: ???
+    robocasa:
+      endpoint: http://127.0.0.1:28563
+      train_data_paths: ???
+    robodojo:
+      endpoint: http://127.0.0.1:28564
+      train_data_paths: ???

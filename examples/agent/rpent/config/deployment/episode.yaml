@@ -1,0 +1,30 @@
+# Copy outside the repository, fill every ???, then select deployment/local.
+# Paths must resolve identically on all four model hosts.
+runner:
+  output_dir: ???
+data:
+  train_data_paths: ???
+  val_data_paths: ???
+tools:
+  rpent:
+    repo_path: ???
+    python: ???
+    remote_toolkit_endpoint: http://127.0.0.1:28490
+    output_dir: ???
+rollout:
+  model:
+    model_path: ???
+  sglang:
+    token_space_preprocess_cache_dir: ???
+actor:
+  tokenizer:
+    tokenizer_model: ???
+  megatron:
+    ckpt_convertor:
+      hf_model_path: ???
+critic:
+  tokenizer:
+    tokenizer_model: ???
+  megatron:
+    ckpt_convertor:
+      hf_model_path: ???

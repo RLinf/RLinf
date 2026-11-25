@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from functools import partial
 from typing import Callable, Optional
 
 from megatron.core.transformer import TransformerConfig
@@ -92,6 +93,17 @@ class ReshardConfig:
     attn TP (reshard_tp_size) != full engine TP (rollout_full_tp_size), requiring
     different gather+slice strategies per weight type (DPA three/four-way split)."""
 
+    vision_config: Optional[object] = None
+    """Vision configuration of a multimodal Megatron provider."""
+
+    mm_enable_dp_encoder: bool = False
+    """Whether each rollout vision encoder holds a full copy of its weights."""
+
+    @property
+    def rollout_vision_tp_size(self) -> int:
+        """Vision TP is one for DP encoders, otherwise it follows attention TP."""
+        return 1 if self.mm_enable_dp_encoder else self.reshard_tp_size
+
     @property
     def split_fc1(self) -> bool:
         """Whether tp_gather_fn should split fused fc1 into gate_proj/up_proj.
@@ -117,6 +129,17 @@ class ReshardConfig:
 
         if self.tp_gather_fn is None:
             self.tp_gather_fn = get_tp_gather_fn(self.model_type)
+            if self.model_type == "qwen3_5":
+                self.tp_gather_fn = partial(
+                    self.tp_gather_fn,
+                    model_config=self.model_config,
+                    enable_dp_attention=self.enable_dp_attention,
+                    replicate_output_layer=(
+                        self.enable_dp_attention
+                        and self.reshard_pp_size == 1
+                        and self.model_config.share_embeddings_and_output_weights
+                    ),
+                )
 
         # tpe_gather_fn only use in moe model parallel
         if self.model_config.num_moe_experts is not None and self.tpe_gather_fn is None:

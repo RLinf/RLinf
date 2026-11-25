@@ -63,6 +63,9 @@ class RolloutRequest:
     # rollout buffer keys its per-task state by it. None in synchronous
     # training.
     task_names: Optional[list[str]] = None
+    # A finite, fixed-policy candidate cohort used by synchronous oversampling.
+    cohort_id: Optional[str] = None
+    weight_version: Optional[int] = None
 
     def to_seq_group_infos(self) -> list["SeqGroupInfo"]:
         return [
@@ -90,14 +93,24 @@ def build_rollout_requests_from_batch(
     group_size: int,
     split_size: int,
     enforce_divisible_batch: bool = False,
+    split_trajectories: bool = False,
 ) -> list[RolloutRequest]:
-    """Convert one collated batch into split rollout requests."""
+    """Shard query groups, or their individual trajectories, across workers."""
     prompt_ids = batch["prompt"].tolist()
     lengths = batch["length"].tolist()
     answers = batch["answer"]
     image_data = batch["image_data"]
     multi_modal_inputs = batch["multi_modal_inputs"]
     prompt_ids = [ids[-pmp_len:] for ids, pmp_len in zip(prompt_ids, lengths)]
+
+    if split_trajectories:
+        prompt_ids = [ids for ids in prompt_ids for _ in range(group_size)]
+        answers = [answer for answer in answers for _ in range(group_size)]
+        image_data = [images for images in image_data for _ in range(group_size)]
+        multi_modal_inputs = [
+            inputs for inputs in multi_modal_inputs for _ in range(group_size)
+        ]
+        group_size = 1
 
     requests = []
     for (

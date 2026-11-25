@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import importlib.util
 import logging
 import multiprocessing as mp
 import os
@@ -29,6 +30,7 @@ from sglang.srt.utils import (
     set_ulimit,
 )
 
+from rlinf.hybrid_engines.sglang.multimodal.token_space import is_token_space_build
 from rlinf.utils.patcher import Patcher
 
 from .io_struct import (
@@ -106,10 +108,12 @@ def _set_envs_and_config(server_args: ServerArgs):
 
 
 Patcher.clear()
-Patcher.add_patch(
-    "sglang.srt.entrypoints.engine._set_envs_and_config",
-    "rlinf.hybrid_engines.sglang.common.sgl_engine._set_envs_and_config",
-)
+_TOKEN_SPACE_BUILD = is_token_space_build()
+if not _TOKEN_SPACE_BUILD:
+    Patcher.add_patch(
+        "sglang.srt.entrypoints.engine._set_envs_and_config",
+        "rlinf.hybrid_engines.sglang.common.sgl_engine._set_envs_and_config",
+    )
 Patcher.add_patch(
     "sglang.srt.managers.tokenizer_manager.TokenizerManager",
     "rlinf.hybrid_engines.sglang.common.tokenizer_manager.TokenizerManager",
@@ -121,7 +125,7 @@ except Exception as e:
     raise ValueError(f"sglang version not supported: {e}")
 # for sglang < 0.5.0, support to get output_ids in result
 # for sglang < 0.5.5, fix a bug in sglang to get correct output_ids
-if sglang_version <= parse("0.5.5"):
+if sglang_version <= parse("0.5.5") and not _TOKEN_SPACE_BUILD:
     Patcher.add_patch(
         "sglang.srt.managers.detokenizer_manager.DetokenizerManager",
         "rlinf.hybrid_engines.sglang.common.detokenizer_manager.DetokenizerManager",
@@ -135,4 +139,9 @@ Patcher.add_patch(
     "sglang.srt.managers.scheduler.run_scheduler_process",
     "rlinf.hybrid_engines.sglang.common.sgl_scheduler.run_scheduler_process",
 )
+if importlib.util.find_spec("sglang.srt.models.qwen3_5") is not None:
+    Patcher.add_patch(
+        "sglang.srt.models.qwen3_5.RMSNormGated",
+        "rlinf.hybrid_engines.sglang.common.qwen3_5.Qwen35RMSNormGated",
+    )
 Patcher.apply()

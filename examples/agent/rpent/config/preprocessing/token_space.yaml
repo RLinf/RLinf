@@ -1,0 +1,14 @@
+# Capture actual serving image inputs with released SGLang; replay them in training.
+rollout:
+  env_vars:
+    SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE: rlinf.hybrid_engines.sglang.multimodal
+  gpu_memory_utilization: 0.55
+  sglang:
+    disable_fast_image_processor: true
+    enable_shared_multi_modal_processor: true
+actor:
+  multimodal:
+    prefetch_batches: 2
+    prefetch_bytes: 1073741824
+  megatron:
+    mbridge: true

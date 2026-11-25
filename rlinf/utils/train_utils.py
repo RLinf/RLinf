@@ -14,6 +14,15 @@
 
 from megatron.core.distributed import finalize_model_grads
 
+from rlinf.utils.utils import clear_memory
+
+
+def _finalize_after_emptying_cache(*args, **kwargs):
+    # Backward leaves activation blocks in PyTorch's cache, while NCCL allocates
+    # its buffers outside it; return them before the gradient collectives.
+    clear_memory()
+    return finalize_model_grads(*args, **kwargs)
+
 
 def set_sync_funcs(megatron_model_manager, forward_only):
     # handle asynchronous grad reduction
@@ -61,7 +70,13 @@ def set_sync_funcs(megatron_model_manager, forward_only):
         module.config.grad_sync_func = grad_sync_func
         module.config.param_sync_func = param_sync_func
 
-        module.config.finalize_model_grads_func = finalize_model_grads
+        module.config.finalize_model_grads_func = (
+            _finalize_after_emptying_cache
+            if megatron_model_manager._cfg.megatron.get(
+                "empty_cache_after_backward", False
+            )
+            else finalize_model_grads
+        )
         if not forward_only:
             module.config.grad_scale_func = megatron_model_manager.optimizer.scale_loss
         else:

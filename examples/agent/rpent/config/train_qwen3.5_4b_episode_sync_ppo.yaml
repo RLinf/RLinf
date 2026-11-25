@@ -1,0 +1,11 @@
+defaults:
+  - base_episode
+  - _self_
+
+algorithm:
+  group_size: 1
+  adv_type: actor_gae
+  clip_ratio_high: 0.2
+
+critic:
+  use_critic_model: true

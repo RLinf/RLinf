@@ -1,0 +1,13 @@
+diff --git a/srt/models/qwen3_5.py b/srt/models/qwen3_5.py
+--- a/srt/models/qwen3_5.py
++++ b/srt/models/qwen3_5.py
+@@ -236,7 +236,8 @@
+             group_size=None,
+             norm_before_gate=True,
+             device=torch.get_device_module().current_device(),
+-            dtype=config.torch_dtype,
++            # Preserve the effective scale of Megatron's zero-centered norm.
++            dtype=torch.float32,
+         )
+ 
+         self.out_proj = RowParallelLinear(

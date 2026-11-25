@@ -43,8 +43,11 @@ requests
 scipy
 sentencepiece
 setproctitle
-# wandb / swanlab cap protobuf below 7; smg-grpc-servicer's grpcio helpers want 7.
+# wandb / swanlab require protobuf < 7. Explicit helper pins are needed because
+# the project's protobuf override bypasses their generated-code requirements.
 protobuf>=6.31.1,<7
+grpcio-health-checking==1.81.1
+grpcio-reflection==1.81.1
 smg-grpc-servicer>=0.5.0
 soundfile==0.13.1
 tiktoken

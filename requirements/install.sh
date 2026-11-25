@@ -1640,6 +1640,31 @@ install_sglang() {
         fi
         install_engine_requirements "$extra_req"
     done
+    if [ "$version" = "0.5.12.post1" ]; then
+        local sglang_dir norm_patch
+        # uv may link installed files to its cache; patch only this environment.
+        sglang_dir=$(python - <<'PY'
+from importlib.util import find_spec
+from pathlib import Path
+import os
+import shutil
+import tempfile
+
+package = Path(find_spec("sglang").origin).parent
+target = package / "srt/models/qwen3_5.py"
+if target.is_symlink() or target.stat().st_nlink > 1:
+    with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as private:
+        shutil.copy2(target, private.name)
+    os.replace(private.name, target)
+print(package)
+PY
+        )
+        norm_patch="$SCRIPT_DIR/agentic/sglang-0.5.12.post1-gdn-norm.patch"
+        # Apply relative to the package, even when the venv is inside a checkout.
+        if ! git --git-dir=/dev/null -C "$sglang_dir" apply --reverse --check "$norm_patch" 2>/dev/null; then
+            git --git-dir=/dev/null -C "$sglang_dir" apply "$norm_patch" || return $?
+        fi
+    fi
     echo "[install.sh] Installed sglang ${version}${*:+ with extras: $*} for $(agentic_cuda_line)."
 }
 
@@ -2318,7 +2343,7 @@ clone_or_reuse_repo() {
         target_dir="$env_value"
         if [ ! -d "$target_dir" ]; then
             echo "$env_var_name=$target_dir does not exist yet; cloning $git_url into it..." >&2
-            git_clone_with_retry "$@" "$git_url" "$target_dir" >&2
+            git_clone_with_retry "$@" "$git_url" "$target_dir" >&2 || return $?
         else
             echo "Reusing existing checkout at $env_var_name=$target_dir." >&2
             local want_ref="" prev="" arg current_ref
@@ -2336,7 +2361,7 @@ clone_or_reuse_repo() {
     else
         target_dir="$default_dir"
         if [ ! -d "$target_dir" ]; then
-            git_clone_with_retry "$@" "$git_url" "$target_dir" >&2
+            git_clone_with_retry "$@" "$git_url" "$target_dir" >&2 || return $?
         elif [ -d "$target_dir/.git" ]; then
             echo "Checking git repo $target_dir..." >&2
             local git_intact=1
@@ -2346,12 +2371,12 @@ clone_or_reuse_repo() {
             else
                 echo "Git repo $target_dir is corrupted. Re-cloning..." >&2
                 rm -rf "$target_dir"
-                git_clone_with_retry "$@" "$git_url" "$target_dir" >&2
+                git_clone_with_retry "$@" "$git_url" "$target_dir" >&2 || return $?
             fi
         fi
     fi
 
-    printf '%s\n' "$(realpath "$target_dir")"
+    realpath "$target_dir"
 }
 
 #=======================EMBODIED INSTALLERS=======================
@@ -4661,6 +4686,8 @@ install_mbridge() {
     uv pip uninstall rlinf-megatron-bridge || true
     uv pip install --no-deps "megatron-bridge==0.5.0"
     uv pip install "nvidia-modelopt==0.45.0"
+    # Qwen3.5's GatedDeltaNet uses FLA kernels, not the optional HF model wrappers.
+    uv pip install "fla-core==0.6.0"
 
     local mbridge_ver modelopt_ver
     mbridge_ver=$(uv pip show megatron-bridge 2>/dev/null | awk '/^Version:/{print $2}')
@@ -4769,6 +4796,15 @@ install_agentic() {
     [ "$torch211_stack" -eq 1 ] && megatron_branch="core_r0.18.0"
     local megatron_dir
     megatron_dir=$(clone_or_reuse_repo MEGATRON_PATH "$VENV_DIR/Megatron-LM" https://github.com/NVIDIA/Megatron-LM.git -b "$megatron_branch")
+
+    if [ "$torch211_stack" -eq 1 ] && [ -z "${MEGATRON_PATH:-}" ]; then
+        # Preserve CPU-offloaded master weights and Adam counters on resume.
+        # Explicit MEGATRON_PATH checkouts remain under the caller's control.
+        local resume_patch="$SCRIPT_DIR/agentic/megatron-core-r0.18.0-cpu-offload.patch"
+        if ! git -C "$megatron_dir" apply --reverse --check "$resume_patch" 2>/dev/null; then
+            git -C "$megatron_dir" apply "$resume_patch" || return $?
+        fi
+    fi
 
     echo "export PYTHONPATH=$(realpath "$megatron_dir"):\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
 

@@ -318,6 +318,7 @@ class ComponentPlacement:
         self._components: list[str] = []
         self._component_world_size: dict[str, int] = {}
         self._component_rank_map: dict[str, dict[tuple[int], list[int]]] = {}
+        self._component_node_groups: dict[str, list[str]] = {}
 
         for component_names in self._placement_config.keys():
             component_placement = self._placement_config[component_names]
@@ -419,6 +420,9 @@ class ComponentPlacement:
             self._placements[component_name] = placement_strategy
             self._component_world_size[component_name] = num_processes
             self._component_rank_map[component_name] = rank_map
+            self._component_node_groups[component_name] = [
+                group.label for group in node_groups
+            ]
 
     def _parse_rank_map(
         self, rank_map_str: str, resolver: MultiNodeGroupResolver

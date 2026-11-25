@@ -32,6 +32,8 @@ except ImportError:
         from sglang.srt.managers.communicator import FanOutCommunicator as _Communicator
 from sglang.srt.server_args import PortArgs, ServerArgs
 
+from rlinf.hybrid_engines.sglang.multimodal.token_space import is_token_space_build
+
 from .io_struct import (
     AbortGenerationInput,
     AbortGenerationOutput,
@@ -40,6 +42,7 @@ from .io_struct import (
     TaskMethodInput,
     TaskMethodOutput,
 )
+from .token_metadata import accumulate_token_metadata
 
 
 # Add two methods and their communicators, input/output structs.
@@ -48,22 +51,21 @@ class TokenizerManager(_TokenizerManager):
         self,
         server_args: ServerArgs,
         port_args: PortArgs,
+        **kwargs,
     ):
         super().__init__(
             server_args=server_args,
             port_args=port_args,
+            **kwargs,
         )
 
-        self.run_task_method_communicator = _Communicator(
-            self.send_to_scheduler,
-            fan_out=server_args.dp_size,
+        token_space_build = is_token_space_build()
+        send = (
+            self._dispatch_to_scheduler if token_space_build else self.send_to_scheduler
         )
-        self.sync_hf_weight_communicator = _Communicator(
-            self.send_to_scheduler, server_args.dp_size
-        )
-        self.abort_generation_communicator = _Communicator(
-            self.send_to_scheduler, server_args.dp_size
-        )
+        self.run_task_method_communicator = _Communicator(send, server_args.dp_size)
+        self.sync_hf_weight_communicator = _Communicator(send, server_args.dp_size)
+        self.abort_generation_communicator = _Communicator(send, server_args.dp_size)
 
         _extra_mapping = [
             (TaskMethodOutput, self.run_task_method_communicator.handle_recv),
@@ -80,7 +82,9 @@ class TokenizerManager(_TokenizerManager):
             sglang_version = parse(version("sglang"))
         except Exception as e:
             raise ValueError(f"sglang version not supported: {e}")
-        self.patch_return_output_ids = sglang_version < parse("0.5.0")
+        self.patch_return_output_ids = (
+            sglang_version < parse("0.5.0") and not token_space_build
+        )
 
     async def run_task_method(
         self,
@@ -104,7 +108,31 @@ class TokenizerManager(_TokenizerManager):
         if obj is None:
             obj = SyncHFWeightInput()
         self.auto_create_handle_loop()
-        await self.sync_hf_weight_communicator(obj)
+        responses = await self.sync_hf_weight_communicator(obj)
+        if obj.weight_version is not None and any(
+            response.weight_version != obj.weight_version for response in responses
+        ):
+            raise RuntimeError(
+                "Not all rollout schedulers acknowledged the published weight version."
+            )
+
+    async def pause_for_weight_update(self):
+        """Gate new generation calls until scheduler retraction is acknowledged."""
+        async with self.is_pause_cond:
+            self.is_pause = True
+            return await self.run_task_method(
+                TaskMethodInput(method_name="pause_for_weight_update")
+            )
+
+    async def resume_after_weight_update(self):
+        """Acknowledge scheduler resumption before admitting further generation calls."""
+        async with self.is_pause_cond:
+            result = await self.run_task_method(
+                TaskMethodInput(method_name="resume_after_weight_update")
+            )
+            self.is_pause = False
+            self.is_pause_cond.notify_all()
+            return result
 
     async def abort_generation(
         self,
@@ -114,14 +142,16 @@ class TokenizerManager(_TokenizerManager):
         self.auto_create_handle_loop()
         await self.abort_generation_communicator(obj)
 
-    # to return output_ids and response_text simaltaneously in sglang 0.4.x.
-    # copied from srt/managers/tokenizer_manager.py (0.4.6) and only add "output_ids" in out_dict when isinstance(recv_obj, BatchStrOut) is True
     def _handle_batch_output(
         self,
         recv_obj,
     ):
         import json
         import time
+
+        # Component-based SGLang unwraps and accumulates packet metadata itself.
+        if not hasattr(_TokenizerManager, "update_request_meta_info"):
+            accumulate_token_metadata(recv_obj, self.rid_to_state)
 
         # for sglang 0.5.0 and later, we use the original _handle_batch_output
         if not self.patch_return_output_ids:
