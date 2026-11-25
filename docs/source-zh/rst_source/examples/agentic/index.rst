@@ -95,6 +95,8 @@ Agent 训练
 
       面向广泛信息检索的主从多 Agent 强化学习，4B 模型在 WideSearch 上达到 40.0% item F1。
 
+如需接入自己的 Agent（白盒或 OpenAI API 黑盒接入），见 :doc:`新增 Agent </rst_source/extending/agents/index>`。
+
 图像与视频生成
 --------------
 

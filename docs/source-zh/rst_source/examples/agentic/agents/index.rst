@@ -36,6 +36,10 @@ Agent 训练
 
       面向广泛信息检索的主从多 Agent 强化学习（MARL），4B 模型在 WideSearch 上达到 40.0% item F1。
 
+.. tip::
+
+   **接入自己的 Agent？** 参见 :doc:`新增 Agent </rst_source/extending/agents/index>`，按需选择在 RLinf 内编写白盒 Agent 或通过 OpenAI API 接入外部黑盒 Agent。
+
 .. toctree::
    :hidden:
    :maxdepth: 1

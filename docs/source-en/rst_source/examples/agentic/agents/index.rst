@@ -36,6 +36,10 @@ Reinforcement learning recipes for multi-turn tool use, multi-agent coordination
 
       Lead-agent and parallel subagent MARL for broad information seeking on WideSearch, reaching 40.0% item F1 with a 4B model.
 
+.. tip::
+
+   **Integrating your own agent?** See :doc:`Add an Agent </rst_source/extending/agents/index>` to build a white-box agent inside RLinf or connect an existing black-box agent over the OpenAI API.
+
 .. toctree::
    :hidden:
    :maxdepth: 1

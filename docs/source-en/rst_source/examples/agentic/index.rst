@@ -95,6 +95,8 @@ Agentic RL
 
       Lead-agent and parallel subagent MARL for broad information seeking on WideSearch, reaching 40.0% item F1 with a 4B model.
 
+To plug in your own white-box or OpenAI API black-box agent, see :doc:`Add an Agent </rst_source/extending/agents/index>`.
+
 Image & Video Generation
 ------------------------
 
