@@ -99,7 +99,7 @@ PPO 以产生数据的 policy 为基准衡量每次更新。如果这个基准�
 .. _phyai-http-evaluation-zh:
 
 通过 PhyAI Gateway 评估
----------------------
+-----------------------
 
 这条路径仅用于评估，通过 Gateway 发送批量观测。不填写\ ``rollout.phyai.gateway_url``\ 时，RLinf 会在 placement 选中的 worker 上启动模型 Server 和 Gateway，并管理服务的生命周期。填写 Gateway 地址则使用外部管理的服务。
 
