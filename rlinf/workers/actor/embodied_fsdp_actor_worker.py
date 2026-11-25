@@ -32,8 +32,13 @@ from rlinf.data.schema.embodied_types import Trajectory, batch_format
 from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
 from rlinf.data.storage.replay import EnvReplayBuffer, TrajectoryReplayBuffer
 from rlinf.envs.layout import EnvSpec
+from rlinf.hybrid_engines.fsdp import FSDP
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
-from rlinf.hybrid_engines.weight_syncer import WeightSyncer
+from rlinf.hybrid_engines.weight_syncer import (
+    FlatBucketWeightSyncer,
+    WeightSyncer,
+    can_use_p2p_weight_sync,
+)
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Cluster, Worker
@@ -131,11 +136,17 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         self._sync_weight_comm_options = self.weight_syncer.comm_options
 
-        self._is_weight_sender = self._rank == 0
         self._actor_world_size = self._world_size
         self._rollout_all_ranks = list(
             range(self._component_placement.get_world_size("rollout"))
         )
+        self._use_p2p_weight_sync = can_use_p2p_weight_sync(
+            self.weight_syncer,
+            cfg,
+            self._actor_world_size,
+            len(self._rollout_all_ranks),
+        )
+        self._is_weight_sender = True if self._use_p2p_weight_sync else self._rank == 0
 
     # Built on first use: offline actors have no env.train and never read them.
     @cached_property
@@ -202,16 +213,65 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def get_rollout_state_dict(self) -> dict:
         return self.get_model_state_dict(cpu_offload=False, full_state_dict=False)
 
-    @Worker.timer("actor/sync_model_to_rollout")
-    async def sync_model_to_rollout(self) -> None:
-        if self.enable_offload:
-            if not self.is_optimizer_offloaded:
-                self.offload_optimizer()
+    async def _sync_weights_with_syncer(
+        self,
+        *,
+        version: int | torch.Tensor,
+        direct_module: nn.Module | None,
+        state_dict_fn: Callable[[], dict],
+    ) -> None:
+        if self._use_p2p_weight_sync:
+            assert isinstance(self.weight_syncer, FlatBucketWeightSyncer)
 
-            if self.is_weight_offloaded:
-                self.load_param_and_grad(self.device, False)
+            async def send_meta(data: Any) -> None:
+                await self.send(
+                    data,
+                    dst_group_name=self._rollout_group_name,
+                    dst_rank=self._rank,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
 
-        state_dict = self.get_rollout_state_dict()
+            async def send_payload(buf: torch.Tensor) -> None:
+                if (
+                    self.torch_platform is not None
+                    and self.torch_platform.is_available()
+                    and buf.device.type == self.torch_device_type
+                ):
+                    self.torch_platform.current_stream().synchronize()
+                await self.send_tensor(
+                    buf,
+                    dst_group_name=self._rollout_group_name,
+                    dst_rank=self._rank,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
+
+            if direct_module is not None:
+                if not self.weight_syncer.sender_initialized():
+                    await self.weight_syncer.init_sender_from_module(
+                        module=direct_module,
+                        param_names_need_sync=self.param_names_need_sync,
+                        send=send_meta,
+                        is_sender=True,
+                    )
+                await self.weight_syncer.sync_module(
+                    direct_module, send_payload, version=version
+                )
+            else:
+                state_dict = state_dict_fn()
+                if not self.weight_syncer.sender_initialized():
+                    await self.weight_syncer.init_sender(
+                        state_dict=state_dict,
+                        send=send_meta,
+                        recv=None,
+                        param_names_need_sync=self.param_names_need_sync,
+                        is_sender=True,
+                    )
+                await self.weight_syncer.sync(state_dict, send_payload, version=version)
+            return
+
+        state_dict = state_dict_fn()
 
         async def send_func(data):
             if not self._is_weight_sender:
@@ -244,12 +304,28 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 is_sender=self._is_weight_sender,
             )
 
+        await self.weight_syncer.sync(state_dict, send_func, version=version)
+
+    @Worker.timer("actor/sync_model_to_rollout")
+    async def sync_model_to_rollout(self) -> None:
+        if self.enable_offload:
+            if not self.is_optimizer_offloaded:
+                self.offload_optimizer()
+
+            if self.is_weight_offloaded:
+                self.load_param_and_grad(self.device, False)
+
         version = (
             self.get_rollout_sync_version()
             if hasattr(self, "get_rollout_sync_version")
             else self.version
         )
-        await self.weight_syncer.sync(state_dict, send_func, version=version)
+        direct_module = self.model if not isinstance(self.model, FSDP) else None
+        await self._sync_weights_with_syncer(
+            version=version,
+            direct_module=direct_module,
+            state_dict_fn=self.get_rollout_state_dict,
+        )
 
         if self.enable_offload:
             assert not self.is_weight_offloaded, (
