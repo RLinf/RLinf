@@ -1,7 +1,7 @@
 SuperMimic：基于可微世界模型的人形全身动作跟踪
 ==============================================
 
-使用 **SuperMimic**\ （`arXiv:2610.28480 <https://arxiv.org/abs/2610.28480>`__，`项目主页 <https://supermimic.github.io>`__）在 MuJoCo Warp 中训练 29 自由度 Unitree G1 的全身动作跟踪 policy。SuperMimic 从仿真轨迹中学习可微动力学世界模型，在 32 步想象轨迹上将跟踪回报梯度直接反向传播给 policy，并配合 critic 做末端价值估计与按回报重采样。在 40 条 LAFAN1 片段上，单卡 GenCoord 配置训练 6000 次更新后归一化回报达到 ``0.850``，摔倒率为 ``0``。
+使用 **SuperMimic**\ （`arXiv:2610.28480 <https://arxiv.org/abs/2610.28480>`__，`项目主页 <https://supermimic.github.io>`__）在 MuJoCo Warp 中训练 29 自由度 Unitree G1 的全身动作跟踪 policy。SuperMimic 从仿真轨迹中学习可微动力学世界模型，在 32 步想象轨迹上将跟踪回报梯度直接反向传播给 policy，并配合 critic 做末端价值估计与按回报重采样。在 40 条 LAFAN1 片段上，单卡 GenCoord 配置训练 6000 次更新后归一化回报达到 ``0.836``，摔倒率为 ``0.025``。
 
 概览
 ----
@@ -291,11 +291,11 @@ Docker 构建方式见 :doc:`g1_mimic`，AMD ROCm 平台见 :ref:`在其他硬�
      - ``fail_rate``
      - ``body_pos_err``\ （m）
    * - 6000
-     - 0.850
-     - 0
+     - 0.836
      - 0.025
+     - 0.024
 
-40 条片段全部无摔倒播完（论文在这 40 条片段上报告的归一化回报为 ``0.82``）。
+40 条片段中有 1 条摔倒（论文在这 40 条片段上报告的归一化回报为 ``0.82``）。
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/supermimic_gencoord_curves.png
    :alt: SuperMimic GenCoord 训练曲线
@@ -323,29 +323,29 @@ Docker 构建方式见 :doc:`g1_mimic`，AMD ROCm 平台见 :ref:`在其他硬�
    * - RLinf
      - 1
      - TF32
-     - 0.603
+     - 0.702
    * - RLinf
      - 1
      - bf16
-     - 0.515
+     - 0.627
    * - RLinf
      - 2
      - TF32
-     - 0.486
+     - 0.534
    * - RLinf
      - 2
      - bf16
-     - 0.449
+     - 0.528
    * - RLinf
      - 4
      - TF32
-     - 0.421
+     - 0.411
    * - RLinf
      - 4
      - bf16
-     - 0.407
+     - 0.385
 
-单卡 TF32 下 RLinf 比单进程官方代码慢约 17%（来自 worker 间观测和动作交换及每步更新后的权重同步）；开启 bf16 后与官方单卡持平，2–4 卡可进一步加速。
+单卡 TF32 下 RLinf 比单进程官方代码慢约 36%（来自 worker 间观测和动作交换及每步更新后的权重同步）；开启 bf16 后单卡为 0.627 秒，2–4 卡可进一步加速。
 
 .. _supermimic-hardware:
 

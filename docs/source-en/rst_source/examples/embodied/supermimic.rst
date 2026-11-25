@@ -1,7 +1,7 @@
 SuperMimic: Whole-Body Motion Tracking with a Differentiable World Model
 ========================================================================
 
-Train a 29-DoF Unitree G1 whole-body motion-tracking policy with **SuperMimic** (`arXiv:2610.28480 <https://arxiv.org/abs/2610.28480>`__, `project page <https://supermimic.github.io>`__) in MuJoCo Warp. SuperMimic learns a differentiable dynamics world model from simulation rollouts, backpropagates exact tracking returns through 32-step imagined rollouts with a critic for value bootstrapping, and focuses resets on low-return clip segments. On 40 LAFAN1 clips, the 6000-update single-GPU GenCoord recipe reaches a normalized return of ``0.850`` with zero falls.
+Train a 29-DoF Unitree G1 whole-body motion-tracking policy with **SuperMimic** (`arXiv:2610.28480 <https://arxiv.org/abs/2610.28480>`__, `project page <https://supermimic.github.io>`__) in MuJoCo Warp. SuperMimic learns a differentiable dynamics world model from simulation rollouts, backpropagates exact tracking returns through 32-step imagined rollouts with a critic for value bootstrapping, and focuses resets on low-return clip segments. On 40 LAFAN1 clips, the 6000-update single-GPU GenCoord recipe reaches a normalized return of ``0.836`` with a fail rate of ``0.025``.
 
 Overview
 --------
@@ -291,11 +291,11 @@ Single-GPU GenCoord run on one NVIDIA A800 (seed 0):
      - ``fail_rate``
      - ``body_pos_err`` (m)
    * - 6000
-     - 0.850
-     - 0
+     - 0.836
      - 0.025
+     - 0.024
 
-All 40 clips played to completion without falling (the paper reports ``0.82`` normalized return on these clips).
+One of the 40 clips falls (the paper reports ``0.82`` normalized return on these clips).
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/supermimic_gencoord_curves.png
    :alt: SuperMimic GenCoord training curves
@@ -323,29 +323,29 @@ Seconds per global update of the GenCoord recipe on dedicated NVIDIA A800 GPUs c
    * - RLinf
      - 1
      - TF32
-     - 0.603
+     - 0.702
    * - RLinf
      - 1
      - bf16
-     - 0.515
+     - 0.627
    * - RLinf
      - 2
      - TF32
-     - 0.486
+     - 0.534
    * - RLinf
      - 2
      - bf16
-     - 0.449
+     - 0.528
    * - RLinf
      - 4
      - TF32
-     - 0.421
+     - 0.411
    * - RLinf
      - 4
      - bf16
-     - 0.407
+     - 0.385
 
-On 1 GPU with TF32, RLinf is ~17% slower per update than the single-process official code due to worker observation/action exchange and per-update weight sync; enabling bf16 matches single-GPU official speed, and 2–4 GPUs scale further.
+On 1 GPU with TF32, RLinf is ~36% slower per update than the single-process official code due to worker observation/action exchange and per-update weight sync; with bf16, one GPU takes 0.627 s, and 2–4 GPUs scale further.
 
 .. _supermimic-hardware:
 
