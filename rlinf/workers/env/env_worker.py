@@ -238,16 +238,12 @@ class EnvWorker(Worker):
         """Set the trajectory step used to correlate distributed events."""
         self._trajectory_step = global_step
 
-    def close(self, mode: str | None = None) -> None:
-        """Close train, eval, or all owned environments, attempting every close."""
-        if mode not in (None, "train", "eval"):
-            raise ValueError(f"Expected train, eval, or None; got {mode!r}")
+    def close(self) -> None:
+        """Close all owned training and evaluation environments, attempting every close."""
         for env_mode, envs in (
             ("train", self.env_list),
             ("eval", self.eval_env_list),
         ):
-            if mode is not None and mode != env_mode:
-                continue
             for env in envs:
                 close = get_env_attr(env, "close")
                 if callable(close):
@@ -257,6 +253,17 @@ class EnvWorker(Worker):
                         self.log_warning(
                             f"Failed to close {env_mode} environment: {exc}"
                         )
+
+    def _close(self) -> None:
+        """Release owned environments before the scheduler terminates this worker."""
+        self.close()
+
+    def _release_envs(self, mode: str) -> None:
+        envs = self.env_list if mode == "train" else self.eval_env_list
+        for env in envs:
+            release = get_env_attr(env, "release")
+            if callable(release):
+                release()
 
     def init_worker(self):
         # This is a barrier to ensure all envs' initial setup upon import is done
@@ -1170,6 +1177,11 @@ class EnvWorker(Worker):
         rollout_channel: Channel,
     ) -> None:
         """Prepare and send the first env batch for the next training rollout."""
+        # Evaluation must be able to borrow the training environments' slots.
+        if self.enable_eval and any(
+            callable(get_env_attr(env, "release")) for env in self.env_list
+        ):
+            return
         if self._prefetched_train_bootstrap is not None:
             raise RuntimeError(
                 "A prefetched train bootstrap already exists. "
@@ -1377,11 +1389,10 @@ class EnvWorker(Worker):
                 cooperative_yield=False,
             )
         except BaseException:
-            if (
-                self.train_assignment.cfg.env_type
-                == SupportedEnvType.VLNCE_SERVER.value
-            ):
-                self.close(mode="train")
+            try:
+                self._release_envs("train")
+            except Exception as exc:
+                self.log_warning(f"Failed to release training environments: {exc}")
             raise
 
         for env in self.env_list:
@@ -1391,21 +1402,15 @@ class EnvWorker(Worker):
         return env_metrics
 
     @Worker.timer("evaluate")
-    def evaluate(self, input_channel: Channel, rollout_channel: Channel):
-        if (
-            self.enable_train
-            and self.train_assignment.cfg.env_type
-            == SupportedEnvType.VLNCE_SERVER.value
-            and self._prefetched_train_bootstrap is None
-        ):
-            self.close(mode="train")
+    async def evaluate(self, input_channel: Channel, rollout_channel: Channel):
+        if self.enable_train:
+            self._release_envs("train")
         try:
-            return self._evaluate(input_channel, rollout_channel)
+            return await self._evaluate(input_channel, rollout_channel)
         finally:
-            if self.eval_assignment.cfg.env_type == SupportedEnvType.VLNCE_SERVER.value:
-                self.close(mode="eval")
+            self._release_envs("eval")
 
-    def _evaluate(self, input_channel: Channel, rollout_channel: Channel):
+    async def _evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
         early_stop_on_done = self.eval_assignment.cfg.get("early_stop_on_done", False)
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
@@ -1440,17 +1445,9 @@ class EnvWorker(Worker):
             eval_epoch_done = False
             for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
-                    action_payload = self.recv_from(
-                        group_name=self.cfg.rollout.group_name,
-                        channel=input_channel,
-                        tag="eval_rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
-                        batch_size=self.eval_batch_size,
-                        merge_fn=self._merge_action_batches,
-                        infer_batch_size_fn=self._infer_action_batch_size,
-                        async_op=True,
-                        decoupled_mode=self.env_decoupled_mode,
-                    ).wait()
+                    action_payload = await self._recv_actions(
+                        input_channel, stage_id, mode="eval"
+                    )
                     raw_chunk_actions = self._consume_action_payload(
                         action_payload,
                         self.eval_env_list[stage_id],

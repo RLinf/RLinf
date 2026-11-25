@@ -225,3 +225,7 @@ class VLNCEServerEnv:
             self.client.close_batch(self._ids)
             self._created = False
             self._created_configs = None
+
+    def release(self) -> None:
+        """Return pooled simulator slots between rollout phases."""
+        self.close()
