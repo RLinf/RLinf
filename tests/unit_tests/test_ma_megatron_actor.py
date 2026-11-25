@@ -110,6 +110,70 @@ class TestExtractVersionedTrajectoryRecords:
         )
 
 
+class _LocalDeliveryChannel:
+    """A local input channel that returns one delivered group."""
+
+    is_local = True
+
+    def __init__(self, delivery):
+        self._delivery = delivery
+        self.get_count = 0
+
+    def get(self):
+        self.get_count += 1
+        return self._delivery
+
+
+def test_get_step_batch_assembles_delivered_groups(monkeypatch):
+    """get_step_batch assembles a group delivered by the session server.
+
+    A delivered group arrives as a GroupDelivery whose data is in a payload
+    channel, and only MAMegatronActor._receive_rollout_result turns it into
+    training data. If get_step_batch received the group with a plain
+    channel.get(), the GroupDelivery would reach the batch code and the
+    first training step would fail.
+    """
+    pytest.importorskip("megatron.core")
+    from megatron.core import parallel_state
+
+    from rlinf.data.schema.reasoning_results import GroupDelivery, PayloadRef
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
+    actor = MAMegatronActor.__new__(MAMegatronActor)
+    actor.cfg = OmegaConf.create(
+        {"data": {"rollout_batch_size": 1}, "algorithm": {"group_size": 1}}
+    )
+    delivery = GroupDelivery(
+        group_id=7,
+        task_name="searchr1",
+        payload_ref=PayloadRef(locator="channel://Payload", key=7),
+    )
+    assembled = DynamicRolloutResult(
+        num_sequence=1,
+        group_size=1,
+        idx_to_traj=[0],
+        input_ids=[[1, 2, 3]],
+        prompt_lengths=[2],
+        response_lengths=[1],
+        is_end=[True],
+        rewards=[0.0],
+    )
+    assembled_calls = []
+    monkeypatch.setattr(
+        actor,
+        "_assemble_delivery",
+        lambda delivery: assembled_calls.append(delivery) or assembled,
+    )
+    monkeypatch.setattr(parallel_state, "get_data_parallel_world_size", lambda: 1)
+    channel = _LocalDeliveryChannel(delivery)
+
+    _batch, results = actor.get_step_batch(channel)
+
+    assert assembled_calls == [delivery]
+    assert results == [assembled]
+    assert channel.get_count == 1
+
+
 def _versioned_group(identity):
     lengths = [3 + identity, 5 + identity]
     return DynamicRolloutResult(
@@ -296,6 +360,44 @@ def test_ragged_fixed_inference_microbatches(count, micro_batch_size):
         strict=True,
     ):
         torch.testing.assert_close(actual, expected)
+
+
+@pytest.mark.parametrize("layout", ["prepacked", "packed", "padded"])
+@pytest.mark.parametrize("last_stage", [False, True])
+def test_pipeline_temperature_only_scales_logits(monkeypatch, layout, last_stage):
+    parallel_state = pytest.importorskip("megatron.core.parallel_state")
+    from megatron.core.packed_seq_params import PackedSeqParams
+
+    from rlinf.hybrid_engines.megatron.megatron_model_manager import (
+        MegatronModelManager,
+    )
+
+    monkeypatch.setattr(
+        parallel_state, "get_tensor_model_parallel_world_size", lambda: 1
+    )
+    monkeypatch.setattr(parallel_state, "get_context_parallel_world_size", lambda: 1)
+    monkeypatch.setattr(parallel_state, "get_context_parallel_rank", lambda: 0)
+
+    class Stage(torch.nn.Module):
+        pre_process = not last_stage
+        post_process = last_stage
+
+        def forward(self, input_ids, **kwargs):
+            return input_ids.float().unsqueeze(-1)
+
+    ids = torch.tensor([[1, 2]])
+    output = MegatronModelManager.custom_forward(
+        Stage(),
+        input_ids=ids,
+        attention_mask=torch.ones_like(ids, dtype=torch.bool),
+        position_ids=None,
+        sequence_parallel=False,
+        pack_seqs=layout != "padded",
+        packed_seq_params=PackedSeqParams() if layout == "prepacked" else None,
+        temperature=0.5,
+    )
+    expected = ids.float().unsqueeze(-1)
+    torch.testing.assert_close(output, expected / 0.5 if last_stage else expected)
 
 
 def _pipeline_probabilities_process(rank, pp_size, dp_size, init_file):

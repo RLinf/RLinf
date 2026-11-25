@@ -1,5 +1,5 @@
-PhyAI 具身 Rollout 后端
-=======================
+PhyAI 具身推理后端
+==================
 
 本页介绍如何用 `PhyAI <https://github.com/mingti-org/phyai>`_ 在进程内训练 PI0.5 policy，或通过 PhyAI Gateway 执行评估。PhyAI 是面向 VLA 等物理 AI 模型的推理框架。进程内路径由每个 RLinf rollout worker 管理一个 engine，LIBERO 环境、FSDP actor、观测变换和权重同步仍由 RLinf 负责。
 
@@ -8,7 +8,7 @@ PhyAI 具身 Rollout 后端
 准备工作
 --------
 
-需要一台配备 NVIDIA GPU 的 Linux 机器和 Python 3.12。目前该后端支持在 LIBERO 上用同步 PPO 训练 PI0.5，每个 rollout worker 使用一张 GPU。训练流程已使用 RLinf PI0.5 LIBERO SFT checkpoint，在两张 NVIDIA H800 80 GB GPU 上完成 smoke test。
+需要一台配备 NVIDIA GPU 的 Linux 机器和 Python 3.12。该后端支持在 LIBERO 上用同步 PPO 训练 PI0.5，每个 rollout worker 使用一张 GPU。训练流程已使用 RLinf PI0.5 LIBERO SFT checkpoint，在两张 NVIDIA H800 80 GB GPU 上完成快速验证。
 
 .. _phyai-installation-zh:
 
@@ -40,7 +40,6 @@ PhyAI 具身 Rollout 后端
 
 .. code-block:: bash
 
-   # For mainland China users: export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir RLinf-Pi05-LIBERO-SFT
 
 然后在 ``examples/embodiment/config/libero_spatial_ppo_openpi_pi05_phyai.yaml`` 中把 ``actor.model.model_path`` 设为下载目录。rollout 读取同一路径，因此 PhyAI 与 actor 加载相同的权重，并用同一份统计量归一化观测。其他 PI0.5 checkpoint 及下载镜像见 :doc:`π₀ 与 π₀.₅ 模型强化学习训练 <../../examples/embodied/pi0>`。

@@ -28,6 +28,7 @@ infer_benchmark() {
         robocasa_*|robocasa-* ) echo "robocasa" ;;
         roboverse_*|roboverse-* ) echo "roboverse" ;;
         polaris_*|polaris-* ) echo "polaris" ;;
+        dexjoco_*|dexjoco-* ) echo "dexjoco" ;;
         robolab_*|robolab-* ) echo "robolab" ;;
         geniesim_*|geniesim-* ) echo "geniesim" ;;
         simple_*|simple-* ) echo "simple" ;;
@@ -132,6 +133,10 @@ if [ "$1" = "mani-ood" ]; then
 fi
 
 if [ $# -ge 2 ] && [ -f "${EVALUATIONS_PATH}/$1/$2.yaml" ]; then
+    BENCHMARK="$1"
+    CONFIG_NAME="$2"
+    shift 2
+elif [ $# -ge 2 ] && [ -d "${EVALUATIONS_PATH}/$1" ] && [ -f "${EMBODIED_PATH}/config/$2.yaml" ]; then
     BENCHMARK="$1"
     CONFIG_NAME="$2"
     shift 2

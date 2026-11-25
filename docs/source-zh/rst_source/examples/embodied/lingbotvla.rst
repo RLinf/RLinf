@@ -1,5 +1,5 @@
-LingbotVLA 1.0 模型强化学习
-========================================
+LingbotVLA 1.0 强化学习
+=======================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -12,9 +12,7 @@ LingbotVLA 1.0 模型强化学习
 
    LingbotVLA 1.0 在 RoboTwin 上（图片来源：`RLinf <https://github.com/RLinf>`__）。
 
-`LingbotVLA 1.0 <https://huggingface.co/robbyant/lingbot-vla-4b>`__ 是一个基于 Qwen2.5-VL 的
-视觉-语言-动作模型，以自回归方式生成连续动作块。RLinf 将其原生接入——嵌入 RLinf 的 Python
-内存空间，实现零延迟的 Tensor 级交互——并支持在 RoboTwin 2.0 仿真器上进行全参数 SFT 与 GRPO 微调。
+`LingbotVLA 1.0 <https://huggingface.co/robbyant/lingbot-vla-4b>`__ 是一个基于 Qwen2.5-VL 的视觉-语言-动作模型，以自回归方式生成连续动作块。RLinf 将其原生接入，嵌入 RLinf 的 Python 内存空间，支持零延迟的 Tensor 级交互，并在 RoboTwin 2.0 仿真器上支持全参数 SFT 与 GRPO 微调。
 
 概览
 ----------------------------------------
@@ -44,7 +42,7 @@ LingbotVLA 1.0 模型强化学习
 
       1–2 节点 · 8–16 GPU
 
-| **你将完成：** 原生安装 → 克隆 RoboTwin 与资产 → 下载检查点 → SFT → GRPO → 观察 ``env/success_once``。
+| **你将完成：** 原生安装 → 克隆 RoboTwin 与资产 → 下载检查点 → SFT / GRPO → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · RoboTwin 仓库与资产 · LingbotVLA 1.0 与 Qwen 底座检查点（见下文步骤）。
 
 任务
@@ -87,229 +85,133 @@ LingbotVLA 1.0 模型强化学习
    * - Prompt
      - RoboTwin episode 的自然语言任务指令。
 
-安装
-----------------------------------------
+安装与运行
+----------
 
-1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
-首先克隆 RLinf 仓库并进入主目录：
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: GRPO 训练
 
-    git clone https://github.com/RLinf/RLinf.git
-    cd RLinf
-    export RLINF_PATH=$(pwd)
+      **1. 安装环境**
 
-2. 安装依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      安装 LingbotVLA 1.0 环境、克隆 RoboTwin 仓库并下载 RoboTwin 资产：
 
-**选项 1：Docker 镜像**
+      .. code-block:: bash
 
-使用 Docker 镜像运行基于 RoboTwin 的具身训练：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model lingbotvla --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support
+         (cd RoboTwin && bash script/_download_assets.sh)
 
-.. code-block:: bash
+      **2. 下载资源与模型**
 
-    docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-robotwin
+      下载 LingbotVLA 1.0 基础权重、固定 revision 的 RoboTwin SFT 权重（请勿改用 ``main`` 分支最新版本）与 Qwen2.5-VL 底座：
 
-请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
+      .. code-block:: bash
 
-.. code-block:: bash
+         hf download robbyant/lingbot-vla-4b --local-dir ./lingbot-vla-4b
+         hf download robbyant/lingbot-vla-4b-posttrain-robotwin \
+           --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
+           --local-dir ./lingbot-vla-4b-posttrain-robotwin
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 
-    source switch_env lingbotvla
+      **3. 启动训练**
 
-**选项 2：自定义环境**
+      ``examples/embodiment/config/`` 下内置的 GRPO 配置如下：
 
-在本地环境中一键安装 LingbotVLA 1.0 原生环境与 RoboTwin 基础依赖：
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 70
 
-.. code-block:: bash
+         * - 任务
+           - 配置文件
+         * - Click Bell
+           - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla.yaml``
+         * - Place Shoe
+           - ``examples/embodiment/config/robotwin_place_shoe_grpo_lingbotvla.yaml``
 
-    bash requirements/install.sh embodied --model lingbotvla --env robotwin --use-mirror
-    source .venv/bin/activate
+      在配置中填写本地模型路径（rollout 会自动沿用 ``actor.model.model_path`` 与 ``tokenizer_path``），并将 ``env.train.assets_path`` 与 ``env.eval.assets_path`` 指向 RoboTwin 资产目录：
 
-RoboTwin 仓库克隆与资产下载
-----------------------------------------
+      .. code-block:: yaml
 
-RoboTwin Assets 是 RoboTwin 环境运行所需的资源文件，需要从 HuggingFace 下载。
+         actor:
+           model:
+             model_path: ./lingbot-vla-4b-posttrain-robotwin
+             tokenizer_path: ./Qwen2.5-VL-3B-Instruct
+             lingbotvla:
+               config_path: ./lingbot-vla-4b
 
-.. code-block:: bash
+      先导出相关仓库路径，再启动 GRPO 训练：
 
-   # 1. 克隆 RoboTwin 仓库
-   git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support
+      .. code-block:: bash
 
-   # 2. 下载并解压 Assets 文件
-   bash script/_download_assets.sh
+         export ROBOTWIN_PATH=$PWD/RoboTwin
+         export LINGBOT_VLA_PATH=$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")
+         bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvla
 
-下载模型
-----------------------------------------
+      .. dropdown:: 进阶配置（可选）
 
-开始训练前，请从 HuggingFace 下载 LingbotVLA 1.0 基础权重、RoboTwin SFT 权重和 Qwen 底座模型。进行 RoboTwin SFT 或强化学习实验时，请使用下面固定 revision 的 RoboTwin SFT 权重，不要直接使用 HuggingFace ``main`` 分支的最新权重。
+         - **统一归一化键**：LingbotVLA 1.0 使用 ``robotwin_50.json`` 中的全局归一化键（如 ``action.arm.position``），切换 RoboTwin 任务时无需覆写 ``unnorm_key``。
+         - **主机内存回收（Linux/glibc）**：GRPO 配置默认启用 ``env.train.malloc_trim_reset_interval: 8``，每个环境实例每 8 次自动 reset 回收一次空闲 glibc 堆内存（仅影响主机 RSS，不影响显存）。设为 ``0`` 可关闭，评估环境未配置时保持关闭。
+         - **独立评测**：按 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 运行独立评估，使用 ``robotwin_click_bell_lingbotvla_eval``、``robotwin_place_shoe_lingbotvla_eval`` 等配置。
 
-.. code-block:: bash
+   .. tab-item:: SFT 训练
 
-    # 方法 1：使用 git clone
-    git lfs install
-    git clone https://huggingface.co/robbyant/lingbot-vla-4b
-    git clone https://huggingface.co/robbyant/lingbot-vla-4b-posttrain-robotwin
-    cd lingbot-vla-4b-posttrain-robotwin
-    git checkout 3e0c7c476bde3daaac00f79f3741a292a299f60a
-    cd ..
-    git clone https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
+      **1. 安装环境**
 
-    # 方法 2：使用 huggingface-hub
-    pip install huggingface-hub
-    huggingface-cli download robbyant/lingbot-vla-4b --local-dir lingbot-vla-4b
-    huggingface-cli download robbyant/lingbot-vla-4b-posttrain-robotwin \
-        --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
-        --local-dir lingbot-vla-4b-posttrain-robotwin
-    huggingface-cli download Qwen/Qwen2.5-VL-3B-Instruct --local-dir Qwen2.5-VL-3B-Instruct
+      安装 LingbotVLA 1.0 环境、克隆 RoboTwin 仓库并下载 RoboTwin 资产：
 
+      .. code-block:: bash
 
-然后在配置中将 ``rollout.model.model_path`` 和 ``actor.model.model_path`` 设为本地模型路径（如基础权重 ``/path/to/model/lingbot-vla-4b``，或固定 revision 的 RoboTwin SFT 权重 ``/path/to/model/lingbot-vla-4b-posttrain-robotwin``），并务必将对应的 ``tokenizer_path`` 设为下载的 Tokenizer 路径（如 ``/path/to/model/Qwen2.5-VL-3B-Instruct``），否则 Rollout 节点在解析文本指令时会报错。
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model lingbotvla --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support
+         (cd RoboTwin && bash script/_download_assets.sh)
 
-运行
-----------------------------------------
+      **2. 下载资源与模型**
 
-配置文件
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      下载 LingbotVLA 1.0 基础权重、固定 revision 的 RoboTwin SFT 权重（请勿改用 ``main`` 分支最新版本）与 Qwen2.5-VL 底座：
 
-RLinf 支持对 LingbotVLA 1.0 进行全参监督微调（SFT）与强化学习对齐（GRPO）。相关配置文件如下：
+      .. code-block:: bash
 
-* **SFT (行为克隆)**:
-  ``examples/sft/config/robotwin_sft_lingbotvla.yaml``
-* **GRPO (强化学习)**:
-  ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla.yaml``
+         hf download robbyant/lingbot-vla-4b --local-dir ./lingbot-vla-4b
+         hf download robbyant/lingbot-vla-4b-posttrain-robotwin \
+           --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
+           --local-dir ./lingbot-vla-4b-posttrain-robotwin
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 
-关键配置片段 (SFT)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      **3. 启动训练**
 
-SFT 阶段的核心在于指定离线数据集格式（LeRobot Parquet 格式）、FSDP 训练后端以及批次大小。
+      在 ``examples/sft/config/robotwin_sft_lingbotvla.yaml`` 中填写本地模型路径，并将 ``data.train_data_paths`` 指向转换后的 LeRobot 数据集目录：
 
-.. code-block:: yaml
+      .. code-block:: yaml
 
-    runner:
-      task_type: sft
-      max_epochs: 30000
+         actor:
+           model:
+             model_path: ./lingbot-vla-4b-posttrain-robotwin
+             tokenizer_path: ./Qwen2.5-VL-3B-Instruct
+             lingbotvla:
+               config_path: ./lingbot-vla-4b
 
-    data:
-      # 指向转换好的 LeRobot 格式离线数据集目录
-      train_data_paths: "/path/to/lerobot_data"
+      先导出相关仓库路径，再启动 SFT 训练：
 
-    actor:
-      training_backend: "fsdp"
-      micro_batch_size: 1
-      global_batch_size: 8
-      model:
-        model_type: "lingbotvla"
-        model_path: "path/to/lingbot_model"
-        tokenizer_path: "/path/to/model/Qwen2.5-VL-3B-Instruct"
-        precision: bf16
-        num_action_chunks: 50
-        action_dim: 14
+      .. code-block:: bash
 
-关键配置片段 (GRPO)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+         export ROBOTWIN_PATH=$PWD/RoboTwin
+         export LINGBOT_VLA_PATH=$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")
+         bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvla
 
-GRPO 顶层文件通过 Hydra 动态组装了环境与模型，并直接在 ``actor.model`` 下覆写了强化学习所需的核心 SDE 采样参数。
+      .. dropdown:: 进阶配置（可选）
 
-**注意**：由于 LingbotVLA 1.0 使用的是 ``robotwin_50.json`` 中统一的全局归一化键值（如 ``action.arm.position``），因此在不同任务间切换时，**无需再配置或覆写** ``unnorm_key``，实现了真正的多任务平滑迁移。
-
-.. code-block:: yaml
-
-    rollout:
-      model:
-        model_type: "lingbotvla"
-
-
-    actor:
-      model:
-        model_path: "/path/to/lingbot_sft_model"
-        tokenizer_path: "/path/to/model/Qwen2.5-VL-3B-Instruct"
-        model_type: "lingbotvla"
-        lingbotvla:
-            config_path: "/path/to/lingbot-vla-4b"
-        action_dim: 14
-        num_action_chunks: 50
-        num_steps: 10
-        noise_method: "flow_sde"
-        noise_level: 0.5
-        action_env_dim: 14
-
-
-.. note::
-
-   为缓解 RoboTwin 长时间运行时 glibc 保留已释放主机内存的问题，LingbotVLA GRPO 示例默认启用 ``env.train.malloc_trim_reset_interval: 8``，仅适用于 Linux/glibc：每个 RoboTwin 环境实例每 8 次 reset 尝试回收空闲堆内存。设为 ``0`` 可关闭；未配置时默认仍为 ``0``。自动 reset 参与计数，评估环境未配置时保持关闭；此选项仅针对主机 RSS，不回收显存。
-
-   .. code-block:: yaml
-
-      env:
-        train:
-          malloc_trim_reset_interval: 8
-
-启动命令
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-要使用选定的配置开始训练，请运行相应的启动脚本。
-
-**注意**：由于默认任务使用的是双臂机器人，在执行任何启动脚本前，请务必在终端中声明机器人平台为 ALOHA，否则环境将无法正确加载动作空间：
-
-.. code-block:: bash
-
-    export ROBOT_PLATFORM="ALOHA"
-    # 设置 ROBOTWIN_PATH 环境变量
-    export ROBOTWIN_PATH=/path/to/RoboTwin
-    # 设置 install.sh 自动生成的 lingbot-vla 目录
-    export LINGBOT_VLA_PATH=$(python -c "import lingbotvla; import os; print(os.path.dirname(lingbotvla.__path__[0]))")
-
-
-**1. 启动 SFT 训练**
-
-使用转换好的离线数据进行监督微调：
-
-.. code-block:: bash
-
-    bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvla
-
-**2. 启动 GRPO 训练**
-
-例如，要在 RoboTwin Click Bell 任务上使用 GRPO 算法对 SFT 后的模型进行强化学习微调：
-
-.. code-block:: bash
-
-    bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvla
-
-独立评测
-----------------------------------------
-
-独立评估请走 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>`。
-使用 LingbotVLA 1.0 评测配置，例如 ``robotwin_click_bell_lingbotvla_eval`` 和
-``robotwin_place_shoe_lingbotvla_eval``；该指南负责 ``ROBOT_PLATFORM=ALOHA``、
-``ROBOTWIN_PATH``、assets、启动命令和结果解读。
+         - **统一归一化键**：LingbotVLA 1.0 使用 ``robotwin_50.json`` 中的全局归一化键（如 ``action.arm.position``），切换 RoboTwin 任务时无需覆写 ``unnorm_key``。
+         - **独立评测**：按 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 运行独立评估，使用 ``robotwin_click_bell_lingbotvla_eval``、``robotwin_place_shoe_lingbotvla_eval`` 等配置。
 
 可视化与结果
 ----------------------------------------
 
-在 RLinf 仓库根目录启动 TensorBoard：
-
-.. code:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-关键指标是 ``env/success_once``。完整指标说明见
-:doc:`训练指标 <../../reference/metrics>`。
-
-视频通过 env video 配置保存：
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     video_base_dir: ${runner.logger.log_path}/video/eval
+执行 ``tensorboard --logdir ./logs --port 6006`` 启动 TensorBoard，关注任务成功率指标 ``env/success_once``。传入 ``env.eval.video_cfg.save_video=True`` 可保存评估视频，完整指标与日志后端说明见 :doc:`训练指标 <../../reference/metrics>`。
 
 .. list-table:: LingbotVLA 1.0 在 RoboTwin 任务上的评估结果
    :header-rows: 1

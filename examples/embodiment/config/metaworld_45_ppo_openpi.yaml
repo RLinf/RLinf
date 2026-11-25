@@ -93,7 +93,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi0-MetaWorld-SFT" # https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 
 actor:

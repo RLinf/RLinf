@@ -91,74 +91,71 @@ Observation and Action
    * - Prompt
      - Natural-language task instruction from ``task_descriptions``.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: LIBERO
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      **1. Install**
 
-   # Inside the container, switch to the MolmoAct2 virtual environment:
-   source switch_env molmoact2
+      .. code-block:: bash
 
-**Option 2: Custom environment** — install bundle ``--model molmoact2 --env libero``:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model molmoact2 --env libero && source .venv/bin/activate
 
-.. code-block:: bash
+      Set ``MOLMOACT2_LEROBOT_PATH`` before installing to reuse an existing checkout of
+      `RLinf/lerobot <https://github.com/RLinf/lerobot/tree/RLinf/molmoact2-hf-inference>`__.
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model molmoact2 --env libero
-   source .venv/bin/activate
+      **2. Download**
 
-Set ``MOLMOACT2_LEROBOT_PATH`` before installing to reuse an existing checkout of
-`RLinf/lerobot <https://github.com/RLinf/lerobot/tree/RLinf/molmoact2-hf-inference>`__.
+      Download the official `allenai/MolmoAct2-LIBERO <https://huggingface.co/allenai/MolmoAct2-LIBERO>`__ checkpoint:
 
-Download the Model
-------------------
+      .. code-block:: bash
 
-Download the official `allenai/MolmoAct2-LIBERO <https://huggingface.co/allenai/MolmoAct2-LIBERO>`__ checkpoint:
+         hf download allenai/MolmoAct2-LIBERO --local-dir ./MolmoAct2-LIBERO
 
-.. code-block:: bash
+      **3. Launch**
 
-   hf download allenai/MolmoAct2-LIBERO \
-     --local-dir /path/to/model/MolmoAct2-LIBERO
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 46 32
 
-Then set ``rollout.model.model_path`` in the eval config to that directory. The
-config has no ``actor`` section, so there is no second path to keep in sync.
+         * - Suite
+           - Config (``evaluations/libero/``)
+           - Command suffix
+         * - Spatial
+           - ``libero_spatial_molmoact2_eval.yaml``
+           - ``libero_spatial_molmoact2_eval``
+         * - Object
+           - ``libero_object_molmoact2_eval.yaml``
+           - ``libero_object_molmoact2_eval``
+         * - Goal
+           - ``libero_goal_molmoact2_eval.yaml``
+           - ``libero_goal_molmoact2_eval``
+         * - Long
+           - ``libero_10_molmoact2_eval.yaml``
+           - ``libero_10_molmoact2_eval``
 
-Run It
-------
+      Set ``rollout.model.model_path`` in the eval config or pass it on the command line (the config has no ``actor`` section, so there is no second path to keep in sync). Evaluate LIBERO-Long:
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash evaluations/run_eval.sh libero libero_10_molmoact2_eval \
-     rollout.model.model_path=/path/to/model/MolmoAct2-LIBERO
+         bash evaluations/run_eval.sh libero libero_10_molmoact2_eval \
+           rollout.model.model_path=./MolmoAct2-LIBERO
 
-What this command does:
-
-1. Loads the official checkpoint through the MolmoAct2 model adapter.
-2. Runs the LIBERO-Long suite with the settings in ``evaluations/libero/libero_10_molmoact2_eval.yaml``.
-3. Writes terminal output and ``eval/success_once`` to a timestamped log.
-
-Swap in any config from the Tasks table above to evaluate another suite.
+      Swap in any config suffix from the table above to evaluate another suite.
 
 .. warning::
 
    A full suite covers 500 trajectories and can take several hours. Lower
-   ``env.eval.max_steps_per_rollout_epoch`` for a smoke test — one episode per
+   ``env.eval.max_steps_per_rollout_epoch`` for a quick check — one episode per
    environment is ``max_episode_steps``.
 
-.. admonition:: Configure further
-   :class: note
+.. dropdown:: Advanced configuration (optional)
 
    - Inference settings (``num_steps``, ``norm_tag``, action mode) → the ``molmoact2`` block in ``examples/embodiment/config/model/molmoact2.yaml``.
    - ``rollout.model.precision`` has no effect: MolmoAct2 loads its weights in fp32 upstream.
@@ -173,7 +170,7 @@ The terminal reports ``eval/success_once``. Logs are written to:
 
 .. code-block:: text
 
-   logs/<timestamp>-libero_10_molmoact2_eval/eval_embodiment.log
+   logs/YYYYMMDD-HHMMSS-libero_10_molmoact2_eval/eval_embodiment.log
 
 See :doc:`LIBERO Evaluation <../../evaluations/guides/libero>` for the benchmark
 protocol and :doc:`Evaluation Results <../../evaluations/reference/results>` for

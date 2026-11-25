@@ -1,5 +1,5 @@
-Release Notes
-=============
+v0.1–v0.2 Release Notes
+=======================
 
 RLinf v0.2 Release
 ------------------

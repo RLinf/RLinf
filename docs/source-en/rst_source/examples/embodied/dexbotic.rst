@@ -1,5 +1,5 @@
-RL on Dexbotic Models
-=====================
+Dexbotic RL
+===========
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -13,12 +13,12 @@ RL on Dexbotic Models
    Dexbotic model overview (image: `Dexbotic <https://github.com/dexmal/dexbotic>`__).
 
 `Dexbotic <https://github.com/dexmal/dexbotic>`__ is an open-source VLA toolbox from Dexmal.
-RLinf uses the Dexbotic π\ :sub:`0`\ and DM0 policies as LIBERO action-generation models, then fine-tunes them online with PPO.
+RLinf uses the Dexbotic π₀ and DM0 policies as LIBERO action-generation models, then fine-tunes them online with PPO.
 
 Overview
 --------
 
-Fine-tune Dexbotic π\ :sub:`0`\ or DM0 on LIBERO with PPO.
+Fine-tune Dexbotic π₀ or DM0 on LIBERO with PPO.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -90,142 +90,118 @@ Observation and Action
    * - Prompt
      - Natural-language LIBERO instruction consumed by the policy processor.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: π₀
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      **1. Install**
 
-   # Inside the container, switch to the Dexbotic virtual environment:
-   source switch_env dexbotic
+      .. code-block:: bash
 
-**Option 2: Custom environment** — install bundle ``--model dexbotic --env maniskill_libero``:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model dexbotic --env maniskill_libero && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. Download**
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model dexbotic --env maniskill_libero
-   source .venv/bin/activate
+      .. code-block:: bash
 
-Download the Model
-------------------
+         hf download Dexmal/libero-db-pi0 --local-dir ./libero-db-pi0
 
-Download one or both Dexbotic checkpoints (either method works):
+      **3. Launch**
 
-.. code-block:: bash
+      Shipped π₀ configs under ``examples/embodiment/config/``:
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/Dexmal/libero-db-pi0
-   git clone https://huggingface.co/Dexmal/DM0-libero
+      .. list-table::
+         :header-rows: 1
+         :widths: 36 64
 
-   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
-   pip install huggingface-hub
-   huggingface-cli download Dexmal/libero-db-pi0 --local-dir libero-db-pi0
-   huggingface-cli download Dexmal/DM0-libero --local-dir DM0-libero
+         * - Task suite
+           - Config
+         * - LIBERO Spatial
+           - ``libero_spatial_ppo_dexbotic_pi0.yaml``
+         * - LIBERO Object
+           - ``libero_object_ppo_dexbotic_pi0.yaml``
+         * - LIBERO Goal
+           - ``libero_goal_ppo_dexbotic_pi0.yaml``
+         * - LIBERO 10
+           - ``libero_10_ppo_dexbotic_pi0.yaml``
 
-.. include:: _model_path.rst
+      .. include:: _model_path.rst
 
-Run It
-------
+      Launch PPO training with ``run_embodiment.sh``:
 
-Each recipe is a YAML config under ``examples/embodiment/config/``:
+      .. code-block:: bash
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 26 44
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_dexbotic_pi0 actor.model.model_path=$PWD/libero-db-pi0
 
-   * - Task suite
-     - Model
-     - Config
-   * - LIBERO Spatial
-     - Dexbotic π₀
-     - ``libero_spatial_ppo_dexbotic_pi0.yaml``
-   * - LIBERO Spatial
-     - DM0
-     - ``libero_spatial_ppo_dexbotic_dm0.yaml``
-   * - LIBERO Object
-     - Dexbotic π₀
-     - ``libero_object_ppo_dexbotic_pi0.yaml``
-   * - LIBERO Goal
-     - Dexbotic π₀
-     - ``libero_goal_ppo_dexbotic_pi0.yaml``
-   * - LIBERO 10
-     - Dexbotic π₀
-     - ``libero_10_ppo_dexbotic_pi0.yaml``
+      .. dropdown:: Advanced configuration (optional)
 
-Launch a config with ``run_embodiment.sh``:
+         - **Precision**: ``actor.model.precision`` controls the loaded parameter dtype. Set it to ``bf16`` for BF16 execution and use the same precision in ``rollout.model``; leaving it ``null`` preserves the checkpoint's default dtype.
+         - **Action chunks**: π₀ defaults to ``num_action_chunks: 5``.
+         - **Standalone evaluation**: run Dexbotic's LIBERO evaluator on a trained checkpoint (or use RLinf's unified :doc:`evaluation <../../evaluations/index>` flow):
 
-.. code-block:: bash
+           .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_dexbotic_pi0
+              python toolkits/standalone_eval_scripts/dexbotic/libero_eval.py \
+                --config_name db_pi0_libero \
+                --pretrained_path ./libero-db-pi0 \
+                --task_suite_name libero_spatial \
+                --num_trials_per_task 50 \
+                --action_chunk 5 \
+                --num_steps 10
 
-**What this command does:**
+         - **Placement and metrics**: see :doc:`Placement <../../concepts/placement>`, :doc:`Execution modes <../../concepts/execution_modes>`, and :doc:`Training metrics <../../reference/metrics>`.
 
-1. Loads ``examples/embodiment/config/libero_spatial_ppo_dexbotic_pi0.yaml``.
-2. Builds LIBERO actor, rollout, and env workers according to ``cluster.component_placement``.
-3. Runs PPO and writes logs/checkpoints under ``runner.logger.log_path``.
+   .. tab-item:: DM0
 
-For π₀, ``actor.model.precision`` controls the loaded parameter dtype. Set it to
-``bf16`` for BF16 execution, and use the same precision in ``rollout.model``.
-Leaving precision at ``null`` preserves the checkpoint's default dtype.
+      **1. Install**
 
-.. admonition:: Configure further
-   :class: note
+      .. code-block:: bash
 
-   - π₀ checkpoint path → set ``actor.model.model_path`` and ``rollout.model.model_path`` to ``libero-db-pi0``.
-   - DM0 checkpoint path → set both model paths to ``DM0-libero`` in ``libero_spatial_ppo_dexbotic_dm0.yaml``.
-   - Action chunks → π₀ uses ``num_action_chunks: 5``; DM0 uses ``num_action_chunks: 10``.
-   - Metric definitions and logging backends → :doc:`Training metrics <../../reference/metrics>`
-   - Placement and throughput → :doc:`Placement <../../concepts/placement>` and :doc:`Execution modes <../../concepts/execution_modes>`
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model dexbotic --env maniskill_libero && source .venv/bin/activate
 
-Standalone Evaluation
----------------------
+      **2. Download**
 
-Run Dexbotic's LIBERO evaluator for a trained checkpoint:
+      .. code-block:: bash
 
-.. code-block:: bash
+         hf download Dexmal/DM0-libero --local-dir ./DM0-libero
 
-   python toolkits/standalone_eval_scripts/dexbotic/libero_eval.py \
-      --config_name db_pi0_libero \
-      --pretrained_path /path/to/checkpoint \
-      --task_suite_name libero_spatial \
-      --num_trials_per_task 50 \
-      --action_chunk 5 \
-      --num_steps 10
+      **3. Launch**
 
-For DM0, switch the evaluator config and action chunk:
+      The shipped DM0 config is ``examples/embodiment/config/libero_spatial_ppo_dexbotic_dm0.yaml``.
 
-.. code-block:: bash
+      .. include:: _model_path.rst
 
-   python toolkits/standalone_eval_scripts/dexbotic/libero_eval.py \
-      --config_name dm0_libero \
-      --pretrained_path /path/to/checkpoint \
-      --task_suite_name libero_spatial \
-      --num_trials_per_task 50 \
-      --action_chunk 10 \
-      --num_steps 10
+      Launch PPO training with ``run_embodiment.sh``:
 
-You can also use RLinf's unified VLA evaluation flow. See :doc:`evaluation <../../evaluations/index>`.
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_dexbotic_dm0 actor.model.model_path=$PWD/DM0-libero
+
+      .. dropdown:: Advanced configuration (optional)
+
+         - **Action chunks**: DM0 defaults to ``num_action_chunks: 10``.
+         - **Standalone evaluation**: run Dexbotic's LIBERO evaluator on a trained checkpoint (or use RLinf's unified :doc:`evaluation <../../evaluations/index>` flow):
+
+           .. code-block:: bash
+
+              python toolkits/standalone_eval_scripts/dexbotic/libero_eval.py \
+                --config_name dm0_libero \
+                --pretrained_path ./DM0-libero \
+                --task_suite_name libero_spatial \
+                --num_trials_per_task 50 \
+                --action_chunk 10 \
+                --num_steps 10
+
+         - **Placement and metrics**: see :doc:`Placement <../../concepts/placement>`, :doc:`Execution modes <../../concepts/execution_modes>`, and :doc:`Training metrics <../../reference/metrics>`.
 
 Visualization and Results
 -------------------------
 
-Launch TensorBoard to watch training live:
-
-.. code-block:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-The key signal to watch is **``env/success_once``** — the episodic success rate. For every logged metric, see :doc:`Training metrics <../../reference/metrics>`.
+Watch ``env/success_once`` in TensorBoard (``tensorboard --logdir ./logs``); set ``env.eval.video_cfg.save_video=True`` to record videos, or see :doc:`Training metrics <../../reference/metrics>` for all logged metrics.

@@ -1,83 +1,41 @@
 Why RLinf
 =========
 
-RLinf is built to post-train foundation models with reinforcement learning at
-scale. This page collects the design ideas, performance numbers, and SOTA
-recipes behind the framework — read it when you want the *why* rather than the
-*how*.
+RLinf is an open-source distributed reinforcement learning framework for post-training embodied, agentic, and generative foundation models. Read this page for the architecture, benchmarked throughput gains, and workload coverage behind the framework.
 
 What Makes RLinf Unique
 -----------------------
 
-- **Macro-to-Micro Flow (M2Flow):** a new paradigm that executes macro-level
-  logical flows through micro-level execution flows, decoupling logical workflow
-  construction (programmable) from physical communication and scheduling
-  (efficient).
+- **Macro-to-Micro Flow (M2Flow):** decouples logical RL workflow programming from physical communication and hardware scheduling (:doc:`publications/rlinf_system`).
+- **Flexible execution modes:** switch between *Collocated*, *Disaggregated*, and *Hybrid* placement through YAML without rewriting training loops (:doc:`../concepts/execution_modes`).
+- **Auto and dynamic scheduling:** static mode selection and online dynamic resource scaling adapt GPU allocation during training while preserving on-policy semantics (:doc:`publications/dynarl`, :doc:`../guides/dynamic_scheduling`).
+- **Broad workload coverage (v0.4+):**
 
-- **Flexible execution modes:**
+  - *Embodied Simulation:* standardized RL recipes across LIBERO, ManiSkill3, RoboTwin, IsaacLab, BEHAVIOR, CALVIN, MetaWorld, and Genesis with OpenVLA, OpenVLA-OFT, π₀ / π₀.₅, GR00T, LingBot-VLA, and MLP/CNN policies (:doc:`../examples/simulators_index`, :doc:`../examples/vla_wam_index`).
+  - *Real-World Robots:* unified ``rlinf.robotics`` hardware abstraction and online RL / DAgger / teleoperation across Franka, Dual Franka, SO-101, Piper, Turtle2, YAM, and more (:doc:`../examples/real_world_index`).
+  - *World Models & Generative RL:* world-model RL (WoVR / Wan, OpenSora, DreamZero, Cosmos3) and diffusion/video post-training (:doc:`../examples/world_model_index`).
+  - *Reasoning & Agentic AI:* math reasoning, VQA, multi-turn search and tool-use agents (Search-R1, WideSeek-R1, rStar2, Coding-Online-RL, AgentLightning) (:doc:`../examples/agentic/index`).
+  - *SFT & Offline RL:* supervised fine-tuning, IQL, RECAP, STEAM, and sim-real co-training (:doc:`../examples/sft_index`, :doc:`../examples/methods_index`).
 
-  - *Collocated* — share all GPUs across all workers.
-  - *Disaggregated* — enable fine-grained pipelining.
-  - *Hybrid* — a customizable combination of collocated and disaggregated modes.
+- **Multi-accelerator portability:** runs across NVIDIA GPUs, AMD ROCm, Huawei Ascend, Moore Threads MUSA, Kunlun, and Biren accelerators behind one ``Worker`` abstraction (:doc:`../start/installation`).
 
-- **Auto scheduling:**
+Measured Performance
+--------------------
 
-  - *Dynamic* — schedule resource allocation on the fly to maximize utilization.
-  - *Static* — automatically pick the best execution mode for the workload, with
-    no manual resource allocation.
+- **End-to-end training speedup:** M2Flow with hybrid placement and fine-grained pipelining delivers **1.07×–2.43×** end-to-end throughput over comparable RL frameworks—up to **1.7×** on math reasoning against veRL and Slime and up to **2.43×** on embodied VLA training (see :doc:`publications/rlinf_system` and :doc:`blog/compare_with_verl`).
+- **Dynamic online scaling:** DynaRL rebalances worker allocations within seconds to improve utilization by **20–40%** on dynamic rollout workloads while preserving on-policy behavior (see :doc:`publications/dynarl`).
 
-- **Embodied agent support:**
+Unified Backends and Algorithms
+-------------------------------
 
-  - Fast adaptation for mainstream VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_, `GR00T-N1.5`_.
-  - Mainstream CPU & GPU simulators via standardized RL interfaces: `ManiSkill3`_, `LIBERO`_, `IsaacLab`_.
-  - The first RL fine-tuning of the π₀ model family with a flow-matching action expert.
+- **Pluggable training and rollout engines:** pair **FSDP + Hugging Face** for rapid VLA and research iteration, or **Megatron + SGLang / vLLM** (with :doc:`../extending/mbridge`) for large-scale LLM and VLM training.
+- **Built-in algorithms:** PPO, Async PPO, GRPO, DAPO, REINFORCE++, SAC, CrossQ, RLPD, and IQL behind unified advantage and loss registries (:doc:`../reference/algorithms/index`).
+- **Configuration and metrics:** inspect Hydra YAML structure and metric namespaces in :doc:`../reference/training/index`.
 
-Performance
------------
+Reproducible Recipes
+--------------------
 
-- **Hybrid mode with fine-grained pipelining** achieves a **120%+** throughput
-  improvement over comparable frameworks.
-- **Automatic online scaling** scales training resources dynamically, completing
-  GPU switching within seconds and improving efficiency by a further **20–40%**
-  while preserving the on-policy nature of RL algorithms.
+RLinf ships end-to-end configs and scripts that reproduce published numbers across embodied and reasoning benchmarks:
 
-Flexible and Easy to Use
-------------------------
-
-- **Multiple backends** behind one interface — switch without code changes:
-
-  - *FSDP + Hugging Face* — rapid adaptation to new models and algorithms; ideal
-    for beginners and fast prototyping.
-  - *Megatron + SGLang* — optimized for large-scale training and maximum
-    efficiency for demanding workloads.
-
-- **Adaptive communication** via the asynchronous communication channel.
-- **Built-in RL methods**, including `PPO`_, `GRPO`_, `DAPO`_, `Reinforce++`_, and more.
-
-SOTA RL Training Reproduction
------------------------------
-
-RLinf provides end-to-end recipes that reproduce or match **state-of-the-art
-(SOTA) RL results** out of the box — run our configs and scripts directly to
-obtain published numbers without custom engineering.
-
-- **Embodied tasks:** RLinf reaches or matches SOTA success rates on benchmarks
-  such as **LIBERO**, **ManiSkill**, and **RoboTwin** with OpenVLA, OpenVLA-OFT,
-  π₀/π₀.₅, GR00T, and other VLAs. See the :doc:`../examples/index` gallery and the
-  :doc:`../reference/index` algorithm specs.
-- **Agentic tasks (including math reasoning):** RLinf achieves SOTA performance on
-  **AIME24 / AIME25 / GPQA-diamond** with DeepSeek-R1-Distill-Qwen models, and
-  supports single- and multi-agent tasks such as Search-R1 and Coding-Online-RL.
-  See :doc:`../examples/agentic/index`.
-
-.. _PPO: https://arxiv.org/abs/1707.06347
-.. _GRPO: https://arxiv.org/abs/2402.03300
-.. _DAPO: https://arxiv.org/abs/2503.14476
-.. _Reinforce++: https://arxiv.org/abs/2501.03262
-.. _OpenVLA: https://github.com/openvla/openvla
-.. _OpenVLA-OFT: https://github.com/moojink/openvla-oft
-.. _ManiSkill3: https://github.com/haosulab/ManiSkill
-.. _LIBERO: https://github.com/Lifelong-Robot-Learning/LIBERO
-.. _IsaacLab: https://github.com/isaac-sim/IsaacLab
-.. _π₀: https://github.com/Physical-Intelligence/openpi
-.. _GR00T-N1.5: https://github.com/NVIDIA/Isaac-GR00T.git
+- **Embodied benchmarks:** verified training and evaluation recipes on **LIBERO**, **ManiSkill**, **RoboTwin**, and real-world Franka / Turtle2 setups (:doc:`../examples/index`, :doc:`../evaluations/index`).
+- **Reasoning and agentic benchmarks:** reproducible **AIME24 / AIME25 / GPQA-diamond** math training with DeepSeek-R1-Distill-Qwen models plus single- and multi-agent search and coding pipelines (:doc:`../examples/agentic/index`).

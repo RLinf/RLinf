@@ -1,29 +1,25 @@
-Embodiment Configuration
-=========================
+Embodied Configuration
+======================
 
-This section covers configuration parameters specific to embodied RL training
-(robot manipulation, simulators, VLA models). These extend the shared
-configuration described in :doc:`basic_config`.
+For an annotated minimal embodied YAML and Hydra preset overview, see :doc:`../reference/configuration`. This page documents embodied-specific RL keys (robot manipulation, simulators, and VLA models) extending :doc:`basic_config`.
 
 defaults
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
   defaults:
+    - base/embodied_rl
     - env/maniskill_put_on_plate_in_scene_25_main@env.train
     - env/maniskill_ood_template@env.eval
     - model/openvla_oft@actor.model
-    - hybrid_engines/fsdp@actor.fsdp_config
-    - weight_syncer/patch_syncer@weight_syncer
+    - algorithm/ppo@algorithm
+    - _self_
 
-``defaults``: Hydra configuration inheritance. Selects the environment, model,
-training-backend, and weight-syncer presets to compose into the run. The
-``<group>@<target>`` syntax mounts a preset onto a config node (e.g.
-``model/openvla_oft@actor.model`` fills ``actor.model``).
+``defaults``: Hydra configuration inheritance. ``base/embodied_rl`` brings in the default ``cluster/collocated``, ``runner``, ``hybrid_engines/fsdp``, and ``weight_syncer/patch_syncer`` presets; ``<group>@<target>`` mounts a preset onto a config node (e.g. ``model/openvla_oft@actor.model`` fills ``actor.model``).
 
 hydra
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -35,7 +31,7 @@ hydra
 points at the embodiment example config directory.
 
 runner
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -55,7 +51,7 @@ runner
    * - ``runner.overlap_env_bootstrap``
      - Overlap environment bootstrap (reset) with actor training to hide reset
        latency. Useful when environment reset is slow. Only effective when
-       ``env.enable_offload`` is False; enabling it may increase GPU memory
+       ``env.train.enable_offload`` is False; enabling it may increase GPU memory
        pressure when the environment and actor share the same accelerator.
    * - ``runner.enable_decoupled_mode``
      - Decouple Env Workers from Rollout Workers. When enabled, an Env Worker is
@@ -71,7 +67,7 @@ Shared keys such as ``runner.task_type`` (set to ``embodied``),
 and ``runner.resume_dir`` are documented in :doc:`basic_config`.
 
 algorithm
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -108,7 +104,7 @@ algorithm
    * - ``algorithm.normalize_advantages``
      - Normalize advantages across the batch.
    * - ``algorithm.kl_penalty``
-     - How to estimate the KL divergence (``kl`` or ``kl_penalty``).
+     - How to estimate the KL divergence (``kl``, ``abs``, ``mse``, ``low_var_kl``, or ``full``).
    * - ``algorithm.reward_type``
      - Reward aggregation level (``chunk_level`` or ``action_level``). Also drives
        ``actor.model.value_type`` by default.
@@ -152,15 +148,15 @@ algorithm
 documented in :doc:`basic_config`.
 
 env
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
   env:
     group_name: "EnvGroup"
-    enable_offload: True
 
     train:
+      enable_offload: True
       rollout_epoch: 1
       total_num_envs: 128
       auto_reset: True
@@ -170,6 +166,7 @@ env
       max_steps_per_rollout_epoch: 160
 
     eval:
+      enable_offload: True
       rollout_epoch: 1
       total_num_envs: 16
       auto_reset: True
@@ -186,8 +183,8 @@ env
      - Description
    * - ``env.group_name``
      - Logical name for the environment worker group.
-   * - ``env.enable_offload``
-     - Offload the environment to reduce memory usage.
+   * - ``env.train.enable_offload`` / ``env.eval.enable_offload``
+     - Offload the training/evaluation environment to reduce GPU memory usage.
    * - ``env.train.rollout_epoch`` / ``env.eval.rollout_epoch``
      - Number of rollout epochs per training/evaluation step. Evaluation metrics
        are averaged over passes with the same seeds.
@@ -214,7 +211,7 @@ env
      - Action statistics OpenVLA-OFT unnormalizes this env configuration's actions with, instead of ``actor.model.unnorm_key``. See :doc:`hetero_envs`.
 
 rollout
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -274,7 +271,7 @@ OpenPI, GR00T, etc.) do not use ``rollout.sampling_params``.
      - Inference precision for rollout.
 
 actor
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 

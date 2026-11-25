@@ -1,3 +1,5 @@
+:orphan:
+
 Resources
 =========
 
@@ -25,11 +27,11 @@ troubleshooting, and contributor policy.
 
       Papers and technical reports built on RLinf.
 
-   .. grid-item-card:: v0.1 & v0.2 Release Notes
-      :link: release_v0.1_v0.2
+   .. grid-item-card:: v0.4 Release Notes
+      :link: release_v0.4
       :link-type: doc
 
-      What changed in RLinf v0.1 and v0.2.
+      What changed in RLinf v0.4.
 
    .. grid-item-card:: v0.3 Release Notes
       :link: release_v0.3
@@ -37,11 +39,11 @@ troubleshooting, and contributor policy.
 
       What changed in RLinf v0.3.
 
-   .. grid-item-card:: v0.4 Release Notes
-      :link: release_v0.4
+   .. grid-item-card:: v0.1 & v0.2 Release Notes
+      :link: release_v0.1_v0.2
       :link-type: doc
 
-      What changed in RLinf v0.4.
+      What changed in RLinf v0.1 and v0.2.
 
    .. grid-item-card:: FAQ
       :link: faq
@@ -54,15 +56,3 @@ troubleshooting, and contributor policy.
       :link-type: doc
 
       Grow from contributor to Area Owner through sustained contributions and peer review.
-
-.. toctree::
-   :hidden:
-
-   Why RLinf <why_rlinf>
-   Blog <blog/index>
-   Publications <publications/index>
-   v0.1 & v0.2 Release Notes <release_v0.1_v0.2>
-   v0.3 Release Notes <release_v0.3>
-   v0.4 Release Notes <release_v0.4>
-   FAQ <faq>
-   Contributor Policy <maintainer_policy>

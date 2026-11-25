@@ -1,53 +1,94 @@
-Benchmark 指南
-==============
+评测基准
+========
 
-本节按 benchmark 组织完整评测流程。每篇指南包含环境准备、示例配置、逐步命令与进阶用法。
+按 benchmark 选择对应指南，查看完整的依赖安装、权重下载、启动命令与常见问题处理。
 
-.. list-table::
-   :header-rows: 1
-   :widths: 20 50 30
+.. grid:: 1 2 2 2
+   :gutter: 2
 
-   * - Benchmark
-     - 说明
-     - 指南
-   * - RealWorld
-     - Franka 真机评测与部署
-     - :doc:`realworld`
-   * - BEHAVIOR-1K
-     - 大规模家居场景仿真
-     - :doc:`behavior`
-   * - LIBERO
-     - 机器人操作基准，含 Spatial / Object / Goal / Long / 90 等套件
-     - :doc:`libero`
-   * - ManiSkill OOD
-     - ManiSkill 分布外泛化评测
-     - :doc:`maniskill_ood`
-   * - PolaRiS
-     - 桌面操作仿真平台
-     - :doc:`polaris`
-   * - RoboLab
-     - 包含 120 个操作任务的 DROID joint-position benchmark
-     - :doc:`robolab`
-   * - RoboTwin
-     - 双臂操作仿真，多任务场景
-     - :doc:`robotwin`
-   * - SIMPLE
-     - 使用 Psi0 的人形机器人全身评测
-     - :doc:`simple`
+   .. grid-item-card:: BEHAVIOR-1K
+      :link: behavior
+      :link-type: doc
+
+      基于 OmniGibson 与 Isaac Sim 4.5 的 50 个家居任务评测（OpenPI π₀.₅）。
+
+   .. grid-item-card:: LIBERO
+      :link: libero
+      :link-type: doc
+
+      Spatial、Object、Goal、10 与 90 套件，支持 LIBERO-PRO 与 LIBERO-PLUS。
+
+   .. grid-item-card:: ManiSkill OOD
+      :link: maniskill_ood
+      :link-type: doc
+
+      13 个分布外场景与分布内划分的批量评测。
+
+   .. grid-item-card:: PolaRiS
+      :link: polaris
+      :link-type: doc
+
+      基于 Isaac Sim 5.1.0 的 DROID 桌面操作评测（OpenPI π₀ / π₀.₅）。
+
+   .. grid-item-card:: RealWorld
+      :link: realworld
+      :link-type: doc
+
+      Franka PnP、自定义 ``FrankaEnv-v1`` 任务与 Dual Franka RTC 真机评测。
+
+   .. grid-item-card:: RoboLab
+      :link: robolab
+      :link-type: doc
+
+      使用 π₀.₅ 运行单任务或全部 120 个 DROID joint-position 操作任务。
+
+   .. grid-item-card:: RoboTwin
+      :link: robotwin
+      :link-type: doc
+
+      基于 OpenVLA-OFT、OpenPI 与 LingbotVLA 的双臂操作评测。
+
+   .. grid-item-card:: SIMPLE
+      :link: simple
+      :link-type: doc
+
+      使用 Psi0 在 3 档 DR 上评测 8 个 G1 人形机器人全身 Teleop 任务。
+
+SGLang 服务评测
+---------------
+
+面向通过 RLinf SGLang 具身后端在 LIBERO 上部署的世界动作模型：
+
+.. grid:: 1 2 2 2
+   :gutter: 2
+
+   .. grid-item-card:: Cosmos3（SGLang）
+      :link: cosmos3_sglang
+      :link-type: doc
+
+      使用 SGLang diffusers 后端在 LIBERO-Spatial 上评测 Cosmos3。
+
+   .. grid-item-card:: DreamZero（SGLang）
+      :link: dreamzero_sglang
+      :link-type: doc
+
+      使用 SGLang 后端在 LIBERO-Spatial 上评测 DreamZero WAN2.2-5B。
 
 .. note::
 
-   IsaacLab、MetaWorld 等 benchmark 尚无 ``evaluations/`` 示例配置，评测可参考 :doc:`../../examples/simulators_index` 中对应训练文档，通过配置回退机制使用 ``examples/embodiment/config/`` 下的训练 YAML 进行评测。
+   GenieSim、RoboCasa365 与 RoboDojo 的配置也位于 ``evaluations/`` 下（见 :doc:`../index`）。对于 IsaacLab、MetaWorld 等尚无独立 ``evaluations/`` 目录的模拟器，:doc:`配置回退 <../reference/cli>` 仅支持 ``examples/embodiment/config/`` 中已定义 ``rollout.model``\ （含 ``model_type`` 与 ``num_action_chunks``）的评测就绪配置；若要评测 :doc:`../../examples/simulators_index` 中的纯训练配置，请按 :doc:`../reference/configuration` 改写为评测 YAML。
 
 .. toctree::
    :hidden:
-   :maxdepth: 1
+   :maxdepth: 2
 
-   realworld
-   behavior
-   libero
-   maniskill_ood
-   polaris
-   robolab
-   robotwin
-   simple
+   BEHAVIOR-1K <behavior>
+   LIBERO <libero>
+   ManiSkill OOD <maniskill_ood>
+   PolaRiS <polaris>
+   RealWorld <realworld>
+   RoboLab <robolab>
+   RoboTwin <robotwin>
+   SIMPLE <simple>
+   Cosmos3（SGLang） <cosmos3_sglang>
+   DreamZero（SGLang） <dreamzero_sglang>

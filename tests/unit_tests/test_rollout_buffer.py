@@ -32,7 +32,7 @@ from omegaconf import OmegaConf, open_dict
 from torch.utils.data import Dataset
 
 from rlinf.data.datasets.common.item import DatasetItem
-from rlinf.data.schema import DiscardedGroup, GroupMetadata
+from rlinf.data.schema import DiscardedGroup, GroupMetadata, PayloadRef
 from rlinf.scheduler import Worker
 from rlinf.workers.rollout_buffer.rollout_buffer_worker import (
     RolloutBuffer,
@@ -126,6 +126,39 @@ class _QueueChannel:
 
     def get_nowait(self, key=None):
         return self._queue.get_nowait()
+
+
+class _RecordingPayloadChannel:
+    """A payload channel that records the keys it is asked to drop."""
+
+    def __init__(self, name="Payload"):
+        self.name = name
+        self.removed: list = []
+
+    def remove_key(self, key, async_op=False):
+        self.removed.append(key)
+
+        async def _wait():
+            return None
+
+        return mock.MagicMock(async_wait=_wait)
+
+
+def _ref_result(group_id, earliest_version, key=None):
+    """A finished group delivered by reference, as the session server sends it:
+    the metadata itself, with the group's payload left in its channel."""
+    return GroupMetadata(
+        group_id=group_id,
+        task_name=None,
+        rewards=[1.0, 0.5],
+        earliest_version=earliest_version,
+        completion_version=earliest_version,
+        num_gen_tokens=0,
+        num_generate_calls=0,
+        payload_ref=PayloadRef(
+            locator="channel://Payload", key=group_id if key is None else key
+        ),
+    )
 
 
 def _result(group_id=None, earliest_version=None, rewards=None, task_name=None):
@@ -400,7 +433,7 @@ class TestPerTaskState:
         assert buffer._buffered_groups() == 1
 
     def test_release_takes_the_oldest_groups_across_tasks(self):
-        """A release still hands the actor the oldest buffered groups."""
+        """A release still returns the oldest buffered groups to the actor."""
         buffer = _BufferFixture.make(rollout_batch_size=2)
         group_ids = {}
         for sample, task_name in [(0, "searchr1"), (1, "code"), (2, "searchr1")]:
@@ -412,7 +445,7 @@ class TestPerTaskState:
                 ).group_metadata(),
             )
         released = buffer.release_groups()
-        assert [result.group_id for result in released] == [
+        assert [result.group_id for _, result in released] == [
             group_ids[0],
             group_ids[1],
         ]
@@ -467,7 +500,7 @@ class TestRelease:
         for group_id in group_ids:
             buffer.record_result(_result(group_id), _result(group_id).group_metadata())
         released = buffer.release_groups()
-        assert [result.group_id for result in released] == sorted(group_ids)
+        assert [result.group_id for _, result in released] == sorted(group_ids)
 
     def test_release_removes_the_groups_from_the_buffer(self):
         """Released groups leave the buffer and the issue-version dict."""
@@ -820,6 +853,79 @@ class TestWorkerResident:
 
         asyncio.run(run())
 
+    def test_a_stale_group_releases_its_payload_at_arrival(self):
+        """A group too stale when it arrives is dropped, and the payload its
+        reference names is removed from the channel: nothing would fetch it."""
+
+        async def run():
+            worker = _make_worker(rollout_batch_size=2, max_actor_accept_staleness=1)
+            worker.buffer.loaded_versions = {0: 5}
+            payload_channel = _RecordingPayloadChannel()
+            dataloader_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
+            rollout_channel = _QueueChannel()
+            resident = asyncio.create_task(
+                worker.run_continuously(
+                    agent_output_channel,
+                    dataloader_channel,
+                    rollout_channel,
+                    [payload_channel],
+                )
+            )
+            try:
+                await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
+                agent_output_channel.put(_ref_result(0, earliest_version=0))
+                for _ in range(100):
+                    if payload_channel.removed:
+                        break
+                    await asyncio.sleep(0.01)
+                assert payload_channel.removed == [0]
+                assert worker.buffer._task(None)["num_dropped_groups"]["stale"] == 1
+            finally:
+                await worker.stop()
+                await asyncio.wait_for(resident, timeout=5)
+
+        asyncio.run(run())
+
+    def test_a_group_stale_only_at_release_releases_its_payload(self):
+        """A group that arrives in time but is too stale for the training
+        version is dropped at release, and its payload removed."""
+
+        async def run():
+            worker = _make_worker(rollout_batch_size=1, max_actor_accept_staleness=1)
+            worker.buffer.loaded_versions = {0: 5}
+            payload_channel = _RecordingPayloadChannel()
+            dataloader_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
+            rollout_channel = _QueueChannel()
+            resident = asyncio.create_task(
+                worker.run_continuously(
+                    agent_output_channel,
+                    dataloader_channel,
+                    rollout_channel,
+                    [payload_channel],
+                )
+            )
+            try:
+                await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
+                # In time for the loaded version (5 - 4 = 1 is not above the
+                # limit), and the batch runs under a newer one.
+                agent_output_channel.put(_ref_result(0, earliest_version=4))
+                await asyncio.sleep(0.05)
+                assert payload_channel.removed == []
+                await worker.release_batch(version=9)
+                for _ in range(100):
+                    if payload_channel.removed:
+                        break
+                    await asyncio.sleep(0.01)
+                assert payload_channel.removed == [0]
+                assert rollout_channel._queue.empty()
+            finally:
+                await worker.stop()
+                await asyncio.wait_for(resident, timeout=5)
+
+        asyncio.run(run())
+
     def test_release_waits_until_the_batch_is_complete(self):
         """An early release request is held until enough results arrive."""
 
@@ -1001,7 +1107,7 @@ class TestWorkerResident:
                 await asyncio.sleep(0.05)
                 assert dataloader_channel._queue.empty()
 
-                # A release hands one training batch over: two groups
+                # A release returns one training batch to the actor: two groups
                 # leave, and exactly two are issued to top the total back
                 # up to the cap.
                 await worker.release_batch(version=0)
@@ -1066,7 +1172,7 @@ class TestDiscard:
         assert first not in _task_state(buffer, None)["buffer"]
         buffer.record_result(_result(second), _result(second).group_metadata())
         released = buffer.release_groups()
-        assert [result.group_id for result in released] == [second]
+        assert [result.group_id for _, result in released] == [second]
 
     def test_discarded_group_record_takes_the_receive_path(self):
         """A DiscardedGroup from the agent loop wakes admission."""
@@ -1451,7 +1557,7 @@ def test_real_length_groups_keep_versions_through_buffer_release():
     buffer.drop_group(stale[0], "staleness", 100, True, task_name="searchr1")
     released = buffer.release_groups()
     assert len(released) == 2
-    for actual, expected in zip(released, results[1:], strict=True):
+    for (_, actual), expected in zip(released, results[1:], strict=True):
         assert actual is expected
         assert actual.task_name == "searchr1"
         assert actual.group_metadata().earliest_version == actual.version_start[0]

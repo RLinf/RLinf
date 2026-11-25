@@ -1,5 +1,5 @@
-ART 扩散模型微调
-================
+DiffusionART
+============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
    :align: center
@@ -81,25 +81,68 @@ ART 根据同一提示词下各候选的奖励和最终潜变量计算共享更�
 
 算法推导与参考实现见 `DiffusionART 论文 <https://arxiv.org/abs/2610.12572>`_、`官方代码 <https://github.com/vanzll/DiffusionART>`_ 和 `项目页 <https://vanzll.github.io/diffusionart-project/>`_。
 
-安装
-----
+安装与运行
+----------
 
-按共用步骤完成 :ref:`安装 <diffusion-model-setup>`、:ref:`下载模型 <diffusion-model-checkpoints>` 和 :ref:`下载 OCR 数据集 <diffusion-ocr-dataset>`。两个 ART 配置均使用 CPU OCR。
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。两个 ART 配置均使用 CPU OCR，完整共用说明见 :doc:`video_models`。
 
-运行
-----
+.. tab-set::
 
-打开 ``examples/diffusion/config/sd3_art_ocr.yaml`` 或 ``examples/diffusion/config/wan22_ti2v_5b_art_video_ocr.yaml``，将 ``actor.model.model_path``、``env.train.dataset.path`` 和 ``env.eval.dataset.path`` 设为模型与数据目录。GPU 分配由 ``cluster.component_placement`` 设置。
+   .. tab-item:: SD3.5 Medium（图像 OCR）
 
-在仓库根目录运行对应配置：
+      **1. 安装环境**
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash examples/diffusion/run_diffusion.sh sd3_art_ocr
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
 
-   bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_art_video_ocr
+      **2. 下载模型与数据**
 
-训练日志写入 ``logs/<timestamp>-<config>/``。图像 OCR 分数记录为 ``env/avg``，视频 OCR 分数记录为 ``env/video_ocr``。
+      先在 Hugging Face 同意 SD3.5 Medium 的使用协议，再下载权重与 OCR 提示词数据集：
+
+      .. code-block:: bash
+
+         hf download stabilityai/stable-diffusion-3.5-medium --local-dir ./stable-diffusion-3.5-medium
+         mkdir -p ./ocr_data
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/train.txt -o ./ocr_data/train.txt
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/test.txt -o ./ocr_data/test.txt
+
+      **3. 启动训练**
+
+      在 ``examples/diffusion/config/sd3_art_ocr.yaml`` 中设置 ``actor.model.model_path``、``env.train.dataset.path`` 和 ``env.eval.dataset.path``\ （GPU 分配由 ``cluster.component_placement`` 控制），然后启动训练：
+
+      .. code-block:: bash
+
+         bash examples/diffusion/run_diffusion.sh sd3_art_ocr
+
+   .. tab-item:: Wan2.2 TI2V 5B（视频 OCR）
+
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
+
+      **2. 下载模型与数据**
+
+      .. code-block:: bash
+
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --local-dir ./Wan2.2-TI2V-5B-Diffusers
+         mkdir -p ./ocr_data
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/train.txt -o ./ocr_data/train.txt
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/test.txt -o ./ocr_data/test.txt
+
+      **3. 启动训练**
+
+      在 ``examples/diffusion/config/wan22_ti2v_5b_art_video_ocr.yaml`` 中设置 ``actor.model.model_path``、``env.train.dataset.path`` 和 ``env.eval.dataset.path``\ （GPU 分配由 ``cluster.component_placement`` 控制），然后启动训练：
+
+      .. code-block:: bash
+
+         bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_art_video_ocr
+
+训练日志写入 ``logs/<timestamp>-<config>/``。图像 OCR 分数记录为 ``env/avg``，视频 OCR 分数记录为 ``env/video_ocr``，指标定义见 :doc:`训练指标 </rst_source/reference/metrics>`。
 
 配置 ART 更新
 ~~~~~~~~~~~~~
@@ -183,32 +226,34 @@ ART 使用 ``wan22_ti2v_5b_art_video_ocr`` 配置，NFT 使用 ``wan22_ti2v_5b_n
 
 复现实验时，在对应配置中设置模型与数据目录，并使用以下共用设置：
 
-.. code-block:: yaml
+.. dropdown:: 进阶配置（可选）
 
-   cluster:
-     component_placement:
-       actor,env,rollout: "0-3"
-   algorithm:
-     group_size: 8
-   actor:
-     seed: 42
-     model:
-       wan22_ti2v_5b:
-         max_generation_batch_size: 2
-         compile_transformer_forward: True
-         offload_auxiliary_modules: True
-   env:
-     train:
-       total_num_envs: 96
-       seed: 42
-       reward:
-         use_gpu: False
-     eval:
-       seed: 42
-       reward:
-         use_gpu: False
-   runner:
-     val_check_interval: -1
+   .. code-block:: yaml
+
+      cluster:
+        component_placement:
+          actor,env,rollout: "0-3"
+      algorithm:
+        group_size: 8
+      actor:
+        seed: 42
+        model:
+          wan22_ti2v_5b:
+            max_generation_batch_size: 2
+            compile_transformer_forward: True
+            offload_auxiliary_modules: True
+      env:
+        train:
+          total_num_envs: 96
+          seed: 42
+          reward:
+            use_gpu: False
+        eval:
+          seed: 42
+          reward:
+            use_gpu: False
+      runner:
+        val_check_interval: -1
 
 各组实验的 batch 和训练步数设置如下。两组 NFT 均使用 ``algorithm.nft_tau=[1.0,0.01,0,70]``。
 
