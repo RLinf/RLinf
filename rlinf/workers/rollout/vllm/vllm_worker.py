@@ -43,6 +43,13 @@ from . import VLLM_WORKER_CLS, VLLMExecutor
 
 
 class VLLMWorker(Worker):
+    """vLLM-backed rollout worker for LLM response generation.
+
+    Owns an asynchronous vLLM engine instance that consumes rollout requests
+    over channels and returns sampled responses with optional logprobs.
+    Receives updated policy weights from actor workers between training steps.
+    """
+
     def __init__(self, config: DictConfig, placement: ModelParallelComponentPlacement):
         Worker.__init__(self)
         self._cfg = config

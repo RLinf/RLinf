@@ -1,33 +1,53 @@
-Rollout 引擎
-============
+Rollout 后端与服务
+==================
 
-这些指南介绍如何配置 RLinf rollout 使用的推理引擎，包括进程内 GPU 后端，以及与
-RLinf 任务一起启动或独立运行的 HTTP 服务。
+需要切换或调优推理引擎时查阅本组指南：管理 SGLang 与 vLLM 版本、部署 SGLang 推理服务、通过 HTTP 客户端接入外部推理，或用 PhyAI / ApxInf 加速具身 VLA 策略 Rollout。
 
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
+.. grid:: 1 2 3 3
+   :gutter: 2
 
-   * - 指南
-     - 你能得到什么
-   * - :doc:`ApxInf <../apxinf>`
-     - 使用 ApxInf 的进程内 Rust/CUDA 推理后端，在 LIBERO 上评测 π₀.₅。
-   * - :doc:`SGLang Server 与 Router <../sglang_server>`
-     - 启动一组 sglang HTTP server 与一个 sglang router，对外暴露统一的、兼容 OpenAI 风格的
-       ``/generate`` 与 ``/v1/chat/completions`` 接口。
-   * - :doc:`使用 InferenceHTTPClient 调用 SGLang <../inference_http_client>`
-     - 在自己的代码里向 router（或单个 server）发送同步/异步的
-       ``/generate`` / ``/v1/chat/completions`` 请求。
-   * - :doc:`SGLang 版本切换 <../version>`
-     - 在不同 SGLang 版本之间切换 rollout 引擎。
-   * - :doc:`PhyAI <phyai>`
-     - 使用 FSDP actor 和 PhyAI 的进程内 GPU rollout 后端，在 LIBERO 上训练 PI0.5。
+   .. grid-item-card:: SGLang 与 vLLM 版本选择
+      :link: ../version
+      :link-type: doc
+
+      选择与当前 PyTorch 和任务兼容的 SGLang / vLLM 版本。
+
+   .. grid-item-card:: SGLang 服务与路由
+      :link: ../sglang_server
+      :link-type: doc
+
+      通过 RLinf 的 SGLang 服务与路由层承载 LLM 或具身模型推理。
+
+   .. grid-item-card:: 异步 HTTP 推理客户端
+      :link: ../inference_http_client
+      :link-type: doc
+
+      以异步 HTTP 方式对接外部或远程推理服务。
+
+   .. grid-item-card:: Session Server
+      :link: ../session_server
+      :link-type: doc
+
+      在 rollout 节点上收集 Agent 轨迹，提供 SGLang 路由与 OpenAI chat completions 接口。
+
+   .. grid-item-card:: PhyAI 具身推理后端
+      :link: phyai
+      :link-type: doc
+
+      在 LIBERO 上用 CUDA Graph 与 FlashInfer 加速 OpenPI π₀.₅ PPO Rollout。
+
+   .. grid-item-card:: ApxInf 具身评测后端
+      :link: ../apxinf
+      :link-type: doc
+
+      在 LIBERO 上用进程内 Rust/CUDA 后端加速 OpenPI π₀.₅ 评测。
 
 .. toctree::
    :hidden:
 
-   ApxInf <../apxinf>
-   SGLang Server 与 Router <../sglang_server>
-   InferenceHTTPClient <../inference_http_client>
-   SGLang 版本切换 <../version>
-   PhyAI <phyai>
+   SGLang 与 vLLM 版本选择 <../version>
+   SGLang 服务与路由 <../sglang_server>
+   异步 HTTP 推理客户端 <../inference_http_client>
+   Session Server <../session_server>
+   PhyAI 具身推理后端 <phyai>
+   ApxInf 具身评测后端 <../apxinf>

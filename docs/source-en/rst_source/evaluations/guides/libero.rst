@@ -1,309 +1,503 @@
 LIBERO Evaluation
 =================
 
-LIBERO is a robotic manipulation simulation benchmark built on robosuite (MuJoCo), with suites including Spatial, Object, Goal, and Long. RLinf supports parallel VLA policy evaluation on LIBERO with task-level success metrics.
+Overview
+--------
 
-Related training docs: :doc:`../../examples/embodied/libero`, :doc:`../../examples/embodied/sft_fastwam`, :ref:`LIBERO-Pro & LIBERO-Plus <liberopro-plus-benchmark>`
+LIBERO is a robotic manipulation simulation benchmark built on robosuite (MuJoCo), covering the Spatial, Object, Goal, and Long (``libero_10``) suites plus LIBERO-PRO and LIBERO-PLUS perturbation variants. RLinf runs parallel VLA policy evaluation on LIBERO and reports task-level metrics such as ``eval/success_once``.
 
-Environment Setup
------------------
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-.. code-block:: bash
+   .. grid-item-card:: Benchmark
+      :text-align: center
 
-   bash requirements/install.sh embodied --model openpi --env libero
-   source .venv/bin/activate
+      LIBERO (Spatial · Object · Goal · Long · Mem · Pro · Plus)
 
-With ``--env libero``, the installer clones LIBERO into ``.venv/libero`` (or reuses an existing checkout when ``LIBERO_PATH`` is set) and appends it to ``PYTHONPATH`` in ``.venv/bin/activate``.
+   .. grid-item-card:: Models
+      :text-align: center
 
-Supported models include ``openpi``, ``openvla-oft``, ``starvla``, ``dreamzero``, ``fastwam``, ``molmoact2``, and ``pi0_fast`` — replace ``--model`` accordingly during installation.
+      OpenPI · OpenVLA-OFT · FastWAM · MolmoAct2 · StarVLA · Evo-1 · π₀-FAST · DreamZero · Cosmos3
 
-Example Configs
----------------
+   .. grid-item-card:: Config Dir
+      :text-align: center
 
-Available under ``evaluations/libero/``:
+      ``evaluations/libero/``
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 35 30
+   .. grid-item-card:: Related Training
+      :text-align: center
 
-   * - Config file
-     - Task suite
-     - Model
-   * - ``libero_spatial_openpi_pi05_eval.yaml``
-     - Spatial
-     - π₀.₅
-   * - ``libero_spatial_starvla_eval.yaml``
-     - Spatial
-     - StarVLA
-   * - ``libero_spatial_dreamzero_eval.yaml``
-     - Spatial
-     - DreamZero
-   * - ``libero_spatial_dreamzero_eval_sglang.yaml``
-     - Spatial
-     - DreamZero (SGLang backend)
-   * - ``libero_spatial_fastwam_eval.yaml``
-     - Spatial
-     - FastWAM
-   * - ``libero_spatial_molmoact2_eval.yaml``
-     - Spatial
-     - MolmoAct2
-   * - ``libero_object_openpi_pi05_eval.yaml``
-     - Object
-     - π₀.₅
-   * - ``libero_object_openvlaoft_eval.yaml``
-     - Object
-     - OpenVLA-OFT
-   * - ``libero_object_fastwam_eval.yaml``
-     - Object
-     - FastWAM
-   * - ``libero_object_molmoact2_eval.yaml``
-     - Object
-     - MolmoAct2
-   * - ``libero_goal_openpi_eval.yaml``
-     - Goal
-     - π₀
-   * - ``libero_goal_openvlaoft_eval.yaml``
-     - Goal
-     - OpenVLA-OFT
-   * - ``libero_goal_fastwam_eval.yaml``
-     - Goal
-     - FastWAM
-   * - ``libero_goal_molmoact2_eval.yaml``
-     - Goal
-     - MolmoAct2
-   * - ``libero_10_openpi_pi05_eval.yaml``
-     - Long (libero_10)
-     - π₀.₅
-   * - ``libero_10_apxinf_pi05_eval.yaml``
-     - Long (libero_10)
-     - π₀.₅ (ApxInf backend)
-   * - ``libero_10_openvlaoft_eval.yaml``
-     - Long (libero_10)
-     - OpenVLA-OFT
-   * - ``libero_10_fastwam_eval.yaml``
-     - Long (libero_10)
-     - FastWAM
-   * - ``libero_10_molmoact2_eval.yaml``
-     - Long (libero_10)
-     - MolmoAct2
-   * - ``libero_10_pi0_fast_eval.yaml``
-     - Long (libero_10)
-     - π₀-FAST
+      :doc:`LIBERO <../../examples/embodied/libero>` · :doc:`FastWAM <../../examples/embodied/sft_fastwam>` · :doc:`DreamZero <../../examples/embodied/sft_dreamzero>`
 
-For the DreamZero SGLang backend, see :doc:`dreamzero_sglang`. For the Cosmos3 SGLang backend, see :doc:`cosmos3_sglang`.
+Setup and Run
+-------------
 
-To hide inference latency by overlapping it with action-chunk execution, see :doc:`RTC <../../guides/rtc>`.
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
 
-End-to-End Workflow
--------------------
+.. tab-set::
 
-**Step 1: Activate the environment**
+   .. tab-item:: OpenPI π₀.₅
 
-.. code-block:: bash
+      **1. Install**
 
-   source .venv/bin/activate
+      .. code-block:: bash
 
-**Step 2: Edit the config**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
 
-Copy or edit the target YAML and set at least ``rollout.model.model_path``. See :doc:`../reference/configuration` (:ref:`env-eval-fields`) for ``env.eval`` field descriptions; see :ref:`libero-eval-config` below for the LIBERO eval protocol and suite-specific settings.
+      **2. Download**
 
-**Step 3: Launch evaluation**
+      .. code-block:: bash
 
-.. code-block:: bash
+         hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
-   bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
-     rollout.model.model_path=/path/to/model
+      **3. Evaluate (LIBERO-Spatial)**
 
-**Step 4: Check results**
+      .. code-block:: bash
 
-The terminal prints ``eval/success_once``; see :doc:`../reference/results` for logs.
+         bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
+           rollout.model.model_path=./RLinf-Pi05-LIBERO-SFT
+
+      Swap the config name for ``libero_object_openpi_pi05_eval``, ``libero_goal_openpi_eval`` (π₀), or ``libero_10_openpi_pi05_eval`` to evaluate other suites.
+
+   .. tab-item:: OpenVLA-OFT
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env libero && source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download RLinf/Openvla-oft-SFT-libero10-trajall --local-dir ./Openvla-oft-SFT-libero10-trajall
+
+      **3. Evaluate (LIBERO-10)**
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval \
+           rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall
+
+      Swap the config name for ``libero_object_openvlaoft_eval`` or ``libero_goal_openvlaoft_eval`` for other suites.
+
+   .. tab-item:: FastWAM
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model fastwam --env libero && source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download yuanty/fastwam libero_uncond_2cam224.pt libero_uncond_2cam224_dataset_stats.json --local-dir ./fastwam
+
+      **3. Evaluate (LIBERO-Spatial)**
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval \
+           rollout.model.model_path=./fastwam/libero_uncond_2cam224.pt \
+           rollout.model.dataset_stats_path=./fastwam/libero_uncond_2cam224_dataset_stats.json
+
+      Default placement uses 4 GPUs (20 slots × 25 episodes = 500 states). Swap the config name for ``libero_object_fastwam_eval``, ``libero_goal_fastwam_eval``, or ``libero_10_fastwam_eval``.
+
+   .. tab-item:: MolmoAct2
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model molmoact2 --env libero && source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download allenai/MolmoAct2-LIBERO --local-dir ./MolmoAct2-LIBERO
+
+      **3. Evaluate (LIBERO-10)**
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh libero libero_10_molmoact2_eval \
+           rollout.model.model_path=./MolmoAct2-LIBERO
+
+      Swap the config name for ``libero_spatial_molmoact2_eval``, ``libero_object_molmoact2_eval``, or ``libero_goal_molmoact2_eval`` (see :doc:`../../examples/embodied/molmoact2`).
+
+   .. tab-item:: StarVLA
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model starvla --env libero && source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
+
+      Set ``framework.qwenvl.base_vlm`` in ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` to ``./Qwen2.5-VL-3B-Instruct`` (see :doc:`../../examples/embodied/starvla`).
+
+      **3. Evaluate (LIBERO-Spatial)**
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh libero libero_spatial_starvla_eval \
+           rollout.model.model_path=./Qwen2.5-VL-OFT-LIBERO-4in1
+
+   .. tab-item:: π₀-FAST
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         UV_TORCH_BACKEND=cu128 bash requirements/install.sh embodied \
+           --model pi0_fast --env libero \
+           --python 3.12.12 --torch 2.11.0 --no-flash-attn && source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download lerobot/pi0fast-libero \
+           --revision 840f4b503f4c09110421c33c810a85b6684fd658 \
+           --local-dir ./pi0fast-libero
+         hf download google/paligemma-3b-pt-224 \
+           --revision 35e4f46485b4d07967e7e9935bc3786aad50687c \
+           --local-dir ./paligemma-3b-pt-224
+         hf download jadechoghari/tokenizer-lib-mean \
+           --revision 79ae83e3cbd8786dcb84b628569f8d076ca8151e \
+           --local-dir ./tokenizer-lib-mean
+
+      **3. Evaluate (LIBERO-10)**
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh libero libero_10_pi0_fast_eval \
+           rollout.model.model_path=./pi0fast-libero \
+           rollout.model.pi0_fast.text_tokenizer_name=./paligemma-3b-pt-224 \
+           rollout.model.pi0_fast.action_tokenizer_name=./tokenizer-lib-mean
+
+      Accept the PaliGemma terms on Hugging Face and run ``hf auth login`` before downloading. The default config uses 2 nodes / 10 GPUs (``cluster.num_nodes=2``); see :doc:`../../examples/embodied/pi0_fast`.
+
+   .. tab-item:: DreamZero
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model dreamzero --env libero && source .venv/bin/activate
+         git clone https://github.com/RLinf/dreamzero.git ../dreamzero
+
+      **2. Download Checkpoints, WAN2.2 Components, and Generate LIBERO Metadata**
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000 --local-dir ./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000
+         hf download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B
+         hf download Wan-AI/Wan2.1-I2V-14B-480P models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth --local-dir ./Wan2.1-CLIP
+         hf download google/umt5-xxl --local-dir ./umt5-xxl
+         hf download physical-intelligence/libero --repo-type dataset --local-dir ./libero
+         python toolkits/lerobot/generate_dreamzero_metadata.py \
+           --preset libero_sim \
+           --dataset-root ./libero \
+           --output-metadata ./libero_metadata.json
+
+      Set ``tokenizer_path`` (``./umt5-xxl``), ``diffusion_model_pretrained_path`` (``./Wan2.2-TI2V-5B``), ``image_encoder_pretrained_path`` (``./Wan2.1-CLIP/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth``), ``text_encoder_pretrained_path`` (``./Wan2.2-TI2V-5B/models_t5_umt5-xxl-enc-bf16.pth``), and ``vae_pretrained_path`` (``./Wan2.2-TI2V-5B/Wan2.2_VAE.pth``) under ``rollout.model`` in ``evaluations/libero/libero_spatial_dreamzero_eval.yaml``.
+
+      **3. Evaluate (LIBERO-Spatial)**
+
+      .. code-block:: bash
+
+         export DREAMZERO_PATH="$(realpath ../dreamzero)"
+         bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval \
+           runner.ckpt_path=./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000/model.pt \
+           rollout.model.metadata_json_path=./libero_metadata.json
+
+      Point ``runner.ckpt_path`` at your ``.pt`` weights (such as ``full_weights.pt`` from SFT). For SGLang serving with the Diffusers checkpoint, see :doc:`dreamzero_sglang`.
+
+   .. tab-item:: ApxInf
+
+      **1. Install RLinf and Build APXinf-robo CUDA Binding**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
+         git clone --recursive https://github.com/RLinf/APXinf-robo.git ../APXinf-robo
+         (cd ../APXinf-robo && pip install maturin && \
+           CARGO_TARGET_DIR=target/wheel maturin build --release --features cuda \
+             --auditwheel skip -m apxinf/crates/apxinf-py/Cargo.toml && \
+           pip install --force-reinstall target/wheel/wheels/apxinf_py-*.whl && \
+           pip install -e ./apxinf/python/apxinf --config-settings editable_mode=strict && \
+           pip install -e ".[rlinf]")
+
+      **2. Download π₀.₅ Checkpoint and Normalization Stats**
+
+      .. code-block:: bash
+
+         hf download lerobot/pi05_libero_base --local-dir ./pi05_libero_base
+         curl -fL https://storage.googleapis.com/openpi-assets/checkpoints/pi05_libero/assets/physical-intelligence/libero/norm_stats.json \
+           -o ./pi05_libero_base/norm_stats.json
+
+      **3. Evaluate (LIBERO-10)**
+
+      .. code-block:: bash
+
+         export APXINF_PI05_MODEL_DIR="$(pwd)/pi05_libero_base"
+         bash evaluations/run_eval.sh libero libero_10_apxinf_pi05_eval
+
+      Requires Linux with an NVIDIA GPU, CUDA toolkit, and Rust toolchain; see :ref:`ApxInf Backend <apxinf-backend>` and :doc:`../../guides/apxinf`.
+
+.. note::
+
+   **Host RAM & full-suite coverage:** Each LIBERO env holds ~2 GiB of host RAM, so configs defaulting to ``total_num_envs=500`` need ~1 TiB RAM. On standard hosts, lower ``env.eval.total_num_envs`` and raise ``env.eval.max_steps_per_rollout_epoch`` together (for example ``env.eval.total_num_envs=128 env.eval.max_steps_per_rollout_epoch=960`` on ``libero_spatial``) so ``auto_reset`` still covers all 500 states (see :ref:`Evaluation Configuration <libero-eval-config>`).
+
+With ``--env libero``, ``install.sh`` clones LIBERO into ``.venv/libero`` (or reuses ``LIBERO_PATH``) and adds it to ``PYTHONPATH`` in ``.venv/bin/activate``. For SGLang serving, see :doc:`dreamzero_sglang` and :doc:`cosmos3_sglang`; to overlap inference latency with action-chunk execution, see :doc:`RTC <../../guides/rtc>`.
+
+.. dropdown:: Example Configs
+
+   Available under ``evaluations/libero/``:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 38 28 34
+
+      * - Config file
+        - Task suite
+        - Model
+      * - ``libero_spatial_openpi_pi05_eval.yaml``
+        - Spatial
+        - π₀.₅
+      * - ``libero_spatial_eval_pi05_RTC.yaml``
+        - Spatial
+        - π₀.₅ (RTC)
+      * - ``libero_spatial_evo1_eval.yaml``
+        - Spatial
+        - Evo-1
+      * - ``libero_spatial_starvla_eval.yaml``
+        - Spatial
+        - StarVLA
+      * - ``libero_spatial_dreamzero_eval.yaml``
+        - Spatial
+        - DreamZero
+      * - ``libero_spatial_dreamzero_eval_sglang.yaml``
+        - Spatial
+        - DreamZero (SGLang backend)
+      * - ``libero_spatial_cosmos3_eval_sglang.yaml``
+        - Spatial
+        - Cosmos3 (SGLang backend)
+      * - ``libero_spatial_fastwam_eval.yaml``
+        - Spatial
+        - FastWAM
+      * - ``libero_spatial_molmoact2_eval.yaml``
+        - Spatial
+        - MolmoAct2
+      * - ``libero_object_openpi_pi05_eval.yaml``
+        - Object
+        - π₀.₅
+      * - ``libero_object_openvlaoft_eval.yaml``
+        - Object
+        - OpenVLA-OFT
+      * - ``libero_object_fastwam_eval.yaml``
+        - Object
+        - FastWAM
+      * - ``libero_object_molmoact2_eval.yaml``
+        - Object
+        - MolmoAct2
+      * - ``libero_goal_openpi_eval.yaml``
+        - Goal
+        - π₀
+      * - ``libero_goal_openvlaoft_eval.yaml``
+        - Goal
+        - OpenVLA-OFT
+      * - ``libero_goal_fastwam_eval.yaml``
+        - Goal
+        - FastWAM
+      * - ``libero_goal_molmoact2_eval.yaml``
+        - Goal
+        - MolmoAct2
+      * - ``libero_10_openpi_pi05_eval.yaml``
+        - Long (``libero_10``)
+        - π₀.₅
+      * - ``libero_10_apxinf_pi05_eval.yaml``
+        - Long (``libero_10``)
+        - π₀.₅ (ApxInf backend)
+      * - ``libero_10_openvlaoft_eval.yaml``
+        - Long (``libero_10``)
+        - OpenVLA-OFT
+      * - ``libero_10_fastwam_eval.yaml``
+        - Long (``libero_10``)
+        - FastWAM
+      * - ``libero_10_molmoact2_eval.yaml``
+        - Long (``libero_10``)
+        - MolmoAct2
+      * - ``libero_10_pi0_fast_eval.yaml``
+        - Long (``libero_10``)
+        - π₀-FAST
+      * - ``libero_mem_openpi_pi05_eval.yaml``
+        - LIBERO-Mem (``libero_mem``)
+        - π₀.₅ (Short Memory)
 
 .. _apxinf-backend:
 
-ApxInf Backend
---------------
+.. dropdown:: ApxInf Backend
 
-The ApxInf path is evaluation-only. RLinf reaches the engine through
-`APXinf-robo <https://github.com/RLinf/APXinf-robo>`_, which wraps the L1
-interface of `ApxInf <https://github.com/infinigence/ApxInf>`_. Install it and
-the ``apxinf_py`` CUDA binding it wraps in the RLinf runtime, then point
-``APXINF_PI05_MODEL_DIR`` at a checkpoint directory containing ``config.json``,
-``model.safetensors``, ``tokenizer.model``, and ``norm_stats.json``:
+   The ApxInf path is evaluation-only. RLinf calls `APXinf-robo <https://github.com/RLinf/APXinf-robo>`_, wrapping the L1 interface of `ApxInf <https://github.com/infinigence/ApxInf>`_. Point ``APXINF_PI05_MODEL_DIR`` at a checkpoint directory containing ``config.json``, ``model.safetensors``, ``tokenizer.model``, and ``norm_stats.json``:
 
-.. code-block:: bash
+   .. code-block:: bash
 
-   export APXINF_PI05_MODEL_DIR=/path/to/pi05_libero_base
-   bash evaluations/run_eval.sh libero libero_10_apxinf_pi05_eval
+      export APXINF_PI05_MODEL_DIR="$(pwd)/pi05_libero_base"
+      bash evaluations/run_eval.sh libero libero_10_apxinf_pi05_eval
 
-This config keeps the native OpenPI contract: two already-oriented LIBERO
-images, an 8-D state, a state-free PI0.5 prompt, 5 flow steps, a 10-action
-prediction horizon, and execution of only the first 5 actions. RLinf's OpenPI
-transforms own resize, tokenization, checkpoint normalization and action
-unnormalization. ApxInf's low-level ``Model.infer_rgb`` API owns only model
-inference and, by default, initial Gaussian noise sampling. Loading goes through
-``apxinf_robo.load_bare_model``, which selects the tuned GEMM tactics that keep
-that bare handle numerically equal to ApxInf's own policy path. Set
-``rollout.model.apxinf.noise_source=observation`` and pass an explicit
-``[B,10,32]`` noise tensor when doing paired numerical parity tests.
-The default 10 environments x 10 rollout epochs evaluate 10 reset states for
-each LIBERO-10 task (100 trajectories total).
+   This config keeps the native OpenPI contract: two oriented LIBERO images, an 8-D state, a state-free π₀.₅ prompt, 5 flow steps, a 10-action horizon, and execution of the first 5 actions. Set ``rollout.model.apxinf.noise_source=observation`` and pass an explicit ``[B,10,32]`` noise tensor for paired parity tests. The default 10 envs × 10 rollout epochs evaluate 10 reset states per LIBERO-10 task (100 trajectories total). For full build and backend details, see :doc:`../../guides/apxinf`.
 
 .. _libero-eval-config:
 
-Evaluation Configuration
-------------------------
+.. dropdown:: Evaluation Configuration
 
-LIBERO evaluation runs one trajectory per ``(task_id, trial_id)`` pair in the suite and reports ``eval/success_once`` (fraction of trajectories with at least one success). The fields below are all under ``env.eval`` and together control **parallelism**, **trajectory length**, and **test-set coverage**.
+   LIBERO evaluation runs one trajectory per ``(task_id, trial_id)`` pair and reports ``eval/success_once``. Each of the four standard suites (``libero_spatial``, ``libero_object``, ``libero_goal``, ``libero_10``) from the `official repo <https://github.com/Lifelong-Robot-Learning/LIBERO>`_ contains 10 tasks and ~50 initial states per task (~500 trajectories).
 
-Evaluation Protocol
-~~~~~~~~~~~~~~~~~~~
+   **Evaluation protocol**
 
-LIBERO provides a fixed set of initial states per task (``task_suite.get_task_init_states(task_id)``, loaded from ``.pruned_init`` files).
-The `official repo <https://github.com/Lifelong-Robot-Learning/LIBERO>`_ defines four standard eval suites: **LIBERO-Spatial**, **LIBERO-Object**, **LIBERO-Goal**, and **LIBERO-Long** (``libero_10``), each with 10 tasks and ~50 initial states per task—**~500** trajectories to fully evaluate one suite.
-RLinf ``evaluations/libero/`` examples cover these four ``task_suite_name`` values: ``libero_spatial``, ``libero_object``, ``libero_goal``, and ``libero_10``.
+   Trials across tasks are concatenated into a global ``reset_state_id`` and traversed in interleaved order in eval mode (``is_eval=True``) — ``(task0, trial0), (task1, trial0), …, (task0, trial1), …`` — so parallel envs advance evenly across tasks. Cover every ``(task_id, trial_id)`` pair in one ``rollout_epoch`` using either high parallelism (``total_num_envs >= S``) or auto-reset (``auto_reset=True`` with ``max_steps_per_rollout_epoch = N * max_episode_steps``).
 
-In RLinf's ``LiberoEnv``, each eval trajectory is uniquely identified by ``(task_id, trial_id)``:
+   **Per-suite episode step limits**
 
-- ``task_id``: task index within the current ``task_suite_name`` (``0 … n_tasks-1``), determining the language instruction and BDDL scene;
-- ``trial_id``: initial-state index for that task, loaded via ``get_task_init_states(task_id)[trial_id]`` into the MuJoCo configuration.
+   The longest training demo sets a lower bound for ``max_episode_steps``; match your training config:
 
-Internally, trials from all tasks are concatenated into a global ``reset_state_id``, which is decoded back into ``task_id`` and ``trial_id``.
-In eval mode (``is_eval=True``), all ``reset_state_id`` values are traversed in interleaved order—``(task0, trial0), (task1, trial0), …, (task0, trial1), …``—so parallel envs advance trials evenly across tasks; on ``auto_reset``, the next ``reset_state_id`` is assigned in order.
+   .. list-table::
+      :header-rows: 1
+      :widths: 22 20 24 34
 
-One ``rollout_epoch`` should cover every ``(task_id, trial_id)`` pair in the suite. Two approaches:
+      * - Suite
+        - Lower bound
+        - RLinf example values
+        - Example config
+      * - ``libero_spatial``
+        - 220
+        - 240 / 480
+        - ``libero_spatial_openpi_pi05_eval`` / ``libero_spatial_dreamzero_eval``
+      * - ``libero_object``
+        - 280
+        - 280 / 512
+        - ``libero_object_openpi_pi05_eval`` / ``libero_object_openvlaoft_eval``
+      * - ``libero_goal``
+        - 300
+        - 320 / 512
+        - ``libero_goal_openpi_eval`` / ``libero_goal_openvlaoft_eval``
+      * - ``libero_10``
+        - 520
+        - 520
+        - ``libero_10_openpi_pi05_eval`` / ``libero_10_openvlaoft_eval``
 
-1. **High parallelism:** Set ``total_num_envs`` ≥ total init states and ``max_steps_per_rollout_epoch = max_episode_steps`` so each parallel env runs exactly one trajectory (see ``libero_spatial_openpi_pi05_eval.yaml``).
-2. **Auto-reset:** With ``auto_reset=True``, finished episodes immediately load the next init state. Set ``max_steps_per_rollout_epoch`` to **N** × ``max_episode_steps`` to evaluate roughly ``N × total_num_envs`` trajectories per epoch (see ``libero_spatial_dreamzero_eval.yaml``).
+   See :ref:`env-eval-fields` in :doc:`../reference/configuration` for generic ``env.eval`` fields.
 
-Per-Suite ``max_episode_steps`` Reference
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   **Covering the full test set**
 
-The longest training demo per suite sets a lower bound for the step limit. RLinf eval YAML values vary by model action frequency but should be **≥** this bound and match the training config:
+   Let ``S`` = total init states, ``E`` = ``total_num_envs``, and ``T`` = ``max_episode_steps``.
+
+   *Option 1 — High parallelism:*
+
+   .. code-block:: yaml
+
+      env:
+        eval:
+          total_num_envs: 500                # S for Spatial / Object / Goal / Long
+          max_episode_steps: 240
+          max_steps_per_rollout_epoch: 240   # equals max_episode_steps
+          auto_reset: True                   # optional when E >= S
+          rollout_epoch: 1
+
+   Each LIBERO env runs in its own process and holds about 2 GiB of unshared host RAM after reset (about 1 TiB total for ``total_num_envs: 500``).
+
+   .. warning::
+
+      Env processes are subprocesses of the env worker, not Ray workers. Exhausting host RAM can hang the node without Ray's memory monitor killing a worker.
+
+   *Option 2 — Auto-reset (recommended unless each env has >2 GiB host RAM plus headroom for the rollout model):*
+
+   .. code-block:: yaml
+
+      env:
+        eval:
+          total_num_envs: 128
+          max_episode_steps: 480
+          # N = ceil(S / E); Spatial: ceil(500/128) = 4
+          max_steps_per_rollout_epoch: 1920  # N * max_episode_steps = 4 * 480
+          auto_reset: True
+          ignore_terminations: True
+          use_fixed_reset_state_ids: True
+          use_ordered_reset_state_ids: True
+          rollout_epoch: 1
+
+   Set ``env.eval.rollout_epoch: 2`` to average metrics across two passes. Keep ``max_steps_per_rollout_epoch`` divisible by ``rollout.model.num_action_chunks``. Env workers offset seeds by ``seed + rank × stage_num + stage_id`` so each receives a distinct init-state subset; with ``auto_reset``, ``eval/success_once`` records each completed episode once.
+
+.. dropdown:: Advanced Usage (LIBERO-PRO, LIBERO-PLUS, Parallelism)
+
+   For LIBERO-PRO and LIBERO-PLUS environment installation, see :ref:`LIBERO-Pro & LIBERO-Plus <liberopro-plus-benchmark>`.
+
+   **LIBERO-PRO**
+
+   .. code-block:: bash
+
+      export LIBERO_TYPE=pro
+      export LIBERO_PERTURBATION=all
+      bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval \
+        rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall
+
+   **LIBERO-PLUS**
+
+   .. code-block:: bash
+
+      export LIBERO_TYPE=plus
+      export LIBERO_SUFFIX=all
+      bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval \
+        rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall
+
+   **Adjust parallel scale**
+
+   Lowering ``total_num_envs`` alone lowers coverage (64 envs with a 240-step budget evaluate only 64 of 500 init states). Raise ``max_steps_per_rollout_epoch`` together with it, and keep ``total_num_envs`` divisible by the number of env workers (``128`` works on 1, 2, 4, or 8 GPUs):
+
+   .. code-block:: bash
+
+      # max_steps_per_rollout_epoch = ceil(500 / 128) * 240 = 960
+      bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
+        env.eval.total_num_envs=128 \
+        env.eval.max_steps_per_rollout_epoch=960 \
+        rollout.model.model_path=./RLinf-Pi05-LIBERO-SFT
+
+Results and Troubleshooting
+---------------------------
+
+The terminal prints ``eval/success_once``; logs and videos go to ``logs/<timestamp>-<config>/`` (see :doc:`../reference/results` and :ref:`env-eval-fields` in :doc:`../reference/configuration`).
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 22 28 28
+   :widths: 34 66
 
-   * - Suite
-     - Lower bound
-     - RLinf example values
-     - Example config
-   * - ``libero_spatial``
-     - 220
-     - 240 / 480
-     - ``libero_spatial_openpi_pi05_eval`` / ``libero_spatial_dreamzero_eval``
-   * - ``libero_object``
-     - 280
-     - 280 / 512
-     - ``libero_object_openpi_pi05_eval`` / ``libero_object_openvlaoft_eval``
-   * - ``libero_goal``
-     - 300
-     - 320 / 512
-     - ``libero_goal_openpi_eval`` / ``libero_goal_openvlaoft_eval``
-   * - ``libero_10``
-     - 520
-     - 520
-     - ``libero_10_openpi_pi05_eval`` / ``libero_10_openvlaoft_eval``
-
-See :ref:`env-eval-fields` in :doc:`../reference/configuration` for detailed ``env.eval`` field descriptions.
-
-Covering the Full Test Set
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Let ``S`` = total init states in the suite, ``E`` = ``total_num_envs``, ``T`` = ``max_episode_steps``.
-
-Option 1: High parallelism (``auto_reset`` optional)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       total_num_envs: 500        # S for Spatial / Object / Goal / Long
-       max_episode_steps: 240
-       max_steps_per_rollout_epoch: 240   # equals max_episode_steps
-       auto_reset: True           # optional when E >= S
-       rollout_epoch: 1
-
-Each LIBERO env runs in its own process and holds about 2 GiB of host RAM after reset (measured on ``libero_spatial``), and this memory is not shared between envs. With ``total_num_envs: 500``, the env workers need about 1 TiB of host RAM in total.
-
-.. warning::
-
-   The env processes are subprocesses of the env worker, not Ray workers. In a run that exhausted host memory, Ray's memory monitor (Ray 2.58.0) logged that it selected no worker to kill, and the node became unresponsive instead of the job failing with an out-of-memory error.
-
-**Option 2: Auto-reset (recommended unless the env nodes have more than about 2 GiB of host RAM per env, plus headroom for the rollout model)**
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       total_num_envs: 128
-       max_episode_steps: 480
-       # N = ceil(S / E); Spatial: ceil(500/128) = 4
-       max_steps_per_rollout_epoch: 1920   # N * max_episode_steps = 4 * 480
-       auto_reset: True
-       ignore_terminations: True
-       use_fixed_reset_state_ids: True
-       use_ordered_reset_state_ids: True
-       rollout_epoch: 1
-
-Trajectories per ``rollout_epoch`` ≈ ``N × total_num_envs`` where ``N = max_steps_per_rollout_epoch / max_episode_steps``. For example, Spatial (``S=500``) with ``E=128`` requires ``N = ceil(500/128) = 4``.
-
-**Multi-epoch averaging**
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       rollout_epoch: 2           # same seed, two passes, metrics averaged
-
-Notes
-~~~~~
-
-- ``max_steps_per_rollout_epoch`` must be divisible by ``rollout.model.num_action_chunks``; startup validation will fail otherwise.
-- Env workers use seed offset ``seed + rank × stage_num + stage_id`` so each worker receives a distinct init-state subset.
-- ``eval/success_once`` in the terminal is the success rate over completed trajectories; with ``auto_reset``, metrics are recorded only when a new episode finishes, avoiding double counting.
-
-Advanced Usage
---------------
-
-**LIBERO-PRO**
-
-.. code-block:: bash
-
-   export LIBERO_TYPE=pro
-   export LIBERO_PERTURBATION=all
-   bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval
-
-**LIBERO-PLUS**
-
-.. code-block:: bash
-
-   export LIBERO_TYPE=plus
-   export LIBERO_SUFFIX=all
-   bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval
-
-**Adjust parallel scale**
-
-Lowering ``total_num_envs`` alone also lowers coverage: with 64 envs and the config's 240-step budget, one rollout epoch evaluates 64 of the 500 init states. Raise ``max_steps_per_rollout_epoch`` with it so each env runs several trajectories. ``total_num_envs`` must also be divisible by the number of env worker processes; 128 works on 1, 2, 4, or 8 GPUs:
-
-.. code-block:: bash
-
-   # max_steps_per_rollout_epoch = ceil(S / E) * max_episode_steps = ceil(500 / 128) * 240
-   bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
-     env.eval.total_num_envs=128 \
-     env.eval.max_steps_per_rollout_epoch=960 \
-     rollout.model.model_path=/path/to/model
-
-FAQ
----
-
-- **Rendering issues:** ``run_eval.sh`` renders with EGL by default; on hosts without EGL, ``export MUJOCO_GL=osmesa`` and ``export PYOPENGL_PLATFORM=osmesa``.
-- **Test coverage:** See :ref:`libero-eval-config` above; the key is coordinating ``total_num_envs``, ``auto_reset``, and ``max_steps_per_rollout_epoch``.
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
-   dreamzero_sglang
-   cosmos3_sglang
+   * - Symptom
+     - Fix
+   * - EGL rendering errors on headless hosts
+     - ``run_eval.sh`` uses EGL by default; on hosts without EGL, export ``MUJOCO_GL=osmesa`` and ``PYOPENGL_PLATFORM=osmesa``.
+   * - Incomplete test-set coverage
+     - Coordinate ``total_num_envs``, ``auto_reset``, and ``max_steps_per_rollout_epoch`` per :ref:`Evaluation Configuration <libero-eval-config>`.
+   * - Host RAM exhaustion with 500 envs
+     - Lower ``total_num_envs`` (such as ``128``) and enable ``auto_reset: True`` with a larger ``max_steps_per_rollout_epoch``; each LIBERO env uses ~2 GiB of host RAM.
+   * - Step count validation error
+     - Set ``max_steps_per_rollout_epoch`` to a multiple of ``rollout.model.num_action_chunks``.

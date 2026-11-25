@@ -108,7 +108,7 @@ env、rollout 和 actor 是三个逻辑角色。GPU 布局决定各模型何时�
 
    actor GPU -> CPU buffer -> CPU/Gloo -> rollout CPU -> rollout GPU
 
-权重同步配置选择 ``transport_device: cpu``。这增加了拷贝，但每步只同步一次，而且权重可以分片并行传输。冒烟测试测得约 41 s；在完整参考训练中，权重同步约占整步的 2%。共享式布局下，世界模型生成和 VLA 推理仍是主要耗时。
+权重同步配置选择 ``transport_device: cpu``。这增加了拷贝，但每步只同步一次，而且权重可以分片并行传输。小规模验证测得约 41 s；在完整参考训练中，权重同步约占整步的 2%。共享式布局下，世界模型生成和 VLA 推理仍是主要耗时。
 
 适配还调整了两处通信边界。由于每个 rank 已独立加载同一份 Hugging Face checkpoint，可以关闭 ``sync_module_states``，避开 7.5B 模型 coalesced broadcast 挂起的问题。权重传输使用 CPU/Gloo，设备集合通信继续使用 MCCL，也避免了依赖未发布的额外通信库。
 

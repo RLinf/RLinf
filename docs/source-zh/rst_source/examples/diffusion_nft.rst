@@ -1,5 +1,5 @@
-NFT 扩散模型微调
-================
+Diffusion-NFT
+=============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
    :align: center
@@ -32,13 +32,13 @@ NFT 扩散模型微调
 
       图像 / 视频
 
-   .. grid-item-card:: 奖励
+   .. grid-item-card:: 硬件
       :text-align: center
 
-      OCR / 视频 OCR
+      SD3.5 Medium：1–8 张 GPU；Wan2.2 TI2V 5B：4–8 张 80 GB GPU
 
 | **操作流程：** 选择配置 → 启动训练 → 检查 OCR reward 和生成样本。
-| **前置条件：** :doc:`共用安装、模型与数据集准备 <video_models>`。
+| **前置条件：** :doc:`共用安装、模型与数据集准备 <video_models>` · SD3.5 Medium（BF16 + LoRA）需要 1–8 张 GPU，Wan2.2 TI2V 5B 需要 4–8 张 80 GB GPU（A800/A100/H100）。
 
 任务
 ~~~~
@@ -84,25 +84,71 @@ NFT 扩散模型微调
    * - 奖励
      - 图像 OCR 相似度或视频逐帧 OCR 分数。
 
-安装与资源准备
---------------
+安装与运行
+----------
 
-按共用步骤完成 :ref:`安装 <diffusion-model-setup>`、:ref:`下载模型 <diffusion-model-checkpoints>` 和 :ref:`下载 OCR 数据集 <diffusion-ocr-dataset>`。Wan NFT 配置使用 GPU OCR，请选择共用安装步骤中的 ``--paddle-gpu`` 命令。
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。完整共用准备说明见 :doc:`video_models`。
 
-运行训练
---------
+.. tab-set::
 
-在 ``examples/diffusion/config/`` 下打开所选配置对应的 YAML，例如 SD3 使用 ``examples/diffusion/config/sd3_nft_ocr.yaml``。将 ``actor.model.model_path``、``env.train.dataset.path`` 和 ``env.eval.dataset.path`` 设为下载目录，并根据实际硬件检查 ``cluster.num_nodes``、``cluster.component_placement`` 及 batch 设置。
+   .. tab-item:: SD3.5 Medium（图像 OCR）
 
-检查 YAML 后，在仓库根目录传入对应配置名启动训练：
+      **1. 安装环境**
 
-.. code:: bash
+      .. code-block:: bash
 
-   bash examples/diffusion/run_diffusion.sh sd3_nft_ocr
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
 
-.. code:: bash
+      **2. 下载模型与数据**
 
-   bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_nft_video_ocr
+      先在 Hugging Face 同意 SD3.5 Medium 的使用协议，再下载权重与 OCR 提示词数据集：
+
+      .. code-block:: bash
+
+         hf download stabilityai/stable-diffusion-3.5-medium --local-dir ./stable-diffusion-3.5-medium
+         mkdir -p ./ocr_data
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/train.txt -o ./ocr_data/train.txt
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/test.txt -o ./ocr_data/test.txt
+
+      **3. 启动训练**
+
+      在 ``examples/diffusion/config/sd3_nft_ocr.yaml`` 中设置 ``actor.model.model_path``、``env.train.dataset.path`` 和 ``env.eval.dataset.path``\ （并根据硬件检查 ``cluster.num_nodes``、``cluster.component_placement`` 及 batch 设置），然后启动训练：
+
+      .. code-block:: bash
+
+         bash examples/diffusion/run_diffusion.sh sd3_nft_ocr
+
+   .. tab-item:: Wan2.2 TI2V 5B（图像 / 视频 OCR）
+
+      **1. 安装环境**
+
+      Wan NFT 配置使用 GPU OCR（``--paddle-gpu``）：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion --paddle-gpu && source .venv/bin/activate
+
+      **2. 下载模型与数据**
+
+      .. code-block:: bash
+
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --local-dir ./Wan2.2-TI2V-5B-Diffusers
+         mkdir -p ./ocr_data
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/train.txt -o ./ocr_data/train.txt
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/test.txt -o ./ocr_data/test.txt
+
+      **3. 启动训练**
+
+      在 ``examples/diffusion/config/wan22_ti2v_5b_nft_ocr.yaml``\ （单帧）或 ``examples/diffusion/config/wan22_ti2v_5b_nft_video_ocr.yaml``\ （视频）中设置 ``actor.model.model_path``、``env.train.dataset.path`` 和 ``env.eval.dataset.path``，然后启动训练：
+
+      .. code-block:: bash
+
+         # 单帧图像 OCR
+         bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_nft_ocr
+         # 视频 OCR
+         bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_nft_video_ocr
 
 启动脚本生成候选、计算 OCR 奖励并更新 LoRA 参数，日志写入 ``logs/<timestamp>-<config>/``。
 
@@ -113,11 +159,11 @@ NFT 扩散模型微调
 
 当前配置将组内 reward 归一化与扩散 velocity space 中的 NFT 更新结合起来：
 
-1. 每个 prompt 生成 ``group_size`` 个候选并计算相对 advantage。图像配置在每个 prompt group 内使用 GRPO 归一化；视频配置则以整段视频为组，对帧/chunk reward 进行归一化。
-2. 采样一个去噪 step，并重建当前噪声状态（``nft_xcur_source: resample``）。rollout/reference 模型提供旧 velocity :math:`v_{old}`，可训练模型预测 :math:`v_\theta`。
-3. 构造 :math:`\Delta v = v_\theta - v_{old}`，以及正负候选 :math:`v_{\pm} = v_{old} \pm \beta\Delta v`。
-4. 将两个候选映射到目标空间。当前配置使用 ``nft_target_space: x0``，在 clean sample 空间中计算加权平方误差 energy :math:`E_{+}` 和 :math:`E_{-}`。
-5. 将相对 advantage 映射到 ``[0, 1]`` 后计算 NFT objective。较好的候选更强调 :math:`E_{+}`，较差的候选更强调 :math:`E_{-}`；``nft_clip_ratio`` 可限制 velocity update 相对 :math:`v_{old}` 的幅度。
+1. 每个 prompt 生成 ``group_size`` 个候选并计算相对 advantage。图像配置在每个 prompt group 内使用 GRPO 归一化；视频配置则以整段视频为组，归一化帧/chunk reward。
+2. 采样一个去噪 step，并重建当前噪声状态（``nft_xcur_source: resample``）。rollout/reference 模型提供旧 velocity 预测，可训练模型预测更新后的 velocity。
+3. 计算可训练模型与 reference 模型的 velocity 差值，并按 ``nft_beta`` 缩放构造正负扰动候选。
+4. 将两个候选映射到目标空间。当前配置使用 ``nft_target_space: x0``，在 clean sample 空间中分别计算正负候选与 rollout 目标的加权平方误差 energy。
+5. 将相对 advantage 映射到 ``[0, 1]`` 后计算 NFT objective。较好的候选更强调正候选 energy，较差的候选更强调负候选 energy；``nft_clip_ratio`` 可限制 velocity update 相对旧 velocity 的幅度。
 
 ``nft_tau`` 控制 rollout/reference 权重。标量 ``1.0`` 表示 on-policy；列表 ``[start_tau, end_tau, start_step, end_step]`` 表示线性退火的 EMA 更新。例如 ``[1.0, 0.01, 0, 70]`` 会在前 70 次更新中，从当前策略逐渐过渡到缓慢更新的 reference model。
 
@@ -139,10 +185,10 @@ NFT 扩散模型微调
      - 计算候选 prediction error 的目标空间。
    * - ``nft_weight_mode``
      - ``adaptive``
-     - 使用停止梯度的平均绝对误差对 energy 进行自适应归一化。
+     - 使用停止梯度的平均绝对误差自适应归一化 energy。
    * - ``nft_clip_ratio``
      - Wan2.2 使用 ``0.1``
-     - 限制 velocity update 相对 :math:`v_{old}` 的幅度。
+     - 限制 velocity update 相对 rollout/reference velocity 的幅度。
    * - ``nft_tau``
      - 按模型设置退火区间
      - 控制 rollout/reference 权重跟随 actor 的速度。
@@ -157,8 +203,7 @@ NFT 扩散模型微调
    :align: center
    :width: 92%
 
-   SD3 图像 OCR、Wan2.2 图像 OCR 和 Wan2.2 视频 OCR 训练的参考
-   ``env/avg`` reward 曲线。
+   SD3 图像 OCR、Wan2.2 图像 OCR 和 Wan2.2 视频 OCR 训练的参考 ``env/avg`` reward 曲线。
 
 在上面的参考实验中，三个配置都从较低的初始 OCR reward 上升到约 ``0.8``。Wan2.2 图像和视频实验上升更快，SD3 随后达到接近的区间。该图用于说明预期训练趋势，并不保证完全相同的最终分数；随机种子、prompt、初始 checkpoint、GPU 数量、依赖版本和评测设置都会影响收敛速度与最终 reward。
 
