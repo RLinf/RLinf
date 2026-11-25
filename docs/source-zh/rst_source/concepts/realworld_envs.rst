@@ -61,11 +61,11 @@
    finally:
        env.close()
 
-``enumerate()`` 返回硬件描述，不会打开机械臂的控制连接。每个 ``RobotInfo`` 的 ``config`` 保存解析后的类型化配置。环境构造函数连接机器人，并可能将其移动到复位姿态；``reset()`` 开始一个 episode，返回任务观测和 info 字典；``close()`` 释放机器人的连接。SO-101 检查工具也使用这一流程。``SO101Config.serial_port`` 和 ``calibration_id`` 通过共享 resolver 从 ``SERIAL_PORT`` 和 ``CALIBRATION_ID`` 解析，因此无关的 ``PORT=8080`` 不会被当作串口地址。已有机械臂配置时，``--port`` 必须精确匹配其中一个串口，并保留该机械臂的 calibration；找不到匹配项会报错。没有机械臂配置时，``--port`` 和 ``--id`` 用于描述本地机械臂。``--id`` 显式设置选中机械臂的 calibration 标识。SO-101 硬件 YAML 条目中的 ``port`` 应改为 ``serial_port``。检查工具的 ``--port`` 和 ``--id`` 分别选择串口和 calibration 标识。
+``enumerate()`` 返回硬件描述，不会打开机械臂的控制连接。每个 ``RobotInfo`` 的 ``config`` 保存解析后的类型化配置。环境构造函数连接机器人，并可能将其移动到复位姿态；``reset()`` 开始一个 episode，返回任务观测和 info 字典；``close()`` 释放机器人的连接。SO-101 检查工具也使用这一流程。``SO101Config.serial_port`` 和 ``calibration_id`` 通过共享 resolver 从 ``SERIAL_PORT`` 和 ``CALIBRATION_ID`` 解析，因此无关的 ``PORT=8080`` 不会被当作串口地址。已有机械臂配置时，``--port`` 必须精确匹配其中一个串口，并保留该机械臂的 calibration；找不到匹配项会报错。没有机械臂配置时，``--port`` 和 ``--id`` 用于描述本地机械臂。``--id`` 显式设置选中机械臂的 calibration 标识。SO-101 硬件 YAML 条目通过 ``serial_port`` 指定串口设备路径；检查工具的 ``--port`` 和 ``--id`` 分别选择串口和 calibration 标识。
 
-通过 scheduler 运行时，节点 probe 完成枚举，worker placement 分配 ``RobotInfo``，再由 ``RealWorldEnv`` 将其传给任务构造函数。环境只读取其中的硬件配置，不修改原对象。``camera_serials``、``robot_ip`` 等字段不再允许出现在任务 override 中，应移至硬件条目。若硬件默认值已能描述所需的观测空间，dummy 环境可以省略 ``robot_info``；需要其他相机布局或末端执行器时，也应传入对应布局的描述。Franka 在 dummy 模式下也要求至少一个相机，因此构造时始终需要带有相机序列号的描述。离线运行可以使用虚拟序列号；dummy 构造过程不会打开或探测设备。
+通过 scheduler 运行时，节点 probe 完成枚举，worker placement 分配 ``RobotInfo``，再由 ``RealWorldEnv`` 将其传给任务构造函数。环境只读取其中的硬件配置，不修改原对象。``camera_serials``、``robot_ip`` 等硬件字段应填写在 ``cluster.node_groups[].hardware.configs`` 中，而不属于任务 override。若硬件默认值已能描述所需的观测空间，dummy 环境可以省略 ``robot_info``；需要其他相机布局或末端执行器时，也应传入对应布局的描述。Franka 在 dummy 模式下也要求至少一个相机，因此构造时始终需要带有相机序列号的描述。离线运行可以使用虚拟序列号；dummy 构造过程不会打开或探测设备。
 
-共享任务 dataclass 分别命名为 ``FrankaEnvConfig``、``DualFrankaEnvConfig``、``SO101EnvConfig``、``PiperEnvConfig``、``GimArmEnvConfig``、``DOSW1EnvConfig`` 和 ``Turtle2EnvConfig``，对应的硬件配置仍位于 ``rlinf.robotics.robots``。Turtle2 的相机通道从任务字段 ``use_camera_ids`` 移至硬件字段 ``camera_ids``。Piper 的硬件字段 ``with_gripper`` 决定 action 包含 6 个关节值，还是包含夹爪开度的 7 个值。
+共享任务 dataclass 分别命名为 ``FrankaEnvConfig``、``DualFrankaEnvConfig``、``SO101EnvConfig``、``PiperEnvConfig``、``GimArmEnvConfig``、``DOSW1EnvConfig`` 和 ``Turtle2EnvConfig``，对应的硬件配置位于 ``rlinf.robotics.robots``。Turtle2 的相机通道通过硬件字段 ``camera_ids`` 配置。Piper 的硬件字段 ``with_gripper`` 决定 action 包含 6 个关节值，还是包含夹爪开度的 7 个值。
 
 注册任务
 --------

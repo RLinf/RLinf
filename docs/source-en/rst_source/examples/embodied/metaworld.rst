@@ -1,5 +1,5 @@
-RL with MetaWorld Benchmark
-===========================
+MetaWorld RL
+============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -80,98 +80,135 @@ Observation and Action
    * - Reward
      - Sparse — based on task completion.
 
-
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-metaworld``:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: OpenPI π₀
+      :sync: pi0
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-metaworld
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-metaworld
+      **1. Install**
 
-   # Inside the container, switch to the model's virtual environment:
-   source switch_env openpi        # or: source switch_env openvla-oft
+      .. code-block:: bash
 
-**Option 2: Custom environment** — install bundle ``--env metaworld``:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env metaworld && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. Download**
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model openpi --env metaworld
-   # Or install the OpenVLA-OFT environment:
-   # bash requirements/install.sh embodied --model openvla-oft --env metaworld
+      Download the OpenPI π₀ SFT checkpoint (also available on `ModelScope <https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld>`__):
 
-   source .venv/bin/activate
+      .. code-block:: bash
 
-Download the Model
-------------------
+         hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir ./RLinf-Pi0-MetaWorld-SFT
 
-Download the SFT checkpoints used by the reference recipes (either method works):
+      **3. Launch**
 
-.. code-block:: bash
+      Available configs under ``examples/embodiment/config/``:
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT
+      .. list-table::
+         :header-rows: 1
+         :widths: 25 25 50
 
-   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir RLinf-Pi0-MetaWorld-SFT
-   hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir RLinf-Pi05-MetaWorld-SFT
-   hf download RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT --local-dir RLinf-OpenVLAOFT-MetaWorld-SFT
+         * - Setting
+           - Algorithm
+           - Config
+         * - MT50
+           - PPO
+           - ``metaworld_50_ppo_openpi.yaml``
+         * - ML45
+           - PPO
+           - ``metaworld_45_ppo_openpi.yaml``
 
-Alternatively, you can also download the model from ModelScope at https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld.
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` on the command line (rollout inherits it automatically):
 
-.. include:: _model_path.rst
+      .. code-block:: bash
 
-Run It
-------
+         bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi \
+           actor.model.model_path=./RLinf-Pi0-MetaWorld-SFT
 
-Each recipe is a YAML config under ``examples/embodiment/config/``:
+   .. tab-item:: OpenPI π₀.₅
+      :sync: pi05
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 30 40
+      **1. Install**
 
-   * - Setting
-     - Model / algorithm
-     - Config
-   * - MT50
-     - π₀ + PPO
-     - ``metaworld_50_ppo_openpi.yaml``
-   * - MT50
-     - π₀.₅ + PPO
-     - ``metaworld_50_ppo_openpi_pi05.yaml``
-   * - MT50
-     - OpenVLA-OFT + GRPO
-     - ``metaworld_50_grpo_openvlaoft.yaml``
-   * - ML45
-     - π₀ + PPO
-     - ``metaworld_45_ppo_openpi.yaml``
+      .. code-block:: bash
 
-Launch a config with ``run_embodiment.sh``:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env metaworld && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. Download**
 
-   bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi
+      Download the OpenPI π₀.₅ SFT checkpoint:
 
-**What this command does:**
+      .. code-block:: bash
 
-1. Loads ``examples/embodiment/config/metaworld_50_ppo_openpi.yaml``.
-2. Starts Meta-World MT50 rollout/evaluation workers according to ``cluster.component_placement``.
-3. Runs the PPO training loop and writes logs/checkpoints under ``runner.logger.log_path``.
+         hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir ./RLinf-Pi05-MetaWorld-SFT
+
+      **3. Launch**
+
+      Available config under ``examples/embodiment/config/``:
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 25 25 50
+
+         * - Setting
+           - Algorithm
+           - Config
+         * - MT50
+           - PPO
+           - ``metaworld_50_ppo_openpi_pi05.yaml``
+
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` on the command line (rollout inherits it automatically):
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi_pi05 \
+           actor.model.model_path=./RLinf-Pi05-MetaWorld-SFT
+
+   .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env metaworld && source .venv/bin/activate
+
+      **2. Download**
+
+      Download the OpenVLA-OFT SFT checkpoint:
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT --local-dir ./RLinf-OpenVLAOFT-MetaWorld-SFT
+
+      **3. Launch**
+
+      Available config under ``examples/embodiment/config/``:
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 25 25 50
+
+         * - Setting
+           - Algorithm
+           - Config
+         * - MT50
+           - GRPO
+           - ``metaworld_50_grpo_openvlaoft.yaml``
+
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` on the command line (rollout inherits it automatically):
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh metaworld_50_grpo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-MetaWorld-SFT
 
 .. admonition:: Configure further
    :class: note
@@ -181,32 +218,14 @@ Launch a config with ``run_embodiment.sh``:
    - Metric definitions and logging backends → :doc:`Training metrics <../../reference/metrics>`
    - Resuming from a checkpoint → :doc:`Resume <../../guides/resume>`
 
-
 Visualization and Results
 -------------------------
 
-Launch TensorBoard to watch training live:
-
-.. code-block:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-The key signal to watch is **``env/success_once``** — the task success rate. For every
-logged metric, see :doc:`Training metrics <../../reference/metrics>`.
-
-To save evaluation videos, enable them in the config:
-
-.. code-block:: yaml
-
-   env:
-      eval:
-         video_cfg:
-            save_video: True
-            video_base_dir: ${runner.logger.log_path}/video/eval
-
+Watch ``env/success_once`` in TensorBoard (``tensorboard --logdir ./logs``); set ``env.eval.video_cfg.save_video=True`` to record videos, or see :doc:`Training metrics <../../reference/metrics>` for W&B/SwanLab and all metrics.
 
 MetaWorld Results
 ~~~~~~~~~~~~~~~~~
+
 The results for Diffusion Policy, TinyVLA, and SmolVLA in the table below are referenced from the `SmolVLA paper <https://arxiv.org/abs/2403.04880>`_. The SFT results for π\ :sub:`0`\  and π\ :sub:`0.5`\  are obtained by retraining using the official `dataset <https://huggingface.co/datasets/lerobot/metaworld_mt50>`_ provided by LeRobot.
 
 .. list-table:: **MetaWorld-MT50 Performance Comparison (Success Rate, %)**

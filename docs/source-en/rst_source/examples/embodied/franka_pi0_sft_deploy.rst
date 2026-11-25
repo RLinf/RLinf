@@ -1,408 +1,232 @@
-Running Pi0 SFT with Franka
-===========================
-Run the Bin-relocation pipeline end to end with OpenPI π₀: collect Franka data, convert it to a LeRobot-style dataset, compute normalization stats, fine-tune, and deploy the checkpoint on real hardware.
+Franka π₀ SFT & Deployment
+==========================
 
 Overview
 --------
 
-Create a real-world Franka dataset, fine-tune π₀, and deploy the result.
+Run the Bin-relocation pipeline end to end with OpenPI π₀ on a Franka arm: collect LeRobot demonstrations with SpaceMouse teleoperation, compute OpenPI normalization statistics, fine-tune π₀, and deploy the checkpoint on real hardware.
 
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: Models
+   .. grid-item-card:: Robot
       :text-align: center
 
-      OpenPI π₀
+      Franka Emika Panda (with gripper)
 
-   .. grid-item-card:: Algorithms
+   .. grid-item-card:: Sensors & Teleop
       :text-align: center
 
-      SFT · eval-only deployment
+      Intel RealSense · SpaceMouse · Keyboard
 
-   .. grid-item-card:: Tasks
+   .. grid-item-card:: Workflow
       :text-align: center
 
-      Bin relocation · generic SFT env
+      Collect → Norm Stats → SFT → Deploy
 
    .. grid-item-card:: Hardware
       :text-align: center
 
-      Franka · cameras · gripper
-
-| **You'll do:** get target pose → collect data → compute norm stats → run SFT → run real-world eval.
-| **Prerequisites:** :doc:`franka` · :doc:`sft_openpi` · OpenPI base checkpoint · real-world dataset path.
+      1× NVIDIA GPU (or Controller + GPU)
 
 Tasks
 ~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24 24
+   :widths: 22 34 44
 
-   * - Task
-     - Config / entry point
+   * - Stage
+     - Config / Format
      - Description
-   * - Data conversion
-     - ``pi0_realworld``
-     - Represent Franka data in the OpenPI data format.
+   * - Data collection
+     - ``realworld_collect_data`` + ``pi0_realworld``
+     - Collect Franka Bin-relocation episodes and export them in LeRobot format for OpenPI.
    * - SFT
      - ``realworld_bin_relocation_sft_openpi``
-     - Fine-tune π₀ on real-world Franka data.
+     - Fine-tune OpenPI π₀ on the collected real-world dataset.
    * - Deployment
      - ``realworld_pnp_eval`` / ``realworld_eval``
-     - Run eval-only deployment on the real robot.
+     - Run autonomous eval-only policy deployment on the physical Franka arm.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24
+   :widths: 24 76
 
    * - Field
      - Description
    * - Observation
-     - Real-world camera frames mapped to OpenPI dataset keys.
+     - Wrist RealSense camera frames mapped to ``pi0_realworld`` OpenPI dataset keys and robot state.
    * - Action
-     - Franka action format selected by ``pi0_realworld`` metadata.
+     - Franka Cartesian action plus gripper control formatted by ``pi0_realworld``.
    * - Reward
-     - Eval success or operator-observed deployment outcome.
+     - Keyboard success label (``c``) during collection; operator-observed task completion during deployment.
    * - Prompt
-     - Task text stored in the SFT dataset/config.
+     - Task instruction stored in ``override_cfg.task_description`` and dataset metadata.
 
-Installation
-------------
+Hardware and Safety
+-------------------
 
-Hardware Requirements
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+You need a Franka Emika Panda arm with a gripper, an Intel RealSense wrist camera, an NVIDIA GPU host for SFT and rollout, and an optional SpaceMouse for teleoperation. On a single-machine setup, the GPU host also controls the robot; in a multi-node setup, a separate controller host without a GPU runs Franky and data collection. Complete the firmware check, real-time kernel setup, and FCI activation in :doc:`franka`, and obtain the base OpenPI π₀ checkpoint per :doc:`sft_openpi`.
 
-- **Robot arm**: Franka Emika Panda.
-- **Camera**: Intel RealSense camera (wrist camera for observation).
-- **Compute node**: A GPU-equipped machine for SFT training and rollout.
-- **Robot computer**: The machine wired to the arm, which runs the Franka
-  controller and data collection. By default this is the GPU machine itself;
-  in the multi-node setup it is a separate controller node without a GPU.
-- **SpaceMouse (optional)**: For remote teleoperation during data collection.
+.. warning::
 
-.. note::
+   Keep the emergency stop within reach and supervise every collection and deployment run. In the Bin-relocation task, ``target_ee_pose`` marks the midpoint of the lowest point in the motion space and carves out a workspace region to prevent colliding with the container rim. Measure ``target_ee_pose`` on your own robot and clear the workspace before enabling autonomous motion.
 
-   For Franky installation, firmware compatibility, and real-time kernel setup
-   on the robot computer, see the Installation section in :doc:`franka`.
+Setup and Run
+-------------
 
-Software Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
-The **robot computer** (data collection and the env worker during deployment)
-needs the Franka controller environment; follow the Installation section in
-:doc:`franka`.
+.. tab-set::
 
-The **training / rollout node** (SFT training + deployment) needs the OpenPI
-model environment. Adding ``--env franka`` also installs the Franky dependencies,
-so when the robot computer is the GPU machine itself, this one environment serves
-both roles:
+   .. tab-item:: 1. Setup & Collect
 
-.. code:: bash
+      **Install**
 
-   # For mainland China users, you can add `--use-mirror` to the install.sh command.
-   bash requirements/install.sh embodied --model openpi --env franka
-   source .venv/bin/activate
+      Install the OpenPI and Franka environment on the GPU host (adding ``--env franka`` covers single-node setups; on a separate controller host, follow :doc:`franka`):
 
-.. note::
+      .. code-block:: bash
 
-   **Note on training / rollout node installation**: Make sure to specify
-   ``openpi`` (not ``openvla``) in the ``--model`` argument.
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
-Environment Configuration
-~~~~~~~~~~~~~~~~~~~~~~~~~
+      **Measure target pose**
 
-Data collection, training, and deployment all rely on the Franka real-world
-environment config template at
-``examples/embodiment/config/env/realworld_bin_relocation.yaml``.
-This config defines key Bin-relocation task parameters such as end-effector pose
-limits and success thresholds. Adjust fields under ``override_cfg`` as needed
-for your task.
+      Position the arm at the Bin-relocation target midpoint in guiding mode, activate FCI in Franka Desk, and record ``[x, y, z, roll, pitch, yaw]`` via ``getpos_euler``:
 
-Run It
-------
+      .. code-block:: bash
 
-The following steps cover the full Bin-relocation pipeline.
+         export FRANKA_ROBOT_IP=192.168.1.10  # Replace with your robot IP
+         python -m toolkits.realworld_check.test_franka_controller
 
-Step 1: Obtain the Target Pose
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      **Configure and collect demonstrations**
 
-Before collecting data, you must determine the target end-effector pose
-(``target_ee_pose``).
+      Data collection, training, and deployment share the task template ``examples/embodiment/config/env/realworld_bin_relocation.yaml``. In ``examples/embodiment/config/realworld_collect_data.yaml``, configure your Franka IP and camera serial as in :doc:`franka`, then apply these Bin-relocation overrides (switch env, enable gripper, enable keyboard labeling, set task prompt, export LeRobot format):
 
-Note that in the Bin-relocation task, the target end-effector pose represents
-the midpoint of the lowest point in the motion space. Specifically, to prevent
-the Franka end-effector from colliding with the rim of the container, a
-workspace region is carved out around the target pose to limit the robot's
-range of motion. See ``rlinf/envs/real/franka/bin_relocation.py``
-for details.
+      .. code-block:: yaml
 
-Follow the target pose steps in :doc:`franka` and use the
-``toolkits.realworld_check.test_franka_controller`` script to obtain the
-target pose. Record this pose for use in subsequent configuration steps.
+         defaults:
+           - env/realworld_bin_relocation@env.eval
+           - override hydra/job_logging: stdout
 
-Step 2: Collect Expert Data
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+         env:
+           eval:
+             no_gripper: False
+             keyboard_reward_wrapper: single_stage
+             override_cfg:
+               target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
+               task_description: "pick up the object and place it into the container"
+             data_collection:
+               enabled: True
+               export_format: lerobot_dataset
 
-Follow the demonstration collection steps in :doc:`franka` to collect expert
-data on the robot computer.
+      Run collection:
 
-In addition to the base configuration, make the following modifications for
-the Bin-relocation pick-and-place task:
+      .. code-block:: bash
 
-1. Switch the environment from peg insertion to bin relocation:
+         bash examples/embodiment/collect_data.sh realworld_collect_data
 
-.. code-block:: yaml
+      Teleoperate with the SpaceMouse, press ``c`` after each episode to mark success and reset the arm, and return the object to its start position. By default, collection stops after 20 episodes (configured by ``num_data_episodes``) and saves LeRobot shards under ``logs/<running-timestamp>/lerobot_dataset/rank_*/id_*/``.
 
-  defaults:
-    - env/realworld_bin_relocation@env.eval
-    - override hydra/job_logging: stdout
+   .. tab-item:: 2. Compute Stats & SFT
 
-2. Enable the gripper degree of freedom for the pick-and-place task:
+      **Prepare dataset and compute normalization statistics**
 
-.. code:: yaml
+      Copy the collected LeRobot dataset to the training node (skip on a single-machine setup) under a root directory such as ``/path/to/lerobot_data/realworld_franka_bin_relocation/`` containing ``data/`` and ``meta/``. Export ``HF_LEROBOT_HOME`` to that root directory and compute ``pi0_realworld`` normalization statistics:
 
-  env:
-    eval:
-      no_gripper: False
+      .. code-block:: bash
 
-3. Use the keyboard to label trajectories during data collection:
-   press ``c`` to mark the current trajectory as successful and reset the robot:
+         export HF_LEROBOT_HOME=/path/to/lerobot_data
+         python -m toolkits.lerobot.calculate_norm_stats \
+             --config-name pi0_realworld \
+             --repo-id realworld_franka_bin_relocation
 
-.. code:: yaml
+      ``config-name`` must match the OpenPI data config used in training, and ``repo-id`` must match your LeRobot dataset directory name. The script writes ``./assets/pi0_realworld/realworld_franka_bin_relocation/norm_stats.json``. Consistent with :doc:`sft_openpi`, training and evaluation do not look beside SFT ``full_weights.pt`` for this file: pass it via ``openpi_data.norm_stats_path`` (recommended) or copy it to ``<model_path>/realworld_franka_bin_relocation/norm_stats.json`` for the default fallback.
 
-  env:
-    eval:
-      keyboard_reward_wrapper: single_stage
+      **Run OpenPI SFT**
 
-4. Set the task description:
+      Edit ``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml`` or pass the dataset, base model, and normalization stats paths as Hydra CLI overrides (see :doc:`sft_openpi` for full OpenPI SFT details):
 
-.. code:: yaml
+      .. code-block:: bash
 
-   env:
-     eval:
-       override_cfg:
-         task_description: "pick up the object and place it into the container"
+         bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi \
+           data.train_data_paths=./lerobot_data/realworld_franka_bin_relocation \
+           actor.model.model_path=./pi0-model \
+           +actor.model.openpi_data.norm_stats_path=./assets/pi0_realworld/realworld_franka_bin_relocation/norm_stats.json
 
-5. Export data in LeRobot format:
+   .. tab-item:: 3. Deploy on Robot
 
-.. code:: yaml
+      Edit ``evaluations/realworld/realworld_pnp_eval.yaml`` with your robot IP and measured target pose (RealSense cameras are auto-discovered; set ``camera_serials`` only to select a subset or fix camera order):
 
-  env:
-    data_collection:
-      enabled: True
-      export_format: lerobot_dataset
+      .. code-block:: yaml
 
-During collection, use the SpaceMouse to teleoperate the robot and perform
-the task. After each episode, press ``c`` to mark it as successful and reset
-the robot pose. Remember to return the target object to the starting position.
-
-The script stops after collecting 20 episodes by default (configurable via
-``num_data_episodes``). Collected LeRobot-format data is saved under
-``logs/<running-timestamp>/lerobot_dataset/rank_*/id_*/``.
-
-Step 3: SFT Training Pi0
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Create a Real-World Dataset Format
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-This step follows the **Supported datasets** section in :doc:`sft_openpi`.
-For real-world Franka environments, you can create the ``pi0_realworld``
-dataset format, defined in:
-
-1. ``rlinf/models/embodiment/openpi/dataconfig/__init__.py``
-2. ``rlinf/models/embodiment/openpi/dataconfig/realworld_dataconfig.py``
-
-To unify the policy call interface between real-world and simulated
-environments, RLinf provides
-3. ``rlinf/models/embodiment/openpi/policies/realworld_policy.py``.
-
-Compute Normalization Statistics
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Following the **Normalization statistics for new LeRobot datasets** section in
-:doc:`sft_openpi`, you must compute normalization statistics for your newly
-collected LeRobot dataset before launching SFT.
-
-First, copy the data from the robot computer to the training node's data
-directory, e.g. ``/path/to/lerobot_data``; skip the copy when both roles run on
-the same machine. The file structure should be:
-
-.. code::
-
-   /path/to/lerobot_data
-   |-- realworld_franka_bin_relocation
-      |-- data
-      |-- meta
-    |-- franka_dagger
-        |-- data
-        |-- meta
-    |-- ...
-
-Here ``realworld_franka_bin_relocation`` corresponds to the ``repo_id`` field in the
-``TrainConfig`` defined in ``rlinf/models/embodiment/openpi/dataconfig/__init__.py``.
-
-Then run on the training node:
-
-.. code:: bash
-
-   export HF_LEROBOT_HOME=/path/to/lerobot_root
-   python toolkits/lerobot/calculate_norm_stats.py \
-       --config-name pi0_realworld \
-       --repo-id realworld_franka_bin_relocation
-
-Notes:
-
-- ``HF_LEROBOT_HOME`` must be set before running the script.
-- ``config_name`` must match the OpenPI dataconfig used by training.
-- ``repo_id`` must match your LeRobot-format dataset name.
-
-The script writes stats to
-``<assets_dir>/<exp_name>/<repo_id>/norm_stats.json``.
-
-The OpenPI loader reads normalization stats from ``<model_path>/<repo_id>`` at
-runtime.
-
-Run OpenPI SFT
-~~~~~~~~~~~~~~~
-
-With the ``pi0_realworld`` dataset format, modify the SFT training config
-``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml``:
-
-.. code:: yaml
-
-   data:
-     train_data_paths: "/path/to/lerobot_data"
-
-   actor:
-     model:
-       model_path: "/path/to/pi0-model"
-       openpi:
-         config_name: "pi0_realworld"
-
-Place the normalization stats under the model path; the OpenPI loader reads
-them from ``<model_path>/<repo_id>``. The file structure should be:
-
-.. code::
-
-  /path/to/pi0-model
-  |-- config.json
-  |-- model.safetensors
-  |-- realworld_franka_bin_relocation
-    |-- norm_stats.json
-  |-- franka_dagger
-    |-- norm_stats.json
-  |-- ...
-
-Run the SFT training script:
-
-.. code:: bash
-
-   bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
-
-The checkpoint exported by SFT will be used in the deployment step.
-See :doc:`sft_openpi` for more details on OpenPI datasets and SFT training.
-
-Step 5: Real-World Deployment
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Modify ``evaluations/realworld/realworld_pnp_eval.yaml``
-to match your cluster and target pose. RealSense cameras are discovered
-automatically. Set ``camera_serials`` in the hardware entry only to select a
-subset or specify the camera order:
-
-.. code-block:: yaml
-
-   cluster:
-     node_groups:
-       - label: franka
-         hardware:
-           configs:
-             - robot_ip: ROBOT_IP
-
-   env:
-     eval:
-       override_cfg:
-         target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
-         task_description: "pick up the object and place it into the container"
-
-After SFT training completes, update the model checkpoint path in the deploy
-config:
-
-.. code:: yaml
-
-   runner:
-     ckpt_path: "/path/to/your/sft/checkpoint/full_weights.pt"
-
-   rollout:
-     model:
-       model_path: "/path/to/pi0-model"
-
-After starting the Ray cluster as described in :doc:`franka`, run deployment
-through the :doc:`real-world evaluation guide
-<../../evaluations/guides/realworld>` with ``realworld_pnp_eval``. The policy
-will autonomously control the robot to complete the Bin-relocation task.
-
-You can control the number of evaluation episodes via the
-``env.eval.rollout_epoch`` parameter:
-
-.. code:: yaml
-
-   env:
-     eval:
-       rollout_epoch: 20
-
-Generic Real-World SFT Environment and Deployment
--------------------------------------------------
-
-Beyond the Bin-relocation task, RLinf provides a **generic SFT environment**
-(``FrankaEnv-v1``) that lets you define new real-world tasks entirely through
-YAML configuration, without writing a custom environment class. It is useful for:
-
-- Collecting SFT demonstration data on new tasks
-- Deploying (evaluating) a trained policy on the real robot
-
-Generic SFT Environment
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-The env config template lives at
-``examples/embodiment/config/env/realworld_franka_sft_env.yaml``.
-Key fields you should customise for your task:
-
-.. code:: yaml
-
-   override_cfg:
-     task_description: "pick up the object and place it into the container"
-     target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]   # goal pose [x,y,z,rx,ry,rz]
-     reset_ee_pose:  [0.5, 0.0, 0.2, -3.14, 0.0, 0.0]    # reset pose (above goal)
-     max_num_steps: 300
-     reward_threshold: [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]  # success tolerance
-     action_scale: [1.0, 1.0, 1.0]                         # [xyz, rpy, gripper]
-     ee_pose_limit_min: [0.4, -0.2, 0.05, -3.64, -0.5, -0.5]
-     ee_pose_limit_max: [0.6,  0.2, 0.35, -2.64,  0.5,  0.5]
-
-Under the hood, ``FrankaEnv`` accepts ``override_cfg`` as a plain dict and uses
-a class-variable ``CONFIG_CLS`` to instantiate the dataclass config (defaults to
-``FrankaEnvConfig``). Subclasses such as ``PegInsertionEnv`` and ``BottleEnv``
-override ``CONFIG_CLS`` to their own dataclass while sharing the same
-constructor.
-
-Standalone Evaluation
-~~~~~~~~~~~~~~~~~~~~~
-
-A full evaluation config is provided at
-``evaluations/realworld/realworld_eval.yaml``. It pairs the generic SFT env
-with a Pi0 actor for deployment.
-
-Before running, replace the placeholders:
-
-- ``ROBOT_IP`` — your Franka robot's IP address.
-- ``MODEL_PATH`` — path to your trained checkpoint.
-
-Launch and override examples are maintained in the :doc:`real-world evaluation
-guide <../../evaluations/guides/realworld>`.
+         cluster:
+           node_groups:
+             - label: franka
+               hardware:
+                 configs:
+                   - robot_ip: ROBOT_IP
+
+         env:
+           eval:
+             rollout_epoch: 20
+             override_cfg:
+               target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
+               task_description: "pick up the object and place it into the container"
+
+      ``evaluations/realworld/realworld_pnp_eval.yaml`` defaults to a two-node cluster (``cluster.num_nodes: 2`` with ``franka`` on ``node_rank: 1``). For multi-node deployment, start the Ray cluster as in :doc:`franka`. For single-host deployment, set ``cluster.num_nodes: 1`` and set both ``node_ranks: 0`` and ``node_rank: 0`` on the ``franka`` group (or use the single-node ``realworld_eval`` config below), otherwise Ray waits indefinitely for a second node. Launch deployment from the repository root with Hydra CLI overrides for the checkpoint, base model, and ``norm_stats.json`` (see the :doc:`real-world evaluation guide <../../evaluations/guides/realworld>` for options):
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh realworld_pnp_eval \
+           runner.ckpt_path=./logs/checkpoints/global_step_2000/actor/model_state_dict/full_weights.pt \
+           rollout.model.model_path=./pi0-model \
+           +rollout.model.openpi_data.norm_stats_path=./assets/pi0_realworld/realworld_franka_bin_relocation/norm_stats.json
+
+      The policy autonomously controls the arm for ``env.eval.rollout_epoch`` episodes.
+
+.. dropdown:: Generic Real-World SFT Environment (FrankaEnv-v1)
+
+   To collect SFT demonstrations or deploy a trained policy on a new Franka task purely through YAML (without writing a custom environment), customize ``examples/embodiment/config/env/realworld_franka_sft_env.yaml``:
+
+   .. code-block:: yaml
+
+      override_cfg:
+        task_description: "pick up the object and place it into the container"
+        target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]   # goal pose [x, y, z, rx, ry, rz]
+        reset_ee_pose:  [0.5, 0.0, 0.2, -3.14, 0.0, 0.0]   # reset pose above goal
+        max_num_steps: 300
+        reward_threshold: [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
+        action_scale: [1.0, 1.0, 1.0]                       # [xyz, rpy, gripper]
+        ee_pose_limit_min: [0.4, -0.2, 0.05, -3.64, -0.5, -0.5]
+        ee_pose_limit_max: [0.6,  0.2, 0.35, -2.64,  0.5,  0.5]
+
+   For single-node standalone deployment with this generic environment and a π₀ policy, edit ``ROBOT_IP`` and ``MODEL_PATH`` in ``evaluations/realworld/realworld_eval.yaml`` and run (see the :doc:`real-world evaluation guide <../../evaluations/guides/realworld>`):
+
+   .. code-block:: bash
+
+      bash evaluations/run_eval.sh realworld_eval
+
+Results and Troubleshooting
+---------------------------
+
+Track SFT loss in TensorBoard (``tensorboard --logdir ./logs``) and verify autonomous rollouts on hardware; see :doc:`Training metrics <../../reference/metrics>` for logging configuration.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 62
+
+   * - Symptom
+     - Fix
+   * - ``calculate_norm_stats.py`` cannot find dataset
+     - Export ``HF_LEROBOT_HOME`` to the parent directory containing ``<repo_id>/{data,meta}`` and match ``--repo-id`` to that folder name.
+   * - Missing ``norm_stats.json`` during SFT or deployment
+     - Pass the generated ``norm_stats.json`` through ``openpi_data.norm_stats_path`` (recommended, matching :doc:`sft_openpi`) or copy it into ``<model_path>/<repo_id>/norm_stats.json``.
+   * - Gripper stays closed during collection
+     - Set ``env.eval.no_gripper: False`` in ``realworld_collect_data.yaml``.
+   * - Arm hits container rim or workspace limit
+     - Re-measure ``target_ee_pose`` at the midpoint of the lowest safe point in the motion space and verify ``ee_pose_limit_min`` / ``ee_pose_limit_max``.

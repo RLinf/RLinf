@@ -1,55 +1,61 @@
-Multi-Node Ray Cluster Setup
-============================
+Multi-Node Training
+===================
 
-This guide explains how to start a Ray cluster across **multiple machines** and run
-RLinf training on top of it. It applies to all Ray-based RLinf workloads, including
-embodied RL, reasoning, and agents.
+Start a Ray cluster across multiple machines and run RLinf workloads on top of
+it. This guide applies to all Ray-based RLinf jobs, including embodied RL,
+reasoning, and agents.
 
+.. note::
+
+   Single-node runs (``cluster.num_nodes: 1``) start Ray automatically and need
+   no manual ``ray start`` or ``RLINF_NODE_RANK``.
 
 Prerequisites
 -------------
 
-Before you begin, confirm that:
+Before starting, confirm that:
 
 * All nodes can reach the head at ``<head_ip>:6379`` (or your chosen port).
-* Every node has the **same versions** of Python, Ray (``ray>=2.47.0``), and RLinf dependencies.
-* ``cluster.num_nodes`` in your config matches the actual cluster size (see :doc:`basic_config`).
+* Every node has the **same versions** of Python, Ray (``ray>=2.47.0``), and
+  RLinf dependencies.
+* ``cluster.num_nodes`` in your config matches the cluster size (see
+  :doc:`basic_config`).
 
 .. important::
 
-   Ray **freezes** the Python interpreter path and environment variables when you run
-   ``ray start``. All processes Ray launches on that node inherit that environment.
-   On **each node**, ``source`` your virtualenv and install dependencies **before**
-   ``ray start``. Packages installed **after** ``ray start`` are **not** visible to Ray workers.
+   Ray **freezes** the Python interpreter path and environment variables when
+   you run ``ray start``. Every process Ray launches on that node inherits that
+   environment. On **each node**, activate your virtualenv and install
+   dependencies **before** running ``ray start``. Packages installed afterward
+   are not visible to Ray workers.
 
-
-Step 1: Set environment variables on each node
+Step 1: Set Environment Variables on Each Node
 ----------------------------------------------
 
-On **every node**, before ``ray start``, set the node rank (required):
+On **every node**, before ``ray start``, export a unique node rank:
 
 .. code-block:: bash
 
    export RLINF_NODE_RANK=<0..N-1>   # unique in the cluster; head is usually 0
 
-If the machine has multiple NICs and Ray/collective communication should use a specific
-interface:
+If a machine has multiple NICs and Ray or collective communication must use a
+specific interface, export it too:
 
 .. code-block:: bash
 
    export RLINF_COMM_NET_DEVICES=<interface>   # e.g. eth0, enp3s0
 
-Use ``ip addr`` or ``ifconfig`` to find which interface is reachable from other nodes.
+Use ``ip addr`` or ``ifconfig`` to check which interface is reachable from
+other nodes.
 
-
-Step 2: Start the Ray cluster
+Step 2: Start the Ray Cluster
 -----------------------------
 
-Option A: Manual ``ray start`` on each node
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Option A: Start Ray Manually on Each Node
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Pick one machine as **head** (``RLINF_NODE_RANK=0``). Its IP must be reachable from all
-workers; call it ``<head_ip>``.
+Pick one machine as the **head** (``RLINF_NODE_RANK=0``). Its IP must be
+reachable from all workers; call it ``<head_ip>``.
 
 **Head node:**
 
@@ -67,14 +73,15 @@ workers; call it ``<head_ip>``.
    # optional: export RLINF_COMM_NET_DEVICES=eth0
    ray start --address='<head_ip>:6379'
 
-``--node-ip-address`` must be the address other nodes use to reach the head (private IP,
-VPC IP, or overlay IP; see cloud platform notes below). Port ``6379`` can be changed if
-unused; head and workers must use the same port.
+``--node-ip-address`` must be the address other nodes use to reach the head
+(private IP, VPC IP, or overlay IP; see :doc:`cloud_edge`). You can change port
+``6379`` to any unused port, as long as the head and all workers use the same
+one.
 
-Option B: Repository script (shared filesystem)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Option B: Use the Repository Script (Shared Filesystem)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-When all nodes mount the **same shared directory** and can read/write
+When all nodes mount the **same shared directory** and can read and write
 ``ray_utils/ray_head_ip.txt``:
 
 .. code-block:: bash
@@ -84,44 +91,65 @@ When all nodes mount the **same shared directory** and can read/write
    RANK=1 bash ray_utils/start_ray.sh   # worker 1
    # ...
 
-The script uses ``RANK`` for head/worker roles and does **not** set ``RLINF_NODE_RANK``
-automatically. Still export ``RLINF_NODE_RANK`` per Option A before running the script,
-or bake it into your launch script.
+The script uses ``RANK`` to choose head versus worker roles and does **not**
+set ``RLINF_NODE_RANK``. Export ``RLINF_NODE_RANK`` on each node as in Option A
+before running the script, or include it in your launch wrapper.
 
+.. warning::
 
-Step 3: Enable code sync (optional)
+   ``ray_utils/start_ray.sh`` defaults to port ``29500`` (override with
+   ``RAY_PORT``) and passes a hardcoded ``--memory=461708984320`` (~430 GB) to
+   ``ray start``. On machines with less RAM or custom ports, use Option A
+   instead.
+
+Step 3: Enable Code Sync (Optional)
 -----------------------------------
 
-When the driver and workers **do not share the same filesystem** (cloud-edge,
-heterogeneous datacenters, etc.), enable Ray task-level code sync **before** starting
-the training script. The driver packs the ``rlinf/`` package into ``runtime_env.py_modules``;
-workers do not need a matching local checkout.
+When the driver and workers do not share a filesystem (such as cloud-edge or
+multi-site setups), enable Ray task-level code sync **before** launching the
+training script. The driver packages the RLinf Python package into
+``runtime_env.py_modules`` so workers need no matching local checkout:
 
 .. code-block:: bash
 
    export RLINF_CODE_WORKING_DIR=auto
 
-Details:
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-* ``RLINF_CODE_WORKING_DIR``
-  - unset / ``0`` / ``false``: sync off (default; each node must have a consistent local tree).
-  - ``auto``: infer the repo root from the installed ``rlinf`` package or current directory.
-  - **absolute path**: repo root containing ``pyproject.toml`` and ``rlinf/``, or the ``rlinf`` package directory.
+   * - ``RLINF_CODE_WORKING_DIR``
+     - Behavior
+   * - Unset, ``0``, or ``false``
+     - Sync off (default); every node needs a matching local RLinf install.
+   * - ``auto``
+     - Infers the repository root from the installed ``rlinf`` package or
+       current working directory.
+   * - Absolute path
+     - Repository root containing ``pyproject.toml`` and the RLinf package, or
+       the RLinf package directory itself.
 
-Only the ``rlinf/`` subtree is synced—not ``examples/``, ``docs/``, etc. Example configs
-and data paths must still be reachable on each node or via shared storage/NFS.
+Code sync ships only the RLinf Python package—not ``examples/`` or ``docs/``.
+Task configs and data paths must still be reachable on each node or over shared
+storage.
 
 .. note::
 
    **When code sync is enabled**
 
-   * **Do not store large files under ``rlinf/``**: sync packages the **entire local ``rlinf/`` directory** from the launch node. Avoid logs, checkpoints, caches, datasets, or other large artifacts under ``rlinf/`` to keep packaging and transfer fast.
-   * **Prepare models and assets separately**: **model weights, simulator assets, datasets**, etc. are **not** synced. Download them on each worker to the paths in your config, or mount via NFS/shared storage, and verify every node can access those paths.
+   * **Keep large files out of the RLinf package directory**: code sync
+     packages the entire local RLinf package tree from the launch node. Store
+     logs, checkpoints, caches, and datasets outside it so packaging and
+     transfer stay fast.
+   * **Prepare models and assets separately**: model weights, simulator assets,
+     and datasets are not synced. Download them on every worker to the
+     configured paths, or mount them over NFS or shared storage, and verify
+     that every node can access them.
 
-These variables take effect on RLinf's first ``ray.init`` (``Cluster`` initialization). Do not call ``ray.init`` manually outside the training process.
+``RLINF_CODE_WORKING_DIR`` takes effect when RLinf initializes Ray. Do not call
+``ray.init`` manually before running the training script.
 
-
-Step 4: Verify cluster status
+Step 4: Verify Cluster Status
 -----------------------------
 
 On **any node** that has run ``ray start``:
@@ -130,24 +158,26 @@ On **any node** that has run ``ray start``:
 
    ray status
 
-Confirm **node count**, per-node **CPU/GPU**, and **state** (``ALIVE``) match expectations.
-For example, with ``2`` nodes and ``8`` GPUs each, you should see ``16`` GPUs total.
+Confirm that the **node count**, per-node **CPU/GPU**, and **state**
+(``ALIVE``) match expectations. For example, 2 nodes with 8 GPUs each should
+report 16 GPUs total.
 
-You can also wait for resources with (argument = total **GPU count** in the cluster):
+You can also wait until all GPUs are ready (pass the cluster's total GPU count):
 
 .. code-block:: bash
 
    bash ray_utils/check_ray.sh 16
 
-If nodes are missing, check firewalls, whether ``--node-ip-address`` is reachable, and
-worker ``ray start`` errors.
+If nodes are missing, check firewalls, confirm ``--node-ip-address`` is
+reachable, and inspect ``ray start`` output on each worker.
 
-
-Step 5: Launch RLinf training
+Step 5: Launch RLinf Training
 -----------------------------
 
-1. Set ``cluster.num_nodes`` in your task YAML to the actual node count (consistent with ``RLINF_NODE_RANK``).
-2. On **any node** that has joined the Ray cluster, ``cd`` to the RLinf repo and run an entry script, e.g. embodied:
+1. Set ``cluster.num_nodes`` in your task YAML to the actual node count
+   (matching the ``RLINF_NODE_RANK`` range).
+2. On the **head node** (``RLINF_NODE_RANK=0``), ``cd`` to the RLinf repository
+   root and run the entry script—for example, embodied training:
 
 .. code-block:: bash
 
@@ -160,51 +190,53 @@ Reasoning example:
 
    bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron
 
-The launch node must:
+Before launching, confirm the head node:
 
-* Have run ``ray start`` locally (``ray status`` shows the full cluster);
-* Reach config files, models, and data (shared storage or code sync);
-* If code sync is enabled, have ``export RLINF_CODE_WORKING_DIR=...`` in the **same terminal**.
+* Has run ``ray start`` locally (``ray status`` shows the full cluster);
+* Can access config files, models, and datasets (shared storage or code sync);
+* Exports ``RLINF_CODE_WORKING_DIR`` in the **same terminal** if code sync is
+  enabled.
 
 .. note::
 
-   For ``node_groups`` and cross-machine placement, see :doc:`../concepts/placement` and :doc:`hetero`.
-   Cloud-edge ``component_placement`` examples are in :doc:`cloud_edge`.
+   For ``node_groups`` and cross-machine placement, see
+   :doc:`../concepts/placement` and :doc:`hetero`. Cloud-edge
+   ``component_placement`` examples are in :doc:`cloud_edge`.
 
+Stop and Rebuild the Cluster
+----------------------------
 
-Stopping and rebuilding the cluster
------------------------------------
-
-After ``ray stop`` on all nodes and clearing state, restart using this guide:
+Stop Ray on every node and clear stale head-IP state before restarting:
 
 .. code-block:: bash
 
    ray stop
    rm -f ray_utils/ray_head_ip.txt   # if you used start_ray.sh
 
-After changing the Python environment or ``RLINF_NODE_RANK``, ``ray stop`` on all affected
-nodes and ``ray start`` again.
-
+After changing the Python environment or ``RLINF_NODE_RANK``, run ``ray stop``
+and ``ray start`` again on every affected node.
 
 FAQ
 ---
 
 **Worker cannot reach head**
 
-Check that ``<head_ip>`` is pingable/telnet-able from workers, security groups/iptables allow
-port ``6379``, and the head did not bind ``--node-ip-address`` to ``127.0.0.1``.
+Check that ``<head_ip>`` is reachable from workers (ping or telnet), firewalls
+and security groups allow port ``6379``, and the head did not bind
+``--node-ip-address`` to ``127.0.0.1``.
 
-**``ray status`` shows fewer nodes than ``cluster.num_nodes``**
+**ray status shows fewer nodes than cluster.num_nodes**
 
-Wait for workers to finish joining; confirm ``ray start`` succeeded on each node and you
-are not mixing multiple independent Ray clusters.
+Wait for workers to finish joining, verify ``ray start`` succeeded on every
+node, and make sure you are not mixing separate Ray clusters.
 
 **Worker cannot import latest code**
 
-Check ``RLINF_CODE_WORKING_DIR``; without sync, ``rlinf/`` must match on all nodes. With
-sync, only the ``rlinf/`` package is shipped (avoid large files under ``rlinf/``); configs
-under ``examples/``, models, and simulator assets must still be local or on shared storage.
+Check ``RLINF_CODE_WORKING_DIR``: without sync, every node needs the same local
+RLinf package version. With sync, only the RLinf package is shipped (keep large
+files out of it); configs under ``examples/``, models, and simulator assets
+must still be available locally or on shared storage.
 
 **Ray version mismatch**
 
-All nodes should use the same ``ray`` version (RLinf requires ``ray>=2.47.0``).
+Use the same ``ray`` version on every node (RLinf requires ``ray>=2.47.0``).

@@ -1,5 +1,5 @@
-基于D4RL评测平台的强化学习训练
-============================================
+IQL (D4RL)
+==========
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png
    :align: center
@@ -68,196 +68,137 @@ RLinf 为三类 D4RL 任务族提供 IQL 配置；各任务的观测与动作空
      - 操作 / 灵巧手
      - ``d4rl_iql_kitchen_adroit.yaml``
 
-IQL 工作原理
+IQL 原理
 ----------------------------------------
 
 **核心算法组件**
 
 1. **IQL（Implicit Q-Learning）**
 
-   - **Value** :math:`V(s)`：用 expectile 回归更新，基于 :math:`Q_{\mathrm{target}}(s,a) - V(s)`，权重 :math:`w(d) = \tau \cdot \mathbb{I}(d>0) + (1-\tau) \cdot \mathbb{I}(d \le 0)`。
-   - **Actor** :math:`\pi(a|s)`：AWR 风格优势加权极大似然；优势 :math:`A = Q_{\mathrm{target}}(s,a) - V(s)`，权重 :math:`w = \min(\exp(A \cdot \beta), 100)`。
-   - **Critic** （双 Q）：TD 损失，目标 :math:`y = r + \gamma \cdot \mathrm{mask} \cdot V(s')`。
-   - **Target**：以 :math:`\tau` 软更新目标 Critic。
+   - **Value**：按目标 Q 值与当前价值估计的差值做非对称 expectile 回归，由 ``algorithm.expectile`` 控制权重。
+   - **Actor**：采用 AWR 风格的优势加权极大似然，用 ``algorithm.temperature`` 缩放优势后取指数并截断到 100。
+   - **Critic**\ （双 Q）：以折扣后的下一状态价值估计作为 TD 目标，由 ``algorithm.discount`` 控制折扣系数。
+   - **Target**：按 ``algorithm.tau`` 对目标 Critic 做 Polyak 软更新。
 
 2. **训练流程**
 
-   每个 update step：Actor 从各 rank 本地的 ``DataLoader``\ （在 ``EmbodiedIQLFSDPPolicy.build_offline_dataloader`` 中构建）取一个 batch，然后按当前实现顺序执行 IQL：更新 Value → 更新 Actor → 更新 Critic → 软更新目标 Critic。
+   每个 update step：Actor 从各 rank 本地的离线数据加载器取一个 batch，然后按顺序执行 IQL 更新：更新 Value → 更新 Actor → 更新 Critic → 软更新目标 Critic。
 
-安装
-----------------------------------------
+安装与运行
+----------
 
-安装带 D4RL 的 embodied 环境：
+.. include:: _setup_common.rst
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --env d4rl
-   source .venv/bin/activate
+   .. tab-item:: D4RL
 
-启动脚本默认设置 ``MUJOCO_GL=egl`` 与 ``PYOPENGL_PLATFORM=egl``，便于无头运行。
+      **1. 安装环境**
 
-运行
-----------------------------------------
+      .. code-block:: bash
 
-**1. 配置文件**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env d4rl && source .venv/bin/activate
 
-RLinf 为不同 D4RL 任务族提供默认 IQL 配置：
+      启动脚本默认设置 ``MUJOCO_GL=egl`` 与 ``PYOPENGL_PLATFORM=egl``，便于无头运行。
 
-- **MuJoCo**：``examples/embodiment/config/d4rl_iql_mujoco.yaml``
-- **AntMaze**：``examples/embodiment/config/d4rl_iql_antmaze.yaml``
-- **Kitchen / Adroit**：``examples/embodiment/config/d4rl_iql_kitchen_adroit.yaml``
+      **2. 启动训练**
 
-**2. 关键参数配置**
+      RLinf 为三类 D4RL 任务族内置了默认 IQL 配置（``data.dataset_path`` 保持 ``null`` 时，首次运行自动下载对应 D4RL 数据集）：
 
-**2.1 Runner 与 Algorithm**
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 74
 
-.. code-block:: yaml
+         * - 任务族
+           - 配置文件
+         * - MuJoCo
+           - ``examples/embodiment/config/d4rl_iql_mujoco.yaml``
+         * - AntMaze
+           - ``examples/embodiment/config/d4rl_iql_antmaze.yaml``
+         * - Kitchen / Adroit
+           - ``examples/embodiment/config/d4rl_iql_kitchen_adroit.yaml``
 
-   runner:
-     task_type: "offline"
+      在仓库根目录启动任一任务族（省略参数时默认使用 ``d4rl_iql_mujoco``；日志写入 ``logs/<timestamp>-<config_name>/``）：
 
-   algorithm:
-     loss_type: "offline_iql"
-     batch_size: 256
-     actor_lr: 3.0e-4
-     value_lr: 3.0e-4
-     critic_lr: 3.0e-4
-     discount: 0.99
-     tau: 0.005
-     expectile: 0.9
-     temperature: 10.0
-     gamma: 0.99
+      .. code-block:: bash
 
-**2.2 Actor（模型）**
+         # MuJoCo（默认）
+         ./examples/embodiment/run_offline_rl.sh d4rl_iql_mujoco
 
-.. code-block:: yaml
+         # AntMaze
+         ./examples/embodiment/run_offline_rl.sh d4rl_iql_antmaze
 
-   actor:
-     model:
-       iql_config:
-         type: "actor"
-         hidden_dims: [256, 256]
-         dropout_rate: null
-         log_std_min: -5.0
-         log_std_max: 2.0
+         # Kitchen / Adroit
+         ./examples/embodiment/run_offline_rl.sh d4rl_iql_kitchen_adroit
 
-**2.3 数据**
+.. dropdown:: 进阶配置（可选）
 
-.. code-block:: yaml
+   **切换任务与本地数据集。** 修改 ``data.task_name`` 和 ``env.eval.task_name`` 可切换 D4RL 任务（如 ``antmaze-large-play-v0``）。``data.dataset_path`` 为 ``null`` 时，RLinf 优先读取 ``~/.d4rl/datasets/<task_name>.hdf5``，不存在时由 D4RL 自动下载。若要使用本地 HDF5 文件，将 ``data.dataset_path`` 设为对应路径（观测和动作维度须与 ``data.task_name`` 一致）；标准 D4RL 文件按 ``timeouts`` 经过 ``d4rl.qlearning_dataset`` 转换，已整理好的 transition 文件（包含 ``next_observations`` 且无 ``timeouts``）则直接使用。
 
-   data:
-     dataset_type: "d4rl"
-     task_name: "antmaze-large-play-v0"
-     dataset_path: null
+   **断点续训。** 将 ``runner.resume_dir`` 设为 checkpoint 目录（如 ``checkpoints/global_step_XXXXX``），再执行相同启动命令即可从该步加载权重并继续训练。
 
-**2.4 环境**
+   内置配置中的主要默认超参数如下：
 
-.. code-block:: yaml
+   .. code-block:: yaml
 
-   env:
-     task_name: "antmaze-large-play-v0"
+      runner:
+        task_type: "offline"
 
-将 ``data.dataset_type`` 设为 ``d4rl``，并将 ``data.task_name`` 和 ``env.eval.task_name`` 设为所需的 D4RL 任务（如 ``antmaze-large-play-v0``）。
+      algorithm:
+        loss_type: "offline_iql"
+        batch_size: 256
+        actor_lr: 3.0e-4
+        value_lr: 3.0e-4
+        critic_lr: 3.0e-4
+        discount: 0.99
+        tau: 0.005
+        expectile: 0.9
+        temperature: 10.0
+        gamma: 0.99
 
-``data.dataset_path`` 为 ``null`` 时，RLinf 优先读取 ``~/.d4rl/datasets/<task_name>.hdf5``，该文件不存在时由 D4RL 下载对应任务的数据集。若要使用已有的 D4RL HDF5 文件，将 ``data.dataset_path`` 设为该文件路径，文件中 observation 和 action 的 shape 须与 ``data.task_name`` 对应的环境一致。标准 D4RL 文件与下载的数据集一样经过 ``d4rl.qlearning_dataset`` 转换，转换时依据 ``timeouts`` 字段切分 episode，不会把一条 episode 的最后一个 observation 与下一条 episode 的第一个 observation 配成 transition。已整理好的 transition 文件（包含 ``next_observations`` 且没有 ``timeouts``）则直接使用。
+      actor:
+        model:
+          iql_config:
+            type: "actor"
+            hidden_dims: [256, 256]
+            dropout_rate: null
+            log_std_min: -5.0
+            log_std_max: 2.0
 
-**3. 启动脚本**
+      data:
+        dataset_type: "d4rl"
+        task_name: "antmaze-large-play-v0"
+        dataset_path: null
 
-- 脚本：``examples/embodiment/run_offline_rl.sh``
-- 默认配置（不传参数）：``d4rl_iql_mujoco``
-- 日志目录：``<repo>/logs/<timestamp>-<config_name>/``
-- 实际命令：
-
-.. code-block:: bash
-
-   python examples/embodiment/train_offline_rl.py \
-     --config-path examples/embodiment/config/ \
-     --config-name <config_name> \
-     runner.logger.log_path=<log_dir> runner.logger.experiment_name=<config_name>
-
-**4. 启动命令**
-
-在仓库根目录执行：
-
-**MuJoCo（默认）**
-
-::
-
-   ./examples/embodiment/run_offline_rl.sh d4rl_iql_mujoco
-
-**AntMaze**
-
-::
-
-   ./examples/embodiment/run_offline_rl.sh d4rl_iql_antmaze
-
-**Kitchen / Adroit**
-
-::
-
-   ./examples/embodiment/run_offline_rl.sh d4rl_iql_kitchen_adroit
-
-断点续训
-----------------------------------------
-
-将 ``runner.resume_dir`` 设为 checkpoint 目录（如 ``checkpoints/global_step_XXXXX``），再执行相同启动命令即可从该步加载权重并继续训练。
+      env:
+        task_name: "antmaze-large-play-v0"
 
 可视化与结果
 ----------------------------------------
 
-**1. TensorBoard 日志**
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``eval/return`` 曲线，通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制（纯状态 D4RL 环境在 ``MUJOCO_GL=egl`` 下会自动回退到 ``env.render()``），完整指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
-.. code-block:: bash
-
-   # 启动 TensorBoard
-   tensorboard --logdir ./logs --port 6006
-
-**2. 关键跟踪指标**
-
-指标含义见 :doc:`训练指标 <../../reference/metrics>`。IQL 相关指标：
+IQL 相关指标：
 
 - **训练指标**：
 
-  - ``train/value_loss``: Value 函数 expectile 损失。
-  - ``train/actor_loss``: AWR 风格策略损失。
-  - ``train/critic_loss``: 双 Q 网络 TD 损失。
-  - ``train/v``: Value 函数估计（batch 均值）。
-  - ``train/q1``、``train/q2``: 双 Q 网络估计。
-  - ``train/adv_mean``、``train/adv_std``: 优势的均值与标准差。
+  - ``train/value_loss``：Value 函数 expectile 损失。
+  - ``train/actor_loss``：AWR 风格 policy 损失。
+  - ``train/critic_loss``：双 Q 网络 TD 损失。
+  - ``train/v``：Value 函数估计（batch 均值）。
+  - ``train/q1``、``train/q2``：双 Q 网络估计。
+  - ``train/adv_mean``、``train/adv_std``：优势的均值与标准差。
 
 - **时间指标**：
 
-  - ``time/step``: 每训练步墙钟时间（取数 + actor 更新）。
-  - ``time/eval``: 评估墙钟时间（当 ``runner.eval_episodes`` > 0 时）。
-  - ``time/actor/update_one_epoch``: 每步 actor 更新时间。
+  - ``time/step``：每训练步墙钟时间（取数 + actor 更新）。
+  - ``time/eval``：评估墙钟时间（``runner.eval_episodes`` > 0 时）。
+  - ``time/actor/update_one_epoch``：每步 actor 更新时间。
 
-- **评估指标** （当 ``runner.eval_episodes`` > 0 时）：
+- **评估指标**\ （``runner.eval_episodes`` > 0 时）：
 
-  - ``eval/return``: 评估 rollout 的平均 episode 回报。
-  - ``eval/episode_len``: 平均 episode 长度。
-  - ``eval/num_trajectories``: 评估轨迹数量。
-  - ``eval/terminated_at_end``: 以终止（非截断）结束的 episode 比例；仅当环境启用 ``ignore_terminations`` 时存在。
-
-**3. 视频生成**
-
-D4RL 观测为纯状态（无图像键）。当观测中没有图像字段时，录像会回退到 ``env.render()``，因此只需将 ``save_video`` 设为 true 即可生成评估视频。``video_base_dir`` 为可选项（默认 ``./video``），你也可以显式配置以便统一管理输出目录。需保证 MuJoCo 环境支持渲染（当 ``save_video`` 为 true 时会自动以 ``render_mode="rgb_array"`` 创建）。无头服务器请设置 ``MUJOCO_GL=egl`` 与 ``PYOPENGL_PLATFORM=egl``。
-
-.. code-block:: yaml
-
-   env:
-      eval:
-         video_cfg:
-            save_video: true
-            video_base_dir: ${runner.logger.log_path}/video/eval  # 可选，默认 ./video
-
-**4. 训练日志工具集成**
-
-.. code-block:: yaml
-
-   runner:
-      task_type: "offline"
-      logger:
-         log_path: "../results"
-         project_name: rlinf
-         experiment_name: "d4rl_iql_mujoco"
-         logger_backends: ["tensorboard"] # wandb, swanlab
+  - ``eval/return``：评估 rollout 的平均 episode 回报。
+  - ``eval/episode_len``：平均 episode 长度。
+  - ``eval/num_trajectories``：评估轨迹数量。
+  - ``eval/terminated_at_end``：以终止（非截断）结束的 episode 比例；仅在环境启用 ``ignore_terminations`` 时存在。

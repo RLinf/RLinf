@@ -1,45 +1,39 @@
 World Models
 ============
 
-This category collects examples for training and fine-tuning world models in RLinf.
+Pick this section to train VLA policies with closed-loop RL using learned video world models as simulators.
 
-.. raw:: html
+.. grid:: 1 2 3 3
+   :gutter: 3
 
-   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
+   .. grid-item-card:: BWM World Model
+      :img-top: https://raw.githubusercontent.com/boundless-large-model/boundless-world-model/main/assets/images/teaser.png
+      :img-alt: Boundless World Model
+      :link: embodied/bwm
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/opensora.html" style="display: block;"><img src="https://raw.githubusercontent.com/hpcaitech/Open-Sora-Demo/main/readme/icon.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/opensora.html" style="text-decoration: underline; color: blue;"><b>RL with OpenSora World Model</b></a><br>
-         Support OpenSora World Model + OpenVLA-OFT + GRPO training
-       </p>
-     </div>
+      Train a single-view π₀.₅ policy with PPO on RoboTwin ``adjust_bottle`` inside BWM.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/wan.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/wan.html" style="text-decoration: underline; color: blue;"><b>RL with Wan World Model</b></a><br>
-         Support Wan World Model + OpenVLA-OFT + GRPO training
-       </p>
-     </div>
+   .. grid-item-card:: OpenSora World Model
+      :img-top: https://raw.githubusercontent.com/hpcaitech/Open-Sora-Demo/main/readme/icon.png
+      :img-alt: OpenSora world model
+      :link: embodied/opensora
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/bwm.html" style="display: block;"><img src="https://raw.githubusercontent.com/boundless-large-model/boundless-world-model/main/assets/images/teaser.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/bwm.html" style="text-decoration: underline; color: blue;"><b>RL with BWM World Model</b></a><br>
-         Support BWM World Model + pi0.5 + PPO training on RoboTwin
-       </p>
-     </div>
+      Fine-tune OpenVLA-OFT with GRPO inside the OpenSora video world model.
 
-   </div>
+   .. grid-item-card:: Wan World Model
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
+      :img-alt: Wan world model
+      :link: embodied/wan
+      :link-type: doc
+
+      Fine-tune OpenVLA-OFT with GRPO using the Wan video world model as simulator.
 
 .. toctree::
    :hidden:
    :maxdepth: 2
 
+   BWM <embodied/bwm>
    OpenSora <embodied/opensora>
    Wan <embodied/wan>
-   BWM <embodied/bwm>

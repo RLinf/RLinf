@@ -104,7 +104,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/RLinf/RLinf-Pi0-RoboCasa"
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 
 actor:

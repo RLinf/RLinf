@@ -1,5 +1,5 @@
-基于 RoboCasa 的强化学习训练
-========================================
+RoboCasa 强化学习
+=================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -12,9 +12,7 @@
 
    RoboCasa（图片来源：`RoboCasa <https://robocasa.ai/>`__）。
 
-`RoboCasa <https://robocasa.ai/>`__ 是基于 robosuite 的厨房操作基准，包含多样化布局、
-物体和原子任务。你将使用 RLinf 在 RoboCasa ``CloseDrawer`` 任务上，通过 PPO 微调
-OpenPI π₀ 策略。
+`RoboCasa <https://robocasa.ai/>`__ 是基于 robosuite 的厨房操作基准，包含多样化布局、物体和原子任务。你将使用 RLinf 在 RoboCasa ``CloseDrawer`` 任务上，通过 PPO 微调 OpenPI π₀ 策略。
 
 概览
 ----------------------------------------
@@ -42,7 +40,7 @@ OpenPI π₀ 策略。
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1 节点 · 8 GPUs
+      1 节点 · 8 GPU
 
 | **你将完成：** 安装 → 下载厨房资产 + 模型 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · RoboCasa 厨房资产 · SFT 检查点。
@@ -79,138 +77,55 @@ OpenPI π₀ 策略。
 
 .. note::
 
-   RoboCasa 包含更多原子任务，但当前公开的 RLinf 配方使用
-   ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml`` 训练
-   ``CloseDrawer``。
+   RoboCasa 包含更多原子任务，公开的 RLinf 配方使用 ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml`` 训练 ``CloseDrawer``。
 
-安装
-----------------------------------------
+安装与运行
+----------
 
 .. include:: _setup_common.rst
 
-**Docker 镜像**
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenPI π₀
 
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-robocasa
+      **1. 安装环境**
 
-   # 国内用户可使用：
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-robocasa
+      .. code-block:: bash
 
-在镜像中切换到 OpenPI 虚拟环境：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robocasa && source .venv/bin/activate
 
-.. code:: bash
+      **2. 下载资源与模型**
 
-   source switch_env openpi
+      下载 RoboCasa 厨房资产（约 5 GB，只需下载一次）和 OpenPI π₀ 检查点：
 
-**自定义环境**
+      .. code-block:: bash
 
-安装 RoboCasa 与 OpenPI 依赖：
+         python -m robocasa.scripts.download_kitchen_assets
+         hf download RLinf/RLinf-Pi0-RoboCasa --local-dir ./RLinf-Pi0-RoboCasa
 
-.. code:: bash
+      **3. 启动训练**
 
-   # 国内用户可添加 --use-mirror。
-   bash requirements/install.sh embodied --model openpi --env robocasa
-   source .venv/bin/activate
+      内置配置为 ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml``。
 
-安装 RoboCasa 后下载厨房资产：
+      .. include:: _model_path.rst
 
-.. code:: bash
+      使用 ``run_embodiment.sh`` 启动 PPO 训练：
 
-   python -m robocasa.scripts.download_kitchen_assets
+      .. code-block:: bash
 
-.. warning::
+         bash examples/embodiment/run_embodiment.sh robocasa_closedrawer_ppo_openpi actor.model.model_path=$PWD/RLinf-Pi0-RoboCasa
 
-   RoboCasa 厨房资产约 5 GB。启动训练前只需下载一次。
+      .. dropdown:: 进阶配置（可选）
 
-下载模型
-----------------------------------------
-
-下载 OpenPI π₀ 检查点：
-
-.. code-block:: bash
-
-   cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-RoboCasa
-
-   # 或使用 huggingface-hub：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-RoboCasa --local-dir RLinf-Pi0-RoboCasa
-
-.. include:: _model_path.rst
-
-运行
-----------------------------------------
-
-启动 CloseDrawer 配方：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 46 26
-
-   * - 配方
-     - 配置
-     - 命令后缀
-   * - OpenPI π₀ + PPO
-     - ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml``
-     - ``robocasa_closedrawer_ppo_openpi``
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh robocasa_closedrawer_ppo_openpi
-
-这条命令会：
-
-1. 使用 RoboCasa Hydra 配置启动 embodied 训练入口。
-2. 为 actor、rollout 和 RoboCasa env 组件创建 Ray worker。
-3. 运行 PPO rollout，计算稀疏任务奖励，并更新 OpenPI 策略。
-
-独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>`，
-通过配置回退机制复用相同后缀 ``robocasa_closedrawer_ppo_openpi``。
-
-.. note::
-
-   默认配置使用 ``actor,env,rollout: all`` 共置。请根据 GPU 显存预算调整
-   ``env.train.total_num_envs``、``env.eval.total_num_envs`` 和
-   ``actor.global_batch_size``。
+         - **显存调优**：默认配置使用 ``actor,env,rollout: all`` 共置。按 GPU 显存预算调整 ``env.train.total_num_envs``、``env.eval.total_num_envs`` 和 ``actor.global_batch_size``。
+         - **独立评测**：使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>`，通过配置回退机制复用相同后缀 ``robocasa_closedrawer_ppo_openpi``。
 
 可视化与结果
 ----------------------------------------
 
-在 RLinf 仓库根目录启动 TensorBoard：
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-关键指标是 ``env/success_once``。完整指标说明见
-:doc:`训练指标 <../../reference/metrics>`。
-
-如需保存 rollout 视频，请在环境配置中启用 video：
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
-
-如需启用 W&B 或 SwanLab，请添加 logger backend：
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``env/success_once`` 曲线，通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制，完整指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
 .. note::
 
-   本页面暂未发布固定的 RoboCasa 成功率表。请使用 ``env/success_once`` 和评估视频比较运行结果。
+   本页面暂未发布固定的 RoboCasa 成功率表。使用 ``env/success_once`` 和评估视频比较运行结果。

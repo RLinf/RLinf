@@ -109,7 +109,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: /path/to/GR00T-N1.7-LIBERO/libero_spatial
+    model_path: ${actor.model.model_path}
     backbone_model_path: /path/to/Cosmos-Reason2-2B
     precision: ${actor.model.precision}
 

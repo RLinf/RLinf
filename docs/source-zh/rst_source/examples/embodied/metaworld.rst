@@ -1,5 +1,5 @@
-基于MetaWorld评测平台的强化学习训练
-========================================
+MetaWorld 强化学习
+==================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -12,14 +12,12 @@
 
    Meta-World 基准（图片来源：`Meta-World <https://metaworld.farama.org>`__）。
 
-`Meta-World <https://metaworld.farama.org>`__ 是一个基于 MuJoCo 的多任务操作基准：一台 7 自由度
-机械臂完成 50 个多样的桌面任务。RLinf 借助它对视觉-语言-动作（VLA）策略进行强化学习微调，并评测
-分布外（OOD）泛化。
+`Meta-World <https://metaworld.farama.org>`__ 是一个基于 MuJoCo 的多任务操作基准：一台 7 自由度机械臂完成 50 个多样的桌面任务。RLinf 借助它用强化学习微调视觉-语言-动作（VLA）policy，并评测分布外（OOD）泛化。
 
 概览
 ----------------------------------------
 
-在 Meta-World 的 50 个任务上对 VLA 进行强化学习微调；π₀ + PPO 平均成功率约 78%。
+在 Meta-World 的 50 个任务上用强化学习微调 VLA；π₀ + PPO 平均成功率约 78%。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -59,7 +57,7 @@
      - 设置
    * - MT50
      - 50
-     - 在全部 50 个任务上进行多任务训练与评测。
+     - 在全部 50 个任务上开展多任务训练与评测。
    * - ML45
      - 45 + 5
      - 在 45 个任务上训练；在 5 个留出（OOD）任务上评测。
@@ -80,99 +78,135 @@
    * - 奖励 (Reward)
      - 稀疏奖励——基于任务完成。
 
-
-安装
-----------------------------------------
+安装与运行
+----------
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** — 镜像标签 ``agentic-rlinf0.4-metaworld``：
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: OpenPI π₀
+      :sync: pi0
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-metaworld
-      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-metaworld
+      **1. 安装环境**
 
-   # 在容器内切换到对应模型的虚拟环境：
-   source switch_env openpi        # 或：source switch_env openvla-oft
+      .. code-block:: bash
 
-**选项 2：自定义环境** — 安装 ``--env metaworld`` 依赖组合：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env metaworld && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. 下载资源与模型**
 
-   # 国内用户可以添加 --use-mirror 加速下载。
-   bash requirements/install.sh embodied --model openpi --env metaworld
-   # 或安装 OpenVLA-OFT 环境：
-   # bash requirements/install.sh embodied --model openvla-oft --env metaworld
+      下载 OpenPI π₀ SFT checkpoint（也可以从 `ModelScope <https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld>`__ 下载）：
 
-   source .venv/bin/activate
+      .. code-block:: bash
 
+         hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir ./RLinf-Pi0-MetaWorld-SFT
 
-下载模型
-----------------------------------------
+      **3. 启动训练**
 
-下载参考配方使用的 SFT 检查点（任选一种方式）：
+      ``examples/embodiment/config/`` 下的可用配置：
 
-.. code-block:: bash
+      .. list-table::
+         :header-rows: 1
+         :widths: 25 25 50
 
-   # 方法 1：git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT
+         * - 设定
+           - 算法
+           - 配置
+         * - MT50
+           - PPO
+           - ``metaworld_50_ppo_openpi.yaml``
+         * - ML45
+           - PPO
+           - ``metaworld_45_ppo_openpi.yaml``
 
-   # 方法 2：huggingface-hub（国内用户可设置 HF_ENDPOINT=https://hf-mirror.com）
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir RLinf-Pi0-MetaWorld-SFT
-   hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir RLinf-Pi05-MetaWorld-SFT
-   hf download RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT --local-dir RLinf-OpenVLAOFT-MetaWorld-SFT
+      通过命令行覆盖 ``actor.model.model_path`` 启动训练（rollout 会自动沿用同一路径）：
 
-也可以从 ModelScope 下载模型：https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld。
+      .. code-block:: bash
 
-.. include:: _model_path.rst
+         bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi \
+           actor.model.model_path=./RLinf-Pi0-MetaWorld-SFT
 
-运行
-----------------------------------------
+   .. tab-item:: OpenPI π₀.₅
+      :sync: pi05
 
-每个配方都是 ``examples/embodiment/config/`` 下的一个 YAML 配置：
+      **1. 安装环境**
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 30 40
+      .. code-block:: bash
 
-   * - 设定
-     - 模型 / 算法
-     - 配置
-   * - MT50
-     - π₀ + PPO
-     - ``metaworld_50_ppo_openpi.yaml``
-   * - MT50
-     - π₀.₅ + PPO
-     - ``metaworld_50_ppo_openpi_pi05.yaml``
-   * - MT50
-     - OpenVLA-OFT + GRPO
-     - ``metaworld_50_grpo_openvlaoft.yaml``
-   * - ML45
-     - π₀ + PPO
-     - ``metaworld_45_ppo_openpi.yaml``
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env metaworld && source .venv/bin/activate
 
-使用 ``run_embodiment.sh`` 启动一个配置：
+      **2. 下载资源与模型**
 
-.. code-block:: bash
+      下载 OpenPI π₀.₅ SFT checkpoint：
 
-   bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi
+      .. code-block:: bash
 
-**这个命令会：**
+         hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir ./RLinf-Pi05-MetaWorld-SFT
 
-1. 加载 ``examples/embodiment/config/metaworld_50_ppo_openpi.yaml``。
-2. 按 ``cluster.component_placement`` 启动 Meta-World MT50 的 rollout/eval worker。
-3. 运行 PPO 训练循环，并把日志和检查点写入 ``runner.logger.log_path``。
+      **3. 启动训练**
+
+      ``examples/embodiment/config/`` 下的可用配置：
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 25 25 50
+
+         * - 设定
+           - 算法
+           - 配置
+         * - MT50
+           - PPO
+           - ``metaworld_50_ppo_openpi_pi05.yaml``
+
+      通过命令行覆盖 ``actor.model.model_path`` 启动训练（rollout 会自动沿用同一路径）：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi_pi05 \
+           actor.model.model_path=./RLinf-Pi05-MetaWorld-SFT
+
+   .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
+
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env metaworld && source .venv/bin/activate
+
+      **2. 下载资源与模型**
+
+      下载 OpenVLA-OFT SFT checkpoint：
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT --local-dir ./RLinf-OpenVLAOFT-MetaWorld-SFT
+
+      **3. 启动训练**
+
+      ``examples/embodiment/config/`` 下的可用配置：
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 25 25 50
+
+         * - 设定
+           - 算法
+           - 配置
+         * - MT50
+           - GRPO
+           - ``metaworld_50_grpo_openvlaoft.yaml``
+
+      通过命令行覆盖 ``actor.model.model_path`` 启动训练（rollout 会自动沿用同一路径）：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh metaworld_50_grpo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-MetaWorld-SFT
 
 .. admonition:: 进一步配置
    :class: note
@@ -182,33 +216,15 @@
    - 指标定义和日志后端 → :doc:`训练指标 <../../reference/metrics>`
    - 从检查点恢复 → :doc:`恢复训练 <../../guides/resume>`
 
-
 可视化与结果
 ----------------------------------------
 
-启动 TensorBoard 实时观察训练：
-
-.. code-block:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-最值得关注的指标是 **``env/success_once``** —— 任务成功率。每个日志指标的含义见
-:doc:`训练指标 <../../reference/metrics>`。
-
-如需保存评估视频，在配置中启用：
-
-.. code-block:: yaml
-
-   env:
-      eval:
-         video_cfg:
-            save_video: True
-            video_base_dir: ${runner.logger.log_path}/video/eval
-
+运行 ``tensorboard --logdir ./logs`` 关注 ``env/success_once``；如需保存评测视频，设置 ``env.eval.video_cfg.save_video=True``，更多日志后端与指标见 :doc:`训练指标 <../../reference/metrics>`。
 
 MetaWorld 结果
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-下表Diffusion Policy, TinyVLA和SmolVLA的结果参考 `SmolVLA 论文 <https://arxiv.org/abs/2403.04880>`_ 论文得到。π\ :sub:`0`\ 和 π\ :sub:`0.5`\ 的SFT结果是通过LeRobot官方提供的 `数据集 <https://huggingface.co/datasets/lerobot/metaworld_mt50>`_ 重新训练所得。
+
+下表 Diffusion Policy、TinyVLA 和 SmolVLA 的结果参考 `SmolVLA 论文 <https://arxiv.org/abs/2403.04880>`_。π\ :sub:`0`\ 与 π\ :sub:`0.5`\ 的 SFT 结果是通过 LeRobot 官方提供的 `数据集 <https://huggingface.co/datasets/lerobot/metaworld_mt50>`_ 重新训练所得。
 
 .. list-table:: **MetaWorld-MT50 性能对比（Success Rate, %）**
    :widths: 15 10 10 10 10 10

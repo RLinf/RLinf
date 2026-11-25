@@ -1,8 +1,7 @@
-5D 并行配置
-================================
+5D 并行策略
+===========
 
-RLinf 使用 **NVIDIA Megatron-LM** 作为大规模 Transformer 训练的后端，  
-并提供五种相互独立的并行模式：
+RLinf 使用 **NVIDIA Megatron-LM** 作为大规模 Transformer 训练的后端，并提供五种相互独立的并行模式：
 
 1. **Tensor Parallelism (TP)** 张量并行  
 2. **Data Parallelism (DP)** 数据并行  
@@ -10,8 +9,7 @@ RLinf 使用 **NVIDIA Megatron-LM** 作为大规模 Transformer 训练的后端�
 4. **Sequence Parallelism (SP)** 序列并行  
 5. **Context Parallelism (CP)** 上下文并行  
 
-合适的组合可以让系统从单节点扩展到数百 GPU 的集群，  
-同时在内存、通信和利用率之间取得平衡。  
+合适的组合可以让系统从单节点扩展到数百 GPU 的集群，同时在内存、通信和利用率之间取得平衡。  
 
 下面将详细介绍这五种并行模式，并给出启动时的配置方法。
 
@@ -24,10 +22,8 @@ RLinf 使用 **NVIDIA Megatron-LM** 作为大规模 Transformer 训练的后端�
 
 **机制**
 
-* 线性层  
-  – ``Linear(h, 4h)`` 按 **列** 切分  
-  – ``Linear(4h, h)`` 按 **行** 切分  
-* 注意力投影 – :math:`Q,K,V` 按 head 维度切分  
+* 线性层 – ``Linear(h, 4h)`` 按 **列** 切分 – ``Linear(4h, h)`` 按 **行** 切分  
+* 注意力投影 – 将 Q、K、V 按 head 维度切分
 * 每次切分计算后通过 *all-reduce* 将结果合并  
 
 **YAML 示例**
@@ -40,7 +36,7 @@ RLinf 使用 **NVIDIA Megatron-LM** 作为大规模 Transformer 训练的后端�
 
 **优点**
 
-* 避免单 GPU 内存瓶颈  
+* 避免单卡显存瓶颈
 * 在 GPU 之间平衡计算  
 
 **缺点**
@@ -170,8 +166,8 @@ Megatron 的 *序列并行* 在 TP 的基础上扩展，用于减少 **长上下
 
 **机制**
 
-* 将 :math:`Q,K,V` 和 logits 切分为 *context* 块  
-* 使用环形注意力进行通信，并逐步累积输出  
+* 将 Q、K、V 和 logits 切分为 *context* 块
+* 使用环形注意力通信，并逐步累积输出
 
 **YAML 示例**
 
@@ -183,15 +179,60 @@ Megatron 的 *序列并行* 在 TP 的基础上扩展，用于减少 **长上下
 
 **优点**
 
-* 打破 100k+ token 上下文的内存瓶颈  
-* 与动态 batch 大小搭配良好  
+* 打破 100k+ token 上下文的内存瓶颈
+* 与动态 batch 大小搭配良好
 
 **缺点**
 
-* 带宽开销大；参数 **不** 被切分，模型内存依然完全复制  
+* 带宽开销大；参数 **不** 被切分，模型内存依然完全复制
 
-总结
--------
+6. 专家并行（EP，适用于 MoE 模型）
+----------------------------------
 
-Megatron-LM 灵活组合 **TP、DP、PP、SP 和 CP**，使 RLinf 可以通过 *宽度* （TP）、*数据规模* （DP）、*深度* （PP）或 *上下文长度* （SP / CP）来扩展模型。  
-选择合适的规模取决于模型结构、目标序列长度、GPU 内存和互联拓扑，以获得最佳吞吐量。  
+*专家并行* 将混合专家模型（MoE）的各专家切分到不同 GPU 上，每张卡仅保存部分专家，并通过 All-to-All 通信路由 token。:doc:`Moonlight-16B GRPO <../examples/agentic/math_reasoning/moonlight>` 与 :doc:`GLM-4.7-Flash Search-R1 <../examples/agentic/searchr1/index>` 等 MoE 配方都使用 EP：
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       tensor_model_parallel_size: 4
+       expert_model_parallel_size: 8
+       expert_tensor_parallel_size: 1
+       moe_token_dispatcher_type: alltoall
+
+建议将 ``expert_model_parallel_size`` 控制在单机 8 卡以内（通常设为 ``8``），让 MoE All-to-All 通信留在节点内 NVLink 上完成。在 Ampere/Hopper 集群上可结合 :doc:`FUSCO <../examples/system/fusco>` 融合数据重排与 All-to-All 通信。
+
+GPU 规模速查表
+--------------
+
+参考以下内置并行预设配置，并按集群卡数扩展 DP（``DP = actor 总卡数 / (TP * PP * CP)``）：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 14 14 26 22
+
+   * - 模型
+     - 类型
+     - 最低卡数（80 GB）
+     - Actor 并行（TP / PP / CP / EP）
+     - 参考配方
+   * - Qwen2.5-1.5B
+     - 稠密
+     - 2–8
+     - TP 2 / PP 1 / CP 1 / EP 1
+     - :doc:`Qwen2.5 GRPO <../examples/agentic/math_reasoning/reasoning>`
+   * - Qwen2.5-7B
+     - 稠密
+     - 4–8
+     - TP 4 / PP 1 / CP 1 / EP 1
+     - :doc:`Qwen2.5 GRPO <../examples/agentic/math_reasoning/reasoning>`
+   * - Moonlight-16B-A3B
+     - MoE
+     - 8
+     - TP 1–2 / PP 1 / CP 1 / EP 8
+     - :doc:`Moonlight-16B <../examples/agentic/math_reasoning/moonlight>`
+   * - GLM-4.7-Flash（约 3B 激活）
+     - MoE
+     - 8（1–2 节点）
+     - TP 4 / PP 1 / CP 1 / EP 8
+     - :doc:`GLM-4.7-Flash <../examples/agentic/searchr1/index>`

@@ -6944,6 +6944,260 @@ def test_sd3_pretraining_auxiliary_placement_and_gradients(sd3_policy, offload):
         model.to("cpu")
 
 
+def test_rollout_model_path_inherits_from_actor():
+    from rlinf.config import validate_rollout_cfg
+
+    algorithm_cfg = OmegaConf.create({"importance_sampling_fix": False})
+    actor_cfg = OmegaConf.create({"model": {"model_path": "/checkpoints/actor"}})
+
+    inherited = OmegaConf.create(
+        {
+            "model": {"model_type": "qwen2.5"},
+            "rollout_backend": "sglang",
+            "return_logprobs": False,
+            "sglang": {},
+        }
+    )
+    validate_rollout_cfg(inherited, algorithm_cfg, actor_cfg)
+    assert inherited.model.model_path == "/checkpoints/actor"
+
+    explicit = OmegaConf.create(
+        {
+            "model": {"model_type": "qwen2.5", "model_path": "/checkpoints/rollout"},
+            "rollout_backend": "sglang",
+            "return_logprobs": False,
+            "sglang": {},
+        }
+    )
+    validate_rollout_cfg(explicit, algorithm_cfg, actor_cfg)
+    assert explicit.model.model_path == "/checkpoints/rollout"
+
+    missing = OmegaConf.create(
+        {
+            "model": {"model_type": "qwen2.5", "model_path": None},
+            "rollout_backend": "sglang",
+            "return_logprobs": False,
+            "sglang": {},
+        }
+    )
+    with pytest.raises(AssertionError, match="rollout.model.model_path"):
+        validate_rollout_cfg(missing, algorithm_cfg, None)
+
+
+def test_embodied_rollout_model_path_inherits_from_actor():
+    from rlinf.config import _inherit_rollout_model_path
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {"model": {"model_path": "/checkpoints/openvla"}},
+            "rollout": {"model": {"precision": "bf16"}},
+        }
+    )
+    _inherit_rollout_model_path(cfg.rollout, cfg.actor)
+    assert cfg.rollout.model.model_path == "/checkpoints/openvla"
+
+    cfg_none = OmegaConf.create(
+        {
+            "actor": {"model": {"model_path": "/checkpoints/openvla"}},
+            "rollout": {"model": {"model_path": None, "precision": "bf16"}},
+        }
+    )
+    _inherit_rollout_model_path(cfg_none.rollout, cfg_none.actor)
+    assert cfg_none.rollout.model.model_path == "/checkpoints/openvla"
+
+    cfg_override = OmegaConf.create(
+        {
+            "actor": {"model": {"model_path": "/checkpoints/openvla"}},
+            "rollout": {"model": {"model_path": "/checkpoints/custom-rollout"}},
+        }
+    )
+    _inherit_rollout_model_path(cfg_override.rollout, cfg_override.actor)
+    assert cfg_override.rollout.model.model_path == "/checkpoints/custom-rollout"
+
+    cfg_no_rollout_model = OmegaConf.create(
+        {
+            "actor": {"model": {"model_path": "/checkpoints/openvla"}},
+            "rollout": {"rollout_backend": "huggingface"},
+        }
+    )
+    _inherit_rollout_model_path(
+        cfg_no_rollout_model.rollout, cfg_no_rollout_model.actor
+    )
+    assert cfg_no_rollout_model.rollout.model.model_path == "/checkpoints/openvla"
+
+
+def test_resolve_model_path_distinguishes_local_paths_and_hf_repo_ids(
+    tmp_path, monkeypatch
+):
+    from rlinf.models import is_hf_repo_id, resolve_model_path
+
+    # Existing relative directory matching owner/repo shape must stay local.
+    existing_rel = tmp_path / "local_org" / "local_repo"
+    existing_rel.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    with patch("huggingface_hub.snapshot_download") as mock_download:
+        for local_path in (
+            "local_org/local_repo",
+            "/path/to/model/openvla-7b",
+            "./org/repo",
+            "../org/repo",
+            "~/org/repo",
+            "checkpoints/full_weights.pt",
+            "a/b/c",
+            "gs://openpi-assets/checkpoints/pi05_base",
+            "",
+        ):
+            assert not is_hf_repo_id(local_path), local_path
+            assert resolve_model_path(local_path) == local_path
+        mock_download.assert_not_called()
+
+    # Valid Hugging Face repo IDs (including dots) resolve via snapshot_download.
+    cached_dir = str(tmp_path / "hf_cache" / "snapshot")
+    with patch(
+        "huggingface_hub.snapshot_download", return_value=cached_dir
+    ) as mock_download:
+        for repo_id in (
+            "gen-robot/openvla-7b-rlvla-warmup",
+            "RLinf/RLinf-Pi0.5-LIBERO-SFT",
+        ):
+            assert is_hf_repo_id(repo_id), repo_id
+            assert resolve_model_path(repo_id) == cached_dir
+            mock_download.assert_called_with(repo_id=repo_id)
+
+    with patch("huggingface_hub.snapshot_download", side_effect=OSError("offline")):
+        with pytest.raises(RuntimeError, match="HF_ENDPOINT"):
+            resolve_model_path("RLinf/unreachable-repo")
+
+
+def test_get_model_resolves_hf_model_and_lora_paths_without_mutating_cfg(
+    tmp_path, monkeypatch
+):
+    import rlinf.models as models_mod
+
+    seen_model_paths: list[str] = []
+
+    def _dummy_builder(cfg, torch_dtype):
+        seen_model_paths.append(cfg.model_path)
+        return torch.nn.Linear(4, 4)
+
+    monkeypatch.setitem(models_mod._MODEL_REGISTRY, "_test_hf_dummy", _dummy_builder)
+
+    base_dir = str(tmp_path / "base_snapshot")
+    lora_dir = str(tmp_path / "lora_snapshot")
+
+    def _fake_snapshot_download(repo_id: str) -> str:
+        return {
+            "RLinf/test-base": base_dir,
+            "RLinf/test-lora": lora_dir,
+        }[repo_id]
+
+    cfg = OmegaConf.create(
+        {
+            "model_type": "_test_hf_dummy",
+            "model_path": "RLinf/test-base",
+            "precision": "fp32",
+            "load_to_device": False,
+            "is_lora": True,
+            "lora_path": "RLinf/test-lora",
+        }
+    )
+
+    fake_peft_cls = MagicMock()
+    fake_peft_cls.from_pretrained.side_effect = lambda model, path, **kwargs: (
+        model,
+        path,
+        kwargs,
+    )
+    fake_peft_mod = ModuleType("peft")
+    fake_peft_mod.LoraConfig = MagicMock()
+    fake_peft_mod.PeftModel = fake_peft_cls
+    fake_peft_mod.get_peft_model = MagicMock()
+    fake_peft_mod.inject_adapter_in_model = MagicMock()
+    monkeypatch.setitem(sys.modules, "peft", fake_peft_mod)
+
+    with patch(
+        "huggingface_hub.snapshot_download", side_effect=_fake_snapshot_download
+    ):
+        result = get_model(cfg)
+
+    assert seen_model_paths == [base_dir]
+    assert result[1] == lora_dir
+    assert result[2] == {"is_trainable": True}
+    # Caller's config remains unmutated.
+    assert cfg.model_path == "RLinf/test-base"
+    assert cfg.lora_path == "RLinf/test-lora"
+
+
+def test_embodied_preset_configs_compose_cleanly():
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.models import is_hf_repo_id
+
+    cfg_dir = str(Path("examples/embodiment/config").resolve())
+    quickstarts = (
+        "maniskill_ppo_openvla_quickstart",
+        "maniskill_ppo_openvlaoft_quickstart",
+        "libero_spatial_ppo_openpi_quickstart",
+    )
+    ppo_configs = (
+        *quickstarts,
+        "maniskill_ppo_openvla",
+        "maniskill_ppo_openvlaoft",
+        "libero_spatial_ppo_openpi",
+        "libero_spatial_ppo_openpi_pi05",
+    )
+    grpo_configs = (
+        "libero_spatial_grpo_openpi",
+        "libero_spatial_grpo_openpi_pi05",
+        "libero_spatial_grpo_openvlaoft",
+    )
+
+    with initialize_config_dir(config_dir=cfg_dir, version_base="1.1"):
+        for name in ppo_configs:
+            cfg = compose(config_name=name)
+            assert cfg.runner.task_type == "embodied"
+            assert cfg.algorithm.adv_type == "gae"
+            assert cfg.algorithm.loss_type == "actor_critic"
+            assert (
+                cfg.actor.fsdp_config.mixed_precision.param_dtype
+                == cfg.actor.model.precision
+            )
+            assert cfg.rollout.model.precision == cfg.actor.model.precision
+
+        for name in grpo_configs:
+            cfg = compose(config_name=name)
+            assert cfg.runner.task_type == "embodied"
+            assert cfg.algorithm.adv_type == "grpo"
+            assert cfg.algorithm.loss_type == "actor"
+            assert cfg.algorithm.group_size == 8
+
+        for name in quickstarts:
+            cfg = compose(config_name=name)
+            assert dict(cfg.cluster.component_placement) == {"actor,env,rollout": "all"}
+            assert is_hf_repo_id(cfg.actor.model.model_path), cfg.actor.model.model_path
+
+        # Custom placement recipes must not inherit stray collocated keys.
+        for name in ("maniskill_ppo_openvla", "maniskill_ppo_openvlaoft"):
+            cfg = compose(config_name=name)
+            assert dict(cfg.cluster.component_placement) == {
+                "actor": "0-7",
+                "env": "0-3",
+                "rollout": "4-7",
+            }
+
+        # CLI overrides still compose cleanly over presets.
+        overridden = compose(
+            config_name="maniskill_ppo_openvla_quickstart",
+            overrides=[
+                "actor.model.model_path=/local/ckpt",
+                "runner.max_epochs=5",
+            ],
+        )
+        assert overridden.actor.model.model_path == "/local/ckpt"
+        assert overridden.runner.max_epochs == 5
+
+
 def test_prefix_rollout_keeps_realworld_on_existing_rlt_route():
     from rlinf.algorithms.prefix_off_policy.route import build_prefix_route
 
