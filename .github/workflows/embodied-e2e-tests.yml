@@ -446,7 +446,7 @@ jobs:
           import torch
 
           from rlinf.envs.sim.g1_mimic.constants import G1_JOINT_NAMES, JOINT_POS
-          from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
+          from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import asset_default_state
 
           pose = asset_default_state()
           os.makedirs(os.environ["SUPERMIMIC_MOTION_PATH"], exist_ok=True)
