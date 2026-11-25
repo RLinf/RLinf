@@ -302,6 +302,8 @@ class SGLangServerProcess:
                 "dist_init_addr (the entry node's rendezvous host:port) is "
                 "required when nnodes > 1."
             )
+        if apply_rlinf_patch and server_type == "srt":
+            _assert_sglang_supports_rlinf_patch()
         self._server_args_kwargs = dict(server_args_kwargs)
         self._acquire_free_port = acquire_free_port
         self._server_type = server_type
@@ -543,6 +545,28 @@ class SGLangServerProcess:
             proc.join(timeout=5)
         self._server_proc = None
         self._server_port = None
+
+
+def _assert_sglang_supports_rlinf_patch() -> None:
+    """Refuse ``apply_rlinf_patch`` on sglang versions lacking the hooks.
+
+    Server-mode patching needs ``launch_server``'s ``run_scheduler_process_func``
+    injection parameter (sglang > 0.5.5). Checked in the parent process so the
+    failure surfaces as a readable error instead of a dead child.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    from packaging.version import parse
+
+    try:
+        sglang_version = parse(version("sglang"))
+    except PackageNotFoundError as e:
+        raise RuntimeError("sglang is not installed.") from e
+    assert sglang_version > parse("0.5.5"), (
+        f"apply_rlinf_patch requires sglang > 0.5.5 "
+        f"(launch_server run_scheduler_process_func injection); "
+        f"installed: {sglang_version}"
+    )
 
 
 def _pin_bundled_cudart() -> None:

@@ -114,7 +114,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
         self.weight_syncer = (
             WeightSyncer.create(OmegaConf.select(cfg, "weight_syncer"))
-            if self.rollout_backend == "huggingface"
+            if self.rollout_backend in ("huggingface", "phyai")
             or (
                 self.rollout_backend == "sglang"
                 and cfg.get("weight_syncer") is not None
@@ -260,7 +260,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     cpu_offload=True,
                     version=self.version,
                 )
-        elif self.rollout_backend == "huggingface":
+        elif self.rollout_backend in ("huggingface", "phyai"):
 
             async def send_func(data):
                 if not self._is_weight_sender:
@@ -301,7 +301,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             await self.weight_syncer.sync(state_dict, send_func, version=version)
         else:
             raise ValueError(
-                "Embodied weight synchronization supports 'sglang' and 'huggingface', "
+                "Embodied weight synchronization supports 'sglang', 'huggingface', "
+                "and 'phyai', "
                 f"got rollout_backend={self.rollout_backend!r}"
             )
 

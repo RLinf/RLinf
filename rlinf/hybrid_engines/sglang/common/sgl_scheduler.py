@@ -255,6 +255,10 @@ class Scheduler(_Scheduler):
         use_cudagraph = not self.cfg.rollout.enforce_eager
         assert use_cudagraph, "use_cudagraph must be True now."
 
+        # Overlap scheduling may leave an issued batch on the GPU when paused;
+        # wait for it before overwriting the weights.
+        Worker.torch_platform.synchronize()
+
         receive_hf_weights(
             self._rlinf_worker,
             self._actor_group_name,
