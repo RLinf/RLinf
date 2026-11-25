@@ -12,7 +12,7 @@
 
 随着 **Agentic AI** 时代的到来，越来越多的智能体（Agent）被部署到真实生产环境中，并通过在线强化学习实现个性化与性能自适应优化。这一范式有望成为推动智能体“落地最后一公里”的关键技术路径。
 
-嗅到这一趋势，我们团队基于大规模强化学习框架 **RLinf** 对 Cursor 的在线强化学习方案进行了复现实验，探索在线强化学习能否进一步提升模型的代码补全能力。具体而言，我们采用 **Continue** 作为代码编辑器端，用户可直接在 VSCode 中安装 `Continue 插件 <https://github.com/RLinf/continue>`_ 进行开发； **RLinf** 则作为后端系统，既负责大模型的 Serving，也承担在线强化学习的训练。值得注意的是，大模型的 Serving 后端也可以替换为已部署的 Agent 服务，而 **RLinf** 可灵活作为提供在线强化学习能力的通用组件接入系统。
+嗅到这一趋势，我们团队基于大规模强化学习框架 **RLinf** 对 Cursor 的在线强化学习方案进行了复现实验，探索在线强化学习能否进一步提升模型的代码补全能力。具体而言，我们采用 **Continue** 作为代码编辑器端，用户可直接在 VSCode 中安装 `Continue 插件 <https://github.com/RLinf/continue>`_ 开发；**RLinf** 则作为后端系统，既负责大模型的 Serving，也承担在线强化学习的训练。大模型的 Serving 后端也可替换为已部署的 Agent 服务，而 **RLinf** 可作为提供在线强化学习能力的通用组件接入系统。
 
 2. 前情提要
 ------------------------------
@@ -90,7 +90,7 @@ RLinf 框架提供了高性能、易用的异步通信抽象 Channel，自适应
 
 .. raw:: html
 
-   <img src="https://github.com/RLinf/misc/raw/main/pic/coding_online_rl_arch.png" width="800"/>
+   <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/coding_online_rl_arch.png" width="800"/>
 
 假设代码补全 Agent 已经作为一个完整的在线服务部署，由 **用户前端（User Frontend）** 与 **服务后端（Service Backend）** 组成。为了让这一线上系统具备在线强化学习（Online RL）能力，我们在其 **plugin** 层 引入了一个独立组件 —— **RLinf Runner** 。与长期运行的后台服务不同，RLinf Runner 并不是一个常驻进程，而是一个可以由线上系统的 **Controller** 按需调用的轻量级模块。我们为 RLinf Runner 设计了与线上 Agent 的交互接口，用于：
 
@@ -138,7 +138,7 @@ RLinf 框架提供了高性能、易用的异步通信抽象 Channel，自适应
    :header-rows: 0
    :align: center
 
-   * - .. image:: https://github.com/qurakchin/misc/raw/docs/coding_rl_offline_reward/pic/coding_online_rl_offline_rewards.png
+   * - .. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/coding_online_rl_offline_rewards.png
           :width: 100%
      - .. list-table::
           :header-rows: 1

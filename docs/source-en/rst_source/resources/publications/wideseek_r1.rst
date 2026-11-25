@@ -24,7 +24,7 @@ WideSeek-R1: Exploring Width Scaling for Broad Information Seeking via Multi-Age
             <sup>3</sup>Infinigence AI &nbsp;&nbsp;
             <sup>4</sup>IIIS, Tsinghua University
         </p>
-       <p class="affiliations" style="color: #333;">
+       <p class="affiliations" style="color: var(--pst-color-text-muted);">
          <sup>*</sup>Equal Contribution. &nbsp;&nbsp;<sup>&dagger;</sup>Corresponding Authors.
        </p>
      </div>
@@ -61,7 +61,7 @@ comparable to the performance of single-agent DeepSeek-R1-671B. Furthermore,
 WideSeek-R1-4B exhibits consistent performance gains as the number of parallel subagents increases,
 highlighting the effectiveness of width scaling.
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/scaling.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wideseek_r1/scaling.png
    :alt: Depth vs width scaling comparison
    :align: center
 
@@ -117,7 +117,7 @@ The lead agent and subagents share a single LLM but operate with isolated contex
 the lead agent focuses on task decomposition and orchestration, while each subagent executes its assigned
 subtask in parallel using external tools to gather information and return findings.
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/overview.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wideseek_r1/overview.png
    :alt: WideSeek-R1 rollout and training pipeline
    :align: center
 
@@ -172,7 +172,7 @@ tasks. We build a fully automated data construction pipeline that synthesizes hi
 instances with schema-constrained queries and standardized tabular outputs, yielding **20,000**
 instances.
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/data_pipeline.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wideseek_r1/data_pipeline.png
    :alt: Automated data construction pipeline
    :align: center
 
@@ -302,7 +302,7 @@ function of the number of turns (depth) and the number of agents (width).
 - **Width Scaling:** performance initially improves with more subagents but can decline at larger width when an untrained lead agent receives conflicting signals.
 - **Width Scaling + MARL:** performance improves consistently as subagents increase, reaching 40.0% item F1 with 10 subagents.
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/exp_scaling.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wideseek_r1/exp_scaling.png
    :alt: Depth scaling versus width scaling
    :align: center
 
@@ -315,13 +315,13 @@ We conduct ablations to answer two questions:
 (1) whether jointly optimizing both the lead agent and subagents is necessary,
 and (2) how data composition affects final capability.
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/ablation_agent.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wideseek_r1/ablation_agent.png
    :alt: Ablation on lead agent and subagents
    :align: center
 
 *Figure 5. Ablation on lead agent and subagents.*
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/ablation_data.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wideseek_r1/ablation_data.png
    :alt: Ablation on training data composition
    :align: center
 

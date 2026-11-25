@@ -1,31 +1,53 @@
-Launch & Scale
-==============
+Scale to a Cluster
+==================
 
-Use these guides when you need to start runs beyond a single default machine or
-connect RLinf to physical hardware.
+Pick these guides when scaling a working single-node run across multiple machines, heterogeneous CPU/GPU nodes, cloud-edge links, 5D model parallelism, or dynamic cluster scheduling.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
+.. grid:: 1 2 3 3
+   :gutter: 2
 
-   * - Guide
-     - What you get
-   * - :doc:`Multi-Node Training <../multi_node>`
-     - Launch a run across multiple nodes.
-   * - :doc:`Heterogeneous Clusters <../hetero>`
-     - Configure mixed hardware and node groups.
-   * - :doc:`Cloud-Edge Collaboration <../cloud_edge>`
-     - Split inference and training across cloud and edge.
-   * - :doc:`Real-World Robots <../realworld_robot>`
-     - Run RL on physical robot hardware.
-   * - :doc:`Teleoperation <../teleoperation>`
-     - Let an operator take over from the policy mid-rollout.
+   .. grid-item-card:: Multi-Node Training
+      :link: ../multi_node
+      :link-type: doc
+
+      Launch a multi-node Ray cluster and configure node ranks and network devices.
+
+   .. grid-item-card:: Heterogeneous Clusters
+      :link: ../hetero
+      :link-type: doc
+
+      Combine different GPU types or CPU simulator nodes in one cluster.
+
+   .. grid-item-card:: Cloud-Edge Training
+      :link: ../cloud_edge
+      :link-type: doc
+
+      Connect cloud GPU training nodes to edge machines behind NAT via overlay networking.
+
+   .. grid-item-card:: Auto Placement
+      :link: ../auto_placement
+      :link-type: doc
+
+      Let RLinf search for an optimal hardware placement across actor, rollout, and env workers.
+
+   .. grid-item-card:: 5D Parallelism
+      :link: ../5D
+      :link-type: doc
+
+      Combine tensor, pipeline, context, data, and expert parallelism for large LLMs.
+
+   .. grid-item-card:: Dynamic Scheduling
+      :link: ../dynamic_scheduling
+      :link-type: doc
+
+      Handle elastic scaling and worker rescheduling across dynamic cluster resources.
 
 .. toctree::
    :hidden:
 
    Multi-Node Training <../multi_node>
    Heterogeneous Clusters <../hetero>
-   Cloud-Edge Collaboration <../cloud_edge>
-   Real-World Robots <../realworld_robot>
-   Teleoperation <../teleoperation>
+   Cloud-Edge Training <../cloud_edge>
+   Auto Placement <../auto_placement>
+   5D Parallelism <../5D>
+   Dynamic Scheduling <../dynamic_scheduling>

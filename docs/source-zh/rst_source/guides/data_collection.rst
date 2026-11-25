@@ -1,20 +1,20 @@
-数据采集
-========
+真机数据采集
+============
 
-采集有两个入口，写出的目录相同。``save_dir`` 默认是
-``${runner.logger.log_path}``。
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/data_formats_zh.svg
+   :align: center
+   :width: 100%
+   :alt: RLinf 数据格式流转图：采集来源、三种存储格式与下游消费阶段
 
-- **真机遥操**：``examples/embodiment/collect_data.sh`` 启动
-  ``collect_real_data.py``。``export_format`` 可以选一种，也可以让
-  ``replay_buffer`` 和一种 episode 格式一起写。
-- **训练或评估**：在 ``env`` 的 ``data_collection`` 里打开。env worker 一次只写一种
-  episode 格式。
+   数据采集来源、落盘格式与下游训练阶段。
 
-两个入口使用同一组名字：``replay_buffer``、``pickle_episode``、``lerobot_dataset``。
-``pickle_episode`` 与 ``lerobot_dataset`` 不能同时选择，env worker 不写
-``replay_buffer``。真机脚本不写 ``export_format`` 时，默认写出 ``replay_buffer``
-和 ``lerobot_dataset``。旧名字 ``pickle`` 和 ``lerobot`` 仍对应两种 episode
-格式，但会给出弃用警告。
+采集真机示范或仿真 rollout 数据时，所有输出统一写入 ``save_dir``\ （默认为 ``${runner.logger.log_path}``）。RLinf 提供两个采集入口：
+
+- **真机遥操作**：运行 ``examples/embodiment/collect_data.sh`` 录制示范。``export_format`` 可指定单个格式，也可将 ``replay_buffer`` 与一种 episode 格式组合写出；省略该字段时默认同时写出 ``replay_buffer`` 和 ``lerobot_dataset``。
+
+- **训练或评估**：在训练或评估配置中开启 ``env`` 下的 ``data_collection``。每个 env worker 一次写出一种 episode 格式，可选 ``lerobot_dataset`` 或 ``pickle_episode``。
+
+两个入口使用同一套格式名称。单次运行不能同时选择 ``pickle_episode`` 和 ``lerobot_dataset``，训练与评估中的 env worker 也不写出 ``replay_buffer``。
 
 .. list-table::
    :header-rows: 1
@@ -22,38 +22,58 @@
 
    * - 数据格式
      - 保存目录
-     - 谁来读
+     - 下游用途
    * - ``replay_buffer``
      - ``{save_dir}/demo_buffer/``
-     - RLPD。训练配置 ``algorithm.demo_buffer.load_path`` 指向该目录，例如 Franka 插孔和 DoSW1。
+     - RLPD 训练，通过 ``algorithm.demo_buffer.load_path`` 加载（如 Franka 插孔和 DOS-W1）。
    * - ``lerobot_dataset``
      - ``{save_dir}/lerobot_dataset/``
-     - OpenPI SFT、HG-DAgger，以及其他读取 LeRobot shard 的模仿学习。
+     - OpenPI SFT、HG-DAgger 及其他读取 LeRobot shard 的模仿学习管线。
    * - ``pickle_episode``
      - ``{save_dir}/pickle_episode/``
-     - 奖励模型预处理。``examples/reward/preprocess_reward_dataset.py`` 生成 ResNet 二分类数据；``examples/reward/vlm_trend/`` 生成 VLM trend 标签。
+     - 奖励模型预处理：``examples/reward/preprocess_reward_dataset.py`` 构建 ResNet 二分类数据集，``examples/reward/vlm_trend/`` 生成 VLM trend 标签。
 
-真机同时保存 replay buffer 和 LeRobot：
+采集真机遥操作数据
+------------------
+
+在 ``examples/embodiment/config/realworld_collect_data.yaml`` 中配置机械臂 IP、遥操作设备、目标位姿、导出格式和目标条数：
 
 .. code-block:: yaml
 
+   cluster:
+     node_groups:
+       - label: franka
+         hardware:
+           configs:
+             - robot_ip: "192.168.1.100"
    env:
      eval:
+       teleop: spacemouse          # spacemouse、gello、pico 或 none
+       override_cfg:
+         target_ee_pose: [0.5, 0.0, 0.3, 0.0, 3.14, 0.0]
+         success_hold_steps: 1     # 到达目标后连续保持多少步算成功
        data_collection:
          enabled: True
          save_dir: ${runner.logger.log_path}
          export_format: [replay_buffer, lerobot_dataset]
+   runner:
+     num_data_episodes: 20         # 成功条数达到后退出
 
-流式 LeRobot（例如双臂 YAM）只设 ``export_format: lerobot_dataset`` 和 ``streaming: true``。帧随录随写，内存不随 episode 变长。每条保留下来的录制单独成为一个 shard。成功和失败的录制都会写入，并标上 ``is_success``；``only_success`` 在流式模式下不起作用。操作员丢弃的录制和录制队列溢出不会进入正式 dataset。训练前把这些 shard 合并成一个 dataset，同时去掉失败的录制：
+在仓库根目录启动数据采集（可传入其他配置名作为第一个参数）：
 
 .. code-block:: bash
 
-   python toolkits/lerobot/merge_lerobot_datasets.py \
-       --source-dir logs/{timestamp}/lerobot_dataset \
-       --output-dir logs/{timestamp}/lerobot_merged \
-       --only-success
+   bash examples/embodiment/collect_data.sh
+   bash examples/embodiment/collect_data.sh realworld_collect_data_gello
 
-训练中采集 pickle，供奖励模型使用：
+成功条数达到 ``runner.num_data_episodes`` 后脚本自动退出。默认输出写入 ``logs/{timestamp}/demo_buffer/``\ （标记为专家数据的成功 ``.pt`` 轨迹）与 ``logs/{timestamp}/lerobot_dataset/rank_0/id_0/``\ （导出 pickle 格式时为 ``pickle_episode/*.pkl``）。
+
+再次采集并指向同一个 ``demo_buffer`` 目录即可增量追加轨迹；LeRobot 数据集设置 ``resume: true`` 后会沿用已有分片编号，不覆盖已完成的数据。
+
+在训练或评估中采集数据
+----------------------
+
+在训练或评估 YAML 中开启 ``env.eval``\ （或 ``env.train``）下的 ``data_collection``。例如，``maniskill_ppo_mlp_collect`` 采集成功的 pickle episode 供奖励模型训练：
 
 .. code-block:: yaml
 
@@ -65,171 +85,153 @@
          export_format: pickle_episode
          only_success: True
 
-``maniskill_ppo_mlp_collect`` 就是这个用法。``.pkl`` 在
-``{save_dir}/pickle_episode/``。把 ``export_format`` 改成 ``lerobot_dataset``
-时，shard 在 ``{save_dir}/lerobot_dataset/rank_*/id_*/``。
+pickle 格式的 ``.pkl`` 文件落在 ``{save_dir}/pickle_episode/``；将 ``export_format`` 设为 ``lerobot_dataset`` 时，分片落在 ``{save_dir}/lerobot_dataset/rank_*/id_*/``。
 
-真机遥操数采步骤
+合并流式采集分片
 ----------------
 
-在 ``examples/embodiment/config/realworld_collect_data.yaml`` 里填写机器人、
-遥操方式和目标位姿：
+录制长时任务（如双臂 YAM）时，设置 ``export_format: lerobot_dataset`` 与 ``streaming: true``。图像帧随录随落盘，内存占用不随 episode 变长。
 
-.. code-block:: yaml
+每条保留的录制单独生成一个分片，成功与失败的录制都会落盘并标上 ``is_success``\ （流式模式下 ``only_success`` 不生效）。操作员丢弃的片段与录制队列溢出片段不会进入正式数据集。
 
-   cluster:
-     node_groups:
-       hardware:
-         configs:
-           robot_ip: "192.168.1.100"
-   env:
-     eval:
-       teleop: spacemouse          # spacemouse、gello、pico 或 none
-       override_cfg:
-         target_ee_pose: [0.5, 0.0, 0.3, 0.0, 3.14, 0.0]
-         success_hold_steps: 1     # 到达目标后连续保持多少步算成功
-   runner:
-     num_data_episodes: 20         # 成功条数达到后退出
-
-然后：
+训练前合并这些分片，并过滤掉失败的录制：
 
 .. code-block:: bash
 
-   bash examples/embodiment/collect_data.sh
-   bash examples/embodiment/collect_data.sh realworld_collect_data_gello
+   python -m toolkits.lerobot.merge_lerobot_datasets \
+       --source-dir logs/{timestamp}/lerobot_dataset \
+       --output-dir logs/{timestamp}/lerobot_merged \
+       --only-success
 
-成功次数达到 ``runner.num_data_episodes`` 后退出。``save_dir`` 为日志目录时，目录是：
+检查采集数据
+------------
 
-.. code-block:: text
-
-   logs/{timestamp}/
-   ├── demo_buffer/
-   └── lerobot_dataset/rank_0/id_0/    # 选 pickle_episode 时为 pickle_episode/*.pkl
-
-``demo_buffer`` 里每条成功轨迹是一个 ``.pt``，``intervene_flags`` 全为 1，表示专家数据。
-追加数据时，让新的一次采集指向同一个 ``demo_buffer`` 目录。
-
-检查数据：
+训练前先可视化 replay buffer 或 LeRobot 分片，核对相机画面、状态和动作：
 
 .. code-block:: bash
 
-   python toolkits/replay_buffer/visualize.py \
+   python -m toolkits.replay_buffer.visualize \
        --replay_dir logs/{timestamp}/demo_buffer
 
-   python toolkits/lerobot/visualize_lerobot_dataset.py \
+   python -m toolkits.lerobot.visualize_lerobot_dataset \
        --dataset-path logs/{timestamp}/lerobot_dataset/rank_0/id_0 \
        --output-dir logs/{timestamp}/lerobot_visualized
 
-数据格式细节
-------------
+.. dropdown:: 落盘格式细节与自定义环境包装
 
-写入由 ``CollectEpisode`` 在后台线程完成，``env.close()`` 时做最后一次刷盘，
-不挡住训练的 step。多个 env worker 各自使用不同 ``rank``，文件名和 shard
-目录都带这个编号。
+   采集器在后台线程写盘，环境关闭时刷出剩余数据，不阻塞训练步。多个 env worker 各自使用独立的 ``rank``，文件名与分片目录都会带上该编号。
 
-**replay_buffer**
+   **replay_buffer**
 
-只保存成功 episode。真机采集里，``manual_episode_control_only`` 为真时只看 ``manual_done``，否则 ``reward >= 0.5`` 或 ``manual_done`` 算成功。``recording_invalid`` 和 ``episode_discarded`` 不写入、也不计入成功次数。每条轨迹一个 ``trajectory_*.pt``，同目录还有 ``metadata.json`` 和 ``trajectory_index.json``。``intervene_flags`` 全为 1，RLPD 用它区分专家数据和在线策略数据。指向同一目录再次采集时增量写入。张量形状随机器人和相机变化，不是格式的一部分。
+   只保存成功的 episode。真机采集开启 ``manual_episode_control_only`` 后仅以 ``manual_done`` 判成功，否则 ``reward >= 0.5`` 或 ``manual_done`` 均算成功。
 
-.. code-block:: python
+   无效录制与丢弃片段（``recording_invalid``、``episode_discarded``）既不写入也不计入成功条数。每条轨迹保存为 ``trajectory_*.pt``，同目录包含 ``metadata.json`` 与 ``trajectory_index.json``。
 
-   {
-       "transitions": {
-           "obs": {"states", "main_images"},
-           "next_obs": {"states", "main_images"},
-           "action": "float32[T, action_dim]",
-           "rewards": "float32[T, 1]",
-           "dones": "bool[T, 1]",
-           "terminations": "bool[T, 1]",
-           "truncations": "bool[T, 1]",
-       },
-       "intervene_flags": "全 1",
-   }
+   每步都带有专家干预标记，供 RLPD 区分专家示范与在线 policy 数据。张量形状随机器人与相机配置变化，图像在 episode 结束前留在内存中。
 
-图像在 episode 结束前留在内存里，用量随长度增长。
+   .. code-block:: python
 
-**pickle_episode**
+      {
+          "transitions": {
+              "obs": {"states", "main_images"},
+              "next_obs": {"states", "main_images"},
+              "action": "float32[T, action_dim]",
+              "rewards": "float32[T, 1]",
+              "dones": "bool[T, 1]",
+              "terminations": "bool[T, 1]",
+              "truncations": "bool[T, 1]",
+          },
+          "intervene_flags": "全 1",
+      }
 
-``CollectEpisode`` 在 episode 结束时写一个 ``.pkl``。非流式且
-``only_success: true`` 时丢掉失败 episode。文件名：
+   **pickle_episode**
 
-.. code-block:: text
+   每条 episode 结束时写入一个 ``.pkl`` 文件；非流式模式下开启 ``only_success: true`` 会丢弃失败 episode。
 
-   rank_{rank}_env_{env_idx}_episode_{episode_id}_step_{global_step}_{success|fail}.pkl
+   .. code-block:: text
 
-内容：
+      rank_{rank}_env_{env_idx}_episode_{episode_id}_step_{global_step}_{success|fail}.pkl
 
-.. code-block:: python
+   文件内容结构：
 
-   {
-       "rank": int,
-       "env_idx": int,
-       "episode_id": int,
-       "step": int,
-       "success": bool,
-       "observations": list,  # 长度 = num_steps + 1，第 0 项来自 reset()
-       "actions": list,
-       "rewards": list,
-       "terminated": list,
-       "truncated": list,
-       "infos": list,         # 奖励模型读取其中的主图像和逐步 success
-   }
+   .. code-block:: python
 
-**lerobot_dataset**
+      {
+          "rank": int,
+          "env_idx": int,
+          "episode_id": int,
+          "step": int,
+          "success": bool,
+          "observations": list,  # 长度 = num_steps + 1，第 0 项来自 reset()
+          "actions": list,
+          "rewards": list,
+          "terminated": list,
+          "truncated": list,
+          "infos": list,         # 奖励模型预处理读取其中的主图像和逐步 success
+      }
 
-``CollectEpisode`` 把一个或多个 episode 写成一个 shard：
-``lerobot_dataset/rank_{rank}/id_{N}/``；流式采集每个 shard 只放一条保留的录制。
-``resume: true`` 时从已有 shard 往后编号，不改已写完的数据。
+   **lerobot_dataset**
 
-.. code-block:: text
+   采集器将一个或多个 episode 写入 ``lerobot_dataset/rank_{rank}/id_{N}/``，流式模式下每个分片只保存一条保留的录制。设置 ``resume: true`` 会接续已有分片编号，不改动已写完的数据。
 
-   id_0/
-   ├── meta/info.json          # fps、robot_type、维度
-   ├── meta/episodes.jsonl
-   ├── meta/tasks.jsonl
-   ├── meta/stats.json
-   └── data/chunk-000/episode_*.parquet
+   .. code-block:: text
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 72
+      id_0/
+      ├── meta/info.json          # fps、robot_type、维度
+      ├── meta/episodes.jsonl
+      ├── meta/tasks.jsonl
+      ├── meta/stats.json
+      └── data/chunk-000/episode_*.parquet
 
-   * - 列
-     - 内容
-   * - ``image``
-     - 主相机图像，uint8
-   * - ``extra_view_image`` / ``extra_view_image-N``
-     - 其他视角。没有额外视角时为空
-   * - ``state`` / ``actions``
-     - 状态向量和动作向量，``float32``
-   * - ``timestamp`` / ``frame_index``
-     - 帧时间（秒）和 episode 内序号
-   * - ``episode_index`` / ``index`` / ``task_index``
-     - 全局 episode 号、全局帧号、任务号
-   * - ``done`` / ``is_success``
-     - 该步是否为 episode 最后一帧；该 episode 是否成功
+   .. list-table::
+      :header-rows: 1
+      :widths: 28 72
 
-图像从观测里按 ``main_images``、``image``、``full_image`` 的顺序取主视角，按
-``extra_view_images``、``extra_view_image`` 取其余视角；``[N, H, W, C]``
-会拆成 ``extra_view_image-0``、``extra_view_image-1``。状态键优先
-``states``，其次 ``state``。浮点图像若在 ``[0, 1]`` 会乘 255 变成 uint8。
+      * - 列
+        - 内容
+      * - ``image``
+        - 主相机图像，uint8
+      * - ``extra_view_image`` / ``extra_view_image-N``
+        - 其他视角；无额外视角时为空
+      * - ``state`` / ``actions``
+        - 状态向量和动作向量，``float32``
+      * - ``timestamp`` / ``frame_index``
+        - 帧时间（秒）和 episode 内序号
+      * - ``episode_index`` / ``index`` / ``task_index``
+        - 全局 episode 号、全局帧号、任务号
+      * - ``done`` / ``is_success``
+        - 该步是否为 episode 最后一帧；该 episode 是否成功
 
-在自己的脚本里包一层环境时，把父目录传给 ``save_dir``，格式子目录由 wrapper 添加：
+   观测字段的回退查找顺序：
 
-.. code-block:: python
+   - **主视角图像**：依次查找 ``main_images``、``image``、``full_image``。落在 ``[0, 1]`` 的浮点图像会乘 255 转为 uint8。
 
-   env = CollectEpisode(
-       env=base_env,
-       save_dir="./logs/run",
-       export_format="lerobot_dataset",   # 或 "pickle_episode"
-       robot_type="panda",
-       fps=10,
-       only_success=True,
-   )
-   env.close()   # 刷出最后一批 episode
+   - **额外视角图像**：依次查找 ``extra_view_images``、``extra_view_image``。堆叠的 ``[N, H, W, C]`` 张量拆分为 ``extra_view_image-0``、``extra_view_image-1`` 等列。
 
-``streaming: true`` 时每帧的各个视角立刻写成未压缩的 PNG，episode 结束再写 parquet。parquet 原样保存这些字节，640x480 的一个视角每帧约占 0.9 MB 磁盘。成功和失败都保存，``is_success`` 在结束时写入。操作员丢弃会删掉当前未发布的 episode；录制队列溢出的片段移到该 shard 的 ``invalid_episodes/``，不作为正式 episode。流式 shard 旁还有 ``stream_frames.jsonl``，记录每帧的 ``state`` 和 ``actions``。
+   - **状态向量**：优先读取 ``states``，其次 ``state``。
 
-每步 info 先看 ``final_info`` 和 ``episode`` 里的 ``success_once``、
-``success_at_end``、``success``，这些都没有再看 info 根字段。任一来源为真即记为成功。
-全程都没有这些字段时，用采集过程中维护的成功标志。
+   流式存储与成功判定规则：
+
+   - 开启 ``streaming: true`` 后，每帧各视角立即写成未压缩 PNG，episode 结束再生成 parquet。由于 parquet 原样保存这些 PNG 字节，单路 640x480 图像每帧约占 0.9 MB 磁盘空间。
+
+   - 成功与失败的录制都会落盘并在结束时写入 ``is_success``，同目录的 ``stream_frames.jsonl`` 记录每帧状态与动作。操作员丢弃会删除当前未发布的 episode；录制队列溢出的片段会移入该分片的 ``invalid_episodes/`` 目录，不作为正式 episode 发布。
+
+   - 每步成功状态优先检查 ``final_info`` 与 ``episode`` 子字典，再检查顶层 info 字段。
+
+   - 只要 ``success_once``、``success_at_end`` 或 ``success`` 任一为真即判成功；全程缺少这些键时，回退使用采集器维护的成功标志。
+
+   **在自定义脚本中包装环境**
+
+   将父目录传给 ``save_dir``\ （包装器自动创建格式子目录），结束时关闭环境以刷出剩余 episode：
+
+   .. code-block:: python
+
+      env = CollectEpisode(
+          env=base_env,
+          save_dir="./logs/run",
+          export_format="lerobot_dataset",   # 或 "pickle_episode"
+          robot_type="panda",
+          fps=10,
+          only_success=True,
+      )
+      env.close()   # 刷出最后一批 episode
