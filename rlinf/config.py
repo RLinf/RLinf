@@ -1444,6 +1444,7 @@ def validate_embodied_cfg(cfg):
     if not only_eval and algorithm_cfg.get("loss_type") == "embodied_refl":
         validate_refl_cfg(cfg)
     model_type = SupportedModel(model_cfg.model_type)
+    rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     if model_type == SupportedModel.ACTIVEVLN:
         if model_cfg.get("is_lora", False):
             raise ValueError(
@@ -1484,21 +1485,14 @@ def validate_embodied_cfg(cfg):
                 raise ValueError(
                     "ActiveVLN environment and algorithm group_size must match"
                 )
-        actor_backend = model_cfg.get("model_backend", "huggingface")
-        rollout_backend = cfg.rollout.get("generation_backend", "huggingface")
-        if actor_backend != "huggingface":
-            raise ValueError("ActiveVLN actor model_backend must be huggingface")
         if rollout_backend not in ("huggingface", "embodiinfer"):
             raise ValueError(
-                "ActiveVLN generation_backend must be huggingface or embodiinfer"
+                "ActiveVLN rollout.rollout_backend must be huggingface or embodiinfer"
             )
-        if (
-            not only_eval
-            and cfg.rollout.model.get("model_backend", actor_backend) != actor_backend
-        ):
+        if "model_backend" in model_cfg or "model_backend" in cfg.rollout.model:
             raise ValueError(
-                "Configure the actor in actor.model.model_backend and the rollout "
-                "engine in rollout.generation_backend"
+                "ActiveVLN uses a Hugging Face actor; select rollout.rollout_backend "
+                "instead of model.model_backend"
             )
         if not only_eval and not algorithm_cfg.get("recompute_logprobs", False):
             raise ValueError(

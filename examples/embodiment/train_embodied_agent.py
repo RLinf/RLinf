@@ -148,22 +148,19 @@ def main(cfg) -> None:
         from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
 
         rollout_worker_cls = PhyAIRolloutWorker
+    elif rollout_backend == "embodiinfer":
+        from rlinf.workers.rollout.embodiinfer.embodiinfer_worker import (
+            EmbodiInferRolloutWorker,
+        )
+
+        rollout_worker_cls = EmbodiInferRolloutWorker
     elif rollout_backend == "huggingface":
-        if cfg.rollout.get("generation_backend") == "embodiinfer":
-            from rlinf.workers.rollout.embodiinfer.embodiinfer_worker import (
-                EmbodiInferRolloutWorker,
-            )
+        from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
-            rollout_worker_cls = EmbodiInferRolloutWorker
-        else:
-            from rlinf.workers.rollout.hf.huggingface_worker import (
-                MultiStepRolloutWorker,
-            )
-
-            rollout_worker_cls = MultiStepRolloutWorker
+        rollout_worker_cls = MultiStepRolloutWorker
     else:
         raise ValueError(
-            "Expected rollout.rollout_backend 'huggingface' or 'phyai' for "
+            "Expected rollout.rollout_backend 'huggingface', 'embodiinfer', or 'phyai' for "
             f"embodied training, got {rollout_backend!r}."
         )
     rollout_group = rollout_worker_cls.create_group(cfg).launch(

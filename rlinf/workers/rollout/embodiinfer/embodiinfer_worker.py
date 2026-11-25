@@ -16,6 +16,7 @@ import copy
 
 from omegaconf import DictConfig, open_dict
 
+from rlinf.config import SupportedModel
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
@@ -24,7 +25,13 @@ from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 class EmbodiInferRolloutWorker(MultiStepRolloutWorker):
     """Use an in-process rollout policy with the shared weight-sync lifecycle."""
 
+    _supported_models = {SupportedModel.ACTIVEVLN}
+
     def _build_model(self, model_cfg: DictConfig) -> BasePolicy:
+        if SupportedModel(model_cfg.model_type) not in self._supported_models:
+            raise NotImplementedError(
+                f"No EmbodiInfer rollout adapter for model {model_cfg.model_type!r}"
+            )
         # Runtime selection belongs to the rollout; the actor config stays unchanged.
         runtime_cfg = copy.deepcopy(model_cfg)
         with open_dict(runtime_cfg):

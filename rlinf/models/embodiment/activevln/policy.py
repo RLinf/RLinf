@@ -90,18 +90,14 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
         max_new_tokens: int = 64,
         max_image_tokens: int = 2048,
         max_images: int = 32,
-        model_backend: str = "huggingface",
     ) -> None:
         super().__init__()
         if not 0 < max_new_tokens < max_context:
             raise ValueError("Expected 0 < max_new_tokens < max_context")
         if max_image_tokens < 1 or max_images < 1:
             raise ValueError("max_image_tokens and max_images must be positive")
-        if model_backend != "huggingface":
-            raise ValueError("ActiveVLN actor model_backend must be huggingface")
         self.core = core
         self.processor = processor
-        self.model_backend = model_backend
         self.max_context = max_context
         self.max_new_tokens = max_new_tokens
         self.max_images = max_images
@@ -120,9 +116,6 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
                 "ActiveVLN uses direct language-layer training; is_lora must be False"
             )
         options = cfg.activevln
-        backend = cfg.get("model_backend", "huggingface")
-        if backend != "huggingface":
-            raise ValueError("ActiveVLN actor model_backend must be huggingface")
         if cfg.num_action_chunks != 1 or cfg.action_dim != options.max_new_tokens:
             raise ValueError(
                 "ActiveVLN requires num_action_chunks=1 and action_dim=max_new_tokens"
@@ -156,7 +149,6 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
         return cls(
             core,
             processor,
-            model_backend=backend,
             max_context=options.max_context,
             max_new_tokens=options.max_new_tokens,
             max_image_tokens=options.max_image_tokens,

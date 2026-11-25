@@ -65,7 +65,7 @@ env:
     group_size: 1
 rollout:
   group_name: RolloutGroup
-  generation_backend: embodiinfer
+  rollout_backend: embodiinfer
   recompute_logprobs: False
   collect_final_values: False
   enable_offload: False

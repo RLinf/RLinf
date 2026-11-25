@@ -1,5 +1,4 @@
 model_type: activevln
-model_backend: huggingface
 model_path: /path/to/activevln
 precision: bf16
 load_to_device: True

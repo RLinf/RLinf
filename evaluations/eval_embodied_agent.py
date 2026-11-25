@@ -49,8 +49,7 @@ def main(cfg) -> None:
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
-    native_embodiinfer = cfg.rollout.get("generation_backend") == "embodiinfer"
-    if native_embodiinfer:
+    if rollout_backend == "embodiinfer":
         from rlinf.workers.rollout.embodiinfer.embodiinfer_worker import (
             EmbodiInferRolloutWorker,
         )
@@ -112,7 +111,7 @@ def main(cfg) -> None:
     )
 
     # launch the sglang server
-    if rollout_backend == "sglang" and not native_embodiinfer:
+    if rollout_backend == "sglang":
         from rlinf.workers.rollout.sglang import (
             launch_sglang_router_and_server,
         )
