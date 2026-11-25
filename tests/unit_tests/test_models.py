@@ -6290,6 +6290,8 @@ def test_phyai_http_example_uses_pi05_model_contract(monkeypatch):
     assert cfg.rollout.phyai.model_name == "pi05"
     assert cfg.rollout.model.openpi.task == "eval"
     assert "action_head_cfg" not in cfg.rollout.model
+
+
 def test_steam_gate_preserves_source_state_across_rebatching(tmp_path):
     from rlinf.algorithms.rlt.rlt_steam_critical_phase_gate import SteamRoutingGate
     from rlinf.algorithms.rlt.rlt_steam_phase_head import SteamPhaseHead
@@ -7361,6 +7363,8 @@ def test_embodied_router_grouped_transport_without_sglang(_http_router_scheduler
     assert calls == [[2], [0, 1]]
     assert actions[:, 0, 0].tolist() == [0.0, 1.0, 2.0]
     assert info["ids"].tolist() == [0, 1, 2]
+
+
 def test_rollout_model_path_inherits_from_actor():
     from rlinf.config import validate_rollout_cfg
 
