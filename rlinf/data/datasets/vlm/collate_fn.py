@@ -99,13 +99,11 @@ def collate_fn(data_list: list[Any]) -> dict[str, Any]:
     )
     batch_idx = torch.tensor([int(it.idx) for it in data_list], dtype=torch.long)
 
-    multi_modal_list = [
-        it.multi_modal_inputs for it in data_list if it.multi_modal_inputs is not None
-    ]
+    multi_modal_list = [it.multi_modal_inputs or {} for it in data_list]
     multi_modal_inputs = {}
     if multi_modal_list:
-        for key in multi_modal_list[0].keys():
-            vals = [m[key] for m in multi_modal_list]
+        for key in sorted(set().union(*multi_modal_list)):
+            vals = [m[key] for m in multi_modal_list if key in m]
             if key in ("pixel_values", "pixel_values_videos"):
                 # Keep per-sample tensors as a list; Qwen VL video/image
                 # processors emit variable-length vision tokens.
@@ -120,7 +118,8 @@ def collate_fn(data_list: list[Any]) -> dict[str, Any]:
                 # transformers >= 5 emits this; the model needs it to compute
                 # M-RoPE. Left-pad with 0 (text token) to match the prompts.
                 mm_type_ids = []
-                for v in vals:
+                for inputs in multi_modal_list:
+                    v = inputs.get(key, [])
                     t = (
                         v
                         if isinstance(v, torch.Tensor)

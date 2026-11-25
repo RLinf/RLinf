@@ -50,7 +50,7 @@ If the checkpoint uses a custom ``model_type`` registered only through
 """
 
 import os
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 
 import hydra
@@ -204,9 +204,7 @@ def _verify_openpi_rlt_conversion(
     if not _openpi_use_rlt(model_cfg):
         return
 
-    ckpt_keys = list(_normalize_state_dict_keys(dict(checkpoint_state_dict)).keys())
-    ckpt_rlt_keys = [key for key in ckpt_keys if key.startswith("rlt_module.")]
-    if not ckpt_rlt_keys:
+    if not any(key.startswith("rlt_module.") for key in checkpoint_state_dict):
         raise ValueError(
             "OpenPI use_rlt=True but checkpoint has no rlt_module.* weights. "
             "Train Stage1 with use_rlt enabled before converting."
@@ -269,18 +267,24 @@ def _extract_state_dict(checkpoint) -> Mapping:
     )
 
 
-def _normalize_state_dict_keys(state_dict: Mapping) -> dict:
-    normalized = {}
-    for key, value in state_dict.items():
-        if not torch.is_tensor(value):
+def _normalize_state_dict_keys(
+    state_dict: Mapping, target_keys: Collection[str]
+) -> dict:
+    """Use legacy aliases only when they match an unfilled model key."""
+    normalized = {
+        key: value for key, value in state_dict.items() if torch.is_tensor(value)
+    }
+    for key in tuple(normalized):
+        if key in target_keys:
             continue
 
-        name = key
-        for prefix in ("_orig_mod.", "module."):
-            if name.startswith(prefix):
-                name = name[len(prefix) :]
-        name = name.replace(".base_layer.", ".")
-        normalized[name] = value
+        name = key.removeprefix("_orig_mod.")
+        if name not in target_keys:
+            name = name.removeprefix("module.")
+        if name not in target_keys:
+            name = name.replace(".base_layer.", ".")
+        if name in target_keys and name not in normalized:
+            normalized[name] = normalized.pop(key)
     return normalized
 
 
@@ -347,7 +351,9 @@ def main(cfg) -> None:
     model = get_model(model_cfg)
 
     checkpoint = torch.load(cfg.convertor.ckpt_path, map_location="cpu")
-    model_dict = _normalize_state_dict_keys(_extract_state_dict(checkpoint))
+    model_dict = _normalize_state_dict_keys(
+        _extract_state_dict(checkpoint), model.state_dict().keys()
+    )
     strict_load = cfg.convertor.get("strict_load", True)
     missing_keys, unexpected_keys = model.load_state_dict(
         model_dict, strict=strict_load

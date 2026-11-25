@@ -92,6 +92,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             SupportedModel.QWEN2_5_VL_SFT,
             SupportedModel.QWEN3_VL_SFT,
             SupportedModel.QWEN3_VL_MOE_SFT,
+            SupportedModel.QWEN3_5_SFT,
         ]:
             from torch.utils.data import DataLoader, DistributedSampler
 

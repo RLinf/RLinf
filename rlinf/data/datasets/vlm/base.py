@@ -48,9 +48,6 @@ class VLMBaseDataset(Dataset):
         super().__init__()
         self.cfg = config
         self.eval_dataset = eval_dataset
-        raw_paths = [data_paths] if isinstance(data_paths, str) else list(data_paths)
-        # Expand directories into file lists recursively (json/jsonl/parquet)
-        self.data_paths = self._expand_data_paths(raw_paths)
         self.tokenizer = tokenizer
         # Delay processor creation; only needed when use_chat_template is True
         self._processor = None
@@ -65,9 +62,14 @@ class VLMBaseDataset(Dataset):
         self.max_prompt_length = int(config.data.max_prompt_length)
         self.eos_id = int(self.tokenizer.eos_token_id)
 
-        # Loading mode
-        self.lazy_loading = bool(getattr(config.data, "lazy_loading", False))
+        self._load_data_files(data_paths, config.data.get("lazy_loading", False))
 
+    def _load_data_files(
+        self, data_paths: Union[list[str], str], lazy_loading: bool
+    ) -> None:
+        raw_paths = [data_paths] if isinstance(data_paths, str) else list(data_paths)
+        self.data_paths = self._expand_data_paths(raw_paths)
+        self.lazy_loading = bool(lazy_loading)
         self._records = []
         self._indices = []  # (path, fmt, row_index_or_offset)
 
@@ -279,7 +281,9 @@ class VLMBaseDataset(Dataset):
 
     def _eager_load_all(self) -> None:
         merged: list[dict[str, Any]] = []
+        self._indices.clear()
         for path in tqdm(self.data_paths, desc="Loading dataset files", unit="file"):
+            start = len(merged)
             fmt = os.path.splitext(path)[1].lower()
             if fmt == ".jsonl":
                 with open(path, "r", encoding="utf-8") as f:
@@ -298,9 +302,8 @@ class VLMBaseDataset(Dataset):
                     raise RuntimeError(f"Failed to load parquet eagerly: {path}: {e}")
             else:
                 logger.warning(f"Unsupported format {fmt} for path {path}, skipping.")
+            self._indices.extend((path, "eager", i) for i in range(start, len(merged)))
         self._records = merged
-        # Build indices for consistency
-        self._indices = [("", "eager", i) for i in range(len(self._records))]
 
     def _build_parquet_rg_bounds(self, pf, path: str) -> list[tuple[int, int, int]]:
         """Build and cache row-group boundaries for a parquet file."""

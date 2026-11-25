@@ -1014,6 +1014,87 @@ class _DummyFSDPModel(torch.nn.Module):
         self.head._fsdp_wrap_name = "custom_head"
 
 
+def test_qwen3_5_loads_multimodal_checkpoint(tmp_path):
+    pytest.importorskip("transformers.models.qwen3_5")
+    from transformers import Qwen3_5Config, Qwen3_5ForConditionalGeneration
+
+    config = Qwen3_5Config(
+        text_config={
+            "vocab_size": 64,
+            "hidden_size": 32,
+            "intermediate_size": 64,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "head_dim": 8,
+            "layer_types": ["full_attention"],
+        },
+        vision_config={
+            "depth": 1,
+            "hidden_size": 32,
+            "intermediate_size": 64,
+            "num_heads": 4,
+            "out_hidden_size": 32,
+            "num_position_embeddings": 16,
+        },
+    )
+    reference = Qwen3_5ForConditionalGeneration(config)
+    reference.save_pretrained(tmp_path)
+    cfg = OmegaConf.create(
+        {
+            "model_type": "qwen3_5",
+            "model_path": str(tmp_path),
+            "precision": "bf16",
+            "is_lora": False,
+            "load_to_device": False,
+        }
+    )
+
+    model = get_model(cfg)
+
+    assert isinstance(model, Qwen3_5ForConditionalGeneration)
+    assert model.device.type == "cpu"
+    torch.testing.assert_close(
+        model.get_input_embeddings().weight,
+        reference.get_input_embeddings().weight.bfloat16(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({}, {"block.proj"}),
+        ({"lora_target_modules": ["proj", "head"]}, {"block.proj", "head"}),
+        (
+            {"lora_target_modules": r"head$", "lora_target_scope": "all_linear"},
+            {"head"},
+        ),
+    ],
+)
+def test_lora_target_modules(options, expected):
+    pytest.importorskip("peft")
+    model_type = "test_lora_targets"
+    register_model(model_type, lambda cfg, dtype: _DummyFSDPModel(), force=True)
+    cfg = OmegaConf.create(
+        {
+            "model_type": model_type,
+            "precision": "fp32",
+            "load_to_device": False,
+            "is_lora": True,
+            "lora_rank": 2,
+            **options,
+        }
+    )
+
+    model = get_model(cfg)
+    trainable_layers = {
+        name
+        for name in ("block.proj", "head")
+        if any(p.requires_grad for p in model.get_submodule(name).parameters())
+    }
+    assert trainable_layers == expected
+
+
 def test_custom_model_registration_smoke():
     model_type = f"custom_model_smoke_{int(time.time() * 1000)}"
     received = {"torch_dtype": None}

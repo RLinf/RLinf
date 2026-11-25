@@ -1,0 +1,52 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+defaults:
+  - qwen3_vl_sft_vlm
+  - _self_
+
+runner:
+  experiment_name: qwen3_8_27b_rpent_sft
+  max_epochs: 1
+  max_steps: -1
+  val_check_interval: -1
+
+data:
+  dataset_name: rpent_planner_sft
+  train_data_paths: ${oc.env:RPENT_SAMPLES_PATH}
+  val_data_paths: null
+  max_prompt_length: 65536
+  num_workers: 0
+
+actor:
+  micro_batch_size: 1
+  global_batch_size: 8
+  model:
+    # Qwen3.8-27B uses the Transformers qwen3_5 multimodal architecture.
+    model_type: qwen3_5
+    model_path: ${oc.env:QWEN3_8_MODEL_PATH,Qwen/Qwen3.8-27B}
+    precision: bf16
+    load_to_device: false
+    lora_rank: 16
+    lora_target_modules: >-
+      (?x)model\.language_model\.layers\.\d+\.
+      (self_attn\.(q|k|v|o)_proj
+      |linear_attn\.(in_proj_(qkv|z|a|b)|out_proj)
+      |mlp\.(gate|up|down)_proj)
+  fsdp_config:
+    gradient_checkpointing: true
+    gradient_checkpointing_use_reentrant: false
+  optim:
+    total_training_steps: null
+    lr_warmup_steps: 0

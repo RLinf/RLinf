@@ -5151,6 +5151,93 @@ def test_rollout_terminal_values_preserve_observations_and_routes(batch_bootstra
     assert completed[2].final_prev_values.tolist() == [[4.0], [6.0]]
 
 
+@pytest.mark.parametrize("lazy_loading", [False, True])
+def test_rpent_planner_reads_each_chat_with_its_own_images(
+    tmp_path, lazy_loading, monkeypatch
+):
+    from transformers import AutoProcessor
+
+    from rlinf.workers.sft.fsdp_vlm_sft_worker import FSDPVlmSftWorker
+
+    image = {"type": "image", "artifact": {"path": "images/scene.png"}}
+    text = {"type": "text", "text": "second view"}
+    calls = [
+        {"id": "a", "name": "look", "arguments": {"view": 2}},
+        {"id": "b", "name": "look", "arguments": {"view": 1}},
+    ]
+    tool = {"name": "look", "description": "Look around"}
+    schema = {"type": "object"}
+    row = {
+        "turn_id": "P2",
+        "tools": [{**tool, "input_schema": schema}],
+        "messages": [
+            {"role": "user", "content": [text]},
+            {"role": "assistant", "content": [], "tool_calls": calls[:1]},
+            {"role": "tool", "tool_call_id": "a", "content": [image, text, image]},
+        ],
+        "target": {"role": "assistant", "content": [], "tool_calls": calls},
+    }
+    paths = []
+    for episode in ("one", "two"):
+        manifest = tmp_path / episode / "samples.jsonl"
+        manifest.parent.mkdir()
+        manifest.write_text(json.dumps({**row, "episode_id": episode}) + "\n")
+        paths.append(str(manifest))
+
+    def encode(messages, *, add_generation_prompt, enable_thinking, tools, **kwargs):
+        assert not enable_thinking
+        assert tools == [
+            {"type": "function", "function": {**tool, "parameters": schema}}
+        ]
+        if add_generation_prompt:
+            assert messages[-1]["role"] == "tool"
+            ids = torch.tensor([[1, 2]])
+        else:
+            assert messages[-1]["role"] == "assistant"
+            ids = torch.tensor([[1, 2, 50, 51, 90, 10]])
+        return {"input_ids": ids, "attention_mask": torch.ones_like(ids)}
+
+    processor = Mock()
+    processor.apply_chat_template.side_effect = encode
+    processor.tokenizer.eos_token = "<|im_end|>"
+    processor.tokenizer.encode.return_value = [90, 10]
+    monkeypatch.setattr(AutoProcessor, "from_pretrained", lambda path: processor)
+    worker = object.__new__(FSDPVlmSftWorker)
+    worker.cfg = OmegaConf.create(
+        {
+            "data": {
+                "type": "vlm",
+                "dataset_name": "rpent_planner_sft",
+                "lazy_loading": lazy_loading,
+                "max_prompt_length": 64,
+                "num_workers": 0,
+            },
+            "actor": {
+                "model": {"model_type": "qwen3_5", "model_path": "test-processor"}
+            },
+        }
+    )
+    worker.micro_batch_size = 1
+    worker.tokenizer = processor.tokenizer
+    loader, _ = worker.build_dataloader(paths)
+
+    for item, path in zip(loader.dataset, paths, strict=True):
+        assert item.prompt[~item.label_mask].tolist() == [50, 51]
+        _, history, observation, target = item.prompt_text["messages"]
+        view = {"type": "image", "image": str(Path(path).parent / "images/scene.png")}
+        assert observation["content"] == [view, text, view]
+        assert observation["tool_call_id"] == history["tool_calls"][0]["id"] == "a"
+        assert target["content"] == []
+        assert target["tool_calls"] == [
+            {
+                "type": "function",
+                "id": call["id"],
+                "function": {"name": call["name"], "arguments": call["arguments"]},
+            }
+            for call in calls
+        ]
+
+
 @pytest.mark.parametrize("use_chat_template", [False, True])
 def test_vlm_trend_sft_uses_inference_prefix_without_trailing_assistant(
     use_chat_template,
@@ -5322,6 +5409,22 @@ def test_vlm_collate_stacks_mm_token_type_ids_without_padding():
     assert mm_ids.shape == (2, 5)
     assert torch.equal(mm_ids[0], torch.tensor([0, 1, 1, 0, 0]))
     assert torch.equal(mm_ids[1], torch.tensor([0, 0, 1, 1, 0]))
+
+
+def test_vlm_collate_keeps_images_in_mixed_batches():
+    from rlinf.data.datasets.vlm.collate_fn import collate_fn
+
+    text = _vlm_sft_sample(0, 3, [0, 0, 0])
+    text.multi_modal_inputs = {}
+    image = _vlm_sft_sample(1, 5, [0, 1, 1, 0, 0])
+    mm = collate_fn([text, image])["multi_modal_inputs"]
+    torch.testing.assert_close(
+        mm["pixel_values"], [image.multi_modal_inputs["pixel_values"]]
+    )
+    torch.testing.assert_close(
+        mm["image_grid_thw"], image.multi_modal_inputs["image_grid_thw"]
+    )
+    assert mm["mm_token_type_ids"].tolist() == [[0] * 5, [0, 1, 1, 0, 0]]
 
 
 def test_vlm_collate_still_rejects_unknown_mm_keys():
