@@ -129,6 +129,52 @@ For SFT tasks:
 When ``actor.megatron.mbridge`` is ``True``, RLinf reads the model path from
 ``actor.model.model_path`` and lets MBridge build the Megatron model provider.
 
+Configure Qwen3.5 RL Tasks
+--------------------------
+
+For Qwen3.5 Dense models, use the SGLang 0.5.12.post1 agentic environment described above, which includes FLA. See :doc:`../guides/version` for engine version selection. The checkpoint configuration must declare ``Qwen3_5ForConditionalGeneration``; both actor and rollout need access to the full checkpoint, including tokenizer and processor files.
+
+Merge this fragment into an existing Megatron/SGLang RL task. Replace all three ``<checkpoint>`` values with the same local directory. Set the optimizer precision explicitly when adapting an FP16 task.
+
+.. code-block:: yaml
+
+   actor:
+     training_backend: megatron
+     model:
+       model_type: qwen3_5
+       precision: bf16
+     optim:
+       bf16: true
+       fp16: false
+     tokenizer:
+       tokenizer_model: <checkpoint>
+     megatron:
+       mbridge: true
+       use_hf_ckpt: true
+       ckpt_convertor:
+         hf_model_path: <checkpoint>
+   rollout:
+     rollout_backend: sglang
+     model:
+       model_type: qwen3_5
+       model_path: <checkpoint>
+       precision: bf16
+
+To train MTP and enable NEXTN speculative decoding, set ``actor.model.load_mtp: true``. The draft uses the MTP branch from the same checkpoint; external draft checkpoints are not supported. MTP adds a prediction loss on response tokens whose gradients also update the language model backbone. Monitor the unscaled loss with ``actor/mtp_loss`` and adjust its contribution with ``actor.model.mtp_loss_scaling_factor``.
+
+To replicate the vision encoder across rollout ranks, set ``rollout.sglang.mm_enable_dp_encoder: true``; otherwise it uses tensor parallelism. This example uses attention TP 2, feed-forward TP 4, and vision TP 1:
+
+.. code-block:: yaml
+
+   rollout:
+     tensor_parallel_size: 4
+     sglang:
+       enable_dp_attention: true
+       dp_size: 2
+       mm_enable_dp_encoder: true
+
+Keep ``rollout.pipeline_parallel_size: 1`` for SGLang. Actor tensor, pipeline, and virtual pipeline parallelism can differ from rollout parallelism. See :doc:`../guides/5D` for Megatron parallelism settings and :doc:`../concepts/placement` for GPU placement.
+
 Quick Start
 -----------
 
@@ -299,3 +345,6 @@ Qwen3-VL fails with a ``deepstack_visual_indexes`` assertion
   contain all ``deepstack_visual_indexes``. If you are using a reduced-layer
   checkpoint, also verify that the visual deepstack configuration matches the
   number of language model layers.
+
+Check Qwen3.5 initial loading
+  For a fresh run, set ``rollout.validate_weight_first_sync: true`` to compare received weight norms against the checkpoint within a tolerance, including the MTP draft if enabled. Each rollout rank should log ``sglang: validate_weight success``. RLinf skips this check when resuming from a training checkpoint. Remove the setting after validation to avoid loading rollout weights from disk before synchronization.
