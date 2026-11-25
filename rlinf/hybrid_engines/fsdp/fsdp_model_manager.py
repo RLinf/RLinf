@@ -789,11 +789,15 @@ class FSDPModelManager:
             for name, tensor in bucket.items():
                 if isinstance(tensor, DTensor):
                     tensor = tensor.full_tensor()
+                if not dst_ranks:
+                    continue
                 if dtype is not None:
                     tensor = tensor.to(dtype)
                 if cpu_offload:
                     tensor = tensor.cpu()
                 buffer[name] = reduce_tensor(tensor) if use_cuda_ipc else tensor
+            if not dst_ranks:
+                continue
             if index == 0:
                 buffer["bucket_length"] = torch.tensor(
                     [len(buckets)], device="cpu" if cpu_offload else self.device

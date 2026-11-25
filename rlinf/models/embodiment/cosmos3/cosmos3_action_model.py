@@ -349,8 +349,8 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
         if clean.x0_tokens_action[0].shape[0] != horizon or raw_dim > model_dim:
             raise ValueError("Cosmos3 action shape does not match rollout config")
         action_width = horizon * model_dim
-        cond_mask[:, -action_width:].reshape(n, horizon, model_dim)[:, :, raw_dim:] = 1
-        ref[:, -action_width:].reshape(n, horizon, model_dim)[:, :, raw_dim:] = 0
+        cond_mask[:, -action_width:].view(n, horizon, model_dim)[..., raw_dim:].fill_(1)
+        ref[:, -action_width:].view(n, horizon, model_dim)[..., raw_dim:].zero_()
         x = cond_mask * ref + (1 - cond_mask) * x
         times = shifted_timesteps(steps, shift, self.device)
         noise_level = float(self._option("noise_level", 0.5))

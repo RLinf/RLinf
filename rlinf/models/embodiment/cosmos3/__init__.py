@@ -37,8 +37,6 @@ from rlinf.models.embodiment.cosmos3.checkpoint_loader import (
 from rlinf.models.embodiment.cosmos3.cosmos3_action_model import Cosmos3ActionModel
 from rlinf.models.embodiment.cosmos3.cosmos3_config import (
     build_cosmos3_config,
-)
-from rlinf.models.embodiment.cosmos3.cosmos3_config import (
     cosmos_framework_root,
 )
 from rlinf.models.embodiment.cosmos3.cosmos3_policy import Cosmos3Policy

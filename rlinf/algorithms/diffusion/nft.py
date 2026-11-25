@@ -82,16 +82,6 @@ def init_nft_ema_state(
     return result
 
 
-def export_nft_ema_state(
-    state: Mapping[str, Any], dtypes: Mapping[str, torch.dtype]
-) -> dict[str, Any]:
-    """Cast EMA weights for reference inference and weight-sync wire formats."""
-    return {
-        name: value.to(dtype=dtypes[name]) if torch.is_tensor(value) else value
-        for name, value in state.items()
-    }
-
-
 @torch.no_grad()
 def update_nft_ema(
     rollout_state: dict[str, Any], current_state: Mapping[str, Any], tau: float

@@ -20,7 +20,6 @@ import torch
 from rlinf.algorithms.diffusion.nft import (
     build_nft_schedule,
     compute_nft_loss,
-    export_nft_ema_state,
     get_nft_tau,
     init_nft_ema_state,
     nft_requires_ema,
@@ -189,9 +188,7 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
     def get_rollout_state_dict(self) -> dict:
         """Return EMA cache when tau<1, otherwise defer to the on-policy parent behavior."""
         if self._get_current_nft_tau() < 1.0:
-            return export_nft_ema_state(
-                self.rollout_model_state_dict, self._rollout_state_dtypes
-            )
+            return self.rollout_model_state_dict
         return super().get_rollout_state_dict()
 
     def soft_update_rollout_model(self) -> None:
