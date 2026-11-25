@@ -1,0 +1,20 @@
+defaults:
+  - train_qwen3.5_4b_episode_sync_ppo
+  - _self_
+
+runner:
+  task_type: reasoning_eval
+  # Evaluation loads fixed HF weights without actor synchronization.
+  synchronous: false
+  experiment_name: rpent-episode-qwen3.5-4b-eval
+  max_epochs: 1
+  max_steps: -1
+
+data:
+  train_data_paths: null
+  val_data_paths: ???
+  val_rollout_batch_size: 60
+
+rollout:
+  return_logprobs: false
+  validate_weight_first_sync: false

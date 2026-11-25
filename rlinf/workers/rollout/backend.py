@@ -92,12 +92,15 @@ class RolloutBackend(ABC):
         """Generate for a batch of prompts, given as text or as token ids."""
 
     @abstractmethod
-    async def sync_weights(self, pause_mode: Optional[str] = None) -> None:
+    async def sync_weights(
+        self, pause_mode: Optional[str] = None, weight_version: Optional[int] = None
+    ) -> None:
         """Pull the latest weights from the actor side.
 
         `pause_mode` is the rollout's current pause mode during async
         training (None when not paused, i.e. the synchronous path); backends
         pass it to the scheduler so it can handle caches accordingly.
+        ``weight_version`` labels tokens only after the weights are installed.
         """
 
     @abstractmethod

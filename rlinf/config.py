@@ -98,6 +98,7 @@ SupportedModel.QWEN2_5 = SupportedModel.register("qwen2.5", force=True)
 SupportedModel.QWEN2_5_VL = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3 = SupportedModel.register("qwen3", force=True)
 SupportedModel.QWEN3_VL = SupportedModel.register("qwen3_vl", force=True)
+SupportedModel.QWEN3_5 = SupportedModel.register("qwen3_5", force=True)
 SupportedModel.QWEN3_MOE = SupportedModel.register("qwen3_moe", force=True)
 SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
@@ -322,6 +323,68 @@ def _inherit_rollout_model_path(
                 rollout_model.model_path = actor_model_path
 
 
+def shared_multi_modal_processor_enabled(cfg: DictConfig | dict | None) -> bool:
+    """Read the SGLang config switch, accepting legacy saved configurations."""
+    if cfg is None:
+        return False
+    current = "enable_shared_multi_modal_processor"
+    legacy = "enable_token_space_processor"
+    if current in cfg and legacy in cfg:
+        raise ValueError(
+            f"rollout.sglang contains both {current} and {legacy}; keep only {current}."
+        )
+    key = legacy if legacy in cfg else current
+    enabled = cfg.get(key, False)
+    if type(enabled) is not bool:
+        raise ValueError(f"rollout.sglang.{key} must be a boolean, got {enabled!r}.")
+    return enabled
+
+
+def release_image_replay_enabled(rollout: DictConfig | dict | None) -> bool:
+    """Select image capture from the rollout configuration on every worker."""
+    return (
+        rollout is not None
+        and shared_multi_modal_processor_enabled(rollout.get("sglang"))
+        and rollout.get("env_vars", {}).get("SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE")
+        == "rlinf.hybrid_engines.sglang.multimodal"
+    )
+
+
+def validate_sglang_multimodal_cfg(cfg: DictConfig) -> None:
+    """Check multimodal options supported by the default serving worker."""
+    shared_processor = shared_multi_modal_processor_enabled(cfg)
+    serving_mode = cfg.get("serving_mode")
+    cache_enabled = cfg.get("enable_token_space_preprocess_cache", False)
+    cache_directory = cfg.get("token_space_preprocess_cache_dir")
+    check_rate = cfg.get("token_space_preprocess_cache_check_rate", 0.0)
+    if cache_enabled:
+        if (
+            serving_mode is not None
+            or not shared_processor
+            or not cfg.get("token_space_preprocess_cache_trust_url", False)
+            or not cache_directory
+            or not os.path.isabs(cache_directory)
+        ):
+            raise ValueError(
+                "Shared preprocessing cache requires the default SGLang worker, "
+                "enable_shared_multi_modal_processor=True, "
+                "token_space_preprocess_cache_trust_url=True and an absolute "
+                "token_space_preprocess_cache_dir visible to rollout and learners."
+            )
+    elif cache_directory is not None or check_rate:
+        raise ValueError(
+            "Set enable_token_space_preprocess_cache=True to use "
+            "token_space_preprocess_cache_dir or token_space_preprocess_cache_check_rate."
+        )
+    if check_rate is not None and (
+        type(check_rate) not in (int, float) or not 0 <= check_rate <= 1
+    ):
+        raise ValueError(
+            "token_space_preprocess_cache_check_rate must be between 0 and 1, "
+            f"got {check_rate!r}."
+        )
+
+
 def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
     SupportedModel(cfg.model.model_type)  # To validate model_type is supported
 
@@ -347,6 +410,7 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
             f"backend_type=server; the server backend is only implemented for "
             f"the default serving worker (leave serving_mode unset)."
         )
+        validate_sglang_multimodal_cfg(cfg)
         return cfg
 
     def validate_vllm_cfg(cfg):
@@ -383,6 +447,20 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         assert cfg.rollout_backend in SUPPORTED_ROLLOUT_BACKENDS, (
             f"rollout_backend must be one of {SUPPORTED_ROLLOUT_BACKENDS}."
         )
+        if cfg.get("replica_affinity", False):
+            assert cfg.rollout_backend == "sglang", (
+                "rollout.replica_affinity requires the SGLang backend, "
+                f"got {cfg.rollout_backend!r}."
+            )
+        if (
+            cfg.model.model_type == "qwen3_5"
+            and actor_cfg is not None
+            and actor_cfg.get("training_backend") == "megatron"
+        ):
+            load_mtp = actor_cfg.model.get("load_mtp", True)
+            assert isinstance(load_mtp, bool), (
+                f"actor.model.load_mtp must be a boolean, got {load_mtp!r}."
+            )
         cfg.return_logprobs = cfg.return_logprobs or algorithm_cfg.get(
             "importance_sampling_fix", False
         )
@@ -444,6 +522,8 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         or "Qwen3MoeForCausalLM" in hf_config.architectures
         or "Qwen3VLForConditionalGeneration" in hf_config.architectures
         or "Qwen3VLMoeForConditionalGeneration" in hf_config.architectures
+        or "Qwen3_5ForConditionalGeneration" in hf_config.architectures
+        or "Qwen3_5ForCausalLM" in hf_config.architectures
     ):
         qk_layernorm = True
     else:
@@ -461,7 +541,9 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             # reported as rope_scaling=None and so left this untouched.
             cfg.model.seq_len_interpolation_factor = None
         model_type = getattr(cfg.model, "model_type", None)
-        if model_type == "qwen3_vl" or model_type == "qwen3_vl_moe":
+        if model_type in ("qwen3_vl", "qwen3_vl_moe", "qwen3_5") and hasattr(
+            hf_config, "text_config"
+        ):
             # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
             hf_config = hf_config.text_config
 
@@ -488,6 +570,19 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         )
         if cfg.model.head_dim is not None:
             cfg.model.kv_channels = cfg.model.head_dim
+
+        if model_type == "qwen3_5":
+            # Gated attention and Gated DeltaNet sizes that the rollout weight
+            # conversion splits by.
+            cfg.model.attention_output_gate = hf_config.attn_output_gate
+            for key in (
+                "linear_conv_kernel_dim",
+                "linear_key_head_dim",
+                "linear_value_head_dim",
+                "linear_num_key_heads",
+                "linear_num_value_heads",
+            ):
+                cfg.model[key] = getattr(hf_config, key)
 
         # MoE model
         cfg.model.num_moe_experts = getattr(hf_config, "num_experts", None)
@@ -697,6 +792,8 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
 
 def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
+    if "data" in cfg and "sampling_batch_size" in cfg.data:
+        sampling_batch_size(cfg)
 
     with open_dict(cfg):
         cfg.mcore_gpt = cfg.get("mcore_gpt", True)
@@ -2307,6 +2404,21 @@ def _validate_steam_ensemble_cfg(actor_cfg: DictConfig) -> None:
 
 
 def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
+    logprob_chunk_size = cfg.actor.get("logprob_chunk_size", 0)
+    if type(logprob_chunk_size) is not int or logprob_chunk_size < 0:
+        raise ValueError("actor.logprob_chunk_size must be a nonnegative integer")
+    if logprob_chunk_size and (
+        cfg.actor.training_backend != "megatron"
+        or not OmegaConf.select(
+            cfg, "agentloop.is_dynamic_rollout_batch", default=False
+        )
+        or cfg.algorithm.get("calculate_entropy", False)
+        or cfg.algorithm.get("entropy_bonus", 0) != 0
+    ):
+        raise ValueError(
+            "actor.logprob_chunk_size requires a dynamic Megatron agent batch "
+            "with entropy calculation disabled"
+        )
     assert cfg.algorithm.recompute_logprobs or cfg.rollout.return_logprobs, (
         "One of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
     )
@@ -2346,6 +2458,125 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
             cfg.rollout, cfg.algorithm, cfg.get("actor", None)
         )
     return cfg
+
+
+def validate_qwen_vl_chunked_cfg(cfg) -> int:
+    """Validate the experimental Qwen3.5 Actor mode before model initialization."""
+    size = cfg.actor.model.get("lm_head_chunk_size", 0)
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        raise ValueError(
+            f"actor.model.lm_head_chunk_size must be a nonnegative integer, got {size!r}"
+        )
+    if size == 0:
+        return 0
+    if cfg.actor.get("training_backend") != "megatron" or not OmegaConf.select(
+        cfg, "agentloop.is_dynamic_rollout_batch", default=False
+    ):
+        raise ValueError(
+            "Chunked LM-head scoring requires a dynamic-batch Megatron Actor"
+        )
+    if (
+        not cfg.actor.megatron.get("mbridge", False)
+        or cfg.actor.model.model_type != "qwen3_5"
+    ):
+        raise ValueError("Qwen-VL chunked scoring requires MBridge Qwen3.5")
+    if (
+        cfg.actor.model.pipeline_model_parallel_size != 1
+        or cfg.actor.model.get("context_parallel_size", 1) != 1
+    ):
+        raise ValueError("Qwen-VL chunked scoring currently requires PP1 and CP1")
+    if cfg.algorithm.calculate_entropy and cfg.algorithm.entropy_bonus != 0:
+        raise ValueError(
+            "Qwen-VL chunked scoring supports entropy metrics only; entropy_bonus must be zero"
+        )
+    if cfg.actor.model.get("load_mtp", False):
+        raise ValueError("Qwen-VL chunked scoring requires actor.model.load_mtp=False")
+    for option in (
+        "fp8",
+        "mtp_num_layers",
+        "defer_embedding_wgrad_compute",
+        "use_mup",
+        "enable_autocast",
+    ):
+        if cfg.actor.model.get(option, None):
+            raise ValueError(
+                f"Qwen-VL chunked scoring does not support actor.model.{option}"
+            )
+    temperature = cfg.algorithm.sampling_params.temperature
+    if not math.isfinite(temperature) or temperature <= 0:
+        raise ValueError(
+            "Qwen-VL chunked scoring requires a finite positive temperature"
+        )
+    return size
+
+
+def sampling_batch_size(cfg: DictConfig) -> int:
+    """Return the candidate count without changing the effective learner batch."""
+    effective = cfg.data.rollout_batch_size
+    candidates = cfg.data.get("sampling_batch_size", effective)
+    if type(candidates) is not int or candidates < effective:
+        raise ValueError(
+            "data.sampling_batch_size must be an integer >= "
+            f"data.rollout_batch_size={effective}, got {candidates!r}."
+        )
+    if candidates == effective:
+        return candidates
+    if cfg.runner.task_type != "reasoning" or not cfg.runner.get("synchronous", False):
+        raise ValueError(
+            "Oversampling requires synchronous agent PPO; asynchronous and "
+            "evaluation runs must use sampling_batch_size=rollout_batch_size."
+        )
+    if (
+        cfg.algorithm.get("max_num_gen_batches", 1) != 1
+        or not cfg.agentloop.get("is_dynamic_rollout_batch", False)
+        or cfg.rollout.rollout_backend != "sglang"
+    ):
+        raise ValueError(
+            "Synchronous oversampling requires "
+            "max_num_gen_batches=1, a multi-turn agent loop and SGLang rollout."
+        )
+    return candidates
+
+
+def validate_agent_ppo_cfg(cfg: DictConfig, task: str) -> None:
+    """Check the settings synchronous agent PPO (``AgentPPORunner``) relies on.
+
+    Args:
+        cfg: The full run config.
+        task: Task name used in error messages.
+    """
+    if not cfg.runner.get("synchronous", False):
+        raise ValueError(f"{task} PPO requires runner.synchronous=True.")
+    if (
+        cfg.actor.training_backend != "megatron"
+        or cfg.critic.training_backend != "megatron"
+        or cfg.rollout.rollout_backend != "sglang"
+    ):
+        raise ValueError(
+            f"{task} PPO requires Megatron actor/critic and SGLang rollout."
+        )
+    if (
+        cfg.algorithm.adv_type != "actor_gae"
+        or cfg.algorithm.kl_beta != 0
+        or cfg.algorithm.get("reinpp_kl_beta", 0) != 0
+    ):
+        raise ValueError(
+            f"{task} PPO requires actor_gae and zero KL reward/loss coefficients."
+        )
+    if cfg.algorithm.group_size != 1:
+        raise ValueError(f"{task} PPO requires algorithm.group_size=1.")
+    if cfg.algorithm.get("loss_agg_func", "token-mean") != "token-mean":
+        raise ValueError(f"{task} PPO requires algorithm.loss_agg_func=token-mean.")
+    if not cfg.algorithm.get("use_valid_token_scale", False):
+        raise ValueError(f"{task} PPO requires algorithm.use_valid_token_scale=True.")
+    if cfg.algorithm.get("loss_scales", []):
+        raise ValueError(f"{task} PPO requires uniform action-token loss weights.")
+    for role in ("actor", "critic"):
+        if (
+            cfg[role].model.pipeline_model_parallel_size != 1
+            or cfg[role].model.get("context_parallel_size", 1) != 1
+        ):
+            raise ValueError(f"Synchronous {task} PPO currently requires PP=CP=1.")
 
 
 def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
@@ -2416,6 +2647,10 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
         )
 
     if cfg.critic.get("use_critic_model", False):
+        if cfg.algorithm.adv_type == "actor_gae":
+            # Whole-batch targets also support the shared/separate GPU recipes.
+            validate_agent_ppo_cfg(cfg, "SearchR1")
+            return cfg
         if not cfg.runner.get("synchronous", False):
             raise ValueError("SearchR1 PPO requires runner.synchronous=True.")
         if (
@@ -2426,9 +2661,10 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             raise ValueError(
                 "SearchR1 PPO requires Megatron actor/critic and SGLang rollout."
             )
-        if "sglang" not in cfg.rollout:
-            cfg.rollout.sglang = {}
-        cfg.rollout.sglang.setdefault("backend_type", "server")
+        with open_dict(cfg.rollout):
+            if "sglang" not in cfg.rollout:
+                cfg.rollout.sglang = {}
+            cfg.rollout.sglang.setdefault("backend_type", "server")
         if (
             cfg.algorithm.adv_type != "gae_dynamic"
             or cfg.algorithm.kl_beta != 0
@@ -2896,6 +3132,36 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def validate_multimodal_learner_cfg(cfg: DictConfig) -> None:
+    """Validate per-rank image cache and prefetch budgets for agent learners."""
+    for role in ("actor", "critic"):
+        multimodal = (cfg.get(role) or {}).get("multimodal") or {}
+        for field in ("cache_bytes", "prefetch_batches", "prefetch_bytes"):
+            value = multimodal.get(field, 0)
+            if type(value) is not int or value < 0:
+                raise ValueError(
+                    f"{role}.multimodal.{field} must be a nonnegative integer, "
+                    f"got {value!r}."
+                )
+        if multimodal.get("prefetch_batches", 0) and (
+            not multimodal.get("prefetch_bytes", 0)
+            or not shared_multi_modal_processor_enabled(
+                OmegaConf.select(cfg, "rollout.sglang")
+            )
+        ):
+            raise ValueError(
+                f"{role}.multimodal prefetch requires enable_shared_multi_modal_processor=True "
+                "and positive prefetch_bytes per learner rank."
+            )
+
+
+def validate_rpent_cfg(cfg: DictConfig) -> DictConfig:
+    """Validate RPent configuration through the integration-owned validator."""
+    from rlinf.agents.rpent.config_validation import validate_rpent_cfg as validate
+
+    return validate(cfg)
+
+
 def validate_reasoning_eval_cfg(cfg: DictConfig) -> DictConfig:
     session_cfg = cfg.get("session_server", None)
     if session_cfg is not None and session_cfg.get("enable", False):
@@ -3066,7 +3332,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_coding_online_rl_cfg(cfg)
     elif cfg.runner.task_type == "reasoning_eval":
         cfg = validate_reasoning_eval_cfg(cfg)
-        return cfg
+        return validate_rpent_cfg(cfg)
     elif cfg.runner.task_type == "sft":
         cfg = validate_sft_cfg(cfg)
     elif cfg.runner.task_type == "offline":
@@ -3127,7 +3393,10 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             cfg.critic = validate_fsdp_cfg(cfg.critic)
 
     if cfg.runner.task_type == "reasoning":
+        validate_qwen_vl_chunked_cfg(cfg)
         cfg = validate_searchr1_cfg(cfg)
+        cfg = validate_rpent_cfg(cfg)
+        validate_multimodal_learner_cfg(cfg)
 
     cfg = validate_session_server_cfg(cfg)
     return cfg
@@ -3331,6 +3600,16 @@ def build_transformer_config(cfg) -> "TransformerConfig":
                 model_parallel_config, field.name
             )
 
+    if isinstance(transformer_config_dict.get("attention_backend"), str):
+        from megatron.core.transformer.enums import AttnBackend
+
+        backend = transformer_config_dict["attention_backend"]
+        try:
+            transformer_config_dict["attention_backend"] = AttnBackend[backend]
+        except KeyError as error:
+            raise ValueError(
+                f"Unknown Megatron attention backend: {backend}"
+            ) from error
     transformer_config = TransformerConfig(**transformer_config_dict)
 
     # pass mcore customization configs directly to mcore

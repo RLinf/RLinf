@@ -256,6 +256,9 @@ class _Patcher:
                     del sys.modules[k]
 
         for key, value in sys.modules.copy().items():
+            # Optional imports may leave non-module sentinels in sys.modules.
+            if not isinstance(value, types.ModuleType):
+                continue
             for k, v in value.__dict__.copy().items():
                 if k.startswith("ORIG__"):
                     continue

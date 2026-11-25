@@ -1,0 +1,6 @@
+# Experimental input-contract stack. Build CUDA/Bridge kernels separately;
+# this is not a validated replacement for the default agentic environment.
+# Source builds require Rust; the pinned dependencies use CUDA 13.
+sglang @ git+https://github.com/sgl-project/sglang.git@18a44326f6de5134fe921927d760d81f8ee48fc9#subdirectory=python
+torch==2.14.1
+transformers==5.19.0

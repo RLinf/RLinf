@@ -17,6 +17,7 @@ import contextvars
 import copy
 import json
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Optional
 from uuid import uuid4
@@ -38,6 +39,7 @@ from rlinf.data.schema.reasoning_results import (
 )
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Channel, Worker
+from rlinf.scheduler.channel.channel import DEFAULT_KEY
 from rlinf.utils.metric_utils import aggregate_agent_metrics
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.session_server_client import (
@@ -46,7 +48,6 @@ from rlinf.workers.agent.session_server_client import (
     SessionServerClient,
 )
 from rlinf.workers.agent.tool_worker import ToolChannelInfo
-from rlinf.workers.rollout.utils import green
 
 
 @dataclass
@@ -65,6 +66,10 @@ class AgentLoopOutput:
     response_mask: Optional[list[int]] = None
     """Log probabilities for the response tokens."""
     response_logprobs: Optional[list[float]] = None
+    """Published rollout version that generated each response token."""
+    response_weight_versions: Optional[list[int]] = None
+    """Images the prompt expanded, as the processor's token grid and PNG bytes."""
+    response_images: Optional[dict[str, Any]] = None
     """Number of chat turns, including user, assistant, tool."""
     num_turns: int = 0
     """Whether the sequence ends."""
@@ -111,12 +116,22 @@ class GroupDiscarded(RuntimeError):
         self.reason = reason
 
 
+_ROLLOUT_CANDIDATE: ContextVar[Optional[dict]] = ContextVar(
+    "rollout_candidate", default=None
+)
+
+
 class AgentLoopWorker(Worker):
     """
     Abstract agent loop worker.
 
     Subclasses must implement the run_one_query method.
     """
+
+    # Requests go to any SGLang replica unless rollout.replica_affinity pins
+    # this worker's requests to one, so a multi-turn episode reuses its prefix cache.
+    rollout_request_key = DEFAULT_KEY
+    _generation_cohort_id: Optional[str] = None
 
     def __init__(
         self,
@@ -125,6 +140,10 @@ class AgentLoopWorker(Worker):
     ):
         super().__init__()
         self.cfg = cfg
+        if cfg.rollout.get("replica_affinity", False):
+            self.rollout_request_key = (
+                self._rank % placement.rollout_num_model_instances
+            )
         self.print_outputs = cfg.agentloop.print_outputs
         if cfg.runner.task_type == "reasoning_eval":
             self.return_logprobs = False
@@ -160,6 +179,10 @@ class AgentLoopWorker(Worker):
         self._session_binding = contextvars.ContextVar(
             "rlinf_agent_session_binding", default=None
         )
+        self._candidate_cohort = None
+        self._candidate_started = {}
+        self._candidate_admissions = {}
+        self._generation_cohort_id = None
         # Idle-time accounting for the continuous loop: seconds with no
         # in-flight group, accumulated over the window since the last
         # pop_idle_stats call.
@@ -218,42 +241,103 @@ class AgentLoopWorker(Worker):
         prompt_ids: list[int],
         sampling_params: Optional[dict] = None,
         rollout_name: Optional[str] = None,
+        image_data: Optional[list[bytes]] = None,
+        return_prompt_token_ids: bool = False,
+        mm_token_expansion_start_len: Optional[int] = None,
+        image_spans: Optional[list[tuple[int, int]]] = None,
+        image_history: Optional[dict] = None,
+        image_store_dir: Optional[str] = None,
+        image_token_budget: Optional[tuple[int, int]] = None,
     ):
-        if rollout_name is not None:
-            # Solid targets are frozen models outside the training loop;
-            # they never enter a session and produce no payload.
+        """Sample one turn; images the prompt stands for ride with the request.
+
+        The rollout engine expands the image markers in ``prompt_ids`` from
+        ``image_data`` itself, so the tokens stay the ones this turn trains on.
+        """
+        if rollout_name is not None and image_data is None:
             return await self._generate_on_solid_channel(
                 prompt_ids, sampling_params, rollout_name
             )
-        if self.session_server_client is not None:
+        if rollout_name is None and self.session_server_client is not None:
+            if image_data or image_spans is not None:
+                raise ValueError(
+                    "Use the session's image API for session-server generation"
+                )
             binding = self._session_binding.get()
-            assert binding is not None, (
-                "the session server transport is active but no session is "
-                "bound to this task; the group runner binds one per "
-                "trajectory"
-            )
             return await self._generate_on_session(binding, prompt_ids, sampling_params)
-        return await self._generate_on_channel(prompt_ids, sampling_params)
+        request = {
+            "prompt_ids": prompt_ids,
+            "sampling_params": sampling_params,
+        }
+        if image_spans is not None:
+            request["capture_images"] = {
+                "image_spans": image_spans,
+                "history": image_history,
+                "store_dir": image_store_dir,
+                "token_budget": image_token_budget,
+            }
+        if image_data:
+            request["image_data"] = image_data
+        if return_prompt_token_ids:
+            request["return_prompt_token_ids"] = True
+        if mm_token_expansion_start_len is not None:
+            request["mm_token_expansion_start_len"] = mm_token_expansion_start_len
+        return await self._request_rollout(request, rollout_name)
 
-    async def _generate_on_channel(
-        self, prompt_ids: list[int], sampling_params: Optional[dict]
-    ):
-        channel_key = uuid4().hex
-        await self.generate_input_channel.put(
+    async def prepare_multimodal(
+        self,
+        prompt_ids: list[int],
+        image_data: list,
+        *,
+        prefix_length: int,
+        image_spans: list,
+    ) -> dict:
+        """Resolve image expansion before calculating this turn's output budget."""
+        return await self._request_rollout(
             {
-                "channel_key": channel_key,
                 "prompt_ids": prompt_ids,
-                "sampling_params": sampling_params,
-            },
-            async_op=True,
-        ).async_wait()
-        result = await self.generate_output_channel.get(
-            channel_key, async_op=True
-        ).async_wait()
-        if isinstance(result, dict) and "error" in result:
-            # The rollout side failed to generate and reported back via the
-            # channel; fail loudly instead of continuing.
-            raise RuntimeError(f"Rollout generate request failed: {result['error']}")
+                "image_data": image_data,
+                "prepare_multimodal": {
+                    "prefix_length": prefix_length,
+                    "image_spans": image_spans,
+                },
+            }
+        )
+
+    async def _request_rollout(self, request: dict, rollout_name=None) -> dict:
+        channel_key = uuid4().hex
+        request["channel_key"] = channel_key
+        if rollout_name is None:
+            input_channel = self.generate_input_channel
+            request_key = self.rollout_request_key
+        else:
+            input_channel = self.solid_generate_input_channels[rollout_name]
+            request_key = DEFAULT_KEY
+        oversampling = self._generation_cohort_id is not None
+        if oversampling:
+            request["cohort_id"] = self._generation_cohort_id
+
+        async def exchange():
+            await input_channel.put(
+                request, key=request_key, async_op=True
+            ).async_wait()
+            return await self.generate_output_channel.get(
+                channel_key, async_op=True
+            ).async_wait()
+
+        if oversampling:
+            pending = asyncio.create_task(exchange())
+            try:
+                result = await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                # The cohort abort supplies a reply even for cancelled requests.
+                # Consume it before releasing this key and its Channel future.
+                await pending
+                raise
+        else:
+            result = await exchange()
+        if "error" in result:
+            raise RuntimeError(f"rollout generation failed: {result['error']}")
         return result
 
     async def _generate_on_solid_channel(
@@ -339,14 +423,13 @@ class AgentLoopWorker(Worker):
         prompt_texts: Optional[str],
         trace_prints: list[Any],
     ):
-        print_texts = []
+        lines = []
         if prompt_texts is not None:
-            print_texts = [
-                f"{green('Prompt')}         : {prompt_texts!r}",
-            ]
+            lines.append(f"Prompt: {prompt_texts!r}")
         for trace_print in trace_prints:
-            print_texts.append(f"{green('Trace print')}    : {trace_print!r}")
-        print(*print_texts, sep="\n")
+            lines.append(f"Agent output: {trace_print!r}")
+        if lines:
+            self.log_info("\n".join(lines))
 
     def get_tool_response_ids(self, tool_messages: list[dict]):
         """
@@ -732,13 +815,25 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         self.extra_keys_turn = None
         self.extra_keys_traj = None
         self.is_eval = self.cfg.runner.task_type == "reasoning_eval"
+        self._next_rollout_id = self._rank
+
+    @staticmethod
+    async def _gather_rollout_tasks(tasks: list[asyncio.Task]) -> list:
+        """Wait for sibling cleanup before propagating a rollout failure or cancellation."""
+        try:
+            return await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     async def run_agentloop_rollout_group(
         self,
         input_ids: list[int],
         answer: str,
         group_size: int,
-        output_channel: Channel,
+        output_channel: Channel | list[Channel] | None,
         group_id: Optional[int] = None,
         task_name: Optional[str] = None,
     ):
@@ -768,7 +863,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             rollout_tasks.append(task)
 
         try:
-            task_results = await asyncio.gather(*rollout_tasks)
+            task_results = await self._gather_rollout_tasks(rollout_tasks)
 
             # For eval mode, allow multiple samples (group_size=k) to compute pass@k and avg@k
             extra_fields = self.gen_extra_fields(task_results, answer)
@@ -778,7 +873,13 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                 rollout_result.task_name = task_name
             agent_metrics = self.get_rollout_metrics(rollout_result)
 
-            await output_channel.put(rollout_result, async_op=True).async_wait()
+            if output_channel is None:
+                return rollout_result, agent_metrics
+            channels = (
+                output_channel if isinstance(output_channel, list) else [output_channel]
+            )
+            for channel in channels:
+                await channel.put(rollout_result, async_op=True).async_wait()
         except GroupDiscarded as e:
             # Only this failure mode is per-group: record the discard and
             # let the group end normally. The remaining trajectories of
@@ -1068,17 +1169,21 @@ class MultiAgentLoopWorker(AgentLoopWorker):
     async def run_agentloop_rollout(
         self,
         input_channel: Channel,
-        output_channel: Channel,
+        output_channel: Channel | list[Channel],
     ):
         """
         Run the agent loop for multiple queries.
 
         Args:
             input_channel: Channel to receive rollout requests
-            output_channel: Channel receiving each result
+            output_channel: Channels receiving a copy of each result
         """
         with self.worker_timer():
             rollout_request: RolloutRequest = input_channel.get()
+            if rollout_request.cohort_id is not None:
+                return await self._run_synchronous_candidates(
+                    rollout_request, output_channel
+                )
 
             send_output_tasks: list[asyncio.Task[dict]] = []
             for input_ids, answer in zip(
@@ -1094,9 +1199,288 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                 )
                 send_output_tasks.append(task)
 
-            agent_metrics_list = await asyncio.gather(*send_output_tasks)
+            agent_metrics_list = await self._gather_rollout_tasks(send_output_tasks)
             agent_metrics = self.post_process_metric(agent_metrics_list)
             return agent_metrics
+
+    @staticmethod
+    def rollout_candidate() -> Optional[dict]:
+        """Metadata of the candidate owning this query, including nested tasks."""
+        return _ROLLOUT_CANDIDATE.get()
+
+    async def finalize_rollout_candidates(self, records: list[dict]) -> None:
+        """Persist task-owned trace dispositions after all candidate cleanup."""
+        return None
+
+    async def _run_synchronous_candidate(
+        self,
+        state: dict,
+        candidate_id: int,
+        input_ids: list[int],
+        answer: Any,
+        output_channel: Channel,
+    ) -> None:
+        try:
+            sampled = await self._collect_synchronous_candidate(
+                state, candidate_id, input_ids, answer
+            )
+            await self._publish_synchronous_candidate(
+                state, candidate_id, sampled, output_channel
+            )
+        except asyncio.CancelledError:
+            self._mark_synchronous_candidate_cancelled(state, candidate_id)
+            raise
+        except Exception as error:
+            await self._fail_synchronous_candidate(
+                state, candidate_id, error, output_channel
+            )
+
+    async def _collect_synchronous_candidate(
+        self, state: dict, candidate_id: int, input_ids: list[int], answer: Any
+    ) -> tuple[DynamicRolloutResult, dict]:
+        record = state["records"][candidate_id]
+        metadata = {
+            "cohort_id": state["id"],
+            "candidate_id": candidate_id,
+            "weight_version": state["version"],
+        }
+        group_size = self.cfg.algorithm.group_size
+        if group_size > 1:
+            metadata.update(
+                group_id=candidate_id // group_size,
+                group_member=candidate_id % group_size,
+            )
+            record.update(metadata)
+        token = _ROLLOUT_CANDIDATE.set(metadata)
+        try:
+            record.update(status="running", task=answer)
+            result, metrics = await self.run_agentloop_rollout_group(
+                input_ids, answer, 1, None
+            )
+            # is_end marks model EOS; length-limited replies still finish an episode.
+            if result.group_size != 1 or result.num_sequence < 1:
+                raise RuntimeError(
+                    f"Candidate {candidate_id} must be one complete episode."
+                )
+            for versions in (result.version_start, result.version_end):
+                if versions is not None and any(
+                    version != state["version"] for version in versions
+                ):
+                    raise RuntimeError(
+                        f"Candidate {candidate_id} mixed fixed-policy weight versions."
+                    )
+            result.group_id = candidate_id
+            result.extra_fields_group = {
+                **(result.extra_fields_group or {}),
+                "sampling_candidate": [
+                    {
+                        "cohort_id": state["id"],
+                        "candidate_id": candidate_id,
+                        "weight_version": state["version"],
+                    }
+                ],
+            }
+            return result, metrics
+        finally:
+            _ROLLOUT_CANDIDATE.reset(token)
+
+    async def _publish_synchronous_candidate(
+        self, state: dict, candidate_id: int, sampled: tuple, output_channel: Channel
+    ) -> None:
+        result, metrics = sampled
+        record = state["records"][candidate_id]
+        record.update(
+            status="complete",
+            finished_at=time.time(),
+            num_training_rows=result.num_sequence,
+            terminal_reward=(
+                float(result.rewards[-1]) if result.rewards is not None else None
+            ),
+        )
+        state["metrics"][candidate_id] = metrics
+        state["results"][candidate_id] = result
+        await output_channel.put(
+            {**record, "cohort_id": state["id"]}, async_op=True
+        ).async_wait()
+
+    def _mark_synchronous_candidate_cancelled(self, state: dict, candidate_id: int):
+        record = state["records"][candidate_id]
+        record["completed_before_drop"] = record["status"] == "complete"
+        record.update(status="cancelled", finished_at=time.time())
+
+    async def _fail_synchronous_candidate(
+        self, state: dict, candidate_id: int, error: Exception, output_channel: Channel
+    ) -> None:
+        record = state["records"][candidate_id]
+        record.update(status="error", error=repr(error), finished_at=time.time())
+        await output_channel.put(
+            {**record, "cohort_id": state["id"]}, async_op=True
+        ).async_wait()
+
+    async def _run_synchronous_candidate_group(
+        self,
+        state: dict,
+        candidate_ids: range,
+        input_ids: list[int],
+        answer: Any,
+        output_channel: Channel,
+    ) -> None:
+        await self._gather_rollout_tasks(
+            [
+                asyncio.create_task(
+                    self._run_synchronous_candidate(
+                        state, candidate_id, input_ids, answer, output_channel
+                    )
+                )
+                for candidate_id in candidate_ids
+            ]
+        )
+
+    async def _run_synchronous_candidates(
+        self, request: RolloutRequest, output_channel: Channel
+    ) -> dict:
+        if self._candidate_cohort is not None:
+            raise RuntimeError("A synchronous candidate cohort is already active.")
+        state = {
+            "id": request.cohort_id,
+            "version": request.weight_version,
+            "tasks": {},
+            "metrics": {},
+            "results": {},
+            "records": {},
+            "closed": asyncio.Event(),
+            "cleaned": asyncio.Event(),
+            "selected": set(),
+        }
+        self._candidate_cohort = state
+        self._generation_cohort_id = request.cohort_id
+        self._candidate_started.setdefault(request.cohort_id, asyncio.Event()).set()
+        try:
+            for candidate_id, input_ids, answer in zip(
+                request.group_ids, request.input_ids, request.answers, strict=True
+            ):
+                members = range(candidate_id, candidate_id + request.n)
+                task = asyncio.create_task(
+                    self._run_synchronous_candidate_group(
+                        state, members, input_ids, answer, output_channel
+                    )
+                    if request.n > 1
+                    else self._run_synchronous_candidate(
+                        state, candidate_id, input_ids, answer, output_channel
+                    )
+                )
+                for member in members:
+                    state["records"][member] = {
+                        "candidate_id": member,
+                        "worker_rank": self._rank,
+                        "task": answer,
+                        "weight_version": request.weight_version,
+                        "status": "pending",
+                    }
+                    state["tasks"][member] = task
+            await state["closed"].wait()
+            await state["cleaned"].wait()
+            metrics = [
+                state["metrics"][candidate_id]
+                for candidate_id in state["records"]
+                if candidate_id in state["selected"]
+            ]
+            selected_count = len(metrics)
+            agent_metrics = (
+                self.post_process_metric(metrics)
+                if state["selected"]
+                else MultiAgentLoopWorker.post_process_metric(self, metrics)
+            )
+            sampling_metrics = MultiAgentLoopWorker.post_process_metric(
+                self,
+                [
+                    {
+                        "__sum__/sampling/candidates": len(state["records"]),
+                        "__sum__/sampling/selected": selected_count,
+                        "__sum__/sampling/dropped": len(state["records"])
+                        - selected_count,
+                        "__sum__/sampling/cancelled": sum(
+                            record["status"] == "cancelled"
+                            for record in state["records"].values()
+                        ),
+                    }
+                ],
+            )
+            if agent_metrics is not None:
+                agent_metrics.update(sampling_metrics)
+            return agent_metrics
+        finally:
+            for task in set(state["tasks"].values()):
+                task.cancel()
+            await asyncio.gather(*state["tasks"].values(), return_exceptions=True)
+            state["results"].clear()
+            self._generation_cohort_id = None
+            self._candidate_cohort = None
+
+    async def cancel_rollout_candidates(
+        self, cohort_id: str, selected_ids: list[int]
+    ) -> dict:
+        """Cancel only this finite cohort and wait for its process/session cleanup."""
+        await self._candidate_started.setdefault(cohort_id, asyncio.Event()).wait()
+        state = self._candidate_cohort
+        if state["id"] != cohort_id:
+            raise RuntimeError(
+                f"Cannot cancel cohort {cohort_id}; active cohort is {state['id']}."
+            )
+        state["selected"] = set(selected_ids)
+        state["closed"].set()
+        try:
+            for candidate_id, task in state["tasks"].items():
+                if candidate_id in state["selected"]:
+                    if state["records"][candidate_id]["status"] != "complete":
+                        raise RuntimeError(
+                            f"Selected candidate {candidate_id} is not complete."
+                        )
+                elif not task.done():
+                    task.cancel()
+            results = await asyncio.gather(
+                *state["tasks"].values(), return_exceptions=True
+            )
+            for record, result in zip(state["records"].values(), results, strict=True):
+                if isinstance(result, BaseException) and not isinstance(
+                    result, asyncio.CancelledError
+                ):
+                    raise result
+                if record["status"] == "pending":
+                    record.update(status="cancelled", finished_at=time.time())
+                kept = record["candidate_id"] in state["selected"]
+                record["kept"] = kept
+                record["drop_reason"] = None if kept else "synchronous_oversample_drop"
+                record["cleanup_complete"] = True
+            records = list(state["records"].values())
+            await self.finalize_rollout_candidates(records)
+            self._candidate_admissions[cohort_id] = {
+                candidate_id: state["results"][candidate_id]
+                for candidate_id in state["records"]
+                if candidate_id in state["selected"]
+            }
+            return {"cohort_id": cohort_id, "candidates": records}
+        finally:
+            state["cleaned"].set()
+
+    async def admit_rollout_candidates(
+        self, cohort_id: str, output_channels: Optional[list[Channel]]
+    ) -> dict:
+        """Forward selected payloads locally after cleanup, or release a failed batch."""
+        if output_channels is None:
+            self._candidate_admissions.pop(cohort_id, None)
+            return {"cohort_id": cohort_id, "admitted": 0, "admitted_ids": []}
+        if cohort_id not in self._candidate_admissions:
+            raise RuntimeError(f"Candidate cohort {cohort_id} has not passed cleanup.")
+        results = self._candidate_admissions.pop(cohort_id)
+        for result in results.values():
+            for channel in output_channels:
+                await channel.put(result, async_op=True).async_wait()
+        return {
+            "cohort_id": cohort_id,
+            "admitted": len(results),
+            "admitted_ids": list(results),
+        }
 
     def gen_extra_fields(
         self,
@@ -1132,16 +1516,22 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                     extra_fields_traj[k].append(v)
         return extra_fields_turn, extra_fields_traj, None, {}
 
-    def post_process_metric(self, agent_metrics_list: list[dict]):
+    def post_process_metric(
+        self, agent_metrics_list: list[dict], *, gather_workers: bool = True
+    ):
         """Merge per-query metrics, including weighted stats across workers.
 
         Args:
             agent_metrics_list: Metrics returned by each query rollout.
+            gather_workers: Gather worker-local lists. Set false when the runner
+                supplies a complete learner batch to every worker.
 
         Returns:
             Aggregated metric dictionary on rank 0, or empty dict on no data.
         """
-        if self._world_size > 1:
+        if not gather_workers and self._rank != 0:
+            return None
+        if gather_workers and self._world_size > 1:
             if self._rank == 0:
                 for i in range(1, self._world_size):
                     recv_list = self.recv(self._group_name, i)
@@ -1190,8 +1580,11 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         rollout_logprobs = None
         if self.return_logprobs:
             rollout_logprobs = []
+        images = []
         is_end = []
         rewards = []
+        response_masks = []
+
         version_start = []
         version_end = []
 
@@ -1212,8 +1605,11 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                         single_turn_output.response_ids
                     ), "response_logprobs should have the same length as response_ids"
                     rollout_logprobs.append(single_turn_output.response_logprobs)
+                images.append(single_turn_output.response_images)
                 is_end.append(single_turn_output.is_end)
                 rewards.append(single_turn_output.reward_score)
+                response_masks.append(single_turn_output.response_mask)
+
                 version_start.append(single_turn_output.version_start)
                 version_end.append(single_turn_output.version_end)
 
@@ -1238,8 +1634,16 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             response_lengths=response_lengths,
             input_ids=input_ids,
             rollout_logprobs=rollout_logprobs,
+            multi_modal_inputs=images if any(v is not None for v in images) else None,
             is_end=is_end,
             rewards=rewards,
+            # Rows without a mask train every response token.
+            response_mask=[
+                [1] * length if mask is None else mask
+                for mask, length in zip(response_masks, response_lengths)
+            ]
+            if any(mask is not None for mask in response_masks)
+            else None,
             version_start=version_start,
             version_end=version_end,
             extra_fields_turn=extra_fields_turn,

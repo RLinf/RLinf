@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import nullcontext
 from dataclasses import replace
+from functools import partial
 from typing import Optional
 
 import torch
@@ -30,7 +32,7 @@ from rlinf.algorithms.registry import (
     get_loss_scales,
     policy_loss,
 )
-from rlinf.algorithms.utils import kl_penalty
+from rlinf.algorithms.utils import apply_importance_sampling_correction, kl_penalty
 from rlinf.data.schema.actor_batch import (
     DynamicActorBatch,
 )
@@ -40,8 +42,11 @@ from rlinf.data.schema.reasoning_results import (
     RolloutResult,
 )
 from rlinf.hybrid_engines.megatron.utils import (
+    align_next_token_scores,
+    output_layer_positions,
     postprocess_ragged_seqs,
     preprocess_ragged_seqs,
+    supports_fp32_output,
 )
 from rlinf.scheduler import Channel
 from rlinf.utils.data_iter_utils import (
@@ -67,6 +72,7 @@ from rlinf.utils.utils import (
     configure_batch_sizes,
     cpu_dict,
     cpu_weight_swap,
+    masked_mean,
 )
 from rlinf.workers.actor.megatron_actor_worker import (
     MegatronActor,
@@ -78,6 +84,8 @@ from rlinf.workers.rollout.session_server.assembly import (
 )
 from rlinf.workers.rollout.session_server.payload import payload_channel_for
 
+_RESPONSE_LOGPROB_CHUNK_SIZE = 256
+
 
 class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
     """The class for running the actor training using Megatron."""
@@ -86,6 +94,19 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         self, cfg: DictConfig, placement: ModelParallelComponentPlacement, role="actor"
     ):
         super().__init__(cfg, placement)
+        self.response_only_logits = cfg.actor.get("response_only_logits", False)
+        self.scoring_forward = None
+        lm_head_chunk_size = cfg.actor.model.get("lm_head_chunk_size", 0)
+        if lm_head_chunk_size:
+            from rlinf.hybrid_engines.megatron.qwen_vl import (
+                forward_qwen_vl_with_chunked_log_probs,
+            )
+
+            self.scoring_forward = partial(
+                forward_qwen_vl_with_chunked_log_probs,
+                chunk_size=lm_head_chunk_size,
+                calculate_entropy=self.calculate_entropy,
+            )
         self._init_auto_scheduler(role)
         # Set by run_training for the duration of a training call and read
         # by _assemble_delivery.
@@ -171,6 +192,74 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             self.torch_platform.current_device(),
         )
 
+    def _score_packed_tokens(self, model, module, model_inputs, label, label_mask):
+        """Project packed tokens and return scores in their original positions."""
+        temperature = self.cfg.algorithm.sampling_params.temperature
+        if self.scoring_forward is not None:
+            return self.scoring_forward(
+                model,
+                module,
+                **model_inputs,
+                temperature=temperature,
+                label=label,
+                label_mask=label_mask,
+            )
+        positions = None
+        projection = nullcontext()
+        if self.response_only_logits and module.post_process:
+            positions = label_mask[0].nonzero(as_tuple=True)[0]
+            if positions.numel() == 0:
+                positions = positions.new_zeros(1)
+            projection = output_layer_positions(module, positions)
+
+        chunk_size = self.cfg.actor.get("logprob_chunk_size", 0)
+        scale_in_softmax = self.response_only_logits and not self.calculate_entropy
+
+        def process_logits(logits, label, label_mask):
+            assert logits.shape[:2] == label.shape == label_mask.shape
+            if self.calculate_entropy:
+                entropy, log_probs = vocab_parallel_entropy_and_log_probs(
+                    logits, label, calculate_entropy_loss=self.calculate_entropy_loss
+                )
+                output = {"entropy": entropy}
+            else:
+                log_probs = vocab_parallel_log_probs_from_logits(
+                    logits,
+                    label,
+                    chunk_size=chunk_size
+                    or (_RESPONSE_LOGPROB_CHUNK_SIZE if scale_in_softmax else 0),
+                    temperature=temperature if scale_in_softmax else 1.0,
+                )
+                output = {}
+            output["log_probs"] = log_probs.masked_fill(~label_mask, 0.0)
+            return output
+
+        with projection:
+            output = self.custom_forward(
+                model,
+                **model_inputs,
+                sequence_parallel=self.transformer_config.sequence_parallel,
+                logits_processor=process_logits,
+                logits_processor_args={
+                    "label": label if positions is None else label[:, positions],
+                    "label_mask": label_mask
+                    if positions is None
+                    else label_mask[:, positions],
+                },
+                temperature=1.0 if scale_in_softmax else temperature,
+                **(
+                    {"fp32_output": False}
+                    if scale_in_softmax and supports_fp32_output(model)
+                    else {}
+                ),
+            )
+        if positions is None:
+            return output
+        return {
+            key: value.new_zeros(label.shape).index_copy(1, positions, value)
+            for key, value in output.items()
+        }
+
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
 
@@ -188,51 +277,33 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             )
             labels = [torch.cat((row[1:], row.new_zeros(1))) for row in rows]
             label, _ = preprocess_ragged_seqs(labels)
-            label_mask, _ = preprocess_ragged_seqs(
-                [torch.arange(n, device=input_ids.device) < n - 1 for n in lengths]
-            )
+            if self.response_only_logits or self.scoring_forward is not None:
+                # Shift in each trajectory before the packing step inserts TP padding.
+                masks = [
+                    torch.cat((mask[1:], mask.new_zeros(1))).to(input_ids.device)
+                    for mask in batch["response_mask"]
+                ]
+            else:
+                masks = [
+                    torch.arange(n, device=input_ids.device) < n - 1 for n in lengths
+                ]
+            label_mask, _ = preprocess_ragged_seqs(masks)
+            module = unwrap_model(model)
+            with self.ragged_model_inputs(
+                batch, module, input_ids, position_ids, packed_params
+            ) as model_inputs:
+                output = self._score_packed_tokens(
+                    model, module, model_inputs, label, label_mask
+                )
 
-            def logits_processor(logits, label, label_mask):
-                assert logits.shape[:2] == label.shape[:2]
-                assert label.shape == label_mask.shape
-
-                if self.calculate_entropy:
-                    entropy, log_probs = vocab_parallel_entropy_and_log_probs(
-                        logits,
-                        label,
-                        calculate_entropy_loss=self.calculate_entropy_loss,
-                    )
-                    log_probs = log_probs.masked_fill(~label_mask, 0.0)
-                    ret = {"log_probs": log_probs, "entropy": entropy}
-                else:
-                    log_probs = vocab_parallel_log_probs_from_logits(logits, label)
-                    log_probs = log_probs.masked_fill(~label_mask, 0.0)
-                    ret = {"log_probs": log_probs}
-
-                return ret
-
-            logits_processor_args = {"label": label, "label_mask": label_mask}
-
-            output = self.custom_forward(
-                model,
-                input_ids,
-                None,
-                position_ids,
-                sequence_parallel=self.transformer_config.sequence_parallel,
-                logits_processor=logits_processor,
-                logits_processor_args=logits_processor_args,
-                temperature=self.cfg.algorithm.sampling_params.temperature,
-                packed_seq_params=packed_params,
-            )
-
-            if unwrap_model(model).post_process:
+            if module.post_process:
                 output_rows = {
                     key: postprocess_ragged_seqs(value, packed_params, lengths)
                     for key, value in output.items()
                 }
                 if not self.return_loss:
                     logprob_rows = [
-                        torch.cat((row.new_zeros(1), row[:-1])).detach().cpu()
+                        align_next_token_scores(row).detach().cpu()
                         for row in output_rows["log_probs"]
                     ]
                     # Megatron inspects the tensor device before collecting non-loss data.
@@ -270,10 +341,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 return output, id_func
 
             def loss_func(output):
-                curr_logprobs_ori = output["log_probs"]
-                curr_logprobs = curr_logprobs_ori.clone()
-                curr_logprobs[:, 1:] = curr_logprobs_ori[:, :-1].clone()
-                curr_logprobs[:, 0] = 0.0  # first token has no previous token
+                curr_logprobs = align_next_token_scores(output["log_probs"])
 
                 advantages = batch["advantages"]
                 advantages *= batch["loss_scales"]
@@ -285,18 +353,29 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 if "ref_logprobs" in batch:
                     ref_logprobs = batch["ref_logprobs"]
 
-                if self.cfg.algorithm.get("importance_sampling_fix", False):
-                    assert False, (
-                        "importance_sampling_fix is not supported for dynamic rollout batch"
-                    )
-                    rollout_logprobs = batch["rollout_logprobs"]
-                    recomputed_logprobs = batch.get("recomputed_logprobs")
-                    advantages = advantages * torch.clamp(
-                        (recomputed_logprobs - rollout_logprobs).exp(),
-                        max=self.cfg.algorithm.importance_sampling_clip,
-                    )
-
                 mask = batch["response_mask"]
+                correction_metrics = {}
+                if self.cfg.algorithm.get("importance_sampling_fix", False):
+                    if "recomputed_logprobs" not in batch:
+                        raise ValueError("Importance sampling requires actor logprobs")
+                    clip = self.cfg.algorithm.importance_sampling_clip
+                    advantages, weights, log_ratio = (
+                        apply_importance_sampling_correction(
+                            advantages,
+                            old_logprobs.masked_fill(~mask, 0),
+                            batch["rollout_logprobs"].masked_fill(~mask, 0),
+                            clip,
+                        )
+                    )
+                    correction_metrics = {
+                        "actor/recomputed_logprob_abs_diff": masked_mean(
+                            log_ratio.abs(), mask
+                        ),
+                        "actor/importance_sampling_weight": masked_mean(weights, mask),
+                        "actor/importance_sampling_clip_fraction": masked_mean(
+                            (weights > clip).float(), mask
+                        ),
+                    }
 
                 loss, metrics_data = policy_loss(
                     task_type=self.cfg.runner.task_type,
@@ -320,7 +399,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
 
                 entropy_loss = torch.zeros(1, device=loss.device)
                 if self.calculate_entropy:
-                    entropy = output["entropy"]
+                    entropy = align_next_token_scores(output["entropy"])
                     entropy_loss = self.loss_agg_func(entropy, mask=mask)
                     if self.calculate_entropy_loss:
                         loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
@@ -362,6 +441,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 # add to log
                 metrics_data.update(
                     {
+                        **correction_metrics,
                         "actor/final_loss": loss.detach(),
                         "actor/entropy_loss": entropy_loss.detach(),
                         "actor/kl_loss": kl_loss.detach(),
@@ -592,8 +672,22 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             turn_rewards = [0.0] * num_trajectories
             turn_counts = [0] * num_trajectories
             token_weighted_version_start_sums = [0] * num_trajectories
+            versions = (rollout_result.extra_fields_turn or {}).get(
+                "rollout_weight_versions"
+            )
+            calls = (rollout_result.extra_fields_turn or {}).get("generate_calls")
+            sampled_sums = [0] * num_trajectories if versions is not None else None
             for turn_index, traj_index in enumerate(rollout_result.idx_to_traj):
                 turn_tokens = rollout_result.response_lengths[turn_index]
+                if rollout_result.response_mask is not None:
+                    turn_tokens = sum(rollout_result.response_mask[turn_index])
+                if sampled_sums is not None:
+                    sampled = versions[turn_index]
+                    if len(sampled) != turn_tokens:
+                        raise ValueError(
+                            "One sampled policy version is required per response token"
+                        )
+                    sampled_sums[traj_index] += sum(sampled)
                 version_start = rollout_result.version_start[turn_index]
                 version_end = rollout_result.version_end[turn_index]
                 earliest_versions[traj_index] = (
@@ -607,7 +701,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     else max(completion_versions[traj_index], version_end)
                 )
                 generated_tokens[traj_index] += turn_tokens
-                call_counts[traj_index] += 1
+                call_counts[traj_index] += calls[turn_index] if calls is not None else 1
                 cross_version_calls[traj_index] += int(version_start != version_end)
                 turn_rewards[traj_index] += rollout_result.rewards[turn_index]
                 turn_counts[traj_index] += 1
@@ -625,6 +719,9 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                         cross_version_calls=cross_version_calls[traj_index],
                         reward=turn_rewards[traj_index]
                         / max(turn_counts[traj_index], 1),
+                        sampled_token_version_sum=sampled_sums[traj_index]
+                        if sampled_sums is not None
+                        else None,
                         token_weighted_version_start_sum=(
                             token_weighted_version_start_sums[traj_index]
                         ),
