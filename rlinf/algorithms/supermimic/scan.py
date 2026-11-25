@@ -73,7 +73,25 @@ def make_world_model_rollout(
             representation.loss_blocks(true_roots, true_encs),
         )
 
+    def rollout_window(dynamics, states, actions, context):
+        encs = representation.encode(states)
+        roots = representation.root(states)
+        root, enc = roots[:, 0], encs[:, 0]
+        pred_roots, pred_encs = [], []
+        for t in range(states.shape[1] - 1):
+            root, enc = step(dynamics, root, enc, actions[:, t], context)
+            pred_roots.append(root)
+            pred_encs.append(enc)
+        return score(
+            torch.stack(pred_roots, dim=1),
+            torch.stack(pred_encs, dim=1),
+            roots[:, 1:],
+            encs[:, 1:],
+        )
+
     def run(dynamics, states, actions, context):
+        if states.shape[1] <= 16:
+            return call("window", rollout_window, dynamics, states, actions, context)
         encs = representation.encode(states)
         roots = representation.root(states)
         root, enc = roots[:, 0], encs[:, 0]

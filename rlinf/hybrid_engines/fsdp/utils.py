@@ -65,8 +65,10 @@ class FSDPVersion(str, Enum):
     FSDP2 = "fsdp2"
 
 
-def create_device_mesh(world_size: int) -> DeviceMesh:
-    """Build the 1-D device mesh that FSDP shards over.
+def create_device_mesh(
+    world_size: int, sharding_strategy: str = "full_shard"
+) -> DeviceMesh:
+    """Build the device mesh that FSDP shards or replicates over.
 
     The default process group is created here rather than left to
     ``init_device_mesh``. When no default group exists, ``init_device_mesh``
@@ -79,9 +81,13 @@ def create_device_mesh(world_size: int) -> DeviceMesh:
 
     Args:
         world_size (int): Number of ranks participating in FSDP.
+        sharding_strategy (str): When ``"no_shard"``, builds a 2-D
+            ``(world_size, 1)`` mesh named ``("ddp", "fsdp")`` so FSDP2
+            replicates parameters across ranks (DDP) without parameter sharding.
 
     Returns:
-        DeviceMesh: A 1-D mesh over ``world_size`` ranks named ``fsdp``.
+        DeviceMesh: A 1-D ``("fsdp",)`` mesh, or a 2-D ``("ddp", "fsdp")`` mesh
+        for ``no_shard``.
     """
     if torch.distributed.is_initialized():
         get_logger().warning(
@@ -93,6 +99,12 @@ def create_device_mesh(world_size: int) -> DeviceMesh:
         # No backend is passed, so torch still resolves the per-device backend
         # it would have picked on its own; only the timeout changes.
         torch.distributed.init_process_group(timeout=Cluster.get_collective_timeout())
+    if sharding_strategy == "no_shard":
+        return init_device_mesh(
+            Worker.torch_device_type,
+            mesh_shape=(world_size, 1),
+            mesh_dim_names=("ddp", "fsdp"),
+        )
     return init_device_mesh(
         Worker.torch_device_type, mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
     )
@@ -802,17 +814,25 @@ def clip_grad_by_total_norm_(
     grads = [
         to_local_if_dtensor(p.grad.detach()) for p in parameters if p.grad is not None
     ]
+    if not grads:
+        return
 
     # Scale.
     clip_coeff = max_grad_norm / (total_norm + 1.0e-6)
 
     if isinstance(clip_coeff, torch.Tensor):
         clip_coeff = clip_coeff.clamp(max=1.0)
+        by_key: dict[tuple[torch.device, torch.dtype], list[torch.Tensor]] = {}
         for g in grads:
-            g.mul_(clip_coeff.to(device=g.device, dtype=g.dtype))
+            by_key.setdefault((g.device, g.dtype), []).append(g)
+        for (dev, dt), group in by_key.items():
+            torch._foreach_mul_(group, clip_coeff.to(device=dev, dtype=dt))
     elif clip_coeff < 1.0:
+        by_key = {}
         for g in grads:
-            g.mul_(clip_coeff)
+            by_key.setdefault((g.device, g.dtype), []).append(g)
+        for group in by_key.values():
+            torch._foreach_mul_(group, clip_coeff)
 
 
 @torch.no_grad()
@@ -848,11 +868,11 @@ def get_grad_norm(
         parameters = list(parameters)
 
     # Grads.
-    grads_for_norm = [
-        to_local_if_dtensor(p.grad.detach()).to(dtype)
-        for p in parameters
-        if p.grad is not None
-    ]
+    grads_for_norm = []
+    for p in parameters:
+        if p.grad is not None:
+            local = to_local_if_dtensor(p.grad.detach())
+            grads_for_norm.append(local if local.dtype == dtype else local.to(dtype))
 
     # Norm parameters.
     norm_type = float(norm_type)
@@ -867,41 +887,44 @@ def get_grad_norm(
             return torch.tensor(0.0, dtype=torch.float, device=device)
         return 0.0
 
-    total_norm = 0.0
     device = grads_for_norm[0].device
+    same_device = all(grad.device == device for grad in grads_for_norm)
     # Calculate norm.
     if norm_type == torch.inf:
-        total_norm = max(grad.abs().max().item() for grad in grads_for_norm)
-        total_norm_cuda = torch.tensor(
-            [float(total_norm)], dtype=torch.float, device=device
-        )
+        if same_device:
+            total_norm_cuda = (
+                torch.stack(torch._foreach_norm(grads_for_norm, torch.inf))
+                .max()
+                .reshape(1)
+                .to(dtype=torch.float)
+            )
+        else:
+            total_norm = max(grad.abs().max().item() for grad in grads_for_norm)
+            total_norm_cuda = torch.tensor(
+                [float(total_norm)], dtype=torch.float, device=device
+            )
         # Take max across all data-parallel GPUs if using FSDP and then all model-parallel GPUs.
-        if dp_group is not None:
+        if dp_group is not None and torch.distributed.get_world_size(dp_group) > 1:
             torch.distributed.all_reduce(
                 total_norm_cuda, op=torch.distributed.ReduceOp.MAX, group=dp_group
             )
         if as_tensor:
             return total_norm_cuda[0]
-        total_norm = total_norm_cuda[0].item()
+        return float(total_norm_cuda[0].item())
 
     else:
-        # Accumulate p-norm over all gradients.
-        for grad in grads_for_norm:
-            grad_norm = torch.norm(grad, norm_type)
-            total_norm += grad_norm**norm_type
-
-        # Ensure total_norm is a tensor on CUDA before all_reduce.
-        if not isinstance(total_norm, torch.Tensor):
-            total_norm = torch.tensor(
-                float(total_norm),
-                dtype=torch.float,
-                device=device,
-            )
+        # Accumulate p-norm over all gradients with multi-tensor kernel when colocated.
+        if same_device:
+            norms = torch._foreach_norm(grads_for_norm, norm_type)
+            total_norm = torch.stack(norms).pow(norm_type).sum().to(dtype=torch.float)
         else:
-            total_norm = total_norm.to(device=device)
+            total_norm = torch.tensor(0.0, dtype=torch.float, device=device)
+            for grad in grads_for_norm:
+                grad_norm = torch.norm(grad, norm_type).to(device=device)
+                total_norm = total_norm + grad_norm**norm_type
 
         # Sum across all data-parallel GPUs if using FSDP and then all model-parallel GPUs.
-        if dp_group is not None:
+        if dp_group is not None and torch.distributed.get_world_size(dp_group) > 1:
             torch.distributed.all_reduce(
                 total_norm, op=torch.distributed.ReduceOp.SUM, group=dp_group
             )

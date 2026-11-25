@@ -245,17 +245,17 @@ class SuperMimicRunner(EmbodiedRunner):
 
     # -------------------------------------------------------------- training
 
-    def _collect(self, num_steps: int) -> tuple[Handle, Handle]:
+    def _collect(self, num_steps: int) -> tuple[Handle, Handle, list[bool]]:
         """Run ``num_steps`` control steps on every rank; returns the env and
-        rollout handles."""
+        rollout handles plus each actor rank's replay readiness."""
         env_handle = self.env.collect(num_steps)
         rollout_handle = self.rollout.serve(num_steps)
-        self.actor.ingest(num_steps).wait()
+        ready = self.actor.ingest(num_steps).wait()
         env_handle.wait()
         rollout_handle.wait()
         self.env_steps += num_steps
         self.replay_steps += num_steps
-        return env_handle, rollout_handle
+        return env_handle, rollout_handle, ready
 
     def _steps_until_update(self) -> tuple[int, int, float]:
         """Vector steps to collect until updates fall due with a full enough
@@ -278,12 +278,9 @@ class SuperMimicRunner(EmbodiedRunner):
         batch.
         """
         steps, due, self.anchor = self._steps_until_update()
-        env_handle, rollout_handle = self._collect(steps)
+        env_handle, rollout_handle, ready = self._collect(steps)
         waited = 0
-        while True:
-            ready = self.actor.replay_ready().wait()
-            if all(ready):
-                return env_handle, rollout_handle, due
+        while not all(ready):
             if waited >= self.replay_length:
                 missing = [rank for rank, ok in enumerate(ready) if not ok]
                 raise RuntimeError(
@@ -291,8 +288,9 @@ class SuperMimicRunner(EmbodiedRunner):
                     f"replay window after {waited} more steps: every env on "
                     f"those ranks ends within {self.k} steps."
                 )
-            env_handle, rollout_handle = self._collect(1)
+            env_handle, rollout_handle, ready = self._collect(1)
             waited += 1
+        return env_handle, rollout_handle, due
 
     def evaluate(self) -> dict[str, float]:
         return evaluate_g1_mimic(
@@ -394,7 +392,6 @@ class SuperMimicRunner(EmbodiedRunner):
         return handle, handle.wait()
 
     def _sync_policy(self) -> None:
-        self._set_global_step()
         self.update_rollout_weights()
 
     def _measure(self, name: str, durations: dict[str, float], fn, *args):

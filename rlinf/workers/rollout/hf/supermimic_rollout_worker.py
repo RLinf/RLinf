@@ -18,6 +18,12 @@ from __future__ import annotations
 
 import torch
 
+from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache, run_compiled
+from rlinf.models.embodiment.supermimic.supermimic_policy import (
+    FlatTensorPacker,
+    sync_param_names,
+    use_direct_weight_sync,
+)
 from rlinf.scheduler import Worker
 from rlinf.utils.precision import torch_dtype_from_precision
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
@@ -38,6 +44,29 @@ class SuperMimicRolloutWorker(MultiStepRolloutWorker):
         if amp is not None and amp.enabled:
             dtype = torch_dtype_from_precision(amp.precision)
         self.hf_model.set_autocast(dtype)
+        self._compile_cache = CompileCache(
+            enabled=bool(self.hf_model._compile_cache.enabled), dynamic=False
+        )
+        self._use_direct_weight_sync = not self.only_eval and use_direct_weight_sync(
+            self.cfg, self.placement.get_world_size("actor"), self._world_size
+        )
+        self._sync_packer = (
+            FlatTensorPacker(self.hf_model, sync_param_names(self.hf_model))
+            if self._use_direct_weight_sync
+            else None
+        )
+
+    @Worker.timer("sync_model_from_actor")
+    async def sync_model_from_actor(self):
+        if not self._use_direct_weight_sync:
+            return await super().sync_model_from_actor()
+        self.recv_tensor(
+            self._sync_packer.buffer,
+            src_group_name=self.actor_group_name,
+            src_rank=self._rank,
+        )
+        self._sync_packer.unpack()
+        self.version += 1
 
     @Worker.timer("serve")
     def serve(self, num_steps: int) -> None:
@@ -51,6 +80,12 @@ class SuperMimicRolloutWorker(MultiStepRolloutWorker):
         for _ in range(num_steps):
             obs = self.recv(env, rank)
             with torch.no_grad():
-                action = model.act(obs["enc"], obs["goal"])
+                action = run_compiled(
+                    "rollout-act",
+                    model.act,
+                    obs["enc"],
+                    obs["goal"],
+                    cache=self._compile_cache,
+                )
             self.send(action, env, rank)
             model.fold_policy_stats(obs["enc_stats"], obs["goal_stats"])

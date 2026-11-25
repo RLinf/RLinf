@@ -154,6 +154,9 @@ actor:
 
   fsdp_config:
     strategy: fsdp2
+    # SuperMimicPolicy is ~64 MB FP32; replicating weights avoids per-step AllGather.
+    sharding_strategy: no_shard
+    reshard_after_forward: False
     # One FSDP unit per network; each phase gathers only the networks it reads.
     wrap_policy:
       module_classes_to_wrap: [Dynamics, MotionPolicy, Critic]

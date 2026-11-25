@@ -76,6 +76,7 @@ from rlinf.models.embodiment.supermimic.normalization import (
     EmpiricalNorm,
     merged_moments,
     pack_moments,
+    split_moments,
 )
 from rlinf.runners.supermimic_runner import (
     SuperMimicRunner,
@@ -520,6 +521,13 @@ def test_norm_folds_batches_like_their_union():
     torch.testing.assert_close(norm.var, var)
     assert float(norm.count) == 14.0
 
+    left, right = torch.randn(6, 4, generator=gen), torch.randn(6, 5, generator=gen)
+    got_left, got_right = split_moments(
+        pack_moments(torch.cat((left, right), dim=-1)), 4
+    )
+    torch.testing.assert_close(got_left, pack_moments(left), atol=0, rtol=0)
+    torch.testing.assert_close(got_right, pack_moments(right), atol=0, rtol=0)
+
 
 _RANK_ROWS = (
     torch.tensor([[0.0, 1.0], [2.0, -1.0]]),
@@ -638,14 +646,13 @@ def _runner_with_replay_answers(answers: list[list[bool]], replay_length: int = 
     runner.ratio, runner.k, runner.replay_length = 0.4, 8, replay_length
     runner.anchor, runner.env_steps, runner.replay_steps = None, 0, 0
     replies = iter(answers)
-    runner.actor = SimpleNamespace(replay_ready=lambda: _Done(next(replies)))
     runner.collected = []
 
     def collect(steps):
         runner.collected.append(steps)
         runner.env_steps += steps
         runner.replay_steps += steps
-        return _Done(), _Done()
+        return _Done(), _Done(), next(replies)
 
     runner._collect = collect
     return runner
@@ -673,6 +680,62 @@ def test_due_updates_wait_until_every_rank_can_draw_a_window():
     with pytest.raises(RuntimeError, match=r"actor ranks \[1\]"):
         stuck._collect_until_update()
     assert stuck.collected == [9, 1, 1]
+
+
+def test_flat_tensor_packer_round_trips_actor_weights_and_norm_buffers():
+    from rlinf.models.embodiment.supermimic.supermimic_policy import (
+        FlatTensorPacker,
+        SuperMimicPolicy,
+        sync_param_names,
+    )
+
+    torch.manual_seed(0)
+    src = SuperMimicPolicy(representation="gencoord", torch_compile=False)
+    dst = SuperMimicPolicy(representation="gencoord", torch_compile=False)
+    src.fold_policy_stats(
+        pack_moments(torch.randn(8, src.representation.encoding_dim)),
+        pack_moments(torch.randn(8, ACTOR_GOAL_DIM)),
+    )
+    names = sync_param_names(src)
+    assert names and all(not n.startswith(("dynamics.", "critic.")) for n in names)
+
+    src_packer = FlatTensorPacker(src, names)
+    dst_packer = FlatTensorPacker(dst, names)
+    dst_packer.buffer.copy_(src_packer.pack())
+    dst_packer.unpack()
+
+    src_sd, dst_sd = src.state_dict(), dst.state_dict()
+    for name in names:
+        assert torch.equal(src_sd[name], dst_sd[name]), name
+
+
+def test_replay_has_window_fast_path_and_older_fallback():
+    ring = TransitionRing(num_envs=2, capacity=32, state_dim=STATE_DIM, device=CPU)
+
+    def push(done: bool):
+        ring.add(
+            {
+                "state": torch.zeros(2, STATE_DIM),
+                "action": torch.zeros(2, ACTION_DIM),
+                "prev_action": torch.zeros(2, ACTION_DIM),
+                "motion_time": torch.zeros(2, dtype=torch.long),
+                "terminated": torch.full((2,), done, dtype=torch.bool),
+                "truncated": torch.zeros(2, dtype=torch.bool),
+                "sim_context": torch.zeros(2, SIM_CONTEXT_DIM),
+            }
+        )
+
+    for _ in range(4):
+        push(False)
+    assert ring.has_window(4)
+    # Push 10 steps where every step terminates: newest 8 steps have no legal
+    # 4-step window, so has_window must fall back and still find the older one.
+    for _ in range(10):
+        push(True)
+    assert ring.has_window(4)
+    sample = ring.sample(1, 16, fields=("state", "motion_time"))
+    assert set(sample) == {"state", "motion_time"}
+    assert sample["state"].shape == (16, 1, STATE_DIM)
 
 
 def test_reset_draws_before_the_step_is_recorded_and_keeps_the_action(monkeypatch):
@@ -1009,6 +1072,7 @@ def _small_actor(cfg, mesh, motion):
     def base_init(self, cfg):
         self.cfg = cfg
         self._rank, self._world_size = 0, 1
+        self.version = 0
 
     orig_init = module.EmbodiedFSDPActor.__init__
     module.EmbodiedFSDPActor.__init__ = base_init

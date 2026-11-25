@@ -31,7 +31,10 @@ import torch.distributed as dist
 from omegaconf import DictConfig
 
 from rlinf.algorithms.supermimic.reset_sampler import ReturnResetSampler
-from rlinf.models.embodiment.supermimic.normalization import merged_moments
+from rlinf.models.embodiment.supermimic.normalization import (
+    merged_moments,
+    split_moments,
+)
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.utils import get_rng_state, set_rng_state
 from rlinf.workers.env.env_worker import EnvWorker
@@ -88,8 +91,11 @@ class SuperMimicEnvWorker(EnvWorker):
         )
         for _ in range(num_steps):
             obs = env.observe()
-            enc_stats = merged_moments(obs["enc"], self._env_group)
-            goal_stats = merged_moments(obs["goal"], self._env_group)
+            enc_width = int(obs["enc"].shape[-1])
+            combined = merged_moments(
+                torch.cat((obs["enc"], obs["goal"]), dim=-1), self._env_group
+            )
+            enc_stats, goal_stats = split_moments(combined, enc_width)
             self.send(
                 {**obs, "enc_stats": enc_stats, "goal_stats": goal_stats},
                 rollout,

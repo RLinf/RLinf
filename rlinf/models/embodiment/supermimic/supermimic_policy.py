@@ -34,10 +34,101 @@ from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache
 from rlinf.envs.sim.g1_mimic.constants import ACTOR_GOAL_DIM
 from rlinf.envs.sim.g1_mimic.g1_fk import set_kinematics_compile, soft_joint_limits
 from rlinf.envs.sim.g1_mimic.representations import make_representation
+from rlinf.hybrid_engines.fsdp.utils import to_local_if_dtensor
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.supermimic.networks import Critic, Dynamics, MotionPolicy
 from rlinf.scheduler import Worker
 from rlinf.utils.precision import torch_dtype_from_precision
+from rlinf.utils.utils import collect_param_names_need_sync
+
+# The rollout worker only acts; it never reads these networks.
+ACTOR_ONLY_PREFIXES = ("dynamics.", "critic.")
+
+
+def sync_param_names(module: nn.Module) -> list[str]:
+    """Sorted parameter and buffer names synced from actor to rollout."""
+    return sorted(
+        name
+        for name in collect_param_names_need_sync(module)
+        if not name.startswith(ACTOR_ONLY_PREFIXES)
+    )
+
+
+def use_direct_weight_sync(
+    cfg: DictConfig, actor_world_size: int, rollout_world_size: int
+) -> bool:
+    """Whether each actor rank holds full weights and pairs 1:1 with a rollout rank."""
+    if actor_world_size != rollout_world_size:
+        return False
+    if cfg.actor.get("enable_offload", False) or cfg.rollout.get(
+        "enable_offload", False
+    ):
+        return False
+    sharding = cfg.actor.fsdp_config.get("sharding_strategy", "full_shard")
+    return actor_world_size == 1 or sharding == "no_shard"
+
+
+class FlatTensorPacker:
+    """Pack and unpack named module parameters/buffers through one flat buffer.
+
+    References are resolved by ``(submodule, attr)`` on each call so FSDP2
+    parameter swaps between sharded and unsharded views stay valid.
+    """
+
+    def __init__(
+        self,
+        module: nn.Module,
+        names: list[str],
+        device: torch.device | str | int | None = None,
+    ):
+        resolved: list[tuple[nn.Module, str, torch.dtype, torch.Size, int]] = []
+        offset = 0
+        inferred_device: torch.device | None = None
+        for name in names:
+            parent_name, _, attr = name.rpartition(".")
+            parent = module.get_submodule(parent_name) if parent_name else module
+            tensor = to_local_if_dtensor(getattr(parent, attr).detach())
+            if inferred_device is None:
+                inferred_device = tensor.device
+            align = max(tensor.element_size(), 8)
+            offset = (offset + align - 1) // align * align
+            resolved.append((parent, attr, tensor.dtype, tensor.shape, offset))
+            offset += tensor.numel() * tensor.element_size()
+
+        buf_device = inferred_device if device is None else device
+        self.buffer = torch.empty(offset, dtype=torch.uint8, device=buf_device)
+        grouped: dict[
+            torch.dtype, tuple[list[tuple[nn.Module, str]], list[torch.Tensor]]
+        ] = {}
+        for parent, attr, dtype, shape, start in resolved:
+            nbytes = shape.numel() * torch.empty((), dtype=dtype).element_size()
+            view = self.buffer[start : start + nbytes].view(dtype).view(shape)
+            refs, views = grouped.setdefault(dtype, ([], []))
+            refs.append((parent, attr))
+            views.append(view)
+        self._groups = list(grouped.values())
+
+    @torch.no_grad()
+    def pack(self) -> torch.Tensor:
+        """Copy current local parameters and buffers into ``self.buffer``."""
+        for refs, views in self._groups:
+            srcs = [
+                to_local_if_dtensor(getattr(parent, attr).detach())
+                for parent, attr in refs
+            ]
+            torch._foreach_copy_(views, srcs)
+        return self.buffer
+
+    @torch.no_grad()
+    def unpack(self) -> None:
+        """Copy ``self.buffer`` into the target module's parameters and buffers."""
+        for refs, views in self._groups:
+            dsts = [
+                to_local_if_dtensor(getattr(parent, attr).detach())
+                for parent, attr in refs
+            ]
+            torch._foreach_copy_(dsts, views)
+
 
 # Submodules each training phase updates; every other parameter is frozen.
 PHASE_MODULES = {
@@ -70,7 +161,10 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
         self.actor = MotionPolicy(enc_dim)
         self.critic = Critic(enc_dim)
         self.register_buffer("soft_limits", soft_joint_limits(), persistent=False)
-        self._compile_cache = CompileCache(enabled=torch_compile)
+        self._compile_cache = CompileCache(
+            enabled=torch_compile,
+            dynamic=False,
+        )
         set_kinematics_compile(torch_compile)
         self._world_model_rollout = None
         self._imagination = None
