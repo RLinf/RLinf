@@ -1,5 +1,5 @@
-基于 ManiSkill 的强化学习训练
-========================================
+ManiSkill 强化学习
+==================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -12,14 +12,12 @@
 
    ManiSkill 中渲染的环境（图片来源：`ManiSkill <https://github.com/haosulab/ManiSkill>`__）。
 
-`ManiSkill <https://maniskill.readthedocs.io>`__ 是一个 GPU 并行化的机器人操作模拟器与基准。
-一台 7 自由度机械臂完成语言条件下的桌面操作任务；RLinf 借助 ManiSkill3 对视觉-语言-动作（VLA）
-策略进行强化学习微调，达到业界领先的成功率，并在分布外（OOD）变体上同样表现优异。
+`ManiSkill <https://maniskill.readthedocs.io>`__ 是一个 GPU 并行化的机器人操作模拟器与基准。一台 7 自由度机械臂完成语言条件下的桌面操作任务；RLinf 借助 ManiSkill3 用强化学习微调视觉-语言-动作（VLA）policy，取得高成功率，并在分布外（OOD）变体上保持良好泛化。
 
 概览
 ----------------------------------------
 
-在 ManiSkill3 上对 VLA 进行强化学习微调；OpenVLA 与 OpenVLA-OFT 在 plate-25 上成功率均超过 90%。
+在 ManiSkill3 上用强化学习微调 VLA；OpenVLA 与 OpenVLA-OFT 在 plate-25 上成功率均超过 90%。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -50,8 +48,7 @@
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-参考方案在 ``PutOnPlateInScene25Main-v3`` (plate-25) 任务上训练，并在分布内（IND）以及分布外
-（OOD）设置上评测：
+参考方案在 ``PutOnPlateInScene25Main-v3``\ （plate-25）任务上训练，并在分布内（IND）与分布外（OOD）设置上评测：
 
 .. list-table::
    :header-rows: 1
@@ -92,101 +89,139 @@
 
    各模型在 ManiSkill 上的后端配置见 :ref:`OpenVLA-OFT <openvla-oft-hardware>`、:ref:`GR00T N1.5 <gr00t-hardware>` 与 :ref:`OpenPI π₀ / π₀.₅ <pi0-hardware>`。AMD、昇腾和 MUSA 使用 CPU PhysX simulation，模型仍在所选 accelerator 上运行。GR00T 需要带有 ``maniskill_widowx`` embodiment head 的兼容 checkpoint；MUSA 需要厂商模拟器包。
 
-安装
-----------------------------------------
+安装与运行
+----------
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.4-maniskill_libero``：
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenVLA
+      :sync: openvla
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 国内镜像加速：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      **1. 安装环境**
 
-   # 进入容器后，切换到模型对应的虚拟环境：
-   source switch_env openvla        # 或：source switch_env openvla-oft
+      .. code-block:: bash
 
-**选项 2：自定义环境** —— 安装包 ``--env maniskill_libero``：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
-.. code:: bash
+      **2. 下载资源与模型**
 
-   # 国内用户可添加 --use-mirror 以提升下载速度。
-   # OpenVLA-OFT 实验请使用 --model openvla-oft。
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
-   source .venv/bin/activate
+      在仓库根目录下载 ManiSkill 场景资产与基座检查点：
 
-下载资产
-----------------------------------------
+      .. code-block:: bash
 
-下载 ManiSkill 资产：
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         hf download gen-robot/openvla-7b-rlvla-warmup --local-dir ./openvla-7b-rlvla-warmup
 
-.. code:: bash
+      **3. 启动训练**
 
-   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
-   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./maniskill_assets
+      ``examples/embodiment/config/`` 下的可用配置：
 
-.. important::
+      .. list-table::
+         :header-rows: 1
+         :widths: 25 75
 
-   资产 **必须** 放置在 ``rlinf/envs/sim/maniskill/assets`` 目录下——环境会从该路径加载资产。请将其复制到环境包目录：
+         * - 算法
+           - 配置
+         * - PPO
+           - ``maniskill_ppo_openvla.yaml``
+         * - GRPO
+           - ``maniskill_grpo_openvla.yaml``
 
-.. code:: bash
+      通过命令行覆盖 ``actor.model.model_path`` 启动训练（rollout 会自动沿用同一路径）：
 
-   cp -r ./maniskill_assets <path_to_RLinf>/rlinf/envs/sim/maniskill/assets
+      .. code-block:: bash
 
-下载模型
-----------------------------------------
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla \
+           actor.model.model_path=./openvla-7b-rlvla-warmup
 
-下载预训练基座检查点（任选一种方式）：
+      .. dropdown:: 进阶配置（可选）
 
-.. code:: bash
+         如果 PPO rollout 在终止状态 bootstrap 上逐个切片推理，或为 OpenVLA 解码未使用的动作 token，可在配置中开启批量与仅价值 bootstrap：
 
-   # 方式 1：git clone
-   git lfs install
-   git clone https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
+         .. code-block:: yaml
 
-   # 方式 2：huggingface-hub（国内可设置 HF_ENDPOINT=https://hf-mirror.com）
-   pip install huggingface-hub
-   hf download gen-robot/openvla-7b-rlvla-warmup --local-dir openvla-7b-rlvla-warmup
+            rollout:
+              batch_bootstrap_inference: True
+              value_only_bootstrap: True
 
-.. include:: _model_path.rst
+         ``rollout.batch_bootstrap_inference`` 将待处理的终止观测合并为单个 rollout 批次推理，再按原有路由拆回结果；``rollout.value_only_bootstrap`` 在 policy 带有价值头（如 OpenVLA PPO）时直接从提示隐藏状态估计价值，跳过动作 token 的自回归生成。两项默认均为 ``False``。
 
-运行
-----------------------------------------
+      **4. 训练曲线**
 
-每个方案对应 ``examples/embodiment/config/`` 下的一个 YAML 配置：
+      在单台 8 卡 H100 机器上，OpenVLA 在 ManiSkill3 的 plate-25-main 任务上成功率超过 90%：
 
-- **OpenVLA + PPO** —— ``maniskill_ppo_openvla.yaml``
-- **OpenVLA-OFT + PPO** —— ``maniskill_ppo_openvlaoft.yaml``
-- **OpenVLA + GRPO** —— ``maniskill_grpo_openvla.yaml``
-- **OpenVLA-OFT + GRPO** —— ``maniskill_grpo_openvlaoft.yaml``
+      .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/mani_openvla.png
+         :align: center
+         :width: 80%
 
-使用 ``run_embodiment.sh`` 启动某个配置：
+         OpenVLA 在 ManiSkill3 上的训练曲线。
 
-.. code-block:: bash
+   .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla
+      **1. 安装环境**
 
-**本命令做了什么：**
+      .. code-block:: bash
 
-1. 加载 ``examples/embodiment/config/maniskill_ppo_openvla.yaml`` 配置。
-2. 连接（或启动）Ray，并按 ``cluster.component_placement`` 放置 actor、rollout、env 各 worker。
-3. 运行 PPO 训练循环，并将日志与检查点写入 ``runner.logger.log_path``。
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-当 PPO rollout 在终止状态 bootstrap 上逐个切片推理，或为 OpenVLA 解码未使用的动作 token 时，可在配置中开启批量与仅价值 bootstrap：
+      **2. 下载资源与模型**
 
-.. code-block:: yaml
+      在仓库根目录下载 ManiSkill 场景资产、基座检查点与 LoRA 权重：
 
-   rollout:
-     batch_bootstrap_inference: True
-     value_only_bootstrap: True
+      .. code-block:: bash
 
-``rollout.batch_bootstrap_inference`` 将待处理的终止观测合并为单个 rollout 批次推理，再按原有路由拆回结果；``rollout.value_only_bootstrap`` 在策略带有价值头（如 OpenVLA PPO）时直接通过 ``predict_value_batch`` 从提示隐藏状态估计价值，跳过动作 token 的自回归生成。两项默认均为 ``False``。
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir ./RLinf-OpenVLAOFT-ManiSkill-Base-Main
+         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+
+      **3. 启动训练**
+
+      ``examples/embodiment/config/`` 下的可用配置：
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 25 75
+
+         * - 算法
+           - 配置
+         * - PPO
+           - ``maniskill_ppo_openvlaoft.yaml``
+         * - GRPO
+           - ``maniskill_grpo_openvlaoft.yaml``
+
+      通过命令行覆盖 ``actor.model.model_path`` 与 ``actor.model.lora_path`` 启动训练（rollout 会自动沿用 ``model_path``）：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft \
+           actor.model.model_path=./RLinf-OpenVLAOFT-ManiSkill-Base-Main \
+           actor.model.lora_path=./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+
+      .. dropdown:: 进阶配置（可选）
+
+         如果 PPO rollout 在终止状态 bootstrap 上逐个切片推理，可在配置中开启批量 bootstrap：
+
+         .. code-block:: yaml
+
+            rollout:
+              batch_bootstrap_inference: True
+
+         ``rollout.batch_bootstrap_inference`` 将待处理的终止观测合并为单个 rollout 批次推理，再按原有路由拆回结果（默认 ``False``）。
+
+      **4. 训练曲线**
+
+      在单台 8 卡 H100 机器上，OpenVLA-OFT 在 ManiSkill3 的 plate-25-main 任务上成功率超过 90%：
+
+      .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/mani_openvlaoft.png
+         :align: center
+         :width: 80%
+
+         OpenVLA-OFT 在 ManiSkill3 上的训练曲线。
 
 .. admonition:: 进一步配置
    :class: note
@@ -200,59 +235,23 @@
 可视化与结果
 ----------------------------------------
 
-启动 TensorBoard 实时查看训练：
-
-.. code-block:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-最值得关注的指标是 **``env/success_once``** —— 未归一化的回合成功率。每个日志指标的含义见
-:doc:`训练指标 <../../reference/metrics>`。
-
-如需保存评测视频，在配置中开启：
-
-.. code-block:: yaml
-
-   env:
-      eval:
-         video_cfg:
-            save_video: True
-            video_base_dir: ${runner.logger.log_path}/video/eval
+运行 ``tensorboard --logdir ./logs`` 关注 ``env/success_once``；如需保存评测视频，设置 ``env.eval.video_cfg.save_video=True``，更多日志后端与指标见 :doc:`训练指标 <../../reference/metrics>`。
 
 ManiSkill3 结果
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-在单台 8 卡 H100 机器上，OpenVLA（左）与 OpenVLA-OFT（右）在 ManiSkill3 的 plate-25-main
-任务上成功率均超过 90%。
-
-.. raw:: html
-
-   <div style="display: flex; justify-content: space-between; gap: 10px;">
-     <div style="flex: 1; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/mani_openvla.png" style="width: 100%;"/>
-       <p><em>OpenVLA</em></p>
-     </div>
-     <div style="flex: 1; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/mani_openvlaoft.png" style="width: 100%;"/>
-       <p><em>OpenVLA-OFT</em></p>
-     </div>
-   </div>
 
 我们在分布内（IND）和 OOD 场景（视觉、语义、执行）上评测。每列最优结果以粗体标注。
 
 .. note::
 
-   这里采用与 `rl4vla <https://arxiv.org/abs/2505.19789>`_ 相同的 OOD 测试集以便公平比较。基座模型：
-   OpenVLA 采用预训练的 `openvla-7b-rlvla-warmup <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_；
-   OpenVLA-OFT 使用我们在 ``PutOnPlateInScene25Main-v3`` 数据上自行 LoRA 微调的权重
-   （`OpenVLA-OFT (Base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_）。
+   这里采用与 `rl4vla <https://arxiv.org/abs/2505.19789>`_ 相同的 OOD 测试集以便公平比较。基座模型：OpenVLA 采用预训练的 `openvla-7b-rlvla-warmup <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_；OpenVLA-OFT 使用我们在 ``PutOnPlateInScene25Main-v3`` 数据上自行 LoRA 微调的权重（`OpenVLA-OFT (Base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_）。
 
 .. list-table:: **OpenVLA 与 OpenVLA-OFT 在 ManiSkill3 上的结果**
    :header-rows: 1
    :widths: 40 15 15 15 15 15
 
    * - 模型
-     - 训练设置(IND)
+     - 训练设置 (IND)
      - 视觉 (OOD)
      - 语义 (OOD)
      - 执行 (OOD)
@@ -302,8 +301,7 @@ ManiSkill3 结果
 
 .. note::
 
-   ``rl4vla`` 是在小批量下的 PPO + OpenVLA，因此只应与在相近条件下训练的 PPO+OpenVLA 比较。
-   我们的 PPO+OpenVLA 依托 RLinf 的大规模基础设施以更大批量训练，显著提升了性能。
+   ``rl4vla`` 是在小批量下的 PPO + OpenVLA，因此只应与在相近条件下训练的 PPO+OpenVLA 比较。我们的 PPO+OpenVLA 依托 RLinf 的大规模基础设施以更大批量训练，显著提升了性能。
 
 下面的动画展示了在 RLinf 中用 PPO 在 ManiSkill3 多任务基准上训练 OpenVLA 的结果。
 

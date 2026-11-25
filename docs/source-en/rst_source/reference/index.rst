@@ -1,3 +1,5 @@
+:orphan:
+
 Reference
 =========
 
@@ -27,10 +29,3 @@ Choose a Reference Area
       :link-type: doc
 
       Look up training config keys and metric namespaces.
-
-.. toctree::
-   :hidden:
-
-   API <api/index>
-   Algorithms <algorithms/index>
-   Configuration <training/index>

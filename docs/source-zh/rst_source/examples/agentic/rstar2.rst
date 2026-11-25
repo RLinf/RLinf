@@ -1,12 +1,10 @@
-rStar2的强化学习训练
-========================================
+rStar2 强化学习
+===============
 
-使用本配方复现 `rStar2-Agent: Agentic Reasoning Technical Report <https://arxiv.org/abs/2508.20722>`__ 的多轮工具调用实验，通过强化学习训练大语言模型调用代码运行工具回答问题。
+复现 `rStar2-Agent: Agentic Reasoning Technical Report <https://arxiv.org/abs/2508.20722>`__ 中的多轮代码执行强化学习实验，在 RLinf 中训练 Qwen2.5-7B-Instruct 调用本地 Python 执行服务解答数学题。默认配置训练 150 步后，RLinf 在 AIME 24、AIME 25 与 Math 500 上达到 **45.79** 的平均得分。
 
-概述
-----------------------------------------
-
-使用本配方复现 rStar2 风格的智能体推理，包含代码执行工具与 Megatron 训练。
+概览
+----
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -19,149 +17,95 @@ rStar2的强化学习训练
    .. grid-item-card:: 算法
       :text-align: center
 
-      带工具调用的多轮强化学习
+      GRPO（多轮工具调用 RL）
 
    .. grid-item-card:: 工具
       :text-align: center
 
-      Code Judge server 与 Math-Verify reward
+      Code Judge 服务 · Math-Verify
 
    .. grid-item-card:: 硬件
       :text-align: center
 
-      参考运行使用 8×H100
+      8×H100（Megatron）
 
-环境
-----------------------------------------
+| **你将完成：** 安装依赖与 Code Judge → 下载模型并启动代码执行服务 → 运行 ``run_rstar2.sh``。
+| **前置条件：** :doc:`安装与硬件参考 </rst_source/start/installation>` · 本地 Code Judge 服务需要 Redis 和 ``tmux``。
 
-RLinf环境
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+安装与运行
+----------
 
-RLinf 环境配置参照 :doc:`RLinf Installation </rst_source/start/installation>`。
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。
 
-Code judge运行环境
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. tab-set::
 
-我们使用 rStar2 示例中的 code judge 工具，安装过程参考 `rStar2 & veRL-SGLang <https://github.com/volcengine/verl/blob/c12e3cbce8dceb70e9c9b16252bfd5675ec3129c/recipe/rstar2_agent/README.md>`__
+   .. tab-item:: Qwen2.5-7B-Instruct（Megatron · 8×H100）
 
-.. code-block:: bash
+      **1. 安装环境**
 
-   cd examples/agent/rstar2
+      安装 agentic 环境、Reward 依赖、Redis 和 Code Judge（参考 `rStar2 & veRL-SGLang <https://github.com/volcengine/verl/blob/c12e3cbce8dceb70e9c9b16252bfd5675ec3129c/recipe/rstar2_agent/README.md>`__）：
 
-   # install code judge
-   sudo apt-get update -y && sudo apt-get install redis -y
-   git clone https://github.com/0xWJ/code-judge
-   pip install -r code-judge/requirements.txt
-   pip install -e code-judge
+      .. code-block:: bash
 
-   # install rstar2_agent requirements
-   pip install -r requirements.txt
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
+         uv pip install math-verify sympy pylatexenc
+         sudo apt-get update -y && sudo apt-get install redis -y
+         git clone https://github.com/0xWJ/code-judge examples/agent/rstar2/code-judge
+         uv pip install -r examples/agent/rstar2/code-judge/requirements.txt
+         uv pip install -e examples/agent/rstar2/code-judge
 
-   cd code-judge
+      **2. 下载模型并启动 Code Judge**
 
-Code Judge 服务器设置
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      下载基础模型并生成处理后的训练数据（默认输出到 ``./dapo/train.jsonl``）：
 
-rStar2-Agent 使用 Code Judge 作为工具调用服务器来执行模型生成的 Python 代码。
+      .. code-block:: bash
 
-**1. 启动 Redis 服务器**
+         hf download Qwen/Qwen2.5-7B-Instruct --local-dir ./Qwen2.5-7B-Instruct
+         python examples/agent/rstar2/data_process/process_train_dataset.py
 
-.. code-block:: bash
+      启动 Redis、Code Judge HTTP 服务（仅主节点运行）及执行 worker；多机部署时将 ``MASTER_ADDR`` 改为主节点 IP：
 
-   sudo apt-get update -y && sudo apt-get install redis -y
-   redis-server --daemonize yes --protected-mode no --bind 0.0.0.0
+      .. code-block:: bash
 
-**2. 启动 Code Judge Server**
+         export WORKSPACE=$(pwd)
+         export MASTER_ADDR=127.0.0.1
+         redis-server --daemonize yes --protected-mode no --bind 0.0.0.0
+         tmux new-session -d -s server \
+           'cd $WORKSPACE/examples/agent/rstar2/code-judge && MAX_EXECUTION_TIME=4 REDIS_URI="redis://$MASTER_ADDR:6379" RUN_WORKERS=0 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 16 2>&1 | tee server.log'
+         tmux new-session -d -s worker \
+           'cd $WORKSPACE/examples/agent/rstar2/code-judge && MAX_EXECUTION_TIME=4 REDIS_URI="redis://$MASTER_ADDR:6379" MAX_WORKERS=64 python run_workers.py 2>&1 | tee worker.log'
 
-.. code-block:: bash
+      **3. 启动训练**
 
-   # Start the main server (master node only)
-   # Environment variables can be configured as per: https://github.com/0xWJ/code-judge/blob/main/app/config.py
-   # Replace $WORKSPACE and $MASTER_ADDR with your actual paths
+      通过命令行传入模型和数据集路径，使用 ``rstar2-qwen2.5-7b-megatron.yaml`` 启动训练：
 
-   tmux new-session -d -s server \
-   'cd $WORKSPACE/examples/agent/rstar2/code-judge && \
-      MAX_EXECUTION_TIME=4 \
-      REDIS_URI="redis://$MASTER_ADDR:6379" \
-      RUN_WORKERS=0 \
-      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 16 \
-      2>&1 | tee server.log'
+      .. code-block:: bash
 
-**3. 启动 Code Judge Workers**
+         bash examples/agent/rstar2/run_rstar2.sh rstar2-qwen2.5-7b-megatron \
+           rollout.model.model_path=./Qwen2.5-7B-Instruct \
+           data.train_data_paths='["./dapo/train.jsonl"]'
 
-.. code-block:: bash
+      .. dropdown:: 进阶配置（可选）
 
-   # Launch workers (can be deployed on multiple nodes for increased parallelism)
-   # Adjust MAX_WORKERS based on your CPU count per node
+         如需将路径写入配置文件或开启验证，编辑 ``examples/agent/rstar2/config/rstar2-qwen2.5-7b-megatron.yaml``，并保持 ``algorithm.recompute_logprobs: False`` 与 ``algorithm.shuffle_rollout: False``：
 
-   tmux new-session -d -s worker \
-   'cd $WORKSPACE/examples/agent/rstar2/code-judge && \
-      MAX_EXECUTION_TIME=4 \
-      REDIS_URI="redis://$MASTER_ADDR:6379" \
-      MAX_WORKERS=64 \
-      python run_workers.py \
-      2>&1 | tee worker.log'
+         .. code-block:: yaml
 
+            data:
+              train_data_paths: ["./dapo/train.jsonl"]
+              val_data_paths: ["./dapo/train.jsonl"]
 
-Reward计算工具
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-我们使用 Math-Verify 辅助进行 reward 计算，需通过 pip 安装
-
-.. code-block:: bash
-
-   pip install math-verify
-
-我们同时使用了简单规则进行reward计算，以确保reward计算的正确性， 计算需安装依赖。
-
-.. code-block:: bash
-
-   pip install sympy
-   pip install pylatexenc
-
-在8*H100上训练
-----------------------------------------
-
-通过 ``examples/agent/rstar2/data_process/process_train_dataset.py`` 下载训练集，并将路径写入 ``examples/agent/rstar2/config/rstar2-qwen2.5-7b-megatron.yaml``
-
-.. code-block:: yaml
-
-   data:
-     # ……
-     train_data_paths: ["/path/to/train.jsonl"]
-     val_data_paths: ["/path/to/train.jsonl"]
-
-修改 ``examples/agent/rstar2/config/rstar2-qwen2.5-7b-megatron.yaml`` 中 ``rollout.model.model_path`` 的路径
-
-.. code-block:: yaml
-
-   rollout:
-     group_name: "RolloutGroup"
-
-     gpu_memory_utilization: 0.5
-     model:
-       model_path: /path/to/model/Qwen2.5-7B-Instruct
-       model_type: qwen2.5
-
-由于 down sample 逻辑不适配目前 inference 逻辑，``recompute_logprobs`` 应当设置为 ``False``
-
-.. code-block:: yaml
-
-   algorithm:
-      # ……
-      recompute_logprobs: False
-      shuffle_rollout: False
-
-运行
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-运行 ``examples/agent/rstar2/run_rstar2.sh`` 启动训练。
-
+            rollout:
+              model:
+                model_path: ./Qwen2.5-7B-Instruct
 
 可视化与结果
-----------------------------------------
+------------
 
-下面展示 RLinf 与 Verl 的 reward 曲线和 response 长度曲线对比。
+运行 ``tensorboard --logdir ../results`` 查看 Reward 与响应长度曲线；更多指标与 W&B/SwanLab 配置见 :doc:`训练指标 </rst_source/reference/metrics>`。
+
+下图和表格展示默认配置训练 150 步后 RLinf 与 Verl 的效果对比。
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rstar2-RLinf-7b.jpg
    :width: 80%
@@ -177,9 +121,7 @@ Reward计算工具
 
    Qwen2.5-7B-Instruct in Verl
 
-\* 我们使用默认配置对模型进行了 150 步重训，以和Verl的效果对齐。
-
-.. list-table:: **7B验证结果对比**
+.. list-table:: **7B 模型验证结果（150 步）**
    :header-rows: 1
    :widths: 35 15 15 15 20
 
@@ -199,7 +141,4 @@ Reward计算工具
      - 76.20
      - 44.64
 
-References
-----------
-
-- rStar2 & veRL-SGLang: https://github.com/volcengine/verl/pull/3397
+**参考：** `rStar2 & veRL-SGLang <https://github.com/volcengine/verl/pull/3397>`__。

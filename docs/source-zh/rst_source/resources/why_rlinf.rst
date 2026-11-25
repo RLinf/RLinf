@@ -1,63 +1,41 @@
 为什么选择 RLinf
-=================================
+================
 
-RLinf 专为大规模通过强化学习对基础模型进行后训练而构建。本页汇总了框架背后的设计理念、性能数据与 SOTA 复现配方——当你想了解“为什么”而非“怎么做”时，请阅读本页。
+RLinf 是一个面向具身智能、智能体与生成式基础模型的开源分布式强化学习框架。本页概括框架的设计理念、实测吞吐收益与工作负载覆盖范围。
 
-RLinf 的独特之处
----------------------------------
+RLinf 的核心设计
+----------------
 
-- **宏观到微观流程（M2Flow）：** 一种新范式，通过微观级的执行流程完成宏观级的逻辑流程，将逻辑工作流构建（可编程）与物理通信调度（高效执行）解耦。
+- **宏观到微观流程（M2Flow）**：将逻辑 RL 工作流编排与底层物理通信、硬件调度解耦（见 :doc:`publications/rlinf_system`）。
+- **灵活执行模式**：无需修改训练循环，直接通过 YAML 在 *共享式*、*分离式* 与 *混合式* 部署间切换（见 :doc:`../concepts/execution_modes`）。
+- **自动与动态调度**：支持静态模式自动选型与训练期在线弹性扩缩，在保持 on-policy 语义的前提下提升集群利用率（见 :doc:`publications/dynarl` 与 :doc:`../guides/dynamic_scheduling`）。
+- **完整的工作负载覆盖（v0.4+）**：
 
-- **灵活的执行模式：**
+  - *具身仿真*：覆盖 LIBERO、ManiSkill3、RoboTwin、IsaacLab、BEHAVIOR、CALVIN、MetaWorld 与 Genesis 等模拟器，适配 OpenVLA、OpenVLA-OFT、π₀ / π₀.₅、GR00T、LingBot-VLA 及 MLP/CNN policy（见 :doc:`../examples/simulators_index`、:doc:`../examples/vla_wam_index`）。
+  - *真机机器人*：通过统一的 ``rlinf.robotics`` 硬件接口支持 Franka、双臂 Franka、SO-101、Piper、Turtle2、YAM 等平台的在线 RL、DAgger 与遥操作（见 :doc:`../examples/real_world_index`）。
+  - *世界模型与生成式 RL*：支持 WoVR / Wan、OpenSora、DreamZero、Cosmos3 等世界模型 RL 与扩散/视频生成后训练（见 :doc:`../examples/world_model_index`）。
+  - *推理与智能体*：支持数学推理、VQA 以及 Search-R1、WideSeek-R1、rStar2、在线代码 RL 与 AgentLightning 等多轮工具调用智能体（见 :doc:`../examples/agentic/index`）。
+  - *SFT 与离线 RL*：支持有监督微调、IQL、RECAP、STEAM 与仿真实协同训练（见 :doc:`../examples/sft_index`、:doc:`../examples/methods_index`）。
 
-  - *共享式* — 所有任务共享全部 GPU。
-  - *分离式* — 支持细粒度流水线。
-  - *混合式* — 可定制地组合共享式与分离式两种模式。
+- **多加速器支持**：在同一套 ``Worker`` 抽象下支持 NVIDIA GPU、AMD ROCm、昇腾 Ascend、摩尔线程 MUSA、昆仑芯与壁仞加速器（见 :doc:`../start/installation`）。
 
-- **自动调度：**
+实测性能
+--------
 
-  - *动态调度* — 即时调度资源分配，最大化资源利用率。
-  - *静态调度* — 根据训练任务自动选择最合适的执行模式，无需手动分配资源。
+- **端到端训练加速**：M2Flow 结合混合式部署与细粒度流水线，相比同类 RL 框架获得 **1.07×–2.43×** 端到端吞吐提升——数学推理相对 veRL 与 Slime 最高提升 **1.7×**，具身 VLA 训练最高提升 **2.43×**\ （详见 :doc:`publications/rlinf_system` 与 :doc:`blog/compare_with_verl`）。
+- **在线动态扩缩**：DynaRL 在数秒内完成 worker 资源重分配，在保持 on-policy 语义的同时将动态负载效率再提升 **20–40%**\ （详见 :doc:`publications/dynarl`）。
 
-- **具身智能支持：**
+统一后端与算法
+--------------
 
-  - 快速适配主流 VLA 模型：`OpenVLA`_、`OpenVLA-OFT`_、`π₀`_、`GR00T-N1.5`_。
-  - 通过标准化 RL 接口支持主流 CPU 与 GPU 模拟器：`ManiSkill3`_、`LIBERO`_、`IsaacLab`_。
-  - 支持 π₀ 模型族首次基于 flow-matching 动作专家的强化学习微调。
+- **可切换训练与推理引擎**：可用 **FSDP + Hugging Face** 快速迭代具身与科研实验，也可用 **Megatron + SGLang / vLLM**\ （配合 :doc:`../extending/mbridge`）支撑大规模 LLM 与 VLM 训练。
+- **内置算法**：在同一套优势函数与损失注册表下提供 PPO、Async PPO、GRPO、DAPO、REINFORCE++、SAC、CrossQ、RLPD 与 IQL（见 :doc:`../reference/algorithms/index`）。
+- **配置与指标参考**：Hydra YAML 结构与训练指标定义见 :doc:`../reference/training/index`。
 
-性能
----------------------------------
+可复现的端到端配方
+------------------
 
-- **结合细粒度流水线的混合式** 相比同类框架实现 **120%+** 的吞吐率提升。
-- **自动在线扩缩** 动态扩展训练资源，GPU 切换只需数秒，在保持 RL 算法 on-policy 特性的同时进一步提升效率 **20–40%**。
+RLinf 提供可直接运行的配置与启动脚本，用于复现论文级实验结果：
 
-灵活且易用
----------------------------------
-
-- **多后端集成**，在统一接口背后无需修改代码即可切换：
-
-  - *FSDP + Hugging Face* — 快速适配新模型与算法，适合初学者与快速原型开发。
-  - *Megatron + SGLang* — 面向大规模训练优化，为高负载场景提供极致效率。
-
-- 通过异步通信通道实现自适应通信。
-- 内建多种强化学习方法，包括 `PPO`_、`GRPO`_、`DAPO`_、`Reinforce++`_ 等。
-
-SOTA 强化学习复现
----------------------------------
-
-RLinf 提供开箱即用的端到端配方，可复现或达到 **业界领先（SOTA）的 RL 结果**——直接运行官方配置与脚本即可获得论文级数据，无需额外工程改造。
-
-- **具身智能任务：** RLinf 在 **LIBERO**、**ManiSkill**、**RoboTwin** 等基准上，使用 OpenVLA、OpenVLA-OFT、π₀/π₀.₅、GR00T 等 VLA 模型达到或接近 SOTA 成功率。详见 :doc:`../examples/index` 示例库与 :doc:`../reference/index` 算法说明。
-- **智能体任务（含数学推理）：** RLinf 基于 DeepSeek-R1-Distill-Qwen 系列模型，在 **AIME24 / AIME25 / GPQA-diamond** 上达到 SOTA 表现，并支持 Search-R1、在线代码补全等单智能体与多智能体任务。详见 :doc:`../examples/agentic/index`。
-
-.. _PPO: https://arxiv.org/abs/1707.06347
-.. _GRPO: https://arxiv.org/abs/2402.03300
-.. _DAPO: https://arxiv.org/abs/2503.14476
-.. _Reinforce++: https://arxiv.org/abs/2501.03262
-.. _OpenVLA: https://github.com/openvla/openvla
-.. _OpenVLA-OFT: https://github.com/moojink/openvla-oft
-.. _ManiSkill3: https://github.com/haosulab/ManiSkill
-.. _LIBERO: https://github.com/Lifelong-Robot-Learning/LIBERO
-.. _IsaacLab: https://github.com/isaac-sim/IsaacLab
-.. _π₀: https://github.com/Physical-Intelligence/openpi
-.. _GR00T-N1.5: https://github.com/NVIDIA/Isaac-GR00T.git
+- **具身基准**：提供 **LIBERO**、**ManiSkill**、**RoboTwin** 以及 Franka / Turtle2 真机训练与独立评测配方（见 :doc:`../examples/index`、:doc:`../evaluations/index`）。
+- **推理与智能体基准**：提供基于 DeepSeek-R1-Distill-Qwen 系列的 **AIME24 / AIME25 / GPQA-diamond** 数学推理配方，以及单智能体与多智能体检索和代码训练流程（见 :doc:`../examples/agentic/index`）。
