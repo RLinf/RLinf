@@ -5959,6 +5959,41 @@ def test_ros_parts_share_one_session_per_process():
             ROSController._shared = None
 
 
+@pytest.mark.parametrize(
+    "probe", ["exit 0", "exit 1", "exec sleep 10"], ids=["healthy", "offline", "hung"]
+)
+def test_ros_checks_master_before_reusing_roscore(monkeypatch, tmp_path, probe):
+    from robot_mocks import mocked_sdks
+
+    master_uri = "http://remapped-master:11311/"
+    rosparam = tmp_path / "rosparam"
+    rosparam.write_text(
+        f'#!/bin/sh\n[ "$1" = list ] && [ "$ROS_MASTER_URI" = "{master_uri}" ] '
+        f"|| exit 2\n{probe}\n"
+    )
+    rosparam.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("ROS_MASTER_URI", "http://default-master:11311/")
+    with mocked_sdks(
+        extra={"rosgraph": SimpleNamespace(get_master_uri=lambda: master_uri)}
+    ):
+        import rospy
+
+        from rlinf.robotics.parts.transports.ros import ros_controller
+
+        core = SimpleNamespace(name=lambda: "roscore")
+        monkeypatch.setattr(ros_controller.psutil, "process_iter", lambda: [core])
+        init_node = mock.Mock()
+        monkeypatch.setattr(rospy, "init_node", init_node)
+        if probe == "exit 0":
+            ros_controller.ROSController()
+            init_node.assert_called_once()
+        else:
+            with pytest.raises(RuntimeError, match="ROS_MASTER_URI"):
+                ros_controller.ROSController()
+            init_node.assert_not_called()
+
+
 def test_a_ros_hand_opens_without_an_arm_to_hand_it_a_session():
     from robot_mocks import mocked_sdks
 

@@ -14,6 +14,7 @@
 
 import os
 import pathlib
+import subprocess
 import sys
 import threading
 import time
@@ -87,6 +88,24 @@ class ROSController:
                         ["roscore"], stdout=sys.stdout, stderr=sys.stdout
                     )
                     time.sleep(1)  # Allow roscore to accept connections.
+                else:
+                    from rosgraph import get_master_uri
+
+                    # A local roscore may serve a different master URI.
+                    master_uri = get_master_uri()
+                    try:
+                        subprocess.run(
+                            ["rosparam", "list"],
+                            env={**os.environ, "ROS_MASTER_URI": master_uri},
+                            stdout=subprocess.DEVNULL,
+                            timeout=5,
+                            check=True,
+                        )
+                    except subprocess.SubprocessError as exc:
+                        raise RuntimeError(
+                            f"Found roscore but could not reach {master_uri}. "
+                            "Check ROS_MASTER_URI or the __master remapping."
+                        ) from exc
 
         # Initialize the ROS node.
         import rospy
