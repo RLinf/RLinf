@@ -115,6 +115,7 @@ jobs:
               - 'rlinf/runners/*reward*.py'
               - 'examples/embodiment/*'
               - 'examples/embodiment/config/*/**'
+              - 'examples/embodiment/config/isaaclab_go2_*_ppo.yaml'
               - 'examples/diffusion/**'
               - 'examples/reward/**'
               - 'tests/e2e_tests/embodied/**'
@@ -202,6 +203,9 @@ jobs:
               - 'rlinf/models/embodiment/mlp_policy/**'
               - 'rlinf/models/embodiment/prefix_features.py'
               - 'toolkits/rlt/**'
+              - 'examples/embodiment/go2_abc/**'
+              - 'rlinf/models/embodiment/go2_policy/**'
+              - 'tests/fixtures/go2_control_reference.json'
               - 'rlinf/robotics/**'
               - 'rlinf/models/embodiment/openpi/**'
               # Unit tests import env modules directly (robot task envs, the

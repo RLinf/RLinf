@@ -1,0 +1,59 @@
+{
+  "policy_joint_names": [
+    "FL_hip_joint",
+    "FR_hip_joint",
+    "RL_hip_joint",
+    "RR_hip_joint",
+    "FL_thigh_joint",
+    "FR_thigh_joint",
+    "RL_thigh_joint",
+    "RR_thigh_joint",
+    "FL_calf_joint",
+    "FR_calf_joint",
+    "RL_calf_joint",
+    "RR_calf_joint"
+  ],
+  "sdk_joint_names": [
+    "FR_hip_joint",
+    "FR_thigh_joint",
+    "FR_calf_joint",
+    "FL_hip_joint",
+    "FL_thigh_joint",
+    "FL_calf_joint",
+    "RR_hip_joint",
+    "RR_thigh_joint",
+    "RR_calf_joint",
+    "RL_hip_joint",
+    "RL_thigh_joint",
+    "RL_calf_joint"
+  ],
+  "default_joint_positions": [
+    0.1,
+    -0.1,
+    0.1,
+    -0.1,
+    0.8,
+    0.8,
+    1.0,
+    1.0,
+    -1.5,
+    -1.5,
+    -1.5,
+    -1.5
+  ],
+  "action_scale": 0.25,
+  "physics_dt": 0.005,
+  "policy_decimation": 4,
+  "stiffness": 25.0,
+  "damping": 0.5,
+  "effort_limit": 23.5,
+  "saturation_effort": 23.5,
+  "velocity_limit": 30.0,
+  "height_offset": 0.5,
+  "height_clip": [
+    -1.0,
+    1.0
+  ],
+  "state_timeout": 0.05,
+  "perception_timeout": 0.1
+}

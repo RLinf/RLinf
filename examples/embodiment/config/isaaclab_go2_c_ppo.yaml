@@ -1,0 +1,19 @@
+defaults:
+  - isaaclab_go2_a_ppo
+  - _self_
+
+runner:
+  logger:
+    experiment_name: C_rlinf
+
+env:
+  train:
+    total_num_envs: 1024
+    init_params:
+      id: MTL-Velocity-Rough-Unitree-Go2-B2-StairClimb-v0
+
+actor:
+  micro_batch_size: 6144
+  global_batch_size: 6144
+  model:
+    model_path: ${oc.env:GO2_ABC_DATA,data/go2_abc}/models/C/baseline.pt

@@ -106,6 +106,7 @@ SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
 SupportedModel.PSI0 = SupportedModel.register("psi0", force=True)
 SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
+SupportedModel.GO2_POLICY = SupportedModel.register("go2_policy", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
 SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
 SupportedModel.RLT_TD3_MLP_POLICY = SupportedModel.register(
@@ -169,6 +170,7 @@ EMBODIED_MODEL = set(
         SupportedModel.PI0_FAST,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
+        SupportedModel.GO2_POLICY,
         SupportedModel.RLT_MLP_POLICY,
         SupportedModel.RLT_TD3_MLP_POLICY,
         SupportedModel.PREFIX_POLICY,
@@ -1461,6 +1463,29 @@ def validate_embodied_cfg(cfg):
         _inherit_rollout_model_path(cfg.get("rollout", None), cfg.get("actor", None))
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
+    desired_kl = algorithm_cfg.get("desired_kl")
+    if not only_eval and desired_kl is not None:
+        if type(desired_kl) not in (float, int) or not (
+            math.isfinite(desired_kl) and desired_kl > 0
+        ):
+            raise ValueError("algorithm.desired_kl must be a finite positive number")
+        if (
+            algorithm_cfg.get("loss_type") != "actor_critic"
+            or cfg.actor.get("training_backend") != "fsdp"
+            or cfg.runner.get("use_training_pipeline", False)
+        ):
+            raise ValueError(
+                "algorithm.desired_kl requires synchronous FSDP actor_critic PPO "
+                "with runner.use_training_pipeline=false"
+            )
+        if (
+            cfg.actor.get("optim", {}).get("lr_scheduler", "constant")
+            != "torch_constant"
+        ):
+            raise ValueError(
+                "algorithm.desired_kl requires actor.optim.lr_scheduler=torch_constant "
+                "so the scheduler preserves the KL-adjusted learning rate"
+            )
     if not only_eval and algorithm_cfg.get("loss_type") == "embodied_refl":
         validate_refl_cfg(cfg)
     model_type = SupportedModel(model_cfg.model_type)

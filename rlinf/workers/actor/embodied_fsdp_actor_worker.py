@@ -33,6 +33,7 @@ from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
 from rlinf.data.storage.replay import EnvReplayBuffer, TrajectoryReplayBuffer
 from rlinf.envs.layout import EnvSpec
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+from rlinf.hybrid_engines.fsdp.optim import adapt_learning_rate
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import ForwardType
@@ -930,6 +931,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             for pool in self.rollout_batches:
                 append_to_dict(metrics, self.recompute_prev_logprobs(pool))
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
+        desired_kl = self.cfg.algorithm.get("desired_kl")
         for _ in range(update_epoch):
             # See PPO paper for details. https://arxiv.org/abs/1707.06347
             for micro_batches in self._global_batches():
@@ -937,6 +939,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     batch["prev_logprobs"].shape[0] for batch in micro_batches
                 )
                 self.optimizer.zero_grad()
+                if desired_kl is not None:
+                    self._ppo_kl_sum = torch.zeros(2, device=self.device)
                 for idx, batch in enumerate(micro_batches):
                     self.train_micro_batch(
                         micro_batch=batch,
@@ -950,6 +954,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                 self.torch_platform.empty_cache()
 
+                if desired_kl is not None:
+                    torch.distributed.all_reduce(self._ppo_kl_sum)
+                    kl = (self._ppo_kl_sum[0] / self._ppo_kl_sum[1].clamp_min(1)).item()
+                    adapt_learning_rate(self.optimizer, kl, desired_kl)
+                    append_to_dict(metrics, {"actor/analytic_kl": kl})
                 grad_norm, lr_list = self.optimizer_step()
                 data = {
                     "actor/grad_norm": grad_norm,
@@ -1044,6 +1053,21 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 use_cache=False,
                 **kwargs,
             )
+
+        if self.cfg.algorithm.get("desired_kl", None) is not None:
+            if "kl_divergence" not in output_dict:
+                raise ValueError(
+                    "algorithm.desired_kl requires the policy to return a "
+                    "kl_divergence tensor for its sampled actions"
+                )
+            kl = output_dict["kl_divergence"].detach().reshape(micro_batch_rows)
+            count = micro_batch_rows
+            if loss_mask is not None:
+                valid = loss_mask.reshape(micro_batch_rows, -1).any(dim=-1)
+                kl = kl.masked_fill(~valid, 0)
+                count = valid.sum()
+            self._ppo_kl_sum[0] += kl.sum()
+            self._ppo_kl_sum[1] += count
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T,

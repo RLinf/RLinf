@@ -62,6 +62,12 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
 
       Train π₀.₅ with PPO or GRPO on dual-arm GenieSim manipulation benchmarks.
 
+   .. grid-item-card:: Go2 ABC
+      :link: embodied/go2_abc
+      :link-type: doc
+
+      Train a Unitree Go2 policy with PPO on flat ground, rough terrain, and stairs.
+
    .. grid-item-card:: GSEnv
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/gsenv.gif
       :img-alt: GSEnv Real2Sim2Real
@@ -183,6 +189,7 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
    Franka-Sim <embodied/frankasim>
    Genesis <embodied/genesis>
    GenieSim <embodied/geniesim>
+   Go2 ABC <embodied/go2_abc>
    GSEnv <embodied/gsenv>
    IsaacLab <embodied/isaaclab>
    LIBERO <embodied/libero>

@@ -2169,3 +2169,133 @@ def test_prefix_async_replay_drains_without_rank_collectives(tmp_path):
         nprocs=2,
         join=True,
     )
+
+
+@pytest.mark.parametrize(
+    "kl, initial, expected",
+    [
+        (0.02, 3e-4, 2e-4),
+        (0.001, 3e-4, 4.5e-4),
+        (0.005, 3e-4, 3e-4),
+        (0.0, 3e-4, 3e-4),
+        (0.02, 1e-5, 1e-5),
+        (0.001, 1e-2, 1e-2),
+    ],
+)
+def test_analytical_kl_adapts_learning_rate(kl, initial, expected):
+    from rlinf.hybrid_engines.fsdp.optim import adapt_learning_rate
+
+    parameter = nn.Parameter(torch.ones(1))
+    optimizer = torch.optim.Adam([parameter], lr=initial)
+    adapt_learning_rate(optimizer, kl, desired_kl=0.005)
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(expected)
+    torch.testing.assert_close(parameter, torch.ones(1), rtol=0, atol=0)
+
+
+@pytest.mark.parametrize(
+    ("override", "value", "error"),
+    [
+        ("algorithm.desired_kl", 0, "finite positive"),
+        ("algorithm.desired_kl", -0.001, "finite positive"),
+        ("algorithm.desired_kl", float("nan"), "finite positive"),
+        ("algorithm.desired_kl", float("inf"), "finite positive"),
+        ("algorithm.desired_kl", True, "finite positive"),
+        ("actor.optim.lr_scheduler", "constant", "lr_scheduler=torch_constant"),
+        ("runner.use_training_pipeline", True, "synchronous FSDP"),
+        ("algorithm.loss_type", "decoupled_actor_critic", "synchronous FSDP"),
+        ("actor.training_backend", "megatron", "synchronous FSDP"),
+    ],
+)
+def test_embodied_kl_rejects_invalid_configuration(override, value, error):
+    from rlinf.config import validate_embodied_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "runner": {"task_type": "embodied"},
+            "actor": {
+                "model": {"model_type": "mlp_policy"},
+                "training_backend": "fsdp",
+                "optim": {"lr_scheduler": "torch_constant"},
+            },
+            "algorithm": {"desired_kl": 0.005, "loss_type": "actor_critic"},
+        }
+    )
+    OmegaConf.update(cfg, override, value)
+    with pytest.raises(ValueError, match=error):
+        validate_embodied_cfg(cfg)
+
+
+@pytest.fixture
+def go2_ppo_microbatch(monkeypatch):
+    from contextlib import nullcontext
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.models import get_model
+    from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
+
+    actor = object.__new__(EmbodiedFSDPActor)
+    configs = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    with initialize_config_dir(config_dir=str(configs), version_base="1.1"):
+        actor.cfg = compose(
+            config_name="isaaclab_go2_a_ppo",
+            overrides=[
+                "actor.model.model_path=''",
+                "+actor.model.load_to_device=false",
+            ],
+        )
+    actor.device = torch.device("cpu")
+    actor.model = get_model(actor.cfg.actor.model)
+    actor.before_micro_batch = lambda *args, **kwargs: nullcontext()
+    actor.amp_context = nullcontext()
+    actor.enable_sft_co_train = False
+    actor.grad_scaler = torch.amp.GradScaler("cpu", enabled=False)
+    actor.optimizer_steps = actor.critic_warmup_steps = 0
+    actor._ppo_kl_sum = torch.zeros(2)
+    monkeypatch.setattr(
+        Worker, "torch_platform", SimpleNamespace(current_device=lambda: "cpu")
+    )
+
+    _, rollout = actor.model.predict_action_batch({"states": torch.zeros(2, 235)})
+    batch = {
+        "forward_inputs": {k: v.clone() for k, v in rollout["forward_inputs"].items()},
+        "prev_values": rollout["prev_values"].clone(),
+        "prev_logprobs": rollout["prev_logprobs"].clone(),
+        "returns": rollout["prev_values"].clone(),
+        "advantages": torch.ones(2, 1),
+    }
+    return actor, batch
+
+
+def test_adaptive_kl_requires_policy_output(go2_ppo_microbatch):
+    actor, batch = go2_ppo_microbatch
+    del batch["forward_inputs"]["old_mean"]
+    with pytest.raises(
+        ValueError, match="requires the policy to return a kl_divergence"
+    ):
+        actor.train_micro_batch(batch, {}, is_last=True, global_batch_rows=2)
+
+
+@pytest.mark.parametrize(
+    "mask, expected_sum, expected_count",
+    [
+        (None, 150, 2),
+        ([True, True], 150, 2),
+        ([True, False], 0, 1),
+        ([False, False], 0, 0),
+    ],
+)
+def test_adaptive_kl_counts_only_valid_ppo_samples(
+    go2_ppo_microbatch, mask, expected_sum, expected_count
+):
+    actor, batch = go2_ppo_microbatch
+    # Only the second row changed. Each of its 12 unit normals contributes 5² / 2.
+    batch["forward_inputs"]["old_mean"][1] += 5
+    if mask is not None:
+        batch["loss_mask"] = torch.tensor(mask).view(2, 1)
+    actor.train_micro_batch(batch, {}, is_last=True, global_batch_rows=2)
+    torch.testing.assert_close(
+        actor._ppo_kl_sum, torch.tensor([expected_sum, expected_count]).float()
+    )

@@ -124,6 +124,8 @@ algorithm
        only on truncation; ``always`` bootstraps on truncation or termination.
    * - ``algorithm.kl_beta``
      - Weight of the KL penalty added to rewards.
+   * - ``algorithm.desired_kl``
+     - Optional analytical KL target for synchronous embodied FSDP PPO with the training pipeline disabled. Set ``actor.optim.lr_scheduler`` to ``torch_constant`` to preserve the adjusted learning rate. The policy must return a tensor named ``kl_divergence`` with the old-to-current KL per sample. Before each optimizer step, the worker averages KL across the global batch. Above twice the target it divides the learning rate by 1.5 (floor 1e-5). For a positive KL below half the target it multiplies the rate by 1.5 (ceiling 1e-2).
    * - ``algorithm.entropy_bonus``
      - Entropy reward coefficient.
    * - ``algorithm.clip_ratio_low`` / ``clip_ratio_high``
@@ -251,6 +253,8 @@ OpenPI, GR00T, etc.) do not use ``rollout.sampling_params``.
      - Top-k and nucleus sampling parameters.
    * - ``rollout.sampling_params.repetition_penalty``
      - Penalize repeated tokens.
+   * - ``rollout.seed``
+     - Optional training seed for the Hugging Face rollout backend. Each rollout worker adds its rank to this seed before loading its policy.
    * - ``rollout.group_name``
      - Logical name for the rollout worker group.
    * - ``rollout.rollout_backend``

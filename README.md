@@ -47,6 +47,7 @@ That launches ManiSkill3 PPO MLP training on one GPU. Next, follow the [Quick St
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports [PPO locomotion training for Unitree Go2 in Isaac Lab](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/go2_abc.html).
 - [2026/11] 🔥 RLinf supports FlexRLT: train a compact actor-critic from frozen VLA features, with configurable heads, AC/TD3 updates, and STEAM routing. Doc: [FlexRLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html).
 - [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
 - [2026/11] 🔥 RLinf supports Reward Feedback Learning (ReFL) for fine-tuning SD3.5 Medium with ImageReward. Doc: [ReFL](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html).
@@ -225,7 +226,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/roboverse.html">RoboVerse</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/behavior.html">BEHAVIOR</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/metaworld.html">MetaWorld</a> ✅</li>
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/isaaclab.html">IsaacLab</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/isaaclab.html">IsaacLab</a> (<a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/go2_abc.html">Go2 locomotion</a>) ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/calvin.html">CALVIN</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robocasa.html">RoboCasa</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robocasa365.html">RoboCasa365</a> ✅</li>

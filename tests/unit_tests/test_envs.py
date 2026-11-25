@@ -49,6 +49,426 @@ def _env(env_type: str, total_num_envs: int, **fields) -> dict:
     }
 
 
+@pytest.mark.parametrize("failure", ["timeout", "eof"])
+def test_isaaclab_startup_failure_reaps_subprocess(failure):
+    import multiprocessing as mp
+    import time
+
+    from rlinf.envs.sim.isaaclab.venv import SubProcIsaacLabEnv
+
+    def make_env():
+        if failure == "timeout":
+            time.sleep(60)
+        raise RuntimeError("simulator initialization failed")
+
+    env = SubProcIsaacLabEnv(make_env, timeout=0.1 if failure == "timeout" else 30)
+    pid = env.isaac_lab_process.pid
+    try:
+        with pytest.raises(
+            TimeoutError if failure == "timeout" else (EOFError, ConnectionResetError)
+        ):
+            env.device()
+        assert all(child.pid != pid for child in mp.active_children())
+    finally:
+        env.close()
+
+
+def test_isaaclab_subprocess_transports_steps_and_closes_once(tmp_path):
+    from rlinf.envs.sim.isaaclab.venv import SubProcIsaacLabEnv
+
+    class Simulator:
+        device = "cpu"
+
+        def reset(self, seed, env_ids=None):
+            return seed, env_ids
+
+        def step(self, action):
+            return action
+
+        def close(self):
+            (tmp_path / "task_closed").touch(exist_ok=False)
+
+    class App:
+        def close(self):
+            (tmp_path / "app_closed").touch(exist_ok=False)
+
+    env = SubProcIsaacLabEnv(lambda: (Simulator(), App()))
+    try:
+        assert env.device() == "cpu"
+        seed, ids = env.reset(seed=3, env_ids=torch.tensor([1, 2]))
+        assert seed == 3 and ids.tolist() == [1, 2]
+        action = torch.randn(2, 12)
+        assert torch.equal(env.step(action), action)
+    finally:
+        env.close()
+    env.close()
+    assert (tmp_path / "task_closed").exists() and (tmp_path / "app_closed").exists()
+
+
+@pytest.mark.parametrize(
+    "auto_reset,ignore_terminations", [(False, False), (True, True)]
+)
+def test_go2_rejects_episode_modes_its_simulator_cannot_honor(
+    auto_reset, ignore_terminations
+):
+    from rlinf.envs.sim.isaaclab.tasks.go2 import Go2IsaacLabEnv
+
+    cfg = OmegaConf.create(
+        {"auto_reset": auto_reset, "ignore_terminations": ignore_terminations}
+    )
+    with pytest.raises(
+        ValueError, match="auto_reset=true and ignore_terminations=false"
+    ):
+        Go2IsaacLabEnv(cfg, 2)
+
+
+@pytest.mark.parametrize(
+    "task,task_id,family_id,label,seed,legacy",
+    [
+        ("A", 1, 0, "A2_omni", None, False),
+        ("B", 2, 1, "B1_rough", 2, False),
+        ("C", 3, 1, "B2_stairs", None, False),
+        ("C", 3, 1, "B2_stairs", None, True),
+        ("C", 3, 1, "B2_stairs", 2, True),
+    ],
+)
+def test_go2_evaluator_pools_same_task_episodes(
+    tmp_path, monkeypatch, task, task_id, family_id, label, seed, legacy
+):
+    import json
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from examples.embodiment.go2_abc import evaluate, evaluate_stairs
+    from rlinf.envs.sim.isaaclab.tasks.go2 import FLAT, ROUGH, STAIRS
+    from rlinf.models.embodiment.go2_policy import Go2Policy
+
+    gym_id = {"A": FLAT, "B": ROUGH, "C": STAIRS}[task]
+    report_seed = 0 if legacy and seed is None else seed
+    train_name = label if report_seed is None else f"{label}_s{report_seed}"
+    checkpoint, output = tmp_path / "full_weights.pt", tmp_path / "output"
+    torch.save(Go2Policy().state_dict(), checkpoint)
+    seeds = []
+
+    def run_benchmark(command, env, check):
+        assert check
+        assert Path(command[1]).name == "evaluate_continuation.py"
+        options = command[2:]
+        assert options[options.index("--task") + 1] == gym_id
+        assert options[options.index("--eval_task") + 1] == label
+        assert options[options.index("--report_train_task") + 1] == train_name
+        assert options[options.index("--num_envs") + 1] == "256"
+        assert options[options.index("--num_episodes") + 1] == "1024"
+        assert (
+            "--kit_args=--/app/extensions/excluded/0=omni.kit.telemetry "
+            f"--/persistent/isaac/asset_root/cloud={tmp_path / 'assets'}"
+        ) in options
+        assert env.get("GO2_B1_NUMERIC_GUARD") == ("1" if task == "B" else None)
+        eval_seed = int(env["GO2_EVAL_SEED"])
+        seeds.append(eval_seed)
+        directory = Path(options[options.index("--output_dir") + 1]) / train_name
+        assert directory == output / str(eval_seed) / train_name
+        directory.mkdir(parents=True)
+        size = 1024 if eval_seed == 23456 else 1026
+        success = eval_seed == 23456
+        row = {"task_id": task_id, "family_id": family_id, "episode_success": success}
+        summary = {
+            "train_task": train_name,
+            "eval_task": gym_id,
+            "num_episodes": size,
+            "success_rate": float(success),
+        }
+        if task == "C":
+            row["physical_obstacle_passage"] = not success
+            summary.update(
+                required_obstacle_metrics_complete=True,
+                physical_measured_episodes=size,
+                physical_passage_successes=0 if success else size,
+                physical_obstacle_passage_rate=float(not success),
+            )
+        (directory / "summary.json").write_text(json.dumps({label: summary}))
+        (directory / f"{label}.json").write_text(
+            json.dumps({"summary": summary, "episodes": [row] * size})
+        )
+
+    monkeypatch.setenv("GO2_ABC_DATA", str(tmp_path))
+    arguments = [] if legacy else ["--task", task]
+    if legacy:
+        initial = tmp_path / "models/C/baseline.pt"
+        if seed is not None:
+            initial = tmp_path / "custom.pt"
+            arguments += ["--initial-checkpoint", str(initial)]
+        initial.parent.mkdir(parents=True, exist_ok=True)
+        torch.save({"model_state_dict": Go2Policy().state_dict()}, initial)
+    if seed is not None:
+        arguments += ["--train-seed", str(seed)]
+    arguments.extend(
+        [str(checkpoint), str(output), "--asset-root", str(tmp_path / "assets")]
+    )
+    monkeypatch.setattr(sys, "argv", ["evaluate", *arguments])
+    monkeypatch.setenv("SLURM_JOB_ID", "test")
+    monkeypatch.setenv("GO2_B1_NUMERIC_GUARD", "0")
+    monkeypatch.setattr(evaluate, "subprocess", SimpleNamespace(run=run_benchmark))
+    (evaluate_stairs.main if legacy else evaluate.main)()
+
+    assert seeds == [23456, 34567]
+    expected = {
+        "num_episodes": 2050,
+        "tracking_successes": 1024,
+        "tracking_rate": 1024 / 2050,
+    }
+    if task == "C":
+        expected.update(passage_successes=1026, passage_rate=1026 / 2050)
+    assert json.loads((output / "summary.json").read_text()) == expected
+
+
+def test_go2_evaluator_rejects_negative_training_seed(monkeypatch, capsys):
+    import sys
+
+    from examples.embodiment.go2_abc.evaluate import main
+
+    monkeypatch.setattr(
+        sys, "argv", ["evaluate", "--task", "B", "--train-seed", "-1", "ckpt", "out"]
+    )
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+    assert "--train-seed must be nonnegative" in capsys.readouterr().err
+
+
+def test_go2_stairs_checks_its_frozen_baseline_by_default(tmp_path, monkeypatch):
+    import sys
+
+    from examples.embodiment.go2_abc import evaluate_stairs
+    from rlinf.models.embodiment.go2_policy import Go2Policy
+
+    baseline = tmp_path / "models/C/baseline.pt"
+    baseline.parent.mkdir(parents=True)
+    weights = Go2Policy().state_dict()
+    torch.save({"model_state_dict": weights}, baseline)
+    checkpoint = tmp_path / "full_weights.pt"
+    torch.save(weights, checkpoint)
+    monkeypatch.setenv("SLURM_JOB_ID", "test")
+    monkeypatch.setenv("GO2_ABC_DATA", str(tmp_path))
+    monkeypatch.setattr(
+        sys, "argv", ["evaluate_stairs", str(checkpoint), str(tmp_path / "out")]
+    )
+    with pytest.raises(ValueError, match="No update to actor"):
+        evaluate_stairs.main()
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        ["-m", "examples.embodiment.go2_abc.evaluate_stairs"],
+        ["examples/embodiment/go2_abc/evaluate_stairs.py"],
+    ],
+)
+def test_go2_stairs_command_line_help(entry, monkeypatch):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    result = subprocess.run(
+        [sys.executable, *entry, "--help"],
+        cwd=Path(__file__).resolve().parents[2],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "checkpoint output" in result.stdout
+
+
+@pytest.mark.parametrize("wrapped,unchanged", [(False, "actor"), (True, "critic")])
+def test_go2_evaluator_checks_supplied_starting_weights(tmp_path, wrapped, unchanged):
+    from examples.embodiment.go2_abc.evaluate import export_policy
+    from rlinf.models.embodiment.go2_policy import Go2Policy
+
+    initial, checkpoint, policy = (
+        tmp_path / name for name in ("start", "final", "policy")
+    )
+    weights = Go2Policy().state_dict()
+    torch.save({"model_state_dict": weights} if wrapped else weights, initial)
+    updated = "actor" if unchanged == "critic" else "critic"
+    weights[f"{updated}.0.bias"].add_(1)
+    torch.save(weights, checkpoint)
+    with pytest.raises(ValueError, match=f"No update to {unchanged}"):
+        export_policy(checkpoint, initial, policy)
+    weights[f"{unchanged}.0.bias"].add_(1)
+    torch.save(weights, checkpoint)
+    export_policy(checkpoint, initial, policy)
+    exported = torch.load(policy, map_location="cpu", weights_only=True)[
+        "model_state_dict"
+    ]
+    assert all(torch.equal(value, exported[key]) for key, value in weights.items())
+
+
+@pytest.fixture
+def go2_manager_cfg(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    class Manager:
+        def __init__(self, cfg):
+            self.device = "cpu"
+            self.episode_length_buf = torch.zeros(cfg.scene.num_envs, dtype=torch.long)
+            self.action_manager = SimpleNamespace(total_action_dim=12)
+            self.observation_manager = SimpleNamespace(
+                group_obs_dim={"policy": (235,)}, compute=self.compute
+            )
+            self.cfg = cfg
+
+        def compute(self, update_history):
+            assert not update_history
+            torch.rand(1)
+            return {"policy": torch.full((2, 235), 7.0)}
+
+        def _reset_idx(self, ids):
+            self.episode_length_buf[ids] = 0
+
+        def reset(self, env_ids):
+            return {"policy": torch.zeros(2, 235)}, {}
+
+        def step(self, actions):
+            self._reset_idx(torch.tensor([0]))
+            obs = {"policy": torch.zeros(2, 235)}
+            return (
+                obs,
+                actions[:, 0],
+                torch.tensor([True, False]),
+                torch.zeros(2, dtype=torch.bool),
+                {},
+            )
+
+    task_cfg = SimpleNamespace(
+        scene=SimpleNamespace(),
+        sim=SimpleNamespace(dt=0.005),
+        decimation=4,
+        rewards=SimpleNamespace(
+            base_height=SimpleNamespace(
+                func=torch.square,
+                weight=-10.0,
+                params={
+                    "target_height": 0.38,
+                    "asset_cfg": SimpleNamespace(name="robot"),
+                    "sensor_cfg": SimpleNamespace(name="height_scanner"),
+                },
+            )
+        ),
+    )
+    modules = {
+        "isaaclab.app": SimpleNamespace(
+            AppLauncher=lambda **kw: SimpleNamespace(app=None)
+        ),
+        "envs.registry": SimpleNamespace(register_tasks=lambda: None),
+        "isaaclab.envs": SimpleNamespace(ManagerBasedRLEnv=Manager),
+        "isaaclab_tasks.utils": SimpleNamespace(
+            load_cfg_from_registry=lambda *args: task_cfg
+        ),
+    }
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    return task_cfg
+
+
+def test_go2_rough_action_boundary_and_terminal_observation(go2_manager_cfg):
+    from rlinf.envs import get_env_cls
+    from rlinf.envs.sim.isaaclab.tasks.go2 import ROUGH, Go2IsaacLabEnv, _make_go2_env
+
+    cfg = OmegaConf.create({"seed": 0, "init_params": {"id": ROUGH}})
+    assert get_env_cls("isaaclab", cfg) is Go2IsaacLabEnv
+    task, _ = _make_go2_env(cfg.init_params, cfg.seed, 2, max_episode_steps=7)
+    assert task.task.max_episode_length == 7
+    assert task.task.cfg.episode_length_s == pytest.approx(0.14)
+    task.reset()
+    assert (task.task.episode_length_buf < 7).all()
+    state = torch.get_rng_state()
+    actions = torch.tensor([[-150.0] * 12, [145.0] * 12])
+    obs, reward, _, _, info = task.step(actions)
+    assert torch.equal(torch.get_rng_state(), state)
+    assert reward.tolist() == [-100.0, 100.0]
+    assert obs["states"].eq(0).all()
+    assert info["final_observation"]["states"][0].eq(7).all()
+    assert info["_final_observation"].tolist() == [True, False]
+    actions[1, 0] = float("nan")
+    with pytest.raises(FloatingPointError):
+        task.step(actions)
+
+
+@pytest.mark.parametrize("task_name", ["FLAT", "ROUGH", "STAIRS"])
+def test_go2_base_height_uses_ground_returns(go2_manager_cfg, task_name):
+    from types import SimpleNamespace
+
+    from rlinf.envs.sim.isaaclab.tasks import go2
+
+    params = OmegaConf.create({"id": getattr(go2, task_name)})
+    task, _ = go2._make_go2_env(params, 0, 3, 1000)
+    term = task.task.cfg.rewards.base_height
+    assert term.func is go2.terrain_base_height_l2
+    generator = torch.Generator().manual_seed(41)
+    hits = torch.randn(3, 187, 3, generator=generator)
+    root = torch.randn(3, 3, generator=generator)
+    task.task.scene = {
+        "robot": SimpleNamespace(data=SimpleNamespace(root_pos_w=root)),
+        "height_scanner": SimpleNamespace(data=SimpleNamespace(ray_hits_w=hits)),
+    }
+    original = torch.square(root[:, 2] - (0.38 + torch.mean(hits[..., 2], dim=1)))
+    assert torch.equal(term.func(task.task, **term.params), original)
+    assert term.weight == -10.0
+
+    hits[1, :-2] = torch.inf
+    hits[1, -2:, 2] = torch.tensor([1.0, 3.0])
+    hits[2] = torch.inf
+    penalty = term.func(task.task, **term.params)
+    assert torch.equal(penalty[0], original[0])
+    assert torch.equal(penalty[1], (root[1, 2] - 2.38).square())
+    assert penalty[2].item() == 0.0
+
+    for invalid in (torch.nan, -torch.inf, 0.0):
+        hits[2, 0, 0] = invalid
+        with pytest.raises(FloatingPointError, match="terrain hit"):
+            term.func(task.task, **term.params)
+    hits[2] = torch.inf
+    root[2, 0] = torch.nan
+    with pytest.raises(FloatingPointError, match="root position"):
+        term.func(task.task, **term.params)
+    root[2, 0] = 0
+    root[0, 2] = 1e30
+    with pytest.raises(FloatingPointError, match="height penalty"):
+        term.func(task.task, **term.params)
+
+
+def test_go2_bootstrap_observation_mixes_terminal_and_continuing_rows():
+    from types import SimpleNamespace
+
+    from rlinf.envs.sim.isaaclab.tasks.go2 import STAIRS, _Go2Task
+
+    terminal = torch.arange(3 * 235, dtype=torch.float32).reshape(3, 235)
+    next_states = terminal + 1000
+
+    class Simulator:
+        device = "cpu"
+        observation_manager = SimpleNamespace(group_obs_dim={"policy": (235,)})
+        action_manager = SimpleNamespace(total_action_dim=12)
+
+        def step(self, actions):
+            self.terminal_observation = terminal
+            terminated = torch.tensor([False, False, True])
+            truncated = torch.tensor([True, False, False])
+            return {"policy": next_states}, torch.zeros(3), terminated, truncated, {}
+
+    task = _Go2Task(Simulator(), SimpleNamespace(id=STAIRS), 3)
+    obs, _, _, _, info = task.step(torch.zeros(3, 12))
+
+    assert info["_final_observation"].tolist() == [True, False, True]
+    expected = torch.stack([terminal[0], next_states[1], terminal[2]])
+    for key in ("states", "critic_states"):
+        torch.testing.assert_close(obs[key], next_states)
+        torch.testing.assert_close(info["final_observation"][key], expected)
+
+
 def _hetero_mode(**envs: dict):
     return OmegaConf.create({"envs": envs})
 

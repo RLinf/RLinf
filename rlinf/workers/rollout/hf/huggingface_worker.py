@@ -58,6 +58,7 @@ from rlinf.scheduler import (
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.pinned_offload import pinned_offload_context
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.utils import seed_everything
 
 
 class MultiStepRolloutWorker(Worker):
@@ -204,6 +205,9 @@ class MultiStepRolloutWorker(Worker):
         return self.collect_transitions and not (self.enable_prefix or self.enable_rlt)
 
     def init_worker(self):
+        seed = self.cfg.rollout.get("seed")
+        if self.enable_train and seed is not None:
+            seed_everything(seed + self._rank)
         if self.enable_prefix:
             rollout_model_config = OmegaConf.merge(
                 OmegaConf.to_container(self.model_cfg, resolve=True),
@@ -619,6 +623,7 @@ class MultiStepRolloutWorker(Worker):
         if model_type in [
             SupportedModel.OPENPI,
             SupportedModel.PI0_FAST,
+            SupportedModel.GO2_POLICY,
             SupportedModel.EVO1,
             SupportedModel.MLP_POLICY,
             SupportedModel.GR00T,
@@ -634,7 +639,7 @@ class MultiStepRolloutWorker(Worker):
         ]:
             if self.enable_dagger:
                 kwargs = {"mode": "eval"}
-            elif model_type == SupportedModel.PI0_FAST:
+            elif model_type in (SupportedModel.PI0_FAST, SupportedModel.GO2_POLICY):
                 kwargs = dict(kwargs)
                 kwargs["mode"] = mode
             else:

@@ -1,0 +1,107 @@
+defaults:
+  - env/isaaclab_go2@env.train
+  - model/go2_policy@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: '0'
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: ${oc.env:GO2_ABC_DATA,data/go2_abc}/runs
+    project_name: rlinf
+    experiment_name: A_rlinf
+    logger_backends: [tensorboard]
+  max_epochs: 1000
+  max_steps: 1000
+  only_eval: false
+  val_check_interval: -1
+  save_interval: 50
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  update_epoch: 5
+  normalize_advantages: true
+  kl_penalty: kl
+  group_size: 1
+  reward_type: action_level
+  logprob_type: action_level
+  entropy_type: action_level
+  adv_type: gae
+  loss_type: actor_critic
+  loss_agg_func: token-mean
+  kl_beta: 0.0
+  entropy_bonus: 0.003
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: null
+  value_clip: 0.2
+  huber_delta: 10.0
+  gamma: 0.99
+  gae_lambda: 0.95
+  reward_coef: 1.0
+  desired_kl: 0.005
+
+env:
+  group_name: EnvGroup
+  eval: null
+  train:
+    init_params:
+      id: MTL-Velocity-Flat-Unitree-Go2-A2-Omni-v0
+
+rollout:
+  group_name: RolloutGroup
+  rollout_backend: huggingface
+  enable_offload: false
+  pipeline_stage_num: 1
+  seed: ${actor.seed}
+  model:
+    model_path: ${actor.model.model_path}
+    precision: ${actor.model.precision}
+  enable_torch_compile: false
+  enable_cuda_graph: false
+  sampling_params:
+    max_new_tokens: 1
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 12288
+  global_batch_size: 12288
+  seed: 0
+  enable_offload: false
+  model:
+    model_path: ${oc.env:GO2_ABC_DATA,data/go2_abc}/models/A/baseline.pt
+  fsdp_config:
+    sharding_strategy: no_shard
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+  optim:
+    lr: 0.0003
+    value_lr: 0.0003
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    weight_decay: 0.0
+    clip_grad: 1.0
+    lr_scheduler: torch_constant
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false

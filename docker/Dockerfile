@@ -74,6 +74,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-calvin
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa365
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-isaaclab
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-go2_abc
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robotwin
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-opensora
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-frankasim
@@ -388,6 +389,12 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 
 # Set default env
 RUN echo "source ${UV_PATH}/gr00t/bin/activate" >> ~/.bashrc
+
+
+FROM embodied-common-image AS embodied-go2_abc-image
+
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv go2_abc --env go2_abc
+RUN echo "source ${UV_PATH}/go2_abc/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################

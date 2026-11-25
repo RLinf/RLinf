@@ -62,6 +62,12 @@
 
       在 GenieSim 双臂操作基准上用 PPO 或 GRPO 训练 π₀.₅。
 
+   .. grid-item-card:: Go2 ABC
+      :link: embodied/go2_abc
+      :link-type: doc
+
+      用 PPO 训练宇树 Go2 在平地、崎岖地面和楼梯上行走。
+
    .. grid-item-card:: GSEnv
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/gsenv.gif
       :img-alt: GSEnv Real2Sim2Real
@@ -183,6 +189,7 @@
    Franka-Sim <embodied/frankasim>
    Genesis <embodied/genesis>
    GenieSim <embodied/geniesim>
+   Go2 ABC <embodied/go2_abc>
    GSEnv <embodied/gsenv>
    IsaacLab <embodied/isaaclab>
    LIBERO <embodied/libero>

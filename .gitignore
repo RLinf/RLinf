@@ -16,6 +16,7 @@ dist
 logs/*
 logs_baseline/*
 outputs/*
+/data/go2_abc/
 *.so
 .venv
 .venv-*

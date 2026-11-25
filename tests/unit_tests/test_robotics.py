@@ -20,6 +20,7 @@ import ast
 import contextlib
 import ctypes
 import io
+import json
 import os
 import pickle
 import re
@@ -9013,6 +9014,142 @@ def test_r2_kinematics_adapter_and_pico_joint():
             assert pico.action(reengaged, mid_travel_ctx).driving
         finally:
             pico.disconnect()
+
+
+@pytest.fixture
+def go2_control_case(tmp_path):
+    import torch
+
+    from examples.embodiment.go2_abc.control import Go2Control, JointState, Perception
+    from rlinf.models.embodiment.go2_policy import Go2Policy
+
+    record = json.loads(
+        (Path(__file__).parents[1] / "fixtures/go2_control_reference.json").read_text()
+    )
+    model = Go2Policy()
+    with torch.no_grad():
+        for parameter in model.actor.parameters():
+            parameter.zero_()
+        model.actor[-1].bias.copy_(torch.tensor(record["policy_action"]))
+    checkpoint = tmp_path / "policy.pt"
+    torch.save({"model_state_dict": model.state_dict()}, checkpoint)
+    control = Go2Control(checkpoint, "A")
+    frame = record["frame"]
+    return (
+        control,
+        JointState(**frame["state"]),
+        Perception(**frame["perception"]),
+        frame["command"],
+        record,
+    )
+
+
+def test_go2_replay_cli_matches_reference(tmp_path, monkeypatch, go2_control_case):
+    from examples.embodiment.go2_abc.deploy import main
+
+    record = go2_control_case[-1]
+    checkpoint = tmp_path / "models" / "A" / "baseline.pt"
+    checkpoint.parent.mkdir(parents=True)
+    (tmp_path / "policy.pt").rename(checkpoint)
+    frames = tmp_path / "frames.jsonl"
+    valid_frame = json.dumps(record["frame"]) + "\n"
+    frames.write_text(valid_frame)
+
+    def replay(output, *weights):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "deploy",
+                "--task",
+                "A",
+                "--frames",
+                str(frames),
+                "--output",
+                str(output),
+                *weights,
+            ],
+        )
+        main()
+
+    group = ["--group", "baseline"]
+    missing = tmp_path / "unused"
+    cases = [
+        ("environment", tmp_path, group),
+        ("data", missing, [*group, "--data", str(tmp_path)]),
+        ("checkpoint", missing, ["--checkpoint", str(checkpoint)]),
+    ]
+    for name, data, weights in cases:
+        monkeypatch.setenv("GO2_ABC_DATA", str(data))
+        output = tmp_path / f"{name}.jsonl"
+        replay(output, *weights)
+        command = json.loads(output.read_text())
+        assert command["time"] == record["frame"]["time"]
+        for key in ("target_q_sdk", "torque_sdk"):
+            np.testing.assert_allclose(
+                command[key], record["expected"][key], rtol=1e-6, atol=1e-6
+            )
+
+    output = tmp_path / "commands.jsonl"
+    for invalid, error in [("", ValueError), (valid_frame + "{", json.JSONDecodeError)]:
+        frames.write_text(invalid)
+        with pytest.raises(error):
+            replay(output, "--checkpoint", str(checkpoint))
+        assert not output.exists()
+    output.write_text("earlier report")
+    frames.write_text(valid_frame)
+    with pytest.raises(FileExistsError):
+        replay(output, "--checkpoint", str(checkpoint))
+    assert output.read_text() == "earlier report"
+
+
+def test_go2_control_matches_original_observations_and_dc_motor(go2_control_case):
+    control, state, perception, command, record = go2_control_case
+    result = control.step(state, perception, command, 1.0)
+    for name, expected in record["expected"].items():
+        np.testing.assert_allclose(result[name], expected, rtol=1e-6, atol=1e-6)
+    assert result["observation"].shape == (235,)
+
+
+def test_go2_control_holds_actions_for_four_motor_steps(go2_control_case):
+    import torch
+
+    control, state, perception, command, _ = go2_control_case
+    first = control.step(state, perception, command, 1.0)["action"]
+    with torch.no_grad():
+        control.model.actor[-1].bias.add_(0.1)
+    for index in range(1, 4):
+        result = control.step(state, perception, command, 1 + index * 0.005)
+        np.testing.assert_array_equal(result["action"], first)
+        np.testing.assert_array_equal(result["observation"][36:48], first)
+    updated = control.step(state, perception, command, 1.02)["action"]
+    np.testing.assert_allclose(updated, first + 0.1)
+
+
+@pytest.mark.parametrize(
+    "sensor,changes,error",
+    [
+        ("perception", {"ground_z_w": [0.0] * 186}, ValueError),
+        ("perception", {"ground_z_w": [float("nan")] * 187}, ValueError),
+        ("perception", {"base_lin_vel_b": [float("nan"), 0.0, 0.0]}, ValueError),
+        ("state", {"quaternion_wxyz": [0.0] * 4}, ValueError),
+        ("state", {"timestamp": 0.0}, TimeoutError),
+        ("state", {"timestamp": 2.0}, TimeoutError),
+        ("perception", {"timestamp": 0.0}, TimeoutError),
+    ],
+)
+def test_go2_control_rejects_incomplete_or_stale_sensors(
+    go2_control_case, sensor, changes, error
+):
+    from dataclasses import replace
+
+    control, state, perception, command, _ = go2_control_case
+    if sensor == "state":
+        state = replace(state, **changes)
+    else:
+        perception = replace(perception, **changes)
+    with pytest.raises(error):
+        control.step(state, perception, command, 1.0)
 
 
 def wheel_command(

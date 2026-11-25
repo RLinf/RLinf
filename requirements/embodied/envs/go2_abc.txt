@@ -1,0 +1,1 @@
+mt-locomotion-bench @ git+https://github.com/viktoriageorrg04/bsc-thesis-multi-task-RL-env.git@743ac04d9543b04b7854f1100bfa0cc69c993106
