@@ -5,6 +5,8 @@ SuperMimic 评测
 
 相关文档：:doc:`SuperMimic 训练示例 <../../examples/embodied/supermimic>` · :doc:`G1 动作跟踪环境 <../../examples/embodied/g1_mimic>` · :doc:`动作数据准备 <../../examples/embodied/supermimic_motion>`。
 
+**前置条件：** :doc:`安装 </rst_source/start/installation>` · 训练好的 SuperMimic checkpoint · :doc:`G1 动作跟踪环境 <../../examples/embodied/g1_mimic>` 中的环境。
+
 评测配置
 --------
 
@@ -35,8 +37,8 @@ SuperMimic 评测
 
 两份配置默认在 0 号 GPU 上以 ``rollout.model.representation: gencoord`` 运行，并关闭域随机化、重置噪声与动作噪声。
 
-环境准备
---------
+安装与运行
+----------
 
 在仓库根目录激活 SuperMimic 虚拟环境并设置环境变量：
 

@@ -77,7 +77,7 @@ How SuperMimic Works
 
 Each global update runs three phases in lockstep across GPUs:
 
-.. figure:: ../../../_static/svg/supermimic_loop.svg
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/supermimic_loop.svg
    :align: center
    :width: 100%
    :alt: SuperMimic three-phase training loop: simulation collection, world-model fitting, and imagined policy and critic optimization
@@ -112,17 +112,23 @@ State Representations: GenCoord vs. MaxCoord
 
 For equations, network dimensions, optimizer settings (Muon + fused Adam), FSDP2 sharding, and differences from the paper, see :doc:`../../reference/algorithms/supermimic`.
 
-Installation
-------------
+Setup and Run
+-------------
 
-Create a dedicated virtual environment from the repository root (pins PyTorch, MuJoCo Warp, and ``warp-lang`` separately from other RLinf environments):
+.. include:: _setup_common.rst
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --env supermimic --venv .venv-supermimic
-   source .venv-supermimic/bin/activate
+   .. tab-item:: SuperMimic
 
-For Docker container builds, see :doc:`g1_mimic`. For AMD ROCm GPUs, see :ref:`Run on Different Hardware Backends <supermimic-hardware>`.
+      Create a dedicated virtual environment from the repository root (pins PyTorch, MuJoCo Warp, and ``warp-lang`` separately from other RLinf environments):
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --env supermimic --venv .venv-supermimic
+         source .venv-supermimic/bin/activate
+
+For AMD ROCm GPUs, see :ref:`Run on Different Hardware Backends <supermimic-hardware>`.
 
 Prepare LAFAN1
 --------------

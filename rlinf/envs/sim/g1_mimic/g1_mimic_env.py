@@ -25,7 +25,6 @@ from __future__ import annotations
 import torch
 from omegaconf import DictConfig
 
-from rlinf.utils.compile_cache import CompileCache, run_compiled
 from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM
 from rlinf.envs.sim.g1_mimic.kinematics.features import quat_to_rotmat
 from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import set_kinematics_compile
@@ -33,6 +32,7 @@ from rlinf.envs.sim.g1_mimic.kinematics.representations import make_representati
 from rlinf.envs.sim.g1_mimic.mjlab_env import MjlabG1Env, env_device
 from rlinf.envs.sim.g1_mimic.tasks.motion import build_motion_library, root_goals
 from rlinf.envs.sim.g1_mimic.tasks.reward import tracking_reward
+from rlinf.utils.compile_cache import CompileCache, run_compiled
 from rlinf.utils.utils import seed_everything
 
 

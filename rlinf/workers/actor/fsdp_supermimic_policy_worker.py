@@ -46,7 +46,6 @@ from rlinf.algorithms.supermimic.objectives import (
     value_ceiling,
 )
 from rlinf.algorithms.supermimic.replay import TransitionRing
-from rlinf.utils.compile_cache import run_compiled
 from rlinf.envs.sim.g1_mimic.tasks.motion import build_motion_library
 from rlinf.hybrid_engines.fsdp import FSDPModule
 from rlinf.hybrid_engines.fsdp.utils import (
@@ -67,6 +66,7 @@ from rlinf.models.embodiment.supermimic.supermimic_policy import (
     sync_param_names,
 )
 from rlinf.scheduler import Worker
+from rlinf.utils.compile_cache import run_compiled
 from rlinf.utils.cuda_graph import CUDAGraphManager, GraphCaptureSpec
 from rlinf.utils.precision import torch_dtype_from_precision
 from rlinf.utils.profiler import PyTorchProfiler

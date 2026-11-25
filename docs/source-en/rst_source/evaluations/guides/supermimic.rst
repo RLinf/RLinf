@@ -5,6 +5,8 @@ Evaluate a trained SuperMimic checkpoint on the Unitree G1 in MuJoCo Warp across
 
 Related docs: :doc:`SuperMimic training recipe <../../examples/embodied/supermimic>` · :doc:`G1 Motion Tracking Environment <../../examples/embodied/g1_mimic>` · :doc:`Motion data preparation <../../examples/embodied/supermimic_motion>`.
 
+**Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a trained SuperMimic checkpoint · the environment from :doc:`../../examples/embodied/g1_mimic`.
+
 Evaluation Configs
 ------------------
 
@@ -35,8 +37,8 @@ Two preset configs live under ``evaluations/supermimic/``:
 
 Both configs default to ``rollout.model.representation: gencoord`` on GPU 0 and disable domain randomization, reset noise, and action noise.
 
-Environment Setup
------------------
+Setup and Run
+-------------
 
 Activate the SuperMimic virtual environment from the repository root and set the required environment variables:
 

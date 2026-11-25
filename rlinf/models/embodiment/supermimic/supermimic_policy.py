@@ -30,7 +30,6 @@ from torch import nn
 
 from rlinf.algorithms.supermimic.objectives import value_ceiling
 from rlinf.algorithms.supermimic.scan import make_imagination, make_world_model_rollout
-from rlinf.utils.compile_cache import CompileCache, run_compiled
 from rlinf.envs.sim.g1_mimic.constants import ACTOR_GOAL_DIM
 from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import (
     set_kinematics_compile,
@@ -40,6 +39,7 @@ from rlinf.envs.sim.g1_mimic.kinematics.representations import make_representati
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.supermimic.networks import Critic, Dynamics, MotionPolicy
 from rlinf.scheduler import Worker
+from rlinf.utils.compile_cache import CompileCache, run_compiled
 from rlinf.utils.utils import collect_param_names_need_sync
 
 # The rollout worker only acts; it never reads these networks.

@@ -3,8 +3,10 @@ G1 Motion Data Preparation
 
 Prepare reference motion clips for the :doc:`G1 Motion Tracking Environment <g1_mimic>` and :doc:`SuperMimic <supermimic>`, including offline LAFAN1 conversion and custom ``clip_*.pt`` files.
 
-Installation
-------------
+**Prerequisites:** :doc:`Installation </rst_source/start/installation>` · the SuperMimic environment from :doc:`g1_mimic`.
+
+Setup and Run
+-------------
 
 Activate the SuperMimic virtual environment from :doc:`g1_mimic` and run all commands from the RLinf repository root.
 

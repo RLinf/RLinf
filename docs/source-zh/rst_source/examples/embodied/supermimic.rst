@@ -77,7 +77,7 @@ SuperMimic 算法原理
 
 每次全局更新在多卡间同步执行三个阶段：
 
-.. figure:: ../../../_static/svg/supermimic_loop.svg
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/supermimic_loop_zh.svg
    :align: center
    :width: 100%
    :alt: SuperMimic 三阶段训练循环：MuJoCo Warp 仿真采集、世界模型拟合、想象轨迹与 policy 及 critic 优化
@@ -112,17 +112,23 @@ SuperMimic 算法原理
 
 完整数学公式、网络维度、优化器设置（Muon 与 fused Adam）、FSDP2 分片以及与论文和官方代码的差异详见 :doc:`../../reference/algorithms/supermimic`。
 
-安装
-----
+安装与运行
+----------
 
-在仓库根目录创建独立虚拟环境（固定特定版本的 PyTorch、MuJoCo Warp 和 ``warp-lang``，不要与其他 RLinf 虚拟环境混用）：
+.. include:: _setup_common.rst
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --env supermimic --venv .venv-supermimic
-   source .venv-supermimic/bin/activate
+   .. tab-item:: SuperMimic
 
-Docker 构建方式见 :doc:`g1_mimic`，AMD ROCm 平台见 :ref:`在其他硬件后端上运行 <supermimic-hardware>`。
+      在仓库根目录创建独立虚拟环境（固定特定版本的 PyTorch、MuJoCo Warp 和 ``warp-lang``，不要与其他 RLinf 虚拟环境混用）：
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --env supermimic --venv .venv-supermimic
+         source .venv-supermimic/bin/activate
+
+AMD ROCm 平台见 :ref:`在不同硬件后端上运行 <supermimic-hardware>`。
 
 准备 LAFAN1 数据
 ----------------
@@ -349,7 +355,7 @@ Docker 构建方式见 :doc:`g1_mimic`，AMD ROCm 平台见 :ref:`在其他硬�
 
 .. _supermimic-hardware:
 
-在其他硬件后端上运行
+在不同硬件后端上运行
 --------------------
 
 AMD ROCm

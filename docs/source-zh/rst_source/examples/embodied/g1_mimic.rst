@@ -152,25 +152,12 @@ G1 动作跟踪环境
      - ``0.1``
      - 训练时的动作高斯噪声标准差
 
-安装
-----
+安装与运行
+----------
 
 .. include:: _setup_common.rst
 
 .. tab-set::
-
-   .. tab-item:: Docker 镜像
-
-      构建 SuperMimic 镜像目标并启动容器：
-
-      .. code-block:: bash
-
-         docker build -f docker/Dockerfile \
-             --build-arg BUILD_TARGET=embodied-supermimic \
-             -t rlinf:embodied-supermimic .
-         docker run -it --rm --gpus all \
-             --shm-size 32g --network host --name rlinf \
-             -v .:/workspace/RLinf rlinf:embodied-supermimic
 
    .. tab-item:: 自定义环境
 
@@ -181,7 +168,7 @@ G1 动作跟踪环境
          bash requirements/install.sh embodied --env supermimic --venv .venv-supermimic
          source .venv-supermimic/bin/activate
 
-AMD ROCm 环境安装见 :ref:`在其他硬件后端上运行 <supermimic-hardware>`。
+AMD ROCm 环境安装见 :ref:`在不同硬件后端上运行 <supermimic-hardware>`。
 
 准备动作数据
 ------------

@@ -3,8 +3,10 @@ G1 动作数据准备
 
 为 :doc:`G1 动作跟踪环境 <g1_mimic>` 和 :doc:`SuperMimic <supermimic>` 准备参考动作片段，包括 LAFAN1 离线转换以及自定义 ``clip_*.pt`` 文件格式。
 
-安装
-----
+**前置条件：** :doc:`安装 </rst_source/start/installation>` · :doc:`G1 动作跟踪环境 <g1_mimic>` 中的 SuperMimic 环境。
+
+安装与运行
+----------
 
 先激活 :doc:`g1_mimic` 中创建的 SuperMimic 虚拟环境，以下所有命令均在 RLinf 仓库根目录执行。
 

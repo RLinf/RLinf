@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import torch
 
-from rlinf.utils.compile_cache import CompileCache, run_compiled
 from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM
 from rlinf.models.embodiment.supermimic.ipc import (
     FlatDictBuffer,
@@ -28,6 +27,7 @@ from rlinf.models.embodiment.supermimic.ipc import (
 )
 from rlinf.models.embodiment.supermimic.supermimic_policy import sync_param_names
 from rlinf.scheduler import Worker
+from rlinf.utils.compile_cache import CompileCache, run_compiled
 from rlinf.utils.precision import torch_dtype_from_precision
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 

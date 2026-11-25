@@ -152,25 +152,12 @@ The default preset lives in ``examples/embodiment/config/env/g1_mimic.yaml``. Co
      - ``0.1``
      - Standard deviation of Gaussian action noise during training
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
 .. tab-set::
-
-   .. tab-item:: Docker image
-
-      Build the SuperMimic target and start a container with GPU access:
-
-      .. code-block:: bash
-
-         docker build -f docker/Dockerfile \
-             --build-arg BUILD_TARGET=embodied-supermimic \
-             -t rlinf:embodied-supermimic .
-         docker run -it --rm --gpus all \
-             --shm-size 32g --network host --name rlinf \
-             -v .:/workspace/RLinf rlinf:embodied-supermimic
 
    .. tab-item:: Custom environment
 
