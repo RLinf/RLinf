@@ -10,7 +10,7 @@
       :link: behavior
       :link-type: doc
 
-      基于 OmniGibson 与 Isaac Sim 4.5 的 50 个家居任务评测（OpenPI π₀.₅）。
+      OpenPI π₀.₅ 家居任务评测：2025 版 50 个任务，使用 Isaac Sim 4.5；2026 版 100 个任务，使用 Isaac Sim 5.1。
 
    .. grid-item-card:: LIBERO
       :link: libero

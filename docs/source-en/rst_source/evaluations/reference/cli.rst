@@ -4,6 +4,7 @@ CLI
 Activate your virtual environment from the repository root, then launch evaluations with ``evaluations/run_eval.sh``. Supported call forms:
 
 - **Explicit benchmark:** ``bash evaluations/run_eval.sh <benchmark> <config_name> [hydra_overrides...]``
+- **BEHAVIOR year preset:** ``bash evaluations/run_eval.sh behavior2025|behavior2026 [config_name] [hydra_overrides...]``
 - **Auto-inferred benchmark:** ``bash evaluations/run_eval.sh <config_name> [hydra_overrides...]``
 - **ManiSkill OOD batch mode:** ``bash evaluations/run_eval.sh mani-ood [config_name]`` (requires ``EVAL_NAME``, ``CKPT_PATH``, ``TOTAL_NUM_ENVS``, and ``EVAL_ROLLOUT_EPOCH``)
 
@@ -18,6 +19,7 @@ Pass the benchmark folder name under ``evaluations/`` followed by the YAML confi
    bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval
    bash evaluations/run_eval.sh robotwin robotwin_place_empty_cup_openvlaoft_eval
    bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval_2025
+   bash evaluations/run_eval.sh behavior2026 behavior_openpi_pi05_eval_2026
    bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos
    bash evaluations/run_eval.sh simple simple_psi0_eval
 
@@ -55,9 +57,9 @@ Supported Benchmark Prefixes
    * - Config prefix
      - Inferred benchmark
      - Notes
-   * - ``behavior_*`` / ``behavior-*``
+   * - ``behavior_*`` / ``behavior-*`` / ``behavior2026_*``
      - ``behavior``
-     - BEHAVIOR-1K
+     - BEHAVIOR-1K 2025 / 2026
    * - ``calvin_*`` / ``calvin-*``
      - ``calvin``
      - CALVIN (via config fallback)
@@ -120,8 +122,8 @@ Benchmark Environment Variables
      - ``ROBOTWIN_PATH=/path/to/RoboTwin``, ``ROBOT_PLATFORM=ALOHA``
      - Path to cloned RoboTwin checkout
    * - BEHAVIOR-1K
-     - ``OMNIGIBSON_DATA_PATH``
-     - See :doc:`../../examples/embodied/behavior`
+     - ``OMNIGIBSON_DATA_PATH``; ``ISAAC_PATH`` for 2025
+     - See :doc:`../guides/behavior`
    * - DreamZero
      - ``DREAMZERO_PATH=/path/to/DreamZero``
      - Path to DreamZero checkout

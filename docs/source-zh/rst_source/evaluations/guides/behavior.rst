@@ -38,7 +38,7 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
 
    .. tab-item:: 2025 · OpenPI π₀.₅
 
-      OmniGibson 3.7.2 使用独立安装的 Isaac Sim 4.5。安装时，原有的 ``--env behavior`` 和 ``--env behavior2025`` 都选择此版本。
+      OmniGibson 3.7.2 使用独立安装的 Isaac Sim 4.5。安装参数 ``--env behavior`` 和 ``--env behavior2025`` 都选择此版本。
 
       **1. 安装**
 
@@ -72,34 +72,55 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
 
       在仓库根目录打开新终端。安装脚本会将基于 OmniGibson 3.9.4 的仿真库和 Isaac Sim 5.1 装入单独的 Python 3.11 环境。
 
+      **1. 安装**
+
+      Isaac Sim 下载约需 20 GB 临时空间。如果 ``/tmp`` 容量不足，安装前将 ``TMPDIR`` 设为较大磁盘上的目录，例如先执行 ``mkdir -p ./tmp`` 和 ``export TMPDIR="$PWD/tmp"``。
+
       .. code-block:: bash
 
          unset ISAAC_PATH EXP_PATH CARB_APP_PATH
          bash requirements/install.sh embodied --model openpi --env behavior2026
          source .venv-behavior2026/bin/activate
 
-      为 2026 资产选择独立目录。首次运行以下命令时，按提示接受资产许可，再下载公开实例和 PT50 权重。
+      **2. 下载资产与模型**
+
+      为 2026 资产选择独立目录，先下载机器人资产。
 
       .. code-block:: bash
 
          export OMNIGIBSON_DATA_PATH="$PWD/behavior-2026-data"
          mkdir -p "$OMNIGIBSON_DATA_PATH"
          python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
+
+      单独执行下面这条命令，按提示接受资产许可后再继续。
+
+      .. code-block:: bash
+
          python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets()"
+
+      接受许可后，下载公开实例和 PT50 权重。
+
+      .. code-block:: bash
+
          python -c "from omnigibson.utils.asset_utils import download_2026_challenge_task_instances; download_2026_challenge_task_instances()"
-         hf download RLinf/RLinf-Pi05-BEHAVIOR-1K-PT50-CS32 --local-dir ./PT50
+         hf download RLinf/RLinf-Pi05-BEHAVIOR-1K-PT50-CS32 --local-dir ./RLinf-Pi05-BEHAVIOR-1K-PT50-CS32
 
-         bash evaluations/run_eval.sh behavior2026 rollout.model.model_path="$PWD/PT50"
+      **3. 启动评测**
 
-      默认命令评测“打开收音机”的基础布局。要评测固定公开实例，在评测 YAML 的 ``env.eval.omni_config`` 下，用 ``scene.scene_instance`` 指定该任务的完整模板，用 ``task.activity_instance_dir`` 指向存放该任务布局 JSON 的目录，再用 ``task.activity_instance_id`` 选择实例编号。
+      .. code-block:: bash
 
-在 2025 环境中，``run_eval.sh`` 会根据 ``ISAAC_PATH`` 与 ``OMNIGIBSON_DATA_PATH`` 自动补全 ``OMNIGIBSON_DATASET_PATH``、``OMNIGIBSON_KEY_PATH``、``OMNIGIBSON_ASSET_PATH``、``EXP_PATH`` 与 ``CARB_APP_PATH``。
+         bash evaluations/run_eval.sh behavior2026 \
+           rollout.model.model_path=./RLinf-Pi05-BEHAVIOR-1K-PT50-CS32
+
+      默认评测 ``turning_on_radio`` 的基础布局。固定公开实例的评测命令见下方“进阶用法”。
+
+2025 启动脚本根据 ``ISAAC_PATH`` 与 ``OMNIGIBSON_DATA_PATH`` 补全其余 OmniGibson 和 Isaac Sim 路径。
 
 使用第三方 OpenPI 权重（如 OpenPI-Comet）前须转换为 PyTorch 格式；OpenVLA-OFT 可从 ``examples/embodiment/config/`` 中的训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
 
 .. dropdown:: 硬件要求、Isaac Sim 与示例配置
 
-   2025 版依赖 Isaac Sim 4.5（`依赖说明 <https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html>`_）：
+   2025 版使用 Isaac Sim 4.5（`依赖说明 <https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html>`__），2026 版使用 Isaac Sim 5.1（`依赖说明 <https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/requirements.html>`__）。
 
    - 使用支持 Ray Tracing 的 GPU（RTX 30/40 系列或更新）；A100、H100 等无 RT 能力的卡渲染画面会出现马赛克或模糊。
    - Hopper 及以上架构 GPU 须使用 570 及以上版本 NVIDIA 驱动。
@@ -142,15 +163,15 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
       * - 字段
         - 说明
       * - ``total_num_envs``
-        - 全局并行环境数。单个环境约占 **10 GiB** 显存，``behavior_openpi_pi05_eval_2025.yaml`` 默认为 ``4``。
+        - 全局并行环境数，两版预设均为 ``4``，须能被 env worker 数量整除。单个环境约占 **10 GiB** 显存。
       * - ``rollout_epoch``
-        - 评测轮次，多轮指标取平均；``behavior_openpi_pi05_eval_2025.yaml`` 默认为 ``4``。
+        - 评测轮次，多轮指标取平均；两版预设均为 ``4``。
       * - ``max_episode_steps``
-        - 单条轨迹步数上限（2025 版 π₀.₅ 示例为 ``4096``，预设默认 ``2000`` 对长程任务偏短）。2026 版留空时使用所选任务的官方步数上限。
+        - 单条轨迹步数上限。2025 预设为 ``4096``；2026 默认为 ``null``，按所选任务读取官方上限。
       * - ``max_steps_per_rollout_epoch``
-        - 每轮 rollout 的总交互步数，**必须能被** ``rollout.model.num_action_chunks`` **整除**。
+        - 每轮 rollout 的总交互步数，须能被 ``rollout.model.num_action_chunks`` 整除。2026 默认为 ``null``，将轨迹上限向上取整到完整动作块。
       * - ``num_env_subprocess``
-        - 单个 env worker 内的 Isaac Sim 子进程数（默认 ``1``）。``total_num_envs`` 须能被 ``num_env_subprocess × pipeline_stage_num`` 整除。
+        - 单个 env worker 内的 Isaac Sim 子进程数（默认 ``1``）。每个 worker 的环境数须分别能被 ``num_env_subprocess`` 和 ``pipeline_stage_num`` 整除。worker 数量通过 :doc:`../../concepts/placement` 设置。
       * - ``skip_intermediate_renders``
         - 设为 ``True`` 时跳过动作块内中间渲染以加速步进；视频仅保留块边界帧。
 
@@ -192,6 +213,18 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
         env.eval.total_num_envs=4 \
         env.eval.num_env_subprocess=2
 
+   **评测公开实例 301（2026）**
+
+   指定完整场景模板和实例状态目录，任务名保持为 ``turning_on_radio``。
+
+   .. code-block:: bash
+
+      bash evaluations/run_eval.sh behavior2026 \
+        rollout.model.model_path=./RLinf-Pi05-BEHAVIOR-1K-PT50-CS32 \
+        +env.eval.omni_config.scene.scene_instance="$OMNIGIBSON_DATA_PATH/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_0_301_template.json" \
+        env.eval.omni_config.task.activity_instance_dir="$OMNIGIBSON_DATA_PATH/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json" \
+        env.eval.omni_config.task.activity_instance_id=301
+
    **使用离线 instance 随机采样（2025）**
 
    .. code-block:: yaml
@@ -216,8 +249,8 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
 
    * - 现象
      - 处理
-   * - 缺少 BEHAVIOR 资源或 license 报错
-     - 2025 版按 :doc:`../../examples/embodied/behavior` 完成 Isaac Sim、OmniGibson 资产与 license 配置后再评测。2026 版请按上方步骤下载资产并配置许可。
+   * - 缺少 BEHAVIOR 资源或许可报错
+     - 2025 版按 :doc:`../../examples/embodied/behavior` 完成 Isaac Sim、OmniGibson 资产与许可配置后再评测。2026 版按上方步骤下载资产并配置许可。
    * - 2025 版未设置 ``ISAAC_PATH``
      - 将 ``ISAAC_PATH`` 导出为 Isaac Sim 安装目录；``run_eval.sh`` 默认设置 ``OMNIGIBSON_HEADLESS=1``。
    * - 显存不足

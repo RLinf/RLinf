@@ -276,9 +276,7 @@ Setup and Run
 Standalone Evaluation
 ~~~~~~~~~~~~~~~~~~~~~
 
-Any PyTorch-converted ``pi05`` checkpoint (for example, `OpenPI-Comet <https://huggingface.co/sunshk/openpi_comet/tree/main>`__ converted with `openpi-comet <https://github.com/mli0603/openpi-comet>`__, or weights from :doc:`sft_openpi` / the OpenPI checkpoint converter) can be evaluated with ``evaluations/behavior/behavior_openpi_pi05_eval_2025.yaml``. Normalization statistics are loaded from the checkpoint's bundled ``physical-intelligence/behavior/norm_stats.json`` asset. Increase ``env.eval.max_episode_steps`` and ``env.eval.max_steps_per_rollout_epoch`` (for example, ``4096``) if you need longer trajectories.
-
-Run standalone evaluation through the :doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>`. It covers the required ``ISAAC_PATH`` / ``OMNIGIBSON_DATA_PATH`` setup, setting the eval checkpoint path, the ``behavior_openpi_pi05_eval_2025`` launch command, and result interpretation.
+Evaluate PyTorch-converted OpenPI checkpoints with the :doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>`. The 2025 preset defaults to 4,096 steps; the 2026 preset uses the selected task's official limit. Normalization statistics come from the checkpoint's bundled assets.
 
 .. note::
 
