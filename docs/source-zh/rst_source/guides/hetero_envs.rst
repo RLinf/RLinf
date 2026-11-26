@@ -1,5 +1,5 @@
-异构环境
-========
+多 Env 混合训练
+===============
 
 在一次运行中，让同一个 policy 在多个不同的环境配置上联合训练或评估，例如 ManiSkill 与 LIBERO 联合训练、多个 LIBERO 任务集组合，或仿真与真机混合训练。
 
@@ -119,14 +119,12 @@ env worker 按列出顺序根据 ``total_num_envs`` 的比例分配：
 
    .. code-block:: bash
 
-      bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-      source .venv/bin/activate
+      bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-2. 下载权重：
+2. 下载权重（中国大陆用户可先设置 ``HF_ENDPOINT=https://hf-mirror.com``）：
 
    .. code-block:: bash
 
-      # 在中国大陆可设置 HF_ENDPOINT=https://hf-mirror.com。
       hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Main
       hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 

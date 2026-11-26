@@ -14,16 +14,19 @@
 
 # ruff: noqa: D103
 import asyncio
+import logging
 import threading
 import time
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, fields, is_dataclass
+from functools import partial
 from types import SimpleNamespace
 from typing import Any, Optional
 from unittest.mock import Mock
 
 import pytest
+import ray
 import torch
 
 from rlinf.scheduler import (
@@ -58,6 +61,12 @@ from rlinf.scheduler.cluster import (
     resolve_group_sizes,
     resolve_worker_names,
 )
+from rlinf.scheduler.collective import AsyncChannelCommWork, AsyncChannelWork
+from rlinf.scheduler.collective.async_work import (
+    AsyncFuncWork,
+    PeerCommunicationError,
+)
+from rlinf.scheduler.collective.collective_group import CollectiveGroup
 from rlinf.scheduler.worker import WorkerAddress, WorkerGroup
 
 # --- Constants ---
@@ -176,6 +185,15 @@ class ProducerWorker(Worker):
             data.append(await channel.get(async_op=True, key="stress_key").async_wait())
 
         return data
+
+    async def ordered_puts_then_get_nowait(
+        self, channel: Channel, key: str, items: list
+    ):
+        """Issue same-key puts without waiting for them, await only the last
+        one, then get_nowait every item. Returns the items in issue order."""
+        works = [channel.put(item, key=key, async_op=True) for item in items]
+        await works[-1].async_wait()
+        return [channel.get_nowait(key=key) for _ in items]
 
     async def stress_multiple_queues(self, channel: Channel, num_items: int):
         works = []
@@ -907,6 +925,302 @@ class TestChannel:
         with pytest.raises(RuntimeError, match="future failed"):
             future.value()
 
+    def test_last_future_per_key_is_dropped(self, cluster):
+        """A key leaves last_future_per_key once its operation completes.
+
+        Keys are per group on the payload channels, so a table that keeps
+        them grows for the whole run.
+        """
+
+        @ray.remote
+        class _RecordingActor:
+            def __init__(self):
+                self.calls = []
+
+            def work(self, value, delay):
+                time.sleep(delay)
+                self.calls.append(value)
+                return value
+
+            def called(self):
+                return list(self.calls)
+
+        actor = _RecordingActor.remote()
+        channel_key = f"last_future_{uuid.uuid4().hex[:8]}"
+        table_key = f"order_channel:{channel_key}"
+
+        work = AsyncChannelWork("order_channel", channel_key, actor, "work", 1, 0.3)
+
+        assert work.wait() == 1
+        assert ray.get(actor.called.remote()) == [1]
+        assert table_key not in AsyncChannelWork.last_future_per_key
+
+    def test_a_finished_call_leaves_no_entry_in_the_table(self):
+        """A remote call that has already finished leaves no entry behind.
+
+        _complete runs in the thread that registers it; the entry is written
+        before the call is issued, so the callback finds its own future and
+        removes it.
+        """
+        channel_key = uuid.uuid4().hex[:8]
+        table_key = f"completed_channel:{channel_key}"
+
+        work = AsyncChannelWork(
+            "completed_channel", channel_key, _CompletedHandle(), "work"
+        )
+
+        assert work.wait() == "ok"
+        assert table_key not in AsyncChannelWork.last_future_per_key
+
+    def test_two_finished_calls_on_one_key_both_return(self):
+        """A second operation on a key whose first call has already finished
+        still runs, and the key leaves the table.
+
+        The first call completes inside its own construction, so the second
+        reads an empty table instead of the first call's finished future.
+        """
+        channel_key = uuid.uuid4().hex[:8]
+        table_key = f"completed_channel:{channel_key}"
+        handle = _CompletedHandle()
+
+        first = AsyncChannelWork("completed_channel", channel_key, handle, "work", 1)
+        second = AsyncChannelWork("completed_channel", channel_key, handle, "work", 2)
+
+        assert first.wait() == "ok"
+        assert second.wait() == "ok"
+        assert table_key not in AsyncChannelWork.last_future_per_key
+
+    def test_async_channel_work_remote_failure_raises(self, cluster):
+        """A failed remote call must raise at the waiter instead of leaving
+        the work forever pending, and work issued later on the same channel
+        key must still execute instead of queueing behind the failed work."""
+
+        @ray.remote
+        class FailingActor:
+            def ok(self, value):
+                return value
+
+            def boom(self):
+                raise ValueError("remote boom")
+
+        actor = FailingActor.remote()
+        channel_key = f"failure_key_{uuid.uuid4().hex[:8]}"
+
+        sync_work = AsyncChannelWork("failure_channel", channel_key, actor, "boom")
+        with pytest.raises(Exception, match="remote boom"):
+            sync_work.wait()
+
+        async_work = AsyncChannelWork("failure_channel", channel_key, actor, "boom")
+        with pytest.raises(Exception, match="remote boom"):
+            asyncio.run(async_work.async_wait())
+
+        follow_up = AsyncChannelWork("failure_channel", channel_key, actor, "ok", 42)
+        assert follow_up.wait() == 42
+
+    def test_recv_failure_fails_pending_gets_of_the_same_peer(self, monkeypatch):
+        """A worker's recvs from one channel worker are not keyed: each takes
+        the next message, and the store returns the data to the get its
+        query_id names. When one recv of a peer fails after an earlier
+        recv already delivered another get's data, every get still pending
+        on that peer fails instead of hanging, and gets on other peers are
+        untouched.
+
+        The recvs are real ``AsyncFuncWork`` objects, called the way the work
+        queue thread calls them, so a failure that escapes the call ends the
+        thread and every later recv hangs.
+        """
+
+        # The queue thread runs inside a worker; this test process has none.
+        monkeypatch.setattr(
+            Worker, "current_worker", SimpleNamespace(has_accelerator=False)
+        )
+
+        def _boom():
+            raise ValueError("peer boom")
+
+        peer = ("chan", 0)
+        other_peer = ("chan", 1)
+        # A's recv delivers B's data (arrival order is not get order).
+        recv_a = AsyncFuncWork(lambda: ("data_b", 200))
+        recv_b = AsyncFuncWork(_boom)
+        work_a = AsyncChannelCommWork(recv_a, 100, None, peer=peer)
+        work_b = AsyncChannelCommWork(recv_b, 200, None, peer=peer)
+
+        # A's recv delivers B's data; B is done, A still waits.
+        recv_a(None)
+        assert work_b.wait() == "data_b"
+
+        # B's recv fails: A, whose data never arrived, must fail with the
+        # original error instead of hanging, and the call must return so the
+        # queue thread keeps running.
+        recv_b(None)
+        with pytest.raises(ValueError, match="peer boom"):
+            asyncio.run(asyncio.wait_for(work_a.async_wait(), timeout=5))
+        with pytest.raises(ValueError, match="peer boom"):
+            work_a.wait()
+
+        # A later get on that peer fails as well: the failed recv may have
+        # lost part of the stream, so the data the peer sends afterwards
+        # cannot be matched to the get it belongs to.
+        recv_d = AsyncFuncWork(_raise_peer_error)
+        work_d = AsyncChannelCommWork(recv_d, 400, None, peer=peer)
+        recv_d(None)
+        with pytest.raises(PeerCommunicationError):
+            work_d.wait()
+
+        # A get on another peer is unaffected: its data still arrives.
+        recv_c = AsyncFuncWork(lambda: ("data_c", 300))
+        work_c = AsyncChannelCommWork(recv_c, 300, None, peer=other_peer)
+        recv_c(None)
+        assert work_c.wait() == "data_c"
+
+    def test_done_callback_runs_after_a_failure(self):
+        """A callback added with add_done_callback runs whether the work
+        succeeded or failed, unlike a work chained with then().
+
+        A step that has to hand the outcome to its callers, such as failing
+        the gets waiting on a channel rank after a recv error, is skipped by
+        then() on failure and must register here instead.
+        """
+        called = []
+
+        def _boom():
+            raise ValueError("call back failed")
+
+        work = AsyncFuncWork(_boom)
+        work.add_done_callback(lambda future: called.append(future))
+        work(None)
+
+        assert len(called) == 1
+        with pytest.raises(ValueError, match="call back failed"):
+            called[0].wait()
+
+    def test_work_returning_a_work_completes_with_the_chain(self, monkeypatch):
+        """A work whose function returns another work completes once that
+        work does, and its waiter sees the chain's failure.
+
+        Nested works are how the collective helpers chain one transfer with
+        the next one it needs (a send with its follow-up recv, a broadcast
+        with the copy out of the receive buffer). An outer work that is never
+        completed hangs its caller even when every step succeeded.
+        """
+        monkeypatch.setattr(
+            Worker, "current_worker", SimpleNamespace(has_accelerator=False)
+        )
+        created = []
+
+        def _outer():
+            inner = AsyncFuncWork(lambda: "inner result")
+            created.append(inner)
+            return inner
+
+        outer = AsyncFuncWork(_outer)
+        outer(None)
+        assert not outer.done()
+        created[0](None)
+        assert outer.done()
+        assert outer.wait() == "inner result"
+
+    def test_work_returning_a_failing_work_completes_with_its_error(self, monkeypatch):
+        """The chain's failure reaches the outer work's waiter.
+
+        The inner work here is the one that fails, so the outer work is
+        completed by the failure, not by a result.
+        """
+        monkeypatch.setattr(
+            Worker, "current_worker", SimpleNamespace(has_accelerator=False)
+        )
+        created = []
+
+        def _boom():
+            raise ValueError("inner failed")
+
+        def _outer():
+            inner = AsyncFuncWork(_boom)
+            created.append(inner)
+            return inner
+
+        outer = AsyncFuncWork(_outer)
+        outer(None)
+        created[0](None)
+        assert outer.done()
+        with pytest.raises(ValueError, match="inner failed"):
+            outer.wait()
+
+    def test_chained_work_skips_its_function_when_the_previous_failed(self):
+        """A work chained with then() does not run its function when the work
+        before it failed, and its waiter gets the original error.
+
+        Without this, a chained step runs on missing data, or its waiter
+        waits forever on a future that is never completed.
+        """
+        calls = []
+
+        def _boom():
+            raise ValueError("first failed")
+
+        first = AsyncFuncWork(_boom)
+        next_work = first.then(lambda: calls.append("ran"))
+        first(None)
+
+        assert calls == []
+        with pytest.raises(ValueError, match="first failed"):
+            next_work.wait()
+
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_remove_key_drops_items_and_keeps_the_channel_usable(
+        self, worker_groups, channel, channel_type
+    ):
+        """remove_key drops a key's queued items and queues in place, without
+        pulling them to the caller, and the channel keeps serving the key."""
+        producer, consumer = worker_groups
+        key = f"remove_key_{uuid.uuid4().hex[:8]}"
+
+        for i in range(3):
+            producer.put_item(channel, i, 1, 0, True, key=key).wait()
+        assert channel.qsize(key) == 3
+
+        assert channel.remove_key(key) == 3
+        assert channel.qsize(key) == 0
+        assert channel.remove_key(f"never_put_{uuid.uuid4().hex[:8]}") == 0
+
+        producer.put_item(channel, "after_remove", 1, 0, True, key=key).wait()
+        assert consumer.get_item(channel, False, key=key).wait()[0] == "after_remove"
+        assert channel.qsize(key) == 0
+
+        with pytest.raises(ValueError, match="default queue"):
+            channel.remove_key(DEFAULT_KEY)
+
+    def test_local_channel_remove_key(self):
+        """remove_key on a local channel drops the key's items and queue, and
+        later puts on the key still work."""
+        channel = Channel.create(
+            name=f"local_remove_{uuid.uuid4().hex[:8]}", local=True
+        )
+        key = "local_key"
+        channel.put(1, key=key)
+        channel.put(2, key=key)
+
+        assert channel.remove_key(key) == 2
+        assert channel.qsize(key) == 0
+
+        channel.put(3, key=key)
+        assert channel.get_nowait(key) == 3
+
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_same_key_puts_execute_in_issue_order(
+        self, worker_groups, channel, channel_type
+    ):
+        """Same-key put(async_op=True) calls from one process must run in the
+        order they were issued: once the last put's handle completes, every
+        item is already queued and get_nowait returns them in that order."""
+        producer = worker_groups[0]
+        key = f"ordered_key_{uuid.uuid4().hex[:8]}"
+        items = list(range(5))
+
+        received = producer.ordered_puts_then_get_nowait(channel, key, items).wait()[0]
+        assert received == items
+
     @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
     def test_async_wait_yields_control(self, worker_groups, channel, channel_type):
         """Ensures channel get(async_op=True).async_wait() yields control so other
@@ -968,6 +1282,27 @@ class TestChannel:
         assert len(batch[0]) == 2
         assert batch[0][0] == items[0][0]
         assert batch[0][1] == items[1][0]
+
+    def test_queued_summary_sums_over_every_channel_rank(self):
+        """queued_summary counts every channel worker, not one rank.
+
+        A key is hosted on the rank of the node it is first produced from.
+        This test runs on one node, so it asks the channel worker for the
+        two keys the way callers from nodes 0 and 1 would, which is what a
+        key's own lookup does on first use. Reading the queue of one rank
+        would report only that rank's share.
+        """
+        channel = DistributedChannel.create(
+            f"QUEUED_SUMMARY_TEST_{uuid.uuid4().hex[:8]}"
+        )
+        for key, src_node_rank in (("q_rank0", 0), ("q_rank1", 1)):
+            channel._channel_worker_group.execute_on(0).ensure_key_replica(
+                key=key, src_node_rank=src_node_rank
+            ).wait()
+        channel.put("first", weight=2, key="q_rank0")
+        channel.put("second", weight=3, key="q_rank1")
+
+        assert channel.queued_summary() == (2, 5)
 
     @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
     def test_qsize_empty_full(self, worker_groups, channel, channel_type):
@@ -1511,6 +1846,20 @@ def test_qsize_reports_the_total_and_a_single_consumer_share():
     assert missing_empty is True
 
 
+def test_remove_key_clears_dealt_consumer_queues_too():
+    async def run():
+        worker = _stub_worker(dispatcher="least_loaded")
+        for index in range(3):
+            await worker._enqueue("k", index, 0)
+        dropped = ChannelWorker.remove_key(worker, "k")
+        return dropped, "k" in worker._queue_map, "k" in worker._consumer_queues
+
+    dropped, shared_left, dealt_left = asyncio.run(run())
+    assert dropped == 3
+    assert not shared_left
+    assert not dealt_left
+
+
 # --- resolution ---------------------------------------------------------------
 
 
@@ -1681,6 +2030,60 @@ def test_consumer_ids_match_the_ids_the_worker_get_path_reports():
 NODE_OF_GROUP = {"Rollout": 2, "Actor": 3, "Env": 1}
 
 
+class _CompletedCall:
+    """A channel call whose future is already done when it is returned."""
+
+    def __init__(self, value: Any):
+        from concurrent.futures import Future
+
+        self._future = Future()
+        self._future.set_result(value)
+
+    def future(self):
+        return self._future
+
+
+class _PendingCall:
+    """A channel call whose future is not completed by anyone else."""
+
+    def __init__(self):
+        from concurrent.futures import Future
+
+        self._future = Future()
+
+    def future(self):
+        return self._future
+
+
+class _PendingHandle:
+    """A channel-actor handle whose calls stay in flight.
+
+    Stands in for a remote call that has not returned: nothing settles it but
+    the code under test.
+    """
+
+    def __getattr__(self, name):
+        def remote(*args, **kwargs):
+            return _PendingCall()
+
+        return SimpleNamespace(remote=remote)
+
+
+class _CompletedHandle:
+    """A channel-actor handle whose every call has already finished.
+
+    Stands in for the process boundary: the remote call behind
+    ``getattr(handle, method).remote(...)`` is done before the caller
+    registers its completion callback.
+    """
+
+    def __getattr__(self, name):
+        def remote(*args, **kwargs):
+            return _CompletedCall("ok")
+
+        return SimpleNamespace(remote=remote)
+
+
 class _FakeGroup:
     """A worker group as ``resolve_group_names`` sees it: just a name."""
 
@@ -1748,3 +2151,311 @@ def test_returns_none_when_nothing_resolves(group_type):
 def test_unregistered_group_name_is_skipped(group_type):
     """An unknown name yields None instead of raising, so creation can proceed."""
     assert resolve_colocation_node_rank("Missing") is None
+
+
+class TestPeerCommunicationFailure:
+    """One collective direction failing refuses the operations after it.
+
+    The failure state lives on the group, one per direction, so every pool
+    queue of that direction shares it. These cases drive the works the way
+    the queue thread and the synchronous path do, without a cluster: the
+    group object carries only what the guard and the recorder read.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _worker_context(self, monkeypatch):
+        """The queue thread runs inside a worker; this process has none."""
+        monkeypatch.setattr(
+            Worker, "current_worker", SimpleNamespace(has_accelerator=False)
+        )
+
+    @staticmethod
+    def _group(name="direction_group"):
+        """A group with only the state the guard and the recorder read."""
+        group = CollectiveGroup.__new__(CollectiveGroup)
+        group._group_name = name
+        group._logger = logging.getLogger(f"test.{name}")
+        group._direction_failures = {"send": None, "recv": None}
+        return group
+
+    @staticmethod
+    def _guarded_work(group, direction, calls, comm_id):
+        """A work built like a real send or recv: guarded, and recorded."""
+
+        def _run(work, **kwargs):
+            calls.append(kwargs["comm_id"])
+            return "ran"
+
+        work = AsyncFuncWork(
+            partial(group._run_guarded, direction, _run),
+            comm_id=comm_id,
+            pass_self=True,
+        )
+        group._watch_work(work, direction, comm_id)
+        return work
+
+    def test_a_failed_send_refuses_later_sends(self):
+        """A send issued after a failed send does not run: the failure of the
+        first one lost the stream's alignment, so later sends report it
+        instead of sending, on every pool queue of that direction."""
+        group = self._group()
+        calls = []
+
+        def _failing(work, **kwargs):
+            calls.append(("failed", kwargs["comm_id"]))
+            raise ValueError("link down")
+
+        failed = AsyncFuncWork(
+            partial(group._run_guarded, "send", _failing), comm_id=8, pass_self=True
+        )
+        group._watch_work(failed, "send", 8)
+        failed(None)
+        with pytest.raises(ValueError, match="link down"):
+            failed.wait()
+
+        # The recorder took this failure from the work it was watching.
+        assert isinstance(group._direction_failures["send"], ValueError)
+
+        for comm_id in (0, 1):
+            work = self._guarded_work(group, "send", calls, comm_id)
+            work(None)
+            with pytest.raises(PeerCommunicationError) as excinfo:
+                work.wait()
+            assert isinstance(excinfo.value.__cause__, ValueError)
+            assert str(excinfo.value) == (
+                "an earlier send in collective group direction_group failed "
+                "(ValueError('link down')); later sends in this group are not run"
+            )
+
+        assert calls == [("failed", 8)]
+
+    def test_a_failed_recv_refuses_later_recvs_and_sends_still_run(self):
+        """The state is per direction: a failed recv refuses the recvs after
+        it, and the sends of the same group are untouched."""
+        group = self._group()
+        group._direction_failures["recv"] = OSError("peer gone")
+        calls = []
+
+        send_work = self._guarded_work(group, "send", calls, 0)
+        send_work(None)
+        assert send_work.wait() == "ran"
+        recv_work = self._guarded_work(group, "recv", calls, 1)
+        recv_work(None)
+        with pytest.raises(PeerCommunicationError) as excinfo:
+            recv_work.wait()
+
+        assert calls == [0]
+        assert isinstance(excinfo.value.__cause__, OSError)
+
+    def test_the_synchronous_path_raises_the_same_error(self):
+        """The synchronous path runs the send in the caller's thread; the
+        guard is inside the work, so ``send`` raises there too."""
+        group = self._group()
+        group._direction_failures["send"] = ValueError("link down")
+        group._send_comm_id_iter = iter(range(CollectiveGroup.POOL_SIZE))
+        group._send_work_queues = [
+            SimpleNamespace(done=True) for _ in range(CollectiveGroup.POOL_SIZE)
+        ]
+        sent = []
+        group._atomic_send = lambda work, **kwargs: sent.append(kwargs["comm_id"])
+
+        with pytest.raises(PeerCommunicationError) as excinfo:
+            group.send("item", async_op=False)
+
+        assert sent == []
+        assert "an earlier send in collective group direction_group failed" in str(
+            excinfo.value
+        )
+
+    def test_another_group_is_unaffected(self):
+        """The failure state belongs to the group that failed."""
+        failed = self._group("failed_group")
+        failed._direction_failures["send"] = ValueError("link down")
+        other = self._group("other_group")
+        calls = []
+
+        other_work = self._guarded_work(other, "send", calls, 0)
+        other_work(None)
+        assert other_work.wait() == "ran"
+        refused = self._guarded_work(failed, "send", calls, 1)
+        refused(None)
+        with pytest.raises(PeerCommunicationError):
+            refused.wait()
+
+        assert calls == [0]
+
+    def test_the_first_failure_is_recorded_and_logged(self, caplog):
+        """The recorder keeps the first failure of a direction and logs every
+        failure; a later one, from an operation that had already started when
+        the first failed, does not replace it."""
+        group = self._group()
+
+        def _failing(exc, comm_id):
+            def _run():
+                raise exc
+
+            work = AsyncFuncWork(_run)
+            group._watch_work(work, "send", comm_id)
+            return work
+
+        with caplog.at_level(logging.ERROR, logger=group._logger.name):
+            first = _failing(ValueError("first"), 3)
+            first(None)
+            with pytest.raises(ValueError, match="first"):
+                first.wait()
+            second = _failing(RuntimeError("second"), 4)
+            second(None)
+            with pytest.raises(RuntimeError, match="second"):
+                second.wait()
+
+        assert isinstance(group._direction_failures["send"], ValueError)
+        logged = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+        assert any("send 3 failed in group direction_group" in m for m in logged)
+        assert any("send 4 failed in group direction_group" in m for m in logged)
+
+    def test_a_refused_work_is_logged_at_debug_only(self, caplog):
+        """A work refused because its direction failed was not itself a
+        failure: the first one was logged, and this one at debug level."""
+        group = self._group()
+        group._direction_failures["send"] = ValueError("link down")
+
+        with caplog.at_level(logging.DEBUG, logger=group._logger.name):
+            work = self._guarded_work(group, "send", [], 5)
+            work(None)
+            with pytest.raises(PeerCommunicationError):
+                work.wait()
+
+        assert [r.levelno for r in caplog.records] == [logging.DEBUG]
+
+    def test_broadcast_failures_are_logged_but_not_recorded(self, caplog):
+        """A broadcast belongs to no direction: its failure is logged, it
+        fails nothing, and a broadcast still runs when a direction has
+        already failed."""
+        group = self._group()
+
+        def _failing(work, **kwargs):
+            raise ValueError("broadcast down")
+
+        work = AsyncFuncWork(_failing, comm_id=9, pass_self=True)
+        # Broadcast work is watched with no direction.
+        with caplog.at_level(logging.ERROR, logger=group._logger.name):
+            group._watch_work(work, None, 9)
+            work(None)
+            with pytest.raises(ValueError, match="broadcast down"):
+                work.wait()
+
+        assert group._direction_failures == {"send": None, "recv": None}
+
+        # A failed send refuses the sends after it, not the broadcasts.
+        group._direction_failures["send"] = ValueError("link down")
+        ran = AsyncFuncWork(lambda **kwargs: "broadcast ran", comm_id=10)
+        group._watch_work(ran, None, 10)
+        ran(None)
+
+        assert ran.wait() == "broadcast ran"
+        assert any(
+            "collective broadcast 9 failed in group direction_group" in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_a_keyboard_interrupt_is_not_stored(self):
+        """Only Exception is stored on a work: an interrupt keeps going out,
+        the way it does on main."""
+        work = AsyncFuncWork(_raise_keyboard_interrupt)
+
+        with pytest.raises(KeyboardInterrupt):
+            work(None)
+        assert not work.done()
+
+    def test_a_failed_send_fails_the_put(self):
+        """A put whose send failed fails with the error the send reports: the
+        item never reached the channel, so the put cannot report success."""
+        key = uuid.uuid4().hex[:8]
+        channel = _put_channel(AsyncFuncWork(_raise_peer_error))
+        table_key = f"chan:{key}"
+
+        work = channel.put("item", key=key, async_op=True)
+
+        assert work.done(), "the put was never failed"
+        with pytest.raises(PeerCommunicationError) as excinfo:
+            work.wait()
+        assert "an earlier send in collective group test_peer failed" in str(
+            excinfo.value
+        )
+        assert table_key not in AsyncChannelWork.last_future_per_key
+
+    def test_a_failed_send_of_another_kind_is_wrapped(self):
+        """A send that failed for its own reason fails the put with an error
+        naming the channel, chained to the send's error, and leaves no table
+        entry behind."""
+        key = uuid.uuid4().hex[:8]
+        channel = _put_channel(AsyncFuncWork(_raise_zero_division))
+
+        work = channel.put("item", key=key, async_op=True)
+
+        assert work.done(), "the put was never failed"
+        with pytest.raises(PeerCommunicationError) as excinfo:
+            work.wait()
+        assert str(excinfo.value) == (
+            "the send of a put to channel chan failed "
+            "(ZeroDivisionError('division by zero'))"
+        )
+        assert isinstance(excinfo.value.__cause__, ZeroDivisionError)
+        assert f"chan:{key}" not in AsyncChannelWork.last_future_per_key
+
+    def test_late_data_from_a_failed_peer_is_dropped(self):
+        """A recv that was already running when its peer failed keeps no
+        entry: its get was failed with the others, so nobody would take it."""
+        peer = ("late_chan", 3)
+
+        def _boom():
+            raise ValueError("recv failed")
+
+        failed_recv = AsyncFuncWork(_boom)
+        failed = AsyncChannelCommWork(failed_recv, 100, None, peer=peer)
+        late_recv = AsyncFuncWork(lambda: ("data_late", 200))
+        late = AsyncChannelCommWork(late_recv, 200, None, peer=peer)
+
+        failed_recv(None)
+        with pytest.raises(ValueError, match="recv failed"):
+            failed.wait()
+        late_recv(None)
+        with pytest.raises(ValueError, match="recv failed"):
+            late.wait()
+
+        assert AsyncChannelCommWork.channel_data_store.get(peer, {}) == {}
+        AsyncChannelCommWork.failed_peers.discard(peer)
+        AsyncChannelCommWork.channel_data_store.pop(peer, None)
+
+
+def _raise_keyboard_interrupt():
+    raise KeyboardInterrupt
+
+
+def _put_channel(send_work):
+    """A Channel whose worker send is ``send_work``, for the put cases.
+
+    Every part a real put needs beyond the send is a stand-in: the channel
+    rank and the channel worker's actor, whose call never returns.
+    """
+    channel = Channel.__new__(Channel)
+    channel._local_channel = None
+    channel._channel_name = "chan"
+    # A send that has already finished when it returns, the way a fast remote
+    # call does: the failure is there for the put to pick up.
+    send_work(None)
+    channel._current_worker = SimpleNamespace(
+        worker_address=WorkerAddress("Worker", ranks=0),
+        send=lambda *args, **kwargs: send_work,
+    )
+    channel._get_channel_rank_by_key = lambda key: 0
+    channel._get_channel_actor = lambda rank: _PendingHandle()
+    return channel
+
+
+def _raise_peer_error():
+    raise PeerCommunicationError("an earlier send in collective group test_peer failed")
+
+
+def _raise_zero_division():
+    raise ZeroDivisionError("division by zero")

@@ -96,7 +96,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-pi05-SFT-Stack-cube" # https://huggingface.co/YifWRobotics/RLinf-pi05-SFT-Stack-cube
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 
 actor:

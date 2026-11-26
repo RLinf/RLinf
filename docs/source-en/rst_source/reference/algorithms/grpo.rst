@@ -63,10 +63,14 @@ where
 
 
 3. Configuration
------------------
+----------------
 
-Our framework supports GRPO for both LLM math tasks and embodied tasks.  
-An example configuration for LLM math tasks is shown below:
+RLinf supports GRPO across embodied manipulation, math reasoning, VQA, and agentic tasks. Runnable starting recipes and configs:
+
+- **Embodied (VLA)**: :doc:`LIBERO <../../examples/embodied/libero>` and :doc:`π₀ / π₀.₅ <../../examples/embodied/pi0>` (``examples/embodiment/config/libero_10_grpo_openpi.yaml``, ``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml``, preset ``examples/embodiment/config/algorithm/grpo.yaml``).
+- **Math reasoning**: :doc:`Math Reasoning <../../examples/agentic/math_reasoning/reasoning>` (``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``, ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-fsdp.yaml``).
+
+An example configuration for LLM math reasoning is shown below:
 
 .. code-block:: yaml
 
