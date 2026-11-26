@@ -388,6 +388,157 @@ def test_abot_value_head_uses_forward_dtype(single_rank_env, strategy):
         assert torch.isfinite(parameter.grad).all()
 
 
+@pytest.mark.parametrize("strategy", ["fsdp", "fsdp_orig_params", "fsdp2"])
+def test_abot_default_forward_uses_sharded_autocast_dtype(single_rank_env, strategy):
+    from functools import partial
+    from types import SimpleNamespace
+
+    from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+
+    from rlinf.hybrid_engines.fsdp import FSDP
+    from rlinf.models.embodiment.abot_m0 import _forward_dtype
+    from rlinf.models.embodiment.abot_m0.abot_m0_action_model import (
+        ABotM0ForRLActionPrediction,
+    )
+    from rlinf.models.embodiment.abot_m0.action_head_rl import (
+        AMLFlowMatchingActionHeadRL,
+    )
+    from rlinf.models.embodiment.modules.value_head import ValueHead
+
+    class _ActionEncoder(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layer1 = nn.Linear(2, 4)
+
+        def forward(self, x, t=None):
+            return self.layer1(x)
+
+    class _DiT(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.proj = nn.Linear(4, 4)
+
+        def forward(self, hidden_states, encoder_hidden_states, timestep):
+            return self.proj(hidden_states) + encoder_hidden_states.mean(
+                dim=1, keepdim=True
+            )
+
+    class _BaseActionHead(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.action_dim = 2
+            self.action_horizon = 1
+            self.num_inference_timesteps = 1
+            self.num_timestep_buckets = 16
+            self.t_eps = 0.05
+            self.config = SimpleNamespace(add_pos_embed=False)
+            self.state_encoder = None
+            self.action_encoder = _ActionEncoder()
+            self.future_tokens = nn.Embedding(1, 4)
+            self.model = _DiT()
+            self.action_decoder = nn.Linear(4, 2)
+
+    class _ToyABotPolicy(ABotM0ForRLActionPrediction):
+        def __init__(self):
+            nn.Module.__init__(self)
+            self.base_model = nn.Module()
+            self.action_dim = 2
+            self.num_action_chunks = 1
+            self.action_head_rl = AMLFlowMatchingActionHeadRL(
+                _BaseActionHead(), {"add_value_head": True}, vl_hidden_size=4
+            )
+            self.seen_autocast_dtype = None
+
+        def _encode_observations(
+            self, qwen_inputs, spatial_images=None, state=None, device=None
+        ):
+            if torch.is_autocast_enabled(device.type):
+                self.seen_autocast_dtype = torch.get_autocast_dtype(device.type)
+            return torch.full(
+                (2, 3, 4), 0.25, device=device, dtype=torch.bfloat16
+            ), None
+
+    dist.init_process_group("gloo")
+    mesh = create_device_mesh(1)
+    torch.manual_seed(0)
+    policy = _ToyABotPolicy()
+    chains = torch.tensor(
+        [[[[0.1, -0.2]], [[0.3, 0.4]]], [[[-0.5, 0.2]], [[0.1, -0.1]]]],
+        dtype=torch.float32,
+    )
+    denoise_inds = torch.zeros(2, 1, dtype=torch.long)
+    prev_logprobs = torch.tensor(
+        [[[[-0.1234567, -0.7654321]]], [[[-0.3333333, -0.6666667]]]],
+        dtype=torch.float32,
+    )
+    forward_inputs = {
+        "spatial_images": torch.zeros(2, 1, 2, 2, 3, dtype=torch.uint8),
+        "chains": chains,
+        "denoise_inds": denoise_inds,
+    }
+    import copy
+
+    rollout_policy = copy.deepcopy(policy).to(torch.bfloat16)
+    with torch.no_grad(), torch.autocast("cpu", dtype=torch.bfloat16):
+        reference = rollout_policy(
+            forward_inputs=forward_inputs,
+            prev_logprobs=prev_logprobs,
+            compute_values=True,
+        )
+
+    precision = {"param_dtype": torch.bfloat16, "cast_forward_inputs": False}
+    if strategy == "fsdp2":
+        wrapped = apply_fsdp2_to_model(
+            policy,
+            {},
+            mesh,
+            MixedPrecisionPolicy(**precision),
+            OffloadPolicy(),
+            reshard_after_forward=True,
+        )
+        head = wrapped.action_head_rl
+        assert isinstance(head, FSDPModule)
+        assert not isinstance(head.base.future_tokens, FSDPModule)
+        assert (
+            _forward_dtype(head, head.base.action_encoder.layer1.weight)
+            == torch.bfloat16
+        )
+        if not hasattr(torch.cpu.Stream, "record_event"):
+            return
+    else:
+        wrapped = FSDP(
+            policy,
+            device_id=torch.device("cpu"),
+            device_mesh=mesh,
+            auto_wrap_policy=partial(
+                transformer_auto_wrap_policy,
+                transformer_layer_cls={AMLFlowMatchingActionHeadRL, ValueHead},
+            ),
+            mixed_precision=MixedPrecision(**precision, cast_root_forward_inputs=False),
+            use_orig_params=strategy == "fsdp_orig_params",
+        )
+
+    assert next(wrapped.parameters()).dtype == torch.float32
+    result = wrapped(
+        forward_inputs=forward_inputs,
+        prev_logprobs=prev_logprobs,
+        compute_values=True,
+    )
+    assert policy.seen_autocast_dtype == torch.bfloat16
+    torch.testing.assert_close(
+        result["prev_logprobs"], prev_logprobs[:, 0], rtol=0, atol=0
+    )
+    torch.testing.assert_close(
+        result["logprobs"], reference["logprobs"], rtol=0, atol=0
+    )
+    torch.testing.assert_close(result["values"], reference["values"], rtol=0, atol=0)
+    (result["logprobs"].sum() + result["values"].float().sum()).backward()
+    for parameter in wrapped.parameters():
+        if parameter.requires_grad:
+            assert parameter.grad is not None
+            assert torch.isfinite(parameter.grad).all()
+
+
 def test_embeddings_are_sharded_as_their_own_units_by_default(single_rank_env):
     policy = _shard(_Policy())
 
