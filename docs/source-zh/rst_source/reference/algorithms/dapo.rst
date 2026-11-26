@@ -1,27 +1,22 @@
-解耦裁剪与动态采样策略优化 (DAPO)
-==============================================================
+解耦裁剪与动态采样策略优化（DAPO）
+====================================
 
 1. 引言
----------------
+-------
 
-解耦裁剪与动态采样策略优化 (DAPO) 是一种最近提出的用于大规模 LLM 训练的强化学习算法。  
-它在 GRPO 的基础上扩展了四项关键技术：  
+解耦裁剪与动态采样策略优化（DAPO）在 :doc:`GRPO <grpo>` 基础上针对长链式思维（CoT）推理任务做了扩展。原始 `DAPO 论文 <https://arxiv.org/abs/2503.14476>`__ 提出了四项技术：
 
-1. **Clip-Higher**：非对称裁剪，设置更高的上限。  
-2. **动态采样**：重新采样直到一个组中同时包含正确和错误的答案。  
-3. **基于 Token 的策略梯度损失**：在 token 级别而不是序列级别计算损失。  
-4. **过长奖励塑形**：对过长的回答进行惩罚。  
+1. **Clip-Higher**：采用非对称裁剪上限（:math:`\varepsilon_{\mathrm{high}} > \varepsilon_{\mathrm{low}}`），避免过早抑制探索性更新并缓解熵坍缩。
+2. **Token 级策略梯度损失**：按有效 token 数加权计算损失，减少变长回复带来的梯度偏差。
+3. **动态采样**：过滤组内全对或全错的无效 prompt 分组。
+4. **过长奖励塑形**：对过长回复施加长度相关的奖励惩罚。
 
-这些改进使得 DAPO 在长链式思维 (CoT) 推理任务中更加稳定和高效。  
-
-更多细节请参考原始论文：  
-`DAPO <https://arxiv.org/abs/2503.14476>`_  
-
+在 RLinf 中，DAPO 的 **Clip-Higher**\ （``clip_ratio_low`` / ``clip_ratio_high``）与 **token 级损失缩放**\ （``use_valid_token_scale``）已直接内置在 ``grpo`` + ``actor`` 训练路径中。
 
 2. 目标函数
-----------------------
+-----------
 
-DAPO 最大化以下目标函数：  
+DAPO 最大化如下按 token 归一化的裁剪代理目标：
 
 .. math::
 
@@ -36,79 +31,43 @@ DAPO 最大化以下目标函数：
          \Big)
      \right],
 
-其中：  
+其中：
 
-- :math:`r_{i,t}(\theta)` 是重要性采样比率，  
-- :math:`\varepsilon_{\mathrm{low}}, \varepsilon_{\mathrm{high}}` 定义了解耦裁剪范围，  
-- :math:`\hat{A}_{i,t}` 是组相对优势。  
-
-**动态采样**  
-与其接受任意的回答组，DAPO 要求每个组中必须同时包含正确和错误的回答：  
-
-.. math::
-
-   0 \;<\; \big\lvert \{\, o_i \mid \mathrm{is\_equivalent}(a, o_i) \,\} \big\rvert \;<\; G.
-
-该约束避免了平凡组（全对或全错），从而提升训练效率和稳定性。  
-
-**Clip-Higher**  
-DAPO 采用非对称裁剪策略，设置更高的上限  
-(:math:`\varepsilon_{\mathrm{high}} > \varepsilon_{\mathrm{low}}`)。  
-这能减少对潜在有用的探索性更新过早抑制，鼓励多样性，并缓解熵坍缩。  
-
-**基于 Token 的损失**  
-与只在 *序列级别* 计算梯度不同，DAPO 在 *token 级别* 应用策略梯度损失。  
-这样能减少因回答长度不同带来的偏差，对长 CoT 强化学习任务尤其重要。  
-
-**过长奖励塑形**  
-为了稳定训练，避免过长回答带来的噪声优化，DAPO 引入了长度惩罚：  
-
-- 当回答长度超过 :math:`\texttt{safe\_length}` 时开始惩罚；  
-- 惩罚随长度线性增长，直到最大截断值；  
-- 长度奖励范围在 :math:`[-1, 0]`。  
-
-这样可以确保虚假的长回答不会主导优化过程。  
-
+- :math:`r_{i,t}(\theta)` 是新旧 policy 之间的重要性采样比率；
+- :math:`\varepsilon_{\mathrm{low}}, \varepsilon_{\mathrm{high}}` 是解耦后的裁剪下界与上界；
+- :math:`\hat{A}_{i,t}` 是组内相对优势。
 
 3. 配置
------------------
+-------
 
-目前，该框架支持在 LLM 数学任务中使用 DAPO。  
+RLinf 在推理与 VQA 配方中通过 GRPO actor 配置直接启用已实现的 DAPO 参数。可直接运行的完整配置参见 :doc:`Moonlight-16B <../../examples/agentic/math_reasoning/moonlight>`\ （``examples/reasoning/config/math/moonlight-16b-grpo-megatron.yaml``）、``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml`` 与 ``examples/reasoning/config/vqa/qwen3-vl-2b-grpo-fsdp-geo3k.yaml``。
 
 .. code-block:: yaml
 
-  algorithm:
-    # 核心 DAPO 设置（建议不要修改）
-    adv_type: grpo
-    loss_type: actor
-    loss_agg_func: "token-mean"
-    use_valid_token_scale: True # 优势除以有效 token 数 → token 级损失
+   algorithm:
+     # 核心 GRPO / DAPO 设置
+     adv_type: grpo
+     loss_type: actor
+     loss_agg_func: "token-mean"
+     use_valid_token_scale: True   # 按有效 token 数缩放，启用 token 级损失
 
-    # 算法参数（通常需要调优）
-    group_size: 16              # 每个提示采样的回答数量
-    clip_ratio_high: 0.28       # epsilon_high（非对称裁剪上限）
-    clip_ratio_low: 0.20        # epsilon_low（裁剪下限）
+     # 非对称裁剪（Clip-Higher）
+     group_size: 16                # 每个 prompt 采样的回复数
+     ratio_clip_eps: 0.2           # clip_ratio_low/high 为 null 时的默认裁剪阈值
+     clip_ratio_low: 0.20          # epsilon_low（裁剪下界）
+     clip_ratio_high: 0.28         # epsilon_high（非对称裁剪上界）
 
-    len_reward_penalty: 0.1     # 长度惩罚系数
-    safe_length: 16384          # 安全长度阈值（超过该值 → 应用惩罚）
-    max_length: 20480           # 硬截断：超过该长度的回答会被丢弃
-    max_resample: 5             # 动态采样最大重采样次数
-
-    kl_beta: 0.0                # KL 惩罚系数
-    kl_penalty_type: low_var_kl # 可选：low_var_kl, kl, abs, mse
-
-    calculate_entropy: False    # 可选：鼓励探索
-    entropy_bonus: 0.0
-
-    normalize_advantages: True
-    early_stop_imp_ratio: 5.0   # 丢弃重要性比率极端的 minibatch
-
+     # 正则化与稳定性控制
+     kl_beta: 0.0                  # KL 惩罚系数
+     kl_penalty_type: low_var_kl   # 可选：low_var_kl、kl、abs、mse
+     calculate_entropy: False      # 是否记录 policy 熵
+     entropy_bonus: 0.0
+     normalize_advantages: True
+     early_stop_imp_ratio: 5.0     # 跳过重要性比率极端的 minibatch
 
 4. 注意事项
 -----------
 
-- 始终确保动态采样开启；平凡组会降低效果。  
-- 对于长 CoT 任务，请使用基于 token 的损失（通过 ``use_valid_token_scale=True`` 启用）。  
-- 小心调节 :math:`\varepsilon_{\mathrm{low}}, \varepsilon_{\mathrm{high}}`：  
-  较小的间隔 → 更新更保守；较大的间隔 → 更多探索。  
-- 长度塑形对于防止 LLM 出现失控的长回答至关重要。  
+- 长 CoT 推理任务建议开启 ``use_valid_token_scale: True``，使不同长度回复按有效 token 数贡献梯度。
+- 将 ``clip_ratio_high`` 设得高于 ``clip_ratio_low``\ （例如 ``0.28`` 与 ``0.20``）即可启用 Clip-Higher；上下界间隔越小更新越保守，间隔越大越鼓励探索。
+- 最大回复长度通过 ``runner.seq_length`` 与 ``algorithm.sampling_params.max_new_tokens`` 控制，详见 :doc:`数学推理 <../../examples/agentic/math_reasoning/reasoning>`。

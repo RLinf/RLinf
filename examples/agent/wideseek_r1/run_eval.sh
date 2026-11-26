@@ -12,11 +12,12 @@ REPO_PATH=$(dirname $(dirname $(dirname "$CONFIG_PATH")))
 MEGATRON_PATH=/opt/Megatron-LM
 export PYTHONPATH=${REPO_PATH}:${MEGATRON_PATH}:${REPO_PATH}/examples:$PYTHONPATH
 
-if [ -z "$1" ]; then
+if [ -z "$1" ] || [[ "$1" == *=* ]] || [[ "$1" == +* ]] || [[ "$1" == ~* ]] || [[ "$1" == -* ]]; then
     CONFIG_NAME="eval_qwen3_widesearch"
 else
     CONFIG_NAME=$1
+    shift
 fi
 
-python ${REPO_PATH}/examples/agent/wideseek_r1/eval.py --config-path ${CONFIG_PATH}/config/  --config-name $CONFIG_NAME
+python "${REPO_PATH}/examples/agent/wideseek_r1/eval.py" --config-path "${CONFIG_PATH}/config/" --config-name "$CONFIG_NAME" "$@"
 

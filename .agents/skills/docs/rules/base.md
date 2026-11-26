@@ -38,9 +38,10 @@ Rewrite such a sentence around the behavior instead of trimming it:
 
 When completeness and readability pull in opposite directions, cut from the main flow rather than piling more text onto the page. A shorter page that gets the reader cleanly through the common path beats an exhaustive page that lists every option, default, and caveat.
 
+- **Write in plain, readable language.** Explain ideas in ordinary, concrete words a colleague understands on the first read—avoid stiff jargon, abstract nominalizations, and convoluted prose. If you would not say a sentence aloud when explaining the feature to a peer, rewrite it.
 - **Apply the delete test.** Every section, paragraph, table row, and note must earn its space. If removing it still lets a reader finish the task (recipe or guide) or grasp the idea (concept), cut it or link to Reference.
-- **Say each thing once.** State a fact or config key once, where the reader acts on it; do not repeat it across the intro, command prose, tables, and results.
-- **Write for scanning.** Keep paragraphs short (1–3 sentences on recipes and guides) and code blocks clean. Never dump a long list of config keys or parameter overrides into a dense prose paragraph; show only the few keys the reader changes and leave the rest to YAML defaults.
+- **Say each thing once.** State a fact or config key once, where the reader acts on it; do not repeat it across the intro, command prose, tables, and results. Do not explain the same point twice from negative and positive sides (such as "this is not A, not B, but C") or stack defensive disclaimers; state directly what it is or does.
+- **Write for scanning and avoid code-symbol pileups (all pages).** Keep paragraphs short (1–3 sentences) and commands clean. On every page type—including Extending and Concepts—never pack long chains of backticked variables, functions, classes, config keys, or file paths into dense prose paragraphs (`docs/inline-code-density`); move structured contracts and parameter lists into a compact `.. list-table::`, and never re-narrate a diagram in prose right below it.
 - **Use progressive disclosure.** Lead with one clean common path; push optional variants and advanced tuning to the end or to a separate guide or reference page.
 
 ## Be accurate
@@ -52,7 +53,7 @@ When completeness and readability pull in opposite directions, cut from the main
 
 ## Structure
 
-- One H1 per page. Headings are Title Case (lowercase only a, an, the, and, or, of, to, in, on, with, vs), never skip a level, and use the standard section names of the page type.
+- One H1 per page. Headings are Title Case (lowercase only a, an, the, and, or, of, to, in, on, with, vs), never skip a level, and use the standard section names of the page type. Keep headings short and direct (<= 48 chars in English, <= 20 CJK-equivalent chars in Chinese; `docs/heading-length`)—avoid appending extra clauses like `& Channels` or `与 Channel 交互` when the body or diagram already shows it.
 - A heading names a task or an idea the reader already understands, not an unexplained code identifier. Reference pages may use identifiers as headings.
 - Explain in prose; use lists for steps and enumerations, and tables for specs, comparisons, and results (`list-table`). Avoid bullet walls with bold labels.
 - Put footguns in a `warning` (out-of-memory settings, `MUJOCO_GL`, the `RLINF_NODE_RANK` ordering, multi-node pitfalls) and side information in a `note`.
@@ -79,5 +80,5 @@ When completeness and readability pull in opposite directions, cut from the main
 ## Two languages
 
 - Every page exists at the same path under `docs/source-en/` and `docs/source-zh/`. Change both in the same pass, and keep the same sections, commands, config keys, numbers, and links.
-- Write each language from the page plan, in its own idiom; the sentences need not correspond.
+- Write each language from the page plan, in its own idiom; never machine-translate or literally translate the English page sentence by sentence into Chinese.
 - Never translate an identifier: config keys, env and model names, CLI flags, script names.

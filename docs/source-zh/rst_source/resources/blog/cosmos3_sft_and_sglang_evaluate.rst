@@ -29,7 +29,7 @@ Cosmos3 是 NVIDIA 推出的全模态模型，能够原生理解和生成文本�
    :align: center
    :width: 100%
 
-   （来源：cosmos3 technical report https://arxiv.org/pdf/2606.02800）
+   （来源：`cosmos3 technical report <https://arxiv.org/pdf/2606.02800>`_\ ）
 
 Cosmos 3 提供 Edge、Nano、Super 三种规格，本文后续训练与评测均以 Cosmos3-Nano 为例。
 
@@ -215,7 +215,7 @@ Cosmos3 的集成并不只是让 RLinf “多支持了一个模型”。在此�
 
 想了解更多请访问 https://github.com/RLinf/RLinf 
 
-期待您的点赞，关注和试用～
+欢迎点赞、关注和试用。
 
 Cosmos3 SFT文档： :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>`
 

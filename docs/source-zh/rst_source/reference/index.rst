@@ -1,3 +1,5 @@
+:orphan:
+
 参考
 ====
 
@@ -27,10 +29,3 @@
       :link-type: doc
 
       查询训练配置项与指标命名空间。
-
-.. toctree::
-   :hidden:
-
-   API <api/index>
-   算法 <algorithms/index>
-   配置 <training/index>

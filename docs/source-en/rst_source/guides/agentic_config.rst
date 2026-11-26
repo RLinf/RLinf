@@ -1,12 +1,12 @@
-Agentic RL Configuration
-=========================
+Agentic Configuration
+=====================
 
 This section covers configuration parameters specific to agentic and reasoning RL training
 (math reasoning, coding agents, multi-agent systems). These extend the shared
 configuration described in :doc:`basic_config`.
 
 runner
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -27,7 +27,7 @@ runner
        enabled.
 
 algorithm
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -78,7 +78,7 @@ Shared loss/advantage keys (``loss_type``, ``adv_type``, ``kl_beta``,
 documented in :doc:`basic_config`.
 
 rollout
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -196,7 +196,7 @@ rollout
 are shared keys documented in :doc:`basic_config`.
 
 data
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -256,7 +256,7 @@ data
      - List of validation JSONL file paths.
 
 actor
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -645,7 +645,7 @@ Used when ``actor.training_backend`` is ``fsdp``.
      - Enable the gradient scaler.
 
 reward
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
