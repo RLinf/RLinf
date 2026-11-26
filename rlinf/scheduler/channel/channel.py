@@ -13,11 +13,14 @@
 # limitations under the License.
 
 import asyncio
+import threading
 import uuid
+from concurrent.futures import Future as ConcurrentFuture
 from typing import TYPE_CHECKING, Any, Optional
 
 import ray
 import ray.actor
+from torch.futures import Future as TorchFuture
 
 from ..cluster import (
     Cluster,
@@ -464,6 +467,38 @@ class Channel:
 
         send_work.add_done_callback(_record)
 
+    @staticmethod
+    def _wait_recv_or_call(
+        async_comm_work: AsyncWork, call_future: ConcurrentFuture
+    ) -> Any:
+        """Wait for a single recv while surfacing remote ChannelWorker failures."""
+        result_future: TorchFuture = TorchFuture()
+        lock = threading.Lock()
+
+        def _on_recv(_future) -> None:
+            try:
+                value = async_comm_work.wait()
+            except Exception as exc:
+                with lock:
+                    if not result_future.done():
+                        result_future.set_exception(exc)
+            else:
+                with lock:
+                    if not result_future.done():
+                        result_future.set_result(value)
+
+        def _on_call(future: ConcurrentFuture) -> None:
+            try:
+                future.result()
+            except Exception as exc:
+                with lock:
+                    if not result_future.done():
+                        result_future.set_exception(exc)
+
+        async_comm_work.add_done_callback(_on_recv)
+        call_future.add_done_callback(_on_call)
+        return result_future.wait()
+
     def put(
         self,
         item: Any,
@@ -606,21 +641,20 @@ class Channel:
                 "query_id": query_id,
                 "key": key,
             }
-            target_actor.get.remote(**get_kwargs)
+            call_future = target_actor.get.remote(**get_kwargs).future()
             async_comm_work = self._current_worker.recv(
                 self._channel_name, target_rank, async_op=True
             )
+            work = AsyncChannelCommWork(
+                async_comm_work=async_comm_work,
+                query_id=query_id,
+                channel_actor=target_actor,
+                peer=(self._channel_name, target_rank),
+                call_future=call_future,
+            )
             if async_op:
-                return AsyncChannelCommWork(
-                    async_comm_work=async_comm_work,
-                    query_id=query_id,
-                    channel_actor=target_actor,
-                    peer=(self._channel_name, target_rank),
-                )
-            else:
-                # query_id, data
-                data, _ = async_comm_work.wait()
-                return data
+                return work
+            return work.wait()
         else:
             # Outside a worker, use ray comm
             get_kwargs = {"key": key}
@@ -696,9 +730,12 @@ class Channel:
                 "key": key,
                 "nowait": True,
             }
-            target_actor.get.remote(**get_kwargs)
-            data, query_id = self._current_worker.recv(self._channel_name, target_rank)
-            if query_id == asyncio.QueueEmpty:
+            call_future = target_actor.get.remote(**get_kwargs).future()
+            async_comm_work = self._current_worker.recv(
+                self._channel_name, target_rank, async_op=True
+            )
+            data, resp_query_id = self._wait_recv_or_call(async_comm_work, call_future)
+            if resp_query_id == asyncio.QueueEmpty:
                 raise asyncio.QueueEmpty
             return data
         else:
@@ -740,21 +777,20 @@ class Channel:
                 "target_weight": target_weight,
                 "key": key,
             }
-            target_actor.get_batch.remote(**get_kwargs)
+            call_future = target_actor.get_batch.remote(**get_kwargs).future()
             async_comm_work = self._current_worker.recv(
                 self._channel_name, target_rank, async_op=True
             )
+            work = AsyncChannelCommWork(
+                async_comm_work=async_comm_work,
+                query_id=query_id,
+                channel_actor=target_actor,
+                peer=(self._channel_name, target_rank),
+                call_future=call_future,
+            )
             if async_op:
-                return AsyncChannelCommWork(
-                    async_comm_work=async_comm_work,
-                    query_id=query_id,
-                    channel_actor=target_actor,
-                    peer=(self._channel_name, target_rank),
-                )
-            else:
-                # query_id, data
-                data, _ = async_comm_work.wait()
-                return data
+                return work
+            return work.wait()
         else:
             get_kwargs = {"target_weight": target_weight, "key": key}
             async_channel_work = AsyncRayWork(
