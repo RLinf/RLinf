@@ -115,7 +115,7 @@ def _align_agent_cfg_to_checkpoint(agent_cfg: object, checkpoint_path: str) -> N
 def _load_runner_checkpoint_compat(runner, checkpoint_path: str) -> None:
     """Load checkpoint with compatibility fallback for std/log-std key rename."""
     try:
-        runner.load(checkpoint_path)
+        runner.load(checkpoint_path, map_location=runner.device)
         return
     except KeyError as exc:
         if str(exc).strip("'\"") != "actor_state_dict":
@@ -182,7 +182,7 @@ def _load_runner_checkpoint_compat(runner, checkpoint_path: str) -> None:
             "[WARN] Checkpoint uses different distribution std schema "
             "(std_param vs log_std_param). Retrying non-strict load for inference."
         )
-        runner.load(checkpoint_path, strict=False)
+        runner.load(checkpoint_path, strict=False, map_location=runner.device)
 
 
 def _summarize(episodes: list[dict]) -> dict:
