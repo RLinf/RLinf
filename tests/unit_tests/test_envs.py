@@ -169,7 +169,7 @@ def test_pooled_envs_skip_prefetch_and_share_slots_with_evaluation(vlnce_env_fac
     assert result == {"ran_eval": True}
     assert not slots
     worker.env_list[0].reset()
-    worker._close()
+    asyncio.run(worker._close())
     assert not slots
 
 
@@ -220,9 +220,11 @@ def test_env_teardown_can_run_while_evaluation_waits_for_rollout(vlnce_env_facto
             await asyncio.wait_for(waiting.wait(), timeout=5)
             assert len(slots) == 2
             assert not evaluation.done()
-            worker._close()
+            await asyncio.wait_for(worker._close(), timeout=5)
             assert not slots
-            assert not evaluation.done()
+            assert evaluation.cancelled()
+            assert worker._evaluate_task is None
+            await worker._close()
         finally:
             evaluation.cancel()
             with pytest.raises(asyncio.CancelledError):

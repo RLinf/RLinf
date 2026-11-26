@@ -4099,6 +4099,7 @@ def test_env_evaluate_uses_async_channel_receive():
     env.eval_num_envs_per_stage = 1
     env.eval_batch_size = 1
     env.eval_enable_offload = False
+    env.enable_train = False
     env.enable_prefix = False
     env.eval_assignment = EnvAssignment(
         name=None,
@@ -4114,7 +4115,7 @@ def test_env_evaluate_uses_async_channel_receive():
         )
     ]
     env.send_to = Mock()
-    recv_work = Mock(wait=Mock(return_value=torch.zeros(1, 1, 4)))
+    recv_work = Mock(async_wait=AsyncMock(return_value=torch.zeros(1, 1, 4)))
     env.recv_from = Mock(return_value=recv_work)
     env.env_evaluate_step = Mock(
         return_value=(
@@ -4124,10 +4125,10 @@ def test_env_evaluate_uses_async_channel_receive():
     )
     env.finish_rollout = Mock()
 
-    metrics = env.evaluate(Mock(), Mock())
+    metrics = asyncio.run(env.evaluate(Mock(), Mock()))
 
     assert env.recv_from.call_args.kwargs["async_op"] is True
-    recv_work.wait.assert_called_once_with()
+    recv_work.async_wait.assert_awaited_once_with()
     assert torch.equal(metrics["return"], torch.tensor([1.0]))
 
 

@@ -85,6 +85,7 @@ class EnvWorker(Worker):
         self.last_obs_list = []
         self.last_intervened_info_list = []
         self._prefetched_train_bootstrap: list[EnvOutput] | None = None
+        self._evaluate_task: asyncio.Task | None = None
         self._trajectory_step = 0
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 
@@ -262,9 +263,17 @@ class EnvWorker(Worker):
                             f"Failed to close {env_mode} environment: {exc}"
                         )
 
-    def _close(self) -> None:
+    async def _close(self) -> None:
         """Release owned environments before the scheduler terminates this worker."""
-        self.close()
+        try:
+            if self._evaluate_task is not None:
+                self._evaluate_task.cancel()
+                try:
+                    await self._evaluate_task
+                except asyncio.CancelledError:
+                    pass
+        finally:
+            self.close()
 
     def _release_envs(self, mode: str) -> None:
         envs = self.env_list if mode == "train" else self.eval_env_list
@@ -1413,9 +1422,11 @@ class EnvWorker(Worker):
     async def evaluate(self, input_channel: Channel, rollout_channel: Channel):
         if self.enable_train:
             self._release_envs("train")
+        self._evaluate_task = asyncio.current_task()
         try:
             return await self._evaluate(input_channel, rollout_channel)
         finally:
+            self._evaluate_task = None
             self._release_envs("eval")
 
     async def _evaluate(self, input_channel: Channel, rollout_channel: Channel):
