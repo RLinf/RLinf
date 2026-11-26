@@ -14,4 +14,11 @@ algorithm:
 env:
   train:
     enable_offload: false
-    wait_for_offload_before_training: false
+  eval:
+    enable_offload: false
+
+rollout:
+  enable_offload: false
+
+actor:
+  enable_offload: false

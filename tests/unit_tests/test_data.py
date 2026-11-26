@@ -57,7 +57,6 @@ from rlinf.data.schema.embodied_types import (
     EnvOutput,
     EnvPart,
     EnvTransition,
-    JointPositionTargets,
     LeRobotFrame,
     PolicyInput,
     PolicyOutput,
@@ -80,7 +79,6 @@ from rlinf.envs.layout import EnvAssignment, EnvLayout
 from rlinf.envs.sim.diffusion import build_reward_dataset
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
-from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import AcceleratorType
 from rlinf.scheduler.channel.channel import DEFAULT_KEY
 from rlinf.scheduler.channel.hooks import ChannelContext
@@ -1814,18 +1812,6 @@ def test_transport_results_store_contiguous_cpu_tensors():
     assert not hasattr(policy_output, "actions")
     assert policy_output.forward_inputs["states"].device.type == "cpu"
     assert policy_output.forward_inputs["states"].is_contiguous()
-
-
-def test_named_numpy_actions_build_dagger_flags():
-    rollout = object.__new__(MultiStepRolloutWorker)
-    rollout.enable_dagger = True
-    rollout.collect_prev_infos = False
-    rollout.model_cfg = SimpleNamespace(num_action_chunks=2)
-    targets = JointPositionTargets(np.zeros((1, 2, 1)), [["joint"]], "full")
-    output = rollout._build_policy_output(
-        targets, {"expert_label_flag": True, "forward_inputs": {}}
-    )
-    assert torch.equal(output.intervene_flags, torch.ones(1, 2, dtype=torch.bool))
 
 
 def test_policy_output_detaches_nested_model_tensors_for_transport():
@@ -3639,70 +3625,6 @@ def test_decoupled_evaluation_service_is_reused_and_cancelled_on_stop():
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("runner_cls", [EmbodiedRunner, AsyncEmbodiedRunner])
-def test_embodied_eval_every_ten_steps_and_save_every_two_steps(runner_cls):
-    runner = object.__new__(runner_cls)
-    runner.cfg = OmegaConf.create(
-        {
-            "runner": {
-                "independent_eval_and_save_intervals": True,
-                "val_check_interval": 10,
-                "save_interval": 2,
-            }
-        }
-    )
-    runner.max_steps = 37
-    evaluations, checkpoints = [], []
-    for step in range(1, 38):
-        runner.global_step = step
-        run_val, save_model, is_train_end = runner._check_progress()
-        if run_val:
-            evaluations.append(step)
-        if save_model:
-            checkpoints.append(step)
-        assert is_train_end is (step == 37)
-    assert evaluations == [10, 20, 30, 37]
-    assert checkpoints == [*range(2, 37, 2), 37]
-
-
-@pytest.mark.parametrize("runner_cls", [EmbodiedRunner, AsyncEmbodiedRunner])
-@pytest.mark.parametrize(
-    "eval_interval,save_interval",
-    [(10, 10), (5, 10), (-1, 2), (10, -1), (0, 0), (-1, -1), (2, 6)],
-)
-def test_embodied_progress_preserves_existing_schedules(
-    runner_cls, eval_interval, save_interval
-):
-    from rlinf.utils.runner_utils import check_progress
-
-    runner = object.__new__(runner_cls)
-    runner.cfg = OmegaConf.create(
-        {
-            "runner": {
-                "val_check_interval": eval_interval,
-                "save_interval": save_interval,
-            }
-        }
-    )
-    runner.max_steps = 37
-    for step in range(1, 38):
-        runner.global_step = step
-        assert runner._check_progress() == check_progress(
-            step, 37, eval_interval, save_interval, 1.0
-        )
-
-
-def test_embodied_progress_keeps_main_interval_validation_by_default():
-    runner = object.__new__(EmbodiedRunner)
-    runner.cfg = OmegaConf.create(
-        {"runner": {"val_check_interval": 10, "save_interval": 2}}
-    )
-    runner.global_step = 10
-    runner.max_steps = 20
-    with pytest.raises(AssertionError, match="must be divisible"):
-        runner._check_progress()
-
-
 def test_async_runner_reuses_decoupled_evaluation_service_across_validations():
     runner = object.__new__(AsyncEmbodiedRunner)
     runner.cfg = OmegaConf.create({"runner": {"enable_decoupled_mode": True}})
@@ -4519,8 +4441,7 @@ def _serve_one_source(rollout, *policy_inputs):
     return serve_step
 
 
-@pytest.mark.parametrize("named_targets", [False, True])
-def test_rollout_completes_each_epoch_through_policy_inputs(named_targets):
+def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.prefix_runtime = None
     rollout.rlt_feature_model = None
@@ -4585,13 +4506,10 @@ def test_rollout_completes_each_epoch_through_policy_inputs(named_targets):
             is_last=True,
         ),
     ]
-    actions = torch.zeros(1, 1)
-    if named_targets:
-        actions = JointPositionTargets(actions, [["joint"]], "active")
     rollout._predict_rollout_actions = Mock(
         side_effect=[
-            (actions, {"forward_inputs": {"states": torch.tensor([[1]])}}),
-            (actions, {"forward_inputs": {"states": torch.tensor([[2]])}}),
+            (torch.zeros(1, 1), {"forward_inputs": {"states": torch.tensor([[1]])}}),
+            (torch.zeros(1, 1), {"forward_inputs": {"states": torch.tensor([[2]])}}),
             (
                 torch.zeros(1, 1),
                 {
@@ -4624,21 +4542,9 @@ def test_rollout_completes_each_epoch_through_policy_inputs(named_targets):
     assert torch.equal(env_parts[1].bootstrap_values, torch.tensor([[4.0]]))
     assert torch.equal(env_parts[1].final_prev_values, torch.tensor([[4.0, 5.0]]))
     assert rollout._predict_rollout_actions.call_count == 3
-    assert rollout._send_actions.call_count == 2
-    for call in rollout._send_actions.call_args_list:
-        sent = call.args[1]
-        if named_targets:
-            assert isinstance(sent, ActionPayload)
-            sent = EnvWorker._consume_action_payload(sent, None)
-            assert sent.joint_names == actions.joint_names
-            assert sent.joint_layout == actions.joint_layout
-            assert torch.equal(sent.joint_positions, actions.joint_positions)
-        else:
-            assert torch.equal(sent, actions)
 
 
-@pytest.mark.parametrize("named_targets", [False, True])
-def test_rollout_runs_one_forward_pass_per_observation_format(named_targets):
+def test_rollout_runs_one_forward_pass_per_observation_format():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.prefix_runtime = None
     rollout.rlt_feature_model = None
@@ -4656,12 +4562,7 @@ def test_rollout_runs_one_forward_pass_per_observation_format(named_targets):
     def predict(obs, **kwargs):
         batch = next(iter(obs.values())).shape[0]
         batch_sizes.append(batch)
-        width = obs["states"].shape[-1]
-        actions = torch.full((batch, 1), float(width))
-        if named_targets and width == 2:
-            names = [[f"joint_{index}"] for index in range(batch)]
-            actions = JointPositionTargets(actions, names, "full")
-        return actions, {}
+        return torch.full((batch, 1), float(obs["states"].shape[-1])), {}
 
     rollout.predict = Mock(side_effect=predict)
     requests = [
@@ -4681,17 +4582,7 @@ def test_rollout_runs_one_forward_pass_per_observation_format(named_targets):
     # The two width-2 requests share one call; actions return in request order.
     assert sorted(batch_sizes) == [2, 4]
     actions = rollout._send_actions.call_args.args[1]
-    if named_targets:
-        first, second, third = rollout._split_actions(actions, [1, 2, 3])
-        assert second.squeeze(-1).tolist() == [3.0, 3.0]
-        joined = EnvWorker._merge_action_batches([first, third])
-        assert EnvWorker._infer_action_batch_size(joined) == 4
-        joined = EnvWorker._consume_action_payload(joined, None)
-        assert joined.joint_positions.squeeze(-1).tolist() == [2.0] * 4
-        assert joined.joint_names == [[f"joint_{index}"] for index in range(4)]
-        assert joined.joint_layout == "full"
-    else:
-        assert actions.squeeze(-1).tolist() == [2.0, 3.0, 3.0, 2.0, 2.0, 2.0]
+    assert actions.squeeze(-1).tolist() == [2.0, 3.0, 3.0, 2.0, 2.0, 2.0]
 
 
 def _policy_field_layout(path: str) -> EnvLayout:
@@ -5818,7 +5709,7 @@ def test_action_payload_routes_feedback_and_preserves_plain_action_responses():
 
 
 @pytest.mark.parametrize("mode", ["train", "eval"])
-@pytest.mark.parametrize("typed", [False, True, "named"])
+@pytest.mark.parametrize("typed", [False, True])
 @pytest.mark.parametrize("decoupled,rollout_ranks", [(False, 1), (False, 2), (True, 2)])
 def test_env_receives_actions_and_feedback_in_both_modes(
     mode, typed, decoupled, rollout_ranks
@@ -5841,12 +5732,8 @@ def test_env_receives_actions_and_feedback_in_both_modes(
     batch_size = env.eval_batch_size if mode == "eval" else env.train_batch_size
     actions = torch.arange(batch_size * 6).reshape(batch_size, 2, 3).float()
     feedback = {"actor_active": torch.arange(batch_size) % 2 == 0}
-    names = [[f"{row}:{joint}" for joint in range(3)] for row in range(batch_size)]
-    targets = (
-        JointPositionTargets(actions, names, "full") if typed == "named" else actions
-    )
     payload = (
-        ActionPayload(actions=targets, rollout_infos=feedback) if typed else targets
+        ActionPayload(actions=actions, rollout_infos=feedback) if typed else actions
     )
     shards = split_batch_value(payload, [batch_size // rollout_ranks] * rollout_ranks)
     base_tag = "rollout_results" if mode == "eval" else "policy"
@@ -5890,12 +5777,7 @@ def test_env_receives_actions_and_feedback_in_both_modes(
         assert result is shards[0]
     if typed:
         assert isinstance(result, ActionPayload)
-        if typed == "named":
-            assert result.actions.joint_names == names
-            assert result.actions.joint_layout == "full"
-            torch.testing.assert_close(result.actions.joint_positions, actions)
-        else:
-            torch.testing.assert_close(result.actions, actions)
+        torch.testing.assert_close(result.actions, actions)
         torch.testing.assert_close(
             result.rollout_infos["actor_active"], feedback["actor_active"]
         )

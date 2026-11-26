@@ -50,6 +50,10 @@ def channel_command(
         raise ValueError(
             f"Expected positive episodes divisible by num_envs, got {episodes}, {num_envs}"
         )
+    if num_gpus < 1 or num_envs % num_gpus:
+        raise ValueError(
+            f"Expected num_envs divisible by num_gpus, got {num_envs}, {num_gpus}"
+        )
     profile = {"cov": "cov_only", "inv": "inv_only"}.get(channel, channel)
     return [
         "bash",
@@ -118,6 +122,7 @@ def evaluate_channel(
 ) -> tuple[str, dict | None]:
     """Execute one channel's process batches and collect native episode results."""
     chunk_size = args.episodes_per_process or args.num_episodes
+    available_gpus = len(str(args.gpu_id).split(","))
     channel_dir = output / channel
     directories = []
     status = "ok"
@@ -125,6 +130,11 @@ def evaluate_channel(
     while start <= args.num_episodes:
         budget = min(chunk_size, args.num_episodes - start + 1)
         num_envs = min(args.num_envs, budget)
+        num_gpus = next(
+            workers
+            for workers in range(min(available_gpus, num_envs), 0, -1)
+            if num_envs % workers == 0
+        )
         count = budget - budget % num_envs
         directory = (
             channel_dir
@@ -144,7 +154,7 @@ def evaluate_channel(
             args.generalization_split,
             overrides,
             num_envs=num_envs,
-            num_gpus=len(str(args.gpu_id).split(",")),
+            num_gpus=num_gpus,
         )
         result = subprocess.run(command, env=env, check=False)
         if (directory / "summary.json").is_file():

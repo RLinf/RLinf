@@ -335,37 +335,15 @@ class EmbodiedRunner:
         training_metrics = [result.get("training_metrics", {}) for result in results]
         return rollout_metrics, training_metrics
 
-    def _check_progress(self) -> tuple[bool, bool, bool]:
-        """Apply the configured evaluation and checkpoint cadence."""
-        if not self.cfg.runner.get("independent_eval_and_save_intervals", False):
-            return check_progress(
-                self.global_step,
-                self.max_steps,
-                self.cfg.runner.val_check_interval,
-                self.cfg.runner.save_interval,
-                1.0,
-                run_time_exceeded=False,
-            )
-        run_val, _, is_train_end = check_progress(
+    def _maybe_eval_and_checkpoint(self, step: int) -> dict:
+        run_val, save_model, _ = check_progress(
             self.global_step,
             self.max_steps,
             self.cfg.runner.val_check_interval,
-            -1,
-            1.0,
-            run_time_exceeded=False,
-        )
-        _, save_model, _ = check_progress(
-            self.global_step,
-            self.max_steps,
-            -1,
             self.cfg.runner.save_interval,
             1.0,
             run_time_exceeded=False,
         )
-        return run_val, save_model, is_train_end
-
-    def _maybe_eval_and_checkpoint(self, step: int) -> dict:
-        run_val, save_model, _ = self._check_progress()
 
         eval_metrics = {}
         if run_val:
@@ -531,7 +509,7 @@ class EmbodiedRunner:
             return self.run_pipeline()
 
         wait_for_offload = any(
-            env_cfg.get("wait_for_offload_before_training", False)
+            env_cfg.get("enable_offload", False)
             for env_cfg in EnvLayout.env_cfgs(
                 self.cfg.env.get("train"), "env.train"
             ).values()

@@ -415,7 +415,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 "loss_mask": batch.get("loss_mask", None),
                 "loss_mask_sum": batch.get("loss_mask_sum", None),
                 "advantage_mode": algorithm_cfg.get("advantage_mode", None),
-                "log_rollout_moments": spec.cfg.get("log_rollout_moments", False),
             }
             if normalize_jointly:
                 kwargs["normalize_advantages"] = False
@@ -435,24 +434,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         rollout_metrics = dict(self._group_success_metrics)
         per_env_stats = [
-            (
-                spec,
-                compute_rollout_metric_stats(
-                    self.env_batches[spec.name],
-                    reward_type=(
-                        self._env_algorithm_cfgs[spec.name].reward_type
-                        if spec.cfg.get("log_rollout_moments", False)
-                        else None
-                    ),
-                ),
-            )
+            (spec, compute_rollout_metric_stats(self.env_batches[spec.name]))
             for spec in self._rollout_geometry.layout.specs
         ]
         for spec, stats in per_env_stats:
             rollout_metrics.update(spec.scoped(format_rollout_metrics(stats)))
-        for batch in self.env_batches.values():
-            batch.pop("rollout_values", None)
-            batch.pop("advantages_raw", None)
         self.rollout_batches = self._merge_env_batches()
         rollout_metrics.update(
             format_rollout_metrics(

@@ -35,7 +35,6 @@ from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import (
     ActionPayload,
     EnvPart,
-    JointPositionTargets,
     PolicyInput,
     PolicyOutput,
     PolicyPart,
@@ -59,8 +58,6 @@ from rlinf.scheduler import (
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.pinned_offload import pinned_offload_context
 from rlinf.utils.placement import HybridComponentPlacement
-
-ActionBatch = torch.Tensor | ActionPayload
 
 
 class MultiStepRolloutWorker(Worker):
@@ -604,7 +601,7 @@ class MultiStepRolloutWorker(Worker):
         mode: Literal["train", "eval"] = "train",
         policy_kwargs: dict[str, Any] | None = None,
         dagger_beta: float | None = None,
-    ) -> tuple[torch.Tensor | JointPositionTargets, dict[str, Any]]:
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         """Act on one batch of observations.
 
         Args:
@@ -716,7 +713,7 @@ class MultiStepRolloutWorker(Worker):
         stage_id: int = 0,
         policy_kwargs: dict[str, Any] | None = None,
         dagger_beta: float | None = None,
-    ) -> tuple[torch.Tensor | JointPositionTargets, dict[str, Any]]:
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         if self.prefix_runtime is not None:
             if mode == "train" and self.prefix_runtime.gate is not None:
                 resets = [
@@ -763,7 +760,7 @@ class MultiStepRolloutWorker(Worker):
         )
 
     def _build_policy_output(
-        self, actions: torch.Tensor | JointPositionTargets, result: dict[str, Any]
+        self, actions: torch.Tensor, result: dict[str, Any]
     ) -> PolicyOutput:
         """Keep inference metadata locally until its environment result arrives."""
         intervene_flags = result.get("intervene_flags")
@@ -772,15 +769,10 @@ class MultiStepRolloutWorker(Worker):
             and self.enable_dagger
             and result.get("expert_label_flag", False)
         ):
-            positions = (
-                torch.as_tensor(actions.joint_positions)
-                if isinstance(actions, JointPositionTargets)
-                else actions
-            )
             intervene_flags = torch.ones(
-                (positions.shape[0], self.model_cfg.num_action_chunks),
+                (actions.shape[0], self.model_cfg.num_action_chunks),
                 dtype=torch.bool,
-                device=positions.device,
+                device=actions.device,
             )
         return PolicyOutput(
             prev_logprobs=result["prev_logprobs"] if self.collect_prev_infos else None,
@@ -1061,7 +1053,7 @@ class MultiStepRolloutWorker(Worker):
     def _send_actions(
         self,
         channel: Channel,
-        actions: ActionBatch | JointPositionTargets | list[ActionBatch],
+        actions: torch.Tensor | ActionPayload,
         stage_id: int,
         split_sizes: list[int] | None,
         diagnostics: dict[str, Any] | None = None,
@@ -1072,9 +1064,12 @@ class MultiStepRolloutWorker(Worker):
         # as a CUDA IPC handle aliasing the buffer the next forward pass reuses.
         payload = (
             actions
-            if isinstance(actions, (ActionPayload, list))
+            if isinstance(actions, ActionPayload)
             else self._build_action_payload(actions, diagnostics)
         )
+        split_fn = self._split_actions
+        if isinstance(payload, ActionPayload):
+            split_fn = self._split_action_payload
         if self.env_decoupled_mode:
             if split_sizes is None:
                 raise ValueError("Decoupled policy output requires recorded routes.")
@@ -1083,7 +1078,7 @@ class MultiStepRolloutWorker(Worker):
                 channel=channel,
                 data=payload,
                 tag="policy",
-                split_fn=self._split_actions,
+                split_fn=split_fn,
                 split_sizes=split_sizes,
             )
             return
@@ -1095,20 +1090,18 @@ class MultiStepRolloutWorker(Worker):
             route_key=stage_id,
             async_op=True,
             batch_size=self.train_batch_size,
-            split_fn=self._split_actions,
+            split_fn=split_fn,
             peer_ranks=peer_ranks,
         )
 
     def _build_action_payload(
         self,
-        actions: torch.Tensor | JointPositionTargets,
+        actions: torch.Tensor,
         diagnostics: dict[str, Any] | None,
-    ) -> ActionBatch:
+    ) -> torch.Tensor | ActionPayload:
         """Build optional runtime feedback without changing plain action transport."""
         if self.prefix_runtime is not None:
             return self.prefix_runtime.action_payload(actions, diagnostics)
-        if isinstance(actions, JointPositionTargets):
-            return ActionPayload(actions=actions)
         return actions.detach().cpu().contiguous()
 
     def _serve_policy_inputs(
@@ -1226,9 +1219,7 @@ class MultiStepRolloutWorker(Worker):
             actions_to_send = (
                 direct_actions
                 if single_reply_group
-                else self._merge_action_shards(
-                    [request_actions[index] for index in replied]
-                )
+                else merge_batch_values([request_actions[index] for index in replied])
             )
             self._send_actions(
                 output_channel,
@@ -1546,18 +1537,20 @@ class MultiStepRolloutWorker(Worker):
                         peer_ranks=[senders[index] for index in indices],
                     )
                     sizes = [split_sizes[index] for index in indices]
-                    for index, shard in zip(
-                        indices, self._split_actions(actions, sizes)
-                    ):
+                    for index, shard in zip(indices, split_batch_value(actions, sizes)):
                         shard_actions[index] = shard
-                payload = self._merge_action_shards(shard_actions)
+                payload = merge_batch_values(shard_actions)
                 self.send_to_recorded_batch_routes(
                     group_name=self.cfg.env.group_name,
                     channel=output_channel,
                     data=payload,
                     tag="rollout_results",
                     split_sizes=split_sizes,
-                    split_fn=self._split_actions,
+                    split_fn=(
+                        self._split_action_payload
+                        if isinstance(payload, ActionPayload)
+                        else self._split_actions
+                    ),
                 )
         else:
             requests_left = self._source_budgets(
@@ -1614,7 +1607,11 @@ class MultiStepRolloutWorker(Worker):
                             group_name=self.cfg.env.group_name,
                             channel=output_channel,
                             data=payload,
-                            split_fn=self._split_actions,
+                            split_fn=(
+                                self._split_action_payload
+                                if isinstance(payload, ActionPayload)
+                                else self._split_actions
+                            ),
                             tag="eval_rollout_results",
                             route_key=stage_id,
                             async_op=True,
@@ -1634,7 +1631,7 @@ class MultiStepRolloutWorker(Worker):
         *,
         peer_ranks: list[int] | None = None,
         stage_id: int = 0,
-    ) -> ActionBatch | list[ActionBatch]:
+    ) -> torch.Tensor | ActionPayload:
         """Predict compatible eval shards while retaining their source identities."""
         shards = [decompress_obs(shard) for shard in shards]
         formats = self._group_indices(
@@ -1660,7 +1657,7 @@ class MultiStepRolloutWorker(Worker):
             )
             for index, shard in zip(indices, split_batch_value(actions, sizes)):
                 shard_actions[index] = shard
-        return self._merge_action_shards(shard_actions)
+        return merge_batch_values(shard_actions)
 
     def _predict_eval_actions(
         self,
@@ -1804,34 +1801,16 @@ class MultiStepRolloutWorker(Worker):
         }
 
     @staticmethod
-    def _merge_action_shards(
-        shards: list[ActionBatch],
-    ) -> ActionBatch | list[ActionBatch]:
-        """Keep actions with different joint layouts in their own route shards."""
-        if any(
-            isinstance(shard, ActionPayload)
-            and isinstance(shard.actions, JointPositionTargets)
-            for shard in shards
-        ):
-            return shards
-        return merge_batch_values(shards)
+    def _split_actions(actions: torch.Tensor, sizes: list[int]) -> list[torch.Tensor]:
+        """Split policy actions for the environment workers that requested them."""
+        return [shard.contiguous() for shard in torch.split(actions, sizes, dim=0)]
 
     @staticmethod
-    def _split_actions(
-        actions: ActionBatch | list[ActionBatch], sizes: list[int]
-    ) -> list[ActionBatch]:
-        """Return one action batch for each destination."""
-        if isinstance(actions, list):
-            actual_sizes = [
-                shard.batch_size if isinstance(shard, ActionPayload) else shard.shape[0]
-                for shard in actions
-            ]
-            if actual_sizes != sizes:
-                raise ValueError(
-                    f"Expected action route sizes {sizes}, got {actual_sizes}"
-                )
-            return actions
-        return split_batch_value(actions, sizes)
+    def _split_action_payload(
+        payload: ActionPayload, sizes: list[int]
+    ) -> list[ActionPayload]:
+        """Split typed action feedback on the routed batch dimension."""
+        return split_batch_value(payload, sizes)
 
     def set_global_step(self, global_step: int):
         self.global_step = global_step

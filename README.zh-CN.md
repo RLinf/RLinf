@@ -46,6 +46,7 @@ bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
 ## 最新动态
 
+- [2026/11] 🔥 RLinf 接入 [Bench2Dex](https://github.com/Bench2Dex/Bench2Dex) 灵巧手操作基准，支持在 Isaac Sim 并行环境中用 PPO、异步 PPO 和 GRPO 训练 π₀.₅ policy 并执行四通道泛化评测；Task64 在 4 卡 16 环境下评测吞吐达官方单卡实现的 4.59×–5.78×，Task22 固定场景 PPO 独立评测成功率达 100%。文档：[Bench2Dex](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/bench2dex.html)。
 - [2026/11] 🔥 RLinf 支持 SuperMimic，在 MuJoCo Warp 中用可微世界模型训练 Unitree G1 全身动作跟踪 policy，并集成多卡 FSDP2、CUDAGraph 与 bf16 混合精度优化。在 NVIDIA A800 上，相较官方单卡实现（0.515 秒/更新），RLinf 单卡吞吐提升至 **1.34 倍**（0.383 秒/更新），4 卡提升至 **2.27 倍**（0.227 秒/更新，约 23 分钟完成 6000 次更新）；在 40 条 LAFAN1 片段上性能与论文对齐，归一化回报达 **0.856**（论文为 0.82）且 **0** 摔倒。文档：[SuperMimic](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/supermimic.html)。
 - [2026/11] 🔥 RLinf 新增 FlexRLT，可直接用冻结 VLA 的特征训练小型 actor 和 critic，并分别选择特征表示、网络、AC/TD3 算法及 STEAM 门控。文档：[FlexRLT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/flexrlt.html)。
 - [2026/11] 🔥 RLinf 支持在 [DexJoCo](https://github.com/brave-eai/dexjoco) 灵巧操作基准上用 SFT 和 PPO 训练 CNN 和 π₀.₅ policy。PPO 将 π₀.₅ 在 `water_plant` 上的成功率从 SFT 后的 78.1% 提升至 98.4%。文档：[基于 DexJoCo 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html)。
@@ -239,6 +240,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robodojo.html">RoboDojo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/bench2dex.html">Bench2Dex</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robolab.html">RoboLab（仅评估）</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/g1_mimic.html">G1 动作跟踪（MuJoCo Warp）</a> ✅</li>
           <li>更多…</li>

@@ -25,6 +25,9 @@ RLinf 通过 :doc:`MetricLogger <../guides/logger>` 在五个核心命名空间�
    * - ``train/actor/clip_fraction``
      - 概率比触发裁剪的样本比例。
      - 持续高于 ``0.3`` 说明每轮 policy 变化过快。
+   * - ``train/actor/dual_clip_fraction``
+     - 触发 PPO 双重裁剪上界的有效样本比例（配置见 :doc:`PPO <algorithms/ppo>`）。
+     - 比例偏高说明负 Advantage 样本的概率比偏移过大。
    * - ``train/actor/clipped_ratio``
      - 裁剪后概率比的均值。
      - 正常训练应保持在 ``1.0`` 附近。
@@ -53,25 +56,10 @@ RLinf 通过 :doc:`MetricLogger <../guides/logger>` 在五个核心命名空间�
      - 总损失（actor + critic + 熵正则）。
      - 重点监控是否出现 ``NaN`` / ``Inf``，细节看上方分项。
 
-Dual-Clip 配置
---------------
-
-.. list-table::
-   :header-rows: 1
-
-   * - 配置项
-     - 含义
-   * - ``algorithm.use_dual_clip``
-     - 设为 ``true`` 启用双重裁剪，设为 ``false`` 关闭。省略时沿用 actor 的默认设置。
-   * - ``algorithm.clip_ratio_c``
-     - 启用双重裁剪时，默认值为 ``3.0``\ 。可设为大于 ``1`` 的有限数值。设为 ``null`` 可关闭裁剪上界。
-
 ``rollout/``
 ------------
 
 优化前在 rollout 阶段收集的奖励与优势统计量。
-
-将 ``env.train.log_rollout_moments`` 设为 ``true``\ ，可记录有效样本的额外 rollout 统计。``*_std`` 记录总体标准差。
 
 .. list-table::
    :header-rows: 1
@@ -92,24 +80,6 @@ Dual-Clip 配置
    * - ``rollout/advantages_min``
      - 批次优势最小值。
      - 与 ``advantages_max`` 对照检查奖励分布是否偏斜。
-   * - ``rollout/advantages_std``
-     - 训练时 Advantage 的标准差。
-     - 结合均值观察分布。
-   * - ``rollout/rewards_mean`` / ``rollout/rewards_std``
-     - 按配置的奖励粒度计算的均值与标准差。
-     - 在奖励粒度相同的批次间比较。
-   * - ``rollout/returns_mean`` / ``rollout/returns_std``
-     - critic 的 GAE 目标均值与标准差。
-     - 与价值预测对照。
-   * - ``rollout/returns_min`` / ``rollout/returns_max``
-     - GAE 目标的最小值与最大值。
-     - 检查是否出现极端目标值。
-   * - ``rollout/values_mean`` / ``rollout/values_std``
-     - 采样状态的价值预测均值与标准差。
-     - 若回报变化而价值预测长期不变，检查 critic。
-   * - ``rollout/advantages_raw_mean`` / ``rollout/advantages_raw_std``
-     - 关闭回报归一化时，记录归一化前 GAE Advantage 的均值和标准差。
-     - 观察 Advantage 归一化前的分布。
    * - ``rollout/loss_mask_fraction``
      - 批次中有效（未 mask）token 或步数的比例。
      - 接近 ``0`` 提示轨迹被提前截断或格式异常。
@@ -135,9 +105,6 @@ Dual-Clip 配置
    * - ``env/return``
      - 回合累计回报。
      - 稀疏奖励下在成功前接近 0。
-   * - ``env/return_mean`` / ``env/return_std``
-     - Bench2Dex 已结束回合的累计回报均值与总体标准差。
-     - 观察回合结果的波动。
    * - ``env/reward``
      - 按回合长度平均后的步级奖励。
      - 稀疏奖励任务受回合长度稀释，建议以 ``env/success_once`` 为准。

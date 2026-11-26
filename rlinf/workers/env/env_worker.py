@@ -30,7 +30,6 @@ from rlinf.data.schema.embodied_types import (
     EnvOutput,
     EnvPart,
     EnvTransition,
-    JointPositionTargets,
     PolicyInput,
     TrajectoryKey,
     TrajectorySource,
@@ -439,7 +438,7 @@ class EnvWorker(Worker):
 
     @Worker.timer("env_interact_step")
     def env_interact_step(
-        self, chunk_actions: torch.Tensor | JointPositionTargets, stage_id: int
+        self, chunk_actions: torch.Tensor, stage_id: int
     ) -> tuple[EnvOutput, dict[str, Any], dict[str, Any]]:
         """Execute a chunk and build environment output and LeRobot payload.
 
@@ -544,9 +543,7 @@ class EnvWorker(Worker):
         return env_output, env_info, chunk_step_payload
 
     def env_evaluate_step(
-        self,
-        raw_actions: torch.Tensor | np.ndarray | JointPositionTargets,
-        stage_id: int,
+        self, raw_actions: torch.Tensor, stage_id: int
     ) -> tuple[EnvOutput, dict[str, Any]]:
         """
         This function is used to evaluate the environment.
@@ -1191,7 +1188,7 @@ class EnvWorker(Worker):
     def _infer_action_batch_size(actions: Any) -> int:
         """Infer the batch dimension of a policy response."""
         if isinstance(actions, ActionPayload):
-            return actions.batch_size
+            actions = actions.actions
         elif isinstance(actions, dict):
             actions = actions["actions"]
         elif hasattr(actions, "actions"):
@@ -1199,9 +1196,7 @@ class EnvWorker(Worker):
         return int(actions.shape[0])
 
     @staticmethod
-    def _consume_action_payload(
-        payload: Any, env: Any
-    ) -> torch.Tensor | JointPositionTargets:
+    def _consume_action_payload(payload: Any, env: Any) -> torch.Tensor:
         """Apply optional rollout diagnostics and return executable actions."""
         if isinstance(payload, ActionPayload):
             if payload.rollout_infos:
@@ -1428,7 +1423,7 @@ class EnvWorker(Worker):
                     )
                     if isinstance(raw_chunk_actions, torch.Tensor):
                         raw_chunk_actions = raw_chunk_actions.detach().cpu().numpy()
-                    elif not isinstance(raw_chunk_actions, JointPositionTargets):
+                    else:
                         raw_chunk_actions = np.asarray(raw_chunk_actions)
                     env_output, env_info = self.env_evaluate_step(
                         raw_chunk_actions, stage_id

@@ -15,6 +15,7 @@
 """Bench2Dex evaluation, scene lifecycle, rewards and recipe contracts."""
 
 import json
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,7 +24,7 @@ from types import ModuleType, SimpleNamespace
 import numpy as np
 import pytest
 
-from evaluations.bench2dex.run_all_channels import channel_command
+from evaluations.bench2dex.run_all_channels import channel_command, evaluate_channel
 from rlinf.envs.sim.bench2dex.evaluation import configure_profile, normalize_profile
 from rlinf.envs.sim.bench2dex.rewards import StageCompletionReward
 
@@ -123,15 +124,15 @@ def test_evaluation_rejects_unknown_channel():
         normalize_profile("unknown")
 
 
-@pytest.mark.parametrize("num_gpus", [1, 8])
+@pytest.mark.parametrize(("num_envs", "num_gpus"), [(3, 1), (8, 8)])
 def test_parallel_evaluation_command_keeps_episode_and_seed_contract(
-    num_gpus, compose_bench2dex_recipe
+    num_envs, num_gpus, compose_bench2dex_recipe
 ):
     command = channel_command(
         Path("/repo"),
         "example",
         "inv_cov",
-        12,
+        4 * num_envs,
         7,
         Path("/output"),
         Path("/anchors"),
@@ -139,7 +140,7 @@ def test_parallel_evaluation_command_keeps_episode_and_seed_contract(
         456,
         "unseen",
         [],
-        num_envs=3,
+        num_envs=num_envs,
         num_gpus=num_gpus,
     )
     placement = "0" if num_gpus == 1 else "0-7"
@@ -153,7 +154,7 @@ def test_parallel_evaluation_command_keeps_episode_and_seed_contract(
         "env, rollout": 0 if num_gpus == 1 else "0-7"
     }
     assert "env.eval.rollout_epoch=4" in command
-    assert "env.eval.total_num_envs=3" in command
+    assert f"env.eval.total_num_envs={num_envs}" in command
     assert "env.eval.auto_reset=false" in command
     assert "env.eval.seed=123" in command
     assert "env.eval.init_params.inv_cov_seed=456" in command
@@ -162,13 +163,22 @@ def test_parallel_evaluation_command_keeps_episode_and_seed_contract(
     assert "env.eval.init_params.generalization_profile=inv_cov" in command
 
 
-def test_parallel_evaluation_rejects_incomplete_batch():
-    with pytest.raises(ValueError):
+@pytest.mark.parametrize(
+    ("episodes", "num_envs", "num_gpus", "error"),
+    [
+        (5, 2, 1, "episodes divisible by num_envs"),
+        (12, 3, 8, "num_envs divisible by num_gpus"),
+    ],
+)
+def test_parallel_evaluation_rejects_incomplete_batch(
+    episodes, num_envs, num_gpus, error
+):
+    with pytest.raises(ValueError, match=error):
         channel_command(
             Path("/repo"),
             "example",
             "none",
-            5,
+            episodes,
             1,
             Path("/out"),
             Path("/anchors"),
@@ -176,7 +186,70 @@ def test_parallel_evaluation_rejects_incomplete_batch():
             2,
             "unseen",
             [],
-            num_envs=2,
+            num_envs=num_envs,
+            num_gpus=num_gpus,
+        )
+
+
+@pytest.mark.parametrize(
+    ("num_envs", "expected"),
+    [
+        (32, [(1, 32, 1, 8), (33, 18, 1, 6)]),
+        (1, [(1, 1, 50, 1)]),
+    ],
+)
+def test_parallel_evaluation_places_each_batch(
+    tmp_path,
+    monkeypatch,
+    compose_bench2dex_recipe,
+    bench2dex_params,
+    num_envs,
+    expected,
+):
+    from rlinf.envs.sim.bench2dex.spec import validate_bench2dex_env_cfg
+
+    args = SimpleNamespace(
+        config_name="bench2dex_task22_openpi_pi05_eval",
+        num_episodes=50,
+        num_envs=num_envs,
+        gpu_id="0,1,2,3,4,5,6,7",
+        episodes_per_process=0,
+        anchor_dir=tmp_path,
+        seed=123,
+        inv_cov_seed=456,
+        generalization_split="unseen",
+    )
+    commands = []
+
+    def collect_command(command, *, env, check):
+        commands.append([arg for arg in command if "=" in arg])
+        return subprocess.CompletedProcess(command, 0)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "run", collect_command)
+        evaluate_channel(Path("/repo"), args, "none", tmp_path, {}, [], tmp_path)
+
+    assert len(commands) == len(expected)
+    for command, (start, env_count, rollout_epoch, workers) in zip(
+        commands, expected, strict=True
+    ):
+        cfg = compose_bench2dex_recipe(
+            "evaluations/bench2dex", args.config_name, overrides=command
+        )
+        placement = 0 if workers == 1 else f"0-{workers - 1}"
+        assert dict(cfg.cluster.component_placement) == {"env, rollout": placement}
+        assert cfg.env.eval.total_num_envs == env_count
+        assert cfg.env.eval.rollout_epoch == rollout_epoch
+        assert cfg.env.eval.init_params.start_episode == start
+
+        params = cfg.env.eval.init_params
+        params.source_path = bench2dex_params["source_path"]
+        params.task = bench2dex_params["task"]
+        params.embodiment = bench2dex_params["embodiment"]
+        params.max_control_steps = cfg.env.eval.max_episode_steps
+        cfg.rollout.model.action_dim = 1
+        validate_bench2dex_env_cfg(
+            cfg, cfg.env.eval, cfg.rollout.model, workers, "eval", actor_world_size=None
         )
 
 
@@ -440,7 +513,6 @@ def test_runner_waits_for_environment_release(cpu_env_factory):
             "env": {
                 "train": {
                     "enable_offload": True,
-                    "wait_for_offload_before_training": True,
                 }
             },
         }
@@ -705,7 +777,6 @@ def compose_bench2dex_recipe(monkeypatch):
         "BENCH2DEX_ASSETS_PATH": "/assets",
         "BENCH2DEX_PI05_PATH": "/model",
         "BENCH2DEX_ANCHOR_DIR": "/anchors",
-        "BENCH2DEX_WARMUP10_PATH": "/warmup10/full_weights.pt",
     }.items():
         monkeypatch.setenv(key, value)
 
@@ -807,19 +878,37 @@ def test_bench2dex_recipes(
         assert "noise_rng" not in model.openpi
         assert cfg.env.eval.skip_intermediate_renders is False
         return
-    from rlinf.runners.embodied_runner import EmbodiedRunner
-
-    runner = object.__new__(EmbodiedRunner)
-    runner.cfg = cfg
-    runner.global_step = cfg.runner.save_interval
-    runner.max_steps = cfg.runner.max_epochs
-    run_val, save_model, _ = runner._check_progress()
-    assert save_model and not run_val
     is_async = "_async_" in config_name
     is_grpo = "_grpo_" in config_name
-    assert cfg.actor.enable_offload and cfg.rollout.enable_offload
+    from rlinf.utils.runner_utils import check_progress
+
+    assert "independent_eval_and_save_intervals" not in cfg.runner
+    assert "wait_for_offload_before_training" not in cfg.env.train
+    assert "log_rollout_moments" not in cfg.env.train
+    if is_async:
+        assert cfg.runner.val_check_interval == -1
+    expected_val_at_save = (
+        cfg.runner.val_check_interval > 0
+        and cfg.runner.save_interval % cfg.runner.val_check_interval == 0
+    )
+    for step, expected in (
+        (1, (False, False, False)),
+        (cfg.runner.save_interval, (expected_val_at_save, True, False)),
+    ):
+        assert (
+            check_progress(
+                step=step,
+                max_steps=cfg.runner.max_epochs,
+                val_check_interval=cfg.runner.val_check_interval,
+                save_interval=cfg.runner.save_interval,
+                limit_val_batches=1.0,
+            )
+            == expected
+        )
+    assert cfg.actor.enable_offload is (not is_async)
+    assert cfg.rollout.enable_offload is (not is_async)
     assert cfg.env.train.enable_offload is (not is_async)
-    assert cfg.env.eval.enable_offload is True
+    assert cfg.env.eval.enable_offload is (not is_async)
     assert cfg.env.train.skip_intermediate_renders is True
     assert cfg.actor.model.add_value_head is (not is_grpo)
     assert cfg.algorithm.loss_type == (
@@ -830,7 +919,7 @@ def test_bench2dex_recipes(
     assert cfg.actor.global_batch_size % (4 * cfg.actor.micro_batch_size) == 0
     if action_dim == 40:
         assert cfg.cluster.component_placement["actor,env,rollout"] == "0-7"
-        assert cfg.runner.ckpt_path == "/warmup10/full_weights.pt"
+        assert cfg.runner.ckpt_path is None
         assert cfg.runner.resume_dir is None
         assert cfg.actor.optim.critic_warmup_steps == 0
         assert cfg.env.train.total_num_envs == 32
@@ -843,8 +932,9 @@ def test_bench2dex_recipes(
         assert cfg.actor.optim.lr == 2e-6
         assert cfg.actor.optim.value_lr == 2e-5
         assert cfg.actor.optim.get("lr_scheduler", "constant") == "constant"
-        assert cfg.runner.val_check_interval == 10
-        assert cfg.runner.save_interval == 2
+        if not is_async:
+            assert cfg.runner.val_check_interval == 10
+        assert cfg.runner.save_interval == 10
         assert cfg.env.eval.total_num_envs == 32
         assert cfg.env.eval.rollout_epoch == 1
         for split in ("train", "eval"):
@@ -885,7 +975,39 @@ def test_bench2dex_e2e_recipes(compose_bench2dex_recipe, config_name):
         cfg.env.train.total_num_envs * cfg.env.train.rollout_epoch * 35
         == cfg.actor.global_batch_size
     )
-    assert cfg.env.train.enable_offload is ("_async_" not in config_name)
+    is_async = "_async_" in config_name
+    assert cfg.env.train.enable_offload is (not is_async)
+    assert cfg.actor.enable_offload is (not is_async)
+    assert cfg.env.eval.enable_offload is (not is_async)
+    assert cfg.rollout.enable_offload is (not is_async)
+
+
+def test_task22_resolves_explicit_warmup_checkpoint(compose_bench2dex_recipe):
+    weights = "/warmup10/full_weights.pt"
+    cfg = compose_bench2dex_recipe(
+        "examples/embodiment/config",
+        "bench2dex_task22_ppo_openpi_pi05",
+        overrides=[f"runner.ckpt_path={weights}"],
+    )
+    assert cfg.runner.ckpt_path == weights
+    assert cfg.runner.resume_dir is None
+    assert cfg.rollout.model.model_path == cfg.actor.model.model_path == "/model"
+
+
+def test_task22_warmup_steps_match_epochs(compose_bench2dex_recipe):
+    cfg = compose_bench2dex_recipe(
+        "examples/embodiment/config", "bench2dex_task22_critic_warmup_openpi_pi05"
+    )
+    env = cfg.env.train
+    steps = env.max_steps_per_rollout_epoch // cfg.actor.model.num_action_chunks
+    samples = env.total_num_envs * env.rollout_epoch * steps
+    batches, remainder = divmod(samples, cfg.actor.global_batch_size)
+    assert remainder == 0
+    assert cfg.runner.ckpt_path is cfg.runner.resume_dir is None
+    assert cfg.runner.save_interval == cfg.runner.max_epochs == 10
+    assert cfg.runner.val_check_interval == 10
+    assert batches * cfg.algorithm.update_epoch * cfg.runner.max_epochs == 1400
+    assert cfg.actor.optim.critic_warmup_steps == 1400
 
 
 @pytest.mark.parametrize("inline", [False, True])
@@ -987,3 +1109,100 @@ def test_bench2dex_rejects_conflicting_openpi_rollout_options(
     )
     with pytest.raises(ValueError, match=error):
         validate_embodied_cfg(cfg)
+
+
+def test_bench2dex_boundary_joint_targets_reorder_and_validate():
+    from rlinf.envs.sim.bench2dex.spec import (
+        JointPositionTargets,
+        joint_targets_in_runtime_order,
+    )
+
+    targets = JointPositionTargets(
+        joint_positions=np.array([[[10.0, 20.0, 30.0]]], dtype=np.float32),
+        joint_names=[["j2", "j0", "j1"]],
+        joint_layout="full",
+    )
+    reordered, layout = joint_targets_in_runtime_order(
+        targets,
+        active_joint_names=("j0", "j1"),
+        full_joint_names=("j0", "j1", "j2"),
+    )
+    assert layout == "full"
+    assert reordered.tolist() == [[20.0, 30.0, 10.0]]
+
+    plain, plain_layout = joint_targets_in_runtime_order(
+        np.array([[1.0, 2.0]], dtype=np.float32),
+        active_joint_names=("j0", "j1"),
+        full_joint_names=("j0", "j1", "j2"),
+    )
+    assert plain_layout == "active"
+    assert plain.tolist() == [[1.0, 2.0]]
+
+    with pytest.raises(ValueError, match="Expected joint names"):
+        joint_targets_in_runtime_order(
+            JointPositionTargets(
+                joint_positions=np.zeros((1, 1, 2), dtype=np.float32),
+                joint_names=[["j0", "wrong"]],
+                joint_layout="active",
+            ),
+            active_joint_names=("j0", "j1"),
+            full_joint_names=("j0", "j1", "j2"),
+        )
+
+
+def test_embodied_runner_preserves_env_overlap_when_offload_disabled():
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from omegaconf import OmegaConf
+
+    from rlinf.runners.embodied_runner import EmbodiedRunner
+
+    events = []
+
+    class Handle:
+        def __init__(self, name):
+            self.name = name
+
+        def wait(self):
+            events.append(f"wait:{self.name}")
+            return []
+
+    def ready(*args, **kwargs):
+        return Handle("ready")
+
+    def interact(**kwargs):
+        events.append("start:env")
+        return Handle("env")
+
+    def train():
+        events.append("start:train")
+        return Handle("train")
+
+    runner = object.__new__(EmbodiedRunner)
+    runner.cfg = OmegaConf.create(
+        {"runner": {}, "env": {"train": {"enable_offload": False}}}
+    )
+    runner.actor = SimpleNamespace(
+        set_global_step=ready,
+        recv_rollout_trajectories=ready,
+        compute_advantages_and_returns=ready,
+        run_training=train,
+    )
+    runner.rollout = SimpleNamespace(set_global_step=ready, generate=ready)
+    runner.env = SimpleNamespace(set_global_step=ready, interact=interact)
+    runner.reward = None
+    runner.global_step = 0
+    runner.max_steps = 1
+    runner.weight_sync_interval = 1
+    runner.overlap_env_bootstrap = False
+    runner.env_channel = runner.rollout_channel = runner.actor_channel = None
+    runner.reward_channel = None
+    runner.timer = lambda *args, **kwargs: nullcontext()
+    runner._should_profile_step = lambda step: False
+    runner.update_rollout_weights = lambda: None
+    runner._maybe_eval_and_checkpoint = lambda step: {}
+    runner._log_step_metrics = lambda **kwargs: kwargs["env_handle"].wait()
+    runner._finish_run = lambda: None
+    runner.run()
+    assert events.index("start:train") < events.index("wait:env")

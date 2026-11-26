@@ -150,6 +150,8 @@ The evaluation runner coordinates env workers and rollout workers over channels 
         - Unified launcher with benchmark inference, log setup, and simulator env setup.
       * - ``evaluations/behavior/``
         - BEHAVIOR-1K household evaluation configs.
+      * - ``evaluations/bench2dex/``
+        - Bench2Dex Task22 and Task64 configs (single-channel runs via ``evaluations/run_eval.sh``; four-channel batch evaluation via ``evaluations/bench2dex/run_all_channels.py``).
       * - ``evaluations/geniesim/``
         - GenieSim server-backed evaluation configs.
       * - ``evaluations/libero/``

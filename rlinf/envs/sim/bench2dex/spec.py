@@ -21,14 +21,35 @@ import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import yaml
 from omegaconf import DictConfig, OmegaConf
 
-from rlinf.data.schema.embodied_types import JointPositionTargets
-
 from .evaluation import normalize_profile
+
+
+@dataclass(frozen=True)
+class JointPositionTargets:
+    """Absolute joint targets with per-environment names, shaped [B,J] or [B,C,J]."""
+
+    joint_positions: np.ndarray
+    joint_names: list[list[str]]
+    joint_layout: Literal["active", "full"]
+
+    def __post_init__(self) -> None:
+        if self.joint_layout not in ("active", "full"):
+            raise ValueError(
+                f"Expected active or full joint layout, got {self.joint_layout!r}"
+            )
+        shape = self.joint_positions.shape
+        if len(shape) not in (2, 3) or shape[0] != len(self.joint_names):
+            raise ValueError(
+                f"Expected batched joint targets and one name list per env, got {shape}"
+            )
+        if any(len(names) != shape[-1] for names in self.joint_names):
+            raise ValueError(f"Expected {shape[-1]} joint names per environment")
 
 
 @dataclass(frozen=True)

@@ -25,13 +25,12 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-from rlinf.data.schema.embodied_types import JointPositionTargets
 from rlinf.utils.logging import get_logger
 from rlinf.utils.nested_dict_process import cat_list_of_dict_tensor
 
 from .evaluation import Bench2DexResults, normalize_profile
 from .runtime import make_bench2dex_runtime
-from .spec import Bench2DexSpec
+from .spec import Bench2DexSpec, JointPositionTargets
 from .venv import Bench2DexSubprocEnvWorker, Bench2DexVectorEnv
 
 
@@ -237,8 +236,6 @@ class Bench2DexEnv(gym.Env):
         episode = {
             "success_once": torch.tensor([item["success_once"] for item in raw]),
             "return": totals,
-            "return_mean": totals,
-            "return_std": totals,
             "episode_len": counts,
             "reward": totals / counts.clamp_min(1),
         }

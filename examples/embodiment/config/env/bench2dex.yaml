@@ -3,7 +3,6 @@ enable_offload: false
 total_num_envs: 1
 auto_reset: false
 bootstrap_non_reset_truncations: true
-log_rollout_moments: true
 ignore_terminations: false
 use_rel_reward: false
 seed: 100000000

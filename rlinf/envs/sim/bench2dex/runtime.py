@@ -34,7 +34,6 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from rlinf.data.schema.embodied_types import JointPositionTargets
 from rlinf.utils.logging import get_logger
 
 from .evaluation import (
@@ -47,6 +46,7 @@ from .rewards import StageCompletionReward
 from .spec import (
     Bench2DexEpisode,
     Bench2DexSpec,
+    JointPositionTargets,
     joint_targets_in_runtime_order,
     load_episodes,
 )

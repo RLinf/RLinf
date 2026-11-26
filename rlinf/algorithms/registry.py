@@ -124,21 +124,6 @@ def calculate_adv_and_returns(
             res = postprocess_embodied_advantages_outputs(
                 advantages=advantages, returns=returns, **kwargs
             )
-            if (
-                adv_type == "gae"
-                and kwargs.get("log_rollout_moments", False)
-                and kwargs.get("values") is not None
-            ):
-                rollout_values = kwargs["values"][:-1]
-                value_outputs = postprocess_embodied_advantages_outputs(
-                    advantages=rollout_values, **kwargs
-                )
-                res["rollout_values"] = value_outputs["advantages"]
-                if not kwargs.get("normalize_returns", False):
-                    raw_outputs = postprocess_embodied_advantages_outputs(
-                        advantages=returns - rollout_values, **kwargs
-                    )
-                    res["advantages_raw"] = raw_outputs["advantages"]
     else:
         # reasoning tasks
         if adv_type in ("grpo_dynamic", "gae_dynamic"):

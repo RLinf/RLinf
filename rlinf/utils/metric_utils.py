@@ -627,14 +627,6 @@ def compute_evaluate_metrics(eval_metrics_list):
             aggregated_eval_metrics.update(compute_delay_stats(key, stacked))
             continue
 
-        if key.rsplit("/", 1)[-1] == "return_std":
-            aggregated_eval_metrics[key] = (
-                stacked.std(correction=0).detach().cpu().numpy()
-                if stacked.numel()
-                else np.asarray(float("nan"), dtype=np.float64)
-            )
-            continue
-
         aggregated_eval_metrics[key] = (
             stacked.mean().detach().cpu().numpy()
             if stacked.numel() > 0
@@ -647,19 +639,16 @@ def compute_evaluate_metrics(eval_metrics_list):
     return aggregated_eval_metrics
 
 
-RolloutMetricStats = dict[str, tuple[float, float, float, float]]
-
-
 def compute_rollout_metric_stats(
-    data_buffer: dict, *, reward_type: str | None = None
-) -> RolloutMetricStats:
+    data_buffer: dict,
+) -> dict[str, tuple[float, float, float, float]]:
     """Compute distributed ``(sum, count, min, max)`` rollout stats once per buffer."""
     stats: dict[str, tuple[float, float, float, float]] = {}
     loss_mask = data_buffer.get("loss_mask", None)
 
-    from rlinf.scheduler.worker.worker import Worker
-
     def reduce_stats(values: torch.Tensor) -> tuple[float, float, float, float]:
+        from rlinf.scheduler.worker.worker import Worker
+
         device = Worker.torch_platform.current_device()
 
         if values.numel() == 0:
@@ -702,22 +691,6 @@ def compute_rollout_metric_stats(
             mask = torch.broadcast_to(mask, values.shape)
         return values[mask]
 
-    def record_moment(key: str, values: torch.Tensor) -> None:
-        values = valid_values(values).detach()
-        total, count, low, high = stats[key] if key in stats else reduce_stats(values)
-        moment = values.to(
-            device=Worker.torch_platform.current_device(),
-            dtype=torch.float32,
-        )
-        if count:
-            moment = (moment - total / count).square().sum()
-            torch.distributed.all_reduce(moment, op=torch.distributed.ReduceOp.SUM)
-            variance = moment.item()
-        else:
-            variance = 0.0
-        stats[key] = (total, count, low, high)
-        stats[f"{key}/variance"] = (variance, count, total, total)
-
     if loss_mask is not None:
         # Every metric below is taken over the mask, and filter_rewards can mask
         # out whole groups, so they can read as clean simply because little
@@ -733,22 +706,6 @@ def compute_rollout_metric_stats(
     if data_buffer.get("returns", None) is not None:
         stats["returns"] = reduce_stats(valid_values(data_buffer["returns"]))
 
-    if reward_type is not None:
-        rewards = data_buffer.get("rewards")
-        if rewards is not None:
-            if reward_type == "chunk_level" and rewards.ndim > 1:
-                rewards = rewards.sum(dim=-1, keepdim=True)
-            record_moment("reward_moments", rewards)
-        for key, output in (
-            ("advantages", "advantages"),
-            ("returns", "returns"),
-            ("rollout_values", "values"),
-            ("advantages_raw", "advantages_raw"),
-        ):
-            values = data_buffer.get(key)
-            if values is not None:
-                record_moment(output, values)
-
     return stats
 
 
@@ -763,25 +720,6 @@ def merge_rollout_metric_stats(
                 merged[key] = (total_sum, count, min_val, max_val)
             else:
                 prev_sum, prev_count, prev_min, prev_max = merged[key]
-                if key.endswith("/variance"):
-                    # Pool centered sums of squares from independently reduced envs.
-                    delta = (
-                        min_val / count - prev_min / prev_count
-                        if count and prev_count
-                        else 0.0
-                    )
-                    correction = (
-                        delta**2 * (count * prev_count) / (count + prev_count)
-                        if count and prev_count
-                        else 0.0
-                    )
-                    merged[key] = (
-                        prev_sum + total_sum + correction,
-                        prev_count + count,
-                        prev_min + max_val,
-                        prev_min + max_val,
-                    )
-                    continue
                 merged[key] = (
                     prev_sum + total_sum,
                     prev_count + count,
@@ -825,27 +763,11 @@ def format_rollout_metrics(
         rollout_metrics["returns_max"] = max_ret
         rollout_metrics["returns_min"] = min_ret
 
-    for key, entry in stats.items():
-        if key.endswith("/variance"):
-            name = key.removesuffix("/variance")
-            variance_sum, count, total, _ = entry
-            if name == "reward_moments":
-                name = "rewards"
-            rollout_metrics.setdefault(
-                f"{name}_mean", total / count if count else float("nan")
-            )
-            rollout_metrics[f"{name}_std"] = (
-                math.sqrt(max(variance_sum / count, 0.0)) if count else float("nan")
-            )
     return rollout_metrics
 
 
-def compute_rollout_metrics(
-    data_buffer: dict, *, reward_type: str | None = None
-) -> dict:
-    return format_rollout_metrics(
-        compute_rollout_metric_stats(data_buffer, reward_type=reward_type)
-    )
+def compute_rollout_metrics(data_buffer: dict) -> dict:
+    return format_rollout_metrics(compute_rollout_metric_stats(data_buffer))
 
 
 def append_to_dict(data, new_data):

@@ -150,6 +150,8 @@ SGLang 服务评测指南
         - 统一启动脚本，负责推断 benchmark、准备日志目录与初始化仿真环境。
       * - ``evaluations/behavior/``
         - BEHAVIOR-1K 家居任务评测配置。
+      * - ``evaluations/bench2dex/``
+        - Bench2Dex Task22 与 Task64 评测配置（单通道通过 ``evaluations/run_eval.sh`` 运行，四通道批量评测通过 ``evaluations/bench2dex/run_all_channels.py`` 运行）。
       * - ``evaluations/geniesim/``
         - GenieSim 服务化仿真评测配置。
       * - ``evaluations/libero/``

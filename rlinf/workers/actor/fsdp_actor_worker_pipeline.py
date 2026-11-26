@@ -160,22 +160,15 @@ class PipelineEmbodiedFSDPActor(EmbodiedFSDPActor):
             global_batches[global_batch.train_count].append(global_batch)
         self.lr_scheduler.step()
 
-        log_rollout_moments = self.cfg.env.train.get("log_rollout_moments", False)
-        metric_keys = ("rewards", "advantages", "returns")
-        if log_rollout_moments:
-            metric_keys += ("loss_mask", "rollout_values", "advantages_raw")
         rollout_metric_batch = {
             key: torch.cat(
                 [batch[key] for batch in received_rollout_micro_batches], dim=0
             )
-            for key in metric_keys
+            for key in ("rewards", "advantages", "returns")
             if received_rollout_micro_batches
             and key in received_rollout_micro_batches[0]
         }
-        rollout_metrics = compute_rollout_metrics(
-            rollout_metric_batch,
-            reward_type=self.cfg.algorithm.reward_type if log_rollout_moments else None,
-        )
+        rollout_metrics = compute_rollout_metrics(rollout_metric_batch)
 
         del (
             current_global_batch,

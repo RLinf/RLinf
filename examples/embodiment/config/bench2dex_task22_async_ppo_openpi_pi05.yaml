@@ -3,13 +3,21 @@ defaults:
   - _self_
 
 runner:
+  val_check_interval: -1
   logger:
     experiment_name: bench2dex_task22_async_ppo_openpi_pi05
 
 env:
   train:
     enable_offload: false
-    wait_for_offload_before_training: false
+  eval:
+    enable_offload: false
+
+rollout:
+  enable_offload: false
+
+actor:
+  enable_offload: false
 
 algorithm:
   loss_type: decoupled_actor_critic

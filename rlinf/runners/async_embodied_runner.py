@@ -23,6 +23,7 @@ from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.metric_utils import compute_evaluate_metrics
+from rlinf.utils.runner_utils import check_progress
 
 if TYPE_CHECKING:
     from rlinf.workers.actor.async_fsdp_dagger_policy_worker import (
@@ -184,7 +185,14 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
                         ).items()
                     }
 
-                    run_val, save_model, _ = self._check_progress()
+                    run_val, save_model, _ = check_progress(
+                        self.global_step,
+                        self.max_steps,
+                        self.cfg.runner.val_check_interval,
+                        self.cfg.runner.save_interval,
+                        1.0,
+                        run_time_exceeded=False,
+                    )
                     if save_model:
                         self._save_checkpoint()
                     eval_metrics = {}

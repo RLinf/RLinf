@@ -665,7 +665,6 @@ class PipelineOutput(AccumulatorOutput):
                 loss_mask=batch.get("loss_mask"),
                 loss_mask_sum=batch.get("loss_mask_sum"),
                 normalize_advantages=False,
-                log_rollout_moments=spec.cfg.get("log_rollout_moments", False),
             )
         )
         return add_loss_weights(

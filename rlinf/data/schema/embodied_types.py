@@ -32,7 +32,7 @@ always use ``B`` as their leading batch dimension during transport.
 import copy
 import uuid
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal, TypeAlias
+from typing import Any, TypeAlias
 
 import numpy as np
 import torch
@@ -43,74 +43,6 @@ from rlinf.utils.nested_dict_process import (
     split_dict,
     stack_list_of_dict_tensor,
 )
-
-
-@dataclass(frozen=True)
-class JointPositionTargets:
-    """Absolute joint targets with per-environment names, shaped [B,J] or [B,C,J]."""
-
-    joint_positions: torch.Tensor | np.ndarray
-    joint_names: list[list[str]]
-    joint_layout: Literal["active", "full"]
-
-    def __post_init__(self) -> None:
-        if self.joint_layout not in ("active", "full"):
-            raise ValueError(
-                f"Expected active or full joint layout, got {self.joint_layout!r}"
-            )
-        shape = self.joint_positions.shape
-        if len(shape) not in (2, 3) or shape[0] != len(self.joint_names):
-            raise ValueError(
-                f"Expected batched joint targets and one name list per env, got {shape}"
-            )
-        if any(len(names) != shape[-1] for names in self.joint_names):
-            raise ValueError(f"Expected {shape[-1]} joint names per environment")
-
-    def to_cpu(self) -> "JointPositionTargets":
-        """Detach targets and move their storage to CPU for transport."""
-        positions = self.joint_positions
-        if isinstance(positions, torch.Tensor):
-            positions = positions.detach().cpu().contiguous()
-        return replace(self, joint_positions=positions)
-
-    @classmethod
-    def merge(cls, shards: list["JointPositionTargets"]) -> "JointPositionTargets":
-        """Join action shards for one environment batch in route order."""
-        first = shards[0]
-        if any(shard.joint_layout != first.joint_layout for shard in shards):
-            raise ValueError(
-                "Joint targets for one environment must use the same layout"
-            )
-        return cls(
-            joint_positions=merge_batch_values(
-                [shard.joint_positions for shard in shards]
-            ),
-            joint_names=[names for shard in shards for names in shard.joint_names],
-            joint_layout=first.joint_layout,
-        )
-
-    def split(self, sizes: list[int]) -> list["JointPositionTargets"]:
-        """Split targets and joint-name metadata on their environment dimension."""
-        if sum(sizes) != self.joint_positions.shape[0]:
-            raise ValueError("Joint action batch size must match the requested splits")
-        positions = self.joint_positions
-        shards = (
-            torch.split(positions, sizes, dim=0)
-            if isinstance(positions, torch.Tensor)
-            else np.split(positions, np.cumsum(sizes)[:-1], axis=0)
-        )
-        output, offset = [], 0
-        for shard, size in zip(shards, sizes, strict=True):
-            output.append(
-                replace(
-                    self,
-                    joint_positions=shard,
-                    joint_names=self.joint_names[offset : offset + size],
-                )
-            )
-            offset += size
-        return output
-
 
 # Source identity carried through the trajectory pipeline.
 
@@ -423,52 +355,26 @@ class EnvTransition:
 class ActionPayload:
     """Executable actions and optional environment feedback, batched on axis zero."""
 
-    actions: torch.Tensor | JointPositionTargets
+    actions: torch.Tensor
     rollout_infos: dict[str, torch.Tensor] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.actions = (
-            self.actions.to_cpu()
-            if isinstance(self.actions, JointPositionTargets)
-            else self.actions.detach().cpu().contiguous()
-        )
+        self.actions = self.actions.detach().cpu().contiguous()
         self.rollout_infos = put_tensor_device(self.rollout_infos, "cpu", detach=True)
-
-    @property
-    def batch_size(self) -> int:
-        """Return the number of environment rows."""
-        actions = self.actions
-        positions = (
-            actions.joint_positions
-            if isinstance(actions, JointPositionTargets)
-            else actions
-        )
-        return int(positions.shape[0])
 
     def split(self, sizes: list[int]) -> list["ActionPayload"]:
         """Split actions and feedback using the same routed batch sizes."""
         infos = split_batch_value(self.rollout_infos, sizes)
-        actions = self.actions
-        shards = (
-            actions.split(sizes)
-            if isinstance(actions, JointPositionTargets)
-            else split_batch_value(actions, sizes)
-        )
         return [
             type(self)(actions=actions, rollout_infos=info)
-            for actions, info in zip(shards, infos)
+            for actions, info in zip(split_batch_value(self.actions, sizes), infos)
         ]
 
     @classmethod
     def merge(cls, payloads: list["ActionPayload"]) -> "ActionPayload":
         """Merge routed action fragments in batch order."""
-        shards = [item.actions for item in payloads]
         return cls(
-            actions=(
-                JointPositionTargets.merge(shards)
-                if shards and isinstance(shards[0], JointPositionTargets)
-                else merge_batch_values(shards)
-            ),
+            actions=merge_batch_values([item.actions for item in payloads]),
             rollout_infos=merge_batch_values([item.rollout_infos for item in payloads]),
         )
 

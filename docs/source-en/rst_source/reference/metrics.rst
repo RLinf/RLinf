@@ -25,6 +25,9 @@ Policy and value optimization statistics logged every actor update (on-policy PP
    * - ``train/actor/clip_fraction``
      - Fraction of tokens or actions whose importance ratio was clipped.
      - Sustained values above ``0.3`` mean the policy is moving too fast per epoch.
+   * - ``train/actor/dual_clip_fraction``
+     - Fraction of valid samples hitting the PPO dual-clip bound (see :doc:`PPO <algorithms/ppo>`).
+     - Frequent clipping indicates large negative-advantage importance ratios.
    * - ``train/actor/clipped_ratio``
      - Mean clipped probability ratio.
      - Should remain close to ``1.0``.
@@ -53,25 +56,10 @@ Policy and value optimization statistics logged every actor update (on-policy PP
      - Total combined loss (actor + critic + entropy regularization).
      - Watch for ``NaN`` / ``Inf``; interpret individual components above.
 
-Dual-Clip Configuration
------------------------
-
-.. list-table::
-   :header-rows: 1
-
-   * - Setting
-     - Behavior
-   * - ``algorithm.use_dual_clip``
-     - Set to ``true`` to enable dual clipping or ``false`` to disable it. If omitted, the actor uses its default.
-   * - ``algorithm.clip_ratio_c``
-     - Defaults to ``3.0`` when dual clipping is enabled. Set a finite value greater than ``1``. Set ``null`` to disable the bound.
-
 ``rollout/``
 ------------
 
 Batch-level reward and advantage statistics collected from rollout before optimization.
-
-Set ``env.train.log_rollout_moments`` to ``true`` to log additional rollout statistics for valid samples. The ``*_std`` metrics report population standard deviations.
 
 .. list-table::
    :header-rows: 1
@@ -92,24 +80,6 @@ Set ``env.train.log_rollout_moments`` to ``true`` to log additional rollout stat
    * - ``rollout/advantages_min``
      - Minimum advantage in the batch.
      - Check symmetry with ``advantages_max`` to verify reward distribution.
-   * - ``rollout/advantages_std``
-     - Standard deviation of training advantages.
-     - Check the spread alongside the mean.
-   * - ``rollout/rewards_mean`` / ``rollout/rewards_std``
-     - Mean and standard deviation at the configured reward granularity.
-     - Compare batches with the same reward granularity.
-   * - ``rollout/returns_mean`` / ``rollout/returns_std``
-     - Mean and standard deviation of GAE targets for the critic.
-     - Compare with the predicted values.
-   * - ``rollout/returns_min`` / ``rollout/returns_max``
-     - Minimum and maximum GAE targets.
-     - Check for extreme targets.
-   * - ``rollout/values_mean`` / ``rollout/values_std``
-     - Mean and standard deviation of rollout value predictions.
-     - Watch for value predictions that stay flat as returns change.
-   * - ``rollout/advantages_raw_mean`` / ``rollout/advantages_raw_std``
-     - Mean and standard deviation of GAE advantages before advantage normalization, when return normalization is disabled.
-     - Check the spread before advantage normalization.
    * - ``rollout/loss_mask_fraction``
      - Fraction of active (unmasked) tokens or steps in the batch.
      - Near ``0`` indicates truncated or degenerate rollouts.
@@ -135,9 +105,6 @@ Task-level signals reported by training environment workers.
    * - ``env/return``
      - Sum of rewards over an episode.
      - Near zero under sparse rewards until episodes succeed.
-   * - ``env/return_mean`` / ``env/return_std``
-     - Mean and population standard deviation of completed-episode returns in Bench2Dex.
-     - Track the spread of episode outcomes.
    * - ``env/reward``
      - Step-level reward averaged over episode length.
      - Diluted by episode length; use ``env/success_once`` for sparse-reward tasks.
