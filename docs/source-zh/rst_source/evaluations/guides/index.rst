@@ -54,6 +54,12 @@
 
       使用 Psi0 在 3 档 DR 上评测 8 个 G1 人形机器人全身 Teleop 任务。
 
+   .. grid-item-card:: SuperMimic
+      :link: supermimic
+      :link-type: doc
+
+      Unitree G1 动作跟踪与站立推力恢复评测。
+
 SGLang 服务评测
 ---------------
 
@@ -90,5 +96,6 @@ SGLang 服务评测
    RoboLab <robolab>
    RoboTwin <robotwin>
    SIMPLE <simple>
+   SuperMimic <supermimic>
    Cosmos3（SGLang） <cosmos3_sglang>
    DreamZero（SGLang） <dreamzero_sglang>

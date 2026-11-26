@@ -70,6 +70,12 @@ Algorithm Decision Matrix
      - Yes (Q-networks)
      - Optional
      - :doc:`MLP Policy <../../examples/embodied/mlp>` (``examples/embodiment/config/maniskill_sac_mlp.yaml``)
+   * - :doc:`SuperMimic <supermimic>`
+     - Differentiable world model
+     - Embodied (G1 tracking)
+     - Yes
+     - No
+     - :doc:`SuperMimic <../../examples/embodied/supermimic>` (``examples/embodiment/config/supermimic_lafan1_gencoord.yaml``)
 
 .. toctree::
    :hidden:
@@ -83,3 +89,4 @@ Algorithm Decision Matrix
    REINFORCE++ <reinforce>
    RLPD <rlpd>
    SAC <sac>
+   SuperMimic <supermimic>
