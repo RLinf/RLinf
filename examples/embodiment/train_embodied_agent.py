@@ -101,6 +101,16 @@ def main(cfg) -> None:
         from rlinf.workers.actor.fsdp_nft_policy_worker import EmbodiedNFTFSDPPolicy
 
         actor_worker_cls = EmbodiedNFTFSDPPolicy
+    elif cfg.algorithm.loss_type == "supermimic":
+        if use_training_pipeline:
+            raise ValueError(
+                "runner.use_training_pipeline=True is not supported for supermimic."
+            )
+        from rlinf.workers.actor.fsdp_supermimic_policy_worker import (
+            EmbodiedSuperMimicFSDPPolicy,
+        )
+
+        actor_worker_cls = EmbodiedSuperMimicFSDPPolicy
     elif cfg.algorithm.loss_type == "embodied_refl":
         if use_training_pipeline:
             raise ValueError(
@@ -140,6 +150,10 @@ def main(cfg) -> None:
         from rlinf.runners.refl_runner import ReFLRunner
 
         runner_cls = ReFLRunner
+    elif cfg.algorithm.loss_type == "supermimic":
+        from rlinf.runners.supermimic_runner import SuperMimicRunner
+
+        runner_cls = SuperMimicRunner
 
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
@@ -154,6 +168,12 @@ def main(cfg) -> None:
         )
 
         rollout_worker_cls = EmbodiInferRolloutWorker
+    elif rollout_backend == "huggingface" and cfg.algorithm.loss_type == "supermimic":
+        from rlinf.workers.rollout.hf.supermimic_rollout_worker import (
+            SuperMimicRolloutWorker,
+        )
+
+        rollout_worker_cls = SuperMimicRolloutWorker
     elif rollout_backend == "huggingface":
         from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
@@ -171,7 +191,12 @@ def main(cfg) -> None:
 
     # Create env worker group
     env_placement = component_placement.get_strategy("env")
-    env_group = EnvWorker.create_group(cfg).launch(
+    env_worker_cls = EnvWorker
+    if cfg.algorithm.loss_type == "supermimic":
+        from rlinf.workers.env.supermimic_env_worker import SuperMimicEnvWorker
+
+        env_worker_cls = SuperMimicEnvWorker
+    env_group = env_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 

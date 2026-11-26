@@ -34,6 +34,9 @@ import re
 import sys
 import tempfile
 import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -194,6 +197,163 @@ def check_toctrees(pages: list[str]) -> list[route.Finding]:
 
 TAB_SET_LINE = re.compile(r"^\s*\.\.\s+tab-set::", re.MULTILINE)
 TAB_ITEM_LINE = re.compile(r"^\s*\.\.\s+tab-item::", re.MULTILINE)
+RST_IMAGE_URL = re.compile(
+    r"^\s*(?:\.\.\s+(?:figure|image)::|:img-top:)\s+(https?://\S+)\s*$"
+)
+MD_IMAGE_URL = re.compile(
+    r"""(?:<img\b[^>]*\bsrc=["'](https?://[^"']+)["']|!\[[^\]]*\]\((https?://[^)\s]+)\))"""
+)
+GITHUB_RAW_REDIRECT = re.compile(r"^https?://github\.com/[^/\s]+/[^/\s]+/raw/")
+
+
+def _probe_url(url: str) -> tuple[int | None, str | None]:
+    """Return ``(http_status, network_error)`` for an external image URL."""
+    parts = urllib.parse.urlsplit(url)
+    safe_url = urllib.parse.urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc.encode("idna").decode("ascii"),
+            urllib.parse.quote(parts.path, safe="/:@!$&'()*+,;=-._~%"),
+            urllib.parse.quote(parts.query, safe="=/?:@!$&'()*+,;=-._~%"),
+            urllib.parse.quote(parts.fragment, safe=""),
+        )
+    )
+    headers = {"User-Agent": "RLinf-docs-check/1.0"}
+    for method, extra in (("HEAD", {}), ("GET", {"Range": "bytes=0-0"})):
+        req = urllib.request.Request(
+            safe_url, method=method, headers={**headers, **extra}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                return resp.status, None
+        except urllib.error.HTTPError as err:
+            if method == "HEAD" and err.code in (403, 405, 501):
+                continue
+            return err.code, None
+        except (urllib.error.URLError, OSError) as err:
+            return None, str(err)
+    return None, "probe failed"
+
+
+def check_image_urls(
+    changes: list[route.Change],
+    selection: route.Selection,
+    check_http: bool = True,
+) -> list[route.Finding]:
+    """Verify external figure/image URLs on checked lines (non-redirecting raw URL + HTTP 200)."""
+    findings: list[route.Finding] = []
+    targets: list[tuple[str, int, str]] = []
+    for change in changes:
+        if change.status == "D":
+            continue
+        is_rst = change.path.endswith(".rst") and change.path.startswith("docs/")
+        is_md = change.path in ("README.md", "README.zh-CN.md")
+        if not (is_rst or is_md):
+            continue
+        path = route.REPO_ROOT / change.path
+        if not path.is_file():
+            continue
+        allowed = selection.lines(change)
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1
+        ):
+            if allowed is not None and lineno not in allowed:
+                continue
+            urls: list[str] = []
+            if is_rst:
+                m = RST_IMAGE_URL.match(line)
+                if m:
+                    urls.append(m.group(1))
+            else:
+                for m in MD_IMAGE_URL.finditer(line):
+                    urls.append(m.group(1) or m.group(2))
+            for url in urls:
+                if GITHUB_RAW_REDIRECT.match(url):
+                    findings.append(
+                        route.Finding(
+                            "major",
+                            change.path,
+                            lineno,
+                            "docs/image-url",
+                            f"use raw.githubusercontent.com instead of redirecting github.com/.../raw/ URL: {url}",
+                        )
+                    )
+                targets.append((change.path, lineno, url))
+
+    if not check_http or not targets:
+        return findings
+
+    cache: dict[str, tuple[int | None, str | None]] = {}
+    network_unavailable = False
+    for rel, lineno, url in targets:
+        if network_unavailable:
+            break
+        if url not in cache:
+            status, net_err = _probe_url(url)
+            cache[url] = (status, net_err)
+            if net_err is not None and len(cache) == 1:
+                network_unavailable = True
+                print("skipped: external image URL checks (network unavailable)")
+                break
+        status, _ = cache[url]
+        if status is not None and status >= 400 and status != 429:
+            findings.append(
+                route.Finding(
+                    "major",
+                    rel,
+                    lineno,
+                    "docs/image-url",
+                    f"external image URL returned HTTP {status}: {url}",
+                )
+            )
+    return findings
+
+
+def check_duplicate_commands(pages: list[str]) -> list[route.Finding]:
+    """Flag identical multi-line setup/launch bash blocks duplicated across changed recipe pages."""
+    findings: list[route.Finding] = []
+    seen: dict[tuple[str, str], str] = {}
+    for rel in sorted(pages):
+        if not check_recipe.RECIPE_OR_EVAL_PAGE.match(
+            rel
+        ) or check_recipe.SKIP_NAME.search(rel):
+            continue
+        lang = "zh" if rel.startswith("docs/source-zh/") else "en"
+        path = route.REPO_ROOT / rel
+        if not path.is_file():
+            continue
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        for block in check_recipe._iter_code_blocks(lines, len(lines)):
+            if block["lang"] not in ("bash", "sh", "shell", "console", ""):
+                continue
+            cmds = [
+                raw.strip()
+                for _, raw in block["body"]
+                if raw.strip() and not raw.strip().startswith("#")
+            ]
+            if len(cmds) < 2:
+                continue
+            norm = "\n".join(cmds)
+            if (
+                "requirements/install.sh" not in norm
+                and not check_recipe.LAUNCH_SCRIPT.search(norm)
+            ):
+                continue
+            key = (lang, norm)
+            first = seen.get(key)
+            if first is not None and first != rel:
+                findings.append(
+                    route.Finding(
+                        "minor",
+                        rel,
+                        block["line"],
+                        "docs/duplicate-commands",
+                        f"setup/launch bash block duplicates {first}; link to the primary recipe or include a shared _*.rst partial",
+                    )
+                )
+            elif first is None:
+                seen[key] = rel
+    return findings
 
 
 def check_tabs(pages: list[str]) -> list[route.Finding]:
@@ -360,6 +520,11 @@ def check_build() -> list[route.Finding]:
 def main() -> int:
     parser = route.check_parser(__doc__.splitlines()[0])
     parser.add_argument("--no-build", action="store_true", help="skip the Sphinx build")
+    parser.add_argument(
+        "--no-url-check",
+        action="store_true",
+        help="skip HTTP probes for external figure/image URLs",
+    )
     args = parser.parse_args()
     if args.files:
         args.files = _expand_file_args(args.files)
@@ -383,6 +548,8 @@ def main() -> int:
         + check_toctrees(pages)
         + check_tabs(pages)
         + check_recipe.check_static_assets(changes)
+        + check_image_urls(changes, selection, check_http=not args.no_url_check)
+        + check_duplicate_commands(pages)
     )
     for page in pages:
         path = route.REPO_ROOT / page

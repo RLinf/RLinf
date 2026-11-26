@@ -50,18 +50,23 @@ Page findings count only on the lines the change adds, because many existing pag
 | `docs/symbol` | major | a name in code font, on a Concepts, Extending, or Reference page, that nothing in the repository defines |
 | `docs/code-name` | major or minor | RLinf's internal classes, functions, or source paths in code font on a recipe or guide page (major) or a concept page (minor) |
 | `docs/math` | major | an equation on a recipe or guide page |
-| `docs/structure` | major | an Agent & LLM recipe (or new embodied/eval recipe) missing `Overview`/`概览` or `Setup and Run`/`安装与运行`, using legacy `一键上手`, or keeping generic theory sections (`Algorithm`, `Model Architecture`, `GRPO 原理`, `技术细节`, etc.) |
+| `docs/structure` | major | an Agent & LLM recipe (or new embodied/eval recipe) missing `Overview`/`概览` or `Setup and Run`/`安装与运行`, using legacy `一键上手`, keeping legacy split H2s (`Run It`/`运行`, `Run on Different Hardware Backends`/`在不同硬件后端上运行`), or keeping generic theory sections (`Algorithm`, `Model Architecture`, `GRPO 原理`, `技术细节`, etc.) |
 | `docs/rtd-link` | major | a hardcoded Read the Docs link to an RLinf page instead of `:doc:` or `:ref:` |
+| `docs/image-url` | major | a broken external figure/image URL (HTTP 4xx/5xx such as 404 on `RLinf/misc`) or a redirecting `github.com/<org>/<repo>/raw/` URL instead of `raw.githubusercontent.com/...` |
 | `docs/parity` | major or minor | a page, `conf.py`, or `_static` CSS/JS without its counterpart, differing toctrees, or diverged shared CSS/JS (`custom.css` / `sidebar-nav.js`) (major); a page or README changed while its counterpart did not (minor) |
 | `docs/heading` | minor | a code identifier in a heading outside Reference and Extending |
+| `docs/heading-length` | minor | an overly long heading (> 48 EN chars or > 20 ZH CJK-equivalent chars) |
 | `docs/en-style` | minor | a word or phrase that [rules/english.md](rules/english.md) cuts |
 | `docs/zh-style` | minor | 您, 「」, 值得注意的是, 进行, 当……时, 不是/并非……而是……, half-width punctuation in a Chinese sentence, or no space between Chinese and English or digits ([rules/chinese.md](rules/chinese.md)) |
 | `docs/zh-term` | minor | translated RL/system terms (`优势函数`, `策略损失`, `损失函数`, `规则奖励`, `奖励模型`, `新增环境`) in Chinese headings ([rules/glossary.md](rules/glossary.md)) |
 | `docs/zh-hard-wrap` | minor | Chinese prose wrapped inside a paragraph or list item, which renders as a space |
-| `docs/command-placeholder` | major | an `install.sh` or `hf download` command containing unrunnable `<...>` placeholders on `examples/` or `evaluations/` pages |
+| `docs/command-placeholder` | major | an `install.sh` or `hf download` command containing unrunnable `<...>` placeholders, or `/path/to/...` placeholders inside recipe/eval bash commands |
+| `docs/command-launcher` | major | bare `python examples/embodiment/train_embodied_agent.py` in a recipe instead of `bash examples/embodiment/run_embodiment.sh <config>` |
+| `docs/command-path` | minor | hardcoded root-level `/data/...` path in a recipe/eval bash command (prefer repo-relative `./data/...`) |
 | `docs/command-legacy` | major | `huggingface-cli download`, `pip install huggingface-hub`, `git lfs`, `git clone https://huggingface.co/`, or `CUDA_VISIBLE_DEVICES` (on recipes, eval guides, and `guides/`) |
 | `docs/command-cd` | major | `cd` immediately before `hf download`, or `--local-dir .` / `--local-dir /path/to/...` |
-| `docs/command-tabset` | major | an `install.sh` or `hf download` block on `examples/` or `evaluations/` (outside hardware-backend subsections) not wrapped in `.. tab-set::` |
+| `docs/command-tabset` | major | an `install.sh` or `hf download` block on `examples/` or `evaluations/` not wrapped in `.. tab-set::`, or a hollow `.. tab-set::` that wraps only install while leaving launch commands outside |
+| `docs/duplicate-commands` | minor | identical multi-line setup or launch bash blocks duplicated across multiple changed same-language recipe pages (link to the primary recipe or extract a `_*.rst` partial) |
 | `docs/command-bloat` | major | mega bash blocks combining `git clone` + launch script, >= 16 command lines outside `.. dropdown::`, shell argument arrays, or >= 6 Hydra overrides on one launch line |
 | `docs/nested-tabset` | major | nested `.. tab-set::` directives (stacked tab bars); flatten into one single-level `.. tab-set::` |
 | `docs/tab-title` | major | `.. tab-item::` title > 48 chars or concatenating `Model + Benchmark` (e.g. `OpenPI + RoboCasa`) |

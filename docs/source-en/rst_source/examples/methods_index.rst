@@ -78,6 +78,14 @@ Pick this section when choosing a training method rather than a benchmark or mod
 
       Evaluate offline samples conservatively with an ensemble advantage predictor.
 
+   .. grid-item-card:: SuperMimic
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/supermimic.jpg
+      :img-alt: SuperMimic overview
+      :link: embodied/supermimic
+      :link-type: doc
+
+      Train a G1 whole-body tracking policy through a differentiable world model in MuJoCo Warp.
+
 .. toctree::
    :hidden:
    :maxdepth: 2
@@ -91,3 +99,4 @@ Pick this section when choosing a training method rather than a benchmark or mod
    RL Token <embodied/rlt>
    SAC-Flow <embodied/sac_flow>
    STEAM <embodied/steam>
+   SuperMimic <embodied/supermimic>
