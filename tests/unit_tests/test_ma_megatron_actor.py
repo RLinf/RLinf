@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Multi-turn Megatron batches, packing, and weight-version bookkeeping.
+"""Multi-turn Megatron batches, packing, chunked LM head, and weight-version bookkeeping.
 
-The actor is built only in Megatron environments, so every test skips when
-`megatron.core` is absent. No Ray or GPUs are launched.
+Megatron-dependent cases skip when `megatron.core` is absent, while pure-PyTorch
+chunked LM head and config-validation cases always run. No Ray or GPUs are launched.
 """
 
 import copy
@@ -821,6 +821,14 @@ def _pipeline_output_projection(rank, rendezvous):
             with pytest.raises(ValueError, match="separate bias"):
                 install_chunked_projection(model)
             model.output_layer.skip_bias_add = False
+            model.output_layer.gather_output = True
+            with pytest.raises(ValueError, match="parallel_output"):
+                install_chunked_projection(model)
+            model.output_layer.gather_output = False
+            model.output_layer.config.logit_softcapping = 30.0
+            with pytest.raises(ValueError, match="logit_softcapping"):
+                install_chunked_projection(model)
+            model.output_layer.config.logit_softcapping = None
             with torch.no_grad():
                 model.output_layer.bias.copy_(torch.arange(8))
             hidden = torch.empty(5, 1, 4)
@@ -857,15 +865,21 @@ def _pipeline_output_projection(rank, rendezvous):
                     labels=labels,
                     label_mask=torch.ones_like(labels, dtype=torch.bool),
                     chunk_size=2,
-                ),
+                    calculate_entropy=True,
+                ) as captured,
             ):
                 count_mp.setattr(dist, "all_reduce", _count_all_reduce)
+                with pytest.raises(ValueError, match="runtime_gather_output"):
+                    model.output_layer(hidden, runtime_gather_output=True)
                 scores, _ = model.output_layer(hidden)
             assert all_reduce_calls == 0
-            expected = (
-                dense.transpose(0, 1).log_softmax(-1).gather(-1, labels[..., None])
-            )
+            assert scores.shape == (5, 1, 1)
+            dense_lp = dense.transpose(0, 1).log_softmax(-1)
+            expected = dense_lp.gather(-1, labels[..., None])
+            expected_entropy = -(dense_lp.exp() * dense_lp).sum(-1)
             torch.testing.assert_close(scores.transpose(0, 1), expected)
+            torch.testing.assert_close(captured["entropy"], expected_entropy)
+            assert not captured["entropy"].requires_grad
             grads = torch.autograd.grad(
                 scores.sum(), (hidden, model.output_layer.weight)
             )
@@ -953,7 +967,7 @@ def _check_tp_cp_chunked_actor(rank, init_file):
             torch.tensor([2, 10, 5, 1, 8, 3, 9, 4, 11, 0, 7, 6, 2, 5, 1, 9, 4, 3, 8]),
         ]
         masks = [
-            torch.tensor([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1], dtype=torch.bool),
+            torch.tensor([0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1], dtype=torch.bool),
             torch.tensor(
                 [0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1],
                 dtype=torch.bool,
@@ -963,13 +977,15 @@ def _check_tp_cp_chunked_actor(rank, init_file):
         class _TPCPStage(torch.nn.Module):
             pre_process = post_process = True
 
-            def __init__(self, chunked: bool):
+            def __init__(self, chunked: bool, sequence_parallel: bool):
                 super().__init__()
+                self.embed = torch.nn.Parameter(full_embed.clone())
+                self.sequence_parallel = sequence_parallel
                 cfg = ModelParallelConfig(
                     use_cpu_initialization=True,
                     tensor_model_parallel_size=2,
                     context_parallel_size=2,
-                    sequence_parallel=True,
+                    sequence_parallel=sequence_parallel,
                 )
                 self.output_layer = ColumnParallelLinear(
                     6,
@@ -988,12 +1004,13 @@ def _check_tp_cp_chunked_actor(rank, init_file):
             def forward(
                 self, input_ids, attention_mask, position_ids, packed_seq_params
             ):
-                hidden = full_embed[input_ids.T]
-                hidden_sp = hidden.chunk(2, dim=0)[tp_rank].contiguous()
-                out, _ = self.output_layer(hidden_sp)
+                hidden = self.embed[input_ids.T]
+                if self.sequence_parallel:
+                    hidden = hidden.chunk(2, dim=0)[tp_rank].contiguous()
+                out, _ = self.output_layer(hidden)
                 return out.transpose(0, 1).contiguous()
 
-        def run_actor_pass(chunk_size: int):
+        def run_actor_pass(chunk_size: int, sequence_parallel: bool):
             actor = MAMegatronActor.__new__(MAMegatronActor)
             actor.cfg = OmegaConf.create(
                 {
@@ -1008,7 +1025,9 @@ def _check_tp_cp_chunked_actor(rank, init_file):
                     },
                 }
             )
-            actor.transformer_config = SimpleNamespace(sequence_parallel=True)
+            actor.transformer_config = SimpleNamespace(
+                sequence_parallel=sequence_parallel
+            )
             actor.tokenizer = SimpleNamespace(eos_token_id=0)
             actor.clip_ratio_c, actor.clip_ratio_low, actor.clip_ratio_high = (
                 None,
@@ -1023,7 +1042,9 @@ def _check_tp_cp_chunked_actor(rank, init_file):
             actor.loss_agg_func = masked_mean
             actor.torch_platform = SimpleNamespace(current_device=lambda: "cpu")
 
-            model = _TPCPStage(chunked=chunk_size > 0)
+            model = _TPCPStage(
+                chunked=chunk_size > 0, sequence_parallel=sequence_parallel
+            )
             actor.return_loss = False
             infer_batch = {"input_ids": [r.clone() for r in rows]}
             with torch.no_grad():
@@ -1044,23 +1065,26 @@ def _check_tp_cp_chunked_actor(rank, init_file):
             scores, loss_fn = actor.get_forward_step_func()(iter([train_batch]), model)
             loss, metrics = loss_fn(scores)
             loss.backward()
+            assert model.embed.grad is not None and model.embed.grad.abs().sum() > 0
             return (
                 recomputed,
                 loss.detach(),
                 metrics["actor/entropy_loss"].detach(),
                 metrics["actor/kl_loss"].detach(),
+                model.embed.grad.detach().clone(),
                 model.output_layer.weight.grad.detach().clone(),
                 model.output_layer.bias.grad.detach().clone(),
             )
 
         with pytest.MonkeyPatch.context() as mpatch:
             mpatch.setattr(torch.cuda, "current_device", lambda: "cpu")
-            dense_res = run_actor_pass(0)
-            chunk_res = run_actor_pass(3)
-        for got_lp, want_lp in zip(chunk_res[0], dense_res[0], strict=True):
-            torch.testing.assert_close(got_lp, want_lp, atol=2e-6, rtol=2e-6)
-        for got, want in zip(chunk_res[1:], dense_res[1:], strict=True):
-            torch.testing.assert_close(got, want, atol=2e-6, rtol=2e-6)
+            for sequence_parallel in (True, False):
+                dense_res = run_actor_pass(0, sequence_parallel)
+                chunk_res = run_actor_pass(3, sequence_parallel)
+                for got_lp, want_lp in zip(chunk_res[0], dense_res[0], strict=True):
+                    torch.testing.assert_close(got_lp, want_lp, atol=2e-6, rtol=2e-6)
+                for got, want in zip(chunk_res[1:], dense_res[1:], strict=True):
+                    torch.testing.assert_close(got, want, atol=2e-6, rtol=2e-6)
     finally:
         parallel_state.destroy_model_parallel()
         dist.destroy_process_group()
@@ -1102,3 +1126,219 @@ def test_chunked_lm_head_rejects_unsupported_actor(
     )
     with pytest.raises(ValueError, match=message):
         validate_reasoning_cfg(cfg)
+
+
+@pytest.mark.parametrize(
+    "chunk_size,temperature,dtype,entropy",
+    [
+        (1, 0.7, torch.float32, False),
+        (4, 1.3, torch.float32, True),
+        (3, 1.0, torch.bfloat16, False),
+        (32, 1.0, torch.float16, False),
+    ],
+)
+def test_chunked_lm_head_matches_dense_values_and_gradients(
+    chunk_size, temperature, dtype, entropy, monkeypatch
+):
+    from rlinf.hybrid_engines.megatron.lm_head import chunked_vocab_parallel_log_probs
+
+    torch.manual_seed(81)
+    hidden = torch.randn(2, 7, 5, dtype=dtype, requires_grad=True)
+    weight = torch.randn(19, 5, dtype=dtype, requires_grad=True)
+    bias = torch.randn(19, dtype=dtype, requires_grad=True)
+    labels = torch.randint(19, (2, 7))
+    mask = torch.rand(2, 7) > 0.3
+    # Out-of-bounds labels at masked positions must be ignored without nonzero sync.
+    masked_labels = labels.masked_fill(~mask, -100)
+    scale = torch.randn(2, 7)
+    dense = torch.nn.functional.linear(hidden, weight, bias).float() / temperature
+    dense_log_probs = dense.log_softmax(-1)
+    expected = (
+        dense_log_probs.gather(-1, labels.unsqueeze(-1))
+        .squeeze(-1)
+        .masked_fill(~mask, 0)
+    )
+    reference_grads = torch.autograd.grad(
+        (expected * scale).sum(), (hidden, weight, bias)
+    )
+
+    def _forbid_nonzero(*args, **kwargs):
+        raise AssertionError("chunked_vocab_parallel_log_probs must not call nonzero()")
+
+    monkeypatch.setattr(torch.Tensor, "nonzero", _forbid_nonzero)
+    actual = chunked_vocab_parallel_log_probs(
+        hidden,
+        weight,
+        masked_labels,
+        mask,
+        chunk_size=chunk_size,
+        temperature=temperature,
+        bias=bias,
+        calculate_entropy=entropy,
+    )
+    torch.testing.assert_close(actual["log_probs"], expected, atol=2e-6, rtol=2e-6)
+    actual_grads = torch.autograd.grad(
+        (actual["log_probs"] * scale).sum(), (hidden, weight, bias)
+    )
+    tolerance = 0.02 if dtype in (torch.bfloat16, torch.float16) else 2e-6
+    for got, want in zip(actual_grads, reference_grads):
+        torch.testing.assert_close(got, want, atol=tolerance, rtol=tolerance)
+    if entropy:
+        assert not actual["entropy"].requires_grad
+        torch.testing.assert_close(
+            actual["entropy"], -(dense_log_probs.exp() * dense_log_probs).sum(-1)
+        )
+
+
+@pytest.mark.parametrize(
+    "fusion,need_dummy_grad",
+    [(True, True), (False, False), (False, True)],
+)
+def test_chunked_lm_head_accumulates_main_grad_without_double_add(
+    fusion, need_dummy_grad
+):
+    from rlinf.hybrid_engines.megatron.lm_head import chunked_vocab_parallel_log_probs
+
+    torch.manual_seed(93)
+    weight = torch.nn.Parameter(torch.randn(17, 5, dtype=torch.bfloat16))
+    weight.main_grad = torch.ones(17, 5, dtype=torch.float32)
+    weight.grad_added_to_main_grad = False
+    expected = weight.main_grad.clone()
+    for _ in range(2):
+        hidden = torch.randn(7, 5, dtype=torch.bfloat16, requires_grad=True)
+        labels = torch.randint(17, (7,))
+        dense = torch.nn.functional.linear(hidden, weight).float().log_softmax(-1)
+        expected += torch.autograd.grad(dense.gather(1, labels[:, None]).sum(), weight)[
+            0
+        ].float()
+        result = chunked_vocab_parallel_log_probs(
+            hidden,
+            weight,
+            labels,
+            torch.ones(7, dtype=torch.bool),
+            chunk_size=3,
+            gradient_accumulation_fusion=fusion,
+            need_dummy_grad=need_dummy_grad,
+        )
+        result["log_probs"].sum().backward()
+    torch.testing.assert_close(weight.main_grad, expected, atol=0.02, rtol=0.02)
+    assert weight.grad_added_to_main_grad
+    if need_dummy_grad:
+        torch.testing.assert_close(weight.grad, torch.zeros_like(weight))
+    else:
+        assert weight.grad is None
+
+
+def test_chunked_lm_head_skips_fsdp_and_empty_main_grad():
+    from rlinf.hybrid_engines.megatron.lm_head import chunked_vocab_parallel_log_probs
+
+    for make_unusable in ("fsdp", "empty"):
+        torch.manual_seed(94)
+        weight = torch.nn.Parameter(torch.randn(11, 4, dtype=torch.bfloat16))
+        weight.main_grad = torch.zeros(11, 4, dtype=torch.float32)
+        if make_unusable == "fsdp":
+            weight.__fsdp_param__ = True
+        else:
+            weight.main_grad.untyped_storage().resize_(0)
+        hidden = torch.randn(5, 4, dtype=torch.bfloat16, requires_grad=True)
+        labels = torch.randint(11, (5,))
+        dense = torch.nn.functional.linear(hidden, weight).float().log_softmax(-1)
+        (expected_grad,) = torch.autograd.grad(
+            dense.gather(1, labels[:, None]).sum(), weight
+        )
+        result = chunked_vocab_parallel_log_probs(
+            hidden,
+            weight,
+            labels,
+            torch.ones(5, dtype=torch.bool),
+            chunk_size=2,
+            need_dummy_grad=False,
+        )
+        result["log_probs"].sum().backward()
+        assert weight.grad is not None and weight.grad.dtype == torch.bfloat16
+        torch.testing.assert_close(weight.grad, expected_grad, atol=0.02, rtol=0.02)
+        if make_unusable == "fsdp":
+            torch.testing.assert_close(
+                weight.main_grad, torch.zeros_like(weight.main_grad)
+            )
+
+
+def _chunked_lm_head_tp_reference(rank, rendezvous):
+    from rlinf.hybrid_engines.megatron.lm_head import chunked_vocab_parallel_log_probs
+
+    dist.init_process_group(
+        "gloo",
+        init_method=rendezvous,
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=30),
+    )
+    try:
+        torch.manual_seed(17)
+        hidden = torch.randn(9, 5, requires_grad=True)
+        full_weight = torch.randn(22, 5, requires_grad=True)
+        labels = torch.tensor([0, 10, 11, 21, 3, 16, 7, 18, 20])
+        mask = torch.tensor([True, False, True, True, True, True, False, True, True])
+        scales = torch.randn(9)
+        reference = (hidden @ full_weight.t() / 0.7).log_softmax(-1)
+        reference = (
+            reference.gather(1, labels[:, None]).squeeze(1).masked_fill(~mask, 0)
+        )
+        dh, dw = torch.autograd.grad((reference * scales).sum(), (hidden, full_weight))
+        shard = full_weight.detach().chunk(2)[rank].clone().requires_grad_()
+        actual = chunked_vocab_parallel_log_probs(
+            hidden,
+            shard,
+            labels,
+            mask,
+            chunk_size=3,
+            temperature=0.7,
+            tp_group=dist.group.WORLD,
+        )
+        (actual["log_probs"] * scales).sum().backward()
+        dist.all_reduce(hidden.grad)
+        torch.testing.assert_close(actual["log_probs"], reference, atol=3e-6, rtol=3e-6)
+        torch.testing.assert_close(hidden.grad, dh, atol=3e-6, rtol=3e-6)
+        torch.testing.assert_close(shard.grad, dw.chunk(2)[rank], atol=3e-6, rtol=3e-6)
+    finally:
+        dist.destroy_process_group()
+
+
+def test_chunked_lm_head_two_rank_vocab_shards(tmp_path):
+    if not dist.is_gloo_available():
+        pytest.skip("The TP reference test requires Gloo")
+    mp.spawn(
+        _chunked_lm_head_tp_reference, args=((tmp_path / "tp-init").as_uri(),), nprocs=2
+    )
+
+
+def test_chunked_lm_head_accumulates_bias_gradient_across_chunks():
+    from rlinf.hybrid_engines.megatron.lm_head import chunked_vocab_parallel_log_probs
+
+    # Equal logits give a bias gradient of (+0.5, -0.5) for each target zero.
+    hidden = torch.zeros(1024, 1, dtype=torch.bfloat16)
+    weight = hidden.new_zeros(2, 1)
+    bias = hidden.new_zeros(2, requires_grad=True)
+    labels = torch.zeros(1024, dtype=torch.long)
+    scores = chunked_vocab_parallel_log_probs(
+        hidden, weight, labels, labels == 0, bias=bias, chunk_size=2
+    )
+    scores["log_probs"].sum().backward()
+    torch.testing.assert_close(bias.grad, bias.new_tensor([512, -512]), rtol=0, atol=0)
+
+
+def test_chunked_lm_head_accumulates_bf16_weight_gradient_across_chunks():
+    from rlinf.hybrid_engines.megatron.lm_head import chunked_vocab_parallel_log_probs
+
+    # Constant hidden=1 with equal logits gives (+0.5, -0.5) per token, which
+    # saturates at 256 if accumulated in BF16 across 2-token chunks.
+    hidden = torch.ones(4096, 1, dtype=torch.bfloat16)
+    weight = hidden.new_zeros(2, 1, requires_grad=True)
+    labels = torch.zeros(4096, dtype=torch.long)
+    scores = chunked_vocab_parallel_log_probs(
+        hidden, weight, labels, labels == 0, chunk_size=2
+    )
+    scores["log_probs"].sum().backward()
+    torch.testing.assert_close(
+        weight.grad, weight.new_tensor([[2048.0], [-2048.0]]), rtol=0, atol=0
+    )

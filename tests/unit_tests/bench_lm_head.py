@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Measure peak CUDA memory for dense and chunked BF16 LM head forward/backward."""
+"""Measure peak accelerator memory for dense and chunked BF16 LM head forward/backward."""
 
 import argparse
 import sys
@@ -24,22 +24,34 @@ import torch.nn.functional as F
 
 def measure(chunk_size, args):
     from rlinf.hybrid_engines.megatron.lm_head import chunked_vocab_parallel_log_probs
+    from rlinf.scheduler import Worker
+
+    platform = Worker.torch_platform
+    if (
+        platform is None
+        or not hasattr(platform, "is_available")
+        or not platform.is_available()
+    ):
+        raise RuntimeError(
+            "An accelerator supported by Worker.torch_platform is required."
+        )
+    device = torch.device(Worker.torch_device_type, platform.current_device())
 
     torch.manual_seed(0)
     hidden = torch.randn(
-        args.tokens, args.hidden_size, device="cuda", dtype=torch.bfloat16
+        args.tokens, args.hidden_size, device=device, dtype=torch.bfloat16
     )
     weight = torch.randn(
-        args.vocab_size, args.hidden_size, device="cuda", dtype=hidden.dtype
+        args.vocab_size, args.hidden_size, device=device, dtype=hidden.dtype
     )
     weight.mul_(args.hidden_size**-0.5)
     hidden.requires_grad_()
     weight.requires_grad_()
-    labels = torch.randint(args.vocab_size, (args.tokens,), device="cuda")
+    labels = torch.randint(args.vocab_size, (args.tokens,), device=device)
     mask = torch.ones_like(labels, dtype=torch.bool)
     for _ in range(2):  # Warm up once before recording the second pass.
         weight.grad = hidden.grad = None
-        torch.cuda.reset_peak_memory_stats()
+        platform.reset_peak_memory_stats()
         if chunk_size:
             scores = chunked_vocab_parallel_log_probs(
                 hidden, weight, labels, mask, chunk_size=chunk_size
@@ -54,8 +66,8 @@ def measure(chunk_size, args):
             )
         loss = -scores.mean()
         loss.backward()
-        torch.cuda.synchronize()
-        peak = torch.cuda.max_memory_allocated()
+        platform.synchronize()
+        peak = platform.max_memory_allocated()
         del loss, scores
     return peak / 2**30
 

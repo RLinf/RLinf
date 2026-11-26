@@ -299,7 +299,7 @@ jobs:
           export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
           source .venv/bin/activate
           python -c "import megatron.training; import torch.distributed as dist; assert dist.is_gloo_available()"
-          python -m pytest -q tests/unit_tests/test_ma_megatron_actor.py tests/unit_tests/test_megatron_lm_head.py
+          python -m pytest -q tests/unit_tests/test_ma_megatron_actor.py
           python -m pytest -q tests/unit_tests/test_utils.py -k "valid_token_scaling or critic_packing"
 
       - name: Train with SGLang Megatron Collocated mode

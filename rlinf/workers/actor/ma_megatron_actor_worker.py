@@ -224,16 +224,16 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     chunk_size=self.lm_head_chunk_size,
                     calculate_entropy=self.calculate_entropy,
                     need_dummy_grad=need_dummy_grad,
-                ):
+                ) as captured:
                     scores = model(
                         input_ids=input_ids.contiguous(),
                         attention_mask=None,
                         position_ids=position_ids,
                         packed_seq_params=packed_params,
                     )
-                output = {"log_probs": scores[..., 0].contiguous()}
+                output = {"log_probs": scores.squeeze(-1).contiguous()}
                 if self.calculate_entropy:
-                    output["entropy"] = scores[..., 1].detach().contiguous()
+                    output["entropy"] = captured["entropy"].detach().contiguous()
                 return output
 
         def process_logits(logits, label, label_mask):

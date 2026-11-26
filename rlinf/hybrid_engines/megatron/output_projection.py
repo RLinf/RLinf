@@ -36,17 +36,19 @@ def _resolve_output_layer(module: torch.nn.Module) -> torch.nn.Module:
     return layer
 
 
-# GPT still transposes the returned tensor. Use its normal forward path with one
-# score channel per token (two when entropy is requested) instead of a vocab axis.
+# GPT still transposes the returned tensor. Keep differentiable log_probs on
+# its normal forward path with one channel per token and pass structured scores
+# (including detached entropy) out through the active scoring context.
 _scoring = ContextVar("megatron_actor_output_scoring", default=None)
 
 
 @contextmanager
 def chunked_scoring(model, **score_args):
     layer = _resolve_output_layer(model)
-    token = _scoring.set((layer, score_args))
+    captured = {}
+    token = _scoring.set((layer, score_args, captured))
     try:
-        yield
+        yield captured
     finally:
         _scoring.reset(token)
 
@@ -57,6 +59,13 @@ class _ChunkedProjection:
         if scoring is None or scoring[0] is not self:
             return super().forward(input_, *args, **kwargs)
 
+        runtime_gather_output = kwargs.get(
+            "runtime_gather_output", args[1] if len(args) > 1 else None
+        )
+        if runtime_gather_output:
+            raise ValueError(
+                "Chunked LM head does not support runtime_gather_output=True"
+            )
         weight = kwargs.get("weight", args[0] if args else None)
         if weight is None:
             weight = self.weight
@@ -79,7 +88,8 @@ class _ChunkedProjection:
             gradient_accumulation_fusion=self.gradient_accumulation_fusion,
             **scoring[1],
         )
-        return torch.stack(list(scores.values()), dim=-1).transpose(0, 1), None
+        scoring[2].update(scores)
+        return scores["log_probs"].unsqueeze(-1).transpose(0, 1), None
 
 
 class ChunkedColumnParallelLinear(_ChunkedProjection, ColumnParallelLinear):
@@ -101,6 +111,10 @@ def install_chunked_projection(model, *, bridge=False):
         )
     if layer.is_expert:
         raise ValueError("Chunked LM head requires a vocabulary-parallel output layer")
+    if layer.gather_output:
+        raise ValueError(
+            "Chunked LM head requires parallel_output=True (gather_output=False)"
+        )
     if layer.skip_bias_add and layer.bias is not None:
         raise ValueError("Chunked LM head does not support returning a separate bias")
     config = layer.config
@@ -110,6 +124,8 @@ def install_chunked_projection(model, *, bridge=False):
         "defer_embedding_wgrad_compute",
         "fp8",
         "enable_autocast",
+        "final_logit_softcapping",
+        "logit_softcapping",
     ):
         if getattr(config, name, False):
             raise ValueError(f"Chunked LM head does not support {name}")

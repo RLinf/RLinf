@@ -111,13 +111,11 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
            rollout.model.model_path=./Qwen2.5-3B-Instruct \
            'data.train_data_paths=["./Search-R1-Data/train.jsonl"]'
 
-      .. dropdown:: PPO, FSDP GRPO, chunked GRPO, checkpoint export, and evaluation
+      .. dropdown:: PPO, FSDP GRPO, memory optimization, checkpoint export, and evaluation
 
          **Megatron PPO** (``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``): saves both ``actor`` and ``critic`` under each ``global_step_xxx``; set ``runner.resume_dir`` to resume both.
 
          **FSDP GRPO** (``examples/agent/searchr1/config/train_qwen2.5_fsdp.yaml``): enables dynamic rollout batches with ``actor.training_backend: fsdp`` and ``actor.pack_traj: True`` to pack compatible turns from the same trajectory and avoid recomputing shared prefixes.
-
-         **Chunked Megatron GRPO** (``examples/agent/searchr1/config/train_qwen2.5_chunked.yaml``): sets ``actor.model.lm_head_chunk_size: 256`` on top of ``train_qwen2.5.yaml`` so both the actor and reference model compute LM-head logits in 256-token chunks to reduce peak GPU memory.
 
          .. code-block:: bash
 
@@ -125,8 +123,8 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
               rollout.model.model_path=./Qwen2.5-3B-Instruct 'data.train_data_paths=["./Search-R1-Data/train.jsonl"]'
             bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp \
               rollout.model.model_path=./Qwen2.5-3B-Instruct 'data.train_data_paths=["./Search-R1-Data/train.jsonl"]'
-            bash examples/agent/searchr1/run_train.sh train_qwen2.5_chunked \
-              rollout.model.model_path=./Qwen2.5-3B-Instruct 'data.train_data_paths=["./Search-R1-Data/train.jsonl"]'
+
+         **Reduce LM-head GPU memory:** When long sequences hit memory limits, append ``actor.model.lm_head_chunk_size=256`` to any Megatron training command to compute LM-head logits in 256-token chunks and reduce peak GPU memory.
 
          **Export checkpoints to Hugging Face and evaluate** (uses ``examples/agent/searchr1/config/eval_qwen2.5.yaml``):
 

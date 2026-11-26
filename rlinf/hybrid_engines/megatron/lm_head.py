@@ -271,17 +271,12 @@ def chunked_vocab_parallel_log_probs(
     if tp_group is not None and dist.get_world_size(tp_group) <= 1:
         tp_group = None
     flat_mask = label_mask.reshape(-1).bool()
-    positions = (
-        torch.arange(labels.numel(), device=labels.device)
-        if calculate_entropy
-        else flat_mask.nonzero(as_tuple=True)[0]
-    )
     flat_hidden = hidden.reshape(-1, hidden.shape[-1])
-    selected, entropy = _ChunkedLogProbs.apply(
-        flat_hidden[positions],
+    log_probs, entropy = _ChunkedLogProbs.apply(
+        flat_hidden,
         weight,
         bias,
-        labels.reshape(-1).masked_fill(~flat_mask, 0)[positions],
+        labels.reshape(-1).masked_fill(~flat_mask, 0),
         chunk_size,
         temperature,
         tp_group,
@@ -289,7 +284,6 @@ def chunked_vocab_parallel_log_probs(
         gradient_accumulation_fusion,
         need_dummy_grad,
     )
-    log_probs = selected.new_zeros(labels.numel()).scatter(0, positions, selected)
     result = {"log_probs": log_probs.masked_fill(~flat_mask, 0).view_as(labels)}
     if entropy is not None:
         result["entropy"] = entropy.view_as(labels)
