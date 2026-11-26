@@ -46,6 +46,7 @@ bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
 ## 最新动态
 
+- [2026/11] 🔥 RLinf 支持用 RPent 规划器多轮数据对 Qwen3.8-27B 做全量或 LoRA 微调，并支持导出或合并 HuggingFace adapter。文档：[Qwen-VL 监督微调](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html#rpent-planner-sft)。
 - [2026/11] 🔥 RLinf 新增 FlexRLT，可直接用冻结 VLA 的特征训练小型 actor 和 critic，并分别选择特征表示、网络、AC/TD3 算法及 STEAM 门控。文档：[FlexRLT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/flexrlt.html)。
 - [2026/11] 🔥 RLinf 支持在 [DexJoCo](https://github.com/brave-eai/dexjoco) 灵巧操作基准上用 SFT 和 PPO 训练 CNN 和 π₀.₅ policy。PPO 将 π₀.₅ 在 `water_plant` 上的成功率从 SFT 后的 78.1% 提升至 98.4%。文档：[基于 DexJoCo 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html)。
 - [2026/11] 🔥 RLinf 支持奖励反馈学习（ReFL），使用 ImageReward 微调 SD3.5 Medium。文档：[ReFL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/refl.html)。
@@ -55,11 +56,11 @@ bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 - [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) 接入 RLinf 作为分布式 rollout 与训练运行时，并集成了[示范协同训练（Co-Training）](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/co_training.html)用于 VLA 强化学习后训练。
 - [2026/11] 🎉 [RLinf 官网](https://rlinf.org/zh/)上线了！欢迎阅读[博客](https://rlinf.org/zh/blog/)并查看[社区活动](https://rlinf.org/zh/events/)。
 - [2026/11] 🔥 RLinf 接入 MuJoCo Warp，支持五个经典运动控制任务的 GPU 批量仿真及 MLP + PPO 示例。文档：[MuJoCo Warp](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/mujoco_warp.html)。
-- [2026/11] 🔥 RLinf 支持 LeKiwi 三轮全向移动底盘，提供分部件调试工具，并注册了真机驱动环境。文档：[LeKiwi](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lekiwi.html)。
 
 <details>
 <summary><b>更多更新</b></summary>
 
+- [2026/11] 🔥 RLinf 支持 LeKiwi 三轮全向移动底盘，提供分部件调试工具，并注册了真机驱动环境。文档：[LeKiwi](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lekiwi.html)。
 - [2026/11] 🔥 RLinf 支持双臂 ARX X5 搭配 Pico 遥操作的数据采集。文档：[ARX X5](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/arx5.html)。
 - [2026/11] 🔥 RLinf 为异步 agentic RL 提供 session server：轨迹留在 rollout 节点上，不再集中到 node 0；请求经 SGLang router 路由；agent 可以直接使用 OpenAI chat completions 接口。文档：[Session Server](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/session_server.html)。
 - [2026/11] 🔥 RLinf 支持异步 agentic RL：rollout 持续生成，actor 同时用更早权重版本的数据训练，staleness 有上限。在 Search-R1（GLM-4.7-Flash）上，每步耗时从 278.6 s 降到 139.0 s，reward 与同步训练相当。文档：[异步 agentic RL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/async_agentic.html)、[Search-R1 异步训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/searchr1/async.html)。
@@ -265,6 +266,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">Qwen2.5-VL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL-MoE</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html#rpent-planner-sft">Qwen3.8-27B</a> ✅</li>
           </ul>
           <li><b>世界模型</b></li>
           <ul>

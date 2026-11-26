@@ -47,6 +47,7 @@ That launches ManiSkill3 PPO MLP training on one GPU. Next, follow the [Quick St
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports full-parameter and LoRA SFT for Qwen3.8-27B on multi-turn RPent planner data, with HuggingFace adapter export and merging. Doc: [Qwen-VL SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html#rpent-planner-sft).
 - [2026/11] 🔥 RLinf supports FlexRLT: train a compact actor-critic from frozen VLA features, with configurable heads, AC/TD3 updates, and STEAM routing. Doc: [FlexRLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html).
 - [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
 - [2026/11] 🔥 RLinf supports Reward Feedback Learning (ReFL) for fine-tuning SD3.5 Medium with ImageReward. Doc: [ReFL](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html).
@@ -56,11 +57,11 @@ That launches ManiSkill3 PPO MLP training on one GPU. Next, follow the [Quick St
 - [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) adopts RLinf as a distributed rollout and training runtime and integrates [demonstration co-training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/co_training.html) for VLA RL post-training.
 - [2026/11] 🎉 The [RLinf website](https://rlinf.org/) is live. Read our [blog posts](https://rlinf.org/en/blog/) and browse [community events](https://rlinf.org/en/events/).
 - [2026/11] 🔥 RLinf supports MuJoCo Warp for batched GPU simulation on five classic locomotion tasks with an MLP + PPO recipe. Doc: [MuJoCo Warp](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/mujoco_warp.html).
-- [2026/11] 🔥 RLinf supports LeKiwi, a three-wheel omnidirectional mobile base, with per-part bring-up tools and a registered real-world drive environment. Doc: [LeKiwi](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lekiwi.html).
 
 <details>
 <summary><b>More updates</b></summary>
 
+- [2026/11] 🔥 RLinf supports LeKiwi, a three-wheel omnidirectional mobile base, with per-part bring-up tools and a registered real-world drive environment. Doc: [LeKiwi](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lekiwi.html).
 - [2026/11] 🔥 RLinf supports dual-arm ARX X5 data collection with Pico teleoperation. Doc: [ARX X5](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/arx5.html).
 - [2026/11] 🔥 RLinf supports a session server for asynchronous agentic RL: trajectories stay on the rollout nodes instead of node 0, requests are routed by an SGLang router, and agents can use the OpenAI chat completions API. Doc: [Session Server](https://rlinf.readthedocs.io/en/latest/rst_source/guides/session_server.html).
 - [2026/11] 🔥 RLinf supports asynchronous agentic RL: the rollout keeps generating while the actor trains on data from an earlier weight version, with bounded staleness. On Search-R1 with GLM-4.7-Flash, the step time drops from 278.6 s to 139.0 s with a comparable reward. Docs: [Asynchronous Agentic RL](https://rlinf.readthedocs.io/en/latest/rst_source/guides/async_agentic.html), [Asynchronous Search-R1 Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/async.html).
@@ -265,6 +266,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen2.5-VL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL-MoE</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html#rpent-planner-sft">Qwen3.8-27B</a> ✅</li>
           </ul>
           <li><b>World Model</b></li>
           <ul>

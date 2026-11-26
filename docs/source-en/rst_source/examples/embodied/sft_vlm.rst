@@ -20,17 +20,17 @@ Full-parameter SFT for Qwen-VL models on the Robo2VLM visual-QA dataset, with FS
    .. grid-item-card:: Models
       :text-align: center
 
-      Qwen2.5-VL · Qwen3-VL · Qwen3-VL-MoE
+      Qwen2.5-VL · Qwen3-VL · Qwen3-VL-MoE · Qwen3.8-27B
 
    .. grid-item-card:: Methods
       :text-align: center
 
-      Full-parameter SFT
+      Full-parameter SFT · LoRA
 
    .. grid-item-card:: Data
       :text-align: center
 
-      Robo2VLM (visual QA)
+      Robo2VLM (visual QA) · RPent
 
    .. grid-item-card:: Hardware
       :text-align: center
@@ -170,7 +170,7 @@ Setup and Run
    - ``convertor.ckpt_path``: path to ``full_weights.pt``
    - ``convertor.save_path``: output HF model directory
    - ``model.model_path``: base model path
-   - ``model.model_type``: model type (``qwen2.5_vl``, ``qwen3_vl``, or ``qwen3_vl_moe``)
+   - ``model.model_type``: model type (``qwen2.5_vl``, ``qwen3_vl``, ``qwen3_vl_moe``, or ``qwen3_5``)
 
    Then run the built-in FSDP-to-HF converter:
 
@@ -180,7 +180,7 @@ Setup and Run
           --config-path rlinf/utils/ckpt_convertor/fsdp_convertor/config \
           --config-name fsdp_model_convertor
 
-   See :doc:`Checkpoint conversion <../../guides/convertor>` for details.
+   For Qwen3.8-27B or LoRA checkpoints, pass the run's saved ``logs/<timestamp>/tensorboard/config.yaml`` via ``+convertor.train_config_path``. The converter merges LoRA adapters into the base weights by default; set ``convertor.merge_lora_weighs=False`` to save the adapter alone under ``lora_adapter/``. See :doc:`Checkpoint conversion <../../guides/convertor>` for details.
 
 .. dropdown:: Troubleshooting
 
@@ -198,6 +198,45 @@ Setup and Run
         - Reduce ``micro_batch_size`` first, then ``num_workers``; if it persists, use a smaller model or shorter input length.
       * - Quick verification
         - Use a small data subset, set ``max_epochs: 1``, and lower ``save_interval`` for faster feedback.
+
+.. dropdown:: RPent planner SFT (Qwen3.8-27B)
+   :name: rpent-planner-sft
+
+   Fine-tune Qwen3.8-27B (``qwen3_5`` architecture) on multi-turn `RPent <https://github.com/RLinf/RPent>`_ planner data with ``examples/sft/config/qwen3_8_27b_rpent_sft.yaml``. Image paths resolve relative to each JSONL file, and loss applies only to the target assistant reply and tool calls.
+
+   Reuse the ``agentic --engine sglang`` environment installed above, with a ``transformers`` version that supports ``qwen3_5``.
+
+   Set ``RPENT_SAMPLES_PATH`` to your JSONL file or directory and ``QWEN3_8_MODEL_PATH`` to a local checkpoint (leave it unset to load ``Qwen/Qwen3.8-27B`` from HuggingFace). Launch full-parameter or rank-16 LoRA SFT from the repository root:
+
+   .. code-block:: bash
+
+      export RPENT_SAMPLES_PATH=./rpent_samples.jsonl
+      export QWEN3_8_MODEL_PATH=./Qwen3.8-27B
+
+      # Full-parameter SFT (default)
+      bash examples/sft/run_vlm_sft.sh qwen3_8_27b_rpent_sft
+
+      # LoRA SFT (rank 16 on language-model attention and MLP layers)
+      bash examples/sft/run_vlm_sft.sh qwen3_8_27b_rpent_sft actor.model.is_lora=true
+
+   Each JSONL record contains these fields:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 22 78
+
+      * - Field
+        - Description
+      * - ``episode_id``, ``turn_id``
+        - Episode and turn identifiers.
+      * - ``tools``
+        - Available tool definitions.
+      * - ``messages``
+        - Conversation history.
+      * - ``target``
+        - Target assistant reply and tool calls.
+
+   To export or merge a trained checkpoint to HuggingFace format, follow *Checkpoint conversion* above and pass the run's saved ``config.yaml`` via ``+convertor.train_config_path``.
 
 Visualization and Results
 -------------------------
