@@ -85,8 +85,10 @@ class MultiStepRolloutWorker(Worker):
 
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
         self.enable_offload = self.cfg.rollout.get("enable_offload", False)
-        if self.enable_offload:
-            self.device = self.torch_platform.current_device()
+        self.device = "cpu"
+        if self.torch_platform is not None:
+            device_index = self.torch_platform.current_device()
+            self.device = f"{self.torch_device_type}:{device_index}"
 
         self.placement = HybridComponentPlacement(cfg, Cluster())
 
@@ -230,7 +232,7 @@ class MultiStepRolloutWorker(Worker):
             self.hf_model.load_state_dict(model_dict)
 
         self.prefix_runtime = PrefixRolloutRuntime.build(
-            self.cfg, self.hf_model, device=f"{self.torch_device_type}:{self.device}"
+            self.cfg, self.hf_model, device=self.device
         )
 
         rlt_feature_model_config = OmegaConf.select(
