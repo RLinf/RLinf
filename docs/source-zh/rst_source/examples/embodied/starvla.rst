@@ -1,5 +1,5 @@
-StarVLA 模型强化学习训练
-========================================
+StarVLA 强化学习
+================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/starvla.png
    :align: center
@@ -7,9 +7,7 @@ StarVLA 模型强化学习训练
 
    StarVLA：模块化的 VLM backbone + action head。
 
-使用 RLinf 对 **StarVLA** 模型进行强化学习微调。StarVLA 是一个开源的
-Vision-Language-Action 工具箱，支持将 VLM backbone 与 action head 以模块化方式组合；
-本示例采用 **QwenOFT** 设置，在 **LIBERO** 上使用 GRPO 训练。
+使用 RLinf 对 **StarVLA** 模型做强化学习微调。StarVLA 是一个开源的 Vision-Language-Action 工具箱，支持将 VLM backbone 与 action head 模块化组合；本示例采用 **QwenOFT** 设置，在 **LIBERO** 上使用 GRPO 训练。
 
 概览
 ----------------------------------------
@@ -37,7 +35,7 @@ Vision-Language-Action 工具箱，支持将 VLM backbone 与 action head 以模
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1 节点 · NVIDIA CUDA · :ref:`华为昇腾 CANN <starvla-hardware>` （QwenOFT + LIBERO）
+      1 节点 · NVIDIA CUDA · :ref:`华为昇腾 CANN <starvla-hardware>`\ （QwenOFT + LIBERO）
 
 | **你将完成：** 安装 → 下载 StarVLA checkpoint 与 base VLM → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一个 StarVLA LIBERO checkpoint 与 Qwen2.5-VL 基座（见下文）。
@@ -94,162 +92,113 @@ Vision-Language-Action 工具箱，支持将 VLM backbone 与 action head 以模
 * ``wrist_images``：腕部视角 RGB，``torch.uint8``，形状 ``[B, H, W, 3]``。
 * ``extra_view_images``：其他视角 RGB，推荐形状 ``[B, V, H, W, 3]``\ （``V`` 为额外视角数）。若仅提供单个额外视角，也允许 ``[B, H, W, 3]``，等价视为 ``V=1``。
 
-在 LIBERO 的默认实现中，``states`` 的常见定义为末端位置 ``(x, y, z)``\ （3 维）、
-末端姿态轴角 ``(rx, ry, rz)``\ （3 维）与夹爪状态（原始 2 维），因此常见
-``D_state = 3 + 3 + 2 = 8``。若 checkpoint 期望 7 维状态，wrapper 会将 2 维夹爪状态压缩为
-``[x, y, z, rx, ry, rz, g_mean]``，其中 ``g_mean = 0.5 * (g0 + g1)``。
+在 LIBERO 的默认实现中，``states`` 的常见定义为末端位置 ``(x, y, z)``\ （3 维）、末端姿态轴角 ``(rx, ry, rz)``\ （3 维）与夹爪状态（原始 2 维），因此常见 ``D_state = 3 + 3 + 2 = 8``。若 checkpoint 期望 7 维状态，wrapper 会将 2 维夹爪状态压缩为 ``[x, y, z, rx, ry, rz, g_mean]``，其中 ``g_mean = 0.5 * (g0 + g1)``。
 
-StarVLA 推理输出动作块 ``[B, T, D_action]``，其中
-``T = actor.model.num_action_chunks``\ （planning horizon），
-``D_action = actor.model.action_dim``\ （LIBERO 常用 7）。Rollout 采用 receding-horizon：
-每次 forward 产生长度 ``T`` 的动作序列，环境执行前 ``N`` 步（``1 <= N <= T``）后重新规划。
-
-安装
-----------------------------------------
-
-NVIDIA CUDA 可使用以下两种安装方式。华为昇腾 CANN 请参照 :ref:`starvla-hardware`。
-
-.. include:: _setup_common.rst
-
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.4-maniskill_libero``：
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 国内镜像加速：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   # 进入容器后，切换到 StarVLA 虚拟环境：
-   source switch_env starvla
-
-**选项 2：自定义环境** —— 安装套件 ``--env maniskill_libero``：
-
-.. code:: bash
-
-   # 为提高国内依赖安装速度，可以添加 --use-mirror。
-   bash requirements/install.sh embodied --model starvla --env maniskill_libero
-   source .venv/bin/activate
-
-下载模型
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-下载 StarVLA checkpoint 与 base VLM：
-
-.. code-block:: bash
-
-   # 方式1：使用 git clone
-   git lfs install
-   git clone https://huggingface.co/StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1
-   git clone https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
-
-   # 方式2：使用 huggingface-hub（国内可设置 HF_ENDPOINT=https://hf-mirror.com）
-   pip install -U huggingface-hub
-   hf download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
-   hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
-
-.. note::
-
-   下载完成后，请修改 ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` 中的
-   ``framework.qwenvl.base_vlm``，使其指向 ``Qwen2.5-VL-3B-Instruct`` 的本地路径。
-
-运行
-----------------------------------------
-
-**1. 配置**
-
-StarVLA + GRPO + LIBERO Spatial 使用
-``examples/embodiment/config/libero_spatial_grpo_starvla.yaml``。将模型路径指向你的下载，并设置动作接口：
-
-.. code-block:: yaml
-
-   defaults:
-      - env/libero_spatial@env.train
-      - env/libero_spatial@env.eval
-
-   rollout:
-     model:
-       model_path: "/path/to/model"
-
-   actor:
-     model:
-       model_path: "/path/to/model"
-       action_dim: 7
-       num_action_chunks: 8
-       action_stats_source: "minmax"
-       starvla:
-         framework_name: "QwenOFT"
-         expected_action_dim: ${actor.model.action_dim}
-         expected_num_action_chunks: ${actor.model.num_action_chunks}
-         enable_state_input: False
-
-**2. 启动**
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_starvla
-
-评估建议采用 RLinf 统一的评估流程，详见 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`。
+StarVLA 推理输出动作块 ``[B, T, D_action]``，其中 ``T = actor.model.num_action_chunks``\ （planning horizon），``D_action = actor.model.action_dim``\ （LIBERO 常用 7）。Rollout 采用 receding-horizon：每次 forward 产生长度 ``T`` 的动作序列，环境执行前 ``N`` 步（``1 <= N <= T``）后重新规划。
 
 .. _starvla-hardware:
 
-在不同硬件后端上运行
-----------------------------------------
+安装与运行
+----------
 
-NVIDIA 使用上面的安装与启动步骤。华为昇腾 CANN 支持在 LIBERO 上使用 GRPO 训练 StarVLA（QwenOFT）。昇腾使用相同的 checkpoint 与任务配置，并通过 OSMesa 在 CPU 上渲染。
+.. include:: _setup_common.rst
 
-华为昇腾 CANN
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. tab-set::
 
-RLinf 安装器将 starVLA 固定为 ``starVLA-v1.6``，并在 aarch64 上从源码构建 ``decord``。如果通过 ``STARVLA_PATH`` 复用上游代码目录，也需确保其版本为 ``starVLA-v1.6``。
+   .. tab-item:: NVIDIA CUDA
+      :sync: cuda
 
-使用昇腾 LIBERO 容器，或已安装 CANN 与 NPU 驱动的宿主机：
+      **1. 安装环境**
 
-.. include:: _ascend_libero.rst
+      .. code-block:: bash
 
-在容器内使用 RLinf 代码创建 StarVLA 环境，也可以直接在昇腾宿主机上运行相同命令：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model starvla --env maniskill_libero && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. 下载模型**
 
-   bash requirements/install.sh --platform ascend embodied --model starvla --env libero
-   source .venv/bin/activate
+      下载 StarVLA checkpoint 与 Qwen2.5-VL 基座模型：
 
-国内下载可添加 ``--use-mirror``。安装器会安装匹配的 ``torch-npu`` 包，并跳过 CUDA flash-attention。
+      .. code-block:: bash
 
-按上文下载 StarVLA checkpoint 与 Qwen2.5-VL 基座模型。在 checkpoint 的 ``config.yaml`` 中，将 ``framework.qwenvl.base_vlm`` 设置为基座模型的本地路径；在 ``examples/embodiment/config/libero_spatial_grpo_starvla.yaml`` 中，将 ``actor.model.model_path`` 与 ``rollout.model.model_path`` 均设置为 StarVLA checkpoint 的本地目录。
+         hf download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 
-在已激活的环境中启用软件渲染：
+      下载完成后，将 ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` 中的 ``framework.qwenvl.base_vlm`` 指向本地 ``Qwen2.5-VL-3B-Instruct`` 目录。
 
-.. include:: _libero_osmesa.rst
+      .. include:: _model_path.rst
 
-默认配置使用一个节点，将 actor、rollout 和环境 worker 放置在所有可用设备上。根据 NPU 数量与显存调整 ``cluster.component_placement``、``actor.micro_batch_size``、``actor.global_batch_size``，以及训练和评估的 ``total_num_envs``，然后启动 LIBERO Spatial 训练：
+      **3. 启动训练**
 
-.. code-block:: bash
+      StarVLA + GRPO + LIBERO Spatial 使用 ``examples/embodiment/config/libero_spatial_grpo_starvla.yaml``。启动 GRPO 训练：
 
-   bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_starvla
+      .. code-block:: bash
 
-如果使用 Qwen2.5-VL checkpoint，可以在实验配置中启用以下选项，减少 attention 中的数据复制和重复算子下发：
+         bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_starvla
 
-.. code-block:: yaml
+      独立评估详见 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`。
 
-   actor:
-     model:
-       starvla:
-         enable_npu_attention: True
+   .. tab-item:: 华为昇腾 CANN
+      :sync: ascend
 
-该选项同时作用于 actor 和 rollout 模型，默认关闭，仅在昇腾上生效。StarVLA 安装器提供所需的 Transformers ``4.57.6`` 版本。
+      华为昇腾 CANN 支持在 LIBERO 上使用 GRPO 训练 StarVLA（QwenOFT），使用相同的 checkpoint 与任务配置，并通过 OSMesa 在 CPU 上渲染。
+
+      **1. 安装环境**
+
+      RLinf 安装器将 starVLA 固定为 ``starVLA-v1.6``，并在 aarch64 上从源码构建 ``decord``。如果通过 ``STARVLA_PATH`` 复用上游代码目录，也需确保其版本为 ``starVLA-v1.6``。
+
+      使用昇腾 LIBERO 容器，或已安装 CANN 与 NPU 驱动的宿主机：
+
+      .. include:: _ascend_libero.rst
+
+      在容器内使用 RLinf 代码创建 StarVLA 环境，也可以直接在昇腾宿主机上运行相同命令（会安装匹配的 ``torch-npu`` 包并跳过 CUDA flash-attention）：
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform ascend embodied --model starvla --env libero && source .venv/bin/activate
+
+      **2. 下载模型**
+
+      下载 StarVLA checkpoint 与 Qwen2.5-VL 基座模型：
+
+      .. code-block:: bash
+
+         hf download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
+
+      将 ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` 中的 ``framework.qwenvl.base_vlm`` 设置为基座模型的本地路径。
+
+      .. include:: _model_path.rst
+
+      **3. 启动训练**
+
+      在已激活的环境中启用软件渲染：
+
+      .. include:: _libero_osmesa.rst
+
+      默认配置使用一个节点，将 actor、rollout 和环境 worker 放置在所有可用设备上。按 NPU 数量与显存调整 ``examples/embodiment/config/libero_spatial_grpo_starvla.yaml`` 中的 ``cluster.component_placement``、``actor.micro_batch_size``、``actor.global_batch_size``，以及训练和评估的 ``total_num_envs``，然后启动 LIBERO Spatial 训练：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_starvla
+
+      如果使用 Qwen2.5-VL checkpoint，可以在实验配置中启用以下选项，减少 attention 中的数据复制和重复算子下发：
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             starvla:
+               enable_npu_attention: True
+
+      该选项同时作用于 actor 和 rollout 模型，默认关闭，仅在昇腾上生效。StarVLA 安装器提供所需的 Transformers ``4.57.6`` 版本。
 
 可视化与结果
 ----------------------------------------
 
-关注任务成功率指标 ``env/success_once``。各项指标的含义见
-:doc:`训练指标 <../../reference/metrics>`。
+执行 ``tensorboard --logdir ./logs --port 6006`` 启动 TensorBoard，关注任务成功率指标 ``env/success_once``。传入 ``env.eval.video_cfg.save_video=True`` 可保存评估视频，完整指标与日志后端说明见 :doc:`训练指标 <../../reference/metrics>`。
 
-参考曲线（采用的模型来自
-`LIBERO_BASELIEN_FORJINHUI_10K_QWENOFT <https://huggingface.co/JasonYang66/LIBERO_BASELIEN_FORJINHUI_10K_QWENOFT>`_）：
+参考曲线（采用的模型来自 `LIBERO_BASELIEN_FORJINHUI_10K_QWENOFT <https://huggingface.co/JasonYang66/LIBERO_BASELIEN_FORJINHUI_10K_QWENOFT>`_）：
 
 .. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/libero_goal_starvla_baseline.png
    :alt: LIBERO Goal StarVLA baseline result curve

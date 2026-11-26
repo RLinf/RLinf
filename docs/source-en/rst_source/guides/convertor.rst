@@ -1,4 +1,4 @@
-Checkpoint Convertor
+Checkpoint Conversion
 =====================
 
 RLinf provides Megatron-LM and FSDP checkpoint convertor scripts, supporting converting from ``.distcp`` or ``.pt`` format checkpoint files to ``.safetensors`` format.
@@ -22,18 +22,18 @@ The FSDP checkpoint file structure is as follows:
    │       │   ├── __2_0.distcp
    │       │   └── __3_0.distcp
    │       └── model_state_dict/
-   │           └── full_weigths.pt
+   │           └── full_weights.pt
    └── global_step_20/
        └── …
 
-RLinf saves a complete copy of model weights when saving checkpoints, such as ``global_step_10/actor/model_state_dict/full_weigths.pt``.
+RLinf saves a complete copy of model weights when saving checkpoints, such as ``global_step_10/actor/model_state_dict/full_weights.pt``.
 This pt file can be used to evaluate checkpoints (set ``runner.ckpt_path`` to this file path), or continue converting to safetensors format.
 
 
 Converting distcp Format to pt Format
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-If you are using the latest code to save checkpoints, the ``model_state_dict/full_weigths.pt`` file has already been saved, and you can skip this step.
+If you are using the latest code to save checkpoints, the ``model_state_dict/full_weights.pt`` file has already been saved, and you can skip this step.
 If you still want to convert the saved ``.distcp`` files to ``.pt`` format, or if you are using older code that only saved ``.distcp`` format files, you can use ``RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/convert_dcp_to_pt.py``
 to first convert ``.distcp`` to ``.pt`` format, then proceed with subsequent operations.
 
@@ -49,48 +49,52 @@ Where ``DCP_PATH`` is the directory containing DCP files, and ``OUTPUT_PATH`` is
 Converting pt Format to safetensors Format
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1. **Modify the config file**
+1. **Run the convertor with your training config (recommended)**
 
-Before running the convertor script, please modify the ``RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/config/fsdp_model_convertor.yaml`` file.
-Please check that the following 7 parameters are correct:
-
-    ``defaults``, ``convertor.save_path``, ``convertor.merge_lora_weighs``, ``convertor.ckpt_path``, 
-    ``model.model_type``, ``model.model_path``, ``model.is_lora``
-
-.. code-block:: yaml
-
-    defaults:
-        - model/openvla_oft@model                                    # Default model parameters, specify the corresponding model according to the model type to be converted
-        - override hydra/job_logging: stdout
-
-    convertor:
-        save_path: /path/to/save                                     # Path to save converted files
-        merge_lora_weighs: True                                      # Whether to save merged LoRA weights, if set to False, only LoRA weights will be saved
-        ckpt_path: /path/to/model_state_dict/full_weights.pt         # Complete model weights file
-
-    # Override the default values in model/openvla_oft
-    model:
-        model_type: "openvla_oft"                                    # Model type, specify according to the model type to be converted
-        model_path: "/path/to/Openvla-oft-SFT-libero-goal-traj1/"    # Initial model weights
-        is_lora: True                                                # Whether LoRA is enabled
-
-
-2. **（Optional）Add model_save_helper**
-
-If your model has special saving logic, please add the corresponding save function in the ``get_model_save_helper`` in the ``RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/utils.py`` file.
-
-3. **Run the script**
-
+From the repository root, pass the resolved training config (``convertor.train_config_path``), checkpoint path, and output directory directly via CLI overrides:
 
 .. code-block:: bash
 
    python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
-       --config-path /path/to/RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/config \
-       --config-name fsdp_model_convertor
+       convertor.train_config_path=/path/to/train_config.yaml \
+       convertor.ckpt_path=/path/to/model_state_dict/full_weights.pt \
+       convertor.save_path=/path/to/save
 
-4. **View saved safetensors files**
+Pass ``convertor.merge_lora_weighs=False`` if you want to save only the LoRA adapter weights instead of merging them into the base model.
 
-After the script runs successfully, you can view the HuggingFace format files saved under ``convertor.save_path``.
+2. **View saved safetensors files**
+
+After the script finishes, the Hugging Face format model files are written under ``convertor.save_path``.
+
+.. dropdown:: Optional: standalone YAML configuration (manual)
+
+   If you do not have the training config YAML, edit ``fsdp_model_convertor.yaml`` (in the FSDP convertor ``config`` directory shown in the command below) and verify ``defaults``, ``convertor.save_path``, ``convertor.merge_lora_weighs``, ``convertor.ckpt_path``, ``model.model_type``, ``model.model_path``, and ``model.is_lora``:
+
+   .. code-block:: yaml
+
+      defaults:
+        - model/openvla_oft@model
+        - override hydra/job_logging: stdout
+
+      convertor:
+        save_path: /path/to/save
+        merge_lora_weighs: True
+        ckpt_path: /path/to/model_state_dict/full_weights.pt
+
+      model:
+        model_type: "openvla_oft"
+        model_path: "/path/to/Openvla-oft-SFT-libero-goal-traj1/"
+        is_lora: True
+
+   Then run the convertor with that config:
+
+   .. code-block:: bash
+
+      python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
+          --config-path "$(pwd)/rlinf/utils/ckpt_convertor/fsdp_convertor/config" \
+          --config-name fsdp_model_convertor
+
+   If a custom model needs special export logic, register a matching save helper in the FSDP checkpoint convertor utilities.
 
 
 Megatron Convertor Script
@@ -117,41 +121,36 @@ The Megatron checkpoint file structure is as follows:
        └── …
 
 
-Run the following commands directly. Set:
-1. ``CKPT_PATH_MG`` (Megatron checkpoint path, e.g., ``results/run_name/checkpoints/global_step_xx/actor/``),
-2. ``CKPT_PATH_HF`` (HuggingFace target path), and
-3. ``CKPT_PATH_ORIGINAL_HF`` (base model checkpoint path, e.g., ``/path/to/DeepSeek-R1-Distill-Qwen-1.5B``).
+Convert a Megatron actor checkpoint to Hugging Face format in three steps:
 
-.. code-block:: bash
+1. **Set paths and convert Megatron shards to an intermediate format** (adjust ``--model``, ``--tp-size``, ``--ep-size``, and ``--pp-size`` to match your training config):
 
-    CKPT_PATH_MG=/path/to/megatron_checkpoint
-    CKPT_PATH_HF=/target/path/to/huggingface_checkpoint
-    CKPT_PATH_ORIGINAL_HF=/path/to/base_model_checkpoint
-    CKPT_PATH_MF="${CKPT_PATH_HF}_middle_file"
+   .. code-block:: bash
 
-    # Example: 1.5B
-    python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_mg_to_middle_file \
-        --load-path "${CKPT_PATH_MG}" \
-        --save-path "${CKPT_PATH_MF}" \
-        --model DeepSeek-R1-Distill-Qwen-1.5B \
-        --tp-size 2 \
-        --ep-size 1 \
-        --pp-size 1 \
-        --te-ln-linear-qkv true \
-        --te-ln-linear-mlp_fc1 true \
-        --te-extra-state-check-none true \
-        --use-gpu-num 0 \
-        --process-num 16
+      CKPT_PATH_MG=/path/to/results/run_name/checkpoints/global_step_xx/actor
+      CKPT_PATH_HF=/target/path/to/huggingface_checkpoint
+      CKPT_PATH_ORIGINAL_HF=/path/to/DeepSeek-R1-Distill-Qwen-1.5B
+      CKPT_PATH_MF="${CKPT_PATH_HF}_middle_file"
 
-    python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_middle_file_to_hf \
-        --load-path "${CKPT_PATH_MF}" \
-        --save-path "${CKPT_PATH_HF}" \
-        --model DeepSeek-R1-Distill-Qwen-1.5B \
-        --use-gpu-num 0 \
-        --process-num 16
+      python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_mg_to_middle_file \
+          --load-path "${CKPT_PATH_MG}" --save-path "${CKPT_PATH_MF}" \
+          --model DeepSeek-R1-Distill-Qwen-1.5B --tp-size 2 --ep-size 1 --pp-size 1 \
+          --te-ln-linear-qkv true --te-ln-linear-mlp_fc1 true \
+          --te-extra-state-check-none true --use-gpu-num 0 --process-num 16
 
-    rm -rf "${CKPT_PATH_MF}"
-    rm -f "${CKPT_PATH_HF}"/*.done
-    shopt -s extglob
-    cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index).json "${CKPT_PATH_HF}"
+2. **Convert the intermediate format to Hugging Face weights**:
+
+   .. code-block:: bash
+
+      python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_middle_file_to_hf \
+          --load-path "${CKPT_PATH_MF}" --save-path "${CKPT_PATH_HF}" \
+          --model DeepSeek-R1-Distill-Qwen-1.5B --use-gpu-num 0 --process-num 16
+
+3. **Clean up temporary files and copy tokenizer/config JSON files from the base checkpoint**:
+
+   .. code-block:: bash
+
+      rm -rf "${CKPT_PATH_MF}" && rm -f "${CKPT_PATH_HF}"/*.done
+      shopt -s extglob
+      cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index).json "${CKPT_PATH_HF}"
 

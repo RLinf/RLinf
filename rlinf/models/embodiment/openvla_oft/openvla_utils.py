@@ -175,6 +175,25 @@ def apply_film_to_vla(vla: torch.nn.Module, cfg) -> torch.nn.Module:
     return vla
 
 
+def resolve_unnorm_key(norm_stats: dict[str, Any], unnorm_key: str) -> str:
+    """Return the ``norm_stats`` key for ``unnorm_key``, trying its ``_no_noops`` variant.
+
+    Args:
+        norm_stats: Dataset statistics of the checkpoint, keyed by dataset.
+        unnorm_key: Dataset named by the config.
+
+    Returns:
+        ``unnorm_key`` or ``f"{unnorm_key}_no_noops"``, whichever ``norm_stats`` has.
+    """
+    if unnorm_key not in norm_stats and f"{unnorm_key}_no_noops" in norm_stats:
+        unnorm_key = f"{unnorm_key}_no_noops"
+    assert unnorm_key in norm_stats, (
+        f"Expected the action un-norm key to be one of the checkpoint's dataset "
+        f"statistics {sorted(norm_stats)}, got {unnorm_key!r}."
+    )
+    return unnorm_key
+
+
 def load_dataset_stats(cfg: DictConfig) -> None:
     """
     Load dataset statistics for action normalization.

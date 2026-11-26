@@ -1,13 +1,10 @@
-PPO training for Math Reasoning
-==================================
+Qwen2.5 Math (PPO)
+==================
 
-Use this recipe when you want actor-critic PPO for the same math-reasoning task covered by :doc:`reasoning`. PPO and GRPO share most launch and data settings, so this page only lists the PPO-specific differences.
+Train Qwen2.5-1.5B-Instruct on AReaL-boba math problems with actor-critic :doc:`PPO </rst_source/reference/algorithms/ppo>` (GAE advantages and a Megatron critic). This recipe shares the launch script and dataset setup with :doc:`Qwen2.5 Math GRPO <reasoning>`.
 
 Overview
 --------
-
-Use this recipe when you want actor-critic PPO for the same math-reasoning setup
-used by the GRPO example.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -15,53 +12,74 @@ used by the GRPO example.
    .. grid-item-card:: Model
       :text-align: center
 
-      Qwen2.5-1.5B
+      Qwen2.5-1.5B-Instruct
 
    .. grid-item-card:: Algorithm
       :text-align: center
 
-      PPO with GAE advantages and a critic
+      PPO (GAE + critic, Megatron + SGLang)
 
-   .. grid-item-card:: Data
+   .. grid-item-card:: Task
       :text-align: center
 
-      AReaL-boba math reasoning data
+      Math reasoning (AReaL-boba)
 
    .. grid-item-card:: Hardware
       :text-align: center
 
-      Multi-GPU Megatron training
+      Single node (1–8 GPUs)
 
-Dataset
--------
+| **What you'll do:** install ``agentic`` deps → download model and AReaL-boba data → launch ``run_main_grpo_math.sh`` with the PPO config → monitor reward curves.
+| **Prerequisites:** :doc:`Installation & Hardware </rst_source/start/installation>` · NVIDIA GPU node with SGLang and Megatron support.
 
-We also use the boba dataset. For details, see :doc:`reasoning`.
-
-How PPO Works
+Setup and Run
 -------------
 
-Use standard PPO (Proximal Policy Optimization) with GAE advantages and a critic. For the algorithm reference, see :doc:`PPO <../../../reference/algorithms/ppo>`.
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
 
-Run It
-------
+.. tab-set::
 
-**1. Config file**
+   .. tab-item:: Qwen2.5-1.5B-Instruct
 
-For common path, cluster, and runner fields, see :doc:`Training configuration <../../../reference/configuration>`. Recommended config example:
+      **1. Install**
 
-- ``examples/reasoning/config/math/qwen2.5-1.5b-ppo-megatron.yaml``
+      .. code-block:: bash
 
-**2. Launch command**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-The launch command for PPO training is basically the same as for GRPO training. We also use ``run_main_grpo_math.sh`` as the entry script. RLinf automatically determines whether to use PPO training based on whether there are critic-related configurations in the YAML config file and the value of ``adv_type`` (PPO typically uses ``gae`` as the advantage function).
+      **2. Download**
 
+      Download the model and `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`__:
+
+      .. code-block:: bash
+
+         hf download Qwen/Qwen2.5-1.5B-Instruct --local-dir ./Qwen2.5-1.5B-Instruct
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
+
+      **3. Launch**
+
+      PPO reuses ``run_main_grpo_math.sh``; ``examples/reasoning/config/math/qwen2.5-1.5b-ppo-megatron.yaml`` enables the critic and GAE advantages (``critic.use_critic_model: true``, ``algorithm.adv_type: gae``). Pass local model, dataset, and output paths via Hydra overrides:
+
+      .. code-block:: bash
+
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-ppo-megatron \
+           rollout.model.model_path=./Qwen2.5-1.5B-Instruct \
+           data.train_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
+           data.val_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
+           runner.output_dir=./results
+
+.. dropdown:: Advanced configuration & multi-node (optional)
+
+   - **Dataset keys:** see :doc:`Qwen2.5 Math GRPO <reasoning>` for ``data.prompt_key``, ``data.answer_key``, and ``data.apply_chat_template``.
+   - **Multi-node scaling:** start a Ray cluster following :doc:`/rst_source/guides/multi_node`, increase ``cluster.num_nodes``, and run the launch command on the head node. For common cluster and runner fields, see :doc:`Training configuration </rst_source/reference/configuration>`.
 
 Visualization and Results
 -------------------------
 
-We fine-tune the Qwen2.5-1.5B-Instruct model with PPO. The orange line is RLinf and the blue line is VeRL; both use the same algorithm configuration. For common metric meanings, see :doc:`Training metrics <../../../reference/metrics>`.
+Watch training progress with ``tensorboard --logdir ./results --port 6006``; see :doc:`Training metrics </rst_source/reference/metrics>` for metric definitions and W&B/SwanLab logging.
 
-Since the base capability of the Qwen2.5-1.5B-Instruct model is relatively weak, the overall reward values are low. However, as training progresses, the reward values increase significantly.
+The figure compares RLinf (orange) and VeRL (blue) fine-tuning Qwen2.5-1.5B-Instruct under identical PPO settings. Reward rises steadily over training from the weak base model baseline.
 
 .. raw:: html
 

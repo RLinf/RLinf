@@ -1,9 +1,9 @@
-Heterogenous Hardware Setup
-============================
+Heterogeneous Clusters
+======================
 
 RLinf supports running on nodes with heterogeneous hardware and software setup, e.g., running simulators on ray tracing-capable GPUs (like RTX 4090), training on compute GPUs with larger GPU memory (like A100), search agent on CPU-only nodes, and/or robot controllers on nodes with special hardware like robotic arms.
 
-To set up such a heterogeneous environment, all you need to do is configuring the `cluster` section of the YAML config file as follows.
+To set up such a heterogeneous environment, configure the ``cluster`` section of the YAML config file as follows.
 
 
 Cluster configuration
@@ -26,54 +26,54 @@ configured via ``env_configs``:
 
 .. code-block:: yaml
 
-	cluster:
-	  num_nodes: 18
+   cluster:
+     num_nodes: 18
 
-	  component_placement:
-	    actor:
-	      node_group: a800
-	      placement: 0-63           # hardware ranks within ``a800``
-	    rollout:
-	      node_group: 4090
-	      placement: 0-63           # hardware ranks within ``4090``
-	    env:
-	      node_group: franka
-	      placement: 0-1            # robot hardware ranks within ``franka``
-	    agent:
-	      node_group: node
-	      placement: 0-1:0-199,2-3:200-399  # node ranks : process ranks
+     component_placement:
+       actor:
+         node_group: a800
+         placement: 0-63           # hardware ranks within ``a800``
+       rollout:
+         node_group: 4090
+         placement: 0-63           # hardware ranks within ``4090``
+       env:
+         node_group: franka
+         placement: 0-1            # robot hardware ranks within ``franka``
+       agent:
+         node_group: node
+         placement: 0-1:0-199,2-3:200-399  # node ranks : process ranks
 
-	  node_groups:
-	    - label: a800
-	      node_ranks: 0-7
-	      env_configs:
-	        - node_ranks: 0-7
-	          python_interpreter_path: /opt/venv/openpi/bin/python3
-	          env_vars:
-	            - GLOO_SOCKET_IFNAME: "eth0"
+     node_groups:
+       - label: a800
+         node_ranks: 0-7
+         env_configs:
+           - node_ranks: 0-7
+             python_interpreter_path: /opt/venv/openpi/bin/python3
+             env_vars:
+               - GLOO_SOCKET_IFNAME: "eth0"
 
-	    - label: 4090
-	      node_ranks: 8-15
-	      env_configs:
-	        - node_ranks: 8-15
-	          env_vars:
-	            - GLOO_SOCKET_IFNAME: "eth1"
+       - label: 4090
+         node_ranks: 8-15
+         env_configs:
+           - node_ranks: 8-15
+             env_vars:
+               - GLOO_SOCKET_IFNAME: "eth1"
 
-	    - label: franka
-	      node_ranks: 16-17
-	      hardware:
-	        type: Franka
-	        configs:
-	          - robot_ip: "10.10.10.1"
-	            node_rank: 16
-	            camera_serials:
-	              - "322142001230"
-	              - "322142001231"
-	          - robot_ip: "10.10.10.2"
-	            node_rank: 17
-	            camera_serials:
-	              - "322142001232"
-	              - "322142001233"
+       - label: franka
+         node_ranks: 16-17
+         hardware:
+           type: Franka
+           configs:
+             - robot_ip: "10.10.10.1"
+               node_rank: 16
+               camera_serials:
+                 - "322142001230"
+                 - "322142001231"
+             - robot_ip: "10.10.10.2"
+               node_rank: 17
+               camera_serials:
+                 - "322142001232"
+                 - "322142001233"
 
 Interpretation
 ~~~~~~~~~~~~~~
