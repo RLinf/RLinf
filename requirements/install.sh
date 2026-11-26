@@ -4020,6 +4020,10 @@ install_behavior2026_env() {
         *) echo "behavior2026 requires a Torch 2.7.0 CUDA wheel (cu118, cu126 or cu128); got $cuda_tag." >&2; return 1 ;;
     esac
     export UV_TORCH_BACKEND="$cuda_tag"
+    export OMNI_KIT_ACCEPT_EULA=YES
+    if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
+    fi
     pushd "$behavior_dir" >/dev/null
     # The SDK checks public Torch versions only. Select matching CUDA builds before setup.
     python -m pip install --index-url "https://download.pytorch.org/whl/$cuda_tag" \
