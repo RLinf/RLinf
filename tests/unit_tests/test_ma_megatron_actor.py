@@ -1342,3 +1342,50 @@ def test_chunked_lm_head_accumulates_bf16_weight_gradient_across_chunks():
     torch.testing.assert_close(
         weight.grad, weight.new_tensor([[2048.0], [-2048.0]]), rtol=0, atol=0
     )
+
+
+@pytest.mark.parametrize(
+    "dtype,tokens,chunk_size,need_dummy_grad",
+    [
+        (torch.bfloat16, 131_072, 256, False),
+        (torch.float16, 8_192, 2, True),
+    ],
+)
+def test_chunked_lm_head_accumulates_low_precision_main_grad_in_fp32(
+    dtype, tokens, chunk_size, need_dummy_grad
+):
+    from rlinf.hybrid_engines.megatron.lm_head import chunked_vocab_parallel_log_probs
+
+    # Accumulating each chunk directly into a BF16/FP16 main_grad saturates at
+    # +/-0.25 once per-chunk mean updates fall below half a ULP; FP32 tiled
+    # accumulation flushed once per microbatch matches dense backward (+/-0.5).
+    hidden = torch.ones(tokens, 1, dtype=dtype)
+    labels = torch.zeros(tokens, dtype=torch.long)
+    mask = torch.ones(tokens, dtype=torch.bool)
+    weight = torch.nn.Parameter(torch.zeros(2, 1, dtype=dtype))
+    weight.main_grad = torch.zeros_like(weight)
+
+    for step in (1, 2):
+        weight.grad = None
+        weight.grad_added_to_main_grad = False
+        scores = chunked_vocab_parallel_log_probs(
+            hidden,
+            weight,
+            labels,
+            mask,
+            chunk_size=chunk_size,
+            gradient_accumulation_fusion=True,
+            need_dummy_grad=need_dummy_grad,
+        )
+        scores["log_probs"].mean().backward()
+        torch.testing.assert_close(
+            weight.main_grad,
+            weight.new_tensor([[0.5 * step], [-0.5 * step]]),
+            rtol=0,
+            atol=0,
+        )
+        assert weight.grad_added_to_main_grad
+        if need_dummy_grad:
+            torch.testing.assert_close(weight.grad, torch.zeros_like(weight))
+        else:
+            assert weight.grad is None

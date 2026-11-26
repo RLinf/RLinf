@@ -47,13 +47,13 @@ def _accumulate_weight_gradient(hidden, dlogits, grad_weight, use_fusion):
     if use_fusion and hidden.is_cuda:
         from megatron.core.tensor_parallel.layers import fused_weight_gradient_mlp_cuda
 
-        if grad_weight.dtype == torch.float32:
-            accumulate = fused_weight_gradient_mlp_cuda.wgrad_gemm_accum_fp32
-        elif grad_weight.dtype in (torch.bfloat16, torch.float16):
-            accumulate = fused_weight_gradient_mlp_cuda.wgrad_gemm_accum_fp16
-        else:
-            raise ValueError(f"Unsupported main_grad dtype: {grad_weight.dtype}")
-        accumulate(hidden.contiguous(), dlogits.contiguous(), grad_weight)
+        if grad_weight.dtype != torch.float32:
+            raise ValueError(
+                f"Fused chunked accumulation requires FP32 main_grad, got {grad_weight.dtype}"
+            )
+        fused_weight_gradient_mlp_cuda.wgrad_gemm_accum_fp32(
+            hidden.contiguous(), dlogits.contiguous(), grad_weight
+        )
     else:
         grad_weight.addmm_(
             dlogits.t().to(grad_weight.dtype), hidden.to(grad_weight.dtype)
@@ -79,11 +79,12 @@ def _usable_main_grad(weight: torch.Tensor) -> torch.Tensor | None:
 
 
 def _accumulate_weight_tiles(tiles, hidden, dlogits):
-    hidden = hidden.float()
+    tile_dtype = tiles[0].dtype
+    hidden = hidden.to(tile_dtype)
     for tile, update in zip(
         tiles, dlogits.chunk(_WEIGHT_GRAD_TILES, dim=1), strict=True
     ):
-        tile.addmm_(update.t().float(), hidden)
+        tile.addmm_(update.t().to(tile_dtype), hidden)
 
 
 class _ChunkedLogProbs(torch.autograd.Function):
@@ -129,7 +130,9 @@ class _ChunkedLogProbs(torch.autograd.Function):
         ) * weight.shape[0]
         ctx.main_grad = _usable_main_grad(weight)
         ctx.use_fusion = bool(
-            gradient_accumulation_fusion and ctx.main_grad is not None
+            gradient_accumulation_fusion
+            and ctx.main_grad is not None
+            and ctx.main_grad.dtype == torch.float32
         )
         ctx.need_dummy_grad = bool(need_dummy_grad)
         if entropy is not None:
@@ -145,10 +148,19 @@ class _ChunkedLogProbs(torch.autograd.Function):
             torch.float32 if weight.dtype != torch.float64 else weight.dtype
         )
         use_main_grad = ctx.main_grad is not None and ctx.needs_input_grad[1]
-        grad_weight = ctx.main_grad if use_main_grad else None
+        low_precision_main_grad = use_main_grad and ctx.main_grad.dtype in (
+            torch.float16,
+            torch.bfloat16,
+        )
+        grad_weight = (
+            ctx.main_grad if use_main_grad and not low_precision_main_grad else None
+        )
         weight_tiles = []
         if grad_weight is None and ctx.needs_input_grad[1]:
-            if weight.dtype in (torch.float16, torch.bfloat16):
+            if low_precision_main_grad or weight.dtype in (
+                torch.float16,
+                torch.bfloat16,
+            ):
                 weight_tiles = [
                     torch.zeros_like(tile, dtype=accumulation_dtype)
                     for tile in weight.chunk(_WEIGHT_GRAD_TILES)
@@ -191,6 +203,11 @@ class _ChunkedLogProbs(torch.autograd.Function):
         # Megatron DDP must run its ready hook when overlapping grad reduce
         # without adding the gradient twice.
         if use_main_grad:
+            if weight_tiles:
+                # Flush FP32 tiles into low-precision main_grad once per microbatch.
+                for i, dst in enumerate(ctx.main_grad.chunk(_WEIGHT_GRAD_TILES)):
+                    dst.add_(weight_tiles[i].to(dst.dtype))
+                    weight_tiles[i] = None
             if hasattr(weight, "grad_added_to_main_grad"):
                 weight.grad_added_to_main_grad = True
                 grad_weight = torch.zeros_like(weight) if ctx.need_dummy_grad else None
@@ -245,7 +262,7 @@ def chunked_vocab_parallel_log_probs(
         tp_group: Tensor-parallel group; None means a single vocabulary shard.
         calculate_entropy: Return detached entropy across all positions.
         gradient_accumulation_fusion: Use fused CUDA GEMM when accumulating
-            into Megatron's ``main_grad`` buffer.
+            into Megatron's FP32 ``main_grad`` buffer.
         need_dummy_grad: Return a zero gradient tensor when accumulating into
             ``main_grad`` (required when ``overlap_grad_reduce`` is enabled so
             Megatron DDP's backward post-hook runs).
