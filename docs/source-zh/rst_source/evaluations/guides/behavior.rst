@@ -70,7 +70,7 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
 
    .. tab-item:: 2026 · OpenPI π₀.₅
 
-      在仓库根目录打开新终端。安装脚本会将基于 OmniGibson 3.9.4 的仿真库和 Isaac Sim 5.1 装入单独的 Python 3.11 环境。
+      在仓库根目录打开新终端。安装脚本会将适配后的 OmniGibson 3.9.4 和 Isaac Sim 5.1 装入单独的 Python 3.11 环境。2026 适配代码的上游维护分支为 `RLinf/v3.9 <https://github.com/RLinf/BEHAVIOR-1K/tree/RLinf/v3.9>`__，模拟器改动详见 `BEHAVIOR-1K 接入 PR <https://github.com/RLinf/BEHAVIOR-1K/pull/4>`__。
 
       **1. 安装**
 

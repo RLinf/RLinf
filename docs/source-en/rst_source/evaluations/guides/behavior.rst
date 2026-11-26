@@ -70,7 +70,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. tab-item:: 2026 · OpenPI π₀.₅
 
-      Open a fresh shell in the repository root. The installer sets up the OmniGibson 3.9.4 fork and Isaac Sim 5.1 in a separate Python 3.11 environment.
+      Open a fresh shell in the repository root. The installer sets up the OmniGibson 3.9.4 adapter and Isaac Sim 5.1 in a separate Python 3.11 environment. The `RLinf/v3.9 branch <https://github.com/RLinf/BEHAVIOR-1K/tree/RLinf/v3.9>`__ is the upstream home for the 2026 adapter. See the `BEHAVIOR-1K integration PR <https://github.com/RLinf/BEHAVIOR-1K/pull/4>`__ for the simulator changes.
 
       **1. Install**
 
