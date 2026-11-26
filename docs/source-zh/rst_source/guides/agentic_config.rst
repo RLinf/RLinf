@@ -405,7 +405,7 @@ actor
    * - ``actor.seed``
      - 用于可复现性的全局随机种子。
    * - ``actor.response_only_logits``
-     - 仅在预测回复 token 的位置计算 logits 以降低显存。
+     - 仅在预测回复 token 的位置计算 logits 以降低显存（仅限 Megatron 动态 batch、CP=1）。
 
 **模型子节**
 
@@ -462,7 +462,7 @@ actor
    * - ``actor.model.use_cpu_initialization``
      - 在 CPU 上初始化权重以降低显存峰值。
    * - ``actor.model.lm_head_chunk_size``
-     - LM head 分块大小（例如 ``256``，``0`` 表示关闭）。
+     - 按指定 token 数分块计算 LM head logits 以降低显存峰值（例如 ``256``，``0`` 表示关闭；仅限 Megatron 动态 batch、CP=1 且 ``algorithm.entropy_bonus: 0``）。
 
 **优化器**
 
