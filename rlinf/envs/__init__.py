@@ -29,6 +29,7 @@ class SupportedEnvType(Enum):
     ROBOTWIN = "robotwin"
     ROBODOJO = "robodojo"
     ISAACLAB = "isaaclab"
+    ISAACLAB_ARENA = "isaaclab_arena"
     METAWORLD = "metaworld"
     BEHAVIOR = "behavior"
     CALVIN = "calvin"
@@ -121,6 +122,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.sim.robodojo.robodojo_env import RoboDojoEnv
 
         return RoboDojoEnv
+    elif env_type == SupportedEnvType.ISAACLAB_ARENA:
+        from rlinf.envs.sim.isaaclab_arena.isaaclab_arena_env import IsaacLabArenaEnv
+
+        return IsaacLabArenaEnv
     elif env_type == SupportedEnvType.ISAACLAB:
         from rlinf.envs.sim.isaaclab import REGISTER_ISAACLAB_ENVS
 

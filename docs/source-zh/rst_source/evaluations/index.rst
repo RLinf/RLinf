@@ -60,6 +60,10 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
      - ``polaris_droid_tapeintocontainer``、``polaris_droid_movelattecup`` 等
      - ``polaris/polaris_tapeintocontainer_openpi_pi05_eval.yaml``、``polaris/polaris_movelattecup_openpi_eval.yaml``
      - :doc:`PolaRiS <../examples/embodied/polaris>`
+   * - :doc:`Isaac Lab-Arena <guides/isaaclab_arena>`
+     - DROID 将香蕉放到盘中的任务
+     - ``isaaclab_arena/isaaclab_arena_pi05_eval.yaml``
+     - :ref:`单动作 PPO <isaaclab-arena-single-action-ppo>`
    * - :doc:`RoboLab <guides/robolab>`
      - 120 个 DROID 关节位置控制操作任务
      - ``robolab/robolab_pi05_droid_jointpos.yaml``
@@ -147,6 +151,8 @@ SGLang 服务评测指南
         - BEHAVIOR-1K 家居任务评测配置。
       * - ``evaluations/geniesim/``
         - GenieSim 服务化仿真评测配置。
+      * - ``evaluations/isaaclab_arena/``
+        - OpenPI π₀.₅ 在 Isaac Lab-Arena 中的 DROID 任务评测配置。
       * - ``evaluations/libero/``
         - LIBERO 评测配置（Spatial、Object、Goal、10、Mem、RTC、ApxInf、SGLang）与自定义初始状态。
       * - ``evaluations/maniskill/``

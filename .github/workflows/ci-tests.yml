@@ -207,6 +207,8 @@ jobs:
               - 'rlinf/models/embodiment/mlp_policy/**'
               - 'rlinf/models/embodiment/prefix_features.py'
               - 'toolkits/rlt/**'
+              - 'evaluations/isaaclab_arena/**'
+              - 'examples/embodiment/config/env/isaaclab_arena.yaml'
               - 'rlinf/robotics/**'
               - 'rlinf/models/embodiment/openpi/**'
               # Unit tests import env modules directly (robot task envs, the

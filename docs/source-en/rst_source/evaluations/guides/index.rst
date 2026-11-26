@@ -12,6 +12,12 @@ Pick a benchmark below for its end-to-end installation, checkpoint download, lau
 
       50 household tasks on OmniGibson and Isaac Sim 4.5 with OpenPI π₀.₅.
 
+   .. grid-item-card:: Isaac Lab-Arena
+      :link: isaaclab_arena
+      :link-type: doc
+
+      Switch DROID tasks or run a short evaluation with OpenPI π₀.₅.
+
    .. grid-item-card:: LIBERO
       :link: libero
       :link-type: doc
@@ -89,6 +95,7 @@ Dedicated guides for world-action models served through RLinf's SGLang embodied 
    :maxdepth: 2
 
    BEHAVIOR-1K <behavior>
+   Isaac Lab-Arena <isaaclab_arena>
    LIBERO <libero>
    ManiSkill OOD <maniskill_ood>
    PolaRiS <polaris>

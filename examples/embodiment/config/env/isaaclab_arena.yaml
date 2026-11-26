@@ -1,0 +1,17 @@
+env_type: isaaclab_arena
+total_num_envs: 4
+group_size: 1
+seed: 0
+auto_reset: false
+ignore_terminations: false
+# The default graph runs for 40 seconds at 15 Hz.
+max_episode_steps: 600
+max_steps_per_rollout_epoch: 600
+return_step_observations: ${oc.select:reward.use_reward_model,false}
+video_cfg:
+  save_video: false
+  video_base_dir: ./logs/isaaclab_arena/video
+init_params:
+  environment: isaaclab_arena_environments/robolab/tasks/banana_on_plate.yaml
+  environment_args: {}
+  language_instruction: null

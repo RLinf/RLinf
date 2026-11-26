@@ -12,6 +12,12 @@
 
       基于 OmniGibson 与 Isaac Sim 4.5 的 50 个家居任务评测（OpenPI π₀.₅）。
 
+   .. grid-item-card:: Isaac Lab-Arena
+      :link: isaaclab_arena
+      :link-type: doc
+
+      切换 DROID 任务，或用 OpenPI π₀.₅ 运行短回合评测。
+
    .. grid-item-card:: LIBERO
       :link: libero
       :link-type: doc
@@ -89,6 +95,7 @@ SGLang 服务评测
    :maxdepth: 2
 
    BEHAVIOR-1K <behavior>
+   Isaac Lab-Arena <isaaclab_arena>
    LIBERO <libero>
    ManiSkill OOD <maniskill_ood>
    PolaRiS <polaris>

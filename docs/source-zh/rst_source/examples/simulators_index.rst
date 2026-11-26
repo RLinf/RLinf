@@ -76,6 +76,14 @@
 
       在高斯泼溅场景中用 PPO 训练 π₀.₅，用于 Real2Sim2Real 迁移。
 
+   .. grid-item-card:: Isaac Lab-Arena
+      :img-top: https://media.githubusercontent.com/media/isaac-sim/IsaacLab-Arena/a72262a0f1896f56bb3a1fdf329a1548ba55aad5/docs/images/openpi_droid_get_started.png
+      :img-alt: Isaac Lab-Arena 中的 DROID 机械臂
+      :link: embodied/isaaclab_arena
+      :link-type: doc
+
+      在 DROID 任务上评测 OpenPI π₀.₅，或用单动作 PPO 训练。
+
    .. grid-item-card:: IsaacLab
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/IsaacLab.png
       :img-alt: IsaacLab 基准
@@ -191,6 +199,7 @@
    Genesis <embodied/genesis>
    GenieSim <embodied/geniesim>
    GSEnv <embodied/gsenv>
+   Isaac Lab-Arena <embodied/isaaclab_arena>
    IsaacLab <embodied/isaaclab>
    LIBERO <embodied/libero>
    ManiSkill <embodied/maniskill>

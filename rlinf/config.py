@@ -1721,9 +1721,23 @@ def validate_embodied_cfg(cfg):
                     f"algorithm.{legacy_key} is deprecated; use "
                     f"env.{mode}.rollout_epoch instead."
                 )
+            active = enable_eval if mode == "eval" else not only_eval
             for env_cfg in EnvLayout.env_cfgs(
                 cfg.env.get(mode, None), f"env.{mode}"
             ).values():
+                if (
+                    active
+                    and env_cfg.get("env_type") == SupportedEnvType.ISAACLAB_ARENA.value
+                ):
+                    from rlinf.envs.sim.isaaclab_arena.config import (
+                        validate_arena_config,
+                    )
+
+                    validate_arena_config(
+                        env_cfg,
+                        evaluation=mode == "eval",
+                        action_chunk=model_cfg.num_action_chunks,
+                    )
                 env_cfg.rollout_epoch = env_cfg.get(
                     "rollout_epoch", 1 if legacy_value is None else legacy_value
                 )

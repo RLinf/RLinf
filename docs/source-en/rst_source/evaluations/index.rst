@@ -60,6 +60,10 @@ The matrix below covers benchmarks with ready-to-run configs under ``evaluations
      - ``polaris_droid_tapeintocontainer``, ``polaris_droid_movelattecup``, etc.
      - ``polaris/polaris_tapeintocontainer_openpi_pi05_eval.yaml``, ``polaris/polaris_movelattecup_openpi_eval.yaml``
      - :doc:`PolaRiS <../examples/embodied/polaris>`
+   * - :doc:`Isaac Lab-Arena <guides/isaaclab_arena>`
+     - DROID banana-on-plate task
+     - ``isaaclab_arena/isaaclab_arena_pi05_eval.yaml``
+     - :ref:`Single-action PPO <isaaclab-arena-single-action-ppo>`
    * - :doc:`RoboLab <guides/robolab>`
      - 120 DROID joint-position manipulation tasks
      - ``robolab/robolab_pi05_droid_jointpos.yaml``
@@ -147,6 +151,8 @@ The evaluation runner coordinates env workers and rollout workers over channels 
         - BEHAVIOR-1K household evaluation configs.
       * - ``evaluations/geniesim/``
         - GenieSim server-backed evaluation configs.
+      * - ``evaluations/isaaclab_arena/``
+        - OpenPI π₀.₅ evaluation on DROID tasks in Isaac Lab-Arena.
       * - ``evaluations/libero/``
         - LIBERO evaluation configs (Spatial, Object, Goal, 10, Mem, RTC, ApxInf, SGLang) and custom init states.
       * - ``evaluations/maniskill/``
