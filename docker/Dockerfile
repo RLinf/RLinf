@@ -91,6 +91,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-geniesim
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-simple
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-supermimic
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-vlnce_server
 
 
 ##################################################################################################
