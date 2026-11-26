@@ -37,13 +37,15 @@ class QHead(nn.Module):
         hidden_dims,
         output_dim=1,
         train_action_encoder=False,
+        activation="tanh",
+        use_layer_norm=True,
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.action_feature_dim = action_feature_dim
         self.train_action_encoder = train_action_encoder
 
-        self.nonlinearity = "tanh"
+        self.nonlinearity = activation
 
         if self.train_action_encoder:
             self.action_encoder = nn.Sequential(
@@ -64,7 +66,7 @@ class QHead(nn.Module):
                     output_dim,
                 ],
                 act_builder=get_act_func(self.nonlinearity),
-                use_layer_norm=True,
+                use_layer_norm=use_layer_norm,
                 last_act=False,
             )
         )
@@ -130,6 +132,8 @@ class MultiQHead(nn.Module):
         num_q_heads=2,
         output_dim=1,
         train_action_encoder=False,
+        activation="tanh",
+        use_layer_norm=True,
     ):
         super().__init__()
 
@@ -143,6 +147,8 @@ class MultiQHead(nn.Module):
                     hidden_dims,
                     output_dim,
                     train_action_encoder,
+                    activation,
+                    use_layer_norm,
                 )
             )
         self.qs = nn.ModuleList(qs)

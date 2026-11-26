@@ -1,20 +1,32 @@
-添加新环境
-============================
+仿真 Env
+========
 
-为 RLinf 添加一个新的强化学习环境。  
-RLinf 支持多种强化学习环境，包括机器人操作（例如 ManiSkill3、LIBERO）等。  
+将向量化仿真器封装为 ``gym.Env``、注册环境类型、完成动作格式映射，并在本地 CPU 上验证接口契约。注册完成后，任意具身强化学习配置都可以通过 ``env.train.env_type`` 或 ``env.eval.env_type`` 直接选用该环境。
 
-RLinf 的环境系统由以下组件构成：
+接入速览
+--------
 
-- **基础环境类**：继承自 ``gym.Env`` 的具体实现。  
-- **环境封装器（Wrappers）**：提供额外功能的扩展封装器。  
-- **任务变体**：实现特定任务或场景。  
+.. list-table::
+   :header-rows: 1
+   :widths: 24 76
 
-1. 创建基础环境类
------------------------------------
+   * - 项目
+     - 说明
+   * - 新增或修改的文件
+     - ``rlinf/envs/sim/<name>/``、``rlinf/envs/__init__.py``、``rlinf/envs/action_utils.py``、``examples/embodiment/config/env/<name>.yaml``
+   * - 扩展点
+     - ``rlinf/envs/__init__.py`` 中的 ``SupportedEnvType`` 与 ``get_env_cls()``
+   * - 必选接口
+     - 继承 ``gym.Env``，提供 ``reset``、``step``、``num_envs``、``total_num_group_envs`` 与 ``device``
+   * - 本地 CPU 验证
+     - 无需启动 Ray，直接在 CPU 上运行纯 PyTorch 示例环境的 ``reset`` 与 ``step`` 检查
 
-1.1 继承 ``gym.Env``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1. 实现向量化环境
+-----------------
+
+在 ``rlinf/envs/sim/<name>/`` 下创建仿真器包并添加 ``__init__.py``。每个仿真环境类都继承自 ``gym.Env``，并在单个 worker stage 内管理 ``num_envs`` 个并行实例。
+
+下面的示例仅依赖 ``torch`` 和 ``gymnasium`` 实现了一个可直接运行的二维点位到达环境（PointReachEnv），完整展示了并行张量形状，可直接在 CPU 上运行验证。将其保存为 ``rlinf/envs/sim/point_reach/point_reach_env.py``：
 
 .. code-block:: python
 
@@ -22,249 +34,230 @@ RLinf 的环境系统由以下组件构成：
    import numpy as np
    import torch
 
-   class YourCustomEnv(gym.Env):
-       def __init__(self, cfg, rank, num_envs, ret_device="cpu"):
+
+   class PointReachEnv(gym.Env):
+       """运行在 CPU 上的向量化二维点位到达环境。"""
+
+       def __init__(
+           self,
+           cfg,
+           num_envs: int,
+           seed_offset: int = 0,
+           total_num_processes: int = 1,
+           worker_info=None,
+       ):
            self.cfg = cfg
-           self.rank = rank
-           self.ret_device = ret_device
-           self.seed = self.cfg.seed + rank
+           self._num_envs = num_envs
+           self.seed = cfg.seed + seed_offset
+           self.total_num_processes = total_num_processes
+           self.worker_info = worker_info
+           self.group_size = cfg.group_size
+           self.num_group = self._num_envs // self.group_size
+           self.max_episode_steps = cfg.max_episode_steps
+           self._device = torch.device("cpu")
+           self._generator = torch.Generator(device=self._device).manual_seed(self.seed)
 
-           # 初始化环境相关参数
-           self.num_envs = num_envs
-           self.group_size = self.cfg.group_size
-           self.num_group = self.num_envs // self.group_size
+           self.action_space = gym.spaces.Box(
+               low=-1.0, high=1.0, shape=(2,), dtype=np.float32
+           )
+           self.observation_space = gym.spaces.Dict(
+               {
+                   "states": gym.spaces.Box(
+                       low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32
+                   )
+               }
+           )
+           self.pos = torch.zeros(self._num_envs, 2, device=self._device)
+           self.target = torch.zeros(self._num_envs, 2, device=self._device)
+           self.elapsed_steps = torch.zeros(
+               self._num_envs, dtype=torch.long, device=self._device
+           )
 
-           # 初始化环境内部
-           self._init_environment()
-           self._init_reset_state_ids()
+       @property
+       def num_envs(self) -> int:
+           return self._num_envs
 
-       def _init_environment(self):
-           """初始化具体的环境实例。"""
-           # 根据环境类型初始化
-           pass
+       @property
+       def total_num_group_envs(self) -> int:
+           return self.num_group
 
-       def _init_reset_state_ids(self):
-           """初始化重置状态 ID 和随机数发生器。"""
-           self._generator = torch.Generator()
-           self._generator.manual_seed(self.seed)
-           # 设置重置状态逻辑
-           pass
+       @property
+       def device(self) -> torch.device:
+           return self._device
 
-       def reset(self, options={}):
-           """重置环境。"""
-           # 实现环境重置逻辑
-           obs = self._get_observation()
-           return obs, {}
+       def _get_obs(self) -> dict[str, torch.Tensor]:
+           return {"states": torch.cat([self.pos, self.target], dim=-1)}
 
-       def step(self, actions):
-           """执行动作。"""
-           # 实现动作执行逻辑
-           obs = self._get_observation()
-           reward = self._calculate_reward()
-           terminated = self._check_termination()
-           truncated = self._check_truncation()
-           info = self._get_info()
-           return obs, reward, terminated, truncated, info
+       def reset(self, *, seed: int | None = None, options: dict | None = None):
+           if seed is not None:
+               self._generator.manual_seed(seed)
+           self.pos.zero_()
+           self.target = (
+               torch.rand(
+                   self._num_envs, 2, generator=self._generator, device=self._device
+               )
+               * 2.0
+               - 1.0
+           )
+           self.elapsed_steps.zero_()
+           return self._get_obs(), {}
 
-       def _get_observation(self):
-           """获取观测。"""
-           # 实现观测获取逻辑
-           pass
+       def step(self, actions: torch.Tensor | np.ndarray):
+           actions = torch.as_tensor(
+               actions, dtype=torch.float32, device=self._device
+           ).clamp(-1.0, 1.0)
+           self.pos = self.pos + 0.1 * actions
+           self.elapsed_steps += 1
 
-       def _calculate_reward(self):
-           """计算奖励。"""
-           # 实现奖励计算逻辑
-           pass
+           dist = torch.linalg.norm(self.pos - self.target, dim=-1)
+           reward = -dist
+           terminated = dist < 0.05
+           truncated = self.elapsed_steps >= self.max_episode_steps
+           info = {"distance": dist, "success": terminated}
+           return self._get_obs(), reward, terminated, truncated, info
 
-       def _check_termination(self):
-           """检查终止条件。"""
-           # 实现终止条件逻辑
-           pass
+``EnvWorker`` 按调用顺序依赖以下接口：
 
-       def _check_truncation(self):
-           """检查截断条件。"""
-           # 实现截断条件逻辑
-           pass
+- ``__init__(cfg, num_envs, seed_offset, total_num_processes, worker_info)``：``EnvWorker`` 传入 Hydra 环境配置、当前流水线 stage 的并行环境数、各 stage 独立的 ``seed_offset``、总进程数 ``total_num_processes`` 以及 ``worker_info``。用 ``cfg.seed + seed_offset`` 初始化随机种子，避免不同 rank 采出完全相同的轨迹。
+- ``reset(seed=None, options=None)``：重置全部 ``num_envs`` 个实例并返回 ``(obs, info)``，``obs`` 中每个张量的首维均为 ``num_envs``\ （本例中 ``states`` 的形状为 ``[num_envs, 4]``\ ）。
+- ``step(actions)``：接收形状为 ``[num_envs, action_dim]`` 的动作，返回 ``(obs, reward, terminated, truncated, info)``，其中 ``reward`` 为形状 ``[num_envs]`` 的浮点张量，``terminated`` 与 ``truncated`` 为形状 ``[num_envs]`` 的布尔张量。
+- ``num_envs``、``total_num_group_envs`` 与 ``device``：供 ``EnvWorker`` 及封装器读取，用于批处理、GRPO 分组索引和设备放置。
 
-       def _get_info(self):
-           """获取信息字典。"""
-           # 实现信息获取逻辑
-           pass
+.. note::
 
-1.2 实现必要的属性
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   输出多步动作块的具身策略会调用环境的 ``chunk_step(chunk_actions)``\ （完整实现和 ``auto_reset`` 处理可参考 ``rlinf/envs/sim/maniskill/maniskill_env.py``\ ）。
 
-.. code-block:: python
+2. 支持状态卸载（可选）
+-----------------------
 
-   @property
-   def total_num_group_envs(self):
-       """环境组的总数量。"""
-       # 根据你的环境实现
-       pass
-
-   @property
-   def num_envs(self):
-       """向量化环境的数量。"""
-       return self.num_envs
-
-   @property
-   def device(self):
-       """当前使用的设备。"""
-       return self.env.unwrapped.device
-
-2. 实现环境的 Offload 支持（可选）
-----------------------------------------------------------------------
-
-如果需要支持保存/恢复环境状态，可以继承 ``EnvOffloadMixin``：
+如果 GPU 仿真器需要与 actor 或 rollout worker 共享显存，可以实现 ``get_state()`` 和 ``load_state()`` 将仿真状态与随机数状态序列化到 CPU 内存并按需恢复（完整代理模式见 ``rlinf/envs/sim/maniskill/maniskill_offload_env.py`` 中的 ``EnvOffloadMixin`` 和 ``ManiskillOffloadEnv``\ ）：
 
 .. code-block:: python
 
-   from rlinf.envs.env_offload_wrapper import EnvOffloadMixin
    import io
    import torch
 
-   class YourCustomEnv(gym.Env, EnvOffloadMixin):
+
+   class PointReachOffloadEnv(PointReachEnv):
        def get_state(self) -> bytes:
-           """序列化环境状态为字节。"""
            state = {
-               "env_state": self.env.get_state(),
+               "pos": self.pos.cpu(),
+               "target": self.target.cpu(),
+               "elapsed_steps": self.elapsed_steps.cpu(),
                "rng_state": self._generator.get_state(),
-               # 根据需要添加其他状态
            }
            buffer = io.BytesIO()
            torch.save(state, buffer)
            return buffer.getvalue()
 
-       def load_state(self, state_buffer: bytes):
-           """从字节恢复环境状态。"""
-           buffer = io.BytesIO(state_buffer)
-           state = torch.load(buffer, map_location="cpu")
-           self.env.set_state(state["env_state"])
+       def load_state(self, state_buffer: bytes) -> None:
+           state = torch.load(
+               io.BytesIO(state_buffer), map_location="cpu", weights_only=True
+           )
+           self.pos = state["pos"].to(self._device)
+           self.target = state["target"].to(self._device)
+           self.elapsed_steps = state["elapsed_steps"].to(self._device)
            self._generator.set_state(state["rng_state"])
-           # 根据需要恢复其他状态
 
-3. 创建环境封装器
------------------------------------
+3. 注册环境并适配动作格式
+-------------------------
 
-如果实现了 offload 功能，需要创建对应的封装器：
-
-.. code-block:: python
-
-   # 在 env_offload_wrapper.py 中
-   class YourCustomEnv(BaseYourCustomEnv, EnvOffloadMixin):
-       def get_state(self) -> bytes:
-           # 实现状态保存
-           pass
-
-       def load_state(self, state_buffer: bytes):
-           # 实现状态恢复
-           pass
-
-4. 添加动作处理工具
------------------------------------
-
-在 ``action_utils.py`` 中添加动作处理函数：
+在 ``rlinf/envs/__init__.py`` 的 ``SupportedEnvType`` 枚举中新增成员，并在 ``get_env_cls()`` 中补充延迟导入分支。将导入放在 ``elif`` 分支内部，确保未选中该环境时不会加载可选仿真器依赖：
 
 .. code-block:: python
 
-   def prepare_actions_for_your_env(
-       raw_chunk_actions,
-       num_action_chunks,
-       action_dim,
-       action_scale,
-       policy,
-   ):
-       """为你的环境准备动作。"""
-       # 实现动作处理逻辑
-       pass
+   class SupportedEnvType(Enum):
+       ...
+       POINT_REACH = "point_reach"
+
+
+   def get_env_cls(env_type: str, env_cfg=None):
+       env_type = SupportedEnvType(env_type)
+       ...
+       elif env_type == SupportedEnvType.POINT_REACH:
+           from rlinf.envs.sim.point_reach.point_reach_env import PointReachEnv
+
+           return PointReachEnv
+
+接着检查 ``rlinf/envs/action_utils.py`` 中的 ``prepare_actions()``。如果仿真器可以直接消费策略输出的动作张量，默认的 ``else`` 分支会原样透传 ``raw_chunk_actions``；如果需要缩放、夹爪二值化或坐标映射，则按对应的 ``SupportedEnvType`` 新增处理分支：
+
+.. code-block:: python
+
+   def prepare_actions_for_point_reach(raw_chunk_actions, action_scale: float):
+       return np.clip(raw_chunk_actions * action_scale, -1.0, 1.0)
+
 
    def prepare_actions(
-       env_type,
        raw_chunk_actions,
+       env_type: str,
+       model_type: str,
        num_action_chunks,
        action_dim,
        action_scale: float = 1.0,
-       policy: str = "default",
+       policy: str = "widowx_bridge",
+       wm_env_type=None,
+       env_cfg=None,
    ):
-       if env_type == "your_env":
-           chunk_actions = prepare_actions_for_your_env(
+       ...
+       elif env_type == SupportedEnvType.POINT_REACH:
+           chunk_actions = prepare_actions_for_point_reach(
                raw_chunk_actions=raw_chunk_actions,
-               num_action_chunks=num_action_chunks,
-               action_dim=action_dim,
                action_scale=action_scale,
-               policy=policy,
            )
-       # ... 其他环境类型
+       ...
        return chunk_actions
 
-5. 创建任务变体（可选）
------------------------------------
+4. 添加 Hydra 配置预设
+----------------------
 
-如果需要特定任务变体，可以将其放在 ``envs/YOUR_ENV/tasks/variants/`` 下：
-
-.. code-block:: python
-
-   # envs/YOUR_ENV/tasks/variants/your_task_variant.py
-   class YourTaskVariant:
-       def __init__(self, config):
-           self.config = config
-
-       def setup_task(self):
-           """设置任务资源和初始状态。"""
-           pass
-
-       def get_task_description(self):
-           """返回任务的自然语言描述。"""
-           pass
-
-       def check_success(self, obs, action):
-           """任务成功时返回 True。"""
-           pass
-
-6. 更新配置文件
------------------------------------
-
-添加你的环境配置：
+在 ``examples/embodiment/config/env/point_reach.yaml`` 中创建静态默认配置：
 
 .. code-block:: yaml
 
-   your_env:
-     env_type: "your_env"
-     total_num_envs: 8
-     group_size: 4
-     seed: 42
-     # 其他环境特定设置
+   env_type: point_reach
+   total_num_envs: 8
+   group_size: 4
+   max_episode_steps: 50
+   seed: 42
+   auto_reset: true
+   ignore_terminations: false
 
-7. 注册环境
------------------------------------
+   video_cfg:
+     save_video: false
+     video_base_dir: ${runner.logger.log_path}/video/train
 
-在包中暴露新环境：
+5. 在本地 CPU 上验证
+--------------------
 
-.. code-block:: python
-
-   # 在 __init__.py 或相关模块中
-   from .your_custom_env import YourCustomEnv
-
-   __all__ = ["YourCustomEnv"]
-
-测试与验证
------------------------------------
+启动完整 Ray 训练前，直接在本地 CPU 上验证 ``reset``、``step``、张量形状、数据类型以及必选属性：
 
 .. code-block:: python
 
-   import numpy as np
+   import torch
+   from omegaconf import OmegaConf
 
-   def test_your_env():
-       """对环境的基本测试。"""
-       cfg = get_test_config()
-       env = YourCustomEnv(cfg, rank=0)
+   from rlinf.envs.sim.point_reach.point_reach_env import PointReachEnv
 
-       # Reset
-       obs, info = env.reset()
-       assert obs is not None
+   cfg = OmegaConf.create(
+       {
+           "env_type": "point_reach",
+           "total_num_envs": 8,
+           "group_size": 4,
+           "max_episode_steps": 50,
+           "seed": 42,
+       }
+   )
+   env = PointReachEnv(cfg, num_envs=cfg.total_num_envs)
 
-       # Step
-       action = env.action_space.sample()
-       obs, reward, terminated, truncated, info = env.step(action)
-       assert obs is not None
-       assert isinstance(reward, (float, np.ndarray))
+   obs, info = env.reset(seed=42)
+   assert obs["states"].shape == (8, 4) and info == {}
+
+   actions = torch.zeros(env.num_envs, 2)
+   next_obs, reward, terminated, truncated, step_info = env.step(actions)
+   assert next_obs["states"].shape == (8, 4)
+   assert reward.shape == (8,) and reward.dtype == torch.float32
+   assert terminated.shape == (8,) and terminated.dtype == torch.bool
+   assert truncated.shape == (8,) and truncated.dtype == torch.bool
+   assert "distance" in step_info and "success" in step_info
+   assert env.total_num_group_envs == 2 and env.device == torch.device("cpu")
+   print("PointReachEnv check passed:", env.num_envs, env.device)

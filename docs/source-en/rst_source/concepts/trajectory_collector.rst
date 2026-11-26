@@ -1,5 +1,5 @@
-Understand the Trajectory Collector
-===================================
+Trajectory Collector
+====================
 
 Use this page to trace embodied rollout data from one action chunk to the
 Actor-facing training batch. Focus on the fields your algorithm produces and

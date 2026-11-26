@@ -1,5 +1,5 @@
-RL with Real2Sim2Real GSEnv
-===========================
+GSEnv Real2Sim2Real RL
+======================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -83,142 +83,54 @@ Observation and Action
    ``examples/embodiment/config/env/gsenv_put_cube_on_plate.yaml``. The task id
    selects the ManiSkill-GS environment.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-**Docker image**
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenPI π₀.₅
 
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      **1. Install**
 
-   # For mainland China users:
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      .. code-block:: bash
 
-Switch to the OpenPI virtual environment inside the image:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+         git clone -b v01 https://github.com/chenkang455/ManiSkill-GS.git
+         uv pip install -e ./ManiSkill-GS
 
-.. code:: bash
+      **2. Download**
 
-   source switch_env openpi
+      Download the GSEnv 3DGS assets, verify the RLinf interface (the first run may compile ``gsplat`` kernels), and download the OpenPI π₀.₅ SFT checkpoint:
 
-**Custom environment**
+      .. code-block:: bash
 
-Install the ManiSkill/LIBERO environment with OpenPI dependencies:
+         hf download RLinf/gsenv-assets-v0 --repo-type dataset --local-dir ./ManiSkill-GS/assets
+         (cd ManiSkill-GS && python scripts/test_rlinf_interface.py)
+         hf download RLinf/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT --local-dir ./RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
 
-.. code:: bash
+      **3. Launch**
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+      The shipped config is ``examples/embodiment/config/gsenv_ppo_openpi_pi05.yaml``.
 
-Install ManiSkill-GS and its assets:
+      .. include:: _model_path.rst
 
-.. code:: bash
+      Launch PPO training with ``run_embodiment.sh``:
 
-   git clone -b v01 https://github.com/chenkang455/ManiSkill-GS.git
-   cd ManiSkill-GS
-   uv pip install -e .
+      .. code-block:: bash
 
-   # Download assets into the ManiSkill-GS project.
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/gsenv-assets-v0 --repo-type dataset --local-dir ./assets
+         bash examples/embodiment/run_embodiment.sh gsenv_ppo_openpi_pi05 actor.model.model_path=$PWD/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
 
-Verify the RLinf interface from the ManiSkill-GS project root:
+      .. dropdown:: Advanced configuration (optional)
 
-.. code:: bash
-
-   python scripts/test_rlinf_interface.py
-
-.. note::
-
-   The first run can take time because ``gsplat`` may compile kernels.
-
-Download the Model
-------------------
-
-Download the OpenPI π₀.₅ SFT checkpoint:
-
-.. code-block:: bash
-
-   cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
-
-   # Or use huggingface-hub:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT --local-dir RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
-
-.. include:: _model_path.rst
-
-Run It
-------
-
-Launch the GSEnv recipe:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 46 26
-
-   * - Recipe
-     - Config
-     - Command suffix
-   * - OpenPI π₀.₅ + PPO
-     - ``examples/embodiment/config/gsenv_ppo_openpi_pi05.yaml``
-     - ``gsenv_ppo_openpi_pi05``
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh gsenv_ppo_openpi_pi05
-
-What this does:
-
-1. Starts the embodied training entrypoint with the GSEnv Hydra config.
-2. Creates Ray workers for the actor, rollout, and ManiSkill-backed env components.
-3. Runs PPO rollouts with OpenPI action chunks and sparse GSEnv success rewards.
-
-.. note::
-
-   The default config uses ``actor,env,rollout: all``. Tune
-   ``cluster.component_placement``, ``env.train.total_num_envs``, and
-   ``actor.global_batch_size`` for your GPU memory budget.
+         The default config colocates ``actor,env,rollout: all``. Tune ``cluster.component_placement``, ``env.train.total_num_envs``, and ``actor.global_batch_size`` for your GPU memory budget.
 
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable video in the env config when you want 3DGS rollout videos:
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
-
-Enable W&B or SwanLab by adding logger backends:
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 .. figure:: https://github.com/user-attachments/assets/54a22c98-df04-42bd-beef-2630f69da8be
    :align: center
@@ -226,8 +138,6 @@ Enable W&B or SwanLab by adding logger backends:
 
    Example GSEnv training curves.
 
-References
-----------
+.. note::
 
-- `ManiSkill-GS <https://github.com/chenkang455/ManiSkill-GS>`__
-- `pi_RL paper <https://arxiv.org/pdf/2510.25889>`__
+   **References:** `ManiSkill-GS <https://github.com/chenkang455/ManiSkill-GS>`__ · `pi_RL paper <https://arxiv.org/pdf/2510.25889>`__.

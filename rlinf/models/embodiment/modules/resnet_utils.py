@@ -121,7 +121,7 @@ class ResNetEncoder(nn.Module):
                 channel=channel,
                 num_features=self.num_spatial_blocks,
             )
-            self.dropout = nn.Dropout(0.1)
+            self.dropout = nn.Dropout(self.encoder_cfg.get("dropout", 0.1))
 
         # final linear
         self.mlp = nn.Sequential(

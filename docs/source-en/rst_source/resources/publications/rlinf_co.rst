@@ -7,7 +7,7 @@ Overview
 --------
 
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/rlinf-co/overview.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png
    :alt: RLinf-Co overview
    :align: center
 
@@ -77,7 +77,7 @@ Main Results
 Ablation Study
 ~~~~~~~~~~~~~~
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/rlinf-co/success_rate.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/success_rate.png
    :alt: Ablation study on simulation SFT initialization
    :align: center
 
@@ -86,7 +86,7 @@ Ablation study on simulation SFT initialization. We report the simulation succes
 Data Efficiency
 ~~~~~~~~~~~~~~~
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/rlinf-co/data_efficiency.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/data_efficiency.png
    :alt: Effect of the number of real-world demonstrations
    :align: center
 

@@ -1,56 +1,56 @@
-指南
-====
+使用指南
+========
 
-指南面向实际操作流程：配置训练、扩展运行、管理数据与 checkpoint，以及调优性能。
+按实际跑任务的先后顺序查阅指南：先把训练配好并能看日志、续训和导出，再扩到多机集群，遇到吞吐瓶颈时先做性能诊断再对症提速，最后按需切换 Rollout 后端。
 
-选择工作流
-----------
+按当前阶段快速定位
+------------------
 
-.. grid:: 1 2 2 3
+.. list-table::
+   :header-rows: 1
+   :widths: 32 44 24
+
+   * - 当前阶段
+     - 常见需求
+     - 入口
+   * - 把任务配好并稳定运行
+     - 日志曲线、断点续训、Checkpoint 转换、LoRA 省显存、多 Env 混训
+     - :doc:`配置与运行 <configure/index>`
+   * - 单卡 / 单机不够，要上集群
+     - 多节点训练、异构集群、云边协同、自动 Placement、5D 并行、动态调度
+     - :doc:`扩展到多机集群 <launch-scale/index>`
+   * - 训练太慢或 GPU 空等
+     - 先做 Profiling 查瓶颈，再按需开 Pipeline、Env 解耦、观测压缩、异步 Agent RL、RTC、FUSCO
+     - :doc:`性能诊断与提速 <performance/index>`
+   * - 切换或部署独立推理引擎
+     - SGLang / vLLM 版本、SGLang 服务与路由、HTTP 推理客户端、Session Server、PhyAI、ApxInf
+     - :doc:`Rollout 后端与服务 <rollout-engines/index>`
+
+.. grid:: 1 2 2 2
    :gutter: 2
 
-   .. grid-item-card:: 配置
+   .. grid-item-card:: 1. 配置与运行
       :link: configure/index
       :link-type: doc
 
-      设置 Hydra 配置、日志与不同工作负载的专用选项。
+      配置日志与可视化、断点续训、Checkpoint 转换、LoRA 微调与多 Env 混合训练。
 
-   .. grid-item-card:: 启动与扩展
+   .. grid-item-card:: 2. 扩展到多机集群
       :link: launch-scale/index
       :link-type: doc
 
-      在多节点、异构硬件、云边协同或真实机器人上运行。
+      扩展到多节点、异构集群与云边协同，配置自动 Placement、5D 并行与动态调度。
 
-   .. grid-item-card:: 数据与 Checkpoint
-      :link: data-checkpoints/index
-      :link-type: doc
-
-      采集数据、转换 checkpoint，并恢复训练。
-
-   .. grid-item-card:: 性能
+   .. grid-item-card:: 3. 性能诊断与提速
       :link: performance/index
       :link-type: doc
 
-      调整 placement、调度、并行、profiling 与 adapter 训练。
+      先用 Profiling 定位瓶颈，再开启 Pipeline、Env 解耦、观测压缩、异步 Agent RL、RTC 或 FUSCO。
 
-   .. grid-item-card:: 智能体工作流
-      :link: agent-workflows/index
-      :link-type: doc
-
-      运行智能体与推理工作负载。
-
-   .. grid-item-card:: Rollout 引擎
+   .. grid-item-card:: 4. Rollout 后端与服务
       :link: rollout-engines/index
       :link-type: doc
 
-      启动 SGLang server 与 router，或使用 PhyAI 作为进程内的具身 rollout 后端。
+      管理 SGLang 与 vLLM 版本、部署独立推理服务，或启用 PhyAI / ApxInf 具身推理后端。
 
-.. toctree::
-   :hidden:
-
-   配置 <configure/index>
-   启动与扩展 <launch-scale/index>
-   数据与 Checkpoint <data-checkpoints/index>
-   性能 <performance/index>
-   智能体工作流 <agent-workflows/index>
-   Rollout 引擎 <rollout-engines/index>
+如果是真机遥操作、数据采集或真机多机启动，请前往 :doc:`真机通用流程 <../examples/real_world_workflows_index>`。

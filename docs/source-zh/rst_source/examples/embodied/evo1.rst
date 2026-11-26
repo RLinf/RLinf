@@ -1,15 +1,12 @@
-Evo-1 模型的强化学习
-====================
+Evo-1 强化学习
+==============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
    :height: 16px
    :class: inline-icon
 
-`Evo-1 <https://github.com/MINT-SJTU/Evo-1>`__ 是一个紧凑（约 1B）的视觉-语言-动作（VLA）模型：
-以 InternVL3-1B 作为视觉-语言主干，配一个 flow-matching（DiT）动作头。RLinf **原生集成** 了
-Evo-1 —— 嵌入 RLinf 的 Python 内存空间，实现零延迟、张量级交互 —— 并支持在 LIBERO 仿真器上做
-全参数 SFT 与 GRPO 微调。
+`Evo-1 <https://github.com/MINT-SJTU/Evo-1>`__ 是一个紧凑（约 1B）的视觉-语言-动作（VLA）模型：以 InternVL3-1B 作为视觉-语言主干，配一个 flow-matching（DiT）动作头。RLinf **原生集成**\ 了 Evo-1，将其嵌入 RLinf 的 Python 内存空间，支持零延迟的张量级交互，并在 LIBERO 仿真器上支持全参数 SFT 与 GRPO 微调。
 
 概览
 ----
@@ -76,157 +73,97 @@ Evo-1 —— 嵌入 RLinf 的 Python 内存空间，实现零延迟、张量级�
    * - 指令
      - LIBERO episode 的自然语言任务指令。
 
-安装
-----
+安装与运行
+----------
 
-1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
-.. code-block:: bash
+.. tab-set::
 
-    git clone https://github.com/RLinf/RLinf.git
-    cd RLinf
-    export RLINF_PATH=$(pwd)
+   .. tab-item:: LIBERO
 
-2. 安装依赖
-~~~~~~~~~~~
+      **1. 安装环境**
 
-一条命令安装 Evo-1 原生环境与 LIBERO 基础依赖：
+      .. code-block:: bash
 
-.. code-block:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model evo1 --env libero && source .venv/bin/activate
 
-    bash requirements/install.sh embodied --model evo1 --env libero --use-mirror
-    source .venv/bin/activate
+      **2. 下载模型**
 
-下载模型
---------
+      下载 Evo-1 的 LIBERO 权重（包含 ``config.json``、``norm_stats.json`` 与 ``mp_rank_00_model_states.pt``）：
 
-从 HuggingFace 下载 Evo-1 的 LIBERO 权重（一个包含 ``config.json``、``norm_stats.json``、
-``mp_rank_00_model_states.pt`` 的权重目录）：
+      .. code-block:: bash
 
-.. code-block:: bash
+         hf download MINT-SJTU/Evo1_LIBERO --local-dir ./Evo1_LIBERO
 
-    git lfs install
-    git clone https://huggingface.co/MINT-SJTU/Evo1_LIBERO
+      **3. 启动训练**
 
-然后把配置里的 ``rollout.model.model_path`` 与 ``actor.model.model_path`` 设为本地权重路径。
-``actor.model.evo1.arm_key`` / ``dataset_key`` 必须与权重 ``norm_stats.json`` 的顶层 key 一致。
+      Evo-1 配置文件一览：
 
-该权重只包含在基座 VLM 之上训练得到的参数，并以 hub id 的形式记录基座
-（``vlm_name: OpenGVLab/InternVL3-1B``），因此加载模型时会去 HuggingFace 拉取它。
-在无外网的机器上，先把它下载到本地，再把 ``actor.model.evo1.vlm_name`` 指向该目录：
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 50 28
 
-.. code-block:: bash
+         * - 流程
+           - 配置文件
+           - 启动脚本
+         * - GRPO
+           - ``examples/embodiment/config/libero_spatial_grpo_evo1.yaml``
+           - ``examples/embodiment/run_embodiment.sh``
+         * - SFT
+           - ``examples/sft/config/libero_sft_evo1.yaml``
+           - ``examples/sft/run_vla_sft.sh``
+         * - 独立评测
+           - ``evaluations/libero/libero_spatial_evo1_eval.yaml``
+           - ``evaluations/run_eval.sh``
 
-    git clone https://huggingface.co/OpenGVLab/InternVL3-1B
+      .. include:: _model_path.rst
 
-运行
-----
+      启动 LIBERO-Spatial GRPO 训练：
 
-配置文件
-~~~~~~~~
+      .. code-block:: bash
 
-* **SFT（监督微调）**：
-  ``examples/sft/config/libero_sft_evo1.yaml``\ （用 ``examples/sft/run_vla_sft.sh`` 运行）
-* **GRPO（强化学习）**：
-  ``examples/embodiment/config/libero_spatial_grpo_evo1.yaml``
-* **独立评测**：
-  ``evaluations/libero/libero_spatial_evo1_eval.yaml``\ （用 ``evaluations/run_eval.sh`` 运行）
+         bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_evo1 actor.model.model_path=$PWD/Evo1_LIBERO
 
-关键配置片段（GRPO）
-^^^^^^^^^^^^^^^^^^^^
+      .. dropdown:: 进阶配置（可选）
 
-顶层文件通过 Hydra 组装环境与模型，并在 ``actor.model`` / ``algorithm`` 下覆盖 flow-matching
-SDE 采样与 GRPO 的核心参数。
+         - **离线基座 VLM**：运行机器无法联网时，提前下载 ``OpenGVLab/InternVL3-1B``，并将 ``actor.model.evo1.vlm_name`` 指向本地目录：
 
-.. code-block:: yaml
+           .. code-block:: bash
 
-    rollout:
-      model:
-        model_type: "evo1"
+              hf download OpenGVLab/InternVL3-1B --local-dir ./InternVL3-1B
 
-    actor:
-      model:
-        model_type: "evo1"
-        model_path: "/path/to/model/Evo1_LIBERO"
-        num_action_chunks: 14        # 每次推理执行的步数
-        evo1:
-          arm_key: "libero_robot"    # 必须与 norm_stats.json 一致
-          dataset_key: "libero_robot"
-        rl_head_config:
-          noise_level: 0.5           # SDE 噪声尺度
-          denoising_steps: 8         # RL rollout + replay 的 SDE 去噪步数
-      model.evo1.rl_trainable_scope: "action_head"   # 冻结 InternVL3，只训动作头
+         - **自定义数据集与源码路径**：使用自定义数据集时，保持 ``actor.model.evo1.arm_key`` 与 ``actor.model.evo1.dataset_key`` 与 ``norm_stats.json`` 的顶层 key 一致。若自行克隆了 Evo-1 仓库，将 ``actor.model.evo1.repo_path``\ （或环境变量 ``EVO1_REPO_PATH``）指向仓库根目录。如需快速在单任务上验证，追加 ``+env.train.task_id_filter=[0] +env.eval.task_id_filter=[0]``，几十个 GRPO step 内即可看到 ``env/success_at_end`` 上升。
+         - **监督微调（SFT）**：在 LIBERO 风格的 LeRobot 数据集上对 Evo-1 做 SFT 时，将 ``data.train_data_paths`` 指向 Evo-1 数据集配置 YAML，将 ``actor.model.model_path`` 指向起始权重后启动（训练权重保存在 ``runner.logger.log_path`` 下）：
 
-    algorithm:
-      adv_type: grpo
-      logprob_type: token_level      # 逐维 ratio（执行的 14x7 维）
-      group_size: 8
-      update_epoch: 2
-      clip_ratio_low: 0.2
-      clip_ratio_high: 0.28          # clip-higher：持续改进
+           .. code-block:: bash
 
-当动作头的算子下发成为 rollout 瓶颈时，可以为训练 rollout 中的确定性计算启用 graph。让 rollout 模型常驻设备，可以在后续调用中复用已捕获的 graph：
+              bash examples/sft/run_vla_sft.sh libero_sft_evo1
 
-.. code-block:: yaml
+         - **独立评测**：使用独立评测脚本评测权重：
 
-    rollout:
-      enable_cuda_graph: True
-      enable_offload: False
+           .. code-block:: bash
 
-CUDA 和 Ascend 均按实际输入的 shape 和 dtype 延迟捕获 graph，原地更新权重后，replay 会使用新权重。模型卸载时会释放 graph；重新加载后，再根据下一次 rollout 的输入捕获。
+              bash evaluations/run_eval.sh libero libero_spatial_evo1_eval \
+                rollout.model.model_path=$PWD/Evo1_LIBERO
 
-Ascend 上的大 batch 可能在冻结的 InternVL 视觉 attention 中耗尽显存。将 ``actor.model.evo1.vision_attention_batch_size`` 设为 ``8``，可以让 attention 矩阵每次最多计算八帧相机图像。该参数默认为 ``0``，沿用原 attention；仅适用于昇腾上未启用 dropout 的冻结视觉 attention。分批计算减少了临时显存，但会增加算子下发次数，需要结合实际 rollout batch 测量吞吐。
+         - **CUDA / Ascend Graph 捕获**：动作头算子下发成为 rollout 瓶颈时，可为确定性 rollout 路径启用 graph 捕获，并保持 rollout 模型常驻设备以复用已捕获的 graph（按实际输入 shape 和 dtype 延迟捕获，原地更新权重后 replay 仍生效；模型卸载时会释放 graph）：
 
-启动命令
-~~~~~~~~
+           .. code-block:: yaml
 
-.. code-block:: bash
+              rollout:
+                enable_cuda_graph: True
+                enable_offload: False
 
-    export ROBOT_PLATFORM="LIBERO"
-    bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_evo1
-
-若你自行 clone 了 Evo-1 仓库，请把 ``actor.model.evo1.repo_path``\ （或环境变量
-``EVO1_REPO_PATH``）指向仓库根目录。
-
-如需快速复现单任务上的 RL 效果，可用 ``+env.train.task_id_filter=[0] +env.eval.task_id_filter=[0]``
-把训练限制到单个 LIBERO-Spatial 任务；几十个 GRPO step 内 ``env/success_at_end`` 就会从
-SFT 基线稳步上升（见下方结果）。
-
-监督微调（SFT）
-----------------
-
-在 RL 之前用 LIBERO 风格的 LeRobot 数据对 Evo-1 做 SFT（或复现 SFT 权重）：
-
-.. code-block:: bash
-
-    bash examples/sft/run_vla_sft.sh libero_sft_evo1
-
-把 ``data.train_data_paths`` 指向 Evo-1 的数据集配置 YAML，``actor.model.model_path``
-指向要微调的权重（或基座）。SFT 配方（AdamW、带 warmup 的 cosine 调度、flow-matching MSE）
-沿用 Evo-1 的原生训练；权重保存在 ``runner.logger.log_path`` 下。
-
-独立评测
---------
-
-用独立评测框架评测一个权重（配置在 ``evaluations/libero/`` 下）：
-
-.. code-block:: bash
-
-    bash evaluations/run_eval.sh libero libero_spatial_evo1_eval \
-      rollout.model.model_path=/path/to/ckpt
+         - **Ascend 视觉 attention 分批**：Ascend 上大 batch 可能在冻结的 InternVL 视觉 attention 中耗尽显存。将 ``actor.model.evo1.vision_attention_batch_size`` 设为 ``8``\ （默认 ``0``，使用原生 attention），每次最多计算八帧相机图像的 attention，并结合实际 rollout batch 测量吞吐。
 
 可视化与结果
 ------------
 
-在 RLinf 仓库根目录启动 TensorBoard：
+执行 ``tensorboard --logdir ./logs --port 6006`` 启动 TensorBoard，关注任务成功率指标 ``env/success_once``。传入 ``env.eval.video_cfg.save_video=True`` 可保存评估视频，完整指标与日志后端说明见 :doc:`训练指标 <../../reference/metrics>`。
 
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-关键指标是 ``env/success_once``。从 Evo-1 SFT 权重出发做 GRPO，在 LIBERO-Spatial 上成功率稳定上升
-（n=64 验证，冻结 VLM、只训动作头）：
+从 Evo-1 SFT 权重出发运行 GRPO，LIBERO-Spatial 成功率稳步提升（n=64 验证，冻结 VLM、只训动作头）：
 
 .. list-table:: Evo-1 GRPO 在 LIBERO-Spatial 上的结果（n=64）
    :header-rows: 1

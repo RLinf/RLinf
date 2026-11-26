@@ -1,9 +1,24 @@
-New Real-World Tasks
-====================
+Real-World Task
+===============
 
 This guide explains how to add a real-world task when RLinf already knows how to
 connect the physical robot. By the end, you will have a config dataclass, a
 small env class, a registered Gymnasium ID, and a YAML config you can launch.
+
+.. list-table:: At a Glance
+   :header-rows: 1
+   :widths: 26 74
+
+   * - Item
+     - Details
+   * - Extension point
+     - Real-world task config dataclass and Gymnasium env subclass
+   * - Registration API
+     - ``TASKS`` mapping + ``register_tasks(...)``
+   * - Config selector
+     - ``env_type: real``, ``init_params.id``
+   * - Files touched
+     - ``rlinf/envs/real/<robot>/<task>.py``, ``rlinf/envs/real/<robot>/__init__.py``, ``examples/embodiment/config/env/``
 
 This guide covers task modules under ``rlinf/envs/real``. To add a task to a
 simulator or benchmark, follow :doc:`new_env` instead.
@@ -186,10 +201,9 @@ hardware, import the real-world env package and confirm that the ID resolves:
 
    assert "WipeEnv-v1" in registry
 
-``tests/unit_tests/test_real_env.py`` makes the same assertion for every shipped
-task. Add your ID to ``EXPECTED_IDS`` there. A passing assertion establishes
-registration only; run the mock and hardware checks from :doc:`new_robot` when
-the task changes the robot-facing observation or action path.
+A passing assertion establishes registration only; run the mock and hardware checks
+from :doc:`new_robot` when the task changes the robot-facing observation or action
+path.
 
 Reuse Existing Infrastructure
 -----------------------------
