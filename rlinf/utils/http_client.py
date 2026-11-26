@@ -66,6 +66,29 @@ def no_proxy_env() -> Iterator[None]:
                 os.environ[var] = val
 
 
+class HTTPStatusError(RuntimeError):
+    """An error HTTP status (400 or above) from an async POST.
+
+    Carries the status code and body text so callers can branch on them;
+    still a RuntimeError subclass with the same message format the plain
+    raise used, for backward compatibility.
+    """
+
+    def __init__(self, message: str, status: int, body: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.body = body
+
+    def __reduce__(self):
+        """Reconstruct with every argument.
+
+        The base class pickle only preserves ``args``, which here holds
+        the message alone, so without this an unpickle would call the
+        constructor with one argument instead of three.
+        """
+        return (type(self), (self.args[0], self.status, self.body))
+
+
 class InferenceHTTPClient:
     """Thin HTTP client for an sglang router or server base URL.
 
@@ -153,7 +176,7 @@ class InferenceHTTPClient:
         return_logprob: list[bool] | bool = False,
         image_data: Optional[list] = None,
     ) -> dict | list:
-        return await self._apost(
+        return await self.async_post(
             "/generate",
             self._generate_body(
                 prompt, input_ids, sampling_params, return_logprob, image_data
@@ -167,7 +190,7 @@ class InferenceHTTPClient:
         **kwargs: Any,
     ) -> dict:
         body = {"model": model, "messages": messages, **kwargs}
-        return await self._apost("/v1/chat/completions", body)
+        return await self.async_post("/v1/chat/completions", body)
 
     async def async_health(self) -> bool:
         session = self._get_or_create_session()
@@ -184,13 +207,13 @@ class InferenceHTTPClient:
         self, tags: Optional[list[str]] = None
     ) -> dict:
         body = {} if tags is None else {"tags": tags}
-        return await self._apost("/release_memory_occupation", body)
+        return await self.async_post("/release_memory_occupation", body)
 
     async def async_resume_memory_occupation(
         self, tags: Optional[list[str]] = None
     ) -> dict:
         body = {} if tags is None else {"tags": tags}
-        return await self._apost("/resume_memory_occupation", body)
+        return await self.async_post("/resume_memory_occupation", body)
 
     async def async_run_task_method(self, obj: Any) -> Any:
         """POST a pickled TaskMethodInput to ``/rlinf/run_task_method``.
@@ -200,24 +223,24 @@ class InferenceHTTPClient:
         must only target servers they trust — the route unpickles the
         body (loopback-bound in server-mode rollout).
         """
-        resp = await self._apost("/rlinf/run_task_method", _b64_payload(obj))
+        resp = await self.async_post("/rlinf/run_task_method", _b64_payload(obj))
         return pickle.loads(base64.b64decode(resp["payload_b64"]))
 
     async def async_sync_hf_weight(self, obj: Any = None) -> None:
         """Trigger an actor-to-rollout weight sync round via HTTP."""
-        await self._apost("/rlinf/sync_hf_weight", _b64_payload(obj))
+        await self.async_post("/rlinf/sync_hf_weight", _b64_payload(obj))
 
     async def async_abort_generation(self, obj: Any = None) -> None:
         """Abort all in-flight generations via HTTP."""
-        await self._apost("/rlinf/abort_generation", _b64_payload(obj))
+        await self.async_post("/rlinf/abort_generation", _b64_payload(obj))
 
     async def async_pause_generation(self, mode: str) -> dict:
         """Pause generation via sglang's native route (in_place / retract)."""
-        return await self._apost("/pause_generation", {"mode": mode})
+        return await self.async_post("/pause_generation", {"mode": mode})
 
     async def async_continue_generation(self) -> dict:
         """Continue generation via sglang's native route."""
-        return await self._apost("/continue_generation", {})
+        return await self.async_post("/continue_generation", {})
 
     # ------------------------------------------------------------------
     # Session management
@@ -387,23 +410,47 @@ class InferenceHTTPClient:
             return [InferenceHTTPClient._to_msgpackable(v) for v in value]
         return value
 
-    async def _apost(self, path: str, body: dict) -> dict:
+    async def async_post(
+        self,
+        path: str,
+        body: dict,
+        headers: Optional[dict[str, str]] = None,
+        timeout_s: Optional[float] = None,
+    ) -> dict:
+        """POST ``body`` with custom headers and a total timeout.
+
+        Errors propagate: ``HTTPStatusError`` on an HTTP status of 400 or
+        above, with status and body text.
+
+        Args:
+            path: Path appended to the base URL.
+            body: JSON request body.
+            headers: Extra request headers, e.g. a routing key for a router.
+            timeout_s: Total timeout for the request, connect and read
+                included; None waits indefinitely.
+
+        Returns:
+            The decoded response dict.
+        """
         session = self._get_or_create_session()
         async with session.post(
             f"{self.base_url}{path}",
             json=body,
+            headers=headers,
             timeout=aiohttp.ClientTimeout(
-                total=None,
+                total=timeout_s,
                 sock_connect=self.connect_timeout,
-                sock_read=None,
+                sock_read=timeout_s,
             ),
         ) as resp:
             # ClientResponseError is not picklable and Ray would hide it
-            # behind "can't pickle"; raise a RuntimeError with status and
-            # body instead.
+            # behind "can't pickle"; raise HTTPStatusError (a RuntimeError
+            # subclass) with status and body instead.
             if resp.status >= 400:
                 text = await resp.text()
-                raise RuntimeError(
-                    f"POST {path} failed with HTTP {resp.status}: {text[:2000]}"
+                raise HTTPStatusError(
+                    f"POST {path} failed with HTTP {resp.status}: {text[:2000]}",
+                    status=resp.status,
+                    body=text,
                 )
             return await resp.json()

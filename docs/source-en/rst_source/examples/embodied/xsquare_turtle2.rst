@@ -1,53 +1,51 @@
-Real-World RL with XSquare Turtle2
-==================================
+XSquare Turtle2 Online RL
+=========================
+
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/xsquare_turtle2_arm_small.jpg
    :align: center
    :width: 80%
 
    XSquare Turtle2 dual-arm robot used for SAC/CNN real-world button-pressing training.
 
-Train a real-world policy on the XSquare Turtle2 dual-arm robot. You will enter the vendor controller container, install RLinf dependencies, set target poses for button pressing, and launch SAC/CNN training across robot and GPU nodes.
+Train a visual SAC/CNN button-pressing policy on the XSquare Turtle2 dual-arm robot across a vendor controller node and a GPU training node.
 
 Overview
 --------
 
-Train a visual SAC policy for button pressing on XSquare Turtle2.
+This recipe pairs the XSquare ROS controller container on the robot host with an asynchronous SAC, Cross-Q, or RLPD training loop using a pretrained ResNet-10 backbone on the GPU node.
 
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: Models
+   .. grid-item-card:: Robot
       :text-align: center
 
-      CNN policy
+      XSquare Turtle2 · 1–2 arms
 
-   .. grid-item-card:: Algorithms
+   .. grid-item-card:: Sensors & Teleop
       :text-align: center
 
-      SAC · Cross-Q · RLPD
+      Up to 3 RGB cameras (IDs 0–2)
 
-   .. grid-item-card:: Tasks
+   .. grid-item-card:: Workflow
       :text-align: center
 
-      Button pressing
+      Dummy check · SAC / Cross-Q / RLPD · CNN
 
    .. grid-item-card:: Hardware
       :text-align: center
 
-      XSquare Turtle2 · 1–2 arms · cameras
-
-| **You'll do:** enter vendor container → install RLinf env → set target poses → test dummy config → train.
-| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · XSquare Docker/controller stack · local network.
+      Controller PC (XSquare Docker) · GPU node
 
 Tasks
 ~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24 24
+   :widths: 22 34 44
 
    * - Task
-     - Config / entry point
+     - Config / Entry Point
      - Description
    * - Dummy check
      - ``realworld_dummy_turtle2_sac_cnn``
@@ -55,305 +53,191 @@ Tasks
    * - Training
      - ``realworld_button_turtle2_sac_cnn``
      - Train button pressing with one or two active arms.
-   * - Monitoring
-     - TensorBoard logs
-     - Track reward, return, and replay-buffer statistics.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24
+   :widths: 24 76
 
    * - Field
      - Description
    * - Observation
      - Up to three RGB camera streams plus TCP pose per active arm.
    * - Action
-     - 7-D continuous delta pose and gripper command per arm.
+     - 6-D continuous delta pose per arm for button pressing (12-D dual arm, gripper fixed closed; the arm hardware supports 7-D with gripper).
    * - Reward
      - ``1.0`` on button-press success; optional dense exponential shaping.
    * - Prompt
      - ``Press the button with the end-effector.``
 
-Hardware Setup
---------------
+Hardware and Safety
+-------------------
 
-The real-world setup requires:
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
 
-- **Robot**: XSquare Turtle2 dual-arm robot
-- **Cameras**: Up to 3 RGB cameras mounted on the robot (IDs 0–2)
-- **Training / Rollout Node**: A computer with GPU support for running the CNN policy
-- **Robot Controller Node**: A small computer (GPU not required) connected to the robot in the same local network
-
-.. warning::
-
-  Ensure the training node and the robot controller node are in the **same local network**.
-
-
-Installation
-------------
-
-The controller node and the training/rollout node(s) require different software dependencies.
-
-Robot Controller Node
-~~~~~~~~~~~~~~~~~~~~~
-
-The XSquare Turtle2 platform ships with its own SDK and ROS-based controller stack. **Please ensure that you have entered the official Docker container of Xsquare before starting the following installation.**. Contact `XSquare <https://x2robot.com>`_
-for the exact Docker image and startup instructions.
-
-After entering the XSquare Docker container, clone the RLinf repository inside it:
-
-.. code:: bash
-
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-Then install the RLinf Python dependencies for the embodied real-world setup:
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag for better speed.
-   bash requirements/install.sh embodied --env xsquare_turtle2
-   source .venv/bin/activate
-
-Training / Rollout Nodes
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-A. Clone RLinf Repository
-^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code:: bash
-
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-B. Install Dependencies
-^^^^^^^^^^^^^^^^^^^^^^^
-
-**Option 1: Docker Image**
-
-.. code:: bash
-
-   # use maniskill_libero image for training / rollout nodes
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-**Option 2: Custom Environment**
-
-.. code:: bash
-
-   # install openvla + maniskill_libero environment on training / rollout nodes
-   # For mainland China users, you can add the `--use-mirror` flag for better speed.
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
-   source .venv/bin/activate
-
-
-Download the Model
-------------------
-
-Before starting training, download the pretrained ResNet CNN backbone:
-
-.. code:: bash
-
-   # Method 1: Using git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
-
-   # Method 2: Using huggingface-hub
-   # For mainland China users:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
-
-After downloading, update the ``model_path`` field in the configuration YAML file.
-
-
-Run It
-------
-
-Prerequisites
-~~~~~~~~~~~~~
-
-**Acquire the Target End-Effector Pose**
-
-For each task, you need to record the target end-effector pose that triggers a success
-signal. Move the robot arm(s) to the desired target pose manually via the XSquare control
-interface, then read back the pose.
-
-The pose is stored as Euler angles in the format
-``[x, y, z, rz, ry, rx]`` (XSquare convention). Record this for both
-arms if using dual-arm mode.
-
-Cluster Setup
-~~~~~~~~~~~~~
-
-Before starting the experiment, set up the Ray cluster properly.
+   * - Component
+     - Requirement
+   * - Robot & cameras
+     - XSquare Turtle2 dual-arm robot with up to three mounted RGB cameras (IDs 0–2).
+   * - Controller node
+     - Small Linux computer (no GPU required) running the official XSquare Docker container on the same LAN.
+   * - Training / Rollout node
+     - Linux GPU server on the same local network running the CNN policy.
 
 .. warning::
 
-  This step is critical. Any misconfiguration may cause missing packages or failure
-  to control the robot.
+   Keep the controller node and training node on the same local network, keep the physical emergency stop within reach, and clear the workspace around the arms before disabling ``is_dummy``. Button pressing resets each active arm slightly above ``target_ee_pose`` along the Z axis; verify the recorded pose before starting motion.
 
-RLinf uses Ray for managing distributed environments. When ``ray start`` is run on
-a node, the current Python interpreter and environment variables are recorded and
-inherited by all subsequent Ray processes on that node.
+Setup and Run
+-------------
 
-We provide ``ray_utils/realworld/setup_before_ray.sh`` to help configure the environment
-before starting Ray on each node. Modify and source it before ``ray start``.
+.. include:: _setup_common.rst
 
-The script sets up the following:
+.. tab-set::
 
-1. Source the correct virtual Python environment (see Dependency Installation above).
-2. On the controller node: ensure the XSquare SDK packages are discoverable (this is
-   handled automatically when using the XSquare official Docker image).
-3. Set RLinf environment variables on all nodes:
+   .. tab-item:: Robot Controller Node
 
-.. code-block:: bash
+      **1. Enter the XSquare Docker container and install RLinf**
 
-   export PYTHONPATH=<path_to_your_RLinf_repo>:$PYTHONPATH
-   export RLINF_NODE_RANK=<node_rank_of_this_node>
-   export RLINF_COMM_NET_DEVICES=<network_device>  # Optional if only one NIC
+      Enter the official XSquare Docker container (contact `XSquare <https://x2robot.com>`__ for the image and startup commands) before installing RLinf:
 
-``RLINF_NODE_RANK`` is set to ``0 ~ N-1`` for each of the ``N`` nodes.
-``RLINF_COMM_NET_DEVICES`` is only needed if the machine has multiple network interfaces;
-check with ``ifconfig`` or ``ip addr``.
+      .. code-block:: bash
 
-Start Ray on each node after sourcing the script:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env xsquare_turtle2 && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. Record the target end-effector pose**
 
-   # On the head node (node rank 0)
-   ray start --head --port=6379 --node-ip-address=<head_node_ip_address>
+      Move the active arm(s) to the button-press pose through the XSquare control interface and read back the pose in XSquare's Euler convention ``[x, y, z, rz, ry, rx]``. Record both arms when running in dual-arm mode.
 
-   # On worker nodes (node rank 1 ~ N-1)
-   ray start --address='<head_node_ip_address>:6379'
+      **3. Start the Ray worker**
 
-Run ``ray status`` to verify the cluster is up.
+      Ray freezes the active Python interpreter and environment variables at ``ray start`` time. Activate ``.venv`` and export the variables below from the repo root (replace ``192.168.1.10`` with your head node IP and ``eth0`` if you have multiple NICs):
 
-Configuration File
-~~~~~~~~~~~~~~~~~~
+      .. code-block:: bash
 
-Modify ``examples/embodiment/config/realworld_button_turtle2_sac_cnn.yaml`` to match
-your setup.
+         source .venv/bin/activate
+         export RLINF_NODE_RANK=1
+         export RLINF_COMM_NET_DEVICES=eth0  # Optional if only one NIC
+         ray start --address='192.168.1.10:6379'
 
-Key fields to update:
+   .. tab-item:: Training & Rollout Nodes
 
-.. code-block:: yaml
+      **1. Install RLinf and download ResNet-10**
 
-  cluster:
-    num_nodes: 2  # 1 training/rollout node + 1 controller node
-    component_placement:
-      actor:
-        node_group: "gpu"
-        placement: 0
-      rollout:
-        node_group: "gpu"
-        placement: 0
-      env:
-        node_group: turtle2
-        placement: 0
-    node_groups:
-      - label: "gpu"
-        node_ranks: 0
-      - label: turtle2
-        node_ranks: 1
-        hardware:
-          type: Turtle2
-          configs:
-            - node_rank: 1
+      .. code-block:: bash
 
-  env:
-    train:
-      override_cfg:
-        is_dummy: False
-        use_arm_ids: [1]          # 0=left arm, 1=right arm; use [0,1] for dual arm
-        use_camera_ids: [2]       # camera IDs to use (0, 1, or 2)
-        target_ee_pose:           # [[left_arm_pose], [right_arm_pose]], Euler [x,y,z,rz,ry,rx]
-          - [0, 0, 0, 0, 0, 0]
-          - [0.3, 0.0, 0.15, 0.0, 1.0, 0.0]
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env xsquare_turtle2 && source .venv/bin/activate
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
 
-  actor:
-    model:
-      model_path: "/path/to/RLinf-ResNet10-pretrained"
-      state_dim: 6    # 6 for single arm (xyz+euler); 12 for dual arm
-      action_dim: 6   # 6 for single arm (xyz_delta+rpy_delta); 12 for dual arm
+      **2. Start the Ray head**
 
-  rollout:
-    model:
-      model_path: "/path/to/RLinf-ResNet10-pretrained"
+      Export the cluster variables from the repo root (replace ``192.168.1.10`` with your head node IP) and verify both nodes join with ``ray status``:
 
-For the **button-pressing** task, the ``target_ee_pose`` defines both the success
-threshold position and the reset position (arms reset to a pose slightly above the
-target along the Z axis).
+      .. code-block:: bash
 
-Testing the Setup (Optional)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+         export RLINF_NODE_RANK=0
+         export RLINF_COMM_NET_DEVICES=eth0  # Optional if only one NIC
+         ray start --head --port=6379 --node-ip-address=192.168.1.10
+         ray status
 
-Before running the full experiment, you can verify the setup using dummy mode:
+      **3. Configure arms, target pose, and backbone path**
 
-Set ``is_dummy: True`` in both ``env.train.override_cfg`` and ``env.eval.override_cfg``
-to enable dummy mode (no real robot required). This validates the cluster and model
-pipeline without physical robot interaction.
+      Update the required fields in ``examples/embodiment/config/realworld_button_turtle2_sac_cnn.yaml``:
 
-Run on the head node:
+      .. code-block:: yaml
 
-.. code-block:: bash
+         env:
+           train:
+             override_cfg:
+               is_dummy: False
+               use_arm_ids: [1]          # 0=left, 1=right; [0, 1] for dual arm
+               use_camera_ids: [2]       # Camera IDs to use (0, 1, or 2)
+               target_ee_pose:           # [[left], [right]], Euler [x, y, z, rz, ry, rx]
+                 - [0, 0, 0, 0, 0, 0]
+                 - [0.3, 0.0, 0.15, 0.0, 1.0, 0.0]
 
-   bash examples/embodiment/run_realworld_async.sh realworld_dummy_turtle2_sac_cnn
+         actor:
+           model:
+             model_path: "./RLinf-ResNet10-pretrained"
+             state_dim: 6    # 6 for single arm, 12 for dual arm
+             action_dim: 6   # 6 for single arm, 12 for dual arm
 
-Run It
-~~~~~~
+      .. dropdown:: Full configuration reference (optional)
 
-After verifying the setup, start the real-world training experiment on the head node:
+         .. code-block:: yaml
 
-.. code-block:: bash
+            cluster:
+              num_nodes: 2  # 1 training/rollout node + 1 controller node
+              component_placement:
+                actor:
+                  node_group: "gpu"
+                  placement: 0
+                rollout:
+                  node_group: "gpu"
+                  placement: 0
+                env:
+                  node_group: turtle2
+                  placement: 0
+              node_groups:
+                - label: "gpu"
+                  node_ranks: 0
+                - label: turtle2
+                  node_ranks: 1
+                  hardware:
+                    type: Turtle2
+                    configs:
+                      - node_rank: 1
 
-   bash examples/embodiment/run_realworld_async.sh realworld_button_turtle2_sac_cnn
+            env:
+              train:
+                override_cfg:
+                  is_dummy: False
+                  use_arm_ids: [1]          # 0=left arm, 1=right arm; use [0,1] for dual arm
+                  use_camera_ids: [2]       # camera IDs to use (0, 1, or 2)
+                  target_ee_pose:           # [[left_arm_pose], [right_arm_pose]], Euler [x,y,z,rz,ry,rx]
+                    - [0, 0, 0, 0, 0, 0]
+                    - [0.3, 0.0, 0.15, 0.0, 1.0, 0.0]
 
-Visualization and Results
---------------------------
+            actor:
+              model:
+                model_path: "./RLinf-ResNet10-pretrained"
+                state_dim: 6    # 6 for single arm (xyz+euler); 12 for dual arm
+                action_dim: 6   # 6 for single arm (xyz_delta+rpy_delta); 12 for dual arm
 
-**1. TensorBoard Logging**
+      **4. Run dummy check and launch training**
 
-On the Ray head node:
+      Validate the cluster and model pipeline without robot motion first (uses ``is_dummy: True``), then start real-world training on the head node:
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   tensorboard --logdir ./logs --port 6006
+         # Pipeline check without hardware motion
+         bash examples/embodiment/run_realworld_async.sh realworld_dummy_turtle2_sac_cnn
 
-**2. Key Metrics Tracked**
+         # Real-world training
+         bash examples/embodiment/run_realworld_async.sh realworld_button_turtle2_sac_cnn
 
-- **Environment Metrics**:
+Results and Troubleshooting
+---------------------------
 
-  - ``env/episode_len``: Number of environment steps elapsed in the episode (unit: step).
-  - ``env/return``: Episode return.
-  - ``env/reward``: Step-level reward.
-  - ``env/success_once``: Whether the robot succeeded at least once in the episode (0 or 1).
+Monitor training on the Ray head node with ``tensorboard --logdir ./logs --port 6006`` and track ``env/success_once``, ``env/return``, ``train/sac/*``, and ``train/replay_buffer/*``; see :doc:`Training metrics <../../reference/metrics>` for all metrics.
 
-- **Training Metrics**:
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
 
-  - ``train/sac/critic_loss``: Q-function loss.
-  - ``train/critic/grad_norm``: Q-function gradient norm.
-  - ``train/sac/actor_loss``: Policy loss.
-  - ``train/actor/entropy``: Policy entropy.
-  - ``train/actor/grad_norm``: Policy gradient norm.
-  - ``train/sac/alpha_loss``: Temperature parameter loss.
-  - ``train/sac/alpha``: Temperature parameter value.
-  - ``train/alpha/grad_norm``: Temperature gradient norm.
-  - ``train/replay_buffer/size``: Current replay buffer size.
-  - ``train/replay_buffer/max_reward``: Maximum reward in replay buffer.
-  - ``train/replay_buffer/min_reward``: Minimum reward in replay buffer.
-  - ``train/replay_buffer/mean_reward``: Mean reward in replay buffer.
-  - ``train/replay_buffer/utilization``: Replay buffer utilization rate.
+   * - Symptom
+     - Fix
+   * - Missing XSquare SDK or ROS packages on controller node
+     - Run installation and ``ray start`` inside the official XSquare Docker container so SDK packages stay on the Python path.
+   * - Ray workers miss ``RLINF_NODE_RANK`` or ``.venv``
+     - Source ``.venv/bin/activate`` and export ``RLINF_NODE_RANK`` before running ``ray start``.
+   * - State or action dimension mismatch in dual-arm mode
+     - Set both ``actor.model.state_dim`` and ``actor.model.action_dim`` to ``12`` when ``use_arm_ids: [0, 1]``.
+
+To build additional tasks on Turtle2, see :doc:`New Real-World Tasks <../../extending/new_task>`.

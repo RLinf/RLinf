@@ -1,15 +1,11 @@
-Env Decoupled Mode
-==================
+Env 解耦执行
+============
 
-``env_decoupled_mode`` 是 RLinf embodied 任务中用于解耦 Env Worker 与 Rollout Worker
-通信的一种模式。它通过配置 ``runner.enable_decoupled_mode: true`` 开启。
+``env_decoupled_mode`` 是 RLinf embodied 任务中用于解耦 Env Worker 与 Rollout Worker 通信的模式，通过配置 ``runner.enable_decoupled_mode: true`` 开启。
 
-开启后，Env Worker 不再与固定的 Rollout Worker rank 一一绑定。Env Worker 会将观测
-数据放入共享 Channel，空闲的 Rollout Worker 可以动态获取 batch 进行推理，并在完成后
-将结果返回给原始 Env Worker。
+开启后，Env Worker 不再与固定的 Rollout Worker rank 一一绑定。Env Worker 将观测数据放入共享 Channel，空闲的 Rollout Worker 动态获取 batch 进行推理，并在完成后将结果返回给原始 Env Worker。
 
-该模式适用于 Env Worker 和 Rollout Worker 处理速度不一致的场景，尤其是仿真环境耗时波动较大、
-部分 Env Worker 容易阻塞，或希望 Rollout Worker 动态聚合多个 Env 请求进行批量推理时。
+该模式适用于 Env Worker 和 Rollout Worker 处理速度不一致的场景，尤其是模拟器耗时波动较大、部分 Env Worker 容易阻塞，或希望 Rollout Worker 动态聚合多个 Env 请求进行批量推理时。
 
 如何开启
 --------
@@ -28,9 +24,7 @@ Env Decoupled Mode
 
 - ``runner.enable_decoupled_mode: true`` 表示启用 Env Decoupled Mode。
 - 不配置 ``runner.enable_decoupled_mode`` 时，使用普通通信模式。
-- ``rollout_queue_size`` 控制 Rollout Worker 单次最多聚合多少组 Env 数据。
-  设置为 ``0`` 时使用默认策略，此时 Rollout Worker 单次聚合的 Env 数据数量为
-  ``ceil(env_world_size // rollout_world_size)``。
+- ``rollout_queue_size`` 控制 Rollout Worker 单次最多聚合多少组 Env 数据。设置为 ``0`` 时使用默认策略，此时 Rollout Worker 单次聚合的 Env 数据数量为 ``ceil(env_world_size // rollout_world_size)``。
 
 示例配置可参考：
 
@@ -41,19 +35,15 @@ Env Decoupled Mode
 适用条件
 --------
 
-当前实现要求 Env Worker 和 Rollout Worker 数量满足一定比例关系，可以是任意比例，
-例如 ``env:rollout = 8:3``，但需要保证 Env Worker 数量不小于 Rollout Worker 数量。
+当前实现要求 Env Worker 和 Rollout Worker 数量满足一定比例关系，可以是任意比例，例如 ``env:rollout = 8:3``，但需要保证 Env Worker 数量不小于 Rollout Worker 数量。
 
-当 Env Worker 明显多于 Rollout Worker 时，decoupled 模式可以让 Rollout Worker
-持续从共享 Channel 中获取任务，避免绑定到某个固定 Env rank。
+Env Worker 明显多于 Rollout Worker 时，decoupled 模式可以让 Rollout Worker 持续从共享 Channel 中获取任务，避免绑定到某个固定 Env rank。
 
-这种配置适合 Env Worker 较多、Rollout Worker 相对较少的情况。需要注意的是，
-如果 Rollout Worker 成为瓶颈，继续增加 Env Worker 不一定能提升吞吐，反而可能增加
-Channel 排队时间。
+这种配置适合 Env Worker 较多、Rollout Worker 相对较少的情况。如果 Rollout Worker 成为瓶颈，继续增加 Env Worker 不一定能提升吞吐，反而可能增加 Channel 排队时间。
 
 适合用于：
 
-- 仿真环境数量较多。
+- 模拟环境数量较多。
 - 单个 rollout 推理可以处理较大的 batch。
 - 希望用较少 Rollout Worker 服务较多 Env Worker。
 
@@ -67,8 +57,7 @@ Channel 排队时间。
    rollout:
      rollout_queue_size: 2
 
-较小的 ``rollout_queue_size`` 通常降低等待时间；较大的值可能提高推理 batch 利用率，
-但也可能增加单次聚合等待。
+较小的 ``rollout_queue_size`` 通常降低等待时间；较大的值可能提高推理 batch 利用率，但也可能增加单次聚合等待。
 
 训练流程
 --------
@@ -79,19 +68,16 @@ Channel 排队时间。
 2. Env Worker 将 observation 发送到 Rollout Channel。
 3. 任意 Rollout Worker 从 Channel 中动态获取一个或多个 Env batch。
 4. Rollout Worker 执行模型推理，生成 action 或 rollout result，并将结果返回给发送该请求的 Env Worker。
-5. Env Worker 根据返回结果继续进行环境交互。
+5. Env Worker 根据返回结果继续与环境交互。
 
-用户通常不需要直接处理路由细节。只要在配置中开启 ``runner.enable_decoupled_mode``，
-并使用支持该模式的 Env Worker、Rollout Worker 和 Runner 即可。
+用户通常不需要直接处理路由细节。只要在配置中开启 ``runner.enable_decoupled_mode``，并使用支持该模式的 Env Worker、Rollout Worker 和 Runner 即可。
 
 评估流程
 --------
 
-评估阶段也可以使用 decoupled 模式。此时 Env Worker 会持续发送 eval observation，
-Rollout Worker 执行 eval 推理并返回 action。
+评估阶段也可以使用 decoupled 模式。此时 Env Worker 会持续发送 eval observation，Rollout Worker 执行 eval 推理并返回 action。
 
-与训练阶段相比，评估通常不需要收集完整的训练用 rollout 信息，但通信方式相同：
-Env Worker 发送请求，Rollout Worker 动态接收并返回结果。
+与训练阶段相比，评估通常不需要收集完整的训练用 rollout 信息，但通信方式相同：Env Worker 发送请求，Rollout Worker 动态接收并返回结果。
 
 何时使用
 --------
@@ -109,4 +95,8 @@ Env Worker 发送请求，Rollout Worker 动态接收并返回结果。
 注意事项
 --------
 
-- 当前
+- 当前实现要求 ``env_world_size >= rollout_world_size``。
+- 解耦模式暂不支持 ``enable_p2p=True``。
+- ``runner.enable_decoupled_mode`` 控制是否启用该模式。
+- ``rollout_queue_size`` 同时影响吞吐和延迟，应根据 Env 与 Rollout 的速度调优。
+- Env、Rollout 和 Reward Worker 需要使用支持解耦模式的通信路径。

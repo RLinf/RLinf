@@ -1,29 +1,23 @@
-隐式Q学习 (IQL)
-==================================
+隐式 Q 学习（IQL）
+==================
 
 1. 引言
----------------
+-------
 
-IQL（Implicit Q-Learning）是一种面向离线强化学习（Offline RL）的经典算法。  
-它在不需要对未见动作进行显式策略外推的前提下，能够从静态数据集中学习高质量策略。  
+隐式 Q 学习（Implicit Q-Learning，IQL）是一种离线强化学习算法，可以在固定数据集上训练 policy，而在 Bellman 更新阶段无需查询未见过的分布外（OOD）动作。
 
-IQL 的核心思想是将价值学习和策略学习解耦：  
+IQL 将价值学习与 policy 提取解耦为三个部分：
 
-- Value （状态价值函数）: 使用 expectile 回归学习偏向高回报区域的状态价值。  
-- Critic （Q值函数）: 通过 Bellman 目标拟合动作价值。  
-- Actor （策略模型）: 通过优势加权行为克隆（Advantage-Weighted BC）更新策略。  
+- **Value**\ （:math:`V_{\psi}`）：使用 expectile 回归学习偏向高回报区域的状态价值。
+- **Critic**\ （:math:`Q_{\phi}`）：使用状态价值目标通过 Bellman 回归拟合动作价值。
+- **Actor**\ （:math:`\pi_{\theta}`）：使用优势加权行为克隆（Advantage-Weighted BC）更新 policy。
 
-这种设计避免了直接对 OOD（out-of-distribution）动作进行过度估计，在 D4RL 等离线基准上表现稳定。
-
-更多细节请参考原始论文  
-`IQL <https://arxiv.org/abs/2110.06169>`_.
-
+更多细节参见原始 `IQL 论文 <https://arxiv.org/abs/2110.06169>`__。
 
 2. 目标函数
-----------------------
+-----------
 
-设状态价值函数为 :math:`V_{\psi}(s)`，Q 值函数为 :math:`Q_{\phi}(s, a)`，策略为 :math:`\pi_{\theta}(a|s)`。  
-IQL 的训练通常包含以下三个目标：
+设状态价值函数为 :math:`V_{\psi}(s)`，Q 值函数为 :math:`Q_{\phi}(s, a)`，policy 为 :math:`\pi_{\theta}(a \mid s)`。IQL 最小化以下三个损失：
 
 **(1) Q 函数回归**
 
@@ -50,7 +44,7 @@ IQL 的训练通常包含以下三个目标：
       \right)
    \right],
 
-其中 :math:`\rho_{\tau}(u)=|\tau-\mathbb{I}(u<0)|u^2`，:math:`\tau` 是 expectile 系数（例如 0.7）。
+其中 :math:`\rho_{\tau}(u)=|\tau-\mathbb{I}(u<0)|u^2`，:math:`\tau` 为 expectile 系数（例如 ``0.7``）。
 
 **(3) Actor 的优势加权行为克隆**
 
@@ -62,40 +56,44 @@ IQL 的训练通常包含以下三个目标：
       \exp\left(
          \frac{Q_{\bar{\phi}}(s, a)-V_{\bar{\psi}}(s)}{\beta}
       \right)
-      \log \pi_{\theta}(a|s)
+      \log \pi_{\theta}(a \mid s)
    \right],
 
-其中 :math:`\beta` 对应温度系数，用于控制优势权重的尺度。
-
+其中 :math:`\beta` 为温度系数，用于控制优势权重的尺度。
 
 3. 配置
------------------
+-------
 
-在 RLinf 中，IQL 可用于离线具身任务（如 D4RL）。  
-以 `d4rl_iql_mujoco.yaml` 为例，核心配置如下：
+在 RLinf 中，IQL 可直接用于 D4RL 等离线具身基准。完整运行步骤参见 :doc:`D4RL IQL 示例 <../../examples/embodied/iql_d4rl>`，可直接运行的配置文件位于 ``examples/embodiment/config/d4rl_iql_mujoco.yaml``\ （以及 ``examples/embodiment/config/d4rl_iql_antmaze.yaml`` 和 ``examples/embodiment/config/d4rl_iql_kitchen_adroit.yaml``）。
 
 .. code-block:: yaml
 
-   algorithm:
-      loss_type: "offline_iql"
-      batch_size: 256
-      actor_lr: 3.0e-4
-      value_lr: 3.0e-4
-      critic_lr: 3.0e-4
-      hidden_dims: [256, 256]
-      discount: 0.99
-      tau: 0.005
-      expectile: 0.7
-      temperature: 3.0
-      gamma: 0.99
-      dropout_rate: null
-      opt_decay_schedule: "cosine"
+   runner:
+     task_type: "offline"
 
-   env:
-      dataset_type: "d4rl"
-      train:
-         env_type: "d4rl"
-         env_name: "halfcheetah-medium-v2"
+   algorithm:
+     loss_type: "offline_iql"
+     adv_type: null
+     hidden_dims: [256, 256]
+     gamma: 0.99
+     tau: 0.005
+     expectile: 0.7
+     temperature: 3.0
+     dropout_rate: null
+
+   data:
+     dataset_type: "d4rl"
+     task_name: "halfcheetah-medium-v2"
 
    actor:
-      worker_cls: "iql"
+     micro_batch_size: 256
+     global_batch_size: 256
+     optim:
+       lr: 3.0e-4
+       lr_scheduler: torch_cosine
+     critic_optim:
+       lr: 3.0e-4
+       lr_scheduler: torch_constant
+     value_optim:
+       lr: 3.0e-4
+       lr_scheduler: torch_constant

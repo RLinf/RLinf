@@ -77,30 +77,46 @@ Observation and Action
    * - Prompt
      - <the task instruction>
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-<The recipe-specific image tag or install command, each introduced by what it does.>
+.. tab-set::
 
-Download the Model
-------------------
+   .. tab-item:: <Model / Suite>
 
-<The download command for the exact weights this recipe uses.>
+      **1. Install**
 
-.. include:: _model_path.rst
+      .. code-block:: bash
 
-Run It
-------
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model <model> --env <env> && source .venv/bin/activate
 
-<One sentence on what the command does.>
+      **2. Download**
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh <config_name>
+         hf download <org>/<repo> --local-dir ./<checkpoint>
 
-<What this command does, in order, and the config keys you may change.>
+      **3. Launch**
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 40 30
+
+         * - Setting
+           - Config (``examples/embodiment/config/``)
+           - Notes
+         * - <model + algorithm>
+           - ``<config_name>.yaml``
+           - <one-line focus>
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh <config_name> actor.model.model_path=$PWD/<checkpoint>
+
+      .. include:: _model_path.rst
 
 Visualization and Results
 -------------------------

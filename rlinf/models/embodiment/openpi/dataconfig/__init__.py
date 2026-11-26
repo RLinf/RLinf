@@ -34,6 +34,9 @@ from rlinf.models.embodiment.openpi.dataconfig.behavior_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.calvin_dataconfig import (
     LeRobotCalvinDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.dexjoco_dataconfig import (
+    LeRobotDexJoCoDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.dual_franka_tcp_rot6d_dataconfig import (
     DualFrankaTcpRot6dDataConfig,
 )
@@ -677,6 +680,21 @@ _CONFIGS = [
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
     ),
+    TrainConfig(
+        name="pi05_dexjoco",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=30,
+            max_token_len=250,
+            discrete_state_input=True,
+        ),
+        data=LeRobotDexJoCoDataConfig(
+            repo_id="dexjoco",
+            base_config=DataConfig(prompt_from_task=False),
+            assets=AssetsConfig(asset_id="dexjoco"),
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
 ]
 
 if len({config.name for config in _CONFIGS}) != len(_CONFIGS):
@@ -686,6 +704,9 @@ _CONFIGS_DICT = {config.name: config for config in _CONFIGS}
 
 def _override_with_model_path(config: TrainConfig, model_path: str) -> TrainConfig:
     """Return a copy of the config with assets/weight paths set from model_path."""
+    from rlinf.models import resolve_model_path
+
+    model_path = resolve_model_path(model_path)
     data_config = config.data
     if (
         dataclasses.is_dataclass(data_config)

@@ -1,22 +1,21 @@
+:orphan:
+
 高级集成
 ========
 
-当扩展内容涉及后端集成或权重传输，而不是添加主要模型或环境时，
-使用这些指南。
+本组指南已按接入目标重新归类：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
+.. grid:: 1 2 2 2
+   :gutter: 2
 
-   * - 指南
-     - 内容
-   * - :doc:`Megatron-Bridge <../mbridge>`
-     - 使用 Megatron-Bridge actor 后端。
-   * - :doc:`权重同步 <../weight_syncer>`
-     - 优化具身训练中 actor 到 rollout 的权重同步。
+   .. grid-item-card:: 新增模型
+      :link: ../models/index
+      :link-type: doc
 
-.. toctree::
-   :hidden:
+      手动 Megatron 模型接入与 Actor 到 Rollout 权重同步。
 
-   Megatron-Bridge <../mbridge>
-   权重同步 <../weight_syncer>
+   .. grid-item-card:: 新增硬件后端
+      :link: ../new_accelerator
+      :link-type: doc
+
+      接入新的 GPU / NPU 加速卡后端。

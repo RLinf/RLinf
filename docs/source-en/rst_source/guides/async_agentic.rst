@@ -1,12 +1,12 @@
-Asynchronous Agentic RL
-=======================
+Async Agentic RL
+================
 
 This page shows how to turn on asynchronous agentic RL in RLinf and which
 settings you may need to change, then explains what happens underneath: how
 rollout and training overlap, what the two admission limits control, and how
 stale the training data gets. If you want a complete runnable configuration,
-start from :doc:`Asynchronous Search-R1 Training
-</rst_source/examples/agentic/searchr1/async>`; come back here when a default
+start from :doc:`Search-R1 (Async Training)
+</rst_source/examples/agentic/searchr1/index>`; come back here when a default
 needs changing and you want to know which one and why.
 
 Turning It On
@@ -128,6 +128,12 @@ buffer, it bounds how much data piles up between the two sides. And because it
 hands off the oldest groups first, the data the actor sees ages at a rate the
 limits determine.
 
+.. note::
+
+   With the :doc:`session server <session_server>`, the buffer worker
+   receives only each group's metadata. The trajectories stay on the rollout
+   nodes. The limits and staleness rules below apply unchanged.
+
 The Two Limits
 --------------
 
@@ -153,8 +159,8 @@ and age the data. On the GLM reference run, raising ``max_inflight_groups``
 from 77 to 160 moved the running requests per DP rank from about 75 to 128
 (with another 33–78 queued), left the throughput unchanged, and raised the
 mean staleness from about 1.3 to about 2.0: the GPUs were already busy at 75
-requests. The plots are on the :doc:`Search-R1 async page
-</rst_source/examples/agentic/searchr1/async>` under "Tuning the Limits".
+requests. The plots are on the :doc:`Search-R1 page
+</rst_source/examples/agentic/searchr1/index>` under Async Training.
 
 The Buffer Limit: Data Age
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

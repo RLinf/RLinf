@@ -1,17 +1,15 @@
-GRPO training for Math Reasoning
-=================================
+Qwen2.5 Math (GRPO)
+===================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
    :height: 16px
    :class: inline-icon
 
-Train a Qwen-based reasoning model with GRPO on math data. Compared with supervised fine-tuning, RL encourages diverse reasoning paths while optimizing final-answer correctness.
+Train DeepSeek-R1-Distill-Qwen 1.5B or 7B models with :doc:`GRPO </rst_source/reference/algorithms/grpo>` on AReaL-boba math problems, reaching 40.84 (1.5B) and 56.23 (7B) average across AIME 24, AIME 25, and GPQA-diamond.
 
 Overview
 --------
-
-Use this recipe to train Qwen-based reasoning models with GRPO on math data.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -19,149 +17,111 @@ Use this recipe to train Qwen-based reasoning models with GRPO on math data.
    .. grid-item-card:: Models
       :text-align: center
 
-      Qwen2.5-1.5B and Qwen2.5-7B
+      DeepSeek-R1-Distill-Qwen-1.5B · 7B
 
    .. grid-item-card:: Algorithm
       :text-align: center
 
-      GRPO with token-level loss and minibatch early-stop
+      GRPO (token-level loss, Megatron + SGLang)
 
-   .. grid-item-card:: Data
+   .. grid-item-card:: Task
       :text-align: center
 
-      AReaL-boba math reasoning data
+      Math reasoning (AReaL-boba)
 
    .. grid-item-card:: Hardware
       :text-align: center
 
-      Multi-node Megatron training
+      16 nodes default (single-node quick start ≥ 2 / 4 GPUs)
 
+| **What you'll do:** install ``agentic`` deps → download model and AReaL-boba data → launch ``run_main_grpo_math.sh`` → track curves and evaluate.
+| **Prerequisites:** :doc:`Installation & Hardware </rst_source/start/installation>` · 2+ GPUs (1.5B) or 4+ GPUs (7B) for single-node quick start; 16 nodes for the default config.
 
-Dataset
+Setup and Run
 -------------
 
-We use the dataset from `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`_.
-This dataset integrates data from DeepScaleR, Open-Reasoner-Zero, Light-R1, DAPO, NuminaMath (AoPS/Olympiad subsets), and ZebraLogic.
-Overly simple problems are filtered out to ensure dataset quality and effectiveness.
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
 
-An example training sample looks like:
+.. tab-set::
 
-.. code-block:: json
+   .. tab-item:: DeepSeek-R1-Distill-Qwen-1.5B
 
-   {
-      "prompt": "<｜User｜>\nProblem description... Please reason step by step, and put your final answer within \\boxed{}.<｜Assistant｜><think>\n",
-      "task": "math",
-      "query_id": "xx",
-      "solutions": ["\\boxed{x}"]
-   }
+      **1. Install**
 
-.. note::
+      .. code-block:: bash
 
-  Ensure the dataset is structured as the above using the default configurations.
-  Otherwise, read below configuration guidelines carefully to adapt RLinf to your dataset.
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-We also support importing other dataset types.
-To support different dataset formats, you can adjust the configuration as needed.
+      **2. Download**
 
-- **Prompt key and answer key configurations**
+      Download the model and `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`__:
 
-  The default configuration expects the dataset to have the `prompt` and `solutions` keys for retrieving the prompt and answer like in the Boba dataset.
+      .. code-block:: bash
 
-  However, different datasets may have different key names or structures. You can customize the configuration to match your dataset's format.
-  Change the `prompt_key` and `answer_key` in the configuration yaml file to point to the correct fields in your dataset.
+         hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --local-dir ./DeepSeek-R1-Distill-Qwen-1.5B
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
 
-  For example, if your dataset uses `prompt` and `label` as keys, you would set:
+      **3. Launch**
 
-  .. code-block:: yaml
+      .. warning::
 
-      prompt_key: "prompt"
-      answer_key: "label"
+         ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml`` defaults to **16 nodes** (``cluster.num_nodes: 16``). Override ``cluster.num_nodes=1`` on a single machine (requires at least 2 GPUs for TP=2).
 
-- **apply_chat_template configuration**
+      .. code-block:: bash
 
-  Some datasets may require the use of a chat template for the prompt.
-  If so, you will need to enable the `apply_chat_template` option in the configuration.
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron \
+           cluster.num_nodes=1 \
+           rollout.model.model_path=./DeepSeek-R1-Distill-Qwen-1.5B \
+           actor.tokenizer.tokenizer_model=./DeepSeek-R1-Distill-Qwen-1.5B \
+           data.train_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
+           data.val_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]'
 
-  .. code-block:: yaml
+   .. tab-item:: DeepSeek-R1-Distill-Qwen-7B
 
-      apply_chat_template: true
+      **1. Install**
 
-  For example, if your dataset has a specific structure for chat messages, you need to enable this option to properly format the prompt. Such as:
+      .. code-block:: bash
 
-  .. code-block:: json
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-      {
-          "prompt": [{"content": "<str>", "role": "<str>"},],
-          "label": "<str>",
-      }
+      **2. Download**
 
-  When the option is enabled, the raw dataset is processed through `tokenizer.apply_chat_template()` to format the prompt according to the model's chat template.
-  After processing, the prompt will be converted into a string for input.
+      Download the model and `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`__:
 
-How GRPO Works
---------------
+      .. code-block:: bash
 
-We adopt GRPO (Group Relative Policy Optimization) with the following modifications:
+         hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-7B --local-dir ./DeepSeek-R1-Distill-Qwen-7B
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
 
-- Token-level loss: Instead of averaging loss over the entire response sequence, we compute the average over tokens, as in DAPO.
-  This prevents excessively long responses from dominating training and reduces their gradient impact.
+      **3. Launch**
 
-- Minibatch early-stop: If the importance ratio within a minibatch becomes too large, we discard that minibatch to stabilize training.
+      .. warning::
 
-Reward function:
+         ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml`` defaults to **16 nodes** (``cluster.num_nodes: 16``). Override ``cluster.num_nodes=1`` on a single machine (requires at least 4 GPUs for TP=4).
 
-- +5 if the final boxed/numeric answer is correct;
-- -5 if incorrect.
+      .. code-block:: bash
 
-Run It
-------
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-7b-grpo-megatron \
+           cluster.num_nodes=1 \
+           rollout.model.model_path=./DeepSeek-R1-Distill-Qwen-7B \
+           actor.tokenizer.tokenizer_model=./DeepSeek-R1-Distill-Qwen-7B \
+           data.train_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
+           data.val_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]'
 
-**1. Key Parameters Configuration**
+.. dropdown:: Advanced configuration: multi-node, vLLM & custom datasets (optional)
 
-Before launching, check the configuration file. For common cluster, runner, rollout, and data fields, see :doc:`Training configuration <../../../reference/configuration>`.
+   - **Full 16-node run:** start a Ray cluster following :doc:`/rst_source/guides/multi_node`, then run the launch command on the head node without ``cluster.num_nodes=1`` using shared storage paths.
 
-**2. Configuration File**
+   - **vLLM rollout backend:** install with ``bash requirements/install.sh agentic --engine vllm`` and append ``rollout.rollout_backend=vllm``. See :doc:`Rollout Engine Versions </rst_source/guides/version>` and :doc:`Training configuration </rst_source/reference/configuration>`.
 
-Recommended configurations can be found in:
-
-- ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``
-- ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``
-
-**3. Launch Command**
-
-Run the following commands to start the Ray cluster and begin training:
-
-.. code-block:: bash
-
-   cd /path_to_RLinf/ray_utils;
-   rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
-   export TOKENIZERS_PARALLELISM=false
-   bash start_ray.sh;
-   if [ "$RANK" -eq 0 ]; then
-       bash check_ray.sh 128; # set to number of accelerators/GPUs in the cluster
-       cd /path_to_RLinf;
-       bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron # change config file
-   else
-     if [ "$RANK" -eq 1 ]; then
-         sleep 3m
-     fi
-     sleep 10d
-   fi
-
-   sleep 10d
+   - **Custom dataset format:** the default config reads ``prompt`` and ``solutions`` (boxed answers, rewarded +5 / -5). Override ``data.prompt_key`` and ``data.answer_key`` for other schemas, and set ``data.apply_chat_template=True`` when prompts are chat message lists.
 
 Visualization and Results
 -------------------------
 
-We trained both 1.5B and 7B models based on DeepSeek-R1-Distill-Qwen.
-
-After launch, monitor training with:
-
-.. code-block:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-For common metric meanings, see :doc:`Training metrics <../../../reference/metrics>`. The following plots show training curves.
+Watch training progress with ``tensorboard --logdir ./logs --port 6006``; see :doc:`Training metrics </rst_source/reference/metrics>` for metric definitions and W&B/SwanLab logging.
 
 .. raw:: html
 
@@ -176,13 +136,7 @@ For common metric meanings, see :doc:`Training metrics <../../../reference/metri
      </div>
    </div>
 
-
-Final Performance
-~~~~~~~~~~~~~~~~~
-
-We provide an evaluation `toolkit <https://github.com/RLinf/LLMEvalKit>`_.
-
-Measured performance on AIME24, AIME25, and GPQA-diamond shows RLinf achieves SOTA performance.
+Evaluate checkpoints with `LLMEvalKit <https://github.com/RLinf/LLMEvalKit>`__ on AIME 24, AIME 25, and GPQA-diamond. Trained checkpoints are published at `RLinf-math-1.5B <https://huggingface.co/RLinf/RLinf-math-1.5B>`__ and `RLinf-math-7B <https://huggingface.co/RLinf/RLinf-math-7B>`__.
 
 .. list-table:: **1.5 B model results**
    :header-rows: 1
@@ -229,7 +183,7 @@ Measured performance on AIME24, AIME25, and GPQA-diamond shows RLinf achieves SO
      - **38.46**
      - **40.84**
 
-\* We retrain the model using the default settings for 600 steps.
+\* Retrained with the default settings for 600 steps.
 
 .. list-table:: **7 B model results**
    :header-rows: 1
@@ -270,12 +224,3 @@ Measured performance on AIME24, AIME25, and GPQA-diamond shows RLinf achieves SO
      - 52.19
      - **48.18**
      - **56.23**
-
-
-Public Checkpoints
-------------------
-
-We release trained models on Hugging Face for public use:
-
-- `RLinf-math-1.5B <https://huggingface.co/RLinf/RLinf-math-1.5B>`_
-- `RLinf-math-7B <https://huggingface.co/RLinf/RLinf-math-7B>`_
