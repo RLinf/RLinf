@@ -79,6 +79,8 @@ RL 算法示例
       用集成优势预测器对离线样本做保守评估。
 
    .. grid-item-card:: SuperMimic
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/supermimic.jpg
+      :img-alt: SuperMimic 概览
       :link: embodied/supermimic
       :link-type: doc
 

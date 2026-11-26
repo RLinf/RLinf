@@ -100,7 +100,7 @@ Pass any of the values below to ``--model``, ``--env``, ``--engine``, or ``--pla
    * - ``--model`` (:doc:`WAM / VLM / Gen <../examples/vla_wam_index>`)
      - ``cosmos3``, ``diffusion``, ``dreamzero``, ``fastwam``, ``qwen3_vl``, ``sglang``
    * - ``--env`` (:doc:`Simulators <../examples/simulators_index>`)
-     - ``behavior``, ``calvin``, ``d4rl``, ``embodichain``, ``frankasim``, ``genesis``, ``geniesim``, ``habitat``, ``isaaclab``, ``libero``, ``liberoplus``, ``liberopro``, ``maniskill_libero``, ``metaworld``, ``mujoco_warp``, ``polaris``, ``robocasa``, ``robocasa365``, ``robodojo``, ``robolab``, ``robotwin``, ``roboverse``, ``simple``
+     - ``behavior``, ``calvin``, ``d4rl``, ``embodichain``, ``frankasim``, ``genesis``, ``geniesim``, ``habitat``, ``isaaclab``, ``libero``, ``liberoplus``, ``liberopro``, ``maniskill_libero``, ``metaworld``, ``mujoco_warp``, ``polaris``, ``robocasa``, ``robocasa365``, ``robodojo``, ``robolab``, ``robotwin``, ``roboverse``, ``simple``, ``supermimic``
    * - ``--env`` (:doc:`World Models <../examples/world_model_index>`)
      - ``opensora``, ``wan``
    * - ``--env`` (:doc:`Real Robots <../examples/real_world_index>`)

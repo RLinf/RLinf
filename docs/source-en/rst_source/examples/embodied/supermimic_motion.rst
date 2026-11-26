@@ -3,48 +3,48 @@ G1 Motion Data Preparation
 
 Prepare reference motion clips for the :doc:`G1 Motion Tracking Environment <g1_mimic>` and :doc:`SuperMimic <supermimic>`, including offline LAFAN1 conversion and custom ``clip_*.pt`` files.
 
-**Prerequisites:** :doc:`Installation </rst_source/start/installation>` · the SuperMimic environment from :doc:`g1_mimic`.
+**Prerequisites:** :doc:`Installation </rst_source/start/installation>` · the ``.venv-supermimic`` environment from :doc:`supermimic`.
 
 Setup and Run
 -------------
 
-Activate the SuperMimic virtual environment from :doc:`g1_mimic` and run all commands from the RLinf repository root.
+Activate ``.venv-supermimic`` and run all commands from the RLinf repository root.
 
-Offline LAFAN1 Conversion
--------------------------
+.. tab-set::
 
-If the training machine cannot reach Hugging Face, convert LAFAN1 on another machine that has network access, an RLinf checkout, and Python with ``torch``, ``numpy``, and ``omegaconf``. Because conversion checks against mjlab's G1 default joint pose, export that pose from the training machine first:
+   .. tab-item:: Offline LAFAN1 Conversion
 
-1. On the training machine, export the default joint pose to ``g1_q0.pt``:
+      If the training machine cannot reach Hugging Face, convert LAFAN1 on an internet-connected machine that has an RLinf checkout and Python with ``torch``, ``numpy``, and ``omegaconf``. Because conversion checks against mjlab's G1 default joint pose, export that pose from the training machine first:
 
-   .. code-block:: bash
+      **1. Export the default joint pose on the training machine**
 
-      python toolkits/supermimic/prepare_lafan1.py --export-q0 g1_q0.pt
+      .. code-block:: bash
 
-2. Copy ``g1_q0.pt`` to the conversion machine.
-3. On the conversion machine, download and convert the 40 clips using that pose:
+         python toolkits/supermimic/prepare_lafan1.py --export-q0 ./g1_q0.pt
 
-   .. code-block:: bash
+      **2. Copy ``g1_q0.pt`` and convert the 40 clips on the internet-connected machine**
 
-      python toolkits/supermimic/prepare_lafan1.py --out /data/lafan1_g1 \
-          --q0-file /path/to/g1_q0.pt --accept-license
+      .. code-block:: bash
 
-4. Copy the entire ``/data/lafan1_g1`` directory (including ``manifest.json``) to the training machine and point ``SUPERMIMIC_MOTION_PATH`` to it.
+         python toolkits/supermimic/prepare_lafan1.py --out ./data/lafan1_g1 \
+             --q0-file ./g1_q0.pt --accept-license
 
-Run It
-------
+      **3. Copy ``./data/lafan1_g1`` (including ``manifest.json``) back to the training machine**
 
-Save each custom clip in the ``clip_*.pt`` format below inside one directory (loaded in file-name order), point ``SUPERMIMIC_MOTION_PATH`` to that directory, and pass ``env.train.num_clips=null`` (or ``env.eval.num_clips=null`` for evaluation) to load every clip in the folder:
+      Point ``SUPERMIMIC_MOTION_PATH`` to ``./data/lafan1_g1`` and launch training as shown in :doc:`supermimic`.
 
-.. code-block:: bash
+   .. tab-item:: Custom Clips
 
-   export SUPERMIMIC_MOTION_PATH=/data/my_clips
-   python examples/embodiment/train_embodied_agent.py \
-       --config-name supermimic_lafan1_gencoord \
-       env.train.num_clips=null \
-       runner.logger.log_path=/data/runs/supermimic_custom
+      Save each custom clip in the ``clip_*.pt`` format below inside one folder (loaded in file-name order), point ``SUPERMIMIC_MOTION_PATH`` to it, and pass ``env.train.num_clips=null`` (or ``env.eval.num_clips=null`` for evaluation) to load every clip:
 
-To evaluate more than 40 clips, adjust the evaluation capacity settings described in :doc:`../../evaluations/guides/supermimic`. If the directory includes a ``manifest.json``, the loader verifies every clip's SHA-256 and rejects unlisted files; without ``manifest.json``, it checks tensor shapes and values only.
+      .. code-block:: bash
+
+         export MUJOCO_GL=disabled
+         export SUPERMIMIC_MOTION_PATH=./data/my_clips
+         bash examples/embodiment/run_embodiment.sh supermimic_lafan1_gencoord \
+             env.train.num_clips=null
+
+      To evaluate more than 40 clips, adjust the evaluation capacity settings in :doc:`../../evaluations/guides/supermimic`. If the directory includes a ``manifest.json``, the loader verifies every clip's SHA-256 and rejects unlisted files; without ``manifest.json``, it validates tensor shapes and values only.
 
 Clip File Format
 ----------------
@@ -94,4 +94,4 @@ Column layout of ``state`` (``[T, 71]``):
      - Joint velocities
      - rad/s
 
-Export ``g1_q0.pt`` once with ``python toolkits/supermimic/prepare_lafan1.py --export-q0 g1_q0.pt``, then save each custom clip dictionary with ``torch.save`` (for example ``clip_000.pt``). The training and evaluation loader validates every clip's keys, joint order, ``q0`` match, quaternion norms, and finite values on startup.
+Export ``g1_q0.pt`` once with ``python toolkits/supermimic/prepare_lafan1.py --export-q0 ./g1_q0.pt``, then save each custom clip dictionary with ``torch.save`` (for example ``clip_000.pt``). The loader validates every clip's keys, joint order, ``q0`` match, quaternion norms, and finite values on startup.

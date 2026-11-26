@@ -34,8 +34,8 @@ G1 动作跟踪环境
 
       1–4 张 NVIDIA GPU · :ref:`AMD ROCm（实验性） <supermimic-hardware>`
 
-| **你将完成：** 安装环境 → 准备 LAFAN1 动作片段 → 启动训练或评测。
-| **前置条件：** :doc:`安装说明 </rst_source/start/installation>` · 一张或多张 NVIDIA GPU（或 AMD ROCm）· 可访问 Hugging Face 下载 LAFAN1 数据。
+| **你将完成：** 了解 G1 任务、观测、奖励与环境配置 → 使用 :doc:`SuperMimic <supermimic>` 启动训练或评测。
+| **前置条件：** :doc:`安装说明 </rst_source/start/installation>` · 按 :doc:`supermimic` 完成虚拟环境安装和 LAFAN1 数据准备。
 
 任务
 ~~~~
@@ -155,60 +155,25 @@ G1 动作跟踪环境
 安装与运行
 ----------
 
-.. include:: _setup_common.rst
+请先按 :doc:`SuperMimic <supermimic>` 页面的 :ref:`安装与运行 <supermimic-hardware>` 完成 ``.venv-supermimic`` 环境安装（支持 NVIDIA CUDA 与 AMD ROCm）并将 40 条 LAFAN1 片段准备到 ``./data/lafan1_g1``\ （离线转换或自定义片段见 :doc:`supermimic_motion`）。
 
 .. tab-set::
 
-   .. tab-item:: 自定义环境
+   .. tab-item:: SuperMimic（GenCoord）
 
-      在仓库根目录创建独立虚拟环境。这个环境固定了特定版本的 PyTorch、MuJoCo Warp 和 ``warp-lang``，不要与其他 RLinf 虚拟环境混用：
+      在仓库根目录激活 ``.venv-supermimic``，启动 ``g1_mimic`` 单卡训练（在 0 号 GPU 上并行 4096 个 G1 环境训练 6000 次更新，每 2000 次更新保存一个 checkpoint）：
 
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --env supermimic --venv .venv-supermimic
          source .venv-supermimic/bin/activate
+         export MUJOCO_GL=disabled
+         export SUPERMIMIC_MOTION_PATH=./data/lafan1_g1
+         bash examples/embodiment/run_embodiment.sh supermimic_lafan1_gencoord
 
-AMD ROCm 环境安装见 :ref:`在不同硬件后端上运行 <supermimic-hardware>`。
-
-准备动作数据
+可视化与结果
 ------------
 
-训练与动作跟踪评测使用 Hugging Face 数据集 `lvhaidong/LAFAN1_Retargeting_Dataset <https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset>`_ 中 ``g1/`` 目录下的 40 条 Unitree G1 片段。重定向数据源自 Ubisoft La Forge `LAFAN1 <https://github.com/ubisoft/ubisoft-laforge-animation-dataset>`_\ （CC BY-NC-ND 4.0，非商业、禁止演绎），传入 ``--accept-license`` 前请先阅读许可条款。
-
-下载、校验并转换 40 条片段到 ``/data/lafan1_g1``：
-
-.. code-block:: bash
-
-   python toolkits/supermimic/prepare_lafan1.py --out /data/lafan1_g1 --accept-license
-
-转换成功后，最后一行输出如下：
-
-.. code-block:: text
-
-   [lafan1] wrote 40 clips, 2.45 h, manifest /data/lafan1_g1/manifest.json
-
-保持生成的 ``manifest.json`` 和片段文件原样，加载器启动时会校验文件哈希。如需在另一台机器离线转换或制作自定义 ``clip_*.pt`` 片段，见 :doc:`supermimic_motion`。
-
-运行
-----
-
-设置动作目录并关闭 MuJoCo 的 OpenGL 渲染器（训练与评测不使用渲染），在 ``g1_mimic`` 上启动单卡 GenCoord 训练：
-
-.. code-block:: bash
-
-   export PYTHONPATH=$PWD:$PYTHONPATH
-   export MUJOCO_GL=disabled
-   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
-
-   python examples/embodiment/train_embodied_agent.py \
-       --config-name supermimic_lafan1_gencoord \
-       runner.logger.log_path=/data/runs/supermimic_gencoord
-
-这条命令依次完成以下操作：
-
-1. 加载 ``examples/embodiment/config/supermimic_lafan1_gencoord.yaml`` 与 ``examples/embodiment/config/env/g1_mimic.yaml``。
-2. 在 0 号 GPU 上启动 4096 个并行 G1 环境并训练 6000 次更新，每 2000 次更新保存一个 checkpoint。
-3. 每 100 次更新打印一次指标表，开头为 ``Global Step: <step>/6000``。
+使用 TensorBoard（``tensorboard --logdir ./logs``）查看训练曲线，LAFAN1 40 片段动作跟踪结果与多卡吞吐对比见 :doc:`SuperMimic <supermimic>`。
 
 下一步
 ------
