@@ -5,7 +5,7 @@ SuperMimic 评测
 
 相关文档：:doc:`SuperMimic 训练示例 <../../examples/embodied/supermimic>` · :doc:`G1 动作跟踪环境 <../../examples/embodied/g1_mimic>` · :doc:`动作数据准备 <../../examples/embodied/supermimic_motion>`。
 
-**前置条件：** :doc:`安装 </rst_source/start/installation>` · 训练好的 SuperMimic checkpoint · :doc:`G1 动作跟踪环境 <../../examples/embodied/g1_mimic>` 中的环境。
+**前置条件：** :doc:`安装 </rst_source/start/installation>` · 训练好的 SuperMimic checkpoint · 按 :doc:`../../examples/embodied/supermimic` 创建的 ``.venv-supermimic`` 虚拟环境。
 
 评测配置
 --------
@@ -35,91 +35,75 @@ SuperMimic 评测
      - 否（内置姿态）
      - ``per_trial.csv``
 
-两份配置默认在 0 号 GPU 上以 ``rollout.model.representation: gencoord`` 运行，并关闭域随机化、重置噪声与动作噪声。
+两份配置默认在 0 号 GPU 上以 ``rollout.model.representation: gencoord`` 运行，并关闭域随机化、重置噪声与动作噪声。训练保存的权重路径为 ``<log_path>/<experiment_name>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``。
 
 安装与运行
 ----------
 
-在仓库根目录激活 SuperMimic 虚拟环境并设置环境变量：
+在仓库根目录激活 ``.venv-supermimic`` 后，按需选择以下评测协议。评测 MaxCoord checkpoint 时需追加 ``rollout.model.representation=maxcoord``\ （checkpoint 只能加载到训练时对应的状态表示中）。
 
-.. code-block:: bash
+.. tab-set::
 
-   source .venv-supermimic/bin/activate
-   export MUJOCO_GL=disabled
-   # 动作跟踪评测必填；站立推力恢复无需设置。
-   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
+   .. tab-item:: 动作跟踪
 
-训练保存的 checkpoint 权重位于：
+      动作跟踪评测为每条参考片段分配一个环境，从第 0 帧开始确定性执行 policy 动作，直到片段播完或机器人摔倒。
 
-.. code-block:: text
+      .. code-block:: bash
 
-   <run_dir>/<experiment_name>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt
+         source .venv-supermimic/bin/activate
+         export MUJOCO_GL=disabled
+         export SUPERMIMIC_MOTION_PATH=./data/lafan1_g1
 
-在下面的命令中用 ``runner.ckpt_path`` 指定这个文件。
+         bash evaluations/run_eval.sh supermimic_lafan1_eval \
+             runner.ckpt_path=./runs/supermimic_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
+             runner.eval_export.output_dir=./eval_results/supermimic_6000
 
-评测动作跟踪
-------------
+      * **自定义或超过 40 条片段：** 设置 ``env.eval.num_clips=null``，同时保证 ``env.eval.total_num_envs * env.eval.rollout_epoch`` 不少于片段总数；如果有片段超过 ``13656`` 个控制步（50 Hz 下 273.12 秒），需同步调大 ``env.eval.max_steps_per_rollout_epoch``。
+      * **切换 GPU：** 用 ``cluster.component_placement`` 指定卡号，例如 ``'~cluster.component_placement' '+cluster.component_placement={env:1,rollout:1}'``。
 
-动作跟踪评测为每条参考片段分配一个环境，从第 0 帧开始确定性执行 policy 动作，直到片段播完或机器人摔倒。
+   .. tab-item:: 站立推力恢复
 
-在 40 条 LAFAN1 片段上运行评测：
+      站立推力恢复使用 mjlab 内置屈膝站立姿态测试抗扰能力（无需动作片段）。机器人先站稳 1 秒，随后在随机水平方向施加根节点速度冲量（``0.5``、``1.0``、``2.0``、``4.0`` m/s，每种速度 4 次共 16 次试验），受推后继续运行最多 5 秒。
 
-.. code-block:: bash
+      .. note::
 
-   bash evaluations/run_eval.sh supermimic_lafan1_eval \
-       runner.ckpt_path=/path/to/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=/path/to/eval_6000
+         这项评测采用 mjlab 内置屈膝站立关键帧，而非 SuperMimic 论文第 4.3 节的 T-pose。
 
-* **MaxCoord checkpoint：** 必须追加 ``rollout.model.representation=maxcoord``，checkpoint 只能加载到训练时对应的状态表示中。
-* **自定义或超过 40 条片段：** 设置 ``env.eval.num_clips=null``，同时保证 ``env.eval.total_num_envs * env.eval.rollout_epoch`` 不少于片段总数；如果有片段超过 ``13656`` 个控制步（50 Hz 下 273.12 秒），需同步调大 ``env.eval.max_steps_per_rollout_epoch``。
-* **切换 GPU：** 用 ``cluster.component_placement`` 指定卡号，例如 ``'~cluster.component_placement' '+cluster.component_placement={env:1,rollout:1}'``。
+      .. code-block:: bash
 
-评测站立推力恢复
-----------------
+         source .venv-supermimic/bin/activate
+         export MUJOCO_GL=disabled
 
-站立推力恢复使用 mjlab 内置屈膝站立姿态测试抗扰能力（无需动作片段）。机器人先站稳 1 秒，随后在随机水平方向施加根节点速度冲量（``0.5``、``1.0``、``2.0``、``4.0`` m/s，每种速度 4 次共 16 次试验），受推后继续运行最多 5 秒。
+         bash evaluations/run_eval.sh supermimic_push_recovery \
+             runner.ckpt_path=./runs/supermimic_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
+             runner.eval_export.output_dir=./eval_results/supermimic_push_6000
 
-.. note::
+      .. dropdown:: 自定义推力协议
 
-   这项评测采用 mjlab 内置屈膝站立关键帧，而非 SuperMimic 论文第 4.3 节的 T-pose。
+         可在命令行或 YAML 中覆盖 ``env.eval.push_recovery.*`` 调整测试参数：
 
-运行站立推力恢复评测：
+         .. list-table::
+            :header-rows: 1
+            :widths: 36 22 42
 
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh supermimic_push_recovery \
-       runner.ckpt_path=/path/to/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=/path/to/push_6000
-
-评测 MaxCoord checkpoint 时同样追加 ``rollout.model.representation=maxcoord``。
-
-自定义推力协议
-~~~~~~~~~~~~~~
-
-可在命令行或 YAML 中覆盖 ``env.eval.push_recovery.*`` 调整测试参数：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 36 22 42
-
-   * - 配置项
-     - 默认值
-     - 说明
-   * - ``env.eval.push_recovery.speeds``
-     - ``[0.5, 1.0, 2.0, 4.0]``
-     - 水平推动速度列表（m/s）
-   * - ``env.eval.push_recovery.trials``
-     - ``4``
-     - 每种速度的试验次数（需要满足 ``total_num_envs * rollout_epoch >= len(speeds) * trials``）
-   * - ``env.eval.push_recovery.push_mode``
-     - ``add``
-     - ``add`` 在根节点当前水平速度上叠加推力；``set`` 直接替换水平速度
-   * - ``env.eval.push_recovery.direction``
-     - ``random``
-     - ``random`` 或指定水平方向向量 ``[x, y]``
-   * - ``env.eval.push_recovery.frame``
-     - ``world``
-     - ``direction`` 所在坐标系：``world`` 或 ``heading``
+            * - 配置项
+              - 默认值
+              - 说明
+            * - ``env.eval.push_recovery.speeds``
+              - ``[0.5, 1.0, 2.0, 4.0]``
+              - 水平推动速度列表（m/s）
+            * - ``env.eval.push_recovery.trials``
+              - ``4``
+              - 每种速度的试验次数（需要满足 ``total_num_envs * rollout_epoch >= len(speeds) * trials``）
+            * - ``env.eval.push_recovery.push_mode``
+              - ``add``
+              - ``add`` 在根节点当前水平速度上叠加推力；``set`` 直接替换水平速度
+            * - ``env.eval.push_recovery.direction``
+              - ``random``
+              - ``random`` 或指定水平方向向量 ``[x, y]``
+            * - ``env.eval.push_recovery.frame``
+              - ``world``
+              - ``direction`` 所在坐标系：``world`` 或 ``heading``
 
 输出文件与指标
 --------------

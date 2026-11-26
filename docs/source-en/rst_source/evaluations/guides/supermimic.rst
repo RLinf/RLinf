@@ -5,7 +5,7 @@ Evaluate a trained SuperMimic checkpoint on the Unitree G1 in MuJoCo Warp across
 
 Related docs: :doc:`SuperMimic training recipe <../../examples/embodied/supermimic>` · :doc:`G1 Motion Tracking Environment <../../examples/embodied/g1_mimic>` · :doc:`Motion data preparation <../../examples/embodied/supermimic_motion>`.
 
-**Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a trained SuperMimic checkpoint · the environment from :doc:`../../examples/embodied/g1_mimic`.
+**Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a trained SuperMimic checkpoint · the ``.venv-supermimic`` environment from :doc:`../../examples/embodied/supermimic`.
 
 Evaluation Configs
 ------------------
@@ -35,91 +35,75 @@ Two preset configs live under ``evaluations/supermimic/``:
      - No (built-in pose)
      - ``per_trial.csv``
 
-Both configs default to ``rollout.model.representation: gencoord`` on GPU 0 and disable domain randomization, reset noise, and action noise.
+Both configs default to ``rollout.model.representation: gencoord`` on GPU 0 and disable domain randomization, reset noise, and action noise. Training writes checkpoint weights to ``<log_path>/<experiment_name>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``.
 
 Setup and Run
 -------------
 
-Activate the SuperMimic virtual environment from the repository root and set the required environment variables:
+Activate ``.venv-supermimic`` from the repository root and choose an evaluation protocol below. For MaxCoord checkpoints, append ``rollout.model.representation=maxcoord`` (checkpoints load only into the representation they were trained with).
 
-.. code-block:: bash
+.. tab-set::
 
-   source .venv-supermimic/bin/activate
-   export MUJOCO_GL=disabled
-   # Required for motion tracking; not needed for standing push recovery.
-   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
+   .. tab-item:: Motion Tracking
 
-Training writes checkpoint weights to:
+      Motion-tracking evaluation assigns one environment per reference clip, starts each clip at frame 0, and runs deterministically until the clip finishes or the robot falls.
 
-.. code-block:: text
+      .. code-block:: bash
 
-   <run_dir>/<experiment_name>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt
+         source .venv-supermimic/bin/activate
+         export MUJOCO_GL=disabled
+         export SUPERMIMIC_MOTION_PATH=./data/lafan1_g1
 
-Pass this path to ``runner.ckpt_path`` in the commands below.
+         bash evaluations/run_eval.sh supermimic_lafan1_eval \
+             runner.ckpt_path=./runs/supermimic_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
+             runner.eval_export.output_dir=./eval_results/supermimic_6000
 
-Evaluate Motion Tracking
-------------------------
+      * **Custom or >40 clips:** Set ``env.eval.num_clips=null`` and ensure ``env.eval.total_num_envs * env.eval.rollout_epoch`` is at least the total clip count. If any clip exceeds ``13656`` control steps (273.12 s at 50 Hz), raise ``env.eval.max_steps_per_rollout_epoch`` as well.
+      * **Select another GPU:** Override ``cluster.component_placement``, for example ``'~cluster.component_placement' '+cluster.component_placement={env:1,rollout:1}'``.
 
-Motion-tracking evaluation assigns one environment per reference clip, starts each clip at frame 0, and runs the policy deterministically until the clip finishes or the robot falls.
+   .. tab-item:: Standing Push Recovery
 
-Run motion-tracking evaluation on the 40 LAFAN1 clips:
+      Standing push recovery tests disturbance rejection from mjlab's built-in knees-bent standing pose (no motion clips required). The robot holds the pose for 1 second, receives a root velocity impulse in a random horizontal direction at one of four speeds (``0.5``, ``1.0``, ``2.0``, or ``4.0`` m/s, 4 trials per speed = 16 trials), and runs for up to 5 seconds post-push.
 
-.. code-block:: bash
+      .. note::
 
-   bash evaluations/run_eval.sh supermimic_lafan1_eval \
-       runner.ckpt_path=/path/to/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=/path/to/eval_6000
+         This protocol uses mjlab's knees-bent standing keyframe rather than the T-pose mentioned in Section 4.3 of the SuperMimic paper.
 
-* **MaxCoord checkpoints:** Append ``rollout.model.representation=maxcoord``; a checkpoint loads only into the representation it was trained with.
-* **Custom or >40 clips:** Set ``env.eval.num_clips=null`` and ensure ``env.eval.total_num_envs * env.eval.rollout_epoch`` is at least the total clip count. If any clip exceeds ``13656`` control steps (273.12 s at 50 Hz), raise ``env.eval.max_steps_per_rollout_epoch`` as well.
-* **Select another GPU:** Override ``cluster.component_placement``, for example ``'~cluster.component_placement' '+cluster.component_placement={env:1,rollout:1}'``.
+      .. code-block:: bash
 
-Evaluate Standing Push Recovery
--------------------------------
+         source .venv-supermimic/bin/activate
+         export MUJOCO_GL=disabled
 
-Standing push recovery tests disturbance rejection from mjlab's built-in knees-bent standing pose (no motion clips required). The robot holds the pose for 1 second, receives a root velocity impulse in a random horizontal direction at one of four speeds (``0.5``, ``1.0``, ``2.0``, or ``4.0`` m/s, 4 trials per speed = 16 trials), and runs for up to 5 seconds post-push.
+         bash evaluations/run_eval.sh supermimic_push_recovery \
+             runner.ckpt_path=./runs/supermimic_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
+             runner.eval_export.output_dir=./eval_results/supermimic_push_6000
 
-.. note::
+      .. dropdown:: Customize Push Protocol
 
-   This protocol uses mjlab's knees-bent standing keyframe rather than the T-pose mentioned in Section 4.3 of the SuperMimic paper.
+         Override ``env.eval.push_recovery.*`` on the command line or in YAML to change the test grid:
 
-Run standing push recovery:
+         .. list-table::
+            :header-rows: 1
+            :widths: 36 22 42
 
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh supermimic_push_recovery \
-       runner.ckpt_path=/path/to/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=/path/to/push_6000
-
-For a MaxCoord checkpoint, append ``rollout.model.representation=maxcoord``.
-
-Customize Push Protocol
-~~~~~~~~~~~~~~~~~~~~~~~
-
-Override ``env.eval.push_recovery.*`` on the command line or in YAML to change the test grid:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 36 22 42
-
-   * - Config Key
-     - Default
-     - Meaning
-   * - ``env.eval.push_recovery.speeds``
-     - ``[0.5, 1.0, 2.0, 4.0]``
-     - Horizontal push speeds (m/s)
-   * - ``env.eval.push_recovery.trials``
-     - ``4``
-     - Number of trials per speed (ensure ``total_num_envs * rollout_epoch >= len(speeds) * trials``)
-   * - ``env.eval.push_recovery.push_mode``
-     - ``add``
-     - ``add`` adds the impulse to current root horizontal velocity; ``set`` replaces it
-   * - ``env.eval.push_recovery.direction``
-     - ``random``
-     - ``random`` or a fixed horizontal vector ``[x, y]``
-   * - ``env.eval.push_recovery.frame``
-     - ``world``
-     - Reference frame for ``direction``: ``world`` or ``heading``
+            * - Config Key
+              - Default
+              - Meaning
+            * - ``env.eval.push_recovery.speeds``
+              - ``[0.5, 1.0, 2.0, 4.0]``
+              - Horizontal push speeds (m/s)
+            * - ``env.eval.push_recovery.trials``
+              - ``4``
+              - Number of trials per speed (ensure ``total_num_envs * rollout_epoch >= len(speeds) * trials``)
+            * - ``env.eval.push_recovery.push_mode``
+              - ``add``
+              - ``add`` adds the impulse to current root horizontal velocity; ``set`` replaces it
+            * - ``env.eval.push_recovery.direction``
+              - ``random``
+              - ``random`` or a fixed horizontal vector ``[x, y]``
+            * - ``env.eval.push_recovery.frame``
+              - ``world``
+              - Reference frame for ``direction``: ``world`` or ``heading``
 
 Output Files and Metrics
 ------------------------
