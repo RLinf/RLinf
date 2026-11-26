@@ -735,3 +735,77 @@ def test_openpi_rlinf_preprocess_observation_train_rng(monkeypatch):
     assert not torch.allclose(
         outs[0].images["left_wrist_0_rgb"], outs[1].images["left_wrist_0_rgb"]
     )
+
+
+def test_openpi_rlinf_batched_color_jitter_numerical_parity(monkeypatch):
+    """Verify vectorized _apply_batched_color_jitter matches torchvision.transforms.functional.adjust_*."""
+    torch = pytest.importorskip("torch")
+    TF = pytest.importorskip("torchvision.transforms.functional")
+
+    for pkg_name, rel_dir in (
+        ("rlinf.models", "rlinf/models"),
+        ("rlinf.models.embodiment", "rlinf/models/embodiment"),
+        ("rlinf.models.embodiment.openpi_rlinf", "rlinf/models/embodiment/openpi_rlinf"),
+        (
+            "rlinf.models.embodiment.openpi_rlinf.pi0_model",
+            "rlinf/models/embodiment/openpi_rlinf/pi0_model",
+        ),
+        ("rlinf.models.embodiment.openpi", "rlinf/models/embodiment/openpi"),
+        (
+            "rlinf.models.embodiment.openpi.modules",
+            "rlinf/models/embodiment/openpi/modules",
+        ),
+    ):
+        if pkg_name not in sys.modules:
+            pkg = types.ModuleType(pkg_name)
+            pkg.__path__ = [str(REPO_ROOT / rel_dir)]
+            monkeypatch.setitem(sys.modules, pkg_name, pkg)
+
+    rlinf_model_mod = importlib.import_module(
+        "rlinf.models.embodiment.openpi_rlinf.pi0_model.model"
+    )
+    openpi_model_mod = importlib.import_module(
+        "rlinf.models.embodiment.openpi.modules.model"
+    )
+
+    def _ref_tf_color_jitter(images_bhwc, factors_b3):
+        out = []
+        for i in range(images_bhwc.shape[0]):
+            aug = images_bhwc[i].permute(2, 0, 1)
+            b_i, c_i, s_i = (float(x) for x in factors_b3[i].tolist())
+            aug = TF.adjust_brightness(aug, 1.0 + b_i)
+            aug = TF.adjust_contrast(aug, 1.0 + c_i)
+            aug = TF.adjust_saturation(aug, 1.0 + s_i)
+            out.append(aug.permute(1, 2, 0))
+        return torch.stack(out, dim=0)
+
+    devices = ["cpu"] + (["cuda"] if torch.cuda.is_available() else [])
+    gen = torch.Generator(device="cpu").manual_seed(20261126)
+    base_img = torch.rand((8, 224, 224, 3), generator=gen, dtype=torch.float32)
+    u = torch.rand((8, 3), generator=gen, dtype=torch.float32)
+    factors = torch.stack(
+        [
+            (u[:, 0] * 2.0 - 1.0) * 0.3,
+            (u[:, 1] * 2.0 - 1.0) * 0.4,
+            (u[:, 2] * 2.0 - 1.0) * 0.5,
+        ],
+        dim=-1,
+    )
+    # Include clamping extremes on first two samples
+    factors[0] = torch.tensor([0.3, 0.4, 0.5])
+    factors[1] = torch.tensor([-0.3, -0.4, -0.5])
+
+    for dev in devices:
+        for dtype in (torch.float32, torch.bfloat16):
+            img = base_img.to(device=dev, dtype=dtype)
+            fac = factors.to(device=dev)
+            ref = _ref_tf_color_jitter(img, fac)
+
+            for mod in (rlinf_model_mod, openpi_model_mod):
+                vec = mod._apply_batched_color_jitter(img, factors=fac)
+                assert vec.dtype == dtype
+                assert vec.device.type == dev
+                max_diff = (ref.float() - vec.float()).abs().max().item()
+                assert max_diff < 1e-5, (
+                    f"ColorJitter parity failed on {dev} {dtype}: max_abs_diff={max_diff}"
+                )

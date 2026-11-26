@@ -205,6 +205,149 @@ def _observation_to_dtype(obs: Observation, dtype: torch.dtype) -> Observation:
     )
 
 
+_BT601_LUMA_CACHE: dict[tuple[torch.device, torch.dtype], torch.Tensor] = {}
+
+
+def _get_bt601_luma_weights(device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    key = (device, dtype)
+    weights = _BT601_LUMA_CACHE.get(key)
+    if weights is None:
+        # Matches torchvision.transforms.functional.rgb_to_grayscale (BT.601).
+        weights = torch.tensor([0.2989, 0.5870, 0.1140], device=device, dtype=dtype)
+        _BT601_LUMA_CACHE[key] = weights
+    return weights
+
+
+def _apply_non_wrist_spatial_aug(
+    image: torch.Tensor,
+    *,
+    rng: torch.Generator | None = None,
+) -> torch.Tensor:
+    """Apply random 95% crop, resize, and [-5, 5] deg rotation on ``(..., H, W, C)``."""
+    import torchvision.transforms.functional as TF
+
+    batch_size = image.shape[0]
+    if batch_size == 0:
+        return image
+
+    chw_images = image.movedim(-1, -3)
+    h, w = chw_images.shape[-2:]
+    crop_h, crop_w = int(h * 0.95), int(w * 0.95)
+
+    rng_device = rng.device if rng is not None else "cpu"
+    tops = torch.randint(
+        0, h - crop_h + 1, (batch_size,), generator=rng, device=rng_device
+    ).tolist()
+    lefts = torch.randint(
+        0, w - crop_w + 1, (batch_size,), generator=rng, device=rng_device
+    ).tolist()
+    angles = (
+        torch.rand(
+            (batch_size,), dtype=torch.float32, generator=rng, device=rng_device
+        )
+        * 10.0
+        - 5.0
+    ).tolist()
+
+    cropped = torch.stack(
+        [
+            TF.crop(chw_images[i], tops[i], lefts[i], crop_h, crop_w)
+            for i in range(batch_size)
+        ],
+        dim=0,
+    )
+    if cropped.ndim > 4:
+        lead_shape = cropped.shape[:-3]
+        resized = TF.resize(
+            cropped.flatten(0, -4), [h, w], antialias=True
+        ).reshape(*lead_shape, cropped.shape[-3], h, w)
+    else:
+        resized = TF.resize(cropped, [h, w], antialias=True)
+    rotated = torch.stack(
+        [TF.rotate(resized[i], angles[i], fill=0) for i in range(batch_size)],
+        dim=0,
+    )
+    return rotated.movedim(-3, -1)
+
+
+def _apply_batched_color_jitter(
+    image: torch.Tensor,
+    *,
+    rng: torch.Generator | None = None,
+    factors: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Apply batched torchvision-equivalent ColorJitter on ``(..., H, W, C)`` in ``[0, 1]``.
+
+    Simulates ``ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5)`` in
+    brightness -> contrast -> saturation order using batched GPU tensor ops.
+    When ``rng is None``, random factors are sampled on CPU and transferred
+    non-blockingly to avoid GPU-CPU synchronization.
+    """
+    batch_size = image.shape[0]
+    if batch_size == 0:
+        return image
+
+    dtype = image.dtype
+    if factors is None:
+        rng_device = rng.device if rng is not None else "cpu"
+        u = torch.rand(
+            (batch_size, 3), dtype=torch.float32, generator=rng, device=rng_device
+        )
+        if u.device != image.device:
+            u = u.to(device=image.device, non_blocking=True)
+        b = (u[:, 0] * 2.0 - 1.0) * 0.3
+        c = (u[:, 1] * 2.0 - 1.0) * 0.4
+        s = (u[:, 2] * 2.0 - 1.0) * 0.5
+    else:
+        f = factors.to(device=image.device, dtype=torch.float32, non_blocking=True)
+        b, c, s = f[:, 0], f[:, 1], f[:, 2]
+
+    bcast_shape = (batch_size,) + (1,) * (image.ndim - 1)
+    fb = (1.0 + b).reshape(bcast_shape)
+    fc = (1.0 + c).reshape(bcast_shape)
+    fs = (1.0 + s).reshape(bcast_shape)
+    channels = image.shape[-1]
+
+    if dtype in (torch.float32, torch.float64):
+        if dtype != fb.dtype:
+            fb = fb.to(dtype)
+            fc = fc.to(dtype)
+            fs = fs.to(dtype)
+        # 1. Brightness
+        image = (image * fb).clamp(0.0, 1.0)
+        # 2. Contrast
+        if channels == 3:
+            luma_w = _get_bt601_luma_weights(image.device, dtype)
+            gray_c = (image * luma_w).sum(dim=-1, keepdim=True)
+        else:
+            gray_c = image
+        mean_c = gray_c.mean(dim=(-3, -2), keepdim=True)
+        image = (image * fc + mean_c * (1.0 - fc)).clamp(0.0, 1.0)
+        # 3. Saturation
+        if channels == 3:
+            gray_s = (image * luma_w).sum(dim=-1, keepdim=True)
+            image = (image * fs + gray_s * (1.0 - fs)).clamp(0.0, 1.0)
+        return image
+
+    # Low-precision float path (bfloat16 / float16): match torchvision._blend and
+    # rgb_to_grayscale stage-by-stage opmath rounding for bit-exact parity.
+    om_fc = 1.0 - fc
+    om_fs = 1.0 - fs
+    image = (image * fb).to(dtype).clamp(0.0, 1.0)
+    if channels == 3:
+        r, g, bl = image.unbind(dim=-1)
+        gray_c = (0.2989 * r + 0.5870 * g + 0.1140 * bl).to(dtype).unsqueeze(-1)
+    else:
+        gray_c = image
+    mean_c = gray_c.mean(dim=(-3, -2), keepdim=True)
+    image = ((image * fc).to(dtype) + (mean_c * om_fc).to(dtype)).clamp(0.0, 1.0)
+    if channels == 3:
+        r, g, bl = image.unbind(dim=-1)
+        gray_s = (0.2989 * r + 0.5870 * g + 0.1140 * bl).to(dtype).unsqueeze(-1)
+        image = ((image * fs).to(dtype) + (gray_s * om_fs).to(dtype)).clamp(0.0, 1.0)
+    return image
+
+
 def preprocess_observation(
     observation: Observation,
     *,
@@ -219,9 +362,9 @@ def preprocess_observation(
     Resizes images to the target resolution with padding.
 
     Random draws use ``rng`` when provided; when ``rng`` is ``None`` (the
-    default for every training caller) they fall back to the global torch
-    RNG, matching upstream openpi. The eval path (``train=False``) applies
-    no augmentation and is unaffected.
+    default for every training caller) they fall back to the global CPU torch
+    RNG with non-blocking device transfer, avoiding GPU-CPU synchronization.
+    The eval path (``train=False``) applies no augmentation and is unaffected.
     """
     if not set(image_keys).issubset(observation.images):
         raise ValueError(
@@ -247,8 +390,6 @@ def preprocess_observation(
             image = resize_with_pad_torch(image, *image_resolution)
 
         if train:
-            import torchvision.transforms.functional as TF
-
             # Convert from [-1, 1] to [0, 1] for augmentations
             image = image / 2.0 + 0.5
             # Keep matching patches aligned by sharing augmentation across time.
@@ -257,39 +398,18 @@ def preprocess_observation(
                 if history_shape is not None
                 else image
             )
-            B = augmentation_images.shape[0]
-            augmented = []
-            for i in range(B):
-                aug_image = augmentation_images[i].movedim(-1, -3)
-
-                if "wrist" not in key:
-                    # Random crop (95% of size) then resize back
-                    h, w = aug_image.shape[-2:]
-                    crop_h, crop_w = int(h * 0.95), int(w * 0.95)
-                    # generator=None draws from the global torch RNG
-                    top = torch.randint(0, h - crop_h + 1, (1,), generator=rng).item()
-                    left = torch.randint(0, w - crop_w + 1, (1,), generator=rng).item()
-                    aug_image = TF.crop(aug_image, top, left, crop_h, crop_w)
-                    aug_image = TF.resize(aug_image, [h, w], antialias=True)
-
-                    # Random rotation (-5 to 5 degrees)
-                    angle = torch.rand(1, generator=rng).item() * 10 - 5
-                    aug_image = TF.rotate(aug_image, angle, fill=0)
-
-                # Color jitter
-                # Simulate augmax ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5)
-                b = (torch.rand(1, generator=rng).item() * 2 - 1) * 0.3
-                c = (torch.rand(1, generator=rng).item() * 2 - 1) * 0.4
-                s = (torch.rand(1, generator=rng).item() * 2 - 1) * 0.5
-                aug_image = TF.adjust_brightness(aug_image, 1.0 + b)
-                aug_image = TF.adjust_contrast(aug_image, 1.0 + c)
-                aug_image = TF.adjust_saturation(aug_image, 1.0 + s)
-
-                aug_image = aug_image.movedim(-3, -1)
-                augmented.append(aug_image)
-            image = torch.stack(augmented, dim=0)
-            if history_shape is not None:
-                image = image.flatten(0, 1)
+            if "wrist" not in key:
+                augmentation_images = _apply_non_wrist_spatial_aug(
+                    augmentation_images, rng=rng
+                )
+            augmentation_images = _apply_batched_color_jitter(
+                augmentation_images, rng=rng
+            )
+            image = (
+                augmentation_images.flatten(0, 1)
+                if history_shape is not None
+                else augmentation_images
+            )
 
             # Back to [-1, 1]
             image = image * 2.0 - 1.0
