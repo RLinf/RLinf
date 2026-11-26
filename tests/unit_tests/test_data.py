@@ -5912,8 +5912,8 @@ def test_ragged_reasoning_batch_matches_dense_merge(advantage_mode):
     assert folded["response_lengths"].tolist() == [11, 3]
 
 
-def test_pack_traj_batch_merges_response_only_ref_logprobs():
-    """Keep earlier turns' ref_logprobs when folding response-only multi-turn rows."""
+def test_pack_traj_batch_merges_turn_ref_logprobs():
+    """Keep earlier turns' ref_logprobs when folding multi-turn rows."""
     from rlinf.algorithms.utils import kl_penalty, masked_mean
     from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 

@@ -2308,26 +2308,17 @@ def _validate_steam_ensemble_cfg(actor_cfg: DictConfig) -> None:
 
 def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
     chunk_size = cfg.actor.model.get("lm_head_chunk_size", 0)
-    response_only = cfg.actor.get("response_only_logits", False)
-    if chunk_size or response_only:
-        if type(chunk_size) is not int or chunk_size < 0:
-            raise ValueError(
-                "actor.model.lm_head_chunk_size must be a nonnegative integer"
-            )
-        if not isinstance(response_only, bool):
-            raise ValueError("actor.response_only_logits must be a boolean")
+    if type(chunk_size) is not int or chunk_size < 0:
+        raise ValueError("actor.model.lm_head_chunk_size must be a nonnegative integer")
+    if chunk_size:
         if cfg.actor.training_backend != "megatron" or not OmegaConf.select(
             cfg, "agentloop.is_dynamic_rollout_batch", default=False
         ):
             raise ValueError(
-                "Output projection options require a dynamic Megatron agent batch"
+                "actor.model.lm_head_chunk_size requires a dynamic Megatron agent batch"
             )
-        if cfg.actor.model.get("context_parallel_size", 1) != 1:
-            raise ValueError(
-                "Output projection options require context_parallel_size=1"
-            )
-    if chunk_size and cfg.algorithm.get("entropy_bonus", 0) != 0:
-        raise ValueError("Chunked LM head supports entropy for logging only")
+        if cfg.algorithm.get("entropy_bonus", 0) != 0:
+            raise ValueError("Chunked LM head supports entropy for logging only")
     assert cfg.algorithm.recompute_logprobs or cfg.rollout.return_logprobs, (
         "One of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
     )

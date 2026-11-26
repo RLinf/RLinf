@@ -22,7 +22,19 @@ from megatron.core import tensor_parallel
 from megatron.core.tensor_parallel.layers import ColumnParallelLinear
 
 from .lm_head import chunked_vocab_parallel_log_probs
-from .utils import _resolve_output_layer
+
+
+def _resolve_output_layer(module: torch.nn.Module) -> torch.nn.Module:
+    """Return the layer that produces logits for ``module``."""
+    layer = getattr(module, "output_layer", None)
+    if layer is None:
+        layer = getattr(getattr(module, "language_model", None), "output_layer", None)
+    if layer is None:
+        raise AttributeError(
+            f"{type(module).__name__} has no output layer to restrict."
+        )
+    return layer
+
 
 # GPT still transposes the returned tensor. Use its normal forward path with one
 # score channel per token (two when entropy is requested) instead of a vocab axis.

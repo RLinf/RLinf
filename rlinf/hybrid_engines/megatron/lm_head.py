@@ -200,9 +200,8 @@ def chunked_vocab_parallel_log_probs(
     tp_group: dist.ProcessGroup | None = None,
     calculate_entropy: bool = False,
     gradient_accumulation_fusion: bool = False,
-    response_only: bool = False,
 ) -> dict[str, torch.Tensor]:
-    """Score selected positions without retaining sequence-by-vocabulary logits.
+    """Score active positions without retaining sequence-by-vocabulary logits.
 
     Args:
         hidden: Replicated hidden states, with labels-shaped leading dimensions.
@@ -214,8 +213,7 @@ def chunked_vocab_parallel_log_probs(
         temperature: Positive sampling temperature, applied before softmax.
         bias: Optional vocabulary-sharded output bias.
         tp_group: Tensor-parallel group; None means a single vocabulary shard.
-        calculate_entropy: Return detached entropy at the projected positions.
-        response_only: Restrict entropy to the same selected positions as logprob.
+        calculate_entropy: Return detached entropy across all positions.
         gradient_accumulation_fusion: Accumulate into Megatron's main_grad buffer.
 
     Returns:
@@ -239,7 +237,7 @@ def chunked_vocab_parallel_log_probs(
     flat_mask = label_mask.reshape(-1).bool()
     positions = (
         torch.arange(labels.numel(), device=labels.device)
-        if calculate_entropy and not response_only
+        if calculate_entropy
         else flat_mask.nonzero(as_tuple=True)[0]
     )
     flat_hidden = hidden.reshape(-1, hidden.shape[-1])
@@ -257,9 +255,5 @@ def chunked_vocab_parallel_log_probs(
     log_probs = selected.new_zeros(labels.numel()).scatter(0, positions, selected)
     result = {"log_probs": log_probs.masked_fill(~flat_mask, 0).view_as(labels)}
     if entropy is not None:
-        result["entropy"] = (
-            entropy.new_zeros(labels.numel()).scatter(0, positions, entropy)
-            if response_only
-            else entropy
-        ).view_as(labels)
+        result["entropy"] = entropy.view_as(labels)
     return result

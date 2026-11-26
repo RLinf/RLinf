@@ -272,7 +272,6 @@ actor
     enable_dp_load_balance: False
     calculate_flops: False
     seed: 1234
-    response_only_logits: False
 
     model:
       precision: fp16
@@ -413,8 +412,6 @@ actor
      - Compute and log FLOPs for profiling.
    * - ``actor.seed``
      - Global seed for reproducibility.
-   * - ``actor.response_only_logits``
-     - Compute logits only at response-predicting positions to reduce GPU memory (Megatron dynamic batch, CP=1).
 
 **Model sub-section**
 
@@ -471,7 +468,7 @@ actor
    * - ``actor.model.use_cpu_initialization``
      - Initialize weights on CPU to reduce GPU spikes.
    * - ``actor.model.lm_head_chunk_size``
-     - Compute LM-head logits in chunks of this many tokens to reduce peak GPU memory (e.g., ``256``; ``0`` disables; Megatron dynamic batch, CP=1, ``algorithm.entropy_bonus: 0``).
+     - Compute LM-head logits in chunks of this many tokens to reduce peak GPU memory (e.g., ``256``; ``0`` disables; Megatron dynamic batch, ``algorithm.entropy_bonus: 0``).
 
 **Optimizer**
 

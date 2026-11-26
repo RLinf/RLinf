@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from contextlib import nullcontext
 from dataclasses import replace
 from typing import Optional
 
@@ -88,9 +87,6 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         self, cfg: DictConfig, placement: ModelParallelComponentPlacement, role="actor"
     ):
         super().__init__(cfg, placement)
-        self.response_only_logits = role == "actor" and cfg.actor.get(
-            "response_only_logits", False
-        )
         self.lm_head_chunk_size = (
             cfg.actor.model.get("lm_head_chunk_size", 0) if role == "actor" else 0
         )
@@ -206,42 +202,32 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
     def _score_packed_tokens(
         self, model, input_ids, position_ids, packed_params, label, label_mask
     ):
-        module = None
-        if self.lm_head_chunk_size or self.response_only_logits:
-            module = unwrap_model(model)
         temperature = self.cfg.algorithm.sampling_params.temperature
-        if self.lm_head_chunk_size and module.post_process:
-            from rlinf.hybrid_engines.megatron.output_projection import chunked_scoring
-
-            with chunked_scoring(
-                module,
-                labels=label,
-                label_mask=label_mask,
-                temperature=temperature,
-                chunk_size=self.lm_head_chunk_size,
-                calculate_entropy=self.calculate_entropy,
-                response_only=self.response_only_logits,
-            ):
-                scores = model(
-                    input_ids=input_ids.contiguous(),
-                    attention_mask=None,
-                    position_ids=position_ids,
-                    packed_seq_params=packed_params,
+        if self.lm_head_chunk_size:
+            module = unwrap_model(model)
+            if module.post_process:
+                from rlinf.hybrid_engines.megatron.output_projection import (
+                    chunked_scoring,
                 )
-            output = {"log_probs": scores[..., 0]}
-            if self.calculate_entropy:
-                output["entropy"] = scores[..., 1].detach()
-            return output
 
-        positions = None
-        projection = nullcontext()
-        if self.response_only_logits and module.post_process:
-            positions = label_mask[0].nonzero(as_tuple=True)[0]
-            if positions.numel() == 0:
-                positions = positions.new_zeros(1)
-            from rlinf.hybrid_engines.megatron.utils import output_layer_positions
-
-            projection = output_layer_positions(module, positions)
+                with chunked_scoring(
+                    module,
+                    labels=label,
+                    label_mask=label_mask,
+                    temperature=temperature,
+                    chunk_size=self.lm_head_chunk_size,
+                    calculate_entropy=self.calculate_entropy,
+                ):
+                    scores = model(
+                        input_ids=input_ids.contiguous(),
+                        attention_mask=None,
+                        position_ids=position_ids,
+                        packed_seq_params=packed_params,
+                    )
+                output = {"log_probs": scores[..., 0].contiguous()}
+                if self.calculate_entropy:
+                    output["entropy"] = scores[..., 1].detach().contiguous()
+                return output
 
         def process_logits(logits, label, label_mask):
             assert logits.shape[:2] == label.shape == label_mask.shape
@@ -256,29 +242,20 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             log_probs = vocab_parallel_log_probs_from_logits(logits, label)
             return {"log_probs": log_probs.masked_fill(~label_mask, 0.0)}
 
-        with projection:
-            output = self.custom_forward(
-                model,
-                input_ids,
-                None,
-                position_ids,
-                sequence_parallel=self.transformer_config.sequence_parallel,
-                logits_processor=process_logits,
-                logits_processor_args={
-                    "label": label if positions is None else label[:, positions],
-                    "label_mask": label_mask
-                    if positions is None
-                    else label_mask[:, positions],
-                },
-                temperature=temperature,
-                packed_seq_params=packed_params,
-            )
-        if positions is None:
-            return output
-        return {
-            key: value.new_zeros(label.shape).index_copy(1, positions, value)
-            for key, value in output.items()
-        }
+        return self.custom_forward(
+            model,
+            input_ids,
+            None,
+            position_ids,
+            sequence_parallel=self.transformer_config.sequence_parallel,
+            logits_processor=process_logits,
+            logits_processor_args={
+                "label": label,
+                "label_mask": label_mask,
+            },
+            temperature=temperature,
+            packed_seq_params=packed_params,
+        )
 
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
@@ -297,17 +274,9 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             )
             labels = [torch.cat((row[1:], row.new_zeros(1))) for row in rows]
             label, _ = preprocess_ragged_seqs(labels)
-            if self.response_only_logits:
-                # Shift in each trajectory before the packing step inserts TP padding.
-                masks = [
-                    torch.cat((mask[1:], mask.new_zeros(1))).to(input_ids.device)
-                    for mask in batch["response_mask"]
-                ]
-            else:
-                masks = [
-                    torch.arange(n, device=input_ids.device) < n - 1 for n in lengths
-                ]
-            label_mask, _ = preprocess_ragged_seqs(masks)
+            label_mask, _ = preprocess_ragged_seqs(
+                [torch.arange(n, device=input_ids.device) < n - 1 for n in lengths]
+            )
             output = self._score_packed_tokens(
                 model, input_ids, position_ids, packed_params, label, label_mask
             )

@@ -346,7 +346,7 @@ def test_chunked_actor_scores_ragged_rows_without_crossing_boundaries(monkeypatc
     def score(model, input_ids, position_ids, packed_seq_params, label, label_mask):
         assert packed_seq_params.cu_seqlens_q.tolist() == [0, 4, 6, 8]
         assert label.tolist() == [[2, 3, 0, 0, 0, 0, 6, 0]]
-        assert label_mask.nonzero(as_tuple=True)[1].tolist() == [0, 6]
+        assert label_mask.nonzero(as_tuple=True)[1].tolist() == [0, 1, 6]
         return {"log_probs": label.float().masked_fill(~label_mask, 0)}
 
     actor = MAMegatronActor.__new__(MAMegatronActor)
@@ -354,19 +354,15 @@ def test_chunked_actor_scores_ragged_rows_without_crossing_boundaries(monkeypatc
     actor.cfg = SimpleNamespace(
         algorithm=SimpleNamespace(sampling_params=SimpleNamespace(temperature=1.0))
     )
-    actor.response_only_logits = True
     actor._score_packed_tokens = score
     actor.return_loss = False
     model = torch.nn.Module()
     model.post_process = True
     batch = {
         "input_ids": [torch.tensor(ids) for ids in ([1, 2, 3], [4], [5, 6])],
-        "response_mask": [
-            torch.tensor(mask, dtype=torch.bool) for mask in ([0, 1, 0], [0], [0, 1])
-        ],
     }
     packed, collect = MAMegatronActor.get_forward_step_func(actor)(iter([batch]), model)
-    assert [row.tolist() for row in collect(packed)] == [[0, 2, 0], [0], [0, 6]]
+    assert [row.tolist() for row in collect(packed)] == [[0, 2, 3], [0], [0, 6]]
 
 
 @pytest.mark.parametrize(
@@ -621,7 +617,6 @@ def scoring_actor(tmp_path, monkeypatch):
     actor.transformer_config = SimpleNamespace(sequence_parallel=False)
     actor.tokenizer = SimpleNamespace(eos_token_id=0)
     actor.clip_ratio_c, actor.clip_ratio_low, actor.clip_ratio_high = 3.0, 0.2, 0.2
-    actor.response_only_logits = False
     actor.lm_head_chunk_size = 0
     actor.kl_beta = 0.0
     actor.loss_agg_func = masked_mean
@@ -651,15 +646,13 @@ def scoring_actor(tmp_path, monkeypatch):
         dist.destroy_process_group()
 
 
-@pytest.mark.parametrize("response_only", [False, True])
 @pytest.mark.parametrize(
     ("chunk_size", "entropy_bonus"), [(0, 0.0), (0, 0.1), (1, 0.0)]
 )
 def test_actor_entropy_uses_response_predictors(
-    scoring_actor, chunk_size, entropy_bonus, response_only
+    scoring_actor, chunk_size, entropy_bonus
 ):
     actor, batch = scoring_actor
-    actor.response_only_logits = response_only
     actor.lm_head_chunk_size = chunk_size
     actor.cfg.algorithm.entropy_bonus = entropy_bonus
     actor.calculate_entropy = actor.return_loss = True
@@ -707,7 +700,6 @@ def test_run_inference_uses_packed_scoring_for_ref_logprobs(scoring_actor, monke
     )
 
     actor, _ = scoring_actor
-    actor.response_only_logits = True
     actor.lm_head_chunk_size = 1
     actor.calculate_entropy = False
     actor.cfg.actor.model.encoder_seq_length = 6
@@ -754,21 +746,18 @@ def test_run_inference_uses_packed_scoring_for_ref_logprobs(scoring_actor, monke
 
     temperature = actor.cfg.algorithm.sampling_params.temperature
 
-    def expected_row(weight, token_ids, response_mask):
+    def expected_row(weight, token_ids):
         ids = torch.tensor(token_ids)
         logits = weight.T[ids[:-1]] / temperature
         logp = logits.log_softmax(-1).gather(-1, ids[1:, None]).squeeze(-1)
-        aligned = torch.cat((logp.new_zeros(1), logp))
-        return aligned.masked_fill(~response_mask, 0.0)
+        return torch.cat((logp.new_zeros(1), logp))
 
-    for idx, (ids, mask) in enumerate(
-        zip(result.input_ids, step_batch["response_mask"], strict=True)
-    ):
+    for idx, ids in enumerate(result.input_ids):
         torch.testing.assert_close(
-            emitted[0].recomputed_logprobs[idx], expected_row(actor_weight, ids, mask)
+            emitted[0].recomputed_logprobs[idx], expected_row(actor_weight, ids)
         )
         torch.testing.assert_close(
-            emitted[0].ref_logprobs[idx], expected_row(ref_weight, ids, mask)
+            emitted[0].ref_logprobs[idx], expected_row(ref_weight, ids)
         )
 
     packed_batch = DynamicRolloutResult.pack_traj_batch({}, emitted[0].to_actor_batch())
@@ -776,11 +765,13 @@ def test_run_inference_uses_packed_scoring_for_ref_logprobs(scoring_actor, monke
     torch.testing.assert_close(packed_batch["response_mask"][0], combined_mask)
     torch.testing.assert_close(
         packed_batch["recomputed_logprobs"][0],
-        expected_row(actor_weight, result.input_ids[1], combined_mask),
+        expected_row(actor_weight, result.input_ids[1]).masked_fill(
+            ~combined_mask, 0.0
+        ),
     )
     torch.testing.assert_close(
         packed_batch["ref_logprobs"][0],
-        expected_row(ref_weight, result.input_ids[1], combined_mask),
+        expected_row(ref_weight, result.input_ids[1]).masked_fill(~combined_mask, 0.0),
     )
 
 
@@ -916,23 +907,170 @@ def test_tp_entropy_and_log_probs_match_dense_gradient(tmp_path):
     mp.spawn(_check_tp_entropy_gradient, args=(str(tmp_path / "tp"),), nprocs=2)
 
 
+def _check_tp_cp_chunked_actor(rank, init_file):
+    from types import SimpleNamespace
+
+    from megatron.core import ModelParallelConfig, parallel_state
+    from megatron.core.tensor_parallel.layers import ColumnParallelLinear
+
+    from rlinf.hybrid_engines.megatron.output_projection import (
+        install_chunked_projection,
+    )
+    from rlinf.utils.utils import masked_mean
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=4,
+        timeout=timedelta(seconds=60),
+    )
+    try:
+        parallel_state.initialize_model_parallel(
+            tensor_model_parallel_size=2, context_parallel_size=2
+        )
+        tp_rank = parallel_state.get_tensor_model_parallel_rank()
+        torch.manual_seed(31)
+        full_embed = torch.randn(12, 6)
+        full_head = torch.randn(12, 6)
+        full_bias = torch.randn(12)
+        rows = [
+            torch.tensor([1, 4, 7, 2, 9, 0, 5, 11, 3, 8, 6]),
+            torch.tensor([2, 10, 5, 1, 8, 3, 9, 4, 11, 0, 7, 6, 2, 5, 1, 9, 4, 3, 8]),
+        ]
+        masks = [
+            torch.tensor([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1], dtype=torch.bool),
+            torch.tensor(
+                [0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1],
+                dtype=torch.bool,
+            ),
+        ]
+
+        class _TPCPStage(torch.nn.Module):
+            pre_process = post_process = True
+
+            def __init__(self, chunked: bool):
+                super().__init__()
+                cfg = ModelParallelConfig(
+                    use_cpu_initialization=True,
+                    tensor_model_parallel_size=2,
+                    context_parallel_size=2,
+                    sequence_parallel=True,
+                )
+                self.output_layer = ColumnParallelLinear(
+                    6,
+                    12,
+                    config=cfg,
+                    init_method=torch.nn.init.zeros_,
+                    bias=True,
+                    gather_output=False,
+                )
+                with torch.no_grad():
+                    self.output_layer.weight.copy_(full_head.chunk(2, dim=0)[tp_rank])
+                    self.output_layer.bias.copy_(full_bias.chunk(2, dim=0)[tp_rank])
+                if chunked:
+                    install_chunked_projection(self)
+
+            def forward(
+                self, input_ids, attention_mask, position_ids, packed_seq_params
+            ):
+                hidden = full_embed[input_ids.T]
+                hidden_sp = hidden.chunk(2, dim=0)[tp_rank].contiguous()
+                out, _ = self.output_layer(hidden_sp)
+                return out.transpose(0, 1).contiguous()
+
+        def run_actor_pass(chunk_size: int):
+            actor = MAMegatronActor.__new__(MAMegatronActor)
+            actor.cfg = OmegaConf.create(
+                {
+                    "runner": {"task_type": "reasoning"},
+                    "actor": {"model": {"encoder_seq_length": 24}},
+                    "algorithm": {
+                        "sampling_params": {"temperature": 0.8},
+                        "loss_type": "actor",
+                        "entropy_bonus": 0.0,
+                        "use_valid_token_scale": False,
+                        "early_stop_imp_ratio": None,
+                    },
+                }
+            )
+            actor.transformer_config = SimpleNamespace(sequence_parallel=True)
+            actor.tokenizer = SimpleNamespace(eos_token_id=0)
+            actor.clip_ratio_c, actor.clip_ratio_low, actor.clip_ratio_high = (
+                None,
+                0.2,
+                0.2,
+            )
+            actor.lm_head_chunk_size = chunk_size
+            actor.calculate_entropy = True
+            actor.calculate_entropy_loss = False
+            actor.kl_beta = 0.05
+            actor.kl_penalty_type = "low_var_kl"
+            actor.loss_agg_func = masked_mean
+            actor.torch_platform = SimpleNamespace(current_device=lambda: "cpu")
+
+            model = _TPCPStage(chunked=chunk_size > 0)
+            actor.return_loss = False
+            infer_batch = {"input_ids": [r.clone() for r in rows]}
+            with torch.no_grad():
+                packed_lp, collect = actor.get_forward_step_func()(
+                    iter([infer_batch]), model
+                )
+                recomputed = collect(packed_lp)
+
+            actor.return_loss = True
+            train_batch = {
+                "input_ids": [r.clone() for r in rows],
+                "response_mask": [m.clone() for m in masks],
+                "advantages": [m.float() * 0.7 for m in masks],
+                "loss_scales": [m.float() for m in masks],
+                "recomputed_logprobs": [lp - 0.03 for lp in recomputed],
+                "ref_logprobs": [lp + 0.02 for lp in recomputed],
+            }
+            scores, loss_fn = actor.get_forward_step_func()(iter([train_batch]), model)
+            loss, metrics = loss_fn(scores)
+            loss.backward()
+            return (
+                recomputed,
+                loss.detach(),
+                metrics["actor/entropy_loss"].detach(),
+                metrics["actor/kl_loss"].detach(),
+                model.output_layer.weight.grad.detach().clone(),
+                model.output_layer.bias.grad.detach().clone(),
+            )
+
+        with pytest.MonkeyPatch.context() as mpatch:
+            mpatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+            dense_res = run_actor_pass(0)
+            chunk_res = run_actor_pass(3)
+        for got_lp, want_lp in zip(chunk_res[0], dense_res[0], strict=True):
+            torch.testing.assert_close(got_lp, want_lp, atol=2e-6, rtol=2e-6)
+        for got, want in zip(chunk_res[1:], dense_res[1:], strict=True):
+            torch.testing.assert_close(got, want, atol=2e-6, rtol=2e-6)
+    finally:
+        parallel_state.destroy_model_parallel()
+        dist.destroy_process_group()
+
+
+def test_chunked_actor_scores_and_backpropagates_under_tp_and_cp(tmp_path):
+    pytest.importorskip("megatron.training")
+    mp.spawn(_check_tp_cp_chunked_actor, args=(str(tmp_path / "tpcp"),), nprocs=4)
+
+
 @pytest.mark.parametrize(
-    "backend,dynamic,cp,response_only,chunk_size,entropy_bonus,message",
+    "backend,dynamic,chunk_size,entropy_bonus,message",
     [
-        ("fsdp", True, 1, True, 0, 0.0, "dynamic Megatron"),
-        ("megatron", False, 1, True, 0, 0.0, "dynamic Megatron"),
-        ("megatron", True, 2, True, 0, 0.0, "context_parallel_size=1"),
-        ("fsdp", True, 1, False, 16, 0.0, "dynamic Megatron"),
-        ("megatron", False, 1, False, 16, 0.0, "dynamic Megatron"),
-        ("megatron", True, 2, False, 16, 0.0, "context_parallel_size=1"),
-        ("megatron", True, 1, False, -1, 0.0, "nonnegative integer"),
-        ("megatron", True, 1, False, True, 0.0, "nonnegative integer"),
-        ("megatron", True, 1, "yes", 0, 0.0, "boolean"),
-        ("megatron", True, 1, False, 16, 0.01, "logging only"),
+        ("fsdp", True, 16, 0.0, "dynamic Megatron"),
+        ("megatron", False, 16, 0.0, "dynamic Megatron"),
+        ("megatron", True, -1, 0.0, "nonnegative integer"),
+        ("megatron", True, True, 0.0, "nonnegative integer"),
+        ("megatron", True, False, 0.0, "nonnegative integer"),
+        ("megatron", True, 16, 0.01, "logging only"),
     ],
 )
-def test_response_projection_rejects_unsupported_actor(
-    backend, dynamic, cp, response_only, chunk_size, entropy_bonus, message
+def test_chunked_lm_head_rejects_unsupported_actor(
+    backend, dynamic, chunk_size, entropy_bonus, message
 ):
     from rlinf.config import validate_reasoning_cfg
 
@@ -940,9 +1078,8 @@ def test_response_projection_rejects_unsupported_actor(
         {
             "actor": {
                 "training_backend": backend,
-                "response_only_logits": response_only,
                 "model": {
-                    "context_parallel_size": cp,
+                    "context_parallel_size": 2,
                     "lm_head_chunk_size": chunk_size,
                 },
             },
