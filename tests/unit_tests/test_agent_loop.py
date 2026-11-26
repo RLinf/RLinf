@@ -126,9 +126,11 @@ def test_shared_sglang_retraction_retains_prefix_logprobs_and_late_requests(
     monkeypatch.setattr(
         _Scheduler,
         "flush_cache",
-        lambda self: not self.waiting_queue
-        and not self.running_batch.reqs
-        and self.chunked_req is None,
+        lambda self: (
+            not self.waiting_queue
+            and not self.running_batch.reqs
+            and self.chunked_req is None
+        ),
     )
     monkeypatch.setattr(
         _Scheduler,
@@ -196,6 +198,7 @@ class _QueueChannel:
 def _make_worker() -> AgentLoopWorker:
     """An AgentLoopWorker with the loop state but no Worker init."""
     worker = AgentLoopWorker.__new__(AgentLoopWorker)
+    worker.session_server_client = None
     worker._agentloop_task = None
     worker._agent_metric_channel = None
     worker._producer_error = None
@@ -218,6 +221,7 @@ def _request(n_groups=1, group_size=2, group_ids=None, task_names=None):
 def _make_group_worker(worker_cls=AgentLoopWorker):
     """A group-method worker: enough state to build one group result."""
     worker = worker_cls.__new__(worker_cls)
+    worker.session_server_client = None
     worker.print_outputs = False
     worker.return_logprobs = False
     worker.cfg = OmegaConf.create(
@@ -550,6 +554,7 @@ class TestGroupDiscarded:
         from rlinf.workers.agent.agent_loop import AgentLoopWorker
 
         worker = AgentLoopWorker.__new__(AgentLoopWorker)
+        worker.session_server_client = None
         worker.print_outputs = False
         worker.return_logprobs = False
         worker.cfg = OmegaConf.create(
@@ -729,6 +734,41 @@ class TestSyncWeightsInstanceSubset:
             assert "subset" in str(e)
 
 
+@pytest.mark.parametrize("is_collocated", [False, True])
+def test_actor_wait_preserves_disaggregated_data_wait_metric(
+    monkeypatch, is_collocated
+):
+    pytest.importorskip("megatron.core")
+    from rlinf.runners import async_agent_runner
+
+    timestamps = iter([5.0, 8.0])
+    monkeypatch.setattr(
+        async_agent_runner,
+        "time",
+        SimpleNamespace(perf_counter=lambda: next(timestamps)),
+    )
+    handle = SimpleNamespace(
+        done=lambda: True,
+        wait=lambda: [({}, [{}])],
+        consume_duration=lambda: 2.0,
+    )
+    runner = async_agent_runner.AsyncAgentRunner.__new__(
+        async_agent_runner.AsyncAgentRunner
+    )
+    runner.critic = None
+    runner.is_collocated = is_collocated
+    runner.global_steps = 0
+    runner.rollout_channel = object()
+    runner._training_handles = []
+    runner.actor = SimpleNamespace(run_training=lambda **kwargs: handle)
+
+    _, _, times = runner._run_training(None, [])
+    expected = {"training": 2.0}
+    if not is_collocated:
+        expected["wait_data"] = 1.0
+    assert times == expected
+
+
 def _single_turn_output(
     version_start: int | None,
     version_end: int | None,
@@ -748,6 +788,7 @@ def _single_turn_output(
 
 def _make_multi_worker():
     worker = MultiAgentLoopWorker.__new__(MultiAgentLoopWorker)
+    worker.session_server_client = None
     worker.print_outputs = False
     worker.return_logprobs = True
     return worker
@@ -814,6 +855,7 @@ class TestIdleStats:
     @staticmethod
     def _make_worker():
         worker = AgentLoopWorker.__new__(AgentLoopWorker)
+        worker.session_server_client = None
         worker._agentloop_task = None
         worker._agent_metric_channel = None
         worker._producer_error = None
@@ -987,7 +1029,7 @@ class TestTaskNamePassthrough:
             worker.is_eval = False
             out_channel = _QueueChannel()
 
-            async def _query(input_dict, answer=None):
+            async def _query(input_ids, answer=None):
                 return SimpleNamespace(
                     single_turn_outputs=[_single_turn_output(None, None)],
                     trace_prints=[],
@@ -996,7 +1038,7 @@ class TestTaskNamePassthrough:
 
             worker.run_one_query = _query
             await worker.run_agentloop_rollout_group(
-                input_dict={"input_ids": [1, 2]},
+                input_ids=[1, 2],
                 answer="a",
                 group_size=2,
                 output_channel=out_channel,

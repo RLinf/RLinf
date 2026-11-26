@@ -14,6 +14,7 @@
 
 import os
 import sys
+from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import MagicMock
 
@@ -2397,6 +2398,17 @@ class TestSearchr1AsyncAdmissionCfg:
         with pytest.raises(ValueError, match="requires.{0,20}rollout_backend: sglang"):
             self._validate(self._make_cfg(**{key: value}))
 
+    def test_collocated_async_uses_the_rollout_dispatch_gate(self, monkeypatch):
+        import rlinf.config as cfg_mod
+
+        placement = SimpleNamespace(is_collocated=True, is_disaggregated=False)
+        monkeypatch.setattr(
+            cfg_mod, "ModelParallelComponentPlacement", lambda *args: placement
+        )
+        cfg = self._make_cfg(**{"session_server.enable": True})
+        with pytest.raises(ValueError, match="session_server.enable requires separate"):
+            cfg_mod.validate_searchr1_cfg(cfg)
+
     def test_defaults_are_derived(self):
         """Unset caps derive from engine capacity and batch size."""
         cfg = self._validate(self._make_cfg())
@@ -2404,6 +2416,38 @@ class TestSearchr1AsyncAdmissionCfg:
         assert cfg.rollout_buffer.max_inflight_groups == 77
         assert cfg.rollout_buffer.max_buffered_groups == 128
         assert cfg.rollout_buffer.max_dropped_groups_per_step == 640
+
+    @pytest.mark.parametrize(
+        "overrides, error",
+        [
+            (
+                {"algorithm.recompute_logprobs": True},
+                "original rollout behavior logprobs",
+            ),
+            ({"algorithm.clip_ratio_low": 1.0}, "0 <= clip_ratio_low < 1"),
+            ({"algorithm.clip_ratio_high": 0.0}, "positive finite clip_ratio_high"),
+            ({"algorithm.clip_ratio_high": None}, "positive finite clip_ratio_high"),
+        ],
+    )
+    def test_dis_rejects_invalid_settings_without_critic(self, overrides, error):
+        options = {
+            "algorithm.loss_type": "dis",
+            "algorithm.clip_ratio_low": 0.3,
+            "algorithm.clip_ratio_high": 5.0,
+        }
+        with pytest.raises(ValueError, match=error):
+            self._validate(self._make_cfg(**(options | overrides)))
+
+    def test_dis_accepts_the_actor_clip_default_without_critic(self):
+        self._validate(
+            self._make_cfg(
+                **{
+                    "algorithm.loss_type": "dis",
+                    "algorithm.ratio_clip_eps": 0.2,
+                    "algorithm.clip_ratio_low": None,
+                }
+            )
+        )
 
     def test_default_inflight_sums_over_instances_and_rounds_up(self):
         """The derivation sums instances and rounds up to whole groups."""

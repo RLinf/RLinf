@@ -114,7 +114,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/RLinf-Gr00t-SFT-Stack-cube" # https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Stack-cube
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 
 actor:

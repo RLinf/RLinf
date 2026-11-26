@@ -1,7 +1,7 @@
-异步 agentic RL
-===============
+异步 Agent RL
+=============
 
-本页先说明如何在 RLinf 里打开异步 agentic RL、哪些配置可能需要改，再解释底下的机制：rollout 与训练怎样重叠，两个准入上限各管什么，训练数据会旧到什么程度。如果只需要一份能直接跑的配置，先看 :doc:`Search-R1 异步训练 </rst_source/examples/agentic/searchr1/async>`；等到要改某个默认值、想知道该改哪个以及为什么时，再回到这里。
+本页先说明如何在 RLinf 里打开异步 agentic RL、哪些配置可能需要改，再解释底下的机制：rollout 与训练怎样重叠，两个准入上限各管什么，训练数据会旧到什么程度。如果只需要一份能直接跑的配置，先看 :doc:`Search-R1（异步训练） </rst_source/examples/agentic/searchr1/index>`；等到要改某个默认值、想知道该改哪个以及为什么时，再回到这里。
 
 如何开启
 --------
@@ -27,15 +27,6 @@
      task_name: searchr1      # 异步模式下必填
 
 ``component_placement`` 总要求有 ``reward`` 一项，所以这里保留了它；Search-R1 的 reward 在 agent loop 里计算，不会启动 reward worker。缺少上面任何一项要求的配置，会在配置校验阶段直接报错，不会等到 worker 启动之后。
-
-共享 GPU
-~~~~~~~~
-
-共享部署需要 SGLang 0.5.12 或更高版本。把 actor 和 rollout 放在同一组 GPU 上，开启 actor 的权重、梯度和 optimizer 卸载，并设置 ``rollout.pause_mode=retract``\ 。
-
-完整训练批次交付后，生成才会暂停。未完成请求保留生成的 token 和 behavior logprob，释放显存。训练并同步权重后，rollout 用更新后的权重重新处理保留的 token 前缀，再继续生成。工具调用可以在训练期间完成。
-
-SAO 的 critic 也放在这组 GPU 上，并开启同样的卸载设置。每批先更新两次 critic，用更新后的 value 计算 policy advantage，再更新一次 actor。Qwen2.5 SAO 的运行命令和 critic 配置见 :ref:`searchr1-sao`。下文的性能测试中，actor 与 rollout 使用不同的 GPU。
 
 其余配置都有默认值。下表是最可能需要调整的几项，后文会逐一说明什么时候需要改。
 
@@ -64,14 +55,25 @@ SAO 的 critic 也放在这组 GPU 上，并开启同样的卸载设置。每批
 
 运行起来之后，最先要看的是 ``rollout/buffer/admission_wait_inflight_limit`` 和 ``rollout/buffer/admission_wait_buffer_full`` 两个指标，它们说明当前是哪个上限在限制投放。后面两节分别讲遇到哪种情况该怎么调。
 
+共享 GPU
+~~~~~~~~
+
+共享部署需要 SGLang 0.5.12 或更高版本。把 actor 和 rollout 放在同一组 GPU 上，开启 ``actor.offload_weight``、``actor.offload_grad`` 和 ``actor.offload_optimizer``，并设置 ``rollout.pause_mode: retract``\ 。
+
+session server 需要分离部署 actor 和 rollout。
+
+learner 收到完整批次后，rollout 暂停生成并释放显存，保留未完成请求已生成的 token 和对应的 logprob。训练和权重同步结束后，rollout 用新的权重重新处理保留的前缀，再继续生成。工具调用可以在训练期间完成。
+
+运行 SAO 时，将 critic 放在同一组 GPU 上并开启相同的卸载设置。TP、PP 和 CP 均为 1。运行命令和更新顺序见 :ref:`searchr1-sao`。
+
 异步为什么快
 ------------
 
-要理解这两个上限，先看异步改变了什么。同步的 agent 训练里，训练和生成这两个最耗时的环节只能交替运行，总有一边空着：actor 训练一批轨迹时，rollout 引擎没有活干；训练结束后引擎重新满载，actor 又得等这一批里最慢的那条轨迹跑完，才能开始下一步。多轮 agentic rollout 会让情况更糟，一条反复调用工具的轨迹就能把整批拖到最后。
+本节的性能数据来自分离式部署。同步的 agent 训练里，训练和生成这两个最耗时的环节只能交替运行，总有一边空着：actor 训练一批轨迹时，rollout 引擎没有活干；训练结束后引擎重新满载，actor 又得等这一批里最慢的那条轨迹跑完，才能开始下一步。多轮 agentic rollout 会让情况更糟，一条反复调用工具的轨迹就能把整批拖到最后。
 
 异步训练把两边解耦，不再互相等待。prompt 持续送进 rollout 引擎，生成完的轨迹先放进缓冲，actor 每准备好一步，就取走缓冲里最早的 ``rollout_batch_size`` 个组。
 
-实测的重叠效果接近理想情况。以参考运行为例（第 2–19 步，数据取自 TensorBoard），同步运行的 ``time/step`` 为 278.6 s，由 ``time/rollout`` 181.9、``time/training`` 93.3 和 ``time/sync_weights`` 1.4 组成；异步运行每步耗时 139.0 s，其中训练占 91.7 s，权重同步占 1.3 s，其余约 46.0 s 用于等待数据及其他调度开销。两者的训练时间几乎一样，省下来的正是双方互相等待的时间。
+实测的重叠效果接近理想情况。以参考运行为例（第 2–19 步，数据取自 TensorBoard），同步运行的 ``time/step`` 为 278.6 s，由 ``time/rollout`` 181.9、``time/training`` 93.3 和 ``time/sync_weights`` 1.4 组成；异步运行每步耗时 139.0 s，其中训练占 91.7 s，权重同步占 1.3 s，其余约 46.0 s 包括 ``time/wait_data`` 和其他调度开销。两者的训练时间几乎一样，省下来的正是双方互相等待的时间。
 
 组件如何协作
 ------------
@@ -87,6 +89,10 @@ SAO 的 critic 也放在这组 GPU 上，并开启同样的卸载设置。每批
 
 重叠之所以可控，关键在 buffer worker。dataloader 由它而不是 runner 持有，所以 actor 训练期间它仍能继续投放；它同时统计在途的组和缓冲里的组，所以两边之间积压的数据有上限；它总是先交出最早的组，所以 actor 拿到的数据变旧的速度由上限决定。
 
+.. note::
+
+   使用 :doc:`session server <session_server>` 时，buffer worker 只收到每个组的元数据，轨迹留在 rollout 节点上。下文的上限和 staleness 规则不变。
+
 两个准入上限
 ------------
 
@@ -97,7 +103,7 @@ buffer worker 只在两个上限同时满足时才投放新 prompt。两个上�
 
 第一个上限要求在途组数（已投放、尚未交回的组）低于 ``rollout_buffer.max_inflight_groups``\ 。默认值把引擎的请求容量换算成组数，即 ``ceil(max_running_requests x instances x 1.2 / group_size)``\ ；多出的 1.2 倍余量，留给那些轨迹正在等工具返回、或在等组内最慢那条轨迹的组。
 
-只有引擎还有空闲时，调高这个上限才有用。引擎一旦忙满，多投放的组只会在引擎里排队，让数据变旧。在 GLM 参考运行上，把 ``max_inflight_groups`` 从 77 提到 160 后，每个 DP rank 的运行请求数从约 75 升到 128（另有 33–78 个在排队），吞吐没有变化，平均 staleness 却从约 1.3 升到约 2.0：GPU 在约 75 个请求时就已经忙满了。对应的实测图见 :doc:`Search-R1 异步页 </rst_source/examples/agentic/searchr1/async>` 的“两个上限怎么调”一节。
+只有引擎还有空闲时，调高这个上限才有用。引擎一旦忙满，多投放的组只会在引擎里排队，让数据变旧。在 GLM 参考运行上，把 ``max_inflight_groups`` 从 77 提到 160 后，每个 DP rank 的运行请求数从约 75 升到 128（另有 33–78 个在排队），吞吐没有变化，平均 staleness 却从约 1.3 升到约 2.0：GPU 在约 75 个请求时就已经忙满了。对应的实测图见 :doc:`Search-R1 </rst_source/examples/agentic/searchr1/index>` 的异步训练部分。
 
 缓冲上限：数据新鲜度
 ~~~~~~~~~~~~~~~~~~~~
@@ -139,4 +145,4 @@ Staleness
 限制
 ----
 
-异步 agentic RL 使用 Megatron actor、多轮 agent loop 和 SGLang server 后端。共享 GPU 要求开启 retraction 和模型卸载，生成与反向计算轮流执行；分离式部署可以同时执行两者。GRPO 配置使用 rollout 期间记录的 behavior policy logprob。SAO 使用这些 logprob 计算双侧 importance mask，要求 actor、critic 和 rollout 共享 GPU，并使用 TP=PP=CP=1。
+异步 agentic RL 使用 Megatron actor、多轮 agent loop 和 SGLang server 后端。GRPO 和 SAO 都使用 rollout 记录的 logprob。SAO 用这些 logprob 计算双侧重要性采样。

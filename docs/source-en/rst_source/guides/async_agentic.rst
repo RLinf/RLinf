@@ -1,12 +1,12 @@
-Asynchronous Agentic RL
-=======================
+Async Agentic RL
+================
 
 This page shows how to turn on asynchronous agentic RL in RLinf and which
 settings you may need to change, then explains what happens underneath: how
 rollout and training overlap, what the two admission limits control, and how
 stale the training data gets. If you want a complete runnable configuration,
-start from :doc:`Asynchronous Search-R1 Training
-</rst_source/examples/agentic/searchr1/async>`; come back here when a default
+start from :doc:`Search-R1 (Async Training)
+</rst_source/examples/agentic/searchr1/index>`; come back here when a default
 needs changing and you want to know which one and why.
 
 Turning It On
@@ -41,24 +41,6 @@ one; Search-R1 computes its rewards inside the agent loop and launches no
 reward worker. A configuration that misses one of these requirements is
 rejected when the configuration is validated, before any worker starts.
 
-Share GPUs
-~~~~~~~~~~
-
-For a shared-GPU run, use SGLang 0.5.12 or later. Place actor and rollout on the same GPUs, enable the
-actor's weight, gradient, and optimizer offload, and set
-``rollout.pause_mode=retract``. Generation pauses after a full training batch
-has been dispatched. Unfinished requests retain their generated tokens and
-behavior logprobs while their GPU memory is released. After training and
-weight synchronization, rollout processes the retained token prefixes again
-under the updated weights, then resumes generation.
-Tool calls can finish during training.
-
-SAO adds a critic on the same GPU set with the same offload settings. It updates
-the critic twice, computes policy advantages using the updated values, and
-updates the actor once. Use :ref:`searchr1-sao`
-for the Qwen2.5 SAO run command and critic options.
-The overlap measurements below use separate GPUs.
-
 Everything else has a default. The settings below are the ones you are most
 likely to touch; the rest of the page explains when.
 
@@ -90,10 +72,27 @@ and ``rollout/buffer/admission_wait_buffer_full``. They show which of the two
 limits is holding generation back, and the sections below explain what to do
 about each.
 
+Share GPUs
+~~~~~~~~~~
+
+For a shared-GPU run, use SGLang 0.5.12 or later. Place actor and rollout
+on the same GPUs, enable ``actor.offload_weight``, ``actor.offload_grad``,
+and ``actor.offload_optimizer``, and set ``rollout.pause_mode: retract``.
+Use separate GPUs for the session server path.
+
+After the learner receives a full batch, rollout pauses generation and
+frees GPU memory. It keeps the tokens and log probabilities already generated
+for unfinished requests. Once training and weight sync finish, rollout
+processes the retained token prefixes with the updated weights and continues
+generation. Tool calls can finish during training.
+
+For SAO, place the critic on the same GPUs with the same offload settings
+and use TP=PP=CP=1. See :ref:`searchr1-sao` for setup and the update order.
+
 Why It Helps
 ------------
 
-To see what the limits are for, start with what asynchrony changes. In a
+The overlap measurements in this section use separate GPUs. In a
 synchronous agent run, the two expensive sides of the loop take turns being
 idle. While the actor trains on a batch of trajectories, the rollout engines
 have nothing to generate. When the actor is done, the engines fill up again,
@@ -110,8 +109,8 @@ The measured effect is close to an ideal overlap. On the reference run (steps
 2–19, TensorBoard), the synchronous run's ``time/step`` of 278.6 s splits into
 ``time/rollout`` 181.9 + ``time/training`` 93.3 + ``time/sync_weights`` 1.4.
 The asynchronous run records 139.0 s per step, with 91.7 s of training and
-1.3 s of weight synchronization. The remaining 46.0 s covers data waiting and
-other scheduling overhead. Training takes almost the same time in both runs;
+1.3 s of weight synchronization. The remaining 46.0 s includes
+``time/wait_data`` and other scheduling overhead. Training takes almost the same time in both runs;
 overlap reduces the time each side spends waiting for the other.
 
 How It Fits Together
@@ -145,6 +144,12 @@ buffer, it bounds how much data piles up between the two sides. And because it
 hands off the oldest groups first, the data the actor sees ages at a rate the
 limits determine.
 
+.. note::
+
+   With the :doc:`session server <session_server>`, the buffer worker
+   receives only each group's metadata. The trajectories stay on the rollout
+   nodes. The limits and staleness rules below apply unchanged.
+
 The Two Limits
 --------------
 
@@ -170,8 +175,8 @@ and age the data. On the GLM reference run, raising ``max_inflight_groups``
 from 77 to 160 moved the running requests per DP rank from about 75 to 128
 (with another 33–78 queued), left the throughput unchanged, and raised the
 mean staleness from about 1.3 to about 2.0: the GPUs were already busy at 75
-requests. The plots are on the :doc:`Search-R1 async page
-</rst_source/examples/agentic/searchr1/async>` under "Tuning the Limits".
+requests. The plots are on the :doc:`Search-R1 page
+</rst_source/examples/agentic/searchr1/index>` under Async Training.
 
 The Buffer Limit: Data Age
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -275,8 +280,5 @@ Limitations
 -----------
 
 Asynchronous agentic RL uses a Megatron actor, the multi-turn agent loop, and
-the SGLang server backend. Shared GPUs require retraction and model offload;
-generation and backpropagation alternate. Separate GPU sets run both at once.
-The GRPO recipe uses behavior-policy log probabilities recorded during rollout.
-SAO uses the same log probabilities for its double-sided importance mask and
-requires actor, critic, and rollout to share the GPU set, with TP=PP=CP=1.
+the SGLang server backend. GRPO and SAO use the log probabilities recorded
+during rollout. SAO uses them for double-sided importance sampling.

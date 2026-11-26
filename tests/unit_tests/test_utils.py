@@ -1608,7 +1608,12 @@ def test_pinned_offload_reports_allocation_failure_and_restores_patch(monkeypatc
 
 
 @pytest.mark.parametrize("normalize", [False, True])
-def test_multiturn_gae_matches_discounted_targets_in_shuffled_turn_order(normalize):
+@pytest.mark.parametrize(
+    "sao_options", [{}, {"gae_lambda_alpha": 1.5}, {"gae_lambda_alpha": 0}]
+)
+def test_multiturn_gae_matches_discounted_targets_in_shuffled_turn_order(
+    normalize, sao_options
+):
     values = torch.full((4, 6), 99.0)
     mask = torch.zeros_like(values, dtype=torch.bool)
     mask[0, 4] = mask[3, 1] = True
@@ -1625,6 +1630,7 @@ def test_multiturn_gae_matches_discounted_targets_in_shuffled_turn_order(normali
         gamma=0.9,
         gae_lambda=0.95,
         normalize_advantages=normalize,
+        **sao_options,
     )
     advantages = torch.nn.utils.rnn.pad_sequence(advantages, batch_first=True)
     returns = torch.nn.utils.rnn.pad_sequence(returns, batch_first=True)

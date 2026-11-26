@@ -21,6 +21,7 @@ An English page reads as if an engineer who writes English natively explained th
 | in order to, allows you to, enables you to, is able to | wordy | to, you can, can |
 | currently, new, now, no longer, recently | goes stale | the version, or nothing |
 | a wide range of, various, a variety of | vague | the actual items or number |
+| smoke test, smoke check, smoke run, smoke-tested | internal testing jargon | quick check, quick verification, verified |
 
 ## Constructions to avoid
 

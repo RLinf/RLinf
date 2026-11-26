@@ -1,373 +1,198 @@
-真机评测
-========
+RealWorld 评测
+==============
 
-RLinf 支持在 Franka 机械臂上评测与部署 VLA 策略，涵盖 Bin-relocation（pick-and-place）任务，以及通过 YAML 配置的通用真机环境（``FrankaEnv-v1``，用于自定义任务）。
+概览
+----
 
-相关训练文档：:doc:`../../examples/embodied/franka_pi0_sft_deploy`、:doc:`../../examples/embodied/franka`、:doc:`../../examples/embodied/sft_dreamzero`
+在 Franka 机械臂上评测与部署 VLA policy，覆盖 Bin-relocation（pick-and-place）、YAML 自定义任务（``FrankaEnv-v1``）与 Dual Franka RTC 场景。硬件接线、实时内核、相机与夹爪配置见 :doc:`../../examples/embodied/franka`、:doc:`../../examples/embodied/franka_zed_robotiq` 与 :doc:`../../examples/real_world_index`。
 
-环境准备
---------
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-**硬件**
+   .. grid-item-card:: 评测基准
+      :text-align: center
 
-- Franka Emika Panda 机械臂 + Intel RealSense 相机（默认）
-- 一台 **GPU 节点** （训练 / rollout）与一台 **机器人控制节点** （直连 Franka 与相机，无需 GPU）
-- 所有节点处于同一局域网；机械臂仅需与控制节点互通
+      Franka PnP · 自定义（``FrankaEnv-v1``） · Dual Franka
 
-使用 ZED 相机或 Robotiq 夹爪时，请参阅 :doc:`../../examples/embodied/franka_zed_robotiq`。
+   .. grid-item-card:: 支持模型
+      :text-align: center
 
-**依赖安装**
+      OpenPI π₀ / π₀.₅ · DreamZero
 
-控制节点与 GPU 节点需分别安装依赖：
+   .. grid-item-card:: 配置目录
+      :text-align: center
 
-.. code-block:: bash
+      ``evaluations/realworld/``
 
-   # 机器人控制节点（Franka + 相机）
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
+   .. grid-item-card:: 关联训练
+      :text-align: center
 
-.. code-block:: bash
+      :doc:`Franka SFT <../../examples/embodied/franka_pi0_sft_deploy>` · :doc:`Franka <../../examples/embodied/franka>` · :doc:`DreamZero <../../examples/embodied/sft_dreamzero>`
 
-   # GPU / rollout 节点（π₀ 评测）
-   bash requirements/install.sh embodied --model openpi --env franka
-   source .venv/bin/activate
-
-控制节点使用默认的 Franky backend。如需改用 ROS 控制机械臂，请参考 :doc:`../../examples/embodied/franka` 的「旧版 ROS 后端（可选）」章节。
-
-DreamZero 真机评测还需在 GPU 节点安装 DreamZero 依赖，详见 :doc:`../../examples/embodied/sft_dreamzero`。
-
-**节点拓扑**
-
-真机评测通常采用 **「1 个 GPU 节点 + 1 个 Franka 控制节点」** 的异构布局：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 15 35 50
-
-   * - ``RLINF_NODE_RANK``
-     - 角色
-     - 说明
-   * - rank 0
-     - GPU / head
-     - 运行 ``rollout``；在此节点提交 ``run_eval.sh``
-   * - rank 1
-     - 机器人控制
-     - 运行 ``env`` worker，直连 Franka 与相机
-
-``realworld_pnp_eval.yaml`` 与 ``realworld_pnp_eval_dreamzero.yaml`` 使用上述双节点布局；``realworld_eval.yaml`` （自定义任务）为 **单机** 布局，``env`` 与 ``rollout`` 均部署在同一 Franka 节点。
-
-Ray 集群的完整搭建、固件版本与 libfranka 兼容性见 :doc:`../../examples/embodied/franka` 与 :doc:`../../guides/realworld_robot`。
-
-示例配置
---------
-
-``evaluations/realworld/`` 目录下已有以下示例：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 35 35 30
-
-   * - 配置文件
-     - 任务
-     - 模型
-   * - ``realworld_pnp_eval.yaml``
-     - Bin-relocation (PnP)
-     - π₀
-   * - ``realworld_pnp_eval_dreamzero.yaml``
-     - Bin-relocation (PnP)
-     - DreamZero
-   * - ``realworld_eval.yaml``
-     - 自定义任务（``FrankaEnv-v1``）
-     - π₀
-
-若 ``evaluations/realworld/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.task_type: embodied_eval`` 与 ``runner.only_eval: True``）。详见 :doc:`../reference/cli`。
-双节点 Dual Franka 部署通过该回退路径使用 ``realworld_eval_dual_franka``。单机 RTC 评测使用 ``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``。
-
-启动前检查
-----------
-
-在正式评测前，建议依次完成以下检查：
-
-1. **相机连接** （控制节点）：
-
-   .. code-block:: bash
-
-      python -m toolkits.realworld_check.test_franka_camera
-
-   记录输出的相机序列号，填入 ``env.eval.override_cfg.camera_serials``。
-
-2. **目标位姿** （PnP 任务，控制节点）：
-
-   .. code-block:: bash
-
-      export FRANKA_ROBOT_IP=<robot_ip>
-      python -m toolkits.realworld_check.test_franka_controller
-      # 输入 getpos_euler 获取目标末端位姿
-
-   将结果填入 ``env.eval.override_cfg.target_ee_pose``。PnP 任务中该位姿表示运动空间中间的最低点，并用于成功判定与工作空间截断；详见 :doc:`../../examples/embodied/franka_pi0_sft_deploy`。
-
-3. **Ray 集群连通** （各节点）：
-
-   .. code-block:: bash
-
-      ray status
-
-   应同时看到 GPU 节点与 Franka 节点在线。
-
-4. **Dummy 模式（可选）**：参考 ``examples/embodiment/config/realworld_dummy_franka_sac_cnn.yaml``，在 ``override_cfg`` 中设置 ``is_dummy: True`` 验证集群配置，无需真实机器人运动。
+步骤 0：安全检查与双节点 Ray 启动
+----------------------------------
 
 .. warning::
 
-   真机评测前务必确认工作空间限位（``ee_pose_limit_min`` / ``ee_pose_limit_max``）与急停功能正常；首次评测建议将 ``env.eval.rollout_epoch`` 设为较小值。
+   真机评测前务必核对工作空间限位（``ee_pose_limit_min`` / ``ee_pose_limit_max``）与急停开关，首次运行先用较小的 ``env.eval.rollout_epoch``。可在 ``override_cfg`` 中设 ``is_dummy: True``，在不移动机械臂的情况下验证集群链路。
 
-Ray 集群启动
-------------
-
-在 **每个节点**、执行 ``ray start`` **之前**，先统一环境变量（可使用 ``ray_utils/realworld/setup_before_ray.sh``）：
+启动评测前，在机器人控制节点（保持 ``.venv`` 激活）检查相机序列号与控制器位姿（输入 ``getpos_euler`` 记录 ``target_ee_pose``）：
 
 .. code-block:: bash
 
-   source ray_utils/realworld/setup_before_ray.sh
-   export RLINF_NODE_RANK=<0|1>          # 集群内唯一
-   # 多网卡时指定对外可达网卡：
-   # export RLINF_COMM_NET_DEVICES=<network_interface>
+   python -m toolkits.realworld_check.test_franka_camera
+   export FRANKA_ROBOT_IP=192.168.1.20
+   python -m toolkits.realworld_check.test_franka_controller
 
-若 setup 脚本未激活 Franka 环境，控制节点还需手动激活：
-
-.. code-block:: bash
-
-   source .venv/bin/activate
-
-然后启动 Ray（记 head 节点 IP 为 ``<head_ip>``）：
+**仅双节点配置**\ （如 ``双节点 PnP（π₀）`` 与 ``realworld_dual_yam_openpi_pi05_eval``）需要在两台机器上保持 ``.venv`` 激活、在 ``ray start`` 前导出 ``RLINF_NODE_RANK`` 并手动启动 Ray（将 ``192.168.1.10`` GPU head 与 ``192.168.1.20`` 控制节点替换为实际 IP；多网卡主机额外导出 ``RLINF_COMM_NET_DEVICES=eth0``，或修改并 source ``ray_utils/realworld/setup_before_ray.sh``）。单机配置会自动启动 Ray，跳过此步即可：
 
 .. code-block:: bash
 
-   # GPU 节点（rank 0，head）
+   # GPU head 节点（rank 0）
    export RLINF_NODE_RANK=0
-   ray start --head --port=6379 --node-ip-address=<head_ip>
+   ray start --head --port=6379 --node-ip-address=192.168.1.10
 
    # Franka 控制节点（rank 1）
    export RLINF_NODE_RANK=1
-   ray start --address=<head_ip>:6379
+   ray start --address=192.168.1.10:6379
 
-.. important::
+启动评测前运行 ``ray status``，确认两个节点均在线。
 
-   ``ray start`` 会冻结当时的 Python 解释器与环境变量；请在各节点完成 venv、``PYTHONPATH`` 等配置后再启动 Ray。
+安装与运行
+----------
 
-完整评测流程（PnP / π₀）
-------------------------
+中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
-**Step 1：配置 Ray 集群**
+.. tab-set::
 
-按上文在各节点启动 Ray，确保 ``ray status`` 显示双节点在线。
+   .. tab-item:: 双节点 PnP（π₀）
 
-**Step 2：准备模型**
+      在 GPU head 节点（rank 0）安装 ``--model openpi --env franka``，在机器人控制节点（rank 1，无需 GPU）仅安装 ``--env franka``。完成步骤 0 并更新 ``evaluations/realworld/realworld_pnp_eval.yaml`` 中的 ``robot_ip``、``camera_serials`` 与 ``target_ee_pose`` 后，从 head 节点启动评测：
 
-π₀ PnP 评测需要：
+      **1. 安装（GPU head 节点；控制节点去掉 ``--model openpi``）**
 
-- ``rollout.model.model_path``：Pi0 基座模型目录，且须包含 ``<repo_id>/norm_stats.json`` （SFT 前置步骤生成，见 :doc:`../../examples/embodied/franka_pi0_sft_deploy`）
-- ``runner.ckpt_path``：SFT 导出的 ``full_weights.pt``
+      .. code-block:: bash
 
-**Step 3：编辑配置**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
-修改 ``evaluations/realworld/realworld_pnp_eval.yaml``，至少更新以下字段：
+      **2. 在 GPU head 节点启动评测**
 
-.. code-block:: yaml
+      .. code-block:: bash
 
-   cluster:
-     node_groups:
-       - label: "4090"
-         node_ranks: 0          # GPU 节点 rank
-       - label: franka
-         node_ranks: 1          # Franka 控制节点 rank
-         hardware:
-           type: Franka
-           configs:
-             - robot_ip: ROBOT_IP
-               node_rank: 1
+         bash evaluations/run_eval.sh realworld realworld_pnp_eval \
+           rollout.model.model_path=./pi0-model \
+           runner.ckpt_path=./full_weights.pt
 
-   runner:
-     ckpt_path: /path/to/full_weights.pt
+   .. tab-item:: 单机自定义任务
 
-   env:
-     eval:
-       rollout_epoch: 20
-       override_cfg:
-         target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
-         camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
-         task_description: "pick up the object and place it into the container"
+      GPU 推理与 Franka 控制合署同一工作站时，先完成步骤 0 硬件检查，再更新 ``evaluations/realworld/realworld_eval.yaml``\ （``FrankaEnv-v1``）中的 ``robot_ip`` 与任务空间参数后启动（自动启动 Ray）：
 
-   rollout:
-     model:
-       model_path: /path/to/pi0-model
-       openpi:
-         config_name: "pi0_realworld"
+      **1. 安装**
 
-``node_ranks`` 与 ``component_placement`` 须与集群中实际的 ``RLINF_NODE_RANK`` 一致。
+      .. code-block:: bash
 
-**Step 4：启动评测**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
-在 **GPU / head 节点** 执行：
+      **2. 启动评测**
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash evaluations/run_eval.sh realworld_pnp_eval
+         bash evaluations/run_eval.sh realworld realworld_eval \
+           rollout.model.model_path=./pi0-sft-model
 
-也可通过 Hydra 覆盖参数，无需修改 YAML 文件：
+   .. tab-item:: 单机双臂 RTC（π₀.₅）
 
-.. code-block:: bash
+      单机双臂 RTC 在一台机器上运行 GPU 推理、两台 Franka 与三路 RealSense 相机（``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``，自动启动 Ray）。先完成步骤 0 硬件检查并填入双臂 IP、相机序列号、夹爪串口、``keyboard_device``、``norm_stats_path`` 与 ``task_description``；复位后在 USB 键盘或脚踏上按 ``a`` 启动、``c`` 记成功、``b`` 记失败：
 
-   bash evaluations/run_eval.sh realworld_pnp_eval \
-     rollout.model.model_path=/path/to/pi0-model \
-     runner.ckpt_path=/path/to/full_weights.pt
+      **1. 安装**
 
-**Step 5：查看结果**
+      .. code-block:: bash
 
-策略以 ``runner.only_eval: True`` 模式运行；终端输出任务指标，日志见 :doc:`../reference/results`。
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
+
+      **2. 启动评测**
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh realworld realworld_dual_franka_pi05_RTC \
+           rollout.model.model_path=./pi05-dual-franka
 
 .. _realworld-eval-config:
 
-评测配置详解
-------------
+.. dropdown:: 评测配置参考
 
-以下说明适用于 ``realworld_pnp_eval.yaml``；自定义任务评测见下文，DreamZero 见 :doc:`../../examples/embodied/sft_dreamzero`。
+   ``evaluations/realworld/`` 已有配置如下（``realworld`` 跳过仿真环境初始化；缺省配置仅回退加载 ``examples/embodiment/config/`` 中已定义 ``rollout.model`` 的评测就绪配置）：
 
-必须修改的字段
-~~~~~~~~~~~~~~
+   .. list-table::
+      :header-rows: 1
+      :widths: 42 36 22
+
+      * - 配置文件
+        - 任务与拓扑
+        - 模型
+      * - ``realworld_pnp_eval.yaml``
+        - Bin-relocation PnP（双节点）
+        - π₀
+      * - ``realworld_pnp_eval_pi05_sft_RTC.yaml``
+        - Bin-relocation PnP RTC（双节点）
+        - π₀.₅
+      * - ``realworld_pnp_eval_dreamzero.yaml``
+        - Bin-relocation PnP（双节点）
+        - DreamZero
+      * - ``realworld_eval.yaml``
+        - 自定义 ``FrankaEnv-v1``\ （单机）
+        - π₀
+      * - ``realworld_dual_franka_pi05_RTC.yaml``
+        - Dual Franka RTC（单机）
+        - π₀.₅
+      * - ``realworld_dual_yam_openpi_pi05_eval.yaml``
+        - Dual YAM（双节点）
+        - π₀.₅
+
+   真机配置需重点核对以下字段：
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 34 66
+
+      * - 字段
+        - 说明
+      * - ``cluster.node_groups`` / ``component_placement``
+        - 填写 ``robot_ip`` 并让 ``node_ranks`` 与各节点的 ``RLINF_NODE_RANK`` 对齐（``env`` 在控制节点，``rollout`` 在 GPU 节点）。
+      * - ``env.eval.override_cfg``
+        - 设置 ``camera_serials``、``task_description``\ （须与 SFT 一致）与 ``target_ee_pose``\ （``FrankaEnv-v1`` 还需 ``reset_ee_pose`` 与位姿限位）。
+      * - ``rollout.model.model_path`` / ``runner.ckpt_path``
+        - 含 ``norm_stats.json`` 的基座模型目录与可选 SFT ``full_weights.pt``；``rollout.model.openpi.config_name`` 须与训练一致。
+      * - ``env.eval.rollout_epoch`` / ``max_steps_per_rollout_epoch``
+        - 评测轮数与每轮步数上限；``max_steps_per_rollout_epoch`` 须为 ``rollout.model.num_action_chunks`` 的整数倍。
+      * - ``env.eval.teleop``
+        - 评测时设为 ``none``，真机 ``total_num_envs`` 通常保持 ``1``。
+
+   自定义 ``FrankaEnv-v1`` 的采集与 SFT 见 :doc:`../../examples/embodied/franka_pi0_sft_deploy`；双节点 Dual Franka 回退配置与采集流程见 :doc:`../../examples/embodied/dual_franka` 与 :doc:`../../examples/embodied/dual_franka_pico_dagger`；DreamZero 真机依赖与权重见 :doc:`../../examples/embodied/sft_dreamzero`。
+
+结果与常见问题
+--------------
+
+任务指标输出在终端，日志保存在 ``logs/<时间戳>-<config_name>/eval_embodiment.log``，开启 ``env.eval.video_cfg.save_video: True`` 时视频保存在 ``<log_path>/video/eval/``\ （详见 :doc:`../reference/results`）。
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 30 40
+   :widths: 34 66
 
-   * - 字段
-     - 位置
-     - 说明
-   * - ``robot_ip``
-     - ``cluster.node_groups[].hardware.configs``
-     - Franka 机器人 IP
-   * - ``node_ranks`` / ``component_placement``
-     - ``cluster``
-     - 与 ``RLINF_NODE_RANK`` 对齐；env 在 Franka 节点，rollout 在 GPU 节点
-   * - ``target_ee_pose``
-     - ``env.eval.override_cfg``
-     - PnP 目标末端位姿 ``[x,y,z,rx,ry,rz]``，影响成功判定与运动截断
-   * - ``camera_serials``
-     - ``env.eval.override_cfg``
-     - RealSense 序列号列表（**非** ``node_groups`` 字段）
-   * - ``task_description``
-     - ``env.eval.override_cfg``
-     - 语言指令，须与 SFT 训练一致
-   * - ``model_path``
-     - ``rollout.model``
-     - Pi0 基座模型目录（含 ``norm_stats.json``）
-   * - ``ckpt_path``
-     - ``runner``
-     - SFT checkpoint（``full_weights.pt``）
-   * - ``config_name``
-     - ``rollout.model.openpi``
-     - PnP 任务为 ``"pi0_realworld"``
-
-关键 ``env.eval`` 字段
-~~~~~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - 字段
-     - 说明
-   * - ``rollout_epoch``
-     - 评测轮数，每轮重复完整 rollout；默认 20
-   * - ``max_episode_steps``
-     - 单条轨迹最大步数，默认 200
-   * - ``max_steps_per_rollout_epoch``
-     - 每轮 rollout 步数上限；**必须能被** ``rollout.model.num_action_chunks`` **整除** （PnP 默认 ``num_action_chunks=10``）
-   * - ``total_num_envs``
-     - 并行环境数，真机通常为 1
-   * - ``teleop``
-     - 从策略手中接管的设备，评测时通常填 ``none``
-
-``run_eval.sh`` 行为
-~~~~~~~~~~~~~~~~~~~~
-
-- ``realworld`` benchmark **不** 调用 ``setup_sim_env``，无需仿真相关环境变量
-- 日志写入 ``logs/<时间戳>-<config_name>/eval_embodiment.log``
-- 评测入口脚本须在 **head（GPU）节点** 提交
-
-DreamZero 真机评测（``realworld_pnp_eval_dreamzero.yaml``）完整流程见 :doc:`../../examples/embodied/sft_dreamzero`。
-
-自定义真机任务评测
-------------------
-
-本节面向 **你自己定义的任务**，与上文内置的 Bin-relocation（PnP）任务不同。
-
-RLinf 提供通用真机环境 ``FrankaEnv-v1``：在 YAML 中配置 ``task_description``、目标/复位位姿、工作空间限位等即可，**无需编写新的 Python 环境类**。典型用法是：采集示教数据 → 监督微调（SFT）训练策略 → 在真机上部署评测（流程见 :doc:`../../examples/embodied/franka_pi0_sft_deploy`）。环境模板为 ``examples/embodiment/config/env/realworld_franka_sft_env.yaml``；评测配置为 ``evaluations/realworld/realworld_eval.yaml``。
-
-**节点拓扑**
-
-``realworld_eval.yaml`` 为 **单机** 配置：``env`` 与 ``rollout`` 均部署在 Franka 节点（``num_nodes: 1``），适用于 GPU 与控制合署一机的场景。
-
-关键 ``override_cfg`` 字段
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: yaml
-
-   override_cfg:
-     task_description: "pick up the object and place it into the container"
-     target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]   # 目标位姿
-     reset_ee_pose:  [0.5, 0.0, 0.2, -3.14, 0.0, 0.0]    # 复位位姿（应高于目标）
-     max_num_steps: 300
-     reward_threshold: [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
-     action_scale: [1.0, 1.0, 1.0]
-     ee_pose_limit_min: [0.4, -0.2, 0.05, -3.64, -0.5, -0.5]
-     ee_pose_limit_max: [0.6,  0.2, 0.35, -2.64,  0.5,  0.5]
-
-**启动评测**
-
-替换 ``ROBOT_IP`` 与 ``MODEL_PATH`` 后执行：
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh realworld_eval
-
-自定义任务的采集、训练与部署流程见 :doc:`../../examples/embodied/franka_pi0_sft_deploy`。
-
-Dual Franka 部署
-----------------
-
-双臂评测有两份配置。
-
-``examples/embodiment/config/realworld_eval_dual_franka.yaml`` 是双节点回退配置。``run_eval.sh`` 在 ``evaluations/realworld/`` 找不到同名文件时使用它。将 ``rollout.model.model_path`` 设为已同步的 checkpoint 目录，将 ``actor.model.openpi_data.repo_id`` 设为包含 ``norm_stats.json`` 的 repo id。
-
-``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml`` 是单机 RTC 评测：GPU、两台机械臂和三路相机在同一台机器上。动作是 20 维 tcp_rot6d，``openpi.config_name`` 为 ``pi05_dualfranka_tcp_rot6d``，主相机是 ``left_wrist_0_rgb``。把 ``MODEL_PATH``、``norm_stats`` 路径、机械臂 IP、相机 serial、夹爪串口、``keyboard_device`` 和 ``TASK_DESCRIPTION`` 换成自己的值。复位完成后，在这台 USB 键盘或脚踏上按 ``a`` 才开始 policy；``c`` 记成功，``b`` 记失败。脚本不读终端输入。``a`` 要按在 ``keyboard_device`` 指向的 evdev 设备上，该字段为空时用 ``RLINF_KEYBOARD_DEVICE``。SSH 会话里输入的 ``a`` 到不了这台设备；如果这台设备就是本机键盘，即使焦点在终端上，按下也会生效。无图形界面时保持 ``enable_camera_player: False``。``max_steps_per_rollout_epoch`` 必须能被 20 整除。
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh realworld_eval_dual_franka \
-       rollout.model.model_path=/path/to/deploy/global_step_<N> \
-       actor.model.openpi_data.repo_id=<repo_id>/tcp_rot6d_v1 \
-       env.eval.override_cfg.task_description="handover the object"
-
-   bash evaluations/run_eval.sh realworld_dual_franka_pi05_RTC
-
-完整采集、SFT、checkpoint 同步与按键流程见 :doc:`../../examples/embodied/dual_franka` 和 :doc:`../../examples/embodied/dual_franka_pico_dagger`。
-
-查看结果
---------
-
-- **终端指标：** 任务成功率、回报等（具体字段因环境而异）
-- **日志：** ``logs/<时间戳>-<config_name>/eval_embodiment.log``
-- **视频：** 若 ``env.eval.video_cfg.save_video: True``，视频保存在 ``video_base_dir`` 或 ``<log_path>/video/eval/``
-
-详见 :doc:`../reference/results`。
-
-常见问题
---------
-
-- **安全：** 评测前确认工作空间限位与急停功能正常；首次评测降低 ``rollout_epoch``。
-- **节点拓扑：** ``env`` worker 必须部署在可直连 Franka 的节点；``node_ranks`` 须与 ``RLINF_NODE_RANK`` 一致。PnP 与 ``realworld_eval_dual_franka`` 为双节点；自定义任务评测和 ``realworld_dual_franka_pi05_RTC`` 为单机。
-- **相机未找到：** 在控制节点运行 ``python -m toolkits.realworld_check.test_franka_camera``，核对 ``camera_serials``。
-- **动作异常：** 检查 ``norm_stats.json`` 是否位于 ``model_path/<repo_id>/``，以及 ``openpi.config_name`` 是否与训练一致。
-- **Ray 只见一个节点：** 检查防火墙、``RLINF_COMM_NET_DEVICES`` 与 head IP 是否可被其他节点访问。
-- **步数报错：** 确保 ``max_steps_per_rollout_epoch`` 能被 ``num_action_chunks`` 整除。
-- **ZED / Robotiq：** 参阅 :doc:`../../examples/embodied/franka_zed_robotiq`。
+   * - 现象
+     - 处理
+   * - 节点拓扑或 rank 不匹配
+     - ``env`` worker 须运行在直连 Franka 的节点，且 ``node_ranks`` 与 ``RLINF_NODE_RANK`` 一致。
+   * - 相机未检测到
+     - 在控制节点运行 ``python -m toolkits.realworld_check.test_franka_camera``，核对 ``env.eval.override_cfg.camera_serials``。
+   * - 机械臂动作异常
+     - 确认 ``norm_stats.json`` 与训练一致，并核对 ``rollout.model.openpi.config_name`` 匹配对应权重。
+   * - ``ray status`` 只显示一个节点
+     - 检查防火墙、``RLINF_COMM_NET_DEVICES`` 与到 GPU head IP 的网络连通性。
+   * - 步数校验报错
+     - 将 ``max_steps_per_rollout_epoch`` 设为 ``rollout.model.num_action_chunks`` 的整数倍。
+   * - Dual Franka 按键无响应
+     - 须在 ``keyboard_device``\ （或 ``RLINF_KEYBOARD_DEVICE``）指向的本地 USB evdev 设备上按键，SSH 终端按键不会传入。

@@ -1,14 +1,138 @@
-Reward Model Guide
+Model-Based Reward
 ==================
 
-Use reward models in RLinf — both image-classification rewards such as
-``ResNetRewardModel`` and VLM rewards based on ``VLMRewardModel``.
-``BufferedVLMRewardModel`` extends ``VLMRewardModel`` to process history windows
-maintained by the env worker. ``ShapedVLMRewardModel`` adds potential-based
-shaping and a one-shot success bonus on that history path.
+Train and deploy learned reward models for embodied RL in RLinf, or plug in a custom reward model class. Choose the path that fits your task:
 
-Simulation Reward Model
------------------------
+- **Path A: Implement and register a custom reward model** — subclass ``BaseRewardModel`` and register it in ``reward_model_registry``, or register custom VLM input builders and output parsers on top of the built-in VLM reward models.
+- **Path B: Train and use built-in reward models** — collect trajectories, preprocess them, train a ResNet binary image classifier or fine-tune a VLM reward model (single-frame, history-window VLM Trend, or Success + Potential shaped VLM), and wire it into simulation or real-world RL.
+
+At a Glance
+-----------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 38 38
+
+   * - Workflow
+     - What It Covers
+     - Jump To
+   * - Custom reward model
+     - Subclassing ``BaseRewardModel``, registering in ``reward_model_registry``, or adding VLM ``input_builder`` / ``reward_parser`` plugins
+     - :ref:`1. Custom Reward Model <custom-reward-model>`
+   * - Built-in simulation workflow
+     - Episode collection, preprocessing, ResNet / VLM Trend / Success + Potential training, and online RL inference (local Hugging Face or SGLang API)
+     - :ref:`2. Built-In Simulation Workflow <sim-reward-model>`
+   * - Built-in real-world workflow
+     - Franka keyboard-labeled or fixed-pose data collection, dataset conversion, training, and live teleop reward inference
+     - :ref:`3. Built-In Real-World Workflow <realworld-reward-model>`
+   * - Rule-based text rewards
+     - Deterministic rewards for reasoning and agentic tasks via ``register_reward``
+     - :doc:`Rule-Based Reward <rule_reward>`
+
+.. _custom-reward-model:
+
+1. Custom Reward Model
+----------------------
+
+To add a new learned reward model architecture, subclass ``BaseRewardModel`` and register the class in ``rlinf/models/embodiment/reward/__init__.py``. Both ``EmbodiedRewardWorker`` (online RL inference) and ``FSDPRewardWorker`` (reward training) resolve ``model_type`` through ``get_reward_model_class``.
+
+Implement the Reward Model Class
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Create a module under ``rlinf/models/embodiment/reward/`` and implement ``forward`` (training loss and metrics) and ``compute_reward`` (no-gradient inference returning a ``[B]`` or ``[B, 1]`` tensor):
+
+.. code-block:: python
+
+   # rlinf/models/embodiment/reward/my_reward_model.py
+   from typing import Any, Optional
+
+   import torch
+   import torch.nn as nn
+   import torch.nn.functional as F
+   from omegaconf import DictConfig
+
+   from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
+
+
+   class MyRewardModel(BaseRewardModel):
+       def __init__(self, cfg: DictConfig):
+           super().__init__(cfg)
+           self.head = nn.Linear(cfg.state_dim, 1)
+
+       def forward(
+           self,
+           input_data: torch.Tensor,
+           labels: Optional[torch.Tensor] = None,
+       ) -> dict[str, Any]:
+           logits = self.head(input_data).squeeze(-1)
+           loss = F.binary_cross_entropy_with_logits(logits, labels.float())
+           preds = (torch.sigmoid(logits) >= 0.5).long()
+           acc = (preds == labels.long()).float().mean()
+           return {"loss": loss, "accuracy": acc}
+
+       @torch.no_grad()
+       def compute_reward(self, observations: dict[str, Any]) -> torch.Tensor:
+           logits = self.head(observations["states"]).squeeze(-1)
+           return torch.sigmoid(logits)
+
+Register the Reward Model
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Add a lazy import entry to ``_REWARD_MODEL_IMPORTS`` in ``rlinf/models/embodiment/reward/__init__.py`` (which backs ``reward_model_registry`` and ``get_reward_model_class``):
+
+.. code-block:: python
+
+   _REWARD_MODEL_IMPORTS = {
+       # ...
+       "my_reward": (
+           "rlinf.models.embodiment.reward.my_reward_model",
+           "MyRewardModel",
+       ),
+   }
+
+If you train the model through ``FSDPRewardWorker`` and need config validation on ``actor.model.model_type``, also register the name in ``SupportedModel`` in ``rlinf/config.py``.
+
+Select in YAML and Verify
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Select the registered name in your RL or reward-training YAML:
+
+.. code-block:: yaml
+
+   reward:
+     use_reward_model: True
+     model:
+       model_type: "my_reward"
+       state_dim: 16
+
+Verify class lookup and ``compute_reward`` locally on CPU:
+
+.. code-block:: bash
+
+   python -c '
+   import torch
+   from omegaconf import OmegaConf
+   from rlinf.models.embodiment.reward import get_reward_model_class
+
+   cls = get_reward_model_class("my_reward")
+   model = cls(OmegaConf.create({"state_dim": 16}))
+   out = model.compute_reward({"states": torch.zeros(4, 16)})
+   assert out.shape == (4,)
+   '
+
+Custom VLM Input Builders and Parsers
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+If your custom reward uses a VLM backbone and only changes the prompt formatting or output parsing, keep ``model_type: "vlm"`` or ``"buffered_vlm"`` and register plugins instead of writing a new model class:
+
+- Register a prompt/input builder with ``@register_input_builder("<name>")`` in ``rlinf/models/embodiment/reward/vlm_reward_utils/input_builder.py`` and set ``reward.model.input_builder_name``.
+- Register a response parser with ``@register_reward_parser("<name>")`` in ``rlinf/models/embodiment/reward/vlm_reward_utils/reward_parser.py`` and set ``reward.model.reward_parser_name``.
+
+
+.. _sim-reward-model:
+
+2. Built-In Simulation Workflow
+-------------------------------
 
 The full workflow has four stages:
 
@@ -67,15 +191,15 @@ used later by the VLM pipeline, such as ``main_images`` and ``extra_view_images`
 
 Raw ``pickle`` files cannot be consumed by reward model training directly. Use
 ``examples/reward/preprocess_reward_dataset.py`` to convert collected ``.pkl`` episodes into
-``.pt`` files that can be loaded by ``RewardBinaryDataset``. In the current implementation,
-the script extracts ``main_images`` from observations and builds binary labels from per-step
+``.pt`` files that can be loaded by ``RewardBinaryDataset``. The script extracts
+``main_images`` from observations and builds binary labels from per-step
 ``info["success"]``.
 
 Example:
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_reward_dataset.py \
+   python -m examples.reward.preprocess_reward_dataset \
        --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data
 
@@ -117,7 +241,7 @@ Example:
 
 .. code-block:: bash
 
-   python examples/reward/vlm_trend/preprocess_reward_dataset.py \
+   python -m examples.reward.vlm_trend.preprocess_reward_dataset \
        --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
@@ -191,9 +315,9 @@ Before training, edit ``examples/reward/config/reward_training.yaml`` so it poin
 
 .. note::
 
-   At present, ``run_reward_training.sh`` mainly prepares the launch command and log directory.
-   The dataset paths are taken from ``reward_training.yaml``, specifically
-   ``data.train_data_paths`` and ``data.val_data_paths``.
+   ``run_reward_training.sh`` prepares the launch command and log directory;
+   dataset paths come from ``data.train_data_paths`` and ``data.val_data_paths``
+   in ``reward_training.yaml``.
 
 2.2.2 Configure the ResNet Model
 ....................................
@@ -215,7 +339,7 @@ If you want to train from scratch, keep ``model_path: null``.
 2.2.3 Launch ResNet Training
 ................................
 
-Once the dataset and model are configured, run:
+Launch ResNet reward model training:
 
 .. code-block:: bash
 
@@ -279,40 +403,47 @@ shaping from the same VLM. Keep the four stages in order:
 
 Configure the pipeline paths in YAML before running the stages:
 
-- In ``examples/reward/vlm_trend/config/pipeline.yaml``, set
-  ``paths.raw_data_root``, ``paths.pipeline_root``, ``paths.model_path``, and,
-  after Potential SFT, ``paths.potential_checkpoint``. The teacher, feature,
-  and scalar-head paths reuse those values through YAML references.
-  Also replace ``auxiliary.teacher.raw_data_paths`` with the actual collected
-  checkpoint directories for your run.
-- In ``examples/sft/config/vlm_trend_success_sft.yaml`` and
-  ``vlm_trend_potential_sft.yaml``, set ``paths.pipeline_root`` and
-  ``paths.model_path``. Their data and output paths are derived in YAML.
+.. list-table::
+   :header-rows: 1
+   :widths: 34 32 34
+
+   * - Config
+     - Fields to set
+     - Notes
+   * - ``examples/reward/vlm_trend/config/pipeline.yaml``
+     - ``paths.raw_data_root``, ``paths.pipeline_root``, ``paths.model_path``, ``paths.potential_checkpoint`` (after Potential SFT), ``auxiliary.teacher.raw_data_paths``
+     - Teacher, feature, and scalar-head paths reuse these via YAML references; replace ``raw_data_paths`` with your collected checkpoint directories.
+   * - ``examples/sft/config/vlm_trend_success_sft.yaml``
+     - ``paths.pipeline_root``, ``paths.model_path``
+     - Data and output paths are derived in YAML.
+   * - ``examples/sft/config/vlm_trend_potential_sft.yaml``
+     - ``paths.pipeline_root``, ``paths.model_path``
+     - Data and output paths are derived in YAML.
 
 Train the teacher from the checkpoint directories listed under
 ``auxiliary.teacher.raw_data_paths`` in ``pipeline.yaml``:
 
 .. code-block:: bash
 
-   python examples/reward/vlm_trend/train_auxiliary.py auxiliary.stage=teacher
+   python -m examples.reward.vlm_trend.train_auxiliary auxiliary.stage=teacher
 
 Build the two datasets. Repeat ``--raw-data-path`` for every collected
 checkpoint directory; the abbreviated example below shows the argument shape:
 
 .. code-block:: bash
 
-   python examples/reward/vlm_trend/preprocess_terminal_success.py \
+   python -m examples.reward.vlm_trend.preprocess_terminal_success \
      --raw-data-path /path/to/vlm_trend_uniform_collection/step0 \
      --raw-data-path /path/to/vlm_trend_uniform_collection/step20 \
      --output-dir /path/to/vlm_trend_success_potential/success_data
 
-   python examples/reward/vlm_trend/preprocess_potential.py \
+   python -m examples.reward.vlm_trend.preprocess_potential \
      --raw-data-path /path/to/vlm_trend_uniform_collection/step0 \
      --raw-data-path /path/to/vlm_trend_uniform_collection/step20 \
      --value-checkpoint /path/to/vlm_trend_success_potential/teacher/best.pt \
      --output-dir /path/to/vlm_trend_success_potential/potential_data
 
-What this does: terminal-success keeps online-matched ``0``/``1`` windows without
+Terminal-success preprocessing keeps online-matched ``0``/``1`` windows without
 balanced sampling. Both branches stop at the first successful transition, matching
 the online environment termination boundary. Potential preprocessing uses the
 teacher to emit absolute potential digits and ``up``/``same``/``down`` progress
@@ -343,8 +474,8 @@ entrypoint processes both splits and both sample types:
 
 .. code-block:: bash
 
-   python examples/reward/vlm_trend/extract_potential_features.py
-   python examples/reward/vlm_trend/train_auxiliary.py auxiliary.stage=scalar_head
+   python -m examples.reward.vlm_trend.extract_potential_features
+   python -m examples.reward.vlm_trend.train_auxiliary auxiliary.stage=scalar_head
 
 Use the existing ``eval/eval_accuracy`` to select the Success adapter and
 ``model_potential`` from ``scalar_head/metrics.jsonl`` to select the scalar head.
@@ -352,16 +483,30 @@ Use the existing ``eval/eval_accuracy`` to select the Success adapter and
 3. Reward Model Inference in RL
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-RLinf provides several example configs for integrating a reward model into RL:
+Example configs for integrating a reward model into RL (keeping the policy on state observations and the reward model on image or VLM observations):
 
-- ``examples/embodiment/config/maniskill_ppo_mlp_resnet_reward.yaml``
-- ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
-- ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward.yaml`` (VLM Trend reward, local Hugging Face)
-- ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml`` (VLM Trend reward, SGLang API)
-- ``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml`` (Success + Potential VLM reward, local Hugging Face)
+.. list-table::
+   :header-rows: 1
+   :widths: 34 14 52
 
-These configs show how to enable a reward worker in RL training while keeping the policy on state observations
-and the reward model on image or VLM observations.
+   * - Reward model / Backend
+     - Algorithm
+     - Config
+   * - ResNet (local)
+     - PPO
+     - ``examples/embodiment/config/maniskill_ppo_mlp_resnet_reward.yaml``
+   * - ResNet (local)
+     - Async SAC
+     - ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
+   * - VLM Trend (local Hugging Face)
+     - PPO
+     - ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward.yaml``
+   * - VLM Trend (SGLang API)
+     - PPO
+     - ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``
+   * - Success + Potential VLM (local Hugging Face)
+     - PPO
+     - ``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml``
 
 3.1 Key Config Fields
 """""""""""""""""""""
@@ -389,7 +534,7 @@ Where:
 - ``reward_threshold`` applies only to ``model_type: resnet``: sigmoid probabilities below the threshold are set to ``0``.
   For ``buffered_vlm`` / VLM Trend reward, scalar rewards come from ``reward_parser_params``.
   For ``shaped_vlm``, they come from potential differences and the one-shot success bonus.
-  The top-level ``reward_threshold`` is not read by either VLM path today.
+  The top-level ``reward_threshold`` is not read by either VLM path.
 - ``model_path`` points to the reward model checkpoint used for online inference.
   For ``model_type: resnet``, it is the weights file itself, such as
   ``checkpoints/best_model/actor/model_state_dict/full_weights.pt`` from section 2.2.3.
@@ -431,7 +576,7 @@ then merges it with the original environment reward inside ``compute_bootstrap_r
 
 If bootstrap is enabled by the algorithm config, RLinf may also add bootstrap values to the last step reward.
 
-From a system perspective, the reward model does not replace the original bootstrap reward. Instead, it serves as
+From a system perspective, the reward model does not replace the original bootstrap reward. Instead, it is
 an additional reward source inside the env worker and participates in final reward construction.
 
 3.4 Deploy VLM Trend Reward for MLP RL
@@ -455,7 +600,7 @@ PPO:
 .. code-block:: bash
 
    export EMBODIED_PATH="$(pwd)/examples/embodiment"
-   python examples/embodiment/train_embodied_agent.py \
+   python -m examples.embodiment.train_embodied_agent \
      --config-path config \
      --config-name maniskill_ppo_mlp \
      runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
@@ -512,60 +657,62 @@ head, use ``reward.model.success_input_builder_params``.
 .....................................
 
 Leave ``reward.worker_type`` unset (default ``model``, ``EmbodiedRewardWorker``).
-See ``maniskill_ppo_mlp_vlm_trend_reward.yaml``:
+See ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward.yaml``:
 
-.. code-block:: yaml
+.. dropdown:: Full reward config (maniskill_ppo_mlp_vlm_trend_reward.yaml)
 
-   reward:
-     use_reward_model: true
-     group_name: "RewardGroup"
-     reward_mode: history_buffer
-     history_reward_assign: true
-     reward_weight: 1.0
-     env_reward_weight: 0.0
-     model:
-       model_path: "/path/to/Qwen3-VL-4B-Instruct"
-       model_type: "buffered_vlm"
-       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
-       gt_success_bonus: 20.0
-       precision: "bf16"
-       input_builder_name: vlm_trend_reward_input_builder
-       input_builder_params:
-         default_task_description: "Pick up the red cube and place it on the green spot on the table."
-       reward_parser_name: vlm_trend_reward_parser
-       reward_parser_params:
-         positive_reward: 1.0
-         negative_reward: -0.2
-         unclear_reward: 0.0
-         invalid_reward: 0.0
-       history_buffers:
-         history_window:
-           history_size: 5
-           min_history_size: 5
-           input_interval: 1
-           history_keys:
-             - main_images
-             - extra_view_images
-           input_on_done: false
-       interval_reward: 0.0
-       infer_micro_batch_size: 64
-       max_new_tokens: 16
-       do_sample: false
-       temperature: 0.0
+   .. code-block:: yaml
+
+      reward:
+        use_reward_model: true
+        group_name: "RewardGroup"
+        reward_mode: history_buffer
+        history_reward_assign: true
+        reward_weight: 1.0
+        env_reward_weight: 0.0
+        model:
+          model_path: "/path/to/Qwen3-VL-4B-Instruct"
+          model_type: "buffered_vlm"
+          lora_path: "/path/to/qwen3-vl-lora-checkpoint"
+          gt_success_bonus: 20.0
+          precision: "bf16"
+          input_builder_name: vlm_trend_reward_input_builder
+          input_builder_params:
+            default_task_description: "Pick up the red cube and place it on the green spot on the table."
+          reward_parser_name: vlm_trend_reward_parser
+          reward_parser_params:
+            positive_reward: 1.0
+            negative_reward: -0.2
+            unclear_reward: 0.0
+            invalid_reward: 0.0
+          history_buffers:
+            history_window:
+              history_size: 5
+              min_history_size: 5
+              input_interval: 1
+              history_keys:
+                - main_images
+                - extra_view_images
+              input_on_done: false
+          interval_reward: 0.0
+          infer_micro_batch_size: 64
+          max_new_tokens: 16
+          do_sample: false
+          temperature: 0.0
 
 Launch:
 
 .. code-block:: bash
 
-   python examples/embodiment/train_embodied_agent.py \
+   python -m examples.embodiment.train_embodied_agent \
      --config-path config \
      --config-name maniskill_ppo_mlp_vlm_trend_reward \
      runner.ckpt_path="${POLICY_CHECKPOINT}"
 
 For Success + Potential, use the warmup checkpoint selected above and the three
-reward artifacts. This recipe is based on the existing VLM Trend recipe, uses
+reward artifacts. This recipe extends the VLM Trend recipe, uses
 1,024 environments, evaluates every 5 PPO steps, disables environment reward,
-and runs 160 steps by default:
+and runs 160 steps by default.
 
 Set the five artifact fields under ``vlm_trend_paths`` in
 ``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml``.
@@ -616,48 +763,50 @@ OpenAI-compatible chat endpoint is not sufficient. Image builders continue to
 use the chat API. Equal inputs do not guarantee identical floating-point
 inference outputs across backends.
 
-See ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``:
+See ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``:
 
-.. code-block:: yaml
+.. dropdown:: Full reward config (maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml)
 
-   reward:
-     use_reward_model: true
-     worker_type: api
-     group_name: "RewardGroup"
-     reward_mode: history_buffer
-     history_reward_assign: true
-     reward_weight: 1.0
-     env_reward_weight: 0.0
-     api:
-       api_base: null
-       model: Qwen3-VL-4B-Instruct
-       sampling_params:
-         max_tokens: 16
-         temperature: 0.0
-     model:
-       model_path: "/path/to/Qwen3-VL-4B-Instruct"
-       model_type: "buffered_vlm"
-       gt_success_bonus: 20.0
-       precision: "bf16"
-       input_builder_name: vlm_trend_reward_input_builder
-       input_builder_params:
-         default_task_description: "Pick up the red cube and place it on the green spot on the table."
-       reward_parser_name: vlm_trend_reward_parser
-       reward_parser_params:
-         positive_reward: 1.0
-         negative_reward: -0.2
-         unclear_reward: 0.0
-         invalid_reward: 0.0
-       history_buffers:
-         history_window:
-           history_size: 5
-           min_history_size: 5
-           input_interval: 1
-           history_keys:
-             - main_images
-             - extra_view_images
-           input_on_done: false
-       interval_reward: 0.0
+   .. code-block:: yaml
+
+      reward:
+        use_reward_model: true
+        worker_type: api
+        group_name: "RewardGroup"
+        reward_mode: history_buffer
+        history_reward_assign: true
+        reward_weight: 1.0
+        env_reward_weight: 0.0
+        api:
+          api_base: null
+          model: Qwen3-VL-4B-Instruct
+          sampling_params:
+            max_tokens: 16
+            temperature: 0.0
+        model:
+          model_path: "/path/to/Qwen3-VL-4B-Instruct"
+          model_type: "buffered_vlm"
+          gt_success_bonus: 20.0
+          precision: "bf16"
+          input_builder_name: vlm_trend_reward_input_builder
+          input_builder_params:
+            default_task_description: "Pick up the red cube and place it on the green spot on the table."
+          reward_parser_name: vlm_trend_reward_parser
+          reward_parser_params:
+            positive_reward: 1.0
+            negative_reward: -0.2
+            unclear_reward: 0.0
+            invalid_reward: 0.0
+          history_buffers:
+            history_window:
+              history_size: 5
+              min_history_size: 5
+              input_interval: 1
+              history_keys:
+                - main_images
+                - extra_view_images
+              input_on_done: false
+          interval_reward: 0.0
 
 Additional notes for the SGLang path:
 
@@ -671,7 +820,7 @@ Launch:
 
 .. code-block:: bash
 
-   python examples/embodiment/train_embodied_agent.py \
+   python -m examples.embodiment.train_embodied_agent \
      --config-path config \
      --config-name maniskill_ppo_mlp_vlm_trend_reward_sglang \
      runner.ckpt_path="${POLICY_CHECKPOINT}"
@@ -703,18 +852,20 @@ The full workflow is:
 4. Enable ``reward.use_reward_model=True`` in your RL YAML and plug the trained reward worker into online RL inference.
 
 
-Real-World Reward Model
------------------------
+.. _realworld-reward-model:
+
+3. Built-In Real-World Workflow
+-------------------------------
 
 Collect and preprocess a reward model training dataset directly on a real-world
 Franka robot. Two data collection approaches are supported:
 a **general-purpose keyboard-labeling** approach and a **fixed-pose** approach that
 uses a predetermined target pose to drive episode success/failure.
 
-Before getting started, it is strongly recommended to read the following documents:
+Before getting started, read the following documents:
 
 1. :doc:`../examples/embodied/franka` — to familiarize yourself with the end-to-end real-world Franka training pipeline.
-2. :doc:`reward_model` — to understand the canonical reward model workflow in RLinf (data collection via ``pickle``, offline preprocessing, training, RL inference).
+2. :ref:`Simulation Reward Model <sim-reward-model>` — to understand the canonical reward model workflow in RLinf (data collection via ``pickle``, offline preprocessing, training, RL inference).
 3. :doc:`../examples/embodied/franka_reward_model` — to understand the full real-world RL pipeline that follows after you have a trained reward model.
 
 Workflow Overview
@@ -757,49 +908,51 @@ It is task-agnostic and works for any manipulation task.
 **Configuration file** — ``examples/reward/config/realworld_collect_dataset.yaml``,
 inheriting environment parameters from ``env/realworld_bin_relocation.yaml``:
 
-.. code-block:: yaml
+.. dropdown:: Full config (examples/reward/config/realworld_collect_dataset.yaml)
 
-   defaults:
-     - env/realworld_bin_relocation@env.eval
-     - override hydra/job_logging: stdout
+   .. code-block:: yaml
 
-   cluster:
-     num_nodes: 1
-     component_placement:
-       env:
-         node_group: franka
-         placement: 0
-     node_groups:
-       - label: franka
-         node_ranks: 0
-         hardware:
-           type: Franka
-           configs:
-             - robot_ip: ROBOT_IP
-               node_rank: 0
+      defaults:
+        - env/realworld_bin_relocation@env.eval
+        - override hydra/job_logging: stdout
 
-   runner:
-     task_type: embodied
-     logger:
-       log_path: null
-       project_name: rlinf
-       experiment_name: "collect-dataset"
-       logger_backends: ["tensorboard"]
-     num_success_frames: 50    # target number of success frames to collect
-     num_fail_frames: 150      # target number of fail frames to collect
-     val_split: 0.2            # fraction of frames reserved for validation
-     fail_success_ratio: 2.0   # downsample fail frames to 2x success frames
-     random_seed: 42
+      cluster:
+        num_nodes: 1
+        component_placement:
+          env:
+            node_group: franka
+            placement: 0
+        node_groups:
+          - label: franka
+            node_ranks: 0
+            hardware:
+              type: Franka
+              configs:
+                - robot_ip: ROBOT_IP
+                  node_rank: 0
 
-   env:
-     group_name: "EnvGroup"
-     eval:
-       no_gripper: False
-       teleop: spacemouse
-       max_episode_steps: 10000
-       keyboard_reward_wrapper: single_stage
-       override_cfg:
-         target_ee_pose: TARGET_EE_POSE
+      runner:
+        task_type: embodied
+        logger:
+          log_path: null
+          project_name: rlinf
+          experiment_name: "collect-dataset"
+          logger_backends: ["tensorboard"]
+        num_success_frames: 50    # target number of success frames to collect
+        num_fail_frames: 150      # target number of fail frames to collect
+        val_split: 0.2            # fraction of frames reserved for validation
+        fail_success_ratio: 2.0   # downsample fail frames to 2x success frames
+        random_seed: 42
+
+      env:
+        group_name: "EnvGroup"
+        eval:
+          no_gripper: False
+          teleop: spacemouse
+          max_episode_steps: 10000
+          keyboard_reward_wrapper: single_stage
+          override_cfg:
+            target_ee_pose: TARGET_EE_POSE
 
 **Key configuration fields:**
 
@@ -815,16 +968,14 @@ inheriting environment parameters from ``env/realworld_bin_relocation.yaml``:
   ``intervene_action`` in step info overrides the zero dummy action).
 - ``env.eval.override_cfg.target_ee_pose`` — the target end-effector pose for the task.
 
-**Launching:**
+**Launching**
+
+Start collection (optionally pass a custom config name as the first argument):
 
 .. code-block:: bash
 
    bash examples/reward/realworld_collect_process_dataset.sh
-
-Or with an explicit config name:
-
-.. code-block:: bash
-
+   # or with an explicit config name:
    bash examples/reward/realworld_collect_process_dataset.sh realworld_collect_dataset
 
 A progress bar prints live to the terminal:
@@ -888,11 +1039,11 @@ Step 2: Preprocessing into a Reward Dataset
 ...........................................
 
 The collected ``.pkl`` episodes are converted into ``train.pt`` / ``val.pt`` using
-``preprocess_reward_dataset.py``. It is recommended to increase ``fail-success-ratio`` to ``3``:
+``preprocess_reward_dataset.py``. Increase ``fail-success-ratio`` to ``3``:
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_reward_dataset.py \
+   python -m examples.reward.preprocess_reward_dataset \
        --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data \
        --fail-success-ratio 3
@@ -1008,7 +1159,7 @@ This is useful for:
 - Qualitatively evaluating whether the reward model generalizes to the current scene.
 
 Cluster Configuration
-^^^^^^^^^^^^^^^^^^^^^
+"""""""""""""""""""""
 
 The teleop script requires **two nodes**: one for the Franka robot and one for the GPU
 that runs the reward model inference:
@@ -1040,58 +1191,60 @@ on the robot node (``franka``). This is a disaggregated placement — the reward
 not share a node with the robot.
 
 Configuration File
-^^^^^^^^^^^^^^^^^^
+""""""""""""""""""
 
 The default config is ``examples/reward/config/realworld_teleop.yaml``,
 which inherits environment parameters from ``env/realworld_bin_relocation.yaml``:
 
-.. code-block:: yaml
+.. dropdown:: Full config (examples/reward/config/realworld_teleop.yaml)
 
-   defaults:
-     - env/realworld_bin_relocation@env.eval
-     - override hydra/job_logging: stdout
+   .. code-block:: yaml
 
-   cluster:
-     num_nodes: 2
-     component_placement:
-       env:
-         node_group: franka
-         placement: 0
-       reward:
-         node_group: "4090"
-         placement: 0
-     node_groups:
-       - label: "4090"
-         node_ranks: 0
-       - label: franka
-         node_ranks: 1
-         hardware:
-           type: Franka
-           configs:
-             - robot_ip: ROBOT_IP
-               node_rank: 1
+      defaults:
+        - env/realworld_bin_relocation@env.eval
+        - override hydra/job_logging: stdout
 
-   env:
-     group_name: "EnvGroup"
-     eval:
-       no_gripper: True
-       teleop: spacemouse
-       max_episode_steps: 10000
-       override_cfg:
-         target_ee_pose: TARGET_EE_POSE
-         camera_serials: ["0123456789"]
+      cluster:
+        num_nodes: 2
+        component_placement:
+          env:
+            node_group: franka
+            placement: 0
+          reward:
+            node_group: "4090"
+            placement: 0
+        node_groups:
+          - label: "4090"
+            node_ranks: 0
+          - label: franka
+            node_ranks: 1
+            hardware:
+              type: Franka
+              configs:
+                - robot_ip: ROBOT_IP
+                  node_rank: 1
 
-   reward:
-     use_reward_model: True
-     use_reward_prob: True    # log raw sigmoid probs to terminal
-     standalone_realworld: True
-     reward_mode: "per_step"
-     reward_threshold: 0.2
-     model:
-       model_path: path/to/reward_model_checkpoint
-       model_type: "resnet"
-       arch: "resnet18"
-       image_size: [3, 128, 128]
+      env:
+        group_name: "EnvGroup"
+        eval:
+          no_gripper: True
+          teleop: spacemouse
+          max_episode_steps: 10000
+          override_cfg:
+            target_ee_pose: TARGET_EE_POSE
+            camera_serials: ["0123456789"]
+
+      reward:
+        use_reward_model: True
+        use_reward_prob: True    # log raw sigmoid probs to terminal
+        standalone_realworld: True
+        reward_mode: "per_step"
+        reward_threshold: 0.2
+        model:
+          model_path: path/to/reward_model_checkpoint
+          model_type: "resnet"
+          arch: "resnet18"
+          image_size: [3, 128, 128]
 
 Key fields for the reward model in teleop mode:
 
@@ -1102,18 +1255,14 @@ Key fields for the reward model in teleop mode:
 - ``reward.model.model_path`` — path to the trained reward model checkpoint.
 
 Launching
-^^^^^^^^^
+"""""""""
 
-Set environment variables and run:
+Set environment variables and launch teleoperation (optionally pass a custom config name):
 
 .. code-block:: bash
 
    bash examples/reward/run_realworld_teleop.sh
-
-Or with an explicit config:
-
-.. code-block:: bash
-
+   # or with an explicit config name:
    bash examples/reward/run_realworld_teleop.sh realworld_teleop
 
 The terminal prints per-step output:
@@ -1136,7 +1285,7 @@ SpaceMouse controls:
 - **Ctrl+C** — stop.
 
 How It Works
-^^^^^^^^^^^^
+""""""""""""
 
 Inside ``TeleopWorker``:
 
