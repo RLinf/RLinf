@@ -29,7 +29,7 @@
 
       GPU 0：训练与推理；GPU 1：渲染
 
-**前置条件：**\ :doc:`安装指南 </rst_source/start/installation>` 和下文的 Habitat 环境配置。
+**前置条件：**\ :doc:`安装指南 </rst_source/start/installation>`\ 和下文的 Habitat 环境配置。
 
 任务
 ~~~~
@@ -171,7 +171,7 @@
                 max_episode_steps: 32
                 max_steps_per_rollout_epoch: 32
 
-         每个 episode 最多运行 32 轮模型交互，每轮最多执行三个导航动作。训练和评测轮流使用服务端的两个模拟器。checkpoint 保存在 ``<run directory>/activevln_r2r_grpo_embodiinfer/checkpoints/global_step_<step>/actor`` 下。
+         每个 episode 最多运行 32 轮模型交互，每轮最多执行三个导航动作。训练和评测轮流使用服务端的两个模拟器。checkpoint 保存在 ``logs/<timestamp>-activevln_r2r_grpo_embodiinfer/activevln_r2r_grpo_embodiinfer/checkpoints/global_step_<step>/actor`` 下。
 
          **独立评测**
 

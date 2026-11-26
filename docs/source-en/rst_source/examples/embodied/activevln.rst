@@ -190,7 +190,7 @@ Setup and Run
          Each episode can run for up to 32 model turns, with up to three navigation
          actions per turn. Training and evaluation share the server's two slots.
          Checkpoints are saved under
-         ``<run directory>/activevln_r2r_grpo_embodiinfer/checkpoints/global_step_<step>/actor``.
+         ``logs/<timestamp>-activevln_r2r_grpo_embodiinfer/activevln_r2r_grpo_embodiinfer/checkpoints/global_step_<step>/actor``.
 
          **Standalone Evaluation**
 
