@@ -14,10 +14,12 @@
 
 import os
 import pathlib
+import socket
 import subprocess
 import sys
 import threading
 import time
+from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional
 
 import psutil
@@ -89,23 +91,7 @@ class ROSController:
                     )
                     time.sleep(1)  # Allow roscore to accept connections.
                 else:
-                    from rosgraph import get_master_uri
-
-                    # A local roscore may serve a different master URI.
-                    master_uri = get_master_uri()
-                    try:
-                        subprocess.run(
-                            ["rosparam", "list"],
-                            env={**os.environ, "ROS_MASTER_URI": master_uri},
-                            stdout=subprocess.DEVNULL,
-                            timeout=5,
-                            check=True,
-                        )
-                    except subprocess.SubprocessError as exc:
-                        raise RuntimeError(
-                            f"Found roscore but could not reach {master_uri}. "
-                            "Check ROS_MASTER_URI or the __master remapping."
-                        ) from exc
+                    self._ensure_configured_master()
 
         # Initialize the ROS node.
         import rospy
@@ -116,6 +102,66 @@ class ROSController:
         self._output_channels: dict[str, rospy.Publisher] = {}
         self._input_channels: dict[str, rospy.Subscriber] = {}
         self._input_channel_status: dict[str, bool] = {}
+
+    def _ensure_configured_master(self) -> None:
+        from rosgraph import get_master_uri
+
+        master_uri = get_master_uri()
+        environ = {**os.environ, "ROS_MASTER_URI": master_uri}
+        probe = partial(
+            subprocess.run,
+            ["rosparam", "list"],
+            env=environ,
+            stdout=subprocess.DEVNULL,
+            timeout=5,
+            check=True,
+        )
+        try:
+            try:
+                probe()
+                return
+            except subprocess.CalledProcessError:
+                from rosgraph.network import is_local_address, parse_http_host_and_port
+
+                host, port = parse_http_host_and_port(master_uri)
+                if not is_local_address(host) or not self._port_is_unbound(host, port):
+                    raise
+            self._ros_core = psutil.Popen(
+                ["roscore", "-p", str(port)],
+                env=environ,
+                stdout=sys.stdout,
+                stderr=sys.stdout,
+            )
+            try:
+                deadline = time.monotonic() + 10
+                while True:
+                    try:
+                        probe(timeout=max(0.01, deadline - time.monotonic()))
+                        break
+                    except subprocess.CalledProcessError:
+                        if (
+                            self._ros_core.poll() is not None
+                            or time.monotonic() >= deadline
+                        ):
+                            raise
+                        time.sleep(0.1)
+            except (OSError, subprocess.SubprocessError):
+                if self._ros_core.is_running():
+                    self._ros_core.terminate()
+                raise
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(
+                f"Could not reach ROS master at {master_uri}. "
+                "Check ROS_MASTER_URI or the __master remapping."
+            ) from exc
+
+    @staticmethod
+    def _port_is_unbound(host: str, port: int) -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return False
+        except ConnectionRefusedError:
+            return True
 
     def get_input_channel_status(self, name: str) -> bool:
         """Return whether a subscriber has received a message.

@@ -112,6 +112,7 @@ class Go2Base(MobileBase):
         self._subscriber: Any = None
         self._client: Any = None
         self._move_client: Any = None
+        self._move_in_flight = False
         self._deadline: float | None = None
         self._retry_stop_at: float | None = None
         self._fault: str | None = None
@@ -209,7 +210,8 @@ class Go2Base(MobileBase):
             )
             self._retry_stop_at = time.monotonic() + 0.2
             raise RuntimeError(self._fault) from exc
-        self._retry_stop_at = None
+        # A pending Move can publish after a successful StopMove.
+        self._retry_stop_at = time.monotonic() + 0.2 if self._move_in_flight else None
 
     def _trip(self, reason: str, *, retry_now: bool = False) -> None:
         if self._retry_stop_at is not None and not retry_now:
@@ -268,7 +270,6 @@ class Go2Base(MobileBase):
                 raise RuntimeError(
                     "Go2 connection is closing; no actions are permitted."
                 )
-            dispatched = False
             try:
                 if set(action) != {"velocity"}:
                     raise ValueError("Go2 action must contain only 'velocity'.")
@@ -307,9 +308,9 @@ class Go2Base(MobileBase):
                         raise TimeoutError("Go2 Move expired before dispatch.")
                     move_client.SetTimeout(min(expires - now, self.rpc_timeout, 0.1))
                     self._deadline = expires
+                    self._move_in_flight = True
                 if time.monotonic() >= expires:
                     raise TimeoutError("Go2 Move expired before dispatch.")
-                dispatched = True
                 code = move_client.Move(*(float(v) for v in velocity))
                 with self._lock:
                     if self._deadline is None or time.monotonic() >= expires:
@@ -318,14 +319,17 @@ class Go2Base(MobileBase):
                         )
                     if code != 0:
                         raise RuntimeError(f"Move send returned {code}.")
+                    self._move_in_flight = False
                     self._deadline = command_deadline
                 return {"velocity": velocity}
             except BaseException:
                 # A prior watchdog stop may have preceded a stalled SDK write.
                 with self._lock:
+                    had_pending_move = self._move_in_flight
+                    self._move_in_flight = False
                     self._trip(
                         "Go2 action failed; reconnect before motion.",
-                        retry_now=dispatched,
+                        retry_now=had_pending_move,
                     )
                 raise
 
