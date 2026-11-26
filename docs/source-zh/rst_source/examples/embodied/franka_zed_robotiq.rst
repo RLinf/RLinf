@@ -1,426 +1,277 @@
-在 Franka 上使用 ZED + Robotiq
-================================================
+Franka ZED 与 Robotiq
+=====================
+
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robotiq_zed.jpeg
    :align: center
    :width: 80%
 
    接入 Stereolabs ZED 相机和 Robotiq 2F 夹爪的 Franka 数据采集配置。
 
-在基础 Franka 配置上接入 Stereolabs ZED 相机和 Robotiq 2F 夹爪。你将安装 SDK，连接串口设备，更新 YAML 硬件字段，并用新传感器采集数据。
-
 概览
-----------------------------------------
+----
 
-将默认相机/夹爪栈替换为 ZED + Robotiq 部署。
+在双节点 Franka 部署中，将默认的 RealSense 相机和 Franka 夹爪替换为 Stereolabs ZED 相机与 Robotiq 2F 夹爪。节点 0（GPU 服务器）负责采集 ZED 图像流，节点 1（NUC 控制节点）通过网口与 USB-RS485 控制 Franka 机械臂和 Robotiq 夹爪。
 
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: 模型
-      :text-align: center
-
-      Any Franka policy
-
-   .. grid-item-card:: 算法
-      :text-align: center
-
-      Data collection · downstream RL/SFT
-
-   .. grid-item-card:: 任务
-      :text-align: center
-
-      ZED + Robotiq collection
-
    .. grid-item-card:: 硬件
       :text-align: center
 
-      Franka · ZED · Robotiq 2F
+      Franka · ZED 相机 · Robotiq 2F
 
-| **你将完成:** 安装 ZED SDK → 配置 Robotiq 串口设备 → 设置相机序列号 → 采集数据.
-| **前置条件:** :doc:`franka` · ZED SDK 4.2.x · USB-RS485 adapter · Robotiq gripper.
+   .. grid-item-card:: 连接方式
+      :text-align: center
 
-任务
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      USB 3.0\ （ZED）· USB-RS485 Modbus RTU
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24 24
+   .. grid-item-card:: 用途
+      :text-align: center
 
-   * - 任务
-     - 配置 / 入口
-     - 说明
-   * - Sensor setup
-     - ``realworld_collect_data_zed_robotiq``
-     - 采集 ZED 图像并控制 Robotiq 夹爪。
-   * - Data collection
-     - ``collect_data.sh realworld_collect_data_zed_robotiq``
-     - 使用硬件覆盖项采集 SpaceMouse 示教。
-   * - Downstream training
-     - Franka real-world configs
-     - 在 SFT/RL 配置中复用采集数据。
+      双节点数据采集与下游 RL/SFT
 
-观测与动作
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   .. grid-item-card:: 前置依赖
+      :text-align: center
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24
+      :doc:`franka` · ZED SDK 4.2.x · 双节点
 
-   * - 字段
-     - 说明
-   * - Observation
-     - ZED RGB 图像流，通常在 GPU 节点采集。
-   * - Action
-     - Franka 笛卡尔动作加 Robotiq 夹爪命令。
-   * - Reward
-     - 沿用下游 Franka 任务的奖励来源。
-   * - Prompt
-     - 继承下游 Franka 任务配置。
+硬件与安全准备
+--------------
 
-安装
-----------------------------------------
+该方案采用 **双节点** 部署（``num_nodes: 2``）：
 
-ZED 相机设置
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-需要在所有进行图像采集的节点（通常为 GPU 服务器）上安装 ZED SDK 及其 Python API。
-完整安装说明请参考
-`ZED Python API 官方安装指南 <https://www.stereolabs.com/docs/development/python/install>`_。
-
-1. 安装 ZED SDK
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-从 `Stereolabs 下载页面 <https://www.stereolabs.com/developers/release>`_
-下载 SDK 安装程序，选择与你的操作系统和 CUDA 版本匹配的版本。
+- **节点 0（GPU 服务器）**：通过 USB 3.0 连接 ZED 相机，确认相机指示灯亮起且 ``lsusb`` 能看到 ``Stereolabs`` 设备。
+- **节点 1（NUC 控制节点）**：网线直连 Franka 机械臂，并通过 USB 转 RS485 适配器连接 Robotiq 2F 夹爪（``ls /dev/ttyUSB*``，通常为 ``/dev/ttyUSB0``）。执行 ``sudo chmod 666 /dev/ttyUSB0`` 或 ``sudo usermod -aG dialout $USER``\ （需注销重登）赋予串口权限。
 
 .. warning::
 
-   请使用 **ZED SDK 4.2.x** （如 v4.2.5）。ZED SDK 5.0+ 自带的 NumPy
-   与 Franka 跨节点序列化所需的 ``numpy<2`` 约束冲突。
-   请使用 4.2 系列以避免依赖问题。
+   测试夹爪或启动采集前，将 Franka 急停按钮放在伸手可及处，清空工作空间并让机械臂处于安全初始姿态。请安装 **ZED SDK 4.2.x**\ （如 v4.2.5）：ZED SDK 5.0+ 自带的 NumPy 与 Franka 跨节点序列化所需的 ``numpy<2`` 约束冲突。
 
-.. code-block:: bash
+.. _franka-zed-robotiq-data-collection:
 
-   # 以 CUDA 12.x + Ubuntu 22.04 为例
-   chmod +x ZED_SDK_Ubuntu22_cuda12.1_v4.2.5.zstd.run
-   ./ZED_SDK_Ubuntu22_cuda12.1_v4.2.5.zstd.run
+安装与运行
+----------
 
-按照屏幕上的提示完成安装。当提示
-``Do you want to install the Python API (recommended) [Y/n] ?`` 时，
-按 **Y** 以自动安装 Python 绑定。
+.. include:: _setup_common.rst
 
-2. 安装 Python API（如果 SDK 安装时未安装）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. tab-set::
 
-如果在 SDK 安装过程中跳过了 Python API，或需要安装到其他虚拟环境，
-可以运行 SDK 自带的辅助脚本：
+   .. tab-item:: 1. 安装与硬件检查
 
-.. code-block:: bash
+      **节点 0（GPU 服务器）—— 安装 ZED SDK 4.2.x 并记录相机序列号**
 
-   # 先激活你的虚拟环境
-   source /path/to/your/venv/bin/activate
+      从 `Stereolabs 下载页面 <https://www.stereolabs.com/developers/release>`_ 下载匹配操作系统与 CUDA 版本的 ZED SDK 4.2.x（详见 `ZED Python API 官方安装指南 <https://www.stereolabs.com/docs/development/python/install>`_），运行安装程序并在提示安装 Python API 时按 **Y**：
 
-   # 运行官方安装脚本
-   cd /usr/local/zed/
-   python3 get_python_api.py
+      .. code-block:: bash
 
-该脚本会自动检测你的平台、Python 版本和 ZED SDK 版本，
-然后下载并安装匹配的 ``pyzed`` wheel。
+         # 以 CUDA 12.x + Ubuntu 22.04 为例
+         chmod +x ZED_SDK_Ubuntu22_cuda12.1_v4.2.5.zstd.run
+         ./ZED_SDK_Ubuntu22_cuda12.1_v4.2.5.zstd.run
 
-也可以直接安装 wheel 文件：
+      如需将 ``pyzed`` 安装到 RLinf 虚拟环境，在仓库根目录激活环境后运行自带脚本或直接安装 wheel：
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   python -m pip install --ignore-installed /usr/local/zed/pyzed-*.whl
+         source .venv/bin/activate
+         python3 /usr/local/zed/get_python_api.py
+         # 或直接安装 wheel：
+         # uv pip install --reinstall /usr/local/zed/pyzed-*.whl
 
-.. note::
+      查询已连接的 ZED 相机并记录序列号：
 
-   ``pyzed`` wheel 与特定的 Python 版本和 CUDA 版本绑定。请确保将其安装到
-   Ray 在该节点上使用的 **同一虚拟环境** 中。如果你正在使用虚拟环境，
-   请在运行安装脚本 **之前** 先激活虚拟环境。
+      .. code-block:: bash
 
-3. 验证相机检测
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+         python -c "
+         import pyzed.sl as sl
+         for dev in sl.Camera.get_device_list():
+             print(f'Serial: {dev.serial_number}  Model: {dev.camera_model}')
+         "
 
-列出已连接的 ZED 相机并记录 **序列号**：
+      **节点 1（NUC）—— 安装 RLinf Franka 环境并验证 Robotiq 夹爪**
 
-.. code-block:: bash
+      ``franka`` 环境会自动安装 Modbus RTU 通信所需的 ``pymodbus``：
 
-   python -c "
-   import pyzed.sl as sl
-   for dev in sl.Camera.get_device_list():
-       print(f'Serial: {dev.serial_number}  Model: {dev.camera_model}')
-   "
+      .. code-block:: bash
 
-记录序列号，后续在 YAML 配置中需要使用。
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
+      赋予串口权限并在 NUC 上测试夹爪开合：
 
-Robotiq 夹爪设置
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      .. code-block:: bash
 
-Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信。
-所需的 Python 依赖 ``pymodbus`` 会在运行 Franka 安装脚本时 **自动安装**：
+         sudo chmod 666 /dev/ttyUSB0
+         python -c "
+         from rlinf.robotics.parts.end_effectors.grippers.robotiq import RobotiqGripper
+         g = RobotiqGripper(port='/dev/ttyUSB0')
+         g.connect()
+         print(f'Position: {g.position:.4f} m, Ready: {g.is_ready()}')
+         g.open()
+         import time; time.sleep(1)
+         g.close()
+         g.disconnect()
+         "
 
-.. code-block:: bash
+   .. tab-item:: 2. 数据采集与运行
 
-   bash requirements/install.sh embodied --env franka
+      修改 ``examples/embodiment/config/realworld_collect_data_zed_robotiq.yaml`` 中的必填硬件与目标位姿字段：
 
-以下步骤用于在控制夹爪的节点（通常为 NUC）上配置串口设备。
+      .. code-block:: yaml
 
-1. 配置串口设备
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+         cluster:
+           node_groups:
+             - label: franka
+               node_ranks: 0-1
+               hardware:
+                 type: Franka
+                 configs:
+                   - robot_ip: ROBOT_IP           # 机器人 IP 地址
+                     camera_serials:
+                       - "ZED_SERIAL_1"           # ZED 相机序列号
+                     camera_type: zed
+                     gripper_type: robotiq
+                     gripper_connection: "/dev/ttyUSB0"
+                     controller_node_rank: 1
 
-将 USB 转 RS485 适配器插入 NUC。识别串口设备：
+         env:
+           eval:
+             override_cfg:
+               target_ee_pose: TARGET_EE_POSE     # 目标末端执行器位姿
 
-.. code-block:: bash
+      在 **两个节点** 的 RLinf 仓库根目录（保持 ``.venv`` 已激活），导出节点环境变量并启动 Ray：
 
-   ls /dev/ttyUSB*
-   # 通常为 /dev/ttyUSB0
+      .. code-block:: bash
 
-赋予权限：
+         # 节点 0（GPU 服务器，Ray 头节点；按实际网络替换 IP 与网卡）
+         export RLINF_NODE_RANK=0
+         export RLINF_COMM_NET_DEVICES=eth0  # 可选，单网卡可省略
+         ray start --head --port=6379 --node-ip-address=192.168.1.10
 
-.. code-block:: bash
+         # 节点 1（NUC 控制节点）
+         export RLINF_NODE_RANK=1
+         export RLINF_COMM_NET_DEVICES=eth0  # 可选，单网卡可省略
+         ray start --address=192.168.1.10:6379
 
-   sudo chmod 666 /dev/ttyUSB0
-   # 或者将用户添加到 dialout 组以获得持久访问权限：
-   sudo usermod -aG dialout $USER
+      在 **节点 0（头节点）** 启动采集并使用 SpaceMouse 遥操作：
 
-3. 验证夹爪
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      .. code-block:: bash
 
-快速验证（在 NUC 上运行）：
+         bash examples/embodiment/collect_data.sh realworld_collect_data_zed_robotiq
 
-.. code-block:: bash
+      若复制了配置文件，将参数替换为新配置名即可。数据保存在 ``logs/<时间戳>-<配置名>/`` 下的 ``demo_buffer/`` 与 ``lerobot_dataset/``，后续训练时把该路径填到 ``algorithm.demo_buffer.load_path``。
 
-   python -c "
-   from rlinf.robotics.parts.end_effectors.grippers.robotiq import RobotiqGripper
-   g = RobotiqGripper(port='/dev/ttyUSB0')
-   g.connect()
-   print(f'Position: {g.position:.4f} m, Ready: {g.is_ready()}')
-   g.open()
-   import time; time.sleep(1)
-   g.close()
-   g.disconnect()
-   "
+.. dropdown:: 完整双节点 YAML 与硬件/采集字段参考
 
+   节点 0 采集 ZED 图像、节点 1 控制机械臂与夹爪的完整集群配置示例：
 
-配置文件
-----------------------------------------
+   .. code-block:: yaml
 
-与标准配置（RealSense + Franka 夹爪）相比，主要区别在于 ``hardware.configs``
-中新增了 ``camera_type``、``gripper_type``、``gripper_connection`` 和
-``controller_node_rank`` 字段。
+      cluster:
+        num_nodes: 2
+        component_placement:
+          actor:
+            node_group: gpu
+            placement: 0
+          env:
+            node_group: franka
+            placement: 0
+          rollout:
+            node_group: gpu
+            placement: 0
+        node_groups:
+          - label: gpu
+            node_ranks: 0
+          - label: franka
+            node_ranks: 0-1
+            hardware:
+              type: Franka
+              configs:
+                - robot_ip: <ROBOT_IP>
+                  node_rank: 0
+                  camera_serials:
+                    - "<ZED_SERIAL_1>"
+                    - "<ZED_SERIAL_2>"
+                    - "<ZED_SERIAL_3>"
+                  camera_type: zed            # "realsense" 或 "zed"
+                  gripper_type: robotiq       # "franka" 或 "robotiq"
+                  gripper_connection: "/dev/ttyUSB0"
+                  controller_node_rank: 1     # 机械臂控制运行在 NUC 上
+                  disable_validate: false
 
-.. code-block:: yaml
+   **硬件配置字段**
 
-   cluster:
-     num_nodes: 2
-     component_placement:
-       actor:
-         node_group: gpu
-         placement: 0
-       env:
-         node_group: franka
-         placement: 0
-       rollout:
-         node_group: gpu
-         placement: 0
-     node_groups:
-       - label: gpu
-         node_ranks: 0
-       - label: franka
-         node_ranks: 0-1
-         hardware:
-           type: Franka
-           configs:
-             - robot_ip: <ROBOT_IP>
-               node_rank: 0
-               camera_serials:
-                 - "<ZED_SERIAL_1>"
-                 - "<ZED_SERIAL_2>"
-                 - "<ZED_SERIAL_3>"
-               camera_type: zed            # "realsense" 或 "zed"
-               gripper_type: robotiq       # "franka" 或 "robotiq"
-               gripper_connection: "/dev/ttyUSB0"
-               controller_node_rank: 1     # 机械臂控制连接运行在 NUC 上
-               disable_validate: false
+   .. list-table::
+      :header-rows: 1
+      :widths: 25 15 60
 
-.. list-table:: 新增硬件配置字段
-   :header-rows: 1
-   :widths: 25 15 60
+      * - 字段
+        - 默认值
+        - 说明
+      * - ``camera_type``
+        - ``"realsense"``
+        - 相机后端，使用 ZED 相机时设为 ``"zed"``。
+      * - ``gripper_type``
+        - ``"franka"``
+        - 夹爪后端，使用 Robotiq 夹爪时设为 ``"robotiq"``。
+      * - ``gripper_connection``
+        - ``null``
+        - Robotiq 串口路径（如 ``"/dev/ttyUSB0"``），``gripper_type`` 为 ``"franka"`` 时忽略。
+      * - ``controller_node_rank``
+        - ``null``
+        - 运行机械臂控制的节点 rank。为 ``null`` 时与 env worker 同机部署；机械臂与相机分机时设为 ``1``。
 
-   * - 字段
-     - 默认值
-     - 说明
-   * - ``camera_type``
-     - ``"realsense"``
-     - 相机后端。设置为 ``"zed"`` 以使用 ZED 相机。
-   * - ``gripper_type``
-     - ``"franka"``
-     - 夹爪后端。设置为 ``"robotiq"`` 以使用 Robotiq 夹爪。
-   * - ``gripper_connection``
-     - ``null``
-     - Robotiq 串口路径（如 ``"/dev/ttyUSB0"``）。当 ``gripper_type``
-       为 ``"franka"`` 时忽略。
-   * - ``controller_node_rank``
-     - ``null``
-     - 机械臂控制连接运行的节点 rank。为 ``null`` 时与 env worker
-       共同部署。当机械臂和相机在不同机器上时需要设置。
+   **数据采集字段**
 
+   ``realworld_collect_data_zed_robotiq.yaml`` 中的主要采集字段：
 
-.. _franka-zed-robotiq-data-collection-zh:
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 18 52
 
-运行
-----------------------------------------
+      * - 字段
+        - 默认值
+        - 说明
+      * - ``runner.num_data_episodes``
+        - ``20``
+        - 采集目标 episode 数，达到后自动退出。
+      * - ``env.eval.teleop``
+        - ``spacemouse``
+        - 采集时驱动机械臂的遥操作设备。
+      * - ``env.eval.data_collection.save_dir``
+        - ``${runner.logger.log_path}``
+        - 导出根目录（``{save_dir}/lerobot_dataset`` 与 ``{save_dir}/demo_buffer``）。
+      * - ``env.eval.data_collection.export_format``
+        - ``[replay_buffer, lerobot_dataset]``
+        - 真机采集支持 ``replay_buffer``、``pickle_episode`` 与 ``lerobot_dataset``。
+      * - ``env.eval.data_collection.only_success``
+        - ``True``
+        - 仅保存成功的 episode。
 
-我们提供了专用的数据采集脚本和配置文件，用于使用 ZED + Robotiq 硬件进行遥操作示教
-数据采集。该流程与 :doc:`franka` 中描述的基础 Franka 数据采集流程一致，
-但已预配置了 ZED 相机和 Robotiq 夹爪的默认参数。
+.. dropdown:: 集群配置注意事项
 
-**配置文件**
+   - **节点 0（GPU 服务器）**：在执行 ``ray start`` 之前，先在虚拟环境中装好 ZED SDK 4.2.x 和 ``pyzed``。
+   - **节点 1（NUC）**：在执行 ``ray start`` 之前，确认 ``pymodbus`` 已安装且 Robotiq 串口可读写。
 
-配置文件路径为
-``examples/embodiment/config/realworld_collect_data_zed_robotiq.yaml``。
-运行前需根据实际硬件修改以下字段：
+   .. warning::
 
-.. code-block:: yaml
+      Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。启动 Ray 之后安装的 SDK 或依赖库对 Ray worker 不可见。务必先装完所有依赖再启动 Ray。
 
-   cluster:
-     node_groups:
-       - label: franka
-         node_ranks: 0-1
-         hardware:
-           type: Franka
-           configs:
-             - robot_ip: ROBOT_IP           # 你的机器人 IP 地址
-               camera_serials:
-                 - "ZED_SERIAL_1"           # 你的 ZED 相机序列号
-               camera_type: zed
-               gripper_type: robotiq
-               gripper_connection: "/dev/ttyUSB0"
-               controller_node_rank: 1
+   多节点 Ray 集群完整配置见 :doc:`franka` 与 :doc:`../../guides/hetero`。
 
-   env:
-     eval:
-       override_cfg:
-         target_ee_pose: TARGET_EE_POSE     # 你的目标末端执行器位姿
-
-配置文件中的关键数据采集参数：
+常见问题
+--------
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 15 55
+   :widths: 32 68
 
-   * - 字段
-     - 默认值
-     - 说明
-   * - ``runner.num_data_episodes``
-     - ``20``
-     - 采集的 episode 数量，达到后脚本自动退出。
-   * - ``env.eval.teleop``
-     - ``spacemouse``
-     - 采集过程中由哪种设备驱动机械臂。
-   * - ``env.eval.data_collection.save_dir``
-     - ``${runner.logger.log_path}``
-     - 采集根目录。LeRobot 写到 ``{save_dir}/lerobot_dataset``，replay buffer 写到 ``{save_dir}/demo_buffer``。
-   * - ``env.eval.data_collection.export_format``
-     - ``[replay_buffer, lerobot_dataset]``
-     - 同时写出 replay buffer 与 LeRobot。真机采集只接受 ``replay_buffer``、``pickle_episode``、``lerobot_dataset``。
-   * - ``env.eval.data_collection.only_success``
-     - ``True``
-     - 仅保存成功的 episode。
-
-**运行数据采集**
-
-.. important::
-
-   与 :doc:`franka` 中描述的基础 Franka 数据采集（单节点，
-   ``num_nodes: 1``）不同，ZED + Robotiq 配置需要 **两个节点**
-   （``num_nodes: 2``）：
-
-   - **节点 0** – 连接 ZED 相机的 GPU 服务器。
-   - **节点 1** – 连接机器人和 Robotiq 夹爪的 NUC / 控制器节点
-     （``controller_node_rank: 1``）。
-
-   启动脚本前，两个节点上都必须先启动 Ray。
-
-1. 在 **每个节点** 上，激活虚拟环境并设置环境变量：
-
-.. code-block:: bash
-
-   source <path_to_your_venv>/bin/activate
-
-   export PYTHONPATH=<path_to_your_RLinf_repo>:$PYTHONPATH
-   export RLINF_NODE_RANK=<0_or_1>
-   # 可选 - 仅在有多个网卡时需要
-   export RLINF_COMM_NET_DEVICES=<network_device>
-
-2. 在每个节点上启动 Ray：
-
-.. code-block:: bash
-
-   # 在头节点（节点 0，GPU 服务器）
-   ray start --head --port=6379 --node-ip-address=<head_node_ip>
-
-   # 在控制器节点（节点 1，NUC）
-   ray start --address=<head_node_ip>:6379
-
-3. 在 **头节点（节点 0）** 上运行数据采集脚本：
-
-.. code-block:: bash
-
-   bash examples/embodiment/collect_data.sh realworld_collect_data_zed_robotiq
-
-脚本默认使用 ``realworld_collect_data_zed_robotiq`` 配置，
-也可以传入不同的配置名称作为参数：
-
-.. code-block:: bash
-
-   bash examples/embodiment/collect_data.sh <config_name>
-
-采集过程中使用 SpaceMouse 遥操作机器人。脚本会在达到配置的 episode 数量后
-自动终止，数据保存在 ``logs/<时间戳>-<配置名>/`` 下的 ``demo_buffer/`` 和 ``lerobot_dataset/``。
-
-采集完成后，将数据上传到训练节点，并在训练配置中将
-``algorithm.demo_buffer.load_path`` 字段设置为数据路径。
-
-
-集群配置注意事项
-----------------------------------------
-
-集群配置步骤与 :doc:`franka` 中描述的相同，主要区别如下：
-
-- 在 **GPU 服务器** (node 0) 上：确保在运行 ``ray start`` **之前** 已在虚拟环境中
-  安装好 ZED SDK 和 ``pyzed``。
-- 在 **NUC** (node 1) 上：确保已安装 ``pymodbus``，且 Robotiq 串口设备可访问。
-
-.. warning::
-
-   请记住 Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。任何在
-   ``ray start`` **之后** 安装的 SDK 或库对 Ray worker 不可见。请务必先安装
-   所有依赖，然后再启动 Ray。
-
-关于多节点 Ray 配置的详细信息，请参考 :doc:`franka` 和
-:doc:`../../guides/hetero`。
-
-
-故障排查
-----------------------------------------
-
-**ZED 相机未检测到**
-
-- 确认 USB 3.0 数据线已连接且相机 LED 亮起。
-- 运行 ``lsusb`` 查看是否有 ``Stereolabs`` 设备。
-- 确保 ZED SDK 版本与 CUDA 版本匹配。
-
-**Robotiq 夹爪无响应**
-
-- 执行 ``ls /dev/ttyUSB*`` 确认串口设备存在。
-- 检查权限：``sudo chmod 666 /dev/ttyUSB0``。
-- 确保 ``pymodbus`` 版本为 ``>=3.0,<4.0``。
-- 如果通信不稳定，尝试降低波特率：
-  ``RobotiqGripper(port='/dev/ttyUSB0', baudrate=9600)``。
-
-**控制器节点 rank 不匹配**
-
-- 如果机械臂在 NUC（node 1）上而相机在 GPU 服务器（node 0）上，**必须** 在硬件配置中设置 ``controller_node_rank: 1``。否则控制器会尝试在 node 0 上启动，而该节点与机械臂之间没有网络连接。
+   * - 现象
+     - 解决方法
+   * - 未检测到 ZED 相机
+     - 检查 USB 3.0 数据线与相机指示灯，运行 ``lsusb`` 确认存在 ``Stereolabs`` 设备，并核对 ZED SDK 与 CUDA 版本是否匹配。
+   * - 安装 ZED SDK 后出现 NumPy 冲突
+     - 改用 **ZED SDK 4.2.x**\ （如 v4.2.5），避免 5.0+ 自带 NumPy 与 Franka 的 ``numpy<2`` 约束冲突。
+   * - Robotiq 夹爪无响应
+     - 用 ``ls /dev/ttyUSB*`` 确认串口存在，执行 ``sudo chmod 666 /dev/ttyUSB0`` 授权，检查 ``pymodbus`` 版本在 ``>=3.0,<4.0``，通信不稳定时可尝试将波特率降为 ``9600``。
+   * - 控制器节点 rank 不匹配
+     - 机械臂接在 NUC\ （node 1）而相机接在 GPU 服务器\ （node 0）时，必须在硬件配置中设置 ``controller_node_rank: 1``，否则控制器会在无机械臂连接的 node 0 上启动。

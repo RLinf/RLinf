@@ -1,49 +1,42 @@
-概念
-====
+核心概念
+========
 
-概念页面介绍 RLinf 如何执行任务、调度组件和组织机器人硬件。请从与当前问题最相关的主题开始阅读；只有在扩展功能或排查底层问题时，才需要继续了解对应的架构细节。
+通过核心概念了解 RLinf 的执行流、调度排布与 Robotics 硬件抽象。直接从最贴近当前问题的主题开始阅读即可。
 
-选择概念主题
-------------
+选择主题
+--------
 
 .. grid:: 1 2 2 2
    :gutter: 2
 
-   .. grid-item-card:: 执行
+   .. grid-item-card:: 架构总览
+      :link: overview
+      :link-type: doc
+
+      用 5 分钟建立 RL 训练循环、部署模式与数据格式的全局视图。
+
+   .. grid-item-card:: 执行模型
       :link: execution-model/index
       :link-type: doc
 
-      了解任务执行流程，以及 worker、cluster、channel 与 collective 之间的关系。
+      了解执行流、Worker、Cluster、Channel 与集合通信。
 
-   .. grid-item-card:: 调度
+   .. grid-item-card:: 调度与排布
       :link: scheduling-model/index
       :link-type: doc
 
-      了解 placement、执行模式与 replay buffer 的工作机制。
+      了解 Placement 策略、执行模式与 Replay Buffer。
 
-   .. grid-item-card:: 机器人接口
-      :link: robotics
+   .. grid-item-card:: Robotics 架构
+      :link: robotics-model/index
       :link-type: doc
 
-      通过具名零部件读取和控制机器人。
-
-   .. grid-item-card:: 机器人架构
-      :link: robotics_architecture
-      :link-type: doc
-
-      了解共享连接、资源生命周期和远程部署机制。
-
-   .. grid-item-card:: 真机任务与环境
-      :link: realworld_envs
-      :link-type: doc
-
-      了解任务、遥操作和 wrapper 与机器人的组合关系。
+      了解真机部件接口、连接生命周期与真机任务环境。
 
 .. toctree::
    :hidden:
 
-   执行 <execution-model/index>
-   调度 <scheduling-model/index>
-   机器人接口 <robotics>
-   机器人架构 <robotics_architecture>
-   真机任务与环境 <realworld_envs>
+   架构总览 <overview>
+   执行模型 <execution-model/index>
+   调度与排布 <scheduling-model/index>
+   Robotics 架构 <robotics-model/index>

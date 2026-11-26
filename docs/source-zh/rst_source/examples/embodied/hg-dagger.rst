@@ -1,390 +1,341 @@
-在 Franka 上使用 HG-DAgger
-================================================
+Franka HG-DAgger
+================
+
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/hg-dagger.jpg
    :align: center
    :width: 80%
 
-   用于采集干预数据并在线训练 Franka 策略的 Human-Gated DAgger 流程。
-
-使用 Human-Gated DAgger 训练 Franka 真机策略。你将采集干预数据，计算 OpenPI 归一化统计，运行 SFT，然后启动在线 HG-DAgger。在线阶段使用 LeRobot 归档完整的成功 episode：未接管帧保留策略实际执行动作，接管帧保存人工动作和 ``intervene_flag``。启用 ``only_save_expert: True`` 后，训练只采样非 padding 帧全部由人工接管的 action chunk。
+   用于采集干预数据并在线训练 Franka policy 的 Human-Gated DAgger 流程。
 
 概览
-----------------------------------------
+----
 
-用人工门控干预在线提升 Franka 真机策略。
+使用 Human-Gated DAgger（HG-DAgger）在线提升 Franka 真机 OpenPI policy：先用 PICO 采集示教，再计算归一化统计量并运行 SFT 获得学生模型初始化，最后启动带实时人工接管的在线 HG-DAgger。在线阶段由 LeRobot 归档完整的成功 episode（未接管帧保留 policy 实际执行动作，接管帧保存人工动作与 ``intervene_flag``）；启用 ``only_save_expert: True`` 后，训练仅采样非 padding 帧全部由人工接管的 action chunk。
 
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: 模型
+   .. grid-item-card:: 机器人
       :text-align: center
 
-      OpenPI π₀ / π₀.₅
+      Franka Emika Panda（Franky）
 
-   .. grid-item-card:: 算法
+   .. grid-item-card:: 传感器与遥操作
       :text-align: center
 
-      SFT · HG-DAgger
+      双 RealSense · PICO VR
 
-   .. grid-item-card:: 任务
+   .. grid-item-card:: 流程
       :text-align: center
 
-      Real-world PnP
+      PICO 数据采集 → SFT → 在线 HG-DAgger
 
    .. grid-item-card:: 硬件
       :text-align: center
 
-      Franka · PICO
-
-| **你将完成:** 采集干预数据 → 计算 norm stats → 运行 SFT → 启动 HG-DAgger → 监控干预.
-| **前置条件:** :doc:`franka` · :doc:`franka_vr` · :doc:`sft_openpi` · Ray cluster · trained or base OpenPI checkpoint.
+      控制节点 + GPU 节点
 
 任务
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24 24
+   :widths: 20 34 46
 
-   * - 任务
-     - 配置 / 入口
+   * - 阶段
+     - 配置
      - 说明
-   * - Collection
+   * - 示教采集
      - ``realworld_collect_data_pico``
-     - 使用 PICO 采集真机示教。
-   * - SFT
+     - 使用 PICO 遥操作采集真机抓放示教数据。
+   * - SFT 训练
      - ``realworld_bin_relocation_sft_openpi``
-     - 训练 student 初始化。
+     - 训练 OpenPI 学生模型初始化权重。
    * - HG-DAgger
      - ``realworld_pnp_dagger_openpi``
-     - 使用 online LeRobot 归档完整成功轨迹，并仅用全接管 action chunk 训练。
+     - 用在线 LeRobot 归档完整成功轨迹，并仅在全接管 action chunk 上在线训练。
 
 观测与动作
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24
+   :widths: 24 76
 
    * - 字段
      - 说明
-   * - Observation
-     - Franka 相机帧与可选机器人状态。
-   * - Action
-     - OpenPI action 解码为 Franka 真机控制。
-   * - Reward
-     - 人工门控干预信号与任务结果。
-   * - Prompt
-     - OpenPI 数据集/配置 metadata 中的任务文本。
+   * - 观测
+     - 双 RealSense 相机帧与机器人状态。
+   * - 动作
+     - OpenPI 动作块解码后的 Franka 笛卡尔与夹爪控制指令。
+   * - 奖励
+     - PICO 人工门控接管信号与任务成功结果。
+   * - 提示词
+     - OpenPI 数据集与配置元数据中的任务文本。
 
-安装
-----------------------------------------
+硬件与安全准备
+--------------
 
-真实世界流程的不同节点需要 **不同的软件环境**：
+本流程由一台 Franka 控制节点（Franka 机械臂、两台 RealSense 相机、PICO VR 遥操作数据流）与一台运行 OpenPI π₀ / π₀.₅ 的 GPU 训练 / rollout 节点组成。开始前按 :doc:`franka` 完成机械臂固件检查、实时内核配置与 FCI 激活，按 :doc:`franka_vr` 配置 PICO 数据流，并按 :doc:`sft_openpi` 准备 OpenPI 基础权重。
 
-- **机器人 / env 节点**：使用 :doc:`franka` 中的 Franka 控制节点环境。
-- **训练 / rollout 节点**：使用与模拟器 DAgger :doc:`dagger` 相同的环境。
+.. warning::
 
-机器人 / Env 节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   在线训练期间须由操作员全程监控并保持急停按钮触手可及。开启人工接管前先确认 PICO 数据流延迟与按键标定正常、清空工作区域，并在每个节点执行 ``ray start`` 前激活对应虚拟环境并导出 ``RLINF_NODE_RANK``\ （Ray 会捕获启动时的终端环境）。
 
-按 :doc:`franka` 的「安装」章节准备机器人节点：直接安装基于 Franky 的 ``franka`` 环境，或使用 Franka Docker 镜像中的 ``franky`` venv，并让 ``LIBFRANKA_VERSION`` 与固件匹配。启动 Ray 前先激活该环境。本示例在独立的 GPU 节点上运行 OpenPI actor 和 rollout。
+安装与运行
+----------
 
-训练 / Rollout 节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
-该节点使用与模拟器 Pi0 DAgger 相同的软件环境。
-
-**选项 1：Docker 镜像**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 如果需要国内加速下载镜像，可以使用：
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-进入容器后执行：
-
-.. code:: bash
+.. tab-set::
 
-   source switch_env openpi
+   .. tab-item:: 机器人 / 环境节点
 
-**选项 2：自定义环境**
+      **1. 安装依赖**
 
-.. code:: bash
+      安装基于 Franky 的 ``franka`` 环境，并将 ``LIBFRANKA_VERSION`` 匹配到机械臂固件版本：
 
-   # 为提高国内依赖安装速度，可以添加 `--use-mirror` 参数。
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+      .. code-block:: bash
 
-集群设置
-----------------------------------------
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         LIBFRANKA_VERSION=0.19.0 bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
-在启动采集或训练任务之前，请先完成 :doc:`franka` 中介绍的 Ray 集群配置。
-通常训练 / rollout 节点作为 Ray head（``RLINF_NODE_RANK=0``），Franka 控制
-节点作为 worker（``RLINF_NODE_RANK=1``）。
+      **2. 加入 Ray 集群**
 
-.. code-block:: bash
+      在 GPU 节点启动 Ray head 后，本节点作为 worker 节点 1 加入（将 ``HEAD_NODE_IP`` 替换为 GPU 节点 IP）：
 
-   # 在训练 / rollout 节点
-   export RLINF_NODE_RANK=0
-   ray start --head --port=6379 --node-ip-address=<head_node_ip>
+      .. code-block:: bash
 
-   # 在机器人 / env 节点
-   export RLINF_NODE_RANK=1
-   ray start --address='<head_node_ip>:6379'
+         export RLINF_NODE_RANK=1
+         export HEAD_NODE_IP=192.168.1.10
+         ray start --address="${HEAD_NODE_IP}:6379"
 
-Ray 会在启动时记录当前 Python 解释器与环境变量，因此务必在 ``ray start``
-之前完成对应环境的 source。
+      **3. 采集 PICO 示教数据**
 
-运行
-----------------------------------------
+      复制 ``examples/embodiment/config/realworld_collect_data_pico.yaml`` 为 ``my_realworld_pnp_collect.yaml``，将环境切换为 bin relocation，并填写机械臂 IP、目标位姿与相机序列号：
 
-1. 采集带人工引导的真实数据
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      .. code-block:: yaml
 
-从 ``examples/embodiment/config/realworld_collect_data_pico.yaml`` 开始。对于抓放
-任务，需要将环境从 peg insertion 切换为 bin relocation：
+         defaults:
+           - env/realworld_bin_relocation@env.eval
+           - override hydra/job_logging: stdout
 
-.. code-block:: yaml
+         cluster:
+           node_groups:
+             - label: franka
+               hardware:
+                 configs:
+                   - robot_ip: ROBOT_IP
+                     node_rank: 0
 
-   defaults:
-     - env/realworld_bin_relocation@env.eval
-     - override hydra/job_logging: stdout
+         env:
+           eval:
+             override_cfg:
+               target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
+               camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
 
-然后填写机器人配置和 PICO publisher 地址，并将导出格式设置为 LeRobot：
+      按 :doc:`franka_vr` 启动并验证 PICO 数据流（默认的 ``ipc:///tmp/vr_data.ipc`` 要求 publisher 与 env worker 在同一台机器；跨机部署时在 ``env.eval.pico.zmq_addr`` 填入 ``tcp://<publisher_ip>:<port>``），再启动采集：
 
-.. code-block:: yaml
+      .. code-block:: bash
 
-   cluster:
-     node_groups:
-       - label: franka
-         node_ranks: 0
-         hardware:
-           type: Franka
-           configs:
-             - robot_ip: ROBOT_IP
-               node_rank: 0
+         bash examples/embodiment/collect_data.sh my_realworld_pnp_collect
 
-   env:
-     eval:
-       teleop: pico
-       pico:
-         zmq_addr: "ipc:///tmp/vr_data.ipc"
-         hand: "right"
-         control_trigger: "grip"
-         control_threshold: 0.85
-         gripper_close_button: "A"
-         gripper_open_button: "B"
-         position_scale: 1.0
-         rotation_scale: 1.0
-         max_stale_s: 0.2
-         calibration:
-           enabled: True
-           required: True
-           auto_calibrate_on_start: True
-           button: "trigger"
-       override_cfg:
-         target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
-         success_hold_steps: 1
-         camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
-       data_collection:
-         enabled: True
-         save_dir: ${runner.logger.log_path}
-         export_format: [replay_buffer, lerobot_dataset]
-         only_success: True
-         robot_type: "panda"
-         fps: 10
-
-启动采集前，请按照 :doc:`franka_vr` 启动并检查 PICO 数据流。上述 ``ipc://``
-地址要求 publisher 与 env worker 运行在同一台机器；若二者位于不同机器，请改为
-``tcp://<publisher_ip>:<port>``。
-
-使用你复制后的配置启动采集：
-
-.. code-block:: bash
-
-   bash examples/embodiment/collect_data.sh my_realworld_pnp_collect
-
-遥操作过程中，同一次运行会写出：
-
-- replay-buffer 轨迹到 ``logs/{timestamp}/demo_buffer/``
-- LeRobot 数据到 ``logs/{timestamp}/lerobot_dataset/``
-
-关于采集格式，参见 :doc:`../../guides/data_collection`。
-
-2. 计算归一化统计
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-在进行 SFT 或 HG-DAgger 之前，先为采集得到的 LeRobot 数据集计算 OpenPI
-归一化统计：
-
-.. code-block:: bash
-
-   export HF_LEROBOT_HOME=/path/to/lerobot_root
-   python toolkits/lerobot/calculate_norm_stats.py \
-       --config-name pi0_realworld \
-       --repo-id realworld_franka_bin_relocation
-
-这里使用的数据集根目录和数据集 id，需要与后续 SFT 保持一致。更多 OpenPI
-数据集说明可参考 :doc:`sft_openpi`。
-
-3. 运行 OpenPI SFT
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-启动前，先修改 ``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml``：
-
-.. code-block:: yaml
-
-   data:
-     train_data_paths: "/path/to/realworld-franka-bin-relocation-dataset"
-
-   actor:
-     model:
-       model_path: "/path/to/pi0-model"
-       openpi:
-         config_name: "pi0_realworld"
-
-然后执行：
-
-.. code-block:: bash
-
-   bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
-
-SFT 导出的 checkpoint 会作为在线阶段的学生模型初始化。更多 OpenPI SFT 细节
-可参考 :doc:`sft_openpi`。
-
-4. 在真机上运行异步 HG-DAgger
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-修改 ``examples/embodiment/config/realworld_pnp_dagger_openpi.yaml``，使其与你的
-集群、相机、目标位姿与 checkpoint 一致：
-
-.. code-block:: yaml
-
-   cluster:
-     num_nodes: 2
-     node_groups:
-       - label: "train"
-         node_ranks: 0
-       - label: franka
-         node_ranks: 1
-         hardware:
-           type: Franka
-           configs:
-             - robot_ip: ROBOT_IP
-               node_rank: 1
-
-   runner:
-     ckpt_path: "/path/to/sft_checkpoint/full_weights.pt"
-
-   algorithm:
-     dagger:
-       only_save_expert: True
-       online_lerobot:
-         enabled: True
-         only_success: True
-         robot_type: "panda"
-         fps: 10
-         finalize_interval: 1
-         data_path: ${runner.logger.log_path}/online_lerobot
-         rolling_lerobot_window_size: 50000
-         min_frames: 1
-         lerobot_num_workers: 0
-
-   env:
-     train:
-       smooth_intervene: True
-       teleop: pico
-       pico:
-         zmq_addr: "ipc:///tmp/vr_data.ipc"
-         hand: "right"
-         control_trigger: "grip"
-         control_threshold: 0.85
-         gripper_close_button: "A"
-         gripper_open_button: "B"
-         position_scale: 1.0
-         rotation_scale: 1.0
-         max_stale_s: 0.2
-         calibration:
-           enabled: True
-           required: True
-           auto_calibrate_on_start: True
-           button: "trigger"
-       override_cfg:
-         target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
-         camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
-     eval:
-       teleop: none
-       override_cfg:
-         target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
-         camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
-
-   rollout:
-     model:
-       model_path: "/path/to/pi0-model"
-
-   actor:
-     model:
-       model_path: "/path/to/pi0-model"
-       openpi:
-         config_name: "pi0_realworld"
-
-``online_lerobot.enabled: True`` 表示启用在线 LeRobot 数据链路。env worker 按 episode 收集 rollout，并将满足过滤条件的 episode 发送给 actor；actor 将其加入 ``RollingLeRobotDataset`` 进行训练，因此在线训练不再使用 trajectory replay buffer。
-
-``smooth_intervene: True`` 会在 PICO 接管持续到 action chunk 最后一帧时绕过下一次策略推理。env worker 使用 dummy chunk 持续驱动遥操 wrapper，并在松开 ``grip`` 或 episode 结束后恢复正常推理。该模式仅支持 PICO：``env.train.teleop`` 必须是 ``pico``；同时要求每个 env worker pipeline stage 只运行一个环境。``env.eval.teleop: none`` 表示评测阶段只运行策略，不启用人工接管。
-
-``only_success: True`` 会丢弃失败 episode。``only_save_expert: True`` 仍将完整的
-成功 episode 保存在 LeRobot 归档中，但在线 sampler 只暴露 action chunk 内所有非
-padding 帧均满足 ``intervene_flag=True`` 的起点。当 ``num_action_chunks: 1`` 时，
-该规则退化为逐帧过滤。每个成功 episode 内：
-
-* 未接管帧仍保留在物理归档中，但不会作为 expert-only 训练样本暴露；
-* 人工接管帧保存接管设备实际执行的动作，并带有 ``intervene_flag=True``；
-* ``finalize_interval: 1`` 表示每完成一个成功 episode 就立即写出一个 LeRobot shard；
-* ``rolling_lerobot_window_size: 50000`` 表示在线训练只从最近 50,000 个符合专家
-  条件的逻辑 chunk 起点采样，较早的 shard 仍保留在磁盘中。
-
-真机 DAgger 配置不包含 beta 相关字段，因为没有配置 ``rollout.expert_model``。Beta 只用于模型 expert 和 student 之间的动作混合；真机人工接管由 ``env.train`` 中启用的 PICO intervention wrapper 决定。
-
-在 Ray head 节点上启动 HG-DAgger：
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_realworld_async.sh realworld_pnp_dagger_openpi
-
-可视化与监控
-----------------------------------------
-
-**1. TensorBoard 日志**
-
-.. code-block:: bash
-
-   tensorboard --logdir ./logs
-
-**2. 在线 LeRobot 数据写入**
-
-每个成功 episode 会写到本次运行日志目录：
-
-.. code-block:: text
-
-   logs/<timestamp>-realworld_pnp_dagger_openpi/online_lerobot/rank_0/id_0/
-   logs/<timestamp>-realworld_pnp_dagger_openpi/online_lerobot/rank_0/id_1/
-   ...
-
-失败 episode 不会进入在线 dataset。
-
-**3. 推荐关注的监控指标**
-
-- ``train/dagger/actor_loss``：基于 expert-only action chunk 计算的监督损失。
-- ``train/lerobot_dataset/total_episodes``：actor 当前已接收的成功 episode 数量。
-- ``train/lerobot_dataset/physical_frames``：已接收的 LeRobot 物理帧数量。
-- ``train/lerobot_dataset/logical_samples``：rolling window 内符合专家条件、可训练的 chunk 起点数。
-- ``train/lerobot_dataset/num_sub_datasets``：当前加载的 LeRobot shard 数量。
-- ``train/actor/lr``：学习率。
-- ``train/actor/grad_norm``：梯度范数。
+      采集会同时写出 replay-buffer 轨迹到 ``logs/{timestamp}/demo_buffer/``，以及 LeRobot 数据到 ``logs/{timestamp}/lerobot_dataset/``\ （数据格式见 :doc:`../../guides/data_collection`）。
+
+      .. dropdown:: 进阶配置（可选）
+
+         仓库自带采集配置已预设 PICO 按键映射、标定与 LeRobot 导出默认项：
+
+         .. code-block:: yaml
+
+            env:
+              eval:
+                teleop: pico
+                pico:
+                  zmq_addr: "ipc:///tmp/vr_data.ipc"
+                  hand: "right"
+                  control_trigger: "grip"
+                  control_threshold: 0.85
+                  gripper_close_button: "A"
+                  gripper_open_button: "B"
+                  position_scale: 1.0
+                  rotation_scale: 1.0
+                  max_stale_s: 0.2
+                  calibration:
+                    enabled: True
+                    required: True
+                    auto_calibrate_on_start: True
+                    button: "trigger"
+                override_cfg:
+                  success_hold_steps: 1
+                data_collection:
+                  enabled: True
+                  save_dir: ${runner.logger.log_path}
+                  export_format: [replay_buffer, lerobot_dataset]
+                  only_success: True
+                  robot_type: "panda"
+                  fps: 10
+
+   .. tab-item:: 训练与 Rollout 节点
+
+      **1. 安装依赖**
+
+      在 GPU 节点安装 OpenPI 与 Franka 环境：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
+
+      **2. 启动 Ray head 节点**
+
+      .. code-block:: bash
+
+         export RLINF_NODE_RANK=0
+         export HEAD_NODE_IP=192.168.1.10
+         ray start --head --port=6379 --node-ip-address="$HEAD_NODE_IP"
+
+      **3. 计算归一化统计量并运行 SFT**
+
+      为采集得到的 LeRobot 数据集计算 ``pi0_realworld`` 归一化统计量（数据集根目录与 ``repo_id`` 须与 SFT 保持一致，详见 :doc:`sft_openpi`）：
+
+      .. code-block:: bash
+
+         export HF_LEROBOT_HOME=/path/to/lerobot_root
+         python -m toolkits.lerobot.calculate_norm_stats \
+             --config-name pi0_realworld \
+             --repo-id realworld_franka_bin_relocation
+
+      编辑 ``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml`` 并运行 SFT，产出学生模型初始权重：
+
+      .. code-block:: yaml
+
+         data:
+           train_data_paths: "/path/to/realworld-franka-bin-relocation-dataset"
+
+         actor:
+           model:
+             model_path: "/path/to/pi0-model"
+             openpi:
+               config_name: "pi0_realworld"
+
+      .. code-block:: bash
+
+         bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
+
+      **4. 启动真机异步 HG-DAgger**
+
+      编辑 ``examples/embodiment/config/realworld_pnp_dagger_openpi.yaml``，填写 SFT checkpoint、基础模型路径（rollout 自动沿用 ``actor.model.model_path``）、``repo_id``、``robot_ip``、``target_ee_pose`` 与 ``camera_serials``：
+
+      .. code-block:: yaml
+
+         runner:
+           ckpt_path: "/path/to/sft_checkpoint/full_weights.pt"
+
+         actor:
+           model:
+             model_path: "/path/to/pi0-model"
+             openpi_data:
+               repo_id: "realworld_franka_bin_relocation"
+
+      在 Ray head 节点启动 HG-DAgger：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_realworld_async.sh realworld_pnp_dagger_openpi
+
+      .. dropdown:: 进阶配置（可选）
+
+         仓库自带 HG-DAgger 配置预设了双机节点分组、在线 LeRobot 归档与 PICO 接管参数：
+
+         .. code-block:: yaml
+
+            cluster:
+              num_nodes: 2
+              node_groups:
+                - label: "train"
+                  node_ranks: 0
+                - label: franka
+                  node_ranks: 1
+                  hardware:
+                    type: Franka
+                    configs:
+                      - robot_ip: ROBOT_IP
+                        node_rank: 1
+
+            algorithm:
+              dagger:
+                only_save_expert: True
+                online_lerobot:
+                  enabled: True
+                  only_success: True
+                  robot_type: "panda"
+                  fps: 10
+                  finalize_interval: 1
+                  data_path: ${runner.logger.log_path}/online_lerobot
+                  rolling_lerobot_window_size: 50000
+                  min_frames: 1
+                  lerobot_num_workers: 0
+
+            env:
+              train:
+                smooth_intervene: True
+                teleop: pico
+                pico:
+                  zmq_addr: "ipc:///tmp/vr_data.ipc"
+                  hand: "right"
+                  control_trigger: "grip"
+                  control_threshold: 0.85
+                  gripper_close_button: "A"
+                  gripper_open_button: "B"
+                  position_scale: 1.0
+                  rotation_scale: 1.0
+                  max_stale_s: 0.2
+                  calibration:
+                    enabled: True
+                    required: True
+                    auto_calibrate_on_start: True
+                    button: "trigger"
+                override_cfg:
+                  target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
+                  camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
+              eval:
+                teleop: none
+                override_cfg:
+                  target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
+                  camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
+
+            actor:
+              model:
+                openpi:
+                  config_name: "pi0_realworld"
+
+         关键配置行为：
+
+         - ``online_lerobot.enabled: True`` 开启在线 LeRobot 数据链路，过滤后的 episode 直接进入 actor 的滚动数据集，不再使用 trajectory replay buffer。
+         - ``smooth_intervene: True`` 会在 PICO ``grip`` 接管持续到 action chunk 末尾时跳过下一次 policy 推理，松开 ``grip`` 或 episode 结束后恢复正常推理（仅支持 PICO，且每个 env worker pipeline stage 仅运行一个环境）。``env.eval.teleop: none`` 让评测保持纯 policy 执行。
+         - ``only_success: True`` 丢弃失败 episode；``only_save_expert: True`` 在磁盘归档完整成功 episode，同时仅采样非 padding 帧全为 ``intervene_flag=True`` 的 chunk 起点（``num_action_chunks: 1`` 时退化为逐帧过滤）。
+         - ``finalize_interval: 1`` 每完成一个成功 episode 立即写入一个 LeRobot shard；``rolling_lerobot_window_size: 50000`` 将在线采样限制在最近 50,000 个有效专家 chunk 起点，旧 shard 仍保留在磁盘。
+         - 真机配置省略 beta 混合字段，因为人工接管由 PICO wrapper 控制，不配置 ``rollout.expert_model``。
+
+结果与常见问题
+--------------
+
+在 TensorBoard（``tensorboard --logdir ./logs``）中监控在线训练，日志配置见 :doc:`训练指标 <../../reference/metrics>`。成功 episode 以 LeRobot shard 形式写入 ``logs/<timestamp>-realworld_pnp_dagger_openpi/online_lerobot/rank_0/id_*/``，失败 episode 不会写入。
+
+重点关注指标：``train/dagger/actor_loss``、``train/lerobot_dataset/total_episodes``、``train/lerobot_dataset/physical_frames``、``train/lerobot_dataset/logical_samples``、``train/lerobot_dataset/num_sub_datasets``、``train/actor/lr`` 与 ``train/actor/grad_norm``。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 62
+
+   * - 现象
+     - 解决方法
+   * - Env worker 收不到 PICO 位姿更新
+     - 按 :doc:`franka_vr` 确认 PICO publisher 正常运行；跨机部署时将 ``pico.zmq_addr`` 从 ``ipc:///tmp/vr_data.ipc`` 改为 ``tcp://<publisher_ip>:<port>``。
+   * - Worker 启动报缺包或节点编号错误
+     - 执行 ``ray stop``，激活对应节点的虚拟环境并导出 ``RLINF_NODE_RANK``\ （head 为 ``0``，控制机为 ``1``）后再重启 Ray。
+   * - ``smooth_intervene`` 启动校验失败
+     - 确认 ``env.train.teleop`` 为 ``pico``，且每个 env worker pipeline stage 只运行一个环境。
+   * - ``train/lerobot_dataset/logical_samples`` 始终为 ``0``
+     - 开启 ``only_save_expert: True`` 与 ``only_success: True`` 时，episode 须成功且至少包含一个非 padding 帧全部由人工接管的 action chunk。

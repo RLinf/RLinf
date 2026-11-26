@@ -1,0 +1,52 @@
+# Five updates of the GenCoord recipe on the standing clip in
+# SUPERMIMIC_MOTION_PATH (update 4 records the CUDA graph, update 5 replays it).
+# Every update evaluates so the eval env runs repeatedly in one process; update
+# 5 saves a checkpoint for the resume test.
+defaults:
+  - supermimic_lafan1_gencoord
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  component_placement:
+    actor,env,rollout: 0
+
+runner:
+  logger:
+    log_path: /workspace/results/g1_mimic_supermimic
+    experiment_name: ci-test
+  max_epochs: 5
+  save_interval: 5
+  val_check_interval: 1
+  eval_export:
+    enabled: True
+
+algorithm:
+  replay_length: 32
+  replay_ratio: 32           # two updates per env step with the sizes below
+  wm_batches: 1
+  wm_window_batch: 8
+  imagine_batch: 8
+  critic_epochs: 1
+  critic_minibatches: 1
+
+actor:
+  model:
+    torch_compile: False
+
+env:
+  train:
+    total_num_envs: 4
+    num_clips: 1
+    motion_on_cpu: True
+  eval:
+    total_num_envs: 1
+    num_clips: 1
+    motion_on_cpu: True
+    max_steps_per_rollout_epoch: 64  # frames in the standing clip

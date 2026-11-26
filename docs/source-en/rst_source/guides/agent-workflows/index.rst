@@ -1,3 +1,5 @@
+:orphan:
+
 Agent Workflows
 ===============
 
@@ -12,8 +14,3 @@ embodied RL jobs.
      - What you get
    * - :doc:`Agentic Guides <../agentic>`
      - Operational workflows for agentic tasks.
-
-.. toctree::
-   :hidden:
-
-   Agentic Guides <../agentic>

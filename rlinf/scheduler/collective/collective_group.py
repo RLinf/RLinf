@@ -19,6 +19,7 @@ import threading
 import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, is_dataclass, replace
+from functools import partial
 from pickle import Pickler, Unpickler
 from queue import Empty, Queue
 from typing import TYPE_CHECKING, Any, Iterable, Optional
@@ -39,7 +40,7 @@ from ..manager import (
     WorkerInfo,
 )
 from ..worker import Worker, WorkerAddress
-from .async_work import AsyncFuncWork, AsyncWork
+from .async_work import AsyncFuncWork, AsyncWork, PeerCommunicationError
 from .tensor_buffer_pool import BufferLease
 from .tensor_compression import TensorCompressionWireMetadata
 
@@ -282,6 +283,77 @@ class CollectiveGroup:
             for _ in range(CollectiveGroup.POOL_SIZE)
         ]
 
+        # The first exception of each direction, shared by every pool queue of
+        # that direction: a send or recv that failed lost its place in the
+        # stream, so later operations of that direction cannot run.
+        self._direction_failures: dict[str, Optional[Exception]] = {
+            "send": None,
+            "recv": None,
+        }
+
+    def _run_guarded(
+        self,
+        direction: str,
+        func: Any,
+        work: AsyncFuncWork,
+        **kwargs,
+    ) -> Optional[AsyncFuncWork]:
+        """Run a direction's function, unless that direction already failed.
+
+        The queue thread calls this through the work, and the synchronous path
+        calls the work in the caller's thread, so both are refused here. A
+        refused work never starts, and the first failure is chained to the
+        error it raises.
+        """
+        failure = self._direction_failures[direction]
+        if failure is not None:
+            raise PeerCommunicationError(
+                f"an earlier {direction} in collective group {self._group_name} "
+                f"failed ({failure!r}); later {direction}s in this group are "
+                f"not run"
+            ) from failure
+        return func(work, **kwargs)
+
+    def _watch_work(
+        self, work: AsyncFuncWork, direction: Optional[str], comm_id: int
+    ) -> None:
+        """Log this work's failure, and record it as its direction's failure.
+
+        Registered with add_done_callback, so it runs when the work completes
+        however it completes: on the queue thread for an async operation, in
+        the caller's thread for a synchronous one. It reads the work's final
+        outcome, so a work whose function returned another work reports the
+        chain's failure. ``direction`` is None for broadcast work, which is
+        logged but does not fail its group.
+        """
+
+        def _record(future) -> None:
+            try:
+                future.wait()
+            except Exception as exc:
+                if direction is None:
+                    self._logger.error(
+                        f"collective broadcast {comm_id} failed in group "
+                        f"{self._group_name}: {exc!r}"
+                    )
+                    return
+                if isinstance(exc, PeerCommunicationError):
+                    # This work was refused because the direction had already
+                    # failed, and that first failure was logged already.
+                    self._logger.debug(
+                        f"collective {direction} {comm_id} not run in group "
+                        f"{self._group_name}: {exc!r}"
+                    )
+                    return
+                self._logger.error(
+                    f"collective {direction} {comm_id} failed in group "
+                    f"{self._group_name}: {exc!r}"
+                )
+                if self._direction_failures[direction] is None:
+                    self._direction_failures[direction] = exc
+
+        work.add_done_callback(_record)
+
     def _get_global_accelerator_id(self, device: torch.device | int) -> str:
         """Return the worker placement's global accelerator id for UUID-less platforms."""
         if isinstance(device, torch.device):
@@ -326,7 +398,7 @@ class CollectiveGroup:
 
         # Create AsyncFuncWork for the send operation
         send_work = AsyncFuncWork(
-            self._atomic_send,
+            partial(self._run_guarded, "send", self._atomic_send),
             object=object,
             comm_id=send_comm_id,
             object_type=object_type,
@@ -335,6 +407,7 @@ class CollectiveGroup:
             piggyback_payload=piggyback_payload,
             pass_self=True,
         )
+        self._watch_work(send_work, "send", send_comm_id)
 
         # Capture CUDA event of the main stream if sending accelerator tensors
         if tensor_data.has_accel_tensor:
@@ -464,12 +537,13 @@ class CollectiveGroup:
             current_device = None
 
         recv_work = AsyncFuncWork(
-            self._atomic_recv,
+            partial(self._run_guarded, "recv", self._atomic_recv),
             comm_id=recv_comm_id,
             current_device=current_device,
             options=options,
             pass_self=True,
         )
+        self._watch_work(recv_work, "recv", recv_comm_id)
 
         if self._worker.has_accelerator and Worker.torch_platform.is_initialized():
             recv_event = Worker.torch_platform.Event()
@@ -550,7 +624,7 @@ class CollectiveGroup:
         object_type, tensor_data = self._get_object_info(tensor)
 
         send_work = AsyncFuncWork(
-            self._atomic_send_tensor,
+            partial(self._run_guarded, "send", self._atomic_send_tensor),
             tensor=tensor,
             comm_id=send_comm_id,
             object_type=object_type,
@@ -558,6 +632,7 @@ class CollectiveGroup:
             options=options,
             pass_self=True,
         )
+        self._watch_work(send_work, "send", send_comm_id)
 
         if tensor_data.has_accel_tensor:
             send_event = Worker.torch_platform.Event()
@@ -629,12 +704,13 @@ class CollectiveGroup:
         recv_comm_id = next(self._recv_comm_id_iter)
 
         recv_work = AsyncFuncWork(
-            self._atomic_recv_tensor,
+            partial(self._run_guarded, "recv", self._atomic_recv_tensor),
             tensor=tensor,
             comm_id=recv_comm_id,
             options=options,
             pass_self=True,
         )
+        self._watch_work(recv_work, "recv", recv_comm_id)
 
         if self._worker.has_accelerator and Worker.torch_platform.is_initialized():
             recv_event = Worker.torch_platform.Event()
@@ -685,6 +761,7 @@ class CollectiveGroup:
             options=options,
             pass_self=True,
         )
+        self._watch_work(broadcast_work, None, broadcast_comm_id)
 
         if self._worker.has_accelerator and Worker.torch_platform.is_initialized():
             broadcast_event = Worker.torch_platform.Event()

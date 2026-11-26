@@ -1,5 +1,5 @@
-Adapting an Embodied Model in SGLang Server
-===============================================
+Embodied Rollout Model (SGLang)
+===============================
 
 This document describes how to integrate an embodied model already adapted to SGLang Server into
 RLinf's evaluation rollout and evaluate the model using the various simulators supported by RLinf.
@@ -16,12 +16,38 @@ The document is divided into two parts:
    :doc:`Adding a New Model with FSDP <new_model_fsdp>` and
    :doc:`Adding a New SFT Model <new_model_sft>`.
 
+At a Glance
+-----------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 34 48
+
+   * - Step
+     - File
+     - What You Change
+   * - 1. Register model type
+     - ``rlinf/config.py``
+     - Add ``SupportedModel.register("<your_model>", force=True)`` and include it in ``EMBODIED_MODEL``.
+   * - 2. Implement adapter
+     - ``rlinf/models/embodiment/<your_model>/sglang_adapter.py``
+     - Write a standalone adapter class declaring ``action_path`` and implementing ``build_request`` and ``parse_response`` (no HTTP client, no weight loading).
+   * - 3. Register adapter
+     - ``rlinf/models/embodiment/sglang_adapter.py``
+     - Register a lazy builder with ``register_sglang_adapter`` in ``_register_builtin_sglang_adapters()`` (resolved via ``get_sglang_adapter_cls``).
+   * - 4. Configure YAML
+     - ``examples/embodiment/config/model/<your_model>.yaml`` and ``evaluations/<benchmark>/<your_model>_eval_sglang.yaml``
+     - Set ``rollout.rollout_backend: sglang``, ``rollout.sglang.serving_mode: embodied``, ``rollout.sglang.server_type: embodied``, and ``rollout.model.model_type: "<your_model>"``.
+   * - 5. Run evaluation
+     - ``evaluations/run_eval.sh``
+     - Launch with ``bash evaluations/run_eval.sh <benchmark> <config>``.
+
 
 Part One: Adapting a New Model
-==============================
+------------------------------
 
 Overall Architecture
---------------------
+~~~~~~~~~~~~~~~~~~~~
 
 The SGLang embodied evaluation path separates general logic from model-specific logic:
 
@@ -89,7 +115,7 @@ configuration:
      model:
        model_type: "<your_model>"
 
-Note that ``rollout.sglang.server_type`` and ``rollout.model.model_type`` are two
+``rollout.sglang.server_type`` and ``rollout.model.model_type`` are two
 **orthogonal** fields with different names and different responsibilities:
 
 - ``rollout.sglang.server_type`` decides **which sglang dispatch branch the
@@ -106,12 +132,12 @@ regular ``SGLangWorker`` instead of ``SGLangEmbodiedWorker``.
 
 
 Adaptation Steps
-----------------
+~~~~~~~~~~~~~~~~
 
 The following describes, in the recommended order, the work required for a new model.
 
 Step 1: Confirm the SGLang Server Action Interface
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 RLinf's sglang adapter builds requests for and parses responses from SGLang
 Server (the actual HTTP round-trip is performed by the worker). Before writing
@@ -128,8 +154,8 @@ capabilities:
    related ``sglang serve`` parameters still need to be implemented in the SGLang version being used.
 
 
-Step 2: Register ``model_type``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Step 2: Register the Model Type
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Register the model in ``rlinf/config.py`` so that configuration validation recognizes the name:
 
@@ -151,8 +177,8 @@ If the model needs to pass embodied configuration validation, it must also be ad
 lookup is case-insensitive, but using lowercase everywhere is still recommended.
 
 
-Step 3: Implement the sglang adapter
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Step 3: Implement the SGLang Adapter
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Create the adapter file under the model's own directory (in the model layer,
 next to the training-side model code):
@@ -213,7 +239,7 @@ Interface contract:
   in ``parse_response``;
 - ``parse_response`` returns ``(actions, info)``: ``actions`` must be a Tensor
   with shape ``[N, num_action_chunks, action_dim]``; ``info`` is an additional
-  information dictionary reserved for future training extensions — currently it
+  information dictionary reserved for future training extensions — it
   can return ``prev_logprobs``, ``prev_values`` and ``forward_inputs`` as
   DreamZero does;
 - The current SGLang embodied Worker is used only for evaluation. If the adapter
@@ -229,8 +255,8 @@ Interface contract:
    and additional GPU memory will be consumed.
 
 
-Step 4: Register the adapter
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Step 4: Register the Adapter
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The adapter is registered with a **lazy builder** in
 ``_register_builtin_sglang_adapters()`` inside
@@ -261,7 +287,7 @@ no sglang adapter is registered for the corresponding ``model_type``.
 
 
 Step 5: Add the Model YAML and Evaluation YAML
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 It is recommended to maintain the model configuration and SGLang evaluation configuration separately:
 
@@ -276,7 +302,7 @@ model configuration to be reused by multiple YAML configuration files.
 
 
 Step 6: Test and Debug
-~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^
 
 For the first run, it is recommended to reduce ``env.eval.total_num_envs`` and confirm the following in order:
 
@@ -293,7 +319,7 @@ For the first run, it is recommended to reduce ``env.eval.total_num_envs`` and c
 
 
 Part Two: DreamZero as an Example
-=================================
+---------------------------------
 
 DreamZero's SGLang evaluation path consists of the following files:
 
@@ -316,10 +342,10 @@ DreamZero's SGLang evaluation path consists of the following files:
 
 
 Code Adaptation
----------------
+~~~~~~~~~~~~~~~
 
 Register the Model
-~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^
 
 DreamZero is registered in ``rlinf/config.py`` as follows:
 
@@ -338,7 +364,7 @@ can use:
 
 
 Adapter Adaptation
-~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^
 
 ``sglang_adapter.py`` uses a **single class** ``DreamZeroSGLangAdapter`` to hold
 all of the DreamZero adaptation logic (observation/action transforms + request
@@ -403,7 +429,7 @@ embodiment id.
 
 
 HTTP Requests
-~~~~~~~~~~~~~
+^^^^^^^^^^^^^
 
 The adapter's ``build_request`` assembles the payload for
 ``POST /v1/actions/generations``, which the worker sends via
@@ -463,7 +489,7 @@ These actions are still in DreamZero's normalized and padded action space and ca
 
 
 Server Parameters and Pipeline Configuration
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The server's startup parameters come entirely from the YAML
 ``rollout.sglang.server`` block. That block is forwarded verbatim to
@@ -519,7 +545,7 @@ availability.
 
 
 Model YAML
-----------
+~~~~~~~~~~
 
 The DreamZero model configuration is located at
 ``examples/embodiment/config/model/dreamzero_5b.yaml``. Fields directly related to SGLang evaluation
@@ -583,13 +609,13 @@ the current checkpoint. For example, the LIBERO SGLang configuration in this sec
 
 
 Detailed Evaluation YAML
-------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 The complete example is located at
 ``evaluations/libero/libero_spatial_dreamzero_eval_sglang.yaml``. The configuration blocks are explained below.
 
-Hydra defaults
-~~~~~~~~~~~~~~
+Hydra Defaults
+^^^^^^^^^^^^^^
 
 .. code-block:: yaml
 
@@ -608,7 +634,7 @@ This composes the ``libero_spatial`` simulator configuration into ``env.eval`` a
 
 
 Cluster and Runner Configuration
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: yaml
 
@@ -634,7 +660,7 @@ Field descriptions:
 
 
 Environment Parallelism and Evaluation Steps
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: yaml
 
@@ -670,7 +696,7 @@ actually executed by the environment.
 
 
 SGLang Worker Dispatch
-~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: yaml
 
@@ -705,7 +731,7 @@ SGLang Worker Dispatch
 
 
 Server Startup and Parallel Configuration
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 ``rollout.sglang`` top level holds RLinf-private keys (HTTP client, parallelism,
 launch toggles); the ``server`` sub-block holds the ``ServerArgs`` fields
@@ -774,7 +800,7 @@ port (an EADDRINUSE on master_port=30005 was seen before).
 
 
 HTTP Client Configuration
-~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: yaml
 
@@ -801,7 +827,7 @@ descriptions:
 
 
 DreamZero Model and Data Configuration
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: yaml
 
@@ -837,13 +863,13 @@ one of these fields is insufficient.
 
 
 Generating Metadata
-~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^
 
 DreamZero's observation normalization and action denormalization depend on dataset metadata. The LIBERO example can use:
 
 .. code-block:: bash
 
-   python toolkits/lerobot/generate_dreamzero_metadata.py \
+   python -m toolkits.lerobot.generate_dreamzero_metadata \
      --preset libero_sim \
      --dataset-root /path/to/libero \
      --output-metadata /path/to/metadata.json
@@ -854,7 +880,7 @@ scales.
 
 
 Running Evaluation
-------------------
+~~~~~~~~~~~~~~~~~~
 
 After preparing the DreamZero dependencies, an SGLang environment that supports ``DreamZeroPipeline``, the checkpoint, and
 metadata, run the following from the repository root:
@@ -887,12 +913,12 @@ For initial joint debugging, the number of environments can be overridden:
 code directory containing the ``groot`` package.
 
 Common Issues
--------------
+~~~~~~~~~~~~~
 
-Worker Is Not ``SGLangEmbodiedWorker``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Wrong Rollout Worker Type
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Check whether both of the following are set:
+If logs show a rollout worker other than ``SGLangEmbodiedWorker``, check that both fields are set:
 
 .. code-block:: yaml
 
@@ -902,8 +928,8 @@ Check whether both of the following are set:
        serving_mode: embodied
 
 
-sglang adapter Not Registered
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+SGLang Adapter Not Registered
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Confirm that the following three names are identical and that the adapter is
 registered in ``_register_builtin_sglang_adapters()`` inside
@@ -917,7 +943,7 @@ registered in ``_register_builtin_sglang_adapters()`` inside
 
 
 Server Fails to Start
-~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^
 
 The logs print a ``multimodal_gen sglang serve: launching in-process ...`` line
 and the server subprocess output (streamed straight to the Ray actor's
@@ -933,7 +959,7 @@ stdout/stderr). Check the following first:
 
 
 Request to Local Server Times Out
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 ``NO_PROXY`` must include ``127.0.0.1,localhost``; otherwise, ``/health`` and action requests may
 be sent to an upstream proxy. The Worker sets it automatically when starting a local Server; when starting one manually or testing the Client separately,
@@ -941,7 +967,7 @@ you need to check the proxy environment variables yourself.
 
 
 Incorrect Action Shape or Scale
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Check the following in order:
 
@@ -955,7 +981,7 @@ Check the following in order:
 
 
 Abnormal GPU Memory Usage
-~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Confirm that the sglang adapter does not import and create a local large DreamZero model. The model can only be loaded by
 ``sglang serve``. Also check ``max_sessions``, eval batch size, compilation options, and
