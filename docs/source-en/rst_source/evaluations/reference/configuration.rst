@@ -143,6 +143,10 @@ Training-only configs under ``examples/embodiment/config/`` bind the model prese
      task_type: embodied_eval
      only_eval: True
 
+.. note::
+
+   SuperMimic configs under ``evaluations/supermimic/`` are standalone evaluation configs that load ``full_weights.pt`` through ``runner.ckpt_path``, select tasks via ``env.eval.eval_tasks``, and configure exports via ``runner.eval_export``. See :doc:`../guides/supermimic`.
+
 Config Fallback
 ---------------
 
