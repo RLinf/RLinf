@@ -3991,14 +3991,14 @@ install_behavior_env() {
 }
 
 install_behavior2026_env() {
-    local source_pin="https://github.com/Forging-ahead/BEHAVIOR-1K.git@5acd19864a3ec51b9ed1dade6d0b1a04b9d63c24"
+    local source_pin="https://github.com/RLinf/BEHAVIOR-1K.git@5acd19864a3ec51b9ed1dade6d0b1a04b9d63c24"
     local repo="${GITHUB_PREFIX}${source_pin%@*}" ref="${source_pin##*@}" behavior_dir
     local shared_checkout="${BEHAVIOR_PATH:-$VENV_DIR/BEHAVIOR-1K}"
     local reuse=0
     if [[ -L "$shared_checkout" || ( -n "${BEHAVIOR_PATH:-}" && -d "$shared_checkout" ) ]]; then
         reuse=1
     fi
-    behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" "$repo" -b migration/rlinf-v3.9.4 --depth 1)
+    behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" "$repo" -b RLinf/v3.9 --depth 1)
     if [[ "$(git -C "$behavior_dir" rev-parse HEAD)" != "$ref" ]]; then
         if [[ "$reuse" == 1 ]]; then
             echo "behavior2026 requires BEHAVIOR-1K at $ref. Select this revision in $behavior_dir or use a separate checkout." >&2
