@@ -74,33 +74,77 @@ def test_chunked_lm_head_matches_dense_values_and_gradients(
         )
 
 
-def test_chunked_lm_head_accumulates_main_grad_without_double_add():
+@pytest.mark.parametrize(
+    "fusion,need_dummy_grad",
+    [(True, True), (False, False), (False, True)],
+)
+def test_chunked_lm_head_accumulates_main_grad_without_double_add(
+    fusion, need_dummy_grad
+):
     from rlinf.hybrid_engines.megatron.lm_head import chunked_vocab_parallel_log_probs
 
     torch.manual_seed(93)
-    weight = torch.nn.Parameter(torch.randn(17, 5))
-    weight.main_grad = torch.ones_like(weight)
+    weight = torch.nn.Parameter(torch.randn(17, 5, dtype=torch.bfloat16))
+    weight.main_grad = torch.ones(17, 5, dtype=torch.float32)
     weight.grad_added_to_main_grad = False
     expected = weight.main_grad.clone()
     for _ in range(2):
-        hidden = torch.randn(7, 5, requires_grad=True)
+        hidden = torch.randn(7, 5, dtype=torch.bfloat16, requires_grad=True)
         labels = torch.randint(17, (7,))
-        dense = torch.nn.functional.linear(hidden, weight).log_softmax(-1)
+        dense = torch.nn.functional.linear(hidden, weight).float().log_softmax(-1)
         expected += torch.autograd.grad(dense.gather(1, labels[:, None]).sum(), weight)[
             0
-        ]
+        ].float()
         result = chunked_vocab_parallel_log_probs(
             hidden,
             weight,
             labels,
             torch.ones(7, dtype=torch.bool),
             chunk_size=3,
-            gradient_accumulation_fusion=True,
+            gradient_accumulation_fusion=fusion,
+            need_dummy_grad=need_dummy_grad,
         )
         result["log_probs"].sum().backward()
-    torch.testing.assert_close(weight.main_grad, expected, atol=3e-6, rtol=3e-6)
+    torch.testing.assert_close(weight.main_grad, expected, atol=0.02, rtol=0.02)
     assert weight.grad_added_to_main_grad
-    torch.testing.assert_close(weight.grad, torch.zeros_like(weight))
+    if need_dummy_grad:
+        torch.testing.assert_close(weight.grad, torch.zeros_like(weight))
+    else:
+        assert weight.grad is None
+
+
+def test_chunked_lm_head_skips_fsdp_and_empty_main_grad():
+    from rlinf.hybrid_engines.megatron.lm_head import chunked_vocab_parallel_log_probs
+
+    for make_unusable in ("fsdp", "empty"):
+        torch.manual_seed(94)
+        weight = torch.nn.Parameter(torch.randn(11, 4, dtype=torch.bfloat16))
+        weight.main_grad = torch.zeros(11, 4, dtype=torch.float32)
+        if make_unusable == "fsdp":
+            weight.__fsdp_param__ = True
+        else:
+            weight.main_grad.untyped_storage().resize_(0)
+        hidden = torch.randn(5, 4, dtype=torch.bfloat16, requires_grad=True)
+        labels = torch.randint(11, (5,))
+        dense = torch.nn.functional.linear(hidden, weight).float().log_softmax(-1)
+        (expected_grad,) = torch.autograd.grad(
+            dense.gather(1, labels[:, None]).sum(), weight
+        )
+        result = chunked_vocab_parallel_log_probs(
+            hidden,
+            weight,
+            labels,
+            torch.ones(5, dtype=torch.bool),
+            chunk_size=2,
+            need_dummy_grad=False,
+        )
+        result["log_probs"].sum().backward()
+        assert weight.grad is not None and weight.grad.dtype == torch.bfloat16
+        torch.testing.assert_close(weight.grad, expected_grad, atol=0.02, rtol=0.02)
+        if make_unusable == "fsdp":
+            torch.testing.assert_close(
+                weight.main_grad, torch.zeros_like(weight.main_grad)
+            )
 
 
 def _chunked_lm_head_tp_reference(rank, rendezvous):

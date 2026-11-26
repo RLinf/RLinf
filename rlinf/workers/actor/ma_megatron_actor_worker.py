@@ -210,6 +210,12 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     chunked_scoring,
                 )
 
+                ddp_config = getattr(model, "ddp_config", None)
+                need_dummy_grad = (
+                    bool(ddp_config.overlap_grad_reduce)
+                    if ddp_config is not None
+                    else True
+                )
                 with chunked_scoring(
                     module,
                     labels=label,
@@ -217,6 +223,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     temperature=temperature,
                     chunk_size=self.lm_head_chunk_size,
                     calculate_entropy=self.calculate_entropy,
+                    need_dummy_grad=need_dummy_grad,
                 ):
                     scores = model(
                         input_ids=input_ids.contiguous(),

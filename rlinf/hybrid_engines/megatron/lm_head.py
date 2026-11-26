@@ -60,8 +60,22 @@ def _accumulate_weight_gradient(hidden, dlogits, grad_weight, use_fusion):
         )
 
 
-# Limit the last FP32-to-parameter-dtype cast to a quarter of the weight shard.
+# Limit the last FP32-to-FP16 cast to a quarter of the weight shard.
 _WEIGHT_GRAD_TILES = 4
+
+
+def _usable_main_grad(weight: torch.Tensor) -> torch.Tensor | None:
+    if not weight.requires_grad or hasattr(weight, "__fsdp_param__"):
+        return None
+    main_grad = getattr(weight, "main_grad", None)
+    if (
+        not isinstance(main_grad, torch.Tensor)
+        or main_grad.shape != weight.shape
+        or main_grad.device != weight.device
+        or main_grad.untyped_storage().size() == 0
+    ):
+        return None
+    return main_grad
 
 
 def _accumulate_weight_tiles(tiles, hidden, dlogits):
@@ -85,6 +99,7 @@ class _ChunkedLogProbs(torch.autograd.Function):
         group,
         calculate_entropy,
         gradient_accumulation_fusion,
+        need_dummy_grad,
     ):
         log_probs = torch.empty(
             targets.shape, dtype=torch.float32, device=hidden.device
@@ -112,11 +127,11 @@ class _ChunkedLogProbs(torch.autograd.Function):
         ctx.vocab_start = (
             dist.get_rank(group) if group is not None else 0
         ) * weight.shape[0]
-        ctx.main_grad = (
-            getattr(weight, "main_grad", None)
-            if gradient_accumulation_fusion and weight.requires_grad
-            else None
+        ctx.main_grad = _usable_main_grad(weight)
+        ctx.use_fusion = bool(
+            gradient_accumulation_fusion and ctx.main_grad is not None
         )
+        ctx.need_dummy_grad = bool(need_dummy_grad)
         if entropy is not None:
             ctx.mark_non_differentiable(entropy)
         ctx.set_materialize_grads(False)
@@ -129,16 +144,17 @@ class _ChunkedLogProbs(torch.autograd.Function):
         accumulation_dtype = (
             torch.float32 if weight.dtype != torch.float64 else weight.dtype
         )
-        grad_weight = ctx.main_grad
+        use_main_grad = ctx.main_grad is not None and ctx.needs_input_grad[1]
+        grad_weight = ctx.main_grad if use_main_grad else None
         weight_tiles = []
         if grad_weight is None and ctx.needs_input_grad[1]:
-            if weight.dtype == accumulation_dtype:
-                grad_weight = torch.zeros_like(weight)
-            else:
+            if weight.dtype == torch.float16:
                 weight_tiles = [
                     torch.zeros_like(tile, dtype=accumulation_dtype)
                     for tile in weight.chunk(_WEIGHT_GRAD_TILES)
                 ]
+            else:
+                grad_weight = torch.zeros_like(weight)
         grad_bias = (
             torch.zeros_like(bias, dtype=accumulation_dtype)
             if bias is not None and ctx.needs_input_grad[2]
@@ -161,21 +177,23 @@ class _ChunkedLogProbs(torch.autograd.Function):
             else:
                 probabilities.mul_(grad_log_probs[start:end, None] / ctx.temperature)
             dlogits = probabilities.to(weight.dtype)
+            del probabilities
             grad_hidden[start:end] = dlogits @ weight
             if grad_weight is not None:
                 _accumulate_weight_gradient(
-                    hidden[start:end], dlogits, grad_weight, ctx.main_grad is not None
+                    hidden[start:end], dlogits, grad_weight, ctx.use_fusion
                 )
             elif weight_tiles:
                 _accumulate_weight_tiles(weight_tiles, hidden[start:end], dlogits)
             if grad_bias is not None:
                 grad_bias.add_(dlogits.sum(dim=0, dtype=accumulation_dtype))
-            del probabilities, dlogits
-        # Megatron DDP must run its ready hook without adding the gradient twice.
-        if ctx.main_grad is not None:
+            del dlogits
+        # Megatron DDP must run its ready hook when overlapping grad reduce
+        # without adding the gradient twice.
+        if use_main_grad:
             if hasattr(weight, "grad_added_to_main_grad"):
                 weight.grad_added_to_main_grad = True
-                grad_weight = torch.zeros_like(weight)
+                grad_weight = torch.zeros_like(weight) if ctx.need_dummy_grad else None
             else:
                 grad_weight = None
         elif weight_tiles:
@@ -185,7 +203,18 @@ class _ChunkedLogProbs(torch.autograd.Function):
             grad_weight = torch.cat(weight_tiles)
         if grad_bias is not None:
             grad_bias = grad_bias.to(bias.dtype)
-        return grad_hidden, grad_weight, grad_bias, None, None, None, None, None, None
+        return (
+            grad_hidden,
+            grad_weight,
+            grad_bias,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
 
 
 def chunked_vocab_parallel_log_probs(
@@ -200,6 +229,7 @@ def chunked_vocab_parallel_log_probs(
     tp_group: dist.ProcessGroup | None = None,
     calculate_entropy: bool = False,
     gradient_accumulation_fusion: bool = False,
+    need_dummy_grad: bool = True,
 ) -> dict[str, torch.Tensor]:
     """Score active positions without retaining sequence-by-vocabulary logits.
 
@@ -214,7 +244,11 @@ def chunked_vocab_parallel_log_probs(
         bias: Optional vocabulary-sharded output bias.
         tp_group: Tensor-parallel group; None means a single vocabulary shard.
         calculate_entropy: Return detached entropy across all positions.
-        gradient_accumulation_fusion: Accumulate into Megatron's main_grad buffer.
+        gradient_accumulation_fusion: Use fused CUDA GEMM when accumulating
+            into Megatron's ``main_grad`` buffer.
+        need_dummy_grad: Return a zero gradient tensor when accumulating into
+            ``main_grad`` (required when ``overlap_grad_reduce`` is enabled so
+            Megatron DDP's backward post-hook runs).
 
     Returns:
         Labels-shaped log_probs, zero outside label_mask, and optional entropy.
@@ -251,6 +285,7 @@ def chunked_vocab_parallel_log_probs(
         tp_group,
         calculate_entropy,
         gradient_accumulation_fusion,
+        need_dummy_grad,
     )
     log_probs = selected.new_zeros(labels.numel()).scatter(0, positions, selected)
     result = {"log_probs": log_probs.masked_fill(~flat_mask, 0).view_as(labels)}
