@@ -53,6 +53,7 @@ class FakeGo2SDK:
         self.callback: Any = None
         self.sport_callback: Any = None
         self.publish_sport = True
+        self.image_sample: tuple[int, bytes] = (0, b"")
 
     def publish(self) -> None:
         """Deliver one recent state through the real adapter's SDK callback."""
@@ -150,6 +151,16 @@ class FakeGo2SDK:
             def Crc(self, message):
                 return 42
 
+        class VideoClient:
+            def Init(self) -> None:
+                fake.events.append(("video_init",))
+
+            def SetTimeout(self, timeout: float) -> None:
+                self.timeout = timeout
+
+            def GetImageSample(self) -> tuple[int, bytes]:
+                return fake.image_sample
+
         definitions = {
             "unitree_sdk2py.core.channel": {
                 "ChannelFactory": ChannelFactory,
@@ -159,6 +170,7 @@ class FakeGo2SDK:
             },
             "unitree_sdk2py.utils.crc": {"CRC": CRC},
             "unitree_sdk2py.go2.sport.sport_client": {"SportClient": Client},
+            "unitree_sdk2py.go2.video.video_client": {"VideoClient": VideoClient},
             "unitree_sdk2py.idl.unitree_go.msg.dds_": {
                 "LowState_": SimpleNamespace,
                 "SportModeState_": SimpleNamespace,

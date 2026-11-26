@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Go2 high-level drive environment, without a training reward or cameras."""
+"""Go2 high-level drive environment for state and camera checks."""
 
 import time
 from dataclasses import dataclass
@@ -23,6 +23,7 @@ import numpy as np
 
 from rlinf.envs.real.utils.config import get_hardware_config
 from rlinf.robotics import Go2Config, Go2Robot, RobotInfo
+from rlinf.robotics.parts.cameras.unitree_go2 import GO2_FRONT_CAMERA_RESOLUTION
 from rlinf.robotics.parts.mobility.unitree_go2 import STATE_SHAPES
 from rlinf.scheduler import WorkerInfo
 
@@ -32,6 +33,7 @@ class Go2EnvConfig:
     """Drive timing and episode bounds; motion opt-in belongs to hardware."""
 
     is_dummy: bool = False
+    enable_front_camera: bool = False
     step_frequency: float = 10.0
     max_num_steps: int = 20
 
@@ -73,18 +75,20 @@ class Go2Env(gym.Env):
         self._closed = False
         limit = np.asarray([0.3, 0.3, 0.5], dtype=np.float32)
         self.action_space = gym.spaces.Box(-limit, limit)
-        self.observation_space = gym.spaces.Dict(
-            {
-                "state": gym.spaces.Dict(
-                    {
-                        name: gym.spaces.Box(
-                            -np.inf, np.inf, shape=shape, dtype=np.float32
-                        )
-                        for name, shape in STATE_SHAPES.items()
-                    }
-                )
-            }
-        )
+        spaces = {
+            "state": gym.spaces.Dict(
+                {
+                    name: gym.spaces.Box(-np.inf, np.inf, shape=shape, dtype=np.float32)
+                    for name, shape in STATE_SHAPES.items()
+                }
+            )
+        }
+        if config.enable_front_camera:
+            width, height = GO2_FRONT_CAMERA_RESOLUTION
+            spaces["frames"] = gym.spaces.Dict(
+                {"front": gym.spaces.Box(0, 255, (height, width, 3), dtype=np.uint8)}
+            )
+        self.observation_space = gym.spaces.Dict(spaces)
         if not config.is_dummy:
             node_rank = self.hardware.node_rank
             if worker_info is None:
@@ -95,6 +99,7 @@ class Go2Env(gym.Env):
                 worker_rank=worker_info.rank if worker_info else 0,
                 env_idx=env_idx,
                 enable_motion=self.hardware.enable_motion,
+                enable_front_camera=config.enable_front_camera,
                 command_timeout=self.hardware.command_timeout,
                 state_timeout=self.hardware.state_timeout,
                 rpc_timeout=self.hardware.rpc_timeout,
@@ -112,13 +117,25 @@ class Go2Env(gym.Env):
 
     def _observation(self) -> dict[str, Any]:
         if self.config.is_dummy:
-            return {
+            observation = {
                 "state": {
                     name: np.zeros(shape, dtype=np.float32)
                     for name, shape in STATE_SHAPES.items()
                 }
             }
-        return {"state": self.robot.get_observation()["base"]}
+            if self.config.enable_front_camera:
+                frame_space = self.observation_space["frames"]["front"]
+                observation["frames"] = {
+                    "front": np.zeros(frame_space.shape, dtype=frame_space.dtype)
+                }
+            return observation
+        if not self.config.enable_front_camera:
+            return {"state": self.robot.get_observation()["base"]}
+        frame = self.robot.children["front"].get_frame(timeout=0.25, max_age=0.25)
+        return {
+            "state": self.robot.children["base"].get_observation(),
+            "frames": {"front": frame},
+        }
 
     def _stop(self) -> None:
         if self.robot is not None:

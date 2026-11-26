@@ -108,6 +108,16 @@ Gymnasium 环境 ``Go2DriveEnv-v1`` 默认从 ``rt/lowstate`` 读取 Go2 EDU 的
 
          停止请求和 SDK 低速估计均不能证明物理停稳。请直接观察机器人，运动未停止就使用遥控器。网络断开或进程故障可能导致软件无法请求停止。
 
+      **3. 检查前视相机**
+
+      用同一个网口运行相机检查命令：
+
+      .. code-block:: bash
+
+         python -m toolkits.realworld_check.check_go2_camera --interface <interface>
+
+      命令通过 Go2 环境读取十次观测，并报告其中画面不同的数量。让机器人保持静止，在镜头前移动物体即可检查画面是否更新。在环境配置中将 ``override_cfg.enable_front_camera`` 设为 ``true``，便可从每次观测的 ``frames["front"]`` 读取 640 × 360 的 8 位 BGR 彩色图像。
+
 可视化与结果
 ------------
 

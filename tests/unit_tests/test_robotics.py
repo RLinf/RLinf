@@ -9493,15 +9493,18 @@ def go2_sdk(monkeypatch):
     from robot_mocks.unitree_go2 import FakeGo2SDK
 
     from rlinf.robotics import go2_dds
+    from rlinf.robotics.parts.cameras.unitree_go2 import _video_client
     from rlinf.robotics.parts.mobility.unitree_go2 import _sport_transport
 
     monkeypatch.setattr(go2_dds, "_interface", None)
     _sport_transport.cache_clear()
+    _video_client.cache_clear()
     sdk = FakeGo2SDK()
     for name, module in sdk.modules().items():
         monkeypatch.setitem(sys.modules, name, module)
     yield sdk
     _sport_transport.cache_clear()
+    _video_client.cache_clear()
 
 
 @pytest.fixture
@@ -9513,6 +9516,60 @@ def connect_go2(go2_sdk, request):
         return base
 
     return connect
+
+
+def test_go2_camera_observation_and_reconnect(go2_sdk):
+    import cv2
+    import gymnasium as gym
+
+    from rlinf.robotics import Go2Config, RobotDiscovery
+
+    config = Go2Config(node_rank=0, interface="fake-go2")
+    resource = RobotDiscovery.registry["UnitreeGo2"].discovery_cls.enumerate(
+        0, [config]
+    )
+    for color in ((0, 0, 255), (255, 0, 0)):
+        sample = np.full((16, 16, 3), color, dtype=np.uint8)
+        encoded, jpeg = cv2.imencode(".jpg", sample)
+        assert encoded
+        go2_sdk.image_sample = (0, jpeg.tobytes())
+        env = gym.make(
+            "rlinf.envs.real.go2:Go2DriveEnv-v1",
+            override_cfg={"enable_front_camera": True},
+            worker_info=None,
+            robot_info=resource.infos[0],
+            env_idx=0,
+            env_cfg={},
+        )
+        try:
+            observation, _ = env.reset()
+            assert env.observation_space.contains(observation)
+            frame = observation["frames"]["front"]
+            assert frame.shape == (360, 640, 3)
+            np.testing.assert_allclose(frame[0, 0], color, atol=2)
+        finally:
+            env.close()
+    assert go2_sdk.events.count(("dds", 0, "fake-go2")) == 1
+    assert go2_sdk.events.count(("video_init",)) == 1
+    assert not go2_sdk.writes
+
+
+@pytest.mark.parametrize("sample", [(3103, b""), (0, b"invalid jpeg")])
+def test_go2_camera_failed_sample_times_out(go2_sdk, sample):
+    from queue import Empty
+
+    from rlinf.robotics.parts.cameras import Camera, CameraInfo
+
+    go2_sdk.image_sample = sample
+    info = CameraInfo(name="front", serial_number="fake-go2", camera_type="unitree_go2")
+    camera = Camera.of(info)
+    camera.connect()
+    try:
+        with pytest.raises(Empty, match="Camera front produced no frame"):
+            camera.get_frame(timeout=0.15)
+    finally:
+        camera.disconnect()
+    assert not go2_sdk.writes
 
 
 @pytest.mark.parametrize("motion", [False, True])

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Exclusive access to SDK2's process-wide Go2 channel factory."""
+"""Share SDK2's process-wide Go2 channel factory on one network interface."""
 
 import threading
 from collections.abc import Iterator
@@ -20,19 +20,19 @@ from contextlib import contextmanager
 
 _lock = threading.Lock()
 _interface: str | None = None
-_active = False
+_active_channels: set[str] = set()
 
 
 @contextmanager
-def go2_dds_session(interface: str) -> Iterator[None]:
-    """Own the shared Go2 factory until local channels have closed."""
+def go2_dds_session(interface: str, *, channel: str = "state") -> Iterator[None]:
+    """Hold the state or video channel on the process-wide factory."""
     from unitree_sdk2py.core.channel import ChannelFactory, Qos
 
-    global _active, _interface
+    global _interface
     with _lock:
-        if _active:
+        if channel in _active_channels:
             raise RuntimeError(
-                "Only one Go2 connection can have exclusive DDS ownership."
+                f"Only one Go2 {channel} connection can have exclusive DDS ownership."
             )
         if _interface is None:
             factory = ChannelFactory()
@@ -51,9 +51,9 @@ def go2_dds_session(interface: str) -> Iterator[None]:
             raise RuntimeError(
                 f"DDS interface is bound to {_interface}, requested {interface}."
             )
-        _active = True
+        _active_channels.add(channel)
     try:
         yield
     finally:
         with _lock:
-            _active = False
+            _active_channels.remove(channel)

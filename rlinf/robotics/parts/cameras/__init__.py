@@ -24,6 +24,7 @@ from .base import BaseCamera, Camera, CameraInfo
 from .lumos import LumosCamera
 from .orbbec import OrbbecCamera
 from .realsense import RealSenseCamera
+from .unitree_go2 import Go2FrontCamera
 from .uvc import UVCCamera
 from .v4l2 import V4L2Camera
 from .zed import ZEDCamera
@@ -32,6 +33,7 @@ __all__ = [
     "BaseCamera",
     "Camera",
     "CameraInfo",
+    "Go2FrontCamera",
     "LumosCamera",
     "OrbbecCamera",
     "RealSenseCamera",

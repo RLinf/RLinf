@@ -17,12 +17,14 @@
 from dataclasses import dataclass
 
 from ..discovery import RobotConfig
+from ..parts.cameras import Camera, CameraInfo
+from ..parts.cameras.unitree_go2 import GO2_FRONT_CAMERA_RESOLUTION
 from ..parts.mobility import MobileBase
 from ..robot import Robot
 
 
 class Go2Robot(Robot):
-    """Go2 composed under a single high-level base part."""
+    """Go2 composed from a high-level base and an optional front camera."""
 
     ROBOT_TYPE = "UnitreeGo2"
 
@@ -35,13 +37,28 @@ class Go2Robot(Robot):
         worker_rank: int = 0,
         env_idx: int = 0,
         enable_motion: bool = False,
+        enable_front_camera: bool = False,
         command_timeout: float = 0.5,
         state_timeout: float = 0.5,
         rpc_timeout: float = 1.0,
     ) -> "Go2Robot":
         """Declare a Go2 without connecting or changing its posture."""
         base_cls = MobileBase.backend("unitree_go2")
+        cameras = {}
+        if enable_front_camera:
+            cameras["front"] = Camera.of(
+                CameraInfo(
+                    name="front",
+                    serial_number=interface,
+                    camera_type="unitree_go2",
+                    resolution=GO2_FRONT_CAMERA_RESOLUTION,
+                ),
+                node_rank=node_rank,
+                worker_name=f"Go2FrontCamera-{worker_rank}-{env_idx}",
+            )
+        # Disconnect the base before waiting for the camera reader to stop.
         return cls(
+            **cameras,
             base=base_cls(
                 interface,
                 enable_motion=enable_motion,
@@ -50,7 +67,7 @@ class Go2Robot(Robot):
                 rpc_timeout=rpc_timeout,
                 node_rank=node_rank,
                 worker_name=f"{base_cls.__name__}-{worker_rank}-{env_idx}",
-            )
+            ),
         )
 
 
