@@ -76,6 +76,12 @@ Each experiment YAML imports a path-free model template through Hydra ``defaults
      - ``model/pi0``
      - ``robotwin_adjust_bottle_sft_openpi``
 
+If your dataset uses fewer cameras than the model has slots, set
+``actor.model.openpi.prune_invalid_image_slots=true`` for π₀.₅ SFT with short memory disabled.
+The vision encoder skips a camera when its mask is false for every sample in the current batch across all training ranks.
+If all cameras are masked, it keeps one slot for the backward pass. The option defaults to
+``false``.
+
 Setup and Run
 -------------
 

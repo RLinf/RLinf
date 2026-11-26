@@ -39,6 +39,8 @@ openpi:
   # model factory both build their transforms from it.
   config_name: "pi05_behavior"
   num_images_in_input: 3
+  # Ordinary pi0.5 SFT can skip camera slots masked on all training ranks.
+  prune_invalid_image_slots: False
   action_chunk: ${..num_action_chunks}
   action_env_dim: ${..action_dim}
   # Pi0 model shape: padded action dim, LLM/expert variants, prompt token budget.

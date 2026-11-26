@@ -1371,6 +1371,140 @@ def test_siglip_time_encoding_preserves_timestamp_precision():
     )
 
 
+def _image_slot_policy():
+    from rlinf.models.embodiment.openpi.modules.gemma import Embedder
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+
+    config = Pi0Config(
+        pi05=True,
+        paligemma_variant="dummy",
+        action_expert_variant="dummy",
+        action_dim=4,
+        action_horizon=2,
+        max_token_len=4,
+        dtype="float32",
+    )
+    matmul_precision = torch.get_float32_matmul_precision()
+    with torch.device("meta"):
+        policy = Pi0(config)
+        width = policy.llm.configs[0].width
+        policy.img = SigLIPViT(variant="mu/32", num_classes=width)
+        policy.llm.embedder = Embedder(16, width)
+    torch.set_float32_matmul_precision(matmul_precision)
+    policy.to_empty(device="cpu")
+    with torch.no_grad():
+        for parameter in policy.parameters():
+            parameter.normal_(std=0.1)
+    return policy, config
+
+
+@pytest.mark.parametrize(
+    ("masks", "kept"),
+    [
+        ([[1, 1], [1, 1], [1, 1]], [0, 1, 2]),
+        ([[1, 0], [0, 0], [0, 1]], [0, 2]),
+        ([[0, 0], [0, 0], [1, 1]], [2]),
+        ([[0, 0], [0, 0], [0, 0]], [0]),
+    ],
+    ids=["all-valid", "mixed", "third-only", "all-invalid"],
+)
+def test_openpi_image_slot_sft_loss_and_gradients(masks, kept, monkeypatch):
+    from rlinf.models.embodiment.openpi.modules import utils
+
+    monkeypatch.setattr(utils, "_torch_compile_enabled", False)
+    monkeypatch.setattr(utils, "_sdpa_attention_enabled", False)
+    torch.manual_seed(27)
+    policy, config = _image_slot_policy()
+    obs = config.fake_obs(batch_size=2)
+    obs.image_masks = dict(zip(IMAGE_KEYS, torch.tensor(masks, dtype=torch.bool)))
+    obs.images = {
+        key: (
+            torch.rand_like(obs.images[key]) * obs.image_masks[key][:, None, None, None]
+        ).requires_grad_()
+        for key in reversed(IMAGE_KEYS)
+    }
+    obs.tokenized_prompt_mask[0, -1] = False
+    actions = torch.randn_like(config.fake_act(batch_size=2))
+    inputs = {"noise": torch.randn_like(actions), "time": torch.tensor([0.2, 0.7])}
+    cameras, prefix_lengths = [], []
+    policy.img.register_forward_pre_hook(lambda _, args: cameras.append(args[0]))
+    policy.llm.register_forward_pre_hook(
+        lambda _, args: prefix_lengths.append(args[0][0].shape[1])
+    )
+
+    dense = policy.compute_loss(obs, actions, **inputs)
+    dense.mean().backward()
+    dense_grads = {
+        name: p.grad.clone()
+        for name, p in policy.named_parameters()
+        if p.grad is not None
+    }
+    image_grads = {key: image.grad.clone() for key, image in obs.images.items()}
+    for image in obs.images.values():
+        image.grad = None
+    policy.zero_grad(set_to_none=True)
+    assert len(cameras) == len(IMAGE_KEYS)
+    cameras.clear()
+
+    config.prune_invalid_image_slots = True
+    pruned = policy.compute_loss(obs, actions, **inputs)
+    pruned.mean().backward()
+    torch.testing.assert_close(cameras, [obs.images[IMAGE_KEYS[i]] for i in kept])
+    patches = policy.img.pos_embedding.shape[1]
+    assert prefix_lengths == [
+        n * patches + config.max_token_len for n in (3, len(kept))
+    ]
+    torch.testing.assert_close(pruned, dense)
+    grads = {
+        name: p.grad for name, p in policy.named_parameters() if p.grad is not None
+    }
+    torch.testing.assert_close(grads, dense_grads, rtol=2e-4, atol=2e-5)
+    for i, key in enumerate(IMAGE_KEYS):
+        if i in kept:
+            torch.testing.assert_close(
+                obs.images[key].grad, image_grads[key], rtol=2e-4, atol=2e-5
+            )
+        else:
+            assert (
+                obs.images[key].grad is None and image_grads[key].count_nonzero() == 0
+            )
+    assert bool(policy.img.stem.weight.grad.count_nonzero()) == any(map(any, masks))
+
+
+def _check_image_slot_rank(rank, store):
+    import torch.distributed as dist
+
+    dist.init_process_group("gloo", init_method=store, rank=rank, world_size=2)
+    try:
+        policy, config = _image_slot_policy()
+        obs = config.fake_obs()
+        obs.image_masks = {
+            key: torch.tensor([i == 2 * rank]) for i, key in enumerate(IMAGE_KEYS)
+        }
+        with torch.no_grad():
+            _, mask, _ = policy.embed_prefix(obs, prune_invalid_image_slots=True)
+        patches = policy.img.pos_embedding.shape[1]
+        expected = torch.cat(
+            [
+                obs.image_masks[key][:, None].expand(-1, patches)
+                for key in (IMAGE_KEYS[0], IMAGE_KEYS[2])
+            ]
+            + [obs.tokenized_prompt_mask],
+            dim=1,
+        )
+        torch.testing.assert_close(mask, expected)
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.skipif(not torch.distributed.is_gloo_available(), reason="requires Gloo")
+def test_openpi_image_slot_union_across_ranks(tmp_path):
+    torch.multiprocessing.spawn(
+        _check_image_slot_rank, args=((tmp_path / "store").as_uri(),), nprocs=2
+    )
+
+
 def test_openpi_prefix_preserves_camera_inputs(siglip_with_history):
     from rlinf.models.embodiment.openpi.pi0 import Pi0
 
@@ -1407,7 +1541,9 @@ def test_openpi_prefix_preserves_camera_inputs(siglip_with_history):
             decisions.append(kwargs["current_only"])
 
         handle = vision.register_forward_pre_hook(record_decision, with_kwargs=True)
-        actual, input_mask, _ = Pi0.embed_prefix(policy, observation)
+        actual, input_mask, _ = Pi0.embed_prefix(
+            policy, observation, prune_invalid_image_slots=True
+        )
         handle.remove()
 
     assert decisions == [False, True, True]

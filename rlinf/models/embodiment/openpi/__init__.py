@@ -131,7 +131,13 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         if drop_history_layer is not None:
             pi0_kwargs["short_memory_drop_history_layer"] = int(drop_history_layer)
 
-    pi0_config = Pi0Config(**pi0_kwargs)
+    task = OmegaConf.select(model_cfg, "task", default="sft")
+    task = str(task).lower() if task is not None else "sft"
+    pi0_config = Pi0Config(
+        **pi0_kwargs,
+        prune_invalid_image_slots=task == "sft"
+        and bool(model_cfg.get("prune_invalid_image_slots", False)),
+    )
     rlt_cfg = build_rlt_config(model_cfg, parent_cfg=cfg)
     runtime = {
         "num_steps": num_steps,
@@ -139,8 +145,6 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         "action_chunk": action_chunk,
     }
 
-    task = OmegaConf.select(model_cfg, "task", default="sft")
-    task = str(task).lower() if task is not None else "sft"
     if pi0_config.short_memory and task not in ("eval", "sft"):
         raise ValueError(
             f"openpi.short_memory supports task='eval' or 'sft'; got {task!r}. "

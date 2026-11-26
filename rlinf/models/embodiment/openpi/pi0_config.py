@@ -44,6 +44,7 @@ class Pi0Config:
     # the current frame.
     short_memory_temporal_layers: tuple[int, ...] = (3, 7, 11, 15)
     short_memory_drop_history_layer: int = 15
+    prune_invalid_image_slots: bool = False
 
     def __post_init__(self):
         if self.pi05 and self.max_token_len == 48:
