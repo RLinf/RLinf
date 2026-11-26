@@ -435,6 +435,7 @@ class TestDistillation(unittest.TestCase):
     def test_separate_async_derives_behavior_and_support(self):
         cfg = {
             "runner": {"execution_mode": "separate_async"},
+            "algorithm": {"sampling_params": {"temperature": 1.0}},
             "distillation": {
                 "enabled": True,
                 "teacher_models": {"x": {"model_path": "teacher"}},
@@ -444,10 +445,10 @@ class TestDistillation(unittest.TestCase):
         plan = build_distillation_plan(cfg)
         self.assertTrue(plan.separate_async and plan.need_old_logprobs)
         self.assertEqual((plan.target_format, plan.mc_k), ("mc", 4))
-        cfg["algorithm"] = {"recompute_logprobs": True}
+        cfg["algorithm"]["recompute_logprobs"] = True
         with self.assertRaisesRegex(ValueError, "behavior"):
             build_distillation_plan(cfg)
-        cfg.pop("algorithm")
+        del cfg["algorithm"]["recompute_logprobs"]
         loss.update(loss_mode="reverse_kl_topk", mc_k=1, topk_source="student")
         with self.assertRaisesRegex(ValueError, "Student top-k"):
             build_distillation_plan(cfg)
@@ -520,11 +521,13 @@ class TestDistillation(unittest.TestCase):
         cfg["rollout"]["sampling_params"] = sampling
         self.assertTrue(build_distillation_plan(cfg).use_policy_gradient)
 
-        cfg["algorithm"]["sampling_params"]["temperature"] = 0.5
-        with self.assertRaisesRegex(
-            ValueError, "algorithm.sampling_params.temperature"
-        ):
-            build_distillation_plan(cfg)
+        for actor_sampling in ({"temperature": 0.5}, {}, None):
+            with self.subTest(actor_sampling=actor_sampling):
+                cfg["algorithm"]["sampling_params"] = actor_sampling
+                with self.assertRaisesRegex(
+                    ValueError, r"algorithm\.sampling_params\.temperature"
+                ):
+                    build_distillation_plan(cfg)
 
     def test_async_joint_reward_grpo_uses_reasoning_preset(self):
         from contextlib import nullcontext
@@ -1208,6 +1211,7 @@ class TestDistillation(unittest.TestCase):
                 )
                 plan = build_distillation_plan(
                     {
+                        "algorithm": {"sampling_params": {"temperature": 1.0}},
                         "distillation": {
                             "enabled": True,
                             "teacher_models": {"default": {"model_path": "teacher"}},
@@ -1215,7 +1219,7 @@ class TestDistillation(unittest.TestCase):
                                 "loss_mode": mode,
                                 "use_policy_gradient": config.use_policy_gradient,
                             },
-                        }
+                        },
                     }
                 )
                 microbatch_metrics = []

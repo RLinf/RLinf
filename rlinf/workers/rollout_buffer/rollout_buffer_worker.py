@@ -518,7 +518,7 @@ class RolloutBufferWorker(Worker):
         self._resident_task: Optional[asyncio.Task] = None
         self._data_iter = None
         self._rollout_channel: Optional[Channel] = None
-        self._pending_fetch: Optional[asyncio.Future] = None
+        self._dataloader_lock = asyncio.Lock()
 
     async def run_continuously(
         self,
@@ -547,52 +547,29 @@ class RolloutBufferWorker(Worker):
             # stop(): in-flight prompts are dropped, the run is ending.
             return
         finally:
-            self._resident_task = None
             for task in (admission, receive):
                 task.cancel()
             await asyncio.gather(admission, receive, return_exceptions=True)
+            async with self._dataloader_lock:
+                self._resident_task = None
 
     async def _next_batch(self) -> Any:
-        """Pull the next dataloader batch without blocking the event loop.
-
-        A cold `next()` can block on disk even with prefetching workers;
-        blocking the loop would stall receive and the RPCs sharing it.
-        Restarts the dataloader at the end of an epoch.
-        """
-        if self._data_iter is None:
-            self._data_iter = iter(self.buffer.dataloader)
-
-        def _next():
-            return next(self._data_iter, None)
-
-        batch = await self._run_fetch(_next)
-        if batch is None:
-            self._data_iter = iter(self.buffer.dataloader)
-            batch = await self._run_fetch(_next)
-        return batch
-
-    async def _run_fetch(self, fetch) -> Any:
-        """Run one dataloader access in the executor and record the future.
-
-        `save_checkpoint` awaits the recorded future first: a
-        `state_dict()` taken while a `next()` is still running in the
-        thread pool would race with it (StatefulDataLoader is not
-        thread-safe).
-        """
-        loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(None, fetch)
-        self._pending_fetch = future
-        try:
-            return await future
-        finally:
-            if self._pending_fetch is future:
-                self._pending_fetch = None
+        """Advance the loader and its fetched count together, including at epoch end."""
+        async with self._dataloader_lock:
+            if self._data_iter is None:
+                self._data_iter = iter(self.buffer.dataloader)
+            batch = await asyncio.to_thread(next, self._data_iter, None)
+            if batch is None:
+                self._data_iter = iter(self.buffer.dataloader)
+                batch = await asyncio.to_thread(next, self._data_iter, None)
+            self.buffer.num_samples_fetched += len(batch["idx"])
+            return batch
 
     async def _run_admission(self, dataloader_channel: Channel):
         while True:
-            batch = await self._next_batch()
+            # Cancelling admission leaves the reader holding the lock until its I/O ends.
+            batch = await asyncio.shield(self._next_batch())
             sample_indices = batch["idx"].tolist()
-            self.buffer.num_samples_fetched += len(sample_indices)
             # One request carries one group (one prompt): the agent loop
             # starts one task per request and groups complete
             # independently, so a finished group can be buffered as soon
@@ -749,12 +726,12 @@ class RolloutBufferWorker(Worker):
         self, path: str, distillation_manifest: Optional[dict] = None
     ):
         """Write the dataloader state to `path/data.pt` atomically."""
-        if self._pending_fetch is not None:
-            await self._pending_fetch
-        state_dict = self.buffer.dataloader.state_dict()
-        sampler = self.buffer.dataloader.sampler
-        if isinstance(sampler, _RolloutRandomSampler):
-            state_dict["epoch_start_rng_state"] = sampler.epoch_start_rng_state
+        async with self._dataloader_lock:
+            state_dict = self.buffer.dataloader.state_dict()
+            fetched = self.buffer.num_samples_fetched
+            sampler = self.buffer.dataloader.sampler
+            if isinstance(sampler, _RolloutRandomSampler):
+                state_dict["epoch_start_rng_state"] = sampler.epoch_start_rng_state
         if distillation_manifest is not None:
             state_dict["distillation_manifest"] = distillation_manifest
         dropped = sum(
@@ -770,10 +747,10 @@ class RolloutBufferWorker(Worker):
         # released groups is skipped (in flight, buffered, or fetched
         # but not yet issued). Dropped groups are subtracted: their
         # prompts are never re-issued, resume or not.
-        skipped = self.buffer.num_samples_fetched - released - dropped
+        skipped = fetched - released - dropped
         self.log_info(
             f"RolloutBuffer checkpoint: fetched "
-            f"{self.buffer.num_samples_fetched} samples, {released} "
+            f"{fetched} samples, {released} "
             f"groups released to training, {dropped} dropped; a resume "
             f"will skip {skipped} prompts that were issued ahead of the "
             f"resume point."
@@ -807,18 +784,19 @@ class RolloutBufferWorker(Worker):
         state_dict = torch.load(local_path, weights_only=False)
         state_dict.pop("distillation_manifest", None)
         rng_state = state_dict.pop("epoch_start_rng_state", None)
-        sampler = self.buffer.dataloader.sampler
-        if isinstance(sampler, _RolloutRandomSampler):
-            if rng_state is None:
-                self.log_warning(
-                    "This checkpoint has no shuffle RNG state. Resuming from the "
-                    "configured seed may change sample order after the first epoch."
-                )
-            else:
-                sampler.generator.set_state(rng_state)
-                sampler.epoch_start_rng_state = rng_state
-        self.buffer.dataloader.load_state_dict(state_dict)
-        self._data_iter = None
+        async with self._dataloader_lock:
+            sampler = self.buffer.dataloader.sampler
+            if isinstance(sampler, _RolloutRandomSampler):
+                if rng_state is None:
+                    self.log_warning(
+                        "This checkpoint has no shuffle RNG state. Resuming from the "
+                        "configured seed may change sample order after the first epoch."
+                    )
+                else:
+                    sampler.generator.set_state(rng_state)
+                    sampler.epoch_start_rng_state = rng_state
+            self.buffer.dataloader.load_state_dict(state_dict)
+            self._data_iter = None
 
     async def stop(self):
         """Cancel the resident coroutines; in-flight prompts are dropped."""

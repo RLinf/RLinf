@@ -243,6 +243,15 @@ def _rollout_gpu_groups_by_node(
     return groups
 
 
+def model_parallel_size(model: DictConfig) -> int:
+    """Return the ranks per Megatron replica across tensor, context and pipeline axes."""
+    return (
+        model.get("tensor_model_parallel_size", 1)
+        * model.get("context_parallel_size", 1)
+        * model.get("pipeline_model_parallel_size", 1)
+    )
+
+
 class HybridComponentPlacement(ComponentPlacement):
     """Hybrid component placement that allows components to run on any sets of GPUs."""
 
@@ -647,19 +656,11 @@ class ModelParallelComponentPlacement(ComponentPlacement):
 
     @property
     def actor_dp_size(self) -> int:
-        return self._actor_num_gpus // (
-            self._config.actor.model.get("tensor_model_parallel_size", 1)
-            * self._config.actor.model.get("context_parallel_size", 1)
-            * self._config.actor.model.get("pipeline_model_parallel_size", 1)
-        )
+        return self._actor_num_gpus // model_parallel_size(self._config.actor.model)
 
     @property
     def critic_dp_size(self) -> int:
-        return self._critic_num_gpus // (
-            self._config.critic.model.get("tensor_model_parallel_size", 1)
-            * self._config.critic.model.get("context_parallel_size", 1)
-            * self._config.critic.model.get("pipeline_model_parallel_size", 1)
-        )
+        return self._critic_num_gpus // model_parallel_size(self._config.critic.model)
 
     @property
     def actor_tp_size(self) -> int:

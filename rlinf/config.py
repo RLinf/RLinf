@@ -34,6 +34,7 @@ from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
     PlacementMode,
+    model_parallel_size,
 )
 from rlinf.utils.precision import (
     torch_dtype_from_precision as torch_dtype_from_precision,
@@ -1894,7 +1895,7 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
 
 
 def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
-    """Validate SearchR1 multi-agent training requirements before launch."""
+    """Validate multi-turn batch sizes and SearchR1 requirements before launch."""
     from rlinf.algorithms.distillation.config import build_distillation_plan
 
     plan = build_distillation_plan(cfg)
@@ -1904,6 +1905,10 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             return _validate_async_agent_cfg(
                 cfg, ModelParallelComponentPlacement(cfg, Cluster()), plan
             )
+        if OmegaConf.select(
+            cfg, "agentloop.is_dynamic_rollout_batch"
+        ) and not cfg.runner.get("async_mode", False):
+            _validate_sync_agent_batch(cfg, HybridComponentPlacement(cfg, Cluster()))
         return cfg
 
     if not cfg.agentloop.get("is_dynamic_rollout_batch", False):
@@ -1984,13 +1989,18 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
         )
     if cfg.runner.get("async_mode", False) or plan.separate_async:
         return _validate_async_agent_cfg(cfg, component_placement, plan)
-    if cfg.algorithm.get("max_num_gen_batches", 1) != 1:
+    _validate_sync_agent_batch(cfg, component_placement)
+    return cfg
+
+
+def _validate_sync_agent_batch(cfg, component_placement):
+    multiplier = cfg.algorithm.get("max_num_gen_batches", 1)
+    if multiplier != 1:
         raise ValueError(
-            "Synchronous SearchR1 requires algorithm.max_num_gen_batches=1: "
-            "the actor consumes one rollout batch per update."
+            "Synchronous multi-turn training requires algorithm.max_num_gen_batches=1 "
+            f"because the actor consumes one rollout batch per update, found {multiplier}."
         )
     _validate_agent_group_count(cfg, component_placement)
-    return cfg
 
 
 def _validate_agent_group_count(cfg, component_placement):
@@ -1998,12 +2008,11 @@ def _validate_agent_group_count(cfg, component_placement):
     batch_size = cfg.data.get("rollout_batch_size")
     if batch_size is None:
         return
-    actor_dp_size = (
-        component_placement.get_world_size("actor")
-        if cfg.actor.training_backend == "fsdp"
-        else component_placement.actor_dp_size
-    )
-    if batch_size % actor_dp_size:
+    # The multi-turn launchers place one actor process on each actor accelerator.
+    actor_dp_size = len(component_placement.get_hardware_ranks("actor"))
+    if cfg.actor.training_backend == "megatron":
+        actor_dp_size //= model_parallel_size(cfg.actor.model)
+    if actor_dp_size < 1 or batch_size % actor_dp_size:
         raise ValueError(
             f"data.rollout_batch_size ({batch_size}) must be divisible by the "
             f"actor data-parallel size ({actor_dp_size})."

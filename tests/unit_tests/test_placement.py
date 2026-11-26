@@ -954,6 +954,7 @@ class TestSearchr1AsyncPauseModeDefaults:
                 },
                 "actor": {
                     "training_backend": "megatron",
+                    "model": {},
                     "enable_dp_load_balance": True,
                 },
                 "agentloop": {
@@ -989,7 +990,7 @@ class TestSearchr1AsyncPauseModeDefaults:
         placement.is_collocated = False
         placement.is_disaggregated = True
         placement.rollout_num_model_instances = 1
-        placement.actor_dp_size = 4
+        placement.get_hardware_ranks.return_value = list(range(4))
         with (
             mock.patch.object(cfg_mod, "Cluster"),
             mock.patch.object(
@@ -1035,6 +1036,7 @@ class TestSearchr1AsyncBatchDivisibility:
                 },
                 "actor": {
                     "training_backend": "megatron",
+                    "model": {},
                     "enable_dp_load_balance": True,
                 },
                 "agentloop": {
@@ -1066,7 +1068,7 @@ class TestSearchr1AsyncBatchDivisibility:
         placement.is_collocated = False
         placement.is_disaggregated = True
         placement.rollout_num_model_instances = 1
-        placement.actor_dp_size = actor_dp_size
+        placement.get_hardware_ranks.return_value = list(range(actor_dp_size))
         with (
             mock.patch.object(cfg_mod, "Cluster"),
             mock.patch.object(
@@ -1130,6 +1132,40 @@ class TestSearchr1AsyncBatchDivisibility:
         assert cfg.data.rollout_batch_size == 8
 
 
+@pytest.mark.parametrize(
+    ("batch_size", "multiplier", "actor_placement", "error"),
+    [
+        (4, 1, "0-1", None),
+        (3, 1, "0-1", r"actor data-parallel size \(2\)"),
+        (3, 1, "0-1:0", r"actor data-parallel size \(2\)"),
+        (4, 2, "0-1", "max_num_gen_batches=1"),
+    ],
+)
+def test_envscaler_sync_actor_quota(batch_size, multiplier, actor_placement, error):
+    from pathlib import Path
+
+    import rlinf.config as cfg_mod
+
+    cfg = OmegaConf.load(
+        Path(__file__).resolve().parents[2]
+        / "examples/agent/envscaler/config/train.yaml"
+    )
+    cfg.cluster.component_placement = {
+        "actor": actor_placement,
+        "rollout,reward": "0-1",
+    }
+    cfg.data.rollout_batch_size = batch_size
+    cfg.algorithm.group_size = 2
+    cfg.algorithm.n_minibatches = 1
+    cfg.algorithm.max_num_gen_batches = multiplier
+    with mock.patch.object(cfg_mod, "Cluster", return_value=create_fake_cluster(1, 2)):
+        if error:
+            with pytest.raises(ValueError, match=error):
+                cfg_mod.validate_cfg(cfg)
+        else:
+            cfg_mod.validate_cfg(cfg)
+
+
 class TestSearchr1AsyncDiscardConfig:
     """validate_searchr1_cfg: discard-related validation of async runs."""
 
@@ -1154,6 +1190,7 @@ class TestSearchr1AsyncDiscardConfig:
                 },
                 "actor": {
                     "training_backend": "megatron",
+                    "model": {},
                     "enable_dp_load_balance": True,
                 },
                 "agentloop": {
@@ -1180,7 +1217,7 @@ class TestSearchr1AsyncDiscardConfig:
         placement = MagicMock()
         placement.is_collocated = False
         placement.is_disaggregated = True
-        placement.actor_dp_size = actor_dp_size
+        placement.get_hardware_ranks.return_value = list(range(actor_dp_size))
         placement.rollout_num_model_instances = 1
         with (
             mock.patch.object(cfg_mod, "Cluster"),
@@ -2300,6 +2337,7 @@ class TestSearchr1AsyncAdmissionCfg:
                 },
                 "actor": {
                     "training_backend": "megatron",
+                    "model": {},
                     "enable_dp_load_balance": True,
                 },
                 "agentloop": {
@@ -2341,7 +2379,7 @@ class TestSearchr1AsyncAdmissionCfg:
         placement = MagicMock()
         placement.is_collocated = False
         placement.is_disaggregated = True
-        placement.actor_dp_size = 4
+        placement.get_hardware_ranks.return_value = list(range(4))
         placement.rollout_num_model_instances = 2
         with (
             mock.patch.object(cfg_mod, "Cluster"),
@@ -2413,6 +2451,7 @@ class TestSearchr1AsyncAdmissionCfg:
                 "distillation.enabled": True,
                 "distillation.teacher_models.math.model_path": "teacher",
                 "distillation.distillation_loss.mc_k": 4,
+                "algorithm.sampling_params.temperature": 1.0,
                 "algorithm.staleness_threshold": threshold,
             }
         )

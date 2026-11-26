@@ -254,15 +254,16 @@ def build_distillation_plan(cfg: Mapping) -> DistillationPlan:
         )
     if loss.use_policy_gradient:
         rollout = cfg.get("rollout", {})
+        actor_sampling = algorithm.get("sampling_params") or {}
         sampling = (
             rollout.get("sampling_params")
             if rollout.get("rollout_backend", "sglang") == "sglang"
             else None
         )
         if sampling is None:
-            sampling = algorithm.get("sampling_params", {})
+            sampling = actor_sampling
         validate_pg_sampling(sampling)
-        actor_temperature = algorithm.get("sampling_params", {}).get("temperature", 1.0)
+        actor_temperature = actor_sampling.get("temperature")
         if actor_temperature != 1.0:
             raise ValueError(
                 "Distillation PG requires algorithm.sampling_params.temperature=1 "

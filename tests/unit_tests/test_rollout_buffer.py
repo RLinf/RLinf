@@ -23,6 +23,7 @@ coroutines over fake channels. No Ray or sglang is launched.
 import asyncio
 import os
 import tempfile
+import threading
 from types import SimpleNamespace
 from unittest import mock
 
@@ -54,6 +55,7 @@ def _cfg(
     algorithm = {
         "group_size": 2,
         "max_num_gen_batches": 1,
+        "sampling_params": {"temperature": 1.0},
     }
     if reject_equal_reward:
         algorithm["down_sampling"] = {
@@ -208,7 +210,7 @@ def _make_worker(
     worker._resident_task = None
     worker._data_iter = None
     worker._rollout_channel = None
-    worker._pending_fetch = None
+    worker._dataloader_lock = asyncio.Lock()
     return worker
 
 
@@ -681,12 +683,15 @@ class TestCheckpoint:
     """Dataloader checkpoint round-trip of the buffer."""
 
     @staticmethod
-    def _make_worker(cfg):
+    def _make_worker(cfg, dataset=None):
         worker = RolloutBufferWorker.__new__(RolloutBufferWorker)
-        worker.buffer = RolloutBuffer(cfg, _ToyDataset(8))
+        worker._data_iter = None
+        worker.buffer = RolloutBuffer(
+            cfg, _ToyDataset(8) if dataset is None else dataset
+        )
         worker.log_warning = mock.MagicMock()
         worker.log_info = mock.MagicMock()
-        worker._pending_fetch = None
+        worker._dataloader_lock = asyncio.Lock()
         return worker
 
     def test_save_then_load_resumes_the_iteration_position(self):
@@ -710,7 +715,6 @@ class TestCheckpoint:
 
         async def run():
             original = self._make_worker(cfg)
-            original._data_iter = None
             await original.save_checkpoint(tmp_path)
             batches = len(original.buffer.dataloader)
             for _ in range(batches + 1):
@@ -720,6 +724,46 @@ class TestCheckpoint:
             await restored.load_checkpoint(tmp_path, start_step=batches + 1)
             for _ in range(batches * 2 - 1):
                 expected = await original._next_batch()
+                actual = await restored._next_batch()
+                assert actual["idx"].tolist() == expected["idx"].tolist()
+
+        asyncio.run(run())
+
+    def test_save_during_epoch_rollover(self, tmp_path):
+        cfg = _cfg(rollout_batch_size=2, shuffle=True)
+
+        async def run():
+            loop = asyncio.get_running_loop()
+            reading = asyncio.Event()
+            resume_read = threading.Event()
+
+            class PausedDataset(_ToyDataset):
+                def __getitem__(self, idx):
+                    if pause:
+                        loop.call_soon_threadsafe(reading.set)
+                        assert resume_read.wait(timeout=10)
+                    return super().__getitem__(idx)
+
+            pause = False
+            worker = self._make_worker(cfg, PausedDataset(8))
+            for _ in range(len(worker.buffer.dataloader)):
+                await worker._next_batch()
+
+            pause = True
+            fetch = asyncio.create_task(worker._next_batch())
+            saving = asyncio.create_task(worker.save_checkpoint(tmp_path))
+            try:
+                await asyncio.wait_for(reading.wait(), timeout=10)
+                assert not saving.done()
+            finally:
+                resume_read.set()
+                await asyncio.gather(fetch, saving)
+
+            assert "fetched 10 samples" in worker.log_info.call_args.args[0]
+            restored = self._make_worker(cfg)
+            await restored.load_checkpoint(tmp_path, start_step=4)
+            for _ in range(len(worker.buffer.dataloader)):
+                expected = await worker._next_batch()
                 actual = await restored._next_batch()
                 assert actual["idx"].tolist() == expected["idx"].tolist()
 
