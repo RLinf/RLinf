@@ -124,7 +124,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
             bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp \
               rollout.model.model_path=./Qwen2.5-3B-Instruct 'data.train_data_paths=["./Search-R1-Data/train.jsonl"]'
 
-         **Reduce LM-head GPU memory:** When long sequences hit memory limits, append ``actor.model.lm_head_chunk_size=256`` to any Megatron training command to compute LM-head logits in 256-token chunks and reduce peak GPU memory.
+         **Reduce LM-head GPU memory:** When long sequences hit memory limits, append ``+actor.model.lm_head_chunk_size=256`` to any Megatron training command to compute logits in 256-token chunks.
 
          **Export checkpoints to Hugging Face and evaluate** (uses ``examples/agent/searchr1/config/eval_qwen2.5.yaml``):
 
