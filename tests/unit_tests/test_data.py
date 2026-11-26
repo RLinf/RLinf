@@ -5197,10 +5197,17 @@ def test_rpent_planner_reads_each_chat_with_its_own_images(
             ids = torch.tensor([[1, 2, 50, 51, 90, 10]])
         return {"input_ids": ids, "attention_mask": torch.ones_like(ids)}
 
+    def encode_text(text, *, add_special_tokens):
+        assert not add_special_tokens
+        return {"<|im_end|>": [90], "<|im_end|>\n": [90, 10]}[text]
+
     processor = Mock()
     processor.apply_chat_template.side_effect = encode
     processor.tokenizer.eos_token = "<|im_end|>"
-    processor.tokenizer.encode.return_value = [90, 10]
+    processor.tokenizer.encode.side_effect = encode_text
+    processor.tokenizer.decode.side_effect = lambda token_ids, **_: ",".join(
+        map(str, token_ids.tolist())
+    )
     monkeypatch.setattr(AutoProcessor, "from_pretrained", lambda path: processor)
     worker = object.__new__(FSDPVlmSftWorker)
     worker.cfg = OmegaConf.create(
@@ -5222,7 +5229,8 @@ def test_rpent_planner_reads_each_chat_with_its_own_images(
     loader, _ = worker.build_dataloader(paths)
 
     for item, path in zip(loader.dataset, paths, strict=True):
-        assert item.prompt[~item.label_mask].tolist() == [50, 51]
+        assert item.prompt[~item.label_mask].tolist() == [50, 51, 90]
+        assert item.answer == "50,51"
         _, history, observation, target = item.prompt_text["messages"]
         view = {"type": "image", "image": str(Path(path).parent / "images/scene.png")}
         assert observation["content"] == [view, text, view]
@@ -5236,6 +5244,12 @@ def test_rpent_planner_reads_each_chat_with_its_own_images(
             }
             for call in calls
         ]
+
+    eval_loader, _ = worker.build_dataloader(paths, eval_dataset=True)
+    for item in eval_loader.dataset:
+        assert item.prompt.tolist() == [1, 2]
+        assert item.label_mask.tolist() == [True, True]
+        assert item.answer == "50,51"
 
 
 @pytest.mark.parametrize("use_chat_template", [False, True])

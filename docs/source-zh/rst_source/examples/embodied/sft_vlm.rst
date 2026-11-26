@@ -7,12 +7,12 @@ Qwen-VL 监督微调
 
    Qwen2.5-VL 在 Robo2VLM 视觉问答数据集上的监督微调。
 
-使用 RLinf 对视觉-语言模型（Qwen2.5-VL、Qwen3-VL、Qwen3-VL-MoE）做 **全量监督微调（Full-parameter SFT）**——完成训练、评估，并将检查点转换为 HuggingFace 格式。
+使用 RLinf 微调视觉语言模型：在 Robo2VLM 视觉问答数据上对 Qwen2.5-VL、Qwen3-VL 和 Qwen3-VL-MoE 做\ **全量 SFT** 与评估，或在 RPent 多轮规划数据上对 Qwen3.8-27B 做\ **全量与 LoRA** SFT，并将训练后的 checkpoint 导出为 HuggingFace 格式。
 
 概览
 ----------------------------------------
 
-在 Robo2VLM 视觉问答数据集上对 Qwen-VL 系列模型做全量 SFT，使用 FSDP 并内置评估。
+两个流程均使用 FSDP 并通过 ``examples/sft/run_vlm_sft.sh`` 启动，按下方标签页完成环境配置与训练。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -25,22 +25,22 @@ Qwen-VL 监督微调
    .. grid-item-card:: 方法
       :text-align: center
 
-      Full-parameter SFT · LoRA
+      全量 SFT · LoRA
 
    .. grid-item-card:: 数据
       :text-align: center
 
-      Robo2VLM (visual QA) · RPent
+      Robo2VLM（视觉问答）· RPent
 
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1–2 节点 · GPU
+      1–2 节点 · GPU（27B LoRA 需 4 × 80 GB 起）
 
-| **你将完成：** 安装环境 → 下载模型与 Robo2VLM → 修改配置 → 启动 ``run_vlm_sft.sh`` → 观察 loss 与评估准确率。
-| **前置条件：** :doc:`安装 </rst_source/start/installation>` · Qwen-VL 权重 · Robo2VLM 数据集。
+| **你将完成：**\ 安装环境 → 准备模型权重与数据（Robo2VLM 或 RPent JSONL）→ 启动 ``run_vlm_sft.sh`` → 观察 loss 与指标并导出 HuggingFace 权重。
+| **前置条件：**\ :doc:`安装 </rst_source/start/installation>` · Qwen-VL 或 Qwen3.8-27B 权重 · Robo2VLM 或 RPent 数据集。
 
-本示例围绕启动脚本 ``examples/sft/run_vlm_sft.sh`` 和训练配置 ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` 展开。
+.. _rpent-planner-sft:
 
 安装与运行
 ----------
@@ -91,6 +91,80 @@ Qwen-VL 监督微调
       .. code-block:: bash
 
          bash examples/sft/run_vlm_sft.sh qwen2_5_vl_sft_vlm
+
+   .. tab-item:: Qwen3.8-27B（RPent）
+
+      使用 ``examples/sft/config/qwen3_8_27b_rpent_sft.yaml`` 在 `RPent <https://github.com/RLinf/RPent>`_ 多轮规划数据上微调 Qwen3.8-27B（``qwen3_5`` 架构），仅对目标 assistant 回复与工具调用计算 loss。LoRA 微调已在 4 × A800 80 GB GPU 上验证，27B 全量微调需要更多 GPU。
+
+      **1. 安装环境**
+
+      安装默认 ``agentic --engine sglang`` 环境（已固定 ``transformers==5.6.1``，直接支持 ``qwen3_5``）：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
+
+      **2. 下载权重并准备数据**
+
+      从 HuggingFace 下载 Qwen3.8-27B 权重：
+
+      .. code-block:: bash
+
+         hf download Qwen/Qwen3.8-27B --local-dir ./Qwen3.8-27B
+
+      准备 RPent JSONL 文件或目录（相对图片路径以所在 JSONL 文件目录为准）：
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 78
+
+         * - 字段
+           - 说明
+         * - ``episode_id``、``turn_id``
+           - episode 与轮次标识。
+         * - ``tools``
+           - 可用工具定义，每项包含 ``name``、``description`` 与 ``input_schema``。
+         * - ``messages``
+           - 对话历史，每条消息包含 ``role``、``content`` 内容块（``text`` 或 ``image``）、可选 ``tool_calls`` 与 ``tool_call_id``。
+         * - ``target``
+           - 目标 assistant 轮次，包含 ``role: "assistant"``、``content`` 与可选 ``tool_calls``。
+
+      单条 JSONL 记录最小示例（为便于阅读已按多行排版）：
+
+      .. code-block:: json
+
+         {
+           "episode_id": "ep_001",
+           "turn_id": "P1",
+           "tools": [{"name": "look", "description": "Inspect view", "input_schema": {"type": "object"}}],
+           "messages": [
+             {"role": "user", "content": [{"type": "text", "text": "Find the cup."}]},
+             {"role": "assistant", "content": [], "tool_calls": [{"id": "c1", "name": "look", "arguments": {"view": 1}}]},
+             {"role": "tool", "tool_call_id": "c1", "content": [
+               {"type": "image", "artifact": {"path": "images/view1.png"}},
+               {"type": "text", "text": "Cup on left"}
+             ]}
+           ],
+           "target": {"role": "assistant", "content": [{"type": "text", "text": "Picking up the cup."}]}
+         }
+
+      **3. 启动训练**
+
+      将 ``RPENT_SAMPLES_PATH`` 设为 JSONL 文件或目录，将 ``QWEN3_8_MODEL_PATH`` 设为本地权重路径，然后在仓库根目录启动全量或 rank-16 LoRA 微调：
+
+      .. code-block:: bash
+
+         export RPENT_SAMPLES_PATH=./rpent_samples.jsonl
+         export QWEN3_8_MODEL_PATH=./Qwen3.8-27B
+
+         # 全量监督微调（默认）
+         bash examples/sft/run_vlm_sft.sh qwen3_8_27b_rpent_sft
+
+         # LoRA 监督微调（语言模型注意力与 MLP 层，rank 16）
+         bash examples/sft/run_vlm_sft.sh qwen3_8_27b_rpent_sft actor.model.is_lora=true
+
+      训练完成后，按下方“检查点转换（FSDP 转 HuggingFace）”导出或合并权重，再到 RPent / RoboTwin 环境中评测规划效果。
 
 .. dropdown:: 进阶配置与字段说明
 
@@ -165,22 +239,17 @@ Qwen-VL 监督微调
 
 .. dropdown:: 检查点转换（FSDP 转 HuggingFace）
 
-   FSDP SFT 默认保存 ``full_weights.pt``。如需导出 HuggingFace 格式，在内置的 ``fsdp_model_convertor`` 配置中填写：
-
-   - ``convertor.ckpt_path``：指向 ``full_weights.pt``
-   - ``convertor.save_path``：输出 HF 权重目录
-   - ``model.model_path``：原始基座模型路径
-   - ``model.model_type``：模型类型（``qwen2.5_vl``、``qwen3_vl``、``qwen3_vl_moe`` 或 ``qwen3_5``）
-
-   然后运行内置转换工具：
+   FSDP SFT 默认将完整权重保存为 ``full_weights.pt``。在仓库根目录传入本次训练保存的 ``config.yaml``，即可导出 HuggingFace 权重：
 
    .. code-block:: bash
 
+      export REPO_PATH=$(pwd)
       python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
-          --config-path rlinf/utils/ckpt_convertor/fsdp_convertor/config \
-          --config-name fsdp_model_convertor
+          +convertor.train_config_path=./logs/<timestamp>/tensorboard/config.yaml \
+          convertor.ckpt_path=./logs/<timestamp>/<experiment_name>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt \
+          convertor.save_path=./hf_converted_model
 
-   转换 Qwen3.8-27B 或 LoRA checkpoint 时，用 ``+convertor.train_config_path`` 传入本次训练保存的 ``logs/<timestamp>/tensorboard/config.yaml``。默认将 LoRA adapter 合并回基座权重；设置 ``convertor.merge_lora_weighs=False`` 则仅将 adapter 导出到 ``lora_adapter/`` 目录。详见 :doc:`检查点转换 <../../guides/convertor>`。
+   将 ``<timestamp>``、``<experiment_name>`` 和 ``<N>`` 替换为实际训练目录中的值。转换 LoRA checkpoint 时，默认将 adapter 合并回基座权重；传入 ``convertor.merge_lora_weighs=False`` 则仅将 adapter 导出到 ``lora_adapter/`` 目录。详见 :doc:`检查点转换 <../../guides/convertor>`。
 
 .. dropdown:: 常见报错与排查
 
@@ -199,51 +268,12 @@ Qwen-VL 监督微调
       * - 快速跑通流程
         - 使用小数据子集，设 ``max_epochs: 1``，并调小 ``save_interval`` 以便观察。
 
-.. dropdown:: RPent 规划器监督微调（Qwen3.8-27B）
-   :name: rpent-planner-sft
-
-   使用 ``examples/sft/config/qwen3_8_27b_rpent_sft.yaml`` 可在 `RPent <https://github.com/RLinf/RPent>`_ 规划器多轮数据上微调 Qwen3.8-27B（``qwen3_5`` 架构）。相对图片路径以所在 JSONL 文件目录为准，仅对目标 assistant 回复和工具调用计算 loss。
-
-   复用上方安装的 ``agentic --engine sglang`` 环境，并确保 ``transformers`` 版本支持 ``qwen3_5``。
-
-   将 ``RPENT_SAMPLES_PATH`` 设为 JSONL 文件或目录，将 ``QWEN3_8_MODEL_PATH`` 设为本地权重路径（不设置则默认从 HuggingFace 拉取 ``Qwen/Qwen3.8-27B``）。然后在仓库根目录启动全量或 rank-16 LoRA 微调：
-
-   .. code-block:: bash
-
-      export RPENT_SAMPLES_PATH=./rpent_samples.jsonl
-      export QWEN3_8_MODEL_PATH=./Qwen3.8-27B
-
-      # 全量监督微调（默认）
-      bash examples/sft/run_vlm_sft.sh qwen3_8_27b_rpent_sft
-
-      # LoRA 监督微调（语言模型注意力与 MLP 层，rank 16）
-      bash examples/sft/run_vlm_sft.sh qwen3_8_27b_rpent_sft actor.model.is_lora=true
-
-   每条 JSONL 记录包含以下字段：
-
-   .. list-table::
-      :header-rows: 1
-      :widths: 22 78
-
-      * - 字段
-        - 说明
-      * - ``episode_id``、``turn_id``
-        - episode 与轮次标识。
-      * - ``tools``
-        - 可用工具定义。
-      * - ``messages``
-        - 对话历史。
-      * - ``target``
-        - 目标 assistant 回复与工具调用。
-
-   训练完成后，按上方“检查点转换”用 ``+convertor.train_config_path`` 传入本次训练保存的 ``config.yaml``，即可导出或合并为 HuggingFace 权重。
-
 可视化与结果
 ----------------------------------------
 
 正常训练中 **loss** 下降、**评估准确率** 上升。运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``logs/<timestamp>`` 中的曲线，指标含义见 :doc:`训练指标 <../../reference/metrics>`。
 
-不同规模模型的参考结果：
+不同规模模型的参考结果（Robo2VLM）：
 
 .. list-table::
    :header-rows: 1
@@ -265,6 +295,8 @@ Qwen-VL 监督微调
      - 2 × 8 × A100
      - 1000
      - 58.4% → 91.3%
+
+**Qwen3.8-27B（RPent）**\ ：训练时在 TensorBoard 中观察 ``train/loss``。在 4 × A800 80 GB GPU 上以 ``actor.model.lora_rank=592`` 训练 48 步 LoRA 后，最终 ``train/loss`` 降至 0.199；合并权重后，RoboTwin 规划任务的成功 episode 数从基座模型的 8 提升到 14。
 
 **Qwen2.5-VL-3B** —— 每 1000 次迭代的评估准确率、grad_norm 与 loss 曲线：
 

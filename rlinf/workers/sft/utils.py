@@ -49,6 +49,7 @@ def vlm_extract_answer(text: str, model_type) -> str:
         SupportedModel.QWEN2_5_VL_SFT,
         SupportedModel.QWEN3_VL_SFT,
         SupportedModel.QWEN3_VL_MOE_SFT,
+        SupportedModel.QWEN3_5_SFT,
     ]:
         raise ValueError(f"not support such model type {model_type} for SFT right now.")
 

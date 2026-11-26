@@ -113,9 +113,15 @@ class RPentPlannerSFTDataset(VLMBaseDataset):
                 f"exceeding max_prompt_length={self.max_prompt_length}"
             )
 
-        # Qwen closes the assistant turn with EOS and a newline after its payload.
+        # Qwen closes the assistant turn with EOS and a newline; supervise EOS so
+        # generation stops, but exclude both from the decoded reference answer.
         tokenizer = self._processor.tokenizer
+        eos = tokenizer.encode(tokenizer.eos_token, add_special_tokens=False)
         ending = tokenizer.encode(tokenizer.eos_token + "\n", add_special_tokens=False)
+        if not eos or len(ending) <= len(eos) or ending[: len(eos)] != eos:
+            raise ValueError(
+                f"Expected EOS+newline tokens {ending} to extend EOS tokens {eos}"
+            )
         stop = full_ids.numel() - len(ending)
         if full_ids[stop:].tolist() != ending or stop <= start:
             raise ValueError(
@@ -125,7 +131,8 @@ class RPentPlannerSFTDataset(VLMBaseDataset):
         inputs = prefix if self.eval_dataset else full
         ids = inputs.pop("input_ids")[0]
         label_mask = torch.ones_like(ids, dtype=torch.bool)
-        label_mask[start:stop] = False
+        if not self.eval_dataset:
+            label_mask[start : stop + len(eos)] = False
         return SftDatasetItem(
             prompt=ids,
             length=ids.numel(),

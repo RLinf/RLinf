@@ -2154,3 +2154,24 @@ def test_dynamic_rollout_metrics_allow_empty_dp_rank(tmp_path, empty_rank):
         nprocs=2,
         join=True,
     )
+
+
+@pytest.mark.parametrize(
+    "model_type",
+    ["qwen2.5_vl", "qwen3_vl", "qwen3_vl_moe", "qwen3_5"],
+)
+def test_vlm_extract_answer_supports_qwen_sft_models(model_type):
+    from rlinf.workers.sft.utils import vlm_extract_answer
+
+    text = (
+        "<|im_start|>assistant\n<think>reason</think>"
+        "Final answer is: A. left.<|im_end|>"
+    )
+    assert vlm_extract_answer(text, model_type) == "A. left"
+
+
+def test_vlm_extract_answer_rejects_unsupported_model():
+    from rlinf.workers.sft.utils import vlm_extract_answer
+
+    with pytest.raises(ValueError, match="openvla"):
+        vlm_extract_answer("Done.", "openvla")
