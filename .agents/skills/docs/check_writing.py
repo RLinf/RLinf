@@ -52,6 +52,16 @@ AGENTIC_PROJECT_INDEX = re.compile(
 )
 RECIPE_NON_RUNNABLE = ("retriever.rst", "tools.rst", "video_models.rst")
 RECIPE_SECTIONS = {"en": ("Setup and Run",), "zh": ("安装与运行",)}
+LEGACY_SPLIT_SECTIONS = {
+    "en": {
+        "Run It": "fold launch commands into the unified 'Setup and Run' tab-set instead of a separate 'Run It' section",
+        "Run on Different Hardware Backends": "place non-CUDA backends as flat tabs (:sync: rocm/ascend/musa) inside 'Setup and Run' with .. _<recipe>-hardware: above it",
+    },
+    "zh": {
+        "运行": "将启动命令整合到统一的“安装与运行”tab-set 中，不再单独拆出“运行”大节",
+        "在不同硬件后端上运行": "将非 CUDA 后端以平铺标签页（:sync: rocm/ascend/musa）并入“安装与运行”，并在其上方放置 .. _<recipe>-hardware: 锚点",
+    },
+}
 AGENTIC_OVERVIEW_SECTIONS = {"en": "Overview", "zh": "概览"}
 GENERIC_SECTIONS = {
     "Algorithm",
@@ -301,13 +311,23 @@ def check_page(
 
     is_index = rel.endswith(("/index.rst", "_index.rst")) and not is_agentic_leaf_index
     is_agentic = "/rst_source/examples/agentic/" in rel
-    if (
-        (new or is_agentic)
-        and not is_index
+    is_runnable_recipe = (
+        not is_index
         and ":orphan:" not in source[:240]
-        and RECIPE_PAGE.match(rel)
+        and bool(RECIPE_PAGE.match(rel))
         and not rel.endswith(RECIPE_NON_RUNNABLE)
-    ):
+    )
+    if is_runnable_recipe:
+        page_headings = headings(lines)
+        titles = {title for _, title in page_headings}
+        required = RECIPE_SECTIONS[lang]
+        legacy_map = LEGACY_SPLIT_SECTIONS[lang]
+        for number, title in page_headings:
+            if title in legacy_map:
+                if title in ("Run It", "运行") and required[0] not in titles:
+                    continue
+                add("major", number, "docs/structure", legacy_map[title])
+    if (new or is_agentic) and is_runnable_recipe:
         titles = {title for _, title in headings(lines)}
         required = RECIPE_SECTIONS[lang]
         missing = [s for s in required if s not in titles]

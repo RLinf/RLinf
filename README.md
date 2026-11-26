@@ -43,10 +43,11 @@ bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin
 bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 ```
 
-That launches ManiSkill3 PPO MLP training on one GPU. Next, follow the [Quick Start](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html) for OpenVLA / OpenVLA-OFT PPO training, read the [RLinf Walkthrough](https://rlinf.readthedocs.io/en/latest/rst_source/start/walkthrough.html) for a visual tour of the framework and repo layout, try the [5-Minute Evaluation Quick Tour](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/get_started/quick_tour.html), or browse [Embodied Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) and the [Installation Guide](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html).
+That launches ManiSkill3 PPO MLP training on one GPU. Next, read the [RLinf Walkthrough](https://rlinf.readthedocs.io/en/latest/rst_source/start/walkthrough.html) for a visual tour of the framework and repo layout, or browse the [Embodied Examples](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) and [Agentic Examples](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/index.html).
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports SuperMimic for Unitree G1 whole-body motion tracking with a differentiable world model in MuJoCo Warp, including multi-GPU FSDP2 scaling, CUDA graphs, and bf16 mixed precision. On NVIDIA A800, it reaches **1.34×** throughput on 1 GPU (0.383 s vs. 0.515 s/update) and **2.27×** on 4 GPUs (0.227 s/update, 6000 updates in ~23 min) over the official single-GPU code, and reaches **0.856** normalized return on 40 LAFAN1 clips (paper: 0.82) with **0** falls. Doc: [SuperMimic](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/supermimic.html).
 - [2026/11] 🔥 RLinf supports FlexRLT: train a compact actor-critic from frozen VLA features, with configurable heads, AC/TD3 updates, and STEAM routing. Doc: [FlexRLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html).
 - [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
 - [2026/11] 🔥 RLinf supports [high-level motion control on the Unitree Go2 EDU](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/go2.html).
@@ -240,6 +241,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robolab.html">RoboLab (evaluation only)</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/g1_mimic.html">G1 Motion Tracking (MuJoCo Warp)</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -312,6 +314,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opd.html">OPD</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/diffusion_art.html">DiffusionART</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html">ReFL</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/supermimic.html">SuperMimic</a> ✅</li>
           </ul>
           <li><b>SFT</b></li>
           <ul>

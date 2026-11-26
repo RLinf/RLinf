@@ -220,6 +220,16 @@ class EmbodiedRunner:
         )
         env_results = env_handle.wait()
         rollout_handle.wait()
+        finalized = (
+            self.env.execute_on(0)
+            .finalize_eval_results(env_results, step=self.global_step)
+            .wait()[0]
+        )
+        if finalized is not None:
+            eval_metrics, out_dir = finalized
+            if out_dir is not None:
+                self.logger.info(f"Wrote evaluation results to {out_dir}")
+            return eval_metrics
         eval_metrics_list = [results for results in env_results if results is not None]
         eval_metrics = compute_evaluate_metrics(eval_metrics_list)
         return eval_metrics
