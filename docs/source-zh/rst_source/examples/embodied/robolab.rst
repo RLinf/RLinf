@@ -1,4 +1,4 @@
-RoboLab 评估
+RoboLab 评测
 ============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png
@@ -74,10 +74,51 @@ RoboLab 是基于 Isaac Sim 的机器人操作 benchmark，包含 120 个任务�
    * - Prompt
      - 任务元数据中的自然语言指令。
 
-运行评估
---------
+安装与运行
+----------
 
-按照 :doc:`评估指南 <../../evaluations/guides/robolab>` 安装环境、下载 checkpoint、配置任务并运行评估。
+.. include:: _setup_common.rst
+
+.. tab-set::
+
+   .. tab-item:: OpenPI π₀.₅
+
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robolab && source .venv/bin/activate
+
+      **2. 下载模型**
+
+      下载面向 RoboLab DROID 关节位置任务的 PyTorch 转换权重：
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos --local-dir ./RLinf-Pi05-RoboLab-droid-jointpos
+
+      **3. 启动评估**
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 28 46 26
+
+         * - 配方
+           - 配置
+           - 命令后缀
+         * - OpenPI π₀.₅（评测）
+           - ``evaluations/robolab/robolab_pi05_droid_jointpos.yaml``
+           - ``robolab_pi05_droid_jointpos``
+
+      运行默认任务（``BowlStackingLeftOnRightTask``，10 个回合）：
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \
+           rollout.model.model_path=./RLinf-Pi05-RoboLab-droid-jointpos
+
+本接入仅支持评估。导出全部 120 个任务、配置任务步数上限以及运行完整 benchmark 的步骤见 :doc:`评估指南 <../../evaluations/guides/robolab>`。
 
 可视化与结果
 ------------

@@ -1,5 +1,5 @@
-STEAM: Ensemble Advantage Modeling for Offline Policy Optimization
-==================================================================
+STEAM
+=====
 
 Run the **STEAM** pipeline in RLinf. STEAM is an offline policy-optimization
 recipe that scores existing data with a **pair-classification progress critic**
@@ -46,187 +46,52 @@ ensemble progress critic and steering with classifier-free guidance.
 | **You'll do:** SFT an ensemble progress critic → compute ensemble advantages → CFG-train the policy → evaluate.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · SigLIP + Gemma3 + π₀.₅ checkpoints · LeRobot-format datasets (steps below).
 
-Pipeline
---------
-
-A STEAM run is two STEAM-specific stages followed by a CFG training stage:
-
-.. code-block:: text
-
-   ┌────────────────────────┐     ┌────────────────────────┐     ┌──────────────────────┐
-   │  Step 1                │     │  Step 2                │     │  Step 3              │
-   │  STEAM Value Model SFT │────▶│  Compute Ensemble      │────▶│  CFG Training        │
-   │                        │     │  Advantages            │     │                      │
-   │  Train an ensemble of  │     │  Worst-of-N ensemble   │     │  Train the policy    │
-   │  pair-classification   │     │  signed score -> bool  │     │  with classifier-    │
-   │  progress critics      │     │  advantage labels      │     │  free guidance       │
-   └────────────────────────┘     └────────────────────────┘     └──────────────────────┘
-
-**Core Idea**
-
-1. **Value Model SFT**: Train an ensemble of progress critics (SigLIP + Gemma3
-   backbone + classifier head). Each member sees a frame pair
-   :math:`(o_t, o_{t+k})` and classifies the signed frame stride into bins, so
-   the head predicts *temporal progress* rather than a regressed return.
-
-2. **Compute Ensemble Advantages**: For every frame, run all ensemble members on
-   the pair :math:`(o_t, o_{t+k})` and aggregate with the **worst-of-N** rule
-   (:math:`A = \min_m A_m`), yielding a signed score ``advantage_continuous``
-   :math:`\in [-1, 1]`. Frames are then labelled positive/negative under a
-   threshold or quantile rule.
-
-3. **CFG Training**: Hand the advantage labels to the CFG stage — positive
-   (high-advantage) samples are conditional inputs and negative samples are
-   unconditional inputs, enabling classifier-free guidance for policy
-   optimization.
-
 How STEAM Works
 ---------------
 
-**STEAM Core Components**
+STEAM (*Self-supervised Temporal Ensemble Advantage Modeling*) runs three offline stages without online environment rollouts:
 
-1. **Advantage modeling**
-
-   STEAM (*Self-supervised Temporal Ensemble Advantage Modeling*) learns
-   advantages from the *temporal order* of expert demonstrations alone — no
-   rewards, human labels, or external value model. For a frame pair
-   :math:`(f_i, f_j)` from an expert episode, the **temporal offset** is the
-   signed frame stride :math:`j - i`: pairing a frame with a future frame
-   supervises forward progress, while feeding the pair in reverse gives a
-   negative offset, exposing regressive motion from successful demos alone.
-   Offsets are **normalized by trajectory length**
-   (:math:`\propto L_{\max}/L_\tau`) so the target measures *temporal efficiency*
-   rather than raw step count — shorter, more efficient executions score higher,
-   slower or suboptimal ones lower.
-
-   Each predictor (a SigLIP vision encoder + Gemma3 language model + a
-   task-specific head) maps the frame pair and language instruction to a
-   categorical distribution over :math:`N` (``num_bins``) temporal-offset bins,
-   trained with a cross-entropy loss against the binned offset target. The
-   per-member advantage subtracts a fixed **baseline** offset from the predicted
-   expected bin, so it scores progress *relative to the expected pace*:
-
-   .. math::
-
-      A_m = \frac{2}{N}\left( E_{b \sim p_{\theta_m}}[b] - b_{\mathrm{ref}} \right) \in [-1, 1]
-
-   where :math:`E_{b}[b]` is the expected bin index of predictor :math:`m`'s
-   distribution and :math:`b_{\mathrm{ref}}` is the deterministic reference — the
-   length-normalized ground-truth offset for a fixed lookahead :math:`H` on the
-   longest episode. :math:`A_m` is high near efficient progress and low (or
-   negative) near stalls and regressions. (``num_bins == 2`` reduces to a binary
-   progress classifier.)
-
-2. **Advantage estimation**
-
-   A single predictor can over-estimate on out-of-distribution rollout states.
-   Members agree in-distribution but diverge in unfamiliar states, so STEAM
-   aggregates the :math:`M` predictors with the conservative **worst-of-N** rule
-   — penalizing high variance to suppress false positives:
-
-   .. math::
-
-      A_{\text{STEAM}} = \min_{m \in \{1, \dots, M\}} A_m
-
-   :math:`A_{\text{STEAM}}` is written to ``advantage_continuous``; per-member
-   mean / min / variance are recorded for diagnostics. Because different data
-   sources have different advantage distributions, ``advantage_continuous`` is
-   turned into the boolean ``advantage`` per source under one of two
-   ``label_mode`` rules:
-
-   - ``threshold``: ``advantage = advantage_continuous > positive_threshold`` for
-     rollout frames (a signed-score threshold in :math:`[-1, 1]`); sft frames are
-     always True (success demos by construction).
-   - ``quantile``: label the top ``rollout_quantile`` fraction of rollout frames
-     True and, when ``expert_quantile`` is set, the top ``expert_quantile``
-     fraction of sft frames True — the two pools are scored independently.
-
-3. **Classifier-Free Guidance (CFG) Training**
-
-   STEAM advantage labels drive the CFG stage on the OpenPI (π₀.₅) policy:
-   positive (high-advantage) samples serve as conditional inputs and negative
-   samples as unconditional inputs, enabling classifier-free guidance for policy
-   optimization. See :doc:`the CFG training stage <recap>` for the full CFG mechanism
-   (``positive_only_conditional``, ``unconditional_prob``, ``cfgrl_guidance_scale``).
+1. **Value Model SFT (Progress Critic Ensemble):** Train an ensemble of progress critics (SigLIP vision encoder + Gemma3 language model + classifier head) on expert demonstration frame pairs. Each member classifies the trajectory-length-normalized signed frame stride between two frames into ``num_bins`` bins (with reversed pairs providing negative progress examples), measuring temporal efficiency without rewards or human labels.
+2. **Compute Ensemble Advantages (Worst-of-N):** Score every frame across all ensemble members and take the minimum (worst-of-N) score to suppress over-estimation on out-of-distribution rollout states. The resulting continuous score ``advantage_continuous`` in ``[-1, 1]`` is converted per data source into boolean ``advantage`` labels using either ``label_mode: threshold`` (rollout frames above ``positive_threshold``, SFT frames always ``True``) or ``label_mode: quantile`` (top ``rollout_quantile`` of rollout frames and optional top ``expert_quantile`` of SFT frames).
+3. **CFG Training:** Pass the advantage labels to the Classifier-Free Guidance (CFG) stage on OpenPI π₀.₅ — positive frames serve as conditional inputs and negative frames as unconditional inputs. See :doc:`RECAP <recap>` for CFG options (``positive_only_conditional``, ``unconditional_prob``, ``cfgrl_guidance_scale``).
 
 Installation
 ------------
 
-1. Clone RLinf Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
-.. code:: bash
+.. tab-set::
 
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   .. tab-item:: OpenPI
 
-2. Install Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+      .. code-block:: bash
 
-STEAM shares the OpenPI environment with RECAP.
-
-**Option 1: Docker Image**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-Please switch to the OpenPI virtual environment via the built-in ``switch_env`` utility:
-
-.. code:: bash
-
-   source switch_env openpi
-
-**Option 2: Custom Environment**
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 Download the Model
 ------------------
 
-The STEAM value model is built from two pretrained backbones:
+Download the two pretrained backbones for the STEAM value model (SigLIP-so400m vision encoder and Gemma3-270M language model):
 
-- **SigLIP-so400m** (``google/siglip-so400m-patch14-384``): vision encoder
-- **Gemma3-270M** (``google/gemma-3-270m``): language model and tokenizer
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: Value Model Backbones
 
-   # Download models (choose either method)
-   # Method 1: Using git clone
-   git lfs install
-   git clone https://huggingface.co/google/siglip-so400m-patch14-384
-   git clone https://huggingface.co/google/gemma-3-270m
+      .. code-block:: bash
 
-   # Method 2: Using huggingface-hub
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download google/siglip-so400m-patch14-384 --local-dir siglip-so400m-patch14-384
-   hf download google/gemma-3-270m --local-dir gemma-3-270m
+         hf download google/siglip-so400m-patch14-384 --local-dir ./siglip-so400m-patch14-384
+         hf download google/gemma-3-270m --local-dir ./gemma-3-270m
 
 Set the paths in the model config (``examples/offline_rl/config/model/steam_value_model.yaml``):
 
-.. code:: yaml
+.. code-block:: yaml
 
    actor:
      model:
-       vision_repo_id: /path/to/siglip-so400m-patch14-384
-       language_repo_id: /path/to/gemma-3-270m
-       tokenizer_path: /path/to/gemma-3-270m
+       vision_repo_id: ./siglip-so400m-patch14-384
+       language_repo_id: ./gemma-3-270m
+       tokenizer_path: ./gemma-3-270m
 
 Data Preparation
 ----------------
@@ -239,7 +104,7 @@ STEAM uses datasets in the LeRobot format, categorized into two types:
 
 Example dataset configuration:
 
-.. code:: yaml
+.. code-block:: yaml
 
    data:
      train_data_paths:
@@ -279,191 +144,84 @@ CFG reads ``meta/advantages_{tag}.parquet``.
 Step 1: Value Model SFT
 -----------------------
 
-Train the ensemble progress critic. Each member is a SigLIP + Gemma3 backbone
-with a classifier head; members are cloned from a shared backbone and their value
-heads are re-seeded so ensemble variance is a meaningful epistemic signal.
+Train the ensemble progress critic using ``examples/offline_rl/config/steam_value_model_sft.yaml``. Set ``data.train_data_paths`` (and ``data.camera_keys`` if your camera names differ), then launch:
 
-**Configuration**
-
-The config is ``examples/offline_rl/config/steam_value_model_sft.yaml``; the model
-defaults live in ``examples/offline_rl/config/model/steam_value_model.yaml``. Key fields:
-
-.. code:: yaml
-
-   runner:
-     max_epochs: -1
-     max_steps: 16000
-     save_interval: 1000
-
-   data:
-     train_data_paths:
-       - dataset_path: /path/to/sft_dataset
-         type: sft
-     k: 32                       # max signed stride K (pair temporal scale)
-     # Image (view) names the critic loads per frame; must match the views the
-     # checkpoint was trained on. Missing views become zero-placeholders.
-     camera_keys: [face_view, left_wrist_view, right_wrist_view]
-
-   actor:
-     micro_batch_size: 32
-     global_batch_size: 512
-     model:
-       precision: fp32            # fp32 master parameters, bf16 FSDP forward
-       num_bins: 32              # 2 = binary progress; >2 = multi-bin (even)
-       ensemble_size: 3          # number of critics in the ensemble
-       fusion_hidden_dim: 512
-       freeze_vision_encoder: false
-       freeze_language_model: false
-       use_gradient_checkpointing: true
-     optim:
-       lr: 5.0e-5
-       value_lr: 5.0e-5
-
-**Key Parameters**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 32 16 52
-
-   * - Parameter
-     - Default
-     - Description
-   * - ``data.k``
-     - ``32``
-     - Max signed stride :math:`K`. In multi-bin mode ``2*K`` must be a multiple of ``num_bins``.
-   * - ``actor.model.num_bins``
-     - ``32``
-     - Bin count. ``2`` is binary progress; ``> 2`` (even) is multi-bin signed-stride classification.
-   * - ``actor.model.ensemble_size``
-     - ``3``
-     - Number of ensemble members. ``> 1`` enables worst-of-N aggregation and uncertainty stats.
-
-**Launch Command**
-
-.. code:: bash
+.. code-block:: bash
 
    bash examples/offline_rl/advantage_labeling/steam/run_steam_sft.sh steam_value_model_sft
 
-   # Override config fields inline:
-   bash examples/offline_rl/advantage_labeling/steam/run_steam_sft.sh steam_value_model_sft data.k=8
+.. dropdown:: Advanced configuration (optional)
 
-**Output**
+   The shipped config already sets defaults (``data.k=32``, ``actor.model.num_bins=32``, ``actor.model.ensemble_size=3``, ``runner.max_steps=16000``). Override them in YAML or on the CLI (e.g., ``data.k=8``):
 
-- Checkpoints under ``logs/steam_sft/{config_name}-{timestamp}/.../checkpoints/global_step_{N}/actor``
-- TensorBoard logs
+   .. code-block:: yaml
 
-**Key Metrics**
+      runner:
+        max_epochs: -1
+        max_steps: 16000
+        save_interval: 1000
 
-- ``train/loss``: cross-entropy over the signed-stride bins
-- ``train/accuracy``: exact-bin classification accuracy
-- ``train/accuracy_neighbor``: accuracy within the neighboring bin
-- ``train/grad_norm``: gradient norm
+      data:
+        train_data_paths:
+          - dataset_path: /path/to/sft_dataset
+            type: sft
+        k: 32                       # max signed stride K; 2*K must be a multiple of num_bins
+        camera_keys: [face_view, left_wrist_view, right_wrist_view]
 
-To compare checkpoints on held-out episodes, add ``data.eval_data_paths`` and set
-``runner.val_check_interval`` to a positive interval. The corresponding metrics
-are logged under ``eval/loss``, ``eval/accuracy``, and
-``eval/accuracy_neighbor``; named datasets additionally use paths such as
-``eval/rollout_holdout/loss``. Select a critic checkpoint from held-out metrics
-rather than assuming the final training step generalizes best.
+      actor:
+        micro_batch_size: 32
+        global_batch_size: 512
+        model:
+          precision: fp32           # fp32 master parameters, bf16 FSDP forward
+          num_bins: 32              # 2 = binary progress; >2 = multi-bin (even)
+          ensemble_size: 3          # >1 enables worst-of-N aggregation and uncertainty stats
+          fusion_hidden_dim: 512
+          freeze_vision_encoder: false
+          freeze_language_model: false
+          use_gradient_checkpointing: true
+        optim:
+          lr: 5.0e-5
+          value_lr: 5.0e-5
+
+   To evaluate on held-out episodes, set ``data.eval_data_paths`` and a positive ``runner.val_check_interval`` and select the checkpoint by ``eval/loss`` and ``eval/accuracy``.
+
+Checkpoints are written under ``logs/steam_sft/{config_name}-{timestamp}/.../checkpoints/global_step_{N}/actor``.
 
 Step 2: Compute Ensemble Advantages
 -----------------------------------
 
-Run the trained ensemble over every frame and write per-frame advantage labels.
+Set ``advantage.value_checkpoint`` to the Step 1 ``actor`` checkpoint directory (and match ``data.train_data_paths`` / ``data.camera_keys``) in ``examples/offline_rl/config/steam_compute_advantages_ensemble.yaml``, then launch:
 
-**Configuration**
+.. code-block:: bash
 
-The config is ``examples/offline_rl/config/steam_compute_advantages_ensemble.yaml``:
-
-.. code:: yaml
-
-   advantage:
-     value_checkpoint: /path/to/steam_value_ensemble/checkpoints/global_step_N/actor
-     batch_size: 256
-     label_mode: quantile        # required: "threshold" or "quantile"
-     rollout_quantile: 0.3       # top 30% of rollout frames labelled True
-     expert_quantile: 0.8        # optional: top 80% of sft frames labelled True
-     tag: steam_k32_ensemble3_q30
-
-   data:
-     k: 32                       # must match Step 1 data.k
-     camera_keys: [face_view, left_wrist_view, right_wrist_view]
-     train_data_paths:
-       - dataset_path: /path/to/sft_dataset
-         type: sft
-       - dataset_path: /path/to/rollout_dataset
-         type: rollout
-
-**Key Parameters**
-
-``label_mode`` decides which knobs are active. In ``threshold`` mode only
-``advantage.positive_threshold`` applies — a signed-score cut in :math:`[-1, 1]`;
-rollout frames scoring above it are positive and sft frames are always positive.
-In ``quantile`` mode ``positive_threshold`` is ignored and the
-``rollout_quantile`` / ``expert_quantile`` fractions select the top-scoring frames
-in each pool independently (omit ``expert_quantile`` to mark every sft frame
-positive).
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 14 52
-
-   * - Parameter
-     - Default
-     - Description
-   * - ``advantage.value_checkpoint``
-     - ``required``
-     - Path to the Step 1 ensemble checkpoint (``actor`` directory).
-   * - ``advantage.label_mode``
-     - ``quantile``
-     - ``threshold`` or ``quantile``.
-   * - ``advantage.positive_threshold``
-     - ``null``
-     - Signed-score threshold in :math:`[-1, 1]` (``label_mode=threshold`` only).
-   * - ``advantage.rollout_quantile``
-     - ``0.3``
-     - Top fraction of rollout frames labelled True (``label_mode=quantile``).
-   * - ``advantage.expert_quantile``
-     - ``0.8``
-     - Top fraction of sft frames labelled True (``label_mode=quantile``, optional).
-   * - ``advantage.tag``
-     - ``steam_k32_ensemble3_q30``
-     - Output tag; writes ``meta/advantages_{tag}.parquet``.
-   * - ``data.k``
-     - ``32``
-     - Pair stride; must match the Step 1 training ``data.k``.
-
-**Launch Command**
-
-.. code:: bash
-
-   # Auto-detects #GPUs; single-GPU or torchrun multi-GPU both supported.
    bash examples/offline_rl/advantage_labeling/steam/process/run_compute_advantages_ensemble.sh steam_compute_advantages_ensemble
 
-   # Force a GPU count:
-   bash examples/offline_rl/advantage_labeling/steam/process/run_compute_advantages_ensemble.sh steam_compute_advantages_ensemble --nproc 4
+.. dropdown:: Advanced configuration (optional)
 
-**Output Files**
+   Default labeling uses ``label_mode: quantile`` (``rollout_quantile: 0.3``, ``expert_quantile: 0.8``, ``tag: steam_k32_ensemble3_q30``). Pass ``--nproc 4`` to force a GPU count, or switch to ``label_mode: threshold`` with ``advantage.positive_threshold`` in ``[-1, 1]``:
 
-- ``meta/advantages_{tag}.parquet``: per-frame ``advantage`` (bool),
-  ``advantage_continuous`` (signed score), ``ensemble_signed_score``, per-member
-  values, and ensemble entropy / variance diagnostics.
-- ``meta/mixture_config.yaml``: a per-tag entry recording ``label_mode``, the
-  applied threshold, ``ensemble_size``, ``num_bins``, and positive counts.
+   .. code-block:: yaml
+
+      advantage:
+        value_checkpoint: /path/to/steam_value_ensemble/checkpoints/global_step_N/actor
+        batch_size: 256
+        label_mode: quantile        # "threshold" or "quantile"
+        rollout_quantile: 0.3       # top 30% of rollout frames labelled True
+        expert_quantile: 0.8        # optional: top 80% of sft frames labelled True
+        tag: steam_k32_ensemble3_q30
+
+      data:
+        k: 32                       # must match Step 1 data.k
+        camera_keys: [face_view, left_wrist_view, right_wrist_view]
+
+This writes ``meta/advantages_{tag}.parquet`` and ``meta/mixture_config.yaml``.
 
 Step 3: CFG Training
 --------------------
 
-Policy optimization runs the shared CFG stage directly on the STEAM advantage
-parquets. ``cfg_rl_openpi.yaml`` is shared with other offline-RL pipelines, so
-set both STEAM dataset paths as well as the tag written by Step 2. The runner is
-step-bounded: its 30,000-step limit matches the optimizer schedule.
+In ``examples/offline_rl/config/cfg_rl_openpi.yaml``, set ``data.train_data_paths`` and ``actor.model.model_path`` (matching your policy's ``openpi.config_name`` and ``norm_stats.json``), then launch with the tag written by Step 2:
 
-.. code:: yaml
-
-   runner:
-     max_epochs: -1
-     max_steps: 30000
+.. code-block:: yaml
 
    data:
      advantage_tag: steam_k32_ensemble3_q30
@@ -478,40 +236,58 @@ step-bounded: its 30,000-step limit matches the optimizer schedule.
    actor:
      model:
        model_path: /path/to/pi05_base_pytorch
-       openpi:
-         config_name: pi05_libero
-         train_expert_only: false
 
-The OpenPI config must match the dataset's observation and action contract. For
-the ManiSkill joint-control data described in :doc:`RLT <rlt>`, use
-``config_name: pi05_rlt_maniskill_joint`` and ``action_dim: 8``. The policy
-checkpoint must also contain the matching OpenPI normalization asset at
-``<model_path>/<asset_id>/norm_stats.json``; for this ManiSkill config the
-``asset_id`` is ``physical-intelligence/maniskill``.
-
-Launch after the paths and environment-specific model fields are set:
-
-.. code:: bash
+.. code-block:: bash
 
    bash examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh cfg_rl_openpi \
        data.advantage_tag=steam_k32_ensemble3_q30
 
-See :doc:`the CFG training stage <recap>` for the full CFG configuration and parameters.
+For the ManiSkill joint-control data described in :doc:`RLT <rlt>`, set ``actor.model.openpi.config_name: pi05_rlt_maniskill_joint`` and ``actor.model.action_dim: 8``. See :doc:`RECAP <recap>` for full CFG options and :doc:`Evaluation </rst_source/evaluations/index>` to evaluate checkpoints.
 
-During training, monitor ``train/loss``, ``train/conditional_loss``,
-``train/unconditional_loss``, ``train/grad_norm``, and ``train/learning_rate``.
-A finite, stable loss verifies optimization but is not a task-level acceptance
-metric. Evaluate the final and selected intermediate policy checkpoints in the
-target environment and report success rate and episode count; see
-:doc:`Evaluation </rst_source/evaluations/index>` for the evaluation entrypoints.
+.. dropdown:: Advanced Usage (Merge, Relabel, Visualize)
 
-STEAM Results
--------------
+   **Merge ensemble checkpoints**
+
+   Combine single-model runs (or extract member ``idx`` via ``PATH:idx``) into one ensemble checkpoint:
+
+   .. code-block:: bash
+
+      python examples/offline_rl/advantage_labeling/steam/process/merge_steam_ensemble.py \
+          --member ./logs/seed1/checkpoints/global_step_5000/actor \
+          --member ./logs/seed2/checkpoints/global_step_5000/actor \
+          --member ./logs/ensemble/checkpoints/global_step_6000/actor:2 \
+          --output ./merged_steam_actor
+
+   **Threshold / quantile relabeling**
+
+   Change the labeling rule on CPU without rerunning GPU inference (reuses ``advantage_continuous``):
+
+   .. code-block:: bash
+
+      python examples/offline_rl/advantage_labeling/steam/process/relabel_advantages.py \
+          --dataset_paths ./datasets/sft ./datasets/rollout \
+          --source_tag steam_k32_ensemble3_q30 \
+          --new_tag steam_k32_ensemble3_q20 \
+          --mode quantile --rollout_quantile 0.2
+
+   **Visualize advantages**
+
+   Render distribution, per-member, uncertainty, and episode-timeline plots from an advantages parquet:
+
+   .. code-block:: bash
+
+      python examples/offline_rl/advantage_labeling/steam/process/visualize_advantage.py \
+          --dataset ./datasets/rollout \
+          --tag steam_k32_ensemble3_q30 \
+          --output ./outputs/steam_viz
+
+Visualization and Results
+-------------------------
+
+Monitor runs with ``tensorboard --logdir ./logs --port 6006``; see :doc:`Training metrics <../../reference/metrics>` for metric definitions.
 
 We evaluate STEAM against behavior cloning (**BC**), **HG-DAgger**, and
-:doc:`RECAP <recap>` on four real-robot manipulation tasks. STEAM markedly raises
-the task success rate over the BC baseline on every task (absolute gain over BC
-shown as ↑):
+:doc:`RECAP <recap>` on four real-robot manipulation tasks (↑ marks absolute gain over BC):
 
 .. list-table:: Success rate (%) — higher is better
    :header-rows: 1
@@ -572,111 +348,3 @@ shown as ↑):
      - —
      - 46
      - **90**
-
-Across the four tasks STEAM raises success rates to 75–93.8% and delivers the
-highest throughput, with the largest success-rate gains on Towel Folding (↑59)
-and Chips Checkout (↑54.3). (↑ marks the absolute gain over the BC baseline.)
-
-Advanced Usage
---------------
-
-Merge Ensemble Checkpoints
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Members trained as separate single-model runs (or extracted from existing
-ensembles) can be fused into one ensemble inference checkpoint. Each ``--member``
-is a checkpoint path, or ``PATH:idx`` to pull member ``idx`` from an ensemble:
-
-.. code:: bash
-
-   python examples/offline_rl/advantage_labeling/steam/process/merge_steam_ensemble.py \
-       --member /path/to/seed1/checkpoints/global_step_5000/actor \
-       --member /path/to/seed2/checkpoints/global_step_5000/actor \
-       --member /path/to/ensemble/checkpoints/global_step_6000/actor:2 \
-       --output /path/to/merged/actor
-
-The merge logic lives in
-``rlinf.models.embodiment.value_model.steam.checkpoint_merge.merge_ensemble_checkpoints``.
-
-Threshold / Quantile Relabeling
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-To change the labelling threshold without rerunning GPU inference, relabel an
-existing advantages parquet (pure CPU — ``advantage_continuous`` is reused):
-
-.. code:: bash
-
-   python examples/offline_rl/advantage_labeling/steam/process/relabel_advantages.py \
-       --dataset_paths /path/to/sft_ds /path/to/rollout_ds \
-       --source_tag steam_k32_ensemble3_q30 \
-       --new_tag steam_k32_ensemble3_q20 \
-       --mode quantile --rollout_quantile 0.2
-
-The relabel logic lives in
-``examples/offline_rl/advantage_labeling/steam/process/relabel_advantages.py``.
-
-Visualize Advantages
-~~~~~~~~~~~~~~~~~~~~~~
-
-Render distribution, per-member, uncertainty, per-episode, and episode-timeline
-diagnostics from an advantages parquet:
-
-.. code:: bash
-
-   python examples/offline_rl/advantage_labeling/steam/process/visualize_advantage.py \
-       --dataset /path/to/dataset \
-       --tag steam_k32_ensemble3_q30 \
-       --output outputs/steam_viz
-
-Visualization and Results
--------------------------
-
-For metric definitions, see :doc:`Training metrics <../../reference/metrics>`.
-
-.. code:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-File Structure
---------------
-
-Like RECAP, STEAM keeps its pipeline scripts self-contained under ``examples/``
-(the inference + labelling strategy that is bound to the model), the model /
-dataset code under ``rlinf/models`` and ``rlinf/data/datasets``, and shares the
-model-agnostic post-processing with RECAP via
-``rlinf/algorithms/offline/process/``:
-
-.. code-block:: text
-
-   examples/offline_rl/
-   ├── config/                                  # shared production configs
-   │   ├── steam_value_model_sft.yaml           # Step 1
-   │   ├── steam_compute_advantages_ensemble.yaml   # Step 2
-   │   ├── cfg_rl_openpi.yaml                   # Step 3 (CFG, shared with RECAP)
-   │   └── model/
-   │       └── steam_value_model.yaml           # value model architecture defaults
-   ├── advantage_labeling/
-   │   └── steam/
-   │       ├── train_steam.py                   # Step 1: value model SFT entry
-   │       ├── run_steam_sft.sh                 # Step 1 launch script
-   │       └── process/                         # Step 2: self-contained entries (like recap)
-   │           ├── compute_advantages_ensemble.py     # Step 2: ensemble inference + labelling (Hydra)
-   │           ├── relabel_advantages.py              # CLI: relabel advantages (CPU)
-   │           ├── merge_steam_ensemble.py            # CLI: merge ensemble checkpoints
-   │           ├── visualize_advantage.py             # advantage visualization
-   │           └── run_compute_advantages_ensemble.sh # Step 2 launch script
-   └── policy_optimization/
-       └── cfg_rl/
-           ├── train_cfg.py                      # Step 3: CFG policy training
-           └── run_cfg_rl.sh                     # Step 3 launch script
-
-   rlinf/
-   ├── models/embodiment/value_model/steam/     # critic, ensemble, config, merge
-   │   ├── modeling_steam.py / modeling_critic.py
-   │   ├── ensemble_modeling_critic.py          # worst-of-N + coerce_to_ensemble
-   │   └── checkpoint_merge.py                  # ensemble checkpoint merge
-   ├── data/datasets/steam/                     # pair_dataset.py, mixture.py, binning.py
-   └── algorithms/offline/process/              # shared, model-agnostic (RECAP + STEAM)
-       ├── advantage.py                         # quantile threshold + boolean label
-       ├── distributed.py                       # sharded-inference helpers
-       └── mixture_config.py                    # meta/mixture_config.yaml tag I/O

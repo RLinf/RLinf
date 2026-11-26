@@ -6,7 +6,7 @@ DynaRL: Flexible and Dynamic Scheduling of Large-Scale Reinforcement Learning Tr
 Overview
 --------
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/dynarl/overview.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dynarl/overview.png
    :alt: DynaRL system architecture
    :align: center
 
@@ -48,7 +48,7 @@ systems use static sequential allocation (all GPUs for one stage at a time).
 DynaRL detects underutilized stages and reallocates capacity to the active
 bottleneck.
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/dynarl/math_throughput.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dynarl/math_throughput.png
    :alt: End-to-end throughput of math-reasoning RL
    :align: center
 
@@ -85,7 +85,7 @@ predictable. DynaRL combines dynamic GPU allocation with priority-aware request
 scheduling (preferring requests with more completed tool calls to reduce
 stragglers and improve KV-cache reuse).
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/dynarl/agent_throughput.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dynarl/agent_throughput.png
    :alt: End-to-end throughput of multi-turn agentic RL
    :align: center
 
@@ -123,19 +123,19 @@ and dynamic allocation with priority-aware request scheduling.
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/dynarl/allocation_static.png" alt="Static allocation" width="700"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dynarl/allocation_static.png" alt="Static allocation" width="700"/>
          <br/><strong>Static allocation</strong>
        </td>
      </tr>
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/dynarl/allocation_dynamic.png" alt="Dynamic allocation" width="700"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dynarl/allocation_dynamic.png" alt="Dynamic allocation" width="700"/>
          <br/><strong>Dynamic allocation</strong>
        </td>
      </tr>
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/dynarl/allocation_priority.png" alt="Dynamic allocation with priority-aware scheduling" width="700"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dynarl/allocation_priority.png" alt="Dynamic allocation with priority-aware scheduling" width="700"/>
          <br/><strong>Dynamic + priority-aware request scheduling</strong>
        </td>
      </tr>
@@ -157,11 +157,11 @@ finish within **200 ms**; total scheduling overhead per iteration is below
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/dynarl/migration_trainer.png" alt="Trainer migration cost" width="320"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dynarl/migration_trainer.png" alt="Trainer migration cost" width="320"/>
          <br/><strong>Trainer migration cost</strong>
        </td>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/dynarl/migration_rollout.png" alt="Rollout migration cost" width="320"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dynarl/migration_rollout.png" alt="Rollout migration cost" width="320"/>
          <br/><strong>Rollout migration cost</strong>
        </td>
      </tr>
