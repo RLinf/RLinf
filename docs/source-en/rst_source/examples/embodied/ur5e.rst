@@ -10,6 +10,8 @@ teleoperation, record LeRobot demonstrations, then fine-tune and deploy a
 Overview
 --------
 
+| **Prerequisites:** A Linux controller computer and a UR5e or URSim e-Series configured as UR5.
+
 The ``UR5e`` robot composes an arm registered under ``ur_rtde``, an optional
 independent Robotiq gripper, and explicitly configured cameras. Its arm action
 is an absolute TCP pose in the robot base frame. A local loop sends that target
@@ -47,18 +49,22 @@ Follow the `ur_rtde controller setup instructions
 to enable the services and Remote Control. Manage power, brakes, and safety
 recovery through your normal controller procedure before connecting.
 
-Installation
-------------
+Setup and Run
+-------------
 
 Follow :doc:`Installation </rst_source/start/installation>` for platform
 prerequisites and clone the repository. From its root, install and activate the
 UR5e and OpenPI environment:
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env ur5e --venv .venv-ur5e
-   source .venv-ur5e/bin/activate
-   export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+   .. tab-item:: UR5e and OpenPI
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openpi --env ur5e --venv .venv-ur5e
+         source .venv-ur5e/bin/activate
+         export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 
 This installs OpenPI together with ``ur_rtde``, Orbbec capture, SpaceMouse,
 serial Modbus, keyboard input, and LeRobot collection dependencies. Keep this environment activated for
@@ -67,8 +73,8 @@ subsequent commands.
 The Orbbec SDK is installed as ``pyorbbecsdk2==2.1.2`` and imports as
 ``pyorbbecsdk``. Device permissions and stream checks are covered below.
 
-Run It
-------
+Check the Driver
+~~~~~~~~~~~~~~~~
 
 Check the driver before combining the arm with the collection devices. For
 simulation, use URSim e-Series configured as UR5; the integration was checked
@@ -286,18 +292,19 @@ Fine-Tune π₀.₅
 ---------------
 
 Use the recorded LeRobot directory as the training dataset. Copy it to the GPU
-training host with this version of RLinf and the OpenPI environment. First
-compute statistics with the same ``pi05_ur5e`` configuration that SFT and
-inference will use:
+training host with this version of RLinf and the OpenPI environment. From the
+repository root, compute statistics with the same ``pi05_ur5e`` configuration
+that SFT and inference will use:
 
 .. code-block:: bash
 
    python toolkits/lerobot/calculate_norm_stats.py \
      --config-name pi05_ur5e \
-     --repo-id /path/to/ur5e_dataset
+     --repo-id ./data/ur5e_dataset
 
-Pass the directory containing ``meta/info.json``. The command reports where it
-writes ``norm_stats.json``; use that file for both training and deployment.
+Replace the example path with the dataset directory containing
+``meta/info.json``. The command reports where it writes ``norm_stats.json``.
+Use that file for both training and deployment.
 Statistics use the same data transforms as training: the state keeps its seven
 values, and the seven recorded delta-action channels are padded to the model
 dimension.
@@ -321,13 +328,16 @@ base weights, and statistics paths on the training host:
        openpi_data:
          norm_stats_path: /path/to/ur5e_dataset/norm_stats.json
 
-The template uses one RGB view, the recorded state, and a 20-step prediction
-horizon. Set its batch size and GPU placement for the training host, then launch
-SFT from the repository root:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: Training host
 
-   bash examples/sft/run_vla_sft.sh realworld_ur5e_sft_openpi_pi05
+      Set the batch size and GPU placement for the training host. Run SFT from
+      the repository root:
+
+      .. code-block:: bash
+
+         bash examples/sft/run_vla_sft.sh realworld_ur5e_sft_openpi_pi05
 
 SFT saves checkpoints under the run's
 ``ur5e_openpi_sft/checkpoints/global_step_<N>/`` directory. Keep the dataset's

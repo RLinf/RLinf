@@ -6,6 +6,8 @@ UR5e 配置与控制
 概览
 ----
 
+| **前置条件：** Linux 控制主机，以及 UR5e 或配置为 UR5 的 URSim e-Series。
+
 ``UR5e`` 机器人包含使用 ``ur_rtde`` 后端的机械臂、可选的独立 Robotiq 夹爪，以及显式配置的相机。机械臂动作是在机器人基座坐标系中表示的绝对 TCP 位姿，由本地循环通过 SDK 的 ``servoL`` 位置控制器发送。采集环境将较低频率的 SpaceMouse 增量转换为这些绝对目标。
 
 驱动使用控制器当前配置的 TCP 和负载。安装工具后，请先在 PolyScope 中完成对应设置。本指南中的控制器仿真使用 PolyScope 5.26.3 的 URSim。
@@ -32,23 +34,27 @@ UR5e 配置与控制
 
 按 `ur_rtde 控制器配置说明 <https://sdurobotics.gitlab.io/ur_rtde/pages/getting_started/environment_setup.html>`_ 开启服务和 Remote Control。连接前，按现有控制器流程处理上电、刹车与安全状态恢复。
 
-安装
-----
+安装与运行
+----------
 
 按 :doc:`安装 </rst_source/start/installation>` 准备平台依赖并克隆仓库。在仓库根目录安装并激活 UR5e 与 OpenPI 环境：
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env ur5e --venv .venv-ur5e
-   source .venv-ur5e/bin/activate
-   export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+   .. tab-item:: UR5e 与 OpenPI
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openpi --env ur5e --venv .venv-ur5e
+         source .venv-ur5e/bin/activate
+         export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 
 该流程安装 OpenPI，以及 ``ur_rtde``、Orbbec 采集、SpaceMouse、串口 Modbus、键盘输入和 LeRobot 采集依赖。后续命令均使用这个已激活的环境。
 
 Orbbec SDK 的安装包为 ``pyorbbecsdk2==2.1.2``，通过 ``pyorbbecsdk`` 导入。设备权限和图像流检查见下文。
 
-运行
-----
+检查驱动
+~~~~~~~~
 
 组合采集设备前，先检查驱动。使用仿真时，将 URSim e-Series 设置为 UR5；本集成使用 ``universalrobots/ursim_e-series:5.26.3`` 验证。按 `官方 URSim Docker 说明 <https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/master/doc/setup/ursim_docker.rst>`_ 配置网络，使驱动所在的计算机或容器能够访问控制器端口。将下列地址替换为你的控制器地址。
 
@@ -173,15 +179,15 @@ runner 创建带时间戳的日志目录，并将 LeRobot 数据集写入其中�
 微调 π₀.₅
 ----------
 
-将记录的 LeRobot 目录复制到 GPU 训练主机，并在该主机准备同一版本的 RLinf 和 OpenPI 环境。先使用训练和推理共同采用的 ``pi05_ur5e`` 配置计算归一化统计：
+将记录的 LeRobot 目录复制到 GPU 训练主机，并在该主机准备同一版本的 RLinf 和 OpenPI 环境。在仓库根目录用训练和推理共用的 ``pi05_ur5e`` 配置计算归一化统计：
 
 .. code-block:: bash
 
    python toolkits/lerobot/calculate_norm_stats.py \
      --config-name pi05_ur5e \
-     --repo-id /path/to/ur5e_dataset
+     --repo-id ./data/ur5e_dataset
 
-传入包含 ``meta/info.json`` 的数据集目录。命令会报告 ``norm_stats.json`` 的输出位置；训练和部署均使用该文件。统计采用与训练相同的数据转换：状态保留七维，记录的七维增量动作补齐到模型维度。
+将示例路径替换为包含 ``meta/info.json`` 的数据集目录。命令会报告 ``norm_stats.json`` 的输出位置，训练和部署都使用这份文件。统计采用与训练相同的数据转换：状态保留七维，记录的七维增量动作补齐到模型维度。
 
 按 :doc:`OpenPI SFT <sft_openpi>` 中的下载与转换步骤准备 RLinf OpenPI 格式的基础权重。本流程转换时使用 ``--action-dim 32``、``--action-horizon 20`` 和 ``--max-token-len 200``。模型内部补齐后的 32 维动作与 UR 环境接收的七维动作分别配置。
 
@@ -197,11 +203,15 @@ runner 创建带时间戳的日志目录，并将 LeRobot 数据集写入其中�
        openpi_data:
          norm_stats_path: /path/to/ur5e_dataset/norm_stats.json
 
-模板使用一张 RGB 图像、记录的状态和 20 步预测长度。按训练主机配置 batch size 与 GPU placement，然后在仓库根目录启动 SFT：
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: 训练主机
 
-   bash examples/sft/run_vla_sft.sh realworld_ur5e_sft_openpi_pi05
+      按训练主机的配置调整 batch size 和 GPU 分配。在仓库根目录启动 SFT：
+
+      .. code-block:: bash
+
+         bash examples/sft/run_vla_sft.sh realworld_ur5e_sft_openpi_pi05
 
 SFT 将 checkpoint 保存在本次运行的 ``ur5e_openpi_sft/checkpoints/global_step_<N>/`` 目录。将数据集统计文件与实验一起保存，部署配置会分别加载 checkpoint 和统计文件。训练指标、checkpoint 格式与恢复训练见 :doc:`OpenPI SFT <sft_openpi>`。
 
