@@ -16,5 +16,12 @@
 
 from .base import MobileBase
 from .lekiwi import LeKiwiBase, body_to_wheel_raw, limit_wheel_raw
+from .unitree_go2 import Go2Base
 
-__all__ = ["LeKiwiBase", "MobileBase", "body_to_wheel_raw", "limit_wheel_raw"]
+__all__ = [
+    "Go2Base",
+    "LeKiwiBase",
+    "MobileBase",
+    "body_to_wheel_raw",
+    "limit_wheel_raw",
+]

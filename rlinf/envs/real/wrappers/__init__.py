@@ -65,11 +65,11 @@ class WrapperStack:
         self.cfg = cfg
         self.inner = env.unwrapped
 
-    def build(self) -> gym.Env:
+    def build(self, *, teleop_devices: list[Any] | None = None) -> gym.Env:
         """Build and return the configured wrapper stack."""
         self._refuse_unsupported()
         self._apply(getattr(self.inner, "ACTION_WRAPPERS", ()))
-        self._apply_teleop()
+        self._apply_teleop(teleop_devices)
         self._apply_keyboard_reward()
         self._apply_episode()
         self._apply(getattr(self.inner, "TRANSFORMS", ()))
@@ -99,13 +99,14 @@ class WrapperStack:
             if self._wanted(wrapper) and applies_to(self.inner):
                 self.env = wrapper(self.env)
 
-    def _apply_teleop(self) -> None:
+    def _apply_teleop(self, devices: list[Any] | None) -> None:
         """Apply the configured teleoperation devices when supported."""
-        devices = resolve_teleop_devices(
-            self.cfg,
-            supported=getattr(self.inner, "TELEOP", ()),
-            default=getattr(self.inner, "TELEOP_DEFAULT", NO_DEVICE),
-        )
+        if devices is None:
+            devices = resolve_teleop_devices(
+                self.cfg,
+                supported=getattr(self.inner, "TELEOP", ()),
+                default=getattr(self.inner, "TELEOP_DEFAULT", NO_DEVICE),
+            )
         if not devices or getattr(self.inner.config, "is_dummy", False):
             return
         self.env = TeleopIntervention(

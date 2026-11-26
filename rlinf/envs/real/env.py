@@ -13,22 +13,17 @@
 # limitations under the License.
 
 import copy
-import os
-import pathlib
-import time
 from functools import partial
 from typing import Any, Mapping, Optional, OrderedDict, Union
 
 import gymnasium as gym
 import numpy as np
-import psutil
 import torch
-from filelock import FileLock
 from omegaconf import DictConfig, OmegaConf
 from torch import Tensor
 
 from rlinf.envs.real.venv import NoAutoResetSyncVectorEnv
-from rlinf.envs.utils import to_tensor
+from rlinf.envs.utils import to_tensor, valid_action_mask_from_counts
 from rlinf.robotics.discovery import RobotInfo
 from rlinf.scheduler import WorkerInfo
 
@@ -79,7 +74,7 @@ class RealWorldEnv(gym.Env):
         self.ignore_terminations = cfg.ignore_terminations
         self.num_group = num_envs // cfg.group_size
         self.group_size = cfg.group_size
-        self.main_image_key = cfg.main_image_key
+        self.main_image_key = cfg.get("main_image_key")
         self.manual_episode_control_only = bool(
             self.override_cfg.get("manual_episode_control_only", False)
         )
@@ -89,6 +84,7 @@ class RealWorldEnv(gym.Env):
         self._is_start = True
         self._init_metrics()
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
+        self._pending_reset: tuple[Observation, EnvInfos] | None = None
         self._init_reset_state_ids()
 
     def _create_env(self, env_idx: int) -> gym.Env:
@@ -113,27 +109,6 @@ class RealWorldEnv(gym.Env):
             env_cfg=self.cfg,
         )
         return env
-
-    @staticmethod
-    def realworld_setup() -> None:
-        """Run node-level setup before creating real-world environments.
-
-        The setup is serialized because ROS permits only one core per node.
-        Existing ROS core processes are stopped before environments start.
-        """
-        # Serialize setup across environment processes on the same node.
-        node_lock_file = "/tmp/.realworld.lock"
-        # Fall back to the user directory if the temporary path is unavailable.
-        if not os.path.exists(os.path.dirname(node_lock_file)):
-            node_lock_file = os.path.join(pathlib.Path.home(), ".realworld.lock")
-        node_lock = FileLock(node_lock_file)
-
-        with node_lock:
-            ros_proc_names = ["roscore", "rosmaster", "rosout"]
-            for proc in psutil.process_iter():
-                if proc.name() in ros_proc_names:
-                    proc.kill()
-                    time.sleep(0.5)
 
     def _init_env(self) -> None:
         env_fns = [
@@ -276,6 +251,7 @@ class RealWorldEnv(gym.Env):
         raw_obs, infos = self.env.reset(seed=seed, options=options)
 
         extracted_obs = self._wrap_obs(raw_obs)
+        self._pending_reset = None
         if env_idx is not None:
             self._reset_metrics(env_idx)
         else:
@@ -290,17 +266,22 @@ class RealWorldEnv(gym.Env):
         full_states = np.concatenate([state[k] for k in sorted(state)], axis=-1)
         obs["states"] = full_states
 
-        frames = raw_obs["frames"]
-        if self.main_image_key not in frames:
-            raise KeyError(
-                f"main_image_key {self.main_image_key!r} not in {list(frames)}"
-            )
-        obs["main_images"] = frames[self.main_image_key]
-        raw_images = OrderedDict(sorted(frames.items()))
-        raw_images.pop(self.main_image_key)
+        if (
+            self.main_image_key is not None
+            or "frames" in raw_obs
+            or "frames" in self.observation_space.spaces
+        ):
+            frames = raw_obs["frames"]
+            if self.main_image_key not in frames:
+                raise KeyError(
+                    f"main_image_key {self.main_image_key!r} not in {list(frames)}"
+                )
+            obs["main_images"] = frames[self.main_image_key]
+            raw_images = OrderedDict(sorted(frames.items()))
+            raw_images.pop(self.main_image_key)
 
-        if raw_images:
-            obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
+            if raw_images:
+                obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
 
         raw_depths = raw_obs.get("depths")
         if raw_depths:
@@ -324,6 +305,10 @@ class RealWorldEnv(gym.Env):
         actions: Optional[Union[np.ndarray, torch.Tensor]] = None,
         auto_reset: bool = True,
     ) -> StepResult:
+        if self._pending_reset is not None:
+            raise RuntimeError(
+                "Reset the environment before stepping after a hard stop."
+            )
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
 
@@ -335,7 +320,9 @@ class RealWorldEnv(gym.Env):
         else:
             timeout_truncations = self.elapsed_steps >= self.cfg.max_episode_steps
         if not self.manual_episode_control_only:
-            truncations = timeout_truncations
+            truncations = np.logical_or(
+                timeout_truncations, infos.get("requires_reset", False)
+            )
         if "fault_truncated" in infos:
             truncations = np.logical_or(
                 truncations, np.asarray(infos["fault_truncated"], dtype=bool)
@@ -378,6 +365,9 @@ class RealWorldEnv(gym.Env):
         _auto_reset = auto_reset and self.auto_reset
         if dones.any() and _auto_reset:
             obs, infos = self._handle_auto_reset(dones, obs, infos)
+        elif np.any(infos.get("requires_reset", False)):
+            # A stopped robot cannot execute the remainder of this worker's rollout.
+            self._pending_reset = (obs, infos.copy())
         return (
             obs,
             to_tensor(step_reward),
@@ -410,12 +400,25 @@ class RealWorldEnv(gym.Env):
         raw_chunk_intervene_actions = []
         raw_chunk_intervene_flag = []
         raw_chunk_rlt_switch_flags = []
-        self._notify_action_chunk_begin()
+        executed_steps = 0
+        if self._pending_reset is None:
+            self._notify_action_chunk_begin()
         for i in range(chunk_size):
-            actions = chunk_actions[:, i]
-            extracted_obs, step_reward, terminations, truncations, infos = self.step(
-                actions, auto_reset=False
-            )
+            if self._pending_reset is None:
+                extracted_obs, step_reward, terminations, truncations, infos = (
+                    self.step(chunk_actions[:, i], auto_reset=False)
+                )
+                executed_steps += 1
+            else:
+                extracted_obs, terminal_info = self._pending_reset
+                step_reward = torch.zeros(self.num_envs, dtype=torch.float32)
+                terminations = truncations = torch.zeros(
+                    self.num_envs, dtype=torch.bool
+                )
+                infos = terminal_info.copy()
+                for key in ("intervene_action", "intervene_flag", "rlt_switch_flags"):
+                    if key in infos:
+                        infos[key] = torch.zeros_like(infos[key])
             obs_list.append(extracted_obs)
             infos_list.append(infos)
             if "intervene_action" in infos:
@@ -457,6 +460,11 @@ class RealWorldEnv(gym.Env):
             obs_list[-1], infos_list[-1] = self._handle_auto_reset(
                 past_dones.cpu().numpy(), obs_list[-1], infos_list[-1]
             )
+        if "requires_reset" in infos_last:
+            # RealWorldEnv owns one robot. Its executed steps always form a prefix.
+            mask = valid_action_mask_from_counts(executed_steps, chunk_size)
+            infos_list[-1]["executed_mask"] = mask
+            infos_list[-1]["valid_action_mask"] = mask
 
         if self.auto_reset or self.ignore_terminations:
             chunk_terminations = torch.zeros_like(raw_chunk_terminations)

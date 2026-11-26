@@ -209,10 +209,16 @@ Integrated bimanual and wheeled humanoid systems for whole-body teleoperation an
 Low-Cost & Mobile Robots
 ------------------------
 
-Desktop manipulators and mobile bases built on LeRobot-compatible servo hardware.
+Desktop manipulators, wheeled bases, and quadrupeds.
 
 .. grid:: 1 2 3 3
    :gutter: 3
+
+   .. grid-item-card:: Go2 EDU
+      :link: embodied/go2
+      :link-type: doc
+
+      Read state and check six directions with the original Unitree controller.
 
    .. grid-item-card:: LeKiwi
       :link: embodied/lekiwi

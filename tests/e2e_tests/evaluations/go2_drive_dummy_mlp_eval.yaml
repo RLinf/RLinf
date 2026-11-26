@@ -1,0 +1,59 @@
+defaults:
+  - model/mlp_policy@rollout.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: 0
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: results/go2_drive_dummy_mlp_eval
+    project_name: rlinf
+    experiment_name: ci-test
+    logger_backends: null
+  max_epochs: 1
+  max_steps: 1
+  only_eval: true
+  val_check_interval: -1
+
+env:
+  group_name: EnvGroup
+  eval:
+    env_type: real
+    init_params:
+      id: Go2DriveEnv-v1
+    override_cfg:
+      is_dummy: true
+      max_num_steps: 2
+    total_num_envs: 1
+    group_size: 1
+    seed: 0
+    max_episode_steps: 2
+    max_steps_per_rollout_epoch: 2
+    rollout_epoch: 1
+    use_fixed_reset_state_ids: false
+    auto_reset: true
+    ignore_terminations: false
+    video_cfg:
+      save_video: false
+
+rollout:
+  group_name: RolloutGroup
+  rollout_backend: huggingface
+  enable_offload: false
+  pipeline_stage_num: 1
+  model:
+    obs_dim: 35
+    action_dim: 3
+    add_value_head: false

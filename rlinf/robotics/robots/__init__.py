@@ -28,6 +28,7 @@ from .piper import PiperConfig, PiperRobot
 from .r2 import R2Config, R2Robot
 from .so101 import SO101Config, SO101Robot
 from .turtle2 import Turtle2Config, Turtle2Robot
+from .unitree_go2 import Go2Config, Go2Robot
 
 __all__ = [
     "DOSW1Robot",
@@ -42,6 +43,8 @@ __all__ = [
     "FrankaRobot",
     "GimArmConfig",
     "GimArmRobot",
+    "Go2Config",
+    "Go2Robot",
     "LeKiwiConfig",
     "LeKiwiRobot",
     "PiperConfig",
