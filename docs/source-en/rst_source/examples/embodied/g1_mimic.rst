@@ -34,8 +34,8 @@ Overview
 
       1–4 NVIDIA GPUs · :ref:`AMD ROCm (experimental) <supermimic-hardware>`
 
-| **You'll do:** install → prepare LAFAN1 clips → launch training or evaluation.
-| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · one or more NVIDIA GPUs (or AMD ROCm) · network access to Hugging Face for LAFAN1 clips.
+| **You'll do:** review the G1 task, observation, reward, and config specs → launch training or evaluation with :doc:`SuperMimic <supermimic>`.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · SuperMimic environment and prepared LAFAN1 clips from :doc:`supermimic`.
 
 Tasks
 ~~~~~
@@ -155,60 +155,25 @@ The default preset lives in ``examples/embodiment/config/env/g1_mimic.yaml``. Co
 Setup and Run
 -------------
 
-.. include:: _setup_common.rst
+Follow :ref:`Setup and Run <supermimic-hardware>` on the :doc:`SuperMimic <supermimic>` page to install the ``.venv-supermimic`` environment (NVIDIA CUDA or AMD ROCm) and prepare the 40 LAFAN1 clips into ``./data/lafan1_g1`` (or prepare custom ``clip_*.pt`` files via :doc:`supermimic_motion`).
 
 .. tab-set::
 
-   .. tab-item:: Custom environment
+   .. tab-item:: SuperMimic (GenCoord)
 
-      Create a dedicated virtual environment from the repository root. This environment pins specific PyTorch, MuJoCo Warp, and ``warp-lang`` versions, so keep it separate from other RLinf virtual environments:
+      Activate ``.venv-supermimic`` from the repository root and launch single-GPU training on ``g1_mimic`` (starts 4096 parallel G1 environments on GPU 0 for 6000 updates, saving checkpoints every 2000 updates):
 
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --env supermimic --venv .venv-supermimic
          source .venv-supermimic/bin/activate
+         export MUJOCO_GL=disabled
+         export SUPERMIMIC_MOTION_PATH=./data/lafan1_g1
+         bash examples/embodiment/run_embodiment.sh supermimic_lafan1_gencoord
 
-For AMD ROCm setup, see :ref:`Run on Different Hardware Backends <supermimic-hardware>`.
+Visualization and Results
+-------------------------
 
-Prepare Motion Data
--------------------
-
-Training and motion-tracking evaluation use the 40 Unitree G1 clips from the ``g1/`` folder of `lvhaidong/LAFAN1_Retargeting_Dataset <https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset>`_ on Hugging Face. The retargeted clips originate from Ubisoft La Forge `LAFAN1 <https://github.com/ubisoft/ubisoft-laforge-animation-dataset>`_ (CC BY-NC-ND 4.0: non-commercial, no derivatives); review those terms before passing ``--accept-license``.
-
-Download, verify, and convert the 40 clips into ``/data/lafan1_g1``:
-
-.. code-block:: bash
-
-   python toolkits/supermimic/prepare_lafan1.py --out /data/lafan1_g1 --accept-license
-
-A successful conversion ends with:
-
-.. code-block:: text
-
-   [lafan1] wrote 40 clips, 2.45 h, manifest /data/lafan1_g1/manifest.json
-
-Keep the generated ``manifest.json`` and clip files unmodified; the loader verifies file checksums on startup. For offline conversion on a separate machine or building your own ``clip_*.pt`` files, see :doc:`supermimic_motion`.
-
-Run It
-------
-
-Export the clip directory and disable MuJoCo's OpenGL renderer (unused by training and evaluation), then launch the single-GPU GenCoord SuperMimic recipe on ``g1_mimic``:
-
-.. code-block:: bash
-
-   export PYTHONPATH=$PWD:$PYTHONPATH
-   export MUJOCO_GL=disabled
-   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
-
-   python examples/embodiment/train_embodied_agent.py \
-       --config-name supermimic_lafan1_gencoord \
-       runner.logger.log_path=/data/runs/supermimic_gencoord
-
-What this command does:
-
-1. Loads ``examples/embodiment/config/supermimic_lafan1_gencoord.yaml`` and ``examples/embodiment/config/env/g1_mimic.yaml``.
-2. Starts 4096 parallel G1 environments on GPU 0 and trains for 6000 updates, saving checkpoints every 2000 updates.
-3. Prints a metrics table every 100 updates starting with ``Global Step: <step>/6000``.
+Watch training curves in TensorBoard (``tensorboard --logdir ./logs``); see :doc:`SuperMimic <supermimic>` for 40-clip LAFAN1 tracking results and multi-GPU throughput benchmarks.
 
 Next Steps
 ----------

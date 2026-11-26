@@ -99,7 +99,24 @@ SuperMimic 将想象轨迹上的回报沿着可微世界模型反向传播，用
 
    r_t = \Delta t \left( \sum_{i=1}^{6} w_i \exp\!\left(-\frac{e_i}{\sigma_i^2}\right) - 0.1 \|a_t - a_{t-1}\|_2^2 - 2.0 \sum_{j=1}^{29} \delta_{\text{lim}, j} \right),
 
-其中 :math:`\Delta t = 0.02`，:math:`\delta_{\text{lim}, j}` 为关节角超出软限位的偏移量，6 个跟踪核的 ``(weight, std)`` 参数依次为：根位置 ``(0.5, 0.3)``、根朝向 ``(0.5, 0.4)``、部位位置 ``(1.0, 0.3)``、部位朝向 ``(1.0, 0.4)``、部位线速度 ``(1.0, 1.0)``、部位角速度 ``(1.0, 3.14)``。由于 :math:`\sum w_i = 5`，单步奖励上限为 :math:`r_{\max} = 0.1`。
+其中 :math:`\Delta t = 0.02`，:math:`\delta_{\text{lim}, j}` 为关节角超出软限位的偏移量；由于 :math:`\sum w_i = 5`，单步奖励上限为 :math:`r_{\max} = 0.1`，6 个跟踪核参数如下：
+
+.. list-table:: 跟踪核参数
+   :header-rows: 1
+   :widths: 44 28 28
+
+   * - 跟踪核
+     - 权重 :math:`w_i`
+     - 标准差 :math:`\sigma_i`
+   * - 根位置 / 根朝向
+     - 0.5 / 0.5
+     - 0.3 / 0.4
+   * - 部位位置 / 部位朝向
+     - 1.0 / 1.0
+     - 0.3 / 0.4
+   * - 部位线速度 / 部位角速度
+     - 1.0 / 1.0
+     - 1.0 / 3.14
 
 仿真中的硬失败条件为 :math:`|z_{\text{pelvis}} - z_{\text{ref}}| > 0.25\text{ m}` 或 :math:`|g_z - g_{z,\text{ref}}| > 0.8`。想象轨迹中将其替换为平滑可微的软终止概率（平滑系数 :math:`\tau = 0.05`）：
 
@@ -141,7 +158,8 @@ SuperMimic 将想象轨迹上的回报沿着可微世界模型反向传播，用
 
 * **双优化器：** 各网络隐藏层线性矩阵使用 Muon（``adjust_lr_fn: match_rms_adamw``、权重衰减 ``0.1``、动量 ``0.95``、Nesterov ``True``）；其余参数（首尾层、归一化层与偏置）使用 fused Adam，actor 的 :math:`\beta = (0.9, 0.95)`，世界模型与 critic 的 :math:`\beta = (0.9, 0.999)`。学习率恒定 :math:`2\times 10^{-4}`。
 * **梯度裁剪与异常检查：** 在 GPU 上按全局范数 ``1.0`` 裁剪（不触发主机同步），actor 额外对每个元素裁剪到 ``0.1``。一旦出现非有限梯度，指标拷回主机时训练直接终止。
-* **CUDA 图与 bf16：** 开启 ``actor.cuda_graph``\ （默认 ``True``）后，前 3 次更新按常规方式执行，第 4 次将三个阶段录成单张 CUDA 图并持续回放。默认使用 FSDP2 ``mixed_precision.param_dtype: bf16``\ （配合 ``reduce_dtype: fp32`` 与 ``cast_forward_inputs: False``），在每阶段 unshard 时将网络权重转为 bf16，主权重、优化器状态、梯度归约、运动学、奖励与损失仍保持 float32；rollout 推理则由 ``rollout.amp_autocast`` 启用 bf16。
+* **CUDA 图：** 开启 ``actor.cuda_graph``\ （默认 ``True``）后，前 3 次更新按常规方式执行，第 4 次将三个阶段录成单张 CUDA 图并持续回放。
+* **bf16 混合精度：** 默认通过 FSDP2 ``mixed_precision.param_dtype: bf16``\ （梯度归约保持 fp32、不转换前向输入）在每阶段 unshard 时将网络权重转为 bf16，主权重、优化器状态、梯度归约、运动学、奖励与损失仍保持 float32；rollout 推理则由 ``rollout.amp_autocast`` 启用 bf16。
 
 并行训练（FSDP2）
 -----------------
