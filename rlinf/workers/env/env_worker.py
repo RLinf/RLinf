@@ -15,13 +15,18 @@
 import asyncio
 import copy
 from collections import defaultdict
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.algorithms.prefix_off_policy.config import (
+    is_gate_trace_enabled,
+    is_prefix_off_policy_loss,
+)
 from rlinf.data.schema.embodied_types import (
+    ActionPayload,
     EnvOutput,
     EnvPart,
     EnvTransition,
@@ -33,9 +38,9 @@ from rlinf.envs import SupportedEnvType, get_env_cls
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.layout import EnvAssignment, EnvLayout
 from rlinf.envs.policy_obs import PolicyObsSpec
-from rlinf.envs.utils import get_env_attr
+from rlinf.envs.utils import get_env_attr, get_rollout_info_receiver
 from rlinf.envs.wrappers import InsertDelay, RecordVideo
-from rlinf.scheduler import Channel, Cluster, Worker
+from rlinf.scheduler import Channel, Cluster, Worker, merge_batches
 from rlinf.utils.env_helpers import HistoryManager, SmoothInterveneController
 from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
@@ -46,6 +51,14 @@ from rlinf.utils.placement import HybridComponentPlacement
 
 
 class EnvWorker(Worker):
+    """Distributed environment worker for embodied training and evaluation.
+
+    Owns one or more simulator or real-world environment instances per rank.
+    Steps environments with actions from rollout workers, applies optional
+    reward models or wrappers, and streams observations and transitions over
+    channels.
+    """
+
     # Class-level default so the observation send path is safe even when the
     # instance is built without running ``__init__`` (e.g. ``object.__new__`` in
     # unit tests). ``None`` means "use the scheduler's default split"; when
@@ -79,9 +92,15 @@ class EnvWorker(Worker):
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.collect_final_values = self.cfg.rollout.get("collect_final_values", True)
         self.stage_num = self.cfg.rollout.pipeline_stage_num
-        self.enable_rlt = OmegaConf.select(
-            self.cfg, "algorithm.loss_type", default=""
-        ) in {"rlt_ac", "rlt_td3"}
+        loss_type = OmegaConf.select(self.cfg, "algorithm.loss_type", default="")
+        self.enable_prefix = is_prefix_off_policy_loss(loss_type) or loss_type in {
+            "rlt_ac",
+            "rlt_td3",
+        }
+        # Env-declared diagnostics ride the trajectory only for a trace consumer.
+        self.export_trajectory_infos = self.enable_prefix and is_gate_trace_enabled(
+            self.cfg
+        )
         self.use_training_pipeline = self.cfg.runner.get("use_training_pipeline", False)
         # Optional lossless compression of image observations before they are
         # sent to the rollout workers. Disabled unless `env.obs_compression`
@@ -258,6 +277,10 @@ class EnvWorker(Worker):
                 assert all(
                     callable(get_env_attr(env, "offload")) for env in self.eval_env_list
                 ), "eval envs must have an offload method to enable offload!"
+
+        if OmegaConf.select(self.cfg, "rollout.routing_gate.enable", default=False):
+            for env in (*self.env_list, *self.eval_env_list):
+                get_rollout_info_receiver(env)
 
         if self.enable_train:
             if self.reward_mode == "history_buffer":
@@ -849,10 +872,41 @@ class EnvWorker(Worker):
                 else None
             ),
         }
-        if self.enable_rlt:
+        if self.enable_prefix:
             data["rlt_switch_flags"] = env_batch.get("rlt_switch_flags", None)
             data["intervene_flags"] = env_batch.get("intervene_flags", None)
+            data["dones"] = env_batch.get("dones", None)
         return data
+
+    def _select_trajectory_infos(
+        self,
+        env_infos: dict[str, Any] | None,
+        env: Any,
+    ) -> dict[str, torch.Tensor] | None:
+        """Export only the diagnostic fields declared by the environment."""
+        if not self.export_trajectory_infos or not isinstance(env_infos, dict):
+            return None
+        export_spec = get_env_attr(env, "trajectory_info_spec")
+        if not callable(export_spec):
+            return None
+        selected = {}
+        batch_size = int(get_env_attr(env, "num_envs"))
+        for key, dtype in export_spec().items():
+            value = env_infos.get(key)
+            if value is None:
+                final_info = env_infos.get("final_info")
+                if isinstance(final_info, dict):
+                    value = final_info.get(key)
+            if value is None:
+                continue
+            normalized = torch.as_tensor(value, dtype=dtype)
+            if normalized.ndim == 0 or normalized.shape[0] != batch_size:
+                raise ValueError(
+                    f"Trajectory info {key!r} expected leading batch {batch_size}, "
+                    f"got shape {tuple(normalized.shape)}."
+                )
+            selected[key] = normalized.reshape(batch_size, -1)[:, -1:]
+        return selected or None
 
     def _build_env_transition(
         self,
@@ -881,6 +935,13 @@ class EnvWorker(Worker):
             reward_model_output=reward_model_output,
             reward_assign_lengths=reward_assign_lengths,
             episode_data=chunk_step_data if self.enable_online_lerobot else None,
+            trajectory_infos=(
+                self._select_trajectory_infos(
+                    env_output.env_infos, self.env_list[stage_id]
+                )
+                if stage_id is not None
+                else None
+            ),
         )
 
     def _train_policy_obs(
@@ -898,6 +959,7 @@ class EnvWorker(Worker):
             obs=self._train_policy_obs(env_output, env_output.obs),
             rlt_switch_flags=env_output.rlt_switch_flags,
             intervene_flags=env_output.intervene_flags,
+            dones=env_output.dones,
         )
 
     def _send_policy_input(
@@ -1123,23 +1185,59 @@ class EnvWorker(Worker):
         ]
 
     @staticmethod
-    def _infer_action_batch_size(actions: torch.Tensor) -> int:
+    def _infer_action_batch_size(actions: Any) -> int:
         """Infer the batch dimension of a policy response."""
+        if isinstance(actions, ActionPayload):
+            actions = actions.actions
+        elif isinstance(actions, dict):
+            actions = actions["actions"]
+        elif hasattr(actions, "actions"):
+            actions = actions.actions
         return int(actions.shape[0])
 
+    @staticmethod
+    def _consume_action_payload(payload: Any, env: Any) -> torch.Tensor:
+        """Apply optional rollout diagnostics and return executable actions."""
+        if isinstance(payload, ActionPayload):
+            if payload.rollout_infos:
+                get_rollout_info_receiver(env)(payload.rollout_infos)
+            return payload.actions
+        # Other rollout backends may return their own action response object.
+        if hasattr(payload, "actions"):
+            return payload.actions
+        return payload
+
+    @staticmethod
+    def _merge_action_batches(batches: list[Any]) -> Any:
+        """Merge action feedback while preserving other backends' payloads."""
+        if len(batches) > 1 and isinstance(batches[0], ActionPayload):
+            return ActionPayload.merge(batches)
+        return merge_batches(batches)
+
     async def _recv_actions(
-        self, input_channel: Channel, stage_id: int
-    ) -> torch.Tensor:
-        """Return the actions the stage supplied, else receive the policy's reply."""
-        supplied = self._supplied_actions.pop(stage_id, None)
-        if supplied is not None:
-            return supplied
+        self,
+        input_channel: Channel,
+        stage_id: int,
+        *,
+        mode: Literal["train", "eval"] = "train",
+    ) -> Any:
+        """Return supplied train actions or receive a reply on the mode's route."""
+        if mode == "eval":
+            tag = "eval_rollout_results"
+            batch_size = self.eval_batch_size
+        else:
+            supplied = self._supplied_actions.pop(stage_id, None)
+            if supplied is not None:
+                return supplied
+            tag = "train_policy" if self.env_decoupled_mode else "policy"
+            batch_size = self.train_batch_size
         return await self.recv_from(
             group_name=self.cfg.rollout.group_name,
             channel=input_channel,
-            tag="train_policy" if self.env_decoupled_mode else "policy",
+            tag=tag,
             route_key=stage_id if not self.env_decoupled_mode else None,
-            batch_size=self.train_batch_size,
+            batch_size=batch_size,
+            merge_fn=self._merge_action_batches,
             infer_batch_size_fn=self._infer_action_batch_size,
             async_op=True,
             decoupled_mode=self.env_decoupled_mode,
@@ -1179,7 +1277,11 @@ class EnvWorker(Worker):
                     if cooperative_yield:
                         await asyncio.sleep(0)
 
-                    actions = await self._recv_actions(input_channel, stage_id)
+                    action_payload = await self._recv_actions(input_channel, stage_id)
+                    actions = self._consume_action_payload(
+                        action_payload,
+                        self.env_list[stage_id],
+                    )
                     self.smooth_intervene.remember_actions(stage_id, actions)
 
                     if self.enable_online_lerobot:
@@ -1304,24 +1406,20 @@ class EnvWorker(Worker):
             eval_epoch_done = False
             for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
-                    # Async channel receive demultiplexes by query_id when an
-                    # async training interact loop shares input_channel.
-                    policy_output = self.recv_from(
+                    action_payload = self.recv_from(
                         group_name=self.cfg.rollout.group_name,
                         channel=input_channel,
                         tag="eval_rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         batch_size=self.eval_batch_size,
-                        infer_batch_size_fn=self._infer_rollout_batch_size
-                        if self.env_decoupled_mode
-                        else None,
+                        merge_fn=self._merge_action_batches,
+                        infer_batch_size_fn=self._infer_action_batch_size,
                         async_op=True,
                         decoupled_mode=self.env_decoupled_mode,
                     ).wait()
-                    raw_chunk_actions = (
-                        policy_output.actions
-                        if hasattr(policy_output, "actions")
-                        else policy_output
+                    raw_chunk_actions = self._consume_action_payload(
+                        action_payload,
+                        self.eval_env_list[stage_id],
                     )
                     if isinstance(raw_chunk_actions, torch.Tensor):
                         raw_chunk_actions = raw_chunk_actions.detach().cpu().numpy()
@@ -1388,3 +1486,14 @@ class EnvWorker(Worker):
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
         return {**eval_metrics, **self.eval_assignment.scoped(eval_metrics)}
+
+    def finalize_eval_results(
+        self, env_results: list[dict | None], step: int | None = None
+    ) -> tuple[dict[str, float], str | None] | None:
+        """Summarize and optionally export eval results when the env provides a hook."""
+        if not getattr(self, "eval_env_list", None):
+            return None
+        finalize_fn = get_env_attr(self.eval_env_list[0], "finalize_eval_results")
+        if not callable(finalize_fn):
+            return None
+        return finalize_fn(self.cfg, env_results, step=step)

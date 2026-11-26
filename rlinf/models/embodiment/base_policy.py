@@ -31,6 +31,9 @@ class ForwardType(Enum):
     IQL_VALUE = "iql_value"
     NFT = "nft"
     ART = "art"
+    SUPERMIMIC_WORLD_MODEL = "supermimic_world_model"
+    SUPERMIMIC_ACTOR = "supermimic_actor"
+    SUPERMIMIC_CRITIC = "supermimic_critic"
     REFL = "refl"
 
 

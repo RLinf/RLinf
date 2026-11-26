@@ -11,6 +11,27 @@ At the moment, this capability is mainly intended for the
 ``examples/embodiment/train_async.py``.
 
 
+At a Glance
+------------------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 44 34
+
+   * - Strategy
+     - Mechanism
+     - Config / Extension Point
+   * - ``patch`` (default)
+     - Incremental sparse delta sync against a sender snapshot (with optional one-time init bootstrap)
+     - ``weight_syncer/patch_syncer@weight_syncer``
+   * - ``bucket``
+     - Full bucketized tensor transfer for the selected parameter subset
+     - ``weight_syncer/bucket_syncer@weight_syncer``
+   * - Custom ``WeightSyncer``
+     - Subclass ``WeightSyncer`` (``init_sender``, ``init_receiver``, ``sync``, ``apply``)
+     - ``WeightSyncer.create()`` in ``rlinf/hybrid_engines/weight_syncer/base.py``
+
+
 Why Weight Syncer Exists
 ------------------------------
 
@@ -18,7 +39,7 @@ In embodied RL, every actor update usually needs to be synchronized to the
 rollout workers. For large models such as OpenPI, OpenVLA, OpenVLA-OFT, and
 GR00T, full-weight synchronization can become expensive:
 
-- The model is large, so full sync can easily become a major part of step time.
+- The model is large, so full sync can become a major part of step time.
 - Repeatedly loading a full ``state_dict`` on the rollout side also adds GPU and
   CPU overhead.
 - In async settings, blocking full sync directly hurts rollout throughput and
@@ -51,7 +72,7 @@ group.
 Supported Sync Strategies
 ------------------------------
 
-RLinf currently provides two strategies:
+RLinf provides two built-in strategies:
 
 ``patch``
   Incremental synchronization. The sender maintains a snapshot and only sends
@@ -209,7 +230,7 @@ The fields mean:
 
 ``patch.snapshot_device``
   Device where the snapshot is stored. It can be either ``cpu`` or ``cuda``.
-  ``cpu`` is currently recommended as the default: it avoids keeping an
+  ``cpu`` is the recommended default: it avoids keeping an
   additional model-sized snapshot in GPU memory, and after GPU-side comparison,
   asynchronous prefetching, and background snapshot flushing optimizations, its
   synchronization latency is already close to ``snapshot_device: cuda``. If GPU
@@ -223,7 +244,7 @@ The fields mean:
   Whether to delta-encode COO coordinates. Enabled by default and recommended.
 
 ``patch.compression``
-  Compression algorithm. Supported values currently include:
+  Compression algorithm. Supported values include:
 
   - ``none``: no compression
   - ``nvcomp_lz4``: GPU-side lossless compression via nvCOMP
@@ -265,9 +286,9 @@ Patch mode is roughly split into two stages:
      ``state_dict``.
    - The sender then creates its snapshot for the later incremental patch path.
      That snapshot only covers the keys selected for incremental sync:
-     currently trainable parameters and persistent buffers.
+     trainable parameters and persistent buffers.
 
-   The metadata currently includes:
+   The metadata includes:
 
    - a fixed parameter order ``ordered_keys``
    - the original shape of each tensor in ``original_shapes``
@@ -375,7 +396,7 @@ Patch compression only applies to the incremental patch payload itself, not the
 full model weights. The one-time init bootstrap uses bucketized weight
 transfer and does not go through the patch compressor.
 
-RLinf currently provides these patch compressors:
+RLinf provides these patch compressors:
 
 - ``none``: send patch tensors directly
 - ``nvcomp_lz4``: apply GPU-side lossless compression separately to
@@ -483,7 +504,7 @@ This means:
 - a request arriving while the previous sync is still running is coalesced
   rather than queued, so a slow transfer cannot build up a backlog
 
-The runner tracks rollout-side *application*, not just sender completion. Both
+The runner tracks rollout-side *application* in addition to sender completion. Both
 a later blocking synchronization and normal teardown wait for any background
 application to finish first.
 
@@ -526,7 +547,7 @@ number of model parameters multiplied by the byte size of the corresponding
 receiver-side weight dtype.
 In this mode, patch comparison still runs on GPU, and CPU snapshot overhead is
 reduced through prefetching, event synchronization, and background flushing. For
-memory-tight training jobs, this is the currently recommended configuration. In
+memory-tight training jobs, this is the recommended configuration. In
 addition, ``nvcomp_lz4`` requires ``transport_device`` to be ``cuda``.
 
 
@@ -539,7 +560,7 @@ The current implementation has several constraints to keep in mind:
   from the same initial weights
 - targeted ``patch.init_sync.prefixes`` can miss nested module paths if the
   configured prefixes are incomplete; ``null`` is the safest default
-- ``patch`` is currently designed primarily for the embodied HuggingFace rollout path
+- ``patch`` is designed primarily for the embodied HuggingFace rollout path
 - high-rank tensors are converted to a 2D view internally; if trailing dimensions
   cannot be flattened as a view, patch mode will raise an error
 - compression settings in this document refer to patch payload compression, not
@@ -571,3 +592,133 @@ safest approach is:
 - keep patch init bootstrap enabled, or use ``bucket`` first to validate the
   selected-key transport path
 - then switch to ``patch`` for performance optimization
+
+
+Implementing a Custom Weight Syncer
+-----------------------------------
+
+To add a custom synchronization strategy, subclass ``WeightSyncer`` from
+``rlinf/hybrid_engines/weight_syncer/base.py`` and implement the four async
+lifecycle methods: ``init_sender``, ``init_receiver``, ``sync``, and ``apply``.
+
+.. code-block:: python
+
+   # rlinf/hybrid_engines/weight_syncer/custom_dict_syncer.py
+   from __future__ import annotations
+
+   import torch
+   from torch.distributed.tensor import DTensor
+
+   from .base import RecvFn, SendFn, WeightSyncer
+
+
+   class DictWeightSyncer(WeightSyncer):
+       def __init__(self):
+           super().__init__()
+           self._param_names: list[str] = []
+
+       async def init_sender(
+           self,
+           state_dict: dict[str, torch.Tensor | DTensor],
+           param_names_need_sync: list[str],
+           send: SendFn,
+           recv: RecvFn | None = None,
+           is_sender: bool = True,
+       ) -> None:
+           self._param_names = list(param_names_need_sync)
+           self._sender_initialized = True
+
+       async def init_receiver(
+           self,
+           state_dict: dict[str, torch.Tensor | DTensor] | None,
+           recv: RecvFn,
+           send: SendFn | None = None,
+       ) -> None:
+           self._receiver_initialized = True
+
+       async def sync(
+           self,
+           state_dict: dict[str, torch.Tensor | DTensor],
+           send: SendFn,
+           version: int | torch.Tensor,
+       ) -> None:
+           payload = {}
+           for name in self._param_names:
+               tensor = state_dict[name]
+               if isinstance(tensor, DTensor):
+                   tensor = tensor.full_tensor()
+               payload[name] = tensor.detach().clone()
+           await send({"version": int(version), "weights": payload})
+
+       async def apply(self, model: torch.nn.Module, recv: RecvFn) -> int:
+           packet = await recv()
+           model.load_state_dict(packet["weights"], strict=False)
+           return int(packet["version"])
+
+How the calls fit together:
+
+- ``init_sender(state_dict, param_names_need_sync, send, recv=None, is_sender=True)``:
+  runs once on the actor side, records the parameter names to synchronize, and
+  sets ``self._sender_initialized = True``.
+- ``init_receiver(state_dict, recv, send=None)``: runs once on the rollout side
+  and sets ``self._receiver_initialized = True``.
+- ``sync(state_dict, send, version)``: materializes any ``DTensor`` values,
+  packages the selected weights together with ``version``, and sends them via
+  ``await send(...)``.
+- ``apply(model, recv)``: receives the payload via ``await recv()``, loads the
+  weights into ``model``, and returns the applied integer ``version``.
+
+Register the syncer in ``WeightSyncer.create()`` in
+``rlinf/hybrid_engines/weight_syncer/base.py`` and re-export it from
+``rlinf/hybrid_engines/weight_syncer/__init__.py``:
+
+.. code-block:: python
+
+   elif syncer_type == "custom_dict":
+       from .custom_dict_syncer import DictWeightSyncer
+
+       syncer = DictWeightSyncer()
+
+``WeightSyncer.create()`` automatically reads top-level ``use_ring_sync``,
+``nccl_max_ctas``, and ``nccl_min_ctas`` from the ``weight_syncer`` config and
+attaches them to ``syncer.comm_options``. Add a matching Hydra preset at
+``examples/embodiment/config/weight_syncer/custom_dict_syncer.yaml``:
+
+.. code-block:: yaml
+
+   type: custom_dict
+
+Verify the sender/receiver round-trip locally on CPU over an in-memory ``asyncio.Queue``:
+
+.. code-block:: python
+
+   import asyncio
+   import torch
+
+
+   async def main():
+       queue: asyncio.Queue = asyncio.Queue()
+       sender_model = torch.nn.Linear(4, 2)
+       receiver_model = torch.nn.Linear(4, 2)
+       param_names = [
+           name for name, p in sender_model.named_parameters() if p.requires_grad
+       ]
+
+       sender = DictWeightSyncer()
+       receiver = DictWeightSyncer()
+       await sender.init_sender(sender_model.state_dict(), param_names, queue.put)
+       await receiver.init_receiver(receiver_model.state_dict(), queue.get)
+
+       await sender.sync(sender_model.state_dict(), queue.put, version=3)
+       applied_version = await receiver.apply(receiver_model, queue.get)
+
+       assert applied_version == 3
+       for name in param_names:
+           torch.testing.assert_close(
+               receiver_model.state_dict()[name],
+               sender_model.state_dict()[name],
+           )
+       print("DictWeightSyncer check passed, version:", applied_version)
+
+
+   asyncio.run(main())

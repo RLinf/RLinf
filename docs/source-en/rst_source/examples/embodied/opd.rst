@@ -1,5 +1,5 @@
-OPD for OpenVLA-OFT on LIBERO
-=================================
+OPD
+====
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -22,22 +22,22 @@ This example trains an **OpenVLA-OFT student** with an **OpenVLA-OFT teacher** o
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: Environment
-      :text-align: center
-
-      LIBERO-Spatial
-
    .. grid-item-card:: Algorithm
       :text-align: center
 
       OPD
 
-   .. grid-item-card:: Model
+   .. grid-item-card:: Models
       :text-align: center
 
       OpenVLA-OFT student · OpenVLA-OFT teacher
 
-   .. grid-item-card:: Hardware
+   .. grid-item-card:: Environments / Data
+      :text-align: center
+
+      LIBERO-Spatial
+
+   .. grid-item-card:: Training
       :text-align: center
 
       1 node · 8 GPUs
@@ -45,15 +45,10 @@ This example trains an **OpenVLA-OFT student** with an **OpenVLA-OFT teacher** o
 | **You'll do:** download student/teacher checkpoints -> verify ``unnorm_key`` -> launch ``libero_spatial_opd_openvlaoft`` -> watch ``env/success_once`` and OPD actor metrics.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · :doc:`LIBERO setup <libero>` · a working OpenVLA-OFT + LIBERO environment.
 
-Method
-------
+How OPD Works
+-------------
 
-OPD uses the relative log probability assigned by teacher and student to the same
-student action-token sequence:
-
-.. math::
-
-   A_{OPD} = \log \pi_{teacher}(a_{student} \mid s) - \operatorname{stop\_grad}(\log \pi_{student}(a_{student} \mid s))
+OPD computes a token-level distillation advantage as the log-probability gap between the teacher and the student on the student's own sampled action tokens, applying stop-gradient to the student term.
 
 Implementation details:
 
@@ -61,8 +56,10 @@ Implementation details:
 - After rollout, the teacher computes dense token logprobs over stored ``forward_inputs.action_tokens``.
 - OPD loss uses ``loss_mask`` to exclude invalid tokens after success or termination.
 
-Checkpoints
------------
+Setup and Run
+-------------
+
+.. include:: _setup_common.rst
 
 .. list-table:: **Checkpoints used by LIBERO-Spatial OPD**
    :header-rows: 1
@@ -74,82 +71,81 @@ Checkpoints
      - ``unnorm_key``
    * - Student
      - |huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_
-     - ``actor.model.model_path`` / ``rollout.model.model_path``
+     - ``actor.model.model_path``
      - ``libero_130_no_noops_trajall``
    * - Teacher
      - |huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130 <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_
      - ``rollout.expert_model.model_path``
      - ``libero_130_no_noops_trajall``
 
-Download the checkpoints with either method:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: LIBERO (OpenVLA-OFT)
 
-   # Method 1: git-lfs
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130
+      Install the environment and download both student and teacher checkpoints:
 
-   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
-   pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130 --local-dir RLinf-OpenVLAOFT-LIBERO-130
+      .. code-block:: bash
 
-Configuration
--------------
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
+         hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir ./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+         hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130 --local-dir ./RLinf-OpenVLAOFT-LIBERO-130
 
-The example config is ``examples/embodiment/config/libero_spatial_opd_openvlaoft.yaml``.
-Key fields are:
+      Set the student and teacher model paths in ``examples/embodiment/config/libero_spatial_opd_openvlaoft.yaml`` (rollout inherits ``actor.model.model_path`` automatically):
 
-.. code-block:: yaml
+      .. code-block:: yaml
 
-   algorithm:
-     adv_type: opd
-     loss_type: opd
-     loss_agg_func: token-mean
+         actor:
+           model:
+             model_path: ./RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
-   actor:
-     global_batch_size: 4096
-     micro_batch_size: 32
-     model:
-       model_path: /path/to/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-       unnorm_key: libero_130_no_noops_trajall
-     optim:
-       lr: 2.0e-6
+         rollout:
+           expert_model:
+             model_path: ./RLinf-OpenVLAOFT-LIBERO-130
 
-   rollout:
-     model:
-       model_path: /path/to/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-     expert_model:
-       model_path: /path/to/RLinf-OpenVLAOFT-LIBERO-130
-       unnorm_key: libero_130_no_noops_trajall
+      Launch training:
 
-   env:
-     train:
-       rollout_epoch: 8
-       max_episode_steps: 240
-       max_steps_per_rollout_epoch: 240
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_spatial_opd_openvlaoft
 
 .. note::
 
-   Student and teacher must use the same ``unnorm_key``. Both checkpoints in this
-   recipe use ``libero_130_no_noops_trajall``.
+   Student and teacher must use the same ``unnorm_key``. Both checkpoints in this recipe use ``libero_130_no_noops_trajall``.
 
-Run
----
+.. dropdown:: Advanced configuration (optional)
 
-Launch the full training run:
+   The shipped config already sets the OPD algorithm, batch size, learning rate, and rollout defaults:
 
-.. code-block:: bash
+   .. code-block:: yaml
 
-   source switch_env openvla-oft
-   bash examples/embodiment/run_embodiment.sh libero_spatial_opd_openvlaoft
+      algorithm:
+        adv_type: opd
+        loss_type: opd
+        loss_agg_func: token-mean
 
-Logs are written under ``runner.logger.log_path`` and can be inspected with TensorBoard:
+      actor:
+        global_batch_size: 4096
+        micro_batch_size: 32
+        model:
+          unnorm_key: libero_130_no_noops_trajall
+        optim:
+          lr: 2.0e-6
 
-.. code-block:: bash
+      rollout:
+        expert_model:
+          unnorm_key: libero_130_no_noops_trajall
 
-   tensorboard --logdir ./logs --port 6006
+      env:
+        train:
+          rollout_epoch: 8
+          max_episode_steps: 240
+          max_steps_per_rollout_epoch: 240
+
+Visualization and Results
+-------------------------
+
+Inspect logs with TensorBoard (``tensorboard --logdir ./logs --port 6006``). For metric definitions, see :doc:`Training metrics <../../reference/metrics>`.
 
 Key metrics:
 
@@ -158,12 +154,7 @@ Key metrics:
 - ``actor/opd_reward``: token-level distillation reward used by OPD.
 - ``actor/policy_loss`` and ``actor/total_loss``: actor update stability.
 
-Results
--------
-
-The table below reports LIBERO-Spatial results. The base student is
-|huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_;
-the teacher is |huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130 <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_.
+The table below reports LIBERO-Spatial results. The base student is |huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_; the teacher is |huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130 <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_.
 
 .. list-table:: **LIBERO-Spatial success rate**
    :header-rows: 1

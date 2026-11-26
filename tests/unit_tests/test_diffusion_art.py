@@ -37,6 +37,7 @@ from rlinf.algorithms.diffusion.art import (
     validate_art_rollout,
 )
 from rlinf.config import validate_cfg, validate_openpi_art_cfg
+from rlinf.data.schema.embodied_types import PolicyInput
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler.cluster.node import NodeGroupInfo, NodeInfo
 from rlinf.scheduler.hardware import Accelerator, HardwareInfo, HardwareResource
@@ -1007,13 +1008,14 @@ def test_art_rollout_shares_reference_and_keeps_eval_unchanged():
     worker.enable_dagger = False
     worker.expert_model = None
     worker.rlt_feature_model = None
+    worker.prefix_runtime = None
     worker._train_sampling_params = {}
     worker._eval_sampling_params = {}
     worker._timer_metrics = {}
     worker._accelerator_type = AcceleratorType.NO_ACCEL
     policy_inputs = {"art_cluster_features": torch.ones(1, 26)}
     _, result = worker._predict_rollout_actions(
-        {"policy_inputs": policy_inputs},
+        PolicyInput(obs={"policy_inputs": policy_inputs}),
         mode="train",
         policy_kwargs={"unnorm_key": "libero_10"},
         dagger_beta=0.5,
@@ -1022,7 +1024,7 @@ def test_art_rollout_shares_reference_and_keeps_eval_unchanged():
     assert torch.equal(calls[0]["art_anchor_noise"], worker._art_anchor_noise())
     assert calls[0]["unnorm_key"] == "libero_10"
     _, result = worker._predict_rollout_actions(
-        {}, mode="eval", policy_kwargs={"unnorm_key": "libero_10"}
+        PolicyInput(obs={}), mode="eval", policy_kwargs={"unnorm_key": "libero_10"}
     )
     assert "art_anchor_noise" not in calls[1]
     assert calls[1]["unnorm_key"] == "libero_10"
