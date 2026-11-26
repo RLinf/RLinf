@@ -1377,7 +1377,9 @@ class EnvWorker(Worker):
         finally:
             if self.only_eval:
                 for env in self.eval_env_list:
-                    env.close()
+                    close = get_env_attr(env, "close")
+                    if callable(close):
+                        close()
 
     def _evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)

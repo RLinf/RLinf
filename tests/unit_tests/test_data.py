@@ -4087,7 +4087,8 @@ def test_async_env_worker_stop_cancels_pending_action_receive():
     asyncio.run(run())
 
 
-def test_env_evaluate_uses_async_channel_receive():
+@pytest.mark.parametrize("has_close", [True, False])
+def test_env_evaluate_uses_async_channel_receive(has_close):
     env = object.__new__(EnvWorker)
     env.only_eval = True
     env._accelerator_type = AcceleratorType.NO_ACCEL
@@ -4115,6 +4116,8 @@ def test_env_evaluate_uses_async_channel_receive():
             reset=Mock(return_value=({"states": torch.zeros(1, 4)}, {})),
         )
     ]
+    if not has_close:
+        del env.eval_env_list[0].close
     env.send_to = Mock()
     recv_work = Mock(wait=Mock(return_value=torch.zeros(1, 1, 4)))
     env.recv_from = Mock(return_value=recv_work)
@@ -4131,7 +4134,8 @@ def test_env_evaluate_uses_async_channel_receive():
     assert env.recv_from.call_args.kwargs["async_op"] is True
     recv_work.wait.assert_called_once_with()
     assert torch.equal(metrics["return"], torch.tensor([1.0]))
-    env.eval_env_list[0].close.assert_called_once_with()
+    if has_close:
+        env.eval_env_list[0].close.assert_called_once_with()
 
 
 def test_smooth_intervention_builds_external_input_without_policy_history():
