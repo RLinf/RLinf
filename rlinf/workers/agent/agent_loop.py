@@ -976,6 +976,12 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             await asyncio.gather(*rollout_tasks, return_exceptions=True)
             await self.session_server_client.abort(group_id, exc.reason)
             return {}
+        except BaseException:
+            for task in rollout_tasks:
+                task.cancel()
+            await asyncio.gather(*rollout_tasks, return_exceptions=True)
+            # The caller handles group cancellation; never admit a partial group.
+            raise
         outputs = [output for _, output, _, _ in trajectories]
         agent_side = [output is not None for output in outputs]
         assert all(agent_side) or not any(agent_side), (

@@ -150,6 +150,7 @@ class Scheduler(_Scheduler):
     """
 
     def __init__(self, *args, **kwargs):
+        self._token_weight_version = None
         # Must run before super().__init__, which builds the model.
         patch_glm4_moe_lite_shared_expert_tp1()
         super().__init__(*args, **kwargs)
@@ -436,7 +437,21 @@ class Scheduler(_Scheduler):
             if mm_utils.embedding_cache is not None:
                 mm_utils.embedding_cache.clear()
         self._handle_cache_after_sync(recv_req.pause_mode)
+        if recv_req.token_weight_version is not None:
+            self._token_weight_version = recv_req.token_weight_version
         return SyncHFWeightOutput()
+
+    def maybe_collect_customized_info(self, i, req, logits_output):
+        """Record which installed weights generated each token, including retractions."""
+        super().maybe_collect_customized_info(i, req, logits_output)
+        if self._token_weight_version is not None:
+            if req.customized_info is None:
+                req.customized_info = {}
+            versions = req.customized_info.setdefault("rollout_weight_versions", [])
+            count = len(req.output_ids) - len(versions)
+            if count < 0:
+                raise RuntimeError("SGLang retracted an already emitted output token")
+            versions.extend([self._token_weight_version] * count)
 
     def _handle_cache_after_sync(self, pause_mode: Optional[str]):
         """Handle prefix tree / KV caches at the end of `sync_hf_weight`.

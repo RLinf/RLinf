@@ -95,6 +95,45 @@ def test_sglang_server_args_with_installed_vendor(monkeypatch):
         SGLangWorker._build_server_args(worker)
 
 
+def test_sglang_server_args_forwards_parsers(monkeypatch):
+    import dataclasses
+
+    pytest.importorskip("sglang.srt.server_args")
+    from rlinf.workers.rollout.sglang import sglang_worker
+
+    @dataclasses.dataclass
+    class _FakeServerArgs:
+        reasoning_parser: str | None = None
+        tool_call_parser: str | None = None
+        skip_server_warmup: bool = False
+
+        def __init__(self, **kwargs):
+            self.reasoning_parser = kwargs.get("reasoning_parser")
+            self.tool_call_parser = kwargs.get("tool_call_parser")
+            self.skip_server_warmup = kwargs.get("skip_server_warmup", False)
+
+    monkeypatch.setattr(sglang_worker, "ServerArgs", _FakeServerArgs)
+    configured = _sglang_test_worker(
+        {
+            "sglang": {
+                "use_torch_compile": False,
+                "torch_compile_max_bs": 4,
+                "decode_log_interval": 100,
+                "attention_backend": "triton",
+                "tool_call_parser": "qwen3_coder",
+                "reasoning_parser": "qwen3",
+            }
+        }
+    )
+    args = sglang_worker.SGLangWorker._build_server_args(configured)
+    assert args["tool_call_parser"] == "qwen3_coder"
+    assert args["reasoning_parser"] == "qwen3"
+
+    defaults = sglang_worker.SGLangWorker._build_server_args(_sglang_test_worker())
+    assert defaults["tool_call_parser"] is None
+    assert defaults["reasoning_parser"] is None
+
+
 @pytest.mark.parametrize(
     ("env_package", "sglang_ver", "expected_error"),
     [
@@ -343,6 +382,84 @@ def test_qwen_release_capture_replays_only_real_images(qwen_image_processor):
         assert entry["prompt_token_ids"][: spans[-1][0]] == ids[: spans[-1][0]]
         ids = output.input_ids + sampled + [start, pad, end]
         spans = entry["image_spans"]
+
+
+def test_qwen_vl_token_budget_enforces_reserve_before_clamping(qwen_image_processor):
+    from tempfile import TemporaryDirectory
+    from uuid import uuid4
+
+    from PIL import Image
+
+    from rlinf.hybrid_engines.sglang.multimodal.replay import CAPTURE_KEY
+
+    processor, _, config = qwen_image_processor
+    start, pad, end = (
+        config.vision_start_token_id,
+        config.image_token_id,
+        config.vision_end_token_id,
+    )
+    images = [Image.new("RGB", (64, 64), "red")]
+    ids = [start, pad, end]
+
+    def _run(context_length, reserve, sampling_params):
+        with TemporaryDirectory(prefix="rlinf-qwen-") as directory:
+            ticket, rid = Path(directory).name, uuid4().hex
+            request = SimpleNamespace(
+                video_data=None,
+                audio_data=None,
+                rid=rid,
+                sampling_params={
+                    **sampling_params,
+                    "custom_params": {
+                        CAPTURE_KEY: {
+                            "ticket": ticket,
+                            "image_spans": [[1, 2]],
+                            "prefix_length": 0,
+                            "token_budget": (context_length, reserve),
+                        }
+                    },
+                },
+            )
+            asyncio.run(processor.process_mm_data_async(images, ids, request))
+            return request.sampling_params["max_new_tokens"]
+
+    # First expand once to know exact expanded prompt length.
+    unconstrained = _run(10000, 1, {})
+    expanded_len = 10000 - unconstrained
+
+    with pytest.raises(ValueError, match="expected at least 16"):
+        _run(expanded_len + 8, 16, {"max_new_tokens": 64})
+
+    # requested < reserve <= remaining clamps to requested without raising.
+    assert _run(expanded_len + 32, 16, {"max_new_tokens": 8}) == 8
+    # Omitted max_new_tokens uses remaining.
+    assert _run(expanded_len + 32, 16, {}) == 32
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("sglang") is None, reason="requires SGLang"
+)
+def test_tokenizer_manager_handles_aborted_none_versions_in_mixed_batch(monkeypatch):
+    from rlinf.hybrid_engines.sglang.common.tokenizer_manager import TokenizerManager
+
+    seen = []
+    monkeypatch.setattr(
+        TokenizerManager.__mro__[1],
+        "_handle_batch_output",
+        lambda self, obj: seen.append(obj),
+    )
+    tm = object.__new__(TokenizerManager)
+    tm.patch_return_output_ids = False
+    active_state = SimpleNamespace(rlinf_token_versions=[1])
+    tm.rid_to_state = {"ok": active_state, "aborted": None}
+    recv_obj = SimpleNamespace(
+        rids=["aborted", "ok"],
+        customized_info={"rollout_weight_versions": [None, [2, 3]]},
+    )
+    tm._handle_batch_output(recv_obj)
+    assert active_state.rlinf_token_versions == [1, 2, 3]
+    assert recv_obj.customized_info["rollout_weight_versions"] == [None, [1, 2, 3]]
+    assert seen == [recv_obj]
 
 
 def test_qwen_vl_module_imports_without_sglang_05():

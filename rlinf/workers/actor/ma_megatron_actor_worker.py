@@ -30,7 +30,7 @@ from rlinf.algorithms.registry import (
     get_loss_scales,
     policy_loss,
 )
-from rlinf.algorithms.utils import kl_penalty
+from rlinf.algorithms.utils import apply_importance_sampling_correction, kl_penalty
 from rlinf.data.schema.actor_batch import (
     DynamicActorBatch,
 )
@@ -68,6 +68,7 @@ from rlinf.utils.utils import (
     configure_batch_sizes,
     cpu_dict,
     cpu_weight_swap,
+    masked_mean,
 )
 from rlinf.workers.actor.megatron_actor_worker import (
     MegatronActor,
@@ -393,18 +394,34 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 if "ref_logprobs" in batch:
                     ref_logprobs = batch["ref_logprobs"]
 
-                if self.cfg.algorithm.get("importance_sampling_fix", False):
-                    assert False, (
-                        "importance_sampling_fix is not supported for dynamic rollout batch"
-                    )
-                    rollout_logprobs = batch["rollout_logprobs"]
-                    recomputed_logprobs = batch.get("recomputed_logprobs")
-                    advantages = advantages * torch.clamp(
-                        (recomputed_logprobs - rollout_logprobs).exp(),
-                        max=self.cfg.algorithm.importance_sampling_clip,
-                    )
-
                 mask = batch["response_mask"]
+                correction_metrics = {}
+                if self.cfg.algorithm.get("importance_sampling_fix", False):
+                    if (
+                        "recomputed_logprobs" not in batch
+                        or "rollout_logprobs" not in batch
+                    ):
+                        raise ValueError(
+                            "importance_sampling_fix requires both recomputed_logprobs and rollout_logprobs"
+                        )
+                    clip = self.cfg.algorithm.importance_sampling_clip
+                    advantages, weights, log_ratio = (
+                        apply_importance_sampling_correction(
+                            advantages,
+                            old_logprobs.masked_fill(~mask, 0),
+                            batch["rollout_logprobs"].masked_fill(~mask, 0),
+                            clip,
+                        )
+                    )
+                    correction_metrics = {
+                        "actor/recomputed_logprob_abs_diff": masked_mean(
+                            log_ratio.abs(), mask
+                        ),
+                        "actor/importance_sampling_weight": masked_mean(weights, mask),
+                        "actor/importance_sampling_clip_fraction": masked_mean(
+                            (weights > clip).float(), mask
+                        ),
+                    }
 
                 loss, metrics_data = policy_loss(
                     task_type=self.cfg.runner.task_type,
@@ -470,6 +487,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 # add to log
                 metrics_data.update(
                     {
+                        **correction_metrics,
                         "actor/final_loss": loss.detach(),
                         "actor/entropy_loss": entropy_loss.detach(),
                         "actor/kl_loss": kl_loss.detach(),
@@ -700,8 +718,22 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             turn_rewards = [0.0] * num_trajectories
             turn_counts = [0] * num_trajectories
             token_weighted_version_start_sums = [0] * num_trajectories
+            versions = (rollout_result.extra_fields_turn or {}).get(
+                "rollout_weight_versions"
+            )
+            calls = (rollout_result.extra_fields_turn or {}).get("generate_calls")
+            sampled_sums = [0] * num_trajectories if versions is not None else None
             for turn_index, traj_index in enumerate(rollout_result.idx_to_traj):
                 turn_tokens = rollout_result.response_lengths[turn_index]
+                if rollout_result.response_mask is not None:
+                    turn_tokens = sum(rollout_result.response_mask[turn_index])
+                if sampled_sums is not None:
+                    sampled = versions[turn_index]
+                    if len(sampled) != turn_tokens:
+                        raise ValueError(
+                            "One sampled policy version is required per response token"
+                        )
+                    sampled_sums[traj_index] += sum(sampled)
                 version_start = rollout_result.version_start[turn_index]
                 version_end = rollout_result.version_end[turn_index]
                 earliest_versions[traj_index] = (
@@ -715,7 +747,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     else max(completion_versions[traj_index], version_end)
                 )
                 generated_tokens[traj_index] += turn_tokens
-                call_counts[traj_index] += 1
+                call_counts[traj_index] += calls[turn_index] if calls is not None else 1
                 cross_version_calls[traj_index] += int(version_start != version_end)
                 turn_rewards[traj_index] += rollout_result.rewards[turn_index]
                 turn_counts[traj_index] += 1
@@ -733,6 +765,9 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                         cross_version_calls=cross_version_calls[traj_index],
                         reward=turn_rewards[traj_index]
                         / max(turn_counts[traj_index], 1),
+                        sampled_token_version_sum=sampled_sums[traj_index]
+                        if sampled_sums is not None
+                        else None,
                         token_weighted_version_start_sum=(
                             token_weighted_version_start_sums[traj_index]
                         ),

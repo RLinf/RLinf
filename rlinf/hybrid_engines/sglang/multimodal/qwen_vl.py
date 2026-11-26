@@ -85,6 +85,17 @@ else:
             output = self._place_images(
                 input_text, spans, capture["prefix_length"], native
             )
+            if capture.get("token_budget") is not None:
+                context_length, reserve = capture["token_budget"]
+                remaining = context_length - len(output.input_ids)
+                if remaining < reserve:
+                    raise ValueError(
+                        f"Expanded image prompt leaves {remaining} output tokens, expected at least {reserve}"
+                    )
+                requested = params.get("max_new_tokens")
+                params["max_new_tokens"] = (
+                    remaining if requested is None else min(requested, remaining)
+                )
             await asyncio.to_thread(save_capture, path, output)
             return output
 

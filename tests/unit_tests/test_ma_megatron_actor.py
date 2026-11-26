@@ -3201,3 +3201,152 @@ def test_chunked_lm_head_accumulates_low_precision_main_grad_in_fp32(
             torch.testing.assert_close(weight.grad, torch.zeros_like(weight))
         else:
             assert weight.grad is None
+
+
+def test_extract_versioned_records_respects_response_mask_and_token_versions():
+    pytest.importorskip("megatron.core")
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.utils.metric_utils import compute_staleness_metrics
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
+    actor = object.__new__(MAMegatronActor)
+    result = DynamicRolloutResult(
+        num_sequence=1,
+        group_size=1,
+        idx_to_traj=[0],
+        input_ids=[[1, 2, 8, 3]],
+        prompt_lengths=[1],
+        response_lengths=[3],
+        response_mask=[[True, False, True]],
+        is_end=[True],
+        rewards=[1.0],
+        version_start=[1],
+        version_end=[2],
+        extra_fields_turn={
+            "rollout_weight_versions": [[1, 2]],
+            "generate_calls": [2],
+        },
+    )
+    records = actor._extract_versioned_trajectory_records([result])
+    assert len(records) == 1
+    assert records[0].generated_tokens == 2
+    assert records[0].call_count == 2
+    assert records[0].sampled_token_version_sum == 3
+    metrics = compute_staleness_metrics(records, version=3)
+    assert metrics["data_staleness/sampled_token_mean"] == 1.5
+
+    bad = DynamicRolloutResult(
+        num_sequence=1,
+        group_size=1,
+        idx_to_traj=[0],
+        input_ids=[[1, 2, 8, 3]],
+        prompt_lengths=[1],
+        response_lengths=[3],
+        response_mask=[[True, False, True]],
+        is_end=[True],
+        rewards=[1.0],
+        version_start=[1],
+        version_end=[2],
+        extra_fields_turn={"rollout_weight_versions": [[1]]},
+    )
+    with pytest.raises(ValueError, match="One sampled policy version is required"):
+        actor._extract_versioned_trajectory_records([bad])
+
+
+def test_ma_megatron_actor_tis_loss_masks_tool_tokens_and_checks_logprobs(monkeypatch):
+    pytest.importorskip("megatron.core")
+    from contextlib import nullcontext
+
+    import rlinf.workers.actor.ma_megatron_actor_worker as actor_mod
+    from rlinf.algorithms.utils import masked_mean
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
+    monkeypatch.setattr(
+        actor_mod, "unwrap_model", lambda m: SimpleNamespace(post_process=True)
+    )
+    monkeypatch.setattr(actor_mod, "postprocess_ragged_seqs", lambda v, p, l: [v[0]])
+    monkeypatch.setattr(
+        actor_mod, "average_losses_across_data_parallel_group", lambda xs: xs[0]
+    )
+    monkeypatch.setattr(
+        actor_mod.parallel_state, "get_data_parallel_group", lambda: None
+    )
+    monkeypatch.setattr(
+        actor_mod.parallel_state, "get_data_parallel_world_size", lambda: 1
+    )
+    monkeypatch.setattr(
+        actor_mod.parallel_state, "get_tensor_model_parallel_world_size", lambda: 1
+    )
+    monkeypatch.setattr(
+        actor_mod.parallel_state, "get_context_parallel_world_size", lambda: 1
+    )
+    monkeypatch.setattr(
+        actor_mod.parallel_state, "get_context_parallel_rank", lambda: 0
+    )
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: torch.device("cpu"))
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda *a, **kw: None)
+
+    actor = object.__new__(MAMegatronActor)
+    actor.cfg = OmegaConf.create(
+        {
+            "runner": {"task_type": "reasoning"},
+            "actor": {"model": {"encoder_seq_length": 6}},
+            "algorithm": {
+                "loss_type": "actor",
+                "clip_ratio_c": 3.0,
+                "clip_ratio_low": 0.2,
+                "clip_ratio_high": 0.28,
+                "kl_beta": 0.0,
+                "use_valid_token_scale": False,
+                "early_stop_imp_ratio": None,
+                "importance_sampling_fix": True,
+                "importance_sampling_clip": 2.0,
+            },
+        }
+    )
+    actor.torch_platform = torch.cpu
+    actor.return_loss = True
+    actor.trains_mtp = False
+    actor.calculate_entropy = False
+    actor.calculate_entropy_loss = False
+    actor.kl_beta = 0.0
+    actor.clip_ratio_c = 3.0
+    actor.clip_ratio_low = 0.2
+    actor.clip_ratio_high = 0.28
+    actor.loss_agg_func = masked_mean
+    actor.tokenizer = SimpleNamespace(eos_token_id=0)
+    actor.ragged_model_inputs = lambda batch, module, rows: nullcontext(
+        {
+            "input_ids": torch.zeros(1, 6, dtype=torch.long),
+            "attention_mask": None,
+            "position_ids": None,
+            "packed_seq_params": None,
+        }
+    )
+    # 6 tokens: align_next_token_scores takes output[:-1] (length 5).
+    logp = torch.tensor([-0.5, -1.0, -9.0, -1.5, -2.0, 0.0])
+    actor._score_packed_tokens = lambda *a, **kw: {"log_probs": [logp]}
+    fwd_step = actor.get_forward_step_func()
+
+    batch = {
+        "input_ids": [torch.tensor([1, 2, 3, 4, 5, 6])],
+        # Mask out tool token index 2 (has -9.0/-99.0 noise that must be ignored).
+        "response_mask": [torch.tensor([False, True, False, True, False, False])],
+        "advantages": [torch.tensor([0.0, 1.0, 0.0, 1.0, 0.0, 0.0])],
+        "loss_scales": [torch.ones(6)],
+        "recomputed_logprobs": [torch.tensor([0.0, -0.5, 0.0, -1.0, 0.0, 0.0])],
+        "rollout_logprobs": [torch.tensor([0.0, -1.0, 0.0, -1.5, 0.0, 0.0])],
+    }
+    output, loss_func = fwd_step(iter([batch]), object())
+    loss, metrics = loss_func(output)
+    assert torch.isfinite(loss)
+    # Masked tool token ignored: abs diff is |(-0.5)-(-1.0)| = 0.5 at both active positions.
+    torch.testing.assert_close(
+        metrics["actor/recomputed_logprob_abs_diff"], torch.tensor(0.5)
+    )
+    assert metrics["actor/importance_sampling_weight"].item() > 1.0
+
+    missing_rollout = {k: v for k, v in batch.items() if k != "rollout_logprobs"}
+    output2, bad_loss_func = fwd_step(iter([missing_rollout]), object())
+    with pytest.raises(ValueError, match="recomputed_logprobs and rollout_logprobs"):
+        bad_loss_func(output2)

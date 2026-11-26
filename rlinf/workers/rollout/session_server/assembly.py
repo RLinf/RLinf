@@ -92,6 +92,8 @@ def assemble_group_payload(
     for part in parts:
         turns_by_traj.setdefault(part.traj_index, []).append(part)
 
+    image_inputs = []
+    token_versions = []
     idx_to_traj: list[int] = []
     prompt_lengths: list[int] = []
     response_lengths: list[int] = []
@@ -163,6 +165,12 @@ def assemble_group_payload(
             previous_kept = kept
 
             response_ids = part.output_ids[:kept]
+            image_inputs.append(part.image_input)
+            token_versions.append(
+                part.token_weight_versions[:kept]
+                if part.token_weight_versions is not None
+                else None
+            )
             idx_to_traj.append(traj_index)
             input_ids.append(part.input_ids + response_ids)
             prompt_lengths.append(len(part.input_ids))
@@ -184,7 +192,16 @@ def assemble_group_payload(
             f"extra_fields_train {name!r} of group {payload.group_id} covers "
             f"{len(values)} sequences, the payload holds {len(idx_to_traj)}"
         )
+    extra_turn = None
+    if any(row is not None for row in token_versions):
+        if any(row is None for row in token_versions):
+            raise ValueError("Missing sampled token versions on one or more turns")
+        extra_turn = {"rollout_weight_versions": token_versions}
     return DynamicRolloutResult(
+        extra_fields_turn=extra_turn,
+        multi_modal_inputs=image_inputs
+        if any(x is not None for x in image_inputs)
+        else None,
         num_sequence=len(idx_to_traj),
         group_size=len(verdicts),
         idx_to_traj=idx_to_traj,

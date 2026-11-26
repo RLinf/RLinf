@@ -980,6 +980,8 @@ class DynamicRolloutResult:
     ref_logprobs: Optional[TokenRows] = None
     prompt_lengths: list[int]
     response_lengths: list[int]
+    # In a folded conversation, tool observations between policy actions are masked.
+    response_mask: Optional[list[list[bool]]] = None
     is_end: list[bool]
     rewards: Optional[torch.Tensor | list[float]] = None
     advantages: Optional[TokenRows] = None
@@ -1031,14 +1033,17 @@ class DynamicRolloutResult:
             if self.version_start is not None and self.version_end is not None
             else None
         )
+        calls = (self.extra_fields_turn or {}).get("generate_calls")
         return GroupMetadata(
             group_id=self.group_id,
             task_name=self.task_name,
             rewards=rewards,
             earliest_version=min(versions) if versions else None,
             completion_version=max(versions) if versions else None,
-            num_gen_tokens=sum(self.response_lengths),
-            num_generate_calls=self.num_sequence,
+            num_gen_tokens=sum(map(sum, self.response_mask))
+            if self.response_mask is not None
+            else sum(self.response_lengths),
+            num_generate_calls=sum(calls) if calls is not None else self.num_sequence,
         )
 
     def to_actor_batch(self) -> DynamicActorBatch:
@@ -1062,6 +1067,18 @@ class DynamicRolloutResult:
                 for k, v in self.extra_fields_train.items()
             },
         }
+        if self.response_mask is not None:
+            for target, start, mask in zip(
+                batch["response_mask"],
+                self.prompt_lengths,
+                self.response_mask,
+                strict=True,
+            ):
+                if len(mask) != len(target) - start:
+                    raise ValueError(
+                        "Response mask length must match the response span"
+                    )
+                target[start:] = torch.as_tensor(mask, dtype=torch.bool)
         self._validate_image_rows()
         if _has_image_payload(self.multi_modal_inputs):
             batch["multi_modal_inputs"] = list(self.multi_modal_inputs)
@@ -1456,6 +1473,51 @@ class DynamicRolloutResult:
         carry_payloads = any(
             _has_image_payload(res.multi_modal_inputs) for res in rollout_results
         )
+        if any(res.response_mask is not None for res in rollout_results):
+            merged_result.response_mask = [
+                mask
+                for res in rollout_results
+                for mask in (
+                    res.response_mask
+                    if res.response_mask is not None
+                    else [[True] * n for n in res.response_lengths]
+                )
+            ]
+        has_versions = [
+            bool((res.extra_fields_turn or {}).get("rollout_weight_versions"))
+            for res in rollout_results
+        ]
+        if any(has_versions) and not all(has_versions):
+            raise ValueError(
+                "Cannot merge DynamicRolloutResult items when only a subset carry rollout_weight_versions."
+            )
+        merged_turn: dict[str, list] = {}
+        if all(has_versions):
+            merged_turn["rollout_weight_versions"] = [
+                row
+                for res in rollout_results
+                for row in res.extra_fields_turn["rollout_weight_versions"]
+            ]
+        if any(
+            "generate_calls" in (res.extra_fields_turn or {}) for res in rollout_results
+        ):
+            merged_turn["generate_calls"] = [
+                row
+                for res in rollout_results
+                for row in (
+                    (res.extra_fields_turn or {}).get("generate_calls")
+                    or [1] * res.num_sequence
+                )
+            ]
+        if all(res.extra_fields_turn is not None for res in rollout_results):
+            extra_keys = set.intersection(
+                *(set(res.extra_fields_turn) for res in rollout_results)
+            ) - {"rollout_weight_versions", "generate_calls"}
+            for key in sorted(extra_keys):
+                merged_turn[key] = [
+                    row for res in rollout_results for row in res.extra_fields_turn[key]
+                ]
+        merged_result.extra_fields_turn = merged_turn or None
         for res in rollout_results:
             # Merge required list fields (size: num_sequence)
             merged_result.idx_to_traj.extend(res.idx_to_traj)
@@ -1600,6 +1662,15 @@ class DynamicRolloutResult:
                 ref_logprobs=split_ref_logprobs,
                 prompt_lengths=split_prompt_lengths,
                 response_lengths=split_response_lengths,
+                response_mask=rollout_result.response_mask[start_idx:end_idx]
+                if rollout_result.response_mask is not None
+                else None,
+                extra_fields_turn={
+                    key: rows[start_idx:end_idx]
+                    for key, rows in rollout_result.extra_fields_turn.items()
+                }
+                if rollout_result.extra_fields_turn is not None
+                else None,
                 is_end=split_is_end,
                 rewards=split_rewards,
                 version_start=split_version_start,

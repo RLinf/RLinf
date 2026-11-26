@@ -108,6 +108,8 @@ class PayloadPart:
     rewards: Optional[list] = None
     verdicts: Optional[dict] = None
     verify: Optional[dict] = None
+    image_input: Optional[dict] = None
+    token_weight_versions: Optional[list[int]] = None
 
 
 @dataclass
@@ -372,10 +374,27 @@ class PayloadWriter:
 
 
 def _estimate_part_bytes(part: PayloadPart) -> int:
-    """Rough byte cost of a part's serialized token and logprob lists."""
+    """Estimate in-flight token lists and in-band image metadata, excluding blobs on disk."""
     nbytes = (len(part.input_ids) + len(part.output_ids)) * _BYTES_PER_LIST_ELEMENT
     if part.logprobs is not None:
         nbytes += len(part.logprobs) * _BYTES_PER_LIST_ELEMENT
+    if part.token_weight_versions is not None:
+        nbytes += len(part.token_weight_versions) * _BYTES_PER_LIST_ELEMENT
+    if part.image_input is not None:
+        entry = part.image_input
+        for name in (
+            "pixel_values",
+            "image_grid_thw",
+            "mrope_positions",
+            "mrope_position_delta",
+        ):
+            tensor = entry.get(name)
+            if tensor is not None:
+                nbytes += tensor.numel() * tensor.element_size()
+        nbytes += len(entry.get("prompt_token_ids", [])) * _BYTES_PER_LIST_ELEMENT
+        nbytes += sum(
+            len(ref["path"]) + len(ref["sha256"]) for ref in entry.get("pixel_refs", [])
+        )
     return nbytes + _PART_OVERHEAD_BYTES
 
 

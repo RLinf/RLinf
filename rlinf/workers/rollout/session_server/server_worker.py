@@ -107,6 +107,7 @@ class _SessionState:
     entry: Optional[str] = None
     # The chat entry's server-side conversation.
     chat: Optional[ChatConversation] = None
+    image_history: Optional[dict] = None
     # Set while a request of this session is being served, by either
     # endpoint: a session handles one request at a time.
     inflight: bool = False
@@ -695,6 +696,7 @@ class SessionServerWorker(Worker):
         sampling_overrides: Any,
         prev_kept_len: Optional[int],
         body_fields: Optional[dict] = None,
+        chat_messages: Optional[list[dict]] = None,
     ) -> tuple[Optional[dict], Optional[tuple[int, str]]]:
         """Run one generation turn for ``session``; both entries share it.
 
@@ -733,9 +735,6 @@ class SessionServerWorker(Worker):
 
         group = self._groups[session.group_id]
         version_start = min(self._loaded_versions)
-        turn = new_turn_record(
-            input_ids, session.last_input, session.last_output, prev_kept_len
-        )
 
         forwarded = dict(body_fields or {})
         forwarded["input_ids"] = input_ids
@@ -743,9 +742,11 @@ class SessionServerWorker(Worker):
         forwarded["return_logprob"] = self._return_logprob
 
         try:
-            result = await self._forward_generate(
-                forwarded, routing_key_for(session.group_id), group.task_name
+            result, image_input, image_history = await self._sample_turn(
+                session, forwarded, group.task_name, chat_messages
             )
+            if image_input is not None:
+                input_ids = image_input["prompt_token_ids"]
         except Exception as exc:
             self.log_error(
                 f"Session server generate forward failed (group "
@@ -799,6 +800,9 @@ class SessionServerWorker(Worker):
             token_logprobs = meta_info.get("output_token_logprobs") or []
             logprobs = [float(item[0]) for item in token_logprobs]
 
+        turn = new_turn_record(
+            input_ids, session.last_input, session.last_output, prev_kept_len
+        )
         turn.output_len = len(output_ids)
         part = PayloadPart(
             group_id=session.group_id,
@@ -811,6 +815,8 @@ class SessionServerWorker(Worker):
             weight_version=weight_version,
             finish_reason=dict(finish_reason),
             prev_kept_len=prev_kept_len,
+            image_input=image_input,
+            token_weight_versions=meta_info.get("rollout_weight_versions"),
         )
         await self._emit_part(session, part)
         if group.discard_reason is not None:
@@ -827,6 +833,7 @@ class SessionServerWorker(Worker):
             self._metrics["session_server/prefix_rewritten"] += 1
         session.last_input = list(input_ids)
         session.last_output = list(output_ids)
+        session.image_history = image_history
         if self._verify_assembly:
             turn.merged_sampling_params = forwarded["sampling_params"]
         group.num_gen_tokens += len(output_ids)
@@ -853,6 +860,13 @@ class SessionServerWorker(Worker):
         if isinstance(overrides, dict):
             params.update(overrides)
         return params
+
+    async def _sample_turn(self, session, forwarded, task_name, chat_messages):
+        """Return the engine response and any captured multimodal input and history."""
+        result = await self._forward_generate(
+            forwarded, routing_key_for(session.group_id), task_name
+        )
+        return result, None, None
 
     async def _forward_generate(
         self, body: dict, routing_key: int, task_name: str
@@ -977,15 +991,18 @@ class SessionServerWorker(Worker):
                 last_input=session.last_input,
                 last_output=session.last_output,
                 tools=session.chat.tools if session.chat is not None else tools,
+                image_history=session.image_history,
             )
             result, error = await self._generate_core(
                 session,
                 list(rendered.input_ids),
                 overrides,
                 None,
+                chat_messages=rendered.messages,
             )
             if error is not None:
                 return self._openai_error(*error, "generation_failed")
+            prompt_ids = session.last_input
             text = result.get("text")
             if text is None:
                 # The engines were started without a tokenizer
@@ -997,7 +1014,7 @@ class SessionServerWorker(Worker):
                 )
             parsed = self._chat_entry.parse(
                 text,
-                rendered.input_ids,
+                prompt_ids,
                 tools,
                 body.get("tool_choice") or "auto",
             )
@@ -1012,9 +1029,7 @@ class SessionServerWorker(Worker):
                 tools=tools,
                 checkpoint=checkpoint,
             )
-            response = self._chat_entry.response_body(
-                body, parsed, result, rendered.input_ids
-            )
+            response = self._chat_entry.response_body(body, parsed, result, prompt_ids)
             if body.get("stream"):
                 return Response(
                     content=self._chat_entry.stream_body(response),
@@ -1058,6 +1073,7 @@ class SessionServerWorker(Worker):
             tools=checkpoint.tools,
             checkpoint=None,
         )
+        session.image_history = checkpoint.image_history
         session.last_input = (
             None if checkpoint.last_input is None else list(checkpoint.last_input)
         )
@@ -1436,6 +1452,7 @@ class SessionServerWorker(Worker):
         group.rewards = []
         for session in group.sessions.values():
             session.turns.clear()
+            session.image_history = None
             session.last_input = None
             session.last_output = None
             session.chat = None
