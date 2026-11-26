@@ -1,10 +1,8 @@
-使用 ``InferenceHTTPClient`` 调用 SGLang
-=========================================
+异步 HTTP 推理客户端
+====================
 
 :class:`rlinf.utils.http_client.InferenceHTTPClient` 是对 ``requests`` 与
-``aiohttp`` 的轻薄封装，面向单个 sglang **router 或 server** 的 base URL。
-同步和异步接口都有；异步接口共享一个懒加载的 ``aiohttp.ClientSession``，请
-使用 ``async with``\ （或主动调用 ``aclose()``\ ）来释放 socket。
+``aiohttp`` 的轻薄封装，面向单个 sglang **router 或 server** 的 base URL。同步和异步接口都有；异步接口共享一个懒加载的 ``aiohttp.ClientSession``，请使用 ``async with``\ （或主动调用 ``aclose()``\ ）来释放 socket。
 
 本文假定你已经有了 ``router_url`` ——如何启动一个，参见
 :doc:`SGLang Server 与 Router <sglang_server>`。
@@ -29,8 +27,8 @@
      - ``GET /health``
      - 返回 ``bool``；从不抛出。
 
-同步——适合短脚本与测试
------------------------
+同步调用
+--------
 
 .. code-block:: python
 
@@ -51,8 +49,8 @@
        max_tokens=32,
    )
 
-异步——并发发送多请求
----------------------
+异步调用
+--------
 
 使用 ``async with`` 让 aiohttp session 在退出时自动关闭：
 
@@ -103,9 +101,7 @@ OpenAI 风格 chat 同理：
 并发与超时
 ----------
 
-- ``connect_timeout``\ （默认 ``10.0`` 秒）只约束 TCP 连接阶段；**读** 端故意
-  不设上限——生成请求可能耗时很久。如需请求级别的截止时间，请在外层用
-  ``asyncio.wait_for`` 包裹。
+- ``connect_timeout``\ （默认 ``10.0`` 秒）只约束 TCP 连接阶段；**读** 端故意不设上限——生成请求可能耗时很久。如需请求级别的截止时间，请在外层用 ``asyncio.wait_for`` 包裹。
 
 直接连后端 server
 -----------------

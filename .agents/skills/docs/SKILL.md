@@ -20,7 +20,7 @@ RLinf's documentation rules live in [rules/](rules/), split so that a writer rea
 5. **Write the English and the Chinese page from the plan**, each in its own language. Write the Chinese from the plan, not by translating the English sentences.
 6. **Place the page** in one gallery or section index and in both toctrees ([rules/index.md](rules/index.md)), and add a README highlight for a feature worth announcing ([rules/readme.md](rules/readme.md)).
 7. **Go through [rules/mistakes.md](rules/mistakes.md).**
-8. **Run a language pass.** Give a fresh agent, which has seen nothing else, only the changed pages and the language file for each, and ask it to mark every sentence that reads as translated, padded, or built on code names, with its rewrite. Apply the rewrites that hold. A writer cannot hear the cadence of their own prose.
+8. **Run a simplicity and language pass.** Give a fresh agent, which has seen nothing else, only the changed pages, [rules/base.md](rules/base.md), and the language file for each. Ask it first to cut anything the reader does not need for the main path (long-winded explanations of details, redundant paragraphs, repeated facts, restated YAML defaults, defensive caveats, code citations, complex commands, dense inline parameter dumps, and repeated negative-and-positive framing such as "this is not A, not B, but C"), and then to rewrite any remaining sentence that reads as translated, padded, or built on code names. Apply the cuts and rewrites that hold. A writer cannot hear the length or cadence of their own prose.
 9. **Run the check** below and fix what it reports.
 
 ### A recipe page for a new model or env
@@ -50,22 +50,64 @@ Page findings count only on the lines the change adds, because many existing pag
 | `docs/symbol` | major | a name in code font, on a Concepts, Extending, or Reference page, that nothing in the repository defines |
 | `docs/code-name` | major or minor | RLinf's internal classes, functions, or source paths in code font on a recipe or guide page (major) or a concept page (minor) |
 | `docs/math` | major | an equation on a recipe or guide page |
-| `docs/structure` | major | a new gallery recipe without Installation and Run It, or with a generic Algorithm or Environment section |
+| `docs/structure` | major | an Agent & LLM recipe (or new embodied/eval recipe) missing `Overview`/`概览` or `Setup and Run`/`安装与运行`, using legacy `一键上手`, keeping legacy split H2s (`Run It`/`运行`, `Run on Different Hardware Backends`/`在不同硬件后端上运行`), or keeping generic theory sections (`Algorithm`, `Model Architecture`, `GRPO 原理`, `技术细节`, etc.) |
 | `docs/rtd-link` | major | a hardcoded Read the Docs link to an RLinf page instead of `:doc:` or `:ref:` |
-| `docs/parity` | major or minor | a page without its counterpart, or toctrees that differ (major); a page or README changed while its counterpart did not (minor) |
+| `docs/image-url` | major | a broken external figure/image URL (HTTP 4xx/5xx such as 404 on `RLinf/misc`) or a redirecting `github.com/<org>/<repo>/raw/` URL instead of `raw.githubusercontent.com/...` |
+| `docs/parity` | major or minor | a page, `conf.py`, or `_static` CSS/JS without its counterpart, differing toctrees, or diverged shared CSS/JS (`custom.css` / `sidebar-nav.js`) (major); a page or README changed while its counterpart did not (minor) |
 | `docs/heading` | minor | a code identifier in a heading outside Reference and Extending |
+| `docs/heading-length` | minor | an overly long heading (> 48 EN chars or > 20 ZH CJK-equivalent chars) |
 | `docs/en-style` | minor | a word or phrase that [rules/english.md](rules/english.md) cuts |
-| `docs/zh-style` | minor | 您, 「」, 值得注意的是, 进行, 当……时, half-width punctuation in a Chinese sentence, or no space between Chinese and English or digits ([rules/chinese.md](rules/chinese.md)) |
+| `docs/zh-style` | minor | 您, 「」, 值得注意的是, 进行, 当……时, 不是/并非……而是……, half-width punctuation in a Chinese sentence, or no space between Chinese and English or digits ([rules/chinese.md](rules/chinese.md)) |
+| `docs/zh-term` | minor | translated RL/system terms (`优势函数`, `策略损失`, `损失函数`, `规则奖励`, `奖励模型`, `新增环境`) in Chinese headings ([rules/glossary.md](rules/glossary.md)) |
 | `docs/zh-hard-wrap` | minor | Chinese prose wrapped inside a paragraph or list item, which renders as a space |
+| `docs/command-placeholder` | major | an `install.sh` or `hf download` command containing unrunnable `<...>` placeholders, or `/path/to/...` placeholders inside recipe/eval bash commands |
+| `docs/command-launcher` | major | bare `python examples/embodiment/train_embodied_agent.py` in a recipe instead of `bash examples/embodiment/run_embodiment.sh <config>` |
+| `docs/command-path` | minor | hardcoded root-level `/data/...` path in a recipe/eval bash command (prefer repo-relative `./data/...`) |
+| `docs/command-legacy` | major | `huggingface-cli download`, `pip install huggingface-hub`, `git lfs`, `git clone https://huggingface.co/`, or `CUDA_VISIBLE_DEVICES` (on recipes, eval guides, and `guides/`) |
+| `docs/command-cd` | major | `cd` immediately before `hf download`, or `--local-dir .` / `--local-dir /path/to/...` |
+| `docs/command-tabset` | major | an `install.sh` or `hf download` block on `examples/` or `evaluations/` not wrapped in `.. tab-set::`, or a hollow `.. tab-set::` that wraps only install while leaving launch commands outside |
+| `docs/duplicate-commands` | minor | identical multi-line setup or launch bash blocks duplicated across multiple changed same-language recipe pages (link to the primary recipe or extract a `_*.rst` partial) |
+| `docs/command-bloat` | major | mega bash blocks combining `git clone` + launch script, >= 16 command lines outside `.. dropdown::`, shell argument arrays, or >= 6 Hydra overrides on one launch line |
+| `docs/nested-tabset` | major | nested `.. tab-set::` directives (stacked tab bars); flatten into one single-level `.. tab-set::` |
+| `docs/tab-title` | major | `.. tab-item::` title > 48 chars or concatenating `Model + Benchmark` (e.g. `OpenPI + RoboCasa`) |
+| `docs/tab-parity` | major | paired EN/ZH pages with mismatched `.. tab-set::` or `.. tab-item::` counts |
+| `docs/mirror-comment` | major | commented `--use-mirror`, `HF_ENDPOINT`, `hf-mirror`, or `gh-proxy` lines inside bash blocks |
+| `docs/dir-tree` | major | decorative ASCII directory trees (`├──` / `└──`) outside `.. dropdown::` |
+| `docs/boilerplate-yaml` | major | stale `rollout.model.model_path` alongside `actor.model.model_path`, or repeated `logger_backends:` / `video_base_dir:` YAML blocks |
+| `docs/long-yaml` | minor | a YAML block with ≥ 20 lines outside `.. dropdown::` on `start/`, `examples/`, `evaluations/`, or `guides/` pages |
+| `docs/yaml-edit-friction` | minor | a recipe telling readers to manually edit `model_path` / `train_data_paths` in YAML without showing a copy-pasteable Hydra CLI override |
+| `docs/eval-command` | major | `env.eval.total_num_envs=10` (crashes on 4/8 GPUs), passing a training-only YAML to `evaluations/run_eval.sh`, or claiming arbitrary training configs work via eval fallback |
+| `docs/multinode-trap` | major | launching a YAML whose `cluster.num_nodes > 1` without stating the node count or giving a `cluster.num_nodes=1` quick-start override |
+| `docs/local-asset` | major | a new image/diagram file added under `docs/**/_static/` instead of hosted in `RLinf/misc` under `pic/` |
+| `docs/no-todo` | major | unfinished `TODO`, `TBD`, or `FIXME` marker in published docs (prose, table cells, or comments) |
+| `docs/jargon` | major | testing jargon (`冒烟测试` / `smoke test` / `smoke check`) or informal ZH shorthand (`采数` / `数采` / `遥操`) |
+| `docs/long-paragraph` | minor | wall-of-text paragraph (> 120 EN words or > 260 ZH chars) on a recipe or guide page |
+| `docs/inline-code-density` | minor | single prose paragraph packing >= 6 inline code literals (`` ``...`` ``) on a recipe or guide page; simplify or move into a table/dropdown |
+| `docs/raw-html-grid` | major | `.. raw:: html` navigation card grid or hardcoded `color: blue` (use `sphinx-design` `.. grid::`) |
+| `docs/index-style` | major | non-hidden toctree on an index page, missing cards/table routing, or hidden toctree entry omitted from the page body |
+| `docs/path-exists` | major | repository file path (`rlinf/`, `examples/`, `evaluations/`, `toolkits/`, `requirements/`) cited in prose or commands that does not exist on disk |
+| `docs/extending-no-pytest` | major | boilerplate `tests/unit_tests/` or `pytest` unit-test section in `extending/` (use standalone local CPU verification instead) |
+| `docs/extending-structure` | major | `extending/` page missing top At-a-Glance `.. list-table::` or runnable verification step |
+| `docs/guide-quality` | major | ultra-thin stub guide (< 40 non-empty lines) in `guides/` |
+| `docs/concept-purity` | major | `.. autoclass::` / `.. autofunction::`, ultra-thin stub (< 40 lines), or PR migration history in `concepts/` |
+| `docs/algo-keys` | major | YAML key on `reference/algorithms/` that does not exist in `rlinf/` / `examples/` / `evaluations/`, or missing runnable config/recipe link |
+| `docs/latex-sanity` | major | broken LaTeX subscript omission (`\mathbb{E}{`, `\pi{\theta}`) or orphan paper equation tags (`\tag{8}`) in `reference/` |
+| `docs/sidebar-grouping` | major | raw leaf pages dumped into grouped top-level chapters (`Embodied AI`, `Agent & LLM`, `Guides`) or >5 entries in `Get Started` on root `index.rst` |
+| `docs/sidebar-depth` | major | nested `.. toctree::` sub-index folders inside `examples/agentic/` (each Agent & LLM project must be a single-page recipe with tabs like Embodied AI) |
+| `docs/alpha-order` | major | unsorted simulator, real-world robot, model, RL method, Agent & LLM sub-category, algorithm reference, Python API, or publication toctrees (`simulators_index`, `vla_wam_index`, `sft_index`, `world_model_index`, `video_models`, `methods_index`, `agentic/{math_reasoning,agents}/index`, `reference/{algorithms,api}/index`, `resources/publications/index`, and root `Real-World Robots`) |
+| `docs/sibling-alignment` | major | Agent & LLM recipe (or new embodied/eval recipe) missing Overview `.. grid::` + `Prerequisites` header, `start/installation` link, `.. tab-set::`, or `Visualization and Results` / `可视化与结果` |
+| `docs/box-table` | major | misaligned Unicode box-drawing table rows (e.g. `Metric Table`) whose display width differs from the top border |
+| `docs/heading-consistency` | major | redundant `.. contents::` (wraps headings in underlined `a.toc-backref` links) or EN/ZH heading-level sequence mismatch |
 
-Then read every changed page in full, in both languages, as a reader new to RLinf who has not seen its code, and check:
+Then read every changed page in full, in both languages, as a reader new to RLinf who has not seen its code, and inspect every command block (the script above checks build, markup, and prose, not command quality or workflow design):
 
 - [ ] The checklist in the page type's rules file holds.
-- [ ] Docs to code: every config key, CLI flag, env var, path, and model or env name exists on `main` plus the change.
-- [ ] Code to docs: a change that adds, removes, or renames a public config key, model, env, runner, script, env var, or feature updates the pages that describe it. Name the pages under `docs/source-en/` and `docs/source-zh/` that still need it.
-- [ ] Parity: paired pages agree on commands, paths, env vars, config keys, supported models, envs, and algorithms, capability claims, reported numbers, and section order.
-- [ ] README highlight for a feature worth announcing ([rules/readme.md](rules/readme.md)).
-- [ ] Model and dataset references in changed docs and configs pass [reference.md § Asset references](reference.md#asset-references).
-- [ ] None of the mistakes in [rules/mistakes.md](rules/mistakes.md) remains, and each page reads as written in its own language.
+- [ ] **Readability & conciseness**: apply [rules/base.md](rules/base.md#prefer-simplicity-and-readability-over-verbosity). Flag unreadable/stiff prose, machine-translated or sentence-by-sentence Chinese, long-winded detail explanations, walls of prose, internal code citations, repeated facts, restated YAML defaults, repeated negative-and-positive framing ("not A, not B, but C" / "不是……而是……"), and pages bloatier than a clean `main` sibling covering the same scope.
+- [ ] **Commands & sibling alignment (recipes/guides)**: compare against the closest model- or domain-family siblings on `main` (not only the gallery). Shared setup links to existing family pages or partials; commands stay minimal and YAML-first (no shell plumbing, long CLI overrides, inline prep scripts, or env-var workarounds).
+- [ ] **Docs ↔ code accuracy**: every config key, flag, env var, path, and model/env name matches `main` plus the change; public additions, renames, or removals update all affected EN/ZH pages.
+- [ ] **Cross-references**: a sentence that sends the reader to another page for a step ("as in", "see") points to a page that covers that step for the same model, config, and workflow. Open the target page; a link that resolves is not enough.
+- [ ] **Code examples**: code the reader is meant to copy (a subclass, a hook, a config snippet) runs as shown. When it needs a cluster, trace each of its branches against the code of the change, including the error and early-exit branches, and confirm each one ends in a state RLinf accepts.
+- [ ] **Parity, assets & README**: paired EN/ZH pages agree on sections, commands, keys, claims, and numbers; changed assets pass [reference.md § Asset references](reference.md#asset-references); noteworthy features get a README highlight ([rules/readme.md](rules/readme.md)).
+- [ ] None of the mistakes in [rules/mistakes.md](rules/mistakes.md) remains.
 
-Report every changed page with its type and its result, pass or the findings, so the reader sees which pages were checked. A page fails as a whole (major) when a first-time reader cannot tell what the feature does or how to run it, it explains code instead of behavior, it breaks the rules of its type, it sits in the wrong place in the tree, or the Chinese page tracks the English one sentence for sentence. A line or two of wording is minor. Each finding quotes the line, names the rule it breaks, and gives the rewrite.
+Report each changed page with its type and result (pass or findings). Rate a page `major` when it fails any of the bullets above as a whole (hard to follow or run, bloated/unscannable, machine-translated Chinese, cites internals instead of behavior, complex/non-standard commands, duplicated setup, or broken parity/placement); rate isolated wording issues `minor`. Quote the line, name the rule, and give the rewrite.

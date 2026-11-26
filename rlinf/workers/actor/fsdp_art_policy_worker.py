@@ -39,6 +39,7 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
     @Worker.timer("actor/compute_adv")
     def compute_advantages_and_returns(self) -> dict[str, float]:
         """Report rollout metrics; ART builds guidance directly from rewards."""
+        (self.rollout_batch,) = self.env_batches.values()
         metrics = compute_rollout_metrics(self.rollout_batch)
         metrics.update(self._group_success_metrics)
         return metrics

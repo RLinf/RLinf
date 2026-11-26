@@ -94,12 +94,12 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  backend: "huggingface"
+  rollout_backend: "huggingface"
   enable_offload: True
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/RLinf-Gr00t-N1.6-RL-Spatial"
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 actor:
   group_name: "ActorGroup"

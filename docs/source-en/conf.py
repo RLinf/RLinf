@@ -20,8 +20,13 @@ import sys
 from docutils import nodes
 from docutils.parsers.rst import roles
 
-# Ensure project root is on Python path for autodoc
+# Ensure project root and docs directory are on Python path for autodoc
 sys.path.insert(0, os.path.abspath("../../"))
+sys.path.insert(0, os.path.abspath("../"))
+
+from autodoc_mock import AUTODOC_MOCK_IMPORTS, install_autodoc_mock_shims  # noqa: E402
+
+install_autodoc_mock_shims()
 
 
 # -- Project Information -------------------------------------------------------
@@ -59,7 +64,7 @@ exclude_patterns = [
 ]  # underscore-prefixed files are reusable includes, not standalone pages
 default_role = "code"
 autosummary_generate = True
-autodoc_mock_imports = ["sglang", "megatron", "prismatic", "libero", "lerobot"]
+autodoc_mock_imports = AUTODOC_MOCK_IMPORTS
 autodoc_class_signature = "separated"
 autodoc_typehints = "description"
 # autoclass_content = "both"
@@ -94,19 +99,19 @@ html_css_files = [
     "css/mode-selection.css",
 ]
 html_js_files = [
-    "typesense.min.js",
-    "js/config-manager.js",
-    "js/assistant-utils.js",
-    "js/typesense-client.js",
-    "js/message-manager.js",
-    "js/ai-chat-service.js",
-    "js/mode-badge.js",
-    "js/mode-panel.js",
-    "js/github-stars.js",
-    "js/sidebar-nav.js",
-    "js/lang-switcher.js",
-    "js/theme-toggle.js",
-    "sphinx-modal-widget.js",
+    ("js/sidebar-nav.js", {"defer": "defer"}),
+    ("js/lang-switcher.js", {"defer": "defer"}),
+    ("js/theme-toggle.js", {"defer": "defer"}),
+    ("js/github-stars.js", {"defer": "defer"}),
+    ("typesense.min.js", {"defer": "defer"}),
+    ("js/config-manager.js", {"defer": "defer"}),
+    ("js/assistant-utils.js", {"defer": "defer"}),
+    ("js/typesense-client.js", {"defer": "defer"}),
+    ("js/message-manager.js", {"defer": "defer"}),
+    ("js/ai-chat-service.js", {"defer": "defer"}),
+    ("js/mode-badge.js", {"defer": "defer"}),
+    ("js/mode-panel.js", {"defer": "defer"}),
+    ("sphinx-modal-widget.js", {"defer": "defer"}),
 ]
 html_sidebars = {
     "**": [
@@ -143,7 +148,7 @@ html_theme_options = {
     },
     "collapse_navigation": False,
     "show_nav_level": 1,
-    "navigation_depth": 5,
+    "navigation_depth": 4,
     "header_links_before_dropdown": 10,
     "icon_links": [
         {
@@ -241,7 +246,6 @@ def setup(app):
     )
 
     app.connect("html-page-context", setup_html_context)
-    app.add_css_file("css/custom.css")
 
     return {
         "version": "0.2",

@@ -1,5 +1,5 @@
-结合先验数据的强化学习 (RLPD)
-====================================
+结合先验数据的强化学习（RLPD）
+==============================
 
 1. 简介
 ----------
@@ -87,7 +87,7 @@ RLPD建立在SAC配置之上，增加了离线数据集等内容。
 
    rollout:
       group_name: "RolloutGroup"
-      backend: "huggingface"
+      rollout_backend: "huggingface"
       enable_offload: False
       pipeline_stage_num: 1
 

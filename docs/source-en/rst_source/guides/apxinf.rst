@@ -44,8 +44,7 @@ environment:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openpi --env libero
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
 
 Clone APXinf-robo recursively, then install the ApxInf CUDA binding, the ApxInf
 Python frontend, and the APXinf-robo wrapper into that active environment:
@@ -54,12 +53,12 @@ Python frontend, and the APXinf-robo wrapper into that active environment:
 
    git clone --recursive https://github.com/RLinf/APXinf-robo.git
    cd APXinf-robo
-   pip install maturin
+   uv pip install maturin
    CARGO_TARGET_DIR=target/wheel maturin build --release --features cuda \
      --auditwheel skip -m apxinf/crates/apxinf-py/Cargo.toml
-   pip install --force-reinstall target/wheel/wheels/apxinf_py-*.whl
-   pip install -e ./apxinf/python/apxinf --config-settings editable_mode=strict
-   pip install -e ".[rlinf]"
+   uv pip install --force-reinstall target/wheel/wheels/apxinf_py-*.whl
+   uv pip install -e ./apxinf/python/apxinf --config-settings editable_mode=strict
+   uv pip install -e ".[rlinf]"
 
 The CUDA build targets the GPU detected on the build machine. For a different
 deployment target, set ``APXINF_CUDA_ARCH`` before running ``maturin``. See the
@@ -82,7 +81,6 @@ configuration:
 
 .. code-block:: bash
 
-   pip install -U huggingface_hub
    hf download lerobot/pi05_libero_base \
      --local-dir /path/to/pi05_libero_base
    curl -fL \
@@ -119,7 +117,6 @@ settings are:
 
    rollout:
      rollout_backend: apxinf
-     generation_backend: apxinf
      model:
        model_path: ${oc.env:APXINF_PI05_MODEL_DIR}
        num_action_chunks: 5

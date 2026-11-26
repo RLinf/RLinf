@@ -1,335 +1,372 @@
 RoboTwin Evaluation
 ===================
 
-RoboTwin is a bimanual manipulation simulation platform with tasks such as placing cups, adjusting bottles, and clicking bells. RLinf supports parallel VLA policy evaluation on RoboTwin and reports metrics such as ``eval/success_once``.
+Overview
+--------
 
-Related training doc: :doc:`../../examples/embodied/robotwin`
+RoboTwin is a bimanual manipulation simulation platform covering tabletop tasks such as placing cups, adjusting bottles, placing shoes, and clicking bells across 22 bundled seed tasks. RLinf runs parallel VLA policy evaluation on RoboTwin and reports task-level metrics such as ``eval/success_once``.
 
-Environment Setup
------------------
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-**Install dependencies**
+   .. grid-item-card:: Benchmark
+      :text-align: center
 
-.. code-block:: bash
+      RoboTwin (22 seed tasks, bimanual ALOHA / Piper)
 
-   bash requirements/install.sh embodied --model openvla-oft --env robotwin
-   source .venv/bin/activate
+   .. grid-item-card:: Models
+      :text-align: center
 
-Supported models include ``openvla-oft``, ``openpi``, ``lingbotvla``, ``lingbotvlav2``, and ``openwam`` — replace ``--model`` accordingly during installation.
+      OpenVLA-OFT · OpenPI π₀ / π₀.₅ · LingbotVLA 1.0 / 2.0 · OpenWAM
 
-On AMD ROCm, install with ``--platform`` and set ``planner_backend: mplib`` in the task config;
-see :ref:`Run on Different Hardware Backends <robotwin-hardware>`.
+   .. grid-item-card:: Config Dir
+      :text-align: center
 
-**RoboTwin repository and assets**
+      ``evaluations/robotwin/``
 
-Before evaluation, clone the RLinf-compatible branch and download simulation assets (see the training doc for details):
+   .. grid-item-card:: Related Training
+      :text-align: center
 
-.. code-block:: bash
+      :doc:`RoboTwin <../../examples/embodied/robotwin>` · :doc:`LingbotVLA 1.0 <../../examples/embodied/lingbotvla>` · :doc:`LingbotVLA 2.0 <../../examples/embodied/lingbotvlav2>`
 
-   # 1. Clone RoboTwin (must use the RLinf_support branch)
-   git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support
-   cd RoboTwin
+Setup and Run
+-------------
 
-   # 2. Download and extract assets
-   bash script/_download_assets.sh
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
 
-By default, this script downloads assets under ``/path/to/RoboTwin/assets/``.
-After the download completes, set ``env.eval.assets_path`` to ``/path/to/RoboTwin`` (the parent folder of ``assets/``).
+.. tab-set::
 
-RLinf creates RoboTwin's cameras with a 0.01 m near plane instead of RoboTwin's 0.1 m: SAPIEN 3.0.1 clips everything closer than the near plane, and 0.1 m hides the gripper fingers from the wrist cameras. Set ``env.eval.camera_near`` to change it, or to ``null`` to keep RoboTwin's own value.
+   .. tab-item:: OpenWAM
 
-**Environment variables**
+      **1. Install and Download RoboTwin Assets**
 
-Set these before every evaluation run:
+      .. code-block:: bash
 
-.. code-block:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openwam --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-   export ROBOTWIN_PATH=/path/to/RoboTwin
-   export ROBOT_PLATFORM=ALOHA
+      **2. Download Model**
 
-``run_eval.sh`` adds ``ROBOTWIN_PATH`` to ``PYTHONPATH``; at env init, ``assets_path`` is also written to ``ASSETS_PATH``.
+      .. code-block:: bash
 
-**Docker (optional)**
+         hf download OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Full --local-dir ./OpenWAM-Alpha-Sim-RoboTwin-Full
 
-You can also run evaluation with the official Docker image ``rlinf/rlinf:agentic-rlinf0.4-robotwin``, which includes RoboTwin dependencies and compatibility patches. Inside the container, switch environments by model type:
+      **3. Evaluate**
 
-- OpenVLA-OFT: ``source switch_env openvla-oft``
-- OpenPI (π\ :sub:`0`\ / π\ :sub:`0.5`\ ): ``source switch_env openpi``
+      .. code-block:: bash
 
-Example Configs
----------------
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openwam_eval \
+           rollout.model.model_path=./OpenWAM-Alpha-Sim-RoboTwin-Full \
+           env.eval.assets_path="${ROBOTWIN_PATH}"
 
-Available under ``evaluations/robotwin/``:
+      Use ``robotwin_click_bell_openwam_eval`` for ``click_bell``. The public `Clean2Random checkpoint <https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Clean2Random>`_ and `joint self-attention study checkpoint <https://huggingface.co/OpenWAM/robotwin_dual_system_joint_self_attention>`_ are alternative model directories.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 40 30 30
+      - Keep the ``aloha-agilex`` embodiment, head and wrist cameras, and ``absolute_eef20`` action representation from the preset.
+      - Keep unseen instructions and execute all 32 predicted actions. The recipe's episode budget follows the task limit rounded to an action chunk.
+      - Raise ``env.eval.rollout_epoch`` to evaluate more trajectories; reset seeds advance between episodes.
+      - Run ``python toolkits/openwam/gen_robotwin_eval_recipes.py --all`` for the 46 supported task recipes. RoboTwin SFT has not been validated; use :doc:`OpenWAM SFT <../../examples/embodied/sft_openwam>` for LIBERO training.
 
-   * - Config file
-     - Task
-     - Model
-   * - ``robotwin_place_empty_cup_openvlaoft_eval.yaml``
-     - place_empty_cup
-     - OpenVLA-OFT
-   * - ``robotwin_place_empty_cup_openpi_eval.yaml``
-     - place_empty_cup
-     - π₀
-   * - ``robotwin_adjust_bottle_openpi_pi05_eval.yaml``
-     - adjust_bottle
-     - π₀.₅
-   * - ``robotwin_adjust_bottle_openpi_eval.yaml``
-     - adjust_bottle
-     - π₀
-   * - ``robotwin_place_shoe_lingbotvla_eval.yaml``
-     - place_shoe
-     - LingbotVLA 1.0
-   * - ``robotwin_click_bell_lingbotvla_eval.yaml``
-     - click_bell
-     - LingbotVLA 1.0
-   * - ``robotwin_click_bell_lingbotvlav2_eval.yaml``
-     - click_bell
-     - LingbotVLA 2.0
-   * - ``robotwin_adjust_bottle_openwam_eval.yaml``
-     - adjust_bottle
-     - OpenWAM
-   * - ``robotwin_click_bell_openwam_eval.yaml``
-     - click_bell
-     - OpenWAM
+   .. tab-item:: OpenVLA-OFT (place_empty_cup)
 
-If ``evaluations/robotwin/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to the same name under ``examples/embodiment/config/`` (set ``runner.only_eval: True`` and ``runner.task_type: embodied_eval``). ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` contains eval seeds for **22 tasks**; other tasks can be derived from training configs (see :doc:`../reference/configuration`).
+      **1. Install and Download RoboTwin Assets**
 
-End-to-End Workflow
--------------------
+      .. code-block:: bash
 
-**Step 1: Activate and set paths**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-.. code-block:: bash
+      **2. Download Model**
 
-   source .venv/bin/activate
-   export ROBOTWIN_PATH=/path/to/RoboTwin
-   export ROBOT_PLATFORM=ALOHA
+      .. code-block:: bash
 
-**Step 2: Prepare the model**
+         hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
 
-Recommended pretrained weights:
+      **3. Evaluate**
 
-- OpenVLA-OFT: `RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
-- π\ :sub:`0`: `RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle>`_
-- π\ :sub:`0.5`: `RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle>`_
-- OpenWAM: `OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Full <https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Full>`_ (recipe default), `OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Clean2Random <https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Clean2Random>`_, or the `joint self-attention study checkpoint <https://huggingface.co/OpenWAM/robotwin_dual_system_joint_self_attention>`_.
+      .. code-block:: bash
 
-See the training doc "Model Download" section for download commands.
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         export ROBOT_PLATFORM=ALOHA
+         bash evaluations/run_eval.sh robotwin robotwin_place_empty_cup_openvlaoft_eval \
+           rollout.model.model_path=./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup \
+           env.eval.assets_path="${ROBOTWIN_PATH}"
 
-For the default OpenWAM recipe, download the Full checkpoint into the directory used by ``rollout.model.model_path``:
+   .. tab-item:: OpenPI π₀.₅ (adjust_bottle)
 
-.. code-block:: bash
+      **1. Install and Download RoboTwin Assets**
 
-   hf download OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Full --local-dir /path/to/OpenWAM-Alpha-Sim-RoboTwin-Full
+      .. code-block:: bash
 
-**Step 3: Edit the config**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-Copy or edit the target YAML and set at least ``rollout.model.model_path`` and ``env.eval.assets_path``. See :doc:`../reference/configuration` (:ref:`env-eval-fields`) for generic ``env.eval`` fields; see :ref:`robotwin-eval-config` below for the RoboTwin eval protocol and model-specific settings.
+      **2. Download Model**
 
-**Step 4: Launch evaluation**
+      .. code-block:: bash
 
-.. code-block:: bash
+         hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
 
-   bash evaluations/run_eval.sh robotwin robotwin_place_empty_cup_openvlaoft_eval \
-     rollout.model.model_path=/path/to/model \
-     env.eval.assets_path=/path/to/robotwin_assets
+      **3. Evaluate**
 
-**Step 5: Check results**
+      .. code-block:: bash
 
-The terminal prints ``eval/success_once``; see :doc:`../reference/results` for logs and videos.
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_pi05_eval \
+           rollout.model.model_path=./RLinf-Pi05-RoboTwin-SFT-adjust_bottle \
+           env.eval.assets_path="${ROBOTWIN_PATH}"
 
-.. _robotwin-eval-config:
+   .. tab-item:: OpenPI π₀ (adjust_bottle)
 
-Evaluation Configuration
-------------------------
+      **1. Install and Download RoboTwin Assets**
 
-RoboTwin evaluation runs one trajectory per **success seed** in ``eval_seeds.json`` for each task and reports ``eval/success_once`` (fraction of trajectories with at least one success). The fields below are all under ``env.eval`` and together control **parallelism**, **trajectory length**, and **test-set coverage**.
+      .. code-block:: bash
 
-Evaluation Protocol
-~~~~~~~~~~~~~~~~~~~
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-RoboTwin evaluation uses pre-filtered **success seeds** as the random seed for each trajectory, fixing the initial scene and language instruction. Seeds are listed in ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json``, indexed by ``task_name``; the file currently covers **22 tasks** (150–320 seeds each).
+      **2. Download Model**
 
-In ``RoboTwinEnv``:
+      .. code-block:: bash
 
-- On startup, ``success_seeds`` for the task are loaded from ``seeds_path``, globally shuffled, and partitioned across workers so each env worker gets a non-overlapping subset;
-- Each trajectory is uniquely determined by its assigned **seed** (initial scene and language instruction);
-- When ``is_eval: True`` and ``auto_reset`` fires, completed envs receive the next seed (only when ``use_fixed_reset_state_ids: False``).
+         hf download RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi0-RoboTwin-SFT-adjust_bottle
 
-With the default example settings (``total_num_envs: 128``, ``rollout_epoch: 1``, ``use_fixed_reset_state_ids: True``), each parallel env evaluates one fixed-seed trajectory per epoch. With 8 GPUs (``component_placement: 0-7``), one epoch covers about 128 trajectories, which may not cover all seeds for the task.
+      **3. Evaluate**
 
-Seed counts and step limits for example tasks
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      .. code-block:: bash
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 22 22 28
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
+           rollout.model.model_path=./RLinf-Pi0-RoboTwin-SFT-adjust_bottle \
+           env.eval.assets_path="${ROBOTWIN_PATH}"
 
-   * - Task
-     - Total seeds
-     - Example ``max_episode_steps``
-     - Example config
-   * - ``adjust_bottle``
-     - 150
-     - 200
-     - ``robotwin_adjust_bottle_openpi_eval``
-   * - ``place_empty_cup``
-     - 260
-     - 200
-     - ``robotwin_place_empty_cup_openvlaoft_eval``
-   * - ``click_bell``
-     - 150
-     - 400
-     - ``robotwin_click_bell_lingbotvla_eval``
-   * - ``place_shoe``
-     - 320
-     - 400
-     - ``robotwin_place_shoe_lingbotvla_eval``
+   .. tab-item:: LingbotVLA 1.0 (click_bell)
 
-``max_episode_steps`` should match training and ``task_config.step_lim``. LingBotVLA example tasks typically use 400 steps; OpenVLA-OFT / OpenPI examples mostly use 200.
+      **1. Install and Download RoboTwin Assets**
 
-See :ref:`env-eval-fields` in :doc:`../reference/configuration` for detailed ``env.eval`` field descriptions.
+      .. code-block:: bash
 
-Model-specific settings
-~~~~~~~~~~~~~~~~~~~~~~~
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model lingbotvla --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-Different VLAs use different robot embodiments, cameras, and domain randomization on RoboTwin. Eval settings must match the training protocol for comparable results:
+      **2. Download Weights and Qwen2.5-VL Backbone**
 
-OpenVLA-OFT (demo_randomized protocol)
+      .. code-block:: bash
 
-- Use env preset default: ``task_config.embodiment: [piper, piper, 0.6]``
-- ``center_crop: True``; set ``rollout.model.center_crop: True`` on the model side
-- Keep domain randomization enabled (training preset default)
-- ``rollout.model.num_action_chunks: 25``; ``unnorm_key`` must match SFT, e.g. ``place_empty_cup_1k``
-- ``rollout.model.implement_version: "official"``
+         hf download robbyant/lingbot-vla-4b --local-dir ./lingbot-vla-4b
+         hf download robbyant/lingbot-vla-4b-posttrain-robotwin \
+           --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
+           --local-dir ./lingbot-vla-4b-posttrain-robotwin
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 
-OpenPI (π\ :sub:`0`\ / π\ :sub:`0.5`\ , demo_clean protocol)
+      **3. Evaluate**
 
-- ``task_config.embodiment: [aloha-agilex]``
-- ``center_crop: False``
-- ``task_config.camera.collect_wrist_camera: true``
-- Disable all ``task_config.domain_randomization`` fields: set ``random_background``, ``cluttered_table``, ``random_light``, etc. to ``false``
-- ``rollout.model.num_action_chunks: 50``
-- ``rollout.model.openpi.config_name``: ``pi0_aloha_robotwin`` or ``pi05_aloha_robotwin``
-- Recommend ``env.enable_offload: True`` and ``rollout.enable_offload: True`` to reduce GPU memory use
+      .. code-block:: bash
 
-LingbotVLA 1.0
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         export LINGBOT_VLA_PATH="$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")"
+         bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvla_eval \
+           rollout.model.model_path=./lingbot-vla-4b-posttrain-robotwin \
+           rollout.model.tokenizer_path=./Qwen2.5-VL-3B-Instruct \
+           rollout.model.lingbotvla.config_path=./lingbot-vla-4b \
+           env.eval.assets_path="${ROBOTWIN_PATH}"
 
-- Besides ``rollout.model.model_path``, also set ``tokenizer_path`` and ``rollout.model.lingbotvla.config_path``
-- ``rollout.model.num_action_chunks: 50``; ``max_episode_steps: 400`` (e.g. ``click_bell``, ``place_shoe``)
-- ``use_custom_reward: False`` (disable custom reward during evaluation)
+      Swap the config name for ``robotwin_place_shoe_lingbotvla_eval`` to evaluate ``place_shoe`` with the same checkpoint (see :doc:`../../examples/embodied/lingbotvla`).
 
-LingbotVLA 2.0
+   .. tab-item:: LingbotVLA 2.0 (click_bell)
 
-- Fill in the paths in ``examples/embodiment/config/model/lingbotvlav2.yaml``, which the eval config shares with training
-- ``rollout.model.precision: bf16``; fp32 weights belong only to the PPO actor
-- ``task_config.embodiment: [aloha-agilex]`` and ``task_config.camera.collect_wrist_camera: true``; the model reads both wrist cameras
-- ``rollout.model.num_action_chunks: 50``; ``max_episode_steps: 400``
+      **1. Install and Download RoboTwin Assets**
 
-OpenWAM
+      .. code-block:: bash
 
-The OpenWAM recipes use the public RoboTwin checkpoints linked in Step 2. Set ``rollout.model.model_path`` to the downloaded checkpoint directory and retain these settings:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model lingbotvlav2 --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
-- Use the shared ``env/robotwin_openwam_aloha.yaml`` preset for the ``aloha-agilex`` robot, head and wrist cameras, and end-effector observations.
-- Keep ``env.eval.openwam_action_representation: absolute_eef20`` for the checkpoint's absolute end-effector actions.
-- Set ``rollout.model.num_action_chunks: 32`` and ``rollout.model.openwam.inference_horizon: null``. Keep the recipe values for ``env.eval.max_episode_steps`` and ``env.eval.task_config.step_lim``. The recipes round each task's step limit up to a multiple of 32; ``click_bell`` uses 416 steps.
-- Keep ``env.eval.instruction_type: unseen`` and the preset's domain randomization for the randomized protocol. For the clean protocol, disable the randomization options under ``env.eval.task_config.domain_randomization``.
-- Keep env and rollout on separate GPUs with ``cluster.component_placement``. The recipes use two environments per env GPU. Keep ``env.eval.use_fixed_reset_state_ids: false`` so each rollout epoch advances to more seeds; increase ``env.eval.rollout_epoch`` or allocate more env GPUs to evaluate more trajectories.
+      **2. Download Checkpoint and Qwen3-VL Backbone**
 
-The repository includes ``adjust_bottle`` and ``click_bell`` recipes. Generate the other supported task recipes with:
+      .. code-block:: bash
 
-.. code-block:: bash
+         hf download robbyant/lingbot-vla-v2-6b-robotwin --local-dir ./lingbot-vla-v2-6b-robotwin
+         hf download Qwen/Qwen3-VL-4B-Instruct --local-dir ./Qwen3-VL-4B-Instruct
 
-   python toolkits/openwam/gen_robotwin_eval_recipes.py --all
+      **3. Evaluate**
 
-This writes ``evaluations/robotwin/robotwin_<task>_openwam_eval.yaml`` for the 46 supported RoboTwin 2.0 tasks. Tasks without fixed RLinf evaluation seeds use random seeds. The generator excludes ``place_fan``, ``open_laptop``, ``place_object_scale``, and ``put_object_cabinet``, which are unsupported in RLinf.
+      .. code-block:: bash
+
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         export ROBOTWIN_ASSETS_PATH="${ROBOTWIN_PATH}"
+         bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvlav2_eval \
+           rollout.model.model_path=./lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt \
+           rollout.model.tokenizer_path=./Qwen3-VL-4B-Instruct \
+           rollout.model.lingbotvlav2.training_config_path=./lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml \
+           rollout.model.lingbotvlav2.robot_config_path=./.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml \
+           rollout.model.lingbotvlav2.stats_path=./.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json
+
+      Default placement uses 2 GPUs (``rollout: 0``, ``env: 1``). Keep LingbotVLA 1.0 and 2.0 in separate virtual environments because both install a ``lingbotvla`` package (see :doc:`../../examples/embodied/lingbotvlav2`).
 
 .. note::
 
-   Use the RoboTwin environment installed by ``requirements/install.sh`` and provide a working ``DISPLAY`` for SAPIEN. On a headless node, start ``Xvfb :99`` and set ``DISPLAY=:99`` before evaluation. ``env.eval.robotwin_step_timeout_s`` limits the wait for each action chunk and defaults to 1800 seconds.
+   **Memory & full-seed coverage:** Default configs run ``total_num_envs: 128`` with ``use_fixed_reset_state_ids: True``, which evaluates ~128 of 150–320 task seeds. On memory-constrained hosts, lower ``env.eval.total_num_envs`` (or enable ``env.enable_offload: True`` and ``rollout.enable_offload: True``), and to cover all seeds set ``use_fixed_reset_state_ids: False`` with ``auto_reset: True`` and a larger ``max_steps_per_rollout_epoch`` (see :ref:`Evaluation Configuration <robotwin-eval-config>`).
 
-Covering the full test set
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+On AMD ROCm, install with ``--platform amd`` and set ``planner_backend: mplib`` in the task config (see :ref:`Run on Different Hardware Backends <robotwin-hardware>`). ``run_eval.sh`` adds ``ROBOTWIN_PATH`` to ``PYTHONPATH``, and ``env.eval.assets_path`` points to the parent folder of ``assets/``. RLinf uses a ``0.01 m`` camera near plane so SAPIEN 3.0.1 keeps gripper fingers visible in wrist views (override ``env.eval.camera_near`` or set ``null`` for RoboTwin's default ``0.1 m``).
 
-Let ``S`` be the total number of seeds for a task, ``E`` the number of parallel envs, and ``T`` the per-trajectory step limit (``max_episode_steps``).
+.. dropdown:: Example Configs
 
-**Option 1: High parallelism**
+   Available under ``evaluations/robotwin/`` (for prebuilt container images, see `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__):
 
-.. code-block:: yaml
+   .. list-table::
+      :header-rows: 1
+      :widths: 44 28 28
 
-   env:
-     eval:
-       total_num_envs: 260        # S, e.g. place_empty_cup
-       max_episode_steps: 200
-       max_steps_per_rollout_epoch: 200   # equals max_episode_steps
-       use_fixed_reset_state_ids: True
-       rollout_epoch: 1
+      * - Config file
+        - Task
+        - Model
+      * - ``robotwin_place_empty_cup_openvlaoft_eval.yaml``
+        - ``place_empty_cup``
+        - OpenVLA-OFT
+      * - ``robotwin_place_empty_cup_openpi_eval.yaml``
+        - ``place_empty_cup``
+        - π₀
+      * - ``robotwin_adjust_bottle_openpi_pi05_eval.yaml``
+        - ``adjust_bottle``
+        - π₀.₅
+      * - ``robotwin_adjust_bottle_openpi_eval.yaml``
+        - ``adjust_bottle``
+        - π₀
+      * - ``robotwin_place_shoe_lingbotvla_eval.yaml``
+        - ``place_shoe``
+        - LingbotVLA 1.0
+      * - ``robotwin_click_bell_lingbotvla_eval.yaml``
+        - ``click_bell``
+        - LingbotVLA 1.0
+      * - ``robotwin_click_bell_lingbotvlav2_eval.yaml``
+        - ``click_bell``
+        - LingbotVLA 2.0
 
-**Option 2: Dynamic seeds with auto reset (recommended when resources are limited)**
+   If ``evaluations/robotwin/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` only for eval-ready configs that define ``rollout.model`` (with ``model_type`` and ``num_action_chunks``). The bundled ``eval_seeds.json`` covers **22 tasks**; to evaluate a training-only config, adapt it per :doc:`../reference/configuration`.
 
-.. code-block:: yaml
+.. _robotwin-eval-config:
 
-   env:
-     eval:
-       total_num_envs: 128
-       max_episode_steps: 200
-       # N = ceil(S / E); place_empty_cup: ceil(260/128) = 3
-       max_steps_per_rollout_epoch: 600   # N * max_episode_steps = 3 * 200
-       auto_reset: True
-       ignore_terminations: True
-       use_fixed_reset_state_ids: False   # allow seed rotation on auto_reset
-       is_eval: True
-       rollout_epoch: 1
+.. dropdown:: Evaluation Configuration
 
-**Multi-epoch averaging**
+   RoboTwin evaluation runs one trajectory per pre-filtered **success seed** in ``eval_seeds.json`` (150–320 seeds per task across 22 tasks) and reports ``eval/success_once``. On startup, ``success_seeds`` are shuffled and partitioned across env workers without overlap. With default settings (``total_num_envs: 128``, ``rollout_epoch: 1``, ``use_fixed_reset_state_ids: True``), one epoch covers ~128 trajectories; set ``use_fixed_reset_state_ids: False`` so ``auto_reset`` rotates to subsequent seeds.
 
-.. code-block:: yaml
+   **Seed counts and step limits**
 
-   env:
-     eval:
-       rollout_epoch: 2
-       use_fixed_reset_state_ids: False   # required when rollout_epoch > 1
+   .. list-table::
+      :header-rows: 1
+      :widths: 26 18 22 34
 
-Notes
-~~~~~
+      * - Task
+        - Total seeds
+        - Example ``max_episode_steps``
+        - Example config
+      * - ``adjust_bottle``
+        - 150
+        - 200
+        - ``robotwin_adjust_bottle_openpi_eval``
+      * - ``place_empty_cup``
+        - 260
+        - 200
+        - ``robotwin_place_empty_cup_openvlaoft_eval``
+      * - ``click_bell``
+        - 150
+        - 400
+        - ``robotwin_click_bell_lingbotvla_eval``
+      * - ``place_shoe``
+        - 320
+        - 400
+        - ``robotwin_place_shoe_lingbotvla_eval``
 
-- ``max_steps_per_rollout_epoch`` must be divisible by ``rollout.model.num_action_chunks``, or startup validation will fail.
-- ``env.eval.seeds_path`` defaults to ``eval_seeds.json``; custom seed files must include a ``success_seeds`` list for the target ``task_name``.
-- OpenVLA-OFT is trained/evaluated under **demo_randomized**; OpenPI under **demo_clean**. Mixing domain randomization settings makes metrics incomparable.
-- These tasks are not yet supported: ``place_fan``, ``open_laptop``, ``place_object_scale``, ``put_object_cabinet``.
+   Keep ``max_episode_steps`` aligned with training and ``task_config.step_lim``. See :ref:`env-eval-fields` in :doc:`../reference/configuration` for generic ``env.eval`` fields.
 
-Advanced Usage
---------------
+   **Model-specific settings**
 
-**Adjust parallelism**
+   Match each model's training protocol for comparable results:
 
-.. code-block:: bash
+   - **OpenVLA-OFT (``demo_randomized``):** ``task_config.embodiment: [piper, piper, 0.6]``, ``center_crop: True`` (and ``rollout.model.center_crop: True``), domain randomization enabled, ``num_action_chunks: 25``, matching ``unnorm_key`` (such as ``place_empty_cup_1k``), ``implement_version: "official"``.
+   - **OpenPI π₀ / π₀.₅ (``demo_clean``):** ``task_config.embodiment: [aloha-agilex]``, ``center_crop: False``, ``collect_wrist_camera: true``, all ``task_config.domain_randomization`` fields ``false``, ``num_action_chunks: 50``, ``openpi.config_name: pi0_aloha_robotwin`` or ``pi05_aloha_robotwin``; set ``env.enable_offload: True`` and ``rollout.enable_offload: True`` to save GPU memory.
+   - **LingbotVLA 1.0:** set ``model_path``, ``tokenizer_path``, and ``rollout.model.lingbotvla.config_path``; ``num_action_chunks: 50``, ``max_episode_steps: 400``, ``use_custom_reward: False``.
+   - **LingbotVLA 2.0:** set paths in ``examples/embodiment/config/model/lingbotvlav2.yaml`` or via Hydra overrides; ``precision: bf16``, ``embodiment: [aloha-agilex]``, ``collect_wrist_camera: true``, ``num_action_chunks: 50``, ``max_episode_steps: 400``.
 
-   bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
-     env.eval.total_num_envs=64 \
-     rollout.model.model_path=/path/to/model
+   **Covering the full test set**
 
-**Derive configs for other tasks**
+   Let ``S`` = total seeds, ``E`` = ``total_num_envs``, and ``T`` = ``max_episode_steps``.
 
-``eval_seeds.json`` also lists seeds for ``beat_block_hammer``, ``handover_block``, ``lift_pot``, and more. Copy a structurally similar YAML from ``evaluations/robotwin/``, change the env preset in ``defaults`` to ``env/robotwin_<task>@env.eval`` (under ``examples/embodiment/config/env/``), and adjust ``rollout.model`` fields such as ``unnorm_key`` or ``openpi.config_name``.
+   *Option 1 — High parallelism:*
 
-**Load an RL checkpoint**
+   .. code-block:: yaml
 
-.. code-block:: bash
+      env:
+        eval:
+          total_num_envs: 260                # S, e.g. place_empty_cup
+          max_episode_steps: 200
+          max_steps_per_rollout_epoch: 200
+          use_fixed_reset_state_ids: True
+          rollout_epoch: 1
 
-   bash evaluations/run_eval.sh robotwin robotwin_place_empty_cup_openvlaoft_eval \
-     runner.ckpt_path=/path/to/checkpoint.pt
+   *Option 2 — Dynamic seeds with auto-reset (recommended when GPU memory is limited):*
 
-FAQ
----
+   .. code-block:: yaml
 
-- **ROBOTWIN_PATH not set:** Export ``ROBOTWIN_PATH`` to a RoboTwin repo root (``RLinf_support`` branch). ``run_eval.sh`` adds it to ``PYTHONPATH`` only when it is set.
-- **Wrong assets_path:** The env loads assets via ``ASSETS_PATH``; an invalid path causes startup failure or missing scenes.
-- **Robot platform:** Set ``ROBOT_PLATFORM=ALOHA`` to select the platform variant.
-- **GPU OOM:** Set ``env.enable_offload: True`` and ``rollout.enable_offload: True`` in the YAML, or reduce ``env.eval.total_num_envs``.
-- **Eval coverage:** See :ref:`robotwin-eval-config` above; default 128 parallel envs with ``use_fixed_reset_state_ids: True`` only covers a subset of seeds.
-- **Rendering issues:** ``run_eval.sh`` renders with EGL by default; on hosts without EGL, ``export MUJOCO_GL=osmesa`` and ``export PYOPENGL_PLATFORM=osmesa``.
+      env:
+        eval:
+          total_num_envs: 128
+          max_episode_steps: 200
+          # N = ceil(S / E); place_empty_cup: ceil(260/128) = 3
+          max_steps_per_rollout_epoch: 600   # N * max_episode_steps = 3 * 200
+          auto_reset: True
+          ignore_terminations: True
+          use_fixed_reset_state_ids: False   # allow seed rotation on auto_reset
+          is_eval: True
+          rollout_epoch: 1
+
+   For multi-epoch averaging (``rollout_epoch > 1``), keep ``use_fixed_reset_state_ids: False``. Keep ``max_steps_per_rollout_epoch`` divisible by ``rollout.model.num_action_chunks``. Unsupported tasks: ``place_fan``, ``open_laptop``, ``place_object_scale``, ``put_object_cabinet``.
+
+.. dropdown:: Advanced Usage
+
+   **Adjust parallelism or load an RL checkpoint**
+
+   .. code-block:: bash
+
+      bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
+        env.eval.total_num_envs=64 \
+        rollout.model.model_path=./RLinf-Pi0-RoboTwin-SFT-adjust_bottle \
+        env.eval.assets_path="${ROBOTWIN_PATH}"
+
+      bash evaluations/run_eval.sh robotwin robotwin_place_empty_cup_openvlaoft_eval \
+        rollout.model.model_path=./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup \
+        runner.ckpt_path=./logs/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt \
+        env.eval.assets_path="${ROBOTWIN_PATH}"
+
+   **Derive configs for other tasks**
+
+   ``eval_seeds.json`` also includes ``beat_block_hammer``, ``handover_block``, ``lift_pot``, and more. Copy a matching YAML under ``evaluations/robotwin/``, update ``defaults`` to ``env/robotwin_<task>@env.eval``, and adjust ``unnorm_key`` or ``openpi.config_name``.
+
+Results and Troubleshooting
+---------------------------
+
+The terminal prints ``eval/success_once``; logs and videos go to ``logs/<timestamp>-<config>/`` (see :doc:`../reference/results`).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - Symptom
+     - Fix
+   * - ``ROBOTWIN_PATH`` not found on import
+     - Export ``ROBOTWIN_PATH`` to your RoboTwin checkout (``RLinf_support`` branch); ``run_eval.sh`` adds it to ``PYTHONPATH`` when set.
+   * - Startup failure or missing scenes
+     - Set ``env.eval.assets_path`` (or ``ROBOTWIN_ASSETS_PATH`` for LingbotVLA 2.0) to the parent directory of ``assets/``; for OpenVLA-OFT, also export ``ROBOT_PLATFORM=ALOHA``.
+   * - GPU out of memory
+     - Set ``env.enable_offload: True`` and ``rollout.enable_offload: True``, or lower ``env.eval.total_num_envs``.
+   * - Incomplete seed coverage
+     - Default 128 envs with ``use_fixed_reset_state_ids: True`` covers only a subset of seeds; see :ref:`Evaluation Configuration <robotwin-eval-config>`.
+   * - EGL rendering errors
+     - ``run_eval.sh`` uses EGL by default; on hosts without EGL, export ``MUJOCO_GL=osmesa`` and ``PYOPENGL_PLATFORM=osmesa``.

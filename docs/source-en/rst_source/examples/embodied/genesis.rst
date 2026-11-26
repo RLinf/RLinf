@@ -1,5 +1,5 @@
-RL with Genesis Benchmark
-=========================
+Genesis RL
+==========
 
 .. figure:: https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/HeroShot_Final.png
    :align: center
@@ -72,121 +72,68 @@ Observation and Action
    * - Prompt
      - Not used; this is a low-dimensional/CNN policy-control recipe.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-**Docker image**
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: MLP / CNN
 
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-genesis
+      **1. Install**
 
-   # For mainland China users:
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-genesis
+      .. code-block:: bash
 
-**Custom environment**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env genesis && source .venv/bin/activate
 
-Install Genesis dependencies:
+      **2. Download**
 
-.. code:: bash
+      Skip this step for the MLP + PPO recipe. For the CNN + PPO recipe, download the pretrained ResNet-10 checkpoint:
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --env genesis
-   source .venv/bin/activate
+      .. code-block:: bash
 
-Download the Model
-------------------
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
 
-Skip this section for the MLP + PPO recipe. For the CNN + PPO recipe, download the
-ResNet checkpoint:
+      **3. Launch**
 
-.. code-block:: bash
+      Available recipes:
 
-   cd /path/to/save/model
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 48 26
 
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+         * - Recipe
+           - Config
+           - Command suffix
+         * - MLP + PPO
+           - ``examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``
+           - ``genesis_cubepick_ppo_mlp``
+         * - CNN + PPO
+           - ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``
+           - ``genesis_cubepick_ppo_cnn``
 
-   # Or use huggingface-hub:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+      .. include:: _model_path.rst
 
-Then set the same checkpoint path for rollout and actor in
-``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``:
+      Launch training with ``run_embodiment.sh``:
 
-.. code-block:: yaml
+      .. code-block:: bash
 
-   rollout:
-      model:
-         model_path: /path/to/RLinf-ResNet10-pretrained
-   actor:
-      model:
-         model_path: /path/to/RLinf-ResNet10-pretrained
+         # State-observation MLP + PPO
+         bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_mlp
 
-Run It
-------
+         # Vision CNN + PPO
+         bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_cnn actor.model.model_path=$PWD/RLinf-ResNet10-pretrained
 
-Pick one recipe and launch training:
+      .. dropdown:: Advanced configuration (optional)
 
-.. list-table::
-   :header-rows: 1
-   :widths: 26 48 26
-
-   * - Recipe
-     - Config
-     - Command suffix
-   * - MLP + PPO
-     - ``examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``
-     - ``genesis_cubepick_ppo_mlp``
-   * - CNN + PPO
-     - ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``
-     - ``genesis_cubepick_ppo_cnn``
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_mlp
-   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_cnn
-
-What this does:
-
-1. Starts the embodied training entrypoint with the selected Hydra config.
-2. Creates Ray workers for the actor, rollout, and Genesis env components.
-3. Runs PPO rollouts, computes cube-pick rewards, and updates the selected policy.
-
-.. note::
-
-   Both configs run on GPU ``0`` by default. Tune ``cluster.component_placement``,
-   ``env.train.total_num_envs``, and batch sizes for your hardware.
+         Both configs run on GPU ``0`` by default. Tune ``cluster.component_placement``, ``env.train.total_num_envs``, and batch sizes for your hardware.
 
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable video in the env config when needed:
-
-.. code:: yaml
-
-   env:
-     eval:
-       video_cfg:
-         save_video: True
-         video_base_dir: ${runner.logger.log_path}/video/eval
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 .. list-table::
    :header-rows: 1

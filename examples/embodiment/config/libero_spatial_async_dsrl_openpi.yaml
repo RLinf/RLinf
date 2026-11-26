@@ -117,7 +117,7 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: False
   unnorm_key: libero_10
   enable_offload: False
@@ -126,7 +126,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT" # https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 
 actor:

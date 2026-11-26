@@ -99,7 +99,7 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: False
   unnorm_key: robocasa
   enable_offload: False
@@ -115,7 +115,7 @@ rollout:
     max_new_tokens: null
 
   model:
-    model_path: ${oc.env:ROBOCASA365_OPENPI_CKPT,/path/to/pi0-robocasa-pretrain-human300}
+    model_path: ${actor.model.model_path}
     precision: null
 
 actor:

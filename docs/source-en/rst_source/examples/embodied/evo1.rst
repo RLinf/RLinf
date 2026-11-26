@@ -1,5 +1,5 @@
-RL on Evo-1 Models
-==================
+Evo-1 RL
+========
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -77,150 +77,97 @@ Observation and Action
    * - Prompt
      - Natural-language task instruction for the LIBERO episode.
 
-Installation
-------------
+Setup and Run
+-------------
 
-1. Clone the RLinf Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
-.. code-block:: bash
+.. tab-set::
 
-    git clone https://github.com/RLinf/RLinf.git
-    cd RLinf
-    export RLINF_PATH=$(pwd)
+   .. tab-item:: LIBERO
 
-2. Install Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~
+      **1. Install**
 
-Install the Evo-1 native environment and LIBERO base dependencies in one command:
+      .. code-block:: bash
 
-.. code-block:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model evo1 --env libero && source .venv/bin/activate
 
-    bash requirements/install.sh embodied --model evo1 --env libero --use-mirror
-    source .venv/bin/activate
+      **2. Download**
 
-Download the Model
-------------------
+      Download the Evo-1 LIBERO checkpoint (contains ``config.json``, ``norm_stats.json``, and ``mp_rank_00_model_states.pt``):
 
-Download the Evo-1 LIBERO checkpoint from HuggingFace (a checkpoint directory containing
-``config.json``, ``norm_stats.json``, ``mp_rank_00_model_states.pt``):
+      .. code-block:: bash
 
-.. code-block:: bash
+         hf download MINT-SJTU/Evo1_LIBERO --local-dir ./Evo1_LIBERO
 
-    git lfs install
-    git clone https://huggingface.co/MINT-SJTU/Evo1_LIBERO
+      **3. Launch**
 
-Then set ``rollout.model.model_path`` and ``actor.model.model_path`` in the config to your
-local checkpoint path. ``actor.model.evo1.arm_key`` / ``dataset_key`` must match the
-top-level key(s) in the checkpoint's ``norm_stats.json``.
+      Shipped Evo-1 configs:
 
-The checkpoint holds only the weights trained on top of the base VLM, and names that
-VLM as a hub id (``vlm_name: OpenGVLab/InternVL3-1B``), so loading the model reaches
-HuggingFace for it. On a machine without internet, fetch it once and point
-``actor.model.evo1.vlm_name`` at the local directory:
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 50 28
 
-.. code-block:: bash
+         * - Workflow
+           - Config
+           - Launcher
+         * - GRPO
+           - ``examples/embodiment/config/libero_spatial_grpo_evo1.yaml``
+           - ``examples/embodiment/run_embodiment.sh``
+         * - SFT
+           - ``examples/sft/config/libero_sft_evo1.yaml``
+           - ``examples/sft/run_vla_sft.sh``
+         * - Standalone Eval
+           - ``evaluations/libero/libero_spatial_evo1_eval.yaml``
+           - ``evaluations/run_eval.sh``
 
-    git clone https://huggingface.co/OpenGVLab/InternVL3-1B
+      .. include:: _model_path.rst
 
-Run It
-------
+      Launch GRPO training on LIBERO-Spatial:
 
-Configuration Files
-~~~~~~~~~~~~~~~~~~~
+      .. code-block:: bash
 
-* **SFT (supervised fine-tuning)**:
-  ``examples/sft/config/libero_sft_evo1.yaml`` (run via ``examples/sft/run_vla_sft.sh``)
-* **GRPO (Reinforcement Learning)**:
-  ``examples/embodiment/config/libero_spatial_grpo_evo1.yaml``
-* **Standalone eval**:
-  ``evaluations/libero/libero_spatial_evo1_eval.yaml`` (run via ``evaluations/run_eval.sh``)
+         bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_evo1 actor.model.model_path=$PWD/Evo1_LIBERO
 
-Key Config Snippets (GRPO)
-^^^^^^^^^^^^^^^^^^^^^^^^^^
+      .. dropdown:: Advanced configuration (optional)
 
-The top-level file assembles the environment and model via Hydra and overrides the
-flow-matching SDE sampling / GRPO parameters under ``actor.model`` and ``algorithm``.
+         - **Offline base VLM**: on machines without internet access at runtime, also download ``OpenGVLab/InternVL3-1B`` and point ``actor.model.evo1.vlm_name`` at the local directory:
 
-.. code-block:: yaml
+           .. code-block:: bash
 
-    rollout:
-      model:
-        model_type: "evo1"
+              hf download OpenGVLab/InternVL3-1B --local-dir ./InternVL3-1B
 
-    actor:
-      model:
-        model_type: "evo1"
-        model_path: "/path/to/model/Evo1_LIBERO"
-        num_action_chunks: 14        # steps executed per inference
-        evo1:
-          arm_key: "libero_robot"    # must match norm_stats.json
-          dataset_key: "libero_robot"
-        rl_head_config:
-          noise_level: 0.5           # SDE noise scale
-          denoising_steps: 8         # SDE denoise steps for RL rollout + replay
-      # freeze the InternVL3 VLM; train only the flow-matching action head
-      model.evo1.rl_trainable_scope: "action_head"
+         - **Custom datasets and checkout**: match ``actor.model.evo1.arm_key`` and ``actor.model.evo1.dataset_key`` to the top-level keys in ``norm_stats.json``. If you cloned Evo-1 separately, set ``actor.model.evo1.repo_path`` (or ``EVO1_REPO_PATH``) to its root. To test quickly on a single task, append ``+env.train.task_id_filter=[0] +env.eval.task_id_filter=[0]``; ``env/success_at_end`` rises within tens of GRPO steps.
+         - **Supervised Fine-Tuning (SFT)**: set ``data.train_data_paths`` to your Evo-1 dataset config YAML and ``actor.model.model_path`` to the base checkpoint, then launch (checkpoints are written under ``runner.logger.log_path``):
 
-    algorithm:
-      adv_type: grpo
-      logprob_type: token_level      # per-dim ratio (14x7 executed dims)
-      group_size: 8
-      update_epoch: 2
-      clip_ratio_low: 0.2
-      clip_ratio_high: 0.28          # clip-higher: sustains improvement
+           .. code-block:: bash
 
-Launch Commands
-~~~~~~~~~~~~~~~
+              bash examples/sft/run_vla_sft.sh libero_sft_evo1
 
-.. code-block:: bash
+         - **Standalone evaluation**: evaluate a checkpoint with the standalone eval harness:
 
-    export ROBOT_PLATFORM="LIBERO"
-    bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_evo1
+           .. code-block:: bash
 
-If you checked the Evo-1 repository out yourself, point ``actor.model.evo1.repo_path``
-(or the ``EVO1_REPO_PATH`` environment variable) at its root.
+              bash evaluations/run_eval.sh libero libero_spatial_evo1_eval \
+                rollout.model.model_path=$PWD/Evo1_LIBERO
 
-To reproduce the RL result quickly on a single task, restrict training to one
-LIBERO-Spatial task with ``+env.train.task_id_filter=[0] +env.eval.task_id_filter=[0]``;
-``env/success_at_end`` rises from the SFT baseline within tens of GRPO steps (see Results below).
+         - **CUDA / Ascend graph capture**: when action-head kernel launch overhead bottlenecks rollout, enable graph capture for the deterministic rollout path and keep the rollout model resident so later calls reuse captured graphs (graphs capture lazily per input shape and dtype, and in-place weight updates stay visible to replay; offloading releases captured graphs):
 
-Supervised Fine-Tuning
-----------------------
+           .. code-block:: yaml
 
-To SFT Evo-1 on a LIBERO-style LeRobot dataset (e.g. to produce the SFT
-checkpoint before RL), use the SFT config and launcher:
+              rollout:
+                enable_cuda_graph: True
+                enable_offload: False
 
-.. code-block:: bash
-
-    bash examples/sft/run_vla_sft.sh libero_sft_evo1
-
-Point ``data.train_data_paths`` at an Evo-1 dataset config YAML and
-``actor.model.model_path`` at the checkpoint (or base) to fine-tune. The SFT
-recipe (AdamW, cosine schedule with warmup, flow-matching MSE) follows Evo-1's
-native training; checkpoints are written under ``runner.logger.log_path``.
-
-Standalone Evaluation
----------------------
-
-Evaluate a checkpoint with the standalone eval harness (config under ``evaluations/libero/``):
-
-.. code-block:: bash
-
-    bash evaluations/run_eval.sh libero libero_spatial_evo1_eval \
-      rollout.model.model_path=/path/to/ckpt
+         - **Ascend vision-attention batching**: large batches on Ascend can exhaust memory in the frozen InternVL vision attention. Set ``actor.model.evo1.vision_attention_batch_size: 8`` (default ``0``, native attention) to compute attention for at most eight camera frames at once on Ascend without dropout, and measure throughput with your target rollout batch.
 
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
+Launch TensorBoard with ``tensorboard --logdir ./logs --port 6006`` and watch ``env/success_once``. Pass ``env.eval.video_cfg.save_video=True`` to record evaluation videos; see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. GRPO from an Evo-1 SFT checkpoint produces a stable
-rise in LIBERO-Spatial success rate (n=64 validation, frozen VLM, action-head-only RL):
+GRPO from an Evo-1 SFT checkpoint produces a steady rise in LIBERO-Spatial success rate (n=64 validation, frozen VLM, action-head-only RL):
 
 .. list-table:: Evo-1 GRPO on LIBERO-Spatial (n=64)
    :header-rows: 1
@@ -234,11 +181,3 @@ rise in LIBERO-Spatial success rate (n=64 validation, frozen VLM, action-head-on
    * - LIBERO-Spatial suite (``success_once``, best ckpt)
      - 0.656
      - **0.750**
-
-Videos are saved through the env video config:
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     video_base_dir: ${runner.logger.log_path}/video/eval

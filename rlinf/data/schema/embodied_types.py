@@ -37,6 +37,7 @@ from typing import Any, TypeAlias
 import numpy as np
 import torch
 
+from rlinf.envs.policy_obs import PolicyObsSpec
 from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict,
@@ -159,6 +160,8 @@ class EnvTransition:
     reward_assign_lengths: list[int] | None = None
     # Online LeRobot frame data for this chunk; batched entries start with [B, ...].
     episode_data: dict[str, Any] | None = None
+    # Environment-owned tensors joined into trajectory diagnostics; leaves [B, ...].
+    trajectory_infos: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -175,6 +178,8 @@ class EnvTransition:
             value = getattr(self, field_name)
             if value is not None:
                 setattr(self, field_name, value.cpu().contiguous())
+        if self.trajectory_infos is not None:
+            self.trajectory_infos = put_tensor_device(self.trajectory_infos, "cpu")
 
         if self.executed_mask is not None and (
             self.executed_mask.ndim != 2 or self.executed_mask.dtype != torch.bool
@@ -187,6 +192,7 @@ class EnvTransition:
         reward_model_output: torch.Tensor | None = None,
         reward_assign_lengths: list[int] | None = None,
         episode_data: dict[str, Any] | None = None,
+        trajectory_infos: dict[str, Any] | None = None,
     ) -> "EnvTransition":
         """Return a copy enriched with collector-facing metadata."""
         return replace(
@@ -194,6 +200,7 @@ class EnvTransition:
             reward_model_output=reward_model_output,
             reward_assign_lengths=reward_assign_lengths,
             episode_data=episode_data,
+            trajectory_infos=trajectory_infos,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -216,13 +223,15 @@ class EnvTransition:
         fields = {
             name: split_batch_value(getattr(self, name), split_sizes)
             for name in self.__dataclass_fields__
-            if name != "episode_data"
+            if name not in {"episode_data", "trajectory_infos"}
         }
         episodes = split_episode_data(self.episode_data, split_sizes)
+        trajectory_infos = split_batch_value(self.trajectory_infos, split_sizes)
         return [
             type(self)(
                 **{name: values[index] for name, values in fields.items()},
                 episode_data=episodes[index],
+                trajectory_infos=trajectory_infos[index],
             )
             for index in range(len(split_sizes))
         ]
@@ -243,12 +252,15 @@ class EnvTransition:
                     [getattr(transition, name) for transition in transitions]
                 )
                 for name in transitions[0].__dataclass_fields__
-                if name != "episode_data"
+                if name not in {"episode_data", "trajectory_infos"}
             },
             episode_data=(
                 merge_episode_data(episode_data)
                 if all(value is not None for value in episode_data)
                 else None
+            ),
+            trajectory_infos=merge_batch_values(
+                [transition.trajectory_infos for transition in transitions]
             ),
         )
 
@@ -258,14 +270,17 @@ class EnvTransition:
         bootstrap_values: torch.Tensor | None,
         env_reward_weight: float,
         reward_weight: float,
+        reward_scale: float,
         auto_reset: bool,
         bootstrap_type: str,
         gamma: float,
     ) -> torch.Tensor | None:
         """Build the reward tensor consumed by trajectory training.
 
-        Reward-model scores are weighted into environment rewards first.
-        Auto-reset truncations then receive the configured bootstrap value.
+        Reward-model scores are weighted into environment rewards first, and the
+        sum is multiplied by the env's ``reward_scale``. Auto-reset truncations
+        then receive the configured bootstrap value, which the critic already
+        predicts in scaled units.
 
         The result has independent storage for later in-place reward updates.
         """
@@ -279,6 +294,8 @@ class EnvTransition:
             )
         else:
             rewards = rewards.clone()
+        if reward_scale != 1.0:
+            rewards = rewards * reward_scale
         if bootstrap_values is None or not auto_reset or self.dones is None:
             return rewards
 
@@ -312,12 +329,42 @@ class EnvTransition:
 
 
 @dataclass(kw_only=True)
+class ActionPayload:
+    """Executable actions and optional environment feedback, batched on axis zero."""
+
+    actions: torch.Tensor
+    rollout_infos: dict[str, torch.Tensor] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.actions = self.actions.detach().cpu().contiguous()
+        self.rollout_infos = put_tensor_device(self.rollout_infos, "cpu", detach=True)
+
+    def split(self, sizes: list[int]) -> list["ActionPayload"]:
+        """Split actions and feedback using the same routed batch sizes."""
+        infos = split_batch_value(self.rollout_infos, sizes)
+        return [
+            type(self)(actions=actions, rollout_infos=info)
+            for actions, info in zip(split_batch_value(self.actions, sizes), infos)
+        ]
+
+    @classmethod
+    def merge(cls, payloads: list["ActionPayload"]) -> "ActionPayload":
+        """Merge routed action fragments in batch order."""
+        return cls(
+            actions=merge_batch_values([item.actions for item in payloads]),
+            rollout_infos=merge_batch_values([item.rollout_infos for item in payloads]),
+        )
+
+
+@dataclass(kw_only=True)
 class PolicyOutput:
     """Policy inference output retained until its environment transition arrives."""
 
     # Model-ready training inputs; batched leaves are [B, ...], and ``action``
     # is normally flattened [B, D] where D = num_action_chunks * action_dim.
     forward_inputs: dict[str, Any]
+    # Diagnostics retained for tracing, never passed to model forward.
+    trajectory_infos: dict[str, Any] = field(default_factory=dict)
     # Behavior-policy log probabilities, float [B, ...]; common layouts are
     # [B, D] and [B, C, A], selected by the model/loss implementation.
     prev_logprobs: torch.Tensor | None = None
@@ -335,6 +382,9 @@ class PolicyOutput:
             self.forward_inputs,
             "cpu",
             detach=True,
+        )
+        self.trajectory_infos = put_tensor_device(
+            self.trajectory_infos, "cpu", detach=True
         )
         for field_name in (
             "prev_logprobs",
@@ -590,6 +640,7 @@ class EnvPart:
         *,
         env_reward_weight: float,
         reward_weight: float,
+        reward_scale: float,
         auto_reset: bool,
         bootstrap_type: str,
         gamma: float,
@@ -599,6 +650,7 @@ class EnvPart:
             bootstrap_values=self.bootstrap_values,
             env_reward_weight=env_reward_weight,
             reward_weight=reward_weight,
+            reward_scale=reward_scale,
             auto_reset=auto_reset,
             bootstrap_type=bootstrap_type,
             gamma=gamma,
@@ -633,6 +685,8 @@ class TrajectoryStep:
     rewards: torch.Tensor | None = None
     # Actor training inputs for the current chunk; leaves start with [B, ...].
     forward_inputs: dict[str, Any] = field(default_factory=dict)
+    # Diagnostics retained for tracing, never passed to model forward.
+    trajectory_infos: dict[str, Any] = field(default_factory=dict)
     # Actor weight version for each policy statistic; shape matches prev_logprobs.
     versions: torch.Tensor | None = None
     # Current transition observation; leaves start with [B, ...].
@@ -668,7 +722,12 @@ class TrajectoryStep:
             value = getattr(self, field_name)
             if value is not None:
                 setattr(self, field_name, value.cpu().contiguous())
-        for field_name in ("forward_inputs", "curr_obs", "next_obs"):
+        for field_name in (
+            "forward_inputs",
+            "curr_obs",
+            "next_obs",
+            "trajectory_infos",
+        ):
             value = getattr(self, field_name)
             if value:
                 setattr(self, field_name, put_tensor_device(value, "cpu"))
@@ -685,7 +744,7 @@ class TrajectoryStep:
         rewards: torch.Tensor | None,
         collect_prev_infos: bool,
         collect_transitions: bool,
-        enable_rlt: bool,
+        enable_prefix: bool,
         include_final_value: bool,
     ) -> "TrajectoryStep":
         """Resolve one joined policy/env pair into self-contained step data.
@@ -708,6 +767,10 @@ class TrajectoryStep:
             terminations=env.transition.terminations,
             rewards=rewards,
             forward_inputs=dict(output.forward_inputs),
+            trajectory_infos={
+                **output.trajectory_infos,
+                **(env.transition.trajectory_infos or {}),
+            },
             versions=output.versions,
             initial_dones=initial.dones if initial is not None else None,
             initial_truncations=(initial.truncations if initial is not None else None),
@@ -743,7 +806,7 @@ class TrajectoryStep:
             policy,
             env,
             collect_transitions=collect_transitions,
-            enable_rlt=enable_rlt,
+            enable_prefix=enable_prefix,
         )
         return step
 
@@ -796,19 +859,19 @@ class TrajectoryStep:
         env: EnvPart,
         *,
         collect_transitions: bool,
-        enable_rlt: bool,
+        enable_prefix: bool,
     ) -> None:
         """Extract the transition representation required by the algorithm."""
-        if enable_rlt:
-            from rlinf.algorithms.rlt.transition import (
-                apply_rlt_interventions,
-                extract_rlt_obs_from_forward_inputs,
+        if enable_prefix:
+            from rlinf.algorithms.prefix_off_policy.transition import (
+                apply_prefix_interventions,
+                extract_prefix_obs_from_forward_inputs,
             )
 
             if env.next_rlt_obs is None:
                 raise ValueError("RLT transitions require next-state features.")
-            current_obs = extract_rlt_obs_from_forward_inputs(self.forward_inputs)
-            apply_rlt_interventions(
+            current_obs = extract_prefix_obs_from_forward_inputs(self.forward_inputs)
+            apply_prefix_interventions(
                 current_obs,
                 env.transition.intervene_actions,
                 env.transition.intervene_flags,
@@ -847,6 +910,9 @@ class Trajectory:
 
     max_episode_length: int = 0
     model_weights_id: str = ""
+    # Env config under ``env.train.envs`` the trajectory came from; ``None`` in a
+    # homogeneous run.
+    env_name: str | None = None
     actions: torch.Tensor | None = None
     intervene_flags: torch.Tensor | None = None
     rewards: torch.Tensor | None = None
@@ -859,6 +925,8 @@ class Trajectory:
     forward_inputs: dict[str, Any] = field(default_factory=dict)
     curr_obs: dict[str, Any] = field(default_factory=dict)
     next_obs: dict[str, Any] = field(default_factory=dict)
+    # Diagnostics retained for tracing, never passed to model forward.
+    trajectory_infos: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_steps(
@@ -918,7 +986,7 @@ class Trajectory:
         if values:
             trajectory.prev_values = torch.stack(values, dim=0).cpu().contiguous()
 
-        for name in ("forward_inputs", "curr_obs", "next_obs"):
+        for name in ("forward_inputs", "curr_obs", "next_obs", "trajectory_infos"):
             values = [getattr(step, name) for step in steps if getattr(step, name)]
             if values:
                 setattr(
@@ -933,6 +1001,11 @@ class Trajectory:
             else torch.zeros(1, dtype=torch.float32)
         )
         return trajectory
+
+    @property
+    def dispatch_group(self) -> str | None:
+        """Group the channel dispatcher balances this trajectory within."""
+        return self.env_name
 
     def split(self, split_sizes: int | list[int]) -> list["Trajectory"]:
         """Split the batch dimension into actor-consumable shards.
@@ -984,7 +1057,12 @@ class Trajectory:
             return {}
 
         batch: dict[str, Any] = {}
-        for field_name in ("curr_obs", "next_obs", "forward_inputs"):
+        for field_name in (
+            "curr_obs",
+            "next_obs",
+            "forward_inputs",
+            "trajectory_infos",
+        ):
             all_keys = {
                 key
                 for trajectory in trajectories
@@ -1063,6 +1141,7 @@ class Trajectory:
                 Trajectory(
                     max_episode_length=self.max_episode_length,
                     model_weights_id=self.model_weights_id,
+                    env_name=self.env_name,
                     actions=actions,
                     intervene_flags=intervene_flags,
                     rewards=rewards,
@@ -1072,6 +1151,7 @@ class Trajectory:
                     prev_logprobs=prev_logprobs,
                     prev_values=prev_values,
                     forward_inputs=forward_inputs,
+                    trajectory_infos=apply_mask_to_dict(self.trajectory_infos, i),
                     curr_obs=curr_obs,
                     next_obs=next_obs,
                 )
@@ -1702,22 +1782,13 @@ class EnvOutput:
 
     def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
         """Select policy inputs and normalize task descriptions."""
-        prepared = {
-            key: obs.get(key)
-            for key in (
-                "main_images",
-                "wrist_images",
-                "extra_view_images",
-                "states",
-                "native_proprio",
-            )
-        }
+        prepared = {key: obs.get(key) for key in PolicyObsSpec.KEYS}
         if obs.get("active_mask") is not None:
             prepared["active_mask"] = obs["active_mask"]
         for key in ("reset_mask", "history"):
             if key in obs:
                 prepared[key] = obs[key]
-        task_descriptions = obs.get("task_descriptions")
+        task_descriptions = prepared["task_descriptions"]
         prepared["task_descriptions"] = (
             list(task_descriptions) if task_descriptions is not None else None
         )
@@ -1746,6 +1817,8 @@ class PolicyInput:
     rlt_switch_flags: torch.Tensor | None = None
     # Requested expert-intervention slots, bool [B, C].
     intervene_flags: torch.Tensor | None = None
+    # Previous chunk termination mask used by stateful policy components.
+    dones: torch.Tensor | None = None
     # Logical source shards spanning this request; sizes sum to B.
     sources: list[TrajectorySource] = field(default_factory=list)
     # Previous environment parts awaiting rollout-side completion; one per source
@@ -1763,7 +1836,7 @@ class PolicyInput:
 
     def __post_init__(self) -> None:
         self.obs = put_tensor_device(self.obs, "cpu")
-        for name in ("rlt_switch_flags", "intervene_flags"):
+        for name in ("rlt_switch_flags", "intervene_flags", "dones"):
             value = getattr(self, name)
             if value is not None:
                 setattr(self, name, value.cpu().contiguous())
@@ -1785,6 +1858,7 @@ class PolicyInput:
         source_shards = TrajectorySource.split(self.sources, split_sizes)
         rlt_shards = split_batch_value(self.rlt_switch_flags, split_sizes)
         intervene_shards = split_batch_value(self.intervene_flags, split_sizes)
+        done_shards = split_batch_value(self.dones, split_sizes)
         env_part = self.env_parts[0] if self.env_parts else None
         env_part_shards = (
             env_part.split(split_sizes)
@@ -1797,6 +1871,7 @@ class PolicyInput:
                 obs=obs,
                 rlt_switch_flags=rlt_shards[index],
                 intervene_flags=intervene_shards[index],
+                dones=done_shards[index],
                 sources=source_shards[index],
                 env_parts=[env_part_shards[index]],
                 request_sizes=[split_sizes[index]],
@@ -1838,6 +1913,7 @@ class PolicyInput:
             obs=merge_batch_values(observations),
             rlt_switch_flags=merge_optional_tensor("rlt_switch_flags"),
             intervene_flags=merge_optional_tensor("intervene_flags"),
+            dones=merge_optional_tensor("dones"),
             sources=TrajectorySource.merge(
                 [policy_input.sources for policy_input in policy_inputs]
             ),
@@ -1918,6 +1994,8 @@ def get_model_weights_id(versions: torch.Tensor) -> str:
 
 def split_batch_value(value: Any, split_sizes: list[int]) -> list[Any]:
     """Split a recursively nested batch on its leading dimension."""
+    if isinstance(value, ActionPayload):
+        return value.split(split_sizes)
     if value is None:
         return [None] * len(split_sizes)
     if isinstance(value, torch.Tensor):
@@ -1943,6 +2021,22 @@ def split_batch_value(value: Any, split_sizes: list[int]) -> list[Any]:
     raise TypeError(f"Unsupported batch value: {type(value)}")
 
 
+def batch_format(value: Any) -> Any:
+    """Return what batch values must share to merge on their leading dimension.
+
+    Dict keys and the trailing shape and dtype of tensors and arrays count;
+    other values count by type, so two values merge exactly when their formats
+    are equal.
+    """
+    if isinstance(value, torch.Tensor):
+        return ("tensor", tuple(value.shape[1:]), value.dtype)
+    if isinstance(value, np.ndarray):
+        return ("array", value.shape[1:], value.dtype.str)
+    if isinstance(value, dict):
+        return tuple((key, batch_format(value[key])) for key in sorted(value))
+    return type(value).__name__
+
+
 def merge_batch_values(values: list[Any]) -> Any:
     """Merge recursively nested batches on their leading dimension."""
     if not values:
@@ -1953,6 +2047,8 @@ def merge_batch_values(values: list[Any]) -> Any:
         raise ValueError("Cannot merge present and absent batch values.")
 
     first = values[0]
+    if isinstance(first, ActionPayload):
+        return ActionPayload.merge(values)
     if isinstance(first, torch.Tensor):
         return torch.cat(values, dim=0)
     if isinstance(first, np.ndarray):
@@ -2070,6 +2166,7 @@ __all__ = [
     "PolicyInput",
     "RTCRequest",
     "RTCActionResponse",
+    "batch_format",
     "get_model_weights_id",
     "merge_batch_values",
     "merge_episode_data",

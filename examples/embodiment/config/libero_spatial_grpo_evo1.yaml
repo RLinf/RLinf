@@ -111,14 +111,14 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: False      # GRPO uses the rollout-time prev_logprobs
   unnorm_key: libero_10          # unused by Evo-1 (its Normalizer keys on arm/dataset_key)
   enable_offload: False
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/Evo1_LIBERO" # https://huggingface.co/MINT-SJTU/Evo1_LIBERO
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 
 actor:

@@ -91,12 +91,12 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  backend: "huggingface"
+  rollout_backend: "huggingface"
   enable_offload: True
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi0-Behavior" # https://huggingface.co/RLinf/RLinf-Pi0-Behavior
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 
 actor:
@@ -109,7 +109,7 @@ actor:
 
   # Override the default values in model/openpi
   model:
-    model_path: ${rollout.model.model_path}
+    model_path: "/path/to/model/RLinf-Pi0-Behavior" # https://huggingface.co/RLinf/RLinf-Pi0-Behavior
     add_value_head: True
     num_images_in_input: 3
     proprio_dim: 32

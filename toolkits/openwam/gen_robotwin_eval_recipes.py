@@ -256,7 +256,7 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   enable_offload: False
   pipeline_stage_num: 1
   model:

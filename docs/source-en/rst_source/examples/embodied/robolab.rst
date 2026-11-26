@@ -1,5 +1,5 @@
-Evaluation on RoboLab
-=====================
+RoboLab Evaluation
+==================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png
    :align: center
@@ -74,10 +74,51 @@ Observation and Action
    * - Prompt
      - Natural-language instruction from the task metadata.
 
-Run It
-------
+Setup and Run
+-------------
 
-Follow the :doc:`evaluation guide <../../evaluations/guides/robolab>` to install the environment, download the checkpoint, configure tasks, and run the evaluation.
+.. include:: _setup_common.rst
+
+.. tab-set::
+
+   .. tab-item:: OpenPI π₀.₅
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robolab && source .venv/bin/activate
+
+      **2. Download**
+
+      Download the converted PyTorch checkpoint for RoboLab DROID joint-position tasks:
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos --local-dir ./RLinf-Pi05-RoboLab-droid-jointpos
+
+      **3. Launch**
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 28 46 26
+
+         * - Recipe
+           - Config
+           - Command suffix
+         * - OpenPI π₀.₅ (eval)
+           - ``evaluations/robolab/robolab_pi05_droid_jointpos.yaml``
+           - ``robolab_pi05_droid_jointpos``
+
+      Run the default task (``BowlStackingLeftOnRightTask``, 10 episodes):
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \
+           rollout.model.model_path=./RLinf-Pi05-RoboLab-droid-jointpos
+
+This integration is evaluation only. Follow the :doc:`evaluation guide <../../evaluations/guides/robolab>` to export all 120 task definitions, configure task step limits, and run the full benchmark.
 
 Visualization and Results
 -------------------------

@@ -88,11 +88,11 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  backend: "huggingface"
+  rollout_backend: "huggingface"
   enable_offload: True
   pipeline_stage_num: 1
   model:
-    model_path: "/path/to/RLinf-Gr00t-SFT-Goal" # https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 
 actor:

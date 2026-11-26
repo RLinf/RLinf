@@ -20,6 +20,7 @@ from .async_work import (
     AsyncRayWork,
     AsyncRouteWork,
     AsyncWork,
+    PeerCommunicationError,
 )
 from .collective import Collective
 from .collective_group import CollectiveGroup, CollectiveGroupOptions
@@ -35,4 +36,5 @@ __all__ = [
     "CollectiveGroup",
     "Collective",
     "CollectiveGroupOptions",
+    "PeerCommunicationError",
 ]

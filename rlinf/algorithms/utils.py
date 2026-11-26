@@ -252,20 +252,10 @@ def preprocess_reasoning_advantages_inputs(
             }
         )
 
-    elif kwargs["adv_type"] == "grpo_dynamic":
-        grouped_rewards = (
-            rewards.reshape(-1, kwargs["num_sequence"]).transpose(0, 1).contiguous()
-        )
-        kwargs.update(
-            {
-                "rewards": grouped_rewards,
-            }
-        )
-
     elif kwargs["adv_type"] == "reinpp":
         kwargs.update({"rewards": rewards.unsqueeze(0)})
 
-    elif kwargs["adv_type"] in ("raw", "gae_dynamic"):
+    elif kwargs["adv_type"] == "raw":
         kwargs.update({"rewards": rewards})
 
     else:
@@ -274,17 +264,16 @@ def preprocess_reasoning_advantages_inputs(
     if values is not None:  # [bsz, seq_len]
         assert values.ndim == 2, f"Unsupported values shape {values.shape}"
         values = values.transpose(0, 1)  # [seq_len, bsz]
-        if kwargs["adv_type"] != "gae_dynamic":
-            # pad values with zeros at the end for bootstrapping
-            values = torch.cat(
-                [
-                    values,
-                    torch.zeros(
-                        (1, values.shape[-1]), dtype=values.dtype, device=values.device
-                    ),
-                ],
-                dim=0,
-            )  # [seq_len+1, bsz]
+        # Pad values with zeros at the end for bootstrapping.
+        values = torch.cat(
+            [
+                values,
+                torch.zeros(
+                    (1, values.shape[-1]), dtype=values.dtype, device=values.device
+                ),
+            ],
+            dim=0,
+        )  # [seq_len+1, bsz]
 
         kwargs.update({"values": values})
 
@@ -333,7 +322,7 @@ def preprocess_loss_inputs(
     logprob_type: Optional[str] = None,
     single_action_dim: Optional[int] = None,
     loss_mask: Optional[torch.Tensor] = None,
-    loss_mask_sum: Optional[torch.Tensor] = None,
+    loss_mask_ratio: Optional[torch.Tensor] = None,
     values: Optional[torch.Tensor] = None,
     prev_values: Optional[torch.Tensor] = None,
     returns: Optional[torch.Tensor] = None,
@@ -346,8 +335,8 @@ def preprocess_loss_inputs(
         advantages = advantages.flatten()
         if loss_mask is not None:
             loss_mask = loss_mask.flatten()
-        if loss_mask_sum is not None:
-            loss_mask_sum = loss_mask_sum.flatten()
+        if loss_mask_ratio is not None:
+            loss_mask_ratio = loss_mask_ratio.flatten()
         if values is not None:
             values = values.flatten()
         if prev_values is not None:
@@ -376,8 +365,8 @@ def preprocess_loss_inputs(
             loss_mask = loss_mask.unsqueeze(-1).to(dtype=torch.bool) & token_mask
         else:
             loss_mask = token_mask
-        if loss_mask_sum is not None:
-            loss_mask_sum = loss_mask_sum.unsqueeze(-1)
+        if loss_mask_ratio is not None:
+            loss_mask_ratio = loss_mask_ratio.unsqueeze(-1)
 
     elif logprob_type == "token_level":
         # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz, num_action_chunks, action_dim]
@@ -398,8 +387,8 @@ def preprocess_loss_inputs(
             advantages = advantages.unsqueeze(-1)
         if loss_mask is not None:
             loss_mask = loss_mask.unsqueeze(-1)
-        if loss_mask_sum is not None:
-            loss_mask_sum = loss_mask_sum.unsqueeze(-1)
+        if loss_mask_ratio is not None:
+            loss_mask_ratio = loss_mask_ratio.unsqueeze(-1)
 
     elif logprob_type == "action_level":
         # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz, num_action_chunks]
@@ -434,7 +423,7 @@ def preprocess_loss_inputs(
     target_shape = logprobs.shape
     advantages = expand_to_target_dim(advantages, target_shape)
     loss_mask = expand_to_target_dim(loss_mask, target_shape)
-    loss_mask_sum = expand_to_target_dim(loss_mask_sum, target_shape)
+    loss_mask_ratio = expand_to_target_dim(loss_mask_ratio, target_shape)
     values = expand_to_target_dim(values, target_shape)
     prev_values = expand_to_target_dim(prev_values, target_shape)
     returns = expand_to_target_dim(returns, target_shape)
@@ -449,7 +438,7 @@ def preprocess_loss_inputs(
             "versions": versions,
             "advantages": advantages,
             "loss_mask": loss_mask,
-            "loss_mask_sum": loss_mask_sum,
+            "loss_mask_ratio": loss_mask_ratio,
             "values": values,
             "prev_values": prev_values,
             "returns": returns,

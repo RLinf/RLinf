@@ -205,7 +205,7 @@ Model and Algorithm Configuration
 Rollout and Inference Configuration
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- ``actor_rollout_ref.rollout.name``: **Inference backend** - Include ``["hf", "sglang", "vllm]"`` 
+- ``actor_rollout_ref.rollout.name``: **Inference backend** - Include ``["huggingface", "sglang", "vllm]"``
 - ``actor_rollout_ref.rollout.tensor_model_parallel_size``: **Tensor parallelism** - TP size for rollout. Only effective for vllm
 - ``actor_rollout_ref.rollout.gpu_memory_utilization``: **GPU memory usage** - Fraction of GPU memory to use for inference 
 - ``actor_rollout_ref.rollout.n``: **Samples per prompt** - Number of responses to generate for each prompt during rollout
@@ -394,7 +394,8 @@ recompute            20 blocks
 .. step throughput         19850.13        total tokens/s
 .. ======================= =============== ====================
 
-.. **Note**: RLinf results below does not count ref logprob time. 
+.. note::
+   RLinf results below do not count ref logprob time.
 
 
 The following benchmark results compare **RLinf** with **VeRL**.  
