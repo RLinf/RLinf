@@ -49,7 +49,15 @@ def main(cfg) -> None:
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
-    if rollout_backend == "apxinf":
+    if rollout_backend == "embodiinfer":
+        from rlinf.workers.rollout.embodiinfer.embodiinfer_worker import (
+            EmbodiInferRolloutWorker,
+        )
+
+        rollout_group = EmbodiInferRolloutWorker.create_group(cfg).launch(
+            cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
+        )
+    elif rollout_backend == "apxinf":
         from rlinf.workers.rollout.apxinf import ApxInfRolloutWorker
 
         rollout_group = ApxInfRolloutWorker.create_group(cfg).launch(
@@ -126,8 +134,14 @@ def main(cfg) -> None:
         env=env_group,
     )
 
-    runner.init_workers()
-    runner.run()
+    try:
+        runner.init_workers()
+        runner.run()
+    finally:
+        try:
+            env_group.close().wait()
+        except Exception:
+            get_logger().exception("Failed to close environment workers")
 
 
 if __name__ == "__main__":

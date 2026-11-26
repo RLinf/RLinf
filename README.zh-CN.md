@@ -46,6 +46,7 @@ bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
 ## 最新动态
 
+- [2026/11] 🔥 RLinf 支持 ActiveVLN GRPO 训练，使用 EmbodiInfer rollout 和 VLN-CE 环境服务。文档：[ActiveVLN](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/activevln.html)。
 - [2026/11] 🔥 RLinf 支持 SuperMimic，在 MuJoCo Warp 中用可微世界模型训练 Unitree G1 全身动作跟踪 policy，并集成多卡 FSDP2、CUDAGraph 与 bf16 混合精度优化。在 NVIDIA A800 上，相较官方单卡实现（0.515 秒/更新），RLinf 单卡吞吐提升至 **1.34 倍**（0.383 秒/更新），4 卡提升至 **2.27 倍**（0.227 秒/更新，约 23 分钟完成 6000 次更新）；在 40 条 LAFAN1 片段上性能与论文对齐，归一化回报达 **0.856**（论文为 0.82）且 **0** 摔倒。文档：[SuperMimic](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/supermimic.html)。
 - [2026/11] 🔥 RLinf 新增 FlexRLT，可直接用冻结 VLA 的特征训练小型 actor 和 critic，并分别选择特征表示、网络、AC/TD3 算法及 STEAM 门控。文档：[FlexRLT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/flexrlt.html)。
 - [2026/11] 🔥 RLinf 支持在 [DexJoCo](https://github.com/brave-eai/dexjoco) 灵巧操作基准上用 SFT 和 PPO 训练 CNN 和 π₀.₅ policy。PPO 将 π₀.₅ 在 `water_plant` 上的成功率从 SFT 后的 78.1% 提升至 98.4%。文档：[基于 DexJoCo 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html)。
@@ -165,14 +166,14 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
 
 ### 训练与 Rollout 引擎
 
-RLinf 用训练引擎更新模型，用 Rollout 引擎执行 rollout 和评测。FSDP 能快速适配新模型和新算法，Megatron-LM 和 Megatron-Bridge 面向大规模训练。智能体一栏也涵盖数学、VQA 等推理任务。PhyAI 和 ApxInf 目前仅支持 π₀.₅。
+RLinf 用训练引擎更新模型，用 Rollout 引擎执行 rollout 和评测。FSDP 能快速适配新模型和新算法，Megatron-LM 和 Megatron-Bridge 面向大规模训练。智能体一栏也涵盖数学、VQA 等推理任务。PhyAI 和 ApxInf 目前仅支持 π₀.₅。EmbodiInfer 支持 ActiveVLN。
 
 <table>
   <thead align="center">
     <tr>
       <th rowspan="2"></th>
       <th colspan="3">训练</th>
-      <th colspan="5">Rollout</th>
+      <th colspan="6">Rollout</th>
     </tr>
     <tr>
       <th>FSDP</th>
@@ -181,6 +182,7 @@ RLinf 用训练引擎更新模型，用 Rollout 引擎执行 rollout 和评测�
       <th>HuggingFace</th>
       <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/sglang_server.html">SGLang</a></th>
       <th>vLLM</th>
+      <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/activevln.html">EmbodiInfer</a></th>
       <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/rollout-engines/phyai.html">PhyAI</a></th>
       <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/apxinf.html">ApxInf</a></th>
     </tr>
@@ -189,12 +191,12 @@ RLinf 用训练引擎更新模型，用 Rollout 引擎执行 rollout 和评测�
     <tr>
       <td align="left"><b>具身智能</b></td>
       <td>✅</td><td>—</td><td>✅</td>
-      <td>✅</td><td>✅</td><td>—</td><td>✅</td><td>✅</td>
+      <td>✅</td><td>✅</td><td>—</td><td>✅</td><td>✅</td><td>✅</td>
     </tr>
     <tr>
       <td align="left"><b>智能体</b></td>
       <td>✅</td><td>✅</td><td>✅</td>
-      <td>—</td><td>✅</td><td>✅</td><td>—</td><td>—</td>
+      <td>—</td><td>✅</td><td>✅</td><td>—</td><td>—</td><td>—</td>
     </tr>
   </tbody>
 </table>
@@ -240,6 +242,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robolab.html">RoboLab（仅评估）</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/activevln.html">VLN-CE</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/g1_mimic.html">G1 动作跟踪（MuJoCo Warp）</a> ✅</li>
           <li>更多…</li>
         </ul>
@@ -261,6 +264,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/evo1.html">Evo-1</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/molmoact2.html">MolmoAct2</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/psi0.html">Psi0</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/activevln.html">ActiveVLN</a> ✅</li>
           </ul>
           <li><b>VLM 模型</b></li>
           <ul>

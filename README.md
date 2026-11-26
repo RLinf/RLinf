@@ -47,6 +47,7 @@ That launches ManiSkill3 PPO MLP training on one GPU. Next, read the [RLinf Walk
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports ActiveVLN GRPO training with EmbodiInfer rollout and the VLN-CE environment server. Doc: [ActiveVLN](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/activevln.html).
 - [2026/11] 🔥 RLinf supports SuperMimic for Unitree G1 whole-body motion tracking with a differentiable world model in MuJoCo Warp, including multi-GPU FSDP2 scaling, CUDA graphs, and bf16 mixed precision. On NVIDIA A800, it reaches **1.34×** throughput on 1 GPU (0.383 s vs. 0.515 s/update) and **2.27×** on 4 GPUs (0.227 s/update, 6000 updates in ~23 min) over the official single-GPU code, and reaches **0.856** normalized return on 40 LAFAN1 clips (paper: 0.82) with **0** falls. Doc: [SuperMimic](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/supermimic.html).
 - [2026/11] 🔥 RLinf supports FlexRLT: train a compact actor-critic from frozen VLA features, with configurable heads, AC/TD3 updates, and STEAM routing. Doc: [FlexRLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html).
 - [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
@@ -166,14 +167,14 @@ The high flexibility allows RLinf to explore more efficient scheduling and execu
 
 ### Training and Inference Engines
 
-RLinf updates models with a training engine and runs rollout and evaluation with an inference engine. FSDP adapts quickly to new models and algorithms, and Megatron-LM and Megatron-Bridge are built for large-scale training. Agentic AI includes reasoning tasks such as math and VQA. PhyAI and ApxInf currently support π₀.₅ only.
+RLinf updates models with a training engine and runs rollout and evaluation with an inference engine. FSDP adapts quickly to new models and algorithms, and Megatron-LM and Megatron-Bridge are built for large-scale training. Agentic AI includes reasoning tasks such as math and VQA. PhyAI and ApxInf currently support π₀.₅ only. EmbodiInfer supports ActiveVLN.
 
 <table>
   <thead align="center">
     <tr>
       <th rowspan="2"></th>
       <th colspan="3">Training</th>
-      <th colspan="5">Inference</th>
+      <th colspan="6">Inference</th>
     </tr>
     <tr>
       <th>FSDP</th>
@@ -182,6 +183,7 @@ RLinf updates models with a training engine and runs rollout and evaluation with
       <th>HuggingFace</th>
       <th><a href="https://rlinf.readthedocs.io/en/latest/rst_source/guides/sglang_server.html">SGLang</a></th>
       <th>vLLM</th>
+      <th><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/activevln.html">EmbodiInfer</a></th>
       <th><a href="https://rlinf.readthedocs.io/en/latest/rst_source/guides/rollout-engines/phyai.html">PhyAI</a></th>
       <th><a href="https://rlinf.readthedocs.io/en/latest/rst_source/guides/apxinf.html">ApxInf</a></th>
     </tr>
@@ -190,12 +192,12 @@ RLinf updates models with a training engine and runs rollout and evaluation with
     <tr>
       <td align="left"><b>Embodied AI</b></td>
       <td>✅</td><td>—</td><td>✅</td>
-      <td>✅</td><td>✅</td><td>—</td><td>✅</td><td>✅</td>
+      <td>✅</td><td>✅</td><td>—</td><td>✅</td><td>✅</td><td>✅</td>
     </tr>
     <tr>
       <td align="left"><b>Agentic AI</b></td>
       <td>✅</td><td>✅</td><td>✅</td>
-      <td>—</td><td>✅</td><td>✅</td><td>—</td><td>—</td>
+      <td>—</td><td>✅</td><td>✅</td><td>—</td><td>—</td><td>—</td>
     </tr>
   </tbody>
 </table>
@@ -240,6 +242,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robolab.html">RoboLab (evaluation only)</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/activevln.html">VLN-CE</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/g1_mimic.html">G1 Motion Tracking (MuJoCo Warp)</a> ✅</li>
           <li>More...</li>
         </ul>
@@ -261,6 +264,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/evo1.html">Evo-1</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/molmoact2.html">MolmoAct2</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/psi0.html">Psi0</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/activevln.html">ActiveVLN</a> ✅</li>
           </ul>
           <li><b>VLM</b></li>
           <ul>

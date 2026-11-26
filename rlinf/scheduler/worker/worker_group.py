@@ -335,6 +335,9 @@ class WorkerGroup(Generic[WorkerClsType]):
                 setattr(self, func_name, WorkerGroupFunc(self, func_name))
 
         for func_name in hidden_func_list:
+            if func_name == "_close":
+                # The group invokes this lifecycle hook directly on each actor.
+                continue
             if func_name in hidden_worker_group_cls_func_list:
                 raise ValueError(
                     f"Function {func_name} already exists in the {WorkerGroup.__name__} class, please rename it in the {self._worker_cls} class."

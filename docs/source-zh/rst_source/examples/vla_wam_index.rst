@@ -55,6 +55,14 @@
 
       在标准 LIBERO 和 LIBERO-Plus 上用 PPO 微调 ABot-M0。
 
+   .. grid-item-card:: ActiveVLN
+      :img-top: https://raw.githubusercontent.com/arvillion/ActiveVLN/3a0c63b00e4f42c828cc74c3554afce17641da60/docs/overview.png
+      :img-alt: ActiveVLN 导航概览，图片来自 ActiveVLN 作者
+      :link: embodied/activevln
+      :link-type: doc
+
+      在 VLN-CE 中用 GRPO 训练 ActiveVLN 导航模型。
+
    .. grid-item-card:: Dexbotic
       :img-top: https://raw.githubusercontent.com/dexmal/dexbotic/main/resources/intro.png
       :img-alt: Dexbotic 模型
@@ -148,6 +156,7 @@
    :maxdepth: 2
 
    ABot-M0 <embodied/abot_m0>
+   ActiveVLN <embodied/activevln>
    Dexbotic <embodied/dexbotic>
    Evo-1 <embodied/evo1>
    GR00T <embodied/gr00t>

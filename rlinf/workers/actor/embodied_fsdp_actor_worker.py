@@ -757,6 +757,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             }
 
         recomputed_logprobs = []
+        recomputed_masks = []
         with torch.no_grad():
             for micro_batch in split_dict_to_chunk(
                 batch, math.ceil(rollout_size / self.cfg.actor.micro_batch_size)
@@ -772,6 +773,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         **kwargs,
                     )
                 recomputed_logprobs.append(output["logprobs"].detach().cpu())
+                if output.get("logprob_mask") is not None:
+                    recomputed_masks.append(output["logprob_mask"].detach().cpu())
 
         recomputed_logprobs = torch.cat(recomputed_logprobs, dim=0).to(
             rollout_logprobs.dtype
@@ -787,14 +790,19 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
         loss_mask = batch.get("loss_mask", None)
         mask = None
+        if recomputed_masks:
+            mask = _reshape_recompute_logprob_gap(
+                torch.cat(recomputed_masks, dim=0).bool(), self.cfg
+            )
         if loss_mask is not None:
-            mask = loss_mask.bool()
-            while mask.ndim < log_ratio.ndim:
-                mask = mask.unsqueeze(-1)
-            mask = mask.expand_as(log_ratio)
-        joint_log_ratio = (
-            log_ratio if mask is None else log_ratio.masked_fill(~mask, 0)
-        ).sum(dim=(-2, -1))
+            step_mask = loss_mask.bool()
+            while step_mask.ndim < log_ratio.ndim:
+                step_mask = step_mask.unsqueeze(-1)
+            step_mask = step_mask.expand_as(log_ratio)
+            mask = step_mask if mask is None else mask & step_mask
+        if mask is not None:
+            log_ratio = log_ratio.masked_fill(~mask, 0)
+        joint_log_ratio = log_ratio.flatten(start_dim=1).sum(dim=-1)
         joint_gap = joint_log_ratio.abs().max().item()
         metrics = {
             "actor/rollout_train_logprob_gap": masked_mean(

@@ -1,0 +1,21 @@
+env_type: vlnce_server
+task_suite_name: r2r
+server_url: http://127.0.0.1:5001
+tokenizer_path: /path/to/Qwen2.5-VL-3B_rl_r2r_4000
+episode_ids: [1]
+data_source: r2r
+action_space: r2r
+server_reward_type: success
+step_budget: 500
+seed: 42
+group_size: 2
+reward_coef: 1.0
+total_num_envs: 2
+auto_reset: False
+ignore_terminations: False
+max_episode_steps: 8
+max_steps_per_rollout_epoch: 8
+use_fixed_reset_state_ids: True
+use_ordered_reset_state_ids: True
+video_cfg:
+  save_video: False

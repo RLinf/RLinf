@@ -456,21 +456,27 @@ class Cluster:
 
         def signal_handler(sig, frame):
             # Exit the main process if SIGUSR1 is received, which is sent by the worker group when an exception occurs.
+            signal.signal(signal.SIGUSR1, signal.SIG_IGN)
             sys.stdout.flush()
             sys.stderr.flush()
             if self._distributed_log_collector is not None:
                 self._distributed_log_collector.stop()
 
             with without_http_proxies():
-                alive_actors = list_actors(
-                    filters=[
-                        ("STATE", "=", "ALIVE"),
-                        ("RAY_NAMESPACE", "=", Cluster.NAMESPACE),
-                    ]
-                )
-            for actor_state in alive_actors:
-                actor = ray.get_actor(actor_state.name)
-                ray.kill(actor, no_restart=True)
+                # The state API lets RAY_ADDRESS override even an explicit address.
+                saved_ray_address = os.environ.pop("RAY_ADDRESS", None)
+                try:
+                    alive_actors = list_actors(
+                        address=ray.get_runtime_context().gcs_address,
+                        filters=[
+                            ("STATE", "=", "ALIVE"),
+                            ("RAY_NAMESPACE", "=", Cluster.NAMESPACE),
+                        ],
+                    )
+                finally:
+                    if saved_ray_address is not None:
+                        os.environ["RAY_ADDRESS"] = saved_ray_address
+            self._close_actors([ray.get_actor(actor.name) for actor in alive_actors])
 
             if ray.is_initialized():
                 # Mimic ray's sleep before shutdown to ensure log messages are flushed
@@ -480,6 +486,23 @@ class Cluster:
             exit(-1)
 
         signal.signal(signal.SIGUSR1, signal_handler)
+
+    def _close_actors(self, actors: list[ActorHandle]) -> None:
+        """Close actor-owned resources before terminating any actor.
+
+        Args:
+            actors: Live actors belonging to this cluster's namespace.
+        """
+        for actor in actors:
+            if hasattr(actor, "_close"):
+                try:
+                    ray.get(actor._close.remote(), timeout=30)
+                except Exception as exc:
+                    self._logger.warning(
+                        "Actor cleanup failed before termination: %s", exc
+                    )
+        for actor in actors:
+            ray.kill(actor, no_restart=True)
 
     def _start_local_ray(self, ray_init_kwargs: dict[str, Any]):
         """Start a local Ray instance, retrying once if the node fails to come up.

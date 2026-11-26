@@ -22,6 +22,7 @@ from omegaconf.omegaconf import OmegaConf
 from rlinf.config import validate_cfg
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Cluster
+from rlinf.utils.logging import get_logger
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.reward import EmbodiedAPIRewardWorker, EmbodiedRewardWorker
@@ -161,6 +162,12 @@ def main(cfg) -> None:
         from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
 
         rollout_worker_cls = PhyAIRolloutWorker
+    elif rollout_backend == "embodiinfer":
+        from rlinf.workers.rollout.embodiinfer.embodiinfer_worker import (
+            EmbodiInferRolloutWorker,
+        )
+
+        rollout_worker_cls = EmbodiInferRolloutWorker
     elif rollout_backend == "huggingface" and cfg.algorithm.loss_type == "supermimic":
         from rlinf.workers.rollout.hf.supermimic_rollout_worker import (
             SuperMimicRolloutWorker,
@@ -168,14 +175,12 @@ def main(cfg) -> None:
 
         rollout_worker_cls = SuperMimicRolloutWorker
     elif rollout_backend == "huggingface":
-        from rlinf.workers.rollout.hf.huggingface_worker import (
-            MultiStepRolloutWorker,
-        )
+        from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
         rollout_worker_cls = MultiStepRolloutWorker
     else:
         raise ValueError(
-            "Expected rollout.rollout_backend 'huggingface' or 'phyai' for "
+            "Expected rollout.rollout_backend 'huggingface', 'embodiinfer', or 'phyai' for "
             f"embodied training, got {rollout_backend!r}."
         )
     rollout_group = rollout_worker_cls.create_group(cfg).launch(
@@ -245,8 +250,14 @@ def main(cfg) -> None:
         reward=reward_group,
     )
 
-    runner.init_workers()
-    runner.run()
+    try:
+        runner.init_workers()
+        runner.run()
+    finally:
+        try:
+            env_group.close().wait()
+        except Exception:
+            get_logger().exception("Failed to close environment workers")
 
     if reward_group is not None:
         reward_group.stop().wait()

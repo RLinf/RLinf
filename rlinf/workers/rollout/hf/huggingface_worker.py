@@ -204,6 +204,10 @@ class MultiStepRolloutWorker(Worker):
         """Return whether Actor training requires raw transition observations."""
         return self.collect_transitions and not (self.enable_prefix or self.enable_rlt)
 
+    def _build_model(self, model_cfg: DictConfig) -> BasePolicy:
+        """Build the rollout policy from the merged actor and rollout model config."""
+        return get_model(model_cfg)
+
     def init_worker(self):
         if self.enable_prefix:
             rollout_model_config = OmegaConf.merge(
@@ -215,7 +219,7 @@ class MultiStepRolloutWorker(Worker):
                 self.model_cfg, self.cfg.rollout.model
             )
 
-        self.hf_model: BasePolicy = get_model(rollout_model_config)
+        self.hf_model: BasePolicy = self._build_model(rollout_model_config)
         if self.value_only_bootstrap and getattr(
             type(self.hf_model), "predict_value_batch", None
         ) in (None, BasePolicy.predict_value_batch):
@@ -299,6 +303,9 @@ class MultiStepRolloutWorker(Worker):
                 "top_p": sampling_params["top_p"],
                 "max_new_tokens": sampling_params["max_new_tokens"],
             }
+            if sampling_params.get("repetition_penalty", 1.0) != 1.0:
+                for params in (self._train_sampling_params, self._eval_sampling_params):
+                    params["repetition_penalty"] = sampling_params["repetition_penalty"]
         else:
             self._train_sampling_params = {}
             self._eval_sampling_params = {}

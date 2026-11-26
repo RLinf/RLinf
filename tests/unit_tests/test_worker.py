@@ -56,6 +56,67 @@ from rlinf.scheduler.manager.manager import Manager
 MAX_NON_NV_ACCELERATORS = 2
 
 
+def test_worker_group_preserves_its_close_method_with_an_actor_cleanup_hook(
+    monkeypatch,
+):
+    from rlinf.scheduler.worker.worker_group import WorkerGroup
+    from rlinf.workers.env.env_worker import EnvWorker
+
+    group = EnvWorker.create_group()
+    group._attach_cls_func()
+    assert group._close.__func__ is WorkerGroup._close
+    events = []
+    actor = SimpleNamespace(
+        _close=SimpleNamespace(remote=lambda: events.append("release"))
+    )
+    group._workers = [WorkerGroup.WorkerRank(rank=0, worker=actor)]
+    monkeypatch.setattr(ray, "get", lambda result: result)
+    monkeypatch.setattr(ray, "kill", lambda worker: events.append("kill"))
+    group._close()
+    assert events == ["release", "kill"]
+
+
+def test_worker_group_still_rejects_other_method_collisions():
+    class ConflictingWorker(Worker):
+        def _create_workers(self):
+            pass
+
+    group = ConflictingWorker.create_group()
+    with pytest.raises(ValueError, match="Function _create_workers already exists"):
+        group._attach_cls_func()
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_cluster_releases_actor_resources_before_termination(
+    monkeypatch, cleanup_fails
+):
+    allocated = {"environment"}
+    events = []
+
+    def release():
+        allocated.clear()
+        events.append("release")
+
+    def broken_close():
+        raise OSError("owner disconnected")
+
+    environment = SimpleNamespace(_close=SimpleNamespace(remote=release))
+    actors = [environment]
+    if cleanup_fails:
+        actors.insert(0, SimpleNamespace(_close=SimpleNamespace(remote=broken_close)))
+
+    def kill(actor, **kwargs):
+        assert not allocated
+        events.append("kill")
+
+    monkeypatch.setattr(ray, "get", lambda result, **kwargs: result)
+    monkeypatch.setattr(ray, "kill", kill)
+    cluster = object.__new__(Cluster)
+    cluster._logger = logging.getLogger("test_cluster_cleanup")
+    cluster._close_actors(actors)
+    assert events == ["release"] + ["kill"] * len(actors)
+
+
 def accelerator_is_available():
     """Return whether the Worker accelerator backend is available."""
     return (

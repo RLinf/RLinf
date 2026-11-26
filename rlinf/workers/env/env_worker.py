@@ -85,6 +85,7 @@ class EnvWorker(Worker):
         self.last_obs_list = []
         self.last_intervened_info_list = []
         self._prefetched_train_bootstrap: list[EnvOutput] | None = None
+        self._evaluate_task: asyncio.Task | None = None
         self._trajectory_step = 0
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 
@@ -245,6 +246,41 @@ class EnvWorker(Worker):
     def set_global_step(self, global_step: int) -> None:
         """Set the trajectory step used to correlate distributed events."""
         self._trajectory_step = global_step
+
+    def close(self) -> None:
+        """Close all owned training and evaluation environments, attempting every close."""
+        for env_mode, envs in (
+            ("train", self.env_list),
+            ("eval", self.eval_env_list),
+        ):
+            for env in envs:
+                close = get_env_attr(env, "close")
+                if callable(close):
+                    try:
+                        close()
+                    except Exception as exc:
+                        self.log_warning(
+                            f"Failed to close {env_mode} environment: {exc}"
+                        )
+
+    async def _close(self) -> None:
+        """Release owned environments before the scheduler terminates this worker."""
+        try:
+            if self._evaluate_task is not None:
+                self._evaluate_task.cancel()
+                try:
+                    await self._evaluate_task
+                except asyncio.CancelledError:
+                    pass
+        finally:
+            self.close()
+
+    def _release_envs(self, mode: str) -> None:
+        envs = self.env_list if mode == "train" else self.eval_env_list
+        for env in envs:
+            release = get_env_attr(env, "release")
+            if callable(release):
+                release()
 
     def init_worker(self):
         # This is a barrier to ensure all envs' initial setup upon import is done
@@ -1158,6 +1194,11 @@ class EnvWorker(Worker):
         rollout_channel: Channel,
     ) -> None:
         """Prepare and send the first env batch for the next training rollout."""
+        # Evaluation must be able to borrow the training environments' slots.
+        if self.enable_eval and any(
+            callable(get_env_attr(env, "release")) for env in self.env_list
+        ):
+            return
         if self._prefetched_train_bootstrap is not None:
             raise RuntimeError(
                 "A prefetched train bootstrap already exists. "
@@ -1357,12 +1398,19 @@ class EnvWorker(Worker):
         rollout_channel: Channel,
         reward_channel: Channel | None,
     ):
-        env_metrics = await self._run_interact_once(
-            input_channel,
-            rollout_channel,
-            reward_channel,
-            cooperative_yield=False,
-        )
+        try:
+            env_metrics = await self._run_interact_once(
+                input_channel,
+                rollout_channel,
+                reward_channel,
+                cooperative_yield=False,
+            )
+        except BaseException:
+            try:
+                self._release_envs("train")
+            except Exception as exc:
+                self.log_warning(f"Failed to release training environments: {exc}")
+            raise
 
         for env in self.env_list:
             if self.train_enable_offload:
@@ -1371,7 +1419,17 @@ class EnvWorker(Worker):
         return env_metrics
 
     @Worker.timer("evaluate")
-    def evaluate(self, input_channel: Channel, rollout_channel: Channel):
+    async def evaluate(self, input_channel: Channel, rollout_channel: Channel):
+        if self.enable_train:
+            self._release_envs("train")
+        self._evaluate_task = asyncio.current_task()
+        try:
+            return await self._evaluate(input_channel, rollout_channel)
+        finally:
+            self._evaluate_task = None
+            self._release_envs("eval")
+
+    async def _evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
         early_stop_on_done = self.eval_assignment.cfg.get("early_stop_on_done", False)
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
@@ -1406,17 +1464,9 @@ class EnvWorker(Worker):
             eval_epoch_done = False
             for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
-                    action_payload = self.recv_from(
-                        group_name=self.cfg.rollout.group_name,
-                        channel=input_channel,
-                        tag="eval_rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
-                        batch_size=self.eval_batch_size,
-                        merge_fn=self._merge_action_batches,
-                        infer_batch_size_fn=self._infer_action_batch_size,
-                        async_op=True,
-                        decoupled_mode=self.env_decoupled_mode,
-                    ).wait()
+                    action_payload = await self._recv_actions(
+                        input_channel, stage_id, mode="eval"
+                    )
                     raw_chunk_actions = self._consume_action_payload(
                         action_payload,
                         self.eval_env_list[stage_id],

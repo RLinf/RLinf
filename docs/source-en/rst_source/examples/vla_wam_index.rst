@@ -55,6 +55,14 @@ Open a model page for the full workflow and its supported environments.
 
       Fine-tune ABot-M0 with PPO on standard LIBERO and LIBERO-Plus.
 
+   .. grid-item-card:: ActiveVLN
+      :img-top: https://raw.githubusercontent.com/arvillion/ActiveVLN/3a0c63b00e4f42c828cc74c3554afce17641da60/docs/overview.png
+      :img-alt: ActiveVLN navigation overview, image by the ActiveVLN authors
+      :link: embodied/activevln
+      :link-type: doc
+
+      Train ActiveVLN navigation with VLN-CE and GRPO.
+
    .. grid-item-card:: Dexbotic
       :img-top: https://raw.githubusercontent.com/dexmal/dexbotic/main/resources/intro.png
       :img-alt: Dexbotic model
@@ -148,6 +156,7 @@ Open a model page for the full workflow and its supported environments.
    :maxdepth: 2
 
    ABot-M0 <embodied/abot_m0>
+   ActiveVLN <embodied/activevln>
    Dexbotic <embodied/dexbotic>
    Evo-1 <embodied/evo1>
    GR00T <embodied/gr00t>
