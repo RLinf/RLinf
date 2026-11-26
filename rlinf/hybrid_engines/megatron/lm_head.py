@@ -60,7 +60,7 @@ def _accumulate_weight_gradient(hidden, dlogits, grad_weight, use_fusion):
         )
 
 
-# Limit the last FP32-to-FP16 cast to a quarter of the weight shard.
+# Limit the last FP32-to-parameter-dtype cast to a quarter of the weight shard.
 _WEIGHT_GRAD_TILES = 4
 
 
@@ -148,7 +148,7 @@ class _ChunkedLogProbs(torch.autograd.Function):
         grad_weight = ctx.main_grad if use_main_grad else None
         weight_tiles = []
         if grad_weight is None and ctx.needs_input_grad[1]:
-            if weight.dtype == torch.float16:
+            if weight.dtype in (torch.float16, torch.bfloat16):
                 weight_tiles = [
                     torch.zeros_like(tile, dtype=accumulation_dtype)
                     for tile in weight.chunk(_WEIGHT_GRAD_TILES)

@@ -216,3 +216,20 @@ def test_chunked_lm_head_accumulates_bias_gradient_across_chunks():
     )
     scores["log_probs"].sum().backward()
     torch.testing.assert_close(bias.grad, bias.new_tensor([512, -512]), rtol=0, atol=0)
+
+
+def test_chunked_lm_head_accumulates_bf16_weight_gradient_across_chunks():
+    from rlinf.hybrid_engines.megatron.lm_head import chunked_vocab_parallel_log_probs
+
+    # Constant hidden=1 with equal logits gives (+0.5, -0.5) per token, which
+    # saturates at 256 if accumulated in BF16 across 2-token chunks.
+    hidden = torch.ones(4096, 1, dtype=torch.bfloat16)
+    weight = hidden.new_zeros(2, 1, requires_grad=True)
+    labels = torch.zeros(4096, dtype=torch.long)
+    scores = chunked_vocab_parallel_log_probs(
+        hidden, weight, labels, labels == 0, chunk_size=2
+    )
+    scores["log_probs"].sum().backward()
+    torch.testing.assert_close(
+        weight.grad, weight.new_tensor([[2048.0], [-2048.0]]), rtol=0, atol=0
+    )
