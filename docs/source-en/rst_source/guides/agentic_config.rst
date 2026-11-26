@@ -309,6 +309,7 @@ actor
       gradient_accumulation_fusion: False
       moe_token_dispatcher_type: alltoall
       use_cpu_initialization: False
+      lm_head_chunk_size: 0
 
     optim:
       optimizer: adam
@@ -476,6 +477,8 @@ actor
      - MoE token dispatcher (e.g., ``alltoall``).
    * - ``actor.model.use_cpu_initialization``
      - Initialize weights on CPU to reduce GPU spikes.
+   * - ``actor.model.lm_head_chunk_size``
+     - Compute LM-head logits in chunks of this many tokens to reduce peak GPU memory (e.g., ``256``; ``0`` disables; Megatron multi-turn agent tasks only).
 
 **Optimizer**
 

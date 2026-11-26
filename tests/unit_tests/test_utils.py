@@ -1743,6 +1743,7 @@ def megatron_cpu(monkeypatch, tmp_path):
         worker.kl_beta = 0
         worker.clip_ratio_c = None
         worker.clip_ratio_low = worker.clip_ratio_high = 0.2
+        worker.lm_head_chunk_size = 0
         worker.value_clip = 0.5
         worker.num_microbatches = 1
         return worker

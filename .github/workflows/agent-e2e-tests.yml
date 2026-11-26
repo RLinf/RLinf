@@ -294,7 +294,7 @@ jobs:
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           bash requirements/install.sh agentic
 
-      - name: Test Megatron response entropy
+      - name: Test Megatron actor scoring
         timeout-minutes: 10
         env:
           CUDA_VISIBLE_DEVICES: ""
@@ -302,7 +302,8 @@ jobs:
           export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
           source .venv/bin/activate
           python -c "import megatron.training; import torch.distributed as dist; assert dist.is_gloo_available()"
-          python -m pytest -q tests/unit_tests/test_ma_megatron_actor.py -k entropy
+          python -m pytest -q tests/unit_tests/test_ma_megatron_actor.py
+          python -m pytest -q tests/unit_tests/test_utils.py -k "valid_token_scaling or critic_packing"
 
       - name: Train with SGLang Megatron Collocated mode
         timeout-minutes: 20
@@ -310,13 +311,6 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-megatron
-
-      - name: Check multi-agent Megatron numerical equivalence
-        timeout-minutes: 5
-        run: |
-          export PYTHONPATH=$(pwd):$PYTHONPATH
-          source .venv/bin/activate
-          python -m pytest -q tests/unit_tests/test_utils.py -k "valid_token_scaling or critic_packing"
 
       - name: Train PPO with SGLang Megatron Collocated mode
         timeout-minutes: 20

@@ -111,7 +111,7 @@ Search-R1 强化学习训练
            rollout.model.model_path=./Qwen2.5-3B-Instruct \
            'data.train_data_paths=["./Search-R1-Data/train.jsonl"]'
 
-      .. dropdown:: PPO、FSDP GRPO 及 checkpoint 导出与评测
+      .. dropdown:: PPO、FSDP GRPO、显存优化及 checkpoint 导出与评测
 
          **Megatron PPO**\ （``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``）：在每个 ``global_step_xxx`` 下同时保存 ``actor`` 和 ``critic``，通过 ``runner.resume_dir`` 一并恢复。
 
@@ -123,6 +123,8 @@ Search-R1 强化学习训练
               rollout.model.model_path=./Qwen2.5-3B-Instruct 'data.train_data_paths=["./Search-R1-Data/train.jsonl"]'
             bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp \
               rollout.model.model_path=./Qwen2.5-3B-Instruct 'data.train_data_paths=["./Search-R1-Data/train.jsonl"]'
+
+         **降低 LM head 显存：** 长序列显存不足时，在任意 Megatron 训练命令后追加 ``+actor.model.lm_head_chunk_size=256``，按 256 token 分块计算 logits。
 
          **导出 Hugging Face checkpoint 并评测**\ （评测配置为 ``examples/agent/searchr1/config/eval_qwen2.5.yaml``）：
 
