@@ -48,6 +48,12 @@
 
       在 MuJoCo Franka-Sim 任务上用 PPO 或 SAC 训练 MLP 和 CNN policy。
 
+   .. grid-item-card:: G1 动作跟踪
+      :link: embodied/g1_mimic
+      :link-type: doc
+
+      MuJoCo Warp 中的 Unitree G1 全身动作跟踪环境。
+
    .. grid-item-card:: Genesis
       :img-top: https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/HeroShot_Final.png
       :img-alt: Genesis 仿真平台
@@ -187,6 +193,7 @@
    DexJoCo <embodied/dexjoco>
    EmbodiChain <embodied/embodichain>
    Franka-Sim <embodied/frankasim>
+   G1 动作跟踪 <embodied/g1_mimic>
    Genesis <embodied/genesis>
    GenieSim <embodied/geniesim>
    Go2 ABC <embodied/go2_abc>

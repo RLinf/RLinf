@@ -70,6 +70,12 @@
      - 是（Q 网络）
      - 可选
      - :doc:`MLP Policy <../../examples/embodied/mlp>`\ （``examples/embodiment/config/maniskill_sac_mlp.yaml``）
+   * - :doc:`SuperMimic <supermimic>`
+     - 可微世界模型
+     - 具身（G1 动作跟踪）
+     - 是
+     - 否
+     - :doc:`SuperMimic <../../examples/embodied/supermimic>`\ （``examples/embodiment/config/supermimic_lafan1_gencoord.yaml``）
 
 .. toctree::
    :hidden:
@@ -83,3 +89,4 @@
    REINFORCE++ <reinforce>
    RLPD <rlpd>
    SAC <sac>
+   SuperMimic <supermimic>

@@ -146,6 +146,7 @@ SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
 SupportedModel.GLM4_MOE_LITE = SupportedModel.register("glm4_moe_lite", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
+SupportedModel.SUPERMIMIC = SupportedModel.register("supermimic", force=True)
 
 # Policies whose training entry point reads a contract other than ``obs["states"]``.
 # ``register_model`` fills this for out-of-tree models through ``obs_contract``.
@@ -193,6 +194,7 @@ EMBODIED_MODEL = set(
         SupportedModel.RECAP_VALUE_MODEL,
         SupportedModel.STEAM_VALUE_MODEL,
         SupportedModel.EVO1,
+        SupportedModel.SUPERMIMIC,
     }
 )
 
@@ -2172,6 +2174,15 @@ def validate_embodied_cfg(cfg):
                     f"{env_path}.base_config_name={env_cfg.base_config_name!r}"
                 )
 
+    if model_type == SupportedModel.SUPERMIMIC:
+        from rlinf.algorithms.supermimic.validate import (
+            check_supermimic_placement,
+            validate_supermimic_cfg,
+        )
+
+        validate_supermimic_cfg(cfg, only_eval=only_eval)
+        if not only_eval:
+            check_supermimic_placement(cfg, component_placement)
     validate_online_lerobot_env_cfg(cfg)
     validate_weight_sync_overlap_cfg(cfg)
     return cfg
