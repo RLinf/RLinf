@@ -226,6 +226,34 @@ class SGLangServerBackend(RolloutBackend):
             return (None, None)
         return self._process.poll_child_failure()
 
+    def _build_server_extra_env(self, session_server_enabled: bool) -> dict[str, str]:
+        """Build subprocess environment overrides for the spawned SGLang server."""
+        # With the session server, the router's forwarding client holds
+        # idle connections to the engines for 50 s (sgl-model-gateway
+        # app_context.rs, hardcoded `.pool_idle_timeout(50s)` in
+        # sglang-router 0.3.x; the CLI flag of newer routers defaults to
+        # the same). The engine's uvicorn keep-alive must outlive that or
+        # the router reuses a connection the engine just closed
+        # (ECONNRESET race); validate_session_server_cfg checks the
+        # configured values. Without the session server, uvicorn's
+        # default of 5 s stays.
+        extra_env: dict[str, str] = {}
+        if session_server_enabled:
+            extra_env["SGLANG_TIMEOUT_KEEP_ALIVE"] = str(
+                self._rlinf_ctx.cfg.session_server.engine_keep_alive_s
+            )
+        from rlinf.config import rollout_captures_multi_modal_inputs
+
+        if rollout_captures_multi_modal_inputs(self._rlinf_ctx.cfg):
+            from rlinf.hybrid_engines.sglang.multimodal.replay import (
+                EXTERNAL_MM_PROCESSOR_PACKAGE,
+            )
+
+            extra_env["SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE"] = (
+                EXTERNAL_MM_PROCESSOR_PACKAGE
+            )
+        return extra_env
+
     async def initialize(self) -> None:
         # Loopback unless the session server opens the data plane to
         # other nodes. advertise_host=None lets SGLangServerProcess
@@ -244,22 +272,7 @@ class SGLangServerBackend(RolloutBackend):
             server_args_kwargs["dtype"] = str(server_args_kwargs["dtype"]).removeprefix(
                 "torch."
             )
-        # With the session server, the router's forwarding client holds
-        # idle connections to the engines for 50 s (sgl-model-gateway
-        # app_context.rs, hardcoded `.pool_idle_timeout(50s)` in
-        # sglang-router 0.3.x; the CLI flag of newer routers defaults to
-        # the same). The engine's uvicorn keep-alive must outlive that or
-        # the router reuses a connection the engine just closed
-        # (ECONNRESET race); validate_session_server_cfg checks the
-        # configured values. Without the session server, uvicorn's
-        # default of 5 s stays.
-        extra_env = None
-        if session_server_enabled:
-            extra_env = {
-                "SGLANG_TIMEOUT_KEEP_ALIVE": str(
-                    self._rlinf_ctx.cfg.session_server.engine_keep_alive_s
-                )
-            }
+        extra_env = self._build_server_extra_env(session_server_enabled)
         self._process = SGLangServerProcess(
             server_args_kwargs=server_args_kwargs,
             acquire_free_port=self._acquire_free_port,
@@ -270,7 +283,7 @@ class SGLangServerBackend(RolloutBackend):
             bind_host="0.0.0.0" if session_server_enabled else "127.0.0.1",
             advertise_host=None if session_server_enabled else "127.0.0.1",
             apply_rlinf_patch=True,
-            extra_env=extra_env,
+            extra_env=extra_env or None,
             log_info=self._log_info,
             log_error=self._log_error,
         )

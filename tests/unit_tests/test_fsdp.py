@@ -2169,3 +2169,97 @@ def test_prefix_async_replay_drains_without_rank_collectives(tmp_path):
         nprocs=2,
         join=True,
     )
+
+
+@pytest.mark.parametrize("worker_kind", ["fsdp", "ma_fsdp"])
+@pytest.mark.parametrize(
+    ("payloads", "expected_rows"),
+    [
+        (
+            [
+                None,
+                {},
+                {"pixel_values": torch.tensor([[1.0, 2.0]])},
+                {},
+                {"pixel_values": torch.tensor([[3.0, 4.0]])},
+                None,
+            ],
+            torch.tensor([[1.0, 2.0], [3.0, 4.0]]),
+        ),
+        ([None, {}], None),
+    ],
+)
+def test_fsdp_forward_batch_filters_none_and_empty_multimodal_inputs(
+    monkeypatch, worker_kind, payloads, expected_rows
+):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from rlinf.scheduler import Worker
+    from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
+    from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
+
+    seen = {}
+
+    class CaptureModel(torch.nn.Module):
+        def forward(self, input_ids, attention_mask=None, position_ids=None, **kwargs):
+            seen["kwargs"] = kwargs
+            logits = torch.zeros((*input_ids.shape, 4), dtype=torch.float32)
+            return SimpleNamespace(logits=logits)
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    nrows = len(payloads)
+    if worker_kind == "fsdp":
+        actor = FSDPActor.__new__(FSDPActor)
+        actor.model = CaptureModel()
+        actor.amp_context = nullcontext()
+        actor.enable_dynamic_batch_size = False
+        actor.variable_seq_lengths = False
+        actor.response_len = 2
+        actor.cfg = OmegaConf.create(
+            {
+                "actor": {"model": {"encoder_seq_length": 4}},
+                "data": {"max_prompt_length": 2},
+                "algorithm": {"sampling_params": {"temperature": 1.0}},
+            }
+        )
+        actor.entropy_op_type = "torch"
+        batch = {
+            "input_ids": torch.ones((nrows, 4), dtype=torch.long),
+            "attention_mask": torch.ones((nrows, 4), dtype=torch.bool),
+            "position_ids": torch.arange(4).unsqueeze(0).expand(nrows, -1),
+            "multi_modal_inputs": payloads,
+        }
+        actor.forward_batch(batch)
+    else:
+        actor = MAFSDPActor.__new__(MAFSDPActor)
+        actor.model = CaptureModel()
+        actor.amp_context = nullcontext()
+        actor.enable_dynamic_batch_size = False
+        actor.torch_platform = SimpleNamespace(current_device=lambda: "cpu")
+        actor.tokenizer = SimpleNamespace(eos_token_id=0)
+        actor.cfg = OmegaConf.create(
+            {"algorithm": {"sampling_params": {"temperature": 1.0}}}
+        )
+        actor.entropy_op_type = "torch"
+        batch = {
+            "input_ids": [torch.tensor([1, 2, 3]) for _ in range(nrows)],
+            "position_ids": [torch.tensor([0, 1, 2]) for _ in range(nrows)],
+            "multi_modal_inputs": payloads,
+        }
+        actor.forward_batch(batch)
+
+    if expected_rows is None:
+        assert "pixel_values" not in seen["kwargs"]
+    else:
+        torch.testing.assert_close(seen["kwargs"]["pixel_values"], expected_rows)
+
+
+def test_fsdp_collate_rejects_captured_replay_payloads():
+    from rlinf.utils.image_replay import REPLAY_FORMAT
+    from rlinf.utils.multimodal import collate_fsdp_multimodal_inputs
+
+    with pytest.raises(ValueError, match="Megatron-Bridge, not FSDP"):
+        collate_fsdp_multimodal_inputs(
+            [None, {"format": REPLAY_FORMAT, "pixel_values": torch.ones(2, 2)}], "cpu"
+        )

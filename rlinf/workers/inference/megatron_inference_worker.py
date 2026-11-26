@@ -14,9 +14,12 @@
 
 import copy
 
+import torch
 from omegaconf import DictConfig, open_dict
 
+from rlinf.scheduler.worker.routing import get_group_world_size
 from rlinf.utils.placement import ComponentPlacement
+from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
 from rlinf.utils.utils import retrieve_model_state_dict_in_cpu
 
 from ..actor.megatron_actor_worker import MegatronActor
@@ -60,7 +63,7 @@ def make_megatron_inference(base_class, trainer_role):
 
             # Actor information
             self._train_group_name = self.trainer_role_cfg.group_name
-            self._weight_sync_train_src_rank = self._rank
+            self._weight_layout_sent = False
             self.offload_weight = False
             self.offload_optimizer = False
 
@@ -77,10 +80,10 @@ def make_megatron_inference(base_class, trainer_role):
                 ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model[0])
             self.ref_policy_state_dict = ref_policy_state_dict
 
-            self._weight_dst_rank_in_inference = self.get_inference_weight_dst_ranks(
-                self.role_cfg.model.tensor_model_parallel_size,
-                self.role_cfg.model.pipeline_model_parallel_size,
+            train_world_size = get_group_world_size(
+                self._manager_proxy, self._train_group_name
             )
+            self._weight_sync_train_src_rank = self._rank % train_world_size
 
         def _build_inference_cfg(self):
             """Build the configuration for inference based on the actor config."""
@@ -88,36 +91,47 @@ def make_megatron_inference(base_class, trainer_role):
             train_cfg = self.trainer_role_cfg
             merged_cfg = copy.deepcopy(train_cfg)
             with open_dict(merged_cfg):
-                # Override with inference configs
-                merged_cfg.group_name = inference_cfg.group_name
-                merged_cfg.load_from_actor = inference_cfg.load_from_actor
-                merged_cfg.model.tensor_model_parallel_size = (
-                    inference_cfg.model.tensor_model_parallel_size
-                )
-                merged_cfg.model.pipeline_model_parallel_size = (
-                    inference_cfg.model.pipeline_model_parallel_size
-                )
-                merged_cfg.model.sequence_parallel = (
-                    inference_cfg.model.sequence_parallel
-                )
+                merged_cfg.merge_with(inference_cfg)
 
             with open_dict(self.cfg):
                 setattr(self.cfg, self.role, merged_cfg)
 
+        @torch.no_grad()
         def sync_model_from_actor(self):
             if self.is_weight_offloaded:
                 self.onload_model_weights_and_grad(load_grad=False)
                 self.is_weight_offloaded = False
-            for rank in self._weight_dst_rank_in_inference:
-                if self._rank == rank:
-                    state_dict = self.recv(
-                        src_group_name=self._train_group_name,
-                        src_rank=rank,
+            if not self._weight_layout_sent:
+                self._weight_layout = MegatronCoreWeightReshard.get_model_weight_layout(
+                    self.model, self.reshard_model_config
+                )
+                self.send(
+                    self._weight_layout,
+                    self._train_group_name,
+                    self._weight_sync_train_src_rank,
+                )
+                self._weight_layout_sent = True
+            bucket_count = self.recv(
+                self._train_group_name, self._weight_sync_train_src_rank
+            )
+            received = [set() for _ in self.model]
+            for _ in range(bucket_count):
+                state_dict = self.recv(
+                    self._train_group_name, self._weight_sync_train_src_rank
+                )
+                self.load_state_dict(state_dict, strict=False)
+                for idx, names in enumerate(received):
+                    chunk = (
+                        state_dict
+                        if len(self.model) == 1
+                        else state_dict[f"model{idx}"]
                     )
-                    self.load_state_dict(state_dict, strict=False)
-
-            for ddp_model in self.model:
-                ddp_model.broadcast_params()
+                    names.update(chunk)
+            for idx, chunk in enumerate(self._weight_layout["chunks"]):
+                missing = set(chunk.values()) - received[idx]
+                assert not missing, (
+                    f"Inference sync omitted chunk {idx} weights: {sorted(missing)}"
+                )
 
             self.log_debug("Inference sync_model_from_actor: resharding done")
 

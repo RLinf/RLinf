@@ -30,6 +30,12 @@ Pick these guides when selecting or tuning a rollout engine: switching SGLang an
 
       Collect agent trajectories on rollout nodes with SGLang routing and an OpenAI chat completions endpoint.
 
+   .. grid-item-card:: Qwen3.5 Multi-Turn Image Alignment
+      :link: ../qwen35_multi_turn_images
+      :link-type: doc
+
+      Align SGLang image inputs and M-RoPE positions with Megatron-Bridge in multi-turn Qwen3.5 Agent training.
+
    .. grid-item-card:: PhyAI Rollout Backend
       :link: phyai
       :link-type: doc
@@ -49,5 +55,6 @@ Pick these guides when selecting or tuning a rollout engine: switching SGLang an
    SGLang Server & Routing <../sglang_server>
    Inference HTTP Client <../inference_http_client>
    Session Server <../session_server>
+   Qwen3.5 Multi-Turn Image Alignment <../qwen35_multi_turn_images>
    PhyAI Rollout Backend <phyai>
    ApxInf Rollout Backend <../apxinf>

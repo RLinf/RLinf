@@ -31,9 +31,11 @@ from omegaconf import OmegaConf
 
 from rlinf.data.schema import DiscardedGroup
 from rlinf.workers.agent.agent_loop import (
+    AgentLoopOutput,
     AgentLoopWorker,
     GroupDiscarded,
     MultiAgentLoopWorker,
+    MultiModalTurnState,
 )
 
 
@@ -71,6 +73,134 @@ def _make_worker() -> AgentLoopWorker:
     worker._inflight_groups = set()
     worker.log_error = mock.MagicMock()
     return worker
+
+
+def test_agent_loop_sends_multimodal_request_metadata():
+    worker = _make_worker()
+    worker.generate_input_channel = _QueueChannel()
+    worker.generate_output_channel = _QueueChannel()
+    ids, images, spans = [1, 2], [b"image"], [(1, 2)]
+
+    worker.generate_output_channel.put({"output_ids": [3]})
+    asyncio.run(worker.generate(ids, {}, image_data=images, image_spans=spans))
+    request = worker.generate_input_channel.get_nowait()
+    assert request["image_data"] == images
+    assert request["capture_images"]["image_spans"] == spans
+
+    # Passing image_history or image_store_dir without image_spans must still
+    # route through capture_images and trigger the session-server guard.
+    worker.generate_output_channel.put({"output_ids": [4]})
+    asyncio.run(worker.generate(ids, {}, image_history={"length": 2}))
+    request = worker.generate_input_channel.get_nowait()
+    assert request["capture_images"]["image_spans"] is None
+    assert request["capture_images"]["history"] == {"length": 2}
+
+    worker.session_server_client = object()
+    with pytest.raises(ValueError, match="session server transport"):
+        asyncio.run(worker.generate(ids, {}, image_store_dir="/tmp/store"))
+
+
+def test_multimodal_turn_state_tracks_spans_copies_and_text_turns():
+    from rlinf.utils.image_replay import REPLAY_FORMAT
+
+    tokenizer = SimpleNamespace(
+        unk_token_id=None,
+        convert_tokens_to_ids=lambda tokens: [101, 102, 103],
+        encode=lambda text, add_special_tokens=False: [ord(ch) for ch in text],
+    )
+    state = MultiModalTurnState(tokenizer, [1, 2], image_store_dir="/shared/images")
+
+    # Turn 1: pure text before any image arrives.
+    state.append_text("A")
+    assert state.prompt_ids == [1, 2, 65]
+    assert state.generate_kwargs() == {}
+    row1 = state.record_turn(
+        {"output_ids": [20], "logprobs": [-0.1], "version_start": 3, "version_end": 4}
+    )
+    assert row1.prompt_ids == [1, 2, 65]
+    assert row1.response_ids == [20]
+    assert row1.is_end is False
+    assert row1.version_start == 3
+    assert row1.version_end == 4
+    assert row1.multi_modal_inputs is None
+    assert state.prompt_ids == [1, 2, 65, 20]
+
+    # Unexpected capture on a text-only turn must fail instead of silently rewriting state.
+    with pytest.raises(ValueError, match="Turn capture mismatch"):
+        state.record_turn(
+            {
+                "prompt_token_ids": [1, 2, 65, 20],
+                "output_ids": [21],
+                "multi_modal_inputs": {"format": REPLAY_FORMAT, "image_spans": []},
+                "image_history": {"length": 5},
+            }
+        )
+
+    # Turn 2: add an image followed by trailing text/template tokens.
+    state.append_image(b"img-1")
+    state.append_text("B")
+    kwargs2 = state.generate_kwargs()
+    assert kwargs2["image_data"] == [b"img-1"]
+    assert kwargs2["image_spans"] == [[5, 6]]
+    assert kwargs2["image_history"] is None
+    assert kwargs2["image_store_dir"] == "/shared/images"
+
+    # Missing capture after an image arrives must fail fast instead of leaving stale spans.
+    with pytest.raises(ValueError, match="Turn capture mismatch"):
+        state.record_turn({"output_ids": [21], "logprobs": [-0.2]})
+
+    captured2 = {"format": REPLAY_FORMAT, "image_spans": [[5, 9]]}
+    row2 = state.record_turn(
+        {
+            "prompt_token_ids": [1, 2, 65, 20, 101, 102, 102, 102, 102, 103, 66],
+            "output_ids": [21],
+            "logprobs": [-0.2],
+            "version_start": 4,
+            "version_end": 5,
+            "multi_modal_inputs": captured2,
+            "image_history": {"length": 12},
+        },
+        is_end=True,
+    )
+    assert row2.multi_modal_inputs is captured2
+    assert row2.is_end is True
+    assert row2.version_start == 4
+    assert row2.version_end == 5
+    assert state.prompt_ids[-1] == 21
+
+    # Turn 3: adding another image must not mutate Turn 2's captured spans.
+    state.append_image(b"img-2")
+    kwargs3 = state.generate_kwargs()
+    assert kwargs3["image_spans"] == [[5, 9], [13, 14]]
+    assert kwargs3["image_history"] == {"length": 12}
+    assert row2.multi_modal_inputs["image_spans"] == [[5, 9]]
+
+    # Custom vision markers work without hardcoding Qwen-VL tokens.
+    custom_seen = []
+    custom_tokenizer = SimpleNamespace(
+        unk_token_id=None,
+        convert_tokens_to_ids=lambda tokens: custom_seen.extend(tokens) or [7, 8, 9],
+    )
+    custom_state = MultiModalTurnState(
+        custom_tokenizer, [1], vision_markers=("<img_s>", "<img_p>", "<img_e>")
+    )
+    custom_state.append_image(b"img")
+    assert custom_seen == ["<img_s>", "<img_p>", "<img_e>"]
+    assert custom_state.prompt_ids == [1, 7, 8, 9]
+
+
+def test_multimodal_turn_state_rejects_missing_or_duplicate_vision_markers():
+    for marker_ids, unk_id in (
+        ([101, None, 103], None),
+        ([101, 101, 103], None),
+        ([101, 0, 103], 0),
+    ):
+        tokenizer = SimpleNamespace(
+            unk_token_id=unk_id,
+            convert_tokens_to_ids=lambda _tokens, ids=marker_ids: ids,
+        )
+        with pytest.raises(ValueError, match="vision markers"):
+            MultiModalTurnState(tokenizer, [1, 2])
 
 
 def _request(n_groups=1, group_size=2, group_ids=None, task_names=None):
@@ -111,7 +241,7 @@ def _make_group_worker(worker_cls=AgentLoopWorker):
 
 async def _single_query_output(input_ids):
     """One finished single-turn trajectory for the base group method."""
-    return SimpleNamespace(
+    return AgentLoopOutput(
         prompt_ids=[1, 2],
         prompt_text="p",
         response_ids=[3],
@@ -604,8 +734,8 @@ def _single_turn_output(
     version_start: int | None,
     version_end: int | None,
     not_training: bool = False,
-) -> SimpleNamespace:
-    return SimpleNamespace(
+) -> AgentLoopOutput:
+    return AgentLoopOutput(
         prompt_ids=[1, 2],
         response_ids=[3],
         response_logprobs=[0.5],
@@ -638,6 +768,18 @@ class TestGetRolloutResultVersions:
         return worker.get_rollout_result(
             task_results, None, None, None, extra_fields_train={}
         )
+
+    def test_image_payloads_follow_retained_turns(self):
+        from rlinf.utils.image_replay import REPLAY_FORMAT
+
+        text, skipped, image = (_single_turn_output(1, 1) for _ in range(3))
+        skipped.extra_fields["not_training"] = True
+        image.multi_modal_inputs = {
+            "format": REPLAY_FORMAT,
+            "image_spans": [[1, 2]],
+        }
+        result = self._get_rollout_result([[text, skipped], [image]])
+        assert result.multi_modal_inputs == [None, image.multi_modal_inputs]
 
     def test_versions_written_and_aligned(self):
         result = self._get_rollout_result(
@@ -909,3 +1051,53 @@ class TestTaskNamePassthrough:
             assert seen == [(None, None), (None, None)]
 
         asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("training_backend", "mbridge", "resume_dir", "should_convert"),
+    [
+        ("megatron", True, None, False),
+        ("megatron", False, None, True),
+        ("megatron", False, "/ckpt", False),
+        ("fsdp", False, None, False),
+    ],
+)
+def test_agent_ppo_runner_skips_legacy_critic_convert_for_mbridge(
+    monkeypatch, training_backend, mbridge, resume_dir, should_convert
+):
+    import sys
+
+    from omegaconf import OmegaConf
+
+    from rlinf.runners.agent_ppo_runner import AgentPPORunner
+    from rlinf.runners.agent_runner import AgentRunner
+
+    converted = []
+    monkeypatch.setattr(AgentRunner, "init_rollout_workers", lambda self: None)
+    monkeypatch.setitem(
+        sys.modules,
+        "rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg",
+        SimpleNamespace(
+            convert_hf_to_mg=lambda path, cfg: converted.append((path, cfg))
+        ),
+    )
+    runner = AgentPPORunner.__new__(AgentPPORunner)
+    runner.cfg = OmegaConf.create(
+        {
+            "runner": {"resume_dir": resume_dir},
+            "critic": {
+                "training_backend": training_backend,
+                "megatron": {
+                    "use_hf_ckpt": True,
+                    "mbridge": mbridge,
+                    "ckpt_convertor": {"hf_model_path": "/hf/critic"},
+                },
+            },
+        }
+    )
+    runner.init_rollout_workers()
+    if should_convert:
+        assert len(converted) == 1
+        assert converted[0][0] == "/hf/critic"
+    else:
+        assert converted == []

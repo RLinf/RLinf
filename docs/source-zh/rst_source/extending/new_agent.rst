@@ -483,8 +483,99 @@ HTTP 工具与带会话状态的工具可分别参考 ``rlinf/agents/searchr1/se
 
 解析器位于外部仓库时，启动前导出 ``RLINF_EXT_MODULE=my_pkg.rlinf_ext`` 即可在所有 Ray Worker 中自动注册（见 :ref:`out-of-tree-extensions`）。
 
+.. _multi-turn-visual-agents:
+
+多轮视觉 Agent（Qwen3.5）
+-------------------------
+
+编写带图像输入的多轮 Qwen3.5 Agent 时，改继承 ``MultiAgentLoopWorker``\ （替代第 3 步的 ``AgentLoopWorker``），通过 ``MultiModalTurnState`` 维护每轮 prompt、插入视觉标记，并透传图像区间与历史状态；配套 YAML 配置见 :doc:`../guides/qwen35_multi_turn_images`。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 36 64
+
+   * - 接口
+     - 作用
+   * - ``MultiModalTurnState(tokenizer, prompt_ids, image_store_dir=None)``
+     - 用首轮已分词的 ``prompt_ids`` 初始化单条轨迹状态；传入可选 ``image_store_dir`` 可将捕获的像素张量落盘到共享目录而非直接随批次传递。
+   * - ``append_text(text)`` / ``append_tokens(ids)``
+     - 向 ``state.prompt_ids`` 追加文本或 token ID，可用于图像前后的对话模板标记与用户文本。
+   * - ``append_image(raw_bytes)``
+     - 插入 Qwen-VL 视觉标记、记录新图像区间，并追加原始 PNG/JPEG 字节。
+   * - ``generate_kwargs()``
+     - 返回传给 ``self.generate`` 的图像参数；尚未出现图像时返回空字典。
+   * - ``record_turn(result)``
+     - 用 SGLang 展开后的 prompt 和本轮生成 token 推进 ``state.prompt_ids``，更新图像区间与历史状态，并返回已填充回复 token、logprob、权重版本与多模态输入的 ``AgentLoopOutput``\ （默认 ``is_end=False``）。
+
+.. code-block:: python
+
+   from rlinf.workers.agent.agent_loop import (
+       MultiAgentLoopOutput,
+       MultiAgentLoopWorker,
+       MultiModalTurnState,
+   )
+
+
+   class VisionAgentLoop(MultiAgentLoopWorker):
+       async def run_one_query(
+           self, prompt_ids: list[int], answer: str
+       ) -> MultiAgentLoopOutput:
+           max_turns = int(self.cfg.agentloop.get("max_turns", 3))
+           # 如需落盘像素张量，将 image_store_dir 设为共享目录路径
+           state = MultiModalTurnState(
+               self.tokenizer, prompt_ids, image_store_dir=None
+           )
+           rows = []
+           for _ in range(max_turns):
+               result = await self.generate(
+                   state.prompt_ids, **state.generate_kwargs()
+               )
+               row = state.record_turn(result)
+               rows.append(row)
+
+               next_text, next_image_bytes = await step_env(row)  # 自定义工具或环境交互
+               if next_text is None and next_image_bytes is None:
+                   break
+               state.append_text("<|im_start|>user\n")
+               if next_image_bytes is not None:
+                   state.append_image(next_image_bytes)
+               if next_text:
+                   state.append_text(next_text)
+               state.append_text("<|im_end|>\n<|im_start|>assistant\n")
+
+           episode_reward = score_episode(rows, answer)  # 自定义轨迹打分函数
+           for row in rows:
+               row.reward_score = episode_reward
+           if rows:
+               rows[-1].is_end = True
+           return MultiAgentLoopOutput(single_turn_outputs=rows)
+
+.. dropdown:: 进阶：直接传底层 generate() 参数
+
+   若不使用 ``MultiModalTurnState``，在对话出现图像后的每一轮须满足三条约束：
+
+   1. 向 ``self.generate`` 传入下表中的图像参数。
+   2. 将 ``result["prompt_token_ids"]`` 写入 ``AgentLoopOutput.prompt_ids``，同时将 ``result["multi_modal_inputs"]`` 写入 ``AgentLoopOutput.multi_modal_inputs``。
+   3. 用 ``result["prompt_token_ids"] + result["output_ids"]`` 作为下一轮 prompt 前缀（SGLang 会将单个 ``<|image_pad|>`` 占位符展开为图像对应的 patch token 数）。
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 28 72
+
+      * - 参数
+        - 约束
+      * - ``image_data``
+        - 截至本轮的原始 PNG/JPEG 字节列表，与 ``image_spans`` 一一对应。
+      * - ``image_spans``
+        - 每张图像占位符的左闭右开区间 ``[start, end)``，须夹在 ``<|vision_start|>`` 与 ``<|vision_end|>`` 之间（新图像展开前长度为 1）。追加下一轮前先浅拷贝返回的区间列表，避免原地修改破坏历史轮次数据。
+      * - ``image_history``
+        - 首次出现图像传 ``None``，之后每轮原样透传 ``result["image_history"]``。
+      * - ``image_store_dir``
+        - 可选共享落盘目录；默认 ``None`` 表示直接随批次传递。
+
 下一步
 ------
 
+- **训练 Qwen3.5 视觉 Agent？** 参见 :doc:`Qwen3.5 多轮图像输入对齐 <../guides/qwen35_multi_turn_images>` 完成 YAML 配置与环境验证。
 - **已有 OpenAI API 或外部黑盒 Agent？** 参见 :doc:`黑盒 Agent <openai_agent>`，无需重写解析器与 ``ToolWorker``。
 - **扩展到多机异步训练：** 开启 ``runner.async_mode: True``\ （见 :doc:`异步 Agent RL <../guides/async_agentic>`），并按需通过 :doc:`Session Server <../guides/session_server>` 将轨迹存储下沉到 rollout 节点。

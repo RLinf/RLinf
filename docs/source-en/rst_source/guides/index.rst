@@ -23,7 +23,7 @@ Where Are You in Your Run?
      - Profiling first, then pipeline mode, decoupled envs, observation compression, async Agent RL, RTC, FUSCO
      - :doc:`Profile & Speed Up <performance/index>`
    * - Switch or serve a dedicated rollout engine
-     - SGLang & vLLM versions, SGLang server, HTTP inference client, Session Server, PhyAI, ApxInf
+     - SGLang & vLLM versions, SGLang server, HTTP inference client, Session Server, Qwen3.5 multi-turn images, PhyAI, ApxInf
      - :doc:`Rollout Backends <rollout-engines/index>`
 
 .. grid:: 1 2 2 2

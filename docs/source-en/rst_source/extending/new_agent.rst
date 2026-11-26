@@ -483,8 +483,99 @@ Launch both worker groups in your entry script and pass them to ``AgentRunner`` 
 
 If the parser lives outside RLinf, export ``RLINF_EXT_MODULE=my_pkg.rlinf_ext`` before launching so every Ray worker registers it automatically (see :ref:`out-of-tree-extensions`).
 
+.. _multi-turn-visual-agents:
+
+Multi-Turn Visual Agents (Qwen3.5)
+----------------------------------
+
+For multi-turn Qwen3.5 agents that pass images, subclass ``MultiAgentLoopWorker`` (instead of ``AgentLoopWorker`` from Step 3) and use ``MultiModalTurnState`` to track prompt tokens, insert Qwen-VL image markers, and carry image spans and history across turns. Enable the matching YAML config in :doc:`../guides/qwen35_multi_turn_images`.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 36 64
+
+   * - API
+     - Role
+   * - ``MultiModalTurnState(tokenizer, prompt_ids, image_store_dir=None)``
+     - Initialize per-trajectory state from turn 1's tokenized prompt. Pass optional ``image_store_dir`` to offload captured pixel tensors to a shared directory instead of keeping them inline.
+   * - ``append_text(text)`` / ``append_tokens(ids)``
+     - Append text or pre-tokenized IDs to ``state.prompt_ids`` (including chat-template turn delimiters before and after an image).
+   * - ``append_image(raw_bytes)``
+     - Insert Qwen-VL vision markers, record the new image span, and append raw PNG or JPEG bytes.
+   * - ``generate_kwargs()``
+     - Return image kwargs for ``self.generate`` (empty dict before any image arrives).
+   * - ``record_turn(result)``
+     - Advance ``state.prompt_ids`` with SGLang's expanded prompt plus generated tokens, update tracked spans and image history, and return an ``AgentLoopOutput`` carrying response tokens, logprobs, weight versions, and captured multimodal inputs (defaults to ``is_end=False``).
+
+.. code-block:: python
+
+   from rlinf.workers.agent.agent_loop import (
+       MultiAgentLoopOutput,
+       MultiAgentLoopWorker,
+       MultiModalTurnState,
+   )
+
+
+   class VisionAgentLoop(MultiAgentLoopWorker):
+       async def run_one_query(
+           self, prompt_ids: list[int], answer: str
+       ) -> MultiAgentLoopOutput:
+           max_turns = int(self.cfg.agentloop.get("max_turns", 3))
+           # Set image_store_dir="/shared/images" to offload pixel tensors to shared disk.
+           state = MultiModalTurnState(
+               self.tokenizer, prompt_ids, image_store_dir=None
+           )
+           rows = []
+           for _ in range(max_turns):
+               result = await self.generate(
+                   state.prompt_ids, **state.generate_kwargs()
+               )
+               row = state.record_turn(result)
+               rows.append(row)
+
+               next_text, next_image_bytes = await step_env(row)  # your tool or environment step
+               if next_text is None and next_image_bytes is None:
+                   break
+               state.append_text("<|im_start|>user\n")
+               if next_image_bytes is not None:
+                   state.append_image(next_image_bytes)
+               if next_text:
+                   state.append_text(next_text)
+               state.append_text("<|im_end|>\n<|im_start|>assistant\n")
+
+           episode_reward = score_episode(rows, answer)  # your episode scorer
+           for row in rows:
+               row.reward_score = episode_reward
+           if rows:
+               rows[-1].is_end = True
+           return MultiAgentLoopOutput(single_turn_outputs=rows)
+
+.. dropdown:: Advanced: Low-Level generate() Arguments
+
+   If your loop tracks prompt state directly without ``MultiModalTurnState``, follow three rules on every turn after an image appears:
+
+   1. Pass the arguments below to ``self.generate`` on every image-carrying turn.
+   2. Store ``result["prompt_token_ids"]`` on ``AgentLoopOutput.prompt_ids`` alongside ``result["multi_modal_inputs"]`` on ``AgentLoopOutput.multi_modal_inputs``.
+   3. Start the next turn's prompt from ``result["prompt_token_ids"] + result["output_ids"]`` (SGLang expands each single ``<|image_pad|>`` placeholder to the image's patch width).
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 28 72
+
+      * - Argument
+        - Contract
+      * - ``image_data``
+        - Cumulative list of raw PNG or JPEG bytes, 1-to-1 with ``image_spans``.
+      * - ``image_spans``
+        - Half-open ``[start, end)`` ranges covering each image's pad tokens between ``<|vision_start|>`` and ``<|vision_end|>`` (length 1 before expansion). Shallow-copy the returned ``image_spans`` list before appending new turns so earlier saved payloads are not mutated.
+      * - ``image_history``
+        - Pass ``None`` on the first image turn, then forward ``result["image_history"]`` unchanged on every subsequent turn.
+      * - ``image_store_dir``
+        - Optional shared directory path for disk offloading (``None`` keeps tensors inline).
+
 Next Steps
 ----------
 
+- **Training a Qwen3.5 visual agent?** Configure SGLang image capture and Megatron-Bridge alignment in :doc:`Qwen3.5 Multi-Turn Image Alignment <../guides/qwen35_multi_turn_images>`.
 - **Already have an OpenAI API or external agent?** Follow :doc:`Black-Box Agent <openai_agent>` to connect without rewriting parsers or ``ToolWorker``.
 - **Scale asynchronously across nodes:** Enable ``runner.async_mode: True`` (:doc:`Async Agentic RL <../guides/async_agentic>`) and offload rollout payloads with :doc:`Session Server <../guides/session_server>`.

@@ -97,6 +97,7 @@ class SupportedModel:
 SupportedModel.QWEN2_5 = SupportedModel.register("qwen2.5", force=True)
 SupportedModel.QWEN2_5_VL = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3 = SupportedModel.register("qwen3", force=True)
+SupportedModel.QWEN3_5 = SupportedModel.register("qwen3_5", force=True)
 SupportedModel.QWEN3_VL = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_MOE = SupportedModel.register("qwen3_moe", force=True)
 SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
@@ -324,7 +325,49 @@ def _inherit_rollout_model_path(
                 rollout_model.model_path = actor_model_path
 
 
+def capture_multi_modal_inputs_enabled(cfg: DictConfig | dict | None) -> bool:
+    """Read the opt-in flag for capturing SGLang image inputs."""
+    if cfg is None:
+        return False
+    key = "capture_multi_modal_inputs"
+    enabled = cfg.get(key, False)
+    if type(enabled) is not bool:
+        raise ValueError(f"rollout.sglang.{key} must be a boolean, got {enabled!r}.")
+    return enabled
+
+
+def rollout_captures_multi_modal_inputs(cfg: DictConfig | dict | None) -> bool:
+    """Whether the rollout config enables SGLang multimodal input capture."""
+    if cfg is None:
+        return False
+    rollout = cfg.get("rollout")
+    if rollout is None:
+        return False
+    if rollout.get("rollout_backend", "sglang") != "sglang":
+        return False
+    return capture_multi_modal_inputs_enabled(rollout.get("sglang"))
+
+
+def _validate_megatron_mtp_cfg(cfg: DictConfig, role: str = "actor") -> None:
+    if cfg.model.get("model_type") != SupportedModel.QWEN3_5.value:
+        return
+    with open_dict(cfg.model):
+        cfg.model.setdefault("load_mtp", False)
+        cfg.model.setdefault("mtp_loss_scaling_factor", 0.1)
+    load_mtp = cfg.model.load_mtp
+    assert isinstance(load_mtp, bool), (
+        f"{role}.model.load_mtp must be a boolean, got {load_mtp!r}."
+    )
+    scale = cfg.model.mtp_loss_scaling_factor
+    assert (
+        isinstance(scale, (int, float))
+        and not isinstance(scale, bool)
+        and math.isfinite(scale)
+    ), f"mtp_loss_scaling_factor must be a finite number, got {scale!r}."
+
+
 def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
+    """Normalize rollout options using the actor's already validated model options."""
     SupportedModel(cfg.model.model_type)  # To validate model_type is supported
 
     def validate_sglang_cfg(cfg):
@@ -349,6 +392,11 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
             f"backend_type=server; the server backend is only implemented for "
             f"the default serving worker (leave serving_mode unset)."
         )
+        if capture_multi_modal_inputs_enabled(cfg) and serving_mode is not None:
+            raise ValueError(
+                "Multimodal input capture requires the default SGLang rollout worker, "
+                f"got rollout.sglang.serving_mode={serving_mode!r}."
+            )
         return cfg
 
     def validate_vllm_cfg(cfg):
@@ -385,11 +433,62 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         assert cfg.rollout_backend in SUPPORTED_ROLLOUT_BACKENDS, (
             f"rollout_backend must be one of {SUPPORTED_ROLLOUT_BACKENDS}."
         )
+        cfg.sync_mtp = False
+        qwen_megatron = (
+            actor_cfg is not None
+            and actor_cfg.get("training_backend") == "megatron"
+            and (
+                cfg.model.model_type == "qwen3_5"
+                or actor_cfg.model.get("model_type") == "qwen3_5"
+            )
+        )
+        if qwen_megatron:
+            assert actor_cfg.model.get("model_type") == cfg.model.model_type, (
+                f"Megatron actor.model.model_type must match rollout model_type "
+                f"{cfg.model.model_type!r}, got {actor_cfg.model.get('model_type')!r}."
+            )
+            load_mtp = actor_cfg.model.load_mtp
         cfg.return_logprobs = cfg.return_logprobs or algorithm_cfg.get(
             "importance_sampling_fix", False
         )
         if cfg.rollout_backend == "sglang":
             cfg.sglang = validate_sglang_cfg(cfg.sglang)
+            if qwen_megatron:
+                cfg.sync_mtp = load_mtp
+                algorithm = cfg.sglang.get("speculative_algorithm")
+                draft_path = cfg.sglang.get("speculative_draft_model_path")
+                assert draft_path in (None, cfg.model.model_path), (
+                    "Qwen3.5 does not support an external draft checkpoint; "
+                    f"expected {cfg.model.model_path!r}, got {draft_path!r}."
+                )
+                if not load_mtp:
+                    assert algorithm is None and draft_path is None, (
+                        "Qwen3.5 speculative decoding requires load_mtp=True; "
+                        f"got algorithm={algorithm!r}, draft={draft_path!r}."
+                    )
+                if load_mtp:
+                    assert algorithm is None or algorithm.upper() in (
+                        "NEXTN",
+                        "EAGLE",
+                    ), (
+                        "actor.model.load_mtp=True requires NEXTN or its EAGLE "
+                        f"alias, got speculative_algorithm={algorithm!r}."
+                    )
+                    mamba_strategy = cfg.sglang.get("mamba_scheduler_strategy")
+                    if mamba_strategy is None:
+                        mamba_strategy = "no_buffer"
+                    defaults = {
+                        "speculative_algorithm": "NEXTN",
+                        "speculative_draft_model_path": cfg.model.model_path,
+                        "speculative_num_steps": 1,
+                        "speculative_num_draft_tokens": 2,
+                        "speculative_eagle_topk": 1,
+                        "disable_radix_cache": mamba_strategy == "no_buffer",
+                    }
+                    for name, value in defaults.items():
+                        if cfg.sglang.get(name) is None:
+                            cfg.sglang[name] = value
+
         else:
             cfg.vllm = validate_vllm_cfg(cfg.vllm)
 
@@ -426,11 +525,31 @@ def hf_rope_parameters(hf_config) -> dict:
     return params
 
 
-def validate_model_cfg_by_hf_config(cfg, hf_model_path):
-    # validate by hf config
+def _resolve_megatron_model_type(model_cfg: DictConfig, hf_config) -> None:
+    architectures = hf_config.architectures or []
+    model_type = model_cfg.get("model_type")
+    if "Qwen3_5ForConditionalGeneration" in architectures:
+        if model_type is None:
+            with open_dict(model_cfg):
+                model_cfg.model_type = SupportedModel.QWEN3_5.value
+        else:
+            assert model_type == SupportedModel.QWEN3_5.value, (
+                f"Qwen3_5ForConditionalGeneration requires model_type='qwen3_5', "
+                f"got {model_type!r}."
+            )
+    elif model_type == SupportedModel.QWEN3_5.value:
+        raise ValueError(
+            "model_type qwen3_5 requires a Qwen3_5ForConditionalGeneration "
+            f"checkpoint, got architectures={architectures}."
+        )
+
+
+def validate_model_cfg_by_hf_config(cfg, hf_model_path, hf_config=None):
     from transformers import AutoConfig
 
-    hf_config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=True)
+    if hf_config is None:
+        hf_config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=True)
+    _resolve_megatron_model_type(cfg.model, hf_config)
 
     if (
         "Qwen2ForCausalLM" in hf_config.architectures
@@ -446,6 +565,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         or "Qwen3MoeForCausalLM" in hf_config.architectures
         or "Qwen3VLForConditionalGeneration" in hf_config.architectures
         or "Qwen3VLMoeForConditionalGeneration" in hf_config.architectures
+        or "Qwen3_5ForConditionalGeneration" in hf_config.architectures
     ):
         qk_layernorm = True
     else:
@@ -463,7 +583,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             # reported as rope_scaling=None and so left this untouched.
             cfg.model.seq_len_interpolation_factor = None
         model_type = getattr(cfg.model, "model_type", None)
-        if model_type == "qwen3_vl" or model_type == "qwen3_vl_moe":
+        if model_type in ("qwen3_vl", "qwen3_vl_moe", "qwen3_5"):
             # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
             hf_config = hf_config.text_config
 
@@ -697,10 +817,16 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
-def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
+def validate_megatron_cfg(cfg: DictConfig, role: str = "actor") -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
+    _validate_megatron_mtp_cfg(cfg, role=role)
     with open_dict(cfg):
+        if cfg.model.get("model_type") == SupportedModel.QWEN3_5.value:
+            assert cfg.megatron.get("mbridge", False), (
+                "Qwen3.5's Megatron model requires megatron.mbridge=True, "
+                f"got {cfg.megatron.get('mbridge', False)!r}."
+            )
         cfg.mcore_gpt = cfg.get("mcore_gpt", True)
         spec_name = cfg.get("spec_name", "local_gpt")
         cfg.spec_name = spec_name
@@ -3019,6 +3145,80 @@ def adv_requires_group_baseline(
     return False
 
 
+def validate_multimodal_learner_cfg(cfg: DictConfig) -> None:
+    """Validate multimodal input capture constraints and per-rank prefetch budgets."""
+    capture_enabled = rollout_captures_multi_modal_inputs(cfg)
+    active_roles = ["actor"]
+    critic_cfg = cfg.get("critic") or {}
+    if critic_cfg.get("use_critic_model", False):
+        active_roles.append("critic")
+
+    for role in active_roles:
+        learner = cfg.get(role) or {}
+        if capture_enabled:
+            model = learner.get("model") or {}
+            megatron = learner.get("megatron") or {}
+            if (
+                learner.get("training_backend") != "megatron"
+                or not megatron.get("mbridge", False)
+                or any(
+                    model.get(key, 1) != 1
+                    for key in (
+                        "pipeline_model_parallel_size",
+                        "context_parallel_size",
+                    )
+                )
+            ):
+                raise ValueError(
+                    f"rollout.sglang.capture_multi_modal_inputs=True requires "
+                    f"{role} to use Megatron with megatron.mbridge=True, PP=1, and CP=1."
+                )
+        multi_modal = learner.get("multi_modal") or {}
+        for field in ("prefetch_batches", "prefetch_bytes"):
+            value = multi_modal.get(field, 0)
+            if type(value) is not int or value < 0:
+                raise ValueError(
+                    f"{role}.multi_modal.{field} must be a nonnegative integer, "
+                    f"got {value!r}."
+                )
+        if multi_modal.get("prefetch_batches", 0) and (
+            not multi_modal.get("prefetch_bytes", 0) or not capture_enabled
+        ):
+            raise ValueError(
+                f"{role}.multi_modal prefetch requires "
+                "rollout.sglang.capture_multi_modal_inputs=True and positive "
+                "prefetch_bytes per learner rank."
+            )
+
+    if capture_enabled:
+        for inf_role in ("inference", "actor_inference", "critic_inference"):
+            inf_cfg = cfg.get(inf_role)
+            if not inf_cfg:
+                continue
+            inf_model = inf_cfg.get("model") or {}
+            if any(
+                inf_model.get(key, 1) != 1
+                for key in (
+                    "pipeline_model_parallel_size",
+                    "context_parallel_size",
+                )
+            ):
+                raise ValueError(
+                    f"rollout.sglang.capture_multi_modal_inputs=True requires "
+                    f"{inf_role} to use PP=1 and CP=1."
+                )
+        if not OmegaConf.select(
+            cfg, "agentloop.is_dynamic_rollout_batch", default=False
+        ):
+            raise ValueError(
+                "Multimodal input capture requires agentloop.is_dynamic_rollout_batch=True."
+            )
+        if OmegaConf.select(cfg, "session_server.enable", default=False):
+            raise ValueError(
+                "Multimodal input capture is not supported with session_server.enable=True."
+            )
+
+
 def validate_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
@@ -3064,6 +3264,25 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.runner.task_type in SUPPORTED_TASK_TYPE, (
         f"task_type must be one of {SUPPORTED_TASK_TYPE}"
     )
+    actor_hf_config = None
+    actor_hf_path = None
+    if (
+        OmegaConf.select(cfg, "actor.training_backend") == "megatron"
+        and cfg.runner.task_type != "embodied_eval"
+    ):
+        from transformers import AutoConfig
+
+        if cfg.runner.task_type == "sft":
+            actor_hf_path = cfg.actor.model.model_path
+        else:
+            _inherit_rollout_model_path(cfg.rollout, cfg.actor)
+            actor_hf_path = cfg.rollout.model.model_path
+        actor_hf_config = AutoConfig.from_pretrained(
+            actor_hf_path, trust_remote_code=True
+        )
+        _resolve_megatron_model_type(cfg.actor.model, actor_hf_config)
+        _validate_megatron_mtp_cfg(cfg.actor)
+
     if cfg.runner.task_type == "embodied":
         cfg = validate_embodied_cfg(cfg)
     elif cfg.runner.task_type == "embodied_eval":
@@ -3100,14 +3319,9 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
 
     if cfg.actor.training_backend == "megatron":
         cfg.actor = validate_megatron_cfg(cfg.actor)
-        if cfg.runner.task_type == "sft":
-            cfg.actor = validate_model_cfg_by_hf_config(
-                cfg.actor, cfg.actor.model.model_path
-            )
-        else:
-            cfg.actor = validate_model_cfg_by_hf_config(
-                cfg.actor, cfg.rollout.model.model_path
-            )
+        cfg.actor = validate_model_cfg_by_hf_config(
+            cfg.actor, actor_hf_path, hf_config=actor_hf_config
+        )
         # TODO. Need actually pad padded_vocab_size.
         assert (
             cfg.actor.model.padded_vocab_size
@@ -3130,13 +3344,28 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
 
     if cfg.get("critic", None) is not None:
         if cfg.critic.use_critic_model and cfg.critic.training_backend == "megatron":
-            cfg.critic = validate_megatron_cfg(cfg.critic)
+            critic_hf_path = cfg.rollout.model.model_path
+            if actor_hf_config is not None and critic_hf_path == actor_hf_path:
+                critic_hf_config = actor_hf_config
+            else:
+                from transformers import AutoConfig
+
+                critic_hf_config = AutoConfig.from_pretrained(
+                    critic_hf_path, trust_remote_code=True
+                )
+            _resolve_megatron_model_type(cfg.critic.model, critic_hf_config)
+            cfg.critic = validate_megatron_cfg(cfg.critic, role="critic")
             cfg.critic = validate_model_cfg_by_hf_config(
-                cfg.critic, cfg.rollout.model.model_path
+                cfg.critic, critic_hf_path, hf_config=critic_hf_config
             )
+            if cfg.critic.model.get("load_mtp", False):
+                raise ValueError(
+                    "Dedicated critic models do not support critic.model.load_mtp=True."
+                )
         elif cfg.critic.use_critic_model and cfg.critic.training_backend == "fsdp":
             cfg.critic = validate_fsdp_cfg(cfg.critic)
 
+    validate_multimodal_learner_cfg(cfg)
     if cfg.runner.task_type == "reasoning":
         cfg = validate_searchr1_cfg(cfg)
 
@@ -3342,6 +3571,17 @@ def build_transformer_config(cfg) -> "TransformerConfig":
                 model_parallel_config, field.name
             )
 
+    if isinstance(transformer_config_dict.get("attention_backend"), str):
+        from megatron.core.transformer.enums import AttnBackend
+
+        backend = transformer_config_dict["attention_backend"]
+        try:
+            transformer_config_dict["attention_backend"] = AttnBackend[backend]
+        except KeyError as error:
+            valid = ", ".join(AttnBackend.__members__)
+            raise ValueError(
+                f"Unknown Megatron attention backend {backend!r}; expected one of: {valid}."
+            ) from error
     transformer_config = TransformerConfig(**transformer_config_dict)
 
     # pass mcore customization configs directly to mcore

@@ -30,6 +30,12 @@ Rollout 后端与服务
 
       在 rollout 节点上收集 Agent 轨迹，提供 SGLang 路由与 OpenAI chat completions 接口。
 
+   .. grid-item-card:: Qwen3.5 多轮图像输入对齐
+      :link: ../qwen35_multi_turn_images
+      :link-type: doc
+
+      在 Qwen3.5 多轮视觉 Agent 训练中对齐 SGLang 与 Megatron-Bridge 的图像输入和 M-RoPE 位置。
+
    .. grid-item-card:: PhyAI 具身推理后端
       :link: phyai
       :link-type: doc
@@ -49,5 +55,6 @@ Rollout 后端与服务
    SGLang 服务与路由 <../sglang_server>
    异步 HTTP 推理客户端 <../inference_http_client>
    Session Server <../session_server>
+   Qwen3.5 多轮图像输入对齐 <../qwen35_multi_turn_images>
    PhyAI 具身推理后端 <phyai>
    ApxInf 具身评测后端 <../apxinf>

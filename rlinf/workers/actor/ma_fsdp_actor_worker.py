@@ -167,10 +167,11 @@ class MAFSDPActor(FSDPActor):
         idx_starts, idx_ends = [0] * len(rows), lengths
         multi_modal_inputs = {}
         if "multi_modal_inputs" in m_batch:
-            for key in m_batch["multi_modal_inputs"][0]:
-                multi_modal_inputs[key] = torch.cat(
-                    [inputs[key] for inputs in m_batch["multi_modal_inputs"]], dim=0
-                ).to(device)
+            from rlinf.utils.multimodal import collate_fsdp_multimodal_inputs
+
+            multi_modal_inputs = collate_fsdp_multimodal_inputs(
+                m_batch["multi_modal_inputs"], device
+            )
         if self.enable_dynamic_batch_size:
             input_ids, position_ids, attention_mask = pack_fsdp_input(
                 rows,

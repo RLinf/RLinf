@@ -6513,3 +6513,138 @@ def test_dataset_factory_import_does_not_require_gym():
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_static_image_rows_survive_grouping(monkeypatch):
+    from rlinf.data.schema.reasoning_results import RolloutResult
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    rows = RolloutResult(
+        num_sequence=2,
+        group_size=1,
+        prompt_ids=[[1], [2]],
+        prompt_lengths=[1, 1],
+        response_ids=[[3], [4]],
+        response_lengths=[1, 1],
+        is_end=[True, True],
+        multi_modal_inputs=[None, {"image": "second"}],
+    )
+    groups = RolloutResult.split_result_list_by_group([rows])
+    assert [g.multi_modal_inputs for g in groups] == [[None], [{"image": "second"}]]
+    assert (
+        RolloutResult.merge_result_list(groups).multi_modal_inputs
+        == rows.multi_modal_inputs
+    )
+    actor_batch = rows.to_actor_batch(
+        data_seq_length=2, training_seq_length=4, pad_token=0
+    )
+    assert actor_batch["multi_modal_inputs"] == [None, {"image": "second"}]
+
+    for empty_payloads in ([None, None], [{}, {}]):
+        all_empty = RolloutResult(
+            num_sequence=2,
+            group_size=1,
+            prompt_ids=[[1], [2]],
+            prompt_lengths=[1, 1],
+            response_ids=[[3], [4]],
+            response_lengths=[1, 1],
+            is_end=[True, True],
+            multi_modal_inputs=empty_payloads,
+        )
+        assert "multi_modal_inputs" not in all_empty.to_actor_batch(
+            data_seq_length=2, training_seq_length=4, pad_token=0
+        )
+
+    rows.multi_modal_inputs = [{"image": "unknown row"}]
+    for operation in (
+        RolloutResult.split_result_list_by_group,
+        RolloutResult.merge_result_list,
+    ):
+        with pytest.raises(ValueError, match="one entry per sequence"):
+            operation([rows])
+    with pytest.raises(ValueError, match="one entry per sequence"):
+        rows.to_actor_batch(data_seq_length=2, training_seq_length=4, pad_token=0)
+
+
+def test_batch_merge_pads_rows_for_a_text_only_batch():
+    """A batch without images must still contribute one slot per row."""
+    from rlinf.data.schema.reasoning_results import RolloutResult
+
+    def batch(payloads):
+        data = {
+            "input_ids": [torch.arange(n) for n in (3, 5, 6)],
+            "idx_to_traj": [0, 1, 2],
+            "prompt_lengths": torch.ones(3, dtype=torch.int32),
+            "response_lengths": torch.ones(3, dtype=torch.int32),
+            "is_end": torch.zeros(3, dtype=torch.bool),
+        }
+        if payloads is not None:
+            data["multi_modal_inputs"] = payloads
+        return data
+
+    with_images = batch([None, {"tag": torch.tensor([1.0])}, None])
+    for order in ([batch(None), with_images], [with_images, batch(None)]):
+        merged = DynamicRolloutResult.merge_batches(
+            [dict(item) for item in order], group_size=3, adjust_traj_indices=True
+        )
+        payloads = merged["multi_modal_inputs"]
+        assert len(payloads) == len(merged["input_ids"]) == 6
+        image_row = 4 if "multi_modal_inputs" not in order[0] else 1
+        assert [i for i, entry in enumerate(payloads) if entry is not None] == [
+            image_row
+        ]
+        assert DynamicRolloutResult.pack_traj_batch({}, merged) is merged
+
+    for merge in (RolloutResult.merge_batches, DynamicRolloutResult.merge_batches):
+        with pytest.raises(ValueError, match="one entry per sequence"):
+            merge([batch([{}])])
+
+    for empty_payloads in ([None, None, None], [{}, {}, {}]):
+        only_empty = DynamicRolloutResult.merge_batches(
+            [batch(empty_payloads), batch(None)],
+            group_size=3,
+            adjust_traj_indices=True,
+        )
+        assert "multi_modal_inputs" not in only_empty
+
+
+def test_dynamic_result_filters_all_none_and_validates_image_rows():
+    from rlinf.utils.image_replay import REPLAY_FORMAT
+
+    def make_result(payloads):
+        return DynamicRolloutResult(
+            num_sequence=2,
+            group_size=2,
+            idx_to_traj=[0, 1],
+            input_ids=[[1, 2], [1, 2, 3]],
+            prompt_lengths=[1, 1],
+            response_lengths=[1, 2],
+            is_end=[True, True],
+            rewards=[1.0, 1.0],
+            multi_modal_inputs=payloads,
+        )
+
+    for empty_payloads in ([None, None], [{}, {}]):
+        assert "multi_modal_inputs" not in make_result(empty_payloads).to_actor_batch()
+
+    mixed = make_result([None, {"format": REPLAY_FORMAT}])
+    merged = DynamicRolloutResult.merge_result_list([make_result(None), mixed])
+    assert merged.multi_modal_inputs == [
+        None,
+        None,
+        None,
+        {"format": REPLAY_FORMAT},
+    ]
+    text_part, image_part = DynamicRolloutResult.split_results(merged, [2, 2])
+    assert text_part.multi_modal_inputs is None
+    assert "multi_modal_inputs" not in text_part.to_actor_batch()
+    assert image_part.multi_modal_inputs == [None, {"format": REPLAY_FORMAT}]
+
+    bad = make_result([{"format": REPLAY_FORMAT}])
+    with pytest.raises(ValueError, match="one entry per sequence"):
+        bad.to_actor_batch()
+    with pytest.raises(ValueError, match="one entry per sequence"):
+        DynamicRolloutResult.merge_result_list([bad])
+    with pytest.raises(ValueError, match="one entry per sequence"):
+        DynamicRolloutResult.split_results(bad, [1, 1])
