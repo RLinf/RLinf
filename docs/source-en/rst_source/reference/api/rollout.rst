@@ -1,20 +1,36 @@
 Rollout Interface
 =================
 
-This section provides the key APIs of the **Rollout** classes in the RLinf framework.  
-It includes implementations based on both **SGLang** and **Hugging Face** backends.  
+Use these rollout worker APIs when wiring SGLang, vLLM, or Hugging Face inference engines into reasoning, agentic, or embodied RL and evaluation loops.
 
-
-SGLang
----------
-
-.. autoclass:: rlinf.workers.rollout.sglang.sglang_worker.SGLangWorker
-   :members: 
-   :member-order: bysource
-
-Huggingface
+SGLangWorker
 ------------
 
+.. autoclass:: rlinf.workers.rollout.sglang.sglang_worker.SGLangWorker
+   :show-inheritance:
+   :members:
+   :member-order: bysource
+
+VLLMWorker
+----------
+
+.. autoclass:: rlinf.workers.rollout.vllm.vllm_worker.VLLMWorker
+   :show-inheritance:
+   :members:
+   :member-order: bysource
+
+MultiStepRolloutWorker
+----------------------
+
 .. autoclass:: rlinf.workers.rollout.hf.huggingface_worker.MultiStepRolloutWorker
-   :members: 
+   :show-inheritance:
+   :members:
+   :member-order: bysource
+
+SGLangEmbodiedWorker
+--------------------
+
+.. autoclass:: rlinf.workers.rollout.sglang.sglang_embodied_worker.SGLangEmbodiedWorker
+   :show-inheritance:
+   :members:
    :member-order: bysource

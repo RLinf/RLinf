@@ -6,7 +6,7 @@ USER: A Unified and Extensible System for Online Real-World Policy Learning in E
 概述
 ----
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/USER/USER-HEAD.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/USER/USER-HEAD.png
    :alt: USER 概述
    :width: 800px
    :align: center
@@ -59,7 +59,7 @@ USER 是面向真机在线策略学习的统一可扩展系统，提供奖励、
 
 USER 支持多种学习范式。下方为多种 RL 算法（RLPD、SAC、SAC-Flow）在多任务上的训练曲线，以及 VLA（π₀）经在线微调后的提升。
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/USER/USER-main_rl.jpg
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/USER/USER-main_rl.jpg
    :alt: RL 训练曲线
    :width: 800px
    :align: center
@@ -136,11 +136,11 @@ USER 采用完全异步流水线，将数据生成、训练与权重同步解耦
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/USER/USER-multi.jpg" alt="Multi-Robot" width="370"/><br/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/USER/USER-multi.jpg" alt="Multi-Robot" width="370"/><br/>
          <strong>并行训练 (2× Franka)</strong>
        </td>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/USER/USER-hetero.jpg" alt="Heterogeneous" width="300"/><br/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/USER/USER-hetero.jpg" alt="Heterogeneous" width="300"/><br/>
          <strong>异构 (Franka + ARX)</strong>
        </td>
      </tr>

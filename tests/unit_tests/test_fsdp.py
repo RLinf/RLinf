@@ -2236,7 +2236,7 @@ def test_multi_turn_fsdp_receive_and_advantages_use_shared_rows(
         "gloo", init_method=f"file://{tmp_path / 'rendezvous'}", rank=0, world_size=1
     )
     try:
-        batch, received = actor.get_batch(channel)
+        batch, received = actor.get_step_batch(channel)
         assert received == results and channel.empty()
         if not local:
             assert batch["extra:source_dp"].tolist() == [0, 0, 0, 0]
@@ -2268,3 +2268,62 @@ def test_multi_turn_fsdp_logprob_gap_uses_only_response_tokens(dense):
         batch = DynamicRolloutResult.materialize_actor_batch(batch, 32, 0)
     gap = compute_rollout_train_kl(batch, batch["response_mask"])
     torch.testing.assert_close(gap, torch.tensor((2 * 0.2 + 5 * 0.3 + 9 * 0.4) / 16))
+
+
+def _prefix_async_uneven_replay(rank, rendezvous):
+    import queue
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from rlinf.algorithms.prefix_off_policy.replay import PrefixReplayService
+    from rlinf.algorithms.prefix_off_policy.schedule import PrefixUpdateSchedule
+    from rlinf.data.schema.embodied_types import Trajectory
+    from rlinf.data.storage.replay import TrajectoryReplayBuffer
+    from rlinf.workers.actor.fsdp_prefix_off_policy_worker import (
+        AsyncPrefixOffPolicyFSDPPolicy,
+    )
+
+    cfg = OmegaConf.create({"algorithm": {}, "env": {"train": {}}})
+    worker = object.__new__(AsyncPrefixOffPolicyFSDPPolicy)
+    worker.replay_service = PrefixReplayService(cfg)
+    worker.replay_service.bind_buffers(TrajectoryReplayBuffer(), None)
+    worker.update_schedule = PrefixUpdateSchedule(cfg)
+    worker._recv_queue = queue.Queue()
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{rendezvous}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=15),
+    )
+    try:
+        with patch.object(
+            Worker, "torch_platform", SimpleNamespace(current_device=lambda: "cpu")
+        ):
+            for source_rank in (0, 1):
+                if rank == source_rank:
+                    worker._recv_queue.put(
+                        Trajectory(
+                            actions=torch.zeros(1, 1, 2),
+                            rewards=torch.ones(1, 1, 1),
+                            forward_inputs={
+                                "actor_switch": torch.ones(1, 1, 1, dtype=torch.bool)
+                            },
+                        )
+                    )
+                worker._drain_received_trajectories()
+                dist.barrier()
+                metrics = worker.replay_service.collect_metrics()
+                assert metrics["replay/actor_switch_rate"] == 1.0
+    finally:
+        dist.destroy_process_group()
+        worker.replay_service.replay_buffer.close()
+
+
+def test_prefix_async_replay_drains_without_rank_collectives(tmp_path):
+    torch.multiprocessing.spawn(
+        _prefix_async_uneven_replay,
+        args=(str(tmp_path / "prefix-replay"),),
+        nprocs=2,
+        join=True,
+    )

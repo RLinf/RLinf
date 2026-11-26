@@ -1,5 +1,5 @@
-Qwen-VL
-========
+Qwen-VL SFT
+===========
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/release_0.2/qwen2_5_sft_vlm.png
    :align: center
@@ -7,9 +7,7 @@ Qwen-VL
 
    Qwen2.5-VL supervised fine-tuning on the Robo2VLM visual-QA dataset.
 
-Run **full-parameter** supervised fine-tuning for vision-language models (Qwen2.5-VL,
-Qwen3-VL, Qwen3-VL-MoE) on multimodal QA data with RLinf — train, evaluate, and convert
-the resulting checkpoint to HuggingFace format.
+Run **full-parameter** supervised fine-tuning for vision-language models (Qwen2.5-VL, Qwen3-VL, Qwen3-VL-MoE) on multimodal QA data with RLinf — train, evaluate, and convert the resulting checkpoint to HuggingFace format.
 
 Overview
 --------
@@ -39,175 +37,172 @@ Full-parameter SFT for Qwen-VL models on the Robo2VLM visual-QA dataset, with FS
 
       1–2 nodes · GPUs
 
-| **You'll do:** pull the image → download the model + Robo2VLM → edit the config → launch ``run_vlm_sft.sh`` → watch loss and eval accuracy.
+| **You'll do:** install the environment → download the model + Robo2VLM → edit the config → launch ``run_vlm_sft.sh`` → watch loss and eval accuracy.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Qwen-VL weights · the Robo2VLM dataset.
 
-This recipe centers on two files — the launch script ``examples/sft/run_vlm_sft.sh`` and
-the training config ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``.
+This recipe centers on two files: the launch script ``examples/sft/run_vlm_sft.sh`` and the training config ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``.
 
-Installation
-------------
+Setup and Run
+-------------
 
-1. **Pull the RLinf image:**
-   ``rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17``.
-2. **Download model weights:** `Qwen2.5-VL-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct>`_.
-3. **Download the dataset:** `Robo2VLM-1 <https://huggingface.co/datasets/keplerccc/Robo2VLM-1>`_.
-4. **Edit** ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` and run ``examples/sft/run_vlm_sft.sh``.
+.. include:: _setup_common.rst
 
-.. warning::
+.. tab-set::
 
-   After downloading Robo2VLM, the train and eval parquet files are mixed in one
-   directory (e.g. ``train-00000-of-00262.parquet`` and ``test-0000X-of-00003.parquet``).
-   Split them into separate folders, or RLinf may load the entire dataset.
+   .. tab-item:: Qwen2.5-VL (Robo2VLM)
 
-.. note::
+      **1. Install and Download**
 
-   To train **qwen3_vl** or **qwen3_vl_moe**, make sure ``transformers >= 4.57.1``.
+      Install the agentic/VLM environment and download `Qwen2.5-VL-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct>`_ and `Robo2VLM-1 <https://huggingface.co/datasets/keplerccc/Robo2VLM-1>`_:
 
-Run It
-------
+      .. code-block:: bash
 
-**1. Configuration**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
+         hf download keplerccc/Robo2VLM-1 --repo-type dataset --local-dir ./Robo2VLM-1
 
-The launch script uses ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` by default and writes
-logs to ``<repo>/logs/<timestamp>/``. It runs:
+      .. warning::
 
-.. code:: bash
+         After downloading Robo2VLM, train and eval parquet files are mixed in one directory (for example ``train-00000-of-00262.parquet`` and ``test-0000X-of-00003.parquet``). Split them into separate ``train_data`` and ``test_data`` folders before launching, or RLinf may load the entire dataset.
 
-   python examples/sft/train_vlm_sft.py \
-     --config-path examples/sft/config/ \
-     --config-name <your_config_name> \
-     runner.logger.log_path=<auto_generated_log_dir>
+      .. note::
 
-The config structure matches other RLinf training configs; you mainly adapt ``data`` and
-``actor.model``. Fields you must change are commented; keep the rest unchanged for a baseline run.
+         To train **qwen3_vl** or **qwen3_vl_moe**, ensure ``transformers >= 4.57.1``.
 
-.. code:: yaml
+      **2. Configure**
 
-   defaults:
-     - override hydra/job_logging: stdout
+      Set the dataset and model paths in ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``:
 
-   hydra:
-     run:
-       dir: .
-     output_subdir: null
+      .. code-block:: yaml
 
-   cluster:
-     num_nodes: 1
-     component_placement:
-       actor: all
+         data:
+           train_data_paths: "./Robo2VLM-1/train_data"
+           val_data_paths: "./Robo2VLM-1/test_data"
 
-   runner:
-     task_type: sft
-     logger:
-       log_path: "../results"
-       project_name: rlinf
-       experiment_name: "qwen2_5_vl_sft_demo"
-       logger_backends: ["tensorboard"]
+         actor:
+           model:
+             model_path: "./Qwen2.5-VL-3B-Instruct"
 
-     max_epochs: 6000
-     max_steps: -1
-     val_check_interval: 1000
-     save_interval: 1000
+      **3. Launch**
 
-   data:
-     type: vlm
-     dataset_name: "robo2vlmsft"
+      Run from the repository root (logs write to ``logs/<timestamp>/``; pass another config name to run a custom YAML, or set ``data.train_data_paths: null`` for eval-only mode):
 
-     # Data paths: split train and eval files into different directories
-     train_data_paths: "/path/to/Robo2VLM-1/train_data"
-     # For eval-only runs, set train_data_paths to null
-     val_data_paths: "/path/to/Robo2VLM-1/test_data"
+      .. code-block:: bash
 
-     # Keys must match dataset columns
-     prompt_key: "question"
-     choice_key: "choices"
-     answer_key: "correct_answer"
-     image_keys: ["image"]
+         bash examples/sft/run_vlm_sft.sh qwen2_5_vl_sft_vlm
 
-     apply_chat_template: True
-     use_chat_template: True
-     max_prompt_length: 1024
-     lazy_loading: false
-     num_workers: 4
+.. dropdown:: Advanced configuration & field reference
 
-   algorithm:
-     adv_type: gae
+   The shipped ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` already sets column keys, batch sizes, optimizer, and FSDP defaults:
 
-   actor:
-     group_name: "ActorGroup"
-     training_backend: "fsdp"
-     micro_batch_size: 4
-     eval_batch_size: 4
-     global_batch_size: 256
-     seed: 42
+   .. code-block:: yaml
 
-     model:
-       model_type: "qwen2.5_vl"
-       precision: fp32
-       # Download model weights locally and set the path here
-       model_path: "/path/to/Qwen2.5-VL-3B-Instruct"
-       is_lora: False
+      cluster:
+        num_nodes: 1
+        component_placement:
+          actor: all
 
-     optim:
-       lr: 1e-5
-       adam_beta1: 0.9
-       adam_beta2: 0.999
-       adam_eps: 1.0e-08
-       weight_decay: 0.01
-       clip_grad: 1.0
-       lr_scheduler: "cosine"
-       total_training_steps: ${runner.max_epochs}
-       lr_warmup_steps: 200
+      runner:
+        task_type: sft
+        max_epochs: -1
+        max_steps: 6000
+        val_check_interval: 1000
+        save_interval: 1000
 
-     fsdp_config:
-       strategy: "fsdp"
-       sharding_strategy: "no_shard"
-       use_orig_params: False
-       gradient_checkpointing: False
-       mixed_precision:
-         param_dtype: bf16
-         reduce_dtype: fp32
-         buffer_dtype: bf16
+      data:
+        type: vlm
+        dataset_name: "robo2vlmsft"
+        prompt_key: "question"
+        choice_key: "choices"
+        answer_key: "correct_answer"
+        image_keys: ["image"]
+        apply_chat_template: True
+        use_chat_template: True
+        max_prompt_length: 1024
+        lazy_loading: true
+        num_workers: 16
 
-   reward:
-     use_reward_model: False
+      actor:
+        group_name: "ActorGroup"
+        training_backend: "fsdp"
+        micro_batch_size: 4
+        eval_batch_size: 4
+        global_batch_size: 256
+        seed: 42
+        model:
+          model_type: "qwen2.5_vl"
+          precision: fp32
+          is_lora: False
+        optim:
+          lr: 1e-5
+          adam_beta1: 0.9
+          adam_beta2: 0.999
+          adam_eps: 1.0e-08
+          weight_decay: 0.01
+          clip_grad: 1.0
+          lr_scheduler: "cosine"
+          total_training_steps: ${runner.max_steps}
+          lr_warmup_steps: 200
+        fsdp_config:
+          strategy: "fsdp"
+          sharding_strategy: "full_shard"
+          use_orig_params: False
+          gradient_checkpointing: False
+          mixed_precision:
+            param_dtype: bf16
+            reduce_dtype: fp32
+            buffer_dtype: bf16
 
-   critic:
-     use_critic_model: False
+   **Key fields:**
 
-**2. Launch**
+   - ``micro_batch_size``: per-GPU batch size per forward/backward.
+   - ``global_batch_size``: total batch size across all GPUs (must be divisible).
+   - ``max_epochs``: number of full passes over the dataset.
+   - ``save_interval``: checkpoint save frequency (in steps).
+   - ``model_path``: local model directory (must exist).
+   - ``train_data_paths`` / ``val_data_paths``: dataset directory or file path (set ``train_data_paths: null`` for eval-only mode).
 
-Run from the repository root:
+.. dropdown:: Checkpoint conversion (FSDP to HuggingFace)
 
-.. code:: bash
+   FSDP SFT saves checkpoints as ``full_weights.pt``. To export HuggingFace format, configure the built-in ``fsdp_model_convertor`` YAML with:
 
-   bash examples/sft/run_vlm_sft.sh
+   - ``convertor.ckpt_path``: path to ``full_weights.pt``
+   - ``convertor.save_path``: output HF model directory
+   - ``model.model_path``: base model path
+   - ``model.model_type``: model type (``qwen2.5_vl``, ``qwen3_vl``, or ``qwen3_vl_moe``)
 
-- With no argument, the script uses ``qwen2_5_sft_vlm`` by default.
-- For a different config (e.g. ``my_vlm_config.yaml``), pass its name: ``bash examples/sft/run_vlm_sft.sh my_vlm_config``.
+   Then run the built-in FSDP-to-HF converter:
 
-Eval-Only Mode
-~~~~~~~~~~~~~~
+   .. code-block:: bash
 
-To run evaluation only, set ``data.train_data_paths: null`` and point
-``data.val_data_paths`` at your validation data, then use the same launch command:
+      python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
+          --config-path rlinf/utils/ckpt_convertor/fsdp_convertor/config \
+          --config-name fsdp_model_convertor
 
-.. code:: bash
+   See :doc:`Checkpoint conversion <../../guides/convertor>` for details.
 
-   bash examples/sft/run_vlm_sft.sh <config_name>
+.. dropdown:: Troubleshooting
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 70
+
+      * - Issue
+        - Fix
+      * - Model path not found
+        - Verify ``actor.model.model_path`` is correct and readable.
+      * - Dataset key mismatch
+        - Verify ``prompt_key``, ``choice_key``, ``answer_key``, and ``image_keys`` match your dataset columns.
+      * - OOM (out of memory)
+        - Reduce ``micro_batch_size`` first, then ``num_workers``; if it persists, use a smaller model or shorter input length.
+      * - Quick verification
+        - Use a small data subset, set ``max_epochs: 1``, and lower ``save_interval`` for faster feedback.
 
 Visualization and Results
 -------------------------
 
-A healthy run shows the **loss** decreasing and the **eval accuracy** climbing. The script
-creates ``logs/<timestamp>`` automatically; visualize with TensorBoard. For every logged
-metric, see :doc:`Training metrics <../../reference/metrics>`.
-
-.. code:: bash
-
-   tensorboard --logdir /path/to/RLinf/logs --port 6006
-   # open http://localhost:6006
+A healthy run shows the **loss** decreasing and the **eval accuracy** climbing. Visualize ``logs/<timestamp>`` with TensorBoard (``tensorboard --logdir ./logs --port 6006``). For every logged metric, see :doc:`Training metrics <../../reference/metrics>`.
 
 Reference runs across model scales:
 
@@ -277,45 +272,3 @@ Reference runs across model scales:
    :alt: Qwen3-VL-30B-A3B MoE VLM SFT loss
    :width: 85%
    :align: center
-
-Checkpoint Conversion
----------------------
-
-SFT with FSDP saves checkpoints in FSDP format (for example, ``full_weights.pt``). To get
-HuggingFace format, use the built-in converter
-``rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf.py`` with the
-``fsdp_model_convertor`` config. First set, in
-``rlinf/utils/ckpt_convertor/fsdp_convertor/config/fsdp_model_convertor.yaml``:
-
-- ``convertor.ckpt_path``: path to ``full_weights.pt``
-- ``convertor.save_path``: output HF model directory
-- ``model.model_path``: base model path
-- ``model.model_type``: model type (e.g. ``qwen2.5_vl``, ``qwen3_vl``, or ``qwen3_vl_moe``)
-
-Then run:
-
-.. code:: bash
-
-   python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
-       --config-path rlinf/utils/ckpt_convertor/fsdp_convertor/config \
-       --config-name fsdp_model_convertor
-
-See :doc:`Checkpoint conversion <../../guides/convertor>` for details.
-
-Field Reference
----------------
-
-- ``micro_batch_size``: per-GPU batch size per forward/backward.
-- ``global_batch_size``: total batch size across all GPUs (must be divisible).
-- ``max_epochs``: number of full passes over the dataset.
-- ``save_interval``: checkpoint save frequency (in steps).
-- ``model_path``: local model directory (must exist).
-- ``train_data_paths`` / ``val_data_paths``: dataset directory or file path.
-
-Common Issues and Fixes
------------------------
-
-- **Model path not found** — verify ``actor.model.model_path`` is correct and readable.
-- **Dataset key mismatch** — verify ``prompt_key`` / ``choice_key`` / ``answer_key`` / ``image_keys`` match your dataset columns.
-- **OOM (out of memory)** — reduce ``micro_batch_size`` first, then ``num_workers``; if it persists, use a smaller model or shorter input length.
-- **Quick smoke test** — use a very small data subset, set ``max_epochs`` to 1, and set a smaller ``save_interval`` for faster feedback.

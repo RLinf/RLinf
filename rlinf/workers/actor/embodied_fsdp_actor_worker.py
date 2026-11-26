@@ -92,6 +92,13 @@ def _reshape_recompute_logprob_gap(
 
 
 class EmbodiedFSDPActor(FSDPModelManager, Worker):
+    """FSDP-backed actor worker for embodied RL policy training.
+
+    Owns the sharded embodied policy model, optimizer, and weight syncer.
+    Receives trajectory batches over channels, computes advantages and policy
+    updates, and broadcasts updated parameters to rollout workers.
+    """
+
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
         super().__init__(cfg.actor, self._world_size, self._rank)
