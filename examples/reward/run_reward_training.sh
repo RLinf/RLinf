@@ -24,10 +24,13 @@ mkdir -p "${LOG_DIR}"
 MEGA_LOG_FILE="${LOG_DIR}/run_reward_training.log"
 
 # Build command
-CMD="python examples/reward/train_reward_model.py"
-CMD="$CMD runner.logger.log_path=${LOG_DIR}"
+CMD=(
+    python examples/reward/train_reward_model.py
+    "runner.logger.log_path=${LOG_DIR}"
+    "$@"
+)
 
 # Run training with remaining arguments
-echo ${CMD} > ${MEGA_LOG_FILE}
-${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
+echo "${CMD[*]}" > "${MEGA_LOG_FILE}"
+"${CMD[@]}" 2>&1 | tee -a "${MEGA_LOG_FILE}"
 

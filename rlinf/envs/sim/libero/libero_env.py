@@ -1222,16 +1222,12 @@ class LiberoEnv(gym.Env):
 
         new_reset_state_ids = self._get_ordered_reset_state_ids(len(env_idx))
         valid_mask = new_reset_state_ids >= 0
-        env_to_reset = env_idx[valid_mask]
-        if len(env_to_reset) > 0:
-            self.reset_state_ids[env_to_reset] = new_reset_state_ids[valid_mask]
-            obs, infos = self.reset(
-                env_idx=env_to_reset,
-                reset_state_ids=self.reset_state_ids[env_to_reset],
-            )
-        else:
-            obs = _final_obs
-            infos = {}
+        self.reset_state_ids[env_idx[valid_mask]] = new_reset_state_ids[valid_mask]
+        # Exhausted slots replay their last trial; count_mask excludes repeats.
+        obs, infos = self.reset(
+            env_idx=env_idx,
+            reset_state_ids=self.reset_state_ids[env_idx],
+        )
 
         infos["final_observation"] = final_obs
         infos["final_info"] = final_info

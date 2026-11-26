@@ -1,11 +1,26 @@
-Adding a Robot
-==============
+Real-World Hardware
+===================
 
 This guide adds a mobile base, composes it with RLinf's existing Franka arm, and
 drives the resulting mobile manipulator through a real-world Gymnasium
 environment. By the end, the base will have a registered backend, a declared
 observation and action contract, a reusable robot builder, cluster configuration,
-and tests that run before the physical platform moves.
+and verification checks that run before the physical platform moves.
+
+.. list-table:: At a Glance
+   :header-rows: 1
+   :widths: 26 74
+
+   * - Item
+     - Details
+   * - Extension point
+     - Hardware part driver (``MobileBase`` / ``RobotPart``) and composed ``Robot`` type
+   * - Registration APIs
+     - ``@MobileBase.register(...)``, ``Robot.register_type(RobotConfig)``
+   * - Config selector
+     - ``cluster.node_groups[].hardware.type``
+   * - Files touched
+     - ``rlinf/robotics/parts/``, ``rlinf/robotics/robots/``, ``tests/robot_mocks/``
 
 The work proceeds through four checkpoints. First, make one local part complete
 its own lifecycle and data exchange. Next, compose it with existing parts and use
@@ -157,7 +172,7 @@ Franka connection:
        **arm_parts,
    )
 
-The three declarations reach ``MobileManipulator`` in one form. Constructing
+The three declarations reach the mobile-manipulator class in one form. Constructing
 the mobile base returns an unconnected ``RobotPart``. ``build_arms()`` returns
 a dictionary with the standard keys ``arm`` and ``end_effector``; each value is
 an unconnected ``RobotPart``. Expanding that mapping passes both parts to the
@@ -416,8 +431,8 @@ declaration rather than copying its SDK or lifecycle code:
            return cls(base=base, **arm_parts)
 
 The config and builder describe different parts of the same construction.
-``base_backend`` selects a registered mobile-base driver,
-``base_endpoint`` and ``arm_ip`` identify the two devices, and
+The base backend field selects a registered mobile-base driver,
+the base endpoint and arm IP fields identify the two devices, and
 ``controller_node_rank`` can place the arm away from the node that owns the
 robot record. ``worker_rank`` and ``env_idx`` identify the environment instance
 in generated worker names.
@@ -481,7 +496,7 @@ configured Python environment must be able to import the module.
 7. Configure the Cluster
 ------------------------
 
-Registration makes ``MobileManipulator`` resolvable; the cluster now supplies
+Registration makes the mobile-manipulator type resolvable; the cluster now supplies
 one physical instance and its placement. Hardware entries live under
 ``cluster.node_groups.hardware``. Each entry is parsed with the registered
 config class and becomes a ``RobotInfo`` during hardware discovery. Put
@@ -510,7 +525,7 @@ Python:
 The fields now follow the construction path above. ``type`` selects the
 registered robot; each item in ``configs`` creates one hardware record.
 ``node_rank`` identifies the node that owns that record,
-``base_backend`` and the two addresses identify its devices, and
+the base backend and the two device addresses identify its hardware, and
 ``controller_node_rank`` places the reused Franka connection on its controller
 node. The env config selects the Gym ID separately, so the same hardware
 composition can serve navigation, mobile manipulation, or data-collection
@@ -552,26 +567,24 @@ For the contract layer, add a minimal fake for the example SDK under
 ``tests/robot_mocks/`` and include it in ``sdk_modules()``. The fake needs
 only the device-side methods used above: ``get_pose()``, ``set_velocity()``,
 ``stop()``, and ``close()``. Registering it in one place makes the same fake
-available to unit tests, the bench checker, and remote mock workers.
+available to local contract checks, the bench checker, and remote mock workers.
 
-Then add a test under ``tests/unit_tests/`` beside the component you extended:
-a new part or robot belongs in ``test_robotics.py``, and the environment that
-drives it in ``test_real_env.py``. Cover the lifecycle the framework relies on
--- connect, reconnect, disconnect, and a disconnect that runs twice -- along
-with the observation names and shapes the part declares, and a connect that
-fails partway, which must leave no robot behind.
+Verify the connection lifecycle (connect, idempotent disconnect, observation
+names and shapes, and action handling) locally on CPU before running the
+full composition check:
 
-The rest of the integration is testable the same way. Cover the part contract,
-composition paths, connection lifecycle, discovery registration, and the schema
-policies expect:
+.. code-block:: python
 
-.. code-block:: bash
+   import numpy as np
 
-   pytest tests/unit_tests/test_robotics.py tests/unit_tests/test_real_env.py
-
-These exercise the scheduler import boundary, part composition, the task and
-robot split, and the policy-facing schema of every built-in real-world
-environment. None of it requires physical hardware.
+   base = ExampleMobileBase("tcp://mobile-base:7000")
+   base.connect()
+   obs = base.get_observation()
+   assert obs["pose"].shape == (3,)
+   applied = base.send_action({"velocity": np.array([0.1, 0.0], dtype=np.float32)})
+   assert applied["velocity"].shape == (2,)
+   base.disconnect()
+   base.disconnect()  # idempotent teardown
 
 Run It Against Faked SDKs
 ~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -1,5 +1,5 @@
-RL on π\ :sub:`0`\  and π\ :sub:`0.5`\  Models
-==================================================================
+π₀ / π₀.₅ RL
+==============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -10,25 +10,25 @@ RL on π\ :sub:`0`\  and π\ :sub:`0.5`\  Models
    :align: center
    :width: 35%
 
-   The π\ :sub:`0`\  / π\ :sub:`0.5`\  flow-based VLA models.
+   The π₀ / π₀.₅ flow-based VLA models.
 
-Fine-tune the **π**\ :sub:`0`\  and **π**\ :sub:`0.5`\  flow-based VLA models with
+Fine-tune the **π₀** and **π₀.₅** flow-based VLA models with
 reinforcement learning (PPO / GRPO) across several simulators using RLinf. For the full
 method, see the paper
 `πRL: Online RL Fine-Tuning for Flow-Based Vision-Language-Action Models <https://arxiv.org/abs/2510.25889>`__.
 
-Use :doc:`Short Memory <pi0/short_memory>` to condition OpenPI on past camera
+Use :doc:`Visual Short Memory <pi0/short_memory>` to condition OpenPI on past camera
 frames during SFT and evaluation.
 
 .. toctree::
    :hidden:
 
-   Short Memory <pi0/short_memory>
+   Visual Short Memory <pi0/short_memory>
 
 Overview
 --------
 
-RL-fine-tune π\ :sub:`0`\  / π\ :sub:`0.5`\  on LIBERO, ManiSkill, MetaWorld, and CALVIN with PPO or GRPO.
+RL-fine-tune π₀ / π₀.₅ on LIBERO, ManiSkill, MetaWorld, and CALVIN with PPO or GRPO.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -54,7 +54,7 @@ RL-fine-tune π\ :sub:`0`\  / π\ :sub:`0.5`\  on LIBERO, ManiSkill, MetaWorld, 
       NVIDIA CUDA · :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <pi0-hardware>` (π₀ / π₀.₅, LIBERO · ManiSkill)
 
 | **You'll do:** install → download an SFT checkpoint → pick a config → launch ``run_embodiment.sh`` → watch ``env/success_once``.
-| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a π\ :sub:`0`\  / π\ :sub:`0.5`\  SFT checkpoint (steps below).
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a π₀ / π₀.₅ SFT checkpoint (steps below).
 
 Tasks
 ~~~~~
@@ -104,574 +104,395 @@ Observation and Action
    * - Prompt
      - Environment-provided natural-language task description consumed by the VLA processor.
 
-π\ :sub:`0`\  / π\ :sub:`0.5`\  train with PPO (actor-critic; GAE, ratio clipping, value clipping, entropy regularization) or GRPO (group-relative advantages over *G* sampled actions).
-
-Installation
-------------
-
-Use the NVIDIA setup below, or follow :ref:`the backend-specific setup <pi0-hardware>` for your hardware.
-
-.. include:: _setup_common.rst
-
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
-
-.. code:: bash
-
-   source switch_env openpi
-
-**Option 2: Custom Environment**
-
-Install dependencies directly in your environment by running the following command:
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
-
---------------
-
-Download the Model
-------------------
-
-Before starting training, you need to download the corresponding pretrained models. For example, for Spatial, Object, Goal task types in the LIBERO environment, you can download them as follows:
-
-.. code:: bash
-
-   # Download the Spatial-Object-Goal model (choose either method)
-   # Method 1: Using git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
-
-   # Method 2: Using huggingface-hub
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
-
-Alternatively, you can download the model from ModelScope: https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal.
-
-Of course, RLinf also provides pretrained models for other environments. The model list is as follows:
-
-.. list-table:: **π**\ :sub:`0`\  **Model List**
-   :header-rows: 1
-   :widths: 15 25 15 12 12
-
-   * - Environment
-     - Task Description
-     - SFT Model
-     - Flow-SDE
-     - Flow-Noise
-
-   * - LIBERO
-     - Spatial, Object, Goal
-     - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT>`__
-     - -
-     - -
-
-   * - LIBERO
-     - Long
-     - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Long-SFT>`__
-     - -
-     - -
-
-   * - ManiSkill3
-     - Multi-task
-     - |huggingface| `38.4% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT>`__
-     - |huggingface| `78.8% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-RL-FlowSDE>`__
-     - |huggingface| `77.8% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-RL-FlowNoise>`__
-
-   * - MetaWorld
-     - MT50
-     - |huggingface| `50.8% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT>`__
-     - |huggingface| `78.1% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-RL-FlowSDE>`__
-     - |huggingface| `85.8% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-RL-FlowNoise>`__
-
-   * - CALVIN
-     - ABC-D
-     - |huggingface| `57.5% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT>`__
-     - |huggingface| `61.7% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-RL-FlowSDE>`__
-     - |huggingface| `59.9% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-RL-FlowNoise>`__
-
-.. list-table:: **π**\ :sub:`0.5`\  **Model List**
-   :header-rows: 1
-   :widths: 15 25 15 12 12
-   :align: left
-
-   * - Environment
-     - Task Description
-     - SFT Model
-     - Flow-SDE
-     - Flow-Noise
-
-   * - LIBERO
-     - Spatial, Object, Goal, Long
-     - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
-     - -
-     - -
-
-   * - ManiSkill3
-     - Multi-task
-     - |huggingface| `40.1% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT>`__
-     - |huggingface| `90.9% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-RL-FlowSDE>`__
-     - |huggingface| `89.7% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-RL-FlowNoise>`__
-
-   * - MetaWorld
-     - MT50
-     - |huggingface| `43.8% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT>`__
-     - |huggingface| `70.7% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-RL-FlowSDE>`__
-     - |huggingface| `66.1% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-RL-FlowNoise>`__
-
-   * - CALVIN
-     - ABC-D
-     - |huggingface| `61.3% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT>`__
-     - |huggingface| `87.0% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-RL-FlowSDE>`__
-     - |huggingface| `84.5% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-RL-FlowNoise>`__
-
-After downloading, please make sure to specify the model path correctly in your configuration file.
-
-Run It
-------
-
-**1. Key Cluster Configuration**
-
-.. code:: yaml
-
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env: 0-3
-         rollout: 4-7
-         actor: 0-7
-
-   rollout:
-      pipeline_stage_num: 2
-
-Here you can flexibly configure the GPU count for env, rollout, and
-actor components.
-Additionally, by setting ``pipeline_stage_num = 2`` in the
-configuration, you can achieve pipeline overlap between rollout and
-env, improving rollout efficiency.
-
-.. code:: yaml
-
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env,rollout,actor: all
-
-You can also reconfigure the placement to achieve complete sharing,
-where env, rollout, and actor components all share all GPUs.
-
-.. code:: yaml
-
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env: 0-1
-         rollout: 2-5
-         actor: 6-7
-
-You can also reconfigure the placement to achieve complete separation,
-where env, rollout, and actor components each use their own GPUs without
-interference, eliminating the need for offload functionality.
-
---------------
-
-**2. Model Key Parameter Configuration**
-
-**2.1 Model Parameters**
-
-This page covers the ``model_type: openpi`` implementation of
-π\ :sub:`0`\ / π\ :sub:`0.5`\  (templates ``model/pi0``,
-``model/pi0_5``). The network action horizon is
-kept separate from the chunk the environment executes:
-
-- ``num_action_chunks`` / ``openpi.action_chunk`` is the **env-executed**
-  chunk (what RLinf sends to the simulator).
-- The **network** ``action_horizon`` is ``openpi.action_horizon`` when set;
-  otherwise the official OpenPI ``TrainConfig.model.action_horizon`` for
-  ``openpi.config_name``; otherwise it falls back to ``num_action_chunks``.
-
-``openpi`` copies ``action_horizon`` from official
-``TrainConfig.model``, then overlays ``cfg.openpi``. Default templates only
-interpolate ``num_action_chunks`` into ``action_chunk``; they do **not** set
-the network horizon from ``num_action_chunks``.
-
-LIBERO PPO commonly sets ``num_action_chunks: 5`` while ``pi0_libero`` still
-uses official horizon **50** and ``pi05_libero`` uses official horizon **10**.
-Override ``openpi.action_horizon`` in the experiment YAML only when the
-checkpoint horizon differs from that ``TrainConfig``.
-
-The following is an ``openpi`` example. Launch it with
-``bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi``.
-
-.. code:: yaml
-
-   actor:
-     model:
-       pi05: False                 # True for π0.5; lives on actor.model, not under openpi
-       num_action_chunks: 5        # env interface, not the network horizon
-       openpi:
-         task: rl                  # sft | eval | rl | dagger | dsrl
-         config_name: "pi0_libero" # official TrainConfig (network action_horizon)
-         noise_level: 0.5 # default noise intensity for flow_sde
-         noise_logvar_range: [0.08, 0.16] # default learnable noise range for flow_noise
-         action_chunk: ${..num_action_chunks}
-         num_steps: ${..num_steps}
-         train_expert_only: True
-         action_env_dim: ${..action_dim}
-         noise_method: "flow_sde" # flow_sde, flow_noise
-         add_value_head: ${..add_value_head}
-         value_after_vlm: False
-
-- Set different flow-matching steps via ``num_steps``.
-
-- Use different noise injection methods by modifying ``noise_method``. We provide two options:
-  `flow_sde <https://arxiv.org/abs/2505.05470>`__ and
-  `flow_noise <https://arxiv.org/abs/2505.22094>`__.
-  ``noise_level`` controls the noise intensity for ``flow_sde``, and ``noise_logvar_range`` controls the learnable noise range for ``flow_noise``.
-
-- Select π\ :sub:`0.5`\  through ``openpi.config_name`` (e.g. ``pi05_libero``).
-  With ``openpi``, also set ``actor.model.pi05: True``; it defaults to
-  True when omitted, and ``model/pi0`` sets it to False.
-
-- Control the critic position via ``value_after_vlm``: when True, the critic is connected after the VLM module output; when False, the critic input is from the action expert module output. π\ :sub:`0.5`\  PPO should set ``value_after_vlm: True``.
-
-**2.2 Algorithm Configuration**
-
-In the paper, we provide two technical approaches, flow-noise and flow-sde, to fine-tune π\ :sub:`0`\  and π\ :sub:`0.5`\  models. Specifically, you can choose different technical approaches by switching the following configuration:
-
-.. code:: yaml
-
-   algorithm:
-      entropy_bonus: 0.0 # entropy regularization coefficient, set to 0.0 for flow-sde, 0.005 for flow-noise
-   openpi:
-     noise_method: "flow_sde" # [flow_sde,flow_noise] noise injection method, flow-sde introduces noise through ode-sde transformation, flow-noise introduces noise through noise network
-     noise_level: 0.5 # noise intensity for flow-sde
-     noise_logvar_range: [0.08, 0.16] # learnable noise range for flow-noise
-     joint_logprob: False # whether to optimize joint probability density function. For flow-sde, please set to False. For flow-noise, please set to True.
-
-For a complete flow-sde setup, see ``libero_spatial_ppo_openpi.yaml``.
-For flow-noise, see ``maniskill_ppo_openpi.yaml``.
-
-**2.3 LoRA Settings**
-
-.. code:: yaml
-
-   model:
-     is_lora: True
-     lora_rank: 8
-     gradient_checkpointing: False
-
-If you want to use LoRA (Low-Rank Adaptation) to fine-tune the VLM part, please set ``is_lora: True`` and configure the ``lora_rank`` parameter. Note that gradient checkpointing is currently **not supported**, please keep ``gradient_checkpointing: False``.
-
-⭐ **2.4 Minimum Test Case** ⭐
-
-If you encounter OOM errors or want to implement a minimum test case with as few resources as possible, you can refer to ``libero_spatial_ppo_openpi_quickstart.yaml``.
-Compared to the standard task configuration, we have made the following modifications:
-
-.. code:: yaml
-
-   env.train.rollout_epoch: 8 -> 2
-   env.train.total_num_envs: 64 -> 32
-   actor.micro_batch_size: 128 -> 64
-   actor.global_batch_size: 2048 -> 256
-   actor.optim.lr: 5e-6 -> 1e-6
-   actor.enable_offload: False -> True
-   rollout.enable_offload: False -> True
-
-On 4 H100 GPUs, we compared the results of standard parameters and minimum test parameters, and found that their performance is almost the same at the same time: (minimum test parameters optimize faster per round, but converge slower)
-
-.. image:: https://github.com/user-attachments/assets/80d098f6-5286-4ff4-89be-547f43a4dc86
-   :alt: Minimum test case comparison
-   :width: 95%
-   :align: center
-
-If you still encounter OOM issues under the minimum parameter configuration, we provide the following solutions:
-
-**If OOM occurs during the rollout stage:**
-
-- Try replacing the rendering engine from ``egl`` to ``osmesa``
-- Further reduce ``env.train.total_num_envs`` from 32 to 16, but increase ``env.train.rollout_epoch`` from 2 to 4 to ensure the total number of environments per rollout round remains consistent
-- Check if actor's ``enable_offload`` is enabled, and set it to ``True`` if it is ``False``
-
-**If OOM occurs during the actor stage:**
-
-- Try reducing ``micro_batch_size`` from 64 to 32, keeping ``global_batch_size`` at 256
-- Check if rollout's ``enable_offload`` is enabled, and set it to ``True`` if it is ``False``
-
-.. note::
-
-   If you encounter a mismatch between ``micro_batch_size`` and ``global_batch_size``, ensure that ``global_batch_size`` is an integer multiple of ``micro_batch_size`` × number of GPUs.
-
-**2.5 Model Evaluation**
-
-For models after SFT or RL training, we provide two evaluation methods:
-
-- Use RLinf's unified evaluation script; see :doc:`evaluation <../../evaluations/index>` for evaluation. This method supports parallel environment evaluation, which is fast, but only supports outputting the success rate of the entire task.
-- To hide inference latency during evaluation or deployment, π\ :sub:`0.5`\  is also integrated with RTC, which overlaps action-chunk execution with the next chunk's inference; see :doc:`RTC <../../guides/rtc>`.
-
-.. note::
-
-   ``Metaworld`` currently do not support the evaluation mode with ``env.eval.auto_reset=True``. It is recommended to use individual script files for model evaluation.
-
-- Use individual script files for model evaluation, refer to the example `README.md <https://github.com/RLinf/RLinf/blob/main/toolkits/standalone_eval_scripts/openpi/README.md>`__. This method's evaluation scripts are consistent with the official evaluation scripts provided by ``openpi``, supporting output of success rates for each subtask, but it is slower.
-
-**3. Configuration Files**
-
-Using libero-10 as an example, the configuration files for π\ :sub:`0`\  and π\ :sub:`0.5`\  are:
-
-- π\ :sub:`0`\ + PPO:
-   ``examples/embodiment/config/libero_10_ppo_openpi.yaml``
-- π\ :sub:`0`\ + GRPO:
-   ``examples/embodiment/config/libero_10_grpo_openpi.yaml``
-- π\ :sub:`0.5`\ + PPO:
-   ``examples/embodiment/config/libero_10_ppo_openpi_pi05.yaml``
-- π\ :sub:`0.5`\ + GRPO:
-   ``examples/embodiment/config/libero_10_grpo_openpi_pi05.yaml``
-
---------------
-
-**4. Launch Command**
-
-OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard``.
-To shard training state across actor ranks, set the following fields in the
-chosen YAML. Use ``shard_grad_op`` to retain gathered parameters between
-forward and backward, or ``full_shard`` to release them after forward.
-Keep the recipe's mixed precision settings.
-
-.. code:: yaml
-
-   actor:
-     fsdp_config:
-       sharding_strategy: full_shard
-       use_orig_params: true
-
-To start training with a chosen configuration, run the following
-command:
-
-::
-
-   bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
-
-For example, to train the π\ :sub:`0`\  model using the PPO algorithm in
-the LIBERO environment, run:
-
-::
-
-   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_quickstart
-
---------------
+π₀ / π₀.₅ train with PPO (actor-critic; GAE, ratio clipping, value clipping, entropy regularization) or GRPO (group-relative advantages over *G* sampled actions).
 
 .. _pi0-hardware:
 
-Run on Different Hardware Backends
-----------------------------------
+Setup and Run
+-------------
 
-NVIDIA uses the installation and launch steps above. AMD ROCm, Huawei Ascend
-CANN, and Moore Threads MUSA support the OpenPI π₀ / π₀.₅ model family on
-LIBERO and ManiSkill through the shared platform installer and scheduler device
-API. ManiSkill uses CPU simulation on the non-CUDA backends; MUSA additionally
-requires vendor simulator packages.
+.. include:: _setup_common.rst
 
-OpenPI can compile activation, rotary embedding, and gated residual kernels
-with ``torch.compile``. Compilation runs when
-``actor.model.openpi.torch_compile`` is true and this Python environment
-contains a ``triton`` module. The π₀.₅ template sets the flag to ``True``,
-so a backend without Triton stays eager. Set it to ``False`` when Triton is
-installed but Inductor cannot run, as with Isaac Sim, by adding this override
-to the experiment YAML:
+NVIDIA CUDA supports all four environments listed above (select **π₀** or **π₀.₅** below). AMD ROCm, Huawei Ascend CANN, and Moore Threads MUSA support OpenPI π₀ / π₀.₅ on LIBERO and ManiSkill through the shared platform installer and scheduler device API; ManiSkill uses CPU simulation on non-CUDA backends, and MUSA also requires vendor simulator packages.
 
-.. code-block:: yaml
+.. tab-set::
 
-   actor:
-     model:
-       openpi:
-         torch_compile: False
+   .. tab-item:: π₀
+      :sync: pi0
 
-This setting controls those OpenPI kernels within the process; it
-does not compile the entire policy.
+      **1. Install**
 
-AMD ROCm
-~~~~~~~~
+      .. code-block:: bash
 
-ROCm uses PyTorch's CUDA-compatible API, so OpenPI follows the shared AMD
-accelerator and installation path.
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
-.. include:: _amd_libero.rst
+      **2. Download**
 
-Inside the container, or directly on a host with ROCm installed, create the
-OpenPI LIBERO environment:
+      Download the LIBERO Spatial, Object, and Goal SFT checkpoint (also available on `ModelScope <https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal>`__), or pick another environment from the table below:
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env libero
-   source .venv/bin/activate
+         hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
-Omit ``--rocm`` to detect the installed version, or add ``--use-mirror`` for
-downloads from mainland China.
+      .. list-table:: **π₀ Model List**
+         :header-rows: 1
+         :widths: 15 25 15 12 12
 
-Huawei Ascend CANN
-~~~~~~~~~~~~~~~~~~
+         * - Environment
+           - Task Description
+           - SFT Model
+           - Flow-SDE
+           - Flow-Noise
 
-Use the Ascend LIBERO container or a host with CANN and the NPU driver installed.
+         * - LIBERO
+           - Spatial, Object, Goal
+           - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT>`__
+           - -
+           - -
 
-.. include:: _ascend_libero.rst
+         * - LIBERO
+           - Long
+           - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Long-SFT>`__
+           - -
+           - -
 
-The published LIBERO image does not contain an OpenPI environment. Create one
-inside that container, or run the same command directly on an Ascend host:
+         * - ManiSkill3
+           - Multi-task
+           - |huggingface| `38.4% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT>`__
+           - |huggingface| `78.8% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-RL-FlowSDE>`__
+           - |huggingface| `77.8% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-RL-FlowNoise>`__
 
-.. code-block:: bash
+         * - MetaWorld
+           - MT50
+           - |huggingface| `50.8% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT>`__
+           - |huggingface| `78.1% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-RL-FlowSDE>`__
+           - |huggingface| `85.8% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-RL-FlowNoise>`__
 
-   bash requirements/install.sh --platform ascend embodied --model openpi --env libero
-   source .venv/bin/activate
+         * - CALVIN
+           - ABC-D
+           - |huggingface| `57.5% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT>`__
+           - |huggingface| `61.7% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-RL-FlowSDE>`__
+           - |huggingface| `59.9% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-RL-FlowNoise>`__
 
-Add ``--use-mirror`` for downloads from mainland China. The installer adds the
-matching ``torch-npu`` package and skips CUDA flash-attention; OpenPI then uses
-the common NPU worker and collective paths.
+      .. include:: _model_path.rst
 
-.. include:: _ascend_torch.rst
+      **3. Launch**
 
-Moore Threads MUSA
-~~~~~~~~~~~~~~~~~~
+      Shipped π₀ LIBERO configs under ``examples/embodiment/config/`` (see :doc:`Placement <../../concepts/placement>` to customize GPU layout):
 
-MUSA reuses the image's Python, PyTorch, and ``torch_musa`` through a virtual
-environment with system site-packages enabled. The installer preserves those
-vendor packages and skips CUDA-only dependencies.
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 70
 
-.. include:: _musa_libero.rst
+         * - Recipe
+           - Config
+         * - π₀ + PPO (Spatial / Quickstart)
+           - ``libero_spatial_ppo_openpi.yaml`` · ``libero_spatial_ppo_openpi_quickstart.yaml``
+         * - π₀ + PPO / GRPO (LIBERO-10)
+           - ``libero_10_ppo_openpi.yaml`` · ``libero_10_grpo_openpi.yaml``
 
-Inside the container, create the OpenPI LIBERO environment:
+      Launch LIBERO Spatial PPO training:
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash requirements/install.sh --platform musa embodied --model openpi --env libero
-   source .venv/bin/activate
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi
 
-Add ``--use-mirror`` for downloads from mainland China. If a Transformers model
-path requests ``attn_implementation: flash_attention_2`` but Transformers cannot
-detect the vendor package, select ``sdpa`` instead.
+      Pass ``libero_spatial_ppo_openpi_quickstart`` on smaller GPU setups. For standalone evaluation, see :doc:`evaluation <../../evaluations/index>`.
 
-LIBERO on AMD, Ascend, or MUSA
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   .. tab-item:: π₀.₅
+      :sync: pi05
 
-Choose a LIBERO checkpoint and matching config from the model list above. The
-following commands use the π₀.₅ LIBERO-10 PPO path as a concrete example. Set
-both model paths in
-``examples/embodiment/config/libero_10_ppo_openpi_pi05.yaml`` and enable
-software rendering in the active environment.
+      **1. Install**
 
-.. include:: _libero_osmesa.rst
+      .. code-block:: bash
 
-Launch the LIBERO PPO recipe:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. Download**
 
-   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi_pi05
+      Download the LIBERO SFT checkpoint (covers Spatial, Object, Goal, and Long), or pick another environment from the table below:
 
-ManiSkill on AMD, Ascend, or MUSA
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      .. code-block:: bash
 
-On AMD or Ascend, install the combined ManiSkill and LIBERO environment for
-OpenPI. Use the command for the selected model accelerator:
+         hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
-.. code-block:: bash
+      .. list-table:: **π₀.₅ Model List**
+         :header-rows: 1
+         :widths: 15 25 15 12 12
 
-   # AMD ROCm
-   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env maniskill_libero
+         * - Environment
+           - Task Description
+           - SFT Model
+           - Flow-SDE
+           - Flow-Noise
 
-   # Huawei Ascend CANN
-   bash requirements/install.sh --platform ascend embodied --model openpi --env maniskill_libero
+         * - LIBERO
+           - Spatial, Object, Goal, Long
+           - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
+           - -
+           - -
 
-   source .venv/bin/activate
+         * - ManiSkill3
+           - Multi-task
+           - |huggingface| `40.1% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT>`__
+           - |huggingface| `90.9% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-RL-FlowSDE>`__
+           - |huggingface| `89.7% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-RL-FlowNoise>`__
 
-For MUSA, use the vendor simulator image and its existing OpenPI environment:
+         * - MetaWorld
+           - MT50
+           - |huggingface| `43.8% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT>`__
+           - |huggingface| `70.7% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-RL-FlowSDE>`__
+           - |huggingface| `66.1% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-RL-FlowNoise>`__
 
-.. include:: _musa_maniskill.rst
+         * - CALVIN
+           - ABC-D
+           - |huggingface| `61.3% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT>`__
+           - |huggingface| `87.0% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-RL-FlowSDE>`__
+           - |huggingface| `84.5% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-RL-FlowNoise>`__
 
-.. code-block:: bash
+      .. include:: _model_path.rst
 
-   source switch_env openpi
+      **3. Launch**
 
-Configure CPU simulation for all three non-CUDA backends:
+      Shipped π₀.₅ LIBERO configs under ``examples/embodiment/config/`` (see :doc:`Placement <../../concepts/placement>` to customize GPU layout):
 
-.. include:: _maniskill_non_cuda.rst
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 70
 
-For π₀.₅, download ``RLinf/RLinf-Pi05-ManiSkill-25Main-SFT`` and set both model
-paths in ``examples/embodiment/config/maniskill_ppo_openpi_pi05.yaml``. The π₀
-recipe uses ``maniskill_ppo_openpi.yaml`` instead. Adjust placement and batch
-sizes for the available devices, then launch the selected recipe; for example:
+         * - Recipe
+           - Config
+         * - π₀.₅ + PPO (Spatial)
+           - ``libero_spatial_ppo_openpi_pi05.yaml``
+         * - π₀.₅ + PPO / GRPO (LIBERO-10)
+           - ``libero_10_ppo_openpi_pi05.yaml`` · ``libero_10_grpo_openpi_pi05.yaml``
 
-.. code-block:: bash
+      Launch LIBERO-10 PPO training:
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi_pi05
+
+      For standalone evaluation, see :doc:`evaluation <../../evaluations/index>` (or :doc:`RTC <../../guides/rtc>` for π₀.₅ inference latency hiding).
+
+   .. tab-item:: AMD ROCm
+      :sync: rocm
+
+      ROCm uses PyTorch's CUDA-compatible API, so OpenPI follows the shared AMD accelerator and installation path.
+
+      **1. Install (LIBERO)**
+
+      .. include:: _amd_libero.rst
+
+      Inside the container, or directly on a host with ROCm installed, create the OpenPI LIBERO environment (omit ``--rocm`` to detect the installed version):
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env libero && source .venv/bin/activate
+
+      **2. Download**
+
+      Download the π₀.₅ LIBERO SFT checkpoint (or pick another checkpoint from the model list in the **π₀** or **π₀.₅** tab):
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
+
+      .. include:: _model_path.rst
+
+      **3. Launch LIBERO**
+
+      Set the model path in ``examples/embodiment/config/libero_10_ppo_openpi_pi05.yaml`` and enable software rendering (or ``egl`` on supported Radeon GPUs) in the active environment:
+
+      .. include:: _libero_osmesa.rst
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi_pi05
+
+      **ManiSkill on AMD ROCm**
+
+      Install the combined ManiSkill and LIBERO environment for OpenPI:
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+
+      Configure CPU simulation:
+
+      .. include:: _maniskill_non_cuda.rst
+
+      For π₀.₅, download ``RLinf/RLinf-Pi05-ManiSkill-25Main-SFT`` and set the model path in ``examples/embodiment/config/maniskill_ppo_openpi_pi05.yaml`` (π₀ uses ``maniskill_ppo_openpi.yaml``). Adjust placement and batch sizes for your devices, then launch:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
+
+   .. tab-item:: Huawei Ascend CANN
+      :sync: ascend
+
+      Use the Ascend LIBERO container or a host with CANN and the NPU driver installed.
+
+      **1. Install (LIBERO)**
+
+      .. include:: _ascend_libero.rst
+
+      The published LIBERO image does not contain an OpenPI environment. Create one inside that container, or run the same command directly on an Ascend host (adds the matching ``torch-npu`` package and skips CUDA flash-attention):
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform ascend embodied --model openpi --env libero && source .venv/bin/activate
+
+      .. include:: _ascend_torch.rst
+
+      **2. Download**
+
+      Download the π₀.₅ LIBERO SFT checkpoint (or pick another checkpoint from the model list in the **π₀** or **π₀.₅** tab):
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
+
+      .. include:: _model_path.rst
+
+      **3. Launch LIBERO**
+
+      Set the model path in ``examples/embodiment/config/libero_10_ppo_openpi_pi05.yaml`` and enable software rendering in the active environment:
+
+      .. include:: _libero_osmesa.rst
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi_pi05
+
+      **ManiSkill on Huawei Ascend CANN**
+
+      Install the combined ManiSkill and LIBERO environment for OpenPI:
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform ascend embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+
+      Configure CPU simulation:
+
+      .. include:: _maniskill_non_cuda.rst
+
+      For π₀.₅, download ``RLinf/RLinf-Pi05-ManiSkill-25Main-SFT`` and set the model path in ``examples/embodiment/config/maniskill_ppo_openpi_pi05.yaml`` (π₀ uses ``maniskill_ppo_openpi.yaml``). Adjust placement and batch sizes for your devices, then launch:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
+
+   .. tab-item:: Moore Threads MUSA
+      :sync: musa
+
+      MUSA reuses the image's Python, PyTorch, and ``torch_musa`` through a virtual environment with system site-packages enabled. The installer preserves those vendor packages and skips CUDA-only dependencies.
+
+      **1. Install (LIBERO)**
+
+      .. include:: _musa_libero.rst
+
+      Inside the container, create the OpenPI LIBERO environment:
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform musa embodied --model openpi --env libero && source .venv/bin/activate
+
+      If a Transformers model path requests ``attn_implementation: flash_attention_2`` and Transformers cannot detect the vendor package, select ``sdpa`` instead.
+
+      **2. Download**
+
+      Download the π₀.₅ LIBERO SFT checkpoint (or pick another checkpoint from the model list in the **π₀** or **π₀.₅** tab):
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
+
+      .. include:: _model_path.rst
+
+      **3. Launch LIBERO**
+
+      Set the model path in ``examples/embodiment/config/libero_10_ppo_openpi_pi05.yaml`` and enable software rendering in the active environment:
+
+      .. include:: _libero_osmesa.rst
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi_pi05
+
+      **ManiSkill on Moore Threads MUSA**
+
+      Use the vendor simulator image and its existing OpenPI environment:
+
+      .. include:: _musa_maniskill.rst
+
+      .. code-block:: bash
+
+         source switch_env openpi
+
+      Configure CPU simulation:
+
+      .. include:: _maniskill_non_cuda.rst
+
+      For π₀.₅, download ``RLinf/RLinf-Pi05-ManiSkill-25Main-SFT`` and set the model path in ``examples/embodiment/config/maniskill_ppo_openpi_pi05.yaml`` (π₀ uses ``maniskill_ppo_openpi.yaml``). Adjust placement and batch sizes for your devices, then launch:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
+
+.. dropdown:: Advanced configuration (optional)
+
+   **OpenPI model and flow-RL parameters**
+
+   - **Action chunk vs. network horizon**: ``num_action_chunks`` / ``openpi.action_chunk`` sets the steps executed per rollout step, while ``openpi.action_horizon`` defaults to the official ``TrainConfig`` horizon for ``openpi.config_name`` (``50`` for ``pi0_libero``, ``10`` for ``pi05_libero``). Override ``openpi.action_horizon`` only when a checkpoint uses a different horizon.
+   - **π₀.₅ selector and critic placement**: Select π₀.₅ with ``openpi.config_name`` (such as ``pi05_libero``) and ``actor.model.pi05: True``. Set ``openpi.value_after_vlm: True`` for π₀.₅ PPO to attach the critic after the VLM output instead of the action expert.
+   - **Flow-RL noise method and steps**: Control denoising steps with ``num_steps`` and choose ``openpi.noise_method`` between `flow_sde <https://arxiv.org/abs/2505.05470>`__ (``noise_level: 0.5``, ``joint_logprob: False``, ``algorithm.entropy_bonus: 0.0``; see ``libero_spatial_ppo_openpi.yaml``) and `flow_noise <https://arxiv.org/abs/2505.22094>`__ (``noise_logvar_range: [0.08, 0.16]``, ``joint_logprob: True``, ``algorithm.entropy_bonus: 0.005``; see ``maniskill_ppo_openpi.yaml``).
+   - **Kernel compilation**: OpenPI compiles activation, rotary embedding, and gated residual kernels with ``torch.compile`` when ``actor.model.openpi.torch_compile`` is ``True`` and ``triton`` is installed (π₀.₅ enables it by default; backends without Triton stay eager). Disable it when Triton is installed but Inductor cannot run (such as with Isaac Sim):
+
+     .. code-block:: yaml
+
+        actor:
+          model:
+            openpi:
+              torch_compile: False
+
+   **LoRA and FSDP sharding**
+
+   - Set ``actor.model.is_lora: True`` and ``actor.model.lora_rank: 8`` to fine-tune the VLM with LoRA. Keep ``gradient_checkpointing: False``, as gradient checkpointing is not supported for OpenPI.
+   - OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard``. Set ``actor.fsdp_config.sharding_strategy: full_shard`` and ``actor.fsdp_config.use_orig_params: true`` to shard training state across actor ranks while keeping the recipe's mixed-precision settings.
+
+   **Minimum test case and OOM tuning**
+
+   ``libero_spatial_ppo_openpi_quickstart.yaml`` reduces ``env.train.rollout_epoch`` (8 → 2), ``env.train.total_num_envs`` (64 → 32), ``actor.micro_batch_size`` (128 → 64), ``actor.global_batch_size`` (2048 → 256), and ``actor.optim.lr`` (5e-6 → 1e-6), and enables offload on actor and rollout. On 4 H100 GPUs it matches the standard config at the same wall-clock time:
+
+   .. image:: https://github.com/user-attachments/assets/80d098f6-5286-4ff4-89be-547f43a4dc86
+      :alt: Minimum test case comparison
+      :width: 95%
+      :align: center
+
+   If OOM persists:
+
+   - **Rollout OOM**: Switch rendering from ``egl`` to ``osmesa``, halve ``env.train.total_num_envs`` (32 → 16) while doubling ``env.train.rollout_epoch`` (2 → 4), and set ``actor.enable_offload: True``.
+   - **Actor OOM**: Lower ``actor.micro_batch_size`` (64 → 32) while keeping ``actor.global_batch_size`` divisible by ``micro_batch_size`` × GPU count, and set ``rollout.enable_offload: True``.
+
+   **Alternative evaluation script**
+
+   For per-subtask LIBERO success rates matching upstream OpenPI, or for MetaWorld (which does not support ``env.eval.auto_reset=True``), use the standalone script in `toolkits/standalone_eval_scripts/openpi/README.md <https://github.com/RLinf/RLinf/blob/main/toolkits/standalone_eval_scripts/openpi/README.md>`__.
 
 Visualization and Results
 -------------------------
 
-**1. TensorBoard Logging**
-
-.. code:: bash
-
-   # Launch TensorBoard
-   tensorboard --logdir ./logs --port 6006
-
---------------
-
-**2. Key Metrics**
-
-Watch **``env/success_once``** for the task success rate. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
---------------
-
-**3. Video Generation**
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
-
---------------
-
-**4. WandB Integration**
-
-.. code:: yaml
-
-   runner:
-     task_type: embodied
-     logger:
-       log_path: "../results"
-       project_name: rlinf
-       experiment_name: "libero_10_ppo_openpi"
-       logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
-
---------------
+Launch TensorBoard with ``tensorboard --logdir ./logs --port 6006`` and watch ``env/success_once``. Pass ``env.eval.video_cfg.save_video=True`` to record evaluation videos; see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 LIBERO Results
 ~~~~~~~~~~~~~~
 
-We trained π\ :sub:`0`\  and π\ :sub:`0.5`\  with PPO and GRPO in the LIBERO environment.
+We trained π₀ and π₀.₅ with PPO and GRPO in the LIBERO environment.
 The results achieved through RL training are shown below:
 
-.. list-table:: **π**\ :sub:`0`\  **model results on LIBERO**
+.. list-table:: **π₀ model results on LIBERO**
    :header-rows: 1
 
    * - Model
@@ -682,7 +503,7 @@ The results achieved through RL training are shown below:
      - Average
      - Δ Avg.
 
-   * - π\ :sub:`0`\ (few-shot)
+   * - π₀ (few-shot)
      - 65.3%
      - 64.4%
      - 49.8%
@@ -706,7 +527,7 @@ The results achieved through RL training are shown below:
      - **96.0%**
      - **+38.4**
 
-.. list-table:: **π**\ :sub:`0.5`\  **model results on LIBERO**
+.. list-table:: **π₀.₅ model results on LIBERO**
    :header-rows: 1
 
    * - Model
@@ -717,7 +538,7 @@ The results achieved through RL training are shown below:
      - Average
      - Δ Avg.
 
-   * - π\ :sub:`0.5`\ (few-shot)
+   * - π₀.₅ (few-shot)
      - 84.6%
      - 95.4%
      - 84.6%

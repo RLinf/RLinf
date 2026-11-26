@@ -26,6 +26,23 @@ from rlinf.utils.nested_dict_process import concat_batch
 logger = get_logger()
 
 
+def mix_demo_batch(
+    replay_batch: dict[str, Any], demo_batch: dict[str, Any]
+) -> dict[str, Any]:
+    """Join replay and demo samples into one batch.
+
+    Demo samples come from no env, so they take ``env_index`` -1 next to the
+    replay samples' env indices; without replay env indices the key is dropped.
+    """
+    rows = next(
+        value.shape[0]
+        for value in demo_batch.values()
+        if isinstance(value, torch.Tensor)
+    )
+    demo_batch = {**demo_batch, "env_index": torch.full((rows,), -1, dtype=torch.long)}
+    return concat_batch(replay_batch, demo_batch)
+
+
 class ReplayBufferDataset(IterableDataset):
     """Dataset that samples batches from replay and demonstration buffers.
 
@@ -98,7 +115,7 @@ class ReplayBufferDataset(IterableDataset):
                 if self.demo_buffer is not None:
                     replay_batch = self.replay_buffer.sample(self.batch_size // 2)
                     demo_batch = self.demo_buffer.sample(self.batch_size // 2)
-                    batch = concat_batch(replay_batch, demo_batch)
+                    batch = mix_demo_batch(replay_batch, demo_batch)
                 else:
                     batch = self.replay_buffer.sample(self.batch_size)
                 yield batch
@@ -198,7 +215,7 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
                     if self.demo_buffer is not None:
                         replay_batch = self.replay_buffer.sample(self.batch_size // 2)
                         demo_batch = self.demo_buffer.sample(self.batch_size // 2)
-                        batch = concat_batch(replay_batch, demo_batch)
+                        batch = mix_demo_batch(replay_batch, demo_batch)
                     else:
                         batch = self.replay_buffer.sample(self.batch_size)
                 else:

@@ -11,3 +11,34 @@ jobs:
     - uses: actions/checkout@v5
     - uses: actions/setup-python@v3
     - uses: pre-commit/action@v3.0.1
+
+  docs-lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+    - name: Check for docs changes
+      id: docs-changed
+      env:
+        BASE_REF: ${{ github.base_ref }}
+      run: |
+        git rev-parse --verify "origin/${BASE_REF}" >/dev/null 2>&1 || git fetch --no-tags origin "${BASE_REF}"
+        if [ -z "$(git diff --name-only "origin/${BASE_REF}...HEAD" -- docs/ README.md README.zh-CN.md)" ]; then
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+          echo "No docs files changed; skipping docs lint."
+        else
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+        fi
+    - uses: actions/setup-python@v5
+      if: steps.docs-changed.outputs.changed == 'true'
+      with:
+        python-version: "3.12"
+    - name: Run docs lint
+      if: steps.docs-changed.outputs.changed == 'true'
+      env:
+        BASE_REF: ${{ github.base_ref }}
+      run: |
+        python3 -m pip install --quiet docutils
+        python3 .agents/skills/docs/check.py --no-build --base "origin/${BASE_REF}"

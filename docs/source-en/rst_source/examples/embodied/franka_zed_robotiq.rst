@@ -1,442 +1,277 @@
-Using ZED + Robotiq with Franka
-===============================
+Franka ZED & Robotiq
+====================
+
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robotiq_zed.jpeg
    :align: center
    :width: 80%
 
    Franka setup with Stereolabs ZED cameras and a Robotiq 2F gripper for sensor-rich data collection.
 
-Extend the base Franka setup with Stereolabs ZED cameras and a Robotiq 2F gripper. You'll install the SDKs, wire serial devices, update YAML hardware fields, and collect data with the new sensors.
-
 Overview
 --------
 
-Swap the default camera/gripper stack for a ZED + Robotiq deployment.
+Replace the default RealSense camera and Franka gripper with Stereolabs ZED cameras and a Robotiq 2F gripper in a two-node Franka deployment. Node 0 (GPU server) captures ZED RGB streams, while Node 1 (NUC controller) drives the Franka arm and Robotiq gripper over USB-RS485.
 
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: Models
-      :text-align: center
-
-      Any Franka policy
-
-   .. grid-item-card:: Algorithms
-      :text-align: center
-
-      Data collection · downstream RL/SFT
-
-   .. grid-item-card:: Tasks
-      :text-align: center
-
-      ZED + Robotiq collection
-
    .. grid-item-card:: Hardware
       :text-align: center
 
-      Franka · ZED · Robotiq 2F
+      Franka · ZED cameras · Robotiq 2F
 
-| **You'll do:** install ZED SDK → configure Robotiq serial device → set camera serials → collect data.
-| **Prerequisites:** :doc:`franka` · ZED SDK 4.2.x · USB-RS485 adapter · Robotiq gripper.
+   .. grid-item-card:: Connection
+      :text-align: center
 
-Tasks
-~~~~~
+      USB 3.0 (ZED) · USB-RS485 Modbus RTU
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24 24
+   .. grid-item-card:: Workflow
+      :text-align: center
 
-   * - Task
-     - Config / entry point
-     - Description
-   * - Sensor setup
-     - ``realworld_collect_data_zed_robotiq``
-     - Capture ZED images and control the Robotiq gripper.
-   * - Data collection
-     - ``collect_data.sh realworld_collect_data_zed_robotiq``
-     - Collect SpaceMouse demonstrations with the hardware override.
-   * - Downstream training
-     - Franka real-world configs
-     - Reuse the collected data in SFT/RL configs.
+      Two-node data collection & RL/SFT
 
-Observation and Action
-~~~~~~~~~~~~~~~~~~~~~~
+   .. grid-item-card:: Requires
+      :text-align: center
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24
+      :doc:`franka` · ZED SDK 4.2.x · 2 nodes
 
-   * - Field
-     - Description
-   * - Observation
-     - ZED RGB streams, usually captured on the GPU node.
-   * - Action
-     - Franka Cartesian action plus Robotiq gripper command.
-   * - Reward
-     - Same reward source as the downstream Franka task.
-   * - Prompt
-     - Inherited from the downstream Franka task config.
+Hardware and Safety
+-------------------
 
-Installation
-------------
+This configuration uses **two nodes** (``num_nodes: 2``):
 
-ZED Camera Setup
-~~~~~~~~~~~~~~~~
-
-The ZED SDK and its Python API must be installed on every node that captures
-images (typically the GPU server node).  Full details are available in the
-`official ZED Python API installation guide <https://www.stereolabs.com/docs/development/python/install>`_.
-
-1. Install the ZED SDK
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-Download the SDK installer from the
-`Stereolabs download page <https://www.stereolabs.com/developers/release>`_
-and choose the version that matches your OS and CUDA version.
+- **Node 0 (GPU server)**: Connect ZED cameras over USB 3.0 and check ``lsusb`` for ``Stereolabs`` devices with the camera LED lit.
+- **Node 1 (NUC controller)**: Connect the Franka arm over Ethernet and the Robotiq 2F gripper through a USB-to-RS485 adapter (``ls /dev/ttyUSB*``, typically ``/dev/ttyUSB0``). Grant serial access with ``sudo chmod 666 /dev/ttyUSB0`` or ``sudo usermod -aG dialout $USER`` (log out and back in).
 
 .. warning::
 
-   Use **ZED SDK 4.2.x** (e.g. v4.2.5).  ZED SDK 5.0+ ships its own
-   bundled NumPy which conflicts with the ``numpy<2`` pin required by
-   Franka cross-node serialization.  Stick with the 4.2 series to avoid
-   dependency issues.
-
-.. code-block:: bash
-
-   # Example for CUDA 12.x on Ubuntu 22.04
-   chmod +x ZED_SDK_Ubuntu22_cuda12.1_v4.2.5.zstd.run
-   ./ZED_SDK_Ubuntu22_cuda12.1_v4.2.5.zstd.run
-
-Follow the on-screen prompts.  When asked
-``Do you want to install the Python API (recommended) [Y/n] ?``,
-press **Y** to install the Python bindings automatically.
-
-2. Install the Python API (if not done during SDK setup)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-If you skipped the Python API during SDK installation, or need to install
-it into a different virtual environment, run the bundled helper script:
-
-.. code-block:: bash
-
-   # Activate your virtual environment first
-   source /path/to/your/venv/bin/activate
-
-   # Run the official install script
-   cd /usr/local/zed/
-   python3 get_python_api.py
-
-The script auto-detects your platform, Python version, and ZED SDK version,
-then downloads and installs the matching ``pyzed`` wheel.
-
-Alternatively, you can install the wheel directly:
-
-.. code-block:: bash
-
-   python -m pip install --ignore-installed /usr/local/zed/pyzed-*.whl
-
-.. note::
-
-   The ``pyzed`` wheel is tied to a specific Python version and CUDA
-   version.  Make sure you install it into the **same virtual environment**
-   that Ray will use on this node.  If you are using a virtual environment,
-   activate it **before** running the install script.
-
-3. Verify camera detection
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-List connected ZED cameras and note their **serial numbers**:
-
-.. code-block:: bash
-
-   python -c "
-   import pyzed.sl as sl
-   for dev in sl.Camera.get_device_list():
-       print(f'Serial: {dev.serial_number}  Model: {dev.camera_model}')
-   "
-
-Record the serial numbers; they will be used in the YAML configuration.
-
-
-Robotiq Gripper Setup
-~~~~~~~~~~~~~~~~~~~~~
-
-The Robotiq gripper communicates over **Modbus RTU** through a USB-to-RS485
-adapter.  The required Python dependency ``pymodbus`` is **automatically
-installed** when you run the Franka installation script:
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --env franka
-
-The following steps set up the serial device on the node that controls the
-gripper (typically the NUC).
-
-1. Set up the serial device
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Plug the USB-to-RS485 adapter into the NUC.  Identify the serial device:
-
-.. code-block:: bash
-
-   ls /dev/ttyUSB*
-   # Typically /dev/ttyUSB0
-
-Grant permission:
-
-.. code-block:: bash
-
-   sudo chmod 666 /dev/ttyUSB0
-   # Or add your user to the dialout group for persistent access:
-   sudo usermod -aG dialout $USER
-
-3. Verify the gripper
-~~~~~~~~~~~~~~~~~~~~~~~
-
-A quick sanity check (run on the NUC):
-
-.. code-block:: bash
-
-   python -c "
-   from rlinf.robotics.parts.end_effectors.grippers.robotiq import RobotiqGripper
-   g = RobotiqGripper(port='/dev/ttyUSB0')
-   g.connect()
-   print(f'Position: {g.position:.4f} m, Ready: {g.is_ready()}')
-   g.open()
-   import time; time.sleep(1)
-   g.close()
-   g.disconnect()
-   "
-
-
-Configuration File
-------------------
-
-The key differences from a standard (RealSense + Franka gripper) config are
-the new ``camera_type``, ``gripper_type``, ``gripper_connection``, and
-``controller_node_rank`` fields inside the ``hardware.configs`` block.
-
-.. code-block:: yaml
-
-   cluster:
-     num_nodes: 2
-     component_placement:
-       actor:
-         node_group: gpu
-         placement: 0
-       env:
-         node_group: franka
-         placement: 0
-       rollout:
-         node_group: gpu
-         placement: 0
-     node_groups:
-       - label: gpu
-         node_ranks: 0
-       - label: franka
-         node_ranks: 0-1
-         hardware:
-           type: Franka
-           configs:
-             - robot_ip: <ROBOT_IP>
-               node_rank: 0
-               camera_serials:
-                 - "<ZED_SERIAL_1>"
-                 - "<ZED_SERIAL_2>"
-                 - "<ZED_SERIAL_3>"
-               camera_type: zed            # "realsense" or "zed"
-               gripper_type: robotiq       # "franka" or "robotiq"
-               gripper_connection: "/dev/ttyUSB0"
-               controller_node_rank: 1     # the arm part runs on the NUC
-               disable_validate: false
-
-.. list-table:: New hardware config fields
-   :header-rows: 1
-   :widths: 25 15 60
-
-   * - Field
-     - Default
-     - Description
-   * - ``camera_type``
-     - ``"realsense"``
-     - Camera backend.  Set to ``"zed"`` for ZED cameras.
-   * - ``gripper_type``
-     - ``"franka"``
-     - Gripper backend.  Set to ``"robotiq"`` for Robotiq grippers.
-   * - ``gripper_connection``
-     - ``null``
-     - Serial port for Robotiq (e.g. ``"/dev/ttyUSB0"``).  Ignored when
-       ``gripper_type`` is ``"franka"``.
-   * - ``controller_node_rank``
-     - ``null``
-     - Node rank where the arm part runs.  When ``null``, it
-       co-locates with the env worker.  Set this when the arm and cameras
-       are on different machines.
-
+   Keep the Franka e-stop button within reach, clear the workspace, and start from a safe pose before testing the gripper or collecting data. Use **ZED SDK 4.2.x** (such as v4.2.5): ZED SDK 5.0+ bundles a NumPy version that conflicts with the ``numpy<2`` constraint required by Franka cross-node serialization.
 
 .. _franka-zed-robotiq-data-collection:
 
-Run It
-------
+Setup and Run
+-------------
 
-A dedicated data collection script and configuration are provided for
-collecting teleoperation demonstrations using the ZED + Robotiq hardware
-setup.  This mirrors the base Franka data collection workflow described in
-:doc:`franka`, but with ZED camera and Robotiq gripper defaults
-pre-configured.
+.. include:: _setup_common.rst
 
-**Configuration**
+.. tab-set::
 
-The config file is
-``examples/embodiment/config/realworld_collect_data_zed_robotiq.yaml``.
-Before running, update the following fields to match your setup:
+   .. tab-item:: 1. Setup & Hardware Check
 
-.. code-block:: yaml
+      **Node 0 (GPU server) — Install ZED SDK 4.2.x and find camera serials**
 
-   cluster:
-     node_groups:
-       - label: franka
-         node_ranks: 0-1
-         hardware:
-           type: Franka
-           configs:
-             - robot_ip: ROBOT_IP           # your robot's IP
-               camera_serials:
-                 - "ZED_SERIAL_1"           # your ZED camera serial(s)
-               camera_type: zed
-               gripper_type: robotiq
-               gripper_connection: "/dev/ttyUSB0"
-               controller_node_rank: 1
+      Download ZED SDK 4.2.x matching your OS and CUDA version from the `Stereolabs download page <https://www.stereolabs.com/developers/release>`_ (see the `official ZED Python API guide <https://www.stereolabs.com/docs/development/python/install>`_ for details), run the installer, and press **Y** when prompted to install the Python API:
 
-   env:
-     eval:
-       override_cfg:
-         target_ee_pose: TARGET_EE_POSE     # your target end-effector pose
+      .. code-block:: bash
 
-Key data-collection settings in the same file:
+         # Example for CUDA 12.x on Ubuntu 22.04
+         chmod +x ZED_SDK_Ubuntu22_cuda12.1_v4.2.5.zstd.run
+         ./ZED_SDK_Ubuntu22_cuda12.1_v4.2.5.zstd.run
+
+      To install ``pyzed`` into your RLinf virtual environment, activate it from the repository root and run the helper script or install the matching wheel:
+
+      .. code-block:: bash
+
+         source .venv/bin/activate
+         python3 /usr/local/zed/get_python_api.py
+         # Or direct wheel install:
+         # uv pip install --reinstall /usr/local/zed/pyzed-*.whl
+
+      List connected ZED cameras and record their serial numbers:
+
+      .. code-block:: bash
+
+         python -c "
+         import pyzed.sl as sl
+         for dev in sl.Camera.get_device_list():
+             print(f'Serial: {dev.serial_number}  Model: {dev.camera_model}')
+         "
+
+      **Node 1 (NUC) — Install RLinf Franka env and verify Robotiq gripper**
+
+      The ``franka`` environment automatically installs ``pymodbus`` for Modbus RTU control:
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+
+      Grant serial access and run a quick open/close check on the NUC:
+
+      .. code-block:: bash
+
+         sudo chmod 666 /dev/ttyUSB0
+         python -c "
+         from rlinf.robotics.parts.end_effectors.grippers.robotiq import RobotiqGripper
+         g = RobotiqGripper(port='/dev/ttyUSB0')
+         g.connect()
+         print(f'Position: {g.position:.4f} m, Ready: {g.is_ready()}')
+         g.open()
+         import time; time.sleep(1)
+         g.close()
+         g.disconnect()
+         "
+
+   .. tab-item:: 2. Collect Data & Run
+
+      Update the required hardware and target fields in ``examples/embodiment/config/realworld_collect_data_zed_robotiq.yaml``:
+
+      .. code-block:: yaml
+
+         cluster:
+           node_groups:
+             - label: franka
+               node_ranks: 0-1
+               hardware:
+                 type: Franka
+                 configs:
+                   - robot_ip: ROBOT_IP           # your robot's IP
+                     camera_serials:
+                       - "ZED_SERIAL_1"           # your ZED camera serial(s)
+                     camera_type: zed
+                     gripper_type: robotiq
+                     gripper_connection: "/dev/ttyUSB0"
+                     controller_node_rank: 1
+
+         env:
+           eval:
+             override_cfg:
+               target_ee_pose: TARGET_EE_POSE     # your target end-effector pose
+
+      On **both nodes**, from the RLinf repository root with ``.venv`` active, export the node variables and start Ray:
+
+      .. code-block:: bash
+
+         # Node 0 (GPU server, Ray head; replace IP and NIC for your network)
+         export RLINF_NODE_RANK=0
+         export RLINF_COMM_NET_DEVICES=eth0  # optional, omit if single NIC
+         ray start --head --port=6379 --node-ip-address=192.168.1.10
+
+         # Node 1 (NUC controller)
+         export RLINF_NODE_RANK=1
+         export RLINF_COMM_NET_DEVICES=eth0  # optional, omit if single NIC
+         ray start --address=192.168.1.10:6379
+
+      Launch data collection on **Node 0 (head node)** and teleoperate with the SpaceMouse:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/collect_data.sh realworld_collect_data_zed_robotiq
+
+      Pass another config name if you copy the YAML. Episodes save under ``logs/<timestamp>-<config_name>/`` as ``demo_buffer/`` and ``lerobot_dataset/``; point ``algorithm.demo_buffer.load_path`` to that path for downstream training.
+
+.. dropdown:: Full multi-node YAML and hardware/collection fields
+
+   Complete two-node cluster placement example with ZED cameras on Node 0 and arm/gripper control on Node 1:
+
+   .. code-block:: yaml
+
+      cluster:
+        num_nodes: 2
+        component_placement:
+          actor:
+            node_group: gpu
+            placement: 0
+          env:
+            node_group: franka
+            placement: 0
+          rollout:
+            node_group: gpu
+            placement: 0
+        node_groups:
+          - label: gpu
+            node_ranks: 0
+          - label: franka
+            node_ranks: 0-1
+            hardware:
+              type: Franka
+              configs:
+                - robot_ip: <ROBOT_IP>
+                  node_rank: 0
+                  camera_serials:
+                    - "<ZED_SERIAL_1>"
+                    - "<ZED_SERIAL_2>"
+                    - "<ZED_SERIAL_3>"
+                  camera_type: zed            # "realsense" or "zed"
+                  gripper_type: robotiq       # "franka" or "robotiq"
+                  gripper_connection: "/dev/ttyUSB0"
+                  controller_node_rank: 1     # arm control runs on the NUC
+                  disable_validate: false
+
+   **Hardware config fields**
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 25 15 60
+
+      * - Field
+        - Default
+        - Description
+      * - ``camera_type``
+        - ``"realsense"``
+        - Camera backend. Set to ``"zed"`` for ZED cameras.
+      * - ``gripper_type``
+        - ``"franka"``
+        - Gripper backend. Set to ``"robotiq"`` for Robotiq grippers.
+      * - ``gripper_connection``
+        - ``null``
+        - Serial port for Robotiq (such as ``"/dev/ttyUSB0"``). Ignored when ``gripper_type`` is ``"franka"``.
+      * - ``controller_node_rank``
+        - ``null``
+        - Node rank hosting arm control. Co-locates with the env worker when ``null``; set to ``1`` when the arm and cameras live on separate machines.
+
+   **Data-collection fields**
+
+   Key fields in ``realworld_collect_data_zed_robotiq.yaml``:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 18 52
+
+      * - Field
+        - Default
+        - Description
+      * - ``runner.num_data_episodes``
+        - ``20``
+        - Number of episodes to collect before exiting.
+      * - ``env.eval.teleop``
+        - ``spacemouse``
+        - Teleoperation device driving the arm during collection.
+      * - ``env.eval.data_collection.save_dir``
+        - ``${runner.logger.log_path}``
+        - Output root (``{save_dir}/lerobot_dataset`` and ``{save_dir}/demo_buffer``).
+      * - ``env.eval.data_collection.export_format``
+        - ``[replay_buffer, lerobot_dataset]``
+        - Real-robot collector accepts ``replay_buffer``, ``pickle_episode``, and ``lerobot_dataset``.
+      * - ``env.eval.data_collection.only_success``
+        - ``True``
+        - Save only successful episodes.
+
+.. dropdown:: Cluster setup notes
+
+   - **Node 0 (GPU server)**: Install ZED SDK 4.2.x and ``pyzed`` into the virtual environment **before** running ``ray start``.
+   - **Node 1 (NUC)**: Verify ``pymodbus`` is installed and the Robotiq serial port is readable **before** running ``ray start``.
+
+   .. warning::
+
+      Ray captures the Python interpreter and environment variables at ``ray start`` time. SDKs or libraries installed after ``ray start`` are invisible to Ray workers. Always install dependencies first, then start Ray.
+
+   See :doc:`franka` and :doc:`../../guides/hetero` for full multi-node Ray setup details.
+
+Troubleshooting
+---------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 15 55
+   :widths: 32 68
 
-   * - Field
-     - Default
-     - Description
-   * - ``runner.num_data_episodes``
-     - ``20``
-     - Number of episodes to collect before the script exits.
-   * - ``env.eval.teleop``
-     - ``spacemouse``
-     - Which device drives the arm during collection.
-   * - ``env.eval.data_collection.save_dir``
-     - ``${runner.logger.log_path}``
-     - Collection root. LeRobot shards go to ``{save_dir}/lerobot_dataset`` and the replay buffer goes to ``{save_dir}/demo_buffer``.
-   * - ``env.eval.data_collection.export_format``
-     - ``[replay_buffer, lerobot_dataset]``
-     - Write both the replay buffer and a LeRobot dataset. The real-robot collector accepts ``replay_buffer``, ``pickle_episode``, and ``lerobot_dataset``.
-   * - ``env.eval.data_collection.only_success``
-     - ``True``
-     - Only save successful episodes.
-
-**Running data collection**
-
-.. important::
-
-   Unlike the base Franka setup described in :doc:`franka` (which runs on
-   a single controller node with ``num_nodes: 1``), the ZED + Robotiq
-   configuration requires **two nodes** (``num_nodes: 2``):
-
-   - **Node 0** – GPU server with ZED camera connected.
-   - **Node 1** – NUC / controller node connected to the robot arm and
-     Robotiq gripper (``controller_node_rank: 1``).
-
-   Both nodes must have Ray running before you launch the script.
-
-1. On **each node**, source the virtual environment and set the required
-   environment variables:
-
-.. code-block:: bash
-
-   source <path_to_your_venv>/bin/activate
-
-   export PYTHONPATH=<path_to_your_RLinf_repo>:$PYTHONPATH
-   export RLINF_NODE_RANK=<0_or_1>
-   # Optional – only needed if you have multiple network interfaces
-   export RLINF_COMM_NET_DEVICES=<network_device>
-
-2. Start Ray on each node:
-
-.. code-block:: bash
-
-   # On the head node (node 0, GPU server)
-   ray start --head --port=6379 --node-ip-address=<head_node_ip>
-
-   # On the controller node (node 1, NUC)
-   ray start --address=<head_node_ip>:6379
-
-3. Run the data collection script **on the head node (node 0)**:
-
-.. code-block:: bash
-
-   bash examples/embodiment/collect_data.sh realworld_collect_data_zed_robotiq
-
-Pass another config name if you copy the ZED + Robotiq YAML:
-
-.. code-block:: bash
-
-   bash examples/embodiment/collect_data.sh <config_name>
-
-During collection, use the SpaceMouse to teleoperate the robot.  The script
-will terminate after the configured number of episodes and save the data
-under ``logs/<timestamp>-<config_name>/`` as ``demo_buffer/`` and ``lerobot_dataset/``.
-
-After collection, upload the data to the training node and set the
-``algorithm.demo_buffer.load_path`` field in your training config to the
-data path.
-
-
-Cluster Setup Notes
----------------------
-
-The cluster setup procedure is the same as described in
-:doc:`franka`, with one key difference:
-
-- On the **GPU server** (node 0): make sure the ZED SDK and ``pyzed`` are
-  installed in the virtual environment **before** running ``ray start``.
-- On the **NUC** (node 1): make sure ``pymodbus`` is installed, and the
-  Robotiq serial device is accessible.
-
-.. warning::
-
-   Remember that Ray captures the Python interpreter and environment
-   variables at ``ray start`` time.  Any SDK or library installed
-   **after** ``ray start`` will not be visible to Ray workers.  Always
-   install dependencies first, then start Ray.
-
-For multi-node Ray setup details, refer to :doc:`franka` and
-:doc:`../../guides/hetero`.
-
-
-Troubleshooting
-----------------
-
-**ZED camera not detected**
-
-- Verify the USB 3.0 cable is connected and the camera LED is on.
-- Run ``lsusb`` and look for ``Stereolabs`` devices.
-- Ensure the ZED SDK version matches your CUDA version.
-
-**Robotiq gripper not responding**
-
-- Check ``ls /dev/ttyUSB*`` to confirm the serial device is present.
-- Verify permissions: ``sudo chmod 666 /dev/ttyUSB0``.
-- Ensure ``pymodbus`` version is ``>=3.0,<4.0``.
-- Try reducing the baud rate if communication is unreliable:
-  ``RobotiqGripper(port='/dev/ttyUSB0', baudrate=9600)``.
-
-**Controller node rank mismatch**
-
-- If the arm is on a NUC (node 1) but cameras are on the GPU server
-  (node 0), you **must** set ``controller_node_rank: 1`` in the hardware
-  config.  Otherwise the controller will try to start on node 0, which
-  has no network connection to the arm.
+   * - Symptom
+     - Fix
+   * - ZED camera not detected
+     - Check the USB 3.0 cable and camera LED, run ``lsusb`` for ``Stereolabs`` devices, and confirm the ZED SDK version matches your CUDA version.
+   * - NumPy conflict after ZED SDK install
+     - Install **ZED SDK 4.2.x** (such as v4.2.5) instead of 5.0+, which bundles an incompatible NumPy version against Franka's ``numpy<2`` requirement.
+   * - Robotiq gripper not responding
+     - Confirm ``ls /dev/ttyUSB*`` shows the adapter, grant access with ``sudo chmod 666 /dev/ttyUSB0``, verify ``pymodbus`` is ``>=3.0,<4.0``, and try ``baudrate=9600`` if serial traffic is noisy.
+   * - Controller node rank mismatch
+     - Set ``controller_node_rank: 1`` whenever the arm is on the NUC (node 1) and ZED cameras are on the GPU server (node 0); otherwise arm control attempts to start on node 0 with no robot link.

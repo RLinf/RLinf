@@ -1,12 +1,33 @@
-灵活执行模式
-=============
+执行模式
+========
 
-RLinf 支持三种执行模式，决定 Worker 如何在 GPU 之间放置以及训练过程中如何协调。
-本页面涵盖全部三种模式及其权衡。
+RLinf 用同一套 worker 代码支持共享式、分离式与混合式三种部署模式，按组件共享 GPU 的方式与阶段并发关系灵活切换。本页对比三种模式在显存、利用率与流水线上的权衡；快速图示总览见 :doc:`overview`，``cluster.component_placement`` 完整语法与节点组规则见 :doc:`placement`。
 
-.. contents::
-   :depth: 1
-   :local:
+模式对比与选型
+--------------
+
+三种模式在显存余量与流水线利用率之间各有侧重：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 16 24 30 30
+
+   * - 模式
+     - 设备分配方式
+     - 核心优势
+     - 主要权衡
+   * - 共享式
+     - 所有角色共享同一组 GPU
+     - 1–8 卡下配置最简单，每个阶段独占全集群算力
+     - 阶段切换需卸载到 CPU 内存；rollout 长尾延迟会拖慢整步训练
+   * - 分离式
+     - 每个角色独占独立 GPU 组
+     - 无需卸载开销，支持细粒度流水线与异步 RL
+     - 各阶段速率不匹配时会产生 GPU 空闲，需调优流水线分片
+   * - 混合式
+     - 并发阶段拆分 GPU，串行阶段共享全部 GPU
+     - 兼顾 rollout 与 env 流水线并发，同时让 actor 用满整机算力
+     - rollout 与 actor 切换边界需要卸载，且需平衡两组 GPU 比例
 
 共享式模式
 ----------
@@ -16,66 +37,24 @@ RLinf 支持三种执行模式，决定 Worker 如何在 GPU 之间放置以及�
    :align: center
    :class: col-img
 
-所有 Worker 都被调度到 **同一组** GPU 上。在任意阶段，
-只有一种类型的 Worker 运行，并占用整个设备的计算能力，直到该阶段结束。
-这里有两种执行模式：同时常驻于 GPU 内存，或者通过卸载/重新加载在 GPU 内存中切换驻留。
+共享式模式下，所有 worker 组部署在同一组 GPU 上，每个阶段只有一类 worker 运行并占满全部计算能力。
 
-**优点**
+由于多个组件共用显存，轻量级组件可以同时常驻，大模型组件则需在阶段结束后将权重、梯度与优化器状态卸载到 CPU 内存。未开启卸载时，actor 与 rollout 引擎会争夺显存并触发 OOM。
 
-* 设计简单；无需复杂的数据依赖管理。
+下面示例在两台 8 卡节点上把 ``actor`` 与 ``rollout`` 都放到全部 16 张 GPU，并在阶段间卸载 actor：
 
-**缺点**
-
-* 通常需要为每个组件实现卸载/重新加载。
-* rollout 阶段的长尾延迟会延长端到端 RL 训练时间。
-
-**示例配置**
-
-下面是一个 Worker 放置的示例配置。本次训练任务有两个节点，每个节点有 8 个 GPU。`actor` 使用所有 16 个 GPU，`rollout` 也使用所有 16 个 GPU：
-
-.. code:: yaml
+.. code-block:: yaml
 
    cluster:
      num_nodes: 2
      component_placement:
-       actor,rollout: all # or 0-15
-
-另外，一些 Worker 支持卸载，以在某些时间段释放 GPU 给其他 Worker 使用。
-例如，math RL actor 支持一些卸载选项：
-
-.. code:: yaml
-
+       actor,rollout: all
    actor:
-     offload_optimizer: True
-     offload_weight: True
-     offload_grad: True
+     offload_optimizer: true
+     offload_weight: true
+     offload_grad: true
 
-如果为 actor 启用了卸载，actor 会在运行前被加载到 GPU 内存中，运行结束后再被卸载到 CPU 内存。
-如果没有启用卸载，共享式的 Worker（假设运行在 GPU 上）会争夺 GPU 内存，可能导致 OOM 错误。
-完整配置请参考 :doc:`../guides/basic_config`。
-
-**ComponentPlacement 编程**
-
-基于以上的放置配置，用户可以使用合适的 `ComponentPlacement` 类来解析配置，
-并将放置策略应用到 Worker，如下所示：
-
-.. code:: python
-
-   from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
-
-   component_placement = ModelParallelComponentPlacement(cfg, cluster)
-   rollout_placement_strategy = component_placement.get_strategy("rollout")
-   rollout_group = SGLangWorker.create_group(cfg, component_placement).launch(
-        cluster,
-        name=cfg.rollout.group_name,
-        placement_strategy=rollout_placement_strategy,
-    )
-
-`ModelParallelComponentPlacement` 支持两种放置方式：共享式和分离式。
-更重要的是，它会处理 rank 的排列，从而实现从训练到 rollout 的高效模型权重更新。
-它会解析配置并为不同组件生成放置策略。生成的放置策略会在 Worker 启动时生效。
-完整代码请参考 `Math RL 训练代码 <https://github.com/RLinf/RLinf/blob/main/examples/reasoning/main_grpo.py>`_。
-
+GPU 数量较少（1–8 卡）、单机快速验证，或者 rollout 长度较均匀、长尾不明显时，适合采用共享式模式。
 
 分离式模式
 ----------
@@ -85,24 +64,13 @@ RLinf 支持三种执行模式，决定 Worker 如何在 GPU 之间放置以及�
    :align: center
    :class: dis-img
 
-不同的 RL 任务会根据计算需求映射到不同的 GPU 组。这里也有两种执行模式：
-Worker 可以顺序依次运行，或者通过细粒度流水线并发运行。
+分离式模式按计算开销把不同角色映射到互不重叠的 GPU 组。由于 actor、inference 与 rollout 各自独占设备，模型常驻显存，省去了阶段间的卸载与重载开销。
 
-**优点**
+分离式 worker 可以按阶段顺序执行，也可以用细粒度流水线并发推进：rollout 每生成一批分片就立刻送入推理与训练。合理调整 ``pipeline_stage_num`` 与各角色卡数比例，可以压低流水线气泡并提高整体利用率。
 
-* Worker 分配灵活。
-* 不需要实现卸载功能。
+下面示例在两台 8 卡节点上为 rollout、inference 与 actor 分配独立 GPU 区间：
 
-**缺点**
-
-* 数据流依赖会导致 GPU 空闲。
-* 需要实现流水线来减少 GPU 空闲时间。
-
-**示例配置**
-
-Worker 被分配到不同的 GPU 上。GPU 集合通过全局 GPU 索引指定。
-
-.. code:: yaml
+.. code-block:: yaml
 
    cluster:
      num_nodes: 2
@@ -111,17 +79,7 @@ Worker 被分配到不同的 GPU 上。GPU 集合通过全局 GPU 索引指定�
        inference: 10-11
        actor: 12-15
 
-.. note::
-   ``pipeline_stage_num`` 配置应调整以实现所需的流水线效果。
-
-完整配置请参考 :doc:`../guides/basic_config`。
-
-**ComponentPlacement 编程**
-
-如共享式模式中所描述，yaml 文件中的放置配置可以通过 `ComponentPlacement` 解析，
-并应用到 Worker 上。完整代码请参考
-`Math RL 细粒度流水训练代码 <https://github.com/RLinf/RLinf/blob/main/examples/reasoning/main_grpo.py>`_。
-
+在 8 卡以上规模、显存卸载开销大、rollout 生成存在明显长尾，或采用异步训练循环时，适合使用分离式模式。
 
 混合式模式
 ----------
@@ -131,58 +89,37 @@ Worker 被分配到不同的 GPU 上。GPU 集合通过全局 GPU 索引指定�
    :align: center
    :class: hyb-img
 
-RLinf 在共享式模式和分离式模式的基础上，进一步引入了混合式模式：
-有些任务共享同一组 GPU，而有些任务使用独立的 GPU。
+混合式模式在同一次任务中结合共享式与分离式：并发执行的组件拆分 GPU，处于不同阶段的组件共享整组 GPU。
 
-上图展示了一个具身 RL 训练的具体放置与执行示例。
-仿真 Worker 被放置在 GPU 0-1 上，生成 Worker 被放置在 GPU 2-3 上。两个 *数据队列* 将生产者和消费者的速率解耦，帮助平滑流水线、平衡负载，并几乎消除性能瓶颈。在 rollout 阶段（即仿真+生成）结束后，推理 Worker 被放置并运行在 GPU 0-3 上，随后训练 Worker 也运行在 GPU 0-3 上。可以看到，混合式模式结合了共享式和分离式模式。RLinf 中的通信工具支持这种灵活的放置和执行方式。
+具身 RL 是典型场景。在采样阶段，仿真环境（``env``）与策略推理（``rollout``）分配到互不重叠的 GPU，通过生产者-消费者队列流水线并行；采样结束后，两者卸载到 CPU 内存，``actor`` 加载到全部 GPU 上完成高吞吐参数更新。
 
-**示例配置**
+在单台 8 卡节点上，混合式布局可将 GPU 0–3 分给 ``env``、GPU 4–7 分给 ``rollout``，同时让 ``actor`` 使用全部 8 张 GPU：
 
-混合式模式的配置风格与共享式/分离式模式一致，如下所示：
-`env` （即仿真 Worker）放置在 GPU 0-3 上，`rollout` （即生成 Worker）放置在 GPU 4-7 上，它们通过流水线运行。`actor` （即训练 Worker）放置在 GPU 0-7 上。当 rollout 阶段结束后，`env` 和 `rollout` 会卸载到 CPU 内存，`actor` 会加载到 GPU 内存。
+.. code-block:: yaml
 
-.. code:: yaml
-
-  cluster:
-    num_nodes: 1
-    component_placement:
-      actor: 0-7
-      env: 0-3
-      rollout: 4-7
-
-在大多数情况下，`env`、`rollout` 和 `actor` 应该启用如下的卸载功能，以避免 OOM 错误。
-
-.. code:: yaml
-
+   cluster:
+     num_nodes: 1
+     component_placement:
+       actor: 0-7
+       env: 0-3
+       rollout: 4-7
    env:
-     enable_offload: True
+     enable_offload: true
    rollout:
-     enable_offload: True
+     enable_offload: true
    actor:
-     enable_offload: True
+     enable_offload: true
 
 .. note::
-   ``pipeline_stage_num`` 配置应调整以实现所需的流水线效果。
-   对于具身RL训练，建议在混合模式设置为 2，以实现 rollout 和 env 之间的流水线重叠。
 
-完整配置请参考 :doc:`../guides/basic_config`。
+   具身混合式训练建议将 ``rollout.pipeline_stage_num`` 设为 ``2`` 或更大，让环境步进与 rollout 推理在各自 GPU 子集上并发重叠。
 
-**ComponentPlacement 编程**
+混合式模式同样适用于异构集群，例如把 ``env`` 部署在 CPU 节点或真机控制主机上，而 ``rollout`` 与 ``actor`` 共用 GPU 节点。
 
-与共享式和分离式模式不同，混合式模式使用 `HybridComponentPlacement`，
-它对 Worker 放置的限制更少。
+延伸阅读
+--------
 
-.. code:: python
-
-   from rlinf.utils.placement import HybridComponentPlacement
-
-   component_placement = HybridComponentPlacement(cfg, cluster)
-   # 创建 actor Worker 组
-   actor_placement = component_placement.get_strategy("actor")
-   actor_group = FSDPActor.create_group(cfg).launch(
-        cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
-    )
-
-完整代码请参考
-`具身模型训练 <https://github.com/RLinf/RLinf/blob/main/examples/embodiment/train_embodied_agent.py>`_。
+- :doc:`placement`：完整的 placement 语法、进程与资源配比及命名节点组。
+- :doc:`flow`：同一套 runner 代码如何不经修改即可适配三种执行模式。
+- :doc:`../guides/multi_node` 与 :doc:`../guides/hetero`：多节点部署与 GPU/真机异构集群配置。
+- :doc:`../reference/configuration`：完整的 Hydra 配置项参考。

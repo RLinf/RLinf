@@ -67,7 +67,11 @@ jobs:
       - name: Run pytest
         timeout-minutes: 40
         run: |
-          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH 
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH
+          # Avoid BLAS/OpenMP thread oversubscription across mp.spawn workers.
+          export OPENBLAS_NUM_THREADS=1
+          export OMP_NUM_THREADS=1
+          export MKL_NUM_THREADS=1
           source .venv/bin/activate
           no_ray_files=()
           ray_files=()
