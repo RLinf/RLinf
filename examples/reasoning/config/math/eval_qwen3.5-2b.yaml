@@ -12,7 +12,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    rollout: 6-7 # Visible GPU ranks; one model replica per TP × PP GPUs.
+    rollout: 3-4 # Visible GPU ranks; one model replica per TP × PP GPUs.
 
 runner:
   task_type: reasoning_eval
@@ -47,7 +47,7 @@ data:
   prompt_suffix: ' Please put your final answer in \boxed{}.'
   apply_chat_template: true
   apply_chat_template_kwargs:
-    enable_thinking: false
+    enable_thinking: true
   max_prompt_length: 2048
   filter_prompt_by_length: false # true excludes overlength questions; false reports an error.
   data_size: -1 # First N rows across validation files; -1 selects all rows.
@@ -58,8 +58,8 @@ data:
 rollout:
   rollout_backend: sglang
   model:
-    model_path: /mnt/public2/suheng/models/Qwen3-8B # HF model with tokenizer
-    model_type: qwen3
+    model_path: /mnt/public2/suheng/models/Qwen3.5-2B # HF model with tokenizer
+    model_type: qwen3.5
     precision: bf16
   tensor_parallel_size: 1
   pipeline_parallel_size: 1

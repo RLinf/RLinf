@@ -14,6 +14,8 @@ runner:
 
 algorithm:
   group_size: 1
+  loss_agg_func: token-mean
+  loss_scales: []
   recompute_logprobs: false
   normalize_advantages: false
   entropy_bonus: 0.0

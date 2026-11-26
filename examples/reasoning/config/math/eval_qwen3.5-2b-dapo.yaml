@@ -8,6 +8,11 @@ data:
     - /mnt/public2/suheng/data/trainset/DAPO-Math-17k/data/DAPO-17K.jsonl
   prompt_key: prompt
   answer_key: reward_model # ground_truth contains the reference integer.
-  prompt_suffix: "" # The dataset already requests a final "Answer: ..." line.
+  prompt_suffix: "" # The shared DAPO prompt supplies the final-answer format.
   data_size: 200
   val_rollout_batch_size: 100
+
+rollout:
+  model:
+    model_path: /mnt/public2/suheng/models/Qwen3-8B # HF model with tokenizer
+    model_type: qwen3

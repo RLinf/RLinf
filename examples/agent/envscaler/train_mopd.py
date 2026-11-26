@@ -22,6 +22,7 @@ from transformers import PreTrainedTokenizerBase
 
 from rlinf.agents.envscaler.agent_loop import EnvScalerAgentLoopWorker
 from rlinf.data.datasets.reasoning.envscaler import EnvScalerDataset
+from rlinf.data.datasets.reasoning.math_prompt import format_dapo_math_prompt
 from rlinf.runners.agent_training import run_agent_training
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.agent.agent_loop import AgentLoopOutput, MultiAgentLoopOutput
@@ -79,8 +80,15 @@ class EnvScalerDAPODataset(EnvScalerDataset):
         with open(self.math_path, encoding="utf-8") as source:
             for line in source:
                 question = json.loads(line)
+                for message in question["prompt"]:
+                    content = message.get("content")
+                    if message["role"] == "user" and isinstance(content, str):
+                        message["content"] = format_dapo_math_prompt(content)
                 prompt = self.tokenizer.apply_chat_template(
-                    question["prompt"], tokenize=False, add_generation_prompt=True
+                    question["prompt"],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    **self.apply_chat_template_kwargs,
                 )
                 rows.append(
                     {

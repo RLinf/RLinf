@@ -26,6 +26,8 @@ from transformers import AutoTokenizer
 from rlinf.agents.envscaler.agent_loop import EnvScalerRollout
 from rlinf.data.datasets.reasoning import create_reasoning_datasets
 
+QWEN3_NO_THINKING_SUFFIX = "<|im_start|>assistant\n<think>\n\n</think>\n\n"
+
 
 @pytest.mark.parametrize(
     ("variant", "mode", "source"),
@@ -88,6 +90,11 @@ def test_envscaler_dapo_mopd_batches(tmp_path):
     scenario_path = tmp_path / "scenarios.json"
     scenario_path.write_text(json.dumps(scenarios))
     math_path = tmp_path / "math.jsonl"
+    opening = "Solve the following math problem step by step. "
+    answer_format = (
+        "The last line of your response should be of the form Answer: $Answer."
+    )
+    reasoning = "You must conduct reasoning inside <think> and </think> firstly. "
     questions = [
         {
             "prompt": [{"role": "user", "content": f"What is {i}+1?"}],
@@ -95,6 +102,10 @@ def test_envscaler_dapo_mopd_batches(tmp_path):
         }
         for i in range(3)
     ]
+    questions[0]["prompt"][0]["content"] = opening + answer_format + "\n\nWhat is 0+1?"
+    questions[1]["prompt"][0]["content"] = (
+        opening + reasoning + answer_format + "\n\nWhat is 1+1?"
+    )
     math_path.write_text("\n".join(map(json.dumps, questions)))
     cfg.data.train_data_paths = [str(scenario_path)]
     cfg.data.environment_path = str(root / "191_env_metadata.json")
@@ -115,11 +126,19 @@ def test_envscaler_dapo_mopd_batches(tmp_path):
             "math",
             "tooluse",
         }
-        for answer, group in zip(batch["answer"], request.sample_contexts, strict=True):
+        for ids, answer, group in zip(
+            request.input_ids, batch["answer"], request.sample_contexts, strict=True
+        ):
             if group[0].teacher_key == "tooluse":
                 assert answer["task_id"] == scenarios[0]["task_id"]
                 assert answer["path"] == str(scenario_path)
             else:
+                prompt = tokenizer.decode(ids)
+                assert prompt.count(reasoning) == 1
+                assert prompt.count(r"Answer: \boxed{...}") == 1
+                assert "Answer: $Answer" not in prompt
+                assert f"\n\nWhat is {int(answer[0]) - 1}+1?\n\n" in prompt
+                assert prompt.endswith("<|im_end|>\n<|im_start|>assistant\n")
                 seen_math.add(answer[0])
     assert seen_math == {"1", "2", "3"}
 
@@ -141,6 +160,8 @@ def test_envscaler_rollout(conversational, monkeypatch):
     if conversational:
         cfg.agentloop.mode = "conversational"
         cfg.agentloop.user_model = "test-user"
+    else:
+        cfg.data.apply_chat_template_kwargs = {"enable_thinking": False}
 
     def user_reply(messages, **kwargs):
         if len(messages) == 2:
@@ -189,6 +210,8 @@ def test_envscaler_rollout(conversational, monkeypatch):
                 "Perform the following two-part administration request"
                 not in prompts[0]
             )
+        else:
+            assert all(p.endswith(QWEN3_NO_THINKING_SUFFIX) for p in prompts)
         if modify:
             assert "Subscription cancelled successfully" in prompts[-1]
         return [turn.reward_score for turn in result.single_turn_outputs]

@@ -12,7 +12,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    rollout,reward: 5-6
+    rollout,reward: 3-4
 
 runner:
   task_type: reasoning_eval
@@ -57,6 +57,8 @@ data:
   max_prompt_length: 4096
   filter_prompt_by_length: false
   apply_chat_template: false
+  apply_chat_template_kwargs:
+    enable_thinking: false
 
 agentloop:
   group_name: AgentLoopGroup

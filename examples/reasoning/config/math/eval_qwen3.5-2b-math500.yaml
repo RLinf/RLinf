@@ -4,6 +4,7 @@ defaults:
 
 data:
   dataset_name: MATH-500
+  prompt_suffix: "" # The shared DAPO prompt supplies the final-answer format.
   val_data_paths:
     - /mnt/public2/suheng/data/benchmark/MATH-500/test.jsonl
   val_rollout_batch_size: 100

@@ -28,6 +28,7 @@ import hydra
 import regex
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.data.datasets.reasoning.math_prompt import format_dapo_math_prompt
 from rlinf.scheduler import Worker
 from rlinf.scheduler.cluster import parse_rank_config
 from rlinf.utils.logging import get_logger
@@ -142,7 +143,10 @@ def _grade(final: str, reference: str, benchmark: str) -> tuple[bool, bool]:
 def _prepare_prompts(rows, tokenizer, data):
     questions = []
     for index, row in enumerate(rows):
-        content = row[data.prompt_key] + data.prompt_suffix
+        content = row[data.prompt_key]
+        if data.dataset_name in {"DAPO-17K", "MATH-500"}:
+            content = format_dapo_math_prompt(content)
+        content += data.prompt_suffix
         if data.apply_chat_template:
             content = tokenizer.apply_chat_template(
                 [{"role": "user", "content": content}],

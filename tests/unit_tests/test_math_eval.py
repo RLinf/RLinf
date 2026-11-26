@@ -28,6 +28,7 @@ from examples.reasoning.eval_math import (
     _score,
     _write_summary,
 )
+from rlinf.data.datasets.reasoning.math_prompt import format_dapo_math_prompt
 
 
 @pytest.mark.parametrize(
@@ -46,12 +47,30 @@ def test_aime_scores_final_boxed_integer(response, expected):
 
 def test_math500_scores_equivalent_latex():
     pytest.importorskip("math_verify")
-    assert _score(r"\boxed{\frac{3}{6}}", r"\frac{1}{2}", "MATH-500")
+    assert _grade(r"Answer: \boxed{\frac{3}{6}}", r"\frac{1}{2}", "MATH-500") == (
+        True,
+        True,
+    )
     assert not _score(r"\boxed{9}", "7", "MATH-500")
+
+
+def test_boxed_math_prompt_preserves_the_problem():
+    problem = "Consider these cases.\n\nFind all solutions."
+    legacy = (
+        "Solve the following math problem step by step. "
+        "The last line of your response should be of the form Answer: $Answer.\n\n"
+        + problem
+        + '\n\nRemember to put your answer on its own line after "Answer:".'
+    )
+    prompt = format_dapo_math_prompt(problem)
+    assert format_dapo_math_prompt(legacy) == format_dapo_math_prompt(prompt) == prompt
+    assert prompt.count(r"Answer: \boxed{...}") == 1
+    assert prompt.split("\n\n")[1:-1] == problem.split("\n\n")
 
 
 def test_dapo_uses_final_answer_line_and_signed_integers():
     assert _grade("Answer: 4\nAnswer: $-12345$", "-12345", "DAPO-17K") == (True, True)
+    assert _grade(r"Answer: \boxed{-12345}", "-12345", "DAPO-17K") == (True, True)
     assert _grade(r"Answer: \boxed{42}", "41", "DAPO-17K") == (False, True)
     assert _grade("Answer: 3.5", "3", "DAPO-17K") == (False, False)
 

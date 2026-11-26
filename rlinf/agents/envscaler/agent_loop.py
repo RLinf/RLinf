@@ -108,7 +108,11 @@ class EnvScalerRollout:
         reward = 0.0
         for _ in range(self.cfg.agentloop.max_turns):
             prompt = self.tokenizer.apply_chat_template(
-                messages, tools=tools, tokenize=False, add_generation_prompt=True
+                messages,
+                tools=tools,
+                tokenize=False,
+                add_generation_prompt=True,
+                **self.cfg.data.get("apply_chat_template_kwargs", {}),
             )
             turn_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
             budget = min(
