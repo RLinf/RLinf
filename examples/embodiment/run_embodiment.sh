@@ -4,36 +4,25 @@ export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
 export SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
 
-export MUJOCO_GL=${MUJOCO_GL:-"egl"}
-export PYOPENGL_PLATFORM=${PYOPENGL_PLATFORM:-"egl"}
-export ROBOTWIN_PATH=${ROBOTWIN_PATH:-"/path/to/RoboTwin"}
-export PYTHONPATH=${REPO_PATH}:${ROBOTWIN_PATH}:$PYTHONPATH
-
-# Base path to the BEHAVIOR dataset, which is the BEHAVIOR-1k repo's dataset folder
-# Only required when running the behavior experiment.
-export OMNIGIBSON_NO_OMNI_LOGS=${OMNIGIBSON_NO_OMNI_LOGS:-1}
-export OMNIGIBSON_DEBUG=${OMNIGIBSON_DEBUG:-0}
-export OMNIGIBSON_DATA_PATH=$OMNIGIBSON_DATA_PATH
-export OMNIGIBSON_DATASET_PATH=${OMNIGIBSON_DATASET_PATH:-$OMNIGIBSON_DATA_PATH/behavior-1k-assets/}
-export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_KEY_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson.key}
-export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_ASSET_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson-robot-assets/}
-export OMNIGIBSON_HEADLESS=${OMNIGIBSON_HEADLESS:-1}
-# Base path to Isaac Sim, only required when running the behavior experiment.
-export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
-export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
-export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
-
-# POLARIS dataset
-export POLARIS_DATA_PATH=${POLARIS_DATA_PATH:-"/path/to/dataset/PolaRiS-Hub"}
+export PYTHONPATH="${REPO_PATH}${PYTHONPATH:+:${PYTHONPATH}}"
+# setup_sim_env is defined in sim_env.sh.
+source "${EMBODIED_PATH}/sim_env.sh"
+setup_sim_env
 
 if [ -z "$1" ]; then
     CONFIG_NAME=${CONFIG_NAME:-"maniskill_ppo_openvlaoft"}
 else
     CONFIG_NAME=$1
+    shift
 fi
 
 # NOTE: Set the active robot platform (required for correct action dimension and normalization), supported platforms are LIBERO, ALOHA, BRIDGE, default is LIBERO
-ROBOT_PLATFORM=${2:-${ROBOT_PLATFORM:-"LIBERO"}}
+if [ "$#" -gt 0 ] && [[ "$1" != *=* && "$1" != +* && "$1" != ~* && "$1" != -* ]]; then
+    ROBOT_PLATFORM="$1"
+    shift
+else
+    ROBOT_PLATFORM=${ROBOT_PLATFORM:-"LIBERO"}
+fi
 
 export ROBOT_PLATFORM
 
@@ -54,11 +43,18 @@ mkdir -p "${LOG_DIR}"
 # Forward optional overrides exported by callers (e.g. tests/parity_tests/run_all.sh).
 # Sentinel: "-2" means "do not override, use YAML default". -1 is a legitimate value
 # (e.g. runner.max_steps=-1 means unlimited) and is forwarded as-is.
-EXTRA_OVERRIDES=""
-[ -n "${STEPS:-}" ]      && [ "$STEPS"      != "-2" ] && EXTRA_OVERRIDES+=" runner.max_steps=${STEPS}"
-[ -n "${SAVE_INTER:-}" ] && [ "$SAVE_INTER" != "-2" ] && EXTRA_OVERRIDES+=" runner.save_interval=${SAVE_INTER}"
-[ -n "${NODES:-}" ]      && [ "$NODES"      != "-2" ] && EXTRA_OVERRIDES+=" cluster.num_nodes=${NODES}"
+EXTRA_OVERRIDES=()
+[ -n "${STEPS:-}" ]      && [ "$STEPS"      != "-2" ] && EXTRA_OVERRIDES+=("runner.max_steps=${STEPS}")
+[ -n "${SAVE_INTER:-}" ] && [ "$SAVE_INTER" != "-2" ] && EXTRA_OVERRIDES+=("runner.save_interval=${SAVE_INTER}")
+[ -n "${NODES:-}" ]      && [ "$NODES"      != "-2" ] && EXTRA_OVERRIDES+=("cluster.num_nodes=${NODES}")
 
-CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} runner.logger.log_path=${LOG_DIR}${EXTRA_OVERRIDES}"
-echo ${CMD} > ${MEGA_LOG_FILE}
-${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
+CMD=(
+    python "${SRC_FILE}"
+    --config-path "${EMBODIED_PATH}/config/"
+    --config-name "${CONFIG_NAME}"
+    "runner.logger.log_path=${LOG_DIR}"
+    "${EXTRA_OVERRIDES[@]}"
+    "$@"
+)
+echo "${CMD[*]}" > "${MEGA_LOG_FILE}"
+"${CMD[@]}" 2>&1 | tee -a "${MEGA_LOG_FILE}"

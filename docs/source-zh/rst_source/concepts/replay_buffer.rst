@@ -1,5 +1,5 @@
-Replay Buffer 使用教程
-==============================
+Replay Buffer
+=============
 
 本教程聚焦 `TrajectoryReplayBuffer` 的 **实际使用** 与 **配置建议**。
 更完整的设计说明与数据流细节见 API 文档：:doc:`../reference/api/replay_buffer`。

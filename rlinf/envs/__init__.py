@@ -46,7 +46,10 @@ class SupportedEnvType(Enum):
     MUJOCO_WARP = "mujoco_warp"
     DIFFUSION = "diffusion"
     POLARIS = "polaris"
+    DEXJOCO = "dexjoco"
+    ROBOLAB = "robolab"
     SIMPLE = "simple"
+    G1_MIMIC = "g1_mimic"
 
     @classmethod
     def _missing_(cls, value: object) -> "SupportedEnvType | None":
@@ -194,16 +197,32 @@ def get_env_cls(env_type: str, env_cfg=None):
 
         return MujocoWarpEnv
     elif env_type == SupportedEnvType.DIFFUSION:
-        from rlinf.envs.sim.diffusion import GenerationEnv
+        from rlinf.envs.sim.diffusion.generation_env import GenerationEnv
 
         return GenerationEnv
     elif env_type == SupportedEnvType.POLARIS:
         from rlinf.envs.sim.polaris.polaris_env import PolarisEnv
 
         return PolarisEnv
+    elif env_type == SupportedEnvType.DEXJOCO:
+        from rlinf.envs.sim.dexjoco.dexjoco_env import DexJoCoEnv
+
+        return DexJoCoEnv
+    elif env_type == SupportedEnvType.ROBOLAB:
+        from rlinf.envs.sim.robolab.robolab_env import RoboLabEnv
+
+        return RoboLabEnv
     elif env_type == SupportedEnvType.SIMPLE:
         from rlinf.envs.sim.simple.simple_env import SimpleEnv
 
         return SimpleEnv
+    elif env_type == SupportedEnvType.G1_MIMIC:
+        if env_cfg is not None and env_cfg.get("eval_tasks", None):
+            from rlinf.envs.sim.g1_mimic.g1_mimic_eval_env import G1MimicEvalEnv
+
+            return G1MimicEvalEnv
+        from rlinf.envs.sim.g1_mimic.g1_mimic_env import G1MimicEnv
+
+        return G1MimicEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")

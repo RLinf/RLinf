@@ -1,5 +1,5 @@
-RECAP: Offline Advantage-Based Policy Optimization
-=====================================================
+RECAP
+=====
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/recap.png
    :align: center
@@ -44,105 +44,29 @@ Improve a π₀.₅ policy offline (no new rollouts) by scoring existing data wi
 | **You'll do:** compute returns → SFT a value model → compute advantages → CFG-train the policy → evaluate.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · SigLIP2 + Gemma3 + π₀.₅ checkpoints · LeRobot-format datasets (steps below).
 
-Pipeline
---------
-
-RECAP consists of four sequential stages:
-
-.. code-block:: text
-
-   ┌──────────────────────┐     ┌──────────────────────┐     ┌────────────────────────┐     ┌──────────────────────┐
-   │  Step 1              │     │  Step 2              │     │  Step 3                │     │  Step 4              │
-   │  Compute Returns     │────▶│  Value Model SFT     │────▶│  Compute Advantages    │────▶│  CFG Training        │
-   │                      │     │                      │     │                        │     │                      │
-   │  Compute discounted  │     │  Train a value model │     │  Compute per-timestep  │     │  Train the policy    │
-   │  returns for each    │     │  to predict returns  │     │  advantages using the  │     │  with classifier-    │
-   │  trajectory          │     │  from observations   │     │  trained value model   │     │  free guidance       │
-   └──────────────────────┘     └──────────────────────┘     └────────────────────────┘     └──────────────────────┘
-
-**Core Idea**
-
-1. **Compute Returns**: For each trajectory, compute discounted returns in reverse using :math:`G_t = r_t + \gamma \cdot G_{t+1}`, generating sidecar files without modifying the original data.
-
-2. **Value Model SFT**: Train a value model (VLM backbone + Value Head) to predict normalized returns from observations (images + language instructions).
-
-3. **Compute Advantages**: Use the trained value model to compute per-timestep advantages via :math:`A_t = \text{normalize}(r_{t:t+N}) + \gamma^N \cdot V(o_{t+N}) - V(o_t)`, then label samples as positive/negative based on a quantile threshold.
-
-4. **CFG Training**: Train the policy model using advantage labels — positive (high-advantage) samples serve as conditional inputs and negative (low-advantage) samples as unconditional inputs, enabling classifier-free guidance for policy optimization.
-
 How RECAP Works
 ---------------
 
-**RECAP Core Components**
+RECAP runs four offline stages without online environment rollouts:
 
-1. **Return Computation**
-
-   - For SFT datasets (all successful trajectories): per-step reward :math:`r_t = -1`, terminal step :math:`r_T = 0`
-   - For rollout datasets (containing failures): failed trajectory terminal step :math:`r_T = r_{\text{fail}}` (e.g., :math:`-300`)
-   - Discount factor :math:`\gamma` defaults to :math:`1.0` (undiscounted)
-
-2. **Value Model**
-
-   - Based on SigLIP2 vision encoder + Gemma3 language model + learnable Critic Expert
-   - Uses Categorical Value Distribution with 201 bins by default
-   - Output range :math:`[-1, 0]` (normalized return space)
-
-3. **Advantage Estimation**
-
-   - N-step lookahead advantage: :math:`A_t = \text{normalize}(r_{t:t+N}) + \gamma^N \cdot V(o_{t+N}) - V(o_t)`
-   - Quantile threshold: top :math:`X\%` of samples labeled as positive (default :math:`X = 30`)
-   - Supports multi-GPU distributed inference
-
-4. **Classifier-Free Guidance (CFG) Training**
-
-   - Based on the OpenPI (pi0.5) policy model
-   - ``positive_only_conditional`` mode: only positive samples serve as conditional inputs; negative samples are always unconditional
-   - Positive samples are randomly dropped to unconditional with probability ``unconditional_prob`` (default :math:`0.1`) for dropout regularization
-   - At inference time, ``cfgrl_guidance_scale`` controls the guidance strength
+1. **Compute Returns:** Compute reverse discounted cumulative returns per trajectory (default ``gamma: 1.0``; SFT demos get per-step reward ``-1`` and terminal ``0``, while failed rollouts get terminal penalty ``failure_reward``, e.g. ``-300``) and write sidecar return files without modifying raw data.
+2. **Value Model SFT:** Train a value model (SigLIP2 vision encoder + Gemma3 language model + learnable Critic Expert) to predict a 201-bin categorical value distribution over normalized returns in ``[-1, 0]``.
+3. **Compute Advantages:** Estimate N-step lookahead advantages with the trained value model across multiple GPUs and label the top quantile (default top 30%) as positive.
+4. **CFG Training:** Fine-tune the OpenPI π₀.₅ policy with Classifier-Free Guidance — positive samples act as conditional inputs (randomly dropped to unconditional with probability ``unconditional_prob``, default ``0.1``) and negative samples act as unconditional inputs. At inference time, ``cfgrl_guidance_scale`` steers actions toward high-advantage behavior.
 
 Installation
 ------------
 
-1. Clone RLinf Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
-.. code:: bash
+.. tab-set::
 
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   .. tab-item:: OpenPI (LIBERO / ManiSkill)
 
-2. Install Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+      .. code-block:: bash
 
-**Option 1: Docker Image**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-Please switch to the OpenPI virtual environment via the built-in ``switch_env`` utility:
-
-.. code:: bash
-
-   source switch_env openpi
-
-**Option 2: Custom Environment**
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
 
 Download the Model
@@ -154,33 +78,25 @@ The RECAP pipeline requires the following pretrained models:
 - **Gemma3-270M**: Language model for Step 2 value model training
 - **pi0.5 base (PyTorch)**: Policy model for Step 4 CFG training. Refer to `openpi <https://github.com/Physical-Intelligence/openpi>`_ for obtaining model weights and converting to PyTorch format
 
-**Models for Step 2**
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: SigLIP2 + Gemma3 (Value Model)
 
-   # Download models (choose either method)
-   # Method 1: Using git clone
-   git lfs install
-   git clone https://huggingface.co/google/siglip2-so400m-patch14-224
-   git clone https://huggingface.co/google/gemma-3-270m
+      .. code-block:: bash
 
-   # Method 2: Using huggingface-hub
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download google/siglip2-so400m-patch14-224 --local-dir siglip2-so400m-patch14-224
-   hf download google/gemma-3-270m --local-dir gemma-3-270m
+         hf download google/siglip2-so400m-patch14-224 --local-dir ./siglip2-so400m-patch14-224
+         hf download google/gemma-3-270m --local-dir ./gemma-3-270m
 
-After downloading, make sure to correctly specify the model paths in the configuration files:
+After downloading, set the model paths in the Step 2 and Step 4 configs:
 
-.. code:: yaml
+.. code-block:: yaml
 
    # Step 2 value model configuration
    actor:
      model:
-       siglip_path: /path/to/siglip2-so400m-patch14-224
-       gemma3_path: /path/to/gemma-3-270m
-       tokenizer_path: /path/to/gemma-3-270m
+       siglip_path: ./siglip2-so400m-patch14-224
+       gemma3_path: ./gemma-3-270m
+       tokenizer_path: ./gemma-3-270m
 
    # Step 4 policy model configuration
    actor:
@@ -198,7 +114,7 @@ RECAP uses datasets in the LeRobot format. Datasets are categorized into two typ
 
 Example dataset configuration:
 
-.. code:: yaml
+.. code-block:: yaml
 
    data:
      train_data_paths:
@@ -252,9 +168,9 @@ This step computes discounted cumulative returns for each trajectory in reverse 
 
 **Configuration**
 
-The configuration file is located at ``examples/offline_rl/config/recap_compute_returns.yaml``:
+Set dataset paths and output tag in ``examples/offline_rl/config/recap_compute_returns.yaml``:
 
-.. code:: yaml
+.. code-block:: yaml
 
    data:
      train_data_paths:
@@ -262,39 +178,51 @@ The configuration file is located at ``examples/offline_rl/config/recap_compute_
          type: sft
        - dataset_path: /path/to/rollout_dataset
          type: rollout
-
-     gamma: 1.0              # discount factor
-     failure_reward: -300.0   # terminal reward for failed trajectories
-     tag: "fail300"           # output file tag
-     num_workers: 128         # parallel processing threads
-
-**Key Parameters**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 15 55
-
-   * - Parameter
-     - Default
-     - Description
-   * - ``data.gamma``
-     - ``1.0``
-     - Discount factor. :math:`1.0` means undiscounted (simple sum of future rewards)
-   * - ``data.failure_reward``
-     - ``-300.0``
-     - Penalty for failed trajectory terminal steps. Larger magnitude increases separation between success and failure returns
-   * - ``data.tag``
-     - ``null``
-     - Output file tag, generates ``meta/returns_{tag}.parquet``
-   * - ``data.num_workers``
-     - ``128``
-     - Number of threads for parallel parquet file processing
+     eval_data_paths:          # must cover Step 2's eval_data_paths
+       - dataset_path: /path/to/eval_dataset
+         type: rollout
+     tag: "fail300"
 
 **Launch Command**
 
-.. code:: bash
+.. code-block:: bash
 
    bash examples/offline_rl/advantage_labeling/recap/process/run_compute_returns.sh recap_compute_returns
+
+.. dropdown:: Advanced configuration (optional)
+
+   The shipped config already sets ``gamma: 1.0``, ``failure_reward: -300.0``, and ``num_workers: 128``:
+
+   .. code-block:: yaml
+
+      data:
+        gamma: 1.0              # discount factor
+        failure_reward: -300.0   # terminal reward for failed trajectories
+        tag: "fail300"           # output file tag
+        num_workers: 128         # parallel processing threads
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 15 55
+
+      * - Parameter
+        - Default
+        - Description
+      * - ``data.gamma``
+        - ``1.0``
+        - Discount factor. ``1.0`` means undiscounted (simple sum of future rewards)
+      * - ``data.failure_reward``
+        - ``-300.0``
+        - Penalty for failed trajectory terminal steps. Larger magnitude increases separation between success and failure returns
+      * - ``data.eval_data_paths``
+        - ``[]``
+        - Eval datasets; must include every dataset in Step 2's ``data.eval_data_paths``
+      * - ``data.tag``
+        - ``null``
+        - Output file tag, generates ``meta/returns_{tag}.parquet``
+      * - ``data.num_workers``
+        - ``128``
+        - Number of threads for parallel parquet file processing
 
 **Output Files**
 
@@ -303,11 +231,11 @@ The configuration file is located at ``examples/offline_rl/config/recap_compute_
 
 **Verification**
 
-.. code:: bash
+.. code-block:: bash
 
    python3 -c "
    import json
-   stats = json.load(open('/path/to/dataset/meta/stats.json'))
+   stats = json.load(open('./datasets/rollout/meta/stats.json'))
    assert 'return' in stats
    print('return stats:', stats['return'])
    "
@@ -326,13 +254,13 @@ The value model consists of three components:
 - **Language Model**: Gemma3-270M (640-dim) — processes language instructions
 - **Critic Expert**: Learnable expert head that maps multimodal representations to value predictions
 
-The output is a Categorical Value Distribution over 201 bins spanning :math:`[-1, 0]`.
+The output is a Categorical Value Distribution over 201 bins spanning ``[-1, 0]``.
 
 **Configuration**
 
-The configuration file is located at ``examples/offline_rl/config/recap_value_model_sft.yaml``. Key fields:
+Set dataset paths, Step 1 ``tag``, and model paths (from Download the Model above) in ``examples/offline_rl/config/recap_value_model_sft.yaml``:
 
-.. code:: yaml
+.. code-block:: yaml
 
    data:
      train_data_paths:
@@ -342,66 +270,71 @@ The configuration file is located at ``examples/offline_rl/config/recap_value_mo
          robot_type: "libero"
          model_type: "pi05"
      tag: "fail300"                     # must match Step 1 tag
-     action_horizon: 10
-     normalize_to_minus_one_zero: true  # normalize to [-1, 0]
-
-     eval_data_paths:                   # optional, recommended
-       - dataset_path: /path/to/eval_dataset
-         max_samples: 10000
-         robot_type: "libero"
-         model_type: "pi05"
-
-   actor:
-     micro_batch_size: 32
-     global_batch_size: 256
-     model:
-       freeze_vlm: false         # whether to freeze VLM backbone
-       value_dropout: 0.0        # Value Head dropout
-     optim:
-       lr: 5.0e-5               # VLM backbone learning rate
-       value_lr: 1.0e-4          # Value Head learning rate
-       weight_decay: 1.0e-10
-       lr_warmup_steps: 500
-
-   runner:
-     max_epochs: 30000
-     save_interval: 3000         # checkpoint save interval
-
-**Key Parameters**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 35 15 50
-
-   * - Parameter
-     - Default
-     - Description
-   * - ``data.tag``
-     - ``null``
-     - Same tag as Step 1, used to read the corresponding ``returns_{tag}.parquet``
-   * - ``data.normalize_to_minus_one_zero``
-     - ``true``
-     - Normalization mode. ``true``: map to :math:`[-1, 0]`; ``false``: map to :math:`[0, 1]`
-   * - ``actor.model.freeze_vlm``
-     - ``false``
-     - Freeze the vision encoder. When ``true``, also set ``actor.fsdp_config.use_orig_params: True``
-   * - ``actor.model.value_dropout``
-     - ``0.0``
-     - Dropout rate before the Value Head
-   * - ``actor.optim.lr``
-     - ``5.0e-5``
-     - VLM backbone learning rate
-   * - ``actor.optim.value_lr``
-     - ``1.0e-4``
-     - Value Head learning rate
 
 **Launch Command**
 
 The training script automatically initializes the Ray cluster:
 
-.. code:: bash
+.. code-block:: bash
 
    bash examples/offline_rl/advantage_labeling/recap/run_value_sft.sh recap_value_model_sft
+
+.. dropdown:: Advanced configuration (optional)
+
+   The shipped config already sets evaluation sampling, batch sizes, optimizer hyperparameters, and save intervals:
+
+   .. code-block:: yaml
+
+      data:
+        action_horizon: 10
+        normalize_to_minus_one_zero: true  # normalize to [-1, 0]
+        eval_data_paths:                   # optional, recommended
+          - dataset_path: /path/to/eval_dataset
+            max_samples: 10000
+            robot_type: "libero"
+            model_type: "pi05"
+
+      actor:
+        micro_batch_size: 32
+        global_batch_size: 256
+        model:
+          freeze_vlm: false         # whether to freeze VLM backbone
+          value_dropout: 0.0        # Value Head dropout
+        optim:
+          lr: 5.0e-5               # VLM backbone learning rate
+          value_lr: 1.0e-4          # Value Head learning rate
+          weight_decay: 1.0e-10
+          lr_warmup_steps: 500
+
+      runner:
+        max_epochs: 30000
+        save_interval: 3000         # checkpoint save interval
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 35 15 50
+
+      * - Parameter
+        - Default
+        - Description
+      * - ``data.tag``
+        - ``null``
+        - Same tag as Step 1, used to read the corresponding ``returns_{tag}.parquet``
+      * - ``data.normalize_to_minus_one_zero``
+        - ``true``
+        - Normalization mode. ``true`` maps to ``[-1, 0]``; ``false`` maps to ``[0, 1]``
+      * - ``actor.model.freeze_vlm``
+        - ``false``
+        - Freeze the vision encoder. When ``true``, also set ``actor.fsdp_config.use_orig_params: True``
+      * - ``actor.model.value_dropout``
+        - ``0.0``
+        - Dropout rate before the Value Head
+      * - ``actor.optim.lr``
+        - ``5.0e-5``
+        - VLM backbone learning rate
+      * - ``actor.optim.value_lr``
+        - ``1.0e-4``
+        - Value Head learning rate
 
 **Output**
 
@@ -426,28 +359,18 @@ The training script automatically initializes the Ray cluster:
 Step 3: Compute Advantages
 -----------------------------
 
-Using the value model trained in Step 2, compute per-timestep advantage values for the dataset and label samples as positive/negative based on a quantile threshold.
-
-**Advantage Formula**
-
-.. math::
-
-   A_t = \text{normalize}\left(\sum_{k=0}^{N-1} \gamma^k r_{t+k}\right) + \gamma^N \cdot V(o_{t+N}) - V(o_t)
-
-where :math:`N` is the lookahead steps (``advantage_lookahead_step``) and :math:`\gamma` is the discount factor.
+Using the value model trained in Step 2, compute per-timestep N-step lookahead advantages (configured via ``advantage_lookahead_step`` and ``gamma``) for the dataset and label samples as positive/negative based on a quantile threshold.
 
 **Configuration**
 
-The configuration file is located at ``examples/offline_rl/config/recap_compute_advantages.yaml``:
+Set the Step 2 checkpoint path, tags, and dataset paths in ``examples/offline_rl/config/recap_compute_advantages.yaml``:
 
-.. code:: yaml
+.. code-block:: yaml
 
    advantage:
      value_checkpoint: /path/to/value_checkpoint
-     positive_quantile: 0.3      # top 30% labeled as positive
      tag: "fail300_N10_ckpt18000_q30"
      returns_tag: "fail300"       # must match Step 1 tag
-     batch_size: 1024
 
    data:
      train_data_paths:
@@ -455,41 +378,51 @@ The configuration file is located at ``examples/offline_rl/config/recap_compute_
          robot_type: "libero"
          type: "sft"
          weight: 1.0
-     advantage_lookahead_step: 10   # N-step lookahead
-     gamma: 1.0
-
-**Key Parameters**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 35 15 50
-
-   * - Parameter
-     - Default
-     - Description
-   * - ``advantage.value_checkpoint``
-     - required
-     - Path to the value model checkpoint from Step 2
-   * - ``advantage.positive_quantile``
-     - ``0.3``
-     - Positive sample ratio. :math:`0.3` means the top 30% by advantage value are labeled as positive
-   * - ``data.advantage_lookahead_step``
-     - ``10``
-     - Lookahead steps :math:`N`, i.e., how many future steps of rewards to consider
-   * - ``advantage.returns_tag``
-     - ``null``
-     - Tag for reading the return file generated by Step 1
-   * - ``advantage.tag``
-     - ``null``
-     - Output advantage file tag, generates ``meta/advantages_{tag}.parquet``
 
 **Launch Command**
 
 Supports multi-GPU distributed inference:
 
-.. code:: bash
+.. code-block:: bash
 
    bash examples/offline_rl/advantage_labeling/recap/process/run_compute_advantages.sh recap_compute_advantages
+
+.. dropdown:: Advanced configuration (optional)
+
+   The shipped config already sets ``positive_quantile: 0.3``, ``batch_size: 1024``, ``advantage_lookahead_step: 10``, and ``gamma: 1.0``:
+
+   .. code-block:: yaml
+
+      advantage:
+        positive_quantile: 0.3      # top 30% labeled as positive
+        batch_size: 1024
+
+      data:
+        advantage_lookahead_step: 10   # N-step lookahead
+        gamma: 1.0
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 35 15 50
+
+      * - Parameter
+        - Default
+        - Description
+      * - ``advantage.value_checkpoint``
+        - required
+        - Path to the value model checkpoint from Step 2
+      * - ``advantage.positive_quantile``
+        - ``0.3``
+        - Positive sample ratio. ``0.3`` means the top 30% by advantage value are labeled as positive
+      * - ``data.advantage_lookahead_step``
+        - ``10``
+        - Lookahead steps N, i.e., how many future steps of rewards to consider
+      * - ``advantage.returns_tag``
+        - ``null``
+        - Tag for reading the return file generated by Step 1
+      * - ``advantage.tag``
+        - ``null``
+        - Output advantage file tag, generates ``meta/advantages_{tag}.parquet``
 
 **Output Files**
 
@@ -498,11 +431,11 @@ Supports multi-GPU distributed inference:
 
 **Verification**
 
-.. code:: bash
+.. code-block:: bash
 
    python3 -c "
    import pandas as pd
-   df = pd.read_parquet('/path/to/dataset/meta/advantages_fail300_N10_ckpt18000_q30.parquet')
+   df = pd.read_parquet('./datasets/rollout/meta/advantages_fail300_N10_ckpt18000_q30.parquet')
    print(f'samples={len(df)}, columns={list(df.columns)}')
    print(df[['advantage_continuous']].describe())
    "
@@ -522,13 +455,12 @@ Using the advantage labels from Step 3, train the OpenPI policy model with class
 
 **Configuration**
 
-The configuration file is located at ``examples/offline_rl/config/cfg_rl_openpi.yaml``:
+Set ``data.advantage_tag``, dataset paths, and ``actor.model.model_path`` in ``examples/offline_rl/config/cfg_rl_openpi.yaml``:
 
-.. code:: yaml
+.. code-block:: yaml
 
    data:
      advantage_tag: "fail300_N10_ckpt18000_q30"   # must match Step 3 advantage.tag
-     balance_dataset_weights: true
      train_data_paths:
        - dataset_path: /path/to/sft_dataset
          type: sft
@@ -538,54 +470,64 @@ The configuration file is located at ``examples/offline_rl/config/cfg_rl_openpi.
          weight: 1.0
 
    actor:
-     micro_batch_size: 32
-     global_batch_size: 512
      model:
        model_path: /path/to/pi05_base_pytorch
-       openpi:
-         config_name: "pi05_libero"
-         positive_only_conditional: true
-         unconditional_prob: 0.1
-         cfgrl_guidance_scale: 1.0
-     optim:
-       lr: 1.0e-5
-       lr_scheduler: cosine
-       lr_warmup_steps: 5000
-       total_training_steps: 30000
-
-**Key Parameters**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 40 15 45
-
-   * - Parameter
-     - Default
-     - Description
-   * - ``data.advantage_tag``
-     - ``null``
-     - Matches Step 3's ``advantage.tag`` for reading advantage labels
-   * - ``actor.model.openpi.positive_only_conditional``
-     - ``true``
-     - Only positive samples serve as conditional inputs. When ``false``, both positive and negative samples are conditional
-   * - ``actor.model.openpi.unconditional_prob``
-     - ``0.1``
-     - Probability of dropping samples to unconditional. When ``positive_only_conditional`` is enabled, applies only to positive samples; otherwise applies to all samples
-   * - ``actor.model.openpi.cfgrl_guidance_scale``
-     - ``1.0``
-     - Guidance scale at inference. Higher values favor high-advantage actions more strongly
-   * - ``actor.model.openpi.config_name``
-     - ``pi05_libero``
-     - Data transform config. Use ``pi05_libero`` for LIBERO, ``pi05_maniskill_sim_real_co_training`` for Franka
-   * - ``data.balance_dataset_weights``
-     - ``true``
-     - Balance sampling weights by dataset size
 
 **Launch Command**
 
-.. code:: bash
+.. code-block:: bash
 
    bash examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh cfg_rl_openpi
+
+.. dropdown:: Advanced configuration (optional)
+
+   The shipped config already sets CFG conditioning, batch size, and optimizer defaults:
+
+   .. code-block:: yaml
+
+      data:
+        balance_dataset_weights: true
+
+      actor:
+        micro_batch_size: 32
+        global_batch_size: 512
+        model:
+          openpi:
+            config_name: "pi05_libero"
+            positive_only_conditional: true
+            unconditional_prob: 0.1
+            cfgrl_guidance_scale: 1.0
+        optim:
+          lr: 1.0e-5
+          lr_scheduler: cosine
+          lr_warmup_steps: 5000
+          total_training_steps: 30000
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 40 15 45
+
+      * - Parameter
+        - Default
+        - Description
+      * - ``data.advantage_tag``
+        - ``null``
+        - Matches Step 3's ``advantage.tag`` for reading advantage labels
+      * - ``actor.model.openpi.positive_only_conditional``
+        - ``true``
+        - Only positive samples serve as conditional inputs. When ``false``, both positive and negative samples are conditional
+      * - ``actor.model.openpi.unconditional_prob``
+        - ``0.1``
+        - Probability of dropping samples to unconditional. When ``positive_only_conditional`` is enabled, applies only to positive samples; otherwise applies to all samples
+      * - ``actor.model.openpi.cfgrl_guidance_scale``
+        - ``1.0``
+        - Guidance scale at inference. Higher values favor high-advantage actions more strongly
+      * - ``actor.model.openpi.config_name``
+        - ``pi05_libero``
+        - Data transform config. Use ``pi05_libero`` for LIBERO, ``pi05_maniskill_sim_real_co_training`` for Franka
+      * - ``data.balance_dataset_weights``
+        - ``true``
+        - Balance sampling weights by dataset size
 
 **Key Metrics**
 
@@ -593,223 +535,50 @@ The configuration file is located at ``examples/offline_rl/config/cfg_rl_openpi.
 - ``train/actor/grad_norm``: Gradient norm
 
 
-Visualize Advantages
--------------------------
+.. dropdown:: Visualize Advantages (optional)
 
-After Step 3, use ``examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py`` to analyze the advantage distribution,
-including advantage histograms, value prediction distributions, per-episode positive rates, and episode replay videos with advantage annotations.
+   After Step 3, run ``visualize_advantage_dataset.py`` to generate distribution panels (``advantage_distribution.png``), per-episode summaries (``episode_{N}_summary.png``), and annotated replay videos (``episode_{N}.mp4``). Pass ``--no-video`` for plots only, or ``--episodes 0 5 10`` to select specific episodes:
 
-**Basic Usage**
+   .. code-block:: bash
 
-Generate distribution plots and episode videos:
+      python examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py \
+          --dataset ./datasets/rollout \
+          --output ./outputs/advantage_viz \
+          --tag "fail300_N10_ckpt18000_q30" \
+          --num-episodes 10
 
-.. code:: bash
+.. dropdown:: Advanced Usage (Threshold Relabeling & Iterative Optimization)
 
-   python examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py \
-       --dataset /path/to/your/dataset \
-       --output outputs/advantage_viz \
-       --tag "fail300_N10_ckpt18000_q30" \
-       --num-episodes 10
+   **Threshold relabeling**
 
-Distribution plot only (no videos):
+   Adjust the quantile threshold on CPU without rerunning GPU inference (reuses ``advantage_continuous``). Pass ``--dataset_root`` with ``--advantage_lookahead_step`` instead of ``--dataset_paths`` to recompute advantages across a directory of datasets:
 
-.. code:: bash
+   .. code-block:: bash
 
-   python examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py \
-       --dataset /path/to/your/dataset \
-       --output outputs/advantage_viz \
-       --tag "fail300_N10_ckpt18000_q30" \
-       --no-video
+      python examples/offline_rl/advantage_labeling/recap/process/relabel_advantages.py \
+          --dataset_paths ./datasets/sft ./datasets/rollout \
+          --source_tag "fail300_N10_ckpt18000_q30" \
+          --new_tag "fail300_N10_ckpt18000_q20" \
+          --positive_quantile 0.2
 
-Visualize specific episodes:
+   **Iterative optimization**
 
-.. code:: bash
+   Collect new rollouts with the Step 4 policy and restart from Step 1 using fresh tags per iteration:
 
-   python examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py \
-       --dataset /path/to/your/dataset \
-       --output outputs/advantage_viz \
-       --tag "fail300_N10_ckpt18000_q30" \
-       --episodes 0 5 10 20
+   .. code-block:: text
 
-**Key Parameters**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 15 55
-
-   * - Parameter
-     - Default
-     - Description
-   * - ``--dataset``
-     - required
-     - Path to LeRobot dataset
-   * - ``--output``
-     - ``outputs/advantage_viz``
-     - Output directory
-   * - ``--tag``
-     - ``null``
-     - Advantage file tag, reads ``meta/advantages_{tag}.parquet``
-   * - ``--num-episodes``
-     - ``10``
-     - Number of episodes to visualize (``0`` for all)
-   * - ``--episodes``
-     - ``null``
-     - Specific episode indices to visualize
-   * - ``--no-video``
-     - ``false``
-     - Skip video generation, output static plots only
-   * - ``--threshold``
-     - auto-detected
-     - Advantage threshold. When not set, automatically inferred from ``mixture_config.yaml`` or data
-
-**Output Contents**
-
-- ``advantage_distribution.png``: 6-subplot comprehensive statistics panel (advantage histogram, value distribution, scatter plot, per-episode positive rate, per-episode advantage mean, statistics summary)
-- ``episode_{N}_summary.png``: Key frames + value/advantage time series for each episode (frames above threshold highlighted with green border)
-- ``episode_{N}.mp4``: Per-frame replay video with advantage annotations
-
-Run It
-------
-
-Follow the numbered RECAP stages above to generate returns, train the value model, compute advantages, and train the CFG policy.
+      Iter 1: tag="fail300"          → Train Value Model → tag="fail300_N10_ckpt18000_q30"     → CFG Training
+      Iter 2: tag="fail300_iter2"    → Train Value Model → tag="fail300_iter2_N10_ckpt6000_q20" → CFG Training
 
 Visualization and Results
 -------------------------
 
-For metric definitions, see :doc:`Training metrics <../../reference/metrics>`.
+Track Step 2 (``logs/value_sft/``) and Step 4 (``logs/cfg_sft/``) metrics with TensorBoard (``tensorboard --logdir ./logs --port 6006``). For metric definitions and logger backends, see :doc:`Training metrics <../../reference/metrics>`.
 
+We reproduce the RECAP pipeline on `LIBERO-10 <https://github.com/Lifelong-Robot-Learning/LIBERO>`_ Task 0 using the `RECAP-Libero10-Task0-48succ-Data <https://huggingface.co/datasets/RLinf/RECAP-Libero10-Task0-48succ-Data/tree/main>`_ dataset (expert SFT demos, 4,096 mixed rollouts from a few-shot π\ :sub:`0.5` policy, and a held-out eval split). After one RECAP iteration, success rate rises from **48.8%** (few-shot SFT baseline in this compact setup) to **66.5%** (+17.7%).
 
-**TensorBoard Logging**
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/recap_libero10_task0.png
+   :align: center
+   :width: 55%
 
-.. code:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-The RECAP pipeline generates two subdirectories under ``logs/``:
-
-- ``logs/value_sft/``: Value model training logs (Step 2)
-- ``logs/cfg_sft/``: CFG policy training logs (Step 4)
-
-**Train Log Tool Integration**
-
-.. code:: yaml
-
-   runner:
-     logger:
-       log_path: "../results"
-       project_name: rlinf
-       experiment_name: "recap_experiment"
-       logger_backends: ["tensorboard"]   # also supports wandb, swanlab
-
-
-Dataset
----------
-
-We provide a reproduced experiment on the `LIBERO-10 <https://github.com/Lifelong-Robot-Learning/LIBERO>`_ benchmark (Task 0) to demonstrate the RECAP pipeline.
-
-- **SFT data**: Expert demonstration data from LIBERO-10 (successful trajectories)
-- **Rollout data**: 4,096 trajectories collected by a few-shot π\ :sub:`0.5` policy on Task 0, containing both successful and failed episodes
-- **Eval data**: A held-out set collected by the same few-shot π\ :sub:`0.5` policy, used in Step 2 to monitor value model overfitting
-
-.. note::
-
-   This tutorial intentionally uses a few-shot π\ :sub:`0.5` policy with a moderate
-   initial success rate so that RECAP's offline improvement can be observed in a
-   compact Task 0 example. The baseline below is scoped to this reproduced setup;
-   it is not intended to represent the general π\ :sub:`0.5` SFT performance on
-   the full LIBERO benchmark.
-
-The dataset is available `here <https://huggingface.co/datasets/RLinf/RECAP-Libero10-Task0-48succ-Data/tree/main>`_.
-
-
-
-RECAP Results
---------------
-
-After one iteration of the RECAP pipeline on LIBERO-10 Task 0, the success rate improves from **48.8%** (the few-shot SFT baseline in this tutorial setup) to **66.5%** (RECAP), an absolute improvement of **17.7%**.
-
-.. raw:: html
-
-   <div style="display: flex; justify-content: center; margin: 20px 0;">
-     <div style="flex: 0.5; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/recap_libero10_task0.png" style="width: 100%;"/>
-       <p><em>RECAP results on LIBERO-10 Task 0</em></p>
-     </div>
-   </div>
-
-Advanced Usage
------------------
-
-Threshold Relabeling
-~~~~~~~~~~~~~~~~~~~~~~~
-
-To adjust the quantile threshold (e.g., from 30% to 20%) without rerunning the full Step 3,
-use ``relabel_advantages.py`` for threshold-only relabeling:
-
-.. code:: bash
-
-   cd examples/offline_rl/advantage_labeling/recap/process
-   python relabel_advantages.py \
-       --dataset_paths /path/to/sft_dataset /path/to/rollout_dataset \
-       --source_tag "fail300_N10_ckpt18000_q30" \
-       --new_tag "fail300_N10_ckpt18000_q20" \
-       --positive_quantile 0.2
-
-You can also use ``--dataset_root`` to specify a root directory containing multiple datasets, with ``--advantage_lookahead_step`` to recompute advantages:
-
-.. code:: bash
-
-   python relabel_advantages.py \
-       --dataset_root /path/to/dataset_root \
-       --advantage_lookahead_step 20 \
-       --positive_quantile 0.3
-
-This script reads existing continuous advantage values (``advantage_continuous``), updates only the threshold and boolean labels, avoiding redundant GPU inference.
-
-Iterative Optimization
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-RECAP supports iterative optimization: use the policy trained in Step 4 to collect new data, then restart from Step 1.
-Use different tags for each iteration to track results:
-
-.. code-block:: text
-
-   Iter 1: tag="fail300"          → Train Value Model → tag="fail300_N10_ckpt18000_q30"     → CFG Training
-   Iter 2: tag="fail300_iter2"    → Train Value Model → tag="fail300_iter2_N10_ckpt6000_q20" → CFG Training
-
-File Structure
-~~~~~~~~~~~~~~~~~
-
-.. code-block:: text
-
-   examples/offline_rl/
-   ├── config/                                  # shared production configs
-   │   ├── recap_compute_returns.yaml           # Step 1
-   │   ├── recap_value_model_sft.yaml           # Step 2
-   │   ├── recap_compute_advantages.yaml        # Step 3
-   │   ├── cfg_rl_openpi.yaml                   # Step 4
-   │   └── model/
-   │       └── recap_value_model.yaml           # value model architecture defaults
-   ├── advantage_labeling/
-   │   └── recap/
-   │       ├── train_value.py                    # Step 2: value model training
-   │       ├── run_value_sft.sh                  # Step 2 launch script
-   │       └── process/
-   │           ├── compute_returns.py            # Step 1: returns logic + Hydra entry
-   │           ├── compute_advantages.py         # Step 3: advantage logic + Hydra entry
-   │           ├── relabel_advantages.py         # threshold relabeling (CPU)
-   │           ├── visualize_advantage_dataset.py    # advantage visualization
-   │           ├── run_compute_returns.sh        # Step 1 launch script
-   │           └── run_compute_advantages.sh     # Step 3 launch script
-   └── policy_optimization/
-       └── cfg_rl/
-           ├── train_cfg.py                      # Step 4: CFG policy training
-           └── run_cfg_rl.sh                     # Step 4 launch script
-
-   rlinf/
-   ├── models/embodiment/value_model/recap/     # value critic, config, checkpoint utils
-   ├── data/datasets/recap/                     # value_dataset.py, cfg_model.py, ...
-   └── algorithms/offline/process/              # shared, model-agnostic (RECAP + STEAM)
-       ├── advantage.py                          # quantile threshold + boolean label
-       ├── distributed.py                        # sharded-inference helpers
-       └── mixture_config.py                     # meta/mixture_config.yaml tag I/O
+   RECAP results on LIBERO-10 Task 0.

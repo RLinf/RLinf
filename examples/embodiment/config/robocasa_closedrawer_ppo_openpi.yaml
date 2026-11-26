@@ -97,14 +97,14 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: False
   unnorm_key: robocasa
   enable_offload: False
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/RLinf/RLinf-Pi0-RoboCasa"
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 
 actor:

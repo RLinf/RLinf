@@ -1,15 +1,14 @@
 Basic Configuration
 ===================
 
-Below is a complete reference for the core configuration parameters shared across all RLinf workloads.
-Every important key in the YAML is documented so that you can confidently adapt the file to your own cluster, model, or research ideas.
-Parameters are grouped exactly by their top-level key.
+For an annotated minimal YAML, Hydra preset overview, and the five keys most commonly tuned on a single GPU, start with :doc:`../reference/configuration`. This page provides the full key-by-key reference for shared parameters across embodied and agentic workloads; for task-specific keys, see :doc:`embodiment_config` and :doc:`agentic_config`.
 
-This section covers the fundamental GPU and cluster configuration that applies to both embodied and agentic training.
-For task-specific configuration, see :doc:`embodiment_config` and :doc:`agentic_config`.
+.. tip::
+
+   **Where config files live:** runnable training YAMLs live under ``examples/<task>/config/`` (such as ``examples/embodiment/config/``, ``examples/sft/config/``, and ``examples/reasoning/config/``), and evaluation YAMLs live under ``evaluations/<benchmark>/``. See :doc:`../reference/configuration` for the full directory map.
 
 hydra
-~~~~~~
+------
 
 .. code:: yaml
 
@@ -30,7 +29,7 @@ hydra
      - Output subdirectory (``null`` disables subdirectory creation).
 
 cluster
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -76,12 +75,12 @@ The ranks value accepts the following forms:
 For more advanced usage of component placement (e.g., heterogeneous cluster with different GPU models, robotic hardware, or CPU-only nodes) and customization in code, see :doc:`../concepts/placement`.
 
 runner
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
   runner:
-    task_type: math
+    task_type: reasoning
     logger:
       log_path: ${runner.output_dir}/${runner.experiment_name}
       project_name: rlinf
@@ -107,7 +106,8 @@ runner
    * - Parameter
      - Description
    * - ``runner.task_type``
-     - Task type identifier (``math`` or ``embodied``).
+     - Task type identifier (``embodied``, ``embodied_eval``, ``reasoning``,
+       ``reasoning_eval``, ``coding_online_rl``, ``sft``, or ``offline``).
    * - ``runner.logger.log_path``
      - Base directory for log files.
    * - ``runner.logger.project_name``
@@ -130,7 +130,7 @@ runner
      - Total sequence length (prompt + generated response) fed into models.
 
 algorithm
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -152,6 +152,7 @@ algorithm
 
     adv_type: grpo
     normalize_advantages: True
+    recompute_logprobs: True
     early_stop_imp_ratio: 5.0
     use_valid_token_scale: False
 
@@ -181,7 +182,7 @@ algorithm
    * - ``algorithm.kl_beta``
      - Weight of the KL penalty added to rewards.
    * - ``algorithm.kl_penalty_type``
-     - KL shaping variant (e.g., ``low_var_kl``).
+     - KL shaping variant (``kl``, ``abs``, ``mse``, ``low_var_kl``, or ``full``).
    * - ``algorithm.ratio_clip_eps``
      - PPO clipping epsilon for importance ratios.
    * - ``algorithm.entropy_bonus``
@@ -194,6 +195,8 @@ algorithm
      - Advantage estimator type (e.g., ``grpo``).
    * - ``algorithm.normalize_advantages``
      - Normalize advantages across the batch.
+   * - ``algorithm.recompute_logprobs``
+     - Recompute log-probs for sampled sequences on the actor.
    * - ``algorithm.early_stop_imp_ratio``
      - Stop an update early if ratios exceed this threshold.
    * - ``algorithm.use_valid_token_scale``
@@ -210,7 +213,7 @@ algorithm
      - Penalize repeated tokens.
 
 rollout
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -222,8 +225,6 @@ rollout
     model:
       model_path: ../../model/DeepSeek-R1-Distill-Qwen-1.5B/
       model_type: qwen2.5
-
-    recompute_logprobs: True
 
 .. list-table::
    :header-rows: 1
@@ -239,11 +240,9 @@ rollout
      - Path to the HF model used by the generation backend.
    * - ``rollout.model.model_type``
      - Internal architecture tag used by the backend (e.g., ``qwen2.5``).
-   * - ``rollout.recompute_logprobs``
-     - Recompute log-probs for sampled sequences.
 
 actor
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -269,7 +268,7 @@ actor
      - Global seed for reproducibility.
 
 reward
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -286,7 +285,7 @@ reward
      - Whether to use a reward model.
 
 critic
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 

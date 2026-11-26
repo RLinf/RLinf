@@ -23,11 +23,13 @@ import inspect
 import logging
 import math
 import os
+import pickle
+import random
 import sys
 import time
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -35,9 +37,13 @@ import torch
 from omegaconf import OmegaConf
 
 from rlinf.algorithms.losses import compute_ppo_critic_loss
+from rlinf.algorithms.prefix_off_policy import build_prefix_off_policy_algorithm
+from rlinf.algorithms.refl_scorers import build_refl_scorer, register_refl_scorer
 from rlinf.config import SupportedModel, validate_embodied_cfg
 from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
+from rlinf.models.embodiment.mlp_policy.prefix_mlp_policy import PrefixPolicy
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
     RLTTokenTransformer,
 )
@@ -55,6 +61,13 @@ from rlinf.models.embodiment.openpi.modules.siglip import (
     Encoder1DBlock,
     SigLIPViT,
 )
+from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
+from rlinf.models.embodiment.prefix_features import (
+    PREFIX_OBS_KEYS,
+    PrefixFeatureModel,
+    extract_prefix_obs,
+    pool_prefix,
+)
 from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
@@ -66,6 +79,916 @@ from rlinf.utils.env_helpers.delay_sampler import (
 )
 from rlinf.workers.rollout.phyai import phyai_rollout_worker
 from rlinf.workers.rollout.phyai.phyai_rollout_worker import PhyAIRolloutWorker
+
+
+@pytest.mark.parametrize("layout", ["hwc", "chw"])
+def test_evo_device_preprocessing_preserves_per_frame_ranges_and_clipping(layout):
+    from rlinf.models.embodiment.evo1.utils.data_pipeline import build_evo1_inputs
+
+    images = np.zeros((2, 8, 10, 3), dtype=np.float32)
+    images[0] = np.linspace(-0.5, 1.0, images[0].size).reshape(images[0].shape)
+    images[1] = np.linspace(-10, 300, images[1].size).reshape(images[1].shape)
+    if layout == "chw":
+        images = images.transpose(0, 3, 1, 2)
+    observation = {"main_images": images, "task_descriptions": ["pick", "place"]}
+    host = build_evo1_inputs(observation, image_size=6)
+    device = build_evo1_inputs(observation, image_size=6, device="cpu")
+    for host_views, device_views in zip(host[0], device[0]):
+        for expected, actual in zip(host_views, device_views):
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    torch.testing.assert_close(device[1], host[1])
+    assert device[2] == host[2]
+
+
+def test_openpi_fused_attention_preserves_fully_masked_query_rows(monkeypatch):
+    import rlinf.models.embodiment.openpi.modules.utils as openpi_utils
+    from rlinf.models.embodiment.openpi.modules.gemma import Attention
+
+    monkeypatch.setattr(openpi_utils, "_torch_compile_enabled", False)
+    monkeypatch.setattr(
+        openpi_utils,
+        "_sdpa_attention_enabled",
+        openpi_utils._sdpa_attention_enabled,
+    )
+    config = SimpleNamespace(
+        width=16, num_heads=4, num_kv_heads=2, head_dim=4, lora_configs={}
+    )
+    model = Attention([config])
+    inputs = [torch.randn(2, 4, 16)]
+    positions = torch.arange(4).repeat(2, 1)
+    mask = torch.ones(2, 1, 4, 4, dtype=torch.bool).tril()
+    mask[:, :, 0] = False
+    for updated in (False, True):
+        if updated:
+            with torch.no_grad():
+                model.v_proj[0].weight.add_(0.1)
+        openpi_utils.set_sdpa_attention(False)
+        eager_in = inputs[0].detach().clone().requires_grad_(True)
+        expected, _ = model([eager_in], positions, mask)
+        expected[0].sum().backward()
+
+        openpi_utils.set_sdpa_attention(True)
+        fused_in = inputs[0].detach().clone().requires_grad_(True)
+        actual, _ = model([fused_in], positions, mask)
+        actual[0].sum().backward()
+
+        torch.testing.assert_close(actual[0], expected[0], rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(fused_in.grad, eager_in.grad, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("aspect_ratio", ["pad", "square"])
+@pytest.mark.parametrize("policy_kind", ["dm0", "pi0"])
+def test_dm0_tensor_images_match_native_padding_and_view_masks(
+    aspect_ratio, policy_kind
+):
+    pytest.importorskip("dexbotic")
+    from PIL import Image
+    from transformers import SiglipImageProcessor
+
+    from rlinf.models.embodiment.dexbotic_dm0.dm0_policy import (
+        DexboticDM0ForRLActionPrediction,
+    )
+    from rlinf.models.embodiment.dexbotic_pi.dexbotic_pi_policy import (
+        DexboticPi0ForRLActionPrediction,
+    )
+
+    cls = (
+        DexboticDM0ForRLActionPrediction
+        if policy_kind == "dm0"
+        else DexboticPi0ForRLActionPrediction
+    )
+    model = cls.__new__(cls)
+    torch.nn.Module.__init__(model)
+    model.anchor = torch.nn.Parameter(torch.zeros(()))
+    model.config = SimpleNamespace(image_aspect_ratio=aspect_ratio)
+    model.model = SimpleNamespace(
+        mm_vision_module=SimpleNamespace(
+            image_processor=SiglipImageProcessor(size={"height": 6, "width": 6})
+        )
+    )
+    images = torch.full((2, 4, 6, 3), 31, dtype=torch.uint8)
+    expected = model.process_images(
+        [Image.fromarray(frame.numpy()) for frame in images]
+    )
+    for raw in (images, images.numpy()):
+        actual, masks = model._process_images_for_training(
+            raw, None, torch.device("cpu")
+        )
+        torch.testing.assert_close(actual[:, 0], expected, rtol=0, atol=1e-6)
+        assert masks.tolist() == [[True, False, False], [True, False, False]]
+        assert not torch.count_nonzero(actual[:, 1:])
+
+
+@pytest.mark.parametrize("precision", [None, "bf16"])
+def test_dexbotic_configured_precision_supports_actions_and_training(
+    precision, monkeypatch
+):
+    source = os.environ.get("RLINF_DEXBOTIC_TEST_OBSERVATIONS")
+    if source is None:
+        pytest.skip("Dexbotic checkpoint and captured observations required")
+    pytest.importorskip("dexbotic")
+    if Worker.torch_platform is None or not Worker.torch_platform.is_available():
+        pytest.skip("Configured accelerator required")
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.models import get_model
+    from rlinf.utils.cuda_graph import clone_tensor_tree
+
+    repo = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(repo))
+    with initialize_config_dir(
+        config_dir=str(repo / "tests/e2e_tests/embodied"), version_base=None
+    ):
+        cfg = compose(config_name="libero_spatial_ppo_dexbotic_pi0")
+    model_cfg = OmegaConf.merge(cfg.actor.model, cfg.rollout.model)
+    model_cfg.precision = precision
+    torch.manual_seed(42)
+    model = get_model(model_cfg)
+    expected_dtype = torch.float32 if precision is None else torch.bfloat16
+    assert {parameter.dtype for parameter in model.parameters()} == {expected_dtype}
+    with Path(source).open("rb") as stream:
+        captured = pickle.load(stream)
+    observation = (
+        captured["args"][0] if captured["args"] else captured["kwargs"]["env_obs"]
+    )
+    source_batch = len(observation["task_descriptions"])
+
+    def select(value):
+        if isinstance(value, (torch.Tensor, np.ndarray)):
+            return value[:2] if value.ndim and value.shape[0] == source_batch else value
+        if isinstance(value, dict):
+            return {key: select(item) for key, item in value.items()}
+        if isinstance(value, list) and len(value) == source_batch:
+            return value[:2]
+        return value
+
+    model.eval()
+    actions, rollout = model.predict_action_batch(select(observation), mode="train")
+    assert torch.isfinite(torch.as_tensor(actions)).all()
+    model.train()
+    model.zero_grad(set_to_none=True)
+    output = model.default_forward(
+        data=clone_tensor_tree(rollout["forward_inputs"]), compute_values=True
+    )
+    assert all(torch.isfinite(value).all() for value in output.values())
+    weights = torch.linspace(
+        -1, 1, output["logprobs"].numel(), device=output["logprobs"].device
+    ).reshape_as(output["logprobs"])
+    loss = (output["logprobs"].float() * weights).mean()
+    loss = loss + output["values"].float().square().mean()
+    loss.backward()
+    gradients = [
+        parameter.grad for parameter in model.parameters() if parameter.grad is not None
+    ]
+    assert gradients and all(torch.isfinite(gradient).all() for gradient in gradients)
+    assert any(torch.count_nonzero(gradient).item() for gradient in gradients)
+
+
+@pytest.mark.parametrize("mode", ["train", "eval"])
+@pytest.mark.parametrize("joint", [False, True])
+@pytest.mark.parametrize("ignore_last", [False, True])
+@pytest.mark.parametrize("steps", [1, 4])
+def test_evo_denoising_preserves_random_draws_masks_and_replay(
+    monkeypatch, mode, joint, ignore_last, steps
+):
+    from rlinf.models.embodiment.evo1 import evo1_rl_head as head_ops
+
+    class ActionHead(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.horizon = 2
+            self.per_action_dim = 3
+            self.dtype = torch.float32
+            self.state_encoder = None
+            self.transformer_blocks = torch.nn.ModuleList()
+            self.action_projection = torch.nn.Linear(3, 8)
+            self.norm_out = torch.nn.LayerNorm(8)
+            self.seq_pool_proj = torch.nn.Linear(16, 8)
+            self.output_projection = torch.nn.Linear(8, 6)
+            self.register_buffer("time_embedding", torch.zeros(1, 1000, 8))
+
+        def time_pos_enc(self, length):
+            return self.time_embedding[:, :length]
+
+        def _project_actions(self, actions, embodiment_id):
+            return self.action_projection(actions)
+
+        def mlp_head(self, features, embodiment_id):
+            return self.output_projection(features)
+
+    head = ActionHead()
+    context = torch.zeros(2, 4, 8)
+    embodiment = torch.zeros(2, dtype=torch.long)
+    mask = torch.ones(2, 2, 3)
+    mask[..., -1] = 0
+    config = {"joint_logprob": joint, "ignore_last": ignore_last, "noise_level": 0.5}
+    selection_rng = random.Random(1234)
+    if mode == "eval":
+        expected_indices = [-1] * steps
+    elif joint:
+        expected_indices = list(range(steps))
+    else:
+        last_step = max(steps - (2 if ignore_last else 1), 0)
+        expected_indices = [selection_rng.randint(0, last_step)] * steps
+    noise_rng = torch.Generator().manual_seed(1234)
+    initial = (torch.rand(2, 2, 3, generator=noise_rng) * 2 - 1) * mask
+    for _ in range(steps):
+        torch.randn(2, 2, 3, generator=noise_rng)
+
+    def reject_scalar_read(tensor):
+        raise AssertionError("Denoising must not read device scalars on the host")
+
+    random.seed(1234)
+    torch.manual_seed(1234)
+    with monkeypatch.context() as guarded, torch.no_grad():
+        guarded.setattr(torch.Tensor, "item", reject_scalar_read)
+        actions, chains, indices, logprobs = head_ops.rl_denoise_sample(
+            head, context, None, embodiment, mask, steps, config, mode=mode
+        )
+    assert random.getstate() == selection_rng.getstate()
+    assert torch.equal(torch.random.get_rng_state(), noise_rng.get_state())
+    torch.testing.assert_close(chains[:, 0], initial, rtol=0, atol=0)
+    torch.testing.assert_close(actions, chains[:, -1], rtol=0, atol=0)
+    assert torch.count_nonzero(chains[..., -1]) == 0
+    assert indices.tolist() == [expected_indices, expected_indices]
+    if mode == "eval":
+        assert torch.count_nonzero(logprobs[:, int(joint) :]) == 0
+    else:
+        replay = head_ops.rl_replay_logprob(
+            head, context, None, embodiment, mask, chains, indices, steps, config
+        )
+        if joint:
+            expected = logprobs
+        else:
+            selected = indices[:, :1, None, None].expand(-1, 1, 2, 3)
+            expected = logprobs.gather(1, selected)
+        torch.testing.assert_close(replay, expected, rtol=0, atol=0)
+        replay.mean().backward()
+        assert torch.isfinite(head.output_projection.weight.grad).all()
+
+
+def test_evo_vision_attention_chunking_is_inert_off_npu(monkeypatch):
+    from rlinf.models.embodiment.evo1.npu_patches import (
+        set_vision_attention_batch_size,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NV_GPU)
+    vision = torch.nn.Linear(4, 8)
+    images = torch.randn(2, 4)
+    reference = vision(images)
+    assert set_vision_attention_batch_size(vision, 8) == 0
+    torch.testing.assert_close(vision(images), reference, rtol=0, atol=0)
+
+
+def test_evo_mask_padded_language_attention_zeros_masked_query_rows():
+    from rlinf.models.embodiment.evo1.npu_patches import (
+        mask_padded_language_attention,
+    )
+
+    class Qwen2Attention(torch.nn.Module):
+        def forward(
+            self, hidden_states, position_embeddings, attention_mask=None, **kwargs
+        ):
+            return hidden_states + 1.0, None
+
+    class DummyLM(torch.nn.Module):
+        def __init__(self, attn_impl: str):
+            super().__init__()
+            self.config = SimpleNamespace(_attn_implementation=attn_impl)
+            self.attn = Qwen2Attention()
+
+    fa2_lm = DummyLM("flash_attention_2")
+    assert mask_padded_language_attention(fa2_lm) == 0
+
+    eager_lm = DummyLM("eager")
+    assert mask_padded_language_attention(eager_lm) == 1
+    hidden = torch.ones(1, 3, 4)
+    mask = torch.zeros(1, 1, 3, 3)
+    mask[:, :, :, 1] = float("-inf")
+    out, _ = eager_lm.attn(hidden, (None, None), attention_mask=mask)
+    torch.testing.assert_close(out[:, 0], torch.full((1, 4), 2.0))
+    torch.testing.assert_close(out[:, 1], torch.zeros((1, 4)))
+    torch.testing.assert_close(out[:, 2], torch.full((1, 4), 2.0))
+
+
+def test_evo_action_head_graph_capture_failure_falls_back_to_eager(monkeypatch):
+    from rlinf.models.embodiment.evo1 import evo1_rl_head as head_ops
+    from rlinf.models.embodiment.evo1.evo1_action_model import (
+        Evo1ForRLActionPrediction,
+    )
+    from rlinf.models.embodiment.evo1.utils.normalizer import Normalizer
+
+    class ActionHead(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.horizon = 2
+            self.per_action_dim = 3
+            self.dtype = torch.float32
+            self.state_encoder = None
+            self.transformer_blocks = torch.nn.ModuleList()
+            self.action_projection = torch.nn.Linear(3, 8)
+            self.norm_out = torch.nn.LayerNorm(8)
+            self.seq_pool_proj = torch.nn.Linear(16, 8)
+            self.output_projection = torch.nn.Linear(8, 6)
+            self.register_buffer("time_embedding", torch.zeros(1, 1000, 8))
+
+        def time_pos_enc(self, length):
+            return self.time_embedding[:, :length]
+
+        def _project_actions(self, actions, embodiment_id):
+            return self.action_projection(actions)
+
+        def mlp_head(self, features, embodiment_id):
+            return self.output_projection(features)
+
+    class DummyEvo1(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.action_head = ActionHead()
+            self.horizon = 2
+            self.per_action_dim = 3
+
+    class FailingGraphManager:
+        def __init__(self, device):
+            self.device = device
+            self.graphs = {}
+            self.capture_calls = 0
+
+        def capture(self, spec):
+            self.capture_calls += 1
+            raise RuntimeError("capture unsupported")
+
+    monkeypatch.setattr(
+        "rlinf.models.embodiment.evo1.evo1_action_model.CUDAGraphManager",
+        FailingGraphManager,
+    )
+    evo1 = DummyEvo1()
+    normalizer = Normalizer(
+        {
+            "arm": {
+                "ds": {
+                    "state": {"min": [-1.0] * 3, "max": [1.0] * 3},
+                    "action": {"min": [-1.0] * 3, "max": [1.0] * 3},
+                }
+            }
+        }
+    )
+    policy = Evo1ForRLActionPrediction(
+        evo1,
+        normalizer,
+        action_dim=3,
+        num_action_chunks=2,
+        arm_key="arm",
+        dataset_key="ds",
+    )
+    policy.capture_cuda_graph(train_batch_size=2, eval_batch_size=1)
+
+    context = torch.randn(2, 4, 8)
+    action_tokens = torch.randn(2, 2, 8)
+    time_emb = torch.randn(2, 8)
+    embodiment = torch.zeros(2, dtype=torch.long)
+
+    with torch.no_grad():
+        expected = head_ops.flow_velocity_from_embeddings(
+            evo1.action_head, context, action_tokens, time_emb, embodiment
+        )
+        first = policy._action_head_forward(
+            evo1.action_head, context, action_tokens, time_emb, embodiment
+        )
+        second = policy._action_head_forward(
+            evo1.action_head, context, action_tokens, time_emb, embodiment
+        )
+
+    assert policy.cuda_graph_manager.capture_calls == 1
+    assert len(policy._failed_graphs) == 1
+    torch.testing.assert_close(first, expected, rtol=0, atol=0)
+    torch.testing.assert_close(second, expected, rtol=0, atol=0)
+
+
+def test_evo_chunked_vision_preserves_actions_replay_gradients_and_rng(monkeypatch):
+    """Compare the real NPU checkpoint using captured rollout observations."""
+    observation_path = os.environ.get("RLINF_EVO_TEST_OBSERVATIONS")
+    if not observation_path:
+        pytest.skip("Set RLINF_EVO_TEST_OBSERVATIONS to captured Evo observations")
+    pytest.importorskip("torch_npu")
+    if not torch.npu.is_available():
+        pytest.skip("Ascend NPU required")
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.models.embodiment.evo1.npu_patches import (
+        set_vision_attention_batch_size,
+    )
+    from rlinf.scheduler import AcceleratorType
+    from rlinf.scheduler.hardware.accelerators.ascend_npu import AscendNPUManager
+    from rlinf.utils.cuda_graph import clone_tensor_tree
+
+    repo = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(repo))
+    with initialize_config_dir(
+        config_dir=str(repo / "tests/e2e_tests/embodied"), version_base=None
+    ):
+        cfg = compose(config_name="libero_spatial_grpo_evo1")
+    if not Path(cfg.actor.model.model_path).is_dir():
+        pytest.skip("Evo checkpoint required")
+    torch.npu.set_device(0)
+    monkeypatch.setattr(Worker, "torch_device_type", "npu")
+    monkeypatch.setattr(Worker, "torch_platform", torch.npu)
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    AscendNPUManager.setup_worker_torch()
+    cfg.actor.model.evo1.vision_attention_batch_size = 8
+    model = get_model(OmegaConf.merge(cfg.actor.model, cfg.rollout.model))
+    vision = model.evo1.embedder.model.vision_model
+    attention_layers = set_vision_attention_batch_size(vision, 8)
+    assert attention_layers > 0
+    with Path(observation_path).open("rb") as stream:
+        captured = pickle.load(stream)
+    observation = (
+        captured["args"][0] if captured["args"] else captured["kwargs"]["env_obs"]
+    )
+    assert observation["main_images"].shape[0] >= 8
+    for updated, batch in ((False, 2), (True, 2), (False, 8)):
+        if updated:
+            with torch.no_grad():
+                model.evo1.action_head.mlp_head.fc2.linear.bias[0].add_(0.5)
+        predictions, replay, gradients, rng = [], [], [], []
+        for size in (0, 8):
+            assert set_vision_attention_batch_size(vision, size) == (
+                attention_layers if size else 0
+            )
+            model.eval()
+            random.seed(1234)
+            torch.manual_seed(1234)
+            obs = {
+                key: value[:batch].clone()
+                if torch.is_tensor(value)
+                else value[:batch].copy()
+                if isinstance(value, np.ndarray)
+                else value[:batch]
+                if isinstance(value, list)
+                else value
+                for key, value in observation.items()
+            }
+            predictions.append(model.predict_action_batch(obs, mode="train"))
+            rng.append((random.getstate(), torch.npu.get_rng_state()))
+            model.zero_grad(set_to_none=True)
+            output = model.default_forward(
+                forward_inputs=clone_tensor_tree(predictions[0][1]["forward_inputs"])
+            )["logprobs"]
+            replay.append(output.detach().clone())
+            output.float().mean().backward()
+            gradients.append(
+                {
+                    name: parameter.grad.detach().clone()
+                    for name, parameter in model.evo1.action_head.named_parameters()
+                    if parameter.grad is not None
+                }
+            )
+        assert gradients[0] and gradients[0].keys() == gradients[1].keys()
+        torch.testing.assert_close(
+            torch.as_tensor(predictions[1][0]),
+            torch.as_tensor(predictions[0][0]),
+            rtol=0,
+            atol=0,
+        )
+        torch.testing.assert_close(replay[1], replay[0], rtol=0, atol=0)
+        torch.testing.assert_close(
+            predictions[1][1]["prev_logprobs"],
+            predictions[0][1]["prev_logprobs"],
+            rtol=0,
+            atol=0,
+        )
+        for name, reference in gradients[0].items():
+            torch.testing.assert_close(gradients[1][name], reference, rtol=0, atol=0)
+            assert torch.isfinite(reference).all()
+        assert any(torch.count_nonzero(value).item() for value in gradients[0].values())
+        assert rng[0][0] == rng[1][0]
+        assert torch.equal(rng[0][1], rng[1][1])
+
+
+def test_evo_rollout_graph_preserves_actions_replay_and_weight_updates(monkeypatch):
+    """Run the real checkpoint with observations in RLINF_EVO_TEST_OBSERVATIONS."""
+    from hydra import compose, initialize_config_dir
+
+    observation_path = os.environ.get("RLINF_EVO_TEST_OBSERVATIONS")
+    if not observation_path:
+        pytest.skip("Set RLINF_EVO_TEST_OBSERVATIONS to captured Evo observations")
+    repo = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(repo))
+    with initialize_config_dir(
+        config_dir=str(repo / "tests/e2e_tests/embodied"), version_base=None
+    ):
+        cfg = compose(config_name="libero_spatial_grpo_evo1")
+    if not Path(cfg.actor.model.model_path).is_dir():
+        pytest.skip("Evo checkpoint required")
+    try:
+        import torch_npu  # noqa: F401
+    except ImportError:
+        pass
+    from rlinf.scheduler import AcceleratorType
+
+    if hasattr(torch, "npu") and torch.npu.is_available():
+        from rlinf.scheduler.hardware.accelerators.ascend_npu import AscendNPUManager
+
+        device, platform, accelerator = "npu", torch.npu, AcceleratorType.NPU
+        AscendNPUManager.setup_worker_torch()
+    elif torch.cuda.is_available():
+        device, platform, accelerator = "cuda", torch.cuda, AcceleratorType.NV_GPU
+    else:
+        pytest.skip("CUDA or Ascend graph support required")
+    platform.set_device(0)
+    monkeypatch.setattr(Worker, "torch_device_type", device)
+    monkeypatch.setattr(Worker, "torch_platform", platform)
+    monkeypatch.setattr(Worker, "accelerator_type", accelerator)
+    model = get_model(OmegaConf.merge(cfg.actor.model, cfg.rollout.model))
+    model.eval()
+    with Path(observation_path).open("rb") as stream:
+        captured = pickle.load(stream)
+    observation = (
+        captured["args"][0] if captured["args"] else captured["kwargs"]["env_obs"]
+    )
+    previous_actions = None
+    try:
+        for updated, batch in ((False, 2), (True, 2), (False, 1)):
+            existing_graph_prediction = None
+            if updated:
+                with torch.no_grad():
+                    model.evo1.action_head.mlp_head.fc2.linear.bias[0].add_(0.5)
+                random.seed(1234)
+                torch.manual_seed(1234)
+                obs = {
+                    key: value[:batch].clone()
+                    if torch.is_tensor(value)
+                    else value[:batch]
+                    if isinstance(value, list)
+                    else value
+                    for key, value in observation.items()
+                }
+                existing_graph_prediction = model.predict_action_batch(
+                    obs, mode="train"
+                )
+            predictions, rng_states, gradients = [], [], []
+            for use_graph in (False, True):
+                model.release_cuda_graph()
+                if use_graph:
+                    model.capture_cuda_graph(train_batch_size=batch, eval_batch_size=1)
+                random.seed(1234)
+                torch.manual_seed(1234)
+                obs = {
+                    key: value[:batch].clone()
+                    if torch.is_tensor(value)
+                    else value[:batch]
+                    if isinstance(value, list)
+                    else value
+                    for key, value in observation.items()
+                }
+                predictions.append(model.predict_action_batch(obs, mode="train"))
+                rng_states.append((random.getstate(), platform.get_rng_state()))
+                model.zero_grad(set_to_none=True)
+                output = model.default_forward(
+                    forward_inputs=predictions[-1][1]["forward_inputs"]
+                )["logprobs"]
+                output.float().mean().backward()
+                gradients.append(
+                    model.evo1.action_head.seq_pool_proj.weight.grad.clone()
+                )
+            assert model.is_cuda_graph_enabled()
+            torch.testing.assert_close(
+                torch.as_tensor(predictions[1][0]),
+                torch.as_tensor(predictions[0][0]),
+                rtol=0,
+                atol=0,
+            )
+            for name in ("chains", "denoise_inds"):
+                torch.testing.assert_close(
+                    predictions[1][1]["forward_inputs"][name],
+                    predictions[0][1]["forward_inputs"][name],
+                    rtol=0,
+                    atol=0,
+                )
+            torch.testing.assert_close(
+                predictions[1][1]["prev_logprobs"],
+                predictions[0][1]["prev_logprobs"],
+                rtol=0,
+                atol=0,
+            )
+            torch.testing.assert_close(gradients[1], gradients[0], rtol=0, atol=0)
+            assert torch.isfinite(gradients[1]).all()
+            assert rng_states[0][0] == rng_states[1][0]
+            assert torch.equal(rng_states[0][1], rng_states[1][1])
+            if updated:
+                torch.testing.assert_close(
+                    torch.as_tensor(existing_graph_prediction[0]),
+                    torch.as_tensor(predictions[0][0]),
+                    rtol=0,
+                    atol=0,
+                )
+                assert not np.array_equal(predictions[1][0], previous_actions)
+            previous_actions = predictions[1][0]
+    finally:
+        model.release_cuda_graph()
+        model.release_cuda_graph()
+    assert not model.is_cuda_graph_enabled()
+
+
+@pytest.mark.parametrize("device", ["cpu", "npu"])
+def test_qwen_npu_attention_preserves_masks_cache_gradients_and_weight_updates(
+    monkeypatch, device
+):
+    import copy
+
+    if device == "npu":
+        pytest.importorskip("torch_npu")
+        if not torch.npu.is_available():
+            pytest.skip("Ascend NPU required")
+    vendor = pytest.importorskip("transformers.models.qwen2_5_vl.modeling_qwen2_5_vl")
+    if not hasattr(vendor, "Qwen2_5_VLTextModel") or not hasattr(
+        vendor.Qwen2_5_VLTextModel, "set_attn_implementation"
+    ):
+        pytest.skip("Transformers Qwen2.5-VL text attention interface required")
+    from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import (
+        Qwen2_5_VLTextConfig,
+    )
+
+    from rlinf.models.embodiment.qwen_vl.npu_attention import (
+        enable_qwen_vl_npu_attention,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    torch.manual_seed(1234)
+    config = Qwen2_5_VLTextConfig(
+        vocab_size=128,
+        hidden_size=128,
+        intermediate_size=256,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        rope_scaling={"rope_type": "default", "mrope_section": [4, 6, 6]},
+    )
+    config._attn_implementation = "sdpa"
+    dtype = torch.bfloat16 if device == "npu" else torch.float32
+    reference = vendor.Qwen2_5_VLTextModel(config).to(device=device, dtype=dtype).eval()
+    candidate = copy.deepcopy(reference)
+    precise = (
+        copy.deepcopy(reference).to(device="cpu", dtype=torch.float32)
+        if device == "npu"
+        else None
+    )
+    parameters = list(candidate.parameters())
+    assert enable_qwen_vl_npu_attention(candidate)
+    assert all(a is b for a, b in zip(parameters, candidate.parameters()))
+    assert candidate.state_dict().keys() == reference.state_dict().keys()
+    ids = torch.randint(1, 128, (2, 32), device=device)
+    upstream = torch.randn(2, 32, 128, device=device) / (2 * 32 * 128)
+    rtol, atol = (0.03, 0.01) if device == "npu" else (1e-5, 1e-6)
+
+    for updated in (False, True):
+        if updated:
+            with torch.no_grad():
+                reference.layers[0].self_attn.q_proj.weight.add_(0.001)
+            candidate.load_state_dict(reference.state_dict())
+            if precise is not None:
+                precise.load_state_dict(reference.state_dict())
+        for padded in (False, True):
+            mask = torch.ones_like(ids)
+            if padded:
+                mask[1, :4] = 0
+            outputs = []
+            models = (
+                (reference, candidate)
+                if precise is None
+                else (reference, candidate, precise)
+            )
+            for model in models:
+                model_device = next(model.parameters()).device
+                model.zero_grad(set_to_none=True)
+                output = model(
+                    input_ids=ids.to(model_device),
+                    attention_mask=mask.to(model_device),
+                    use_cache=False,
+                ).last_hidden_state
+                # Padding is excluded from the action loss. Fully masked rows
+                # have different SDPA behavior across CPU and NPU backends.
+                (
+                    output.float()
+                    * upstream.to(model_device)
+                    * mask.to(model_device).unsqueeze(-1)
+                ).sum().backward()
+                outputs.append(output)
+            torch.testing.assert_close(outputs[1], outputs[0], rtol=rtol, atol=atol)
+            if precise is None:
+                for expected, actual in zip(
+                    reference.parameters(), candidate.parameters()
+                ):
+                    torch.testing.assert_close(
+                        actual.grad, expected.grad, rtol=rtol, atol=1e-6
+                    )
+            else:
+                # BF16 reductions can disagree elementwise near zero. Compare
+                # both paths with an independent FP32 gradient instead.
+                for expected, original, actual in zip(
+                    precise.parameters(), reference.parameters(), candidate.parameters()
+                ):
+                    torch.testing.assert_close(
+                        actual.grad, original.grad, rtol=0, atol=0
+                    )
+                    expected_grad = expected.grad
+                    denominator = expected_grad.norm().clamp_min(1e-30)
+                    original_error = (
+                        original.grad.float().cpu() - expected_grad
+                    ).norm() / denominator
+                    actual_error = (
+                        actual.grad.float().cpu() - expected_grad
+                    ).norm() / denominator
+                    assert torch.isfinite(actual.grad).all()
+                    assert actual_error < 0.03
+                    assert actual_error <= original_error * 1.25 + 0.002
+        with torch.no_grad():
+            decoded = []
+            for model in (reference, candidate):
+                first = model(input_ids=ids, use_cache=True)
+                decoded.append(
+                    model(
+                        input_ids=ids[:, :2],
+                        past_key_values=first.past_key_values,
+                        use_cache=True,
+                    ).last_hidden_state
+                )
+            torch.testing.assert_close(decoded[1], decoded[0], rtol=rtol, atol=atol)
+            modified = ids.clone()
+            modified[:, -1] = (modified[:, -1] + 1) % 128
+            original = candidate(input_ids=ids, use_cache=False).last_hidden_state
+            changed = candidate(input_ids=modified, use_cache=False).last_hidden_state
+            torch.testing.assert_close(
+                changed[:, :-1], original[:, :-1], rtol=0, atol=0
+            )
+
+
+def test_qwen_npu_attention_preserves_vision_windows_and_weight_updates(monkeypatch):
+    import copy
+
+    pytest.importorskip("torch_npu")
+    if not torch.npu.is_available():
+        pytest.skip("Ascend NPU required")
+    vendor = pytest.importorskip("transformers.models.qwen2_5_vl.modeling_qwen2_5_vl")
+    if not hasattr(vendor, "Qwen2_5_VLTextModel") or not hasattr(
+        vendor.Qwen2_5_VLModel, "set_attn_implementation"
+    ):
+        pytest.skip("Transformers Qwen2.5-VL attention interface required")
+    from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import Qwen2_5_VLConfig
+
+    from rlinf.models.embodiment.qwen_vl.linear_patch_embed import (
+        patch_vision_patch_embed,
+    )
+    from rlinf.models.embodiment.qwen_vl.npu_attention import (
+        enable_qwen_vl_npu_attention,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    torch.manual_seed(1234)
+    config = Qwen2_5_VLConfig(
+        text_config={
+            "vocab_size": 128,
+            "hidden_size": 128,
+            "intermediate_size": 256,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "rope_scaling": {"rope_type": "default", "mrope_section": [4, 6, 6]},
+        },
+        vision_config={
+            "depth": 2,
+            "hidden_size": 128,
+            "intermediate_size": 256,
+            "num_heads": 4,
+            "patch_size": 2,
+            "temporal_patch_size": 1,
+            "spatial_merge_size": 2,
+            "window_size": 8,
+            "out_hidden_size": 128,
+            "fullatt_block_indexes": [1],
+        },
+    )
+    config._attn_implementation = "sdpa"
+    reference = (
+        vendor.Qwen2_5_VLModel(config).to(device="npu", dtype=torch.bfloat16).eval()
+    )
+    patch_vision_patch_embed(reference)
+    candidate = copy.deepcopy(reference)
+    parameters = list(candidate.parameters())
+    assert enable_qwen_vl_npu_attention(candidate)
+    assert all(a is b for a, b in zip(parameters, candidate.parameters()))
+    assert candidate.state_dict().keys() == reference.state_dict().keys()
+    pixels = torch.randn(80, 12, device="npu", dtype=torch.bfloat16)
+    grid = torch.tensor([[1, 8, 8], [1, 4, 4]], device="npu")
+    upstream = torch.randn(20, 128, device="npu") / (20 * 128)
+    for updated in (False, True):
+        if updated:
+            with torch.no_grad():
+                reference.visual.blocks[0].attn.qkv.weight.add_(0.001)
+            candidate.load_state_dict(reference.state_dict())
+        outputs = []
+        for model in (reference, candidate):
+            model.zero_grad(set_to_none=True)
+            output = model.visual(pixels, grid_thw=grid)
+            (output.float() * upstream).sum().backward()
+            outputs.append(output)
+        torch.testing.assert_close(outputs[1], outputs[0], rtol=0.01, atol=0.001)
+        for expected, actual in zip(
+            reference.visual.parameters(), candidate.visual.parameters()
+        ):
+            error = (actual.grad.float() - expected.grad.float()).norm()
+            assert torch.isfinite(actual.grad).all()
+            assert error <= expected.grad.float().norm() * 0.01 + 1e-8
+
+
+def _small_openvla():
+    # Prismatic configures process-wide logging when imported.
+    with patch("logging.config.dictConfig"):
+        pytest.importorskip("prismatic")
+    from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
+    from transformers import GenerationConfig, LlamaForCausalLM
+
+    from rlinf.models.embodiment.openvla.openvla_action_model import (
+        OpenVLAForRLActionPrediction,
+    )
+
+    config = OpenVLAConfig(
+        text_config={
+            "hidden_size": 16,
+            "intermediate_size": 32,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "vocab_size": 32064,
+        },
+        norm_stats={"test": {"action": {"q01": [-1.0] * 7, "q99": [1.0] * 7}}},
+    )
+    # Keep the real multimodal forward and generation paths, with small modules.
+    model = OpenVLAForRLActionPrediction.__new__(OpenVLAForRLActionPrediction)
+    torch.nn.Module.__init__(model)
+    model.config = config
+    model.generation_config = GenerationConfig.from_model_config(config)
+    model.language_model = LlamaForCausalLM(config.text_config)
+
+    class VisionBackbone(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.projection = torch.nn.Conv2d(3, 16, 1)
+
+        def forward(self, images):
+            images = torch.nn.functional.interpolate(images, size=(16, 16))
+            return self.projection(images).flatten(2).transpose(1, 2)
+
+    def input_processor(*, text, images, **kwargs):
+        batch = len(text)
+        return {
+            "input_ids": torch.tensor([[1, 0, 3, 29871]]).repeat(batch, 1),
+            "attention_mask": torch.tensor([[1, 0, 1, 1]]).repeat(batch, 1),
+            "pixel_values": images.float() / 255,
+        }
+
+    model.vision_backbone = VisionBackbone()
+    model.projector = torch.nn.Linear(16, 16)
+    model.value_head = torch.nn.Linear(16, 1)
+    model.action_dim = 7
+    model.num_action_chunks = 1
+    model.unnorm_key = "test"
+    model.max_prompt_length = 4
+    model._init_logits_processor()
+    model.setup_config_and_processor(config, input_processor)
+    return model.eval()
+
+
+def test_openvla_bootstrap_values_match_generation_before_and_after_weight_update():
+    torch.manual_seed(1234)
+    model = _small_openvla()
+    obs = {
+        "main_images": torch.randint(0, 256, (2, 2, 2, 3), dtype=torch.uint8),
+        "task_descriptions": ["Move the block", "Move the block"],
+    }
+    for _ in range(2):
+        _, result = model.predict_action_batch(
+            env_obs=obs, do_sample=True, max_new_tokens=7
+        )
+        rng_state = torch.random.get_rng_state()
+        values = model.predict_value_batch(obs)
+        torch.testing.assert_close(values, result["prev_values"])
+        assert values.shape == (2, 1)
+        assert not values.requires_grad
+        assert torch.equal(torch.random.get_rng_state(), rng_state)
+        with torch.no_grad():
+            model.value_head.weight.add_(0.1)
+            model.language_model.model.layers[0].self_attn.q_proj.weight.add_(0.01)
+
+
+def test_openvla_bootstrap_values_require_a_value_head():
+    model = _small_openvla()
+    del model.value_head
+    with pytest.raises(ValueError, match="requires a value head"):
+        model.predict_value_batch({})
 
 
 class _DummyModel:
@@ -191,6 +1114,63 @@ def test_custom_model_registration_smoke():
     assert received["torch_dtype"] == torch.float32
 
 
+class _TinyProjModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.embed = torch.nn.Embedding(5, 4)
+        self.proj = torch.nn.Linear(4, 3)
+
+
+def test_get_model_folds_scaled_lora_adapters_into_the_base_weights(tmp_path):
+    peft = pytest.importorskip("peft")
+    torch.manual_seed(0)
+    base = _TinyProjModel()
+    adapted = peft.get_peft_model(
+        _clone_module(base),
+        peft.LoraConfig(
+            r=2,
+            lora_alpha=4,
+            target_modules=["embed", "proj"],
+            init_lora_weights=False,
+        ),
+    )
+    adapted.save_pretrained(tmp_path)
+    proj = adapted.base_model.model.proj
+    update = (proj.lora_B["default"].weight @ proj.lora_A["default"].weight) * (4 / 2)
+    embed = adapted.base_model.model.embed
+    embed_update = (
+        embed.lora_embedding_B["default"] @ embed.lora_embedding_A["default"]
+    ).T * (4 / 2)
+    model_type = f"custom_model_merged_lora_{int(time.time() * 1000)}"
+    register_model(model_type, lambda cfg, torch_dtype: _clone_module(base))
+
+    model = get_model(
+        OmegaConf.create(
+            {
+                "model_type": model_type,
+                "precision": "fp32",
+                "is_lora": False,
+                "load_to_device": False,
+                "merged_loras": [{"path": str(tmp_path), "scale": 0.5}],
+            }
+        )
+    )
+
+    assert torch.allclose(model.proj.weight, base.proj.weight + 0.5 * update, atol=1e-6)
+    assert torch.allclose(
+        model.embed.weight, base.embed.weight + 0.5 * embed_update, atol=1e-6
+    )
+    assert not any("lora" in name for name, _ in model.named_parameters())
+    # Without a trainable LoRA on top, the merged weights are fully fine-tuned.
+    assert all(param.requires_grad for param in model.parameters())
+
+
+def _clone_module(module: torch.nn.Module) -> torch.nn.Module:
+    clone = type(module)()
+    clone.load_state_dict(module.state_dict())
+    return clone
+
+
 def test_custom_model_registration_with_fsdp_wrap_policy():
     model_type = f"custom_model_fsdp_{int(time.time() * 1000)}"
 
@@ -221,6 +1201,8 @@ def test_custom_model_registration_with_fsdp_wrap_policy():
         }
     )
     model = get_model(cfg)
+    model.extra = torch.nn.Sequential(torch.nn.Linear(2, 2))
+    model.extra._fsdp_wrap_role = "independent_component"
     wrap_policy = get_fsdp_wrap_policy(
         module=model,
         config=fsdp_cfg,
@@ -231,6 +1213,7 @@ def test_custom_model_registration_with_fsdp_wrap_policy():
     assert wrap_policy is not None
     assert wrap_policy(module=model.block, recurse=False, nonwrapped_numel=0)
     assert wrap_policy(module=model.head, recurse=False, nonwrapped_numel=0)
+    assert wrap_policy(module=model.extra, recurse=False, nonwrapped_numel=0)
 
 
 @pytest.mark.parametrize(
@@ -383,26 +1366,26 @@ def _reference_space_time_attention(attention, tokens, frame_mask):
                 for past in range(frame_index + 1)
                 if frame_mask[batch, past] or past == frame_index
             ]
-            for patch in range(num_patches):
+            for patch_index in range(num_patches):
                 for head in range(num_heads):
                     channels = slice(head * head_dim, (head + 1) * head_dim)
-                    query = queries[batch, frame_index, patch, channels]
+                    query = queries[batch, frame_index, patch_index, channels]
                     scores = torch.stack(
                         [
-                            query @ keys[batch, past, patch, channels]
+                            query @ keys[batch, past, patch_index, channels]
                             for past in valid_times
                         ]
                     ) / math.sqrt(head_dim)
                     weights = scores.softmax(dim=0)
-                    temporal_values[batch, frame_index, patch, channels] = sum(
-                        weight * values[batch, past, patch, channels]
+                    temporal_values[batch, frame_index, patch_index, channels] = sum(
+                        weight * values[batch, past, patch_index, channels]
                         for weight, past in zip(weights, valid_times)
                     )
         for frame_index in range(num_frames):
-            for patch in range(num_patches):
+            for patch_index in range(num_patches):
                 for head in range(num_heads):
                     channels = slice(head * head_dim, (head + 1) * head_dim)
-                    query = queries[batch, frame_index, patch, channels]
+                    query = queries[batch, frame_index, patch_index, channels]
                     scores = torch.stack(
                         [
                             query @ keys[batch, frame_index, other, channels]
@@ -410,7 +1393,7 @@ def _reference_space_time_attention(attention, tokens, frame_mask):
                         ]
                     ) / math.sqrt(head_dim)
                     weights = scores.softmax(dim=0)
-                    mixed_values[batch, frame_index, patch, channels] = sum(
+                    mixed_values[batch, frame_index, patch_index, channels] = sum(
                         weights[other]
                         * temporal_values[batch, frame_index, other, channels]
                         for other in range(num_patches)
@@ -681,6 +1664,7 @@ def test_hf_rollout_merges_nested_observations():
 
 def test_openpi_env_io_reads_history():
     from rlinf.models.embodiment.openpi.env_io import EnvIO
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 
     def frame_transform(sample):
         return {
@@ -702,6 +1686,7 @@ def test_openpi_env_io_reads_history():
         return sample
 
     adapter = EnvIO()
+    adapter._config = Pi0Config(short_memory=True)
     adapter.config_name = "pi05_libero"
     adapter.state_indices = ()
     adapter.device = torch.device("cpu")
@@ -917,6 +1902,99 @@ def _load_starvla_util(name: str) -> ModuleType:
     return module
 
 
+@pytest.fixture
+def starvla_preprocessing(monkeypatch):
+    from PIL import Image
+
+    image_tools = ModuleType("deployment.model_server.tools.image_tools")
+    image_tools.to_pil_preserve = lambda views: [
+        Image.fromarray(np.asarray(view.cpu() if torch.is_tensor(view) else view))
+        for view in views
+    ]
+    trainer_tools = ModuleType("starVLA.training.trainer_utils.trainer_tools")
+    trainer_tools.resize_images = lambda images, target_size: images
+    monkeypatch.setitem(sys.modules, image_tools.__name__, image_tools)
+    monkeypatch.setitem(sys.modules, trainer_tools.__name__, trainer_tools)
+    root = "starvla_preprocessing_under_test"
+    for suffix, directory in (
+        ("", _STARVLA_UTILS_DIR.parent),
+        (".utils", _STARVLA_UTILS_DIR),
+        (".action_heads", _STARVLA_UTILS_DIR.parent / "action_heads"),
+    ):
+        package = ModuleType(root + suffix)
+        package.__path__ = [str(directory)]
+        monkeypatch.setitem(sys.modules, package.__name__, package)
+    try:
+        yield SimpleNamespace(
+            data=importlib.import_module(root + ".utils.data_pipeline"),
+            vlm=importlib.import_module(root + ".utils.vlm_preprocess"),
+            oft=importlib.import_module(root + ".action_heads.oft"),
+        )
+    finally:
+        for name in list(sys.modules):
+            if name.startswith(root + "."):
+                sys.modules.pop(name, None)
+
+
+def test_starvla_device_views_match_host_clipping(starvla_preprocessing):
+    images = torch.linspace(-20, 300, 2 * 4 * 5 * 3).reshape(2, 4, 5, 3)
+    obs = {"main_images": images, "task_descriptions": ["pick", "place"]}
+    kwargs = {
+        "state_adapter_name": "none",
+        "prepare_state_tensor": None,
+        "include_state": False,
+    }
+    host = starvla_preprocessing.data.build_examples_from_env_obs(obs, **kwargs)
+    device = starvla_preprocessing.data.build_examples_from_env_obs(
+        obs, image_device="cpu", **kwargs
+    )
+    for expected, actual in zip(host, device):
+        np.testing.assert_array_equal(
+            actual["image"][0].numpy(), np.asarray(expected["image"][0])
+        )
+        assert actual["lang"] == expected["lang"]
+
+
+def test_starvla_prompt_cache_uses_each_processors_template(starvla_preprocessing):
+    class Processor:
+        def __init__(self, prefix):
+            self.prefix = prefix
+
+        def apply_chat_template(self, conversation, **kwargs):
+            return self.prefix + conversation[0]["content"][-1]["text"]
+
+        def __call__(self, *, text, images, **kwargs):
+            return {"input_ids": torch.tensor([[ord(prompt[0])] for prompt in text])}
+
+    examples = [{"image": [torch.zeros(4, 5, 3, dtype=torch.uint8)], "lang": "pick"}]
+    first, second = Processor("A"), Processor("B")
+    for processor in (first, second, first):
+        result = starvla_preprocessing.vlm.build_device_vlm_inputs(
+            SimpleNamespace(), examples, SimpleNamespace(processor=processor)
+        )
+        assert result["input_ids"].tolist() == [[ord(processor.prefix)]]
+
+
+def test_starvla_oft_keeps_the_host_builder_fallback_for_tensor_views(
+    starvla_preprocessing,
+):
+    class Interface:
+        def build_qwenvl_inputs(self, *, images, instructions):
+            return {
+                "pixel_values": torch.from_numpy(np.asarray(images[0][0]).copy()),
+                "prompt": instructions,
+            }
+
+    image = torch.full((4, 5, 3), 127, dtype=torch.uint8)
+    result = starvla_preprocessing.oft._build_oft_vlm_inputs(
+        SimpleNamespace(qwen_vl_interface=Interface(), action_token="x"),
+        num_action_chunks=2,
+        examples=[{"image": [image], "lang": "pick"}],
+    )
+    torch.testing.assert_close(result["pixel_values"], image)
+    assert "next 2 robot actions" in result["prompt"][0]
+
+
 @pytest.mark.parametrize(("source", "bound"), [("q01q99", 0.5), ("minmax", 1.0)])
 def test_starvla_action_stats_follow_the_configured_source(source, bound):
     action_space = _load_starvla_util("action_space")
@@ -984,8 +2062,10 @@ def test_starvla_autocast_targets_the_worker_accelerator(monkeypatch):
     monkeypatch.setattr(Worker, "torch_device_type", "cpu")
 
     with accelerator.accelerator_autocast(torch.bfloat16):
-        assert torch.is_autocast_enabled("cpu")
-        assert torch.get_autocast_dtype("cpu") == torch.bfloat16
+        # Use the CPU-specific queries because torch_musa's patch on
+        # torch.is_autocast_enabled ignores the "cpu" device argument.
+        assert torch.is_autocast_cpu_enabled()
+        assert torch.get_autocast_cpu_dtype() == torch.bfloat16
 
 
 def test_starvla_autocast_is_a_noop_without_an_accelerator(monkeypatch):
@@ -993,7 +2073,7 @@ def test_starvla_autocast_is_a_noop_without_an_accelerator(monkeypatch):
     monkeypatch.setattr(Worker, "torch_device_type", None)
 
     with accelerator.accelerator_autocast(torch.bfloat16):
-        assert not torch.is_autocast_enabled("cpu")
+        assert not torch.is_autocast_cpu_enabled()
         assert not torch.is_autocast_enabled("cuda")
 
 
@@ -1037,7 +2117,7 @@ class _QwenVisionPatchEmbed(torch.nn.Module):
 
 
 def test_qwen_vl_linear_patch_embed_matches_conv3d_and_backprops():
-    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+    from rlinf.models.embodiment.qwen_vl.linear_patch_embed import (
         _linear_patch_embed_forward,
     )
 
@@ -1055,7 +2135,7 @@ def test_qwen_vl_linear_patch_embed_matches_conv3d_and_backprops():
 
 
 def test_qwen_vl_linear_patch_embed_is_rebound_on_npu(monkeypatch):
-    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+    from rlinf.models.embodiment.qwen_vl.linear_patch_embed import (
         _linear_patch_embed_forward,
         patch_vision_patch_embed,
     )
@@ -1071,7 +2151,7 @@ def test_qwen_vl_linear_patch_embed_is_rebound_on_npu(monkeypatch):
 
 
 def test_qwen_vl_linear_patch_embed_is_left_alone_on_nvidia(monkeypatch):
-    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+    from rlinf.models.embodiment.qwen_vl.linear_patch_embed import (
         patch_vision_patch_embed,
     )
     from rlinf.scheduler import AcceleratorType
@@ -1501,6 +2581,79 @@ def test_robotwin_t5_reward_scores_env_observations():
     frames = torch.cat([batch for batch, _ in seen])
     assert frames.amax(dim=(1, 2, 3)).tolist() == pytest.approx([0.0, 1.0, 0.2])
     assert [texts for _, texts in seen] == [["a", "b"], ["c"]]
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+def test_gt_success_bonus_uses_only_valid_terminal_infos(chunked):
+    from rlinf.models.embodiment.reward.vlm_reward_utils.common import (
+        apply_gt_success_bonus,
+    )
+
+    rewards = torch.arange(5, dtype=torch.float32).reshape(-1, 1)
+    dones = torch.tensor([True, True, False, True, False])
+    if chunked:
+        dones = torch.stack([dones, torch.zeros_like(dones)], dim=-1)
+    reward_input = {
+        "dones": dones,
+        "env_infos": {
+            "success": torch.tensor([False, True, True, True, False]),
+            "_final_info": torch.tensor([True, True, False, False, True]),
+            "final_info": {"success": torch.tensor([True, False, False, False, True])},
+        },
+    }
+
+    result = apply_gt_success_bonus(rewards, reward_input, gt_success_bonus=20.0)
+
+    torch.testing.assert_close(
+        result, torch.tensor([[20.0], [1.0], [22.0], [23.0], [4.0]])
+    )
+
+
+@pytest.fixture
+def video_processor_inputs():
+    return {
+        "input_ids": torch.tensor([[7, 11, 13, 17]]),
+        "attention_mask": torch.ones(1, 4, dtype=torch.long),
+        "pixel_values_videos": torch.arange(24, dtype=torch.float32).reshape(4, 6).T
+        / 7,
+        "video_grid_thw": torch.tensor([[1, 1, 2], [1, 2, 2]], dtype=torch.int32),
+        "second_per_grid_ts": torch.tensor([0.25, 0.5], dtype=torch.float64),
+        "mm_token_type_ids": torch.tensor([[0, 2, 2, 0]]),
+    }
+
+
+def test_video_transport_preserves_processor_outputs(video_processor_inputs):
+    from rlinf.models.embodiment.reward.vlm_reward_utils.video_transport import (
+        decode_video_inputs,
+        encode_video_inputs,
+    )
+
+    restored = decode_video_inputs(encode_video_inputs(video_processor_inputs))
+
+    assert restored.keys() == video_processor_inputs.keys()
+    for key, original in video_processor_inputs.items():
+        torch.testing.assert_close(restored[key], original, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize(
+    "field, value, error",
+    [
+        ("attention_mask", [[1, 1, 1, 0]], "unpadded sample"),
+        ("video_grid_thw", [[1, 1, 1]], "pixels do not match"),
+        ("second_per_grid_ts", np.array([None], dtype=object), "allow_pickle=False"),
+    ],
+)
+def test_video_transport_rejects_invalid_inputs(
+    video_processor_inputs, field, value, error
+):
+    from rlinf.models.embodiment.reward.vlm_reward_utils.video_transport import (
+        decode_video_inputs,
+        encode_video_inputs,
+    )
+
+    video_processor_inputs[field] = value
+    with pytest.raises(ValueError, match=error):
+        decode_video_inputs(encode_video_inputs(video_processor_inputs))
 
 
 VALUE_CLIP = 0.2
@@ -2386,7 +3539,7 @@ def test_phyai_eval_worker_accepts_a_config_without_algorithm(monkeypatch):
     worker = _build_phyai_worker(monkeypatch, _phyai_cfg(only_eval=True))
 
     assert worker.only_eval
-    assert not worker.enable_rlt
+    assert not worker.enable_prefix
     assert worker.weight_syncer is None
 
 
@@ -2395,7 +3548,7 @@ def test_phyai_eval_worker_accepts_a_config_without_algorithm(monkeypatch):
     [
         (False, "actor_critic", False),
         (True, "actor_critic", True),
-        (True, "rlt_ac", False),
+        (True, "prefix_off_policy", False),
     ],
 )
 def test_phyai_worker_sends_raw_transition_obs_only_when_the_actor_reads_them(
@@ -2824,8 +3977,6 @@ def test_phyai_training_requires_bucket_weight_sync(phyai_example_cfg):
     ("path", "value"),
     [
         ("algorithm.loss_type", "embodied_dagger"),
-        ("algorithm.loss_type", "rlt_ac"),
-        ("algorithm.loss_type", "rlt_td3"),
         ("algorithm.adv_type", "opd"),
     ],
 )
@@ -2975,6 +4126,1220 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert actions.shape == (2, 16, 7)
     assert torch.all(actions[0, :, 6] == -0.5)
     assert torch.all(actions[1, :, 6] == 0.5)
+
+
+@pytest.mark.parametrize(
+    "config_name,algorithm_name,actor_head,critic_head,num_q_heads,overrides",
+    [
+        (
+            "maniskill_prefix_stage2_td3_mlp_steam",
+            "td3",
+            "deterministic_mlp",
+            "multi_q_mlp",
+            2,
+            [],
+        ),
+        (
+            "maniskill_rlt_stage2_td3_mlp",
+            "td3",
+            "deterministic_mlp",
+            "multi_q_mlp",
+            2,
+            [],
+        ),
+        (
+            "maniskill_rlt_stage2_ac_mlp",
+            "ac",
+            "fixed_std_mlp",
+            "multi_q_mlp",
+            2,
+            [],
+        ),
+        (
+            "maniskill_rlt_stage2_ac_mlp",
+            "ac",
+            "fixed_std_mlp",
+            "multi_q_mlp",
+            4,
+            ["actor.model.critic_head.num_q_heads=4"],
+        ),
+    ],
+)
+def test_maniskill_prefix_configs_build_policy_and_losses(
+    monkeypatch,
+    config_name,
+    algorithm_name,
+    actor_head,
+    critic_head,
+    num_q_heads,
+    overrides,
+):
+    from hydra import compose, initialize_config_dir
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    with initialize_config_dir(
+        config_dir=str(root / "examples/embodiment/config"), version_base="1.1"
+    ):
+        cfg = compose(
+            config_name=config_name,
+            overrides=[
+                *overrides,
+                "+actor.model.load_to_device=false",
+                "+rollout.model.load_to_device=false",
+            ],
+        )
+    OmegaConf.resolve(cfg)
+    assert cfg.algorithm.name == algorithm_name
+    assert cfg.algorithm.loss_type == "prefix_off_policy"
+    assert cfg.algorithm.entropy_tuning.alpha_type == "fixed_alpha"
+    assert cfg.algorithm.entropy_tuning.initial_alpha == 0.0
+    assert cfg.actor.model.actor_head.name == actor_head
+    assert cfg.actor.model.critic_head.name == critic_head
+
+    algorithm = build_prefix_off_policy_algorithm(cfg)
+    model = get_model(cfg.actor.model)
+    rollout_model = get_model(cfg.rollout.model)
+    rollout_model.load_state_dict(model.state_dict())
+    assert isinstance(model, PrefixPolicy)
+    assert algorithm.num_q_heads == num_q_heads
+    model_cfg = cfg.actor.model
+    obs = {
+        "z_rl": torch.randn(2, model_cfg.z_dim),
+        "proprio": torch.randn(2, model_cfg.proprio_dim),
+        "ref_chunk": torch.zeros(
+            2, model_cfg.ref_num_action_chunks, model_cfg.action_dim
+        ),
+    }
+    actions, _ = model.predict_action_batch(obs, mode="eval")
+    rollout_actions, _ = rollout_model.predict_action_batch(obs, mode="eval")
+    assert actions.shape == (2, model_cfg.num_action_chunks, model_cfg.action_dim)
+    torch.testing.assert_close(rollout_actions, actions)
+    assert torch.isfinite(actions).all()
+    assert (actions.abs() <= 1.0).all()
+
+    context = SimpleNamespace(
+        model=model,
+        target_model=copy.deepcopy(model).eval().requires_grad_(False),
+        torch_dtype=torch.float32,
+        update_step=0,
+    )
+    batch = {
+        "curr_obs": obs,
+        "next_obs": obs,
+        "actions": actions.flatten(1),
+        "rewards": torch.ones(2, model_cfg.num_action_chunks),
+        "terminations": torch.zeros(2, model_cfg.num_action_chunks, dtype=torch.bool),
+        "dones": torch.zeros(2, model_cfg.num_action_chunks, dtype=torch.bool),
+    }
+    critic_loss, _ = algorithm.critic_loss(context, batch)
+    assert critic_loss.ndim == 0 and torch.isfinite(critic_loss)
+    critic_loss.backward()
+    assert all(
+        parameter.grad is not None and torch.isfinite(parameter.grad).all()
+        for parameter in model.q_head.parameters()
+    )
+    model.zero_grad(set_to_none=True)
+    model.set_critic_requires_grad(False)
+    actor_loss, entropy, _ = algorithm.actor_loss(context, batch)
+    assert actor_loss.ndim == 0 and torch.isfinite(actor_loss)
+    assert entropy.ndim == 0 and torch.isfinite(entropy)
+    actor_loss.backward()
+    assert all(
+        parameter.grad is not None and torch.isfinite(parameter.grad).all()
+        for parameter in model.actor_head.parameters()
+    )
+
+
+def _make_prefix_training_case(algorithm_name, critic_head):
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "model": {
+                    "action_dim": 2,
+                    "num_action_chunks": 2,
+                    "actor_head": {
+                        "name": (
+                            "fixed_std_mlp"
+                            if algorithm_name == "ac"
+                            else "deterministic_mlp"
+                        ),
+                        "hidden_dims": [8, 8],
+                        "fixed_std": 0.2,
+                        "noise_sigma": 0.1,
+                    },
+                    "critic_head": {
+                        "name": critic_head,
+                        "hidden_dims": [8, 8],
+                        "num_q_heads": 2,
+                    },
+                }
+            },
+            "algorithm": {
+                "name": algorithm_name,
+                "gamma": 0.9,
+                "rlt_transition_replay": True,
+                "reference_dropout_prob": 0.3,
+                "entropy_tuning": {"alpha_type": "fixed_alpha"},
+                "actor_weight_schedule": {
+                    "enable": True,
+                    "warmup_updates": 2,
+                    "ramp_updates": 4,
+                    "warmup_bc_weight": 1.0,
+                    "online_bc_weight": 0.2,
+                    "warmup_q_weight": 0.0,
+                    "online_q_weight": 1.0,
+                },
+            },
+        }
+    )
+    model = PrefixPolicy(
+        prefix_dim=4,
+        proprio_dim=3,
+        action_dim=2,
+        num_action_chunks=2,
+        ref_num_action_chunks=3,
+        actor_head_cfg=cfg.actor.model.actor_head,
+        critic_head_cfg=cfg.actor.model.critic_head,
+    )
+
+    def observation():
+        return {
+            "z_rl": torch.randn(3, 4),
+            "proprio": torch.randn(3, 3),
+            "ref_chunk": torch.randn(3, 3, 2),
+        }
+
+    batch = {
+        "curr_obs": observation(),
+        "next_obs": observation(),
+        "actions": torch.randn(3, 4),
+        "rewards": torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]),
+        "terminations": torch.zeros(3, 2, dtype=torch.bool),
+        "dones": torch.tensor([[False, False], [False, True], [True, False]]),
+        "intervene_flags": torch.tensor([[False, True], [False, False], [True, True]]),
+    }
+    context = SimpleNamespace(
+        cfg=cfg,
+        model=model,
+        target_model=copy.deepcopy(model).eval().requires_grad_(False),
+        torch_dtype=torch.float32,
+        update_step=3,
+    )
+    return build_prefix_off_policy_algorithm(cfg), context, batch
+
+
+def test_prefix_algorithm_extends_only_losses_and_target_actions():
+    from rlinf.algorithms.prefix_off_policy import (
+        PrefixAlgorithmRequirements,
+        PrefixOffPolicyAlgorithm,
+    )
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    class ScaledCriticAlgorithm(PrefixOffPolicyAlgorithm):
+        requirements = PrefixAlgorithmRequirements(actor_distribution="stochastic")
+
+        def critic_loss(self, context, batch):
+            loss, metrics = super().critic_loss(context, batch)
+            return 2.0 * loss, metrics
+
+        def actor_loss(self, context, batch):
+            return self._actor_loss(
+                context, batch, actor_agg_q="mean", apply_reference_dropout=False
+            )
+
+        def target_actions(self, context, next_obs):
+            actions, _, _ = context.model(forward_type=ForwardType.SAC, obs=next_obs)
+            return actions
+
+    original, context, batch = _make_prefix_training_case("ac", "multi_q_mlp")
+    algorithm = ScaledCriticAlgorithm(context.cfg)
+    torch.manual_seed(7)
+    original_loss, _ = original.critic_loss(context, batch)
+    torch.manual_seed(7)
+    critic_loss, _ = algorithm.critic_loss(context, batch)
+    torch.testing.assert_close(critic_loss, 2.0 * original_loss)
+    critic_loss.backward()
+    context.model.zero_grad(set_to_none=True)
+    context.model.set_critic_requires_grad(False)
+    actor_loss, _, metrics = algorithm.actor_loss(context, batch)
+    assert metrics["q_pi"] == pytest.approx(
+        (metrics["q_value_0"] + metrics["q_value_1"]) / 2.0
+    )
+    actor_loss.backward()
+    assert all(
+        p.grad is not None and torch.isfinite(p.grad).all()
+        for p in context.model.actor_head.parameters()
+    )
+
+
+@pytest.mark.parametrize("activation", ["relu", "tanh", "gelu"])
+def test_multi_q_mlp_critic_accepts_only_activations_with_init_gain(activation):
+    from rlinf.models.embodiment.mlp_policy.heads import build_prefix_critic
+
+    cfg = OmegaConf.create({"activation": activation, "hidden_dims": [8]})
+    if activation == "gelu":
+        with pytest.raises(ValueError, match=r"\('relu', 'tanh'\), got 'gelu'"):
+            build_prefix_critic("multi_q_mlp", state_dim=4, action_dim=2, cfg=cfg)
+        return
+    critic = build_prefix_critic("multi_q_mlp", state_dim=4, action_dim=2, cfg=cfg)
+    assert critic(torch.zeros(3, 4), torch.zeros(3, 2)).shape == (3, 2)
+
+
+@pytest.mark.parametrize("critic_head", ["multi_q_mlp", "cross_q_mlp"])
+def test_prefix_policy_forward_types(critic_head):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    _, context, batch = _make_prefix_training_case("td3", critic_head)
+    model, obs = context.model, batch["curr_obs"]
+    actions, log_probs, extra = model(
+        forward_type=ForwardType.SAC, obs=obs, deterministic=True
+    )
+    assert actions.shape == batch["actions"].shape
+    assert log_probs.shape[0] == actions.shape[0] and extra is None
+    q = model(forward_type=ForwardType.SAC_Q, obs=obs, actions=batch["actions"])
+    assert q.shape == (3, 2)
+    current_q, next_q = model(
+        forward_type=ForwardType.CROSSQ_Q,
+        obs=obs,
+        actions=batch["actions"],
+        next_obs=batch["next_obs"],
+        next_actions=actions,
+    )
+    assert current_q.shape == next_q.shape == (3, 2)
+    with pytest.raises(NotImplementedError):
+        model(forward_type=ForwardType.DEFAULT, obs=obs)
+
+
+@pytest.mark.parametrize("algorithm_name", ["ac", "td3"])
+@pytest.mark.parametrize("critic_head", ["multi_q_mlp", "cross_q_mlp"])
+def test_prefix_losses_use_fsdp_forward(tmp_path, algorithm_name, critic_head):
+    import torch.distributed as dist
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+    from rlinf.models.embodiment.base_policy import ForwardType
+    from rlinf.models.embodiment.modules.batch_renorm import BatchRenorm
+
+    if not dist.is_available() or not dist.is_gloo_available():
+        pytest.skip("CPU FSDP coverage requires the Gloo distributed backend")
+    if dist.is_initialized():
+        pytest.skip("CPU FSDP coverage requires an isolated process group")
+    dist.init_process_group(
+        "gloo", init_method=(tmp_path / "store").as_uri(), rank=0, world_size=1
+    )
+    try:
+        algorithm, context, batch = _make_prefix_training_case(
+            algorithm_name, critic_head
+        )
+        raw_model = context.model
+        context.model = FSDP(
+            raw_model, device_id=torch.device("cpu"), use_orig_params=True
+        )
+        context.target_model = FSDP(
+            context.target_model, device_id=torch.device("cpu"), use_orig_params=True
+        )
+        online_calls = []
+        target_calls = []
+        critic_outputs = []
+
+        def record_online(module, args, kwargs, output):
+            online_calls.append(kwargs["forward_type"])
+            if kwargs["forward_type"] == ForwardType.SAC_Q:
+                output = (output, None)
+            if kwargs["forward_type"] in (ForwardType.SAC_Q, ForwardType.CROSSQ_Q):
+                for q in output:
+                    if q is not None and q.requires_grad:
+                        q.retain_grad()
+                critic_outputs.append(output)
+
+        def record_target(module, args, kwargs, output):
+            target_calls.append(kwargs["forward_type"])
+            if kwargs["forward_type"] == ForwardType.SAC:
+                assert kwargs["deterministic"] is True
+                assert kwargs["apply_action_noise"] is False
+
+        context.model.register_forward_hook(record_online, with_kwargs=True)
+        context.target_model.register_forward_hook(record_target, with_kwargs=True)
+        renorms = [m for m in raw_model.modules() if isinstance(m, BatchRenorm)]
+        critic_type = ForwardType.CROSSQ_Q if renorms else ForwardType.SAC_Q
+        critic_loss, _ = algorithm.critic_loss(context, batch)
+        actor_calls = [ForwardType.SAC] if algorithm_name == "ac" else []
+        assert online_calls == actor_calls + [critic_type]
+        assert target_calls == (
+            [ForwardType.SAC] if algorithm_name == "td3" else []
+        ) + ([] if renorms else [ForwardType.SAC_Q])
+        assert all(m.steps.item() == 1 for m in renorms)
+        current_q, next_q = critic_outputs[0]
+        if renorms:
+            assert next_q is not None and next_q.requires_grad
+            reward_target = batch["rewards"][:, :1] + 0.9 * batch["rewards"][:, 1:2]
+            not_done = ~batch["dones"].any(dim=-1, keepdim=True)
+            target = (
+                reward_target
+                + not_done * 0.9**2 * next_q.detach().min(dim=-1, keepdim=True).values
+            )
+            torch.testing.assert_close(
+                critic_loss, (current_q - target).square().mean()
+            )
+        critic_loss.backward()
+        assert current_q.grad is not None
+        assert next_q is None or next_q.grad is None
+        assert all(
+            p.grad is None or torch.count_nonzero(p.grad) == 0
+            for p in raw_model.actor_head.parameters()
+        )
+        assert all(p.grad is None for p in context.target_model.parameters())
+        assert all(
+            p.grad is not None and torch.isfinite(p.grad).all()
+            for p in raw_model.q_head.parameters()
+        )
+        context.model.zero_grad(set_to_none=True)
+        actor_loss, entropy, metrics = algorithm.actor_loss(context, batch)
+        assert torch.isfinite(actor_loss) and torch.isfinite(entropy)
+        assert online_calls[-2:] == [ForwardType.SAC, critic_type]
+        assert metrics["bc_weight"] == pytest.approx(0.6)
+        assert metrics["q_weight"] == pytest.approx(0.5)
+        actor_loss.backward()
+        # A second microbatch must not let accumulated critic gradients change clipping.
+        second_loss, _, _ = algorithm.actor_loss(context, batch)
+        second_loss.backward()
+        from rlinf.workers.actor.fsdp_prefix_off_policy_worker import (
+            PrefixOffPolicyRuntime,
+        )
+
+        actor_params = list(raw_model.actor_head.parameters())
+        expected_norm = torch.stack([p.grad.norm() for p in actor_params]).norm()
+        assert all(p.grad is not None for p in raw_model.q_head.parameters())
+        for p in raw_model.q_head.parameters():
+            p.grad.mul_(1000)
+        optimizer = torch.optim.SGD(actor_params, lr=0.01)
+        worker = object.__new__(PrefixOffPolicyRuntime)
+        worker.model = context.model
+        norm = worker.clip_optimizer_grad_norm(optimizer, max_norm=0.01)
+        torch.testing.assert_close(norm, expected_norm)
+        assert all(p.grad is None for p in raw_model.q_head.parameters())
+        assert torch.stack([p.grad.norm() for p in actor_params]).norm() <= 0.01001
+        assert all(m.steps.item() == 1 for m in renorms)
+
+        from rlinf.scheduler.hardware.accelerators.accelerator import AcceleratorType
+        from rlinf.workers.actor.fsdp_prefix_off_policy_worker import (
+            PrefixOffPolicyFSDPPolicy,
+        )
+
+        worker = object.__new__(PrefixOffPolicyFSDPPolicy)
+        worker.cfg = context.cfg
+        from rlinf.data.schema.embodied_trajectory import RolloutGeometry
+        from rlinf.envs.layout import EnvLayout
+
+        worker._rollout_geometry = RolloutGeometry(
+            layout=EnvLayout(OmegaConf.create({}), 1, "env.train"),
+            stage_num=1,
+            num_action_chunks=2,
+            actor_world_size=1,
+        )
+        worker.cfg.actor.global_batch_size = worker.cfg.actor.micro_batch_size = 3
+        worker.cfg.actor.optim = worker.cfg.actor.critic_optim = {"clip_grad": 10.0}
+        worker.cfg.algorithm.critic_actor_ratio = 2
+        worker.cfg.algorithm.target_update_freq = 2 if algorithm_name == "td3" else 1
+        worker.cfg.algorithm.tau = 0.5
+        worker.algorithm_component = algorithm
+        worker.model, worker.target_model = context.model, context.target_model
+        worker.device = torch.device("cpu")
+        worker.torch_dtype = torch.float32
+        worker._world_size = worker.gradient_accumulation = 1
+        worker._accelerator_type = AcceleratorType.NO_ACCEL
+        worker._timer_metrics = {}
+        worker.enable_drq = False
+        worker.target_model_initialized = True
+        worker.target_update_type = "all"
+        worker.critic_actor_ratio = 2
+        worker.alpha_optimizer = None
+        from rlinf.models.embodiment.modules.entropy_tunning import EntropyTemperature
+
+        worker.entropy_temp = EntropyTemperature(0.0, alpha_type="fixed_alpha")
+        worker.optimizer = torch.optim.SGD(raw_model.actor_head.parameters(), lr=0.01)
+        worker.qf_optimizer = torch.optim.SGD(raw_model.q_head.parameters(), lr=0.01)
+        worker.lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
+            worker.optimizer, factor=1.0
+        )
+        worker.qf_lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
+            worker.qf_optimizer, factor=1.0
+        )
+        worker.buffer_dataloader_iter = iter([batch] * 6)
+        for step, train_actor in enumerate([True, True, True, False, True, True]):
+            worker.update_step = step
+            actor_before = [
+                p.detach().clone() for p in raw_model.actor_head.parameters()
+            ]
+            target_before = [
+                p.detach().clone() for p in worker.target_model.parameters()
+            ]
+            metrics = worker.update_one_epoch(train_actor=train_actor)
+            if algorithm_name == "td3":
+                update_actor = train_actor and (step + 1) % 2 == 0
+                update_targets = update_actor
+            else:
+                update_actor = train_actor and step % 2 == 0
+                update_targets = True
+            assert ("sac/actor_loss" in metrics) == update_actor
+            assert (
+                any(
+                    not torch.equal(before, after)
+                    for before, after in zip(
+                        actor_before, raw_model.actor_head.parameters()
+                    )
+                )
+                == update_actor
+            )
+            for before, online, target in zip(
+                target_before,
+                worker.model.parameters(),
+                worker.target_model.parameters(),
+            ):
+                expected = (before + online.detach()) / 2 if update_targets else before
+                torch.testing.assert_close(target, expected, rtol=0, atol=0)
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize(
+    "algorithm_name,actor_head,expected_distribution",
+    [
+        ("ac", "deterministic_mlp", "stochastic"),
+        ("td3", "fixed_std_mlp", "deterministic"),
+    ],
+)
+def test_prefix_algorithms_enforce_declared_actor_capabilities(
+    algorithm_name, actor_head, expected_distribution
+):
+    _, context, _ = _make_prefix_training_case(algorithm_name, "multi_q_mlp")
+    context.cfg.actor.model.actor_head.name = actor_head
+    with pytest.raises(ValueError, match=f"requires a {expected_distribution} actor"):
+        build_prefix_off_policy_algorithm(context.cfg)
+
+
+@pytest.mark.parametrize(
+    "algorithm_name,key,value,match",
+    [
+        ("td3", "algorithm.entropy_tuning.alpha_type", "softplus", "fixed_alpha"),
+        ("ac", "algorithm.entropy_tuning", None, "fixed_alpha"),
+        ("td3", "algorithm.actor_agg_q", "max", "actor_agg_q"),
+        ("ac", "algorithm.actor_agg_q", "min", "actor_agg_q"),
+        ("td3", "algorithm.agg_q", "mean", "agg_q='min'"),
+        ("td3", "algorithm.target_policy_noise", -0.1, "target_policy_noise"),
+        ("td3", "algorithm.target_noise_clip", float("inf"), "target_noise_clip"),
+        ("td3", "algorithm.critic_actor_ratio", 0, "positive integer"),
+        ("td3", "algorithm.target_update_freq", 1, "target_update_freq"),
+        ("td3", "algorithm.target_update_type", "q_head_only", "target_update_type"),
+    ],
+)
+def test_prefix_algorithms_reject_unsupported_config_at_build(
+    algorithm_name, key, value, match
+):
+    _, context, _ = _make_prefix_training_case(algorithm_name, "multi_q_mlp")
+    OmegaConf.update(context.cfg, key, value)
+    with pytest.raises(ValueError, match=match):
+        build_prefix_off_policy_algorithm(context.cfg)
+
+
+def _compose_prefix_config(monkeypatch, config_dir, config_name):
+    from hydra import compose, initialize_config_dir
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    monkeypatch.setenv("REPO_PATH", str(root))
+    with initialize_config_dir(config_dir=str(root / config_dir), version_base="1.1"):
+        return compose(config_name=config_name)
+
+
+@pytest.mark.parametrize(
+    "config_dir,config_name,feature_path,expected_pool,expected_image_only",
+    [
+        (
+            "examples/embodiment/config",
+            "maniskill_prefix_stage2_td3_mlp_steam",
+            "rollout.prefix_feature_model",
+            "masked_mean",
+            True,
+        ),
+        *[
+            (
+                "examples/embodiment/config",
+                name,
+                "rollout.prefix_feature_model",
+                "rlt_token",
+                False,
+            )
+            for name in (
+                "maniskill_rlt_stage2_ac_mlp",
+                "maniskill_rlt_stage2_td3_mlp",
+            )
+        ],
+        *[
+            (config_dir, name, "actor.model", "rlt_token", False)
+            for config_dir, name in (
+                ("examples/sft/config", "maniskill_rlt_stage1_sft_openpi_pi05"),
+                ("tests/e2e_tests/sft", "maniskill_rlt_stage1_sft_openpi_pi05"),
+            )
+        ],
+        (
+            "tests/e2e_tests/embodied",
+            "maniskill_rlt_stage2_ac_mlp",
+            "rollout.prefix_feature_model",
+            "rlt_token",
+            False,
+        ),
+    ],
+)
+def test_prefix_configs_resolve_pool_from_prefix_block(
+    monkeypatch,
+    config_dir,
+    config_name,
+    feature_path,
+    expected_pool,
+    expected_image_only,
+):
+    from rlinf.models.embodiment.openpi.rlt_config import build_rlt_config
+
+    cfg = _compose_prefix_config(monkeypatch, config_dir, config_name)
+    OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
+    model_cfg = OmegaConf.select(cfg, feature_path)
+    rlt_cfg = build_rlt_config(model_cfg.openpi, parent_cfg=model_cfg)
+    assert rlt_cfg.prefix_pool == expected_pool
+    assert rlt_cfg.prefix_image_only is expected_image_only
+
+
+@pytest.mark.parametrize(
+    "config_name",
+    [
+        "maniskill_prefix_stage2_td3_mlp_steam",
+        "maniskill_prefix_stage2_td3_mlp_steam_calibration",
+    ],
+)
+def test_steam_presets_use_each_checkpoint_for_normalization(monkeypatch, config_name):
+    from rlinf.algorithms.expert import build_expert_model_config
+
+    cfg = _compose_prefix_config(monkeypatch, "examples/embodiment/config", config_name)
+    OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
+    feature_cfg = cfg.rollout.prefix_feature_model
+    assert feature_cfg.openpi_data.norm_stats_path is None
+    assert feature_cfg.openpi_data.repo_id == "maniskill_peginsertionside_joint"
+    if cfg.rollout.expert_model is not None:
+        expert_cfg = build_expert_model_config(
+            cfg, cfg.rollout.model, rlt_feature_model_config=feature_cfg
+        )
+        assert expert_cfg.openpi_data.norm_stats_path is None
+        assert expert_cfg.openpi_data.repo_id == feature_cfg.openpi_data.repo_id
+        assert Path(expert_cfg.model_path).name == "actor"
+    checkpoint_root = Path("/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints")
+    assert Path(feature_cfg.model_path) == (checkpoint_root / "global_step_1000/actor")
+    if cfg.rollout.expert_model is not None:
+        assert Path(expert_cfg.model_path) == checkpoint_root / "global_step_3000/actor"
+    assert cfg.rollout.routing_gate.model.model_path == (
+        "/path/to/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor"
+    )
+    assert feature_cfg.prefix.pool == "masked_mean"
+    assert feature_cfg.prefix.image_only is True
+
+
+def test_steam_calibration_preset_collects_without_a_phase_head(monkeypatch):
+    from rlinf.algorithms.rlt.rlt_steam_critical_phase_gate import SteamRoutingGate
+
+    cfg = _compose_prefix_config(
+        monkeypatch,
+        "examples/embodiment/config",
+        "maniskill_prefix_stage2_td3_mlp_steam_calibration",
+    )
+    gate = SteamRoutingGate(_FakeSteamCritic(), cfg.rollout.routing_gate)
+    assert gate.phase_head is None
+    assert not gate.controls_actor_routing
+    assert gate.emit_phase_features
+    assert gate.expert_mode == "shadow"
+    assert cfg.rollout.expert_model is None
+    assert cfg.rollout.rollout_backend == "huggingface"
+    assert cfg.runner.max_steps == 20
+    assert cfg.runner.val_check_interval == cfg.runner.save_interval == -1
+    assert cfg.algorithm.rlt_gate_calibration.enable
+    assert (
+        cfg.algorithm.rlt_gate_calibration.save_path
+        == f"{cfg.runner.logger.log_path}/{cfg.runner.logger.experiment_name}/gate_calibration"
+    )
+    assert cfg.algorithm.rlt_schedule.warmup_post_collect_updates == 3000
+    for mode in ("train", "eval"):
+        switch = cfg.env[mode].rlt_policy_switch
+        assert switch.routing_source == "environment"
+        assert not switch.expert_takeover.enable
+        assert switch.expert_takeover.oracle_metrics.enable
+
+    training_cfg = _compose_prefix_config(
+        monkeypatch,
+        "examples/embodiment/config",
+        "maniskill_prefix_stage2_td3_mlp_steam",
+    )
+    assert training_cfg.rollout.routing_gate.actor_switch.enable
+    assert training_cfg.algorithm.rlt_schedule.warmup_min_size == 1000
+    assert training_cfg.algorithm.rlt_schedule.warmup_post_collect_updates == 3000
+    assert training_cfg.runner.val_check_interval == 25
+    assert training_cfg.runner.save_interval == 500
+    assert training_cfg.rollout.routing_gate.actor_switch.phase_head_path == (
+        "/path/to/steam_phase_head.pt"
+    )
+    assert training_cfg.rollout.routing_gate.actor_switch.enter_threshold is None
+    assert training_cfg.rollout.routing_gate.actor_switch.patience_chunks is None
+    expert = training_cfg.rollout.routing_gate.expert_takeover
+    assert expert.mode == "shadow"
+    assert expert.enter_threshold is None
+    assert expert.patience_chunks is None
+    assert expert.warmup_chunks is None
+    assert training_cfg.env.train.rlt_policy_switch.routing_source == "rollout"
+    assert not training_cfg.algorithm.rlt_gate_calibration.enable
+
+
+def test_prefix_off_policy_loss_requires_prefix_obs_contract():
+    from rlinf.config import ObsContract, SupportedModel, get_model_obs_contract
+
+    assert get_model_obs_contract(SupportedModel.PREFIX_POLICY) == ObsContract.PREFIX
+    for model_type in (SupportedModel.MLP_POLICY, SupportedModel.OPENPI):
+        assert get_model_obs_contract(model_type) == ObsContract.STATE
+
+
+def test_prefix_e2e_config_builds_current_policy_and_algorithm(monkeypatch):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    cfg = _compose_prefix_config(
+        monkeypatch, "tests/e2e_tests/embodied", "maniskill_rlt_stage2_ac_mlp"
+    )
+    assert cfg.algorithm.loss_type == "prefix_off_policy"
+    assert cfg.algorithm.name == "ac"
+    assert cfg.actor.model.model_type == cfg.rollout.model.model_type == "prefix_policy"
+    algorithm = build_prefix_off_policy_algorithm(cfg)
+    model = get_model(cfg.actor.model)
+    rollout_model = get_model(cfg.rollout.model)
+    rollout_model.load_state_dict(model.state_dict())
+    obs = {
+        "z_rl": torch.zeros(2, 2048),
+        "proprio": torch.zeros(2, 9),
+        "ref_chunk": torch.zeros(2, 10, 8),
+    }
+    actions = algorithm.target_actions(SimpleNamespace(model=model), obs)
+    assert actions.shape == (2, 80)
+    q_values = model(forward_type=ForwardType.SAC_Q, obs=obs, actions=actions)
+    assert q_values.shape == (2, 2)
+    assert cfg.runner.max_epochs == 1
+    assert cfg.env.train.total_num_envs == 8
+    assert cfg.rollout.prefix_feature_model.model_path == (
+        "/workspace/dataset/RLinf-Maniskill-RLT-Stage1/"
+    )
+
+
+@pytest.mark.parametrize(
+    "legacy_key", ["stage2_z_source", "prefix_pool", "rlt_image_only"]
+)
+def test_build_rlt_config_rejects_openpi_pooling_fields(legacy_key):
+    from rlinf.models.embodiment.openpi.rlt_config import build_rlt_config
+
+    model_cfg = OmegaConf.create(
+        {"prefix": {}, "openpi": {"use_rlt": True, legacy_key: False}}
+    )
+    with pytest.raises(ValueError, match=f"openpi.{legacy_key} is no longer"):
+        build_rlt_config(model_cfg.openpi, parent_cfg=model_cfg)
+
+
+def test_prefix_feature_width_must_match_policy_z_dim():
+    from rlinf.models.embodiment.prefix_features import (
+        check_prefix_feature_dim,
+        extract_prefix_obs,
+    )
+
+    class FeatureModel:
+        z_dim = 4
+
+        def __init__(self, width):
+            self.width = width
+
+        def extract_prefix_obs(self, env_obs):
+            return {
+                "z_rl": torch.zeros(2, self.width),
+                "proprio": torch.zeros(2, 3),
+                "ref_chunk": torch.zeros(2, 2, 2),
+            }
+
+    assert extract_prefix_obs(FeatureModel(4), {})["z_rl"].shape == (2, 4)
+    with pytest.raises(ValueError, match="last dimension 5, expected z_dim=4"):
+        extract_prefix_obs(FeatureModel(5), {})
+    check_prefix_feature_dim(FeatureModel(4), 4)
+    with pytest.raises(ValueError, match="width 4, but actor.model.z_dim is 6"):
+        check_prefix_feature_dim(FeatureModel(4), 6)
+
+
+class _FakeSteamImageProcessor:
+    def __init__(self, image_keys):
+        self.image_keys = image_keys
+
+    def __call__(self, images, image_masks, return_tensors, train):
+        del return_tensors, train
+        return {
+            "pixel_values": {
+                key: value.permute(0, 3, 1, 2).float() for key, value in images.items()
+            },
+            "image_masks": image_masks,
+        }
+
+
+class _FakeSteamCritic(torch.nn.Module):
+    """Checkpoint stand-in whose score is the mean pixel change of a pair."""
+
+    def __init__(self, image_keys=("image",)):
+        super().__init__()
+        self.anchor = torch.nn.Parameter(torch.zeros(1))
+        self.prediction_batch_sizes = []
+        self.config = SimpleNamespace(
+            max_token_len=4,
+            num_bins=2,
+            fusion_hidden_dim=2,
+            num_frames_per_pair=2,
+            ensemble_size=1,
+        )
+        self.processor = SimpleNamespace(
+            image_processor=_FakeSteamImageProcessor(list(image_keys)),
+            process_text=lambda prompts, max_length, return_tensors: {
+                "input_ids": torch.zeros(len(prompts), max_length, dtype=torch.long),
+                "attention_mask": torch.ones(len(prompts), max_length),
+            },
+        )
+
+    def predict(self, observation):
+        pair = observation["images"]["image"]
+        self.prediction_batch_sizes.append(pair.shape[0])
+        score = (pair[:, 1] - pair[:, 0]).mean(dim=(1, 2, 3))
+        return SimpleNamespace(
+            predicted_values=score,
+            hidden_states=score[:, None].repeat(1, 6) + 1.0,
+        )
+
+
+def _steam_gate_cfg(**overrides):
+    cfg = {
+        "chunk_size": 1,
+        "lookback_chunks": 1,
+        "actor_switch": {"enable": False, "collect_phase_features": True},
+        "expert_takeover": {
+            "enable": True,
+            "warmup_chunks": 1,
+            "patience_chunks": 1,
+            "enter_threshold": 0.0,
+        },
+    }
+    cfg.update(overrides)
+    return OmegaConf.create(cfg)
+
+
+def test_steam_gate_emits_phase_features_only_for_ready_rows():
+    from rlinf.algorithms.rlt.rlt_steam_critical_phase_gate import SteamRoutingGate
+
+    gate = SteamRoutingGate(_FakeSteamCritic(), _steam_gate_cfg())
+
+    def step(pixel_values, reset_mask=None):
+        images = torch.tensor(pixel_values, dtype=torch.uint8)[:, None, None, None]
+        return gate.step(
+            {
+                "main_images": images.expand(-1, 2, 2, 3),
+                "task_descriptions": ["insert", "insert"],
+            },
+            mode="train",
+            stage_id=0,
+            reset_mask=reset_mask,
+            external_actor_switch=torch.ones(2, dtype=torch.bool),
+        )
+
+    first = step([10, 10])
+    assert gate.model.prediction_batch_sizes == []
+    assert not first.diagnostics["rlt_gate_score_ready"].any()
+    assert torch.count_nonzero(first.phase_features) == 0
+
+    second = step([30, 50])
+    assert gate.model.prediction_batch_sizes == [2]
+    assert second.diagnostics["rlt_gate_score_ready"].all()
+    torch.testing.assert_close(
+        second.diagnostics["rlt_gate_score_min"][:, 0], torch.tensor([20.0, 40.0])
+    )
+    assert torch.count_nonzero(second.phase_features) == second.phase_features.numel()
+
+    third = step([60, 10], reset_mask=torch.tensor([False, True]))
+    assert gate.model.prediction_batch_sizes == [2, 1]
+    assert third.diagnostics["rlt_gate_score_ready"][:, 0].tolist() == [True, False]
+    torch.testing.assert_close(
+        third.diagnostics["rlt_gate_score_min"][:, 0], torch.tensor([30.0, 0.0])
+    )
+    torch.testing.assert_close(
+        third.phase_features[0], torch.full((1, 6), 31.0, dtype=torch.float16)
+    )
+    assert torch.count_nonzero(third.phase_features[1]) == 0
+
+
+def test_steam_gate_maps_processor_cameras_to_env_observations():
+    from rlinf.algorithms.rlt.rlt_steam_critical_phase_gate import SteamRoutingGate
+
+    gate = SteamRoutingGate(
+        _FakeSteamCritic(), _steam_gate_cfg(cameras={"image": "rgb"})
+    )
+    env_obs = {
+        "rgb": torch.zeros(1, 2, 2, 3, dtype=torch.uint8),
+        "task_descriptions": ["insert"],
+    }
+    decision = gate.step(env_obs, mode="eval", stage_id=0)
+    assert decision.phase_features.shape == (1, 1, 6)
+    with pytest.raises(KeyError, match="'image' to env observation 'rgb'"):
+        gate.step(
+            {"task_descriptions": ["insert"], "main_images": env_obs["rgb"]},
+            mode="eval",
+            stage_id=1,
+        )
+    with pytest.raises(ValueError, match="missing \\['wrist_image'\\]"):
+        SteamRoutingGate(
+            _FakeSteamCritic(("image", "wrist_image")),
+            _steam_gate_cfg(cameras={"image": "rgb"}),
+        )
+    with pytest.raises(ValueError, match="routing_gate.main_image_key"):
+        SteamRoutingGate(_FakeSteamCritic(), _steam_gate_cfg(main_image_key="image"))
+
+
+def _gr00t_npu_patch_modules():
+    from rlinf.models.embodiment.gr00t.gr00t_n1d5 import npu_patches as n1d5
+    from rlinf.models.embodiment.gr00t.gr00t_n1d6 import npu_patches as n1d6
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7 import npu_patches as n1d7
+
+    return {"n1d5": n1d5, "n1d6": n1d6, "n1d7": n1d7}
+
+
+def test_gr00t_npu_patches_are_inert_off_ascend(monkeypatch):
+    # Every GR00T version registers its Ascend patches through the same pair of
+    # calls, and off NPU both do nothing, so a CUDA run is untouched.
+    from rlinf.scheduler import AcceleratorType
+    from rlinf.utils.patcher import Patcher
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NO_ACCEL)
+    for version, module in _gr00t_npu_patch_modules().items():
+        Patcher.clear()
+        state = module.apply_npu_patches(Patcher)
+        assert state is None, version
+        module.restore_npu_patches(Patcher, state)
+        assert Patcher._mappings_dict == {}, version
+
+
+def test_gr00t_npu_fused_kernel_paths_resolve_for_every_version():
+    # The Patcher names replacements by string path, so a moved or renamed
+    # kernel wrapper has to fail here rather than at model construction on NPU.
+    from rlinf.utils.patcher import Patcher
+
+    for path in (
+        "rlinf.models.embodiment.gr00t.npu_common.npu_rmsnorm_forward",
+        "rlinf.models.embodiment.gr00t.npu_common.npu_apply_rotary_pos_emb",
+        "rlinf.models.embodiment.gr00t.gr00t_n1d5.npu_patches.npu_rmsnorm_forward",
+        "rlinf.models.embodiment.gr00t.gr00t_n1d5.npu_patches.npu_apply_rotary_pos_emb",
+    ):
+        _, obj = Patcher._get_parent_obj_and_obj(path)
+        assert callable(obj), path
+
+
+def test_npu_flash_attention_binding_fills_only_missing_names(monkeypatch):
+    # GR00T's vendored SigLIP2 attention leaves its flash-attention names
+    # undefined on Ascend; binding supplies them without displacing a module
+    # that found real kernels.
+    from rlinf.models.embodiment.gr00t import npu_common
+
+    def fake_symbols():
+        return {"flash_attn_varlen_func": "npu", "_flash_supports_window_size": False}
+
+    monkeypatch.setattr(npu_common, "_npu_flash_attention_symbols", fake_symbols)
+
+    vendored = ModuleType("modeling_siglip2")
+    npu_common.bind_npu_flash_attention(vendored)
+    assert vendored.flash_attn_varlen_func == "npu"
+    assert vendored._flash_supports_window_size is False
+
+    with_real_kernels = ModuleType("modeling_siglip2")
+    with_real_kernels.flash_attn_varlen_func = "cuda"
+    npu_common.bind_npu_flash_attention(with_real_kernels)
+    assert with_real_kernels.flash_attn_varlen_func == "cuda"
+
+
+def test_npu_flash_attention_binding_reaches_a_later_import(monkeypatch, tmp_path):
+    # The vendored module is loaded by trust_remote_code after the patches are
+    # registered, so the binding has to apply as it is imported, and stop once
+    # the installer's uninstall callable runs.
+    from rlinf.models.embodiment.gr00t import npu_common
+
+    monkeypatch.setattr(
+        npu_common, "_npu_flash_attention_symbols", lambda: {"flash_attn_func": "npu"}
+    )
+    (tmp_path / "modeling_siglip2.py").write_text("flash_attn_func = None\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    stop = npu_common.install_npu_flash_attention("modeling_siglip2")
+    try:
+        sys.modules.pop("modeling_siglip2", None)
+        import modeling_siglip2
+
+        assert modeling_siglip2.flash_attn_func == "npu"
+    finally:
+        stop()
+        sys.modules.pop("modeling_siglip2", None)
+
+    import modeling_siglip2 as unbound
+
+    assert unbound.flash_attn_func is None
+
+
+def test_npu_flash_attention_cache_is_inert_off_ascend(monkeypatch):
+    from rlinf.models.embodiment.gr00t.npu_common import (
+        install_npu_flash_attention_cache,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NO_ACCEL)
+    assert not install_npu_flash_attention_cache()
+
+
+@pytest.mark.parametrize("padded", [False, True])
+def test_npu_flash_attention_cache_preserves_gradients_and_mask_updates(
+    monkeypatch, padded
+):
+    pytest.importorskip("torch_npu")
+    if not torch.npu.is_available():
+        pytest.skip("Ascend NPU required")
+    from transformers import modeling_flash_attention_utils as flash_utils
+    from transformers.integrations import npu_flash_attention as native_flash
+    from transformers.models.qwen3 import Qwen3Config, Qwen3Model
+
+    if hasattr(native_flash, "get_attn_mask_npu"):
+        pytest.skip("Legacy Transformers NPU FlashAttention required")
+    from rlinf.models.embodiment.gr00t.npu_common import (
+        install_npu_flash_attention_cache,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    monkeypatch.setattr(
+        flash_utils, "flash_attn_func", native_flash.npu_flash_attn_func
+    )
+    monkeypatch.setattr(
+        flash_utils, "flash_attn_varlen_func", native_flash.npu_flash_attn_varlen_func
+    )
+    original = (
+        flash_utils._get_unpad_data,
+        flash_utils.flash_attn_func,
+        flash_utils.flash_attn_varlen_func,
+    )
+    for name, value in zip(
+        ("_get_unpad_data", "flash_attn_func", "flash_attn_varlen_func"), original
+    ):
+        monkeypatch.setattr(flash_utils, name, value)
+    assert install_npu_flash_attention_cache()
+    assert install_npu_flash_attention_cache()
+    cached = (
+        flash_utils._get_unpad_data,
+        flash_utils.flash_attn_func,
+        flash_utils.flash_attn_varlen_func,
+    )
+    torch.manual_seed(1234)
+    config = Qwen3Config(
+        vocab_size=128,
+        hidden_size=128,
+        intermediate_size=256,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+    )
+    config._attn_implementation = "flash_attention_2"
+    model = Qwen3Model(config).to(device="npu", dtype=torch.bfloat16).eval()
+    ids = torch.randint(1, 128, (2, 32), device="npu")
+    mask = torch.ones_like(ids)
+    if padded:
+        mask[1, :4] = 0
+        mask[0, -2:] = 0
+    upstream = torch.randn(2, 32, 128, device="npu") / (2 * 32 * 128)
+    for updated in (False, True):
+        if updated:
+            mask[1, :4] = 1 - mask[1, :4]
+            with torch.no_grad():
+                model.layers[0].self_attn.q_proj.weight.add_(0.001)
+        outputs, gradients = [], []
+        for functions in (original, cached):
+            for name, value in zip(
+                ("_get_unpad_data", "flash_attn_func", "flash_attn_varlen_func"),
+                functions,
+            ):
+                setattr(flash_utils, name, value)
+            model.zero_grad(set_to_none=True)
+            output = model(input_ids=ids, attention_mask=mask, use_cache=False)
+            (output.last_hidden_state.float() * upstream).sum().backward()
+            outputs.append(output.last_hidden_state.detach().clone())
+            gradients.append(
+                {
+                    name: parameter.grad.detach().clone()
+                    for name, parameter in model.named_parameters()
+                    if parameter.grad is not None
+                }
+            )
+        torch.testing.assert_close(outputs[1], outputs[0], rtol=0, atol=0)
+        assert gradients[0].keys() == gradients[1].keys() and gradients[0]
+        for name, expected in gradients[0].items():
+            torch.testing.assert_close(gradients[1][name], expected, rtol=0, atol=0)
+
+
+def test_openpi_kernels_compile_only_where_inductor_can_run(monkeypatch):
+    # OpenPI's fused kernels go through Inductor, which needs Triton. Ascend and
+    # MUSA venvs have none, and compiling there used to fail at the first
+    # forward, so absence of Triton has to read as "do not compile".
+    from rlinf.models.embodiment.openpi.modules import utils
+
+    real_find_spec = importlib.util.find_spec
+
+    def without_triton(name, *args, **kwargs):
+        return None if name == "triton" else real_find_spec(name, *args, **kwargs)
+
+    utils.inductor_available.cache_clear()
+    monkeypatch.setattr(importlib.util, "find_spec", without_triton)
+    try:
+        assert utils.inductor_available() is False
+    finally:
+        utils.inductor_available.cache_clear()
+
+    # An explicit choice still wins over the platform default, in both directions.
+    utils.set_torch_compile(True)
+    assert utils.torch_compile_enabled() is True
+    utils.set_torch_compile(False)
+    assert utils.torch_compile_enabled() is False
+
+
+def test_npu_sdpa_context_materializes_a_broadcast_mask():
+    # Ascend's attention kernel rejects a mask whose query dimension is 1, which
+    # CUDA broadcasts. GR00T's DiT builds exactly that, so the context has to
+    # expand it to the query length and leave every other mask alone.
+    from rlinf.models.embodiment.gr00t import npu_common
+
+    seen = {}
+
+    def record(query, key, value, attn_mask=None, *args, **kwargs):
+        seen["mask_shape"] = None if attn_mask is None else tuple(attn_mask.shape)
+        return torch.zeros_like(query)
+
+    original = torch.nn.functional.scaled_dot_product_attention
+    torch.nn.functional.scaled_dot_product_attention = record
+    try:
+        q = torch.zeros(2, 32, 51, 64)
+        kv = torch.zeros(2, 32, 570, 64)
+        with npu_common.npu_sdpa_context():
+            torch.nn.functional.scaled_dot_product_attention(
+                q, kv, kv, attn_mask=torch.zeros(2, 32, 1, 570)
+            )
+            assert seen["mask_shape"] == (2, 32, 51, 570)
+
+            # A mask that already spans the queries is passed through untouched.
+            torch.nn.functional.scaled_dot_product_attention(
+                q, kv, kv, attn_mask=torch.zeros(2, 32, 51, 570)
+            )
+            assert seen["mask_shape"] == (2, 32, 51, 570)
+
+            torch.nn.functional.scaled_dot_product_attention(q, kv, kv)
+            assert seen["mask_shape"] is None
+        # The context restores what it replaced.
+        assert torch.nn.functional.scaled_dot_product_attention is record
+    finally:
+        torch.nn.functional.scaled_dot_product_attention = original
+
+
+@pytest.mark.parametrize(
+    ("batch", "frames", "channel", "grid_h", "grid_w", "patch", "merge", "t_p"),
+    [
+        (2, 2, 3, 4, 4, 14, 2, 2),
+        (1, 4, 3, 8, 6, 14, 2, 2),
+        (3, 1, 3, 2, 2, 16, 1, 1),
+        (2, 2, 3, 6, 4, 7, 2, 1),
+    ],
+)
+def test_qwen_patchify_matches_upstream_10d_layout(
+    batch, frames, channel, grid_h, grid_w, patch, merge, t_p
+):
+    """The staged <=8-dim packing reproduces the upstream 10-dim chain."""
+    from rlinf.models.embodiment.qwen_vl.npu_patchify import _patchify_qwen_vl
+
+    torch.manual_seed(0)
+    height, width = grid_h * patch, grid_w * patch
+    patches = torch.randn(batch, frames, channel, height, width)
+    grid_t = frames // t_p
+
+    upstream = patches.view(
+        batch,
+        grid_t,
+        t_p,
+        channel,
+        grid_h // merge,
+        merge,
+        patch,
+        grid_w // merge,
+        merge,
+        patch,
+    )
+    upstream = upstream.permute(0, 1, 4, 7, 5, 8, 3, 2, 6, 9)
+    upstream = upstream.reshape(
+        batch, grid_t * grid_h * grid_w, channel * t_p * patch * patch
+    )
+
+    staged = _patchify_qwen_vl(patches, patch, t_p, merge)
+    assert staged.shape == upstream.shape
+    torch.testing.assert_close(staged, upstream)
+
+
+def test_gr00t_n1d6_batched_eagle_processor_aligns_frames_to_patch_factor(monkeypatch):
+    from PIL import Image
+
+    class FakeCollator:
+        pass
+
+    class FakeProcessor:
+        pass
+
+    processing_mod = ModuleType("gr00t.model.gr00t_n1d6.processing_gr00t_n1d6")
+    processing_mod.Gr00tN1d6DataCollator = FakeCollator
+    processing_mod.Gr00tN1d6Processor = FakeProcessor
+    for name in ("gr00t", "gr00t.model", "gr00t.model.gr00t_n1d6"):
+        monkeypatch.setitem(sys.modules, name, ModuleType(name))
+    monkeypatch.setitem(sys.modules, processing_mod.__name__, processing_mod)
+
+    mod_name = "rlinf.models.embodiment.gr00t.gr00t_n1d6.device_transform"
+    monkeypatch.delitem(sys.modules, mod_name, raising=False)
+    device_transform = importlib.import_module(mod_name)
+
+    proc = FakeProcessor()
+    proc.collator = FakeCollator()
+    proc.processor = SimpleNamespace(
+        pixels_per_token=784,
+        apply_chat_template=lambda conv, **kw: f"prompt:{len(conv[0]['content'])}",
+    )
+    device_transform.BatchedEagleProcessor.upgrade(proc)
+    proc.set_device("cpu")
+
+    # 256x256 is not divisible by sqrt(784)=28 (or SigLIP2 patch_size=14);
+    # smart_resize rounds it to 252x252 (9*28 = 18*14) matching PIL resize.
+    raw_256 = np.arange(2 * 3 * 256 * 256, dtype=np.uint8).reshape(2, 3, 256, 256)
+    out_256 = proc._apply_vlm_processing(raw_256, "pick up bowl")["vlm_content"]
+    assert out_256["text"] == "prompt:3"
+    assert len(out_256["images"]) == 2
+    expected_0 = np.transpose(
+        np.asarray(
+            Image.fromarray(np.transpose(raw_256[0], (1, 2, 0))).resize((252, 252))
+        ),
+        (2, 0, 1),
+    )
+    assert out_256["images"][0].shape == (3, 252, 252)
+    torch.testing.assert_close(out_256["images"][0], torch.from_numpy(expected_0))
+
+    # 224x224 is already a multiple of 28 and passes through without resizing.
+    raw_224 = np.zeros((1, 3, 224, 224), dtype=np.uint8)
+    out_224 = proc._apply_vlm_processing(raw_224, "pick up bowl")["vlm_content"]
+    assert out_224["images"][0].shape == (3, 224, 224)
 
 
 def test_psi0_rtc_prefix_survives_the_last_denoise_step():
@@ -3188,6 +5553,375 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     )
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == "actor_critic"
     assert cfg.runner.max_steps == 1 and cfg.env.train.total_num_envs == 4
+
+
+class _PrefixFeatureModel:
+    z_dim = 8
+
+    def extract_prefix_obs(self, env_obs):
+        batch = env_obs["states"].shape[0]
+        return {
+            "z_rl": torch.ones(batch, self.z_dim),
+            "proprio": env_obs["states"].to(dtype=torch.float32),
+            "ref_chunk": torch.zeros(batch, 4, 7),
+        }
+
+
+@pytest.mark.parametrize("trailing_dim", [False, True])
+def test_pool_prefix_masked_mean(trailing_dim):
+    hidden = torch.tensor(
+        [
+            [[1.0, 0.0], [3.0, 0.0], [9.0, 0.0]],
+            [[2.0, 0.0], [4.0, 0.0], [8.0, 0.0]],
+        ]
+    )
+    mask = torch.tensor([[True, True, False], [True, False, False]])
+    pooled = pool_prefix(
+        hidden, mask[..., None] if trailing_dim else mask, mode="masked_mean"
+    )
+    torch.testing.assert_close(pooled[0], torch.tensor([2.0, 0.0]))
+    torch.testing.assert_close(pooled[1], torch.tensor([2.0, 0.0]))
+
+
+@pytest.mark.parametrize(
+    "mask,expected_indices",
+    [
+        ([[True, True, False, False], [True, True, True, False]], [1, 2]),
+        ([[True, False, True, False], [False, True, False, True]], [2, 3]),
+        ([[False, False, False, False], [True, False, False, False]], [0, 0]),
+    ],
+)
+@pytest.mark.parametrize("trailing_dim", [False, True])
+def test_pool_prefix_mean_and_last(mask, expected_indices, trailing_dim):
+    hidden = torch.arange(24, dtype=torch.float32).reshape(2, 4, 3)
+    mean = pool_prefix(hidden, None, mode="mean")
+    torch.testing.assert_close(mean, hidden.mean(dim=1))
+    last = pool_prefix(hidden, None, mode="last")
+    torch.testing.assert_close(last, hidden[:, -1])
+    mask = torch.tensor(mask)
+    last_valid = pool_prefix(
+        hidden, mask[..., None] if trailing_dim else mask, mode="last"
+    )
+    torch.testing.assert_close(last_valid, hidden[torch.arange(2), expected_indices])
+
+
+def test_prefix_feature_model_protocol_and_policy():
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    feature = _PrefixFeatureModel()
+    assert isinstance(feature, PrefixFeatureModel)
+    obs = extract_prefix_obs(feature, {"states": torch.zeros(2, 3)})
+    assert tuple(obs.keys()) == PREFIX_OBS_KEYS
+    policy = PrefixPolicy(
+        prefix_dim=feature.z_dim,
+        proprio_dim=3,
+        action_dim=7,
+        num_action_chunks=4,
+        ref_num_action_chunks=4,
+        actor_head_cfg={"name": "fixed_std_mlp", "hidden_dims": [8, 8]},
+        critic_head_cfg={"name": "multi_q_mlp", "hidden_dims": [8, 8]},
+    )
+    action, _, _ = policy(forward_type=ForwardType.SAC, obs=obs)
+    assert action.shape == (2, 28)
+
+
+@pytest.mark.parametrize("algorithm_name", ["ac", "td3"])
+@pytest.mark.parametrize("probability", [0.0, 0.3])
+def test_prefix_actor_reference_dropout_only_enabled_for_positive_probability(
+    algorithm_name, probability
+):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    _, context, batch = _make_prefix_training_case(algorithm_name, "multi_q_mlp")
+    context.cfg.algorithm.reference_dropout_prob = probability
+    algorithm = build_prefix_off_policy_algorithm(context.cfg)
+    actor_requests = []
+
+    def record_request(module, args, kwargs):
+        if kwargs["forward_type"] == ForwardType.SAC:
+            actor_requests.append(kwargs)
+
+    handle = context.model.register_forward_pre_hook(record_request, with_kwargs=True)
+    try:
+        loss, _, _ = algorithm.actor_loss(context, batch)
+    finally:
+        handle.remove()
+    assert torch.isfinite(loss)
+    assert len(actor_requests) == 1
+    assert actor_requests[0]["apply_reference_dropout"] is (probability > 0.0)
+    assert actor_requests[0]["reference_dropout_prob"] == probability
+
+
+def test_prefix_runtime_synchronizes_through_worker_platform(monkeypatch):
+    from rlinf.workers.actor.fsdp_prefix_off_policy_worker import PrefixOffPolicyRuntime
+
+    platform = MagicMock(spec=["synchronize", "empty_cache"])
+    barrier = MagicMock()
+    monkeypatch.setattr(torch.distributed, "barrier", barrier)
+    runtime = PrefixOffPolicyRuntime()
+    runtime.torch_platform = platform
+    runtime._synchronize_after_training()
+    platform.synchronize.assert_called_once_with()
+    barrier.assert_called_once_with()
+    platform.empty_cache.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    "use_rlt,pool,expected",
+    [(False, None, "masked_mean"), (True, None, "rlt_token"), (True, "last", "last")],
+)
+def test_prefix_pool_selection_and_parent_configuration(use_rlt, pool, expected):
+    from rlinf.models.embodiment.openpi.rlt_config import build_rlt_config
+
+    model_cfg = OmegaConf.create(
+        {"openpi": {"use_rlt": use_rlt}, "prefix": {"pool": pool, "image_only": False}}
+    )
+    rlt_cfg = build_rlt_config(model_cfg.openpi, parent_cfg=model_cfg)
+    assert rlt_cfg.prefix_pool == expected
+    assert rlt_cfg.prefix_image_only is False
+
+
+@pytest.mark.parametrize("algorithm_name", ["ac", "td3"])
+def test_prefix_zero_reference_dropout_preserves_actor_outputs_and_rng(algorithm_name):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    _, context, batch = _make_prefix_training_case(algorithm_name, "multi_q_mlp")
+    rng_state = torch.get_rng_state()
+    with_dropout = context.model(
+        forward_type=ForwardType.SAC,
+        obs=batch["curr_obs"],
+        apply_reference_dropout=True,
+        reference_dropout_prob=0.0,
+    )
+    rng_after_dropout = torch.get_rng_state()
+    torch.set_rng_state(rng_state)
+    without_dropout = context.model(
+        forward_type=ForwardType.SAC,
+        obs=batch["curr_obs"],
+        apply_reference_dropout=False,
+        reference_dropout_prob=0.0,
+    )
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    torch.testing.assert_close(with_dropout, without_dropout, rtol=0, atol=0)
+    assert torch.equal(torch.get_rng_state(), rng_after_dropout)
+
+
+@pytest.mark.parametrize(
+    "noise_sigma,noise_clip", [(0.2, 0.5), (1.0, 0.2), (0.0, 0.5), (0.2, 0.0)]
+)
+def test_prefix_td3_target_policy_smoothing(noise_sigma, noise_clip):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    algorithm, context, batch = _make_prefix_training_case("td3", "multi_q_mlp")
+    context.cfg.algorithm.target_policy_noise = noise_sigma
+    context.cfg.algorithm.target_noise_clip = noise_clip
+    algorithm = build_prefix_off_policy_algorithm(context.cfg)
+    with torch.no_grad():
+        for parameter in context.target_model.actor_head.parameters():
+            parameter.zero_()
+        linears = [
+            module
+            for module in context.target_model.actor_head.mlp.modules()
+            if isinstance(module, torch.nn.Linear)
+        ]
+        linears[-1].bias.copy_(torch.tensor([-0.95, 0.0, 0.0, 0.95]))
+        actions, _, _ = context.target_model(
+            forward_type=ForwardType.SAC,
+            obs=batch["next_obs"],
+            deterministic=True,
+            apply_action_noise=False,
+        )
+    torch.manual_seed(0)
+    rng_state = torch.get_rng_state().clone()
+    if noise_sigma > 0 and noise_clip > 0:
+        noise = (torch.randn_like(actions) * noise_sigma).clamp(-noise_clip, noise_clip)
+        expected = (actions + noise).clamp(-1, 1)
+        if noise_sigma > noise_clip:
+            assert (noise.abs() == noise_clip).any()
+        assert (expected.abs() == 1).any()
+    else:
+        expected = actions
+    torch.set_rng_state(rng_state)
+    actual = algorithm.target_actions(context, batch["next_obs"])
+    torch.testing.assert_close(actual, expected)
+    if noise_sigma == 0 or noise_clip == 0:
+        assert torch.equal(torch.get_rng_state(), rng_state)
+
+
+@pytest.mark.parametrize("sample_actions", [True, False])
+def test_prefix_td3_actor_uses_q1_with_optional_rlt_sampling(sample_actions):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    algorithm, context, batch = _make_prefix_training_case("td3", "multi_q_mlp")
+    context.cfg.algorithm.reference_dropout_prob = 0.0
+    if not sample_actions:
+        context.cfg.algorithm.actor_update_action_noise = False
+    context.cfg.algorithm.actor_weight_schedule.enable = False
+    context.cfg.algorithm.bc_weight = 0.0
+    context.cfg.algorithm.q_weight = 1.0
+    rng_state = torch.get_rng_state().clone()
+    loss, _, _ = algorithm.actor_loss(context, batch)
+    rng_after_loss = torch.get_rng_state().clone()
+    torch.set_rng_state(rng_state)
+    actions, _, _ = context.model(
+        forward_type=ForwardType.SAC,
+        obs=batch["curr_obs"],
+        apply_action_noise=sample_actions,
+        apply_reference_dropout=False,
+    )
+    q_values = context.model(
+        forward_type=ForwardType.SAC_Q, obs=batch["curr_obs"], actions=actions
+    )
+    torch.testing.assert_close(loss, -q_values[..., 0].mean())
+    assert torch.equal(torch.get_rng_state(), rng_after_loss)
+    assert torch.equal(rng_after_loss, rng_state) is (not sample_actions)
+
+
+@pytest.mark.parametrize("raw", [-1.2, 1.2])
+def test_prefix_td3_exploration_adds_noise_before_clamping(raw):
+    from rlinf.models.embodiment.mlp_policy.heads import DeterministicMLPActor
+
+    actor = DeterministicMLPActor(1, 1, 1, {"hidden_dims": [], "noise_sigma": 0.5})
+    linear = next(m for m in actor.mlp.modules() if isinstance(m, torch.nn.Linear))
+    with torch.no_grad():
+        linear.weight.zero_()
+        linear.bias.fill_(raw)
+    state = torch.zeros(32, 1)
+    torch.manual_seed(0)
+    noise = torch.randn_like(state) * 0.5
+    torch.manual_seed(0)
+    actual, _ = actor(
+        state,
+        state,
+        deterministic=False,
+        apply_reference_dropout=False,
+        reference_dropout_prob=0,
+        apply_action_noise=True,
+    )
+    torch.testing.assert_close(actual, (raw + noise).clamp(-1, 1))
+    actual.sum().backward()
+    expected_grad = ((raw + noise).abs() < 1).sum().float().reshape(1)
+    torch.testing.assert_close(linear.bias.grad, expected_grad)
+
+
+@pytest.mark.parametrize(
+    "negative_limit,boundary,has_phase,expected_negative",
+    [
+        (4, 4, True, [16, 17, 18, 19]),
+        (2, 4, True, [18, 19]),
+        (8, 4, True, [0, 5, 10, 15, 16, 17, 18, 19]),
+        (4, 0, True, [0, 6, 13, 19]),
+        (0, 4, True, list(range(20))),
+        (4, 4, False, [0, 8, 15, 23]),
+        (0, 4, False, list(range(24))),
+    ],
+)
+def test_steam_calibration_training_samples_respect_negative_budget(
+    tmp_path, negative_limit, boundary, has_phase, expected_negative
+):
+    from rlinf.algorithms.rlt.rlt_steam_phase_head import RLT_PHASE_FEATURE_KEY
+    from toolkits.rlt.calibrate_steam_gates import EpisodeRef, build_training_tensors
+
+    trace_path = tmp_path / "trace_0.pt"
+    zeros = torch.zeros(24, 1)
+    geometry = torch.arange(24)[:, None] >= (20 if has_phase else 24)
+    torch.save(
+        {
+            RLT_PHASE_FEATURE_KEY: torch.arange(24).reshape(24, 1, 1, 1).float(),
+            "rlt_gate_score_min": zeros,
+            "rlt_gate_score_ready": torch.ones(24, 1, dtype=torch.bool),
+            "rlt_gate_actor_active": zeros.bool(),
+            "geometry_critical_active": geometry,
+            "rlt_oracle_expert_active": zeros.bool(),
+            "reward_sum": zeros,
+        },
+        trace_path,
+    )
+    ref = EpisodeRef("episode", trace_path, 0, 0, 24, 10, None)
+    features, labels = build_training_tensors(
+        [ref],
+        positive_window_chunks=4,
+        max_negative_chunks=negative_limit,
+        boundary_negative_chunks=boundary,
+    )
+    expected_indices = expected_negative + (list(range(20, 24)) if has_phase else [])
+    torch.testing.assert_close(
+        features.flatten(), torch.tensor(expected_indices, dtype=features.dtype)
+    )
+    torch.testing.assert_close(labels, geometry[expected_indices, 0].float())
+
+
+def test_steam_gate_uses_head_metadata_and_warns_on_overrides(tmp_path, caplog):
+    from rlinf.algorithms.rlt.rlt_steam_critical_phase_gate import SteamRoutingGate
+    from rlinf.algorithms.rlt.rlt_steam_phase_head import SteamPhaseHead
+
+    path = tmp_path / "head.pt"
+    head = SteamPhaseHead(input_dim=6, hidden_dim=2)
+    for threshold in (0.7, 0.9):
+        head.save_checkpoint(
+            path,
+            metadata={
+                "recommended_enter_threshold": threshold,
+                "recommended_patience_chunks": 4,
+                "recommended_expert_gate": {
+                    "enter_threshold": -0.3,
+                    "patience_chunks": 6,
+                    "warmup_chunks": 2,
+                },
+            },
+        )
+        cfg = _steam_gate_cfg(
+            actor_switch={
+                "enable": True,
+                "phase_head_path": str(path),
+                "enter_threshold": None,
+                "patience_chunks": None,
+            },
+            expert_takeover={
+                "enable": True,
+                "mode": "shadow",
+                "enter_threshold": None,
+                "patience_chunks": None,
+                "warmup_chunks": None,
+            },
+        )
+        gate = SteamRoutingGate(_FakeSteamCritic(), cfg)
+        assert gate.enter_threshold == threshold
+        assert gate.patience_chunks == 4
+        assert gate.expert_enter_threshold == -0.3
+        assert gate.expert_patience_chunks == 6
+        assert gate.expert_warmup_chunks == 2
+    cfg.actor_switch.enter_threshold = 0.1
+    with caplog.at_level(logging.WARNING):
+        gate = SteamRoutingGate(_FakeSteamCritic(), cfg)
+    assert gate.enter_threshold == 0.1
+    assert "actor_switch.enter_threshold" in caplog.text
+
+
+def test_entropy_temperatures_are_tuned_per_env_and_keep_scalar_checkpoints():
+    from rlinf.models.embodiment.modules.entropy_tunning import EntropyTemperature
+
+    temperature = EntropyTemperature(initial_alpha=0.1, num_temperatures=2)
+    with torch.no_grad():
+        temperature.base_alpha[1] += 1.0
+
+    # Index -1 marks a demo sample, which belongs to no env.
+    alpha = temperature.sample_alpha(torch.tensor([1, 0, -1]))
+
+    assert alpha.shape == (3, 1)
+    assert alpha[0, 0] > alpha[1, 0]
+    assert torch.isclose(alpha[2, 0], temperature.temperatures().mean())
+    assert temperature.sample_alpha(None) == temperature.temperatures().mean()
+
+    # One temperature keeps the 0-dim parameter that checkpoints already hold.
+    single = EntropyTemperature(initial_alpha=0.1)
+    assert single.state_dict()["base_alpha"].shape == torch.Size([])
+    single.load_state_dict({"base_alpha": torch.tensor(0.5)})
+    expected = torch.nn.functional.softplus(torch.tensor(0.5))
+    assert torch.allclose(
+        single.sample_alpha(torch.tensor([0, -1])), expected.expand(2, 1)
+    )
 
 
 @pytest.mark.parametrize(
@@ -3405,3 +6139,1319 @@ def test_openvla_oft_predicts_a_finite_action_on_the_accelerator():
     assert tuple(actions.shape) == (1, 8, 7)
     assert torch.isfinite(actions).all()
     assert torch.isfinite(result["prev_logprobs"]).all()
+
+
+def test_steam_gate_preserves_source_state_across_rebatching(tmp_path):
+    from rlinf.algorithms.rlt.rlt_steam_critical_phase_gate import SteamRoutingGate
+    from rlinf.algorithms.rlt.rlt_steam_phase_head import SteamPhaseHead
+    from rlinf.data.schema.embodied_types import TrajectoryKey, TrajectorySource
+
+    head = SteamPhaseHead(input_dim=6, hidden_dim=2)
+    for parameter in head.parameters():
+        parameter.data.zero_()
+    path = tmp_path / "head.pt"
+    head.save_checkpoint(path)
+    gate = SteamRoutingGate(
+        _FakeSteamCritic(),
+        _steam_gate_cfg(
+            actor_switch={
+                "enable": True,
+                "phase_head_path": str(path),
+                "enter_threshold": 0.4,
+                "patience_chunks": 1,
+                "collect_phase_features": True,
+            }
+        ),
+    )
+
+    def source(rank, offset=0, size=1, stage=0):
+        return TrajectorySource(TrajectoryKey(0, 0, rank, stage, 0), size, offset)
+
+    def step(pixels, sources, *, reset=None, mode="train"):
+        images = torch.tensor(pixels, dtype=torch.uint8)[:, None, None, None]
+        return gate.step(
+            {
+                "main_images": images.expand(-1, 2, 2, 3),
+                "task_descriptions": ["insert"] * len(pixels),
+            },
+            mode=mode,
+            stage_id=0,
+            sources=sources,
+            reset_mask=reset,
+        )
+
+    full = [source(7, size=2), source(9)]
+    for _ in range(3):
+        result = step([10, 20, 30], full)
+    assert result.actor_switch.all() and result.expert_requested.all()
+    result = step([30], [source(9)])
+    assert result.actor_switch.all() and result.expert_requested.all()
+    # Reordering same-source rows must also preserve their image-pair histories.
+    result = step([21, 12], [source(7, offset=1), source(7)])
+    torch.testing.assert_close(
+        result.diagnostics["rlt_gate_score_min"][:, 0], torch.tensor([1.0, 2.0])
+    )
+    assert result.actor_switch.all() and result.expert_requested.all()
+    result = step(
+        [30, 12, 21],
+        [source(9), source(7), source(7, offset=1)],
+        reset=torch.tensor([False, True, False]),
+    )
+    assert result.actor_switch[:, 0].tolist() == [True, False, True]
+    assert result.expert_requested[:, 0].tolist() == [True, False, True]
+    assert result.diagnostics["rlt_gate_score_ready"][:, 0].tolist() == [
+        True,
+        False,
+        True,
+    ]
+    assert torch.count_nonzero(result.phase_features[1]) == 0
+    # Growing one source must not clear its existing rows or other stages/modes.
+    result = step([40, 21], [source(7, offset=2), source(7, offset=1)])
+    assert result.actor_switch[:, 0].tolist() == [False, True]
+    assert result.expert_requested[:, 0].tolist() == [False, True]
+    assert not step([30], [source(9)], mode="eval").actor_switch.any()
+    assert not step([30], [source(9, stage=1)]).actor_switch.any()
+    gate.reset(mode="eval")
+    gate.reset(mode="train", stage_id=1)
+    assert step([30], [source(9)]).expert_requested.all()
+    # All ready rows still share one batched STEAM inference.
+    assert 3 in gate.model.prediction_batch_sizes
+
+
+def test_starvla_exposes_no_split_modules_for_fsdp_auto_wrap(starvla_preprocessing):
+    from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
+
+    StarVLAForRLActionPrediction = importlib.import_module(
+        "starvla_preprocessing_under_test.starvla_action_model"
+    ).StarVLAForRLActionPrediction
+
+    class _FakeVisionBlock(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.proj = torch.nn.Linear(8, 8, dtype=torch.bfloat16)
+
+    class _FakeDecoderLayer(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.proj = torch.nn.Linear(8, 8, dtype=torch.bfloat16)
+
+    class _FakeVLM(torch.nn.Module):
+        _no_split_modules = ["_FakeDecoderLayer", "_FakeVisionBlock"]
+
+        def __init__(self):
+            super().__init__()
+            self.config = SimpleNamespace(hidden_size=8)
+            self.embed = torch.nn.Linear(8, 8, dtype=torch.bfloat16)
+            self.vision = _FakeVisionBlock()
+            self.layer = _FakeDecoderLayer()
+
+    class _FakeActionHead(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = torch.nn.Linear(8, 7, dtype=torch.float32)
+
+    class _FakeStarVLA(torch.nn.Module):
+        framework_name = "QwenOFT"
+
+        def __init__(self):
+            super().__init__()
+            self.qwen_vl_interface = torch.nn.Module()
+            self.qwen_vl_interface.model = _FakeVLM()
+            self.action_model = _FakeActionHead()
+            self.norm_stats = {
+                "franka": {"action": {"min": [-1.0] * 7, "max": [1.0] * 7}}
+            }
+
+    wrapper = StarVLAForRLActionPrediction(
+        starvla_model=_FakeStarVLA(),
+        action_dim=7,
+        num_action_chunks=2,
+        add_value_head=False,
+        unnorm_key="franka",
+    )
+    assert wrapper._no_split_modules == [
+        "_FakeDecoderLayer",
+        "_FakeVisionBlock",
+    ]
+    wrap_policy = get_fsdp_wrap_policy(
+        wrapper,
+        OmegaConf.create({"wrap_policy": {}, "use_orig_params": False}),
+        is_lora=False,
+        model_type="starvla",
+    )
+    wrapped = {
+        name
+        for name, sub in wrapper.named_modules()
+        if sub is not wrapper
+        and wrap_policy(
+            module=sub,
+            recurse=False,
+            nonwrapped_numel=sum(p.numel() for p in sub.parameters()),
+        )
+    }
+    assert wrapped == {
+        "starvla_model.qwen_vl_interface.model.vision",
+        "starvla_model.qwen_vl_interface.model.layer",
+    }
+    # The head is called as a plain method (``action_model.predict_action``),
+    # so an FSDP unit of its own would never unshard its parameters.
+    assert "starvla_model.action_model" not in wrapped
+
+
+def test_abot_m0_override_vggt_model_path_redirects_and_restores(monkeypatch):
+    import sys
+    import types
+
+    from rlinf.models.embodiment.abot_m0.abot_m0_action_model import (
+        _override_vggt_model_path,
+    )
+
+    calls: list[str] = []
+
+    class _BaseMixin:
+        @classmethod
+        def from_pretrained(cls, model_id, *args, **kwargs):
+            calls.append(model_id)
+            return SimpleNamespace(cls=cls, model_id=model_id)
+
+    class _FakeVGGT(_BaseMixin):
+        pass
+
+    vggt_pkg = types.ModuleType("vggt")
+    vggt_models = types.ModuleType("vggt.models")
+    vggt_mod = types.ModuleType("vggt.models.vggt")
+    vggt_mod.VGGT = _FakeVGGT
+    monkeypatch.setitem(sys.modules, "vggt", vggt_pkg)
+    monkeypatch.setitem(sys.modules, "vggt.models", vggt_models)
+    monkeypatch.setitem(sys.modules, "vggt.models.vggt", vggt_mod)
+
+    monkeypatch.delenv("VGGT_MODEL_PATH", raising=False)
+    with _override_vggt_model_path():
+        _FakeVGGT.from_pretrained("facebook/VGGT-1B")
+    assert calls == ["facebook/VGGT-1B"]
+
+    monkeypatch.setenv("VGGT_MODEL_PATH", "/local/VGGT-1B")
+    with _override_vggt_model_path():
+        _FakeVGGT.from_pretrained("facebook/VGGT-1B")
+        _FakeVGGT.from_pretrained("other/model")
+    assert "from_pretrained" not in _FakeVGGT.__dict__
+    _FakeVGGT.from_pretrained("facebook/VGGT-1B")
+    assert calls == [
+        "facebook/VGGT-1B",
+        "/local/VGGT-1B",
+        "other/model",
+        "facebook/VGGT-1B",
+    ]
+
+
+def test_openvla_prepare_observation_accepts_5d_multi_image_tensors():
+    model = _small_openvla()
+    seen_shapes: list[tuple[int, ...]] = []
+    orig_processor = model.input_processor
+
+    def recording_processor(*, text, images, padding, max_length):
+        seen_shapes.append(tuple(images.shape))
+        return orig_processor(
+            text=text, images=images, padding=padding, max_length=max_length
+        )
+
+    model.input_processor = recording_processor
+    obs_4d = {
+        "main_images": torch.randint(0, 256, (2, 4, 5, 3), dtype=torch.uint8),
+        "task_descriptions": ["pick", "place"],
+    }
+    obs_5d = {
+        "main_images": torch.randint(0, 256, (2, 3, 4, 5, 3), dtype=torch.uint8),
+        "task_descriptions": ["pick", "place"],
+    }
+    model._prepare_observation(obs_4d)
+    model._prepare_observation(obs_5d)
+    assert seen_shapes == [(2, 1, 3, 4, 5), (2, 3, 3, 4, 5)]
+
+
+def test_npu_flash_attention_cache_defaults_softmax_scale_and_evicts_dead_keys(
+    monkeypatch,
+):
+    import gc
+    import math
+    import weakref
+
+    from transformers import modeling_flash_attention_utils as flash_utils
+    from transformers.integrations import npu_flash_attention as native_flash
+
+    from rlinf.models.embodiment.gr00t import npu_common
+    from rlinf.scheduler import AcceleratorType
+
+    cache = npu_common._TensorMetadataCache(lambda t: t.clone())
+    ephemeral = torch.ones(3)
+    cached_ref = weakref.ref(cache.get(ephemeral))
+    assert cached_ref() is not None
+    assert len(cache.entries) == 1
+    del ephemeral
+    gc.collect()
+    assert cached_ref() is None
+    assert not cache.entries
+
+    scales: list[float] = []
+
+    def fake_fusion_attention(q, k, v, num_heads, *args, **kwargs):
+        scale = kwargs.get("scale")
+        assert isinstance(scale, float), f"Expected float scale, got {scale!r}"
+        scales.append(scale)
+        return (q,)
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    monkeypatch.setattr(
+        npu_common,
+        "torch_npu",
+        SimpleNamespace(npu_fusion_attention=fake_fusion_attention),
+        raising=False,
+    )
+    monkeypatch.delattr(native_flash, "get_attn_mask_npu", raising=False)
+    monkeypatch.setattr(native_flash, "SPARSE_MODE", 2, raising=False)
+    monkeypatch.setattr(
+        flash_utils,
+        "flash_attn_func",
+        native_flash.npu_flash_attn_func,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        flash_utils,
+        "flash_attn_varlen_func",
+        native_flash.npu_flash_attn_varlen_func,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        flash_utils,
+        "_get_unpad_data",
+        flash_utils._get_unpad_data,
+        raising=False,
+    )
+
+    assert npu_common.install_npu_flash_attention_cache()
+    q_bsnd = torch.randn(2, 5, 4, 16)
+    flash_utils.flash_attn_func(q_bsnd, q_bsnd, q_bsnd)
+    flash_utils.flash_attn_func(q_bsnd, q_bsnd, q_bsnd, softmax_scale=0.125)
+    q_tnd = torch.randn(7, 4, 16)
+    cu = torch.tensor([0, 3, 7], dtype=torch.int32)
+    flash_utils.flash_attn_varlen_func(q_tnd, q_tnd, q_tnd, cu, cu)
+    assert len(scales) == 3
+    assert math.isclose(scales[0], 16**-0.5)
+    assert math.isclose(scales[1], 0.125)
+    assert math.isclose(scales[2], 16**-0.5)
+
+
+def test_starvla_predict_action_batch_gates_device_images_by_vlm_and_head(
+    starvla_preprocessing, monkeypatch
+):
+    starvla_mod = importlib.import_module(
+        "starvla_preprocessing_under_test.starvla_action_model"
+    )
+    StarVLAForRLActionPrediction = starvla_mod.StarVLAForRLActionPrediction
+
+    seen_devices: list = []
+    orig_build = starvla_mod.data_pipeline_utils.build_examples_from_env_obs
+
+    def record_build(*, env_obs, image_device=None, **kwargs):
+        seen_devices.append(image_device)
+        return orig_build(env_obs=env_obs, image_device=image_device, **kwargs)
+
+    monkeypatch.setattr(
+        starvla_mod.data_pipeline_utils,
+        "build_examples_from_env_obs",
+        record_build,
+    )
+    monkeypatch.setattr(
+        starvla_mod.vlm_input_utils,
+        "resolve_vlm_interface",
+        lambda _: SimpleNamespace(processor=object()),
+    )
+    monkeypatch.setattr(
+        starvla_mod,
+        "get_rollout_handler",
+        lambda _: (
+            lambda model, **kw: {
+                "output": {"normalized_actions": np.zeros((1, 2, 7), dtype=np.float32)},
+                "model_inputs": {},
+                "forward_inputs": {},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        starvla_mod.action_space_utils,
+        "unnormalize_actions_for_env",
+        lambda normalized_actions, **kw: normalized_actions,
+    )
+
+    obs = {
+        "main_images": torch.zeros((1, 4, 4, 3), dtype=torch.uint8),
+        "task_descriptions": ["pick"],
+    }
+    for vlm_type, head_type in (
+        ("qwen", "oft"),
+        ("florence", "oft"),
+        ("qwen", "dual"),
+    ):
+        wrapper = torch.nn.Module()
+        wrapper.__class__ = StarVLAForRLActionPrediction
+        wrapper.p = torch.nn.Parameter(torch.zeros(1))
+        wrapper.starvla_model = torch.nn.Module()
+        wrapper.vlm_type = vlm_type
+        wrapper.action_head_type = head_type
+        wrapper.state_adapter_type = "none"
+        wrapper.enable_state_input = False
+        wrapper.action_dim = 7
+        wrapper.num_action_chunks = 2
+        wrapper._action_norm_stats = _FRANKA_ACTION_STATS
+        wrapper.policy_setup = "franka"
+        wrapper.predict_action_batch(
+            obs, calculate_logprobs=False, calculate_values=False, mode="eval"
+        )
+
+    assert seen_devices == [torch.device("cpu"), None, None]
+
+
+def test_mlp_policy_cuda_graph_falls_back_to_eager_for_uncaptured_batch_size(
+    monkeypatch,
+):
+    from rlinf.models.embodiment.mlp_policy.mlp_policy import MLPPolicy
+
+    policy = MLPPolicy(
+        obs_dim=4,
+        action_dim=2,
+        num_action_chunks=1,
+        add_value_head=True,
+        add_q_head=False,
+    )
+    replayed = []
+
+    class FakeManager:
+        def replay(self, graph_name, inputs):
+            replayed.append((graph_name, inputs["states"].shape[0]))
+            action, chunk_actions, chunk_logprobs, chunk_values = (
+                policy._eager_generate_actions(inputs["states"], "train", True)
+            )
+            return {
+                "action": action,
+                "chunk_actions": chunk_actions,
+                "chunk_logprobs": chunk_logprobs,
+                "chunk_values": chunk_values,
+            }
+
+    policy.cuda_graph_manager = FakeManager()
+    monkeypatch.setattr(policy, "capture_action_generation", lambda **kwargs: None)
+    policy.capture_cuda_graph(train_batch_size=4, eval_batch_size=2)
+
+    actions, _, _, _ = policy._generate_actions(
+        torch.zeros(4, 4), mode="train", calculate_values=True
+    )
+    assert actions.shape == (4, 2)
+    assert len(replayed) == 1
+
+    smaller_actions, _, _, _ = policy._generate_actions(
+        torch.zeros(2, 4), mode="train", calculate_values=True
+    )
+    assert smaller_actions.shape == (2, 2)
+    assert len(replayed) == 1
+
+
+@pytest.mark.parametrize("pre_weight", [0.0, 0.1, 0.01])
+@pytest.mark.parametrize("image_size,max_tokens", [(224, 35), (32, 7)])
+def test_refl_config_composes(monkeypatch, pre_weight, image_size, max_tokens):
+    from hydra import compose, initialize_config_dir
+
+    repo = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(repo))
+    monkeypatch.setenv("DIFFUSION_PATH", str(repo / "examples/diffusion"))
+    with initialize_config_dir(
+        config_dir=str(repo / "examples/diffusion/config"), version_base="1.1"
+    ):
+        cfg = compose(
+            config_name="sd3_refl_imagereward",
+            overrides=[
+                f"algorithm.refl_pre_loss_weight={pre_weight}",
+                f"actor.refl_reward_model.image_size={image_size}",
+                f"actor.refl_reward_model.max_tokens={max_tokens}",
+            ],
+        )
+        OmegaConf.resolve(cfg)
+    from rlinf.config import validate_refl_cfg
+
+    validate_refl_cfg(cfg)
+    assert cfg.algorithm.loss_type == "embodied_refl"
+    assert "refl_sampling" not in cfg.algorithm
+    assert cfg.actor.model.sd3.rl_mode == "refl"
+    assert cfg.actor.refl_reward_model.type == "image_reward"
+    assert cfg.actor.refl_reward_model.image_size == image_size
+    assert cfg.actor.refl_reward_model.max_tokens == max_tokens
+    assert cfg.env.eval.reward.image_size == image_size
+    assert cfg.env.eval.reward.max_tokens == max_tokens
+    assert cfg.actor.refl_pre_data.num_workers == 0
+    assert cfg.algorithm.refl_pre_loss_weight == pre_weight
+    assert cfg.env.train is None
+    assert cfg.actor.refl_data.type == "visual.prompt_dataset"
+    assert cfg.actor.refl_samples_per_step == 512
+    assert cfg.env.eval.reward.model_path == cfg.actor.refl_reward_model.model_path
+    assert cfg.env.eval.sequential_eval
+    assert cfg.runner.max_epochs == cfg.runner.max_steps == 50
+    assert cfg.runner.val_check_interval == cfg.runner.save_interval == 10
+    assert cfg.actor.micro_batch_size == 1
+    assert cfg.actor.global_batch_size == 64
+    assert cfg.env.eval.total_num_envs == 4
+    assert cfg.env.eval.rollout_epoch == 128
+    assert cfg.env.eval.reward.batch_size == 1
+    assert cfg.rollout.rollout_backend == "huggingface"
+    assert "generation_backend" not in cfg.rollout
+    assert not {
+        "kl_penalty",
+        "kl_penalty_type",
+        "kl_beta",
+        "entropy_bonus",
+        "clip_ratio_high",
+        "clip_ratio_low",
+        "clip_ratio_c",
+    }.intersection(cfg.algorithm)
+
+
+class _VectorPolicy(torch.nn.Module, BasePolicy):
+    forward = BasePolicy.forward
+
+    def __init__(self):
+        super().__init__()
+        self.projection = torch.nn.Linear(3, 4)
+
+    def default_forward(self, features):
+        return self.projection(features)
+
+    def predict_action_batch(self, env_obs, **kwargs):
+        return self.default_forward(env_obs["features"]), {}
+
+    def refl_forward(self, forward_inputs, xt_source="rollout", **kwargs):
+        return {"samples": self.default_forward(forward_inputs["features"])}
+
+
+class _VectorScorer(torch.nn.Module):
+    def __init__(self, target, device):
+        super().__init__()
+        self.target = torch.nn.Parameter(
+            torch.full((4,), target, device=device), requires_grad=False
+        )
+
+    def forward(self, samples, forward_inputs):
+        error = samples - self.target - forward_inputs["offset"]
+        return -error.square().flatten(1).mean(1)
+
+
+def test_refl_scorer_supports_non_image_samples_and_policy_gradients():
+    register_refl_scorer(
+        "test_vector_reward", lambda cfg, device: _VectorScorer(cfg["target"], device)
+    )
+    scorer = build_refl_scorer({"type": "test_vector_reward", "target": 0.5}, "cpu")
+    policy = _VectorPolicy()
+    samples = policy(
+        forward_type=ForwardType.REFL,
+        forward_inputs={"features": torch.ones(2, 5, 3)},
+    )["samples"]
+    rewards = scorer(samples, {"offset": torch.zeros(2, 5, 4)})
+    assert rewards.shape == (2,) and torch.isfinite(rewards).all()
+    torch.nn.functional.relu(2 - rewards).mean().backward()
+    assert policy.projection.weight.grad is not None
+    assert policy.projection.weight.grad.abs().sum() > 0
+    assert all(not p.requires_grad and p.grad is None for p in scorer.parameters())
+    with pytest.raises(ValueError, match="already registered"):
+        register_refl_scorer("test_vector_reward", lambda cfg, device: scorer)
+
+
+def test_refl_scorer_rejects_invalid_registration_and_unknown_types():
+    with pytest.raises(ValueError, match="non-empty"):
+        register_refl_scorer("", lambda cfg, device: None)
+    with pytest.raises(TypeError, match="callable"):
+        register_refl_scorer("invalid_builder", None)
+    with pytest.raises(ValueError, match="Unknown ReFL scorer 'unknown'"):
+        build_refl_scorer({"type": "unknown"}, "cpu")
+
+
+class _ExternalImageReward(torch.nn.Module):
+    """Small replacement for the external checkpoint, not the RLinf scorer."""
+
+    def __init__(self, tokenizer):
+        super().__init__()
+        self.projection = torch.nn.Linear(3, 1)
+        self.blip = SimpleNamespace(tokenizer=tokenizer)
+        self.image_shapes = []
+
+    def score_gard(self, input_ids, attention_mask, pixels):
+        self.image_shapes.append(pixels.shape)
+        return self.projection(pixels.mean(dim=(-2, -1)))
+
+
+@pytest.fixture
+def image_reward_package(tmp_path, monkeypatch):
+    pytest.importorskip("torchvision")
+    from transformers import BertTokenizer
+
+    vocab = tmp_path / "vocab.txt"
+    vocab.write_text("[PAD]\n[UNK]\n[CLS]\n[SEP]\n[MASK]\na\nfox\ncat\n")
+    external_model = _ExternalImageReward(BertTokenizer(vocab_file=str(vocab)))
+    reward_package = ModuleType("ImageReward")
+    reward_package.load = lambda *args, **kwargs: external_model
+    monkeypatch.setitem(sys.modules, "ImageReward", reward_package)
+    reward_cfg = {
+        "model_path": "local-checkpoint",
+        "med_config": "local-config",
+        "precision": "fp32",
+    }
+    return reward_cfg, external_model
+
+
+@pytest.mark.parametrize("scorer_type", [None, "image_reward"])
+@pytest.mark.parametrize("preprocess_cfg", [{}, {"image_size": 32, "max_tokens": 7}])
+def test_image_reward_freezes_weights_but_preserves_image_gradients(
+    image_reward_package, scorer_type, preprocess_cfg
+):
+    from rlinf.envs.sim.diffusion.rewards.visual.image_reward import ImageRewardBackend
+
+    reward_cfg, external_model = image_reward_package
+    reward_cfg.update(preprocess_cfg)
+    if scorer_type is not None:
+        reward_cfg["type"] = scorer_type
+    scorer = build_refl_scorer(reward_cfg, device="cpu")
+    images = torch.full((2, 3, 16, 16), 0.5, requires_grad=True)
+    tokens = scorer.tokenize(["a fox", "a cat"])
+    rewards = scorer(images, {"prompts": ["a fox", "a cat"]})
+    torch.testing.assert_close(
+        rewards,
+        scorer(
+            images, {"reward_input_ids": tokens[0], "reward_attention_mask": tokens[1]}
+        ),
+    )
+    torch.testing.assert_close(rewards, scorer.score(images, *tokens))
+    assert rewards.shape == (2,)
+    assert tokens[0].shape == (2, preprocess_cfg.get("max_tokens", 35))
+    rewards.sum().backward()
+    assert images.grad is not None and images.grad.abs().sum() > 0
+    assert all(
+        not p.requires_grad and p.grad is None for p in external_model.parameters()
+    )
+
+    backend = ImageRewardBackend.from_config(
+        {**reward_cfg, "use_gpu": False, "batch_size": 1}
+    )
+    scores = backend.score(
+        np.full((2, 16, 16, 3), 128, dtype=np.uint8),
+        [{"task_description": "a fox"}, {"task_description": "a cat"}],
+    )
+    expected = scorer.score(torch.full((2, 3, 16, 16), 128 / 255), *tokens).detach()
+    torch.testing.assert_close(scores["image_reward"], expected)
+    torch.testing.assert_close(scores["avg"], expected)
+    assert not scores["image_reward"].requires_grad
+    image_size = preprocess_cfg.get("image_size", 224)
+    assert all(
+        shape[-2:] == (image_size, image_size) for shape in external_model.image_shapes
+    )
+
+
+@pytest.fixture
+def sd3_policy(monkeypatch):
+    if isinstance(sys.modules.get("imageio"), MagicMock):
+        monkeypatch.delitem(sys.modules, "imageio")
+    pytest.importorskip("imageio")
+    pytest.importorskip("torchvision")
+    diffusers = pytest.importorskip("diffusers", minversion="0.38.0")
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import Whitespace
+    from transformers import (
+        CLIPTextConfig,
+        CLIPTextModelWithProjection,
+        PreTrainedTokenizerFast,
+        T5Config,
+        T5EncoderModel,
+    )
+
+    from rlinf.models.diffusion.sd3 import StableDiffusion3, StableDiffusion3Config
+    from rlinf.models.diffusion.sd3.utils import configure_pipeline_trainability
+
+    torch.manual_seed(42)
+    previous_threads = torch.get_num_threads()
+    torch.set_num_threads(1)
+    vocab = {
+        word: i
+        for i, word in enumerate(
+            [
+                "[PAD]",
+                "[UNK]",
+                "[BOS]",
+                "[EOS]",
+                "a",
+                "fox",
+                "cat",
+            ]
+        )
+    }
+    tokenizer_backend = Tokenizer(WordLevel(vocab, unk_token="[UNK]"))
+    tokenizer_backend.pre_tokenizer = Whitespace()
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=tokenizer_backend,
+        pad_token="[PAD]",
+        unk_token="[UNK]",
+        bos_token="[BOS]",
+        eos_token="[EOS]",
+        model_max_length=8,
+    )
+    clip_config = CLIPTextConfig(
+        vocab_size=len(vocab),
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        max_position_embeddings=8,
+        projection_dim=16,
+        pad_token_id=0,
+        bos_token_id=2,
+        eos_token_id=3,
+    )
+    transformer = diffusers.SD3Transformer2DModel(
+        sample_size=8,
+        patch_size=2,
+        in_channels=16,
+        out_channels=16,
+        num_layers=1,
+        attention_head_dim=8,
+        num_attention_heads=2,
+        joint_attention_dim=32,
+        caption_projection_dim=16,
+        pooled_projection_dim=32,
+        pos_embed_max_size=8,
+    )
+    vae = diffusers.AutoencoderKL(
+        down_block_types=("DownEncoderBlock2D", "DownEncoderBlock2D"),
+        up_block_types=("UpDecoderBlock2D", "UpDecoderBlock2D"),
+        block_out_channels=(8, 16),
+        latent_channels=16,
+        norm_num_groups=4,
+        use_quant_conv=False,
+        use_post_quant_conv=False,
+        scaling_factor=1.5305,
+        shift_factor=0.0609,
+    )
+    pipeline = diffusers.StableDiffusion3Pipeline(
+        transformer=transformer,
+        vae=vae,
+        scheduler=diffusers.FlowMatchEulerDiscreteScheduler(shift=3.0),
+        text_encoder=CLIPTextModelWithProjection(clip_config),
+        tokenizer=tokenizer,
+        text_encoder_2=CLIPTextModelWithProjection(clip_config),
+        tokenizer_2=tokenizer,
+        text_encoder_3=T5EncoderModel(
+            T5Config(
+                vocab_size=len(vocab),
+                d_model=32,
+                d_ff=32,
+                d_kv=8,
+                num_layers=1,
+                num_heads=2,
+            )
+        ),
+        tokenizer_3=tokenizer,
+    )
+    configure_pipeline_trainability(pipeline, train_transformer=True)
+    config = StableDiffusion3Config(
+        resolution=16,
+        num_steps=4,
+        max_sequence_length=8,
+        rl_mode="refl",
+        cfg=False,
+        guidance_scale=1.0,
+        train_sampler="ode",
+        refl_late_fraction=0.5,
+        use_lora=False,
+        offload_auxiliary_modules=False,
+    )
+    try:
+        yield StableDiffusion3(config, pipeline)
+    finally:
+        torch.set_num_threads(previous_threads)
+
+
+@pytest.mark.parametrize("xt_source", ["rollout", "resample"])
+@pytest.mark.parametrize("native_time_scale", [1000, 2000])
+def test_refl_batch_sampling_preserves_gradients(
+    sd3_policy, xt_source, native_time_scale
+):
+    from diffusers import FlowMatchEulerDiscreteScheduler
+
+    model = sd3_policy
+    model.pipeline.scheduler = FlowMatchEulerDiscreteScheduler(
+        num_train_timesteps=native_time_scale
+    )
+    forwards = []
+    decodes = []
+    hook = model.transformer.register_forward_pre_hook(
+        lambda module, args: forwards.append(torch.is_grad_enabled())
+    )
+    decode_hook = model.pipeline.vae.decoder.register_forward_pre_hook(
+        lambda module, args: decodes.append(torch.is_grad_enabled())
+    )
+    try:
+        output = model(
+            forward_type=ForwardType.REFL,
+            forward_inputs={"prompts": ["a fox", "a cat"]},
+            xt_source=xt_source,
+        )
+    finally:
+        hook.remove()
+        decode_hook.remove()
+    prefix_steps = model.config.num_steps - (xt_source == "rollout")
+    assert forwards == [False] * prefix_steps + [True]
+    assert decodes == [True]
+    context = output["forward_inputs"]
+    assert context["prompts"] == ["a fox", "a cat"]
+    assert all(
+        not value.requires_grad for value in context.values() if torch.is_tensor(value)
+    )
+    assert output["samples"].shape[:2] == (2, 3)
+    output["samples"].square().mean().backward()
+    grads = [p.grad for p in model.transformer.parameters() if p.grad is not None]
+    assert grads and all(torch.isfinite(g).all() for g in grads)
+    assert sum(g.abs().sum() for g in grads) > 0
+    assert all(p.grad is None for p in model.pipeline.vae.parameters())
+
+
+def test_sd3_pretraining_matches_flow_velocity_target(sd3_policy):
+    model = sd3_policy
+    model.eval()
+    for module in (
+        model.pipeline.vae,
+        model.pipeline.text_encoder,
+        model.pipeline.text_encoder_2,
+        model.pipeline.text_encoder_3,
+    ):
+        module.eval()
+    with torch.no_grad():
+        for parameter in model.transformer.parameters():
+            parameter.zero_()
+        model.transformer.proj_out.bias.fill_(0.25)
+
+    images = torch.zeros(1, 3, 16, 16)
+    vae = model.pipeline.vae
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(7)
+        with torch.no_grad():
+            latents = vae.encode(images).latent_dist.sample()
+            latents = (latents - vae.config.shift_factor) * vae.config.scaling_factor
+            torch.randn(1)  # The logit-normal time draw precedes the image noise.
+            noise = torch.randn_like(latents)
+            expected = ((0.25 - (noise - latents)) ** 2).mean()
+        torch.manual_seed(7)
+        actual = model(
+            forward_type=ForwardType.SFT,
+            data={"images": images, "prompts": ["a fox"]},
+        )
+    torch.testing.assert_close(actual, expected)
+
+
+def test_refl_config_validates_training_batches():
+    from rlinf.config import validate_refl_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "algorithm": {"update_epoch": 1, "group_size": 1},
+            "actor": {
+                "global_batch_size": 64,
+                "refl_samples_per_step": 512,
+                "refl_data": {"type": "visual.prompt_dataset"},
+            },
+            "runner": {},
+            "env": {"train": None},
+        }
+    )
+    validate_refl_cfg(cfg)
+    cfg.actor.refl_samples_per_step = 511
+    with pytest.raises(ValueError, match="positive multiple"):
+        validate_refl_cfg(cfg)
+    cfg.actor.refl_samples_per_step = 512
+    cfg.algorithm.update_epoch = 2
+    with pytest.raises(ValueError, match="update_epoch=1"):
+        validate_refl_cfg(cfg)
+    cfg.algorithm.update_epoch = 1
+    cfg.actor.refl_data.type = "visual.image_text_dataset"
+    with pytest.raises(ValueError, match="refl_data.type=visual.prompt_dataset"):
+        validate_refl_cfg(cfg)
+
+
+@pytest.mark.parametrize("offload", [False, True])
+def test_sd3_pretraining_auxiliary_placement_and_gradients(sd3_policy, offload):
+    if Worker.torch_platform is None or not Worker.torch_platform.is_available():
+        pytest.skip("An accelerator is required to verify GPU-to-CPU offloading")
+    device = torch.device(Worker.torch_device_type, 0)
+    model = sd3_policy.to(device)
+    model.config.offload_auxiliary_modules = offload
+    auxiliary = (
+        model.pipeline.vae,
+        model.pipeline.text_encoder,
+        model.pipeline.text_encoder_2,
+        model.pipeline.text_encoder_3,
+    )
+    placements = []
+    hook = model.transformer.register_forward_pre_hook(
+        lambda module, args: placements.append(
+            [next(part.parameters()).device for part in auxiliary]
+        )
+    )
+    try:
+        loss = model(
+            forward_type=ForwardType.SFT,
+            data={"images": torch.zeros(1, 3, 16, 16), "prompts": ["a fox"]},
+        )
+        expected_device = torch.device("cpu") if offload else device
+        assert placements == [[expected_device] * len(auxiliary)]
+        assert torch.isfinite(loss) and loss > 0
+        loss.backward()
+        grads = [p.grad for p in model.transformer.parameters() if p.grad is not None]
+        assert grads and all(torch.isfinite(grad).all() for grad in grads)
+        assert sum(grad.abs().sum() for grad in grads) > 0
+        assert all(p.grad is None for part in auxiliary for p in part.parameters())
+    finally:
+        hook.remove()
+        model.to("cpu")
+
+
+def test_rollout_model_path_inherits_from_actor():
+    from rlinf.config import validate_rollout_cfg
+
+    algorithm_cfg = OmegaConf.create({"importance_sampling_fix": False})
+    actor_cfg = OmegaConf.create({"model": {"model_path": "/checkpoints/actor"}})
+
+    inherited = OmegaConf.create(
+        {
+            "model": {"model_type": "qwen2.5"},
+            "rollout_backend": "sglang",
+            "return_logprobs": False,
+            "sglang": {},
+        }
+    )
+    validate_rollout_cfg(inherited, algorithm_cfg, actor_cfg)
+    assert inherited.model.model_path == "/checkpoints/actor"
+
+    explicit = OmegaConf.create(
+        {
+            "model": {"model_type": "qwen2.5", "model_path": "/checkpoints/rollout"},
+            "rollout_backend": "sglang",
+            "return_logprobs": False,
+            "sglang": {},
+        }
+    )
+    validate_rollout_cfg(explicit, algorithm_cfg, actor_cfg)
+    assert explicit.model.model_path == "/checkpoints/rollout"
+
+    missing = OmegaConf.create(
+        {
+            "model": {"model_type": "qwen2.5", "model_path": None},
+            "rollout_backend": "sglang",
+            "return_logprobs": False,
+            "sglang": {},
+        }
+    )
+    with pytest.raises(AssertionError, match="rollout.model.model_path"):
+        validate_rollout_cfg(missing, algorithm_cfg, None)
+
+
+def test_embodied_rollout_model_path_inherits_from_actor():
+    from rlinf.config import _inherit_rollout_model_path
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {"model": {"model_path": "/checkpoints/openvla"}},
+            "rollout": {"model": {"precision": "bf16"}},
+        }
+    )
+    _inherit_rollout_model_path(cfg.rollout, cfg.actor)
+    assert cfg.rollout.model.model_path == "/checkpoints/openvla"
+
+    cfg_none = OmegaConf.create(
+        {
+            "actor": {"model": {"model_path": "/checkpoints/openvla"}},
+            "rollout": {"model": {"model_path": None, "precision": "bf16"}},
+        }
+    )
+    _inherit_rollout_model_path(cfg_none.rollout, cfg_none.actor)
+    assert cfg_none.rollout.model.model_path == "/checkpoints/openvla"
+
+    cfg_override = OmegaConf.create(
+        {
+            "actor": {"model": {"model_path": "/checkpoints/openvla"}},
+            "rollout": {"model": {"model_path": "/checkpoints/custom-rollout"}},
+        }
+    )
+    _inherit_rollout_model_path(cfg_override.rollout, cfg_override.actor)
+    assert cfg_override.rollout.model.model_path == "/checkpoints/custom-rollout"
+
+    cfg_no_rollout_model = OmegaConf.create(
+        {
+            "actor": {"model": {"model_path": "/checkpoints/openvla"}},
+            "rollout": {"rollout_backend": "huggingface"},
+        }
+    )
+    _inherit_rollout_model_path(
+        cfg_no_rollout_model.rollout, cfg_no_rollout_model.actor
+    )
+    assert cfg_no_rollout_model.rollout.model.model_path == "/checkpoints/openvla"
+
+
+def test_resolve_model_path_distinguishes_local_paths_and_hf_repo_ids(
+    tmp_path, monkeypatch
+):
+    from rlinf.models import is_hf_repo_id, resolve_model_path
+
+    # Existing relative directory matching owner/repo shape must stay local.
+    existing_rel = tmp_path / "local_org" / "local_repo"
+    existing_rel.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    with patch("huggingface_hub.snapshot_download") as mock_download:
+        for local_path in (
+            "local_org/local_repo",
+            "/path/to/model/openvla-7b",
+            "./org/repo",
+            "../org/repo",
+            "~/org/repo",
+            "checkpoints/full_weights.pt",
+            "a/b/c",
+            "gs://openpi-assets/checkpoints/pi05_base",
+            "",
+        ):
+            assert not is_hf_repo_id(local_path), local_path
+            assert resolve_model_path(local_path) == local_path
+        mock_download.assert_not_called()
+
+    # Valid Hugging Face repo IDs (including dots) resolve via snapshot_download.
+    cached_dir = str(tmp_path / "hf_cache" / "snapshot")
+    with patch(
+        "huggingface_hub.snapshot_download", return_value=cached_dir
+    ) as mock_download:
+        for repo_id in (
+            "gen-robot/openvla-7b-rlvla-warmup",
+            "RLinf/RLinf-Pi0.5-LIBERO-SFT",
+        ):
+            assert is_hf_repo_id(repo_id), repo_id
+            assert resolve_model_path(repo_id) == cached_dir
+            mock_download.assert_called_with(repo_id=repo_id)
+
+    with patch("huggingface_hub.snapshot_download", side_effect=OSError("offline")):
+        with pytest.raises(RuntimeError, match="HF_ENDPOINT"):
+            resolve_model_path("RLinf/unreachable-repo")
+
+
+def test_get_model_resolves_hf_model_and_lora_paths_without_mutating_cfg(
+    tmp_path, monkeypatch
+):
+    import rlinf.models as models_mod
+
+    seen_model_paths: list[str] = []
+
+    def _dummy_builder(cfg, torch_dtype):
+        seen_model_paths.append(cfg.model_path)
+        return torch.nn.Linear(4, 4)
+
+    monkeypatch.setitem(models_mod._MODEL_REGISTRY, "_test_hf_dummy", _dummy_builder)
+
+    base_dir = str(tmp_path / "base_snapshot")
+    lora_dir = str(tmp_path / "lora_snapshot")
+
+    def _fake_snapshot_download(repo_id: str) -> str:
+        return {
+            "RLinf/test-base": base_dir,
+            "RLinf/test-lora": lora_dir,
+        }[repo_id]
+
+    cfg = OmegaConf.create(
+        {
+            "model_type": "_test_hf_dummy",
+            "model_path": "RLinf/test-base",
+            "precision": "fp32",
+            "load_to_device": False,
+            "is_lora": True,
+            "lora_path": "RLinf/test-lora",
+        }
+    )
+
+    fake_peft_cls = MagicMock()
+    fake_peft_cls.from_pretrained.side_effect = lambda model, path, **kwargs: (
+        model,
+        path,
+        kwargs,
+    )
+    fake_peft_mod = ModuleType("peft")
+    fake_peft_mod.LoraConfig = MagicMock()
+    fake_peft_mod.PeftModel = fake_peft_cls
+    fake_peft_mod.get_peft_model = MagicMock()
+    fake_peft_mod.inject_adapter_in_model = MagicMock()
+    monkeypatch.setitem(sys.modules, "peft", fake_peft_mod)
+
+    with patch(
+        "huggingface_hub.snapshot_download", side_effect=_fake_snapshot_download
+    ):
+        result = get_model(cfg)
+
+    assert seen_model_paths == [base_dir]
+    assert result[1] == lora_dir
+    assert result[2] == {"is_trainable": True}
+    # Caller's config remains unmutated.
+    assert cfg.model_path == "RLinf/test-base"
+    assert cfg.lora_path == "RLinf/test-lora"
+
+
+def test_embodied_preset_configs_compose_cleanly():
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.models import is_hf_repo_id
+
+    cfg_dir = str(Path("examples/embodiment/config").resolve())
+    quickstarts = (
+        "maniskill_ppo_openvla_quickstart",
+        "maniskill_ppo_openvlaoft_quickstart",
+        "libero_spatial_ppo_openpi_quickstart",
+    )
+    ppo_configs = (
+        *quickstarts,
+        "maniskill_ppo_openvla",
+        "maniskill_ppo_openvlaoft",
+        "libero_spatial_ppo_openpi",
+        "libero_spatial_ppo_openpi_pi05",
+    )
+    grpo_configs = (
+        "libero_spatial_grpo_openpi",
+        "libero_spatial_grpo_openpi_pi05",
+        "libero_spatial_grpo_openvlaoft",
+    )
+
+    with initialize_config_dir(config_dir=cfg_dir, version_base="1.1"):
+        for name in ppo_configs:
+            cfg = compose(config_name=name)
+            assert cfg.runner.task_type == "embodied"
+            assert cfg.algorithm.adv_type == "gae"
+            assert cfg.algorithm.loss_type == "actor_critic"
+            assert (
+                cfg.actor.fsdp_config.mixed_precision.param_dtype
+                == cfg.actor.model.precision
+            )
+            assert cfg.rollout.model.precision == cfg.actor.model.precision
+
+        for name in grpo_configs:
+            cfg = compose(config_name=name)
+            assert cfg.runner.task_type == "embodied"
+            assert cfg.algorithm.adv_type == "grpo"
+            assert cfg.algorithm.loss_type == "actor"
+            assert cfg.algorithm.group_size == 8
+
+        for name in quickstarts:
+            cfg = compose(config_name=name)
+            assert dict(cfg.cluster.component_placement) == {"actor,env,rollout": "all"}
+            assert is_hf_repo_id(cfg.actor.model.model_path), cfg.actor.model.model_path
+
+        # Custom placement recipes must not inherit stray collocated keys.
+        for name in ("maniskill_ppo_openvla", "maniskill_ppo_openvlaoft"):
+            cfg = compose(config_name=name)
+            assert dict(cfg.cluster.component_placement) == {
+                "actor": "0-7",
+                "env": "0-3",
+                "rollout": "4-7",
+            }
+
+        # CLI overrides still compose cleanly over presets.
+        overridden = compose(
+            config_name="maniskill_ppo_openvla_quickstart",
+            overrides=[
+                "actor.model.model_path=/local/ckpt",
+                "runner.max_epochs=5",
+            ],
+        )
+        assert overridden.actor.model.model_path == "/local/ckpt"
+        assert overridden.runner.max_epochs == 5
+
+
+def test_prefix_rollout_keeps_realworld_on_existing_rlt_route():
+    from rlinf.algorithms.prefix_off_policy.route import build_prefix_route
+
+    cfg = OmegaConf.create(
+        {"runner": {}, "algorithm": {}, "env": {"train": {"env_type": "real"}}}
+    )
+    with pytest.raises(ValueError, match="real-world tasks retain the existing rlt_ac"):
+        build_prefix_route(cfg)
+
+
+def test_prefix_rollout_preserves_steam_sources_and_epoch_resets():
+    from rlinf.algorithms.prefix_off_policy.rollout import PrefixRolloutRuntime
+    from rlinf.algorithms.rlt.rlt_steam_critical_phase_gate import SteamRoutingGate
+    from rlinf.data.schema.embodied_types import ActionPayload
+    from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+    policy = PrefixPolicy(
+        prefix_dim=8,
+        proprio_dim=3,
+        action_dim=7,
+        num_action_chunks=4,
+        ref_num_action_chunks=4,
+        actor_head_cfg={"name": "fixed_std_mlp", "hidden_dims": [8]},
+        critic_head_cfg={"name": "multi_q_mlp", "hidden_dims": [8]},
+    )
+    gate = SteamRoutingGate(_FakeSteamCritic(), _steam_gate_cfg())
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.version = 0
+    rollout.prefix_runtime = PrefixRolloutRuntime(
+        OmegaConf.create(
+            {
+                "runner": {},
+                "algorithm": {},
+                "env": {"train": {"env_type": "maniskill_rlt"}},
+            }
+        ),
+        policy,
+        _PrefixFeatureModel(),
+        gate=gate,
+    )
+
+    def step(ranks, pixels, *, stage_id=0):
+        shards = [
+            {
+                "obs": {
+                    "main_images": torch.full((1, 2, 2, 3), pixel, dtype=torch.uint8),
+                    "states": torch.zeros(1, 3),
+                    "task_descriptions": ["insert"],
+                }
+            }
+            for pixel in pixels
+        ]
+        for index, shard in enumerate(shards):
+            shape = (1,) if index == 0 else (1, 4)
+            shard["dones"] = torch.zeros(shape, dtype=torch.bool)
+        payload = rollout._predict_eval_shards(
+            shards, (), peer_ranks=ranks, stage_id=stage_id
+        )
+        assert isinstance(payload, ActionPayload)
+        assert payload.actions.shape == (len(ranks), 4, 7)
+        return payload.rollout_infos
+
+    assert not step([7, 9], [10, 100])["rlt_gate_score_ready"].any()
+    infos = step([9, 7], [105, 11])
+    assert infos["rlt_gate_score_ready"].all()
+    torch.testing.assert_close(
+        infos["rlt_gate_score_min"][:, 0], torch.tensor([5.0, 1.0])
+    )
+    torch.testing.assert_close(
+        step([7], [14])["rlt_gate_score_min"][:, 0], torch.tensor([3.0])
+    )
+    assert not step([7, 9], [14, 105], stage_id=1)["rlt_gate_score_ready"].any()
+
+    from rlinf.data.schema.embodied_types import (
+        PolicyInput,
+        TrajectoryKey,
+        TrajectorySource,
+    )
+    from rlinf.envs.layout import EnvLayout
+
+    rollout.train_layout = EnvLayout(
+        OmegaConf.create({"auto_reset": False}), 10, "env.train"
+    )
+    for epoch, chunk, pixel, ready in [
+        (0, 0, 10, False),
+        (0, 1, 12, True),
+        (1, 0, 50, False),
+    ]:
+        request = PolicyInput(
+            obs={
+                "main_images": torch.full((1, 2, 2, 3), pixel, dtype=torch.uint8),
+                "states": torch.zeros(1, 3),
+                "task_descriptions": ["insert"],
+            },
+            sources=[TrajectorySource(TrajectoryKey(0, epoch, 7, 0, chunk), 1)],
+        )
+        _, result = rollout._predict_rollout_actions(request)
+        assert bool(result["rollout_infos"]["rlt_gate_score_ready"].any()) is ready
+
+
+def _prefix_pool_model(rlt_cfg):
+    from rlinf.models.embodiment.openpi.tasks.eval import Pi0Eval
+
+    model = Pi0Eval.__new__(Pi0Eval)
+    torch.nn.Module.__init__(model)
+    model.rlt_cfg = rlt_cfg
+    return model
+
+
+def test_encode_vlm_prefix_flat_mean_pool_with_mask():
+    model = _prefix_pool_model(OpenPiPytorchRLTConfig(prefix_pool="masked_mean"))
+    prefix = torch.tensor(
+        [
+            [[1.0, 0.0], [3.0, 0.0], [9.0, 0.0]],
+            [[2.0, 0.0], [4.0, 0.0], [8.0, 0.0]],
+        ]
+    )
+    mask = torch.tensor([[True, True, False], [True, False, False]])
+    pooled = model._encode_vlm_prefix_flat(prefix, mask)
+    torch.testing.assert_close(pooled[0], torch.tensor([2.0, 0.0]))
+    torch.testing.assert_close(pooled[1], torch.tensor([2.0, 0.0]))
+
+
+def test_encode_vlm_prefix_flat_mean_pool_without_mask():
+    model = _prefix_pool_model(OpenPiPytorchRLTConfig(prefix_pool="mean"))
+    prefix = torch.ones(2, 4, 3)
+    pooled = model._encode_vlm_prefix_flat(prefix, torch.ones(2, 4, dtype=torch.bool))
+    torch.testing.assert_close(pooled, torch.ones(2, 3))
+
+
+def test_encode_vlm_prefix_flat_uses_shared_pool_prefix():
+    from rlinf.models.embodiment.prefix_features import pool_prefix
+
+    model = _prefix_pool_model(OpenPiPytorchRLTConfig(prefix_pool="last"))
+    prefix = torch.arange(12, dtype=torch.float32).reshape(2, 2, 3)
+    mask = torch.tensor([[True, False], [True, True]])
+    pooled = model._encode_vlm_prefix_flat(prefix, mask)
+    torch.testing.assert_close(pooled, pool_prefix(prefix, mask, mode="last"))
+
+
+def test_prefix_pooling_requires_rlt_only_for_rlt_tokens():
+    for pool, use_rlt, required in (
+        ("masked_mean", False, False),
+        ("rlt_token", True, True),
+    ):
+        model = _prefix_pool_model(
+            OpenPiPytorchRLTConfig(use_rlt=use_rlt, prefix_pool=pool)
+        )
+        assert model._stage2_requires_rlt() is required
+
+
+@pytest.mark.parametrize("image_only,expected", [(True, 2.0), (False, 51.0)])
+def test_stage2_pooling_respects_explicit_image_only_setting(image_only, expected):
+    from rlinf.models.embodiment.openpi.rlt_config import build_rlt_config
+
+    cfg = OmegaConf.create(
+        {
+            "prefix": {"pool": "masked_mean", "image_only": image_only},
+            "openpi": {"use_rlt": False},
+        }
+    )
+    model = _prefix_pool_model(build_rlt_config(cfg.openpi, parent_cfg=cfg))
+    hidden = torch.tensor([[[2.0], [4.0], [100.0]]])
+    mask = torch.tensor([[True, False, True]])
+    language = torch.ones(1, 1, dtype=torch.long)
+    pooled = model._encode_stage2_z(hidden, mask, language)
+    torch.testing.assert_close(pooled, torch.tensor([[expected]]))
+
+
+@pytest.mark.parametrize(
+    "config_name",
+    [
+        "maniskill_prefix_stage2_td3_mlp_steam",
+    ],
+)
+def test_prefix_eval_config_validates_without_actor(monkeypatch, config_name):
+    cfg = _compose_prefix_config(monkeypatch, "examples/embodiment/config", config_name)
+    OmegaConf.resolve(cfg)
+    cfg.runner.only_eval = True
+    cfg.cluster.component_placement = {"env,rollout": "0"}
+    del cfg.actor
+    validate_embodied_cfg(cfg)
+    assert isinstance(get_model(cfg.rollout.model), PrefixPolicy)

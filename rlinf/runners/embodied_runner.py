@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
     from rlinf.workers.actor.fsdp_art_policy_worker import EmbodiedARTFSDPPolicy
     from rlinf.workers.actor.fsdp_nft_policy_worker import EmbodiedNFTFSDPPolicy
+    from rlinf.workers.actor.fsdp_refl_policy_worker import EmbodiedReFLFSDPPolicy
     from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
     from rlinf.workers.env.env_worker import EnvWorker
@@ -63,6 +64,7 @@ class EmbodiedRunner:
             "EmbodiedFSDPActor",
             "EmbodiedARTFSDPPolicy",
             "EmbodiedNFTFSDPPolicy",
+            "EmbodiedReFLFSDPPolicy",
             "EmbodiedSACFSDPPolicy",
             "AsyncEmbodiedSACFSDPPolicy",
         ],
@@ -102,14 +104,16 @@ class EmbodiedRunner:
         self.rollout_channel = Channel.create("Rollout")
         # Trajectory assembly runs on the channel worker, so neither the env
         # nor the rollout worker has to hold partial trajectory state.
-        self.actor_channel = Channel.create(
-            "Actor",
-            collector=select_trajectory_collector(self.cfg),
-            dispatcher=select_trajectory_dispatcher(self.cfg),
-            cfg=self.cfg,
-            producers=[self.rollout],
-            consumers=[self.actor],
-        )
+        self.actor_channel = None
+        if self.cfg.env.get("train") is not None:
+            self.actor_channel = Channel.create(
+                "Actor",
+                collector=select_trajectory_collector(self.cfg),
+                dispatcher=select_trajectory_dispatcher(self.cfg),
+                cfg=self.cfg,
+                producers=[self.rollout],
+                consumers=[self.actor],
+            )
         if self.reward is not None:
             self.reward_channel = Channel.create("Reward")
         else:
@@ -216,6 +220,16 @@ class EmbodiedRunner:
         )
         env_results = env_handle.wait()
         rollout_handle.wait()
+        finalized = (
+            self.env.execute_on(0)
+            .finalize_eval_results(env_results, step=self.global_step)
+            .wait()[0]
+        )
+        if finalized is not None:
+            eval_metrics, out_dir = finalized
+            if out_dir is not None:
+                self.logger.info(f"Wrote evaluation results to {out_dir}")
+            return eval_metrics
         eval_metrics_list = [results for results in env_results if results is not None]
         eval_metrics = compute_evaluate_metrics(eval_metrics_list)
         return eval_metrics

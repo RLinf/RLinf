@@ -141,14 +141,14 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: False
   enable_offload: False
   pipeline_stage_num: 1
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model"
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 
   expert_model:

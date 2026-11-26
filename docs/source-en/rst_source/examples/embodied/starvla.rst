@@ -1,5 +1,5 @@
-RL on StarVLA Models
-====================
+StarVLA RL
+==========
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/starvla.png
    :align: center
@@ -107,157 +107,107 @@ StarVLA inference outputs chunked actions ``[B, T, D_action]`` with
 receding-horizon strategy: each forward pass predicts ``T`` actions, the environment
 executes the first ``N`` steps (``1 <= N <= T``), then replans.
 
-Installation
-------------
+.. _starvla-hardware:
 
-For NVIDIA CUDA, use either option below. For Huawei Ascend CANN, follow
-:ref:`starvla-hardware`.
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: NVIDIA CUDA
+      :sync: cuda
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      **1. Install**
 
-   # Inside the container, switch to the StarVLA virtual environment:
-   source switch_env starvla
+      .. code-block:: bash
 
-**Option 2: Custom environment** — install bundle ``--env maniskill_libero``:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model starvla --env maniskill_libero && source .venv/bin/activate
 
-.. code:: bash
+      **2. Download**
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model starvla --env maniskill_libero
-   source .venv/bin/activate
+      Download the StarVLA checkpoint and the Qwen2.5-VL base model:
 
-Download the Model
-~~~~~~~~~~~~~~~~~~
+      .. code-block:: bash
 
-Download the StarVLA checkpoint and the base VLM:
+         hf download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 
-.. code-block:: bash
+      Set ``framework.qwenvl.base_vlm`` in ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` to your local ``Qwen2.5-VL-3B-Instruct`` directory.
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1
-   git clone https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
+      .. include:: _model_path.rst
 
-   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
-   uv pip install huggingface-hub
-   hf download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
-   hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
+      **3. Launch**
 
-.. note::
+      StarVLA + GRPO + LIBERO Spatial uses ``examples/embodiment/config/libero_spatial_grpo_starvla.yaml``. Launch GRPO training:
 
-   After download, update ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` so
-   ``framework.qwenvl.base_vlm`` points to your local ``Qwen2.5-VL-3B-Instruct`` path.
+      .. code-block:: bash
 
-Run It
-------
+         bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_starvla
 
-**1. Configuration**
+      For standalone evaluation, see the :doc:`LIBERO evaluation guide <../../evaluations/guides/libero>`.
 
-StarVLA + GRPO + LIBERO Spatial uses
-``examples/embodiment/config/libero_spatial_grpo_starvla.yaml``. Point the model paths at
-your download and set the action interface:
+   .. tab-item:: Huawei Ascend CANN
+      :sync: ascend
 
-.. code-block:: yaml
+      Huawei Ascend CANN supports StarVLA (QwenOFT) training on LIBERO with GRPO using the same checkpoint and task configuration, with OSMesa for CPU rendering.
 
-   defaults:
-      - env/libero_spatial@env.train
-      - env/libero_spatial@env.eval
+      **1. Install**
 
-   rollout:
-     model:
-       model_path: "/path/to/model"
+      The RLinf installer pins starVLA to ``starVLA-v1.6`` and builds ``decord`` from source on aarch64. If you reuse an upstream checkout through ``STARVLA_PATH``, keep it at ``starVLA-v1.6``.
 
-   actor:
-     model:
-       model_path: "/path/to/model"
-       action_dim: 7
-       num_action_chunks: 8
-       action_stats_source: "minmax"
-       starvla:
-         framework_name: "QwenOFT"
-         expected_action_dim: ${actor.model.action_dim}
-         expected_num_action_chunks: ${actor.model.num_action_chunks}
-         enable_state_input: False
+      Start with the Ascend LIBERO container or a host with CANN and the NPU driver installed:
 
-**2. Launch**
+      .. include:: _ascend_libero.rst
 
-.. code-block:: bash
+      Create a StarVLA environment inside the container or directly on the Ascend host (installs matching ``torch-npu`` and skips CUDA flash-attention):
 
-   bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_starvla
+      .. code-block:: bash
 
-For evaluation, use RLinf's unified evaluation workflow — see the
-:doc:`LIBERO evaluation guide <../../evaluations/guides/libero>`.
+         bash requirements/install.sh --platform ascend embodied --model starvla --env libero && source .venv/bin/activate
 
-.. _starvla-hardware:
+      **2. Download**
 
-Run on Different Hardware Backends
-----------------------------------
+      Download the StarVLA checkpoint and Qwen2.5-VL base model:
 
-NVIDIA uses the installation and launch steps above. Huawei Ascend CANN supports
-StarVLA (QwenOFT) training on LIBERO with GRPO. The Ascend recipe uses the same
-checkpoint and task configuration, with OSMesa for CPU rendering.
+      .. code-block:: bash
 
-Huawei Ascend CANN
-~~~~~~~~~~~~~~~~~~
+         hf download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 
-The RLinf installer pins starVLA to ``starVLA-v1.6`` and builds ``decord`` from source on aarch64.
-If you reuse an upstream checkout through ``STARVLA_PATH``, ensure that it is
-also at ``starVLA-v1.6``.
+      Set ``framework.qwenvl.base_vlm`` in ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` to your local ``Qwen2.5-VL-3B-Instruct`` directory.
 
-Start with the Ascend LIBERO container or a host with CANN and the NPU driver
-installed:
+      .. include:: _model_path.rst
 
-.. include:: _ascend_libero.rst
+      **3. Launch**
 
-Create a StarVLA environment from the RLinf checkout inside the container, or
-run the same command directly on the Ascend host:
+      Enable software rendering in the active environment:
 
-.. code-block:: bash
+      .. include:: _libero_osmesa.rst
 
-   bash requirements/install.sh --platform ascend embodied --model starvla --env libero
-   source .venv/bin/activate
+      The default recipe uses one node and places actor, rollout, and environment workers on all available devices. Adjust ``cluster.component_placement``, ``actor.micro_batch_size``, ``actor.global_batch_size``, and the training and evaluation ``total_num_envs`` in ``examples/embodiment/config/libero_spatial_grpo_starvla.yaml`` for your NPU count and memory, then launch LIBERO Spatial training:
 
-Add ``--use-mirror`` for downloads from mainland China. The installer installs
-the matching ``torch-npu`` package and skips CUDA flash-attention.
+      .. code-block:: bash
 
-Download the StarVLA checkpoint and Qwen2.5-VL base model as described above.
-Set ``framework.qwenvl.base_vlm`` in the checkpoint's ``config.yaml`` to the
-local base-model path, and set both ``actor.model.model_path`` and
-``rollout.model.model_path`` in
-``examples/embodiment/config/libero_spatial_grpo_starvla.yaml`` to the local
-StarVLA checkpoint directory.
+         bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_starvla
 
-Enable software rendering in the active environment:
+      For Qwen2.5-VL checkpoints, you can reduce attention overhead by adding this option to the experiment configuration:
 
-.. include:: _libero_osmesa.rst
+      .. code-block:: yaml
 
-The default recipe uses one node and places actor, rollout, and environment
-workers on all available devices. Adjust ``cluster.component_placement``,
-``actor.micro_batch_size``, ``actor.global_batch_size``, and the training and
-evaluation ``total_num_envs`` for your NPU count and memory. Then launch
-LIBERO Spatial training:
+         actor:
+           model:
+             starvla:
+               enable_npu_attention: True
 
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_starvla
+      This option applies to both actor and rollout models, is disabled by default, and takes effect only on Ascend. The StarVLA installer provides the required Transformers version, ``4.57.6``.
 
 Visualization and Results
 -------------------------
 
-Watch **``env/success_once``** for the task success rate. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
+Launch TensorBoard with ``tensorboard --logdir ./logs --port 6006`` and watch ``env/success_once``. Pass ``env.eval.video_cfg.save_video=True`` to record evaluation videos; see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 Reference curves (using the model from
 `LIBERO_BASELIEN_FORJINHUI_10K_QWENOFT <https://huggingface.co/JasonYang66/LIBERO_BASELIEN_FORJINHUI_10K_QWENOFT>`_):

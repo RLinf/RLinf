@@ -1,5 +1,5 @@
-Dexbotic模型强化学习训练
-========================================
+Dexbotic 强化学习
+=================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -12,13 +12,12 @@ Dexbotic模型强化学习训练
 
    Dexbotic 模型概览（图片来源：`Dexbotic <https://github.com/dexmal/dexbotic>`__）。
 
-`Dexbotic <https://github.com/dexmal/dexbotic>`__ 是 Dexmal 推出的开源 VLA 工具箱。
-RLinf 将 Dexbotic π\ :sub:`0`\ 和 DM0 策略作为 LIBERO 动作生成模型，并使用 PPO 进行在线强化学习微调。
+`Dexbotic <https://github.com/dexmal/dexbotic>`__ 是 Dexmal 推出的开源 VLA 工具箱。RLinf 将 Dexbotic π₀ 和 DM0 策略作为 LIBERO 动作生成模型，并用 PPO 在线强化学习微调。
 
 概览
 ----------------------------------------
 
-在 LIBERO 上用 PPO 微调 Dexbotic π\ :sub:`0`\ 或 DM0。
+在 LIBERO 上用 PPO 微调 Dexbotic π₀ 或 DM0。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -90,138 +89,118 @@ RLinf 将 Dexbotic π\ :sub:`0`\ 和 DM0 策略作为 LIBERO 动作生成模型�
    * - Prompt
      - 策略 processor 消费的 LIBERO 自然语言指令。
 
-安装
-----------------------------------------
+安装与运行
+----------
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** — 镜像标签 ``agentic-rlinf0.4-maniskill_libero``：
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: π₀
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      **1. 安装环境**
 
-   # 在容器内切换到 Dexbotic 虚拟环境：
-   source switch_env dexbotic
+      .. code-block:: bash
 
-**选项 2：自定义环境** — 安装 ``--model dexbotic --env maniskill_libero`` 依赖组合：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model dexbotic --env maniskill_libero && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. 下载模型**
 
-   # 国内用户可以添加 --use-mirror 加速下载。
-   bash requirements/install.sh embodied --model dexbotic --env maniskill_libero
-   source .venv/bin/activate
+      .. code-block:: bash
 
-下载模型
-----------------------------------------
+         hf download Dexmal/libero-db-pi0 --local-dir ./libero-db-pi0
 
-下载一个或两个 Dexbotic 检查点（任选一种方式）：
+      **3. 启动训练**
 
-.. code-block:: bash
+      ``examples/embodiment/config/`` 下内置的 π₀ 配置如下：
 
-   # 方法 1：git clone
-   git lfs install
-   git clone https://huggingface.co/Dexmal/libero-db-pi0
-   git clone https://huggingface.co/Dexmal/DM0-libero
+      .. list-table::
+         :header-rows: 1
+         :widths: 36 64
 
-   # 方法 2：huggingface-hub（国内用户可设置 HF_ENDPOINT=https://hf-mirror.com）
-   pip install huggingface-hub
-   huggingface-cli download Dexmal/libero-db-pi0 --local-dir libero-db-pi0
-   huggingface-cli download Dexmal/DM0-libero --local-dir DM0-libero
+         * - 任务套件
+           - 配置文件
+         * - LIBERO Spatial
+           - ``libero_spatial_ppo_dexbotic_pi0.yaml``
+         * - LIBERO Object
+           - ``libero_object_ppo_dexbotic_pi0.yaml``
+         * - LIBERO Goal
+           - ``libero_goal_ppo_dexbotic_pi0.yaml``
+         * - LIBERO 10
+           - ``libero_10_ppo_dexbotic_pi0.yaml``
 
-.. include:: _model_path.rst
+      .. include:: _model_path.rst
 
-运行
-----------------------------------------
+      使用 ``run_embodiment.sh`` 启动 PPO 训练：
 
-每个配方都是 ``examples/embodiment/config/`` 下的一个 YAML 配置：
+      .. code-block:: bash
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 26 44
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_dexbotic_pi0 actor.model.model_path=$PWD/libero-db-pi0
 
-   * - 任务套件
-     - 模型
-     - 配置
-   * - LIBERO Spatial
-     - Dexbotic π₀
-     - ``libero_spatial_ppo_dexbotic_pi0.yaml``
-   * - LIBERO Spatial
-     - DM0
-     - ``libero_spatial_ppo_dexbotic_dm0.yaml``
-   * - LIBERO Object
-     - Dexbotic π₀
-     - ``libero_object_ppo_dexbotic_pi0.yaml``
-   * - LIBERO Goal
-     - Dexbotic π₀
-     - ``libero_goal_ppo_dexbotic_pi0.yaml``
-   * - LIBERO 10
-     - Dexbotic π₀
-     - ``libero_10_ppo_dexbotic_pi0.yaml``
+      .. dropdown:: 进阶配置（可选）
 
-使用 ``run_embodiment.sh`` 启动一个配置：
+         - **参数精度**：π₀ 加载参数时使用 ``actor.model.precision`` 指定的精度。需要以 BF16 运行时，将其设为 ``bf16`` 并让 ``rollout.model`` 使用相同精度；设为 ``null`` 则保留 checkpoint 的默认精度。
+         - **动作块长度**：π₀ 默认使用 ``num_action_chunks: 5``。
+         - **独立评测**：使用 Dexbotic 的 LIBERO evaluator 评测训练后的检查点，或使用 RLinf 统一的 :doc:`评估 <../../evaluations/index>` 流程：
 
-.. code-block:: bash
+           .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_dexbotic_pi0
+              python toolkits/standalone_eval_scripts/dexbotic/libero_eval.py \
+                --config_name db_pi0_libero \
+                --pretrained_path ./libero-db-pi0 \
+                --task_suite_name libero_spatial \
+                --num_trials_per_task 50 \
+                --action_chunk 5 \
+                --num_steps 10
 
-**这个命令会：**
+         - **组件放置与指标**：详见 :doc:`组件放置 <../../concepts/placement>`、:doc:`执行模式 <../../concepts/execution_modes>` 与 :doc:`训练指标 <../../reference/metrics>`。
 
-1. 加载 ``examples/embodiment/config/libero_spatial_ppo_dexbotic_pi0.yaml``。
-2. 按 ``cluster.component_placement`` 构建 LIBERO actor、rollout 和 env worker。
-3. 运行 PPO，并把日志和检查点写入 ``runner.logger.log_path``。
+   .. tab-item:: DM0
 
-.. admonition:: 进一步配置
-   :class: note
+      **1. 安装环境**
 
-   - π₀ 检查点路径 → 将 ``actor.model.model_path`` 和 ``rollout.model.model_path`` 设置为 ``libero-db-pi0``。
-   - DM0 检查点路径 → 在 ``libero_spatial_ppo_dexbotic_dm0.yaml`` 中将两个 model path 设置为 ``DM0-libero``。
-   - Action chunks → π₀ 使用 ``num_action_chunks: 5``；DM0 使用 ``num_action_chunks: 10``。
-   - 指标定义和日志后端 → :doc:`训练指标 <../../reference/metrics>`
-   - 组件放置和吞吐调优 → :doc:`组件放置 <../../concepts/placement>` 与 :doc:`执行模式 <../../concepts/execution_modes>`
+      .. code-block:: bash
 
-独立评测
-----------------------------------------
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model dexbotic --env maniskill_libero && source .venv/bin/activate
 
-对训练后的检查点运行 Dexbotic 的 LIBERO evaluator：
+      **2. 下载模型**
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   python toolkits/standalone_eval_scripts/dexbotic/libero_eval.py \
-      --config_name db_pi0_libero \
-      --pretrained_path /path/to/checkpoint \
-      --task_suite_name libero_spatial \
-      --num_trials_per_task 50 \
-      --action_chunk 5 \
-      --num_steps 10
+         hf download Dexmal/DM0-libero --local-dir ./DM0-libero
 
-如需评估 DM0，切换 evaluator 配置和 action chunk：
+      **3. 启动训练**
 
-.. code-block:: bash
+      DM0 内置配置为 ``examples/embodiment/config/libero_spatial_ppo_dexbotic_dm0.yaml``。
 
-   python toolkits/standalone_eval_scripts/dexbotic/libero_eval.py \
-      --config_name dm0_libero \
-      --pretrained_path /path/to/checkpoint \
-      --task_suite_name libero_spatial \
-      --num_trials_per_task 50 \
-      --action_chunk 10 \
-      --num_steps 10
+      .. include:: _model_path.rst
 
-也可以使用 RLinf 统一的 VLA 评估流程，详见 :doc:`评估 <../../evaluations/index>`。
+      使用 ``run_embodiment.sh`` 启动 PPO 训练：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_dexbotic_dm0 actor.model.model_path=$PWD/DM0-libero
+
+      .. dropdown:: 进阶配置（可选）
+
+         - **动作块长度**：DM0 默认使用 ``num_action_chunks: 10``。
+         - **独立评测**：使用 Dexbotic 的 LIBERO evaluator 评测训练后的检查点，或使用 RLinf 统一的 :doc:`评估 <../../evaluations/index>` 流程：
+
+           .. code-block:: bash
+
+              python toolkits/standalone_eval_scripts/dexbotic/libero_eval.py \
+                --config_name dm0_libero \
+                --pretrained_path ./DM0-libero \
+                --task_suite_name libero_spatial \
+                --num_trials_per_task 50 \
+                --action_chunk 10 \
+                --num_steps 10
+
+         - **组件放置与指标**：详见 :doc:`组件放置 <../../concepts/placement>`、:doc:`执行模式 <../../concepts/execution_modes>` 与 :doc:`训练指标 <../../reference/metrics>`。
 
 可视化与结果
 ----------------------------------------
 
-启动 TensorBoard 实时观察训练：
-
-.. code-block:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-最值得关注的指标是 **``env/success_once``** —— 回合成功率。每个日志指标的含义见 :doc:`训练指标 <../../reference/metrics>`。
+运行 ``tensorboard --logdir ./logs`` 观察 ``env/success_once``；如需保存评测视频，设置 ``env.eval.video_cfg.save_video=True``，更多日志指标见 :doc:`训练指标 <../../reference/metrics>`。

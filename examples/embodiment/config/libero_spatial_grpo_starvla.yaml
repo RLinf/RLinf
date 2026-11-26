@@ -104,14 +104,14 @@ rollout:
     max_new_tokens: 256
 
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: False
   unnorm_key: ${actor.model.unnorm_key}
   enable_offload: False
   pipeline_stage_num: 1
 
   model:
-    model_path: /path/to/Qwen2.5-VL-OFT-LIBERO-4in1 # https://huggingface.co/StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 
 actor:

@@ -1,320 +1,303 @@
-Adding New Models with FSDP+HuggingFace
-========================================
+Embodied RL Model (FSDP)
+========================
 
-This document focuses on how to use the HuggingFace Transformers library together
-with PyTorch FSDP (Fully Sharded Data Parallel) to train and generate with
-models. It supports any model implemented in HuggingFace as long as it is
-compatible with PyTorch. As an example, this guide provides a step-by-step
-workflow showing how to integrate a new HuggingFace model into RLinf following
-the OpenVLA pattern.
+Integrate a PyTorch or Hugging Face Transformers policy into RLinf's FSDP (Fully Sharded Data Parallel) backend for RL rollout and training. By the end, you have a ``BasePolicy`` subclass, a registered model builder, and Hydra and FSDP wrapping configuration.
 
-Prerequisites
--------------
+The work follows three checkpoints. First, implement the policy contract and verify a rollout-to-training round-trip locally on CPU. Next, register the builder and check that ``get_model`` resolves it. Finally, add the Hydra model and FSDP configuration.
 
-* Familiarity with **HuggingFace Transformers**
-* Understanding of the **RLinf** framework architecture
-* Knowledge of **PyTorch** and distributed training
+At a Glance
+-----------
 
-Step-by-Step Implementation
----------------------------
+.. list-table::
+   :header-rows: 1
+   :widths: 24 76
 
-1. Model Registration
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   * - Item
+     - Details
+   * - Files to create/edit
+     - ``rlinf/models/embodiment/<name>/`` (or an external package) and ``examples/embodiment/config/<name>.yaml``
+   * - Extension point
+     - ``register_model`` and ``RLINF_EXT_MODULE`` (see :ref:`out-of-tree-extensions`)
+   * - Required methods
+     - ``BasePolicy`` subclass implementing ``default_forward`` and ``predict_action_batch``
+   * - Verification
+     - Direct local CPU round-trip and ``get_model`` check
 
-The recommended way to integrate a model into RLinf is to register a model
-builder. This is also the preferred approach when another repository depends on
-RLinf.
+1. Implement the Policy Contract Locally
+----------------------------------------
+
+Create your policy under ``rlinf/models/embodiment/<name>/`` (or in an external package), subclassing ``rlinf.models.embodiment.base_policy.BasePolicy`` and ``torch.nn.Module`` (or a Hugging Face model class). Put ``BasePolicy`` before ``nn.Module`` in the base list if you rely on ``BasePolicy.forward`` directly, because ``nn.Module`` defines its own stub ``forward``.
+
+The minimal Gaussian policy below implements both required methods without external weights:
 
 .. code-block:: python
 
-  from rlinf.models import register_model
+   from typing import Any
 
-  def build_my_model(cfg, torch_dtype):
-      from your_package.your_model_action_model import (
-          YourModelForRLActionPrediction,
-      )
+   import torch
+   import torch.nn as nn
+   from torch.distributions import Normal
 
-      return YourModelForRLActionPrediction.from_pretrained(
-          cfg.model_path,
-          torch_dtype=torch_dtype,
-          hidden_size=cfg.hidden_size,
-          unnorm_key=cfg.unnorm_key,
-          action_dim=cfg.action_token_len,
-          attn_implementation=cfg.attn_implementation,
-          low_cpu_mem_usage=cfg.low_cpu_mem_usage,
-          trust_remote_code=cfg.trust_remote_code,
-      )
+   from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 
-  register_model("your_model_type", build_my_model, category="embodied")
 
-This single registration does two things:
+   class TinyGaussianPolicy(BasePolicy, nn.Module):
+       def __init__(self, obs_dim: int, action_dim: int, hidden_dim: int = 64):
+           super().__init__()
+           self.backbone = nn.Sequential(
+               nn.Linear(obs_dim, hidden_dim),
+               nn.Tanh(),
+               nn.Linear(hidden_dim, hidden_dim),
+               nn.Tanh(),
+           )
+           self.actor_mean = nn.Linear(hidden_dim, action_dim)
+           self.actor_logstd = nn.Parameter(torch.zeros(1, action_dim))
+           self.value_head = nn.Linear(hidden_dim, 1)
 
-- Makes ``model_type`` pass RLinf config validation.
-- Makes ``rlinf.models.get_model(cfg)`` build your model correctly.
+       def _distribution(self, states: torch.Tensor) -> tuple[Normal, torch.Tensor]:
+           feat = self.backbone(states)
+           mean = self.actor_mean(feat)
+           std = torch.exp(self.actor_logstd).expand_as(mean)
+           return Normal(mean, std), self.value_head(feat)
 
-Distributed registration when RLinf is a dependency (``RLINF_EXT_MODULE``)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+       def default_forward(
+           self,
+           forward_inputs: dict[str, Any],
+           compute_logprobs: bool = True,
+           compute_entropy: bool = True,
+           compute_values: bool = True,
+           **kwargs,
+       ) -> dict[str, torch.Tensor]:
+           dist, values = self._distribution(forward_inputs["states"])
+           outputs: dict[str, torch.Tensor] = {}
+           if compute_logprobs:
+               outputs["logprobs"] = dist.log_prob(forward_inputs["action"])
+           if compute_entropy:
+               outputs["entropy"] = dist.entropy()
+           if compute_values:
+               outputs["values"] = values
+           return outputs
 
-When RLinf is pulled in as a third-party dependency and **Ray** launches
-distributed workers, calling ``register_model(...)`` only in the main (driver)
-process **does not** carry over to worker processes: workers are separate Python
-processes and will not re-execute the registration code from your entry script.
-As a result, code paths that actually run on workers (rollout, training, etc.)
-may still see an unregistered model and fail to build or resolve it.
+       @torch.inference_mode()
+       def predict_action_batch(
+           self,
+           env_obs: dict[str, Any],
+           mode: str = "train",
+           calculate_values: bool = True,
+           **kwargs,
+       ) -> tuple[torch.Tensor, dict[str, Any]]:
+           states = env_obs["states"]
+           dist, values = self._distribution(states)
+           action = dist.sample() if mode == "train" else dist.mean
+           prev_logprobs = dist.log_prob(action)
+           prev_values = values if calculate_values else torch.zeros_like(values)
+           result = {
+               "prev_logprobs": prev_logprobs,
+               "prev_values": prev_values,
+               "forward_inputs": {"states": states, "action": action},
+           }
+           return action, result
 
-Set the environment variable ``RLINF_EXT_MODULE`` to the import path of an
-**extension module**. On **each worker initialization**, RLinf imports that module
-and, when defined, invokes its ``register()`` so workers perform the same model
-(or other extension) registration as the driver, without patching RLinf.
+Each public method enters the rollout-training loop in this order:
 
-The extension module should implement ``register()`` and call ``register_model``
-and any other needed hooks there. For the exact env var format and examples, see
-the docstring of ``ClusterEnvVar.EXT_MODULE`` in
-``rlinf/scheduler/cluster/cluster.py``, e.g.:
+- ``predict_action_batch(env_obs, mode="train"|"eval", calculate_values=True, **kwargs)`` runs during rollout and evaluation. It receives ``env_obs`` (which for vision-language-action policies such as ``rlinf/models/embodiment/openpi/tasks/rl.py`` also carries ``main_images``, ``wrist_images``, ``extra_view_images``, and ``task_descriptions``) and returns ``(actions, result)``. ``actions`` goes to the environment, while ``result`` carries ``prev_logprobs``, ``prev_values``, and ``forward_inputs`` cached for training.
+- ``forward(forward_type=ForwardType.DEFAULT, **kwargs)`` is the dispatch entry point called by training workers. ``BasePolicy.forward`` routes ``ForwardType.DEFAULT`` to ``default_forward`` and ``ForwardType.REFL`` to ``refl_forward``. Override ``forward`` if your policy also handles ``ForwardType.SFT`` or ``ForwardType.SAC``.
+- ``default_forward(forward_inputs, **kwargs)`` runs under autograd during PPO or GRPO updates. It reads the tensors cached in ``forward_inputs`` (for iterative or diffusion policies, keys such as ``chains``, ``denoise_inds``, ``tokenized_prompt``, and ``model_action``) and returns ``logprobs``, ``values``, and ``entropy`` for the configured loss.
+
+You can pick any keys inside ``forward_inputs`` as long as ``predict_action_batch`` stores everything ``default_forward`` needs. Perform model-specific action post-processing inside ``predict_action_batch`` so returned ``actions`` are directly executable by the environment instead of adding a new branch to ``prepare_actions`` in ``rlinf/envs/action_utils.py``.
+
+Before registering the model, run a local CPU round-trip check that verifies output shapes, log-probability parity between rollout and training, and gradient flow:
+
+.. code-block:: python
+
+   torch.manual_seed(0)
+   policy = TinyGaussianPolicy(obs_dim=8, action_dim=4)
+   actions, result = policy.predict_action_batch({"states": torch.randn(2, 8)})
+   out = policy(forward_type=ForwardType.DEFAULT, forward_inputs=result["forward_inputs"])
+
+   assert actions.shape == (2, 4)
+   assert out["logprobs"].shape == (2, 4)
+   assert out["values"].shape == (2, 1)
+   assert out["entropy"].shape == (2, 4)
+   assert torch.allclose(out["logprobs"], result["prev_logprobs"], atol=1e-6)
+
+   loss = -(out["logprobs"].mean() + 0.01 * out["entropy"].mean()) + out["values"].pow(2).mean()
+   loss.backward()
+   assert policy.actor_mean.weight.grad is not None
+   print("Local check passed:", {k: tuple(v.shape) for k, v in out.items()})
+
+Expected output:
+
+.. code-block:: text
+
+   Local check passed: {'logprobs': (2, 4), 'entropy': (2, 4), 'values': (2, 1)}
+
+.. _out-of-tree-extensions:
+
+2. Register the Model Builder
+-----------------------------
+
+Register a builder with ``register_model``. The builder takes ``(cfg, torch_dtype)`` and returns the instantiated model; for Hugging Face checkpoints, call ``from_pretrained(cfg.model_path, torch_dtype=torch_dtype, ...)`` and attach any ``processor`` inside the builder.
+
+Calling ``register_model`` registers the string in ``SupportedModel`` so Hydra validation accepts it, and maps ``model_type`` to your builder in ``get_model``. Pass ``force=True`` to replace a built-in implementation while keeping its ``model_type``. Choose how you want to host your code:
+
+.. tab-set::
+
+   .. tab-item:: In-Tree (Inside RLinf)
+      :sync: ext-in-tree
+
+      Register the builder inside ``rlinf/models/__init__.py`` (so every worker imports it automatically), then check locally on CPU with ``load_to_device: False``:
+
+      .. code-block:: python
+
+         from omegaconf import OmegaConf
+
+         from rlinf.config import SupportedModel
+         from rlinf.models import get_model, register_model
+
+
+         def build_my_model(cfg, torch_dtype):
+             return TinyGaussianPolicy(
+                 obs_dim=cfg.obs_dim,
+                 action_dim=cfg.action_dim,
+                 hidden_dim=cfg.get("hidden_dim", 64),
+             ).to(dtype=torch_dtype)
+
+
+         register_model("tiny_gaussian", build_my_model, category="embodied")
+
+         assert SupportedModel("tiny_gaussian").value == "tiny_gaussian"
+         cfg = OmegaConf.create(
+             {
+                 "model_type": "tiny_gaussian",
+                 "obs_dim": 8,
+                 "action_dim": 4,
+                 "hidden_dim": 64,
+                 "precision": "fp32",
+                 "is_lora": False,
+                 "load_to_device": False,
+             }
+         )
+         model = get_model(cfg)
+         assert isinstance(model, TinyGaussianPolicy)
+
+   .. tab-item:: Out-of-Tree (External Repo)
+      :sync: ext-out-of-tree
+
+      You do not need to fork RLinf. Because Ray launches each rollout and actor worker in its own Python process, calling ``register_model`` only in your driver script does not reach workers. Put your registration inside a ``register()`` hook in your own package and export ``RLINF_EXT_MODULE`` before launching (see ``ClusterEnvVar.EXT_MODULE`` in ``rlinf/scheduler/cluster/cluster.py``):
+
+      .. code-block:: python
+
+         # my_pkg/rlinf_ext.py
+         from rlinf.models import register_model
+
+
+         def build_my_model(cfg, torch_dtype):
+             from my_pkg.policy import TinyGaussianPolicy
+
+             return TinyGaussianPolicy(
+                 obs_dim=cfg.obs_dim,
+                 action_dim=cfg.action_dim,
+                 hidden_dim=cfg.get("hidden_dim", 64),
+             ).to(dtype=torch_dtype)
+
+
+         def register():
+             register_model("tiny_gaussian", build_my_model, category="embodied")
+
+      .. code-block:: bash
+
+         export RLINF_EXT_MODULE=my_pkg.rlinf_ext
+
+      RLinf imports this module and calls ``register()`` automatically in every worker process before loading configs or models.
+
+      .. note::
+
+         Standalone checkpoint tools such as ``python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf`` also load ``RLINF_EXT_MODULE`` before calling ``get_model``. Export it before running them when your ``model_type`` lives in an external package.
+
+3. Add Hydra Model and FSDP Configuration
+-----------------------------------------
+
+Create a Hydra config under ``examples/embodiment/config/<name>.yaml`` (or a reusable model fragment under ``examples/embodiment/config/model/``) that selects your registered ``model_type`` and declares its hyperparameters:
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       model_type: "tiny_gaussian"
+       obs_dim: 8
+       action_dim: 4
+       hidden_dim: 64
+       precision: "bf16"
+       is_lora: False
+
+When your architecture needs explicit FSDP sharding boundaries, set ``fsdp_config.wrap_policy``. RLinf applies custom rules first and otherwise falls back to ``_no_split_modules``, ``_no_split_names``, and the built-in rules in ``get_fsdp_wrap_policy`` (``rlinf/hybrid_engines/fsdp/utils.py``):
+
+.. code-block:: yaml
+
+   actor:
+     fsdp_config:
+       wrap_policy:
+         transformer_layer_cls_to_wrap:
+           - "MyDecoderLayer"
+         module_classes_to_wrap:
+           - "MyVisionTower"
+           - "MyProjector"
+         no_split_names:
+           - "value_head"
+
+- ``transformer_layer_cls_to_wrap``: class names of main transformer blocks such as decoder or attention layers.
+- ``module_classes_to_wrap``: class names of extra modules outside the main backbone such as vision encoders, projectors, or adapters.
+- ``no_split_names``: fine-grained wrapping matched against each module's ``_fsdp_wrap_name`` attribute.
+
+.. _refl-model-interface:
+
+Train from Differentiable Rewards
+---------------------------------
+
+ReFL connects a model that generates differentiable samples to a scorer that rewards each sample. Reward gradients pass through the samples to the model's trainable parameters.
+
+Implement ``refl_forward(forward_inputs, xt_source="rollout", **kwargs)`` and return a dict containing ``samples``, a tensor with the batch dimension first. The model handles state sampling, time units, noising, and decoding; its sample layout must match the scorer. ``BasePolicy.forward`` calls this method for ``ForwardType.REFL``. A custom ``forward`` must support the same dispatch.
+
+The actor reads ``xt_source`` from ``algorithm.refl_xt_source``. Return ``forward_inputs`` alongside ``samples`` to set the scorer context; the default is the original input. ``scorer(samples, forward_inputs)`` returns rewards of shape ``[B]``, with higher values preferred. Freeze the scorer's parameters and preserve gradients through its input samples.
+
+SD3 takes ``forward_inputs={"prompts": prompts}``, where ``prompts`` is a list of strings. It samples with its current weights and passes the raw prompts to the ImageReward scorer for tokenization. To supply an existing state, pass ``x_t`` and ``timesteps`` in ``refl_inputs``, and ``prompt_embeds`` and ``pooled_prompt_embeds`` in ``forward_inputs``. SD3 uses times in ``[0, 1]``, with 0 for data and 1 for noise.
+
+Register a scorer builder with ``register_refl_scorer`` and select it through ``actor.refl_reward_model.type``. The builder receives the full ``actor.refl_reward_model`` config and the actor device, and returns a scorer. Save this extension module as ``my_refl_ext.py`` to register ImageReward:
+
+.. code-block:: python
+
+   # my_refl_ext.py
+   from rlinf.algorithms.refl_scorers import register_refl_scorer
+
+
+   def build_image_scorer(cfg, device):
+       from rlinf.envs.sim.diffusion.rewards.visual.image_reward import ImageRewardScorer
+
+       return ImageRewardScorer.from_config(cfg, device)
+
+
+   def register():
+       register_refl_scorer("custom_image_reward", build_image_scorer)
+
+Prepare the models, data, and launch-argument array from the :doc:`SD3 recipe </rst_source/examples/embodied/refl>`. Replace ``<ext_dir>`` with the directory containing ``my_refl_ext.py`` and launch training:
 
 .. code-block:: bash
 
-   export RLINF_EXT_MODULE=rlinf_ext
-   # or a fully qualified package path, e.g.:
-   export RLINF_EXT_MODULE=workflows.scripts.rlinf_ext
+   export PYTHONPATH="<ext_dir>:$PYTHONPATH"
+   export RLINF_EXT_MODULE=my_refl_ext
+   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward \
+     "${REFL_ARGS[@]}" \
+     actor.refl_reward_model.type=custom_image_reward
 
-Standalone checkpoint utilities (for example
-``python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf``) also
-load ``RLINF_EXT_MODULE`` before calling ``get_model``, matching worker behavior.
-If your ``model_type`` is registered only via an extension module, set this
-environment variable when running those tools as well.
-
-2. Model Implementation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Create your class in `rlinf/models/embodiment/your_model_action_model.py` and
-inherit from a HuggingFace base class.
-For a custom VLA model integrated into RLinf, you should follow the interface
-contract of `rlinf.models.embodiment.base_policy.BasePolicy` and provide at
-least `forward` and `predict_action_batch`. If you inherit directly from
-`BasePolicy`, you will usually need to implement `default_forward` and
-`predict_action_batch`, while `forward` is dispatched by the base class.
-`predict_action_batch` is used to encapsulate generation, decoding, and optional
-value computation so the RL-specific logic stays inside the model.
-
-.. code-block:: python
-
-  from typing import Any
-
-  from rlinf.models.embodiment.base_policy import BasePolicy
-
-  class YourModelForRLActionPrediction(BasePolicy):
-      def default_forward(
-          self,
-          forward_inputs: dict[str, Any],
-          **kwargs,
-      ) -> dict[str, Any]:
-          return {
-              "logprobs": ...,  # [B, ...]
-              "values": ...,    # [B] or [B, 1]
-              "entropy": ...,   # [B] or [B, 1]
-          }
-
-      def predict_action_batch(
-          self,
-          env_obs: dict[str, Any],
-          mode: str = "train",
-          compute_values: bool = True,
-          **kwargs,
-      ) -> tuple[Any, dict[str, Any]]:
-          actions = ...  # [B, action_chunk, action_dim] or flattened env action
-          result = {
-              "prev_logprobs": ...,
-              "prev_values": ...,
-              "forward_inputs": {
-                  "chains": ...,
-                  "denoise_inds": ...,
-                  "action": ...,
-                  "model_action": ...,
-              },
-          }
-          return actions, result
-
-Refer to `rlinf/models/embodiment/openpi/tasks/rl.py`. The inputs and
-outputs of these interfaces are best understood as follows:
-
-- ``forward(forward_type=..., **kwargs)``:
-  A unified dispatch entry that routes to ``default_forward``, ``sft_forward``,
-  ``sac_forward``, or other training branches based on ``forward_type``. For a
-  custom VLA model, it is recommended to keep this dispatch layer so rollout,
-  actor, SFT, and other callers all go through the same entry point.
-- ``default_forward(forward_inputs, **kwargs)``:
-  Used during training to recompute logprob / value / entropy from the
-  intermediate results cached during rollout. Following OpenPI,
-  ``forward_inputs`` usually includes at least:
-
-  - ``chains``: the action chain from diffusion or iterative sampling, used to
-    recompute logprob during training.
-  - ``denoise_inds``: the denoising step index for each sample, which determines
-    which training signal to use.
-  - ``tokenized_prompt`` / ``tokenized_prompt_mask``: the text prompt and its
-    mask.
-  - ``action``: the actual action sent to the environment, usually flattened as
-    ``[B, ...]``.
-  - ``model_action``: the raw action output of the model, usually preserved
-    before output transformation.
-  - Observation fields: such as ``observation/image``,
-    ``observation/state``, ``observation/wrist_image``, and so on, so the model
-    can reconstruct the observation.
-
-  OpenPI's ``default_forward`` returns a ``dict`` whose key fields include:
-
-  - ``logprobs``: recomputed log probabilities of the current action under the
-    training branch.
-  - ``values``: state values produced by the value head.
-  - ``entropy``: policy entropy or an equivalent uncertainty statistic used for
-    PPO / RL loss.
-- ``predict_action_batch(env_obs, mode="train"|"eval", compute_values=True, **kwargs)``:
-  Used during rollout / inference. It takes environment observations as input
-  and returns actions that can be executed directly. Following OpenPI,
-  ``env_obs`` usually includes:
-
-  - ``main_images``: the main-view image.
-  - ``wrist_images``: wrist camera images, optional.
-  - ``extra_view_images``: additional view images, optional.
-  - ``states``: low-dimensional states.
-  - ``task_descriptions``: text task descriptions.
-
-  OpenPI returns ``(actions, result)``:
-
-  - ``actions``: action tensors sent directly to the environment.
-  - ``result["prev_logprobs"]``: the old-policy logprob recorded during rollout.
-  - ``result["prev_values"]``: the old value recorded during rollout.
-  - ``result["forward_inputs"]``: the cached fields that will be fed into
-    ``default_forward`` again during training.
-
-When implementing a custom model, the field names do not need to be exactly the
-same as OpenPI, but it is recommended to guarantee two things: first,
-``predict_action_batch`` should return enough ``forward_inputs`` for
-``default_forward`` to reconstruct all information required for training;
-second, ``default_forward`` should output at least the fields actually required
-by the training algorithm, such as ``logprobs``, ``values``, and ``entropy``.
-
-3. Configuration File
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Create `examples/embodiment/config/your_config.yaml`.
-It should include fields such as `model_type`, `action_token_len`, and
-`precision`. This template exposes your model hyperparameters so experiments are
-easy to configure.
-
-.. code-block:: yaml
-
-  model:
-    model_type: "your_model_type"
-    action_token_len: 7
-    action_chunks_len: 1
-    unnorm_key: your_action_key
-    precision: "bf16"
-    vocab_size: 32000
-    hidden_size: 4096
-    image_size: [224, 224]
-    is_lora: False
-    low_cpu_mem_usage: True
-    trust_remote_code: True
-
-If your custom model needs explicit wrapping rules under FSDP, you can also add
-``fsdp_config.wrap_policy`` to the config. When this field contains custom
-rules, RLinf will prioritize them. Otherwise, it will continue to follow the
-model's own ``_no_split_modules`` / ``_no_split_names`` together with the
-built-in logic.
-
-Common fields include:
-
-- ``transformer_layer_cls_to_wrap``: specify modules by class name that should
-  be wrapped as transformer blocks. This is suitable for the main structure,
-  such as decoder layers or attention blocks.
-- ``module_classes_to_wrap``: specify extra modules by class name that should be
-  wrapped, such as vision encoders, projectors, or adapters that are not
-  standard transformer blocks.
-- ``no_split_names``: perform finer-grained wrapping based on a module's
-  ``_fsdp_wrap_name``. This is useful when class names are not distinctive
-  enough, but the module role is fixed.
-
-.. code-block:: yaml
-
-  fsdp_config:
-    wrap_policy:
-      transformer_layer_cls_to_wrap:
-        - "MyDecoderLayer"
-      module_classes_to_wrap:
-        - "MyVisionTower"
-        - "MyProjector"
-      no_split_names:
-        - "value_head"
-
-If your custom module is essentially the main transformer block, configuring
-``transformer_layer_cls_to_wrap`` is usually enough. ``module_classes_to_wrap``
-is more suitable for modules outside the main block that should still
-participate in FSDP wrapping separately.
-
-4. Model Usage
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-After calling ``register_model("your_model_type", build_my_model, category="embodied")``,
-you can directly use ``model_type: your_model_type`` in YAML configs. If your
-model also depends on a corresponding ``processor`` class, it is recommended to
-load it inside ``build_my_model`` before returning the model instance.
-
-.. code-block:: python
-
-  from omegaconf import OmegaConf
-  from rlinf.models import get_model
-
-  cfg = OmegaConf.create(
-      {
-          "model_type": "your_model_type",
-          "precision": "fp32",
-          "is_lora": False,
-      }
-  )
-  model = get_model(cfg)
-
-5. Notes
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-- RLinf performs extra environment-side processing on actions produced by
-  different models. For example, ``prepare_actions(...)`` in
-  ``rlinf/envs/action_utils.py`` applies different post-processing logic based
-  on ``env_type`` and ``model_type``. If you are using a brand new custom
-  ``model_type``, it is recommended to complete this extra action
-  post-processing directly inside ``predict_action_batch(...)``, so the
-  ``actions`` returned to the environment are already in their final executable
-  format. This avoids adding extra environment-side branching logic for every
-  new model type.
-- When registering a custom model with ``register_model(...)``, you can pass
-  ``force=True`` to override an existing implementation. This is suitable when
-  you want to replace an RLinf built-in model while keeping the original
-  ``model_type``. In that case, you can continue to reuse RLinf's existing
-  action processing, training branches, and other compatibility logic for that
-  built-in ``model_type``, reducing the amount of additional adaptation code.
-  The prerequisite is that your model interface remains fully aligned with the
-  built-in one.
-- Different VLA models use different wrap policies under FSDP in RLinf. You can
-  refer to ``get_fsdp_wrap_policy(...)`` in
-  ``rlinf/hybrid_engines/fsdp/utils.py`` for the current logic. If you are
-  integrating a custom model, it is recommended to explicitly add the
-  corresponding wrap policy config so that key modules such as transformer
-  layers, vision encoders, projectors, and value heads participate in FSDP
-  wrapping as expected. Otherwise, you may encounter degraded training
-  performance, unreasonable memory usage, or modules that are not sharded
-  correctly.
+Each worker imports ``RLINF_EXT_MODULE`` and calls ``register()``. To use your own scorer, change how the builder constructs it.
 
 Per-Wrapper Mixed Precision (FSDP1)
-----------------------------------------
+-----------------------------------
 
-Use ``mixed_precision`` as the global default MP policy. Select wrappers in
-``wrappers``, define their MP policies in ``mixed_precision_policies``, and bind
-the names in ``mixed_precision_rules`` to override that default. This Pi05
-example keeps sensitive modules in FP32 while using BF16 elsewhere:
+Use ``mixed_precision`` as the global default MP policy. Select wrappers in ``wrappers``, define their MP policies in ``mixed_precision_policies``, and bind the names in ``mixed_precision_rules`` to override that default. This Pi05 example keeps sensitive modules in FP32 while using BF16 elsewhere.
 
-For OpenPI, set ``actor.model.precision: fp32`` for original parameters and
-``actor.model.openpi.embed_dtype: bf16`` for backbone activations and residuals.
+For OpenPI, set ``actor.model.precision: fp32`` for original parameters and ``actor.model.openpi.embed_dtype: bf16`` for backbone activations and residuals.
 
 .. code-block:: yaml
 
@@ -357,48 +340,26 @@ For OpenPI, set ``actor.model.precision: fp32`` for original parameters and
      amp_autocast:
        enabled: false
 
-Choose one selector per wrapper: ``module_names`` matches exact module paths
-or globs such as ``img.encoder.layers.*.mlp``; ``module_classes`` accepts short or qualified Python
-class names, using the same resolver as ``wrap_policy.module_classes_to_wrap``; ``wrap_names`` matches existing ``_fsdp_wrap_name`` tags. Pi05 assigns
-these tags to its projection modules during model initialization.
+Choose one selector per wrapper: ``module_names`` matches exact module paths or globs such as ``img.encoder.layers.*.mlp``; ``module_classes`` accepts short or qualified Python class names, using the same resolver as ``wrap_policy.module_classes_to_wrap``; ``wrap_names`` matches existing ``_fsdp_wrap_name`` tags. Pi05 assigns these tags to its projection modules during model initialization.
 
 Set ``wrap_mode`` to control the boundaries:
 
 - ``individual`` (default): wrap each match and retain automatic child wrapping.
-- ``subtree``: wrap each match's complete subtree, with no inner wrappers.
-  The example creates one FP32 wrapper for each layer's MLP.
-- ``combined``: wrap all matches under their existing common parent, with no
-  inner wrappers. Include all parameters and buffers under that parent.
+- ``subtree``: wrap each match's complete subtree, with no inner wrappers. The example creates one FP32 wrapper for each layer's MLP.
+- ``combined``: wrap all matches under their existing common parent, with no inner wrappers. Include all parameters and buffers under that parent.
 
-Each wrapper's managed parameters must share their original dtype. Mixed
-``requires_grad`` requires ``use_orig_params: true``. Subtree and combined
-boundaries must not overlap other explicitly selected wrappers.
+Each wrapper's managed parameters must share their original dtype. Mixed ``requires_grad`` requires ``use_orig_params: true``. Subtree and combined boundaries must not overlap other explicitly selected wrappers.
 
-Specify all three dtype fields in each named policy. Wrappers without a binding
-use the global policy; nested wrappers retain their own policies. Both global
-and named policies default to ``cast_forward_inputs: true``. Set it to ``false``
-when the module handles input casting itself, as OpenPI RMSNorm does.
-When inputs must retain FP32 precision, as with Pi05 actions and timesteps,
-set global ``cast_root_forward_inputs: false`` to avoid rounding them to BF16
-before they reach that wrapper.
+Specify all three dtype fields in each named policy. Wrappers without a binding use the global policy; nested wrappers retain their own policies. Both global and named policies default to ``cast_forward_inputs: true``. Set it to ``false`` when the module handles input casting itself, as OpenPI RMSNorm does. When inputs must retain FP32 precision, as with Pi05 actions and timesteps, set global ``cast_root_forward_inputs: false`` to avoid rounding them to BF16 before they reach that wrapper.
 
-``buffer_dtype`` controls floating-point buffers during computation. FSDP saves
-buffers in their original dtype in full and sharded model checkpoints;
-``LOCAL_STATE_DICT`` does not restore their dtype. ``summon_full_params()``
-restores parameter precision and does not restore buffer precision.
+``buffer_dtype`` controls floating-point buffers during computation. FSDP saves buffers in their original dtype in full and sharded model checkpoints; ``LOCAL_STATE_DICT`` does not restore their dtype. ``summon_full_params()`` restores parameter precision and does not restore buffer precision.
 
 Retaining Low-Precision Gradients
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``keep_low_precision_grads`` defaults to ``false`` in both the global policy
-and named policies. FSDP converts gradients back to the parameters' original dtype for the
-optimizer. With ``true``, sharded strategies and FSDP CPU parameter offload prepare
-gradients in the compute dtype (``param_dtype``, or the original dtype when
-unset); ``no_shard`` without CPU offload retains the effective reduction dtype.
-Retaining a smaller dtype reduces gradient storage.
+``keep_low_precision_grads`` defaults to ``false`` in both the global policy and named policies. FSDP converts gradients back to the parameters' original dtype for the optimizer. With ``true``, sharded strategies and FSDP CPU parameter offload prepare gradients in the compute dtype (``param_dtype``, or the original dtype when unset); ``no_shard`` without CPU offload retains the effective reduction dtype. Retaining a smaller dtype reduces gradient storage.
 
-Use ``FP32MasterAdamW`` with FSDP1 and ``no_shard`` to update parameters
-from retained gradients of a different dtype. Select it for the whole actor:
+Use ``FP32MasterAdamW`` with FSDP1 and ``no_shard`` to update parameters from retained gradients of a different dtype. Select it for the whole actor:
 
 .. code-block:: yaml
 
@@ -416,8 +377,4 @@ from retained gradients of a different dtype. Select it for the whole actor:
          buffer_dtype: fp32
          keep_low_precision_grads: true
 
-Set ``keep_low_precision_grads`` in ``mixed_precision_policies`` to retain
-gradients for specific wrappers. The optimizer preserves parameter groups and
-optimizer settings, converts gradients to FP32 during updates, and keeps FP32
-optimizer states. BF16/FP16 original parameters also have an FP32 master copy.
-Use the default ``keep_low_precision_grads: false`` with native AdamW.
+Set ``keep_low_precision_grads`` in ``mixed_precision_policies`` to retain gradients for specific wrappers. The optimizer preserves parameter groups and optimizer settings, converts gradients to FP32 during updates, and keeps FP32 optimizer states. BF16/FP16 original parameters also have an FP32 master copy. Use the default ``keep_low_precision_grads: false`` with native AdamW.

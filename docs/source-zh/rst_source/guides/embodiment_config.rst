@@ -1,27 +1,25 @@
-具身智能配置
-=============
+具身配置
+========
 
-本节介绍具身智能 RL 训练专用的配置参数（机器人操作、模拟器、VLA 模型）。
-这些参数扩展了 :doc:`basic_config` 中的共享配置。
+如需带注释的最小具身 YAML 与 Hydra 预设地图，请先阅读 :doc:`../reference/configuration`。本页给出具身智能 RL 训练专用参数的完整说明，扩展自 :doc:`basic_config`。
 
 defaults
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
   defaults:
+    - base/embodied_rl
     - env/maniskill_put_on_plate_in_scene_25_main@env.train
     - env/maniskill_ood_template@env.eval
     - model/openvla_oft@actor.model
-    - hybrid_engines/fsdp@actor.fsdp_config
-    - weight_syncer/patch_syncer@weight_syncer
+    - algorithm/ppo@algorithm
+    - _self_
 
-``defaults``：Hydra 配置继承。选择要组合到本次运行中的环境、模型、训练后端与权重同步器预设。
-``<group>@<target>`` 语法把某个预设挂载到配置节点上（例如
-``model/openvla_oft@actor.model`` 填充 ``actor.model``）。
+``defaults``：Hydra 配置继承。``base/embodied_rl`` 默认引入 ``cluster/collocated``、``runner``、``hybrid_engines/fsdp`` 与 ``weight_syncer/patch_syncer`` 预设；``<group>@<target>`` 语法把预设挂载到对应配置节点（例如 ``model/openvla_oft@actor.model`` 填充 ``actor.model``）。
 
 hydra
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -32,7 +30,7 @@ hydra
 ``hydra.searchpath``：配置文件的额外搜索路径。``EMBODIED_PATH`` 指向具身示例的配置目录。
 
 runner
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -50,9 +48,7 @@ runner
    * - ``runner.only_eval``
      - 仅运行评估，不进行训练。
    * - ``runner.overlap_env_bootstrap``
-     - 让环境引导（重置）与 Actor 训练重叠，以隐藏重置延迟。当环境重置较慢时尤为有用。
-       仅当 ``env.enable_offload`` 为 False 时生效；当环境与 Actor 共用同一加速器时，
-       开启此选项可能增加显存压力。
+     - 让环境引导（重置）与 Actor 训练重叠，以隐藏重置延迟。当环境重置较慢时尤为有用。仅当 ``env.train.enable_offload`` 为 False 时生效；环境与 Actor 共用同一加速器时，开启此选项可能增加显存压力。
    * - ``runner.enable_decoupled_mode``
      - 将 Env Worker 与 Rollout Worker 解耦。开启后，Env Worker 不再绑定到固定的
        Rollout Worker rank：Env Worker 将观测推送到共享 Channel，空闲的 Rollout
@@ -65,7 +61,7 @@ runner
 等共享键在 :doc:`basic_config` 中说明。
 
 algorithm
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -102,7 +98,7 @@ algorithm
    * - ``algorithm.normalize_advantages``
      - 在批次内对优势进行归一化。
    * - ``algorithm.kl_penalty``
-     - 如何估计 KL 散度（``kl`` 或 ``kl_penalty``）。
+     - KL 散度估计方式（``kl``、``abs``、``mse``、``low_var_kl`` 或 ``full``）。
    * - ``algorithm.reward_type``
      - 奖励聚合粒度（``chunk_level`` 或 ``action_level``）。默认同时驱动
        ``actor.model.value_type``。
@@ -145,15 +141,15 @@ algorithm
 :doc:`basic_config` 中说明。
 
 env
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
   env:
     group_name: "EnvGroup"
-    enable_offload: True
 
     train:
+      enable_offload: True
       rollout_epoch: 1
       total_num_envs: 128
       auto_reset: True
@@ -163,6 +159,7 @@ env
       max_steps_per_rollout_epoch: 160
 
     eval:
+      enable_offload: True
       rollout_epoch: 1
       total_num_envs: 16
       auto_reset: True
@@ -179,8 +176,8 @@ env
      - 说明
    * - ``env.group_name``
      - 环境 Worker 组的逻辑名称。
-   * - ``env.enable_offload``
-     - 卸载环境以降低内存占用。
+   * - ``env.train.enable_offload`` / ``env.eval.enable_offload``
+     - 卸载训练/评估环境以降低显存占用。
    * - ``env.train.rollout_epoch`` / ``env.eval.rollout_epoch``
      - 每个训练/评估步的 rollout 轮数。评估指标会在相同种子的多次遍历上取平均。
    * - ``env.train.total_num_envs`` / ``env.eval.total_num_envs``
@@ -196,9 +193,15 @@ env
    * - ``env.train.max_steps_per_rollout_epoch`` / ``env.eval.max_steps_per_rollout_epoch``
      - 每个 rollout 轮采集的最大环境步数。必须能被 ``actor.model.num_action_chunks``
        整除。
+   * - ``env.train.envs`` / ``env.eval.envs``
+     - 以名字为 key 的多份环境配置，设置后 ``env.train`` 或 ``env.eval`` 成为异构的，每份环境配置运行在自己的一段 env worker 上。见 :doc:`hetero_envs` 。
+   * - ``env.train.policy_obs`` / ``env.eval.policy_obs``
+     - 发送给 policy 的观测 key 和图像尺寸，用来统一相机配置不同的环境格式，使它们在 actor 训练阶段共用同一个训练池，并在路由到同一 rollout worker 且 ``unnorm_key`` 等 policy 参数也相同时能够共享 rollout 前向计算。见 :doc:`hetero_envs` 。
+   * - ``env.train.envs.<name>.unnorm_key`` / ``env.eval.envs.<name>.unnorm_key``
+     - OpenVLA-OFT 还原这份环境配置的动作时使用的统计量，用来代替 ``actor.model.unnorm_key`` 。见 :doc:`hetero_envs` 。
 
 rollout
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -212,7 +215,7 @@ rollout
       repetition_penalty: 1.0
 
     group_name: "RolloutGroup"
-    backend: "huggingface"
+    rollout_backend: "huggingface"
     enable_offload: True
     pipeline_stage_num: 1
     rollout_queue_size: 0
@@ -240,7 +243,7 @@ rollout
      - 对重复 token 的惩罚。
    * - ``rollout.group_name``
      - Rollout Worker 组的逻辑名称。
-   * - ``rollout.backend``
+   * - ``rollout.rollout_backend``
      - 模型后端（例如 ``huggingface``）。
    * - ``rollout.enable_offload``
      - 卸载 rollout 模型以降低显存占用。
@@ -257,7 +260,7 @@ rollout
      - rollout 的推理精度。
 
 actor
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -379,6 +382,8 @@ actor
      - LoRA 低秩适配的秩。
    * - ``actor.model.lora_path``
      - LoRA 权重路径。
+   * - ``actor.model.merged_loras``
+     - 加载时合并进基础权重的 LoRA adapter 列表，每项为 ``{path, scale}`` ， ``scale`` 是合并的 adapter 更新量所占的比例。可训练的 LoRA（ ``is_lora`` ）加在合并后的权重之上。
    * - ``actor.model.num_images_in_input``
      - 模型输入中的图像数量。
    * - ``actor.model.attn_implementation``

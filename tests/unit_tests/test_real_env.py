@@ -126,6 +126,7 @@ def _assert_legacy_transition(env) -> None:
         ),
         ("rlinf.envs.real.lekiwi", "LeKiwiDriveEnv", {}),
         ("rlinf.envs.real.so101", "SO101ReachEnv", {}),
+        ("rlinf.envs.real.r2", "R2ReachEnv", {}),
     ],
 )
 def test_a_hardware_free_env_repeats_with_a_seed(module_name, class_name, override):
@@ -5031,7 +5032,7 @@ def test_real_robosuite_imports_with_a_mismatched_egl_index():
 
 
 # ---------------------------------------------------------------------------
-# HIP -> Vulkan render device (AMD, DRI_PRIME)
+# HIP -> render device (AMD: DRI_PRIME for Vulkan, device index for EGL)
 # ---------------------------------------------------------------------------
 
 # An 8x W7900D node: KFD nodes 0-1 are the CPU sockets, 2-9 the GPUs in PCI bus
@@ -5065,12 +5066,30 @@ def kfd_topology(tmp_path, monkeypatch):
             if openable is None or index in openable:
                 (dri / f"renderD{128 + index}").write_text("")
 
+    def egl_lists(render_minors):
+        """Make EGL enumerate the GPUs with these render minors, in this order."""
+        monkeypatch.setattr(
+            amd_gpu,
+            "_query_egl_index_by_render_node",
+            lambda: {
+                str(dri / f"renderD{minor}"): egl_index
+                for egl_index, minor in enumerate(render_minors)
+            },
+        )
+
+    make.egl_lists = egl_lists
+
     monkeypatch.setattr(amd_gpu, "_KFD_TOPOLOGY_NODES", str(nodes))
     monkeypatch.setattr(amd_gpu, "_DRI_DEVICE_DIR", str(dri))
     monkeypatch.delenv("ROCR_VISIBLE_DEVICES", raising=False)
-    amd_gpu._dri_prime_by_hip_device.cache_clear()
+    monkeypatch.delenv("MUJOCO_GL", raising=False)
+    # No EGL devices unless a test asks for them; never the host's.
+    egl_lists([])
+    amd_gpu._rdna_gpus_by_hip_device.cache_clear()
+    amd_gpu._egl_index_by_hip_device.cache_clear()
     yield make
-    amd_gpu._dri_prime_by_hip_device.cache_clear()
+    amd_gpu._rdna_gpus_by_hip_device.cache_clear()
+    amd_gpu._egl_index_by_hip_device.cache_clear()
 
 
 def test_every_hip_device_renders_on_its_own_pci_slot(kfd_topology):
@@ -5185,8 +5204,65 @@ def test_the_kfd_topology_is_read_once(kfd_topology, monkeypatch):
 
     AMDGPUManager.get_dri_prime(0)
     AMDGPUManager.get_dri_prime(1)
+    AMDGPUManager.get_egl_device_id(0)
+    AMDGPUManager.get_worker_local_env_var([1])
 
     assert len(reads) == 10
+
+
+def test_a_worker_renders_egl_on_its_own_gpu(kfd_topology):
+    # Mesa lists the two GPUs in the reverse of the HIP order: HIP 0 is EGL 1
+    # and HIP 1 is EGL 0.
+    kfd_topology([0x46, 0x23], gfx_target=120001)
+    kfd_topology.egl_lists([129, 128])
+
+    assert AMDGPUManager.get_egl_device_id(0) == 1
+    assert AMDGPUManager.get_egl_device_id("1") == 0
+    assert AMDGPUManager.get_worker_local_env_var([1, 0]) == {
+        DRI_PRIME_ENV: "pci-0000_23_00_0",
+        MUJOCO_EGL_DEVICE_ID: "0",
+        EGL_DEVICE_ID: "0",
+    }
+
+
+@pytest.mark.parametrize("backend", ["osmesa", "glx"])
+def test_cpu_rendering_gets_no_egl_device(kfd_topology, monkeypatch, backend):
+    kfd_topology(_W7900D_GPU_BUSES)
+    kfd_topology.egl_lists(range(128, 136))
+    monkeypatch.setenv("MUJOCO_GL", backend)
+
+    env_vars = AMDGPUManager.get_worker_local_env_var([5])
+
+    assert env_vars == {DRI_PRIME_ENV: "pci-0000_a3_00_0"}
+
+
+def test_a_gpu_egl_does_not_list_gets_no_egl_device(kfd_topology):
+    # Mesa too old for the GPU enumerates only its software device.
+    kfd_topology(_W7900D_GPU_BUSES)
+    kfd_topology.egl_lists([])
+
+    assert AMDGPUManager.get_egl_device_id(0) is None
+    assert AMDGPUManager.get_worker_local_env_var([0]) == {
+        DRI_PRIME_ENV: "pci-0000_03_00_0"
+    }
+
+
+def test_a_node_without_egl_gets_no_egl_device(kfd_topology, monkeypatch):
+    kfd_topology(_W7900D_GPU_BUSES)
+
+    def no_egl():
+        raise OSError("libEGL.so.1: cannot open shared object file")
+
+    monkeypatch.setattr(amd_gpu, "_query_egl_index_by_render_node", no_egl)
+
+    assert AMDGPUManager.get_egl_device_id(0) is None
+
+
+def test_cdna_gpus_get_no_egl_device(kfd_topology):
+    kfd_topology([0x0C, 0x22], gfx_target=90402)  # gfx942
+    kfd_topology.egl_lists([128, 129])
+
+    assert AMDGPUManager.get_egl_device_id(0) is None
 
 
 class _FakeCudaTensor:
@@ -5280,6 +5356,115 @@ class _FakeEnv:
 
     def set_state(self, state):
         self.loaded_state = state
+
+
+@pytest.fixture
+def maniskill_env_class(monkeypatch):
+    # Load the wrapper without importing the SDK-backed task registry.
+    package = "rlinf.envs.sim.maniskill"
+    package_dir = Path(__file__).resolve().parents[2] / "rlinf/envs/sim/maniskill"
+    fake_package = types.ModuleType(package)
+    fake_package.__path__ = [str(package_dir)]
+    monkeypatch.setitem(sys.modules, package, fake_package)
+    sdk_modules = {
+        "mani_skill.envs.sapien_env": SimpleNamespace(BaseEnv=object),
+        "mani_skill.utils": SimpleNamespace(common=None, gym_utils=None),
+        "mani_skill.utils.common": SimpleNamespace(torch_clone_dict=dict),
+        "mani_skill.utils.structs.types": SimpleNamespace(Array=torch.Tensor),
+        "mani_skill.utils.visualization.misc": SimpleNamespace(
+            put_info_on_image=None, tile_images=None
+        ),
+    }
+    for name, module in sdk_modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    spec = importlib.util.spec_from_file_location(
+        f"{package}.maniskill_env", package_dir / "maniskill_env.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.ManiskillEnv
+
+
+@pytest.fixture
+def maniskill_reset_env(maniskill_env_class):
+    class Simulator:
+        device = "cpu"
+        num_envs = 2
+        obs_mode = "state"
+
+        def __init__(self):
+            self.unwrapped = self
+
+        def reset(self, *, seed, options):
+            self.seed = seed
+            self.options = options
+            return torch.zeros(self.num_envs, 1), {}
+
+    env = object.__new__(maniskill_env_class)
+    env.env = Simulator()
+    env.cfg = OmegaConf.create(
+        {"wrap_obs_mode": "simple", "_reconfigure_on_full_reset": True}
+    )
+    env.seed = 10
+    env.use_fixed_reset_state_ids = True
+    env.reset_state_ids = torch.tensor([4, 7])
+    env.prev_step_reward = torch.ones(2)
+    env.record_metrics = True
+    env._init_metrics()
+    env.success_once[:] = True
+    return env
+
+
+def test_maniskill_fixed_eval_reset_preserves_explicit_options(maniskill_reset_env):
+    env = maniskill_reset_env
+    env.reset()
+    assert env.env.seed == 10
+    assert env.env.options["reconfigure"] is True
+    assert torch.equal(env.env.options["episode_id"], env.reset_state_ids)
+    assert not env.success_once.any()
+
+    explicit = {"episode_id": [8, 9], "reconfigure": False, "custom": "value"}
+    env.reset(seed=[31, 32], options=explicit)
+    assert env.env.seed == [31, 32]
+    assert env.env.options == explicit
+    assert env.env.options is not explicit
+
+    no_override = {"custom": "value"}
+    env.reset(seed=0, options=no_override)
+    assert env.env.seed == 0
+    assert env.env.options["reconfigure"] is True
+    assert torch.equal(env.env.options["episode_id"], env.reset_state_ids)
+    assert no_override == {"custom": "value"}
+
+
+def test_maniskill_partial_auto_reset_uses_selected_fixed_ids(maniskill_reset_env):
+    env = maniskill_reset_env
+    dones = torch.tensor([False, True])
+    _, infos = env._handle_auto_reset(dones, {}, {"success": dones})
+
+    assert env.env.seed is None
+    assert set(env.env.options) == {"env_idx", "episode_id"}
+    assert env.env.options["env_idx"].tolist() == [1]
+    assert env.env.options["episode_id"].tolist() == [7]
+    assert env.success_once.tolist() == [True, False]
+    assert torch.equal(infos["_final_info"], dones)
+
+    options = {"env_idx": torch.tensor([0]), "custom": "value"}
+    env.reset(seed=0, options=options)
+    assert env.env.seed == 0
+    assert env.env.options == options
+
+
+@pytest.mark.parametrize("fixed_ids", [False, True])
+def test_maniskill_training_reset_keeps_reconfigure_default(
+    maniskill_reset_env, fixed_ids
+):
+    env = maniskill_reset_env
+    del env.cfg._reconfigure_on_full_reset
+    env.use_fixed_reset_state_ids = fixed_ids
+    env.reset()
+    assert "reconfigure" not in env.env.options
+    assert ("episode_id" in env.env.options) is fixed_ids
 
 
 class _FakeManiskillEnv:
@@ -5666,6 +5851,387 @@ def test_robotwin_eval_success_seed_order_is_controlled_by_base_seed():
 
     assert selected_seed_0 == selected_seed_0_again
     assert selected_seed_0 != selected_seed_1
+
+
+def _wait_until(predicate: Any, timeout: float = 3.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return bool(predicate())
+
+
+def test_r2_reach_env_dummy_and_faked_sdk():
+    """R2ReachEnv supports dummy mode, single/dual arms, hands, mobile base, and faked RFrame SDK."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.r2 import R2ReachEnv
+    from rlinf.robotics import R2Config
+
+    # 1. Dummy mode (no hardware or SDK connection)
+    dummy_env = R2ReachEnv(
+        override_cfg={
+            "is_dummy": True,
+            "enable_camera_player": False,
+            "step_frequency": 10000.0,
+        },
+        worker_info=None,
+        robot_info=_robot_info(
+            R2Config(node_rank=0, enable_base=True, cameras=["head", "wrist_left"])
+        ),
+        env_idx=0,
+    )
+    try:
+        # 2*(7 arm + 1 gripper) + 3 base = 19
+        assert dummy_env.action_space.shape == (19,)
+        assert dummy_env.robot is None
+        _assert_legacy_transition(dummy_env)
+    finally:
+        dummy_env.close()
+
+    # 2. Faked RFrame SDK (in-process connection when worker_info is None)
+    with mocked_sdks() as made:
+        controller = made["rframe"].controller
+        cfg = R2Config()
+        assert cfg.node_rank is None
+        assert cfg.enable_base is True
+        assert cfg.cameras == ["head", "wrist_left", "wrist_right"]
+        env = R2ReachEnv(
+            override_cfg={
+                "is_dummy": False,
+                "enable_camera_player": False,
+                "step_frequency": 10000.0,
+                "use_dense_reward": True,
+                "enable_random_reset": True,
+                "max_num_steps": 3,
+            },
+            worker_info=None,
+            robot_info=_robot_info(cfg),
+            env_idx=0,
+        )
+        try:
+            assert env.robot.owners()[0].node_rank is None
+            obs, _ = env.reset(seed=42)
+            assert env.observation_space.contains(obs)
+            assert obs["state"]["arm_joint_position"].shape == (14,)
+            assert obs["state"]["tcp_pose"].shape == (12,)
+            assert obs["state"]["gripper_position"].shape == (2,)
+            assert obs["state"]["base_pose"].shape == (3,)
+            assert set(obs["frames"]) == {"head", "wrist_left", "wrist_right"}
+
+            target_action = np.zeros(env.action_space.shape, dtype=np.float32)
+            obs, reward, terminated, truncated, _ = env.step(target_action)
+            assert env.observation_space.contains(obs)
+            assert np.isfinite(reward)
+            assert not truncated
+        finally:
+            env.close()
+
+        # 3. Auto-detecting 20-DoF + 6-DoF dexterous hands when R2Config leaves them unset
+        controller.configure(body_dof=20, end_effector_type="hand")
+        try:
+            auto_cfg = R2Config(node_rank=0, enable_base=False, cameras=[])
+            hand_env = R2ReachEnv(
+                override_cfg={
+                    "is_dummy": False,
+                    "enable_camera_player": False,
+                    "step_frequency": 10000.0,
+                },
+                worker_info=None,
+                robot_info=_robot_info(auto_cfg),
+                env_idx=0,
+            )
+            try:
+                assert hand_env.hardware.body_dof == 20
+                assert hand_env.hardware.end_effector_type == "hand"
+                # 2 * (7 arm + 6 hand) = 26
+                assert hand_env.action_space.shape == (26,)
+                obs, _ = hand_env.reset(seed=7)
+                assert hand_env.observation_space.contains(obs)
+                assert obs["state"]["gripper_position"].shape == (12,)
+            finally:
+                hand_env.close()
+        finally:
+            controller.configure()
+
+        # 4. Fault recovery during step() truncates episode when truncate_on_fault_recovery=True
+        fault_cfg = R2Config(
+            node_rank=0,
+            cameras=[],
+            enable_fault_recovery=True,
+        )
+        fault_env = R2ReachEnv(
+            override_cfg={
+                "is_dummy": False,
+                "enable_camera_player": False,
+                "step_frequency": 10000.0,
+                "max_num_steps": 50,
+                "truncate_on_fault_recovery": True,
+            },
+            worker_info=None,
+            robot_info=_robot_info(fault_cfg),
+            env_idx=0,
+        )
+        try:
+            fault_env.reset(seed=11)
+            conn = fault_env.robot.owners()[0]
+            controller.report_health("M.ARM-E-501")
+
+            action = np.full(fault_env.action_space.shape, 0.15, dtype=np.float32)
+            obs, _reward, terminated, truncated, info = fault_env.step(action)
+            assert fault_env.observation_space.contains(obs)
+            assert not terminated
+            assert truncated is True
+            assert info.get("fault_truncated") is True
+            assert info["robot_fault"]["level"] == "recoverable_fault"
+            assert "M.ARM-E-501" in info["robot_fault"]["error_message"]
+            assert fault_env.robot.diagnose().healthy is True
+
+            # Subsequent step after recovery runs normally without truncation
+            obs2, _, _, truncated2, info2 = fault_env.step(action)
+            assert truncated2 is False
+            assert "robot_fault" not in info2
+
+            # When truncate_on_fault_recovery=False, recovery still reports info["robot_fault"] without truncating
+            fault_env.config.truncate_on_fault_recovery = False
+            conn._recovery_timestamps.clear()
+            controller.report_health(
+                "C.MC-E-804", message="GENERAL_ERROR(MOTION,COLLISION_DETECTED,robot)"
+            )
+            _, _, _, truncated3, info3 = fault_env.step(action)
+            assert truncated3 is False
+            assert "fault_truncated" not in info3
+            assert info3["robot_fault"]["error_code"] == 304
+        finally:
+            fault_env.close()
+
+        # 5. Dual-arm PICO VR teleoperation via build_stack on R2ReachEnv
+        from robot_mocks.teleop import pico_packet
+
+        from rlinf.envs.real.wrappers import build_stack
+        from rlinf.robotics.parts.arms.r2 import (
+            R2_LEFT_READY_QPOS,
+            R2_RIGHT_READY_QPOS,
+        )
+        from rlinf.robotics.parts.transports import pico as pico_transport
+
+        teleop_addr = "tcp://x:1"
+        teleop_cfg = {
+            "no_gripper": False,
+            "pico": {"zmq_addr": teleop_addr},
+            "teleop": [
+                {"pico": {"drives": "left"}},
+                {"pico": {"drives": "right"}},
+            ],
+        }
+        raw_r2 = R2ReachEnv(
+            override_cfg={
+                "is_dummy": False,
+                "enable_camera_player": False,
+                "step_frequency": 10000.0,
+                "reset_joint_qpos": tuple(
+                    float(x)
+                    for x in np.concatenate([R2_LEFT_READY_QPOS, R2_RIGHT_READY_QPOS])
+                ),
+            },
+            worker_info=None,
+            robot_info=_robot_info(R2Config(node_rank=0, cameras=[])),
+            env_idx=0,
+        )
+        wrapped_r2 = build_stack(raw_r2, teleop_cfg)
+        try:
+            obs, _ = wrapped_r2.reset(seed=5)
+            zmq = pico_transport.zmq
+
+            def _pub_until(packet: dict, check):
+                devices = [entry.device for entry in wrapped_r2.device.group.entries]
+                zmq.frame = packet
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    readings = [d.get_observation() for d in devices]
+                    if check(readings):
+                        return
+                    time.sleep(0.002)
+                raise AssertionError(f"Timed out waiting for PICO packet: {readings}")
+
+            # Release grip first to clear startup latch
+            _pub_until(
+                pico_packet(),
+                lambda rs: all(r["calibrated"] and not r["held"] for r in rs),
+            )
+            policy_zero = np.zeros(wrapped_r2.action_space.shape, dtype=np.float32)
+            wrapped_r2.step(policy_zero)
+
+            # Squeeze both grips to anchor current ready pose
+            _pub_until(
+                pico_packet(left={"grip": 1.0}, right={"grip": 1.0}),
+                lambda rs: all(r["held"] for r in rs),
+            )
+            obs, _, _, _, info = wrapped_r2.step(policy_zero)
+            assert "intervene_action" in info
+            assert "intervene_flag" in info
+
+            # Move right controller 4 cm forward (-Z in PICO -> +X in robot base) and close right gripper (A)
+            tcp_before = obs["state"]["tcp_pose"].copy()
+            _pub_until(
+                pico_packet(
+                    {"A": True},
+                    left={"grip": 1.0},
+                    right={"grip": 1.0, "position": [0.0, 0.0, -0.04]},
+                ),
+                lambda rs: rs[1]["position_delta"][0] > 0.03 and rs[1]["grip_close"],
+            )
+            wrapped_r2.step(policy_zero)
+            # The stream carries the right TCP forward while the left stays anchored.
+            assert _wait_until(
+                lambda: (
+                    raw_r2._get_observation()["state"]["tcp_pose"][6]
+                    > tcp_before[6] + 0.008
+                )
+            )
+            obs = raw_r2._get_observation()
+            assert np.allclose(obs["state"]["tcp_pose"][:3], tcp_before[:3], atol=2e-3)
+            assert obs["state"]["gripper_position"][1] == pytest.approx(0.0)
+        finally:
+            wrapped_r2.close()
+
+        # 6. _run_pico_teleop in test_r2_env drives right arm independently when left controller is untracked
+        from toolkits.realworld_check.test_r2_env import _run_pico_teleop
+
+        solo_env = R2ReachEnv(
+            override_cfg={
+                "is_dummy": False,
+                "enable_camera_player": False,
+                "step_frequency": 10000.0,
+                "reset_joint_qpos": tuple(
+                    float(x)
+                    for x in np.concatenate([R2_LEFT_READY_QPOS, R2_RIGHT_READY_QPOS])
+                ),
+            },
+            worker_info=None,
+            robot_info=_robot_info(R2Config(node_rank=0, cameras=[])),
+            env_idx=0,
+        )
+        try:
+            solo_obs0, _ = solo_env.reset(seed=6)
+            tcp0 = solo_obs0["state"]["tcp_pose"].copy()
+            zmq = pico_transport.zmq
+            # Left controller untracked ([0,0,0,0] quat), right controller squeezed and moved forward
+            frames = [
+                pico_packet(
+                    left={"orientation": [0.0, 0.0, 0.0, 0.0], "grip": 0.0},
+                    right={"grip": 0.0},
+                ),
+                pico_packet(
+                    left={"orientation": [0.0, 0.0, 0.0, 0.0], "grip": 0.0},
+                    right={"grip": 1.0},
+                ),
+                pico_packet(
+                    {"A": True},
+                    left={
+                        "orientation": [0.0, 0.0, 0.0, 0.0],
+                        "grip": 0.0,
+                        "axis": [0.0, 0.8],
+                    },
+                    right={
+                        "grip": 1.0,
+                        "position": [0.0, 0.0, -0.06],
+                        "axis": [-0.6, 0.0],
+                    },
+                ),
+                pico_packet(
+                    left={
+                        "orientation": [0.0, 0.0, 0.0, 0.0],
+                        "grip": 0.0,
+                        "axis": [0.0, 0.8],
+                    },
+                    right={
+                        "grip": 0.0,
+                        "position": [0.0, 0.0, -0.06],
+                        "axis": [-0.6, 0.0],
+                    },
+                ),
+            ]
+            step_counter = {"i": 0}
+            orig_step = solo_env.step
+
+            def _SteppingWithPackets(action):
+                idx = min(step_counter["i"], len(frames) - 1)
+                zmq.frame = frames[idx]
+                time.sleep(0.015)
+                step_counter["i"] += 1
+                return orig_step(action)
+
+            zmq.frame = frames[0]
+            solo_env.step = _SteppingWithPackets
+            final_obs = _run_pico_teleop(solo_env, zmq_addr=teleop_addr, max_steps=6)
+            assert _wait_until(
+                lambda: (
+                    solo_env._get_observation()["state"]["tcp_pose"][6]
+                    > tcp0[6] + 0.005
+                )
+            )
+            assert solo_env._get_observation()["state"]["gripper_position"][
+                1
+            ] == pytest.approx(0.0)
+            assert final_obs["state"]["base_velocity"][0] > 0.02
+            assert final_obs["state"]["base_velocity"][2] > 0.02
+        finally:
+            solo_env.close()
+
+
+def test_r2_env_on_hardware_uses_the_measured_waist_and_refuses_a_failed_reset():
+    """R2Env solves teleop IK in the measured waist frame and never starts from a failed reset."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.r2 import R2ReachEnv
+    from rlinf.robotics import R2Config
+    from rlinf.robotics.parts.arms.r2 import (
+        R2_LEFT_READY_QPOS,
+        _compute_r2_arm_fk_and_jacobian_matrix,
+    )
+
+    with mocked_sdks() as made:
+        controller = made["rframe"].controller
+        controller.joints.update({"J_AnklePitch": 0.2, "J_Knee": 0.3})
+        cfg = R2Config(
+            node_rank=0,
+            enable_base=False,
+            cameras=[],
+            body_dof=21,
+            end_effector_type="gripper",
+        )
+        env = R2ReachEnv(
+            override_cfg={
+                "is_dummy": False,
+                "enable_camera_player": False,
+                "step_frequency": 10000.0,
+                "reset_duration": 0.2,
+            },
+            worker_info=None,
+            robot_info=_robot_info(cfg),
+            env_idx=0,
+        )
+        try:
+            env._get_observation()
+            fk = env.arm_kinematics("left").fk(R2_LEFT_READY_QPOS)
+            measured, _, _, _ = _compute_r2_arm_fk_and_jacobian_matrix(
+                "left", R2_LEFT_READY_QPOS, [0.2, 0.3, 0.0, 0.0, 0.0]
+            )
+            upright, _, _, _ = _compute_r2_arm_fk_and_jacobian_matrix(
+                "left", R2_LEFT_READY_QPOS
+            )
+            assert np.allclose(fk[:3, 3], measured)
+            assert np.linalg.norm(measured - upright) > 0.05
+
+            # A reset that cannot run raises rather than starting an episode.
+            env.robot.configure_fault_recovery(enable_fault_recovery=False)
+            controller.report_health("M.ARM-E-501")
+            with pytest.raises(RuntimeError, match="rest pose"):
+                env.reset()
+        finally:
+            env.close()
 
 
 def test_lekiwi_stops_when_wheel_observation_fails():

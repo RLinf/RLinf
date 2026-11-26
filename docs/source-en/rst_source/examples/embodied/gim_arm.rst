@@ -1,395 +1,283 @@
-Real-World RL with GimArm
-=========================
+GimArm Online RL
+================
+
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gim-arm.png
    :align: center
    :width: 80%
 
    GimArm 6-DoF arm used for SocketCAN control, motor calibration, and peg-insertion training.
 
-Run RLinf on a GimArm 6-DoF arm over SocketCAN. You will install the CAN control SDK, calibrate motors, set a target end-effector pose, collect demonstrations, and launch real-world training.
+Run RLinf on a GimArm 6-DoF arm over Linux SocketCAN to calibrate motors, record target poses, collect VR demonstrations, and train real-world peg-insertion policies.
 
 Overview
 --------
 
-Train a real-world peg-insertion policy on GimArm with CAN-based control.
+This guide configures a two-node setup: a controller computer wired to GimArm over CAN FD and a GPU server that runs SAC/RLPD training and rollout.
 
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: Models
+   .. grid-item-card:: Robot
       :text-align: center
 
-      CNN policy
+      GimArm 6-DoF · parallel gripper
 
-   .. grid-item-card:: Algorithms
+   .. grid-item-card:: Sensors & Teleop
       :text-align: center
 
-      SAC · RLPD
+      RealSense (optional) · PICO 4 Ultra VR
 
-   .. grid-item-card:: Tasks
+   .. grid-item-card:: Workflow
       :text-align: center
 
-      Peg insertion
+      CAN init · Zero cal · VR teleop · SAC / RLPD
 
    .. grid-item-card:: Hardware
       :text-align: center
 
-      GimArm · CAN FD · gripper
-
-| **You'll do:** install gim_arm_control → initialize CAN → calibrate zero → set target pose → train.
-| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · GimArm hardware · CAN adapter · ``gim_arm_control`` SDK.
+      SocketCAN FD · Controller PC · GPU node
 
 Tasks
 ~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24 24
+   :widths: 22 30 48
 
    * - Task
-     - Config / entry point
+     - Config / Entry Point
      - Description
    * - Hardware check
      - ``test_gim_arm_env.py``
-     - Verify controller launch, state reads, motion, reset, and gripper commands.
+     - Verify controller launch, state reads, joint motion, reset, and gripper commands.
    * - Data collection
      - ``gim_arm_teleop``
-     - Collect VR teleoperation demonstrations.
+     - Collect VR teleoperation demonstrations with a PICO 4 Ultra headset.
    * - Training
      - GimArm real-world config
-     - Train on the peg-insertion task with target-pose reward.
+     - Train a CNN peg-insertion policy with target-pose reward.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24
+   :widths: 24 76
 
    * - Field
      - Description
    * - Observation
-     - Camera frames plus GimArm joint/TCP state.
+     - Optional RealSense camera frames plus GimArm joint and TCP state.
    * - Action
      - 6-DoF arm control with gripper command, depending on config.
    * - Reward
-     - Sparse or dense FK distance to ``target_ee_pose``.
+     - Sparse or dense forward-kinematics distance to ``target_ee_pose``.
    * - Prompt
      - Peg-insertion task text in the env config.
 
-Hardware Setup
-----------------
+Hardware and Safety
+-------------------
+
+Connect the GimArm robot directly to the controller node through a Linux SocketCAN FD adapter (1 Mbps standard bitrate, 5 Mbps data bitrate), and place the controller node and GPU training node on the same local network.
 
 .. warning::
 
-  Ensure the controller node and the training node are in the same local network.
-  The GimArm robot is connected to the controller node via CAN bus, not Ethernet.
+   Keep an emergency stop within reach and clear the workspace before enabling motion. Run motor zero calibration only when the arm rests at its mechanical home position; incorrect calibration causes unexpected arm motion. Re-initialize the CAN interface after every system reboot.
 
-.. note::
+.. dropdown:: Manual CAN FD setup and single-motor calibration
 
-   GimArm communicates through the Linux SocketCAN interface directly.
-
-Installation
-------------
-
-The controller node and the training/rollout node(s) should be set up with different software dependencies.
-
-Robot Controller Node
-~~~~~~~~~~~~~~~~~~~~~~
-
-1. Installation
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-a. Clone RLinf Repository
-__________________________
-
-.. code:: bash
-
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-b. Install RLinf Dependencies
-________________________________
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag for better download speed.
-
-   bash requirements/install.sh embodied --env gim_arm
-   source .venv/bin/activate
-
-c. Install gim_arm_control SDK
-________________________________
-
-The ``gim_arm_control`` package provides the low-level CAN communication driver and Python bindings
-for controlling the GimArm robot. It also ships the helper shell scripts used in the next steps
-(``sh/init_can.sh``, ``sh/set_zero.sh``), so install it before proceeding.
-
-.. code:: bash
-
-   # Clone the SDK alongside RLinf (the example below assumes ~/gim_arm_control).
-   cd ~
-   git clone https://github.com/RLinf/gim_arm_control.git
-   cd ~/gim_arm_control/python
-   pip install -e .
-
-This builds the C++ core via CMake and installs Python bindings using nanobind.
-
-**Build requirements**: ``scikit-build-core>=0.5``, ``nanobind>=2.0``, a C++17 compiler (GCC >= 7 or Clang >= 5).
-
-**Runtime dependencies**: ``numpy``, ``pinocchio`` (imported as ``pin``).
-
-.. note::
-
-   ``pinocchio`` is required for forward kinematics and Jacobian computation used by the controller.
-   It is automatically installed as a dependency of the SDK.
-   For systems requiring NumPy 1.x compatibility, install with:
-
-   .. code:: bash
-
-      pip install -e ".[pin270]"
-
-2. CAN Interface Initialization
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-The CAN bus must be initialized before using the robot.
-The ``gim_arm_control`` SDK (installed in the previous step) provides a convenience script,
-or you can run the commands manually.
-
-Using the script from the ``gim_arm_control`` repository:
-
-.. code:: bash
-
-   bash sh/init_can.sh can0
-
-Or manually:
-
-.. code:: bash
-
-   sudo ip link set can0 type can bitrate 1000000 dbitrate 5000000 fd on
-   sudo ip link set can0 txqueuelen 1000
-   sudo ip link set can0 up
-
-This sets a 1 Mbps standard bitrate and 5 Mbps CAN FD data bitrate.
-
-.. warning::
-
-  The CAN interface must be re-initialized after every system reboot.
-  You can verify the interface is up with:
-
-  .. code:: bash
-
-     ip link show can0
-
-3. Motor Zero Calibration
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Before first use (or after replacing a motor), you must calibrate the motor zero positions.
-This sets the current physical position as the zero reference for Damiao motors.
-
-From the ``gim_arm_control`` repository:
-
-.. code:: bash
-
-   # Zero a single motor (CAN ID in hex)
-   bash sh/set_zero.sh can0 001
-
-   # Zero all motors (001-008)
-   bash sh/set_zero.sh can0 --all
-
-.. warning::
-
-  Calibration should only be done with the arm in its mechanical home position.
-  Incorrect calibration can cause the arm to move unexpectedly.
-  Requires ``can-utils`` (install with ``sudo apt install can-utils``).
-
-Training / Rollout Nodes
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-Clone the RLinf repository (same as above), then install dependencies.
-
-Install Dependencies
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-**Option 1: Docker Image**
-
-Use Docker image for the experiment.
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-**Option 2: Custom Environment**
-
-Install dependencies directly in your environment by running the following command:
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag for better download speed.
-
-   bash requirements/install.sh embodied --env gim_arm
-   source .venv/bin/activate
-
-   # To install model-specific dependencies (e.g. OpenVLA), add the --model flag:
-   # bash requirements/install.sh embodied --model openvla --env maniskill_libero
-
-
-Run It
-------
-
-Prerequisites
-~~~~~~~~~~~~~~~
-
-**Get the Target Pose for the Task**
-
-To acquire the target end-effector pose for the peg-insertion task, you can use the hardware test script.
-
-First, initialize the CAN interface (see above), then run:
-
-.. code-block:: bash
-
-   python toolkits/realworld_check/test_gim_arm_env.py --can can0 --variant gim_arm_xl
-
-The script launches the controller, performs forward kinematics on the current joint positions,
-and prints the TCP position and quaternion.
-Manually move the arm to the desired target pose, then record the printed values.
-Convert the quaternion to Euler XYZ angles for use in the ``target_ee_pose`` configuration field.
-
-Data Collection
-~~~~~~~~~~~~~~~~~
-
-Refer to the VR teleoperation code in `gim_arm_teleop <https://github.com/RLinf/gim_arm_teleop>`_ , for data collection with the GimArm robot.
-We recommend the following deployment steps:
-
-1. Prepare the runtime environment:
-
-   - Use Ubuntu 22.04 (x86) on the machine that controls the robot when possible;
-   - Use a PICO 4 Ultra headset and keep it on the same LAN as the control PC;
-   - If you need headset camera passthrough (VST), enable the corresponding device permissions.
-
-2. Install and start the PC service (XRoboToolkit-PC-Service):
-
-   - Download the PC service package: `XRoboToolkit_PC_Service_1.0.0_ubuntu_22.04_amd64.deb <https://github.com/XR-Robotics/XRoboToolkit-PC-Service/releases/download/v1.1.1/XRoboToolkit-PC-Service-1.1.1.deb>`_
+   If you prefer not to use ``sh/init_can.sh`` from ``gim_arm_control``, bring up ``can0`` manually:
 
    .. code-block:: bash
 
-      sudo dpkg -i XRoboToolkit_PC_Service_1.0.0_ubuntu_22.04_amd64.deb
-      bash /opt/apps/roboticsservice/runService.sh
+      sudo ip link set can0 type can bitrate 1000000 dbitrate 5000000 fd on
+      sudo ip link set can0 txqueuelen 1000
+      sudo ip link set can0 up
 
-3. Install and launch the XRoboToolkit app on the headset:
-
-   - Install the APK `XRoboToolkit-PICO-1.1.1.apk <https://github.com/XR-Robotics/XRoboToolkit-Unity-Client/releases/download/v1.1.1/XRoboToolkit-PICO-1.1.1.apk>`_
-   - Connect to the control PC's IP address;
-   - In the app, enable ``head``\ /\ ``hand``\ /\ ``controller`` (as required by your task).
-
-4. Install and run the Python teleoperation stack:
-
-   Follow the `gim_arm_teleop <https://github.com/RLinf/gim_arm_teleop>`_
-   , then on the control PC launch the GimArm hardware teleoperation script:
+   Motor zero calibration requires ``can-utils`` (``sudo apt install can-utils``). To zero a single Damiao motor by hexadecimal CAN ID instead of all motors (``001``–``008``):
 
    .. code-block:: bash
 
-      cd gim_arm_teleop
-      python scripts/hardware/teleop_gim_arm_hardware.py
+      bash ~/gim_arm_control/sh/set_zero.sh can0 001
 
-   Synchronously log VR control signals and robot arm state into your dataset.
+Setup and Run
+-------------
 
-Configuration File
-~~~~~~~~~~~~~~~~~~~~~~
+.. include:: _setup_common.rst
 
-Before starting the experiment, you need to create or modify a configuration YAML file.
-The key section is the cluster hardware configuration, which specifies the GimArm robot:
+.. tab-set::
 
-.. code-block:: yaml
+   .. tab-item:: Robot Controller Node
 
-  cluster:
-    num_nodes: 2
-    component_placement:
-      actor:
-        node_group: "4090"
-        placement: 0
-      env:
-        node_group: gim_arm
-        placement: 0
-      rollout:
-        node_group: "4090"
-        placement: 0
-    node_groups:
-      - label: "4090"
-        node_ranks: 0
-      - label: gim_arm
-        node_ranks: 1
-        hardware:
-          type: GimArm
-          configs:
-            - can_interface: can0
-              arm_variant: gim_arm_xl
-              camera_serials: ["YOUR_CAMERA_SERIAL"]  # Use [] if no cameras are available
-              camera_type: realsense
-              enable_gripper: true
-              gripper_type: parallel
-              node_rank: 1
+      **1. Install RLinf and the gim_arm_control SDK**
 
-Set the ``target_ee_pose`` in the environment override configuration:
+      Install RLinf's GimArm environment, then build the C++ CAN driver and Python bindings (requires ``scikit-build-core>=0.5``, ``nanobind>=2.0``, and a C++17 compiler; installs ``numpy`` and ``pinocchio`` automatically):
 
-.. code-block:: yaml
+      .. code-block:: bash
 
-  env:
-    train:
-      override_cfg:
-        target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
-        reset_joint_qpos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        safe_retract_qpos: [0.0, -1.5, 1.5, 0.0, 0.0, 0.0]
-        is_dummy: false
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
 
-    eval:
-      override_cfg:
-        target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
+         git clone https://github.com/RLinf/gim_arm_control.git ~/gim_arm_control
+         uv pip install -e ~/gim_arm_control/python
 
-Key configuration fields:
+      For systems requiring NumPy 1.x compatibility, install the SDK with ``uv pip install -e "~/gim_arm_control/python[pin270]"``.
 
-- ``target_ee_pose``: Target end-effector pose ``[x, y, z, rx, ry, rz]`` (meters / Euler XYZ radians).
-- ``reset_joint_qpos``: Joint configuration for the start of each episode.
-- ``safe_retract_qpos``: Joint configuration for safe retraction during peg-insertion reset.
-- ``is_dummy``: Set to ``true`` for testing without hardware.
+      **2. Initialize CAN FD and calibrate motor zero**
 
-.. note::
+      Bring up ``can0`` using the helper script shipped in ``gim_arm_control`` and verify the link is up:
 
-   Camera support is optional. If ``camera_serials`` is set to an empty list
-   ``[]`` or omitted, the environment will run without camera observations.
-   The ``frames`` key in the observation space will be an empty dictionary.
-   This is useful for state-only policies or when cameras are not yet set up.
+      .. code-block:: bash
 
-Testing the Setup (Optional)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+         bash ~/gim_arm_control/sh/init_can.sh can0
+         ip link show can0
 
-We provide several test scripts to verify that the setup is correct before starting the experiment. This step is optional but recommended.
+      Before first use or after replacing a motor, place the arm in its mechanical home position and zero all Damiao motors (``001``–``008``):
 
-1. Verify the CAN interface is up:
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash ~/gim_arm_control/sh/set_zero.sh can0 --all
 
-   ip link show can0
+      **3. Run hardware check and record the target pose**
 
-2. Test the robot controller:
+      Launch the hardware check script to verify controller startup, connection status, state output shapes, joint motion, joint reset, and gripper open/close:
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   python toolkits/realworld_check/test_gim_arm_env.py --can can0 --variant gim_arm_xl
+         python -m toolkits.realworld_check.test_gim_arm_env --can can0 --variant gim_arm_xl
 
-This script tests: controller launch, ``is_robot_up()``, ``get_state()`` output shapes, ``move_joints()``, ``reset_joint()``, and gripper open/close.
+      The script runs forward kinematics on the live joint angles and prints the TCP position and quaternion. Move the arm manually to the target peg-insertion pose, record the printed values, and convert the quaternion to Euler XYZ radians for ``target_ee_pose``.
 
-.. note::
+      .. dropdown:: VR teleoperation data collection (optional)
 
-   Camera setup has not been fully tested yet. To run the peg-insertion
-   experiment, cameras should be available and configured via
-   ``camera_serials`` in the hardware config.
+         Collect demonstrations with `gim_arm_teleop <https://github.com/RLinf/gim_arm_teleop>`_ on Ubuntu 22.04 (x86) using a PICO 4 Ultra headset on the same LAN (enable headset camera permissions if you need passthrough VST):
+
+         1. Install and start `XRoboToolkit-PC-Service <https://github.com/XR-Robotics/XRoboToolkit-PC-Service/releases/download/v1.1.1/XRoboToolkit-PC-Service-1.1.1.deb>`__:
+
+            .. code-block:: bash
+
+               sudo dpkg -i XRoboToolkit-PC-Service-1.1.1.deb
+               bash /opt/apps/roboticsservice/runService.sh
+
+         2. Install `XRoboToolkit-PICO-1.1.1.apk <https://github.com/XR-Robotics/XRoboToolkit-Unity-Client/releases/download/v1.1.1/XRoboToolkit-PICO-1.1.1.apk>`__ on the headset, connect to the controller PC IP, and enable ``head``, ``hand``, and ``controller`` as needed.
+
+         3. Follow the `gim_arm_teleop <https://github.com/RLinf/gim_arm_teleop>`__ setup and run hardware teleoperation to log VR control signals and arm state:
+
+            .. code-block:: bash
+
+               cd gim_arm_teleop
+               python scripts/hardware/teleop_gim_arm_hardware.py
+
+   .. tab-item:: Training & Rollout Nodes
+
+      **1. Install RLinf**
+
+      Install the GimArm environment on the GPU node (add ``--model <model>`` if you train a specific VLA model):
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env gim_arm && source .venv/bin/activate
+
+      **2. Configure hardware and target pose**
+
+      Update the hardware connection and task poses in your GimArm training YAML:
+
+      .. code-block:: yaml
+
+         cluster:
+           node_groups:
+             - label: gim_arm
+               node_ranks: 1
+               hardware:
+                 type: GimArm
+                 configs:
+                   - can_interface: can0
+                     arm_variant: gim_arm_xl
+                     camera_serials: ["YOUR_CAMERA_SERIAL"]  # Use [] for state-only runs
+                     node_rank: 1
+
+         env:
+           train:
+             override_cfg:
+               target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]  # [x, y, z, rx, ry, rz] (m / rad)
+               reset_joint_qpos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+               safe_retract_qpos: [0.0, -1.5, 1.5, 0.0, 0.0, 0.0]
+               is_dummy: false
+
+      - ``target_ee_pose`` sets the peg-insertion goal pose in meters and Euler XYZ radians.
+      - ``reset_joint_qpos`` and ``safe_retract_qpos`` define the episode start pose and safe retraction pose during reset.
+      - ``is_dummy: true`` runs without hardware; ``camera_serials: []`` runs state-only with an empty ``frames`` dict.
+
+      .. dropdown:: Full configuration reference (optional)
+
+         .. code-block:: yaml
+
+            cluster:
+              num_nodes: 2
+              component_placement:
+                actor:
+                  node_group: "4090"
+                  placement: 0
+                env:
+                  node_group: gim_arm
+                  placement: 0
+                rollout:
+                  node_group: "4090"
+                  placement: 0
+              node_groups:
+                - label: "4090"
+                  node_ranks: 0
+                - label: gim_arm
+                  node_ranks: 1
+                  hardware:
+                    type: GimArm
+                    configs:
+                      - can_interface: can0
+                        arm_variant: gim_arm_xl
+                        camera_serials: ["YOUR_CAMERA_SERIAL"]  # Use [] if no cameras are available
+                        camera_type: realsense
+                        enable_gripper: true
+                        gripper_type: parallel
+                        node_rank: 1
+
+            env:
+              train:
+                override_cfg:
+                  target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
+                  reset_joint_qpos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+                  safe_retract_qpos: [0.0, -1.5, 1.5, 0.0, 0.0, 0.0]
+                  is_dummy: false
+              eval:
+                override_cfg:
+                  target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
+
+      **3. Start Ray and launch training**
+
+      No standalone GimArm training YAML ships in ``examples/embodiment/config/`` yet—start from an existing real-world SAC/RLPD config (such as ``realworld_peginsertion_rlpd_cnn_async.yaml``) and apply the hardware and env blocks above. Bring up the two-node Ray cluster following :doc:`../../guides/multi_node` (head on GPU rank ``0``, worker on controller rank ``1``), then launch from the head node:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_realworld_async.sh <your_config>
+
+Results and Troubleshooting
+---------------------------
+
+Monitor training on the Ray head node with ``tensorboard --logdir ./logs --port 6006`` and check ``env/success_once``, ``env/return``, and SAC losses; see :doc:`Training metrics <../../reference/metrics>` for metric definitions.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Symptom
+     - Fix
+   * - CAN interface missing or down after reboot
+     - Re-run ``bash ~/gim_arm_control/sh/init_can.sh can0`` and confirm ``UP`` with ``ip link show can0``.
+   * - Unexpected arm motion after motor replacement
+     - Return the arm to its mechanical home position and re-run ``bash ~/gim_arm_control/sh/set_zero.sh can0 --all``.
+   * - ``pinocchio`` or NumPy 1.x version conflict
+     - Reinstall the SDK bindings with ``uv pip install -e "~/gim_arm_control/python[pin270]"``.
+   * - Running without RealSense cameras attached
+     - Set ``camera_serials: []`` in the hardware config to receive an empty ``frames`` dict for state-only checks.
+
+To define custom tasks on GimArm, see :doc:`New Real-World Tasks <../../extending/new_task>`.

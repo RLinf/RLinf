@@ -6,11 +6,11 @@
 概述
 ----
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/pi_rl_teaser.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi_rl_teaser.png
    :alt: πRL 概览
    :align: center
 
-πRL 在 **RLinf** 框架内为基于流的视觉-语言-动作（VLA）模型 π₀ 和 π₀.₅ 提供在线强化学习微调。通过将 PPO/GRPO 与流匹配策略相结合,该方法使少样本 SFT 模型能够通过环境反馈实现强大的操作性能。它支持 LIBERO、ManiSkill3、MetaWorld 和 CALVIN 基准测试。
+πRL 在 **RLinf** 框架内为基于流的视觉-语言-动作（VLA）模型 π₀ 和 π₀.₅ 提供在线强化学习微调。通过将 PPO/GRPO 与流匹配策略相结合，该方法使少样本 SFT 模型能够通过环境反馈实现出色的操作性能。它支持 LIBERO、ManiSkill3、MetaWorld 和 CALVIN 基准测试。
 
 结果
 ----

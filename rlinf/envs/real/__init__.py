@@ -40,6 +40,7 @@ _ROBOT_PACKAGES = (
     ".kuavo",
     ".lekiwi",
     ".piper",
+    ".r2",
     ".so101",
     ".xsquare",
     ".yam",

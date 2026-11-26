@@ -88,13 +88,13 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  backend: "huggingface"
+  rollout_backend: "huggingface"
   enable_offload: False
   pipeline_stage_num: 1
   collect_transitions: True
   collect_prev_infos: False
   model:
-    model_path: "/path/to/RLinf-ResNet10-pretrained"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: ${actor.model.model_path}
     state_dim: 7
     action_dim: 4
     num_q_heads: 10

@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pickle
 from collections import UserDict
 from contextlib import contextmanager
-from typing import Any, Callable, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Union
 
 import numpy as np
 import torch
@@ -24,6 +25,10 @@ from typing_extensions import Self
 
 from rlinf.scheduler import Tracer, Worker
 from rlinf.utils.timers import NamedTimer
+
+if TYPE_CHECKING:
+    from rlinf.data.schema.actor_batch import DynamicActorBatch
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 
 
 class _LazyParallelState:
@@ -51,8 +56,81 @@ class _LazyParallelState:
 parallel_state = _LazyParallelState()
 
 
+def balance_rollout_groups(
+    results: list["DynamicRolloutResult"], dp_group: ProcessGroup
+) -> list["DynamicRolloutResult"]:
+    """Redistribute complete, real-length question groups before model broadcast.
+
+    Only group costs and byte counts are gathered. Local groups stay on their
+    owner; remote groups travel once in variable-sized all-to-all byte buffers.
+
+    Args:
+        results: Complete CPU question groups received by this DP data-I/O rank.
+            Counts may differ by rank; the global count must be divisible by
+            the DP world size and provide at least one group per rank.
+        dp_group: Process group connecting the DP data-I/O ranks.
+
+    Returns:
+        The complete groups assigned to this rank, in partition order.
+    """
+    from rlinf.utils.data_iter_utils import get_seqlen_balanced_partitions
+
+    world_size = torch.distributed.get_world_size(dp_group)
+    rank = torch.distributed.get_rank(dp_group)
+    if world_size == 1:
+        return results
+    local_costs = [sum(map(len, result.input_ids)) for result in results]
+    costs = [None] * world_size
+    torch.distributed.all_gather_object(costs, local_costs, group=dp_group)
+    partitions = get_seqlen_balanced_partitions(
+        sum(costs, []), k_partitions=world_size, equal_size=True
+    )
+    start_idx = sum(len(rank_costs) for rank_costs in costs[:rank])
+    destination = {
+        idx: target for target, part in enumerate(partitions) for idx in part
+    }
+    outgoing = [[] for _ in range(world_size)]
+    owned = {}
+    for i, result in enumerate(results):
+        idx = start_idx + i
+        target = destination[idx]
+        if target == rank:
+            owned[idx] = result
+        else:
+            outgoing[target].append((idx, result))
+    payloads = [pickle.dumps(rows, protocol=5) if rows else b"" for rows in outgoing]
+    device = (
+        "cpu"
+        if torch.distributed.get_backend(dp_group) == "gloo"
+        else Worker.torch_platform.current_device()
+    )
+    send_sizes = torch.tensor(
+        [len(data) for data in payloads], dtype=torch.int64, device=device
+    )
+    recv_sizes = torch.empty_like(send_sizes)
+    torch.distributed.all_to_all_single(recv_sizes, send_sizes, group=dp_group)
+    send_counts, recv_counts = send_sizes.cpu().tolist(), recv_sizes.cpu().tolist()
+    data = bytearray(b"".join(payloads))
+    send = (
+        torch.frombuffer(data, dtype=torch.uint8).to(device)
+        if data
+        else torch.empty(0, dtype=torch.uint8, device=device)
+    )
+    recv = torch.empty(sum(recv_counts), dtype=torch.uint8, device=device)
+    torch.distributed.all_to_all_single(
+        recv, send, recv_counts, send_counts, group=dp_group
+    )
+    received = recv.cpu().numpy().tobytes()
+    offset = 0
+    for size in recv_counts:
+        if size:
+            owned.update(pickle.loads(received[offset : offset + size]))
+        offset += size
+    return [owned[idx] for idx in partitions[rank]]
+
+
 def compute_rollout_metrics_dynamic(
-    rollout_batch: dict[str, torch.Tensor],
+    rollout_batch: "DynamicActorBatch",
     max_prompt_len: int,
     response_len: int,
     data_parallel_group: Optional[ProcessGroup] = None,
@@ -76,11 +154,19 @@ def compute_rollout_metrics_dynamic(
     Returns:
         Tuple of (rollout_metrics dict, total_prompt_lengths tensor, total_decode_lengths tensor)
     """
-    device = torch.device(f"cuda:{torch.cuda.current_device()}")
+    device = Worker.torch_platform.current_device()
 
     # Extract basic tensors
-    advantages = rollout_batch["advantages"].to(device=device)
-    mask = rollout_batch["response_mask"].to(device=device)
+    advantages = (
+        torch.cat(rollout_batch["advantages"]).to(device=device)
+        if rollout_batch["advantages"]
+        else torch.empty(0, dtype=torch.float32, device=device)
+    )
+    mask = (
+        torch.cat(rollout_batch["response_mask"]).to(device=device)
+        if rollout_batch["response_mask"]
+        else torch.empty(0, dtype=torch.bool, device=device)
+    )
     prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)
     reward_scores = rollout_batch["rewards"].clone().to(device=device)
@@ -600,92 +686,6 @@ class RolloutDataBalance(UserDict):
 
         return cls(final_rank_data, ordered_keys_hint=final_ordered_keys)
 
-    @classmethod
-    def from_rollout_batches_dynamic(
-        cls: Self,
-        rollout_batches: dict[str, torch.Tensor],
-        dp_world_size: int,
-        dp_rank: int,
-        dp_group: Optional[ProcessGroup],
-        rollout_batch_pad: dict[str, torch.Tensor],
-        split_fix_chunk: int,
-        partitioning_tool: Callable,
-    ) -> Self:
-        # 0. Check data
-        assert rollout_batches.keys() == rollout_batch_pad.keys(), (
-            f"rollout_batches and rollout_batch_pad must have the same keys, but these are [{sorted(rollout_batches.keys())}] and [{sorted(rollout_batch_pad.keys())}]"
-        )
-        assert (
-            "input_ids" in rollout_batches
-            and "prompt_lengths" in rollout_batches
-            and "response_lengths" in rollout_batches
-        )
-        batch_size = rollout_batches["input_ids"].size(0)
-        assert all(v.size(0) == batch_size for v in rollout_batches.values())
-        assert all(v.size(0) == 1 for v in rollout_batch_pad.values())
-        for k in rollout_batches.keys():
-            assert rollout_batches[k].dtype == rollout_batch_pad[k].dtype, (
-                f"batch dtype mismatch: key: {k}, dtype: {rollout_batches[k].dtype}, {rollout_batch_pad[k].dtype}"
-            )
-            assert rollout_batches[k].shape[1:] == rollout_batch_pad[k].shape[1:], (
-                f"batch shape mismatch: key: {k}, shape: {rollout_batches[k].shape}, {rollout_batch_pad[k].shape}"
-            )
-        rollout_batches = {k: v.cpu() for k, v in rollout_batches.items()}
-        rollout_batch_pad = {k: v.cpu() for k, v in rollout_batch_pad.items()}
-
-        # 1. Allgather data
-        gathered_rollout_batches = [{} for _ in range(dp_world_size)]
-        for k in sorted(rollout_batches.keys()):
-            rollout_batch_values = [None for _ in range(dp_world_size)]
-            torch.distributed.all_gather_object(
-                rollout_batch_values, rollout_batches[k], group=dp_group
-            )
-            for gathered_batch, value in zip(
-                gathered_rollout_batches, rollout_batch_values
-            ):
-                gathered_batch[k] = value
-
-        global_batch_size = batch_size = sum(
-            b["input_ids"].size(0) for b in gathered_rollout_batches
-        )
-
-        # 2. Merge data and pad data to fixed length
-        if global_batch_size % (dp_world_size * split_fix_chunk) == 0:
-            pad_size = 0
-        else:
-            pad_size = (dp_world_size * split_fix_chunk) - (
-                global_batch_size % (dp_world_size * split_fix_chunk)
-            )
-        # make sure dp_world_size * split_fix_chunk (dp size * self.num_train_steps * self.cfg.actor.micro_batch_size) can be divided by global_batch_size
-        merged_rollout_batches = {}
-        for key in rollout_batches.keys():
-            merged_rollout_batches[key] = torch.cat(
-                [rollout_batches[key] for rollout_batches in gathered_rollout_batches]
-                + [rollout_batch_pad[key]] * pad_size,
-                dim=0,
-            )
-
-        # 3. get length of each sample
-        sample_lengths = (
-            merged_rollout_batches["prompt_lengths"]
-            + merged_rollout_batches["response_lengths"]
-        ).tolist()
-
-        # 4. Calc partitions
-        partitions = partitioning_tool(
-            seqlen_list=sample_lengths,
-            k_partitions=dp_world_size,
-            equal_size=True,
-        )
-        self_partition = partitions[dp_rank]
-
-        # 5. Get indices of samples for current rank
-        selected_rollout_batches = {
-            k: v[self_partition] for k, v in merged_rollout_batches.items()
-        }
-
-        return selected_rollout_batches
-
     def gather_and_balance_globally(self):
         global_rollout_batch = type(self)()
 
@@ -771,8 +771,13 @@ def broadcast_tensor(
     - The broadcasted tensor.
     """
 
+    device = (
+        "cpu"
+        if torch.distributed.get_backend(group) == "gloo"
+        else Worker.torch_platform.current_device()
+    )
     if torch.distributed.get_rank() == src:
-        tensor = tensor.to(Worker.torch_device_type)
+        tensor = tensor.to(device)
         if dtype:
             tensor = tensor.to(dtype)
 
@@ -785,7 +790,7 @@ def broadcast_tensor(
         torch.distributed.broadcast_object_list(metadata, src, group)
 
         dtype, input_shape = metadata
-        tensor = torch.empty(input_shape, dtype=dtype, device="cuda")
+        tensor = torch.empty(input_shape, dtype=dtype, device=device)
         torch.distributed.broadcast(tensor, src, group)
     return tensor
 
@@ -962,12 +967,18 @@ def masked_normalization(
             op=torch.distributed.ReduceOp.SUM,
             group=group,
         )
-    mean = x_sum / factor
-    meansq = x_sum_sq / factor
-    var = meansq - mean**2
+    safe_factor = factor.clamp(min=1)
+    mean = x_sum / safe_factor
+    meansq = x_sum_sq / safe_factor
+    var = (meansq - mean**2).clamp(min=0)
     if unbiased:
-        var *= factor / (factor - 1)
-    return ((x - mean) / (var.sqrt() + eps)).float()
+        var = torch.where(
+            factor > 1,
+            var * factor / (factor - 1).clamp(min=1),
+            torch.zeros_like(var),
+        )
+    normalized = ((x - mean) / (var.sqrt() + eps)).float()
+    return torch.where(factor > 0, normalized, torch.zeros_like(normalized))
 
 
 def masked_stats(x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -1126,20 +1137,14 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
         softmax = exp_logits.div_(sum_exp_logits)
         sum_exp_logits_log = sum_exp_logits.log()
 
-        entropy = torch.zeros_like(logits_max.squeeze(-1))
-
-        sum_softmax_times_logits = (softmax * vocab_parallel_logits).sum(
+        sum_softmax_times_norm_logits = (softmax * norm_logits).sum(
             dim=-1, keepdim=True
         )
         torch.distributed.all_reduce(
-            sum_softmax_times_logits,
+            sum_softmax_times_norm_logits,
             group=parallel_state.get_tensor_model_parallel_group(),
         )
-        entropy = (
-            logits_max.squeeze(-1)
-            + sum_exp_logits_log.squeeze(-1)
-            - sum_softmax_times_logits.squeeze(-1)
-        )
+        entropy = (sum_exp_logits_log - sum_softmax_times_norm_logits).squeeze(-1)
 
         partition_vocab_size = norm_logits.size(-1)
         rank = parallel_state.get_tensor_model_parallel_rank()
@@ -1185,7 +1190,7 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
             ctx.save_for_backward(
                 softmax,
                 norm_logits,
-                sum_softmax_times_logits,
+                sum_softmax_times_norm_logits,
                 target_mask,
                 masked_target_1d,
                 calculate_entropy_tensor,
@@ -1208,7 +1213,7 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
         (
             softmax,
             norm_logits,
-            sum_softmax_times_logits,
+            sum_softmax_times_norm_logits,
             target_mask,
             masked_target_1d,
             calculate_entropy_tensor,
@@ -1218,14 +1223,16 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
         vocab_size = ctx.vocab_size
         calculate_entropy_loss = calculate_entropy_tensor.item()
 
-        grad_input = torch.zeros_like(softmax)
         if grad_ce is not None:
             from megatron.core.tensor_parallel.cross_entropy import (
                 VocabParallelCrossEntropy as _CEUtils,
             )
 
-            grad_2d, arange_1d, softmax_update, ce_grad_input = (
-                _CEUtils.prepare_gradient_calculation_operands(softmax, target_mask)
+            # Core writes the CE gradient in place. Entropy backward still needs p.
+            grad_2d, arange_1d, softmax_update, grad_input = (
+                _CEUtils.prepare_gradient_calculation_operands(
+                    softmax.clone(), target_mask
+                )
             )
 
             if label_smoothing > 0:
@@ -1234,24 +1241,25 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
                     1.0 - smoothing
                 ) * softmax_update
                 grad_2d[arange_1d, :] -= smoothing / vocab_size
-                grad_input += ce_grad_input * grad_ce.unsqueeze(dim=-1)
+                grad_input.mul_(grad_ce.unsqueeze(dim=-1))
             else:
-                ce_grad_result = _CEUtils.calculate_gradients(
+                grad_input = _CEUtils.calculate_gradients(
                     grad_2d,
                     arange_1d,
                     masked_target_1d,
                     softmax_update,
-                    ce_grad_input,
+                    grad_input,
                     grad_ce,
                 )
-                grad_input += ce_grad_result
+        else:
+            grad_input = torch.zeros_like(softmax)
 
         # Memory optimized entropy gradient with chunking
         if (
             calculate_entropy_loss
             and grad_entropy is not None
             and norm_logits is not None
-            and sum_softmax_times_logits is not None
+            and sum_softmax_times_norm_logits is not None
         ):
             batch_size, seq_len, vocab_size = softmax.shape
             chunk_size = min(128, seq_len)
@@ -1261,13 +1269,13 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
 
                 softmax_chunk = softmax[:, start_idx:end_idx, :]
                 norm_logits_chunk = norm_logits[:, start_idx:end_idx, :]
-                sum_softmax_times_logits_chunk = sum_softmax_times_logits[
+                sum_softmax_times_norm_logits_chunk = sum_softmax_times_norm_logits[
                     :, start_idx:end_idx, :
                 ]
                 grad_entropy_chunk = grad_entropy[:, start_idx:end_idx]
 
                 grad_entropy_expanded = grad_entropy_chunk.unsqueeze(dim=-1)
-                sum_expanded = sum_softmax_times_logits_chunk
+                sum_expanded = sum_softmax_times_norm_logits_chunk
                 grad_entropy_input_chunk = (
                     grad_entropy_expanded
                     * softmax_chunk

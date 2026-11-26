@@ -1,0 +1,296 @@
+Robbyant R2 Setup & RL
+======================
+
+Set up a Robbyant R2 wheeled humanoid robot over RFrame and ROS 2, verify state feedback and whole-body motion, run PICO VR teleoperation, and configure ``R2ReachEnv-v1`` for real-world rollouts.
+
+Overview
+--------
+
+This guide connects a Robbyant R2 robot to RLinf for mock and hardware diagnostics, whole-body PICO VR teleoperation, and joint-space real-world RL with ``R2ReachEnv-v1``.
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Robot
+      :text-align: center
+
+      Robbyant R2 · 20/21-DoF wheeled humanoid
+
+   .. grid-item-card:: Sensors & Teleop
+      :text-align: center
+
+      RFrame cameras · PICO VR (6-DoF IK)
+
+   .. grid-item-card:: Workflow
+      :text-align: center
+
+      Mock/HW check · PICO teleop · R2ReachEnv-v1
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      FastDDS / ROS 2 · Controller PC · GPU (opt.)
+
+Tasks
+~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 30 48
+
+   * - Task
+     - Config / Entry Point
+     - Description
+   * - Mock hardware check
+     - ``test_r2_env --mock``
+     - Verify environment spaces, whole-body kinematics, and stepping without hardware.
+   * - Hardware check
+     - ``test_r2_env``
+     - Inspect joint, TCP, camera, and fault feedback, and step arms, grippers, waist, head, and base.
+   * - VR teleoperation
+     - ``test_r2_env --pico``
+     - Drive both 7-DoF arms via 6-DoF IK, grippers, and omnidirectional base with PICO controllers.
+   * - Joint reach task
+     - ``R2ReachEnv-v1``
+     - Reach and hold ``target_joint_qpos`` on one or both arms under ``env_type: real``.
+
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 76
+
+   * - Field
+     - Description
+   * - Observation
+     - ``state`` dict (``arm_joint_position``, ``tcp_pose``, optional ``gripper_position``, ``base_pose``, ``base_velocity``) and ``frames`` dict of ``128 x 128 x 3`` RGB ``uint8`` images (default ``head``, ``wrist_left``, ``wrist_right``).
+   * - Action
+     - Continuous vector per active arm: 7 absolute joint targets (rad) plus end-effector target (1 gripper opening in ``[0, 1]`` or 6 hand finger targets), plus ``[vx, vy, wz]`` when ``enable_base: true`` (19-D dual-arm + grippers + base; 16-D without base).
+   * - Reward
+     - ``1.0`` when every active joint is within ``reward_threshold`` (default ``0.05`` rad) of ``target_joint_qpos``, or negative Euclidean joint distance when ``use_dense_reward: true``.
+   * - Prompt
+     - ``reach a joint configuration``
+
+Hardware and Safety
+-------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Component
+     - Requirement
+   * - Robot
+     - Robbyant R2 wheeled humanoid (20- or 21-DoF body: 5-DoF waist, dual 7-DoF arms, 1- or 2-DoF neck; parallel grippers, 6-DoF dexterous hands, or no end effectors; omnidirectional base).
+   * - Onboard / controller PC
+     - Linux host on the R2 FastDDS/ROS 2 network with Robbyant ``rframe``, ``rclpy``, and R2 ROS 2 message packages installed.
+   * - Cameras
+     - Built-in RFrame camera topics (``head``, ``wrist_left``, ``wrist_right``, optional ``navigation_front`` and ``navigation_rear``).
+   * - Training node (optional)
+     - Linux GPU server on the same local network for multi-node policy rollout and training.
+
+.. warning::
+
+   Keep the physical emergency stop within reach whenever R2 is powered on. R2 streams joint targets at 100 Hz in ``ServoJ`` mode and the omnidirectional base can translate or rotate in any direction; clear the workspace around both arms and the chassis before enabling motion. Passing ``--reset`` or creating ``R2ReachEnv-v1`` with ``reset_on_init: true`` (default) moves active arms to ``reset_joint_qpos`` along a raised-cosine trajectory capped at ``--reset-speed`` (default 30 deg/s); set ``reset_on_init: false`` to start from the measured pose. An emergency stop is latched and never cleared automatically—release the physical E-stop first and run ``recover`` only when safe.
+
+.. note::
+
+   When ``/opt/robbyant/dynamic_participant.xml`` exists on the controller machine, RLinf sets ``FASTRTPS_DEFAULT_PROFILES_FILE`` automatically before initializing RFrame.
+
+Setup and Run
+-------------
+
+.. include:: _setup_common.rst
+
+.. tab-set::
+
+   .. tab-item:: Robot Controller Node
+
+      **1. Install RLinf matching the host ROS 2 Python version**
+
+      Because ``rclpy`` and ``rframe`` load compiled CPython extensions from the host ROS 2 and Robbyant installation, match the virtualenv Python ``major.minor`` version to ``/usr/bin/python3`` (for example ``3.10`` on Ubuntu 22.04 with ROS 2 Humble):
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         ROS_PY=$(/usr/bin/python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+         bash requirements/install.sh --no-flash-attn embodied --env dummy --python "$ROS_PY"
+         source /opt/ros/humble/setup.bash
+         source .venv/bin/activate
+         uv pip install pyzmq  # Required only for PICO VR teleoperation
+
+      If ``rframe`` and R2 message packages (``r2_motion_msgs``, ``rdiagnostic_msgs``, ``navigation_msgs``, ``state_machine_msgs``) live in a separate overlay workspace, source its ``setup.bash`` as well and verify with ``python -c "import rclpy, rframe"``.
+
+      **2. Verify mock, read-only, and interactive motion**
+
+      Run the hardware-free mock check, a read-only probe (auto-detects ``body_dof`` 20/21 and ``end_effector_type`` from ``/robotic/joint_states``), and then the interactive console (starts at the measured pose by default; add ``--no-cameras`` or ``--no-base`` as needed):
+
+      .. code-block:: bash
+
+         python -m toolkits.realworld_check.test_r2_env --mock --steps 5
+         python -m toolkits.realworld_check.test_r2_env --no-move
+         python -m toolkits.realworld_check.test_r2_env --step 2
+
+      Enter commands one at a time at the ``r2>`` prompt and wait for each motion to settle:
+
+      .. code-block:: text
+
+         where
+         diag
+         l up 3
+         r fwd 3
+         open
+         close
+         waist up
+         head left
+         base fwd 0.5
+         home
+         quit
+
+      ``where`` prints joint angles, TCP poses, end-effector state, waist/neck angles, base state, and camera summaries; ``diag`` and ``recover`` inspect diagnostics and clear recoverable controller faults without jumping; ``l|r (up|down|fwd|back|left|right) [cm]`` steps TCP via 6-DoF IK; ``l|r (raise|lower|out|in|bend|extend)`` steps individual joints by ``--step`` degrees; ``ready`` and ``home`` move smoothly to preset postures.
+
+      **3. Run PICO VR teleoperation (optional)**
+
+      Prepare XRoboToolkit and the ZeroMQ publisher via :ref:`the PICO software setup <pico-software-setup>`, then start teleoperation (defaults to ``R2_PICO_ZMQ_ADDR`` or ``ipc:///tmp/vr_data.ipc`` when ``--pico-zmq-addr`` is omitted):
+
+      .. code-block:: bash
+
+         python -m toolkits.realworld_check.test_r2_env \
+           --pico \
+           --pico-zmq-addr tcp://192.168.1.100:5555
+
+      - **Side grips (hold)**: engage 6-DoF IK tracking per arm (engages at 0.85, releases below 0.75); releasing holds the arm in place.
+      - **Index triggers** or **X/Y** (left) and **A/B** (right): close and open grippers.
+      - **Thumbsticks**: planar base translation and yaw rotation when enabled.
+      - **Menu**: recalibrate headset yaw reference; **Ctrl-C** stops the base and exits cleanly.
+
+      .. dropdown:: Controller-loss handling and rollout YAML pico settings
+
+         If a controller drops out or a recoverable arm fault triggers during teleoperation, the script holds affected arms at their measured positions and resumes only after you release and squeeze the grips again. In a rollout YAML (:doc:`Teleoperation <../../guides/teleoperation>`), set these keys under ``pico`` to match the script defaults:
+
+         .. code-block:: yaml
+
+            pico:
+              control_threshold: 0.85
+              control_release_margin: 0.10    # Stop tracking below 0.75
+              pause_on_controller_loss: true
+
+      **4. Join a multi-node Ray cluster (optional)**
+
+      Before running ``ray start`` on the R2 controller node, source the ROS 2 / RFrame workspaces and ``.venv``, and export ``RLINF_NODE_RANK`` and (on multi-NIC hosts) ``RLINF_COMM_NET_DEVICES`` so Ray workers inherit the middleware environment.
+
+   .. tab-item:: Training & Rollout Nodes
+
+      **1. Install RLinf on the GPU node**
+
+      Install the model runtime you plan to train (for example OpenPI):
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+
+      **2. Configure hardware and R2ReachEnv-v1**
+
+      Declare ``hardware.type: R2`` under ``cluster.node_groups`` and configure ``R2ReachEnv-v1`` under ``env.train`` / ``env.eval``. Keep ``truncate_on_fault_recovery: true`` during RL rollouts so fault-interrupted episodes truncate and reset cleanly:
+
+      .. code-block:: yaml
+
+         env:
+           train:
+             env_type: real
+             total_num_envs: 1
+             init_params:
+               id: "R2ReachEnv-v1"
+             override_cfg:
+               active_arms: ["left", "right"]
+               step_frequency: 20.0
+               reset_duration: 2.0
+               use_dense_reward: true
+               truncate_on_fault_recovery: true
+               target_joint_qpos: [-0.35, 0.20, 1.00, -0.70, 0.0, -0.30, 0.0,
+                                   -0.35, -0.20, 1.00, 0.70, 0.0, -0.30, 0.0]
+
+      .. dropdown:: Full configuration reference (optional)
+
+         .. code-block:: yaml
+
+            cluster:
+              num_nodes: 2
+              component_placement:
+                actor:
+                  node_group: gpu
+                  placement: 0
+                rollout:
+                  node_group: gpu
+                  placement: 0
+                env:
+                  node_group: r2
+                  placement: 0
+              node_groups:
+                - label: gpu
+                  node_ranks: 0
+                - label: r2
+                  node_ranks: 1
+                  hardware:
+                    type: R2
+                    configs:
+                      - node_rank: 1
+                        body_dof: null                # null auto-detects 20 or 21 from /robotic/joint_states
+                        end_effector_type: null       # null auto-detects "gripper", "hand", or "none"
+                        enable_base: true
+                        cameras: ["head", "wrist_left", "wrist_right"]
+                        use_compressed_camera: true
+                        enable_fault_recovery: true
+                        max_recovery_attempts: 3
+                        recovery_cooldown_window: 10.0
+                        motion_profile:
+                          control_rate_hz: 100.0
+                          max_joint_velocity: 2.0
+                          max_joint_acceleration: 20.0
+
+            env:
+              train:
+                env_type: real
+                total_num_envs: 1
+                init_params:
+                  id: "R2ReachEnv-v1"
+                override_cfg:
+                  active_arms: ["left", "right"]
+                  step_frequency: 20.0
+                  reset_duration: 2.0
+                  use_dense_reward: true
+                  truncate_on_fault_recovery: true
+                  target_joint_qpos: [-0.35, 0.20, 1.00, -0.70, 0.0, -0.30, 0.0,
+                                      -0.35, -0.20, 1.00, 0.70, 0.0, -0.30, 0.0]
+
+      **3. Start Ray and launch training**
+
+      No standalone R2 training YAML ships in ``examples/embodiment/config/`` yet—start from an existing real-world training config and apply the ``cluster`` and ``R2ReachEnv-v1`` blocks above. Start the two-node Ray cluster following :doc:`../../guides/multi_node` (head on GPU rank ``0``, worker on R2 controller rank ``1``), then launch from the head node:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_realworld_async.sh <your_config>
+
+Results and Troubleshooting
+---------------------------
+
+Monitor real-world RL runs on the Ray head node with ``tensorboard --logdir ./logs --port 6006``; see :doc:`Training metrics <../../reference/metrics>` for metric names.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Symptom
+     - Fix
+   * - ``import rclpy, rframe`` fails inside ``.venv``
+     - Recreate ``.venv`` with ``--python "$ROS_PY"`` matching ``/usr/bin/python3`` and source ``/opt/ros/humble/setup.bash`` plus any Robbyant overlay workspace before activating ``.venv``.
+   * - Robot stays halted after an emergency stop
+     - Physical E-stops are latched and never auto-clear; release the E-stop switch first, verify clearance, then run ``recover`` in ``test_r2_env``.
+   * - Arms move immediately on ``R2ReachEnv-v1`` startup
+     - ``reset_on_init`` defaults to ``true``; set ``reset_on_init: false`` in ``override_cfg`` (or omit ``--reset`` in ``test_r2_env``) to start from the measured pose.
+   * - PICO teleop pauses after tracking loss or arm fault
+     - Release both side grips completely and squeeze again to re-engage tracking cleanly.
+
+For programmatic whole-body control and fault recovery APIs, see :doc:`Robotics Interface <../../concepts/robotics>`; to implement new tasks on R2, see :doc:`New Real-World Tasks <../../extending/new_task>`.
