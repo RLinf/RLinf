@@ -21,6 +21,9 @@ import torch
 from rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf import (
     _normalize_state_dict_keys,
 )
+from rlinf.utils.ckpt_convertor.fsdp_convertor.utils import (
+    copy_model_config_and_code,
+)
 from rlinf.utils.ckpt_convertor.openpi.jax_to_openpi import _unwrap_value_leaves
 
 
@@ -59,3 +62,20 @@ def test_fsdp_checkpoint_keeps_conflicting_alias_for_strict_load():
     with pytest.raises(RuntimeError, match="Unexpected key"):
         model.load_state_dict(normalized)
     torch.testing.assert_close(normalized["weight"], checkpoint["weight"])
+
+
+def test_copy_model_config_and_code_preserves_chat_template_and_merges(tmp_path):
+    src = tmp_path / "base_model"
+    dst = tmp_path / "exported"
+    src.mkdir()
+    (src / "config.json").write_text("{}", encoding="utf-8")
+    (src / "chat_template.jinja").write_text("{{ messages }}", encoding="utf-8")
+    (src / "merges.txt").write_text("#version: 0.2\n", encoding="utf-8")
+    (src / "model.safetensors").write_bytes(b"weights")
+
+    copy_model_config_and_code(str(src), str(dst))
+
+    assert (dst / "config.json").read_text(encoding="utf-8") == "{}"
+    assert (dst / "chat_template.jinja").read_text(encoding="utf-8") == "{{ messages }}"
+    assert (dst / "merges.txt").read_text(encoding="utf-8") == "#version: 0.2\n"
+    assert not (dst / "model.safetensors").exists()

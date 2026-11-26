@@ -296,7 +296,7 @@ Qwen-VL 监督微调
      - 1000
      - 58.4% → 91.3%
 
-**Qwen3.8-27B（RPent）**\ ：训练时在 TensorBoard 中观察 ``train/loss``。在 4 × A800 80 GB GPU 上以 ``actor.model.lora_rank=592`` 训练 48 步 LoRA 后，最终 ``train/loss`` 降至 0.199；合并权重后，RoboTwin 规划任务的成功 episode 数从基座模型的 8 提升到 14。
+**Qwen3.8-27B（RPent）**\ ：训练时在 TensorBoard 中观察 ``train/loss``。在 4 × A800 80 GB GPU 上以 ``actor.model.lora_rank=592`` 训练 48 步 LoRA 后，最终 ``train/loss`` 降至 0.199；合并权重后，RoboTwin 规划任务的成功 episode 数从基座模型的 8/50 提升到 14/50。
 
 **Qwen2.5-VL-3B** —— 每 1000 次迭代的评估准确率、grad_norm 与 loss 曲线：
 

@@ -296,7 +296,7 @@ Reference runs across model scales (Robo2VLM):
      - 1000
      - 58.4% → 91.3%
 
-For **Qwen3.8-27B (RPent)**, monitor ``train/loss`` in TensorBoard. On 4 × A800 80 GB GPUs, a 48-step LoRA run (``actor.model.lora_rank=592``) reached a final ``train/loss`` of 0.199 and, after merging weights, raised solved RoboTwin planner episodes from 8 (base model) to 14.
+For **Qwen3.8-27B (RPent)**, monitor ``train/loss`` in TensorBoard. On 4 × A800 80 GB GPUs, a 48-step LoRA run (``actor.model.lora_rank=592``) reached a final ``train/loss`` of 0.199 and, after merging weights, raised solved RoboTwin planner episodes from 8/50 (base model) to 14/50.
 
 **Qwen2.5-VL-3B** — eval accuracy, grad_norm, and loss every 1000 iterations:
 
