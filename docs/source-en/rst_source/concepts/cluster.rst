@@ -1,94 +1,71 @@
-Ray-Based Cluster Launching
-===============================
+Cluster
+=======
 
-The **Cluster** class manages the connection to the Ray cluster and the launching of management actors and worker actors. 
-It serves as a singleton representing the entire cluster’s resources and provides methods to allocate workers on specific nodes and GPUs. 
-By encapsulating Ray initialization and node information, it simplifies distributed setup for the rest of the framework.
+The ``Cluster`` singleton manages the connection to Ray, discovers cluster hardware topology, and launches both global management actors and training workers. By centralizing Ray initialization, node metadata, and actor placement, it keeps distributed setup consistent across single-node and multi-node runs.
 
 .. note::
 
-   **Ray version requirement**: RLinf requires ``ray>=2.47.0`` (enforced at import time).  
-   Do **not** call ``ray.init`` before creating a :class:`Cluster`; premature initialization can interfere with the namespace and logging configuration.
-   
+   **Ray version requirement**: RLinf requires ``ray>=2.47.0`` (enforced at import time). Do **not** call ``ray.init`` before creating a :class:`Cluster`; premature initialization can interfere with the namespace and logging configuration.
+
 Initialization and Ray Setup
 ----------------------------
 
-When a `Cluster` object is created, it performs the following steps in its initialization:
+When the driver creates a ``Cluster``, initialization proceeds in five steps:
 
-- **Ray Initialization** : If Ray is not already started, it calls `ray.init()` with the namespace `Cluster.NAMESPACE`. 
+- **Ray Initialization**: if Ray is not already initialized, ``Cluster`` connects to or starts Ray under the shared namespace ``Cluster.NAMESPACE``.
+- **Waiting for Nodes**: ``Cluster`` waits until the configured number of nodes (``num_nodes``) have registered with Ray.
+- **Gathering Node Information**: once nodes are ready, ``Cluster`` builds a list of ``NodeInfo`` records (Ray node ID, IP, CPU count, accelerator inventory, and optional hardware node groups). Node rank ``0`` acts as the head node.
+- **Master Address and Port**: ``Cluster`` records the head node IP and selects a free TCP port for collective rendezvous.
+- **Global Manager Actors**: ``Cluster`` launches three singleton management actors on the cluster:
 
-- **Waiting for Nodes** : After Ray initialization, `Cluster` waits until the expected number of nodes (`num_nodes`) have registered with Ray. 
+  - ``WorkerManager``: tracks every launched worker's metadata and lifecycle.
+  - ``CollectiveManager``: coordinates collective group rendezvous information.
+  - ``NodeManager``: exposes cluster node layout (IP, accelerator counts, master port) to workers.
 
-- **Gathering Node Information** : Once the nodes are ready, `Cluster` constructs a list of `NodeInfo` objects (Ray ID, IP, CPU and GPU counts).
-  The 'master' node is placed first; remaining nodes are sorted by IP.
+Node Groups and Heterogeneous Hardware
+--------------------------------------
 
-- **Master Address and Port** : The master node's IP is stored and a free TCP port is chosen for collective communications. 
+Beyond homogeneous GPU nodes, ``Cluster`` supports grouping nodes by role or attached hardware through ``cluster.node_groups``. Each node group selects one or more ``node_ranks`` and can declare:
 
-- **Global Manager Actors** : A key part of initialization is launching three singleton manager actors:
+- **Accelerator or CPU-only roles**: separate GPU training nodes from CPU simulator or controller nodes.
+- **Physical robot hardware**: attach ``hardware`` entries (such as Franka arms, SO-101 arms, or cameras) to the specific node ranks that own those cables and SDKs. During cluster boot, node probes enumerate those devices and hand typed ``RobotInfo`` records to real-world environments.
+- **Node-group-scoped placement**: placement strategies can target a named node group rather than hardcoding raw node indices.
 
-  * `WorkerManager` : tracks every worker's metadata.  
-  * `CollectiveManager` : stores collective-group information, including
-    rendezvous ports.  
-  * `NodeManager` : provides node layout (IP, GPU count, master port) to workers.
+Allocating Workers on Nodes and Accelerators
+--------------------------------------------
 
+Rather than launching raw Ray actors directly, ``WorkerGroup`` delegates actor creation to ``Cluster.allocate()``. Given a worker class, worker name, target ``node_rank``, runtime environment variables, and resource requirements, ``Cluster``:
 
-Using Cluster to Allocate Workers
------------------------------------
+- validates the target node rank and accelerator assignment against the discovered cluster topology,
+- prepares the worker's Ray ``runtime_env`` (propagating distributed variables such as ``RANK``, ``WORLD_SIZE``, device isolation variables, and optional profiling context),
+- pins the actor to the target physical node using Ray's ``NodeAffinitySchedulingStrategy``, and
+- launches the Ray actor asynchronously and returns its handle to the owning ``WorkerGroup``.
 
-``Cluster.allocate()`` starts a Ray actor of class ``cls`` on a **specific node** with a controlled runtime environment:
+For the full ``Cluster`` class methods and parameters, see :doc:`../reference/api/cluster`.
+
+Multi-Node Launch and Attaching to an Existing Cluster
+------------------------------------------------------
+
+On multi-node clusters, start Ray on every node before launching RLinf, and export a unique ``RLINF_NODE_RANK`` on each node prior to ``ray start`` so Ray captures the node rank. Run the training entry script only on the head node.
+
+When a worker or helper process instantiates ``Cluster()`` without initialization arguments, it attaches to the already running cluster instead of creating a new one:
+
+- Connects to Ray using ``address="auto"`` and the shared RLinf namespace.
+- Retrieves the existing ``NodeManager`` proxy and reads the shared node list, head IP, and rendezvous port.
 
 .. code-block:: python
 
-   handle = Cluster.allocate(
-       cls,            # The actor class to launch
-       worker_name,    # A unique, human-readable name for the actor
-       node_id,        # Index into Cluster's node list (0 is master)
-       gpu_id,         # Local GPU index on that node (used for env isolation)
-       env_vars,       # Dict of environment variables for this actor (e.g., CUDA_VISIBLE_DEVICES)
-       cls_args=[],    # Positional args to the actor's constructor
-       cls_kwargs={},  # Keyword args to the actor's constructor
-   )
+   from rlinf.scheduler import Cluster
 
-What it does:
+   # Driver initializes once; workers attach with Cluster() using no arguments.
+   cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+   node_info = cluster.get_node_info(node_rank=0)
 
-- Validates ``node_id`` and ``gpu_id`` against discovered topology.
+Every process in the job therefore observes the same cluster topology and manager actors.
 
-- Wraps ``cls`` via ``ray.remote(cls)``.
+Next Steps
+----------
 
-- Applies options:
-
-  - ``runtime_env={"env_vars": env_vars}`` (propagates variables like ``CUDA_VISIBLE_DEVICES``, ``rank``... )
-
-  - ``name=worker_name`` (makes the actor discoverable by name)
-
-  - ``scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=<Ray NodeID>, soft=False)`` (pins the actor to the requested **physical node**)
-
-Finally, it invokes ``.remote(*cls_args, **cls_kwargs)`` to launch the actor asynchronously and returns the actor handle.
-
-
-Attaching to an Existing Cluster
---------------------------------
-
-When a ``Cluster`` is created without arguments, it attaches to the running cluster:
-
-- Ensures Ray is initialized with ``address="auto"`` and the known namespace.
-- Retrieves the existing managers and shared state from ``NodeManager``:
-
-  .. code-block:: python
-
-     self._node_manager     = NodeManager.get_proxy()
-     self._nodes            = self._node_manager.get_nodes()
-     self._num_nodes        = len(self._nodes)
-     self._master_ip        = self._node_manager.get_master_ip()
-     self._master_port      = self._node_manager.get_master_port()
-
-This guarantees that every process using the same namespace observes the same cluster view.
-
-
-Summary
--------
-
-The `Cluster` singleton centralizes Ray initialization, node discovery, and manager-actor lifecycle under a stable namespace.  
-Driver code initializes once (launching managers and selecting a master), while subsequent processes simply attach and retrieve the shared view.  
-With ``allocate()``, users can reliably place actors on specific nodes and set the environment variables accordingly, 
-keeping distributed orchestration predictable and consistent across the framework.
+- :doc:`../reference/api/cluster`: full ``Cluster`` API reference.
+- :doc:`placement`: how placement strategies map worker groups onto cluster nodes and accelerators.
+- :doc:`worker`: how ``WorkerGroup`` launches actors through ``Cluster``.

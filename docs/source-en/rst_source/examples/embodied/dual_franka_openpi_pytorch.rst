@@ -1,5 +1,5 @@
-Using Dual Franka with OpenPI PyTorch
-=====================================
+Dual-Arm Franka OpenPI PyTorch
+==============================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-deploy-rlinf.jpg
    :align: center
@@ -8,548 +8,255 @@ Using Dual Franka with OpenPI PyTorch
 
    Fine-tune and deploy a dual-Franka policy with RLinf PyTorch.
 
-Run the supported dual-Franka workflow: collect joint-space demonstrations with GELLO, convert them to tcp_rot6d data, fine-tune OpenPI π₀.₅, and deploy the checkpoint back to the robot nodes.
+Collect dual-arm GELLO demonstrations, clean and merge shards, convert them to ``tcp_rot6d`` data, fine-tune OpenPI π₀.₅ natively in RLinf PyTorch, and deploy with standard two-node evaluation or single-machine Real-Time Chunking (RTC).
 
 Overview
 --------
 
-Build a dual-arm dataset, train π₀.₅, and deploy on a two-node Franka rig.
+This guide extends the dual-Franka GELLO pipeline (:doc:`dual_franka`) with native OpenPI PyTorch fine-tuning, dataset cleaning and shard merging, ``sft2deploy`` checkpoint conversion, and optional single-workstation RTC deployment. For single-arm setup and GELLO assembly, see :doc:`franka` and :doc:`franka_gello`.
 
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: Models
+   .. grid-item-card:: Robot
       :text-align: center
 
-      OpenPI π₀.₅
+      2× Franka (Franky) · 2× Robotiq
 
-   .. grid-item-card:: Algorithms
+   .. grid-item-card:: Teleop & Cameras
       :text-align: center
 
-      SFT · eval-only deployment
+      2× GELLO · FootSwitch · RealSense + 2× Lumos
 
-   .. grid-item-card:: Tasks
+   .. grid-item-card:: Workflow
       :text-align: center
 
-      Dual-arm manipulation
+      Collect → Clean/Merge → Backfill → PyTorch SFT → Deploy/RTC
 
    .. grid-item-card:: Hardware
       :text-align: center
 
-      2× Franka · 2 robot nodes · GELLO
+      2 robot nodes (or 1 GPU workstation for RTC) · GPU SFT node
 
-| **You'll do:** install franky deps → collect GELLO demos → convert rot6d data → run SFT → deploy eval config.
-| **Prerequisites:** :doc:`franka` · :doc:`franka_gello` · two Franka arms · OpenPI assets.
+.. include:: _dual_franka_setup.rst
 
-Tasks
-~~~~~
+For single-workstation RTC deployment, attach both arms, all three cameras, and the GPU to one host.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24 24
-
-   * - Task
-     - Config / entry point
-     - Description
-   * - Collection
-     - ``realworld_collect_data_gello_joint_dual_franka``
-     - Collect dual-arm joint trajectories.
-   * - SFT
-     - ``realworld_sft_openpi_dual_franka_tcp_rot6d``
-     - Fine-tune π₀.₅ on tcp_rot6d actions.
-   * - Deployment
-     - ``realworld_eval_dual_franka``
-     - Run eval-only deployment on the robot nodes.
-
-Observation and Action
-~~~~~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24
-
-   * - Field
-     - Description
-   * - Observation
-     - Wrist/global camera views plus dual-arm robot state.
-   * - Action
-     - Dual-arm tcp_rot6d: ``[L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]``.
-   * - Reward
-     - Evaluation success signal or operator-gated deployment outcome.
-   * - Prompt
-     - Task text in the OpenPI data/config metadata.
-
-Installation
-------------
-
-Robot Nodes
-~~~~~~~~~~~
-
-Run the robot-node installation on both ``node 0`` and ``node 1``. Dual-arm
-Franka always drives the arms through Franky, the backend that the default
-``franka`` environment installs. The installer downloads a prebuilt Franky wheel
-with libfranka bundled; these wheels exist only for libfranka ``0.15.0`` and
-``0.19.0`` (the default) on x86_64. Set ``LIBFRANKA_VERSION`` to the one that the
-official `Franka compatibility
-matrix <https://frankarobotics.github.io/docs/compatibility.html>`_ lists for your
-firmware. For other firmware, build a Franky wheel against the matching libfranka
-and pass its path or URL in ``FRANKY_WHEEL``; the legacy ROS backend covers other
-libfranka versions only for single-arm Franka.
-
-.. code-block:: bash
-
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-   export LIBFRANKA_VERSION=0.19.0       # or 0.15.0, matching the firmware
-   bash requirements/install.sh embodied --env franka --use-mirror
-   source .venv/bin/activate
-
-Install GELLO dependencies on ``node 0`` by following :doc:`franka_gello`.
-The two GELLO leaders must stay local to ``node 0``; do not route their
-1 kHz stream over the LAN.
-
-Real-time prerequisites
-~~~~~~~~~~~~~~~~~~~~~~~
-
-The ``franka`` environment uses franky/libfranka to communicate with each Franka
-at 1 kHz. A PREEMPT_RT kernel is recommended. The RLinf installer installs
-runtime dependencies only; configure the PREEMPT_RT kernel and real-time
-permissions according to the official `Franka real-time kernel guide
-<https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_.
-
-The ``DualFranka`` hardware config defaults to ``realtime_config: ignore``, so
-both arms also start on a kernel without PREEMPT_RT and RLinf logs a warning.
-On such a kernel the 1 kHz control loop can miss deadlines under load and
-trigger a robot reflex. Set ``realtime_config: enforce`` to refuse a kernel
-without PREEMPT_RT.
-
-Run this example on each workstation that directly communicates with a Franka
-before starting Ray. Replace ``<FRANKA_NIC>`` with the dedicated robot NIC and
-``<ROBOT_IP>`` with ``LEFT_ROBOT_IP`` on ``node 0`` or ``RIGHT_ROBOT_IP`` on
-``node 1``.
-
-.. code-block:: bash
-
-   # Per-boot tuning.
-   sudo bash -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-       echo performance > "$g"
-   done'
-   sudo sysctl -w kernel.sched_rt_runtime_us=-1
-   sudo ethtool -C <FRANKA_NIC> rx-usecs 0 tx-usecs 0 2>/dev/null || true
-
-   # Optional: keep the RT scheduling budget setting after reboot.
-   echo 'kernel.sched_rt_runtime_us = -1' | sudo tee /etc/sysctl.d/99-franka-rt.conf
-
-   # Check realtime permissions and the robot link before running RLinf.
-   uname -a | grep -o PREEMPT_RT
-   ulimit -r
-   ulimit -l
-   sudo cyclictest -p 80 -t 4 -i 1000 -l 300000 -m
-   ping -c 1000 -i 0.001 <ROBOT_IP> | tail -3
-
-``ulimit -r`` should report ``99`` or ``unlimited``; ``ulimit -l`` should report
-``unlimited``. Re-apply the per-boot tuning after every workstation reboot.
-
-Training Node
-~~~~~~~~~~~~~
-
-Install OpenPI dependencies on the remote GPU training cluster that will
-perform SFT:
-
-.. code-block:: bash
-
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero --use-mirror
-   source .venv/bin/activate
-
-
-Configuration
+Setup and Run
 -------------
 
-Use the repository-provided configs and replace the required parameters:
+.. include:: _setup_common.rst
+
+.. tab-set::
+
+   .. tab-item:: 1. Install & Check
+
+      **Robot nodes** (``node 0`` and ``node 1``): prebuilt Franky wheels on x86_64 bundle libfranka ``0.15.0`` or ``0.19.0`` (default). Match ``LIBFRANKA_VERSION`` to the `Franka compatibility matrix <https://frankarobotics.github.io/docs/compatibility.html>`_ (or pass a custom wheel in ``FRANKY_WHEEL``). Install GELLO dependencies on ``node 0`` following :doc:`franka_gello`.
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         export LIBFRANKA_VERSION=0.19.0
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+
+      **Training node** (remote GPU server): install OpenPI PyTorch dependencies.
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
+
+      **Hardware checks on** ``node 0`` (before starting Ray): configure foot-pedal permissions (replace ``event12`` with your resolved event device), verify USB-3 camera links (``5000M`` in ``lsusb -t``), and check both GELLO leaders.
+
+      .. code-block:: bash
+
+         # Foot pedal (replace event12 with your resolved device)
+         ls -l /dev/input/by-id/*-event-kbd
+         sudo chmod 666 /dev/input/event12
+         export RLINF_KEYBOARD_DEVICE=/dev/input/event12
+
+         # Cameras (expect RealSense serial, two Lumos paths, and 5000M speed)
+         rs-enumerate-devices | grep -E "Name|Serial|USB Type"
+         ls /dev/v4l/by-id/
+         lsusb -t
+
+         # GELLO leaders (plug one at a time to identify FTDI paths)
+         ls /dev/serial/by-id/ | grep -i ftdi
+         python -m rlinf.robotics.parts.teleop.gello_joint \
+             --port /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0  # replace with your left GELLO device
+
+      Expected GELLO output refreshes continuously as ``joints=[+0.012 -0.604 ...]  gripper=[0.035]``. If values stall or jump by ``2π``, run ``align-sequential`` (see *GELLO calibration* above).
+
+   .. tab-item:: 2. Collect & SFT
+
+      **Start Ray** on both robot nodes from the RLinf repository root with ``.venv`` active (export ``RLINF_NODE_RANK`` and ``RLINF_KEYBOARD_DEVICE`` before ``ray start``):
+
+      .. code-block:: bash
+
+         # node 0 (replace IP and event device for your station)
+         export RLINF_NODE_RANK=0
+         export RLINF_KEYBOARD_DEVICE=/dev/input/event12
+         ray start --head --port=6379 --node-ip-address=192.168.1.10
+
+         # node 1 (replace IPs for your station)
+         export RLINF_NODE_RANK=1
+         ray start --address=192.168.1.10:6379 --node-ip-address=192.168.1.20
+
+      Confirm ``ray status`` on ``node 0`` reports both nodes ``ALIVE``.
+
+      **Collect demonstrations** on ``node 0`` after ``align-sequential`` (see *GELLO calibration* above) passes:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/collect_data.sh \
+             realworld_collect_data_gello_joint_dual_franka 2>&1 | tee logs/collect.log
+
+      Monitor progress in another terminal with ``python -m toolkits.realworld_check.collect_monitor logs/collect.log``. Foot-pedal controls: ``a`` starts recording (press again to abort and drop the buffer), ``b`` increments ``segment_id``, and ``c`` marks success and writes the LeRobot shard. Set ``data_collection.resume: true`` with the same ``data_collection.save_dir`` to append new ``id_*`` shards.
+
+      **Clean, merge, backfill tcp_rot6d, and sync to the training node:**
+
+      .. code-block:: bash
+
+         # Optional: dry-run episode removal and multi-shard merge (drop --dry-run to apply)
+         python -m toolkits.dual_franka.delete_lerobot \
+             --data-dir ./logs/collect_run/lerobot_dataset/rank_0 --delete "id_0:3,5" --dry-run
+         python -m toolkits.dual_franka.merge_lerobot \
+             --rank-dir ./logs/collect_run/lerobot_dataset --out-dir ./logs/collect_run/lerobot_dataset \
+             --log-file ./logs/collect.log --dry-run
+
+         # Backfill joint data to tcp_rot6d and sync to training node
+         export HF_LEROBOT_HOME="$HOME/lerobot_data"     # replace with your LeRobot data root
+         export DATA_REPO_ID="my_org/dual_franka_demo"   # replace with your dataset repo ID
+         export SFT_REPO_ID="$DATA_REPO_ID/tcp_rot6d_v1"
+         export TRAINER_IP="192.168.1.50"                # replace with your training node IP
+
+         python -m toolkits.dual_franka.backfill_tcp_rot6d \
+             --src "$HF_LEROBOT_HOME/$DATA_REPO_ID/joint_v1" \
+             --dst "$HF_LEROBOT_HOME/$SFT_REPO_ID"
+
+         ssh "$TRAINER_IP" "mkdir -p $HF_LEROBOT_HOME/$SFT_REPO_ID"
+         rsync -av "$HF_LEROBOT_HOME/$SFT_REPO_ID/" \
+             "$TRAINER_IP:$HF_LEROBOT_HOME/$SFT_REPO_ID/"
+
+      **Run OpenPI PyTorch SFT** on the training node from the RLinf repository root with ``.venv`` active (first convert the base ``openpi-jax`` checkpoint as shown in :doc:`sft_openpi`, and update ``train_data_paths``, ``model_path``, and ``openpi_data.norm_stats_path`` in ``examples/sft/config/realworld_sft_openpi_dual_franka_tcp_rot6d.yaml``):
+
+      .. code-block:: bash
+
+         export HF_LEROBOT_HOME="$HOME/lerobot_data"            # replace with your LeRobot data root
+         export SFT_REPO_ID="my_org/dual_franka_demo/tcp_rot6d_v1"
+
+         python -m toolkits.lerobot.calculate_norm_stats \
+             --config-name pi05_dualfranka_tcp_rot6d \
+             --repo-id "$SFT_REPO_ID"
+
+         bash examples/sft/run_vla_sft.sh realworld_sft_openpi_dual_franka_tcp_rot6d
+
+      Checkpoints are saved under ``<log_path>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``.
+
+   .. tab-item:: 3. Deploy & Evaluate
+
+      **Convert the SFT checkpoint to deployment format** before syncing to ``node 0``:
+
+      .. code-block:: bash
+
+         python -m rlinf.utils.ckpt_convertor.openpi.convert \
+             --mode sft2deploy \
+             --ckpt ./logs/sft_run/checkpoints/global_step_10000 \
+             --output "$HOME/deploy/global_step_10000" \
+             --reference-model "$HOME/models/pi05_base_openpi" \
+             --dtype-reference "$HOME/models/deploy_ref/full_weights.pt"  # replace paths for your setup
+
+      **Sync the deployment weights and matching normalization stats** to ``node 0`` so ``$DEPLOY_CKPT`` contains both ``actor/model_state_dict/full_weights.pt`` and ``<repo_id>/tcp_rot6d_v1/norm_stats.json``:
+
+      .. code-block:: bash
+
+         export TRAINER_IP="192.168.1.50"                       # replace with your training node IP
+         export TRAINER_DEPLOY_CKPT="$HOME/deploy/global_step_10000"  # --output dir from sft2deploy on trainer
+         export TRAIN_LOG="./logs/sft_run"                      # replace with your SFT log dir on trainer
+         export DEPLOY_CKPT="$HOME/deploy/global_step_10000"    # replace with your target step/dir on node 0
+         export SFT_REPO_ID="my_org/dual_franka_demo/tcp_rot6d_v1"
+
+         mkdir -p "$DEPLOY_CKPT/actor/model_state_dict" "$DEPLOY_CKPT/$SFT_REPO_ID"
+
+         rsync -av \
+             "$TRAINER_IP:$TRAINER_DEPLOY_CKPT/actor/model_state_dict/full_weights.pt" \
+             "$DEPLOY_CKPT/actor/model_state_dict/full_weights.pt"
+         rsync -av \
+             "$TRAINER_IP:$TRAIN_LOG/checkpoints/global_step_10000/$SFT_REPO_ID/norm_stats.json" \
+             "$DEPLOY_CKPT/$SFT_REPO_ID/norm_stats.json"
+
+      Set ``rollout.model.model_path`` to ``$DEPLOY_CKPT`` and ``actor.model.openpi_data.repo_id`` to ``<repo_id>/tcp_rot6d_v1`` in ``examples/embodiment/config/realworld_eval_dual_franka.yaml``.
+
+      **Launch evaluation** on ``node 0`` (see the :doc:`real-world evaluation guide <../../evaluations/guides/realworld>` for options). Use ``realworld_eval_dual_franka`` for two-node deployment, or ``realworld_dual_franka_pi05_RTC`` when the GPU and both arms share one workstation with overlapped inference:
+
+      .. code-block:: bash
+
+         # Two-node deployment
+         bash evaluations/run_eval.sh realworld_eval_dual_franka
+
+         # Single-workstation RTC deployment
+         bash evaluations/run_eval.sh realworld_dual_franka_pi05_RTC
+
+      After homing, press ``a`` on the keyboard or foot pedal to start policy execution (``b`` marks failure and resets; ``c`` marks success and resets).
+
+.. dropdown:: Config files, norm stats, and checkpoint conversion notes
+
+   Edit the repository-provided configs and replace every field marked with ``# Replace:``:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 52 48
+
+      * - Config
+        - Purpose
+      * - ``examples/embodiment/config/realworld_collect_data_gello_joint_dual_franka.yaml``
+        - GELLO joint-space collection
+      * - ``examples/sft/config/realworld_sft_openpi_dual_franka_tcp_rot6d.yaml``
+        - OpenPI PyTorch π₀.₅ SFT on ``tcp_rot6d`` data
+      * - ``examples/embodiment/config/realworld_eval_dual_franka.yaml``
+        - Two-node real-world deployment
+      * - ``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``
+        - Single-workstation RTC deployment
+      * - ``examples/embodiment/config/env/realworld_dual_franka_joint.yaml``
+        - Shared joint-space hardware defaults
+      * - ``examples/embodiment/config/env/realworld_dual_franka_tcp_rot6d.yaml``
+        - Shared ``tcp_rot6d`` hardware defaults
+
+   Key fields to verify:
+
+   * ``LEFT_ROBOT_IP`` / ``RIGHT_ROBOT_IP``: FCI IPs visible from each controller node.
+   * ``BASE_CAMERA_SERIAL``, ``LEFT_CAMERA_SERIAL``, ``RIGHT_CAMERA_SERIAL``: RealSense serial and stable ``/dev/v4l/by-id`` paths.
+   * ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION`` and ``LEFT_GELLO_PORT`` / ``RIGHT_GELLO_PORT``: stable ``/dev/serial/by-id`` paths.
+   * ``TASK_DESCRIPTION``: natural-language task prompt shared across collection, SFT, and deployment.
+   * ``openpi_data.norm_stats_path``: path to the ``norm_stats.json`` written by ``calculate_norm_stats.py`` (typically ``./assets/pi05_dualfranka_tcp_rot6d/<repo_id>/norm_stats.json``); omit this key to use the OpenPI TrainConfig default under ``model_path``.
+   * Base ``openpi-jax`` conversion follows :doc:`sft_openpi`; to convert RLinf SFT ``full_weights.pt`` checkpoints to OpenPI safetensors layout, see :doc:`../../guides/convertor` or inspect the CLI flags:
+
+   .. code-block:: bash
+
+      python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft_to_openpi --help
+
+Results and Troubleshooting
+---------------------------
+
+Monitor SFT loss and learning rate on the training node with ``tensorboard --logdir ./logs`` and track live collection on ``node 0`` with ``python -m toolkits.realworld_check.collect_monitor logs/collect.log``.
 
 .. list-table::
    :header-rows: 1
-   :widths: 42 58
-
-   * - Config
-     - Purpose
-   * - ``examples/embodiment/config/realworld_collect_data_gello_joint_dual_franka.yaml``
-     - GELLO joint-space collection
-   * - ``examples/sft/config/realworld_sft_openpi_dual_franka_tcp_rot6d.yaml``
-     - π₀.₅ SFT on converted tcp_rot6d data
-   * - ``examples/embodiment/config/realworld_eval_dual_franka.yaml``
-     - Real-world policy deployment
-   * - ``examples/embodiment/config/env/realworld_dual_franka_joint.yaml``
-     - Shared joint-space hardware defaults
-   * - ``examples/embodiment/config/env/realworld_dual_franka_tcp_rot6d.yaml``
-     - Shared tcp_rot6d hardware defaults
-
-Replace the placeholders marked with ``# Replace:``:
-
-* ``LEFT_ROBOT_IP`` / ``RIGHT_ROBOT_IP``: FCI IP visible from each
-  controller node.
-* ``BASE_CAMERA_SERIAL``, ``LEFT_CAMERA_SERIAL``, ``RIGHT_CAMERA_SERIAL``:
-  camera serials or stable ``/dev/v4l/by-id`` paths.
-* ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``: stable
-  ``/dev/serial/by-id`` paths for the Robotiq adapters.
-* ``LEFT_GELLO_PORT`` / ``RIGHT_GELLO_PORT``: stable ``/dev/serial/by-id``
-  paths for the two GELLO leaders.
-* ``TASK_DESCRIPTION``: the natural-language task prompt used for
-  collection, SFT, and deployment.
-* ``SFT_DATASET_REPO_ID``: the converted dataset ID, usually
-  ``<repo_id>/tcp_rot6d_v1``.
-* ``MODEL_PATH``: deployment checkpoint directory on ``node 0``.
-* The shared ``realworld_dual_franka_tcp_rot6d`` TCP xyz limits are
-  x in [0.3, 0.9], y in [-0.4, 0.4], and z in [0.02, 0.7].
-  ``target_ee_pose`` must sit inside that box.
-
-
-Hardware Checks
----------------
-
-Run these checks before starting Ray.
-
-Foot pedal
-~~~~~~~~~~
-
-Use the vendor tool once to configure the PCsensor FootSwitch keys as
-``a`` / ``b`` / ``c``. Then on ``node 0``:
-
-.. code-block:: bash
-
-   ls -l /dev/input/by-id/*-event-kbd
-   sudo chmod 666 /dev/input/eventXX
-   export RLINF_KEYBOARD_DEVICE=/dev/input/eventXX
-
-.. note::
-
-   Replace every ``eventXX`` with the actual ``eventNN`` resolved by the
-   first command, for example ``event7``. Export
-   ``RLINF_KEYBOARD_DEVICE`` before ``ray start``.
-
-Cameras
-~~~~~~~
-
-.. code-block:: bash
-
-   rs-enumerate-devices | grep -E "Name|Serial|USB Type"
-   ls /dev/v4l/by-id/
-   lsusb -t
-
-Expected output should identify the RealSense serial, two Lumos devices,
-and USB-3 speed such as ``5000M``. ``480M`` means the device fell back to
-USB 2.
-
-GELLO leaders
-~~~~~~~~~~~~~
-
-Identify the two FTDI paths by plugging one leader at a time:
-
-.. code-block:: bash
-
-   ls /dev/serial/by-id/ | grep -i ftdi
-
-Verify each leader streams smooth joint values:
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-   export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   python -m rlinf.robotics.parts.teleop.gello_joint \
-       --port /dev/serial/by-id/usb-FTDI_..._<LEFT_ID>-if00-port0
-
-The command continuously refreshes output, for example:
-
-.. code-block:: text
-
-   joints=[+0.012 -0.604 +0.031 -2.184 +0.019 +1.571 +0.781]  gripper=[0.035]
-
-If values stop updating or jump by about ``2π``, run the calibration below.
-
-GELLO calibration
-~~~~~~~~~~~~~~~~~
-
-.. _dual-franka-gello-calibration:
-
-Calibrate each GELLO once, then verify it with ``align-sequential``.
-Both leaders can be calibrated against the left arm on ``node 0``.
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-   export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   export GELLO_PORT=/dev/serial/by-id/usb-FTDI_..._<ID>-if00-port0
-
-   python toolkits/realworld_check/test_gello.py calibrate
-   python toolkits/realworld_check/test_gello.py align-sequential
-
-On success, ``align-sequential`` prints:
-
-.. code-block:: text
-
-   ALL JOINTS ALIGNED
-     per-joint Δ (rad): ['+0.012', '-0.008', '+0.005', '+0.021', '-0.041', '+0.009', '-0.003']
-     max |Δ| = 0.041 rad on J5 (stream gate threshold = 0.5 rad — well under)
-   You can now Ctrl-C and start collect_data.sh.
-
-Run the same two commands for the second leader by changing
-``GELLO_PORT``.
-
-
-Run It
-------
-
-Start Ray
-~~~~~~~~~
-
-Ray captures environment variables at ``ray start`` time. Export the rank
-and keyboard device before starting the cluster.
-
-.. code-block:: bash
-
-   # node 0
-   cd /path/to/RLinf
-   source .venv/bin/activate
-   export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   export RLINF_NODE_RANK=0
-   export RLINF_KEYBOARD_DEVICE=/dev/input/eventXX
-
-   ray stop --force
-   ray start --head --port=6379 --node-ip-address=<HEAD_IP>
-
-.. code-block:: bash
-
-   # node 1
-   cd /path/to/RLinf
-   source .venv/bin/activate
-   export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   export RLINF_NODE_RANK=1
-
-   ray stop --force
-   ray start --address=<HEAD_IP>:6379 --node-ip-address=<WORKER_IP>
-
-On ``node 0``, run ``ray status`` and confirm that both nodes are ALIVE.
-
-Collect demonstrations
-~~~~~~~~~~~~~~~~~~~~~~
-
-Start collection on ``node 0`` after
-:ref:`align-sequential <dual-franka-gello-calibration>` reports
-``ALL JOINTS ALIGNED``:
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-   export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   bash examples/embodiment/collect_data.sh \
-       realworld_collect_data_gello_joint_dual_franka 2>&1 | tee logs/collect.log
-
-In another ``node 0`` terminal, monitor progress:
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-   python toolkits/realworld_check/collect_monitor.py logs/collect.log
-
-Foot-pedal controls:
-
-* ``a``: start recording; press again while recording to abort and drop the
-  current buffer.
-* ``b``: increment ``segment_id`` for sub-task boundaries.
-* ``c``: mark success, write the LeRobot shard, and finish the episode.
-
-Set ``data_collection.resume: true`` and keep the same
-``data_collection.save_dir`` to append new ``id_*`` shards to an existing
-dataset.
-
-Process the dataset
-~~~~~~~~~~~~~~~~~~~
-
-Collected datasets may contain multiple ``id_*`` shards or unwanted samples.
-Before SFT, clean the data and merge the retained shards into a single ID.
-Use ``toolkits/dual_franka/delete_lerobot.py`` to delete selected episodes from
-one or more IDs, and use ``toolkits/dual_franka/merge_lerobot.py`` to merge
-multiple IDs. Usage details are documented in the scripts.
-
-.. code-block:: bash
-
-   python toolkits/dual_franka/delete_lerobot.py \
-       --data-dir /path/to/dataset/rank_0 \
-       --delete "id_0:3,5" \
-       --dry-run
-
-   python toolkits/dual_franka/merge_lerobot.py \
-       --rank-dir /path/to/dataset \
-       --out-dir /path/to/dataset \
-       --log-file /path/to/log \
-       --dry-run
-
-Backfill tcp_rot6d
-~~~~~~~~~~~~~~~~~~
-
-Collection writes joint-space data. Convert it before SFT:
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-   export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   export HF_LEROBOT_HOME=/path/to/lerobot_root
-   export DATA_REPO_ID=<repo_id>
-   export SFT_REPO_ID=$DATA_REPO_ID/tcp_rot6d_v1
-
-   python toolkits/dual_franka/backfill_tcp_rot6d.py \
-       --src $HF_LEROBOT_HOME/$DATA_REPO_ID/joint_v1 \
-       --dst $HF_LEROBOT_HOME/$SFT_REPO_ID
-
-Run SFT
-~~~~~~~
-
-Synchronize the converted dataset to the training node, then run SFT there:
-
-.. code-block:: bash
-
-   export TRAINER_IP=<trainer_ip>
-   export HF_LEROBOT_HOME=/path/to/lerobot_root
-   export SFT_REPO_ID=<repo_id>/tcp_rot6d_v1
-
-   ssh $TRAINER_IP "mkdir -p $HF_LEROBOT_HOME/$SFT_REPO_ID"
-   rsync -av $HF_LEROBOT_HOME/$SFT_REPO_ID/ \
-       $TRAINER_IP:$HF_LEROBOT_HOME/$SFT_REPO_ID/
-
-On the training node:
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-   source .venv/bin/activate
-   export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   export HF_LEROBOT_HOME=/path/to/lerobot_root
-   export SFT_REPO_ID=<repo_id>/tcp_rot6d_v1
-
-   python toolkits/lerobot/calculate_norm_stats.py \
-       --config-name pi05_dualfranka_tcp_rot6d \
-       --repo-id $SFT_REPO_ID
-
-   bash examples/sft/run_vla_sft.sh realworld_sft_openpi_dual_franka_tcp_rot6d
-
-Update ``train_data_paths``, ``model_path``,
-``openpi_data.norm_stats_path``, logger settings, and cluster placement in
-``examples/sft/config/realworld_sft_openpi_dual_franka_tcp_rot6d.yaml``.
-Checkpoints are saved under
-``<log_path>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``.
-
-``openpi_data.norm_stats_path`` is the ``norm_stats.json`` produced by
-``calculate_norm_stats.py`` (typically
-``./assets/pi05_dualfranka_tcp_rot6d/<repo_id>/norm_stats.json``). Omit the
-key to use the OpenPI TrainConfig default under ``model_path``. ``model_path``
-is the model path selected for training. The model used in this
-guide must first be converted from the ``openpi-jax`` format. See
-:doc:`sft_openpi` for details. The conversion utility is located at:
-
-.. code-block:: text
-
-   rlinf/utils/ckpt_convertor/openpi/pt_to_safetensors.py
-
-Before deployment, convert the checkpoint produced by SFT into the deployment
-checkpoint format:
-
-.. code-block:: bash
-
-   python -m rlinf.utils.ckpt_convertor.openpi.convert \
-     --mode sft2deploy \
-     --ckpt INPUT \
-     --output OUTPUT \
-     --reference-model OLD_MODEL \
-     --dtype-reference DEPLOY_FULL_WEIGHTS_PT
-
-
-Evaluation and Deployment
--------------------------
-
-Prepare checkpoint files
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-The deployment checkpoint directory on ``node 0`` must contain:
-
-.. code-block:: text
-
-   <model_path>/
-   ├── actor/model_state_dict/full_weights.pt
-   └── <repo_id>/tcp_rot6d_v1/norm_stats.json
-
-Synchronize the SFT checkpoint and matching normalization stats back to ``node 0``:
-
-.. code-block:: bash
-
-   export TRAINER_IP=<trainer_ip>
-   export DEPLOY_CKPT=/path/to/deploy/global_step_<N>
-   export SFT_REPO_ID=<repo_id>/tcp_rot6d_v1
-
-   mkdir -p $DEPLOY_CKPT/actor/model_state_dict
-   mkdir -p $DEPLOY_CKPT/$SFT_REPO_ID
-
-   rsync -av \
-       $TRAINER_IP:<train_log>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt \
-       $DEPLOY_CKPT/actor/model_state_dict/full_weights.pt
-   rsync -av $TRAINER_IP:<train_log>/checkpoints/global_step_<N>/$SFT_REPO_ID/norm_stats.json \
-       $DEPLOY_CKPT/$SFT_REPO_ID/norm_stats.json
-
-Set ``rollout.model.model_path`` to ``$DEPLOY_CKPT`` and
-``actor.model.openpi_data.repo_id`` to ``<repo_id>/tcp_rot6d_v1`` in
-``examples/embodiment/config/realworld_eval_dual_franka.yaml``.
-
-Launch deployment
-~~~~~~~~~~~~~~~~~
-
-Reuse the Ray cluster from collection, or restart it with the same environment
-variables. Launch the policy through the :doc:`real-world evaluation guide
-<../../evaluations/guides/realworld>`. Two-node deployment uses
-``realworld_eval_dual_franka``. When the GPU and both arms share one machine
-and execution should overlap inference, use ``realworld_dual_franka_pi05_RTC``.
-After homing, press ``a`` on the keyboard or pedal to start the policy.
-
-Deployment pedal controls:
-
-* ``a``: start policy execution from idle.
-* ``b``: mark failure and reset.
-* ``c``: mark success and reset.
-
-After each reset, the wrapper waits for ``a`` again to allow scene reset before
-the next episode.
-
-
-Troubleshooting
----------------
-
-**Ray worker import failure**
-   In the same shell that ran ``ray start``, check
-   ``which python`` and
-   ``python -c "import franky, gello, gello_teleop"``. Worker logs are under
-   ``/tmp/ray/session_latest/logs/worker-*.err``.
-
-**Foot pedal permission denied**
-   Re-run ``sudo chmod 666 /dev/input/eventXX`` and confirm
-   ``RLINF_KEYBOARD_DEVICE`` points to the same device.
-
-**RealSense appears as USB 2**
-   Replace the cable or port. ``lsusb -t`` should show ``5000M`` instead of
-   ``480M``.
-
-**GELLO stops streaming**
-   Power-cycle the leader, replug the FTDI adapter, and verify it with
-   ``python -m rlinf.robotics.parts.teleop.gello_joint --port ...``.
-
-**One arm does not respond during reset**
-   On that controller node, run ``ping -c 100 <robot_ip>``. If packets drop,
-   fix the NIC/FCI connection or power-cycle the robot.
-
-**Deployment cannot locate ``norm_stats.json``**
-   Check that the file is exactly at
-   ``<model_path>/<actor.model.openpi_data.repo_id>/norm_stats.json``.
-
-**Deployment remains idle**
-   Confirm the pedal path and permission, then press ``a``. The eval wrapper
-   waits in idle between episodes by design.
+   :widths: 34 66
+
+   * - Symptom
+     - Fix
+   * - Ray worker import failure
+     - In the shell that ran ``ray start``, check ``which python`` and ``python -c "import franky, gello, gello_teleop"``. Inspect ``/tmp/ray/session_latest/logs/worker-*.err``.
+   * - Foot pedal permission denied
+     - Re-run ``sudo chmod 666 /dev/input/eventXX`` and confirm ``RLINF_KEYBOARD_DEVICE`` points to that exact device before ``ray start``.
+   * - RealSense shows USB 2 speed
+     - Replace the USB cable or port so ``lsusb -t`` reports ``5000M`` instead of ``480M``.
+   * - GELLO stops streaming or jumps by ``2π``
+     - Power-cycle the leader, replug the FTDI adapter, verify with ``gello_joint --port ...``, and re-run ``align-sequential`` (see *GELLO calibration* above).
+   * - One arm stalls during reset
+     - Run ``ping -c 100 <robot_ip>`` on that controller node; fix any NIC/FCI packet loss or power-cycle the robot.
+   * - Deployment cannot locate ``norm_stats.json``
+     - Confirm the file exists at ``<model_path>/<actor.model.openpi_data.repo_id>/norm_stats.json``.
+   * - Deployment stays idle after launch
+     - Verify foot-pedal permissions and press ``a``; the eval wrapper waits in idle between episodes by design.

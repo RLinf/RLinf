@@ -129,6 +129,7 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
     def run(self):
         start_step = self.global_step
         start_time = time.time()
+        self.rollout.set_global_step(self.global_step).wait()
         self.env.set_global_step(self.global_step).wait()
         # Rollout must start from the actor's exact initial/resumed weights, so
         # this first sync always blocks even when overlap is enabled.
