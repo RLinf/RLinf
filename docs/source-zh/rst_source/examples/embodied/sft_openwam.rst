@@ -115,6 +115,62 @@ OpenWAM 监督微调
 
 对应指标为 ``train/loss``\、\ ``train/loss_video`` 和 ``train/loss_action``\。比较微调前后的 LIBERO 成功率时，保持任务、初始状态和评估配置一致。
 
+以下实验在 8 张 A800 80 GB 上微调已发布的 LIBERO checkpoint，训练 1,000 步，全局 batch 为 8，学习率为 1e-6。前 100 步 warmup，余下步数按余弦调度衰减。训练耗时 49.9 分钟，第 1,000 步模型已成功导出，并通过 GPU 加载验证。
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/3a760f24bdc20480a8feba57ecb659ae4111648f/pic/openwam/libero-sft-1000-loss.png
+   :align: center
+   :width: 100%
+
+   总 loss、视频 loss 和动作 loss 的训练曲线。浅色线为原始数值，橙色线为 50 步滑动平均。日志步数 0–999 对应 1,000 次优化器更新。
+
+.. list-table:: 训练 Loss 均值
+   :header-rows: 1
+
+   * - Loss
+     - 前 100 步
+     - 后 100 步
+   * - 总 loss
+     - 0.137325
+     - 0.063728
+   * - 视频 loss
+     - 0.062742
+     - 0.049344
+   * - 动作 loss
+     - 0.074584
+     - 0.014385
+
+下表为\ **子集评估**\：每个套件、每个 checkpoint 运行 100 个 episode。每个 checkpoint 都评估 10 个任务中各任务编号 0–9 的初始状态；两组使用相同组合，每组内部无重复，总计 800 个 episode。评估采用种子 0，每次 reset 后执行 30 个稳定步，每次预测执行 10 个动作；回合预算为 600 步，Long 为 700 步。
+
+.. list-table:: LIBERO 成功率
+   :header-rows: 1
+
+   * - 套件
+     - 已发布模型
+     - 导出的第 1,000 步模型
+   * - Spatial
+     - 99/100（99%）
+     - 100/100（100%）
+   * - Object
+     - 100/100（100%）
+     - 99/100（99%）
+   * - Goal
+     - 100/100（100%）
+     - 95/100（95%）
+   * - Long
+     - 98/100（98%）
+     - 98/100（98%）
+   * - 四套件合计
+     - 397/400（99.25%）
+     - 392/400（98.00%）
+
+训练 loss 下降，但本次评估的成功率下降了 1.25 个百分点。结果验证了训练、导出和评估流程，未显示基准性能提升。实验没有单独的验证集，训练时长为 1,000 步，不能代表默认 30,000 步训练或每套件 500 个初始状态的完整评估结果。
+
+.. dropdown:: 复现本次结果
+
+   在训练命令后追加 ``runner.max_steps=1000``\、\ ``actor.optim.total_training_steps=1000`` 和 ``actor.optim.lr_warmup_steps=100``\，按前文导出第 1,000 步模型。使用 :ref:`OpenWAM 完整覆盖配置 <openwam-libero-full-coverage>` 评估时，将 Spatial、Object、Goal 的 rollout 预算改为 15,000 步，Long 改为 17,500 步，即可覆盖相同的 100 个初始状态组合。
+
+   实验版本为 RLinf ``0a671691``\、OpenWAM ``a8992b613``\、模型 ``110b07e4`` 和数据集 ``bcb2eaf1``\。运行环境为 Python 3.11.14、PyTorch 2.11.0+cu128，未安装 flash-attn。原始 loss、逐回合结果和完整版本号见 `实验记录 <https://github.com/RLinf/misc/tree/3a760f24bdc20480a8feba57ecb659ae4111648f/pic/openwam>`_\。
+
 .. dropdown:: 验证与断点恢复
 
    将单独留出的演示数据作为验证集，设置 ``data.val_data_paths`` 和 ``runner.val_check_interval``\，并沿用训练的归一化统计量。验证集的划分名为 ``train`` 时，设置 ``data.openwam_val_split: train``\。
