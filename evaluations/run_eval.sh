@@ -145,13 +145,19 @@ if [ "$1" = "mani-ood" ]; then
     exit 0
 fi
 
+# Keep existing commands that pass the previous preset names explicitly.
+if [[ $1 == behavior && ( ${2:-} == behavior_openpi_pi05_eval || ${2:-} == behavior2026_openpi_pi05_eval ) ]]; then
+    shift
+fi
 # Year shortcuts use the OpenPI preset and forward all Hydra overrides.
 case "$1" in
+    behavior_openpi_pi05_eval) shift; set -- behavior behavior_openpi_pi05_eval_2025 "$@" ;;
+    behavior2026_openpi_pi05_eval) shift; set -- behavior behavior_openpi_pi05_eval_2026 "$@" ;;
     behavior|behavior2025)
         if [[ "$1" == behavior2025 || $# == 1 || "$2" == -* || "$2" == *=* || "$2" == '~'* ]]; then
-            shift; set -- behavior behavior_openpi_pi05_eval "$@"
+            shift; set -- behavior behavior_openpi_pi05_eval_2025 "$@"
         fi ;;
-    behavior2026) shift; set -- behavior behavior2026_openpi_pi05_eval "$@" ;;
+    behavior2026) shift; set -- behavior behavior_openpi_pi05_eval_2026 "$@" ;;
 esac
 
 if [ $# -ge 2 ] && [ -f "${EVALUATIONS_PATH}/$1/$2.yaml" ]; then

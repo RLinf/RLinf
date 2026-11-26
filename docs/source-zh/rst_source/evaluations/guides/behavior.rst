@@ -65,7 +65,7 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
 
       .. code-block:: bash
 
-         bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+         bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval_2025 \
            rollout.model.model_path=./RLinf-Pi0-Behavior
 
    .. tab-item:: 2026 · OpenPI π₀.₅
@@ -112,10 +112,10 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
       * - 配置文件
         - 环境预设
         - 模型
-      * - ``behavior_openpi_pi05_eval.yaml``
+      * - ``behavior_openpi_pi05_eval_2025.yaml``
         - ``behavior_r1pro``
         - π₀.₅（``openpi``）
-      * - ``behavior2026_openpi_pi05_eval.yaml``
+      * - ``behavior_openpi_pi05_eval_2026.yaml``
         - ``behavior_r1pro``
         - π₀.₅（``openpi``）
 
@@ -142,9 +142,9 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
       * - 字段
         - 说明
       * - ``total_num_envs``
-        - 全局并行环境数。单个环境约占 **10 GiB** 显存，``behavior_openpi_pi05_eval.yaml`` 默认为 ``4``。
+        - 全局并行环境数。单个环境约占 **10 GiB** 显存，``behavior_openpi_pi05_eval_2025.yaml`` 默认为 ``4``。
       * - ``rollout_epoch``
-        - 评测轮次，多轮指标取平均；``behavior_openpi_pi05_eval.yaml`` 默认为 ``4``。
+        - 评测轮次，多轮指标取平均；``behavior_openpi_pi05_eval_2025.yaml`` 默认为 ``4``。
       * - ``max_episode_steps``
         - 单条轨迹步数上限（2025 版 π₀.₅ 示例为 ``4096``，预设默认 ``2000`` 对长程任务偏短）。2026 版留空时使用所选任务的官方步数上限。
       * - ``max_steps_per_rollout_epoch``
@@ -183,11 +183,11 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
 
    .. code-block:: bash
 
-      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval_2025 \
         rollout.model.model_path=./RLinf-Pi0-Behavior \
         env.eval.omni_config.task.activity_name=picking_up_trash
 
-      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval_2025 \
         rollout.model.model_path=./RLinf-Pi0-Behavior \
         env.eval.total_num_envs=4 \
         env.eval.num_env_subprocess=2

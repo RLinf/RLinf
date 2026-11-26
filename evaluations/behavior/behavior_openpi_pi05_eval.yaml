@@ -1,7 +1,0 @@
-defaults:
-  - behavior_openpi_pi05_base
-  - _self_
-
-hydra:
-  searchpath:
-    - file://${oc.env:EMBODIED_PATH}/config/

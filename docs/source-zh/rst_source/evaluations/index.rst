@@ -50,7 +50,7 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
      - :doc:`ManiSkill <../examples/embodied/maniskill>`
    * - :doc:`BEHAVIOR-1K <guides/behavior>`
      - ``behavior_r1pro``\ （50 个家居任务）
-     - ``behavior/behavior_openpi_pi05_eval.yaml``
+     - ``behavior/behavior_openpi_pi05_eval_2025.yaml``
      - :doc:`BEHAVIOR-1K <../examples/embodied/behavior>`
    * - :doc:`RoboTwin <guides/robotwin>`
      - ``robotwin_place_empty_cup``、``robotwin_adjust_bottle``、``robotwin_place_shoe``、``robotwin_click_bell``

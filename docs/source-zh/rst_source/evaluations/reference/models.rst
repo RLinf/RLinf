@@ -12,7 +12,7 @@
      - 示例配置
    * - π₀ / π₀.₅（OpenPI）
      - ``openpi``
-     - ``libero_spatial_openpi_pi05_eval``、``libero_10_apxinf_pi05_eval``\ （ApxInf）、``behavior_openpi_pi05_eval``、``robolab_pi05_droid_jointpos``、``robotwin_adjust_bottle_openpi_eval``、``realworld_pnp_eval`` 等
+     - ``libero_spatial_openpi_pi05_eval``、``libero_10_apxinf_pi05_eval``\ （ApxInf）、``behavior_openpi_pi05_eval_2025``、``robolab_pi05_droid_jointpos``、``robotwin_adjust_bottle_openpi_eval``、``realworld_pnp_eval`` 等
    * - OpenVLA-OFT
      - ``openvla_oft``
      - ``libero_10_openvlaoft_eval``、``robotwin_place_empty_cup_openvlaoft_eval``、``maniskill_ood_openvlaoft_eval`` 等

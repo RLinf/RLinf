@@ -17,7 +17,7 @@ CLI 参考
    source .venv/bin/activate
    bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval
    bash evaluations/run_eval.sh robotwin robotwin_place_empty_cup_openvlaoft_eval
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval_2025
    bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos
    bash evaluations/run_eval.sh simple simple_psi0_eval
 

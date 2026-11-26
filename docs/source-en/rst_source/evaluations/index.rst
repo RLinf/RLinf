@@ -50,7 +50,7 @@ The matrix below covers benchmarks with ready-to-run configs under ``evaluations
      - :doc:`ManiSkill <../examples/embodied/maniskill>`
    * - :doc:`BEHAVIOR-1K <guides/behavior>`
      - ``behavior_r1pro`` (50 household tasks)
-     - ``behavior/behavior_openpi_pi05_eval.yaml``
+     - ``behavior/behavior_openpi_pi05_eval_2025.yaml``
      - :doc:`BEHAVIOR-1K <../examples/embodied/behavior>`
    * - :doc:`RoboTwin <guides/robotwin>`
      - ``robotwin_place_empty_cup``, ``robotwin_adjust_bottle``, ``robotwin_place_shoe``, ``robotwin_click_bell``

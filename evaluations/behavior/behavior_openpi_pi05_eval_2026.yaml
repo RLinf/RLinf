@@ -8,6 +8,8 @@ hydra:
   run:
     dir: .
   output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
   num_nodes: 1
@@ -19,7 +21,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "behavior_openpi_pi05_eval"
+    experiment_name: "behavior2026_openpi_pi05_eval"
     logger_backends: ["tensorboard"]
 
   only_eval: True
@@ -37,10 +39,12 @@ env:
   group_name: "EnvGroup"
 
   eval:
+    env_type: behavior2026
+    is_eval: true
     rollout_epoch: 4
     total_num_envs: 4
-    max_episode_steps: 4096
-    max_steps_per_rollout_epoch: 4096
+    max_episode_steps: null  # Use the official step limit for the selected task.
+    max_steps_per_rollout_epoch: null  # Round the task limit up to a full action chunk.
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
@@ -62,7 +66,7 @@ rollout:
     max_new_tokens: null
 
   model:
-    model_path: /path/to/pi05_sft_pytorch_new
+    model_path: /path/to/RLinf-Pi05-BEHAVIOR-1K-PT50-CS32
     add_value_head: False
     action_dim: 23
     num_action_chunks: 32

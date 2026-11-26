@@ -65,7 +65,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       .. code-block:: bash
 
-         bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+         bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval_2025 \
            rollout.model.model_path=./RLinf-Pi0-Behavior
 
    .. tab-item:: 2026 · OpenPI π₀.₅
@@ -112,10 +112,10 @@ Convert third-party OpenPI checkpoints (such as OpenPI-Comet) to PyTorch format 
       * - Config file
         - Env preset
         - Model
-      * - ``behavior_openpi_pi05_eval.yaml``
+      * - ``behavior_openpi_pi05_eval_2025.yaml``
         - ``behavior_r1pro``
         - π₀.₅ (``openpi``)
-      * - ``behavior2026_openpi_pi05_eval.yaml``
+      * - ``behavior_openpi_pi05_eval_2026.yaml``
         - ``behavior_r1pro``
         - π₀.₅ (``openpi``)
 
@@ -142,9 +142,9 @@ Convert third-party OpenPI checkpoints (such as OpenPI-Comet) to PyTorch format 
       * - Field
         - Guidance
       * - ``total_num_envs``
-        - Global parallel envs. Each env uses ~**10 GiB** GPU memory; ``behavior_openpi_pi05_eval.yaml`` defaults to ``4``.
+        - Global parallel envs. Each env uses ~**10 GiB** GPU memory; ``behavior_openpi_pi05_eval_2025.yaml`` defaults to ``4``.
       * - ``rollout_epoch``
-        - Eval rounds averaged into final metrics; ``behavior_openpi_pi05_eval.yaml`` defaults to ``4``.
+        - Eval rounds averaged into final metrics; ``behavior_openpi_pi05_eval_2025.yaml`` defaults to ``4``.
       * - ``max_episode_steps``
         - Max steps per trajectory (``4096`` in the 2025 π₀.₅ example; preset default ``2000`` can truncate long tasks). Leave this unset in 2026 to use the official limit for the selected task.
       * - ``max_steps_per_rollout_epoch``
@@ -183,11 +183,11 @@ Convert third-party OpenPI checkpoints (such as OpenPI-Comet) to PyTorch format 
 
    .. code-block:: bash
 
-      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval_2025 \
         rollout.model.model_path=./RLinf-Pi0-Behavior \
         env.eval.omni_config.task.activity_name=picking_up_trash
 
-      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval_2025 \
         rollout.model.model_path=./RLinf-Pi0-Behavior \
         env.eval.total_num_envs=4 \
         env.eval.num_env_subprocess=2

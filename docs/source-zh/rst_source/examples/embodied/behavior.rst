@@ -268,9 +268,9 @@ BEHAVIOR-1K 强化学习
 独立评测
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-任何已转换为 PyTorch 格式的 ``pi05`` checkpoint（例如使用 `openpi-comet <https://github.com/mli0603/openpi-comet>`__ 转换的 `OpenPI-Comet <https://huggingface.co/sunshk/openpi_comet/tree/main>`__，或来自 :doc:`sft_openpi` 与 OpenPI checkpoint 转换器的权重）都可以使用 ``evaluations/behavior/behavior_openpi_pi05_eval.yaml`` 评估。归一化统计直接从 checkpoint 打包的 ``physical-intelligence/behavior/norm_stats.json`` 读取。如需更长轨迹，调高 ``env.eval.max_episode_steps`` 和 ``env.eval.max_steps_per_rollout_epoch``\ （例如 ``4096``）。
+任何已转换为 PyTorch 格式的 ``pi05`` checkpoint（例如使用 `openpi-comet <https://github.com/mli0603/openpi-comet>`__ 转换的 `OpenPI-Comet <https://huggingface.co/sunshk/openpi_comet/tree/main>`__，或来自 :doc:`sft_openpi` 与 OpenPI checkpoint 转换器的权重）都可以使用 ``evaluations/behavior/behavior_openpi_pi05_eval_2025.yaml`` 评估。归一化统计直接从 checkpoint 打包的 ``physical-intelligence/behavior/norm_stats.json`` 读取。如需更长轨迹，调高 ``env.eval.max_episode_steps`` 和 ``env.eval.max_steps_per_rollout_epoch``\ （例如 ``4096``）。
 
-独立评测请走 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`，其中包含 ``ISAAC_PATH`` / ``OMNIGIBSON_DATA_PATH`` 设置、评估 checkpoint 路径配置、``behavior_openpi_pi05_eval`` 启动命令与结果解读。
+独立评测请走 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`，其中包含 ``ISAAC_PATH`` / ``OMNIGIBSON_DATA_PATH`` 设置、评估 checkpoint 路径配置、``behavior_openpi_pi05_eval_2025`` 启动命令与结果解读。
 
 .. note::
 

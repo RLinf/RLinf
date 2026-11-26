@@ -12,7 +12,7 @@ Eval configs compose model presets from ``examples/embodiment/config/model/`` vi
      - Example configs
    * - π₀ / π₀.₅ (OpenPI)
      - ``openpi``
-     - ``libero_spatial_openpi_pi05_eval``, ``libero_10_apxinf_pi05_eval`` (ApxInf), ``behavior_openpi_pi05_eval``, ``robolab_pi05_droid_jointpos``, ``robotwin_adjust_bottle_openpi_eval``, ``realworld_pnp_eval``, etc.
+     - ``libero_spatial_openpi_pi05_eval``, ``libero_10_apxinf_pi05_eval`` (ApxInf), ``behavior_openpi_pi05_eval_2025``, ``robolab_pi05_droid_jointpos``, ``robotwin_adjust_bottle_openpi_eval``, ``realworld_pnp_eval``, etc.
    * - OpenVLA-OFT
      - ``openvla_oft``
      - ``libero_10_openvlaoft_eval``, ``robotwin_place_empty_cup_openvlaoft_eval``, ``maniskill_ood_openvlaoft_eval``, etc.
