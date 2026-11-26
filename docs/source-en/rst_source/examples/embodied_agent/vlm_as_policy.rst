@@ -6,28 +6,33 @@ This recipe trains ``Qwen3.8-27B`` directly as a multi-turn robot policy on LIBE
 Overview
 --------
 
+Train a reasoning VLM end-to-end on multi-turn tabletop manipulation tasks from sparse 0/1 rewards.
+
 .. grid:: 2 4 4 4
    :gutter: 2
 
    .. grid-item-card:: Environments
-      :class-card: sd-rounded-3
+      :text-align: center
 
-      LIBERO (``libero_gso``, ``libero_10``) and RoboDojo schema
+      LIBERO (``libero_gso``, ``libero_10``) · RoboDojo schema
 
    .. grid-item-card:: Algorithms
-      :class-card: sd-rounded-3
+      :text-align: center
 
-      GRPO (``grpo_dynamic`` + ``pear_reinforce``), DAPO equal-reward filtering, optional top-K score centering
+      GRPO (``grpo_dynamic`` + ``pear_reinforce``) · DAPO filtering
 
    .. grid-item-card:: Tasks
-      :class-card: sd-rounded-3
+      :text-align: center
 
-      Multi-turn tabletop manipulation from sparse 0/1 rewards
+      Multi-turn tabletop manipulation
 
    .. grid-item-card:: Hardware
-      :class-card: sd-rounded-3
+      :text-align: center
 
-      2 nodes (16 × 80 GB GPUs) default; 4 nodes (32 H200 GPUs) paper scale
+      2 nodes (16 × 80 GB GPU) · 4 nodes (32 H200) paper scale
+
+| **You'll do:** install → download ``Qwen3.8-27B`` → start multi-node Ray → launch → watch ``rollout/rewards``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · :doc:`Multi-node Ray cluster </rst_source/guides/multi_node>` · shared storage visible from every node.
 
 In each episode, the model observes camera frames and rounded base-frame arm coordinates, writes a chain of thought inside ``<think>``, and emits one JSON pose delta. The simulator runs closed-loop PD and operational-space control until the target is reached, the arm stalls, the task finishes, or the native step budget runs out.
 
@@ -48,7 +53,7 @@ Tasks
 
    * - Environment
      - Task / Suite
-     - Config
+     - Config / Weights
      - Focus
    * - LIBERO
      - ``libero_gso`` (Goal, Spatial, Object)
@@ -75,7 +80,7 @@ Observation and Action
    :widths: 20 80
 
    * - Field
-     - Format
+     - Description
    * - Observation
      - Two 512x512 RGB camera frames rotated 180 degrees (``[agentview]`` and ``[wrist]`` for LIBERO) plus rounded base-frame arm pose (cm and rad) and gripper width.
    * - Action
@@ -88,95 +93,152 @@ Observation and Action
 Setup and Run
 -------------
 
-Start a multi-node Ray cluster first (2 nodes for the default config, 4 nodes for the paper-scale config), exporting a unique ``RLINF_NODE_RANK`` on each node (``0`` on the head node, ``1`` on the next node, and so on) before running ``ray start``.
+.. include:: ../embodied/_setup_common.rst
+
+Start a multi-node Ray cluster before launching (2 nodes for the default and Stage 2 configs, 4 nodes for the paper-scale config), exporting a unique ``RLINF_NODE_RANK`` on each node (``0`` on the head node, ``1`` on the next node, and so on) before ``ray start``.
 
 .. tab-set::
 
-   .. tab-item:: LIBERO + Qwen3.8-27B (GRPO / PEAR)
+   .. tab-item:: Stage 1 (LIBERO-GSO)
+      :sync: pear-stage1
 
       **1. Install**
 
-      Install the embodied Qwen3.8 environment with LIBERO and SGLang ``0.5.22`` (CUDA 13 wheels), then activate it on every node:
+      Install the embodied Qwen3.8 environment with LIBERO and SGLang ``0.5.22`` (CUDA 13 wheels), and activate it on every node:
 
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --model qwen3_8 --env libero
-         source .venv/bin/activate
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model qwen3_8 --env libero && source .venv/bin/activate
 
-      **2. Download the Model**
+      **2. Download**
 
-      Download ``Qwen/Qwen3.8-27B`` to a directory accessible from every node (for example on shared storage):
+      Download ``Qwen/Qwen3.8-27B`` into shared storage visible from every node (the launch script runs with ``HF_HUB_OFFLINE=1`` and ``TRANSFORMERS_OFFLINE=1``):
 
       .. code-block:: bash
 
          hf download Qwen/Qwen3.8-27B --local-dir ./Qwen3.8-27B
 
-      The launch script sets ``HF_HUB_OFFLINE=1`` and ``TRANSFORMERS_OFFLINE=1``, so every node reads the model locally. Point ``actor.model.model_path`` and ``actor.tokenizer.tokenizer_model`` in ``examples/embodiment/config/libero_gso_grpo_pear_sglang.yaml`` to that local directory (rollout inherits the model path when set identically):
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./Qwen3.8-27B
-           tokenizer:
-             tokenizer_model: ./Qwen3.8-27B
-
       **3. Launch**
 
-      Launch the default 2-node (16-GPU) Stage 1 quick check from the head node (configured with ``max_steps: 2`` and ``rollout_batch_size: 8``):
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 40 34
+
+         * - Setting
+           - Config (``examples/embodiment/config/``)
+           - Notes
+         * - 2-node default (16 GPUs)
+           - ``libero_gso_grpo_pear_sglang.yaml``
+           - ``cluster.num_nodes: 2``, ``max_steps: 2`` quick check
+         * - 4-node paper scale (32 GPUs)
+           - ``libero_gso_grpo_pear_sglang_paper.yaml``
+           - ``cluster.num_nodes: 4``, 128 groups/step, ``max_steps: 1000``
+
+      Run the 2-node (16-GPU) default quick check from the head node, passing your local model path:
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_vlm_policy.sh libero_gso_grpo_pear_sglang
+         bash examples/embodiment/run_vlm_policy.sh libero_gso_grpo_pear_sglang \
+           actor.model.model_path=$PWD/Qwen3.8-27B \
+           rollout.model.model_path=$PWD/Qwen3.8-27B \
+           actor.tokenizer.tokenizer_model=$PWD/Qwen3.8-27B
 
-      Raise ``runner.max_steps`` (for example ``1000``) for full training, or launch the 4-node (32-GPU) paper-scale Stage 1 config and the 2-node Stage 2 ``libero_10`` config directly:
+      For full training, raise ``runner.max_steps`` (for example ``runner.max_steps=1000``), or launch the 4-node (32-GPU) paper-scale config:
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_vlm_policy.sh libero_gso_grpo_pear_sglang_paper
-         bash examples/embodiment/run_vlm_policy.sh libero_10_grpo_pear_stage2
+         bash examples/embodiment/run_vlm_policy.sh libero_gso_grpo_pear_sglang_paper \
+           actor.model.model_path=$PWD/Qwen3.8-27B \
+           rollout.model.model_path=$PWD/Qwen3.8-27B \
+           actor.tokenizer.tokenizer_model=$PWD/Qwen3.8-27B
 
-Key Configuration Fields
-~~~~~~~~~~~~~~~~~~~~~~~~
+      .. dropdown:: Advanced configuration (optional)
 
-Edit these fields in the YAML when adapting the run to your cluster or training stage:
+         Edit these YAML keys when adapting placement, concurrency, or memory headroom to your cluster:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 38 38
+         .. list-table::
+            :header-rows: 1
+            :widths: 24 38 38
 
-   * - Area
-     - Config Keys
-     - Guidance
-   * - Placement and length
-     - ``cluster.num_nodes``, ``cluster.component_placement``, ``runner.max_steps``, ``runner.seq_length``
-     - Split ``actor`` and ``rollout`` across disjoint GPU ranks; keep ``reward`` on the same ranks as ``rollout``.
-   * - Rollout concurrency
-     - ``data.task_suite_name``, ``data.rollout_batch_size``, ``agentloop.max_turns``, ``tools.embodied_env.max_concurrent_envs``
-     - Scale parallel LIBERO simulators and turn limits with your rollout GPU count.
-   * - Buffer and staleness
-     - ``rollout_buffer.max_inflight_groups``, ``rollout_buffer.max_buffered_groups``, ``agentloop.max_actor_accept_staleness``
-     - Keep engines saturated while bounding policy lag.
-   * - Streaming sessions
-     - ``session_server.engine_streaming_session``, ``session_server.merge_continuous_turns``, ``session_server.payload_shards``
-     - Preserve cross-turn KV/GDN caches and store heavy frames locally on rollout nodes.
-   * - SGLang and FSDP2 memory
-     - ``rollout.sglang.attention_backend``, ``rollout.sglang.max_mamba_cache_size``, ``actor.fsdp_config.enable_gradient_accumulation``
-     - Keep ``attention_backend: null``, ``max_mamba_cache_size: 256``, and ``enable_gradient_accumulation: False`` on 80 GB GPUs.
-   * - Filtering and Stage 3
-     - ``algorithm.down_sampling.down_sampling_config.reject_equal_reward``, ``algorithm.pear.score_centering``, ``session_server.topk_log_probs``
-     - Drop zero-variance groups under DAPO; enable top-K score centering for Stage 3.
+            * - Area
+              - Config Keys
+              - Guidance
+            * - Placement and length
+              - ``cluster.num_nodes``, ``cluster.component_placement``, ``runner.max_steps``, ``runner.seq_length``
+              - Keep ``actor`` and ``rollout`` on disjoint GPU ranks; assign ``reward`` to the same ranks as ``rollout``.
+            * - Rollout concurrency
+              - ``data.task_suite_name``, ``data.rollout_batch_size``, ``agentloop.max_turns``, ``tools.embodied_env.max_concurrent_envs``
+              - Scale parallel LIBERO simulators and turn limits with rollout GPU count.
+            * - Buffer and staleness
+              - ``rollout_buffer.max_inflight_groups``, ``rollout_buffer.max_buffered_groups``, ``agentloop.max_actor_accept_staleness``
+              - Keep engines saturated while bounding policy lag.
+            * - Streaming sessions
+              - ``session_server.engine_streaming_session``, ``session_server.merge_continuous_turns``, ``session_server.payload_shards``
+              - Preserve cross-turn KV/GDN caches and store heavy frames locally on rollout nodes.
+            * - SGLang and FSDP2 memory
+              - ``rollout.sglang.attention_backend``, ``rollout.sglang.max_mamba_cache_size``, ``actor.fsdp_config.enable_gradient_accumulation``
+              - Keep ``attention_backend: null``, ``max_mamba_cache_size: 256``, and ``enable_gradient_accumulation: False`` on 80 GB GPUs.
+            * - Filtering and Stage 3
+              - ``algorithm.down_sampling.down_sampling_config.reject_equal_reward``, ``algorithm.pear.score_centering``, ``session_server.topk_log_probs``
+              - Drop zero-variance groups under DAPO; enable top-K score centering for Stage 3.
+
+   .. tab-item:: Stage 2 & Stage 3
+      :sync: pear-stage23
+
+      **1. Install and Download**
+
+      Reuse the same Qwen3.8 environment and ``./Qwen3.8-27B`` checkpoint from the Stage 1 tab. Stage 3 RoboDojo execution additionally requires Isaac Sim and cuRobo.
+
+      **2. Launch**
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 40 34
+
+         * - Setting
+           - Config (``examples/embodiment/config/``)
+           - Notes
+         * - Stage 2 (LIBERO-10 Long)
+           - ``libero_10_grpo_pear_stage2.yaml``
+           - ``cluster.num_nodes: 2``, 262,144 token budget, ``max_turns: 64``
+         * - Stage 3 (Mixed RoboDojo)
+           - ``pear_stage3_libero_robodojo.yaml``
+           - ``cluster.num_nodes: 2``, ``score_centering: True``, ``topk_log_probs: 32``
+
+      Launch Stage 2 on ``libero_10`` (2 nodes, 16 GPUs) from the head node:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_vlm_policy.sh libero_10_grpo_pear_stage2 \
+           actor.model.model_path=$PWD/Qwen3.8-27B \
+           rollout.model.model_path=$PWD/Qwen3.8-27B \
+           actor.tokenizer.tokenizer_model=$PWD/Qwen3.8-27B
+
+      Launch Stage 3 with top-K score centering (2 nodes, 16 GPUs):
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_vlm_policy.sh pear_stage3_libero_robodojo \
+           actor.model.model_path=$PWD/Qwen3.8-27B \
+           rollout.model.model_path=$PWD/Qwen3.8-27B \
+           actor.tokenizer.tokenizer_model=$PWD/Qwen3.8-27B
 
 Visualization and Results
 -------------------------
 
-Logs and TensorBoard events are written under ``logs/<timestamp>-<config_name>/``. Open TensorBoard on that directory:
+Track ``rollout/rewards``, ``rollout/buffer/dropped_equal_reward``, ``rollout/session_server/payload_queued_groups``, and ``train/actor/policy_loss`` in TensorBoard (``tensorboard --logdir logs/``; see :doc:`Training metrics <../../reference/metrics>`). A steady queued-group count close to the rollout buffer size confirms that discarded multimodal groups release rollout-node memory promptly.
 
-.. code-block:: bash
+.. list-table::
+   :header-rows: 1
+   :widths: 34 32 34
 
-   tensorboard --host 0.0.0.0 --logdir logs/
-
-Watch ``rollout/rewards``, ``rollout/buffer/dropped_equal_reward``, ``rollout/session_server/payload_queued_groups``, and ``train/actor/policy_loss``. A steady queued-group count close to the rollout buffer size confirms that discarded multimodal groups free rollout-node memory promptly. On 2 nodes (16 × 80 GB GPUs), the default config completes each FSDP2 update in ~8–10 s and each cross-node 27B weight sync in ~5 s.
+   * - Config
+     - Hardware
+     - Verified Runtime Reference
+   * - ``libero_gso_grpo_pear_sglang.yaml``
+     - 2 nodes (16 × 80 GB A100)
+     - FSDP2 update ~8–10 s/step; 27B cross-node NCCL weight sync ~5 s; multi-turn prefix cache hits on turn 2+
 
 Troubleshooting
 ---------------

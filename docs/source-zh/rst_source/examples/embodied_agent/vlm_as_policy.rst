@@ -6,28 +6,33 @@ VLM-as-Policy：LIBERO + Qwen3.8-27B
 概览
 ----
 
+在稀疏 0/1 奖励下端到端训练推理型 VLM 完成多轮桌面操作任务。
+
 .. grid:: 2 4 4 4
    :gutter: 2
 
    .. grid-item-card:: 环境
-      :class-card: sd-rounded-3
+      :text-align: center
 
-      LIBERO（``libero_gso``、``libero_10``）与 RoboDojo 动作格式
+      LIBERO（``libero_gso``、``libero_10``）· RoboDojo 动作格式
 
    .. grid-item-card:: 算法
-      :class-card: sd-rounded-3
+      :text-align: center
 
-      GRPO（``grpo_dynamic`` + ``pear_reinforce``）、DAPO 零方差组过滤、可选 top-K score centering
+      GRPO（``grpo_dynamic`` + ``pear_reinforce``）· DAPO 过滤
 
    .. grid-item-card:: 任务
-      :class-card: sd-rounded-3
+      :text-align: center
 
-      稀疏 0/1 奖励下的多轮桌面操作
+      多轮桌面操作
 
    .. grid-item-card:: 硬件
-      :class-card: sd-rounded-3
+      :text-align: center
 
-      默认 2 机 16 张 80 GB GPU；论文规模 4 机 32 卡 H200
+      2 机 16 × 80 GB GPU · 论文规模 4 机 32 卡 H200
+
+| **你将完成：** 安装环境 → 下载 ``Qwen3.8-27B`` → 启动多节点 Ray → 启动训练 → 观察 ``rollout/rewards``。
+| **前置条件：** :doc:`环境安装 </rst_source/start/installation>` · :doc:`多节点 Ray 集群 </rst_source/guides/multi_node>` · 所有节点共享可见的存储目录。
 
 单条轨迹中，模型读取相机画面与舍入后的基座坐标系机械臂位姿，在 ``<think>`` 内推理，然后输出 JSON 相对位姿。模拟器运行闭环 PD 与操作空间控制，直到机械臂到位、受阻停滞、任务完成或原生步数预算耗尽。
 
@@ -47,9 +52,9 @@ VLM-as-Policy：LIBERO + Qwen3.8-27B
    :widths: 18 22 30 30
 
    * - 环境
-     - 任务 / 套件
-     - 配置文件
-     - 说明
+     - 任务 / 任务集
+     - 配置 / 权重
+     - 侧重点
    * - LIBERO
      - ``libero_gso``\ （Goal、Spatial、Object）
      - ``libero_gso_grpo_pear_sglang.yaml``
@@ -74,8 +79,8 @@ VLM-as-Policy：LIBERO + Qwen3.8-27B
    :header-rows: 1
    :widths: 20 80
 
-   * - 项目
-     - 格式说明
+   * - 字段
+     - 说明
    * - 观测
      - 两路旋转 180° 的 512x512 RGB 图像（LIBERO 为 ``[agentview]`` 与 ``[wrist]``），以及基座坐标系下舍入后的机械臂位姿（厘米与弧度）和夹爪宽度。
    * - 动作
@@ -88,11 +93,14 @@ VLM-as-Policy：LIBERO + Qwen3.8-27B
 安装与运行
 ----------
 
-先在多节点集群上启动 Ray（默认配置需 2 台 8 卡节点，论文规模需 4 台 8 卡节点），每个节点在运行 ``ray start`` 前导出唯一的 ``RLINF_NODE_RANK``\ （头节点为 ``0``，工作节点依次为 ``1`` 等）。
+.. include:: ../embodied/_setup_common.rst
+
+启动训练前先在多节点集群上拉起 Ray（默认与第二阶段配置需 2 台 8 卡节点，论文规模需 4 台 8 卡节点），每个节点在执行 ``ray start`` 前导出唯一的 ``RLINF_NODE_RANK``\ （头节点为 ``0``，工作节点依次为 ``1`` 等）。
 
 .. tab-set::
 
-   .. tab-item:: LIBERO + Qwen3.8-27B（GRPO / PEAR）
+   .. tab-item:: 第一阶段（LIBERO-GSO）
+      :sync: pear-stage1
 
       **1. 安装环境**
 
@@ -100,83 +108,137 @@ VLM-as-Policy：LIBERO + Qwen3.8-27B
 
       .. code-block:: bash
 
-         bash requirements/install.sh embodied --model qwen3_8 --env libero
-         source .venv/bin/activate
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model qwen3_8 --env libero && source .venv/bin/activate
 
       **2. 下载模型**
 
-      将 ``Qwen/Qwen3.8-27B`` 下载到所有节点可访问的目录（例如共享存储）：
+      将 ``Qwen/Qwen3.8-27B`` 下载到所有节点共享可见的目录（启动脚本默认导出 ``HF_HUB_OFFLINE=1`` 与 ``TRANSFORMERS_OFFLINE=1``）：
 
       .. code-block:: bash
 
          hf download Qwen/Qwen3.8-27B --local-dir ./Qwen3.8-27B
 
-      启动脚本默认设置离线环境变量，各节点必须能直接读取本地模型目录。将 ``examples/embodiment/config/libero_gso_grpo_pear_sglang.yaml`` 中的模型与分词器路径指向本地目录（推理端会同步使用该模型目录）：
-
-      .. code-block:: yaml
-
-         actor:
-           model:
-             model_path: ./Qwen3.8-27B
-           tokenizer:
-             tokenizer_model: ./Qwen3.8-27B
-
       **3. 启动训练**
 
-      在头节点运行默认配置（需 2 节点 16 卡，``cluster.num_nodes: 2``，默认 2 步快速验证）：
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 40 34
+
+         * - 场景
+           - 配置（``examples/embodiment/config/``）
+           - 说明
+         * - 2 机默认（16 卡）
+           - ``libero_gso_grpo_pear_sglang.yaml``
+           - ``cluster.num_nodes: 2``，默认 ``max_steps: 2`` 快速验证
+         * - 4 机论文规模（32 卡）
+           - ``libero_gso_grpo_pear_sglang_paper.yaml``
+           - ``cluster.num_nodes: 4``，每步 128 组，``max_steps: 1000``
+
+      在头节点运行 2 机 16 卡默认快速验证，传入本地模型路径：
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_vlm_policy.sh libero_gso_grpo_pear_sglang
+         bash examples/embodiment/run_vlm_policy.sh libero_gso_grpo_pear_sglang \
+           actor.model.model_path=$PWD/Qwen3.8-27B \
+           rollout.model.model_path=$PWD/Qwen3.8-27B \
+           actor.tokenizer.tokenizer_model=$PWD/Qwen3.8-27B
 
-      正式训练时调大 ``runner.max_steps``\ （例如 ``1000``）；也可以直接运行论文规模配置（需 4 节点 32 卡，``cluster.num_nodes: 4``）或 2 节点第二阶段 ``libero_10`` 配置：
+      正式训练时追加 ``runner.max_steps=1000``，或直接启动 4 机 32 卡论文规模配置（需 4 节点，``cluster.num_nodes: 4``）：
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_vlm_policy.sh libero_gso_grpo_pear_sglang_paper
-         bash examples/embodiment/run_vlm_policy.sh libero_10_grpo_pear_stage2
+         bash examples/embodiment/run_vlm_policy.sh libero_gso_grpo_pear_sglang_paper \
+           actor.model.model_path=$PWD/Qwen3.8-27B \
+           rollout.model.model_path=$PWD/Qwen3.8-27B \
+           actor.tokenizer.tokenizer_model=$PWD/Qwen3.8-27B
 
-关键配置项
-~~~~~~~~~~
+      .. dropdown:: 进阶配置（可选）
 
-按集群规模或训练阶段调整 YAML 时，重点修改下表中的几组字段：
+         按集群规模或显存余量调整 YAML 时，重点修改下表字段：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 22 40 38
+         .. list-table::
+            :header-rows: 1
+            :widths: 22 40 38
 
-   * - 类别
-     - 配置项
-     - 说明
-   * - 节点划分与步数
-     - ``cluster.num_nodes``、``cluster.component_placement``、``runner.max_steps``、``runner.seq_length``
-     - 将 ``actor`` 与 ``rollout`` 放在互不重叠的 GPU 上；异步模式下 ``reward`` 与 ``rollout`` 共用卡号。
-   * - 采样并发
-     - ``data.task_suite_name``、``data.rollout_batch_size``、``agentloop.max_turns``、``tools.embodied_env.max_concurrent_envs``
-     - 按推理端卡数调整并发 LIBERO 模拟器数量与最大交互轮数。
-   * - 缓冲与滞后上限
-     - ``rollout_buffer.max_inflight_groups``、``rollout_buffer.max_buffered_groups``、``agentloop.max_actor_accept_staleness``
-     - 让推理引擎保持满载，同时约束 policy 滞后。
-   * - 流式会话与缓存
-     - ``session_server.engine_streaming_session``、``session_server.merge_continuous_turns``、``session_server.payload_shards``
-     - 跨轮保持 KV/GDN 前缀缓存，并将多模态帧暂存在采样节点本地。
-   * - SGLang 与 FSDP2 显存
-     - ``rollout.sglang.attention_backend``、``rollout.sglang.max_mamba_cache_size``、``actor.fsdp_config.enable_gradient_accumulation``
-     - 80 GB 显存下保持 ``attention_backend: null``、``max_mamba_cache_size: 256`` 与 ``enable_gradient_accumulation: False``。
-   * - 组过滤与第三阶段
-     - ``algorithm.down_sampling.down_sampling_config.reject_equal_reward``、``algorithm.pear.score_centering``、``session_server.topk_log_probs``
-     - 开启 DAPO 零方差组过滤；第三阶段按需开启 top-K score centering。
+            * - 类别
+              - 配置项
+              - 说明
+            * - 节点划分与步数
+              - ``cluster.num_nodes``、``cluster.component_placement``、``runner.max_steps``、``runner.seq_length``
+              - 将 ``actor`` 与 ``rollout`` 放在互不重叠的 GPU 上；异步模式下 ``reward`` 与 ``rollout`` 共用卡号。
+            * - 采样并发
+              - ``data.task_suite_name``、``data.rollout_batch_size``、``agentloop.max_turns``、``tools.embodied_env.max_concurrent_envs``
+              - 按推理端卡数调整并发 LIBERO 模拟器数量与最大交互轮数。
+            * - 缓冲与滞后上限
+              - ``rollout_buffer.max_inflight_groups``、``rollout_buffer.max_buffered_groups``、``agentloop.max_actor_accept_staleness``
+              - 让推理引擎保持满载，同时约束 policy 滞后。
+            * - 流式会话与缓存
+              - ``session_server.engine_streaming_session``、``session_server.merge_continuous_turns``、``session_server.payload_shards``
+              - 跨轮保持 KV/GDN 前缀缓存，并将多模态帧暂存在采样节点本地。
+            * - SGLang 与 FSDP2 显存
+              - ``rollout.sglang.attention_backend``、``rollout.sglang.max_mamba_cache_size``、``actor.fsdp_config.enable_gradient_accumulation``
+              - 80 GB 显存下保持 ``attention_backend: null``、``max_mamba_cache_size: 256`` 与 ``enable_gradient_accumulation: False``。
+            * - 组过滤与第三阶段
+              - ``algorithm.down_sampling.down_sampling_config.reject_equal_reward``、``algorithm.pear.score_centering``、``session_server.topk_log_probs``
+              - 开启 DAPO 零方差组过滤；第三阶段按需开启 top-K score centering。
+
+   .. tab-item:: 第二、三阶段
+      :sync: pear-stage23
+
+      **1. 安装与下载**
+
+      复用第一阶段标签中的 Qwen3.8 虚拟环境与 ``./Qwen3.8-27B`` 权重。第三阶段的 RoboDojo 执行需额外准备 Isaac Sim 与 cuRobo。
+
+      **2. 启动训练**
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 40 34
+
+         * - 场景
+           - 配置（``examples/embodiment/config/``）
+           - 说明
+         * - 第二阶段（LIBERO-10 长程）
+           - ``libero_10_grpo_pear_stage2.yaml``
+           - ``cluster.num_nodes: 2``，262,144 token 预算，``max_turns: 64``
+         * - 第三阶段（混合 RoboDojo）
+           - ``pear_stage3_libero_robodojo.yaml``
+           - ``cluster.num_nodes: 2``，``score_centering: True``，``topk_log_probs: 32``
+
+      在头节点启动 2 机 16 卡第二阶段 ``libero_10`` 训练（需 2 节点，``cluster.num_nodes: 2``）：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_vlm_policy.sh libero_10_grpo_pear_stage2 \
+           actor.model.model_path=$PWD/Qwen3.8-27B \
+           rollout.model.model_path=$PWD/Qwen3.8-27B \
+           actor.tokenizer.tokenizer_model=$PWD/Qwen3.8-27B
+
+      启动 2 机 16 卡第三阶段 top-K score centering 训练（需 2 节点，``cluster.num_nodes: 2``）：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_vlm_policy.sh pear_stage3_libero_robodojo \
+           actor.model.model_path=$PWD/Qwen3.8-27B \
+           rollout.model.model_path=$PWD/Qwen3.8-27B \
+           actor.tokenizer.tokenizer_model=$PWD/Qwen3.8-27B
 
 可视化与结果
 ------------
 
-启动脚本会自动把日志和 TensorBoard 事件写入 ``logs/<timestamp>-<config_name>/``。在该目录启动 TensorBoard：
+在 TensorBoard 中跟踪 ``rollout/rewards``、``rollout/buffer/dropped_equal_reward``、``rollout/session_server/payload_queued_groups`` 和 ``train/actor/policy_loss``\ （``tensorboard --logdir logs/``，指标说明见 :doc:`训练指标 <../../reference/metrics>`）。本地排队的 payload 组数稳定贴近缓冲区大小，说明被过滤掉的多模态组已及时释放采样节点内存。
 
-.. code-block:: bash
+.. list-table::
+   :header-rows: 1
+   :widths: 34 30 36
 
-   tensorboard --host 0.0.0.0 --logdir logs/
-
-重点观察 ``rollout/rewards``、``rollout/buffer/dropped_equal_reward``、``rollout/session_server/payload_queued_groups`` 和 ``train/actor/policy_loss``。本地排队的 payload 组数稳定贴近缓冲区大小，说明被过滤掉的多模态组已及时释放采样节点内存。在 2 机 16 张 80 GB GPU 上，默认配置单步 FSDP2 更新耗时约 8–10 秒，27B 全量跨机权重同步耗时约 5 秒。
+   * - 配置
+     - 硬件
+     - 实测运行参考
+   * - ``libero_gso_grpo_pear_sglang.yaml``
+     - 2 机（16 × 80 GB A100）
+     - FSDP2 单步更新约 8–10 秒；27B 跨机 NCCL 权重同步约 5 秒；第 2 轮起命中流式前缀缓存
 
 常见问题
 --------
