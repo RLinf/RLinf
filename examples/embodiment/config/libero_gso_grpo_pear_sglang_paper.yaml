@@ -3,8 +3,8 @@
 # Layout (4 nodes, 8 GPUs each = 32 H200 GPUs):
 #   - actor (FSDP2, Qwen3.8-27B): global hardware ranks 0-15 (nodes 0-1)
 #   - rollout (2 x SGLang server TP8): global hardware ranks 16-31 (nodes 2-3)
-#   - 2 SessionServer instances (one per rollout node) behind one SGLangRouter
-#     (policy: manual) for per-group sticky routing and parallel payload assembly.
+#   - 2 SessionServer instances (one per rollout node) using least-loaded
+#     direct per-group engine pinning and parallel payload assembly.
 
 defaults:
   - libero_gso_grpo_pear_sglang

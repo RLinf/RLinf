@@ -252,16 +252,8 @@ class SGLangWorker(Worker):
         )
         if max_mamba_cache_size is not None:
             version_dependent_args["max_mamba_cache_size"] = int(max_mamba_cache_size)
-        session_server_cfg = self._cfg.get("session_server", None)
         enable_streaming_session = bool(
-            self._cfg_rollout.sglang.get(
-                "enable_streaming_session",
-                bool(
-                    session_server_cfg is not None
-                    and session_server_cfg.get("enable", False)
-                    and session_server_cfg.get("engine_streaming_session", False)
-                ),
-            )
+            self._cfg_rollout.sglang.get("enable_streaming_session", False)
         )
         if enable_streaming_session:
             version_dependent_args["enable_streaming_session"] = True

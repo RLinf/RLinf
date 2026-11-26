@@ -19,7 +19,6 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 import rlinf.algorithms  # noqa: F401
-import rlinf.algorithms.pear_objective  # noqa: F401
 from rlinf.algorithms.loss_scales import restore_source_dp_normalization
 from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
@@ -395,7 +394,7 @@ class MAFSDPActor(FSDPActor):
         Avoids materializing full ``[seq_len, vocab_size]`` logits on long
         multimodal episodes (160k-256k tokens).
         """
-        from rlinf.models.embodiment.qwen_vlm.fp32_head import (
+        from rlinf.hybrid_engines.fsdp.fp32_head import (
             response_logprobs_and_heads_from_hidden,
             response_logprobs_from_hidden,
         )
@@ -668,8 +667,9 @@ class MAFSDPActor(FSDPActor):
 
         return mbs_metrics_data
 
-    def _compute_rollout_metrics(self, batch: DynamicActorBatch):
-        rollout_metrics_compute_data_group = self.get_rollout_metrics_group(batch)
+    def _compute_rollout_metrics(
+        self, batch: DynamicActorBatch, rollout_metrics_compute_data_group
+    ):
         if rollout_metrics_compute_data_group is None:
             return None
 
@@ -848,9 +848,12 @@ class MAFSDPActor(FSDPActor):
                 "normalize_advantages is not implemented in multi-agent"
             )
 
-        rollout_metrics = self._compute_rollout_metrics(global_batch)
+        rollout_metrics_group = self.get_rollout_metrics_group(global_batch)
+        rollout_metrics = self._compute_rollout_metrics(
+            global_batch, rollout_metrics_group
+        )
         staleness_metrics = self._compute_staleness_metrics(
-            results, version, torch.distributed.group.WORLD
+            results, version, rollout_metrics_group
         )
         if staleness_metrics:
             if rollout_metrics is None:
@@ -901,7 +904,7 @@ class MAFSDPActor(FSDPActor):
 
         self.model.train()
         training_metrics_list = []
-        with self.worker_timer():
+        with self.worker_timer("run_training"):
             for mini_batch in mini_batches:
                 if not mini_batch["input_ids"]:
                     continue

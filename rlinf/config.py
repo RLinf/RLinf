@@ -2916,13 +2916,14 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
             "reuse an idle connection the engine's uvicorn has already "
             "closed (an ECONNRESET race)."
         )
-    try:
-        import sglang_router  # noqa: F401
-    except ImportError:
-        raise ValueError(
-            "rollout.router.type 'sglang' requires the sglang_router "
-            "package; install it in the training environment."
-        )
+    if not cfg.session_server.engine_streaming_session:
+        try:
+            import sglang_router  # noqa: F401
+        except ImportError:
+            raise ValueError(
+                "rollout.router.type 'sglang' requires the sglang_router "
+                "package; install it in the training environment."
+            )
     if cfg.session_server.num_servers < 1 or cfg.session_server.payload_shards < 1:
         raise ValueError(
             f"session_server.num_servers and session_server.payload_shards "

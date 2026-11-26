@@ -217,7 +217,6 @@ class AsyncAgentRunner(AgentRunner):
         """
         if self._session_servers is None:
             return None, None, None
-        self._session_router.init_router().wait()
         instance_urls = [
             url for url in self.rollout.get_server_url().wait() if url is not None
         ]
@@ -225,9 +224,12 @@ class AsyncAgentRunner(AgentRunner):
             "no rollout instance advertised a server URL: the session server "
             "requires rollout.sglang.backend_type 'server'."
         )
-        for url in instance_urls:
-            self._session_router.register_server(url).wait()
-        router_url = self._session_router.get_router_url().wait()[0]
+        router_url: Optional[str] = None
+        if self._session_router is not None:
+            self._session_router.init_router().wait()
+            for url in instance_urls:
+                self._session_router.register_server(url).wait()
+            router_url = self._session_router.get_router_url().wait()[0]
         session_urls = []
         for server, payload_channels in zip(
             self._session_servers, self._session_payload_channels
@@ -670,5 +672,6 @@ class AsyncAgentRunner(AgentRunner):
                 server.stop().wait()
             for serve_handle in self._session_serve_handles:
                 serve_handle.wait()
-            self._session_router.stop().wait()
+            if self._session_router is not None:
+                self._session_router.stop().wait()
         super()._stop_rollouts()

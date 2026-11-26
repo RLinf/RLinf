@@ -4,7 +4,7 @@
 # Layout (2 nodes, 8 GPUs each):
 #   - actor (FSDP2, Qwen3.8-27B): global hardware ranks 0-7 (node 0)
 #   - rollout (SGLang server TP8): global hardware ranks 8-15 (node 1)
-#   - SessionServer, SGLangRouter (policy: manual), EmbodiedVLMAgentLoopWorker,
+#   - SessionServer (direct per-engine sessions), EmbodiedVLMAgentLoopWorker,
 #     and EmbodiedEnvToolWorker sit on rollout node(s); RolloutBuffer sits on
 #     the head node (node 0).
 #
@@ -120,7 +120,7 @@ session_server:
   payload_shards: 2
   merge_continuous_turns: True
   engine_streaming_session: True
-  keep_sessions_on_weight_sync: False
+  keep_sessions_on_weight_sync: True
   topk_log_probs: 0
   generate_timeout_s: 1800.0
   payload_put_timeout_s: 300.0
@@ -177,7 +177,7 @@ rollout:
     max_idle_secs: 600
     log_level: warn
   model:
-    model_path: "/mnt/public/guozhen/models/Qwen/Qwen3.8-27B"
+    model_path: "/path/to/model/Qwen3.8-27B" # https://huggingface.co/Qwen/Qwen3.8-27B
     model_type: "qwen_vlm"
     precision: "bf16"
     embodiment: "libero"
@@ -196,7 +196,7 @@ actor:
   seed: 42
   enable_offload: False
   model:
-    model_path: "/mnt/public/guozhen/models/Qwen/Qwen3.8-27B"
+    model_path: "/path/to/model/Qwen3.8-27B" # https://huggingface.co/Qwen/Qwen3.8-27B
     model_type: "qwen_vlm"
     precision: "bf16"
     encoder_seq_length: 163840
@@ -209,7 +209,7 @@ actor:
     max_new_tokens: 160000
     trust_remote_code: True
   tokenizer:
-    tokenizer_model: "/mnt/public/guozhen/models/Qwen/Qwen3.8-27B"
+    tokenizer_model: "/path/to/model/Qwen3.8-27B" # https://huggingface.co/Qwen/Qwen3.8-27B
     use_fast: False
     trust_remote_code: True
     padding_side: "right"

@@ -15,8 +15,8 @@
 """Entry script for disaggregated async embodied VLM-as-Policy training.
 
 Launches the unified RLinf agentic stack for multimodal embodied policies:
-- ``SGLangWorker`` (server backend) + ``SGLangRouterWorker`` (``policy: manual``)
-- ``SessionServerWorker`` (engine-side streaming sessions + incremental payload)
+- ``SGLangWorker`` (server backend) + direct per-engine sessions (or ``SGLangRouterWorker`` when ``engine_streaming_session=False``)
+- ``SessionServerWorker`` (engine-side sessions + incremental payload)
 - ``EmbodiedVLMAgentLoopWorker`` + stateful ``EmbodiedEnvToolWorker``
 - ``RolloutBufferWorker`` (admission, DAPO equal-reward rejection, staleness)
 - ``MAFSDPActor`` (FSDP2 + chunked FP32 LM head + ``pear_reinforce``)
@@ -106,10 +106,14 @@ def main(cfg) -> None:
         )
         for server_index in range(num_servers)
     ]
-    session_router = SGLangRouterWorker.create_group(cfg, cfg.rollout.router).launch(
-        cluster,
-        name="SessionServerRouter",
-        placement_strategy=NodePlacementStrategy([rollout_node_ranks[0]]),
+    session_router = (
+        None
+        if cfg.session_server.get("engine_streaming_session", False)
+        else SGLangRouterWorker.create_group(cfg, cfg.rollout.router).launch(
+            cluster,
+            name="SessionServerRouter",
+            placement_strategy=NodePlacementStrategy([rollout_node_ranks[0]]),
+        )
     )
 
     # Disaggregated FSDP2 multi-agent actor.

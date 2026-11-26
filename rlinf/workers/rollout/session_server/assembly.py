@@ -59,7 +59,7 @@ def _assemble_multimodal_trajectory(
     )
     import torch
 
-    from rlinf.models.embodiment.qwen_vlm.conversation import IncrementalEpisodeTokens
+    from rlinf.data.multimodal_episode import IncrementalEpisodeTokens
 
     # Use an unbounded budget during replay unless explicitly configured so
     # turns that were already generated and kept are never dropped at assembly.
@@ -72,6 +72,7 @@ def _assemble_multimodal_trajectory(
     v_starts: list[int] = []
     v_ends: list[int] = []
     turn_is_end = False
+    had_truncation = False
 
     for turn_pos, part in enumerate(trained_turns):
         kept = kept_lens.get(part.turn_index)
@@ -109,6 +110,19 @@ def _assemble_multimodal_trajectory(
                 delta_inputs=delta_inputs,
             )
 
+        if (
+            not had_truncation
+            and part.prompt_tokens is not None
+            and part.prompt_tokens > 0
+            and len(episode.input_ids) != part.prompt_tokens
+        ):
+            raise ValueError(
+                f"Multimodal prompt token count mismatch for group {group_id} "
+                f"trajectory {traj_index} turn {part.turn_index}: actor "
+                f"processor produced {len(episode.input_ids)} tokens, expected "
+                f"engine prompt_tokens={part.prompt_tokens}."
+            )
+
         if return_logprobs:
             assert part.logprobs is not None, (
                 f"trajectory {traj_index} turn {part.turn_index} of group "
@@ -125,6 +139,8 @@ def _assemble_multimodal_trajectory(
             topk_ids=part.topk_ids[:kept] if has_topk else None,
             topk_logprobs=part.topk_logprobs[:kept] if has_topk else None,
         )
+        if kept < len(part.output_ids):
+            had_truncation = True
         v_starts.append(part.version_start)
         v_ends.append(part.weight_version)
         turn_is_end = bool(ended.get(part.turn_index, False))

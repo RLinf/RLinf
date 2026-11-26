@@ -104,6 +104,9 @@ class PayloadPart:
             sampler (shape ``[len(output_ids), K]``).
         topk_logprobs: Optional per-token top-K logprobs from the sampler
             (shape ``[len(output_ids), K]``).
+        prompt_tokens: Engine-reported prompt token count for this turn, when
+            available. Used on the read side to verify multimodal re-tokenization
+            alignment.
     """
 
     group_id: int
@@ -125,6 +128,7 @@ class PayloadPart:
     output_text: Optional[str] = None
     topk_ids: Optional[list[list[int]]] = None
     topk_logprobs: Optional[list[list[float]]] = None
+    prompt_tokens: Optional[int] = None
 
 
 @dataclass
@@ -259,13 +263,14 @@ class PayloadWriter:
         return self._channels[shard]
 
     async def emit_part(
-        self, shard: int, part: PayloadPart
+        self, shard: int, part: PayloadPart, *, extra_pending_bytes: int = 0
     ) -> tuple[int, Optional[asyncio.Task]]:
         """Put one part in the background, with backpressure.
 
         The put is issued synchronously here (issuance order is the queue
         order); its settlement runs as a task, or is awaited inline once the
-        pending byte budget is exceeded. Every-turn parts carry no weight:
+        pending byte budget (including any ``extra_pending_bytes`` held by
+        the caller) is exceeded. Every-turn parts carry no weight:
         the byte estimate rides on the finalize part's put, the queue element
         the runner's payload_queued_bytes gauge sums.
 
@@ -280,7 +285,7 @@ class PayloadWriter:
             part, key=payload_key_for(part.group_id), async_op=True
         )
         self._pending_bytes += nbytes
-        if self._pending_bytes > self._max_pending_bytes:
+        if self._pending_bytes + extra_pending_bytes > self._max_pending_bytes:
             await self._settle_put(part.group_id, nbytes, work)
             return nbytes, None
         task = asyncio.create_task(self._settle_put(part.group_id, nbytes, work))
