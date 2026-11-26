@@ -48,6 +48,12 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
 
       Train MLP and CNN policies with PPO or SAC on MuJoCo Franka-Sim tasks.
 
+   .. grid-item-card:: G1 Motion Tracking
+      :link: embodied/g1_mimic
+      :link-type: doc
+
+      The Unitree G1 whole-body tracking environment in MuJoCo Warp.
+
    .. grid-item-card:: Genesis
       :img-top: https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/HeroShot_Final.png
       :img-alt: Genesis simulator
@@ -181,6 +187,7 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
    DexJoCo <embodied/dexjoco>
    EmbodiChain <embodied/embodichain>
    Franka-Sim <embodied/frankasim>
+   G1 Motion Tracking <embodied/g1_mimic>
    Genesis <embodied/genesis>
    GenieSim <embodied/geniesim>
    GSEnv <embodied/gsenv>

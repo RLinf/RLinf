@@ -84,6 +84,10 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
      - 8 个 G1 人形全身遥操作任务（``G1WholebodyOpenOvenTeleop-v0`` 等）
      - ``simple/simple_psi0_eval.yaml``
      - :doc:`Psi0 <../examples/embodied/psi0>`
+   * - :doc:`SuperMimic <guides/supermimic>`
+     - LAFAN1 参考动作；GenCoord 与 MaxCoord；站立推力恢复
+     - ``supermimic/supermimic_lafan1_eval.yaml``、``supermimic/supermimic_push_recovery.yaml``
+     - :doc:`SuperMimic <../examples/embodied/supermimic>`
    * - :doc:`真机评测 <guides/realworld>`
      - ``realworld_franka_sft_env``、``realworld_bin_relocation``、双臂 Franka
      - ``realworld/realworld_pnp_eval.yaml``、``realworld/realworld_eval.yaml``、``realworld/realworld_pnp_eval_dreamzero.yaml``
@@ -161,6 +165,8 @@ SGLang 服务评测指南
         - RoboTwin 双臂操作评测配置。
       * - ``evaluations/simple/``
         - 面向 Psi0 的 SIMPLE 人形机器人全身评测配置。
+      * - ``evaluations/supermimic/``
+        - Unitree G1 动作跟踪与站立推力恢复评测配置。
 
 参考
 ----
