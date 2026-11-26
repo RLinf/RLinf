@@ -118,7 +118,15 @@ Gymnasium 环境 ``Go2DriveEnv-v1`` 默认从 ``rt/lowstate`` 读取 Go2 EDU 的
 
       日志会报告十次观测中有多少张不同的图像。
 
-      将 ``override_cfg.enable_front_camera`` 的值设为 ``true`` 即可启用相机。观测中的 ``frames["front"]`` 字段包含 640 × 360 的 BGR 图像，类型为 ``uint8`` 数组。
+      在 Gymnasium 环境中，将 ``override_cfg.enable_front_camera`` 设为 ``true`` 后，可从 ``frames["front"]`` 读取 640 × 360 的 BGR 图像，类型为 ``uint8`` 数组。
+
+      使用 RLinf 评测时，将下面的配置合并到 ``env.eval``。如果已有 ``override_cfg``，就在其中添加 ``enable_front_camera``。RLinf 将图像放在 policy 输入的 ``main_images`` 字段中。
+
+      .. code-block:: yaml
+
+         main_image_key: front
+         override_cfg:
+           enable_front_camera: true
 
 可视化与结果
 ------------

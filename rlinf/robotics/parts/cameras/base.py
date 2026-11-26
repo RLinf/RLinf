@@ -199,8 +199,9 @@ class BaseCamera(Camera, ABC):
         wait: float = 0.0,
         *,
         max_age: Optional[float] = None,
+        reopen_on_timeout: bool = True,
     ) -> np.ndarray:
-        """Return the most recent frame (blocks up to *timeout* seconds).
+        """Return the most recent frame.
 
         A camera that stops producing frames is usually recoverable, so a
         failed read reopens the device before the next attempt and before the
@@ -215,6 +216,7 @@ class BaseCamera(Camera, ABC):
             max_age: Reuse a captured frame up to this age in seconds. ``None``
                 or zero consumes the next queued frame. A missing or stale cached
                 frame follows the normal timeout and reconnect behavior.
+            reopen_on_timeout: Reopen the device after each timed-out attempt.
 
         Raises:
             queue.Empty: If no attempt produced a frame.
@@ -244,6 +246,8 @@ class BaseCamera(Camera, ABC):
                     if max_age is None or time.monotonic() - captured_at <= max_age:
                         return frame
             except queue.Empty:
+                if not reopen_on_timeout:
+                    continue
                 get_logger().warning(
                     "Camera %s produced no frame within %.2fs "
                     "(attempt %d of %d); reopening.",
@@ -255,9 +259,10 @@ class BaseCamera(Camera, ABC):
                 self.reopen()
                 if wait:
                     time.sleep(wait)
+        recovery = ", each followed by a reopen" if reopen_on_timeout else ""
         raise queue.Empty(
             f"Camera {self.name} produced no frame after {max(attempts, 1)} "
-            "attempts, each followed by a reopen."
+            f"attempts{recovery}."
         )
 
     # Internal capture loop

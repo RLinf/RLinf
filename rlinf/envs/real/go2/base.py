@@ -16,6 +16,7 @@
 
 import time
 from dataclasses import dataclass
+from queue import Empty
 from typing import Any
 
 import gymnasium as gym
@@ -115,16 +116,21 @@ class Go2Env(gym.Env):
         """Return the number of completed steps in the current episode."""
         return self._num_steps
 
-    def _observation(self, *, camera_timeout: float = 0.25) -> dict[str, Any]:
+    def _observation(
+        self, *, camera_timeout: float = 0.25, reopen_camera: bool = False
+    ) -> dict[str, Any]:
         observation = {}
         if self.config.enable_front_camera:
             if self.config.is_dummy:
                 space = self.observation_space["frames"]["front"]
                 frame = np.zeros(space.shape, dtype=space.dtype)
             else:
-                frame = self.robot.children["front"].get_frame(
-                    timeout=camera_timeout, max_age=0.25
+                frame = self.robot.children["front"].read_color(
+                    timeout=camera_timeout,
+                    reopen_on_timeout=reopen_camera,
                 )
+                if frame is None:
+                    raise Empty("Go2 front camera did not produce a recent frame.")
             observation["frames"] = {"front": frame}
         if self.config.is_dummy:
             observation["state"] = {
@@ -151,7 +157,7 @@ class Go2Env(gym.Env):
         super().reset(seed=seed)
         self._needs_reset = True
         self._stop()
-        observation = self._observation(camera_timeout=1.25)
+        observation = self._observation(camera_timeout=1.25, reopen_camera=True)
         self._num_steps = 0
         self._needs_reset = False
         return observation, {}
@@ -174,12 +180,12 @@ class Go2Env(gym.Env):
             time.sleep(
                 max(0, 1 / self.config.step_frequency - (time.monotonic() - started))
             )
-            observation = self._observation()
-            self._num_steps += 1
-            truncated = self._num_steps >= self.config.max_num_steps
+            truncated = self._num_steps + 1 >= self.config.max_num_steps
             if truncated:
                 self._needs_reset = True
                 self._stop()
+            observation = self._observation(reopen_camera=truncated)
+            self._num_steps += 1
             return observation, 0.0, False, truncated, {"requires_reset": truncated}
         except BaseException:
             self._needs_reset = True

@@ -16,6 +16,7 @@
 
 from contextlib import ExitStack
 from functools import cache
+from queue import Empty
 from typing import Any
 
 import numpy as np
@@ -49,6 +50,29 @@ class Go2FrontCamera(BaseCamera):
         if camera_info.enable_depth:
             raise ValueError("The Go2 front camera provides only color frames.")
         self._dds = ExitStack()
+
+    def read_color(
+        self, timeout: float, *, reopen_on_timeout: bool
+    ) -> np.ndarray | None:
+        """Read a recent BGR frame, returning None on a frame timeout.
+
+        Args:
+            timeout: Seconds to wait for a frame per attempt.
+            reopen_on_timeout: Allow recovery and a second read attempt.
+
+        Returns:
+            A BGR image, or None so the caller can stop the base before
+            reporting the timeout across the environment boundary.
+        """
+        try:
+            return self.get_frame(
+                timeout=timeout,
+                attempts=2 if reopen_on_timeout else 1,
+                max_age=0.25,
+                reopen_on_timeout=reopen_on_timeout,
+            )
+        except Empty:
+            return None
 
     def _open(self) -> Any:
         with ExitStack() as resources:

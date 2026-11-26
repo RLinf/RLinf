@@ -118,7 +118,15 @@ Setup and Run
 
       The log shows how many distinct images appeared in ten observations.
 
-      Set ``override_cfg.enable_front_camera`` to ``true`` to enable the camera. The ``frames["front"]`` field contains a 640 × 360 BGR image as a ``uint8`` array.
+      In the Gymnasium environment, set ``override_cfg.enable_front_camera`` to ``true``. The ``frames["front"]`` field contains a 640 × 360 BGR image as a ``uint8`` array.
+
+      For an RLinf evaluation, merge these settings into ``env.eval``. Add ``enable_front_camera`` under the existing ``override_cfg`` if present. RLinf exposes the image to the policy as ``main_images``.
+
+      .. code-block:: yaml
+
+         main_image_key: front
+         override_cfg:
+           enable_front_camera: true
 
 Visualization and Results
 -------------------------

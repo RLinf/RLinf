@@ -9611,6 +9611,107 @@ def test_go2_camera_observation_and_reconnect(go2_sdk):
     assert not go2_sdk.writes
 
 
+@pytest.mark.parametrize("terminal_step", [False, True])
+def test_go2_camera_timeout_requests_stop_before_reopen(
+    go2_sdk, monkeypatch, terminal_step
+):
+    from queue import Empty
+
+    import cv2
+    import gymnasium as gym
+    from unitree_sdk2py.go2.video.video_client import VideoClient
+
+    from rlinf.robotics import Go2Config, RobotDiscovery
+    from rlinf.robotics.placement import remote_view_of
+
+    config = Go2Config(
+        node_rank=0,
+        interface="fake-go2",
+        enable_motion=True,
+        command_timeout=2.0,
+        state_timeout=5.0,
+    )
+    resource = RobotDiscovery.registry["UnitreeGo2"].discovery_cls.enumerate(
+        0, [config]
+    )
+    encoded, jpeg = cv2.imencode(".jpg", np.zeros((16, 16, 3), dtype=np.uint8))
+    assert encoded
+    image = (0, jpeg.tobytes())
+    go2_sdk.image_sample = image
+    sample_failed = threading.Event()
+    read = VideoClient.GetImageSample
+
+    def next_sample(client):
+        result = read(client)
+        if result[0] != 0:
+            sample_failed.set()
+        return result
+
+    monkeypatch.setattr(VideoClient, "GetImageSample", next_sample)
+    env = gym.make(
+        "rlinf.envs.real.go2:Go2DriveEnv-v1",
+        override_cfg={
+            "enable_front_camera": True,
+            "max_num_steps": 1 if terminal_step else 2,
+        },
+        worker_info=None,
+        robot_info=resource.infos[0],
+        env_idx=0,
+        env_cfg={},
+    )
+    try:
+        env.reset()
+        parts = env.unwrapped.robot.children
+        front = parts["front"]
+        events = go2_sdk.events
+        reopen = front.reopen
+
+        class PartRPC:
+            def __getattr__(self, name):
+                def invoke(*args, **kwargs):
+                    try:
+                        value = getattr(front, name)(*args, **kwargs)
+                    except Empty as exc:
+                        raise AssertionError(
+                            "Frame timeout crossed the part RPC"
+                        ) from exc
+                    return SimpleNamespace(wait=lambda: [value])
+
+                return invoke
+
+        def observe_reopen():
+            events.append(("camera_reopen",))
+            reopen()
+
+        monkeypatch.setattr(front, "reopen", observe_reopen)
+        go2_sdk.image_sample = (3103, b"")
+        assert sample_failed.wait(1)
+        # The failed stream cannot replace the frame cached by reset.
+        time.sleep(0.26)
+        start = len(events)
+        placed_front = object.__new__(remote_view_of(type(front)))
+        placed_front._group = PartRPC()
+        with monkeypatch.context() as placement:
+            placement.setitem(parts, "front", placed_front)
+            with pytest.raises(Empty, match="Go2 front camera"):
+                env.step(np.asarray([0.1, 0, 0], dtype=np.float32))
+        step_events = [
+            event[0]
+            for event in events[start:]
+            if event[0] in {"move", "stop", "camera_reopen"}
+        ]
+        assert step_events[:2] == ["move", "stop"]
+        assert ("camera_reopen" in step_events) is terminal_step
+        if terminal_step:
+            assert step_events.index("stop") < step_events.index("camera_reopen")
+
+        go2_sdk.image_sample = image
+        observation, _ = env.reset()
+        assert env.observation_space.contains(observation)
+    finally:
+        env.close()
+
+
 @pytest.mark.parametrize("sample", [(3103, b""), (0, b"invalid jpeg")])
 def test_go2_camera_failed_sample_times_out(go2_sdk, sample):
     from queue import Empty

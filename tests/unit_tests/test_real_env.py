@@ -1465,6 +1465,26 @@ def test_go2_startup_leaves_host_processes_alone(monkeypatch):
         env.close()
 
 
+def test_go2_front_camera_reaches_rlinf_observation():
+    from rlinf.envs.real.env import RealWorldEnv
+
+    cfg = OmegaConf.load(
+        _ROOT / "tests/e2e_tests/evaluations/go2_drive_dummy_mlp_eval.yaml"
+    ).env.eval
+    cfg.main_image_key = "front"
+    cfg.override_cfg.enable_front_camera = True
+    env = RealWorldEnv(
+        cfg, num_envs=1, seed_offset=0, total_num_processes=1, worker_info=None
+    )
+    try:
+        obs, _ = env.reset()
+        assert obs["main_images"].shape == (1, 360, 640, 3)
+        assert obs["main_images"].dtype == torch.uint8
+        assert obs["states"].shape == (1, 35)
+    finally:
+        env.close()
+
+
 @pytest.mark.parametrize("max_episode_steps", [None, 3, 4])
 @pytest.mark.parametrize("auto_reset", [False, True])
 def test_go2_chunk_stops_at_the_last_executed_action(
