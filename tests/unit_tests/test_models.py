@@ -7381,3 +7381,33 @@ def test_prefix_eval_config_validates_without_actor(monkeypatch, config_name):
     del cfg.actor
     validate_embodied_cfg(cfg)
     assert isinstance(get_model(cfg.rollout.model), PrefixPolicy)
+
+
+@pytest.mark.parametrize(
+    "width,expected",
+    [
+        (61, [*range(3), *range(53, 57), *range(3, 10), *range(28, 35), 49, 99]),
+        (
+            256,
+            [
+                *range(253, 256),
+                *range(236, 240),
+                *range(158, 165),
+                *range(197, 204),
+                387,
+                465,
+            ],
+        ),
+    ],
+)
+def test_behavior_openpi_state_features(width, expected):
+    import numpy as np
+
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.policies.behavior_policy import (
+        extract_state_from_proprio,
+    )
+
+    np.testing.assert_array_equal(
+        extract_state_from_proprio(np.arange(width)), expected
+    )
