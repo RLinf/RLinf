@@ -1,2 +1,2 @@
-embodiinfer[activevln] @ git+https://github.com/BUAA-CI-LAB/EmbodiInfer.git@106106ee944c7af1ca31537c28d920f092bbb284
+embodiinfer @ git+https://github.com/BUAA-CI-LAB/EmbodiInfer.git@106106ee944c7af1ca31537c28d920f092bbb284
 transformers==4.51.3
