@@ -458,6 +458,8 @@ NVIDIA CUDA supports all four environments listed above (select **π₀** or **�
             openpi:
               torch_compile: False
 
+   - **π₀.₅ FlashAttention**: To switch π₀.₅ from ``eager`` to ``flash_attention_2`` or ``flash_attention_3`` via ``actor.model.openpi.attention_backend``, see :ref:`π₀.₅ FlashAttention <openpi-pi05-flashattention>`.
+
    **LoRA and FSDP sharding**
 
    - Set ``actor.model.is_lora: True`` and ``actor.model.lora_rank: 8`` to fine-tune the VLM with LoRA. Keep ``gradient_checkpointing: False``, as gradient checkpointing is not supported for OpenPI.

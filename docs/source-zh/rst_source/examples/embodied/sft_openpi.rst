@@ -362,17 +362,20 @@ OpenPI 监督微调
             reduce_dtype: fp32
             buffer_dtype: fp32
 
+.. _openpi-pi05-flashattention:
+
 .. dropdown:: π₀.₅ 的 FlashAttention 配置
 
-   π₀.₅ 的主干激活使用 FP16 或 BF16 时，可启用 FlashAttention-2。运行 SFT 或 RL 时，将 ``actor.model.openpi.attention_backend`` 设为 ``flash_attention_2``。独立评测时，设置 ``rollout.model.openpi.attention_backend``。在需要使用 FlashAttention-2 的环境中安装与 PyTorch、CUDA 版本匹配的 ``flash-attn`` 2.x。
+   π₀.₅ 默认使用 ``eager`` 注意力。主干激活设为 FP16 或 BF16（``openpi.embed_dtype``）且保持 ``openpi.pytorch_numerics: false`` 时，可以切换为 FlashAttention-2 或 FlashAttention-3。
 
-   使用 FlashAttention 时保持 ``pytorch_numerics: false``。NVIDIA GPU 在默认设置下使用 ``eager`` 以 FP32 计算注意力分数，切换到 FlashAttention 后可能出现小幅数值差异。
+   SFT 与 RL 场景设置 ``actor.model.openpi.attention_backend``，独立评测设置 ``rollout.model.openpi.attention_backend``，取值为 ``flash_attention_2`` 或 ``flash_attention_3``。NVIDIA GPU 上 ``eager`` 以 FP32 计算注意力分数，切换后数值可能略有差异。
 
-   在使用 CUDA Toolkit 12.3 或更高版本的 Hopper GPU 上，将 ``attention_backend`` 设为 ``flash_attention_3``，并在已激活的 OpenPI 环境中安装官方 FlashAttention-3。
+   - **FlashAttention-2**\ （``flash_attention_2``）：多数 ``install.sh embodied --model openpi`` 环境已自带 ``flash-attn`` 2.x；未预装的环境（如 ``polaris``、``robolab``）请在已激活的 OpenPI 环境中安装与当前 PyTorch、CUDA 版本匹配的 2.x 版本。
+   - **FlashAttention-3**\ （``flash_attention_3``，Hopper GPU 且 CUDA Toolkit 12.3 及以上）：先在已激活的 OpenPI 环境中从源码编译安装官方 FlashAttention-3（需 12.3 及以上版本的 ``nvcc`` 与编译工具），再启用 ``flash_attention_3``：
 
-   .. code-block:: bash
+     .. code-block:: bash
 
-      uv pip install --no-build-isolation 'git+https://github.com/Dao-AILab/flash-attention.git@bd26bc8e10e7c8f10dce6e17276156accecd2994#subdirectory=hopper'
+        uv pip install --no-build-isolation 'git+https://github.com/Dao-AILab/flash-attention.git@bd26bc8e10e7c8f10dce6e17276156accecd2994#subdirectory=hopper'
 
 .. dropdown:: 支持的数据集与自定义 LeRobot 配置
 

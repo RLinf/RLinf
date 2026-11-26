@@ -454,6 +454,8 @@ NVIDIA CUDA 支持上方列出的全部四个环境（在下方选择 **π₀** 
             openpi:
               torch_compile: False
 
+   - **π₀.₅ FlashAttention**：使用 ``actor.model.openpi.attention_backend`` 将 π₀.₅ 从 ``eager`` 切换为 ``flash_attention_2`` 或 ``flash_attention_3``，详见 :ref:`π₀.₅ 的 FlashAttention 配置 <openpi-pi05-flashattention>`。
+
    **LoRA 与 FSDP 分片**
 
    - 对 VLM 做 LoRA 微调时，设置 ``actor.model.is_lora: True`` 与 ``actor.model.lora_rank: 8``。OpenPI 暂不支持梯度检查点，保持 ``gradient_checkpointing: False``。
