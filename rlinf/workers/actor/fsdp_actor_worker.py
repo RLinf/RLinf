@@ -469,11 +469,11 @@ class FSDPActor(FSDPModelManager, Worker):
 
         multi_modal_inputs = {}
         if "multi_modal_inputs" in m_batch.keys():
-            for key in m_batch["multi_modal_inputs"][0].keys():
-                multi_modal_inputs[key] = torch.cat(
-                    [inputs[key] for inputs in m_batch["multi_modal_inputs"]],
-                    dim=0,
-                ).to(Worker.torch_device_type)
+            from rlinf.utils.multimodal import collate_fsdp_multimodal_inputs
+
+            multi_modal_inputs = collate_fsdp_multimodal_inputs(
+                m_batch["multi_modal_inputs"], Worker.torch_device_type
+            )
 
         if self.enable_dynamic_batch_size or self.variable_seq_lengths:
             max_seq_len_pack = self.max_tokens_per_mbs

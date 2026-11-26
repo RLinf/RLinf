@@ -2478,3 +2478,506 @@ class TestMegatronModelConfig:
                 AssertionError, match="load_mtp|mtp_loss_scaling_factor"
             ):
                 validate_megatron_cfg(cfg)
+
+    def test_build_transformer_config_converts_string_attention_backend(
+        self, monkeypatch
+    ):
+        from megatron.core.model_parallel_config import ModelParallelConfig
+        from megatron.core.transformer.enums import AttnBackend
+        from omegaconf import OmegaConf
+
+        import rlinf.config as cfg_mod
+
+        monkeypatch.setattr(
+            cfg_mod, "_build_model_parallel_config", lambda cfg: ModelParallelConfig()
+        )
+
+        def make_cfg(backend):
+            return OmegaConf.create(
+                {
+                    "num_layers": 2,
+                    "hidden_size": 16,
+                    "num_attention_heads": 2,
+                    "ffn_hidden_size": 32,
+                    "activation": "swiglu",
+                    "attention_backend": backend,
+                }
+            )
+
+        tf_cfg = cfg_mod.build_transformer_config(make_cfg("flash"))
+        assert tf_cfg.attention_backend is AttnBackend.flash
+        with pytest.raises(ValueError, match="Unknown Megatron attention backend"):
+            cfg_mod.build_transformer_config(make_cfg("not_a_backend"))
+
+
+@pytest.mark.parametrize("prefetch_batches", [0, 1, 2, 8])
+@pytest.mark.parametrize("ragged", [False, True])
+def test_image_prefetch_preserves_order_and_gradients(
+    prefetch_batches, ragged, monkeypatch
+):
+    import threading
+
+    from rlinf.utils.multimodal import MultimodalBatchPreparer
+
+    consumed = []
+    source_ids = []
+    prepared_events = [threading.Event() for _ in range(5)]
+    # Simulate distinct host copies without depending on a GPU for this test.
+    monkeypatch.setattr(torch.Tensor, "cpu", lambda tensor: tensor.clone())
+
+    def batches():
+        for index in range(5):
+            consumed.append(index)
+            ids = (
+                [torch.tensor([index + 1, 9])]
+                if ragged
+                else torch.tensor([[index + 1, 9]])
+            )
+            mask = [torch.ones(2)] if ragged else torch.ones(1, 2)
+            source_ids.append(ids)
+            yield {
+                "input_ids": ids,
+                "attention_mask": mask,
+                "multi_modal_inputs": [
+                    {
+                        "pixel_values": torch.full((2, 3), float(index)),
+                        "image_grid_thw": torch.tensor([[1, 1, 2]]),
+                    }
+                ],
+            }
+
+    # Each result is 48 bytes; the byte limit admits at most two batches
+    # (the active microbatch plus one lookahead microbatch).
+    preparer = MultimodalBatchPreparer(
+        prefetch_batches=prefetch_batches, prefetch_bytes=96
+    )
+    orig_prepare = preparer._prepare
+
+    def tracked_prepare(batch, size):
+        result = orig_prepare(batch, size)
+        prepared_events[int(result["pixel_values"][0, 0].item())].set()
+        return result
+
+    monkeypatch.setattr(preparer, "_prepare", tracked_prepare)
+    weight = torch.tensor(0.5, requires_grad=True)
+    with preparer.iterator_context(batches()) as iterator:
+        for index, batch in enumerate(iterator):
+            assert batch["input_ids"] is source_ids[index]
+            if prefetch_batches and index < 4:
+                # Verify real background overlap before the active microbatch finishes.
+                assert prepared_events[index + 1].wait(timeout=2.0)
+            inputs = preparer.for_forward(batch, "cpu")
+            assert torch.equal(inputs["pixel_values"], torch.full((2, 3), float(index)))
+            if prefetch_batches:
+                assert (
+                    len(consumed) <= index + 3
+                )  # Two admitted, one compact lookahead.
+            (inputs["pixel_values"] * weight).sum().backward()
+            assert "_prepared_multimodal_inputs" not in batch
+    assert weight.grad.item() == 6 * sum(range(5))
+
+
+def test_image_prefetch_capture_replay_and_pixel_refs(tmp_path):
+    from rlinf.utils.image_replay import REPLAY_FORMAT, store_pixels
+    from rlinf.utils.multimodal import MultimodalBatchPreparer
+
+    inline_pixels = torch.arange(8, dtype=torch.float32).reshape(4, 2)
+    stored_pixels = torch.arange(8, 16, dtype=torch.float32).reshape(4, 2)
+
+    inline_entry = {
+        "format": REPLAY_FORMAT,
+        "prompt_token_ids": [10, 11, 12],
+        "image_spans": [[1, 2]],
+        "pixel_values": inline_pixels,
+        "image_grid_thw": torch.tensor([[1, 2, 2]]),
+        "mrope_positions": torch.tensor([[0, 1, 2]] * 3),
+        "mrope_position_delta": torch.tensor([0]),
+    }
+    stored_entry = {
+        "format": REPLAY_FORMAT,
+        "prompt_token_ids": [20, 21, 22],
+        "image_spans": [[1, 2]],
+        "pixel_values": stored_pixels,
+        "image_grid_thw": torch.tensor([[1, 2, 2]]),
+        "mrope_positions": torch.tensor([[0, 1, 2]] * 3),
+        "mrope_position_delta": torch.tensor([0]),
+    }
+    store_pixels(stored_entry, tmp_path)
+    assert "pixel_refs" in stored_entry and "pixel_values_bytes" in stored_entry
+
+    microbatches = [
+        # Mixed ragged microbatch: text-only row + inline REPLAY_FORMAT row (no attention_mask).
+        {
+            "input_ids": [torch.tensor([1, 2]), torch.tensor([10, 11, 12, 13])],
+            "multi_modal_inputs": [None, inline_entry],
+        },
+        # Mixed ragged microbatch: file-backed pixel_refs row + text-only row.
+        {
+            "input_ids": [torch.tensor([20, 21, 22, 23]), torch.tensor([5, 6])],
+            "attention_mask": [torch.ones(4), torch.ones(2)],
+            "multi_modal_inputs": [stored_entry, None],
+        },
+        # Text-only ragged microbatch under capture_replay=True (no image_input_mask).
+        {
+            "input_ids": [torch.tensor([7, 8, 9])],
+            "attention_mask": [torch.ones(3)],
+            "multi_modal_inputs": [None],
+        },
+    ]
+
+    preparer = MultimodalBatchPreparer(
+        capture_replay=True, prefetch_batches=1, prefetch_bytes=4096
+    )
+    results = []
+    with preparer.iterator_context(iter(microbatches)) as iterator:
+        for batch in iterator:
+            assert "_prepared_multimodal_inputs" in batch
+            results.append(preparer.for_forward(batch, "cpu"))
+            assert "_prepared_multimodal_inputs" not in batch
+
+    assert torch.equal(results[0]["pixel_values"], inline_pixels.bfloat16())
+    assert results[0]["image_input_mask"].tolist() == [
+        [False, False, False, False],
+        [False, True, False, False],
+    ]
+    assert results[0]["multimodal_position_ids"][:, 0, :2].tolist() == [[0, 1]] * 3
+    assert results[0]["multimodal_position_ids"][:, 1].tolist() == [[0, 1, 2, 3]] * 3
+
+    assert torch.equal(results[1]["pixel_values"], stored_pixels.bfloat16())
+    assert results[1]["image_input_mask"].tolist() == [
+        [False, True, False, False],
+        [False, False, False, False],
+    ]
+    assert "pixel_values" not in results[2]
+    assert "image_input_mask" not in results[2]
+    assert results[2]["multimodal_position_ids"][:, 0].tolist() == [[0, 1, 2]] * 3
+
+    missing_bytes = dict(stored_entry)
+    missing_bytes.pop("pixel_values_bytes")
+    bad_batch = {
+        "input_ids": [torch.tensor([20, 21, 22, 23])],
+        "attention_mask": [torch.ones(4)],
+        "multi_modal_inputs": [missing_bytes],
+    }
+    with pytest.raises(ValueError, match="pixel_values_bytes"):
+        with preparer.iterator_context(iter([bad_batch])) as iterator:
+            next(iterator)
+
+
+@pytest.mark.parametrize("failure", ["prepare", "consumer", "budget"])
+def test_image_prefetch_propagates_failure_and_joins_threads(failure):
+    import threading
+
+    from rlinf.utils.multimodal import MultimodalBatchPreparer
+
+    batch = {
+        "input_ids": torch.tensor([[1, 2]]),
+        "attention_mask": torch.ones(1, 2),
+        "multi_modal_inputs": [],
+    }
+    if failure == "prepare":
+        batch["multi_modal_inputs"] = [
+            {
+                "format": "legacy",
+                "pixel_values": torch.ones(1),
+                "image_grid_thw": torch.ones(1, 3, dtype=torch.long),
+            }
+        ]
+    preparer = MultimodalBatchPreparer(
+        capture_replay=True,
+        prefetch_batches=2,
+        prefetch_bytes=1 if failure == "budget" else 4096,
+    )
+    error = {
+        "prepare": "requires a captured image row",
+        "budget": "exceeding",
+        "consumer": "model forward",
+    }[failure]
+    with pytest.raises(ValueError, match=error):
+        with preparer.iterator_context(iter([batch, batch])) as iterator:
+            next(iterator)
+            raise ValueError("model forward failed")
+    assert not any(
+        thread.name.startswith("rlinf-images") for thread in threading.enumerate()
+    )
+
+
+def test_release_capture_replays_positions_and_verifies_shared_pixels(tmp_path):
+    from pathlib import Path
+
+    from rlinf.utils.image_replay import REPLAY_FORMAT, store_pixels
+    from rlinf.utils.multimodal import materialize_multimodal_inputs
+
+    pixels = torch.arange(8, dtype=torch.float32).reshape(4, 2)
+    data = {
+        "format": REPLAY_FORMAT,
+        "prompt_token_ids": [10, 11, 12],
+        "image_spans": [[1, 2]],
+        "pixel_values": pixels,
+        "image_grid_thw": torch.tensor([[1, 2, 2]]),
+        "mrope_positions": torch.tensor([[0, 1, 2]] * 3),
+        "mrope_position_delta": torch.tensor([0]),
+    }
+    store_pixels(data, tmp_path)
+    ids = torch.tensor([[10, 11, 12, 13, 0]])
+
+    def replay(entry=data):
+        return materialize_multimodal_inputs(
+            [entry],
+            "cpu",
+            input_ids=ids,
+            attention_mask=ids.ne(0),
+            capture_replay=True,
+        )
+
+    result = replay()
+    assert torch.equal(result["pixel_values"], pixels.bfloat16())
+    assert result["image_input_mask"].tolist() == [[False, True, False, False, False]]
+    assert result["multimodal_position_ids"][:, 0].tolist() == [[0, 1, 2, 3, 0]] * 3
+    for bad_span in ([0, 2], [1, 3], [2, 2]):
+        with pytest.raises(ValueError, match="strictly inside captured prompt length"):
+            replay({**data, "image_spans": [bad_span]})
+    ids[0, 0] = 2
+    with pytest.raises(ValueError, match="prompt"):
+        replay()
+    ids[0, 0] = 10
+    Path(data["pixel_refs"][0]["path"]).write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="checksum"):
+        replay()
+
+
+@pytest.mark.parametrize(
+    "settings,capture_enabled,error",
+    [
+        ({}, False, None),
+        ({"prefetch_batches": 2, "prefetch_bytes": 4096}, True, None),
+        ({"prefetch_batches": -1}, False, "prefetch_batches"),
+        ({"prefetch_batches": True}, True, "prefetch_batches"),
+        ({"prefetch_bytes": 1.5}, True, "prefetch_bytes"),
+        ({"prefetch_batches": 1}, True, "positive prefetch_bytes"),
+        (
+            {"prefetch_batches": 1, "prefetch_bytes": 4096},
+            False,
+            "capture_multi_modal_inputs",
+        ),
+    ],
+)
+def test_validate_multimodal_learner_cfg_budgets(settings, capture_enabled, error):
+    from rlinf.config import validate_multimodal_learner_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": True},
+            "actor": {
+                "training_backend": "megatron",
+                "megatron": {"mbridge": True},
+                "multi_modal": settings,
+            },
+            "rollout": {
+                "rollout_backend": "sglang",
+                "sglang": {"capture_multi_modal_inputs": capture_enabled},
+            },
+        }
+    )
+    if error:
+        with pytest.raises(ValueError, match=error):
+            validate_multimodal_learner_cfg(cfg)
+    else:
+        snapshot = OmegaConf.to_container(cfg)
+        validate_multimodal_learner_cfg(cfg)
+        assert OmegaConf.to_container(cfg) == snapshot
+
+
+@pytest.mark.parametrize(
+    "overrides,match",
+    [
+        ({"actor": {"training_backend": "fsdp"}}, "requires actor to use Megatron"),
+        (
+            {"actor": {"model": {"context_parallel_size": 2}}},
+            "requires actor to use Megatron",
+        ),
+        (
+            {"actor": {"model": {"pipeline_model_parallel_size": 2}}},
+            "requires actor to use Megatron",
+        ),
+        ({"actor": {"megatron": {"mbridge": False}}}, "megatron.mbridge=True"),
+        (
+            {"agentloop": {"is_dynamic_rollout_batch": False}},
+            "is_dynamic_rollout_batch=True",
+        ),
+        ({"session_server": {"enable": True}}, "session_server.enable=True"),
+        (
+            {"rollout": {"sglang": {"capture_multi_modal_inputs": "false"}}},
+            "must be a boolean",
+        ),
+        (
+            {
+                "critic": {
+                    "use_critic_model": True,
+                    "training_backend": "fsdp",
+                },
+            },
+            "requires critic to use Megatron",
+        ),
+    ],
+)
+def test_image_replay_rejects_unsupported_learner(overrides, match):
+    from rlinf.config import validate_multimodal_learner_cfg
+
+    base = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": True},
+            "session_server": {"enable": False},
+            "rollout": {
+                "rollout_backend": "sglang",
+                "sglang": {"capture_multi_modal_inputs": True},
+            },
+            "actor": {
+                "training_backend": "megatron",
+                "model": {
+                    "pipeline_model_parallel_size": 1,
+                    "context_parallel_size": 1,
+                },
+                "megatron": {"mbridge": True},
+            },
+            "critic": {
+                "use_critic_model": False,
+                "training_backend": "fsdp",
+                "model": {"pipeline_model_parallel_size": 2},
+            },
+        }
+    )
+    cfg = OmegaConf.merge(base, overrides)
+    with pytest.raises(ValueError, match=match):
+        validate_multimodal_learner_cfg(cfg)
+
+
+def test_validate_multimodal_skips_disabled_critic_and_non_sglang():
+    from rlinf.config import (
+        rollout_captures_multi_modal_inputs,
+        validate_multimodal_learner_cfg,
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "rollout": {
+                "rollout_backend": "vllm",
+                "sglang": {"capture_multi_modal_inputs": True},
+            },
+            "actor": {"training_backend": "fsdp"},
+            "critic": {
+                "use_critic_model": False,
+                "training_backend": "fsdp",
+                "multi_modal": {"prefetch_batches": -1},
+            },
+        }
+    )
+    assert rollout_captures_multi_modal_inputs(cfg) is False
+    assert rollout_captures_multi_modal_inputs(OmegaConf.create({})) is False
+    validate_multimodal_learner_cfg(cfg)
+
+
+def test_http_client_generate_body_encodes_bytes_and_nested_lists():
+    import base64
+
+    from rlinf.utils.http_client import InferenceHTTPClient
+
+    raw_a, raw_b = b"\x89PNG-a", bytearray(b"\xff\xd8-b")
+    body = InferenceHTTPClient._generate_body(
+        prompt=None,
+        input_ids=[1, 2],
+        sampling_params={"temperature": 0},
+        return_logprob=True,
+        image_data=(raw_a, (raw_b, "already-encoded")),
+    )
+    assert body["image_data"] == [
+        base64.b64encode(raw_a).decode("ascii"),
+        [base64.b64encode(raw_b).decode("ascii"), "already-encoded"],
+    ]
+
+
+def test_validate_megatron_cfg_reports_critic_role_for_load_mtp():
+    from rlinf.config import validate_megatron_cfg
+
+    critic_cfg = OmegaConf.create(
+        {
+            "model": {"model_type": "qwen3_5", "load_mtp": "false"},
+            "megatron": {"mbridge": True, "use_hf_ckpt": True},
+        }
+    )
+    with pytest.raises(AssertionError, match="critic.model.load_mtp must be a boolean"):
+        validate_megatron_cfg(critic_cfg, role="critic")
+
+
+def test_validate_rollout_cfg_rejects_image_capture_with_serving_mode():
+    from rlinf.config import validate_rollout_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "rollout_backend": "sglang",
+            "return_logprobs": False,
+            "model": {"model_type": "qwen3_5", "model_path": "/tmp/model"},
+            "sglang": {
+                "serving_mode": "worker_http",
+                "capture_multi_modal_inputs": True,
+            },
+        }
+    )
+    algorithm_cfg = OmegaConf.create({"recompute_logprobs": False})
+    with pytest.raises(ValueError, match="default SGLang rollout worker"):
+        validate_rollout_cfg(cfg, algorithm_cfg)
+
+
+def test_multimodal_boundary_validation_and_left_aligned_positions():
+    from rlinf.config import validate_multimodal_learner_cfg
+    from rlinf.hybrid_engines.megatron.multimodal_inputs import (
+        _extend_expected_positions,
+    )
+    from rlinf.utils.multimodal import materialize_multimodal_inputs
+
+    with pytest.raises(ValueError, match="requires both input_ids and attention_mask"):
+        materialize_multimodal_inputs([], "cpu", capture_replay=True)
+
+    # Dedicated inference role with PP > 1 must be rejected when capture is enabled.
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": True},
+            "session_server": {"enable": False},
+            "rollout": {
+                "rollout_backend": "sglang",
+                "sglang": {"capture_multi_modal_inputs": True},
+            },
+            "actor": {
+                "training_backend": "megatron",
+                "model": {
+                    "pipeline_model_parallel_size": 1,
+                    "context_parallel_size": 1,
+                },
+                "megatron": {"mbridge": True},
+            },
+            "inference": {"model": {"pipeline_model_parallel_size": 2}},
+        }
+    )
+    with pytest.raises(ValueError, match="inference to use PP=1 and CP=1"):
+        validate_multimodal_learner_cfg(cfg)
+
+    # Trimmed, padded, and left-padded orig_mask positions stay aligned.
+    base_expected = torch.arange(5).repeat(3, 1, 1)
+    right_mask = torch.tensor([[True, True, True, False, False]])
+    trimmed = _extend_expected_positions(
+        base_expected, right_mask, torch.tensor([[True, True, True]])
+    )
+    assert trimmed.shape == (3, 1, 3)
+    assert torch.equal(trimmed, base_expected[:, :, :3])
+
+    padded = _extend_expected_positions(
+        base_expected, right_mask, torch.tensor([[True, True, True, True, True, True]])
+    )
+    assert padded.shape == (3, 1, 6)
+    assert padded[:, 0].tolist() == [[0, 1, 2, 3, 4, 5]] * 3
+
+    expected = torch.tensor([[[0, 0, 10, 11]]] * 3)
+    orig_mask = torch.tensor([[False, False, True, True]])
+    actual_mask = torch.tensor([[True, True, True, False]])
+    extended = _extend_expected_positions(expected, orig_mask, actual_mask)
+    assert extended[:, 0].tolist() == [[10, 11, 12, 0]] * 3

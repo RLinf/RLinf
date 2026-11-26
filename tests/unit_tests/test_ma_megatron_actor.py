@@ -31,6 +31,262 @@ from omegaconf import OmegaConf
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 
 
+def test_ragged_model_inputs_requires_capture_multi_modal_inputs():
+    pytest.importorskip("megatron.core")
+    from rlinf.utils.image_replay import REPLAY_FORMAT
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
+    actor = MAMegatronActor.__new__(MAMegatronActor)
+    actor.role = "actor"
+    actor.cfg = OmegaConf.create(
+        {
+            "rollout": {
+                "rollout_backend": "sglang",
+                "sglang": {"capture_multi_modal_inputs": False},
+            }
+        }
+    )
+    with pytest.raises(ValueError, match="capture_multi_modal_inputs"):
+        actor.ragged_model_inputs(
+            {"multi_modal_inputs": [{"format": REPLAY_FORMAT}]},
+            None,
+            [torch.zeros(2, dtype=torch.long)],
+        )
+
+
+def test_run_forward_backward_skips_prefetch_for_text_only_batch(monkeypatch):
+    pytest.importorskip("megatron.core")
+    from megatron.core import parallel_state
+
+    from rlinf.hybrid_engines.megatron import multimodal_inputs as mm_inputs
+    from rlinf.utils.image_replay import REPLAY_FORMAT
+    from rlinf.workers import megatron_worker as mw_mod
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
+    _parallel_groups(monkeypatch, 1, 1, 0)
+    monkeypatch.setattr(mm_inputs, "model_packs_inputs", lambda model: True)
+
+    actor = MAMegatronActor.__new__(MAMegatronActor)
+    actor.role = "actor"
+    actor.cfg = OmegaConf.create(
+        {
+            "rollout": {
+                "rollout_backend": "sglang",
+                "sglang": {"capture_multi_modal_inputs": True},
+            }
+        }
+    )
+    actor.role_cfg = OmegaConf.create(
+        {
+            "multi_modal": {"prefetch_batches": 1, "prefetch_bytes": 4096},
+        }
+    )
+    actor.enable_dynamic_batch_size = False
+    actor.logprob_forward_micro_batch_size = 2
+    actor.use_profiler = False
+    actor.model = [torch.nn.Identity()]
+    actor._get_num_microbatches = lambda b, fo: 1
+    actor.log_debug = lambda msg: None
+    actor.make_data_iterator_list = lambda it: iter(it)
+    actor._process_fwd_bwd_outputs = lambda out, fo: out
+    monkeypatch.setattr(mw_mod, "clear_memory", lambda: None)
+    monkeypatch.setattr(
+        parallel_state, "get_virtual_pipeline_model_parallel_world_size", lambda: None
+    )
+
+    observed = []
+
+    def fake_forward_step(data_iterator, model):
+        microbatch = next(data_iterator)
+        has_prepared = "_prepared_multimodal_inputs" in microbatch
+        consumed = None
+        if "multi_modal_inputs" in microbatch:
+            with actor.ragged_model_inputs(
+                microbatch, model, microbatch["input_ids"]
+            ) as inputs:
+                consumed = inputs
+            assert "_prepared_multimodal_inputs" not in microbatch
+        observed.append((has_prepared, consumed))
+        return 1
+
+    actor.get_forward_step_func = lambda: fake_forward_step
+
+    def fake_fwd_bwd(**kw):
+        return [
+            kw["forward_step_func"](kw["data_iterator"], kw["model"][0])
+            for _ in range(kw["num_microbatches"])
+        ]
+
+    monkeypatch.setattr(mw_mod, "get_forward_backward_func", lambda: fake_fwd_bwd)
+    monkeypatch.setattr(
+        mm_inputs,
+        "qwen_vl_replay_inputs",
+        lambda model, expected, inputs: mw_mod.nullcontext(
+            {**inputs, "expected_positions": expected}
+        ),
+    )
+
+    actor.run_forward_backward(
+        {"input_ids": [torch.tensor([1, 2])], "attention_mask": [torch.ones(2)]},
+        forward_only=False,
+    )
+    assert observed == [(False, None)]
+
+    pixels = torch.arange(8, dtype=torch.float32).reshape(4, 2)
+    replay_row = {
+        "format": REPLAY_FORMAT,
+        "prompt_token_ids": [10, 11, 12],
+        "image_spans": [[1, 2]],
+        "pixel_values": pixels,
+        "image_grid_thw": torch.tensor([[1, 2, 2]]),
+        "mrope_positions": torch.tensor([[0, 1, 2]] * 3),
+        "mrope_position_delta": torch.tensor([0]),
+    }
+    actor.run_forward_backward(
+        {
+            "input_ids": [torch.tensor([10, 11, 12, 13])],
+            "attention_mask": [torch.ones(4)],
+            "multi_modal_inputs": [replay_row],
+        },
+        forward_only=False,
+    )
+    assert len(observed) == 2
+    has_prepared, consumed = observed[1]
+    assert has_prepared is True
+    assert consumed["position_ids"] is None
+    assert torch.equal(consumed["pixel_values"], pixels.bfloat16())
+    assert consumed["image_input_mask"].tolist() == [[False, True, False, False]]
+    assert consumed["expected_positions"][:, 0].tolist() == [[0, 1, 2, 3]] * 3
+
+
+def test_multimodal_preparer_respects_rollout_backend():
+    pytest.importorskip("megatron.core")
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
+    for cfg_dict, expected in (
+        (
+            {
+                "rollout": {
+                    "rollout_backend": "vllm",
+                    "sglang": {"capture_multi_modal_inputs": True},
+                }
+            },
+            False,
+        ),
+        ({}, False),
+        (
+            {
+                "rollout": {
+                    "rollout_backend": "sglang",
+                    "sglang": {"capture_multi_modal_inputs": True},
+                }
+            },
+            True,
+        ),
+    ):
+        actor = MAMegatronActor.__new__(MAMegatronActor)
+        actor.cfg = OmegaConf.create(cfg_dict)
+        actor.role_cfg = OmegaConf.create({})
+        assert actor.multimodal_preparer.capture_replay is expected
+
+
+@pytest.mark.parametrize("packs_inputs", [True, False])
+def test_ma_megatron_critic_forward_step_packing_and_multimodal(
+    monkeypatch, packs_inputs
+):
+    pytest.importorskip("megatron.core")
+    from rlinf.hybrid_engines.megatron import multimodal_inputs as mm_inputs
+    from rlinf.hybrid_engines.megatron import utils as megatron_utils
+    from rlinf.workers import megatron_worker as mw_mod
+    from rlinf.workers.critic import ma_megatron_critic_worker as critic_mod
+
+    _parallel_groups(monkeypatch, 1, 1, 0)
+    monkeypatch.setattr(megatron_utils, "model_packs_inputs", lambda m: packs_inputs)
+    monkeypatch.setattr(mm_inputs, "model_packs_inputs", lambda m: packs_inputs)
+
+    prepare_calls = 0
+    orig_prepare = mw_mod.prepare_ragged_model_inputs
+
+    def counted_prepare(*args, **kwargs):
+        nonlocal prepare_calls
+        prepare_calls += 1
+        return orig_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(mw_mod, "prepare_ragged_model_inputs", counted_prepare)
+
+    critic = critic_mod.MAMegatronCritic.__new__(critic_mod.MAMegatronCritic)
+    critic.role = "critic"
+    critic.torch_device_type = "cpu"
+    critic.return_loss = False
+    critic.transformer_config = SimpleNamespace(sequence_parallel=False)
+    critic.role_cfg = OmegaConf.create({})
+    critic.cfg = OmegaConf.create(
+        {
+            "rollout": {
+                "rollout_backend": "sglang",
+                "sglang": {"capture_multi_modal_inputs": True},
+            }
+        }
+    )
+    captured = {}
+
+    def fake_custom_forward(model, **kwargs):
+        captured["input_ids_ndim"] = kwargs["input_ids"].ndim
+        captured["has_attention_mask"] = kwargs["attention_mask"] is not None
+        captured["has_position_ids"] = kwargs["position_ids"] is not None
+        captured["has_packed_params"] = kwargs["packed_seq_params"] is not None
+        total = int(kwargs["packed_seq_params"].cu_seqlens_q[-1].item())
+        return torch.arange(total, dtype=torch.float32).reshape(1, total, 1)
+
+    critic.custom_forward = fake_custom_forward
+
+    model = torch.nn.Module()
+    model.post_process = True
+    batch = {
+        "input_ids": [torch.tensor([1, 2, 3]), torch.tensor([4, 5])],
+        "response_mask": [
+            torch.tensor([False, True, True]),
+            torch.tensor([False, True]),
+        ],
+    }
+    output, collect = critic.get_forward_step_func()(iter([batch]), model)
+    values = collect(output)
+    assert len(values) == 2
+    assert captured["has_packed_params"] is True
+    assert prepare_calls == 1
+    assert captured["input_ids_ndim"] == 2
+    assert captured["has_attention_mask"] is packs_inputs
+    assert captured["has_position_ids"] is (not packs_inputs)
+
+    # Multimodal microbatches route directly to ragged_multimodal_inputs without
+    # running text-only prepare_ragged_model_inputs first.
+    if packs_inputs:
+        from rlinf.hybrid_engines.megatron import multimodal_inputs as mm_inputs_mod
+
+        mm_calls = 0
+
+        def fake_ragged_mm(batch_in, preparer, mod, rows):
+            nonlocal mm_calls
+            mm_calls += 1
+            tokens, mask, _, packed_params = orig_prepare(rows, mod)
+            return mw_mod.nullcontext(
+                {
+                    "input_ids": tokens,
+                    "attention_mask": mask,
+                    "position_ids": None,
+                    "packed_seq_params": packed_params,
+                }
+            )
+
+        monkeypatch.setattr(mm_inputs_mod, "ragged_multimodal_inputs", fake_ragged_mm)
+        prepare_calls = 0
+        mm_batch = {**batch, "multi_modal_inputs": [None, None]}
+        output, collect = critic.get_forward_step_func()(iter([mm_batch]), model)
+        assert len(collect(output)) == 2
+        assert mm_calls == 1
+        assert prepare_calls == 0
+
+
 class TestExtractVersionedTrajectoryRecords:
     """The actor's record extraction from DynamicRolloutResult objects."""
 
@@ -207,6 +463,8 @@ def _distributed_staleness_process(rank, counts, balance, missing, init_file):
     try:
         first = sum(counts[:rank])
         results = [_versioned_group(i) for i in range(first, first + counts[rank])]
+        for result in results:
+            result.multi_modal_inputs = [None, {"image_id": result.group_id}]
         if missing and rank == 1:
             results[0].version_start = results[0].version_end = None
         if balance:
@@ -229,6 +487,10 @@ def _distributed_staleness_process(rank, counts, balance, missing, init_file):
             assert metrics[f"data_staleness_{5 - i}/ratio"] == 0.25
         for result in results:
             assert result.task_name == "searchr1"
+            assert result.to_actor_batch()["multi_modal_inputs"] == [
+                None,
+                {"image_id": result.group_id},
+            ]
             assert result.version_start == [5 + result.group_id] * 2
     finally:
         dist.destroy_process_group()
@@ -481,6 +743,7 @@ def _training_rows_process(rank, counts, micro_batch_size, target, init_file):
             "advantages": [torch.ones_like(row, dtype=torch.float32) for row in rows],
             "rewards": torch.arange(count).float(),
             "idx_to_traj": list(range(count)),
+            "multi_modal_inputs": [{"image_id": int(row[0])} for row in rows],
         }
         original = copy.deepcopy(batch)
         padded = actor._pad_ragged_rows(batch)
@@ -492,6 +755,7 @@ def _training_rows_process(rank, counts, micro_batch_size, target, init_file):
                     torch.testing.assert_close(actual, expected)
             else:
                 torch.testing.assert_close(padded[key][:count], value)
+        assert padded["multi_modal_inputs"][count:] == [None] * (target - count)
         for row in padded["attention_mask"][count:]:
             assert row.tolist() == [True]
         for key in ("response_mask", "advantages", "recomputed_logprobs"):
@@ -1313,6 +1577,7 @@ def mtp_configured_actor(request, tmp_path, monkeypatch):
     )
     actor._rank = 1
     actor.mbridge = True
+    actor.is_dedicated_critic_model = False
 
     class ProviderReady(Exception):
         pass
@@ -1387,9 +1652,16 @@ def test_actor_mtp_opt_in_is_independent_of_checkpoint_layers(
             input_ids=[row[valid] for row, valid in zip(ids, mask)],
             response_mask=[row[valid] for row, valid in zip(mask, mask)],
         )
-    actor_cls = MAMegatronActor if multi_turn else MegatronActor
+    if multi_turn:
+        ma_actor = MAMegatronActor.__new__(MAMegatronActor)
+        ma_actor.__dict__.update(actor.__dict__)
+        target_actor = ma_actor
+        actor_cls = MAMegatronActor
+    else:
+        target_actor = actor
+        actor_cls = MegatronActor
     with pytest.raises(Checked):
-        actor_cls.get_forward_step_func(actor)(iter([batch]), Backend())
+        actor_cls.get_forward_step_func(target_actor)(iter([batch]), Backend())
 
 
 def test_training_step_mtp_metric_requires_opt_in(
@@ -1849,3 +2121,360 @@ def test_ragged_actor_and_critic_model_input_contract(
     assert torch.equal(collect(output)[..., 0], expected.float() * 2)
     output.sum().backward()
     assert model.weight.grad.item() == expected.sum().item()
+
+
+def test_bridge_text_critic_replaces_only_last_stage_output():
+    pytest.importorskip("megatron.training")
+    from rlinf.hybrid_engines.megatron.megatron_model_manager import (
+        MegatronModelManager,
+    )
+
+    manager = MegatronModelManager.__new__(MegatronModelManager)
+    manager._cfg = OmegaConf.create({"model": {}})
+    first, last = torch.nn.Module(), torch.nn.Module()
+    first.post_process, last.post_process = False, True
+    first.config = OmegaConf.create(
+        {
+            "hidden_size": 4,
+            "sequence_parallel": False,
+            "share_embeddings_and_output_weights": True,
+        }
+    )
+    first.share_embeddings_and_output_weights = True
+    last.config = OmegaConf.create(
+        {
+            "hidden_size": 4,
+            "sequence_parallel": False,
+            "share_embeddings_and_output_weights": True,
+        }
+    )
+    last.embedding = torch.nn.Embedding(8, 4)
+    last.output_layer = torch.nn.Linear(4, 8, bias=False)
+    last.output_layer.weight = last.embedding.weight
+    last.share_embeddings_and_output_weights = True
+    manager._attach_value_head([first, last])
+    values, _ = last.output_layer(last.embedding(torch.tensor([2, 3])))
+    assert values.shape == (2, 1)
+    assert not first.share_embeddings_and_output_weights
+    assert not first.config.share_embeddings_and_output_weights
+    assert not last.share_embeddings_and_output_weights
+    assert not last.config.share_embeddings_and_output_weights
+    values.sum().backward()
+    assert last.output_layer.weight.grad is not None
+    assert last.embedding.weight.shape == (8, 4)
+    assert not hasattr(first, "output_layer")
+
+
+def test_bridge_vlm_critic_unties_all_stages_and_replaces_language_head():
+    pytest.importorskip("megatron.training")
+    from rlinf.hybrid_engines.megatron.megatron_model_manager import (
+        MegatronModelManager,
+    )
+
+    manager = MegatronModelManager.__new__(MegatronModelManager)
+    manager._cfg = OmegaConf.create({"model": {}})
+    first, last = torch.nn.Module(), torch.nn.Module()
+    first.post_process, last.post_process = False, True
+    first.share_embeddings_and_output_weights = True
+    first.config = OmegaConf.create(
+        {
+            "hidden_size": 4,
+            "sequence_parallel": False,
+            "share_embeddings_and_output_weights": True,
+        }
+    )
+    first.language_model = torch.nn.Module()
+    first.language_model.share_embeddings_and_output_weights = True
+    first.language_model.config = OmegaConf.create(
+        {
+            "hidden_size": 4,
+            "sequence_parallel": False,
+            "share_embeddings_and_output_weights": True,
+        }
+    )
+    last.share_embeddings_and_output_weights = True
+    last.config = OmegaConf.create(
+        {
+            "hidden_size": 4,
+            "sequence_parallel": False,
+            "share_embeddings_and_output_weights": True,
+        }
+    )
+    last.language_model = torch.nn.Module()
+    last.language_model.config = OmegaConf.create(
+        {
+            "hidden_size": 4,
+            "sequence_parallel": False,
+            "share_embeddings_and_output_weights": True,
+        }
+    )
+    last.language_model.embedding = torch.nn.Embedding(8, 4)
+    last.language_model.output_layer = torch.nn.Linear(4, 8, bias=False)
+    last.language_model.share_embeddings_and_output_weights = True
+    manager._attach_value_head([first, last])
+    values, _ = last.language_model.output_layer(
+        last.language_model.embedding(torch.tensor([1, 2]))
+    )
+    assert values.shape == (2, 1)
+    assert not first.share_embeddings_and_output_weights
+    assert not first.config.share_embeddings_and_output_weights
+    assert not last.share_embeddings_and_output_weights
+    assert not last.config.share_embeddings_and_output_weights
+    assert not first.language_model.share_embeddings_and_output_weights
+    assert not first.language_model.config.share_embeddings_and_output_weights
+    assert not last.language_model.share_embeddings_and_output_weights
+    assert not last.language_model.config.share_embeddings_and_output_weights
+    assert not hasattr(first.language_model, "output_layer")
+
+
+@pytest.mark.parametrize("is_critic", [True, False])
+def test_bridge_save_checkpoint_skips_hf_export_for_dedicated_critic(
+    monkeypatch, is_critic
+):
+    from contextlib import nullcontext
+
+    pytest.importorskip("megatron.training")
+    from rlinf.hybrid_engines.megatron import megatron_model_manager as mm_mod
+
+    saved = []
+    exported = []
+    manager = mm_mod.MegatronModelManager.__new__(mm_mod.MegatronModelManager)
+    manager.is_running = True
+    manager.mbridge = True
+    manager.is_dedicated_critic_model = is_critic
+    manager.bridge = SimpleNamespace(
+        save_hf_pretrained=lambda *args, **kwargs: exported.append((args, kwargs))
+    )
+    manager.model = ["model"]
+    manager.optimizer = "opt"
+    manager.lr_scheduler = "sched"
+    manager.checkpoint_context = {}
+    manager._cfg = OmegaConf.create({"megatron": {"load": "/src"}})
+    manager.ensure_onloaded_and_then_offload = lambda: nullcontext()
+    fake_args = SimpleNamespace(save=None)
+    monkeypatch.setattr(mm_mod, "get_args", lambda: fake_args)
+    monkeypatch.setattr(
+        mm_mod, "save_checkpoint", lambda *args, **kwargs: saved.append((args, kwargs))
+    )
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 0)
+
+    manager.save_checkpoint("/tmp/ckpt", step=5)
+    assert len(saved) == 1
+    assert len(exported) == (0 if is_critic else 1)
+
+
+def test_ragged_multimodal_inputs_rejects_non_qwen_vl_model():
+    pytest.importorskip("megatron.core")
+    from rlinf.hybrid_engines.megatron.multimodal_inputs import (
+        ragged_multimodal_inputs,
+    )
+
+    class PlainLM(torch.nn.Module):
+        pass
+
+    with pytest.raises(ValueError, match="Qwen3VLModel.*PlainLM"):
+        with ragged_multimodal_inputs(
+            {}, None, PlainLM(), [torch.zeros(2, dtype=torch.long)]
+        ):
+            pass
+
+
+@pytest.mark.parametrize("is_critic", [False, True])
+def test_qwen35_mbridge_setup_forwards_attention_backend_and_critic_hook(
+    tmp_path, is_critic
+):
+    pytest.importorskip("megatron.bridge.models.qwen_vl.qwen35_vl_provider")
+    from megatron.bridge import AutoBridge
+    from megatron.core.transformer.enums import AttnBackend
+    from transformers import Qwen3_5Config
+
+    from rlinf.hybrid_engines.megatron.megatron_model_manager import (
+        LinearForLastLayer,
+        MegatronModelManager,
+    )
+
+    Qwen3_5Config(architectures=["Qwen3_5ForConditionalGeneration"]).save_pretrained(
+        tmp_path
+    )
+    provider = AutoBridge.from_hf_pretrained(
+        str(tmp_path), trust_remote_code=True
+    ).to_megatron_provider(load_weights=False)
+
+    worker = MegatronModelManager.__new__(MegatronModelManager)
+    worker._cfg = OmegaConf.create(
+        {
+            "megatron": {"load": str(tmp_path)},
+            "model": {"model_type": "qwen3_5"},
+            "optim": {"use_distributed_optimizer": False},
+        }
+    )
+    worker.transformer_config = SimpleNamespace(attention_backend=AttnBackend.flash)
+    worker._rank = 1
+    worker.is_dedicated_critic_model = is_critic
+
+    worker._configure_mbridge_provider(provider)
+    assert provider.attention_backend is AttnBackend.flash
+    hook = provider.pre_wrap_hook
+    if is_critic:
+        assert hook is not None
+        chunk = torch.nn.Module()
+        chunk.post_process = True
+        chunk.share_embeddings_and_output_weights = True
+        chunk.config = OmegaConf.create(
+            {
+                "hidden_size": 4,
+                "sequence_parallel": False,
+                "share_embeddings_and_output_weights": True,
+            }
+        )
+        chunk.weight = torch.nn.Parameter(torch.zeros(1))
+        chunk.output_layer = torch.nn.Linear(4, 8, bias=False)
+        hook([chunk])
+        assert isinstance(chunk.output_layer, LinearForLastLayer)
+        assert not chunk.share_embeddings_and_output_weights
+
+        worker._cfg.model.load_mtp = True
+        with pytest.raises(ValueError, match="Dedicated critic models.*load_mtp"):
+            worker._configure_mbridge_provider(provider)
+    else:
+        assert hook is None
+
+
+def test_mrope_verification_removes_hook_after_failure():
+    pytest.importorskip("megatron.bridge")
+    from rlinf.hybrid_engines.megatron.multimodal_inputs import (
+        verify_qwen_vl_positions,
+    )
+
+    class BridgeModel(torch.nn.Module):
+        __module__ = "megatron.bridge.models.qwen_vl.test"
+
+        def __init__(self):
+            super().__init__()
+            self.language_model = torch.nn.Identity()
+
+    model = BridgeModel()
+    positions = torch.zeros(3, 1, 2, dtype=torch.long)
+    with pytest.raises(ValueError, match="M-RoPE positions different"):
+        with verify_qwen_vl_positions(model, positions, torch.ones(1, 2)):
+            model.language_model(position_ids=positions + 1)
+    assert not model.language_model._forward_pre_hooks
+
+
+def test_bridge_replays_literal_media_ids_as_text(monkeypatch):
+    pytest.importorskip("megatron.bridge")
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+
+    from rlinf.hybrid_engines.megatron.megatron_model_manager import (
+        MegatronModelManager,
+    )
+    from rlinf.hybrid_engines.megatron.multimodal_inputs import (
+        ragged_multimodal_inputs,
+    )
+    from rlinf.hybrid_engines.megatron.utils import (
+        postprocess_ragged_seqs,
+        preprocess_ragged_seqs,
+    )
+    from rlinf.utils.image_replay import REPLAY_FORMAT
+    from rlinf.utils.multimodal import MultimodalBatchPreparer
+
+    monkeypatch.setattr(torch.cuda.nvtx, "range_push", lambda *args: None)
+    monkeypatch.setattr(torch.cuda.nvtx, "range_pop", lambda: None)
+    groups = _parallel_groups(monkeypatch, tp=2, cp=1, rank=0)
+
+    class VisionBackend(torch.nn.Module):
+        def forward(self, hidden_states, grid_thw):
+            self.seen_grid = grid_thw
+            return torch.full((hidden_states.shape[0] // 4, 1), 99.0), []
+
+    class EmbeddingBackend(torch.nn.Module):
+        def forward(self, input_ids, position_ids=None):
+            self.seen_input_ids = input_ids
+            return input_ids.float().T.unsqueeze(-1)
+
+    class LanguageBackend(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embedding = EmbeddingBackend()
+            self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+
+        def forward(self, decoder_input, **kwargs):
+            self.seen_input_ids = kwargs["input_ids"]
+            self.seen_positions = kwargs["position_ids"]
+            self.seen_visual_pos_masks = kwargs["visual_pos_masks"]
+            self.seen_packed_params = kwargs["packed_seq_params"]
+            return decoder_input.transpose(0, 1)
+
+    model = Qwen3VLModel.__new__(Qwen3VLModel)
+    torch.nn.Module.__init__(model)
+    model.pg_collection = groups
+    model.config = SimpleNamespace(sequence_parallel=False, spatial_merge_size=2)
+    model.pre_process = True
+    model.post_process = True
+    model.use_dist_train = False
+    model.image_token_id = 2
+    model.video_token_id = 4
+    model.vision_start_token_id = 1
+    model.square_merge_size = 4
+    model.vision_model = VisionBackend()
+    model.language_model = LanguageBackend()
+
+    # Row 0: one real 2x2 image, then literal image markers; Row 1: text-only with literal markers.
+    image_row = torch.tensor([1, 2, 2, 2, 2, 3, 1, 2, 3, 2, 1])
+    text_row = torch.tensor([1, 2, 3, 7])
+    expected_pos = torch.tensor(
+        [
+            [0, 1, 1, 1, 1, 3, 4, 5, 6, 7, 8],
+            [0, 1, 1, 2, 2, 3, 4, 5, 6, 7, 8],
+            [0, 1, 2, 1, 2, 3, 4, 5, 6, 7, 8],
+        ]
+    )
+    entry = {
+        "format": REPLAY_FORMAT,
+        "prompt_token_ids": image_row.tolist(),
+        "image_spans": [[1, 5]],
+        "pixel_values": torch.ones(16, 4),
+        "image_grid_thw": torch.tensor([[1, 4, 4]]),
+        "mrope_positions": expected_pos,
+        "mrope_position_delta": torch.tensor([-2]),
+    }
+    rows = [image_row, text_row]
+    lengths = [len(row) for row in rows]
+    batch = {
+        "input_ids": rows,
+        "attention_mask": [torch.ones_like(row, dtype=torch.bool) for row in rows],
+        "multi_modal_inputs": [entry, None],
+    }
+    _, expected_packed = preprocess_ragged_seqs(rows)
+    preparer = MultimodalBatchPreparer(capture_replay=True)
+    with ragged_multimodal_inputs(batch, preparer, model, rows) as replay:
+        assert "image_input_mask" not in replay
+        assert replay["position_ids"] is None
+        packed_params = replay["packed_seq_params"]
+        assert torch.equal(
+            packed_params.cu_seqlens_q_padded, expected_packed.cu_seqlens_q_padded
+        )
+        output = MegatronModelManager.custom_forward(
+            model,
+            **replay,
+            sequence_parallel=False,
+        )
+
+    assert torch.equal(model.vision_model.seen_grid, torch.tensor([[1, 4, 4]]))
+    # Real embedding saw original unstripped tokens in both rows.
+    assert torch.equal(model.language_model.embedding.seen_input_ids[0, :11], image_row)
+    assert torch.equal(model.language_model.embedding.seen_input_ids[1, :4], text_row)
+    # Language model received restored original THD token IDs and only 4 real vision slots.
+    restored_rows = postprocess_ragged_seqs(
+        model.language_model.seen_input_ids.unsqueeze(-1), packed_params, lengths
+    )
+    assert torch.equal(restored_rows[0].squeeze(-1), image_row)
+    assert torch.equal(restored_rows[1].squeeze(-1), text_row)
+    assert int(model.language_model.seen_visual_pos_masks.sum().item()) == 4
+    # Vision features (99.0) replaced only [1..5) in row 0; literal markers stayed text embeddings.
+    out_rows = postprocess_ragged_seqs(output, packed_params, lengths)
+    assert out_rows[0][:, 0].tolist() == [1, 99, 99, 99, 99, 3, 1, 2, 3, 2, 1]
+    assert out_rows[1][:, 0].tolist() == [1, 2, 3, 7]
+    assert not model._forward_pre_hooks
+    assert not model.language_model._forward_pre_hooks
+    assert not model.language_model.embedding._forward_pre_hooks

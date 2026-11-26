@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import time
-from functools import partial
+from contextlib import nullcontext
+from functools import cached_property, partial
 from typing import Callable, Optional
 
 import torch
@@ -41,7 +42,10 @@ from rlinf.data.schema.reasoning_results import (
 from rlinf.hybrid_engines.megatron.megatron_model_manager import (
     MegatronModelManager,
 )
-from rlinf.hybrid_engines.megatron.utils import collect_mtp_loss
+from rlinf.hybrid_engines.megatron.utils import (
+    collect_mtp_loss,
+    prepare_ragged_model_inputs,
+)
 from rlinf.scheduler import Channel, Worker
 from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_channel,
@@ -1432,6 +1436,49 @@ class MegatronWorker(MegatronModelManager, Worker):
 class DynamicMegatronBatchMixin:
     """Shared real-length group transport and microbatch scheduling."""
 
+    @cached_property
+    def multimodal_preparer(self):
+        from rlinf.config import rollout_captures_multi_modal_inputs
+        from rlinf.utils.multimodal import MultimodalBatchPreparer
+
+        settings = self.role_cfg.get("multi_modal") or {}
+        return MultimodalBatchPreparer(
+            capture_replay=rollout_captures_multi_modal_inputs(self.cfg),
+            prefetch_batches=settings.get("prefetch_batches", 0),
+            prefetch_bytes=settings.get("prefetch_bytes", 0),
+        )
+
+    def ragged_model_inputs(
+        self, batch: DynamicActorBatch, model: torch.nn.Module, rows: list[torch.Tensor]
+    ):
+        """Prepare ragged forward inputs for text-only or multimodal microbatches."""
+        if "multi_modal_inputs" in batch:
+            from rlinf.config import rollout_captures_multi_modal_inputs
+
+            if not rollout_captures_multi_modal_inputs(self.cfg):
+                raise ValueError(
+                    f"Received multi_modal_inputs on {self.role} with "
+                    "rollout.sglang.capture_multi_modal_inputs disabled."
+                )
+            from rlinf.hybrid_engines.megatron.multimodal_inputs import (
+                ragged_multimodal_inputs,
+            )
+
+            return ragged_multimodal_inputs(
+                batch, self.multimodal_preparer, model, rows
+            )
+        input_ids, attention_mask, position_ids, packed_params = (
+            prepare_ragged_model_inputs(rows, model)
+        )
+        return nullcontext(
+            {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "position_ids": position_ids,
+                "packed_seq_params": packed_params,
+            }
+        )
+
     def _receive_rollout_result(
         self, channel: Channel
     ) -> RolloutResult | DynamicRolloutResult:
@@ -1578,16 +1625,23 @@ class DynamicMegatronBatchMixin:
                 else self.megatron_forward_backward_record
             )
             forward_backward_record.start()
-        forward_outputs = fwd_bwd_function(
-            forward_step_func=self.get_forward_step_func(),
-            data_iterator=self.make_data_iterator_list(batch_iter),
-            model=self.model,
-            num_microbatches=num_microbatches,
-            forward_only=forward_only,
-            seq_length=total_seqlen,
-            micro_batch_size=1,
-            collect_non_loss_data=forward_only,
-        )
+        iterator = self.make_data_iterator_list(batch_iter)
+        context = nullcontext(iterator)
+        if "multi_modal_inputs" in batch and (
+            self.role_cfg.get("multi_modal") or {}
+        ).get("prefetch_batches", 0):
+            context = self.multimodal_preparer.iterator_context(iterator)
+        with context as data_iterator:
+            forward_outputs = fwd_bwd_function(
+                forward_step_func=self.get_forward_step_func(),
+                data_iterator=data_iterator,
+                model=self.model,
+                num_microbatches=num_microbatches,
+                forward_only=forward_only,
+                seq_length=total_seqlen,
+                micro_batch_size=1,
+                collect_non_loss_data=forward_only,
+            )
         if self.use_profiler:
             forward_backward_record.stop()
             self.profiler.stop(forward_only=forward_only)

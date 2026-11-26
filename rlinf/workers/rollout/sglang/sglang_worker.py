@@ -23,7 +23,10 @@ from omegaconf import DictConfig, OmegaConf
 from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
-from rlinf.config import torch_dtype_from_precision
+from rlinf.config import (
+    capture_multi_modal_inputs_enabled,
+    torch_dtype_from_precision,
+)
 from rlinf.data.schema.reasoning_requests import RolloutRequest, SeqGroupInfo
 from rlinf.data.schema.reasoning_results import RolloutResult
 from rlinf.scheduler import Channel, Worker
@@ -33,6 +36,7 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.backend import RlinfContext
+from rlinf.workers.rollout.sglang import sglang_version
 from rlinf.workers.rollout.sglang.backends import make_backend
 from rlinf.workers.rollout.sglang.rendezvous import (
     broadcast_instance_readiness,
@@ -246,6 +250,13 @@ class SGLangWorker(Worker):
                     f"sglang ServerArgs has no field {name!r}; "
                     f"the configured value {value!r} is ignored"
                 )
+
+        if capture_multi_modal_inputs_enabled(self._cfg_rollout.sglang):
+            from rlinf.hybrid_engines.sglang.multimodal.replay import (
+                ensure_image_capture_env,
+            )
+
+            ensure_image_capture_env(sglang_version)
 
         server_args = ServerArgs(
             model_path=self._cfg_rollout.model.model_path,
@@ -804,6 +815,8 @@ class SGLangWorker(Worker):
         channel_key: str,
         prompt_ids: list[int],
         sampling_params: Optional[dict] = None,
+        image_data: Optional[list] = None,
+        capture_images: Optional[dict] = None,
     ):
         # Backstop for rollout_serverless's entry-rank gate; return instead
         # of raising because nobody awaits this task.
@@ -820,12 +833,32 @@ class SGLangWorker(Worker):
         # waiting forever.
         try:
             version_start = self._weight_version
-            result = await self._backend.async_generate(
-                input_ids=prompt_ids,
-                sampling_params=final_sampling_params,
-                image_data=None,
-                return_logprob=self._return_logprobs,
-            )
+            captured = None
+            if capture_images is not None:
+                from rlinf.hybrid_engines.sglang.multimodal.replay import (
+                    generate_with_capture,
+                )
+
+                if not capture_multi_modal_inputs_enabled(self._cfg_rollout.sglang):
+                    raise ValueError(
+                        "Multimodal input capture requires "
+                        "rollout.sglang.capture_multi_modal_inputs=True."
+                    )
+                result, captured, history = await generate_with_capture(
+                    self._backend.async_generate,
+                    prompt_ids,
+                    image_data,
+                    final_sampling_params,
+                    capture_images,
+                    self._return_logprobs,
+                )
+            else:
+                result = await self._backend.async_generate(
+                    input_ids=prompt_ids,
+                    sampling_params=final_sampling_params,
+                    image_data=image_data or None,
+                    return_logprob=self._return_logprobs,
+                )
             # sglang will trim matched stop in result text, so we should only return output_ids
             result_dict = {
                 "output_ids": result["output_ids"],
@@ -836,6 +869,10 @@ class SGLangWorker(Worker):
                 "version_start": version_start,
                 "version_end": self._weight_version,
             }
+            if captured is not None:
+                result_dict["multi_modal_inputs"] = captured
+                result_dict["image_history"] = history
+                result_dict["prompt_token_ids"] = list(captured["prompt_token_ids"])
             if self._return_logprobs:
                 result_dict["logprobs"] = [
                     item[0] for item in result["meta_info"]["output_token_logprobs"]
@@ -877,6 +914,8 @@ class SGLangWorker(Worker):
                     channel_key=rollout_request["channel_key"],
                     prompt_ids=rollout_request["prompt_ids"],
                     sampling_params=rollout_request.get("sampling_params", None),
+                    image_data=rollout_request.get("image_data"),
+                    capture_images=rollout_request.get("capture_images"),
                 )
             )
             self._inflight_generates.add(task)

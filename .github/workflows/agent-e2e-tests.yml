@@ -34,9 +34,12 @@ jobs:
           # tokenizer and skip without one; these are the model directories this
           # runner has.
           export RLINF_TEST_QWEN25_MODEL_DIR=/workspace/dataset/Qwen2.5-1.5B-Instruct
+          export RLINF_TEST_SGLANG_MODEL=/workspace/dataset/Qwen2.5-1.5B-Instruct
           export RLINF_TEST_GLM47_MODEL_DIR=/workspace/dataset/GLM-4.7-Flash-8L
           status=0
           pytest tests/unit_tests/test_session_server.py tests/unit_tests/test_agentic_tokenizer.py tests/unit_tests/test_peer_whitelist.py || status=$?
+          # Run test_sglang.py in its own process because it isolates SGLang imports via sys.modules.
+          pytest tests/unit_tests/test_sglang.py || status=$?
           ray stop
           exit $status
 
