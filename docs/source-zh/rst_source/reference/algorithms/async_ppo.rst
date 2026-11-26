@@ -1,16 +1,16 @@
-异步近端策略优化 (Async PPO)
-==================================
+异步近端策略优化（Async PPO）
+=============================
 
 1. 引言
----------------
+-------
 
-RLinf 中的 Async PPO 是为具身任务设计的一种异步训练实现。它在保留 PPO 核心优化思想的同时，放弃了“采样一轮、训练一轮”的严格同步模式，改为将环境交互、策略推理与 actor 训练解耦为长期并行的流水线。
+RLinf 中的 Async PPO 是为具身任务设计的一种异步训练实现。它在保留 PPO 核心优化思想的同时，放弃了“采样一轮、训练一轮”的严格同步模式，改为将环境交互、policy 推理与 actor 训练解耦为长期并行的流水线。
 
 这一实现在不改变 PPO 的核心优化目标的前提下，旨在缓解具身训练中的系统瓶颈，主要包括：
 
 - 环境单步耗时较长，actor 长时间等待 rollout 数据；
 
-- 视觉或大模型策略推理负担重，GPU 在同步等待中闲置；
+- 视觉或大模型 policy 推理负担重，GPU 在同步等待中闲置；
 
 - 单轮 rollout 较长，同步 PPO 的端到端吞吐量偏低。
 
@@ -18,9 +18,9 @@ Async PPO 适用于“系统吞吐为主要瓶颈”的场景。如果任务规�
 
 
 2. 适用范围
-----------------------
+-----------
 
-当前 RLinf 中的 Async PPO 只用于具身任务，相关入口和核心组件如下：
+RLinf 中的 Async PPO 只用于具身任务，相关入口和核心组件如下：
 
 - 训练入口：``examples/embodiment/train_async.py``
 - Runner：``rlinf/runners/async_ppo_embodied_runner.py``
@@ -28,21 +28,22 @@ Async PPO 适用于“系统吞吐为主要瓶颈”的场景。如果任务规�
 - Rollout Worker：``rlinf/workers/rollout/hf/async_huggingface_worker.py``
 - Env Worker：``rlinf/workers/env/async_env_worker.py``
 
-目前实现有以下边界条件：
+边界条件如下：
 
 - 仅支持具身任务，不支持 reasoning 或 agent 任务。
 - Async PPO 分支要求 ``algorithm.loss_type: decoupled_actor_critic``。
 - actor 模型必须带 value head，即 ``actor.model.add_value_head: True``。
 - ``AsyncEnvWorker`` 和 ``AsyncMultiStepRolloutWorker`` 不支持 offload。
-- 当 ``rollout.recompute_logprobs=True`` 时，actor 权重 offload 不受支持。
-- ``AsyncPPOEmbodiedRunner`` 当前不支持验证流程；若配置 ``runner.val_check_interval > 0``，系统会给出 warning 并跳过验证。
+- ``rollout.recompute_logprobs=True`` 时，不支持 actor 权重 offload。
+- ``AsyncPPOEmbodiedRunner`` 不支持验证流程；若配置 ``runner.val_check_interval > 0``，系统会给出 warning 并跳过验证。
 
 
 3. 为什么需要 Async PPO
-------------------------
+-----------------------
+
 同步 PPO 的执行流程大致是：先采样一批轨迹，然后停止采样；接着计算优势并做若干轮更新，再同步新权重，随后进入下一轮采样。这种模式设置了很强的全局同步点——任何一个阶段出现瓶颈，其他部分都得等待。在具身任务中，这一问题尤为突出：物理仿真、渲染或重置逻辑可能拖慢环境；rollout 可能依赖较重的视觉编码或大模型推理；而训练阶段本身又需要较大的 batch 和较多 GPU 资源。
 
-Async PPO 的思路很简单：把环境交互、策略推理和训练这三部分拆开，让它们并发执行。环境持续产生观测，rollout 持续消费观测并输出动作、累积轨迹，训练模块则持续消费已完成的 rollout batch 并进行参数更新。这样能提高整体资源利用率，但代价是训练拿到的样本不一定来自最新策略，因此需要显式处理样本陈旧性问题。
+Async PPO 的思路很直接：把环境交互、policy 推理和训练这三部分拆开，让它们并发执行。环境持续产生观测，rollout 持续消费观测并输出动作、累积轨迹，训练模块则持续消费已完成的 rollout batch 并更新参数。这样能提高整体资源利用率，但代价是训练拿到的样本不一定来自最新 policy，因此需要显式处理样本陈旧性问题。
 
 
 4. 系统架构
@@ -72,7 +73,7 @@ Async PPO 在 RLinf 中的逻辑数据流可以概括为：
 从职责划分上看：
 
 - ``AsyncEnvWorker`` 负责长期运行的环境交互循环。
-- ``AsyncMultiStepRolloutWorker`` 负责策略推理、轨迹收集和版本记录。
+- ``AsyncMultiStepRolloutWorker`` 负责 policy 推理、轨迹收集和版本记录。
 - ``AsyncPPOEmbodiedRunner`` 负责训练节奏控制、权重同步和指标汇总。
 - ``AsyncPPOEmbodiedFSDPActor`` 负责优势计算、近端 logprob 计算和 PPO 更新。
 
@@ -90,7 +91,7 @@ Async PPO 在 RLinf 中的逻辑数据流可以概括为：
    - 从 ``env_channel`` 读取环境输出。
    - 基于当前 rollout 权重推理动作。
    - 记录 ``prev_logprobs``、``prev_values``、``forward_inputs``。
-   - 为当前样本打上策略版本 ``versions``。
+   - 为当前样本打上 policy 版本 ``versions``。
    - 将动作发送回 ``rollout_channel``，供 env 继续执行。
 4. 一个 rollout epoch 结束后，rollout 将轨迹切分并发送到 ``actor_channel``。
 5. actor 从 ``actor_channel`` 接收轨迹，执行：
@@ -101,7 +102,7 @@ Async PPO 在 RLinf 中的逻辑数据流可以概括为：
 6. actor 完成一次更新后，runner 增加 ``global_step``，并再次将新权重同步给 rollout。
 7. rollout 继续用新的版本采样；如果 rollout 跑得过快，系统会通过陈旧度控制逻辑限制其继续前进。
 
-这里要特别注意：Async PPO 是“采样与训练重叠”，但不是“完全无序并发”。权重同步、版本推进和样本准入都有明确规则。
+Async PPO 是“采样与训练重叠”，但不是“完全无序并发”。权重同步、版本推进和样本准入都有明确规则。
 
 
 6. 版本控制与样本陈旧性
@@ -112,12 +113,12 @@ Async PPO 在 RLinf 中的逻辑数据流可以概括为：
 6.1 样本版本标记
 ^^^^^^^^^^^^^^^^^^^^
 
-rollout 在生成每个 step 的数据时，会将当前 rollout 策略版本写入 ``versions``。这个字段表示该样本是由哪一版策略产生的行为数据。
+rollout 在生成每个 step 的数据时，会将当前 rollout policy 版本写入 ``versions``。这个字段表示该样本是由哪一版 policy 产生的行为数据。
 
 随后 actor 在训练时还会维护自己的当前版本号。这样，一批样本就同时关联了：
 
-- 行为策略版本：样本真正产生时使用的策略版本。
-- 近端策略版本：本轮 PPO 更新所依赖的 anchor 版本。
+- 行为 policy 版本：样本真正产生时使用的 policy 版本。
+- 近端 policy 版本：本轮 PPO 更新所依赖的 anchor 版本。
 - 当前训练版本：正在优化的目标版本。
 
 这使得系统能够显式感知“这批数据到底老了多少”。
@@ -129,27 +130,27 @@ actor 依据 ``staleness_threshold`` 筛选样本，保证所用样本的版本�
 
 此外，``on_policy_min_ratio`` 用于控制 rollout store 中 on-policy 样本的比例，确保本轮训练中 on-policy 样本占比不低于该值（默认为 0）。
 
-当每个 actor rank 累积的版本合法轨迹数量达到 ``rollout_store_size_per_rank`` 时，该 actor 开始执行训练（默认为1）。
+每个 actor rank 累积的版本合法轨迹数量达到 ``rollout_store_size_per_rank`` 时，该 actor 开始执行训练（默认为 1）。
 
 
 7. 算法机制
 -----------------
 
-7.1 三个策略视角
+7.1 三个 policy 视角
 ^^^^^^^^^^^^^^^^^^^^
 
-为了理解 RLinf 中的 Async PPO，需要区分三种策略：
+为了理解 RLinf 中的 Async PPO，需要区分三种 policy：
 
-- 行为策略 :math:`\pi_{b}`：实际生成样本的 rollout 策略。
-- 近端策略 :math:`\pi_{p}`：当前 PPO 更新所参考的 anchor 策略。
-- 当前策略 :math:`\pi_{\theta}`：正在反向传播中被优化的策略。
+- 行为 policy :math:`\pi_{b}`：实际生成样本的 rollout policy。
+- 近端 policy :math:`\pi_{p}`：当前 PPO 更新所参考的 anchor policy。
+- 当前 policy :math:`\pi_{\theta}`：正在反向传播中被优化的 policy。
 
-同步 PPO 中，这三者通常非常接近，甚至可以近似看作只涉及“旧策略”和“新策略”。但在异步场景里，行为策略可能明显落后于当前训练策略，因此需要单独处理。
+同步 PPO 中，这三者通常非常接近，甚至可以近似看作只涉及“旧 policy”和“新 policy”。但在异步场景里，行为 policy 可能明显落后于当前训练 policy，因此需要单独处理。
 
 7.2 解耦 actor-critic 损失
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-RLinf 的 Async PPO 使用 ``decoupled_actor_critic`` 损失。它不是直接对行为策略做标准 PPO clip，而是把“近端约束”和“行为分布修正”拆开处理。
+RLinf 的 Async PPO 使用 ``decoupled_actor_critic`` 损失，将“近端约束”与“行为分布修正”拆开处理，避免直接对滞后的行为 policy 做标准 PPO clip。
 
 记
 
@@ -163,12 +164,12 @@ RLinf 的 Async PPO 使用 ``decoupled_actor_critic`` 损失。它不是直接�
    \frac{\pi_{p}(a_t \mid s_t)}
         {\pi_{b}(a_t \mid s_t)}.
 
-则 actor 部分可以理解为：先围绕近端策略 :math:`\pi_p` 做 PPO clip，再用 :math:`w_{\mathrm{behav}}` 修正行为策略带来的分布偏移。
+则 actor 部分可以理解为：先围绕近端 policy :math:`\pi_p` 做 PPO clip，再用 :math:`w_{\mathrm{behav}}` 修正行为 policy 带来的分布偏移。
 
 其工程意义很直接：
 
-- PPO clip 负责控制“当前策略相对近端策略”的更新幅度。
-- 行为权重负责控制“旧样本相对近端策略”的偏移影响。
+- PPO clip 负责控制“当前 policy 相对近端 policy”的更新幅度。
+- 行为权重负责控制“旧样本相对近端 policy”的偏移影响。
 
 7.3 dual-clip 与行为样本裁剪
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -176,7 +177,7 @@ RLinf 的 Async PPO 使用 ``decoupled_actor_critic`` 损失。它不是直接�
 为了进一步提高稳定性，RLinf 还叠加了两层保护：
 
 - ``clip_ratio_c``：dual-clip，上界限制极端优势值对梯度的冲击。
-- ``behave_weight_threshold``：当行为权重过大时，直接将这部分样本屏蔽。
+- ``behave_weight_threshold``：行为权重过大时，直接将这部分样本屏蔽。
 
 如果训练中出现明显震荡，优先检查这两个参数和样本陈旧度指标，而不是直接增大学习率或 batch size。
 
@@ -206,11 +207,11 @@ Async PPO 里的关键量之一是 ``proximal_logprobs``。它有两种来源：
 
 1. 显式重算
 
-   当 ``rollout.recompute_logprobs=True`` 时，actor 会在训练前基于当前权重重新前向，显式得到 proximal logprob。
+   ``rollout.recompute_logprobs=True`` 时，actor 会在训练前用当前权重重新前向，显式得到 proximal logprob。
 
 2. 近似插值
 
-   当 ``rollout.recompute_logprobs=False`` 时，系统会根据 ``versions`` 将行为 logprob 和当前 logprob 进行插值，近似构造 proximal anchor。
+   ``rollout.recompute_logprobs=False`` 时，系统会根据 ``versions`` 对行为 logprob 和当前 logprob 插值，近似构造 proximal anchor。
 
 两种方式的取舍如下：
 
@@ -253,7 +254,7 @@ Async PPO 里的关键量之一是 ``proximal_logprobs``。它有两种来源：
      gamma: 0.99
      gae_lambda: 0.95
      entropy_bonus: 0.0
-     rollout_store_size_per_rank: 2 
+     rollout_store_size_per_rank: 2
      on_policy_min_ratio: 0.1
 
    env:
@@ -284,7 +285,7 @@ Async PPO 里的关键量之一是 ``proximal_logprobs``。它有两种来源：
   控制 rollout store 中 on-policy 样本的比例，确保本轮训练中 on-policy 样本占比不低于该值（默认为 0）。
 
 - ``rollout_store_size_per_rank``
-  控制每个 actor rank 累积的版本合法轨迹数量达到该阈值时，该 actor 开始执行训练（默认为1）。
+  控制每个 actor rank 累积的版本合法轨迹数量达到该阈值时，该 actor 开始执行训练（默认为 1）。
 
 - ``behave_weight_threshold``
   控制旧样本的最大行为权重。越小越保守，越大对旧样本容忍度越高。
@@ -304,37 +305,57 @@ Async PPO 里的关键量之一是 ``proximal_logprobs``。它有两种来源：
 
 
 10. 启动方式与模型链接
------------------------
+----------------------
 
-推荐使用脚本启动：
+使用 ``run_async.sh`` 启动 Async PPO：
 
 .. code-block:: bash
 
    bash examples/embodiment/run_async.sh maniskill_async_ppo_openvla
 
-运行前需要注意：
+运行前确认：
 
 - 多机训练时，Ray 必须提前启动，且只在 head 节点运行训练入口。
 - ``run_async.sh`` 会设置 ``MUJOCO_GL=egl`` 和 ``PYOPENGL_PLATFORM=egl``。
 - ``ROBOT_PLATFORM`` 必须与机器人平台一致，否则动作维度和归一化逻辑可能不匹配。
 
-目前 ``examples/embodiment/config/`` 目录下的 Async PPO 配置都已经过测试，可以直接用来跑具身任务。
-以下是对应yaml所使用模型的下载链接:
+``examples/embodiment/config/`` 目录下已验证的 Async PPO 配置及对应 checkpoint：
 
-- ``libero_goal_async_ppo_gr00t.yaml``: https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal
-- ``libero_object_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
-- ``libero_spatial_async_ppo_openpi.yaml``: https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
-- ``libero_spatial_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
-- ``maniskill_async_ppo_openpi.yaml``: https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT
-- ``maniskill_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
-- ``maniskill_async_ppo_openvla.yaml``: https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
-- ``maniskill_async_ppo_openvlaoft.yaml``: https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-trajall
+.. list-table::
+   :header-rows: 1
+   :widths: 22 36 42
 
-其中 ``maniskill_async_ppo_openvlaoft.yaml`` 中所使用的lora HF仓库链接为: https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+   * - 任务 / 模型
+     - 配置文件
+     - Checkpoint
+   * - LIBERO-Goal / GR00T
+     - ``libero_goal_async_ppo_gr00t.yaml``
+     - `RLinf/RLinf-Gr00t-SFT-Goal <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal>`__
+   * - LIBERO-Object / π₀.₅
+     - ``libero_object_async_ppo_openpi_pi05.yaml``
+     - `RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
+   * - LIBERO-Spatial / π₀
+     - ``libero_spatial_async_ppo_openpi.yaml``
+     - `RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT>`__
+   * - LIBERO-Spatial / π₀.₅
+     - ``libero_spatial_async_ppo_openpi_pi05.yaml``
+     - `RLinf/RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
+   * - ManiSkill / π₀
+     - ``maniskill_async_ppo_openpi.yaml``
+     - `RLinf/RLinf-Pi0-ManiSkill-25Main-SFT <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT>`__
+   * - ManiSkill / π₀.₅
+     - ``maniskill_async_ppo_openpi_pi05.yaml``
+     - `RLinf/RLinf-Pi05-ManiSkill-25Main-SFT <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT>`__
+   * - ManiSkill / OpenVLA
+     - ``maniskill_async_ppo_openvla.yaml``
+     - `gen-robot/openvla-7b-rlvla-warmup <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`__
+   * - ManiSkill / OpenVLA-OFT
+     - ``maniskill_async_ppo_openvlaoft.yaml``
+     - `Haozhan72/Openvla-oft-SFT-libero10-trajall <https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-trajall>`__\ （LoRA：`RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`__）
 
 
 11. 监控指标
------------------
+------------
 
 调试 Async PPO 时，不要只看 reward。至少需要同时观察以下几类指标：
 
@@ -344,15 +365,15 @@ Async PPO 里的关键量之一是 ``proximal_logprobs``。它有两种来源：
 - ``time/rollout/*``：推理是否成为瓶颈。
 - ``time/actor_training``：训练阶段是否过重。
 
-策略更新侧：
+policy 更新侧：
 
-- ``train/actor/proximal_approx_kl``：当前策略相对近端策略的偏移。
+- ``train/actor/proximal_approx_kl``：当前 policy 相对近端 policy 的偏移。
 - ``train/actor/clip_fraction``：PPO clip 命中比例。
 - ``train/actor/dual_clip_fraction``：dual-clip 命中比例。
 
 样本陈旧性侧：
 
-- ``train/actor/behav_approx_kl``：行为策略与近端策略的偏移。
+- ``train/actor/behav_approx_kl``：行为 policy 与近端 policy 的偏移。
 - ``train/actor/behav_clip_fraction``：被行为权重裁掉的样本比例。
 - ``train/actor/average_version``：训练样本的平均版本号。
 - ``train/actor/current_version``：当前训练版本号。

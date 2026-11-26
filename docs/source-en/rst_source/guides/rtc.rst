@@ -3,7 +3,7 @@ Real-Time Control (RTC)
 
 RTC hides inference latency during deployment. It overlaps the execution of one action chunk with the inference of the next: the policy outputs a sequence of actions (chunk), the environment begins executing them frame by frame; during execution, RTC pre-emptively requests inference for the next chunk, so inference latency is absorbed by action execution time.
 
-RTC supports both simulation (LIBERO) and real-world (Franka) evaluation, currently integrated with the OpenPI π₀.₅ policy.
+RTC supports both simulation (LIBERO) and real-world (Franka) evaluation, integrated with the OpenPI π₀.₅ policy.
 
 How RTC Works
 -------------
@@ -28,23 +28,23 @@ Simulation Experiment
 
 Install and download
 
-.. code:: bash
+.. code-block:: bash
 
    # Install dependencies
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
    # Download model
    hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
 Run RTC evaluation
 
-.. code:: bash
+.. code-block:: bash
 
    bash evaluations/run_eval.sh libero_spatial_eval_pi05_RTC
 
 Enable / disable RTC via ``runner.rtc.enabled`` in the YAML (default ``True``):
 
-.. code:: bash
+.. code-block:: bash
 
    bash evaluations/run_eval.sh libero_spatial_eval_pi05_RTC \
        'runner.rtc.enabled=True'
@@ -127,19 +127,19 @@ For real-world deployment, see :doc:`Franka Real-World RL </rst_source/examples/
 
 Control node installation
 
-.. code:: bash
+.. code-block:: bash
 
-   bash requirements/install.sh embodied --env franka
+   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 Training node installation
 
-.. code:: bash
+.. code-block:: bash
 
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
+   bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
 Download model
 
-.. code:: bash
+.. code-block:: bash
 
    hf download RLinf/RLinf-Pi05-Pick_Red --local-dir ./RLinf-Pi05-Pick_Red
 
@@ -147,22 +147,23 @@ Start Ray cluster
 
 Training node (head):
 
-.. code:: bash
+.. code-block:: bash
 
-   source ray_utils/realworld/setup_before_ray.sh
+   source .venv/bin/activate
+   export RLINF_NODE_RANK=0
    ray start --head --port=6379 --node-ip-address=<head_node_ip_address>
 
 Control node (worker):
 
-.. code:: bash
+.. code-block:: bash
 
    source .venv/bin/activate
-   source ray_utils/realworld/setup_before_ray.sh
+   export RLINF_NODE_RANK=1
    ray start --address='<head_node_ip_address>:6379'
 
 Launch evaluation on the training node
 
-.. code:: bash
+.. code-block:: bash
 
    bash evaluations/run_eval.sh realworld_pnp_eval_pi05_sft_RTC
 
@@ -309,7 +310,7 @@ RTC parameters are split across two locations:
      - Use Hydra reference ``${runner.rtc.enabled}`` to keep in sync. When enabled, the model's output action chunk references the previous chunk's remaining actions.
    * - ``rtc_guidance_mode``
      - ``"approx"``
-     - Guidance mode, currently only ``"approx"`` (approximate guidance) is supported.
+     - Guidance mode; only ``"approx"`` (approximate guidance) is supported.
    * - ``rtc_guidance_clip``
      - ``5.0``
      - Guidance strength clipping threshold. Higher values mean stronger guidance and smoother chunk boundaries; too high may cause action drift. Recommended range 3.0-10.0.

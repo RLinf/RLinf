@@ -1,128 +1,29 @@
-Replay Buffer
-======================
+Replay Buffer 接口
+==================
 
-本节介绍 RLinf 中的 `TrajectoryReplayBuffer` 设计思路、核心数据结构与采样流程。
-该实现是 **轨迹级（trajectory-based）** 的 replay buffer，直接存储形状为 `[T, B, ...]`
-的批量轨迹，不做 episode 级拆分，每个 trajectory 会包含多个 episode；采样时按 chunk step 粒度从 trajectory 中抽取。
+``TrajectoryReplayBuffer`` 以 ``[T, B, ...]`` 形状存储批量轨迹，支持滑动窗口 chunk 采样、FIFO 内存缓存与分布式 checkpoint 加载。日常使用示例、CLI 工具与可视化脚本见 :doc:`../../concepts/replay_buffer`。
 
-设计目标
--------------
-
-- **低内存消耗**：buffer 维护轨迹数据的索引信息，避免内存占用过高。
-- **低 I/O 压力**：轨迹以文件保存，索引与元信息分离，异步写盘降低训练阻塞。
-- **高吞吐采样**：按窗口采样最新轨迹，向量化映射全局样本索引到轨迹内位置。
-- **易扩展**：支持缓存策略、不同存储格式与分布式加载。
-- **训练友好**：采样输出与 rollout batch 对齐（字典形式，键与张量结构保持一致）。
-
-核心数据结构
------------------
-
-轨迹索引
-^^^^^^^^^^
-
-每条轨迹在索引中保存：
-
-- `uuid`：唯一标识
-- `trajectory_id`：递增 ID
-- `num_samples`：轨迹内样本总数（`T * B`）
-- `shape`：轨迹张量形状
-- `max_episode_length`：最大 episode 长度
-
-索引与元数据分别写入：
-
-- `trajectory_index.json`：轨迹索引
-- `metadata.json`：buffer 元数据（总样本数、格式、seed 等）
-
-轨迹缓存
-^^^^^^^^^^
-
-`TrajectoryCache` 为 FIFO 缓存，缓存 **flatten 后** 的轨迹字典：
-
-- 轨迹以 `[T, B, ...]` 存储
-- flatten 后视为 `[T*B, ...]`，便于按 transition 抽样
-- cache 仅保留最近若干条轨迹，避免频繁读盘
-
-采样流程
---------
-
-采样接口为 `sample`，参数为 `num_chunks`，返回值为 `[num_chunks, ...]` 的 batch。
-
-1. **滑动窗口**：只在最近 `sample_window_size` 条轨迹内采样（可设为 0 表示全量）。
-2. **均匀采样**：在窗口总样本数范围内随机采样索引。
-3. **索引映射**：将全局索引映射到具体轨迹与轨迹内位置（`bucketize`）。
-4. **批量采样**：一次加载轨迹并批量取样，构建 `[num_chunks, ...]` 的 batch。
-
-这一设计避免频繁加载同一轨迹，同时保证采样分布平滑。
-
-数据流程说明
-------------------
-
-模型和环境交互的多轮数据由 Rollout Worker 作为 trajectory part 发布。Actor Channel
-collector 将其转换为 `Trajectory`，Actor Worker 再将 `Trajectory` 存入
-`TrajectoryReplayBuffer` 并采样训练。
-
-
-Actor Channel 收集轨迹数据流程
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Collector 按时间累积已配对的 chunk。其中 `[obs₀, obs₁]` 表示一个 transition，
-`[act₀, r₀, dones, ... ]` 表示一个 chunk：
-
-.. code-block:: text
-
-   time →
-   [ obs₀, obs₁, act₀, r₀, dones₀, ... ] ──┐
-   [ obs₁, obs₂, act₁, r₁, dones₁, ... ] ──┼── TrajectoryCollector ── Trajectory
-   [ obs₂, obs₃, act₂, r₂, dones₂, ... ] ──┤                         │
-   [ obs₃, obs₄, act₃, r₃, dones₃, ... ] ──┘                    Channel(put)
-
-Actor Worker 保存轨迹数据流程
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Actor worker 从 Channel 接收 `Trajectory`，存入 `TrajectoryReplayBuffer`，并进行采样训练：
-
-.. code-block:: text
-
-   Channel(get) ── Trajectory ── ReplayBuffer
-                                     │
-                                     ├─ add_trajectories(trajectories)
-                                     │     ├─ 生成 uuid + trajectory_id
-                                     │     ├─ 更新 _trajectory_index / 计数器
-                                     │     └─ 线程池异步保存轨迹文件
-                                     │
-                                     └─ sample(num_chunks) ──▶ 训练 batch
-
-存储与异步写盘
---------------
-
-轨迹保存支持两种格式：
-
-- `pt`：`torch.save` 方式，默认格式
-- `pkl`：`pickle` 方式
-
-写盘在单线程 `ThreadPoolExecutor` 中异步执行，写完后再更新元数据与索引。
-这样可以降低训练过程中 I/O 对吞吐的影响。
-
-检查点与分布式加载
+TrajectoryReplayBuffer
 ----------------------
 
-支持将 buffer 元信息保存为 checkpoint，并在分布式场景下按 rank 分片加载：
+.. autoclass:: rlinf.data.storage.replay.TrajectoryReplayBuffer
+   :members: add_trajectories, sample, save_checkpoint, load_checkpoint, clear, clear_cache, close, is_ready
+   :member-order: bysource
 
-- `load_path`：包含 metadata 和轨迹文件的 checkpoint 目录
-- `is_distributed`：是否启用分片加载
-- `local_rank`：当前 rank 只加载自己的那一份轨迹（0-based）
-- `world_size`：总 rank 数（分片数）
-- 维持各分片的 `size`、`total_samples`、`trajectory_counter` 一致性
+TrajectoryCache
+---------------
 
-当 ``auto_save=False`` 时，``save_checkpoint(save_path)`` 保存内存缓存中仍保留的轨迹。checkpoint 索引按插入顺序列出这些轨迹，``size`` 和 ``total_samples`` 也只统计实际保存的数据。例如，``sample_window_size=2`` 的 buffer 添加五条轨迹后，保存的 ID 为 3 和 4。以 ``is_distributed=True``、``world_size=2`` 加载时，rank 0 获得 ID 3，rank 1 获得 ID 4。
+.. autoclass:: rlinf.data.storage.replay.TrajectoryCache
+   :members:
+   :member-order: bysource
 
-保存操作保持运行中的 buffer 不变。完整加载会保留后续轨迹的起始 ID，因此上述示例恢复后，新添加的轨迹从 ID 5 开始编号。``pt`` 和 ``pkl`` 两种格式保存的数据范围相同。
+Replay Buffer Datasets
+----------------------
 
-当 ``auto_save=True`` 时，``save_checkpoint(save_path)`` 从自动落盘目录拷贝当前采样窗口。窗口是轨迹列表末尾的 ``sample_window_size`` 条；``sample_window_size`` 为 0，或列表更短时，保存列表中的全部轨迹。checkpoint 索引以及 ``size``、``total_samples`` 只统计这个窗口。窗口之外的轨迹仍留在自动落盘目录中。
+.. autoclass:: rlinf.data.storage.replay.ReplayBufferDataset
+   :members:
+   :member-order: bysource
 
-使用建议
-------------
-
-- **长轨迹场景**：优先使用窗口采样，减少旧数据干扰。
-- **高并发训练**：启用缓存提升采样吞吐，避免频繁读盘。
-- **无持久化需求**：可设置 `auto_save=False`，保存 checkpoint 时会把缓存轨迹与 metadata 一并写入保存路径。
+.. autoclass:: rlinf.data.storage.replay.PreloadReplayBufferDataset
+   :members:
+   :member-order: bysource

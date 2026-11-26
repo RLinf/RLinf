@@ -1,5 +1,5 @@
-PhyAI Embodied Rollout Backend
-==============================
+PhyAI Rollout Backend
+=====================
 
 This guide trains a PI0.5 policy on LIBERO with PPO while
 `PhyAI <https://github.com/mingti-org/phyai>`_ generates the rollouts. PhyAI is
@@ -18,8 +18,8 @@ Prerequisites
 -------------
 
 You need a Linux machine with NVIDIA GPUs and Python 3.12. The backend
-currently supports PI0.5 on LIBERO with synchronous PPO, and each rollout
-worker uses exactly one GPU. The training path has been smoke-tested on two
+supports PI0.5 on LIBERO with synchronous PPO, and each rollout
+worker uses exactly one GPU. The training path is verified on two
 NVIDIA H800 80 GB GPUs with the RLinf PI0.5 LIBERO SFT checkpoint.
 
 Installation
@@ -55,7 +55,6 @@ Download the PI0.5 LIBERO SFT checkpoint:
 
 .. code-block:: bash
 
-   # For mainland China users: export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir RLinf-Pi05-LIBERO-SFT
 
 Then set ``actor.model.model_path`` in

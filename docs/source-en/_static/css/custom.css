@@ -1,98 +1,363 @@
-/* Custom CSS to enforce a purple-themed color scheme */
+/* ==========================================================================
+   RLinf Docs — Modern Flat UI System (LeRobot / Hugging Face-inspired)
+   ========================================================================== */
+
+/* --- Design tokens -------------------------------------------------------- */
+:root,
 html[data-theme="light"] {
-  --pst-color-primary: #673ab7;
-  --pst-color-secondary: #ab47bc;
-  --rlinf-nav-active-bg: rgba(103, 58, 183, 0.1);
-  --rlinf-nav-hover-bg: rgba(103, 58, 183, 0.06);
+  --pst-color-primary: #6d28d9;
+  --pst-color-secondary: #7c3aed;
+  --pst-color-inline-code: #5b21b6;
+  --pst-color-text-base: #0f172a;
+  --pst-color-text-muted: #64748b;
+  --pst-font-family-base: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  --pst-font-family-heading: "Inter", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --pst-font-family-monospace: "JetBrains Mono", Menlo, "Cascadia Mono",
+    "DejaVu Sans Mono", Consolas, "Liberation Mono", ui-monospace,
+    SFMono-Regular, monospace;
+  --bs-font-monospace: var(--pst-font-family-monospace);
+
+  --rlinf-surface: #ffffff;
+  --rlinf-sidebar-bg: #fbfbfd;
+  --rlinf-surface-subtle: #f8fafc;
+  --rlinf-surface-muted: #f1f5f9;
+  --rlinf-border: rgba(15, 23, 42, 0.08);
+  --rlinf-border-strong: rgba(15, 23, 42, 0.16);
+  --rlinf-nav-active-bg: rgba(109, 40, 217, 0.09);
+  --rlinf-nav-hover-bg: rgba(15, 23, 42, 0.045);
+  --rlinf-row-hover: rgba(109, 40, 217, 0.03);
+  --rlinf-card-radius: 10px;
+  --rlinf-card-gap: 1rem;
+  --rlinf-card-shadow: none;
+  --rlinf-card-shadow-hover: none;
+
+  --rlinf-tab-bg: #f1f5f9;
+  --rlinf-tab-hover-bg: #e2e8f0;
+  --rlinf-tab-active-bg: #ffffff;
+  --rlinf-tab-active-fg: #6d28d9;
+  --rlinf-tab-active-border: rgba(109, 40, 217, 0.28);
+  --rlinf-tab-active-shadow: none;
+  --rlinf-tab-panel-bg: #ffffff;
+  --rlinf-tab-panel-border: rgba(15, 23, 42, 0.09);
+  --rlinf-tab-panel-shadow: none;
+
+  --rlinf-code-bg: #f8fafc;
+  --rlinf-inline-code-bg: rgba(109, 40, 217, 0.075);
+
+  --rlinf-admon-note-bg: #f6f4ff;
+  --rlinf-admon-note-border: #7c3aed;
+  --rlinf-admon-tip-bg: #ecfdf5;
+  --rlinf-admon-tip-border: #10b981;
+  --rlinf-admon-warn-bg: #fffbeb;
+  --rlinf-admon-warn-border: #f59e0b;
+  --rlinf-admon-danger-bg: #fef2f2;
+  --rlinf-admon-danger-border: #ef4444;
 }
 
 html[data-theme="dark"] {
-  --pst-color-primary: #BB86FC;
-  --pst-color-secondary: #CF9BFF;
-  --rlinf-nav-active-bg: rgba(187, 134, 252, 0.18);
-  --rlinf-nav-hover-bg: rgba(187, 134, 252, 0.1);
+  --pst-color-primary: #a78bfa;
+  --pst-color-secondary: #c4b5fd;
+  --pst-color-inline-code: #ddd6fe;
+  --pst-color-text-base: #e6edf3;
+  --pst-color-text-muted: #94a3b8;
+  --pst-color-background: #0b0e14;
+  --pst-color-on-background: #121620;
+
+  --rlinf-surface: #121621;
+  --rlinf-sidebar-bg: #0e121a;
+  --rlinf-surface-subtle: #111520;
+  --rlinf-surface-muted: #1a2030;
+  --rlinf-border: rgba(148, 163, 184, 0.14);
+  --rlinf-border-strong: rgba(148, 163, 184, 0.26);
+  --rlinf-nav-active-bg: rgba(167, 139, 250, 0.15);
+  --rlinf-nav-hover-bg: rgba(148, 163, 184, 0.09);
+  --rlinf-row-hover: rgba(167, 139, 250, 0.06);
+  --rlinf-card-shadow: none;
+  --rlinf-card-shadow-hover: none;
+
+  --rlinf-tab-bg: rgba(148, 163, 184, 0.09);
+  --rlinf-tab-hover-bg: rgba(148, 163, 184, 0.16);
+  --rlinf-tab-active-bg: rgba(167, 139, 250, 0.16);
+  --rlinf-tab-active-fg: #e9d5ff;
+  --rlinf-tab-active-border: rgba(167, 139, 250, 0.42);
+  --rlinf-tab-active-shadow: none;
+  --rlinf-tab-panel-bg: rgba(18, 22, 33, 0.78);
+  --rlinf-tab-panel-border: rgba(148, 163, 184, 0.14);
+  --rlinf-tab-panel-shadow: none;
+
+  --rlinf-code-bg: #0f131c;
+  --rlinf-inline-code-bg: rgba(167, 139, 250, 0.13);
+
+  --rlinf-admon-note-bg: rgba(139, 92, 246, 0.1);
+  --rlinf-admon-note-border: #a78bfa;
+  --rlinf-admon-tip-bg: rgba(16, 185, 129, 0.1);
+  --rlinf-admon-tip-border: #34d399;
+  --rlinf-admon-warn-bg: rgba(245, 158, 11, 0.1);
+  --rlinf-admon-warn-border: #fbbf24;
+  --rlinf-admon-danger-bg: rgba(239, 68, 68, 0.1);
+  --rlinf-admon-danger-border: #f87171;
+}
+
+/* --- Global crisp rendering & typography ---------------------------------- */
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+.bd-article {
+  font-size: 0.955rem;
+  line-height: 1.72;
+  color: var(--pst-color-text-base);
+}
+
+.bd-article p,
+.bd-article li {
+  line-height: 1.72;
+}
+
+.bd-article p {
+  margin-top: 0;
+  margin-bottom: 0.68rem;
+}
+
+.bd-article ul,
+.bd-article ol {
+  margin-top: 0.35rem;
+  margin-bottom: 0.85rem;
+}
+
+.bd-article li {
+  margin-bottom: 0.28rem;
+}
+
+.bd-article li > p {
+  margin-bottom: 0.35rem;
+}
+
+.bd-article li > p:last-child {
+  margin-bottom: 0;
+}
+
+.bd-article h1,
+.bd-article h2,
+.bd-article h3,
+.bd-article h4,
+.bd-article h5 {
+  color: var(--pst-color-text-base);
+  letter-spacing: -0.024em;
+}
+
+.bd-article a.toc-backref,
+.bd-article a.toc-backref:hover {
+  color: inherit;
+  text-decoration: none;
+}
+
+.bd-article h1 {
+  font-size: 2.05rem;
+  font-weight: 750;
+  line-height: 1.22;
+  margin-bottom: 1.35rem;
+}
+
+.bd-article h2 {
+  border-bottom: 1.5px solid var(--rlinf-border);
+  font-size: 1.38rem;
+  font-weight: 680;
+  margin-top: 2.85rem;
+  margin-bottom: 1.1rem;
+  padding-bottom: 0.5rem;
+}
+
+.bd-article h3 {
+  font-size: 1.12rem;
+  font-weight: 650;
+  margin-top: 2.15rem;
+  margin-bottom: 0.85rem;
+}
+
+.bd-article h2 + section > h3:first-child {
+  margin-top: 1.25rem;
+}
+
+.bd-article > section > section > section + section {
+  border-top: 1px solid var(--rlinf-border);
+  margin-top: 1.9rem;
+  padding-top: 1.45rem;
+}
+
+.bd-article > section > section > section + section > h3:first-child {
+  margin-top: 0;
+}
+
+.bd-article h4 {
+  font-size: 0.98rem;
+  font-weight: 630;
+  margin-top: 1.65rem;
+  margin-bottom: 0.72rem;
+}
+
+.bd-article h5 {
+  font-size: 0.93rem;
+  font-weight: 620;
+  margin-top: 1.35rem;
+  margin-bottom: 0.55rem;
+}
+
+/* Subtle hover-revealed heading permalinks */
+.bd-article a.headerlink {
+  color: var(--pst-color-text-muted) !important;
+  font-size: 0.8em;
+  font-weight: 500;
+  margin-left: 0.35rem;
+  opacity: 0;
+  transition: opacity 140ms ease, color 140ms ease;
+}
+
+.bd-article h1:hover a.headerlink,
+.bd-article h2:hover a.headerlink,
+.bd-article h3:hover a.headerlink,
+.bd-article h4:hover a.headerlink,
+.bd-article h5:hover a.headerlink,
+.bd-article a.headerlink:focus {
+  opacity: 0.72;
+}
+
+.bd-article a.headerlink:hover {
+  color: var(--pst-color-primary) !important;
+  opacity: 1;
+  text-decoration: none !important;
 }
 
 a.reference,
 a.reference.external,
 a.reference.internal {
-  font-weight: bold !important;
-  text-decoration: none !important;
+  font-weight: 500;
+  text-decoration: none;
+  text-underline-offset: 3px;
+  transition: color 140ms ease, text-decoration-color 140ms ease;
+}
+
+.bd-article a.reference:hover,
+.bd-article a.reference.external:hover,
+.bd-article a.reference.internal:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+}
+
+.bd-article hr {
+  border: 0;
+  border-top: 1px solid var(--rlinf-border);
+  margin: 2rem 0;
+  opacity: 1;
+}
+
+.bd-article blockquote {
+  background: var(--rlinf-surface-subtle);
+  border-left: 3px solid var(--pst-color-primary);
+  border-radius: 0 8px 8px 0;
+  color: var(--pst-color-text-muted);
+  margin: 1.25rem 0;
+  padding: 0.75rem 1.1rem;
 }
 
 img.logo-img {
-    margin-top: 30px;
-    margin-bottom: 30px;
+  margin-top: 30px;
+  margin-bottom: 30px;
 }
 
-.red { color: red; font-weight: bold; }
-.green { color: green; }
+.red {
+  color: #dc2626;
+  font-weight: 600;
+}
 
-/* --- Home hero ----------------------------------------------------------
-   Logo on top of a centered "Welcome to RLinf", Ray-style. The rst section
-   title is hidden (kept only for the page <title>); the visible hero lives in
-   .rlinf-hero. */
+.green {
+  color: #16a34a;
+  font-weight: 600;
+}
+
+html[data-theme="dark"] .red {
+  color: #f87171;
+}
+
+html[data-theme="dark"] .green {
+  color: #4ade80;
+}
+
+/* --- Home hero ------------------------------------------------------------ */
 #home + h1 {
   display: none;
 }
 
 .rlinf-hero {
-  margin: 0.5rem 0 2rem;
+  background: radial-gradient(
+    ellipse 68% 60% at 50% 20%,
+    rgba(109, 40, 217, 0.08),
+    transparent 72%
+  );
+  border-radius: 16px;
+  margin: 0.25rem 0 2rem;
+  padding: 2rem 1rem 1.4rem;
   text-align: center;
 }
 
+html[data-theme="dark"] .rlinf-hero {
+  background: radial-gradient(
+    ellipse 68% 60% at 50% 20%,
+    rgba(167, 139, 250, 0.13),
+    transparent 72%
+  );
+}
+
 .rlinf-hero-logo {
-  background-color: transparent !important; /* override the theme's dark-mode white image bg */
+  background-color: transparent !important;
   display: block;
   margin: 0 auto;
-  max-width: 360px;
+  max-width: 310px;
   width: 100%;
 }
 
 .rlinf-hero-title {
-  margin-bottom: 0.5rem;
-  margin-top: 2rem;
+  font-size: 2.15rem !important;
+  font-weight: 750 !important;
+  letter-spacing: -0.03em;
+  margin-bottom: 0.55rem;
+  margin-top: 1.35rem;
 }
 
 .rlinf-hero-subtitle {
   color: var(--pst-color-text-muted);
-  font-size: 1.4rem;
-  font-weight: 600;
-  margin: 0;
+  font-size: 1.12rem;
+  font-weight: 450;
+  line-height: 1.55;
+  margin: 0 auto;
+  max-width: 40rem;
 }
 
-/* if you want also to remove underline on hover
-a.reference:hover,
-a.reference.external:hover,
-a.reference.internal:hover {
-  text-decoration: none !important;
-} */
-
-/* --- Wider content area -------------------------------------------------
-   pydata-sphinx-theme caps the article column at 60em and the page at 88rem,
-   which leaves large empty gutters and a cramped content column on wide
-   screens. Widen both and slim the side navigations a touch so the content
-   gets more horizontal room. */
+/* --- Balanced reading layout ---------------------------------------------- */
 .bd-page-width {
-  max-width: 100rem;            /* was 88rem (~1408px) */
-}
-.bd-main .bd-content .bd-article-container {
-  max-width: 84rem;            /* was 60em (~960px) — let prose, cards and tables breathe */
-}
-.bd-sidebar-primary {
-  max-width: 18rem;            /* compact global docs sidebar */
-}
-.bd-sidebar-secondary {
-  max-width: 15rem;            /* slimmer right "On this page" */
+  max-width: 98rem;
 }
 
-/* --- Sidebar-only docs chrome ------------------------------------------
-   Match the compact LeRobot/Hugging Face docs pattern: logo, search, utility
-   controls, then a single global navigation tree. */
-/* Collapse the empty top navbar (sidebar-only model). The theme reserves a 4rem
-   header band above the sidebar; with no navbar items it is just blank space.
-   The Ask AI button is position:fixed, so it stays visible even with a
-   zero-height header. */
+.bd-main .bd-content .bd-article-container {
+  max-width: 66rem;
+}
+
+@media (min-width: 960px) {
+  .bd-main .bd-content .bd-article-container {
+    padding-left: 2.75rem;
+    padding-right: 2.75rem;
+  }
+}
+
+/* --- Sidebar-only chrome (LeRobot / Mintlify style) ----------------------- */
 :root {
   --pst-header-height: 0rem;
 }
@@ -111,76 +376,124 @@ a.reference.internal:hover {
   display: none !important;
 }
 
-/* Condense the sidebar header chrome. The theme uses padding:2rem 1rem 1rem,
-   gap:1rem, and .5rem padding on every item, which spreads the logo / search /
-   version rows far apart — tighten all of it. */
 .bd-sidebar-primary {
-  gap: 0.3rem;
-  padding-left: 0.5rem;
-  padding-right: 0.5rem;
-  padding-top: 0.25rem;
+  background-color: var(--rlinf-sidebar-bg);
+  border-right: 1px solid var(--rlinf-border);
+  gap: 0.25rem;
+  max-width: 17.5rem;
+  padding: 0.85rem 0.75rem 1.75rem;
+  scrollbar-color: var(--rlinf-border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.bd-sidebar-primary::-webkit-scrollbar,
+.bd-sidebar-secondary::-webkit-scrollbar {
+  width: 5px;
+}
+
+.bd-sidebar-primary::-webkit-scrollbar-thumb,
+.bd-sidebar-secondary::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.bd-sidebar-primary:hover::-webkit-scrollbar-thumb,
+.bd-sidebar-secondary:hover::-webkit-scrollbar-thumb {
+  background: var(--rlinf-border-strong);
 }
 
 .bd-sidebar-primary .sidebar-primary-items__start {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 0.45rem;
 }
 
 .bd-sidebar-primary .sidebar-header-items {
   display: none;
 }
 
-/* 3-class selector to beat the theme's .sidebar-primary-items__start
-   .sidebar-primary-item { padding: .5rem 0 }. */
 .bd-sidebar-primary .sidebar-primary-items__start .sidebar-primary-item {
   margin: 0;
-  padding: 0.15rem 0;
+  padding: 0;
 }
 
+/* Brand mark */
 .rlinf-sidebar-brand {
   align-items: center;
+  border-radius: 8px;
   color: var(--pst-color-text-base) !important;
-  display: flex;
-  gap: 0.5rem;
-  padding: 0 0.25rem;
+  display: inline-flex;
+  gap: 0.55rem;
+  padding: 0.2rem 0.4rem;
   text-decoration: none !important;
+  transition: opacity 140ms ease;
+}
+
+.rlinf-sidebar-brand:hover {
+  opacity: 0.85;
 }
 
 .rlinf-sidebar-brand__mark {
   display: block;
-  height: 1.6rem;
-  width: 1.6rem;
+  height: 1.55rem;
+  width: 1.55rem;
 }
 
 .rlinf-sidebar-brand__text {
-  font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-size: 1.02rem;
+  font-weight: 750;
+  letter-spacing: -0.02em;
 }
 
+/* Modern search box */
 .bd-sidebar-primary .bd-search {
-  margin: 0 0.25rem;
+  align-items: center;
+  background: var(--rlinf-surface);
+  border: 1px solid var(--rlinf-border-strong);
+  border-radius: 9px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  margin: 0.1rem 0 0;
+  padding: 0 0.2rem 0 0.6rem;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
-/* Keep the theme's search "pill" (border + absolutely-positioned magnifier on
-   .bd-search); only shrink the inner input so the field is compact. */
+.bd-sidebar-primary .bd-search:hover {
+  border-color: var(--pst-color-primary);
+}
+
+.bd-sidebar-primary .bd-search:focus-within {
+  border-color: var(--pst-color-primary);
+  box-shadow: 0 0 0 3px var(--rlinf-nav-active-bg);
+}
+
+.bd-sidebar-primary .bd-search i.fa-magnifying-glass {
+  color: var(--pst-color-text-muted);
+  font-size: 0.78rem;
+  position: static;
+  margin-right: 0.2rem;
+}
+
 .bd-sidebar-primary .bd-search input.form-control {
-  font-size: 0.85rem;
-  min-height: 1.85rem;
+  background: transparent;
+  border: 0;
+  box-shadow: none !important;
+  color: var(--pst-color-text-base);
+  font-size: 0.83rem;
+  min-height: 2.05rem;
+  padding-left: 0.35rem;
 }
 
-/* Render the Ctrl+K hint as one small pill (LeRobot-style) instead of two
-   separate key boxes. */
 .bd-sidebar-primary .bd-search .search-button__kbd-shortcut {
   align-items: center;
-  background-color: var(--pst-color-surface);
-  border: 1px solid var(--pst-color-border);
-  border-radius: 0.3rem;
+  background-color: var(--rlinf-surface-muted);
+  border: 1px solid var(--rlinf-border);
+  border-radius: 5px;
+  color: var(--pst-color-text-muted);
   display: inline-flex;
+  font-family: var(--pst-font-family-monospace);
   font-size: 0.62rem;
-  margin-inline-end: 0.4rem;
-  padding: 0.1rem 0.35rem;
+  margin-inline-end: 0.3rem;
+  padding: 0.12rem 0.36rem;
 }
 
 .bd-sidebar-primary .bd-search .search-button__kbd-shortcut kbd {
@@ -191,14 +504,13 @@ a.reference.internal:hover {
   padding: 0;
 }
 
-/* Tools: one compact row (LeRobot-style) — version + language switchers on the
-   left, the color-mode toggle and repository icons on the right. */
+/* Tools row: version + language on left, theme + GitHub on right */
 .rlinf-sidebar-tools {
   align-items: center;
   display: flex;
   flex-wrap: nowrap;
-  gap: 0.3rem;
-  padding: 0 0.25rem;
+  gap: 0.35rem;
+  padding: 0.05rem 0 0.35rem;
 }
 
 .rlinf-sidebar-tools__version,
@@ -210,44 +522,45 @@ a.reference.internal:hover {
   align-items: center;
   display: flex;
   flex: 0 0 auto;
-  gap: 0.25rem;
+  gap: 0.2rem;
   margin-left: auto;
 }
 
-/* Version + language dropdown buttons: compact so the whole tools row (both
-   switchers + color toggle + repo icons) fits on a single line without wrapping.
-   Label sits left, caret right. */
 .rlinf-sidebar-tools .version-switcher__button,
 .rlinf-lang-button {
-  font-size: 0.75rem;
+  background-color: var(--rlinf-surface);
+  border: 1px solid var(--rlinf-border);
+  border-radius: 7px;
+  color: var(--pst-color-text-base);
+  font-size: 0.74rem;
+  font-weight: 500;
   justify-content: space-between;
   margin: 0;
   min-width: 0;
-  padding: 0.25rem 0.45rem;
+  padding: 0.24rem 0.52rem;
+  transition: border-color 140ms ease, background-color 140ms ease;
   white-space: nowrap;
   width: auto;
 }
 
-/* Match the version switcher's theme-aware colors so the language label stays
-   readable in dark mode (the bootstrap .btn default is near-black). */
-.rlinf-lang-button {
-  background-color: transparent;
-  border: 1px solid var(--pst-color-border);
-  border-radius: 0.25rem;
-  color: var(--pst-color-text-base);
+.rlinf-sidebar-tools .version-switcher__button:hover,
+.rlinf-lang-button:hover {
+  background-color: var(--rlinf-surface-muted);
+  border-color: var(--rlinf-border-strong);
 }
 
-/* Two-state (light/dark) color-mode toggle in the sidebar tools. The icon
-   reflects the active theme: sun in light mode, moon in dark mode. */
 .rlinf-theme-toggle {
   border: 0;
+  border-radius: 7px;
   color: var(--pst-color-text-muted);
   cursor: pointer;
   font-size: 0.85rem;
-  padding: 0.25rem 0.4rem;
+  padding: 0.28rem 0.42rem;
+  transition: background-color 140ms ease, color 140ms ease;
 }
 
 .rlinf-theme-toggle:hover {
+  background-color: var(--rlinf-nav-hover-bg);
   color: var(--pst-color-primary);
 }
 
@@ -260,55 +573,395 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
   align-items: center;
   display: flex;
   flex: 0 0 auto;
-  gap: 0.25rem;
+  gap: 0.2rem;
   margin: 0;
 }
 
-/* Live GitHub star count rendered beside the repository icon (js/github-stars.js). */
 .rlinf-sidebar-tools a.rlinf-gh-link {
   align-items: center;
+  border-radius: 7px;
   display: inline-flex;
   gap: 0.3rem;
+  padding: 0.24rem 0.4rem;
+  transition: background-color 140ms ease;
+}
+
+.rlinf-sidebar-tools a.rlinf-gh-link:hover {
+  background-color: var(--rlinf-nav-hover-bg);
 }
 
 .rlinf-sidebar-tools .rlinf-gh-stars {
   color: var(--pst-color-text-muted);
-  font-size: 0.8rem;
+  font-size: 0.76rem;
   font-weight: 600;
   line-height: 1;
 }
 
-.bd-sidebar-primary .bd-docs-nav {
-  border-top: 1px solid var(--pst-color-border);
-  margin-top: 0.25rem;
-  padding-top: 0.5rem;
+/* --- Left navigation tree (clean LeRobot / Mintlify hierarchy) ------------ */
+.bd-sidebar-primary nav.bd-docs-nav.bd-links {
+  border-top: 1px solid var(--rlinf-border);
+  margin: 0.15rem 0 0 !important;
+  padding-top: 0.65rem;
 }
 
-/* Floating "Ask AI" button — pinned to the bottom-right corner of the viewport,
-   matching the LeRobot docs chat affordance. */
+.bd-sidebar-primary .bd-docs-nav p.caption {
+  border-top: 0;
+  color: var(--pst-color-text-base);
+  font-size: 0.9rem;
+  font-weight: 680;
+  letter-spacing: 0.01em;
+  margin: 1.2rem 0 0.32rem !important;
+  opacity: 1;
+  padding: 0 0.65rem !important;
+  text-transform: none;
+}
+
+.bd-sidebar-primary .bd-docs-nav p.caption:first-of-type {
+  margin-top: 0.1rem !important;
+}
+
+/* LeRobot-style clickable & collapsible Level-1 chapter captions */
+.bd-docs-nav p.caption.rlinf-caption-collapsible {
+  align-items: center;
+  display: flex;
+  padding: 0 !important;
+  position: relative;
+}
+
+.bd-docs-nav p.caption > a.rlinf-caption-link,
+.bd-docs-nav p.caption > button.rlinf-caption-btn {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--pst-color-text-base);
+  cursor: pointer;
+  display: flex;
+  flex: 1 1 auto;
+  font: inherit;
+  justify-content: space-between;
+  letter-spacing: inherit;
+  line-height: 1.4;
+  padding: 0.28rem 0.65rem;
+  text-align: left;
+  text-decoration: none !important;
+  transition: background-color 90ms ease, color 90ms ease;
+  width: 100%;
+}
+
+.bd-docs-nav p.caption > a.rlinf-caption-link {
+  padding-right: 1.9rem;
+}
+
+.bd-docs-nav p.caption > a.rlinf-caption-link:hover,
+.bd-docs-nav p.caption > button.rlinf-caption-btn:hover {
+  background-color: var(--rlinf-nav-hover-bg);
+  color: var(--pst-color-text-base);
+}
+
+.bd-docs-nav p.caption > a.rlinf-caption-link.current,
+.bd-docs-nav p.caption > a.rlinf-caption-link.current:hover {
+  background-color: var(--rlinf-nav-active-bg);
+  color: var(--pst-color-primary);
+}
+
+.bd-docs-nav p.caption > button.rlinf-caption-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--pst-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  height: 1.75rem;
+  justify-content: center;
+  opacity: 0.72;
+  padding: 0;
+  position: absolute;
+  right: 0.12rem;
+  top: 50%;
+  transform: translateY(-50%);
+  transition: opacity 90ms ease, color 90ms ease, background-color 90ms ease;
+  width: 1.75rem;
+}
+
+.bd-docs-nav p.caption > button.rlinf-caption-toggle:hover {
+  background-color: var(--rlinf-nav-hover-bg);
+  color: var(--pst-color-text-base);
+  opacity: 1;
+}
+
+.bd-docs-nav p.caption .rlinf-caption-chevron {
+  align-items: center;
+  color: var(--pst-color-text-muted);
+  display: inline-flex;
+  height: 1.4rem;
+  justify-content: center;
+  margin-right: -0.35rem;
+  opacity: 0.72;
+  width: 1.4rem;
+}
+
+.bd-docs-nav p.caption .fa-chevron-down {
+  font-size: 0.66rem;
+  transform: rotate(0deg);
+  transition: transform 120ms ease;
+}
+
+.bd-docs-nav p.caption.is-collapsed .fa-chevron-down {
+  transform: rotate(-90deg);
+}
+
+.bd-docs-nav ul.rlinf-section-collapsed,
+.bd-docs-nav li.rlinf-overview-merged {
+  display: none !important;
+}
+
+.bd-sidebar-primary .bd-sidenav {
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.bd-sidebar-primary .bd-sidenav li {
+  margin: 0.06rem 0 !important;
+  position: relative;
+}
+
+.bd-sidebar-primary .bd-sidenav details,
+.bd-sidebar-primary .bd-sidenav summary,
+.bd-sidebar-primary .bd-sidenav ul {
+  margin: 0;
+}
+
+/* Base sidebar links: clean flat hit target */
+.bd-sidebar-primary .bd-docs-nav .bd-sidenav li > a,
+.bd-sidebar-primary .bd-docs-nav .bd-sidenav li > .reference {
+  border-radius: 6px;
+  color: var(--pst-color-text-muted);
+  display: block;
+  font-size: 0.84rem;
+  font-weight: 450;
+  line-height: 1.42;
+  margin-right: 0 !important;
+  padding: 0.32rem 1.9rem 0.32rem 0.65rem !important;
+  transition: background-color 90ms ease, color 90ms ease;
+}
+
+.bd-sidebar-primary .bd-docs-nav .bd-sidenav li:not(.has-children) > a {
+  padding-right: 0.65rem !important;
+}
+
+.bd-sidebar-primary .bd-docs-nav .bd-sidenav li > a:hover {
+  background-color: var(--rlinf-nav-hover-bg);
+  color: var(--pst-color-text-base);
+  text-decoration: none !important;
+}
+
+/* Active branch ancestor */
+.bd-sidebar-primary .bd-docs-nav .bd-sidenav li.current > a {
+  background-color: transparent;
+  box-shadow: none !important;
+  color: var(--pst-color-text-base);
+  font-weight: 560;
+}
+
+/* Active current page: pure flat pill (LeRobot / Mintlify style) */
+.bd-sidebar-primary .bd-docs-nav .bd-sidenav li.current > a.current,
+.bd-sidebar-primary .bd-docs-nav .bd-sidenav li.current > a.current:hover,
+.bd-sidebar-primary .bd-docs-nav .bd-sidenav li.active > a.current {
+  background-color: var(--rlinf-nav-active-bg) !important;
+  box-shadow: none !important;
+  color: var(--pst-color-primary) !important;
+  font-weight: 580 !important;
+}
+
+/* Nested sub-trees: subtle hairline guide rail */
+.bd-sidebar-primary .bd-docs-nav .bd-sidenav ul {
+  border-left: 1px solid var(--rlinf-border);
+  margin: 0.12rem 0 0.25rem 0.82rem !important;
+  padding: 0.04rem 0 0.04rem 0.45rem !important;
+}
+
+.bd-sidebar-primary .bd-docs-nav .bd-sidenav ul li > a {
+  font-size: 0.815rem;
+  padding: 0.28rem 0.58rem !important;
+}
+
+/* Wide, responsive chevron toggle */
+.bd-sidebar-primary .bd-sidenav li.has-children > details > summary .toctree-toggle {
+  align-items: center;
+  border-radius: 5px;
+  color: var(--pst-color-text-muted);
+  display: inline-flex;
+  height: 1.85rem;
+  justify-content: center;
+  opacity: 0.72;
+  padding: 0;
+  right: 0.12rem;
+  top: 0.1rem;
+  width: 1.85rem;
+  transition: opacity 90ms ease, color 90ms ease, background-color 90ms ease;
+}
+
+.bd-sidebar-primary .bd-sidenav li.has-children > details > summary .toctree-toggle:hover {
+  background-color: var(--rlinf-nav-hover-bg);
+  color: var(--pst-color-text-base);
+  opacity: 1;
+}
+
+.bd-sidebar-primary .bd-sidenav li.has-children > details > summary .toctree-toggle .fa-chevron-down {
+  font-size: 0.66rem;
+  transform: rotate(-90deg) !important;
+  transition: transform 120ms ease;
+}
+
+.bd-sidebar-primary .bd-sidenav li.has-children > details[open] > summary .toctree-toggle .fa-chevron-down {
+  transform: rotate(0deg) !important;
+}
+
+.rlinf-sidebar-toggle {
+  display: none !important;
+}
+
+@media (max-width: 959.98px) {
+  .rlinf-sidebar-toggle {
+    align-items: center !important;
+    background: var(--rlinf-surface) !important;
+    border: 1px solid var(--rlinf-border-strong) !important;
+    border-radius: 8px !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08) !important;
+    display: inline-flex !important;
+    height: 2.25rem !important;
+    justify-content: center !important;
+    left: 0.75rem !important;
+    margin: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    position: fixed !important;
+    top: 0.75rem !important;
+    width: 2.25rem !important;
+    z-index: 1040 !important;
+  }
+}
+
+/* --- Right "On this page" TOC (flat indicator rail) ----------------------- */
+.bd-sidebar-secondary {
+  border-left: 0;
+  max-width: 15.5rem;
+  padding-top: 1.5rem;
+  scrollbar-color: var(--rlinf-border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.bd-sidebar-secondary .onthispage {
+  color: var(--pst-color-text-base);
+  font-size: 0.82rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  margin-bottom: 0.65rem;
+  opacity: 0.9;
+  padding-left: 0;
+  text-transform: none;
+}
+
+.bd-sidebar-secondary .onthispage i.fa-list {
+  display: none;
+}
+
+.bd-sidebar-secondary .page-toc {
+  font-size: 0.81rem;
+}
+
+.bd-sidebar-secondary .bd-toc-nav > ul.nav {
+  border-left: 1px solid var(--rlinf-border);
+  padding-left: 0;
+}
+
+.bd-sidebar-secondary .bd-toc-nav ul.nav {
+  padding-left: 0;
+}
+
+.bd-sidebar-secondary .toc-h2,
+.bd-sidebar-secondary .toc-h3,
+.bd-sidebar-secondary .toc-h4 {
+  line-height: 1.45;
+}
+
+.bd-sidebar-secondary .toc-entry a.nav-link {
+  border-left: 2px solid transparent;
+  border-radius: 0 6px 6px 0;
+  box-shadow: none;
+  color: var(--pst-color-text-muted);
+  margin-left: -1px;
+  padding: 0.27rem 0.65rem 0.27rem 0.85rem;
+  text-decoration: none;
+  transition: color 140ms ease, border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.bd-sidebar-secondary .toc-entry.toc-h3 > a.nav-link {
+  font-size: 0.78rem;
+  padding-left: 1.45rem;
+}
+
+.bd-sidebar-secondary .toc-entry.toc-h4 > a.nav-link {
+  font-size: 0.76rem;
+  padding-left: 2rem;
+}
+
+.bd-sidebar-secondary .toc-entry a.nav-link > code {
+  background: transparent;
+  color: inherit;
+  font-size: 0.9em;
+  padding: 0;
+}
+
+.bd-sidebar-secondary .toc-entry a.nav-link:hover {
+  background-color: var(--rlinf-nav-hover-bg);
+  color: var(--pst-color-text-base);
+  text-decoration: none;
+}
+
+.bd-sidebar-secondary .toc-entry a.nav-link.active,
+.bd-sidebar-secondary .toc-entry a.nav-link.active:hover {
+  background: transparent;
+  border-left-color: var(--pst-color-primary);
+  box-shadow: none;
+  color: var(--pst-color-primary);
+  font-weight: 580;
+  text-decoration: none;
+}
+
+/* --- Floating "Ask AI" button --------------------------------------------- */
 .rlinf-ask-ai-fab {
   align-items: center;
   background-color: var(--pst-color-primary);
   border: none;
-  border-radius: 50px;
+  border-radius: 999px;
   bottom: 1.25rem;
-  box-shadow: 0 6px 20px rgba(50, 0, 65, 0.28);
+  box-shadow: 0 4px 14px rgba(109, 40, 217, 0.26);
   color: #fff;
   cursor: pointer;
   display: inline-flex;
-  font-size: 0.875rem;
+  font-size: 0.84rem;
   font-weight: 600;
-  gap: 0.4rem;
-  padding: 0.6rem 1rem;
+  gap: 0.42rem;
+  padding: 0.55rem 0.98rem;
   position: fixed;
   right: 1.25rem;
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
   z-index: 1050;
 }
 
 .rlinf-ask-ai-fab:hover {
-  box-shadow: 0 8px 26px rgba(50, 0, 65, 0.42);
-  transform: translateY(-2px);
+  box-shadow: 0 8px 22px rgba(109, 40, 217, 0.36);
+  transform: translateY(-1px);
+}
+
+html[data-theme="dark"] .rlinf-ask-ai-fab {
+  background-color: #7c3aed;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+  color: #ffffff;
 }
 
 .rlinf-ai-modal-open .rlinf-ask-ai-fab {
@@ -331,243 +984,108 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
   width: 1.35rem;
 }
 
-.bd-sidebar-primary .bd-sidenav {
-  padding: 0 0.25rem;
+/* --- Modern flat tables --------------------------------------------------- */
+.bd-article .pst-scrollable-table-container {
+  border: 1px solid var(--rlinf-border);
+  border-radius: 10px;
+  margin: 1.25rem 0;
+  overflow-x: auto;
 }
 
-/* Compact, LeRobot-style nav rows: smaller text, tighter line height and less
-   vertical padding so more of the tree is visible without scrolling. */
-.bd-sidebar-primary .bd-sidenav li {
-  margin: 0;
-}
-
-.bd-sidebar-primary .bd-sidenav details,
-.bd-sidebar-primary .bd-sidenav summary,
-.bd-sidebar-primary .bd-sidenav ul {
-  margin: 0;
-}
-
-.bd-sidebar-primary .bd-sidenav li > a,
-.bd-sidebar-primary .bd-sidenav li > .reference {
-  border-radius: 0.5rem;
-  font-size: 0.9rem;
-  line-height: 1.4;
-  padding-bottom: 0.34rem;
-  padding-top: 0.34rem;
-}
-
-/* Top-level sections: a touch larger + bold for hierarchy, but far smaller
-   than the theme default (.toctree-l1 > a is 1.3em out of the box). */
-.bd-sidebar-primary .bd-sidenav .toctree-l1 > a {
-  font-size: 0.98rem;
-  font-weight: 700;
-}
-
-/* Clean rounded-pill hover + active state (LeRobot style), replacing the
-   theme's underline-on-hover and the inset left-border bar on the current
-   page. */
-.bd-sidebar-primary .bd-sidenav li > a:hover {
-  background-color: var(--rlinf-nav-hover-bg);
-  color: var(--pst-color-text-base);
-  text-decoration: none !important;
-}
-
-/* The theme tags every breadcrumb ancestor <li> with .current, so neutralise
-   the highlight on the ancestor links first... */
-.bd-sidebar-primary .bd-sidenav li.current > a {
-  background-color: transparent;
-  box-shadow: none !important;
-  color: var(--pst-color-text-muted);
-}
-
-/* ...then apply the pill only to the current page itself: its <a> (not just the
-   <li>) carries the .current class, which the ancestor links do not. */
-.bd-sidebar-primary .bd-sidenav li.current > a.current,
-.bd-sidebar-primary .bd-sidenav li.current > a.current:hover {
-  background-color: var(--rlinf-nav-active-bg);
-  color: var(--pst-color-primary);
-  font-weight: 600;
-}
-
-/* Shrink the collapse chevron to match the rows. */
-.bd-sidebar-primary .bd-sidenav .toctree-toggle {
-  padding: 0.3rem 0.4rem;
-}
-
-.bd-sidebar-primary .bd-sidenav .toctree-toggle .fa-chevron-down {
-  font-size: 0.8rem;
-}
-
-.rlinf-sidebar-toggle {
-  display: none !important;
-}
-
-@media (max-width: 959.98px) {
-  .rlinf-sidebar-toggle {
-    align-items: center !important;
-    border-radius: 4px !important;
-    display: inline-flex !important;
-    height: 2.25rem !important;
-    justify-content: center !important;
-    left: 0.75rem !important;
-    margin: 0 !important;
-    min-height: 0 !important;
-    padding: 0 !important;
-    position: fixed !important;
-    top: 0.75rem !important;
-    width: 2.25rem !important;
-    z-index: 1040 !important;
-  }
-}
-
-/* --- Ray-style cards ----------------------------------------------------
-   Ray's docs use compact PyData cards with a clean surface, subtle shadow,
-   small radius, and stronger hover affordance. Apply that treatment globally
-   to sphinx-design overview cards and the raw-HTML example gallery cards. */
-:root {
-  --rlinf-card-radius: 4px;
-  --rlinf-card-gap: 1em;
-  --rlinf-card-shadow: 0px 4px 10px 0px rgba(0, 0, 0, 0.08);
-  --rlinf-card-shadow-hover: 0px 6px 30px 5px rgba(0, 0, 0, 0.12);
-}
-
-html[data-theme="dark"] {
-  --rlinf-card-shadow: 0px 4px 10px 0px rgba(0, 0, 0, 0.32);
-  --rlinf-card-shadow-hover: 0px 6px 30px 5px rgba(0, 0, 0, 0.42);
-}
-
-.sd-card {
-  background: var(--pst-color-surface, var(--pst-color-background)) !important;
+.bd-article .pst-scrollable-table-container table.table {
   border: 0 !important;
-  border-radius: var(--rlinf-card-radius) !important;
-  box-shadow: var(--rlinf-card-shadow) !important;
-  color: var(--pst-color-text-base) !important;
-  overflow: hidden;
-  transition: border-color 160ms ease, box-shadow 160ms ease,
-    transform 160ms ease;
-}
-
-.sd-card:hover {
-  box-shadow: var(--rlinf-card-shadow-hover) !important;
-  transform: translateY(-2px);
-}
-
-.sd-card .sd-card-title {
-  color: var(--pst-color-text-base) !important;
-  font-weight: 600;
-  margin-bottom: 0.25rem;
-}
-
-.sd-card .sd-card-body {
-  padding: 1rem;
-}
-
-.sd-card .sd-card-body p:last-child {
-  margin-bottom: 0;
-}
-
-.bd-article div[style*="display: grid"][style*="grid-template-columns"],
-.bd-article div[style*="display: flex"][style*="justify-content: center"][style*="flex-wrap: wrap"] {
-  gap: var(--rlinf-card-gap) !important;
-  justify-items: stretch !important;
-}
-
-.bd-article div[style*="display: grid"][style*="grid-template-columns"] > div[style*="max-width: 300px"],
-.bd-article div[style*="display: flex"][style*="justify-content: center"][style*="flex-wrap: wrap"] > div[style*="max-width: 300px"] {
-  align-self: stretch;
-  background: var(--pst-color-surface, var(--pst-color-background)) !important;
-  border: 1px solid var(--pst-color-border) !important;
-  border-radius: var(--rlinf-card-radius) !important;
-  box-shadow: var(--rlinf-card-shadow) !important;
-  display: flex !important;
-  flex-direction: column;
-  max-width: 300px !important;
-  min-width: 0;
-  overflow: hidden;
-  text-align: left !important;
-  transition: border-color 160ms ease, box-shadow 160ms ease,
-    transform 160ms ease;
-}
-
-.bd-article div[style*="display: grid"][style*="grid-template-columns"] > div[style*="max-width: 300px"]:hover,
-.bd-article div[style*="display: flex"][style*="justify-content: center"][style*="flex-wrap: wrap"] > div[style*="max-width: 300px"]:hover {
-  border-color: var(--pst-color-primary) !important;
-  box-shadow: var(--rlinf-card-shadow-hover) !important;
-  transform: translateY(-2px);
-}
-
-.bd-article div[style*="max-width: 300px"] > img,
-.bd-article div[style*="max-width: 300px"] > video {
-  border-radius: var(--rlinf-card-radius) var(--rlinf-card-radius) 0 0 !important;
-  box-shadow: none !important;
-  display: block;
-}
-
-.bd-article div[style*="max-width: 300px"] > p {
-  color: var(--pst-color-text-muted);
-  display: flex;
-  flex: 1;
-  flex-direction: column;
+  border-radius: 0;
   margin: 0 !important;
-  padding: 1rem;
 }
 
-.bd-article div[style*="max-width: 300px"] > p a.reference,
-.bd-article div[style*="max-width: 300px"] > p a {
-  color: var(--pst-color-text-base) !important;
-  font-weight: 600 !important;
-  text-decoration: none !important;
+.bd-article table.table,
+.bd-article table.docutils {
+  background: var(--rlinf-surface);
+  border: 1px solid var(--rlinf-border);
+  border-collapse: separate;
+  border-radius: 10px;
+  border-spacing: 0;
+  font-size: 0.885rem;
+  line-height: 1.56;
+  margin: 1.25rem 0;
+  overflow: hidden;
+  width: 100%;
 }
 
-.bd-article div[style*="max-width: 300px"] > p a:hover {
-  color: var(--pst-color-primary) !important;
+.bd-article table.table caption,
+.bd-article table.docutils caption {
+  caption-side: top;
+  color: var(--pst-color-text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.55rem 0.9rem 0.4rem;
+  text-align: left;
 }
 
-@media (max-width: 768px) {
-  .bd-article div[style*="display: grid"][style*="grid-template-columns"] {
-    grid-template-columns: 1fr !important;
-  }
-
-  .bd-article div[style*="max-width: 300px"] {
-    max-width: 100% !important;
-  }
+.bd-article table.table thead th,
+.bd-article table.docutils thead th {
+  background-color: var(--rlinf-surface-subtle) !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--rlinf-border) !important;
+  color: var(--pst-color-text-base);
+  font-size: 0.8rem;
+  font-weight: 650;
+  letter-spacing: 0.015em;
+  padding: 0.66rem 0.92rem;
+  text-align: left;
+  vertical-align: middle;
 }
 
-/* --- Sphinx copybutton --------------------------------------------------
-   pydata-sphinx-theme sets code blocks to flex column. sphinx-copybutton
-   inserts the button after <pre>; without absolute positioning it becomes a
-   full-width row below the block. Pin it to the top-right inside instead. */
-div.highlight,
-div[class*="highlight-"] {
-  position: relative;
+.bd-article table.table tbody tr,
+.bd-article table.docutils tbody tr {
+  background-color: transparent !important;
+  transition: background-color 120ms ease;
 }
 
-div.highlight button.copybtn {
-  position: absolute;
-  top: 0.3em;
-  right: 0.3em;
-  width: 1.7em;
-  height: 1.7em;
+.bd-article table.table tbody tr:hover,
+.bd-article table.docutils tbody tr:hover {
+  background-color: var(--rlinf-row-hover) !important;
+}
+
+.bd-article table.table tbody td,
+.bd-article table.table tbody th,
+.bd-article table.docutils tbody td,
+.bd-article table.docutils tbody th {
+  background: transparent !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--rlinf-border) !important;
+  color: var(--pst-color-text-base);
+  padding: 0.64rem 0.92rem;
+  vertical-align: top;
+}
+
+.bd-article table.table tbody tr:last-child td,
+.bd-article table.table tbody tr:last-child th,
+.bd-article table.docutils tbody tr:last-child td,
+.bd-article table.docutils tbody tr:last-child th {
+  border-bottom: 0 !important;
+}
+
+.bd-article table.table td p,
+.bd-article table.table th p,
+.bd-article table.docutils td p,
+.bd-article table.docutils th p {
   margin: 0;
-  padding: 0;
-  z-index: 1;
-  flex: none;
-  align-self: auto;
 }
 
-/* Compact success-rate comparison on the GenieSim page. */
+.bd-article table.table td p + p,
+.bd-article table.docutils td p + p {
+  margin-top: 0.35rem;
+}
+
 .bd-article table.geniesim-results-table {
-  font-size: 0.9rem;
+  font-size: 0.86rem;
 }
 
 .bd-article table.geniesim-results-table th,
 .bd-article table.geniesim-results-table td {
-  padding: 0.4rem 0.55rem;
+  padding: 0.45rem 0.6rem;
   vertical-align: middle;
-}
-
-.bd-article table.geniesim-results-table p {
-  margin: 0;
 }
 
 .bd-article table.geniesim-results-table th:not(:first-child),
@@ -577,4 +1095,421 @@ div.highlight button.copybtn {
 
 .bd-article table.geniesim-results-table td:not(:first-child) {
   white-space: nowrap;
+}
+
+/* --- Flat modern cards (sphinx-design) ------------------------------------ */
+.sd-card {
+  background: var(--rlinf-surface) !important;
+  border: 1px solid var(--rlinf-border) !important;
+  border-radius: var(--rlinf-card-radius) !important;
+  box-shadow: none !important;
+  color: var(--pst-color-text-base) !important;
+  overflow: hidden;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.sd-card.sd-card-hover:hover {
+  background: var(--rlinf-surface-subtle) !important;
+  border-color: var(--pst-color-primary) !important;
+  box-shadow: none !important;
+}
+
+.sd-card > .sd-card-img-top {
+  border-bottom: 1px solid var(--rlinf-border);
+  height: 152px;
+  object-fit: cover;
+  width: 100%;
+}
+
+.sd-card .sd-card-header {
+  background: var(--rlinf-surface-subtle) !important;
+  border-bottom: 1px solid var(--rlinf-border) !important;
+  font-size: 0.84rem;
+  font-weight: 650;
+  padding: 0.62rem 1.05rem;
+}
+
+.sd-card .sd-card-title {
+  color: var(--pst-color-text-base) !important;
+  font-size: 0.96rem;
+  font-weight: 660;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.35rem;
+}
+
+.sd-card .sd-card-body {
+  color: var(--pst-color-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.56;
+  padding: 1rem 1.15rem;
+}
+
+.sd-card .sd-card-body p:last-child {
+  margin-bottom: 0;
+}
+
+/* --- Flat soft-tinted callouts / admonitions ------------------------------ */
+.bd-article .admonition,
+.bd-article div.admonition {
+  background-color: var(--rlinf-admon-note-bg) !important;
+  border: 1px solid var(--rlinf-border) !important;
+  border-left: 3px solid var(--rlinf-admon-note-border) !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  margin: 1.25rem 0 !important;
+  padding: 0.85rem 1.05rem !important;
+}
+
+.bd-article .admonition > .admonition-title {
+  background: transparent !important;
+  border: 0 !important;
+  color: var(--pst-color-text-base) !important;
+  font-size: 0.87rem;
+  font-weight: 660;
+  margin: 0 0 0.35rem !important;
+  padding: 0 0 0 1.55rem !important;
+}
+
+.bd-article .admonition > .admonition-title::after {
+  left: 0 !important;
+  top: 0.1rem !important;
+}
+
+.bd-article .admonition > p:last-child {
+  margin-bottom: 0;
+}
+
+.bd-article .admonition.tip,
+.bd-article .admonition.hint {
+  background-color: var(--rlinf-admon-tip-bg) !important;
+  border-left-color: var(--rlinf-admon-tip-border) !important;
+}
+
+.bd-article .admonition.warning,
+.bd-article .admonition.important,
+.bd-article .admonition.attention {
+  background-color: var(--rlinf-admon-warn-bg) !important;
+  border-left-color: var(--rlinf-admon-warn-border) !important;
+}
+
+.bd-article .admonition.caution,
+.bd-article .admonition.danger,
+.bd-article .admonition.error {
+  background-color: var(--rlinf-admon-danger-bg) !important;
+  border-left-color: var(--rlinf-admon-danger-border) !important;
+}
+
+/* --- Clean borderless inline code & modern code blocks -------------------- */
+.bd-article code.literal,
+.bd-article code.docutils.literal,
+.bd-article p > code,
+.bd-article li > code,
+.bd-article td > code {
+  background-color: var(--rlinf-inline-code-bg);
+  border: 0;
+  border-radius: 5px;
+  color: var(--pst-color-inline-code);
+  font-size: 0.845em;
+  font-weight: 500;
+  padding: 0.12em 0.38em;
+}
+
+div.highlight,
+div[class*="highlight-"] {
+  display: block;
+  position: relative;
+}
+
+.bd-article div[class*="highlight-"] {
+  margin: 0.7rem 0 0.95rem;
+}
+
+.bd-article div.literal-block-wrapper div[class*="highlight-"] {
+  margin: 0;
+}
+
+.bd-article pre,
+.bd-article div.highlight pre {
+  font-feature-settings: normal;
+  font-variant-ligatures: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-rendering: auto;
+}
+
+.bd-article div.highlight pre {
+  background-color: var(--rlinf-code-bg);
+  border: 1px solid var(--rlinf-border);
+  border-radius: 10px;
+  box-shadow: none !important;
+  font-size: 0.84rem;
+  line-height: 1.62;
+  margin: 0;
+  padding: 0.95rem 2.75rem 0.95rem 1.15rem;
+}
+
+/* Terminal output & Unicode box diagrams (e.g. Metric Table): Google Fonts'
+   subsetted "JetBrains Mono" strips U+2500-U+259F and macOS SFMono lacks them,
+   causing mixed-font widths that misalign vertical borders. Use a single native
+   monospace font with full box-drawing and block-element coverage. */
+.bd-article div.highlight-text pre,
+.bd-article div.highlight-console pre,
+.bd-article div.highlight-none pre,
+.bd-article div.highlight-default pre {
+  font-family: Menlo, "Cascadia Mono", "DejaVu Sans Mono", Consolas,
+    "Liberation Mono", monospace;
+  line-height: 1.4;
+}
+
+div.highlight button.copybtn {
+  align-self: auto;
+  background: var(--rlinf-surface);
+  border: 1px solid var(--rlinf-border);
+  border-radius: 7px;
+  color: var(--pst-color-text-muted);
+  flex: none;
+  height: 1.9em;
+  margin: 0;
+  opacity: 1;
+  padding: 0;
+  position: absolute;
+  right: 0.55em;
+  top: 0.55em;
+  transition: border-color 150ms ease, color 150ms ease, background-color 150ms ease;
+  width: 1.9em;
+  z-index: 1;
+}
+
+div.highlight:hover button.copybtn,
+div.highlight button.copybtn:focus {
+  border-color: var(--rlinf-border-strong);
+  color: var(--pst-color-text-base);
+  opacity: 1;
+}
+
+div.highlight button.copybtn:hover {
+  border-color: var(--pst-color-primary);
+}
+
+/* Modern harmonious syntax highlighting (Light & Dark) */
+html[data-theme="light"] .highlight .c,
+html[data-theme="light"] .highlight .c1,
+html[data-theme="light"] .highlight .cm { color: #64748b; font-style: italic; }
+html[data-theme="light"] .highlight .k,
+html[data-theme="light"] .highlight .kd,
+html[data-theme="light"] .highlight .kn,
+html[data-theme="light"] .highlight .kp { color: #6d28d9; font-weight: 500; }
+html[data-theme="light"] .highlight .s,
+html[data-theme="light"] .highlight .s1,
+html[data-theme="light"] .highlight .s2,
+html[data-theme="light"] .highlight .sb { color: #0f766e; }
+html[data-theme="light"] .highlight .nb,
+html[data-theme="light"] .highlight .nf { color: #2563eb; }
+html[data-theme="light"] .highlight .mi,
+html[data-theme="light"] .highlight .mf,
+html[data-theme="light"] .highlight .m { color: #b45309; }
+html[data-theme="light"] .highlight .nt,
+html[data-theme="light"] .highlight .nv { color: #1d4ed8; }
+
+html[data-theme="dark"] .highlight .c,
+html[data-theme="dark"] .highlight .c1,
+html[data-theme="dark"] .highlight .cm { color: #64748b; font-style: italic; }
+html[data-theme="dark"] .highlight .k,
+html[data-theme="dark"] .highlight .kd,
+html[data-theme="dark"] .highlight .kn,
+html[data-theme="dark"] .highlight .kp { color: #c084fc; font-weight: 500; }
+html[data-theme="dark"] .highlight .s,
+html[data-theme="dark"] .highlight .s1,
+html[data-theme="dark"] .highlight .s2,
+html[data-theme="dark"] .highlight .sb { color: #5eead4; }
+html[data-theme="dark"] .highlight .nb,
+html[data-theme="dark"] .highlight .nf { color: #60a5fa; }
+html[data-theme="dark"] .highlight .mi,
+html[data-theme="dark"] .highlight .mf,
+html[data-theme="dark"] .highlight .m { color: #fbbf24; }
+html[data-theme="dark"] .highlight .nt,
+html[data-theme="dark"] .highlight .nv { color: #93c5fd; }
+
+/* --- Figures & media ------------------------------------------------------ */
+.bd-article figure {
+  margin: 1.5rem auto;
+}
+
+.bd-article figure img,
+.bd-article figure video {
+  border-radius: 10px;
+}
+
+.bd-article figure figcaption {
+  color: var(--pst-color-text-muted);
+  font-size: 0.84rem;
+  margin-top: 0.55rem;
+}
+
+/* --- Prev / Next flat footer cards ---------------------------------------- */
+.prev-next-area {
+  gap: 0.9rem;
+  margin-top: 2.75rem;
+}
+
+.prev-next-area a.left-next,
+.prev-next-area a.right-next {
+  background: var(--rlinf-surface);
+  border: 1px solid var(--rlinf-border);
+  border-radius: 8px;
+  padding: 0.75rem 1.05rem;
+  text-decoration: none !important;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.prev-next-area a.left-next:hover,
+.prev-next-area a.right-next:hover {
+  background: var(--rlinf-surface-subtle);
+  border-color: var(--pst-color-primary);
+}
+
+/* --- Modern segmented-pill tab-sets & flat dropdowns ---------------------- */
+.bd-content .bd-article .sd-tab-set {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 1rem 0 1.45rem;
+}
+
+.bd-content .bd-article .sd-tab-set > label.sd-tab-label {
+  background: var(--rlinf-tab-bg) !important;
+  border: 1px solid transparent !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  color: var(--pst-color-text-muted) !important;
+  cursor: pointer;
+  font-size: 0.845rem;
+  font-weight: 520;
+  line-height: 1.35 !important;
+  margin: 0 !important;
+  margin-inline-end: 0 !important;
+  padding: 0.4rem 0.88rem !important;
+  text-decoration: none !important;
+  transform: none !important;
+  transition: background-color 140ms ease, color 140ms ease,
+    border-color 140ms ease;
+}
+
+.bd-content .bd-article .sd-tab-set > input:not(:checked) + label.sd-tab-label:hover {
+  background: var(--rlinf-tab-hover-bg) !important;
+  border-color: transparent !important;
+  color: var(--pst-color-text-base) !important;
+  text-decoration: none !important;
+  transform: none !important;
+}
+
+.bd-content .bd-article .sd-tab-set > input:checked + label.sd-tab-label {
+  background: var(--rlinf-tab-active-bg) !important;
+  border: 1px solid var(--rlinf-tab-active-border) !important;
+  border-radius: 8px !important;
+  box-shadow: var(--rlinf-tab-active-shadow) !important;
+  color: var(--rlinf-tab-active-fg) !important;
+  cursor: default;
+  font-weight: 620;
+  text-decoration: none !important;
+  transform: none !important;
+}
+
+.bd-content .bd-article .sd-tab-set > input:focus-visible + label.sd-tab-label {
+  outline: 2px solid var(--pst-color-primary);
+  outline-offset: 2px;
+  border-radius: 8px !important;
+  transform: none !important;
+}
+
+.bd-content .bd-article .sd-tab-set > .sd-tab-content {
+  background: var(--rlinf-tab-panel-bg) !important;
+  border: 1px solid var(--rlinf-tab-panel-border) !important;
+  border-radius: 12px !important;
+  box-shadow: var(--rlinf-tab-panel-shadow) !important;
+  margin-top: 0.35rem;
+  padding: 1.1rem 1.25rem !important;
+}
+
+.bd-content .bd-article .sd-tab-set > .sd-tab-content .highlight pre {
+  border-radius: 8px;
+}
+
+.bd-article details.sd-dropdown {
+  background: var(--rlinf-tab-panel-bg) !important;
+  border: 1px solid var(--rlinf-tab-panel-border) !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  margin: 0.9rem 0 !important;
+  overflow: hidden;
+}
+
+.bd-article details.sd-dropdown:hover {
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.bd-article details.sd-dropdown > summary.sd-summary-title {
+  background: var(--rlinf-surface-subtle) !important;
+  color: var(--pst-color-text-base) !important;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 0.65rem 1rem !important;
+  transition: background-color 140ms ease;
+}
+
+.bd-article details.sd-dropdown > summary.sd-summary-title:hover {
+  background: var(--rlinf-surface-muted) !important;
+}
+
+.bd-article details.sd-dropdown > .sd-summary-content {
+  border-top: 1px solid var(--rlinf-border);
+  padding: 0.95rem 1.15rem !important;
+}
+
+/* --- Transparent canvas + dark-mode adaptation for SVGs & inline icons ---- */
+.bd-article img.inline-icon {
+  background-color: transparent !important;
+}
+
+.bd-article img[src^="https://raw.githubusercontent.com/RLinf/misc/"][src$=".svg"],
+.bd-article img[src*="_static/svg/"][src$=".svg"]:not(.rlinf-sidebar-brand__mark):not(.rlinf-hero-logo):not(.inline-icon) {
+  background-color: transparent !important;
+}
+
+html[data-theme="dark"]
+  .bd-article
+  img[src^="https://raw.githubusercontent.com/RLinf/misc/"][src$=".svg"],
+html[data-theme="dark"]
+  .bd-article
+  img[src*="_static/svg/"][src$=".svg"]:not(.rlinf-sidebar-brand__mark):not(.rlinf-hero-logo):not(.inline-icon) {
+  background-color: transparent !important;
+  filter: invert(0.92) hue-rotate(180deg) saturate(1.15);
+}
+
+/* --- Subtle top progress bar for slow PJAX page swaps --------------------- */
+#rlinf-pjax-bar {
+  background: var(--pst-color-primary);
+  height: 2px;
+  left: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: fixed;
+  top: 0;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 240ms ease, opacity 180ms ease;
+  width: 100%;
+  z-index: 2000;
+}
+
+#rlinf-pjax-bar.is-loading {
+  opacity: 1;
+  transform: scaleX(0.72);
+}
+
+#rlinf-pjax-bar.is-done {
+  opacity: 0;
+  transform: scaleX(1);
 }
