@@ -169,9 +169,7 @@ Setup and Run
 
          Full end-to-end training convergence on AMD ROCm is untested.
 
-.. dropdown:: Multi-GPU, Resume, MaxCoord, Evaluation, and Key Config
-
-   **Multi-GPU scaling**
+.. dropdown:: Multi-GPU Training
 
    Environment count, world-model batches, and imagined rollouts are global totals divided evenly across GPUs, so the learning rate and total update count stay unchanged:
 
@@ -204,7 +202,7 @@ Setup and Run
           '~cluster.component_placement' \
           '+cluster.component_placement={actor:0-1,env:0-1,rollout:0-1}'
 
-   **Resume an interrupted run**
+.. dropdown:: Resume Training
 
    Pass the original run directory and ``runner.resume_dir=auto`` on the same GPU count (the log prints ``Resuming from <path>`` when a checkpoint loads):
 
@@ -214,7 +212,7 @@ Setup and Run
           runner.logger.log_path=./logs/<timestamp>-supermimic_lafan1_gencoord \
           runner.resume_dir=auto
 
-   **Train with MaxCoord**
+.. dropdown:: Train with MaxCoord
 
    Switch the config name to ``supermimic_lafan1_maxcoord``:
 
@@ -222,7 +220,7 @@ Setup and Run
 
       bash examples/embodiment/run_embodiment.sh supermimic_lafan1_maxcoord
 
-   **Evaluate a checkpoint**
+.. dropdown:: Evaluate a Checkpoint
 
    Run motion-tracking evaluation on all 40 LAFAN1 clips (append ``rollout.model.representation=maxcoord`` for MaxCoord checkpoints; for standing push recovery and metric definitions, see :doc:`../../evaluations/guides/supermimic`):
 
@@ -232,7 +230,7 @@ Setup and Run
           runner.ckpt_path=./logs/<timestamp>-supermimic_lafan1_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
           runner.eval_export.output_dir=./eval_results/supermimic_6000
 
-   **Key algorithm configuration**
+.. dropdown:: Key Algorithm Configuration
 
    Default config: ``examples/embodiment/config/supermimic_lafan1_gencoord.yaml`` (``supermimic_lafan1_maxcoord.yaml`` inherits it).
 

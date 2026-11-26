@@ -169,9 +169,7 @@ SuperMimic 算法原理
 
          AMD ROCm 上尚未验证完整训练收敛。
 
-.. dropdown:: 多卡训练、续训、MaxCoord、评测与核心配置
-
-   **多卡扩展**
+.. dropdown:: 多卡训练
 
    环境数、世界模型批次和想象 rollout 数均为跨卡总量，多卡时自动均分，学习率与总更新次数保持不变：
 
@@ -204,7 +202,7 @@ SuperMimic 算法原理
           '~cluster.component_placement' \
           '+cluster.component_placement={actor:0-1,env:0-1,rollout:0-1}'
 
-   **断点续训**
+.. dropdown:: 断点续训
 
    训练中断后，在相同 GPU 数量下传入原输出目录与 ``runner.resume_dir=auto`` 即可续训（成功加载时日志会打印 ``Resuming from <path>``）：
 
@@ -214,7 +212,7 @@ SuperMimic 算法原理
           runner.logger.log_path=./logs/<timestamp>-supermimic_lafan1_gencoord \
           runner.resume_dir=auto
 
-   **切换为 MaxCoord**
+.. dropdown:: 使用 MaxCoord 训练
 
    将配置名切换为 ``supermimic_lafan1_maxcoord``：
 
@@ -222,7 +220,7 @@ SuperMimic 算法原理
 
       bash examples/embodiment/run_embodiment.sh supermimic_lafan1_maxcoord
 
-   **评测 checkpoint**
+.. dropdown:: 评测 Checkpoint
 
    在 40 条 LAFAN1 片段上运行动作跟踪评测（MaxCoord checkpoint 需追加 ``rollout.model.representation=maxcoord``；完整的站立推力恢复测试与指标定义见 :doc:`../../evaluations/guides/supermimic`）：
 
@@ -232,7 +230,7 @@ SuperMimic 算法原理
           runner.ckpt_path=./logs/<timestamp>-supermimic_lafan1_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
           runner.eval_export.output_dir=./eval_results/supermimic_6000
 
-   **核心算法配置项**
+.. dropdown:: 核心算法配置项
 
    默认配置位于 ``examples/embodiment/config/supermimic_lafan1_gencoord.yaml``\ （``supermimic_lafan1_maxcoord.yaml`` 继承此配置）。
 
