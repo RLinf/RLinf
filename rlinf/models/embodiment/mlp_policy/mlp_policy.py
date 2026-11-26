@@ -424,9 +424,17 @@ class MLPPolicy(nn.Module, BasePolicy):
             calculate_values=False,
         )
 
+        if not hasattr(self, "_eager_generate_actions"):
+            self._eager_generate_actions = self._generate_actions
+
         def generate_actions_func(
             states: torch.Tensor, mode: str, calculate_values: bool
         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            expected_batch_size = (
+                train_batch_size if mode == "train" else eval_batch_size
+            )
+            if states.shape[0] != expected_batch_size:
+                return self._eager_generate_actions(states, mode, calculate_values)
             graph_name = f"action_generation_{self.independent_std}_{self.final_tanh}_{mode}_{calculate_values}"
             inputs = {"states": states}
             outputs = self.cuda_graph_manager.replay(graph_name, inputs=inputs)

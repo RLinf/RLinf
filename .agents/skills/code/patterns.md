@@ -74,6 +74,7 @@ Expect validation at the boundaries, once: user config in `rlinf/config.py` (`bu
 Flag:
 
 - `hasattr`, `getattr(x, "y", None)`, or `isinstance` ladders for attributes and types the caller always provides.
+- Replacing direct member access (`obj.attr`) with `getattr`/`hasattr` or adding fallback guards in product code so incomplete mocks or stubs in tests pass; fix the test to construct the real object or satisfy its contract instead.
 - `if x is None` for values that cannot be `None`, and defaults that hide a missing or wrong config.
 - `try: ... except Exception:` that logs and continues in a wrong state, and bare `except` or `except: pass`.
 - Retries, sleeps, or fallbacks for failures the PR never demonstrates.
@@ -99,7 +100,7 @@ Simulators, robot SDKs, and model-specific packages are imported inside the func
 - Logging uses `self.log_info`, `self.log_warning`, and `self.log_error` in a `Worker`, and `rlinf.utils.logging.get_logger()` elsewhere. Product code has no `print`.
 - Accelerator code uses `self.torch_platform` (or `Worker.torch_platform`), not `torch.cuda`.
 - Public APIs have type hints, accepted input types, return types, and short Google-style docstrings.
-- Comments are sparse. They state contracts, invariants, ownership, and non-obvious reasons. They do not narrate the code, repeat the signature, or tell the history of a fix.
+- Comments are sparse and direct. They state contracts, invariants, ownership, and non-obvious reasons. They do not narrate the code, repeat the signature, hedge with defensive disclaimers, or tell the history of a fix.
 - Assertion and exception messages say what was expected and what was found.
 - New files carry `# Copyright <current year> The RLinf Authors.`; moved or renamed files keep their year, and vendored files keep their upstream header.
 - Every new function, method, field, and config key has a caller or consumer. No commented-out code, debug output, or copied legacy helpers stay behind.

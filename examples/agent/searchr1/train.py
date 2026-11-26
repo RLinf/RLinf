@@ -69,13 +69,11 @@ def main(cfg) -> None:
         name=cfg.rollout.group_name,
         placement_strategy=rollout_placement_strategy,
     )
+    rollout_placements = rollout_placement_strategy.get_placement(cluster)
 
     # AgentLoop group.
     agentloop_placement_strategy = NodePlacementStrategy(
-        [
-            placement.cluster_node_rank
-            for placement in rollout_placement_strategy.get_placement(cluster)
-        ]
+        [placement.cluster_node_rank for placement in rollout_placements]
     )
     assert (
         len(agentloop_placement_strategy._node_ranks)
@@ -88,6 +86,49 @@ def main(cfg) -> None:
         name=cfg.agentloop.group_name,
         placement_strategy=agentloop_placement_strategy,
     )
+
+    # With the session server: one worker group per session server (its
+    # server_index fixes the port), round-robin over the rollout nodes,
+    # plus the single router group on the first rollout node. The payload
+    # channels are created by the runner on each server's node.
+    session_servers = None
+    session_router = None
+    if OmegaConf.select(cfg, "session_server.enable", default=False):
+        # Imported here: the session server worker imports fastapi, uvicorn
+        # and SGLang at module level, which a run without the session server
+        # may not have installed.
+        from rlinf.workers.rollout.session_server.server_worker import (
+            SessionServerWorker,
+        )
+        from rlinf.workers.rollout.sglang.router_worker import SGLangRouterWorker
+
+        rollout_node_ranks = list(
+            dict.fromkeys(
+                placement.cluster_node_rank for placement in rollout_placements
+            )
+        )
+        num_servers = cfg.session_server.num_servers
+        session_servers = [
+            SessionServerWorker.create_group(cfg, server_index).launch(
+                cluster,
+                name=(
+                    cfg.session_server.group_name
+                    if num_servers == 1
+                    else f"{cfg.session_server.group_name}_{server_index}"
+                ),
+                placement_strategy=NodePlacementStrategy(
+                    [rollout_node_ranks[server_index % len(rollout_node_ranks)]]
+                ),
+            )
+            for server_index in range(num_servers)
+        ]
+        session_router = SGLangRouterWorker.create_group(
+            cfg, cfg.rollout.router
+        ).launch(
+            cluster,
+            name="SessionServerRouter",
+            placement_strategy=NodePlacementStrategy([rollout_node_ranks[0]]),
+        )
 
     # Inference group
     inference_group = None
@@ -164,6 +205,9 @@ def main(cfg) -> None:
         # AsyncAgentRunner does not take a critic; async and PPO are kept
         # mutually exclusive by config validation.
         runner_kwargs["critic"] = critic_group
+    if session_servers is not None:
+        runner_kwargs["session_servers"] = session_servers
+        runner_kwargs["session_router"] = session_router
     runner = runner_cls(**runner_kwargs)
 
     runner.init_workers()

@@ -121,7 +121,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 
   enable_torch_compile: True

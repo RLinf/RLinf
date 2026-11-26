@@ -1,313 +1,174 @@
-Using GELLO with Franka
-=======================
+Franka GELLO Teleop
+===================
+
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gello.jpeg
    :align: center
    :width: 80%
 
    GELLO joint-level teleoperation device used to collect Franka demonstrations.
 
-Use GELLO as a joint-level teleoperation device for Franka data collection. You'll install ``gello_teleop``, verify the serial device, update collection configs, and monitor saved episodes.
-
 Overview
 --------
 
-Collect Franka demonstrations with joint-level GELLO control instead of SpaceMouse.
+Use a GELLO leader arm for joint-level Franka demonstration collection instead of a SpaceMouse. Install ``gello`` and ``gello-teleop`` on the controller node, verify the USB-FTDI serial stream, update the collection config, and record demonstrations with live progress monitoring.
 
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: Models
-      :text-align: center
-
-      Downstream CNN/OpenPI policies
-
-   .. grid-item-card:: Algorithms
-      :text-align: center
-
-      Teleop collection · SFT/RL downstream
-
-   .. grid-item-card:: Tasks
-      :text-align: center
-
-      Franka demonstration collection
-
    .. grid-item-card:: Hardware
       :text-align: center
 
-      Franka · GELLO · gripper
+      Franka · GELLO leader arm · gripper
 
-| **You'll do:** install GELLO deps → grant serial permissions → test expert stream → run collection.
-| **Prerequisites:** :doc:`franka` · GELLO hardware · Dynamixel permissions.
+   .. grid-item-card:: Connection
+      :text-align: center
 
-Tasks
-~~~~~
+      USB-FTDI serial (``/dev/serial/by-id/``)
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24 24
+   .. grid-item-card:: Workflow
+      :text-align: center
 
-   * - Task
-     - Config / entry point
-     - Description
-   * - GELLO test
-     - ``gello_expert``
-     - Verify live joint and gripper readings.
-   * - Collection
-     - ``realworld_collect_data_gello``
-     - Save successful demonstrations from GELLO teleoperation.
-   * - Monitoring
-     - ``collect_monitor.py``
-     - Follow Ray worker collection progress from logs.
+      Joint-level teleop data collection
 
-Observation and Action
-~~~~~~~~~~~~~~~~~~~~~~
+   .. grid-item-card:: Requires
+      :text-align: center
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24
+      :doc:`franka` · external servo power · ``dialout`` access
 
-   * - Field
-     - Description
-   * - Observation
-     - Same camera/state layout as the target Franka collection config.
-   * - Action
-     - GELLO joint readings converted to Franka target pose or joint action.
-   * - Reward
-     - Collection success flag or downstream task reward.
-   * - Prompt
-     - Inherited from the downstream Franka task config.
+Hardware and Safety
+-------------------
 
-Installation
-------------
-
-GELLO depends on two packages that must be installed **in order**:
-
-1. ``gello`` — the low-level driver from `gello_software <https://github.com/wuphilipp/gello_software>`_.
-2. ``gello-teleop`` — the forward-kinematics and teleoperation agent used by RLinf.
-
-Both packages should be installed on the node that runs the GELLO device
-(typically the NUC / controller node).
-
-1. Install ``gello`` (gello_software)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Choose a directory to install the GELLO software, then clone the repository
-and initialize only the **Dynamixel SDK** submodule:
-
-.. code-block:: bash
-
-   cd /path/to/install/gello
-   git clone https://github.com/wuphilipp/gello_software.git
-   cd gello_software
-   git submodule update --init third_party/DynamixelSDK
-
-.. note::
-
-   ``gello_software`` also registers ``third_party/mujoco_menagerie`` (a
-   large repository of robot MJCF assets used only by the upstream mujoco
-   demo scripts). RLinf's GELLO teleop path goes through
-   ``gello-teleop`` which ships its own Franka MJCF, so the menagerie
-   submodule is not needed. ``git submodule update --init <path>``
-   registers and clones only the requested submodule; a plain
-   ``git submodule init`` would also queue the menagerie.
-
-Install the ``gello`` package and the **Dynamixel SDK** (bundled as a
-third-party submodule):
-
-.. code-block:: bash
-
-   pip install -e .
-   pip install -e third_party/DynamixelSDK/python
-
-The Dynamixel SDK is required for communicating with the Dynamixel servos
-inside the GELLO device. Without it, the ``GelloAgent`` will not be able
-to read joint positions.
-
-.. note::
-
-   If you encounter permission issues accessing the serial device, add
-   your user to the ``dialout`` group:
-
-   .. code-block:: bash
-
-      sudo usermod -aG dialout $USER
-
-   Then log out and back in for the change to take effect.
-
-For additional hardware configuration (e.g. setting unique motor IDs,
-DynamixelRobotConfig, and port mapping), refer to the
-`gello_software README <https://github.com/wuphilipp/gello_software#readme>`_.
-
-2. Install ``gello-teleop``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``gello-teleop`` wraps the ``gello`` driver with Franka forward kinematics
-(using dm_control/MuJoCo) and a teleoperation agent interface. Install it
-as an editable checkout:
-
-.. code-block:: bash
-
-   git clone https://github.com/RLinf/gello-teleop.git
-   cd gello-teleop
-   pip install -e .
-
-
-3. Set up the serial device
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Plug the GELLO device into the controller node via the USB-FTDI adapter.
-Identify the serial port:
+Power the GELLO Dynamixel servos with their external power supply and plug the USB-FTDI adapter into the Franka controller node (typically the NUC). Identify the stable device path under ``/dev/serial/by-id/`` instead of ``/dev/ttyUSB*`` so the port stays fixed across reboots and USB reconnects:
 
 .. code-block:: bash
 
    ls /dev/serial/by-id/
-   # Look for something like:
+   # Example output:
    # usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0
 
-Grant permission:
+Grant serial access for the current session or persistently via the ``dialout`` group (log out and back in after adding the group):
 
 .. code-block:: bash
 
    sudo chmod 666 /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0
-   # Or add your user to the dialout group for persistent access:
+   # Or persistent access:
    sudo usermod -aG dialout $USER
 
-.. tip::
-
-   Using the ``/dev/serial/by-id/`` path is recommended over ``/dev/ttyUSB*``
-   because it is stable across reboots and does not change when other USB
-   devices are plugged in.
-
-4. Verify the GELLO device
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Run the built-in RLinf test script to confirm that the GELLO device is
-communicating correctly and producing valid TCP target readings:
-
-.. code-block:: bash
-
-   export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   python -m rlinf.robotics.parts.teleop.gello \
-       --port /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0
-
-You should see continuously updating output like:
-
-.. code-block:: text
-
-   pos=[0.500 0.000 0.300]  quat=[1.000 0.000 0.000 0.000]  gripper=[0.040]
-
-If the output is updating as you move the GELLO device, the installation
-is successful.
-
-
-Configuration File
-------------------
-
-To use GELLO for data collection, use the config file
-``examples/embodiment/config/realworld_collect_data_gello.yaml``.
-The key differences from the standard SpaceMouse config are:
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       teleop: gello
-       gello_port: "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0"
-
-.. list-table:: GELLO-specific configuration fields
-   :header-rows: 1
-   :widths: 25 15 60
-
-   * - Field
-     - Default
-     - Description
-   * - ``teleop``
-     - ``spacemouse``
-     - Set to ``gello`` to hand control to a leader arm.
-   * - ``gello_port``
-     - ``null``
-     - Serial port path of the GELLO device. Required when ``teleop``
-       is ``gello``.
-
-For full data collection instructions, refer to the
-**Data Collection with GELLO** section in :doc:`franka`.
-
-
-Run It
-------
-
-Because the collector runs as a Ray worker, its stdout is batched by
-Ray's log monitor, which breaks ``tqdm``'s in-place ``\r`` refresh.
-To get a live progress bar, run ``toolkits/realworld_check/collect_monitor.py``
-in a separate terminal — it tails the collector log and renders a
-``tqdm`` bar that surfaces success count, the latest keyboard events,
-and discarded episodes.
-
-.. code-block:: bash
-
-   # terminal 1 — launch (stdout tee'd to a log file)
-   bash examples/embodiment/collect_data.sh \
-       realworld_collect_data_gello_joint_dual_franka 2>&1 \
-       | tee logs/collect.log
-
-   # terminal 2 — live bar (waits for the log file to appear if needed)
-   python toolkits/realworld_check/collect_monitor.py logs/collect.log
-
-The monitor replays the existing log on startup so episodes saved before
-it launched are reflected in the bar's initial position; pass
-``--no-replay`` to tail from EOF instead.
-
-
-Cluster Setup Notes
----------------------
-
-The cluster setup procedure is the same as described in :doc:`franka`. The
-key additional requirement is:
-
-- On the **controller node** (NUC): make sure both ``gello`` and
-  ``gello-teleop`` are installed in the virtual environment **before**
-  running ``ray start``.
+For motor ID assignment, servo config, and port mapping, refer to the `gello_software README <https://github.com/wuphilipp/gello_software#readme>`_.
 
 .. warning::
 
-   Remember that Ray captures the Python interpreter and environment
-   variables at ``ray start`` time. Any package installed **after**
-   ``ray start`` will not be visible to Ray workers. Always install
-   ``gello`` and ``gello-teleop`` first, then start Ray.
+   Keep the Franka e-stop button within reach and clear obstacles from the workspace before starting teleoperation. Match the GELLO leader arm close to a safe Franka start pose so the follower arm does not jump on activation, and confirm Franka Desk is in programmable mode with no other process holding arm control.
 
+Setup and Run
+-------------
+
+.. include:: _setup_common.rst
+
+.. tab-set::
+
+   .. tab-item:: Franka + GELLO
+
+      **1. Install RLinf Franka and GELLO packages (in order)**
+
+      Install the ``franka`` environment on the controller node, then clone and install ``gello_software`` (with its Dynamixel SDK submodule) and ``gello-teleop`` from the RLinf repository root:
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+
+         git clone https://github.com/wuphilipp/gello_software.git ../gello_software
+         git -C ../gello_software submodule update --init third_party/DynamixelSDK
+         uv pip install -e ../gello_software -e ../gello_software/third_party/DynamixelSDK/python
+
+         git clone https://github.com/RLinf/gello-teleop.git ../gello-teleop
+         uv pip install -e ../gello-teleop
+
+      .. note::
+
+         ``git -C ../gello_software submodule update --init third_party/DynamixelSDK`` fetches only the Dynamixel SDK and skips ``third_party/mujoco_menagerie``; ``gello-teleop`` ships its own Franka MJCF.
+
+      **2. Verify the serial device and joint stream**
+
+      From the RLinf repository root, run the built-in GELLO check script with your ``/dev/serial/by-id/`` path:
+
+      .. code-block:: bash
+
+         python -m rlinf.robotics.parts.teleop.gello \
+             --port /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0
+
+      Move the GELLO arm and confirm continuously updating TCP and gripper output:
+
+      .. code-block:: text
+
+         pos=[0.500 0.000 0.300]  quat=[1.000 0.000 0.000 0.000]  gripper=[0.040]
+
+      **3. Configure and launch collection**
+
+      Set ``robot_ip`` and your GELLO serial path in ``examples/embodiment/config/realworld_collect_data_gello.yaml``:
+
+      .. code-block:: yaml
+
+         env:
+           eval:
+             teleop: gello
+             gello_port: "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0"
+
+      Start data collection in terminal 1 (logging to a file because Ray's log monitor batches stdout and breaks ``tqdm`` in-place refresh), and watch live episode counts in terminal 2:
+
+      .. code-block:: bash
+
+         # Terminal 1 — launch single-arm collection (or realworld_collect_data_gello_joint_dual_franka for dual-arm)
+         bash examples/embodiment/collect_data.sh \
+             realworld_collect_data_gello 2>&1 \
+             | tee logs/collect.log
+
+         # Terminal 2 — live progress bar (pass --no-replay to tail from EOF)
+         python -m toolkits.realworld_check.collect_monitor logs/collect.log
+
+.. dropdown:: GELLO YAML fields and dual-arm reference
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 25 15 60
+
+      * - Field
+        - Default
+        - Description
+      * - ``env.eval.teleop``
+        - ``spacemouse``
+        - Set to ``gello`` to drive the arm from a GELLO leader arm.
+      * - ``env.eval.gello_port``
+        - ``null``
+        - Serial port path of the GELLO device. Required when ``teleop`` is ``gello``.
+
+   For dual-arm joint-space collection, pass ``realworld_collect_data_gello_joint_dual_franka`` to ``examples/embodiment/collect_data.sh``. Full demonstration collection options and replay-buffer exports are covered in :doc:`franka`.
+
+.. dropdown:: Cluster setup notes
+
+   For multi-node setups, follow the Ray cluster setup in :doc:`franka`, with one order requirement: install both ``gello`` and ``gello-teleop`` in the virtual environment on the controller node (NUC) **before** running ``ray start``.
+
+   .. warning::
+
+      Ray captures the Python interpreter and environment variables at ``ray start`` time. Packages installed after ``ray start`` are invisible to Ray workers. Install ``gello`` and ``gello-teleop`` first, then start Ray.
 
 Troubleshooting
-----------------
+---------------
 
-**GELLO device not detected**
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
 
-- Verify the USB-FTDI adapter is connected: ``ls /dev/serial/by-id/``.
-- Check ``lsusb`` for ``FTDI`` devices.
-- Ensure the Dynamixel servos are powered on (the GELLO device needs
-  external power for the servos).
-
-**Permission denied on serial port**
-
-- Run ``sudo chmod 666 /dev/serial/by-id/<your-device>``.
-- Or add your user to the ``dialout`` group:
-  ``sudo usermod -aG dialout $USER`` (requires re-login).
-
-**Import error: ``No module named 'gello'``**
-
-- Ensure the ``gello`` package (from ``gello_software``) is installed in
-  the same virtual environment. Run:
-  ``pip show gello`` to verify.
-
-**Import error: ``No module named 'gello_teleop'``**
-
-- Ensure ``gello-teleop`` is installed:
-  ``pip show gello-teleop`` to verify.
-- If using an editable install, make sure the repository path is correct.
-
-**GELLO readings are not updating**
-
-- Check that the Dynamixel servo IDs match the configuration in
-  ``gello_software``.
-- Try lowering the baud rate in the GELLO configuration if communication
-  is unreliable.
-- Ensure no other process is using the same serial port.
+   * - Symptom
+     - Fix
+   * - GELLO device not detected
+     - Check ``ls /dev/serial/by-id/`` and ``lsusb`` for an ``FTDI`` device, and verify the Dynamixel servos have external power switched on.
+   * - Permission denied on serial port
+     - Run ``sudo chmod 666 /dev/serial/by-id/<your-device>``, or run ``sudo usermod -aG dialout $USER`` and log out and back in.
+   * - ``No module named 'gello'``
+     - Verify ``gello`` from ``gello_software`` is installed in the active virtual environment with ``pip show gello`` (restart Ray in multi-node setups).
+   * - ``No module named 'gello_teleop'``
+     - Verify ``gello-teleop`` is installed with ``pip show gello-teleop`` and check the editable checkout path.
+   * - GELLO readings do not update
+     - Confirm Dynamixel servo IDs match ``gello_software``, lower the baud rate if serial traffic drops packets, and close any other process holding the port.

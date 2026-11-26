@@ -30,6 +30,7 @@ from ..collective import (
     AsyncChannelWork,
     AsyncRayWork,
     AsyncWork,
+    PeerCommunicationError,
 )
 from ..placement import NodePlacementStrategy
 from ..worker import Worker, WorkerGroup
@@ -329,6 +330,11 @@ class Channel:
         """Check if the channel is a local channel."""
         return self._local_channel is not None
 
+    @property
+    def name(self) -> str:
+        """Return the channel's registered name."""
+        return self._channel_name
+
     def _get_src_node_rank(self) -> int:
         """Return the caller's cluster node rank if available."""
         if self._current_worker is not None:
@@ -389,6 +395,32 @@ class Channel:
         target_actor = self._get_channel_actor(target_rank)
         return ray.get(target_actor.empty.remote(key))
 
+    def queued_summary(self) -> tuple[int, int]:
+        """Sum queued elements and weights over every key of this channel.
+
+        Read-only and blocking (one ``ray.get`` per channel worker), so
+        call it from the runner's main process or a plain (non-async)
+        worker method, never from inside an asyncio event loop that must
+        not block.
+
+        Returns:
+            tuple[int, int]: The number of queued elements and the sum of
+                their weights.
+
+        """
+        if self._local_channel is not None:
+            return self._local_channel.queued_summary()
+        summaries = ray.get(
+            [
+                actor.queued_summary.remote()
+                for actor in self._channel_actors_by_rank.values()
+            ]
+        )
+        return (
+            sum(items for items, _ in summaries),
+            sum(weight for _, weight in summaries),
+        )
+
     def full(self, key: Any = DEFAULT_KEY) -> bool:
         """Check if the channel queue is full.
 
@@ -404,6 +436,33 @@ class Channel:
         target_rank = self._get_channel_rank_by_key(key)
         target_actor = self._get_channel_actor(target_rank)
         return ray.get(target_actor.full.remote(key))
+
+    def _fail_put_on_send_error(
+        self, work: AsyncChannelWork, send_work: AsyncWork
+    ) -> None:
+        """Fail a put whose send failed.
+
+        The item never reached the channel, and the send that failed lost its
+        place in the stream to the channel worker, so the put cannot report
+        success: the caller has to see the failure. A send that was itself
+        refused because its channel had already failed carries that error.
+        """
+
+        def _record(future) -> None:
+            try:
+                future.wait()
+            except Exception as exc:
+                if isinstance(exc, PeerCommunicationError):
+                    work.fail(exc)
+                    return
+                error = PeerCommunicationError(
+                    f"the send of a put to channel {self._channel_name} failed "
+                    f"({exc!r})"
+                )
+                error.__cause__ = exc
+                work.fail(error)
+
+        send_work.add_done_callback(_record)
 
     def put(
         self,
@@ -444,13 +503,14 @@ class Channel:
                 method="put",
                 **put_kwargs,
             )
-            self._current_worker.send(
+            send_work = self._current_worker.send(
                 item,
                 self._channel_name,
                 target_rank,
                 async_op=True,
                 piggyback_payload=(key, weight),
             )
+            self._fail_put_on_send_error(async_channel_work, send_work)
 
             if async_op:
                 return async_channel_work
@@ -500,13 +560,14 @@ class Channel:
                 method="put",
                 **put_kwargs,
             )
-            self._current_worker.send(
+            send_work = self._current_worker.send(
                 item,
                 self._channel_name,
                 target_rank,
                 async_op=True,
                 piggyback_payload=(key, weight),
             )
+            self._fail_put_on_send_error(async_channel_work, send_work)
             try:
                 async_channel_work.wait()
             except asyncio.QueueFull:
@@ -554,6 +615,7 @@ class Channel:
                     async_comm_work=async_comm_work,
                     query_id=query_id,
                     channel_actor=target_actor,
+                    peer=(self._channel_name, target_rank),
                 )
             else:
                 # query_id, data
@@ -569,6 +631,42 @@ class Channel:
                 return async_channel_work
             else:
                 return async_channel_work.wait()
+
+    def remove_key(
+        self, key: Any = DEFAULT_KEY, async_op: bool = False
+    ) -> AsyncWork | int:
+        """Drop every queued item for ``key`` and delete the key's queues.
+
+        The dropped items stay inside the channel worker instead of traveling
+        to the caller, unlike a get. See
+        :meth:`~rlinf.scheduler.channel.channel_worker.ChannelWorker.remove_key`
+        for the full contract.
+
+        Args:
+            key (Any): The key whose items and queues are dropped.
+            async_op (bool): Whether to perform the removal asynchronously.
+
+        Returns:
+            AsyncWork | int: The removal work when ``async_op`` is True,
+            otherwise the number of dropped items.
+
+        """
+        if self._local_channel is not None:
+            assert async_op is False, "Local channel does not support async remove_key."
+            return self._local_channel.remove_key(key)
+
+        target_rank = self._get_channel_rank_by_key(key)
+        target_actor = self._get_channel_actor(target_rank)
+        async_channel_work = AsyncChannelWork(
+            channel_name=self._channel_name,
+            channel_key=key,
+            channel_actor=target_actor,
+            method="remove_key",
+            key=key,
+        )
+        if async_op:
+            return async_channel_work
+        return async_channel_work.wait()
 
     def get_nowait(self, key: Any = DEFAULT_KEY) -> Any:
         """Get an item from the channel queue without waiting. Raises asyncio.QueueEmpty if the queue is empty.
@@ -651,6 +749,7 @@ class Channel:
                     async_comm_work=async_comm_work,
                     query_id=query_id,
                     channel_actor=target_actor,
+                    peer=(self._channel_name, target_rank),
                 )
             else:
                 # query_id, data

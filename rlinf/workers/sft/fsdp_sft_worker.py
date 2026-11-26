@@ -33,6 +33,13 @@ from rlinf.utils.utils import clear_memory
 
 
 class FSDPSftWorker(FSDPModelManager, Worker):
+    """FSDP-backed base worker for supervised fine-tuning (SFT).
+
+    Owns the sharded model, optimizer, and train/validation dataloaders.
+    Subclasses implement dataset construction and per-batch loss computation
+    while this base handles gradient accumulation, stepping, and checkpoints.
+    """
+
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
         super().__init__(cfg.actor, self._world_size, self._rank)

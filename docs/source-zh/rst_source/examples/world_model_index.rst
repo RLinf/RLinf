@@ -1,45 +1,39 @@
 世界模型
 ========
 
-本类示例展示如何在 RLinf 中训练和微调世界模型。
+用学习得到的视频世界模型作为模拟器，闭环强化学习训练 VLA policy。
 
-.. raw:: html
+.. grid:: 1 2 3 3
+   :gutter: 3
 
-   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
+   .. grid-item-card:: BWM 世界模型
+      :img-top: https://raw.githubusercontent.com/boundless-large-model/boundless-world-model/main/assets/images/teaser.png
+      :img-alt: BWM 世界模型
+      :link: embodied/bwm
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/opensora.html" style="display: block;"><img src="https://raw.githubusercontent.com/hpcaitech/Open-Sora-Demo/main/readme/icon.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/opensora.html" style="text-decoration: underline; color: blue;"><b>基于 OpenSora 世界模型的强化学习</b></a><br>
-         支持 OpenSora 世界模型 + OpenVLA-OFT + GRPO 训练
-       </p>
-     </div>
+      在 BWM 世界模型中用 PPO 训练单视角 π₀.₅ policy 完成 RoboTwin ``adjust_bottle`` 任务。
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/wan.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/wan.html" style="text-decoration: underline; color: blue;"><b>基于 Wan 世界模型的强化学习</b></a><br>
-         支持 Wan 世界模型 + OpenVLA-OFT + GRPO 训练
-       </p>
-     </div>
+   .. grid-item-card:: OpenSora 世界模型
+      :img-top: https://raw.githubusercontent.com/hpcaitech/Open-Sora-Demo/main/readme/icon.png
+      :img-alt: OpenSora 世界模型
+      :link: embodied/opensora
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/bwm.html" style="display: block;"><img src="https://raw.githubusercontent.com/boundless-large-model/boundless-world-model/main/assets/images/teaser.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/bwm.html" style="text-decoration: underline; color: blue;"><b>基于 BWM 世界模型的强化学习</b></a><br>
-         支持 BWM 世界模型 + pi0.5 + PPO 在 RoboTwin 上训练
-       </p>
-     </div>
+      在 OpenSora 视频世界模型中用 GRPO 微调 OpenVLA-OFT。
 
-   </div>
+   .. grid-item-card:: Wan 世界模型
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
+      :img-alt: Wan 世界模型
+      :link: embodied/wan
+      :link-type: doc
+
+      用 Wan 视频世界模型作为模拟器，通过 GRPO 微调 OpenVLA-OFT。
 
 .. toctree::
    :hidden:
    :maxdepth: 2
 
+   BWM <embodied/bwm>
    OpenSora <embodied/opensora>
    Wan <embodied/wan>
-   BWM <embodied/bwm>

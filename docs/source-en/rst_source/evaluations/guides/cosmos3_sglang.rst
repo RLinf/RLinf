@@ -1,134 +1,130 @@
 Cosmos3 SGLang Evaluation
-==========================
+=========================
 
-Evaluate Cosmos3 on the LIBERO simulator using the SGLang backend: the model runs in a standalone SGLang server process, and rollout workers act as clients that send observations, receive action commands, and feed them into the simulation. Suitable for inference-only evaluation scenarios.
+Overview
+--------
 
-How It Works
-----------------------------------------
+Evaluate Cosmos3 on LIBERO through RLinf's SGLang embodied backend. Each GPU runs an SGLang server (``server_type: embodied``) serving ``POST /v1/actions/generations``, while rollout workers batch observations by prompt over HTTP and step LIBERO with the returned action chunks.
 
-Each GPU runs one SGLang server (``server_type: embodied``) executing ``Cosmos3OmniDiffusersPipeline``, exposing the action policy as the HTTP endpoint ``POST /v1/actions/generations``. The eval driver hands each server URL to a rollout worker, which turns one step of N environments into one or more requests.
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-The server only batches prompts of equal token length, so ``Cosmos3SGLangAdapter.request_groups`` first groups the environments by their augmented prompt, then splits each group into chunks of at most ``rollout.sglang.server.batching_max_size`` environments. The example config sets it to ``8``; left unset, the adapter follows SGLang's own default of ``1``, which sends every environment in its own request. The worker posts each group separately and reassembles the results in the original environment order.
+   .. grid-item-card:: Benchmark
+      :text-align: center
 
-Each response carries one record per environment: ``data[i].action.values`` holds that environment's ``[horizon, raw_action_dim]`` normalized rot6d chunk, and the adapter sorts the records by ``input_index`` before de-normalizing and converting them to 7-D axis-angle for LIBERO.
+      LIBERO-Spatial (``libero``)
 
-.. code:: text
+   .. grid-item-card:: Models
+      :text-align: center
 
-   EnvWorker(libero) --obs(images+task)--> Cosmos3SGLangAdapter.request_groups
-     groups the N envs by prompt, each group at most batching_max_size envs
-        --one POST /v1/actions/generations per group-->
-   SGLang server (Cosmos3OmniDiffusersPipeline, diffusion num_inference_steps steps)
-        --response data[i].action.values = [horizon, 10] per env (normalized rot6d)-->
-   Cosmos3SGLangAdapter parses each record, ordered by input_index:
-     take first 10 channels → quantile de-normalize → rot6d(6) to axis-angle(3)
-   the worker reassembles the groups into [N, 16, 7] in env order
-        --[N, 16, 7]-->
-   EnvWorker.chunk_step advances the simulation
+      Cosmos3 (SGLang diffusers backend)
 
-Installation
-----------------------------------------
+   .. grid-item-card:: Config Dir
+      :text-align: center
 
-Install the LIBERO environment and SGLang 0.5.19 with its ``diffusion`` extra. The ``sglang`` model pins torch 2.13.0 and picks the CUDA 12 or CUDA 13 build that the driver supports:
+      ``evaluations/libero/``
 
-.. code-block:: bash
+   .. grid-item-card:: Related Training
+      :text-align: center
 
-   bash requirements/install.sh embodied --model sglang --env libero
-   source .venv/bin/activate
+      :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>`
 
-Prepare Checkpoint
-----------------------------------------
+Setup and Run
+-------------
 
-The eval input is a diffusers component directory ``model_diffusers``, produced by converting the SFT checkpoint via cosmos-framework. The full four-step conversion is described in the "Checkpoint Conversion" section of :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>`.
+The ``sglang`` target installs LIBERO with SGLang 0.5.19 (``diffusion`` extra), pins PyTorch 2.13.0, and picks the CUDA 12 or CUDA 13 wheel for your driver. Convert your SFT checkpoint into ``./model_diffusers`` following :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>` and place ``libero_native_frame_wise_relative_rot6d.json`` from NVIDIA ``cosmos-framework`` in the working directory before launching.
 
-.. note::
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
 
-   Evaluation **does not** require network access to HuggingFace or the Qwen3-VL cache: the tokenizer is copied into ``model_diffusers/text_tokenizer/`` during conversion, and the server reads it directly from there.
+.. tab-set::
 
-Run LIBERO-Spatial
-----------------------------------------
+   .. tab-item:: LIBERO
 
-The default config is ``evaluations/libero/libero_spatial_cosmos3_eval_sglang.yaml``. Before running, point the YAML at your local ``model_diffusers``:
+      **1. Install**
 
-.. code-block:: yaml
+      .. code-block:: bash
 
-   rollout:
-     model:
-       model_path: /path/to/model_diffusers          # eval input diffusers directory
-       action_stats_path: /path/to/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json  # rot6d stats file from cosmos-framework
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model sglang --env libero && source .venv/bin/activate
 
-   env:
-     eval:
-       total_num_envs: 128   # adjust by GPU count / memory (example: 128 for 8 GPUs)
+      **2. Evaluate LIBERO-Spatial**
 
-Then run:
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang \
+           rollout.model.model_path=./model_diffusers \
+           rollout.model.action_stats_path=./libero_native_frame_wise_relative_rot6d.json \
+           env.eval.total_num_envs=128
 
-   bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang
+The default config is ``evaluations/libero/libero_spatial_cosmos3_eval_sglang.yaml`` (one SGLang server per GPU). Scale ``env.eval.total_num_envs`` with your GPU count and memory (for example, ``128`` on 8 GPUs). Evaluation runs offline because checkpoint conversion copies the tokenizer into ``model_diffusers/text_tokenizer/``.
 
-**What this command does:** launches one Cosmos3 SGLang server per GPU, starts the LIBERO environment for evaluation, prints per-episode success/failure, and summarizes the success rate at the end. Logs are written to ``logs/<timestamp>-<config>/eval_embodiment.log``.
+.. dropdown:: How SGLang Serving Works
 
-Key Configuration
-----------------------------------------
+   Each GPU hosts one SGLang server assigned to a rollout worker. Each inference step runs in four stages:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 40 60
+   1. **Group by prompt:** Rollout workers receive LIBERO images and task instructions, group the parallel environments by augmented prompt (the server batches prompts of equal token length), and split each group into batches of at most ``rollout.sglang.server.batching_max_size`` environments (example ``8``; default ``1``).
 
-   * - Field
-     - Description
-   * - ``rollout.model.model_path``
-     - diffusers checkpoint directory (eval input).
-   * - ``rollout.model.action_stats_path``
-     - Quantile stats file for action de-normalization; must be from the same source as SFT (``*_rot6d.json``).
-   * - ``rollout.model.action_normalization``
-     - ``quantile_rot``; must match training.
-   * - ``rollout.model.raw_action_dim`` / ``action_dim``
-     - Model side 10 (rot6d) / env side 7 (axis-angle); **both required** (see FAQ).
-   * - ``rollout.model.num_action_chunks``
-     - Number of action steps returned per request (example 16); ``env.eval.max_steps_per_rollout_epoch`` must be divisible by this.
-   * - ``rollout.model.num_inference_steps`` / ``num_frames`` / ``size``
-     - Diffusion steps and input video specs; must match training.
-   * - ``rollout.sglang.server.num_gpus`` / ``tp_size``
-     - GPUs per server and TP; both 1 for single-GPU deployment (one server per GPU).
-   * - ``rollout.sglang.server.batching_max_size``
-     - Largest number of environments the server batches in one request (example 8). The adapter splits each prompt group into chunks of this size; left unset it follows SGLang's default of 1, one request per environment.
-   * - ``rollout.sglang.http_timeout_s``
-     - HTTP timeout; diffusion inference is slow, recommend ``600``.
-   * - ``env.eval.total_num_envs``
-     - Number of parallel environments; adjust by GPU / memory.
+   2. **Diffusion inference:** Each batch is sent via ``POST /v1/actions/generations`` to the SGLang server, which runs ``num_inference_steps`` diffusion steps and returns ``[horizon, 10]`` normalized rot6d chunks per environment.
 
-Verification
-----------------------------------------
+   3. **Post-process actions:** Rollout workers sort responses by ``input_index``, quantile de-normalize the 10-D output, and convert 6-D rot6d rotations to 3-D axis-angle (producing 7-D LIBERO actions).
 
-Check ``eval_embodiment.log`` and confirm these milestones appear in order:
+   4. **Step simulation:** Rollout workers reassemble the ``[N, 16, 7]`` action chunks in environment order and send them to the LIBERO env workers to advance simulation.
 
-1. Server launch: ``Launching sglang server (server_type=embodied) ...``
-2. Weight loading complete: ``[RunAI Streamer] Overall time to stream 28.3 GiB ... to cpu: <seconds>`` (usually within tens of seconds on local disk; **missing this line** means loading is stuck — see FAQ)
-3. Server ready: ``sglang server assigned: rank=i -> http://...``
-4. Per-episode results: ``[libero eval] task_id=.., trial_id=.., success=..``
-5. Summary: ``success_once`` / ``success_at_end`` / ``num_trajectories``
+.. dropdown:: Key Configuration
 
-LIBERO trajectory counting rules: see :ref:`libero-eval-config`.
+   .. list-table::
+      :header-rows: 1
+      :widths: 40 60
 
-FAQ
-----------------------------------------
+      * - Field
+        - Description
+      * - ``rollout.model.model_path``
+        - Diffusers checkpoint directory containing ``model_index.json``.
+      * - ``rollout.model.action_stats_path``
+        - Quantile stats JSON for action de-normalization; must match SFT (``*_rot6d.json``).
+      * - ``rollout.model.action_normalization``
+        - ``quantile_rot``; must match training.
+      * - ``rollout.model.raw_action_dim`` / ``action_dim``
+        - Model side ``10`` (rot6d) and env side ``7`` (axis-angle); both required.
+      * - ``rollout.model.num_action_chunks``
+        - Action steps returned per request (example ``16``); ``env.eval.max_steps_per_rollout_epoch`` must be divisible by this value.
+      * - ``rollout.model.num_inference_steps`` / ``num_frames`` / ``size``
+        - Diffusion steps and input video specs; must match training.
+      * - ``rollout.sglang.server.num_gpus`` / ``tp_size``
+        - GPUs per server and tensor parallel size; both ``1`` for one server per GPU.
+      * - ``rollout.sglang.server.batching_max_size``
+        - Max environments batched per request (example ``8``; unset defaults to ``1``).
+      * - ``rollout.sglang.http_timeout_s``
+        - HTTP timeout in seconds; ``600`` is recommended for diffusion inference.
+      * - ``env.eval.total_num_envs``
+        - Parallel environment count; scale with GPU count and memory.
+
+Results and Troubleshooting
+---------------------------
+
+Logs go to ``logs/<timestamp>-<config>/eval_embodiment.log`` (see :doc:`../reference/results` for metrics and videos, and :ref:`LIBERO evaluation configuration <libero-eval-config>` for trajectory counting). Confirm these milestones appear in order:
+
+1. ``Launching sglang server (server_type=embodied) ...``
+2. ``[RunAI Streamer] Overall time to stream 28.3 GiB ... to cpu: <seconds>`` (missing means weight loading stalled)
+3. ``sglang server assigned: rank=i -> http://...``
+4. ``[libero eval] task_id=.., trial_id=.., success=..``
+5. Summary with ``success_once``, ``success_at_end``, and ``num_trajectories``
 
 .. list-table::
    :header-rows: 1
-   :widths: 40 60
+   :widths: 36 64
 
    * - Symptom
      - Fix
    * - SGLang cannot find model components
-     - Confirm both ``model_path`` entries point to the ``model_diffusers`` directory containing ``model_index.json``.
-   * - Actions are wrong / nothing succeeds
-     - Verify ``action_normalization`` / ``action_stats_path`` / ``num_inference_steps`` / ``num_frames`` / ``size`` match SFT.
+     - Confirm ``rollout.model.model_path`` points to the ``model_diffusers`` directory containing ``model_index.json``.
+   * - Wrong actions or zero success rate
+     - Verify ``action_normalization``, ``action_stats_path``, ``num_inference_steps``, ``num_frames``, and ``size`` match SFT.
    * - First batch HTTP timeout
-     - Increase ``rollout.sglang.http_timeout_s`` and ``http_max_retries``.
+     - Increase ``rollout.sglang.http_timeout_s`` and ``rollout.sglang.http_max_retries``.
    * - Local requests blocked by proxy
-     - Set ``NO_PROXY=127.0.0.1,localhost`` before launch.
+     - Export ``NO_PROXY=127.0.0.1,localhost`` before launch.
    * - LIBERO rendering errors
-     - ``run_eval.sh`` renders with EGL by default; on hosts without EGL, set ``MUJOCO_GL=osmesa`` and ``PYOPENGL_PLATFORM=osmesa``.
+     - ``run_eval.sh`` uses EGL by default; on hosts without EGL, set ``MUJOCO_GL=osmesa`` and ``PYOPENGL_PLATFORM=osmesa``.
    * - GPU not released before re-run
-     - Confirm the previous ``ray stop`` completed; ``nvidia-smi`` shows all GPUs free; no residual ``ray::SGLangServerGroup`` processes.
+     - Check ``nvidia-smi`` for leftover SGLang server processes; on a dedicated host, stop your Ray session with ``ray stop`` (check ``ray status`` first on shared machines because ``ray stop`` is machine-wide).

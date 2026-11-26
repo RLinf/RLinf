@@ -1,10 +1,13 @@
-Real-World Robot Training Launch
-=================================
+Multi-Node Robot Launch
+=======================
 
-This page explains how to connect **multiple Franka robots** and a **GPU training
-node** to one Ray cluster, configure YAML, and start real-world RL training.
+This page explains how to connect **any real-world robot control node** (Franka, Dual Franka, YAM, DOS-W1, SO-101, and others) and a **GPU training node** to one Ray cluster, configure YAML placement, and start real-world training or evaluation. The YAML examples below use Franka as the concrete worked example.
 
-For full hardware setup, dependencies, data collection, and task details, see:
+.. note::
+
+   Single-node setups auto-start Ray and do not need ``RLINF_NODE_RANK`` or ``ray start``; use this guide when connecting multiple nodes.
+
+For full hardware setup, dependencies, data collection, and platform-specific details, see :doc:`../examples/real_world_index` and the Franka worked examples:
 
 - :doc:`../examples/embodied/franka` — standard RealSense + Franka gripper workflow
 - :doc:`../examples/embodied/franka_zed_robotiq` — ZED camera + Robotiq gripper on split nodes
@@ -31,14 +34,13 @@ Real-world training usually follows **one GPU training node + N robot control no
      - Runs ``actor``, ``rollout`` (and optional ``reward``); **only this node** runs the training entry script
    * - **1 … N**
      - Robot control
-     - Runs ``env`` workers and the Franka arm parts; one control-node rank per arm (see example docs for shared control nodes)
+     - Runs ``env`` workers and the robot hardware parts; typically one control-node rank per robot (see platform guides for shared control nodes)
 
-All nodes must be on the **same LAN** (or overlay network; see :doc:`cloud_edge`), and
-``cluster.num_nodes`` must match the number of nodes joined to Ray.
+All nodes must be on the **same LAN** (or overlay network; see :doc:`cloud_edge`), and ``cluster.num_nodes`` must match the number of nodes joined to Ray.
 
 .. important::
 
-   - Control nodes need the Franka controller environment (Franky with bundled libfranka by default); see :doc:`../examples/embodied/franka`.
+   - Control nodes need the robot-specific driver environment (for Franka, Franky with bundled libfranka by default; see :doc:`../examples/real_world_index`).
    - Ray freezes Python and env vars at ``ray start``; install dependencies on **each node** first.
    - Use ``ray_utils/realworld/setup_before_ray.sh`` to align per-node env before ``ray start``.
 
@@ -49,22 +51,14 @@ Connect robot nodes to the Ray cluster
 Step 1: Prepare the environment on each node
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-On **every node**, before ``ray start``:
-
-.. code-block:: bash
-
-   # Recommended: source and edit the repo script on each machine
-   source ray_utils/realworld/setup_before_ray.sh
-
-   export RLINF_NODE_RANK=<0..N-1>          # unique; GPU node is usually 0
-   # If multiple NICs, pin the reachable interface, e.g.:
-   # export RLINF_COMM_NET_DEVICES=eth0
-
-On control nodes, also activate the Franka environment if ``setup_before_ray.sh`` does not:
+On **every node**, activate the virtual environment and export its rank before ``ray start`` (or edit and ``source ray_utils/realworld/setup_before_ray.sh`` to do both in one step):
 
 .. code-block:: bash
 
    source .venv/bin/activate
+   export RLINF_NODE_RANK=<0..N-1>          # unique; GPU node is usually 0
+   # If multiple NICs, pin the reachable interface, e.g.:
+   # export RLINF_COMM_NET_DEVICES=eth0
 
 Step 2: Start Ray
 ~~~~~~~~~~~~~~~~~
@@ -284,7 +278,7 @@ the identifier variable ``ROBOT_IP``, and every field is read from its variable:
 In this mode every variable you set must provide the same number of
 comma-separated values as ``ROBOT_IP``; a mismatch aborts enumeration with an
 explicit error. Other robot types use their own identifier field
-(``GimArm`` → ``CAN_INTERFACE``, ``DOSW1`` → ``ROBOT_URL``).
+(GimArm → ``CAN_INTERFACE``, DOS-W1 → ``ROBOT_URL``).
 
 
 Launch real-world training

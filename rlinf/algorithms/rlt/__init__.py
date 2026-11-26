@@ -21,9 +21,19 @@ from rlinf.algorithms.rlt.route import (
     SimulatorRLTRoute,
     build_rlt_route,
 )
+from rlinf.algorithms.rlt.routing_gate import (
+    RoutingDecision,
+    RoutingGate,
+    build_routing_gate,
+    register_routing_gate,
+)
 from rlinf.algorithms.rlt.transition import use_simulator_transition_replay
 
 __all__ = [
+    "RoutingDecision",
+    "RoutingGate",
+    "build_routing_gate",
+    "register_routing_gate",
     "RLTRoute",
     "RLTRouteContext",
     "RealworldRLTRoute",

@@ -1,65 +1,80 @@
-SGLang Server 与 Router
-=======================
+SGLang 服务与路由
+=================
 
-通过一份 Hydra 配置启动一组 sglang HTTP server 与一个 sglang router——rollout
-（或任意外部客户端）只需访问一个 URL，由 router 将请求分发到各个引擎。
+通过一份 Hydra 配置启动一组 SGLang HTTP server 与单个 SGLang router，让 rollout 或外部客户端只需访问一个 URL，由 router 将请求分发到各个推理引擎。
 
-**你将完成：** 在 ``cluster.component_placement`` 中声明放置 → 填写一个参数块
-（包含 sglang ``ServerArgs`` 与 ``RouterArgs`` 的字段）→ 调用
-:func:`launch_sglang_router_and_server` → 用 :class:`InferenceHTTPClient`
-与 router URL 通信。
+**操作流程：** 在 ``cluster.component_placement`` 中声明放置 → 填写 server 与 router 参数块 → 在入口脚本中拉起服务与 router → 通过 :doc:`InferenceHTTPClient <inference_http_client>` 向 router URL 发请求。
 
 配置
 ----
 
-配置分两部分：``cluster.component_placement`` 负责 **在哪里** 运行引擎；
-参数块负责 **每个引擎与 router 如何** 配置。
+配置分为两部分：``cluster.component_placement`` 决定引擎 **在哪里** 运行，参数块决定每个引擎与 router **如何** 配置：
+
+.. note::
+
+   :doc:`session server <session_server>` 按 ``rollout.router`` 配置块启动自己的 router。这个 router 与本页 ``router_server_args`` 配置的 router 相互独立。
 
 .. code-block:: yaml
 
    cluster:
      num_nodes: 1
      component_placement:
-       rollout: all             # <-- "rollout" 这个 key 是任意的，含义见下文
+       rollout: all             # 任意组件名
 
-   router_server_args:          # <-- 顶层 key 名字也是任意的，含义见下文
+   router_server_args:          # 任意顶层配置名
      model_path: /path/to/hf_model
      tensor_parallel_size: 2
      pipeline_parallel_size: 1
-
-     group_name: SGLangServerGroup
-     launch_server: True
-     server:                    # 原样作为 ServerArgs(**) 的参数
+     server:                    # 透传为 SGLang ServerArgs
        model_path: ${..model_path}
        tp_size: ${..tensor_parallel_size}
        pp_size: ${..pipeline_parallel_size}
-       mem_fraction_static: 0.85
-       max_running_requests: 64
-       attention_backend: triton
-       log_level: warning
-
-     router_group_name: SGLangRouterGroup
-     launch_router: True
-     router:                    # 原样作为 launch_router 的 CLI flag
+     router:                    # 透传为 SGLang router CLI 参数
        policy: cache_aware
-       log_level: warn
-       worker_startup_timeout_secs: 1800
-       request_timeout_secs: 1800
 
-组件名（``rollout`` 这个 key）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. dropdown:: 完整配置（含可选调优项）
 
-``cluster.component_placement`` 下的 key（上面的 ``rollout``）\ **只是一个标签**，
-按 runner 的习惯起名即可。Launcher 不会按固定名字去查找这个 key；**驱动脚本**
-负责挑选名字，并在三处使用 *同一字符串*：
+   .. code-block:: yaml
 
-1. 作为 ``cluster.component_placement`` 下的 key。
-2. 向 placement 询问引擎硬件 rank：
-   ``placement.get_hardware_ranks(component_name)``。
-3. 读取该组件的 node-group 标签（若有）：
-   ``cfg.cluster.component_placement.get(component_name)``。
+      cluster:
+        num_nodes: 1
+        component_placement:
+          rollout: all
 
-把名字定义为常量并在三处复用——这样改名时只需修改 YAML key 和这一个 Python 常量：
+      router_server_args:
+        model_path: /path/to/hf_model
+        tensor_parallel_size: 2
+        pipeline_parallel_size: 1
+
+        group_name: SGLangServerGroup
+        launch_server: True
+        server:
+          model_path: ${..model_path}
+          tp_size: ${..tensor_parallel_size}
+          pp_size: ${..pipeline_parallel_size}
+          mem_fraction_static: 0.85
+          max_running_requests: 64
+          attention_backend: triton
+          log_level: warning
+
+        router_group_name: SGLangRouterGroup
+        launch_router: True
+        router:
+          policy: cache_aware
+          log_level: warn
+          worker_startup_timeout_secs: 1800
+          request_timeout_secs: 1800
+
+组件名
+~~~~~~
+
+``cluster.component_placement`` 下的字段名（上例中的 ``rollout``）只是自定义标签，按 runner 习惯起名即可。launcher 不会查找固定名称，由入口脚本选定名称并在三处复用同一字符串：
+
+1. 作为 ``cluster.component_placement`` 下的字段名。
+2. 从 placement 对象查询硬件 rank。
+3. 读取该组件的可选 ``node_group`` 配置。
+
+把组件名定义为常量并在三处复用，后续改名只需修改 YAML 字段和这一个 Python 变量：
 
 .. code-block:: python
 
@@ -88,16 +103,12 @@ SGLang Server 与 Router
 
 .. note::
 
-   Launcher 自身看不到这个名字，它只接收解析后的硬件 rank 和 node-group 字符串。
-   只要 YAML key 与 ``component_name`` 一致，叫 ``rollout``、``server``、
-   ``my_engine`` 还是别的都没区别。
+   launcher 只接收解析后的硬件 rank 与 node-group 字符串。只要 YAML 字段名与 ``component_name`` 一致，命名为 ``rollout``、``server`` 或其他名称均可。
 
-参数块（``router_server_args`` 这个 key）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Server 与 Router 参数块
+~~~~~~~~~~~~~~~~~~~~~~~
 
-``router_server_args`` 是你传给 launcher 的 **顶层 YAML key**，名字同样可以任意，
-重要的是 **块内部的结构**。完全可以传入其他子配置（``cfg.rollout``、
-``cfg.my_engine`` 等），只要它带有 launcher 需要消费的字段：
+``router_server_args`` 是传给 launcher 的顶层 YAML 配置块，其名称同样可以自定义（如 ``cfg.rollout``、``cfg.my_engine``），只要内部包含以下字段即可：
 
 .. list-table::
    :header-rows: 1
@@ -108,52 +119,35 @@ SGLang Server 与 Router
      - 作用
    * - ``tensor_parallel_size``
      - int
-     - 单引擎 TP 大小。``tp_size × pp_size`` 张卡打包成一个引擎。
+     - 单引擎 TP 大小，每个引擎打包 ``tp_size × pp_size`` 张卡。
    * - ``pipeline_parallel_size``
      - int
      - 单引擎 PP 大小。
    * - ``server_type``
      - str
-     - 选择 server 子进程走哪条 sglang 分派分支，默认 ``srt``：``srt`` = 语言模型
-       走 ``sglang.srt.entrypoints.http_server.launch_server``；``embodied`` = 具身
-       模型（VLA/diffusion）走 ``sglang.multimodal_gen.runtime.launch_server.dispatch_launch``。
-       两种都由同一个 ``SGLangServerWorker`` 类承载，``server_type`` 只决定子进程内
-       调哪条 sglang 入口。其它值会抛错。
+     - 选择 server 子进程调用的 SGLang 启动入口（默认 ``srt``）：``srt`` 用于语言模型，走 ``sglang.srt.entrypoints.http_server.launch_server``；``embodied`` 用于具身模型（VLA/diffusion），走 ``sglang.multimodal_gen.runtime.launch_server.dispatch_launch``。传入其他值会报错。
    * - ``group_name``
      - str
-     - sglang server worker group 的名字。
+     - SGLang server worker 组的名称。
    * - ``launch_server``
      - bool
-     - 设为 ``False`` 可跳过 server group（例如挂载已有的外部 server）。
+     - 设为 ``False`` 可跳过启动 server（例如挂载已有外部服务）。
    * - ``server``
      - dict
-     - **原样** 作为所选 sglang ``ServerArgs`` 的关键字参数：``srt`` 走
-       ``sglang.srt.server_args.ServerArgs(**)``，``embodied`` 走
-       ``sglang.multimodal_gen.runtime.server_args.ServerArgs.from_kwargs(**)``；
-       key 必须是对应 ``ServerArgs`` 的合法字段名——参见 `sglang ServerArgs 参考
-       <https://docs.sglang.io/docs/advanced_features/server_arguments>`_。
-       例外：``server.num_gpus`` 还会被 launcher 读取用于计算每个 engine 的放置GPU数量
-       （每 engine 的gpu数量），因此它兼作 launcher/placement 参数，并非纯粹的
-       ``ServerArgs`` 透传项。
+     - 原样透传给 SGLang 的 ``ServerArgs``：``srt`` 调用 ``sglang.srt.server_args.ServerArgs(**)``，``embodied`` 调用 ``sglang.multimodal_gen.runtime.server_args.ServerArgs.from_kwargs(**)``。字段名须为对应 ``ServerArgs`` 的合法项，参见 `SGLang ServerArgs 参考 <https://docs.sglang.io/docs/advanced_features/server_arguments>`_。例外：``server.num_gpus`` 也会被 launcher 用于计算单引擎占用的 GPU 数量。
    * - ``router_group_name``
      - str
-     - router worker 的 worker group 名字。
+     - router worker 组的名称。
    * - ``launch_router``
      - bool
-     - 设为 ``False`` 可跳过 router（例如只想拿到原始 server URL 列表）。
+     - 设为 ``False`` 可跳过启动 router（例如仅需原始 server URL 列表）。
    * - ``router``
      - dict
-     - 作为 ``--<field>`` CLI flag 传给 ``sglang_router.launch_router``；
-       key 必须是 ``RouterArgs`` 合法字段名——参见 `RouterArgs 源码
-       <https://github.com/sgl-project/sglang/blob/main/sgl-model-gateway/bindings/python/src/sglang_router/router_args.py>`_。
+     - 以 ``--<field>`` 形式传给 ``sglang_router.launch_router``。字段名须为 ``RouterArgs`` 的合法项，参见 `RouterArgs 源码 <https://github.com/sgl-project/sglang/blob/main/sgl-model-gateway/bindings/python/src/sglang_router/router_args.py>`_。
 
 .. note::
 
-   仓库已在
-   ``examples/embodiment/config/hybrid_engines/sglang_router_server.yaml``
-   中提供了一份默认配置。可通过 Hydra 的 ``defaults`` 列表引用它，然后只覆盖
-   你需要改动的字段——通常是 ``model_path``\ （以及 ``server`` / ``router`` 里的
-   个别项）：
+   仓库在 ``examples/embodiment/config/hybrid_engines/sglang_router_server.yaml`` 提供了一份默认配置。可在 Hydra 的 ``defaults`` 列表中引入，只覆盖需要修改的字段（通常是 ``model_path`` 及少量 ``server`` / ``router`` 参数）：
 
    .. code-block:: yaml
 
@@ -162,47 +156,34 @@ SGLang Server 与 Router
 
       router_server_args:
         model_path: /path/to/hf_model
-        # tensor_parallel_size: 2       # 其他字段按需覆盖
+        # tensor_parallel_size: 2
         # server:
         #   mem_fraction_static: 0.9
 
-   ``@router_server_args`` 是 Hydra 的 package override 语法——它把默认配置挂到
-   顶层 key ``router_server_args`` 下。
+   ``@router_server_args`` 是 Hydra 的 package override 语法，用于将默认配置挂载到 ``router_server_args`` 顶层键下。
 
 .. warning::
 
-   Launcher 不会校验 ``server`` 与 ``router`` 块内的 key。``server`` 里有非法字段会让
-   ``ServerArgs(**kwargs)`` 报错；``router`` 里有非法字段则会由 launcher 抛出
-   ``ValueError`` 并列出所有合法字段。把这两个块当作向上游 dataclass 的直接透传即可。
+   launcher 不会预先校验 ``server`` 与 ``router`` 块内的字段。``server`` 中的无效字段会在 SGLang 解析参数时报错；``router`` 中的无效字段则会由 launcher 抛出 ``ValueError`` 并列出所有合法字段。将这两个块视为向上游 SGLang 的直接透传即可。
 
-server 的 ``host``/``port``/``dist_init_addr``，以及 router 的 ``port``，都会在
-运行时填入——在 YAML 里留空即可。Router 默认绑定 ``0.0.0.0``；server 同样绑定
-``0.0.0.0`` 并把 Ray 节点 IP 报告给 router。
+server 的 ``host``、``port``、``dist_init_addr`` 以及 router 端口均在运行时自动填入，YAML 中留空即可。router 与 server 默认都绑定 ``0.0.0.0``，每个 server 会把所在 Ray 节点的 IP 报告给 router。
 
-Launcher 如何使用这份配置
-~~~~~~~~~~~~~~~~~~~~~~~~~
+Launcher 启动流程
+~~~~~~~~~~~~~~~~~
 
-:func:`rlinf.workers.rollout.sglang.launch_sglang_router_and_server`
-顺序做了以下事情：
+launcher 按以下四步拉起推理服务：
 
-1. 将扁平的 ``rollout_hardware_ranks`` 重新打包成
-   ``PackedPlacementStrategy``，每个 process 占 ``tp_size × pp_size`` 张卡——
-   一个 process 即一个 sglang 引擎。
-2. 启动 ``SGLangServerWorker`` group（配置取自 ``group_name`` 与 ``server``）。
-3. 在 node 0 启动单个 ``SGLangRouterWorker``，初始不挂载任何 worker
-   （配置取自 ``router_group_name`` 与 ``router``）。
-4. 收集每个 server 的 ``http://host:port`` 并通过 ``POST /workers`` 注册到
-   router，阻塞直到每个 worker 报告 ``is_healthy=true``。
+1. 将扁平硬件 rank 打包为紧凑排布，每个进程占用 ``tp_size × pp_size`` 张卡，即一个进程运行一个 SGLang 引擎。
+2. 按配置的组名与 ``server`` 参数启动 server worker 组。
+3. 在 node 0 按配置的组名与 ``router`` 参数启动单个 router worker，初始不挂载后端。
+4. 收集每个 server 的地址并通过 ``POST /workers`` 注册到 router，阻塞等待所有后端进入健康状态。
 
-扁平 rank 重打包有一个 **硬性要求**：硬件 rank 必须是连续的。若需要非连续布局
-（例如由 ``placement: 0-1:0-3,3-5`` 解析出的 ``FlexiblePlacementStrategy``），
-请自行构造 strategy，通过 ``placement_strategy=...`` 传入——
-该参数会短路重打包逻辑，原样使用你给的 strategy。
+扁平 rank 打包要求硬件 rank 连续。如需非连续布局（例如 ``placement: 0-1:0-3,3-5``），自行构造 placement 策略并通过 ``placement_strategy`` 传入，即可跳过重打包。
 
-启动
-----
+启动服务
+--------
 
-把上面的配置串起来的最小 Hydra 入口：
+串联上述配置的最小 Hydra 入口脚本：
 
 .. code-block:: python
 
@@ -236,7 +217,7 @@ Launcher 如何使用这份配置
        )
 
        router_url = router_group.get_router_url().wait()[0]
-       # ... 使用 router_url（见下文 “后续：调用 router”） ...
+       # ... 使用 router_url（见下文 “后续：调用 Router”） ...
 
        router_group.stop().wait()
        server_group.stop().wait()
@@ -245,16 +226,12 @@ Launcher 如何使用这份配置
    if __name__ == "__main__":
        main()
 
-这段代码做了什么：通过 ``Cluster`` 启动 Ray，从 ``cluster.component_placement``
-构造 ``ComponentPlacement``，再让 launcher 拉起引擎与 router，等所有 server 都
-注册成功且健康为止。``launch_sglang_router_and_server`` 返回之后，router 已可
-通过 ``router_url`` 访问，且所有后端均已通过 ``GET /workers/<id>``。
+这段脚本先初始化 Ray 集群，再从 ``cluster.component_placement`` 解析组件放置，拉起所有 SGLang 引擎与 router，并等待全部后端注册完成且通过健康检查。启动调用返回后，即可通过 ``router_url`` 访问 router。
 
-异构集群（``node_group``）
---------------------------
+异构集群
+--------
 
-如需把引擎绑定到一组带标签的节点——例如把推理节点专门留给 rollout，训练放别处
-运行——使用 ``cluster`` 下的 ``node_group``/``node_groups`` 形式：
+需要将引擎固定到带标签的节点组（例如将推理节点专门留给 rollout、其他节点跑训练）时，在 ``cluster`` 下配置 ``node_group`` 与 ``node_groups``：
 
 .. code-block:: yaml
 
@@ -262,43 +239,33 @@ Launcher 如何使用这份配置
      num_nodes: 2
      component_placement:
        rollout:
-         node_group: rollout_gpu       # 落在哪个 group
-         placement: all                # 使用该 group 内所有硬件 rank
+         node_group: rollout_gpu       # 落在哪个节点组
+         placement: all                # 使用该组内所有硬件 rank
      node_groups:
        - label: rollout_gpu
-         node_ranks: 1                 # node rank 1 承载引擎
+         node_ranks: 1                 # node rank 1 运行引擎
        - label: test
-         node_ranks: 0                 # node rank 0 留给其他工作
+         node_ranks: 0                 # node rank 0 留给其他任务
 
    router_server_args:
-     # ... 与上面的单机配置一致 ...
+     # ... 与单机配置一致 ...
 
 与扁平配置相比的变化：
 
-- ``component_placement.rollout`` 由一个字符串变成一个 **mapping**，包含
-  ``node_group`` 与 ``placement``。
-- 驱动脚本从 launcher 所期望接收硬件 rank 的同一个 key 上读出标签，即
-  ``cfg.cluster.component_placement.get(component_name).node_group``。
-- 该标签作为 ``rollout_node_group`` 传给 launcher；launcher 再把它注入到重打包
-  的 ``PackedPlacementStrategy`` 中，从而把 server 调度到正确的节点。
+- ``component_placement.rollout`` 从单个字符串变为包含 ``node_group`` 与 ``placement`` 的映射。
+- 入口脚本从同一个组件配置中读取节点组标签，并作为 ``rollout_node_group`` 传入 launcher。
+- launcher 将该标签传给紧凑排布策略，使所有 server 进程落在目标节点上。
 
-如果把组件 key 从 ``rollout`` 改成别的（例如 ``my_engine``），**只需** 同步修改
-YAML key 和驱动里的 ``component_name`` 变量。``node_group`` 标签
-（这里是 ``rollout_gpu``）和 ``node_groups`` 下的条目是独立的——
-那是集群本身的命名空间。
+如果修改了 ``rollout`` 这个组件名，只需同步更新 YAML 字段名和入口脚本里的 ``component_name`` 变量。``node_group`` 标签与 ``node_groups`` 列表属于集群自身的定义，彼此独立。
 
-也可以传入 **标签列表**，让引擎横跨多个
-group；launcher 会原样把列表交给 placement strategy。
+引擎需要横跨多个节点组时，也可传入 **标签列表**，launcher 会原样转发给 placement 策略。
 
-完整的 ``node_groups`` / ``env_configs`` / ``hardware`` schema——
-包含按 node group 指定 Python 解释器、环境变量、以及非加速器硬件（机器人）的写法——
-参见 :doc:`异构集群 <hetero>`。
+完整的 ``node_groups``、``env_configs`` 与 ``hardware`` 配置说明（包括按节点组指定 Python 解释器、环境变量以及机器人等非加速器硬件）见 :doc:`异构集群 <hetero>`。
 
 编程接口
 --------
 
-如果你的 runner 已经自己构造好 placement strategy，可以跳过扁平 rank 路径，
-直接传入一个 strategy。该 strategy 必须已编码 ``tp_size × pp_size`` 张卡/process：
+如果 runner 已经自行构造好 placement 策略，可以跳过扁平 rank 重打包，直接传入该策略。策略须已按每个进程 ``tp_size × pp_size`` 张卡编排：
 
 .. code-block:: python
 
@@ -310,24 +277,20 @@ group；launcher 会原样把列表交给 placement strategy。
    server_group, router_group = launch_sglang_router_and_server(
        cfg,
        cluster,
-       rollout_hardware_ranks=None,        # placement_strategy 已传入时会被忽略
+       rollout_hardware_ranks=None,        # 传入 placement_strategy 时忽略此项
        router_server_args=cfg.router_server_args,
        placement_strategy=placement.get_strategy(component_name),
-       router_node_rank=0,                 # router 落在哪个 node
+       router_node_rank=0,                 # router 运行在哪个节点
    )
 
-返回的句柄上还有其他常用入口：
+返回的句柄还提供以下常用方法：
 
-- ``server_group.get_server_url().wait()`` → server URL 列表。
-- ``router_group.register_server(url).wait()`` → 事后把一个 server URL 挂到 router
-  上（阻塞直到该 worker 就绪）。
-- ``router_group.unregister_server(url).wait()`` → 摘下。
-- ``router_group.get_router_url().wait()[0]`` → router URL。
+- ``server_group.get_server_url().wait()``：获取 server URL 列表。
+- ``router_group.register_server(url).wait()``：启动后动态挂载 server URL（阻塞至该后端健康）。
+- ``router_group.unregister_server(url).wait()``：卸载指定 server URL。
+- ``router_group.get_router_url().wait()[0]``：获取 router URL。
 
-后续：调用 router
+后续：调用 Router
 -----------------
 
-``launch_sglang_router_and_server`` 返回后，``router_url`` 即可通过普通 HTTP
-访问——任何 HTTP 客户端都行。``/generate`` 与 ``/v1/chat/completions``
-（同步与异步）的具体调用方式，请参见配套指南：
-:doc:`使用 InferenceHTTPClient 调用 SGLang <inference_http_client>`。
+启动调用返回后，即可用任意 HTTP 客户端访问 ``router_url``。同步与异步调用 ``/generate`` 及 ``/v1/chat/completions`` 接口的示例见 :doc:`使用 InferenceHTTPClient 调用 SGLang <inference_http_client>`。
