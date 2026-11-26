@@ -1,5 +1,5 @@
-MLP策略强化学习训练
-===============================================
+MLP 强化学习
+============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/3_layer_mlp.jpg
    :align: center
@@ -7,8 +7,7 @@ MLP策略强化学习训练
 
    多层感知机（MLP）策略。
 
-MLP 策略是一种轻量网络，用于从低维状态输入（关节角、末端执行器位姿、物体状态等）进行机器人控制。
-RLinf 在多个仿真器上用 PPO、SAC、GRPO 训练 MLP 策略——便于快速验证环境、训练流程与网络结构。
+MLP 策略是一种轻量网络，用于从低维状态输入（关节角、末端执行器位姿、物体状态等）控制机器人。RLinf 在多个仿真器上用 PPO、SAC、GRPO 训练 MLP 策略——便于快速验证环境、训练流程与网络结构。
 
 概览
 ----------------------------------------
@@ -85,104 +84,109 @@ RLinf 在多个仿真器上用 PPO、SAC、GRPO 训练 MLP 策略——便于快
    * - Prompt
      - MLP 策略不使用 prompt；任务通过 Hydra 配置选择。
 
-安装
-----------------------------------------
+安装与运行
+----------
 
-对于在仿真环境运行，请参考 :doc:`../../start/installation` 进行安装。
+.. include:: _setup_common.rst
 
-本系列配置使用 Hydra 的 searchpath 从环境变量引入外部配置目录:
+无需预训练 checkpoint，MLP 策略从头训练。
 
-- ``hydra.searchpath: file://${oc.env:EMBODIED_PATH}/config/``
+.. tab-set::
 
-请确保已正确设置 ``EMBODIED_PATH``，并安装 ManiSkill3 / FrankaSim 相关依赖与资源。
+   .. tab-item:: ManiSkill / LIBERO
 
-运行
-----------------------------------------
+      **1. 安装环境**
 
-**1. 配置文件**
+      .. code-block:: bash
 
-RLinf 提供多份 MLP 默认配置，覆盖不同环境与算法设置:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
 
--   **ManiSkill + PPO + MLP**: ``maniskill_ppo_mlp``
--   **ManiSkill + SAC + MLP**: ``maniskill_sac_mlp``
--   **FrankaSim + PPO + MLP**: ``frankasim_ppo_mlp``
+      **2. 启动训练**
 
-**2. 关键参数配置**
+      ``examples/embodiment/config/`` 下的默认配置：
 
-**2.1 模型参数 (Model)**
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 34 36
 
-MLP 模型由 ``model/mlp_policy@actor.model`` 引入，并在不同配置中做覆盖。常见关键字段如下:
+         * - 配方
+           - 配置文件
+           - 启动命令后缀
+         * - ManiSkill + PPO + MLP
+           - ``maniskill_ppo_mlp.yaml``
+           - ``maniskill_ppo_mlp``
+         * - ManiSkill + SAC + MLP
+           - ``maniskill_sac_mlp.yaml``
+           - ``maniskill_sac_mlp``
+         * - LIBERO-Spatial + GRPO + MLP
+           - ``libero_spatial_0_grpo_mlp.yaml``
+           - ``libero_spatial_0_grpo_mlp``
 
-.. code:: yaml
+      .. code-block:: bash
 
-   model_type: "mlp_policy"                # 使用 MLP 策略网络作为 actor（多层感知机；适合低维 state 输入）
+         # ManiSkill（PPO-MLP）
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
-   model_path: ""
+         # ManiSkill（SAC-MLP）
+         bash examples/embodiment/run_embodiment.sh maniskill_sac_mlp
 
-   policy_setup: "panda-qpos"              # 选择动作语义与控制模式；panda-qpos 通常表示关节空间控制（如 qpos/关节目标或增量）
+         # LIBERO-Spatial（GRPO-MLP）
+         bash examples/embodiment/run_embodiment.sh libero_spatial_0_grpo_mlp
 
-   obs_dim: 42                             # 输入到 MLP 的状态向量维度（需与环境输出的 state 维度严格一致）
+   .. tab-item:: Franka-Sim
 
-   action_dim: 8                           # 策略输出动作向量的维度（需与环境 action space 维度严格一致）
+      **1. 安装环境**
 
-   num_action_chunks: 1                    # 一次 forward 生成的动作 chunk
+      .. code-block:: bash
 
-   hidden_dim: 256                         # MLP 隐藏层的通道/宽度
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env frankasim && source .venv/bin/activate
 
-   precision: "32"                         # 模型参数与计算精度；
-   add_value_head: True                    # 是否在策略网络上额外挂载 value head
+      **2. 启动训练**
 
-   is_lora: False                          # 是否启用 LoRA（
+      ``examples/embodiment/config/`` 下的默认配置：
 
-   lora_rank: 32                           # LoRA 的低秩维度 r；仅当 is_lora=True 时生效
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 34 36
 
+         * - 配方
+           - 配置文件
+           - 启动命令后缀
+         * - Franka-Sim + PPO + MLP
+           - ``frankasim_ppo_mlp.yaml``
+           - ``frankasim_ppo_mlp``
 
-**2.2 集群与硬件配置 (Cluster)**
-    对于真机训练，使用多节点配置，将 Actor/Policy 部署在 GPU 服务器上，将 Env/Robot 部署在控制机（NUC/工控机）上。具体配置可参考 :doc:`franka` 。
+      .. code-block:: bash
 
-**3. 启动命令**
-
-**ManiSkill(PPO-MLP)**
-
-::
-
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
-
-**ManiSkill(SAC-MLP)**
-
-::
-
-   bash examples/embodiment/run_embodiment.sh maniskill_sac_mlp
+         bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
 
 .. note::
 
-   **SAC 注意事项。** SAC 通过 Bellman 回传与熵正则学习 Q 值（off-policy），因此需在配置中启用
-   Q 相关的 head（``add_q_head: True``）。它还支持通过 ``entropy_tuning`` 进行自动熵调节
-   （如 ``alpha_type: softplus``），以平衡探索与利用。
+   **SAC 注意事项。** SAC 通过 Bellman 回传与熵正则学习 Q 值（off-policy），需在配置中启用 Q 相关 head（``add_q_head: True``），并支持通过 ``entropy_tuning``\ （如 ``alpha_type: softplus``）自动调节熵以平衡探索与利用。
 
-**Libero-Spatial(GRPO-MLP)**
+.. dropdown:: 进阶配置（可选）
 
-::
+   MLP 模型由 ``model/mlp_policy@actor.model`` 引入，可按配方覆盖以下主要默认字段：
 
-   bash examples/embodiment/run_embodiment.sh libero_spatial_0_grpo_mlp
+   .. code-block:: yaml
 
-**FrankaSim(PPO-MLP)**
+      model_type: "mlp_policy"
+      model_path: ""
+      policy_setup: "panda-qpos"
+      obs_dim: 42
+      action_dim: 8
+      num_action_chunks: 1
+      hidden_dim: 256
+      precision: "32"
+      add_value_head: True
+      is_lora: False
+      lora_rank: 32
 
-::
-
-   bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
+   真机多节点部署（Actor/Policy 部署在 GPU 服务器，Env/Robot 部署在控制机）见 :doc:`franka`。
 
 可视化与结果
 ----------------------------------------
 
-**1. TensorBoard 日志**
-
-.. code-block:: bash
-
-   # 启动 TensorBoard
-   tensorboard --logdir ../results
-
-**2. 关键指标**
-
-最值得关注的指标是 **``env/success_once``** —— 任务成功率。每个日志指标的含义见
-:doc:`训练指标 <../../reference/metrics>`。
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``env/success_once`` 曲线，通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制，完整指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。

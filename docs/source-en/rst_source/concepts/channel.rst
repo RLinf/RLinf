@@ -1,5 +1,5 @@
-Use Channel for Communication
-=============================
+Channel
+=======
 
 The Channel module provides a distributed producer-consumer queue for moving
 data between workers. One or more producers can ``put`` items into a named
@@ -223,14 +223,14 @@ then rotates over three consumers:
      - First Assignment
      - Second Assignment
    * - ``actor:0``
-     - ``s0``
-     - ``s3``
+     - sample 0
+     - sample 3
    * - ``actor:1``
-     - ``s1``
-     - ``s4``
+     - sample 1
+     - sample 4
    * - ``actor:2``
-     - ``s2``
-     - ``s5``
+     - sample 2
+     - sample 5
 
 Each Actor calls ``sample_channel.get()`` with the same queue key. The Channel
 identifies the calling worker and reads its private queue. Assignment counts

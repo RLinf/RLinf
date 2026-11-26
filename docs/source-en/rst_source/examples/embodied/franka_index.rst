@@ -1,5 +1,5 @@
-Single-Arm Franka
-=================
+Franka (Single-Arm)
+===================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
    :align: center
@@ -8,32 +8,23 @@ Single-Arm Franka
 
    A single-arm Franka platform for real-world RL, data collection, and policy deployment.
 
-Start with Real-World RL to set up a single-arm Franka and train a policy.
-Then choose a guide for teleoperation, data collection, deployment, or hardware
-extensions.
+Start with **Core Workflows** to set up a single-arm Franka and train or deploy a policy, then pick teleoperation, reward-model, or hardware guides as needed.
 
-.. grid:: 1 2 2 3
+1. Core Workflows
+-----------------
+
+Choose the training or deployment loop you want to run on a single-arm Franka.
+
+.. grid:: 1 3 3 3
    :gutter: 3
 
-   .. grid-item-card:: Real-World RL
+   .. grid-item-card:: Online RL
       :link: franka
       :link-type: doc
 
       Set up a single-arm Franka, collect demonstrations, and run online RL training.
 
-   .. grid-item-card:: GELLO Collection
-      :link: franka_gello
-      :link-type: doc
-
-      Collect joint-level teleoperation data with GELLO.
-
-   .. grid-item-card:: VR Teleoperation
-      :link: franka_vr
-      :link-type: doc
-
-      Use VR / PICO devices for teleoperation.
-
-   .. grid-item-card:: Collection / SFT / Deployment
+   .. grid-item-card:: π₀ SFT & Deploy
       :link: franka_pi0_sft_deploy
       :link-type: doc
 
@@ -45,13 +36,41 @@ extensions.
 
       Collect interventions and improve a Franka policy with online human-gated DAgger.
 
-   .. grid-item-card:: Reward Model
+2. Teleoperation and Reward Models
+----------------------------------
+
+Add teleoperation input devices or learned reward models to any core workflow.
+
+.. grid:: 1 3 3 3
+   :gutter: 3
+
+   .. grid-item-card:: GELLO Teleop
+      :link: franka_gello
+      :link-type: doc
+
+      Collect joint-level teleoperation data with GELLO.
+
+   .. grid-item-card:: PICO VR Teleop
+      :link: franka_vr
+      :link-type: doc
+
+      Use VR / PICO devices for teleoperation.
+
+   .. grid-item-card:: Reward Models
       :link: franka_reward_model
       :link-type: doc
 
       Train Franka with a learned reward model.
 
-   .. grid-item-card:: ZED + Robotiq
+3. Cameras and End-Effectors
+----------------------------
+
+Configure optional depth cameras, grippers, and dexterous hands on your Franka rig.
+
+.. grid:: 1 3 3 3
+   :gutter: 3
+
+   .. grid-item-card:: ZED & Robotiq
       :link: franka_zed_robotiq
       :link-type: doc
 
@@ -73,12 +92,12 @@ extensions.
    :hidden:
    :maxdepth: 1
 
-   Real-World RL <franka>
-   GELLO Collection <franka_gello>
-   VR Teleoperation <franka_vr>
-   Collection / SFT / Deployment <franka_pi0_sft_deploy>
+   Online RL <franka>
+   π₀ SFT & Deploy <franka_pi0_sft_deploy>
    HG-DAgger <hg-dagger>
-   Reward Model <franka_reward_model>
-   ZED + Robotiq <franka_zed_robotiq>
+   GELLO Teleop <franka_gello>
+   PICO VR Teleop <franka_vr>
+   Reward Models <franka_reward_model>
+   ZED & Robotiq <franka_zed_robotiq>
    Orbbec Cameras <franka_orbbec>
    Dexterous Hand <franka_dexhand>

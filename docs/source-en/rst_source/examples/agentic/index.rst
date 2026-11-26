@@ -1,108 +1,128 @@
-Agentic Scenarios
-=================
+Agent & LLM
+===========
 
-RLinf's worker abstraction, flexible communication modules, and support for various accelerators make it naturally suited for building agent workflows and training agents.
-The following examples include math reasoning RL and agentic AI workflows, such as agent workflow construction, online RL training, environment integration, and **reasoning-centric agent training**.
+Train text and multimodal reasoning models, multi-turn tool-using agents, multi-agent systems, and diffusion models with RLinf's distributed worker runtime, Megatron / FSDP training backends, and SGLang / vLLM rollout engines.
 
-.. raw:: html
+Before starting a reasoning or agent recipe, install the agentic stack with ``bash requirements/install.sh agentic`` (see :doc:`Installation <../../start/installation>`). Image and video generation recipes use ``bash requirements/install.sh embodied --model diffusion``.
 
-   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="wideseek_r1/index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/wideseek_r1/scaling.png"
-            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="wideseek_r1/index.html" style="text-decoration: underline; color: blue;">
-          <b>WideSeek-R1</b>
-         </a><br>
-         Exploring Width Scaling for Broad Information Seeking via Multi-Agent Reinforcement Learning
-       </p>
-     </div>
+Choose a Track
+--------------
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="agentlightning_calc_x.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/agentlightning_calcx.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="agentlightning_calc_x.html" style="text-decoration: underline; color: blue;">
-          <b>AgentLightning Calc-X</b>
-         </a><br>
-         Agent Lightning orchestrates agent RL; RLinf serves as the distributed training backend
-       </p>
-     </div>
+.. list-table::
+   :header-rows: 1
+   :widths: 20 26 22 32
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="coding_online_rl.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/coding_online_rl_offline_numbers.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="coding_online_rl.html" style="text-decoration: underline; color: blue;">
-          <b>Open-Source Online RL for Code Completion</b>
-         </a><br>
-         End-to-end online RL with RLinf + Continue, improving model performance by 52%
-       </p>
-     </div>
+   * - Track
+     - Models & Backends
+     - Algorithm / Mode
+     - Recipes
+   * - :doc:`Reasoning <math_reasoning/index>`
+     - Moonlight-16B, Qwen2.5, Qwen3-VL (Megatron / FSDP + SGLang / vLLM)
+     - GRPO, PPO (text & visual reasoning)
+     - :doc:`Moonlight-16B <math_reasoning/moonlight>`, :doc:`Qwen2.5 GRPO <math_reasoning/reasoning>`, :doc:`Qwen2.5 PPO <math_reasoning/reasoning_ppo>`, :doc:`Qwen3-VL Geo3K <qwen3_vl_geo3k>`
+   * - :doc:`Agentic RL <agents/index>`
+     - Agent Lightning, GLM-4.7-Flash, Qwen2.5, Qwen3-4B
+     - Multi-turn tools, MARL, online RL
+     - :doc:`AgentLightning <agentlightning_calc_x>`, :doc:`Coding Online RL <coding_online_rl>`, :doc:`rStar2 <rstar2>`, :doc:`Search-R1 <searchr1/index>`, :doc:`WideSeek-R1 <wideseek_r1/index>`
+   * - :doc:`Image & Video Generation <../video_models>`
+     - SD3.5 Medium, Wan2.2 TI2V 5B (Diffusers)
+     - DiffusionART, Diffusion-NFT, ReFL
+     - :doc:`DiffusionART <../diffusion_art>`, :doc:`Diffusion-NFT <../diffusion_nft>`, :doc:`ReFL <../embodied/refl>`
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="searchr1/index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/searchr1.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="searchr1/index.html" style="text-decoration: underline; color: blue;">
-          <b>Search-R1 RL Training</b>
-         </a><br>
-         Train LLMs to answer questions by invoking search tools, RLinf accelerates the training process by 55%.
-       </p>
-     </div>
+Reasoning
+---------
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="rstar2.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rstar2-RLinf-7b.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="rstar2.html" style="text-decoration: underline; color: blue;">
-          <b>rStar2-agent RL Training</b>
-         </a><br>
-         Enabling models to autonomously reason and reflect using Python tools through reinforcement learning, achieving frontier-level mathematical reasoning at extremely low computational cost
-       </p>
-     </div>
+.. grid:: 1 2 2 4
+   :gutter: 3
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/waiting_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[Ongoing]SWE-agent</b><br>
-         Unified deployment, inference, and training with high flexibility and performance
-       </p>
-     </div>
+   .. grid-item-card:: Moonlight-16B (MoE GRPO)
+      :link: math_reasoning/moonlight
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="math_reasoning/index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/math_numbers_small.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="math_reasoning/index.html" style="text-decoration: underline; color: blue;">
-          <b>Math Reasoning</b>
-         </a><br>
-         GRPO and PPO training for math reasoning with Qwen2.5 and Moonlight-16B
-       </p>
-     </div>
+      GRPO training for DeepSeek-V3 MLA + MoE architecture via Megatron-Bridge.
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="qwen3_vl_geo3k.html" style="display: block;"><img src="https://github.com/RLinf/misc/raw/main/pic/geo_problem.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="qwen3_vl_geo3k.html" style="text-decoration: underline; color: blue;">
-          <b>Qwen3-VL GRPO for VQA</b>
-         </a><br>
-         GRPO training for vision-language reasoning on geometric problem solving (Geo3K)
-       </p>
-     </div>
+   .. grid-item-card:: Qwen2.5 Math (GRPO)
+      :link: math_reasoning/reasoning
+      :link-type: doc
 
-   </div>
+      GRPO training for DeepSeek-R1-Distill-Qwen (1.5B / 7B) on AReaL-boba, evaluated on AIME24, AIME25, and GPQA-diamond.
 
-.. toctree::
-   :hidden:
-   :maxdepth: 2
+   .. grid-item-card:: Qwen2.5 Math (PPO)
+      :link: math_reasoning/reasoning_ppo
+      :link-type: doc
 
-   WideSeek-R1 <wideseek_r1/index>
-   AgentLightning <agentlightning_calc_x>
-   Coding Online RL <coding_online_rl>
-   Search-R1 <searchr1/index>
-   rStar2 <rstar2>
-   Math Reasoning <math_reasoning/index>
-   Qwen3 VL GRPO <qwen3_vl_geo3k>
+      PPO math reasoning on Qwen2.5-1.5B updating both actor and critic.
+
+   .. grid-item-card:: Qwen3-VL Visual Reasoning (Geo3K)
+      :link: qwen3_vl_geo3k
+      :link-type: doc
+
+      Vision-language GRPO training on geometric reasoning (Geo3K) with FSDP and SGLang.
+
+Agentic RL
+----------
+
+.. grid:: 1 2 3 3
+   :gutter: 3
+
+   .. grid-item-card:: AgentLightning
+      :link: agentlightning_calc_x
+      :link-type: doc
+
+      Use Agent Lightning for agent workflow orchestration while delegating distributed RL training to RLinf on Calc-X.
+
+   .. grid-item-card:: Coding Online RL
+      :link: coding_online_rl
+      :link-type: doc
+
+      End-to-end online RL for IDE code completion combining RLinf with the Continue extension.
+
+   .. grid-item-card:: rStar2
+      :link: rstar2
+      :link-type: doc
+
+      Multi-turn mathematical reasoning and self-reflection using a local Python execution server.
+
+   .. grid-item-card:: Search-R1
+      :link: searchr1/index
+      :link-type: doc
+
+      Multi-turn search tool RL on Qwen2.5-3B and GLM-4.7-Flash (sync and async), with FAISS or Qdrant local wiki retrieval.
+
+   .. grid-item-card:: WideSeek-R1
+      :link: wideseek_r1/index
+      :link-type: doc
+
+      Lead-agent and parallel subagent MARL for broad information seeking on WideSearch, reaching 40.0% item F1 with a 4B model.
+
+To plug in your own white-box or OpenAI API black-box agent, see :doc:`Add an Agent </rst_source/extending/agents/index>`.
+
+Image & Video Generation
+------------------------
+
+.. grid:: 1 2 2 4
+   :gutter: 3
+
+   .. grid-item-card:: Image & Video Generation Overview
+      :link: ../video_models
+      :link-type: doc
+
+      Shared diffusion setup, OCR prompt dataset, and checkpoint downloads for SD3.5 Medium and Wan2.2 TI2V 5B.
+
+   .. grid-item-card:: DiffusionART
+      :link: ../diffusion_art
+      :link-type: doc
+
+      Group reward guidance against frozen velocity targets for SD3.5 Medium image OCR and Wan2.2 video OCR.
+
+   .. grid-item-card:: Diffusion-NFT
+      :link: ../diffusion_nft
+      :link-type: doc
+
+      RL fine-tuning of SD3.5 Medium and Wan2.2 with positive/negative velocity candidates and OCR rewards.
+
+   .. grid-item-card:: ReFL
+      :link: ../embodied/refl
+      :link-type: doc
+
+      Fine-tune SD3.5 Medium with differentiable ImageReward feedback and optional supervised image-text updates.
