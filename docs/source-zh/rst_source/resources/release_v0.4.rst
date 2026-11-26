@@ -109,7 +109,7 @@ Agentic AI
 - **NVIDIA Isaac Lab v3.0.0**：Isaac Lab 采用 RLinf 作为 VLA 后训练与强化学习训练基础设施。文档：:doc:`Isaac Lab 中的 RLinf <../examples/embodied/isaaclab>`
 - **RLinf × SGLang**：打通 Cosmos3、DreamZero 等世界动作模型的 SFT 与 SGLang 流水线并行评测，评测吞吐提升 3.33×。博客：:doc:`RLinf × SGLang：Cosmos3 <blog/cosmos3_sft_and_sglang_evaluate>`
 - **RLinf × AMD**：在 AMD MI300（ROCm）上复现 WoVR 静态世界模型强化学习，并用冻结的 Qwen3-VL（TOPReward）替代任务专用奖励模型。LIBERO-Spatial 成功率从 44.8% 提升至 56.0%，与专用 ResNet 奖励处于同一水平。博客：:doc:`RLinf × WorldLoop <blog/worldloop_topreward>`
-- **NSDI 2027**：MoE 高性能变换-通信融合库 *FUSCO: High-Performance Distributed Data Shuffling via Transformation-Communication Fusion* 被 NSDI 2027 接收。文档：:doc:`FUSCO <../examples/system/fusco>` ｜ 论文：`arXiv:2512.22036 <https://arxiv.org/abs/2512.22036>`__
+- **NSDI 2027**：MoE 高性能变换-通信融合库 *FUSCO: High-Performance Distributed Data Shuffling via Transformation-Communication Fusion* 被 NSDI 2027 接收。文档：:doc:`FUSCO <../extending/fusco>` ｜ 论文：`arXiv:2512.22036 <https://arxiv.org/abs/2512.22036>`__
 - **STEAM**：发布自监督时序集成优势建模论文 *STEAM: Self-Supervised Temporal Ensemble Advantage Modeling for Real-World Robot Learning*。文档：:doc:`STEAM <publications/steam>` ｜ 论文：`arXiv:2606.29834 <https://arxiv.org/abs/2606.29834>`__
 
 重要修复

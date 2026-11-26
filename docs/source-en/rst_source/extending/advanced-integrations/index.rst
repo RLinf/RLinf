@@ -16,6 +16,8 @@ transport instead of adding a primary model or environment.
      - Optimize actor-to-rollout weight sync in embodied training.
    * - :doc:`Connect the Session Server to a Runner <../session_server_runner>`
      - Use the session server from a runner other than the asynchronous one.
+   * - :doc:`FUSCO <../fusco>`
+     - Accelerate distributed MoE All-to-All communication with FUSCO.
 
 .. toctree::
    :hidden:
@@ -23,3 +25,4 @@ transport instead of adding a primary model or environment.
    Megatron-Bridge <../mbridge>
    Weight Synchronization <../weight_syncer>
    Connect the Session Server to a Runner <../session_server_runner>
+   FUSCO <../fusco>

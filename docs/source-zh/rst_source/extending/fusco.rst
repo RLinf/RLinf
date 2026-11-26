@@ -1,4 +1,4 @@
-FUSCO高性能MoE通信库
+FUSCO 高性能 MoE 通信库
 ========================================
 
 使用 FUSCO 为 RLinf 中的 MoE 训练和推理加速分布式 All-to-All 通信。FUSCO 融合数据变换与通信过程，降低大规模 MoE 模型的通信开销。
@@ -51,8 +51,7 @@ FUSCO高性能MoE通信库
 运行
 ----------------------------------------
 
-RLinf 目前通过 Patch 方式集成 FUSCO，支持以 Megatron-LM 为后端的 MoE 训练。当训练配置满足条件时，系统会自动替换 Megatron 中的 MoEAlltoAllTokenDispatcher 类，并使用 FUSCO 的实现进行加速。
-启用 FUSCO 的配置示例如下：
+RLinf 通过 Patch 方式集成 FUSCO，支持以 Megatron-LM 为后端的 MoE 训练。训练配置满足条件后，系统会自动替换 Megatron 中的 MoEAlltoAllTokenDispatcher 类，并使用 FUSCO 的实现加速通信。启用 FUSCO 的配置示例如下：
 
 .. code-block:: yaml
 
@@ -65,14 +64,14 @@ RLinf 目前通过 Patch 方式集成 FUSCO，支持以 Megatron-LM 为后端的
 
 配置说明：
 
-- ``moe_token_dispatcher_type``: 设置为 ``alltoall``
-- ``expert_model_parallel_size``: 设置为大于1
-- ``expert_tensor_parallel_size``: 设置为等于1
-- ``variable_seq_lengths``: 设置为 ``false``
+- ``moe_token_dispatcher_type``：设置为 ``alltoall``
+- ``expert_model_parallel_size``：设置为大于 1
+- ``expert_tensor_parallel_size``：设置为等于 1
+- ``variable_seq_lengths``：设置为 ``false``
 
 满足以上条件且正确安装 FUSCO 后，RLinf 会自动启用 FUSCO。
 
-可以通过以下命令进行测试：
+使用以下命令测试：
 
 .. code-block:: bash
 

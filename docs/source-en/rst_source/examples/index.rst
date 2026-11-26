@@ -1,13 +1,7 @@
 Example Gallery
 ===============
 
-This section presents the collection of **examples currently supported by RLinf**,
-showcasing how the framework can be applied across different scenarios and
-demonstrating its efficiency in practice.
-This example gallery is continuously expanding, covering new scenarios and tasks to highlight RLinf's flexibility and efficiency.
-
-Embodied intelligence is RLinf's primary focus. The embodied gallery is organized into
-the entry points below — pick the one that matches your starting question:
+Pick the entry point below that matches your starting scenario:
 
 .. grid:: 1 2 3 3
    :gutter: 3
@@ -36,17 +30,17 @@ the entry points below — pick the one that matches your starting question:
 
       Train and fine-tune world models — OpenSora, Wan, and more.
 
-   .. grid-item-card:: Reward Models
-      :link: embodied/reward_model_index
+   .. grid-item-card:: Embodied Agents
+      :link: embodied_agent/index
       :link-type: doc
 
-      Build reward models for simulation and real-world reinforcement learning workflows.
+      Train reasoning VLMs as multi-turn tool-calling embodied agents — VLM-as-Policy and upcoming planners.
 
-   .. grid-item-card:: VLM-as-Policy
-      :link: embodied/vlm_as_policy
+   .. grid-item-card:: LLM Agents
+      :link: agentic/index
       :link-type: doc
 
-      Train a reasoning VLM directly as a multi-turn robot policy with online RL.
+      Math reasoning and LLM agent workflows, in both single-agent and multi-agent settings.
 
    .. grid-item-card:: SFT
       :link: sft_index
@@ -60,28 +54,17 @@ the entry points below — pick the one that matches your starting question:
 
       Algorithm-centric examples — DAgger, RECAP, DSRL, IQL offline RL, sim-real co-training, MLP / SAC-Flow.
 
-Beyond embodiment:
+   .. grid-item-card:: Reward Models
+      :link: embodied/reward_model_index
+      :link-type: doc
 
-.. grid:: 1 2 3 3
-   :gutter: 3
+      Build reward models for simulation and real-world reinforcement learning workflows.
 
    .. grid-item-card:: Image and Video Generation
       :link: video_models
       :link-type: doc
 
       Prepare SD3 and Wan2.2 models, then train with Diffusion-NFT or DiffusionART.
-
-   .. grid-item-card:: Agents
-      :link: agentic/index
-      :link-type: doc
-
-      Math reasoning and agentic AI workflows, in both single-agent and multi-agent settings.
-
-   .. grid-item-card:: Systems
-      :link: system/index
-      :link-type: doc
-
-      Flexible, dynamic scheduling of compute resources across the most suitable hardware devices.
 
 .. toctree::
    :hidden:
@@ -91,10 +74,9 @@ Beyond embodiment:
    Robots <real_world_index>
    Embodied Models <vla_wam_index>
    World Models <world_model_index>
-   Reward Models <embodied/reward_model_index>
-   VLM-as-Policy <embodied/vlm_as_policy>
+   Embodied Agents <embodied_agent/index>
+   LLM Agents <agentic/index>
    SFT <sft_index>
    RL <methods_index>
+   Reward Models <embodied/reward_model_index>
    Image and Video Generation <video_models>
-   Agents <agentic/index>
-   Systems <system/index>

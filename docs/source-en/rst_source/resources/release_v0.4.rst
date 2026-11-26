@@ -109,7 +109,7 @@ Ecosystem and Research
 - **NVIDIA Isaac Lab v3.0.0**: Isaac Lab adopts RLinf as the infrastructure for VLA post-training and reinforcement learning. Docs: :doc:`RLinf in Isaac Lab <../examples/embodied/isaaclab>`
 - **RLinf × SGLang**: SFT and pipeline-parallel SGLang evaluation for world-action models such as Cosmos3 and DreamZero, with 3.33× evaluation throughput. Blog: :doc:`RLinf × SGLang: Cosmos3 <blog/cosmos3_sft_and_sglang_evaluate>`
 - **RLinf × AMD**: WoVR static world-model RL is reproduced on AMD MI300 (ROCm). A frozen Qwen3-VL reward (TOPReward) replaces a task-specific reward model and lifts LIBERO-Spatial success from 44.8% to 56.0%, in line with a dedicated ResNet reward. Blog: :doc:`RLinf × WorldLoop <blog/worldloop_topreward>`
-- **NSDI 2027**: *FUSCO: High-Performance Distributed Data Shuffling via Transformation-Communication Fusion*, the MoE transform-communication fusion library, is accepted to NSDI 2027. Docs: :doc:`FUSCO <../examples/system/fusco>` ｜ Paper: `arXiv:2512.22036 <https://arxiv.org/abs/2512.22036>`__
+- **NSDI 2027**: *FUSCO: High-Performance Distributed Data Shuffling via Transformation-Communication Fusion*, the MoE transform-communication fusion library, is accepted to NSDI 2027. Docs: :doc:`FUSCO <../extending/fusco>` ｜ Paper: `arXiv:2512.22036 <https://arxiv.org/abs/2512.22036>`__
 - **STEAM**: *STEAM: Self-Supervised Temporal Ensemble Advantage Modeling for Real-World Robot Learning*. Docs: :doc:`STEAM <publications/steam>` ｜ Paper: `arXiv:2606.29834 <https://arxiv.org/abs/2606.29834>`__
 
 Important Fixes

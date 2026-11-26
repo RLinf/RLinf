@@ -52,7 +52,7 @@ Refer to the installation guide provided in the official FUSCO repository (https
 Run It
 ------
 
-RLinf currently integrates FUSCO through patching, supporting MoE training with Megatron-LM as the backend. When the training configuration meets the requirements, the system will automatically replace the MoEAlltoAllTokenDispatcher class in Megatron and use FUSCO's implementation for acceleration.
+RLinf integrates FUSCO through patching, supporting MoE training with Megatron-LM as the backend. When the training configuration meets the requirements, the system automatically replaces the MoEAlltoAllTokenDispatcher class in Megatron and uses FUSCO's implementation for acceleration.
 The configuration example for enabling FUSCO is as follows:
 
 .. code-block:: yaml

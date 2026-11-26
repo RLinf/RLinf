@@ -1,0 +1,260 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 790" width="1200" height="790" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="m-blue" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 9.5 5 L 0 8.8 z" fill="#2563eb"/>
+    </marker>
+    <marker id="m-violet" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 9.5 5 L 0 8.8 z" fill="#7c3aed"/>
+    </marker>
+    <marker id="m-teal" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 9.5 5 L 0 8.8 z" fill="#0d9488"/>
+    </marker>
+    <marker id="m-orange" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+      <path d="M 0 1.2 L 9.5 5 L 0 8.8 z" fill="#ea580c"/>
+    </marker>
+    <marker id="m-slate" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+      <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <!-- Canvas -->
+  <rect x="8" y="8" width="1184" height="774" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+
+  <!-- Header -->
+  <text x="34" y="40" font-size="19" font-weight="700" fill="#0f172a">Embodied Agent 异步训练如何运转</text>
+  <text x="34" y="62" font-size="12" fill="#64748b">将推理型 VLM 建模为多轮 Tool-Call 具身智能体：仿真环境是有状态工具，采样与训练解耦并行</text>
+
+  <!-- Legend -->
+  <g transform="translate(698, 34)">
+    <line x1="0" y1="6" x2="24" y2="6" stroke="#2563eb" stroke-width="2.4" marker-end="url(#m-blue)"/>
+    <text x="32" y="10" font-size="11.5" fill="#334155">控制面 / 元数据</text>
+
+    <line x1="138" y1="6" x2="162" y2="6" stroke="#7c3aed" stroke-width="2.4" marker-end="url(#m-violet)"/>
+    <text x="170" y="10" font-size="11.5" fill="#334155">Agent 多轮闭环 / 推理</text>
+
+    <line x1="312" y1="6" x2="336" y2="6" stroke="#ea580c" stroke-width="2.8" marker-end="url(#m-orange)"/>
+    <text x="344" y="10" font-size="11.5" fill="#334155">有效数据 / 权重同步</text>
+  </g>
+
+  <!-- ==================== TOP BAR: AsyncAgentRunner ==================== -->
+  <rect x="34" y="80" width="1132" height="44" rx="10" fill="#0f172a"/>
+  <text x="54" y="107" font-size="13.5" font-weight="700" fill="#ffffff">AsyncAgentRunner</text>
+  <line x1="198" y1="92" x2="198" y2="112" stroke="#334155" stroke-width="1.2"/>
+  <text x="214" y="106" font-size="12" fill="#cbd5e1">Head 进程全局编排 · 启动各组件 WorkerGroup · 驱动训练步与跨机权重版本同步</text>
+  <rect x="964" y="90" width="184" height="24" rx="12" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+  <text x="1056" y="106" text-anchor="middle" font-size="11" font-weight="600" fill="#e2e8f0">双机 16 GPU · 分离式异步</text>
+
+  <!-- Subtle runner launch indicators -->
+  <line x1="310" y1="124" x2="310" y2="146" stroke="#64748b" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#m-slate)"/>
+  <line x1="652" y1="124" x2="652" y2="146" stroke="#64748b" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#m-slate)"/>
+  <line x1="1004" y1="124" x2="1004" y2="146" stroke="#64748b" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#m-slate)"/>
+
+  <!-- ==================== BAND 1: CONTROL PLANE (RolloutBuffer) ==================== -->
+  <rect x="118" y="150" width="1048" height="90" rx="12" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.4"/>
+  <rect x="118" y="150" width="7" height="90" rx="3.5" fill="#2563eb"/>
+  <text x="140" y="172" font-size="12.5" font-weight="700" fill="#1d4ed8">控制面 · RolloutBuffer（Node 0 CPU）</text>
+
+  <rect x="780" y="156" width="368" height="22" rx="11" fill="#dbeafe" stroke="#60a5fa" stroke-width="1"/>
+  <text x="964" y="171" text-anchor="middle" font-size="11" font-weight="600" fill="#1e40af">仅流转轻量元数据与 payload_ref，不搬运图像与 Token</text>
+
+  <g>
+    <rect x="140" y="184" width="214" height="44" rx="8" fill="#ffffff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="247" y="202" text-anchor="middle" font-size="12" font-weight="700" fill="#1e3a8a">任务数据集 (Dataset)</text>
+    <text x="247" y="219" text-anchor="middle" font-size="10.8" fill="#64748b">读取任务指令、场景与随机种子</text>
+  </g>
+  <line x1="354" y1="206" x2="378" y2="206" stroke="#2563eb" stroke-width="1.8" marker-end="url(#m-blue)"/>
+
+  <g>
+    <rect x="382" y="184" width="234" height="44" rx="8" fill="#ffffff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="499" y="202" text-anchor="middle" font-size="12" font-weight="700" fill="#1e3a8a">双上限准入限流</text>
+    <text x="499" y="219" text-anchor="middle" font-size="10.8" fill="#64748b">限制在途组数与缓冲积压上限</text>
+  </g>
+  <line x1="616" y1="206" x2="640" y2="206" stroke="#2563eb" stroke-width="1.8" marker-end="url(#m-blue)"/>
+
+  <g>
+    <rect x="644" y="184" width="234" height="44" rx="8" fill="#ffffff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="761" y="202" text-anchor="middle" font-size="12" font-weight="700" fill="#1e3a8a">DAPO 零方差组过滤</text>
+    <text x="761" y="219" text-anchor="middle" font-size="10.8" fill="#64748b">全成/全败组直接剔除并通知回收</text>
+  </g>
+  <line x1="878" y1="206" x2="902" y2="206" stroke="#2563eb" stroke-width="1.8" marker-end="url(#m-blue)"/>
+
+  <g>
+    <rect x="906" y="184" width="242" height="44" rx="8" fill="#ffffff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="1027" y="202" text-anchor="middle" font-size="12" font-weight="700" fill="#1e3a8a">新鲜度控制与发批</text>
+    <text x="1027" y="219" text-anchor="middle" font-size="10.8" fill="#64748b">约束版本滞后，按序交付有效批次</text>
+  </g>
+
+  <!-- ==================== BAND 2: ASYNC ROLLOUT ZONE (Node 1) ==================== -->
+  <rect x="118" y="286" width="1048" height="276" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4"/>
+  <rect x="118" y="286" width="7" height="276" rx="3.5" fill="#7c3aed"/>
+  <text x="140" y="308" font-size="12.5" font-weight="700" fill="#5b21b6">异步多轮采样区</text>
+  <rect x="814" y="293" width="334" height="22" rx="11" fill="#f3e8ff" stroke="#c4b5fd" stroke-width="1"/>
+  <text x="981" y="308" text-anchor="middle" font-size="11" font-weight="600" fill="#5b21b6">Node 1 Rollout · 8× GPU + 仿真器 · 后台持续运转</text>
+
+  <!-- LEFT HERO: Embodied Agent (Observe -> Think -> Act via EnvTool) -->
+  <g>
+    <rect x="143" y="328" width="374" height="224" rx="12" fill="#6d28d9" fill-opacity="0.08"/>
+    <rect x="140" y="324" width="374" height="224" rx="12" fill="#ffffff" stroke="#7c3aed" stroke-width="2.5"/>
+    <!-- Hero header -->
+    <path d="M 140 336 Q 140 324 152 324 L 502 324 Q 514 324 514 336 L 514 364 L 140 364 Z" fill="#6d28d9"/>
+    <text x="156" y="349" font-size="13.5" font-weight="700" fill="#ffffff">Embodied Agent（具身智能体）</text>
+    <rect x="380" y="333" width="122" height="22" rx="11" fill="#4c1d95"/>
+    <text x="441" y="348" text-anchor="middle" font-size="10.5" font-weight="700" fill="#ede9fe">多轮 Tool-Call 闭环</text>
+
+    <!-- 3-step Observe -> Think -> Act visual loop -->
+    <rect x="154" y="376" width="102" height="60" rx="8" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1.2"/>
+    <text x="205" y="399" text-anchor="middle" font-size="12" font-weight="700" fill="#4c1d95">1. 感知</text>
+    <text x="205" y="419" text-anchor="middle" font-size="10.5" fill="#475569">多视角帧 + 位姿</text>
+
+    <line x1="256" y1="406" x2="272" y2="406" stroke="#7c3aed" stroke-width="1.8" marker-end="url(#m-violet)"/>
+
+    <rect x="276" y="376" width="102" height="60" rx="8" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1.2"/>
+    <text x="327" y="399" text-anchor="middle" font-size="12" font-weight="700" fill="#4c1d95">2. 推理决策</text>
+    <text x="327" y="419" text-anchor="middle" font-size="10.5" fill="#475569">思维链 + 动作/规划</text>
+
+    <line x1="378" y1="406" x2="394" y2="406" stroke="#7c3aed" stroke-width="1.8" marker-end="url(#m-violet)"/>
+
+    <rect x="398" y="376" width="102" height="60" rx="8" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="1.2"/>
+    <text x="449" y="399" text-anchor="middle" font-size="12" font-weight="700" fill="#065f46">3. 工具调用</text>
+    <text x="449" y="419" text-anchor="middle" font-size="10.5" fill="#475569">执行并获取新观测</text>
+
+    <!-- Loop arrows between 3-step cycle and EnvTool -->
+    <line x1="449" y1="436" x2="449" y2="466" stroke="#7c3aed" stroke-width="2" marker-end="url(#m-violet)"/>
+    <text x="438" y="455" text-anchor="end" font-size="10.2" font-weight="600" fill="#6d28d9">动作 / 技能调用</text>
+
+    <line x1="205" y1="468" x2="205" y2="440" stroke="#059669" stroke-width="2" marker-end="url(#m-teal)"/>
+    <text x="216" y="455" text-anchor="start" font-size="10.2" font-weight="600" fill="#047857">新观测 + Reward</text>
+
+    <!-- Docked EnvTool inside Embodied Agent ecosystem -->
+    <rect x="154" y="470" width="346" height="64" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.6"/>
+    <text x="168" y="492" font-size="12.2" font-weight="700" fill="#065f46">EnvTool（把仿真/物理世界封装为有状态工具）</text>
+    <text x="168" y="512" font-size="10.8" fill="#334155">模拟器 / 控制器 / 技能库（如 LIBERO + PD/OSC）</text>
+    <text x="168" y="527" font-size="10.2" fill="#047857">支持直接输出动作（VLM-as-Policy）与高层规划调用</text>
+  </g>
+
+  <!-- CENTER-RIGHT BRIDGE: Session Server (calm supporting service) -->
+  <g>
+    <rect x="588" y="324" width="238" height="224" rx="10" fill="#ffffff" stroke="#0d9488" stroke-width="1.8"/>
+    <path d="M 588 334 Q 588 324 598 324 L 816 324 Q 826 324 826 334 L 826 360 L 588 360 Z" fill="#f0fdfa"/>
+    <line x1="588" y1="360" x2="826" y2="360" stroke="#99f6e4" stroke-width="1.2"/>
+    <text x="602" y="347" font-size="13" font-weight="700" fill="#0f766e">Session Server</text>
+    <text x="724" y="346" font-size="10.5" font-weight="600" fill="#0d9488">会话与轨迹服务</text>
+
+    <text x="602" y="382" font-size="11.2" fill="#334155">• 代理多轮流式会话至推理引擎</text>
+    <text x="602" y="404" font-size="11.2" fill="#334155">• 录制 Token、Logprob 与版本 v</text>
+    <text x="602" y="426" font-size="11.2" fill="#334155">• 先回复 Agent，再后台异步落盘</text>
+    <text x="602" y="448" font-size="11.2" fill="#334155">• 整组完成仅向控制面上报元数据</text>
+
+    <!-- Payload Shards dock -->
+    <rect x="600" y="464" width="214" height="72" rx="8" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5"/>
+    <text x="612" y="486" font-size="11.8" font-weight="700" fill="#92400e">Payload Shards（本地缓存）</text>
+    <text x="612" y="506" font-size="10.8" fill="#78350f">图像与 Token 留在采样节点</text>
+    <text x="612" y="524" font-size="10.8" fill="#78350f">无效组原地释放，零跨机搬运</text>
+  </g>
+
+  <!-- RIGHT COMPUTE: SGLang Router + Engine -->
+  <rect x="898" y="324" width="250" height="52" rx="9" fill="#ffffff" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="5 3"/>
+  <text x="912" y="346" font-size="12" font-weight="700" fill="#334155">SGLang Router（路由层）</text>
+  <text x="912" y="364" font-size="10.5" fill="#64748b">引擎注册与均衡（流式会话直连引擎）</text>
+
+  <g>
+    <rect x="898" y="396" width="250" height="152" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+    <text x="912" y="422" font-size="13.5" font-weight="700" fill="#9a3412">SGLang 推理引擎</text>
+    <rect x="1062" y="406" width="74" height="22" rx="11" fill="#ffedd5" stroke="#fb923c" stroke-width="1"/>
+    <text x="1099" y="421" text-anchor="middle" font-size="10.5" font-weight="700" fill="#c2410c">TP8 推理</text>
+    <text x="912" y="450" font-size="11.3" fill="#334155">• 多模态 VLM 流式会话推理</text>
+    <text x="912" y="473" font-size="11.3" fill="#334155">• 跨轮复用 KV &amp; GDN 缓存</text>
+    <text x="912" y="496" font-size="11.3" fill="#334155">• 同步权重时 retract 划清版本</text>
+    <text x="912" y="526" font-size="10.8" font-weight="600" fill="#c2410c">与 Actor 异步并行，无采样空等</text>
+  </g>
+
+  <!-- ==================== BAND 3: TRAINING & WEIGHT SYNC (Node 0 Actor) ==================== -->
+  <rect x="118" y="610" width="1048" height="150" rx="12" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.4"/>
+  <rect x="118" y="610" width="7" height="150" rx="3.5" fill="#4f46e5"/>
+  <text x="140" y="632" font-size="12.5" font-weight="700" fill="#3730a3">策略训练与权重同步区 · Node 0 Actor 节点（8× GPU · FSDP2 DP8）</text>
+
+  <g>
+    <rect x="140" y="646" width="686" height="98" rx="10" fill="#ffffff" stroke="#4f46e5" stroke-width="2"/>
+    <text x="158" y="668" font-size="13" font-weight="700" fill="#312e81">MAFSDPActor（FSDP2 DP8 训练）</text>
+    <text x="394" y="668" font-size="11" fill="#64748b">仅消费通过 DAPO 过滤与新鲜度检查的有效轨迹组</text>
+
+    <rect x="158" y="680" width="198" height="50" rx="7" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.1"/>
+    <text x="257" y="701" text-anchor="middle" font-size="11.5" font-weight="700" fill="#3730a3">1. 装配多轮轨迹</text>
+    <text x="257" y="719" text-anchor="middle" font-size="10.5" fill="#475569">按 ref 拉取并合并连续轮次</text>
+
+    <line x1="356" y1="705" x2="380" y2="705" stroke="#4f46e5" stroke-width="1.8" marker-end="url(#m-blue)"/>
+
+    <rect x="384" y="680" width="204" height="50" rx="7" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.1"/>
+    <text x="486" y="701" text-anchor="middle" font-size="11.5" font-weight="700" fill="#3730a3">2. 分块 FP32 Head</text>
+    <text x="486" y="719" text-anchor="middle" font-size="10.5" fill="#475569">高精度对齐 Logprob 与梯度</text>
+
+    <line x1="588" y1="705" x2="612" y2="705" stroke="#4f46e5" stroke-width="1.8" marker-end="url(#m-blue)"/>
+
+    <rect x="616" y="680" width="194" height="50" rx="7" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.1"/>
+    <text x="713" y="701" text-anchor="middle" font-size="11.5" font-weight="700" fill="#3730a3">3. GRPO / PEAR 更新</text>
+    <text x="713" y="719" text-anchor="middle" font-size="10.5" fill="#475569">完成一步优化 → 权重 v + 1</text>
+  </g>
+
+  <g>
+    <rect x="898" y="646" width="250" height="98" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+    <text x="912" y="670" font-size="13" font-weight="700" fill="#9a3412">跨机权重同步 (NCCL)</text>
+    <text x="912" y="694" font-size="11.3" fill="#334155">pause retract → 广播新权重</text>
+    <text x="912" y="714" font-size="11.3" fill="#334155">flush cache → continue</text>
+    <text x="912" y="734" font-size="10.8" font-weight="600" fill="#c2410c">27B 全量同步仅约 5 秒</text>
+  </g>
+
+  <!-- ==================== ALL INTER-COMPONENT ARROWS (ZERO CROSSINGS) ==================== -->
+
+  <!-- ① RolloutBuffer -> Embodied Agent -->
+  <line x1="310" y1="240" x2="310" y2="320" stroke="#2563eb" stroke-width="2.4" marker-end="url(#m-blue)"/>
+  <rect x="250" y="253" width="120" height="22" rx="11" fill="#ffffff" stroke="#93c5fd" stroke-width="1.2"/>
+  <text x="310" y="268" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8">① 投放任务组</text>
+
+  <!-- ② Embodied Agent <-> Session Server -->
+  <line x1="514" y1="396" x2="584" y2="396" stroke="#7c3aed" stroke-width="2.2" marker-end="url(#m-violet)"/>
+  <text x="551" y="387" text-anchor="middle" font-size="10.3" font-weight="700" fill="#5b21b6">② 生成请求</text>
+  <line x1="588" y1="432" x2="518" y2="432" stroke="#0d9488" stroke-width="2.2" marker-end="url(#m-teal)"/>
+  <text x="551" y="449" text-anchor="middle" font-size="10.3" font-weight="600" fill="#0f766e">思考 + 动作</text>
+
+  <!-- ③ Session Server <-> SGLang Engine (+ dashed Router) -->
+  <line x1="826" y1="350" x2="894" y2="350" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#m-slate)"/>
+  <text x="862" y="342" text-anchor="middle" font-size="9.8" fill="#64748b">无状态路由</text>
+
+  <line x1="826" y1="442" x2="894" y2="442" stroke="#7c3aed" stroke-width="2.2" marker-end="url(#m-violet)"/>
+  <text x="862" y="433" text-anchor="middle" font-size="10.3" font-weight="700" fill="#5b21b6">③ 流式推理</text>
+  <line x1="898" y1="478" x2="830" y2="478" stroke="#0d9488" stroke-width="2.2" marker-end="url(#m-teal)"/>
+  <text x="862" y="495" text-anchor="middle" font-size="10" font-weight="600" fill="#0f766e">ids + logp</text>
+
+  <!-- ④ Session Server -> RolloutBuffer (metadata up) -->
+  <line x1="652" y1="324" x2="652" y2="244" stroke="#2563eb" stroke-width="2.4" marker-end="url(#m-blue)"/>
+  <rect x="582" y="253" width="140" height="22" rx="11" fill="#ffffff" stroke="#93c5fd" stroke-width="1.2"/>
+  <text x="652" y="268" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8">④ 上报轻量元数据</text>
+
+  <!-- ④' RolloutBuffer -> Session Server (discard down) -->
+  <line x1="774" y1="240" x2="774" y2="320" stroke="#64748b" stroke-width="1.8" stroke-dasharray="4 3" marker-end="url(#m-slate)"/>
+  <rect x="726" y="253" width="110" height="22" rx="11" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.1"/>
+  <text x="781" y="268" text-anchor="middle" font-size="10.5" font-weight="600" fill="#475569">丢弃 → 释放</text>
+
+  <!-- ⑤ RolloutBuffer -> MAFSDPActor (dedicated left lane x=62) -->
+  <path d="M 118 195 L 62 195 L 62 695 L 136 695" fill="none" stroke="#2563eb" stroke-width="2.4" marker-end="url(#m-blue)"/>
+  <rect x="19" y="404" width="86" height="62" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1.3"/>
+  <text x="62" y="424" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8">⑤ 交付</text>
+  <text x="62" y="441" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8">有效批次</text>
+  <text x="62" y="457" text-anchor="middle" font-size="10.5" fill="#475569">元数据</text>
+
+  <!-- ⑥ Payload Shards -> MAFSDPActor -->
+  <line x1="666" y1="536" x2="666" y2="642" stroke="#ea580c" stroke-width="2.6" marker-end="url(#m-orange)"/>
+  <rect x="574" y="574" width="184" height="24" rx="12" fill="#fff7ed" stroke="#fdba74" stroke-width="1.2"/>
+  <text x="666" y="590" text-anchor="middle" font-size="11" font-weight="700" fill="#c2410c">⑥ 按 ref 拉取有效轨迹</text>
+
+  <!-- ⑦ MAFSDPActor -> Weight Sync -> SGLang Engine -->
+  <line x1="826" y1="695" x2="894" y2="695" stroke="#ea580c" stroke-width="2.8" marker-end="url(#m-orange)"/>
+  <line x1="1004" y1="646" x2="1004" y2="552" stroke="#ea580c" stroke-width="3" marker-end="url(#m-orange)"/>
+  <rect x="1016" y="574" width="150" height="24" rx="12" fill="#fff7ed" stroke="#fb923c" stroke-width="1.3"/>
+  <text x="1091" y="590" text-anchor="middle" font-size="11" font-weight="700" fill="#c2410c">⑦ 同步权重 v→v+1</text>
+
+  <!-- Side branch: notify Session Server of weight version update -->
+  <path d="M 1004 586 L 794 586 L 794 552" fill="none" stroke="#ea580c" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#m-orange)"/>
+  <rect x="838" y="575" width="118" height="21" rx="10.5" fill="#ffffff" stroke="#fdba74" stroke-width="1"/>
+  <text x="897" y="589" text-anchor="middle" font-size="10.5" font-weight="600" fill="#c2410c">通知新版本 v+1</text>
+</svg>

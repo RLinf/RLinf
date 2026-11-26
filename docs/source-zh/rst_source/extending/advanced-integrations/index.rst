@@ -16,6 +16,8 @@
      - 优化具身训练中 actor 到 rollout 的权重同步。
    * - :doc:`将 session server 接入 runner <../session_server_runner>`
      - 在异步 runner 以外的 runner 中使用 session server。
+   * - :doc:`FUSCO <../fusco>`
+     - 使用 FUSCO 加速 MoE 训练与推理中的分布式 All-to-All 通信。
 
 .. toctree::
    :hidden:
@@ -23,3 +25,4 @@
    Megatron-Bridge <../mbridge>
    权重同步 <../weight_syncer>
    将 session server 接入 runner <../session_server_runner>
+   FUSCO <../fusco>
