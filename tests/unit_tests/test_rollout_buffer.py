@@ -218,7 +218,6 @@ def _task_state(buffer: RolloutBuffer, task_name=None) -> dict:
 
 
 def test_async_epoch_counts_prompt_groups():
-    pytest.importorskip("megatron.core")
     from rlinf.runners.async_agent_runner import AsyncAgentRunner
 
     cfg = _cfg(rollout_batch_size=2)
@@ -703,6 +702,28 @@ class TestCheckpoint:
             asyncio.run(reloaded.load_checkpoint(tmp_dir, start_step=1))
             second = next(iter(reloaded.buffer.dataloader))["idx"].tolist()
             assert second[0] == first[0] + 4
+
+    @pytest.mark.parametrize("num_workers", [0, 2])
+    def test_mid_epoch_shuffle_resume(self, tmp_path, num_workers):
+        cfg = _cfg(rollout_batch_size=2, shuffle=True)
+        cfg.data.num_workers = num_workers
+
+        async def run():
+            original = self._make_worker(cfg)
+            original._data_iter = None
+            await original.save_checkpoint(tmp_path)
+            batches = len(original.buffer.dataloader)
+            for _ in range(batches + 1):
+                await original._next_batch()
+            await original.save_checkpoint(tmp_path)
+            restored = self._make_worker(cfg)
+            await restored.load_checkpoint(tmp_path, start_step=batches + 1)
+            for _ in range(batches * 2 - 1):
+                expected = await original._next_batch()
+                actual = await restored._next_batch()
+                assert actual["idx"].tolist() == expected["idx"].tolist()
+
+        asyncio.run(run())
 
     def test_data_pt_is_written_atomically(self):
         """save_checkpoint leaves no .tmp file behind."""

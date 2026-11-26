@@ -206,7 +206,7 @@ reward 在 agent loop 内计算（Search-R1 的规则奖励在轨迹和检索文
      </div>
    </div>
 
-训练是瓶颈时（Qwen2.5-1.5B-Instruct，8 个 SGLang 实例 TP1，``rollout_batch_size`` 64 × ``group_size`` 4），缓冲上限决定两边能否重叠。``max_buffered_groups`` 取 1 × ``rollout_batch_size`` 时，下一批只能在本批交付后开始投放，生成与训练重新串行，步时中位数约 11 s；取 2 × 时为 3.94 s。缓冲分别稳定在 54 和 108 个组，都不超上限。
+在 Qwen2.5-1.5B-Instruct 的实测中，8 个 SGLang 实例各用 TP1，每批 64 个 prompt 组，每组 4 条轨迹。缓冲容量从一批增至两批后，步时中位数从约 11 s 降至 3.94 s，缓冲占用分别稳定在 54 和 108 个组。Search-R1 将批次交给 actor 时就释放名额，所以容量为一批时，下一批生成也可以与当前更新重叠。异步 OPD 则在 rollout 加载新权重时释放名额。
 
 .. raw:: html
 
@@ -225,7 +225,7 @@ reward 在 agent loop 内计算（Search-R1 的规则奖励在轨迹和检索文
 恢复训练
 --------------------------------
 
-rollout buffer worker 会把 dataloader 位置存进 checkpoint（``data/data.pt``）。恢复时跳过保存前已经投放出去的 prompt，数量在每次存档时打日志；在 Qwen 默认配置下实测为 192 个（在途加缓冲 128 个，加预取的一批 64 个）。
+rollout buffer worker 会把 dataloader 位置存进 checkpoint（``data/data.pt``）。恢复时跳过保存前已经投放出去的 prompt，数量在每次存档时打日志；在 Qwen 默认配置下实测为 192 个（在途加缓冲 128 个，加预取的一批 64 个）。开启 shuffle 时，checkpoint 还会保存当前 epoch 起始时的随机数生成器状态。只保存了位置的旧 checkpoint 在第二个及之后的 epoch 恢复时，样本顺序可能改变。
 
 限制
 --------------------------------

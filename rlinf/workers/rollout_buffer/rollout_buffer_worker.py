@@ -15,6 +15,7 @@
 import asyncio
 import os
 import time
+from collections.abc import Iterator
 from itertools import islice
 from typing import Any, Optional
 
@@ -30,6 +31,18 @@ from rlinf.data.schema.reasoning_results import DiscardedGroup, GroupMetadata
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.down_sampling import rewards_all_equal
 from rlinf.utils.runner_utils import local_mkdir_safe
+
+
+class _RolloutRandomSampler(RandomSampler):
+    def __init__(self, dataset: Dataset, seed: int):
+        generator = torch.Generator().manual_seed(seed)
+        super().__init__(dataset, generator=generator)
+        self.epoch_start_rng_state = generator.get_state()
+
+    def __iter__(self) -> Iterator[int]:
+        # Prefetch can start the permutation during either iter(loader) or state_dict().
+        self.epoch_start_rng_state = self.generator.get_state()
+        yield from super().__iter__()
 
 
 class RolloutBuffer:
@@ -148,9 +161,7 @@ class RolloutBuffer:
         from rlinf.data.datasets.reasoning import collate_fn
 
         if cfg.data.shuffle:
-            generator = torch.Generator()
-            generator.manual_seed(cfg.data.get("seed", 1))
-            sampler = RandomSampler(data_source=train_dataset, generator=generator)
+            sampler = _RolloutRandomSampler(train_dataset, cfg.data.get("seed", 1))
         else:
             sampler = SequentialSampler(data_source=train_dataset)
 
@@ -741,6 +752,9 @@ class RolloutBufferWorker(Worker):
         if self._pending_fetch is not None:
             await self._pending_fetch
         state_dict = self.buffer.dataloader.state_dict()
+        sampler = self.buffer.dataloader.sampler
+        if isinstance(sampler, _RolloutRandomSampler):
+            state_dict["epoch_start_rng_state"] = sampler.epoch_start_rng_state
         if distillation_manifest is not None:
             state_dict["distillation_manifest"] = distillation_manifest
         dropped = sum(
@@ -792,7 +806,19 @@ class RolloutBufferWorker(Worker):
             return
         state_dict = torch.load(local_path, weights_only=False)
         state_dict.pop("distillation_manifest", None)
+        rng_state = state_dict.pop("epoch_start_rng_state", None)
+        sampler = self.buffer.dataloader.sampler
+        if isinstance(sampler, _RolloutRandomSampler):
+            if rng_state is None:
+                self.log_warning(
+                    "This checkpoint has no shuffle RNG state. Resuming from the "
+                    "configured seed may change sample order after the first epoch."
+                )
+            else:
+                sampler.generator.set_state(rng_state)
+                sampler.epoch_start_rng_state = rng_state
         self.buffer.dataloader.load_state_dict(state_dict)
+        self._data_iter = None
 
     async def stop(self):
         """Cancel the resident coroutines; in-flight prompts are dropped."""

@@ -125,7 +125,7 @@ placement 的 key 为 ``teacher_<model key>``。所需 GPU 总数等于 ``num_re
 
 带 tail 的目标还会计算所选集合之外的概率质量。完整词表目标可能占用大量主机内存和传输带宽，``inference.max_payload_bytes`` 用于限制单个 Teacher 请求的大小。reverse、tail 和完整词表目标要求 ``log_prob_min_clamp: null``。所有目标当前均使用 ``policy_loss_mode: vanilla``，输入限于文本。
 
-设置 ``use_policy_gradient: true`` 后，蒸馏信号用于 policy-gradient 目标。此时采样参数要求 ``do_sample: true``、``temperature: 1.0``、``top_p: 1.0``、``top_k: -1`` （或 ``0``）、``min_new_tokens: 0`` 和 ``repetition_penalty: 1.0``。SGLang 的 ``rollout.sampling_params`` 和单次生成请求的覆盖值也需满足这些条件。Teacher 始终对原始模型概率评分。
+设置 ``use_policy_gradient: true`` 后，蒸馏信号用于 policy-gradient 目标。此时采样参数要求 ``do_sample: true``、``temperature: 1.0``、``top_p: 1.0``、``top_k: -1`` （或 ``0``）、``min_new_tokens: 0`` 和 ``repetition_penalty: 1.0``。SGLang 的 ``rollout.sampling_params`` 和单次生成请求的覆盖值也需满足这些条件。即使覆盖了 rollout 温度，也要将 ``algorithm.sampling_params.temperature`` 保持为 1.0，Actor 会按这个温度计算采样 token 的 logprob。Teacher 始终对原始模型概率评分。
 
 Policy-gradient 训练还需获取旧 Student 的 logprob。同步单样本训练设置 ``rollout.return_logprobs: true`` 可在生成时收集，设置 ``algorithm.recompute_logprobs: true`` 可在 Actor 更新前重新计算，两者至少开启一项。示例默认采用直接蒸馏，因此关闭了这两项。
 

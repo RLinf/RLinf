@@ -117,6 +117,18 @@ class TokenizerManager(_TokenizerManager):
         self.auto_create_handle_loop()
         await self.abort_generation_communicator(obj)
 
+    def _coalesce_streaming_chunks(self, out_list: list, rid: str) -> dict:
+        out = super()._coalesce_streaming_chunks(out_list, rid)
+        if any("mc_extra_ids" in chunk.get("meta_info", {}) for chunk in out_list):
+            meta = out.setdefault("meta_info", {})
+            for key in ("mc_extra_ids", "mc_extra_logprobs"):
+                meta[key] = [
+                    row
+                    for chunk in out_list
+                    for row in chunk.get("meta_info", {}).get(key, [])
+                ]
+        return out
+
     # to return output_ids and response_text simaltaneously in sglang 0.4.x.
     # copied from srt/managers/tokenizer_manager.py (0.4.6) and only add "output_ids" in out_dict when isinstance(recv_obj, BatchStrOut) is True
     def _handle_batch_output(

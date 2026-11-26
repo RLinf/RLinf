@@ -21,7 +21,6 @@ from concurrent.futures import (
 from typing import Union
 
 import regex
-from latex2sympy2 import latex2sympy
 from sympy import N, simplify
 from sympy.parsing.latex import parse_latex
 from sympy.parsing.sympy_parser import parse_expr
@@ -86,8 +85,15 @@ def numeric_equal(prediction: float, reference: float):
 
 
 def symbolic_equal(a, b):
+    def parsers():
+        yield parse_latex
+        yield parse_expr
+        from latex2sympy2 import latex2sympy
+
+        yield latex2sympy
+
     def _parse(s):
-        for f in [parse_latex, parse_expr, latex2sympy]:
+        for f in parsers():
             try:
                 return f(s.replace("\\\\", "\\"))
             except Exception:
@@ -365,6 +371,8 @@ def process_results(answer, solution):
             retval = False
 
         return retval, (extracted_answer, extracted_solution)
+    except ImportError:
+        raise
     except Exception:
         return False, ("None", "None")
 

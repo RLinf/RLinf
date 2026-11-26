@@ -262,6 +262,12 @@ def build_distillation_plan(cfg: Mapping) -> DistillationPlan:
         if sampling is None:
             sampling = algorithm.get("sampling_params", {})
         validate_pg_sampling(sampling)
+        actor_temperature = algorithm.get("sampling_params", {}).get("temperature", 1.0)
+        if actor_temperature != 1.0:
+            raise ValueError(
+                "Distillation PG requires algorithm.sampling_params.temperature=1 "
+                f"for Actor logprobs, found {actor_temperature}."
+            )
     if cfg.get("data", {}).get("type") in {"vlm", "vision_language"}:
         raise ValueError("Distillation supports text-only inputs")
     need_ref = algorithm.get("kl_beta", 0) > 0

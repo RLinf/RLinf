@@ -1984,6 +1984,11 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
         )
     if cfg.runner.get("async_mode", False) or plan.separate_async:
         return _validate_async_agent_cfg(cfg, component_placement, plan)
+    if cfg.algorithm.get("max_num_gen_batches", 1) != 1:
+        raise ValueError(
+            "Synchronous SearchR1 requires algorithm.max_num_gen_batches=1: "
+            "the actor consumes one rollout batch per update."
+        )
     _validate_agent_group_count(cfg, component_placement)
     return cfg
 
@@ -1991,10 +1996,17 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
 def _validate_agent_group_count(cfg, component_placement):
     """Each multi-agent actor DP rank reads an equal number of whole prompt groups."""
     batch_size = cfg.data.get("rollout_batch_size")
-    if batch_size is not None and batch_size % component_placement.actor_dp_size:
+    if batch_size is None:
+        return
+    actor_dp_size = (
+        component_placement.get_world_size("actor")
+        if cfg.actor.training_backend == "fsdp"
+        else component_placement.actor_dp_size
+    )
+    if batch_size % actor_dp_size:
         raise ValueError(
             f"data.rollout_batch_size ({batch_size}) must be divisible by the "
-            f"actor data-parallel size ({component_placement.actor_dp_size})."
+            f"actor data-parallel size ({actor_dp_size})."
         )
 
 

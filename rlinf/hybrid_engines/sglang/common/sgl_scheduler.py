@@ -313,9 +313,27 @@ class Scheduler(_Scheduler):
                 )
             self.weight_norm_dict = None
 
-        return SyncHFWeightOutput(
-            error=self._handle_cache_after_sync(recv_req.pause_mode)
-        )
+        return self._acknowledge_cache_sync(recv_req.pause_mode)
+
+    def _acknowledge_cache_sync(self, pause_mode: Optional[str]) -> SyncHFWeightOutput:
+        try:
+            error = self._handle_cache_after_sync(pause_mode)
+        except Exception as exc:
+            error = f"cache flush after weight sync failed: {exc!r}"
+
+        # Only the leader sends a reply to the tokenizer for the TP shards.
+        if self.tp_size > 1 and pause_mode != "in_place":
+            errors = [None] * self.tp_size
+            torch.distributed.all_gather_object(errors, error, group=self.tp_cpu_group)
+            error = next(
+                (
+                    f"TP rank {rank}: {reason}"
+                    for rank, reason in enumerate(errors)
+                    if reason
+                ),
+                None,
+            )
+        return SyncHFWeightOutput(error=error)
 
     def _handle_cache_after_sync(self, pause_mode: Optional[str]) -> Optional[str]:
         """Return an error if the cache cannot safely acknowledge the new weights.

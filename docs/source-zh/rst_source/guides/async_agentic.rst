@@ -104,7 +104,9 @@ buffer worker 只在两个上限同时满足时才投放新 prompt。两个上�
 
 第二个上限要求在途组数加上缓冲里的组数低于 ``rollout_buffer.max_buffered_groups``，默认为 2 × ``rollout_batch_size``。在途组也要算进去，因为它们迟早会进缓冲：组内轨迹一跑完，就无条件放入缓冲。如果只限制缓冲本身，在途部分就没有约束，一旦训练成为瓶颈，缓冲会越堆越多。我们实测过这种错误配置，缓冲涨到 338 和 369 个组，staleness 达到 8。把在途组算进上限后，每个组在完成时都有缓冲名额。
 
-这个上限怎么取，要看瓶颈在哪一边。生成是瓶颈时，actor 一直在等数据，缓冲随进随出，这时 ``max_buffered_groups`` 至少要取 ``max_inflight_groups + rollout_batch_size``；取得更小，每步末尾缓冲里的组会占掉在途的额度，引擎反而吃不饱。训练是瓶颈时，靠缓冲让生成一直有活干，这时至少要取 2 × ``rollout_batch_size``，下一批才能在本批训练时开始生成。如果只取 1 倍，下一批要等本批交付之后才能开始投放，每一步都要等整批（包括最慢的组）生成完。在缩小规模的 Qwen2.5-1.5B 配置上（``rollout_batch_size`` 为 64）实测，1×B 的步时中位数约 11 s，2×B 为 3.94 s；后者付出的代价是 staleness 从约 1 升到均值峰值 2.09。
+这个上限怎么取，要看瓶颈在哪一边。生成是瓶颈时，actor 一直在等数据，缓冲随进随出，这时 ``max_buffered_groups`` 至少要取 ``max_inflight_groups + rollout_batch_size``；取得更小，每步末尾缓冲里的组会占掉在途的额度，引擎反而吃不饱。Search-R1 在把一批数据交给 actor 时就释放这批的名额。容量为一个 batch 时，下一批生成可以与当前更新重叠；容量为两个 batch 时，下一批可以在交付前就开始生成。在 Qwen2.5-1.5B、每批 64 个 prompt 组的实测中，容量从一批增至两批后，步时中位数从约 11 s 降至 3.94 s，平均 staleness 从约 1 升至峰值 2.09。
+
+异步 OPD 会保留训练批次的名额，直到 rollout 加载新权重。容量为一个 batch 时，下一批要等到新版本发布才能投放。
 
 判断哪个上限在起作用
 ~~~~~~~~~~~~~~~~~~~~
@@ -139,4 +141,4 @@ Staleness
 限制
 ----
 
-异步 agentic RL 目前只支持它所基于的组合：Megatron actor、多轮 agent loop、SGLang server 后端，以及 actor 与 rollout 分离部署的 placement。训练时不做 off-policy 修正，rollout 返回的 logprob 直接作为 PPO 的 old logprob，可以通过设置版本差上限，让 actor 只接受近期生成的数据。
+异步 Search-R1 RL 使用 Megatron actor、多轮 agent loop，以及部署在独立 GPU 上的 SGLang server。actor 直接使用 rollout 返回的 logprob 作为 PPO 的 old logprob。需要让 actor 只接受近期生成的数据时，可设置版本差上限。使用 FSDP actor 做异步蒸馏的配置见 :doc:`在线策略蒸馏 </rst_source/examples/agentic/math_reasoning/opd>`。

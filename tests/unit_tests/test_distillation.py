@@ -520,6 +520,12 @@ class TestDistillation(unittest.TestCase):
         cfg["rollout"]["sampling_params"] = sampling
         self.assertTrue(build_distillation_plan(cfg).use_policy_gradient)
 
+        cfg["algorithm"]["sampling_params"]["temperature"] = 0.5
+        with self.assertRaisesRegex(
+            ValueError, "algorithm.sampling_params.temperature"
+        ):
+            build_distillation_plan(cfg)
+
     def test_async_joint_reward_grpo_uses_reasoning_preset(self):
         from contextlib import nullcontext
         from pathlib import Path

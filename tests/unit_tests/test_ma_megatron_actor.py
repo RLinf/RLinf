@@ -57,12 +57,13 @@ class TestExtractVersionedTrajectoryRecords:
 
     def test_extracts_per_trajectory_records(self):
         actor = self._make_actor()
-        # One result = one group (result_index 0); its trajectories are
+        # One result = one group; its trajectories are
         # trajectory 0 (two turns) and trajectory 1 (one turn).
         result = DynamicRolloutResult(
             num_sequence=3,
             group_size=2,
             idx_to_traj=[0, 0, 1],
+            group_id=42,
             input_ids=[[1] * 4, [1] * 4, [1] * 4],
             prompt_lengths=[1, 1, 1],
             response_lengths=[10, 30, 20],
@@ -75,7 +76,7 @@ class TestExtractVersionedTrajectoryRecords:
         assert len(records) == 2
         first, second = records
         # Every trajectory of one result shares the result's group index.
-        assert first.group_index == 0 and second.group_index == 0
+        assert first.group_index == 42 and second.group_index == 42
         assert first.earliest_version == 5
         assert first.completion_version == 6
         assert first.generated_tokens == 40
@@ -98,6 +99,16 @@ class TestExtractVersionedTrajectoryRecords:
         assert metrics["cross_version_call_ratio"] == 0.5
         assert "equal_reward_group_ratio" not in metrics
         assert "zero_reward_group_ratio" not in metrics
+
+    def test_filtered_trajectory_does_not_create_a_version_record(self):
+        from rlinf.utils.metric_utils import compute_staleness_metrics
+
+        result = self._dynamic_result(version_start=[2, 3], version_end=[2, 3])
+        result.idx_to_traj = [1, 1]
+        result.group_id = 21
+        records = self._make_actor()._extract_versioned_trajectory_records([result])
+        assert [(r.group_index, r.call_count) for r in records] == [(21, 2)]
+        assert compute_staleness_metrics(records, version=4)["data_staleness/max"] == 2
 
     def test_returns_none_without_versions(self):
         actor = self._make_actor()

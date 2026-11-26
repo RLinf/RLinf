@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import copy
-from dataclasses import replace
 from typing import Optional
 
 import torch
@@ -620,14 +619,16 @@ class MAMegatronActor(MegatronActor):
         return rollout_metrics
 
     def _extract_versioned_trajectory_records(
-        self, rollout_results: list[DynamicRolloutResult]
+        self,
+        rollout_results: list[DynamicRolloutResult],
+        dp_rank: int = 0,
+        dp_size: int = 1,
     ) -> Optional[list[VersionedTrajectoryRecord]]:
         """Extract per-trajectory weight-version records from rollout results.
 
         Returns None when any result lacks versions (synchronous training).
-        Group indices are the position of each result in the local list, so
-        they are unique within a rank; `_compute_staleness_metrics` offsets
-        them per rank after gathering.
+        Preserve buffer group IDs. For untagged results use a negative ID
+        unique to the local position and data-parallel rank.
         """
         records = []
         for result_index, rollout_result in enumerate(rollout_results):
@@ -646,7 +647,6 @@ class MAMegatronActor(MegatronActor):
             call_counts = [0] * num_trajectories
             cross_version_calls = [0] * num_trajectories
             turn_rewards = [0.0] * num_trajectories
-            turn_counts = [0] * num_trajectories
             token_weighted_version_start_sums = [0] * num_trajectories
             for turn_index, traj_index in enumerate(rollout_result.idx_to_traj):
                 turn_tokens = rollout_result.response_lengths[turn_index]
@@ -667,21 +667,24 @@ class MAMegatronActor(MegatronActor):
                 cross_version_calls[traj_index] += int(version_start != version_end)
                 if rollout_result.rewards is not None:
                     turn_rewards[traj_index] += rollout_result.rewards[turn_index]
-                turn_counts[traj_index] += 1
                 token_weighted_version_start_sums[traj_index] += (
                     version_start * turn_tokens
                 )
-            for traj_index in range(num_trajectories):
+            group_id = rollout_result.group_id
+            if group_id is None:
+                group_id = -(result_index * dp_size + dp_rank + 1)
+            for traj_index, calls in enumerate(call_counts):
+                if calls == 0:
+                    continue
                 records.append(
                     VersionedTrajectoryRecord(
-                        group_index=result_index,
+                        group_index=group_id,
                         earliest_version=earliest_versions[traj_index],
                         completion_version=completion_versions[traj_index],
                         generated_tokens=generated_tokens[traj_index],
-                        call_count=call_counts[traj_index],
+                        call_count=calls,
                         cross_version_calls=cross_version_calls[traj_index],
-                        reward=turn_rewards[traj_index]
-                        / max(turn_counts[traj_index], 1)
+                        reward=turn_rewards[traj_index] / calls
                         if rollout_result.rewards is not None
                         else None,
                         token_weighted_version_start_sum=(
@@ -700,15 +703,16 @@ class MAMegatronActor(MegatronActor):
         """Compute staleness metrics over all DP ranks, or None to skip.
 
         MP ranks hold broadcast copies of the same results, so records are
-        gathered only across the DP group and group indices are offset by
-        rank to stay unique. If any DP rank lacks versions, all ranks skip
+        gathered only across the DP group. If any DP rank lacks versions, all ranks skip
         (the has-version flag is gathered first).
         """
         if version is None or dp_group is None:
             return None
 
-        local_records = self._extract_versioned_trajectory_records(rollout_results)
         dp_world_size = torch.distributed.get_world_size(dp_group)
+        local_records = self._extract_versioned_trajectory_records(
+            rollout_results, torch.distributed.get_rank(dp_group), dp_world_size
+        )
         has_version_list = [None] * dp_world_size
         torch.distributed.all_gather_object(
             has_version_list, local_records is not None, group=dp_group
@@ -721,17 +725,9 @@ class MAMegatronActor(MegatronActor):
         torch.distributed.all_gather_object(
             records_by_rank, local_records, group=dp_group
         )
-        # Offset group indices by the number of records on preceding ranks
-        # (deterministic on every rank) so groups from different DP ranks
-        # stay distinct.
-        all_records = []
-        group_index_offset = 0
-        for rank_records in records_by_rank:
-            for record in rank_records:
-                all_records.append(
-                    replace(record, group_index=group_index_offset + record.group_index)
-                )
-            group_index_offset += len(rank_records)
+        all_records = [
+            record for rank_records in records_by_rank for record in rank_records
+        ]
         return compute_staleness_metrics(all_records, version)
 
     def run_inference(

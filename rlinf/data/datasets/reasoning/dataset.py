@@ -82,6 +82,10 @@ class ReasoningDataset(Dataset):
         )
         self.prompt_key = config.data.prompt_key
         self.answer_key = config.data.answer_key
+        self.unwrap_math_reference = (
+            self.answer_key == "reward_model"
+            and (config.get("reward") or {}).get("reward_type") == "math"
+        )
         self.is_apply_chat_template = config.data.apply_chat_template
         self.apply_chat_template_kwargs = config.data.get(
             "apply_chat_template_kwargs", {}
@@ -240,6 +244,8 @@ class ReasoningDataset(Dataset):
 
         prompt = self.data[idx][self.prompt_key]
         answer = self.data[idx][self.answer_key]
+        if self.unwrap_math_reference and isinstance(answer, dict):
+            answer = answer.get("ground_truth", answer)
 
         # if answer is a string, convert it to a list
         if isinstance(answer, str):

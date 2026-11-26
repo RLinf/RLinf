@@ -654,12 +654,13 @@ def test_retract_sync_requires_cache_flush_on_every_replica(flush_result):
     waiting = [object()]
     scheduler.waiting_queue = waiting
     scheduler.flush_cache = lambda: flush_result
-    error = scheduler._handle_cache_after_sync("retract")
+    scheduler.tp_size = 1
+    reply = scheduler._acknowledge_cache_sync("retract")
     assert scheduler.waiting_queue is waiting
     manager = TokenizerManager.__new__(TokenizerManager)
     manager.auto_create_handle_loop = lambda: None
     manager.sync_hf_weight_communicator = mock.AsyncMock(
-        return_value=[SyncHFWeightOutput(), SyncHFWeightOutput(error=error)]
+        return_value=[SyncHFWeightOutput(), reply]
     )
     worker = SGLangWorker.__new__(SGLangWorker)
     worker._is_model_instance_entry = True
@@ -671,6 +672,38 @@ def test_retract_sync_requires_cache_flush_on_every_replica(flush_result):
     with pytest.raises(RuntimeError, match="retract.*flush"):
         asyncio.run(worker.sync_model_from_actor(version=1))
     assert worker._weight_version == 0
+
+
+def _check_tp_cache_ack(rank, rendezvous):
+    import torch.distributed as dist
+
+    from rlinf.hybrid_engines.sglang.common.sgl_scheduler import Scheduler
+
+    dist.init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=2)
+    try:
+        scheduler = Scheduler.__new__(Scheduler)
+        scheduler.tp_size = 2
+        scheduler.tp_cpu_group = dist.group.WORLD
+        scheduler.running_batch = SimpleNamespace(is_empty=lambda: True, reqs=[])
+        scheduler.chunked_req = None
+        scheduler.enable_overlap = False
+        scheduler.waiting_queue = []
+        for failing_rank in (None, 0, 1):
+            scheduler.flush_cache = lambda: rank != failing_rank
+            reply = scheduler._acknowledge_cache_sync("retract")
+            if failing_rank is None:
+                assert reply.error is None
+            else:
+                assert f"TP rank {failing_rank}" in reply.error
+    finally:
+        dist.destroy_process_group()
+
+
+def test_cache_ack_includes_nonleader_tp_rank(tmp_path):
+    pytest.importorskip("sglang")
+    import torch.multiprocessing as mp
+
+    mp.spawn(_check_tp_cache_ack, args=((tmp_path / "gloo").as_uri(),), nprocs=2)
 
 
 class TestSyncWeightsInstanceSubset:

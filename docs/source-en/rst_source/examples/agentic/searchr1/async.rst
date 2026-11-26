@@ -288,13 +288,13 @@ at 75 running requests.
      </div>
    </div>
 
-When training is the bottleneck (Qwen2.5-1.5B-Instruct, 8 SGLang instances
-at TP1, ``rollout_batch_size`` 64 × ``group_size`` 4), the buffer limit
-decides whether the two sides overlap. At ``max_buffered_groups`` =
-1 × ``rollout_batch_size``, the next batch can only start generating after
-the current one is handed off, so generation and training serialize and the
-median step time is about 11 s. At 2 ×, the median step time is 3.94 s; the
-buffer settles at 54 and 108 groups respectively, both within the limit.
+In the Qwen2.5-1.5B-Instruct run (8 SGLang instances at TP1, 64 prompt
+groups per batch and 4 trajectories per group), doubling the buffer capacity
+from one batch to two reduced median step time from about 11 s to 3.94 s.
+Buffer occupancy settled at 54 and 108 groups respectively. Search-R1 frees
+slots on handoff to the actor, so even with one batch of capacity the next
+batch can generate while the actor trains. Separate async OPD releases those
+slots when rollout loads the new weights.
 
 .. raw:: html
 
@@ -317,7 +317,10 @@ The rollout buffer worker saves the dataloader position into the checkpoint
 (``data/data.pt``). On resume, the prompts that were already issued before
 the save are skipped, and their count is logged at every save; the measured
 count is 192 on the Qwen default config (128 in-flight plus buffered
-groups, plus one prefetched dataloader batch of 64).
+groups, plus one prefetched dataloader batch of 64). With shuffling enabled,
+the checkpoint also saves the random generator state at the start of the
+current epoch. Older checkpoints that only saved the position can resume in
+a different order after the first epoch.
 
 Limitations
 -----------

@@ -385,6 +385,45 @@ class TestMathDatasetMultithread:
 
         return data
 
+    @pytest.fixture
+    def dapo_reference(self, mock_tokenizer, mock_config, tmp_path):
+        path = tmp_path / "dapo.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "question": "6 * 7?",
+                    "reward_model": {"style": "rule", "ground_truth": "42"},
+                }
+            )
+            + "\n"
+        )
+        mock_config.reward = {"reward_type": "math"}
+        mock_config.data.answer_key = "reward_model"
+        mock_config.data.apply_chat_template = False
+        mock_config.data.filter_prompt_by_length = False
+        dataset = ReasoningDataset([str(path)], mock_config, mock_tokenizer)
+        return dataset[0].answer
+
+    def test_dapo_reward_model_reference(self, dapo_reference):
+        assert dapo_reference == ["42"]
+
+    def test_dapo_reference_scores_correct_and_incorrect(self, dapo_reference):
+        from concurrent.futures import ThreadPoolExecutor
+
+        pytest.importorskip("word2number")
+        from rlinf.algorithms.rewards.math import MathReward
+        from rlinf.algorithms.rewards.math.math_verifier import verify
+
+        reward = MathReward({"reward_scale": 5})
+        with (
+            ThreadPoolExecutor(1) as pool,
+            patch.object(verify, "global_executor", pool),
+        ):
+            scores = reward.get_reward(
+                [r"\boxed{42}", r"\boxed{41}"], [dapo_reference] * 2
+            )
+        assert scores == [5.0, -5.0]
+
     def test_multithread_vs_singlethread_consistency(
         self, mock_tokenizer, mock_config, sample_data, tmp_path
     ):

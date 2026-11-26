@@ -178,14 +178,16 @@ generation is the bottleneck, the actor is always waiting and the buffer
 empties as fast as it fills; keep ``max_buffered_groups`` at least
 ``max_inflight_groups + rollout_batch_size``, or the buffered groups take
 budget from the in-flight ones at the end of each step and the engines run
-short of work. When training is the bottleneck, the buffer is what keeps
-generation busy; keep it at least 2 × ``rollout_batch_size`` so the next batch
-generates while the current one trains. At 1 ×, the next batch can only start
-after the current one is handed off, and every step waits for a whole batch,
-slowest group included, to finish generating. On a scaled-down Qwen2.5-1.5B
-setup with ``rollout_batch_size`` 64, the median step time was about 11 s at
-1×B against 3.94 s at 2×B, and the staleness rose from about 1 to a peak mean
-of 2.09.
+short of work. Search-R1 releases slots as soon as it hands a batch to the
+actor. With one batch of capacity, generation of the next batch can overlap
+the current update. With two batches of capacity, generation can start before
+the handoff. In the Qwen2.5-1.5B run with 64 prompt groups per batch, median
+step time fell from about 11 s to 3.94 s as capacity doubled, and mean
+staleness rose from about 1 to a peak of 2.09.
+
+Separate async OPD holds the slots for a training batch until rollout loads
+the new weights. With one batch of capacity, this delays admission of the
+next batch until weight publication.
 
 Which Limit Is Binding
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -258,8 +260,8 @@ rollout, giving the rollout more capacity or generating with a smaller model.
 Limitations
 -----------
 
-Asynchronous agentic RL runs only on the combination it was built for: a
-Megatron actor, the multi-turn agent loop, the SGLang server backend, and a
-disaggregated placement of actor and rollout. There is no off-policy
-correction: the rollout logprob is used directly as the PPO old logprob, so
-set an explicit age limit if the actor should accept only recent data.
+Asynchronous Search-R1 RL uses a Megatron actor, the multi-turn agent loop,
+and an SGLang server on separate GPUs. The actor uses rollout logprobs as PPO
+old logprobs. Set an explicit age limit if it should accept only recent data.
+For separate async distillation with an FSDP actor, see
+:doc:`On-Policy Distillation </rst_source/examples/agentic/math_reasoning/opd>`.

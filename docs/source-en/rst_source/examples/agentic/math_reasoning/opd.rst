@@ -180,7 +180,10 @@ Set ``use_policy_gradient: true`` to use the distillation signal as a
 policy-gradient objective. This requires sampling with ``do_sample: true``,
 ``temperature: 1.0``, ``top_p: 1.0``, ``top_k: -1`` (or ``0``),
 ``min_new_tokens: 0``, and ``repetition_penalty: 1.0``. These settings also
-apply to ``rollout.sampling_params`` and per-request SGLang overrides. The Teacher scores raw model probabilities.
+apply to ``rollout.sampling_params`` and per-request SGLang overrides. Keep
+``algorithm.sampling_params.temperature`` at 1.0 even when overriding rollout
+sampling. The Actor uses that temperature to score the sampled tokens.
+The Teacher scores raw model probabilities.
 
 Policy-gradient training also requires old Student logprobs. For synchronous single-sample training, set either
 ``rollout.return_logprobs: true`` to collect them during generation or

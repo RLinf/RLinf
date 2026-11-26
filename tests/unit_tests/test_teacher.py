@@ -700,8 +700,9 @@ class TestTeacherClient(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.runner.cleanup()
 
-    async def test_mc_rows_survive_nonstreaming_output_chunks(self):
+    async def test_mc_rows_survive_output_chunks(self):
         from dataclasses import fields
+        from itertools import product
         from unittest.mock import Mock
 
         import pytest
@@ -715,7 +716,9 @@ class TestTeacherClient(unittest.IsolatedAsyncioTestCase):
         )
         from rlinf.workers.teacher.scoring import read_mc_samples
 
-        for output_type in (BatchTokenIDOutput, BatchStrOutput):
+        for output_type, incremental in product(
+            (BatchTokenIDOutput, BatchStrOutput), (False, True)
+        ):
             manager = TokenizerManager.__new__(TokenizerManager)
             manager.enable_metrics = manager.patch_return_output_ids = False
             manager.dump_requests_folder = manager.crash_dump_folder = None
@@ -723,7 +726,7 @@ class TestTeacherClient(unittest.IsolatedAsyncioTestCase):
                 batch_notify_size=8,
                 weight_version="0",
                 skip_tokenizer_init=False,
-                incremental_streaming_output=False,
+                incremental_streaming_output=incremental,
                 speculative_algorithm=None,
                 enable_lora=False,
                 dp_size=1,
@@ -740,7 +743,7 @@ class TestTeacherClient(unittest.IsolatedAsyncioTestCase):
                     top_logprobs_num=0,
                     token_ids_logprob=None,
                     return_text_in_logprobs=False,
-                    stream=False,
+                    stream=incremental,
                 ),
             )
             manager.rid_to_state = {"query": state}
@@ -762,7 +765,12 @@ class TestTeacherClient(unittest.IsolatedAsyncioTestCase):
                     "mc_extra_logprobs": [[[-1.0] for _ in ids]],
                 }
                 await manager._handle_batch_output(out)
-            rows = read_mc_samples(state.out_list[0], mc_k=2)
+            if incremental:
+                self.assertEqual(len(state.out_list), 2)
+                output = manager._coalesce_streaming_chunks(state.out_list, "query")
+            else:
+                output = state.out_list[0]
+            rows = read_mc_samples(output, mc_k=2)
             self.assertEqual(rows, [([i, i + 1], [-0.5, -1.0]) for i in range(51)])
 
     async def test_mc_teacher_scores_duplicates_and_preserves_behavior(self):

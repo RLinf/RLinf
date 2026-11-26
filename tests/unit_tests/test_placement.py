@@ -1098,6 +1098,33 @@ class TestSearchr1AsyncBatchDivisibility:
         with pytest.raises(ValueError, match="recompute_logprobs=False"):
             self._validate(cfg, actor_dp_size=4)
 
+    def test_sync_generation_multiplier_rejected(self):
+        cfg = self._make_cfg(rollout_batch_size=4)
+        cfg.runner.async_mode = False
+        cfg.algorithm.max_num_gen_batches = 2
+        with pytest.raises(ValueError, match="max_num_gen_batches=1"):
+            self._validate(cfg, actor_dp_size=2)
+
+    def test_fsdp_consumes_groups_across_all_actor_ranks(self):
+        from pathlib import Path
+
+        import rlinf.config as cfg_mod
+
+        root = Path(__file__).resolve().parents[2]
+        cfg = OmegaConf.load(
+            root / "examples/agent/searchr1/config/train_qwen2.5_fsdp.yaml"
+        )
+        cfg.cluster.component_placement = {"actor,rollout,reward": "0-3"}
+        cfg.actor.model.tensor_model_parallel_size = 2
+        cfg.data.rollout_batch_size = 2
+        with mock.patch.object(
+            cfg_mod, "Cluster", return_value=create_fake_cluster(1, 4)
+        ):
+            with pytest.raises(ValueError, match=r"actor data-parallel size \(4\)"):
+                cfg_mod.validate_searchr1_cfg(cfg)
+            cfg.data.rollout_batch_size = 4
+            cfg_mod.validate_searchr1_cfg(cfg)
+
     def test_divisible_batch_size_passes(self):
         cfg = self._validate(self._make_cfg(rollout_batch_size=8), actor_dp_size=4)
         assert cfg.data.rollout_batch_size == 8

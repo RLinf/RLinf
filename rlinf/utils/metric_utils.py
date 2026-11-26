@@ -32,7 +32,7 @@ class VersionedTrajectoryRecord:
     """Per-trajectory weight-version record for staleness statistics.
 
     One record per trajectory in a training step; groups are identified by
-    `group_index` (unique within the step after the caller offsets it by rank).
+    `group_index` (unique within the training step).
     """
 
     group_index: int
