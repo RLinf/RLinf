@@ -53,7 +53,7 @@ VLM-as-Policy：LIBERO + Qwen3.8-27B
    * - LIBERO
      - ``libero_gso``\ （Goal、Spatial、Object）
      - ``libero_gso_grpo_pear_sglang.yaml``
-     - 第一阶段默认配置（2 机 16 卡，每步 8 组，160k 预算，默认 ``max_steps: 2`` 快速冒烟）
+     - 第一阶段默认配置（2 机 16 卡，每步 8 组，160k 预算，默认 ``max_steps: 2`` 快速验证）
    * - LIBERO
      - ``libero_gso``\ （Goal、Spatial、Object）
      - ``libero_gso_grpo_pear_sglang_paper.yaml``
@@ -85,83 +85,98 @@ VLM-as-Policy：LIBERO + Qwen3.8-27B
    * - 提示词
      - 系统提示词定义坐标系与 JSON 格式，每轮追加状态 JSON 与带相机标签的新帧。LIBERO 指令中的左右方向已做镜像，与旋转后的相机画面一致。
 
-安装
-----
+安装与运行
+----------
 
-安装包含 LIBERO 与 SGLang ``0.5.22``\ （CUDA 13 wheel）的具身 Qwen3.8 运行环境：
+先在多节点集群上启动 Ray（默认配置需 2 台 8 卡节点，论文规模需 4 台 8 卡节点），每个节点在运行 ``ray start`` 前导出唯一的 ``RLINF_NODE_RANK``\ （头节点为 ``0``，工作节点依次为 ``1`` 等）。
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model qwen3_8 --env libero
+   .. tab-item:: LIBERO + Qwen3.8-27B（GRPO / PEAR）
 
-在每个节点启动 Ray 或运行训练前激活虚拟环境：
+      **1. 安装环境**
 
-.. code-block:: bash
+      安装包含 LIBERO 与 SGLang ``0.5.22``\ （CUDA 13 wheel）的具身 Qwen3.8 环境，并在每个节点激活：
 
-   source .venv/bin/activate
+      .. code-block:: bash
 
-下载模型
---------
+         bash requirements/install.sh embodied --model qwen3_8 --env libero
+         source .venv/bin/activate
 
-将 ``Qwen/Qwen3.8-27B`` 下载到所有节点可访问的目录（例如共享存储）：
+      **2. 下载模型**
 
-.. code-block:: bash
+      将 ``Qwen/Qwen3.8-27B`` 下载到所有节点可访问的目录（例如共享存储）：
 
-   hf download Qwen/Qwen3.8-27B --local-dir /path/to/Qwen3.8-27B
+      .. code-block:: bash
 
-启动脚本默认导出 ``HF_HUB_OFFLINE=1`` 与 ``TRANSFORMERS_OFFLINE=1``，各节点必须能直接读取本地模型目录。将 ``examples/embodiment/config/libero_gso_grpo_pear_sglang.yaml`` 中的下面三项改为实际路径：
+         hf download Qwen/Qwen3.8-27B --local-dir ./Qwen3.8-27B
 
-.. code-block:: yaml
+      启动脚本默认设置离线环境变量，各节点必须能直接读取本地模型目录。将 ``examples/embodiment/config/libero_gso_grpo_pear_sglang.yaml`` 中的模型与分词器路径指向本地目录（推理端会同步使用该模型目录）：
 
-   rollout:
-     model:
-       model_path: /path/to/Qwen3.8-27B
+      .. code-block:: yaml
 
-   actor:
-     model:
-       model_path: /path/to/Qwen3.8-27B
-     tokenizer:
-       tokenizer_model: /path/to/Qwen3.8-27B
+         actor:
+           model:
+             model_path: ./Qwen3.8-27B
+           tokenizer:
+             tokenizer_model: ./Qwen3.8-27B
 
-运行
-----
+      **3. 启动训练**
 
-先在各节点启动 Ray 集群，每个节点在运行 ``ray start`` 前导出唯一的 ``RLINF_NODE_RANK``\ （头节点为 ``0``，工作节点依次为 ``1`` 等）。
+      在头节点运行默认配置（需 2 节点 16 卡，``cluster.num_nodes: 2``，默认 2 步快速验证）：
 
-在头节点启动默认 2 机 16 卡第一阶段配置：
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash examples/embodiment/run_vlm_policy.sh libero_gso_grpo_pear_sglang
 
-   bash examples/embodiment/run_vlm_policy.sh libero_gso_grpo_pear_sglang
+      正式训练时调大 ``runner.max_steps``\ （例如 ``1000``）；也可以直接运行论文规模配置（需 4 节点 32 卡，``cluster.num_nodes: 4``）或 2 节点第二阶段 ``libero_10`` 配置：
 
-``libero_gso_grpo_pear_sglang.yaml`` 默认设为 ``runner.max_steps: 2``、``data.rollout_batch_size: 8`` 和 ``agentloop.max_turns: 16``，便于先快速跑通端到端链路。正式训练时调大 ``runner.max_steps``\ （例如 ``1000``），或直接运行论文规模配置与第二阶段配置：
+      .. code-block:: bash
 
-.. code-block:: bash
-
-   bash examples/embodiment/run_vlm_policy.sh libero_gso_grpo_pear_sglang_paper
-   bash examples/embodiment/run_vlm_policy.sh libero_10_grpo_pear_stage2
+         bash examples/embodiment/run_vlm_policy.sh libero_gso_grpo_pear_sglang_paper
+         bash examples/embodiment/run_vlm_policy.sh libero_10_grpo_pear_stage2
 
 关键配置项
 ~~~~~~~~~~
 
-按集群规模或训练阶段调整 YAML 时，重点修改以下几组字段：
+按集群规模或训练阶段调整 YAML 时，重点修改下表中的几组字段：
 
-- **节点划分与步数**：``cluster.num_nodes``、``cluster.component_placement``\ （包含 ``actor``、``rollout`` 与 ``reward``，异步模式下 ``reward`` 与 ``rollout`` 共用卡号）、``runner.max_steps`` 与 ``runner.seq_length``。
-- **采样并发与滞后上限**：``data.task_suite_name``、``data.rollout_batch_size``、``agentloop.max_turns``、``agentloop.max_actor_accept_staleness``、``rollout_buffer.max_inflight_groups``、``rollout_buffer.max_buffered_groups`` 与 ``tools.embodied_env.max_concurrent_envs``。
-- **流式会话与本地缓存**：``session_server.engine_streaming_session``、``session_server.merge_continuous_turns``、``session_server.payload_shards`` 与 ``session_server.keep_sessions_on_weight_sync``。
-- **SGLang 与 FSDP2 显存设置**：``rollout.sglang.attention_backend``\ （保持 ``null`` 由引擎按 GPU 架构自动选择）、``rollout.sglang.max_mamba_cache_size``\ （默认 ``256``，避免并发流式会话占满循环状态槽位）、``actor.fsdp_config.enable_gradient_accumulation: False`` 与 ``actor.fsdp_config.gradient_checkpointing_use_reentrant: False``。
-- **组过滤与第三阶段开关**：``algorithm.down_sampling.down_sampling_config.reject_equal_reward`` 控制 DAPO 零方差组过滤；``algorithm.pear.score_centering`` 与 ``session_server.topk_log_probs`` 用于第三阶段开启 top-K score centering。
+.. list-table::
+   :header-rows: 1
+   :widths: 22 40 38
+
+   * - 类别
+     - 配置项
+     - 说明
+   * - 节点划分与步数
+     - ``cluster.num_nodes``、``cluster.component_placement``、``runner.max_steps``、``runner.seq_length``
+     - 将 ``actor`` 与 ``rollout`` 放在互不重叠的 GPU 上；异步模式下 ``reward`` 与 ``rollout`` 共用卡号。
+   * - 采样并发
+     - ``data.task_suite_name``、``data.rollout_batch_size``、``agentloop.max_turns``、``tools.embodied_env.max_concurrent_envs``
+     - 按推理端卡数调整并发 LIBERO 模拟器数量与最大交互轮数。
+   * - 缓冲与滞后上限
+     - ``rollout_buffer.max_inflight_groups``、``rollout_buffer.max_buffered_groups``、``agentloop.max_actor_accept_staleness``
+     - 让推理引擎保持满载，同时约束 policy 滞后。
+   * - 流式会话与缓存
+     - ``session_server.engine_streaming_session``、``session_server.merge_continuous_turns``、``session_server.payload_shards``
+     - 跨轮保持 KV/GDN 前缀缓存，并将多模态帧暂存在采样节点本地。
+   * - SGLang 与 FSDP2 显存
+     - ``rollout.sglang.attention_backend``、``rollout.sglang.max_mamba_cache_size``、``actor.fsdp_config.enable_gradient_accumulation``
+     - 80 GB 显存下保持 ``attention_backend: null``、``max_mamba_cache_size: 256`` 与 ``enable_gradient_accumulation: False``。
+   * - 组过滤与第三阶段
+     - ``algorithm.down_sampling.down_sampling_config.reject_equal_reward``、``algorithm.pear.score_centering``、``session_server.topk_log_probs``
+     - 开启 DAPO 零方差组过滤；第三阶段按需开启 top-K score centering。
 
 可视化与结果
 ------------
 
-启动脚本会自动把日志和 TensorBoard 事件写入 ``logs/<timestamp>-<config_name>/``\ （自动覆盖 ``runner.logger.log_path``）。在该目录启动 TensorBoard：
+启动脚本会自动把日志和 TensorBoard 事件写入 ``logs/<timestamp>-<config_name>/``。在该目录启动 TensorBoard：
 
 .. code-block:: bash
 
    tensorboard --host 0.0.0.0 --logdir logs/
 
-重点观察 ``rollout/rewards``、``rollout/buffer/dropped_equal_reward``、``rollout/session_server/payload_queued_groups`` 和 ``train/actor/policy_loss``。``payload_queued_groups`` 稳定贴近 ``rollout/buffer/size``，说明被过滤掉的多模态组已及时释放采样节点内存。在 2 机 16 张 80 GB GPU 上，冒烟配置单步 FSDP2 更新耗时约 8–10 秒，27B 全量跨机权重同步耗时约 5 秒。
+重点观察 ``rollout/rewards``、``rollout/buffer/dropped_equal_reward``、``rollout/session_server/payload_queued_groups`` 和 ``train/actor/policy_loss``。本地排队的 payload 组数稳定贴近缓冲区大小，说明被过滤掉的多模态组已及时释放采样节点内存。在 2 机 16 张 80 GB GPU 上，默认配置单步 FSDP2 更新耗时约 8–10 秒，27B 全量跨机权重同步耗时约 5 秒。
 
 常见问题
 --------

@@ -78,6 +78,13 @@ _SERVER_ARGS_FIELDS = _server_args_fields(ServerArgs)
 
 
 class SGLangWorker(Worker):
+    """SGLang-backed rollout worker for LLM response generation.
+
+    Owns an SGLang inference backend per model instance and serves rollout
+    requests over channels for reasoning and agentic runs. Receives updated
+    policy weights from actor workers and supports pause, resume, and offload.
+    """
+
     def __init__(
         self,
         config: DictConfig,

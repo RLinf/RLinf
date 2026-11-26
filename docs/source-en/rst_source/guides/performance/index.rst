@@ -1,43 +1,60 @@
-Performance
-===========
+Profile & Speed Up
+==================
 
-Use these guides when latency, throughput, memory, placement, or large-model
-training efficiency becomes the bottleneck.
+Start with profiling to see whether time goes to simulator stepping, policy rollout, actor updates, or communication—then turn on the targeted optimization below.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
+.. grid:: 1 2 3 3
+   :gutter: 2
 
-   * - Guide
-     - What you get
-   * - :doc:`RTC <../rtc>`
-     - Hide policy inference latency by overlapping it with action-chunk execution, in simulation and on real robots.
-   * - :doc:`Env Decoupled Mode <../env_decoupled_mode>`
-     - Decouple Env Workers from Rollout Workers for dynamic embodied rollout scheduling.
-   * - :doc:`Observation Compression <../obs_compression>`
-     - Losslessly compress image observations on the Env to Rollout channel to save bandwidth.
-   * - :doc:`LoRA <../lora>`
-     - Train with LoRA adapters.
-   * - :doc:`Auto Placement <../auto_placement>`
-     - Auto-select the best placement for a workload.
-   * - :doc:`Dynamic Scheduling <../dynamic_scheduling>`
-     - Dynamically schedule resources during training.
-   * - :doc:`Profiling <../profile>`
-     - System-level profiling of Ray worker processes.
-   * - :doc:`5D Parallelism <../5D>`
-     - Configure 5D parallelism for large models.
-   * - :doc:`Asynchronous Agentic RL <../async_agentic>`
-     - Overlap multi-turn agent rollout with training; two admission limits bound how stale the training data gets.
+   .. grid-item-card:: Performance Profiling
+      :link: ../profile
+      :link-type: doc
+
+      Capture step timings and PyTorch traces to pinpoint the real bottleneck first.
+
+   .. grid-item-card:: Training Pipeline Mode
+      :link: ../training_pipeline
+      :link-type: doc
+
+      Overlap embodied rollout stages and packed FSDP actor micro-batches so GPUs stay busy.
+
+   .. grid-item-card:: Decoupled Env Execution
+      :link: ../env_decoupled_mode
+      :link-type: doc
+
+      Decouple slow simulators from policy rollout and training workers.
+
+   .. grid-item-card:: Observation Compression
+      :link: ../obs_compression
+      :link-type: doc
+
+      Compress high-resolution image observations with LZ4 or Zstd between env and rollout workers.
+
+   .. grid-item-card:: Async Agentic RL
+      :link: ../async_agentic
+      :link-type: doc
+
+      Eliminate long-tail stragglers in multi-turn agent rollouts with asynchronous training.
+
+   .. grid-item-card:: Real-Time Control (RTC)
+      :link: ../rtc
+      :link-type: doc
+
+      Overlap action chunk execution with next-chunk inference to hide deployment latency.
+
+   .. grid-item-card:: FUSCO Communication
+      :link: ../../examples/system/fusco
+      :link-type: doc
+
+      Accelerate collective communication in large-scale multi-node runs.
 
 .. toctree::
    :hidden:
 
-   RTC <../rtc>
-   Env Decoupled Mode <../env_decoupled_mode>
+   Performance Profiling <../profile>
+   Training Pipeline Mode <../training_pipeline>
+   Decoupled Env Execution <../env_decoupled_mode>
    Observation Compression <../obs_compression>
-   LoRA <../lora>
-   Auto Placement <../auto_placement>
-   Dynamic Scheduling <../dynamic_scheduling>
-   Profiling <../profile>
-   5D Parallelism <../5D>
-   Asynchronous Agentic RL <../async_agentic>
+   Async Agentic RL <../async_agentic>
+   Real-Time Control (RTC) <../rtc>
+   FUSCO Communication <../../examples/system/fusco>

@@ -96,7 +96,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 actor:
   group_name: "ActorGroup"

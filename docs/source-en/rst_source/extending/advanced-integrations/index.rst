@@ -1,28 +1,21 @@
+:orphan:
+
 Advanced Integrations
 =====================
 
-Use these guides when the extension changes backend integration or weight
-transport instead of adding a primary model or environment.
+These guides have been moved into goal-oriented extension categories:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
+.. grid:: 1 2 2 2
+   :gutter: 2
 
-   * - Guide
-     - What you get
-   * - :doc:`Megatron-Bridge <../mbridge>`
-     - Use the Megatron-Bridge actor backend.
-   * - :doc:`Weight Synchronization <../weight_syncer>`
-     - Optimize actor-to-rollout weight sync in embodied training.
-   * - :doc:`Connect the Session Server to a Runner <../session_server_runner>`
-     - Use the session server from a runner other than the asynchronous one.
-   * - :doc:`FUSCO <../fusco>`
-     - Accelerate distributed MoE All-to-All communication with FUSCO.
+   .. grid-item-card:: Add a Model
+      :link: ../models/index
+      :link-type: doc
 
-.. toctree::
-   :hidden:
+      Manual Megatron model integration and actor-to-rollout weight synchronization.
 
-   Megatron-Bridge <../mbridge>
-   Weight Synchronization <../weight_syncer>
-   Connect the Session Server to a Runner <../session_server_runner>
-   FUSCO <../fusco>
+   .. grid-item-card:: Add a Hardware Backend
+      :link: ../new_accelerator
+      :link-type: doc
+
+      Port RLinf to a new GPU or NPU accelerator backend.

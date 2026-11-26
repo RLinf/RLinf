@@ -1,5 +1,5 @@
-基于 Franka-Sim 的强化学习训练
-========================================
+Franka-Sim 强化学习
+===================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/serl/refs/heads/RLinf/franka-sim/franka_sim/franka_sim/envs/xmls/robotiq_2f85/2f85.png
    :align: center
@@ -7,10 +7,7 @@
 
    RLinf SERL fork 中的 Franka-Sim 资源。
 
-Franka-Sim 是基于
-`SERL <https://rail-berkeley.github.io/serl/docs/sim_quick_start.html>`__ 栈构建的轻量级
-Franka Panda 仿真环境。你将使用 RLinf 在状态观测上用 PPO 训练 MLP policy，或在 RGB
-观测上用异步 SAC 训练 CNN policy。
+Franka-Sim 是基于 `SERL <https://rail-berkeley.github.io/serl/docs/sim_quick_start.html>`__ 栈构建的轻量级 Franka Panda 仿真环境。你将使用 RLinf 在状态观测上用 PPO 训练 MLP policy，或在 RGB 观测上用异步 SAC 训练 CNN policy。
 
 概览
 ----------------------------------------
@@ -75,132 +72,71 @@ Franka Panda 仿真环境。你将使用 RLinf 在状态观测上用 PPO 训练 
    * - 提示词
      - 状态 MLP 配方不使用提示词；视觉策略从 env wrapper 接收任务条件观测。
 
-安装
-----------------------------------------
+安装与运行
+----------
 
 .. include:: _setup_common.rst
 
-**Docker 镜像**
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: MLP / CNN
 
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-frankasim
+      **1. 安装环境**
 
-   # 国内用户可使用：
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-frankasim
+      .. code-block:: bash
 
-在镜像中切换到虚拟环境：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env frankasim && source .venv/bin/activate
 
-.. code:: bash
+      **2. 下载模型**
 
-   source switch_env openvla
+      MLP + PPO 配方可跳过此步。CNN + SAC 配方需要下载预训练 ResNet-10 检查点：
 
-**自定义环境**
+      .. code-block:: bash
 
-安装 Franka-Sim 依赖：
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
 
-.. code:: bash
+      **3. 启动训练**
 
-   # 国内用户可添加 --use-mirror。
-   bash requirements/install.sh embodied --model openvla --env frankasim
-   source .venv/bin/activate
+      可用训练配置：
 
-下载模型
-----------------------------------------
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 38 20 18
 
-MLP + PPO 配方可跳过本节。CNN + SAC 配方需要下载 ResNet 检查点：
+         * - 配方
+           - 配置
+           - 入口
+           - 命令后缀
+         * - MLP + PPO
+           - ``examples/embodiment/config/frankasim_ppo_mlp.yaml``
+           - ``run_embodiment.sh``
+           - ``frankasim_ppo_mlp``
+         * - CNN + SAC
+           - ``examples/embodiment/config/frankasim_sac_cnn_async.yaml``
+           - ``run_async.sh``
+           - ``frankasim_sac_cnn_async``
 
-.. code-block:: bash
+      .. include:: _model_path.rst
 
-   cd /path/to/save/model
+      使用对应脚本启动训练：
 
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+      .. code-block:: bash
 
-   # 或使用 huggingface-hub：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+         # 状态观测 MLP + PPO
+         bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
 
-然后在 ``examples/embodiment/config/frankasim_sac_cnn_async.yaml`` 中为 rollout 和 actor
-设置相同的检查点路径：
+         # 视觉 CNN + 异步 SAC
+         bash examples/embodiment/run_async.sh frankasim_sac_cnn_async actor.model.model_path=$PWD/RLinf-ResNet10-pretrained
 
-.. code-block:: yaml
+      .. dropdown:: 进阶配置（可选）
 
-   rollout:
-      model:
-         model_path: /path/to/RLinf-ResNet10-pretrained
-   actor:
-      model:
-         model_path: /path/to/RLinf-ResNet10-pretrained
-
-运行
-----------------------------------------
-
-选择一个配方并启动训练：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 24 38 20 18
-
-   * - 配方
-     - 配置
-     - 入口
-     - 命令后缀
-   * - MLP + PPO
-     - ``examples/embodiment/config/frankasim_ppo_mlp.yaml``
-     - ``run_embodiment.sh``
-     - ``frankasim_ppo_mlp``
-   * - CNN + SAC
-     - ``examples/embodiment/config/frankasim_sac_cnn_async.yaml``
-     - ``run_async.sh``
-     - ``frankasim_sac_cnn_async``
-
-.. code:: bash
-
-   # 状态观测 PPO 配方
-   bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
-
-   # 视觉 SAC 配方
-   bash examples/embodiment/run_async.sh frankasim_sac_cnn_async
-
-这条命令会：
-
-1. 启动选定的 embodied 训练入口。
-2. 为 actor、rollout 和 Franka-Sim env 组件创建 Ray worker。
-3. 运行 rollout，计算任务奖励，并更新选定策略。
-
-.. note::
-
-   两个参考配置都运行在 GPU ``0``。如果迁移到更大的机器，请调整
-   ``cluster.component_placement``、``env.train.total_num_envs`` 和 batch size。
+         两个参考配置默认都运行在 GPU ``0``。迁移到多卡机器时，按需调整 ``cluster.component_placement``、``env.train.total_num_envs`` 和 batch size。
 
 可视化与结果
 ----------------------------------------
 
-在 RLinf 仓库根目录启动 TensorBoard：
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-关键指标是 ``env/success_once``。完整指标说明见
-:doc:`训练指标 <../../reference/metrics>`。
-
-如需保存 rollout 视频，请启用 video：
-
-.. code:: yaml
-
-   env:
-     eval:
-       video_cfg:
-         save_video: True
-         video_base_dir: ${runner.logger.log_path}/video/eval
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``env/success_once`` 曲线，通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制，完整指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
 .. list-table::
    :header-rows: 1

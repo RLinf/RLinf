@@ -91,6 +91,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-geniesim
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-simple
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-libero-qwen3_8
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-supermimic
 
 
 ##################################################################################################
@@ -594,6 +595,17 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
     --torch 2.14.1 --sglang 0.5.22 --transformers 5.19.0
 
 RUN echo "source ${UV_PATH}/qwen3_8/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: SuperMimic
+##################################################################################################
+FROM embodied-common-image AS embodied-supermimic-image
+
+# Install the SuperMimic env (MuJoCo Warp G1, no VLA model)
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv supermimic --env supermimic
+
+# Set default env
+RUN echo "source ${UV_PATH}/supermimic/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Embodied: DexJoCo

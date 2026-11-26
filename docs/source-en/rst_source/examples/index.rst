@@ -1,7 +1,7 @@
-Example Gallery
-===============
+Embodied AI
+===========
 
-Pick the entry point below that matches your starting scenario:
+Choose an entry point by benchmark, model family, or training paradigm:
 
 .. grid:: 1 2 3 3
    :gutter: 3
@@ -10,25 +10,31 @@ Pick the entry point below that matches your starting scenario:
       :link: simulators_index
       :link-type: doc
 
-      Start from a benchmark — LIBERO, ManiSkill, RoboTwin, IsaacLab, and more.
-
-   .. grid-item-card:: Robots
-      :link: real_world_index
-      :link-type: doc
-
-      Run on physical robot hardware — the Franka family plus GimArm, XSquare Turtle2, and DOS-W1.
+      Start from a benchmark — LIBERO, ManiSkill, RoboTwin, BEHAVIOR-1K, IsaacLab, and more.
 
    .. grid-item-card:: Embodied Models
       :link: vla_wam_index
       :link-type: doc
 
-      RL-fine-tune embodied model families — π₀, GR00T, StarVLA, Lingbot-VLA, and more.
+      RL-fine-tune VLA and WAM families — π₀ / π₀.₅, OpenVLA-OFT, GR00T, StarVLA, LingBot-VLA, ABot-M0, and more.
+
+   .. grid-item-card:: SFT & Imitation
+      :link: sft_index
+      :link-type: doc
+
+      Supervised fine-tuning and imitation recipes — OpenPI, DreamZero, FastWAM, Cosmos3, Qwen-VL, and DAgger.
+
+   .. grid-item-card:: RL Recipes
+      :link: methods_index
+      :link-type: doc
+
+      Algorithm-focused recipes — SAC-Flow, DSRL, RL Token, Sim-Real Co-Training, OPD, RECAP, STEAM, and IQL.
 
    .. grid-item-card:: World Models
       :link: world_model_index
       :link-type: doc
 
-      Train and fine-tune world models — OpenSora, Wan, and more.
+      Closed-loop VLA RL using learned world models as simulators — OpenSora, Wan, and BWM.
 
    .. grid-item-card:: Embodied Agents
       :link: embodied_agent/index
@@ -36,47 +42,86 @@ Pick the entry point below that matches your starting scenario:
 
       Train reasoning VLMs as multi-turn tool-calling embodied agents — VLM-as-Policy and upcoming planners.
 
-   .. grid-item-card:: LLM Agents
-      :link: agentic/index
-      :link-type: doc
+Model × Simulator Quick Matrix
+------------------------------
 
-      Math reasoning and LLM agent workflows, in both single-agent and multi-agent settings.
+Find the right recipe from either a model family or a benchmark.
 
-   .. grid-item-card:: SFT
-      :link: sft_index
-      :link-type: doc
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 10 10 10 10 10 10 10
 
-      Supervised fine-tuning recipes that produce strong RL cold-start checkpoints.
+   * - Model
+     - :doc:`BEHAVIOR-1K <embodied/behavior>`
+     - :doc:`CALVIN <embodied/calvin>`
+     - :doc:`LIBERO <embodied/libero>`
+     - :doc:`ManiSkill3 <embodied/maniskill>`
+     - :doc:`MetaWorld <embodied/metaworld>`
+     - :doc:`RoboCasa <embodied/robocasa>`
+     - :doc:`RoboTwin <embodied/robotwin>`
+     - :doc:`Real-World <real_world_index>`
+   * - :doc:`Dexbotic <embodied/dexbotic>`
+     - —
+     - —
+     - ✓
+     - —
+     - —
+     - —
+     - —
+     - —
+   * - :doc:`GR00T <embodied/gr00t>`
+     - —
+     - —
+     - ✓
+     - ✓
+     - —
+     - —
+     - —
+     - —
+   * - :doc:`MLP <embodied/mlp>` / :doc:`SAC <embodied/sac_flow>`
+     - —
+     - —
+     - ✓
+     - ✓
+     - —
+     - —
+     - —
+     - ✓
+   * - :doc:`OpenPI π₀ / π₀.₅ <embodied/pi0>`
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+   * - :doc:`OpenVLA <embodied/maniskill>`
+     - —
+     - —
+     - ✓
+     - ✓
+     - —
+     - —
+     - —
+     - —
+   * - :doc:`OpenVLA-OFT <embodied/openvla_oft>`
+     - ✓
+     - —
+     - ✓
+     - ✓
+     - ✓
+     - —
+     - ✓
+     - —
+   * - :doc:`StarVLA <embodied/starvla>`
+     - —
+     - —
+     - ✓
+     - —
+     - —
+     - —
+     - —
+     - —
 
-   .. grid-item-card:: RL
-      :link: methods_index
-      :link-type: doc
-
-      Algorithm-centric examples — DAgger, RECAP, DSRL, IQL offline RL, sim-real co-training, MLP / SAC-Flow.
-
-   .. grid-item-card:: Reward Models
-      :link: embodied/reward_model_index
-      :link-type: doc
-
-      Build reward models for simulation and real-world reinforcement learning workflows.
-
-   .. grid-item-card:: Image and Video Generation
-      :link: video_models
-      :link-type: doc
-
-      Prepare SD3 and Wan2.2 models, then train with Diffusion-NFT or DiffusionART.
-
-.. toctree::
-   :hidden:
-   :maxdepth: 2
-
-   Simulators <simulators_index>
-   Robots <real_world_index>
-   Embodied Models <vla_wam_index>
-   World Models <world_model_index>
-   Embodied Agents <embodied_agent/index>
-   LLM Agents <agentic/index>
-   SFT <sft_index>
-   RL <methods_index>
-   Reward Models <embodied/reward_model_index>
-   Image and Video Generation <video_models>
+Looking for other tracks? See :doc:`Real-World Robots <real_world_index>`, :doc:`Evaluation <../evaluations/index>`, :doc:`Agentic & Reasoning <agentic/index>`, and :doc:`Image & Video Generation <video_models>`.

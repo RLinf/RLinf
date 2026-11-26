@@ -1,7 +1,7 @@
-示例库
-========================================
+具身智能
+========
 
-本节汇总 RLinf 支持的各类训练与部署示例。按你的任务起点选择对应的入口：
+按仿真基准、模型系列或训练范式选择具身训练入口：
 
 .. grid:: 1 2 3 3
    :gutter: 3
@@ -10,73 +10,118 @@
       :link: simulators_index
       :link-type: doc
 
-      以模拟器 / 基准为出发点 —— LIBERO、ManiSkill、RoboTwin、IsaacLab 等。
-
-   .. grid-item-card:: 真机
-      :link: real_world_index
-      :link-type: doc
-
-      在真实机器人硬件上运行 —— Franka 系列，以及 GimArm、XSquare Turtle2、DOS-W1。
+      从评测基准切入——LIBERO、ManiSkill、RoboTwin、BEHAVIOR-1K、IsaacLab 等。
 
    .. grid-item-card:: 具身模型
       :link: vla_wam_index
       :link-type: doc
 
-      对具身模型做 RL 微调 —— π₀、GR00T、StarVLA、Lingbot-VLA 等。
+      微调 VLA / WAM 模型——π₀ / π₀.₅、OpenVLA-OFT、GR00T、StarVLA、LingBot-VLA、ABot-M0 等。
+
+   .. grid-item-card:: SFT 与模仿学习
+      :link: sft_index
+      :link-type: doc
+
+      监督微调与模仿学习配方——OpenPI、DreamZero、FastWAM、Cosmos3、Qwen-VL 与 DAgger。
+
+   .. grid-item-card:: RL 算法示例
+      :link: methods_index
+      :link-type: doc
+
+      按算法切入——SAC-Flow、DSRL、RL Token、仿真-真机协同训练、OPD、RECAP、STEAM 与 IQL。
 
    .. grid-item-card:: 世界模型
       :link: world_model_index
       :link-type: doc
 
-      训练和微调世界模型 —— OpenSora、Wan 等。
+      用世界模型作为模拟器做 VLA 闭环强化学习——OpenSora、Wan 与 BWM。
 
    .. grid-item-card:: 具身智能体
       :link: embodied_agent/index
       :link-type: doc
 
-      以多轮工具调用范式训练推理 VLM 具身智能体 —— 包含 VLM-as-Policy 与后续高层规划大脑。
+      以多轮工具调用范式训练推理 VLM 具身智能体——包含 VLM-as-Policy 与后续高层规划大脑。
 
-   .. grid-item-card:: LLM 智能体
-      :link: agentic/index
-      :link-type: doc
+模型 × 模拟器速查矩阵
+---------------------
 
-      数学推理与 LLM 智能体 AI 工作流，涵盖单智能体与多智能体设置。
+从模型系列或评测基准任意一侧进入对应示例。
 
-   .. grid-item-card:: SFT
-      :link: sft_index
-      :link-type: doc
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 10 10 10 10 10 10 10
 
-      用于产出 RL 冷启动检查点的监督微调（SFT）配方。
+   * - 模型
+     - :doc:`BEHAVIOR-1K <embodied/behavior>`
+     - :doc:`CALVIN <embodied/calvin>`
+     - :doc:`LIBERO <embodied/libero>`
+     - :doc:`ManiSkill3 <embodied/maniskill>`
+     - :doc:`MetaWorld <embodied/metaworld>`
+     - :doc:`RoboCasa <embodied/robocasa>`
+     - :doc:`RoboTwin <embodied/robotwin>`
+     - :doc:`真机 <real_world_index>`
+   * - :doc:`Dexbotic <embodied/dexbotic>`
+     - —
+     - —
+     - ✓
+     - —
+     - —
+     - —
+     - —
+     - —
+   * - :doc:`GR00T <embodied/gr00t>`
+     - —
+     - —
+     - ✓
+     - ✓
+     - —
+     - —
+     - —
+     - —
+   * - :doc:`MLP <embodied/mlp>` / :doc:`SAC <embodied/sac_flow>`
+     - —
+     - —
+     - ✓
+     - ✓
+     - —
+     - —
+     - —
+     - ✓
+   * - :doc:`OpenPI π₀ / π₀.₅ <embodied/pi0>`
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+   * - :doc:`OpenVLA <embodied/maniskill>`
+     - —
+     - —
+     - ✓
+     - ✓
+     - —
+     - —
+     - —
+     - —
+   * - :doc:`OpenVLA-OFT <embodied/openvla_oft>`
+     - ✓
+     - —
+     - ✓
+     - ✓
+     - ✓
+     - —
+     - ✓
+     - —
+   * - :doc:`StarVLA <embodied/starvla>`
+     - —
+     - —
+     - ✓
+     - —
+     - —
+     - —
+     - —
+     - —
 
-   .. grid-item-card:: RL
-      :link: methods_index
-      :link-type: doc
-
-      以训练算法为主线 —— DAgger、RECAP、DSRL、IQL 离线 RL、仿真-真机协同训练、MLP / SAC-Flow。
-
-   .. grid-item-card:: 奖励模型
-      :link: embodied/reward_model_index
-      :link-type: doc
-
-      构建用于仿真与真实机器人强化学习流程的奖励模型。
-
-   .. grid-item-card:: 图像与视频生成
-      :link: video_models
-      :link-type: doc
-
-      准备 SD3 与 Wan2.2 模型，再选择 Diffusion-NFT 或 DiffusionART 训练。
-
-.. toctree::
-   :hidden:
-   :maxdepth: 2
-
-   模拟器 <simulators_index>
-   真机 <real_world_index>
-   具身模型 <vla_wam_index>
-   世界模型 <world_model_index>
-   具身智能体 <embodied_agent/index>
-   LLM 智能体 <agentic/index>
-   SFT <sft_index>
-   RL <methods_index>
-   奖励模型 <embodied/reward_model_index>
-   图像与视频生成 <video_models>
+其他方向请见 :doc:`真机机器人 <real_world_index>`、:doc:`评测 <../evaluations/index>`、:doc:`智能体与推理 <agentic/index>` 与 :doc:`图像与视频生成 <video_models>`。

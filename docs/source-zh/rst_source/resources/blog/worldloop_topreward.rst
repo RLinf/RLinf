@@ -52,7 +52,7 @@ RLinf 将 actor、rollout 和 env 三类 Ray worker collocate 到每张 GPU。Qw
    OpenVLA-OFT ── 8 步动作 ──> Wan world model ── 8 帧画面 ──> Qwen3-VL
         ^                         │                                  │
         │                         └── 末帧作为下一步观测             │
-        └────── GRPO 更新 <────── log P(" True") ≥ 0.46 → 0/1 ──────┘
+        └────── GRPO 更新 <────── P(" True") ≥ 0.46 → 0/1 ──────┘
 
 Qwen3-VL 的连续分数经过阈值处理后输出 0/1，与 ResNet 奖励经过 ``round()`` 后的数据形状一致。WoVR 原有的奖励差分、轨迹终止、 ``loss_mask`` 截断和 GRPO 组内标准化逻辑可以直接复用，无需修改强化学习算法。
 
