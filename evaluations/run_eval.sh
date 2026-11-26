@@ -154,11 +154,15 @@ fi
 case "$1" in
     behavior_openpi_pi05_eval) shift; set -- behavior behavior_openpi_pi05_eval_2025 "$@" ;;
     behavior2026_openpi_pi05_eval) shift; set -- behavior behavior_openpi_pi05_eval_2026 "$@" ;;
-    behavior|behavior2025)
-        if [[ "$1" == behavior2025 || $# == 1 || "$2" == -* || "$2" == *=* || "$2" == '~'* ]]; then
-            shift; set -- behavior behavior_openpi_pi05_eval_2025 "$@"
-        fi ;;
-    behavior2026) shift; set -- behavior behavior_openpi_pi05_eval_2026 "$@" ;;
+    behavior|behavior2025|behavior2026)
+        BEHAVIOR_YEAR=2025
+        if [[ "$1" == behavior2026 ]]; then BEHAVIOR_YEAR=2026; fi
+        shift
+        if [[ $# == 0 || "$1" == -* || "$1" == *=* || "$1" == '~'* ]]; then
+            set -- "behavior_openpi_pi05_eval_${BEHAVIOR_YEAR}" "$@"
+        fi
+        set -- behavior "$@"
+        ;;
 esac
 
 if [ $# -ge 2 ] && [ -f "${EVALUATIONS_PATH}/$1/$2.yaml" ]; then
