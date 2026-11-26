@@ -41,8 +41,8 @@ from rlinf.data.schema.reasoning_results import (
 )
 from rlinf.hybrid_engines.megatron.utils import (
     align_next_token_scores,
-    model_packs_inputs,
     postprocess_ragged_seqs,
+    prepare_ragged_model_inputs,
     preprocess_ragged_seqs,
 )
 from rlinf.scheduler import Channel
@@ -185,24 +185,13 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             ]
             lengths = [len(row) for row in rows]
             labels = [torch.cat((row[1:], row.new_zeros(1))) for row in rows]
-            label, packed_params = preprocess_ragged_seqs(labels)
+            label, _ = preprocess_ragged_seqs(labels)
             label_mask, _ = preprocess_ragged_seqs(
                 [torch.arange(n, device=rows[0].device) < n - 1 for n in lengths]
             )
-            attention_mask = None
-            if model_packs_inputs(model):
-                input_ids = torch.nn.utils.rnn.pad_sequence(rows, batch_first=True)
-                position_ids = torch.arange(input_ids.shape[1], device=input_ids.device)
-                attention_mask = (
-                    position_ids[None, :]
-                    < torch.tensor(lengths, device=input_ids.device)[:, None]
-                )
-                position_ids = position_ids.expand_as(input_ids)
-            else:
-                input_ids, _ = preprocess_ragged_seqs(rows)
-                position_ids, _ = preprocess_ragged_seqs(
-                    [torch.arange(n, device=input_ids.device) for n in lengths]
-                )
+            input_ids, attention_mask, position_ids, packed_params = (
+                prepare_ragged_model_inputs(rows, model)
+            )
 
             def logits_processor(logits, label, label_mask):
                 assert logits.shape[:2] == label.shape[:2]

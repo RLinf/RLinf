@@ -442,7 +442,6 @@ class MegatronCoreWeightReshard:
             "attn": (dst_tp_rank, reshard_tp_size),
             "dense": (dst_tp_rank % effective_dense_tp, effective_dense_tp),
             "shared": (dst_shared_rank, self.config.rollout_full_tp_size),
-            "full_tp": (dst_shared_rank, self.config.rollout_full_tp_size),
             "lm_head": (dst_lm_head_rank, self.config.rollout_lm_head_tp_size),
             "expert_tp": dst_expert_tp or (dst_tp_rank, reshard_tp_size),
             "vision": (

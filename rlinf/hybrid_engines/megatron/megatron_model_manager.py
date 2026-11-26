@@ -40,7 +40,6 @@ from .utils import (
     model_packs_inputs,
     postprocess_packed_seqs,
     prepare_full_model_inputs,
-    prepare_packed_model_inputs,
     preprocess_packed_seqs,
     recover_left_padding,
     remove_left_padding,
@@ -480,7 +479,8 @@ class MegatronModelManager:
         # Get Megatron Model
         with _bridge_shared_embeddings():
             model = self.provider.provide_distributed_model(ddp_config=ddp_config)
-        _install_mtp_logits_processor(model)
+        if self.trains_mtp:
+            _install_mtp_logits_processor(model)
 
         args = get_args()
         from megatron.training.training import get_megatron_optimizer_config
@@ -787,12 +787,6 @@ class MegatronModelManager:
         # Earlier pipeline stages return hidden states for the next stage.
         post_process = unwrap_model(model).post_process
         if packed_seq_params is not None:
-            if model_packs_inputs(model):
-                input_ids, attention_mask, packed_seq_params = (
-                    prepare_full_model_inputs(
-                        input_ids, attention_mask, pre_process=pre_process
-                    )
-                )
             if post_process and mtp_labels is not None:
                 model_forward_kwargs["labels"] = mtp_labels
                 if mtp_loss_mask is not None:
@@ -811,11 +805,6 @@ class MegatronModelManager:
             return output
         if pack_seqs:
             batch_size, seq_len = attention_mask.shape[:2]
-            prepare_inputs = (
-                prepare_full_model_inputs
-                if model_packs_inputs(model)
-                else prepare_packed_model_inputs
-            )
             if post_process and mtp_labels is not None:
                 model_forward_kwargs["labels"] = preprocess_packed_seqs(
                     mtp_labels,
@@ -830,12 +819,21 @@ class MegatronModelManager:
                         pre_process=True,
                         padding_seqlen=padding_seqlen,
                     )[0].float()
-            input_ids_rmpad, model_attention_mask, packed_seq_params = prepare_inputs(
-                input_ids,
-                attention_mask,
-                pre_process=pre_process,
-                padding_seqlen=padding_seqlen,
-            )
+            if model_packs_inputs(model):
+                input_ids_rmpad, model_attention_mask, packed_seq_params = (
+                    prepare_full_model_inputs(
+                        input_ids, attention_mask, padding_seqlen=padding_seqlen
+                    )
+                )
+                position_ids = None
+            else:
+                input_ids_rmpad, packed_seq_params = preprocess_packed_seqs(
+                    input_ids,
+                    attention_mask,
+                    pre_process=pre_process,
+                    padding_seqlen=padding_seqlen,
+                )
+                model_attention_mask = None
             input_ids_rmpad = input_ids_rmpad.contiguous()
             output_orig = model(
                 input_ids=input_ids_rmpad,

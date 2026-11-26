@@ -1734,6 +1734,10 @@ def megatron_cpu(monkeypatch, tmp_path):
         worker.tokenizer = SimpleNamespace(eos_token_id=0)
         worker.transformer_config = SimpleNamespace(sequence_parallel=False)
         worker.return_loss = True
+        worker.trains_mtp = False
+        worker.torch_platform = SimpleNamespace(
+            current_device=lambda: torch.device("cpu")
+        )
         worker.loss_agg_func = masked_mean
         worker.calculate_entropy = False
         worker.kl_beta = 0
@@ -2154,3 +2158,323 @@ def test_dynamic_rollout_metrics_allow_empty_dp_rank(tmp_path, empty_rank):
         nprocs=2,
         join=True,
     )
+
+
+class TestMegatronModelConfig:
+    @pytest.fixture(autouse=True)
+    def model_config_dependencies(self):
+        pytest.importorskip("megatron.training")
+        pytest.importorskip("transformers.models.qwen3_5.configuration_qwen3_5")
+
+    @pytest.mark.parametrize(
+        "load_mtp,sglang_options,accepted",
+        [
+            (None, {}, True),
+            (True, {}, True),
+            (False, {}, True),
+            (True, {"speculative_algorithm": None}, True),
+            (
+                False,
+                {
+                    "speculative_algorithm": "NEXTN",
+                    "speculative_draft_model_path": "/old/checkpoint",
+                },
+                False,
+            ),
+            (
+                True,
+                {
+                    "speculative_algorithm": "STANDALONE",
+                    "speculative_draft_model_path": "/old/checkpoint",
+                },
+                False,
+            ),
+            (False, {"speculative_algorithm": "NEXTN"}, False),
+            (
+                False,
+                {
+                    "speculative_algorithm": "EAGLE",
+                    "speculative_draft_model_path": "/unused/checkpoint",
+                },
+                False,
+            ),
+            (
+                False,
+                {
+                    "speculative_algorithm": "STANDALONE",
+                    "speculative_draft_model_path": "/external/draft",
+                },
+                False,
+            ),
+            (
+                True,
+                {
+                    "speculative_algorithm": "eagle",
+                    "speculative_num_steps": 3,
+                    "speculative_num_draft_tokens": 8,
+                    "speculative_eagle_topk": 2,
+                },
+                True,
+            ),
+            (True, {"speculative_draft_model_path": "/compatible/draft"}, False),
+            (
+                True,
+                {
+                    "mamba_scheduler_strategy": "extra_buffer",
+                    "disable_radix_cache": False,
+                },
+                True,
+            ),
+            (True, {"mamba_scheduler_strategy": "extra_buffer"}, True),
+            (True, {"disable_radix_cache": False}, True),
+            (False, {"disable_radix_cache": False}, True),
+            ("false", {}, False),
+        ],
+    )
+    def test_qwen35_mtp_loading_needs_only_one_switch(
+        self, load_mtp, sglang_options, accepted
+    ):
+        from omegaconf import OmegaConf
+
+        from rlinf.config import validate_megatron_cfg, validate_rollout_cfg
+
+        actor = OmegaConf.create(
+            {
+                "training_backend": "megatron",
+                "megatron": {"mbridge": True, "use_hf_ckpt": True},
+                "optim": {},
+                "lr_sched": {},
+                "model": {
+                    "model_type": "qwen3_5",
+                    "tensor_model_parallel_size": 2,
+                    "precision": "bf16",
+                    "activation": "swiglu",
+                    "normalization": "rmsnorm",
+                },
+            }
+        )
+        if load_mtp is not None:
+            actor.model.load_mtp = load_mtp
+        rollout = OmegaConf.create(
+            {
+                "model": {"model_type": "qwen3_5", "model_path": "/unused/checkpoint"},
+                "sglang": sglang_options,
+                "vllm": {},
+                "enforce_eager": False,
+                "tensor_parallel_size": 4,
+                "return_logprobs": True,
+            }
+        )
+        if accepted:
+            validate_megatron_cfg(actor)
+            original_actor = OmegaConf.to_container(actor, resolve=True)
+            result = validate_rollout_cfg(rollout, OmegaConf.create({}), actor)
+            assert OmegaConf.to_container(actor, resolve=True) == original_actor
+            assert result.sync_mtp is (load_mtp is True)
+            for name, value in sglang_options.items():
+                if value is not None:
+                    assert result.sglang[name] == value
+            assert actor.model.load_mtp is (load_mtp is True)
+            assert actor.model.mtp_loss_scaling_factor == 0.1
+            if load_mtp is True:
+                assert result.sglang.speculative_algorithm.upper() in ("NEXTN", "EAGLE")
+                assert result.sglang.speculative_draft_model_path == sglang_options.get(
+                    "speculative_draft_model_path", rollout.model.model_path
+                )
+                assert result.sglang.disable_radix_cache is sglang_options.get(
+                    "disable_radix_cache",
+                    sglang_options.get("mamba_scheduler_strategy", "no_buffer")
+                    == "no_buffer",
+                )
+            elif not sglang_options:
+                assert "speculative_algorithm" not in result.sglang
+                assert "disable_radix_cache" not in result.sglang
+            normalized = OmegaConf.to_container(result, resolve=True)
+            validate_rollout_cfg(result, OmegaConf.create({}), actor)
+            assert OmegaConf.to_container(result, resolve=True) == normalized
+        else:
+            with pytest.raises(AssertionError, match="load_mtp|external draft"):
+                validate_megatron_cfg(actor)
+                validate_rollout_cfg(rollout, OmegaConf.create({}), actor)
+
+    @pytest.mark.parametrize(
+        "model_type,mbridge",
+        [
+            ("qwen3_5", None),
+            ("qwen3_5", False),
+            ("qwen3_5", True),
+            ("qwen2.5", False),
+            ("glm4_moe_lite", True),
+            ("deepseek_v3", True),
+        ],
+    )
+    def test_megatron_bridge_requirement_at_config_boundary(self, model_type, mbridge):
+        pytest.importorskip("megatron.training")
+        from omegaconf import OmegaConf
+
+        from rlinf.config import validate_megatron_cfg
+
+        cfg = OmegaConf.create(
+            {
+                "model": {
+                    "model_type": model_type,
+                    "precision": "bf16",
+                    "activation": "swiglu",
+                    "normalization": "rmsnorm",
+                },
+                "megatron": {"use_hf_ckpt": True},
+                "optim": {},
+                "lr_sched": {},
+            }
+        )
+        if mbridge is not None:
+            cfg.megatron.mbridge = mbridge
+        if model_type == "qwen3_5" and not mbridge:
+            with pytest.raises(AssertionError, match="mbridge=True"):
+                validate_megatron_cfg(cfg)
+        else:
+            result = validate_megatron_cfg(cfg)
+            assert result.model.model_type == model_type
+            assert result.megatron.get("mbridge", False) is bool(mbridge)
+
+    def test_qwen35_rejects_text_only_architecture(self, tmp_path):
+        import transformers
+        from omegaconf import OmegaConf
+
+        Qwen3_5TextConfig = getattr(transformers, "Qwen3_5TextConfig", None)
+        if Qwen3_5TextConfig is None:
+            pytest.skip("transformers does not define Qwen3_5TextConfig")
+
+        from rlinf.config import validate_model_cfg_by_hf_config
+
+        Qwen3_5TextConfig(architectures=["Qwen3_5ForCausalLM"]).save_pretrained(
+            tmp_path
+        )
+        cfg = OmegaConf.create({"model": {"model_type": "qwen3_5"}})
+        with pytest.raises(ValueError, match="architectures=.*Qwen3_5ForCausalLM"):
+            validate_model_cfg_by_hf_config(cfg, str(tmp_path))
+
+    @pytest.mark.parametrize("model_type", [None, "qwen3_5", "qwen2.5"])
+    @pytest.mark.parametrize("checkpoint_type", ["qwen3_5", "qwen2.5"])
+    @pytest.mark.parametrize("preloaded", [False, True])
+    def test_megatron_model_identity_from_checkpoint(
+        self, tmp_path, model_type, checkpoint_type, preloaded
+    ):
+        from omegaconf import OmegaConf
+        from transformers import Qwen2Config, Qwen3_5Config
+
+        from rlinf.config import (
+            validate_megatron_cfg,
+            validate_model_cfg_by_hf_config,
+            validate_rollout_cfg,
+        )
+
+        hf = (
+            Qwen3_5Config(architectures=["Qwen3_5ForConditionalGeneration"])
+            if checkpoint_type == "qwen3_5"
+            else Qwen2Config(architectures=["Qwen2ForCausalLM"])
+        )
+        hf.save_pretrained(tmp_path)
+        config_path = "/not-read-when-preloaded" if preloaded else str(tmp_path)
+        options = {"hf_config": hf} if preloaded else {}
+        actor = OmegaConf.create({"training_backend": "megatron", "model": {}})
+        if model_type is not None:
+            actor.model.model_type = model_type
+        if model_type is not None and model_type != checkpoint_type:
+            with pytest.raises((ValueError, AssertionError), match="model_type"):
+                validate_model_cfg_by_hf_config(actor, config_path, **options)
+            return
+        validate_model_cfg_by_hf_config(actor, config_path, **options)
+        expected_type = "qwen3_5" if checkpoint_type == "qwen3_5" else model_type
+        assert actor.model.get("model_type") == expected_type
+        text = hf.text_config if checkpoint_type == "qwen3_5" else hf
+        assert actor.model.padded_vocab_size == text.vocab_size
+        rollout = OmegaConf.create(
+            {
+                "model": {"model_type": checkpoint_type, "model_path": str(tmp_path)},
+                "sglang": {},
+                "return_logprobs": True,
+            }
+        )
+        actor.megatron = {"mbridge": True, "use_hf_ckpt": True}
+        actor.optim = {}
+        actor.lr_sched = {}
+        actor.model.precision = "bf16"
+        actor.model.activation = "swiglu"
+        actor.model.normalization = "rmsnorm"
+        validate_megatron_cfg(actor)
+        original_actor = OmegaConf.to_container(actor, resolve=True)
+        validate_rollout_cfg(rollout, OmegaConf.create({}), actor)
+        assert OmegaConf.to_container(actor, resolve=True) == original_actor
+        if checkpoint_type == "qwen3_5":
+            assert actor.model.load_mtp is False
+
+    @pytest.mark.parametrize(
+        "actor_type,rollout_type",
+        [(None, "qwen3_5"), ("qwen2.5", "qwen3_5"), ("qwen3_5", "qwen2.5")],
+    )
+    def test_rollout_rejects_unresolved_or_conflicting_megatron_type(
+        self, actor_type, rollout_type
+    ):
+        from omegaconf import OmegaConf
+
+        from rlinf.config import validate_rollout_cfg
+
+        actor = OmegaConf.create(
+            {"training_backend": "megatron", "model": {"model_type": actor_type}}
+        )
+        rollout = OmegaConf.create(
+            {
+                "model": {"model_type": rollout_type, "model_path": "/unused"},
+                "sglang": {},
+                "return_logprobs": True,
+            }
+        )
+        with pytest.raises(AssertionError, match="model_type must match"):
+            validate_rollout_cfg(rollout, OmegaConf.create({}), actor)
+
+    @pytest.mark.parametrize(
+        "load_mtp,scale,valid",
+        [
+            (False, 0.0, True),
+            (True, 0.1, True),
+            (True, 2.0, True),
+            ("false", 0.1, False),
+            (1, 0.1, False),
+            (True, "0.1", False),
+            (True, -0.1, True),
+            (True, float("nan"), False),
+            (True, float("inf"), False),
+            (True, True, False),
+        ],
+    )
+    def test_standalone_megatron_validates_mtp_options(self, load_mtp, scale, valid):
+        pytest.importorskip("megatron.training")
+        from omegaconf import OmegaConf
+
+        from rlinf.config import validate_megatron_cfg
+
+        cfg = OmegaConf.create(
+            {
+                "model": {
+                    "model_type": "qwen3_5",
+                    "precision": "bf16",
+                    "activation": "swiglu",
+                    "normalization": "rmsnorm",
+                    "load_mtp": load_mtp,
+                    "mtp_loss_scaling_factor": scale,
+                },
+                "megatron": {"mbridge": True, "use_hf_ckpt": True},
+                "optim": {},
+                "lr_sched": {},
+            }
+        )
+        if valid:
+            validate_megatron_cfg(cfg)
+            assert cfg.model.load_mtp is load_mtp
+            assert cfg.model.mtp_loss_scaling_factor == scale
+        else:
+            with pytest.raises(
+                AssertionError, match="load_mtp|mtp_loss_scaling_factor"
+            ):
+                validate_megatron_cfg(cfg)

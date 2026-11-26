@@ -325,7 +325,26 @@ def _inherit_rollout_model_path(
                 rollout_model.model_path = actor_model_path
 
 
+def _validate_megatron_mtp_cfg(cfg: DictConfig) -> None:
+    if cfg.model.get("model_type") != SupportedModel.QWEN3_5.value:
+        return
+    with open_dict(cfg.model):
+        cfg.model.setdefault("load_mtp", False)
+        cfg.model.setdefault("mtp_loss_scaling_factor", 0.1)
+    load_mtp = cfg.model.load_mtp
+    assert isinstance(load_mtp, bool), (
+        f"actor.model.load_mtp must be a boolean, got {load_mtp!r}."
+    )
+    scale = cfg.model.mtp_loss_scaling_factor
+    assert (
+        isinstance(scale, (int, float))
+        and not isinstance(scale, bool)
+        and math.isfinite(scale)
+    ), f"mtp_loss_scaling_factor must be a finite number, got {scale!r}."
+
+
 def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
+    """Normalize rollout options using the actor's already validated model options."""
     SupportedModel(cfg.model.model_type)  # To validate model_type is supported
 
     def validate_sglang_cfg(cfg):
@@ -386,28 +405,28 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         assert cfg.rollout_backend in SUPPORTED_ROLLOUT_BACKENDS, (
             f"rollout_backend must be one of {SUPPORTED_ROLLOUT_BACKENDS}."
         )
-        if (
-            cfg.model.model_type == "qwen3_5"
-            and actor_cfg is not None
+        cfg.sync_mtp = False
+        qwen_megatron = (
+            actor_cfg is not None
             and actor_cfg.get("training_backend") == "megatron"
-        ):
-            with open_dict(actor_cfg.model):
-                actor_cfg.model.setdefault("load_mtp", False)
-                actor_cfg.model.setdefault("mtp_loss_scaling_factor", 0.1)
-            load_mtp = actor_cfg.model.get("load_mtp", False)
-            assert isinstance(load_mtp, bool), (
-                f"actor.model.load_mtp must be a boolean, got {load_mtp!r}."
+            and (
+                cfg.model.model_type == "qwen3_5"
+                or actor_cfg.model.get("model_type") == "qwen3_5"
             )
+        )
+        if qwen_megatron:
+            assert actor_cfg.model.get("model_type") == cfg.model.model_type, (
+                f"Megatron actor.model.model_type must match rollout model_type "
+                f"{cfg.model.model_type!r}, got {actor_cfg.model.get('model_type')!r}."
+            )
+            load_mtp = actor_cfg.model.load_mtp
         cfg.return_logprobs = cfg.return_logprobs or algorithm_cfg.get(
             "importance_sampling_fix", False
         )
         if cfg.rollout_backend == "sglang":
             cfg.sglang = validate_sglang_cfg(cfg.sglang)
-            if (
-                cfg.model.model_type == "qwen3_5"
-                and actor_cfg is not None
-                and actor_cfg.get("training_backend") == "megatron"
-            ):
+            if qwen_megatron:
+                cfg.sync_mtp = load_mtp
                 algorithm = cfg.sglang.get("speculative_algorithm")
                 draft_path = cfg.sglang.get("speculative_draft_model_path")
                 assert draft_path in (None, cfg.model.model_path), (
@@ -427,16 +446,16 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
                         "actor.model.load_mtp=True requires NEXTN or its EAGLE "
                         f"alias, got speculative_algorithm={algorithm!r}."
                     )
+                    mamba_strategy = cfg.sglang.get("mamba_scheduler_strategy")
+                    if mamba_strategy is None:
+                        mamba_strategy = "no_buffer"
                     defaults = {
                         "speculative_algorithm": "NEXTN",
                         "speculative_draft_model_path": cfg.model.model_path,
                         "speculative_num_steps": 1,
                         "speculative_num_draft_tokens": 2,
                         "speculative_eagle_topk": 1,
-                        "disable_radix_cache": cfg.sglang.get(
-                            "mamba_scheduler_strategy", "no_buffer"
-                        )
-                        == "no_buffer",
+                        "disable_radix_cache": mamba_strategy == "no_buffer",
                     }
                     for name, value in defaults.items():
                         if cfg.sglang.get(name) is None:
@@ -446,16 +465,6 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
             cfg.vllm = validate_vllm_cfg(cfg.vllm)
 
     return cfg
-
-
-def sglang_syncs_mtp(actor_cfg: Optional[DictConfig], rollout_cfg: DictConfig) -> bool:
-    """Whether the actor supplies weights for SGLang's MTP draft."""
-    return (
-        actor_cfg is not None
-        and actor_cfg.get("training_backend") == "megatron"
-        and rollout_cfg.model.model_type == "qwen3_5"
-        and actor_cfg.model.get("load_mtp", False)
-    )
 
 
 def hf_rope_parameters(hf_config) -> dict:
@@ -488,18 +497,31 @@ def hf_rope_parameters(hf_config) -> dict:
     return params
 
 
-def validate_model_cfg_by_hf_config(cfg, hf_model_path):
-    # validate by hf config
-    from transformers import AutoConfig
-
-    hf_config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=True)
-    if getattr(cfg.model, "model_type", None) == "qwen3_5" and (
-        "Qwen3_5ForConditionalGeneration" not in (hf_config.architectures or [])
-    ):
+def _resolve_megatron_model_type(model_cfg: DictConfig, hf_config) -> None:
+    architectures = hf_config.architectures or []
+    model_type = model_cfg.get("model_type")
+    if "Qwen3_5ForConditionalGeneration" in architectures:
+        if model_type is None:
+            with open_dict(model_cfg):
+                model_cfg.model_type = SupportedModel.QWEN3_5.value
+        else:
+            assert model_type == SupportedModel.QWEN3_5.value, (
+                f"Qwen3_5ForConditionalGeneration requires model_type='qwen3_5', "
+                f"got {model_type!r}."
+            )
+    elif model_type == SupportedModel.QWEN3_5.value:
         raise ValueError(
             "model_type qwen3_5 requires a Qwen3_5ForConditionalGeneration "
-            f"checkpoint, got architectures={hf_config.architectures}."
+            f"checkpoint, got architectures={architectures}."
         )
+
+
+def validate_model_cfg_by_hf_config(cfg, hf_model_path, hf_config=None):
+    from transformers import AutoConfig
+
+    if hf_config is None:
+        hf_config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=True)
+    _resolve_megatron_model_type(cfg.model, hf_config)
 
     if (
         "Qwen2ForCausalLM" in hf_config.architectures
@@ -770,6 +792,7 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
 def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
+    _validate_megatron_mtp_cfg(cfg)
     with open_dict(cfg):
         if cfg.model.get("model_type") == SupportedModel.QWEN3_5.value:
             assert cfg.megatron.get("mbridge", False), (
@@ -3139,6 +3162,24 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.runner.task_type in SUPPORTED_TASK_TYPE, (
         f"task_type must be one of {SUPPORTED_TASK_TYPE}"
     )
+    actor_hf_config = None
+    if (
+        OmegaConf.select(cfg, "actor.training_backend") == "megatron"
+        and cfg.runner.task_type != "embodied_eval"
+    ):
+        from transformers import AutoConfig
+
+        if cfg.runner.task_type == "sft":
+            actor_hf_path = cfg.actor.model.model_path
+        else:
+            _inherit_rollout_model_path(cfg.rollout, cfg.actor)
+            actor_hf_path = cfg.rollout.model.model_path
+        actor_hf_config = AutoConfig.from_pretrained(
+            actor_hf_path, trust_remote_code=True
+        )
+        _resolve_megatron_model_type(cfg.actor.model, actor_hf_config)
+        _validate_megatron_mtp_cfg(cfg.actor)
+
     if cfg.runner.task_type == "embodied":
         cfg = validate_embodied_cfg(cfg)
     elif cfg.runner.task_type == "embodied_eval":
@@ -3175,14 +3216,9 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
 
     if cfg.actor.training_backend == "megatron":
         cfg.actor = validate_megatron_cfg(cfg.actor)
-        if cfg.runner.task_type == "sft":
-            cfg.actor = validate_model_cfg_by_hf_config(
-                cfg.actor, cfg.actor.model.model_path
-            )
-        else:
-            cfg.actor = validate_model_cfg_by_hf_config(
-                cfg.actor, cfg.rollout.model.model_path
-            )
+        cfg.actor = validate_model_cfg_by_hf_config(
+            cfg.actor, actor_hf_path, hf_config=actor_hf_config
+        )
         # TODO. Need actually pad padded_vocab_size.
         assert (
             cfg.actor.model.padded_vocab_size

@@ -191,19 +191,6 @@ def preprocess_packed_seqs(
         return input_ids, packed_seq_params
 
 
-def prepare_packed_model_inputs(
-    input_ids: torch.Tensor,
-    attention_mask: torch.Tensor,
-    pre_process: bool,
-    padding_seqlen: Optional[int] = None,
-) -> tuple[torch.Tensor, Optional[torch.Tensor], PackedSeqParams]:
-    """Prepare local token shards for models consuming packed inputs."""
-    tokens, params = preprocess_packed_seqs(
-        input_ids, attention_mask, pre_process, padding_seqlen
-    )
-    return tokens.contiguous(), None, params
-
-
 def model_packs_inputs(model: torch.nn.Module) -> bool:
     """Whether the backend packs and CP-splits complete input sequences."""
     from megatron.training.training import unwrap_model
@@ -218,7 +205,6 @@ def model_packs_inputs(model: torch.nn.Module) -> bool:
 def prepare_full_model_inputs(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
-    pre_process: bool,
     padding_seqlen: Optional[int] = None,
 ) -> tuple[torch.Tensor, torch.Tensor, PackedSeqParams]:
     """Left-align complete sequences before model-owned mRoPE and CP packing.
@@ -243,9 +229,7 @@ def prepare_full_model_inputs(
     tokens = tokens.masked_fill(columns >= lengths[:, None], 0)
     mask = columns < aligned[:, None]
     if padding_seqlen is not None:
-        lengths = mask.sum(-1)
-        packed_length = ((lengths + alignment - 1) // alignment * alignment).sum()
-        extra = padding_seqlen * input_ids.shape[0] - int(packed_length)
+        extra = padding_seqlen * input_ids.shape[0] - int(aligned.sum())
         if extra > 0:
             width = max(tokens.shape[1], extra)
             tokens = torch.nn.functional.pad(tokens, (0, width - tokens.shape[1]))
@@ -255,6 +239,32 @@ def prepare_full_model_inputs(
             mask = torch.cat((mask, dummy_mask.unsqueeze(0)))
     _, params = preprocess_packed_seqs(tokens, mask, pre_process=False)
     return tokens, mask, params
+
+
+def prepare_ragged_model_inputs(
+    rows: list[torch.Tensor], model: torch.nn.Module
+) -> tuple[
+    torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], PackedSeqParams
+]:
+    """Prepare ragged batches according to the model's packing ownership.
+
+    Model-owned packing consumes complete rows and computes mRoPE internally;
+    other models consume local packed tokens and matching position IDs.
+    """
+    if model_packs_inputs(model):
+        tokens = torch.nn.utils.rnn.pad_sequence(rows, batch_first=True)
+        lengths = torch.tensor([len(row) for row in rows], device=tokens.device)
+        mask = (
+            torch.arange(tokens.shape[1], device=tokens.device)[None, :]
+            < lengths[:, None]
+        )
+        tokens, mask, params = prepare_full_model_inputs(tokens, mask)
+        return tokens, mask, None, params
+    tokens, params = preprocess_ragged_seqs(rows)
+    positions, _ = preprocess_ragged_seqs(
+        [torch.arange(len(row), device=row.device) for row in rows]
+    )
+    return tokens, None, positions, params
 
 
 def postprocess_packed_seqs(

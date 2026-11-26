@@ -36,7 +36,6 @@ from sglang.srt.managers.scheduler import (
     run_scheduler_process as _run_scheduler_process,
 )
 
-from rlinf.config import sglang_syncs_mtp
 from rlinf.scheduler import Worker, WorkerAddress
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
@@ -142,13 +141,6 @@ def patch_sglang_presharded_weights(model: torch.nn.Module) -> None:
         else:
             continue
         module._rlinf_presharded_loader_patched = True
-
-
-def get_mtp_draft_model(draft_worker: Any) -> torch.nn.Module:
-    """Resolve the MTP runner through SGLang's supported worker wrappers."""
-    if draft_worker.server_args.disable_overlap_schedule:
-        return draft_worker.draft_model_runner.model
-    return draft_worker.draft_worker.draft_runner.model
 
 
 class Scheduler(_Scheduler):
@@ -575,9 +567,14 @@ class Scheduler(_Scheduler):
                 and self.cfg.actor.training_backend == "megatron"
             ):
                 patch_sglang_presharded_weights(model)
-                if sglang_syncs_mtp(self.cfg.actor, self.cfg.rollout):
-                    self._sync_draft_model = get_mtp_draft_model(self.draft_worker)
-                    patch_sglang_presharded_weights(self._sync_draft_model)
+            if self.cfg.rollout.sync_mtp:
+                if self.draft_worker.server_args.disable_overlap_schedule:
+                    self._sync_draft_model = self.draft_worker.draft_model_runner.model
+                else:
+                    self._sync_draft_model = (
+                        self.draft_worker.draft_worker.draft_runner.model
+                    )
+                patch_sglang_presharded_weights(self._sync_draft_model)
             # it's important to use load_weight to load resharded weight from megatron
             sync_models = (
                 (model,)

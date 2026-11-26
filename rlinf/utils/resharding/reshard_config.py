@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from functools import partial
 from typing import Callable, Optional
 
 from megatron.core.transformer import TransformerConfig
@@ -128,19 +127,7 @@ class ReshardConfig:
             self.convert_fn = self._convertor.convert
 
         if self.tp_gather_fn is None:
-            self.tp_gather_fn = get_tp_gather_fn(self.model_type)
-            if self.model_type == "qwen3_5":
-                self.tp_gather_fn = partial(
-                    self.tp_gather_fn,
-                    model_config=self.model_config,
-                    target_vision_tp_size=self.rollout_vision_tp_size,
-                    enable_dp_attention=self.enable_dp_attention,
-                    replicate_output_layer=(
-                        self.enable_dp_attention
-                        and self.reshard_pp_size == 1
-                        and self.model_config.share_embeddings_and_output_weights
-                    ),
-                )
+            self.tp_gather_fn = get_tp_gather_fn(self.model_type, self)
 
         # tpe_gather_fn only use in moe model parallel
         if self.model_config.num_moe_experts is not None and self.tpe_gather_fn is None:

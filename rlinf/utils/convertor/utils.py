@@ -573,10 +573,14 @@ class Qwen35Convertor(BaseConvertor):
             model.num_attention_heads,
             model.linear_num_key_heads,
             model.linear_num_value_heads,
-            model.ffn_hidden_size,
         )
         assert tp >= 1 and all(size % tp == 0 for size in sizes), (
-            f"Qwen3.5 language head and FFN dimensions {sizes} must be divisible by target TP={tp}."
+            f"Qwen3.5 language head dimensions {sizes} must be divisible by target TP={tp}."
+        )
+        ffn_tp = config.rollout_full_tp_size if config.enable_dp_attention else tp
+        assert ffn_tp >= 1 and model.ffn_hidden_size % ffn_tp == 0, (
+            f"Qwen3.5 FFN dimension {model.ffn_hidden_size} must be divisible "
+            f"by target FFN TP={ffn_tp}."
         )
         groups = model.num_query_groups
         assert groups % tp == 0 or tp % groups == 0, (

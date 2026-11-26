@@ -14,21 +14,41 @@
 
 
 import math
+from functools import partial
+from typing import TYPE_CHECKING, Callable, Optional
 
 import torch
 
 from rlinf.config import SupportedModel
 from rlinf.scheduler import Worker
 
+if TYPE_CHECKING:
+    from rlinf.utils.resharding.reshard_config import ReshardConfig
 
-def get_tp_gather_fn(model_type: str):
+
+def get_tp_gather_fn(
+    model_type: str, reshard_config: Optional["ReshardConfig"] = None
+) -> Callable:
+    """Select the TP gather function, optionally binding target-layout settings."""
     model_type = SupportedModel(model_type)
     if model_type == SupportedModel.QWEN2_5:
         return tp_gather_fn_qwen2_5
     elif model_type == SupportedModel.QWEN3:
         return tp_gather_fn_qwen3_dense
     elif model_type == SupportedModel.QWEN3_5:
-        return tp_gather_fn_qwen3_5
+        if reshard_config is None:
+            return tp_gather_fn_qwen3_5
+        return partial(
+            tp_gather_fn_qwen3_5,
+            model_config=reshard_config.model_config,
+            target_vision_tp_size=reshard_config.rollout_vision_tp_size,
+            enable_dp_attention=reshard_config.enable_dp_attention,
+            replicate_output_layer=(
+                reshard_config.enable_dp_attention
+                and reshard_config.reshard_pp_size == 1
+                and reshard_config.model_config.share_embeddings_and_output_weights
+            ),
+        )
     elif model_type == SupportedModel.QWEN3_MOE:
         return tp_gather_fn_qwen3_moe
     elif model_type in (SupportedModel.DEEPSEEK_V3,):
@@ -368,7 +388,7 @@ def tp_gather_fn_qwen3_5(
             not vision or target_vision_tp_size == tp_size
         )
         if not vision and enable_dp_attention and ".mlp." in key:
-            target_cat = "full_tp"
+            target_cat = "shared"
         if key.endswith(
             (
                 "self_attention.in_proj.weight",

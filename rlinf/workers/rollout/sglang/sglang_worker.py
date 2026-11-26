@@ -23,7 +23,7 @@ from omegaconf import DictConfig, OmegaConf
 from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
-from rlinf.config import sglang_syncs_mtp, torch_dtype_from_precision
+from rlinf.config import torch_dtype_from_precision
 from rlinf.data.schema.reasoning_requests import RolloutRequest, SeqGroupInfo
 from rlinf.data.schema.reasoning_results import RolloutResult
 from rlinf.scheduler import Channel, Worker
@@ -205,10 +205,9 @@ class SGLangWorker(Worker):
                 # validate_weight_first_sync compare hf weights with megatron weights,
                 # and if resume_dir is enabled, hf weights can't equal to megatron's.
                 validate_weight_first_sync = False
-            independent_draft = self._cfg_rollout.sglang.get(
-                "speculative_algorithm"
-            ) is not None and not sglang_syncs_mtp(
-                self._cfg.get("actor"), self._cfg_rollout
+            independent_draft = (
+                self._cfg_rollout.sglang.get("speculative_algorithm") is not None
+                and not self._cfg_rollout.sync_mtp
             )
             # SGLang shares load_format between target and draft runners.
             if (
@@ -231,6 +230,8 @@ class SGLangWorker(Worker):
             ),
         }
         for name, value in self._cfg_rollout.sglang.items():
+            if value is None:
+                continue
             if name in (
                 "mm_enable_dp_encoder",
                 "disable_radix_cache",

@@ -652,6 +652,35 @@ jobs:
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           bash requirements/install.sh agentic
 
+      - name: Test Megatron and SGLang weight sync on CPU
+        timeout-minutes: 20
+        env:
+          CUDA_VISIBLE_DEVICES: ""
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+        run: |
+          source .venv/bin/activate
+          export PYTHONPATH="$(pwd):$(pwd)/tests/unit_tests:${PYTHONPATH:-}"
+          python -c "import megatron.bridge, sglang; import torch.distributed as dist; assert dist.is_gloo_available()"
+          for suite in test_ma_megatron_actor test_ckpt_convertor; do
+            python -m pytest "tests/unit_tests/${suite}.py" -q -ra --junitxml="${suite}.xml"
+          done
+          python -m pytest \
+            tests/unit_tests/test_utils.py::TestMegatronModelConfig \
+            tests/unit_tests/test_utils.py::test_valid_token_scaling_preserves_unsplit_gradient \
+            tests/unit_tests/test_utils.py::test_critic_packing_preserves_values_loss_and_optimizer_update \
+            tests/unit_tests/test_utils.py::test_critic_targets_are_fixed_real_length_rows \
+            -q -ra --junitxml="test_model_config.xml"
+          python -m pytest tests/unit_tests/test_weight_syncer.py::TestMegatronSGLangWeightSync -q -ra --junitxml="test_sglang_sync.xml"
+          python - <<'PYTHON'
+          import xml.etree.ElementTree as ET
+          for name in ("test_ma_megatron_actor", "test_ckpt_convertor", "test_model_config", "test_sglang_sync"):
+              root = ET.parse(f"{name}.xml").getroot()
+              skipped = sum(int(suite.get("skipped", 0)) for suite in root.iter("testsuite"))
+              assert skipped == 0, f"{name}: expected no skipped tests, got {skipped}"
+          PYTHON
+
       - name: Train Qwen2.5-1.5B with SGLang Megatron-Bridge Collocated mode
         timeout-minutes: 20
         run: |
