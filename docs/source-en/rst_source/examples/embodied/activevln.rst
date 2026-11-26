@@ -1,9 +1,10 @@
 ActiveVLN with EmbodiInfer
 ==========================
 
-Run a two-step ActiveVLN GRPO quick check with a Hugging Face actor,
+Run two ActiveVLN GRPO training steps with an FSDP actor,
 EmbodiInfer rollout, and a VLN-CE environment server. The example repeats R2R
-episode 1 with batch size 2 and BF16 weights.
+episode 1 with two environments, GRPO groups of two, a global training batch of
+16, and BF16 weights.
 
 Overview
 --------
@@ -36,7 +37,17 @@ Overview
 Tasks
 ~~~~~
 
-The preset follows R2R navigation instructions in Matterport3D scenes.
+.. list-table::
+   :header-rows: 1
+
+   * - Environment
+     - Task / Suite
+     - Config / Weights
+     - Focus
+   * - VLN-CE / Habitat
+     - R2R
+     - ``activevln_r2r_grpo_embodiinfer``
+     - Instruction-following navigation in Matterport3D scenes
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -44,12 +55,16 @@ Observation and Action
 .. list-table::
    :header-rows: 1
 
+   * - Field
+     - Description
    * - Observation
-     - Action
-     - Reward
-   * - RGB images, navigation instruction, and episode history
-     - Text navigation commands
+     - RGB images and episode history
+   * - Action
+     - Text navigation actions
+   * - Reward
      - Navigation success
+   * - Prompt
+     - Natural-language navigation instruction
 
 Setup and Run
 -------------
@@ -96,6 +111,7 @@ Setup and Run
 
       .. code-block:: bash
 
+         deactivate
          conda activate server
          python -m pip install ray flask hydra-core av
 
@@ -132,51 +148,84 @@ Setup and Run
 
       **4. Launch Training**
 
-      Set these YAML fields to the absolute path of the downloaded checkpoint:
-
-      .. list-table::
-         :header-rows: 1
-
-         * - File
-           - Field
-         * - ``examples/embodiment/config/model/activevln.yaml``
-           - ``model_path``
-         * - ``examples/embodiment/config/env/vlnce_server_r2r.yaml``
-           - ``tokenizer_path``
-
-      In ``examples/embodiment/config/activevln_r2r_grpo_embodiinfer.yaml``, place RLinf on GPU 0 so the server can render on GPU 1:
-
-      .. code-block:: yaml
-
-         cluster:
-           component_placement:
-             actor,env,rollout: 0
-
-      Launch from the RLinf checkout. ``RAY_ADDRESS=local`` keeps RLinf separate from
-      the server's Ray cluster.
+      Launch from the RLinf checkout with the downloaded checkpoint. The default
+      placement uses GPU 0, leaving GPU 1 for rendering. ``RAY_ADDRESS=local``
+      starts a separate Ray cluster for RLinf.
 
       .. code-block:: bash
 
          RAY_ADDRESS=local \
-           bash examples/embodiment/run_embodiment.sh activevln_r2r_grpo_embodiinfer
+           bash examples/embodiment/run_embodiment.sh activevln_r2r_grpo_embodiinfer \
+           actor.model.model_path="$PWD/models/activevln-r2r" \
+           env.train.tokenizer_path="$PWD/models/activevln-r2r" \
+           env.eval.tokenizer_path="$PWD/models/activevln-r2r"
 
-      Select the inference backend with ``rollout.rollout_backend``: ``embodiinfer`` or ``huggingface``.
-      EmbodiInfer options live under ``rollout.embodiinfer``.
+      .. dropdown:: Advanced configuration (optional)
 
-      For longer training, edit ``env.train.episode_ids``, ``runner.max_steps``, and
-      ``runner.max_epochs`` in the preset. For a remote server, set
-      ``env.train.server_url`` and ``env.eval.server_url``.
+         **Longer Training and Checkpoints**
+
+         To train for 1,000 updates and save a checkpoint every 100 updates,
+         change these fields in
+         ``examples/embodiment/config/activevln_r2r_grpo_embodiinfer.yaml``,
+         then repeat the launch command above. Training and evaluation cycle through
+         their respective episode lists. Choose IDs from the server's loaded annotations.
+
+         .. code-block:: yaml
+
+            runner:
+              max_epochs: 1000
+              max_steps: 1000
+              save_interval: 100
+              val_check_interval: 100
+            env:
+              train:
+                episode_ids: [1, 2, 3, 4]
+                max_episode_steps: 32
+                max_steps_per_rollout_epoch: 32
+              eval:
+                episode_ids: [5, 6]
+                max_episode_steps: 32
+                max_steps_per_rollout_epoch: 32
+
+         Each episode can run for up to 32 model turns, with up to three navigation
+         actions per turn. Training and evaluation share the server's two slots.
+         Checkpoints are saved under
+         ``<run directory>/activevln_r2r_grpo_embodiinfer/checkpoints/global_step_<step>/actor``.
+
+         **Standalone Evaluation**
+
+         From the RLinf checkout, evaluate the downloaded checkpoint with the same
+         running server:
+
+         .. code-block:: bash
+
+            export EMBODIED_PATH="$PWD/examples/embodiment"
+            RAY_ADDRESS=local python -m evaluations.eval_embodied_agent \
+              --config-path "$EMBODIED_PATH/config" \
+              --config-name activevln_r2r_grpo_embodiinfer \
+              +model@rollout.model=activevln \
+              rollout.model.model_path="$PWD/models/activevln-r2r" \
+              env.eval.tokenizer_path="$PWD/models/activevln-r2r"
+
+         **Backend and Server**
+
+         Set ``rollout.rollout_backend=huggingface`` to use Hugging Face rollout.
+         EmbodiInfer options live under ``rollout.embodiinfer``. For a remote
+         server, set ``env.train.server_url`` and ``env.eval.server_url``.
 
 Visualization and Results
 -------------------------
 
-The run saves console logs and TensorBoard events under
-``logs/<timestamp>-activevln_r2r_grpo_embodiinfer``. Start TensorBoard to inspect
-the training metrics:
+The two-step run prints progress through step 2 and records ``env/success_once``,
+``actor/policy_loss``, and ``actor/grad_norm``.
+
+Under
+``logs/<timestamp>-activevln_r2r_grpo_embodiinfer``, open ``run_embodiment.log``
+for console output or ``tensorboard/`` for training curves. Start TensorBoard
+to inspect the metrics:
 
 .. code-block:: bash
 
    tensorboard --logdir logs
 
-See :doc:`/rst_source/reference/metrics` for training metrics and
-:doc:`/rst_source/evaluations/get_started/index` for the evaluation workflow.
+See :doc:`/rst_source/reference/metrics` for metric definitions.
