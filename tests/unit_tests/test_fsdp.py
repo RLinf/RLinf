@@ -1517,6 +1517,7 @@ def test_openwam_sft_resume_hands_the_epoch_to_loader_workers(tmp_path, monkeypa
     assert len(remaining) == 4
     assert {sample["epoch"] for sample in remaining} == {2}
 
+
 def _embodied_actor(mode_cfg, *, mix_envs=True, rank=0, world_size=1, actor_cls=None):
     """An embodied FSDP actor holding only the state its batch planning reads."""
     from rlinf.data.schema.embodied_trajectory import RolloutGeometry

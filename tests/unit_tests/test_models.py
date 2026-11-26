@@ -64,6 +64,7 @@ from rlinf.models.embodiment.openpi.modules.siglip import (
     Encoder1DBlock,
     SigLIPViT,
 )
+from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
 from rlinf.models.embodiment.openwam.checkpoint import (
     _checkpoint_with_encoder_override,
 )
@@ -74,7 +75,6 @@ from rlinf.models.embodiment.openwam.processing import (
     _libero_state_to_eef10,
     _to_pil,
 )
-from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
 from rlinf.models.embodiment.prefix_features import (
     PREFIX_OBS_KEYS,
     PrefixFeatureModel,
