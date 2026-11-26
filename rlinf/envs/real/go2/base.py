@@ -33,9 +33,9 @@ class Go2EnvConfig:
     """Drive timing and episode bounds; motion opt-in belongs to hardware."""
 
     is_dummy: bool = False
-    enable_front_camera: bool = False
     step_frequency: float = 10.0
     max_num_steps: int = 20
+    enable_front_camera: bool = False
 
 
 class Go2Env(gym.Env):
@@ -115,27 +115,25 @@ class Go2Env(gym.Env):
         """Return the number of completed steps in the current episode."""
         return self._num_steps
 
-    def _observation(self) -> dict[str, Any]:
+    def _observation(self, *, camera_timeout: float = 0.25) -> dict[str, Any]:
+        observation = {}
+        if self.config.enable_front_camera:
+            if self.config.is_dummy:
+                space = self.observation_space["frames"]["front"]
+                frame = np.zeros(space.shape, dtype=space.dtype)
+            else:
+                frame = self.robot.children["front"].get_frame(
+                    timeout=camera_timeout, max_age=0.25
+                )
+            observation["frames"] = {"front": frame}
         if self.config.is_dummy:
-            observation = {
-                "state": {
-                    name: np.zeros(shape, dtype=np.float32)
-                    for name, shape in STATE_SHAPES.items()
-                }
+            observation["state"] = {
+                name: np.zeros(shape, dtype=np.float32)
+                for name, shape in STATE_SHAPES.items()
             }
-            if self.config.enable_front_camera:
-                frame_space = self.observation_space["frames"]["front"]
-                observation["frames"] = {
-                    "front": np.zeros(frame_space.shape, dtype=frame_space.dtype)
-                }
-            return observation
-        if not self.config.enable_front_camera:
-            return {"state": self.robot.get_observation()["base"]}
-        frame = self.robot.children["front"].get_frame(timeout=0.25, max_age=0.25)
-        return {
-            "state": self.robot.children["base"].get_observation(),
-            "frames": {"front": frame},
-        }
+        else:
+            observation["state"] = self.robot.children["base"].get_observation()
+        return observation
 
     def _stop(self) -> None:
         if self.robot is not None:
@@ -153,7 +151,7 @@ class Go2Env(gym.Env):
         super().reset(seed=seed)
         self._needs_reset = True
         self._stop()
-        observation = self._observation()
+        observation = self._observation(camera_timeout=1.25)
         self._num_steps = 0
         self._needs_reset = False
         return observation, {}

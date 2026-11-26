@@ -9528,6 +9528,7 @@ def test_go2_camera_observation_and_reconnect(go2_sdk):
     resource = RobotDiscovery.registry["UnitreeGo2"].discovery_cls.enumerate(
         0, [config]
     )
+    go2_sdk.image_delay = 0.3
     for color in ((0, 0, 255), (255, 0, 0)):
         sample = np.full((16, 16, 3), color, dtype=np.uint8)
         encoded, jpeg = cv2.imencode(".jpg", sample)
@@ -10117,7 +10118,7 @@ def test_go2_sport_manual_failures_preserve_report_and_cleanup(go2_sdk, failure)
 def test_go2_sport_preview_and_cancel_never_open_sdk(
     monkeypatch, go2_sdk, tmp_path, mode
 ):
-    from toolkits.realworld_check.check_go2_sport import main
+    from toolkits.realworld_check import check_go2_sport
 
     output = tmp_path / "report.json"
     argv = [
@@ -10132,9 +10133,10 @@ def test_go2_sport_preview_and_cancel_never_open_sdk(
     if mode == "dry-run":
         argv += ["--dry-run"]
     else:
+        monkeypatch.setattr(check_go2_sport, "competing_processes", lambda: [])
         monkeypatch.setattr("builtins.input", lambda _: "CANCEL")
     monkeypatch.setattr(sys, "argv", argv)
-    main()
+    check_go2_sport.main()
     assert go2_sdk.events == []
     assert not output.exists()
 
@@ -10170,6 +10172,7 @@ def test_go2_sport_conflicts_only_include_potential_motion_commands(
         ["-m", "toolkits.realworld_check.check_go2_sport", "--readonly"],
         ["-m", "toolkits.realworld_check.check_go2_sport", "--direction", "left"],
         ["go2_move.py", "-m", "examples.embodiment.go2_abc.deploy"],
+        ["-m", "toolkits.realworld_check.check_go2_camera", "--interface", "eth0"],
     ]
     for pid, command in enumerate(commands, 20):
         process = tmp_path / str(pid)

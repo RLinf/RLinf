@@ -17,15 +17,18 @@
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Literal
 
 _lock = threading.Lock()
 _interface: str | None = None
-_active_channels: set[str] = set()
+_active_channels: set[Literal["state", "video"]] = set()
 
 
 @contextmanager
-def go2_dds_session(interface: str, *, channel: str = "state") -> Iterator[None]:
-    """Hold the state or video channel on the process-wide factory."""
+def go2_dds_session(
+    interface: str, *, channel: Literal["state", "video"] = "state"
+) -> Iterator[None]:
+    """Reserve a state or video session on the process-wide DDS interface."""
     from unitree_sdk2py.core.channel import ChannelFactory, Qos
 
     global _interface

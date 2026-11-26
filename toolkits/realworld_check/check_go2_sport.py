@@ -103,6 +103,7 @@ def competing_processes() -> list[int]:
             if argv[1:3] in (
                 ["-m", "examples.embodiment.go2_abc.deploy"],
                 ["-m", "toolkits.realworld_check.check_go2_lowstate"],
+                ["-m", "toolkits.realworld_check.check_go2_camera"],
             ):
                 continue
             if argv[1:3] == ["-m", "toolkits.realworld_check.check_go2_sport"] and (

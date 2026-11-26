@@ -34,7 +34,7 @@ def main() -> None:
     resource = RobotDiscovery.registry["UnitreeGo2"].discovery_cls.enumerate(
         0, [config]
     )
-    observations = set()
+    image_hashes = set()
     with closing(
         gym.make(
             "rlinf.envs.real.go2:Go2DriveEnv-v1",
@@ -50,11 +50,11 @@ def main() -> None:
             if not env.observation_space.contains(observation):
                 raise ValueError("Go2 observation did not match its declared space.")
             frame = observation["frames"]["front"]
-            observations.add(sha256(frame).digest())
+            image_hashes.add(sha256(frame).digest())
             time.sleep(0.1)
     get_logger().info(
         "Read 10 Go2 front-camera observations, %d distinct images, %s %s BGR.",
-        len(observations),
+        len(image_hashes),
         frame.shape,
         frame.dtype,
     )

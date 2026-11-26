@@ -15,6 +15,7 @@
 """In-memory SDK2 edge fake; no sockets, DDS participants, or robot access."""
 
 import threading
+import time
 from contextlib import contextmanager
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -54,6 +55,7 @@ class FakeGo2SDK:
         self.sport_callback: Any = None
         self.publish_sport = True
         self.image_sample: tuple[int, bytes] = (0, b"")
+        self.image_delay = 0.0
 
     def publish(self) -> None:
         """Deliver one recent state through the real adapter's SDK callback."""
@@ -159,6 +161,7 @@ class FakeGo2SDK:
                 self.timeout = timeout
 
             def GetImageSample(self) -> tuple[int, bytes]:
+                time.sleep(fake.image_delay)
                 return fake.image_sample
 
         definitions = {

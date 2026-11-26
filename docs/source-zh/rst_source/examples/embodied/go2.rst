@@ -110,13 +110,15 @@ Gymnasium 环境 ``Go2DriveEnv-v1`` 默认从 ``rt/lowstate`` 读取 Go2 EDU 的
 
       **3. 检查前视相机**
 
-      用同一个网口运行相机检查命令：
+      用前面配置的网卡运行只读检查：
 
       .. code-block:: bash
 
          python -m toolkits.realworld_check.check_go2_camera --interface <interface>
 
-      命令通过 Go2 环境读取十次观测，并报告其中画面不同的数量。让机器人保持静止，在镜头前移动物体即可检查画面是否更新。在环境配置中将 ``override_cfg.enable_front_camera`` 设为 ``true``，便可从每次观测的 ``frames["front"]`` 读取 640 × 360 的 8 位 BGR 彩色图像。
+      日志会报告十次观测中有多少张不同的图像。
+
+      将 ``override_cfg.enable_front_camera`` 的值设为 ``true`` 即可启用相机。观测中的 ``frames["front"]`` 字段包含 640 × 360 的 BGR 图像，类型为 ``uint8`` 数组。
 
 可视化与结果
 ------------

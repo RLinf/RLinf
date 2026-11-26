@@ -108,15 +108,17 @@ Setup and Run
 
          A stop request or a low SDK velocity estimate does not establish physical rest. Observe the robot directly and use the remote if motion continues. Network loss or process failure can defeat software stop requests.
 
-      **3. Check the front camera**
+      **3. Check the Front Camera**
 
-      Run the camera check with the same network interface:
+      Run the read-only camera check with the same network interface:
 
       .. code-block:: bash
 
          python -m toolkits.realworld_check.check_go2_camera --interface <interface>
 
-      The command reads ten observations through the drive environment and reports the number of distinct images. Move an object in front of the stationary robot to check that the view updates. To enable the camera in your environment, set ``override_cfg.enable_front_camera`` to ``true``. Each observation includes ``frames["front"]``, a 640 × 360 BGR image with 8-bit channels.
+      The log shows how many distinct images appeared in ten observations.
+
+      Set ``override_cfg.enable_front_camera`` to ``true`` to enable the camera. The ``frames["front"]`` field contains a 640 × 360 BGR image as a ``uint8`` array.
 
 Visualization and Results
 -------------------------
