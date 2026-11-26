@@ -1,5 +1,5 @@
-Env Decoupled Mode
-==================
+Decoupled Env Execution
+=======================
 
 ``env_decoupled_mode`` is a communication mode used in RLinf embodied tasks to
 decouple Env Workers from Rollout Workers. It is enabled by setting

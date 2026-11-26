@@ -1,91 +1,146 @@
-使用 PICO 采集双臂 YAM 示教数据
-===============================
+YAM PICO 数据采集
+=================
 
-使用 PICO 双手柄和 3 台 RealSense RGB 相机采集双臂 YAM 示教数据。关节状态与动作均为 14 维绝对位置向量，顺序为 ``[left_q0..q5, left_gripper, right_q0..q5, right_gripper]``；夹爪用 ``0=关闭，1=打开``。
+在单台 YAM 主机上使用 PICO 双手柄和 3 台 RealSense RGB 相机采集双臂 YAM 关节空间示教数据，并将成功分片合并为可用于 :doc:`yam_openpi` 的 LeRobot 数据集。
 
-准备设备
---------
+概览
+----
 
-准备两台配备 ``flexible_4310`` 夹爪的 YAM 从臂、3 台 RealSense 相机、PICO 头显与双手柄，以及 ZeroMQ PICO publisher。按 :ref:`PICO 软件准备 <pico-software-setup>` 准备 XRoboToolkit、PC Service 和 publisher，再安装 YAM 运行环境：
+本示例通过 PICO 双手柄驱动两台配备 ``flexible_4310`` 夹爪的 YAM 从臂（按臂做逆运动学求解），将采集数据导出为未压缩 LeRobot shard，供后续 OpenPI SFT 或 HG-DAgger 训练使用。
 
-.. code-block:: bash
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-   bash requirements/install.sh embodied --env yam
-   source .venv/bin/activate
+   .. grid-item-card:: 机器人
+      :text-align: center
 
-安装脚本包含固定版本的 ``i2rt`` backend 和 PICO 传输依赖。启用运动前，核对已安装的机器人模型、工具中心点、关节限位、操作者坐标系到机械臂基座坐标系的 yaw 和运动缩放参数是否与真机一致。
+      2× YAM · ``flexible_4310`` 夹爪
+
+   .. grid-item-card:: 遥操作与相机
+      :text-align: center
+
+      PICO 双手柄 · 3 台 RealSense RGB 相机
+
+   .. grid-item-card:: 工作流
+      :text-align: center
+
+      PICO 逆解数据采集 → 过滤合并 LeRobot
+
+   .. grid-item-card:: 硬件
+      :text-align: center
+
+      1 台 YAM 主机 · 2 路 CAN（1 Mbit/s）· PICO publisher
+
+观测与动作
+~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 78
+
+   * - 字段
+     - 说明
+   * - 观测
+     - 顶部、左腕与右腕 3 路 RealSense RGB 图像，加 14 维绝对关节位置向量 ``[left_q0..q5, left_gripper, right_q0..q5, right_gripper]``\ （弧度；夹爪 ``0=关闭，1=打开``）。
+   * - 动作
+     - 同顺序 14 维绝对关节与夹爪目标，由每条臂的 YAM 逆运动学（``override_cfg.ik``）从手柄位姿求得。
+   * - 采集控制
+     - 按住左 / 右手 ``grip`` 接管对应机械臂；右菜单键开始或结束一条录制，左菜单键丢弃当前未完成录制（``yam_episode``）。
+
+硬件与安全准备
+--------------
+
+将两台配备 ``flexible_4310`` 夹爪的 YAM 从臂接入两路 1 Mbit/s CAN 接口（配置见 `i2rt CAN 说明 <https://github.com/i2rt-robotics/i2rt/blob/47fee5e7dec4e30ca054f798bda1c8894b465ed2/README.md#can-bus-setup>`_），并按机身实物标签区分顶部、左腕、右腕 3 台 RealSense 相机。按 :ref:`PICO 软件准备 <pico-software-setup>` 与 :ref:`PICO publisher 配置 <pico-publisher-setup>` 准备好 XRoboToolkit、PC Service 与 ZeroMQ publisher。开始前先释放其他进程占用的 CAN 与相机。
 
 .. warning::
 
-   采集器在第一次 reset 时连接两条从臂 CAN 和全部 3 台相机。请先让双臂处于有支撑且已确认安全的姿态，清空运动范围，并安排操作员守在急停旁。示例默认不自动复位或停放；结束会话前，操作员需确认关闭电机输出后双臂仍能安全稳定地受到支撑。
+   采集器在第一次 reset 时连接两条从臂 CAN 和全部 3 台相机。请先让双臂处于有支撑且已确认安全的姿态，清空运动范围，并安排操作员守在急停旁。示例默认关闭自动复位与停放——结束会话前，操作员必须确认关闭电机输出后双臂仍能安全稳定地受到支撑。
 
-硬件检查
---------
+.. dropdown:: 硬件标定细则（可选）
 
-启动 Ray 前，在 YAM 节点的仓库根目录、已激活的环境中查询 CAN 接口、相机序列号和模型文件；以下命令不启用电机或启动图像流：
+   启用运动前，核对机器人模型、工具中心点、关节限位、运动缩放与操作者到机械臂基座的 yaw：
 
-.. code-block:: bash
+   * **关节限位与 TCP 校验：** 打开下方 ``i2rt`` 输出的机械臂与夹爪 XML，比对 ``joint1`` 至 ``joint6`` 的 ``range``\ （弧度）与 ``examples/embodiment/config/env/realworld_dual_yam_joint.yaml`` 中两臂的 ``joint_limit_min`` / ``joint_limit_max``\ （任务限位须落在模型与真机允许范围内）。核对夹爪 XML 中的 ``grasp_site`` 与实物工具及 ``env.eval.override_cfg.ik.site_name`` 一致。
+   * **缩放与单步限幅：** ``env.eval.pico.position_scale`` 与 ``rotation_scale`` 默认均为 ``0.3``\ （手柄移动 1 cm 对应 3 mm TCP 目标位移）；``env.eval.override_cfg.max_joint_delta`` 限制每步关节目标相对当前反馈的最大弧度变化。
+   * **publisher 地址：** 在 publisher PC 上用 ``ip -brief address`` 查出 YAM 节点可达的 IP，端口取 ``configs/vr_bridge.yaml`` 中的 ``zmq.ipc_addr``。将 ``YAM_PICO_ZMQ_ADDR`` 设为 ``tcp://<publisher-PC-address>:<port>``\ （切勿填头显 IP 或 ``0.0.0.0``；同机运行也可用一致的 IPC 地址）。
+   * **分臂测量 yaw：** 左右臂需分别测量。校准时头显面向的水平方向为操作者 ``+X``\ （左侧 ``+Y``，上方 ``+Z``）；按模型与厂家坐标图将操作者前方表示为各臂基座水平面内的 ``(dx, dy)``，设 yaw 为 ``atan2(dy, dx)``\ （弧度，正值绕基座 ``+Z`` 按右手定则旋转；角度乘 ``π/180`` 换算；仅水平轴同向时填 ``0``，yaw 不能补偿基座倾斜）。启动时面向实测方向并松开两侧 grip，操作朝向改变后需重新测量校准。
 
-   ip -details link show type can
-   python -c 'import pyrealsense2 as rs; print([device.get_info(rs.camera_info.serial_number) for device in rs.context().devices])'
-   python - <<'PY'
-   from i2rt.robots.utils import ArmType, GripperType
-
-   print(ArmType.YAM.get_xml_path(), GripperType.FLEXIBLE_4310.get_xml_path(), sep="\n")
-   PY
-
-按实物接线区分左、右 CAN，核对接口为 ``UP``、bitrate 为 SDK 要求的 1 Mbit/s，且无 ``BUS-OFF`` 等故障；配置方法见 `i2rt CAN 说明 <https://github.com/i2rt-robotics/i2rt/blob/47fee5e7dec4e30ca054f798bda1c8894b465ed2/README.md#can-bus-setup>`_。按机身标签确认顶部、左腕、右腕相机序列号；不要按枚举顺序猜测左右关系，并先释放其他任务占用的 CAN 和相机。
-
-确认实物为 YAM 与 ``flexible_4310`` 夹爪。打开输出的两个 XML，将机械臂 ``joint1`` 至 ``joint6`` 的 ``range`` 与 ``examples/embodiment/config/env/realworld_dual_yam_joint.yaml`` 中两臂的 ``joint_limit_min/max`` 比对，单位为 rad，任务限位应在模型与真机允许范围内。夹爪 XML 的 ``grasp_site`` 定义 TCP，核对其位置、方向与实物工具一致，并与采集配置的 ``env.eval.override_cfg.ik.site_name`` 对应；更换夹爪或工具后须先验证模型。
-
-采集配置的 ``env.eval.pico.position_scale`` 和 ``rotation_scale`` 分别控制手柄平移与转动的目标比例，示例均为 ``0.3``；手柄移动 1 cm 对应 3 mm TCP 目标位移。``env.eval.override_cfg.max_joint_delta`` 限制每步关节目标相对当前反馈的差值，单位为 rad，不限制整段运动总幅度。
-
-publisher 地址按 :ref:`PICO publisher 配置 <pico-publisher-setup>` 获取：在 publisher PC 用 ``ip -brief address`` 找到 YAM 节点可访问的地址，端口取 ``configs/vr_bridge.yaml`` 的 ``zmq.ipc_addr``。consumer 填 ``tcp://<publisher-PC-address>:<port>``，不是头显 IP 或 ``0.0.0.0``；同机也可使用一致的 IPC 地址。
-
-yaw 需分别测量左右臂：校准时头显面向的水平方向为操作者 +X，左侧为 +Y，上方为 +Z。按模型与厂家坐标图，将操作者前方表示为对应基座水平面内的 ``(dx, dy)``，填 ``atan2(dy, dx)``，单位为 rad，正值绕基座 +Z 按右手定则旋转；用度测量时乘 π/180 换算。仅在水平坐标轴同向时填 0，不能用 yaw 补偿基座倾斜。启动时面向测量时的方向并松开两侧 grip；操作朝向改变后重新测量和校准。
-
-配置并采集
+安装与运行
 ----------
 
-配置两条从臂 CAN、按顶部、左侧、右侧顺序排列的 3 个相机序列号、PICO publisher 地址，以及左右臂各自实测的操作者坐标系到机器人坐标系的 yaw。在 YAM 所在节点 **启动 Ray 前** 导出这些值，供硬件枚举和环境 worker 读取：
+.. include:: _setup_common.rst
 
-.. code-block:: bash
+.. tab-set::
 
-   export LEFT_CAN_CHANNEL='<left-can-interface>'
-   export RIGHT_CAN_CHANNEL='<right-can-interface>'
-   export CAMERA_SERIALS='<top-serial>,<left-serial>,<right-serial>'
-   export YAM_PICO_ZMQ_ADDR='tcp://<publisher-host>:<publisher-port>'
-   export YAM_LEFT_OPERATOR_TO_ROBOT_YAW='<measured-radians>'
-   export YAM_RIGHT_OPERATOR_TO_ROBOT_YAW='<measured-radians>'
+   .. tab-item:: 双臂 YAM + PICO
 
-前三个变量填入 ``DualYam`` 硬件配置中未设置的字段，也可以直接在 YAML 里写 ``left_can_channel``、``right_can_channel`` 和 ``camera_serials``。将占位符替换为当前工作站核对过的值。示例配置位于 ``examples/embodiment/config/realworld_dual_yam_collect_data_pico.yaml``，将环境 worker 和硬件放在同一个 Ray 节点。
+      **1. 安装 YAM 运行环境**\ （包含固定版本的 ``i2rt`` 后端与 PICO 传输依赖）：
 
-启动采集前，先在 YAM 节点检查 PICO 数据流：
+      .. code-block:: bash
 
-.. code-block:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env yam && source .venv/bin/activate
 
-   python toolkits/realworld_check/test_pico_data.py \
-       --zmq-addr "$YAM_PICO_ZMQ_ADDR"
+      **2. 查询 CAN 接口、相机序列号与模型 XML**\ （只读查询，不会启用电机或图像流）：
 
-确认头显、双手柄位姿和按键随操作更新，按 Ctrl-C 退出检查。新启动的单机环境可按下面的命令运行：
+      .. code-block:: bash
 
-.. code-block:: bash
+         ip -details link show type can
+         python -c 'import pyrealsense2 as rs; print([device.get_info(rs.camera_info.serial_number) for device in rs.context().devices])'
+         python - <<'PY'
+         from i2rt.robots.utils import ArmType, GripperType
 
-   export RLINF_NODE_RANK=0
-   ray start --head
-   bash examples/embodiment/collect_data.sh realworld_dual_yam_collect_data_pico
+         print(ArmType.YAM.get_xml_path(), GripperType.FLEXIBLE_4310.get_xml_path(), sep="\n")
+         PY
 
-首次接管先逐臂小幅移动，核对方向与缩放；方向不符时松开两侧 grip、停止采集后修正配置，故障停机后由现场操作员确认状态再恢复。
+      确认两路 CAN 处于 ``UP``、bitrate 为 1 Mbit/s 且无 ``BUS-OFF`` 故障，按实物接线区分左右 CAN，并按机身标签匹配顶部、左腕、右腕序列号（XML 与 yaw 核对方法见上方“硬件标定细则”）。
 
-按住某侧手柄的 grip 可接管对应机械臂，松开即结束接管。示例为每条手臂各配置一项 ``pico``，各自经 YAM 模型的逆运动学（``override_cfg.ik``）把手柄位姿换算为关节目标。任一手柄掉线时，两条手臂都会保持不动，直到两侧 grip 都松开。``yam_episode`` 段将右菜单键映射为开始或结束一条录制，将左菜单键映射为丢弃当前录制。正式采集前，请在当前工作站的 PICO 设备上确认按键事件能送达。丢弃只会移除当前未完成的 episode；故障或超时的录制仍可能保存为未成功的 episode。
+      **3. 导出环境变量、验流并启动采集**\ （在 **启动采集前** 导出，供硬件枚举与 env worker 读取；也可将前三个硬件字段直接写入 ``examples/embodiment/config/realworld_dual_yam_collect_data_pico.yaml`` 中的 ``left_can_channel``、``right_can_channel`` 与 ``camera_serials``）：
 
-启动脚本默认在 ``logs/<timestamp>-realworld_dual_yam_collect_data_pico/`` 下保存日志。该配置设置 ``export_format: lerobot_dataset``。每条录制单独流式写入该目录 ``lerobot_dataset/rank_0/`` 下的一个 shard，未成功的录制也会保存，``is_success`` 为假。供 OpenPI SFT 或 HG-DAgger 使用前，把这些 shard 合并成一个 dataset，并去掉未成功的录制。将下面路径中的 ``<timestamp>`` 替换为本次采集目录的时间戳：
+      .. code-block:: bash
 
-.. code-block:: bash
+         export LEFT_CAN_CHANNEL='can0'                      # 替换为左臂 CAN 接口
+         export RIGHT_CAN_CHANNEL='can1'                     # 替换为右臂 CAN 接口
+         export CAMERA_SERIALS='12345678,23456789,34567890'  # 替换为顶、左、右相机序列号
+         export YAM_PICO_ZMQ_ADDR='tcp://192.168.1.100:5555' # 替换为 publisher IP:端口
+         export YAM_LEFT_OPERATOR_TO_ROBOT_YAW='0.0'         # 替换为实测 yaw（弧度）
+         export YAM_RIGHT_OPERATOR_TO_ROBOT_YAW='0.0'        # 替换为实测 yaw（弧度）
 
-   python toolkits/lerobot/merge_lerobot_datasets.py \
-       --source-dir "logs/<timestamp>-realworld_dual_yam_collect_data_pico/lerobot_dataset" \
-       --output-dir logs/yam_merged \
-       --only-success
+         # 检查头显、双手柄位姿与按键更新（按 Ctrl-C 退出）
+         python -m toolkits.realworld_check.test_pico_data --zmq-addr "$YAM_PICO_ZMQ_ADDR"
 
-帧以未压缩 PNG 保存，640x480 的一个视角每帧约 0.9 MB，一分钟的录制约占 5 GB。训练前请检查三路 RGB 图像；``is_success`` 不能代替操作员对任务结果的判断。三种格式的用途见 :doc:`../../guides/data_collection`。
+         # 启动采集
+         bash examples/embodiment/collect_data.sh realworld_dual_yam_collect_data_pico
+
+      首次接管请逐臂小幅移动，核对方向与缩放；方向不符立即松开两侧 grip、停止采集并修正 yaw。任一手柄掉线时双臂会保持不动，直到两侧 grip 均松开。故障停机后须由现场操作员确认状态再恢复。
+
+      **4. 合并成功分片**\ （未成功或超时录制也会以 ``is_success: false`` 落盘；将 ``20261121-120000`` 替换为本次日志目录时间戳）：
+
+      .. code-block:: bash
+
+         python -m toolkits.lerobot.merge_lerobot_datasets \
+             --source-dir "logs/20261121-120000-realworld_dual_yam_collect_data_pico/lerobot_dataset" \
+             --output-dir logs/yam_merged \
+             --only-success  # 将时间戳替换为实际采集目录
+
+结果与常见问题
+--------------
+
+每条录制按未压缩 PNG 写入 ``logs/<timestamp>-realworld_dual_yam_collect_data_pico/lerobot_dataset/rank_0/``\ （640×480 单视角每帧约 0.9 MB，三路相机每分钟约占 5 GB）。训练前务必人工检查三路 RGB 图像——``is_success`` 不能代替任务结果核验。导出格式说明见 :doc:`../../guides/data_collection`，Pi0.5 训练与评估见 :doc:`yam_openpi`。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - 现象
+     - 处理方法
+   * - 接管时机械臂运动方向反了
+     - 立即松开两侧 grip 并停止采集，按 ``atan2(dy, dx)`` 重新测量 ``YAM_LEFT_OPERATOR_TO_ROBOT_YAW`` / ``YAM_RIGHT_OPERATOR_TO_ROBOT_YAW``，重新导出后再次启动。
+   * - CAN 接口出现 ``BUS-OFF`` 或打开失败
+     - 释放占用 CAN 的其他进程，按 ``i2rt`` CAN 文档重设 1 Mbit/s 速率，并用 ``ip -details link show type can`` 确认 ``UP`` 状态。
+   * - ``test_pico_data.py`` 无输出更新
+     - 确认 XRoboToolkit PC Service 与 ``vr_data_publisher`` 正在运行，并将 ``YAM_PICO_ZMQ_ADDR`` 设为可达的 ``tcp://<publisher-ip>:<port>``\ （切勿填头显 IP 或 ``0.0.0.0``）。
+   * - 左右腕相机画面颠倒
+     - 按相机机身标签而非枚举顺序核对序列号，在启动前按 ``top,left,right`` 顺序更新 ``CAMERA_SERIALS``。
+   * - 原始分片中混入失败或超时回合
+     - 合并时为 ``merge_lerobot_datasets.py`` 传入 ``--only-success``，并在 SFT 前抽查合并后的 RGB 画面。

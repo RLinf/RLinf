@@ -1,33 +1,21 @@
+:orphan:
+
 系统级优化
-========================================
+==========
 
-RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训练、智能体中的组件，提供灵活高效的通信库做组件间通信。基于这种解耦的设计，可以灵活调度Worker所使用的计算资源，也可以将Worker分配到更适配的加速器上。
+系统级优化指南已整合到 :doc:`../../guides/performance/index`。
 
-.. raw:: html
+.. grid:: 1 2 2 2
+   :gutter: 2
 
-   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/waiting_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[开发中]Worker(组件)间秒级热切换</b><br>
-         秒级热切换提升训练速度50%+
-       </p>
-     </div>
+   .. grid-item-card:: FUSCO（MoE All-to-All）
+      :link: fusco
+      :link-type: doc
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/waiting_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[开发中]异构加速器混合训练</b><br>
-         使用不同加速器运行的组件间灵活互通，构建训练工作流
-       </p>
-     </div>
-   </div>
+      融合数据重排与 All-to-All 通信，加速分布式 MoE 训练。
 
+   .. grid-item-card:: 性能与并行
+      :link: ../../guides/performance/index
+      :link-type: doc
 
-.. toctree::
-   :hidden:
-   :maxdepth: 2
-
-   fusco
+      浏览 5D 并行、自动 placement、流水线训练、性能分析与动态调度指南。

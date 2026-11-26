@@ -1,27 +1,40 @@
-参考
-====
+评测参考
+========
 
-本节汇总评测参考文档，涵盖配置结构、命令行用法、支持的模型，以及如何查看评测输出。
+本节用于查阅评测 YAML 字段、命令行用法、支持的模型与输出路径。
 
-.. list-table::
-   :header-rows: 1
+.. grid:: 1 2 2 2
+   :gutter: 2
 
-   * - 页面
-     - 内容
-   * - :doc:`配置 <configuration>`
-     - ``evaluations/<benchmark>/`` 下的 Hydra YAML 结构，以及 ``embodied_eval`` 所需的 ``runner``、``env``、``rollout`` 等字段说明。
-   * - :doc:`CLI <cli>`
-     - 如何使用 ``run_eval.sh`` 启动评测、传入 Hydra 覆盖参数，以及从配置名自动推断 benchmark。
-   * - :doc:`模型 <models>`
-     - 当前 ``evaluations/`` 中提供示例配置的 VLA 模型（OpenPI、OpenVLA-OFT、StarVLA、DreamZero、MolmoAct2、LingBotVLA）及 ``model_path`` 设置方式。
-   * - :doc:`结果 <results>`
-     - 日志与 rollout 视频的输出路径、终端指标（如 ``eval/success_once``）以及 TensorBoard 查看方式。
+   .. grid-item-card:: CLI 参考
+      :link: cli
+      :link-type: doc
+
+      ``evaluations/run_eval.sh`` 语法、benchmark 前缀自动推断、配置回退与 Hydra 覆盖参数。
+
+   .. grid-item-card:: 配置参考
+      :link: configuration
+      :link-type: doc
+
+      Hydra YAML 结构、``env.eval`` 字段说明以及从训练 YAML 派生评测配置的方法。
+
+   .. grid-item-card:: 支持的模型
+      :link: models
+      :link-type: doc
+
+      ``evaluations/`` 下提供示例配置的模型与推理后端清单。
+
+   .. grid-item-card:: 日志与结果
+      :link: results
+      :link-type: doc
+
+      日志目录、核心指标、rollout 视频输出路径与 TensorBoard 查看方式。
 
 .. toctree::
    :hidden:
    :maxdepth: 1
 
-   configuration
-   cli
-   models
-   results
+   CLI 参考 <cli>
+   配置参考 <configuration>
+   支持的模型 <models>
+   日志与结果 <results>

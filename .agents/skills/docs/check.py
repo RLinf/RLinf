@@ -34,6 +34,9 @@ import re
 import sys
 import tempfile
 import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -53,7 +56,9 @@ except ImportError:
     os.execv(str(python), [str(python), __file__, *sys.argv[1:]])
 
 import check_doc_symbols  # noqa: E402
+import check_recipe  # noqa: E402
 import check_rst_markup  # noqa: E402
+import check_sections  # noqa: E402
 import check_writing  # noqa: E402
 
 LANGS = {"docs/source-en/": "docs/source-zh/", "docs/source-zh/": "docs/source-en/"}
@@ -84,12 +89,18 @@ def counterpart(path: str) -> str | None:
     return None
 
 
+PARITY_EXTS = (".rst", ".md", ".css", ".js")
+SHARED_STATIC_PARITY = ("_static/css/custom.css", "_static/js/sidebar-nav.js")
+
+
 def check_parity(changes: list[route.Change]) -> list[route.Finding]:
     changed = {c.path for c in changes}
     findings = []
+    checked_shared: set[str] = set()
     for change in changes:
         other = counterpart(change.path)
-        if other is None or not change.path.endswith((".rst", ".md")):
+        is_conf = change.path in ("docs/source-en/conf.py", "docs/source-zh/conf.py")
+        if other is None or (not change.path.endswith(PARITY_EXTS) and not is_conf):
             continue
         exists = (route.REPO_ROOT / other).exists()
         if change.status == "D" and exists and other not in changed:
@@ -118,6 +129,22 @@ def check_parity(changes: list[route.Change]) -> list[route.Finding]:
                     f"changed while {other} did not; check whether it needs the same change",
                 )
             )
+        for suffix in SHARED_STATIC_PARITY:
+            if change.path.endswith(suffix) and suffix not in checked_shared:
+                checked_shared.add(suffix)
+                en_f = route.REPO_ROOT / "docs/source-en" / suffix
+                zh_f = route.REPO_ROOT / "docs/source-zh" / suffix
+                if en_f.exists() and zh_f.exists():
+                    if en_f.read_bytes() != zh_f.read_bytes():
+                        findings.append(
+                            route.Finding(
+                                "major",
+                                change.path,
+                                None,
+                                "docs/parity",
+                                f"EN and ZH copies of {suffix} differ; keep shared CSS/JS identical",
+                            )
+                        )
     return findings
 
 
@@ -166,6 +193,225 @@ def check_toctrees(pages: list[str]) -> list[route.Finding]:
                 )
             )
     return findings
+
+
+TAB_SET_LINE = re.compile(r"^\s*\.\.\s+tab-set::", re.MULTILINE)
+TAB_ITEM_LINE = re.compile(r"^\s*\.\.\s+tab-item::", re.MULTILINE)
+RST_IMAGE_URL = re.compile(
+    r"^\s*(?:\.\.\s+(?:figure|image)::|:img-top:)\s+(https?://\S+)\s*$"
+)
+MD_IMAGE_URL = re.compile(
+    r"""(?:<img\b[^>]*\bsrc=["'](https?://[^"']+)["']|!\[[^\]]*\]\((https?://[^)\s]+)\))"""
+)
+GITHUB_RAW_REDIRECT = re.compile(r"^https?://github\.com/[^/\s]+/[^/\s]+/raw/")
+
+
+def _probe_url(url: str) -> tuple[int | None, str | None]:
+    """Return ``(http_status, network_error)`` for an external image URL."""
+    parts = urllib.parse.urlsplit(url)
+    safe_url = urllib.parse.urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc.encode("idna").decode("ascii"),
+            urllib.parse.quote(parts.path, safe="/:@!$&'()*+,;=-._~%"),
+            urllib.parse.quote(parts.query, safe="=/?:@!$&'()*+,;=-._~%"),
+            urllib.parse.quote(parts.fragment, safe=""),
+        )
+    )
+    headers = {"User-Agent": "RLinf-docs-check/1.0"}
+    for method, extra in (("HEAD", {}), ("GET", {"Range": "bytes=0-0"})):
+        req = urllib.request.Request(
+            safe_url, method=method, headers={**headers, **extra}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                return resp.status, None
+        except urllib.error.HTTPError as err:
+            if method == "HEAD" and err.code in (403, 405, 501):
+                continue
+            return err.code, None
+        except (urllib.error.URLError, OSError) as err:
+            return None, str(err)
+    return None, "probe failed"
+
+
+def check_image_urls(
+    changes: list[route.Change],
+    selection: route.Selection,
+    check_http: bool = True,
+) -> list[route.Finding]:
+    """Verify external figure/image URLs on checked lines (non-redirecting raw URL + HTTP 200)."""
+    findings: list[route.Finding] = []
+    targets: list[tuple[str, int, str]] = []
+    for change in changes:
+        if change.status == "D":
+            continue
+        is_rst = change.path.endswith(".rst") and change.path.startswith("docs/")
+        is_md = change.path in ("README.md", "README.zh-CN.md")
+        if not (is_rst or is_md):
+            continue
+        path = route.REPO_ROOT / change.path
+        if not path.is_file():
+            continue
+        allowed = selection.lines(change)
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1
+        ):
+            if allowed is not None and lineno not in allowed:
+                continue
+            urls: list[str] = []
+            if is_rst:
+                m = RST_IMAGE_URL.match(line)
+                if m:
+                    urls.append(m.group(1))
+            else:
+                for m in MD_IMAGE_URL.finditer(line):
+                    urls.append(m.group(1) or m.group(2))
+            for url in urls:
+                if GITHUB_RAW_REDIRECT.match(url):
+                    findings.append(
+                        route.Finding(
+                            "major",
+                            change.path,
+                            lineno,
+                            "docs/image-url",
+                            f"use raw.githubusercontent.com instead of redirecting github.com/.../raw/ URL: {url}",
+                        )
+                    )
+                targets.append((change.path, lineno, url))
+
+    if not check_http or not targets:
+        return findings
+
+    cache: dict[str, tuple[int | None, str | None]] = {}
+    network_unavailable = False
+    for rel, lineno, url in targets:
+        if network_unavailable:
+            break
+        if url not in cache:
+            status, net_err = _probe_url(url)
+            cache[url] = (status, net_err)
+            if net_err is not None and len(cache) == 1:
+                network_unavailable = True
+                print("skipped: external image URL checks (network unavailable)")
+                break
+        status, _ = cache[url]
+        if status is not None and status >= 400 and status != 429:
+            findings.append(
+                route.Finding(
+                    "major",
+                    rel,
+                    lineno,
+                    "docs/image-url",
+                    f"external image URL returned HTTP {status}: {url}",
+                )
+            )
+    return findings
+
+
+def check_duplicate_commands(pages: list[str]) -> list[route.Finding]:
+    """Flag identical multi-line setup/launch bash blocks duplicated across changed recipe pages."""
+    findings: list[route.Finding] = []
+    seen: dict[tuple[str, str], str] = {}
+    for rel in sorted(pages):
+        if not check_recipe.RECIPE_OR_EVAL_PAGE.match(
+            rel
+        ) or check_recipe.SKIP_NAME.search(rel):
+            continue
+        lang = "zh" if rel.startswith("docs/source-zh/") else "en"
+        path = route.REPO_ROOT / rel
+        if not path.is_file():
+            continue
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        for block in check_recipe._iter_code_blocks(lines, len(lines)):
+            if block["lang"] not in ("bash", "sh", "shell", "console", ""):
+                continue
+            cmds = [
+                raw.strip()
+                for _, raw in block["body"]
+                if raw.strip() and not raw.strip().startswith("#")
+            ]
+            if len(cmds) < 2:
+                continue
+            norm = "\n".join(cmds)
+            if (
+                "requirements/install.sh" not in norm
+                and not check_recipe.LAUNCH_SCRIPT.search(norm)
+            ):
+                continue
+            key = (lang, norm)
+            first = seen.get(key)
+            if first is not None and first != rel:
+                findings.append(
+                    route.Finding(
+                        "minor",
+                        rel,
+                        block["line"],
+                        "docs/duplicate-commands",
+                        f"setup/launch bash block duplicates {first}; link to the primary recipe or include a shared _*.rst partial",
+                    )
+                )
+            elif first is None:
+                seen[key] = rel
+    return findings
+
+
+def check_tabs(pages: list[str]) -> list[route.Finding]:
+    """Ensure paired EN and ZH pages have the same number of tab-sets and tabs."""
+    findings = []
+    pairs = {
+        (page, counterpart(page))
+        if page.startswith("docs/source-en/")
+        else (counterpart(page), page)
+        for page in pages
+        if counterpart(page)
+    }
+    for en_page, zh_page in sorted(pairs):
+        mine, theirs = route.REPO_ROOT / en_page, route.REPO_ROOT / zh_page
+        if not (mine.exists() and theirs.exists()):
+            continue
+        en_text, zh_text = (
+            mine.read_text(encoding="utf-8"),
+            theirs.read_text(encoding="utf-8"),
+        )
+        en_counts = (
+            len(TAB_SET_LINE.findall(en_text)),
+            len(TAB_ITEM_LINE.findall(en_text)),
+        )
+        zh_counts = (
+            len(TAB_SET_LINE.findall(zh_text)),
+            len(TAB_ITEM_LINE.findall(zh_text)),
+        )
+        if en_counts != zh_counts:
+            findings.append(
+                route.Finding(
+                    "major",
+                    en_page,
+                    None,
+                    "docs/tab-parity",
+                    f"tab structure differs between EN ({en_counts[0]} tab-set, "
+                    f"{en_counts[1]} tab-item) and ZH ({zh_counts[0]} tab-set, "
+                    f"{zh_counts[1]} tab-item)",
+                )
+            )
+    return findings
+
+
+def _expand_file_args(files: list[str]) -> list[str]:
+    """Expand any directory arguments into their ``*.rst`` files."""
+    expanded: list[str] = []
+    for raw in files:
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = route.REPO_ROOT / candidate
+        if candidate.is_dir():
+            expanded.extend(
+                p.resolve().relative_to(route.REPO_ROOT).as_posix()
+                for p in sorted(candidate.rglob("*.rst"))
+            )
+        else:
+            expanded.append(raw)
+    return expanded
 
 
 def is_cjk(char: str) -> bool:
@@ -274,7 +520,14 @@ def check_build() -> list[route.Finding]:
 def main() -> int:
     parser = route.check_parser(__doc__.splitlines()[0])
     parser.add_argument("--no-build", action="store_true", help="skip the Sphinx build")
+    parser.add_argument(
+        "--no-url-check",
+        action="store_true",
+        help="skip HTTP probes for external figure/image URLs",
+    )
     args = parser.parse_args()
+    if args.files:
+        args.files = _expand_file_args(args.files)
     selection = route.select("docs", args)
     changes = selection.changes
     pages = [
@@ -290,11 +543,22 @@ def main() -> int:
     )
     names = check_writing.code_names(route.REPO_ROOT)
     added = {c.path for c in changes if c.status == "A"}
-    findings = check_parity(changes) + check_toctrees(pages)
+    findings = (
+        check_parity(changes)
+        + check_toctrees(pages)
+        + check_tabs(pages)
+        + check_recipe.check_static_assets(changes)
+        + check_image_urls(changes, selection, check_http=not args.no_url_check)
+        + check_duplicate_commands(pages)
+    )
     for page in pages:
         path = route.REPO_ROOT / page
         page_findings = check_page(path, page, known)
         page_findings += check_writing.check_page(path, page, names, page in added)
+        page_findings += check_recipe.check_page(path, page)
+        page_findings += check_sections.check_page(
+            path, page, route.REPO_ROOT, is_new=page in added
+        )
         findings += selection.relevant(page_findings)
     if args.no_build:
         print("skipped: the Sphinx build (--no-build)")

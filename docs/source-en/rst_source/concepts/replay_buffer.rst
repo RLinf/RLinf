@@ -1,5 +1,5 @@
-Replay Buffer Tutorial
-==============================
+Replay Buffer
+=============
 
 This tutorial focuses on **practical usage** and **configuration tips** for
 `TrajectoryReplayBuffer`. For a fuller design overview and data-flow details,
