@@ -90,7 +90,7 @@ With Worker and Channel in hand, we can assemble the full Online RL training flo
 
 .. raw:: html
 
-   <img src="https://github.com/RLinf/misc/raw/main/pic/coding_online_rl_arch.png" width="800"/>
+   <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/coding_online_rl_arch.png" width="800"/>
 
 Assume the code completion Agent has been deployed as a complete online service, consisting of a **User Frontend** and a **Service Backend**. To enable Online RL capability, we introduce an independent component — **RLinf Runner** — at the **plugin** layer. Unlike long-running background services, RLinf Runner is not a resident process; it is a lightweight module that can be invoked on demand by the **Controller** in the online system. We design interaction interfaces between RLinf Runner and the online Agent to:
 
@@ -138,7 +138,7 @@ As shown in Figure 1, model performance steadily increases with Online RL. The t
    :header-rows: 0
    :align: center
 
-   * - .. image:: https://github.com/RLinf/misc/raw/main/pic/coding_online_rl_offline_rewards.png
+   * - .. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/coding_online_rl_offline_rewards.png
           :width: 100%
      - .. list-table::
           :header-rows: 1

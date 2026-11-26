@@ -6,7 +6,7 @@ WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL
 Overview
 --------
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/wovr_overview.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wovr_overview.png
    :alt: WoVR framework overview
    :align: center
 

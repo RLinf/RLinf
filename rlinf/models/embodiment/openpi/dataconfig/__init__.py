@@ -691,6 +691,9 @@ _CONFIGS_DICT = {config.name: config for config in _CONFIGS}
 
 def _override_with_model_path(config: TrainConfig, model_path: str) -> TrainConfig:
     """Return a copy of the config with assets/weight paths set from model_path."""
+    from rlinf.models import resolve_model_path
+
+    model_path = resolve_model_path(model_path)
     data_config = config.data
     if (
         dataclasses.is_dataclass(data_config)

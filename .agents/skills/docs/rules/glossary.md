@@ -7,8 +7,12 @@ One term per concept, in both languages. When a page needs a term that is missin
 | policy (RL) | policy | not 策略; a generic strategy, such as a placement strategy, is 策略 |
 | rollout | rollout | not 展开 |
 | worker, actor, critic | worker, actor, critic | |
-| env (in prose) | 环境 | write `env_type` and other identifiers as they are |
-| heterogeneous envs | 异构环境 | several env configurations in one run; "multiple envs" means parallel copies of one env |
+| Agent, LLM | Agent, LLM | keep English in headings, nav, and extending pages |
+| Env | Env | keep `Env` in headings, nav, and extending pages; write `env_type` and other identifiers as they are |
+| Advantage | Advantage | not 优势 / 优势函数 for RL advantage (product strength on landing pages may still use 优势) |
+| Loss, Policy Loss | Loss, Policy Loss | not 损失 / 策略损失 in headings and extending pages |
+| Reward, Reward Model | Reward, Reward Model | not 规则奖励 / 奖励模型 in headings and extending pages |
+| heterogeneous envs | 异构环境 / 多 Env | several env configurations in one run; "multiple envs" means parallel copies of one env |
 | env configuration | 环境配置 | not "named config", "entry", or "mode" |
 | simulator | 模拟器 | |
 | real robot, real-world | 真机 | |

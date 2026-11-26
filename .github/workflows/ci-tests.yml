@@ -104,17 +104,21 @@ jobs:
               - 'rlinf/workers/actor/fsdp_rlt_td3_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'
               - 'rlinf/workers/actor/embodied_fsdp_actor_worker.py'
+              - 'rlinf/workers/actor/fsdp_supermimic_policy_worker.py'
               - 'rlinf/workers/env/**'
               - 'rlinf/workers/rollout/hf/**'
               - 'rlinf/models/embodiment/**'
               - 'rlinf/models/diffusion/**'
               - 'rlinf/models/worldmodel/**'
               - 'rlinf/runners/*embodied*.py'
+              - 'rlinf/runners/supermimic*.py'
               - 'rlinf/runners/refl_runner.py'
               - 'rlinf/runners/async_weight_sync_mixin.py'
               - 'rlinf/runners/*reward*.py'
               - 'examples/embodiment/*'
               - 'examples/embodiment/config/*/**'
+              # The SuperMimic CI configs build on this recipe.
+              - 'examples/embodiment/config/supermimic*.yaml'
               - 'examples/diffusion/**'
               - 'examples/reward/**'
               - 'tests/e2e_tests/embodied/**'
@@ -132,6 +136,7 @@ jobs:
               - 'toolkits/lerobot/**'
               - 'toolkits/dual_franka/**'
               - 'toolkits/cosmos3/**'
+              - 'toolkits/supermimic/**'
               - 'toolkits/rlt/**'
               - 'toolkits/__init__.py'
             agent_reason_filter: &agent
@@ -162,6 +167,9 @@ jobs:
               - 'tests/e2e_tests/agent/**'
               - 'tests/e2e_tests/agentlightning/**'
               - 'tests/e2e_tests/reasoning/**'
+              - 'tests/unit_tests/test_session_server.py'
+              - 'tests/unit_tests/test_agentic_tokenizer.py'
+              - 'tests/unit_tests/mock_sglang_server.py'
               - '.github/workflows/agent-e2e-tests.yml'
             sft_filter: &sft
               - *shared
@@ -205,6 +213,20 @@ jobs:
               # real-world compatibility suite, maniskill offload, delay
               # sampler), so env changes have to trigger this job.
               - 'rlinf/envs/**'
+              # test_supermimic.py imports SuperMimic models, workers, runners,
+              # toolkit prep, and configs directly.
+              - 'rlinf/models/embodiment/base_policy.py'
+              - 'rlinf/models/embodiment/supermimic/**'
+              - 'rlinf/workers/actor/fsdp_supermimic_policy_worker.py'
+              - 'rlinf/workers/env/supermimic_env_worker.py'
+              - 'rlinf/runners/supermimic_runner.py'
+              - 'rlinf/runners/embodied_eval_runner.py'
+              - 'rlinf/runners/embodied_runner.py'
+              - 'toolkits/supermimic/**'
+              - 'examples/embodiment/config/env/g1_mimic.yaml'
+              - 'examples/embodiment/config/model/supermimic.yaml'
+              - 'examples/embodiment/config/supermimic*.yaml'
+              - 'evaluations/supermimic/*.yaml'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
               # The agent loop, rollout buffer, agentic tokenizer, Megatron MA actor

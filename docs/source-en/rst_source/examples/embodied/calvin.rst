@@ -1,5 +1,5 @@
-RL with CALVIN Benchmark
-========================
+CALVIN RL
+=========
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -87,110 +87,98 @@ Observation and Action
    the upstream repository. See the upstream
    `CALVIN issue <https://github.com/mees/calvin/issues/41>`__ for context.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-**Docker image**
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: OpenPI π₀
+      :sync: pi0
 
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-calvin
+      **1. Install**
 
-   # For mainland China users:
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-calvin
+      .. code-block:: bash
 
-Switch to the OpenPI virtual environment inside the image:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env calvin && source .venv/bin/activate
 
-.. code:: bash
+      **2. Download**
 
-   source switch_env openpi
+      Download the OpenPI π₀ SFT checkpoint:
 
-**Custom environment**
+      .. code-block:: bash
 
-Install CALVIN with the OpenPI dependencies:
+         hf download RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT --local-dir ./RLinf-Pi0-CALVIN-ABC-D-SFT
 
-.. code:: bash
+      **3. Launch**
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --model openpi --env calvin
-   source .venv/bin/activate
+      Available config under ``examples/embodiment/config/``:
 
-Download the Model
-------------------
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 50 28
 
-Download the checkpoint for the OpenPI model you plan to fine-tune.
+         * - Recipe
+           - Config
+           - Command suffix
+         * - π₀, D→D
+           - ``examples/embodiment/config/calvin_d_d_ppo_openpi.yaml``
+           - ``calvin_d_d_ppo_openpi``
 
-**OpenPI π₀**
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` on the command line (rollout inherits it automatically):
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   cd /path/to/save/model
+         bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi \
+           actor.model.model_path=./RLinf-Pi0-CALVIN-ABC-D-SFT
 
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT
+   .. tab-item:: OpenPI π₀.₅
+      :sync: pi05
 
-   # Or use huggingface-hub:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT --local-dir RLinf-Pi0-CALVIN-ABC-D-SFT
+      **1. Install**
 
-**OpenPI π₀.₅**
+      .. code-block:: bash
 
-.. code-block:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env calvin && source .venv/bin/activate
 
-   cd /path/to/save/model
+      **2. Download**
 
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT
+      Download the OpenPI π₀.₅ SFT checkpoint:
 
-   # Or use huggingface-hub:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT --local-dir RLinf-Pi05-CALVIN-ABC-D-SFT
+      .. code-block:: bash
 
-.. include:: _model_path.rst
+         hf download RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT --local-dir ./RLinf-Pi05-CALVIN-ABC-D-SFT
 
-Run It
-------
+      **3. Launch**
 
-Pick one config and launch training:
+      Available configs under ``examples/embodiment/config/``:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 22 50 28
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 50 28
 
-   * - Recipe
-     - Config
-     - Command suffix
-   * - π₀, D→D
-     - ``examples/embodiment/config/calvin_d_d_ppo_openpi.yaml``
-     - ``calvin_d_d_ppo_openpi``
-   * - π₀.₅, D→D
-     - ``examples/embodiment/config/calvin_d_d_ppo_openpi_pi05.yaml``
-     - ``calvin_d_d_ppo_openpi_pi05``
-   * - π₀.₅, ABC→D
-     - ``examples/embodiment/config/calvin_abc_d_ppo_openpi_pi05.yaml``
-     - ``calvin_abc_d_ppo_openpi_pi05``
-   * - π₀.₅, ABCD→D
-     - ``examples/embodiment/config/calvin_abcd_d_ppo_openpi_pi05.yaml``
-     - ``calvin_abcd_d_ppo_openpi_pi05``
+         * - Recipe
+           - Config
+           - Command suffix
+         * - π₀.₅, D→D
+           - ``examples/embodiment/config/calvin_d_d_ppo_openpi_pi05.yaml``
+           - ``calvin_d_d_ppo_openpi_pi05``
+         * - π₀.₅, ABC→D
+           - ``examples/embodiment/config/calvin_abc_d_ppo_openpi_pi05.yaml``
+           - ``calvin_abc_d_ppo_openpi_pi05``
+         * - π₀.₅, ABCD→D
+           - ``examples/embodiment/config/calvin_abcd_d_ppo_openpi_pi05.yaml``
+           - ``calvin_abcd_d_ppo_openpi_pi05``
 
-.. code:: bash
+      Launch training with ``run_embodiment.sh``, passing ``actor.model.model_path`` on the command line (rollout inherits it automatically):
 
-   bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi_pi05
+      .. code-block:: bash
 
-What this does:
-
-1. Starts the embodied training entrypoint with the selected Hydra config.
-2. Creates Ray workers for the actor, rollout, and CALVIN env components.
-3. Runs PPO rollouts, computes sparse subtask rewards, and updates the OpenPI policy.
+         bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi_pi05 \
+           actor.model.model_path=./RLinf-Pi05-CALVIN-ABC-D-SFT
 
 For standalone evaluation, use the unified :doc:`Evaluation CLI
 <../../evaluations/reference/cli>` with config fallback and the same suffix, for
@@ -205,31 +193,7 @@ example ``calvin_d_d_ppo_openpi_pi05``.
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable video in the env config when you want rollout videos:
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
-
-Enable W&B or SwanLab by adding logger backends:
-
-.. code:: yaml
-
-   runner:
-     logger:
-       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+Watch ``env/success_once`` in TensorBoard (``tensorboard --logdir ./logs``); set ``env.eval.video_cfg.save_video=True`` to record videos, or see :doc:`Training metrics <../../reference/metrics>` for W&B/SwanLab and all metrics.
 
 .. list-table::
    :header-rows: 1

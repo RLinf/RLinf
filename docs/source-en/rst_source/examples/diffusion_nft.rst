@@ -1,5 +1,5 @@
-Diffusion Model Fine-Tuning with NFT
-====================================
+Diffusion-NFT
+=============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
    :align: center
@@ -39,13 +39,13 @@ and derivation, see the
 
       Image / Video
 
-   .. grid-item-card:: Reward
+   .. grid-item-card:: Hardware
       :text-align: center
 
-      OCR / Video OCR
+      1–8 GPUs (SD3.5 Medium); 4–8× 80 GB GPUs (Wan2.2 TI2V 5B)
 
 | **You'll do:** select a recipe → launch training → inspect OCR reward and generated samples.
-| **Prerequisites:** :doc:`Shared installation, model, and dataset setup <video_models>`.
+| **Prerequisites:** :doc:`Shared installation, model, and dataset setup <video_models>` · 1–8 GPUs for SD3.5 Medium (BF16 + LoRA), 4–8× 80 GB GPUs (A800/A100/H100) for Wan2.2 TI2V 5B.
 
 Tasks
 ~~~~~
@@ -91,33 +91,74 @@ Each episode scores one generated image or video for its prompt.
    * - Reward
      - Image OCR similarity or frame-aware video OCR scores.
 
-Installation and Assets
------------------------
+Setup and Run
+-------------
 
-Follow the shared :ref:`installation <diffusion-model-setup>`,
-:ref:`model download <diffusion-model-checkpoints>`, and
-:ref:`OCR dataset download <diffusion-ocr-dataset>` instructions. Wan NFT recipes
-use GPU OCR; select the shared ``--paddle-gpu`` installation for those configs.
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run
+``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt
+images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
+See :doc:`video_models` for full shared setup notes.
 
-Run Training
-------------
+.. tab-set::
 
-Open the YAML matching your chosen config in ``examples/diffusion/config/``;
-for example, use ``examples/diffusion/config/sd3_nft_ocr.yaml`` for SD3.
-Set ``actor.model.model_path``, ``env.train.dataset.path``, and
-``env.eval.dataset.path`` to your downloaded directories. Check
-``cluster.num_nodes``, ``cluster.component_placement``, and the batch settings
-against your hardware before launching.
+   .. tab-item:: SD3.5 Medium (Image OCR)
 
-After checking the YAML, run its config name from the repository root:
+      **1. Install**
 
-.. code:: bash
+      .. code-block:: bash
 
-   bash examples/diffusion/run_diffusion.sh sd3_nft_ocr
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
 
-.. code:: bash
+      **2. Download**
 
-   bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_nft_video_ocr
+      Accept the SD3.5 Medium access terms on Hugging Face first, then download the checkpoint and OCR prompts:
+
+      .. code-block:: bash
+
+         hf download stabilityai/stable-diffusion-3.5-medium --local-dir ./stable-diffusion-3.5-medium
+         mkdir -p ./ocr_data
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/train.txt -o ./ocr_data/train.txt
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/test.txt -o ./ocr_data/test.txt
+
+      **3. Launch**
+
+      Set ``actor.model.model_path``, ``env.train.dataset.path``, and ``env.eval.dataset.path`` in ``examples/diffusion/config/sd3_nft_ocr.yaml`` (check ``cluster.num_nodes``, ``cluster.component_placement``, and batch settings against your hardware), then launch:
+
+      .. code-block:: bash
+
+         bash examples/diffusion/run_diffusion.sh sd3_nft_ocr
+
+   .. tab-item:: Wan2.2 TI2V 5B (Image / Video OCR)
+
+      **1. Install**
+
+      Wan NFT recipes use GPU OCR (``--paddle-gpu``):
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion --paddle-gpu && source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --local-dir ./Wan2.2-TI2V-5B-Diffusers
+         mkdir -p ./ocr_data
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/train.txt -o ./ocr_data/train.txt
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/test.txt -o ./ocr_data/test.txt
+
+      **3. Launch**
+
+      Set ``actor.model.model_path``, ``env.train.dataset.path``, and ``env.eval.dataset.path`` in ``examples/diffusion/config/wan22_ti2v_5b_nft_ocr.yaml`` (single-frame) or ``examples/diffusion/config/wan22_ti2v_5b_nft_video_ocr.yaml`` (video), then launch:
+
+      .. code-block:: bash
+
+         # Single-frame image OCR
+         bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_nft_ocr
+         # Video OCR
+         bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_nft_video_ocr
 
 The launcher generates candidates, scores them with OCR, updates LoRA
 parameters, and writes logs under ``logs/<timestamp>-<config>/``.
@@ -139,17 +180,17 @@ in diffusion velocity space:
    group.
 2. Sample a denoising step and reconstruct the current noisy state
    (``nft_xcur_source: resample``). The rollout/reference model supplies the old
-   velocity :math:`v_{old}` and the trainable model predicts :math:`v_\theta`.
-3. Form :math:`\Delta v = v_\theta - v_{old}` and the positive/negative
-   candidates :math:`v_{\pm} = v_{old} \pm \beta\Delta v`.
+   velocity prediction and the trainable model predicts the updated velocity.
+3. Compute the velocity difference between the trainable and reference models,
+   then form positive and negative perturbed candidates scaled by ``nft_beta``.
 4. Convert both candidates to the configured target space. The provided configs
    use ``nft_target_space: x0`` and compare the predicted clean sample against
-   the rollout target with weighted squared-error energies
-   :math:`E_{+}` and :math:`E_{-}`.
+   the rollout target using weighted squared-error energies for the positive and
+   negative candidates.
 5. Map the relative advantage into ``[0, 1]`` and minimize the configured NFT
-   objective. Better candidates emphasize :math:`E_{+}`; worse candidates
-   emphasize :math:`E_{-}`. ``nft_clip_ratio`` can limit the update relative to
-   the old velocity.
+   objective. Better candidates emphasize the positive energy; worse candidates
+   emphasize the negative energy. ``nft_clip_ratio`` can limit the update
+   relative to the old velocity.
 
 ``nft_tau`` controls the rollout/reference weights. A scalar ``1.0`` is
 on-policy. A schedule ``[start_tau, end_tau, start_step, end_step]`` linearly
@@ -177,7 +218,7 @@ current policy to a slowly updated reference over the first 70 updates.
      - Normalizes energy using the detached mean absolute prediction error.
    * - ``nft_clip_ratio``
      - ``0.1`` for Wan2.2
-     - Bounds the velocity update relative to :math:`v_{old}`.
+     - Bounds the velocity update relative to the rollout/reference velocity.
    * - ``nft_tau``
      - Model-specific annealing schedule
      - Controls how quickly rollout/reference weights follow the actor.

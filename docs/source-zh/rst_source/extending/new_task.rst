@@ -1,7 +1,22 @@
-新增真机任务
-============
+真机任务
+========
 
 本页说明在 RLinf 已支持目标真机的前提下，如何新增真机任务，而无需修改机器人实现。新任务可以定义特有的目标、奖励和复位方式；完成后将得到任务配置、env 类、Gymnasium ID 和对应的 YAML 配置，后续步骤会依次定义并验证这些内容。
+
+.. list-table:: 速览
+   :header-rows: 1
+   :widths: 24 76
+
+   * - 项目
+     - 说明
+   * - 扩展点
+     - 真机任务配置 dataclass 与 Gymnasium env 子类
+   * - 注册接口
+     - ``TASKS`` 映射与 ``register_tasks(...)``
+   * - 配置入口
+     - ``env_type: real``、``init_params.id``
+   * - 涉及文件
+     - ``rlinf/envs/real/<robot>/<task>.py``、``rlinf/envs/real/<robot>/__init__.py``、``examples/embodiment/config/env/``
 
 本页所述真机任务专指 ``rlinf/envs/real`` 下的任务模块。如需为模拟器或 benchmark 新增 task，请参阅 :doc:`new_env`。
 
@@ -132,7 +147,7 @@ env class 可以执行任务后，还需要一个供配置和数据集长期引�
 
    assert "WipeEnv-v1" in registry
 
-``tests/unit_tests/test_real_env.py`` 会检查所有内置任务，请将新 ID 加入 ``EXPECTED_IDS``。这项断言只验证注册；如果任务改变了面向机器人的观测或动作路径，还需按照 :doc:`new_robot` 运行 mock 和真机检查。
+这项断言只验证注册；如果任务改变了面向机器人的观测或动作路径，还需按照 :doc:`new_robot` 运行 mock 和真机检查。
 
 复用现有基础设施
 ----------------

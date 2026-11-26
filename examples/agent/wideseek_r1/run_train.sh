@@ -12,11 +12,12 @@ REPO_PATH=$(dirname $(dirname $(dirname "$CONFIG_PATH")))
 MEGATRON_PATH=/opt/Megatron-LM
 export PYTHONPATH=${REPO_PATH}:${MEGATRON_PATH}:$PYTHONPATH
 
-if [ -z "$1" ]; then
+if [ -z "$1" ] || [[ "$1" == *=* ]] || [[ "$1" == +* ]] || [[ "$1" == ~* ]] || [[ "$1" == -* ]]; then
     CONFIG_NAME="train_qwen3_hybrid"
 else
     CONFIG_NAME=$1
+    shift
 fi
 
-python ${REPO_PATH}/examples/agent/wideseek_r1/train.py --config-path ${CONFIG_PATH}/config/  --config-name $CONFIG_NAME
+python "${REPO_PATH}/examples/agent/wideseek_r1/train.py" --config-path "${CONFIG_PATH}/config/" --config-name "$CONFIG_NAME" "$@"
 

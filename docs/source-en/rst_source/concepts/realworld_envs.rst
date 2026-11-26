@@ -1,5 +1,5 @@
-Real-World Tasks and Environments
-=================================
+Real-World Tasks
+================
 
 This page explains how a real-world environment combines one robot with one task
 and adds rollout behavior such as operator intervention, manual outcome labels,
@@ -103,15 +103,15 @@ unrelated ``PORT=8080`` cannot select a serial device. With configured arms, ``-
 selects an exact match and retains that arm's calibration; an unmatched port
 is an error. Without configured arms, ``--port`` and ``--id`` describe a local
 arm. ``--id`` explicitly sets the selected arm's calibration identifier.
-In SO-101 hardware YAML entries, replace ``port`` with ``serial_port``.
+In SO-101 hardware YAML entries, set the device path via ``serial_port``.
 The bench flags ``--port`` and ``--id`` select the serial port and calibration
 identifier respectively.
 
 During a scheduled run, the node probe performs enumeration, worker placement
 assigns a ``RobotInfo``, and ``RealWorldEnv`` passes it to the task constructor.
-The environment reads its hardware config without modifying it. A task override
-such as ``camera_serials`` or ``robot_ip`` is now rejected; move it to the
-hardware entry. Dummy environments may omit ``robot_info`` when the hardware
+The environment reads its hardware config without modifying it. Hardware fields
+such as ``camera_serials`` and ``robot_ip`` belong in the hardware entry under
+``cluster.node_groups[].hardware.configs``, not in task overrides. Dummy environments may omit ``robot_info`` when the hardware
 defaults describe the required observation space. To sample another camera
 layout or end effector, supply a descriptor for that layout as well. Franka
 requires at least one camera even in dummy mode, so its dummy constructors
@@ -121,8 +121,8 @@ for offline runs; dummy construction does not open or probe devices.
 The shared task dataclasses are named ``FrankaEnvConfig``,
 ``DualFrankaEnvConfig``, ``SO101EnvConfig``, ``PiperEnvConfig``,
 ``GimArmEnvConfig``, ``DOSW1EnvConfig``, and ``Turtle2EnvConfig``. Their hardware
-counterparts remain in ``rlinf.robotics.robots``. For Turtle2, camera channels
-move from the task's ``use_camera_ids`` to the hardware field ``camera_ids``.
+counterparts live in ``rlinf.robotics.robots``. For Turtle2, camera channels
+are configured through the hardware field ``camera_ids``.
 Piper's ``with_gripper`` hardware field determines whether the action has six
 joint values or seven values including the gripper opening.
 

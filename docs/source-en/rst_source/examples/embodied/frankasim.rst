@@ -1,5 +1,5 @@
-RL with Franka-Sim Benchmark
-============================
+Franka-Sim RL
+=============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/serl/refs/heads/RLinf/franka-sim/franka_sim/franka_sim/envs/xmls/robotiq_2f85/2f85.png
    :align: center
@@ -75,133 +75,71 @@ Observation and Action
    * - Prompt
      - Not used by the state MLP recipe; vision policies consume task-conditioned observations from the env wrapper.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-**Docker image**
+.. tab-set::
 
-.. code:: bash
+   .. tab-item:: MLP / CNN
 
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-frankasim
+      **1. Install**
 
-   # For mainland China users:
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-frankasim
+      .. code-block:: bash
 
-Switch to the virtual environment inside the image:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env frankasim && source .venv/bin/activate
 
-.. code:: bash
+      **2. Download**
 
-   source switch_env openvla
+      Skip this step for the MLP + PPO recipe. For the CNN + SAC recipe, download the pretrained ResNet-10 checkpoint:
 
-**Custom environment**
+      .. code-block:: bash
 
-Install Franka-Sim dependencies:
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
 
-.. code:: bash
+      **3. Launch**
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --model openvla --env frankasim
-   source .venv/bin/activate
+      Available recipes:
 
-Download the Model
-------------------
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 38 20 18
 
-Skip this section for the MLP + PPO recipe. For the CNN + SAC recipe, download the
-ResNet checkpoint:
+         * - Recipe
+           - Config
+           - Entrypoint
+           - Command suffix
+         * - MLP + PPO
+           - ``examples/embodiment/config/frankasim_ppo_mlp.yaml``
+           - ``run_embodiment.sh``
+           - ``frankasim_ppo_mlp``
+         * - CNN + SAC
+           - ``examples/embodiment/config/frankasim_sac_cnn_async.yaml``
+           - ``run_async.sh``
+           - ``frankasim_sac_cnn_async``
 
-.. code-block:: bash
+      .. include:: _model_path.rst
 
-   cd /path/to/save/model
+      Launch training with the matching script:
 
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+      .. code-block:: bash
 
-   # Or use huggingface-hub:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+         # State-observation MLP + PPO
+         bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
 
-Then set the same checkpoint path for rollout and actor in
-``examples/embodiment/config/frankasim_sac_cnn_async.yaml``:
+         # Vision CNN + asynchronous SAC
+         bash examples/embodiment/run_async.sh frankasim_sac_cnn_async actor.model.model_path=$PWD/RLinf-ResNet10-pretrained
 
-.. code-block:: yaml
+      .. dropdown:: Advanced configuration (optional)
 
-   rollout:
-      model:
-         model_path: /path/to/RLinf-ResNet10-pretrained
-   actor:
-      model:
-         model_path: /path/to/RLinf-ResNet10-pretrained
-
-Run It
-------
-
-Pick one recipe and launch training:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 24 38 20 18
-
-   * - Recipe
-     - Config
-     - Entrypoint
-     - Command suffix
-   * - MLP + PPO
-     - ``examples/embodiment/config/frankasim_ppo_mlp.yaml``
-     - ``run_embodiment.sh``
-     - ``frankasim_ppo_mlp``
-   * - CNN + SAC
-     - ``examples/embodiment/config/frankasim_sac_cnn_async.yaml``
-     - ``run_async.sh``
-     - ``frankasim_sac_cnn_async``
-
-.. code:: bash
-
-   # State-observation PPO recipe
-   bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
-
-   # Vision SAC recipe
-   bash examples/embodiment/run_async.sh frankasim_sac_cnn_async
-
-What this does:
-
-1. Starts the selected embodied training entrypoint.
-2. Creates Ray workers for the actor, rollout, and Franka-Sim env components.
-3. Runs rollouts, computes task rewards, and updates the selected policy.
-
-.. note::
-
-   Both reference configs run on GPU ``0``. Tune ``cluster.component_placement``,
-   ``env.train.total_num_envs``, and batch sizes if you move to a larger machine.
+         Both reference configs run on GPU ``0`` by default. Tune ``cluster.component_placement``, ``env.train.total_num_envs``, and batch sizes when scaling to a larger machine.
 
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable video when you want rollout videos:
-
-.. code:: yaml
-
-   env:
-     eval:
-       video_cfg:
-         save_video: True
-         video_base_dir: ${runner.logger.log_path}/video/eval
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 .. list-table::
    :header-rows: 1
