@@ -45,6 +45,10 @@ actor:
       |linear_attn\.(in_proj_(qkv|z|a|b)|out_proj)
       |mlp\.(gate|up|down)_proj)
   fsdp_config:
+    use_orig_params: true
+    wrap_policy:
+      transformer_layer_cls_to_wrap:
+        - Qwen3_5DecoderLayer
     gradient_checkpointing: true
     gradient_checkpointing_use_reentrant: false
   optim:

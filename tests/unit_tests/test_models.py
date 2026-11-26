@@ -1014,8 +1014,14 @@ class _DummyFSDPModel(torch.nn.Module):
         self.head._fsdp_wrap_name = "custom_head"
 
 
-def test_qwen3_5_loads_multimodal_checkpoint(tmp_path):
+@pytest.mark.parametrize("is_lora", [False, True], ids=["full", "lora"])
+def test_qwen3_5_loads_multimodal_checkpoint_with_rpent_fsdp_policy(
+    tmp_path, monkeypatch, is_lora
+):
     pytest.importorskip("transformers.models.qwen3_5")
+    if is_lora:
+        pytest.importorskip("peft")
+    from hydra import compose, initialize_config_dir
     from transformers import Qwen3_5Config, Qwen3_5ForConditionalGeneration
 
     config = Qwen3_5Config(
@@ -1040,23 +1046,33 @@ def test_qwen3_5_loads_multimodal_checkpoint(tmp_path):
     )
     reference = Qwen3_5ForConditionalGeneration(config)
     reference.save_pretrained(tmp_path)
-    cfg = OmegaConf.create(
-        {
-            "model_type": "qwen3_5",
-            "model_path": str(tmp_path),
-            "precision": "bf16",
-            "is_lora": False,
-            "load_to_device": False,
-        }
+    monkeypatch.setenv("QWEN3_8_MODEL_PATH", str(tmp_path))
+    config_dir = Path(__file__).resolve().parents[2] / "examples/sft/config"
+    with initialize_config_dir(config_dir=str(config_dir), version_base="1.1"):
+        actor = compose(
+            config_name="qwen3_8_27b_rpent_sft",
+            overrides=["actor.model.is_lora=true"] if is_lora else [],
+        ).actor
+
+    model = get_model(actor.model)
+    qwen = model.get_base_model() if is_lora else model
+    assert isinstance(qwen, Qwen3_5ForConditionalGeneration)
+    assert qwen.device.type == "cpu"
+    torch.testing.assert_close(
+        qwen.get_input_embeddings().weight,
+        reference.get_input_embeddings().weight.bfloat16(),
     )
 
-    model = get_model(cfg)
-
-    assert isinstance(model, Qwen3_5ForConditionalGeneration)
-    assert model.device.type == "cpu"
-    torch.testing.assert_close(
-        model.get_input_embeddings().weight,
-        reference.get_input_embeddings().weight.bfloat16(),
+    assert actor.fsdp_config.use_orig_params
+    wrap = get_fsdp_wrap_policy(
+        model, actor.fsdp_config, actor.model.is_lora, actor.model.model_type
+    )
+    assert wrap(
+        module=qwen.model.language_model.layers[0], recurse=False, nonwrapped_numel=0
+    )
+    assert not any(
+        wrap(module=module, recurse=False, nonwrapped_numel=0)
+        for module in qwen.model.visual.modules()
     )
 
 
