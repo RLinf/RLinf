@@ -18,6 +18,12 @@ Agent 训练
 
       结合 RLinf 与 Continue IDE 插件的端到端代码补全在线强化学习流程。
 
+   .. grid-item-card:: RPent
+      :link: ../rpent
+      :link-type: doc
+
+      在 LIBERO 与 LIBERO-Pro 中用同步或异步 GRPO 训练 Qwen3.5-4B 视觉语言规划器。
+
    .. grid-item-card:: rStar2
       :link: ../rstar2
       :link-type: doc
@@ -46,6 +52,7 @@ Agent 训练
 
    AgentLightning <../agentlightning_calc_x>
    Coding Online RL <../coding_online_rl>
+   RPent <../rpent>
    rStar2 <../rstar2>
    Search-R1 <../searchr1/index>
    WideSeek-R1 <../wideseek_r1/index>

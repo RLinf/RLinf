@@ -15,7 +15,7 @@ Qwen3.5 多轮图像输入对齐
    * - **适用场景**
      - 本地稠密架构 Qwen3.5 checkpoint（``Qwen3_5ForConditionalGeneration``）的多轮视觉 Agent RL，搭配 SGLang rollout 与 Megatron-Bridge 训练。
    * - **保持默认**
-     - 纯文本训练、VLM SFT、FSDP 训练，或使用 :doc:`Session Server <session_server>` 的任务。
+     - 纯文本训练、VLM SFT、FSDP 训练，或使用带 router 的 :doc:`Session Server <session_server>` 的任务。
    * - **环境依赖**
      - Python 3.12 agentic 环境，包含 SGLang ``>= 0.5.12.post1``、Megatron Core 0.18.x、Megatron-Bridge 0.5.0（见 :doc:`../extending/mbridge`）与 ``fla-core``；``Qwen/Qwen3.5-4B`` 已在 1、2、8 张 NVIDIA A100 80 GB 上验证通过。
 
@@ -37,7 +37,7 @@ Qwen3.5 多轮图像输入对齐
    agentloop:
      is_dynamic_rollout_batch: true
    session_server:
-     enable: false
+     enable: false  # 若为类似 RPent 的无 router 直连场景，也可设为 true 并配置 `rollout.router.type: null` 与 `verify_assembly: false`。
    rollout:
      model:
        model_type: qwen3_5
@@ -153,7 +153,7 @@ Qwen3.5 多轮图像输入对齐
       * - 训练后端
         - ``actor``\ （启用 Critic 时包括 ``critic``）须使用 Megatron-Bridge、``PP=1``、``CP=1`` 及 ``agentloop.is_dynamic_rollout_batch: true``。
       * - Rollout 模式
-        - 须使用默认 SGLang rollout worker，关闭 ``session_server.enable`` 且不设置 ``rollout.sglang.serving_mode``。
+        - 须使用单实例 SGLang rollout worker 且不设置 ``rollout.sglang.serving_mode``；标准带 router 的 ``session_server`` 需保持 ``session_server.enable: false``，无 router 的 OpenAI 对话工作流（``rollout.router.type: null``、``session_server.verify_assembly: false``，见 :doc:`../examples/agentic/rpent`）同样支持捕获。
       * - 同机临时文件传递
         - rollout worker 与本机 SGLang tokenizer 进程须共用同一个 ``TMPDIR``\ （未单独覆盖时默认 ``/tmp`` 即可）。
 

@@ -15,7 +15,7 @@ Overview
    * - **When to use**
      - Multi-turn visual Agent RL with a local dense Qwen3.5 checkpoint (``Qwen3_5ForConditionalGeneration``), SGLang rollout, and Megatron-Bridge training.
    * - **Keep default**
-     - Text-only runs, VLM SFT, FSDP training, or workflows that rely on :doc:`Session Server <session_server>`.
+     - Text-only runs, VLM SFT, FSDP training, or workflows that rely on router-backed :doc:`Session Server <session_server>`.
    * - **Requirements**
      - Python 3.12 agentic environment with SGLang ``>= 0.5.12.post1``, Megatron Core 0.18.x, Megatron-Bridge 0.5.0 (:doc:`../extending/mbridge`), and ``fla-core``; verified on 1, 2, or 8 NVIDIA A100 80 GB GPUs for ``Qwen/Qwen3.5-4B``.
 
@@ -37,7 +37,7 @@ Image capture is off by default. Turn on ``rollout.sglang.capture_multi_modal_in
    agentloop:
      is_dynamic_rollout_batch: true
    session_server:
-     enable: false
+     enable: false  # Or true without a router (`rollout.router.type: null`, `verify_assembly: false`), as in RPent.
    rollout:
      model:
        model_type: qwen3_5
@@ -153,7 +153,7 @@ Each training step aligns rollout and training in three stages:
       * - Training backend
         - Requires Megatron-Bridge on ``actor`` (and ``critic`` when enabled) with ``PP=1``, ``CP=1``, and ``agentloop.is_dynamic_rollout_batch: true``.
       * - Rollout serving
-        - Requires the default SGLang rollout worker with ``session_server.enable: false`` and ``rollout.sglang.serving_mode`` unset.
+        - Requires a single-instance SGLang rollout worker with ``rollout.sglang.serving_mode`` unset; standard router-backed ``session_server`` runs keep ``session_server.enable: false``, while routerless OpenAI-chat workflows (``rollout.router.type: null``, ``session_server.verify_assembly: false``, see :doc:`../examples/agentic/rpent`) also support capture.
       * - Local handoff
         - The rollout worker and its local SGLang tokenizer process must share ``TMPDIR`` (default ``/tmp`` works when unchanged across processes).
 
