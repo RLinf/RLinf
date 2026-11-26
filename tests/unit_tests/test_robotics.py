@@ -5975,7 +5975,13 @@ def test_ros_checks_master_before_reusing_roscore(monkeypatch, tmp_path, probe):
     monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("ROS_MASTER_URI", "http://default-master:11311/")
     with mocked_sdks(
-        extra={"rosgraph": SimpleNamespace(get_master_uri=lambda: master_uri)}
+        extra={
+            "rosgraph": SimpleNamespace(get_master_uri=lambda: master_uri),
+            "rosgraph.network": SimpleNamespace(
+                is_local_address=lambda host: False,
+                parse_http_host_and_port=lambda uri: ("remapped-master", 11311),
+            ),
+        }
     ):
         import rospy
 
@@ -5992,6 +5998,56 @@ def test_ros_checks_master_before_reusing_roscore(monkeypatch, tmp_path, probe):
             with pytest.raises(RuntimeError, match="ROS_MASTER_URI"):
                 ros_controller.ROSController()
             init_node.assert_not_called()
+
+
+def test_ros_starts_local_target_without_replacing_another_master(monkeypatch):
+    import subprocess
+
+    from robot_mocks import mocked_sdks
+
+    master_uri = "http://127.0.0.1:11312/"
+    with mocked_sdks(
+        extra={
+            "rosgraph": SimpleNamespace(get_master_uri=lambda: master_uri),
+            "rosgraph.network": SimpleNamespace(
+                is_local_address=lambda host: host == "127.0.0.1",
+                parse_http_host_and_port=lambda uri: ("127.0.0.1", 11312),
+            ),
+        }
+    ):
+        import rospy
+
+        from rlinf.robotics.parts.transports.ros import ros_controller
+
+        other_core = mock.Mock()
+        other_core.name.return_value = "roscore"
+        monkeypatch.setattr(ros_controller.psutil, "process_iter", lambda: [other_core])
+        connect = mock.Mock(side_effect=ConnectionRefusedError)
+        launch = mock.Mock()
+        launch.return_value.poll.return_value = None
+        probe = mock.Mock(
+            side_effect=[
+                subprocess.CalledProcessError(1, ["rosparam", "list"]),
+                subprocess.CalledProcessError(1, ["rosparam", "list"]),
+                subprocess.CompletedProcess(["rosparam", "list"], 0),
+            ]
+        )
+        init_node = mock.Mock()
+        monkeypatch.setattr(ros_controller.socket, "create_connection", connect)
+        monkeypatch.setattr(ros_controller.psutil, "Popen", launch)
+        monkeypatch.setattr(ros_controller.subprocess, "run", probe)
+        monkeypatch.setattr(ros_controller.time, "sleep", lambda _: None)
+        monkeypatch.setattr(rospy, "init_node", init_node)
+
+        ros_controller.ROSController()
+
+        connect.assert_called_once_with(("127.0.0.1", 11312), timeout=0.5)
+        assert launch.call_args.args == (["roscore", "-p", "11312"],)
+        assert launch.call_args.kwargs["env"]["ROS_MASTER_URI"] == master_uri
+        assert probe.call_count == 3
+        other_core.kill.assert_not_called()
+        other_core.terminate.assert_not_called()
+        init_node.assert_called_once()
 
 
 def test_a_ros_hand_opens_without_an_arm_to_hand_it_a_session():
@@ -9710,6 +9766,53 @@ def test_go2_watchdog_stops_during_stalled_move_and_again_after_return(
     assert sum(event[0] == "move" for event in go2_sdk.events) == 1
 
 
+def test_go2_watchdog_keeps_stopping_until_late_move_returns(
+    go2_sdk, connect_go2, monkeypatch
+):
+    from unitree_sdk2py.go2.sport.sport_client import SportClient
+
+    base = connect_go2(command_timeout=0.04)
+    go2_sdk.stopped.clear()
+    publish = threading.Event()
+    published = threading.Event()
+    release = threading.Event()
+    stopped_after_publish = threading.Event()
+    move = SportClient.Move
+    stop = SportClient.StopMove
+
+    def late_move(client, *velocities):
+        assert publish.wait(2)
+        result = move(client, *velocities)
+        published.set()
+        assert release.wait(2)
+        return result
+
+    def observe_stop(client):
+        result = stop(client)
+        if published.is_set():
+            stopped_after_publish.set()
+        return result
+
+    monkeypatch.setattr(SportClient, "Move", late_move)
+    monkeypatch.setattr(SportClient, "StopMove", observe_stop)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(base.send_action, {"velocity": [0.3, 0, 0]})
+        try:
+            assert go2_sdk.stopped.wait(1)
+            publish.set()
+            assert published.wait(1)
+            assert stopped_after_publish.wait(1)
+            assert not result.done()
+            stop_count = go2_sdk.events.count(("stop",))
+        finally:
+            publish.set()
+            release.set()
+        with pytest.raises(TimeoutError):
+            result.result(timeout=1)
+    assert go2_sdk.events.count(("stop",)) > stop_count
+    assert go2_sdk.events[-1] == ("stop",)
+
+
 def test_go2_reset_waits_for_inflight_move(go2_sdk, connect_go2, stalled_go2_move):
     base = connect_go2(state_timeout=5.0, command_timeout=5.0)
     entered, release = stalled_go2_move
@@ -10060,7 +10163,7 @@ def test_go2_sport_manual_failures_preserve_report_and_cleanup(go2_sdk, failure)
 def test_go2_sport_preview_and_cancel_never_open_sdk(
     monkeypatch, go2_sdk, tmp_path, mode
 ):
-    from toolkits.realworld_check.check_go2_sport import main
+    from toolkits.realworld_check import check_go2_sport
 
     output = tmp_path / "report.json"
     argv = [
@@ -10075,9 +10178,10 @@ def test_go2_sport_preview_and_cancel_never_open_sdk(
     if mode == "dry-run":
         argv += ["--dry-run"]
     else:
+        monkeypatch.setattr(check_go2_sport, "competing_processes", lambda: [])
         monkeypatch.setattr("builtins.input", lambda _: "CANCEL")
     monkeypatch.setattr(sys, "argv", argv)
-    main()
+    check_go2_sport.main()
     assert go2_sdk.events == []
     assert not output.exists()
 
