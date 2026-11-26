@@ -30,7 +30,7 @@ mkdir -p "${LOG_DIR}"
 cd "${REPO_PATH}"
 
 echo "Logging to ${LOG_DIR}/run_embodiment.log"
-python "${EMBODIED_PATH}/train_embodied_agent.py" \
+python "${EMBODIED_PATH}/train_vlm_agent.py" \
   --config-path "${EMBODIED_PATH}/config" \
   --config-name "${CONFIG_NAME}" \
   "runner.logger.log_path=${LOG_DIR}" \

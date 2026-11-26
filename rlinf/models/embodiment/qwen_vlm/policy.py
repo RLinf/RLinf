@@ -212,7 +212,6 @@ class QwenVLMPolicy(nn.Module, BasePolicy):
         self._turn_response_ids: list[list[list[int]]] = []
         self._episodes: list[IncrementalEpisodeTokens | None] = []
         self._sp_group = None
-        self._sglang = None
         self.processor = None
         self.model = None
         if cfg.get("load_model", True):
@@ -246,42 +245,6 @@ class QwenVLMPolicy(nn.Module, BasePolicy):
         self.model.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs=gradient_checkpointing_kwargs
         )
-
-    def attach_sglang(self, cfg: Any) -> None:
-        """Send turns to an SGLang text server instead of ``model.generate``."""
-        from rlinf.models.embodiment.qwen_vlm.sglang_client import QwenVLMSGLangClient
-
-        effort = str(cfg.get("reasoning_effort", self.reasoning_effort))
-        self.reasoning_effort = effort
-        self._sglang = QwenVLMSGLangClient(
-            base_url=str(cfg.get("base_url", "")),
-            reasoning_effort=effort,
-        )
-
-    def release_sglang_memory(self) -> None:
-        """Drop local sessions. The caller posts the server release once."""
-        if self._sglang is None:
-            return
-        self._sglang.close_sessions()
-        self._sglang.memory_released = True
-
-    def resume_sglang_memory(self) -> None:
-        """Mark this worker ready. Rank 0 posts the server resume."""
-        if self._sglang is None:
-            return
-        self._sglang.memory_released = False
-
-    def on_weights_synced(self, version: int) -> None:
-        """Close SGLang sessions after the rollout weights change."""
-        if self._sglang is None:
-            return
-        parameters = None
-        if self.model is not None and self._sglang.engine is not None:
-            parameters = [
-                (name, tensor.detach())
-                for name, tensor in self.model.named_parameters()
-            ]
-        self._sglang.sync_weights(int(version), parameters)
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type != ForwardType.DEFAULT:
@@ -465,61 +428,42 @@ class QwenVLMPolicy(nn.Module, BasePolicy):
             episode.budget_exhausted = True
             return action_to_vector(None, self.schema), episode.build_sample()
 
-        if self._sglang is not None:
-            generated = self._sglang.generate(
-                index,
-                full_text=episode.rendered_text,
-                max_new_tokens=remaining,
-                images=turn_images,
+        current_sample = episode.build_sample()
+        device_inputs: dict[str, Any] = {
+            "input_ids": current_sample["input_ids"].unsqueeze(0).to(self.model.device),
+            "attention_mask": current_sample["attention_mask"]
+            .unsqueeze(0)
+            .to(self.model.device),
+            "pixel_values": current_sample["pixel_values"].to(self.model.device),
+            "image_grid_thw": current_sample["image_grid_thw"].to(self.model.device),
+        }
+        if "mm_token_type_ids" in current_sample:
+            device_inputs["mm_token_type_ids"] = (
+                current_sample["mm_token_type_ids"].unsqueeze(0).to(self.model.device)
             )
-            text = str(generated["text"])
-            response_ids = [int(t) for t in generated["output_ids"]]
-            token_logprobs = None
-        else:
-            current_sample = episode.build_sample()
-            device_inputs: dict[str, Any] = {
-                "input_ids": current_sample["input_ids"]
-                .unsqueeze(0)
-                .to(self.model.device),
-                "attention_mask": current_sample["attention_mask"]
-                .unsqueeze(0)
-                .to(self.model.device),
-                "pixel_values": current_sample["pixel_values"].to(self.model.device),
-                "image_grid_thw": current_sample["image_grid_thw"].to(
-                    self.model.device
-                ),
-            }
-            if "mm_token_type_ids" in current_sample:
-                device_inputs["mm_token_type_ids"] = (
-                    current_sample["mm_token_type_ids"]
-                    .unsqueeze(0)
-                    .to(self.model.device)
-                )
-            prompt_length = int(current_sample["input_ids"].shape[0])
-            output = self.model.generate(
-                **device_inputs,
-                max_new_tokens=remaining,
-                do_sample=do_sample,
-                temperature=temperature if do_sample else None,
-                top_p=1.0,
-                return_dict_in_generate=True,
-                output_scores=True,
-            )
-            sequence = output.sequences[0].detach().cpu()
-            response_tensor = sequence[prompt_length:]
-            response_ids = response_tensor.tolist()
-            text = self.processor.tokenizer.decode(
-                response_tensor, skip_special_tokens=False
-            )
-            scores = torch.stack(
-                [score[0].float().cpu() for score in output.scores], dim=0
-            )
-            token_logprobs = (
-                torch.log_softmax(scores, dim=-1)
-                .gather(-1, response_tensor.unsqueeze(-1))
-                .squeeze(-1)
-                .tolist()
-            )
+        prompt_length = int(current_sample["input_ids"].shape[0])
+        output = self.model.generate(
+            **device_inputs,
+            max_new_tokens=remaining,
+            do_sample=do_sample,
+            temperature=temperature if do_sample else None,
+            top_p=1.0,
+            return_dict_in_generate=True,
+            output_scores=True,
+        )
+        sequence = output.sequences[0].detach().cpu()
+        response_tensor = sequence[prompt_length:]
+        response_ids = response_tensor.tolist()
+        text = self.processor.tokenizer.decode(
+            response_tensor, skip_special_tokens=False
+        )
+        scores = torch.stack([score[0].float().cpu() for score in output.scores], dim=0)
+        token_logprobs = (
+            torch.log_softmax(scores, dim=-1)
+            .gather(-1, response_tensor.unsqueeze(-1))
+            .squeeze(-1)
+            .tolist()
+        )
         episode.append_assistant_response(
             response_ids=response_ids,
             response_text=text,
@@ -636,9 +580,6 @@ class QwenVLMPolicy(nn.Module, BasePolicy):
                 self._histories[index] = []
                 self._turn_response_ids[index] = []
                 self._episodes[index] = None
-                sglang = getattr(self, "_sglang", None)
-                if sglang is not None:
-                    sglang.close_session(index)
 
     @staticmethod
     def _batch_size(env_obs: dict[str, Any]) -> int:

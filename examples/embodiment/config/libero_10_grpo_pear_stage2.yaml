@@ -1,53 +1,32 @@
+# PEAR Stage 2 on LIBERO-10 (Long): extends episode response budget to 256k.
+
 defaults:
   - libero_gso_grpo_pear_sglang
   - _self_
 
 runner:
+  experiment_name: "libero_10_grpo_pear_stage2"
   logger:
     experiment_name: "libero_10_grpo_pear_stage2"
+  seq_length: 262144
+
+data:
+  task_suite_name: libero_10
 
 algorithm:
-  group_size: 8
-
-env:
-  train:
-    task_suite_name: libero_10
-    total_num_envs: 64
-    group_size: ${algorithm.group_size}
-    use_fixed_reset_state_ids: False
-    specific_reset_id: null
-    max_episode_steps: 16
-    max_steps_per_rollout_epoch: 16
-    vlm_action_mode: True
-    vlm_native_budget: 520
-    use_rel_reward: False
-    # Paper images are 512x512. Stage 2 extends the response budget toward 256k.
-    init_params:
-      camera_heights: 512
-      camera_widths: 512
-  eval:
-    task_suite_name: libero_10
-    total_num_envs: 8
-    use_fixed_reset_state_ids: False
-    use_ordered_reset_state_ids: True
-    specific_reset_id: null
-    max_episode_steps: 16
-    max_steps_per_rollout_epoch: 16
-    vlm_action_mode: True
-    vlm_native_budget: 520
-    init_params:
-      camera_heights: 512
-      camera_widths: 512
-
-actor:
-  model:
-    max_new_tokens: 262144
-  global_batch_size: 64
-
-rollout:
   sampling_params:
     max_new_tokens: 262144
+
+agentloop:
+  max_turns: 64
+
+rollout:
   sglang:
     response_budget: 262144
   model:
+    max_new_tokens: 262144
+
+actor:
+  model:
+    encoder_seq_length: 262144
     max_new_tokens: 262144

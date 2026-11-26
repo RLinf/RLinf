@@ -29,10 +29,8 @@ from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.metric_utils import aggregate_agent_metrics
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import check_progress
-from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.agent.agent_loop import AgentLoopWorker
 from rlinf.workers.agent.tool_worker import ToolWorker, ToolWorkerInfo
-from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.reward.reward_worker import RewardWorker
 from rlinf.workers.rollout.session_server.payload import create_payload_channels
 from rlinf.workers.rollout_buffer.rollout_buffer_worker import RolloutBufferWorker
@@ -41,6 +39,9 @@ if typing.TYPE_CHECKING:
     # Type checking only: the session server worker imports fastapi,
     # uvicorn and SGLang at module level, which a run without the session
     # server (on vLLM, for example) may not have installed.
+    from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
+    from rlinf.workers.actor.megatron_actor_worker import MegatronActor
+    from rlinf.workers.inference.megatron_inference_worker import MegatronInference
     from rlinf.workers.rollout.session_server.server_worker import SessionServerWorker
     from rlinf.workers.rollout.sglang.router_worker import SGLangRouterWorker
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
@@ -74,8 +75,8 @@ class AsyncAgentRunner(AgentRunner):
         train_dataset: Dataset,
         val_dataset: Optional[Dataset],
         rollout: Union["SGLangWorker", "VLLMWorker"],
-        inference: Optional[MegatronInference],
-        actor: MegatronActor,
+        inference: Optional["MegatronInference"],
+        actor: Union["MegatronActor", "FSDPActor"],
         reward: Optional[RewardWorker],
         agent_loop: AgentLoopWorker,
         rollout_buffer: RolloutBufferWorker,
@@ -236,7 +237,12 @@ class AsyncAgentRunner(AgentRunner):
             # before the URL is handed out, so a startup failure (the
             # port is fixed per server) surfaces here.
             self._session_serve_handles.append(
-                server.serve(router_url, self.agent_output_channel, payload_channels)
+                server.serve(
+                    router_url,
+                    self.agent_output_channel,
+                    payload_channels,
+                    engine_urls=instance_urls,
+                )
             )
             server.wait_until_serving().wait()
             session_urls.append(f"http://{server.get_server_address().wait()[0]}")

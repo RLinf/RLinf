@@ -142,13 +142,24 @@ class Scheduler(_Scheduler):
     def _tp_world(self) -> tuple[int, int]:
         """Return (tp_size, tp_rank).
 
-        SGLang 0.5.19 keeps these on ``scheduler.ps``. Older releases stored
-        them directly on the scheduler.
+        SGLang 0.5.22+ exposes parallel state via
+        ``sglang.srt.runtime_context.get_parallel()``; 0.5.19 kept it on
+        ``scheduler.ps``; older releases stored ``tp_size`` / ``tp_rank``
+        directly on the scheduler.
         """
         ps = getattr(self, "ps", None)
         if ps is not None and hasattr(ps, "tp_size"):
             return ps.tp_size, ps.tp_rank
-        return self.tp_size, self.tp_rank
+        if hasattr(self, "tp_rank"):
+            return self.tp_size, self.tp_rank
+        try:
+            from sglang.srt.runtime_context import get_parallel
+
+            parallel = get_parallel()
+            tp_size = getattr(self, "tp_size", None) or int(self.server_args.tp_size)
+            return tp_size, parallel.tp_rank
+        except ImportError:
+            return self.tp_size, self.tp_rank
 
     def cuda_info(self, text: str = ""):
         free_gpu_memory, total_gpu_memory = Worker.torch_platform.mem_get_info()

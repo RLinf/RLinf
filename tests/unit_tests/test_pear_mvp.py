@@ -333,20 +333,32 @@ def test_vlm_policy_stage_configs_compose():
         Path(__file__).resolve().parents[2] / "examples" / "embodiment" / "config"
     )
     expected = {
-        "libero_gso_grpo_pear_sglang": ("libero_gso", 8, "libero"),
-        "libero_10_grpo_pear_stage2": ("libero_10", 8, "libero"),
-        "pear_stage3_libero_robodojo": ("libero_10", 8, "robodojo"),
+        "libero_gso_grpo_pear_sglang": ("libero_gso", 8, "libero", 8),
+        "libero_gso_grpo_pear_sglang_paper": ("libero_gso", 8, "libero", 128),
+        "libero_10_grpo_pear_stage2": ("libero_10", 8, "libero", 8),
+        "pear_stage3_libero_robodojo": ("libero_10", 8, "robodojo", 8),
     }
     for name, values in expected.items():
         with initialize_config_dir(config_dir=str(config_dir), version_base=None):
             cfg = compose(config_name=name)
         assert (
-            cfg.env.train.task_suite_name,
+            cfg.data.task_suite_name,
             cfg.algorithm.group_size,
             cfg.actor.model.embodiment,
+            cfg.data.rollout_batch_size,
         ) == values
+        assert cfg.runner.async_mode is True
+        assert cfg.session_server.enable is True
+        assert cfg.session_server.merge_continuous_turns is True
+        assert cfg.session_server.engine_streaming_session is True
         assert cfg.rollout.rollout_backend == "sglang"
-        assert cfg.rollout.sglang.server.attention_backend is None
-        assert cfg.rollout.sglang.server.max_mamba_cache_size == 256
+        assert cfg.rollout.sglang.backend_type == "server"
+        assert cfg.rollout.sglang.attention_backend is None
+        assert cfg.rollout.sglang.max_mamba_cache_size == 256
+        assert cfg.rollout.router.policy == "manual"
+        assert cfg.algorithm.adv_type == "grpo_dynamic"
         assert cfg.algorithm.loss_type == "pear_reinforce"
-        assert cfg.actor.global_batch_size == 64
+        assert cfg.algorithm.recompute_logprobs is False
+        assert (
+            cfg.algorithm.down_sampling.down_sampling_config.reject_equal_reward is True
+        )

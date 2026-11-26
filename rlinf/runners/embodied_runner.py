@@ -38,21 +38,6 @@ from rlinf.utils.timers import Timer
 
 logger = logging.getLogger(__name__)
 
-
-def _kept_dapo_groups(metrics) -> float:
-    rows = metrics if isinstance(metrics, list) else [metrics]
-    return sum(
-        float(row.get("dapo/kept_groups", 0.0)) for row in rows if isinstance(row, dict)
-    )
-
-
-def _stamp_dapo_batches(metrics, batches: int) -> None:
-    rows = metrics if isinstance(metrics, list) else [metrics]
-    for row in rows:
-        if isinstance(row, dict):
-            row["dapo/sampled_batches"] = batches
-
-
 if TYPE_CHECKING:
     from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
         AsyncEmbodiedSACFSDPPolicy,
@@ -204,15 +189,6 @@ class EmbodiedRunner:
 
         rollout_handle.wait()
         env_handle.wait()
-        # SGLang loads weights, KV cache, and CUDA graphs during server init.
-        # The actor then materializes the full checkpoint on the same GPUs
-        # before FSDP shards it. Release SGLang first; the training loop
-        # resumes weights for the IPC copy and the KV cache for generation.
-        if self._uses_external_sglang() and bool(
-            self.cfg.actor.get("enable_offload", False)
-        ):
-            logger.info("Releasing SGLang GPU memory before actor initialization.")
-            self.rollout.release_sglang_memory().wait()
         self.actor.init_worker().wait()
 
         resume_dir = self.cfg.runner.get("resume_dir", None)
@@ -227,18 +203,7 @@ class EmbodiedRunner:
         )
         self.actor.load_checkpoint(actor_checkpoint_path).wait()
 
-    def _uses_external_sglang(self) -> bool:
-        rollout = self.cfg.rollout
-        return (
-            str(rollout.get("generation_backend", "")) == "sglang"
-            or str(rollout.get("rollout_backend", "")) == "sglang"
-        )
-
     def update_rollout_weights(self):
-        # SGLang must be resident before the weight flush. The actor loads FSDP
-        # for the copy, then offloads it again before this returns.
-        if self._uses_external_sglang():
-            self.rollout.resume_sglang_memory().wait()
         rollout_handle: Handle = self.rollout.sync_model_from_actor()
         actor_handle: Handle = self.actor.sync_model_to_rollout()
         actor_handle.wait()
@@ -528,78 +493,6 @@ class EmbodiedRunner:
         self.env.stop_profile().wait()
         self.logger.info(f"Closed profiling window at step {step_idx}")
 
-    def _rollout_until_variable_groups(self):
-        """Sample one batch, or more when DAPO still needs variable groups."""
-        pear_cfg = self.cfg.algorithm.get("pear", {})
-        resample = bool(pear_cfg.get("dapo_resample", False))
-        target_groups = int(pear_cfg.get("dapo_target_groups", 1))
-        # PEAR's max_num_gen_batches is 0: replace until enough groups have
-        # different rewards. A positive value is this runner's stop.
-        configured_batches = int(pear_cfg.get("dapo_max_batches", 4))
-        unlimited = resample and configured_batches == 0
-        max_batches = None if unlimited else (configured_batches if resample else 1)
-        compact = bool(pear_cfg.get("dapo_compact", False))
-        env_handle: Handle | None = None
-        rollout_handle: Handle | None = None
-        reward_handle: Handle | None = None
-        actor_rollout_metrics: list[dict] = []
-        batch_index = 0
-        # One step records each timer name once. Extra DAPO batches are folded
-        # into that single measurement as a sum.
-        carried_rollout_time = 0.0
-        carried_advantage_time = 0.0
-        while max_batches is None or batch_index < max_batches:
-            with self.timer("generate_rollouts"):
-                env_handle = self.env.interact(
-                    input_channel=self.env_channel,
-                    rollout_channel=self.rollout_channel,
-                    reward_channel=self.reward_channel,
-                )
-                rollout_handle = self.rollout.generate(
-                    input_channel=self.rollout_channel,
-                    output_channel=self.env_channel,
-                    actor_channel=self.actor_channel,
-                )
-                reward_handle = None
-                if self.reward is not None:
-                    reward_handle = self.reward.compute_rewards(
-                        input_channel=self.reward_channel,
-                        output_channel=self.env_channel,
-                    )
-                self.actor.recv_rollout_trajectories(
-                    input_channel=self.actor_channel
-                ).wait()
-                rollout_handle.wait()
-                if reward_handle is not None:
-                    reward_handle.wait()
-            with self.timer("cal_adv_and_returns"):
-                actor_rollout_metrics = (
-                    self.actor.compute_advantages_and_returns().wait()
-                )
-            if not resample:
-                break
-            kept = _kept_dapo_groups(actor_rollout_metrics)
-            _stamp_dapo_batches(actor_rollout_metrics, batch_index + 1)
-            reached_cap = max_batches is not None and batch_index + 1 == max_batches
-            if kept >= target_groups or reached_cap:
-                break
-            carried_rollout_time += self.timer.take_duration("generate_rollouts")
-            carried_advantage_time += self.timer.take_duration("cal_adv_and_returns")
-            env_handle.wait()
-            batch_index += 1
-        if carried_rollout_time:
-            self.timer.add_duration("generate_rollouts", carried_rollout_time)
-        if carried_advantage_time:
-            self.timer.add_duration("cal_adv_and_returns", carried_advantage_time)
-        if compact and _kept_dapo_groups(actor_rollout_metrics) < target_groups:
-            raise RuntimeError(
-                "DAPO filled "
-                f"{_kept_dapo_groups(actor_rollout_metrics)} of {target_groups} "
-                "variable groups before dapo_max_batches. Leave the cap at 0 to "
-                "keep sampling, or lower dapo_target_groups."
-            )
-        return env_handle, rollout_handle, reward_handle, actor_rollout_metrics
-
     def run(self):
         if self.cfg.runner.get("use_training_pipeline", False):
             return self.run_pipeline()
@@ -624,16 +517,35 @@ class EmbodiedRunner:
                 with self.timer("sync_weights"):
                     if _step % self.weight_sync_interval == 0:
                         self.update_rollout_weights()
-                if self._uses_external_sglang():
-                    self.rollout.resume_sglang_memory().wait()
-                (
-                    env_handle,
-                    rollout_handle,
-                    reward_handle,
-                    actor_rollout_metrics,
-                ) = self._rollout_until_variable_groups()
-                if self._uses_external_sglang():
-                    self.rollout.release_sglang_memory().wait()
+                with self.timer("generate_rollouts"):
+                    env_handle: Handle = self.env.interact(
+                        input_channel=self.env_channel,
+                        rollout_channel=self.rollout_channel,
+                        reward_channel=self.reward_channel,
+                    )
+                    rollout_handle: Handle = self.rollout.generate(
+                        input_channel=self.rollout_channel,
+                        output_channel=self.env_channel,
+                        actor_channel=self.actor_channel,
+                    )
+                    reward_handle = None
+                    if self.reward is not None:
+                        reward_handle: Handle = self.reward.compute_rewards(
+                            input_channel=self.reward_channel,
+                            output_channel=self.env_channel,
+                        )
+                    self.actor.recv_rollout_trajectories(
+                        input_channel=self.actor_channel
+                    ).wait()
+                    rollout_handle.wait()
+                    if self.reward is not None:
+                        reward_handle.wait()
+
+                # compute advantages and returns.
+                with self.timer("cal_adv_and_returns"):
+                    actor_rollout_metrics = (
+                        self.actor.compute_advantages_and_returns().wait()
+                    )
 
                 # actor training.
                 with self.timer("actor_training"):

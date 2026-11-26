@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import pickle
 import time
@@ -460,7 +461,10 @@ class InferenceHTTPClient:
                             status=resp.status,
                             body=text,
                         )
-                    return await resp.json()
+                    body_bytes = await resp.read()
+                    if not body_bytes:
+                        return {}
+                    return json.loads(body_bytes)
             except aiohttp.ClientConnectionError as exc:
                 # The body never left the client, so the server did not start
                 # the call. Drop the pooled socket and try once more. A reset

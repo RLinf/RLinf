@@ -1,236 +1,55 @@
+# Paper-scale disaggregated async VLM-as-Policy (PEAR Stage 1) on LIBERO-GSO.
+#
+# Layout (4 nodes, 8 GPUs each = 32 H200 GPUs):
+#   - actor (FSDP2, Qwen3.8-27B): global hardware ranks 0-15 (nodes 0-1)
+#   - rollout (2 x SGLang server TP8): global hardware ranks 16-31 (nodes 2-3)
+#   - 2 SessionServer instances (one per rollout node) behind one SGLangRouter
+#     (policy: manual) for per-group sticky routing and parallel payload assembly.
+
 defaults:
-  - env/libero_spatial_vlm@env.train
-  - env/libero_spatial_vlm@env.eval
-  - model/qwen3_8_27b@actor.model
-  - model/qwen3_8_27b@rollout.model
-  - hybrid_engines/fsdp@actor.fsdp_config
-  - hybrid_engines/sglang_router_server@rollout.sglang
-  - weight_syncer/patch_syncer@weight_syncer
-  - override hydra/job_logging: stdout
+  - libero_gso_grpo_pear_sglang
   - _self_
 
-hydra:
-  run:
-    dir: .
-  output_subdir: null
-
 cluster:
-  # 32 H200s as four 8-GPU nodes. FSDP uses every GPU. SGLang TP stays 8, so
-  # this is four engines, one per node. An engine spans nodes only when TP
-  # does not fit on one node; the driver derives that from the real GPU count.
   num_nodes: 4
   component_placement:
-    actor,env,rollout: all
+    actor: 0-15
+    rollout: 16-31
+    reward: 16-31
 
 runner:
-  task_type: embodied
-  weight_sync_interval: 1
+  experiment_name: "libero_gso_grpo_pear_sglang_paper"
   logger:
-    log_path: "../results"
-    project_name: rlinf
     experiment_name: "libero_gso_grpo_pear_sglang_paper"
-    logger_backends: ["tensorboard"]
-  max_epochs: 1
-  # run_stage1.sh caps the run at 1000 updates. The reported stage-1 curve is
-  # about 148 updates; stop earlier by overriding runner.max_steps.
+  # Paper run_stage1.sh caps at 1000 updates (reported Stage 1 curve ~148 steps).
   max_steps: 1000
-  only_eval: False
-  val_check_interval: -1
-  # PEAR writes a checkpoint every update and keeps two. Left off here.
-  save_interval: -1
-  resume_dir: null
-  ckpt_path: null
 
-algorithm:
-  normalize_advantages: True
-  kl_penalty: kl
-  group_size: 8
-  reward_coef: 1.0
-  reward_type: chunk_level
-  logprob_type: sequence_token_level
-  entropy_type: token_level
-  update_epoch: 1
-  adv_type: grpo
-  loss_type: pear_reinforce
-  loss_agg_func: "token-mean"
-  kl_beta: 0.0
-  entropy_bonus: 0
-  clip_ratio_high: 0.2
-  clip_ratio_low: 0.2
-  clip_ratio_c: 3.0
-  value_clip: 0.2
-  huber_delta: 10.0
-  gamma: 1.0
-  gae_lambda: 1.0
-  filter_rewards: False
-  # pear_reinforce does not use old_logprobs; skipping recompute saves a full 27B forward pass.
-  recompute_logprobs: False
-  pear:
-    # Synchronous on-policy updates do not use the paper's async score centering.
-    score_centering: False
-    episode_sequence: True
-    dapo_filter: True
-    dapo_resample: True
-    dapo_compact: True
-    stream_to_actors: True
-    # Drop cross-step surplus under synchronous on-policy REINFORCE so stale
-    # groups never leak into a later policy step without off-policy correction.
-    clear_surplus_after_step: True
-    # The trajectory worker keeps one global pool. As soon as actor-world-size
-    # variable groups are ready, one group is sent to each actor while the
-    # other ranks are still rolling out. 128 groups form the update. Further
-    # variable groups stay in the pool and fill a later update.
-    dapo_target_groups: 128
-    dapo_max_batches: 0
+data:
+  # 128 variable groups x 8 trajectories = 1024 trajectories per step
+  # (8 groups per actor DP rank across 16 actor GPUs).
+  rollout_batch_size: 128
 
-env:
-  group_name: "EnvGroup"
-  enable_offload: False
-  train:
-    task_suite_name: libero_gso
-    num_steps_wait: 10
-    rollout_epoch: 1
-    # Generate 256 groups, then train on the 128 whose returns are not all
-    # equal. 32 workers x 64 envs. The update itself is still 1024 trajectories.
-    total_num_envs: 2048
-    reward_coef: ${algorithm.reward_coef}
-    group_size: ${algorithm.group_size}
-    # Sample across all 1,500 LIBERO-GSO episodes rather than locking to reset_state_id=0.
-    use_fixed_reset_state_ids: False
-    specific_reset_id: null
-    # PEAR does not cap model turns. 300 is libero_goal's native budget, the
-    # longest suite in libero_gso (spatial 220, object 280, goal 300).
-    max_episode_steps: 300
-    max_steps_per_rollout_epoch: 300
-    video_cfg:
-      save_video: False
-      info_on_video: False
-      video_base_dir: ${runner.logger.log_path}/video/train
-    init_params:
-      camera_heights: 512
-      camera_widths: 512
-  eval:
-    task_suite_name: libero_gso
-    num_steps_wait: 10
-    rollout_epoch: 1
-    total_num_envs: 8
-    auto_reset: False
-    ignore_terminations: False
-    early_stop_on_done: True
-    use_fixed_reset_state_ids: False
-    use_ordered_reset_state_ids: True
-    specific_reset_id: null
-    max_episode_steps: 300
-    max_steps_per_rollout_epoch: 300
-    group_size: 1
-    is_eval: True
-    init_params:
-      camera_heights: 512
-      camera_widths: 512
-    video_cfg:
-      save_video: False
-      video_base_dir: ${runner.logger.log_path}/video/eval
+agentloop:
+  # Uncapped model turns up to the suite's native step budget (libero_goal: 300).
+  max_turns: 300
+  max_actor_accept_staleness: 4
+
+rollout_buffer:
+  max_inflight_groups: 160
+  max_buffered_groups: 256
+  max_dropped_groups_per_step: 1280
+
+session_server:
+  num_servers: 2
+  payload_shards: 2
+
+tools:
+  embodied_env:
+    max_concurrent_envs: 128
 
 rollout:
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 1.0
-    top_k: -1
-    top_p: 1.0
-    repetition_penalty: 1.0
-    add_BOS: False
-    # Episode response budget. Each turn receives only the tokens still left.
-    max_new_tokens: 160000
-  group_name: "RolloutGroup"
-  rollout_backend: "sglang"
-  enforce_eager: False
-  collect_final_values: False
-  recompute_logprobs: ${algorithm.recompute_logprobs}
-  enable_offload: False
-  pipeline_stage_num: 1
+  max_running_requests: 64
+  cuda_graph_max_bs: 64
   sglang:
-    apply_rlinf_patch: True
-    launch_router: False
-    tensor_parallel_size: 8
-    # actor_world_size and nnodes_per_model_instance are filled from the
-    # actor placement at launch. They are not the same number as TP.
-    reasoning_effort: xhigh
-    response_budget: 160000
-    # Keep visual tower, Gated DeltaNet A_log, and lm_head in fp32 on sync (PEAR qwen3_5 config).
-    fp32_modules: ["visual", "A_log", "lm_head"]
-    dtype: bf16
-    log_decode_text: false
-    http_timeout_s: 3600
-    model_path: "/mnt/public/guozhen/models/Qwen/Qwen3.8-27B"
-    server:
-      model_path: "/mnt/public/guozhen/models/Qwen/Qwen3.8-27B"
-      tp_size: 8
-      # Let SGLang pick the hardware-optimal backend (flashinfer on Ampere,
-      # fa3 on Hopper) instead of inheriting triton from sglang_router_server.
-      attention_backend: null
-      # Leave room for the FSDP parameters during the CUDA-IPC copy.
-      mem_fraction_static: 0.45
-      # One PEAR replica keeps 64 sessions. This engine's captured decode
-      # batch stays 16; the other requests wait.
-      max_running_requests: 16
-      # Bound GDN recurrent-state slots (~4-5 per running request under
-      # extra_buffer plus 64 sticky sessions) so default mamba_full_memory_ratio
-      # does not squeeze the KV cache pool.
-      max_mamba_cache_size: 256
-      cuda_graph_max_bs_decode: 16
-      enable_memory_saver: True
-      disable_cuda_graph: False
-  model:
-    model_path: ${actor.model.model_path}
-    precision: ${actor.model.precision}
-    is_lora: False
-    reasoning_effort: xhigh
-    max_new_tokens: 160000
-
-actor:
-  group_name: "ActorGroup"
-  training_backend: "fsdp"
-  micro_batch_size: 1
-  # The update is the 1024 selected trajectories, 32 on each of the 32 ranks.
-  # The other 1024 generated trajectories are filtered out before this step.
-  global_batch_size: 1024
-  seed: 42
-  enable_offload: True
-  model:
-    model_path: "/mnt/public/guozhen/models/Qwen/Qwen3.8-27B"
-    action_dim: 8
-    num_action_chunks: 1
-    add_value_head: False
-    is_lora: False
-    reasoning_effort: xhigh
-    max_new_tokens: 160000
-    # Weights stay bf16 so the SGLang IPC copy matches the engine dtype.
-    precision: bf16
-  optim:
-    lr: 1.0e-6
-    value_lr: 1.0e-4
-    adam_beta1: 0.9
-    adam_beta2: 0.95
-    adam_eps: 1.0e-8
-    weight_decay: 0.0
-    clip_grad: 1.0
-  fsdp_config:
-    strategy: "fsdp2"
-    sharding_strategy: "full_shard"
-    gradient_checkpointing: True
-    # Compute in bf16. Gradient reduction, buffers, visual tower, and residual stream stay fp32.
-    # amp_autocast stays off; enabling it together with this policy conflicts.
-    mixed_precision:
-      param_dtype: bf16
-      reduce_dtype: fp32
-      buffer_dtype: fp32
-      fp32_modules: ["model.visual"]
-      fp32_modules_tf32: True
-      fp32_residual: True
-
-reward:
-  use_reward_model: False
-
-critic:
-  use_critic_model: False
+    max_mamba_cache_size: 256
+    torch_compile_max_bs: 64

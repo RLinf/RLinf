@@ -24,6 +24,7 @@ the writing side: the puts, their settlements, and the pending-byte budget.
 """
 
 import asyncio
+import math
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Iterator, Optional
 
@@ -47,6 +48,7 @@ __all__ = [
     "GroupPayload",
     "PayloadCollector",
     "PayloadWriter",
+    "extract_topk_logprobs",
     "routing_key_for",
     "payload_key_for",
     "create_payload_channels",
@@ -92,6 +94,16 @@ class PayloadPart:
         verify: Assembly-verification record, on the finalize part only and
             only in verify mode: the reference result fields the agent
             reported at close, both sides' per-turn sampling params.
+        delta_text: Incremental prompt text for this turn when using
+            multimodal or text streaming sessions, else None.
+        image_data: Base64-encoded images introduced on this turn only,
+            else None.
+        output_text: Decoded text returned by the engine for this turn,
+            stored when ``delta_text`` is set.
+        topk_ids: Optional per-token top-K candidate token ids from the
+            sampler (shape ``[len(output_ids), K]``).
+        topk_logprobs: Optional per-token top-K logprobs from the sampler
+            (shape ``[len(output_ids), K]``).
     """
 
     group_id: int
@@ -108,6 +120,11 @@ class PayloadPart:
     rewards: Optional[list] = None
     verdicts: Optional[dict] = None
     verify: Optional[dict] = None
+    delta_text: Optional[str] = None
+    image_data: Optional[list[str]] = None
+    output_text: Optional[str] = None
+    topk_ids: Optional[list[list[int]]] = None
+    topk_logprobs: Optional[list[list[float]]] = None
 
 
 @dataclass
@@ -371,11 +388,78 @@ class PayloadWriter:
         return success
 
 
+def extract_topk_logprobs(
+    meta_info: dict[str, Any],
+    output_ids: list[int],
+    topk: int,
+) -> tuple[
+    Optional[list[float]], Optional[list[list[int]]], Optional[list[list[float]]]
+]:
+    """Extract per-token logprobs and top-K heads from SGLang ``meta_info``.
+
+    Supports SGLang 0.5.x ``output_top_logprobs`` where each token entry is a
+    list of ``(logprob, token_id[, text])`` tuples or dicts with
+    ``logprob``/``token_id`` keys.
+    """
+    raw_token_lps = meta_info.get("output_token_logprobs")
+    token_logprobs: Optional[list[float]] = None
+    if isinstance(raw_token_lps, list) and len(raw_token_lps) == len(output_ids):
+        token_logprobs = []
+        for entry in raw_token_lps:
+            if isinstance(entry, (list, tuple)) and entry:
+                token_logprobs.append(float(entry[0]))
+            elif isinstance(entry, dict) and "logprob" in entry:
+                token_logprobs.append(float(entry["logprob"]))
+            else:
+                token_logprobs.append(float(entry))
+
+    if topk <= 0:
+        return token_logprobs, None, None
+
+    raw_topk = meta_info.get("output_top_logprobs")
+    if not isinstance(raw_topk, list) or len(raw_topk) != len(output_ids):
+        return token_logprobs, None, None
+
+    placeholder_lp = -math.log(max(topk, 1))
+    topk_ids: list[list[int]] = []
+    topk_lps: list[list[float]] = []
+    for step_entries in raw_topk:
+        step_ids: list[int] = []
+        step_lps: list[float] = []
+        if isinstance(step_entries, list):
+            for entry in step_entries[:topk]:
+                if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                    lp, tid = float(entry[0]), int(entry[1])
+                elif isinstance(entry, dict):
+                    lp = float(entry["logprob"])
+                    tid = int(entry["token_id"])
+                else:
+                    continue
+                step_ids.append(tid)
+                step_lps.append(lp)
+        while len(step_ids) < topk:
+            step_ids.append(len(step_ids))
+            step_lps.append(placeholder_lp)
+        topk_ids.append(step_ids)
+        topk_lps.append(step_lps)
+    return token_logprobs, topk_ids, topk_lps
+
+
 def _estimate_part_bytes(part: PayloadPart) -> int:
-    """Rough byte cost of a part's serialized token and logprob lists."""
+    """Rough byte cost of a part's serialized token, image, and logprob payloads."""
     nbytes = (len(part.input_ids) + len(part.output_ids)) * _BYTES_PER_LIST_ELEMENT
     if part.logprobs is not None:
         nbytes += len(part.logprobs) * _BYTES_PER_LIST_ELEMENT
+    if part.delta_text is not None:
+        nbytes += len(part.delta_text)
+    if part.output_text is not None:
+        nbytes += len(part.output_text)
+    if part.image_data is not None:
+        nbytes += sum(len(img) for img in part.image_data)
+    if part.topk_ids is not None:
+        nbytes += sum(len(row) for row in part.topk_ids) * _BYTES_PER_LIST_ELEMENT
+    if part.topk_logprobs is not None:
+        nbytes += sum(len(row) for row in part.topk_logprobs) * _BYTES_PER_LIST_ELEMENT
     return nbytes + _PART_OVERHEAD_BYTES
 
 

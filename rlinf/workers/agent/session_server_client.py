@@ -189,6 +189,41 @@ class SessionServerClient:
         resp.setdefault("logprobs", None)
         return resp
 
+    async def generate_multimodal(
+        self,
+        group_id: int,
+        session_id: str,
+        *,
+        text: str,
+        image_data: Optional[list[str]] = None,
+        sampling_params: Optional[dict] = None,
+        input_ids: Optional[list[int]] = None,
+        engine_session: Optional[bool] = None,
+    ) -> dict:
+        """Run one multimodal / streaming-text generate call on a session.
+
+        Sends only the incremental turn ``text`` and new ``image_data``; the
+        session server manages any engine-side streaming session and records
+        the incremental turn into the group's payload channel.
+        """
+        body: dict[str, Any] = {"text": text}
+        if image_data is not None:
+            body["image_data"] = image_data
+        if sampling_params is not None:
+            body["sampling_params"] = sampling_params
+        if input_ids is not None:
+            body["input_ids"] = input_ids
+        if engine_session is not None:
+            body["engine_session"] = engine_session
+        resp = await self._checked_post(
+            group_id,
+            f"/sessions/{session_id}/generate",
+            body,
+            timeout_s=self._generate_timeout_s,
+        )
+        resp.setdefault("logprobs", None)
+        return resp
+
     async def close(
         self,
         group_id: int,

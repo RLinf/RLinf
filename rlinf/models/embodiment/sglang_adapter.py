@@ -129,17 +129,6 @@ def _register_builtin_sglang_adapters():
         force=True,
     )
 
-    def _build_qwen_vlm_sglang_adapter():
-        from rlinf.models.embodiment.qwen_vlm.sglang_adapter import QwenVLMSGLangAdapter
-
-        return QwenVLMSGLangAdapter
-
-    register_sglang_adapter(
-        SupportedModel.QWEN_VLM.value,
-        _build_qwen_vlm_sglang_adapter,
-        force=True,
-    )
-
 
 _register_builtin_sglang_adapters()
 

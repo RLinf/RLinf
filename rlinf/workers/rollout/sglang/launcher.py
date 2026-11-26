@@ -140,7 +140,6 @@ def launch_sglang_router_and_server(
             config=config,
             sglang_cfg=router_server_args.server,
             server_type=router_server_args.get("server_type", "srt"),
-            apply_rlinf_patch=bool(router_server_args.get("apply_rlinf_patch", False)),
         ).launch(
             cluster=cluster,
             name=router_server_args.group_name,
@@ -175,7 +174,7 @@ def launch_sglang_router_and_server(
     # driver (serialized) so the order of attached workers is stable —
     # if you want concurrent registration, call from N workers instead.
     if server_group is not None and router_group is not None:
-        server_urls = _entry_server_urls(server_group.get_server_url().wait())
+        server_urls = server_group.get_server_url().wait()
         for url in server_urls:
             router_group.register_server(url).wait()
 
@@ -191,7 +190,7 @@ def get_sglang_api_url(server_group, router_group) -> str:
     if router_group is not None:
         return router_group.get_router_url().wait()[0].rstrip("/")
     if server_group is not None:
-        server_urls = _entry_server_urls(server_group.get_server_url().wait())
+        server_urls = server_group.get_server_url().wait()
         if server_urls:
             return str(server_urls[0]).rstrip("/")
     raise RuntimeError(
@@ -226,11 +225,6 @@ def launch_sglang_api(
         router_node_rank=router_node_rank,
     )
     return get_sglang_api_url(server_group, router_group), server_group, router_group
-
-
-def _entry_server_urls(urls) -> list[str]:
-    """Drop non-entry processes of a cross-node engine. They return no URL."""
-    return [str(url) for url in urls if url]
 
 
 def _num_accelerators_per_engine(router_server_args: DictConfig) -> int:

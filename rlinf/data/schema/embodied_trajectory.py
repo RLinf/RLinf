@@ -527,115 +527,12 @@ class RolloutOutput(AccumulatorOutput):
     """Collect complete rollout steps and emit trajectory shards.
 
     Every shard goes to the shared key, so any actor may take any of them.
-    With ``algorithm.pear.dapo_compact``, variable groups stay in one pool
-    and are dealt evenly once the pool can fill a training batch.
-    With ``algorithm.pear.stream_to_actors``, a finished source is split
-    into groups immediately. Every time ``actor_world_size`` groups are
-    ready, one group is sent to each actor while other sources are still
-    rolling out. Surplus groups stay here for a later update.
     """
-
-    def __init__(self, cfg: DictConfig, geometry: RolloutGeometry) -> None:
-        """Remember the shared DAPO pool when compact selection is enabled."""
-        super().__init__(cfg, geometry)
-        pear_cfg = cfg.algorithm.get("pear", {})
-        self._dapo_compact = bool(pear_cfg.get("dapo_compact", False))
-        self._stream_to_actors = bool(pear_cfg.get("stream_to_actors", False))
-        self._dapo_target_groups = int(pear_cfg.get("dapo_target_groups", 0))
-        self._dapo_group_size = int(cfg.algorithm.group_size)
-        self._clear_surplus_after_step = bool(
-            pear_cfg.get("clear_surplus_after_step", False)
-        )
-        raw_staleness = pear_cfg.get("max_off_policy_threshold", None)
-        self._max_off_policy_threshold = (
-            int(raw_staleness) if raw_staleness is not None else None
-        )
-        self._latest_policy_version = 0
-        self._dapo_buffer = None
-        # Groups ready to ship, one trajectory per group, oldest first.
-        self._ready_groups: list = []
-        self._sources_in_step = 0
-        self._sent_groups = 0
-        if (
-            self._stream_to_actors
-            and self._dapo_compact
-            and (
-                self._dapo_target_groups <= 0
-                or self._dapo_target_groups % self._geometry.actor_world_size != 0
-            )
-        ):
-            raise ValueError(
-                "stream_to_actors needs dapo_target_groups to be a positive "
-                "multiple of the actor world size, got "
-                f"{self._dapo_target_groups} and {self._geometry.actor_world_size}"
-            )
 
     def _flush(
         self, accumulators: dict[SourceID, TrajectoryAccumulator]
     ) -> Iterator[CollectedItem]:
         """Split each source's trajectory into its shards."""
-        if self._stream_to_actors or self._dapo_compact:
-            incoming = []
-            for (env_rank, _), accumulator in sorted(accumulators.items()):
-                trajectory = accumulator.to_trajectory()
-                trajectory.env_name = self._geometry.spec(env_rank).name
-                incoming.append(trajectory)
-        if self._stream_to_actors:
-            yield from self._emit_ready_groups(incoming)
-            return
-        if self._dapo_compact:
-            from rlinf.algorithms.pear_objective import (
-                DapoPending,
-                absorb_variable_groups,
-                is_trajectory_stale,
-            )
-
-            self._update_latest_policy_version(incoming)
-            if (
-                self._dapo_buffer is not None
-                and self._max_off_policy_threshold is not None
-                and is_trajectory_stale(
-                    self._dapo_buffer,
-                    self._latest_policy_version,
-                    self._max_off_policy_threshold,
-                )
-            ):
-                self._dapo_buffer = None
-            fresh_incoming = [
-                traj
-                for traj in incoming
-                if traj is not None
-                and not is_trajectory_stale(
-                    traj,
-                    self._latest_policy_version,
-                    self._max_off_policy_threshold,
-                )
-            ]
-            shard_count = (
-                self._geometry.shards_per_actor() * self._geometry.actor_world_size
-            )
-            self._dapo_buffer, outputs = absorb_variable_groups(
-                self._dapo_buffer,
-                fresh_incoming,
-                group_size=self._dapo_group_size,
-                target_groups=self._dapo_target_groups,
-                shard_count=shard_count,
-            )
-            if (
-                self._clear_surplus_after_step
-                and outputs
-                and not isinstance(outputs[0], DapoPending)
-            ):
-                self._dapo_buffer = None
-            env_name = next(
-                (traj.env_name for traj in fresh_incoming if traj.env_name is not None),
-                None,
-            )
-            for item in outputs:
-                if not isinstance(item, DapoPending) and item.env_name is None:
-                    item.env_name = env_name
-                yield DEFAULT_KEY, item
-            return
         # Stable source ordering makes output independent of arrival timing.
         for (env_rank, _), accumulator in sorted(accumulators.items()):
             trajectory = accumulator.to_trajectory()
@@ -644,137 +541,21 @@ class RolloutOutput(AccumulatorOutput):
                 yield DEFAULT_KEY, shard
 
     def _expected_key_count(self, scope: CollectionScope) -> int:
-        """Return the chunks required before ``scope`` can flush."""
-        if self._dapo_compact and not self._stream_to_actors:
-            return (
-                sum(
-                    self._geometry.spec(env_rank).cfg.rollout_epoch
-                    * self._geometry.chunk_count(env_rank)
-                    for env_rank in self._geometry.env_ranks
-                )
-                * self._geometry.stage_num
-            )
+        """Return all chunks one source emits in a training step."""
         _, env_rank, _ = scope
         spec = self._geometry.spec(env_rank)
         return spec.cfg.rollout_epoch * self._geometry.chunk_count(env_rank)
 
     @property
     def _expected_accumulator_count(self) -> int:
-        """Wait for every source only when the pool is batched at the end."""
-        if self._dapo_compact and not self._stream_to_actors:
-            return self._source_count
+        """Flush sources independently to preserve async main behavior."""
         return 1
 
     def _scope(self, key: TrajectoryKey) -> CollectionScope:
-        """Group chunks by source, unless compact mode waits for the whole step."""
-        if self._dapo_compact and not self._stream_to_actors:
-            return (key.step_id,)
+        """Group chunks by training step and logical rollout source."""
         # Main emits one trajectory as soon as one env source completes. Do not
         # turn async/decoupled collection into a cross-source barrier.
         return (key.step_id, key.env_rank, key.stage_id)
-
-    def _update_latest_policy_version(self, incoming: list) -> None:
-        for traj in incoming:
-            if traj is None:
-                continue
-            versions = getattr(traj, "versions", None)
-            if torch.is_tensor(versions) and versions.numel() > 0:
-                self._latest_policy_version = max(
-                    self._latest_policy_version, int(versions.max().item())
-                )
-            weight_id = getattr(traj, "model_weights_id", None)
-            if weight_id is not None:
-                try:
-                    self._latest_policy_version = max(
-                        self._latest_policy_version, int(weight_id)
-                    )
-                except (TypeError, ValueError):
-                    pass
-
-    def _emit_ready_groups(self, incoming: list) -> Iterator[CollectedItem]:
-        """Queue finished groups and ship one to every actor per full wave."""
-        from rlinf.algorithms.pear_objective import (
-            TrajectoryDrain,
-            is_trajectory_stale,
-            narrow_trajectory,
-            variable_group_index,
-        )
-
-        self._update_latest_policy_version(incoming)
-        if self._max_off_policy_threshold is not None and self._ready_groups:
-            self._ready_groups = [
-                group
-                for group in self._ready_groups
-                if not is_trajectory_stale(
-                    group,
-                    self._latest_policy_version,
-                    self._max_off_policy_threshold,
-                )
-            ]
-        for trajectory in incoming:
-            if is_trajectory_stale(
-                trajectory,
-                self._latest_policy_version,
-                self._max_off_policy_threshold,
-            ):
-                continue
-            self._queue_groups(trajectory, variable_group_index, narrow_trajectory)
-        self._sources_in_step += len(incoming)
-        yield from self._yield_group_waves()
-        if self._sources_in_step < self._source_count:
-            return
-        self._sources_in_step = 0
-        if not self._dapo_compact and self._ready_groups:
-            raise RuntimeError(
-                f"{len(self._ready_groups)} groups are left after the rollout, "
-                "which is not a multiple of actor world size "
-                f"{self._geometry.actor_world_size}."
-            )
-        if self._dapo_compact and self._sent_groups >= self._dapo_target_groups:
-            self._sent_groups = 0
-            if self._clear_surplus_after_step:
-                self._ready_groups.clear()
-        drain = TrajectoryDrain()
-        for _ in range(self._geometry.actor_world_size):
-            yield DEFAULT_KEY, drain
-
-    def _queue_groups(
-        self, trajectory, variable_group_index, narrow_trajectory
-    ) -> None:
-        """Keep one trajectory per group. Constant groups are dropped when compacting."""
-        group_size = self._dapo_group_size
-        if trajectory._batch_size() % group_size != 0:
-            raise ValueError(
-                f"trajectory batch {trajectory._batch_size()} is not divisible "
-                f"by group_size {group_size}"
-            )
-        if self._dapo_compact:
-            index = variable_group_index(trajectory.rewards, group_size)
-            if index.numel() == 0:
-                return
-            trajectory = narrow_trajectory(trajectory, index)
-        self._ready_groups.extend(self._split_groups(trajectory, narrow_trajectory))
-
-    def _split_groups(self, trajectory, narrow_trajectory) -> list:
-        group_size = self._dapo_group_size
-        return [
-            narrow_trajectory(trajectory, torch.arange(start, start + group_size))
-            for start in range(0, trajectory._batch_size(), group_size)
-        ]
-
-    def _yield_group_waves(self) -> Iterator[CollectedItem]:
-        world = self._geometry.actor_world_size
-        while len(self._ready_groups) >= world and self._may_send_wave(world):
-            wave = self._ready_groups[:world]
-            del self._ready_groups[:world]
-            self._sent_groups += world
-            for group in wave:
-                yield DEFAULT_KEY, group
-
-    def _may_send_wave(self, world: int) -> bool:
-        if not self._dapo_compact:
-            return True
-        return self._sent_groups + world <= self._dapo_target_groups
 
 
 class PipelineOutput(AccumulatorOutput):

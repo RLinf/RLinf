@@ -39,8 +39,6 @@ import torch
 
 from rlinf.envs.policy_obs import PolicyObsSpec
 from rlinf.utils.nested_dict_process import (
-    _pad_and_stack_tensors,
-    pad_stack_list_of_dict_tensor,
     put_tensor_device,
     split_dict,
     stack_list_of_dict_tensor,
@@ -947,12 +945,7 @@ class Trajectory:
         def stack_step_field(name: str) -> torch.Tensor | None:
             values = [getattr(step, name) for step in steps]
             present = [value for value in values if value is not None]
-            if not present:
-                return None
-            # Assistant spans grow with the dialogue, so later turns are longer.
-            if name in {"prev_logprobs", "versions"}:
-                return _pad_and_stack_tensors(present, dim=0).cpu().contiguous()
-            return torch.stack(present, dim=0).cpu().contiguous()
+            return torch.stack(present, dim=0).cpu().contiguous() if present else None
 
         for name in (
             "actions",
@@ -995,18 +988,12 @@ class Trajectory:
 
         for name in ("forward_inputs", "curr_obs", "next_obs", "trajectory_infos"):
             values = [getattr(step, name) for step in steps if getattr(step, name)]
-            if not values:
-                continue
-            stack = (
-                pad_stack_list_of_dict_tensor
-                if name == "forward_inputs"
-                else stack_list_of_dict_tensor
-            )
-            setattr(
-                trajectory,
-                name,
-                put_tensor_device(stack(values), "cpu"),
-            )
+            if values:
+                setattr(
+                    trajectory,
+                    name,
+                    put_tensor_device(stack_list_of_dict_tensor(values), "cpu"),
+                )
 
         trajectory.model_weights_id = get_model_weights_id(
             trajectory.versions
@@ -1798,7 +1785,7 @@ class EnvOutput:
         prepared = {key: obs.get(key) for key in PolicyObsSpec.KEYS}
         if obs.get("active_mask") is not None:
             prepared["active_mask"] = obs["active_mask"]
-        for key in ("reset_mask", "history", "vlm_finished", "vlm_state"):
+        for key in ("reset_mask", "history"):
             if key in obs:
                 prepared[key] = obs[key]
         task_descriptions = prepared["task_descriptions"]
