@@ -4,7 +4,7 @@ BEHAVIOR-1K 评测
 概览
 ----
 
-RLinf 使用 R1 Pro 双臂机器人，在 BEHAVIOR-1K 家居任务中评测 OpenPI 等策略。选择挑战年份后，按对应步骤安装仿真器、准备资产并运行评测。
+BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基准，控制双臂 R1 Pro 机器人在 2025 版的 50 个任务和 2026 版的 100 个任务中完成抓取、放置与整理等操作。RLinf 支持在 BEHAVIOR 环境中并行评测 OpenPI 等 VLA policy，并输出 ``eval/success_once`` 等任务指标。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -12,7 +12,7 @@ RLinf 使用 R1 Pro 双臂机器人，在 BEHAVIOR-1K 家居任务中评测 Open
    .. grid-item-card:: 评测基准
       :text-align: center
 
-      2025 年 50 个任务，2026 年 100 个任务
+      BEHAVIOR-1K（2025 版 50 个家居任务，2026 版 100 个，``behavior_r1pro``）
 
    .. grid-item-card:: 支持模型
       :text-align: center
@@ -65,10 +65,8 @@ RLinf 使用 R1 Pro 双臂机器人，在 BEHAVIOR-1K 家居任务中评测 Open
 
       .. code-block:: bash
 
-         bash evaluations/run_eval.sh behavior2025 \
+         bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
            rollout.model.model_path=./RLinf-Pi0-Behavior
-
-      启动脚本根据前面导出的两个目录补全 OmniGibson 和 Isaac Sim 的其他路径。
 
    .. tab-item:: 2026 · OpenPI π₀.₅
 
@@ -95,7 +93,9 @@ RLinf 使用 R1 Pro 双臂机器人，在 BEHAVIOR-1K 家居任务中评测 Open
 
       默认命令评测“打开收音机”的基础布局。要评测固定公开实例，在评测 YAML 的 ``env.eval.omni_config`` 下，用 ``scene.scene_instance`` 指定该任务的完整模板，用 ``task.activity_instance_dir`` 指向存放该任务布局 JSON 的目录，再用 ``task.activity_instance_id`` 选择实例编号。
 
-2025 版支持从训练配置派生 OpenVLA-OFT 评测配置，见 :doc:`../reference/configuration`。使用第三方 OpenPI 权重前，须将其转换为 PyTorch 格式。
+在 2025 环境中，``run_eval.sh`` 会根据 ``ISAAC_PATH`` 与 ``OMNIGIBSON_DATA_PATH`` 自动补全 ``OMNIGIBSON_DATASET_PATH``、``OMNIGIBSON_KEY_PATH``、``OMNIGIBSON_ASSET_PATH``、``EXP_PATH`` 与 ``CARB_APP_PATH``。
+
+使用第三方 OpenPI 权重（如 OpenPI-Comet）前须转换为 PyTorch 格式；OpenVLA-OFT 可从 ``examples/embodiment/config/`` 中的训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
 
 .. dropdown:: 硬件要求、Isaac Sim 与示例配置
 
@@ -146,7 +146,7 @@ RLinf 使用 R1 Pro 双臂机器人，在 BEHAVIOR-1K 家居任务中评测 Open
       * - ``rollout_epoch``
         - 评测轮次，多轮指标取平均；``behavior_openpi_pi05_eval.yaml`` 默认为 ``4``。
       * - ``max_episode_steps``
-        - 单条轨迹的步数上限。2025 配置使用 ``4096``。2026 配置留空时，按官方任务统计计算该任务的步数上限。
+        - 单条轨迹步数上限（2025 版 π₀.₅ 示例为 ``4096``，预设默认 ``2000`` 对长程任务偏短）。2026 版留空时使用所选任务的官方步数上限。
       * - ``max_steps_per_rollout_epoch``
         - 每轮 rollout 的总交互步数，**必须能被** ``rollout.model.num_action_chunks`` **整除**。
       * - ``num_env_subprocess``
@@ -217,7 +217,7 @@ RLinf 使用 R1 Pro 双臂机器人，在 BEHAVIOR-1K 家居任务中评测 Open
    * - 现象
      - 处理
    * - 缺少 BEHAVIOR 资源或 license 报错
-     - 确认已完成对应年份的资产下载，并在运行评测的终端中设置了 ``OMNIGIBSON_DATA_PATH``。
+     - 2025 版按 :doc:`../../examples/embodied/behavior` 完成 Isaac Sim、OmniGibson 资产与 license 配置后再评测。2026 版请按上方步骤下载资产并配置许可。
    * - 2025 版未设置 ``ISAAC_PATH``
      - 将 ``ISAAC_PATH`` 导出为 Isaac Sim 安装目录；``run_eval.sh`` 默认设置 ``OMNIGIBSON_HEADLESS=1``。
    * - 显存不足

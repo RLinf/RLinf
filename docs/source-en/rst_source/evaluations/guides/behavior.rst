@@ -4,7 +4,7 @@ BEHAVIOR-1K Evaluation
 Overview
 --------
 
-Use RLinf to evaluate OpenPI and other policies on household tasks with the R1 Pro robot. Choose a challenge year below to install its simulator and run the evaluation.
+BEHAVIOR-1K is a household scene simulation benchmark built on OmniGibson and Isaac Sim, tasking a dual-arm R1 Pro robot with pick-and-place, stacking, and tidying across 50 tasks in 2025 and 100 in 2026. RLinf runs parallel evaluation of OpenPI and other VLA policies in BEHAVIOR environments and reports task-level metrics such as ``eval/success_once``.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -12,7 +12,7 @@ Use RLinf to evaluate OpenPI and other policies on household tasks with the R1 P
    .. grid-item-card:: Benchmark
       :text-align: center
 
-      50 tasks in 2025, 100 in 2026
+      BEHAVIOR-1K (50 household tasks in 2025, 100 in 2026, ``behavior_r1pro``)
 
    .. grid-item-card:: Models
       :text-align: center
@@ -65,10 +65,8 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       .. code-block:: bash
 
-         bash evaluations/run_eval.sh behavior2025 \
+         bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
            rollout.model.model_path=./RLinf-Pi0-Behavior
-
-      The launcher derives the remaining OmniGibson and Isaac Sim paths from the two exported directories.
 
    .. tab-item:: 2026 · OpenPI π₀.₅
 
@@ -95,7 +93,9 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       The command evaluates the base layout for ``turning_on_radio``. To select a public instance, set three fields under ``env.eval.omni_config`` in the evaluation YAML. Set ``scene.scene_instance`` to the full template for that task, ``task.activity_instance_dir`` to the directory containing its layout JSON files, and ``task.activity_instance_id`` to the instance number.
 
-For OpenVLA-OFT on the 2025 benchmark, derive an evaluation config from its training config as described in :doc:`../reference/configuration`. Convert third-party OpenPI checkpoints to PyTorch format before evaluation.
+For 2025, ``run_eval.sh`` fills ``OMNIGIBSON_DATASET_PATH``, ``OMNIGIBSON_KEY_PATH``, ``OMNIGIBSON_ASSET_PATH``, ``EXP_PATH``, and ``CARB_APP_PATH`` from ``ISAAC_PATH`` and ``OMNIGIBSON_DATA_PATH``.
+
+Convert third-party OpenPI checkpoints (such as OpenPI-Comet) to PyTorch format before setting ``rollout.model.model_path``; for OpenVLA-OFT, derive an eval YAML from ``examples/embodiment/config/`` (see :doc:`../reference/configuration`).
 
 .. dropdown:: Hardware, Isaac Sim, and Example Configs
 
@@ -146,7 +146,7 @@ For OpenVLA-OFT on the 2025 benchmark, derive an evaluation config from its trai
       * - ``rollout_epoch``
         - Eval rounds averaged into final metrics; ``behavior_openpi_pi05_eval.yaml`` defaults to ``4``.
       * - ``max_episode_steps``
-        - Maximum steps per trajectory. The 2025 config uses ``4096``. Leave this unset in the 2026 config to use the official limit for the selected task.
+        - Max steps per trajectory (``4096`` in the 2025 π₀.₅ example; preset default ``2000`` can truncate long tasks). Leave this unset in 2026 to use the official limit for the selected task.
       * - ``max_steps_per_rollout_epoch``
         - Steps per rollout round; **must be divisible by** ``rollout.model.num_action_chunks``.
       * - ``num_env_subprocess``
@@ -217,7 +217,7 @@ The terminal prints ``eval/success_once``; logs and videos go to ``logs/<timesta
    * - Symptom
      - Fix
    * - Missing BEHAVIOR assets or license errors
-     - Complete the asset downloads for the chosen year and export ``OMNIGIBSON_DATA_PATH`` in the shell that launches evaluation.
+     - For 2025, complete Isaac Sim, OmniGibson asset, and license setup per :doc:`../../examples/embodied/behavior` before evaluation. For 2026, follow the asset download and license steps above.
    * - ``ISAAC_PATH`` missing in 2025
      - Export ``ISAAC_PATH`` to your Isaac Sim directory so Isaac Sim can start; ``run_eval.sh`` sets ``OMNIGIBSON_HEADLESS=1`` by default.
    * - Out of GPU memory
