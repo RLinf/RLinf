@@ -2886,12 +2886,13 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
     reward_type = (
         reward_cfg.get("reward_type", None) if reward_cfg is not None else None
     )
-    if reward_type != "searchr1":
+    is_rpent = OmegaConf.select(cfg, "tools.rpent") is not None
+    if reward_type != "searchr1" and not is_rpent:
         raise ValueError(
             f"session_server.enable requires reward.reward_type 'searchr1', "
             f"found {reward_type!r}."
         )
-    if not cfg.runner.get("async_mode", False):
+    if not is_rpent and not cfg.runner.get("async_mode", False):
         raise ValueError(
             "session_server.enable requires runner.async_mode: only the "
             "async runner drives the session servers (the synchronous and "
@@ -2926,7 +2927,8 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
         if cfg.rollout.get("router", None) is None:
             cfg.rollout.router = {}
         router_cfg = cfg.rollout.router
-        router_cfg.type = router_cfg.get("type", "sglang")
+        if "type" not in router_cfg:
+            router_cfg.type = "sglang"
         router_cfg.policy = router_cfg.get("policy", "manual")
         router_cfg.assignment_mode = router_cfg.get("assignment_mode", "min_load")
         router_cfg.disable_retries = bool(router_cfg.get("disable_retries", True))
@@ -2945,13 +2947,48 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
         )
         router_cfg.log_level = router_cfg.get("log_level", "warn")
 
-    if cfg.rollout.router.type != "sglang":
+    if cfg.rollout.router.type not in (None, "sglang"):
         raise ValueError(
-            f"session_server.enable requires rollout.router.type 'sglang': "
-            f"the session servers forward generates through a router so a "
-            f"group's requests stay on one engine; found "
-            f"{cfg.rollout.router.type!r}."
+            f"session_server.enable requires rollout.router.type 'sglang' or "
+            f"None, found {cfg.rollout.router.type!r}."
         )
+    for name in ("keep_alive_s", "engine_keep_alive_s"):
+        if not isinstance(cfg.session_server[name], int) or isinstance(
+            cfg.session_server[name], bool
+        ):
+            raise ValueError(
+                f"session_server.{name} must be a whole number of seconds "
+                f"(uvicorn's timeout_keep_alive and sglang's "
+                f"SGLANG_TIMEOUT_KEEP_ALIVE both take ints), found "
+                f"{cfg.session_server[name]!r}."
+            )
+    if cfg.session_server.keep_alive_s <= 1:
+        raise ValueError(
+            f"session_server.keep_alive_s must be > 1, found "
+            f"{cfg.session_server.keep_alive_s}: the session server's HTTP "
+            "clients hold idle connections one second shorter than this, "
+            "and a value of 1 or less leaves them no keepalive window."
+        )
+    if cfg.session_server.num_servers < 1 or cfg.session_server.payload_shards < 1:
+        raise ValueError(
+            f"session_server.num_servers and session_server.payload_shards "
+            f"must both be >= 1, found {cfg.session_server.num_servers} and "
+            f"{cfg.session_server.payload_shards}."
+        )
+    component_placement = ModelParallelComponentPlacement(cfg, Cluster())
+    if cfg.rollout.router.type is None:
+        if (
+            component_placement.rollout_num_model_instances != 1
+            or component_placement.rollout_nnodes_per_model_instance != 1
+        ):
+            raise ValueError(
+                "session_server.enable with rollout.router.type=None "
+                "requires a single single-node rollout instance; found "
+                f"{component_placement.rollout_num_model_instances} instances "
+                f"with {component_placement.rollout_nnodes_per_model_instance} nodes each."
+            )
+        return cfg
+
     if cfg.rollout.router.policy not in ("manual", "cache_aware"):
         raise ValueError(
             f"rollout.router.policy must be 'manual' or 'cache_aware' when the "
@@ -2989,23 +3026,6 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
             "auto-scheduler migration moves requests between rollout "
             "instances, which breaks the router's per-group worker pinning."
         )
-    for name in ("keep_alive_s", "engine_keep_alive_s"):
-        if not isinstance(cfg.session_server[name], int) or isinstance(
-            cfg.session_server[name], bool
-        ):
-            raise ValueError(
-                f"session_server.{name} must be a whole number of seconds "
-                f"(uvicorn's timeout_keep_alive and sglang's "
-                f"SGLANG_TIMEOUT_KEEP_ALIVE both take ints), found "
-                f"{cfg.session_server[name]!r}."
-            )
-    if cfg.session_server.keep_alive_s <= 1:
-        raise ValueError(
-            f"session_server.keep_alive_s must be > 1, found "
-            f"{cfg.session_server.keep_alive_s}: the session server's HTTP "
-            "clients hold idle connections one second shorter than this, "
-            "and a value of 1 or less leaves them no keepalive window."
-        )
     # The router's forwarding client holds idle connections for
     # pool_idle_timeout_secs. sglang-router 0.3.x has no such key and
     # hardcodes 50 s (sgl-model-gateway
@@ -3029,13 +3049,6 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
             "rollout.router.type 'sglang' requires the sglang_router "
             "package; install it in the training environment."
         )
-    if cfg.session_server.num_servers < 1 or cfg.session_server.payload_shards < 1:
-        raise ValueError(
-            f"session_server.num_servers and session_server.payload_shards "
-            f"must both be >= 1, found {cfg.session_server.num_servers} and "
-            f"{cfg.session_server.payload_shards}."
-        )
-    component_placement = ModelParallelComponentPlacement(cfg, Cluster())
     if component_placement.rollout_num_model_instances == 1:
         logging.warning(
             "session_server.enable with a single rollout instance: the "
@@ -3225,9 +3238,22 @@ def validate_multimodal_learner_cfg(cfg: DictConfig) -> None:
             raise ValueError(
                 "Multimodal input capture requires agentloop.is_dynamic_rollout_batch=True."
             )
-        if OmegaConf.select(cfg, "session_server.enable", default=False):
+        router_cfg = cfg.rollout.get("router", None)
+        routerless_session = (
+            router_cfg is not None
+            and "type" in router_cfg
+            and router_cfg.type is None
+            and not OmegaConf.select(
+                cfg, "session_server.verify_assembly", default=False
+            )
+        )
+        if (
+            OmegaConf.select(cfg, "session_server.enable", default=False)
+            and not routerless_session
+        ):
             raise ValueError(
-                "Multimodal input capture is not supported with session_server.enable=True."
+                "Multimodal input capture with session_server.enable=True requires "
+                "rollout.router.type=None and session_server.verify_assembly=False."
             )
 
 
@@ -3308,6 +3334,10 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_coding_online_rl_cfg(cfg)
     elif cfg.runner.task_type == "reasoning_eval":
         cfg = validate_reasoning_eval_cfg(cfg)
+        if OmegaConf.select(cfg, "tools.rpent") is not None:
+            from rlinf.agents.rpent.config_validation import validate_rpent_eval_cfg
+
+            cfg = validate_rpent_eval_cfg(cfg)
         return cfg
     elif cfg.runner.task_type == "sft":
         cfg = validate_sft_cfg(cfg)
@@ -3379,7 +3409,12 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
 
     validate_multimodal_learner_cfg(cfg)
     if cfg.runner.task_type == "reasoning":
-        cfg = validate_searchr1_cfg(cfg)
+        if OmegaConf.select(cfg, "tools.rpent") is not None:
+            from rlinf.agents.rpent.config_validation import validate_rpent_cfg
+
+            validate_rpent_cfg(cfg)
+        else:
+            cfg = validate_searchr1_cfg(cfg)
 
     cfg = validate_session_server_cfg(cfg)
     return cfg

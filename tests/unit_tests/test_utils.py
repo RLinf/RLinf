@@ -2806,7 +2806,17 @@ def test_validate_multimodal_learner_cfg_budgets(settings, capture_enabled, erro
             {"agentloop": {"is_dynamic_rollout_batch": False}},
             "is_dynamic_rollout_batch=True",
         ),
-        ({"session_server": {"enable": True}}, "session_server.enable=True"),
+        (
+            {"session_server": {"enable": True}},
+            "session_server.enable=True",
+        ),
+        (
+            {
+                "rollout": {"router": {"type": None}},
+                "session_server": {"enable": True, "verify_assembly": True},
+            },
+            "session_server.enable=True",
+        ),
         (
             {"rollout": {"sglang": {"capture_multi_modal_inputs": "false"}}},
             "must be a boolean",
@@ -2982,3 +2992,111 @@ def test_multimodal_boundary_validation_and_left_aligned_positions():
     actual_mask = torch.tensor([[True, True, True, False]])
     extended = _extend_expected_positions(expected, orig_mask, actual_mask)
     assert extended[:, 0].tolist() == [[10, 11, 12, 0]] * 3
+
+
+def test_validate_multimodal_allows_routerless_unverified_session_server():
+    from rlinf.config import validate_multimodal_learner_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": True},
+            "session_server": {"enable": True, "verify_assembly": False},
+            "rollout": {
+                "rollout_backend": "sglang",
+                "router": {"type": None},
+                "sglang": {"capture_multi_modal_inputs": True},
+            },
+            "actor": {
+                "training_backend": "megatron",
+                "model": {
+                    "pipeline_model_parallel_size": 1,
+                    "context_parallel_size": 1,
+                },
+                "megatron": {"mbridge": True},
+            },
+        }
+    )
+    validate_multimodal_learner_cfg(cfg)
+
+
+def test_rpent_real_yaml_configs_pass_and_reject_invalid_settings(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    import rlinf.agents.rpent.config_validation as rpent_val
+    import rlinf.config as rlinf_cfg
+    from rlinf.utils.placement import PlacementMode
+
+    monkeypatch.setenv("RPENT_PYTHON", "/tmp/rpent/python")
+    monkeypatch.setenv("RPENT_MODEL", "/tmp/qwen35")
+    monkeypatch.setenv("LIBERO_CONFIG_PATH", "/tmp/libero_cfg")
+    monkeypatch.setenv("RPENT_TRAIN_DATA", "/tmp/train.jsonl")
+    monkeypatch.setenv("RPENT_EVAL_DATA", "/tmp/eval.jsonl")
+
+    fake_placement = SimpleNamespace(
+        is_disaggregated=True,
+        placement_mode=PlacementMode.DISAGGREGATED,
+        rollout_num_model_instances=1,
+        rollout_nnodes_per_model_instance=1,
+        actor_dp_size=2,
+    )
+    for mod in (rlinf_cfg, rpent_val):
+        monkeypatch.setattr(mod, "Cluster", lambda *args, **kwargs: object())
+        monkeypatch.setattr(
+            mod,
+            "ModelParallelComponentPlacement",
+            lambda *args, **kwargs: fake_placement,
+        )
+
+    config_dir = os.path.abspath("examples/agent/rpent/config")
+    with initialize_config_dir(version_base="1.1", config_dir=config_dir):
+        sync_cfg = compose(config_name="train_qwen3.5_4b_grpo")
+        async_cfg = compose(config_name="train_qwen3.5_4b_async")
+        eval_cfg = compose(config_name="eval_qwen3.5_4b")
+
+    rpent_val.validate_rpent_cfg(sync_cfg)
+    rlinf_cfg.validate_session_server_cfg(sync_cfg)
+    assert sync_cfg.rollout.router.type is None
+    assert sync_cfg.actor.multi_modal.prefetch_batches == 0
+    rpent_val.validate_rpent_cfg(async_cfg)
+    rlinf_cfg.validate_session_server_cfg(async_cfg)
+    assert eval_cfg.rollout.sglang.reasoning_parser == "qwen3"
+    rpent_val.validate_rpent_eval_cfg(eval_cfg)
+
+    bad_sync = OmegaConf.create(OmegaConf.to_container(sync_cfg, resolve=True))
+    bad_sync.data.sampling_batch_size = 2
+    with pytest.raises(
+        ValueError, match="sampling_batch_size >= data.rollout_batch_size"
+    ):
+        rpent_val.validate_rpent_cfg(bad_sync)
+
+    bad_model = OmegaConf.create(OmegaConf.to_container(sync_cfg, resolve=True))
+    bad_model.rollout.model.model_type = "qwen3"
+    with pytest.raises(ValueError, match="model_type='qwen3_5'"):
+        rpent_val.validate_rpent_cfg(bad_model)
+
+    bad_async = OmegaConf.create(OmegaConf.to_container(async_cfg, resolve=True))
+    bad_async.algorithm.recompute_logprobs = True
+    with pytest.raises(ValueError, match="recompute_logprobs=False"):
+        rpent_val.validate_rpent_cfg(bad_async)
+
+    bad_dp = OmegaConf.create(OmegaConf.to_container(sync_cfg, resolve=True))
+    bad_dp.data.rollout_batch_size = 3
+    with pytest.raises(ValueError, match="divisible by the actor data-parallel size"):
+        rpent_val.validate_rpent_cfg(bad_dp)
+
+    bad_tok = OmegaConf.create(OmegaConf.to_container(sync_cfg, resolve=True))
+    bad_tok.agentloop.agentic_tokenizer = "qwen"
+    with pytest.raises(ValueError, match="agentic_tokenizer='qwen3_5'"):
+        rpent_val.validate_rpent_cfg(bad_tok)
+
+    bad_eval = OmegaConf.create(OmegaConf.to_container(eval_cfg, resolve=True))
+    bad_eval.rollout.sglang.tool_call_parser = "qwen25"
+    with pytest.raises(ValueError, match="tool_call_parser='qwen3_coder'"):
+        rpent_val.validate_rpent_eval_cfg(bad_eval)
+
+    bad_eval_reasoning = OmegaConf.create(
+        OmegaConf.to_container(eval_cfg, resolve=True)
+    )
+    bad_eval_reasoning.rollout.sglang.reasoning_parser = None
+    with pytest.raises(ValueError, match="reasoning_parser='qwen3'"):
+        rpent_val.validate_rpent_eval_cfg(bad_eval_reasoning)

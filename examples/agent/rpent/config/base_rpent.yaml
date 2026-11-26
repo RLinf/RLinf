@@ -1,0 +1,72 @@
+# Shared LIBERO episode, planner and SGLang settings.
+tools:
+  rpent:
+    python: ${oc.env:RPENT_PYTHON}
+    tokenizer_path: ${rollout.model.model_path}
+    sam3_endpoint: ${oc.env:RPENT_SAM3_URL,http://127.0.0.1:8101}
+    libero_type: pro
+    max_episode_steps: 1200
+    episodes_per_worker: 4
+    output_dir: ${runner.output_dir}/${runner.experiment_name}/episodes
+    keep_episodes: all
+    process_timeout_s: 960
+    workflow: episode
+    libero_config_path: ${oc.env:LIBERO_CONFIG_PATH}
+    max_env_initializations_per_worker: 2
+
+agentloop:
+  group_name: AgentLoopGroup
+  toolcall_parser: null
+  agentic_tokenizer: qwen3_5
+  chat_template_kwargs:
+    enable_thinking: true
+    preserve_thinking: true
+  task_name: rpent
+  truncate_response: false
+  is_dynamic_rollout_batch: true
+  print_outputs: false
+  max_turns: 25
+  model_request_timeout_s: 180
+  episode_timeout_s: 900
+  minimum_output_tokens: 256
+  history_compaction:
+    max_messages: 32
+    keep_messages: 16
+    context_window: ${runner.seq_length}
+    max_fraction: 0.7
+    preserve_first_user_message: true
+    receipts: false
+  prompt: simple
+  max_actor_accept_staleness: 0
+
+rollout:
+  group_name: RolloutGroup
+  gpu_memory_utilization: 0.55
+  model:
+    model_path: ${oc.env:RPENT_MODEL}
+    model_type: qwen3_5
+    precision: bf16
+  distributed_executor_backend: mp
+  disable_log_stats: false
+  detokenize: true
+  padding: null
+  eos: null
+  router:
+    type: null
+  rollout_backend: sglang
+  sglang:
+    backend_type: server
+    attention_backend: triton
+    decode_log_interval: 500000
+    use_torch_compile: false
+    torch_compile_max_bs: 128
+    mamba_full_memory_ratio: 0.2
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  max_running_requests: 4
+  cuda_graph_max_bs: 4
+  validate_weight: false
+  validate_weight_first_sync: true
+  validate_save_dir: null
+  print_outputs: false
+  pause_mode: retract

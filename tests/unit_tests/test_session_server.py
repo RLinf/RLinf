@@ -606,6 +606,36 @@ class TestSessionServerConfig:
         with pytest.raises(ValueError, match="chat_template_kwargs must be a mapping"):
             validate_session_server_cfg(cfg)
 
+    def test_routerless_session_server_validation(self, monkeypatch):
+        import rlinf.config as rlinf_cfg
+
+        monkeypatch.setattr(rlinf_cfg, "Cluster", lambda: object())
+        monkeypatch.setattr(
+            rlinf_cfg,
+            "ModelParallelComponentPlacement",
+            lambda cfg, cluster: SimpleNamespace(
+                rollout_num_model_instances=cfg.mock_instances,
+                rollout_nnodes_per_model_instance=1,
+            ),
+        )
+        base = {
+            "runner": {"async_mode": True},
+            "reward": {"reward_type": "searchr1"},
+            "actor": {"training_backend": "megatron"},
+            "rollout": {
+                "sglang": {"backend_type": "server"},
+                "router": {"type": None},
+            },
+            "session_server": {"enable": True},
+            "mock_instances": 1,
+        }
+        validated = validate_session_server_cfg(OmegaConf.create(base))
+        assert validated.rollout.router.type is None
+
+        bad = OmegaConf.create({**base, "mock_instances": 2})
+        with pytest.raises(ValueError, match="single single-node rollout instance"):
+            validate_session_server_cfg(bad)
+
     def test_reasoning_eval_rejects_an_enabled_session_server(self):
         """Only the asynchronous training runner drives the session servers:
         an eval run with them enabled would wait for closes no agent sends."""
@@ -2846,3 +2876,264 @@ class TestPayloadWriterFailures:
 async def _append_async(target, value):
     """Record a group id the way the writer's callback does."""
     target.append(value)
+
+
+def test_rpent_session_server_strips_sampling_and_rewrites_tool_choice(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from rlinf.agents.rpent.session_server import (
+        RPentSessionServerWorker,
+        SessionServerWorker,
+    )
+
+    chat = AsyncMock()
+    monkeypatch.setattr(SessionServerWorker, "_chat_completions", chat)
+    worker = object.__new__(RPentSessionServerWorker)
+    body = {
+        "tool_choice": "required",
+        "temperature": 0.2,
+        "top_k": 20,
+        "top_p": 0.9,
+        "tools": [{"type": "function"}],
+    }
+    asyncio.run(worker._chat_completions("episode-1", body))
+    chat.assert_awaited_once_with(
+        "episode-1", {"tool_choice": "auto", "tools": body["tools"]}
+    )
+    assert body["tool_choice"] == "required"
+
+
+def test_rpent_session_server_planner_turn_validation_and_capture(
+    monkeypatch, tmp_path
+):
+    from unittest.mock import AsyncMock
+
+    from rlinf.agents.rpent import session_server as rpent_ss
+    from rlinf.agents.rpent.session_server import (
+        RPentSessionServerWorker,
+        SessionServerWorker,
+    )
+
+    worker = object.__new__(RPentSessionServerWorker)
+    worker._cfg = OmegaConf.create(
+        {
+            "rollout": {"record_token_weight_versions": True},
+            "agentloop": {"minimum_output_tokens": 16},
+            "tools": {"rpent": {"output_dir": str(tmp_path)}},
+        }
+    )
+    worker._max_seq_length = 4096
+    worker._forward_generate = AsyncMock()
+    worker.__dict__["_image_token_id"] = 99
+
+    super_sample = AsyncMock(return_value=("text-res", "text-entry", "text-hist"))
+    monkeypatch.setattr(SessionServerWorker, "_sample_turn", super_sample)
+
+    session = SimpleNamespace(
+        group_id=1,
+        image_history=None,
+        last_input=[1, 2],
+        last_output=[3],
+        chat=SimpleNamespace(messages=[{"role": "user", "content": "hi"}]),
+    )
+    forwarded = {
+        "input_ids": [1, 99, 99, 2],
+        "sampling_params": {"max_new_tokens": 64},
+        "return_logprob": True,
+    }
+
+    assert asyncio.run(
+        worker._generate_planner_turn(
+            session, forwarded, "rpent", [{"role": "user", "content": "hi"}]
+        )
+    ) == ("text-res", "text-entry", "text-hist")
+
+    with pytest.raises(ValueError, match="embedded image data URLs"):
+        asyncio.run(
+            worker._generate_planner_turn(
+                session,
+                forwarded,
+                "rpent",
+                [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": "http://example.com/a.png"},
+                            }
+                        ],
+                    }
+                ],
+            )
+        )
+
+    data_msgs = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AA=="},
+                }
+            ],
+        }
+    ]
+    with pytest.raises(ValueError, match="Rendered 0 image spans for 1 images"):
+        asyncio.run(
+            worker._generate_planner_turn(
+                session, {**forwarded, "input_ids": [1, 2]}, "rpent", data_msgs
+            )
+        )
+
+    capture_calls = []
+
+    async def fake_capture(forward, prompt_ids, images, sampling, opts, return_lp):
+        capture_calls.append(opts)
+        return (
+            {
+                "output_ids": [10, 11],
+                "meta_info": {
+                    "finish_reason": {"type": "stop"},
+                    "rollout_weight_versions": [1, 1],
+                    "output_token_logprobs": [[-0.1, 10], [-0.2, 11]],
+                    "weight_version": 2,
+                },
+            },
+            {"capture": True},
+            {"hist": True},
+        )
+
+    monkeypatch.setattr(rpent_ss, "generate_with_capture", fake_capture)
+    session.image_history = {"prev": True}
+    cont_forwarded = {**forwarded, "input_ids": [1, 2, 3, 99, 99, 2]}
+    _, entry_cont, _ = asyncio.run(
+        worker._generate_planner_turn(
+            session,
+            cont_forwarded,
+            "rpent",
+            [{"role": "user", "content": "hi"}, *data_msgs],
+        )
+    )
+    assert entry_cont["extends_previous_turn"] is True
+    assert capture_calls[-1]["history"] == {"prev": True}
+
+    rewritten_forwarded = {**forwarded, "input_ids": [9, 99, 99, 2]}
+    _, entry_reset, _ = asyncio.run(
+        worker._generate_planner_turn(session, rewritten_forwarded, "rpent", data_msgs)
+    )
+    assert entry_reset["extends_previous_turn"] is False
+    assert capture_calls[-1]["history"] is None
+
+    # Aborted turns skip token-version / logprob completeness checks.
+    async def aborted_capture(*args):
+        return (
+            {"output_ids": [10], "meta_info": {"finish_reason": {"type": "abort"}}},
+            {},
+            None,
+        )
+
+    monkeypatch.setattr(rpent_ss, "generate_with_capture", aborted_capture)
+    res, _, _ = asyncio.run(
+        worker._sample_turn(session, cont_forwarded, "rpent", data_msgs)
+    )
+    assert res["meta_info"]["finish_reason"]["type"] == "abort"
+
+
+def test_assemble_group_payload_carries_image_input_and_token_versions():
+    from rlinf.workers.rollout.session_server.assembly import assemble_group_payload
+    from rlinf.workers.rollout.session_server.payload import GroupPayload, PayloadPart
+
+    image_row = {"format": "qwen3_5_replay", "prompt_token_ids": [1, 2]}
+    parts = [
+        PayloadPart(
+            group_id=1,
+            traj_index=0,
+            turn_index=0,
+            input_ids=[1, 2],
+            output_ids=[3, 4, 5],
+            logprobs=[-0.1, -0.2, -0.3],
+            version_start=1,
+            weight_version=2,
+            finish_reason={"type": "stop"},
+            image_input=image_row,
+            token_weight_versions=[1, 1, 2],
+        ),
+        PayloadPart(
+            group_id=1,
+            traj_index=0,
+            turn_index=1,
+            input_ids=[],
+            output_ids=[],
+            logprobs=None,
+            version_start=0,
+            weight_version=0,
+            finish_reason={},
+            last=True,
+            rewards=[1.0],
+            verdicts={
+                0: {
+                    "kept_lens": {0: 2},
+                    "continues_prev": {0: False},
+                    "is_end": {0: True},
+                    "not_training": {},
+                    "extra_fields_train": {},
+                }
+            },
+        ),
+    ]
+    result = assemble_group_payload(GroupPayload(group_id=1, parts=parts), True)
+    assert result.multi_modal_inputs == [image_row]
+    assert result.extra_fields_turn == {"rollout_weight_versions": [[1, 1]]}
+    assert result.rollout_logprobs == [[-0.1, -0.2]]
+
+    partial_versions = [
+        PayloadPart(
+            group_id=1,
+            traj_index=0,
+            turn_index=0,
+            input_ids=[1],
+            output_ids=[2],
+            logprobs=[-0.1],
+            version_start=1,
+            weight_version=1,
+            finish_reason={"type": "stop"},
+            token_weight_versions=[1],
+        ),
+        PayloadPart(
+            group_id=1,
+            traj_index=0,
+            turn_index=1,
+            input_ids=[1, 2],
+            output_ids=[3],
+            logprobs=[-0.2],
+            version_start=1,
+            weight_version=1,
+            finish_reason={"type": "stop"},
+            token_weight_versions=None,
+        ),
+        PayloadPart(
+            group_id=1,
+            traj_index=0,
+            turn_index=2,
+            input_ids=[],
+            output_ids=[],
+            logprobs=None,
+            version_start=0,
+            weight_version=0,
+            finish_reason={},
+            last=True,
+            rewards=[1.0],
+            verdicts={
+                0: {
+                    "kept_lens": {0: 1, 1: 1},
+                    "continues_prev": {0: False, 1: True},
+                    "is_end": {0: False, 1: True},
+                    "not_training": {},
+                    "extra_fields_train": {},
+                }
+            },
+        ),
+    ]
+    with pytest.raises(ValueError, match="sampled token versions"):
+        assemble_group_payload(GroupPayload(group_id=1, parts=partial_versions), True)
