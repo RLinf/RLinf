@@ -120,7 +120,7 @@ SuperMimic 算法原理
 
          python toolkits/supermimic/prepare_lafan1.py --out ./data/lafan1_g1 --accept-license
 
-      转换成功后最后一行输出 ``[lafan1] wrote 40 clips, 2.45 h, manifest ./data/lafan1_g1/manifest.json``。如需离线转换或制作自定义 ``clip_*.pt`` 片段，见 :doc:`supermimic_motion`。
+      转换成功后最后一行输出 ``[lafan1] wrote 40 clips, 2.45 h, manifest data/lafan1_g1/manifest.json``。如需离线转换或制作自定义 ``clip_*.pt`` 片段，见 :doc:`supermimic_motion`。
 
       **3. 启动训练**
 
@@ -132,7 +132,7 @@ SuperMimic 算法原理
          export SUPERMIMIC_MOTION_PATH=./data/lafan1_g1
          bash examples/embodiment/run_embodiment.sh supermimic_lafan1_gencoord
 
-      前 3 次预热更新结束后日志输出 ``Recorded the SuperMimic update as a CUDA graph.``。每 100 次更新打印一次以 ``Global Step: <N>/6000`` 开头的指标表；每 2000 次更新及第 6000 次更新后在 ``logs/<timestamp>-supermimic_lafan1_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_<N>/`` 保存 checkpoint。
+      首次启动会有约 2–3 分钟的 ``torch.compile`` 编译预热，前 3 次预热更新结束后日志输出 ``Recorded the SuperMimic update as a CUDA graph.``。每 100 次更新打印一次以 ``Global Step: <N>/6000`` 开头的指标表；每 2000 次更新及第 6000 次更新后在 ``logs/<timestamp>-supermimic_lafan1_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_<N>/`` 保存 checkpoint。
 
    .. tab-item:: AMD ROCm（实验性）
       :sync: rocm
@@ -211,7 +211,7 @@ SuperMimic 算法原理
    .. code-block:: bash
 
       bash examples/embodiment/run_embodiment.sh supermimic_lafan1_gencoord \
-          runner.logger.log_path=./runs/supermimic_gencoord \
+          runner.logger.log_path=./logs/<timestamp>-supermimic_lafan1_gencoord \
           runner.resume_dir=auto
 
    **切换为 MaxCoord**
@@ -229,7 +229,7 @@ SuperMimic 算法原理
    .. code-block:: bash
 
       bash evaluations/run_eval.sh supermimic_lafan1_eval \
-          runner.ckpt_path=./runs/supermimic_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
+          runner.ckpt_path=./logs/<timestamp>-supermimic_lafan1_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
           runner.eval_export.output_dir=./eval_results/supermimic_6000
 
    **核心算法配置项**

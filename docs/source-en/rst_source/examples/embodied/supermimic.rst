@@ -120,7 +120,7 @@ Setup and Run
 
          python toolkits/supermimic/prepare_lafan1.py --out ./data/lafan1_g1 --accept-license
 
-      A successful run ends with ``[lafan1] wrote 40 clips, 2.45 h, manifest ./data/lafan1_g1/manifest.json``. For offline conversion or custom ``clip_*.pt`` files, see :doc:`supermimic_motion`.
+      A successful run ends with ``[lafan1] wrote 40 clips, 2.45 h, manifest data/lafan1_g1/manifest.json``. For offline conversion or custom ``clip_*.pt`` files, see :doc:`supermimic_motion`.
 
       **3. Launch**
 
@@ -132,7 +132,7 @@ Setup and Run
          export SUPERMIMIC_MOTION_PATH=./data/lafan1_g1
          bash examples/embodiment/run_embodiment.sh supermimic_lafan1_gencoord
 
-      After 3 warm-up updates, the log prints ``Recorded the SuperMimic update as a CUDA graph.`` Every 100 updates it prints a metrics table starting with ``Global Step: <N>/6000``. Checkpoints are written under ``logs/<timestamp>-supermimic_lafan1_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_<N>/`` every 2000 updates and at step 6000.
+      The first run spends ~2–3 minutes in ``torch.compile`` warmup before printing ``Recorded the SuperMimic update as a CUDA graph.`` after update 3. Every 100 updates it prints a metrics table starting with ``Global Step: <N>/6000``. Checkpoints are written under ``logs/<timestamp>-supermimic_lafan1_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_<N>/`` every 2000 updates and at step 6000.
 
    .. tab-item:: AMD ROCm (Experimental)
       :sync: rocm
@@ -211,7 +211,7 @@ Setup and Run
    .. code-block:: bash
 
       bash examples/embodiment/run_embodiment.sh supermimic_lafan1_gencoord \
-          runner.logger.log_path=./runs/supermimic_gencoord \
+          runner.logger.log_path=./logs/<timestamp>-supermimic_lafan1_gencoord \
           runner.resume_dir=auto
 
    **Train with MaxCoord**
@@ -229,7 +229,7 @@ Setup and Run
    .. code-block:: bash
 
       bash evaluations/run_eval.sh supermimic_lafan1_eval \
-          runner.ckpt_path=./runs/supermimic_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
+          runner.ckpt_path=./logs/<timestamp>-supermimic_lafan1_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
           runner.eval_export.output_dir=./eval_results/supermimic_6000
 
    **Key algorithm configuration**

@@ -55,7 +55,7 @@ Activate ``.venv-supermimic`` from the repository root and choose an evaluation 
          export SUPERMIMIC_MOTION_PATH=./data/lafan1_g1
 
          bash evaluations/run_eval.sh supermimic_lafan1_eval \
-             runner.ckpt_path=./runs/supermimic_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
+             runner.ckpt_path=./logs/<timestamp>-supermimic_lafan1_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
              runner.eval_export.output_dir=./eval_results/supermimic_6000
 
       * **Custom or >40 clips:** Set ``env.eval.num_clips=null`` and ensure ``env.eval.total_num_envs * env.eval.rollout_epoch`` is at least the total clip count. If any clip exceeds ``13656`` control steps (273.12 s at 50 Hz), raise ``env.eval.max_steps_per_rollout_epoch`` as well.
@@ -75,7 +75,7 @@ Activate ``.venv-supermimic`` from the repository root and choose an evaluation 
          export MUJOCO_GL=disabled
 
          bash evaluations/run_eval.sh supermimic_push_recovery \
-             runner.ckpt_path=./runs/supermimic_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
+             runner.ckpt_path=./logs/<timestamp>-supermimic_lafan1_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
              runner.eval_export.output_dir=./eval_results/supermimic_push_6000
 
       .. dropdown:: Customize Push Protocol
@@ -108,7 +108,7 @@ Activate ``.venv-supermimic`` from the repository root and choose an evaluation 
 Output Files and Metrics
 ------------------------
 
-When evaluation finishes, the log under ``logs/<timestamp>-<config>/`` prints ``Wrote SuperMimic evaluation results to <output_dir>`` and logs the same summary metrics with an ``eval/`` prefix.
+When evaluation finishes, the log under ``logs/<timestamp>-<config>/`` prints ``Wrote evaluation results to <output_dir>`` and logs the same summary metrics with an ``eval/`` prefix.
 
 Output Directory
 ~~~~~~~~~~~~~~~~

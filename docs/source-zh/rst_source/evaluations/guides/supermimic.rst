@@ -55,7 +55,7 @@ SuperMimic 评测
          export SUPERMIMIC_MOTION_PATH=./data/lafan1_g1
 
          bash evaluations/run_eval.sh supermimic_lafan1_eval \
-             runner.ckpt_path=./runs/supermimic_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
+             runner.ckpt_path=./logs/<timestamp>-supermimic_lafan1_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
              runner.eval_export.output_dir=./eval_results/supermimic_6000
 
       * **自定义或超过 40 条片段：** 设置 ``env.eval.num_clips=null``，同时保证 ``env.eval.total_num_envs * env.eval.rollout_epoch`` 不少于片段总数；如果有片段超过 ``13656`` 个控制步（50 Hz 下 273.12 秒），需同步调大 ``env.eval.max_steps_per_rollout_epoch``。
@@ -75,7 +75,7 @@ SuperMimic 评测
          export MUJOCO_GL=disabled
 
          bash evaluations/run_eval.sh supermimic_push_recovery \
-             runner.ckpt_path=./runs/supermimic_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
+             runner.ckpt_path=./logs/<timestamp>-supermimic_lafan1_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
              runner.eval_export.output_dir=./eval_results/supermimic_push_6000
 
       .. dropdown:: 自定义推力协议
@@ -108,7 +108,7 @@ SuperMimic 评测
 输出文件与指标
 --------------
 
-评测结束后，日志（位于 ``logs/<timestamp>-<config>/``）末尾会打印 ``Wrote SuperMimic evaluation results to <output_dir>``，所有汇总指标也会以 ``eval/`` 为前缀写入日志。
+评测结束后，日志（位于 ``logs/<timestamp>-<config>/``）末尾会打印 ``Wrote evaluation results to <output_dir>``，所有汇总指标也会以 ``eval/`` 为前缀写入日志。
 
 输出目录结构
 ~~~~~~~~~~~~
