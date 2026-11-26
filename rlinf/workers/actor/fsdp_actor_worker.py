@@ -158,7 +158,7 @@ class FSDPActor(FSDPModelManager, Worker):
         self._component_placement = placement
         self.is_pipeline = self._component_placement.is_disaggregated
         self.ref_policy_state_dict = None
-        if self.is_pipeline:
+        if self.is_pipeline and not self.distillation_plan.separate_async:
             self._inference_group_name = cfg.inference.group_name
             self._inference_world_size = self._component_placement.get_world_size(
                 "inference"
@@ -181,7 +181,7 @@ class FSDPActor(FSDPModelManager, Worker):
         self.enable_dynamic_batch_size = cfg.runner.get(
             "enable_dynamic_batch_size", False
         )
-        if self.is_pipeline:
+        if self.is_pipeline and not self.distillation_plan.separate_async:
             assert not self.enable_dp_load_balance, (
                 "DP load balance is not supported in pipeline mode."
             )

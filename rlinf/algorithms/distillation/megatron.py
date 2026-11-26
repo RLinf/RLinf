@@ -20,6 +20,7 @@ from torch import Tensor
 
 from .config import DistillationLossConfig
 from .fsdp import DistillationDistributionOutput
+from .losses import compute_mc_pg_tokens
 
 
 @torch.no_grad()
@@ -81,6 +82,7 @@ def compute_vocab_parallel_distribution_loss(
     tp_group,
     config: DistillationLossConfig,
     valid_mask: Tensor,
+    behavior_logprobs: Tensor | None = None,
 ) -> DistillationDistributionOutput:
     """Evaluate full local shards or replicated sparse targets.
 
@@ -130,6 +132,12 @@ def compute_vocab_parallel_distribution_loss(
         local_ids = (ids - vocab_start).clamp(0, z.shape[-1] - 1)
         selected = torch.where(owned, z.gather(-1, local_ids), 0.0)
         qlog = _Sum.apply(selected, tp_group, False) - log_z
+        if config.mc_k > 1:
+            if behavior_logprobs is None:
+                raise ValueError("MC-K requires behavior logprobs for the selected IDs")
+            loss = compute_mc_pg_tokens(qlog, behavior_logprobs, t, mask, config)
+            zero = torch.zeros_like(loss)
+            return DistillationDistributionOutput(loss, zero, zero, zero)
         p, q = t.exp(), qlog.exp()
         pmass, qmass = p.sum(-1), q.sum(-1)
         if config.log_prob_min_clamp is not None:

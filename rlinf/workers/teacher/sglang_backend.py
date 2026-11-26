@@ -75,7 +75,7 @@ class SGLangTeacherBackend(TeacherScoringBackend):
                 "Student top-k requires the SGLang per-position scoring patch; "
                 "run bash requirements/patches/apply_sglang.sh in a SGLang 0.5.12.post1 environment"
             )
-        width = request.topk
+        width = request.width(self.info.vocab_size)
         # Prefill row t predicts input token t+1; the final row has no target.
         ids = [i for row in request.selected_token_ids[1:] for i in row] + [0] * width
         output = await self.engine.async_generate(

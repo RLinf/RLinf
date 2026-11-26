@@ -86,6 +86,10 @@ def teacher_targets_to_batch(
     result["teacher_index"] = torch.tensor([target.teacher_index for target in targets])
     if targets[0].token_ids is not None:
         result["teacher_token_ids"] = torch.zeros(shape, dtype=torch.long)
+    if targets[0].target_format == "mc":
+        result["distillation_behavior_logprobs"] = torch.zeros(
+            shape, dtype=torch.float32
+        )
     for index, (target, prompt, response) in enumerate(
         zip(targets, prompt_lengths, response_lengths)
     ):
@@ -98,6 +102,15 @@ def teacher_targets_to_batch(
             )
         result["teacher_logprobs"][index, :length] = target.logprobs[start:end]
         result["teacher_valid_mask"][index, :length] = target.valid_mask[start:end]
+        if target.target_format == "mc":
+            behavior = target.behavior_logprobs
+            if behavior is None or behavior.shape != target.logprobs.shape:
+                raise ValueError(
+                    "MC targets require rollout behavior logprobs for every candidate"
+                )
+            result["distillation_behavior_logprobs"][index, :length] = behavior[
+                start:end
+            ]
         if target.token_ids is not None:
             result["teacher_token_ids"][index, :length] = target.token_ids[start:end]
     return result
@@ -117,6 +130,19 @@ class TeacherScoreRequest:
     tokenizer_fingerprint: str
     selected_token_ids: tuple[tuple[int, ...], ...] | None = None
     student_policy_version: str | None = None
+    mc_k: int = 1
+
+    @property
+    def target_format(self) -> str:
+        if self.mc_k > 1:
+            return "mc"
+        return (
+            "sampled" if self.topk is None else "full" if self.topk == -1 else "sparse"
+        )
+
+    def width(self, vocab_size: int) -> int:
+        """Number of scores returned per target position."""
+        return vocab_size if self.topk == -1 else self.topk or self.mc_k
 
     def validate(self, vocab_size: int) -> None:
         """Reject malformed requests before entering an inference backend."""
@@ -135,8 +161,17 @@ class TeacherScoreRequest:
             raise ValueError(
                 f"{prefix}: expected K in [1, {vocab_size}], -1 or None; got {self.topk}"
             )
+        if type(self.mc_k) is not int or self.mc_k < 1:
+            raise ValueError(f"{prefix}: expected a positive integer mc_k")
+        mc = self.mc_k > 1
+        if mc and (self.topk is not None or self.selected_token_ids is None):
+            raise ValueError(
+                f"{prefix}: MC scoring requires rollout candidates and topk=None"
+            )
         if self.selected_token_ids is not None:
-            if self.topk is None or self.topk == -1 or not self.student_policy_version:
+            if not mc and (
+                self.topk is None or self.topk == -1 or not self.student_policy_version
+            ):
                 raise ValueError(
                     f"{prefix}: selected IDs require positive K and a Student version"
                 )
@@ -144,15 +179,25 @@ class TeacherScoreRequest:
                 raise ValueError(
                     f"{prefix}: selected IDs must match the sequence length"
                 )
-            for row, active in zip(self.selected_token_ids, self.response_mask):
-                if len(row) != self.topk:
-                    raise ValueError(f"{prefix}: expected {self.topk} IDs per position")
-                if active and (
-                    len(set(row)) != self.topk
-                    or any(type(i) is not int or not 0 <= i < vocab_size for i in row)
+            width = self.width(vocab_size)
+            for token, row, active in zip(
+                self.input_ids, self.selected_token_ids, self.response_mask, strict=True
+            ):
+                if len(row) != width:
+                    raise ValueError(f"{prefix}: expected {width} IDs per position")
+                if active and mc and row[0] != token:
+                    raise ValueError(
+                        f"{prefix}: MC column zero must contain the generated token"
+                    )
+                if active and any(
+                    type(i) is not int or not 0 <= i < vocab_size for i in row
                 ):
                     raise ValueError(
-                        f"{prefix}: selected IDs must be unique model output vocabulary IDs"
+                        f"{prefix}: selected IDs must belong to the model output vocabulary"
+                    )
+                if active and not mc and len(set(row)) != width:
+                    raise ValueError(
+                        f"{prefix}: top-k requires unique model output vocabulary IDs"
                     )
 
 
@@ -163,12 +208,13 @@ class TeacherTargets:
     request_id: str
     teacher_key: str
     model_fingerprint: str
-    target_format: Literal["sampled", "sparse", "full"]
+    target_format: Literal["sampled", "sparse", "full", "mc"]
     student_policy_version: str | None
     token_ids: torch.Tensor | None
     logprobs: torch.Tensor
     valid_mask: torch.Tensor
     context: SampleContext | None = None
+    behavior_logprobs: torch.Tensor | None = None
 
     @property
     def teacher_index(self) -> int:
@@ -185,20 +231,8 @@ class TeacherTargets:
             request.student_policy_version,
         ):
             raise ValueError(f"{prefix}: response identity or Student version mismatch")
-        expected_format = (
-            "sampled"
-            if request.topk is None
-            else "full"
-            if request.topk == -1
-            else "sparse"
-        )
-        width = (
-            1
-            if request.topk is None
-            else vocab_size
-            if request.topk == -1
-            else request.topk
-        )
+        expected_format = request.target_format
+        width = request.width(vocab_size)
         if self.target_format != expected_format or self.logprobs.shape != (
             len(request.input_ids),
             width,
@@ -247,16 +281,21 @@ class TeacherTargets:
                     f"{prefix}: target IDs must belong to the model output vocabulary"
                 )
             rows = ids[self.valid_mask]
-            ordered = rows.sort(-1).values
-            if (ordered[:, 1:] == ordered[:, :-1]).any():
-                raise ValueError(f"{prefix}: target support contains duplicate IDs")
+            if expected_format == "sparse":
+                ordered = rows.sort(-1).values
+                if (ordered[:, 1:] == ordered[:, :-1]).any():
+                    raise ValueError(f"{prefix}: target support contains duplicate IDs")
             expected_ids = request.selected_token_ids
-            if request.topk is None:
+            if expected_format == "sampled":
                 expected_ids = tuple((i,) for i in request.input_ids)
             if expected_ids is not None and not torch.equal(
                 rows, torch.tensor(expected_ids, dtype=torch.long)[self.valid_mask]
             ):
                 raise ValueError(f"{prefix}: target IDs differ from requested IDs")
+        if expected_format == "mc":
+            if (self.logprobs[self.valid_mask] > 1e-5).any():
+                raise ValueError(f"{prefix}: expected nonpositive MC log probabilities")
+            return
         masses = self.logprobs[self.valid_mask].exp().sum(-1)
         if (masses > 1 + 1e-5).any() or (
             expected_format == "full"

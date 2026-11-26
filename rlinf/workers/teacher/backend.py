@@ -115,7 +115,7 @@ class TeacherScoringBackend(ABC):
         if self.info is None:
             raise RuntimeError("Teacher must be initialized before scoring")
         request.validate(self.info.vocab_size)
-        width = self.info.vocab_size if request.topk == -1 else request.topk or 1
+        width = request.width(self.info.vocab_size)
         estimated_bytes = (
             len(request.input_ids) * width * (4 if request.topk == -1 else 12)
         )
@@ -186,7 +186,7 @@ class TeacherScoringBackend(ABC):
                 f"Teacher request {request.request_id}: expected {size} score rows, got {len(rows)}"
             )
         full = request.topk == -1
-        width = self.info.vocab_size if full else request.topk or 1
+        width = request.width(self.info.vocab_size)
         scores = torch.zeros((size, width), dtype=torch.float32)
         ids = None if full else torch.zeros((size, width), dtype=torch.long)
         mask = torch.tensor(request.response_mask, dtype=torch.bool)
@@ -221,7 +221,7 @@ class TeacherScoringBackend(ABC):
             request.request_id,
             request.teacher_key,
             self.info.model_fingerprint,
-            "full" if full else "sampled" if request.topk is None else "sparse",
+            request.target_format,
             request.student_policy_version,
             ids,
             scores,

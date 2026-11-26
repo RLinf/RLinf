@@ -29,14 +29,14 @@ from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.metric_utils import aggregate_agent_metrics
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import check_progress
-from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.agent.agent_loop import AgentLoopWorker
 from rlinf.workers.agent.tool_worker import ToolWorker, ToolWorkerInfo
-from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.reward.reward_worker import RewardWorker
 from rlinf.workers.rollout_buffer.rollout_buffer_worker import RolloutBufferWorker
 
 if typing.TYPE_CHECKING:
+    from rlinf.workers.actor.megatron_actor_worker import MegatronActor
+    from rlinf.workers.inference.megatron_inference_worker import MegatronInference
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
     from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
@@ -62,13 +62,15 @@ class AsyncAgentRunner(AgentRunner):
         train_dataset: Dataset,
         val_dataset: Optional[Dataset],
         rollout: Union["SGLangWorker", "VLLMWorker"],
-        inference: Optional[MegatronInference],
-        actor: MegatronActor,
+        inference: Optional["MegatronInference"],
+        actor: "MegatronActor",
         reward: Optional[RewardWorker],
         agent_loop: AgentLoopWorker,
         rollout_buffer: RolloutBufferWorker,
         tool_workers: dict[ToolWorker, ToolWorkerInfo] = {},
         solid_rollouts: dict[str, Union["SGLangWorker", "VLLMWorker"]] = {},
+        *,
+        teacher_runtime=None,
     ):
         assert placement.is_disaggregated, (
             "AsyncAgentRunner: rollout and actor must be deployed "
@@ -96,6 +98,7 @@ class AsyncAgentRunner(AgentRunner):
             agent_loop,
             tool_workers,
             solid_rollouts,
+            teacher_runtime=teacher_runtime,
         )
         self.rollout_buffer = rollout_buffer
         self.pause_mode = cfg.rollout.pause_mode
@@ -153,10 +156,11 @@ class AsyncAgentRunner(AgentRunner):
                     self.pause_mode
                 ).wait()
         with self.timer("sync/transfer"):
-            self.actor.sync_model_to_rollout()
+            transfer = self.actor.sync_model_to_rollout()
             self._rollout_target(instance_ids).sync_model_from_actor(
                 version=version
             ).wait()
+            transfer.wait()
             self.actor.del_reshard_state_dict().wait()
         if pause_generation:
             with self.timer("sync/continue"):
@@ -174,6 +178,7 @@ class AsyncAgentRunner(AgentRunner):
         self,
         actor_handle: Handle,
         watched_handles: list[Handle],
+        release_handle: Optional[Handle] = None,
     ):
         """Wait for the actor while watching the resident loops for death.
 
@@ -185,6 +190,12 @@ class AsyncAgentRunner(AgentRunner):
             for handle in watched_handles:
                 if handle.done():
                     handle.wait()
+                    raise RuntimeError(
+                        "A resident worker exited while the actor was waiting for a batch"
+                    )
+            if release_handle is not None and release_handle.done():
+                release_handle.wait()
+                release_handle = None
             time.sleep(0.1)
         return actor_handle.wait()
 
@@ -226,7 +237,10 @@ class AsyncAgentRunner(AgentRunner):
 
         # data (dataloader state of the rollout buffer worker)
         data_save_path = os.path.join(base_output_dir, "data")
-        self.rollout_buffer.save_checkpoint(data_save_path).wait()
+        manifest = (
+            self.teacher_runtime.manifest if self.teacher_runtime is not None else None
+        )
+        self.rollout_buffer.save_checkpoint(data_save_path, manifest).wait()
 
     def _load_buffer_checkpoint(self):
         """Hand the resume directory to the buffer worker.
@@ -245,6 +259,10 @@ class AsyncAgentRunner(AgentRunner):
     def init_actor_critic_workers(self):
         super().init_actor_critic_workers()
         self._load_buffer_checkpoint()
+        if self.teacher_runtime is not None:
+            endpoints = self.teacher_runtime.endpoints
+            self.agent_loop.configure_teacher(endpoints, str(self.global_steps)).wait()
+            self.actor.configure_teacher(endpoints, str(self.global_steps)).wait()
 
     def run(self):
         if self.global_steps >= self.max_steps:
@@ -299,20 +317,32 @@ class AsyncAgentRunner(AgentRunner):
                     # The buffer worker releases the oldest finished
                     # groups as soon as they form a batch; no need to
                     # wait for the release to land.
-                    self.rollout_buffer.release_batch(version=self.global_steps)
+                    release_handle = self.rollout_buffer.release_batch(
+                        version=self.global_steps
+                    )
 
                     actor_handle: Handle = self.actor.run_training(
                         input_channel=self.rollout_channel,
-                        version=self.global_steps,
+                        **(
+                            {"version": self.global_steps}
+                            if self.cfg.actor.training_backend == "megatron"
+                            else {}
+                        ),
                     )
                     step_start = time.perf_counter()
                     metrics = self._wait_actor(
-                        actor_handle, [agent_handle, buffer_handle, rollout_handle]
+                        actor_handle,
+                        [agent_handle, buffer_handle, rollout_handle],
+                        release_handle,
                     )
                     actor_wait_time = time.perf_counter() - step_start
 
                     actor_rollout_metrics = metrics[0][0]
                     actor_training_metrics = metrics[0][1]
+                    if actor_training_metrics is None:
+                        raise RuntimeError(
+                            "Async actor returned an empty training batch without an update"
+                        )
                     self.global_steps += 1
 
                     # Agent loop idle time since the last step, sampled while
@@ -363,6 +393,10 @@ class AsyncAgentRunner(AgentRunner):
                 agent_metrics = self.get_agent_metrics()
 
                 self.metric_logger.log(agent_metrics, logging_steps)
+                if self.teacher_runtime is not None:
+                    self.metric_logger.log(
+                        self.teacher_runtime.take_metrics(), logging_steps
+                    )
                 self.metric_logger.log(log_time_metrics, logging_steps)
                 rollout_metrics = {
                     f"rollout/{k}": v for k, v in (actor_rollout_metrics or {}).items()

@@ -100,6 +100,42 @@ def _tp_process(rank, path):
                 torch.testing.assert_close(selected, expected_ids)
         teacher = torch.randn_like(original)
         mask = torch.tensor([[True, False, True], [True, True, False]])
+        from rlinf.algorithms.distillation.losses import compute_mc_pg_tokens
+
+        mc = DistillationLossConfig(loss_mode="k1", mc_k=3)
+        ids = torch.tensor([0, 4, 4]).expand(2, 3, 3)
+        t = teacher.log_softmax(-1).gather(-1, ids)
+        behavior = original.log_softmax(-1).gather(-1, ids) - 0.1
+        dense = original.clone().requires_grad_()
+        expected = compute_mc_pg_tokens(
+            dense.log_softmax(-1).gather(-1, ids), behavior, t, mask, mc
+        )
+        shard = (
+            torch.nn.functional.pad(original, (0, 1), value=100)[
+                ..., rank * 4 : (rank + 1) * 4
+            ]
+            .clone()
+            .requires_grad_()
+        )
+        actual = compute_vocab_parallel_distribution_loss(
+            shard,
+            ids,
+            t,
+            vocab_start=rank * 4,
+            vocab_end=(rank + 1) * 4,
+            vocab_size=7,
+            tp_group=dist.group.WORLD,
+            config=mc,
+            valid_mask=mask,
+            behavior_logprobs=behavior,
+        ).distribution_losses
+        torch.testing.assert_close(actual, expected)
+        expected.sum().backward()
+        actual.sum().backward()
+        torch.testing.assert_close(
+            shard.grad,
+            torch.nn.functional.pad(dense.grad, (0, 1))[..., rank * 4 : (rank + 1) * 4],
+        )
         for mode in MODES:
             for k in (3, -1):
                 config = DistillationLossConfig(
@@ -329,9 +365,96 @@ class TestDistillation(unittest.TestCase):
                             torch.autograd.grad(blocks, current, retain_graph=True)[0],
                         )
 
-    def test_synchronous_distillation_rejects_async_agent_runner(self):
-        cfg = {"runner": {"async_mode": True}, "distillation": {"enabled": True}}
-        with self.assertRaisesRegex(ValueError, "runner.async_mode=False"):
+    def test_mc_k_actor_loss_and_gradients_use_each_behavior_sample(self):
+        from types import SimpleNamespace
+
+        from rlinf.workers.actor.distillation import fsdp_distillation_forward
+
+        config = DistillationLossConfig(loss_mode="k1", mc_k=3)
+        tokens = torch.tensor([[0, 1, 2, 1]])
+        ids = torch.tensor([[[0, 0, 0], [1, 1, 0], [2, 1, 2], [1, 2, 2]]])
+        mask = torch.tensor([[False, True, False, True]])
+        teacher = torch.tensor(
+            [[[-1.0] * 3, [-0.7, -0.7, -1.5], [-1.0] * 3, [-0.1, -3.0, -3.0]]]
+        )
+        behavior = torch.tensor(
+            [[[-1.0] * 3, [-1.1, -1.1, -0.8], [-1.0] * 3, [-2.0, -0.5, -0.5]]]
+        )
+        batch = {
+            "input_ids": tokens,
+            "response_mask": mask,
+            "teacher_valid_mask": mask,
+            "teacher_logprobs": teacher,
+            "teacher_token_ids": ids,
+            "distillation_behavior_logprobs": behavior,
+        }
+        for separate in (False, True):
+            plan = DistillationPlan(
+                enabled=True,
+                separate_async=separate,
+                canonical_loss_mode="k1",
+                target_format="mc",
+                use_policy_gradient=True,
+                need_task_rewards=False,
+                mc_k=3,
+            )
+            actor = SimpleNamespace(
+                distillation_plan=plan,
+                distillation_loss_config=config,
+                compute_logprobs=lambda z, label: (
+                    z.log_softmax(-1).gather(-1, label[:, None]).squeeze(-1)
+                ),
+            )
+            z = torch.tensor(
+                [[[0.1, 0.3, 0.5], [0.2, 0.1, 0.5], [0.6, -0.1, 0.5], [0.0, 0.0, 0.0]]],
+                requires_grad=True,
+            )
+            output = fsdp_distillation_forward(
+                actor, z, batch, packed=False, starts=[0], ends=[4], response_only=False
+            )
+            loss, metrics = compute_distillation_loss(
+                output,
+                batch,
+                plan=plan,
+                config=config,
+                reduction=DistillationReductionContext(2),
+            )
+            current = z[:, :-1].log_softmax(-1).gather(-1, ids[:, 1:])
+            advantage = (teacher[:, 1:] - current).detach()
+            ratio = (current - behavior[:, 1:]).exp()
+            expected = -torch.minimum(
+                ratio * advantage, ratio.clamp(0.8, 1.28) * advantage
+            )
+            expected = expected[mask[:, 1:]].mean()
+            torch.testing.assert_close(loss, expected)
+            torch.testing.assert_close(
+                torch.autograd.grad(loss, z)[0], torch.autograd.grad(expected, z)[0]
+            )
+            self.assertEqual(metrics["distillation/token_count"].item(), 2)
+
+    def test_separate_async_derives_behavior_and_support(self):
+        cfg = {
+            "runner": {"execution_mode": "separate_async"},
+            "distillation": {
+                "enabled": True,
+                "teacher_models": {"x": {"model_path": "teacher"}},
+            },
+        }
+        cfg["distillation"]["distillation_loss"] = loss = {"loss_mode": "k1", "mc_k": 4}
+        plan = build_distillation_plan(cfg)
+        self.assertTrue(plan.separate_async and plan.need_old_logprobs)
+        self.assertEqual((plan.target_format, plan.mc_k), ("mc", 4))
+        cfg["algorithm"] = {"recompute_logprobs": True}
+        with self.assertRaisesRegex(ValueError, "behavior"):
+            build_distillation_plan(cfg)
+        cfg.pop("algorithm")
+        loss.update(loss_mode="reverse_kl_topk", mc_k=1, topk_source="student")
+        with self.assertRaisesRegex(ValueError, "Student top-k"):
+            build_distillation_plan(cfg)
+        cfg["runner"]["execution_mode"] = "sync"
+        self.assertTrue(build_distillation_plan(cfg).need_rollout_topk)
+        cfg["runner"]["async_mode"] = True
+        with self.assertRaisesRegex(ValueError, "disagrees"):
             build_distillation_plan(cfg)
 
     def test_policy_gradient_rejects_greedy_sampling(self):
@@ -375,6 +498,9 @@ class TestDistillation(unittest.TestCase):
             {"top_p": 0.9},
             {"top_k": 10},
             {"repetition_penalty": 1.1},
+            {"min_p": 0.1},
+            {"presence_penalty": 0.1},
+            {"logit_bias": {"3": 1}},
         ):
             with self.subTest(override=override):
                 cfg["rollout"]["sampling_params"] = {**sampling, **override}

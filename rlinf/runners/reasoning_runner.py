@@ -286,6 +286,8 @@ class ReasoningRunner:
                 dataloader_local_path, weights_only=False
             )
             saved = dataloader_state_dict.pop("distillation_manifest", None)
+            if saved is not None and "loss" in saved:
+                saved["loss"].setdefault("mc_k", 1)
             current = (
                 self.teacher_runtime.manifest
                 if self.teacher_runtime is not None

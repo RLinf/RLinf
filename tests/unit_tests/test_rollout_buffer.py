@@ -457,6 +457,26 @@ class TestPerTaskState:
 
 
 class TestRelease:
+    def test_async_opd_fifo_and_capacity_until_publication(self):
+        cfg = _cfg(rollout_batch_size=2, max_inflight_groups=3, max_buffered_groups=3)
+        cfg.runner.execution_mode = "separate_async"
+        cfg.distillation = {
+            "enabled": True,
+            "teacher_models": {"x": {"model_path": "x"}},
+        }
+        buffer = RolloutBuffer(cfg, _ToyDataset(8))
+        buffer.set_loaded_versions({0: 4})
+        groups = [buffer.issue_group(i, "math")[0] for i in range(3)]
+        for i in reversed(groups):
+            result = _result(group_id=i, earliest_version=3, task_name="math")
+            buffer.record_result(result, result.group_metadata())
+        assert [res.group_id for res in buffer.release_groups()] == [2, 1]
+        assert buffer._admission_block_reason() == "buffer_full"
+        buffer.set_loaded_versions({0: 4})
+        assert buffer._admission_block_reason() == "buffer_full"
+        buffer.set_loaded_versions({0: 5})
+        assert buffer._admission_block_reason() is None
+
     """Release of buffered groups."""
 
     def test_release_takes_the_oldest_groups_in_order(self):
@@ -1369,6 +1389,47 @@ class TestIssuedRequestTaskName:
                 )
                 assert request.task_names == ["searchr1"]
                 assert request.group_ids == [0]
+            finally:
+                await worker.stop()
+                await asyncio.wait_for(resident, timeout=5)
+
+        asyncio.run(run())
+
+    def test_async_opd_routes_every_trajectory_in_a_prompt_group(self):
+        class RoutedDataset(_ToyDataset):
+            def __getitem__(self, idx):
+                item = super().__getitem__(idx)
+                item.meta = {"subject": ("math", "code")[idx % 2]}
+                return item
+
+        async def run():
+            cfg = _cfg(
+                rollout_batch_size=2, max_inflight_groups=2, max_buffered_groups=2
+            )
+            cfg.runner.execution_mode = "separate_async"
+            cfg.algorithm.group_size = 2
+            cfg.distillation = {
+                "enabled": True,
+                "teacher_key": "subject",
+                "teacher_models": {
+                    key: {"model_path": key} for key in ("math", "code")
+                },
+            }
+            with mock.patch.object(Worker, "__init__", return_value=None):
+                worker = RolloutBufferWorker(cfg, RoutedDataset())
+            requests = _QueueChannel()
+            resident = asyncio.create_task(
+                worker.run_continuously(_QueueChannel(), requests, _QueueChannel())
+            )
+            try:
+                for key in ("math", "code"):
+                    request = await asyncio.wait_for(requests._queue.get(), timeout=5)
+                    contexts = request.sample_contexts[0]
+                    assert len({ctx.sample_id for ctx in contexts}) == 2
+                    assert {ctx.teacher_key for ctx in contexts} == {key}
+                    assert {int(ctx.group_id, 16) for ctx in contexts} == set(
+                        request.group_ids
+                    )
             finally:
                 await worker.stop()
                 await asyncio.wait_for(resident, timeout=5)

@@ -663,7 +663,11 @@ class TestTeacherClient(unittest.IsolatedAsyncioTestCase):
                         "request_id": payload["request_id"],
                         "teacher_key": key,
                         "model_fingerprint": "wrong" if self.wrong_model else model,
-                        "target_format": "sparse" if selected else "sampled",
+                        "target_format": "mc"
+                        if payload.get("mc_k", 1) > 1
+                        else "sparse"
+                        if selected
+                        else "sampled",
                         "student_policy_version": payload.get("student_policy_version"),
                         "token_ids": selected or [[0], [3], [2]],
                         "logprobs": [
@@ -695,6 +699,46 @@ class TestTeacherClient(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.runner.cleanup()
+
+    async def test_mc_teacher_scores_duplicates_and_preserves_behavior(self):
+        from rlinf.algorithms.distillation.config import DistillationPlan
+        from rlinf.data.schema.distillation import teacher_targets_to_batch
+        from rlinf.workers.teacher.scoring import RolloutTeacherScorer, read_mc_samples
+
+        scorer = object.__new__(RolloutTeacherScorer)
+        scorer.plan = DistillationPlan(
+            enabled=True, separate_async=True, mc_k=3, target_format="mc"
+        )
+        scorer.client = TeacherClient([self.endpoint], remember_completed=False)
+        scorer.fingerprint, scorer.teacher_key = "tokenizer", "default"
+        result = {
+            "output_ids": [3, 2],
+            "meta_info": {
+                "output_token_logprobs": [(-0.2, 3, None), (-1.3, 2, None)],
+                "mc_extra_ids": [[3, 3], [1, 2]],
+                "mc_extra_logprobs": [[-0.2, -0.2], [-1.5, -1.3]],
+            },
+        }
+        try:
+            rows = read_mc_samples(result, 3)
+            target = await scorer.score_sequence([1], [3, 2], "sample", mc_samples=rows)
+            batch = teacher_targets_to_batch([target], [1], [2], 4, response_only=False)
+            self.assertEqual(batch["teacher_token_ids"][0, 1].tolist(), [3, 3, 3])
+            torch.testing.assert_close(
+                batch["distillation_behavior_logprobs"][0, 2],
+                torch.tensor([-1.3, -1.5, -1.3]),
+            )
+            self.assertEqual(
+                batch["teacher_valid_mask"].tolist(), [[False, True, True, False]]
+            )
+            with self.assertRaisesRegex(ValueError, "matching rollout candidates"):
+                await scorer.score_sequence(
+                    [1, 1], [3, 2], "bad-length", mc_samples=rows[1:]
+                )
+            with self.assertRaisesRegex(ValueError, "generated token"):
+                await scorer.score_sequence([1], [4, 2], "bad", mc_samples=rows)
+        finally:
+            await scorer.close()
 
     async def test_rollout_student_topk_is_scored_before_actor_training(self):
         from rlinf.algorithms.distillation.config import DistillationPlan
@@ -1041,6 +1085,25 @@ class TestTeacherEngine(unittest.TestCase):
                 torch.testing.assert_close(
                     target.logprobs[1:],
                     expected.gather(-1, torch.tensor(selected[1:])),
+                    atol=tolerance,
+                    rtol=2e-4,
+                )
+                draws = tuple((token, token, 1) for token in tokens)
+                mc = replace(
+                    req,
+                    request_id="engine-mc",
+                    topk=None,
+                    mc_k=3,
+                    selected_token_ids=draws,
+                    student_policy_version=None,
+                )
+                target = await backend.score(mc)
+                torch.testing.assert_close(
+                    target.token_ids[1:], torch.tensor(draws[1:])
+                )
+                torch.testing.assert_close(
+                    target.logprobs[1:],
+                    expected.gather(-1, torch.tensor(draws[1:])),
                     atol=tolerance,
                     rtol=2e-4,
                 )

@@ -45,7 +45,7 @@ Student 生成回答，Teacher 对相同上下文打分，Actor 根据评分更�
 蒸馏流程
 --------
 
-每轮先用当前 Student 生成回答，再获取 Teacher 评分，完成 Student 更新后才开始下一轮 rollout。Teacher 在整个训练过程中保持初始权重。将 ``runner.execution_mode`` 设为 ``sync``，并配置一个 Teacher 模型；同一模型可以启动多个副本。
+在 ``runner.execution_mode: sync`` 下，每轮先用当前 Student 生成回答，再获取 Teacher 评分，完成 Student 更新后才开始下一轮 rollout。Teacher 在整个训练过程中保持初始权重。配置多个 Teacher 时，按每条样本的路由字段选择 Teacher。
 
 分布目标的评分范围由 ``topk_source`` 决定。设为 ``teacher`` 时，使用 Teacher 概率最高的 token；设为 ``student`` 时，rollout 直接记录各生成位置的 Student top-k ID，再交给 Teacher 评分。Actor 在正常训练前向中重新计算这些固定候选的当前概率。两条路径都使用回答中各位置的原始上下文。
 
@@ -63,7 +63,7 @@ Teacher 和 Student 的概率均按各自完整的模型输出词表归一化，
 
 命令会创建并激活训练环境。如果使用 SGLang，安装时传入 ``--engine sglang``，并将 ``rollout.rollout_backend`` 和 ``distillation.teacher_models.default.inference.backend`` 都设为 ``sglang``。系统与平台依赖见 :doc:`安装指南 <../../../start/installation>`。
 
-使用 SGLang Teacher 的 Student top-k 模式时，需安装带逐位置评分补丁的 SGLang ``0.5.12.post1``。``requirements/install.sh`` 会为该版本自动应用补丁。更新已有环境时，先激活环境，再运行：
+使用 SGLang Teacher 为 Student top-k 或 MC-K 评分时，需安装带逐位置评分补丁的 SGLang ``0.5.12.post1``。``requirements/install.sh`` 会为该版本自动应用补丁。更新已有环境时，先激活环境，再运行：
 
 .. code-block:: bash
 
@@ -127,9 +127,25 @@ placement 的 key 为 ``teacher_<model key>``。所需 GPU 总数等于 ``num_re
 
 设置 ``use_policy_gradient: true`` 后，蒸馏信号用于 policy-gradient 目标。此时采样参数要求 ``do_sample: true``、``temperature: 1.0``、``top_p: 1.0``、``top_k: -1`` （或 ``0``）以及 ``repetition_penalty: 1.0``。使用 SGLang rollout 时，还需检查 ``rollout.sampling_params`` 中的覆盖值。Teacher 始终对原始模型概率评分。
 
-Policy-gradient 训练还需获取旧 Student 的 logprob。设置 ``rollout.return_logprobs: true`` 可在生成时收集，设置 ``algorithm.recompute_logprobs: true`` 可在 Actor 更新前重新计算，两者至少开启一项。示例默认采用直接蒸馏，因此关闭了这两项。
+Policy-gradient 训练还需获取旧 Student 的 logprob。同步单样本训练设置 ``rollout.return_logprobs: true`` 可在生成时收集，设置 ``algorithm.recompute_logprobs: true`` 可在 Actor 更新前重新计算，两者至少开启一项。示例默认采用直接蒸馏，因此关闭了这两项。
 
 联合训练需设置 ``use_task_rewards: true``，并按 :doc:`reasoning` 配置任务奖励、advantage 和 PPO 参数。总目标为任务损失加上 ``distillation_loss_coef`` 倍的蒸馏损失；纯蒸馏模式的系数固定为 1。任务与 Teacher 的 mask 分别归一化。开启 ``algorithm.use_valid_token_scale`` 后，entropy 和 reference-KL 正则项也按任务的有效 token 加权。如果拒绝采样导致任一 Actor rank 的序列全部被过滤，所有 Actor rank 会共同跳过本轮更新，并记录 ``rollout/skipped_empty_batch``。
+
+每个位置采样多个 token
+----------------------
+
+对采样 token 的 policy-gradient 目标，``distillation.distillation_loss.mc_k`` 控制每个生成位置的采样次数，默认值为 1。设置 ``mc_k: 4`` 时，SGLang 保留实际生成的 token，同时从同一 Student 分布有放回地再抽三个。只有实际生成的 token 会进入后续上下文。候选 ID 可以重复，每次抽取都计入平均值。
+
+Rollout 为每个候选记录采样时的行为策略 logprob。Teacher 在原始前缀上为这四个 ID 评分，Actor 用每个候选的当前概率除以其行为策略概率，分别计算带裁剪的 PG 损失。使用 ``loss_mode: k1`` 时，advantage 取 Teacher logprob 减当前 Student logprob，并在反传时视为常量。先在四个候选上取平均，再按有效训练 token 归约。工具输出和 padding 不参与损失。同步示例配置为 ``qwen3.5-2b-opd-mc4-pg-fsdp2-sglang``。
+
+Actor 与 rollout 异卡训练
+-------------------------
+
+``qwen3.5-2b-async-opd-mc4-pg-fsdp2-sglang`` 使用 ``runner.execution_mode: separate_async`` 持续生成。示例将 FSDP Actor 放在 GPU 0，SGLang rollout server 放在 GPU 1，冻结的 Teacher 使用 GPU 2 和 3。异步 PG 可以用单个采样 token 或 MC-K。有限的 Student top-k 仅支持同步执行。
+
+同一 prompt 组内保留的回答全部完成 Teacher 评分后，整组进入训练队列。Actor 按完成顺序取满一批组并更新，同时 rollout 和 Teacher 可以处理后续组。设置 ``rollout.return_logprobs: true`` 和 ``algorithm.recompute_logprobs: false``。长回答可能跨越多次权重更新，每个候选保留生成它的 Student 在该位置的实际 logprob。
+
+``algorithm.staleness_threshold`` 将系统内尚未完成的组数限制为 ``(staleness_threshold + 1) * data.rollout_batch_size``。组从开始生成到 Teacher 打分、排队、训练，直到新权重发布，都占用名额。阈值设为 1 时最多容纳两批。若还需要按版本差丢弃过旧的组，可设置 ``agentloop.max_actor_accept_staleness``。默认情况下，已完成的旧组仍可用于训练。
 
 运行
 ----
@@ -147,9 +163,11 @@ Policy-gradient 训练还需获取旧 Student 的 logprob。设置 ``rollout.ret
      'data.train_data_paths=[/path/to/AReaL-boba-106k.jsonl]' \
      'data.val_data_paths=[/path/to/AReaL-boba-106k.jsonl]'
 
+运行同步或异步 MC-K 时，将命令中的配置名替换为上文对应的示例名，并传入相应模型和数据路径。
+
 该命令启动冻结的 Teacher 服务、生成 Student 回答，再更新 FSDP Actor。序列长度、batch size 和设备分配均可在启动前修改 YAML。若使用 Megatron Actor，从对应的 GRPO 配置出发，添加相同的 ``distillation`` 配置和独立的 Teacher 设备分配。
 
 可视化与结果
 ------------
 
-在配置的 TensorBoard 日志目录中查看 ``actor/training/distillation/loss`` 和 ``actor/training/distillation/token_count``：前者是所选蒸馏目标，后者用于确认参与训练的回答 token 数量。请在相同评测设置下，对比训练结果与初始 Student checkpoint 的验证集任务奖励；本示例不预设提升幅度。通用指标说明见 :doc:`训练指标 <../../../reference/metrics>`。
+同步训练在 TensorBoard 中记录 ``actor/training/distillation/loss`` 和 ``actor/training/distillation/token_count``，异卡异步训练记录 ``train/distillation/loss`` 和 ``train/distillation/token_count``。两项指标分别表示蒸馏损失和参与训练的回答 token 数量。请在相同评测设置下，对比训练结果与初始 Student checkpoint 的验证集任务奖励；本示例不预设提升幅度。通用指标说明见 :doc:`训练指标 <../../../reference/metrics>`。

@@ -2338,6 +2338,24 @@ class TestSearchr1AsyncAdmissionCfg:
         )
         assert cfg.rollout_buffer.max_inflight_groups == 3
 
+    @pytest.mark.parametrize("threshold", [0, 2])
+    def test_separate_async_opd_bounds_all_outstanding_groups(self, threshold):
+        cfg = self._make_cfg(
+            **{
+                "reward.reward_type": "math",
+                "runner.execution_mode": "separate_async",
+                "distillation.enabled": True,
+                "distillation.teacher_models.math.model_path": "teacher",
+                "distillation.distillation_loss.mc_k": 4,
+                "algorithm.staleness_threshold": threshold,
+            }
+        )
+        checked = self._validate(cfg)
+        assert (
+            checked.rollout_buffer.max_buffered_groups
+            == (threshold + 1) * cfg.data.rollout_batch_size
+        )
+
     def test_staleness_threshold_errors(self):
         """algorithm.staleness_threshold, an embodied async setting, is
         rejected with the async agent admission settings."""

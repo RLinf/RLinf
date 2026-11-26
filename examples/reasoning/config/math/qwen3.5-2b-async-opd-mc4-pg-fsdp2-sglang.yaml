@@ -1,0 +1,245 @@
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0
+    rollout,reward: 1
+    teacher_default: 2-3
+runner:
+  task_type: reasoning
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: qwen3_5_dapo_opd
+    experiment_name: ${runner.experiment_name}
+    logger_backends:
+    - tensorboard
+  max_epochs: 1
+  max_steps: 160
+  val_check_interval: -1
+  save_interval: 40
+  seq_length: 10240
+  enable_dynamic_batch_size: false
+  max_tokens_per_mbs: 10240
+  resume_dir: null
+  experiment_name: qwen3.5-2b-async-opd-mc4-pg
+  output_dir: ./logs
+  execution_mode: separate_async
+algorithm:
+  group_size: 1
+  n_minibatches: 1
+  training_batch_size_per_gpu: 1
+  rollout_batch_size_per_gpu: null
+  logprob_forward_micro_batch_size: 1
+  val_rollout_batch_size_per_gpu: 4
+  recompute_logprobs: false
+  shuffle_rollout: false
+  loss_type: actor
+  loss_agg_func: token-mean
+  kl_beta: 0.0
+  kl_penalty_type: low_var_kl
+  ratio_clip_eps: 0.2
+  entropy_bonus: 0.0
+  calculate_entropy: false
+  clip_ratio_c: null
+  clip_ratio_low: null
+  clip_ratio_high: null
+  adv_type: grpo
+  normalize_advantages: false
+  early_stop_imp_ratio: 5.0
+  use_valid_token_scale: false
+  sampling_params:
+    do_sample: true
+    temperature: 1.0
+    top_k: -1
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: 8192
+    min_new_tokens: 1
+  loss_scales: []
+  staleness_threshold: 1
+rollout:
+  group_name: RolloutGroup
+  gpu_memory_utilization: 0.5
+  model:
+    model_path: /mnt/public2/suheng/models/Qwen3.5-2B
+    model_type: qwen3_5
+    precision: bf16
+  enforce_eager: false
+  distributed_executor_backend: mp
+  disable_log_stats: false
+  detokenize: false
+  padding: null
+  eos: null
+  rollout_backend: sglang
+  sglang:
+    attention_backend: flashinfer
+    decode_log_interval: 500000
+    use_torch_compile: false
+    torch_compile_max_bs: 128
+    backend_type: server
+  vllm:
+    attention_backend: FLASH_ATTN
+    enable_chunked_prefill: true
+    enable_prefix_caching: true
+    enable_flash_infer_sampler: true
+  return_logprobs: true
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  validate_weight: false
+  validate_save_dir: null
+  print_outputs: false
+  max_running_requests: 4
+  cuda_graph_max_bs: 4
+  max_model_len: 10241
+  seed: 42
+  pause_mode: retract
+data:
+  type: math
+  dataset_name: dapo
+  max_prompt_length: 2048
+  filter_prompt_by_length: true
+  rollout_batch_size: 96
+  val_rollout_batch_size: null
+  num_workers: 2
+  shuffle: false
+  validation_shuffle: false
+  seed: 42
+  train_data_paths:
+  - /mnt/public2/suheng/data/trainset/DAPO-Math-17k/data/DAPO-17K.jsonl
+  val_data_paths: null
+  prompt_key: prompt
+  answer_key: reward_model
+  apply_chat_template: true
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  enable_offload: false
+  global_batch_size: 96
+  micro_batch_size: 1
+  calculate_flops: false
+  seed: 42
+  model:
+    model_type: qwen3_5
+    model_path: /mnt/public2/suheng/models/Qwen3.5-2B
+    precision: fp32
+    is_lora: false
+    seq_length: 10240
+    encoder_seq_length: 10240
+    variable_seq_lengths: true
+  optim:
+    optimizer: adamw
+    bf16: true
+    fp16: false
+    lr: 1.0e-06
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    weight_decay: 0.01
+    use_distributed_optimizer: true
+    overlap_grad_reduce: false
+    overlap_param_gather: false
+    optimizer_enable_pin: false
+    overlap_param_gather_with_optimizer_step: false
+    clip_grad: 1.0
+    loss_scale: 65536
+    lr_scheduler: constant
+    lr_warmup_steps: 0
+    lr_warmup_steps_ratio: 0.0
+    total_training_steps: 160
+  lr_sched:
+    lr_warmup_fraction: 0.0
+    lr_warmup_init: 0.0
+    lr_warmup_iters: 0
+    max_lr: 1.0e-06
+    min_lr: 0.0
+    lr_decay_style: constant
+    lr_decay_iters: 10
+  tokenizer:
+    tokenizer_model: /mnt/public2/suheng/models/Qwen3.5-2B
+    use_fast: true
+    trust_remote_code: true
+    padding_side: right
+  fsdp_config:
+    strategy: fsdp2
+    sharding_strategy: full_shard
+    cpu_offload: false
+    offload_pin_memory: false
+    reshard_after_forward: true
+    enable_gradient_accumulation: false
+    forward_prefetch: false
+    limit_all_gathers: false
+    backward_prefetch: null
+    use_orig_params: false
+    use_liger_kernel: false
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+    amp_autocast:
+      enabled: false
+      precision: fp16
+    grad_scaler:
+      enabled: false
+    gradient_checkpointing: true
+    gradient_checkpointing_use_reentrant: false
+  enable_dp_load_balance: true
+  pack_traj: false
+reward:
+  group_name: RewardGroup
+  use_reward_model: false
+  reward_type: math
+  reward_scale: 5.0
+  tokenizer:
+    tokenizer_model: ${actor.tokenizer.tokenizer_model}
+    use_fast: ${actor.tokenizer.use_fast}
+    trust_remote_code: ${actor.tokenizer.trust_remote_code}
+    padding_side: ${actor.tokenizer.padding_side}
+critic:
+  use_critic_model: false
+distillation:
+  enabled: true
+  teacher_key: data_source
+  teacher_models:
+    default:
+      model_path: /mnt/public2/suheng/models/Qwen3.5-35B-A3B
+      num_replicas: 1
+      inference:
+        backend: sglang
+        tensor_parallel_size: 2
+        pipeline_parallel_size: 1
+        max_model_len: 10241
+        max_payload_bytes: 629145600
+        max_concurrency: 1
+        engine_kwargs:
+          mem_fraction_static: 0.8
+          random_seed: 42
+          dtype: bfloat16
+          attention_backend: flashinfer
+          chunked_prefill_size: 2048
+          max_prefill_tokens: 2048
+          max_running_requests: 1
+          disable_cuda_graph: true
+          skip_tokenizer_init: true
+  distillation_loss:
+    loss_mode: k1
+    topk_source: teacher
+    topk: 64
+    use_policy_gradient: true
+    use_task_rewards: false
+    distillation_loss_coef: 1.0
+    policy_loss_mode: vanilla
+    clip_ratio_low: 0.2
+    clip_ratio_high: 0.2
+    clip_ratio_c: 3.0
+    loss_max_clamp: null
+    log_prob_min_clamp: null
+    tail_mass_eps: 1.0e-06
+    mc_k: 4
+agentloop:
+  group_name: AgentLoopGroup
+  task_name: math
+  is_dynamic_rollout_batch: true
+  print_outputs: false

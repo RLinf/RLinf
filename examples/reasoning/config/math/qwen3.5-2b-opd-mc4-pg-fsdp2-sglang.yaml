@@ -1,0 +1,10 @@
+defaults:
+  - qwen3.5-2b-opd-k1-pg-fsdp2-sglang
+  - _self_
+
+runner:
+  experiment_name: qwen3.5-2b-opd-mc4-pg
+
+distillation:
+  distillation_loss:
+    mc_k: 4

@@ -160,6 +160,33 @@ def compute_distillation_pg_tokens(
     return tokens, metrics
 
 
+def compute_mc_pg_tokens(
+    current: Tensor,
+    behavior: Tensor,
+    teacher: Tensor,
+    mask: Tensor,
+    config: DistillationLossConfig,
+) -> Tensor:
+    """Clip each sampled action against its behavior probability, then average K draws."""
+    if (
+        current.shape != teacher.shape
+        or current.shape != behavior.shape
+        or current.shape[-1] != config.mc_k
+    ):
+        raise ValueError(
+            "MC Student, behavior and Teacher scores must have the configured candidate width"
+        )
+    active = mask.unsqueeze(-1)
+    current = torch.where(active, current, 0.0)
+    teacher = torch.where(active, teacher.detach(), 0.0)
+    behavior = torch.where(active, behavior.detach(), 0.0)
+    signal = compute_distillation_tokens(current, teacher, config=config)
+    losses, _ = compute_distillation_pg_tokens(
+        current, behavior, signal, config=config, loss_mask=active
+    )
+    return losses.mean(-1)
+
+
 def compute_distillation_loss(
     forward: DistillationForwardOutput,
     batch: dict[str, Tensor],
@@ -176,14 +203,23 @@ def compute_distillation_loss(
     teacher = batch["teacher_logprobs"]
     if plan.target_format == "sampled":
         teacher = torch.where(mask.unsqueeze(-1), teacher, 0.0)
-    tokens = compute_distillation_tokens(
-        current,
-        teacher,
-        config=config,
-        distribution_losses=forward.distribution_losses,
-    )
-    if plan.use_policy_gradient:
-        old = batch.get("recomputed_logprobs", batch.get("rollout_logprobs"))
+    if plan.mc_k > 1:
+        tokens = forward.distribution_losses
+        if tokens is None:
+            raise ValueError("MC-K requires candidate losses from the Student forward")
+    else:
+        tokens = compute_distillation_tokens(
+            current,
+            teacher,
+            config=config,
+            distribution_losses=forward.distribution_losses,
+        )
+    if plan.use_policy_gradient and plan.mc_k == 1:
+        old = (
+            batch.get("rollout_logprobs")
+            if plan.separate_async
+            else batch.get("recomputed_logprobs", batch.get("rollout_logprobs"))
+        )
         if old is None or current is None:
             raise ValueError(
                 "Distillation PG requires current and old Student logprobs"

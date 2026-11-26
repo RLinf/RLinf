@@ -3815,6 +3815,7 @@ def test_teacher_targets_packing_copies_disjoint_spans():
             [[False, True, True, False, False], [False, False, False, True, True]]
         ),
     }
+    batch["distillation_behavior_logprobs"] = 0.5 * batch["teacher_logprobs"]
     separated = DynamicRolloutResult.pack_traj_batch(
         {"folding_scale": []}, {**batch, "teacher_index": torch.tensor([0, 1])}
     )
@@ -3826,6 +3827,9 @@ def test_teacher_targets_packing_copies_disjoint_spans():
     torch.testing.assert_close(
         packed["teacher_logprobs"],
         torch.tensor([[[0.0], [-1.0], [-2.0], [-3.0], [-4.0]]]),
+    )
+    torch.testing.assert_close(
+        packed["distillation_behavior_logprobs"], 0.5 * packed["teacher_logprobs"]
     )
     assert packed["teacher_valid_mask"].tolist() == [[False, True, True, True, True]]
 

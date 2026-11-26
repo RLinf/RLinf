@@ -34,7 +34,12 @@ def teacher_processor_args(actor, batch, *, dynamic: bool):
         return {}
     result = {}
     length = batch["input_ids"].shape[1]
-    for key in ("teacher_logprobs", "teacher_token_ids", "teacher_valid_mask"):
+    for key in (
+        "teacher_logprobs",
+        "teacher_token_ids",
+        "teacher_valid_mask",
+        "distillation_behavior_logprobs",
+    ):
         if key not in batch:
             continue
         value = batch[key]
@@ -68,7 +73,12 @@ def teacher_processor_args(actor, batch, *, dynamic: bool):
 
 
 def distribution_processor(
-    actor, logits, teacher_logprobs, teacher_valid_mask, teacher_token_ids=None
+    actor,
+    logits,
+    teacher_logprobs,
+    teacher_valid_mask,
+    teacher_token_ids=None,
+    distillation_behavior_logprobs=None,
 ):
     """Evaluate the vocabulary-parallel objective while logits remain available."""
     rank = parallel_state.get_tensor_model_parallel_rank()
@@ -83,6 +93,7 @@ def distribution_processor(
         tp_group=parallel_state.get_tensor_model_parallel_group(),
         config=actor.distillation_loss_config,
         valid_mask=teacher_valid_mask,
+        behavior_logprobs=distillation_behavior_logprobs,
     )
     return {
         name: getattr(output, name)

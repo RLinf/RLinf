@@ -26,7 +26,10 @@ from torch.utils.checkpoint import checkpoint
 
 from rlinf.algorithms.distillation.config import DISTRIBUTION_MODES
 from rlinf.algorithms.distillation.fsdp import compute_distribution_loss
-from rlinf.algorithms.distillation.losses import DistillationForwardOutput
+from rlinf.algorithms.distillation.losses import (
+    DistillationForwardOutput,
+    compute_mc_pg_tokens,
+)
 
 if TYPE_CHECKING:
     from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
@@ -153,7 +156,20 @@ def _statistics(
         if plan.need_entropy:
             logq = z.float().log_softmax(-1)
             entropy = -(logq.exp() * logq).sum(-1)
-        if distribution:
+        if plan.mc_k > 1:
+            ids = batch["teacher_token_ids"]
+            ids = ids[row.to(ids.device), col.to(ids.device)].to(device)
+            teacher = batch["teacher_logprobs"]
+            behavior = batch["distillation_behavior_logprobs"]
+            current = z.float().gather(-1, ids) - z.float().logsumexp(-1, keepdim=True)
+            loss = compute_mc_pg_tokens(
+                current,
+                behavior[row.to(behavior.device), col.to(behavior.device)].to(device),
+                teacher[row.to(teacher.device), col.to(teacher.device)].to(device),
+                teacher_mask[row, col],
+                config,
+            )
+        elif distribution:
             ids = batch.get("teacher_token_ids")
             teacher = batch["teacher_logprobs"]
             output = compute_distribution_loss(

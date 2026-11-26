@@ -15,6 +15,7 @@
 import asyncio
 import os
 import time
+from itertools import islice
 from typing import Any, Optional
 
 import torch
@@ -23,6 +24,7 @@ from omegaconf.dictconfig import DictConfig
 from torch.utils.data import Dataset, RandomSampler, SequentialSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
+from rlinf.algorithms.distillation.config import build_distillation_plan
 from rlinf.data.schema.reasoning_requests import build_rollout_requests_from_batch
 from rlinf.data.schema.reasoning_results import DiscardedGroup, GroupMetadata
 from rlinf.scheduler import Channel, Worker
@@ -56,6 +58,9 @@ class RolloutBuffer:
     """
 
     def __init__(self, cfg: DictConfig, train_dataset: Dataset):
+        self.distillation_plan = build_distillation_plan(cfg)
+        self.ready_order: dict[int, str] = {}
+        self.training_groups = 0
         self.rollout_batch_size = cfg.data.rollout_batch_size
         self.max_inflight_groups = cfg.rollout_buffer.max_inflight_groups
         self.max_buffered_groups = cfg.rollout_buffer.max_buffered_groups
@@ -168,6 +173,9 @@ class RolloutBuffer:
         Used by release-time staleness checks and the loaded-version
         metrics; admission does not depend on the loaded versions.
         """
+        if self.training_groups and min(versions.values()) > self._min_loaded_version():
+            self.training_groups = 0
+            self._admission_event.set()
         self.loaded_versions = dict(versions)
 
     def _min_loaded_version(self) -> int:
@@ -208,7 +216,7 @@ class RolloutBuffer:
         """
         if self.inflight_groups() >= self._inflight_group_limit():
             return "inflight_limit"
-        if self.inflight_groups() + self._buffered_groups() >= (
+        if self.training_groups + self.inflight_groups() + self._buffered_groups() >= (
             self.max_buffered_groups
         ):
             return "buffer_full"
@@ -237,7 +245,7 @@ class RolloutBuffer:
             )
 
     def issue_group(
-        self, sample_idx: int, task_name: Optional[str]
+        self, sample_idx: int, task_name: Optional[str], group_id: Optional[int] = None
     ) -> tuple[int, Optional[int]]:
         """Reserve the next group id and its issue-time loaded version.
 
@@ -245,8 +253,9 @@ class RolloutBuffer:
         the prompt onto the dataloader channel: the slot is taken even
         while the prompt is still queued.
         """
-        group_id = self.next_group_id
-        self.next_group_id += 1
+        if group_id is None:
+            group_id = self.next_group_id
+            self.next_group_id += 1
         task = self._task(task_name)
         task["num_issued_groups"] += 1
         self.group_tasks[group_id] = task_name
@@ -287,6 +296,8 @@ class RolloutBuffer:
             ) from None
         task = self._task(task_name)
         task["buffer"][group_id] = (metadata, result)
+        if self.distillation_plan.separate_async:
+            self.ready_order[group_id] = task_name
         task["num_finished_groups"] += 1
         self._admission_event.set()
         return group_id
@@ -322,6 +333,7 @@ class RolloutBuffer:
         task = self._task(task_name)
         if already_buffered:
             task["buffer"].pop(group_id, None)
+            self.ready_order.pop(group_id, None)
         else:
             task["num_finished_groups"] += 1
         num_dropped = task["num_dropped_groups"]
@@ -379,11 +391,22 @@ class RolloutBuffer:
         Also clears the drops-since-release window of every task: the
         caller counts drops between consecutive releases.
         """
-        buffered = sorted(
-            (group_id, task_name)
-            for task_name, task in self.tasks.items()
-            for group_id in task["buffer"]
-        )[: self.rollout_batch_size]
+        if self.distillation_plan.separate_async:
+            if self.training_groups:
+                raise RuntimeError(
+                    "Async OPD must finish the previous update before releasing another batch"
+                )
+            buffered = list(islice(self.ready_order.items(), self.rollout_batch_size))
+            for group_id, _ in buffered:
+                del self.ready_order[group_id]
+            # AsyncOPD holds admission permits through training and weight publication.
+            self.training_groups = len(buffered)
+        else:
+            buffered = sorted(
+                (group_id, task_name)
+                for task_name, task in self.tasks.items()
+                for group_id in task["buffer"]
+            )[: self.rollout_batch_size]
         results = []
         issue_versions = []
         for group_id, task_name in buffered:
@@ -571,11 +594,21 @@ class RolloutBufferWorker(Worker):
                     batch,
                     group_size=self.cfg.algorithm.group_size,
                     split_size=len(batch["prompt"]),
+                    teacher_keys=self.buffer.distillation_plan.teacher_keys,
+                    route_field=OmegaConf.select(
+                        self.cfg, "distillation.teacher_key", default="data_source"
+                    ),
                 ),
                 sample_indices,
             ):
                 await self.buffer.wait_for_admission_slot()
-                group_id, _ = self.buffer.issue_group(sample_idx, self.task_name)
+                # Use the same prompt-group identity for admission, Teacher scoring and release.
+                contexts = request.sample_contexts
+                group_id, _ = self.buffer.issue_group(
+                    sample_idx,
+                    self.task_name,
+                    int(contexts[0][0].group_id, 16) if contexts else None,
+                )
                 request.group_ids = [group_id]
                 request.task_names = [self.task_name]
                 await dataloader_channel.put(request, async_op=True).async_wait()
@@ -595,7 +628,28 @@ class RolloutBufferWorker(Worker):
                     already_buffered=False,
                 )
                 continue
+            if (
+                self.buffer.distillation_plan.enabled
+                and result.num_sequence
+                and (
+                    result.teacher_targets is None
+                    or len(result.teacher_targets) != result.num_sequence
+                    or any(target is None for target in result.teacher_targets)
+                )
+            ):
+                raise ValueError(
+                    "Async OPD requires a scored Teacher target for every retained turn"
+                )
             metadata = result.group_metadata()
+            if (
+                self.buffer.distillation_plan.separate_async
+                and result.num_sequence
+                and self.max_actor_accept_staleness is not None
+                and metadata.earliest_version is None
+            ):
+                raise ValueError(
+                    "Async OPD age filtering requires the sampling version of every group"
+                )
             if self.reject_equal_reward and rewards_all_equal(metadata.rewards):
                 self.buffer.drop_group(
                     metadata.group_id,
@@ -683,11 +737,15 @@ class RolloutBufferWorker(Worker):
     async def get_metrics(self) -> dict:
         return self.buffer.get_step_metrics()
 
-    async def save_checkpoint(self, path: str):
+    async def save_checkpoint(
+        self, path: str, distillation_manifest: Optional[dict] = None
+    ):
         """Write the dataloader state to `path/data.pt` atomically."""
         if self._pending_fetch is not None:
             await self._pending_fetch
         state_dict = self.buffer.dataloader.state_dict()
+        if distillation_manifest is not None:
+            state_dict["distillation_manifest"] = distillation_manifest
         dropped = sum(
             sum(task["num_dropped_groups"].values())
             for task in self.buffer.tasks.values()
@@ -736,6 +794,7 @@ class RolloutBufferWorker(Worker):
             )
             return
         state_dict = torch.load(local_path, weights_only=False)
+        state_dict.pop("distillation_manifest", None)
         self.buffer.dataloader.load_state_dict(state_dict)
 
     async def stop(self):

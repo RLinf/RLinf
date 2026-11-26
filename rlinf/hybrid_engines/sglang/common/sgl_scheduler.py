@@ -422,6 +422,22 @@ class Scheduler(_Scheduler):
         self.weight_reload = weight_reload
         if weight_reload == "sync":
             self.cfg = config
+            from rlinf.algorithms.distillation.config import build_distillation_plan
+
+            mc_k = build_distillation_plan(config).mc_k
+            if mc_k > 1:
+                from sglang.srt.layers.sampler import Sampler
+
+                from rlinf.hybrid_engines.sglang.common.mc_sampler import MCSampler
+
+                runner = self.tp_worker.worker.model_runner
+                if type(runner.sampler) is not Sampler or not hasattr(
+                    Sampler, "_attach_logprobs_to_output"
+                ):
+                    raise ValueError(
+                        "MC-K requires the SGLang logprob sampler (0.5.12.post1)"
+                    )
+                runner.sampler = MCSampler(mc_k)
             self._actor_group_name = self.cfg.actor.group_name
             self.placement_mode = placement.placement_mode
             self.rollout_sync_mode = placement._rollout_sync_mode

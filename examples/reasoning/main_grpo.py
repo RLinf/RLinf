@@ -46,6 +46,12 @@ mp.set_start_method("spawn", force=True)
 @hydra.main(version_base="1.1")
 @output_redirector
 def main(cfg) -> None:
+    if build_distillation_plan(cfg).separate_async:
+        from rlinf.runners.agent_training import run_agent_training
+        from rlinf.workers.agent.agent_loop import ReasoningDistillationWorker
+
+        return run_agent_training(cfg, ReasoningDistillationWorker)
+
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 

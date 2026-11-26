@@ -50,10 +50,10 @@ or combine distillation with the task's reinforcement-learning objective.
 How Distillation Works
 ----------------------
 
-Each round generates responses with the current Student, obtains Teacher
-scores, and finishes the Student update before the next rollout. The Teacher
-keeps its checkpoint throughout the run. Set ``runner.execution_mode: sync``
-and configure exactly one Teacher model; that model may have multiple replicas.
+With ``runner.execution_mode: sync``, each round generates responses with the
+current Student, obtains Teacher scores, and finishes the Student update
+before the next rollout. Teachers keep their checkpoints throughout training.
+When several Teachers are configured, the sample's routing key selects one.
 
 For distribution objectives, ``topk_source: teacher`` selects the Teacher's most
 likely tokens. With ``topk_source: student``, rollout records the Student's
@@ -84,7 +84,7 @@ with ``--engine sglang``, set ``rollout.rollout_backend: sglang``, and set
 ``distillation.teacher_models.default.inference.backend: sglang``. See
 :doc:`Installation <../../../start/installation>` for platform prerequisites.
 
-For Student top-k with a SGLang Teacher, use SGLang ``0.5.12.post1`` with the
+For Student top-k or MC-K with a SGLang Teacher, use SGLang ``0.5.12.post1`` with the
 per-position scoring patch. ``requirements/install.sh`` applies it automatically
 for that version. To update an existing environment, activate it and run:
 
@@ -182,7 +182,7 @@ policy-gradient objective. This requires sampling with ``do_sample: true``,
 ``repetition_penalty: 1.0``. For SGLang rollout, also check any overrides in
 ``rollout.sampling_params``. The Teacher scores raw model probabilities.
 
-Policy-gradient training also requires old Student logprobs. Set either
+Policy-gradient training also requires old Student logprobs. For synchronous single-sample training, set either
 ``rollout.return_logprobs: true`` to collect them during generation or
 ``algorithm.recompute_logprobs: true`` to recompute them before the Actor update.
 The supplied config disables both for direct distillation.
@@ -195,6 +195,47 @@ normalization. Entropy and reference-KL regularizers retain task token weighting
 when ``algorithm.use_valid_token_scale: true``. If rejection sampling removes
 every sequence on any Actor rank, all Actor ranks skip that round's update and
 report ``rollout/skipped_empty_batch``.
+
+Sample Multiple Tokens per Position
+-----------------------------------
+
+For sampled-token policy gradients, set ``distillation.distillation_loss.mc_k``
+to the number of draws per generated position. Its default is 1. With
+``mc_k: 4``, SGLang records the emitted token and three additional draws with
+replacement from the same Student distribution. Only the emitted token extends
+the trajectory. Keep repeated IDs, since each occurrence counts as a draw.
+
+Rollout records a behavior logprob for each draw. At the original prefix the
+Teacher scores all four IDs, and the Actor computes the clipped policy-gradient
+loss for each ID using its current probability divided by its recorded behavior
+probability. For ``loss_mode: k1``, the detached advantage is the Teacher
+logprob minus the current Student logprob. The Actor averages the four losses
+before reducing over trainable tokens.
+Tool output and padding do not contribute. The sync example is
+``qwen3.5-2b-opd-mc4-pg-fsdp2-sglang``.
+
+Run with Separate Actor and Rollout GPUs
+----------------------------------------
+
+Use ``qwen3.5-2b-async-opd-mc4-pg-fsdp2-sglang`` for continuous generation.
+It sets ``runner.execution_mode: separate_async`` and places the FSDP Actor
+on GPU 0, the SGLang rollout server on GPU 1, and the frozen Teacher on GPUs
+2 and 3. Use either MC-K or the single sampled token for policy gradients.
+Finite Student top-k requires synchronous execution.
+
+A prompt group enters the training queue after its retained responses have
+Teacher scores. The Actor takes complete groups in completion order. While it
+updates one batch, rollout and scoring can work on subsequent groups. Set
+``rollout.return_logprobs: true`` and ``algorithm.recompute_logprobs: false``.
+A long response may span multiple weight updates. Each draw keeps the logprob
+from the Student that generated it, including tokens from earlier versions.
+
+``algorithm.staleness_threshold`` sets the maximum number of outstanding groups
+to ``(staleness_threshold + 1) * data.rollout_batch_size``. This includes groups
+generating, scoring, waiting in the queue, or training until the updated
+weights are published. A threshold of 1 allows two batches in total. To drop
+groups by version age as well, set ``agentloop.max_actor_accept_staleness``.
+By default, older completed groups remain eligible for training.
 
 Run It
 ------
@@ -213,6 +254,9 @@ The YAML already selects pure distillation and the six-GPU placement above:
      'data.train_data_paths=[/path/to/AReaL-boba-106k.jsonl]' \
      'data.val_data_paths=[/path/to/AReaL-boba-106k.jsonl]'
 
+Use either MC-K config name above with the same entry point and checkpoint
+overrides.
+
 This launches the frozen Teacher service, generates Student responses, and
 updates the FSDP Actor. Change the YAML to adjust sequence lengths, batch sizes,
 or placement before launching. For a Megatron Actor, start from the corresponding
@@ -224,8 +268,9 @@ Visualization and Results
 
 Watch ``actor/training/distillation/loss`` and
 ``actor/training/distillation/token_count`` in the configured TensorBoard log
-directory. The first measures the configured objective, and the second confirms
-how many response tokens contribute. Compare validation task rewards against
+directory for synchronous runs. Separate async runs use
+``train/distillation/loss`` and ``train/distillation/token_count``. The first
+measures the objective and the second counts contributing response tokens. Compare validation task rewards against
 the Student checkpoint under the same evaluation settings; this example does
 not prescribe an expected improvement. See :doc:`Training metrics
 <../../../reference/metrics>` for the shared rollout and training metrics.

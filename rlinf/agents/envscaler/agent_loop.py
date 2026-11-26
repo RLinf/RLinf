@@ -136,6 +136,9 @@ class EnvScalerRollout:
                 if self.return_logprobs
                 else None,
                 response_topk_token_ids=generation.get("topk_token_ids"),
+                response_mc_samples=generation.get("mc_samples"),
+                version_start=generation.get("version_start"),
+                version_end=generation.get("version_end"),
             )
             turns.append(turn)
             if generation.get("finish_reason") == "length":

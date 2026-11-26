@@ -8,3 +8,4 @@ runner:
 distillation:
   distillation_loss:
     topk_source: student
+    topk: 64

@@ -67,8 +67,7 @@ from rlinf.workers.actor.fsdp_actor_worker import (
 class MAFSDPActor(FSDPActor):
     """FSDP actor for Search-R1 multi-agent dynamic rollouts.
 
-    The actor requires collocated placement because dynamic rollout batches are
-    consumed and trained within the same actor group.
+    Each DP rank consumes complete groups before balancing the retained turns.
     """
 
     def __init__(
@@ -86,9 +85,9 @@ class MAFSDPActor(FSDPActor):
             "enable_dp_load_balance must be True when is_dynamic_rollout_batch is True"
         )
         self.placement = placement
-        assert self.placement.is_collocated, (
-            "Only collocated placement is supported for multi-agent actor"
-        )
+        assert self.placement.is_collocated or (
+            self.distillation_plan.separate_async and self.placement.is_disaggregated
+        ), "MAFSDPActor requires collocated placement or separate_async distillation"
         if self.cfg.algorithm.get("importance_sampling_fix", False):
             raise ValueError(
                 "importance_sampling_fix is not supported for dynamic rollout batch"

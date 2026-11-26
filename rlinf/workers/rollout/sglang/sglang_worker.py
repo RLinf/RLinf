@@ -65,7 +65,7 @@ class SGLangWorker(Worker):
         # 'cpu': save weight from cpu and reload weight from cpu
         # None: no need to reload, only used in eval
         self.weight_reload = weight_reload
-        collect_student_topk = config_rollout is None
+        collect_student_support = config_rollout is None and weight_reload == "sync"
         if config_rollout is None:
             config_rollout = self._cfg.rollout
         self._cfg_rollout = config_rollout
@@ -95,11 +95,13 @@ class SGLangWorker(Worker):
             trust_remote_code=self._cfg_rollout.model.trust_remote_code,
         )
         self._return_logprobs = self._cfg_rollout.return_logprobs
-        from rlinf.workers.teacher.scoring import rollout_topk_count
+        from rlinf.algorithms.distillation.config import build_distillation_plan
 
-        self._student_topk_count = (
-            rollout_topk_count(self._cfg) if collect_student_topk else 0
-        )
+        plan = build_distillation_plan(self._cfg) if collect_student_support else None
+        self._student_topk_count = plan.topk if plan and plan.need_rollout_topk else 0
+        self._mc_k = plan.mc_k if plan else 1
+        self._distillation_pg = plan is not None and plan.use_policy_gradient
+        self._return_logprobs = self._return_logprobs or self._mc_k > 1
         sampling_params = None
         if config_rollout is not None:
             sampling_params = config_rollout.get("sampling_params", None)
@@ -167,7 +169,7 @@ class SGLangWorker(Worker):
         else:
             sampling_params = {
                 "temperature": cfg_sampling_params.temperature,
-                "top_k": cfg_sampling_params.top_k,
+                "top_k": cfg_sampling_params.top_k or -1,
                 "top_p": cfg_sampling_params.top_p,
                 "repetition_penalty": cfg_sampling_params.repetition_penalty,
                 "max_new_tokens": cfg_sampling_params.max_new_tokens,
@@ -689,11 +691,17 @@ class SGLangWorker(Worker):
                         if scorer.plan.need_rollout_topk
                         else None
                     )
+                    mc = {}
+                    if scorer.plan.mc_k > 1:
+                        from rlinf.workers.teacher.scoring import read_mc_samples
+
+                        mc["mc_samples"] = read_mc_samples(output, scorer.plan.mc_k)
                     return index, await scorer.score_sequence(
                         list(seq_group_info.input_ids),
                         ids,
                         str(seq_group_info.id),
                         selected,
+                        **mc,
                         context=seq_group_info.sample_contexts[index]
                         if seq_group_info.sample_contexts
                         else None,
@@ -835,6 +843,12 @@ class SGLangWorker(Worker):
         # channel key so the requesting agent loop raises instead of
         # waiting forever.
         try:
+            if sampling_params and self._distillation_pg:
+                from rlinf.algorithms.distillation.config import validate_pg_sampling
+
+                validate_pg_sampling(final_sampling_params)
+                if final_sampling_params.get("top_k") == 0:
+                    final_sampling_params["top_k"] = -1
             version_start = self._weight_version
             result = await self._backend.async_generate(
                 input_ids=prompt_ids,
@@ -862,6 +876,10 @@ class SGLangWorker(Worker):
                     len(result["output_ids"]),
                     build_distillation_plan(self._cfg).topk,
                 )
+            if self._mc_k > 1:
+                from rlinf.workers.teacher.scoring import read_mc_samples
+
+                result_dict["mc_samples"] = read_mc_samples(result, self._mc_k)
             if self._return_logprobs:
                 result_dict["logprobs"] = [
                     item[0] for item in result["meta_info"]["output_token_logprobs"]

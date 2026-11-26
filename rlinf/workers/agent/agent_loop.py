@@ -55,6 +55,9 @@ class AgentLoopOutput:
     response_topk_token_ids: Sequence[Sequence[int]] | None = field(
         default=None, kw_only=True
     )
+    response_mc_samples: list[tuple[list[int], list[float]] | None] | None = field(
+        default=None, kw_only=True
+    )
     teacher_targets: object | None = None
     teacher_request: object | None = None
     student_policy_version: str | None = None
@@ -427,6 +430,11 @@ class AgentLoopWorker(Worker):
                             output_channel,
                             group_id,
                             task_name,
+                            **(
+                                {"sample_contexts": request.sample_contexts[index]}
+                                if request.sample_contexts
+                                else {}
+                            ),
                         )
                     )
                     task.add_done_callback(self._on_group_done)
@@ -637,6 +645,10 @@ class AgentLoopWorker(Worker):
                 [generate_context["response_topk_token_ids"][0]]
                 * len(tool_response_ids)
             )
+        if "response_mc_samples" in generate_context:
+            generate_context["response_mc_samples"].extend(
+                [None] * len(tool_response_ids)
+            )
         append_mask = llm_response_mask + tool_response_mask
         append_logprobs = None
         if self.return_logprobs:
@@ -685,6 +697,7 @@ class AgentLoopWorker(Worker):
             prompt_text=self.tokenizer.decode(problem_prompt_ids),
             response_ids=response_ids,
             response_topk_token_ids=generate_context.get("response_topk_token_ids"),
+            response_mc_samples=generate_context.get("response_mc_samples"),
             response_text=self.tokenizer.decode(response_ids),
             response_mask=response_mask,
             trace_prints=trace_prints,
@@ -1050,3 +1063,50 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         )
 
         return await self.post_process_query(generate_context, output)
+
+
+class ReasoningDistillationWorker(MultiAgentLoopWorker):
+    """Produce a one-turn reasoning trajectory for the continuous OPD runner."""
+
+    def __init__(self, cfg: DictConfig, placement: ModelParallelComponentPlacement):
+        super().__init__(cfg, placement)
+        from rlinf.algorithms.distillation.config import build_distillation_plan
+
+        self.reward_fn = None
+        if build_distillation_plan(cfg).need_task_rewards:
+            from rlinf.algorithms.rewards import get_rule_based_reward_class
+
+            self.reward_fn = get_rule_based_reward_class(cfg.reward.reward_type)(
+                cfg.reward
+            )
+
+    async def run_one_query(
+        self, prompt_ids: list[int], answer=None
+    ) -> MultiAgentLoopOutput:
+        result = await self.generate(prompt_ids)
+        response = result["output_ids"]
+        reward = None
+        if self.reward_fn is not None:
+            text = self.tokenizer.decode(response, skip_special_tokens=True)
+            kwargs = {}
+            if self.cfg.reward.get("use_prompt", False):
+                kwargs["prompts"] = [
+                    self.tokenizer.decode(prompt_ids, skip_special_tokens=True)
+                ]
+            reward = self.reward_fn.get_reward([text], [answer], **kwargs)[0]
+        return MultiAgentLoopOutput(
+            [
+                AgentLoopOutput(
+                    prompt_ids=prompt_ids,
+                    response_ids=response,
+                    response_logprobs=result["logprobs"]
+                    if self.return_logprobs
+                    else None,
+                    response_mc_samples=result.get("mc_samples"),
+                    reward_score=reward,
+                    is_end=result["finish_reason"] != "length",
+                    version_start=result["version_start"],
+                    version_end=result["version_end"],
+                )
+            ]
+        )

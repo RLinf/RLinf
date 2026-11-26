@@ -20,6 +20,7 @@ import asyncio
 from collections.abc import Sequence
 from uuid import uuid4
 
+import torch
 from omegaconf import DictConfig
 
 from rlinf.algorithms.distillation.config import build_distillation_plan
@@ -64,12 +65,35 @@ def select_rollout_topk(
     return tuple(selected)
 
 
+def read_mc_samples(result: dict, mc_k: int) -> list[tuple[list[int], list[float]]]:
+    """Join the emitted token and its behavior score with the other draws at that position."""
+    if not result["output_ids"]:
+        return []
+    meta = result["meta_info"]
+    rows = []
+    for token, actual, ids, scores in zip(
+        result["output_ids"],
+        meta["output_token_logprobs"],
+        meta["mc_extra_ids"],
+        meta["mc_extra_logprobs"],
+        strict=True,
+    ):
+        if token != actual[1] or len(ids) != mc_k - 1 or len(scores) != len(ids):
+            raise ValueError(
+                "MC candidates must align with the actual generated tokens"
+            )
+        rows.append(([token, *ids], [actual[0], *scores]))
+    return rows
+
+
 class RolloutTeacherScorer:
     """One connection owner per rollout or Agent worker."""
 
     def __init__(self, cfg, endpoints, tokenizer):
         self.plan = build_distillation_plan(cfg)
-        self.client = TeacherClient(endpoints)
+        self.client = TeacherClient(
+            endpoints, remember_completed=not self.plan.separate_async
+        )
         self.fingerprint = tokenizer_fingerprint(tokenizer)
         self.teacher_key = (
             endpoints[0].teacher_key if len(self.client.endpoints) == 1 else None
@@ -120,6 +144,7 @@ class RolloutTeacherScorer:
             input_ids=tuple(input_ids),
             response_mask=tuple(bool(v) for v in response_mask),
             topk=self.plan.topk,
+            mc_k=self.plan.mc_k,
             tokenizer_fingerprint=self.fingerprint,
             selected_token_ids=selected_token_ids,
             student_policy_version=self.student_policy_version
@@ -146,15 +171,15 @@ class RolloutTeacherScorer:
                     len(turn.response_ids),
                     turn.response_topk_token_ids,
                 )
-            request = self.request(
+            turn.teacher_targets = await self._score(
                 turn.prompt_ids + turn.response_ids,
                 mask,
+                selected,
+                prompt_length=len(turn.prompt_ids),
                 context=context,
                 turn_index=index,
-                selected_token_ids=selected,
+                mc_samples=turn.response_mc_samples if self.plan.mc_k > 1 else None,
             )
-            turn.teacher_targets = await self.client.score(request)
-            turn.teacher_targets.context = context
 
         await asyncio.gather(*(score_turn(i, turn) for i, turn in enumerate(turns)))
         return output
@@ -174,6 +199,40 @@ class RolloutTeacherScorer:
             tuple(row) for row in selected_ids
         )
 
+    async def _score(
+        self, ids, mask, selected, *, prompt_length, context, mc_samples=None, **kwargs
+    ):
+        behavior = None
+        if self.plan.mc_k > 1:
+            if mc_samples is None and len(ids) == prompt_length:
+                mc_samples = []
+            if mc_samples is None or len(mc_samples) != len(ids) - prompt_length:
+                raise ValueError(
+                    "MC-K requires matching rollout candidates and behavior logprobs"
+                )
+            rows = [None] * prompt_length + list(mc_samples)
+            k = self.plan.mc_k
+            selected = []
+            scores = []
+            for active, row in zip(mask, rows, strict=True):
+                if active and (row is None or len(row[0]) != k or len(row[1]) != k):
+                    raise ValueError(
+                        f"Expected {k} rollout candidates and behavior logprobs at every trained position"
+                    )
+                selected.append(tuple(row[0]) if active else (0,) * k)
+                scores.append(row[1] if active else (0.0,) * k)
+            behavior = torch.tensor(scores, dtype=torch.float32)
+            if not torch.isfinite(behavior).all() or (behavior > 1e-5).any():
+                raise ValueError("MC behavior logprobs must be finite and nonpositive")
+            selected = tuple(selected)
+        request = self.request(
+            ids, mask, selected_token_ids=selected, context=context, **kwargs
+        )
+        target = await self.client.score(request)
+        target.context = context
+        target.behavior_logprobs = behavior
+        return target
+
     async def score_sequence(
         self,
         prompt_ids: list[int],
@@ -182,22 +241,22 @@ class RolloutTeacherScorer:
         selected_ids: Sequence[Sequence[int]] | None = None,
         *,
         context: SampleContext | None = None,
+        mc_samples=None,
     ) -> TeacherTargets:
         """Score a completed reasoning sequence."""
-        request = self.request(
+        return await self._score(
             prompt_ids + response_ids,
             [False] * len(prompt_ids) + [True] * len(response_ids),
             sample_id=sample_id,
+            prompt_length=len(prompt_ids),
             context=context,
-            selected_token_ids=self.align_selected_ids(
+            selected=self.align_selected_ids(
                 len(prompt_ids), len(response_ids), selected_ids
             )
             if self.plan.need_rollout_topk
             else None,
+            mc_samples=mc_samples,
         )
-        target = await self.client.score(request)
-        target.context = context
-        return target
 
     async def close(self):
         """Release local client connections."""

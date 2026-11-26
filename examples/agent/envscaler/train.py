@@ -16,8 +16,8 @@ import hydra
 import torch.multiprocessing as mp
 from omegaconf import DictConfig
 
-from examples.agent.train_agent import run_agent_training
 from rlinf.agents.envscaler.agent_loop import EnvScalerAgentLoopWorker
+from rlinf.runners.agent_training import run_agent_training
 from rlinf.utils.utils import output_redirector
 
 

@@ -43,6 +43,7 @@ class TeacherClient:
         self,
         endpoints: list[TeacherEndpoint],
         *,
+        remember_completed: bool = True,
         max_concurrency: int = 8,
         max_total_concurrency: int = 16,
         timeout: float = 300,
@@ -70,6 +71,7 @@ class TeacherClient:
         self._limits = {
             key: asyncio.Semaphore(max_concurrency) for key in self.endpoints
         }
+        self._remember_completed = remember_completed
         self._requests = {}
         self._pending = {}
         self._timeout = timeout
@@ -133,7 +135,8 @@ class TeacherClient:
                                 raise
             finally:
                 self._pending.pop(request.request_id, None)
-                self._requests[request.request_id] = signature
+                if self._remember_completed:
+                    self._requests[request.request_id] = signature
 
         task = asyncio.create_task(dispatch())
         self._pending[request.request_id] = signature, task

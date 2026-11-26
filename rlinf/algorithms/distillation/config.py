@@ -40,6 +40,7 @@ class DistillationLossConfig:
     distillation_loss_coef: float = 1.0
     topk: int = 64
     topk_source: str = "teacher"
+    mc_k: int = 1
     policy_loss_mode: str = "vanilla"
     clip_ratio_low: float = 0.2
     clip_ratio_high: float = 0.28
@@ -57,6 +58,14 @@ class DistillationLossConfig:
         mode = self.canonical_loss_mode
         if mode not in SAMPLED_MODES | DISTRIBUTION_MODES:
             raise ValueError(f"Unknown distillation loss_mode: {self.loss_mode!r}")
+        if type(self.mc_k) is not int or self.mc_k < 1:
+            raise ValueError(f"Expected a positive integer mc_k, got {self.mc_k!r}")
+        if self.mc_k > 1 and (
+            mode not in SAMPLED_MODES or not self.use_policy_gradient
+        ):
+            raise ValueError(
+                "mc_k > 1 requires a sampled-token loss with use_policy_gradient=True"
+            )
         if mode == "k1" and not self.use_policy_gradient:
             raise ValueError("k1/kl requires use_policy_gradient=True")
         if self.policy_loss_mode != "vanilla":
@@ -124,7 +133,7 @@ class TeacherModelConfig:
 
 @dataclass(frozen=True)
 class DistillationConfig:
-    """Sample-routed synchronous distillation configuration."""
+    """Sample-routed distillation configuration."""
 
     enabled: bool = False
     teacher_key: str = "data_source"
@@ -139,6 +148,8 @@ class DistillationPlan:
     """Requirements shared by rollout, inference and training workers."""
 
     enabled: bool = False
+    separate_async: bool = False
+    mc_k: int = 1
     canonical_loss_mode: str = ""
     topk: int | None = None
     support_source: str = "sampled"
@@ -154,19 +165,44 @@ class DistillationPlan:
     teacher_keys: tuple[str, ...] = ()
 
 
+def validate_pg_sampling(sampling: Mapping) -> None:
+    """Require unmodified categorical probabilities for Student policy gradients."""
+    if (
+        not sampling.get("do_sample", True)
+        or sampling.get("temperature", 1.0) != 1.0
+        or sampling.get("top_p", 1.0) != 1.0
+        or sampling.get("top_k", -1) not in (-1, 0)
+        or sampling.get("repetition_penalty", 1.0) != 1.0
+        or sampling.get("min_p", 0.0) != 0.0
+        or sampling.get("frequency_penalty", 0.0) != 0.0
+        or sampling.get("presence_penalty", 0.0) != 0.0
+        or any(
+            sampling.get(key)
+            for key in ("logit_bias", "json_schema", "regex", "ebnf", "structural_tag")
+        )
+    ):
+        raise ValueError(
+            "Distillation PG requires do_sample=True, temperature=1, top_p=1, "
+            "disabled sampling top_k and unmodified model probabilities"
+        )
+
+
 def build_distillation_plan(cfg: Mapping) -> DistillationPlan:
     """Derive data dependencies without mutating the Hydra configuration."""
     section = cfg.get("distillation")
     if not section or not section.get("enabled", False):
         return DistillationPlan()
     runner = cfg.get("runner", {})
-    if (
-        runner.get("async_mode", False)
-        or runner.get("execution_mode", "sync") != "sync"
-    ):
+    execution_mode = runner.get(
+        "execution_mode", "separate_async" if runner.get("async_mode") else "sync"
+    )
+    if execution_mode not in {"sync", "separate_async"}:
         raise ValueError(
-            "Synchronous distillation requires runner.execution_mode='sync' and runner.async_mode=False"
+            f"Expected sync or separate_async for distillation, got {execution_mode!r}"
         )
+    separate = execution_mode == "separate_async"
+    if "async_mode" in runner and runner["async_mode"] != separate:
+        raise ValueError("runner.async_mode disagrees with runner.execution_mode")
     teachers = section.get("teacher_models", {})
     if not teachers or any(
         not isinstance(key, str) or not key.strip() for key in teachers
@@ -186,9 +222,34 @@ def build_distillation_plan(cfg: Mapping) -> DistillationPlan:
         ("full" if loss.topk == -1 else loss.topk_source) if distribution else "sampled"
     )
     algorithm = cfg.get("algorithm", {})
+    if separate and source == "student":
+        raise ValueError("Student top-k is supported only for synchronous distillation")
+    if (separate or loss.mc_k > 1) and algorithm.get("importance_sampling_fix", False):
+        raise ValueError(
+            "Async OPD and MC-K use rollout behavior logprobs directly; disable importance_sampling_fix"
+        )
+    if separate:
+        if (
+            algorithm.get("recompute_logprobs", False)
+            or algorithm.get("kl_beta", 0)
+            or algorithm.get("reinpp_kl_beta", 0)
+        ):
+            raise ValueError(
+                "separate_async requires rollout behavior logprobs and does not run reference inference"
+            )
+        if cfg.get("critic", {}).get("use_critic_model", False):
+            raise ValueError("separate_async distillation does not support a critic")
+        if runner.get("val_check_interval", -1) > 0:
+            raise ValueError(
+                "Use a separate evaluation run for separate_async distillation"
+            )
+    if (separate or loss.mc_k > 1) and cfg.get("rollout", {}).get(
+        "rollout_backend", "sglang"
+    ) != "sglang":
+        raise ValueError("separate_async and MC-K require SGLang Student rollout")
     if cfg.get("cluster", {}).get("auto_scheduler", False):
         raise ValueError(
-            "Synchronous distillation requires fixed placement, not the migration scheduler"
+            "Distillation requires fixed placement, not the migration scheduler"
         )
     if loss.use_policy_gradient:
         rollout = cfg.get("rollout", {})
@@ -199,30 +260,22 @@ def build_distillation_plan(cfg: Mapping) -> DistillationPlan:
         )
         if sampling is None:
             sampling = algorithm.get("sampling_params", {})
-        if (
-            not sampling.get("do_sample", True)
-            or sampling.get("temperature", 1.0) != 1.0
-            or sampling.get("top_p", 1.0) != 1.0
-            or sampling.get("top_k", -1) not in (-1, 0)
-            or sampling.get("repetition_penalty", 1.0) != 1.0
-        ):
-            raise ValueError(
-                "Distillation PG currently requires do_sample=True, temperature=1, top_p=1 and disabled sampling top_k; truncated behavior probabilities are not verified"
-            )
+        validate_pg_sampling(sampling)
     if cfg.get("data", {}).get("type") in {"vlm", "vision_language"}:
-        raise ValueError("Synchronous distillation supports text-only inputs")
+        raise ValueError("Distillation supports text-only inputs")
     need_ref = algorithm.get("kl_beta", 0) > 0
+    target_format = "mc" if loss.mc_k > 1 else "sampled"
+    if distribution:
+        target_format = "full" if source == "full" else "sparse"
     return DistillationPlan(
         enabled=True,
+        separate_async=separate,
+        mc_k=loss.mc_k,
         teacher_keys=tuple(sorted(teachers)),
         canonical_loss_mode=mode,
         topk=loss.topk if distribution else None,
         support_source=source,
-        target_format="full"
-        if source == "full"
-        else "sparse"
-        if distribution
-        else "sampled",
+        target_format=target_format,
         scoring_stage="rollout",
         need_rollout_topk=source == "student",
         need_current_logprobs=not distribution

@@ -1400,6 +1400,7 @@ class DynamicRolloutResult:
             "teacher_valid_mask",
             "teacher_index",
             "teacher_sample_id",
+            "distillation_behavior_logprobs",
             *(k for k in batch.keys() if k.startswith("extra:")),
         ]
         custom_keys = [
@@ -1457,7 +1458,12 @@ class DynamicRolloutResult:
                     [split_params["distillation_sequence_counts"][idx] for idx in idxes]
                 ).sum(dim=0)
 
-            for key in ("teacher_logprobs", "teacher_token_ids", "teacher_valid_mask"):
+            for key in (
+                "teacher_logprobs",
+                "teacher_token_ids",
+                "teacher_valid_mask",
+                "distillation_behavior_logprobs",
+            ):
                 if key not in split_params:
                     continue
                 merged = torch.zeros_like(split_params[key][suffix])

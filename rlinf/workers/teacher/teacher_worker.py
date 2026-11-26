@@ -81,6 +81,8 @@ class TeacherWorker(Worker):
             ):
                 selected = (tuple(range(topk)),) * 2
                 version = "initialization"
+            if self.loss_config.mc_k > 1:
+                selected = ((0,) * self.loss_config.mc_k,) * 2
             probe = TeacherScoreRequest(
                 "initialization",
                 "initialization",
@@ -92,6 +94,7 @@ class TeacherWorker(Worker):
                 info.tokenizer_fingerprint,
                 selected,
                 version,
+                mc_k=self.loss_config.mc_k,
             )
             await self.backend.score(probe)
             app = web.Application(

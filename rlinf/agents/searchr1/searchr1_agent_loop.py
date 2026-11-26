@@ -152,6 +152,10 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         llm_output = AgentLoopOutput(
             prompt_ids=copy.deepcopy(turn_prompt_ids),
             response_ids=llm_response_ids,
+            response_mc_samples=generate_result.get("mc_samples", [])[
+                : len(llm_response_ids)
+            ]
+            or None,
             response_topk_token_ids=generate_result.get("topk_token_ids", ())[
                 : len(llm_response_ids)
             ]

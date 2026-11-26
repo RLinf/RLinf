@@ -15,9 +15,9 @@
 import hydra
 import torch.multiprocessing as mp
 
-from examples.agent.train_agent import run_agent_training
 from rlinf.agents.searchr1.search_tool_worker import SearchToolWorker
 from rlinf.agents.searchr1.searchr1_agent_loop import Searchr1AgentLoopWorker
+from rlinf.runners.agent_training import run_agent_training
 from rlinf.scheduler import NodePlacementStrategy
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo

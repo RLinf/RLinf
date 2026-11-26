@@ -46,6 +46,10 @@ mp.set_start_method("spawn", force=True)
 @output_redirector
 def main(cfg) -> None:
     cfg = validate_cfg(cfg)
+    if build_distillation_plan(cfg).separate_async:
+        raise ValueError(
+            "WideSeek's local judge launcher requires collocated synchronous training"
+        )
     logging.info(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
