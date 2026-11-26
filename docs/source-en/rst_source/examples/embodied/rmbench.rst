@@ -64,79 +64,74 @@ Observation and Action
 
 See :doc:`Short Memory <pi0/short_memory>` for how the model uses the earlier frames.
 
-Installation
-------------
+Setup and Run
+-------------
 
-From the RLinf root, install the OpenPI training environment and check out the
-RMBench revision used by this recipe. Keep that checkout for evaluation.
+See :doc:`Installation </rst_source/start/installation>` for system requirements.
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model openpi --env rmbench
-   source .venv/bin/activate
-   git clone https://github.com/RoboTwin-Platform/RMBench.git
-   git -C RMBench checkout 7d1cdfc7661c273a7a5c5f6126e2d1a7f0a3f4b7
+   .. tab-item:: NVIDIA CUDA
 
-Prepare the Demonstrations
---------------------------
+      **1. Install**
 
-Download the pinned `RMBench demonstration release <https://huggingface.co/datasets/TianxingChen/RMBench/tree/5d8ff21038fba32ea549e9eee8497aaba9aab5cf>`__.
-Convert the HDF5 demonstrations to LeRobot v2.1. The converter splits each
-task into train and validation episodes and computes normalization statistics
-from the training split.
+      From the RLinf root, install the OpenPI training environment and check out the
+      RMBench revision used by this recipe. Keep that checkout for evaluation.
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash RMBench/scripts/_download_data.sh --revision 5d8ff21038fba32ea549e9eee8497aaba9aab5cf
-   python -m toolkits.rmbench.prepare_data --dataset-root RMBench/data/demo_clean \
-     --output-dir rmbench_lerobot
+         bash requirements/install.sh embodied --model openpi --env rmbench
+         source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RMBench.git
+         git -C RMBench checkout 7d1cdfc7661c273a7a5c5f6126e2d1a7f0a3f4b7
 
-The converter writes ``rmbench_lerobot/train`` and ``rmbench_lerobot/val``.
-The camera frames are embedded in LeRobot Parquet files. Allow space for
-the converted dataset alongside the downloads. Use the generated
-``rmbench_lerobot/norm_stats.json`` for training and evaluation.
+      **2. Prepare the Demonstrations**
 
-Download the Model
-------------------
+      Download the pinned `RMBench demonstration release <https://huggingface.co/datasets/TianxingChen/RMBench/tree/5d8ff21038fba32ea549e9eee8497aaba9aab5cf>`__.
+      Convert the HDF5 demonstrations to LeRobot v2.1. The converter splits each
+      task into train and validation episodes and computes normalization statistics
+      from the training split.
 
-Start from the `RoboTwin π₀.₅ checkpoint <https://huggingface.co/motus-robotics/pi0.5_robotwin2/tree/effc6e1a99bd4d0edf9447e8ba313def67649cfe>`__.
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash RMBench/scripts/_download_data.sh --revision 5d8ff21038fba32ea549e9eee8497aaba9aab5cf
+         python -m toolkits.rmbench.prepare_data --dataset-root RMBench/data/demo_clean \
+           --output-dir rmbench_lerobot
 
-   hf download motus-robotics/pi0.5_robotwin2 model.safetensors \
-     --revision effc6e1a99bd4d0edf9447e8ba313def67649cfe --local-dir checkpoints/rmbench_base
+      The converter writes ``rmbench_lerobot/train`` and ``rmbench_lerobot/val``.
+      The camera frames are embedded in LeRobot Parquet files. Allow space for
+      the converted dataset alongside the downloads. Use the generated
+      ``rmbench_lerobot/norm_stats.json`` for training and evaluation.
 
-Run It
-------
+      **3. Download the Model**
 
-Edit the paths in ``examples/sft/config/rmbench_sft_openpi_pi05.yaml``.
+      Start from the `RoboTwin π₀.₅ checkpoint <https://huggingface.co/motus-robotics/pi0.5_robotwin2/tree/effc6e1a99bd4d0edf9447e8ba313def67649cfe>`__.
 
-.. list-table::
-   :header-rows: 1
+      .. code-block:: bash
 
-   * - Setting
-     - Value
-   * - ``data.train_data_paths``
-     - Absolute path to ``rmbench_lerobot/train``
-   * - ``actor.model.model_path``
-     - ``checkpoints/rmbench_base``
-   * - ``actor.model.openpi_data.norm_stats_path``
-     - ``rmbench_lerobot/norm_stats.json``
+         hf download motus-robotics/pi0.5_robotwin2 model.safetensors \
+           --revision effc6e1a99bd4d0edf9447e8ba313def67649cfe --local-dir checkpoints/rmbench_base
 
-The recipe fine-tunes all model weights for 11,642 optimizer steps with a
-global batch size of 128, about five passes over the training split. The
-reference batch layout uses eight 80 GB GPUs and a micro-batch size of eight.
-If you change the GPU count, adjust ``actor.micro_batch_size`` so the global
-batch remains divisible by the number of GPUs times the micro-batch size.
+      **4. Launch Training**
 
-Start training from the RLinf root.
+      The recipe fine-tunes all model weights for 11,642 optimizer steps with a
+      global batch size of 128, about five passes over the training split. The
+      reference batch layout uses eight 80 GB GPUs and a micro-batch size of eight.
+      If you change the GPU count, adjust ``actor.micro_batch_size`` so the global
+      batch remains divisible by the number of GPUs times the micro-batch size.
 
-.. code-block:: bash
+      From the RLinf root, launch training with the dataset, checkpoint, and
+      normalization statistics you prepared above.
 
-   bash examples/sft/run_vla_sft.sh rmbench_sft_openpi_pi05
+      .. code-block:: bash
 
-For SFT with current camera frames only, set
-``actor.model.openpi.short_memory: false`` in the same config.
+         bash examples/sft/run_vla_sft.sh rmbench_sft_openpi_pi05 \
+           data.train_data_paths="$PWD/rmbench_lerobot/train" \
+           actor.model.model_path="$PWD/checkpoints/rmbench_base" \
+           actor.model.openpi_data.norm_stats_path="$PWD/rmbench_lerobot/norm_stats.json"
+
+      For SFT with current camera frames only, set
+      ``actor.model.openpi.short_memory: false`` in the training config.
 
 Visualization and Results
 -------------------------
