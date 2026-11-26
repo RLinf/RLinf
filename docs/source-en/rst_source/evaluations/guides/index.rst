@@ -54,6 +54,12 @@ Pick a benchmark below for its end-to-end installation, checkpoint download, lau
 
       Eight G1 whole-body humanoid Teleop tasks evaluated with Psi0 across 3 DR levels.
 
+   .. grid-item-card:: SuperMimic
+      :link: supermimic
+      :link-type: doc
+
+      Unitree G1 motion tracking and standing push recovery.
+
 SGLang Serving Guides
 ---------------------
 
@@ -90,5 +96,6 @@ Dedicated guides for world-action models served through RLinf's SGLang embodied 
    RoboLab <robolab>
    RoboTwin <robotwin>
    SIMPLE <simple>
+   SuperMimic <supermimic>
    Cosmos3 (SGLang) <cosmos3_sglang>
    DreamZero (SGLang) <dreamzero_sglang>

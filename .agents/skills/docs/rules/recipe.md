@@ -39,19 +39,19 @@ A page in an Examples gallery follows [templates/recipe.rst](../templates/recipe
 
 - **Overview** is a card grid of four aligned cards (`.. grid:: 2 4 4 4`), with the same card titles in the same order on every page of the gallery: Simulators and Robots use Models, Algorithms, Tasks, Hardware; Models use Environments, Algorithms, Tasks, Hardware; Algorithms use Algorithm, Models, Environments / Data, Training; SFT uses Models, Methods, Data, Hardware. On an env page, the Models card lists every model supported on that env and the Algorithms card every algorithm. There is no "Env type" card; the env-type string goes in the prose or a table.
 - **Tasks** and **Observation and Action** are H3 `list-table`s under Overview, never bullet lists. Models pages use the columns Environment, Task / Suite, Config / Weights, Focus, and the rows Observation, Action, Reward, Prompt.
-- **Section names** are standard: Overview, Installation, Download the Model (and Download the Assets when needed), Run It, Visualization and Results. Omit Download the Model only when there is no checkpoint. Algorithm pages add a short How <Method> Works section before setup, which says what the method does in a few sentences and links to Reference for the math. SFT pages put dataset and model preparation before Installation. Robot pages may add hardware and safety sections after Observation and Action.
+- **Section names** are standard: `Overview` (`概览`), `Setup and Run` (`安装与运行`, containing Install, Download / Prepare, and Launch inside one flat `.. tab-set::`), and `Visualization and Results` (`可视化与结果`). Do not split separate `Installation`, `Download the Model`, `Run It`, or `Run on Different Hardware Backends` H2 sections alongside `Setup and Run`. Algorithm pages may add a short `How <Method> Works` section before `Setup and Run` that summarizes the loop in a few sentences and links to Reference for the math. Robot pages may add hardware and safety sections after `Observation and Action`.
 - **A multi-recipe page** (LIBERO) has no page-level Overview; each recipe family gets its own section with a descriptive, parallel name and its own card grid. Give a `:ref:` to a renamed section explicit link text.
 - **Shared steps** reuse what already exists: link to a model- or domain-family setup page (such as `video_models.rst` for shared diffusion installation and checkpoints) with `:doc:` or `:ref:`, or include partials (`_setup_common.rst` for installation and `_model_path.rst` for the model path), keeping only recipe-specific steps on the page.
 
-## Run on Different Hardware Backends
+## Multi-Hardware Backends
 
-A recipe that runs on more than one accelerator keeps the non-CUDA platforms in one section after the CUDA steps, named Run on Different Hardware Backends, with a `_<recipe>-hardware` anchor that the Hardware card and the support table link to. Inside it:
+A recipe that runs on more than one accelerator places `.. _<recipe>-hardware:` directly above `Setup and Run` (`安装与运行`) and adds each backend as a flat `.. tab-item::` inside the same single-level `.. tab-set::` using synced keys (`:sync: cuda`, `:sync: rocm`, `:sync: ascend`, `:sync: musa`), never as a separate `Run on Different Hardware Backends` H2 section or nested tab-set:
 
-- One H3 per platform, named for the vendor stack: AMD ROCm, Huawei Ascend CANN, Moore Threads MUSA.
-- Each covers the same four things in order: how to start the container or install natively, what the platform changes about the run (device flags, rendering, simulator backend), the launch command, and the limits a reader would otherwise find at runtime.
-- Container and install blocks are partials named `_<platform>_<env>.rst`; the model, config, and checkpoint stay on the page.
+- Name each tab for the vendor stack (`NVIDIA CUDA`, `AMD ROCm`, `Huawei Ascend CANN`, `Moore Threads MUSA`), appending `(Experimental)` / `（实验性）` when convergence is unverified.
+- Inside each tab, keep the same numbered flow (**1. Install** → **2. Download / Prepare** → **3. Launch**), noting platform-specific prerequisites, flags, and limits.
+- Container and install blocks shared across recipes live in partials named `_<platform>_<env>.rst`; the model, config, and checkpoint stay on the page.
 - State the hardware the page was verified on, and name what is untested.
-- Every platform with a subsection appears in that recipe's row of the `vla_wam_index` hardware table, and every platform in the row has a subsection.
+- Every platform with a tab appears in that recipe's row of the `vla_wam_index` hardware table, and every platform in the row has a tab.
 
 ## Checklist
 
