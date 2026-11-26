@@ -1,156 +1,130 @@
 OpenWAM 监督微调
 ================
 
-使用 FSDP 在 OpenWAM 的 LIBERO 数据集上微调已发布的 LIBERO checkpoint，再导出模型用于评测。
+用演示数据微调已发布的 OpenWAM LIBERO checkpoint，再导出模型，用 LIBERO 评估任务成功率。
 
-RoboTwin 评测可使用已发布的 OpenWAM checkpoint。RLinf 尚未验证 RoboTwin SFT。监督微调请使用下文的 LIBERO 配方，RoboTwin 评测见 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>`。
-
-安装
+概览
 ----
 
-在 RLinf 仓库根目录安装 OpenWAM 和 LIBERO 环境，并激活环境。已有环境可直接激活：
+本示例用 FSDP2 联合微调视频预测和动作预测模块。
 
-.. code-block:: bash
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-   bash requirements/install.sh embodied --model openwam --env libero
-   source .venv/bin/activate
+   .. grid-item-card:: 模型
+      :text-align: center
 
-监督微调
---------
+      OpenWAM Alpha
 
-准备模型权重
-~~~~~~~~~~~~
+   .. grid-item-card:: 方法
+      :text-align: center
 
-下载 OpenWAM 发布的 LIBERO checkpoint：
+      SFT · FSDP2
 
-.. code-block:: bash
+   .. grid-item-card:: 数据集
+      :text-align: center
 
-   hf download OpenWAM/OpenWAM-Alpha-Sim-LIBERO --local-dir /path/to/OpenWAM-Alpha-Sim-LIBERO
+      OpenWAM LIBERO
 
-下载目录应包含权重文件、模型配置、归一化统计文件和 tokenizer。该 checkpoint 已包含所需的模型组件，无需另外下载 Wan 基座模型。后续的 ``actor.model.model_path`` 应指向整个目录，而不是单个权重文件：
+   .. grid-item-card:: 硬件
+      :text-align: center
 
-.. code-block:: text
+      1 节点 · 8 张 GPU
 
-   /path/to/OpenWAM-Alpha-Sim-LIBERO/
-   ├── checkpoint_step_10690.safetensors
-   ├── config.yaml
-   ├── normalization_stats.npy
-   └── tokenizer/
-       └── google/umt5-xxl/
+**前置条件：**\ 参照 :doc:`安装指南 </rst_source/start/installation>` 准备环境，并准备 8 张至少 80 GB 显存的 GPU。本配置已在 8 张 A800 80 GB 上运行：保留 fp32 主权重，用 bf16 计算，每张 GPU 处理 1 个样本，全局 batch 为 8。
 
-准备数据集
-~~~~~~~~~~
-
-下载与该 checkpoint 配套的 OpenWAM LIBERO 数据集：
-
-.. code-block:: bash
-
-   hf download OpenWAM/LIBERO --repo-type dataset --local-dir /path/to/LIBERO
-
-该数据集已经是 LeRobot v3 格式，无需解压或额外转换。请保留完整的 ``data/``、``meta/`` 和 ``videos/`` 目录，其中 ``meta/libero_normalization_stats.npy`` 是数据集的归一化统计文件：
-
-.. code-block:: text
-
-   /path/to/LIBERO/
-   ├── data/
-   ├── meta/
-   │   ├── info.json
-   │   ├── tasks.parquet
-   │   ├── episodes/
-   │   └── libero_normalization_stats.npy
-   └── videos/
-       ├── observation.images.image/
-       └── observation.images.image2/
-
-将 ``data.train_data_paths`` 设置为包含这三个目录的数据集根目录。训练会使用 checkpoint 中的 LIBERO 数据配置；使用自定义数据时，请保持图像字段、机器人状态、动作表示和归一化约定一致。
-
-填写训练配置
-~~~~~~~~~~~~
-
-在 ``examples/sft/config/model/openwam.yaml`` 中设置下载后的 checkpoint 路径，并保留训练使用的精度与加载方式：
-
-.. code-block:: yaml
-
-   model_path: /path/to/OpenWAM-Alpha-Sim-LIBERO
-   precision: fp32
-   load_to_device: false
-
-在 ``examples/sft/config/libero_sft_openwam.yaml`` 中设置数据路径。关键字段如下；其余字段可保留配方默认值：
-
-.. code-block:: yaml
-
-   cluster:
-     num_nodes: 1
-     component_placement:
-       actor: 0-7
-
-   data:
-     train_data_paths: /path/to/LIBERO
-
-   runner:
-     max_steps: 30000
-     save_interval: 1000
-
-   actor:
-     micro_batch_size: 1
-     global_batch_size: 8
-     optim:
-       lr: 1.0e-6
-       total_training_steps: 30000
-
-配方默认使用 8 张 GPU、FSDP2 和 bf16 混合精度计算，同时保留 fp32 主权重。修改 GPU 数量时，需要同步修改 ``cluster.component_placement.actor``，并确保 ``actor.global_batch_size`` 能被 actor 的 GPU 数量整除；修改训练步数时，也应同步调整 ``actor.optim.total_training_steps``。
-
-.. note::
-
-   H200 测试使用 LIBERO 数据、``micro_batch_size: 1`` 和 ``global_batch_size: 8``。8 卡训练时，每卡峰值已分配显存为 55.5 GiB，保留显存为 83.7 GiB；4 卡时分别为 72.3 GiB 和 113.3 GiB。
-
-运行
-----
-
-在 RLinf 仓库根目录运行：
-
-.. code-block:: bash
-
-   bash examples/sft/run_vla_sft.sh libero_sft_openwam
-
-训练日志保存在 ``logs/<timestamp>-libero_sft_openwam/`` 下。通过 ``run_embodiment.log`` 查看训练日志，或在 TensorBoard 中查看 ``train/loss``、``train/loss_video`` 和 ``train/loss_action``。将下面的 RUN_DIR 替换为实际运行目录：
-
-.. code-block:: bash
-
-   RUN_DIR="/absolute/path/to/RLinf/logs/<timestamp>-libero_sft_openwam"
-   tensorboard --logdir "$RUN_DIR/tensorboard"
-
-checkpoint 默认每 1000 步保存一次，位于 ``$RUN_DIR/libero_sft_openwam/checkpoints/global_step_<N>/``。
-
-导出与评测
+安装与运行
 ----------
 
-训练保存的是 RLinf checkpoint。先将其导出为 OpenWAM checkpoint 目录，再用于推理或评测。使用上一步的 RUN_DIR，导出第 1000 步的 checkpoint：
+.. include:: _setup_common.rst
+
+.. tab-set::
+
+   .. tab-item:: LIBERO
+
+      **1. 安装**
+
+      在 RLinf 仓库根目录安装并激活环境：
+
+      .. code-block:: bash
+
+         bash requirements/install.sh embodied --model openwam --env libero
+         source .venv/bin/activate
+
+      **2. 下载**
+
+      下载模型和配套的 LeRobot v3 数据集：
+
+      .. code-block:: bash
+
+         hf download OpenWAM/OpenWAM-Alpha-Sim-LIBERO --local-dir ./OpenWAM-Alpha-Sim-LIBERO
+         hf download OpenWAM/LIBERO --repo-type dataset --local-dir ./LIBERO
+
+      保留完整的数据集目录，包括视频和元数据。
+
+      **3. 启动**
+
+      按默认配置训练 30,000 步，将日志和 checkpoint 保存到 ``./logs/openwam-sft``\：
+
+      .. code-block:: bash
+
+         bash examples/sft/run_vla_sft.sh libero_sft_openwam \
+           actor.model.model_path=./OpenWAM-Alpha-Sim-LIBERO \
+           data.train_data_paths=./LIBERO \
+           runner.logger.log_path=./logs/openwam-sft
+
+      每 1,000 步保存一次 checkpoint，目录为 ``./logs/openwam-sft/libero_sft_openwam/checkpoints/global_step_<N>/``\。
+
+      .. dropdown:: 调整训练配置
+
+         修改 GPU 数量时，设置 ``cluster.component_placement.actor``\，并确保全局 batch 能被 GPU 数量整除。长时间训练前先检查显存占用。此前在相同 batch 配置下测得：8 张 H200 的单卡 allocated/reserved 峰值为 55.5/83.7 GiB，4 张 H200 为 72.3/113.3 GiB。
+
+         缩短训练时，将 ``runner.max_steps`` 和 ``actor.optim.total_training_steps`` 设为相同的目标步数，并将 ``actor.optim.lr_warmup_steps`` 设为小于总步数的值。例如，训练 1,000 步可配合 100 步 warmup。将这些覆盖参数追加到上面的启动命令即可。
+
+导出与评估
+----------
+
+将第 1,000 步的 checkpoint 导出为 OpenWAM 可直接加载的模型目录：
 
 .. code-block:: bash
 
    python toolkits/openwam/export_checkpoint.py \
-     --rlinf-checkpoint "$RUN_DIR/libero_sft_openwam/checkpoints/global_step_1000" \
-     --source-checkpoint /path/to/OpenWAM-Alpha-Sim-LIBERO \
-     --output /path/to/openwam-libero-step1000
+     --rlinf-checkpoint ./logs/openwam-sft/libero_sft_openwam/checkpoints/global_step_1000 \
+     --source-checkpoint ./OpenWAM-Alpha-Sim-LIBERO \
+     --output ./openwam-libero-step1000
 
-将 ``--source-checkpoint`` 设置为初始化训练时使用的 checkpoint 目录，保留配套的配置、tokenizer 和归一化文件。添加 ``--verify cuda`` 可检查导出结果能否在 GPU 上加载。
+``--source-checkpoint`` 应与训练使用的源模型相同，以保留匹配的配置和分词器。导出还会携带训练保存的归一化统计量。可追加 ``--verify cuda``\，在空闲 GPU 上检查模型是否能加载。
 
-在 LIBERO 评测配置中将 ``rollout.model.model_path`` 设置为导出目录 ``/path/to/openwam-libero-step1000``，再按照 :doc:`../../evaluations/guides/libero` 中的 OpenWAM 说明运行评测。RoboTwin checkpoint 的评测流程见 :doc:`../../evaluations/guides/robotwin`。
+用 OpenWAM 的评估配置运行导出模型：
 
-可选配置
---------
+.. code-block:: bash
 
-验证与断点续训
-~~~~~~~~~~~~~~
+   bash evaluations/run_eval.sh libero libero_spatial_openwam_eval \
+     rollout.model.model_path=./openwam-libero-step1000
 
-启用训练期间的验证时，将 ``data.val_data_paths`` 指向独立的验证数据集，并设置 ``runner.val_check_interval``。上文下载的 OpenWAM LIBERO 数据集只有 ``train`` split；不要直接把同一份训练数据作为验证集。如果独立验证数据集也只提供 ``train`` split，需要设置 ``data.openwam_val_split: train``，并确保其使用与训练一致的归一化统计量。验证指标记录为 ``eval/loss``、``eval/loss_video`` 和 ``eval/loss_action``。
+默认评估占用 4 张 GPU，运行 3 个 episode。评估各套件的全部任务和初始状态，参见 :ref:`OpenWAM 完整覆盖配置 <openwam-libero-full-coverage>`\。
 
-断点续训时，在训练配置中将 ``runner.resume_dir`` 设置为 ``$RUN_DIR/libero_sft_openwam/checkpoints/global_step_<N>`` 的绝对路径。使用包含 ``actor/`` 的目录。配方默认设置 ``runner.strict_resume: true``。checkpoint 缺少数据流或随机数状态时，续训会报错。更多说明见 :doc:`../../guides/resume`。
+可视化与结果
+------------
 
-其他数据源与混合训练
-~~~~~~~~~~~~~~~~~~~~
+打开 TensorBoard 查看总 loss、视频 loss 和动作 loss：
 
-使用其他 OpenWAM checkpoint 时，先确认其 ``config.yaml`` 中的 ``dataloader.type`` 与数据集格式一致。单数据源使用 ``libero_sft_openwam.yaml`` 配方并替换权重与数据路径。checkpoint 配置为 ``mixture`` 时才使用 ``mixture_sft_openwam.yaml``。
+.. code-block:: bash
 
-混合训练的 ``data.train_data_paths`` 只填一个根目录，各启用的数据源默认从 ``<root>/<name>`` 读取。需要单独指定某个数据源的位置时，修改 ``data.openwam.datasets.<name>.dataset_dir``，并保留该数据源配套的归一化统计文件。
+   tensorboard --logdir ./logs/openwam-sft/tensorboard
+
+对应指标为 ``train/loss``\、\ ``train/loss_video`` 和 ``train/loss_action``\。比较微调前后的 LIBERO 成功率时，保持任务、初始状态和评估配置一致。
+
+.. dropdown:: 验证与断点恢复
+
+   将单独留出的演示数据作为验证集，设置 ``data.val_data_paths`` 和 ``runner.val_check_interval``\，并沿用训练的归一化统计量。验证集的划分名为 ``train`` 时，设置 ``data.openwam_val_split: train``\。
+
+   验证指标为 ``eval/loss``\、\ ``eval/loss_video`` 和 ``eval/loss_action``\。
+
+   恢复训练时，将 ``runner.resume_dir`` 设为已保存的 ``global_step_<N>`` 目录的绝对路径，该目录应包含 ``actor/``\。默认配置要求 checkpoint 保存数据流和随机数状态，以准确恢复训练。详见 :doc:`../../guides/resume`\。
+
+.. dropdown:: 其他数据源
+
+   数据集须匹配源模型 ``config.yaml`` 中的 ``dataloader.type``\，包括图像字段、机器人状态、动作表示和归一化方式。单数据源使用 ``libero_sft_openwam``\；源模型配置为 ``mixture`` 时使用 ``mixture_sft_openwam``\。
+
+   混合训练的 ``data.train_data_paths`` 指向根目录，每个启用的数据源默认位于 ``<name>`` 子目录。需要单独指定位置时，设置 ``data.openwam.datasets.<name>.dataset_dir``\，并保留该数据源的归一化统计量。

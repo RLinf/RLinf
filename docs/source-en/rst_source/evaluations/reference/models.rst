@@ -48,7 +48,7 @@ Eval configs compose model presets from ``examples/embodiment/config/model/`` vi
      - ``libero_10_pi0_fast_eval``
    * - OpenWAM
      - ``openwam``
-     - ``libero_spatial_openwam_eval``, ``libero_object_openwam_eval``, ``libero_goal_openwam_eval``, ``libero_10_openwam_eval``, ``robotwin_adjust_bottle_openwam_eval``, ``robotwin_click_bell_openwam_eval`` (``toolkits/openwam/gen_robotwin_eval_recipes.py --all`` generates the 46 RoboTwin tasks RLinf supports)
+     - ``libero_spatial_openwam_eval``, ``libero_object_openwam_eval``, ``libero_goal_openwam_eval``, ``libero_10_openwam_eval``, ``robotwin_adjust_bottle_openwam_eval``, ``robotwin_click_bell_openwam_eval`` (``toolkits/openwam/gen_robotwin_eval_recipes.py --all`` generates configs for 46 supported RoboTwin tasks)
 
 Rollout Backends
 ----------------

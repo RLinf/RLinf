@@ -58,9 +58,26 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
          bash evaluations/run_eval.sh libero libero_spatial_openwam_eval \
            rollout.model.model_path=./OpenWAM-Alpha-Sim-LIBERO
 
-      默认用三张 GPU 各运行一个环境，第四张 GPU 运行推理。保留每次 reset 后的 30 个稳定步、每次预测执行的 10 个动作，以及每回合 600 步的预算。其他套件使用 ``libero_object_openwam_eval``、``libero_goal_openwam_eval`` 或 ``libero_10_openwam_eval``；Long 的回合预算为 700 步。
+      默认用三张 GPU 各运行一个环境，第四张 GPU 运行推理。保留每次 reset 后的 30 个稳定步、每次预测执行的 10 个动作，以及每回合 600 步的预算。其他套件使用 ``libero_object_openwam_eval``\、\ ``libero_goal_openwam_eval`` 或 ``libero_10_openwam_eval``\；Long 的回合预算为 700 步。
 
-      增大 ``env.eval.max_steps_per_rollout_epoch`` 可覆盖更多初始状态，详见 :ref:`评测配置详解 <libero-eval-config>`。评测微调模型前，按 :doc:`OpenWAM SFT <../../examples/embodied/sft_openwam>` 导出 checkpoint，再将导出目录传给 ``rollout.model.model_path``。
+      评测微调模型前，按 :doc:`OpenWAM SFT <../../examples/embodied/sft_openwam>` 导出 checkpoint，再将导出目录传给 ``rollout.model.model_path``\。
+
+      .. _openwam-libero-full-coverage:
+
+      .. dropdown:: OpenWAM 完整覆盖配置
+
+         在 8 张 GPU 上，分别用 4 张运行环境和推理，一次评测覆盖全部 500 个任务与初始状态组合：
+
+         .. code-block:: bash
+
+            bash evaluations/run_eval.sh libero libero_spatial_openwam_eval \
+              rollout.model.model_path=./OpenWAM-Alpha-Sim-LIBERO \
+              cluster.component_placement.env=0-3 \
+              cluster.component_placement.rollout=4-7 \
+              env.eval.total_num_envs=4 \
+              env.eval.max_steps_per_rollout_epoch=75000
+
+         每个环境运行 125 个 episode，按预设顺序遍历初始状态。Object 和 Goal 使用相同预算；Long 改用 ``libero_10_openwam_eval``\，并将 rollout 预算设为 87,500 步。比较不同 checkpoint 时，保持评测配置和初始状态一致。
 
    .. tab-item:: OpenPI π₀.₅
 

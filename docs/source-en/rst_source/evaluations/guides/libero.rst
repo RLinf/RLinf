@@ -60,7 +60,24 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       The default uses three GPUs for one environment each and a fourth GPU for inference. Keep the 30 settling steps, 10 executed actions per prediction, and 600-step episode budget. Use ``libero_object_openwam_eval``, ``libero_goal_openwam_eval``, or ``libero_10_openwam_eval`` for the other suites; Long uses 700 steps.
 
-      Increase ``env.eval.max_steps_per_rollout_epoch`` to cover more initial states, as described in :ref:`Evaluation Configuration <libero-eval-config>`. To evaluate a fine-tuned model, export it using :doc:`OpenWAM SFT <../../examples/embodied/sft_openwam>` and pass the exported directory as ``rollout.model.model_path``.
+      To evaluate a fine-tuned model, export it using :doc:`OpenWAM SFT <../../examples/embodied/sft_openwam>` and pass the exported directory as ``rollout.model.model_path``.
+
+      .. _openwam-libero-full-coverage:
+
+      .. dropdown:: Full OpenWAM Coverage
+
+         On eight GPUs, use four environment workers and four rollout workers to cover all 500 task/initial-state pairs in one evaluation:
+
+         .. code-block:: bash
+
+            bash evaluations/run_eval.sh libero libero_spatial_openwam_eval \
+              rollout.model.model_path=./OpenWAM-Alpha-Sim-LIBERO \
+              cluster.component_placement.env=0-3 \
+              cluster.component_placement.rollout=4-7 \
+              env.eval.total_num_envs=4 \
+              env.eval.max_steps_per_rollout_epoch=75000
+
+         Each environment runs 125 episodes with the preset's ordered initial states. Use the same budget for Object and Goal; for Long, select ``libero_10_openwam_eval`` and set the rollout budget to 87,500 steps. Compare checkpoints with identical settings and initial states.
 
    .. tab-item:: OpenPI π₀.₅
 

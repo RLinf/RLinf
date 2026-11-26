@@ -61,12 +61,15 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
            rollout.model.model_path=./OpenWAM-Alpha-Sim-RoboTwin-Full \
            env.eval.assets_path="${ROBOTWIN_PATH}"
 
-      Use ``robotwin_click_bell_openwam_eval`` for ``click_bell``. The public `Clean2Random checkpoint <https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Clean2Random>`_ and `joint self-attention study checkpoint <https://huggingface.co/OpenWAM/robotwin_dual_system_joint_self_attention>`_ are alternative model directories.
+      Use ``robotwin_click_bell_openwam_eval`` for ``click_bell``. Increase ``env.eval.rollout_epoch`` to evaluate more trajectories; these presets advance through the bundled success seeds between episodes.
 
-      - Keep the ``aloha-agilex`` embodiment, head and wrist cameras, and ``absolute_eef20`` action representation from the preset.
-      - Keep unseen instructions and execute all 32 predicted actions. The recipe's episode budget follows the task limit rounded to an action chunk.
-      - Raise ``env.eval.rollout_epoch`` to evaluate more trajectories; reset seeds advance between episodes.
-      - Run ``python toolkits/openwam/gen_robotwin_eval_recipes.py --all`` for the 46 supported task recipes. RoboTwin SFT has not been validated; use :doc:`OpenWAM SFT <../../examples/embodied/sft_openwam>` for LIBERO training.
+      .. dropdown:: Other OpenWAM Tasks and Checkpoints
+
+         Run ``python toolkits/openwam/gen_robotwin_eval_recipes.py --all`` to generate configs for 46 supported tasks. Tasks covered by the bundled seed file use its success seeds; the others sample random reset seeds.
+
+         Keep the preset's ``aloha-agilex`` embodiment, head/wrist cameras, ``absolute_eef20`` actions, and unseen instructions. Each prediction executes 32 actions, with episode budgets rounded up to whole chunks.
+
+         The public `Clean2Random checkpoint <https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Clean2Random>`_ and `joint self-attention study checkpoint <https://huggingface.co/OpenWAM/robotwin_dual_system_joint_self_attention>`_ use the same evaluation flow. RoboTwin SFT has not been validated; use :doc:`OpenWAM SFT <../../examples/embodied/sft_openwam>` for LIBERO training.
 
    .. tab-item:: OpenVLA-OFT (place_empty_cup)
 
@@ -255,7 +258,11 @@ On AMD ROCm, install with ``--platform amd`` and set ``planner_backend: mplib`` 
 
 .. dropdown:: Evaluation Configuration
 
-   RoboTwin evaluation runs one trajectory per pre-filtered **success seed** in ``eval_seeds.json`` (150–320 seeds per task across 22 tasks) and reports ``eval/success_once``. On startup, ``success_seeds`` are shuffled and partitioned across env workers without overlap. With default settings (``total_num_envs: 128``, ``rollout_epoch: 1``, ``use_fixed_reset_state_ids: True``), one epoch covers ~128 trajectories; set ``use_fixed_reset_state_ids: False`` so ``auto_reset`` rotates to subsequent seeds.
+   For tasks with bundled seeds, RoboTwin evaluation runs one trajectory per pre-filtered **success seed** in ``eval_seeds.json`` (150–320 seeds per task across 22 tasks) and reports ``eval/success_once``.
+
+   On startup, ``success_seeds`` are shuffled and partitioned across env workers without overlap.
+
+   With default settings (``total_num_envs: 128``, ``rollout_epoch: 1``, ``use_fixed_reset_state_ids: True``), one epoch covers ~128 trajectories; set ``use_fixed_reset_state_ids: False`` so ``auto_reset`` rotates to subsequent seeds.
 
    **Seed counts and step limits**
 

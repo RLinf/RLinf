@@ -61,12 +61,15 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
            rollout.model.model_path=./OpenWAM-Alpha-Sim-RoboTwin-Full \
            env.eval.assets_path="${ROBOTWIN_PATH}"
 
-      评测 ``click_bell`` 时使用 ``robotwin_click_bell_openwam_eval``。也可将模型目录换为公开的 `Clean2Random checkpoint <https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Clean2Random>`_ 或 `联合自注意力研究 checkpoint <https://huggingface.co/OpenWAM/robotwin_dual_system_joint_self_attention>`_。
+      评测 ``click_bell`` 时使用 ``robotwin_click_bell_openwam_eval``\。增大 ``env.eval.rollout_epoch`` 可评测更多轨迹，这两个预设会在回合间依次使用内置的 success seed。
 
-      - 保留预设中的 ``aloha-agilex`` 机器人、头部与腕部相机，以及 ``absolute_eef20`` 动作表示。
-      - 保留 unseen 指令，并执行全部 32 个预测动作。回合步数按任务上限取整到动作块的倍数。
-      - 增大 ``env.eval.rollout_epoch`` 可评测更多轨迹，reset 种子会随回合推进。
-      - 运行 ``python toolkits/openwam/gen_robotwin_eval_recipes.py --all`` 可生成 46 个支持任务的配置。RoboTwin SFT 尚未验证；LIBERO 训练见 :doc:`OpenWAM SFT <../../examples/embodied/sft_openwam>`。
+      .. dropdown:: 其他 OpenWAM 任务与模型
+
+         运行 ``python toolkits/openwam/gen_robotwin_eval_recipes.py --all``\，生成全部 46 个支持任务的配置。内置种子文件已覆盖的任务使用其中的 success seed，其余任务随机生成 reset 种子。
+
+         保留预设中的 ``aloha-agilex`` 机器人、头部与腕部相机、\ ``absolute_eef20`` 动作表示及 unseen 指令。每次预测执行 32 个动作，回合预算向上取整到动作块的倍数。
+
+         公开的 `Clean2Random checkpoint <https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Clean2Random>`_ 和 `联合自注意力研究 checkpoint <https://huggingface.co/OpenWAM/robotwin_dual_system_joint_self_attention>`_ 也可按此流程评测。RoboTwin SFT 尚未验证；LIBERO 训练见 :doc:`OpenWAM SFT <../../examples/embodied/sft_openwam>`\。
 
    .. tab-item:: OpenVLA-OFT（place_empty_cup）
 
@@ -255,7 +258,11 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
 
 .. dropdown:: 评测配置详解
 
-   RoboTwin 评测对 ``eval_seeds.json`` 中预筛选的 **success seeds**\ （22 个任务，每任务 150–320 条种子）各跑一条轨迹，汇总 ``eval/success_once``。启动时全局打乱种子并按 worker 无重叠切分。默认配置（``total_num_envs: 128``、``rollout_epoch: 1``、``use_fixed_reset_state_ids: True``）每轮评测约 128 条轨迹；设置 ``use_fixed_reset_state_ids: False`` 可在 ``auto_reset`` 时自动切换后续种子。
+   对有内置种子的任务，评测会为 ``eval_seeds.json`` 中每个预筛选的 **success seed** 运行一条轨迹，并汇总 ``eval/success_once``\。内置种子覆盖 22 个任务，每个任务有 150–320 条种子。
+
+   启动时全局打乱种子并按 worker 无重叠切分。
+
+   默认配置（\ ``total_num_envs: 128``\、\ ``rollout_epoch: 1``\、\ ``use_fixed_reset_state_ids: True``\）每轮评测约 128 条轨迹；设置 ``use_fixed_reset_state_ids: False`` 可在 ``auto_reset`` 时自动切换后续种子。
 
    **示例任务种子数与步数上限**
 

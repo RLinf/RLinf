@@ -91,7 +91,7 @@ The optional ``model_state_dict/full_weights.pt`` export contains model weights;
 resume training from the complete checkpoint directory to restore optimizer,
 scheduler, and RNG state as well.
 
-For FSDP/FSDP2 VLA SFT, ``actor/data.pt`` stores the stateful data loader and
+For FSDP/FSDP2 VLA SFT, ``actor/data.pt`` stores the data loader state and
 ``actor/rng.pt`` stores the per-rank random-number states. If ``data.pt`` is
 missing, training resumes from the start of the epoch with a warning. Set
 ``runner.strict_resume: true`` to require both files and fail if either is
