@@ -258,9 +258,6 @@ Reference SFT configs under ``examples/sft/config/``:
          weights, use the model checkpoint setup above and leave
          ``runner.resume_dir`` unset.
 
-
-         .. _sft-dreamzero-hardware:
-
          Pass Hydra overrides after the config name to change settings such as the training log directory.
 
          .. code-block:: bash

@@ -225,9 +225,6 @@ DreamZero 监督微调
 
          正式训练前，将训练步数和保存间隔改回所需值。使用 ``runner.resume_dir`` 续训会恢复 checkpoint 中保存的优化器设置。若要从已有模型权重开始一轮新训练，并启用 fused AdamW，按上文设置模型 checkpoint，保留 ``runner.resume_dir`` 为空。
 
-
-         .. _sft-dreamzero-hardware:
-
          在配置名后添加 Hydra 参数可覆盖配置。下面的命令将 5B 训练日志写入指定目录。
 
          .. code-block:: bash
