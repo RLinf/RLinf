@@ -56,6 +56,18 @@ Setup and Run
            --config-path "$PWD/examples/embodiment/config" --config-name isaaclab_go2_c_ppo \
            "env.train.init_params.asset_root=$GO2_ASSET_ROOT" "runner.logger.log_path=$PWD/logs/go2-stairs"
 
+Run the RSL-RL PPO Comparison
+-----------------------------
+
+From the repository root, continue training task C with RSL-RL PPO using the weights from step 2.
+
+.. code-block:: bash
+
+   python -m examples.embodiment.go2_abc.train_rsl --task C --seed 0 \
+     "${GO2_ABC_DATA:-data/go2_abc}/models/C/baseline.pt" logs/go2-c-rsl-s0
+
+For task A or B, change ``--task``, the baseline path, and the output directory. To use seed 2, add ``--seed 2`` and choose a fresh output directory. For a local asset mirror, add ``--asset-root "$GO2_ASSET_ROOT"``.
+
 Evaluate a Trained Policy
 -------------------------
 
@@ -64,13 +76,13 @@ On an NVIDIA GPU, evaluate a saved RLinf policy from the repository root. Set th
 .. code-block:: bash
 
    TASK=C
-   RUN_DIR=logs/go2-stairs
+   RUN_DIR=logs/go2-stairs  # Set this to the directory from your RLinf training run.
    CHECKPOINT="$RUN_DIR/${TASK}_rlinf/checkpoints/global_step_1000/actor/model_state_dict/full_weights.pt"
    python -m examples.embodiment.go2_abc.evaluate --task "$TASK" --train-seed 0 "$CHECKPOINT" "$RUN_DIR/eval"
 
 Use a new output directory for each checkpoint. For local Isaac Sim assets, add ``--asset-root "$GO2_ASSET_ROOT"``. Set ``--train-seed`` to the checkpoint's training seed or omit it if unknown.
 
-To score an existing frozen baseline or an RSL-RL PPO checkpoint, use the same command with ``--checkpoint-format rsl-rl`` and that checkpoint's path. The evaluator runs seeds 23456 and 34567, pools completed episodes in ``summary.json``, and reports stair passage for task C.
+To score a frozen baseline or an RSL-RL PPO checkpoint, add ``--checkpoint-format rsl-rl`` and pass that file as the checkpoint. For the C comparison above, use ``logs/go2-c-rsl-s0/model_960.pt``. The final RSL-RL checkpoints for A and B are named ``model_999.pt``. View the results in ``summary.json``.
 
 Simulation Results
 ------------------

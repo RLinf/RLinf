@@ -27,13 +27,7 @@ from isaaclab_tasks.manager_based.locomotion.velocity.config.go2.rough_env_cfg i
 
 
 def _apply_flat_reward_fixes(cfg: UnitreeGo2RoughEnvCfg) -> None:
-    """Fix Go2 rough-env reward defaults for flat-terrain walking.
-
-    The rough env ships with values that prevent clean locomotion learning:
-      - feet_air_time  0.01  (no stepping incentive)
-      - flat_orientation  0.0 (no posture signal)
-      - dof_torques_l2  -2e-4 (20x too heavy)
-    """
+    """Set the stepping, posture, and torque reward weights for flat terrain."""
     rw = cfg.rewards
     rw.feet_air_time.weight = 0.25
     rw.flat_orientation_l2.weight = -2.5
@@ -42,10 +36,7 @@ def _apply_flat_reward_fixes(cfg: UnitreeGo2RoughEnvCfg) -> None:
 
 @configclass
 class Go2A2OmniWalkEnvCfg(UnitreeGo2RoughEnvCfg):
-    """Fam A / task A2: omni-directional walk on flat terrain.
-
-    Same rough-base approach as A1 for obs space compatibility.
-    """
+    """Track omnidirectional velocity commands on flat terrain."""
 
     def __post_init__(self):
         super().__post_init__()
@@ -83,11 +74,7 @@ class Go2A2OmniWalkEnvCfg(UnitreeGo2RoughEnvCfg):
 
 
 def _keep_single_sub_terrain(cfg: UnitreeGo2RoughEnvCfg, terrain_key: str) -> None:
-    """trim terrain gen to one named sub-terrain
-    -> Isaac Lab rough env is a mix of terrain types but we need:
-     one task = one cmd profile x one terrain
-     (A1, A2, B1, B2 are all single-task benchmarks so this is fine)
-    """
+    """Use one terrain type across the terrain generator's grid."""
     generator = cfg.scene.terrain.terrain_generator
     if generator is None:
         return
@@ -102,13 +89,7 @@ def _keep_single_sub_terrain(cfg: UnitreeGo2RoughEnvCfg, terrain_key: str) -> No
 
 
 def _fix_rough_reward_shaping(cfg: UnitreeGo2RoughEnvCfg) -> None:
-    """Override Go2 rough-env reward defaults that prevent locomotion learning.
-      - feet_air_time weight 0.01 (12.5x below base default)
-      - undesired_contacts disabled entirely
-      - dof_torques_l2 penalty 20x base default
-      - flat_orientation_l2 weight 0.0 (no posture signal)
-    These conspire so that "collapse and do nothing" is locally optimal.
-    """
+    """Set the rough-terrain velocity tracking, gait, and posture rewards."""
     rw = cfg.rewards
 
     # stepping reward
@@ -133,7 +114,7 @@ def _fix_rough_reward_shaping(cfg: UnitreeGo2RoughEnvCfg) -> None:
     # upright posture incentive
     rw.flat_orientation_l2 = RewTerm(func=core_mdp.flat_orientation_l2, weight=-5.0)
 
-    # always-on height incentive; uses height_scanner for terrain-relative height
+    # Measure the target height relative to the terrain beneath the base.
     rw.base_height = RewTerm(
         func=core_mdp.base_height_l2,
         weight=-10.0,
@@ -149,7 +130,7 @@ def _fix_rough_reward_shaping(cfg: UnitreeGo2RoughEnvCfg) -> None:
 
 @configclass
 class Go2B1RoughWalkEnvCfg(UnitreeGo2RoughEnvCfg):
-    """fam B / task B1: rough walk on random_rough terrain only"""
+    """Track omnidirectional velocity commands on random rough terrain."""
 
     def __post_init__(self):
         super().__post_init__()
@@ -170,7 +151,7 @@ class Go2B1RoughWalkEnvCfg(UnitreeGo2RoughEnvCfg):
 
 @configclass
 class Go2B2StairClimbEnvCfg(UnitreeGo2RoughEnvCfg):
-    """fam B / task B2: stair climb on stairs only (climb-focused)."""
+    """Track forward velocity commands on uphill stairs."""
 
     def __post_init__(self):
         super().__post_init__()
@@ -184,7 +165,6 @@ class Go2B2StairClimbEnvCfg(UnitreeGo2RoughEnvCfg):
         gen.sub_terrains["pyramid_stairs_inv"].step_height_range = (0.04, 0.16)
         self.scene.terrain.terrain_generator = gen
 
-        # easier curriculum start, matching the successful Apr15 scratch run
         self.scene.terrain.max_init_terrain_level = 1
 
         # straight-forward only
@@ -210,10 +190,8 @@ class Go2B2StairClimbEnvCfg(UnitreeGo2RoughEnvCfg):
         rw.base_height = RewTerm(
             func=core_mdp.base_height_l2,
             weight=-3.5,
-            # weight=-4.2,
             params={
                 "target_height": 0.42,
-                # "target_height": 0.41,
                 "asset_cfg": SceneEntityCfg("robot"),
                 "sensor_cfg": SceneEntityCfg("height_scanner"),
             },
@@ -222,9 +200,7 @@ class Go2B2StairClimbEnvCfg(UnitreeGo2RoughEnvCfg):
         # discourage extreme joint angles
         rw.dof_pos_limits.weight = -2.0
 
-        # rw.feet_air_time.weight = 0.02
         rw.feet_air_time.weight = 0.04
-        # rw.feet_air_time.params["threshold"] = 0.25
         rw.feet_air_time.params["threshold"] = 0.35
         rw.dof_torques_l2.weight = -2.0e-5
         rw.dof_acc_l2.weight = -2.5e-7

@@ -15,6 +15,7 @@
 """Isaac Lab locomotion tasks for Unitree Go2."""
 
 from functools import partial
+from types import MethodType
 from typing import TYPE_CHECKING
 
 import gymnasium as gym
@@ -141,6 +142,28 @@ def _make_go2_env(params, seed: int, num_envs: int, max_episode_steps: int):
         raise
 
 
+def install_rough_action_bound(env: "ManagerBasedRLEnv") -> None:
+    """Apply the Go2 rough-terrain action bound to an Isaac Lab environment.
+
+    Args:
+        env: Simulator that receives the batched joint target offsets.
+    """
+    original_step = env.step
+
+    def step(_env, actions):
+        return original_step(_bound_rough_actions(actions))
+
+    env.step = MethodType(step, env)
+
+
+def _bound_rough_actions(actions: torch.Tensor) -> torch.Tensor:
+    if not torch.isfinite(actions).all():
+        raise FloatingPointError(
+            "Nonfinite Go2 rough-terrain action before simulator step"
+        )
+    return actions.clamp(-100.0, 100.0)
+
+
 class _Go2Task:
     """Translate manager observations and episode boundaries inside the simulator."""
 
@@ -177,11 +200,7 @@ class _Go2Task:
     def step(self, actions):
         actions = actions.to(self.device)
         if self.task_id == ROUGH:
-            if not torch.isfinite(actions).all():
-                raise FloatingPointError(
-                    "Nonfinite Go2 rough-terrain action before simulator step"
-                )
-            actions = actions.clamp(-100.0, 100.0)
+            actions = _bound_rough_actions(actions)
 
         self.task.terminal_observation = None
         self.task.capture_terminal = True
@@ -218,7 +237,7 @@ class _Go2Task:
 
 
 class Go2IsaacLabEnv(IsaaclabProcessEnv):
-    """Run one benchmark instance with its own terrain RNG and native auto-reset."""
+    """Run one Go2 environment with its own terrain RNG and native auto-reset."""
 
     def __init__(
         self, cfg, num_envs, seed_offset=0, total_num_processes=1, worker_info=None

@@ -56,7 +56,19 @@
            --config-path "$PWD/examples/embodiment/config" --config-name isaaclab_go2_c_ppo \
            "env.train.init_params.asset_root=$GO2_ASSET_ROOT" "runner.logger.log_path=$PWD/logs/go2-stairs"
 
-评测训练好的策略
+训练 RSL-RL PPO 对照组
+----------------------
+
+下载初始权重后，在仓库根目录运行以下命令，用 RSL-RL PPO 续训楼梯任务。
+
+.. code-block:: bash
+
+   python -m examples.embodiment.go2_abc.train_rsl --task C --seed 0 \
+     "${GO2_ABC_DATA:-data/go2_abc}/models/C/baseline.pt" logs/go2-c-rsl-s0
+
+训练任务 A 或 B 时，修改 ``--task``、初始权重路径和输出目录。使用种子 2 时，加上 ``--seed 2`` 并指定新的输出目录。如果使用本地资产镜像，添加 ``--asset-root "$GO2_ASSET_ROOT"``。
+
+评测策略
 ----------------
 
 在配有 NVIDIA GPU 的机器上，从 RLinf 仓库根目录评测已有权重。任务和运行目录须与权重文件对应。
@@ -64,18 +76,18 @@
 .. code-block:: bash
 
    TASK=C
-   RUN_DIR=logs/go2-stairs
+   RUN_DIR=logs/go2-stairs  # 改为本次 RLinf 训练的运行目录。
    CHECKPOINT="$RUN_DIR/${TASK}_rlinf/checkpoints/global_step_1000/actor/model_state_dict/full_weights.pt"
    python -m examples.embodiment.go2_abc.evaluate --task "$TASK" --train-seed 0 "$CHECKPOINT" "$RUN_DIR/eval"
 
 每份权重使用新的输出目录。若使用本地 Isaac Sim 资产，添加 ``--asset-root "$GO2_ASSET_ROOT"``。将 ``--train-seed`` 设为训练该权重时的种子。种子未知时可省略此参数。
 
-评测已有的冻结基线或 RSL-RL PPO 权重时，在同一命令中加入 ``--checkpoint-format rsl-rl`` 并替换权重路径。评测使用种子 23456 和 34567，输出文件 ``summary.json`` 汇总完成的回合。任务 C 还会统计楼梯通过率。
+评测冻结基线或 RSL-RL PPO 权重时，添加 ``--checkpoint-format rsl-rl`` 并替换权重路径。上面的楼梯对照组使用 ``logs/go2-c-rsl-s0/model_960.pt``。A 和 B 对照组的最终权重文件为 ``model_999.pt``。评测结果见 ``summary.json``。
 
 仿真评测结果
 ------------
 
-每个任务使用一份基线权重。RSL-RL PPO 和 RLinf PPO 都从这份权重出发，分别用训练种子 0 和 2 续训 1,000 次更新。冻结基线只评测一次，两个训练种子共用这一结果。
+每个任务使用一份基线权重。RSL-RL PPO 和 RLinf PPO 都从这份权重出发，分别用训练种子 0 和 2 更新 1,000 次。冻结基线只评测一次，两个训练种子共用这一结果。
 
 表中成功率按评测种子 23456 和 34567 的全部回合合并计算，括号内为成功回合数与总回合数。任务 C 分别统计速度跟踪和楼梯通过，后者根据 Go2 在仿真中的运动轨迹判定。
 

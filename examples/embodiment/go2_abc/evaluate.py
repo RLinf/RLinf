@@ -32,7 +32,7 @@ EVAL_SEEDS = (23456, 34567)
 
 @dataclass(frozen=True)
 class Task:
-    """Identifiers used by the benchmark CLI and its episode records."""
+    """Task identifiers used by Isaac Lab and the episode records."""
 
     gym_id: str
     name: str
@@ -92,7 +92,7 @@ def export_policy(checkpoint: Path, initial: Path | None, destination: Path) -> 
 def evaluation_args(
     task: Task, train_name: str, policy: Path, output: Path, asset_root: Path | None
 ) -> list[str]:
-    """Build the benchmark's single-task evaluation command for one seed."""
+    """Build the Isaac Lab evaluation command for one seed."""
     kit = "--/app/extensions/excluded/0=omni.kit.telemetry"
     if asset_root is not None:
         kit += f" --/persistent/isaac/asset_root/cloud={asset_root.resolve()}"
@@ -162,7 +162,7 @@ def read_episodes(directory: Path, task: Task, train_name: str) -> list[dict]:
 
 
 def main(*, legacy_stairs: bool = False) -> None:
-    """Export the native weights and pool the two verified benchmark reports."""
+    """Evaluate the checkpoint and pool the results from both seeds."""
     parser = argparse.ArgumentParser(description=__doc__)
     if legacy_stairs:
         data = Path(os.environ.get("GO2_ABC_DATA", PROJECT / "data/go2_abc"))

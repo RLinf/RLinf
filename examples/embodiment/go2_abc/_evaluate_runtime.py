@@ -19,12 +19,16 @@ import json
 import os
 import sys
 from pathlib import Path
-from types import MethodType
 
 import gymnasium as gym
 import torch
 
-from rlinf.envs.sim.isaaclab.tasks.go2 import ROUGH, STAIRS, register_go2_tasks
+from rlinf.envs.sim.isaaclab.tasks.go2 import (
+    ROUGH,
+    STAIRS,
+    install_rough_action_bound,
+    register_go2_tasks,
+)
 from rlinf.utils.logging import get_logger
 
 from ._passage_metrics import PassageRuntime, capture_geometry, summarize_passage
@@ -200,18 +204,6 @@ def _summarize(episodes: list[dict]) -> dict:
     }
 
 
-def _bound_rough_actions(env):
-    """Bound actions before the action manager records the previous action."""
-    original_step = env.step
-
-    def step(_env, action):
-        if not torch.isfinite(action).all():
-            raise FloatingPointError("Nonfinite B1 action before simulator step")
-        return original_step(action.clamp(-100.0, 100.0))
-
-    env.step = MethodType(step, env)
-
-
 def _run_eval_on_env(policy, env, task, num_episodes, device, passage):
     from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
 
@@ -281,7 +273,7 @@ def _evaluate(args, task, env_cfg, agent_cfg):
     passage = None
     try:
         if task.gym_id == ROUGH:
-            _bound_rough_actions(env.unwrapped)
+            install_rough_action_bound(env.unwrapped)
         wrapped = RslRlVecEnvWrapper(env)
         installed_version = metadata.version("rsl-rl-lib")
         _align_agent_cfg_to_checkpoint(agent_cfg, args.checkpoint)
