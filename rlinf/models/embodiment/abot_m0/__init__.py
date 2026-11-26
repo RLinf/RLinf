@@ -16,6 +16,17 @@ import torch
 from omegaconf import DictConfig
 
 
+def _forward_dtype(module: torch.nn.Module, weight: torch.Tensor) -> torch.dtype:
+    """Return a consumer's FSDP forward precision or its local weight dtype."""
+    from rlinf.hybrid_engines.fsdp import FSDP, FSDPModule, fully_shard
+
+    if isinstance(module, FSDP):
+        return module.mixed_precision.param_dtype or weight.dtype
+    if isinstance(module, FSDPModule):
+        return fully_shard.state(module)._mp_policy.param_dtype or weight.dtype
+    return weight.dtype
+
+
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     from pathlib import Path
 

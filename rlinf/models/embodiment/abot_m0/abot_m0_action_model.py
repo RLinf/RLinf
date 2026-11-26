@@ -28,6 +28,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
+from rlinf.models.embodiment.abot_m0 import _forward_dtype
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 
 
@@ -71,6 +72,9 @@ def _override_vggt_model_path() -> Iterator[None]:
 
 class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
     """ABot-M0 wrapper with RL-specific action/value interfaces."""
+
+    # The action head reads future_tokens.weight directly during denoising.
+    _fsdp_wrap_embeddings = False
 
     @property
     def _no_split_modules(self) -> list[str]:
@@ -355,24 +359,17 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
             raise ValueError("ABot-M0 _encode_observations requires spatial_images.")
         batch_images = self._image_tensor_to_pil_batch(spatial_images)
         with torch.no_grad():
-            spatial_dtype = last_hidden.dtype
-            spatial_model = getattr(self.base_model, "spatial_model", None)
-            if spatial_model is not None:
-                spatial_model.eval()
-                first_param = next(iter(spatial_model.parameters()), None)
-                if first_param is not None:
-                    spatial_dtype = first_param.dtype
-                # A wrapped aggregator still exposes its master weights here.
-                precision = getattr(spatial_model.aggregator, "mixed_precision", None)
-                if precision is not None and precision.param_dtype is not None:
-                    spatial_dtype = precision.param_dtype
+            spatial_model = self.base_model.spatial_model
+            spatial_model.eval()
+            aggregator = spatial_model.aggregator
             spatial_input = preprocess_images(
                 batch_images,
                 batch_images[0][0].size[0],
-            ).to(device=last_hidden.device, dtype=spatial_dtype)
-            aggregated_tokens_list, ps_idx = self.base_model.spatial_model.aggregator(
-                spatial_input,
+            ).to(
+                device=last_hidden.device,
+                dtype=_forward_dtype(aggregator, aggregator.camera_token),
             )
+            aggregated_tokens_list, ps_idx = aggregator(spatial_input)
         spatial_tokens = aggregated_tokens_list[-1][:, 0, ps_idx:, :]
         spatial_tokens = self.base_model.spatial_projector(spatial_tokens)
         last_hidden = self.base_model.fuser(last_hidden, spatial_tokens)
@@ -533,8 +530,9 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         chains = forward_inputs["chains"]
         denoise_inds = forward_inputs["denoise_inds"]
 
-        # The actor's FSDP forward dtype may differ from its stored weight dtype.
-        compute_dtype = next(self.parameters()).dtype
+        # FSDP1 calls this method on the inner policy, outside the action head's unshard.
+        head = self.action_head_rl
+        compute_dtype = _forward_dtype(head, head.base.action_encoder.layer1.weight)
         with (
             torch.autocast(device_type=chains.device.type, dtype=compute_dtype)
             if compute_dtype in (torch.float16, torch.bfloat16)

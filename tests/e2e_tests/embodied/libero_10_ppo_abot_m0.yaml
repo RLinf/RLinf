@@ -101,7 +101,7 @@ rollout:
 
   model:
     model_path: "/workspace/dataset/ABot-M0-LIBERO/checkpoints/steps_40000_pytorch_model.pt"
-    precision: ${actor.model.precision}
+    precision: "bf16"
 
 actor:
   group_name: "ActorGroup"
@@ -114,6 +114,7 @@ actor:
   model:
     model_path: "/workspace/dataset/ABot-M0-LIBERO/checkpoints/steps_40000_pytorch_model.pt"
     model_type: "abot_m0"
+    precision: "fp32"
     num_action_chunks: 10
     add_value_head: true
 
@@ -129,11 +130,12 @@ actor:
 
   fsdp_config:
     strategy: "fsdp"
+    use_orig_params: True
     gradient_checkpointing: true
     mixed_precision:
-      param_dtype: ${actor.model.precision}
-      reduce_dtype: ${actor.model.precision}
-      buffer_dtype: ${actor.model.precision}
+      param_dtype: "bf16"
+      reduce_dtype: "bf16"
+      buffer_dtype: "bf16"
       # Preserve the FP32 log-probabilities from rollout autocast.
       cast_forward_inputs: False
       cast_root_forward_inputs: False

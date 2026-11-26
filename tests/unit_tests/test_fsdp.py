@@ -341,6 +341,53 @@ def _shard(policy: torch.nn.Module) -> torch.nn.Module:
     )
 
 
+@pytest.mark.parametrize("strategy", ["fsdp", "fsdp_orig_params", "fsdp2"])
+def test_abot_value_head_uses_forward_dtype(single_rank_env, strategy):
+    from types import SimpleNamespace
+
+    from rlinf.hybrid_engines.fsdp import FSDP, fully_shard
+    from rlinf.models.embodiment.abot_m0.action_head_rl import (
+        AMLFlowMatchingActionHeadRL,
+    )
+
+    if strategy == "fsdp2" and not hasattr(torch.cpu.Stream, "record_event"):
+        pytest.skip("CPU FSDP2 requires streams with record_event")
+    dist.init_process_group("gloo")
+    mesh = create_device_mesh(1)
+    base = SimpleNamespace(
+        action_dim=2,
+        action_horizon=1,
+        num_inference_timesteps=1,
+        num_timestep_buckets=16,
+        t_eps=0.05,
+    )
+    head = AMLFlowMatchingActionHeadRL(base, {"add_value_head": True}, vl_hidden_size=2)
+    embeddings = torch.tensor([[[0.25, 0.75]]], dtype=torch.bfloat16)
+    with torch.no_grad(), torch.autocast("cpu", dtype=torch.bfloat16):
+        reference = head.get_value(embeddings)
+
+    precision = {"param_dtype": torch.bfloat16, "cast_forward_inputs": False}
+    if strategy == "fsdp2":
+        fully_shard(
+            head.value_head, mesh=mesh, mp_policy=MixedPrecisionPolicy(**precision)
+        )
+    else:
+        head.value_head = FSDP(
+            head.value_head,
+            device_id=torch.device("cpu"),
+            device_mesh=mesh,
+            mixed_precision=MixedPrecision(**precision, cast_root_forward_inputs=False),
+            use_orig_params=strategy == "fsdp_orig_params",
+        )
+    assert next(head.value_head.parameters()).dtype == torch.float32
+    values = head.get_value(embeddings)
+    torch.testing.assert_close(values, reference, rtol=0, atol=0)
+    values.float().sum().backward()
+    for parameter in head.value_head.parameters():
+        assert parameter.grad is not None
+        assert torch.isfinite(parameter.grad).all()
+
+
 def test_embeddings_are_sharded_as_their_own_units_by_default(single_rank_env):
     policy = _shard(_Policy())
 
