@@ -46,6 +46,7 @@ bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
 ## 最新动态
 
+- [2026/11] 🔥 RLinf 支持 SuperMimic，在 MuJoCo Warp 中用可微世界模型训练 Unitree G1 全身动作跟踪 policy，并集成多卡 FSDP2、CUDAGraph 与 bf16 混合精度优化。在 NVIDIA A800 上，相较官方单卡实现（0.515 秒/更新），RLinf 单卡吞吐提升至 **1.34 倍**（0.383 秒/更新），4 卡提升至 **2.27 倍**（0.227 秒/更新，约 23 分钟完成 6000 次更新）；在 40 条 LAFAN1 片段上性能与论文对齐，归一化回报达 **0.856**（论文为 0.82）且 **0** 摔倒。文档：[SuperMimic](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/supermimic.html)。
 - [2026/11] 🔥 RLinf 新增 FlexRLT，可直接用冻结 VLA 的特征训练小型 actor 和 critic，并分别选择特征表示、网络、AC/TD3 算法及 STEAM 门控。文档：[FlexRLT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/flexrlt.html)。
 - [2026/11] 🔥 RLinf 支持在 [DexJoCo](https://github.com/brave-eai/dexjoco) 灵巧操作基准上用 SFT 和 PPO 训练 CNN 和 π₀.₅ policy。PPO 将 π₀.₅ 在 `water_plant` 上的成功率从 SFT 后的 78.1% 提升至 98.4%。文档：[基于 DexJoCo 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html)。
 - [2026/11] 🔥 RLinf 支持奖励反馈学习（ReFL），使用 ImageReward 微调 SD3.5 Medium。文档：[ReFL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/refl.html)。
@@ -65,11 +66,11 @@ bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 - [2026/11] 🔥 RLinf 支持在 [GenieSim](https://github.com/AgibotTech/genie_sim) 上用 PPO 和 GRPO 对 π₀.₅ 进行强化学习。文档：[基于 GenieSim 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/geniesim.html)。
 - [2026/11] 🔥 RLinf 支持 RoboDojo——基于 Isaac Sim 的双臂操作类基准，覆盖 ARX-X5 等机器人，已作为 Gym 环境接入，可将官方 π₀.₅ 权重转换为 OpenPI 格式并在 55 个预设场景布局上逐场景评测。文档：[RoboDojo](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robodojo.html)。
 - [2026/11] 🔥 RLinf 支持 SO-101 关节空间示范数据采集、OpenPI π₀.₅ 监督微调和本地评测。文档：[SO-101](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/so101.html)。
-- [2026/11] 🔥 RLinf 支持 Psi0 VLA 模型与 SIMPLE 人形机器人仿真环境。文档：[Psi0](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/psi0.html)、[SIMPLE](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html)。
 
 <details>
 <summary><b>更多更新</b></summary>
 
+- [2026/11] 🔥 RLinf 支持 Psi0 VLA 模型与 SIMPLE 人形机器人仿真环境。文档：[Psi0](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/psi0.html)、[SIMPLE](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html)。
 - [2026/11] 🔥 RLinf 支持将 [PhyAI](https://github.com/mingti-org/phyai) 作为进程内 rollout 后端，在 LIBERO 上用 PPO 训练 π₀.₅，并支持热权重同步，在四张 H800 上把 π₀.₅ 的预测耗时从 142.6 秒降到 68.7 秒。文档：[PhyAI rollout 后端](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/rollout-engines/phyai.html)。
 - [2026/10] 🎉 RLinf v0.4 发布，让强化学习真正走出仿真、敏捷操控物理世界。主要升级：乐高式真机工程体系（`rlinf.robotics`）、真机 SOTA 后训练算法（RLT、STEAM、OPD、RTC）、全模态模型（PyTorch 原生 OpenPI π₀ / π₀.₅、Cosmos3、FastWAM、π₀-FAST、Evo-1、MolmoAct2、SD3 / Wan2.2）以及八大异构算力支持。发布说明：[RLinf v0.4](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/release_v0.4.html)。
 - [2026/10] 🎉 RLinf 发布 **CEL**（Collective Experience Learning）：机器人集群从部署期自身经验中共同改进共享策略，无需额外专家示教或纠错动作；在最多 96 台真机、5 项真实任务上验证。项目主页：[CEL](https://cel-robot-learning.github.io/)，论文：[arXiv:2610.25736](https://arxiv.org/abs/2610.25736)。代码即将开源。
@@ -218,7 +219,7 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习。�
     <tr>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li>SuperMimic（即将支持）</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/supermimic.html">SuperMimic</a> ✅</li>
         </ul>
       </td>
       <td>
@@ -354,6 +355,7 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习。�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robolab.html">RoboLab（仅评估）</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/g1_mimic.html">G1 动作跟踪（MuJoCo Warp）</a> ✅</li>
           <li>更多…</li>
         </ul>
       </td>
@@ -397,7 +399,7 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习。�
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><b>RL 算法</b>
             <ul>
-              <li>SuperMimic（即将支持）</li>
+              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/supermimic.html">SuperMimic</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/flexrlt.html">FlexRLT (AC / TD3)</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/reference/algorithms/grpo.html">GRPO</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/reference/algorithms/ppo.html">PPO</a> ✅</li>

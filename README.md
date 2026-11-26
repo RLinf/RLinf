@@ -47,6 +47,7 @@ That launches ManiSkill3 PPO MLP training on one GPU. Next, follow the [Quick St
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports SuperMimic for Unitree G1 whole-body motion tracking with a differentiable world model in MuJoCo Warp, including multi-GPU FSDP2 scaling, CUDA graphs, and bf16 mixed precision. On NVIDIA A800, it reaches **1.34×** throughput on 1 GPU (0.383 s vs. 0.515 s/update) and **2.27×** on 4 GPUs (0.227 s/update, 6000 updates in ~23 min) over the official single-GPU code, and reaches **0.856** normalized return on 40 LAFAN1 clips (paper: 0.82) with **0** falls. Doc: [SuperMimic](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/supermimic.html).
 - [2026/11] 🔥 RLinf supports FlexRLT: train a compact actor-critic from frozen VLA features, with configurable heads, AC/TD3 updates, and STEAM routing. Doc: [FlexRLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html).
 - [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
 - [2026/11] 🔥 RLinf supports Reward Feedback Learning (ReFL) for fine-tuning SD3.5 Medium with ImageReward. Doc: [ReFL](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html).
@@ -66,11 +67,11 @@ That launches ManiSkill3 PPO MLP training on one GPU. Next, follow the [Quick St
 - [2026/11] 🔥 RLinf supports RL on π₀.₅ in [GenieSim](https://github.com/AgibotTech/genie_sim) with PPO and GRPO. Doc: [RL with GenieSim](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html).
 - [2026/11] 🔥 RLinf supports RoboDojo, an Isaac Sim-based dual-arm manipulation benchmark for ARX-X5, exposed as a Gym environment for VLA policy evaluation: the official π₀.₅ checkpoint can be converted to OpenPI format and evaluated over 55 predefined scene layouts. Doc: [RoboDojo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robodojo.html).
 - [2026/11] 🔥 RLinf supports SO-101 joint-space demonstration collection, OpenPI π₀.₅ supervised fine-tuning, and local evaluation. Doc: [SO-101](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/so101.html).
-- [2026/11] 🔥 RLinf supports Psi0 VLA and the SIMPLE humanoid simulator. Docs: [Psi0](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/psi0.html), [SIMPLE](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html).
 
 <details>
 <summary><b>More updates</b></summary>
 
+- [2026/11] 🔥 RLinf supports Psi0 VLA and the SIMPLE humanoid simulator. Docs: [Psi0](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/psi0.html), [SIMPLE](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html).
 - [2026/11] 🔥 RLinf supports [PhyAI](https://github.com/mingti-org/phyai) as an in-process rollout backend for π₀.₅ PPO training on LIBERO, including hot weight synchronization, and cutting π₀.₅ prediction time on the rollout critical path from 142.6 s to 68.7 s on four H800 GPUs. Doc: [PhyAI rollout backend](https://rlinf.readthedocs.io/en/latest/rst_source/guides/rollout-engines/phyai.html).
 - [2026/10] 🎉 RLinf v0.4 is released, taking RL out of simulation and into agile control of the physical world. Highlights: a modular real-robot system (`rlinf.robotics`), real-robot SOTA post-training algorithms (RLT, STEAM, OPD, RTC), full-modality models (native PyTorch OpenPI π₀ / π₀.₅, Cosmos3, FastWAM, π₀-FAST, Evo-1, MolmoAct2, SD3 / Wan2.2), and eight accelerator backends. Release notes: [RLinf v0.4](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.4.html).
 - [2026/10] 🎉 RLinf introducing **CEL** (Collective Experience Learning): robot fleets improve a shared policy from their own deployment experience without additional expert demonstrations or corrective actions, validated on up to 96 real robots across 5 real-world tasks. Project page: [CEL](https://cel-robot-learning.github.io/), paper: [arXiv:2610.25736](https://arxiv.org/abs/2610.25736). Code will release soon.
@@ -218,7 +219,7 @@ RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. T
     <tr>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li>SuperMimic (coming soon)</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/supermimic.html">SuperMimic</a> ✅</li>
         </ul>
       </td>
       <td>
@@ -354,6 +355,7 @@ The components below cover simulators, real-world environments, and training alg
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robolab.html">RoboLab (evaluation only)</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/g1_mimic.html">G1 Motion Tracking (MuJoCo Warp)</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -397,7 +399,7 @@ The components below cover simulators, real-world environments, and training alg
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><b>RL Algos</b>
             <ul>
-              <li>SuperMimic (coming soon)</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/supermimic.html">SuperMimic</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html">FlexRLT (AC / TD3)</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/grpo.html">GRPO</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/ppo.html">PPO</a> ✅</li>

@@ -143,6 +143,10 @@ env.eval 字段说明
      task_type: embodied_eval
      only_eval: True
 
+.. note::
+
+   ``evaluations/supermimic/`` 下的 SuperMimic 配置同样是独立评测配置，通过 ``runner.ckpt_path`` 加载 ``full_weights.pt``，以 ``env.eval.eval_tasks`` 选择任务，并用 ``runner.eval_export`` 控制结果导出。详见 :doc:`../guides/supermimic`。
+
 配置回退
 --------
 

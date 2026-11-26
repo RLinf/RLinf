@@ -31,6 +31,7 @@ infer_benchmark() {
         dexjoco_*|dexjoco-* ) echo "dexjoco" ;;
         robolab_*|robolab-* ) echo "robolab" ;;
         geniesim_*|geniesim-* ) echo "geniesim" ;;
+        supermimic_*|supermimic-* ) echo "supermimic" ;;
         simple_*|simple-* ) echo "simple" ;;
         * )
             echo "unknown"
