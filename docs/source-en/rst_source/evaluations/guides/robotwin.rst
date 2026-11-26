@@ -330,7 +330,7 @@ Run RoboTwin's ``click_bell`` task with the Dream API on ALOHA-AgileX or a pair 
 
 **Install dependencies**
 
-Clone RoboTwin from the ``RLinf_support`` branch and run ``bash script/_download_assets.sh`` from the RoboTwin repository root. Use Python 3.11–3.13 and run the installation and launch commands from the RLinf repository root in the same shell.
+Clone the ``RLinf_support`` branch of RoboTwin next to RLinf and run ``bash script/_download_assets.sh`` from the RoboTwin repository root. Use Python 3.11–3.13 and run the installation and launch commands from the RLinf repository root in the same shell.
 
 .. tab-set::
 
@@ -353,7 +353,7 @@ MPLib uses NumPy 1. The Dream SDK uses NumPy 2 and runs in the interpreter set b
 
 The URDF, joint order, base frame, and TCP in the arm file must match the simulated robot.
 
-Use these values in the JSON arm file. Set ``urdf`` to the absolute path of the indicated URDF.
+Save the arm file in the RLinf repository root as ``aloha-arm.json`` for ALOHA or ``piper-arm.json`` for Piper. The paths below are relative to the RoboTwin checkout. Set ``urdf`` to the absolute path of the file you use.
 
 - ALOHA uses ``assets/embodiments/aloha-agilex/urdf/arx5_description_isaac.urdf``. Set ``base`` to ``fl_base_link`` and ``flange`` to ``fl_link6``.
 
@@ -366,24 +366,24 @@ Set ``ROBOTWIN_PATH`` to the RoboTwin checkout containing ``assets/`` and export
 
 .. code-block:: bash
 
-   export ROBOTWIN_PATH=/path/to/RoboTwin
+   export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
    export DREAM_API_KEY='<your-api-key>'
 
 Run the ALOHA evaluation with the ALOHA arm file.
 
 .. code-block:: bash
 
-   export DREAM_IK_ARM_FILE=/path/to/aloha-arm.json
+   export DREAM_IK_ARM_FILE="$PWD/aloha-arm.json"
    bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
-     env.eval.assets_path=${ROBOTWIN_PATH}
+     env.eval.assets_path="${ROBOTWIN_PATH}"
 
 In the same shell, set the arm file, embodiment, and action frequency for Piper:
 
 .. code-block:: bash
 
-   export DREAM_IK_ARM_FILE=/path/to/piper-arm.json
+   export DREAM_IK_ARM_FILE="$PWD/piper-arm.json"
    bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
-     env.eval.assets_path=${ROBOTWIN_PATH} \
+     env.eval.assets_path="${ROBOTWIN_PATH}" \
      'env.eval.task_config.embodiment=[piper,piper,0.6]' rollout.model.dream.action_hz=30
 
 **Check results**

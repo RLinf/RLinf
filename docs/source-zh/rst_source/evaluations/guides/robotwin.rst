@@ -330,7 +330,7 @@ Dream API 评测
 
 **安装依赖**
 
-克隆 RoboTwin 的 ``RLinf_support`` 分支，在 RoboTwin 仓库根目录运行 ``bash script/_download_assets.sh`` 下载仿真资产。使用 Python 3.11–3.13，在同一个 shell 中从 RLinf 仓库根目录执行安装和启动命令。
+将 RoboTwin 的 ``RLinf_support`` 分支克隆到 RLinf 的同级目录，在 RoboTwin 仓库根目录运行 ``bash script/_download_assets.sh`` 下载仿真资产。使用 Python 3.11–3.13，在同一个 shell 中从 RLinf 仓库根目录执行安装和启动命令。
 
 .. tab-set::
 
@@ -353,7 +353,7 @@ MPLib 使用 NumPy 1。Dream SDK 使用 NumPy 2，由 ``DREAM_ROLLOUT_PYTHON`` �
 
 机械臂文件中的 URDF、关节顺序、基座坐标系和 TCP 必须与仿真机器人一致。
 
-按下面的值填写 JSON 机械臂文件，``urdf`` 填对应 URDF 的绝对路径。
+将机械臂配置保存到 RLinf 仓库根目录。ALOHA 用 ``aloha-arm.json``\ ，Piper 用 ``piper-arm.json``\ 。下列 URDF 路径相对于 RoboTwin 仓库根目录。在 ``urdf`` 中填写实际使用文件的绝对路径。
 
 - ALOHA 使用 ``assets/embodiments/aloha-agilex/urdf/arx5_description_isaac.urdf``\ 。将 ``base`` 设为 ``fl_base_link``\ ，``flange`` 设为 ``fl_link6``\ 。
 
@@ -366,24 +366,24 @@ MPLib 使用 NumPy 1。Dream SDK 使用 NumPy 2，由 ``DREAM_ROLLOUT_PYTHON`` �
 
 .. code-block:: bash
 
-   export ROBOTWIN_PATH=/path/to/RoboTwin
+   export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
    export DREAM_API_KEY='<your-api-key>'
 
 使用 ALOHA 对应的机械臂文件启动评测。
 
 .. code-block:: bash
 
-   export DREAM_IK_ARM_FILE=/path/to/aloha-arm.json
+   export DREAM_IK_ARM_FILE="$PWD/aloha-arm.json"
    bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
-     env.eval.assets_path=${ROBOTWIN_PATH}
+     env.eval.assets_path="${ROBOTWIN_PATH}"
 
 评测 Piper 时，在同一个 shell 中切换机械臂文件，并设置机器人配置和动作频率。
 
 .. code-block:: bash
 
-   export DREAM_IK_ARM_FILE=/path/to/piper-arm.json
+   export DREAM_IK_ARM_FILE="$PWD/piper-arm.json"
    bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
-     env.eval.assets_path=${ROBOTWIN_PATH} \
+     env.eval.assets_path="${ROBOTWIN_PATH}" \
      'env.eval.task_config.embodiment=[piper,piper,0.6]' rollout.model.dream.action_hz=30
 
 **查看结果**
